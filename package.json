@@ -3,6 +3,7 @@
   "private": true,
   "version": "0.1.0",
   "description": "Oneiron - A memory engine for AI systems that need to remember",
+  "packageManager": "bun@1.3.4",
   "repository": {
     "type": "git",
     "url": "https://github.com/oneiron-dev/oneiron.git"
