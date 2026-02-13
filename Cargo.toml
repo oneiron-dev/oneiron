@@ -1,0 +1,16 @@
+[workspace]
+resolver = "2"
+members = ["crates/*"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+
+[workspace.dependencies]
+heed = "0.20"
+uuid = { version = "1", features = ["v7"] }
+thiserror = "2"
+rmp-serde = "1"
+rmpv = "1"
+xxhash-rust = { version = "0.8", features = ["xxh32"] }
