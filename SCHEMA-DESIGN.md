@@ -717,6 +717,67 @@ Cost: one extra write per document on index (~200 bytes avg). At 50K entities = 
 
 ---
 
+## Index Maintenance API (Dreamer Primitives)
+
+The `oneiron` crate provides deterministic index maintenance operations. These are the low-level primitives that the dreamer (in `oneiron-internal`) calls — the crate does not contain any LLM logic, consolidation intelligence, or ML service calls.
+
+```rust
+impl Vault {
+    pub fn maintain(&self) -> MaintenanceBuilder;
+}
+
+pub struct MaintenanceBuilder<'a> { /* borrows Vault */ }
+
+impl<'a> MaintenanceBuilder<'a> {
+    pub fn rebuild_hnsw(self) -> Self;
+    pub fn cleanup_ppr_cache(self, max_age_secs: u64) -> Self;
+    pub fn compact_postings(self) -> Self;
+    pub fn recompute_short_id_hashes(self) -> Self;
+    pub fn run(self) -> Result<MaintenanceReport>;
+}
+
+pub struct MaintenanceReport {
+    pub hnsw_dead_nodes_removed: usize,
+    pub hnsw_live_nodes: usize,
+    pub ppr_caches_evicted: usize,
+    pub postings_compacted: usize,
+    pub duration_ms: u64,
+}
+```
+
+| Operation | What it does | When to call |
+|---|---|---|
+| `rebuild_hnsw` | Re-insert all live vectors into fresh graph, discard dead nodes | Dead ratio > 10% |
+| `cleanup_ppr_cache` | Evict stale + expired cache entries from `ppr_cache` + `ppr_cache_deps` | Nightly |
+| `compact_postings` | Remove empty posting lists from `text_postings` | After bulk deletes |
+| `recompute_short_id_hashes` | Recompute content hashes for all entities in `short_ids` | After bulk updates |
+
+**Boundary:** The crate provides `maintain()`. The dreamer (private, in `oneiron-internal`) decides *when* to call it and *what entities to write/update*. The dreamer's intelligence (LLM-driven consolidation, skill extraction, edge weight tuning, ML service orchestration) is proprietary.
+
+---
+
+## Repository Structure
+
+```
+github.com/oneiron-ai/oneiron            ← public, Apache 2.0
+  Rust retrieval engine: LMDB, HNSW, BM25, PPR, RRF, context packs
+  Provides: Vault, BatchBuilder, PipelineBuilder, ContextPackBuilder,
+            MaintenanceBuilder, VaultManager
+
+github.com/oneiron-ai/oneiron-internal    ← private, proprietary
+  Platform: Convex backend, dreamer agent, API layer, LLM orchestration
+  Uses: oneiron crate as embedded storage engine
+  Contains: dreamer intelligence, consolidation logic, skill extraction,
+            ML service calls (Modal, Salad), scheduling, Fly deployment
+
+github.com/oneiron-ai/eiri-docs           ← private, architecture docs
+  ADRs, cross-cutting specs, product architecture
+```
+
+The public crate is the storage engine. The private repo is the brain that uses it. Like SQLite (public) vs your app (private).
+
+---
+
 ## Multi-Vault Deployment, ML Infrastructure, Platform Decisions
 
 See [DEPLOYMENT.md](./DEPLOYMENT.md) for:

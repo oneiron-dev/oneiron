@@ -322,11 +322,38 @@ Implement the `BatchBuilder` for atomic multi-database writes, and all secondary
 
 ---
 
-## Task 8: Benchmarks
+## Task 8: Index Maintenance API
+
+**Files:** `maintain.rs`, `lib.rs` (extend)
+**Est:** ~250 LOC
+**Depends on:** Task 4, Task 5
+
+Deterministic index maintenance primitives — the dreamer (in `oneiron-internal`) calls these.
+
+**MaintenanceBuilder (`maintain.rs`):**
+- `MaintenanceBuilder<'a>` borrowing `&'a Vault`
+- `rebuild_hnsw()` — re-insert all live vectors (from `vectors` db) into a fresh HNSW graph. Delete old `hnsw_neighbors` entries, rebuild from scratch. Update `hnsw_meta["count"]`, `hnsw_meta["entry_point"]`.
+- `cleanup_ppr_cache(max_age_secs)` — scan `ppr_cache`, evict entries where `computed_at + max_age < now` OR `stale == 1`. Clean up corresponding `ppr_cache_deps` entries.
+- `compact_postings()` — scan `text_postings`, delete entries with empty posting lists (can accumulate after many deletes).
+- `recompute_short_id_hashes()` — scan `short_ids`, for each entity read current blob from `entities`, recompute `xxHash32 % 256`, update if changed.
+- `run() -> Result<MaintenanceReport>` — execute selected operations, return stats.
+
+**MaintenanceReport:**
+- `hnsw_dead_nodes_removed`, `hnsw_live_nodes`, `ppr_caches_evicted`, `postings_compacted`, `duration_ms`
+
+**Tests:**
+- Insert 100 entities + vectors, delete 20, run `rebuild_hnsw`, verify dead nodes removed and search still works
+- Create PPR caches, age them, run `cleanup_ppr_cache`, verify evicted
+- Create posting lists, delete documents, run `compact_postings`, verify empty lists removed
+- Update entity blobs, run `recompute_short_id_hashes`, verify hashes updated
+
+---
+
+## Task 9: Benchmarks
 
 **Files:** `crates/oneiron-bench/src/main.rs`
 **Est:** ~400 LOC
-**Depends on:** Task 6
+**Depends on:** Task 6, Task 8
 
 **Benchmark suite:**
 - Scale: 1K, 5K, 10K, 50K entities
@@ -353,20 +380,24 @@ Implement the `BatchBuilder` for atomic multi-database writes, and all secondary
 
 ---
 
-## Task 9: FFI Layer (Defer)
+## Task 10: FFI Layer
 
 **Files:** `crates/oneiron-ffi/src/lib.rs`
 **Est:** ~300 LOC
 **Depends on:** Task 7
 
-C-compatible FFI for mobile (iOS/Android). Defer until core is stable.
+C-compatible FFI for mobile (iOS/Android) and TypeScript/Node via NAPI or direct FFI.
 
 - `oneiron_vault_open(path, config_json) -> *mut Vault`
 - `oneiron_vault_close(vault: *mut Vault)`
 - `oneiron_vault_put(vault, id, type, data, data_len, ...) -> i32`
 - `oneiron_vault_query(vault, query_json) -> *mut c_char` (returns serialized context pack)
+- `oneiron_vault_context_pack(vault, query_json, format) -> *mut c_char` (returns formatted text)
+- `oneiron_vault_maintain(vault, ops_json) -> *mut c_char` (returns maintenance report)
 - `oneiron_vault_free_string(s: *mut c_char)`
 - Error handling: return error codes, last-error string
+
+**Note:** The first consumer is `oneiron-internal` (TypeScript on Fly machines), calling via FFI. Mobile (iOS/Android) is the second consumer. Both use the same C FFI surface.
 
 ---
 
@@ -381,9 +412,13 @@ C-compatible FFI for mobile (iOS/Android). Defer until core is stable.
 | 5 | PPR Graph Traversal | ~400 | 1,2 | Bidirectional PPR, per-edge weights, cache |
 | 6 | RRF Fusion + Pipeline | ~300 | 3,4,5 | 5-signal fusion, pipeline builder |
 | 7 | Context Pack + Serialization | ~500 | 6 | Hydration, 5 formats, short ID + hash, token budget |
-| 8 | Benchmarks | ~400 | 6 | Scale testing, recall targets, latency targets |
-| 9 | FFI Layer | ~300 | 7 | C FFI for mobile (deferred) |
+| 8 | Index Maintenance | ~250 | 4,5 | HNSW rebuild, PPR cache cleanup, posting compaction |
+| 9 | Benchmarks | ~400 | 6,8 | Scale testing, recall targets, latency targets |
+| 10 | FFI Layer | ~300 | 7 | C FFI for mobile + TypeScript |
 
-**Total:** ~4,100 LOC (up from BUILD-PROMPT.md's ~3K estimate due to added features)
+**Total:** ~4,350 LOC
 
-**Parallelizable:** Tasks 3 and 4 can run in parallel (both depend on 1/2 but not each other). Task 5 can start as soon as Task 2 is done. Task 8 can run alongside Task 7.
+**Parallelizable:** Tasks 3 and 4 can run in parallel (both depend on 1/2 but not each other). Task 5 can start as soon as Task 2 is done. Task 8 can start after Tasks 4+5. Tasks 9 and 7 can run in parallel.
+
+**Execution order (serial):** 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 → 9 → 10
+**Execution order (parallel where possible):** 1 → 2 → [3, 4] → 5 → 6 → [7, 8] → 9 → 10
