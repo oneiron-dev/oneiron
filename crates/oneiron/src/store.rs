@@ -87,17 +87,15 @@ impl Store {
                 .map(parse_utf8_bytes)
                 .transpose()?;
 
-            match stored {
-                Some(stored) if stored != requested => {
+            if let Some(stored) = stored {
+                if stored != requested {
                     return Err(Error::EmbeddingModelChanged {
                         stored,
                         requested: requested.to_owned(),
                     });
                 }
-                Some(_) => {}
-                None => {
-                    hnsw_meta.put(&mut wtxn, MODEL_ID_KEY, requested.as_bytes())?;
-                }
+            } else {
+                hnsw_meta.put(&mut wtxn, MODEL_ID_KEY, requested.as_bytes())?;
             }
 
             wtxn.commit()?;

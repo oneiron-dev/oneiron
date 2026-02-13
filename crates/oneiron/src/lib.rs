@@ -139,7 +139,7 @@ fn le_bytes_to_f32_vec(bytes: &[u8]) -> Result<Vec<f32>> {
 
     Ok(bytes
         .chunks_exact(4)
-        .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
+        .map(|c| f32::from_le_bytes(c.try_into().unwrap()))
         .collect())
 }
 
@@ -161,13 +161,13 @@ fn scan_edges(
     rtxn: &heed::RoTxn<'_>,
     prefix: &[u8; 16],
 ) -> Result<Vec<(EdgeKind, EntityId, f32)>> {
-    let mut edges = Vec::new();
-    let iter = database.prefix_iter(rtxn, prefix.as_slice())?;
-    for entry in iter {
-        let (key, value) = entry?;
-        edges.push(parse_edge_record(key, value)?);
-    }
-    Ok(edges)
+    database
+        .prefix_iter(rtxn, prefix.as_slice())?
+        .map(|entry| {
+            let (key, value) = entry?;
+            parse_edge_record(key, value)
+        })
+        .collect()
 }
 
 fn parse_edge_record(key: &[u8], value: &[u8]) -> Result<(EdgeKind, EntityId, f32)> {
@@ -353,9 +353,8 @@ mod tests {
 
         let mut cfg = test_config();
         cfg.embedding_model = Some("model-b".to_owned());
-        let err = match Vault::open(temp_dir.path(), cfg) {
-            Ok(_) => panic!("expected mismatch"),
-            Err(err) => err,
+        let Err(err) = Vault::open(temp_dir.path(), cfg) else {
+            panic!("expected mismatch");
         };
         assert!(matches!(
             err,
