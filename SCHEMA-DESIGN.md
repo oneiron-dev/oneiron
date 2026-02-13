@@ -571,6 +571,17 @@ claim_predicates: predicate_string | entity_id(16) → empty
 
 For efficient "find all claims with predicate X" without deserializing blobs. Defer until profiling proves it's needed — type_index + temporal filters should reduce candidate sets enough for app-layer predicate filtering.
 
+### Value-Layer Compression (If Vault Sizes Become an Issue)
+
+LMDB stores raw bytes with no built-in compression. For v1 this is fine — MessagePack is already ~30% smaller than JSON, and f32 vectors are incompressible. But if text-heavy vaults grow large:
+
+- **zstd on `entities` DB values only.** Decompression runs at ~1.5+ GB/s, so per-blob overhead is single-digit microseconds on typical payloads (hundreds of bytes to a few KB). Negligible vs. the LMDB read itself.
+- **Don't compress vectors, edges, or index keys.** Floats and small fixed-size values don't compress well and the overhead isn't worth it.
+- **Use a pre-trained zstd dictionary.** zstd dictionaries excel on small payloads with shared structure — exactly what MessagePack entity blobs are (repeated map keys like `"type"`, `"content"`, `"source"`).
+- **Backward-compatible migration:** prefix compressed values with a 1-byte version tag. Decompress if present, read raw if not. No migration needed.
+
+No schema change — purely a value encoding concern. Add the `zstd` crate dependency when needed.
+
 ---
 
 ## EdgeKind Enum
