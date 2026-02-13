@@ -1,27 +1,63 @@
-# oneiron-db Implementation Tasks
+# oneiron Implementation Tasks
 
-> Each task is a self-contained unit for codex. Workflow:
->
-> **Phase 1 — Build (Codex)**
-> 1. Feed task to codex
-> 2. Codex plans → claude (opus) reviews plan
-> 3. Codex implements + writes tests
-> 4. `cargo test` passes → codex commits
->
-> **Phase 2 — Review (Opus)**
-> 5. Claude (opus) reviews code
-> 6. If changes needed → codex updates, tests again, commits
-> 7. Repeat until opus approves
->
-> **Phase 3 — Simplify (code-simplifier)**
-> 8. Run `code-simplifier` agent (opus) → clean/simplify code
-> 9. `cargo test` → verify nothing broke
-> 10. Claude (opus) reviews simplifier output
-> 11. Commit cleaned code
->
-> **Phase 4 — Next**
-> 12. Confirm ready for next task
 > Reference: [SCHEMA-DESIGN.md](./SCHEMA-DESIGN.md), [BUILD-PROMPT.md](./BUILD-PROMPT.md), [DEPLOYMENT.md](./DEPLOYMENT.md)
+
+## Workflow
+
+Each task is a **PR** built in its own **git worktree**. This isolates work and triggers auto-review on PR creation.
+
+### Setup (per task)
+
+```bash
+git worktree add .worktrees/<task-name> -b feat/<task-name>
+# e.g. git worktree add .worktrees/types-store -b feat/types-store
+```
+
+Worktree directory: `.worktrees/` (gitignored).
+Branch naming: `feat/<task-name>` (e.g. `feat/types-store`, `feat/batch-builder`, `feat/bm25`).
+
+### Phase 1 — Build (Codex)
+
+1. Create worktree + branch
+2. Feed task to codex (working in `.worktrees/<task-name>/`)
+3. Codex plans → claude (opus) reviews plan
+4. Codex implements + writes tests
+5. `cargo test` passes → codex commits
+
+### Phase 2 — Review (Opus)
+
+6. Claude (opus) reviews code
+7. If changes needed → codex updates, tests again, commits
+8. Repeat until opus approves
+
+### Phase 3 — Simplify (code-simplifier)
+
+9. Run `code-simplifier` agent (opus) → clean/simplify code
+10. `cargo test` → verify nothing broke
+11. Claude (opus) reviews simplifier output
+12. Commit cleaned code
+
+### Phase 4 — PR + Merge
+
+13. Push branch, create PR → auto-review triggers
+14. Address review feedback if any
+15. Merge to `main`, delete worktree: `git worktree remove .worktrees/<task-name>`
+16. Confirm ready for next task
+
+### Worktree mapping
+
+| # | Task | Worktree | Branch |
+|---|------|----------|--------|
+| 1 | Types + LMDB Store | `.worktrees/types-store` | `feat/types-store` |
+| 2 | Batch Builder + Indexes | `.worktrees/batch-builder` | `feat/batch-builder` |
+| 3 | BM25 Full-Text Search | `.worktrees/bm25` | `feat/bm25` |
+| 4 | HNSW Vector Search | `.worktrees/hnsw` | `feat/hnsw` |
+| 5 | PPR Graph Traversal | `.worktrees/ppr` | `feat/ppr` |
+| 6 | RRF Fusion + Pipeline | `.worktrees/rrf-pipeline` | `feat/rrf-pipeline` |
+| 7 | Context Pack + Serialization | `.worktrees/context-pack` | `feat/context-pack` |
+| 8 | Index Maintenance | `.worktrees/maintenance` | `feat/maintenance` |
+| 9 | Benchmarks | `.worktrees/benchmarks` | `feat/benchmarks` |
+| 10 | FFI Layer | `.worktrees/ffi` | `feat/ffi` |
 
 ---
 
