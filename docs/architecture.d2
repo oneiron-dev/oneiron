@@ -1,4 +1,4 @@
-direction: down
+direction: right
 
 query: Query {
   shape: text
@@ -11,49 +11,44 @@ vault: Vault {
   style.font-color: "#ffffff"
   style.stroke: "#3730a3"
   style.border-radius: 8
-  style.font-size: 15
+  style.font-size: 14
   style.bold: true
 }
 
-signals: {
-  style.fill: transparent
-  style.stroke: transparent
-
-  vector: Vector {
-    style.fill: "#7c3aed"
-    style.font-color: "#ffffff"
-    style.stroke: "#6d28d9"
-    style.border-radius: 8
-    style.font-size: 13
-  }
-  text: Text {
-    style.fill: "#7c3aed"
-    style.font-color: "#ffffff"
-    style.stroke: "#6d28d9"
-    style.border-radius: 8
-    style.font-size: 13
-  }
-  graph: Graph {
-    style.fill: "#7c3aed"
-    style.font-color: "#ffffff"
-    style.stroke: "#6d28d9"
-    style.border-radius: 8
-    style.font-size: 13
-  }
-  temporal: Temporal {
-    style.fill: "#7c3aed"
-    style.font-color: "#ffffff"
-    style.stroke: "#6d28d9"
-    style.border-radius: 8
-    style.font-size: 13
-  }
-  phonetic: Phonetic {
-    style.fill: "#7c3aed"
-    style.font-color: "#ffffff"
-    style.stroke: "#6d28d9"
-    style.border-radius: 8
-    style.font-size: 13
-  }
+vector: Vector {
+  style.fill: "#7c3aed"
+  style.font-color: "#ffffff"
+  style.stroke: "#6d28d9"
+  style.border-radius: 8
+  style.font-size: 13
+}
+text: Text {
+  style.fill: "#7c3aed"
+  style.font-color: "#ffffff"
+  style.stroke: "#6d28d9"
+  style.border-radius: 8
+  style.font-size: 13
+}
+graph: Graph {
+  style.fill: "#7c3aed"
+  style.font-color: "#ffffff"
+  style.stroke: "#6d28d9"
+  style.border-radius: 8
+  style.font-size: 13
+}
+temporal: Temporal {
+  style.fill: "#7c3aed"
+  style.font-color: "#ffffff"
+  style.stroke: "#6d28d9"
+  style.border-radius: 8
+  style.font-size: 13
+}
+phonetic: Phonetic {
+  style.fill: "#7c3aed"
+  style.font-color: "#ffffff"
+  style.stroke: "#6d28d9"
+  style.border-radius: 8
+  style.font-size: 13
 }
 
 fusion: RRF Fusion {
@@ -61,11 +56,11 @@ fusion: RRF Fusion {
   style.font-color: "#ffffff"
   style.stroke: "#be185d"
   style.border-radius: 8
-  style.font-size: 15
+  style.font-size: 14
   style.bold: true
 }
 
-results: Ranked Results {
+results: Results {
   shape: text
   style.font-size: 18
   style.bold: true
@@ -73,16 +68,16 @@ results: Ranked Results {
 
 query -> vault: {style.stroke: "#6366f1"; style.stroke-width: 2}
 
-vault -> signals.vector: {style.stroke: "#8b5cf6"; style.stroke-width: 2}
-vault -> signals.text: {style.stroke: "#8b5cf6"; style.stroke-width: 2}
-vault -> signals.graph: {style.stroke: "#8b5cf6"; style.stroke-width: 2}
-vault -> signals.temporal: {style.stroke: "#8b5cf6"; style.stroke-width: 2}
-vault -> signals.phonetic: {style.stroke: "#8b5cf6"; style.stroke-width: 2}
+vault -> vector: {style.stroke: "#8b5cf6"; style.stroke-width: 2}
+vault -> text: {style.stroke: "#8b5cf6"; style.stroke-width: 2}
+vault -> graph: {style.stroke: "#8b5cf6"; style.stroke-width: 2}
+vault -> temporal: {style.stroke: "#8b5cf6"; style.stroke-width: 2}
+vault -> phonetic: {style.stroke: "#8b5cf6"; style.stroke-width: 2}
 
-signals.vector -> fusion: {style.stroke: "#a855f7"; style.stroke-width: 2}
-signals.text -> fusion: {style.stroke: "#a855f7"; style.stroke-width: 2}
-signals.graph -> fusion: {style.stroke: "#a855f7"; style.stroke-width: 2}
-signals.temporal -> fusion: {style.stroke: "#a855f7"; style.stroke-width: 2}
-signals.phonetic -> fusion: {style.stroke: "#a855f7"; style.stroke-width: 2}
+vector -> fusion: {style.stroke: "#a855f7"; style.stroke-width: 2}
+text -> fusion: {style.stroke: "#a855f7"; style.stroke-width: 2}
+graph -> fusion: {style.stroke: "#a855f7"; style.stroke-width: 2}
+temporal -> fusion: {style.stroke: "#a855f7"; style.stroke-width: 2}
+phonetic -> fusion: {style.stroke: "#a855f7"; style.stroke-width: 2}
 
 fusion -> results: {style.stroke: "#ec4899"; style.stroke-width: 2}

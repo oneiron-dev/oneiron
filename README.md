@@ -11,7 +11,7 @@ One binary. One process. Zero network hops.
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="./docs/architecture-dark.svg">
   <source media="(prefers-color-scheme: light)" srcset="./docs/architecture-light.svg">
-  <img alt="oneiron architecture" src="./docs/architecture-light.svg" width="600">
+  <img alt="oneiron architecture" src="./docs/architecture-light.svg" width="700">
 </picture>
 
 <br>
