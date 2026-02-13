@@ -4,32 +4,13 @@ Embedded retrieval engine for memory-first applications. One binary, zero networ
 
 Oneiron unifies **HNSW vector search**, **BM25 full-text**, **PPR graph traversal**, **phonetic matching**, and **bi-temporal indexing** inside a single LMDB-backed storage engine — then fuses results with **Reciprocal Rank Fusion**.
 
-```
-Query → [ Vector | Text | Phonetic | Temporal | Graph ] → RRF Fusion → Ranked Results
-```
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="./docs/architecture-dark.svg">
+  <source media="(prefers-color-scheme: light)" srcset="./docs/architecture-light.svg">
+  <img alt="oneiron architecture" src="./docs/architecture-light.svg">
+</picture>
 
-## Why
-
-Most retrieval stacks bolt together separate services for vectors, text, and graphs. That means network hops, consistency gaps, and operational complexity that doesn't belong on a phone.
-
-Oneiron runs in-process. It ships as a Rust library with C FFI bindings — embed it on iOS, Android, desktop, or a server. Every query touches a single LMDB environment with ACID transactions.
-
-## Architecture
-
-```
-┌─────────────────────────────────────────────────┐
-│                    Vault API                     │
-├──────────┬──────────┬──────────┬────────────────┤
-│   HNSW   │   BM25   │   PPR    │   Temporal +   │
-│  Vector   │  Text    │  Graph   │   Phonetic     │
-├──────────┴──────────┴──────────┴────────────────┤
-│              RRF Score Fusion                    │
-├─────────────────────────────────────────────────┤
-│          LMDB (18 databases, 1 env)             │
-└─────────────────────────────────────────────────┘
-```
-
-**18 LMDB databases** handle entities, edges, vectors, HNSW neighbors, BM25 postings, PPR cache, temporal indexes, phonetic codes, and short IDs — all within a single environment per vault.
+Five retrieval signals — vector, text, graph, temporal, phonetic — feed into RRF score fusion over 18 LMDB databases in a single environment per vault. One binary, one process, zero network hops.
 
 ## Features
 
