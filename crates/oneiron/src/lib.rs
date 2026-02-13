@@ -124,11 +124,7 @@ impl Vault {
 }
 
 fn f32_slice_to_le_bytes(values: &[f32]) -> Vec<u8> {
-    let mut bytes = Vec::with_capacity(values.len() * 4);
-    for value in values {
-        bytes.extend_from_slice(&value.to_le_bytes());
-    }
-    bytes
+    values.iter().flat_map(|v| v.to_le_bytes()).collect()
 }
 
 fn le_bytes_to_f32_vec(bytes: &[u8]) -> Result<Vec<f32>> {
@@ -136,13 +132,10 @@ fn le_bytes_to_f32_vec(bytes: &[u8]) -> Result<Vec<f32>> {
         return Err(Error::InvalidKey);
     }
 
-    let mut values = Vec::with_capacity(bytes.len() / 4);
-    for chunk in bytes.chunks_exact(4) {
-        values.push(f32::from_le_bytes(
-            chunk.try_into().map_err(|_| Error::InvalidKey)?,
-        ));
-    }
-    Ok(values)
+    Ok(bytes
+        .chunks_exact(4)
+        .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
+        .collect())
 }
 
 fn encode_edge_value(weight: f32, created_at: u64) -> [u8; 12] {
@@ -178,10 +171,8 @@ fn parse_edge_record(key: &[u8], value: &[u8]) -> Result<(EdgeKind, EntityId, f3
     }
 
     let kind = EdgeKind::try_from_u8(key[16]).ok_or(Error::InvalidKey)?;
-    let neighbor_bytes: [u8; 16] = key[17..33].try_into().map_err(|_| Error::InvalidKey)?;
-    let weight_bytes: [u8; 4] = value[..4].try_into().map_err(|_| Error::InvalidKey)?;
-    let neighbor = EntityId::from_bytes(neighbor_bytes);
-    let weight = f32::from_le_bytes(weight_bytes);
+    let neighbor = EntityId::from_bytes(key[17..33].try_into().unwrap());
+    let weight = f32::from_le_bytes(value[..4].try_into().unwrap());
 
     Ok((kind, neighbor, weight))
 }

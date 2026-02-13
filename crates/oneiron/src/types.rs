@@ -114,6 +114,16 @@ pub struct HnswConfig {
     pub ef_search: usize,
 }
 
+impl Default for HnswConfig {
+    fn default() -> Self {
+        Self {
+            m_max_0: 64,
+            ef_construction: 200,
+            ef_search: 128,
+        }
+    }
+}
+
 /// Vault runtime configuration.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct VaultConfig {
@@ -137,11 +147,7 @@ impl VaultConfig {
             embedding_model: None,
             map_size: 1 << 30,
             max_readers: 126,
-            hnsw: HnswConfig {
-                m_max_0: 64,
-                ef_construction: 200,
-                ef_search: 128,
-            },
+            hnsw: HnswConfig::default(),
         }
     }
 
@@ -152,11 +158,7 @@ impl VaultConfig {
             embedding_model: None,
             map_size: 1 << 33,
             max_readers: 126,
-            hnsw: HnswConfig {
-                m_max_0: 64,
-                ef_construction: 200,
-                ef_search: 128,
-            },
+            hnsw: HnswConfig::default(),
         }
     }
 }
@@ -173,40 +175,27 @@ pub struct ScoredEntity {
 /// Retrieval signal type.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Signal {
-    /// Vector similarity signal.
     Vector,
-    /// Text relevance signal.
     Text,
-    /// Phonetic similarity signal.
     Phonetic,
-    /// Temporal relevance signal.
     Temporal,
-    /// Graph propagation signal.
     Ppr,
 }
 
 /// Output serialization format for context packing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum PackFormat {
-    /// JSON output.
     Json,
-    /// YAML output.
     Yaml,
-    /// TOON output.
     Toon,
-    /// Markdown output.
     Markdown,
-    /// Plain text output.
     Plaintext,
 }
 
 /// Field selection profile for context packing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum FieldProfile {
-    /// Minimal field set.
     Minimal,
-    /// Standard field set.
     Standard,
-    /// Full field set.
     Full,
 }

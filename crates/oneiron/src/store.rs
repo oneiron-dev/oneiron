@@ -158,7 +158,8 @@ fn create_db(env: &Env, wtxn: &mut RwTxn<'_>, name: &str) -> Result<Database<Byt
 }
 
 fn parse_utf8_bytes(bytes: &[u8]) -> Result<String> {
-    Ok(std::str::from_utf8(bytes)
-        .map_err(|_| Error::InvalidKey)?
-        .to_owned())
+    std::str::from_utf8(bytes)
+        .map(str::to_owned)
+        .map_err(|_| Error::InvalidKey)
 }
+
