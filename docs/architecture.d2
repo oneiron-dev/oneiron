@@ -2,16 +2,16 @@ direction: down
 
 query: Query {
   shape: text
-  style.font-size: 20
+  style.font-size: 18
   style.bold: true
 }
 
-vault: Vault API {
+vault: Vault {
   style.fill: "#4f46e5"
   style.font-color: "#ffffff"
   style.stroke: "#3730a3"
   style.border-radius: 8
-  style.font-size: 16
+  style.font-size: 15
   style.bold: true
 }
 
@@ -19,153 +19,70 @@ signals: {
   style.fill: transparent
   style.stroke: transparent
 
-  vector: "HNSW\nVector Search" {
+  vector: Vector {
     style.fill: "#7c3aed"
     style.font-color: "#ffffff"
     style.stroke: "#6d28d9"
     style.border-radius: 8
+    style.font-size: 13
   }
-  bm25: "BM25\nFull-Text" {
+  text: Text {
     style.fill: "#7c3aed"
     style.font-color: "#ffffff"
     style.stroke: "#6d28d9"
     style.border-radius: 8
+    style.font-size: 13
   }
-  ppr: "PPR\nGraph" {
+  graph: Graph {
     style.fill: "#7c3aed"
     style.font-color: "#ffffff"
     style.stroke: "#6d28d9"
     style.border-radius: 8
+    style.font-size: 13
   }
-  temporal: "Bi-Temporal\nIndexing" {
+  temporal: Temporal {
     style.fill: "#7c3aed"
     style.font-color: "#ffffff"
     style.stroke: "#6d28d9"
     style.border-radius: 8
+    style.font-size: 13
   }
-  phonetic: "Phonetic\nMatching" {
+  phonetic: Phonetic {
     style.fill: "#7c3aed"
     style.font-color: "#ffffff"
     style.stroke: "#6d28d9"
     style.border-radius: 8
+    style.font-size: 13
   }
 }
 
-fusion: "RRF Score Fusion" {
+fusion: RRF Fusion {
   style.fill: "#db2777"
   style.font-color: "#ffffff"
   style.stroke: "#be185d"
   style.border-radius: 8
-  style.font-size: 16
+  style.font-size: 15
   style.bold: true
 }
 
-batch: "BatchBuilder\nAtomic Writes" {
-  style.fill: "#0891b2"
-  style.font-color: "#ffffff"
-  style.stroke: "#0e7490"
-  style.border-radius: 8
-}
-
-lmdb: "LMDB — 18 databases, 1 env per vault" {
-  style.fill: "#1e293b"
-  style.font-color: "#f8fafc"
-  style.stroke: "#334155"
-  style.border-radius: 8
-  style.font-size: 14
-  style.bold: true
-
-  dbs: {
-    style.fill: transparent
-    style.stroke: transparent
-
-    entities: entities {
-      style.fill: "#334155"
-      style.font-color: "#94a3b8"
-      style.stroke: "#475569"
-      style.border-radius: 4
-      style.font-size: 11
-    }
-    edges: "edges_out\nedges_in" {
-      style.fill: "#334155"
-      style.font-color: "#94a3b8"
-      style.stroke: "#475569"
-      style.border-radius: 4
-      style.font-size: 11
-    }
-    vectors: vectors {
-      style.fill: "#334155"
-      style.font-color: "#94a3b8"
-      style.stroke: "#475569"
-      style.border-radius: 4
-      style.font-size: 11
-    }
-    hnsw: "hnsw_neighbors\nhnsw_meta" {
-      style.fill: "#334155"
-      style.font-color: "#94a3b8"
-      style.stroke: "#475569"
-      style.border-radius: 4
-      style.font-size: 11
-    }
-    text: "text_postings\ntext_meta\ntext_forward" {
-      style.fill: "#334155"
-      style.font-color: "#94a3b8"
-      style.stroke: "#475569"
-      style.border-radius: 4
-      style.font-size: 11
-    }
-    ppr: "ppr_cache\nppr_cache_deps" {
-      style.fill: "#334155"
-      style.font-color: "#94a3b8"
-      style.stroke: "#475569"
-      style.border-radius: 4
-      style.font-size: 11
-    }
-    temporal: "temporal_*\n(3 indexes)" {
-      style.fill: "#334155"
-      style.font-color: "#94a3b8"
-      style.stroke: "#475569"
-      style.border-radius: 4
-      style.font-size: 11
-    }
-    other: "phonetic\nshort_ids\ntype_index" {
-      style.fill: "#334155"
-      style.font-color: "#94a3b8"
-      style.stroke: "#475569"
-      style.border-radius: 4
-      style.font-size: 11
-    }
-  }
-}
-
-results: "Ranked Results" {
+results: Ranked Results {
   shape: text
-  style.font-size: 20
+  style.font-size: 18
   style.bold: true
 }
 
 query -> vault: {style.stroke: "#6366f1"; style.stroke-width: 2}
+
 vault -> signals.vector: {style.stroke: "#8b5cf6"; style.stroke-width: 2}
-vault -> signals.bm25: {style.stroke: "#8b5cf6"; style.stroke-width: 2}
-vault -> signals.ppr: {style.stroke: "#8b5cf6"; style.stroke-width: 2}
+vault -> signals.text: {style.stroke: "#8b5cf6"; style.stroke-width: 2}
+vault -> signals.graph: {style.stroke: "#8b5cf6"; style.stroke-width: 2}
 vault -> signals.temporal: {style.stroke: "#8b5cf6"; style.stroke-width: 2}
 vault -> signals.phonetic: {style.stroke: "#8b5cf6"; style.stroke-width: 2}
 
 signals.vector -> fusion: {style.stroke: "#a855f7"; style.stroke-width: 2}
-signals.bm25 -> fusion: {style.stroke: "#a855f7"; style.stroke-width: 2}
-signals.ppr -> fusion: {style.stroke: "#a855f7"; style.stroke-width: 2}
+signals.text -> fusion: {style.stroke: "#a855f7"; style.stroke-width: 2}
+signals.graph -> fusion: {style.stroke: "#a855f7"; style.stroke-width: 2}
 signals.temporal -> fusion: {style.stroke: "#a855f7"; style.stroke-width: 2}
 signals.phonetic -> fusion: {style.stroke: "#a855f7"; style.stroke-width: 2}
 
 fusion -> results: {style.stroke: "#ec4899"; style.stroke-width: 2}
-
-vault -> batch: {style.stroke: "#22d3ee"; style.stroke-width: 2; style.stroke-dash: 3}
-
-signals.vector -> lmdb.dbs.vectors: {style.stroke: "#475569"; style.stroke-dash: 3}
-signals.vector -> lmdb.dbs.hnsw: {style.stroke: "#475569"; style.stroke-dash: 3}
-signals.bm25 -> lmdb.dbs.text: {style.stroke: "#475569"; style.stroke-dash: 3}
-signals.ppr -> lmdb.dbs.ppr: {style.stroke: "#475569"; style.stroke-dash: 3}
-signals.ppr -> lmdb.dbs.edges: {style.stroke: "#475569"; style.stroke-dash: 3}
-signals.temporal -> lmdb.dbs.temporal: {style.stroke: "#475569"; style.stroke-dash: 3}
-signals.phonetic -> lmdb.dbs.other: {style.stroke: "#475569"; style.stroke-dash: 3}
-batch -> lmdb.dbs.entities: {style.stroke: "#22d3ee"; style.stroke-dash: 3}
