@@ -1,16 +1,26 @@
 # oneiron-db Implementation Tasks
 
 > Each task is a self-contained unit for codex. Workflow:
-> 1. Feed task to codex
-> 2. Codex makes a plan → claude reviews
-> 3. Codex implements → claude reviews
-> 4. Run `code-simplifier` agent (Opus) → simplify/clean code
-> 5. Run `cargo test` → verify nothing broke
-> 6. Commit, confirm ready for next task
 >
-> Each task should compile and pass its own tests before moving to the next.
-> The code-simplifier step catches over-engineering, unnecessary abstractions,
-> verbose patterns, and style inconsistencies while the code is fresh.
+> **Phase 1 — Build (Codex)**
+> 1. Feed task to codex
+> 2. Codex plans → claude (opus) reviews plan
+> 3. Codex implements + writes tests
+> 4. `cargo test` passes → codex commits
+>
+> **Phase 2 — Review (Opus)**
+> 5. Claude (opus) reviews code
+> 6. If changes needed → codex updates, tests again, commits
+> 7. Repeat until opus approves
+>
+> **Phase 3 — Simplify (code-simplifier)**
+> 8. Run `code-simplifier` agent (opus) → clean/simplify code
+> 9. `cargo test` → verify nothing broke
+> 10. Claude (opus) reviews simplifier output
+> 11. Commit cleaned code
+>
+> **Phase 4 — Next**
+> 12. Confirm ready for next task
 > Reference: [SCHEMA-DESIGN.md](./SCHEMA-DESIGN.md), [BUILD-PROMPT.md](./BUILD-PROMPT.md), [DEPLOYMENT.md](./DEPLOYMENT.md)
 
 ---
