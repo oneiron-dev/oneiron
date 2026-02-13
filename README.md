@@ -1,35 +1,45 @@
+<div align="center">
+
 # oneiron
 
-Embedded retrieval engine for memory-first applications. One binary, zero network hops.
+**Embedded retrieval engine for memory-first applications.**
 
-Oneiron unifies **HNSW vector search**, **BM25 full-text**, **PPR graph traversal**, **phonetic matching**, and **bi-temporal indexing** inside a single LMDB-backed storage engine — then fuses results with **Reciprocal Rank Fusion**.
+One binary. One process. Zero network hops.
+
+<br>
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="./docs/architecture-dark.svg">
   <source media="(prefers-color-scheme: light)" srcset="./docs/architecture-light.svg">
-  <img alt="oneiron architecture" src="./docs/architecture-light.svg">
+  <img alt="oneiron architecture" src="./docs/architecture-light.svg" width="600">
 </picture>
 
-Five retrieval signals — vector, text, graph, temporal, phonetic — feed into RRF score fusion over 18 LMDB databases in a single environment per vault. One binary, one process, zero network hops.
+<br>
 
-## Features
+</div>
 
-- **HNSW vector search** — flat navigable small world graph, f32 vectors, dimension-agnostic, SIMD-accelerated (AVX2 / NEON / scalar fallback)
-- **BM25 full-text search** — inverted index with term frequencies, document length normalization
-- **Personalized PageRank** — seed-set graph traversal over typed, weighted edges with lazy cache invalidation
-- **Bi-temporal indexing** — occurrence time vs. learned time, range queries on both dimensions
-- **Phonetic matching** — voice-first fuzzy matching for ASR misspellings
-- **RRF fusion** — combine any subset of signals with per-signal boosts
-- **Atomic batch writes** — multi-database transactions via `BatchBuilder`
-- **Context packing** — serialize retrieval results into LLM-ready formats (JSON, YAML, Markdown, plaintext)
-- **Cross-platform** — server (x86_64), iOS/Android (aarch64), desktop (native)
+## Why
+
+Most retrieval stacks bolt together separate services for vectors, text, and graphs — network hops, consistency gaps, and operational complexity that doesn't belong on a phone. Oneiron runs in-process as a Rust library with C FFI bindings. Every query touches a single LMDB environment with ACID transactions. Embed it on iOS, Android, desktop, or a server.
+
+## Signals
+
+| Signal | Engine | What it finds |
+|--------|--------|---------------|
+| **Vector** | HNSW (flat NSW), SIMD-accelerated | Semantically similar content |
+| **Text** | BM25 inverted index | Exact keywords and phrases |
+| **Graph** | Personalized PageRank over typed edges | Relationally connected entities |
+| **Temporal** | Bi-temporal range indexes | Events by when they happened or were recorded |
+| **Phonetic** | Code-based posting lists | Fuzzy matches from voice/ASR misspellings |
+
+Any subset of signals can be combined via **Reciprocal Rank Fusion** with per-signal boosts.
 
 ## Quick Start
 
 ```rust
 use oneiron::{Vault, VaultConfig, EntityId};
 
-let config = VaultConfig::device(); // mobile preset
+let config = VaultConfig::device();
 let vault = Vault::open("./my-vault", config)?;
 
 let id = EntityId::now();
@@ -44,30 +54,15 @@ cargo build --release
 cargo test
 ```
 
-## Crate Structure
+## Design
 
-```
-crates/
-├── oneiron/         # core library
-├── oneiron-ffi/     # C FFI for mobile
-└── oneiron-bench/   # benchmarks
-```
+18 LMDB databases per vault. Atomic multi-database writes via `BatchBuilder`. MessagePack entity blobs. Context packing into LLM-ready formats.
 
-## Signals
+Full details in the design docs:
 
-| Signal | Index | Use |
-|--------|-------|-----|
-| Vector | HNSW (flat NSW) | Semantic similarity |
-| Text | BM25 inverted index | Keyword / exact match |
-| Graph | PPR over typed edges | Relational context |
-| Temporal | Bi-temporal B-tree | Time-aware retrieval |
-| Phonetic | Code → entity posting lists | Voice / fuzzy match |
-
-## Design Docs
-
-- [`SCHEMA-DESIGN.md`](./SCHEMA-DESIGN.md) — full database layout, key formats, encoding decisions
-- [`BUILD-PROMPT.md`](./BUILD-PROMPT.md) — architecture spec, algorithms, API surface, known pitfalls
-- [`DEPLOYMENT.md`](./DEPLOYMENT.md) — multi-vault deployment, ML infrastructure, operational concerns
+- [`SCHEMA-DESIGN.md`](./SCHEMA-DESIGN.md) — database layout, key formats, encoding
+- [`BUILD-PROMPT.md`](./BUILD-PROMPT.md) — architecture, algorithms, API surface
+- [`DEPLOYMENT.md`](./DEPLOYMENT.md) — multi-vault deployment, ML infrastructure
 
 ## License
 
