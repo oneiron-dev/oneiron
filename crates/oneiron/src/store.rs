@@ -81,12 +81,11 @@ impl Store {
         wtxn.commit()?;
 
         if let Some(requested) = config.embedding_model.as_deref() {
-            let rtxn = env.read_txn()?;
+            let mut wtxn = env.write_txn()?;
             let stored = hnsw_meta
-                .get(&rtxn, MODEL_ID_KEY)?
+                .get(&wtxn, MODEL_ID_KEY)?
                 .map(parse_utf8_bytes)
                 .transpose()?;
-            drop(rtxn);
 
             match stored {
                 Some(stored) if stored != requested => {
@@ -97,11 +96,11 @@ impl Store {
                 }
                 Some(_) => {}
                 None => {
-                    let mut wtxn = env.write_txn()?;
                     hnsw_meta.put(&mut wtxn, MODEL_ID_KEY, requested.as_bytes())?;
-                    wtxn.commit()?;
                 }
             }
+
+            wtxn.commit()?;
         }
 
         Ok(Self {
@@ -162,4 +161,3 @@ fn parse_utf8_bytes(bytes: &[u8]) -> Result<String> {
         .map(str::to_owned)
         .map_err(|_| Error::InvalidKey)
 }
-

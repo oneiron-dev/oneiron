@@ -124,11 +124,16 @@ impl Vault {
 }
 
 fn f32_slice_to_le_bytes(values: &[f32]) -> Vec<u8> {
-    values.iter().flat_map(|v| v.to_le_bytes()).collect()
+    let mut bytes = Vec::with_capacity(values.len() * 4);
+    for value in values {
+        bytes.extend_from_slice(&value.to_le_bytes());
+    }
+    bytes
 }
 
+#[expect(clippy::manual_is_multiple_of, reason = "Use modulo check for portability.")]
 fn le_bytes_to_f32_vec(bytes: &[u8]) -> Result<Vec<f32>> {
-    if !bytes.len().is_multiple_of(4) {
+    if bytes.len() % 4 != 0 {
         return Err(Error::InvalidKey);
     }
 
@@ -358,6 +363,28 @@ mod tests {
                 ref stored,
                 ref requested
             } if stored == "model-a" && requested == "model-b"
+        ));
+
+        Ok(())
+    }
+
+    #[test]
+    fn embedding_model_first_write_is_atomic() -> Result<()> {
+        let temp_dir = tempfile::tempdir()?;
+        let mut cfg = test_config();
+        cfg.embedding_model = Some("model-x".to_owned());
+
+        let vault = Vault::open(temp_dir.path(), cfg.clone())?;
+        drop(vault);
+
+        let vault = Vault::open(temp_dir.path(), cfg)?;
+        drop(vault);
+
+        let mut cfg2 = test_config();
+        cfg2.embedding_model = Some("model-y".to_owned());
+        assert!(matches!(
+            Vault::open(temp_dir.path(), cfg2),
+            Err(Error::EmbeddingModelChanged { .. })
         ));
 
         Ok(())
