@@ -9,7 +9,7 @@ use crate::store::Store;
 use crate::types::{short_id_prefix, EdgeKind, EntityId, TimeRange};
 use crate::Vault;
 
-const ENTITY_METADATA_HEADER_LEN: usize = 25;
+pub(crate) const ENTITY_METADATA_HEADER_LEN: usize = 25;
 const SHORT_ID_COUNTER_LEN: usize = 8;
 const EDGE_KEY_LEN: usize = 33;
 const EDGE_VALUE_LEN: usize = 12;
@@ -247,6 +247,30 @@ fn apply_put(
     learned_at: u64,
     data: &[u8],
 ) -> Result<()> {
+    if let Some(old_record) = store.entities.get(wtxn, id.as_bytes())? {
+        let (old_type, old_occurred, old_learned) = parse_entity_metadata(old_record)?;
+
+        if old_type != entity_type {
+            let old_type_key = Store::encode_type_key(old_type, &id);
+            store.type_index.delete(wtxn, &old_type_key)?;
+        }
+
+        if old_occurred.start != occurred.start {
+            let old_start_key = Store::encode_temporal_key(old_occurred.start, &id);
+            store.temporal_occurred_start.delete(wtxn, &old_start_key)?;
+        }
+
+        if old_occurred.start != old_occurred.end && old_occurred.end != occurred.end {
+            let old_end_key = Store::encode_temporal_key(old_occurred.end, &id);
+            store.temporal_occurred_end.delete(wtxn, &old_end_key)?;
+        }
+
+        if old_learned != learned_at {
+            let old_learned_key = Store::encode_temporal_key(old_learned, &id);
+            store.temporal_learned.delete(wtxn, &old_learned_key)?;
+        }
+    }
+
     let mut payload = Vec::with_capacity(ENTITY_METADATA_HEADER_LEN + data.len());
     payload.push(entity_type);
     payload.extend_from_slice(&occurred.start.to_be_bytes());
@@ -344,6 +368,13 @@ fn apply_phonetic(
             return Err(Error::InvalidKey);
         }
 
+        if posting
+            .chunks_exact(ENTITY_ID_LEN)
+            .any(|chunk| chunk == id.as_bytes())
+        {
+            continue;
+        }
+
         posting.extend_from_slice(id.as_bytes());
         store.phonetic_index.put(wtxn, code.as_bytes(), &posting)?;
     }
@@ -372,8 +403,7 @@ fn upsert_short_id(
     let sentinel_key = short_id_counter_sentinel(entity_type);
     let current = match store.short_ids.get(wtxn, &sentinel_key)? {
         Some(raw) => {
-            let buf: [u8; SHORT_ID_COUNTER_LEN] =
-                raw.try_into().map_err(|_| Error::InvalidKey)?;
+            let buf: [u8; SHORT_ID_COUNTER_LEN] = raw.try_into().map_err(|_| Error::InvalidKey)?;
             u64::from_le_bytes(buf)
         }
         None => 0,

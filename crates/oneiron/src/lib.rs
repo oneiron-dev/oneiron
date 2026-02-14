@@ -8,8 +8,8 @@ pub mod error;
 pub mod store;
 pub mod types;
 
-use crate::batch::deindex_entity;
 pub use crate::batch::BatchBuilder;
+use crate::batch::{deindex_entity, ENTITY_METADATA_HEADER_LEN};
 pub use crate::error::{Error, Result};
 use crate::store::Store;
 pub use crate::types::{
@@ -17,7 +17,6 @@ pub use crate::types::{
     VaultConfig,
 };
 
-const ENTITY_METADATA_HEADER_LEN: usize = 25;
 const MIN_MAP_SIZE_BYTES: usize = 1 << 20;
 
 /// Main vault API wrapping LMDB storage and configuration.
@@ -164,12 +163,8 @@ fn f32_slice_to_le_bytes(values: &[f32]) -> Vec<u8> {
     bytes
 }
 
-#[expect(
-    clippy::manual_is_multiple_of,
-    reason = "Use modulo check for portability."
-)]
 fn le_bytes_to_f32_vec(bytes: &[u8]) -> Result<Vec<f32>> {
-    if bytes.len() % 4 != 0 {
+    if !bytes.len().is_multiple_of(4) {
         return Err(Error::InvalidKey);
     }
 
@@ -551,6 +546,113 @@ mod tests {
     }
 
     #[test]
+    fn reput_deindexes_stale_secondary_indexes() -> Result<()> {
+        let temp_dir = tempfile::tempdir()?;
+        let vault = Vault::open(temp_dir.path(), test_config())?;
+        let id = EntityId::now();
+        let old_type = 0_u8;
+        let old_occurred = test_time_range(100, 200);
+        let old_learned = 300_u64;
+        let old_data = b"old-data";
+        let new_type = 1_u8;
+        let new_occurred = test_time_range(400, 500);
+        let new_learned = 600_u64;
+        let mut new_data = b"new-data".to_vec();
+        while content_hash(old_data) == content_hash(&new_data) {
+            new_data.push(0_u8);
+        }
+
+        vault
+            .batch()
+            .put(&id, old_type, old_occurred, old_learned, old_data)
+            .commit()?;
+
+        let old_type_key = Store::encode_type_key(old_type, &id);
+        let old_start_key = Store::encode_temporal_key(old_occurred.start, &id);
+        let old_end_key = Store::encode_temporal_key(old_occurred.end, &id);
+        let old_learned_key = Store::encode_temporal_key(old_learned, &id);
+
+        {
+            let rtxn = vault.store.env.read_txn()?;
+            assert!(vault.store.type_index.get(&rtxn, &old_type_key)?.is_some());
+            assert!(vault
+                .store
+                .temporal_occurred_start
+                .get(&rtxn, &old_start_key)?
+                .is_some());
+            assert!(vault
+                .store
+                .temporal_occurred_end
+                .get(&rtxn, &old_end_key)?
+                .is_some());
+            assert!(vault
+                .store
+                .temporal_learned
+                .get(&rtxn, &old_learned_key)?
+                .is_some());
+        }
+
+        let (short_id_before, hash_before) =
+            decode_short_id_value(&read_short_id_value(&vault, &id)?)?;
+
+        vault
+            .batch()
+            .put(&id, new_type, new_occurred, new_learned, &new_data)
+            .commit()?;
+
+        let new_type_key = Store::encode_type_key(new_type, &id);
+        let new_start_key = Store::encode_temporal_key(new_occurred.start, &id);
+        let new_end_key = Store::encode_temporal_key(new_occurred.end, &id);
+        let new_learned_key = Store::encode_temporal_key(new_learned, &id);
+
+        {
+            let rtxn = vault.store.env.read_txn()?;
+            assert!(vault.store.type_index.get(&rtxn, &old_type_key)?.is_none());
+            assert!(vault
+                .store
+                .temporal_occurred_start
+                .get(&rtxn, &old_start_key)?
+                .is_none());
+            assert!(vault
+                .store
+                .temporal_occurred_end
+                .get(&rtxn, &old_end_key)?
+                .is_none());
+            assert!(vault
+                .store
+                .temporal_learned
+                .get(&rtxn, &old_learned_key)?
+                .is_none());
+            assert!(vault.store.type_index.get(&rtxn, &new_type_key)?.is_some());
+            assert!(vault
+                .store
+                .temporal_occurred_start
+                .get(&rtxn, &new_start_key)?
+                .is_some());
+            assert!(vault
+                .store
+                .temporal_occurred_end
+                .get(&rtxn, &new_end_key)?
+                .is_some());
+            assert!(vault
+                .store
+                .temporal_learned
+                .get(&rtxn, &new_learned_key)?
+                .is_some());
+        }
+
+        assert_eq!(vault.get(&id)?.ok_or(Error::EntityNotFound)?, new_data);
+        let (short_id_after, hash_after) =
+            decode_short_id_value(&read_short_id_value(&vault, &id)?)?;
+        assert_eq!(short_id_before, short_id_after);
+        assert_eq!(hash_before, content_hash(old_data));
+        assert_eq!(hash_after, content_hash(&new_data));
+        assert_ne!(hash_before, hash_after);
+
+        Ok(())
+    }
+
+    #[test]
     fn batch_phonetic_index() -> Result<()> {
         let temp_dir = tempfile::tempdir()?;
         let vault = Vault::open(temp_dir.path(), test_config())?;
@@ -572,6 +674,35 @@ mod tests {
             assert!(posting.len().is_multiple_of(16));
             assert!(posting.chunks_exact(16).any(|chunk| chunk == id.as_bytes()));
         }
+        Ok(())
+    }
+
+    #[test]
+    fn phonetic_dedup_on_reindex() -> Result<()> {
+        let temp_dir = tempfile::tempdir()?;
+        let vault = Vault::open(temp_dir.path(), test_config())?;
+        let id = EntityId::now();
+
+        vault
+            .batch()
+            .put(&id, 0, test_time_range(1, 2), 3, b"dedup")
+            .phonetic(&id, &["ABC"])
+            .commit()?;
+
+        vault.batch().phonetic(&id, &["ABC"]).commit()?;
+
+        let rtxn = vault.store.env.read_txn()?;
+        let posting = vault
+            .store
+            .phonetic_index
+            .get(&rtxn, b"ABC")?
+            .ok_or(Error::EntityNotFound)?;
+        assert_eq!(posting.len(), 16);
+        let count = posting
+            .chunks_exact(16)
+            .filter(|chunk| *chunk == id.as_bytes())
+            .count();
+        assert_eq!(count, 1);
         Ok(())
     }
 
