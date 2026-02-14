@@ -249,6 +249,7 @@ Implement the `BatchBuilder` for atomic multi-database writes, and all secondary
 
 **Review follow-ups from Task 2:**
 - Validate `weight.is_finite()` in `apply_edge` and vector elements in `apply_vector` (NaN/Inf poisons HNSW distances)
+- Refactor `put_vector` to route through `BatchBuilder` (`self.batch().vector(id, vector).commit()`) so HNSW insert hook applies
 
 **Key notes from BUILD-PROMPT.md §8:**
 - Do NOT pre-allocate huge `Vec`s for neighbor lists. Read/write from LMDB each time.
@@ -382,6 +383,9 @@ Implement the `BatchBuilder` for atomic multi-database writes, and all secondary
 - Short ID + content hash in output: `cl88:f2` format
 - Token budget: verify output doesn't exceed budget
 - Empty results: verify graceful handling
+
+**Review follow-ups from Task 2:**
+- Add `// SAFETY:` comment to `unsafe` block in `store.rs:47-53` (`EnvOpenOptions::open`) documenting invariants: single Env per path, no NFS, no concurrent map_size. Important for FFI/C consumers.
 
 ---
 
