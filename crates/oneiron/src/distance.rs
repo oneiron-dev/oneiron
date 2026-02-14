@@ -3,7 +3,9 @@ pub(crate) fn cosine_distance(a: &[f32], b: &[f32]) -> f32 {
 }
 
 pub(crate) fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
-    debug_assert_eq!(a.len(), b.len());
+    if a.len() != b.len() {
+        return 0.0;
+    }
 
     #[cfg(target_arch = "x86_64")]
     {

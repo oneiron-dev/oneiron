@@ -5,9 +5,9 @@ use heed::Database;
 
 pub mod batch;
 pub(crate) mod bm25;
-pub mod distance;
+pub(crate) mod distance;
 pub mod error;
-pub mod hnsw;
+pub(crate) mod hnsw;
 pub mod store;
 pub mod types;
 
@@ -113,6 +113,9 @@ impl Vault {
                 expected: self.config.dimensions,
                 got: query.len(),
             });
+        }
+        if query.iter().any(|v| !v.is_finite()) {
+            return Err(Error::InvalidVector);
         }
 
         let rtxn = self.store.env.read_txn()?;
