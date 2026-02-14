@@ -212,6 +212,7 @@ pub(crate) fn deindex_entity(store: &Store, wtxn: &mut RwTxn<'_>, id: &EntityId)
     crate::bm25::deindex_text(store, wtxn, id)?;
     delete_from_phonetic_postings(store, wtxn, id)?;
     store.vectors.delete(wtxn, id.as_bytes())?;
+    crate::hnsw::hnsw_deindex(store, wtxn, id)?;
 
     let Some(entity_record) = store.entities.get(wtxn, id.as_bytes())? else {
         return Ok(false);
@@ -236,7 +237,6 @@ pub(crate) fn deindex_entity(store: &Store, wtxn: &mut RwTxn<'_>, id: &EntityId)
     store.temporal_learned.delete(wtxn, &learned_key)?;
 
     delete_related_edges(store, wtxn, id)?;
-    crate::hnsw::hnsw_deindex(store, wtxn, id)?;
 
     if let Some(raw) = store.short_ids.get(wtxn, id.as_bytes())? {
         let (short_id, _) = parse_short_id_value(raw)?;

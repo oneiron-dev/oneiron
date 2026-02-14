@@ -421,6 +421,7 @@ Deterministic index maintenance primitives — the dreamer (in `oneiron-internal
 - Full HNSW graph deindex: on entity delete, remove entity from ALL neighbors' neighbor lists (not just entry_point reassignment done in PR #4 fix)
 - Idempotent insert doesn't update HNSW graph on vector change — second `put_vector` overwrites raw bytes but HNSW connections stay based on old vector. Requires delete+re-insert in graph (ties into `rebuild_hnsw`)
 - `Error::InvalidKey` used as catch-all for count overflow and missing entry_point — should be `Error::CorruptedIndex` or similar
+- Add doc comment to `hnsw_deindex` making lazy deletion behavior explicit (doesn't scrub deleted ID from other nodes' neighbor lists — beam_search handles this via `load_vector` returning `None`)
 
 **MaintenanceBuilder (`maintain.rs`):**
 - `MaintenanceBuilder<'a>` borrowing `&'a Vault`

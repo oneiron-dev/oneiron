@@ -121,7 +121,7 @@ pub(crate) fn hnsw_search(
         rtxn,
         query_vector,
         entry_point,
-        config.hnsw.ef_search,
+        config.hnsw.ef_search.max(limit),
         true,
     )?;
 
