@@ -1,83 +1,95 @@
 direction: right
 
+# --- Oneiron palette ---
+# accent:  #E63E2A  (vibrant red-orange)
+# ink:     #1a1a1a  (dark text / heavy elements)
+# surface: #F4F0E6  (warm parchment)
+# success: #4A7C59  (positive / completion)
+# muted:   #6B7280  (secondary)
+# brown:   #8B5A2B  (warm secondary accent)
+
 query: Query {
   shape: text
   style.font-size: 18
   style.bold: true
+  style.font-color: "#1a1a1a"
 }
 
 vault: Vault {
-  style.fill: "#4f46e5"
+  style.fill: "#E63E2A"
   style.font-color: "#ffffff"
-  style.stroke: "#3730a3"
+  style.stroke: "#c4321f"
   style.border-radius: 8
   style.font-size: 14
   style.bold: true
+  style.shadow: true
 }
 
 vector: Vector {
-  style.fill: "#7c3aed"
-  style.font-color: "#ffffff"
-  style.stroke: "#6d28d9"
+  style.fill: "#F4F0E6"
+  style.font-color: "#1a1a1a"
+  style.stroke: "#1a1a1a"
   style.border-radius: 8
   style.font-size: 13
 }
 text: Text {
-  style.fill: "#7c3aed"
-  style.font-color: "#ffffff"
-  style.stroke: "#6d28d9"
+  style.fill: "#F4F0E6"
+  style.font-color: "#1a1a1a"
+  style.stroke: "#1a1a1a"
   style.border-radius: 8
   style.font-size: 13
 }
 graph: Graph {
-  style.fill: "#7c3aed"
-  style.font-color: "#ffffff"
-  style.stroke: "#6d28d9"
+  style.fill: "#F4F0E6"
+  style.font-color: "#1a1a1a"
+  style.stroke: "#1a1a1a"
   style.border-radius: 8
   style.font-size: 13
 }
 temporal: Temporal {
-  style.fill: "#7c3aed"
-  style.font-color: "#ffffff"
-  style.stroke: "#6d28d9"
+  style.fill: "#F4F0E6"
+  style.font-color: "#1a1a1a"
+  style.stroke: "#1a1a1a"
   style.border-radius: 8
   style.font-size: 13
 }
 phonetic: Phonetic {
-  style.fill: "#7c3aed"
-  style.font-color: "#ffffff"
-  style.stroke: "#6d28d9"
+  style.fill: "#F4F0E6"
+  style.font-color: "#1a1a1a"
+  style.stroke: "#1a1a1a"
   style.border-radius: 8
   style.font-size: 13
 }
 
 fusion: RRF Fusion {
-  style.fill: "#db2777"
-  style.font-color: "#ffffff"
-  style.stroke: "#be185d"
+  style.fill: "#1a1a1a"
+  style.font-color: "#F4F0E6"
+  style.stroke: "#1a1a1a"
   style.border-radius: 8
   style.font-size: 14
   style.bold: true
+  style.shadow: true
 }
 
 results: Results {
   shape: text
   style.font-size: 18
   style.bold: true
+  style.font-color: "#4A7C59"
 }
 
-query -> vault: {style.stroke: "#6366f1"; style.stroke-width: 2}
+query -> vault: {style.stroke: "#E63E2A"; style.stroke-width: 2}
 
-vault -> vector: {style.stroke: "#8b5cf6"; style.stroke-width: 2}
-vault -> text: {style.stroke: "#8b5cf6"; style.stroke-width: 2}
-vault -> graph: {style.stroke: "#8b5cf6"; style.stroke-width: 2}
-vault -> temporal: {style.stroke: "#8b5cf6"; style.stroke-width: 2}
-vault -> phonetic: {style.stroke: "#8b5cf6"; style.stroke-width: 2}
+vault -> vector: {style.stroke: "#6B7280"; style.stroke-width: 2}
+vault -> text: {style.stroke: "#6B7280"; style.stroke-width: 2}
+vault -> graph: {style.stroke: "#6B7280"; style.stroke-width: 2}
+vault -> temporal: {style.stroke: "#6B7280"; style.stroke-width: 2}
+vault -> phonetic: {style.stroke: "#6B7280"; style.stroke-width: 2}
 
-vector -> fusion: {style.stroke: "#a855f7"; style.stroke-width: 2}
-text -> fusion: {style.stroke: "#a855f7"; style.stroke-width: 2}
-graph -> fusion: {style.stroke: "#a855f7"; style.stroke-width: 2}
-temporal -> fusion: {style.stroke: "#a855f7"; style.stroke-width: 2}
-phonetic -> fusion: {style.stroke: "#a855f7"; style.stroke-width: 2}
+vector -> fusion: {style.stroke: "#8B5A2B"; style.stroke-width: 2}
+text -> fusion: {style.stroke: "#8B5A2B"; style.stroke-width: 2}
+graph -> fusion: {style.stroke: "#8B5A2B"; style.stroke-width: 2}
+temporal -> fusion: {style.stroke: "#8B5A2B"; style.stroke-width: 2}
+phonetic -> fusion: {style.stroke: "#8B5A2B"; style.stroke-width: 2}
 
-fusion -> results: {style.stroke: "#ec4899"; style.stroke-width: 2}
+fusion -> results: {style.stroke: "#4A7C59"; style.stroke-width: 2}
