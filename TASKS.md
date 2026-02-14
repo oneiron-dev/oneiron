@@ -46,18 +46,18 @@ Branch naming: `feat/<task-name>` (e.g. `feat/types-store`, `feat/batch-builder`
 
 ### Worktree mapping
 
-| # | Task | Worktree | Branch |
-|---|------|----------|--------|
-| 1 | Types + LMDB Store | `.worktrees/types-store` | `feat/types-store` |
-| 2 | Batch Builder + Indexes | `.worktrees/batch-builder` | `feat/batch-builder` |
-| 3 | BM25 Full-Text Search | `.worktrees/bm25` | `feat/bm25` |
-| 4 | HNSW Vector Search | `.worktrees/hnsw` | `feat/hnsw` |
-| 5 | PPR Graph Traversal | `.worktrees/ppr` | `feat/ppr` |
-| 6 | RRF Fusion + Pipeline | `.worktrees/rrf-pipeline` | `feat/rrf-pipeline` |
-| 7 | Context Pack + Serialization | `.worktrees/context-pack` | `feat/context-pack` |
-| 8 | Index Maintenance | `.worktrees/maintenance` | `feat/maintenance` |
-| 9 | Benchmarks | `.worktrees/benchmarks` | `feat/benchmarks` |
-| 10 | FFI Layer | `.worktrees/ffi` | `feat/ffi` |
+| # | Task | Status | PR | Worktree | Branch |
+|---|------|--------|-----|----------|--------|
+| 1 | Types + LMDB Store | done | #1 | `.worktrees/types-store` | `feat/types-store` |
+| 2 | Batch Builder + Indexes | done | #2 | `.worktrees/batch-builder` | `feat/batch-builder` |
+| 3 | BM25 Full-Text Search | done | #3 | `.worktrees/bm25` | `feat/bm25` |
+| 4 | HNSW Vector Search | done | #4 | `.worktrees/hnsw` | `feat/hnsw` |
+| 5 | PPR Graph Traversal | done | #6 | `.worktrees/ppr` | `feat/ppr` |
+| 6 | RRF Fusion + Pipeline | | | `.worktrees/rrf-pipeline` | `feat/rrf-pipeline` |
+| 7 | Context Pack + Serialization | | | `.worktrees/context-pack` | `feat/context-pack` |
+| 8 | Index Maintenance | | | `.worktrees/maintenance` | `feat/maintenance` |
+| 9 | Benchmarks | | | `.worktrees/benchmarks` | `feat/benchmarks` |
+| 10 | FFI Layer | | | `.worktrees/ffi` | `feat/ffi` |
 
 ---
 
@@ -149,8 +149,8 @@ Implement the `BatchBuilder` for atomic multi-database writes, and all secondary
 - All in one write txn
 
 **Review follow-ups from Task 1:**
-- Validate `dimensions > 0` and `map_size` to a sane minimum in `Vault::open`
-- `delete_entity` should return `Result<bool>` (whether entity existed)
+- [x] Validate `dimensions > 0` and `map_size` to a sane minimum in `Vault::open`
+- [x] `delete_entity` should return `Result<bool>` (whether entity existed)
 
 **Tests:**
 - Batch builder: put 3 entities + edges in one commit, verify all present
@@ -251,11 +251,11 @@ Implement the `BatchBuilder` for atomic multi-database writes, and all secondary
 - Benchmark: insert + search latency at 1K scale (print, don't assert)
 
 **Review follow-ups from Task 1:**
-- Consider zero-copy vector reads (`&[u8]` → `&[f32]` reinterpret) to avoid 16KB alloc per vector during search
+- [ ] Consider zero-copy vector reads (`&[u8]` → `&[f32]` reinterpret) to avoid 16KB alloc per vector during search
 
 **Review follow-ups from Task 2:**
-- Validate `weight.is_finite()` in `apply_edge` and vector elements in `apply_vector` (NaN/Inf poisons HNSW distances)
-- Refactor `put_vector` to route through `BatchBuilder` (`self.batch().vector(id, vector).commit()`) so HNSW insert hook applies
+- [x] Validate `weight.is_finite()` in `apply_edge` and vector elements in `apply_vector` (NaN/Inf poisons HNSW distances)
+- [x] Refactor `put_vector` to route through `BatchBuilder` (`self.batch().vector(id, vector).commit()`) so HNSW insert hook applies
 
 **Key notes from BUILD-PROMPT.md §8:**
 - Do NOT pre-allocate huge `Vec`s for neighbor lists. Read/write from LMDB each time.
@@ -294,11 +294,6 @@ Implement the `BatchBuilder` for atomic multi-database writes, and all secondary
 - Bidirectional: A→B, C→B, PPR from A, verify C is reachable via B's inbound
 - Cache: compute, verify cached, modify edge, verify stale, recompute
 
-**Review follow-ups from Task 5:**
-- Include `depth` and `alpha` in PPR cache key hash (currently keyed only by seed set — safe while `ppr_query` is called with fixed config-level params, but fragile if callers vary parameters)
-- Upgrade `hash_seeds` from xxh32 (4 bytes entropy) to xxh3_128 (enable `xxh3` feature of `xxhash-rust`) or blake3 for collision resistance at scale
-- Move `increment_graph_version` call from per-edge to once-per-batch-commit (track `had_edge_ops` bool in commit loop)
-
 ---
 
 ## Task 6: RRF Fusion + Pipeline Builder
@@ -308,7 +303,10 @@ Implement the `BatchBuilder` for atomic multi-database writes, and all secondary
 **Depends on:** Task 3, Task 4, Task 5
 
 **Review follow-ups from Task 2:**
-- Add `phonetic_forward` index (entity → codes) to replace O(vocabulary_size) full scan in `delete_from_phonetic_postings`
+- [ ] Add `phonetic_forward` index (entity → codes) to replace O(vocabulary_size) full scan in `delete_from_phonetic_postings`
+
+**Review follow-ups from Task 5:**
+- [ ] Include `depth` and `alpha` in PPR cache key hash (currently keyed only by seed set — safe while `ppr_query` is called with fixed config-level params, but fragile if callers vary parameters)
 
 **RRF Fusion (`fusion.rs`):**
 - `rrf_fuse(ranked_lists: &[Vec<ScoredEntity>], k: f32) -> Vec<ScoredEntity>`
@@ -396,7 +394,7 @@ Implement the `BatchBuilder` for atomic multi-database writes, and all secondary
 - Empty results: verify graceful handling
 
 **Review follow-ups from Task 2:**
-- Add `// SAFETY:` comment to `unsafe` block in `store.rs:47-53` (`EnvOpenOptions::open`) documenting invariants: single Env per path, no NFS, no concurrent map_size. Important for FFI/C consumers.
+- [ ] Add `// SAFETY:` comment to `unsafe` block in `store.rs:47-53` (`EnvOpenOptions::open`) documenting invariants: single Env per path, no NFS, no concurrent map_size. Important for FFI/C consumers.
 
 ---
 
@@ -409,24 +407,30 @@ Implement the `BatchBuilder` for atomic multi-database writes, and all secondary
 Deterministic index maintenance primitives — the dreamer (in `oneiron-internal`) calls these.
 
 **Review follow-ups from Task 2:**
-- Add specific error variants for `Error::InvalidKey` (currently overloaded for ~8 different failure modes)
-- Reject unknown entity types (>11) in `apply_put` or encode type byte into short ID prefix to prevent `"xx"` collision across types
+- [ ] Add specific error variants for `Error::InvalidKey` (currently overloaded for ~8 different failure modes)
+- [ ] Reject unknown entity types (>11) in `apply_put` or encode type byte into short ID prefix to prevent `"xx"` collision across types
 
 **Review follow-ups from Task 3:**
-- Add `CorruptedIndex` error variant (or similar) to replace `Error::InvalidKey` catch-all for BM25 data integrity errors (posting alignment, missing doc_meta, invalid forward index, arithmetic overflow — 10+ distinct failure modes)
-- Cache `doc_len` in a local `HashMap<EntityId, u32>` during `search_text` scoring loop to avoid repeated `text_meta.get()` per posting entry per term
-- Consider DUP_SORT migration for `text_postings` to avoid O(posting_len) read-modify-write on each append
-- Consider iterator-based tokenizer yielding `Cow<str>` to reduce String allocation per token
-- **[Required]** Add CJK tokenization support — current `!is_alphanumeric()` split treats CJK runs as single giant tokens (e.g. "東京塔" → one token). Need character-level unigram or bigram segmentation for Chinese/Japanese/Korean scripts so individual characters and substrings are searchable
-- Eliminate intermediate `Vec<String>` in `index_text` — compute `doc_len` inline while building `term_freq` HashMap directly from tokenizer iterator
-- Pre-size `scores` HashMap in `search_text` with first posting list length estimate to avoid repeated reallocations
-- Consider self-healing in `deindex_text` — skip missing terms in `text_postings` instead of returning `Err(InvalidKey)` so deletion can proceed on corrupted data
+- [ ] Add `CorruptedIndex` error variant (or similar) to replace `Error::InvalidKey` catch-all for BM25 data integrity errors (posting alignment, missing doc_meta, invalid forward index, arithmetic overflow — 10+ distinct failure modes)
+- [ ] Cache `doc_len` in a local `HashMap<EntityId, u32>` during `search_text` scoring loop to avoid repeated `text_meta.get()` per posting entry per term
+- [ ] Consider DUP_SORT migration for `text_postings` to avoid O(posting_len) read-modify-write on each append
+- [ ] Consider iterator-based tokenizer yielding `Cow<str>` to reduce String allocation per token
+- [ ] **[Required]** Add CJK tokenization support — current `!is_alphanumeric()` split treats CJK runs as single giant tokens (e.g. "東京塔" → one token). Need character-level unigram or bigram segmentation for Chinese/Japanese/Korean scripts so individual characters and substrings are searchable
+- [ ] Eliminate intermediate `Vec<String>` in `index_text` — compute `doc_len` inline while building `term_freq` HashMap directly from tokenizer iterator
+- [ ] Pre-size `scores` HashMap in `search_text` with first posting list length estimate to avoid repeated reallocations
+- [ ] Consider self-healing in `deindex_text` — skip missing terms in `text_postings` instead of returning `Err(InvalidKey)` so deletion can proceed on corrupted data
 
 **Review follow-ups from Task 4:**
-- Full HNSW graph deindex: on entity delete, remove entity from ALL neighbors' neighbor lists (not just entry_point reassignment done in PR #4 fix)
-- Idempotent insert doesn't update HNSW graph on vector change — second `put_vector` overwrites raw bytes but HNSW connections stay based on old vector. Requires delete+re-insert in graph (ties into `rebuild_hnsw`)
-- `Error::InvalidKey` used as catch-all for count overflow and missing entry_point — should be `Error::CorruptedIndex` or similar
-- Add doc comment to `hnsw_deindex` making lazy deletion behavior explicit (doesn't scrub deleted ID from other nodes' neighbor lists — beam_search handles this via `load_vector` returning `None`)
+- [ ] Full HNSW graph deindex: on entity delete, remove entity from ALL neighbors' neighbor lists (not just entry_point reassignment done in PR #4 fix)
+- [ ] Idempotent insert doesn't update HNSW graph on vector change — second `put_vector` overwrites raw bytes but HNSW connections stay based on old vector. Requires delete+re-insert in graph (ties into `rebuild_hnsw`)
+- [ ] `Error::InvalidKey` used as catch-all for count overflow and missing entry_point — should be `Error::CorruptedIndex` or similar
+- [ ] Add doc comment to `hnsw_deindex` making lazy deletion behavior explicit (doesn't scrub deleted ID from other nodes' neighbor lists — beam_search handles this via `load_vector` returning `None`)
+
+**Review follow-ups from Task 5:**
+- [ ] Upgrade `hash_seeds` from xxh32 (4 bytes entropy) to xxh3_128 (enable `xxh3` feature of `xxhash-rust`) or blake3 for collision resistance at scale
+- [ ] Move `increment_graph_version` call from per-edge to once-per-batch-commit (track `had_edge_ops` bool in commit loop)
+- [ ] TOCTOU in `Vault::delete_edge`: read txn checks existence, drops, then write txn via batch — return value `Ok(true)` can be incorrect under concurrent access. Move check into write txn or document the race. Low priority: `Vault` is `!Sync`.
+- [ ] `graph_version` in `hnsw_meta`: if `rebuild_hnsw` clears/rebuilds `hnsw_meta`, graph version resets to 0 breaking PPR cache invalidation. Preserve `graph_version` key during rebuild, or migrate to dedicated `graph_meta` db.
 
 **MaintenanceBuilder (`maintain.rs`):**
 - `MaintenanceBuilder<'a>` borrowing `&'a Vault`
@@ -454,11 +458,11 @@ Deterministic index maintenance primitives — the dreamer (in `oneiron-internal
 **Depends on:** Task 6, Task 8
 
 **Review follow-ups from Task 4:**
-- NEON 8-wide accumulators (two independent accumulator registers for 8 floats/iter, matching AVX2 throughput on Apple Silicon)
-- Scalar unrolling: increase from 4 elements to 8 per iteration
-- HashSet pre-sizing in `beam_search`: `HashSet::with_capacity(ef * 2)` to avoid rehashes
-- `load_vector` per-candidate allocation: implement zero-copy `&[f32]` reinterpretation from LMDB byte slice
-- Remove no-op `#[target_feature(enable = "neon")]` on aarch64 — NEON is mandatory, attribute forces unnecessary `unsafe`
+- [ ] NEON 8-wide accumulators (two independent accumulator registers for 8 floats/iter, matching AVX2 throughput on Apple Silicon)
+- [ ] Scalar unrolling: increase from 4 elements to 8 per iteration
+- [ ] HashSet pre-sizing in `beam_search`: `HashSet::with_capacity(ef * 2)` to avoid rehashes
+- [ ] `load_vector` per-candidate allocation: implement zero-copy `&[f32]` reinterpretation from LMDB byte slice
+- [ ] Remove no-op `#[target_feature(enable = "neon")]` on aarch64 — NEON is mandatory, attribute forces unnecessary `unsafe`
 
 **Benchmark suite:**
 - Scale: 1K, 5K, 10K, 50K entities
@@ -503,29 +507,29 @@ C-compatible FFI for mobile (iOS/Android) and TypeScript/Node via NAPI or direct
 - Error handling: return error codes, last-error string
 
 **Review follow-ups from Task 4:**
-- `is_multiple_of` requires nightly Rust — replace with `len % N == 0` if stable toolchain migration is needed for iOS cross-compilation
+- [ ] `is_multiple_of` requires nightly Rust — replace with `len % N == 0` if stable toolchain migration is needed for iOS cross-compilation
 
 **Note:** The first consumer is `oneiron-internal` (TypeScript on Fly machines), calling via FFI. Mobile (iOS/Android) is the second consumer. Both use the same C FFI surface.
 
 **Review follow-ups from Task 3:**
-- Validate `EntityId::from_bytes` inputs at the FFI boundary to reject sentinel keys `[0x00;16]` and `[0xFF;16]` — these collide with BM25 collection stats in `text_meta` and short ID counters in `short_ids`. Safe with UUIDv7 but untrusted FFI callers could craft them. Alternative: use separate LMDB databases for collection stats. Codex repro confirmed: `EntityId::from_bytes([0xFF;16])` aliases `TOTAL_LENGTH_KEY` and silently corrupts BM25 normalization; `[0x00;16]` fails with `InvalidKey`.
+- [ ] Validate `EntityId::from_bytes` inputs at the FFI boundary to reject sentinel keys `[0x00;16]` and `[0xFF;16]` — these collide with BM25 collection stats in `text_meta` and short ID counters in `short_ids`. Safe with UUIDv7 but untrusted FFI callers could craft them. Alternative: use separate LMDB databases for collection stats. Codex repro confirmed: `EntityId::from_bytes([0xFF;16])` aliases `TOTAL_LENGTH_KEY` and silently corrupts BM25 normalization; `[0x00;16]` fails with `InvalidKey`.
 
 ---
 
 ## Task Summary
 
-| # | Task | Est LOC | Depends | Core deliverable |
-|---|------|---------|---------|-----------------|
-| 1 | Types + LMDB Store | ~400 | — | 18 databases, CRUD, key encoding |
-| 2 | Batch Builder + Secondary Indexes | ~400 | 1 | Atomic writes, type/temporal/phonetic/short ID indexes |
-| 3 | BM25 Full-Text Search | ~600 | 2 | Tokenizer, inverted index, forward index, deindexing |
-| 4 | HNSW Vector Search | ~800 | 1 | Flat NSW, cosine distance, SIMD, lazy deletion |
-| 5 | PPR Graph Traversal | ~400 | 1,2 | Bidirectional PPR, per-edge weights, cache |
-| 6 | RRF Fusion + Pipeline | ~300 | 3,4,5 | 5-signal fusion, pipeline builder |
-| 7 | Context Pack + Serialization | ~500 | 6 | Hydration, 5 formats, short ID + hash, token budget |
-| 8 | Index Maintenance | ~250 | 4,5 | HNSW rebuild, PPR cache cleanup, posting compaction |
-| 9 | Benchmarks | ~400 | 6,8 | Scale testing, recall targets, latency targets |
-| 10 | FFI Layer | ~300 | 7 | C FFI for mobile + TypeScript |
+| # | Task | Est LOC | Depends | Status | PR | Core deliverable |
+|---|------|---------|---------|--------|-----|-----------------|
+| 1 | Types + LMDB Store | ~400 | — | done | #1 | 18 databases, CRUD, key encoding |
+| 2 | Batch Builder + Secondary Indexes | ~400 | 1 | done | #2 | Atomic writes, type/temporal/phonetic/short ID indexes |
+| 3 | BM25 Full-Text Search | ~600 | 2 | done | #3 | Tokenizer, inverted index, forward index, deindexing |
+| 4 | HNSW Vector Search | ~800 | 1 | done | #4 | Flat NSW, cosine distance, SIMD, lazy deletion |
+| 5 | PPR Graph Traversal | ~400 | 1,2 | done | #6 | Bidirectional PPR, per-edge weights, cache |
+| 6 | RRF Fusion + Pipeline | ~300 | 3,4,5 | — | — | 5-signal fusion, pipeline builder |
+| 7 | Context Pack + Serialization | ~500 | 6 | — | — | Hydration, 5 formats, short ID + hash, token budget |
+| 8 | Index Maintenance | ~250 | 4,5 | — | — | HNSW rebuild, PPR cache cleanup, posting compaction |
+| 9 | Benchmarks | ~400 | 6,8 | — | — | Scale testing, recall targets, latency targets |
+| 10 | FFI Layer | ~300 | 7 | — | — | C FFI for mobile + TypeScript |
 
 **Total:** ~4,350 LOC
 
