@@ -148,6 +148,10 @@ Implement the `BatchBuilder` for atomic multi-database writes, and all secondary
 - Delete entity blob + vector
 - All in one write txn
 
+**Review follow-ups from Task 1:**
+- Validate `dimensions > 0` and `map_size` to a sane minimum in `Vault::open`
+- `delete_entity` should return `Result<bool>` (whether entity existed)
+
 **Tests:**
 - Batch builder: put 3 entities + edges in one commit, verify all present
 - Type index: query by type prefix scan, verify correct entities returned
@@ -239,6 +243,9 @@ Implement the `BatchBuilder` for atomic multi-database writes, and all secondary
 - Test empty graph: search returns empty
 - Test dimension mismatch: error
 - Benchmark: insert + search latency at 1K scale (print, don't assert)
+
+**Review follow-ups from Task 1:**
+- Consider zero-copy vector reads (`&[u8]` → `&[f32]` reinterpret) to avoid 16KB alloc per vector during search
 
 **Key notes from BUILD-PROMPT.md §8:**
 - Do NOT pre-allocate huge `Vec`s for neighbor lists. Read/write from LMDB each time.
