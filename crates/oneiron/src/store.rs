@@ -75,22 +75,20 @@ impl Store {
 
         if let Some(requested) = config.embedding_model.as_deref() {
             let mut wtxn = env.write_txn()?;
-            let stored = hnsw_meta
-                .get(&wtxn, MODEL_ID_KEY)?
-                .map(parse_utf8_bytes)
-                .transpose()?;
-
-            if let Some(stored) = stored {
-                if stored != requested {
-                    return Err(Error::EmbeddingModelChanged {
-                        stored,
-                        requested: requested.to_owned(),
-                    });
+            match hnsw_meta.get(&wtxn, MODEL_ID_KEY)? {
+                Some(raw) => {
+                    let stored = parse_utf8_bytes(raw)?;
+                    if stored != requested {
+                        return Err(Error::EmbeddingModelChanged {
+                            stored,
+                            requested: requested.to_owned(),
+                        });
+                    }
                 }
-            } else {
-                hnsw_meta.put(&mut wtxn, MODEL_ID_KEY, requested.as_bytes())?;
+                None => {
+                    hnsw_meta.put(&mut wtxn, MODEL_ID_KEY, requested.as_bytes())?;
+                }
             }
-
             wtxn.commit()?;
         }
 

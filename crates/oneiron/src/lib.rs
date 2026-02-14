@@ -158,8 +158,8 @@ impl Vault {
 
 fn f32_slice_to_le_bytes(values: &[f32]) -> Vec<u8> {
     let mut bytes = Vec::with_capacity(values.len() * 4);
-    for value in values {
-        bytes.extend_from_slice(&value.to_le_bytes());
+    for v in values {
+        bytes.extend_from_slice(&v.to_le_bytes());
     }
     bytes
 }
@@ -200,9 +200,7 @@ fn parse_edge_record(key: &[u8], value: &[u8]) -> Result<(EdgeKind, EntityId, f3
 
     let kind = EdgeKind::try_from_u8(key[16]).ok_or(Error::InvalidKey)?;
     let neighbor = EntityId::from_bytes(key[17..33].try_into().map_err(|_| Error::InvalidKey)?);
-    let mut weight_bytes = [0_u8; 4];
-    weight_bytes.copy_from_slice(&value[..4]);
-    let weight = f32::from_le_bytes(weight_bytes);
+    let weight = f32::from_le_bytes(value[..4].try_into().map_err(|_| Error::InvalidKey)?);
 
     Ok((kind, neighbor, weight))
 }
