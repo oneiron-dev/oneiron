@@ -260,7 +260,9 @@ fn apply_put(
             store.temporal_occurred_start.delete(wtxn, &old_start_key)?;
         }
 
-        if old_occurred.start != old_occurred.end && old_occurred.end != occurred.end {
+        let old_is_range = old_occurred.start != old_occurred.end;
+        let new_is_range = occurred.start != occurred.end;
+        if old_is_range && (!new_is_range || old_occurred.end != occurred.end) {
             let old_end_key = Store::encode_temporal_key(old_occurred.end, &id);
             store.temporal_occurred_end.delete(wtxn, &old_end_key)?;
         }
