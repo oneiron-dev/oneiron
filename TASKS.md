@@ -412,6 +412,10 @@ Deterministic index maintenance primitives — the dreamer (in `oneiron-internal
 - Cache `doc_len` in a local `HashMap<EntityId, u32>` during `search_text` scoring loop to avoid repeated `text_meta.get()` per posting entry per term
 - Consider DUP_SORT migration for `text_postings` to avoid O(posting_len) read-modify-write on each append
 - Consider iterator-based tokenizer yielding `Cow<str>` to reduce String allocation per token
+- **[Required]** Add CJK tokenization support — current `!is_alphanumeric()` split treats CJK runs as single giant tokens (e.g. "東京塔" → one token). Need character-level unigram or bigram segmentation for Chinese/Japanese/Korean scripts so individual characters and substrings are searchable
+- Eliminate intermediate `Vec<String>` in `index_text` — compute `doc_len` inline while building `term_freq` HashMap directly from tokenizer iterator
+- Pre-size `scores` HashMap in `search_text` with first posting list length estimate to avoid repeated reallocations
+- Consider self-healing in `deindex_text` — skip missing terms in `text_postings` instead of returning `Err(InvalidKey)` so deletion can proceed on corrupted data
 
 **MaintenanceBuilder (`maintain.rs`):**
 - `MaintenanceBuilder<'a>` borrowing `&'a Vault`
@@ -483,7 +487,7 @@ C-compatible FFI for mobile (iOS/Android) and TypeScript/Node via NAPI or direct
 **Note:** The first consumer is `oneiron-internal` (TypeScript on Fly machines), calling via FFI. Mobile (iOS/Android) is the second consumer. Both use the same C FFI surface.
 
 **Review follow-ups from Task 3:**
-- Validate `EntityId::from_bytes` inputs at the FFI boundary to reject sentinel keys `[0x00;16]` and `[0xFF;16]` — these collide with BM25 collection stats in `text_meta` and short ID counters in `short_ids`. Safe with UUIDv7 but untrusted FFI callers could craft them. Alternative: use separate LMDB databases for collection stats.
+- Validate `EntityId::from_bytes` inputs at the FFI boundary to reject sentinel keys `[0x00;16]` and `[0xFF;16]` — these collide with BM25 collection stats in `text_meta` and short ID counters in `short_ids`. Safe with UUIDv7 but untrusted FFI callers could craft them. Alternative: use separate LMDB databases for collection stats. Codex repro confirmed: `EntityId::from_bytes([0xFF;16])` aliases `TOTAL_LENGTH_KEY` and silently corrupts BM25 normalization; `[0x00;16]` fails with `InvalidKey`.
 
 ---
 

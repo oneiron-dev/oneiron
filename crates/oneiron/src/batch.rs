@@ -104,7 +104,7 @@ impl<'a> BatchBuilder<'a> {
         self
     }
 
-    /// Adds a text indexing placeholder operation to the batch.
+    /// Adds a text indexing operation to the batch.
     pub fn text(mut self, id: &EntityId, fields: &[(&str, &str)]) -> Self {
         self.ops.push(BatchOp::Text {
             id: *id,
