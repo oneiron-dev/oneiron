@@ -21,9 +21,7 @@ pub struct Store {
     pub(crate) text_postings: Database<Bytes, Bytes>,
     pub(crate) text_meta: Database<Bytes, Bytes>,
     pub(crate) text_forward: Database<Bytes, Bytes>,
-    #[allow(dead_code)]
     pub(crate) ppr_cache: Database<Bytes, Bytes>,
-    #[allow(dead_code)]
     pub(crate) ppr_cache_deps: Database<Bytes, Bytes>,
     pub(crate) type_index: Database<Bytes, Bytes>,
     pub(crate) temporal_occurred_start: Database<Bytes, Bytes>,

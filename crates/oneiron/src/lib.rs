@@ -8,6 +8,7 @@ pub(crate) mod bm25;
 pub(crate) mod distance;
 pub mod error;
 pub(crate) mod hnsw;
+pub(crate) mod ppr;
 pub mod store;
 pub mod types;
 
@@ -136,13 +137,16 @@ impl Vault {
     /// Deletes a directed edge and its reverse index entry.
     pub fn delete_edge(&self, src: &EntityId, kind: EdgeKind, tgt: &EntityId) -> Result<bool> {
         let key_out = Store::encode_edge_key(src, kind, tgt);
-        let key_in = Store::encode_edge_key(tgt, kind, src);
+        let rtxn = self.store.env.read_txn()?;
+        let existed = self.store.edges_out.get(&rtxn, &key_out)?.is_some();
+        drop(rtxn);
 
-        let mut wtxn = self.store.env.write_txn()?;
-        let existed_out = self.store.edges_out.delete(&mut wtxn, &key_out)?;
-        let existed_in = self.store.edges_in.delete(&mut wtxn, &key_in)?;
-        wtxn.commit()?;
-        Ok(existed_out || existed_in)
+        if !existed {
+            return Ok(false);
+        }
+
+        self.batch().delete_edge(src, kind, tgt).commit()?;
+        Ok(true)
     }
 
     /// Returns outbound edges for `src`.

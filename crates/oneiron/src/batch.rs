@@ -5,6 +5,7 @@ use heed::RwTxn;
 use xxhash_rust::xxh32::xxh32;
 
 use crate::error::{Error, Result};
+use crate::ppr;
 use crate::store::Store;
 use crate::types::{short_id_prefix, EdgeKind, EntityId, TimeRange, ENTITY_ID_LEN};
 use crate::Vault;
@@ -185,6 +186,9 @@ impl<'a> BatchBuilder<'a> {
                     weight,
                 } => {
                     apply_edge(&self.vault.store, &mut wtxn, src, kind, tgt, weight)?;
+                    ppr::invalidate_ppr_caches(&self.vault.store, &mut wtxn, &src)?;
+                    ppr::invalidate_ppr_caches(&self.vault.store, &mut wtxn, &tgt)?;
+                    ppr::increment_graph_version(&self.vault.store, &mut wtxn)?;
                 }
                 BatchOp::Text { id, fields } => {
                     crate::bm25::index_text(&self.vault.store, &mut wtxn, &id, &fields)?;
@@ -197,6 +201,9 @@ impl<'a> BatchBuilder<'a> {
                 }
                 BatchOp::DeleteEdge { src, kind, tgt } => {
                     apply_delete_edge(&self.vault.store, &mut wtxn, src, kind, tgt)?;
+                    ppr::invalidate_ppr_caches(&self.vault.store, &mut wtxn, &src)?;
+                    ppr::invalidate_ppr_caches(&self.vault.store, &mut wtxn, &tgt)?;
+                    ppr::increment_graph_version(&self.vault.store, &mut wtxn)?;
                 }
             }
         }
