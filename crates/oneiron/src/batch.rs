@@ -6,14 +6,13 @@ use xxhash_rust::xxh32::xxh32;
 
 use crate::error::{Error, Result};
 use crate::store::Store;
-use crate::types::{short_id_prefix, EdgeKind, EntityId, TimeRange};
+use crate::types::{short_id_prefix, EdgeKind, EntityId, TimeRange, ENTITY_ID_LEN};
 use crate::Vault;
 
 pub(crate) const ENTITY_METADATA_HEADER_LEN: usize = 25;
 const SHORT_ID_COUNTER_LEN: usize = 8;
 const EDGE_KEY_LEN: usize = 33;
 const EDGE_VALUE_LEN: usize = 12;
-const ENTITY_ID_LEN: usize = 16;
 
 /// Builder for atomic multi-database write batches.
 pub struct BatchBuilder<'a> {

@@ -5,12 +5,12 @@ use heed::{RoTxn, RwTxn};
 
 use crate::distance::cosine_distance;
 use crate::error::{Error, Result};
+use crate::le_bytes_to_f32_vec;
 use crate::store::Store;
-use crate::types::{EntityId, ScoredEntity, VaultConfig};
+use crate::types::{EntityId, ScoredEntity, VaultConfig, ENTITY_ID_LEN};
 
 const ENTRY_POINT_KEY: &[u8] = b"entry_point";
 const COUNT_KEY: &[u8] = b"count";
-const ENTITY_ID_LEN: usize = 16;
 
 #[derive(Clone, Copy, Debug)]
 struct HeapEntry {
@@ -78,7 +78,7 @@ pub(crate) fn hnsw_insert(
 
     for neighbor_id in &selected {
         let mut neighbors = load_neighbors(store, &*wtxn, neighbor_id)?;
-        if !neighbors.iter().any(|existing| existing == id) {
+        if !neighbors.contains(id) {
             neighbors.push(*id);
         }
 
@@ -213,11 +213,7 @@ fn beam_search(
     }
 
     let mut found = results.into_vec();
-    found.sort_by(|left, right| {
-        left.distance
-            .total_cmp(&right.distance)
-            .then_with(|| left.id.as_bytes().cmp(right.id.as_bytes()))
-    });
+    found.sort_unstable();
     Ok(found)
 }
 
@@ -277,15 +273,7 @@ fn load_vector(store: &Store, txn: &RoTxn<'_>, id: &EntityId) -> Result<Option<V
         return Ok(None);
     };
 
-    if !raw.len().is_multiple_of(4) {
-        return Err(Error::InvalidKey);
-    }
-
-    let values = raw
-        .chunks_exact(4)
-        .map(|chunk| f32::from_le_bytes(chunk.try_into().unwrap()))
-        .collect();
-    Ok(Some(values))
+    le_bytes_to_f32_vec(raw).map(Some)
 }
 
 fn prune_neighbors_for_node(
@@ -317,11 +305,7 @@ fn prune_neighbors_for_node(
         });
     }
 
-    scored.sort_by(|left, right| {
-        left.distance
-            .total_cmp(&right.distance)
-            .then_with(|| left.id.as_bytes().cmp(right.id.as_bytes()))
-    });
+    scored.sort_unstable();
     scored.truncate(max_neighbors);
 
     Ok(scored.into_iter().map(|entry| entry.id).collect())

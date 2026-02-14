@@ -166,7 +166,7 @@ impl Vault {
     }
 }
 
-fn le_bytes_to_f32_vec(bytes: &[u8]) -> Result<Vec<f32>> {
+pub(crate) fn le_bytes_to_f32_vec(bytes: &[u8]) -> Result<Vec<f32>> {
     if !bytes.len().is_multiple_of(4) {
         return Err(Error::InvalidKey);
     }
