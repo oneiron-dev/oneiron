@@ -313,7 +313,7 @@ mod tests {
     use tempfile::tempdir;
 
     use super::*;
-    use crate::{EdgeKind, Error, HnswConfig, Vault, VaultConfig};
+    use crate::{EdgeKind, Error, HnswConfig, TimeRange, Vault, VaultConfig};
 
     fn test_config() -> VaultConfig {
         VaultConfig {
@@ -488,6 +488,37 @@ mod tests {
         let b_score_before = score_for(&first, b);
         let b_score_after = score_for(&second, b);
         assert!((b_score_before - b_score_after).abs() > SCORE_EPSILON);
+        Ok(())
+    }
+
+    #[test]
+    fn ppr_cache_invalidated_on_entity_delete() -> Result<()> {
+        let temp_dir = tempdir()?;
+        let vault = Vault::open(temp_dir.path(), test_config())?;
+        let a = entity(20);
+        let b = entity(21);
+        let c = entity(22);
+
+        // Build entity records so delete_entity can find them.
+        let tr = TimeRange { start: 1, end: 1 };
+        vault.put_entity(&a, 1, tr, 1, b"a-data")?;
+        vault.put_entity(&b, 1, tr, 1, b"b-data")?;
+        vault.put_entity(&c, 1, tr, 1, b"c-data")?;
+
+        vault.put_edge(&a, EdgeKind::BelongsTo, &b, 1.0)?;
+        vault.put_edge(&b, EdgeKind::BelongsTo, &c, 1.0)?;
+
+        // Populate the cache for seeds [a].
+        let _scores = ppr_query(&vault.store, &vault.config, &[a], 3, 0.15)?;
+        let cache_before = cache_row(&vault, &[a])?;
+        assert_eq!(cache_before[CACHE_STALE_OFFSET], 0);
+
+        // Delete entity b — removes a->b and b->c edges.
+        vault.delete_entity(&b)?;
+
+        // Cache for seeds [a] must now be stale because a's edge to b was removed.
+        let cache_after = cache_row(&vault, &[a])?;
+        assert_eq!(cache_after[CACHE_STALE_OFFSET], 1);
         Ok(())
     }
 }

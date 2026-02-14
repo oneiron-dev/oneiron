@@ -79,7 +79,14 @@ impl Vault {
     /// Deletes an entity blob by ID.
     pub fn delete_entity(&self, id: &EntityId) -> Result<bool> {
         let mut wtxn = self.store.env.write_txn()?;
-        let existed = deindex_entity(&self.store, &mut wtxn, id)?;
+        let (existed, neighbors) = deindex_entity(&self.store, &mut wtxn, id)?;
+        if !neighbors.is_empty() {
+            ppr::invalidate_ppr_caches(&self.store, &mut wtxn, id)?;
+            for neighbor in &neighbors {
+                ppr::invalidate_ppr_caches(&self.store, &mut wtxn, neighbor)?;
+            }
+            ppr::increment_graph_version(&self.store, &mut wtxn)?;
+        }
         wtxn.commit()?;
         Ok(existed)
     }
