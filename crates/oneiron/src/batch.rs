@@ -181,7 +181,7 @@ impl<'a> BatchBuilder<'a> {
                     apply_edge(&self.vault.store, &mut wtxn, src, kind, tgt, weight)?;
                 }
                 BatchOp::Text { id, fields } => {
-                    let _ = (id, fields);
+                    crate::bm25::index_text(&self.vault.store, &mut wtxn, &id, &fields)?;
                 }
                 BatchOp::Phonetic { id, codes } => {
                     apply_phonetic(&self.vault.store, &mut wtxn, id, &codes)?;
@@ -225,6 +225,7 @@ pub(crate) fn deindex_entity(store: &Store, wtxn: &mut RwTxn<'_>, id: &EntityId)
 
     delete_related_edges(store, wtxn, id)?;
     delete_from_phonetic_postings(store, wtxn, id)?;
+    crate::bm25::deindex_text(store, wtxn, id)?;
     store.vectors.delete(wtxn, id.as_bytes())?;
 
     if let Some(raw) = store.short_ids.get(wtxn, id.as_bytes())? {
