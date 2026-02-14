@@ -20,11 +20,8 @@ pub struct Store {
     pub(crate) hnsw_neighbors: Database<Bytes, Bytes>,
     #[allow(dead_code)]
     pub(crate) hnsw_meta: Database<Bytes, Bytes>,
-    #[allow(dead_code)]
     pub(crate) text_postings: Database<Bytes, Bytes>,
-    #[allow(dead_code)]
     pub(crate) text_meta: Database<Bytes, Bytes>,
-    #[allow(dead_code)]
     pub(crate) text_forward: Database<Bytes, Bytes>,
     #[allow(dead_code)]
     pub(crate) ppr_cache: Database<Bytes, Bytes>,
