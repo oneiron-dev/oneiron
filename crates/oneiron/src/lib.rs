@@ -653,6 +653,48 @@ mod tests {
     }
 
     #[test]
+    fn reput_range_to_point_deindexes_stale_end_key() -> Result<()> {
+        let temp_dir = tempfile::tempdir()?;
+        let vault = Vault::open(temp_dir.path(), test_config())?;
+        let id = EntityId::now();
+
+        vault
+            .batch()
+            .put(&id, 0, test_time_range(100, 200), 300, b"range")
+            .commit()?;
+
+        let old_end_key = Store::encode_temporal_key(200, &id);
+        {
+            let rtxn = vault.store.env.read_txn()?;
+            assert!(vault
+                .store
+                .temporal_occurred_end
+                .get(&rtxn, &old_end_key)?
+                .is_some());
+        }
+
+        vault
+            .batch()
+            .put(&id, 0, test_time_range(200, 200), 300, b"point")
+            .commit()?;
+
+        {
+            let rtxn = vault.store.env.read_txn()?;
+            assert!(
+                vault
+                    .store
+                    .temporal_occurred_end
+                    .get(&rtxn, &old_end_key)?
+                    .is_none(),
+                "stale occurred_end key should be deleted on range→point transition"
+            );
+        }
+
+        assert!(vault.delete_entity(&id)?);
+        Ok(())
+    }
+
+    #[test]
     fn batch_phonetic_index() -> Result<()> {
         let temp_dir = tempfile::tempdir()?;
         let vault = Vault::open(temp_dir.path(), test_config())?;
