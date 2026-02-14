@@ -15,7 +15,7 @@ pub(crate) fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
             return unsafe { cosine_similarity_avx2(a, b) };
         }
 
-        return cosine_similarity_scalar(a, b);
+        cosine_similarity_scalar(a, b)
     }
 
     #[cfg(target_arch = "aarch64")]
