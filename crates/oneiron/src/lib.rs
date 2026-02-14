@@ -4,6 +4,7 @@ use heed::types::Bytes;
 use heed::Database;
 
 pub mod batch;
+pub(crate) mod bm25;
 pub mod error;
 pub mod store;
 pub mod types;
@@ -147,6 +148,12 @@ impl Vault {
     pub fn edges_in(&self, tgt: &EntityId) -> Result<Vec<(EdgeKind, EntityId, f32)>> {
         let rtxn = self.store.env.read_txn()?;
         scan_edges(&self.store.edges_in, &rtxn, tgt.as_bytes())
+    }
+
+    /// Returns BM25 text matches for a query.
+    pub fn search_text(&self, query: &str, limit: usize) -> Result<Vec<ScoredEntity>> {
+        let rtxn = self.store.env.read_txn()?;
+        bm25::search_text(&self.store, &rtxn, query, limit)
     }
 
     /// Creates a new write batch builder bound to this vault.
