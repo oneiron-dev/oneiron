@@ -9,8 +9,6 @@ use crate::types::{EntityId, ScoredEntity};
 
 const POSTING_ENTRY_LEN: usize = 20;
 const DOC_META_LEN: usize = 8;
-const TOTAL_DOCS_LEN: usize = 4;
-const TOTAL_LENGTH_LEN: usize = 8;
 
 const K1: f64 = 1.2;
 const B: f64 = 0.75;
@@ -45,21 +43,15 @@ pub(crate) fn index_text(
 
     let mut term_freq = HashMap::<String, u32>::new();
     for term in terms {
-        let tf = term_freq.entry(term).or_insert(0);
-        *tf = tf.checked_add(1).ok_or(Error::InvalidKey)?;
+        *term_freq.entry(term).or_default() += 1;
     }
 
     let mut unique_terms: Vec<String> = term_freq.keys().cloned().collect();
     unique_terms.sort();
 
     for term in &unique_terms {
-        let tf = *term_freq.get(term).ok_or(Error::InvalidKey)?;
-        let existing = store.text_postings.get(wtxn, term.as_bytes())?;
-        let mut posting = existing.map_or_else(Vec::new, |bytes| bytes.to_vec());
-        if !posting.len().is_multiple_of(POSTING_ENTRY_LEN) {
-            return Err(Error::InvalidKey);
-        }
-
+        let tf = term_freq[term];
+        let mut posting = read_posting(store, wtxn, term)?;
         posting.extend_from_slice(id.as_bytes());
         posting.extend_from_slice(&tf.to_le_bytes());
         store.text_postings.put(wtxn, term.as_bytes(), &posting)?;
@@ -70,35 +62,15 @@ pub(crate) fn index_text(
     doc_meta[4..].copy_from_slice(&field_count.to_le_bytes());
     store.text_meta.put(wtxn, id.as_bytes(), &doc_meta)?;
 
-    let mut forward = Vec::new();
-    for (idx, term) in unique_terms.iter().enumerate() {
-        if idx > 0 {
-            forward.push(0_u8);
-        }
-        forward.extend_from_slice(term.as_bytes());
-    }
+    let forward: Vec<u8> = unique_terms.join("\0").into_bytes();
     store.text_forward.put(wtxn, id.as_bytes(), &forward)?;
 
-    let total_docs = match store.text_meta.get(wtxn, &TOTAL_DOCS_KEY)? {
-        Some(raw) => decode_u32(raw)?,
-        None => 0,
-    };
-    let total_length = match store.text_meta.get(wtxn, &TOTAL_LENGTH_KEY)? {
-        Some(raw) => decode_u64(raw)?,
-        None => 0,
-    };
-
+    let (total_docs, total_length) = read_collection_stats(store, wtxn)?;
     let total_docs = total_docs.checked_add(1).ok_or(Error::InvalidKey)?;
     let total_length = total_length
         .checked_add(u64::from(doc_len))
         .ok_or(Error::InvalidKey)?;
-
-    store
-        .text_meta
-        .put(wtxn, &TOTAL_DOCS_KEY, &total_docs.to_le_bytes())?;
-    store
-        .text_meta
-        .put(wtxn, &TOTAL_LENGTH_KEY, &total_length.to_le_bytes())?;
+    write_collection_stats(store, wtxn, total_docs, total_length)?;
 
     Ok(())
 }
@@ -121,9 +93,7 @@ pub(crate) fn deindex_text(store: &Store, wtxn: &mut RwTxn<'_>, id: &EntityId) -
             .text_postings
             .get(wtxn, term.as_bytes())?
             .ok_or(Error::InvalidKey)?;
-        if !posting.len().is_multiple_of(POSTING_ENTRY_LEN) {
-            return Err(Error::InvalidKey);
-        }
+        validate_posting_alignment(posting)?;
 
         let mut retained = Vec::with_capacity(posting.len());
         let mut removed = false;
@@ -146,26 +116,12 @@ pub(crate) fn deindex_text(store: &Store, wtxn: &mut RwTxn<'_>, id: &EntityId) -
         }
     }
 
-    let total_docs = match store.text_meta.get(wtxn, &TOTAL_DOCS_KEY)? {
-        Some(raw) => decode_u32(raw)?,
-        None => 0,
-    };
-    let total_length = match store.text_meta.get(wtxn, &TOTAL_LENGTH_KEY)? {
-        Some(raw) => decode_u64(raw)?,
-        None => 0,
-    };
-
+    let (total_docs, total_length) = read_collection_stats(store, wtxn)?;
     let total_docs = total_docs.checked_sub(1).ok_or(Error::InvalidKey)?;
     let total_length = total_length
         .checked_sub(u64::from(doc_len))
         .ok_or(Error::InvalidKey)?;
-
-    store
-        .text_meta
-        .put(wtxn, &TOTAL_DOCS_KEY, &total_docs.to_le_bytes())?;
-    store
-        .text_meta
-        .put(wtxn, &TOTAL_LENGTH_KEY, &total_length.to_le_bytes())?;
+    write_collection_stats(store, wtxn, total_docs, total_length)?;
 
     store.text_meta.delete(wtxn, id.as_bytes())?;
     store.text_forward.delete(wtxn, id.as_bytes())?;
@@ -190,19 +146,13 @@ pub(crate) fn search_text(
     tokens.sort();
     tokens.dedup();
 
-    let total_docs = match store.text_meta.get(rtxn, &TOTAL_DOCS_KEY)? {
-        Some(raw) => decode_u32(raw)?,
-        None => 0,
-    };
+    let (total_docs, total_length) = read_collection_stats(store, rtxn)?;
     if total_docs == 0 {
         return Ok(Vec::new());
     }
 
-    let total_length = match store.text_meta.get(rtxn, &TOTAL_LENGTH_KEY)? {
-        Some(raw) => decode_u64(raw)?,
-        None => 0,
-    };
-    let avgdl = total_length as f64 / total_docs as f64;
+    let n = f64::from(total_docs);
+    let avgdl = total_length as f64 / n;
 
     let mut scores = HashMap::<EntityId, f64>::new();
 
@@ -210,21 +160,17 @@ pub(crate) fn search_text(
         let Some(posting) = store.text_postings.get(rtxn, token.as_bytes())? else {
             continue;
         };
-        if !posting.len().is_multiple_of(POSTING_ENTRY_LEN) {
-            return Err(Error::InvalidKey);
-        }
+        validate_posting_alignment(posting)?;
 
         let df = posting.len() / POSTING_ENTRY_LEN;
         if df == 0 {
             continue;
         }
-        let n = total_docs as f64;
         let df = df as f64;
         let idf = ((n - df + 0.5) / (df + 0.5) + 1.0).ln();
 
         for chunk in posting.chunks_exact(POSTING_ENTRY_LEN) {
-            let id = EntityId::from_bytes(chunk[..16].try_into().map_err(|_| Error::InvalidKey)?);
-            let tf = u32::from_le_bytes(chunk[16..20].try_into().map_err(|_| Error::InvalidKey)?);
+            let (id, tf) = decode_posting_entry(chunk)?;
             if tf == 0 {
                 return Err(Error::InvalidKey);
             }
@@ -235,8 +181,8 @@ pub(crate) fn search_text(
                 .ok_or(Error::InvalidKey)?;
             let (dl, _) = decode_doc_meta(doc_meta)?;
 
-            let tf = tf as f64;
-            let dl = dl as f64;
+            let tf = f64::from(tf);
+            let dl = f64::from(dl);
             let norm = if avgdl > 0.0 { dl / avgdl } else { 0.0 };
             let denom = tf + K1 * (1.0 - B + B * norm);
             if denom == 0.0 {
@@ -263,29 +209,71 @@ pub(crate) fn search_text(
         .collect())
 }
 
+fn validate_posting_alignment(posting: &[u8]) -> Result<()> {
+    if !posting.len().is_multiple_of(POSTING_ENTRY_LEN) {
+        return Err(Error::InvalidKey);
+    }
+    Ok(())
+}
+
+fn decode_posting_entry(chunk: &[u8]) -> Result<(EntityId, u32)> {
+    let id = EntityId::from_bytes(chunk[..16].try_into().map_err(|_| Error::InvalidKey)?);
+    let tf = u32::from_le_bytes(chunk[16..20].try_into().map_err(|_| Error::InvalidKey)?);
+    Ok((id, tf))
+}
+
+fn read_posting(store: &Store, wtxn: &mut RwTxn<'_>, term: &str) -> Result<Vec<u8>> {
+    let existing = store.text_postings.get(wtxn, term.as_bytes())?;
+    let posting = existing.map_or_else(Vec::new, |bytes| bytes.to_vec());
+    validate_posting_alignment(&posting)?;
+    Ok(posting)
+}
+
+fn read_collection_stats(store: &Store, txn: &RoTxn<'_>) -> Result<(u32, u64)> {
+    let total_docs = match store.text_meta.get(txn, &TOTAL_DOCS_KEY)? {
+        Some(raw) => u32::from_le_bytes(raw.try_into().map_err(|_| Error::InvalidKey)?),
+        None => 0,
+    };
+    let total_length = match store.text_meta.get(txn, &TOTAL_LENGTH_KEY)? {
+        Some(raw) => u64::from_le_bytes(raw.try_into().map_err(|_| Error::InvalidKey)?),
+        None => 0,
+    };
+    Ok((total_docs, total_length))
+}
+
+fn write_collection_stats(
+    store: &Store,
+    wtxn: &mut RwTxn<'_>,
+    total_docs: u32,
+    total_length: u64,
+) -> Result<()> {
+    store
+        .text_meta
+        .put(wtxn, &TOTAL_DOCS_KEY, &total_docs.to_le_bytes())?;
+    store
+        .text_meta
+        .put(wtxn, &TOTAL_LENGTH_KEY, &total_length.to_le_bytes())?;
+    Ok(())
+}
+
 fn decode_doc_meta(raw: &[u8]) -> Result<(u32, u32)> {
     if raw.len() != DOC_META_LEN {
         return Err(Error::InvalidKey);
     }
-
     let doc_len = u32::from_le_bytes(raw[..4].try_into().map_err(|_| Error::InvalidKey)?);
     let field_count = u32::from_le_bytes(raw[4..8].try_into().map_err(|_| Error::InvalidKey)?);
     Ok((doc_len, field_count))
 }
 
+#[cfg(test)]
 fn decode_u32(raw: &[u8]) -> Result<u32> {
-    if raw.len() != TOTAL_DOCS_LEN {
-        return Err(Error::InvalidKey);
-    }
     Ok(u32::from_le_bytes(
         raw.try_into().map_err(|_| Error::InvalidKey)?,
     ))
 }
 
+#[cfg(test)]
 fn decode_u64(raw: &[u8]) -> Result<u64> {
-    if raw.len() != TOTAL_LENGTH_LEN {
-        return Err(Error::InvalidKey);
-    }
     Ok(u64::from_le_bytes(
         raw.try_into().map_err(|_| Error::InvalidKey)?,
     ))
