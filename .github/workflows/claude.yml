@@ -38,3 +38,9 @@ jobs:
           additional_permissions: |
             actions: read
           claude_args: '--model claude-opus-4-6 --max-turns 100'
+          allowed_tools: |
+            Bash(cargo *)
+            Bash(rustc *)
+            Bash(git *)
+            Bash(gh *)
+            WebSearch
