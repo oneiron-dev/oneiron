@@ -5,7 +5,9 @@ use heed::Database;
 
 pub mod batch;
 pub(crate) mod bm25;
+pub mod distance;
 pub mod error;
+pub mod hnsw;
 pub mod store;
 pub mod types;
 
@@ -83,18 +85,7 @@ impl Vault {
 
     /// Stores a vector for an entity.
     pub fn put_vector(&self, id: &EntityId, vector: &[f32]) -> Result<()> {
-        if vector.len() != self.config.dimensions {
-            return Err(Error::DimensionMismatch {
-                expected: self.config.dimensions,
-                got: vector.len(),
-            });
-        }
-
-        let bytes = f32_slice_to_le_bytes(vector);
-        let mut wtxn = self.store.env.write_txn()?;
-        self.store.vectors.put(&mut wtxn, id.as_bytes(), &bytes)?;
-        wtxn.commit()?;
-        Ok(())
+        self.batch().vector(id, vector).commit()
     }
 
     /// Retrieves a vector for an entity.
@@ -113,6 +104,19 @@ impl Vault {
         }
 
         Ok(Some(vector))
+    }
+
+    /// Searches nearest neighbors by cosine similarity using the HNSW index.
+    pub fn search_vector(&self, query: &[f32], limit: usize) -> Result<Vec<ScoredEntity>> {
+        if query.len() != self.config.dimensions {
+            return Err(Error::DimensionMismatch {
+                expected: self.config.dimensions,
+                got: query.len(),
+            });
+        }
+
+        let rtxn = self.store.env.read_txn()?;
+        hnsw::hnsw_search(&self.store, &self.config, &rtxn, query, limit)
     }
 
     /// Stores a directed edge and its reverse index entry.
@@ -162,14 +166,6 @@ impl Vault {
     }
 }
 
-fn f32_slice_to_le_bytes(values: &[f32]) -> Vec<u8> {
-    let mut bytes = Vec::with_capacity(values.len() * 4);
-    for v in values {
-        bytes.extend_from_slice(&v.to_le_bytes());
-    }
-    bytes
-}
-
 fn le_bytes_to_f32_vec(bytes: &[u8]) -> Result<Vec<f32>> {
     if !bytes.len().is_multiple_of(4) {
         return Err(Error::InvalidKey);
@@ -209,9 +205,13 @@ fn parse_edge_record(key: &[u8], value: &[u8]) -> Result<(EdgeKind, EntityId, f3
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashSet;
     use std::str;
+    use std::time::Instant;
 
     use heed::types::Bytes;
+    use rand::rngs::StdRng;
+    use rand::{Rng, SeedableRng};
     use xxhash_rust::xxh32::xxh32;
 
     use super::*;
@@ -335,6 +335,179 @@ mod tests {
                 got: 3
             }
         ));
+
+        Ok(())
+    }
+
+    #[test]
+    fn put_vector_routes_through_hnsw_insert() -> Result<()> {
+        let temp_dir = tempfile::tempdir()?;
+        let vault = Vault::open(temp_dir.path(), test_config())?;
+        let id = EntityId::now();
+        let vector = [0.1_f32, 0.2, 0.3, 0.4];
+
+        vault.put_vector(&id, &vector)?;
+
+        let rtxn = vault.store.env.read_txn()?;
+        let count_raw = vault
+            .store
+            .hnsw_meta
+            .get(&rtxn, b"count")?
+            .ok_or(Error::EntityNotFound)?;
+        let count = u64::from_le_bytes(count_raw.try_into().map_err(|_| Error::InvalidKey)?);
+        assert_eq!(count, 1);
+
+        let entry_point = vault
+            .store
+            .hnsw_meta
+            .get(&rtxn, b"entry_point")?
+            .ok_or(Error::EntityNotFound)?;
+        assert_eq!(entry_point, id.as_bytes());
+
+        assert!(vault
+            .store
+            .hnsw_neighbors
+            .get(&rtxn, id.as_bytes())?
+            .is_some());
+        Ok(())
+    }
+
+    #[test]
+    fn search_vector_empty_graph_and_dimension_validation() -> Result<()> {
+        let temp_dir = tempfile::tempdir()?;
+        let vault = Vault::open(temp_dir.path(), test_config())?;
+
+        let empty = vault.search_vector(&[0.1_f32, 0.2, 0.3, 0.4], 10)?;
+        assert!(empty.is_empty());
+
+        let err = vault
+            .search_vector(&[1.0_f32, 2.0, 3.0], 5)
+            .expect_err("expected dimension mismatch");
+        assert!(matches!(
+            err,
+            Error::DimensionMismatch {
+                expected: 4,
+                got: 3
+            }
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn search_vector_skips_deleted_nodes() -> Result<()> {
+        let temp_dir = tempfile::tempdir()?;
+        let vault = Vault::open(temp_dir.path(), test_config())?;
+        let entry = EntityId::now();
+        let deleted = EntityId::now();
+        let live = EntityId::now();
+
+        for id in [entry, deleted, live] {
+            vault.put_entity(&id, 0, test_time_range(1, 1), 1, b"vector-node")?;
+        }
+
+        vault.put_vector(&entry, &[1.0_f32, 0.0, 0.0, 0.0])?;
+        vault.put_vector(&deleted, &[0.98_f32, 0.05, 0.0, 0.0])?;
+        vault.put_vector(&live, &[0.0_f32, 1.0, 0.0, 0.0])?;
+
+        assert!(vault.delete_entity(&deleted)?);
+
+        let results = vault.search_vector(&[0.98_f32, 0.05, 0.0, 0.0], 3)?;
+        assert!(!results.iter().any(|item| item.id == deleted));
+        assert!(results.iter().any(|item| item.id == entry));
+        Ok(())
+    }
+
+    #[test]
+    fn validates_non_finite_vector_and_edge_weights() -> Result<()> {
+        let temp_dir = tempfile::tempdir()?;
+        let vault = Vault::open(temp_dir.path(), test_config())?;
+
+        let vector_err = vault
+            .put_vector(&EntityId::now(), &[1.0_f32, f32::NAN, 2.0, 3.0])
+            .expect_err("expected invalid vector");
+        assert!(matches!(vector_err, Error::InvalidVector));
+
+        let edge_err = vault
+            .put_edge(
+                &EntityId::now(),
+                EdgeKind::Supports,
+                &EntityId::now(),
+                f32::INFINITY,
+            )
+            .expect_err("expected invalid edge weight");
+        assert!(matches!(edge_err, Error::InvalidEdgeWeight));
+        Ok(())
+    }
+
+    #[test]
+    fn hnsw_recall_at_10_vs_bruteforce() -> Result<()> {
+        const DIMENSIONS: usize = 128;
+        const NODE_COUNT: usize = 1_000;
+        const LIMIT: usize = 10;
+        const QUERY_COUNT: usize = 25;
+
+        let temp_dir = tempfile::tempdir()?;
+        let mut config = test_config();
+        config.dimensions = DIMENSIONS;
+        config.map_size = 128 * 1024 * 1024;
+        config.hnsw.m_max_0 = 64;
+        config.hnsw.ef_construction = 256;
+        config.hnsw.ef_search = 256;
+
+        let vault = Vault::open(temp_dir.path(), config)?;
+        let mut rng = StdRng::seed_from_u64(42);
+        let mut corpus = Vec::with_capacity(NODE_COUNT);
+
+        let insert_started = Instant::now();
+        for _ in 0..NODE_COUNT {
+            let id = EntityId::now();
+            let vector: Vec<f32> = (0..DIMENSIONS)
+                .map(|_| rng.gen_range(-1.0_f32..1.0_f32))
+                .collect();
+
+            vault.put_entity(&id, 0, test_time_range(1, 1), 1, b"recall-node")?;
+            vault.put_vector(&id, &vector)?;
+            corpus.push((id, vector));
+        }
+        let insert_elapsed = insert_started.elapsed();
+
+        let search_started = Instant::now();
+        let mut recall_sum = 0.0_f32;
+        for query_idx in 0..QUERY_COUNT {
+            let stride = NODE_COUNT / QUERY_COUNT;
+            let query_vector = &corpus[query_idx * stride].1;
+
+            let ann = vault.search_vector(query_vector, LIMIT)?;
+            let ann_ids: HashSet<EntityId> = ann.iter().map(|item| item.id).collect();
+
+            let mut brute_force: Vec<(EntityId, f32)> = corpus
+                .iter()
+                .map(|(id, vector)| (*id, crate::distance::cosine_distance(query_vector, vector)))
+                .collect();
+            brute_force.sort_by(|left, right| {
+                left.1
+                    .total_cmp(&right.1)
+                    .then_with(|| left.0.as_bytes().cmp(right.0.as_bytes()))
+            });
+
+            let brute_ids: HashSet<EntityId> =
+                brute_force.iter().take(LIMIT).map(|(id, _)| *id).collect();
+            let hits = brute_ids.intersection(&ann_ids).count();
+            recall_sum += hits as f32 / LIMIT as f32;
+        }
+        let search_elapsed = search_started.elapsed();
+
+        let recall_at_10 = recall_sum / QUERY_COUNT as f32;
+        eprintln!(
+            "hnsw recall@10={recall_at_10:.4}, insert_ms={}, search_ms={}",
+            insert_elapsed.as_millis(),
+            search_elapsed.as_millis()
+        );
+
+        assert!(
+            recall_at_10 > 0.95,
+            "expected recall@10 > 0.95, got {recall_at_10:.4}"
+        );
 
         Ok(())
     }

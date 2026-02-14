@@ -171,6 +171,13 @@ impl<'a> BatchBuilder<'a> {
                         id,
                         &vector,
                     )?;
+                    crate::hnsw::hnsw_insert(
+                        &self.vault.store,
+                        &self.vault.config,
+                        &mut wtxn,
+                        &id,
+                        &vector,
+                    )?;
                 }
                 BatchOp::Edge {
                     src,
@@ -321,6 +328,9 @@ fn apply_vector(
             got: vector.len(),
         });
     }
+    if vector.iter().any(|value| !value.is_finite()) {
+        return Err(Error::InvalidVector);
+    }
 
     let mut bytes = Vec::with_capacity(vector.len() * 4);
     for v in vector {
@@ -338,6 +348,10 @@ fn apply_edge(
     tgt: EntityId,
     weight: f32,
 ) -> Result<()> {
+    if !weight.is_finite() {
+        return Err(Error::InvalidEdgeWeight);
+    }
+
     let key_out = Store::encode_edge_key(&src, kind, &tgt);
     let key_in = Store::encode_edge_key(&tgt, kind, &src);
     let value = encode_edge_value(weight, unix_seconds_now());
