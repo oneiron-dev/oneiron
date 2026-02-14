@@ -135,6 +135,39 @@ pub(crate) fn hnsw_search(
         .collect())
 }
 
+pub(crate) fn hnsw_deindex(store: &Store, wtxn: &mut RwTxn<'_>, id: &EntityId) -> Result<()> {
+    let had_entry = store.hnsw_neighbors.delete(wtxn, id.as_bytes())?;
+    if !had_entry {
+        return Ok(());
+    }
+
+    let count = read_count(store, &*wtxn)?;
+    let new_count = count.saturating_sub(1);
+    store
+        .hnsw_meta
+        .put(wtxn, COUNT_KEY, &new_count.to_le_bytes())?;
+
+    let is_entry_point = store
+        .hnsw_meta
+        .get(&*wtxn, ENTRY_POINT_KEY)?
+        .is_some_and(|raw| raw == id.as_bytes());
+    if is_entry_point {
+        let replacement = store
+            .hnsw_neighbors
+            .first(&*wtxn)?
+            .map(|(key, _)| key.to_vec());
+
+        if let Some(key) = replacement {
+            store.hnsw_meta.put(wtxn, ENTRY_POINT_KEY, &key)?;
+        } else {
+            store.hnsw_meta.delete(wtxn, ENTRY_POINT_KEY)?;
+            store.hnsw_meta.put(wtxn, COUNT_KEY, &0_u64.to_le_bytes())?;
+        }
+    }
+
+    Ok(())
+}
+
 fn beam_search(
     store: &Store,
     txn: &RoTxn<'_>,

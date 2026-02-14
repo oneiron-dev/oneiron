@@ -236,6 +236,7 @@ pub(crate) fn deindex_entity(store: &Store, wtxn: &mut RwTxn<'_>, id: &EntityId)
     store.temporal_learned.delete(wtxn, &learned_key)?;
 
     delete_related_edges(store, wtxn, id)?;
+    crate::hnsw::hnsw_deindex(store, wtxn, id)?;
 
     if let Some(raw) = store.short_ids.get(wtxn, id.as_bytes())? {
         let (short_id, _) = parse_short_id_value(raw)?;

@@ -421,6 +421,28 @@ mod tests {
     }
 
     #[test]
+    fn search_after_entry_point_deleted() -> Result<()> {
+        let temp_dir = tempfile::tempdir()?;
+        let vault = Vault::open(temp_dir.path(), test_config())?;
+        let entry = EntityId::now();
+        let survivor = EntityId::now();
+
+        vault.put_entity(&entry, 0, test_time_range(1, 1), 1, b"entry")?;
+        vault.put_entity(&survivor, 0, test_time_range(1, 1), 1, b"survivor")?;
+        vault.put_vector(&entry, &[1.0_f32, 0.0, 0.0, 0.0])?;
+        vault.put_vector(&survivor, &[0.0_f32, 1.0, 0.0, 0.0])?;
+
+        assert_eq!(vault.search_vector(&[1.0_f32, 0.0, 0.0, 0.0], 5)?.len(), 2);
+        assert!(vault.delete_entity(&entry)?);
+
+        let results = vault.search_vector(&[0.0_f32, 1.0, 0.0, 0.0], 5)?;
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].id, survivor);
+
+        Ok(())
+    }
+
+    #[test]
     fn validates_non_finite_vector_and_edge_weights() -> Result<()> {
         let temp_dir = tempfile::tempdir()?;
         let vault = Vault::open(temp_dir.path(), test_config())?;
