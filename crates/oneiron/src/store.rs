@@ -30,19 +30,12 @@ pub struct Store {
     pub(crate) ppr_cache: Database<Bytes, Bytes>,
     #[allow(dead_code)]
     pub(crate) ppr_cache_deps: Database<Bytes, Bytes>,
-    #[allow(dead_code)]
     pub(crate) type_index: Database<Bytes, Bytes>,
-    #[allow(dead_code)]
     pub(crate) temporal_occurred_start: Database<Bytes, Bytes>,
-    #[allow(dead_code)]
     pub(crate) temporal_occurred_end: Database<Bytes, Bytes>,
-    #[allow(dead_code)]
     pub(crate) temporal_learned: Database<Bytes, Bytes>,
-    #[allow(dead_code)]
     pub(crate) phonetic_index: Database<Bytes, Bytes>,
-    #[allow(dead_code)]
     pub(crate) short_ids: Database<Bytes, Bytes>,
-    #[allow(dead_code)]
     pub(crate) short_ids_reverse: Database<Bytes, Bytes>,
 }
 
@@ -82,22 +75,20 @@ impl Store {
 
         if let Some(requested) = config.embedding_model.as_deref() {
             let mut wtxn = env.write_txn()?;
-            let stored = hnsw_meta
-                .get(&wtxn, MODEL_ID_KEY)?
-                .map(parse_utf8_bytes)
-                .transpose()?;
-
-            if let Some(stored) = stored {
-                if stored != requested {
-                    return Err(Error::EmbeddingModelChanged {
-                        stored,
-                        requested: requested.to_owned(),
-                    });
+            match hnsw_meta.get(&wtxn, MODEL_ID_KEY)? {
+                Some(raw) => {
+                    let stored = parse_utf8_bytes(raw)?;
+                    if stored != requested {
+                        return Err(Error::EmbeddingModelChanged {
+                            stored,
+                            requested: requested.to_owned(),
+                        });
+                    }
                 }
-            } else {
-                hnsw_meta.put(&mut wtxn, MODEL_ID_KEY, requested.as_bytes())?;
+                None => {
+                    hnsw_meta.put(&mut wtxn, MODEL_ID_KEY, requested.as_bytes())?;
+                }
             }
-
             wtxn.commit()?;
         }
 
