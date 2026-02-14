@@ -21,6 +21,25 @@ impl EntityId {
     }
 }
 
+/// Returns the short ID prefix for an entity type byte.
+pub fn short_id_prefix(entity_type: u8) -> &'static str {
+    match entity_type {
+        0 => "cl",
+        1 => "tn",
+        2 => "ss",
+        3 => "ms",
+        4 => "pr",
+        5 => "rl",
+        6 => "ev",
+        7 => "sk",
+        8 => "sm",
+        9 => "pl",
+        10 => "tx",
+        11 => "cv",
+        _ => "xx",
+    }
+}
+
 /// Relationship kind used by graph edges.
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

@@ -30,19 +30,12 @@ pub struct Store {
     pub(crate) ppr_cache: Database<Bytes, Bytes>,
     #[allow(dead_code)]
     pub(crate) ppr_cache_deps: Database<Bytes, Bytes>,
-    #[allow(dead_code)]
     pub(crate) type_index: Database<Bytes, Bytes>,
-    #[allow(dead_code)]
     pub(crate) temporal_occurred_start: Database<Bytes, Bytes>,
-    #[allow(dead_code)]
     pub(crate) temporal_occurred_end: Database<Bytes, Bytes>,
-    #[allow(dead_code)]
     pub(crate) temporal_learned: Database<Bytes, Bytes>,
-    #[allow(dead_code)]
     pub(crate) phonetic_index: Database<Bytes, Bytes>,
-    #[allow(dead_code)]
     pub(crate) short_ids: Database<Bytes, Bytes>,
-    #[allow(dead_code)]
     pub(crate) short_ids_reverse: Database<Bytes, Bytes>,
 }
 
