@@ -106,28 +106,21 @@ impl<'a> BatchBuilder<'a> {
 
     /// Adds a text indexing placeholder operation to the batch.
     pub fn text(mut self, id: &EntityId, fields: &[(&str, &str)]) -> Self {
-        let mut owned_fields = Vec::with_capacity(fields.len());
-        for (field, value) in fields {
-            owned_fields.push(((*field).to_owned(), (*value).to_owned()));
-        }
-
         self.ops.push(BatchOp::Text {
             id: *id,
-            fields: owned_fields,
+            fields: fields
+                .iter()
+                .map(|(f, v)| ((*f).to_owned(), (*v).to_owned()))
+                .collect(),
         });
         self
     }
 
     /// Adds a phonetic indexing operation to the batch.
     pub fn phonetic(mut self, id: &EntityId, codes: &[&str]) -> Self {
-        let mut owned_codes = Vec::with_capacity(codes.len());
-        for code in codes {
-            owned_codes.push((*code).to_owned());
-        }
-
         self.ops.push(BatchOp::Phonetic {
             id: *id,
-            codes: owned_codes,
+            codes: codes.iter().map(|c| (*c).to_owned()).collect(),
         });
         self
     }
@@ -234,11 +227,9 @@ pub(crate) fn deindex_entity(store: &Store, wtxn: &mut RwTxn<'_>, id: &EntityId)
     delete_from_phonetic_postings(store, wtxn, id)?;
     store.vectors.delete(wtxn, id.as_bytes())?;
 
-    if let Some(short_id_value) = store.short_ids.get(wtxn, id.as_bytes())? {
-        let short_id = {
-            let (short_id, _) = parse_short_id_value(short_id_value)?;
-            short_id.to_owned()
-        };
+    if let Some(raw) = store.short_ids.get(wtxn, id.as_bytes())? {
+        let (short_id, _) = parse_short_id_value(raw)?;
+        let short_id = short_id.to_owned();
         store.short_ids_reverse.delete(wtxn, short_id.as_bytes())?;
         store.short_ids.delete(wtxn, id.as_bytes())?;
     }
@@ -302,10 +293,9 @@ fn apply_vector(
     }
 
     let mut bytes = Vec::with_capacity(vector.len() * 4);
-    for value in vector {
-        bytes.extend_from_slice(&value.to_le_bytes());
+    for v in vector {
+        bytes.extend_from_slice(&v.to_le_bytes());
     }
-
     store.vectors.put(wtxn, id.as_bytes(), &bytes)?;
     Ok(())
 }
@@ -382,11 +372,8 @@ fn upsert_short_id(
     let sentinel_key = short_id_counter_sentinel(entity_type);
     let current = match store.short_ids.get(wtxn, &sentinel_key)? {
         Some(raw) => {
-            if raw.len() != SHORT_ID_COUNTER_LEN {
-                return Err(Error::InvalidKey);
-            }
-            let mut buf = [0_u8; SHORT_ID_COUNTER_LEN];
-            buf.copy_from_slice(raw);
+            let buf: [u8; SHORT_ID_COUNTER_LEN] =
+                raw.try_into().map_err(|_| Error::InvalidKey)?;
             u64::from_le_bytes(buf)
         }
         None => 0,
@@ -431,22 +418,11 @@ fn parse_entity_metadata(record: &[u8]) -> Result<(u8, TimeRange, u64)> {
     }
 
     let entity_type = record[0];
+    let start = u64::from_be_bytes(record[1..9].try_into().map_err(|_| Error::InvalidKey)?);
+    let end = u64::from_be_bytes(record[9..17].try_into().map_err(|_| Error::InvalidKey)?);
+    let learned = u64::from_be_bytes(record[17..25].try_into().map_err(|_| Error::InvalidKey)?);
 
-    let mut start = [0_u8; 8];
-    start.copy_from_slice(&record[1..9]);
-    let mut end = [0_u8; 8];
-    end.copy_from_slice(&record[9..17]);
-    let mut learned = [0_u8; 8];
-    learned.copy_from_slice(&record[17..25]);
-
-    Ok((
-        entity_type,
-        TimeRange {
-            start: u64::from_be_bytes(start),
-            end: u64::from_be_bytes(end),
-        },
-        u64::from_be_bytes(learned),
-    ))
+    Ok((entity_type, TimeRange { start, end }, learned))
 }
 
 fn delete_related_edges(store: &Store, wtxn: &mut RwTxn<'_>, id: &EntityId) -> Result<()> {
@@ -518,21 +494,13 @@ fn posting_without_entity(posting: &[u8], id: &EntityId) -> Result<Option<Vec<u8
         return Err(Error::InvalidKey);
     }
 
-    let mut changed = false;
-    let mut retained = Vec::with_capacity(posting.len());
-    for chunk in posting.chunks_exact(ENTITY_ID_LEN) {
-        if chunk == id.as_bytes() {
-            changed = true;
-        } else {
-            retained.extend_from_slice(chunk);
-        }
-    }
+    let retained: Vec<u8> = posting
+        .chunks_exact(ENTITY_ID_LEN)
+        .filter(|chunk| *chunk != id.as_bytes())
+        .flat_map(|chunk| chunk.iter().copied())
+        .collect();
 
-    if changed {
-        Ok(Some(retained))
-    } else {
-        Ok(None)
-    }
+    Ok((retained.len() != posting.len()).then_some(retained))
 }
 
 fn validate_edge_record(key: &[u8], value: &[u8]) -> Result<()> {
