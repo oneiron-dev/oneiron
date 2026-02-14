@@ -201,6 +201,12 @@ impl<'a> BatchBuilder<'a> {
 }
 
 pub(crate) fn deindex_entity(store: &Store, wtxn: &mut RwTxn<'_>, id: &EntityId) -> Result<bool> {
+    // Clean secondary indexes unconditionally — they may exist even without an
+    // entity record (e.g. text indexed via batch().text() without a preceding put()).
+    crate::bm25::deindex_text(store, wtxn, id)?;
+    delete_from_phonetic_postings(store, wtxn, id)?;
+    store.vectors.delete(wtxn, id.as_bytes())?;
+
     let Some(entity_record) = store.entities.get(wtxn, id.as_bytes())? else {
         return Ok(false);
     };
@@ -224,9 +230,6 @@ pub(crate) fn deindex_entity(store: &Store, wtxn: &mut RwTxn<'_>, id: &EntityId)
     store.temporal_learned.delete(wtxn, &learned_key)?;
 
     delete_related_edges(store, wtxn, id)?;
-    delete_from_phonetic_postings(store, wtxn, id)?;
-    crate::bm25::deindex_text(store, wtxn, id)?;
-    store.vectors.delete(wtxn, id.as_bytes())?;
 
     if let Some(raw) = store.short_ids.get(wtxn, id.as_bytes())? {
         let (short_id, _) = parse_short_id_value(raw)?;

@@ -15,7 +15,7 @@
 | 4 | `vectors` | `entity_id` (16B) | 16B | `[f32; N]` raw little-endian | N×4B | Embeddings |
 | 5 | `hnsw_neighbors` | `entity_id` (16B) | 16B | `[entity_id; M]` concatenated | M×16B | HNSW neighbor lists (flat NSW) |
 | 6 | `hnsw_meta` | string key (UTF-8) | variable | raw bytes | variable | HNSW metadata |
-| 7 | `text_postings` | `term` (UTF-8) | variable | `[(entity_id(16), tf(f32 4B))]` packed | N×20B | BM25 inverted index |
+| 7 | `text_postings` | `term` (UTF-8) | variable | `[(entity_id(16), tf(u32 4B))]` packed | N×20B | BM25 inverted index |
 | 8 | `text_meta` | `entity_id` (16B) | 16B | `doc_len(u32 4B) \| field_count(u32 4B)` | 8B | BM25 document metadata |
 | 9 | `text_forward` | `entity_id` (16B) | 16B | `[term1\0term2\0...]` packed UTF-8 | variable | BM25 forward index (for deindexing) |
 | 10 | `ppr_cache` | `seed_set_hash` (32B, SHA-256) | 32B | `[meta(17B)] [scores N×20B]` | variable | Cached PPR results |

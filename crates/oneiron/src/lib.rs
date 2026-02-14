@@ -4,7 +4,7 @@ use heed::types::Bytes;
 use heed::Database;
 
 pub mod batch;
-pub mod bm25;
+pub(crate) mod bm25;
 pub mod error;
 pub mod store;
 pub mod types;

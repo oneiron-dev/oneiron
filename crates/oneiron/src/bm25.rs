@@ -38,6 +38,10 @@ pub(crate) fn index_text(
         terms.extend(tokenize(value));
     }
 
+    if terms.is_empty() {
+        return Ok(());
+    }
+
     let doc_len = u32::try_from(terms.len()).map_err(|_| Error::InvalidKey)?;
     let field_count = u32::try_from(fields.len()).map_err(|_| Error::InvalidKey)?;
 
@@ -506,7 +510,7 @@ mod tests {
             .get(&rtxn, &TOTAL_LENGTH_KEY)?
             .ok_or(Error::InvalidKey)?;
 
-        assert_eq!(decode_u32(total_docs)?, 3);
+        assert_eq!(decode_u32(total_docs)?, 2);
         assert_eq!(decode_u64(total_length)?, 3);
 
         Ok(())

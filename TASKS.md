@@ -201,6 +201,12 @@ Implement the `BatchBuilder` for atomic multi-database writes, and all secondary
 - Verify multi-term query (AND semantics: score documents containing both terms higher)
 - Edge case: empty query, empty document, single-term document
 
+**Review fixes applied (PR #3 round 1):**
+- Moved `deindex_text`/`delete_from_phonetic_postings`/`vectors.delete` before entity existence guard in `deindex_entity` — prevents orphaned secondary index data when text indexed without entity record
+- Changed `pub mod bm25` → `pub(crate) mod bm25` — module only exposes `pub(crate)` items
+- Empty documents (zero tokens after tokenization) now short-circuit — no longer inflate `total_docs`/avgdl
+- Updated SCHEMA-DESIGN.md: `tf(f32)` → `tf(u32)` to match implementation (u32 is correct for integer TFs in v1)
+
 ---
 
 ## Task 4: HNSW Vector Search
@@ -401,6 +407,12 @@ Deterministic index maintenance primitives — the dreamer (in `oneiron-internal
 - Add specific error variants for `Error::InvalidKey` (currently overloaded for ~8 different failure modes)
 - Reject unknown entity types (>11) in `apply_put` or encode type byte into short ID prefix to prevent `"xx"` collision across types
 
+**Review follow-ups from Task 3:**
+- Add `CorruptedIndex` error variant (or similar) to replace `Error::InvalidKey` catch-all for BM25 data integrity errors (posting alignment, missing doc_meta, invalid forward index, arithmetic overflow — 10+ distinct failure modes)
+- Cache `doc_len` in a local `HashMap<EntityId, u32>` during `search_text` scoring loop to avoid repeated `text_meta.get()` per posting entry per term
+- Consider DUP_SORT migration for `text_postings` to avoid O(posting_len) read-modify-write on each append
+- Consider iterator-based tokenizer yielding `Cow<str>` to reduce String allocation per token
+
 **MaintenanceBuilder (`maintain.rs`):**
 - `MaintenanceBuilder<'a>` borrowing `&'a Vault`
 - `rebuild_hnsw()` — re-insert all live vectors (from `vectors` db) into a fresh HNSW graph. Delete old `hnsw_neighbors` entries, rebuild from scratch. Update `hnsw_meta["count"]`, `hnsw_meta["entry_point"]`.
@@ -469,6 +481,9 @@ C-compatible FFI for mobile (iOS/Android) and TypeScript/Node via NAPI or direct
 - Error handling: return error codes, last-error string
 
 **Note:** The first consumer is `oneiron-internal` (TypeScript on Fly machines), calling via FFI. Mobile (iOS/Android) is the second consumer. Both use the same C FFI surface.
+
+**Review follow-ups from Task 3:**
+- Validate `EntityId::from_bytes` inputs at the FFI boundary to reject sentinel keys `[0x00;16]` and `[0xFF;16]` — these collide with BM25 collection stats in `text_meta` and short ID counters in `short_ids`. Safe with UUIDv7 but untrusted FFI callers could craft them. Alternative: use separate LMDB databases for collection stats.
 
 ---
 
