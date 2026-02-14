@@ -417,6 +417,12 @@ Deterministic index maintenance primitives — the dreamer (in `oneiron-internal
 - Pre-size `scores` HashMap in `search_text` with first posting list length estimate to avoid repeated reallocations
 - Consider self-healing in `deindex_text` — skip missing terms in `text_postings` instead of returning `Err(InvalidKey)` so deletion can proceed on corrupted data
 
+**Review follow-ups from Task 4:**
+- Full HNSW graph deindex: on entity delete, remove entity from ALL neighbors' neighbor lists (not just entry_point reassignment done in PR #4 fix)
+- Idempotent insert doesn't update HNSW graph on vector change — second `put_vector` overwrites raw bytes but HNSW connections stay based on old vector. Requires delete+re-insert in graph (ties into `rebuild_hnsw`)
+- `Error::InvalidKey` used as catch-all for count overflow and missing entry_point — should be `Error::CorruptedIndex` or similar
+- Add doc comment to `hnsw_deindex` making lazy deletion behavior explicit (doesn't scrub deleted ID from other nodes' neighbor lists — beam_search handles this via `load_vector` returning `None`)
+
 **MaintenanceBuilder (`maintain.rs`):**
 - `MaintenanceBuilder<'a>` borrowing `&'a Vault`
 - `rebuild_hnsw()` — re-insert all live vectors (from `vectors` db) into a fresh HNSW graph. Delete old `hnsw_neighbors` entries, rebuild from scratch. Update `hnsw_meta["count"]`, `hnsw_meta["entry_point"]`.
@@ -441,6 +447,13 @@ Deterministic index maintenance primitives — the dreamer (in `oneiron-internal
 **Files:** `crates/oneiron-bench/src/main.rs`
 **Est:** ~400 LOC
 **Depends on:** Task 6, Task 8
+
+**Review follow-ups from Task 4:**
+- NEON 8-wide accumulators (two independent accumulator registers for 8 floats/iter, matching AVX2 throughput on Apple Silicon)
+- Scalar unrolling: increase from 4 elements to 8 per iteration
+- HashSet pre-sizing in `beam_search`: `HashSet::with_capacity(ef * 2)` to avoid rehashes
+- `load_vector` per-candidate allocation: implement zero-copy `&[f32]` reinterpretation from LMDB byte slice
+- Remove no-op `#[target_feature(enable = "neon")]` on aarch64 — NEON is mandatory, attribute forces unnecessary `unsafe`
 
 **Benchmark suite:**
 - Scale: 1K, 5K, 10K, 50K entities
@@ -483,6 +496,9 @@ C-compatible FFI for mobile (iOS/Android) and TypeScript/Node via NAPI or direct
 - `oneiron_vault_maintain(vault, ops_json) -> *mut c_char` (returns maintenance report)
 - `oneiron_vault_free_string(s: *mut c_char)`
 - Error handling: return error codes, last-error string
+
+**Review follow-ups from Task 4:**
+- `is_multiple_of` requires nightly Rust — replace with `len % N == 0` if stable toolchain migration is needed for iOS cross-compilation
 
 **Note:** The first consumer is `oneiron-internal` (TypeScript on Fly machines), calling via FFI. Mobile (iOS/Android) is the second consumer. Both use the same C FFI surface.
 

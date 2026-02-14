@@ -16,9 +16,7 @@ pub struct Store {
     pub(crate) edges_out: Database<Bytes, Bytes>,
     pub(crate) edges_in: Database<Bytes, Bytes>,
     pub(crate) vectors: Database<Bytes, Bytes>,
-    #[allow(dead_code)]
     pub(crate) hnsw_neighbors: Database<Bytes, Bytes>,
-    #[allow(dead_code)]
     pub(crate) hnsw_meta: Database<Bytes, Bytes>,
     pub(crate) text_postings: Database<Bytes, Bytes>,
     pub(crate) text_meta: Database<Bytes, Bytes>,

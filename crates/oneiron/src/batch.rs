@@ -6,14 +6,13 @@ use xxhash_rust::xxh32::xxh32;
 
 use crate::error::{Error, Result};
 use crate::store::Store;
-use crate::types::{short_id_prefix, EdgeKind, EntityId, TimeRange};
+use crate::types::{short_id_prefix, EdgeKind, EntityId, TimeRange, ENTITY_ID_LEN};
 use crate::Vault;
 
 pub(crate) const ENTITY_METADATA_HEADER_LEN: usize = 25;
 const SHORT_ID_COUNTER_LEN: usize = 8;
 const EDGE_KEY_LEN: usize = 33;
 const EDGE_VALUE_LEN: usize = 12;
-const ENTITY_ID_LEN: usize = 16;
 
 /// Builder for atomic multi-database write batches.
 pub struct BatchBuilder<'a> {
@@ -171,6 +170,13 @@ impl<'a> BatchBuilder<'a> {
                         id,
                         &vector,
                     )?;
+                    crate::hnsw::hnsw_insert(
+                        &self.vault.store,
+                        &self.vault.config,
+                        &mut wtxn,
+                        &id,
+                        &vector,
+                    )?;
                 }
                 BatchOp::Edge {
                     src,
@@ -206,6 +212,7 @@ pub(crate) fn deindex_entity(store: &Store, wtxn: &mut RwTxn<'_>, id: &EntityId)
     crate::bm25::deindex_text(store, wtxn, id)?;
     delete_from_phonetic_postings(store, wtxn, id)?;
     store.vectors.delete(wtxn, id.as_bytes())?;
+    crate::hnsw::hnsw_deindex(store, wtxn, id)?;
 
     let Some(entity_record) = store.entities.get(wtxn, id.as_bytes())? else {
         return Ok(false);
@@ -321,6 +328,9 @@ fn apply_vector(
             got: vector.len(),
         });
     }
+    if vector.iter().any(|value| !value.is_finite()) {
+        return Err(Error::InvalidVector);
+    }
 
     let mut bytes = Vec::with_capacity(vector.len() * 4);
     for v in vector {
@@ -338,6 +348,10 @@ fn apply_edge(
     tgt: EntityId,
     weight: f32,
 ) -> Result<()> {
+    if !weight.is_finite() {
+        return Err(Error::InvalidEdgeWeight);
+    }
+
     let key_out = Store::encode_edge_key(&src, kind, &tgt);
     let key_in = Store::encode_edge_key(&tgt, kind, &src);
     let value = encode_edge_value(weight, unix_seconds_now());

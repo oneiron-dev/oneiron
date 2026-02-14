@@ -1,8 +1,10 @@
 use uuid::Uuid;
 
+pub(crate) const ENTITY_ID_LEN: usize = 16;
+
 /// A time-ordered entity identifier backed by UUIDv7 bytes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct EntityId([u8; 16]);
+pub struct EntityId([u8; ENTITY_ID_LEN]);
 
 impl EntityId {
     /// Creates a new identifier using the current UUIDv7 timestamp.
