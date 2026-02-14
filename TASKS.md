@@ -294,6 +294,11 @@ Implement the `BatchBuilder` for atomic multi-database writes, and all secondary
 - Bidirectional: A→B, C→B, PPR from A, verify C is reachable via B's inbound
 - Cache: compute, verify cached, modify edge, verify stale, recompute
 
+**Review follow-ups from Task 5:**
+- Include `depth` and `alpha` in PPR cache key hash (currently keyed only by seed set — safe while `ppr_query` is called with fixed config-level params, but fragile if callers vary parameters)
+- Upgrade `hash_seeds` from xxh32 (4 bytes entropy) to xxh3_128 (enable `xxh3` feature of `xxhash-rust`) or blake3 for collision resistance at scale
+- Move `increment_graph_version` call from per-edge to once-per-batch-commit (track `had_edge_ops` bool in commit loop)
+
 ---
 
 ## Task 6: RRF Fusion + Pipeline Builder
