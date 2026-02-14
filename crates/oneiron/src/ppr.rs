@@ -1,7 +1,6 @@
 #![cfg_attr(not(test), allow(dead_code))]
 
 use std::collections::{HashMap, HashSet};
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use heed::{RoTxn, RwTxn};
 use xxhash_rust::xxh32::xxh32;
@@ -41,6 +40,8 @@ pub(crate) fn ppr_compute(
         *frontier.entry((*seed, 0)).or_default() += init;
     }
 
+    let edge_dbs = [&store.edges_out, &store.edges_in];
+
     for _ in 0..depth {
         if frontier.is_empty() {
             break;
@@ -54,8 +55,7 @@ pub(crate) fn ppr_compute(
                 continue;
             }
 
-            let edges = [&store.edges_out, &store.edges_in];
-            for db in edges {
+            for db in edge_dbs {
                 for entry in db.prefix_iter(txn, node.as_bytes())? {
                     let (key, value) = entry?;
                     propagate_edge(key, value, hops, score, alpha, &mut next)?;
@@ -95,7 +95,7 @@ pub(crate) fn ppr_query(
     }
 
     let seed_hash = hash_seeds(seeds);
-    let now = unix_seconds_now();
+    let now = crate::unix_seconds_now();
 
     {
         let rtxn = store.env.read_txn()?;
@@ -109,13 +109,12 @@ pub(crate) fn ppr_query(
         }
     }
 
-    let (mut scores, graph_version) = {
+    let (scores, graph_version) = {
         let rtxn = store.env.read_txn()?;
         let scores = ppr_compute(store, &rtxn, seeds, depth, alpha)?;
         let version = read_graph_version(store, &rtxn)?;
         (scores, version)
     };
-    sort_scores(&mut scores);
 
     let encoded = encode_cache_value(now, graph_version, 0, &scores);
     let mut wtxn = store.env.write_txn()?;
@@ -130,7 +129,7 @@ pub(crate) fn ppr_query(
     Ok(scores)
 }
 
-pub(crate) fn invalidate_ppr_caches(
+fn invalidate_ppr_caches(
     store: &Store,
     wtxn: &mut RwTxn<'_>,
     entity_id: &EntityId,
@@ -164,7 +163,34 @@ pub(crate) fn invalidate_ppr_caches(
     Ok(())
 }
 
-pub(crate) fn increment_graph_version(store: &Store, wtxn: &mut RwTxn<'_>) -> Result<()> {
+pub(crate) fn invalidate_ppr_for_edge(
+    store: &Store,
+    wtxn: &mut RwTxn<'_>,
+    src: &EntityId,
+    tgt: &EntityId,
+) -> Result<()> {
+    invalidate_ppr_caches(store, wtxn, src)?;
+    invalidate_ppr_caches(store, wtxn, tgt)?;
+    increment_graph_version(store, wtxn)
+}
+
+pub(crate) fn invalidate_ppr_for_delete(
+    store: &Store,
+    wtxn: &mut RwTxn<'_>,
+    id: &EntityId,
+    neighbors: &[EntityId],
+) -> Result<()> {
+    if neighbors.is_empty() {
+        return Ok(());
+    }
+    invalidate_ppr_caches(store, wtxn, id)?;
+    for neighbor in neighbors {
+        invalidate_ppr_caches(store, wtxn, neighbor)?;
+    }
+    increment_graph_version(store, wtxn)
+}
+
+fn increment_graph_version(store: &Store, wtxn: &mut RwTxn<'_>) -> Result<()> {
     let current = read_graph_version(store, &*wtxn)?;
     let next = current.checked_add(1).ok_or(Error::InvalidKey)?;
     store
@@ -219,10 +245,7 @@ fn hash_seeds(seeds: &[EntityId]) -> [u8; SEED_HASH_LEN] {
     let mut sorted = seeds.to_vec();
     sorted.sort_unstable_by(|a, b| a.as_bytes().cmp(b.as_bytes()));
 
-    let bytes: Vec<u8> = sorted
-        .iter()
-        .flat_map(|seed| seed.as_bytes().iter().copied())
-        .collect();
+    let bytes: Vec<u8> = sorted.iter().flat_map(|seed| *seed.as_bytes()).collect();
 
     let mut out = [0_u8; SEED_HASH_LEN];
     out[..4].copy_from_slice(&xxh32(&bytes, 0).to_le_bytes());
@@ -300,12 +323,6 @@ fn read_graph_version(store: &Store, txn: &RoTxn<'_>) -> Result<u64> {
 fn decode_u64(raw: &[u8]) -> Result<u64> {
     let bytes: [u8; 8] = raw.try_into().map_err(|_| Error::InvalidKey)?;
     Ok(u64::from_le_bytes(bytes))
-}
-
-fn unix_seconds_now() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0, |duration| duration.as_secs())
 }
 
 #[cfg(test)]

@@ -1,4 +1,5 @@
 use std::path::Path;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use heed::types::Bytes;
 use heed::Database;
@@ -80,13 +81,7 @@ impl Vault {
     pub fn delete_entity(&self, id: &EntityId) -> Result<bool> {
         let mut wtxn = self.store.env.write_txn()?;
         let (existed, neighbors) = deindex_entity(&self.store, &mut wtxn, id)?;
-        if !neighbors.is_empty() {
-            ppr::invalidate_ppr_caches(&self.store, &mut wtxn, id)?;
-            for neighbor in &neighbors {
-                ppr::invalidate_ppr_caches(&self.store, &mut wtxn, neighbor)?;
-            }
-            ppr::increment_graph_version(&self.store, &mut wtxn)?;
-        }
+        ppr::invalidate_ppr_for_delete(&self.store, &mut wtxn, id, &neighbors)?;
         wtxn.commit()?;
         Ok(existed)
     }
@@ -178,6 +173,12 @@ impl Vault {
     pub fn batch(&self) -> BatchBuilder<'_> {
         BatchBuilder::new(self)
     }
+}
+
+pub(crate) fn unix_seconds_now() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |duration| duration.as_secs())
 }
 
 pub(crate) fn le_bytes_to_f32_vec(bytes: &[u8]) -> Result<Vec<f32>> {

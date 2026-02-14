@@ -1,5 +1,4 @@
 use std::str;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use heed::RwTxn;
 use xxhash_rust::xxh32::xxh32;
@@ -186,9 +185,7 @@ impl<'a> BatchBuilder<'a> {
                     weight,
                 } => {
                     apply_edge(&self.vault.store, &mut wtxn, src, kind, tgt, weight)?;
-                    ppr::invalidate_ppr_caches(&self.vault.store, &mut wtxn, &src)?;
-                    ppr::invalidate_ppr_caches(&self.vault.store, &mut wtxn, &tgt)?;
-                    ppr::increment_graph_version(&self.vault.store, &mut wtxn)?;
+                    ppr::invalidate_ppr_for_edge(&self.vault.store, &mut wtxn, &src, &tgt)?;
                 }
                 BatchOp::Text { id, fields } => {
                     crate::bm25::index_text(&self.vault.store, &mut wtxn, &id, &fields)?;
@@ -198,19 +195,16 @@ impl<'a> BatchBuilder<'a> {
                 }
                 BatchOp::Delete { id } => {
                     let (_, neighbors) = deindex_entity(&self.vault.store, &mut wtxn, &id)?;
-                    if !neighbors.is_empty() {
-                        ppr::invalidate_ppr_caches(&self.vault.store, &mut wtxn, &id)?;
-                        for neighbor in &neighbors {
-                            ppr::invalidate_ppr_caches(&self.vault.store, &mut wtxn, neighbor)?;
-                        }
-                        ppr::increment_graph_version(&self.vault.store, &mut wtxn)?;
-                    }
+                    ppr::invalidate_ppr_for_delete(
+                        &self.vault.store,
+                        &mut wtxn,
+                        &id,
+                        &neighbors,
+                    )?;
                 }
                 BatchOp::DeleteEdge { src, kind, tgt } => {
                     apply_delete_edge(&self.vault.store, &mut wtxn, src, kind, tgt)?;
-                    ppr::invalidate_ppr_caches(&self.vault.store, &mut wtxn, &src)?;
-                    ppr::invalidate_ppr_caches(&self.vault.store, &mut wtxn, &tgt)?;
-                    ppr::increment_graph_version(&self.vault.store, &mut wtxn)?;
+                    ppr::invalidate_ppr_for_edge(&self.vault.store, &mut wtxn, &src, &tgt)?;
                 }
             }
         }
@@ -372,7 +366,7 @@ fn apply_edge(
 
     let key_out = Store::encode_edge_key(&src, kind, &tgt);
     let key_in = Store::encode_edge_key(&tgt, kind, &src);
-    let value = encode_edge_value(weight, unix_seconds_now());
+    let value = encode_edge_value(weight, crate::unix_seconds_now());
     store.edges_out.put(wtxn, &key_out, &value)?;
     store.edges_in.put(wtxn, &key_in, &value)?;
     Ok(())
@@ -599,10 +593,4 @@ fn encode_edge_value(weight: f32, created_at: u64) -> [u8; EDGE_VALUE_LEN] {
     value[..4].copy_from_slice(&weight.to_le_bytes());
     value[4..].copy_from_slice(&created_at.to_le_bytes());
     value
-}
-
-fn unix_seconds_now() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0, |duration| duration.as_secs())
 }
