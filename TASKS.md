@@ -247,6 +247,10 @@ Implement the `BatchBuilder` for atomic multi-database writes, and all secondary
 **Review follow-ups from Task 1:**
 - Consider zero-copy vector reads (`&[u8]` → `&[f32]` reinterpret) to avoid 16KB alloc per vector during search
 
+**Review follow-ups from Task 2:**
+- Validate `weight.is_finite()` in `apply_edge` and vector elements in `apply_vector` (NaN/Inf poisons HNSW distances)
+- Refactor `put_vector` to route through `BatchBuilder` (`self.batch().vector(id, vector).commit()`) so HNSW insert hook applies
+
 **Key notes from BUILD-PROMPT.md §8:**
 - Do NOT pre-allocate huge `Vec`s for neighbor lists. Read/write from LMDB each time.
 - Entry point update: only update if new node has more connections (not needed for flat NSW, just set first node)
@@ -291,6 +295,9 @@ Implement the `BatchBuilder` for atomic multi-database writes, and all secondary
 **Files:** `fusion.rs`, `pipeline.rs`
 **Est:** ~300 LOC
 **Depends on:** Task 3, Task 4, Task 5
+
+**Review follow-ups from Task 2:**
+- Add `phonetic_forward` index (entity → codes) to replace O(vocabulary_size) full scan in `delete_from_phonetic_postings`
 
 **RRF Fusion (`fusion.rs`):**
 - `rrf_fuse(ranked_lists: &[Vec<ScoredEntity>], k: f32) -> Vec<ScoredEntity>`
@@ -377,6 +384,9 @@ Implement the `BatchBuilder` for atomic multi-database writes, and all secondary
 - Token budget: verify output doesn't exceed budget
 - Empty results: verify graceful handling
 
+**Review follow-ups from Task 2:**
+- Add `// SAFETY:` comment to `unsafe` block in `store.rs:47-53` (`EnvOpenOptions::open`) documenting invariants: single Env per path, no NFS, no concurrent map_size. Important for FFI/C consumers.
+
 ---
 
 ## Task 8: Index Maintenance API
@@ -386,6 +396,10 @@ Implement the `BatchBuilder` for atomic multi-database writes, and all secondary
 **Depends on:** Task 4, Task 5
 
 Deterministic index maintenance primitives — the dreamer (in `oneiron-internal`) calls these.
+
+**Review follow-ups from Task 2:**
+- Add specific error variants for `Error::InvalidKey` (currently overloaded for ~8 different failure modes)
+- Reject unknown entity types (>11) in `apply_put` or encode type byte into short ID prefix to prevent `"xx"` collision across types
 
 **MaintenanceBuilder (`maintain.rs`):**
 - `MaintenanceBuilder<'a>` borrowing `&'a Vault`

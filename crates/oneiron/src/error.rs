@@ -19,6 +19,9 @@ pub enum Error {
     /// LMDB map is full and requires a larger map size.
     #[error("lmdb map is full")]
     MapFull,
+    /// Invalid runtime configuration input.
+    #[error("invalid config: {0}")]
+    InvalidConfig(String),
     /// Requested entity does not exist.
     #[error("entity not found")]
     EntityNotFound,
