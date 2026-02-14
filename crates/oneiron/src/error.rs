@@ -13,6 +13,12 @@ pub enum Error {
     /// Vector dimension does not match vault configuration.
     #[error("dimension mismatch: expected {expected}, got {got}")]
     DimensionMismatch { expected: usize, got: usize },
+    /// Vector contains NaN or infinity values.
+    #[error("vector contains non-finite values (NaN or Inf)")]
+    InvalidVector,
+    /// Edge weight contains NaN or infinity values.
+    #[error("edge weight is non-finite (NaN or Inf)")]
+    InvalidEdgeWeight,
     /// Stored embedding model differs from requested model.
     #[error("embedding model changed: stored={stored}, requested={requested}")]
     EmbeddingModelChanged { stored: String, requested: String },
