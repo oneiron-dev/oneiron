@@ -1,4 +1,5 @@
 use std::path::Path;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use heed::types::Bytes;
 use heed::Database;
@@ -8,6 +9,7 @@ pub(crate) mod bm25;
 pub(crate) mod distance;
 pub mod error;
 pub(crate) mod hnsw;
+pub(crate) mod ppr;
 pub mod store;
 pub mod types;
 
@@ -78,7 +80,8 @@ impl Vault {
     /// Deletes an entity blob by ID.
     pub fn delete_entity(&self, id: &EntityId) -> Result<bool> {
         let mut wtxn = self.store.env.write_txn()?;
-        let existed = deindex_entity(&self.store, &mut wtxn, id)?;
+        let (existed, neighbors) = deindex_entity(&self.store, &mut wtxn, id)?;
+        ppr::invalidate_ppr_for_delete(&self.store, &mut wtxn, id, &neighbors)?;
         wtxn.commit()?;
         Ok(existed)
     }
@@ -136,13 +139,16 @@ impl Vault {
     /// Deletes a directed edge and its reverse index entry.
     pub fn delete_edge(&self, src: &EntityId, kind: EdgeKind, tgt: &EntityId) -> Result<bool> {
         let key_out = Store::encode_edge_key(src, kind, tgt);
-        let key_in = Store::encode_edge_key(tgt, kind, src);
+        let rtxn = self.store.env.read_txn()?;
+        let existed = self.store.edges_out.get(&rtxn, &key_out)?.is_some();
+        drop(rtxn);
 
-        let mut wtxn = self.store.env.write_txn()?;
-        let existed_out = self.store.edges_out.delete(&mut wtxn, &key_out)?;
-        let existed_in = self.store.edges_in.delete(&mut wtxn, &key_in)?;
-        wtxn.commit()?;
-        Ok(existed_out || existed_in)
+        if !existed {
+            return Ok(false);
+        }
+
+        self.batch().delete_edge(src, kind, tgt).commit()?;
+        Ok(true)
     }
 
     /// Returns outbound edges for `src`.
@@ -167,6 +173,12 @@ impl Vault {
     pub fn batch(&self) -> BatchBuilder<'_> {
         BatchBuilder::new(self)
     }
+}
+
+pub(crate) fn unix_seconds_now() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |duration| duration.as_secs())
 }
 
 pub(crate) fn le_bytes_to_f32_vec(bytes: &[u8]) -> Result<Vec<f32>> {

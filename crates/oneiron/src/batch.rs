@@ -1,10 +1,10 @@
 use std::str;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use heed::RwTxn;
 use xxhash_rust::xxh32::xxh32;
 
 use crate::error::{Error, Result};
+use crate::ppr;
 use crate::store::Store;
 use crate::types::{short_id_prefix, EdgeKind, EntityId, TimeRange, ENTITY_ID_LEN};
 use crate::Vault;
@@ -185,6 +185,7 @@ impl<'a> BatchBuilder<'a> {
                     weight,
                 } => {
                     apply_edge(&self.vault.store, &mut wtxn, src, kind, tgt, weight)?;
+                    ppr::invalidate_ppr_for_edge(&self.vault.store, &mut wtxn, &src, &tgt)?;
                 }
                 BatchOp::Text { id, fields } => {
                     crate::bm25::index_text(&self.vault.store, &mut wtxn, &id, &fields)?;
@@ -193,10 +194,12 @@ impl<'a> BatchBuilder<'a> {
                     apply_phonetic(&self.vault.store, &mut wtxn, id, &codes)?;
                 }
                 BatchOp::Delete { id } => {
-                    let _ = deindex_entity(&self.vault.store, &mut wtxn, &id)?;
+                    let (_, neighbors) = deindex_entity(&self.vault.store, &mut wtxn, &id)?;
+                    ppr::invalidate_ppr_for_delete(&self.vault.store, &mut wtxn, &id, &neighbors)?;
                 }
                 BatchOp::DeleteEdge { src, kind, tgt } => {
                     apply_delete_edge(&self.vault.store, &mut wtxn, src, kind, tgt)?;
+                    ppr::invalidate_ppr_for_edge(&self.vault.store, &mut wtxn, &src, &tgt)?;
                 }
             }
         }
@@ -206,7 +209,11 @@ impl<'a> BatchBuilder<'a> {
     }
 }
 
-pub(crate) fn deindex_entity(store: &Store, wtxn: &mut RwTxn<'_>, id: &EntityId) -> Result<bool> {
+pub(crate) fn deindex_entity(
+    store: &Store,
+    wtxn: &mut RwTxn<'_>,
+    id: &EntityId,
+) -> Result<(bool, Vec<EntityId>)> {
     // Clean secondary indexes unconditionally — they may exist even without an
     // entity record (e.g. text indexed via batch().text() without a preceding put()).
     crate::bm25::deindex_text(store, wtxn, id)?;
@@ -215,7 +222,7 @@ pub(crate) fn deindex_entity(store: &Store, wtxn: &mut RwTxn<'_>, id: &EntityId)
     crate::hnsw::hnsw_deindex(store, wtxn, id)?;
 
     let Some(entity_record) = store.entities.get(wtxn, id.as_bytes())? else {
-        return Ok(false);
+        return Ok((false, Vec::new()));
     };
 
     let (entity_type, occurred, learned_at) = parse_entity_metadata(entity_record)?;
@@ -236,7 +243,7 @@ pub(crate) fn deindex_entity(store: &Store, wtxn: &mut RwTxn<'_>, id: &EntityId)
     let learned_key = Store::encode_temporal_key(learned_at, id);
     store.temporal_learned.delete(wtxn, &learned_key)?;
 
-    delete_related_edges(store, wtxn, id)?;
+    let neighbors = delete_related_edges(store, wtxn, id)?;
 
     if let Some(raw) = store.short_ids.get(wtxn, id.as_bytes())? {
         let (short_id, _) = parse_short_id_value(raw)?;
@@ -246,7 +253,7 @@ pub(crate) fn deindex_entity(store: &Store, wtxn: &mut RwTxn<'_>, id: &EntityId)
     }
 
     store.entities.delete(wtxn, id.as_bytes())?;
-    Ok(true)
+    Ok((true, neighbors))
 }
 
 fn apply_put(
@@ -354,7 +361,7 @@ fn apply_edge(
 
     let key_out = Store::encode_edge_key(&src, kind, &tgt);
     let key_in = Store::encode_edge_key(&tgt, kind, &src);
-    let value = encode_edge_value(weight, unix_seconds_now());
+    let value = encode_edge_value(weight, crate::unix_seconds_now());
     store.edges_out.put(wtxn, &key_out, &value)?;
     store.edges_in.put(wtxn, &key_in, &value)?;
     Ok(())
@@ -475,7 +482,11 @@ fn parse_entity_metadata(record: &[u8]) -> Result<(u8, TimeRange, u64)> {
     Ok((entity_type, TimeRange { start, end }, learned))
 }
 
-fn delete_related_edges(store: &Store, wtxn: &mut RwTxn<'_>, id: &EntityId) -> Result<()> {
+fn delete_related_edges(
+    store: &Store,
+    wtxn: &mut RwTxn<'_>,
+    id: &EntityId,
+) -> Result<Vec<EntityId>> {
     let mut outbound = Vec::new();
     for entry in store.edges_out.prefix_iter(wtxn, id.as_bytes())? {
         let (key, value) = entry?;
@@ -485,9 +496,9 @@ fn delete_related_edges(store: &Store, wtxn: &mut RwTxn<'_>, id: &EntityId) -> R
         outbound.push((kind, target));
     }
 
-    for (kind, target) in outbound {
-        let out_key = Store::encode_edge_key(id, kind, &target);
-        let in_key = Store::encode_edge_key(&target, kind, id);
+    for (kind, target) in &outbound {
+        let out_key = Store::encode_edge_key(id, *kind, target);
+        let in_key = Store::encode_edge_key(target, *kind, id);
         store.edges_out.delete(wtxn, &out_key)?;
         store.edges_in.delete(wtxn, &in_key)?;
     }
@@ -501,14 +512,21 @@ fn delete_related_edges(store: &Store, wtxn: &mut RwTxn<'_>, id: &EntityId) -> R
         inbound.push((kind, source));
     }
 
-    for (kind, source) in inbound {
-        let in_key = Store::encode_edge_key(id, kind, &source);
-        let out_key = Store::encode_edge_key(&source, kind, id);
+    for (kind, source) in &inbound {
+        let in_key = Store::encode_edge_key(id, *kind, source);
+        let out_key = Store::encode_edge_key(source, *kind, id);
         store.edges_in.delete(wtxn, &in_key)?;
         store.edges_out.delete(wtxn, &out_key)?;
     }
 
-    Ok(())
+    let mut neighbors: Vec<EntityId> = outbound
+        .into_iter()
+        .map(|(_, id)| id)
+        .chain(inbound.into_iter().map(|(_, id)| id))
+        .collect();
+    neighbors.sort_unstable();
+    neighbors.dedup();
+    Ok(neighbors)
 }
 
 fn delete_from_phonetic_postings(store: &Store, wtxn: &mut RwTxn<'_>, id: &EntityId) -> Result<()> {
@@ -570,10 +588,4 @@ fn encode_edge_value(weight: f32, created_at: u64) -> [u8; EDGE_VALUE_LEN] {
     value[..4].copy_from_slice(&weight.to_le_bytes());
     value[4..].copy_from_slice(&created_at.to_le_bytes());
     value
-}
-
-fn unix_seconds_now() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0, |duration| duration.as_secs())
 }
