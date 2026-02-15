@@ -180,14 +180,14 @@ pub(crate) fn invalidate_ppr_for_delete(
     id: &EntityId,
     neighbors: &[EntityId],
 ) -> Result<()> {
-    if neighbors.is_empty() {
-        return Ok(());
-    }
     invalidate_ppr_caches(store, wtxn, id)?;
     for neighbor in neighbors {
         invalidate_ppr_caches(store, wtxn, neighbor)?;
     }
-    increment_graph_version(store, wtxn)
+    if !neighbors.is_empty() {
+        increment_graph_version(store, wtxn)?;
+    }
+    Ok(())
 }
 
 fn increment_graph_version(store: &Store, wtxn: &mut RwTxn<'_>) -> Result<()> {
