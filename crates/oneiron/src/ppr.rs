@@ -129,11 +129,7 @@ pub(crate) fn ppr_query(
     Ok(scores)
 }
 
-fn invalidate_ppr_caches(
-    store: &Store,
-    wtxn: &mut RwTxn<'_>,
-    entity_id: &EntityId,
-) -> Result<()> {
+fn invalidate_ppr_caches(store: &Store, wtxn: &mut RwTxn<'_>, entity_id: &EntityId) -> Result<()> {
     let mut hashes = HashSet::<[u8; SEED_HASH_LEN]>::new();
     for entry in store
         .ppr_cache_deps

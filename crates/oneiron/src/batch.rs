@@ -195,12 +195,7 @@ impl<'a> BatchBuilder<'a> {
                 }
                 BatchOp::Delete { id } => {
                     let (_, neighbors) = deindex_entity(&self.vault.store, &mut wtxn, &id)?;
-                    ppr::invalidate_ppr_for_delete(
-                        &self.vault.store,
-                        &mut wtxn,
-                        &id,
-                        &neighbors,
-                    )?;
+                    ppr::invalidate_ppr_for_delete(&self.vault.store, &mut wtxn, &id, &neighbors)?;
                 }
                 BatchOp::DeleteEdge { src, kind, tgt } => {
                     apply_delete_edge(&self.vault.store, &mut wtxn, src, kind, tgt)?;
