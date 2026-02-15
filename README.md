@@ -22,6 +22,14 @@ One binary. One process. Zero network hops.
 
 Most retrieval stacks bolt together separate services for vectors, text, and graphs — network hops, consistency gaps, and operational complexity that doesn't belong on a phone. Oneiron runs in-process as a Rust library with C FFI bindings. Every query touches a single LMDB environment with ACID transactions. Embed it on iOS, Android, desktop, or a server.
 
+<div align="center">
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="./docs/deployment-dark.svg">
+  <source media="(prefers-color-scheme: light)" srcset="./docs/deployment-light.svg">
+  <img alt="oneiron deployment targets" src="./docs/deployment-light.svg" width="600">
+</picture>
+</div>
+
 ## Signals
 
 | Signal | Engine | What it finds |
@@ -57,6 +65,14 @@ cargo test
 ## Design
 
 18 LMDB databases per vault. Atomic multi-database writes via `BatchBuilder`. MessagePack entity blobs. Context packing into LLM-ready formats.
+
+<div align="center">
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="./docs/storage-dark.svg">
+  <source media="(prefers-color-scheme: light)" srcset="./docs/storage-light.svg">
+  <img alt="oneiron storage layout" src="./docs/storage-light.svg" width="700">
+</picture>
+</div>
 
 Full details in the design docs:
 

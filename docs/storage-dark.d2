@@ -1,0 +1,91 @@
+direction: down
+
+vault: LMDB Environment (18 databases) {
+  style.fill: "#1A1A1A"
+  style.stroke: "#E63E2A"
+  style.border-radius: 12
+  style.font-color: "#E63E2A"
+  style.font-size: 16
+  style.bold: true
+
+  grid-columns: 3
+  grid-gap: 16
+
+  core: "Core" {
+    shape: class
+    style.fill: "#111111"
+    style.stroke: "#C8C4BA"
+    style.border-radius: 8
+    style.font-color: "#C8C4BA"
+    style.font-size: 13
+
+    entities
+    type_index
+    short_ids
+    short_ids_reverse
+  }
+
+  vector: "Vector" {
+    shape: class
+    style.fill: "#111111"
+    style.stroke: "#E63E2A"
+    style.border-radius: 8
+    style.font-color: "#E63E2A"
+    style.font-size: 13
+
+    vectors
+    hnsw_neighbors
+    hnsw_meta
+  }
+
+  text: "Text" {
+    shape: class
+    style.fill: "#111111"
+    style.stroke: "#C4824D"
+    style.border-radius: 8
+    style.font-color: "#C4824D"
+    style.font-size: 13
+
+    text_postings
+    text_meta
+    text_forward
+  }
+
+  graph: "Graph" {
+    shape: class
+    style.fill: "#111111"
+    style.stroke: "#6BA87D"
+    style.border-radius: 8
+    style.font-color: "#6BA87D"
+    style.font-size: 13
+
+    edges_out
+    edges_in
+    ppr_cache
+    ppr_cache_deps
+  }
+
+  temporal: "Temporal" {
+    shape: class
+    style.fill: "#111111"
+    style.stroke: "#9CA3AF"
+    style.border-radius: 8
+    style.font-color: "#9CA3AF"
+    style.font-size: 13
+
+    temporal_occurred_start
+    temporal_occurred_end
+    temporal_learned
+  }
+
+  phonetic: "Phonetic" {
+    shape: class
+    style.fill: "#111111"
+    style.stroke: "#C8C4BA"
+    style.border-radius: 8
+    style.font-color: "#C8C4BA"
+    style.font-size: 13
+
+    phonetic_index
+  }
+}
