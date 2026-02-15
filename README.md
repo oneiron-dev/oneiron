@@ -9,9 +9,9 @@ One binary. One process. Zero network hops.
 <br>
 
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="./docs/architecture-dark.svg">
-  <source media="(prefers-color-scheme: light)" srcset="./docs/architecture-light.svg">
-  <img alt="oneiron architecture" src="./docs/architecture-light.svg" width="700">
+  <source media="(prefers-color-scheme: dark)" srcset="./docs/architecture-dark.svg?v=2">
+  <source media="(prefers-color-scheme: light)" srcset="./docs/architecture-light.svg?v=2">
+  <img alt="oneiron architecture" src="./docs/architecture-light.svg?v=2" width="700">
 </picture>
 
 <br>
@@ -24,9 +24,9 @@ Most retrieval stacks bolt together separate services for vectors, text, and gra
 
 <div align="center">
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="./docs/deployment-dark.svg">
-  <source media="(prefers-color-scheme: light)" srcset="./docs/deployment-light.svg">
-  <img alt="oneiron deployment targets" src="./docs/deployment-light.svg" width="600">
+  <source media="(prefers-color-scheme: dark)" srcset="./docs/deployment-dark.svg?v=2">
+  <source media="(prefers-color-scheme: light)" srcset="./docs/deployment-light.svg?v=2">
+  <img alt="oneiron deployment targets" src="./docs/deployment-light.svg?v=2" width="600">
 </picture>
 </div>
 
@@ -68,9 +68,9 @@ cargo test
 
 <div align="center">
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="./docs/storage-dark.svg">
-  <source media="(prefers-color-scheme: light)" srcset="./docs/storage-light.svg">
-  <img alt="oneiron storage layout" src="./docs/storage-light.svg" width="700">
+  <source media="(prefers-color-scheme: dark)" srcset="./docs/storage-dark.svg?v=2">
+  <source media="(prefers-color-scheme: light)" srcset="./docs/storage-light.svg?v=2">
+  <img alt="oneiron storage layout" src="./docs/storage-light.svg?v=2" width="700">
 </picture>
 </div>
 
