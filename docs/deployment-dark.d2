@@ -1,0 +1,59 @@
+direction: right
+
+core: Oneiron\n(Rust) {
+  style.fill: "#E63E2A"
+  style.font-color: "#ffffff"
+  style.stroke: "#c4321f"
+  style.border-radius: 8
+  style.font-size: 14
+  style.bold: true
+  style.shadow: true
+}
+
+ffi: C FFI {
+  style.fill: "#C8C4BA"
+  style.font-color: "#111111"
+  style.stroke: "#C8C4BA"
+  style.border-radius: 8
+  style.font-size: 13
+  style.bold: true
+}
+
+ios: iOS\naarch64 · NEON {
+  style.fill: "#1A1A1A"
+  style.font-color: "#C8C4BA"
+  style.stroke: "#C8C4BA"
+  style.border-radius: 8
+  style.font-size: 12
+}
+
+android: Android\naarch64 · NEON {
+  style.fill: "#1A1A1A"
+  style.font-color: "#C8C4BA"
+  style.stroke: "#C8C4BA"
+  style.border-radius: 8
+  style.font-size: 12
+}
+
+desktop: Desktop\nAVX2 · NEON {
+  style.fill: "#1A1A1A"
+  style.font-color: "#C8C4BA"
+  style.stroke: "#C8C4BA"
+  style.border-radius: 8
+  style.font-size: 12
+}
+
+server: Server\nx86_64 · AVX2 {
+  style.fill: "#1A1A1A"
+  style.font-color: "#C8C4BA"
+  style.stroke: "#C8C4BA"
+  style.border-radius: 8
+  style.font-size: 12
+}
+
+core -> ffi: {style.stroke: "#E63E2A"; style.stroke-width: 2}
+
+ffi -> ios: {style.stroke: "#9CA3AF"; style.stroke-width: 2}
+ffi -> android: {style.stroke: "#9CA3AF"; style.stroke-width: 2}
+ffi -> desktop: {style.stroke: "#9CA3AF"; style.stroke-width: 2}
+ffi -> server: {style.stroke: "#9CA3AF"; style.stroke-width: 2}
