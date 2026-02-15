@@ -75,21 +75,50 @@ All edges: `style.stroke-width: 2`
 
 ```bash
 # Light mode
-d2 --sketch architecture.d2 architecture-light.svg
+d2 --sketch <name>.d2 <name>-light.svg
 
-# Dark mode (--dark-theme only works with SVG)
-d2 --sketch --dark-theme 200 architecture-dark.d2 architecture-dark.svg
+# Dark mode — render WITHOUT --dark-theme, then post-process
+d2 --sketch <name>-dark.d2 <name>-dark.svg
 ```
 
 The `--sketch` flag adds analog warmth matching Oneiron's noise-texture aesthetic.
 
+**Important: Do NOT use `--dark-theme`.**  D2's built-in dark themes (200 = Catppuccin Mocha, 201 = Flagship) inject blue-violet tinted neutrals (`#1E1E2E`, `#0D32B2`, `#4A6FF3`, etc.) that clash with Oneiron's warm neutral palette. Instead, render dark SVGs with the default theme and post-process to replace D2's light-theme neutrals with Oneiron-brand dark grays:
+
+```bash
+# Post-process: replace D2's blue-tinted neutrals with brand neutrals
+sed -i '' \
+  -e 's/#FFFFFF/#111111/g' \
+  -e 's/#EEF1F8/#1A1A1A/g' \
+  -e 's/#DEE1EB/#222222/g' \
+  -e 's/#CFD2DD/#2A2A2A/g' \
+  -e 's/#9499AB/#444444/g' \
+  -e 's/#676C7E/#666666/g' \
+  -e 's/#0A0F25/#888888/g' \
+  -e 's/#0D32B2/#333333/g' \
+  -e 's/#4A6FF3/#555555/g' \
+  -e 's/#3d4574/#333333/g' \
+  -e 's/#E3E9FD/#1C1C1C/g' \
+  -e 's/#EDF0FD/#181818/g' \
+  -e 's/#F7F8FE/#141414/g' \
+  <name>-dark.svg
+```
+
 ## Files
 
-| File                    | Purpose                     |
-|-------------------------|-----------------------------|
-| `architecture.d2`       | Light mode source           |
-| `architecture-dark.d2`  | Dark mode source            |
-| `architecture-light.svg`| Light SVG (README)          |
-| `architecture-dark.svg` | Dark SVG (README)           |
+| File                      | Purpose                     |
+|---------------------------|-----------------------------|
+| `architecture.d2`         | Architecture — light source |
+| `architecture-dark.d2`    | Architecture — dark source  |
+| `architecture-light.svg`  | Architecture — light SVG    |
+| `architecture-dark.svg`   | Architecture — dark SVG     |
+| `storage-light.d2`        | Storage layout — light      |
+| `storage-dark.d2`         | Storage layout — dark       |
+| `storage-light.svg`       | Storage layout — light SVG  |
+| `storage-dark.svg`        | Storage layout — dark SVG   |
+| `deployment-light.d2`     | Deployment — light          |
+| `deployment-dark.d2`      | Deployment — dark           |
+| `deployment-light.svg`    | Deployment — light SVG      |
+| `deployment-dark.svg`     | Deployment — dark SVG       |
 
-The README uses a `<picture>` element to auto-switch between light and dark SVGs based on the viewer's color scheme preference.
+The README uses `<picture>` elements to auto-switch between light and dark SVGs based on the viewer's color scheme preference.
