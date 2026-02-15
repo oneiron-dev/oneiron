@@ -4,15 +4,15 @@ Style tokens derived from [oneiron.dev](https://oneiron.dev) landing page.
 
 ## Palette
 
-| Token   | Hex       | Role                          |
-|---------|-----------|-------------------------------|
-| accent  | `#E63E2A` | Hero elements, primary action |
-| ink     | `#1a1a1a` | Text, heavy/convergence nodes |
-| surface | `#F4F0E6` | Warm parchment backgrounds    |
-| success | `#4A7C59` | Completion, positive output   |
-| muted   | `#6B7280` | Secondary connections         |
-| brown   | `#8B5A2B` | Warm secondary accent         |
-| raised  | `#ffffff` | Elevated surfaces             |
+| Token   | Light     | Dark      | Role                          |
+|---------|-----------|-----------|-------------------------------|
+| accent  | `#E63E2A` | `#E63E2A` | Hero elements, primary action |
+| ink     | `#1a1a1a` | `#C8C4BA` | Text, heavy/convergence nodes |
+| surface | `#F4F0E6` | `#111111` | Background                    |
+| raised  | `#ffffff` | `#1A1A1A` | Elevated surfaces             |
+| success | `#4A7C59` | `#6BA87D` | Completion, positive output   |
+| muted   | `#6B7280` | `#9CA3AF` | Secondary connections         |
+| brown   | `#8B5A2B` | `#C4824D` | Warm secondary accent         |
 
 ## Node Styles
 
@@ -74,8 +74,22 @@ All edges: `style.stroke-width: 2`
 ## Rendering
 
 ```bash
-d2 --sketch input.d2 output.svg   # hand-drawn look (recommended)
-d2 --sketch input.d2 output.png   # raster version
+# Light mode
+d2 --sketch architecture.d2 architecture-light.svg
+
+# Dark mode (--dark-theme only works with SVG)
+d2 --sketch --dark-theme 200 architecture-dark.d2 architecture-dark.svg
 ```
 
 The `--sketch` flag adds analog warmth matching Oneiron's noise-texture aesthetic.
+
+## Files
+
+| File                    | Purpose                     |
+|-------------------------|-----------------------------|
+| `architecture.d2`       | Light mode source           |
+| `architecture-dark.d2`  | Dark mode source            |
+| `architecture-light.svg`| Light SVG (README)          |
+| `architecture-dark.svg` | Dark SVG (README)           |
+
+The README uses a `<picture>` element to auto-switch between light and dark SVGs based on the viewer's color scheme preference.
