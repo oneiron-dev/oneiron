@@ -745,43 +745,51 @@ fn boost_contiguity(
     }
 
     let sigma_contig = resolve_sigma_secs(config.sigma_secs).min(LONG_INTERVAL_THRESHOLD_SECS);
+    let use_learned = config.anchor_mode == TemporalAnchorMode::Learned;
 
-    let metadata: Vec<Option<EntityMetadata>> = scores
+    // Extract (start, end) per entity based on axis mode.
+    // Entities with missing metadata get None and are skipped.
+    let intervals: Vec<Option<(u64, u64)>> = scores
         .iter()
-        .map(|scored| read_entity_metadata(store, rtxn, &scored.id))
+        .map(|scored| {
+            let meta = read_entity_metadata(store, rtxn, &scored.id)?;
+            Ok(meta.map(|m| {
+                if use_learned {
+                    (m.learned_at, m.learned_at)
+                } else {
+                    (m.occurred_start, m.occurred_end)
+                }
+            }))
+        })
         .collect::<Result<Vec<_>>>()?;
 
+    // Build sorted start/end arrays from present entities only.
+    let mut sorted_starts: Vec<u64> = intervals.iter().filter_map(|i| i.map(|(s, _)| s)).collect();
+    let mut sorted_ends: Vec<u64> = intervals.iter().filter_map(|i| i.map(|(_, e)| e)).collect();
+    sorted_starts.sort_unstable();
+    sorted_ends.sort_unstable();
+
+    let n = sorted_starts.len(); // only entities with metadata
     let denom = (scores.len() - 1) as f32;
-    for (idx, maybe_current) in metadata.iter().enumerate() {
-        let Some(current) = *maybe_current else {
+
+    for (idx, interval) in intervals.iter().enumerate() {
+        let Some((s_i, e_i)) = *interval else {
             continue;
         };
 
-        let mut neighbors = 0_usize;
-        for (j, maybe_other) in metadata.iter().enumerate() {
-            if idx == j {
-                continue;
-            }
-            let Some(other) = *maybe_other else {
-                continue;
-            };
+        // Count entities too far left: e_j <= s_i - σ
+        // checked_sub: if s_i < σ, no entity can be too far left.
+        let too_left = s_i
+            .checked_sub(sigma_contig)
+            .map_or(0, |t| sorted_ends.partition_point(|&ej| ej <= t));
 
-            let distance = if config.anchor_mode == TemporalAnchorMode::Learned {
-                current.learned_at.abs_diff(other.learned_at)
-            } else {
-                interval_distance(
-                    current.occurred_start,
-                    current.occurred_end,
-                    other.occurred_start,
-                    other.occurred_end,
-                )
-            };
+        // Count entities too far right: s_j >= e_i + σ
+        // checked_add: if e_i + σ overflows, no entity can be too far right.
+        let too_right = e_i
+            .checked_add(sigma_contig)
+            .map_or(0, |t| n - sorted_starts.partition_point(|&sj| sj < t));
 
-            if distance < sigma_contig {
-                neighbors += 1;
-            }
-        }
-
+        let neighbors = (n - 1).saturating_sub(too_left + too_right);
         let contiguity = neighbors as f32 / denom.max(1.0);
         scores[idx].score *= 1.0 + 0.2 * contiguity;
     }

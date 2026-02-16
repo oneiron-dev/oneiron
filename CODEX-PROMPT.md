@@ -373,11 +373,18 @@ fn boost_contiguity(
 - **Window clamping:** `sigma_contig = min(temporal_config.sigma_secs, 14 * 86400)`. If temporal config is present but sigma is 0 (unset), default σ_contig = 86400 (1 day). If no temporal config exists at all, boost is skipped (see Gating).
 - **Axis-awareness:** For `Learned` anchor mode, compute distance using `|learned_a - learned_b|`. For all other modes (Occurred, Auto, Both), use `interval_distance` on occurred ranges.
 - For each scored entity, read timestamps from entity header (occurred: bytes 1..17, learned: bytes 17..25)
-- For each pair of entities, compute axis-aware distance
-- `neighbor_count(e)` = count of other entities in result set where `distance < sigma_contig`
+- **O(n log n) sorted-endpoint algorithm** (NOT naive O(n²) pairwise):
+  1. Extract `(s, e)` per entity: `(occurred_start, occurred_end)` for Occurred/Auto/Both, `(learned_at, learned_at)` for Learned
+  2. Build two sorted arrays: `sorted_starts` and `sorted_ends`
+  3. For each entity i, count neighbors via binary search with **checked arithmetic** for u64 boundary correctness:
+     - `too_left = s_i.checked_sub(σ).map_or(0, |t| sorted_ends.partition_point(|&ej| ej <= t))`
+     - `too_right = e_i.checked_add(σ).map_or(0, |t| n - sorted_starts.partition_point(|&sj| sj < t))`
+     - `neighbors = (n - 1).saturating_sub(too_left + too_right)`
+  - Uses exact `interval_distance` — NOT midpoint approximation (midpoints are wrong for long intervals)
+  - `checked_sub`/`checked_add` not `saturating_*` — saturating gives 0 on underflow which misclassifies intervals at timestamp 0
+  - Self-exclusion is automatic: entity i always satisfies both conditions when σ > 0
 - `contiguity = neighbor_count as f32 / max(scores.len() - 1, 1) as f32`
 - `score *= 1.0 + 0.2 × contiguity`
-- O(n²) where n = result_limit (typically 20) — negligible
 
 ---
 
