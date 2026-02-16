@@ -8,7 +8,7 @@ Style tokens derived from [oneiron.dev](https://oneiron.dev) landing page.
 |---------|-----------|-----------|-------------------------------|
 | accent  | `#E63E2A` | `#E63E2A` | Hero elements, primary action |
 | ink     | `#1a1a1a` | `#C8C4BA` | Text, markers, titles         |
-| surface | `#F4F0E6` | `#111111` | Background (N7)               |
+| surface | transparent | transparent | Background (N7) — blends with host page |
 | raised  | `#ffffff` | `#1E1E1E` | Elevated surfaces, headers    |
 | success | `#4A7C59` | `#6BA87D` | Completion, positive output   |
 | muted   | `#6B7280` | `#9CA3AF` | Secondary connections         |
@@ -165,25 +165,22 @@ We post-process to replace them with Oneiron brand colors.
 
 ## Post-Processing
 
-### Light mode — fix N7 background
+### All SVGs — transparent N7 background
 
-D2 theme 0 renders N7 as pure white. Replace with Oneiron cream:
+D2 renders N7 as a solid fill (white for light, `#1E1E2E` for dark). Replace with
+transparent so diagrams blend seamlessly with the host page (GitHub README, docs site, etc.):
 
 ```bash
+# Light mode
 sed -i '' \
-  -e 's/\.fill-N7{fill:#FFFFFF;}/.fill-N7{fill:#F4F0E6;}/g' \
-  -e 's/fill="#FFFFFF"/fill="#F4F0E6"/g' \
+  -e 's/\.fill-N7{fill:#FFFFFF;}/.fill-N7{fill:transparent;}/g' \
+  -e 's/fill="#FFFFFF"/fill="transparent"/g' \
   <name>-light.svg
-```
 
-### Dark mode — fix N7 background
-
-D2 theme 200 renders N7 as `#1E1E2E` (Catppuccin base). Replace with Oneiron surface:
-
-```bash
+# Dark mode
 sed -i '' \
-  -e 's/\.fill-N7{fill:#1E1E2E;}/.fill-N7{fill:#111111;}/g' \
-  -e 's/fill="#1E1E2E"/fill="#111111"/g' \
+  -e 's/\.fill-N7{fill:#1E1E2E;}/.fill-N7{fill:transparent;}/g' \
+  -e 's/fill="#1E1E2E"/fill="transparent"/g' \
   <name>-dark.svg
 ```
 
@@ -210,7 +207,7 @@ sed -i '' 's|<rect width="784.000000" height="470.000000" transform="translate(0
 The README uses `?v=N` query params on SVG references. Bump after every re-render:
 
 ```markdown
-<source srcset="./docs/storage-dark.svg?v=9">
+<source srcset="./docs/storage-dark.svg?v=10">
 ```
 
 ## Files
