@@ -6,23 +6,27 @@ use heed::Database;
 
 pub mod batch;
 pub(crate) mod bm25;
+pub mod context_pack;
 pub(crate) mod distance;
 pub mod error;
 pub(crate) mod fusion;
 pub(crate) mod hnsw;
 pub mod pipeline;
 pub(crate) mod ppr;
+pub mod serialize;
 pub mod store;
 pub mod types;
 
 pub use crate::batch::BatchBuilder;
 use crate::batch::{deindex_entity, EntityMetadataHeader, ENTITY_METADATA_HEADER_LEN};
+pub use crate::context_pack::ContextPackBuilder;
 pub use crate::error::{Error, Result};
 pub use crate::pipeline::PipelineBuilder;
 use crate::store::Store;
 pub use crate::types::{
-    EdgeKind, EntityId, FieldProfile, HnswConfig, PackFormat, ScoredEntity, Signal,
-    TemporalAnchorMode, TemporalGranularity, TimeRange, VaultConfig,
+    ContextEntity, ContextPack, EdgeInfo, EdgeKind, EntityId, FieldProfile, HnswConfig, PackFormat,
+    PackStats, ScoredEntity, Signal, SignalHit, TemporalAnchorMode, TemporalGranularity, TimeRange,
+    TokenAllocation, VaultConfig,
 };
 
 const MIN_MAP_SIZE_BYTES: usize = 1 << 20;
@@ -180,6 +184,11 @@ impl Vault {
     /// Creates a query pipeline builder for multi-signal retrieval.
     pub fn query(&self) -> PipelineBuilder<'_> {
         PipelineBuilder::new(self)
+    }
+
+    /// Creates a context pack builder for retrieval + hydration + serialization.
+    pub fn context_pack(&self) -> ContextPackBuilder<'_> {
+        ContextPackBuilder::new(self)
     }
 }
 
@@ -1252,6 +1261,42 @@ mod tests {
             assert!(db.is_some(), "missing database: {name}");
         }
 
+        Ok(())
+    }
+
+    #[test]
+    fn context_pack_run_serialized_toon_end_to_end() -> Result<()> {
+        let temp_dir = tempfile::tempdir()?;
+        let vault = Vault::open(temp_dir.path(), test_config())?;
+        let a = EntityId::now();
+        let b = EntityId::now();
+
+        let payload_a = rmp_serde::to_vec_named(&serde_json::json!({
+            "pred": "goal.learning",
+            "val": "Learn Japanese by June"
+        }))
+        .map_err(|_| Error::InvalidKey)?;
+        let payload_b = rmp_serde::to_vec_named(&serde_json::json!({ "name": "Alice" }))
+            .map_err(|_| Error::InvalidKey)?;
+
+        vault
+            .batch()
+            .put(&a, 0, test_time_range(100, 100), 101, &payload_a)
+            .text(&a, &[("body", "learn japanese")])
+            .put(&b, 4, test_time_range(102, 102), 103, &payload_b)
+            .edge(&a, EdgeKind::Mentions, &b, 1.0)
+            .commit()?;
+
+        let output = vault
+            .context_pack()
+            .search_text("japanese", 10)
+            .edge_hop(1)
+            .format(PackFormat::Toon)
+            .run_serialized()?;
+        assert!(!output.is_empty());
+
+        let text = String::from_utf8(output).map_err(|_| Error::InvalidKey)?;
+        assert!(text.contains("claims"));
         Ok(())
     }
 

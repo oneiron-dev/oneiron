@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use uuid::Uuid;
 
 pub(crate) const ENTITY_ID_LEN: usize = 16;
@@ -252,10 +254,90 @@ pub enum PackFormat {
     Plaintext,
 }
 
+impl Default for PackFormat {
+    fn default() -> Self {
+        Self::Json
+    }
+}
+
 /// Field selection profile for context packing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum FieldProfile {
     Minimal,
     Standard,
     Full,
+}
+
+impl Default for FieldProfile {
+    fn default() -> Self {
+        Self::Standard
+    }
+}
+
+/// Hydrated entity with decoded fields, edges, and provenance.
+#[derive(Debug, Clone)]
+pub struct ContextEntity {
+    pub id: EntityId,
+    pub short_id: String,
+    pub content_hash: u8,
+    pub entity_type: u8,
+    pub score: f32,
+    pub fields: Option<HashMap<String, serde_json::Value>>,
+    pub edges: Option<Vec<EdgeInfo>>,
+    pub vector: Option<Vec<f32>>,
+}
+
+/// Edge info for hydrated context entities.
+#[derive(Debug, Clone)]
+pub struct EdgeInfo {
+    pub kind: EdgeKind,
+    pub target: EntityId,
+    pub target_short_id: Option<String>,
+    pub weight: f32,
+    pub created_at: u64,
+}
+
+/// Which retrieval signal produced a hit and its raw score.
+#[derive(Debug, Clone, Copy)]
+pub struct SignalHit {
+    pub signal: Signal,
+    pub score: f32,
+}
+
+/// Stats about the context pack query.
+#[derive(Debug, Clone)]
+pub struct PackStats {
+    pub candidates_considered: usize,
+    pub signals_used: Vec<Signal>,
+    pub query_time_us: u64,
+    pub entities_hydrated: usize,
+    pub neighbors_hydrated: usize,
+}
+
+/// A fully hydrated context pack ready for serialization or programmatic use.
+#[derive(Debug, Clone)]
+pub struct ContextPack {
+    pub results: Vec<ContextEntity>,
+    pub neighbors: Vec<ContextEntity>,
+    pub stats: PackStats,
+}
+
+/// Token budget allocation across entity types.
+#[derive(Debug, Clone, Copy)]
+pub struct TokenAllocation {
+    pub claims: f32,
+    pub turns: f32,
+    pub summaries: f32,
+    pub other: f32,
+}
+
+impl Default for TokenAllocation {
+    fn default() -> Self {
+        Self {
+            claims: 0.45,
+            turns: 0.10,
+            summaries: 0.25,
+            other: 0.20,
+        }
+    }
 }
