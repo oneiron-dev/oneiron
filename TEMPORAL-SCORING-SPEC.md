@@ -184,7 +184,7 @@ Dynamic α behavior:
 
 For **Both** mode, `anchor_age` uses the occurred anchor (`abs_diff(now, anchor_end)`) since that represents the "when did it happen?" dimension.
 
-**Recency double-counting warning:** The pipeline also offers a post-RRF `boost_recency` (exponential decay by half-life). If both temporal search (which includes `s_recency` via α) AND `boost_recency` are enabled, recency is double-weighted. When temporal search is configured, `boost_recency` should typically be disabled. The pipeline builder should document this or auto-skip `boost_recency` when temporal search is present.
+**Recency auto-skip:** The pipeline also offers a post-RRF `boost_recency` (exponential decay by half-life). If any temporal search is configured on the pipeline, `boost_recency` is a **silent no-op** — temporal search already includes recency via `s_recency` weighted by dynamic α. The `boost_recency()` builder method still accepts the call (for API ergonomics) but skips execution when temporal search is present.
 
 ### TemporalAnchorMode
 
@@ -826,7 +826,7 @@ Future event scored correctly. `learned_at < occurred_start` is handled naturall
 45h. All threshold checks use saturating_sub — no panic on malformed data
 
 ### Recency double-counting
-45i. Pipeline with temporal search + boost_recency: warn or auto-skip boost_recency
+45i. Pipeline with temporal search + boost_recency: boost_recency is a silent no-op (scores unchanged)
 
 ### Error cases
 46. Skip missing entities: deleted entity in candidate set doesn't cause error

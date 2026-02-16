@@ -47,7 +47,7 @@ pub(crate) fn boost_recency(
   - `learned_at` is at bytes 17..25, big-endian u64
 - Exponential decay: `recency = exp(-ln(2) / (half_life_days * 86400) * (now - learned_at))`
 - Multiply: `score *= 1.0 + 0.5 * recency`
-- **Recency double-counting warning:** If temporal search is configured (which includes its own `s_recency` via α), `boost_recency` doubles the recency signal. The pipeline builder should log a warning or auto-skip `boost_recency` when `temporal_search` is present.
+- **Recency auto-skip:** If any temporal search is configured on the pipeline (`search_temporal`, `search_temporal_with_sigma`, `search_temporal_with_granularity`, or `search_temporal_bitemporal`), `boost_recency` is a **silent no-op** — it returns immediately without modifying scores. Temporal search already includes recency via `s_recency` weighted by dynamic α; applying `boost_recency` on top would double-count. The pipeline builder method `boost_recency()` still accepts the call (for API ergonomics) but skips execution when temporal search is present.
 
 ```rust
 pub(crate) fn boost_salience(
@@ -554,7 +554,7 @@ Write tests in `pipeline.rs` (or `fusion.rs`) under `#[cfg(test)] mod tests`.
 - **Future events**: entity with occurred_start in future (calendar event) scored correctly; learned_at < occurred_start handled naturally
 - **Overlap tie-break**: two entities both overlapping query (d=0) → entity closer to anchor midpoint ranks higher
 - **Underflow guards**: entity with occurred_start > occurred_end at put_entity → swapped before storing; all threshold checks use saturating_sub
-- **Recency double-counting**: pipeline with temporal search + boost_recency → warns or auto-skips boost_recency
+- **Recency auto-skip**: pipeline with temporal search + boost_recency → boost_recency is a silent no-op (scores unchanged)
 - **Granularity tiers**: same anchor range with `Day` vs `Year` granularity gives different score distributions
 - **Tier equivalence**: `search_temporal(start, end, limit)` produces same results as `search_temporal_with_sigma(start, end, max(e-s, 86400), Auto, limit)` when range_width >= 86400
 
