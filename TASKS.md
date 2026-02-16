@@ -297,12 +297,13 @@ Implement the `BatchBuilder` for atomic multi-database writes, and all secondary
 
 ---
 
-## Task 6: RRF Fusion + Pipeline Builder
+## Task 6: RRF Fusion + Pipeline Builder ✅ MERGED (PR #7)
 
-**Files:** `fusion.rs`, `temporal.rs`, `pipeline.rs`, `store.rs` (extend with `temporal_long_intervals`)
-**Est:** ~800 LOC
+**Files:** `fusion.rs`, `pipeline.rs`, `store.rs` (extend with `temporal_long_intervals`)
+**Actual:** ~1950 LOC across 6 files, 74 tests
 **Depends on:** Task 3, Task 4, Task 5
 **Spec status:** TEMPORAL-SCORING-SPEC.md v3.1 finalized (3 external review rounds), CODEX-PROMPT.md v3.1 is the implementation guide
+**Review:** 3 rounds, 6+ reviewer agents, 6 fixes applied, all verified
 
 **Review follow-ups from Task 2:**
 - [ ] Add `phonetic_forward` index (entity → codes) to replace O(vocabulary_size) full scan in `delete_from_phonetic_postings`
