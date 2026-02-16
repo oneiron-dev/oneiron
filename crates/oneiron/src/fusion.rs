@@ -11,6 +11,14 @@ use crate::error::Result;
 use crate::store::Store;
 use crate::types::{EntityId, ScoredEntity};
 
+pub(crate) fn sort_scored_entities_desc(scores: &mut [ScoredEntity]) {
+    scores.sort_unstable_by(|a, b| {
+        b.score
+            .total_cmp(&a.score)
+            .then_with(|| a.id.as_bytes().cmp(b.id.as_bytes()))
+    });
+}
+
 pub(crate) fn rrf_fuse(ranked_lists: &[Vec<ScoredEntity>], k: f32) -> Vec<ScoredEntity> {
     let mut fused = HashMap::<EntityId, f32>::new();
 
@@ -25,11 +33,7 @@ pub(crate) fn rrf_fuse(ranked_lists: &[Vec<ScoredEntity>], k: f32) -> Vec<Scored
         .into_iter()
         .map(|(id, score)| ScoredEntity { id, score })
         .collect();
-    out.sort_unstable_by(|a, b| {
-        b.score
-            .total_cmp(&a.score)
-            .then_with(|| a.id.as_bytes().cmp(b.id.as_bytes()))
-    });
+    sort_scored_entities_desc(&mut out);
     out
 }
 

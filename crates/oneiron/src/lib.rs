@@ -16,7 +16,7 @@ pub mod store;
 pub mod types;
 
 pub use crate::batch::BatchBuilder;
-use crate::batch::{deindex_entity, ENTITY_METADATA_HEADER_LEN};
+use crate::batch::{deindex_entity, EntityMetadataHeader, ENTITY_METADATA_HEADER_LEN};
 pub use crate::error::{Error, Result};
 pub use crate::pipeline::PipelineBuilder;
 use crate::store::Store;
@@ -73,7 +73,7 @@ impl Vault {
             return Ok(None);
         };
 
-        if bytes.len() < ENTITY_METADATA_HEADER_LEN {
+        if EntityMetadataHeader::parse(bytes).is_none() {
             return Err(Error::InvalidKey);
         }
 
