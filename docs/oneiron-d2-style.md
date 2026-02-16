@@ -14,6 +14,16 @@ Style tokens derived from [oneiron.dev](https://oneiron.dev) landing page.
 | muted   | `#6B7280` | `#9CA3AF` | Secondary connections         |
 | brown   | `#8B5A2B` | `#C4824D` | Warm secondary accent         |
 
+## Shadows
+
+All non-class nodes use `style.shadow: true` for a consistent "cards on a surface" look.
+This applies to architecture, deployment, and any future flow diagrams.
+
+**Storage diagrams are the exception** — `shape: class` boxes in a tight grid don't benefit
+from shadows (the chunky drop shadows create visual noise with no breathing room). D2 also
+silently ignores `style.shadow` on `shape: class`, so even if set, it produces no effect
+without manual SVG post-processing.
+
 ## Node Styles
 
 **Hero node** (e.g. Vault — the central/important element):
@@ -35,6 +45,7 @@ node: Label {
   style.font-color: "#1a1a1a"
   style.stroke: "#1a1a1a"
   style.border-radius: 8
+  style.shadow: true
 }
 ```
 
@@ -199,7 +210,7 @@ sed -i '' 's|<rect width="784.000000" height="470.000000" transform="translate(0
 The README uses `?v=N` query params on SVG references. Bump after every re-render:
 
 ```markdown
-<source srcset="./docs/storage-dark.svg?v=8">
+<source srcset="./docs/storage-dark.svg?v=9">
 ```
 
 ## Files
