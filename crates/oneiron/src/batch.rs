@@ -13,6 +13,35 @@ pub(crate) const ENTITY_METADATA_HEADER_LEN: usize = 25;
 const SHORT_ID_COUNTER_LEN: usize = 8;
 const EDGE_KEY_LEN: usize = 33;
 const EDGE_VALUE_LEN: usize = 12;
+pub(crate) const LONG_INTERVAL_THRESHOLD_SECS: u64 = 14 * 86_400;
+
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct EntityMetadataHeader {
+    pub(crate) entity_type: u8,
+    pub(crate) occurred_start: u64,
+    pub(crate) occurred_end: u64,
+    pub(crate) learned_at: u64,
+}
+
+impl EntityMetadataHeader {
+    pub(crate) fn parse(raw: &[u8]) -> Option<Self> {
+        if raw.len() < ENTITY_METADATA_HEADER_LEN {
+            return None;
+        }
+
+        let entity_type = raw[0];
+        let occurred_start = u64::from_be_bytes(raw[1..9].try_into().ok()?);
+        let occurred_end = u64::from_be_bytes(raw[9..17].try_into().ok()?);
+        let learned_at = u64::from_be_bytes(raw[17..25].try_into().ok()?);
+
+        Some(Self {
+            entity_type,
+            occurred_start,
+            occurred_end,
+            learned_at,
+        })
+    }
+}
 
 /// Builder for atomic multi-database write batches.
 pub struct BatchBuilder<'a> {
@@ -220,6 +249,7 @@ pub(crate) fn deindex_entity(
     delete_from_phonetic_postings(store, wtxn, id)?;
     store.vectors.delete(wtxn, id.as_bytes())?;
     crate::hnsw::hnsw_deindex(store, wtxn, id)?;
+    store.temporal_long_intervals.delete(wtxn, id.as_bytes())?;
 
     let Some(entity_record) = store.entities.get(wtxn, id.as_bytes())? else {
         return Ok((false, Vec::new()));
@@ -265,6 +295,13 @@ fn apply_put(
     learned_at: u64,
     data: &[u8],
 ) -> Result<()> {
+    let mut occurred = occurred;
+    if occurred.start > occurred.end {
+        std::mem::swap(&mut occurred.start, &mut occurred.end);
+    }
+
+    store.temporal_long_intervals.delete(wtxn, id.as_bytes())?;
+
     if let Some(old_record) = store.entities.get(wtxn, id.as_bytes())? {
         let (old_type, old_occurred, old_learned) = parse_entity_metadata(old_record)?;
 
@@ -317,6 +354,15 @@ fn apply_put(
 
     let learned_key = Store::encode_temporal_key(learned_at, &id);
     store.temporal_learned.put(wtxn, &learned_key, &[])?;
+
+    if occurred.end.saturating_sub(occurred.start) > LONG_INTERVAL_THRESHOLD_SECS {
+        let mut value = [0_u8; 16];
+        value[..8].copy_from_slice(&occurred.start.to_be_bytes());
+        value[8..].copy_from_slice(&occurred.end.to_be_bytes());
+        store
+            .temporal_long_intervals
+            .put(wtxn, id.as_bytes(), &value)?;
+    }
 
     upsert_short_id(store, wtxn, &id, entity_type, data)?;
     Ok(())
@@ -470,16 +516,16 @@ fn parse_short_id_value(value: &[u8]) -> Result<(&str, u8)> {
 }
 
 fn parse_entity_metadata(record: &[u8]) -> Result<(u8, TimeRange, u64)> {
-    if record.len() < ENTITY_METADATA_HEADER_LEN {
-        return Err(Error::InvalidKey);
-    }
+    let header = EntityMetadataHeader::parse(record).ok_or(Error::InvalidKey)?;
 
-    let entity_type = record[0];
-    let start = u64::from_be_bytes(record[1..9].try_into().map_err(|_| Error::InvalidKey)?);
-    let end = u64::from_be_bytes(record[9..17].try_into().map_err(|_| Error::InvalidKey)?);
-    let learned = u64::from_be_bytes(record[17..25].try_into().map_err(|_| Error::InvalidKey)?);
-
-    Ok((entity_type, TimeRange { start, end }, learned))
+    Ok((
+        header.entity_type,
+        TimeRange {
+            start: header.occurred_start,
+            end: header.occurred_end,
+        },
+        header.learned_at,
+    ))
 }
 
 fn delete_related_edges(
