@@ -7,6 +7,7 @@
 - v1: Initial formula (linear cutoff, single proximity, fixed α)
 - v2: Interval distance, σ-driven discovery, TemporalAnchorMode, dynamic α, bidirectional scan, adaptive widening, temporal contiguity boost
 - v3: Normalized noisy-OR (Auto mode), Both anchor mode, spanner interval index, contiguity improvements (axis-aware + clamped + gated), σ clamp fix, future events support, considered alternatives appendix
+- v3.1: Floor-preserving Both mode (normalized-space product), noisy-OR defensive clamp, overlap tie-break, abs_diff α for future anchors, true-spanner filter, spanner value stores bounds, adaptive widening skip-when-unchanged, underflow guards, recency double-counting docs
 
 ---
 
@@ -19,7 +20,7 @@ An entity in Oneiron has two temporal anchors (bitemporal model):
 | `occurred_start` / `occurred_end` | When the real-world event happened (or is scheduled to happen) | u64 BE in entity header bytes 1..17 | **Valid time** |
 | `learned_at` | When the entity was recorded into the system | u64 BE in entity header bytes 17..25 | **Transaction time** |
 
-**Relationship between timestamps:** Typically `learned_at >= occurred_start` (events are recorded after they happen). However, for future-scheduled entities (calendar events, plans, commitments, habit experiments), `learned_at < occurred_start` is expected and handled correctly — the scoring functions work symmetrically on unsigned distances. For `anchor_age` calculation (`now.saturating_sub(anchor_end)`), future anchors yield 0, so α ≈ 0.7 and recency remains active. This matches the intended behavior: "what's coming up next week?" should weight recently-added information.
+**Relationship between timestamps:** Typically `learned_at >= occurred_start` (events are recorded after they happen). However, for future-scheduled entities (calendar events, plans, commitments, habit experiments), `learned_at < occurred_start` is expected and handled correctly — the scoring functions work symmetrically on unsigned distances. For `anchor_age` calculation, we use `abs_diff(now, anchor_end)` — symmetric distance regardless of past/future direction. Near-future anchors get α ≈ 0.72 (recency mostly active), while far-future anchors (e.g., 2027) gradually suppress recency, matching the behavior for far-past anchors.
 
 A query arrives with an anchor time range `[anchor_start, anchor_end]`. The scoring function must answer: **how temporally relevant is this entity to the query?**
 
@@ -57,7 +58,7 @@ We surveyed 11+ papers for temporal scoring approaches. Key findings:
 
 **Key observations:**
 - Only Hindsight stores both occurred and learned timestamps; nobody scores both against the query
-- Hindsight uses **interval overlap** for temporal constraints, not midpoint distance
+- Hindsight uses **interval overlap filtering** then **midpoint proximity scoring** for temporal constraints (Eq. 13/14 in paper)
 - Proximity-to-query (MemoTime) and recency-from-now (MemoryBank/Mnemosyne) are treated as separate approaches
 - No existing system combines both timestamps into a unified proximity score
 - EM-LLM uses **temporal contiguity** as a retrieval primitive (co-occurring memories reinforce each other)
@@ -87,6 +88,16 @@ point_interval_distance(p, [c, d]) =
 Both return unsigned distances in seconds. O(1) per entity.
 
 **Why not midpoint distance:** An event spanning Feb 1-28 queried with "mid February" (Feb 10-20) has midpoint distance ~0, which is correct. But an event spanning Jan 1 - Mar 31 queried with "late March" has a midpoint (mid-Feb) far from the query, even though the event **overlaps** the query range. Interval distance returns 0 for overlap — correct.
+
+### Overlap tie-break
+
+When `interval_distance = 0` (overlap), many entities can share the same sigmoid score (~0.983). For month/year queries this can produce hundreds of tied candidates, making temporal ordering feel arbitrary. To provide stable, meaningful ranking within the overlap bucket:
+
+```
+tie_break_distance = |midpoint(entity_occurred) - midpoint(anchor)|
+```
+
+Midpoint distance is safe as a **secondary sort key** (not the primary metric). Entities closest to the anchor center rank higher among the tied-at-zero set. This is applied during the final sort of temporal candidates (step 5 in execute_temporal), not during the sigmoid scoring itself.
 
 ### Sigmoid function
 
@@ -128,39 +139,52 @@ d_lrn = point_interval_distance(learned_at, [learned_anchor_start, learned_ancho
 match anchor_mode {
     Occurred => s_proximity = s_occ_prox,
     Learned  => s_proximity = s_lrn_prox,
-    Both     => s_proximity = s_occ_prox × s_lrn_prox,
+    Both     => {
+        // Floor-preserving product: soft AND in normalized space
+        let s_occ_net = ((s_occ_prox - floor) / (1.0 - floor)).clamp(0.0, 1.0)
+        let s_lrn_net = ((s_lrn_prox - floor) / (1.0 - floor)).clamp(0.0, 1.0)
+        let s_prox_net = s_occ_net × s_lrn_net
+        s_proximity = s_prox_net × (1.0 - floor) + floor
+    }
     Auto     => {
         // Normalized noisy-OR: P(at least one axis matches)
-        let s_occ_net = (s_occ_prox - floor) / (1.0 - floor)
-        let s_lrn_net = (s_lrn_prox - floor) / (1.0 - floor)
+        let s_occ_net = ((s_occ_prox - floor) / (1.0 - floor)).clamp(0.0, 1.0)
+        let s_lrn_net = ((s_lrn_prox - floor) / (1.0 - floor)).clamp(0.0, 1.0)
         let s_prox_net = 1.0 - (1.0 - s_occ_net) × (1.0 - s_lrn_net)
         s_proximity = s_prox_net × (1.0 - floor) + floor
     }
 }
 ```
 
+**Defensive clamp:** The `.clamp(0.0, 1.0)` on net values prevents float drift from producing values outside [0,1] after normalization. Without this, tiny floating-point errors could violate noisy-OR/product assumptions.
+
 ### Recency with dynamic α
 
 ```
 s_recency = exp(-(now - learned_at) / λ)
 
-// Dynamic α: historical queries suppress recency, near-now queries keep it
-anchor_age = now.saturating_sub(anchor_end)
+// Dynamic α: historical/far-future queries suppress recency, near-now queries keep it
+anchor_age = abs_diff(now, anchor_end)   // symmetric: past and future treated equally
 α = 0.7 + 0.3 × (1.0 - exp(-(anchor_age as f64) / (90.0 × 86400.0)))
 
 s_temporal = α × s_proximity + (1.0 - α) × s_recency
 ```
 
+Where `abs_diff(a, b) = if a >= b { a - b } else { b - a }` (safe unsigned subtraction).
+
 Dynamic α behavior:
 - Query is "now" (`anchor_age = 0`): **α = 0.70** — recency gets 30% weight
-- Query is 1 month ago: **α ≈ 0.80** — recency fading
-- Query is 3 months ago: **α ≈ 0.89** — recency mostly irrelevant
-- Query is 1+ year ago: **α ≈ 1.00** — pure proximity, recency completely suppressed
-- **Future query** (`anchor_end > now`): `anchor_age = 0` → **α = 0.70** — recency active, appropriate for "what's coming up?" queries
+- Query is 1 month ago (or 1 month in future): **α ≈ 0.80** — recency fading
+- Query is 3 months ago (or 3 months ahead): **α ≈ 0.89** — recency mostly irrelevant
+- Query is 1+ year ago (or 1+ year ahead): **α ≈ 1.00** — pure proximity, recency completely suppressed
 
-**Rationale:** Fixed α=0.7 penalizes historical queries. "What happened 5 years ago?" shouldn't care about recency. Dynamic α, gated by `|now - anchor_end|`, naturally suppresses recency for explicitly past-anchored queries while keeping it active for near-now and future-anchored queries. The 90-day transition timescale means queries within ~3 months of now get meaningful recency weight; beyond that, proximity dominates.
+**Why abs_diff, not saturating_sub:** With `saturating_sub`, ALL future anchors yield `anchor_age = 0` → α = 0.70, meaning "meeting in 2027" gets the same recency treatment as "meeting next week." With `abs_diff`, far-future anchors suppress recency just like far-past anchors — only proximity to the anchor matters. Near-future (next week) still gets α ≈ 0.72 — recency active, appropriate for "what's coming up?"
 
-For **Both** mode, `anchor_age` uses the occurred anchor (`now.saturating_sub(anchor_end)`) since that represents the "when did it happen?" dimension.
+**Rationale:** Fixed α=0.7 penalizes historical queries. "What happened 5 years ago?" shouldn't care about recency. Dynamic α, gated by `abs_diff(now, anchor_end)`, naturally suppresses recency for explicitly past-anchored OR far-future-anchored queries while keeping it active for near-now queries. The 90-day transition timescale means queries within ~3 months of now get meaningful recency weight; beyond that, proximity dominates.
+
+For **Both** mode, `anchor_age` uses the occurred anchor (`abs_diff(now, anchor_end)`) since that represents the "when did it happen?" dimension.
+
+**Recency double-counting warning:** The pipeline also offers a post-RRF `boost_recency` (exponential decay by half-life). If both temporal search (which includes `s_recency` via α) AND `boost_recency` are enabled, recency is double-weighted. When temporal search is configured, `boost_recency` should typically be disabled. The pipeline builder should document this or auto-skip `boost_recency` when temporal search is present.
 
 ### TemporalAnchorMode
 
@@ -183,7 +207,7 @@ pub enum TemporalAnchorMode {
 **Precision/recall contract per mode:**
 - **Occurred** = precision for "happened" queries. Only scores occurred axis. Rejects entities that merely match on learned time.
 - **Learned** = precision for "told/mentioned" queries. Only scores learned axis. Rejects entities that merely match on occurred time.
-- **Both** = precision for constrained bitemporal queries. Multiplicative scoring (soft AND): both axes must match for a high score. Rejects entities matching on only one axis.
+- **Both** = precision for constrained bitemporal queries. Floor-preserving product (soft AND in normalized space): both axes must match for a high score. If either axis is at floor, output is floor. Range: [floor, ~1.0].
 - **Auto** = recall-maximizing. Accepts false positives from either axis in exchange for never missing matches on either axis.
 
 **With upstream intent signal:** Caller passes `Occurred`, `Learned`, or `Both` from NER/classifier/heuristic. Scoring uses only the relevant axis/axes. Precision is tight — the false positive case (row 5 in Problem table) is eliminated.
@@ -316,26 +340,34 @@ LONG_INTERVAL_THRESHOLD = 14 × 86400   // 14 days
 
 New database: temporal_long_intervals
     Key: entity_id (16 bytes)
-    Value: empty
+    Value: [occurred_start(8 BE) | occurred_end(8 BE)]  (16 bytes)
 ```
 
-**Write path:** On entity put, if `occurred_end - occurred_start > LONG_INTERVAL_THRESHOLD`, insert entity_id into `temporal_long_intervals`. On entity delete, always remove (harmless if absent).
+**Write path:** On entity put, if `occurred_end.saturating_sub(occurred_start) > LONG_INTERVAL_THRESHOLD`, insert entity_id with `[occurred_start(8 BE) | occurred_end(8 BE)]` value into `temporal_long_intervals`. On entity delete, always remove (harmless if absent). Note: `saturating_sub` guards against malformed entities where `start > end` — these produce 0, safely excluded from the index.
 
-**Read path:** After the three bidirectional scans and deduplication, iterate all entries in `temporal_long_intervals`. For each entity, load the metadata header and check if `interval_distance([entity.occurred_start, entity.occurred_end], [window_start, window_end]) == 0` (i.e., any overlap with the scan window). Add overlapping entities to the candidate set (dedup with existing candidates).
+**Input validation at ingest:** `put_entity` should enforce `occurred_start <= occurred_end`. If `start > end`, swap them before storing. This is defense-in-depth — the temporal indexes and scoring functions use `saturating_sub` throughout, but preventing malformed data at the source is cleaner.
+
+**Read path:** After the three bidirectional scans and deduplication, scan `temporal_long_intervals`. For each entry, read the `[occurred_start, occurred_end]` directly from the value (no entity header fetch needed). Apply **true-spanner filter**: only add entities where `occurred_start < window_start AND occurred_end > window_end` — these are the entities invisible to start/end scans because neither timestamp falls within the window. Dedup with existing candidates.
+
+**Anchor mode gating:** Skip the spanner scan entirely in `Learned` mode — the spanner index is occurred-axis only and adds nothing when scoring only against learned timestamps.
+
+**Why true-spanner filter (not any-overlap):** Start/end scans already catch entities with start or end inside the window. The spanner index exists specifically for entities invisible to those scans. Filtering to true spanners (`start < window_start && end > window_end`) avoids redundant candidates and prevents long-lived states from flooding event-like queries under `per_scan_cap`.
 
 **Why 14 days:** The minimum scan radius is 7 days (from the `7 × 86400` floor). A spanner must span more than `2 × radius + range_width` to be invisible. The smallest possible `2 × radius` is 14 days. Setting the threshold at 14 days catches all spanners for all queries.
 
-**Cost:** Personal vault: ~50-500 long-interval entities, scanning all headers ≈ 12.5KB, <1ms. B2B vault with 100K entities: maybe 5-10K long intervals, <5ms. Acceptable. If the set ever grows too large (>50K), the approach can be replaced with a bucketed overlap index (one key per month-bucket per interval) — see Considered Alternatives (§12).
+**Cost:** Personal vault: ~50-500 long-interval entities, scanning values ≈ ~16KB, <1ms. B2B vault with 100K entities: maybe 5-10K long intervals, <5ms. Acceptable. Storing bounds in the value avoids entity header reads during scan — the overlap check uses the value directly. If the set ever grows too large (>50K), the approach can be replaced with a bucketed overlap index (one key per month-bucket per interval) — see Considered Alternatives (§12).
 
 ### Adaptive σ widening
 
 If total unique candidates after all scans (including long-interval scan) < `limit`:
 
 1. `sigma *= 2`
-2. Recompute `radius = max(2 × range_width, 3 × sigma, 7 × 86400)`
-3. Re-scan with new window bounds (bidirectional from anchor)
-4. Merge new candidates into existing set (deduplicated)
+2. Recompute `new_radius = max(2 × range_width, 3 × sigma, 7 × 86400)`
+3. **Skip rescan if radius unchanged:** If `new_radius == old_radius` (the 7-day floor dominates), skip the rescan — the same window would produce the same candidates. Still proceed to the next doubling round (σ affects scoring shape even if the window doesn't expand).
+4. If radius changed: re-scan with new window bounds (bidirectional from anchor), merge new candidates into existing set (deduplicated)
 5. Repeat up to **2 more times** (max 3 rounds total, σ grows to 8× original)
+
+**Why skip unchanged radius:** For small σ (Exact=3600s, Hour=14400s), the radius is dominated by the 7-day floor. Doubling σ from 3600→7200→14400→28800 doesn't change radius at all, making rescans pure waste. The skip check makes widening O(1) for these cases instead of O(3 × scan_cost).
 
 **Controlled by `adaptive` flag (default: `true`):**
 - `adaptive = true`: widen on insufficient candidates
@@ -440,7 +472,7 @@ The contiguity neighborhood window is capped to prevent overly broad "episodes":
 
 Without capping, a `Year` query (σ=180d) would treat entities 6 months apart as "contiguous" — not a meaningful episode.
 
-If no temporal config is set (boost called independently), default σ_contig = 86400 (1 day).
+If temporal config is present but sigma is 0 (unset), default σ_contig = 86400 (1 day). If no temporal config exists at all, the boost is skipped entirely (see Gating above).
 
 ### Axis-awareness
 
@@ -610,7 +642,7 @@ This entity did NOT happen last March. It was TOLD last March.
 Auto mode:     s_temporal ≈ 0.975  ← FALSE POSITIVE for "what happened"
 Occurred mode: s_proximity = s_occ_prox = 0.05 → s_temporal ≈ 0.050  ← correctly rejected
 Learned mode:  s_proximity = s_lrn_prox = 0.983 → s_temporal ≈ 0.975  ← correctly high
-Both mode:     s_proximity = 0.05 × 0.983 = 0.049 → s_temporal ≈ 0.049  ← correctly rejected
+Both mode:     occ_net=0.0, lrn_net=0.981 → prox_net=0.0 → s_proximity = 0.050  ← correctly rejected (floor-preserved)
 ```
 
 This demonstrates why TemporalAnchorMode matters:
@@ -631,17 +663,24 @@ Entity A: occurred=[2016-06-01, 2016-06-15], learned_at=2025-03-20
   d_occ = 0 (occurred within query occurred range — overlap)
   d_lrn = 0 (learned_at within query learned range)
   s_occ_prox ≈ 0.983, s_lrn_prox ≈ 0.983
-  Both: s_proximity = 0.983 × 0.983 = 0.966
+  Both (normalized-space product):
+    occ_net = (0.983 - 0.05) / 0.95 = 0.981
+    lrn_net = (0.983 - 0.05) / 0.95 = 0.981
+    prox_net = 0.981 × 0.981 = 0.962
+    s_proximity = 0.962 × 0.95 + 0.05 = 0.964
   α ≈ 1.0 (occurred anchor is 9+ years ago)
-  s_temporal = 1.0 × 0.966 = 0.966  ← strong match on both axes
+  s_temporal = 1.0 × 0.964 = 0.964  ← strong match on both axes
 
 Entity B: occurred=[2016-06-01, 2016-06-15], learned_at=2026-02-10
   d_occ = 0 (same as A)
   d_lrn = point_interval_distance(2026-02-10, [2025-03-01, 2025-03-31])
         = 2026-02-10 - 2025-03-31 ≈ 316 days ≈ 27,302,400s
   s_occ_prox ≈ 0.983, s_lrn_prox ≈ 0.05 (floor — far from learned anchor)
-  Both: s_proximity = 0.983 × 0.05 = 0.049
-  s_temporal ≈ 0.049  ← correctly rejected (wrong learned time)
+  Both (normalized-space product):
+    occ_net = 0.981, lrn_net = 0.0
+    prox_net = 0.981 × 0.0 = 0.0
+    s_proximity = 0.0 × 0.95 + 0.05 = 0.050  (exactly floor)
+  s_temporal ≈ 0.050  ← correctly rejected (wrong learned time, floor-preserved)
 ```
 
 Both mode correctly finds Entity A (matched on both axes) and rejects Entity B (only matched on occurred). This enables queries like "tell me about what you learned in March 2025 regarding 2016 events."
@@ -669,15 +708,15 @@ Auto (noisy-OR):
   s_prox_net = 1 - (0.019)(0.967) = 0.982
   s_proximity = 0.982 × 0.95 + 0.05 = 0.983
 
-anchor_age = now - anchor_end = 2026-02-16 - 2026-03-01 → saturating_sub = 0
-α = 0.7 + 0.3 × (1 - exp(0)) = 0.7 + 0.0 = 0.70
+anchor_age = abs_diff(2026-02-16, 2026-03-01) = 13 days = 1,123,200s
+α = 0.7 + 0.3 × (1 - exp(-1123200 / 7776000)) = 0.7 + 0.3 × 0.134 = 0.740
 
 s_recency = exp(-(6 × 86400) / (28 × 86400)) = exp(-0.214) ≈ 0.807
 
-s_temporal = 0.70 × 0.983 + 0.30 × 0.807 = 0.688 + 0.242 = 0.930
+s_temporal = 0.740 × 0.983 + 0.260 × 0.807 = 0.727 + 0.210 = 0.937
 ```
 
-Future event scored correctly. `learned_at < occurred_start` is handled naturally. α = 0.70 (future anchor treated as near-now), so recent information gets meaningful weight.
+Future event scored correctly. `learned_at < occurred_start` is handled naturally. α = 0.740 (near-future anchor, 13 days out — recency still gets ~26% weight). With abs_diff, a far-future anchor (e.g., 2027) would get α → 1.0, suppressing recency — correct for "what's planned for next year?" where proximity to the target date matters more than when the plan was recorded.
 
 ---
 
@@ -693,7 +732,8 @@ Future event scored correctly. `learned_at < occurred_start` is handled naturall
 - **Single entity in result set for contiguity boost**: `max(result_count - 1, 1)` prevents division by zero
 - **Future occurred_start** (calendar events): scoring works symmetrically on unsigned distances, no special handling needed
 - **Empty long-interval index**: iteration returns immediately, zero cost
-- **Both mode with None learned anchors**: if `search_temporal_bitemporal` is not used but `anchor_mode = Both`, fall back to Auto mode (defensive)
+- **Both mode with None learned anchors**: if `anchor_mode = Both` but no learned anchor range is set (i.e., `learned_start`/`learned_end` are None), return an error. Silent fallback to Auto would hide caller bugs and produce incorrect recall-heavy results. Use `search_temporal_bitemporal()` or set learned anchors explicitly when using Both mode.
+- **Inverted occurred range** (`occurred_start > occurred_end`): swap at ingest in `put_entity`. All internal arithmetic uses `saturating_sub` as defense-in-depth.
 
 ---
 
@@ -726,7 +766,8 @@ Future event scored correctly. `learned_at < occurred_start` is handled naturall
 16. Near-now query (anchor_age ≈ 0): α ≈ 0.70, recency has 30% weight
 17. Historical query (anchor_age >> 90d): α ≈ 1.0, recency suppressed
 18. Same entity with same proximity but different anchor_age → different s_temporal due to α shift
-19. Future anchor query: anchor_age = 0 (saturating_sub), α = 0.70
+19. Near-future anchor (next week): anchor_age ≈ 7d (abs_diff), α ≈ 0.708
+19b. Far-future anchor (1 year ahead): anchor_age ≈ 1y (abs_diff), α ≈ 1.00 (recency suppressed)
 
 ### Candidate discovery
 20. σ-driven padding: point anchor + Year granularity → radius includes 3σ = 540d (not just 7d)
@@ -753,10 +794,11 @@ Future event scored correctly. `learned_at < occurred_start` is handled naturall
 35. Learned mode: contiguity computed on learned_at distance, not occurred distance
 
 ### Both mode
-36. Entity matching both axes: multiplicative score ≈ 0.966
-37. Entity matching only occurred: multiplicative score ≈ 0.049 (rejected)
+36. Entity matching both axes: floor-preserving product score ≈ 0.964 (not raw 0.966)
+37. Entity matching only occurred: floor-preserving product → exactly floor (0.050), not sub-floor
 38. Both mode uses separate learned anchor range for d_lrn computation
-39. Both mode scans all three indexes
+39. Both mode scans all three indexes (spanner scan included for occurred axis)
+40b. Both mode with no learned anchors: returns error (not silent Auto fallback)
 
 ### API tiers
 40. Tier equivalence: `search_temporal(s, e, lim)` gives same results as `search_temporal_with_sigma(s, e, max(e-s, 86400), Auto, lim)` when range_width >= 86400
@@ -766,9 +808,30 @@ Future event scored correctly. `learned_at < occurred_start` is handled naturall
 42. Entity with occurred_start in future, learned_at = now → scored correctly
 43. Future anchor query → α = 0.70 (saturating_sub gives 0)
 
+### Overlap tie-break
+44b. Two entities both overlapping query (d=0): entity closer to anchor midpoint ranks higher
+44c. Entity exactly at anchor midpoint vs entity at edge of query range: midpoint entity wins tie-break
+
+### Adaptive widening — skip unchanged
+45b. Exact σ (3600s): widening σ to 7200/14400/28800 doesn't change 7d radius → no rescan wasted
+45c. Week σ (604800s): widening to 1209600 DOES change radius → rescan happens
+
+### Spanner scan specifics
+45d. True-spanner filter: entity with start inside window but end outside → NOT added by spanner scan (already found by start scan)
+45e. Spanner scan skipped in Learned mode
+45f. Spanner value contains correct occurred_start/occurred_end (read from value, not header)
+
+### Underflow guards
+45g. Entity with occurred_start > occurred_end at put_entity → swapped before storing
+45h. All threshold checks use saturating_sub — no panic on malformed data
+
+### Recency double-counting
+45i. Pipeline with temporal search + boost_recency: warn or auto-skip boost_recency
+
 ### Error cases
-44. Skip missing entities: deleted entity in candidate set doesn't cause error
-45. Recency component: recently-learned entity gets higher s_temporal than old-learned entity (all else equal, near-now query)
+46. Skip missing entities: deleted entity in candidate set doesn't cause error
+47. Recency component: recently-learned entity gets higher s_temporal than old-learned entity (all else equal, near-now query)
+48. Both mode error: anchor_mode=Both without learned anchors → error returned
 
 ---
 
@@ -796,7 +859,11 @@ Future event scored correctly. `learned_at < occurred_start` is handled naturall
 
 8. **Long-interval threshold (14 days)** — Conservative choice that catches all spanners. If write amplification becomes a concern (many entities just over 14 days), the threshold could be raised. Monitor temporal_long_intervals cardinality.
 
-9. **Both mode sigma sharing** — Both mode uses one σ for both axes. Should each axis have its own σ? (e.g., "events from 2016" → Year σ, "told in March" → Month σ). Adds API complexity. Defer unless benchmarks show a need.
+9. **Both mode sigma sharing** — Both mode uses one σ for both axes. Should each axis have its own σ? (e.g., "events from 2016" → Year σ, "told in March" → Month σ). Adds API complexity. Defer unless benchmarks show a need. The API extension would be `sigma_occurred_secs` + `sigma_learned_secs` as separate fields.
+
+10. **Duration penalty for overlap=0 in Occurred mode** — Long-lived entities (year-spanning CLAIMs, relationships) get `d=0` for any query inside their validity span. Correct for "what was true?" but potentially wrong for "what happened?" An entity-type-aware or duration-aware penalty like `min(1, query_len / entity_len)` could help. This is a product-level decision about EVENT vs STATE semantics in temporal scoring.
+
+11. **Explainability / debug metadata** — Return `(anchor_mode, axis_winner, s_occ_prox, s_lrn_prox, s_proximity, α, s_recency)` as optional debug fields in `ScoredEntity`. Useful for QA tooling when Auto mode misfires. Low implementation cost — just add an optional debug struct.
 
 ---
 
@@ -848,3 +915,49 @@ This section preserves the design alternatives evaluated during v1-v3 developmen
 | **Multiplicative** ✓ | `score *= 1 + 0.2 × contiguity` | Proportional: strong + clustered = stronger | **Chosen**: right semantic for episode coherence |
 | **Additive** | `score += β × contiguity` | Flat bonus regardless of base score | Rejected: can artificially promote weak items |
 | **No contiguity** | N/A | Simpler | Rejected: episode coherence is a real product need |
+| **Min-neighbors guard** | Only boost if ≥2 neighbors | Prevents single near-pair from skewing | Not needed: ×1.2 max multiplier is already mild enough. Revisit if multiplier increases. |
+
+### Both mode fusion alternatives (§3)
+
+| Approach | Formula | Range | Properties | Why rejected/chosen |
+|---|---|---|---|---|
+| **Raw multiplication** | `s_occ × s_lrn` | [0.0025, ~1.0] | Breaks floor contract | Rejected: floor-floor → 0.0025, violates "never below 0.05" for downstream consumers |
+| **Floor-preserving product** ✓ | Normalize → multiply → denormalize | [floor, ~1.0] | Preserves floor, soft AND | **Chosen**: if either axis is floor, output is exactly floor. Same normalized-space pattern as noisy-OR. |
+| **min(s_occ, s_lrn)** | min | [floor, ~1.0] | Preserves floor but weaker AND | Rejected: doesn't punish "one barely above floor" as much. Less selective than product. |
+| **Geometric mean** | `sqrt(s_occ × s_lrn)` | [0.05, ~1.0] | Between product and min | Rejected: breaks floor contract (floor-floor → 0.05, ok, but 0.05 × 0.2 → 0.1 not intuitive). Product in normalized space is cleaner. |
+
+### α anchor_age computation alternatives (§3)
+
+| Approach | Formula | Future behavior | Why rejected/chosen |
+|---|---|---|---|
+| **saturating_sub** | `now.saturating_sub(anchor_end)` | All future → age=0, α=0.70 | Rejected: "meeting in 2027" gets same recency as "meeting next week" |
+| **abs_diff** ✓ | `abs_diff(now, anchor_end)` | Near-future ≈ near-now; far-future → α→1.0 | **Chosen**: symmetric, far-future suppresses recency like far-past |
+| **Piecewise** | Different formula for past vs future | Full control | Over-engineered; abs_diff captures the key insight simply |
+
+### σ sentinel alternatives (§6)
+
+| Approach | Properties | Why rejected/chosen |
+|---|---|---|
+| **σ=0 as sentinel** ✓ | Simple, documented | **Chosen**: σ=0 means "unset → default 86400". Acceptable for internally-consumed Rust API. |
+| **Option\<u64\>** | Type-safe, no ambiguity | Rejected: adds API complexity for no practical benefit. σ=0 is a natural "not set" value. |
+| **Validation error on σ=0** | Catches bugs | Too strict for Tier 1 callers who don't know σ. |
+
+### α scaling with σ alternatives (§3)
+
+| Approach | Formula | Properties | Why rejected/chosen |
+|---|---|---|---|
+| **Fixed 90d** ✓ | `exp(-age / 90d)` | Simple, reasonable default | **Chosen**: captures the key signal (anchor age) without σ coupling |
+| **max(90d, σ)** | `exp(-age / max(90d, σ))` | Slower transition for vague queries | Rejected: one review suggested this, another suggested `max(90d, 3σ)` — disagreement signals it's a tuning knob, not a design flaw. Task 9 benchmarks will settle it. |
+| **max(90d, 3σ)** | `exp(-age / max(90d, 3σ))` | Even slower transition | Same as above — deferred to benchmarks. |
+
+### Dismissed review findings (v3.1)
+
+These findings from external reviews were evaluated and intentionally not adopted:
+
+| Finding | Source | Why dismissed |
+|---|---|---|
+| **Belief revision mode** (two tx-time anchors) | R2 | Out of scope for temporal scoring. Claim supersession chains + validity intervals handle "what did we believe at time T" queries. |
+| **Recurrence/periodicity** ("every Tuesday") | R3 | Upstream NER/pattern-matching concern, not temporal scoring. The crate provides building blocks; periodicity detection belongs in Dreamer agent or extraction pipeline. |
+| **Builder API ergonomics for Tier 4** | R3 | Style preference. Current separate `search_temporal_bitemporal()` is explicit and consistent with tier pattern. |
+| **Widen radius independently of σ** | R3 | Skip-rescan-when-unchanged (adopted) is simpler and sufficient. |
+| **SynapticRAG arXiv citation** | R1 | Only in REVIEW-PROMPT.md (review guide), not in the spec. Low priority. |
