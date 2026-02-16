@@ -8,7 +8,9 @@ pub mod batch;
 pub(crate) mod bm25;
 pub(crate) mod distance;
 pub mod error;
+pub(crate) mod fusion;
 pub(crate) mod hnsw;
+pub mod pipeline;
 pub(crate) mod ppr;
 pub mod store;
 pub mod types;
@@ -16,10 +18,11 @@ pub mod types;
 pub use crate::batch::BatchBuilder;
 use crate::batch::{deindex_entity, ENTITY_METADATA_HEADER_LEN};
 pub use crate::error::{Error, Result};
+pub use crate::pipeline::PipelineBuilder;
 use crate::store::Store;
 pub use crate::types::{
-    EdgeKind, EntityId, FieldProfile, HnswConfig, PackFormat, ScoredEntity, Signal, TimeRange,
-    VaultConfig,
+    EdgeKind, EntityId, FieldProfile, HnswConfig, PackFormat, ScoredEntity, Signal,
+    TemporalAnchorMode, TemporalGranularity, TimeRange, VaultConfig,
 };
 
 const MIN_MAP_SIZE_BYTES: usize = 1 << 20;
@@ -173,6 +176,11 @@ impl Vault {
     pub fn batch(&self) -> BatchBuilder<'_> {
         BatchBuilder::new(self)
     }
+
+    /// Creates a query pipeline builder for multi-signal retrieval.
+    pub fn query(&self) -> PipelineBuilder<'_> {
+        PipelineBuilder::new(self)
+    }
 }
 
 pub(crate) fn unix_seconds_now() -> u64 {
@@ -231,7 +239,7 @@ mod tests {
 
     use super::*;
 
-    const DB_NAMES: [&str; 18] = [
+    const DB_NAMES: [&str; 19] = [
         "entities",
         "edges_out",
         "edges_in",
@@ -247,6 +255,7 @@ mod tests {
         "temporal_occurred_start",
         "temporal_occurred_end",
         "temporal_learned",
+        "temporal_long_intervals",
         "phonetic_index",
         "short_ids",
         "short_ids_reverse",
@@ -1230,7 +1239,7 @@ mod tests {
     }
 
     #[test]
-    fn creates_all_18_databases() -> Result<()> {
+    fn creates_all_databases() -> Result<()> {
         let temp_dir = tempfile::tempdir()?;
         let vault = Vault::open(temp_dir.path(), test_config())?;
         let rtxn = vault.store.env.read_txn()?;

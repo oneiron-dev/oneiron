@@ -27,6 +27,7 @@ pub struct Store {
     pub(crate) temporal_occurred_start: Database<Bytes, Bytes>,
     pub(crate) temporal_occurred_end: Database<Bytes, Bytes>,
     pub(crate) temporal_learned: Database<Bytes, Bytes>,
+    pub(crate) temporal_long_intervals: Database<Bytes, Bytes>,
     pub(crate) phonetic_index: Database<Bytes, Bytes>,
     pub(crate) short_ids: Database<Bytes, Bytes>,
     pub(crate) short_ids_reverse: Database<Bytes, Bytes>,
@@ -61,6 +62,7 @@ impl Store {
         let temporal_occurred_start = create_db(&env, &mut wtxn, "temporal_occurred_start")?;
         let temporal_occurred_end = create_db(&env, &mut wtxn, "temporal_occurred_end")?;
         let temporal_learned = create_db(&env, &mut wtxn, "temporal_learned")?;
+        let temporal_long_intervals = create_db(&env, &mut wtxn, "temporal_long_intervals")?;
         let phonetic_index = create_db(&env, &mut wtxn, "phonetic_index")?;
         let short_ids = create_db(&env, &mut wtxn, "short_ids")?;
         let short_ids_reverse = create_db(&env, &mut wtxn, "short_ids_reverse")?;
@@ -102,6 +104,7 @@ impl Store {
             temporal_occurred_start,
             temporal_occurred_end,
             temporal_learned,
+            temporal_long_intervals,
             phonetic_index,
             short_ids,
             short_ids_reverse,
