@@ -337,7 +337,7 @@ Implement the `BatchBuilder` for atomic multi-database writes, and all secondary
   - Spanner index scan: `temporal_long_intervals` for long-duration entities
   - Adaptive σ widening: doubles σ up to 3 rounds, skips rescan when radius unchanged
 - **4 API tiers:** inferred σ, explicit σ, TemporalGranularity enum, TemporalAnchorMode
-- **Contiguity boost:** post-RRF, `score *= 1 + 0.2 * contiguity`, O(n²) with n≈20
+- **Contiguity boost:** post-RRF, `score *= 1 + 0.2 * contiguity`, O(n log n)
 - **Spanner index (new DB):** `temporal_long_intervals[entity_id(16)] → [occ_start(8 BE) | occ_end(8 BE)]`
   - True-spanner filter: `start < window_start AND end > window_end`
   - Skip in Learned mode
