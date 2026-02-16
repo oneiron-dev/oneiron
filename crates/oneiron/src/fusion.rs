@@ -6,15 +6,10 @@ use std::io::Cursor;
 use heed::RoTxn;
 use rmpv::Value;
 
-use crate::batch::ENTITY_METADATA_HEADER_LEN;
+use crate::batch::{EntityMetadataHeader, ENTITY_METADATA_HEADER_LEN};
 use crate::error::Result;
 use crate::store::Store;
 use crate::types::{EntityId, ScoredEntity};
-
-#[derive(Debug, Clone, Copy)]
-struct EntityHeader {
-    learned_at: u64,
-}
 
 pub(crate) fn rrf_fuse(ranked_lists: &[Vec<ScoredEntity>], k: f32) -> Vec<ScoredEntity> {
     let mut fused = HashMap::<EntityId, f32>::new();
@@ -60,7 +55,7 @@ pub(crate) fn boost_recency(
         let Some(raw) = store.entities.get(rtxn, scored.id.as_bytes())? else {
             continue;
         };
-        let Some(header) = decode_entity_header(raw) else {
+        let Some(header) = EntityMetadataHeader::parse(raw) else {
             continue;
         };
 
@@ -110,15 +105,6 @@ pub(crate) fn boost_confidence(
     }
 
     Ok(())
-}
-
-fn decode_entity_header(raw: &[u8]) -> Option<EntityHeader> {
-    if raw.len() < ENTITY_METADATA_HEADER_LEN {
-        return None;
-    }
-
-    let learned_at = u64::from_be_bytes(raw[17..25].try_into().ok()?);
-    Some(EntityHeader { learned_at })
 }
 
 fn decode_msgpack_float(raw: &[u8], field: &str) -> Option<f32> {

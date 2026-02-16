@@ -3,7 +3,7 @@ use std::collections::{HashMap, HashSet};
 use heed::types::Bytes;
 use heed::{Database, RoTxn};
 
-use crate::batch::ENTITY_METADATA_HEADER_LEN;
+use crate::batch::EntityMetadataHeader;
 use crate::error::{Error, Result};
 use crate::fusion;
 use crate::store::Store;
@@ -15,6 +15,11 @@ const DEFAULT_SIGMA_SECS: u64 = 86_400;
 const MIN_WINDOW_RADIUS_SECS: u64 = 7 * 86_400;
 const LONG_INTERVAL_THRESHOLD_SECS: u64 = 14 * 86_400;
 const TEMPORAL_FLOOR: f64 = 0.05;
+const SECONDS_PER_DAY_F64: f64 = 86_400.0;
+const RECENCY_DECAY_TAU_SECS: f64 = 28.0 * SECONDS_PER_DAY_F64;
+const ALPHA_BASE: f64 = 0.7;
+const ALPHA_RANGE: f64 = 0.3;
+const ALPHA_TAU_SECS: f64 = 90.0 * SECONDS_PER_DAY_F64;
 const ADAPTIVE_ROUNDS: usize = 3;
 const PER_SCAN_CAP_FACTOR: usize = 4;
 const RRF_K: f32 = 60.0;
@@ -523,10 +528,10 @@ fn execute_temporal(
             combine_proximity(config.anchor_mode, s_occ_prox, s_lrn_prox, TEMPORAL_FLOOR);
 
         let age = now.saturating_sub(meta.learned_at) as f64;
-        let s_recency = (-age / (28.0 * 86_400.0)).exp();
+        let s_recency = (-age / RECENCY_DECAY_TAU_SECS).exp();
 
         let anchor_age = now.abs_diff(config.anchor_end) as f64;
-        let alpha = 0.7 + 0.3 * (1.0 - (-anchor_age / (90.0 * 86_400.0)).exp());
+        let alpha = ALPHA_BASE + ALPHA_RANGE * (1.0 - (-anchor_age / ALPHA_TAU_SECS).exp());
 
         let score = (alpha * s_proximity + (1.0 - alpha) * s_recency) as f32;
         let overlap_tiebreak = if d_occ == 0 {
@@ -625,15 +630,7 @@ fn collect_temporal_candidates(
     if config.anchor_mode != TemporalAnchorMode::Learned {
         for entry in store.temporal_long_intervals.iter(rtxn)? {
             let (id_bytes, value) = entry?;
-            if id_bytes.len() != 16 || value.len() != 16 {
-                return Err(Error::InvalidKey);
-            }
-
-            let id = EntityId::from_bytes(id_bytes.try_into().map_err(|_| Error::InvalidKey)?);
-            let occurred_start =
-                u64::from_be_bytes(value[..8].try_into().map_err(|_| Error::InvalidKey)?);
-            let occurred_end =
-                u64::from_be_bytes(value[8..16].try_into().map_err(|_| Error::InvalidKey)?);
+            let (id, occurred_start, occurred_end) = decode_long_interval_row(id_bytes, value)?;
 
             if occurred_start < occurred_window_start && occurred_end > occurred_window_end {
                 out.insert(id);
@@ -711,6 +708,17 @@ fn collect_index_candidates(
     }
 
     Ok(())
+}
+
+fn decode_long_interval_row(id_bytes: &[u8], value: &[u8]) -> Result<(EntityId, u64, u64)> {
+    if id_bytes.len() != 16 || value.len() != 16 {
+        return Err(Error::InvalidKey);
+    }
+
+    let id = EntityId::from_bytes(id_bytes.try_into().map_err(|_| Error::InvalidKey)?);
+    let occurred_start = u64::from_be_bytes(value[..8].try_into().map_err(|_| Error::InvalidKey)?);
+    let occurred_end = u64::from_be_bytes(value[8..16].try_into().map_err(|_| Error::InvalidKey)?);
+    Ok((id, occurred_start, occurred_end))
 }
 
 fn boost_contiguity(
@@ -827,22 +835,18 @@ fn read_entity_metadata(
     let Some(raw) = store.entities.get(rtxn, id.as_bytes())? else {
         return Ok(None);
     };
-    if raw.len() < ENTITY_METADATA_HEADER_LEN {
+    let Some(header) = EntityMetadataHeader::parse(raw) else {
         return Ok(None);
-    }
+    };
 
-    let entity_type = raw[0];
-    let occurred_start = u64::from_be_bytes(raw[1..9].try_into().map_err(|_| Error::InvalidKey)?);
-    let occurred_end = u64::from_be_bytes(raw[9..17].try_into().map_err(|_| Error::InvalidKey)?);
-    let learned_at = u64::from_be_bytes(raw[17..25].try_into().map_err(|_| Error::InvalidKey)?);
-
-    let (occurred_start, occurred_end) = normalize_range(occurred_start, occurred_end);
+    let (occurred_start, occurred_end) =
+        normalize_range(header.occurred_start, header.occurred_end);
 
     Ok(Some(EntityMetadata {
-        entity_type,
+        entity_type: header.entity_type,
         occurred_start,
         occurred_end,
-        learned_at,
+        learned_at: header.learned_at,
     }))
 }
 
