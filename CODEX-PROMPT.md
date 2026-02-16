@@ -104,7 +104,9 @@ pub struct PipelineBuilder<'a> {
 struct TemporalSearchConfig {
     anchor_start: u64,
     anchor_end: u64,
-    sigma_secs: u64,   // controls decay width — derived from range, granularity, or explicit
+    sigma_secs: u64,        // controls decay width — derived from range, granularity, or explicit
+    anchor_mode: TemporalAnchorMode,  // which timestamp axis to score (default: Auto)
+    adaptive: bool,          // widen σ if too few candidates (default: true)
     limit: usize,
 }
 ```
@@ -120,12 +122,14 @@ impl<'a> PipelineBuilder<'a> {
     pub fn search_phonetic(self, codes: &[&str]) -> Self;
 
     // Temporal search — three tiers (all set the same internal TemporalSearchConfig):
-    // Tier 1: infer sigma from range width
+    // Tier 1: infer sigma from range width, Auto anchor mode
     pub fn search_temporal(self, anchor_start: u64, anchor_end: u64, limit: usize) -> Self;
-    // Tier 2: explicit sigma (caller controls decay width in seconds)
-    pub fn search_temporal_with_sigma(self, anchor_start: u64, anchor_end: u64, sigma_secs: u64, limit: usize) -> Self;
-    // Tier 3: granularity enum (maps to sigma internally)
-    pub fn search_temporal_with_granularity(self, anchor_start: u64, anchor_end: u64, granularity: TemporalGranularity, limit: usize) -> Self;
+    // Tier 2: explicit sigma + anchor mode
+    pub fn search_temporal_with_sigma(self, anchor_start: u64, anchor_end: u64, sigma_secs: u64, anchor_mode: TemporalAnchorMode, limit: usize) -> Self;
+    // Tier 3: granularity enum + anchor mode
+    pub fn search_temporal_with_granularity(self, anchor_start: u64, anchor_end: u64, granularity: TemporalGranularity, anchor_mode: TemporalAnchorMode, limit: usize) -> Self;
+    // Adaptive σ widening control (default: true — set false for exact temporal filtering)
+    pub fn temporal_adaptive(self, enabled: bool) -> Self;
 
     // Convenience: set vector + text + optional temporal in one call
     pub fn search(self, query: &str, vector: &[f32], time: Option<TimeRange>, limit: usize) -> Self;
@@ -139,6 +143,7 @@ impl<'a> PipelineBuilder<'a> {
     pub fn boost_recency(self, half_life_days: f32) -> Self;
     pub fn boost_salience(self) -> Self;
     pub fn boost_confidence(self) -> Self;
+    pub fn boost_contiguity(self) -> Self;
 
     pub fn filter_types(self, types: &[u8]) -> Self;
     pub fn filter_since(self, timestamp: u64) -> Self;
@@ -173,7 +178,7 @@ Opens **one** read transaction, then:
    - Note: if both `search_ppr` and `expand_ppr` are configured, both run — pre-RRF PPR feeds into the initial fusion, post-RRF PPR expands from the fused results.
 
 4. **Apply boosts** (if configured) — mutate scores in-place:
-   - `boost_recency`, `boost_salience`, `boost_confidence`
+   - `boost_recency`, `boost_salience`, `boost_confidence`, `boost_contiguity`
    - These need a read txn to look up entity data
 
 5. **Apply hard filters** (if configured) — remove non-matching entities:
@@ -210,51 +215,121 @@ fn execute_phonetic(
 fn execute_temporal(
     store: &Store,
     rtxn: &RoTxn<'_>,
-    anchor_start: u64,
-    anchor_end: u64,
-    limit: usize,
+    config: &TemporalSearchConfig,
 ) -> Result<Vec<ScoredEntity>>
 ```
 
-**Candidate selection: index-bounded window (not full scan)**
+**Candidate selection: σ-driven window with bidirectional scan**
 
 1. Compute window bounds:
-   - `range_width = anchor_end - anchor_start` (if 0, treat as `86400` — 1 day — for point queries)
-   - `padding = range_width * 2` (but at least `7 * 86400` — 7 days — floor)
-   - `window_start = anchor_start.saturating_sub(padding)`
-   - `window_end = anchor_end.saturating_add(padding)`
-   - `candidate_cap = limit * 4` (hard cap on candidates to bound latency)
+   - `range_width = config.anchor_end - config.anchor_start` (if 0, use 86400)
+   - `sigma = max(config.sigma_secs, 86400)`
+   - `radius = max(2 × range_width, 3 × sigma, 7 × 86400)`
+   - `window_start = config.anchor_start.saturating_sub(radius)`
+   - `window_end = config.anchor_end.saturating_add(radius)`
+   - `per_scan_cap = config.limit × 4`
+   - `anchor_mid = midpoint(config.anchor_start, config.anchor_end)` (overflow-safe)
+   - `3σ` radius: at 3σ, sigmoid ≈ floor. Beyond 3σ is noise.
 
-2. Range scan `temporal_occurred_start` from `window_start` to `window_end`:
-   - Seek to `[window_start_BE, 0x00...0x00]`, iterate while key timestamp <= `window_end`
-   - Extract entity IDs from keys (bytes 8..24), deduplicate into a set
-   - Stop after `candidate_cap` unique entities
+2. **Bidirectional index scans** — for each active index:
+   - Seek to `encode_temporal_key(anchor_mid, [0x00; 16])`
+   - Open two iterators: one forward (ascending), one backward (descending)
+   - Alternate: take one from forward, one from backward
+   - Stop when both iterators exit `[window_start, window_end]` or `per_scan_cap` reached
+   - This ensures closest-to-anchor candidates are collected first
 
-3. Also range scan `temporal_learned` with same window bounds, merge into the same candidate set (up to `candidate_cap`)
+   Active indexes by `config.anchor_mode`:
+   - `Occurred`: scan `temporal_occurred_start` + `temporal_occurred_end`
+   - `Learned`: scan `temporal_learned` only
+   - `Auto`: scan all three (`temporal_occurred_start`, `temporal_occurred_end`, `temporal_learned`)
+
+   Each scan gets its own `per_scan_cap`. After all scans, merge + dedupe into single candidate set.
+
+3. **Adaptive σ widening** (if `config.adaptive` and `candidates.len() < config.limit`):
+   - `sigma *= 2`, recompute radius and window, re-scan (bidirectional from anchor)
+   - Merge new candidates into existing set (deduplicated)
+   - Up to 2 additional rounds (max 3 total, σ grows to 8× original)
 
 4. For each candidate entity:
    - Read entity metadata header from `entities` db to get `occurred_start`, `occurred_end`, `learned_at`
-   - Compute `s_occurred` using **sigmoid decay with floor** (Mnemosyne-style, NOT linear clamp-to-zero):
-     ```
-     distance = |midpoint(entity.occurred) - midpoint(query)|   (in seconds)
-     midpoint(r) = r.start / 2 + r.end / 2 + (r.start % 2 + r.end % 2) / 2   (overflow-safe)
-     sigma = sigma_secs from TemporalSearchConfig
-     floor = 0.05
-     s_occurred = (1.0 - floor) / (1.0 + exp((distance - sigma) / (sigma / 4.0))) + floor
-     ```
-     - `sigma` controls where the steep dropoff happens. Derived from:
-       - Tier 1 (`search_temporal`): `sigma = max(range_width, 86400)` where `range_width = anchor_end - anchor_start`
-       - Tier 2 (`search_temporal_with_sigma`): caller provides `sigma_secs` directly
-       - Tier 3 (`search_temporal_with_granularity`): mapped from `TemporalGranularity` enum (see types section)
-     - `floor = 0.05` ensures old memories never score zero (always retrievable)
-     - `sigma / 4.0` as steepness gives a smooth but decisive dropoff
-     - At `distance = 0`: score ≈ 1.0 (close to anchor = best)
-     - At `distance = sigma`: score ≈ 0.525 (midpoint of decay)
-     - At `distance >> sigma`: score → 0.05 (floor, never zero)
-   - `s_learned = exp(-(now - entity.learned_at) / (28 * 86400))` (28-day half-life, per Mnemosyne)
-   - `s_temporal = 0.7 * s_occurred + 0.3 * s_learned`
+   - If missing or blob < 25 bytes: skip (no error)
 
-5. Sort by temporal score descending, take top `limit`
+   **Interval-aware distances** (not midpoint-to-midpoint):
+   ```
+   d_occ = interval_distance(
+       [entity.occurred_start, entity.occurred_end],
+       [config.anchor_start, config.anchor_end]
+   )
+   d_lrn = point_interval_distance(
+       entity.learned_at,
+       [config.anchor_start, config.anchor_end]
+   )
+
+   interval_distance([a,b], [c,d]) =
+       0       if max(a,c) <= min(b,d)   // overlap
+       c - b   if b < c                   // [a,b] before [c,d]
+       a - d   if d < a                   // [a,b] after [c,d]
+
+   point_interval_distance(p, [c,d]) =
+       0       if c <= p && p <= d
+       c - p   if p < c
+       p - d   if p > d
+   ```
+
+   **Proximity scoring:**
+   ```
+   sigmoid(dist, σ, floor) = (1.0 - floor) / (1.0 + exp((dist - σ) / (σ / 4.0))) + floor
+
+   s_occ_prox = sigmoid(d_occ, sigma, 0.05)
+   s_lrn_prox = sigmoid(d_lrn, sigma, 0.05)
+   ```
+
+   Sigmoid behavior:
+   - `distance = 0`: score ≈ 0.983
+   - `distance = σ`: score ≈ 0.525 (sigmoid midpoint)
+   - `distance >> σ`: score → 0.05 (floor)
+
+   **Anchor mode gating:**
+   ```
+   match config.anchor_mode {
+       Occurred => s_proximity = s_occ_prox,
+       Learned  => s_proximity = s_lrn_prox,
+       Auto     => s_proximity = max(s_occ_prox, s_lrn_prox) + 0.1 × min(s_occ_prox, s_lrn_prox),
+   }
+   ```
+
+   **Recency with dynamic α:**
+   ```
+   s_recency = exp(-(now - entity.learned_at) as f64 / (28.0 × 86400.0))
+
+   anchor_age = now.saturating_sub(config.anchor_end)
+   α = 0.7 + 0.3 × (1.0 - exp(-(anchor_age as f64) / (90.0 × 86400.0)))
+   // near-now query: α ≈ 0.70 (recency gets 30% weight)
+   // 3-month-old query: α ≈ 0.89
+   // historical query (1y+): α → 1.0 (proximity dominates, recency suppressed)
+
+   s_temporal = α × s_proximity + (1.0 - α) × s_recency
+   ```
+
+5. Sort by temporal score descending, take top `config.limit`
+
+### Temporal Contiguity Boost Implementation
+
+```rust
+fn boost_contiguity(
+    scores: &mut [ScoredEntity],
+    sigma_secs: u64,    // neighborhood window — from temporal config, or 86400 default
+    store: &Store,
+    rtxn: &RoTxn<'_>,
+) -> Result<()>
+```
+
+- For each scored entity, read `occurred_start` (bytes 1..9) and `occurred_end` (bytes 9..17) from entity header
+- For each pair of entities, compute `interval_distance` between their occurred ranges
+- `neighbor_count(e)` = count of other entities in result set where `interval_distance < sigma_secs`
+- `contiguity = neighbor_count as f32 / max(scores.len() - 1, 1) as f32`
+- `score *= 1.0 + 0.2 × contiguity`
+- O(n²) where n = result_limit (typically 20) — negligible
 
 ---
 
@@ -267,7 +342,7 @@ pub mod pipeline;
 pub(crate) mod fusion;
 
 pub use crate::pipeline::PipelineBuilder;
-pub use crate::types::TemporalGranularity;
+pub use crate::types::{TemporalAnchorMode, TemporalGranularity};
 ```
 
 Add method to `Vault`:
@@ -375,6 +450,20 @@ impl TemporalGranularity {
         }
     }
 }
+
+/// Temporal anchor intent — controls which timestamp axis to score against.
+/// Auto mode scores both and takes the best match (higher recall, lower precision).
+/// Occurred/Learned modes score only one axis (lower recall, higher precision).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum TemporalAnchorMode {
+    /// Query refers to when events happened: "what happened last March?"
+    Occurred,
+    /// Query refers to when information was recorded: "what did I tell you last March?"
+    Learned,
+    /// Ambiguous — score both axes, take best match
+    #[default]
+    Auto,
+}
 ```
 
 ---
@@ -404,10 +493,18 @@ Write tests in `pipeline.rs` (or `fusion.rs`) under `#[cfg(test)] mod tests`.
 - **Limit**: verify result count respects limit
 
 ### Temporal scoring tests:
-- **Sigmoid decay shape**: entity at distance 0 scores ~1.0, at distance >> sigma scores ~0.05 (floor), never zero
+- **Sigmoid decay shape**: entity at distance=0 scores ≈0.983, at distance >> sigma scores ~0.05 (floor), never zero
+- **Interval distance**: overlapping occurred interval + query range → d_occ=0; long event with query near end → correct gap distance
+- **Anchor mode gating**: same entity scores differently under Occurred vs Learned vs Auto; false positive case (old event told recently) rejected by Occurred mode
+- **Dynamic α**: near-now query → α≈0.7 (recency active); historical query (1y+) → α≈1.0 (recency suppressed)
+- **σ-driven discovery**: point anchor + Year granularity → radius includes 3σ=540d, not just 7d
+- **Bidirectional scan**: closest-to-anchor entities prioritized in candidate set even under tight per_scan_cap
+- **Three index scans**: entity with occurred_start outside window but occurred_end inside → discovered via occurred_end scan
+- **Per-scan caps**: learned scan produces candidates even when occurred scans are saturated
+- **Adaptive widening**: narrow σ with few entities → widens σ and finds more; `temporal_adaptive(false)` prevents widening
+- **Contiguity boost**: temporally clustered entities (same week) score higher than isolated ones; single entity → no boost
 - **Granularity tiers**: same anchor range with `Day` vs `Year` granularity gives different score distributions
-- **Tier equivalence**: `search_temporal(start, end, limit)` produces same results as `search_temporal_with_sigma(start, end, range_width, limit)` when range_width >= 86400
-- **Vague queries**: wide granularity (Year/Vague) still surfaces distant entities with floor score
+- **Tier equivalence**: `search_temporal(start, end, limit)` produces same results as `search_temporal_with_sigma(start, end, max(e-s, 86400), Auto, limit)` when range_width >= 86400
 
 ### Test helpers (reuse pattern from existing tests):
 ```rust
