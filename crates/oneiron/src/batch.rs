@@ -13,6 +13,7 @@ pub(crate) const ENTITY_METADATA_HEADER_LEN: usize = 25;
 const SHORT_ID_COUNTER_LEN: usize = 8;
 const EDGE_KEY_LEN: usize = 33;
 const EDGE_VALUE_LEN: usize = 12;
+const LONG_INTERVAL_THRESHOLD_SECS: u64 = 14 * 86_400;
 
 /// Builder for atomic multi-database write batches.
 pub struct BatchBuilder<'a> {
@@ -242,6 +243,7 @@ pub(crate) fn deindex_entity(
 
     let learned_key = Store::encode_temporal_key(learned_at, id);
     store.temporal_learned.delete(wtxn, &learned_key)?;
+    store.temporal_long_intervals.delete(wtxn, id.as_bytes())?;
 
     let neighbors = delete_related_edges(store, wtxn, id)?;
 
@@ -265,6 +267,13 @@ fn apply_put(
     learned_at: u64,
     data: &[u8],
 ) -> Result<()> {
+    let mut occurred = occurred;
+    if occurred.start > occurred.end {
+        std::mem::swap(&mut occurred.start, &mut occurred.end);
+    }
+
+    store.temporal_long_intervals.delete(wtxn, id.as_bytes())?;
+
     if let Some(old_record) = store.entities.get(wtxn, id.as_bytes())? {
         let (old_type, old_occurred, old_learned) = parse_entity_metadata(old_record)?;
 
@@ -317,6 +326,15 @@ fn apply_put(
 
     let learned_key = Store::encode_temporal_key(learned_at, &id);
     store.temporal_learned.put(wtxn, &learned_key, &[])?;
+
+    if occurred.end.saturating_sub(occurred.start) > LONG_INTERVAL_THRESHOLD_SECS {
+        let mut value = [0_u8; 16];
+        value[..8].copy_from_slice(&occurred.start.to_be_bytes());
+        value[8..].copy_from_slice(&occurred.end.to_be_bytes());
+        store
+            .temporal_long_intervals
+            .put(wtxn, id.as_bytes(), &value)?;
+    }
 
     upsert_short_id(store, wtxn, &id, entity_type, data)?;
     Ok(())
