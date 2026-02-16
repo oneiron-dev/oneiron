@@ -15,6 +15,34 @@ const EDGE_KEY_LEN: usize = 33;
 const EDGE_VALUE_LEN: usize = 12;
 const LONG_INTERVAL_THRESHOLD_SECS: u64 = 14 * 86_400;
 
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct EntityMetadataHeader {
+    pub(crate) entity_type: u8,
+    pub(crate) occurred_start: u64,
+    pub(crate) occurred_end: u64,
+    pub(crate) learned_at: u64,
+}
+
+impl EntityMetadataHeader {
+    pub(crate) fn parse(raw: &[u8]) -> Option<Self> {
+        if raw.len() < ENTITY_METADATA_HEADER_LEN {
+            return None;
+        }
+
+        let entity_type = raw[0];
+        let occurred_start = u64::from_be_bytes(raw[1..9].try_into().ok()?);
+        let occurred_end = u64::from_be_bytes(raw[9..17].try_into().ok()?);
+        let learned_at = u64::from_be_bytes(raw[17..25].try_into().ok()?);
+
+        Some(Self {
+            entity_type,
+            occurred_start,
+            occurred_end,
+            learned_at,
+        })
+    }
+}
+
 /// Builder for atomic multi-database write batches.
 pub struct BatchBuilder<'a> {
     vault: &'a Vault,
@@ -488,16 +516,16 @@ fn parse_short_id_value(value: &[u8]) -> Result<(&str, u8)> {
 }
 
 fn parse_entity_metadata(record: &[u8]) -> Result<(u8, TimeRange, u64)> {
-    if record.len() < ENTITY_METADATA_HEADER_LEN {
-        return Err(Error::InvalidKey);
-    }
+    let header = EntityMetadataHeader::parse(record).ok_or(Error::InvalidKey)?;
 
-    let entity_type = record[0];
-    let start = u64::from_be_bytes(record[1..9].try_into().map_err(|_| Error::InvalidKey)?);
-    let end = u64::from_be_bytes(record[9..17].try_into().map_err(|_| Error::InvalidKey)?);
-    let learned = u64::from_be_bytes(record[17..25].try_into().map_err(|_| Error::InvalidKey)?);
-
-    Ok((entity_type, TimeRange { start, end }, learned))
+    Ok((
+        header.entity_type,
+        TimeRange {
+            start: header.occurred_start,
+            end: header.occurred_end,
+        },
+        header.learned_at,
+    ))
 }
 
 fn delete_related_edges(
