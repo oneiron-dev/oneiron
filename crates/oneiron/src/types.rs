@@ -203,6 +203,45 @@ pub enum Signal {
     Ppr,
 }
 
+/// Temporal query precision controls sigmoid width for temporal scoring.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum TemporalGranularity {
+    Exact,
+    Hour,
+    Day,
+    Week,
+    Month,
+    Season,
+    Year,
+    Vague,
+}
+
+impl TemporalGranularity {
+    /// Returns the scoring sigma in seconds for this granularity.
+    pub fn sigma_secs(self) -> u64 {
+        match self {
+            Self::Exact => 3_600,
+            Self::Hour => 14_400,
+            Self::Day => 86_400,
+            Self::Week => 604_800,
+            Self::Month => 2_592_000,
+            Self::Season => 7_776_000,
+            Self::Year => 15_552_000,
+            Self::Vague => 31_536_000,
+        }
+    }
+}
+
+/// Temporal anchor intent for bitemporal scoring.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum TemporalAnchorMode {
+    Occurred,
+    Learned,
+    Both,
+    #[default]
+    Auto,
+}
+
 /// Output serialization format for context packing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum PackFormat {

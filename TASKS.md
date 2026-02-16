@@ -14,6 +14,7 @@ git worktree add .worktrees/<task-name> -b feat/<task-name>
 ```
 
 Worktree directory: `.worktrees/` (gitignored).
+
 Branch naming: `feat/<task-name>` (e.g. `feat/types-store`, `feat/batch-builder`, `feat/bm25`).
 
 ### Phase 1 — Build (Codex)
@@ -53,7 +54,7 @@ Branch naming: `feat/<task-name>` (e.g. `feat/types-store`, `feat/batch-builder`
 | 3 | BM25 Full-Text Search | done | #3 | `.worktrees/bm25` | `feat/bm25` |
 | 4 | HNSW Vector Search | done | #4 | `.worktrees/hnsw` | `feat/hnsw` |
 | 5 | PPR Graph Traversal | done | #6 | `.worktrees/ppr` | `feat/ppr` |
-| 6 | RRF Fusion + Pipeline | | | `.worktrees/rrf-pipeline` | `feat/rrf-pipeline` |
+| 6 | RRF Fusion + Pipeline | in review | #7 | `.worktrees/rrf-pipeline` | `feat/rrf-pipeline` |
 | 7 | Context Pack + Serialization | | | `.worktrees/context-pack` | `feat/context-pack` |
 | 8 | Index Maintenance | | | `.worktrees/maintenance` | `feat/maintenance` |
 | 9 | Benchmarks | | | `.worktrees/benchmarks` | `feat/benchmarks` |
@@ -298,9 +299,10 @@ Implement the `BatchBuilder` for atomic multi-database writes, and all secondary
 
 ## Task 6: RRF Fusion + Pipeline Builder
 
-**Files:** `fusion.rs`, `pipeline.rs`
-**Est:** ~300 LOC
+**Files:** `fusion.rs`, `temporal.rs`, `pipeline.rs`, `store.rs` (extend with `temporal_long_intervals`)
+**Est:** ~800 LOC
 **Depends on:** Task 3, Task 4, Task 5
+**Spec status:** TEMPORAL-SCORING-SPEC.md v3.1 finalized (3 external review rounds), CODEX-PROMPT.md v3.1 is the implementation guide
 
 **Review follow-ups from Task 2:**
 - [ ] Add `phonetic_forward` index (entity → codes) to replace O(vocabulary_size) full scan in `delete_from_phonetic_postings`
@@ -315,25 +317,43 @@ Implement the `BatchBuilder` for atomic multi-database writes, and all secondary
 
 **Signal Boosts:**
 - `boost_recency(scores, half_life_days, store, txn)` — exponential decay from `learned_at`
+  - **Note:** recency is auto-skipped when temporal search is active to avoid double-counting `learned_at` (`pipeline.rs:372-374`).
 - `boost_salience(scores, store, txn)` — read from entity blob (if present)
 - `boost_confidence(scores, store, txn)` — read from entity blob (if present)
+
+**Temporal Scoring (`temporal.rs`) — per TEMPORAL-SCORING-SPEC.md v3.1:**
+- **Proximity function:** Mnemosyne-style sigmoid with floor=0.05
+  - `s_prox = (1 - floor) / (1 + exp((d - λ) / steepness)) + floor`
+  - `d = interval_distance(entity_occurred, anchor)` — 0 for overlap, gap otherwise
+  - Overlap tie-break: `|entity_midpoint - anchor_midpoint|` as secondary sort when d=0
+- **4 anchor modes:** `Occurred` / `Learned` / `Auto` (default) / `Both`
+  - Auto: normalized noisy-OR with defensive `.clamp(0.0, 1.0)` on net values
+  - Both: floor-preserving product in normalized space — range [floor, ~1.0]
+  - Both returns error when used without learned anchors
+- **Dynamic α:** `abs_diff(now, anchor_end)` — symmetric past/future treatment
+  - `α = 0.7 + 0.3 × (1.0 - exp(-(anchor_age as f64) / (90.0 × 86400.0)))`
+- **Candidate discovery:** `radius = max(2w, 3σ, 7d)`, bidirectional scan from anchor_mid
+  - Three point-index scans: occurred_start + occurred_end + learned, per-scan caps
+  - Spanner index scan: `temporal_long_intervals` for long-duration entities
+  - Adaptive σ widening: doubles σ up to 3 rounds, skips rescan when radius unchanged
+- **4 API tiers:** inferred σ, explicit σ, TemporalGranularity enum, TemporalAnchorMode
+- **Contiguity boost:** post-RRF, `score *= 1 + 0.2 * contiguity`, O(n log n)
+- **Spanner index (new DB):** `temporal_long_intervals[entity_id(16)] → [occ_start(8 BE) | occ_end(8 BE)]`
+  - True-spanner filter: `start < window_start AND end > window_end`
+  - Skip in Learned mode
+  - Write-time threshold: fixed 14 days (`occ_end - occ_start > 14 × 86400`)
+- **Input validation:** swap inverted occurred ranges at ingest (`occ_start > occ_end`)
 
 **Pipeline Builder (`pipeline.rs`):**
 - `PipelineBuilder<'a>` struct borrowing `&'a Vault`
 - Lazy: accumulates search/filter/boost config, executes on `run()`
-- `run()` opens one read txn, executes all signals, fuses, applies boosts/filters, returns `Vec<ScoredEntity>`
-- Methods: `search_vector`, `search_text`, `search_phonetic`, `search_temporal`, `search` (convenience), `expand_ppr`, `boost_recency`, `boost_salience`, `boost_confidence`, `filter_types`, `filter_since`, `filter_occurred_range`, `filter_learned_range`, `limit`
+- `run()` — two-transaction flow: txn A (signals) → drop → PPR (internal txns) → txn B (boosts/filters)
+- Methods: `search_vector`, `search_text`, `search_phonetic`, `search_temporal`, `search_temporal_with_sigma`, `search_temporal_with_granularity`, `search` (convenience), `search_ppr`, `expand_ppr`, `boost_recency`, `boost_salience`, `boost_confidence`, `filter_types`, `filter_since`, `filter_occurred_range`, `filter_learned_range`, `limit`
 
 **Phonetic search (in pipeline):**
 - `search_phonetic(codes: &[&str])` — look up each code in `phonetic_index`, score by graduated edit distance
 - Score: `1.0 - (levenshtein(query_code, stored_code) / max_len)`
 - Multi-code boost: entity matching both primary + alternate → 1.2× boost
-
-**Temporal search (in pipeline):**
-- `search_temporal(anchor_start, anchor_end, limit)` — range scan temporal indexes, score by proximity
-- `s_occurred = 1 - |midpoint(entity) - midpoint(query)| / (query_range / 2)`
-- `s_learned = exp(-λ × (now - learned_at))`
-- `s_temporal = α × s_occurred + (1-α) × s_learned`, default `α = 0.7`
 
 **Tests:**
 - End-to-end: insert entities with text + vectors + edges + phonetic codes + timestamps
@@ -342,6 +362,17 @@ Implement the `BatchBuilder` for atomic multi-database writes, and all secondary
 - Verify temporal filter works (only entities in range)
 - Verify recency boost (recent entities score higher)
 - Test with only 1 signal (e.g., text-only query), verify still works
+- **Temporal-specific tests (per spec §10):**
+  - Sigmoid continuity at d=0 (≈0.983, not 1.0)
+  - Overlap tie-break ordering
+  - Both mode: floor-preserving product (exact-match pair ≈0.964, miss pair = floor 0.050)
+  - Both mode: error on missing learned anchors
+  - Auto mode: noisy-OR ≥ max(s_occ, s_lrn)
+  - Dynamic α: near-anchor α≈0.700, far-future α via abs_diff
+  - Spanner: true-spanner filter, skip in Learned mode
+  - Adaptive widening: skip rescan when radius unchanged
+  - Inverted range swap at ingest
+  - Contiguity: off when σ_contig=0, on by default
 
 ---
 
@@ -350,6 +381,14 @@ Implement the `BatchBuilder` for atomic multi-database writes, and all secondary
 **Files:** `context_pack.rs`, `serialize.rs`
 **Est:** ~500 LOC
 **Depends on:** Task 6
+
+**Review follow-ups from Task 6:**
+- [ ] Replace full DB scan in `collect_index_candidates` (`pipeline.rs:687`) with bidirectional range seek from anchor midpoint — O(N) → O(cap). Flagged by all 6 reviewers. Currently uses `db.iter(rtxn)?` which walks entire temporal index.
+- [ ] Overlap tiebreak axis mismatch in Learned mode (`pipeline.rs:539-543`) — always uses occurred midpoint, should use learned axis when `anchor_mode == Learned`. Minor impact (only affects equal-score entities with d_occ==0 in Learned mode).
+- [ ] Two separate `RoTxn` in `PipelineBuilder::run()` (lines 289 and 371) breaks snapshot consistency — entities could change between signal retrieval and boost/filter phases. Requires PPR refactor to accept borrowed `RoTxn` instead of opening internal txns.
+- [ ] Cache `EntityMetadataHeader` per-entity within pipeline `run()` to avoid redundant LMDB lookups across `execute_temporal`, `boost_recency`, `boost_salience`, `boost_confidence`, and `apply_filters`. LMDB page cache mitigates I/O cost but parsing overhead remains.
+- [ ] `boost_contiguity` O(n²) runs on full fused set before `scores.truncate(result_limit)` at `pipeline.rs:407`. For stacked signals (vector+BM25+PPR), fused set can be ~300+ entities. Pre-truncate to 2× `result_limit` before contiguity to bound work.
+- [ ] `temporal_long_intervals` full scan at `pipeline.rs:632-639` — `store.temporal_long_intervals.iter(rtxn)?` walks all spanner entries. Lower impact than `collect_index_candidates` (table is small — only entities with duration >14 days) but same O(N) class.
 
 **Context Pack Builder (`context_pack.rs`):**
 - `ContextPackBuilder<'a>` — extends pipeline with hydration options
@@ -526,13 +565,13 @@ C-compatible FFI for mobile (iOS/Android) and TypeScript/Node via NAPI or direct
 | 3 | BM25 Full-Text Search | ~600 | 2 | done | #3 | Tokenizer, inverted index, forward index, deindexing |
 | 4 | HNSW Vector Search | ~800 | 1 | done | #4 | Flat NSW, cosine distance, SIMD, lazy deletion |
 | 5 | PPR Graph Traversal | ~400 | 1,2 | done | #6 | Bidirectional PPR, per-edge weights, cache |
-| 6 | RRF Fusion + Pipeline | ~300 | 3,4,5 | — | — | 5-signal fusion, pipeline builder |
+| 6 | RRF Fusion + Pipeline | ~800 | 3,4,5 | in review | #7 | 5-signal fusion, temporal scoring (v3.1), pipeline builder |
 | 7 | Context Pack + Serialization | ~500 | 6 | — | — | Hydration, 5 formats, short ID + hash, token budget |
 | 8 | Index Maintenance | ~250 | 4,5 | — | — | HNSW rebuild, PPR cache cleanup, posting compaction |
 | 9 | Benchmarks | ~400 | 6,8 | — | — | Scale testing, recall targets, latency targets |
 | 10 | FFI Layer | ~300 | 7 | — | — | C FFI for mobile + TypeScript |
 
-**Total:** ~4,350 LOC
+**Total:** ~4,850 LOC
 
 **Parallelizable:** Tasks 3 and 4 can run in parallel (both depend on 1/2 but not each other). Task 5 can start as soon as Task 2 is done. Task 8 can start after Tasks 4+5. Tasks 9 and 7 can run in parallel.
 
