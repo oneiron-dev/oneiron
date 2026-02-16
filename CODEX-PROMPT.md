@@ -2,7 +2,7 @@
 
 **Files to create:** `crates/oneiron/src/fusion.rs`, `crates/oneiron/src/pipeline.rs`
 **Files to modify:** `crates/oneiron/src/lib.rs` (add modules + `Vault::query()` method)
-**~300 LOC target**
+**~800 LOC target** (temporal scoring adds significant complexity)
 **Depends on:** Task 3 (BM25), Task 4 (HNSW), Task 5 (PPR) — all merged to main
 
 ---

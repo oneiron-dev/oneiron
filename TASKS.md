@@ -340,7 +340,7 @@ Implement the `BatchBuilder` for atomic multi-database writes, and all secondary
 - **Spanner index (new DB):** `temporal_long_intervals[entity_id(16)] → [occ_start(8 BE) | occ_end(8 BE)]`
   - True-spanner filter: `start < window_start AND end > window_end`
   - Skip in Learned mode
-  - Threshold: `occ_end - occ_start > 2 × σ` (saturating_sub)
+  - Write-time threshold: fixed 14 days (`occ_end - occ_start > 14 × 86400`)
 - **Input validation:** swap inverted occurred ranges at ingest (`occ_start > occ_end`)
 
 **Pipeline Builder (`pipeline.rs`):**
