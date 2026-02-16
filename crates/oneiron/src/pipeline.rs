@@ -7,19 +7,24 @@ use crate::batch::EntityMetadataHeader;
 use crate::error::{Error, Result};
 use crate::fusion;
 use crate::store::Store;
-use crate::types::{EntityId, ScoredEntity, TemporalAnchorMode, TemporalGranularity, TimeRange};
+use crate::types::{
+    EntityId, ScoredEntity, TemporalAnchorMode, TemporalGranularity, TimeRange, ENTITY_ID_LEN,
+};
 use crate::Vault;
 
 const DEFAULT_RESULT_LIMIT: usize = 20;
 const DEFAULT_SIGMA_SECS: u64 = 86_400;
 const MIN_WINDOW_RADIUS_SECS: u64 = 7 * 86_400;
 const LONG_INTERVAL_THRESHOLD_SECS: u64 = 14 * 86_400;
+const TEMPORAL_KEY_LEN: usize = 24;
+const LONG_INTERVAL_ROW_LEN: usize = 16;
 const TEMPORAL_FLOOR: f64 = 0.05;
 const SECONDS_PER_DAY_F64: f64 = 86_400.0;
 const RECENCY_DECAY_TAU_SECS: f64 = 28.0 * SECONDS_PER_DAY_F64;
 const ALPHA_BASE: f64 = 0.7;
 const ALPHA_RANGE: f64 = 0.3;
 const ALPHA_TAU_SECS: f64 = 90.0 * SECONDS_PER_DAY_F64;
+const PPR_DAMPING: f32 = 0.15;
 const ADAPTIVE_ROUNDS: usize = 3;
 const PER_SCAN_CAP_FACTOR: usize = 4;
 const RRF_K: f32 = 60.0;
@@ -322,8 +327,13 @@ impl<'a> PipelineBuilder<'a> {
         }
 
         if let Some((seeds, depth)) = &self.ppr_search {
-            let ppr_results =
-                crate::ppr::ppr_query(&self.vault.store, &self.vault.config, seeds, *depth, 0.15)?;
+            let ppr_results = crate::ppr::ppr_query(
+                &self.vault.store,
+                &self.vault.config,
+                seeds,
+                *depth,
+                PPR_DAMPING,
+            )?;
             ranked_lists.push(ppr_results);
         }
 
@@ -351,7 +361,7 @@ impl<'a> PipelineBuilder<'a> {
                     &self.vault.config,
                     &seeds,
                     *depth,
-                    0.15,
+                    PPR_DAMPING,
                 )?;
                 scores = fusion::rrf_fuse(&[scores, ppr_results], RRF_K);
             }
@@ -360,10 +370,10 @@ impl<'a> PipelineBuilder<'a> {
         {
             let rtxn = self.vault.store.env.read_txn()?;
 
-            if self.temporal_search.is_none() {
-                if let Some(half_life_days) = self.recency_half_life {
-                    fusion::boost_recency(&mut scores, half_life_days, &self.vault.store, &rtxn)?;
-                }
+            if let (None, Some(half_life_days)) =
+                (self.temporal_search.as_ref(), self.recency_half_life)
+            {
+                fusion::boost_recency(&mut scores, half_life_days, &self.vault.store, &rtxn)?;
             }
 
             if self.apply_salience {
@@ -394,11 +404,7 @@ impl<'a> PipelineBuilder<'a> {
             )?;
         }
 
-        scores.sort_unstable_by(|a, b| {
-            b.score
-                .total_cmp(&a.score)
-                .then_with(|| a.id.as_bytes().cmp(b.id.as_bytes()))
-        });
+        fusion::sort_scored_entities_desc(&mut scores);
         scores.truncate(self.result_limit);
         Ok(scores)
     }
@@ -420,11 +426,11 @@ fn execute_phonetic(
             continue;
         };
 
-        if !posting.len().is_multiple_of(16) {
+        if !posting.len().is_multiple_of(ENTITY_ID_LEN) {
             return Err(Error::InvalidKey);
         }
 
-        for chunk in posting.chunks_exact(16) {
+        for chunk in posting.chunks_exact(ENTITY_ID_LEN) {
             let id = EntityId::from_bytes(chunk.try_into().map_err(|_| Error::InvalidKey)?);
             let entry = accumulators.entry(id).or_default();
             entry.score += 1.0;
@@ -444,11 +450,7 @@ fn execute_phonetic(
         })
         .collect();
 
-    out.sort_unstable_by(|a, b| {
-        b.score
-            .total_cmp(&a.score)
-            .then_with(|| a.id.as_bytes().cmp(b.id.as_bytes()))
-    });
+    fusion::sort_scored_entities_desc(&mut out);
     Ok(out)
 }
 
@@ -684,7 +686,7 @@ fn collect_index_candidates(
 
     for entry in db.iter(rtxn)? {
         let (key, _) = entry?;
-        if key.len() != 24 {
+        if key.len() != TEMPORAL_KEY_LEN {
             return Err(Error::InvalidKey);
         }
 
@@ -693,7 +695,11 @@ fn collect_index_candidates(
             continue;
         }
 
-        let id = EntityId::from_bytes(key[8..24].try_into().map_err(|_| Error::InvalidKey)?);
+        let id = EntityId::from_bytes(
+            key[8..TEMPORAL_KEY_LEN]
+                .try_into()
+                .map_err(|_| Error::InvalidKey)?,
+        );
         rows.push((anchor_mid.abs_diff(timestamp), timestamp, id));
     }
 
@@ -711,13 +717,17 @@ fn collect_index_candidates(
 }
 
 fn decode_long_interval_row(id_bytes: &[u8], value: &[u8]) -> Result<(EntityId, u64, u64)> {
-    if id_bytes.len() != 16 || value.len() != 16 {
+    if id_bytes.len() != ENTITY_ID_LEN || value.len() != LONG_INTERVAL_ROW_LEN {
         return Err(Error::InvalidKey);
     }
 
     let id = EntityId::from_bytes(id_bytes.try_into().map_err(|_| Error::InvalidKey)?);
     let occurred_start = u64::from_be_bytes(value[..8].try_into().map_err(|_| Error::InvalidKey)?);
-    let occurred_end = u64::from_be_bytes(value[8..16].try_into().map_err(|_| Error::InvalidKey)?);
+    let occurred_end = u64::from_be_bytes(
+        value[8..LONG_INTERVAL_ROW_LEN]
+            .try_into()
+            .map_err(|_| Error::InvalidKey)?,
+    );
     Ok((id, occurred_start, occurred_end))
 }
 
