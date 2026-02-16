@@ -95,9 +95,9 @@ Respond to all review comments on the current PR after fixes have been pushed.
 
    [If any follow-ups: list them with ROADMAP references]
 
-   @claude @codex @greptile — addressed your comments, please re-review (review only, do not push fixes).
+   @claude @codex @greptile @coderabbitai — addressed your comments, please re-review (review only, do not push fixes).
    ```
 
-   **IMPORTANT**: Use these EXACT tags literally — `@claude @codex @greptile`. Do NOT try to derive GitHub bot usernames (like `@greptile-apps[bot]` or `@chatgpt-codex-connector[bot]`). The literal tags are what trigger the integrations.
+   **IMPORTANT**: Use these EXACT tags literally — `@claude @codex @greptile @coderabbitai`. Do NOT try to derive GitHub bot usernames (like `@greptile-apps[bot]` or `@chatgpt-codex-connector[bot]`). The literal tags are what trigger the integrations.
 
    **WARNING**: `@mentions` invoke the agents. Do NOT `@mention` any agent name in inline replies or other comments — only in this summary comment where re-review is intended.
