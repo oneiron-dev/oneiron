@@ -23,6 +23,16 @@ impl EntityId {
     pub fn as_bytes(&self) -> &[u8; 16] {
         &self.0
     }
+
+    pub(crate) fn lower_hex(&self) -> String {
+        const HEX: &[u8; 16] = b"0123456789abcdef";
+        let mut out = String::with_capacity(self.0.len() * 2);
+        for byte in self.0 {
+            out.push(HEX[(byte >> 4) as usize] as char);
+            out.push(HEX[(byte & 0x0f) as usize] as char);
+        }
+        out
+    }
 }
 
 /// Returns the short ID prefix for an entity type byte.
@@ -245,8 +255,9 @@ pub enum TemporalAnchorMode {
 }
 
 /// Output serialization format for context packing.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum PackFormat {
+    #[default]
     Json,
     Yaml,
     Toon,
@@ -254,24 +265,13 @@ pub enum PackFormat {
     Plaintext,
 }
 
-impl Default for PackFormat {
-    fn default() -> Self {
-        Self::Json
-    }
-}
-
 /// Field selection profile for context packing.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum FieldProfile {
     Minimal,
+    #[default]
     Standard,
     Full,
-}
-
-impl Default for FieldProfile {
-    fn default() -> Self {
-        Self::Standard
-    }
 }
 
 /// Hydrated entity with decoded fields, edges, and provenance.

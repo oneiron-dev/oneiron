@@ -428,7 +428,7 @@ fn hydrate_entity(
     };
 
     let (short_id, content_hash) =
-        read_short_id(&vault.store, rtxn, &id)?.unwrap_or_else(|| (entity_id_hex(&id), 0));
+        read_short_id(&vault.store, rtxn, &id)?.unwrap_or_else(|| (id.lower_hex(), 0));
 
     let edges = if include_edges {
         Some(scan_edges_for_entity(&vault.store, rtxn, &id)?)
@@ -528,17 +528,6 @@ fn read_short_id(store: &Store, rtxn: &RoTxn<'_>, id: &EntityId) -> Result<Optio
         .to_owned();
 
     Ok(Some((short_id, hash[0])))
-}
-
-fn entity_id_hex(id: &EntityId) -> String {
-    const HEX: &[u8; 16] = b"0123456789abcdef";
-    let bytes = id.as_bytes();
-    let mut out = String::with_capacity(bytes.len() * 2);
-    for byte in bytes {
-        out.push(HEX[(byte >> 4) as usize] as char);
-        out.push(HEX[(byte & 0x0f) as usize] as char);
-    }
-    out
 }
 
 fn read_vector(vault: &Vault, rtxn: &RoTxn<'_>, id: &EntityId) -> Result<Option<Vec<f32>>> {
@@ -708,7 +697,6 @@ mod tests {
         assert_eq!(entity.id, id);
         assert_eq!(entity.entity_type, 0);
         assert!(!entity.short_id.is_empty());
-        assert!(entity.content_hash > 0 || entity.content_hash == 0);
 
         let fields = entity.fields.as_ref().expect("fields missing");
         assert_eq!(

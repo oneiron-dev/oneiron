@@ -235,14 +235,7 @@ fn prepare_entities(
 
 fn format_short_id(entity: &ContextEntity) -> String {
     let short_id = if entity.short_id.is_empty() {
-        let bytes = entity.id.as_bytes();
-        let mut out = String::with_capacity(32);
-        const HEX: &[u8; 16] = b"0123456789abcdef";
-        for byte in bytes {
-            out.push(HEX[(byte >> 4) as usize] as char);
-            out.push(HEX[(byte & 0x0f) as usize] as char);
-        }
-        out
+        entity.id.lower_hex()
     } else {
         entity.short_id.clone()
     };
@@ -636,58 +629,99 @@ fn collect_columns(rows: &[PreparedEntity]) -> Vec<String> {
     columns
 }
 
+#[derive(Clone, Copy)]
+struct GroupLabels {
+    key: &'static str,
+    name: &'static str,
+    title: &'static str,
+}
+
+const OTHER_GROUP_LABELS: GroupLabels = GroupLabels {
+    key: "other",
+    name: "OTHER",
+    title: "Other",
+};
+
+const GROUP_LABELS: [GroupLabels; 12] = [
+    GroupLabels {
+        key: "claims",
+        name: "CLAIMS",
+        title: "Claims",
+    },
+    GroupLabels {
+        key: "turns",
+        name: "TURNS",
+        title: "Turns",
+    },
+    GroupLabels {
+        key: "sessions",
+        name: "SESSIONS",
+        title: "Sessions",
+    },
+    GroupLabels {
+        key: "messages",
+        name: "MESSAGES",
+        title: "Messages",
+    },
+    GroupLabels {
+        key: "persons",
+        name: "PERSONS",
+        title: "Persons",
+    },
+    GroupLabels {
+        key: "relationships",
+        name: "RELATIONSHIPS",
+        title: "Relationships",
+    },
+    GroupLabels {
+        key: "events",
+        name: "EVENTS",
+        title: "Events",
+    },
+    GroupLabels {
+        key: "skills",
+        name: "SKILLS",
+        title: "Skills",
+    },
+    GroupLabels {
+        key: "summaries",
+        name: "SUMMARIES",
+        title: "Summaries",
+    },
+    GroupLabels {
+        key: "places",
+        name: "PLACES",
+        title: "Places",
+    },
+    GroupLabels {
+        key: "texts",
+        name: "TEXTS",
+        title: "Texts",
+    },
+    GroupLabels {
+        key: "conversations",
+        name: "CONVERSATIONS",
+        title: "Conversations",
+    },
+];
+
+fn group_labels(entity_type: u8) -> GroupLabels {
+    GROUP_LABELS
+        .get(entity_type as usize)
+        .copied()
+        .unwrap_or(OTHER_GROUP_LABELS)
+}
+
 fn group_key(entity_type: u8) -> &'static str {
-    match entity_type {
-        0 => "claims",
-        1 => "turns",
-        2 => "sessions",
-        3 => "messages",
-        4 => "persons",
-        5 => "relationships",
-        6 => "events",
-        7 => "skills",
-        8 => "summaries",
-        9 => "places",
-        10 => "texts",
-        11 => "conversations",
-        _ => "other",
-    }
+    group_labels(entity_type).key
 }
 
 fn group_name(entity_type: u8) -> &'static str {
-    match entity_type {
-        0 => "CLAIMS",
-        1 => "TURNS",
-        2 => "SESSIONS",
-        3 => "MESSAGES",
-        4 => "PERSONS",
-        5 => "RELATIONSHIPS",
-        6 => "EVENTS",
-        7 => "SKILLS",
-        8 => "SUMMARIES",
-        9 => "PLACES",
-        10 => "TEXTS",
-        11 => "CONVERSATIONS",
-        _ => "OTHER",
-    }
+    group_labels(entity_type).name
 }
 
 fn group_title(entity_type: u8) -> &'static str {
-    match entity_type {
-        0 => "Claims",
-        1 => "Turns",
-        2 => "Sessions",
-        3 => "Messages",
-        4 => "Persons",
-        5 => "Relationships",
-        6 => "Events",
-        7 => "Skills",
-        8 => "Summaries",
-        9 => "Places",
-        10 => "Texts",
-        11 => "Conversations",
-        _ => "Other",
-    }
+    group_labels(entity_type).title
 }
 
 fn fields_for_profile(entity_type: u8, profile: FieldProfile) -> &'static [&'static str] {
@@ -1122,6 +1156,111 @@ mod tests {
         let text =
             String::from_utf8(serialize_pack(&pack, &config(PackFormat::Plaintext))).unwrap();
         assert!(text.contains("hello\\|world"));
+    }
+
+    #[test]
+    fn multiple_other_types_share_normalized_budget() {
+        let mut pack = sample_pack();
+        pack.results.clear();
+        pack.neighbors.clear();
+
+        let row_text = "v".repeat(45);
+
+        for i in 0..8_u8 {
+            pack.results.push(ContextEntity {
+                id: EntityId::from_bytes([10 + i; 16]),
+                short_id: format!("cl{i}"),
+                content_hash: i,
+                entity_type: 0,
+                score: 1.0,
+                fields: Some(HashMap::from([
+                    ("pred".to_owned(), Value::String("p".to_owned())),
+                    ("val".to_owned(), Value::String(row_text.clone())),
+                ])),
+                edges: None,
+                vector: None,
+            });
+
+            pack.results.push(ContextEntity {
+                id: EntityId::from_bytes([40 + i; 16]),
+                short_id: format!("tn{i}"),
+                content_hash: i,
+                entity_type: 1,
+                score: 1.0,
+                fields: Some(HashMap::from([(
+                    "txt".to_owned(),
+                    Value::String(row_text.clone()),
+                )])),
+                edges: None,
+                vector: None,
+            });
+
+            pack.results.push(ContextEntity {
+                id: EntityId::from_bytes([80 + i; 16]),
+                short_id: format!("sm{i}"),
+                content_hash: i,
+                entity_type: 8,
+                score: 1.0,
+                fields: Some(HashMap::from([(
+                    "txt".to_owned(),
+                    Value::String(row_text.clone()),
+                )])),
+                edges: None,
+                vector: None,
+            });
+
+            pack.results.push(ContextEntity {
+                id: EntityId::from_bytes([120 + i; 16]),
+                short_id: format!("pr{i}"),
+                content_hash: i,
+                entity_type: 4,
+                score: 1.0,
+                fields: Some(HashMap::from([(
+                    "name".to_owned(),
+                    Value::String(row_text.clone()),
+                )])),
+                edges: None,
+                vector: None,
+            });
+
+            pack.results.push(ContextEntity {
+                id: EntityId::from_bytes([160 + i; 16]),
+                short_id: format!("ev{i}"),
+                content_hash: i,
+                entity_type: 6,
+                score: 1.0,
+                fields: Some(HashMap::from([(
+                    "name".to_owned(),
+                    Value::String(row_text.clone()),
+                )])),
+                edges: None,
+                vector: None,
+            });
+        }
+
+        let mut cfg = config(PackFormat::Json);
+        cfg.budget = 200;
+        let prepared = prepare_pack(&pack, &cfg, true);
+
+        let persons_count = prepared
+            .results
+            .iter()
+            .find_map(|(entity_type, rows)| (*entity_type == 4).then_some(rows.len()))
+            .unwrap_or(0);
+        let events_count = prepared
+            .results
+            .iter()
+            .find_map(|(entity_type, rows)| (*entity_type == 6).then_some(rows.len()))
+            .unwrap_or(0);
+
+        assert_eq!(
+            persons_count, 1,
+            "persons should be constrained by normalized 'other' share"
+        );
+        assert_eq!(
+            events_count, 1,
+            "events should be constrained by normalized 'other' share"
+        );
     }
 
     #[test]
