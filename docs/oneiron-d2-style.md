@@ -7,7 +7,7 @@ Style tokens derived from [oneiron.dev](https://oneiron.dev) landing page.
 | Token   | Light     | Dark      | Role                          |
 |---------|-----------|-----------|-------------------------------|
 | accent  | `#E63E2A` | `#E63E2A` | Hero elements, primary action |
-| ink     | `#1a1a1a` | `#C8C4BA` | Text, markers, titles         |
+| ink     | `#1a1a1a` | `#ffffff` | Text, markers, titles         |
 | surface | transparent | transparent | Background (N7) — blends with host page |
 | raised  | `#ffffff` | `#1E1E1E` | Elevated surfaces, headers    |
 | success | `#4A7C59` | `#6BA87D` | Completion, positive output   |
@@ -19,10 +19,9 @@ Style tokens derived from [oneiron.dev](https://oneiron.dev) landing page.
 All non-class nodes use `style.shadow: true` for a consistent "cards on a surface" look.
 This applies to architecture, deployment, and any future flow diagrams.
 
-**Storage diagrams are the exception** — `shape: class` boxes in a tight grid don't benefit
-from shadows (the chunky drop shadows create visual noise with no breathing room). D2 also
-silently ignores `style.shadow` on `shape: class`, so even if set, it produces no effect
-without manual SVG post-processing.
+**Storage diagrams** also get shadows, but require manual SVG post-processing because D2
+silently ignores `style.shadow` on `shape: class`. See the post-processing section for
+the injection steps (filter definition + filter attributes on shape groups).
 
 ## Node Styles
 
@@ -90,13 +89,13 @@ vault: LMDB Environment (18 databases) {
 
 ### Class boxes (light mode)
 
-All headers use `raised` (`#ffffff`), all titles use `ink` (`#1a1a1a`).
-Category identity is carried by the body fill (= `style.stroke`).
+All headers use cream (`#F4F0E6`) for contrast against the transparent page background.
+All titles use `ink` (`#1a1a1a`). Category identity is carried by the body fill (= `style.stroke`).
 
 ```d2
 core: "Core" {
   shape: class
-  style.fill: "#ffffff"      # raised — uniform white header
+  style.fill: "#F4F0E6"      # cream — visible header on transparent bg
   style.stroke: "#1a1a1a"   # ink — body fill color
   style.font-color: "#1a1a1a"  # ink — uniform title text
   style.border-radius: 8
@@ -106,15 +105,15 @@ core: "Core" {
 
 ### Class boxes (dark mode)
 
-All headers use `raised` (`#1E1E1E`), all titles use `ink` (`#C8C4BA`).
+All headers use `raised` (`#1E1E1E`), all titles use white (`#ffffff`).
 Category identity is carried by the body fill (= `style.stroke`).
 
 ```d2
 core: "Core" {
   shape: class
   style.fill: "#1E1E1E"     # raised — uniform dark header
-  style.stroke: "#C8C4BA"   # ink — body fill color
-  style.font-color: "#C8C4BA"  # ink — uniform title text
+  style.stroke: "#ffffff"    # white — body fill color
+  style.font-color: "#ffffff"  # white — uniform title text
   style.border-radius: 8
   style.font-size: 13
 }
@@ -124,12 +123,12 @@ core: "Core" {
 
 | Category | Light stroke | Dark stroke | Notes         |
 |----------|-------------|-------------|---------------|
-| Core     | `#1a1a1a`   | `#C8C4BA`   | ink           |
+| Core     | `#1a1a1a`   | `#ffffff`   | ink           |
 | Vector   | `#E63E2A`   | `#E63E2A`   | accent        |
 | Text     | `#8B5A2B`   | `#C4824D`   | brown         |
 | Graph    | `#4A7C59`   | `#6BA87D`   | success       |
 | Temporal | `#6B7280`   | `#9CA3AF`   | muted         |
-| Phonetic | `#1a1a1a`   | `#C8C4BA`   | ink           |
+| Phonetic | `#1a1a1a`   | `#ffffff`   | ink           |
 
 ### Design rationale
 
@@ -171,17 +170,11 @@ D2 renders N7 as a solid fill (white for light, `#1E1E2E` for dark). Replace wit
 transparent so diagrams blend seamlessly with the host page (GitHub README, docs site, etc.):
 
 ```bash
-# Light mode
-sed -i '' \
-  -e 's/\.fill-N7{fill:#FFFFFF;}/.fill-N7{fill:transparent;}/g' \
-  -e 's/fill="#FFFFFF"/fill="transparent"/g' \
-  <name>-light.svg
+# Light mode — only change the N7 CSS class, NOT inline fill attributes (those belong to nodes)
+sed -i '' 's/\.fill-N7{fill:#FFFFFF;}/.fill-N7{fill:transparent;}/g' <name>-light.svg
 
-# Dark mode
-sed -i '' \
-  -e 's/\.fill-N7{fill:#1E1E2E;}/.fill-N7{fill:transparent;}/g' \
-  -e 's/fill="#1E1E2E"/fill="transparent"/g' \
-  <name>-dark.svg
+# Dark mode — same: CSS class only
+sed -i '' 's/\.fill-N7{fill:#1E1E2E;}/.fill-N7{fill:transparent;}/g' <name>-dark.svg
 ```
 
 ### Storage diagrams — fix B2 markers and vault overlay
@@ -201,6 +194,36 @@ sed -i '' 's|<rect width="784.000000" height="470.000000" transform="translate(0
 ```
 
 **Note**: The vault overlay dimensions may change if the diagram layout changes. Match the largest `sketch-overlay-*` rect.
+
+### Storage diagrams — shadow injection
+
+D2 ignores `style.shadow` on `shape: class`, so shadows must be injected manually.
+Two parts: (a) add the filter definition to `<defs>`, (b) add `filter` attributes to each
+class shape group (skip the vault, which is the first `<g class="shape">` in the SVG).
+
+```bash
+# 1. Add filter definition to <defs>
+FILTER='<filter id="shadow-filter" width="200%" height="200%" x="-50%" y="-50%"><feGaussianBlur stdDeviation="1.7" in="SourceGraphic" /><feFlood flood-color="#3d4574" flood-opacity="0.4" result="ShadowFeFlood" in="SourceGraphic" /><feComposite in="ShadowFeFlood" in2="SourceAlpha" operator="in" result="ShadowFeComposite" /><feOffset dx="3" dy="5" result="ShadowFeOffset" in="ShadowFeComposite" /><feBlend in="SourceGraphic" in2="ShadowFeOffset" mode="normal" result="ShadowFeBlend" /></filter>'
+sed -i '' "s|</defs>|${FILTER}</defs>|" storage-*.svg
+
+# 2. Add filter attributes to class shape groups (skip first = vault)
+python3 -c "
+import re
+for fname in ['storage-light', 'storage-dark']:
+    path = f'docs/{fname}.svg'
+    with open(path, 'r') as f:
+        content = f.read()
+    count = [0]
+    def replacer(match):
+        count[0] += 1
+        if count[0] == 1:  # skip vault
+            return match.group(0)
+        return '<g class=\"shape\" filter=\"url(#shadow-filter)\" >'
+    content = re.sub(r'<g class=\"shape\" >', replacer, content)
+    with open(path, 'w') as f:
+        f.write(content)
+"
+```
 
 ### GitHub cache busting
 
