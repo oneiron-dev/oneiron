@@ -1,5 +1,7 @@
 # Task 6 Design Notes — Temporal Scoring & PPR Placement
 
+> **Note:** These notes capture the initial design discussion (v1). The authoritative spec is **TEMPORAL-SCORING-SPEC.md (v3)**, which supersedes the formulas below. Key changes in v2/v3: interval distance (not midpoint), dynamic α (not fixed 0.7), normalized noisy-OR (not max+bonus), Both anchor mode, spanner interval index, contiguity improvements, future event support, σ clamp fix.
+
 Captures design decisions from the Task 6 discussion. Reference for future tasks (especially Task 9 benchmarks, oneiron-internal query layer).
 
 ---
