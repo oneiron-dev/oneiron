@@ -3,7 +3,7 @@ use std::collections::{HashMap, HashSet};
 use heed::types::Bytes;
 use heed::{Database, RoTxn};
 
-use crate::batch::EntityMetadataHeader;
+use crate::batch::{EntityMetadataHeader, LONG_INTERVAL_THRESHOLD_SECS};
 use crate::error::{Error, Result};
 use crate::fusion;
 use crate::store::Store;
@@ -15,7 +15,6 @@ use crate::Vault;
 const DEFAULT_RESULT_LIMIT: usize = 20;
 const DEFAULT_SIGMA_SECS: u64 = 86_400;
 const MIN_WINDOW_RADIUS_SECS: u64 = 7 * 86_400;
-const LONG_INTERVAL_THRESHOLD_SECS: u64 = 14 * 86_400;
 const TEMPORAL_KEY_LEN: usize = 24;
 const LONG_INTERVAL_ROW_LEN: usize = 16;
 const TEMPORAL_FLOOR: f64 = 0.05;

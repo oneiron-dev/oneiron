@@ -40,7 +40,7 @@ The caller picks which (or both). Task 9 benchmarks will compare recall/latency 
 
 ### Problem with linear formula (from SCHEMA-DESIGN.md)
 
-```
+```text
 s_occurred = 1.0 - |midpoint(entity) - midpoint(query)| / (query_range / 2)
 ```
 
@@ -51,16 +51,20 @@ This linearly drops to **zero** at the range boundary. For "what happened 5 year
 ### Alternatives considered
 
 **Hindsight (pure exponential):**
-```
+
+```text
 w = exp(-delta_t / sigma_t)
 ```
+
 - Never reaches zero (asymptotic). Better than linear.
 - No floor — very old memories effectively vanish.
 
 **Mnemosyne (reverse sigmoid with floor):**
-```
+
+```text
 τ(e_eff) = (1 - d) / (1 + exp((e_eff - a) / b)) + d
 ```
+
 Where:
 - `a` = midpoint (default: 4 weeks) — where steep dropoff happens
 - `b` = steepness (lower = steeper)
@@ -70,7 +74,8 @@ Where:
 ### Decision
 
 **Use Mnemosyne-style sigmoid with floor for `s_occurred`:**
-```
+
+```text
 s_occurred = (1 - floor) / (1 + exp((|distance| - midpoint) / steepness)) + floor
 ```
 
@@ -80,12 +85,14 @@ Where:
 - `steepness` scales with midpoint
 
 **Keep exponential decay for `s_learned`** (recency of when we recorded it):
-```
+
+```text
 s_learned = exp(-(now - learned_at) / λ)    // λ = 28 days (Mnemosyne default)
 ```
 
 **Combined:**
-```
+
+```text
 s_temporal = α × s_occurred + (1-α) × s_learned    // α = 0.7 default
 ```
 

@@ -14,6 +14,7 @@ git worktree add .worktrees/<task-name> -b feat/<task-name>
 ```
 
 Worktree directory: `.worktrees/` (gitignored).
+
 Branch naming: `feat/<task-name>` (e.g. `feat/types-store`, `feat/batch-builder`, `feat/bm25`).
 
 ### Phase 1 — Build (Codex)
@@ -53,7 +54,7 @@ Branch naming: `feat/<task-name>` (e.g. `feat/types-store`, `feat/batch-builder`
 | 3 | BM25 Full-Text Search | done | #3 | `.worktrees/bm25` | `feat/bm25` |
 | 4 | HNSW Vector Search | done | #4 | `.worktrees/hnsw` | `feat/hnsw` |
 | 5 | PPR Graph Traversal | done | #6 | `.worktrees/ppr` | `feat/ppr` |
-| 6 | RRF Fusion + Pipeline | spec done | | `.worktrees/rrf-pipeline` | `feat/rrf-pipeline` |
+| 6 | RRF Fusion + Pipeline | in review | #7 | `.worktrees/rrf-pipeline` | `feat/rrf-pipeline` |
 | 7 | Context Pack + Serialization | | | `.worktrees/context-pack` | `feat/context-pack` |
 | 8 | Index Maintenance | | | `.worktrees/maintenance` | `feat/maintenance` |
 | 9 | Benchmarks | | | `.worktrees/benchmarks` | `feat/benchmarks` |
@@ -381,6 +382,12 @@ Implement the `BatchBuilder` for atomic multi-database writes, and all secondary
 **Est:** ~500 LOC
 **Depends on:** Task 6
 
+**Review follow-ups from Task 6:**
+- [ ] Replace full DB scan in `collect_index_candidates` (`pipeline.rs:687`) with bidirectional range seek from anchor midpoint — O(N) → O(cap). Flagged by all 6 reviewers. Currently uses `db.iter(rtxn)?` which walks entire temporal index.
+- [ ] Overlap tiebreak axis mismatch in Learned mode (`pipeline.rs:539-543`) — always uses occurred midpoint, should use learned axis when `anchor_mode == Learned`. Minor impact (only affects equal-score entities with d_occ==0 in Learned mode).
+- [ ] Two separate `RoTxn` in `PipelineBuilder::run()` (lines 289 and 371) breaks snapshot consistency — entities could change between signal retrieval and boost/filter phases. Requires PPR refactor to accept borrowed `RoTxn` instead of opening internal txns.
+- [ ] Cache `EntityMetadataHeader` per-entity within pipeline `run()` to avoid redundant LMDB lookups across `execute_temporal`, `boost_recency`, `boost_salience`, `boost_confidence`, and `apply_filters`. LMDB page cache mitigates I/O cost but parsing overhead remains.
+
 **Context Pack Builder (`context_pack.rs`):**
 - `ContextPackBuilder<'a>` — extends pipeline with hydration options
 - All `PipelineBuilder` methods available
@@ -556,7 +563,7 @@ C-compatible FFI for mobile (iOS/Android) and TypeScript/Node via NAPI or direct
 | 3 | BM25 Full-Text Search | ~600 | 2 | done | #3 | Tokenizer, inverted index, forward index, deindexing |
 | 4 | HNSW Vector Search | ~800 | 1 | done | #4 | Flat NSW, cosine distance, SIMD, lazy deletion |
 | 5 | PPR Graph Traversal | ~400 | 1,2 | done | #6 | Bidirectional PPR, per-edge weights, cache |
-| 6 | RRF Fusion + Pipeline | ~800 | 3,4,5 | spec done | — | 5-signal fusion, temporal scoring (v3.1), pipeline builder |
+| 6 | RRF Fusion + Pipeline | ~800 | 3,4,5 | in review | #7 | 5-signal fusion, temporal scoring (v3.1), pipeline builder |
 | 7 | Context Pack + Serialization | ~500 | 6 | — | — | Hydration, 5 formats, short ID + hash, token budget |
 | 8 | Index Maintenance | ~250 | 4,5 | — | — | HNSW rebuild, PPR cache cleanup, posting compaction |
 | 9 | Benchmarks | ~400 | 6,8 | — | — | Scale testing, recall targets, latency targets |

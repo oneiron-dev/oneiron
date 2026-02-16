@@ -43,7 +43,7 @@ pub(crate) fn boost_recency(
     store: &Store,
     rtxn: &RoTxn<'_>,
 ) -> Result<()> {
-    if half_life_days <= 0.0 {
+    if !half_life_days.is_finite() || half_life_days <= 0.0 {
         return Ok(());
     }
 
@@ -149,6 +149,9 @@ fn decode_numeric_value(value: Value) -> Option<f32> {
         _ => return None,
     };
 
+    if !parsed.is_finite() {
+        return None;
+    }
     Some(parsed.clamp(0.0, 1.0))
 }
 

@@ -1,8 +1,11 @@
 # Task 6: RRF Fusion + Pipeline Builder
 
 **Files to create:** `crates/oneiron/src/fusion.rs`, `crates/oneiron/src/pipeline.rs`
+
 **Files to modify:** `crates/oneiron/src/lib.rs` (add modules + `Vault::query()` method)
+
 **~800 LOC target** (temporal scoring adds significant complexity)
+
 **Depends on:** Task 3 (BM25), Task 4 (HNSW), Task 5 (PPR) — all merged to main
 
 ---
@@ -266,7 +269,8 @@ fn execute_temporal(
    - If missing or blob < 25 bytes: skip (no error)
 
    **Interval-aware distances** (not midpoint-to-midpoint):
-   ```
+
+   ```text
    d_occ = interval_distance(
        [entity.occurred_start, entity.occurred_end],
        [config.anchor_start, config.anchor_end]
@@ -288,7 +292,8 @@ fn execute_temporal(
    ```
 
    **Proximity scoring:**
-   ```
+
+   ```text
    sigmoid(dist, σ, floor) = (1.0 - floor) / (1.0 + exp((dist - σ) / (σ / 4.0))) + floor
 
    s_occ_prox = sigmoid(d_occ, sigma, 0.05)
@@ -301,7 +306,8 @@ fn execute_temporal(
    - `distance >> σ`: score → 0.05 (floor)
 
    **Anchor mode gating:**
-   ```
+
+   ```rust
    const FLOOR: f64 = 0.05;
    match config.anchor_mode {
        Occurred => s_proximity = s_occ_prox,
@@ -326,13 +332,16 @@ fn execute_temporal(
    **Defensive clamp:** `.clamp(0.0, 1.0)` on net values prevents float drift from producing values outside [0,1].
 
    For Both mode, `d_lrn` uses the separate learned anchor:
-   ```
+
+   ```rust
    d_lrn = point_interval_distance(entity.learned_at, [config.learned_start, config.learned_end])
    ```
+
    (For non-Both modes, `d_lrn` uses `[config.anchor_start, config.anchor_end]` as before.)
 
    **Recency with dynamic α:**
-   ```
+
+   ```rust
    s_recency = exp(-(now - entity.learned_at) as f64 / (28.0 × 86400.0))
 
    // abs_diff: symmetric for past and future anchors
@@ -422,6 +431,7 @@ pub(crate) const ENTITY_METADATA_HEADER_LEN: usize = 25;
 ```
 
 Reading timestamps from entity blobs:
+
 ```rust
 let raw = store.entities.get(&rtxn, id.as_bytes())?;
 // raw[0] = entity_type
@@ -431,7 +441,8 @@ let raw = store.entities.get(&rtxn, id.as_bytes())?;
 // raw[25..] = user data (MessagePack blob)
 ```
 
-### Store databases available:
+### Store databases available
+
 - `store.entities` — entity blobs with 25-byte metadata header
 - `store.phonetic_index` — `code (UTF-8)` → `[(entity_id(16))]` packed
 - `store.temporal_occurred_start` — `[ts(8 BE) | id(16)]` → empty
@@ -441,26 +452,30 @@ let raw = store.entities.get(&rtxn, id.as_bytes())?;
 - `store.type_index` — `[type(1) | id(16)]` → empty
 - All other stores (see `store.rs`)
 
-### Key encoding helpers:
+### Key encoding helpers
+
 ```rust
 Store::encode_temporal_key(ts: u64, id: &EntityId) -> [u8; 24]
 Store::encode_type_key(entity_type: u8, id: &EntityId) -> [u8; 17]
 ```
 
-### Crate-level helpers:
+### Crate-level helpers
+
 ```rust
 pub(crate) fn unix_seconds_now() -> u64;
 pub(crate) fn le_bytes_to_f32_vec(bytes: &[u8]) -> Result<Vec<f32>>;
 ```
 
-### Types (from `types.rs`):
+### Types (from `types.rs`)
+
 ```rust
 pub struct ScoredEntity { pub id: EntityId, pub score: f32 }
 pub struct TimeRange { pub start: u64, pub end: u64 }
 pub enum Signal { Vector, Text, Phonetic, Temporal, Ppr }
 ```
 
-### New type to add to `types.rs`:
+### New type to add to `types.rs`
+
 ```rust
 /// Temporal query precision — controls decay width for temporal scoring.
 /// Maps to sigma_secs internally. Wider granularity = more forgiving decay.
@@ -516,13 +531,15 @@ pub enum TemporalAnchorMode {
 
 Write tests in `pipeline.rs` (or `fusion.rs`) under `#[cfg(test)] mod tests`.
 
-### RRF fusion tests:
+### RRF fusion tests
+
 - **Single list**: fuse with one list → scores should be `1/(k+rank+1)`
 - **Two lists, overlapping entities**: entity in both lists gets summed contributions
 - **Empty lists**: no results
 - **Missing entities**: entity in list A but not B → only gets A's contribution
 
-### Pipeline end-to-end tests:
+### Pipeline end-to-end tests
+
 - **Insert entities with text + vectors + edges**, then query with pipeline
 - **Text-only query**: `vault.query().search_text("term", 10).run()`
 - **Vector-only query**: `vault.query().search_vector(&vec, 10).run()`
@@ -536,7 +553,8 @@ Write tests in `pipeline.rs` (or `fusion.rs`) under `#[cfg(test)] mod tests`.
 - **Single signal still works**: each signal type alone produces valid results
 - **Limit**: verify result count respects limit
 
-### Temporal scoring tests:
+### Temporal scoring tests
+
 - **Sigmoid decay shape**: entity at distance=0 scores ≈0.983, at distance >> sigma scores ~0.05 (floor), never zero
 - **Interval distance**: overlapping occurred interval + query range → d_occ=0; long event with query near end → correct gap distance
 - **Anchor mode gating**: same entity scores differently under Occurred vs Learned vs Auto vs Both; false positive case (old event told recently) rejected by Occurred and Both modes
@@ -559,6 +577,7 @@ Write tests in `pipeline.rs` (or `fusion.rs`) under `#[cfg(test)] mod tests`.
 - **Tier equivalence**: `search_temporal(start, end, limit)` produces same results as `search_temporal_with_sigma(start, end, max(e-s, 86400), Auto, limit)` when range_width >= 86400
 
 ### Test helpers (reuse pattern from existing tests):
+
 ```rust
 fn test_config() -> VaultConfig {
     VaultConfig {
@@ -606,16 +625,19 @@ From TASKS.md, Task 6 has two follow-up items. Handle them if they naturally fit
 ## 8. Working Directory
 
 You are working in the worktree at:
-```
+
+```text
 /Users/olety/Desktop/code/oneiron/.worktrees/rrf-pipeline/
 ```
 
 Source files are at:
-```
+
+```text
 crates/oneiron/src/
 ```
 
 Run commands from the worktree root:
+
 ```bash
 cargo test
 cargo clippy -- -D warnings
