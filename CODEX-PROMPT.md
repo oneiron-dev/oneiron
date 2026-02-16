@@ -47,6 +47,7 @@ pub(crate) fn boost_recency(
   - `learned_at` is at bytes 17..25, big-endian u64
 - Exponential decay: `recency = exp(-ln(2) / (half_life_days * 86400) * (now - learned_at))`
 - Multiply: `score *= 1.0 + 0.5 * recency`
+- **Recency double-counting warning:** If temporal search is configured (which includes its own `s_recency` via α), `boost_recency` doubles the recency signal. The pipeline builder should log a warning or auto-skip `boost_recency` when `temporal_search` is present.
 
 ```rust
 pub(crate) fn boost_salience(
@@ -250,13 +251,14 @@ fn execute_temporal(
 
    Each scan gets its own `per_scan_cap`. After all scans, merge + dedupe into single candidate set.
 
-   **Spanner interval scan:** After the three bidirectional scans, iterate all entries in `temporal_long_intervals`. For each entity, load the metadata header and check if `interval_distance([entity.occurred_start, entity.occurred_end], [window_start, window_end]) == 0` (overlap). Add overlapping entities to the candidate set (dedup). This catches long-lived entities (CLAIMs, relationships) whose start and end are both outside the scan window.
+   **Spanner interval scan:** After the three bidirectional scans (skipped entirely in `Learned` mode — spanner index is occurred-axis only), iterate all entries in `temporal_long_intervals`. For each entry, read `[occurred_start(8 BE) | occurred_end(8 BE)]` from the **value** (no entity header fetch needed). Apply **true-spanner filter**: only add entities where `occurred_start < window_start AND occurred_end > window_end` — these are invisible to start/end scans. Dedup with existing candidates.
 
-   The `temporal_long_intervals` DB contains entity IDs of entities where `occurred_end - occurred_start > 14 × 86400` (14 days). Written during entity put, removed during entity delete.
+   The `temporal_long_intervals` DB: key = entity_id (16 bytes), value = `[occurred_start(8 BE) | occurred_end(8 BE)]` (16 bytes). Contains entities where `occurred_end.saturating_sub(occurred_start) > 14 × 86400` (14 days). Written during entity put, removed during entity delete.
 
 3. **Adaptive σ widening** (if `config.adaptive` and `candidates.len() < config.limit`):
-   - `sigma *= 2`, recompute radius and window, re-scan (bidirectional from anchor)
-   - Merge new candidates into existing set (deduplicated)
+   - `sigma *= 2`, recompute `new_radius = max(2 × range_width, 3 × sigma, 7 × 86400)`
+   - **Skip rescan if radius unchanged** (`new_radius == old_radius`): the 7d floor dominates for small σ, making rescans wasteful. Still proceed to next doubling round (σ affects scoring shape).
+   - If radius changed: re-scan with new window (bidirectional from anchor), merge new candidates (deduplicated)
    - Up to 2 additional rounds (max 3 total, σ grows to 8× original)
 
 4. For each candidate entity:
@@ -304,16 +306,24 @@ fn execute_temporal(
    match config.anchor_mode {
        Occurred => s_proximity = s_occ_prox,
        Learned  => s_proximity = s_lrn_prox,
-       Both     => s_proximity = s_occ_prox * s_lrn_prox,  // soft AND
+       Both     => {
+           // Floor-preserving product: soft AND in normalized space
+           let s_occ_net = ((s_occ_prox - FLOOR) / (1.0 - FLOOR)).clamp(0.0, 1.0);
+           let s_lrn_net = ((s_lrn_prox - FLOOR) / (1.0 - FLOOR)).clamp(0.0, 1.0);
+           let s_prox_net = s_occ_net * s_lrn_net;
+           s_proximity = s_prox_net * (1.0 - FLOOR) + FLOOR;
+       }
        Auto     => {
            // Normalized noisy-OR: P(at least one axis matches)
-           let s_occ_net = (s_occ_prox - FLOOR) / (1.0 - FLOOR);
-           let s_lrn_net = (s_lrn_prox - FLOOR) / (1.0 - FLOOR);
+           let s_occ_net = ((s_occ_prox - FLOOR) / (1.0 - FLOOR)).clamp(0.0, 1.0);
+           let s_lrn_net = ((s_lrn_prox - FLOOR) / (1.0 - FLOOR)).clamp(0.0, 1.0);
            let s_prox_net = 1.0 - (1.0 - s_occ_net) * (1.0 - s_lrn_net);
            s_proximity = s_prox_net * (1.0 - FLOOR) + FLOOR;
        }
    }
    ```
+
+   **Defensive clamp:** `.clamp(0.0, 1.0)` on net values prevents float drift from producing values outside [0,1].
 
    For Both mode, `d_lrn` uses the separate learned anchor:
    ```
@@ -325,16 +335,19 @@ fn execute_temporal(
    ```
    s_recency = exp(-(now - entity.learned_at) as f64 / (28.0 × 86400.0))
 
-   anchor_age = now.saturating_sub(config.anchor_end)
+   // abs_diff: symmetric for past and future anchors
+   anchor_age = if now >= config.anchor_end { now - config.anchor_end } else { config.anchor_end - now }
    α = 0.7 + 0.3 × (1.0 - exp(-(anchor_age as f64) / (90.0 × 86400.0)))
    // near-now query: α ≈ 0.70 (recency gets 30% weight)
    // 3-month-old query: α ≈ 0.89
    // historical query (1y+): α → 1.0 (proximity dominates, recency suppressed)
+   // near-future (next week): α ≈ 0.708 (recency mostly active)
+   // far-future (1y ahead): α → 1.0 (proximity dominates)
 
    s_temporal = α × s_proximity + (1.0 - α) × s_recency
    ```
 
-5. Sort by temporal score descending, take top `config.limit`
+5. Sort by temporal score descending. **Tie-break for equal scores:** when `interval_distance = 0` (overlap), use `|midpoint(entity_occurred) - midpoint(anchor)|` as secondary sort key (ascending — closer to anchor center ranks higher). Final tie-break by entity ID bytes ascending. Take top `config.limit`.
 
 ### Temporal Contiguity Boost Implementation
 
@@ -348,7 +361,7 @@ fn boost_contiguity(
 ```
 
 - **Gating:** If `temporal_config` is None, return immediately (no boost). Contiguity only applies when a temporal signal was configured.
-- **Window clamping:** `sigma_contig = min(temporal_config.sigma_secs, 14 * 86400)`. Default 86400 if sigma is 0.
+- **Window clamping:** `sigma_contig = min(temporal_config.sigma_secs, 14 * 86400)`. If temporal config is present but sigma is 0 (unset), default σ_contig = 86400 (1 day). If no temporal config exists at all, boost is skipped (see Gating).
 - **Axis-awareness:** For `Learned` anchor mode, compute distance using `|learned_a - learned_b|`. For all other modes (Occurred, Auto, Both), use `interval_distance` on occurred ranges.
 - For each scored entity, read timestamps from entity header (occurred: bytes 1..17, learned: bytes 17..25)
 - For each pair of entities, compute axis-aware distance
@@ -424,7 +437,7 @@ let raw = store.entities.get(&rtxn, id.as_bytes())?;
 - `store.temporal_occurred_start` — `[ts(8 BE) | id(16)]` → empty
 - `store.temporal_occurred_end` — `[ts(8 BE) | id(16)]` → empty
 - `store.temporal_learned` — `[ts(8 BE) | id(16)]` → empty
-- `store.temporal_long_intervals` — `entity_id(16)` → empty. Entities where `occurred_end - occurred_start > 14 × 86400`.
+- `store.temporal_long_intervals` — `entity_id(16)` → `[occurred_start(8 BE) | occurred_end(8 BE)]`. Entities where `occurred_end - occurred_start > 14 × 86400`.
 - `store.type_index` — `[type(1) | id(16)]` → empty
 - All other stores (see `store.rs`)
 
@@ -528,17 +541,20 @@ Write tests in `pipeline.rs` (or `fusion.rs`) under `#[cfg(test)] mod tests`.
 - **Interval distance**: overlapping occurred interval + query range → d_occ=0; long event with query near end → correct gap distance
 - **Anchor mode gating**: same entity scores differently under Occurred vs Learned vs Auto vs Both; false positive case (old event told recently) rejected by Occurred and Both modes
 - **Noisy-OR (Auto mode)**: floor-floor → exactly 0.05 (not lifted); divergent (0.983, 0.05) → 0.983; aligned (0.983, 0.983) → ~0.999; s_proximity never exceeds 1.0
-- **Both mode**: entity matching both axes → multiplicative ~0.966; entity matching only one → ~0.049 (rejected); uses separate learned anchor for d_lrn
-- **Dynamic α**: near-now query → α≈0.7 (recency active); historical query (1y+) → α≈1.0 (recency suppressed); future anchor → α=0.70 (saturating_sub=0)
+- **Both mode**: entity matching both axes → floor-preserving product ~0.964 (not raw 0.966); entity matching only one → exactly floor (0.050, not sub-floor 0.049); uses separate learned anchor for d_lrn; Both with no learned anchors → returns error (not silent Auto fallback)
+- **Dynamic α**: near-now query → α≈0.7 (recency active); historical query (1y+) → α≈1.0 (recency suppressed); near-future anchor (next week) → α≈0.708 (abs_diff); far-future anchor (1y ahead) → α≈1.0 (recency suppressed)
 - **σ not clamped**: Exact (σ=3600) and Hour (σ=14400) produce different scoring than Day (σ=86400) — σ is NOT clamped to 86400
 - **σ-driven discovery**: point anchor + Year granularity → radius includes 3σ=540d, not just 7d
 - **Bidirectional scan**: closest-to-anchor entities prioritized in candidate set even under tight per_scan_cap
 - **Three index scans**: entity with occurred_start outside window but occurred_end inside → discovered via occurred_end scan
-- **Spanner intervals**: long-interval entity (spanning years) whose start AND end are outside scan window → discovered via temporal_long_intervals; short-interval entity (< 14d) NOT in long-interval index
+- **Spanner intervals**: long-interval entity (spanning years) whose start AND end are outside scan window → discovered via temporal_long_intervals (true-spanner filter); entity with start inside window but end outside → NOT added by spanner scan (already found by start scan); spanner scan skipped in Learned mode; short-interval entity (< 14d) NOT in long-interval index; spanner value contains correct [occurred_start, occurred_end]
 - **Per-scan caps**: learned scan produces candidates even when occurred scans are saturated
-- **Adaptive widening**: narrow σ with few entities → widens σ and finds more; `temporal_adaptive(false)` prevents widening
+- **Adaptive widening**: narrow σ with few entities → widens σ and finds more; `temporal_adaptive(false)` prevents widening; Exact σ widening (3600→7200→...) skips rescan when 7d radius floor unchanged
 - **Contiguity boost**: temporally clustered entities (same week) score higher than isolated ones; single entity → no boost; skipped when no temporal search configured; window capped at 14d; Learned mode uses learned_at distance
 - **Future events**: entity with occurred_start in future (calendar event) scored correctly; learned_at < occurred_start handled naturally
+- **Overlap tie-break**: two entities both overlapping query (d=0) → entity closer to anchor midpoint ranks higher
+- **Underflow guards**: entity with occurred_start > occurred_end at put_entity → swapped before storing; all threshold checks use saturating_sub
+- **Recency double-counting**: pipeline with temporal search + boost_recency → warns or auto-skips boost_recency
 - **Granularity tiers**: same anchor range with `Day` vs `Year` granularity gives different score distributions
 - **Tier equivalence**: `search_temporal(start, end, limit)` produces same results as `search_temporal_with_sigma(start, end, max(e-s, 86400), Auto, limit)` when range_width >= 86400
 
@@ -583,7 +599,7 @@ From TASKS.md, Task 6 has two follow-up items. Handle them if they naturally fit
   - `lib.rs`: module declarations, `Vault::query()`, re-exports
   - `types.rs`: add `TemporalGranularity` and `TemporalAnchorMode` enums
   - `store.rs`: add `temporal_long_intervals` database (+ increment MAX_DBS if needed)
-  - `batch.rs`: add long-interval index writes in `put_entity` (if `occurred_end - occurred_start > 14 * 86400`, insert entity_id into `temporal_long_intervals`) and removes in `delete_entity` (always try remove)
+  - `batch.rs`: add input validation in `put_entity` (if `occurred_start > occurred_end`, swap them before storing). Add long-interval index writes (if `occurred_end.saturating_sub(occurred_start) > 14 * 86400`, insert entity_id with `[occurred_start(8 BE) | occurred_end(8 BE)]` value into `temporal_long_intervals`). Add removes in `delete_entity` (always try remove).
 
 ---
 
