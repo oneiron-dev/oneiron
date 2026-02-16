@@ -7,9 +7,9 @@ Style tokens derived from [oneiron.dev](https://oneiron.dev) landing page.
 | Token   | Light     | Dark      | Role                          |
 |---------|-----------|-----------|-------------------------------|
 | accent  | `#E63E2A` | `#E63E2A` | Hero elements, primary action |
-| ink     | `#1a1a1a` | `#C8C4BA` | Text, heavy/convergence nodes |
-| surface | `#F4F0E6` | `#111111` | Background                    |
-| raised  | `#ffffff` | `#1A1A1A` | Elevated surfaces             |
+| ink     | `#1a1a1a` | `#C8C4BA` | Text, markers, titles         |
+| surface | `#F4F0E6` | `#111111` | Background (N7)               |
+| raised  | `#ffffff` | `#1E1E1E` | Elevated surfaces, headers    |
 | success | `#4A7C59` | `#6BA87D` | Completion, positive output   |
 | muted   | `#6B7280` | `#9CA3AF` | Secondary connections         |
 | brown   | `#8B5A2B` | `#C4824D` | Warm secondary accent         |
@@ -60,6 +60,72 @@ label: Label {
 # or "#4A7C59" (success) for output/results
 ```
 
+## Storage Diagram Conventions
+
+Storage diagrams use `shape: class` for database category boxes inside a vault container.
+
+### Vault container
+
+```d2
+vault: LMDB Environment (18 databases) {
+  style.fill: transparent    # no fill — avoids double hatching with sketch overlay
+  style.stroke: "#E63E2A"   # accent border defines the container
+  style.font-color: "#E63E2A"
+  style.bold: true
+  grid-columns: 3
+  grid-gap: 16
+}
+```
+
+### Class boxes (light mode)
+
+All headers use `raised` (`#ffffff`), all titles use `ink` (`#1a1a1a`).
+Category identity is carried by the body fill (= `style.stroke`).
+
+```d2
+core: "Core" {
+  shape: class
+  style.fill: "#ffffff"      # raised — uniform white header
+  style.stroke: "#1a1a1a"   # ink — body fill color
+  style.font-color: "#1a1a1a"  # ink — uniform title text
+  style.border-radius: 8
+  style.font-size: 13
+}
+```
+
+### Class boxes (dark mode)
+
+All headers use `raised` (`#1E1E1E`), all titles use `ink` (`#C8C4BA`).
+Category identity is carried by the body fill (= `style.stroke`).
+
+```d2
+core: "Core" {
+  shape: class
+  style.fill: "#1E1E1E"     # raised — uniform dark header
+  style.stroke: "#C8C4BA"   # ink — body fill color
+  style.font-color: "#C8C4BA"  # ink — uniform title text
+  style.border-radius: 8
+  style.font-size: 13
+}
+```
+
+### Category stroke colors
+
+| Category | Light stroke | Dark stroke | Notes         |
+|----------|-------------|-------------|---------------|
+| Core     | `#1a1a1a`   | `#C8C4BA`   | ink           |
+| Vector   | `#E63E2A`   | `#E63E2A`   | accent        |
+| Text     | `#8B5A2B`   | `#C4824D`   | brown         |
+| Graph    | `#4A7C59`   | `#6BA87D`   | success       |
+| Temporal | `#6B7280`   | `#9CA3AF`   | muted         |
+| Phonetic | `#1a1a1a`   | `#C8C4BA`   | ink           |
+
+### Design rationale
+
+- **Uniform header fills**: category identity lives in the body color only — one encoding channel, not two
+- **Transparent vault fill**: sketch mode adds a hachure overlay to every filled shape; transparent vault + filled class boxes = max 1 hatching layer instead of 2-3
+- **Vault overlay removal**: even with transparent fill, D2 renders a sketch overlay rect on the vault — remove it in post-processing (see below)
+
 ## Edge Colors
 
 | From → To              | Color     | Token   |
@@ -73,35 +139,67 @@ All edges: `style.stroke-width: 2`
 
 ## Rendering
 
-```bash
-# Light mode
-d2 --sketch <name>.d2 <name>-light.svg
+All diagrams use `--sketch` for hand-drawn aesthetics.
 
-# Dark mode — render WITHOUT --dark-theme, then post-process
-d2 --sketch <name>-dark.d2 <name>-dark.svg
+```bash
+# Light mode (theme 0 = default)
+d2 --sketch --theme=0 <name>.d2 <name>-light.svg
+
+# Dark mode (theme 200 = Catppuccin Mocha)
+d2 --sketch --theme=200 <name>-dark.d2 <name>-dark.svg
 ```
 
-The `--sketch` flag adds analog warmth matching Oneiron's noise-texture aesthetic.
+**Theme 200** gives us dark backgrounds but uses Catppuccin's purple-tinted neutrals.
+We post-process to replace them with Oneiron brand colors.
 
-**Important: Do NOT use `--dark-theme`.**  D2's built-in dark themes (200 = Catppuccin Mocha, 201 = Flagship) inject blue-violet tinted neutrals (`#1E1E2E`, `#0D32B2`, `#4A6FF3`, etc.) that clash with Oneiron's warm neutral palette. Instead, render dark SVGs with the default theme and post-process to replace D2's light-theme neutrals with Oneiron-brand dark grays:
+## Post-Processing
+
+### Light mode — fix N7 background
+
+D2 theme 0 renders N7 as pure white. Replace with Oneiron cream:
 
 ```bash
-# Post-process: replace D2's blue-tinted neutrals with brand neutrals
 sed -i '' \
-  -e 's/#FFFFFF/#111111/g' \
-  -e 's/#EEF1F8/#1A1A1A/g' \
-  -e 's/#DEE1EB/#222222/g' \
-  -e 's/#CFD2DD/#2A2A2A/g' \
-  -e 's/#9499AB/#444444/g' \
-  -e 's/#676C7E/#666666/g' \
-  -e 's/#0A0F25/#888888/g' \
-  -e 's/#0D32B2/#333333/g' \
-  -e 's/#4A6FF3/#555555/g' \
-  -e 's/#3d4574/#333333/g' \
-  -e 's/#E3E9FD/#1C1C1C/g' \
-  -e 's/#EDF0FD/#181818/g' \
-  -e 's/#F7F8FE/#141414/g' \
+  -e 's/\.fill-N7{fill:#FFFFFF;}/.fill-N7{fill:#F4F0E6;}/g' \
+  -e 's/fill="#FFFFFF"/fill="#F4F0E6"/g' \
+  <name>-light.svg
+```
+
+### Dark mode — fix N7 background
+
+D2 theme 200 renders N7 as `#1E1E2E` (Catppuccin base). Replace with Oneiron surface:
+
+```bash
+sed -i '' \
+  -e 's/\.fill-N7{fill:#1E1E2E;}/.fill-N7{fill:#111111;}/g' \
+  -e 's/fill="#1E1E2E"/fill="#111111"/g' \
   <name>-dark.svg
+```
+
+### Storage diagrams — fix B2 markers and vault overlay
+
+B2 controls the `+` visibility markers on class shapes.
+
+```bash
+# Light mode: cream markers (visible on all colored body fills)
+sed -i '' 's/\.fill-B2{fill:#0D32B2;}/.fill-B2{fill:#F4F0E6;}/g' storage-light.svg
+
+# Dark mode: dark markers (visible on all colored body fills)
+sed -i '' 's/\.fill-B2{fill:#CBA6f7;}/.fill-B2{fill:#111111;}/g' storage-dark.svg
+
+# Both modes: remove vault container overlay to eliminate double hatching
+# The vault overlay is the largest sketch-overlay rect (covers entire diagram)
+sed -i '' 's|<rect width="784.000000" height="470.000000" transform="translate(0.000000 0.000000)" class=" sketch-overlay-darker" />||' storage-*.svg
+```
+
+**Note**: The vault overlay dimensions may change if the diagram layout changes. Match the largest `sketch-overlay-*` rect.
+
+### GitHub cache busting
+
+The README uses `?v=N` query params on SVG references. Bump after every re-render:
+
+```markdown
+<source srcset="./docs/storage-dark.svg?v=8">
 ```
 
 ## Files
