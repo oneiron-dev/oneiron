@@ -13,7 +13,7 @@ pub(crate) const ENTITY_METADATA_HEADER_LEN: usize = 25;
 const SHORT_ID_COUNTER_LEN: usize = 8;
 const EDGE_KEY_LEN: usize = 33;
 const EDGE_VALUE_LEN: usize = 12;
-const LONG_INTERVAL_THRESHOLD_SECS: u64 = 14 * 86_400;
+pub(crate) const LONG_INTERVAL_THRESHOLD_SECS: u64 = 14 * 86_400;
 
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct EntityMetadataHeader {
@@ -249,6 +249,7 @@ pub(crate) fn deindex_entity(
     delete_from_phonetic_postings(store, wtxn, id)?;
     store.vectors.delete(wtxn, id.as_bytes())?;
     crate::hnsw::hnsw_deindex(store, wtxn, id)?;
+    store.temporal_long_intervals.delete(wtxn, id.as_bytes())?;
 
     let Some(entity_record) = store.entities.get(wtxn, id.as_bytes())? else {
         return Ok((false, Vec::new()));
@@ -271,7 +272,6 @@ pub(crate) fn deindex_entity(
 
     let learned_key = Store::encode_temporal_key(learned_at, id);
     store.temporal_learned.delete(wtxn, &learned_key)?;
-    store.temporal_long_intervals.delete(wtxn, id.as_bytes())?;
 
     let neighbors = delete_related_edges(store, wtxn, id)?;
 
