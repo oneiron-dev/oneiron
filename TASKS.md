@@ -317,7 +317,7 @@ Implement the `BatchBuilder` for atomic multi-database writes, and all secondary
 
 **Signal Boosts:**
 - `boost_recency(scores, half_life_days, store, txn)` — exponential decay from `learned_at`
-  - **Warning:** recency double-counting if combined with temporal search (both use `learned_at`). Document in pipeline builder.
+  - **Note:** recency is auto-skipped when temporal search is active to avoid double-counting `learned_at` (`pipeline.rs:372-374`).
 - `boost_salience(scores, store, txn)` — read from entity blob (if present)
 - `boost_confidence(scores, store, txn)` — read from entity blob (if present)
 
