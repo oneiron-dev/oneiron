@@ -1,20 +1,20 @@
 # Temporal Scoring Specification — Oneiron Crate
 
-**Status:** Proposed, pending review
+**Status:** Revised after external review (v2)
 **Scope:** `execute_temporal()` in `pipeline.rs` (Task 6)
 **Author:** Design discussion, Feb 2026
-**Reviewers:** [pending]
+**Revision:** Incorporated external review feedback — interval distance, σ-driven discovery, TemporalAnchorMode, dynamic α, bidirectional scan, adaptive widening, temporal contiguity boost
 
 ---
 
 ## 1. Problem
 
-An entity in Oneiron has two temporal anchors:
+An entity in Oneiron has two temporal anchors (bitemporal model):
 
-| Field | Meaning | Stored as |
-|---|---|---|
-| `occurred_start` / `occurred_end` | When the real-world event happened | u64 BE in entity header bytes 1..17 |
-| `learned_at` | When the entity was recorded into the system | u64 BE in entity header bytes 17..25 |
+| Field | Meaning | Stored as | Bitemporal analog |
+|---|---|---|---|
+| `occurred_start` / `occurred_end` | When the real-world event happened | u64 BE in entity header bytes 1..17 | **Valid time** |
+| `learned_at` | When the entity was recorded into the system | u64 BE in entity header bytes 17..25 | **Transaction time** |
 
 **Invariant:** `learned_at >= occurred_start` (you cannot record something before it happens; exception: fictional/roleplay scenarios, handled separately).
 
@@ -22,61 +22,65 @@ A query arrives with an anchor time range `[anchor_start, anchor_end]`. The scor
 
 ### Why this is non-trivial
 
-A linear or naive scoring function fails on common queries:
-
-| Query | Entity | Naive "occurred proximity only" | Problem |
+| Query | Entity | Naive scoring | Problem |
 |---|---|---|---|
-| "What happened 5 years ago?" | occurred=5y ago, learned=5y ago | High score | Works fine |
-| "What happened 5 years ago?" | occurred=5y ago, learned=yesterday | High score | Works fine |
-| "What did I tell you last March?" | occurred=10y ago, learned=last March | **Floor score** | Entity was told near query time but occurred long ago — missed |
-| "Remember that old trip?" (vague) | occurred=8y ago, learned=3y ago | **Floor score** if query defaults to "now" | Old memories should still be retrievable |
+| "What happened 5 years ago?" | occurred=5y ago, learned=5y ago | High | Works |
+| "What happened 5 years ago?" | occurred=5y ago, learned=yesterday | High | Works |
+| "What did I tell you last March?" | occurred=10y ago, learned=last March | **Floor** | Entity told near query time but occurred long ago — missed |
+| "Remember that old trip?" (vague) | occurred=8y ago, learned=3y ago | **Floor** if query defaults to "now" | Old memories should still be retrievable |
+| "What happened last March?" | occurred=10y ago, learned=last March | **High** (false positive in Auto mode) | Entity was _told_ last March, not _happened_ — needs anchor intent |
 
 The third case is the critical gap: the user is asking about **when they told the system**, not when the event occurred. A single-timestamp proximity score cannot serve both intents.
+
+The fifth case shows why **TemporalAnchorMode** matters: without intent disambiguation, Auto mode trades precision for recall.
 
 ---
 
 ## 2. Literature Survey
 
-We surveyed 11 papers for temporal scoring approaches. Key findings:
+We surveyed 11+ papers for temporal scoring approaches. Key findings:
 
 | Paper | Timestamps | Scoring | Limitation |
 |---|---|---|---|
 | **MemoTime** (2025) | Event time only | `exp(-\|t_event - t_query\| / σ)` — proximity to query | No recency signal; no learned-time awareness |
-| **Hindsight** (2025) | `tau_s/tau_e` (occurred), `tau_m` (mentioned) | `tau_m` used for graph link weights; `tau_s/tau_e` for date-range retrieval | `tau_m` never used in scoring against query time |
+| **Hindsight** (2025) | `tau_s/tau_e` (occurred), `tau_m` (mentioned) | `tau_m` used for graph link weights; `tau_s/tau_e` for date-range retrieval (interval overlap) | `tau_m` never scored against query time |
 | **Mnemosyne** (2025) | Effective age (access-adjusted) | Sigmoid with floor=0.05: `τ(e_eff) = (1-d)/(1+exp((e_eff-a)/b)) + d` | Decay from now only; no proximity to query time |
 | **MemoryBank** (2024) | Time since learning | Ebbinghaus: `R = e^(-t/S)`, S++ on recall | Recency from now only; no query-time awareness |
+| **SynapticRAG** (2024) | Temporal association | Sigmoid-normalized temporal score, leaky integrate-and-fire decay | Complex propagation model; not bitemporal |
 | TiMem, ENGRAM, EcphoryRAG, A-Mem, AgeMem, EverMemOS, EM-LLM | Timestamps as metadata | No temporal scoring formula | Rely on LLM to interpret timestamps in context |
 
 **Key observations:**
 - Only Hindsight stores both occurred and learned timestamps; nobody scores both against the query
+- Hindsight uses **interval overlap** for temporal constraints, not midpoint distance
 - Proximity-to-query (MemoTime) and recency-from-now (MemoryBank/Mnemosyne) are treated as separate approaches
 - No existing system combines both timestamps into a unified proximity score
+- EM-LLM uses **temporal contiguity** as a retrieval primitive (co-occurring memories reinforce each other)
+- SynapticRAG demonstrates that sigmoid normalization is a common choice for temporal scores
+- The bitemporal data model (valid-time vs transaction-time) is well-established in database literature and maps directly to our occurred/learned split
 
 ---
 
 ## 3. Proposed Formula
 
-### Three components
+### Interval distance functions
+
+Replaces midpoint-to-midpoint distance. Handles range queries and long events correctly.
 
 ```
-s_occ_prox  = sigmoid(|occurred_mid - query_mid|, σ, floor)
-s_lrn_prox  = sigmoid(|learned_at   - query_mid|, σ, floor)
+interval_distance([a, b], [c, d]) =
+    0       if max(a, c) <= min(b, d)    // intervals overlap
+    c - b   if b < c                      // [a,b] entirely before [c,d]
+    a - d   if d < a                      // [a,b] entirely after [c,d]
 
-s_proximity = max(s_occ_prox, s_lrn_prox) + 0.1 × min(s_occ_prox, s_lrn_prox)
-
-s_recency   = exp(-(now - learned_at) / λ)
-
-s_temporal  = α × s_proximity + (1 - α) × s_recency
+point_interval_distance(p, [c, d]) =
+    0       if c <= p && p <= d           // point inside interval
+    c - p   if p < c                      // point before interval
+    p - d   if p > d                      // point after interval
 ```
 
-### Constants
+Both return unsigned distances in seconds. O(1) per entity.
 
-| Symbol | Value | Rationale |
-|---|---|---|
-| `floor` | 0.05 | Old memories never score zero (Mnemosyne principle) |
-| `λ` | 28 × 86400 s (28 days) | Mnemosyne default; 1/e decay at 28 days |
-| `α` | 0.7 | Proximity dominates; recency is a mild tiebreaker |
-| `0.1` | Bonus weight for min-signal | Small reward when both timestamps agree; doesn't penalize divergence |
+**Why not midpoint distance:** An event spanning Feb 1-28 queried with "mid February" (Feb 10-20) has midpoint distance ~0, which is correct. But an event spanning Jan 1 - Mar 31 queried with "late March" has a midpoint (mid-Feb) far from the query, even though the event **overlaps** the query range. Interval distance returns 0 for overlap — correct.
 
 ### Sigmoid function
 
@@ -85,31 +89,97 @@ sigmoid(distance, σ, floor) = (1.0 - floor) / (1.0 + exp((distance - σ) / (σ 
 ```
 
 Where:
-- `distance` = absolute difference in seconds between entity timestamp and query midpoint
+- `distance` = interval distance in seconds (from functions above)
 - `σ` = decay midpoint in seconds (controls where steep dropoff happens)
 - `σ / 4.0` = steepness (scales with σ for consistent shape across granularities)
+- `floor` = 0.05
 
 Behavior:
-- At `distance = 0`: score ≈ 1.0
+- At `distance = 0`: score ≈ **0.983** (`(1-0.05)/(1+exp(-4)) + 0.05 = 0.95/1.018 + 0.05`)
 - At `distance = σ`: score ≈ 0.525 (midpoint of sigmoid)
+- At `distance = 2σ`: score ≈ 0.068
+- At `distance = 3σ`: score ≈ 0.050 (effectively floor)
 - At `distance >> σ`: score → floor (0.05)
 
-### Midpoint calculation (overflow-safe)
+### Three components
 
 ```
-midpoint(start, end) = start/2 + end/2 + (start%2 + end%2)/2
+d_occ = interval_distance([occurred_start, occurred_end], [anchor_start, anchor_end])
+d_lrn = point_interval_distance(learned_at, [anchor_start, anchor_end])
+
+s_occ_prox = sigmoid(d_occ, σ, 0.05)
+s_lrn_prox = sigmoid(d_lrn, σ, 0.05)
 ```
 
-For `learned_at` (a single timestamp), `midpoint = learned_at`.
+### Anchor mode gating
+
+```
+match anchor_mode {
+    Occurred => s_proximity = s_occ_prox,
+    Learned  => s_proximity = s_lrn_prox,
+    Auto     => s_proximity = max(s_occ_prox, s_lrn_prox) + 0.1 × min(s_occ_prox, s_lrn_prox),
+}
+```
+
+### Recency with dynamic α
+
+```
+s_recency = exp(-(now - learned_at) / λ)
+
+// Dynamic α: historical queries suppress recency, near-now queries keep it
+anchor_age = now.saturating_sub(anchor_end)
+α = 0.7 + 0.3 × (1.0 - exp(-(anchor_age as f64) / (90.0 × 86400.0)))
+
+s_temporal = α × s_proximity + (1.0 - α) × s_recency
+```
+
+Dynamic α behavior:
+- Query is "now" (`anchor_age = 0`): **α = 0.70** — recency gets 30% weight
+- Query is 1 month ago: **α ≈ 0.80** — recency fading
+- Query is 3 months ago: **α ≈ 0.89** — recency mostly irrelevant
+- Query is 1+ year ago: **α ≈ 1.00** — pure proximity, recency completely suppressed
+
+**Rationale:** Fixed α=0.7 penalizes historical queries. "What happened 5 years ago?" shouldn't care about recency. Dynamic α, gated by `|now - anchor_end|`, naturally suppresses recency for explicitly past-anchored queries while keeping it active for near-now queries. The 90-day transition timescale means queries within ~3 months of now get meaningful recency weight; beyond that, proximity dominates.
+
+### TemporalAnchorMode
+
+```rust
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum TemporalAnchorMode {
+    /// Query refers to when events happened: "what happened last March?"
+    Occurred,
+    /// Query refers to when information was recorded: "what did I tell you last March?"
+    Learned,
+    /// Ambiguous — score both axes, take best match
+    #[default]
+    Auto,
+}
+```
+
+**With upstream intent signal:** Caller passes `Occurred` or `Learned` from NER/classifier/heuristic. Scoring uses only the relevant axis. Precision is tight — the false positive case (row 5 in Problem table) is eliminated.
+
+**Without intent signal:** Default `Auto`. Both axes scored, max+bonus. Accepts the false positive tradeoff in exchange for never missing the learned-proximity case.
+
+The crate provides the knobs. Upstream decides how to set them (NER, regex heuristic, user toggle — not our business).
+
+### Constants
+
+| Symbol | Value | Rationale |
+|---|---|---|
+| `floor` | 0.05 | Old memories never score zero (Mnemosyne principle) |
+| `λ` | 28 × 86400 s (28 days) | Exponential time constant: `exp(-t/λ)` gives 1/e ≈ 0.368 at 28 days. Note: Mnemosyne uses 28d as a sigmoid midpoint, not an exponential time constant — we adopt the timescale, not the exact parameterization. |
+| `α` | 0.7 base, dynamic up to 1.0 | Proximity dominates; recency fades for historical queries |
+| `0.1` | Bonus weight for min-signal (Auto mode only) | Small reward when both timestamps agree; doesn't penalize divergence |
+| `90 × 86400` | α transition timescale | ~3 months: queries within ~3 months of now get meaningful recency; beyond that, proximity dominates |
 
 ---
 
-## 4. Why `max + 0.1 × min` instead of alternatives
+## 4. Why `max + 0.1 × min` (Auto mode)
 
-### Option A: Single proximity (occurred only) — current SCHEMA-DESIGN.md
+### Option A: Single proximity (occurred only) — original SCHEMA-DESIGN.md
 
 ```
-s_proximity = sigmoid(|occurred_mid - query_mid|)
+s_proximity = sigmoid(d_occ)
 ```
 
 **Rejected.** "What did I tell you last March?" returns floor score for entities that occurred years before March but were recorded in March.
@@ -120,7 +190,7 @@ s_proximity = sigmoid(|occurred_mid - query_mid|)
 s_proximity = w₁ × s_occ_prox + w₂ × s_lrn_prox
 ```
 
-**Rejected.** When timestamps diverge (old event told recently, or recent event about old topic), the irrelevant signal drags the score down:
+**Rejected.** When timestamps diverge (old event told recently), the irrelevant signal drags the score down:
 
 ```
 Entity: occurred=10y ago, learned=last March
@@ -142,7 +212,7 @@ s_proximity = max(s_occ_prox, s_lrn_prox)
 
 **Almost chosen.** Handles divergence perfectly. But loses information when both timestamps agree — two entities with identical best-match scores can't be distinguished by how well their other timestamp matches.
 
-### Option D: max + bonus (chosen)
+### Option D: max + bonus (chosen for Auto mode)
 
 ```
 s_proximity = max(s_occ_prox, s_lrn_prox) + 0.1 × min(s_occ_prox, s_lrn_prox)
@@ -150,49 +220,73 @@ s_proximity = max(s_occ_prox, s_lrn_prox) + 0.1 × min(s_occ_prox, s_lrn_prox)
 
 - Divergent case: bonus ≈ 0.1 × floor = 0.005 (negligible — no penalty)
 - Aligned case: bonus ≈ 0.1 × 0.9 = 0.09 (small tiebreaker for entities where both timestamps agree)
-- No new hyperparameter to tune (0.1 is fixed; not sensitive)
+- Can exceed 1.0 in the aligned case (~1.08 max). This is fine — scores are used for relative ordering, not as probabilities. RRF operates on ranks, not raw scores.
+
+**Note:** In `Occurred` and `Learned` modes, this formula doesn't apply — only the relevant axis is scored, so s_proximity is always in [floor, ~0.983].
 
 ---
 
 ## 5. Candidate Discovery
 
-### Index-bounded window scan
-
-Before scoring, we need a candidate set. Full table scan is O(n) and unacceptable.
+### σ-driven window
 
 ```
-range_width  = anchor_end - anchor_start       (fallback: 86400 if zero)
-padding      = max(range_width × 2, 7 × 86400) (at least 7 days)
-window_start = anchor_start.saturating_sub(padding)
-window_end   = anchor_end.saturating_add(padding)
-candidate_cap = limit × 4
+range_width  = anchor_end - anchor_start           (fallback: 86400 if zero)
+sigma        = max(sigma_secs, 86400)              (from TemporalSearchConfig)
+radius       = max(2 × range_width, 3 × sigma, 7 × 86400)
+window_start = anchor_start.saturating_sub(radius)
+window_end   = anchor_end.saturating_add(radius)
+per_scan_cap = limit × 4
 ```
 
-### Two index scans (same window)
+**Why `3σ`:** At distance = 3σ, the sigmoid is deep in the floor (`exp((3σ-σ)/(σ/4)) = exp(8)`, denominator ≈ 2981, score ≈ floor). Anything beyond 3σ scores ≈ floor regardless, so not discovering it is acceptable.
 
-1. **`temporal_occurred_start`** — keys: `[timestamp_BE(8) | entity_id(16)]`
-   - Finds entities that **occurred** near the query time
-   - Primary discovery path
+**Critical:** σ must drive the radius, not just range_width. A point anchor (`anchor_start == anchor_end`) with `TemporalGranularity::Year` (σ=180d) would produce radius=7d without σ-awareness — completely wrong. With σ-awareness: radius = max(2×1d, 3×180d, 7d) = 540d. Correct.
 
-2. **`temporal_learned`** — keys: `[timestamp_BE(8) | entity_id(16)]`
-   - Finds entities that were **recorded** near the query time
-   - Catches the "what did I tell you last March?" case
+### Three index scans with per-scan caps
 
-Both scans use the same `[window_start, window_end]` bounds. Entity IDs are deduplicated into a single candidate set, capped at `candidate_cap`.
+Each scan gets its own `per_scan_cap` to prevent index starvation:
 
-### Why scan learned with occurred-derived bounds?
+1. **`temporal_occurred_start`** — entities whose `occurred_start` falls in `[window_start, window_end]`
+2. **`temporal_occurred_end`** — entities whose `occurred_end` falls in `[window_start, window_end]`. Catches long events that started before the window but end inside it.
+3. **`temporal_learned`** — entities whose `learned_at` falls in `[window_start, window_end]`
 
-The query anchor could refer to either timestamp. Scanning both indexes with the same window catches:
-- Events that happened near the query time (via occurred scan)
-- Events that were told near the query time (via learned scan)
+After all scans, merge into a single deduplicated candidate set.
 
-The scoring function then determines which interpretation produces higher relevance.
+**Anchor mode optimization:**
+- `Occurred` mode: scan only indexes 1 + 2 (skip learned)
+- `Learned` mode: scan only index 3 (skip occurred)
+- `Auto` mode: scan all three
+
+### Bidirectional scan from anchor
+
+For each index, instead of scanning forward from `window_start` (which biases toward earliest timestamps under the cap):
+
+1. Compute `anchor_mid = midpoint(anchor_start, anchor_end)` using overflow-safe formula
+2. Seek to `encode_temporal_key(anchor_mid, [0x00; 16])`
+3. Open two iterators: one forward (ascending), one backward (descending)
+4. Alternate: take one from forward, one from backward
+5. Stop when both iterators exit `[window_start, window_end]` or `per_scan_cap` reached
+
+This ensures **closest-to-anchor** candidates are collected first. Under `per_scan_cap` with large windows (Year/Vague granularity), forward-only scan would fill the cap with timestamps far from the anchor, missing the good candidates near it.
+
+### Adaptive σ widening
+
+If total unique candidates after all scans < `limit`:
+
+1. `sigma *= 2`
+2. Recompute `radius = max(2 × range_width, 3 × sigma, 7 × 86400)`
+3. Re-scan with new window bounds (bidirectional from anchor)
+4. Merge new candidates into existing set (deduplicated)
+5. Repeat up to **2 more times** (max 3 rounds total, σ grows to 8× original)
+
+**Controlled by `adaptive` flag (default: `true`):**
+- `adaptive = true`: widen on insufficient candidates
+- `adaptive = false`: exact mode, no widening. Useful when the caller wants precise temporal filtering and would rather get few results than expand the window.
 
 ---
 
 ## 6. Sigma Source: Three API Tiers
-
-The `σ` parameter controls the sigmoid's decay width. Three ways to provide it:
 
 ### Tier 1: Inferred from range width
 
@@ -200,20 +294,32 @@ The `σ` parameter controls the sigmoid's decay width. Three ways to provide it:
 pub fn search_temporal(self, anchor_start: u64, anchor_end: u64, limit: usize) -> Self
 ```
 
-`σ = max(anchor_end - anchor_start, 86400)` — at least 1 day.
+`σ = max(anchor_end - anchor_start, 86400)`, `anchor_mode = Auto`, `adaptive = true`
 
-### Tier 2: Explicit sigma
+### Tier 2: Explicit sigma + anchor mode
 
 ```rust
-pub fn search_temporal_with_sigma(self, anchor_start: u64, anchor_end: u64, sigma_secs: u64, limit: usize) -> Self
+pub fn search_temporal_with_sigma(
+    self,
+    anchor_start: u64,
+    anchor_end: u64,
+    sigma_secs: u64,
+    anchor_mode: TemporalAnchorMode,
+    limit: usize,
+) -> Self
 ```
 
-Caller provides `sigma_secs` directly.
-
-### Tier 3: Granularity enum
+### Tier 3: Granularity enum + anchor mode
 
 ```rust
-pub fn search_temporal_with_granularity(self, anchor_start: u64, anchor_end: u64, granularity: TemporalGranularity, limit: usize) -> Self
+pub fn search_temporal_with_granularity(
+    self,
+    anchor_start: u64,
+    anchor_end: u64,
+    granularity: TemporalGranularity,
+    anchor_mode: TemporalAnchorMode,
+    limit: usize,
+) -> Self
 ```
 
 `TemporalGranularity` maps to fixed sigma values:
@@ -229,138 +335,257 @@ pub fn search_temporal_with_granularity(self, anchor_start: u64, anchor_end: u64
 | `Year` | "5 years ago" | 15,552,000 (180d) |
 | `Vague` | "a while back" | 31,536,000 (365d) |
 
-Intended for use with NER/SFT output that includes granularity classification (oneiron-internal scope).
+### Adaptive control
+
+```rust
+pub fn temporal_adaptive(self, enabled: bool) -> Self
+```
+
+Default: `true`. Set to `false` for exact temporal filtering.
 
 ---
 
-## 7. Worked Examples
+## 7. Temporal Contiguity Boost
 
-All examples use `σ = 86400` (1 day), `floor = 0.05`, `λ = 28 × 86400`, `α = 0.7`.
+Post-RRF boost, same pattern as recency/salience/confidence.
 
-### Example 1: Recent event, recorded at the time
+### Rationale
+
+Memories that occurred close together in time are often part of the same episode. "Trip to Japan" + "met Yuki" + "ate ramen" all in the same week should mutually reinforce when any one is recalled. EM-LLM uses temporal contiguity as a retrieval primitive; we apply it as a post-fusion boost.
+
+### Formula
+
+For each entity `e` in the result set:
+```
+neighbors(e) = count of other entities in results where
+               interval_distance(e.occurred, other.occurred) < σ
+contiguity   = neighbors / max(result_count - 1, 1)        // 0.0 to 1.0
+score       *= 1.0 + 0.2 × contiguity
+```
+
+Where `σ` comes from the temporal search config if configured, or defaults to 86400 (1 day) if no temporal search was set.
+
+O(n²) where n = result_limit (typically 20). Negligible cost.
+
+### API
+
+```rust
+pub fn boost_contiguity(self) -> Self;
+```
+
+### Examples
+
+- 5 entities from the same week, σ=86400: each has ~4 neighbors → contiguity ≈ 1.0 → score ×1.2
+- 1 isolated entity among 20 results: neighbors=0 → contiguity=0 → no boost
+- Mixed: 3 entities from trip week + 17 others scattered → trip entities get ~0.1-0.15 contiguity → score ×1.02-1.03
+
+**Tuning note:** The 0.2 multiplier is a starting point. Task 9 benchmarks will evaluate this against real data.
+
+---
+
+## 8. Worked Examples
+
+### Example 1: Recent event, recorded at the time (Auto mode)
 
 ```
-Query:   anchor_mid = 2026-02-10 12:00
-Entity:  occurred_mid = 2026-02-10 14:00,  learned_at = 2026-02-10 14:30
+Query:   [2026-02-10 12:00, 2026-02-10 12:00] (point query)
+Entity:  occurred=[2026-02-10 14:00, 2026-02-10 15:00], learned_at=2026-02-10 14:30
 Now:     2026-02-16
+σ = 86400 (1 day, Tier 1 inferred from point → fallback)
 
-distance_occ = 7200s (2h),  distance_lrn = 9000s (2.5h)
+d_occ = interval_distance([14:00, 15:00], [12:00, 12:00])
+      = 14:00 - 12:00 = 7200s  (entity starts 2h after query point, no overlap)
 
-s_occ_prox = (0.95) / (1 + exp((7200 - 86400) / 21600)) + 0.05
-           ≈ 0.95 / (1 + exp(-3.667)) + 0.05
-           ≈ 0.95 / 1.026 + 0.05
-           ≈ 0.976
+d_lrn = point_interval_distance(14:30, [12:00, 12:00])
+      = 14:30 - 12:00 = 9000s  (2.5h after)
 
-s_lrn_prox ≈ 0.974  (similar, slightly further)
+s_occ_prox = 0.95 / (1 + exp((7200 - 86400) / 21600)) + 0.05
+           = 0.95 / (1 + exp(-3.667)) + 0.05 ≈ 0.976
 
-s_proximity = max(0.976, 0.974) + 0.1 × min(0.976, 0.974)
-            = 0.976 + 0.097 = 1.073  (clamped to 1.0 in practice, or left as-is for ranking)
+s_lrn_prox = 0.95 / (1 + exp((9000 - 86400) / 21600)) + 0.05 ≈ 0.974
+
+Auto: s_proximity = max(0.976, 0.974) + 0.1 × min(0.976, 0.974)
+                  = 0.976 + 0.097 = 1.073
+
+anchor_age = 2026-02-16 - 2026-02-10 = 6d = 518400s
+α = 0.7 + 0.3 × (1 - exp(-518400 / 7776000)) = 0.7 + 0.3 × 0.065 = 0.719
 
 s_recency = exp(-(6 × 86400) / (28 × 86400)) = exp(-0.214) ≈ 0.807
 
-s_temporal = 0.7 × 1.0 + 0.3 × 0.807 = 0.942
+s_temporal = 0.719 × 1.073 + 0.281 × 0.807 = 0.771 + 0.227 = 0.998
 ```
 
-Both timestamps agree, bonus kicks in.
+High score. Both timestamps agree, bonus kicks in. α near 0.7 because query is recent.
 
-### Example 2: Old memory recalled recently
-
-```
-Query:   anchor_mid = 2021-02-16 (5 years ago)
-Entity:  occurred_mid = 2021-02-20,  learned_at = 2026-02-15 (told yesterday)
-
-distance_occ = 4 × 86400 = 345600s
-distance_lrn = |2026-02-15 - 2021-02-16| ≈ 5y ≈ 157,680,000s
-
-s_occ_prox = 0.95 / (1 + exp((345600 - 86400) / 21600)) + 0.05
-           = 0.95 / (1 + exp(12.0)) + 0.05
-           ≈ 0.95 / 162755 + 0.05
-           ≈ 0.05  (floor)
-
-Wait — distance_occ = 4 days with σ = 1 day. That's 4σ away.
-s_occ_prox = 0.95 / (1 + exp((345600 - 86400) / 21600)) + 0.05
-           = 0.95 / (1 + exp(12.0)) + 0.05 ≈ 0.05
-
-Hmm, with σ = 86400 (1 day), 4 days away gives floor. Let's use σ = Year = 15,552,000s for a "5 years ago" query:
-
-distance_occ = 345600s (4 days off from 5y ago)
-s_occ_prox = 0.95 / (1 + exp((345600 - 15552000) / 3888000)) + 0.05
-           = 0.95 / (1 + exp(-3.91)) + 0.05
-           ≈ 0.95 / 1.020 + 0.05
-           ≈ 0.981
-
-distance_lrn ≈ 157,680,000s (5 years)
-s_lrn_prox = 0.95 / (1 + exp((157680000 - 15552000) / 3888000)) + 0.05
-           = 0.95 / (1 + exp(36.5)) + 0.05
-           ≈ 0.05 (floor)
-
-s_proximity = max(0.981, 0.05) + 0.1 × min(0.981, 0.05)
-            = 0.981 + 0.005 = 0.986
-
-s_recency = exp(-(1 × 86400) / (28 × 86400)) = exp(-0.036) ≈ 0.965
-
-s_temporal = 0.7 × 0.986 + 0.3 × 0.965 = 0.980
-```
-
-High score. occurred_mid is close to query, learned yesterday (high recency). Bonus from min is negligible (0.005).
-
-### Example 3: "What did I tell you last March?" — the key case
+### Example 2: "What happened 5 years ago?" (Auto mode, Year granularity)
 
 ```
-Query:   anchor_mid = 2025-03-15 (last March), σ = Month = 2,592,000s
-Entity:  occurred_mid = 2016-06-01 (10 years ago),  learned_at = 2025-03-20
+Query:   [2021-02-16, 2021-02-16] (point, Tier 3: Year → σ = 15,552,000s)
+Entity:  occurred=[2021-02-18, 2021-02-22] (trip week), learned_at=2026-02-15 (told yesterday)
+Now:     2026-02-16
 
-distance_occ = |2016-06-01 - 2025-03-15| ≈ 276,480,000s (way beyond σ)
-distance_lrn = |2025-03-20 - 2025-03-15| = 432,000s (5 days)
+d_occ = interval_distance([2021-02-18, 2021-02-22], [2021-02-16, 2021-02-16])
+      = 2021-02-18 - 2021-02-16 = 172800s (2 days, no overlap)
 
-s_occ_prox ≈ 0.05 (floor — 10 years from March)
+d_lrn = point_interval_distance(2026-02-15, [2021-02-16, 2021-02-16])
+      = 2026-02-15 - 2021-02-16 ≈ 157,680,000s (5 years)
 
-s_lrn_prox = 0.95 / (1 + exp((432000 - 2592000) / 648000)) + 0.05
-           = 0.95 / (1 + exp(-3.33)) + 0.05
-           ≈ 0.95 / 1.036 + 0.05
-           ≈ 0.967
+s_occ_prox = 0.95 / (1 + exp((172800 - 15552000) / 3888000)) + 0.05
+           = 0.95 / (1 + exp(-3.956)) + 0.05 ≈ 0.982
 
-s_proximity = max(0.05, 0.967) + 0.1 × min(0.05, 0.967)
-            = 0.967 + 0.005 = 0.972
+s_lrn_prox ≈ 0.05 (floor — 5 years away with σ = 180 days)
 
-s_recency = exp(-(11 × 30 × 86400) / (28 × 86400)) = exp(-11.8) ≈ 0.000007
+Auto: s_proximity = max(0.982, 0.05) + 0.1 × 0.05 = 0.987
 
-s_temporal = 0.7 × 0.972 + 0.3 × 0.000007 ≈ 0.680
+anchor_age ≈ 5 years ≈ 157,680,000s
+α = 0.7 + 0.3 × (1 - exp(-157680000 / 7776000)) = 0.7 + 0.3 × ~1.0 ≈ 1.000
+
+s_recency = exp(-(1 × 86400) / (28 × 86400)) ≈ 0.965
+
+s_temporal = 1.0 × 0.987 + 0.0 × 0.965 = 0.987
 ```
 
-Without s_lrn_prox: `s_temporal = 0.7 × 0.05 + 0.3 × 0.000007 = 0.035` — **lost**.
-With s_lrn_prox: `s_temporal = 0.680` — **found**.
+Dynamic α pushed to 1.0 — query is 5 years in the past, recency is irrelevant. Correct behavior.
+
+### Example 3: "What did I tell you last March?" (Auto vs Learned mode)
+
+```
+Query:   [2025-03-01, 2025-03-31] (month range), σ = Month = 2,592,000s
+Entity:  occurred=[2016-06-01, 2016-06-15] (old trip), learned_at = 2025-03-20
+Now:     2026-02-16
+
+d_occ = interval_distance([2016-06-01, 2016-06-15], [2025-03-01, 2025-03-31])
+      = 2025-03-01 - 2016-06-15 ≈ 276,048,000s (no overlap, huge gap)
+
+d_lrn = point_interval_distance(2025-03-20, [2025-03-01, 2025-03-31])
+      = 0  ← learned_at falls WITHIN query range!
+
+s_occ_prox ≈ 0.05 (floor)
+s_lrn_prox = sigmoid(0, 2592000, 0.05) ≈ 0.983
+
+Auto:    s_proximity = max(0.05, 0.983) + 0.1 × 0.05 = 0.988
+Learned: s_proximity = 0.983
+
+anchor_age = 2026-02-16 - 2025-03-31 ≈ 322 days ≈ 27,820,800s
+α = 0.7 + 0.3 × (1 - exp(-27820800 / 7776000)) = 0.7 + 0.3 × 0.972 = 0.992
+
+s_recency = exp(-(322 × 86400) / (28 × 86400)) = exp(-11.5) ≈ 0.00001
+
+Auto:    s_temporal = 0.992 × 0.988 + 0.008 × 0.00001 ≈ 0.980
+Learned: s_temporal = 0.992 × 0.983 + 0.008 × 0.00001 ≈ 0.975
+```
+
+**Key improvements from v1 spec:**
+- `d_lrn = 0` because learned_at falls within query range (interval distance). v1 used midpoint distance → 432,000s (5 days).
+- `α ≈ 0.99` because query is ~11 months ago → recency irrelevant. v1 used fixed α=0.7 → s_temporal=0.680.
+- **Final score ≈ 0.98** vs v1's **0.680**. Massive improvement.
+
+**Without s_lrn_prox** (original single-proximity): s_temporal = 0.992 × 0.05 ≈ **0.050** — dead.
+
+### Example 4: False positive case — anchor mode matters
+
+```
+Query:   "What happened last March?"
+         [2025-03-01, 2025-03-31], σ = Month, anchor_mode varies
+Entity:  occurred=[2016-06-01, 2016-06-15], learned_at=2025-03-20
+         (User told the bot about their 2016 trip in March 2025)
+
+This entity did NOT happen last March. It was TOLD last March.
+
+Auto mode:     s_temporal ≈ 0.980  ← FALSE POSITIVE for "what happened"
+Occurred mode: s_proximity = s_occ_prox = 0.05 → s_temporal ≈ 0.050  ← correctly rejected
+Learned mode:  s_proximity = s_lrn_prox = 0.983 → s_temporal ≈ 0.975  ← correctly high
+```
+
+This demonstrates why TemporalAnchorMode matters:
+- **Auto** accepts this false positive for recall (better than missing "what did I tell you" queries)
+- **Occurred** rejects it for precision (when upstream knows the intent)
+- **Learned** correctly ranks it high (when upstream knows the intent)
 
 ---
 
-## 8. Error Handling
+## 9. Error Handling
 
 - **Missing entity blob** (deleted between scan and scoring): skip candidate, no error
 - **Malformed header** (blob < 25 bytes): skip candidate, no error
 - **Zero sigma**: treated as 86400 (1 day floor)
 - **anchor_start > anchor_end**: swap them
-- **Overflow in midpoint**: handled by `start/2 + end/2 + (start%2 + end%2)/2`
-- **Overflow in abs_diff**: use `u64::abs_diff()` (wrapping-safe)
+- **Overflow in midpoint**: use `start/2 + end/2 + (start%2 + end%2)/2`
+- **Overflow in interval_distance**: use `u64::saturating_sub` for all subtractions
+- **Empty candidate set after adaptive widening**: return empty vec, no error
+- **Single entity in result set for contiguity boost**: `max(result_count - 1, 1)` prevents division by zero
 
 ---
 
-## 9. Test Criteria
+## 10. Test Criteria
 
-1. **Sigmoid shape**: entity at distance=0 scores ≈1.0, at distance >> σ scores ≈0.05, never zero
-2. **Floor guarantee**: no entity ever scores below 0.05 on any proximity component
-3. **Learned proximity wins when appropriate**: entity occurred 10y ago but learned near query time scores high via s_lrn_prox
-4. **Occurred proximity wins when appropriate**: entity occurred near query time but learned long ago scores high via s_occ_prox
-5. **Bonus effect**: two entities with same max but different min — entity with higher min scores slightly higher
-6. **Tier equivalence**: `search_temporal(s, e, lim)` gives same results as `search_temporal_with_sigma(s, e, max(e-s, 86400), lim)`
-7. **Granularity effect**: Day σ vs Year σ produces different score distributions for same entity set
-8. **Skip missing entities**: deleted entity in candidate set doesn't cause error
-9. **Recency component**: recently-learned entity gets higher s_temporal than old-learned entity (all else equal)
+### Sigmoid shape
+1. Entity at distance=0 scores ≈ **0.983** (not 1.0 — sigmoid shape)
+2. Entity at distance >> σ scores ≈ 0.05 (floor), never zero
+3. Floor guarantee: no entity ever scores below 0.05 on any proximity component
+
+### Interval distance
+4. Overlapping occurred interval and query range → `d_occ = 0`
+5. Long event (3 months) with query near end → distance is gap to nearest edge, not midpoint distance
+6. Point event with range query → `interval_distance` degenerates correctly
+
+### Anchor mode
+7. Same entity scores differently under Occurred vs Learned vs Auto
+8. False positive case (Example 4): Occurred mode rejects, Learned mode accepts
+9. In Occurred mode, only occurred indexes are scanned (verify with entity that only matches via learned index — should not appear)
+
+### Proximity (Auto mode)
+10. Learned proximity wins when appropriate: entity occurred 10y ago but learned near query time scores high via s_lrn_prox
+11. Occurred proximity wins when appropriate: entity occurred near query time but learned long ago scores high via s_occ_prox
+12. Bonus effect: two entities with same max but different min — entity with higher min scores slightly higher
+
+### Dynamic α
+13. Near-now query (anchor_age ≈ 0): α ≈ 0.70, recency has 30% weight
+14. Historical query (anchor_age >> 90d): α ≈ 1.0, recency suppressed
+15. Same entity with same proximity but different anchor_age → different s_temporal due to α shift
+
+### Candidate discovery
+16. σ-driven padding: point anchor + Year granularity → radius includes 3σ = 540d (not just 7d)
+17. Bidirectional scan: closest-to-anchor entities are in candidate set even when per_scan_cap is tight
+18. Three indexes: entity with occurred_start outside window but occurred_end inside → discovered via occurred_end scan
+19. Per-scan independence: learned scan produces candidates even when occurred scans are saturated
+
+### Adaptive widening
+20. Narrow σ with few entities → widens and finds more candidates
+21. `temporal_adaptive(false)` → no widening, returns fewer results
+22. Max 3 rounds: σ doesn't grow beyond 8× original
+
+### Temporal contiguity
+23. Temporally clustered entities (same week) score higher than isolated entities after boost
+24. Single entity → contiguity=0, no boost
+25. boost_contiguity without temporal search → uses 86400 default window
+
+### API tiers
+26. Tier equivalence: `search_temporal(s, e, lim)` gives same results as `search_temporal_with_sigma(s, e, max(e-s, 86400), Auto, lim)` when range_width >= 86400
+27. Granularity effect: Day σ vs Year σ produces different score distributions for same entity set
+
+### Error cases
+28. Skip missing entities: deleted entity in candidate set doesn't cause error
+29. Recency component: recently-learned entity gets higher s_temporal than old-learned entity (all else equal, near-now query)
 
 ---
 
-## 10. Open Questions for Reviewer
+## 11. Open Questions
 
-1. **Bonus weight (0.1)**: Is this too small to matter? Too large? Should it be benchmarked?
-2. **s_proximity can exceed 1.0**: When both timestamps agree, `max + 0.1×min` can reach ~1.1. Should we clamp to 1.0, or let it act as a natural tiebreaker in ranking? (Currently: no clamp, since scores are only used for relative ordering.)
-3. **Access-based strengthening**: Mnemosyne and MemoryBank both boost frequently-accessed memories. We don't (yet). Should s_recency evolve into an access-aware signal? (Tracked as future work, not Task 6 scope.)
-4. **Learned scan window**: We scan `temporal_learned` with occurred-derived bounds. Should the learned scan instead use a separate recent window (e.g., `[now - 28d, now]`) to catch recently-recorded entities regardless of query time? Current design is simpler and validated by the scoring function.
+### Resolved from v1
+
+1. **Bonus weight (0.1)** — Kept as-is. It adds ~0.098 in the aligned case, which is meaningful but not dominant. Task 9 benchmarks will evaluate sensitivity.
+
+2. **s_proximity can exceed 1.0** — Accepted. Scores are used for relative ordering within the temporal signal. RRF operates on ranks, not raw scores, so >1.0 doesn't propagate downstream. If this ever changes, clamp at the RRF boundary.
+
+3. **Access-based strengthening** — Deferred. MemoryBank's `S++ on recall` pattern requires `last_access_at` tracking, which is a schema change beyond Task 6 scope. Future task.
+
+4. **Learned scan window** — Resolved: same window for all scans, derived from σ. The dynamic α handles the "recently told me" case by suppressing recency for historical queries rather than using a separate scan window.
+
+### New from v2
+
+5. **Contiguity multiplier (0.2)** — Is this too strong? Could it over-promote temporal clusters at the expense of isolated but highly relevant entities? Task 9.
+
+6. **Adaptive widening round count** — 3 rounds (8× σ) may be too aggressive for Exact/Hour granularity. Should max rounds scale with initial σ? Or is the "still < limit" condition sufficient to stop early?
+
+7. **Bidirectional scan implementation** — heed (LMDB wrapper) provides `rev_range` and `range` iterators. Need to verify that alternating between two iterators on the same database within one read txn is safe. If not, fallback: scan forward from window_start, then sort candidates by distance-to-anchor and truncate to per_scan_cap.
