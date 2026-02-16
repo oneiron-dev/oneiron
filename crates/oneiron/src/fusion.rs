@@ -137,25 +137,29 @@ fn decode_msgpack_float(raw: &[u8], field: &str) -> Option<f32> {
             continue;
         }
 
-        let parsed = match value {
-            Value::F32(v) => v,
-            Value::F64(v) => v as f32,
-            Value::Integer(v) => {
-                if let Some(i) = v.as_i64() {
-                    i as f32
-                } else if let Some(u) = v.as_u64() {
-                    u as f32
-                } else {
-                    return None;
-                }
-            }
-            _ => return None,
-        };
-
-        return Some(parsed.clamp(0.0, 1.0));
+        return decode_numeric_value(value);
     }
 
     None
+}
+
+fn decode_numeric_value(value: Value) -> Option<f32> {
+    let parsed = match value {
+        Value::F32(v) => v,
+        Value::F64(v) => v as f32,
+        Value::Integer(v) => {
+            if let Some(i) = v.as_i64() {
+                i as f32
+            } else if let Some(u) = v.as_u64() {
+                u as f32
+            } else {
+                return None;
+            }
+        }
+        _ => return None,
+    };
+
+    Some(parsed.clamp(0.0, 1.0))
 }
 
 #[cfg(test)]

@@ -46,6 +46,12 @@ struct TemporalCandidateScore {
     overlap_tiebreak: u64,
 }
 
+#[derive(Debug, Clone, Copy, Default)]
+struct PhoneticAccumulator {
+    score: f32,
+    matches: usize,
+}
+
 pub struct PipelineBuilder<'a> {
     vault: &'a Vault,
     vector_search: Option<(Vec<f32>, usize)>,
@@ -402,8 +408,7 @@ fn execute_phonetic(
     unique.sort();
     unique.dedup();
 
-    let mut scores = HashMap::<EntityId, f32>::new();
-    let mut matches = HashMap::<EntityId, usize>::new();
+    let mut accumulators = HashMap::<EntityId, PhoneticAccumulator>::new();
 
     for code in unique {
         let Some(posting) = store.phonetic_index.get(rtxn, code.as_bytes())? else {
@@ -416,18 +421,19 @@ fn execute_phonetic(
 
         for chunk in posting.chunks_exact(16) {
             let id = EntityId::from_bytes(chunk.try_into().map_err(|_| Error::InvalidKey)?);
-            *scores.entry(id).or_insert(0.0) += 1.0;
-            *matches.entry(id).or_insert(0) += 1;
+            let entry = accumulators.entry(id).or_default();
+            entry.score += 1.0;
+            entry.matches += 1;
         }
     }
 
-    let mut out: Vec<ScoredEntity> = scores
+    let mut out: Vec<ScoredEntity> = accumulators
         .into_iter()
-        .map(|(id, score)| {
-            let boosted = if matches.get(&id).copied().unwrap_or(0) >= 2 {
-                score * 1.2
+        .map(|(id, accumulator)| {
+            let boosted = if accumulator.matches >= 2 {
+                accumulator.score * 1.2
             } else {
-                score
+                accumulator.score
             };
             ScoredEntity { id, score: boosted }
         })
@@ -458,11 +464,7 @@ fn execute_temporal(
         ));
     }
 
-    let sigma_initial = if config.sigma_secs == 0 {
-        DEFAULT_SIGMA_SECS
-    } else {
-        config.sigma_secs
-    };
+    let sigma_initial = resolve_sigma_secs(config.sigma_secs);
 
     let range_width = effective_range_width(config.anchor_start, config.anchor_end);
     let per_scan_cap = config.limit.saturating_mul(PER_SCAN_CAP_FACTOR).max(1);
@@ -497,18 +499,7 @@ fn execute_temporal(
     let now = crate::unix_seconds_now();
     let anchor_mid = midpoint(config.anchor_start, config.anchor_end);
 
-    let learned_anchor = match config.anchor_mode {
-        TemporalAnchorMode::Both => {
-            let start = config.learned_start.ok_or_else(|| {
-                Error::InvalidConfig("missing learned_start for Both mode".to_owned())
-            })?;
-            let end = config.learned_end.ok_or_else(|| {
-                Error::InvalidConfig("missing learned_end for Both mode".to_owned())
-            })?;
-            (start, end)
-        }
-        _ => (config.anchor_start, config.anchor_end),
-    };
+    let learned_anchor = learned_anchor_range(config)?;
 
     let mut scored = Vec::<TemporalCandidateScore>::new();
 
@@ -528,26 +519,8 @@ fn execute_temporal(
         let s_occ_prox = sigmoid(d_occ, sigma, TEMPORAL_FLOOR);
         let s_lrn_prox = sigmoid(d_lrn, sigma, TEMPORAL_FLOOR);
 
-        let s_proximity = match config.anchor_mode {
-            TemporalAnchorMode::Occurred => s_occ_prox,
-            TemporalAnchorMode::Learned => s_lrn_prox,
-            TemporalAnchorMode::Both => {
-                let s_occ_net =
-                    ((s_occ_prox - TEMPORAL_FLOOR) / (1.0 - TEMPORAL_FLOOR)).clamp(0.0, 1.0);
-                let s_lrn_net =
-                    ((s_lrn_prox - TEMPORAL_FLOOR) / (1.0 - TEMPORAL_FLOOR)).clamp(0.0, 1.0);
-                let s_prox_net = s_occ_net * s_lrn_net;
-                s_prox_net * (1.0 - TEMPORAL_FLOOR) + TEMPORAL_FLOOR
-            }
-            TemporalAnchorMode::Auto => {
-                let s_occ_net =
-                    ((s_occ_prox - TEMPORAL_FLOOR) / (1.0 - TEMPORAL_FLOOR)).clamp(0.0, 1.0);
-                let s_lrn_net =
-                    ((s_lrn_prox - TEMPORAL_FLOOR) / (1.0 - TEMPORAL_FLOOR)).clamp(0.0, 1.0);
-                let s_prox_net = 1.0 - (1.0 - s_occ_net) * (1.0 - s_lrn_net);
-                s_prox_net * (1.0 - TEMPORAL_FLOOR) + TEMPORAL_FLOOR
-            }
-        };
+        let s_proximity =
+            combine_proximity(config.anchor_mode, s_occ_prox, s_lrn_prox, TEMPORAL_FLOOR);
 
         let age = now.saturating_sub(meta.learned_at) as f64;
         let s_recency = (-age / (28.0 * 86_400.0)).exp();
@@ -598,17 +571,7 @@ fn collect_temporal_candidates(
     let occurred_window_end = config.anchor_end.saturating_add(radius);
     let occurred_mid = midpoint(config.anchor_start, config.anchor_end);
 
-    let (learned_anchor_start, learned_anchor_end) = match config.anchor_mode {
-        TemporalAnchorMode::Both => (
-            config.learned_start.ok_or_else(|| {
-                Error::InvalidConfig("missing learned_start for Both mode".to_owned())
-            })?,
-            config.learned_end.ok_or_else(|| {
-                Error::InvalidConfig("missing learned_end for Both mode".to_owned())
-            })?,
-        ),
-        _ => (config.anchor_start, config.anchor_end),
-    };
+    let (learned_anchor_start, learned_anchor_end) = learned_anchor_range(config)?;
 
     let learned_window_start = learned_anchor_start.saturating_sub(radius);
     let learned_window_end = learned_anchor_end.saturating_add(radius);
@@ -616,17 +579,8 @@ fn collect_temporal_candidates(
 
     match config.anchor_mode {
         TemporalAnchorMode::Occurred => {
-            collect_index_candidates(
-                &store.temporal_occurred_start,
-                rtxn,
-                occurred_window_start,
-                occurred_window_end,
-                occurred_mid,
-                per_scan_cap,
-                out,
-            )?;
-            collect_index_candidates(
-                &store.temporal_occurred_end,
+            collect_occurred_candidates(
+                store,
                 rtxn,
                 occurred_window_start,
                 occurred_window_end,
@@ -647,17 +601,8 @@ fn collect_temporal_candidates(
             )?;
         }
         TemporalAnchorMode::Auto | TemporalAnchorMode::Both => {
-            collect_index_candidates(
-                &store.temporal_occurred_start,
-                rtxn,
-                occurred_window_start,
-                occurred_window_end,
-                occurred_mid,
-                per_scan_cap,
-                out,
-            )?;
-            collect_index_candidates(
-                &store.temporal_occurred_end,
+            collect_occurred_candidates(
+                store,
                 rtxn,
                 occurred_window_start,
                 occurred_window_end,
@@ -696,6 +641,36 @@ fn collect_temporal_candidates(
         }
     }
 
+    Ok(())
+}
+
+fn collect_occurred_candidates(
+    store: &Store,
+    rtxn: &RoTxn<'_>,
+    window_start: u64,
+    window_end: u64,
+    anchor_mid: u64,
+    cap: usize,
+    out: &mut HashSet<EntityId>,
+) -> Result<()> {
+    collect_index_candidates(
+        &store.temporal_occurred_start,
+        rtxn,
+        window_start,
+        window_end,
+        anchor_mid,
+        cap,
+        out,
+    )?;
+    collect_index_candidates(
+        &store.temporal_occurred_end,
+        rtxn,
+        window_start,
+        window_end,
+        anchor_mid,
+        cap,
+        out,
+    )?;
     Ok(())
 }
 
@@ -752,11 +727,7 @@ fn boost_contiguity(
         return Ok(());
     }
 
-    let sigma_contig = if config.sigma_secs == 0 {
-        DEFAULT_SIGMA_SECS
-    } else {
-        config.sigma_secs.min(LONG_INTERVAL_THRESHOLD_SECS)
-    };
+    let sigma_contig = resolve_sigma_secs(config.sigma_secs).min(LONG_INTERVAL_THRESHOLD_SECS);
 
     let metadata: Vec<Option<EntityMetadata>> = scores
         .iter()
@@ -898,12 +869,7 @@ fn effective_range_width(start: u64, end: u64) -> u64 {
 }
 
 fn compute_radius(range_width: u64, sigma_secs: u64) -> u64 {
-    let sigma = if sigma_secs == 0 {
-        DEFAULT_SIGMA_SECS
-    } else {
-        sigma_secs
-    };
-
+    let sigma = resolve_sigma_secs(sigma_secs);
     range_width
         .saturating_mul(2)
         .max(sigma.saturating_mul(3))
@@ -942,14 +908,58 @@ fn intervals_overlap(a_start: u64, a_end: u64, b_start: u64, b_end: u64) -> bool
 }
 
 fn sigmoid(distance_secs: u64, sigma_secs: u64, floor: f64) -> f64 {
-    let sigma = if sigma_secs == 0 {
-        DEFAULT_SIGMA_SECS as f64
-    } else {
-        sigma_secs as f64
-    };
+    let sigma = resolve_sigma_secs(sigma_secs) as f64;
     let steepness = sigma / 4.0;
     let distance = distance_secs as f64;
     (1.0 - floor) / (1.0 + ((distance - sigma) / steepness).exp()) + floor
+}
+
+fn resolve_sigma_secs(sigma_secs: u64) -> u64 {
+    if sigma_secs == 0 {
+        DEFAULT_SIGMA_SECS
+    } else {
+        sigma_secs
+    }
+}
+
+fn learned_anchor_range(config: &TemporalSearchConfig) -> Result<(u64, u64)> {
+    match config.anchor_mode {
+        TemporalAnchorMode::Both => {
+            let start = config.learned_start.ok_or_else(|| {
+                Error::InvalidConfig("missing learned_start for Both mode".to_owned())
+            })?;
+            let end = config.learned_end.ok_or_else(|| {
+                Error::InvalidConfig("missing learned_end for Both mode".to_owned())
+            })?;
+            Ok((start, end))
+        }
+        _ => Ok((config.anchor_start, config.anchor_end)),
+    }
+}
+
+fn remove_floor(score: f64, floor: f64) -> f64 {
+    ((score - floor) / (1.0 - floor)).clamp(0.0, 1.0)
+}
+
+fn apply_floor(score: f64, floor: f64) -> f64 {
+    score * (1.0 - floor) + floor
+}
+
+fn combine_proximity(mode: TemporalAnchorMode, occurred: f64, learned: f64, floor: f64) -> f64 {
+    match mode {
+        TemporalAnchorMode::Occurred => occurred,
+        TemporalAnchorMode::Learned => learned,
+        TemporalAnchorMode::Both => {
+            let occurred_net = remove_floor(occurred, floor);
+            let learned_net = remove_floor(learned, floor);
+            apply_floor(occurred_net * learned_net, floor)
+        }
+        TemporalAnchorMode::Auto => {
+            let occurred_net = remove_floor(occurred, floor);
+            let learned_net = remove_floor(learned, floor);
+            apply_floor(1.0 - (1.0 - occurred_net) * (1.0 - learned_net), floor)
+        }
+    }
 }
 
 #[cfg(test)]
