@@ -387,6 +387,8 @@ Implement the `BatchBuilder` for atomic multi-database writes, and all secondary
 - [ ] Overlap tiebreak axis mismatch in Learned mode (`pipeline.rs:539-543`) — always uses occurred midpoint, should use learned axis when `anchor_mode == Learned`. Minor impact (only affects equal-score entities with d_occ==0 in Learned mode).
 - [ ] Two separate `RoTxn` in `PipelineBuilder::run()` (lines 289 and 371) breaks snapshot consistency — entities could change between signal retrieval and boost/filter phases. Requires PPR refactor to accept borrowed `RoTxn` instead of opening internal txns.
 - [ ] Cache `EntityMetadataHeader` per-entity within pipeline `run()` to avoid redundant LMDB lookups across `execute_temporal`, `boost_recency`, `boost_salience`, `boost_confidence`, and `apply_filters`. LMDB page cache mitigates I/O cost but parsing overhead remains.
+- [ ] `boost_contiguity` O(n²) runs on full fused set before `scores.truncate(result_limit)` at `pipeline.rs:407`. For stacked signals (vector+BM25+PPR), fused set can be ~300+ entities. Pre-truncate to 2× `result_limit` before contiguity to bound work.
+- [ ] `temporal_long_intervals` full scan at `pipeline.rs:632-639` — `store.temporal_long_intervals.iter(rtxn)?` walks all spanner entries. Lower impact than `collect_index_candidates` (table is small — only entities with duration >14 days) but same O(N) class.
 
 **Context Pack Builder (`context_pack.rs`):**
 - `ContextPackBuilder<'a>` — extends pipeline with hydration options
