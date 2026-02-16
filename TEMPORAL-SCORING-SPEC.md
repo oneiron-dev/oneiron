@@ -490,14 +490,63 @@ Auto uses occurred because when intent is ambiguous, co-occurring events are the
 ### Formula
 
 For each entity `e` in the result set:
-```
+
+```text
 neighbors(e) = count of other entities in results where
                distance(e, other) < σ_contig    // axis-aware distance
 contiguity   = neighbors / max(result_count - 1, 1)        // 0.0 to 1.0
 score       *= 1.0 + 0.2 × contiguity
 ```
 
-O(n²) where n = result_limit (typically 20). Negligible cost.
+### Algorithm — O(n log n) via sorted-endpoint binary search
+
+The naive O(n²) pairwise comparison is replaced by a sorted-endpoint technique. The key insight is that for interval distance:
+
+```text
+interval_distance([s_i, e_i], [s_j, e_j]) < σ
+  ⟺  s_j < e_i + σ  AND  e_j > s_i - σ
+```
+
+The negation — "j is NOT a neighbor of i" — splits into two **disjoint** cases (disjoint because for valid intervals `s ≤ e`, an interval cannot simultaneously end before `s_i - σ` and start after `e_i + σ`):
+
+```text
+too_far_left:   e_j ≤ s_i - σ      (j ends before i's window)
+too_far_right:  s_j ≥ e_i + σ      (j starts after i's window)
+```
+
+Therefore: `neighbors(i) = (n - 1) - too_left - too_right`
+
+**Algorithm:**
+
+1. Extract timestamps per axis mode:
+   - Occurred/Auto/Both: `(s, e) = (occurred_start, occurred_end)` per entity
+   - Learned: `(s, e) = (learned_at, learned_at)` — point intervals
+2. Sort two arrays: `sorted_starts` (all `s` values, ascending) and `sorted_ends` (all `e` values, ascending) — **O(n log n)**
+3. For each entity i, compute neighbor count via two binary searches — **O(log n)** each:
+
+```rust
+// Use checked arithmetic to handle u64 boundaries correctly.
+// If s_i < σ, s_i - σ is negative → no interval can be "too far left" → 0.
+// If e_i + σ overflows u64 → no interval can be "too far right" → 0.
+let too_left = match s_i.checked_sub(sigma_contig) {
+    Some(threshold) => sorted_ends.partition_point(|&ej| ej <= threshold),
+    None => 0,
+};
+let too_right = match e_i.checked_add(sigma_contig) {
+    Some(threshold) => n - sorted_starts.partition_point(|&sj| sj < threshold),
+    None => 0,
+};
+
+let neighbors = (n - 1).saturating_sub(too_left + too_right);
+```
+
+**Why `checked_*` not `saturating_*`:** `saturating_sub` gives 0 when the true result is negative, which would wrongly classify intervals ending at timestamp 0 as "too far left." `checked_sub` returns `None` on underflow, letting us correctly set `too_left = 0` (nothing is too far left). Symmetric reasoning for `checked_add` at the u64::MAX boundary.
+
+**Self-exclusion correctness:** Entity i always has `e_i > s_i - σ` and `s_i < e_i + σ` (when σ > 0), so self is never counted in too_left or too_right. The `n - 1` subtracts self from the total.
+
+**Total complexity:** O(n log n) for sorts + O(n log n) for 2n binary searches = **O(n log n)**.
+
+For Learned mode, `s = e = learned_at` simplifies to point-distance binary search but uses the same code path.
 
 ### API
 
