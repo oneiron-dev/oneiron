@@ -304,8 +304,13 @@ fn truncate_strings(value: &mut Value, max_field_chars: usize) {
     match value {
         Value::String(text) => {
             if text.chars().count() > max_field_chars {
-                let truncated: String = text.chars().take(max_field_chars).collect();
-                *text = format!("{truncated}…");
+                let take = max_field_chars.saturating_sub(1);
+                let truncated: String = text.chars().take(take).collect();
+                *text = if take == 0 {
+                    "…".to_owned()
+                } else {
+                    format!("{truncated}…")
+                };
             }
         }
         Value::Array(values) => {

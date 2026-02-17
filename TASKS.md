@@ -440,6 +440,9 @@ Implement the `BatchBuilder` for atomic multi-database writes, and all secondary
 - [ ] `estimate_entity_chars` calls `value_to_compact_string` (JSON serialization) per field per entity for budget estimation — O(n*m) allocations. Consider simpler byte-length estimate or caching.
 - [ ] Remove unused `SignalHit` type or implement per-entity signal tracking that uses it.
 - [ ] Normalize unknown entity types (≥12) to a single sentinel in `group_entities` to prevent "other" key collisions in serialized output when multiple unknown types appear in results.
+- [ ] `append_stats_line` emits `---\n` (YAML document separator) + bare `query: ... | signals: ...` — turns YAML output into invalid multi-document stream when `include_stats=true`. Emit stats as YAML comment (`# query: ...`) or proper key-value mapping.
+- [ ] YAML field keys written bare (`out.push_str(key)`) — safe for all 12 known entity types but would break if a custom key contained `:`, `#`, or was a YAML reserved word. Apply `needs_yaml_quotes` to keys or assert all known keys are safe.
+- [ ] `edge_hop > 0` + `include_edges(true)` double-scans edges: `walk_edges` calls `scan_edges_for_entity` for traversal, then `hydrate_entity` calls it again to populate edge list — 2× LMDB prefix scans for result entities. Cache edge results from `walk_edges`.
 
 **Review follow-ups from Task 2:**
 - [ ] Add `// SAFETY:` comment to `unsafe` block in `store.rs:47-53` (`EnvOpenOptions::open`) documenting invariants: single Env per path, no NFS, no concurrent map_size. Important for FFI/C consumers.
