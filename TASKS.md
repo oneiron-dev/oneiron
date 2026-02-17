@@ -310,6 +310,7 @@ Implement the `BatchBuilder` for atomic multi-database writes, and all secondary
 
 **Review follow-ups from Task 5:**
 - [ ] Include `depth` and `alpha` in PPR cache key hash (currently keyed only by seed set — safe while `ppr_query` is called with fixed config-level params, but fragile if callers vary parameters)
+- [ ] `hash_seeds` (`ppr.rs:240-248`) only populates 4 of 32 bytes — uses xxHash32 (4 bytes) but `SEED_HASH_LEN` is 32 bytes, leaving 28 bytes as zeros. Effective keyspace is 2^32, giving ~39% collision probability at 65K distinct seed sets (birthday paradox). Two different queries can silently get each other's cached PPR results. Fix: use xxHash64 (8 bytes gives P(collision) ≈ 10⁻¹⁰ at 65K) or shrink `SEED_HASH_LEN` to 8.
 
 **RRF Fusion (`fusion.rs`):**
 - `rrf_fuse(ranked_lists: &[Vec<ScoredEntity>], k: f32) -> Vec<ScoredEntity>`
