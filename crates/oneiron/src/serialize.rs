@@ -1225,11 +1225,7 @@ mod tests {
             });
         }
 
-        let total_claims = pack
-            .results
-            .iter()
-            .filter(|e| e.entity_type == 0)
-            .count();
+        let total_claims = pack.results.iter().filter(|e| e.entity_type == 0).count();
 
         let mut cfg = config(PackFormat::Toon);
         cfg.budget = 100;
