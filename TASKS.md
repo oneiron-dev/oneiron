@@ -421,7 +421,7 @@ Implement the `BatchBuilder` for atomic multi-database writes, and all secondary
 
 **Token budget:**
 - Estimate tokens (rough: chars / 4)
-- Allocate budget per entity type (claims 50%, turns 30%, summaries 15%, other 5%)
+- Allocate budget per entity type (claims 45%, summaries 25%, other 20%, turns 10%)
 - Truncate sections that exceed budget
 
 **Tests:**
@@ -432,6 +432,9 @@ Implement the `BatchBuilder` for atomic multi-database writes, and all secondary
 - Short ID + content hash in output: `cl88:f2` format
 - Token budget: verify output doesn't exceed budget
 - Empty results: verify graceful handling
+
+**Review follow-ups from Task 7:**
+- [ ] Split-mode budget partitioning: when `merge_neighbors=false`, results and neighbors each get the full budget independently (potential 2× overshoot). Needs design decision on partition ratio (e.g. 70/30 results/neighbors, or shared pool with priority).
 
 **Review follow-ups from Task 2:**
 - [ ] Add `// SAFETY:` comment to `unsafe` block in `store.rs:47-53` (`EnvOpenOptions::open`) documenting invariants: single Env per path, no NFS, no concurrent map_size. Important for FFI/C consumers.

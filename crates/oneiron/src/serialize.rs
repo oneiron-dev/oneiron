@@ -173,13 +173,17 @@ fn serialize_yaml(pack: &ContextPack, config: &SerializeConfig) -> String {
 }
 
 fn prepare_pack(pack: &ContextPack, config: &SerializeConfig, json_mode: bool) -> PreparedPack {
+    let skip_budget = config.format == PackFormat::Json;
+
     if config.merge_neighbors {
         let mut merged = Vec::with_capacity(pack.results.len() + pack.neighbors.len());
         merged.extend(prepare_entities(&pack.results, config, json_mode));
         merged.extend(prepare_entities(&pack.neighbors, config, json_mode));
 
         let mut groups = group_entities(merged);
-        enforce_token_budget(&mut groups, config);
+        if !skip_budget {
+            enforce_token_budget(&mut groups, config);
+        }
 
         PreparedPack {
             merged: true,
@@ -189,8 +193,10 @@ fn prepare_pack(pack: &ContextPack, config: &SerializeConfig, json_mode: bool) -
     } else {
         let mut results = group_entities(prepare_entities(&pack.results, config, json_mode));
         let mut neighbors = group_entities(prepare_entities(&pack.neighbors, config, json_mode));
-        enforce_token_budget(&mut results, config);
-        enforce_token_budget(&mut neighbors, config);
+        if !skip_budget {
+            enforce_token_budget(&mut results, config);
+            enforce_token_budget(&mut neighbors, config);
+        }
 
         PreparedPack {
             merged: false,
@@ -900,7 +906,12 @@ fn format_relative_timestamp(ts: u64, now: u64) -> String {
         return String::new();
     }
 
-    let diff = now.saturating_sub(ts);
+    let (prefix, diff) = if ts > now {
+        ("+", ts - now)
+    } else {
+        ("-", now - ts)
+    };
+
     let minutes = diff / 60;
     let hours = diff / 3_600;
     let days = diff / 86_400;
@@ -911,17 +922,17 @@ fn format_relative_timestamp(ts: u64, now: u64) -> String {
     if minutes < 1 {
         "now".to_owned()
     } else if minutes < 60 {
-        format!("-{minutes}m")
+        format!("{prefix}{minutes}m")
     } else if hours < 24 {
-        format!("-{hours}h")
+        format!("{prefix}{hours}h")
     } else if days < 7 {
-        format!("-{days}d")
+        format!("{prefix}{days}d")
     } else if weeks < 5 {
-        format!("-{weeks}w")
+        format!("{prefix}{weeks}w")
     } else if months < 12 {
-        format!("-{months}mo")
+        format!("{prefix}{months}mo")
     } else {
-        format!("-{years}y")
+        format!("{prefix}{years}y")
     }
 }
 
@@ -1238,9 +1249,9 @@ mod tests {
             });
         }
 
-        let mut cfg = config(PackFormat::Json);
+        let mut cfg = config(PackFormat::Toon);
         cfg.budget = 200;
-        let prepared = prepare_pack(&pack, &cfg, true);
+        let prepared = prepare_pack(&pack, &cfg, false);
 
         let persons_count = prepared
             .results
@@ -1311,10 +1322,15 @@ mod tests {
         // With normalization (0.45/0.55 = 0.818) → 654 chars → ~8 claims.
         // With redistribution of unused turn budget → ~770 chars → ~10 claims.
         // So claims_count should exceed the raw-fraction baseline of ~4.
-        let mut cfg = config(PackFormat::Json);
+        let mut cfg = config(PackFormat::Toon);
         cfg.budget = 200;
-        let output: Value = serde_json::from_slice(&serialize_pack(&pack, &cfg)).unwrap();
-        let claims_count = output["claims"].as_array().map_or(0, Vec::len);
+        let prepared = prepare_pack(&pack, &cfg, false);
+
+        let claims_count = prepared
+            .results
+            .iter()
+            .find_map(|(et, rows)| (*et == 0).then_some(rows.len()))
+            .unwrap_or(0);
 
         // Raw fraction baseline: 0.45 * 800 = 360 chars.
         let raw_char_budget = (800.0 * 0.45) as usize;
@@ -1326,6 +1342,11 @@ mod tests {
             "redistribution should give claims more than raw {raw_baseline}: got {claims_count}"
         );
         // Turn should still be present (it fits easily).
-        assert!(output["turns"].as_array().map_or(0, Vec::len) > 0);
+        let turns_count = prepared
+            .results
+            .iter()
+            .find_map(|(et, rows)| (*et == 1).then_some(rows.len()))
+            .unwrap_or(0);
+        assert!(turns_count > 0);
     }
 }

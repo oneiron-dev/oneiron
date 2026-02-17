@@ -419,10 +419,7 @@ fn hydrate_entity(
     };
 
     let fields = if hydrate_fields {
-        let Some(decoded) = decode_entity_fields(raw) else {
-            return Ok(None);
-        };
-        Some(decoded)
+        Some(decode_entity_fields(raw).unwrap_or_default())
     } else {
         None
     };

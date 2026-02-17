@@ -104,19 +104,19 @@ pub struct ContextPack {
 /// Token budget allocation across entity types.
 #[derive(Debug, Clone, Copy)]
 pub struct TokenAllocation {
-    pub claims: f32,     // default: 0.50
-    pub turns: f32,      // default: 0.30
-    pub summaries: f32,  // default: 0.15
-    pub other: f32,      // default: 0.05
+    pub claims: f32,     // default: 0.45
+    pub turns: f32,      // default: 0.10
+    pub summaries: f32,  // default: 0.25
+    pub other: f32,      // default: 0.20
 }
 
 impl Default for TokenAllocation {
     fn default() -> Self {
         Self {
-            claims: 0.50,
-            turns: 0.30,
-            summaries: 0.15,
-            other: 0.05,
+            claims: 0.45,
+            turns: 0.10,
+            summaries: 0.25,
+            other: 0.20,
         }
     }
 }
