@@ -439,6 +439,7 @@ Implement the `BatchBuilder` for atomic multi-database writes, and all secondary
 - [ ] `walk_edges` neighbor selection is nondeterministic when candidates exceed `max_neighbors` cap — HashSet iteration order determines which neighbors are included. Consider scored/weighted selection or deterministic tie-breaking.
 - [ ] `estimate_entity_chars` calls `value_to_compact_string` (JSON serialization) per field per entity for budget estimation — O(n*m) allocations. Consider simpler byte-length estimate or caching.
 - [ ] Remove unused `SignalHit` type or implement per-entity signal tracking that uses it.
+- [ ] Normalize unknown entity types (≥12) to a single sentinel in `group_entities` to prevent "other" key collisions in serialized output when multiple unknown types appear in results.
 
 **Review follow-ups from Task 2:**
 - [ ] Add `// SAFETY:` comment to `unsafe` block in `store.rs:47-53` (`EnvOpenOptions::open`) documenting invariants: single Env per path, no NFS, no concurrent map_size. Important for FFI/C consumers.

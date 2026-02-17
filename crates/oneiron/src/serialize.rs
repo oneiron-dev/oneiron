@@ -953,11 +953,35 @@ fn needs_yaml_quotes(value: &str) -> bool {
 fn is_yaml_reserved_word(value: &str) -> bool {
     matches!(
         value,
-        "true" | "false" | "yes" | "no" | "on" | "off" | "null" | "~"
-            | "True" | "False" | "Yes" | "No" | "On" | "Off" | "Null"
-            | "TRUE" | "FALSE" | "YES" | "NO" | "ON" | "OFF" | "NULL"
-            | "y" | "Y" | "n" | "N"
-            | "nil" | "Nil" | "NIL"
+        "true"
+            | "false"
+            | "yes"
+            | "no"
+            | "on"
+            | "off"
+            | "null"
+            | "~"
+            | "True"
+            | "False"
+            | "Yes"
+            | "No"
+            | "On"
+            | "Off"
+            | "Null"
+            | "TRUE"
+            | "FALSE"
+            | "YES"
+            | "NO"
+            | "ON"
+            | "OFF"
+            | "NULL"
+            | "y"
+            | "Y"
+            | "n"
+            | "N"
+            | "nil"
+            | "Nil"
+            | "NIL"
     )
 }
 
@@ -1201,12 +1225,21 @@ mod tests {
             });
         }
 
-        let mut cfg = config(PackFormat::Json);
-        cfg.budget = 100;
-        let output: Value = serde_json::from_slice(&serialize_pack(&pack, &cfg)).unwrap();
+        let total_claims = pack
+            .results
+            .iter()
+            .filter(|e| e.entity_type == 0)
+            .count();
 
-        let claims_len = output["claims"].as_array().map_or(0, Vec::len);
-        assert!(claims_len < pack.results.len());
+        let mut cfg = config(PackFormat::Toon);
+        cfg.budget = 100;
+        let prepared = prepare_pack(&pack, &cfg, false);
+        let claims_len = prepared
+            .results
+            .iter()
+            .find_map(|(et, rows)| (*et == 0).then_some(rows.len()))
+            .unwrap_or(0);
+        assert!(claims_len < total_claims);
     }
 
     #[test]
