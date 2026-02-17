@@ -310,6 +310,7 @@ Implement the `BatchBuilder` for atomic multi-database writes, and all secondary
 
 **Review follow-ups from Task 5:**
 - [ ] Include `depth` and `alpha` in PPR cache key hash (currently keyed only by seed set — safe while `ppr_query` is called with fixed config-level params, but fragile if callers vary parameters)
+- [ ] `hash_seeds` (`ppr.rs:240-248`) only populates 4 of 32 bytes — uses xxHash32 (4 bytes) but `SEED_HASH_LEN` is 32 bytes, leaving 28 bytes as zeros. Effective keyspace is 2^32, giving ~39% collision probability at 65K distinct seed sets (birthday paradox). Two different queries can silently get each other's cached PPR results. Fix: use xxHash64 (8 bytes gives P(collision) ≈ 10⁻¹⁰ at 65K) or shrink `SEED_HASH_LEN` to 8.
 
 **RRF Fusion (`fusion.rs`):**
 - `rrf_fuse(ranked_lists: &[Vec<ScoredEntity>], k: f32) -> Vec<ScoredEntity>`
@@ -421,7 +422,7 @@ Implement the `BatchBuilder` for atomic multi-database writes, and all secondary
 
 **Token budget:**
 - Estimate tokens (rough: chars / 4)
-- Allocate budget per entity type (claims 50%, turns 30%, summaries 15%, other 5%)
+- Allocate budget per entity type (claims 45%, summaries 25%, other 20%, turns 10%)
 - Truncate sections that exceed budget
 
 **Tests:**
@@ -432,6 +433,17 @@ Implement the `BatchBuilder` for atomic multi-database writes, and all secondary
 - Short ID + content hash in output: `cl88:f2` format
 - Token budget: verify output doesn't exceed budget
 - Empty results: verify graceful handling
+
+**Review follow-ups from Task 7:**
+- [ ] Split-mode budget partitioning: when `merge_neighbors=false`, results and neighbors each get the full budget independently (potential 2× overshoot). Needs design decision on partition ratio (e.g. 70/30 results/neighbors, or shared pool with priority).
+- [ ] Clamp `max_neighbors` and `edge_hop` to sane maximums (e.g. 1000 and 5) to prevent resource exhaustion with adversarial values.
+- [ ] `walk_edges` neighbor selection is nondeterministic when candidates exceed `max_neighbors` cap — HashSet iteration order determines which neighbors are included. Consider scored/weighted selection or deterministic tie-breaking.
+- [ ] `estimate_entity_chars` calls `value_to_compact_string` (JSON serialization) per field per entity for budget estimation — O(n*m) allocations. Consider simpler byte-length estimate or caching.
+- [ ] Remove unused `SignalHit` type or implement per-entity signal tracking that uses it.
+- [ ] Normalize unknown entity types (≥12) to a single sentinel in `group_entities` to prevent "other" key collisions in serialized output when multiple unknown types appear in results.
+- [ ] `append_stats_line` emits `---\n` (YAML document separator) + bare `query: ... | signals: ...` — turns YAML output into invalid multi-document stream when `include_stats=true`. Emit stats as YAML comment (`# query: ...`) or proper key-value mapping.
+- [ ] YAML field keys written bare (`out.push_str(key)`) — safe for all 12 known entity types but would break if a custom key contained `:`, `#`, or was a YAML reserved word. Apply `needs_yaml_quotes` to keys or assert all known keys are safe.
+- [ ] `edge_hop > 0` + `include_edges(true)` double-scans edges: `walk_edges` calls `scan_edges_for_entity` for traversal, then `hydrate_entity` calls it again to populate edge list — 2× LMDB prefix scans for result entities. Cache edge results from `walk_edges`.
 
 **Review follow-ups from Task 2:**
 - [ ] Add `// SAFETY:` comment to `unsafe` block in `store.rs:47-53` (`EnvOpenOptions::open`) documenting invariants: single Env per path, no NFS, no concurrent map_size. Important for FFI/C consumers.
