@@ -435,6 +435,10 @@ Implement the `BatchBuilder` for atomic multi-database writes, and all secondary
 
 **Review follow-ups from Task 7:**
 - [ ] Split-mode budget partitioning: when `merge_neighbors=false`, results and neighbors each get the full budget independently (potential 2× overshoot). Needs design decision on partition ratio (e.g. 70/30 results/neighbors, or shared pool with priority).
+- [ ] Clamp `max_neighbors` and `edge_hop` to sane maximums (e.g. 1000 and 5) to prevent resource exhaustion with adversarial values.
+- [ ] `walk_edges` neighbor selection is nondeterministic when candidates exceed `max_neighbors` cap — HashSet iteration order determines which neighbors are included. Consider scored/weighted selection or deterministic tie-breaking.
+- [ ] `estimate_entity_chars` calls `value_to_compact_string` (JSON serialization) per field per entity for budget estimation — O(n*m) allocations. Consider simpler byte-length estimate or caching.
+- [ ] Remove unused `SignalHit` type or implement per-entity signal tracking that uses it.
 
 **Review follow-ups from Task 2:**
 - [ ] Add `// SAFETY:` comment to `unsafe` block in `store.rs:47-53` (`EnvOpenOptions::open`) documenting invariants: single Env per path, no NFS, no concurrent map_size. Important for FFI/C consumers.
