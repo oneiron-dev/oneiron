@@ -3,11 +3,9 @@ use xxhash_rust::xxh32::xxh32;
 use crate::batch::{parse_short_id_value, ENTITY_METADATA_HEADER_LEN};
 use crate::error::{Error, Result};
 use crate::hnsw::{hnsw_insert, COUNT_KEY};
-use crate::store::MODEL_ID_KEY;
+use crate::store::{GRAPH_VERSION_KEY, MODEL_ID_KEY};
 use crate::types::{EntityId, ENTITY_ID_LEN};
 use crate::{le_bytes_to_f32_vec, ppr, Vault};
-
-const GRAPH_VERSION_KEY: &[u8] = b"graph_version";
 
 /// Builder for running maintenance operations against a vault.
 pub struct MaintenanceBuilder<'a> {
@@ -42,28 +40,28 @@ impl<'a> MaintenanceBuilder<'a> {
         }
     }
 
-    pub fn rebuild_hnsw(&mut self) -> &mut Self {
+    pub fn rebuild_hnsw(mut self) -> Self {
         self.do_rebuild_hnsw = true;
         self
     }
 
-    pub fn cleanup_ppr_cache(&mut self, max_age_secs: u64) -> &mut Self {
+    pub fn cleanup_ppr_cache(mut self, max_age_secs: u64) -> Self {
         self.do_cleanup_ppr = true;
         self.ppr_max_age_secs = max_age_secs;
         self
     }
 
-    pub fn compact_postings(&mut self) -> &mut Self {
+    pub fn compact_postings(mut self) -> Self {
         self.do_compact_postings = true;
         self
     }
 
-    pub fn recompute_short_id_hashes(&mut self) -> &mut Self {
+    pub fn recompute_short_id_hashes(mut self) -> Self {
         self.do_recompute_hashes = true;
         self
     }
 
-    pub fn run(&self) -> Result<MaintenanceReport> {
+    pub fn run(self) -> Result<MaintenanceReport> {
         let mut report = MaintenanceReport::default();
 
         if self.do_rebuild_hnsw {
@@ -96,8 +94,9 @@ fn rebuild_hnsw(vault: &Vault) -> Result<(u64, u64)> {
 
     let graph_version = decode_u64_opt(vault.store.hnsw_meta.get(&wtxn, GRAPH_VERSION_KEY)?)?;
     let old_count = decode_u64_opt(vault.store.hnsw_meta.get(&wtxn, COUNT_KEY)?)?.unwrap_or(0);
+    let stored_model_id = vault.store.hnsw_meta.get(&wtxn, MODEL_ID_KEY)?.map(|v| v.to_vec());
 
-    let mut vectors = Vec::<(EntityId, Vec<f32>)>::with_capacity(old_count as usize);
+    let mut vectors = Vec::<(EntityId, Vec<f32>)>::with_capacity(old_count.min(1_000_000) as usize);
     for entry in vault.store.vectors.iter(&wtxn)? {
         let (id_bytes, vector_bytes) = entry?;
         let id = parse_entity_id(id_bytes)?;
@@ -120,6 +119,11 @@ fn rebuild_hnsw(vault: &Vault) -> Result<(u64, u64)> {
             .store
             .hnsw_meta
             .put(&mut wtxn, MODEL_ID_KEY, model.as_bytes())?;
+    } else if let Some(stored) = &stored_model_id {
+        vault
+            .store
+            .hnsw_meta
+            .put(&mut wtxn, MODEL_ID_KEY, stored)?;
     }
 
     for (id, vector) in &vectors {
