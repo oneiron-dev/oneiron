@@ -323,6 +323,28 @@ mod tests {
     }
 
     #[test]
+    fn rebuild_hnsw_preserves_model_id_when_config_is_none() -> Result<()> {
+        let temp_dir = tempfile::tempdir()?;
+        let vault = Vault::open(temp_dir.path(), test_config())?;
+
+        let id = entity(84);
+        vault.put_entity(&id, 0, test_time_range(1, 1), 1, b"node")?;
+        vault.put_vector(&id, &[1.0, 0.0, 0.0, 0.0])?;
+        drop(vault);
+
+        let mut config = test_config();
+        config.embedding_model = None;
+        let vault = Vault::open(temp_dir.path(), config)?;
+
+        vault.maintain().rebuild_hnsw().run()?;
+
+        let rtxn = vault.store.env.read_txn()?;
+        let stored = vault.store.hnsw_meta.get(&rtxn, MODEL_ID_KEY)?;
+        assert_eq!(stored, Some(b"test-model-v1".as_slice()));
+        Ok(())
+    }
+
+    #[test]
     fn cleanup_ppr_cache_evicts_stale_and_expired() -> Result<()> {
         let temp_dir = tempfile::tempdir()?;
         let vault = Vault::open(temp_dir.path(), test_config())?;
