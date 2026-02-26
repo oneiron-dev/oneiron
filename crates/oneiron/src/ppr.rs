@@ -162,7 +162,11 @@ pub(crate) fn cleanup_ppr_cache(
             .map_err(|_| Error::InvalidKey)?;
         if evicted_hashes.contains(&seed_hash) {
             dep_keys_to_delete.push(dep_key.to_vec());
-        } else if store.entities.get(&*wtxn, &dep_key[..ENTITY_ID_LEN])?.is_none() {
+        } else if store
+            .entities
+            .get(&*wtxn, &dep_key[..ENTITY_ID_LEN])?
+            .is_none()
+        {
             dep_keys_to_delete.push(dep_key.to_vec());
         }
     }
