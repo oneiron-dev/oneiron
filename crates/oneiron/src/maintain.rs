@@ -115,13 +115,11 @@ fn rebuild_hnsw(vault: &Vault) -> Result<(u64, u64)> {
             .put(&mut wtxn, GRAPH_VERSION_KEY, &version.to_le_bytes())?;
     }
 
-    if let Some(model) = vault.config.embedding_model.as_deref() {
-        if !model.is_empty() {
-            vault
-                .store
-                .hnsw_meta
-                .put(&mut wtxn, MODEL_ID_KEY, model.as_bytes())?;
-        }
+    if let Some(model) = vault.config.embedding_model.as_deref().filter(|m| !m.is_empty()) {
+        vault
+            .store
+            .hnsw_meta
+            .put(&mut wtxn, MODEL_ID_KEY, model.as_bytes())?;
     }
 
     for (id, vector) in &vectors {
