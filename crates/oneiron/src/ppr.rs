@@ -129,6 +129,56 @@ pub(crate) fn ppr_query(
     Ok(scores)
 }
 
+pub(crate) fn cleanup_ppr_cache(
+    store: &Store,
+    wtxn: &mut RwTxn<'_>,
+    max_age_secs: u64,
+    now: u64,
+) -> Result<(u64, u64)> {
+    let mut evicted_hashes = HashSet::<[u8; SEED_HASH_LEN]>::new();
+    for entry in store.ppr_cache.iter(&*wtxn)? {
+        let (seed_hash_key, value) = entry?;
+        if seed_hash_key.len() != SEED_HASH_LEN {
+            return Err(Error::InvalidKey);
+        }
+
+        let (computed_at, _, stale) = parse_cache_header(value)?;
+        if stale != 0 || now.saturating_sub(computed_at) > max_age_secs {
+            let mut seed_hash = [0_u8; SEED_HASH_LEN];
+            seed_hash.copy_from_slice(seed_hash_key);
+            evicted_hashes.insert(seed_hash);
+        }
+    }
+
+    for seed_hash in &evicted_hashes {
+        store.ppr_cache.delete(wtxn, seed_hash)?;
+    }
+
+    if evicted_hashes.is_empty() {
+        return Ok((0, 0));
+    }
+
+    let mut dep_keys_to_delete = Vec::new();
+    for entry in store.ppr_cache_deps.iter(&*wtxn)? {
+        let (dep_key, _) = entry?;
+        if dep_key.len() != CACHE_DEP_KEY_LEN {
+            return Err(Error::InvalidKey);
+        }
+
+        let mut seed_hash = [0_u8; SEED_HASH_LEN];
+        seed_hash.copy_from_slice(&dep_key[ENTITY_ID_LEN..]);
+        if evicted_hashes.contains(&seed_hash) {
+            dep_keys_to_delete.push(dep_key.to_vec());
+        }
+    }
+
+    for key in &dep_keys_to_delete {
+        store.ppr_cache_deps.delete(wtxn, key)?;
+    }
+
+    Ok((evicted_hashes.len() as u64, dep_keys_to_delete.len() as u64))
+}
+
 fn invalidate_ppr_caches(store: &Store, wtxn: &mut RwTxn<'_>, entity_id: &EntityId) -> Result<()> {
     let mut hashes = HashSet::<[u8; SEED_HASH_LEN]>::new();
     for entry in store
