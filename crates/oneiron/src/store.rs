@@ -7,7 +7,7 @@ use crate::error::{Error, Result};
 use crate::types::{EdgeKind, EntityId, VaultConfig};
 
 const MAX_DBS: u32 = 24;
-const MODEL_ID_KEY: &[u8] = b"model_id";
+pub(crate) const MODEL_ID_KEY: &[u8] = b"model_id";
 
 /// LMDB environment and database handles for a vault.
 pub struct Store {

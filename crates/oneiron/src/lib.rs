@@ -11,6 +11,7 @@ pub(crate) mod distance;
 pub mod error;
 pub(crate) mod fusion;
 pub(crate) mod hnsw;
+pub mod maintain;
 pub mod pipeline;
 pub(crate) mod ppr;
 pub mod serialize;
@@ -21,6 +22,7 @@ pub use crate::batch::BatchBuilder;
 use crate::batch::{deindex_entity, EntityMetadataHeader, ENTITY_METADATA_HEADER_LEN};
 pub use crate::context_pack::ContextPackBuilder;
 pub use crate::error::{Error, Result};
+pub use crate::maintain::{MaintenanceBuilder, MaintenanceReport};
 pub use crate::pipeline::PipelineBuilder;
 use crate::store::Store;
 pub use crate::types::{
@@ -189,6 +191,11 @@ impl Vault {
     /// Creates a context pack builder for retrieval + hydration + serialization.
     pub fn context_pack(&self) -> ContextPackBuilder<'_> {
         ContextPackBuilder::new(self)
+    }
+
+    /// Creates a maintenance builder for index and cache upkeep operations.
+    pub fn maintain(&self) -> MaintenanceBuilder<'_> {
+        MaintenanceBuilder::new(self)
     }
 }
 
