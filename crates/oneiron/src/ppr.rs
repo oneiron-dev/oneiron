@@ -17,7 +17,7 @@ const CACHE_STALE_OFFSET: usize = 16;
 const CACHE_ENTRY_LEN: usize = 20;
 const CACHE_DEP_KEY_LEN: usize = ENTITY_ID_LEN + SEED_HASH_LEN;
 const CACHE_TTL_SECS: u64 = 86_400;
-const GRAPH_VERSION_KEY: &[u8] = b"graph_version";
+use crate::store::GRAPH_VERSION_KEY;
 const SCORE_EPSILON: f32 = 1e-10;
 
 pub(crate) fn ppr_compute(
@@ -150,10 +150,6 @@ pub(crate) fn cleanup_ppr_cache(
         store.ppr_cache.delete(wtxn, seed_hash)?;
     }
 
-    if evicted_hashes.is_empty() {
-        return Ok((0, 0));
-    }
-
     let mut dep_keys_to_delete = Vec::new();
     for entry in store.ppr_cache_deps.iter(&*wtxn)? {
         let (dep_key, _) = entry?;
@@ -165,6 +161,8 @@ pub(crate) fn cleanup_ppr_cache(
             .try_into()
             .map_err(|_| Error::InvalidKey)?;
         if evicted_hashes.contains(&seed_hash) {
+            dep_keys_to_delete.push(dep_key.to_vec());
+        } else if store.entities.get(&*wtxn, &dep_key[..ENTITY_ID_LEN])?.is_none() {
             dep_keys_to_delete.push(dep_key.to_vec());
         }
     }
