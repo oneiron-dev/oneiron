@@ -160,11 +160,7 @@ pub(crate) fn cleanup_ppr_cache(
         let seed_hash: [u8; SEED_HASH_LEN] = dep_key[ENTITY_ID_LEN..]
             .try_into()
             .map_err(|_| Error::InvalidKey)?;
-        if evicted_hashes.contains(&seed_hash)
-            || store
-                .entities
-                .get(&*wtxn, &dep_key[..ENTITY_ID_LEN])?
-                .is_none()
+        if evicted_hashes.contains(&seed_hash) || store.ppr_cache.get(&*wtxn, &seed_hash)?.is_none()
         {
             dep_keys_to_delete.push(dep_key.to_vec());
         }

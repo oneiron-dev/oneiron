@@ -484,6 +484,7 @@ Deterministic index maintenance primitives — the dreamer (in `oneiron-internal
 - [ ] TOCTOU in `Vault::delete_edge`: read txn checks existence, drops, then write txn via batch — return value `Ok(true)` can be incorrect under concurrent access. Move check into write txn or document the race. Low priority: `Vault` is `!Sync`.
 - [ ] `graph_version` in `hnsw_meta`: if `rebuild_hnsw` clears/rebuilds `hnsw_meta`, graph version resets to 0 breaking PPR cache invalidation. Preserve `graph_version` key during rebuild, or migrate to dedicated `graph_meta` db.
 - [ ] Orphaned `ppr_cache_deps` entries on entity delete: `invalidate_ppr_caches` marks caches stale but doesn't delete dep entries for the removed entity. `cleanup_ppr_cache` should scan `ppr_cache_deps` and delete entries whose entity ID prefix no longer exists in `entities`.
+- [ ] `rebuild_hnsw` doesn't validate vector dimensions against `vault.config.dimensions` — corrupted vectors get worst-case distance scores but don't crash. Add dimension check for defense-in-depth.
 
 **MaintenanceBuilder (`maintain.rs`):**
 - `MaintenanceBuilder<'a>` borrowing `&'a Vault`

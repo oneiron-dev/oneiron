@@ -71,8 +71,7 @@ impl<'a> MaintenanceBuilder<'a> {
         }
 
         if self.do_cleanup_ppr {
-            let (evicted, deps_cleaned) =
-                cleanup_ppr_cache(self.vault, self.ppr_max_age_secs)?;
+            let (evicted, deps_cleaned) = cleanup_ppr_cache(self.vault, self.ppr_max_age_secs)?;
             report.ppr_caches_evicted = evicted;
             report.ppr_deps_cleaned = deps_cleaned;
         }
@@ -94,7 +93,11 @@ fn rebuild_hnsw(vault: &Vault) -> Result<(u64, u64)> {
 
     let graph_version = decode_u64_opt(vault.store.hnsw_meta.get(&wtxn, GRAPH_VERSION_KEY)?)?;
     let old_count = decode_u64_opt(vault.store.hnsw_meta.get(&wtxn, COUNT_KEY)?)?.unwrap_or(0);
-    let stored_model_id = vault.store.hnsw_meta.get(&wtxn, MODEL_ID_KEY)?.map(|v| v.to_vec());
+    let stored_model_id = vault
+        .store
+        .hnsw_meta
+        .get(&wtxn, MODEL_ID_KEY)?
+        .map(|v| v.to_vec());
 
     let mut vectors = Vec::<(EntityId, Vec<f32>)>::with_capacity(old_count.min(1_000_000) as usize);
     for entry in vault.store.vectors.iter(&wtxn)? {
@@ -114,16 +117,18 @@ fn rebuild_hnsw(vault: &Vault) -> Result<(u64, u64)> {
             .put(&mut wtxn, GRAPH_VERSION_KEY, &version.to_le_bytes())?;
     }
 
-    if let Some(model) = vault.config.embedding_model.as_deref().filter(|m| !m.is_empty()) {
+    if let Some(model) = vault
+        .config
+        .embedding_model
+        .as_deref()
+        .filter(|m| !m.is_empty())
+    {
         vault
             .store
             .hnsw_meta
             .put(&mut wtxn, MODEL_ID_KEY, model.as_bytes())?;
     } else if let Some(stored) = &stored_model_id {
-        vault
-            .store
-            .hnsw_meta
-            .put(&mut wtxn, MODEL_ID_KEY, stored)?;
+        vault.store.hnsw_meta.put(&mut wtxn, MODEL_ID_KEY, stored)?;
     }
 
     for (id, vector) in &vectors {
@@ -346,7 +351,10 @@ mod tests {
             let mut wtxn = vault.store.env.write_txn()?;
             vault.store.text_postings.put(&mut wtxn, b"empty-a", &[])?;
             vault.store.text_postings.put(&mut wtxn, b"empty-b", &[])?;
-            vault.store.text_postings.put(&mut wtxn, b"keep", &[1, 2, 3])?;
+            vault
+                .store
+                .text_postings
+                .put(&mut wtxn, b"keep", &[1, 2, 3])?;
             wtxn.commit()?;
         }
 
@@ -396,7 +404,10 @@ mod tests {
                 .ok_or(Error::EntityNotFound)?;
             let mut updated = record[..ENTITY_METADATA_HEADER_LEN].to_vec();
             updated.extend_from_slice(&new_payload);
-            vault.store.entities.put(&mut wtxn, id.as_bytes(), &updated)?;
+            vault
+                .store
+                .entities
+                .put(&mut wtxn, id.as_bytes(), &updated)?;
             wtxn.commit()?;
         }
 
@@ -434,7 +445,10 @@ mod tests {
         {
             let mut wtxn = vault.store.env.write_txn()?;
             vault.store.vectors.delete(&mut wtxn, c.as_bytes())?;
-            vault.store.text_postings.put(&mut wtxn, b"empty-maintain", &[])?;
+            vault
+                .store
+                .text_postings
+                .put(&mut wtxn, b"empty-maintain", &[])?;
             wtxn.commit()?;
         }
 
@@ -466,7 +480,10 @@ mod tests {
                 .ok_or(Error::EntityNotFound)?;
             let mut updated = record[..ENTITY_METADATA_HEADER_LEN].to_vec();
             updated.extend_from_slice(&drifted_payload);
-            vault.store.entities.put(&mut wtxn, a.as_bytes(), &updated)?;
+            vault
+                .store
+                .entities
+                .put(&mut wtxn, a.as_bytes(), &updated)?;
             wtxn.commit()?;
         }
 
