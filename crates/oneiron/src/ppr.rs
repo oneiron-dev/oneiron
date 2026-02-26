@@ -138,14 +138,10 @@ pub(crate) fn cleanup_ppr_cache(
     let mut evicted_hashes = HashSet::<[u8; SEED_HASH_LEN]>::new();
     for entry in store.ppr_cache.iter(&*wtxn)? {
         let (seed_hash_key, value) = entry?;
-        if seed_hash_key.len() != SEED_HASH_LEN {
-            return Err(Error::InvalidKey);
-        }
-
+        let seed_hash: [u8; SEED_HASH_LEN] =
+            seed_hash_key.try_into().map_err(|_| Error::InvalidKey)?;
         let (computed_at, _, stale) = parse_cache_header(value)?;
         if stale != 0 || now.saturating_sub(computed_at) > max_age_secs {
-            let mut seed_hash = [0_u8; SEED_HASH_LEN];
-            seed_hash.copy_from_slice(seed_hash_key);
             evicted_hashes.insert(seed_hash);
         }
     }
@@ -165,8 +161,9 @@ pub(crate) fn cleanup_ppr_cache(
             return Err(Error::InvalidKey);
         }
 
-        let mut seed_hash = [0_u8; SEED_HASH_LEN];
-        seed_hash.copy_from_slice(&dep_key[ENTITY_ID_LEN..]);
+        let seed_hash: [u8; SEED_HASH_LEN] = dep_key[ENTITY_ID_LEN..]
+            .try_into()
+            .map_err(|_| Error::InvalidKey)?;
         if evicted_hashes.contains(&seed_hash) {
             dep_keys_to_delete.push(dep_key.to_vec());
         }
