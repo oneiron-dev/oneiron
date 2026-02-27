@@ -486,6 +486,12 @@ Deterministic index maintenance primitives — the dreamer (in `oneiron-internal
 - [ ] Orphaned `ppr_cache_deps` entries on entity delete: `invalidate_ppr_caches` marks caches stale but doesn't delete dep entries for the removed entity. `cleanup_ppr_cache` should scan `ppr_cache_deps` and delete entries whose entity ID prefix no longer exists in `entities`.
 - [ ] `rebuild_hnsw` doesn't validate vector dimensions against `vault.config.dimensions` — corrupted vectors get worst-case distance scores but don't crash. Add dimension check for defense-in-depth.
 
+**Review follow-ups from Task 8:**
+- [ ] `rebuild_hnsw` holds a single long write txn — blocks all writers for the entire rebuild duration. Split into read-all (RoTxn) → rebuild in memory → write-clear-insert (RwTxn) for bounded lock time.
+- [ ] `recompute_short_id_hashes` skips missing entities but doesn't delete orphaned `short_ids` entries. Add self-healing deletion of short_id mappings whose entity no longer exists.
+- [ ] `MaintenanceReport` diverges from SCHEMA-DESIGN.md spec: uses `u64` instead of `usize`, adds `ppr_deps_cleaned` and `short_id_hashes_updated`, omits `duration_ms`. Update SCHEMA-DESIGN.md to match implementation.
+- [ ] `rebuild_hnsw` clears all of `hnsw_meta` then restores only `GRAPH_VERSION_KEY` and `MODEL_ID_KEY`. A more robust approach would selectively delete only `COUNT_KEY` and `ENTRY_POINT_KEY`, preserving any future metadata keys automatically.
+
 **MaintenanceBuilder (`maintain.rs`):**
 - `MaintenanceBuilder<'a>` borrowing `&'a Vault`
 - `rebuild_hnsw()` — re-insert all live vectors (from `vectors` db) into a fresh HNSW graph. Delete old `hnsw_neighbors` entries, rebuild from scratch. Update `hnsw_meta["count"]`, `hnsw_meta["entry_point"]`.
