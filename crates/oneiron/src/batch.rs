@@ -505,7 +505,7 @@ fn short_id_counter_sentinel(entity_type: u8) -> [u8; ENTITY_ID_LEN] {
     key
 }
 
-fn parse_short_id_value(value: &[u8]) -> Result<(&str, u8)> {
+pub(crate) fn parse_short_id_value(value: &[u8]) -> Result<(&str, u8)> {
     if value.len() < 2 {
         return Err(Error::InvalidKey);
     }
