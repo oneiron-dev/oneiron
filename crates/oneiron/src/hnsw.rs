@@ -10,7 +10,7 @@ use crate::store::Store;
 use crate::types::{EntityId, ScoredEntity, VaultConfig, ENTITY_ID_LEN};
 
 const ENTRY_POINT_KEY: &[u8] = b"entry_point";
-const COUNT_KEY: &[u8] = b"count";
+pub(crate) const COUNT_KEY: &[u8] = b"count";
 
 #[derive(Clone, Copy, Debug)]
 struct HeapEntry {
