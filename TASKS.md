@@ -378,7 +378,7 @@ Implement the `BatchBuilder` for atomic multi-database writes, and all secondary
 
 ---
 
-## Task 7: Context Pack + Serialization
+## Task 7: Context Pack + Serialization ✅ MERGED (PR #8)
 
 **Files:** `context_pack.rs`, `serialize.rs`
 **Est:** ~500 LOC
@@ -450,7 +450,7 @@ Implement the `BatchBuilder` for atomic multi-database writes, and all secondary
 
 ---
 
-## Task 8: Index Maintenance API
+## Task 8: Index Maintenance API ✅ MERGED (PR #9)
 
 **Files:** `maintain.rs`, `lib.rs` (extend)
 **Est:** ~250 LOC
@@ -585,9 +585,9 @@ C-compatible FFI for mobile (iOS/Android) and TypeScript/Node via NAPI or direct
 | 3 | BM25 Full-Text Search | ~600 | 2 | done | #3 | Tokenizer, inverted index, forward index, deindexing |
 | 4 | HNSW Vector Search | ~800 | 1 | done | #4 | Flat NSW, cosine distance, SIMD, lazy deletion |
 | 5 | PPR Graph Traversal | ~400 | 1,2 | done | #6 | Bidirectional PPR, per-edge weights, cache |
-| 6 | RRF Fusion + Pipeline | ~800 | 3,4,5 | in review | #7 | 5-signal fusion, temporal scoring (v3.1), pipeline builder |
-| 7 | Context Pack + Serialization | ~500 | 6 | — | — | Hydration, 5 formats, short ID + hash, token budget |
-| 8 | Index Maintenance | ~250 | 4,5 | — | — | HNSW rebuild, PPR cache cleanup, posting compaction |
+| 6 | RRF Fusion + Pipeline | ~800 | 3,4,5 | done | #7 | 5-signal fusion, temporal scoring (v3.1), pipeline builder |
+| 7 | Context Pack + Serialization | ~500 | 6 | done | #8 | Hydration, 5 formats, short ID + hash, token budget |
+| 8 | Index Maintenance | ~250 | 4,5 | done | #9 | HNSW rebuild, PPR cache cleanup, posting compaction |
 | 9 | Benchmarks | ~400 | 6,8 | — | — | Scale testing, recall targets, latency targets |
 | 10 | FFI Layer | ~300 | 7 | — | — | C FFI for mobile + TypeScript |
 
