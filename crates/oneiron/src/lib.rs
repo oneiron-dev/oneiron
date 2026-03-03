@@ -28,9 +28,9 @@ use crate::store::Store;
 pub use crate::types::{
     ContextEntity, ContextPack, EdgeInfo, EdgeKind, EntityId, FieldProfile, HnswConfig, PackFormat,
     PackStats, ScoredEntity, Signal, SignalHit, TemporalAnchorMode, TemporalGranularity, TimeRange,
-    TokenAllocation, VaultConfig,
+    TokenAllocation, Vad, VaultConfig,
 };
-use crate::types::{EDGE_KEY_LEN, EDGE_VALUE_MIN_LEN};
+use crate::types::{EDGE_KEY_LEN, EDGE_VALUE_LEN};
 
 const MIN_MAP_SIZE_BYTES: usize = 1 << 20;
 
@@ -146,6 +146,19 @@ impl Vault {
         self.batch().edge(src, kind, tgt, weight).commit()
     }
 
+    pub fn put_edge_with_vad(
+        &self,
+        src: &EntityId,
+        kind: EdgeKind,
+        tgt: &EntityId,
+        weight: f32,
+        vad: Vad,
+    ) -> Result<()> {
+        self.batch()
+            .edge_with_vad(src, kind, tgt, weight, vad)
+            .commit()
+    }
+
     /// Deletes a directed edge and its reverse index entry.
     pub fn delete_edge(&self, src: &EntityId, kind: EdgeKind, tgt: &EntityId) -> Result<bool> {
         let key_out = Store::encode_edge_key(src, kind, tgt);
@@ -232,7 +245,7 @@ fn scan_edges(
 }
 
 fn parse_edge_record(key: &[u8], value: &[u8]) -> Result<(EdgeKind, EntityId, f32)> {
-    if key.len() != EDGE_KEY_LEN || value.len() < EDGE_VALUE_MIN_LEN {
+    if key.len() != EDGE_KEY_LEN || value.len() != EDGE_VALUE_LEN {
         return Err(Error::InvalidKey);
     }
 
@@ -1319,5 +1332,142 @@ mod tests {
         }
 
         panic!("expected two consecutive EntityId::now() values to increase");
+    }
+
+    #[test]
+    fn new_edge_kinds_round_trip_through_u8() {
+        let new_kinds = [
+            (13_u8, EdgeKind::EmployedBy),
+            (14, EdgeKind::HasFacet),
+            (15, EdgeKind::InWorld),
+            (16, EdgeKind::FacetOf),
+            (17, EdgeKind::SetIn),
+        ];
+        for (disc, expected) in new_kinds {
+            let kind = EdgeKind::try_from_u8(disc).expect("valid discriminant");
+            assert_eq!(kind, expected);
+            assert_eq!(kind as u8, disc);
+        }
+        assert!(EdgeKind::try_from_u8(18).is_none());
+    }
+
+    #[test]
+    fn new_edge_kinds_have_default_weights() {
+        assert_eq!(EdgeKind::EmployedBy.default_weight(), 0.8);
+        assert_eq!(EdgeKind::HasFacet.default_weight(), 0.7);
+        assert_eq!(EdgeKind::InWorld.default_weight(), 0.7);
+        assert_eq!(EdgeKind::FacetOf.default_weight(), 0.7);
+        assert_eq!(EdgeKind::SetIn.default_weight(), 0.7);
+    }
+
+    #[test]
+    fn new_entity_type_prefixes() {
+        use crate::types::short_id_prefix;
+        assert_eq!(short_id_prefix(12), "og");
+        assert_eq!(short_id_prefix(13), "fc");
+        assert_eq!(short_id_prefix(14), "wd");
+        assert_eq!(short_id_prefix(15), "xx");
+    }
+
+    #[test]
+    fn put_edge_with_vad_stores_and_reads() -> Result<()> {
+        let temp_dir = tempfile::tempdir()?;
+        let vault = Vault::open(temp_dir.path(), test_config())?;
+        let src = EntityId::now();
+        let tgt = EntityId::now();
+
+        vault
+            .batch()
+            .put(&src, 0, test_time_range(1, 2), 3, b"src")
+            .put(&tgt, 4, test_time_range(4, 5), 6, b"tgt")
+            .commit()?;
+
+        vault.put_edge_with_vad(
+            &src,
+            EdgeKind::Supports,
+            &tgt,
+            0.8,
+            Vad {
+                valence: 0.6,
+                arousal: 0.3,
+                dominance: 0.9,
+            },
+        )?;
+
+        let out = vault.edges_out(&src)?;
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].0, EdgeKind::Supports);
+        assert_eq!(out[0].1, tgt);
+        assert!((out[0].2 - 0.8).abs() < f32::EPSILON);
+        Ok(())
+    }
+
+    #[test]
+    fn put_edge_with_vad_rejects_non_finite() -> Result<()> {
+        let temp_dir = tempfile::tempdir()?;
+        let vault = Vault::open(temp_dir.path(), test_config())?;
+        let src = EntityId::now();
+        let tgt = EntityId::now();
+
+        let err = vault
+            .put_edge_with_vad(
+                &src,
+                EdgeKind::Supports,
+                &tgt,
+                0.5,
+                Vad {
+                    valence: f32::NAN,
+                    arousal: 0.0,
+                    dominance: 0.0,
+                },
+            )
+            .expect_err("expected invalid edge weight");
+        assert!(matches!(err, Error::InvalidEdgeWeight));
+
+        let err = vault
+            .put_edge_with_vad(
+                &src,
+                EdgeKind::Supports,
+                &tgt,
+                0.5,
+                Vad {
+                    valence: 0.0,
+                    arousal: f32::INFINITY,
+                    dominance: 0.0,
+                },
+            )
+            .expect_err("expected invalid edge weight");
+        assert!(matches!(err, Error::InvalidEdgeWeight));
+        Ok(())
+    }
+
+    #[test]
+    fn batch_edge_with_vad_api() -> Result<()> {
+        let temp_dir = tempfile::tempdir()?;
+        let vault = Vault::open(temp_dir.path(), test_config())?;
+        let src = EntityId::now();
+        let tgt = EntityId::now();
+
+        vault
+            .batch()
+            .put(&src, 0, test_time_range(1, 2), 3, b"src")
+            .put(&tgt, 4, test_time_range(4, 5), 6, b"tgt")
+            .edge_with_vad(
+                &src,
+                EdgeKind::HasFacet,
+                &tgt,
+                0.7,
+                Vad {
+                    valence: 0.5,
+                    arousal: 0.4,
+                    dominance: 0.3,
+                },
+            )
+            .commit()?;
+
+        let out = vault.edges_out(&src)?;
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].0, EdgeKind::HasFacet);
+        Ok(())
     }
 }

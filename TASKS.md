@@ -591,6 +591,12 @@ C-compatible FFI for mobile (iOS/Android) and TypeScript/Node via NAPI or direct
 | 9 | Benchmarks | ~400 | 6,8 | — | — | Scale testing, recall targets, latency targets |
 | 10 | FFI Layer | ~300 | 7 | — | — | C FFI for mobile + TypeScript |
 
+**Review follow-ups from PR #10 (ARCH-022/023 Specs):**
+- [ ] VAD write API — `BatchOp::Edge` hardcodes VAD to `0.0`; add `edge_with_vad()` or VAD params to `BatchBuilder::edge()`.
+- [ ] Float validation — `validate_edge_record` doesn't check that weight/VAD floats are finite (not NaN/Inf). Add `.is_finite()` guard.
+- [ ] Test coverage — add tests for new `EdgeKind` variants, new entity type prefixes (og/fc/wd), and VAD encode/decode round-trip.
+- [ ] Update SCHEMA-DESIGN.md line 517 ("NOT stored on edges") to reflect VAD-on-edges decision from ARCH-022/023.
+
 **Total:** ~4,850 LOC
 
 **Parallelizable:** Tasks 3 and 4 can run in parallel (both depend on 1/2 but not each other). Task 5 can start as soon as Task 2 is done. Task 8 can start after Tasks 4+5. Tasks 9 and 7 can run in parallel.

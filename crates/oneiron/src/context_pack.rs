@@ -12,7 +12,7 @@ use crate::store::Store;
 use crate::types::{
     parse_vad, ContextEntity, ContextPack, EdgeInfo, EntityId, FieldProfile, PackFormat, PackStats,
     Signal, TemporalAnchorMode, TemporalGranularity, TimeRange, TokenAllocation, EDGE_KEY_LEN,
-    EDGE_VALUE_MIN_LEN,
+    EDGE_VALUE_LEN,
 };
 use crate::{le_bytes_to_f32_vec, Vault};
 
@@ -549,7 +549,7 @@ fn scan_edges_for_entity(store: &Store, rtxn: &RoTxn<'_>, id: &EntityId) -> Resu
 
     for entry in store.edges_out.prefix_iter(rtxn, id.as_bytes())? {
         let (key, value) = entry?;
-        if key.len() != EDGE_KEY_LEN || value.len() < EDGE_VALUE_MIN_LEN {
+        if key.len() != EDGE_KEY_LEN || value.len() != EDGE_VALUE_LEN {
             continue;
         }
 
@@ -572,7 +572,7 @@ fn scan_edges_for_entity(store: &Store, rtxn: &RoTxn<'_>, id: &EntityId) -> Resu
         };
         let created_at = u64::from_le_bytes(created_at_bytes);
 
-        let (valence, arousal, dominance) = parse_vad(value);
+        let vad = parse_vad(value);
 
         edges.push(EdgeInfo {
             kind,
@@ -580,9 +580,9 @@ fn scan_edges_for_entity(store: &Store, rtxn: &RoTxn<'_>, id: &EntityId) -> Resu
             target_short_id: None,
             weight,
             created_at,
-            valence,
-            arousal,
-            dominance,
+            valence: vad.valence,
+            arousal: vad.arousal,
+            dominance: vad.dominance,
         });
     }
 
@@ -744,6 +744,50 @@ mod tests {
         assert_eq!(edges.len(), 1);
         assert_eq!(edges[0].target, tgt);
         assert_eq!(edges[0].kind, crate::types::EdgeKind::Supports);
+        Ok(())
+    }
+
+    #[test]
+    fn vad_round_trip_through_hydration() -> Result<()> {
+        let temp_dir = tempfile::tempdir()?;
+        let vault = Vault::open(temp_dir.path(), test_config())?;
+
+        let src = EntityId::now();
+        let tgt = EntityId::now();
+        put_text_entity(
+            &vault,
+            &src,
+            0,
+            "gamma",
+            serde_json::json!({"pred": "x", "val": "y"}),
+        )?;
+        put_text_entity(&vault, &tgt, 4, "delta", serde_json::json!({"name": "Bob"}))?;
+
+        vault.put_edge_with_vad(
+            &src,
+            crate::types::EdgeKind::HasFacet,
+            &tgt,
+            0.8,
+            crate::types::Vad {
+                valence: 0.6,
+                arousal: 0.3,
+                dominance: 0.9,
+            },
+        )?;
+
+        let pack = vault
+            .context_pack()
+            .search_text("gamma", 10)
+            .include_edges(true)
+            .run()?;
+
+        let edges = pack.results[0].edges.as_ref().expect("expected edges");
+        assert_eq!(edges.len(), 1);
+        assert_eq!(edges[0].kind, crate::types::EdgeKind::HasFacet);
+        assert!((edges[0].weight - 0.8).abs() < f32::EPSILON);
+        assert!((edges[0].valence - 0.6).abs() < f32::EPSILON);
+        assert!((edges[0].arousal - 0.3).abs() < f32::EPSILON);
+        assert!((edges[0].dominance - 0.9).abs() < f32::EPSILON);
         Ok(())
     }
 

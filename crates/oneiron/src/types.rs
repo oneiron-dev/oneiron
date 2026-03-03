@@ -5,7 +5,6 @@ use uuid::Uuid;
 pub(crate) const ENTITY_ID_LEN: usize = 16;
 pub(crate) const EDGE_KEY_LEN: usize = 33;
 pub(crate) const EDGE_VALUE_LEN: usize = 24;
-pub(crate) const EDGE_VALUE_MIN_LEN: usize = 12;
 
 /// A time-ordered entity identifier backed by UUIDv7 bytes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -326,7 +325,26 @@ pub struct EdgeInfo {
     pub dominance: f32,
 }
 
-pub(crate) fn parse_vad(value: &[u8]) -> (f32, f32, f32) {
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct Vad {
+    pub valence: f32,
+    pub arousal: f32,
+    pub dominance: f32,
+}
+
+impl Vad {
+    pub const NEUTRAL: Self = Self {
+        valence: 0.0,
+        arousal: 0.0,
+        dominance: 0.0,
+    };
+
+    pub fn is_finite(&self) -> bool {
+        self.valence.is_finite() && self.arousal.is_finite() && self.dominance.is_finite()
+    }
+}
+
+pub(crate) fn parse_vad(value: &[u8]) -> Vad {
     let f = |offset: usize| -> f32 {
         value
             .get(offset..offset + 4)
@@ -334,7 +352,11 @@ pub(crate) fn parse_vad(value: &[u8]) -> (f32, f32, f32) {
             .map(f32::from_le_bytes)
             .unwrap_or(0.0)
     };
-    (f(12), f(16), f(20))
+    Vad {
+        valence: f(12),
+        arousal: f(16),
+        dominance: f(20),
+    }
 }
 
 /// Which retrieval signal produced a hit and its raw score.

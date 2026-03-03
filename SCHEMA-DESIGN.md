@@ -10,8 +10,8 @@
 | # | Database | Key Format | Key Size | Value Format | Value Size | Purpose |
 |---|----------|-----------|----------|-------------|-----------|---------|
 | 1 | `entities` | `entity_id` (16B, UUID v7 BE) | 16B | MessagePack blob | variable | Document store |
-| 2 | `edges_out` | `src_id(16) \| kind(1) \| tgt_id(16)` | 33B | `weight(f32 4B) \| created_at(u64 8B)` | 12B | Outbound adjacency |
-| 3 | `edges_in` | `tgt_id(16) \| kind(1) \| src_id(16)` | 33B | `weight(f32 4B) \| created_at(u64 8B)` | 12B | Inbound adjacency |
+| 2 | `edges_out` | `src_id(16) \| kind(1) \| tgt_id(16)` | 33B | `weight(f32 4B) \| created_at(u64 8B) \| valence(f32 4B) \| arousal(f32 4B) \| dominance(f32 4B)` | 24B | Outbound adjacency |
+| 3 | `edges_in` | `tgt_id(16) \| kind(1) \| src_id(16)` | 33B | `weight(f32 4B) \| created_at(u64 8B) \| valence(f32 4B) \| arousal(f32 4B) \| dominance(f32 4B)` | 24B | Inbound adjacency |
 | 4 | `vectors` | `entity_id` (16B) | 16B | `[f32; N]` raw little-endian | N×4B | Embeddings |
 | 5 | `hnsw_neighbors` | `entity_id` (16B) | 16B | `[entity_id; M]` concatenated | M×16B | HNSW neighbor lists (flat NSW) |
 | 6 | `hnsw_meta` | string key (UTF-8) | variable | raw bytes | variable | HNSW metadata |
@@ -38,7 +38,7 @@ const MAX_DBS: u32 = 24; // 18 core + room for sync, entity_vad, future
 
 | What Changed | Before | After | Why |
 |---|---|---|---|
-| Edge values | empty (`&[]`, 0B) | `weight(f32) + created_at(u64)` = 12B | Per-edge weights for PPR (not hardcoded by EdgeKind). Timestamps for cache invalidation and temporal queries. |
+| Edge values | empty (`&[]`, 0B) | `weight(f32) + created_at(u64) + valence(f32) + arousal(f32) + dominance(f32)` = 24B | Per-edge weights for PPR (not hardcoded by EdgeKind). Timestamps for cache invalidation and temporal queries. VAD scores for emotion-aware traversal (ARCH-022/023). |
 | PPR cache values | `[(id, score)]` only | 17B metadata header + scores | Header: `computed_at(8) + graph_version(8) + stale(1)`. Enables TTL, lazy invalidation, graph version tracking per ARCH-014. |
 | +`ppr_cache_deps` | didn't exist | entity_id\|seed_hash → empty | O(1) PPR cache invalidation when entities/edges change. Without it: full cache scan. |
 | +`type_index` | didn't exist | type(1)\|id(16) → empty | Entity type filtering in Rust, not across FFI. Post-filtering 300 blobs in TypeScript is bad. |
@@ -169,11 +169,15 @@ Prefix scan for "all entities of type X": seek to [X, 0x00...].
 struct EdgeValue {
     weight: f32,       // PPR propagation weight (default from EdgeKind, overridable)
     created_at: u64,   // timestamp of edge creation
+    valence: f32,      // emotional valence (-1.0 to 1.0, default 0.0)
+    arousal: f32,      // emotional arousal (0.0 to 1.0, default 0.0)
+    dominance: f32,    // emotional dominance (0.0 to 1.0, default 0.0)
 }
-// Serialized: 12 bytes, little-endian
+// Serialized: 24 bytes, little-endian
+// Layout: [weight 0..4] [created_at 4..12] [valence 12..16] [arousal 16..20] [dominance 20..24]
 ```
 
-`EdgeKind::ppr_weight()` remains as the DEFAULT weight when creating edges. The actual per-edge weight is stored in the value and used at query time.
+`EdgeKind::ppr_weight()` remains as the DEFAULT weight when creating edges. The actual per-edge weight is stored in the value and used at query time. VAD scores default to 0.0 (neutral) and are populated by the dreamer for emotion-bearing edges (ARCH-022/023).
 
 ---
 
@@ -514,8 +518,7 @@ Key:   entity_id (16B)
 Value: valence(f32 4B) + arousal(f32 4B) + dominance(f32 4B) = 12B
 ```
 
-Entity-level emotional metadata. NOT stored on edges (edges are structural).
-PPR can read during traversal for emotion-aware ranking.
+Entity-level aggregate emotional metadata. Per ARCH-022/023, edge-level VAD (stored in the 24-byte edge value, bytes 12-24) is the primary mechanism for emotion-aware PPR traversal. This database provides an optional entity-level summary for cases where aggregate emotion per entity is needed (e.g., companion plugin emotional profiling).
 Only populated for entities with emotional data (messages, turns, events).
 Add when companion plugin is built.
 
@@ -872,6 +875,9 @@ pub struct EdgeInfo {
     pub target: EntityId,
     pub weight: f32,
     pub created_at: u64,
+    pub valence: f32,
+    pub arousal: f32,
+    pub dominance: f32,
 }
 
 pub struct SignalHit {

@@ -7,7 +7,8 @@ use crate::error::{Error, Result};
 use crate::ppr;
 use crate::store::Store;
 use crate::types::{
-    short_id_prefix, EdgeKind, EntityId, TimeRange, EDGE_KEY_LEN, EDGE_VALUE_LEN, ENTITY_ID_LEN,
+    short_id_prefix, EdgeKind, EntityId, TimeRange, Vad, EDGE_KEY_LEN, EDGE_VALUE_LEN,
+    ENTITY_ID_LEN,
 };
 use crate::Vault;
 
@@ -66,6 +67,7 @@ enum BatchOp {
         kind: EdgeKind,
         tgt: EntityId,
         weight: f32,
+        vad: Vad,
     },
     Text {
         id: EntityId,
@@ -128,6 +130,25 @@ impl<'a> BatchBuilder<'a> {
             kind,
             tgt: *tgt,
             weight,
+            vad: Vad::NEUTRAL,
+        });
+        self
+    }
+
+    pub fn edge_with_vad(
+        mut self,
+        src: &EntityId,
+        kind: EdgeKind,
+        tgt: &EntityId,
+        weight: f32,
+        vad: Vad,
+    ) -> Self {
+        self.ops.push(BatchOp::Edge {
+            src: *src,
+            kind,
+            tgt: *tgt,
+            weight,
+            vad,
         });
         self
     }
@@ -212,8 +233,9 @@ impl<'a> BatchBuilder<'a> {
                     kind,
                     tgt,
                     weight,
+                    vad,
                 } => {
-                    apply_edge(&self.vault.store, &mut wtxn, src, kind, tgt, weight)?;
+                    apply_edge(&self.vault.store, &mut wtxn, src, kind, tgt, weight, vad)?;
                     ppr::invalidate_ppr_for_edge(&self.vault.store, &mut wtxn, &src, &tgt)?;
                 }
                 BatchOp::Text { id, fields } => {
@@ -400,14 +422,15 @@ fn apply_edge(
     kind: EdgeKind,
     tgt: EntityId,
     weight: f32,
+    vad: Vad,
 ) -> Result<()> {
-    if !weight.is_finite() {
+    if !weight.is_finite() || !vad.is_finite() {
         return Err(Error::InvalidEdgeWeight);
     }
 
     let key_out = Store::encode_edge_key(&src, kind, &tgt);
     let key_in = Store::encode_edge_key(&tgt, kind, &src);
-    let value = encode_edge_value(weight, crate::unix_seconds_now(), 0.0, 0.0, 0.0);
+    let value = encode_edge_value(weight, crate::unix_seconds_now(), vad);
     store.edges_out.put(wtxn, &key_out, &value)?;
     store.edges_in.put(wtxn, &key_in, &value)?;
     Ok(())
@@ -626,21 +649,26 @@ fn validate_edge_record(key: &[u8], value: &[u8]) -> Result<()> {
         return Err(Error::InvalidKey);
     }
 
+    let weight = f32::from_le_bytes(value[..4].try_into().unwrap());
+    if !weight.is_finite() {
+        return Err(Error::InvalidEdgeWeight);
+    }
+    for offset in [12, 16, 20] {
+        let f = f32::from_le_bytes(value[offset..offset + 4].try_into().unwrap());
+        if !f.is_finite() {
+            return Err(Error::InvalidEdgeWeight);
+        }
+    }
+
     Ok(())
 }
 
-fn encode_edge_value(
-    weight: f32,
-    created_at: u64,
-    valence: f32,
-    arousal: f32,
-    dominance: f32,
-) -> [u8; EDGE_VALUE_LEN] {
+fn encode_edge_value(weight: f32, created_at: u64, vad: Vad) -> [u8; EDGE_VALUE_LEN] {
     let mut value = [0_u8; EDGE_VALUE_LEN];
     value[..4].copy_from_slice(&weight.to_le_bytes());
     value[4..12].copy_from_slice(&created_at.to_le_bytes());
-    value[12..16].copy_from_slice(&valence.to_le_bytes());
-    value[16..20].copy_from_slice(&arousal.to_le_bytes());
-    value[20..24].copy_from_slice(&dominance.to_le_bytes());
+    value[12..16].copy_from_slice(&vad.valence.to_le_bytes());
+    value[16..20].copy_from_slice(&vad.arousal.to_le_bytes());
+    value[20..24].copy_from_slice(&vad.dominance.to_le_bytes());
     value
 }
