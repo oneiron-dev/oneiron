@@ -573,6 +573,9 @@ fn scan_edges_for_entity(store: &Store, rtxn: &RoTxn<'_>, id: &EntityId) -> Resu
         let created_at = u64::from_le_bytes(created_at_bytes);
 
         let vad = parse_vad(value);
+        if !weight.is_finite() || !vad.is_finite() {
+            continue;
+        }
 
         edges.push(EdgeInfo {
             kind,
@@ -580,9 +583,7 @@ fn scan_edges_for_entity(store: &Store, rtxn: &RoTxn<'_>, id: &EntityId) -> Resu
             target_short_id: None,
             weight,
             created_at,
-            valence: vad.valence,
-            arousal: vad.arousal,
-            dominance: vad.dominance,
+            vad,
         });
     }
 
@@ -785,9 +786,9 @@ mod tests {
         assert_eq!(edges.len(), 1);
         assert_eq!(edges[0].kind, crate::types::EdgeKind::HasFacet);
         assert!((edges[0].weight - 0.8).abs() < f32::EPSILON);
-        assert!((edges[0].valence - 0.6).abs() < f32::EPSILON);
-        assert!((edges[0].arousal - 0.3).abs() < f32::EPSILON);
-        assert!((edges[0].dominance - 0.9).abs() < f32::EPSILON);
+        assert!((edges[0].vad.valence - 0.6).abs() < f32::EPSILON);
+        assert!((edges[0].vad.arousal - 0.3).abs() < f32::EPSILON);
+        assert!((edges[0].vad.dominance - 0.9).abs() < f32::EPSILON);
         Ok(())
     }
 

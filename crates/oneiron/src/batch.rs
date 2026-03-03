@@ -135,6 +135,7 @@ impl<'a> BatchBuilder<'a> {
         self
     }
 
+    /// Adds a graph edge with explicit VAD scores to the batch.
     pub fn edge_with_vad(
         mut self,
         src: &EntityId,
@@ -424,8 +425,11 @@ fn apply_edge(
     weight: f32,
     vad: Vad,
 ) -> Result<()> {
-    if !weight.is_finite() || !vad.is_finite() {
+    if !weight.is_finite() {
         return Err(Error::InvalidEdgeWeight);
+    }
+    if !vad.is_finite() || !vad.is_in_range() {
+        return Err(Error::InvalidVad);
     }
 
     let key_out = Store::encode_edge_key(&src, kind, &tgt);
@@ -656,7 +660,7 @@ fn validate_edge_record(key: &[u8], value: &[u8]) -> Result<()> {
     for offset in [12, 16, 20] {
         let f = f32::from_le_bytes(value[offset..offset + 4].try_into().unwrap());
         if !f.is_finite() {
-            return Err(Error::InvalidEdgeWeight);
+            return Err(Error::InvalidVad);
         }
     }
 

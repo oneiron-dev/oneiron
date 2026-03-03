@@ -177,7 +177,7 @@ struct EdgeValue {
 // Layout: [weight 0..4] [created_at 4..12] [valence 12..16] [arousal 16..20] [dominance 20..24]
 ```
 
-`EdgeKind::ppr_weight()` remains as the DEFAULT weight when creating edges. The actual per-edge weight is stored in the value and used at query time. VAD scores default to 0.0 (neutral) and are populated by the dreamer for emotion-bearing edges (ARCH-022/023).
+`EdgeKind::default_weight()` remains as the DEFAULT weight when creating edges. The actual per-edge weight is stored in the value and used at query time. VAD scores default to 0.0 (neutral) and are populated by the dreamer for emotion-bearing edges (ARCH-022/023).
 
 ---
 
@@ -605,9 +605,14 @@ pub enum EdgeKind {
     Supersedes = 10,
     DerivedFrom = 11,
     PartOf = 12,        // hop-limited to max 2 in PPR
+    EmployedBy = 13,    // ARCH-022: person → org
+    HasFacet = 14,      // ARCH-022: person → facet
+    InWorld = 15,       // ARCH-022: person → world
+    FacetOf = 16,       // ARCH-023: claim → facet
+    SetIn = 17,         // ARCH-023: relationship → world
     // Future (multi-party, CROSS-ARCH-010):
-    // AddressedTo = 13,  // default weight 0.4
-    // RepliesTo = 14,    // default weight 0.3
+    // AddressedTo = 18,  // default weight 0.4
+    // RepliesTo = 19,    // default weight 0.3
 }
 ```
 
@@ -873,11 +878,10 @@ pub struct ContextEntity {
 pub struct EdgeInfo {
     pub kind: EdgeKind,
     pub target: EntityId,
+    pub target_short_id: Option<String>,
     pub weight: f32,
     pub created_at: u64,
-    pub valence: f32,
-    pub arousal: f32,
-    pub dominance: f32,
+    pub vad: Vad,
 }
 
 pub struct SignalHit {
@@ -1002,4 +1006,4 @@ pub struct TokenAllocation {
 
 4. **Collection stats atomicity:** BM25 total_docs and total_length (sentinel keys in text_meta) are updated on every index/deindex. Under concurrent reads, readers see a consistent snapshot (LMDB MVCC). No issue.
 
-5. **Multi-party EdgeKinds:** `AddressedTo` (13) and `RepliesTo` (14) — add to enum now (reserved) or add when multi-party ships? Recommendation: reserve the values now, don't implement until needed.
+5. **Multi-party EdgeKinds:** `AddressedTo` (18) and `RepliesTo` (19) — add to enum now (reserved) or add when multi-party ships? Recommendation: reserve the values now, don't implement until needed.

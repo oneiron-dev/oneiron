@@ -25,12 +25,12 @@ pub use crate::error::{Error, Result};
 pub use crate::maintain::{MaintenanceBuilder, MaintenanceReport};
 pub use crate::pipeline::PipelineBuilder;
 use crate::store::Store;
+use crate::types::{parse_vad, EDGE_KEY_LEN, EDGE_VALUE_LEN};
 pub use crate::types::{
     ContextEntity, ContextPack, EdgeInfo, EdgeKind, EntityId, FieldProfile, HnswConfig, PackFormat,
     PackStats, ScoredEntity, Signal, SignalHit, TemporalAnchorMode, TemporalGranularity, TimeRange,
     TokenAllocation, Vad, VaultConfig,
 };
-use crate::types::{EDGE_KEY_LEN, EDGE_VALUE_LEN};
 
 const MIN_MAP_SIZE_BYTES: usize = 1 << 20;
 
@@ -146,6 +146,7 @@ impl Vault {
         self.batch().edge(src, kind, tgt, weight).commit()
     }
 
+    /// Stores a directed edge with explicit VAD scores.
     pub fn put_edge_with_vad(
         &self,
         src: &EntityId,
@@ -175,13 +176,13 @@ impl Vault {
     }
 
     /// Returns outbound edges for `src`.
-    pub fn edges_out(&self, src: &EntityId) -> Result<Vec<(EdgeKind, EntityId, f32)>> {
+    pub fn edges_out(&self, src: &EntityId) -> Result<Vec<EdgeInfo>> {
         let rtxn = self.store.env.read_txn()?;
         scan_edges(&self.store.edges_out, &rtxn, src.as_bytes())
     }
 
     /// Returns inbound edges for `tgt`.
-    pub fn edges_in(&self, tgt: &EntityId) -> Result<Vec<(EdgeKind, EntityId, f32)>> {
+    pub fn edges_in(&self, tgt: &EntityId) -> Result<Vec<EdgeInfo>> {
         let rtxn = self.store.env.read_txn()?;
         scan_edges(&self.store.edges_in, &rtxn, tgt.as_bytes())
     }
@@ -234,7 +235,7 @@ fn scan_edges(
     database: &Database<Bytes, Bytes>,
     rtxn: &heed::RoTxn<'_>,
     prefix: &[u8; 16],
-) -> Result<Vec<(EdgeKind, EntityId, f32)>> {
+) -> Result<Vec<EdgeInfo>> {
     database
         .prefix_iter(rtxn, prefix.as_slice())?
         .map(|entry| {
@@ -244,16 +245,25 @@ fn scan_edges(
         .collect()
 }
 
-fn parse_edge_record(key: &[u8], value: &[u8]) -> Result<(EdgeKind, EntityId, f32)> {
+fn parse_edge_record(key: &[u8], value: &[u8]) -> Result<EdgeInfo> {
     if key.len() != EDGE_KEY_LEN || value.len() != EDGE_VALUE_LEN {
         return Err(Error::InvalidKey);
     }
 
     let kind = EdgeKind::try_from_u8(key[16]).ok_or(Error::InvalidKey)?;
-    let neighbor = EntityId::from_bytes(key[17..33].try_into().map_err(|_| Error::InvalidKey)?);
+    let target = EntityId::from_bytes(key[17..33].try_into().map_err(|_| Error::InvalidKey)?);
     let weight = f32::from_le_bytes(value[..4].try_into().map_err(|_| Error::InvalidKey)?);
+    let created_at = u64::from_le_bytes(value[4..12].try_into().map_err(|_| Error::InvalidKey)?);
+    let vad = parse_vad(value);
 
-    Ok((kind, neighbor, weight))
+    Ok(EdgeInfo {
+        kind,
+        target,
+        target_short_id: None,
+        weight,
+        created_at,
+        vad,
+    })
 }
 
 #[cfg(test)]
@@ -601,15 +611,15 @@ mod tests {
 
         let out = vault.edges_out(&src)?;
         assert_eq!(out.len(), 1);
-        assert_eq!(out[0].0, kind);
-        assert_eq!(out[0].1, tgt);
-        assert!((out[0].2 - weight).abs() < f32::EPSILON);
+        assert_eq!(out[0].kind, kind);
+        assert_eq!(out[0].target, tgt);
+        assert!((out[0].weight - weight).abs() < f32::EPSILON);
 
         let inbound = vault.edges_in(&tgt)?;
         assert_eq!(inbound.len(), 1);
-        assert_eq!(inbound[0].0, kind);
-        assert_eq!(inbound[0].1, src);
-        assert!((inbound[0].2 - weight).abs() < f32::EPSILON);
+        assert_eq!(inbound[0].kind, kind);
+        assert_eq!(inbound[0].target, src);
+        assert!((inbound[0].weight - weight).abs() < f32::EPSILON);
 
         assert!(vault.delete_edge(&src, kind, &tgt)?);
         assert!(vault.edges_out(&src)?.is_empty());
@@ -1185,8 +1195,8 @@ mod tests {
 
         let out = vault.edges_out(&src)?;
         assert_eq!(out.len(), 1);
-        assert_eq!(out[0].0, EdgeKind::BelongsTo);
-        assert_eq!(out[0].1, tgt);
+        assert_eq!(out[0].kind, EdgeKind::BelongsTo);
+        assert_eq!(out[0].target, tgt);
         Ok(())
     }
 
@@ -1212,8 +1222,8 @@ mod tests {
         assert_eq!(out.len(), expected.len());
         for (kind, target, weight) in expected {
             assert!(
-                out.iter().any(|(k, t, w)| {
-                    *k == kind && *t == target && (*w - weight).abs() < f32::EPSILON
+                out.iter().any(|e| {
+                    e.kind == kind && e.target == target && (e.weight - weight).abs() < f32::EPSILON
                 }),
                 "missing edge ({kind:?}, {target:?}, {weight})"
             );
@@ -1370,7 +1380,7 @@ mod tests {
     }
 
     #[test]
-    fn put_edge_with_vad_stores_and_reads() -> Result<()> {
+    fn put_edge_with_vad_round_trip() -> Result<()> {
         let temp_dir = tempfile::tempdir()?;
         let vault = Vault::open(temp_dir.path(), test_config())?;
         let src = EntityId::now();
@@ -1396,9 +1406,12 @@ mod tests {
 
         let out = vault.edges_out(&src)?;
         assert_eq!(out.len(), 1);
-        assert_eq!(out[0].0, EdgeKind::Supports);
-        assert_eq!(out[0].1, tgt);
-        assert!((out[0].2 - 0.8).abs() < f32::EPSILON);
+        assert_eq!(out[0].kind, EdgeKind::Supports);
+        assert_eq!(out[0].target, tgt);
+        assert!((out[0].weight - 0.8).abs() < f32::EPSILON);
+        assert!((out[0].vad.valence - 0.6).abs() < f32::EPSILON);
+        assert!((out[0].vad.arousal - 0.3).abs() < f32::EPSILON);
+        assert!((out[0].vad.dominance - 0.9).abs() < f32::EPSILON);
         Ok(())
     }
 
@@ -1421,8 +1434,8 @@ mod tests {
                     dominance: 0.0,
                 },
             )
-            .expect_err("expected invalid edge weight");
-        assert!(matches!(err, Error::InvalidEdgeWeight));
+            .expect_err("expected invalid vad");
+        assert!(matches!(err, Error::InvalidVad));
 
         let err = vault
             .put_edge_with_vad(
@@ -1436,8 +1449,8 @@ mod tests {
                     dominance: 0.0,
                 },
             )
-            .expect_err("expected invalid edge weight");
-        assert!(matches!(err, Error::InvalidEdgeWeight));
+            .expect_err("expected invalid vad");
+        assert!(matches!(err, Error::InvalidVad));
         Ok(())
     }
 
@@ -1467,7 +1480,7 @@ mod tests {
 
         let out = vault.edges_out(&src)?;
         assert_eq!(out.len(), 1);
-        assert_eq!(out[0].0, EdgeKind::HasFacet);
+        assert_eq!(out[0].kind, EdgeKind::HasFacet);
         Ok(())
     }
 }

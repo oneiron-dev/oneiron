@@ -320,9 +320,7 @@ pub struct EdgeInfo {
     pub target_short_id: Option<String>,
     pub weight: f32,
     pub created_at: u64,
-    pub valence: f32,
-    pub arousal: f32,
-    pub dominance: f32,
+    pub vad: Vad,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
@@ -341,6 +339,12 @@ impl Vad {
 
     pub fn is_finite(&self) -> bool {
         self.valence.is_finite() && self.arousal.is_finite() && self.dominance.is_finite()
+    }
+
+    pub fn is_in_range(&self) -> bool {
+        (-1.0..=1.0).contains(&self.valence)
+            && (0.0..=1.0).contains(&self.arousal)
+            && (0.0..=1.0).contains(&self.dominance)
     }
 }
 

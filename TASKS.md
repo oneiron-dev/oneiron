@@ -592,10 +592,16 @@ C-compatible FFI for mobile (iOS/Android) and TypeScript/Node via NAPI or direct
 | 10 | FFI Layer | ~300 | 7 | — | — | C FFI for mobile + TypeScript |
 
 **Review follow-ups from PR #10 (ARCH-022/023 Specs):**
-- [ ] VAD write API — `BatchOp::Edge` hardcodes VAD to `0.0`; add `edge_with_vad()` or VAD params to `BatchBuilder::edge()`.
-- [ ] Float validation — `validate_edge_record` doesn't check that weight/VAD floats are finite (not NaN/Inf). Add `.is_finite()` guard.
-- [ ] Test coverage — add tests for new `EdgeKind` variants, new entity type prefixes (og/fc/wd), and VAD encode/decode round-trip.
-- [ ] Update SCHEMA-DESIGN.md line 517 ("NOT stored on edges") to reflect VAD-on-edges decision from ARCH-022/023.
+- [x] VAD write API — `BatchOp::Edge` hardcodes VAD to `0.0`; add `edge_with_vad()` or VAD params to `BatchBuilder::edge()`.
+- [x] Float validation — `validate_edge_record` doesn't check that weight/VAD floats are finite (not NaN/Inf). Add `.is_finite()` guard.
+- [x] Test coverage — add tests for new `EdgeKind` variants, new entity type prefixes (og/fc/wd), and VAD encode/decode round-trip.
+- [x] Update SCHEMA-DESIGN.md line 517 ("NOT stored on edges") to reflect VAD-on-edges decision from ARCH-022/023.
+
+**R2 review follow-ups (PR #10):**
+- [x] VAD range validation — `Vad::is_in_range()` + `InvalidVad` error for out-of-range values.
+- [x] `edges_out`/`edges_in` return `EdgeInfo` with full VAD read path.
+- [x] `EdgeInfo` embeds `Vad` struct instead of flat valence/arousal/dominance fields.
+- [x] `InvalidVad` error variant for VAD-specific validation failures.
 
 **Total:** ~4,850 LOC
 
