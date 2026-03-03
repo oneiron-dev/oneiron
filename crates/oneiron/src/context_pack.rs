@@ -10,8 +10,9 @@ use crate::pipeline::PipelineBuilder;
 use crate::serialize::{serialize_pack, SerializeConfig};
 use crate::store::Store;
 use crate::types::{
-    ContextEntity, ContextPack, EdgeInfo, EntityId, FieldProfile, PackFormat, PackStats, Signal,
-    TemporalAnchorMode, TemporalGranularity, TimeRange, TokenAllocation,
+    parse_vad, ContextEntity, ContextPack, EdgeInfo, EntityId, FieldProfile, PackFormat, PackStats,
+    Signal, TemporalAnchorMode, TemporalGranularity, TimeRange, TokenAllocation, EDGE_KEY_LEN,
+    EDGE_VALUE_MIN_LEN,
 };
 use crate::{le_bytes_to_f32_vec, Vault};
 
@@ -548,7 +549,7 @@ fn scan_edges_for_entity(store: &Store, rtxn: &RoTxn<'_>, id: &EntityId) -> Resu
 
     for entry in store.edges_out.prefix_iter(rtxn, id.as_bytes())? {
         let (key, value) = entry?;
-        if key.len() != 33 || value.len() != 12 {
+        if key.len() != EDGE_KEY_LEN || value.len() < EDGE_VALUE_MIN_LEN {
             continue;
         }
 
@@ -571,12 +572,17 @@ fn scan_edges_for_entity(store: &Store, rtxn: &RoTxn<'_>, id: &EntityId) -> Resu
         };
         let created_at = u64::from_le_bytes(created_at_bytes);
 
+        let (valence, arousal, dominance) = parse_vad(value);
+
         edges.push(EdgeInfo {
             kind,
             target,
             target_short_id: None,
             weight,
             created_at,
+            valence,
+            arousal,
+            dominance,
         });
     }
 

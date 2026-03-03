@@ -30,6 +30,7 @@ pub use crate::types::{
     PackStats, ScoredEntity, Signal, SignalHit, TemporalAnchorMode, TemporalGranularity, TimeRange,
     TokenAllocation, VaultConfig,
 };
+use crate::types::{EDGE_KEY_LEN, EDGE_VALUE_MIN_LEN};
 
 const MIN_MAP_SIZE_BYTES: usize = 1 << 20;
 
@@ -231,7 +232,7 @@ fn scan_edges(
 }
 
 fn parse_edge_record(key: &[u8], value: &[u8]) -> Result<(EdgeKind, EntityId, f32)> {
-    if key.len() != 33 || value.len() != 12 {
+    if key.len() != EDGE_KEY_LEN || value.len() < EDGE_VALUE_MIN_LEN {
         return Err(Error::InvalidKey);
     }
 

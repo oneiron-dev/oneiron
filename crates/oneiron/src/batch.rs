@@ -6,13 +6,13 @@ use xxhash_rust::xxh32::xxh32;
 use crate::error::{Error, Result};
 use crate::ppr;
 use crate::store::Store;
-use crate::types::{short_id_prefix, EdgeKind, EntityId, TimeRange, ENTITY_ID_LEN};
+use crate::types::{
+    short_id_prefix, EdgeKind, EntityId, TimeRange, EDGE_KEY_LEN, EDGE_VALUE_LEN, ENTITY_ID_LEN,
+};
 use crate::Vault;
 
 pub(crate) const ENTITY_METADATA_HEADER_LEN: usize = 25;
 const SHORT_ID_COUNTER_LEN: usize = 8;
-const EDGE_KEY_LEN: usize = 33;
-const EDGE_VALUE_LEN: usize = 12;
 pub(crate) const LONG_INTERVAL_THRESHOLD_SECS: u64 = 14 * 86_400;
 
 #[derive(Debug, Clone, Copy)]
@@ -407,7 +407,7 @@ fn apply_edge(
 
     let key_out = Store::encode_edge_key(&src, kind, &tgt);
     let key_in = Store::encode_edge_key(&tgt, kind, &src);
-    let value = encode_edge_value(weight, crate::unix_seconds_now());
+    let value = encode_edge_value(weight, crate::unix_seconds_now(), 0.0, 0.0, 0.0);
     store.edges_out.put(wtxn, &key_out, &value)?;
     store.edges_in.put(wtxn, &key_in, &value)?;
     Ok(())
@@ -629,9 +629,18 @@ fn validate_edge_record(key: &[u8], value: &[u8]) -> Result<()> {
     Ok(())
 }
 
-fn encode_edge_value(weight: f32, created_at: u64) -> [u8; EDGE_VALUE_LEN] {
+fn encode_edge_value(
+    weight: f32,
+    created_at: u64,
+    valence: f32,
+    arousal: f32,
+    dominance: f32,
+) -> [u8; EDGE_VALUE_LEN] {
     let mut value = [0_u8; EDGE_VALUE_LEN];
     value[..4].copy_from_slice(&weight.to_le_bytes());
-    value[4..].copy_from_slice(&created_at.to_le_bytes());
+    value[4..12].copy_from_slice(&created_at.to_le_bytes());
+    value[12..16].copy_from_slice(&valence.to_le_bytes());
+    value[16..20].copy_from_slice(&arousal.to_le_bytes());
+    value[20..24].copy_from_slice(&dominance.to_le_bytes());
     value
 }

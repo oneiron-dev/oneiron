@@ -3,6 +3,9 @@ use std::collections::HashMap;
 use uuid::Uuid;
 
 pub(crate) const ENTITY_ID_LEN: usize = 16;
+pub(crate) const EDGE_KEY_LEN: usize = 33;
+pub(crate) const EDGE_VALUE_LEN: usize = 24;
+pub(crate) const EDGE_VALUE_MIN_LEN: usize = 12;
 
 /// A time-ordered entity identifier backed by UUIDv7 bytes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -50,6 +53,9 @@ pub fn short_id_prefix(entity_type: u8) -> &'static str {
         9 => "pl",
         10 => "tx",
         11 => "cv",
+        12 => "og",
+        13 => "fc",
+        14 => "wd",
         _ => "xx",
     }
 }
@@ -84,6 +90,16 @@ pub enum EdgeKind {
     DerivedFrom = 11,
     /// Entity is part of another entity.
     PartOf = 12,
+    /// Person is employed by an organization.
+    EmployedBy = 13,
+    /// Person has a behavioral facet.
+    HasFacet = 14,
+    /// Person exists in a world context.
+    InWorld = 15,
+    /// Claim is scoped to a facet.
+    FacetOf = 16,
+    /// Relationship is set in a world context.
+    SetIn = 17,
 }
 
 impl EdgeKind {
@@ -103,6 +119,11 @@ impl EdgeKind {
             Self::Supersedes => 0.3,
             Self::DerivedFrom => 0.2,
             Self::PartOf => 0.8,
+            Self::EmployedBy => 0.8,
+            Self::HasFacet => 0.7,
+            Self::InWorld => 0.7,
+            Self::FacetOf => 0.7,
+            Self::SetIn => 0.7,
         }
     }
 
@@ -122,6 +143,11 @@ impl EdgeKind {
             10 => Some(Self::Supersedes),
             11 => Some(Self::DerivedFrom),
             12 => Some(Self::PartOf),
+            13 => Some(Self::EmployedBy),
+            14 => Some(Self::HasFacet),
+            15 => Some(Self::InWorld),
+            16 => Some(Self::FacetOf),
+            17 => Some(Self::SetIn),
             _ => None,
         }
     }
@@ -295,6 +321,20 @@ pub struct EdgeInfo {
     pub target_short_id: Option<String>,
     pub weight: f32,
     pub created_at: u64,
+    pub valence: f32,
+    pub arousal: f32,
+    pub dominance: f32,
+}
+
+pub(crate) fn parse_vad(value: &[u8]) -> (f32, f32, f32) {
+    let f = |offset: usize| -> f32 {
+        value
+            .get(offset..offset + 4)
+            .and_then(|b| b.try_into().ok())
+            .map(f32::from_le_bytes)
+            .unwrap_or(0.0)
+    };
+    (f(12), f(16), f(20))
 }
 
 /// Which retrieval signal produced a hit and its raw score.
