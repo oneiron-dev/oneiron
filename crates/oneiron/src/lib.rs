@@ -1451,6 +1451,36 @@ mod tests {
             )
             .expect_err("expected invalid vad");
         assert!(matches!(err, Error::InvalidVad));
+
+        let err = vault
+            .put_edge_with_vad(
+                &src,
+                EdgeKind::Supports,
+                &tgt,
+                0.5,
+                Vad {
+                    valence: 1.5,
+                    arousal: 0.0,
+                    dominance: 0.0,
+                },
+            )
+            .expect_err("expected invalid vad for out-of-range valence");
+        assert!(matches!(err, Error::InvalidVad));
+
+        let err = vault
+            .put_edge_with_vad(
+                &src,
+                EdgeKind::Supports,
+                &tgt,
+                0.5,
+                Vad {
+                    valence: 0.0,
+                    arousal: -0.1,
+                    dominance: 0.0,
+                },
+            )
+            .expect_err("expected invalid vad for negative arousal");
+        assert!(matches!(err, Error::InvalidVad));
         Ok(())
     }
 
