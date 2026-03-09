@@ -31,7 +31,7 @@ Read CLAUDE.md, BUILD-PROMPT.md, and SCHEMA-DESIGN.md for project context.
 Output your findings as markdown with sections: Summary, Issues (severity: critical/major/minor/nit), and Verdict (approve/request-changes)."
 
 # 1. Claude — security review
-echo "[1/4] Claude security review..."
+echo "[1/5] Claude security review..."
 claude -p "$REVIEW_CONTEXT
 
 Focus on SECURITY concerns only:
@@ -50,7 +50,7 @@ You may use subagents to split the review across files if the diff is large." \
 PID1=$!
 
 # 2. Claude — code quality review
-echo "[2/4] Claude code review..."
+echo "[2/5] Claude code review..."
 claude -p "$REVIEW_CONTEXT
 
 Focus on CODE QUALITY:
@@ -69,13 +69,13 @@ You may use subagents to split the review across files if the diff is large." \
 PID2=$!
 
 # 3. Codex — review
-echo "[3/4] Codex review..."
+echo "[3/5] Codex review..."
 codex review --base "$BASE" \
   > "$REVIEW_DIR/codex.md" 2>&1 &
 PID3=$!
 
 # 4. Gemini — code review
-echo "[4/4] Gemini code review..."
+echo "[4/5] Gemini code review..."
 gemini -p "$REVIEW_CONTEXT
 
 Provide a thorough code review covering:
@@ -87,12 +87,31 @@ Provide a thorough code review covering:
   > "$REVIEW_DIR/gemini.md" 2>&1 &
 PID4=$!
 
+# 5. Vet (agentic) — deep repo-exploring review via Claude Code
+if command -v vet &>/dev/null; then
+  echo "[5/5] Vet (agentic) review..."
+  vet "Review changes on branch $BRANCH against $BASE" \
+    --base-commit "$BASE" \
+    --agentic \
+    --confidence-threshold 0.8 \
+    --output-format text \
+    --quiet \
+    > "$REVIEW_DIR/vet.md" 2>&1 &
+  PID5=$!
+  VET_ENABLED=1
+else
+  echo "[5/5] Vet review... SKIPPED (not installed — run: uv tool install verify-everything)"
+  VET_ENABLED=0
+fi
+
 echo ""
-echo "All 4 reviews running in parallel. Waiting..."
+echo "All reviews running in parallel. Waiting..."
 echo ""
 
 FAILED=0
-for PID_NAME in "PID1:claude-security" "PID2:claude-code" "PID3:codex" "PID4:gemini"; do
+PID_NAMES="PID1:claude-security PID2:claude-code PID3:codex PID4:gemini"
+[ "$VET_ENABLED" = "1" ] && PID_NAMES="$PID_NAMES PID5:vet"
+for PID_NAME in $PID_NAMES; do
   PID_VAR="${PID_NAME%%:*}"
   NAME="${PID_NAME##*:}"
   PID="${!PID_VAR}"
