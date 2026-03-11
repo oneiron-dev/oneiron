@@ -7,7 +7,7 @@ use crate::error::{Error, Result};
 use crate::ppr;
 use crate::store::Store;
 use crate::types::{
-    short_id_prefix, EdgeKind, EntityId, TimeRange, Vad, EDGE_KEY_LEN, EDGE_VALUE_LEN,
+    parse_vad, short_id_prefix, EdgeKind, EntityId, TimeRange, Vad, EDGE_KEY_LEN, EDGE_VALUE_LEN,
     ENTITY_ID_LEN,
 };
 use crate::Vault;
@@ -657,11 +657,9 @@ fn validate_edge_record(key: &[u8], value: &[u8]) -> Result<()> {
     if !weight.is_finite() {
         return Err(Error::InvalidEdgeWeight);
     }
-    for offset in [12, 16, 20] {
-        let f = f32::from_le_bytes(value[offset..offset + 4].try_into().unwrap());
-        if !f.is_finite() {
-            return Err(Error::InvalidVad);
-        }
+    let vad = parse_vad(value);
+    if !vad.is_finite() || !vad.is_in_range() {
+        return Err(Error::InvalidVad);
     }
 
     Ok(())

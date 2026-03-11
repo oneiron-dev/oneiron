@@ -255,6 +255,12 @@ fn parse_edge_record(key: &[u8], value: &[u8]) -> Result<EdgeInfo> {
     let weight = f32::from_le_bytes(value[..4].try_into().map_err(|_| Error::InvalidKey)?);
     let created_at = u64::from_le_bytes(value[4..12].try_into().map_err(|_| Error::InvalidKey)?);
     let vad = parse_vad(value);
+    if !weight.is_finite() {
+        return Err(Error::InvalidEdgeWeight);
+    }
+    if !vad.is_finite() || !vad.is_in_range() {
+        return Err(Error::InvalidVad);
+    }
 
     Ok(EdgeInfo {
         kind,
