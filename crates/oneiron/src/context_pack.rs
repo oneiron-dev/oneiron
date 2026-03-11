@@ -573,7 +573,7 @@ fn scan_edges_for_entity(store: &Store, rtxn: &RoTxn<'_>, id: &EntityId) -> Resu
         let created_at = u64::from_le_bytes(created_at_bytes);
 
         let vad = parse_vad(value);
-        if !weight.is_finite() || !vad.is_finite() {
+        if !weight.is_finite() || !vad.is_finite() || !vad.is_in_range() {
             continue;
         }
 
