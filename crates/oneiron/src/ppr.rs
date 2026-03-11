@@ -7,10 +7,10 @@ use xxhash_rust::xxh32::xxh32;
 
 use crate::error::{Error, Result};
 use crate::store::Store;
-use crate::types::{EdgeKind, EntityId, ScoredEntity, VaultConfig, ENTITY_ID_LEN};
+use crate::types::{
+    EdgeKind, EntityId, ScoredEntity, VaultConfig, EDGE_KEY_LEN, EDGE_VALUE_LEN, ENTITY_ID_LEN,
+};
 
-const EDGE_KEY_LEN: usize = 33;
-const EDGE_VALUE_LEN: usize = 12;
 const SEED_HASH_LEN: usize = 32;
 const CACHE_HEADER_LEN: usize = 17;
 const CACHE_STALE_OFFSET: usize = 16;

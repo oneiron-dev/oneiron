@@ -6,13 +6,14 @@ use xxhash_rust::xxh32::xxh32;
 use crate::error::{Error, Result};
 use crate::ppr;
 use crate::store::Store;
-use crate::types::{short_id_prefix, EdgeKind, EntityId, TimeRange, ENTITY_ID_LEN};
+use crate::types::{
+    parse_vad, short_id_prefix, EdgeKind, EntityId, TimeRange, Vad, EDGE_KEY_LEN, EDGE_VALUE_LEN,
+    ENTITY_ID_LEN,
+};
 use crate::Vault;
 
 pub(crate) const ENTITY_METADATA_HEADER_LEN: usize = 25;
 const SHORT_ID_COUNTER_LEN: usize = 8;
-const EDGE_KEY_LEN: usize = 33;
-const EDGE_VALUE_LEN: usize = 12;
 pub(crate) const LONG_INTERVAL_THRESHOLD_SECS: u64 = 14 * 86_400;
 
 #[derive(Debug, Clone, Copy)]
@@ -66,6 +67,7 @@ enum BatchOp {
         kind: EdgeKind,
         tgt: EntityId,
         weight: f32,
+        vad: Vad,
     },
     Text {
         id: EntityId,
@@ -128,6 +130,26 @@ impl<'a> BatchBuilder<'a> {
             kind,
             tgt: *tgt,
             weight,
+            vad: Vad::NEUTRAL,
+        });
+        self
+    }
+
+    /// Adds a graph edge with explicit VAD scores to the batch.
+    pub fn edge_with_vad(
+        mut self,
+        src: &EntityId,
+        kind: EdgeKind,
+        tgt: &EntityId,
+        weight: f32,
+        vad: Vad,
+    ) -> Self {
+        self.ops.push(BatchOp::Edge {
+            src: *src,
+            kind,
+            tgt: *tgt,
+            weight,
+            vad,
         });
         self
     }
@@ -212,8 +234,9 @@ impl<'a> BatchBuilder<'a> {
                     kind,
                     tgt,
                     weight,
+                    vad,
                 } => {
-                    apply_edge(&self.vault.store, &mut wtxn, src, kind, tgt, weight)?;
+                    apply_edge(&self.vault.store, &mut wtxn, src, kind, tgt, weight, vad)?;
                     ppr::invalidate_ppr_for_edge(&self.vault.store, &mut wtxn, &src, &tgt)?;
                 }
                 BatchOp::Text { id, fields } => {
@@ -400,14 +423,18 @@ fn apply_edge(
     kind: EdgeKind,
     tgt: EntityId,
     weight: f32,
+    vad: Vad,
 ) -> Result<()> {
     if !weight.is_finite() {
         return Err(Error::InvalidEdgeWeight);
     }
+    if !vad.is_finite() || !vad.is_in_range() {
+        return Err(Error::InvalidVad);
+    }
 
     let key_out = Store::encode_edge_key(&src, kind, &tgt);
     let key_in = Store::encode_edge_key(&tgt, kind, &src);
-    let value = encode_edge_value(weight, crate::unix_seconds_now());
+    let value = encode_edge_value(weight, crate::unix_seconds_now(), vad);
     store.edges_out.put(wtxn, &key_out, &value)?;
     store.edges_in.put(wtxn, &key_in, &value)?;
     Ok(())
@@ -626,12 +653,24 @@ fn validate_edge_record(key: &[u8], value: &[u8]) -> Result<()> {
         return Err(Error::InvalidKey);
     }
 
+    let weight = f32::from_le_bytes(value[..4].try_into().unwrap());
+    if !weight.is_finite() {
+        return Err(Error::InvalidEdgeWeight);
+    }
+    let vad = parse_vad(value);
+    if !vad.is_finite() || !vad.is_in_range() {
+        return Err(Error::InvalidVad);
+    }
+
     Ok(())
 }
 
-fn encode_edge_value(weight: f32, created_at: u64) -> [u8; EDGE_VALUE_LEN] {
+fn encode_edge_value(weight: f32, created_at: u64, vad: Vad) -> [u8; EDGE_VALUE_LEN] {
     let mut value = [0_u8; EDGE_VALUE_LEN];
     value[..4].copy_from_slice(&weight.to_le_bytes());
-    value[4..].copy_from_slice(&created_at.to_le_bytes());
+    value[4..12].copy_from_slice(&created_at.to_le_bytes());
+    value[12..16].copy_from_slice(&vad.valence.to_le_bytes());
+    value[16..20].copy_from_slice(&vad.arousal.to_le_bytes());
+    value[20..24].copy_from_slice(&vad.dominance.to_le_bytes());
     value
 }

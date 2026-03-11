@@ -25,10 +25,11 @@ pub use crate::error::{Error, Result};
 pub use crate::maintain::{MaintenanceBuilder, MaintenanceReport};
 pub use crate::pipeline::PipelineBuilder;
 use crate::store::Store;
+use crate::types::{parse_vad, EDGE_KEY_LEN, EDGE_VALUE_LEN};
 pub use crate::types::{
     ContextEntity, ContextPack, EdgeInfo, EdgeKind, EntityId, FieldProfile, HnswConfig, PackFormat,
     PackStats, ScoredEntity, Signal, SignalHit, TemporalAnchorMode, TemporalGranularity, TimeRange,
-    TokenAllocation, VaultConfig,
+    TokenAllocation, Vad, VaultConfig,
 };
 
 const MIN_MAP_SIZE_BYTES: usize = 1 << 20;
@@ -145,6 +146,20 @@ impl Vault {
         self.batch().edge(src, kind, tgt, weight).commit()
     }
 
+    /// Stores a directed edge with explicit VAD scores.
+    pub fn put_edge_with_vad(
+        &self,
+        src: &EntityId,
+        kind: EdgeKind,
+        tgt: &EntityId,
+        weight: f32,
+        vad: Vad,
+    ) -> Result<()> {
+        self.batch()
+            .edge_with_vad(src, kind, tgt, weight, vad)
+            .commit()
+    }
+
     /// Deletes a directed edge and its reverse index entry.
     pub fn delete_edge(&self, src: &EntityId, kind: EdgeKind, tgt: &EntityId) -> Result<bool> {
         let key_out = Store::encode_edge_key(src, kind, tgt);
@@ -161,13 +176,13 @@ impl Vault {
     }
 
     /// Returns outbound edges for `src`.
-    pub fn edges_out(&self, src: &EntityId) -> Result<Vec<(EdgeKind, EntityId, f32)>> {
+    pub fn edges_out(&self, src: &EntityId) -> Result<Vec<EdgeInfo>> {
         let rtxn = self.store.env.read_txn()?;
         scan_edges(&self.store.edges_out, &rtxn, src.as_bytes())
     }
 
     /// Returns inbound edges for `tgt`.
-    pub fn edges_in(&self, tgt: &EntityId) -> Result<Vec<(EdgeKind, EntityId, f32)>> {
+    pub fn edges_in(&self, tgt: &EntityId) -> Result<Vec<EdgeInfo>> {
         let rtxn = self.store.env.read_txn()?;
         scan_edges(&self.store.edges_in, &rtxn, tgt.as_bytes())
     }
@@ -220,7 +235,7 @@ fn scan_edges(
     database: &Database<Bytes, Bytes>,
     rtxn: &heed::RoTxn<'_>,
     prefix: &[u8; 16],
-) -> Result<Vec<(EdgeKind, EntityId, f32)>> {
+) -> Result<Vec<EdgeInfo>> {
     database
         .prefix_iter(rtxn, prefix.as_slice())?
         .map(|entry| {
@@ -230,16 +245,31 @@ fn scan_edges(
         .collect()
 }
 
-fn parse_edge_record(key: &[u8], value: &[u8]) -> Result<(EdgeKind, EntityId, f32)> {
-    if key.len() != 33 || value.len() != 12 {
+fn parse_edge_record(key: &[u8], value: &[u8]) -> Result<EdgeInfo> {
+    if key.len() != EDGE_KEY_LEN || value.len() != EDGE_VALUE_LEN {
         return Err(Error::InvalidKey);
     }
 
     let kind = EdgeKind::try_from_u8(key[16]).ok_or(Error::InvalidKey)?;
-    let neighbor = EntityId::from_bytes(key[17..33].try_into().map_err(|_| Error::InvalidKey)?);
+    let target = EntityId::from_bytes(key[17..33].try_into().map_err(|_| Error::InvalidKey)?);
     let weight = f32::from_le_bytes(value[..4].try_into().map_err(|_| Error::InvalidKey)?);
+    let created_at = u64::from_le_bytes(value[4..12].try_into().map_err(|_| Error::InvalidKey)?);
+    let vad = parse_vad(value);
+    if !weight.is_finite() {
+        return Err(Error::InvalidEdgeWeight);
+    }
+    if !vad.is_finite() || !vad.is_in_range() {
+        return Err(Error::InvalidVad);
+    }
 
-    Ok((kind, neighbor, weight))
+    Ok(EdgeInfo {
+        kind,
+        target,
+        target_short_id: None,
+        weight,
+        created_at,
+        vad,
+    })
 }
 
 #[cfg(test)]
@@ -587,15 +617,15 @@ mod tests {
 
         let out = vault.edges_out(&src)?;
         assert_eq!(out.len(), 1);
-        assert_eq!(out[0].0, kind);
-        assert_eq!(out[0].1, tgt);
-        assert!((out[0].2 - weight).abs() < f32::EPSILON);
+        assert_eq!(out[0].kind, kind);
+        assert_eq!(out[0].target, tgt);
+        assert!((out[0].weight - weight).abs() < f32::EPSILON);
 
         let inbound = vault.edges_in(&tgt)?;
         assert_eq!(inbound.len(), 1);
-        assert_eq!(inbound[0].0, kind);
-        assert_eq!(inbound[0].1, src);
-        assert!((inbound[0].2 - weight).abs() < f32::EPSILON);
+        assert_eq!(inbound[0].kind, kind);
+        assert_eq!(inbound[0].target, src);
+        assert!((inbound[0].weight - weight).abs() < f32::EPSILON);
 
         assert!(vault.delete_edge(&src, kind, &tgt)?);
         assert!(vault.edges_out(&src)?.is_empty());
@@ -1171,8 +1201,8 @@ mod tests {
 
         let out = vault.edges_out(&src)?;
         assert_eq!(out.len(), 1);
-        assert_eq!(out[0].0, EdgeKind::BelongsTo);
-        assert_eq!(out[0].1, tgt);
+        assert_eq!(out[0].kind, EdgeKind::BelongsTo);
+        assert_eq!(out[0].target, tgt);
         Ok(())
     }
 
@@ -1198,8 +1228,8 @@ mod tests {
         assert_eq!(out.len(), expected.len());
         for (kind, target, weight) in expected {
             assert!(
-                out.iter().any(|(k, t, w)| {
-                    *k == kind && *t == target && (*w - weight).abs() < f32::EPSILON
+                out.iter().any(|e| {
+                    e.kind == kind && e.target == target && (e.weight - weight).abs() < f32::EPSILON
                 }),
                 "missing edge ({kind:?}, {target:?}, {weight})"
             );
@@ -1318,5 +1348,175 @@ mod tests {
         }
 
         panic!("expected two consecutive EntityId::now() values to increase");
+    }
+
+    #[test]
+    fn new_edge_kinds_round_trip_through_u8() {
+        let new_kinds = [
+            (13_u8, EdgeKind::EmployedBy),
+            (14, EdgeKind::HasFacet),
+            (15, EdgeKind::InWorld),
+            (16, EdgeKind::FacetOf),
+            (17, EdgeKind::SetIn),
+        ];
+        for (disc, expected) in new_kinds {
+            let kind = EdgeKind::try_from_u8(disc).expect("valid discriminant");
+            assert_eq!(kind, expected);
+            assert_eq!(kind as u8, disc);
+        }
+        assert!(EdgeKind::try_from_u8(18).is_none());
+    }
+
+    #[test]
+    fn new_edge_kinds_have_default_weights() {
+        assert_eq!(EdgeKind::EmployedBy.default_weight(), 0.8);
+        assert_eq!(EdgeKind::HasFacet.default_weight(), 0.7);
+        assert_eq!(EdgeKind::InWorld.default_weight(), 0.7);
+        assert_eq!(EdgeKind::FacetOf.default_weight(), 0.7);
+        assert_eq!(EdgeKind::SetIn.default_weight(), 0.7);
+    }
+
+    #[test]
+    fn new_entity_type_prefixes() {
+        use crate::types::short_id_prefix;
+        assert_eq!(short_id_prefix(12), "og");
+        assert_eq!(short_id_prefix(13), "fc");
+        assert_eq!(short_id_prefix(14), "wd");
+        assert_eq!(short_id_prefix(15), "xx");
+    }
+
+    #[test]
+    fn put_edge_with_vad_round_trip() -> Result<()> {
+        let temp_dir = tempfile::tempdir()?;
+        let vault = Vault::open(temp_dir.path(), test_config())?;
+        let src = EntityId::now();
+        let tgt = EntityId::now();
+
+        vault
+            .batch()
+            .put(&src, 0, test_time_range(1, 2), 3, b"src")
+            .put(&tgt, 4, test_time_range(4, 5), 6, b"tgt")
+            .commit()?;
+
+        vault.put_edge_with_vad(
+            &src,
+            EdgeKind::Supports,
+            &tgt,
+            0.8,
+            Vad {
+                valence: 0.6,
+                arousal: 0.3,
+                dominance: 0.9,
+            },
+        )?;
+
+        let out = vault.edges_out(&src)?;
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].kind, EdgeKind::Supports);
+        assert_eq!(out[0].target, tgt);
+        assert!((out[0].weight - 0.8).abs() < f32::EPSILON);
+        assert!((out[0].vad.valence - 0.6).abs() < f32::EPSILON);
+        assert!((out[0].vad.arousal - 0.3).abs() < f32::EPSILON);
+        assert!((out[0].vad.dominance - 0.9).abs() < f32::EPSILON);
+        Ok(())
+    }
+
+    #[test]
+    fn put_edge_with_vad_rejects_non_finite() -> Result<()> {
+        let temp_dir = tempfile::tempdir()?;
+        let vault = Vault::open(temp_dir.path(), test_config())?;
+        let src = EntityId::now();
+        let tgt = EntityId::now();
+
+        let err = vault
+            .put_edge_with_vad(
+                &src,
+                EdgeKind::Supports,
+                &tgt,
+                0.5,
+                Vad {
+                    valence: f32::NAN,
+                    arousal: 0.0,
+                    dominance: 0.0,
+                },
+            )
+            .expect_err("expected invalid vad");
+        assert!(matches!(err, Error::InvalidVad));
+
+        let err = vault
+            .put_edge_with_vad(
+                &src,
+                EdgeKind::Supports,
+                &tgt,
+                0.5,
+                Vad {
+                    valence: 0.0,
+                    arousal: f32::INFINITY,
+                    dominance: 0.0,
+                },
+            )
+            .expect_err("expected invalid vad");
+        assert!(matches!(err, Error::InvalidVad));
+
+        let err = vault
+            .put_edge_with_vad(
+                &src,
+                EdgeKind::Supports,
+                &tgt,
+                0.5,
+                Vad {
+                    valence: 1.5,
+                    arousal: 0.0,
+                    dominance: 0.0,
+                },
+            )
+            .expect_err("expected invalid vad for out-of-range valence");
+        assert!(matches!(err, Error::InvalidVad));
+
+        let err = vault
+            .put_edge_with_vad(
+                &src,
+                EdgeKind::Supports,
+                &tgt,
+                0.5,
+                Vad {
+                    valence: 0.0,
+                    arousal: -0.1,
+                    dominance: 0.0,
+                },
+            )
+            .expect_err("expected invalid vad for negative arousal");
+        assert!(matches!(err, Error::InvalidVad));
+        Ok(())
+    }
+
+    #[test]
+    fn batch_edge_with_vad_api() -> Result<()> {
+        let temp_dir = tempfile::tempdir()?;
+        let vault = Vault::open(temp_dir.path(), test_config())?;
+        let src = EntityId::now();
+        let tgt = EntityId::now();
+
+        vault
+            .batch()
+            .put(&src, 0, test_time_range(1, 2), 3, b"src")
+            .put(&tgt, 4, test_time_range(4, 5), 6, b"tgt")
+            .edge_with_vad(
+                &src,
+                EdgeKind::HasFacet,
+                &tgt,
+                0.7,
+                Vad {
+                    valence: 0.5,
+                    arousal: 0.4,
+                    dominance: 0.3,
+                },
+            )
+            .commit()?;
+
+        let out = vault.edges_out(&src)?;
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].kind, EdgeKind::HasFacet);
+        Ok(())
     }
 }

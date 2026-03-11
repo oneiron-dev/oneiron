@@ -19,6 +19,9 @@ pub enum Error {
     /// Edge weight contains NaN or infinity values.
     #[error("edge weight is non-finite (NaN or Inf)")]
     InvalidEdgeWeight,
+    /// VAD tuple contains non-finite or out-of-range values.
+    #[error("vad contains non-finite or out-of-range values")]
+    InvalidVad,
     /// Stored embedding model differs from requested model.
     #[error("embedding model changed: stored={stored}, requested={requested}")]
     EmbeddingModelChanged { stored: String, requested: String },
