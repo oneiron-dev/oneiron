@@ -99,6 +99,8 @@ Each entity gets a permanent vault-scoped short ID on creation: `<2-char prefix>
 | `ms` | MESSAGE | `pl` | PLACE |
 | `pr` | PERSON | `tx` | ASSET_TEXT |
 | `rl` | RELATIONSHIP | `cv` | CONVERSATION |
+| `og` | ORGANIZATION | `fc` | FACET |
+| `wd` | WORLD | | |
 
 Properties:
 - Vault-scoped (no cross-vault collisions)
