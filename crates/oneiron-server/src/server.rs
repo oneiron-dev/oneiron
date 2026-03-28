@@ -121,8 +121,16 @@ mod tests {
         let deep = server.root_doc.get_deep_value();
         let meta = deep.as_map().unwrap().get("meta").unwrap();
         let meta_map = meta.as_map().unwrap();
-        assert_eq!(*meta_map.get("schema_version").unwrap().as_i64().unwrap(), 1i64);
-        assert!(meta_map.get("windows").unwrap().as_string().unwrap().is_empty());
+        assert_eq!(
+            *meta_map.get("schema_version").unwrap().as_i64().unwrap(),
+            1i64
+        );
+        assert!(meta_map
+            .get("windows")
+            .unwrap()
+            .as_string()
+            .unwrap()
+            .is_empty());
     }
 
     #[tokio::test]

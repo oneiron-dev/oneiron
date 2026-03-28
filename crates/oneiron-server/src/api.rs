@@ -53,9 +53,7 @@ fn check_auth(headers: &HeaderMap, config_secret: &Option<String>) -> Result<(),
         .and_then(|v| v.to_str().ok());
 
     match provided {
-        Some(s) if s.len() == expected.len()
-            && s.as_bytes().ct_eq(expected.as_bytes()).into() =>
-        {
+        Some(s) if s.len() == expected.len() && s.as_bytes().ct_eq(expected.as_bytes()).into() => {
             Ok(())
         }
         _ => Err(StatusCode::UNAUTHORIZED),

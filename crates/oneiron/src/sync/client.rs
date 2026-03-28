@@ -117,11 +117,7 @@ impl SyncClient {
 
     /// Queues a local update for a window to be sent to the server.
     pub fn queue_update(&mut self, window_key: &str, update_bytes: Vec<u8>) {
-        let msg = transport::encode_window_sync(
-            window_key,
-            window_sub_tags::UPDATE,
-            &update_bytes,
-        );
+        let msg = transport::encode_window_sync(window_key, window_sub_tags::UPDATE, &update_bytes);
         self.pending_updates.push(PendingUpdate {
             _window_key: window_key.to_string(),
             _encoded: msg,
@@ -150,11 +146,13 @@ impl SyncClient {
 
     /// Returns the list of window keys from the root doc (set by server).
     pub fn server_windows(&self) -> Vec<String> {
-        let windows_str = self
-            .root_doc
-            .get_deep_value()
-            .as_map()
-            .and_then(|m| m.get("meta")?.as_map()?.get("windows")?.as_string().cloned());
+        let windows_str = self.root_doc.get_deep_value().as_map().and_then(|m| {
+            m.get("meta")?
+                .as_map()?
+                .get("windows")?
+                .as_string()
+                .cloned()
+        });
 
         match windows_str {
             Some(s) if !s.is_empty() => s.split(',').map(|s| s.to_string()).collect(),
@@ -219,11 +217,8 @@ impl SyncClient {
                 let updates = doc
                     .export(ExportMode::all_updates())
                     .map_err(|_| TransportError::InvalidPayload("export failed"))?;
-                let response = transport::encode_window_sync(
-                    window_key,
-                    window_sub_tags::UPDATE,
-                    &updates,
-                );
+                let response =
+                    transport::encode_window_sync(window_key, window_sub_tags::UPDATE, &updates);
                 Ok(Some(response))
             }
             window_sub_tags::UPDATE => {
@@ -253,7 +248,10 @@ impl SyncClient {
         const MAX_BULK_DECOMPRESSED: usize = 8 * 1024 * 1024; // 8 MB
         let mut decoder = zstd::Decoder::new(compressed)
             .map_err(|_| TransportError::InvalidPayload("zstd decoder init failed"))?;
-        let mut buf = Vec::with_capacity(std::cmp::min(compressed.len().saturating_mul(2), MAX_BULK_DECOMPRESSED));
+        let mut buf = Vec::with_capacity(std::cmp::min(
+            compressed.len().saturating_mul(2),
+            MAX_BULK_DECOMPRESSED,
+        ));
         let mut chunk = [0u8; 8192];
         loop {
             let n = std::io::Read::read(&mut decoder, &mut chunk)

@@ -7,8 +7,7 @@
 use std::sync::Arc;
 
 use super::bridge::{
-    self, encode_edge_value_for_crdt, format_edge_key, Materializer, ObserverAState,
-    BRIDGE_ORIGIN,
+    self, encode_edge_value_for_crdt, format_edge_key, Materializer, ObserverAState, BRIDGE_ORIGIN,
 };
 use super::engine::{CrdtDoc, CrdtMap, Subscription};
 use super::loro_engine::LoroDocument;
@@ -89,7 +88,11 @@ impl LoadedWindow {
 }
 
 /// Loads a window Doc from persisted state in sync_state.
-pub fn load_window_from_state(vault: &Vault, _user_id: &str, key: &WindowKey) -> Result<LoroDocument> {
+pub fn load_window_from_state(
+    vault: &Vault,
+    _user_id: &str,
+    key: &WindowKey,
+) -> Result<LoroDocument> {
     let rtxn = vault.store.env.read_txn()?;
 
     let doc_key = format!("d:w:{}", key);
@@ -177,14 +180,16 @@ pub fn replay_pending_mirrors(
         }
 
         // Mirror to CRDT under bridge origin
-        entities_map.insert(hex_id.as_str(), raw.as_slice())
+        entities_map
+            .insert(hex_id.as_str(), raw.as_slice())
             .map_err(|e| Error::SyncProtocolError(format!("pm replay entity insert: {e}")))?;
 
         let edges_out = vault.edges_out(id)?;
         for edge in &edges_out {
             let edge_key = format_edge_key(id, edge.kind, &edge.target);
             let edge_val = encode_edge_value_for_crdt(edge.weight, edge.created_at, edge.vad);
-            edges_map.insert(edge_key.as_str(), &edge_val)
+            edges_map
+                .insert(edge_key.as_str(), &edge_val)
                 .map_err(|e| Error::SyncProtocolError(format!("pm replay edge insert: {e}")))?;
         }
 
@@ -234,7 +239,11 @@ pub fn forward_rematerialize(
             Some(h) => h,
             None => return,
         };
-        let data = if blob.len() > ENTITY_METADATA_HEADER_LEN { &blob[ENTITY_METADATA_HEADER_LEN..] } else { &[] };
+        let data = if blob.len() > ENTITY_METADATA_HEADER_LEN {
+            &blob[ENTITY_METADATA_HEADER_LEN..]
+        } else {
+            &[]
+        };
         let result = vault
             .batch()
             .put(
@@ -289,9 +298,7 @@ pub fn forward_rematerialize(
             Err(_) => return,
         };
 
-        if vault.entity_exists(&id).unwrap_or(false)
-            && vault.delete_entity(&id).is_ok()
-        {
+        if vault.entity_exists(&id).unwrap_or(false) && vault.delete_entity(&id).is_ok() {
             count += 1;
         }
     });
@@ -335,7 +342,8 @@ pub fn reverse_rematerialize(
             None => continue,
         };
 
-        entities_map.insert(hex_id.as_str(), raw.as_slice())
+        entities_map
+            .insert(hex_id.as_str(), raw.as_slice())
             .map_err(|e| Error::SyncProtocolError(format!("reverse remat entity insert: {e}")))?;
 
         let edges_out = vault.edges_out(id)?;
@@ -345,7 +353,8 @@ pub fn reverse_rematerialize(
                 continue;
             }
             let edge_val = encode_edge_value_for_crdt(edge.weight, edge.created_at, edge.vad);
-            edges_map.insert(edge_key.as_str(), &edge_val)
+            edges_map
+                .insert(edge_key.as_str(), &edge_val)
                 .map_err(|e| Error::SyncProtocolError(format!("reverse remat edge insert: {e}")))?;
         }
 

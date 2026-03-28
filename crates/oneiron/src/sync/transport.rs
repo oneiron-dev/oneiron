@@ -72,8 +72,8 @@ pub fn decode_window_sync(data: &[u8]) -> Result<(&str, u8, &[u8]), TransportErr
     if data.len() < 1 + key_len + 1 {
         return Err(TransportError::InvalidPayload("WindowSync too short"));
     }
-    let key = std::str::from_utf8(&data[1..1 + key_len])
-        .map_err(|_| TransportError::InvalidWindowKey)?;
+    let key =
+        std::str::from_utf8(&data[1..1 + key_len]).map_err(|_| TransportError::InvalidWindowKey)?;
     let sub_tag = data[1 + key_len];
     let payload = &data[2 + key_len..];
     Ok((key, sub_tag, payload))
@@ -112,8 +112,8 @@ pub fn decode_bulk_transfer(data: &[u8]) -> Result<(&str, &[u8]), TransportError
     if data.len() < 1 + key_len {
         return Err(TransportError::InvalidPayload("BulkTransfer too short"));
     }
-    let key = std::str::from_utf8(&data[1..1 + key_len])
-        .map_err(|_| TransportError::InvalidWindowKey)?;
+    let key =
+        std::str::from_utf8(&data[1..1 + key_len]).map_err(|_| TransportError::InvalidWindowKey)?;
     Ok((key, &data[1 + key_len..]))
 }
 
@@ -151,8 +151,8 @@ pub fn decode_bulk_transfer_done(data: &[u8]) -> Result<(&str, &[u8]), Transport
     if data.len() < 1 + key_len + 4 {
         return Err(TransportError::InvalidPayload("BulkTransferDone too short"));
     }
-    let key = std::str::from_utf8(&data[1..1 + key_len])
-        .map_err(|_| TransportError::InvalidWindowKey)?;
+    let key =
+        std::str::from_utf8(&data[1..1 + key_len]).map_err(|_| TransportError::InvalidWindowKey)?;
     let off = 1 + key_len;
     let state_len = u32::from_be_bytes(
         data[off..off + 4]
