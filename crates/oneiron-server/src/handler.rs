@@ -18,9 +18,7 @@ use futures_util::{SinkExt, StreamExt};
 use loro::ExportMode;
 
 use crate::broadcast::BroadcastSubscriber;
-use crate::protocol::{
-    self, window_sub_tags, ProtocolError, SyncMessage,
-};
+use crate::protocol::{self, window_sub_tags, ProtocolError, SyncMessage};
 use crate::server::SyncServer;
 
 /// Builds the WebSocket routes for the sync server.
@@ -190,7 +188,10 @@ async fn handle_sync_message(
     match msg {
         SyncMessage::RootUpdate(_update_bytes) => {
             // Root doc is server-authoritative — reject client updates silently
-            tracing::debug!(conn_id, "rejected client root update (server-authoritative)");
+            tracing::debug!(
+                conn_id,
+                "rejected client root update (server-authoritative)"
+            );
             Ok(())
         }
         SyncMessage::Awareness(state) => {
@@ -251,11 +252,8 @@ async fn handle_window_sync(
             let updates = doc
                 .export(ExportMode::all_updates())
                 .map_err(|e| ProtocolError::LoroImport(format!("{e}")))?;
-            let response = protocol::encode_window_sync(
-                window_key,
-                window_sub_tags::UPDATE,
-                &updates,
-            );
+            let response =
+                protocol::encode_window_sync(window_key, window_sub_tags::UPDATE, &updates);
             // Send directly to the requesting client's WebSocket sink, NOT via
             // broadcast. Broadcasting with the requester's conn_id would cause
             // echo suppression to drop the response for the requester.
@@ -269,11 +267,8 @@ async fn handle_window_sync(
 
             // The subscribe_local_update callback (when registered by sync-core)
             // will handle persistence + broadcast. For now, manually broadcast.
-            let broadcast_msg = protocol::encode_window_sync(
-                window_key,
-                window_sub_tags::UPDATE,
-                payload,
-            );
+            let broadcast_msg =
+                protocol::encode_window_sync(window_key, window_sub_tags::UPDATE, payload);
             let _ = crate::broadcast::broadcast(&server.broadcast_tx, conn_id, broadcast_msg);
         }
         window_sub_tags::VV_RESPONSE => {
@@ -297,8 +292,13 @@ async fn handle_bulk_transfer(
     window_key: &str,
     _compressed: &[u8],
 ) -> Result<(), ProtocolError> {
-    tracing::warn!(window_key, "rejected client-to-server BulkTransfer — not supported");
-    Err(ProtocolError::InvalidPayload("client-to-server BulkTransfer is not supported"))
+    tracing::warn!(
+        window_key,
+        "rejected client-to-server BulkTransfer — not supported"
+    );
+    Err(ProtocolError::InvalidPayload(
+        "client-to-server BulkTransfer is not supported",
+    ))
 }
 
 /// Rejects a BulkTransferDone message from client.
@@ -309,8 +309,13 @@ async fn handle_bulk_transfer_done(
     window_key: &str,
     _doc_state: &[u8],
 ) -> Result<(), ProtocolError> {
-    tracing::warn!(window_key, "rejected client-to-server BulkTransferDone — not supported");
-    Err(ProtocolError::InvalidPayload("client-to-server BulkTransferDone is not supported"))
+    tracing::warn!(
+        window_key,
+        "rejected client-to-server BulkTransferDone — not supported"
+    );
+    Err(ProtocolError::InvalidPayload(
+        "client-to-server BulkTransferDone is not supported",
+    ))
 }
 
 /// Streaming zstd decompression with a size limit.
@@ -319,7 +324,10 @@ async fn handle_bulk_transfer_done(
 /// exceeds `max_bytes`, or `Err` on decode failure. This prevents
 /// decompression bombs by aborting before allocating unbounded memory.
 #[allow(dead_code)] // Used when server sends BulkTransfer to clients (Phase 2+)
-fn decompress_bounded(compressed: &[u8], max_bytes: usize) -> Result<Option<Vec<u8>>, std::io::Error> {
+fn decompress_bounded(
+    compressed: &[u8],
+    max_bytes: usize,
+) -> Result<Option<Vec<u8>>, std::io::Error> {
     let mut decoder = zstd::Decoder::new(compressed)?;
     let mut buf = Vec::with_capacity(std::cmp::min(compressed.len().saturating_mul(2), max_bytes));
     let mut chunk = [0u8; 8192];

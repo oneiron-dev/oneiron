@@ -378,13 +378,40 @@ fn entities_in_learned_range() {
     let id3 = EntityId::now();
 
     vault
-        .put_entity(&id1, 0, TimeRange { start: 100, end: 100 }, 100, b"a")
+        .put_entity(
+            &id1,
+            0,
+            TimeRange {
+                start: 100,
+                end: 100,
+            },
+            100,
+            b"a",
+        )
         .unwrap();
     vault
-        .put_entity(&id2, 0, TimeRange { start: 200, end: 200 }, 200, b"b")
+        .put_entity(
+            &id2,
+            0,
+            TimeRange {
+                start: 200,
+                end: 200,
+            },
+            200,
+            b"b",
+        )
         .unwrap();
     vault
-        .put_entity(&id3, 0, TimeRange { start: 300, end: 300 }, 300, b"c")
+        .put_entity(
+            &id3,
+            0,
+            TimeRange {
+                start: 300,
+                end: 300,
+            },
+            300,
+            b"c",
+        )
         .unwrap();
 
     let range = vault.entities_in_learned_range(100, 300).unwrap();

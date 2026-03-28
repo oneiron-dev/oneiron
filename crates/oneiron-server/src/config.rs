@@ -38,10 +38,10 @@ impl Default for SyncServerConfig {
             compaction_throttle_secs: 30,
             bulk_chunk_size: 1_048_576, // 1 MB uncompressed
             auth_secret: None,
-            max_frame_size: 4 * 1024 * 1024,         // 4 MB
-            max_update_payload: 2 * 1024 * 1024,      // 2 MB
-            max_entity_blob: 64 * 1024,               // 64 KB
-            max_bulk_decompressed: 8 * 1024 * 1024,   // 8 MB
+            max_frame_size: 4 * 1024 * 1024,        // 4 MB
+            max_update_payload: 2 * 1024 * 1024,    // 2 MB
+            max_entity_blob: 64 * 1024,             // 64 KB
+            max_bulk_decompressed: 8 * 1024 * 1024, // 8 MB
             max_updates_per_sec: 100,
             max_connections_per_user: 5,
             max_windows_per_client: 4,

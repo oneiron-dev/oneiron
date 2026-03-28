@@ -68,10 +68,7 @@ pub trait CrdtMap: Send + Sync {
 
     /// Subscribe to key-level changes. The callback receives a batch of
     /// changes after each commit.
-    fn subscribe_changes(
-        &self,
-        cb: Arc<dyn Fn(Vec<MapChange>) + Send + Sync>,
-    ) -> Subscription;
+    fn subscribe_changes(&self, cb: Arc<dyn Fn(Vec<MapChange>) + Send + Sync>) -> Subscription;
 }
 
 // ─── CrdtDoc ────────────────────────────────────────────────────────────────
@@ -133,8 +130,5 @@ pub trait CrdtDoc: Send + Sync + 'static {
     /// Subscribe to locally-generated updates. The callback receives
     /// encoded update bytes after each commit. Return `false` from the
     /// callback to auto-unsubscribe.
-    fn subscribe_local_updates(
-        &self,
-        cb: LocalUpdateCallback,
-    ) -> Subscription;
+    fn subscribe_local_updates(&self, cb: LocalUpdateCallback) -> Subscription;
 }

@@ -10,7 +10,6 @@ use loro::{
     VersionVector,
 };
 
-
 use super::engine::{CrdtDoc, CrdtMap, LocalUpdateCallback, MapChange, Subscription};
 use crate::error::{Error, Result};
 
@@ -75,8 +74,7 @@ impl CrdtDoc for LoroDocument {
     }
 
     fn commit_with_origin(&self, origin: &str) {
-        self.0
-            .commit_with(CommitOptions::new().origin(origin));
+        self.0.commit_with(CommitOptions::new().origin(origin));
     }
 
     // ── Persistence ─────────────────────────────────────────────────────
@@ -88,18 +86,17 @@ impl CrdtDoc for LoroDocument {
     }
 
     fn from_snapshot(bytes: &[u8]) -> Result<Self> {
-        let doc = LoroDoc::from_snapshot(bytes)
-            .map_err(|e| Error::CrdtDecodeError(e.to_string()))?;
+        let doc =
+            LoroDoc::from_snapshot(bytes).map_err(|e| Error::CrdtDecodeError(e.to_string()))?;
         Ok(LoroDocument(doc))
     }
 
     // ── Observation ─────────────────────────────────────────────────────
 
-    fn subscribe_local_updates(
-        &self,
-        cb: LocalUpdateCallback,
-    ) -> Subscription {
-        let sub = self.0.subscribe_local_update(Box::new(move |bytes| cb(bytes)));
+    fn subscribe_local_updates(&self, cb: LocalUpdateCallback) -> Subscription {
+        let sub = self
+            .0
+            .subscribe_local_update(Box::new(move |bytes| cb(bytes)));
         Subscription::new(sub)
     }
 }
@@ -147,10 +144,7 @@ impl CrdtMap for LoroMapHandle {
         });
     }
 
-    fn subscribe_changes(
-        &self,
-        cb: Arc<dyn Fn(Vec<MapChange>) + Send + Sync>,
-    ) -> Subscription {
+    fn subscribe_changes(&self, cb: Arc<dyn Fn(Vec<MapChange>) + Send + Sync>) -> Subscription {
         let sub = self.doc.subscribe(
             &self.map.id(),
             Arc::new(move |event| {
@@ -318,8 +312,8 @@ mod tests {
 
     #[test]
     fn loro_doc_commit_with_origin() {
-        use std::sync::Mutex;
         use loro::ContainerTrait;
+        use std::sync::Mutex;
 
         let doc = LoroDocument::new();
         let origins = Arc::new(Mutex::new(Vec::new()));
@@ -329,10 +323,7 @@ mod tests {
         let _sub = doc.0.subscribe(
             &map.map.id(),
             Arc::new(move |event| {
-                origins_clone
-                    .lock()
-                    .unwrap()
-                    .push(event.origin.to_string());
+                origins_clone.lock().unwrap().push(event.origin.to_string());
             }),
         );
 

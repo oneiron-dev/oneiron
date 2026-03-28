@@ -147,13 +147,25 @@ pub fn register_observer_b(
     // skip bridge-origin events and avoid circular LMDB->CRDT->LMDB loops.
 
     let entity_sub = subscribe_map_observer(
-        doc, &entities_map, vault, materializer, materialize_entities_from_delta,
+        doc,
+        &entities_map,
+        vault,
+        materializer,
+        materialize_entities_from_delta,
     );
     let edge_sub = subscribe_map_observer(
-        doc, &edges_map, vault, materializer, materialize_edges_from_delta,
+        doc,
+        &edges_map,
+        vault,
+        materializer,
+        materialize_edges_from_delta,
     );
     let tombstone_sub = subscribe_map_observer(
-        doc, &tombstones_map, vault, materializer, materialize_tombstones_from_delta,
+        doc,
+        &tombstones_map,
+        vault,
+        materializer,
+        materialize_tombstones_from_delta,
     );
 
     (entity_sub, edge_sub, tombstone_sub)
@@ -194,10 +206,7 @@ fn subscribe_map_observer(
 ///
 /// Accumulates all entity ops from the delta into a single LMDB write
 /// transaction instead of committing per-entity.
-fn materialize_entities_from_delta(
-    delta: &loro::event::MapDelta<'_>,
-    vault: &Vault,
-) {
+fn materialize_entities_from_delta(delta: &loro::event::MapDelta<'_>, vault: &Vault) {
     let result = vault.with_write_txn(|wtxn| {
         for (key, new_val) in &delta.updated {
             match new_val {
@@ -219,7 +228,11 @@ fn materialize_entities_from_delta(
                         }
                     };
 
-                    let data = if blob.len() > ENTITY_METADATA_HEADER_LEN { &blob[ENTITY_METADATA_HEADER_LEN..] } else { &[] };
+                    let data = if blob.len() > ENTITY_METADATA_HEADER_LEN {
+                        &blob[ENTITY_METADATA_HEADER_LEN..]
+                    } else {
+                        &[]
+                    };
 
                     if let Err(e) = vault
                         .batch_in()
@@ -262,10 +275,7 @@ fn materialize_entities_from_delta(
 ///
 /// Accumulates all edge ops from the delta into a single LMDB write
 /// transaction instead of committing per-edge.
-fn materialize_edges_from_delta(
-    delta: &loro::event::MapDelta<'_>,
-    vault: &Vault,
-) {
+fn materialize_edges_from_delta(delta: &loro::event::MapDelta<'_>, vault: &Vault) {
     let result = vault.with_write_txn(|wtxn| {
         for (key, new_val) in &delta.updated {
             match new_val {
@@ -325,10 +335,7 @@ fn materialize_edges_from_delta(
 /// Each tombstone triggers a delete_entity which involves multiple LMDB
 /// writes (entity + edges + indexes). These are already internally
 /// transactional via delete_entity, so we just replace the logging.
-fn materialize_tombstones_from_delta(
-    delta: &loro::event::MapDelta<'_>,
-    vault: &Vault,
-) {
+fn materialize_tombstones_from_delta(delta: &loro::event::MapDelta<'_>, vault: &Vault) {
     for (key, new_val) in &delta.updated {
         match new_val {
             Some(_) => {

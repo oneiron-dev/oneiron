@@ -137,7 +137,8 @@ fn get_rss_bytes() -> u64 {
 /// Get current process RSS in bytes using /proc/self/statm (Linux).
 #[cfg(target_os = "linux")]
 fn get_rss_bytes() -> u64 {
-    let statm = std::fs::read_to_string("/proc/self/statm").expect("failed to read /proc/self/statm");
+    let statm =
+        std::fs::read_to_string("/proc/self/statm").expect("failed to read /proc/self/statm");
     let fields: Vec<&str> = statm.split_whitespace().collect();
     let rss_pages: u64 = fields[1].parse().expect("failed to parse RSS pages");
     let page_size: u64 = unsafe { libc::sysconf(libc::_SC_PAGESIZE) as u64 };
@@ -163,7 +164,10 @@ fn main() {
     let _tombstones = doc.get_or_insert_map("tombstones");
 
     // ── Insert N entities ───────────────────────────────────────────────────
-    println!("\nInserting {} entities (~{} bytes each)...", NUM_ENTITIES, ENTITY_BLOB_SIZE);
+    println!(
+        "\nInserting {} entities (~{} bytes each)...",
+        NUM_ENTITIES, ENTITY_BLOB_SIZE
+    );
     {
         let mut txn = doc.transact_mut();
         for i in 0..NUM_ENTITIES {
@@ -222,7 +226,9 @@ fn main() {
                 let tgt = (i + e + 1) % NUM_ENTITIES;
                 let kind = (e as u8) % 10;
                 let key = make_edge_key(i, kind, tgt);
-                let val = Any::Buffer(Arc::from(make_edge_value(i * EDGES_PER_ENTITY + e).as_slice()));
+                let val = Any::Buffer(Arc::from(
+                    make_edge_value(i * EDGES_PER_ENTITY + e).as_slice(),
+                ));
                 edges.insert(&mut txn, key.as_str(), val);
             }
         }
@@ -260,15 +266,36 @@ fn main() {
     println!("\n╔══════════════════════════════════════════════════════╗");
     println!("║            BENCHMARK RESULTS                        ║");
     println!("╠══════════════════════════════════════════════════════╣");
-    println!("║  Entities:       {:>6}                              ║", NUM_ENTITIES);
-    println!("║  Rewrites:       {:>6} ({} entities x{})        ║", total_rewrites, NUM_REWRITES, REWRITES_PER_ENTITY);
-    println!("║  Edges:          {:>6}                              ║", num_edges);
+    println!(
+        "║  Entities:       {:>6}                              ║",
+        NUM_ENTITIES
+    );
+    println!(
+        "║  Rewrites:       {:>6} ({} entities x{})        ║",
+        total_rewrites, NUM_REWRITES, REWRITES_PER_ENTITY
+    );
+    println!(
+        "║  Edges:          {:>6}                              ║",
+        num_edges
+    );
     println!("║  Tombstones map: empty                              ║");
     println!("╠══════════════════════════════════════════════════════╣");
-    println!("║  Raw data size:  {:>7.2} MB                         ║", raw_total_mb);
-    println!("║  RSS delta:      {:>7.2} MB                         ║", rss_delta_mb);
-    println!("║  Overhead ratio: {:>7.2}x                           ║", overhead_ratio);
-    println!("║  Per-entity:     {:>7.0} bytes                      ║", per_entity_overhead);
+    println!(
+        "║  Raw data size:  {:>7.2} MB                         ║",
+        raw_total_mb
+    );
+    println!(
+        "║  RSS delta:      {:>7.2} MB                         ║",
+        rss_delta_mb
+    );
+    println!(
+        "║  Overhead ratio: {:>7.2}x                           ║",
+        overhead_ratio
+    );
+    println!(
+        "║  Per-entity:     {:>7.0} bytes                      ║",
+        per_entity_overhead
+    );
     println!("╠══════════════════════════════════════════════════════╣");
 
     let pass = rss_delta_mb < 15.0;

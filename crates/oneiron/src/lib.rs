@@ -20,8 +20,8 @@ pub mod store;
 pub mod sync;
 pub mod types;
 
-pub use crate::batch::{BatchBuilder, TxnBatchBuilder};
 use crate::batch::{deindex_entity, EntityMetadataHeader, ENTITY_METADATA_HEADER_LEN};
+pub use crate::batch::{BatchBuilder, TxnBatchBuilder};
 pub use crate::context_pack::ContextPackBuilder;
 pub use crate::error::{Error, Result};
 pub use crate::maintain::{MaintenanceBuilder, MaintenanceReport};
@@ -244,8 +244,7 @@ impl Vault {
             .entities
             .get(&rtxn, id.as_bytes())?
             .ok_or(Error::EntityNotFound)?;
-        let header =
-            EntityMetadataHeader::parse(raw).ok_or(Error::InvalidKey)?;
+        let header = EntityMetadataHeader::parse(raw).ok_or(Error::InvalidKey)?;
         Ok(header.learned_at)
     }
 
@@ -310,9 +309,7 @@ impl Vault {
     /// Deletes a key from the sync_state database.
     #[cfg(feature = "sync")]
     pub fn sync_state_delete(&self, key: &str) -> Result<bool> {
-        self.with_write_txn(|wtxn| {
-            Ok(self.store.sync_state.delete(wtxn, key)?)
-        })
+        self.with_write_txn(|wtxn| Ok(self.store.sync_state.delete(wtxn, key)?))
     }
 
     /// Lists all keys with the given prefix in sync_state.
