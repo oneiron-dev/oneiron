@@ -20,16 +20,20 @@
 
 pub mod bridge;
 pub mod client;
+pub mod connection;
 pub mod engine;
 pub mod loro_engine;
+pub mod queue;
 pub mod schema;
 pub mod transport;
 pub mod types;
 pub mod window;
 
 pub use client::{SyncClient, SyncClientConfig, SyncEvent, SyncStatus};
+pub use connection::{ConnectionConfig, LocalUpdate, SyncConnection};
 pub use engine::{CrdtDoc, CrdtMap, MapChange, Subscription};
 pub use loro_engine::{LoroDocument, LoroMapHandle};
+pub use queue::{QueuedEmbedJob, QueuedUpdate, SyncQueue};
 pub use transport::{
     decode_bulk_transfer, decode_bulk_transfer_done, decode_window_sync, encode_bulk_transfer,
     encode_bulk_transfer_done, encode_window_sync, TransportError, TAG_BULK_TRANSFER,
