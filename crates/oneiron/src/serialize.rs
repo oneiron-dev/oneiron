@@ -241,7 +241,7 @@ fn prepare_entities(
 
 fn format_short_id(entity: &ContextEntity) -> String {
     let short_id = if entity.short_id.is_empty() {
-        entity.id.lower_hex()
+        entity.id.to_hex()
     } else {
         entity.short_id.clone()
     };
