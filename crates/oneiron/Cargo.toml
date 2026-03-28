@@ -28,6 +28,7 @@ sync = ["loro", "dep:tokio", "dep:tokio-tungstenite", "dep:futures-util", "dep:z
 tempfile = "3"
 rand = "0.8"
 yrs = { version = "0.25", features = ["sync"] }
+libc = "0.2"
 
 [[test]]
 name = "sync_bridge"
