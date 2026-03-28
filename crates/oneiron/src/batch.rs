@@ -50,7 +50,7 @@ pub struct BatchBuilder<'a> {
     ops: Vec<BatchOp>,
 }
 
-enum BatchOp {
+pub(crate) enum BatchOp {
     Put {
         id: EntityId,
         entity_type: u8,
@@ -67,6 +67,14 @@ enum BatchOp {
         kind: EdgeKind,
         tgt: EntityId,
         weight: f32,
+        vad: Vad,
+    },
+    EdgeWithCreatedAt {
+        src: EntityId,
+        kind: EdgeKind,
+        tgt: EntityId,
+        weight: f32,
+        created_at: u64,
         vad: Vad,
     },
     Text {
@@ -154,6 +162,50 @@ impl<'a> BatchBuilder<'a> {
         self
     }
 
+    /// Adds a graph edge with an explicit `created_at` timestamp.
+    ///
+    /// Used by the sync bridge to preserve CRDT edge timestamps exactly,
+    /// bypassing the default `unix_seconds_now()`.
+    pub fn edge_with_created_at(
+        mut self,
+        src: &EntityId,
+        kind: EdgeKind,
+        tgt: &EntityId,
+        weight: f32,
+        created_at: u64,
+    ) -> Self {
+        self.ops.push(BatchOp::EdgeWithCreatedAt {
+            src: *src,
+            kind,
+            tgt: *tgt,
+            weight,
+            created_at,
+            vad: Vad::NEUTRAL,
+        });
+        self
+    }
+
+    /// Adds a graph edge with explicit `created_at` and VAD scores.
+    pub fn edge_with_created_at_and_vad(
+        mut self,
+        src: &EntityId,
+        kind: EdgeKind,
+        tgt: &EntityId,
+        weight: f32,
+        created_at: u64,
+        vad: Vad,
+    ) -> Self {
+        self.ops.push(BatchOp::EdgeWithCreatedAt {
+            src: *src,
+            kind,
+            tgt: *tgt,
+            weight,
+            created_at,
+            vad,
+        });
+        self
+    }
+
     /// Adds a text indexing operation to the batch.
     pub fn text(mut self, id: &EntityId, fields: &[(&str, &str)]) -> Self {
         self.ops.push(BatchOp::Text {
@@ -194,71 +246,177 @@ impl<'a> BatchBuilder<'a> {
     /// Commits all queued operations atomically in a single LMDB write transaction.
     pub fn commit(self) -> Result<()> {
         let mut wtxn = self.vault.store.env.write_txn()?;
-        for op in self.ops {
-            match op {
-                BatchOp::Put {
-                    id,
-                    entity_type,
-                    occurred,
-                    learned_at,
-                    data,
-                } => {
-                    apply_put(
-                        &self.vault.store,
-                        &mut wtxn,
-                        id,
-                        entity_type,
-                        occurred,
-                        learned_at,
-                        &data,
-                    )?;
-                }
-                BatchOp::Vector { id, vector } => {
-                    apply_vector(
-                        &self.vault.store,
-                        &self.vault.config,
-                        &mut wtxn,
-                        id,
-                        &vector,
-                    )?;
-                    crate::hnsw::hnsw_insert(
-                        &self.vault.store,
-                        &self.vault.config,
-                        &mut wtxn,
-                        &id,
-                        &vector,
-                    )?;
-                }
-                BatchOp::Edge {
-                    src,
-                    kind,
-                    tgt,
-                    weight,
-                    vad,
-                } => {
-                    apply_edge(&self.vault.store, &mut wtxn, src, kind, tgt, weight, vad)?;
-                    ppr::invalidate_ppr_for_edge(&self.vault.store, &mut wtxn, &src, &tgt)?;
-                }
-                BatchOp::Text { id, fields } => {
-                    crate::bm25::index_text(&self.vault.store, &mut wtxn, &id, &fields)?;
-                }
-                BatchOp::Phonetic { id, codes } => {
-                    apply_phonetic(&self.vault.store, &mut wtxn, id, &codes)?;
-                }
-                BatchOp::Delete { id } => {
-                    let (_, neighbors) = deindex_entity(&self.vault.store, &mut wtxn, &id)?;
-                    ppr::invalidate_ppr_for_delete(&self.vault.store, &mut wtxn, &id, &neighbors)?;
-                }
-                BatchOp::DeleteEdge { src, kind, tgt } => {
-                    apply_delete_edge(&self.vault.store, &mut wtxn, src, kind, tgt)?;
-                    ppr::invalidate_ppr_for_edge(&self.vault.store, &mut wtxn, &src, &tgt)?;
-                }
-            }
-        }
-
+        apply_ops(&self.vault.store, &self.vault.config, &mut wtxn, self.ops)?;
         wtxn.commit()?;
         Ok(())
     }
+}
+
+/// Builder for batch writes into an externally-owned LMDB write transaction.
+///
+/// Created by [`Vault::batch_in`]. Writes are applied via [`apply()`](TxnBatchBuilder::apply)
+/// without committing — the caller controls transaction commit via `with_write_txn`.
+pub struct TxnBatchBuilder<'a> {
+    vault: &'a Vault,
+    ops: Vec<BatchOp>,
+}
+
+impl<'a> TxnBatchBuilder<'a> {
+    pub(crate) fn new(vault: &'a Vault) -> Self {
+        Self {
+            vault,
+            ops: Vec::new(),
+        }
+    }
+
+    /// Adds an entity put operation.
+    pub fn put(
+        mut self,
+        id: &EntityId,
+        entity_type: u8,
+        occurred: TimeRange,
+        learned_at: u64,
+        data: &[u8],
+    ) -> Self {
+        self.ops.push(BatchOp::Put {
+            id: *id,
+            entity_type,
+            occurred,
+            learned_at,
+            data: data.to_vec(),
+        });
+        self
+    }
+
+    /// Adds a graph edge write operation.
+    pub fn edge(mut self, src: &EntityId, kind: EdgeKind, tgt: &EntityId, weight: f32) -> Self {
+        self.ops.push(BatchOp::Edge {
+            src: *src,
+            kind,
+            tgt: *tgt,
+            weight,
+            vad: Vad::NEUTRAL,
+        });
+        self
+    }
+
+    /// Adds a graph edge with explicit `created_at` timestamp.
+    pub fn edge_with_created_at(
+        mut self,
+        src: &EntityId,
+        kind: EdgeKind,
+        tgt: &EntityId,
+        weight: f32,
+        created_at: u64,
+    ) -> Self {
+        self.ops.push(BatchOp::EdgeWithCreatedAt {
+            src: *src,
+            kind,
+            tgt: *tgt,
+            weight,
+            created_at,
+            vad: Vad::NEUTRAL,
+        });
+        self
+    }
+
+    /// Adds a graph edge with explicit `created_at` and VAD scores.
+    pub fn edge_with_created_at_and_vad(
+        mut self,
+        src: &EntityId,
+        kind: EdgeKind,
+        tgt: &EntityId,
+        weight: f32,
+        created_at: u64,
+        vad: Vad,
+    ) -> Self {
+        self.ops.push(BatchOp::EdgeWithCreatedAt {
+            src: *src,
+            kind,
+            tgt: *tgt,
+            weight,
+            created_at,
+            vad,
+        });
+        self
+    }
+
+    /// Adds an edge delete operation to the batch.
+    pub fn delete_edge(mut self, src: &EntityId, kind: EdgeKind, tgt: &EntityId) -> Self {
+        self.ops.push(BatchOp::DeleteEdge {
+            src: *src,
+            kind,
+            tgt: *tgt,
+        });
+        self
+    }
+
+    /// Applies all queued operations to the given write transaction without committing.
+    pub fn apply(self, wtxn: &mut RwTxn<'_>) -> Result<()> {
+        apply_ops(&self.vault.store, &self.vault.config, wtxn, self.ops)
+    }
+}
+
+/// Applies a list of batch operations to an LMDB write transaction.
+pub(crate) fn apply_ops(
+    store: &Store,
+    config: &crate::types::VaultConfig,
+    wtxn: &mut RwTxn<'_>,
+    ops: Vec<BatchOp>,
+) -> Result<()> {
+    for op in ops {
+        match op {
+            BatchOp::Put {
+                id,
+                entity_type,
+                occurred,
+                learned_at,
+                data,
+            } => {
+                apply_put(store, wtxn, id, entity_type, occurred, learned_at, &data)?;
+            }
+            BatchOp::Vector { id, vector } => {
+                apply_vector(store, config, wtxn, id, &vector)?;
+                crate::hnsw::hnsw_insert(store, config, wtxn, &id, &vector)?;
+            }
+            BatchOp::Edge {
+                src,
+                kind,
+                tgt,
+                weight,
+                vad,
+            } => {
+                apply_edge(store, wtxn, src, kind, tgt, weight, vad)?;
+                ppr::invalidate_ppr_for_edge(store, wtxn, &src, &tgt)?;
+            }
+            BatchOp::EdgeWithCreatedAt {
+                src,
+                kind,
+                tgt,
+                weight,
+                created_at,
+                vad,
+            } => {
+                apply_edge_with_created_at(store, wtxn, src, kind, tgt, weight, created_at, vad)?;
+                ppr::invalidate_ppr_for_edge(store, wtxn, &src, &tgt)?;
+            }
+            BatchOp::Text { id, fields } => {
+                crate::bm25::index_text(store, wtxn, &id, &fields)?;
+            }
+            BatchOp::Phonetic { id, codes } => {
+                apply_phonetic(store, wtxn, id, &codes)?;
+            }
+            BatchOp::Delete { id } => {
+                let (_, neighbors) = deindex_entity(store, wtxn, &id)?;
+                ppr::invalidate_ppr_for_delete(store, wtxn, &id, &neighbors)?;
+            }
+            BatchOp::DeleteEdge { src, kind, tgt } => {
+                apply_delete_edge(store, wtxn, src, kind, tgt)?;
+                ppr::invalidate_ppr_for_edge(store, wtxn, &src, &tgt)?;
+            }
+        }
+    }
+    Ok(())
 }
 
 pub(crate) fn deindex_entity(
@@ -425,6 +583,29 @@ fn apply_edge(
     weight: f32,
     vad: Vad,
 ) -> Result<()> {
+    apply_edge_with_created_at(
+        store,
+        wtxn,
+        src,
+        kind,
+        tgt,
+        weight,
+        crate::unix_seconds_now(),
+        vad,
+    )
+}
+
+#[allow(clippy::too_many_arguments)] // Decomposing would obscure the direct LMDB write logic
+fn apply_edge_with_created_at(
+    store: &Store,
+    wtxn: &mut RwTxn<'_>,
+    src: EntityId,
+    kind: EdgeKind,
+    tgt: EntityId,
+    weight: f32,
+    created_at: u64,
+    vad: Vad,
+) -> Result<()> {
     if !weight.is_finite() {
         return Err(Error::InvalidEdgeWeight);
     }
@@ -434,7 +615,7 @@ fn apply_edge(
 
     let key_out = Store::encode_edge_key(&src, kind, &tgt);
     let key_in = Store::encode_edge_key(&tgt, kind, &src);
-    let value = encode_edge_value(weight, crate::unix_seconds_now(), vad);
+    let value = encode_edge_value(weight, created_at, vad);
     store.edges_out.put(wtxn, &key_out, &value)?;
     store.edges_in.put(wtxn, &key_in, &value)?;
     Ok(())

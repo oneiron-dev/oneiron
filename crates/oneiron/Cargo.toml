@@ -14,7 +14,28 @@ xxhash-rust = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 toon-format = { workspace = true }
+loro = { version = "1.10", optional = true }
+tokio = { version = "1", features = ["net", "sync", "time", "rt"], optional = true }
+tokio-tungstenite = { version = "0.26", optional = true }
+futures-util = { version = "0.3", optional = true }
+zstd = { version = "0.13", optional = true }
+tracing = { version = "0.1", optional = true }
+
+[features]
+sync = ["loro", "dep:tokio", "dep:tokio-tungstenite", "dep:futures-util", "dep:zstd", "dep:tracing"]
 
 [dev-dependencies]
 tempfile = "3"
 rand = "0.8"
+yrs = { version = "0.25", features = ["sync"] }
+libc = "0.2"
+
+[[test]]
+name = "sync_bridge"
+path = "tests/sync_bridge.rs"
+required-features = ["sync"]
+
+[[bench]]
+name = "sync_memory"
+harness = false
+required-features = ["sync"]

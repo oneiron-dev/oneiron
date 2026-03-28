@@ -26,7 +26,8 @@ impl EntityId {
         &self.0
     }
 
-    pub(crate) fn lower_hex(&self) -> String {
+    /// Returns the lowercase hex-encoded string (32 chars).
+    pub fn to_hex(&self) -> String {
         const HEX: &[u8; 16] = b"0123456789abcdef";
         let mut out = String::with_capacity(self.0.len() * 2);
         for byte in self.0 {
@@ -34,6 +35,30 @@ impl EntityId {
             out.push(HEX[(byte & 0x0f) as usize] as char);
         }
         out
+    }
+
+    /// Parses a 32-char hex string (case-insensitive) into an EntityId.
+    pub fn from_hex(s: &str) -> crate::error::Result<Self> {
+        if s.len() != 32 {
+            return Err(crate::error::Error::InvalidKey);
+        }
+        let mut bytes = [0u8; 16];
+        for (i, chunk) in s.as_bytes().chunks_exact(2).enumerate() {
+            let hi = hex_nibble(chunk[0]).ok_or(crate::error::Error::InvalidKey)?;
+            let lo = hex_nibble(chunk[1]).ok_or(crate::error::Error::InvalidKey)?;
+            bytes[i] = (hi << 4) | lo;
+        }
+        Ok(Self(bytes))
+    }
+}
+
+/// Converts an ASCII hex character to its nibble value.
+fn hex_nibble(b: u8) -> Option<u8> {
+    match b {
+        b'0'..=b'9' => Some(b - b'0'),
+        b'a'..=b'f' => Some(b - b'a' + 10),
+        b'A'..=b'F' => Some(b - b'A' + 10),
+        _ => None,
     }
 }
 

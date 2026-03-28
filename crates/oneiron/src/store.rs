@@ -1,6 +1,8 @@
 use std::path::Path;
 
 use heed::types::Bytes;
+#[cfg(feature = "sync")]
+use heed::types::Str;
 use heed::{Database, Env, EnvOpenOptions, RwTxn};
 
 use crate::error::{Error, Result};
@@ -32,6 +34,13 @@ pub struct Store {
     pub(crate) phonetic_index: Database<Bytes, Bytes>,
     pub(crate) short_ids: Database<Bytes, Bytes>,
     pub(crate) short_ids_reverse: Database<Bytes, Bytes>,
+    /// CRDT Doc states, state vectors, pending updates, metadata (sync feature only).
+    #[cfg(feature = "sync")]
+    pub(crate) sync_state: Database<Str, Bytes>,
+    /// Offline update queue and embed job queue (sync feature only).
+    #[cfg(feature = "sync")]
+    #[allow(dead_code)] // Used in Phase 1D
+    pub(crate) sync_queue: Database<Bytes, Bytes>,
 }
 
 impl Store {
@@ -67,6 +76,11 @@ impl Store {
         let phonetic_index = create_db(&env, &mut wtxn, "phonetic_index")?;
         let short_ids = create_db(&env, &mut wtxn, "short_ids")?;
         let short_ids_reverse = create_db(&env, &mut wtxn, "short_ids_reverse")?;
+        #[cfg(feature = "sync")]
+        let sync_state: Database<Str, Bytes> =
+            env.create_database(&mut wtxn, Some("sync_state"))?;
+        #[cfg(feature = "sync")]
+        let sync_queue = create_db(&env, &mut wtxn, "sync_queue")?;
         wtxn.commit()?;
 
         if let Some(requested) = config.embedding_model.as_deref() {
@@ -109,6 +123,10 @@ impl Store {
             phonetic_index,
             short_ids,
             short_ids_reverse,
+            #[cfg(feature = "sync")]
+            sync_state,
+            #[cfg(feature = "sync")]
+            sync_queue,
         })
     }
 
