@@ -555,6 +555,7 @@ fn apply_edge(
     apply_edge_with_created_at(store, wtxn, src, kind, tgt, weight, crate::unix_seconds_now(), vad)
 }
 
+#[allow(clippy::too_many_arguments)] // Decomposing would obscure the direct LMDB write logic
 fn apply_edge_with_created_at(
     store: &Store,
     wtxn: &mut RwTxn<'_>,

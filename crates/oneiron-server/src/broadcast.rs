@@ -73,6 +73,7 @@ impl BroadcastSubscriber {
     }
 
     /// Returns the connection ID for this subscriber.
+    #[allow(dead_code)] // Used when WebSocket connected
     pub fn conn_id(&self) -> u32 {
         self.conn_id
     }

@@ -2,6 +2,7 @@ use clap::Parser;
 
 /// Oneiron sync server configuration.
 #[derive(Debug, Clone)]
+#[allow(dead_code)] // Config fields consumed by WebSocket handler in Phase 1D
 pub struct SyncServerConfig {
     /// Number of default windows to load (current + previous months).
     pub default_window_count: u8,

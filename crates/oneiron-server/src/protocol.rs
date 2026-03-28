@@ -173,6 +173,7 @@ pub enum ProtocolError {
 }
 
 /// WebSocket close codes per ARCH-023 section 3.5.
+#[allow(dead_code)] // Used when WebSocket handler sends close frames
 pub mod close_codes {
     /// JWT expired mid-session or device lease expired.
     pub const AUTH_EXPIRED: u16 = 4001;

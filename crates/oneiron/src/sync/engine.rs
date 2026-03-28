@@ -8,6 +8,10 @@ use std::sync::Arc;
 
 use crate::error::Result;
 
+/// Callback type for subscribing to locally-generated CRDT updates.
+/// Return `false` from the callback to auto-unsubscribe.
+pub type LocalUpdateCallback = Box<dyn Fn(&[u8]) -> bool + Send + Sync>;
+
 // ─── Map Change Events ──────────────────────────────────────────────────────
 
 /// A single key-level change inside a CRDT map.
@@ -131,6 +135,6 @@ pub trait CrdtDoc: Send + Sync + 'static {
     /// callback to auto-unsubscribe.
     fn subscribe_local_updates(
         &self,
-        cb: Box<dyn Fn(&[u8]) -> bool + Send + Sync>,
+        cb: LocalUpdateCallback,
     ) -> Subscription;
 }
