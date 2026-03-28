@@ -3,8 +3,10 @@
 //! **Observer A** (`subscribe_local_updates`): Fires for ALL local commits.
 //! Persists update bytes to sync_state and broadcasts.
 //!
-//! **Observer B** (map `subscribe_changes` × 3): Fires for all commits.
-//! Materializes key-level changes to LMDB, skipping bridge-origin writes.
+//! **Observer B** (`doc.subscribe(container_id)` × 3): Fires for all commits.
+//! Subscribes to each of the three map containers (entities, edges, tombstones)
+//! via the doc's container event system. Materializes key-level changes to LMDB,
+//! skipping bridge-origin writes.
 //!
 //! Origin tracking: bridge writes use `commit_with_origin(BRIDGE_ORIGIN)`.
 //! Observer B callbacks check the event origin and skip bridge-tagged events
@@ -106,9 +108,10 @@ pub fn register_observer_a(
         });
 
         if let Err(e) = result {
-            eprintln!(
-                "[sync][observer-a] CRITICAL: failed to persist update for window {}: {}",
-                window_key, e
+            tracing::error!(
+                window = %window_key,
+                error = %e,
+                "observer-a: CRITICAL — failed to persist update, CRDT committed but LMDB may diverge"
             );
         }
 
@@ -185,110 +188,140 @@ fn subscribe_map_observer(
 }
 
 /// Materialize entity changes from a Loro MapDelta to LMDB.
+///
+/// Accumulates all entity ops from the delta into a single LMDB write
+/// transaction instead of committing per-entity.
 fn materialize_entities_from_delta(
     delta: &loro::event::MapDelta<'_>,
     vault: &Vault,
 ) {
-    for (key, new_val) in &delta.updated {
-        match new_val {
-            Some(loro::ValueOrContainer::Value(loro::LoroValue::Binary(blob))) => {
-                let Some(header) = EntityMetadataHeader::parse(blob) else {
-                    eprintln!(
-                        "[sync][observer-b] entity {}: invalid header ({} bytes)",
-                        key,
-                        blob.len()
-                    );
-                    continue;
-                };
-
-                let id = match EntityId::from_hex(key.as_ref()) {
-                    Ok(id) => id,
-                    Err(_) => {
-                        eprintln!("[sync][observer-b] entity {}: invalid hex id", key);
+    let result = vault.with_write_txn(|wtxn| {
+        for (key, new_val) in &delta.updated {
+            match new_val {
+                Some(loro::ValueOrContainer::Value(loro::LoroValue::Binary(blob))) => {
+                    let Some(header) = EntityMetadataHeader::parse(blob) else {
+                        tracing::warn!(
+                            entity = %key,
+                            blob_len = blob.len(),
+                            "observer-b: entity invalid header"
+                        );
                         continue;
+                    };
+
+                    let id = match EntityId::from_hex(key.as_ref()) {
+                        Ok(id) => id,
+                        Err(_) => {
+                            tracing::warn!(entity = %key, "observer-b: entity invalid hex id");
+                            continue;
+                        }
+                    };
+
+                    let data = if blob.len() > 25 { &blob[25..] } else { &[] };
+
+                    if let Err(e) = vault
+                        .batch_in()
+                        .put(
+                            &id,
+                            header.entity_type,
+                            crate::types::TimeRange {
+                                start: header.occurred_start,
+                                end: header.occurred_end,
+                            },
+                            header.learned_at,
+                            data,
+                        )
+                        .apply(wtxn)
+                    {
+                        tracing::warn!(
+                            entity = %key,
+                            error = %e,
+                            "observer-b: entity materialization failed"
+                        );
                     }
-                };
-
-                let data = if blob.len() > 25 { &blob[25..] } else { &[] };
-
-                let result = vault
-                    .batch()
-                    .put(
-                        &id,
-                        header.entity_type,
-                        crate::types::TimeRange {
-                            start: header.occurred_start,
-                            end: header.occurred_end,
-                        },
-                        header.learned_at,
-                        data,
-                    )
-                    .commit();
-
-                if let Err(e) = result {
-                    eprintln!(
-                        "[sync][observer-b] entity {}: materialization failed: {}",
-                        key, e
-                    );
+                }
+                None => {
+                    // Deleted — no action for entities (use tombstones instead)
+                }
+                _ => {
+                    tracing::warn!(entity = %key, "observer-b: entity unexpected value type");
                 }
             }
-            None => {
-                // Deleted — no action for entities (use tombstones instead)
-            }
-            _ => {
-                eprintln!("[sync][observer-b] entity {}: unexpected value type", key);
-            }
         }
+        Ok(())
+    });
+
+    if let Err(e) = result {
+        tracing::error!(error = %e, "observer-b: entity batch commit failed");
     }
 }
 
 /// Materialize edge changes from a Loro MapDelta to LMDB.
+///
+/// Accumulates all edge ops from the delta into a single LMDB write
+/// transaction instead of committing per-edge.
 fn materialize_edges_from_delta(
     delta: &loro::event::MapDelta<'_>,
     vault: &Vault,
 ) {
-    for (key, new_val) in &delta.updated {
-        match new_val {
-            Some(loro::ValueOrContainer::Value(loro::LoroValue::Binary(buf))) => {
-                let Some((src, kind, tgt)) = parse_edge_key(key.as_ref()) else {
-                    eprintln!("[sync][observer-b] edge {}: invalid key format", key);
-                    continue;
-                };
+    let result = vault.with_write_txn(|wtxn| {
+        for (key, new_val) in &delta.updated {
+            match new_val {
+                Some(loro::ValueOrContainer::Value(loro::LoroValue::Binary(buf))) => {
+                    let Some((src, kind, tgt)) = parse_edge_key(key.as_ref()) else {
+                        tracing::warn!(edge = %key, "observer-b: edge invalid key format");
+                        continue;
+                    };
 
-                match (vault.entity_exists(&src), vault.entity_exists(&tgt)) {
-                    (Ok(true), Ok(true)) => {}
-                    _ => continue,
+                    match (vault.entity_exists(&src), vault.entity_exists(&tgt)) {
+                        (Ok(true), Ok(true)) => {}
+                        _ => continue,
+                    }
+
+                    let (weight, created_at, vad) = match parse_edge_value(buf) {
+                        Some(v) => v,
+                        None => {
+                            tracing::warn!(edge = %key, "observer-b: edge malformed value");
+                            continue;
+                        }
+                    };
+
+                    if let Err(e) = vault
+                        .batch_in()
+                        .edge_with_created_at_and_vad(&src, kind, &tgt, weight, created_at, vad)
+                        .apply(wtxn)
+                    {
+                        tracing::warn!(
+                            edge = %key,
+                            error = %e,
+                            "observer-b: edge materialization failed"
+                        );
+                    }
                 }
-
-                let (weight, created_at, vad) = parse_edge_value(buf);
-
-                let result = vault
-                    .batch()
-                    .edge_with_created_at_and_vad(&src, kind, &tgt, weight, created_at, vad)
-                    .commit();
-
-                if let Err(e) = result {
-                    eprintln!(
-                        "[sync][observer-b] edge {}: materialization failed: {}",
-                        key, e
-                    );
+                None => {
+                    // Deleted
+                    let Some((src, kind, tgt)) = parse_edge_key(key.as_ref()) else {
+                        continue;
+                    };
+                    if let Err(e) = vault.batch_in().delete_edge(&src, kind, &tgt).apply(wtxn) {
+                        tracing::warn!(edge = %key, error = %e, "observer-b: edge remove failed");
+                    }
                 }
+                _ => {}
             }
-            None => {
-                // Deleted
-                let Some((src, kind, tgt)) = parse_edge_key(key.as_ref()) else {
-                    continue;
-                };
-                if let Err(e) = vault.batch().delete_edge(&src, kind, &tgt).commit() {
-                    eprintln!("[sync][observer-b] edge remove {}: failed: {}", key, e);
-                }
-            }
-            _ => {}
         }
+        Ok(())
+    });
+
+    if let Err(e) = result {
+        tracing::error!(error = %e, "observer-b: edge batch commit failed");
     }
 }
 
 /// Materialize tombstone changes — delete entities from LMDB.
+///
+/// Each tombstone triggers a delete_entity which involves multiple LMDB
+/// writes (entity + edges + indexes). These are already internally
+/// transactional via delete_entity, so we just replace the logging.
 fn materialize_tombstones_from_delta(
     delta: &loro::event::MapDelta<'_>,
     vault: &Vault,
@@ -300,15 +333,16 @@ fn materialize_tombstones_from_delta(
                 let id = match EntityId::from_hex(key.as_ref()) {
                     Ok(id) => id,
                     Err(_) => {
-                        eprintln!("[sync][observer-b] tombstone {}: invalid hex id", key);
+                        tracing::warn!(tombstone = %key, "observer-b: tombstone invalid hex id");
                         continue;
                     }
                 };
 
                 if let Err(e) = vault.delete_entity(&id) {
-                    eprintln!(
-                        "[sync][observer-b] tombstone {}: delete failed: {}",
-                        key, e
+                    tracing::warn!(
+                        tombstone = %key,
+                        error = %e,
+                        "observer-b: tombstone delete failed"
                     );
                 }
             }
@@ -320,45 +354,42 @@ fn materialize_tombstones_from_delta(
 }
 
 /// Parses an edge key: `{src_hex}:{kind_u8:02}:{tgt_hex}` → (src, kind, tgt).
+///
+/// Uses `:` delimiter splitting instead of byte-index slicing for panic safety.
 pub fn parse_edge_key(key: &str) -> Option<(EntityId, EdgeKind, EntityId)> {
-    if key.len() != 68 {
+    let mut parts = key.splitn(3, ':');
+    let src_hex = parts.next()?;
+    let kind_str = parts.next()?;
+    let tgt_hex = parts.next()?;
+
+    // Validate expected segment lengths (32-char hex IDs, 2-char kind)
+    if src_hex.len() != 32 || kind_str.len() != 2 || tgt_hex.len() != 32 {
         return None;
     }
-    let src = EntityId::from_hex(&key[..32]).ok()?;
-    if key.as_bytes()[32] != b':' {
-        return None;
-    }
-    let kind_u8: u8 = key[33..35].parse().ok()?;
+
+    let src = EntityId::from_hex(src_hex).ok()?;
+    let kind_u8: u8 = kind_str.parse().ok()?;
     let kind = EdgeKind::try_from_u8(kind_u8)?;
-    if key.as_bytes()[35] != b':' {
-        return None;
-    }
-    let tgt = EntityId::from_hex(&key[36..68]).ok()?;
+    let tgt = EntityId::from_hex(tgt_hex).ok()?;
     Some((src, kind, tgt))
 }
 
 /// Parses a 24-byte edge value.
-pub fn parse_edge_value(buf: &[u8]) -> (f32, u64, Vad) {
-    let weight = if buf.len() >= 4 {
-        f32::from_le_bytes(buf[..4].try_into().unwrap())
-    } else {
-        0.0
+///
+/// Returns `None` if the buffer is too short (< 24 bytes) instead of
+/// fabricating default values from truncated data.
+pub fn parse_edge_value(buf: &[u8]) -> Option<(f32, u64, Vad)> {
+    if buf.len() < 24 {
+        return None;
+    }
+    let weight = f32::from_le_bytes(buf[..4].try_into().unwrap());
+    let created_at = u64::from_le_bytes(buf[4..12].try_into().unwrap());
+    let vad = Vad {
+        valence: f32::from_le_bytes(buf[12..16].try_into().unwrap()),
+        arousal: f32::from_le_bytes(buf[16..20].try_into().unwrap()),
+        dominance: f32::from_le_bytes(buf[20..24].try_into().unwrap()),
     };
-    let created_at = if buf.len() >= 12 {
-        u64::from_le_bytes(buf[4..12].try_into().unwrap())
-    } else {
-        0
-    };
-    let vad = if buf.len() >= 24 {
-        Vad {
-            valence: f32::from_le_bytes(buf[12..16].try_into().unwrap()),
-            arousal: f32::from_le_bytes(buf[16..20].try_into().unwrap()),
-            dominance: f32::from_le_bytes(buf[20..24].try_into().unwrap()),
-        }
-    } else {
-        Vad::NEUTRAL
-    };
-    (weight, created_at, vad)
+    Some((weight, created_at, vad))
 }
 
 /// Encodes an edge value as 24 bytes for CRDT map storage.
@@ -405,7 +436,7 @@ mod tests {
             dominance: 0.7,
         };
         let buf = encode_edge_value_for_crdt(0.8, 12345, vad);
-        let (w, c, v) = parse_edge_value(&buf);
+        let (w, c, v) = parse_edge_value(&buf).unwrap();
         assert!((w - 0.8).abs() < f32::EPSILON);
         assert_eq!(c, 12345);
         assert!((v.valence - 0.5).abs() < f32::EPSILON);

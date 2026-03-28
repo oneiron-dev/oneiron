@@ -85,7 +85,7 @@ pub enum BroadcastError {
     /// Receiver fell behind; n messages were skipped.
     /// Connection should trigger per-window SyncStep resync.
     Lagged(u64),
-    /// Too many lag events (>= 3 within 60s) — disconnect and force full reconnection.
+    /// Too many lag events (>= 3 consecutive) — disconnect and force full reconnection.
     TooManyLags,
 }
 

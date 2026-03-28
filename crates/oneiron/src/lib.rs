@@ -320,12 +320,10 @@ impl Vault {
     pub fn sync_state_keys_with_prefix(&self, prefix: &str) -> Result<Vec<String>> {
         let rtxn = self.store.env.read_txn()?;
         let mut keys = Vec::new();
-        let iter = self.store.sync_state.iter(&rtxn)?;
+        let iter = self.store.sync_state.prefix_iter(&rtxn, prefix)?;
         for entry in iter {
             let (k, _) = entry?;
-            if k.starts_with(prefix) {
-                keys.push(k.to_string());
-            }
+            keys.push(k.to_string());
         }
         Ok(keys)
     }

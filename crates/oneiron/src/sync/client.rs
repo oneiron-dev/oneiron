@@ -249,10 +249,28 @@ impl SyncClient {
         window_key: &str,
         compressed: &[u8],
     ) -> Result<(), TransportError> {
-        let _decompressed = zstd::decode_all(compressed)
-            .map_err(|_| TransportError::InvalidPayload("zstd decompress failed"))?;
+        // Streaming decompression with size limit to prevent decompression bombs.
+        const MAX_BULK_DECOMPRESSED: usize = 8 * 1024 * 1024; // 8 MB
+        let mut decoder = zstd::Decoder::new(compressed)
+            .map_err(|_| TransportError::InvalidPayload("zstd decoder init failed"))?;
+        let mut buf = Vec::with_capacity(std::cmp::min(compressed.len() * 2, MAX_BULK_DECOMPRESSED));
+        let mut chunk = [0u8; 8192];
+        loop {
+            let n = std::io::Read::read(&mut decoder, &mut chunk)
+                .map_err(|_| TransportError::InvalidPayload("zstd decompress failed"))?;
+            if n == 0 {
+                break;
+            }
+            if buf.len() + n > MAX_BULK_DECOMPRESSED {
+                return Err(TransportError::FrameTooLarge {
+                    size: buf.len() + n,
+                    max: MAX_BULK_DECOMPRESSED,
+                });
+            }
+            buf.extend_from_slice(&chunk[..n]);
+        }
         // TODO: deserialize MessagePack and apply to LMDB vault
-        let _ = window_key;
+        let _ = (window_key, buf);
         Ok(())
     }
 
@@ -295,9 +313,7 @@ impl SyncClient {
         let current_key = WindowKey::from_timestamp(now_secs);
         self.ensure_window(current_key.as_str());
 
-        let prev_ts = now_secs.saturating_sub(32 * 86_400);
-        let prev_key = WindowKey::from_timestamp(prev_ts);
-        if prev_key.as_str() != current_key.as_str() {
+        if let Some(prev_key) = current_key.previous_month() {
             self.ensure_window(prev_key.as_str());
         }
 

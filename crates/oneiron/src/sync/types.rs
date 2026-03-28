@@ -86,12 +86,14 @@ impl WindowKey {
     }
 
     /// Returns the start timestamp (first second of the month) as Unix seconds.
+    /// Returns `None` for pre-1970 dates (negative Unix timestamps).
     pub fn start_timestamp(&self) -> Option<u64> {
         let (year, month) = self.parse_year_month()?;
-        Some(date_to_unix(year, month, 1))
+        date_to_unix(year, month, 1)
     }
 
     /// Returns the end timestamp (first second of the next month) as Unix seconds.
+    /// Returns `None` for pre-1970 dates (negative Unix timestamps).
     pub fn end_timestamp(&self) -> Option<u64> {
         let (year, month) = self.parse_year_month()?;
         let (next_year, next_month) = if month == 12 {
@@ -99,7 +101,18 @@ impl WindowKey {
         } else {
             (year, month + 1)
         };
-        Some(date_to_unix(next_year, next_month, 1))
+        date_to_unix(next_year, next_month, 1)
+    }
+
+    /// Returns the previous month's `WindowKey`.
+    pub fn previous_month(&self) -> Option<WindowKey> {
+        let (year, month) = self.parse_year_month()?;
+        let (prev_year, prev_month) = if month == 1 {
+            (year - 1, 12)
+        } else {
+            (year, month - 1)
+        };
+        Some(WindowKey(format!("{prev_year:04}-{prev_month:02}")))
     }
 
     fn parse_year_month(&self) -> Option<(i32, u32)> {
@@ -137,7 +150,9 @@ fn is_leap_year(year: i32) -> bool {
 }
 
 /// Convert year/month/day to Unix timestamp (seconds).
-fn date_to_unix(year: i32, month: u32, day: u32) -> u64 {
+///
+/// Returns `None` for pre-1970 dates where the result would be negative.
+fn date_to_unix(year: i32, month: u32, day: u32) -> Option<u64> {
     // Days from 1970-01-01 to the given date
     let mut days: i64 = 0;
 
@@ -172,7 +187,11 @@ fn date_to_unix(year: i32, month: u32, day: u32) -> u64 {
     // Days within the month
     days += (day as i64) - 1;
 
-    (days * 86_400) as u64
+    if days < 0 {
+        return None;
+    }
+
+    Some((days * 86_400) as u64)
 }
 
 #[cfg(test)]

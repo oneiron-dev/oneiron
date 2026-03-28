@@ -38,7 +38,11 @@ async fn health() -> impl IntoResponse {
 }
 
 /// Validates the auth secret from request headers.
+///
+/// Uses constant-time comparison to prevent timing side-channel attacks.
 fn check_auth(headers: &HeaderMap, config_secret: &Option<String>) -> Result<(), StatusCode> {
+    use subtle::ConstantTimeEq;
+
     let Some(expected) = config_secret.as_ref() else {
         // No secret configured — allow all (dev mode)
         return Ok(());
@@ -49,7 +53,11 @@ fn check_auth(headers: &HeaderMap, config_secret: &Option<String>) -> Result<(),
         .and_then(|v| v.to_str().ok());
 
     match provided {
-        Some(s) if s == expected => Ok(()),
+        Some(s) if s.len() == expected.len()
+            && s.as_bytes().ct_eq(expected.as_bytes()).into() =>
+        {
+            Ok(())
+        }
         _ => Err(StatusCode::UNAUTHORIZED),
     }
 }

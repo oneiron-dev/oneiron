@@ -320,6 +320,37 @@ impl<'a> TxnBatchBuilder<'a> {
         self
     }
 
+    /// Adds a graph edge with explicit `created_at` and VAD scores.
+    pub fn edge_with_created_at_and_vad(
+        mut self,
+        src: &EntityId,
+        kind: EdgeKind,
+        tgt: &EntityId,
+        weight: f32,
+        created_at: u64,
+        vad: Vad,
+    ) -> Self {
+        self.ops.push(BatchOp::EdgeWithCreatedAt {
+            src: *src,
+            kind,
+            tgt: *tgt,
+            weight,
+            created_at,
+            vad,
+        });
+        self
+    }
+
+    /// Adds an edge delete operation to the batch.
+    pub fn delete_edge(mut self, src: &EntityId, kind: EdgeKind, tgt: &EntityId) -> Self {
+        self.ops.push(BatchOp::DeleteEdge {
+            src: *src,
+            kind,
+            tgt: *tgt,
+        });
+        self
+    }
+
     /// Applies all queued operations to the given write transaction without committing.
     pub fn apply(self, wtxn: &mut RwTxn<'_>) -> Result<()> {
         apply_ops(&self.vault.store, &self.vault.config, wtxn, self.ops)

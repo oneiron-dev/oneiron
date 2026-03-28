@@ -120,7 +120,7 @@ pub trait CrdtDoc: Send + Sync + 'static {
     // ── Persistence ─────────────────────────────────────────────────────
 
     /// Encode the full document state as bytes (equivalent to snapshot).
-    fn encode_full_state(&self) -> Vec<u8>;
+    fn encode_full_state(&self) -> Result<Vec<u8>>;
 
     /// Reconstruct a document from a snapshot previously produced by
     /// `encode_full_state` or `export_snapshot`.

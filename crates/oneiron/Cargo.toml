@@ -29,6 +29,11 @@ tempfile = "3"
 rand = "0.8"
 yrs = { version = "0.25", features = ["sync"] }
 
+[[test]]
+name = "sync_bridge"
+path = "tests/sync_bridge.rs"
+required-features = ["sync"]
+
 [[bench]]
 name = "sync_memory"
 harness = false
