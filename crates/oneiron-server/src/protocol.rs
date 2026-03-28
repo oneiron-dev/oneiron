@@ -43,7 +43,7 @@ impl Default for AwarenessState {
 ///
 /// Format: `[TAG_AWARENESS:1][json_bytes]`
 pub fn encode_awareness(state: &AwarenessState) -> Vec<u8> {
-    let json = serde_json::to_vec(state).unwrap_or_default();
+    let json = serde_json::to_vec(state).expect("AwarenessState serialization cannot fail");
     let mut buf = Vec::with_capacity(1 + json.len());
     buf.push(TAG_AWARENESS);
     buf.extend_from_slice(&json);
@@ -155,6 +155,7 @@ pub fn encode_root_update(update_bytes: &[u8]) -> Vec<u8> {
 
 /// Protocol-level errors specific to Oneiron's custom sync protocol.
 #[derive(Debug, thiserror::Error)]
+#[allow(dead_code)] // Variants used in match arms; some constructed only in future Phase 2+ paths
 pub enum ProtocolError {
     #[error("invalid payload: {0}")]
     InvalidPayload(&'static str),

@@ -253,7 +253,7 @@ impl SyncClient {
         const MAX_BULK_DECOMPRESSED: usize = 8 * 1024 * 1024; // 8 MB
         let mut decoder = zstd::Decoder::new(compressed)
             .map_err(|_| TransportError::InvalidPayload("zstd decoder init failed"))?;
-        let mut buf = Vec::with_capacity(std::cmp::min(compressed.len() * 2, MAX_BULK_DECOMPRESSED));
+        let mut buf = Vec::with_capacity(std::cmp::min(compressed.len().saturating_mul(2), MAX_BULK_DECOMPRESSED));
         let mut chunk = [0u8; 8192];
         loop {
             let n = std::io::Read::read(&mut decoder, &mut chunk)
