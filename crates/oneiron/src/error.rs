@@ -37,6 +37,18 @@ pub enum Error {
     /// Encountered malformed key or value bytes.
     #[error("invalid key or value bytes")]
     InvalidKey,
+    /// Malformed CRDT update bytes.
+    #[cfg(feature = "sync")]
+    #[error("crdt decode error: {0}")]
+    CrdtDecodeError(String),
+    /// No persisted state for the requested window.
+    #[cfg(feature = "sync")]
+    #[error("window not found: {0}")]
+    WindowNotFound(String),
+    /// Sync protocol violation.
+    #[cfg(feature = "sync")]
+    #[error("sync protocol error: {0}")]
+    SyncProtocolError(String),
 }
 
 impl From<heed::Error> for Error {

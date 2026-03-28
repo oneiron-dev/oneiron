@@ -1,0 +1,27 @@
+[package]
+name = "oneiron-server"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+oneiron = { path = "../oneiron", features = ["sync"] }
+loro = "1.10"
+axum = { version = "0.8", features = ["ws"] }
+tokio = { version = "1", features = ["full"] }
+tokio-tungstenite = "0.26"
+futures-util = "0.3"
+zstd = "0.13"
+serde = { workspace = true }
+serde_json = { workspace = true }
+rmp-serde = { workspace = true }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+clap = { version = "4", features = ["derive", "env"] }
+tower-http = { version = "0.6", features = ["cors"] }
+anyhow = "1"
+serde_bytes = "0.11"
+thiserror = { workspace = true }
+
+[dev-dependencies]
+tempfile = "3"

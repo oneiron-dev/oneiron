@@ -426,7 +426,7 @@ fn hydrate_entity(
     };
 
     let (short_id, content_hash) =
-        read_short_id(&vault.store, rtxn, &id)?.unwrap_or_else(|| (id.lower_hex(), 0));
+        read_short_id(&vault.store, rtxn, &id)?.unwrap_or_else(|| (id.to_hex(), 0));
 
     let edges = if include_edges {
         Some(scan_edges_for_entity(&vault.store, rtxn, &id)?)

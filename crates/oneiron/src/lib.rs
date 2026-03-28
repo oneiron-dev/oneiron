@@ -16,9 +16,11 @@ pub mod pipeline;
 pub(crate) mod ppr;
 pub mod serialize;
 pub mod store;
+#[cfg(feature = "sync")]
+pub mod sync;
 pub mod types;
 
-pub use crate::batch::BatchBuilder;
+pub use crate::batch::{BatchBuilder, TxnBatchBuilder};
 use crate::batch::{deindex_entity, EntityMetadataHeader, ENTITY_METADATA_HEADER_LEN};
 pub use crate::context_pack::ContextPackBuilder;
 pub use crate::error::{Error, Result};
@@ -198,6 +200,14 @@ impl Vault {
         BatchBuilder::new(self)
     }
 
+    /// Creates a batch builder that writes into an externally-owned transaction.
+    ///
+    /// Call `.apply(wtxn)` to execute writes without committing.
+    /// Use with `with_write_txn()` for atomic multi-operation writes (e.g. entity + pm marker).
+    pub fn batch_in(&self) -> TxnBatchBuilder<'_> {
+        TxnBatchBuilder::new(self)
+    }
+
     /// Creates a query pipeline builder for multi-signal retrieval.
     pub fn query(&self) -> PipelineBuilder<'_> {
         PipelineBuilder::new(self)
@@ -211,6 +221,125 @@ impl Vault {
     /// Creates a maintenance builder for index and cache upkeep operations.
     pub fn maintain(&self) -> MaintenanceBuilder<'_> {
         MaintenanceBuilder::new(self)
+    }
+
+    /// Checks if an entity exists in the LMDB vault.
+    pub fn entity_exists(&self, id: &EntityId) -> Result<bool> {
+        let rtxn = self.store.env.read_txn()?;
+        Ok(self.store.entities.get(&rtxn, id.as_bytes())?.is_some())
+    }
+
+    /// Checks if a directed edge exists in the LMDB vault.
+    pub fn edge_exists(&self, src: &EntityId, kind: EdgeKind, tgt: &EntityId) -> Result<bool> {
+        let key = Store::encode_edge_key(src, kind, tgt);
+        let rtxn = self.store.env.read_txn()?;
+        Ok(self.store.edges_out.get(&rtxn, &key)?.is_some())
+    }
+
+    /// Returns the `learned_at` timestamp from an entity's header (bytes 17-24).
+    pub fn get_learned_at(&self, id: &EntityId) -> Result<u64> {
+        let rtxn = self.store.env.read_txn()?;
+        let raw = self
+            .store
+            .entities
+            .get(&rtxn, id.as_bytes())?
+            .ok_or(Error::EntityNotFound)?;
+        let header =
+            EntityMetadataHeader::parse(raw).ok_or(Error::InvalidKey)?;
+        Ok(header.learned_at)
+    }
+
+    /// Returns entity IDs whose `learned_at` falls within `[start, end)`.
+    ///
+    /// Iterates the `temporal_learned` index and filters by timestamp range.
+    pub fn entities_in_learned_range(&self, start: u64, end: u64) -> Result<Vec<EntityId>> {
+        let rtxn = self.store.env.read_txn()?;
+        let mut ids = Vec::new();
+        for entry in self.store.temporal_learned.iter(&rtxn)? {
+            let (key, _) = entry?;
+            if key.len() != 24 {
+                continue;
+            }
+            let ts = u64::from_be_bytes(key[..8].try_into().map_err(|_| Error::InvalidKey)?);
+            if ts < start {
+                continue;
+            }
+            if ts >= end {
+                break; // temporal keys are sorted by timestamp (BE), so we can stop
+            }
+            let id = EntityId::from_bytes(key[8..24].try_into().map_err(|_| Error::InvalidKey)?);
+            ids.push(id);
+        }
+        Ok(ids)
+    }
+
+    /// Executes a closure within a single LMDB write transaction.
+    ///
+    /// The transaction commits on `Ok(())` return and rolls back on `Err`.
+    /// Used by the sync layer to atomically write entity data + pending-mirror markers.
+    pub fn with_write_txn<F, T>(&self, f: F) -> Result<T>
+    where
+        F: FnOnce(&mut heed::RwTxn<'_>) -> Result<T>,
+    {
+        let mut wtxn = self.store.env.write_txn()?;
+        let result = f(&mut wtxn)?;
+        wtxn.commit()?;
+        Ok(result)
+    }
+
+    /// Reads a value from the sync_state database.
+    #[cfg(feature = "sync")]
+    pub fn sync_state_get(&self, key: &str) -> Result<Option<Vec<u8>>> {
+        let rtxn = self.store.env.read_txn()?;
+        Ok(self
+            .store
+            .sync_state
+            .get(&rtxn, key)?
+            .map(|bytes| bytes.to_vec()))
+    }
+
+    /// Writes a value to the sync_state database.
+    #[cfg(feature = "sync")]
+    pub fn sync_state_put(&self, key: &str, value: &[u8]) -> Result<()> {
+        self.with_write_txn(|wtxn| {
+            self.store.sync_state.put(wtxn, key, value)?;
+            Ok(())
+        })
+    }
+
+    /// Deletes a key from the sync_state database.
+    #[cfg(feature = "sync")]
+    pub fn sync_state_delete(&self, key: &str) -> Result<bool> {
+        self.with_write_txn(|wtxn| {
+            Ok(self.store.sync_state.delete(wtxn, key)?)
+        })
+    }
+
+    /// Lists all keys with the given prefix in sync_state.
+    #[cfg(feature = "sync")]
+    pub fn sync_state_keys_with_prefix(&self, prefix: &str) -> Result<Vec<String>> {
+        let rtxn = self.store.env.read_txn()?;
+        let mut keys = Vec::new();
+        let iter = self.store.sync_state.iter(&rtxn)?;
+        for entry in iter {
+            let (k, _) = entry?;
+            if k.starts_with(prefix) {
+                keys.push(k.to_string());
+            }
+        }
+        Ok(keys)
+    }
+
+    /// Returns the raw entity blob (header + data) for an entity.
+    ///
+    /// Unlike `get()` which strips the header, this returns the full LMDB value.
+    pub fn get_raw(&self, id: &EntityId) -> Result<Option<Vec<u8>>> {
+        let rtxn = self.store.env.read_txn()?;
+        Ok(self
+            .store
+            .entities
+            .get(&rtxn, id.as_bytes())?
+            .map(|bytes| bytes.to_vec()))
     }
 }
 
@@ -285,6 +414,7 @@ mod tests {
 
     use super::*;
 
+    #[cfg(not(feature = "sync"))]
     const DB_NAMES: [&str; 19] = [
         "entities",
         "edges_out",
@@ -305,6 +435,31 @@ mod tests {
         "phonetic_index",
         "short_ids",
         "short_ids_reverse",
+    ];
+
+    #[cfg(feature = "sync")]
+    const DB_NAMES: [&str; 21] = [
+        "entities",
+        "edges_out",
+        "edges_in",
+        "vectors",
+        "hnsw_neighbors",
+        "hnsw_meta",
+        "text_postings",
+        "text_meta",
+        "text_forward",
+        "ppr_cache",
+        "ppr_cache_deps",
+        "type_index",
+        "temporal_occurred_start",
+        "temporal_occurred_end",
+        "temporal_learned",
+        "temporal_long_intervals",
+        "phonetic_index",
+        "short_ids",
+        "short_ids_reverse",
+        "sync_state",
+        "sync_queue",
     ];
 
     fn test_config() -> VaultConfig {
