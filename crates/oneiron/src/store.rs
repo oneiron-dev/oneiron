@@ -39,7 +39,6 @@ pub struct Store {
     pub(crate) sync_state: Database<Str, Bytes>,
     /// Offline update queue and embed job queue (sync feature only).
     #[cfg(feature = "sync")]
-    #[allow(dead_code)] // Used in Phase 1D
     pub(crate) sync_queue: Database<Bytes, Bytes>,
 }
 
