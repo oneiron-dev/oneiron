@@ -128,9 +128,8 @@ impl SyncConnection {
                             break;
                         }
                         LoopExit::Disconnected(err) => {
-                            let _ = event_tx.send(SyncEvent::Error(format!(
-                                "WebSocket disconnected: {err}"
-                            )));
+                            let _ = event_tx
+                                .send(SyncEvent::Error(format!("WebSocket disconnected: {err}")));
                             let _ =
                                 event_tx.send(SyncEvent::StatusChanged(SyncStatus::Disconnected));
                         }
@@ -408,9 +407,9 @@ impl SyncConnection {
                 _ = debounce_sleep, if debounce_deadline.is_some() => {
                     debounce_deadline = None;
 
-                    // Take ownership of the buffer to avoid borrow conflicts
-                    let pending: Vec<LocalUpdate> = debounce_buffer.drain(..).collect();
+                    // Drain the buffer — take ownership to avoid borrow conflicts
                     let mut failed_at = None;
+                    let pending: Vec<LocalUpdate> = std::mem::take(&mut debounce_buffer);
 
                     for (i, local_update) in pending.iter().enumerate() {
                         let wire_msg = transport::encode_window_sync(

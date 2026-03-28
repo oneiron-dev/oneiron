@@ -138,11 +138,8 @@ impl SyncQueue {
                 continue; // malformed entry, skip
             }
             let priority = value[0];
-            let queued_at = u64::from_be_bytes(
-                value[1..9]
-                    .try_into()
-                    .map_err(|_| Error::InvalidKey)?,
-            );
+            let queued_at =
+                u64::from_be_bytes(value[1..9].try_into().map_err(|_| Error::InvalidKey)?);
             jobs.push(QueuedEmbedJob {
                 entity_id,
                 priority,
@@ -204,6 +201,11 @@ impl SyncQueue {
             }
         }
         Ok(count)
+    }
+
+    /// Returns true if the queue has no update entries.
+    pub fn is_empty(&self) -> bool {
+        self.len().unwrap_or(0) == 0
     }
 
     /// Returns true if the queue has reached its maximum capacity.

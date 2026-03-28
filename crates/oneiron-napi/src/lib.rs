@@ -111,13 +111,7 @@ impl NapiVault {
 
     /// Store a directed edge between two entities.
     #[napi]
-    pub fn put_edge(
-        &self,
-        src: Buffer,
-        kind: u32,
-        tgt: Buffer,
-        weight: f64,
-    ) -> napi::Result<()> {
+    pub fn put_edge(&self, src: Buffer, kind: u32, tgt: Buffer, weight: f64) -> napi::Result<()> {
         let src_id = parse_entity_id(&src)?;
         let tgt_id = parse_entity_id(&tgt)?;
         let edge_kind = EdgeKind::try_from_u8(kind as u8)
@@ -192,11 +186,7 @@ impl NapiVault {
 
     /// Search for entities by BM25 text matching.
     #[napi]
-    pub fn search_text(
-        &self,
-        query: String,
-        limit: u32,
-    ) -> napi::Result<Vec<NapiScoredEntity>> {
+    pub fn search_text(&self, query: String, limit: u32) -> napi::Result<Vec<NapiScoredEntity>> {
         let results = self
             .vault
             .search_text(&query, limit as usize)
