@@ -1,4 +1,4 @@
-//! Loro implementation of the `CrdtEngine` traits.
+//! Loro implementation of the `CrdtDoc` / `CrdtMap` traits.
 //!
 //! Maps the engine-agnostic `CrdtDoc` / `CrdtMap` interfaces onto
 //! `loro::LoroDoc` and `loro::LoroMap`.
@@ -54,9 +54,7 @@ impl CrdtDoc for LoroDocument {
     }
 
     fn export_snapshot(&self) -> Result<Vec<u8>> {
-        self.0
-            .export(ExportMode::Snapshot)
-            .map_err(|e| Error::SyncProtocolError(e.to_string()))
+        self.encode_full_state()
     }
 
     fn import(&self, bytes: &[u8]) -> Result<()> {
@@ -83,10 +81,10 @@ impl CrdtDoc for LoroDocument {
 
     // ── Persistence ─────────────────────────────────────────────────────
 
-    fn encode_full_state(&self) -> Vec<u8> {
+    fn encode_full_state(&self) -> Result<Vec<u8>> {
         self.0
             .export(ExportMode::Snapshot)
-            .unwrap_or_default()
+            .map_err(|e| Error::SyncProtocolError(e.to_string()))
     }
 
     fn from_snapshot(bytes: &[u8]) -> Result<Self> {

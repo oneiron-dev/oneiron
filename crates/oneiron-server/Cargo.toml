@@ -21,6 +21,7 @@ clap = { version = "4", features = ["derive", "env"] }
 tower-http = { version = "0.6", features = ["cors"] }
 anyhow = "1"
 serde_bytes = "0.11"
+subtle = "2"
 thiserror = { workspace = true }
 
 [dev-dependencies]

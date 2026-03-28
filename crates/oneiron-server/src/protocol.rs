@@ -10,12 +10,8 @@ pub use oneiron::sync::{
     TAG_BULK_TRANSFER, TAG_BULK_TRANSFER_DONE, TAG_WINDOW_SYNC,
 };
 
-/// Loro update bytes for the root doc.
-pub const TAG_SYNC_UPDATE: u8 = 0;
-/// Custom awareness state (JSON-encoded).
-pub const TAG_AWARENESS: u8 = 1;
-/// Serialized VersionVector for sync negotiation.
-pub const TAG_VERSION_VECTOR: u8 = 2;
+// Re-export tag constants from shared transport (avoid redefinition).
+pub use oneiron::sync::transport::{TAG_AWARENESS, TAG_SYNC_UPDATE, TAG_VERSION_VECTOR};
 
 /// Sub-tags within WindowSync messages.
 pub mod window_sub_tags {

@@ -38,8 +38,18 @@ pub const MAX_WINDOW_KEY_LEN: usize = 7;
 /// Encodes a WindowSync message for the wire.
 ///
 /// Format: `[TAG_WINDOW_SYNC:1][window_key_len:1][window_key][sub_tag:1][payload]`
+///
+/// # Panics
+///
+/// Panics if `window_key` is empty or exceeds `MAX_WINDOW_KEY_LEN` bytes.
 pub fn encode_window_sync(window_key: &str, sub_tag: u8, payload: &[u8]) -> Vec<u8> {
     let key_bytes = window_key.as_bytes();
+    assert!(
+        !key_bytes.is_empty() && key_bytes.len() <= MAX_WINDOW_KEY_LEN,
+        "window key length {} exceeds MAX_WINDOW_KEY_LEN ({})",
+        key_bytes.len(),
+        MAX_WINDOW_KEY_LEN,
+    );
     let mut buf = Vec::with_capacity(3 + key_bytes.len() + payload.len());
     buf.push(TAG_WINDOW_SYNC);
     buf.push(key_bytes.len() as u8);
@@ -70,8 +80,18 @@ pub fn decode_window_sync(data: &[u8]) -> Result<(&str, u8, &[u8]), TransportErr
 }
 
 /// Encodes a BulkTransfer message for the wire.
+///
+/// # Panics
+///
+/// Panics if `window_key` is empty or exceeds `MAX_WINDOW_KEY_LEN` bytes.
 pub fn encode_bulk_transfer(window_key: &str, zstd_data: &[u8]) -> Vec<u8> {
     let key_bytes = window_key.as_bytes();
+    assert!(
+        !key_bytes.is_empty() && key_bytes.len() <= MAX_WINDOW_KEY_LEN,
+        "window key length {} exceeds MAX_WINDOW_KEY_LEN ({})",
+        key_bytes.len(),
+        MAX_WINDOW_KEY_LEN,
+    );
     let mut buf = Vec::with_capacity(2 + key_bytes.len() + zstd_data.len());
     buf.push(TAG_BULK_TRANSFER);
     buf.push(key_bytes.len() as u8);
@@ -98,8 +118,18 @@ pub fn decode_bulk_transfer(data: &[u8]) -> Result<(&str, &[u8]), TransportError
 }
 
 /// Encodes a BulkTransferDone message for the wire.
+///
+/// # Panics
+///
+/// Panics if `window_key` is empty or exceeds `MAX_WINDOW_KEY_LEN` bytes.
 pub fn encode_bulk_transfer_done(window_key: &str, doc_state: &[u8]) -> Vec<u8> {
     let key_bytes = window_key.as_bytes();
+    assert!(
+        !key_bytes.is_empty() && key_bytes.len() <= MAX_WINDOW_KEY_LEN,
+        "window key length {} exceeds MAX_WINDOW_KEY_LEN ({})",
+        key_bytes.len(),
+        MAX_WINDOW_KEY_LEN,
+    );
     let mut buf = Vec::with_capacity(2 + key_bytes.len() + 4 + doc_state.len());
     buf.push(TAG_BULK_TRANSFER_DONE);
     buf.push(key_bytes.len() as u8);

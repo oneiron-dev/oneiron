@@ -6,6 +6,7 @@
 //! 3. Phase 3: Historical windows via BulkTransfer (oldest first) + BulkTransferDone
 //! 4. Ongoing: bidirectional incremental sync via WindowSync + Awareness
 
+use std::io::Read;
 use std::sync::Arc;
 
 use axum::extract::ws::{Message as WsMessage, WebSocket, WebSocketUpgrade};
@@ -64,25 +65,43 @@ async fn handle_connection(socket: WebSocket, server: Arc<SyncServer>, conn_id: 
         }
     }
 
-    // Spawn outbound task: forwards broadcast messages to WebSocket sink
+    // Channel for direct responses (e.g. VV_REQUEST replies sent only to requester)
+    let (direct_tx, mut direct_rx) = tokio::sync::mpsc::unbounded_channel::<Vec<u8>>();
+
+    // Spawn outbound task: forwards broadcast + direct messages to WebSocket sink
     let outbound_handle = {
         tokio::spawn(async move {
             loop {
-                match subscriber.recv().await {
-                    Ok(Some(data)) => {
-                        if ws_sink.send(WsMessage::Binary(data.into())).await.is_err() {
-                            tracing::debug!(conn_id, "outbound sink closed");
-                            break;
+                tokio::select! {
+                    broadcast_result = subscriber.recv() => {
+                        match broadcast_result {
+                            Ok(Some(data)) => {
+                                if ws_sink.send(WsMessage::Binary(data.into())).await.is_err() {
+                                    tracing::debug!(conn_id, "outbound sink closed");
+                                    break;
+                                }
+                            }
+                            Ok(None) => break,
+                            Err(crate::broadcast::BroadcastError::Lagged(n)) => {
+                                tracing::warn!(conn_id, missed = n, "subscriber lagged — resync needed");
+                            }
+                            Err(crate::broadcast::BroadcastError::TooManyLags) => {
+                                tracing::warn!(conn_id, "too many lags — disconnecting");
+                                let _ = ws_sink.close().await;
+                                break;
+                            }
                         }
                     }
-                    Ok(None) => break,
-                    Err(crate::broadcast::BroadcastError::Lagged(n)) => {
-                        tracing::warn!(conn_id, missed = n, "subscriber lagged — resync needed");
-                    }
-                    Err(crate::broadcast::BroadcastError::TooManyLags) => {
-                        tracing::warn!(conn_id, "too many lags — disconnecting");
-                        let _ = ws_sink.close().await;
-                        break;
+                    direct_msg = direct_rx.recv() => {
+                        match direct_msg {
+                            Some(data) => {
+                                if ws_sink.send(WsMessage::Binary(data.into())).await.is_err() {
+                                    tracing::debug!(conn_id, "outbound sink closed (direct)");
+                                    break;
+                                }
+                            }
+                            None => break,
+                        }
                     }
                 }
             }
@@ -117,7 +136,7 @@ async fn handle_connection(socket: WebSocket, server: Arc<SyncServer>, conn_id: 
         // Parse and dispatch the message
         match protocol::parse_message(&data) {
             Ok(msg) => {
-                if let Err(e) = handle_sync_message(&server, conn_id, msg).await {
+                if let Err(e) = handle_sync_message(&server, conn_id, msg, &direct_tx).await {
                     match &e {
                         ProtocolError::UnknownTag(tag) => {
                             tracing::warn!(conn_id, tag, "unknown tag — closing");
@@ -154,6 +173,7 @@ async fn handle_sync_message(
     server: &SyncServer,
     conn_id: u32,
     msg: SyncMessage,
+    direct_tx: &tokio::sync::mpsc::UnboundedSender<Vec<u8>>,
 ) -> Result<(), ProtocolError> {
     match msg {
         SyncMessage::RootUpdate(_update_bytes) => {
@@ -180,7 +200,7 @@ async fn handle_sync_message(
             window_key,
             sub_tag,
             payload,
-        } => handle_window_sync(server, conn_id, &window_key, sub_tag, &payload).await,
+        } => handle_window_sync(server, conn_id, &window_key, sub_tag, &payload, direct_tx).await,
         SyncMessage::BulkTransfer {
             window_key,
             compressed,
@@ -199,12 +219,13 @@ async fn handle_window_sync(
     window_key: &str,
     sub_tag: u8,
     payload: &[u8],
+    direct_tx: &tokio::sync::mpsc::UnboundedSender<Vec<u8>>,
 ) -> Result<(), ProtocolError> {
     let doc = server.get_or_create_window(window_key).await;
 
     match sub_tag {
         window_sub_tags::VV_REQUEST => {
-            // Client sent its VersionVector — send back updates it's missing
+            // Client sent its VersionVector — send back updates it's missing.
             // For now, send all updates (full export). A proper implementation
             // would decode the client's VV and use ExportMode::updates(&client_vv).
             let updates = doc
@@ -215,7 +236,10 @@ async fn handle_window_sync(
                 window_sub_tags::UPDATE,
                 &updates,
             );
-            let _ = crate::broadcast::broadcast(&server.broadcast_tx, conn_id, response);
+            // Send directly to the requesting client's WebSocket sink, NOT via
+            // broadcast. Broadcasting with the requester's conn_id would cause
+            // echo suppression to drop the response for the requester.
+            let _ = direct_tx.send(response);
         }
         window_sub_tags::UPDATE => {
             // Client sending Loro update bytes — import with origin for echo suppression
@@ -251,15 +275,10 @@ async fn handle_bulk_transfer(
     window_key: &str,
     compressed: &[u8],
 ) -> Result<(), ProtocolError> {
-    let decompressed =
-        zstd::decode_all(compressed).map_err(|_| ProtocolError::BulkTransferDecode)?;
-
-    if decompressed.len() > server.config.max_bulk_decompressed {
-        return Err(ProtocolError::FrameTooLarge {
-            size: decompressed.len(),
-            max: server.config.max_bulk_decompressed,
-        });
-    }
+    let max = server.config.max_bulk_decompressed;
+    let decompressed = decompress_bounded(compressed, max)
+        .map_err(|_| ProtocolError::BulkTransferDecode)?
+        .ok_or(ProtocolError::FrameTooLarge { size: max + 1, max })?;
 
     let payload: BulkTransferPayload =
         rmp_serde::from_slice(&decompressed).map_err(|_| ProtocolError::BulkTransferDecode)?;
@@ -287,6 +306,28 @@ async fn handle_bulk_transfer_done(
         "received BulkTransferDone"
     );
     Ok(())
+}
+
+/// Streaming zstd decompression with a size limit.
+///
+/// Returns `Ok(Some(data))` on success, `Ok(None)` if decompressed size
+/// exceeds `max_bytes`, or `Err` on decode failure. This prevents
+/// decompression bombs by aborting before allocating unbounded memory.
+fn decompress_bounded(compressed: &[u8], max_bytes: usize) -> Result<Option<Vec<u8>>, std::io::Error> {
+    let mut decoder = zstd::Decoder::new(compressed)?;
+    let mut buf = Vec::with_capacity(std::cmp::min(compressed.len() * 2, max_bytes));
+    let mut chunk = [0u8; 8192];
+    loop {
+        let n = decoder.read(&mut chunk)?;
+        if n == 0 {
+            break;
+        }
+        if buf.len() + n > max_bytes {
+            return Ok(None);
+        }
+        buf.extend_from_slice(&chunk[..n]);
+    }
+    Ok(Some(buf))
 }
 
 /// BulkTransfer payload schema (MessagePack).
