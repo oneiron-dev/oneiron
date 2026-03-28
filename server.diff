@@ -1,0 +1,1346 @@
+diff --git a/crates/oneiron-server/Cargo.toml b/crates/oneiron-server/Cargo.toml
+new file mode 100644
+index 0000000..ef6649f
+--- /dev/null
++++ b/crates/oneiron-server/Cargo.toml
+@@ -0,0 +1,27 @@
++[package]
++name = "oneiron-server"
++version.workspace = true
++edition.workspace = true
++license.workspace = true
++
++[dependencies]
++oneiron = { path = "../oneiron", features = ["sync"] }
++loro = "1.10"
++axum = { version = "0.8", features = ["ws"] }
++tokio = { version = "1", features = ["full"] }
++tokio-tungstenite = "0.26"
++futures-util = "0.3"
++zstd = "0.13"
++serde = { workspace = true }
++serde_json = { workspace = true }
++rmp-serde = { workspace = true }
++tracing = "0.1"
++tracing-subscriber = { version = "0.3", features = ["env-filter"] }
++clap = { version = "4", features = ["derive", "env"] }
++tower-http = { version = "0.6", features = ["cors"] }
++anyhow = "1"
++serde_bytes = "0.11"
++thiserror = { workspace = true }
++
++[dev-dependencies]
++tempfile = "3"
+diff --git a/crates/oneiron-server/src/api.rs b/crates/oneiron-server/src/api.rs
+new file mode 100644
+index 0000000..d398b56
+--- /dev/null
++++ b/crates/oneiron-server/src/api.rs
+@@ -0,0 +1,242 @@
++//! HTTP query routes for web dashboard access.
++//!
++//! These routes provide server-side query capabilities for clients
++//! that don't have a local LMDB vault (e.g., web dashboard).
++//!
++//! Auth: shared secret header for Phase 1.
++
++use std::sync::Arc;
++
++use axum::extract::{Path, Query, State};
++use axum::http::{HeaderMap, StatusCode};
++use axum::response::{IntoResponse, Json};
++use axum::routing::{get, post};
++use axum::Router;
++use serde::{Deserialize, Serialize};
++
++use crate::server::SyncServer;
++
++/// Builds the HTTP API routes.
++pub fn api_routes(server: Arc<SyncServer>) -> Router {
++    Router::new()
++        .route("/api/health", get(health))
++        .route("/api/search/vector", get(search_vector))
++        .route("/api/search/text", get(search_text))
++        .route("/api/entity/{id}", get(get_entity))
++        .route("/api/edges/{id}", get(get_edges))
++        // context-pack is POST since it takes a complex options body
++        .route("/api/context-pack", post(context_pack))
++        .with_state(server)
++}
++
++/// Health check endpoint.
++async fn health() -> impl IntoResponse {
++    Json(serde_json::json!({
++        "status": "ok",
++        "service": "oneiron-server"
++    }))
++}
++
++/// Validates the auth secret from request headers.
++fn check_auth(headers: &HeaderMap, config_secret: &Option<String>) -> Result<(), StatusCode> {
++    let Some(expected) = config_secret.as_ref() else {
++        // No secret configured — allow all (dev mode)
++        return Ok(());
++    };
++
++    let provided = headers
++        .get("x-oneiron-secret")
++        .and_then(|v| v.to_str().ok());
++
++    match provided {
++        Some(s) if s == expected => Ok(()),
++        _ => Err(StatusCode::UNAUTHORIZED),
++    }
++}
++
++// ─── Search Routes ────────────────────────────────────────────────────────────
++
++#[derive(Deserialize)]
++struct VectorSearchQuery {
++    /// Comma-separated f32 values for the query vector.
++    query: String,
++    /// Maximum results to return.
++    #[serde(default = "default_limit")]
++    limit: usize,
++}
++
++fn default_limit() -> usize {
++    10
++}
++
++#[derive(Serialize)]
++struct SearchResult {
++    id: String,
++    score: f32,
++}
++
++/// Vector similarity search.
++/// GET /api/search/vector?query=0.1,0.2,...&limit=10
++async fn search_vector(
++    headers: HeaderMap,
++    State(server): State<Arc<SyncServer>>,
++    Query(params): Query<VectorSearchQuery>,
++) -> Result<Json<Vec<SearchResult>>, StatusCode> {
++    check_auth(&headers, &server.config.auth_secret)?;
++
++    let query: Result<Vec<f32>, _> = params
++        .query
++        .split(',')
++        .map(|s| s.trim().parse::<f32>())
++        .collect();
++
++    let query = query.map_err(|_| StatusCode::BAD_REQUEST)?;
++
++    let results = server
++        .vault
++        .search_vector(&query, params.limit)
++        .map_err(|e| {
++            tracing::error!(error = %e, "vector search failed");
++            StatusCode::INTERNAL_SERVER_ERROR
++        })?;
++
++    let response: Vec<SearchResult> = results
++        .into_iter()
++        .map(|r| SearchResult {
++            id: r.id.to_hex(),
++            score: r.score,
++        })
++        .collect();
++
++    Ok(Json(response))
++}
++
++#[derive(Deserialize)]
++struct TextSearchQuery {
++    query: String,
++    #[serde(default = "default_limit")]
++    limit: usize,
++}
++
++/// BM25 text search.
++/// GET /api/search/text?query=hello+world&limit=10
++async fn search_text(
++    headers: HeaderMap,
++    State(server): State<Arc<SyncServer>>,
++    Query(params): Query<TextSearchQuery>,
++) -> Result<Json<Vec<SearchResult>>, StatusCode> {
++    check_auth(&headers, &server.config.auth_secret)?;
++
++    let results = server
++        .vault
++        .search_text(&params.query, params.limit)
++        .map_err(|e| {
++            tracing::error!(error = %e, "text search failed");
++            StatusCode::INTERNAL_SERVER_ERROR
++        })?;
++
++    let response: Vec<SearchResult> = results
++        .into_iter()
++        .map(|r| SearchResult {
++            id: r.id.to_hex(),
++            score: r.score,
++        })
++        .collect();
++
++    Ok(Json(response))
++}
++
++// ─── Entity Routes ────────────────────────────────────────────────────────────
++
++/// Get entity by ID.
++/// GET /api/entity/:id
++async fn get_entity(
++    headers: HeaderMap,
++    State(server): State<Arc<SyncServer>>,
++    Path(id_hex): Path<String>,
++) -> Result<impl IntoResponse, StatusCode> {
++    check_auth(&headers, &server.config.auth_secret)?;
++
++    let id = oneiron::EntityId::from_hex(&id_hex).map_err(|_| StatusCode::BAD_REQUEST)?;
++
++    let blob = server.vault.get(&id).map_err(|e| {
++        tracing::error!(error = %e, "get entity failed");
++        StatusCode::INTERNAL_SERVER_ERROR
++    })?;
++
++    match blob {
++        Some(data) => Ok((StatusCode::OK, data)),
++        None => Err(StatusCode::NOT_FOUND),
++    }
++}
++
++/// Get outbound edges for an entity.
++/// GET /api/edges/:id
++async fn get_edges(
++    headers: HeaderMap,
++    State(server): State<Arc<SyncServer>>,
++    Path(id_hex): Path<String>,
++) -> Result<Json<Vec<EdgeResult>>, StatusCode> {
++    check_auth(&headers, &server.config.auth_secret)?;
++
++    let id = oneiron::EntityId::from_hex(&id_hex).map_err(|_| StatusCode::BAD_REQUEST)?;
++
++    let edges = server.vault.edges_out(&id).map_err(|e| {
++        tracing::error!(error = %e, "get edges failed");
++        StatusCode::INTERNAL_SERVER_ERROR
++    })?;
++
++    let response: Vec<EdgeResult> = edges
++        .into_iter()
++        .map(|e| EdgeResult {
++            kind: e.kind as u8,
++            target: e.target.to_hex(),
++            weight: e.weight,
++            created_at: e.created_at,
++        })
++        .collect();
++
++    Ok(Json(response))
++}
++
++#[derive(Serialize)]
++struct EdgeResult {
++    kind: u8,
++    target: String,
++    weight: f32,
++    created_at: u64,
++}
++
++// ─── Context Pack ─────────────────────────────────────────────────────────────
++
++#[derive(Deserialize)]
++#[allow(dead_code)] // Fields deserialized from JSON, used in Phase 1D context-pack endpoint
++struct ContextPackRequest {
++    /// Query text for retrieval.
++    query: Option<String>,
++    /// Query vector (as list of f32).
++    query_vector: Option<Vec<f32>>,
++    /// Maximum entities to retrieve.
++    #[serde(default = "default_limit")]
++    limit: usize,
++}
++
++/// Context pack assembly.
++/// POST /api/context-pack
++async fn context_pack(
++    headers: HeaderMap,
++    State(server): State<Arc<SyncServer>>,
++    Json(_req): Json<ContextPackRequest>,
++) -> Result<Json<serde_json::Value>, StatusCode> {
++    check_auth(&headers, &server.config.auth_secret)?;
++
++    // Build context pack using the vault's query API.
++    // This is a thin wrapper — full implementation depends on
++    // what query parameters the ContextPackBuilder supports.
++    // For Phase 1, return a placeholder acknowledging the request.
++
++    Ok(Json(serde_json::json!({
++        "status": "ok",
++        "message": "context-pack endpoint ready — full implementation pending ContextPackBuilder integration"
++    })))
++}
+diff --git a/crates/oneiron-server/src/broadcast.rs b/crates/oneiron-server/src/broadcast.rs
+new file mode 100644
+index 0000000..e413cf4
+--- /dev/null
++++ b/crates/oneiron-server/src/broadcast.rs
+@@ -0,0 +1,148 @@
++//! Broadcast group for multi-device fan-out with echo suppression.
++//!
++//! Broadcast group pattern with echo suppression. Key differences from typical implementations:
++//! - Payloads include conn_id for echo suppression
++//! - conn_id 0 = local/bridge writes (broadcast to all)
++//! - conn_id >= 1 = specific connection (skip sender)
++//! - Lossy broadcast: on `Lagged`, trigger per-window SyncStep resync
++
++use tokio::sync::broadcast;
++
++use crate::server::BroadcastPayload;
++
++/// A subscriber handle for a single WebSocket connection.
++/// Wraps a broadcast receiver and filters out echo messages.
++pub struct BroadcastSubscriber {
++    /// The connection ID this subscriber belongs to.
++    conn_id: u32,
++    /// Receiver end of the broadcast channel.
++    rx: broadcast::Receiver<BroadcastPayload>,
++    /// Count of consecutive lag events for disconnect escalation.
++    lag_count: u32,
++}
++
++impl BroadcastSubscriber {
++    /// Creates a new subscriber for the given connection.
++    pub fn new(conn_id: u32, tx: &broadcast::Sender<BroadcastPayload>) -> Self {
++        Self {
++            conn_id,
++            rx: tx.subscribe(),
++            lag_count: 0,
++        }
++    }
++
++    /// Receives the next broadcast message, skipping echoes.
++    ///
++    /// Returns `Ok(Some(data))` for a message to forward, `Ok(None)` if the channel
++    /// is closed, or `Err(BroadcastError::Lagged)` if the receiver fell behind.
++    /// After 3 lags in rapid succession, returns `Err(BroadcastError::TooManyLags)`.
++    pub async fn recv(&mut self) -> Result<Option<Vec<u8>>, BroadcastError> {
++        loop {
++            match self.rx.recv().await {
++                Ok((sender_conn_id, data)) => {
++                    // Reset lag counter on successful receive
++                    self.lag_count = 0;
++
++                    // Echo suppression: skip if this message originated from us
++                    if sender_conn_id == self.conn_id {
++                        continue;
++                    }
++
++                    return Ok(Some(data));
++                }
++                Err(broadcast::error::RecvError::Lagged(n)) => {
++                    self.lag_count += 1;
++                    tracing::warn!(
++                        conn_id = self.conn_id,
++                        missed = n,
++                        lag_count = self.lag_count,
++                        "broadcast subscriber lagged"
++                    );
++
++                    if self.lag_count >= 3 {
++                        return Err(BroadcastError::TooManyLags);
++                    }
++
++                    return Err(BroadcastError::Lagged(n));
++                }
++                Err(broadcast::error::RecvError::Closed) => {
++                    return Ok(None);
++                }
++            }
++        }
++    }
++
++    /// Returns the connection ID for this subscriber.
++    #[allow(dead_code)] // Used when WebSocket connected
++    pub fn conn_id(&self) -> u32 {
++        self.conn_id
++    }
++}
++
++/// Errors from broadcast subscriber.
++#[derive(Debug)]
++pub enum BroadcastError {
++    /// Receiver fell behind; n messages were skipped.
++    /// Connection should trigger per-window SyncStep resync.
++    Lagged(u64),
++    /// Too many lag events (>= 3 within 60s) — disconnect and force full reconnection.
++    TooManyLags,
++}
++
++/// Broadcasts an encoded message to all subscribers.
++///
++/// `conn_id` identifies the sender:
++/// - 0 = local/bridge write (broadcast to all devices)
++/// - >= 1 = specific connection (echo suppression skips sender)
++pub fn broadcast(
++    tx: &broadcast::Sender<BroadcastPayload>,
++    conn_id: u32,
++    data: Vec<u8>,
++) -> Result<(), broadcast::error::SendError<BroadcastPayload>> {
++    tx.send((conn_id, data))?;
++    Ok(())
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++
++    #[tokio::test]
++    async fn echo_suppression() {
++        let (tx, _) = broadcast::channel::<BroadcastPayload>(16);
++
++        let mut sub1 = BroadcastSubscriber::new(1, &tx);
++        let mut sub2 = BroadcastSubscriber::new(2, &tx);
++
++        // Send from conn_id 1
++        broadcast(&tx, 1, vec![42]).unwrap();
++
++        // Also send from conn_id 2
++        broadcast(&tx, 2, vec![99]).unwrap();
++
++        // sub1 should skip the message from conn_id 1 (echo) and get conn_id 2's
++        let msg = sub1.recv().await.unwrap().unwrap();
++        assert_eq!(msg, vec![99]);
++
++        // sub2 should get the message from conn_id 1 (not echo)
++        let msg = sub2.recv().await.unwrap().unwrap();
++        assert_eq!(msg, vec![42]);
++    }
++
++    #[tokio::test]
++    async fn bridge_writes_broadcast_to_all() {
++        let (tx, _) = broadcast::channel::<BroadcastPayload>(16);
++
++        let mut sub1 = BroadcastSubscriber::new(1, &tx);
++        let mut sub2 = BroadcastSubscriber::new(2, &tx);
++
++        // Send from conn_id 0 (bridge) — should reach all subscribers
++        broadcast(&tx, 0, vec![77]).unwrap();
++
++        let msg1 = sub1.recv().await.unwrap().unwrap();
++        assert_eq!(msg1, vec![77]);
++
++        let msg2 = sub2.recv().await.unwrap().unwrap();
++        assert_eq!(msg2, vec![77]);
++    }
++}
+diff --git a/crates/oneiron-server/src/config.rs b/crates/oneiron-server/src/config.rs
+new file mode 100644
+index 0000000..d0932c3
+--- /dev/null
++++ b/crates/oneiron-server/src/config.rs
+@@ -0,0 +1,83 @@
++use clap::Parser;
++
++/// Oneiron sync server configuration.
++#[derive(Debug, Clone)]
++#[allow(dead_code)] // Config fields consumed by WebSocket handler in Phase 1D
++pub struct SyncServerConfig {
++    /// Number of default windows to load (current + previous months).
++    pub default_window_count: u8,
++    /// Byte threshold that triggers CRDT Doc compaction.
++    pub compaction_threshold_bytes: u32,
++    /// Minimum seconds between compaction runs.
++    pub compaction_throttle_secs: u32,
++    /// Maximum uncompressed BulkTransfer chunk size in bytes.
++    pub bulk_chunk_size: usize,
++    /// Shared secret for Phase 1 API auth (header-based).
++    pub auth_secret: Option<String>,
++    /// Maximum WebSocket frame size in bytes.
++    pub max_frame_size: usize,
++    /// Maximum CRDT update payload in bytes.
++    pub max_update_payload: usize,
++    /// Maximum entity blob size in bytes.
++    pub max_entity_blob: usize,
++    /// Maximum decompressed BulkTransfer chunk in bytes.
++    pub max_bulk_decompressed: usize,
++    /// Maximum updates per second per client.
++    pub max_updates_per_sec: u32,
++    /// Maximum concurrent connections per user.
++    pub max_connections_per_user: u32,
++    /// Maximum loaded windows per client connection.
++    pub max_windows_per_client: u8,
++}
++
++impl Default for SyncServerConfig {
++    fn default() -> Self {
++        Self {
++            default_window_count: 2,
++            compaction_threshold_bytes: 524_288, // 512 KB
++            compaction_throttle_secs: 30,
++            bulk_chunk_size: 1_048_576, // 1 MB uncompressed
++            auth_secret: None,
++            max_frame_size: 4 * 1024 * 1024,         // 4 MB
++            max_update_payload: 2 * 1024 * 1024,      // 2 MB
++            max_entity_blob: 64 * 1024,               // 64 KB
++            max_bulk_decompressed: 8 * 1024 * 1024,   // 8 MB
++            max_updates_per_sec: 100,
++            max_connections_per_user: 5,
++            max_windows_per_client: 4,
++        }
++    }
++}
++
++/// CLI arguments for the sync server binary.
++#[derive(Parser, Debug)]
++#[command(name = "oneiron-server", about = "Oneiron CRDT sync server")]
++pub struct CliArgs {
++    /// Path to the LMDB vault directory.
++    #[arg(long, default_value = "./vault")]
++    pub vault_path: String,
++
++    /// Host address to bind to.
++    #[arg(long, default_value = "0.0.0.0")]
++    pub host: String,
++
++    /// Port to bind to.
++    #[arg(long, default_value_t = 9090)]
++    pub port: u16,
++
++    /// Shared secret for API authentication (Phase 1).
++    #[arg(long, env = "ONEIRON_AUTH_SECRET")]
++    pub auth_secret: Option<String>,
++
++    /// Embedding vector dimension for the vault.
++    #[arg(long, default_value_t = 4096)]
++    pub dimensions: usize,
++
++    /// LMDB map size in bytes.
++    #[arg(long, default_value_t = 1 << 33)]
++    pub map_size: usize,
++
++    /// Log level filter (e.g., "info", "debug", "oneiron_server=debug").
++    #[arg(long, default_value = "info")]
++    pub log_level: String,
++}
+diff --git a/crates/oneiron-server/src/handler.rs b/crates/oneiron-server/src/handler.rs
+new file mode 100644
+index 0000000..f65690b
+--- /dev/null
++++ b/crates/oneiron-server/src/handler.rs
+@@ -0,0 +1,324 @@
++//! WebSocket upgrade handler and connection lifecycle.
++//!
++//! Each WebSocket connection follows the protocol from ARCH-023 §3.2:
++//! 1. Phase 1: Root doc sync (send snapshot to new client)
++//! 2. Phase 2: Default windows (current + previous) via VV exchange + updates
++//! 3. Phase 3: Historical windows via BulkTransfer (oldest first) + BulkTransferDone
++//! 4. Ongoing: bidirectional incremental sync via WindowSync + Awareness
++
++use std::sync::Arc;
++
++use axum::extract::ws::{Message as WsMessage, WebSocket, WebSocketUpgrade};
++use axum::extract::State;
++use axum::response::IntoResponse;
++use axum::routing::get;
++use axum::Router;
++use futures_util::{SinkExt, StreamExt};
++use loro::ExportMode;
++
++use crate::broadcast::BroadcastSubscriber;
++use crate::protocol::{
++    self, window_sub_tags, ProtocolError, SyncMessage,
++};
++use crate::server::SyncServer;
++
++/// Builds the WebSocket routes for the sync server.
++pub fn ws_routes(server: Arc<SyncServer>) -> Router {
++    Router::new()
++        .route("/ws", get(ws_upgrade_handler))
++        .with_state(server)
++}
++
++/// Handles WebSocket upgrade requests.
++async fn ws_upgrade_handler(
++    ws: WebSocketUpgrade,
++    State(server): State<Arc<SyncServer>>,
++) -> impl IntoResponse {
++    let conn_id = server.alloc_conn_id();
++    tracing::info!(conn_id, "new WebSocket connection");
++
++    ws.max_frame_size(server.config.max_frame_size)
++        .on_upgrade(move |socket| handle_connection(socket, server, conn_id))
++}
++
++/// Main connection lifecycle.
++async fn handle_connection(socket: WebSocket, server: Arc<SyncServer>, conn_id: u32) {
++    let (mut ws_sink, mut ws_stream) = socket.split();
++
++    // Subscribe to broadcast channel for outbound messages
++    let mut subscriber = BroadcastSubscriber::new(conn_id, &server.broadcast_tx);
++
++    // Phase 1: Send root doc snapshot to client.
++    // Root doc is server-authoritative — client only reads it.
++    match server.export_root_snapshot() {
++        Ok(snapshot) => {
++            let msg = protocol::encode_root_update(&snapshot);
++            if ws_sink.send(WsMessage::Binary(msg.into())).await.is_err() {
++                tracing::warn!(conn_id, "failed to send root snapshot");
++                return;
++            }
++        }
++        Err(e) => {
++            tracing::error!(conn_id, error = %e, "failed to export root snapshot");
++            return;
++        }
++    }
++
++    // Spawn outbound task: forwards broadcast messages to WebSocket sink
++    let outbound_handle = {
++        tokio::spawn(async move {
++            loop {
++                match subscriber.recv().await {
++                    Ok(Some(data)) => {
++                        if ws_sink.send(WsMessage::Binary(data.into())).await.is_err() {
++                            tracing::debug!(conn_id, "outbound sink closed");
++                            break;
++                        }
++                    }
++                    Ok(None) => break,
++                    Err(crate::broadcast::BroadcastError::Lagged(n)) => {
++                        tracing::warn!(conn_id, missed = n, "subscriber lagged — resync needed");
++                    }
++                    Err(crate::broadcast::BroadcastError::TooManyLags) => {
++                        tracing::warn!(conn_id, "too many lags — disconnecting");
++                        let _ = ws_sink.close().await;
++                        break;
++                    }
++                }
++            }
++        })
++    };
++
++    // Inbound loop: process messages from client
++    while let Some(msg_result) = ws_stream.next().await {
++        let data = match msg_result {
++            Ok(WsMessage::Binary(data)) => data.to_vec(),
++            Ok(WsMessage::Close(_)) => {
++                tracing::info!(conn_id, "client closed connection");
++                break;
++            }
++            Ok(WsMessage::Ping(_)) | Ok(WsMessage::Pong(_)) => continue,
++            Ok(WsMessage::Text(_)) => {
++                tracing::warn!(conn_id, "received unexpected text message");
++                continue;
++            }
++            Err(e) => {
++                tracing::warn!(conn_id, error = %e, "WebSocket error");
++                break;
++            }
++        };
++
++        // Size check
++        if data.len() > server.config.max_frame_size {
++            tracing::warn!(conn_id, size = data.len(), "frame too large");
++            break;
++        }
++
++        // Parse and dispatch the message
++        match protocol::parse_message(&data) {
++            Ok(msg) => {
++                if let Err(e) = handle_sync_message(&server, conn_id, msg).await {
++                    match &e {
++                        ProtocolError::UnknownTag(tag) => {
++                            tracing::warn!(conn_id, tag, "unknown tag — closing");
++                            break;
++                        }
++                        _ => {
++                            tracing::warn!(conn_id, error = %e, "message handling failed");
++                        }
++                    }
++                }
++            }
++            Err(ProtocolError::UnknownTag(tag)) => {
++                tracing::warn!(conn_id, tag, "unknown tag — closing");
++                break;
++            }
++            Err(e) => {
++                tracing::warn!(conn_id, error = %e, "protocol parse error");
++                break;
++            }
++        }
++    }
++
++    // Cleanup
++    {
++        let mut awareness = server.awareness.write().await;
++        awareness.remove(&conn_id);
++    }
++    outbound_handle.abort();
++    tracing::info!(conn_id, "connection closed");
++}
++
++/// Dispatches a parsed SyncMessage to the appropriate handler.
++async fn handle_sync_message(
++    server: &SyncServer,
++    conn_id: u32,
++    msg: SyncMessage,
++) -> Result<(), ProtocolError> {
++    match msg {
++        SyncMessage::RootUpdate(_update_bytes) => {
++            // Root doc is server-authoritative — reject client updates silently
++            tracing::debug!(conn_id, "rejected client root update (server-authoritative)");
++            Ok(())
++        }
++        SyncMessage::Awareness(state) => {
++            let mut awareness = server.awareness.write().await;
++            awareness.insert(conn_id, state.clone());
++            // Broadcast awareness to other connections
++            let encoded = protocol::encode_awareness(&state);
++            let _ = crate::broadcast::broadcast(&server.broadcast_tx, conn_id, encoded);
++            Ok(())
++        }
++        SyncMessage::RootVersionVector(_vv_bytes) => {
++            // Client is requesting root doc updates since their VV.
++            // Root doc is server-authoritative so we just send the full snapshot.
++            // (In practice, clients don't need to send VV for root — they just receive.)
++            tracing::debug!(conn_id, "client sent root VV — sending snapshot");
++            Ok(())
++        }
++        SyncMessage::WindowSync {
++            window_key,
++            sub_tag,
++            payload,
++        } => handle_window_sync(server, conn_id, &window_key, sub_tag, &payload).await,
++        SyncMessage::BulkTransfer {
++            window_key,
++            compressed,
++        } => handle_bulk_transfer(server, &window_key, &compressed).await,
++        SyncMessage::BulkTransferDone {
++            window_key,
++            doc_state,
++        } => handle_bulk_transfer_done(server, &window_key, &doc_state).await,
++    }
++}
++
++/// Handles a WindowSync message: routes to the correct window LoroDoc.
++async fn handle_window_sync(
++    server: &SyncServer,
++    conn_id: u32,
++    window_key: &str,
++    sub_tag: u8,
++    payload: &[u8],
++) -> Result<(), ProtocolError> {
++    let doc = server.get_or_create_window(window_key).await;
++
++    match sub_tag {
++        window_sub_tags::VV_REQUEST => {
++            // Client sent its VersionVector — send back updates it's missing
++            // For now, send all updates (full export). A proper implementation
++            // would decode the client's VV and use ExportMode::updates(&client_vv).
++            let updates = doc
++                .export(ExportMode::all_updates())
++                .map_err(|e| ProtocolError::LoroImport(format!("{e}")))?;
++            let response = protocol::encode_window_sync(
++                window_key,
++                window_sub_tags::UPDATE,
++                &updates,
++            );
++            let _ = crate::broadcast::broadcast(&server.broadcast_tx, conn_id, response);
++        }
++        window_sub_tags::UPDATE => {
++            // Client sending Loro update bytes — import with origin for echo suppression
++            let origin = format!("conn:{conn_id}");
++            doc.import_with(payload, &origin)
++                .map_err(|e| ProtocolError::LoroImport(format!("{e}")))?;
++
++            // The subscribe_local_update callback (when registered by sync-core)
++            // will handle persistence + broadcast. For now, manually broadcast.
++            let broadcast_msg = protocol::encode_window_sync(
++                window_key,
++                window_sub_tags::UPDATE,
++                payload,
++            );
++            let _ = crate::broadcast::broadcast(&server.broadcast_tx, conn_id, broadcast_msg);
++        }
++        window_sub_tags::VV_RESPONSE => {
++            // Server received a VV response — used during sync negotiation.
++            // The server would use this to compute what updates to send.
++            tracing::debug!(window_key, "received VV response from client");
++        }
++        _ => {
++            tracing::warn!(window_key, sub_tag, "unknown WindowSync sub-tag");
++        }
++    }
++
++    Ok(())
++}
++
++/// Handles a BulkTransfer message from client (rare — usually server→client).
++async fn handle_bulk_transfer(
++    server: &SyncServer,
++    window_key: &str,
++    compressed: &[u8],
++) -> Result<(), ProtocolError> {
++    let decompressed =
++        zstd::decode_all(compressed).map_err(|_| ProtocolError::BulkTransferDecode)?;
++
++    if decompressed.len() > server.config.max_bulk_decompressed {
++        return Err(ProtocolError::FrameTooLarge {
++            size: decompressed.len(),
++            max: server.config.max_bulk_decompressed,
++        });
++    }
++
++    let payload: BulkTransferPayload =
++        rmp_serde::from_slice(&decompressed).map_err(|_| ProtocolError::BulkTransferDecode)?;
++
++    tracing::info!(
++        window_key,
++        entities = payload.entities.len(),
++        edges = payload.edges.len(),
++        tombstones = payload.tombstones.len(),
++        "received BulkTransfer"
++    );
++
++    Ok(())
++}
++
++/// Handles BulkTransferDone message.
++async fn handle_bulk_transfer_done(
++    _server: &SyncServer,
++    window_key: &str,
++    doc_state: &[u8],
++) -> Result<(), ProtocolError> {
++    tracing::info!(
++        window_key,
++        state_len = doc_state.len(),
++        "received BulkTransferDone"
++    );
++    Ok(())
++}
++
++/// BulkTransfer payload schema (MessagePack).
++#[derive(Debug, serde::Deserialize, serde::Serialize)]
++pub struct BulkTransferPayload {
++    pub entities: Vec<BulkEntity>,
++    pub edges: Vec<BulkEdge>,
++    pub tombstones: Vec<BulkTombstone>,
++}
++
++#[derive(Debug, serde::Deserialize, serde::Serialize)]
++pub struct BulkEntity {
++    #[serde(with = "serde_bytes")]
++    pub id: Vec<u8>,
++    #[serde(with = "serde_bytes")]
++    pub blob: Vec<u8>,
++}
++
++#[derive(Debug, serde::Deserialize, serde::Serialize)]
++pub struct BulkEdge {
++    #[serde(with = "serde_bytes")]
++    pub src: Vec<u8>,
++    pub kind: u8,
++    #[serde(with = "serde_bytes")]
++    pub tgt: Vec<u8>,
++    pub weight: f32,
++    pub created_at: u64,
++}
++
++#[derive(Debug, serde::Deserialize, serde::Serialize)]
++pub struct BulkTombstone {
++    #[serde(with = "serde_bytes")]
++    pub id: Vec<u8>,
++    pub deleted_at: u64,
++}
+diff --git a/crates/oneiron-server/src/main.rs b/crates/oneiron-server/src/main.rs
+new file mode 100644
+index 0000000..5b88754
+--- /dev/null
++++ b/crates/oneiron-server/src/main.rs
+@@ -0,0 +1,68 @@
++mod api;
++mod broadcast;
++mod config;
++mod handler;
++mod protocol;
++mod server;
++
++use std::net::SocketAddr;
++use std::sync::Arc;
++
++use axum::Router;
++use clap::Parser;
++use tracing_subscriber::EnvFilter;
++
++use crate::config::CliArgs;
++use crate::server::SyncServer;
++
++#[tokio::main]
++async fn main() -> anyhow::Result<()> {
++    let args = CliArgs::parse();
++
++    // Initialize tracing
++    tracing_subscriber::fmt()
++        .with_env_filter(
++            EnvFilter::try_from_default_env()
++                .unwrap_or_else(|_| EnvFilter::new(&args.log_level)),
++        )
++        .init();
++
++    tracing::info!(
++        vault_path = %args.vault_path,
++        dimensions = args.dimensions,
++        "starting oneiron sync server"
++    );
++
++    // Open vault
++    let vault_config = oneiron::VaultConfig {
++        dimensions: args.dimensions,
++        embedding_model: None,
++        map_size: args.map_size,
++        max_readers: 126,
++        hnsw: oneiron::HnswConfig::default(),
++    };
++
++    let vault = oneiron::Vault::open(&args.vault_path, vault_config)?;
++
++    // Build sync server state
++    let server_config = config::SyncServerConfig {
++        auth_secret: args.auth_secret,
++        ..Default::default()
++    };
++
++    let sync_server = Arc::new(SyncServer::new(vault, server_config));
++
++    // Build Axum router
++    let app = Router::new()
++        .merge(handler::ws_routes(sync_server.clone()))
++        .merge(api::api_routes(sync_server.clone()))
++        .layer(tower_http::cors::CorsLayer::permissive());
++
++    let addr: SocketAddr = format!("{}:{}", args.host, args.port).parse()?;
++    tracing::info!(%addr, "listening");
++
++    let listener = tokio::net::TcpListener::bind(addr).await?;
++    axum::serve(listener, app).await?;
++
++    Ok(())
++}
+diff --git a/crates/oneiron-server/src/protocol.rs b/crates/oneiron-server/src/protocol.rs
+new file mode 100644
+index 0000000..b017db5
+--- /dev/null
++++ b/crates/oneiron-server/src/protocol.rs
+@@ -0,0 +1,265 @@
++//! Custom Oneiron sync protocol — server-side extensions.
++//!
++//! Re-exports the shared wire protocol from `oneiron::sync` and adds
++//! server-specific types: `AwarenessState`, `SyncMessage`, `ProtocolError`,
++//! and close codes.
++
++// Re-export shared wire constants and encode/decode functions.
++pub use oneiron::sync::{
++    decode_bulk_transfer, decode_bulk_transfer_done, decode_window_sync, encode_window_sync,
++    TAG_BULK_TRANSFER, TAG_BULK_TRANSFER_DONE, TAG_WINDOW_SYNC,
++};
++
++/// Loro update bytes for the root doc.
++pub const TAG_SYNC_UPDATE: u8 = 0;
++/// Custom awareness state (JSON-encoded).
++pub const TAG_AWARENESS: u8 = 1;
++/// Serialized VersionVector for sync negotiation.
++pub const TAG_VERSION_VECTOR: u8 = 2;
++
++/// Sub-tags within WindowSync messages.
++pub mod window_sub_tags {
++    pub use oneiron::sync::transport::window_sub_tags::*;
++}
++
++// ─── Awareness ────────────────────────────────────────────────────────────────
++
++/// Custom awareness state (Loro doesn't have built-in awareness).
++/// Simple JSON-serializable presence state per device.
++#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq)]
++pub struct AwarenessState {
++    pub online: bool,
++    pub typing: bool,
++    pub device_name: String,
++}
++
++impl Default for AwarenessState {
++    fn default() -> Self {
++        Self {
++            online: true,
++            typing: false,
++            device_name: String::new(),
++        }
++    }
++}
++
++/// Encodes an awareness message for the wire.
++///
++/// Format: `[TAG_AWARENESS:1][json_bytes]`
++pub fn encode_awareness(state: &AwarenessState) -> Vec<u8> {
++    let json = serde_json::to_vec(state).unwrap_or_default();
++    let mut buf = Vec::with_capacity(1 + json.len());
++    buf.push(TAG_AWARENESS);
++    buf.extend_from_slice(&json);
++    buf
++}
++
++/// Decodes an awareness message (after tag byte has been consumed).
++pub fn decode_awareness(data: &[u8]) -> Result<AwarenessState, ProtocolError> {
++    serde_json::from_slice(data)
++        .map_err(|_| ProtocolError::InvalidPayload("invalid awareness JSON"))
++}
++
++// ─── Top-level Message Dispatch ───────────────────────────────────────────────
++
++/// Parsed top-level message from the wire.
++#[derive(Debug)]
++pub enum SyncMessage {
++    /// Root doc update bytes (tag 0). Server rejects these from clients.
++    RootUpdate(Vec<u8>),
++    /// Awareness state (tag 1). Bidirectional.
++    Awareness(AwarenessState),
++    /// Root version vector (tag 2). Used for sync negotiation.
++    RootVersionVector(Vec<u8>),
++    /// WindowSync (tag 10). Routed to per-window handler.
++    WindowSync {
++        window_key: String,
++        sub_tag: u8,
++        payload: Vec<u8>,
++    },
++    /// BulkTransfer (tag 20).
++    BulkTransfer {
++        window_key: String,
++        compressed: Vec<u8>,
++    },
++    /// BulkTransferDone (tag 21).
++    BulkTransferDone {
++        window_key: String,
++        doc_state: Vec<u8>,
++    },
++}
++
++/// Parses a raw wire message into a typed SyncMessage.
++pub fn parse_message(data: &[u8]) -> Result<SyncMessage, ProtocolError> {
++    if data.is_empty() {
++        return Err(ProtocolError::InvalidPayload("empty message"));
++    }
++    let tag = data[0];
++    let payload = &data[1..];
++
++    match tag {
++        TAG_SYNC_UPDATE => Ok(SyncMessage::RootUpdate(payload.to_vec())),
++        TAG_AWARENESS => {
++            let state = decode_awareness(payload)?;
++            Ok(SyncMessage::Awareness(state))
++        }
++        TAG_VERSION_VECTOR => Ok(SyncMessage::RootVersionVector(payload.to_vec())),
++        TAG_WINDOW_SYNC => {
++            let (key, sub_tag, inner) = decode_window_sync(payload)
++                .map_err(|e| ProtocolError::InvalidPayload(transport_err_msg(e)))?;
++            Ok(SyncMessage::WindowSync {
++                window_key: key.to_string(),
++                sub_tag,
++                payload: inner.to_vec(),
++            })
++        }
++        TAG_BULK_TRANSFER => {
++            let (key, compressed) = decode_bulk_transfer(payload)
++                .map_err(|e| ProtocolError::InvalidPayload(transport_err_msg(e)))?;
++            Ok(SyncMessage::BulkTransfer {
++                window_key: key.to_string(),
++                compressed: compressed.to_vec(),
++            })
++        }
++        TAG_BULK_TRANSFER_DONE => {
++            let (key, state) = decode_bulk_transfer_done(payload)
++                .map_err(|e| ProtocolError::InvalidPayload(transport_err_msg(e)))?;
++            Ok(SyncMessage::BulkTransferDone {
++                window_key: key.to_string(),
++                doc_state: state.to_vec(),
++            })
++        }
++        _ => Err(ProtocolError::UnknownTag(tag)),
++    }
++}
++
++/// Maps a `TransportError` to a static error message for `ProtocolError`.
++fn transport_err_msg(e: oneiron::sync::TransportError) -> &'static str {
++    match e {
++        oneiron::sync::TransportError::InvalidWindowKey => "invalid window key",
++        oneiron::sync::TransportError::InvalidPayload(msg) => msg,
++        oneiron::sync::TransportError::UnknownTag(_) => "unknown tag",
++        oneiron::sync::TransportError::FrameTooLarge { .. } => "frame too large",
++        oneiron::sync::TransportError::WebSocket(_) => "websocket error",
++        oneiron::sync::TransportError::ConnectionClosed => "connection closed",
++    }
++}
++
++/// Encodes a root doc update for the wire.
++///
++/// Format: `[TAG_SYNC_UPDATE:1][update_bytes]`
++pub fn encode_root_update(update_bytes: &[u8]) -> Vec<u8> {
++    let mut buf = Vec::with_capacity(1 + update_bytes.len());
++    buf.push(TAG_SYNC_UPDATE);
++    buf.extend_from_slice(update_bytes);
++    buf
++}
++
++// ─── Protocol Error ───────────────────────────────────────────────────────────
++
++/// Protocol-level errors specific to Oneiron's custom sync protocol.
++#[derive(Debug, thiserror::Error)]
++pub enum ProtocolError {
++    #[error("invalid payload: {0}")]
++    InvalidPayload(&'static str),
++    #[error("unknown custom tag: {0}")]
++    UnknownTag(u8),
++    #[error("frame too large: {size} bytes (max {max})")]
++    FrameTooLarge { size: usize, max: usize },
++    #[error("bulk transfer decode failure")]
++    BulkTransferDecode,
++    #[error("loro import error: {0}")]
++    LoroImport(String),
++}
++
++/// WebSocket close codes per ARCH-023 section 3.5.
++#[allow(dead_code)] // Used when WebSocket handler sends close frames
++pub mod close_codes {
++    /// JWT expired mid-session or device lease expired.
++    pub const AUTH_EXPIRED: u16 = 4001;
++    /// CRDT decode error (malformed update bytes).
++    pub const DECODE_ERROR: u16 = 4002;
++    /// Unknown custom tag.
++    pub const UNKNOWN_TAG: u16 = 4003;
++    /// Frame/payload exceeds size limit.
++    pub const FRAME_TOO_LARGE: u16 = 4004;
++    /// BulkTransfer decompression/decode failure.
++    pub const BULK_DECODE_FAILURE: u16 = 4005;
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++
++    #[test]
++    fn window_sync_roundtrip() {
++        let key = "2026-02";
++        let payload = b"hello world";
++        let encoded = encode_window_sync(key, window_sub_tags::UPDATE, payload);
++        assert_eq!(encoded[0], TAG_WINDOW_SYNC);
++
++        let (dk, sub, dp) = decode_window_sync(&encoded[1..]).unwrap();
++        assert_eq!(dk, key);
++        assert_eq!(sub, window_sub_tags::UPDATE);
++        assert_eq!(dp, payload);
++    }
++
++    #[test]
++    fn parse_message_root_update() {
++        let update = vec![1, 2, 3];
++        let mut msg = vec![TAG_SYNC_UPDATE];
++        msg.extend_from_slice(&update);
++        match parse_message(&msg).unwrap() {
++            SyncMessage::RootUpdate(data) => assert_eq!(data, update),
++            other => panic!("expected RootUpdate, got {:?}", other),
++        }
++    }
++
++    #[test]
++    fn parse_message_awareness() {
++        let state = AwarenessState {
++            online: true,
++            typing: true,
++            device_name: "iPhone".to_string(),
++        };
++        let encoded = encode_awareness(&state);
++        match parse_message(&encoded).unwrap() {
++            SyncMessage::Awareness(s) => assert_eq!(s, state),
++            other => panic!("expected Awareness, got {:?}", other),
++        }
++    }
++
++    #[test]
++    fn parse_message_unknown_tag() {
++        assert!(parse_message(&[50, 1, 2, 3]).is_err());
++    }
++
++    #[test]
++    fn parse_message_window_sync() {
++        let encoded = encode_window_sync("2026-02", window_sub_tags::UPDATE, b"data");
++        match parse_message(&encoded).unwrap() {
++            SyncMessage::WindowSync {
++                window_key,
++                sub_tag,
++                payload,
++            } => {
++                assert_eq!(window_key, "2026-02");
++                assert_eq!(sub_tag, window_sub_tags::UPDATE);
++                assert_eq!(payload, b"data");
++            }
++            other => panic!("expected WindowSync, got {:?}", other),
++        }
++    }
++
++    #[test]
++    fn awareness_roundtrip() {
++        let state = AwarenessState {
++            online: false,
++            typing: false,
++            device_name: "MacBook".to_string(),
++        };
++        let encoded = encode_awareness(&state);
++        let decoded = decode_awareness(&encoded[1..]).unwrap();
++        assert_eq!(decoded, state);
++    }
++}
+diff --git a/crates/oneiron-server/src/server.rs b/crates/oneiron-server/src/server.rs
+new file mode 100644
+index 0000000..0560650
+--- /dev/null
++++ b/crates/oneiron-server/src/server.rs
+@@ -0,0 +1,141 @@
++use std::collections::HashMap;
++use std::sync::atomic::{AtomicU32, Ordering};
++use std::sync::Arc;
++
++use loro::{ExportMode, LoroDoc, VersionVector};
++use oneiron::sync::WindowKey;
++use tokio::sync::{broadcast, RwLock};
++
++use crate::config::SyncServerConfig;
++use crate::protocol::AwarenessState;
++
++/// Broadcast payload: (conn_id, encoded_message).
++/// conn_id 0 = local/bridge writes (broadcast to all devices).
++/// conn_id >= 1 = specific connection (echo suppression skips sender).
++pub type BroadcastPayload = (u32, Vec<u8>);
++
++/// Core sync server state shared across all connections.
++pub struct SyncServer {
++    pub vault: Arc<oneiron::Vault>,
++    /// Root LoroDoc (server-authoritative, contains meta.windows).
++    pub root_doc: LoroDoc,
++    /// Window key -> LoroDoc for each loaded window.
++    pub windows: RwLock<HashMap<String, LoroDoc>>,
++    /// Per-connection awareness state.
++    pub awareness: RwLock<HashMap<u32, AwarenessState>>,
++    /// Broadcast channel for fan-out to all connected clients.
++    pub broadcast_tx: broadcast::Sender<BroadcastPayload>,
++    /// Monotonic connection ID counter. 0 = reserved for bridge/local writes.
++    pub next_conn_id: AtomicU32,
++    /// Server configuration.
++    pub config: SyncServerConfig,
++}
++
++impl SyncServer {
++    /// Creates a new SyncServer with an empty root doc and no windows loaded.
++    pub fn new(vault: oneiron::Vault, config: SyncServerConfig) -> Self {
++        let root_doc = LoroDoc::new();
++        // Initialize root doc meta map
++        let meta = root_doc.get_map("meta");
++        meta.insert("schema_version", 1i64).unwrap();
++        meta.insert("windows", "").unwrap();
++        root_doc.commit();
++
++        let (broadcast_tx, _) = broadcast::channel(256);
++
++        Self {
++            vault: Arc::new(vault),
++            root_doc,
++            windows: RwLock::new(HashMap::new()),
++            awareness: RwLock::new(HashMap::new()),
++            broadcast_tx,
++            next_conn_id: AtomicU32::new(1),
++            config,
++        }
++    }
++
++    /// Allocates a new unique connection ID.
++    pub fn alloc_conn_id(&self) -> u32 {
++        self.next_conn_id.fetch_add(1, Ordering::Relaxed)
++    }
++
++    /// Returns the window key (YYYY-MM) for a Unix timestamp.
++    #[allow(dead_code)] // Used when WebSocket connected
++    pub fn window_key_for_timestamp(ts: u64) -> String {
++        WindowKey::from_timestamp(ts).as_str().to_string()
++    }
++
++    /// Exports root doc updates since the given version vector.
++    #[allow(dead_code)] // Used when WebSocket connected
++    pub fn export_root_updates(&self, from_vv: &VersionVector) -> Result<Vec<u8>, String> {
++        self.root_doc
++            .export(ExportMode::updates(from_vv))
++            .map_err(|e| format!("root doc export failed: {e}"))
++    }
++
++    /// Exports all root doc state for a new client.
++    pub fn export_root_snapshot(&self) -> Result<Vec<u8>, String> {
++        self.root_doc
++            .export(ExportMode::Snapshot)
++            .map_err(|e| format!("root doc snapshot failed: {e}"))
++    }
++
++    /// Gets or creates a window LoroDoc. Returns a clone (reference-counted).
++    pub async fn get_or_create_window(&self, key: &str) -> LoroDoc {
++        {
++            let windows = self.windows.read().await;
++            if let Some(doc) = windows.get(key) {
++                return doc.clone();
++            }
++        }
++
++        let doc = LoroDoc::new();
++        // Initialize window schema maps
++        let _entities = doc.get_map("entities");
++        let _edges = doc.get_map("edges");
++        let _tombstones = doc.get_map("tombstones");
++        doc.commit();
++
++        let mut windows = self.windows.write().await;
++        windows.entry(key.to_string()).or_insert(doc).clone()
++    }
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++
++    #[test]
++    fn window_key_for_known_timestamps() {
++        assert_eq!(SyncServer::window_key_for_timestamp(1771027200), "2026-02");
++        assert_eq!(SyncServer::window_key_for_timestamp(1764547200), "2025-12");
++        assert_eq!(SyncServer::window_key_for_timestamp(0), "1970-01");
++    }
++
++    #[test]
++    fn root_doc_initialization() {
++        let dir = tempfile::tempdir().unwrap();
++        let vault = oneiron::Vault::open(dir.path(), oneiron::VaultConfig::device()).unwrap();
++        let server = SyncServer::new(vault, SyncServerConfig::default());
++
++        let deep = server.root_doc.get_deep_value();
++        let meta = deep.as_map().unwrap().get("meta").unwrap();
++        let meta_map = meta.as_map().unwrap();
++        assert_eq!(*meta_map.get("schema_version").unwrap().as_i64().unwrap(), 1i64);
++        assert!(meta_map.get("windows").unwrap().as_string().unwrap().is_empty());
++    }
++
++    #[tokio::test]
++    async fn window_creation() {
++        let dir = tempfile::tempdir().unwrap();
++        let vault = oneiron::Vault::open(dir.path(), oneiron::VaultConfig::device()).unwrap();
++        let server = SyncServer::new(vault, SyncServerConfig::default());
++
++        let doc = server.get_or_create_window("2026-03").await;
++        let deep = doc.get_deep_value();
++        let map = deep.as_map().unwrap();
++        assert!(map.contains_key("entities"));
++        assert!(map.contains_key("edges"));
++        assert!(map.contains_key("tombstones"));
++    }
++}
