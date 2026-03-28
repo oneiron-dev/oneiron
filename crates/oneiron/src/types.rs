@@ -37,7 +37,7 @@ impl EntityId {
         out
     }
 
-    /// Parses a 32-char lowercase hex string into an EntityId.
+    /// Parses a 32-char hex string (case-insensitive) into an EntityId.
     pub fn from_hex(s: &str) -> crate::error::Result<Self> {
         if s.len() != 32 {
             return Err(crate::error::Error::InvalidKey);

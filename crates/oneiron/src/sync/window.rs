@@ -14,7 +14,7 @@ use super::engine::{CrdtDoc, CrdtMap, Subscription};
 use super::loro_engine::LoroDocument;
 use super::schema::create_window_doc;
 use super::types::WindowKey;
-use crate::batch::EntityMetadataHeader;
+use crate::batch::{EntityMetadataHeader, ENTITY_METADATA_HEADER_LEN};
 use crate::error::{Error, Result};
 use crate::types::EntityId;
 use crate::Vault;
@@ -234,7 +234,7 @@ pub fn forward_rematerialize(
             Some(h) => h,
             None => return,
         };
-        let data = if blob.len() > 25 { &blob[25..] } else { &[] };
+        let data = if blob.len() > ENTITY_METADATA_HEADER_LEN { &blob[ENTITY_METADATA_HEADER_LEN..] } else { &[] };
         let result = vault
             .batch()
             .put(

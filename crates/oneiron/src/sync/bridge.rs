@@ -17,7 +17,7 @@ use std::sync::{Arc, Mutex};
 
 use super::engine::{CrdtDoc, Subscription};
 use super::loro_engine::LoroDocument;
-use crate::batch::EntityMetadataHeader;
+use crate::batch::{EntityMetadataHeader, ENTITY_METADATA_HEADER_LEN};
 use crate::types::{EdgeKind, EntityId, Vad};
 use crate::Vault;
 
@@ -45,8 +45,11 @@ impl Materializer {
     }
 
     /// Acquires the materializer lock.
+    ///
+    /// Recovers from a poisoned mutex (prior panic in Observer B callback)
+    /// instead of cascading the panic to all future callbacks.
     pub fn lock(&self) -> std::sync::MutexGuard<'_, ()> {
-        self.mutex.lock().unwrap()
+        self.mutex.lock().unwrap_or_else(|e| e.into_inner())
     }
 }
 
@@ -216,7 +219,7 @@ fn materialize_entities_from_delta(
                         }
                     };
 
-                    let data = if blob.len() > 25 { &blob[25..] } else { &[] };
+                    let data = if blob.len() > ENTITY_METADATA_HEADER_LEN { &blob[ENTITY_METADATA_HEADER_LEN..] } else { &[] };
 
                     if let Err(e) = vault
                         .batch_in()

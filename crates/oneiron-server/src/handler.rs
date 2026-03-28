@@ -142,6 +142,18 @@ async fn handle_connection(socket: WebSocket, server: Arc<SyncServer>, conn_id: 
                             tracing::warn!(conn_id, tag, "unknown tag — closing");
                             break;
                         }
+                        ProtocolError::FrameTooLarge { size, max } => {
+                            tracing::warn!(conn_id, size, max, "frame too large — closing");
+                            break;
+                        }
+                        ProtocolError::BulkTransferDecode => {
+                            tracing::warn!(conn_id, "bulk transfer decode failure — closing");
+                            break;
+                        }
+                        ProtocolError::LoroImport(msg) => {
+                            tracing::warn!(conn_id, error = %msg, "loro import error — closing");
+                            break;
+                        }
                         _ => {
                             tracing::warn!(conn_id, error = %e, "message handling failed");
                         }
@@ -191,9 +203,17 @@ async fn handle_sync_message(
         }
         SyncMessage::RootVersionVector(_vv_bytes) => {
             // Client is requesting root doc updates since their VV.
-            // Root doc is server-authoritative so we just send the full snapshot.
-            // (In practice, clients don't need to send VV for root — they just receive.)
-            tracing::debug!(conn_id, "client sent root VV — sending snapshot");
+            // Root doc is server-authoritative so we send the full snapshot.
+            tracing::debug!(conn_id, "client sent root VV — sending root snapshot");
+            match server.export_root_snapshot() {
+                Ok(snapshot) => {
+                    let msg = protocol::encode_root_update(&snapshot);
+                    let _ = direct_tx.send(msg);
+                }
+                Err(e) => {
+                    tracing::error!(conn_id, error = %e, "failed to export root snapshot for VV response");
+                }
+            }
             Ok(())
         }
         SyncMessage::WindowSync {
@@ -269,43 +289,28 @@ async fn handle_window_sync(
     Ok(())
 }
 
-/// Handles a BulkTransfer message from client (rare — usually server→client).
+/// Rejects a BulkTransfer message from client.
+///
+/// BulkTransfer is a server→client message only. Clients should not send it.
 async fn handle_bulk_transfer(
-    server: &SyncServer,
+    _server: &SyncServer,
     window_key: &str,
-    compressed: &[u8],
+    _compressed: &[u8],
 ) -> Result<(), ProtocolError> {
-    let max = server.config.max_bulk_decompressed;
-    let decompressed = decompress_bounded(compressed, max)
-        .map_err(|_| ProtocolError::BulkTransferDecode)?
-        .ok_or(ProtocolError::FrameTooLarge { size: max + 1, max })?;
-
-    let payload: BulkTransferPayload =
-        rmp_serde::from_slice(&decompressed).map_err(|_| ProtocolError::BulkTransferDecode)?;
-
-    tracing::info!(
-        window_key,
-        entities = payload.entities.len(),
-        edges = payload.edges.len(),
-        tombstones = payload.tombstones.len(),
-        "received BulkTransfer"
-    );
-
-    Ok(())
+    tracing::warn!(window_key, "rejected client-to-server BulkTransfer — not supported");
+    Err(ProtocolError::InvalidPayload("client-to-server BulkTransfer is not supported"))
 }
 
-/// Handles BulkTransferDone message.
+/// Rejects a BulkTransferDone message from client.
+///
+/// BulkTransferDone is a server→client message only. Clients should not send it.
 async fn handle_bulk_transfer_done(
     _server: &SyncServer,
     window_key: &str,
-    doc_state: &[u8],
+    _doc_state: &[u8],
 ) -> Result<(), ProtocolError> {
-    tracing::info!(
-        window_key,
-        state_len = doc_state.len(),
-        "received BulkTransferDone"
-    );
-    Ok(())
+    tracing::warn!(window_key, "rejected client-to-server BulkTransferDone — not supported");
+    Err(ProtocolError::InvalidPayload("client-to-server BulkTransferDone is not supported"))
 }
 
 /// Streaming zstd decompression with a size limit.
@@ -313,9 +318,10 @@ async fn handle_bulk_transfer_done(
 /// Returns `Ok(Some(data))` on success, `Ok(None)` if decompressed size
 /// exceeds `max_bytes`, or `Err` on decode failure. This prevents
 /// decompression bombs by aborting before allocating unbounded memory.
+#[allow(dead_code)] // Used when server sends BulkTransfer to clients (Phase 2+)
 fn decompress_bounded(compressed: &[u8], max_bytes: usize) -> Result<Option<Vec<u8>>, std::io::Error> {
     let mut decoder = zstd::Decoder::new(compressed)?;
-    let mut buf = Vec::with_capacity(std::cmp::min(compressed.len() * 2, max_bytes));
+    let mut buf = Vec::with_capacity(std::cmp::min(compressed.len().saturating_mul(2), max_bytes));
     let mut chunk = [0u8; 8192];
     loop {
         let n = decoder.read(&mut chunk)?;
@@ -331,6 +337,7 @@ fn decompress_bounded(compressed: &[u8], max_bytes: usize) -> Result<Option<Vec<
 }
 
 /// BulkTransfer payload schema (MessagePack).
+#[allow(dead_code)] // Protocol schema — used for server→client BulkTransfer generation
 #[derive(Debug, serde::Deserialize, serde::Serialize)]
 pub struct BulkTransferPayload {
     pub entities: Vec<BulkEntity>,
@@ -338,6 +345,7 @@ pub struct BulkTransferPayload {
     pub tombstones: Vec<BulkTombstone>,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, serde::Deserialize, serde::Serialize)]
 pub struct BulkEntity {
     #[serde(with = "serde_bytes")]
@@ -346,6 +354,7 @@ pub struct BulkEntity {
     pub blob: Vec<u8>,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, serde::Deserialize, serde::Serialize)]
 pub struct BulkEdge {
     #[serde(with = "serde_bytes")]
@@ -355,8 +364,12 @@ pub struct BulkEdge {
     pub tgt: Vec<u8>,
     pub weight: f32,
     pub created_at: u64,
+    pub vad_valence: f32,
+    pub vad_arousal: f32,
+    pub vad_dominance: f32,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, serde::Deserialize, serde::Serialize)]
 pub struct BulkTombstone {
     #[serde(with = "serde_bytes")]
