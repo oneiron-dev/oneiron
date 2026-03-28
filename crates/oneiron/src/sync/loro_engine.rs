@@ -11,7 +11,7 @@ use loro::{
 };
 
 
-use super::engine::{CrdtDoc, CrdtMap, MapChange, Subscription};
+use super::engine::{CrdtDoc, CrdtMap, LocalUpdateCallback, MapChange, Subscription};
 use crate::error::{Error, Result};
 
 // ─── LoroDocument ───────────────────────────────────────────────────────────
@@ -99,7 +99,7 @@ impl CrdtDoc for LoroDocument {
 
     fn subscribe_local_updates(
         &self,
-        cb: Box<dyn Fn(&[u8]) -> bool + Send + Sync>,
+        cb: LocalUpdateCallback,
     ) -> Subscription {
         let sub = self.0.subscribe_local_update(Box::new(move |bytes| cb(bytes)));
         Subscription::new(sub)

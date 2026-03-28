@@ -165,8 +165,8 @@ fn date_to_unix(year: i32, month: u32, day: u32) -> u64 {
         30,
         31,
     ];
-    for m in 0..(month as usize - 1) {
-        days += month_days[m] as i64;
+    for &d in &month_days[..(month as usize - 1)] {
+        days += d as i64;
     }
 
     // Days within the month

@@ -210,6 +210,7 @@ struct EdgeResult {
 // ─── Context Pack ─────────────────────────────────────────────────────────────
 
 #[derive(Deserialize)]
+#[allow(dead_code)] // Fields deserialized from JSON, used in Phase 1D context-pack endpoint
 struct ContextPackRequest {
     /// Query text for retrieval.
     query: Option<String>,

@@ -45,8 +45,10 @@ async fn main() -> anyhow::Result<()> {
     let vault = oneiron::Vault::open(&args.vault_path, vault_config)?;
 
     // Build sync server state
-    let mut server_config = config::SyncServerConfig::default();
-    server_config.auth_secret = args.auth_secret;
+    let server_config = config::SyncServerConfig {
+        auth_secret: args.auth_secret,
+        ..Default::default()
+    };
 
     let sync_server = Arc::new(SyncServer::new(vault, server_config));
 

@@ -291,10 +291,10 @@ pub fn forward_rematerialize(
             Err(_) => return,
         };
 
-        if vault.entity_exists(&id).unwrap_or(false) {
-            if vault.delete_entity(&id).is_ok() {
-                count += 1;
-            }
+        if vault.entity_exists(&id).unwrap_or(false)
+            && vault.delete_entity(&id).is_ok()
+        {
+            count += 1;
         }
     });
 

@@ -29,11 +29,17 @@ pub struct Materializer {
     mutex: Mutex<()>,
 }
 
-impl Materializer {
-    pub fn new() -> Self {
+impl Default for Materializer {
+    fn default() -> Self {
         Self {
             mutex: Mutex::new(()),
         }
+    }
+}
+
+impl Materializer {
+    pub fn new() -> Self {
+        Self::default()
     }
 
     /// Acquires the materializer lock.
@@ -48,11 +54,17 @@ pub struct ObserverAState {
     pub pending_bytes: AtomicU32,
 }
 
-impl ObserverAState {
-    pub fn new() -> Self {
+impl Default for ObserverAState {
+    fn default() -> Self {
         Self {
             pending_bytes: AtomicU32::new(0),
         }
+    }
+}
+
+impl ObserverAState {
+    pub fn new() -> Self {
+        Self::default()
     }
 }
 
