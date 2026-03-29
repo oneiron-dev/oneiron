@@ -5,14 +5,23 @@ REPO_ROOT=$(git rev-parse --show-toplevel)
 BRANCH=$(git branch --show-current)
 BASE="${1:-main}"
 PR_NUM=$(gh pr list --head "$BRANCH" --json number --jq '.[0].number' 2>/dev/null || echo "")
-REVIEW_DIR="$REPO_ROOT/.reviews/$BRANCH"
+REVIEW_BASE="$REPO_ROOT/.reviews/$BRANCH"
 
 if [ "$BRANCH" = "main" ]; then
   echo "Error: switch to a feature branch first"
   exit 1
 fi
 
+# Find next run number (run-1, run-2, ...) so we never overwrite
+RUN=1
+while [ -d "$REVIEW_BASE/run-$RUN" ]; do
+  RUN=$((RUN + 1))
+done
+REVIEW_DIR="$REVIEW_BASE/run-$RUN"
 mkdir -p "$REVIEW_DIR"
+
+# Symlink "latest" for convenience
+ln -sfn "run-$RUN" "$REVIEW_BASE/latest"
 
 LABEL="branch $BRANCH"
 [ -n "$PR_NUM" ] && LABEL="PR #$PR_NUM ($BRANCH)"
