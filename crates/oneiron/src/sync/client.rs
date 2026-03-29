@@ -77,7 +77,7 @@ pub struct SyncClient {
     windows: HashMap<String, LoroDoc>,
     _config: SyncClientConfig,
     status: SyncStatus,
-    event_tx: mpsc::UnboundedSender<SyncEvent>,
+    pub(crate) event_tx: mpsc::UnboundedSender<SyncEvent>,
     pending_updates: Vec<PendingUpdate>,
 }
 
