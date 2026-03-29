@@ -590,6 +590,8 @@ C-compatible FFI for mobile (iOS/Android) and TypeScript/Node via NAPI or direct
 | 8 | Index Maintenance | ~250 | 4,5 | done | #9 | HNSW rebuild, PPR cache cleanup, posting compaction |
 | 9 | Benchmarks | ~400 | 6,8 | — | — | Scale testing, recall targets, latency targets |
 | 10 | FFI Layer | ~300 | 7 | — | — | C FFI for mobile + TypeScript |
+| 11 | Sync: Memory Bench + CRDT + Transport | ~5500 | 8 | done | #10,#11 | Loro CRDT, CrdtEngine trait, observers, WS server, HTTP API |
+| 12 | Sync: Offline Queue + napi-rs Bridge | ~750 | 11 | done | #12 | Persistent queue, connection manager, napi-rs Vault bindings |
 
 **Review follow-ups from PR #10 (ARCH-022/023 Specs):**
 - [x] VAD write API — `BatchOp::Edge` hardcodes VAD to `0.0`; add `edge_with_vad()` or VAD params to `BatchBuilder::edge()`.
@@ -603,7 +605,66 @@ C-compatible FFI for mobile (iOS/Android) and TypeScript/Node via NAPI or direct
 - [x] `EdgeInfo` embeds `Vad` struct instead of flat valence/arousal/dominance fields.
 - [x] `InvalidVad` error variant for VAD-specific validation failures.
 
-**Total:** ~4,850 LOC
+**Review follow-ups from PR #11 + #12 (Phase 1 Sync Layer):**
+
+Grouped by Linear issue:
+
+**ONE-150 — WebSocket auth + security hardening:**
+- [ ] F2: WebSocket auth (shared secret Phase 1, WorkOS JWT production)
+- [ ] F3: CORS — `CorsLayer::permissive()` in production
+- [ ] F5: Rate limit enforcement (max_updates_per_sec, max_connections)
+- [ ] F25: Auth timing leak in `check_auth`
+- [ ] F40: Unbounded client-driven window allocation
+
+**ONE-154 — Materializer correctness:**
+- [ ] F9/F10: Dead code cleanup (MapChange::Updated, PendingUpdate)
+- [ ] F18/F19: Rematerialization edge cases
+- [ ] F35: `entity_exists()` TOCTOU in edge materializer
+- [ ] F37: `replay_pending_mirrors` byte-equality skips edge replay
+- [ ] F38: `MapChange::Updated` never constructed
+
+**ONE-149 — SyncClient production readiness:**
+- [ ] F1: SyncClient bypasses CrdtDoc trait
+- [ ] F33: Client VV as JSON instead of binary
+- [ ] F36: Client VV `unwrap_or_default()` sends empty VV
+- [ ] F41: `queue_update` never consumed (client WIP)
+- [ ] F43: Backoff loop doesn't drain local_rx
+- [ ] F44: Queue cleared without server VV ack
+- [ ] F45: `run()` returns event_rx after loop exits — API unusable for live events
+- [ ] F46: `is_empty()`/`is_full()` swallow LMDB errors
+- [ ] F47: `clear_all()` seq counter race with concurrent push
+
+**ONE-151 — Server production hardening:**
+- [ ] F4: Server error handling
+- [ ] F29: Transport improvements
+- [ ] F34: Transport `assert!` → `Result` for remote input
+
+**ONE-153 — Schema & encoding consistency:**
+- [ ] F12/F13/F14: Schema improvements
+- [ ] F27: Edge encoding
+- [ ] F32: Root doc schema encoding mismatch (server vs schema.rs)
+
+**ONE-155 — Transport & protocol improvements:**
+- [ ] F15/F16: Transport improvements
+- [ ] F21/F28: Protocol hardening
+
+**ONE-152 — Test coverage gaps:**
+- [ ] F6/F7/F8: Integration tests, rematerialization tests
+
+**ONE-156 — Performance optimizations:**
+- [ ] F20/F23: Counter optimizations
+- [ ] F31: `entities_in_learned_range` O(N) full scan → range seek
+- [ ] F42: `forward_rematerialize` per-entity read txn
+- [ ] F49: `clear_through` holds writer lock during scan
+
+**ONE-157 — Cleanup & tooling:**
+- [ ] F11/F17/F22/F24/F26/F30: Minor cleanup
+- [ ] F39: `review-pr.sh` missing `command -v` checks
+- [ ] F48: `push_embed_job` UNIX_EPOCH unwrap
+
+**Total:** ~6,100 LOC (retrieval engine) + ~6,250 LOC (sync layer)
+
+**Parallelizable:** Tasks 3 and 4 can run in parallel (both depend on 1/2 but not each other). Task 5 can start as soon as Task 2 is done. Task 8 can start after Tasks 4+5. Tasks 9 and 7 can run in parallel.
 
 **Parallelizable:** Tasks 3 and 4 can run in parallel (both depend on 1/2 but not each other). Task 5 can start as soon as Task 2 is done. Task 8 can start after Tasks 4+5. Tasks 9 and 7 can run in parallel.
 
