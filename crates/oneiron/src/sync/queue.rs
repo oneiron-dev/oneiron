@@ -29,7 +29,7 @@ pub struct QueuedUpdate {
     pub seq: u64,
     /// Window key (YYYY-MM format).
     pub window_key: String,
-    /// Encoded wire message (ready to send as WindowSync).
+    /// Raw CRDT update bytes (will be wire-encoded during replay via `encode_window_sync`).
     pub encoded: Vec<u8>,
 }
 
@@ -177,6 +177,31 @@ impl SyncQueue {
         }
         wtxn.commit()?;
 
+        Ok(())
+    }
+
+    /// Clears only update entries (`q:` prefix), preserving embed jobs (`e:` prefix).
+    ///
+    /// Use this after convergence or when clearing stale updates without
+    /// disrupting pending embed work.
+    pub fn clear_updates(&self) -> Result<()> {
+        let rtxn = self.vault.store.env.read_txn()?;
+        let mut keys_to_delete = Vec::new();
+        let iter = self.vault.store.sync_queue.iter(&rtxn)?;
+        for result in iter {
+            let (key, _) = result?;
+            if key.starts_with(UPDATE_PREFIX) {
+                keys_to_delete.push(key.to_vec());
+            }
+        }
+        drop(rtxn);
+
+        let mut wtxn = self.vault.store.env.write_txn()?;
+        for key in &keys_to_delete {
+            self.vault.store.sync_queue.delete(&mut wtxn, key)?;
+        }
+        wtxn.commit()?;
+        self.seq.store(0, Ordering::Relaxed);
         Ok(())
     }
 

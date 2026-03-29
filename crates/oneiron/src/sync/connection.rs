@@ -107,8 +107,9 @@ impl SyncConnection {
             match self.connect_and_sync(&mut client, &event_tx).await {
                 Ok(ws_stream) => {
                     // Reset backoff on successful connect
+                    // Note: connect_and_sync already emits Synced, so we don't emit Connected here
+                    // to avoid regressing status for observers.
                     backoff_ms = self.config.client_config.reconnect_initial_ms;
-                    let _ = event_tx.send(SyncEvent::StatusChanged(SyncStatus::Connected));
 
                     // Run steady state until disconnect or shutdown
                     let reason = self
@@ -242,14 +243,23 @@ impl SyncConnection {
                             Ok(Some(Ok(Message::Close(_)))) => {
                                 return Err("Server closed during initial sync".to_string());
                             }
+                            Ok(Some(Ok(
+                                Message::Ping(_)
+                                | Message::Pong(_)
+                                | Message::Text(_)
+                                | Message::Frame(_),
+                            ))) => {
+                                // Ignore keepalive/non-binary messages during quiet check
+                                continue;
+                            }
                             Ok(Some(Err(e))) => {
                                 return Err(format!("WS error during initial sync: {e}"));
                             }
                             Ok(None) => {
                                 return Err("WS stream ended during initial sync".to_string());
                             }
-                            // Timeout or non-binary message means initial sync is done
-                            _ => break,
+                            // Timeout means initial sync is done
+                            Err(_) => break,
                         }
                     }
                 }
@@ -292,8 +302,8 @@ impl SyncConnection {
             let max_seq = queued.last().map(|u| u.seq).unwrap_or(0);
             self.run_convergence(client, event_tx, max_seq).await;
         } else {
-            // No queue — just clear for safety
-            let _ = self.queue.clear_all();
+            // No queue — clear stale updates but preserve embed jobs
+            let _ = self.queue.clear_updates();
         }
 
         let _ = event_tx.send(SyncEvent::StatusChanged(SyncStatus::Synced));
@@ -380,9 +390,12 @@ impl SyncConnection {
                             }
                         }
                         Some(Ok(Message::Close(_))) | None => {
+                            // Flush debounce buffer before disconnecting
+                            flush_to_queue(&self.queue, &mut debounce_buffer);
                             return LoopExit::Disconnected("Server closed connection".to_string());
                         }
                         Some(Err(e)) => {
+                            flush_to_queue(&self.queue, &mut debounce_buffer);
                             return LoopExit::Disconnected(format!("WS error: {e}"));
                         }
                         _ => {} // Text, Pong — ignore
@@ -427,11 +440,15 @@ impl SyncConnection {
                     if let Some((fail_idx, err)) = failed_at {
                         // Queue all unsent updates (including the failed one)
                         for local_update in &pending[fail_idx..] {
-                            let _ = self.queue.push(
+                            if let Err(e) = self.queue.push(
                                 &local_update.window_key,
                                 &local_update.update_bytes,
-                            );
+                            ) {
+                                tracing::error!("Failed to persist update to offline queue: {e}");
+                            }
                         }
+                        // Also flush any remaining debounce buffer
+                        flush_to_queue(&self.queue, &mut debounce_buffer);
                         return LoopExit::Disconnected(err);
                     }
                 }
@@ -439,17 +456,22 @@ impl SyncConnection {
                 // Shutdown signal
                 _ = &mut *shutdown_rx => {
                     // Flush any remaining buffered updates to queue
-                    for local_update in debounce_buffer.drain(..) {
-                        let _ = self.queue.push(
-                            &local_update.window_key,
-                            &local_update.update_bytes,
-                        );
-                    }
+                    flush_to_queue(&self.queue, &mut debounce_buffer);
                     // Send close frame
                     let _ = write.send(Message::Close(None)).await;
                     return LoopExit::Shutdown;
                 }
             }
+        }
+    }
+}
+
+/// Flush all buffered local updates to the persistent offline queue.
+/// Logs errors but does not fail — best-effort during disconnect/shutdown.
+fn flush_to_queue(queue: &SyncQueue, buffer: &mut Vec<LocalUpdate>) {
+    for local_update in buffer.drain(..) {
+        if let Err(e) = queue.push(&local_update.window_key, &local_update.update_bytes) {
+            tracing::error!("Failed to persist update to offline queue: {e}");
         }
     }
 }
@@ -504,7 +526,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn debounce_buffer_flushed_to_queue_on_shutdown() {
+    async fn queue_push_and_drain_roundtrip() {
         let vault = test_vault();
         let conn = SyncConnection::new(
             Arc::clone(&vault),

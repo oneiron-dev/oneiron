@@ -69,6 +69,11 @@ impl NapiVault {
         data: Buffer,
     ) -> napi::Result<()> {
         let eid = parse_entity_id(&id)?;
+        if entity_type > u8::MAX as u32 {
+            return Err(napi::Error::from_reason(format!(
+                "entity_type must be 0-255, got {entity_type}"
+            )));
+        }
         self.vault
             .put_entity(
                 &eid,
@@ -114,6 +119,11 @@ impl NapiVault {
     pub fn put_edge(&self, src: Buffer, kind: u32, tgt: Buffer, weight: f64) -> napi::Result<()> {
         let src_id = parse_entity_id(&src)?;
         let tgt_id = parse_entity_id(&tgt)?;
+        if kind > u8::MAX as u32 {
+            return Err(napi::Error::from_reason(format!(
+                "edge kind must be 0-255, got {kind}"
+            )));
+        }
         let edge_kind = EdgeKind::try_from_u8(kind as u8)
             .ok_or_else(|| napi::Error::from_reason(format!("invalid edge kind: {kind}")))?;
         self.vault
@@ -233,6 +243,7 @@ impl NapiVault {
             Some("toon") => oneiron::PackFormat::Toon,
             Some("markdown") => oneiron::PackFormat::Markdown,
             Some("plaintext") => oneiron::PackFormat::Plaintext,
+            // Lenient default: unrecognized or missing format falls back to JSON
             _ => oneiron::PackFormat::Json,
         };
 
@@ -261,6 +272,12 @@ impl NapiVault {
 
         for e in &entities {
             let eid = parse_entity_id(&e.id)?;
+            if e.entity_type > u8::MAX as u32 {
+                return Err(napi::Error::from_reason(format!(
+                    "entity_type must be 0-255, got {}",
+                    e.entity_type
+                )));
+            }
             batch = batch.put(
                 &eid,
                 e.entity_type as u8,
@@ -282,7 +299,7 @@ impl NapiVault {
     #[napi]
     pub fn start_sync(&self, _ws_url: String, _auth_token: String) -> napi::Result<()> {
         Err(napi::Error::from_reason(
-            "sync not yet implemented — waiting for Phase 1D connection manager",
+            "N-API sync bindings not yet wired up",
         ))
     }
 
@@ -290,7 +307,7 @@ impl NapiVault {
     #[napi]
     pub fn stop_sync(&self) -> napi::Result<()> {
         Err(napi::Error::from_reason(
-            "sync not yet implemented — waiting for Phase 1D connection manager",
+            "N-API sync bindings not yet wired up",
         ))
     }
 }
