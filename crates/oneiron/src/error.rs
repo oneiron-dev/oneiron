@@ -37,6 +37,12 @@ pub enum Error {
     /// Encountered malformed key or value bytes.
     #[error("invalid key or value bytes")]
     InvalidKey,
+    /// Entity type byte is not in any known range.
+    #[error("invalid entity type: {0}")]
+    InvalidEntityType(u8),
+    /// Tree operation would create a cycle.
+    #[error("cycle detected in tree hierarchy")]
+    CycleDetected,
     /// Malformed CRDT update bytes.
     #[cfg(feature = "sync")]
     #[error("crdt decode error: {0}")]

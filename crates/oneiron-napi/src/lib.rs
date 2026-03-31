@@ -6,7 +6,7 @@ use napi::bindgen_prelude::*;
 use napi_derive::napi;
 use oneiron::{EdgeKind, EntityId, TimeRange, Vault, VaultConfig};
 
-use types::{NapiBatchEntity, NapiEdgeInfo, NapiScoredEntity};
+use types::{NapiBatchEntity, NapiEdgeInfo, NapiScoredEntity, NapiSubtreeEntry};
 
 /// Convert an oneiron error to a napi error.
 fn to_napi_err(e: oneiron::Error) -> napi::Error {
@@ -291,6 +291,108 @@ impl NapiVault {
         }
 
         batch.commit().map_err(to_napi_err)
+    }
+
+    // ─── Tree Queries ──────────────────────────────────────────
+
+    /// Return all entity IDs of a given type.
+    #[napi]
+    pub fn entities_by_type(&self, entity_type: u32) -> napi::Result<Vec<Buffer>> {
+        if entity_type > u8::MAX as u32 {
+            return Err(napi::Error::from_reason(format!(
+                "entity_type must be 0-255, got {entity_type}"
+            )));
+        }
+        let ids = self
+            .vault
+            .entities_by_type(entity_type as u8)
+            .map_err(to_napi_err)?;
+        Ok(ids
+            .into_iter()
+            .map(|id| Buffer::from(id.as_bytes().as_slice()))
+            .collect())
+    }
+
+    /// Return outbound edge targets filtered by kind and optional target type.
+    #[napi]
+    pub fn targets(
+        &self,
+        src: Buffer,
+        kind: u32,
+        target_type: Option<u32>,
+    ) -> napi::Result<Vec<Buffer>> {
+        let src_id = parse_entity_id(&src)?;
+        if kind > u8::MAX as u32 {
+            return Err(napi::Error::from_reason(format!(
+                "edge kind must be 0-255, got {kind}"
+            )));
+        }
+        let edge_kind = EdgeKind::try_from_u8(kind as u8)
+            .ok_or_else(|| napi::Error::from_reason(format!("invalid edge kind: {kind}")))?;
+        let tgt_type = target_type.map(|t| t as u8);
+        let ids = self
+            .vault
+            .targets(&src_id, edge_kind, tgt_type)
+            .map_err(to_napi_err)?;
+        Ok(ids
+            .into_iter()
+            .map(|id| Buffer::from(id.as_bytes().as_slice()))
+            .collect())
+    }
+
+    /// Return inbound edge sources filtered by kind and optional source type.
+    #[napi]
+    pub fn sources(
+        &self,
+        tgt: Buffer,
+        kind: u32,
+        source_type: Option<u32>,
+    ) -> napi::Result<Vec<Buffer>> {
+        let tgt_id = parse_entity_id(&tgt)?;
+        if kind > u8::MAX as u32 {
+            return Err(napi::Error::from_reason(format!(
+                "edge kind must be 0-255, got {kind}"
+            )));
+        }
+        let edge_kind = EdgeKind::try_from_u8(kind as u8)
+            .ok_or_else(|| napi::Error::from_reason(format!("invalid edge kind: {kind}")))?;
+        let src_type = source_type.map(|t| t as u8);
+        let ids = self
+            .vault
+            .sources(&tgt_id, edge_kind, src_type)
+            .map_err(to_napi_err)?;
+        Ok(ids
+            .into_iter()
+            .map(|id| Buffer::from(id.as_bytes().as_slice()))
+            .collect())
+    }
+
+    /// Return full subtree via recursive ChildOf traversal.
+    #[napi]
+    pub fn subtree(&self, root: Buffer, max_depth: u32) -> napi::Result<Vec<NapiSubtreeEntry>> {
+        let root_id = parse_entity_id(&root)?;
+        let entries = self
+            .vault
+            .subtree(&root_id, max_depth)
+            .map_err(to_napi_err)?;
+        Ok(entries
+            .into_iter()
+            .map(|(id, depth)| NapiSubtreeEntry {
+                id: Buffer::from(id.as_bytes().as_slice()),
+                depth,
+            })
+            .collect())
+    }
+
+    /// Walk ancestors via ChildOf edges. Capped at 100.
+    #[napi]
+    pub fn ancestors(&self, node: Buffer) -> napi::Result<Vec<Buffer>> {
+        let node_id = parse_entity_id(&node)?;
+        let ids = self.vault.ancestors(&node_id).map_err(to_napi_err)?;
+        Ok(ids
+            .into_iter()
+            .map(|id| Buffer::from(id.as_bytes().as_slice()))
+            .collect())
     }
 
     // ─── Sync (stubs — wired up in Phase 1D) ──────────────────

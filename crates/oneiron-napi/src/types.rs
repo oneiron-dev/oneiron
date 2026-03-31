@@ -31,6 +31,15 @@ pub struct NapiScoredEntity {
     pub score: f64,
 }
 
+/// A subtree entry with entity ID and depth.
+#[napi(object)]
+pub struct NapiSubtreeEntry {
+    /// Entity ID (16 bytes).
+    pub id: Buffer,
+    /// Depth from root (1 = direct child).
+    pub depth: u32,
+}
+
 /// An entity to write in a batch operation.
 #[napi(object)]
 pub struct NapiBatchEntity {

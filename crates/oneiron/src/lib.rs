@@ -336,6 +336,214 @@ impl Vault {
             .get(&rtxn, id.as_bytes())?
             .map(|bytes| bytes.to_vec()))
     }
+
+    // ─── Tree Query API ───────────────────────────────────────
+
+    /// Returns all entity IDs of a given type via prefix scan on type_index.
+    pub fn entities_by_type(&self, entity_type: u8) -> Result<Vec<EntityId>> {
+        let rtxn = self.store.env.read_txn()?;
+        let mut ids = Vec::new();
+        for entry in self.store.type_index.prefix_iter(&rtxn, &[entity_type])? {
+            let (key, _) = entry?;
+            if key.len() != 17 {
+                continue;
+            }
+            let id = EntityId::from_bytes(key[1..17].try_into().map_err(|_| Error::InvalidKey)?);
+            ids.push(id);
+        }
+        Ok(ids)
+    }
+
+    /// Returns the entity type byte for a stored entity, or None if not found.
+    pub fn get_entity_type(&self, id: &EntityId) -> Result<Option<u8>> {
+        let rtxn = self.store.env.read_txn()?;
+        let Some(raw) = self.store.entities.get(&rtxn, id.as_bytes())? else {
+            return Ok(None);
+        };
+        let header = EntityMetadataHeader::parse(raw).ok_or(Error::InvalidKey)?;
+        Ok(Some(header.entity_type))
+    }
+
+    /// Outbound edge targets filtered by kind and optional target entity type.
+    ///
+    /// For a ChildOf edge (child → parent), calling `targets(child, ChildOf, None)`
+    /// returns the parent(s).
+    pub fn targets(
+        &self,
+        src: &EntityId,
+        kind: EdgeKind,
+        target_type: Option<u8>,
+    ) -> Result<Vec<EntityId>> {
+        let rtxn = self.store.env.read_txn()?;
+        let mut ids = Vec::new();
+        for entry in self.store.edges_out.prefix_iter(&rtxn, src.as_bytes())? {
+            let (key, _) = entry?;
+            if key.len() != EDGE_KEY_LEN {
+                continue;
+            }
+            let edge_kind_byte = key[16];
+            if edge_kind_byte != kind as u8 {
+                continue;
+            }
+            let tgt = EntityId::from_bytes(key[17..33].try_into().map_err(|_| Error::InvalidKey)?);
+
+            if let Some(req_type) = target_type {
+                if let Some(raw) = self.store.entities.get(&rtxn, tgt.as_bytes())? {
+                    if let Some(header) = EntityMetadataHeader::parse(raw) {
+                        if header.entity_type != req_type {
+                            continue;
+                        }
+                    }
+                } else {
+                    continue; // target entity doesn't exist
+                }
+            }
+
+            ids.push(tgt);
+        }
+        Ok(ids)
+    }
+
+    /// Inbound edge sources filtered by kind and optional source entity type.
+    ///
+    /// For a ChildOf edge (child → parent), calling `sources(parent, ChildOf, None)`
+    /// returns the children.
+    pub fn sources(
+        &self,
+        tgt: &EntityId,
+        kind: EdgeKind,
+        source_type: Option<u8>,
+    ) -> Result<Vec<EntityId>> {
+        let rtxn = self.store.env.read_txn()?;
+        let mut ids = Vec::new();
+        for entry in self.store.edges_in.prefix_iter(&rtxn, tgt.as_bytes())? {
+            let (key, _) = entry?;
+            if key.len() != EDGE_KEY_LEN {
+                continue;
+            }
+            let edge_kind_byte = key[16];
+            if edge_kind_byte != kind as u8 {
+                continue;
+            }
+            let src = EntityId::from_bytes(key[17..33].try_into().map_err(|_| Error::InvalidKey)?);
+
+            if let Some(req_type) = source_type {
+                if let Some(raw) = self.store.entities.get(&rtxn, src.as_bytes())? {
+                    if let Some(header) = EntityMetadataHeader::parse(raw) {
+                        if header.entity_type != req_type {
+                            continue;
+                        }
+                    }
+                } else {
+                    continue; // source entity doesn't exist
+                }
+            }
+
+            ids.push(src);
+        }
+        Ok(ids)
+    }
+
+    /// Full subtree via recursive ChildOf traversal. Returns `(id, depth)` pairs.
+    ///
+    /// Finds all descendants by following inbound ChildOf edges (since ChildOf
+    /// direction is child → parent, children appear in the parent's edges_in).
+    pub fn subtree(&self, root: &EntityId, max_depth: u32) -> Result<Vec<(EntityId, u32)>> {
+        let rtxn = self.store.env.read_txn()?;
+        let mut result = Vec::new();
+        let mut frontier = vec![(*root, 0_u32)];
+        let mut visited = std::collections::HashSet::new();
+        visited.insert(*root);
+
+        while let Some((node, depth)) = frontier.pop() {
+            if depth > 0 {
+                result.push((node, depth));
+            }
+            if depth >= max_depth {
+                continue;
+            }
+
+            // Find children: inbound ChildOf edges (child --ChildOf--> node)
+            for entry in self.store.edges_in.prefix_iter(&rtxn, node.as_bytes())? {
+                let (key, _) = entry?;
+                if key.len() != EDGE_KEY_LEN {
+                    continue;
+                }
+                if key[16] != EdgeKind::ChildOf as u8 {
+                    continue;
+                }
+                let child =
+                    EntityId::from_bytes(key[17..33].try_into().map_err(|_| Error::InvalidKey)?);
+                if visited.insert(child) {
+                    frontier.push((child, depth + 1));
+                }
+            }
+        }
+
+        result.sort_by(|a, b| {
+            a.1.cmp(&b.1)
+                .then_with(|| a.0.as_bytes().cmp(b.0.as_bytes()))
+        });
+        Ok(result)
+    }
+
+    /// Walk ancestors via outbound ChildOf edges. Capped at 100 to prevent cycles.
+    ///
+    /// Returns ancestor IDs from immediate parent to root (nearest first).
+    pub fn ancestors(&self, node: &EntityId) -> Result<Vec<EntityId>> {
+        let rtxn = self.store.env.read_txn()?;
+        let mut result = Vec::new();
+        let mut current = *node;
+        let mut visited = std::collections::HashSet::new();
+        visited.insert(current);
+
+        for _ in 0..100 {
+            // Find parent: outbound ChildOf edge (current --ChildOf--> parent)
+            let mut found_parent = None;
+            for entry in self
+                .store
+                .edges_out
+                .prefix_iter(&rtxn, current.as_bytes())?
+            {
+                let (key, _) = entry?;
+                if key.len() != EDGE_KEY_LEN {
+                    continue;
+                }
+                if key[16] != EdgeKind::ChildOf as u8 {
+                    continue;
+                }
+                let parent =
+                    EntityId::from_bytes(key[17..33].try_into().map_err(|_| Error::InvalidKey)?);
+                found_parent = Some(parent);
+                break; // A node has at most one parent
+            }
+
+            match found_parent {
+                Some(parent) => {
+                    if !visited.insert(parent) {
+                        // Cycle detected — stop walking but don't error
+                        break;
+                    }
+                    result.push(parent);
+                    current = parent;
+                }
+                None => break, // Reached root
+            }
+        }
+
+        Ok(result)
+    }
+
+    /// Checks whether making `target` a parent of `node` would create a cycle.
+    ///
+    /// Walks ancestors of `target` — if `node` is found among them, it's a cycle.
+    pub fn would_create_cycle(&self, node: &EntityId, target: &EntityId) -> Result<bool> {
+        if node == target {
+            return Ok(true);
+        }
+        let ancestors = self.ancestors(target)?;
+        Ok(ancestors.contains(node))
+    }
 }
 
 pub(crate) fn unix_seconds_now() -> u64 {
@@ -1508,13 +1716,15 @@ mod tests {
             (15, EdgeKind::InWorld),
             (16, EdgeKind::FacetOf),
             (17, EdgeKind::SetIn),
+            (18, EdgeKind::ChildOf),
+            (19, EdgeKind::AssignedTo),
         ];
         for (disc, expected) in new_kinds {
             let kind = EdgeKind::try_from_u8(disc).expect("valid discriminant");
             assert_eq!(kind, expected);
             assert_eq!(kind as u8, disc);
         }
-        assert!(EdgeKind::try_from_u8(18).is_none());
+        assert!(EdgeKind::try_from_u8(20).is_none());
     }
 
     #[test]
@@ -1529,10 +1739,10 @@ mod tests {
     #[test]
     fn new_entity_type_prefixes() {
         use crate::types::short_id_prefix;
-        assert_eq!(short_id_prefix(12), "og");
-        assert_eq!(short_id_prefix(13), "fc");
-        assert_eq!(short_id_prefix(14), "wd");
-        assert_eq!(short_id_prefix(15), "xx");
+        assert_eq!(short_id_prefix(12).unwrap(), "og");
+        assert_eq!(short_id_prefix(13).unwrap(), "fc");
+        assert_eq!(short_id_prefix(14).unwrap(), "wd");
+        assert!(short_id_prefix(15).is_err());
     }
 
     #[test]
@@ -1667,6 +1877,375 @@ mod tests {
         let out = vault.edges_out(&src)?;
         assert_eq!(out.len(), 1);
         assert_eq!(out[0].kind, EdgeKind::HasFacet);
+        Ok(())
+    }
+
+    // ─── Phase 2A: Productivity Entity Types ──────────────────
+
+    #[test]
+    fn productivity_entity_types_round_trip() -> Result<()> {
+        let temp_dir = tempfile::tempdir()?;
+        let vault = Vault::open(temp_dir.path(), test_config())?;
+        let task_list = EntityId::now();
+        let task = EntityId::now();
+
+        vault
+            .batch()
+            .put(&task_list, 60, test_time_range(100, 100), 101, b"project")
+            .put(&task, 61, test_time_range(200, 200), 201, b"task-data")
+            .commit()?;
+
+        assert_eq!(vault.get(&task_list)?.unwrap(), b"project");
+        assert_eq!(vault.get(&task)?.unwrap(), b"task-data");
+        Ok(())
+    }
+
+    #[test]
+    fn productivity_short_id_prefixes() {
+        use crate::types::short_id_prefix;
+        assert_eq!(short_id_prefix(60).unwrap(), "tl");
+        assert_eq!(short_id_prefix(61).unwrap(), "tk");
+        assert_eq!(short_id_prefix(62).unwrap(), "mc");
+    }
+
+    #[test]
+    fn invalid_entity_type_rejected() {
+        use crate::types::short_id_prefix;
+        assert!(short_id_prefix(99).is_err());
+        assert!(short_id_prefix(255).is_err());
+        assert!(short_id_prefix(30).is_err()); // companion range, not yet defined
+    }
+
+    #[test]
+    fn edge_kinds_child_of_and_assigned_to() -> Result<()> {
+        let temp_dir = tempfile::tempdir()?;
+        let vault = Vault::open(temp_dir.path(), test_config())?;
+        let child = EntityId::now();
+        let parent = EntityId::now();
+        let machine = EntityId::now();
+
+        vault.put_edge(&child, EdgeKind::ChildOf, &parent, 1.0)?;
+        vault.put_edge(&child, EdgeKind::AssignedTo, &machine, 0.8)?;
+
+        let out = vault.edges_out(&child)?;
+        assert_eq!(out.len(), 2);
+        assert!(out
+            .iter()
+            .any(|e| e.kind == EdgeKind::ChildOf && e.target == parent));
+        assert!(out
+            .iter()
+            .any(|e| e.kind == EdgeKind::AssignedTo && e.target == machine));
+
+        assert_eq!(EdgeKind::ChildOf.default_weight(), 1.0);
+        assert_eq!(EdgeKind::AssignedTo.default_weight(), 0.8);
+        Ok(())
+    }
+
+    // ─── Phase 2A: Tree Query API ─────────────────────────────
+
+    #[test]
+    fn entities_by_type_returns_correct_ids() -> Result<()> {
+        let temp_dir = tempfile::tempdir()?;
+        let vault = Vault::open(temp_dir.path(), test_config())?;
+        let tl1 = EntityId::now();
+        let tl2 = EntityId::now();
+        let tk1 = EntityId::now();
+
+        vault
+            .batch()
+            .put(&tl1, 60, test_time_range(1, 1), 2, b"project-1")
+            .put(&tl2, 60, test_time_range(3, 3), 4, b"project-2")
+            .put(&tk1, 61, test_time_range(5, 5), 6, b"task-1")
+            .commit()?;
+
+        let task_lists = vault.entities_by_type(60)?;
+        assert_eq!(task_lists.len(), 2);
+        assert!(task_lists.contains(&tl1));
+        assert!(task_lists.contains(&tl2));
+
+        let tasks = vault.entities_by_type(61)?;
+        assert_eq!(tasks.len(), 1);
+        assert!(tasks.contains(&tk1));
+
+        let empty = vault.entities_by_type(62)?;
+        assert!(empty.is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn targets_and_sources_with_kind_filter() -> Result<()> {
+        let temp_dir = tempfile::tempdir()?;
+        let vault = Vault::open(temp_dir.path(), test_config())?;
+        let child = EntityId::now();
+        let parent = EntityId::now();
+        let sibling = EntityId::now();
+        let task_list = EntityId::now();
+
+        vault
+            .batch()
+            .put(&child, 61, test_time_range(1, 1), 2, b"child")
+            .put(&parent, 61, test_time_range(3, 3), 4, b"parent")
+            .put(&sibling, 61, test_time_range(5, 5), 6, b"sibling")
+            .put(&task_list, 60, test_time_range(7, 7), 8, b"project")
+            .edge(&child, EdgeKind::ChildOf, &parent, 1.0)
+            .edge(&sibling, EdgeKind::ChildOf, &parent, 1.0)
+            .edge(&child, EdgeKind::BelongsTo, &task_list, 1.0)
+            .commit()?;
+
+        // targets(child, ChildOf) should return the parent
+        let parents = vault.targets(&child, EdgeKind::ChildOf, None)?;
+        assert_eq!(parents, vec![parent]);
+
+        // sources(parent, ChildOf) should return both children
+        let children = vault.sources(&parent, EdgeKind::ChildOf, None)?;
+        assert_eq!(children.len(), 2);
+        assert!(children.contains(&child));
+        assert!(children.contains(&sibling));
+
+        // targets with type filter: child's BelongsTo targets of type 60
+        let lists = vault.targets(&child, EdgeKind::BelongsTo, Some(60))?;
+        assert_eq!(lists, vec![task_list]);
+
+        // targets with wrong type filter: should be empty
+        let wrong = vault.targets(&child, EdgeKind::BelongsTo, Some(61))?;
+        assert!(wrong.is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn subtree_four_level_tree() -> Result<()> {
+        let temp_dir = tempfile::tempdir()?;
+        let vault = Vault::open(temp_dir.path(), test_config())?;
+
+        // Build: root → child1 → grandchild → great_grandchild
+        //             → child2
+        let root = EntityId::now();
+        let child1 = EntityId::now();
+        let child2 = EntityId::now();
+        let grandchild = EntityId::now();
+        let great_grandchild = EntityId::now();
+
+        vault
+            .batch()
+            .put(&root, 61, test_time_range(1, 1), 2, b"root")
+            .put(&child1, 61, test_time_range(3, 3), 4, b"child1")
+            .put(&child2, 61, test_time_range(5, 5), 6, b"child2")
+            .put(&grandchild, 61, test_time_range(7, 7), 8, b"gc")
+            .put(&great_grandchild, 61, test_time_range(9, 9), 10, b"ggc")
+            .edge(&child1, EdgeKind::ChildOf, &root, 1.0)
+            .edge(&child2, EdgeKind::ChildOf, &root, 1.0)
+            .edge(&grandchild, EdgeKind::ChildOf, &child1, 1.0)
+            .edge(&great_grandchild, EdgeKind::ChildOf, &grandchild, 1.0)
+            .commit()?;
+
+        let tree = vault.subtree(&root, 10)?;
+        assert_eq!(tree.len(), 4); // child1, child2, grandchild, great_grandchild
+
+        // Verify depths
+        let depth_of = |id: EntityId| tree.iter().find(|(i, _)| *i == id).map(|(_, d)| *d);
+        assert_eq!(depth_of(child1), Some(1));
+        assert_eq!(depth_of(child2), Some(1));
+        assert_eq!(depth_of(grandchild), Some(2));
+        assert_eq!(depth_of(great_grandchild), Some(3));
+
+        // max_depth=1 should only return direct children
+        let shallow = vault.subtree(&root, 1)?;
+        assert_eq!(shallow.len(), 2);
+        assert!(shallow.iter().all(|(_, d)| *d == 1));
+
+        Ok(())
+    }
+
+    #[test]
+    fn ancestors_walks_to_root_capped_at_100() -> Result<()> {
+        let temp_dir = tempfile::tempdir()?;
+        let vault = Vault::open(temp_dir.path(), test_config())?;
+
+        let root = EntityId::now();
+        let mid = EntityId::now();
+        let leaf = EntityId::now();
+
+        vault
+            .batch()
+            .put(&root, 61, test_time_range(1, 1), 2, b"root")
+            .put(&mid, 61, test_time_range(3, 3), 4, b"mid")
+            .put(&leaf, 61, test_time_range(5, 5), 6, b"leaf")
+            .edge(&mid, EdgeKind::ChildOf, &root, 1.0)
+            .edge(&leaf, EdgeKind::ChildOf, &mid, 1.0)
+            .commit()?;
+
+        let anc = vault.ancestors(&leaf)?;
+        assert_eq!(anc, vec![mid, root]);
+
+        // Root has no ancestors
+        let root_anc = vault.ancestors(&root)?;
+        assert!(root_anc.is_empty());
+
+        Ok(())
+    }
+
+    #[test]
+    fn cycle_prevention_rejects_self_parent() -> Result<()> {
+        let temp_dir = tempfile::tempdir()?;
+        let vault = Vault::open(temp_dir.path(), test_config())?;
+        let node = EntityId::now();
+        vault.put_entity(&node, 61, test_time_range(1, 1), 2, b"self")?;
+
+        assert!(vault.would_create_cycle(&node, &node)?);
+        Ok(())
+    }
+
+    #[test]
+    fn cycle_prevention_detects_ancestor_cycle() -> Result<()> {
+        let temp_dir = tempfile::tempdir()?;
+        let vault = Vault::open(temp_dir.path(), test_config())?;
+
+        // A → B → C (ChildOf chain)
+        let a = EntityId::now();
+        let b = EntityId::now();
+        let c = EntityId::now();
+
+        vault
+            .batch()
+            .put(&a, 61, test_time_range(1, 1), 2, b"a")
+            .put(&b, 61, test_time_range(3, 3), 4, b"b")
+            .put(&c, 61, test_time_range(5, 5), 6, b"c")
+            .edge(&b, EdgeKind::ChildOf, &a, 1.0)
+            .edge(&c, EdgeKind::ChildOf, &b, 1.0)
+            .commit()?;
+
+        // Making A a child of C would create A → B → C → A
+        assert!(vault.would_create_cycle(&a, &c)?);
+
+        // Making D a child of C is fine (D doesn't appear in C's ancestors)
+        let d = EntityId::now();
+        vault.put_entity(&d, 61, test_time_range(7, 7), 8, b"d")?;
+        assert!(!vault.would_create_cycle(&d, &c)?);
+
+        Ok(())
+    }
+
+    #[test]
+    fn belongs_to_edge_for_task_list_membership() -> Result<()> {
+        let temp_dir = tempfile::tempdir()?;
+        let vault = Vault::open(temp_dir.path(), test_config())?;
+
+        let project = EntityId::now();
+        let task1 = EntityId::now();
+        let task2 = EntityId::now();
+
+        vault
+            .batch()
+            .put(&project, 60, test_time_range(1, 1), 2, b"proj")
+            .put(&task1, 61, test_time_range(3, 3), 4, b"t1")
+            .put(&task2, 61, test_time_range(5, 5), 6, b"t2")
+            .edge(&task1, EdgeKind::BelongsTo, &project, 1.0)
+            .edge(&task2, EdgeKind::BelongsTo, &project, 1.0)
+            .commit()?;
+
+        // Query: all tasks belonging to project (sources of BelongsTo)
+        let members = vault.sources(&project, EdgeKind::BelongsTo, Some(61))?;
+        assert_eq!(members.len(), 2);
+        assert!(members.contains(&task1));
+        assert!(members.contains(&task2));
+
+        Ok(())
+    }
+
+    #[test]
+    fn get_entity_type_returns_correct_type() -> Result<()> {
+        let temp_dir = tempfile::tempdir()?;
+        let vault = Vault::open(temp_dir.path(), test_config())?;
+        let tl = EntityId::now();
+        let tk = EntityId::now();
+
+        vault
+            .batch()
+            .put(&tl, 60, test_time_range(1, 1), 2, b"tl")
+            .put(&tk, 61, test_time_range(3, 3), 4, b"tk")
+            .commit()?;
+
+        assert_eq!(vault.get_entity_type(&tl)?, Some(60));
+        assert_eq!(vault.get_entity_type(&tk)?, Some(61));
+        assert_eq!(vault.get_entity_type(&EntityId::now())?, None);
+        Ok(())
+    }
+
+    #[test]
+    fn child_of_has_no_ppr_hop_limit() -> Result<()> {
+        let temp_dir = tempfile::tempdir()?;
+        let vault = Vault::open(temp_dir.path(), test_config())?;
+
+        // Build a 5-level deep ChildOf chain: a → b → c → d → e
+        let a = EntityId::now();
+        let b = EntityId::now();
+        let c = EntityId::now();
+        let d = EntityId::now();
+        let e = EntityId::now();
+
+        vault
+            .batch()
+            .put(&a, 61, test_time_range(1, 1), 2, b"a")
+            .put(&b, 61, test_time_range(3, 3), 4, b"b")
+            .put(&c, 61, test_time_range(5, 5), 6, b"c")
+            .put(&d, 61, test_time_range(7, 7), 8, b"d")
+            .put(&e, 61, test_time_range(9, 9), 10, b"e")
+            .edge(&b, EdgeKind::ChildOf, &a, 1.0)
+            .edge(&c, EdgeKind::ChildOf, &b, 1.0)
+            .edge(&d, EdgeKind::ChildOf, &c, 1.0)
+            .edge(&e, EdgeKind::ChildOf, &d, 1.0)
+            .commit()?;
+
+        // PPR from e should reach a (5 hops via ChildOf, no limit)
+        {
+            let rtxn = vault.store.env.read_txn()?;
+            let scores = ppr::ppr_compute(&vault.store, &rtxn, &[e], 6, 0.15)?;
+            let a_score = scores
+                .iter()
+                .find(|s| s.id == a)
+                .map(|s| s.score)
+                .unwrap_or(0.0);
+            assert!(
+                a_score > 0.0,
+                "ChildOf should propagate beyond 2 hops, got score={a_score}"
+            );
+        }
+
+        // Compare with PartOf chain of same depth — d should be blocked at 3rd hop
+        let p1 = EntityId::now();
+        let p2 = EntityId::now();
+        let p3 = EntityId::now();
+        let p4 = EntityId::now();
+        let p5 = EntityId::now();
+
+        vault
+            .batch()
+            .put(&p1, 9, test_time_range(1, 1), 2, b"p1")
+            .put(&p2, 9, test_time_range(3, 3), 4, b"p2")
+            .put(&p3, 9, test_time_range(5, 5), 6, b"p3")
+            .put(&p4, 9, test_time_range(7, 7), 8, b"p4")
+            .put(&p5, 9, test_time_range(9, 9), 10, b"p5")
+            .edge(&p2, EdgeKind::PartOf, &p1, 1.0)
+            .edge(&p3, EdgeKind::PartOf, &p2, 1.0)
+            .edge(&p4, EdgeKind::PartOf, &p3, 1.0)
+            .edge(&p5, EdgeKind::PartOf, &p4, 1.0)
+            .commit()?;
+
+        {
+            let rtxn = vault.store.env.read_txn()?;
+            let part_of_scores = ppr::ppr_compute(&vault.store, &rtxn, &[p5], 6, 0.15)?;
+            let p1_score = part_of_scores
+                .iter()
+                .find(|s| s.id == p1)
+                .map(|s| s.score)
+                .unwrap_or(0.0);
+            // p1 is 4 PartOf hops from p5 — should be blocked (only 2 PartOf hops allowed)
+            assert!(
+                p1_score < 1e-6,
+                "PartOf should block at 3rd hop, but p1 got score={p1_score}"
+            );
+        }
+
         Ok(())
     }
 }

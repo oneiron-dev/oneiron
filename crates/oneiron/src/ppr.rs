@@ -259,12 +259,13 @@ fn propagate_edge(
     }
 
     // PartOf edges count as structural hops; cap at 2 to limit hierarchy depth.
+    // ChildOf edges do NOT count as structural hops — task trees can be arbitrarily deep.
     let new_hops = if kind == EdgeKind::PartOf {
         hops.checked_add(1).ok_or(Error::InvalidKey)?
     } else {
         hops
     };
-    if new_hops > 2 {
+    if new_hops > 2 && kind != EdgeKind::ChildOf {
         return Ok(());
     }
 
