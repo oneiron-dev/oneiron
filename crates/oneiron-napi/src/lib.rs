@@ -295,6 +295,16 @@ impl NapiVault {
 
     // ─── Tree Queries ──────────────────────────────────────────
 
+    /// Return the stored entity type for an entity, or null if not found.
+    #[napi]
+    pub fn get_entity_type(&self, id: Buffer) -> napi::Result<Option<u32>> {
+        let eid = parse_entity_id(&id)?;
+        self.vault
+            .get_entity_type(&eid)
+            .map(|opt| opt.map(u32::from))
+            .map_err(to_napi_err)
+    }
+
     /// Return all entity IDs of a given type.
     #[napi]
     pub fn entities_by_type(&self, entity_type: u32) -> napi::Result<Vec<Buffer>> {

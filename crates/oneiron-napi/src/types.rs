@@ -6,7 +6,7 @@ use napi_derive::napi;
 pub struct NapiEdgeInfo {
     /// Source entity ID (16 bytes).
     pub src: Buffer,
-    /// Edge kind discriminant (0-17).
+    /// Edge kind discriminant (0-19).
     pub kind: u32,
     /// Target entity ID (16 bytes).
     pub tgt: Buffer,
