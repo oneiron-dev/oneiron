@@ -393,6 +393,8 @@ impl Vault {
                         if header.entity_type != req_type {
                             continue;
                         }
+                    } else {
+                        continue; // malformed header — treat as non-matching
                     }
                 } else {
                     continue; // target entity doesn't exist
@@ -433,6 +435,8 @@ impl Vault {
                         if header.entity_type != req_type {
                             continue;
                         }
+                    } else {
+                        continue; // malformed header — treat as non-matching
                     }
                 } else {
                     continue; // source entity doesn't exist
@@ -444,10 +448,12 @@ impl Vault {
         Ok(ids)
     }
 
-    /// Full subtree via recursive ChildOf traversal. Returns `(id, depth)` pairs.
+    /// Full subtree via ChildOf traversal. Returns `(id, depth)` pairs sorted by depth.
     ///
-    /// Finds all descendants by following inbound ChildOf edges (since ChildOf
-    /// direction is child → parent, children appear in the parent's edges_in).
+    /// Uses DFS internally (stack-based) but sorts results by depth before returning,
+    /// so output is always depth-ordered regardless of traversal order.
+    /// Children are found via inbound ChildOf edges (since ChildOf direction is
+    /// child → parent, children appear in the parent's edges_in).
     pub fn subtree(&self, root: &EntityId, max_depth: u32) -> Result<Vec<(EntityId, u32)>> {
         let rtxn = self.store.env.read_txn()?;
         let mut result = Vec::new();
@@ -490,6 +496,11 @@ impl Vault {
     /// Walk ancestors via outbound ChildOf edges. Capped at 100 to prevent cycles.
     ///
     /// Returns ancestor IDs from immediate parent to root (nearest first).
+    ///
+    /// **Invariant:** Each node has at most one ChildOf parent. `parentId` is the
+    /// canonical source of truth (stored in Loro Map as LWW); ChildOf edges are
+    /// derived. If multiple ChildOf edges exist due to data corruption, only the
+    /// first (by LMDB key order) is followed.
     pub fn ancestors(&self, node: &EntityId) -> Result<Vec<EntityId>> {
         let rtxn = self.store.env.read_txn()?;
         let mut result = Vec::new();

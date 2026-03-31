@@ -329,7 +329,15 @@ impl NapiVault {
         }
         let edge_kind = EdgeKind::try_from_u8(kind as u8)
             .ok_or_else(|| napi::Error::from_reason(format!("invalid edge kind: {kind}")))?;
-        let tgt_type = target_type.map(|t| t as u8);
+        let tgt_type = match target_type {
+            Some(t) if t > u8::MAX as u32 => {
+                return Err(napi::Error::from_reason(format!(
+                    "target_type must be 0-255, got {t}"
+                )));
+            }
+            Some(t) => Some(t as u8),
+            None => None,
+        };
         let ids = self
             .vault
             .targets(&src_id, edge_kind, tgt_type)
@@ -356,7 +364,15 @@ impl NapiVault {
         }
         let edge_kind = EdgeKind::try_from_u8(kind as u8)
             .ok_or_else(|| napi::Error::from_reason(format!("invalid edge kind: {kind}")))?;
-        let src_type = source_type.map(|t| t as u8);
+        let src_type = match source_type {
+            Some(t) if t > u8::MAX as u32 => {
+                return Err(napi::Error::from_reason(format!(
+                    "source_type must be 0-255, got {t}"
+                )));
+            }
+            Some(t) => Some(t as u8),
+            None => None,
+        };
         let ids = self
             .vault
             .sources(&tgt_id, edge_kind, src_type)
@@ -393,6 +409,16 @@ impl NapiVault {
             .into_iter()
             .map(|id| Buffer::from(id.as_bytes().as_slice()))
             .collect())
+    }
+
+    /// Check whether making `target` a parent of `node` would create a cycle.
+    #[napi]
+    pub fn would_create_cycle(&self, node: Buffer, target: Buffer) -> napi::Result<bool> {
+        let node_id = parse_entity_id(&node)?;
+        let target_id = parse_entity_id(&target)?;
+        self.vault
+            .would_create_cycle(&node_id, &target_id)
+            .map_err(to_napi_err)
     }
 
     // ─── Sync (stubs — wired up in Phase 1D) ──────────────────

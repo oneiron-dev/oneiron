@@ -296,7 +296,14 @@ fn normalize_value(
 fn is_timestamp_field(key: &str) -> bool {
     matches!(
         key,
-        "at" | "from" | "to" | "start" | "end" | "occurred_start" | "occurred_end" | "learned_at"
+        "at" | "from"
+            | "to"
+            | "start"
+            | "end"
+            | "occurred_start"
+            | "occurred_end"
+            | "learned_at"
+            | "dueDate"
     )
 }
 
