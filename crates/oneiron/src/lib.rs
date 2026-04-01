@@ -36,6 +36,15 @@ pub use crate::types::{
 
 const MIN_MAP_SIZE_BYTES: usize = 1 << 20;
 
+/// Build a 17-byte edge prefix `[entity_id(16) | kind(1)]` for targeted
+/// LMDB prefix scans. Avoids scanning all edge kinds for a given entity.
+fn edge_kind_prefix(id: &EntityId, kind: EdgeKind) -> [u8; 17] {
+    let mut prefix = [0u8; 17];
+    prefix[..16].copy_from_slice(id.as_bytes());
+    prefix[16] = kind as u8;
+    prefix
+}
+
 /// Main vault API wrapping LMDB storage and configuration.
 pub struct Vault {
     pub(crate) store: Store,
@@ -411,10 +420,11 @@ impl Vault {
         peer_type: Option<u8>,
     ) -> Result<Vec<EntityId>> {
         const MAX_EDGE_QUERY_RESULTS: usize = 100_000;
+        let prefix = edge_kind_prefix(prefix_id, kind);
         let mut ids = Vec::new();
-        for entry in db.prefix_iter(rtxn, prefix_id.as_bytes())? {
+        for entry in db.prefix_iter(rtxn, &prefix)? {
             let (key, _) = entry?;
-            if key.len() != EDGE_KEY_LEN || key[16] != kind as u8 {
+            if key.len() != EDGE_KEY_LEN {
                 continue;
             }
             let peer = EntityId::from_bytes(key[17..33].try_into().map_err(|_| Error::InvalidKey)?);
@@ -485,9 +495,10 @@ impl Vault {
             }
 
             // Find children: inbound ChildOf edges (child --ChildOf--> node)
-            for entry in self.store.edges_in.prefix_iter(&rtxn, node.as_bytes())? {
+            let child_prefix = edge_kind_prefix(&node, EdgeKind::ChildOf);
+            for entry in self.store.edges_in.prefix_iter(&rtxn, &child_prefix)? {
                 let (key, _) = entry?;
-                if key.len() != EDGE_KEY_LEN || key[16] != EdgeKind::ChildOf as u8 {
+                if key.len() != EDGE_KEY_LEN {
                     continue;
                 }
                 let child =
@@ -526,14 +537,15 @@ impl Vault {
 
         for _ in 0..MAX_ANCESTOR_DEPTH {
             // Find parent: outbound ChildOf edge (current --ChildOf--> parent)
+            let parent_prefix = edge_kind_prefix(&current, EdgeKind::ChildOf);
             let mut found_parent = None;
             for entry in self
                 .store
                 .edges_out
-                .prefix_iter(&rtxn, current.as_bytes())?
+                .prefix_iter(&rtxn, &parent_prefix)?
             {
                 let (key, _) = entry?;
-                if key.len() != EDGE_KEY_LEN || key[16] != EdgeKind::ChildOf as u8 {
+                if key.len() != EDGE_KEY_LEN {
                     continue;
                 }
                 let parent =
@@ -573,17 +585,15 @@ impl Vault {
         visited.insert(current);
 
         for _ in 0..MAX_ANCESTOR_DEPTH {
+            let parent_prefix = edge_kind_prefix(&current, EdgeKind::ChildOf);
             let mut found_parent = None;
             for entry in self
                 .store
                 .edges_out
-                .prefix_iter(&rtxn, current.as_bytes())?
+                .prefix_iter(&rtxn, &parent_prefix)?
             {
                 let (key, _) = entry?;
                 if key.len() != EDGE_KEY_LEN {
-                    continue;
-                }
-                if key[16] != EdgeKind::ChildOf as u8 {
                     continue;
                 }
                 let parent =
