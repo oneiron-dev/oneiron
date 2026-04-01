@@ -6,7 +6,7 @@ use napi_derive::napi;
 pub struct NapiEdgeInfo {
     /// Source entity ID (16 bytes).
     pub src: Buffer,
-    /// Edge kind discriminant (0-17).
+    /// Edge kind discriminant (0-19).
     pub kind: u32,
     /// Target entity ID (16 bytes).
     pub tgt: Buffer,
@@ -29,6 +29,15 @@ pub struct NapiScoredEntity {
     pub id: Buffer,
     /// Ranking score.
     pub score: f64,
+}
+
+/// A subtree entry with entity ID and depth.
+#[napi(object)]
+pub struct NapiSubtreeEntry {
+    /// Entity ID (16 bytes).
+    pub id: Buffer,
+    /// Depth from root (1 = direct child).
+    pub depth: u32,
 }
 
 /// An entity to write in a batch operation.

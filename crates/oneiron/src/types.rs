@@ -63,24 +63,31 @@ fn hex_nibble(b: u8) -> Option<u8> {
 }
 
 /// Returns the short ID prefix for an entity type byte.
-pub fn short_id_prefix(entity_type: u8) -> &'static str {
+///
+/// Returns an error for unknown entity type IDs.
+pub fn short_id_prefix(entity_type: u8) -> crate::error::Result<&'static str> {
     match entity_type {
-        0 => "cl",
-        1 => "tn",
-        2 => "ss",
-        3 => "ms",
-        4 => "pr",
-        5 => "rl",
-        6 => "ev",
-        7 => "sk",
-        8 => "sm",
-        9 => "pl",
-        10 => "tx",
-        11 => "cv",
-        12 => "og",
-        13 => "fc",
-        14 => "wd",
-        _ => "xx",
+        // Core (0-19)
+        0 => Ok("cl"),  // Claim
+        1 => Ok("tn"),  // Turn
+        2 => Ok("ss"),  // Session
+        3 => Ok("ms"),  // Message
+        4 => Ok("pr"),  // Person
+        5 => Ok("rl"),  // Relationship
+        6 => Ok("ev"),  // Event
+        7 => Ok("sk"),  // Skill
+        8 => Ok("sm"),  // Summary
+        9 => Ok("pl"),  // Place
+        10 => Ok("tx"), // Text
+        11 => Ok("cv"), // Conversation
+        12 => Ok("og"), // Organization
+        13 => Ok("fc"), // Facet
+        14 => Ok("wd"), // World
+        // Productivity (60-79)
+        60 => Ok("tl"), // TaskList
+        61 => Ok("tk"), // Task
+        62 => Ok("mc"), // Machine
+        _ => Err(crate::error::Error::InvalidEntityType(entity_type)),
     }
 }
 
@@ -124,6 +131,11 @@ pub enum EdgeKind {
     FacetOf = 16,
     /// Relationship is set in a world context.
     SetIn = 17,
+    /// Task is a child of another task (tree hierarchy).
+    /// No PPR hop limit — unlike PartOf which caps at 2.
+    ChildOf = 18,
+    /// Task is assigned to a machine for execution.
+    AssignedTo = 19,
 }
 
 impl EdgeKind {
@@ -148,6 +160,8 @@ impl EdgeKind {
             Self::InWorld => 0.7,
             Self::FacetOf => 0.7,
             Self::SetIn => 0.7,
+            Self::ChildOf => 1.0,
+            Self::AssignedTo => 0.8,
         }
     }
 
@@ -172,6 +186,8 @@ impl EdgeKind {
             15 => Some(Self::InWorld),
             16 => Some(Self::FacetOf),
             17 => Some(Self::SetIn),
+            18 => Some(Self::ChildOf),
+            19 => Some(Self::AssignedTo),
             _ => None,
         }
     }

@@ -296,7 +296,14 @@ fn normalize_value(
 fn is_timestamp_field(key: &str) -> bool {
     matches!(
         key,
-        "at" | "from" | "to" | "start" | "end" | "occurred_start" | "occurred_end" | "learned_at"
+        "at" | "from"
+            | "to"
+            | "start"
+            | "end"
+            | "occurred_start"
+            | "occurred_end"
+            | "learned_at"
+            | "dueDate"
     )
 }
 
@@ -653,74 +660,101 @@ const OTHER_GROUP_LABELS: GroupLabels = GroupLabels {
     title: "Other",
 };
 
-const GROUP_LABELS: [GroupLabels; 12] = [
-    GroupLabels {
-        key: "claims",
-        name: "CLAIMS",
-        title: "Claims",
-    },
-    GroupLabels {
-        key: "turns",
-        name: "TURNS",
-        title: "Turns",
-    },
-    GroupLabels {
-        key: "sessions",
-        name: "SESSIONS",
-        title: "Sessions",
-    },
-    GroupLabels {
-        key: "messages",
-        name: "MESSAGES",
-        title: "Messages",
-    },
-    GroupLabels {
-        key: "persons",
-        name: "PERSONS",
-        title: "Persons",
-    },
-    GroupLabels {
-        key: "relationships",
-        name: "RELATIONSHIPS",
-        title: "Relationships",
-    },
-    GroupLabels {
-        key: "events",
-        name: "EVENTS",
-        title: "Events",
-    },
-    GroupLabels {
-        key: "skills",
-        name: "SKILLS",
-        title: "Skills",
-    },
-    GroupLabels {
-        key: "summaries",
-        name: "SUMMARIES",
-        title: "Summaries",
-    },
-    GroupLabels {
-        key: "places",
-        name: "PLACES",
-        title: "Places",
-    },
-    GroupLabels {
-        key: "texts",
-        name: "TEXTS",
-        title: "Texts",
-    },
-    GroupLabels {
-        key: "conversations",
-        name: "CONVERSATIONS",
-        title: "Conversations",
-    },
-];
-
 fn group_labels(entity_type: u8) -> GroupLabels {
-    GROUP_LABELS
-        .get(entity_type as usize)
-        .copied()
-        .unwrap_or(OTHER_GROUP_LABELS)
+    match entity_type {
+        0 => GroupLabels {
+            key: "claims",
+            name: "CLAIMS",
+            title: "Claims",
+        },
+        1 => GroupLabels {
+            key: "turns",
+            name: "TURNS",
+            title: "Turns",
+        },
+        2 => GroupLabels {
+            key: "sessions",
+            name: "SESSIONS",
+            title: "Sessions",
+        },
+        3 => GroupLabels {
+            key: "messages",
+            name: "MESSAGES",
+            title: "Messages",
+        },
+        4 => GroupLabels {
+            key: "persons",
+            name: "PERSONS",
+            title: "Persons",
+        },
+        5 => GroupLabels {
+            key: "relationships",
+            name: "RELATIONSHIPS",
+            title: "Relationships",
+        },
+        6 => GroupLabels {
+            key: "events",
+            name: "EVENTS",
+            title: "Events",
+        },
+        7 => GroupLabels {
+            key: "skills",
+            name: "SKILLS",
+            title: "Skills",
+        },
+        8 => GroupLabels {
+            key: "summaries",
+            name: "SUMMARIES",
+            title: "Summaries",
+        },
+        9 => GroupLabels {
+            key: "places",
+            name: "PLACES",
+            title: "Places",
+        },
+        10 => GroupLabels {
+            key: "texts",
+            name: "TEXTS",
+            title: "Texts",
+        },
+        11 => GroupLabels {
+            key: "conversations",
+            name: "CONVERSATIONS",
+            title: "Conversations",
+        },
+        12 => GroupLabels {
+            key: "organizations",
+            name: "ORGANIZATIONS",
+            title: "Organizations",
+        },
+        13 => GroupLabels {
+            key: "facets",
+            name: "FACETS",
+            title: "Facets",
+        },
+        14 => GroupLabels {
+            key: "worlds",
+            name: "WORLDS",
+            title: "Worlds",
+        },
+        // Productivity (60-79)
+        60 => GroupLabels {
+            key: "task_lists",
+            name: "TASK_LISTS",
+            title: "Task Lists",
+        },
+        61 => GroupLabels {
+            key: "tasks",
+            name: "TASKS",
+            title: "Tasks",
+        },
+        62 => GroupLabels {
+            key: "machines",
+            name: "MACHINES",
+            title: "Machines",
+        },
+        _ => OTHER_GROUP_LABELS,
+    }
 }
 
 fn group_key(entity_type: u8) -> &'static str {
@@ -770,6 +804,33 @@ fn fields_for_profile(entity_type: u8, profile: FieldProfile) -> &'static [&'sta
             "source",
             "confidence",
         ],
+
+        // TaskList (project container)
+        (60, FieldProfile::Minimal) => &["name"],
+        (60, FieldProfile::Standard) => &["name", "goal", "status"],
+        (60, FieldProfile::Full) => &["name", "goal", "status", "icon", "color", "repoUrl"],
+
+        // Task (universal work unit)
+        (61, FieldProfile::Minimal) => &["title", "role"],
+        (61, FieldProfile::Standard) => &["title", "role", "status", "priority", "dueDate"],
+        (61, FieldProfile::Full) => &[
+            "title",
+            "role",
+            "status",
+            "priority",
+            "dueDate",
+            "frequency",
+            "frequencyDetail",
+            "currentStreak",
+            "longestStreak",
+            "parentId",
+            "listId",
+            "position",
+        ],
+
+        // Machine (62): schema-reserved, no fields yet. Explicit empty arms so
+        // future field additions don't silently fall through to alphabetical order.
+        (62, _) => &[],
 
         _ => &[],
     }
