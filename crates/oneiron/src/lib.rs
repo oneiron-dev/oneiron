@@ -571,14 +571,29 @@ impl Vault {
 
     /// Checks whether making `target` a parent of `node` would create a cycle.
     ///
+    /// Convenience wrapper that opens its own read transaction.
+    /// For atomic check+insert, use [`would_create_cycle_in_txn`] within a
+    /// write transaction (see `BatchBuilder::edge_checked`).
+    pub fn would_create_cycle(&self, node: &EntityId, target: &EntityId) -> Result<bool> {
+        let rtxn = self.store.env.read_txn()?;
+        self.would_create_cycle_in_txn(&rtxn, node, target)
+    }
+
+    /// Checks whether making `target` a parent of `node` would create a cycle,
+    /// using the provided read transaction for atomicity with subsequent writes.
+    ///
     /// Walks ancestors of `target` — if `node` is found among them, it's a cycle.
     /// Short-circuits as soon as `node` is found instead of collecting all ancestors.
     /// The `visited` set prevents infinite loops on corrupted cyclic data.
-    pub fn would_create_cycle(&self, node: &EntityId, target: &EntityId) -> Result<bool> {
+    pub fn would_create_cycle_in_txn(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        node: &EntityId,
+        target: &EntityId,
+    ) -> Result<bool> {
         if node == target {
             return Ok(true);
         }
-        let rtxn = self.store.env.read_txn()?;
         let mut current = *target;
         let mut visited = std::collections::HashSet::new();
         visited.insert(current);
@@ -589,7 +604,7 @@ impl Vault {
             for entry in self
                 .store
                 .edges_out
-                .prefix_iter(&rtxn, &parent_prefix)?
+                .prefix_iter(rtxn, &parent_prefix)?
             {
                 let (key, _) = entry?;
                 if key.len() != EDGE_KEY_LEN {
@@ -604,14 +619,14 @@ impl Vault {
             match found_parent {
                 Some(parent) => {
                     if parent == *node {
-                        return Ok(true); // Cycle found — short-circuit
+                        return Ok(true);
                     }
                     if !visited.insert(parent) {
-                        break; // Existing cycle in data — stop
+                        break;
                     }
                     current = parent;
                 }
-                None => break, // Reached root
+                None => break,
             }
         }
         Ok(false)
@@ -2442,6 +2457,50 @@ mod tests {
             place1_score > 0.0,
             "ChildOf should not count toward PartOf hop limit in mixed paths, got score={place1_score}"
         );
+
+        Ok(())
+    }
+
+    #[test]
+    fn edge_checked_detects_cycle_atomically() -> Result<()> {
+        let temp_dir = tempfile::tempdir()?;
+        let vault = Vault::open(temp_dir.path(), test_config())?;
+
+        // Build: a → b → c (ChildOf chain)
+        let a = EntityId::now();
+        let b = EntityId::now();
+        let c = EntityId::now();
+
+        vault
+            .batch()
+            .put(&a, 61, test_time_range(1, 1), 2, b"a")
+            .put(&b, 61, test_time_range(3, 3), 4, b"b")
+            .put(&c, 61, test_time_range(5, 5), 6, b"c")
+            .edge(&b, EdgeKind::ChildOf, &a, 1.0)
+            .edge(&c, EdgeKind::ChildOf, &b, 1.0)
+            .commit()?;
+
+        // Try to make a a child of c — would create cycle a→b→c→a
+        let result = vault
+            .batch()
+            .edge_checked(&a, EdgeKind::ChildOf, &c, 1.0)
+            .commit();
+        assert!(
+            matches!(result, Err(Error::CycleDetected)),
+            "expected CycleDetected, got {result:?}"
+        );
+
+        // Non-cyclic edge should succeed
+        let d = EntityId::now();
+        vault
+            .batch()
+            .put(&d, 61, test_time_range(7, 7), 8, b"d")
+            .edge_checked(&d, EdgeKind::ChildOf, &c, 1.0)
+            .commit()?;
+
+        // Verify d is a child of c
+        let children = vault.sources(&c, EdgeKind::ChildOf, None)?;
+        assert!(children.contains(&d));
 
         Ok(())
     }

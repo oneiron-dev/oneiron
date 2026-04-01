@@ -49,6 +49,7 @@ pub struct BatchBuilder<'a> {
     vault: &'a Vault,
     ops: Vec<BatchOp>,
     validation_error: Option<Error>,
+    cycle_checks: Vec<(EntityId, EntityId)>, // (child, proposed_parent)
 }
 
 pub(crate) enum BatchOp {
@@ -102,6 +103,7 @@ impl<'a> BatchBuilder<'a> {
             vault,
             ops: Vec::new(),
             validation_error: None,
+            cycle_checks: Vec::new(),
         }
     }
 
@@ -151,6 +153,24 @@ impl<'a> BatchBuilder<'a> {
             vad: Vad::NEUTRAL,
         });
         self
+    }
+
+    /// Adds a ChildOf edge with an atomic cycle check during commit.
+    ///
+    /// The cycle check runs inside the write transaction, eliminating the
+    /// TOCTOU race in the standalone `would_create_cycle()` + `put_edge()` pattern.
+    /// Returns `Err(CycleDetected)` at commit time if the edge would create a cycle.
+    pub fn edge_checked(
+        mut self,
+        src: &EntityId,
+        kind: EdgeKind,
+        tgt: &EntityId,
+        weight: f32,
+    ) -> Self {
+        if kind == EdgeKind::ChildOf {
+            self.cycle_checks.push((*src, *tgt));
+        }
+        self.edge(src, kind, tgt, weight)
     }
 
     /// Adds a graph edge with explicit VAD scores to the batch.
@@ -262,6 +282,19 @@ impl<'a> BatchBuilder<'a> {
             return Err(err);
         }
         let mut wtxn = self.vault.store.env.write_txn()?;
+
+        // Run cycle checks inside the write transaction (TOCTOU-safe).
+        // The RwTxn dereferences to RoTxn for read operations.
+        for (child, proposed_parent) in &self.cycle_checks {
+            if self
+                .vault
+                .would_create_cycle_in_txn(&wtxn, child, proposed_parent)?
+            {
+                wtxn.abort();
+                return Err(Error::CycleDetected);
+            }
+        }
+
         apply_ops(&self.vault.store, &self.vault.config, &mut wtxn, self.ops)?;
         wtxn.commit()?;
         Ok(())
