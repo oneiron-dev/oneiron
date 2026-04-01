@@ -458,8 +458,9 @@ impl Vault {
     /// Subtree descendants via ChildOf traversal, limited to `max_depth`.
     /// Returns `(id, depth)` pairs sorted by depth.
     ///
-    /// Uses DFS internally (stack-based) but sorts results by depth before returning,
-    /// so output is always depth-ordered regardless of traversal order.
+    /// Uses BFS internally (queue-based) so that when the result cap is hit,
+    /// shallower nodes are always included before deeper ones. This ensures
+    /// fair capping across wide trees.
     /// Children are found via inbound ChildOf edges (since ChildOf direction is
     /// child → parent, children appear in the parent's edges_in).
     ///
@@ -468,11 +469,11 @@ impl Vault {
         const MAX_SUBTREE_RESULTS: usize = 50_000;
         let rtxn = self.store.env.read_txn()?;
         let mut result = Vec::new();
-        let mut frontier = vec![(*root, 0_u32)];
+        let mut frontier = std::collections::VecDeque::from([(*root, 0_u32)]);
         let mut visited = std::collections::HashSet::new();
         visited.insert(*root);
 
-        while let Some((node, depth)) = frontier.pop() {
+        while let Some((node, depth)) = frontier.pop_front() {
             if depth > 0 {
                 result.push((node, depth));
                 if result.len() >= MAX_SUBTREE_RESULTS {
@@ -492,11 +493,13 @@ impl Vault {
                 let child =
                     EntityId::from_bytes(key[17..33].try_into().map_err(|_| Error::InvalidKey)?);
                 if visited.insert(child) {
-                    frontier.push((child, depth + 1));
+                    frontier.push_back((child, depth + 1));
                 }
             }
         }
 
+        // BFS already produces depth-ordered results, but sort to ensure
+        // deterministic ordering within each depth level (by entity ID).
         result.sort_unstable_by(|a, b| {
             a.1.cmp(&b.1)
                 .then_with(|| a.0.as_bytes().cmp(b.0.as_bytes()))
