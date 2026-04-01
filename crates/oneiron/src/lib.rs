@@ -434,6 +434,12 @@ impl Vault {
     }
 
     /// Returns true if the entity exists and has the given type byte.
+    ///
+    /// Returns `Ok(false)` for missing entities or unparseable headers (corruption).
+    /// This is intentional for edge filtering: a corrupted peer should be skipped,
+    /// not fail the entire query. Compare with `get_entity_type()` which returns
+    /// `Err(InvalidKey)` on corruption — appropriate for direct lookups where the
+    /// caller should know about data issues.
     fn entity_has_type(
         &self,
         rtxn: &heed::RoTxn<'_>,
