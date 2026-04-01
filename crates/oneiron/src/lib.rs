@@ -400,6 +400,8 @@ impl Vault {
 
     /// Scans an edge database (edges_out or edges_in) for entries matching `kind`,
     /// returning the peer entity IDs. Optionally filters by the peer's entity type.
+    ///
+    /// Capped at `MAX_EDGE_QUERY_RESULTS` to prevent unbounded allocation.
     fn filtered_edge_peers(
         &self,
         rtxn: &heed::RoTxn<'_>,
@@ -408,6 +410,7 @@ impl Vault {
         kind: EdgeKind,
         peer_type: Option<u8>,
     ) -> Result<Vec<EntityId>> {
+        const MAX_EDGE_QUERY_RESULTS: usize = 100_000;
         let mut ids = Vec::new();
         for entry in db.prefix_iter(rtxn, prefix_id.as_bytes())? {
             let (key, _) = entry?;
@@ -423,6 +426,9 @@ impl Vault {
             }
 
             ids.push(peer);
+            if ids.len() >= MAX_EDGE_QUERY_RESULTS {
+                break;
+            }
         }
         Ok(ids)
     }
