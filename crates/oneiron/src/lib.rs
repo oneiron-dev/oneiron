@@ -521,21 +521,20 @@ impl Vault {
     /// Walk ancestors via outbound ChildOf edges.
     ///
     /// Returns ancestor IDs from immediate parent to root (nearest first).
-    /// Capped at `MAX_ANCESTOR_DEPTH` as a safety limit.
+    /// The `visited` set prevents infinite loops on corrupted cyclic data.
     ///
     /// **Invariant:** Each node has at most one ChildOf parent. `parentId` is the
     /// canonical source of truth (stored in Loro Map as LWW); ChildOf edges are
     /// derived. If multiple ChildOf edges exist due to data corruption, only the
     /// first (by LMDB key order) is followed.
     pub fn ancestors(&self, node: &EntityId) -> Result<Vec<EntityId>> {
-        const MAX_ANCESTOR_DEPTH: usize = 100;
         let rtxn = self.store.env.read_txn()?;
         let mut result = Vec::new();
         let mut current = *node;
         let mut visited = std::collections::HashSet::new();
         visited.insert(current);
 
-        for _ in 0..MAX_ANCESTOR_DEPTH {
+        loop {
             // Find parent: outbound ChildOf edge (current --ChildOf--> parent)
             let parent_prefix = edge_kind_prefix(&current, EdgeKind::ChildOf);
             let mut found_parent = None;
@@ -574,17 +573,17 @@ impl Vault {
     ///
     /// Walks ancestors of `target` — if `node` is found among them, it's a cycle.
     /// Short-circuits as soon as `node` is found instead of collecting all ancestors.
+    /// The `visited` set prevents infinite loops on corrupted cyclic data.
     pub fn would_create_cycle(&self, node: &EntityId, target: &EntityId) -> Result<bool> {
         if node == target {
             return Ok(true);
         }
-        const MAX_ANCESTOR_DEPTH: usize = 100;
         let rtxn = self.store.env.read_txn()?;
         let mut current = *target;
         let mut visited = std::collections::HashSet::new();
         visited.insert(current);
 
-        for _ in 0..MAX_ANCESTOR_DEPTH {
+        loop {
             let parent_prefix = edge_kind_prefix(&current, EdgeKind::ChildOf);
             let mut found_parent = None;
             for entry in self
@@ -1990,6 +1989,27 @@ mod tests {
     }
 
     #[test]
+    fn batch_put_invalid_entity_type_returns_early_error() -> Result<()> {
+        let temp_dir = tempfile::tempdir()?;
+        let vault = Vault::open(temp_dir.path(), test_config())?;
+        let id = EntityId::now();
+
+        let err = vault
+            .batch()
+            .put(&id, 255, test_time_range(1, 1), 2, b"bad-type")
+            .commit()
+            .expect_err("expected InvalidEntityType for type 255");
+        assert!(
+            matches!(err, Error::InvalidEntityType(255)),
+            "expected InvalidEntityType(255), got {err:?}"
+        );
+
+        // Verify nothing was written
+        assert!(vault.get(&id)?.is_none());
+        Ok(())
+    }
+
+    #[test]
     fn edge_kinds_child_of_and_assigned_to() -> Result<()> {
         let temp_dir = tempfile::tempdir()?;
         let vault = Vault::open(temp_dir.path(), test_config())?;
@@ -2130,7 +2150,7 @@ mod tests {
     }
 
     #[test]
-    fn ancestors_walks_to_root_capped_at_100() -> Result<()> {
+    fn ancestors_walks_to_root() -> Result<()> {
         let temp_dir = tempfile::tempdir()?;
         let vault = Vault::open(temp_dir.path(), test_config())?;
 
@@ -2194,6 +2214,67 @@ mod tests {
         let d = EntityId::now();
         vault.put_entity(&d, 61, test_time_range(7, 7), 8, b"d")?;
         assert!(!vault.would_create_cycle(&d, &c)?);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_deep_ancestor_chain() -> Result<()> {
+        let temp_dir = tempfile::tempdir()?;
+        let vault = Vault::open(temp_dir.path(), test_config())?;
+
+        // Build a 200-deep ChildOf chain: node[0] ← node[1] ← ... ← node[200]
+        // (each node[i+1] --ChildOf--> node[i])
+        const DEPTH: usize = 200;
+        let mut nodes = Vec::with_capacity(DEPTH + 1);
+        for _ in 0..=DEPTH {
+            nodes.push(EntityId::now());
+        }
+
+        // Put all entities
+        {
+            let mut batch = vault.batch();
+            for (i, node) in nodes.iter().enumerate() {
+                batch = batch.put(
+                    node,
+                    61,
+                    test_time_range(i as u64, i as u64),
+                    i as u64 + 1,
+                    format!("node-{i}").as_bytes(),
+                );
+            }
+            // Build ChildOf edges: node[i+1] --ChildOf--> node[i]
+            for i in 0..DEPTH {
+                batch = batch.edge(&nodes[i + 1], EdgeKind::ChildOf, &nodes[i], 1.0);
+            }
+            batch.commit()?;
+        }
+
+        // ancestors(node[200]) should return all 200 ancestors: node[199], ..., node[0]
+        let anc = vault.ancestors(&nodes[DEPTH])?;
+        assert_eq!(
+            anc.len(),
+            DEPTH,
+            "expected {DEPTH} ancestors, got {}",
+            anc.len()
+        );
+        // Verify order: nearest first (node[199]) to root (node[0])
+        for (i, ancestor) in anc.iter().enumerate() {
+            assert_eq!(
+                *ancestor,
+                nodes[DEPTH - 1 - i],
+                "ancestor at position {i} should be node[{}]",
+                DEPTH - 1 - i
+            );
+        }
+
+        // would_create_cycle: making node[0] a child of node[200] would create a cycle
+        assert!(vault.would_create_cycle(&nodes[0], &nodes[DEPTH])?);
+
+        // would_create_cycle: an unrelated node should not create a cycle
+        let unrelated = EntityId::now();
+        vault.put_entity(&unrelated, 61, test_time_range(999, 999), 1000, b"unrelated")?;
+        assert!(!vault.would_create_cycle(&unrelated, &nodes[DEPTH])?);
 
         Ok(())
     }
