@@ -695,7 +695,7 @@ fn upsert_short_id(
         .short_ids
         .put(wtxn, &sentinel_key, &next.to_le_bytes())?;
 
-    let short_id = format!("{}{}", short_id_prefix(entity_type), next);
+    let short_id = format!("{}{}", short_id_prefix(entity_type)?, next);
     let mut short_id_value = Vec::with_capacity(short_id.len() + 1);
     short_id_value.extend_from_slice(short_id.as_bytes());
     short_id_value.push(content_hash);
