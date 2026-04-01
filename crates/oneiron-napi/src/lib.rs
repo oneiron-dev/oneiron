@@ -27,6 +27,30 @@ fn ts_to_u64(ts: i64) -> u64 {
     ts.max(0) as u64
 }
 
+/// Validate and narrow a u32 to u8, returning a descriptive error on overflow.
+fn parse_u8(value: u32, label: &str) -> napi::Result<u8> {
+    if value > u8::MAX as u32 {
+        return Err(napi::Error::from_reason(format!(
+            "{label} must be 0-255, got {value}"
+        )));
+    }
+    Ok(value as u8)
+}
+
+/// Validate a u32 as an EdgeKind discriminant.
+fn parse_edge_kind(kind: u32) -> napi::Result<EdgeKind> {
+    let byte = parse_u8(kind, "edge kind")?;
+    EdgeKind::try_from_u8(byte)
+        .ok_or_else(|| napi::Error::from_reason(format!("invalid edge kind: {kind}")))
+}
+
+/// Convert a slice of EntityIds to Buffers.
+fn entity_ids_to_buffers(ids: Vec<EntityId>) -> Vec<Buffer> {
+    ids.into_iter()
+        .map(|id| Buffer::from(id.as_bytes().as_slice()))
+        .collect()
+}
+
 /// Node.js binding for the Oneiron Vault.
 #[napi]
 pub struct NapiVault {
@@ -69,15 +93,11 @@ impl NapiVault {
         data: Buffer,
     ) -> napi::Result<()> {
         let eid = parse_entity_id(&id)?;
-        if entity_type > u8::MAX as u32 {
-            return Err(napi::Error::from_reason(format!(
-                "entity_type must be 0-255, got {entity_type}"
-            )));
-        }
+        let etype = parse_u8(entity_type, "entity_type")?;
         self.vault
             .put_entity(
                 &eid,
-                entity_type as u8,
+                etype,
                 TimeRange {
                     start: ts_to_u64(occurred_start),
                     end: ts_to_u64(occurred_end),
@@ -119,13 +139,7 @@ impl NapiVault {
     pub fn put_edge(&self, src: Buffer, kind: u32, tgt: Buffer, weight: f64) -> napi::Result<()> {
         let src_id = parse_entity_id(&src)?;
         let tgt_id = parse_entity_id(&tgt)?;
-        if kind > u8::MAX as u32 {
-            return Err(napi::Error::from_reason(format!(
-                "edge kind must be 0-255, got {kind}"
-            )));
-        }
-        let edge_kind = EdgeKind::try_from_u8(kind as u8)
-            .ok_or_else(|| napi::Error::from_reason(format!("invalid edge kind: {kind}")))?;
+        let edge_kind = parse_edge_kind(kind)?;
         self.vault
             .put_edge(&src_id, edge_kind, &tgt_id, weight as f32)
             .map_err(to_napi_err)
@@ -272,15 +286,10 @@ impl NapiVault {
 
         for e in &entities {
             let eid = parse_entity_id(&e.id)?;
-            if e.entity_type > u8::MAX as u32 {
-                return Err(napi::Error::from_reason(format!(
-                    "entity_type must be 0-255, got {}",
-                    e.entity_type
-                )));
-            }
+            let etype = parse_u8(e.entity_type, "entity_type")?;
             batch = batch.put(
                 &eid,
-                e.entity_type as u8,
+                etype,
                 TimeRange {
                     start: ts_to_u64(e.occurred_start),
                     end: ts_to_u64(e.occurred_end),
@@ -308,19 +317,9 @@ impl NapiVault {
     /// Return all entity IDs of a given type.
     #[napi]
     pub fn entities_by_type(&self, entity_type: u32) -> napi::Result<Vec<Buffer>> {
-        if entity_type > u8::MAX as u32 {
-            return Err(napi::Error::from_reason(format!(
-                "entity_type must be 0-255, got {entity_type}"
-            )));
-        }
-        let ids = self
-            .vault
-            .entities_by_type(entity_type as u8)
-            .map_err(to_napi_err)?;
-        Ok(ids
-            .into_iter()
-            .map(|id| Buffer::from(id.as_bytes().as_slice()))
-            .collect())
+        let etype = parse_u8(entity_type, "entity_type")?;
+        let ids = self.vault.entities_by_type(etype).map_err(to_napi_err)?;
+        Ok(entity_ids_to_buffers(ids))
     }
 
     /// Return outbound edge targets filtered by kind and optional target type.
@@ -332,30 +331,15 @@ impl NapiVault {
         target_type: Option<u32>,
     ) -> napi::Result<Vec<Buffer>> {
         let src_id = parse_entity_id(&src)?;
-        if kind > u8::MAX as u32 {
-            return Err(napi::Error::from_reason(format!(
-                "edge kind must be 0-255, got {kind}"
-            )));
-        }
-        let edge_kind = EdgeKind::try_from_u8(kind as u8)
-            .ok_or_else(|| napi::Error::from_reason(format!("invalid edge kind: {kind}")))?;
-        let tgt_type = match target_type {
-            Some(t) if t > u8::MAX as u32 => {
-                return Err(napi::Error::from_reason(format!(
-                    "target_type must be 0-255, got {t}"
-                )));
-            }
-            Some(t) => Some(t as u8),
-            None => None,
-        };
+        let edge_kind = parse_edge_kind(kind)?;
+        let tgt_type = target_type
+            .map(|t| parse_u8(t, "target_type"))
+            .transpose()?;
         let ids = self
             .vault
             .targets(&src_id, edge_kind, tgt_type)
             .map_err(to_napi_err)?;
-        Ok(ids
-            .into_iter()
-            .map(|id| Buffer::from(id.as_bytes().as_slice()))
-            .collect())
+        Ok(entity_ids_to_buffers(ids))
     }
 
     /// Return inbound edge sources filtered by kind and optional source type.
@@ -367,33 +351,18 @@ impl NapiVault {
         source_type: Option<u32>,
     ) -> napi::Result<Vec<Buffer>> {
         let tgt_id = parse_entity_id(&tgt)?;
-        if kind > u8::MAX as u32 {
-            return Err(napi::Error::from_reason(format!(
-                "edge kind must be 0-255, got {kind}"
-            )));
-        }
-        let edge_kind = EdgeKind::try_from_u8(kind as u8)
-            .ok_or_else(|| napi::Error::from_reason(format!("invalid edge kind: {kind}")))?;
-        let src_type = match source_type {
-            Some(t) if t > u8::MAX as u32 => {
-                return Err(napi::Error::from_reason(format!(
-                    "source_type must be 0-255, got {t}"
-                )));
-            }
-            Some(t) => Some(t as u8),
-            None => None,
-        };
+        let edge_kind = parse_edge_kind(kind)?;
+        let src_type = source_type
+            .map(|t| parse_u8(t, "source_type"))
+            .transpose()?;
         let ids = self
             .vault
             .sources(&tgt_id, edge_kind, src_type)
             .map_err(to_napi_err)?;
-        Ok(ids
-            .into_iter()
-            .map(|id| Buffer::from(id.as_bytes().as_slice()))
-            .collect())
+        Ok(entity_ids_to_buffers(ids))
     }
 
-    /// Return full subtree via recursive ChildOf traversal.
+    /// Return subtree descendants via ChildOf traversal, limited to `max_depth`.
     #[napi]
     pub fn subtree(&self, root: Buffer, max_depth: u32) -> napi::Result<Vec<NapiSubtreeEntry>> {
         let root_id = parse_entity_id(&root)?;
@@ -415,10 +384,7 @@ impl NapiVault {
     pub fn ancestors(&self, node: Buffer) -> napi::Result<Vec<Buffer>> {
         let node_id = parse_entity_id(&node)?;
         let ids = self.vault.ancestors(&node_id).map_err(to_napi_err)?;
-        Ok(ids
-            .into_iter()
-            .map(|id| Buffer::from(id.as_bytes().as_slice()))
-            .collect())
+        Ok(entity_ids_to_buffers(ids))
     }
 
     /// Check whether making `target` a parent of `node` would create a cycle.

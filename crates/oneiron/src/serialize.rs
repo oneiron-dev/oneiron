@@ -828,6 +828,10 @@ fn fields_for_profile(entity_type: u8, profile: FieldProfile) -> &'static [&'sta
             "position",
         ],
 
+        // Machine (62): schema-reserved, no fields yet. Explicit empty arms so
+        // future field additions don't silently fall through to alphabetical order.
+        (62, _) => &[],
+
         _ => &[],
     }
 }

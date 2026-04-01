@@ -340,7 +340,10 @@ impl Vault {
     // ─── Tree Query API ───────────────────────────────────────
 
     /// Returns all entity IDs of a given type via prefix scan on type_index.
+    ///
+    /// Returns up to `MAX_TYPE_QUERY_RESULTS` entities to prevent unbounded allocation.
     pub fn entities_by_type(&self, entity_type: u8) -> Result<Vec<EntityId>> {
+        const MAX_TYPE_QUERY_RESULTS: usize = 100_000;
         let rtxn = self.store.env.read_txn()?;
         let mut ids = Vec::new();
         for entry in self.store.type_index.prefix_iter(&rtxn, &[entity_type])? {
@@ -350,6 +353,9 @@ impl Vault {
             }
             let id = EntityId::from_bytes(key[1..17].try_into().map_err(|_| Error::InvalidKey)?);
             ids.push(id);
+            if ids.len() >= MAX_TYPE_QUERY_RESULTS {
+                break;
+            }
         }
         Ok(ids)
     }
@@ -375,35 +381,7 @@ impl Vault {
         target_type: Option<u8>,
     ) -> Result<Vec<EntityId>> {
         let rtxn = self.store.env.read_txn()?;
-        let mut ids = Vec::new();
-        for entry in self.store.edges_out.prefix_iter(&rtxn, src.as_bytes())? {
-            let (key, _) = entry?;
-            if key.len() != EDGE_KEY_LEN {
-                continue;
-            }
-            let edge_kind_byte = key[16];
-            if edge_kind_byte != kind as u8 {
-                continue;
-            }
-            let tgt = EntityId::from_bytes(key[17..33].try_into().map_err(|_| Error::InvalidKey)?);
-
-            if let Some(req_type) = target_type {
-                if let Some(raw) = self.store.entities.get(&rtxn, tgt.as_bytes())? {
-                    if let Some(header) = EntityMetadataHeader::parse(raw) {
-                        if header.entity_type != req_type {
-                            continue;
-                        }
-                    } else {
-                        continue; // malformed header — treat as non-matching
-                    }
-                } else {
-                    continue; // target entity doesn't exist
-                }
-            }
-
-            ids.push(tgt);
-        }
-        Ok(ids)
+        self.filtered_edge_peers(&rtxn, &self.store.edges_out, src, kind, target_type)
     }
 
     /// Inbound edge sources filtered by kind and optional source entity type.
@@ -417,44 +395,65 @@ impl Vault {
         source_type: Option<u8>,
     ) -> Result<Vec<EntityId>> {
         let rtxn = self.store.env.read_txn()?;
-        let mut ids = Vec::new();
-        for entry in self.store.edges_in.prefix_iter(&rtxn, tgt.as_bytes())? {
-            let (key, _) = entry?;
-            if key.len() != EDGE_KEY_LEN {
-                continue;
-            }
-            let edge_kind_byte = key[16];
-            if edge_kind_byte != kind as u8 {
-                continue;
-            }
-            let src = EntityId::from_bytes(key[17..33].try_into().map_err(|_| Error::InvalidKey)?);
+        self.filtered_edge_peers(&rtxn, &self.store.edges_in, tgt, kind, source_type)
+    }
 
-            if let Some(req_type) = source_type {
-                if let Some(raw) = self.store.entities.get(&rtxn, src.as_bytes())? {
-                    if let Some(header) = EntityMetadataHeader::parse(raw) {
-                        if header.entity_type != req_type {
-                            continue;
-                        }
-                    } else {
-                        continue; // malformed header — treat as non-matching
-                    }
-                } else {
-                    continue; // source entity doesn't exist
+    /// Scans an edge database (edges_out or edges_in) for entries matching `kind`,
+    /// returning the peer entity IDs. Optionally filters by the peer's entity type.
+    fn filtered_edge_peers(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        db: &Database<Bytes, Bytes>,
+        prefix_id: &EntityId,
+        kind: EdgeKind,
+        peer_type: Option<u8>,
+    ) -> Result<Vec<EntityId>> {
+        let mut ids = Vec::new();
+        for entry in db.prefix_iter(rtxn, prefix_id.as_bytes())? {
+            let (key, _) = entry?;
+            if key.len() != EDGE_KEY_LEN || key[16] != kind as u8 {
+                continue;
+            }
+            let peer = EntityId::from_bytes(key[17..33].try_into().map_err(|_| Error::InvalidKey)?);
+
+            if let Some(req_type) = peer_type {
+                if !self.entity_has_type(rtxn, &peer, req_type)? {
+                    continue;
                 }
             }
 
-            ids.push(src);
+            ids.push(peer);
         }
         Ok(ids)
     }
 
-    /// Full subtree via ChildOf traversal. Returns `(id, depth)` pairs sorted by depth.
+    /// Returns true if the entity exists and has the given type byte.
+    fn entity_has_type(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        id: &EntityId,
+        expected_type: u8,
+    ) -> Result<bool> {
+        let Some(raw) = self.store.entities.get(rtxn, id.as_bytes())? else {
+            return Ok(false);
+        };
+        let Some(header) = EntityMetadataHeader::parse(raw) else {
+            return Ok(false);
+        };
+        Ok(header.entity_type == expected_type)
+    }
+
+    /// Subtree descendants via ChildOf traversal, limited to `max_depth`.
+    /// Returns `(id, depth)` pairs sorted by depth.
     ///
     /// Uses DFS internally (stack-based) but sorts results by depth before returning,
     /// so output is always depth-ordered regardless of traversal order.
     /// Children are found via inbound ChildOf edges (since ChildOf direction is
     /// child → parent, children appear in the parent's edges_in).
+    ///
+    /// Returns up to `MAX_SUBTREE_RESULTS` nodes to prevent unbounded allocation.
     pub fn subtree(&self, root: &EntityId, max_depth: u32) -> Result<Vec<(EntityId, u32)>> {
+        const MAX_SUBTREE_RESULTS: usize = 50_000;
         let rtxn = self.store.env.read_txn()?;
         let mut result = Vec::new();
         let mut frontier = vec![(*root, 0_u32)];
@@ -464,6 +463,9 @@ impl Vault {
         while let Some((node, depth)) = frontier.pop() {
             if depth > 0 {
                 result.push((node, depth));
+                if result.len() >= MAX_SUBTREE_RESULTS {
+                    break;
+                }
             }
             if depth >= max_depth {
                 continue;
@@ -472,10 +474,7 @@ impl Vault {
             // Find children: inbound ChildOf edges (child --ChildOf--> node)
             for entry in self.store.edges_in.prefix_iter(&rtxn, node.as_bytes())? {
                 let (key, _) = entry?;
-                if key.len() != EDGE_KEY_LEN {
-                    continue;
-                }
-                if key[16] != EdgeKind::ChildOf as u8 {
+                if key.len() != EDGE_KEY_LEN || key[16] != EdgeKind::ChildOf as u8 {
                     continue;
                 }
                 let child =
@@ -486,29 +485,31 @@ impl Vault {
             }
         }
 
-        result.sort_by(|a, b| {
+        result.sort_unstable_by(|a, b| {
             a.1.cmp(&b.1)
                 .then_with(|| a.0.as_bytes().cmp(b.0.as_bytes()))
         });
         Ok(result)
     }
 
-    /// Walk ancestors via outbound ChildOf edges. Capped at 100 to prevent cycles.
+    /// Walk ancestors via outbound ChildOf edges.
     ///
     /// Returns ancestor IDs from immediate parent to root (nearest first).
+    /// Capped at `MAX_ANCESTOR_DEPTH` as a safety limit.
     ///
     /// **Invariant:** Each node has at most one ChildOf parent. `parentId` is the
     /// canonical source of truth (stored in Loro Map as LWW); ChildOf edges are
     /// derived. If multiple ChildOf edges exist due to data corruption, only the
     /// first (by LMDB key order) is followed.
     pub fn ancestors(&self, node: &EntityId) -> Result<Vec<EntityId>> {
+        const MAX_ANCESTOR_DEPTH: usize = 100;
         let rtxn = self.store.env.read_txn()?;
         let mut result = Vec::new();
         let mut current = *node;
         let mut visited = std::collections::HashSet::new();
         visited.insert(current);
 
-        for _ in 0..100 {
+        for _ in 0..MAX_ANCESTOR_DEPTH {
             // Find parent: outbound ChildOf edge (current --ChildOf--> parent)
             let mut found_parent = None;
             for entry in self
@@ -517,10 +518,7 @@ impl Vault {
                 .prefix_iter(&rtxn, current.as_bytes())?
             {
                 let (key, _) = entry?;
-                if key.len() != EDGE_KEY_LEN {
-                    continue;
-                }
-                if key[16] != EdgeKind::ChildOf as u8 {
+                if key.len() != EDGE_KEY_LEN || key[16] != EdgeKind::ChildOf as u8 {
                     continue;
                 }
                 let parent =
@@ -548,12 +546,51 @@ impl Vault {
     /// Checks whether making `target` a parent of `node` would create a cycle.
     ///
     /// Walks ancestors of `target` — if `node` is found among them, it's a cycle.
+    /// Short-circuits as soon as `node` is found instead of collecting all ancestors.
     pub fn would_create_cycle(&self, node: &EntityId, target: &EntityId) -> Result<bool> {
         if node == target {
             return Ok(true);
         }
-        let ancestors = self.ancestors(target)?;
-        Ok(ancestors.contains(node))
+        const MAX_ANCESTOR_DEPTH: usize = 100;
+        let rtxn = self.store.env.read_txn()?;
+        let mut current = *target;
+        let mut visited = std::collections::HashSet::new();
+        visited.insert(current);
+
+        for _ in 0..MAX_ANCESTOR_DEPTH {
+            let mut found_parent = None;
+            for entry in self
+                .store
+                .edges_out
+                .prefix_iter(&rtxn, current.as_bytes())?
+            {
+                let (key, _) = entry?;
+                if key.len() != EDGE_KEY_LEN {
+                    continue;
+                }
+                if key[16] != EdgeKind::ChildOf as u8 {
+                    continue;
+                }
+                let parent =
+                    EntityId::from_bytes(key[17..33].try_into().map_err(|_| Error::InvalidKey)?);
+                found_parent = Some(parent);
+                break;
+            }
+
+            match found_parent {
+                Some(parent) => {
+                    if parent == *node {
+                        return Ok(true); // Cycle found — short-circuit
+                    }
+                    if !visited.insert(parent) {
+                        break; // Existing cycle in data — stop
+                    }
+                    current = parent;
+                }
+                None => break, // Reached root
+            }
+        }
+        Ok(false)
     }
 }
 
@@ -2256,6 +2293,49 @@ mod tests {
                 "PartOf should block at 3rd hop, but p1 got score={p1_score}"
             );
         }
+
+        Ok(())
+    }
+
+    #[test]
+    fn child_of_survives_mixed_part_of_path() -> Result<()> {
+        let temp_dir = tempfile::tempdir()?;
+        let vault = Vault::open(temp_dir.path(), test_config())?;
+
+        // Build a mixed path: place1 --PartOf--> place2 --PartOf--> place3 --ChildOf--> task
+        // After 2 PartOf hops (place1→place3), the next edge is ChildOf.
+        // Without the ChildOf exemption in PPR, this would be blocked at hop 3.
+        let place1 = EntityId::now();
+        let place2 = EntityId::now();
+        let place3 = EntityId::now();
+        let task = EntityId::now();
+
+        vault
+            .batch()
+            .put(&place1, 9, test_time_range(1, 1), 2, b"p1") // Place
+            .put(&place2, 9, test_time_range(3, 3), 4, b"p2")
+            .put(&place3, 9, test_time_range(5, 5), 6, b"p3")
+            .put(&task, 61, test_time_range(7, 7), 8, b"task")
+            .edge(&place2, EdgeKind::PartOf, &place1, 1.0)
+            .edge(&place3, EdgeKind::PartOf, &place2, 1.0)
+            .edge(&task, EdgeKind::ChildOf, &place3, 1.0)
+            .commit()?;
+
+        let rtxn = vault.store.env.read_txn()?;
+        let scores = ppr::ppr_compute(&vault.store, &rtxn, &[task], 6, 0.15)?;
+
+        // place1 is reachable via: task --ChildOf--> place3 --PartOf--> place2 --PartOf--> place1
+        // The ChildOf hop doesn't count, so only 2 PartOf hops (within limit).
+        // Without the ChildOf exemption, hops would be 3 and place1 would be blocked.
+        let place1_score = scores
+            .iter()
+            .find(|s| s.id == place1)
+            .map(|s| s.score)
+            .unwrap_or(0.0);
+        assert!(
+            place1_score > 0.0,
+            "ChildOf should not count toward PartOf hop limit in mixed paths, got score={place1_score}"
+        );
 
         Ok(())
     }
