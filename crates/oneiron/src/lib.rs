@@ -45,6 +45,28 @@ fn edge_kind_prefix(id: &EntityId, kind: EdgeKind) -> [u8; 17] {
     prefix
 }
 
+/// Returns the first outbound ChildOf parent for `node`, or `None` if it has
+/// no ChildOf edge (i.e. it is a root).
+///
+/// Each node has at most one ChildOf parent. If multiple exist due to data
+/// corruption, only the first by LMDB key order is returned.
+fn first_child_of_parent(
+    store: &Store,
+    rtxn: &heed::RoTxn<'_>,
+    node: &EntityId,
+) -> Result<Option<EntityId>> {
+    let prefix = edge_kind_prefix(node, EdgeKind::ChildOf);
+    for entry in store.edges_out.prefix_iter(rtxn, &prefix)? {
+        let (key, _) = entry?;
+        if key.len() != EDGE_KEY_LEN {
+            continue;
+        }
+        let parent = EntityId::from_bytes(key[17..33].try_into().map_err(|_| Error::InvalidKey)?);
+        return Ok(Some(parent));
+    }
+    Ok(None)
+}
+
 /// Main vault API wrapping LMDB storage and configuration.
 pub struct Vault {
     pub(crate) store: Store,
@@ -522,11 +544,6 @@ impl Vault {
     ///
     /// Returns ancestor IDs from immediate parent to root (nearest first).
     /// The `visited` set prevents infinite loops on corrupted cyclic data.
-    ///
-    /// **Invariant:** Each node has at most one ChildOf parent. `parentId` is the
-    /// canonical source of truth (stored in Loro Map as LWW); ChildOf edges are
-    /// derived. If multiple ChildOf edges exist due to data corruption, only the
-    /// first (by LMDB key order) is followed.
     pub fn ancestors(&self, node: &EntityId) -> Result<Vec<EntityId>> {
         let rtxn = self.store.env.read_txn()?;
         let mut result = Vec::new();
@@ -534,36 +551,12 @@ impl Vault {
         let mut visited = std::collections::HashSet::new();
         visited.insert(current);
 
-        loop {
-            // Find parent: outbound ChildOf edge (current --ChildOf--> parent)
-            let parent_prefix = edge_kind_prefix(&current, EdgeKind::ChildOf);
-            let mut found_parent = None;
-            for entry in self
-                .store
-                .edges_out
-                .prefix_iter(&rtxn, &parent_prefix)?
-            {
-                let (key, _) = entry?;
-                if key.len() != EDGE_KEY_LEN {
-                    continue;
-                }
-                let parent =
-                    EntityId::from_bytes(key[17..33].try_into().map_err(|_| Error::InvalidKey)?);
-                found_parent = Some(parent);
-                break; // A node has at most one parent
+        while let Some(parent) = first_child_of_parent(&self.store, &rtxn, &current)? {
+            if !visited.insert(parent) {
+                break; // Cycle detected — stop walking but don't error
             }
-
-            match found_parent {
-                Some(parent) => {
-                    if !visited.insert(parent) {
-                        // Cycle detected — stop walking but don't error
-                        break;
-                    }
-                    result.push(parent);
-                    current = parent;
-                }
-                None => break, // Reached root
-            }
+            result.push(parent);
+            current = parent;
         }
 
         Ok(result)
@@ -598,36 +591,14 @@ impl Vault {
         let mut visited = std::collections::HashSet::new();
         visited.insert(current);
 
-        loop {
-            let parent_prefix = edge_kind_prefix(&current, EdgeKind::ChildOf);
-            let mut found_parent = None;
-            for entry in self
-                .store
-                .edges_out
-                .prefix_iter(rtxn, &parent_prefix)?
-            {
-                let (key, _) = entry?;
-                if key.len() != EDGE_KEY_LEN {
-                    continue;
-                }
-                let parent =
-                    EntityId::from_bytes(key[17..33].try_into().map_err(|_| Error::InvalidKey)?);
-                found_parent = Some(parent);
-                break;
+        while let Some(parent) = first_child_of_parent(&self.store, rtxn, &current)? {
+            if parent == *node {
+                return Ok(true);
             }
-
-            match found_parent {
-                Some(parent) => {
-                    if parent == *node {
-                        return Ok(true);
-                    }
-                    if !visited.insert(parent) {
-                        break;
-                    }
-                    current = parent;
-                }
-                None => break,
+            if !visited.insert(parent) {
+                break; // Existing cycle in data — stop walking
             }
+            current = parent;
         }
         Ok(false)
     }
@@ -2288,7 +2259,13 @@ mod tests {
 
         // would_create_cycle: an unrelated node should not create a cycle
         let unrelated = EntityId::now();
-        vault.put_entity(&unrelated, 61, test_time_range(999, 999), 1000, b"unrelated")?;
+        vault.put_entity(
+            &unrelated,
+            61,
+            test_time_range(999, 999),
+            1000,
+            b"unrelated",
+        )?;
         assert!(!vault.would_create_cycle(&unrelated, &nodes[DEPTH])?);
 
         Ok(())
@@ -2490,6 +2467,12 @@ mod tests {
             "expected CycleDetected, got {result:?}"
         );
 
+        // Verify the rejected edge was not written
+        assert!(
+            !vault.edge_exists(&a, EdgeKind::ChildOf, &c)?,
+            "cyclic edge should not have been persisted"
+        );
+
         // Non-cyclic edge should succeed
         let d = EntityId::now();
         vault
@@ -2501,6 +2484,58 @@ mod tests {
         // Verify d is a child of c
         let children = vault.sources(&c, EdgeKind::ChildOf, None)?;
         assert!(children.contains(&d));
+
+        Ok(())
+    }
+
+    #[test]
+    fn edge_checked_rejects_self_cycle() -> Result<()> {
+        let temp_dir = tempfile::tempdir()?;
+        let vault = Vault::open(temp_dir.path(), test_config())?;
+        let node = EntityId::now();
+
+        vault
+            .batch()
+            .put(&node, 61, test_time_range(1, 1), 2, b"self")
+            .commit()?;
+
+        let result = vault
+            .batch()
+            .edge_checked(&node, EdgeKind::ChildOf, &node, 1.0)
+            .commit();
+        assert!(
+            matches!(result, Err(Error::CycleDetected)),
+            "self-cycle should be rejected, got {result:?}"
+        );
+        assert!(
+            !vault.edge_exists(&node, EdgeKind::ChildOf, &node)?,
+            "self-cycle edge should not have been persisted"
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn subtree_excludes_root() -> Result<()> {
+        let temp_dir = tempfile::tempdir()?;
+        let vault = Vault::open(temp_dir.path(), test_config())?;
+        let root = EntityId::now();
+        let child = EntityId::now();
+
+        vault
+            .batch()
+            .put(&root, 61, test_time_range(1, 1), 2, b"root")
+            .put(&child, 61, test_time_range(3, 3), 4, b"child")
+            .edge(&child, EdgeKind::ChildOf, &root, 1.0)
+            .commit()?;
+
+        let tree = vault.subtree(&root, 10)?;
+        assert_eq!(tree.len(), 1);
+        assert_eq!(tree[0].0, child);
+        assert!(
+            !tree.iter().any(|(id, _)| *id == root),
+            "root should not appear in its own subtree"
+        );
 
         Ok(())
     }

@@ -1552,10 +1552,7 @@ mod tests {
             "description".to_owned(),
             Value::String("Q2 deliverables".to_owned()),
         );
-        fields.insert(
-            "goal".to_owned(),
-            Value::String("Ship the MVP".to_owned()),
-        );
+        fields.insert("goal".to_owned(), Value::String("Ship the MVP".to_owned()));
         fields.insert("icon".to_owned(), Value::String("rocket".to_owned()));
         fields.insert("status".to_owned(), Value::String("active".to_owned()));
         // Extra field not in any profile — should only appear when profile is empty / fallback.
@@ -1624,9 +1621,11 @@ mod tests {
             max_field_chars: 500,
         };
 
-        let text =
-            String::from_utf8(serialize_pack(&pack, &cfg_plain)).expect("utf8");
-        assert!(text.contains("TASK_LISTS"), "group name should be TASK_LISTS");
+        let text = String::from_utf8(serialize_pack(&pack, &cfg_plain)).expect("utf8");
+        assert!(
+            text.contains("TASK_LISTS"),
+            "group name should be TASK_LISTS"
+        );
         assert!(text.contains("tl01:aa"), "short_id:hash should appear");
         assert!(text.contains("Sprint 42"));
         assert!(text.contains("Ship the MVP"));
@@ -1648,10 +1647,7 @@ mod tests {
                 crate::unix_seconds_now().saturating_add(2 * 86_400),
             )),
         );
-        fields.insert(
-            "priority".to_owned(),
-            Value::Number(Number::from(2_u64)),
-        );
+        fields.insert("priority".to_owned(), Value::Number(Number::from(2_u64)));
         fields.insert("frequency".to_owned(), Value::String("daily".to_owned()));
         // Extra fields only in Full profile.
         fields.insert(
@@ -1699,8 +1695,14 @@ mod tests {
         assert_eq!(first["title"], "Morning run");
         assert_eq!(first["role"], "habit");
         assert_eq!(first["status"], "active");
-        assert!(first.get("priority").is_some(), "priority should be present in Standard");
-        assert!(first.get("dueDate").is_some(), "dueDate should be present in Standard");
+        assert!(
+            first.get("priority").is_some(),
+            "priority should be present in Standard"
+        );
+        assert!(
+            first.get("dueDate").is_some(),
+            "dueDate should be present in Standard"
+        );
         // "frequency" is NOT in Standard profile for type 61.
         assert!(
             first.get("frequency").is_none(),
@@ -1720,7 +1722,10 @@ mod tests {
         assert_eq!(minimal, &["title", "role"]);
 
         let standard = fields_for_profile(61, FieldProfile::Standard);
-        assert_eq!(standard, &["title", "role", "status", "priority", "dueDate"]);
+        assert_eq!(
+            standard,
+            &["title", "role", "status", "priority", "dueDate"]
+        );
 
         let full = fields_for_profile(61, FieldProfile::Full);
         assert!(full.contains(&"frequency"));
@@ -1742,10 +1747,7 @@ mod tests {
         fields.insert("title".to_owned(), Value::String("Deploy v2".to_owned()));
         fields.insert("role".to_owned(), Value::String("task".to_owned()));
         fields.insert("status".to_owned(), Value::String("pending".to_owned()));
-        fields.insert(
-            "dueDate".to_owned(),
-            Value::Number(Number::from(due)),
-        );
+        fields.insert("dueDate".to_owned(), Value::Number(Number::from(due)));
 
         let entity = ContextEntity {
             id: EntityId::from_bytes([62; 16]),
