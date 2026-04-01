@@ -48,6 +48,7 @@ impl EntityMetadataHeader {
 pub struct BatchBuilder<'a> {
     vault: &'a Vault,
     ops: Vec<BatchOp>,
+    validation_error: Option<Error>,
 }
 
 pub(crate) enum BatchOp {
@@ -100,10 +101,14 @@ impl<'a> BatchBuilder<'a> {
         Self {
             vault,
             ops: Vec::new(),
+            validation_error: None,
         }
     }
 
     /// Adds an entity put operation to the batch.
+    ///
+    /// Validates `entity_type` eagerly via [`short_id_prefix`]. If validation
+    /// fails, the error is stored and surfaced on [`commit()`](Self::commit).
     pub fn put(
         mut self,
         id: &EntityId,
@@ -112,6 +117,11 @@ impl<'a> BatchBuilder<'a> {
         learned_at: u64,
         data: &[u8],
     ) -> Self {
+        if self.validation_error.is_none() {
+            if let Err(e) = short_id_prefix(entity_type) {
+                self.validation_error = Some(e);
+            }
+        }
         self.ops.push(BatchOp::Put {
             id: *id,
             entity_type,
@@ -244,7 +254,13 @@ impl<'a> BatchBuilder<'a> {
     }
 
     /// Commits all queued operations atomically in a single LMDB write transaction.
+    ///
+    /// Returns any validation error captured during `put()` before opening
+    /// the LMDB write transaction, avoiding unnecessary I/O on bad input.
     pub fn commit(self) -> Result<()> {
+        if let Some(err) = self.validation_error {
+            return Err(err);
+        }
         let mut wtxn = self.vault.store.env.write_txn()?;
         apply_ops(&self.vault.store, &self.vault.config, &mut wtxn, self.ops)?;
         wtxn.commit()?;
