@@ -379,7 +379,7 @@ impl NapiVault {
             .collect())
     }
 
-    /// Walk ancestors via ChildOf edges. Capped at 100.
+    /// Walk ancestors via ChildOf edges. Uses visited set to prevent cycles.
     #[napi]
     pub fn ancestors(&self, node: Buffer) -> napi::Result<Vec<Buffer>> {
         let node_id = parse_entity_id(&node)?;
