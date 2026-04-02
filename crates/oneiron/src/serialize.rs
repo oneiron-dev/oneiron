@@ -1531,4 +1531,313 @@ mod tests {
             .unwrap_or(0);
         assert!(turns_count > 0);
     }
+
+    // ── TaskList (type 60) and Task (type 61) tests ──────────────────
+
+    fn empty_stats() -> PackStats {
+        PackStats {
+            candidates_considered: 0,
+            signals_used: vec![],
+            query_time_us: 0,
+            entities_hydrated: 0,
+            neighbors_hydrated: 0,
+        }
+    }
+
+    #[test]
+    fn test_task_list_field_profiles() {
+        let mut fields = HashMap::new();
+        fields.insert("name".to_owned(), Value::String("Sprint 42".to_owned()));
+        fields.insert(
+            "description".to_owned(),
+            Value::String("Q2 deliverables".to_owned()),
+        );
+        fields.insert("goal".to_owned(), Value::String("Ship the MVP".to_owned()));
+        fields.insert("icon".to_owned(), Value::String("rocket".to_owned()));
+        fields.insert("status".to_owned(), Value::String("active".to_owned()));
+        // Extra fields not in Standard/Minimal — only appear in Full profile or fallback.
+        fields.insert("color".to_owned(), Value::String("#ff0000".to_owned()));
+        fields.insert(
+            "repoUrl".to_owned(),
+            Value::String("https://github.com/example".to_owned()),
+        );
+
+        let entity = ContextEntity {
+            id: EntityId::from_bytes([60; 16]),
+            short_id: "tl01".to_owned(),
+            content_hash: 0xaa,
+            entity_type: 60,
+            score: 0.8,
+            fields: Some(fields),
+            edges: None,
+            vector: None,
+        };
+
+        let pack = ContextPack {
+            results: vec![entity],
+            neighbors: vec![],
+            stats: empty_stats(),
+        };
+
+        // --- JSON with Standard profile ---
+        let cfg_json = SerializeConfig {
+            format: PackFormat::Json,
+            profile: FieldProfile::Standard,
+            budget: 4000,
+            allocation: TokenAllocation::default(),
+            include_stats: false,
+            merge_neighbors: true,
+            max_field_chars: 500,
+        };
+
+        let bytes = serialize_pack(&pack, &cfg_json);
+        let parsed: Value = serde_json::from_slice(&bytes).expect("json parse");
+
+        // Should appear under the "task_lists" group key.
+        let task_lists = parsed.get("task_lists").expect("task_lists key missing");
+        let first = &task_lists[0];
+        assert_eq!(first["name"], "Sprint 42");
+        assert_eq!(first["goal"], "Ship the MVP");
+        assert_eq!(first["status"], "active");
+        // Standard profile for type 60 is ["name", "goal", "status"].
+        // "description" and "icon" are NOT in Standard, so they should be absent.
+        assert!(
+            first.get("description").is_none(),
+            "description should not appear in Standard profile"
+        );
+        assert!(
+            first.get("icon").is_none(),
+            "icon should not appear in Standard profile"
+        );
+
+        // --- Plaintext with Standard profile ---
+        let cfg_plain = SerializeConfig {
+            format: PackFormat::Plaintext,
+            profile: FieldProfile::Standard,
+            budget: 4000,
+            allocation: TokenAllocation::default(),
+            include_stats: false,
+            merge_neighbors: true,
+            max_field_chars: 500,
+        };
+
+        let text = String::from_utf8(serialize_pack(&pack, &cfg_plain)).expect("utf8");
+        assert!(
+            text.contains("TASK_LISTS"),
+            "group name should be TASK_LISTS"
+        );
+        assert!(text.contains("tl01:aa"), "short_id:hash should appear");
+        assert!(text.contains("Sprint 42"));
+        assert!(text.contains("Ship the MVP"));
+
+        // --- Verify field ordering matches fields_for_profile ---
+        let expected = fields_for_profile(60, FieldProfile::Standard);
+        assert_eq!(expected, &["name", "goal", "status"]);
+    }
+
+    #[test]
+    fn test_task_field_profiles() {
+        let mut fields = HashMap::new();
+        fields.insert("role".to_owned(), Value::String("habit".to_owned()));
+        fields.insert("title".to_owned(), Value::String("Morning run".to_owned()));
+        fields.insert("status".to_owned(), Value::String("active".to_owned()));
+        fields.insert(
+            "dueDate".to_owned(),
+            Value::Number(Number::from(
+                crate::unix_seconds_now().saturating_add(2 * 86_400),
+            )),
+        );
+        fields.insert("priority".to_owned(), Value::Number(Number::from(2_u64)));
+        fields.insert("frequency".to_owned(), Value::String("daily".to_owned()));
+        // Extra fields only in Full profile.
+        fields.insert(
+            "frequencyDetail".to_owned(),
+            Value::String("weekdays".to_owned()),
+        );
+        fields.insert(
+            "currentStreak".to_owned(),
+            Value::Number(Number::from(5_u64)),
+        );
+
+        let entity = ContextEntity {
+            id: EntityId::from_bytes([61; 16]),
+            short_id: "tk01".to_owned(),
+            content_hash: 0xbb,
+            entity_type: 61,
+            score: 0.75,
+            fields: Some(fields),
+            edges: None,
+            vector: None,
+        };
+
+        let pack = ContextPack {
+            results: vec![entity],
+            neighbors: vec![],
+            stats: empty_stats(),
+        };
+
+        // --- JSON Standard profile ---
+        let cfg = SerializeConfig {
+            format: PackFormat::Json,
+            profile: FieldProfile::Standard,
+            budget: 4000,
+            allocation: TokenAllocation::default(),
+            include_stats: false,
+            merge_neighbors: true,
+            max_field_chars: 500,
+        };
+
+        let bytes = serialize_pack(&pack, &cfg);
+        let parsed: Value = serde_json::from_slice(&bytes).expect("json parse");
+
+        let tasks = parsed.get("tasks").expect("tasks key missing");
+        let first = &tasks[0];
+        assert_eq!(first["title"], "Morning run");
+        assert_eq!(first["role"], "habit");
+        assert_eq!(first["status"], "active");
+        assert!(
+            first.get("priority").is_some(),
+            "priority should be present in Standard"
+        );
+        assert!(
+            first.get("dueDate").is_some(),
+            "dueDate should be present in Standard"
+        );
+        // "frequency" is NOT in Standard profile for type 61.
+        assert!(
+            first.get("frequency").is_none(),
+            "frequency should not appear in Standard profile"
+        );
+        assert!(
+            first.get("frequencyDetail").is_none(),
+            "frequencyDetail should not appear in Standard profile"
+        );
+        assert!(
+            first.get("currentStreak").is_none(),
+            "currentStreak should not appear in Standard profile"
+        );
+
+        // --- Verify field ordering for all profiles ---
+        let minimal = fields_for_profile(61, FieldProfile::Minimal);
+        assert_eq!(minimal, &["title", "role"]);
+
+        let standard = fields_for_profile(61, FieldProfile::Standard);
+        assert_eq!(
+            standard,
+            &["title", "role", "status", "priority", "dueDate"]
+        );
+
+        let full = fields_for_profile(61, FieldProfile::Full);
+        assert!(full.contains(&"frequency"));
+        assert!(full.contains(&"frequencyDetail"));
+        assert!(full.contains(&"currentStreak"));
+        assert!(full.contains(&"longestStreak"));
+        assert!(full.contains(&"parentId"));
+        assert!(full.contains(&"listId"));
+        assert!(full.contains(&"position"));
+    }
+
+    #[test]
+    fn test_due_date_timestamp_rendering() {
+        // dueDate set to 2 days in the future — should render as "+2d" in plaintext.
+        let now = crate::unix_seconds_now();
+        let due = now + 2 * 86_400;
+
+        let mut fields = HashMap::new();
+        fields.insert("title".to_owned(), Value::String("Deploy v2".to_owned()));
+        fields.insert("role".to_owned(), Value::String("task".to_owned()));
+        fields.insert("status".to_owned(), Value::String("pending".to_owned()));
+        fields.insert("dueDate".to_owned(), Value::Number(Number::from(due)));
+
+        let entity = ContextEntity {
+            id: EntityId::from_bytes([61; 16]),
+            short_id: "tk02".to_owned(),
+            content_hash: 0xcc,
+            entity_type: 61,
+            score: 0.9,
+            fields: Some(fields),
+            edges: None,
+            vector: None,
+        };
+
+        let pack = ContextPack {
+            results: vec![entity],
+            neighbors: vec![],
+            stats: empty_stats(),
+        };
+
+        // Plaintext format renders timestamps relatively.
+        let cfg = SerializeConfig {
+            format: PackFormat::Plaintext,
+            profile: FieldProfile::Standard,
+            budget: 4000,
+            allocation: TokenAllocation::default(),
+            include_stats: false,
+            merge_neighbors: true,
+            max_field_chars: 500,
+        };
+
+        let text = String::from_utf8(serialize_pack(&pack, &cfg)).expect("utf8");
+
+        // dueDate should be rendered as a relative timestamp, not the raw epoch integer.
+        assert!(
+            text.contains("+2d") || text.contains("+1d") || text.contains("+3d"),
+            "dueDate should be a relative timestamp like +2d, got: {text}"
+        );
+        // The raw epoch number should NOT appear in the output.
+        assert!(
+            !text.contains(&due.to_string()),
+            "raw epoch value should not appear in plaintext"
+        );
+
+        // Verify dueDate is recognized as a timestamp field.
+        assert!(
+            is_timestamp_field("dueDate"),
+            "dueDate must be in is_timestamp_field"
+        );
+
+        // JSON format should keep the raw numeric timestamp (no relative rendering).
+        let cfg_json = SerializeConfig {
+            format: PackFormat::Json,
+            profile: FieldProfile::Standard,
+            budget: 4000,
+            allocation: TokenAllocation::default(),
+            include_stats: false,
+            merge_neighbors: true,
+            max_field_chars: 500,
+        };
+
+        let json_bytes = serialize_pack(&pack, &cfg_json);
+        let parsed: Value = serde_json::from_slice(&json_bytes).expect("json parse");
+        let task = &parsed["tasks"][0];
+        assert_eq!(
+            task["dueDate"].as_u64().unwrap(),
+            due,
+            "JSON format should preserve raw numeric timestamp"
+        );
+    }
+
+    #[test]
+    fn test_group_labels_sparse_ids() {
+        let tl = group_labels(60);
+        assert_eq!(tl.key, "task_lists");
+        assert_eq!(tl.name, "TASK_LISTS");
+        assert_eq!(tl.title, "Task Lists");
+
+        let tk = group_labels(61);
+        assert_eq!(tk.key, "tasks");
+        assert_eq!(tk.name, "TASKS");
+        assert_eq!(tk.title, "Tasks");
+
+        let mc = group_labels(62);
+        assert_eq!(mc.key, "machines");
+        assert_eq!(mc.name, "MACHINES");
+        assert_eq!(mc.title, "Machines");
+
+        // Types outside the known set should fall back to OTHER_GROUP_LABELS.
+        let unknown = group_labels(255);
+        assert_eq!(unknown.key, "other");
+        assert_eq!(unknown.name, "OTHER");
+        assert_eq!(unknown.title, "Other");
+    }
 }
