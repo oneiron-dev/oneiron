@@ -578,7 +578,7 @@ impl Vault {
     /// Walks ancestors of `target` — if `node` is found among them, it's a cycle.
     /// Short-circuits as soon as `node` is found instead of collecting all ancestors.
     /// The `visited` set prevents infinite loops on corrupted cyclic data.
-    pub fn would_create_cycle_in_txn(
+    pub(crate) fn would_create_cycle_in_txn(
         &self,
         rtxn: &heed::RoTxn<'_>,
         node: &EntityId,

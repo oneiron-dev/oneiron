@@ -22,8 +22,18 @@ fn test_intra_batch_cycle() {
         .commit();
 
     assert!(
-        result.is_err(),
-        "Intra-batch cycle should be detected, got {:?}",
+        matches!(result, Err(Error::CycleDetected)),
+        "Intra-batch cycle should return CycleDetected, got {:?}",
         result
+    );
+
+    // Verify abort rolled back both edges
+    assert!(
+        !vault.edge_exists(&a, EdgeKind::ChildOf, &b).unwrap(),
+        "a→b edge should not persist after cycle abort"
+    );
+    assert!(
+        !vault.edge_exists(&b, EdgeKind::ChildOf, &a).unwrap(),
+        "b→a edge should not persist after cycle abort"
     );
 }

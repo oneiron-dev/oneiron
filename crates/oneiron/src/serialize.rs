@@ -1555,7 +1555,7 @@ mod tests {
         fields.insert("goal".to_owned(), Value::String("Ship the MVP".to_owned()));
         fields.insert("icon".to_owned(), Value::String("rocket".to_owned()));
         fields.insert("status".to_owned(), Value::String("active".to_owned()));
-        // Extra field not in any profile — should only appear when profile is empty / fallback.
+        // Extra fields not in Standard/Minimal — only appear in Full profile or fallback.
         fields.insert("color".to_owned(), Value::String("#ff0000".to_owned()));
         fields.insert(
             "repoUrl".to_owned(),
