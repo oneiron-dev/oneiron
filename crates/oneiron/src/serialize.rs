@@ -1750,7 +1750,7 @@ mod tests {
         fields.insert("dueDate".to_owned(), Value::Number(Number::from(due)));
 
         let entity = ContextEntity {
-            id: EntityId::from_bytes([62; 16]),
+            id: EntityId::from_bytes([61; 16]),
             short_id: "tk02".to_owned(),
             content_hash: 0xcc,
             entity_type: 61,

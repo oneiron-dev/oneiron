@@ -2458,10 +2458,7 @@ mod tests {
             .commit()?;
 
         // Try to make a a child of c — would create cycle a→b→c→a
-        let result = vault
-            .batch()
-            .edge_checked(&a, EdgeKind::ChildOf, &c, 1.0)
-            .commit();
+        let result = vault.batch().edge_checked(&a, &c, 1.0).commit();
         assert!(
             matches!(result, Err(Error::CycleDetected)),
             "expected CycleDetected, got {result:?}"
@@ -2478,7 +2475,7 @@ mod tests {
         vault
             .batch()
             .put(&d, 61, test_time_range(7, 7), 8, b"d")
-            .edge_checked(&d, EdgeKind::ChildOf, &c, 1.0)
+            .edge_checked(&d, &c, 1.0)
             .commit()?;
 
         // Verify d is a child of c
@@ -2499,10 +2496,7 @@ mod tests {
             .put(&node, 61, test_time_range(1, 1), 2, b"self")
             .commit()?;
 
-        let result = vault
-            .batch()
-            .edge_checked(&node, EdgeKind::ChildOf, &node, 1.0)
-            .commit();
+        let result = vault.batch().edge_checked(&node, &node, 1.0).commit();
         assert!(
             matches!(result, Err(Error::CycleDetected)),
             "self-cycle should be rejected, got {result:?}"
@@ -2540,3 +2534,5 @@ mod tests {
         Ok(())
     }
 }
+#[cfg(test)]
+mod tests_bug;

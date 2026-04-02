@@ -159,18 +159,11 @@ impl<'a> BatchBuilder<'a> {
     ///
     /// The cycle check runs inside the write transaction, eliminating the
     /// TOCTOU race in the standalone `would_create_cycle()` + `put_edge()` pattern.
+    /// Also detects cycles formed by multiple checked edges within the same batch.
     /// Returns `Err(CycleDetected)` at commit time if the edge would create a cycle.
-    pub fn edge_checked(
-        mut self,
-        src: &EntityId,
-        kind: EdgeKind,
-        tgt: &EntityId,
-        weight: f32,
-    ) -> Self {
-        if kind == EdgeKind::ChildOf {
-            self.cycle_checks.push((*src, *tgt));
-        }
-        self.edge(src, kind, tgt, weight)
+    pub fn edge_checked(mut self, src: &EntityId, tgt: &EntityId, weight: f32) -> Self {
+        self.cycle_checks.push((*src, *tgt));
+        self.edge(src, EdgeKind::ChildOf, tgt, weight)
     }
 
     /// Adds a graph edge with explicit VAD scores to the batch.
@@ -283,8 +276,11 @@ impl<'a> BatchBuilder<'a> {
         }
         let mut wtxn = self.vault.store.env.write_txn()?;
 
+        apply_ops(&self.vault.store, &self.vault.config, &mut wtxn, self.ops)?;
+
         // Run cycle checks inside the write transaction (TOCTOU-safe).
         // The RwTxn dereferences to RoTxn for read operations.
+        // We run this after apply_ops so the read transaction can see the newly written edges.
         for (child, proposed_parent) in &self.cycle_checks {
             if self
                 .vault
@@ -295,7 +291,6 @@ impl<'a> BatchBuilder<'a> {
             }
         }
 
-        apply_ops(&self.vault.store, &self.vault.config, &mut wtxn, self.ops)?;
         wtxn.commit()?;
         Ok(())
     }
