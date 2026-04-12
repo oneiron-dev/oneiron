@@ -752,6 +752,7 @@ pub struct MaintenanceBuilder<'a> { /* borrows Vault */ }
 
 impl<'a> MaintenanceBuilder<'a> {
     pub fn rebuild_hnsw(self) -> Self;
+    pub fn rebuild_hnsw_heal_invalid_vectors(self) -> Self;
     pub fn cleanup_ppr_cache(self, max_age_secs: u64) -> Self;
     pub fn compact_postings(self) -> Self;
     pub fn recompute_short_id_hashes(self) -> Self;
@@ -759,20 +760,24 @@ impl<'a> MaintenanceBuilder<'a> {
 }
 
 pub struct MaintenanceReport {
-    pub hnsw_dead_nodes_removed: usize,
-    pub hnsw_live_nodes: usize,
-    pub ppr_caches_evicted: usize,
-    pub postings_compacted: usize,
-    pub duration_ms: u64,
+    pub hnsw_dead_nodes_removed: u64,
+    pub hnsw_live_nodes: u64,
+    pub hnsw_invalid_vectors_skipped: u64,
+    pub ppr_caches_evicted: u64,
+    pub ppr_deps_cleaned: u64,
+    pub postings_compacted: u64,
+    pub orphan_short_ids_deleted: u64,
+    pub short_id_hashes_updated: u64,
 }
 ```
 
 | Operation | What it does | When to call |
 |---|---|---|
-| `rebuild_hnsw` | Re-insert all live vectors into fresh graph, discard dead nodes | Dead ratio > 10% |
+| `rebuild_hnsw` | Strict rebuild: re-insert all live vectors into fresh graph, discard dead nodes, fail on invalid stored vectors before opening the write txn | Dead ratio > 10% |
+| `rebuild_hnsw_heal_invalid_vectors` | Repair rebuild: re-insert only valid vectors into a fresh graph, skip invalid stored vectors, preserve raw vector rows for later inspection | Operator-triggered repair |
 | `cleanup_ppr_cache` | Evict stale + expired cache entries from `ppr_cache` + `ppr_cache_deps` | Nightly |
 | `compact_postings` | Remove empty posting lists from `text_postings` | After bulk deletes |
-| `recompute_short_id_hashes` | Recompute content hashes for all entities in `short_ids` | After bulk updates |
+| `recompute_short_id_hashes` | Recompute content hashes for all entities in `short_ids` and delete orphaned mappings whose entity row no longer exists | After bulk updates |
 
 **Boundary:** The crate provides `maintain()`. The dreamer (private, in `oneiron-internal`) decides *when* to call it and *what entities to write/update*. The dreamer's intelligence (LLM-driven consolidation, skill extraction, edge weight tuning, ML service orchestration) is proprietary.
 
