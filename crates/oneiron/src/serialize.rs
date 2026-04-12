@@ -174,7 +174,7 @@ fn serialize_yaml(pack: &ContextPack, config: &SerializeConfig) -> String {
 }
 
 fn prepare_pack(pack: &ContextPack, config: &SerializeConfig, json_mode: bool) -> PreparedPack {
-    let skip_budget = config.format == PackFormat::Json;
+    let skip_budget = config.format == PackFormat::Json || config.budget == 0;
     let char_budget = config.budget.saturating_mul(4);
 
     if config.merge_neighbors {
@@ -195,10 +195,9 @@ fn prepare_pack(pack: &ContextPack, config: &SerializeConfig, json_mode: bool) -
     } else {
         let results_source = group_entities(prepare_entities(&pack.results, config, json_mode));
         let neighbors_source = group_entities(prepare_entities(&pack.neighbors, config, json_mode));
-        let mut results = results_source.clone();
-        let mut neighbors = neighbors_source.clone();
-
-        if !skip_budget {
+        let (results, neighbors) = if skip_budget {
+            (results_source, neighbors_source)
+        } else {
             let results_need = estimate_groups_chars(&results_source);
             let neighbors_need = estimate_groups_chars(&neighbors_source);
 
@@ -209,8 +208,8 @@ fn prepare_pack(pack: &ContextPack, config: &SerializeConfig, json_mode: bool) -
             let (budgeted_neighbors, neighbors_used) =
                 budget_groups(&neighbors_source, &config.allocation, section_budgets[1]);
 
-            results = budgeted_results;
-            neighbors = budgeted_neighbors;
+            let mut results = budgeted_results;
+            let mut neighbors = budgeted_neighbors;
 
             let leftover = char_budget.saturating_sub(results_used.saturating_add(neighbors_used));
             if leftover > 0 {
@@ -223,13 +222,21 @@ fn prepare_pack(pack: &ContextPack, config: &SerializeConfig, json_mode: bool) -
                     if extra[0] > 0 || extra[1] > 0 {
                         section_budgets[0] = section_budgets[0].saturating_add(extra[0]);
                         section_budgets[1] = section_budgets[1].saturating_add(extra[1]);
-                        results = budget_groups(&results_source, &config.allocation, section_budgets[0]).0;
-                        neighbors =
-                            budget_groups(&neighbors_source, &config.allocation, section_budgets[1]).0;
+                        results =
+                            budget_groups(&results_source, &config.allocation, section_budgets[0])
+                                .0;
+                        neighbors = budget_groups(
+                            &neighbors_source,
+                            &config.allocation,
+                            section_budgets[1],
+                        )
+                        .0;
                     }
                 }
             }
-        }
+
+            (results, neighbors)
+        };
 
         PreparedPack {
             merged: false,
@@ -413,8 +420,7 @@ fn enforce_token_budget(
     char_budget: usize,
 ) -> usize {
     if char_budget == 0 {
-        groups.clear();
-        return 0;
+        return estimate_groups_chars(groups);
     }
 
     // Normalize fractions so they sum to 1.0 (multiple "other" types each
@@ -758,99 +764,103 @@ const OTHER_GROUP_LABELS: GroupLabels = GroupLabels {
 };
 
 fn group_labels(entity_type: u8) -> GroupLabels {
+    known_group_labels(entity_type).unwrap_or(OTHER_GROUP_LABELS)
+}
+
+fn known_group_labels(entity_type: u8) -> Option<GroupLabels> {
     match entity_type {
-        0 => GroupLabels {
+        0 => Some(GroupLabels {
             key: "claims",
             name: "CLAIMS",
             title: "Claims",
-        },
-        1 => GroupLabels {
+        }),
+        1 => Some(GroupLabels {
             key: "turns",
             name: "TURNS",
             title: "Turns",
-        },
-        2 => GroupLabels {
+        }),
+        2 => Some(GroupLabels {
             key: "sessions",
             name: "SESSIONS",
             title: "Sessions",
-        },
-        3 => GroupLabels {
+        }),
+        3 => Some(GroupLabels {
             key: "messages",
             name: "MESSAGES",
             title: "Messages",
-        },
-        4 => GroupLabels {
+        }),
+        4 => Some(GroupLabels {
             key: "persons",
             name: "PERSONS",
             title: "Persons",
-        },
-        5 => GroupLabels {
+        }),
+        5 => Some(GroupLabels {
             key: "relationships",
             name: "RELATIONSHIPS",
             title: "Relationships",
-        },
-        6 => GroupLabels {
+        }),
+        6 => Some(GroupLabels {
             key: "events",
             name: "EVENTS",
             title: "Events",
-        },
-        7 => GroupLabels {
+        }),
+        7 => Some(GroupLabels {
             key: "skills",
             name: "SKILLS",
             title: "Skills",
-        },
-        8 => GroupLabels {
+        }),
+        8 => Some(GroupLabels {
             key: "summaries",
             name: "SUMMARIES",
             title: "Summaries",
-        },
-        9 => GroupLabels {
+        }),
+        9 => Some(GroupLabels {
             key: "places",
             name: "PLACES",
             title: "Places",
-        },
-        10 => GroupLabels {
+        }),
+        10 => Some(GroupLabels {
             key: "texts",
             name: "TEXTS",
             title: "Texts",
-        },
-        11 => GroupLabels {
+        }),
+        11 => Some(GroupLabels {
             key: "conversations",
             name: "CONVERSATIONS",
             title: "Conversations",
-        },
-        12 => GroupLabels {
+        }),
+        12 => Some(GroupLabels {
             key: "organizations",
             name: "ORGANIZATIONS",
             title: "Organizations",
-        },
-        13 => GroupLabels {
+        }),
+        13 => Some(GroupLabels {
             key: "facets",
             name: "FACETS",
             title: "Facets",
-        },
-        14 => GroupLabels {
+        }),
+        14 => Some(GroupLabels {
             key: "worlds",
             name: "WORLDS",
             title: "Worlds",
-        },
+        }),
         // Productivity (60-79)
-        60 => GroupLabels {
+        60 => Some(GroupLabels {
             key: "task_lists",
             name: "TASK_LISTS",
             title: "Task Lists",
-        },
-        61 => GroupLabels {
+        }),
+        61 => Some(GroupLabels {
             key: "tasks",
             name: "TASKS",
             title: "Tasks",
-        },
-        62 => GroupLabels {
+        }),
+        62 => Some(GroupLabels {
             key: "machines",
             name: "MACHINES",
             title: "Machines",
-        },
-        _ => OTHER_GROUP_LABELS,
+        }),
+        _ => None,
     }
 }
 
@@ -1044,7 +1054,9 @@ fn estimate_value_chars(value: &Value) -> usize {
             } else {
                 let pairs_len: usize = map
                     .iter()
-                    .map(|(key, value)| estimate_json_string_chars(key) + 1 + estimate_value_chars(value))
+                    .map(|(key, value)| {
+                        estimate_json_string_chars(key) + 1 + estimate_value_chars(value)
+                    })
                     .sum();
                 2 + pairs_len + (map.len() - 1)
             }
@@ -1058,10 +1070,7 @@ fn estimate_json_string_chars(text: &str) -> usize {
         len += match ch {
             '"' | '\\' | '\n' | '\r' | '\t' => 2,
             '\u{08}' | '\u{0C}' => 2,
-            c if c.is_control() => {
-                let _ = c;
-                6
-            }
+            c if c.is_control() => 6,
             c => c.len_utf8(),
         };
     }
@@ -1117,18 +1126,11 @@ fn yaml_escape_quoted(s: &str) -> String {
 }
 
 fn normalize_group_entity_type(entity_type: u8) -> u8 {
-    if is_known_group_type(entity_type) {
+    if known_group_labels(entity_type).is_some() {
         entity_type
     } else {
         OTHER_ENTITY_TYPE
     }
-}
-
-fn is_known_group_type(entity_type: u8) -> bool {
-    matches!(
-        entity_type,
-        0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13 | 14 | 60 | 61 | 62
-    )
 }
 
 fn yaml_scalar(value: &Value) -> String {
@@ -1529,6 +1531,40 @@ mod tests {
     }
 
     #[test]
+    fn token_budget_zero_disables_budget_enforcement() {
+        let mut pack = sample_pack();
+        for i in 0..12_u8 {
+            pack.results.push(ContextEntity {
+                id: EntityId::from_bytes([50 + i; 16]),
+                short_id: format!("cl{i}"),
+                content_hash: i,
+                entity_type: 0,
+                score: 0.3,
+                fields: Some(HashMap::from([
+                    ("pred".to_owned(), Value::String("p".to_owned())),
+                    ("val".to_owned(), Value::String("v".repeat(64))),
+                ])),
+                edges: None,
+                vector: None,
+            });
+        }
+
+        let total_results = pack.results.len();
+        let total_neighbors = pack.neighbors.len();
+
+        let mut cfg = config(PackFormat::Toon);
+        cfg.budget = 0;
+        cfg.merge_neighbors = false;
+
+        let prepared = prepare_pack(&pack, &cfg, false);
+        let kept_results: usize = prepared.results.iter().map(|(_, rows)| rows.len()).sum();
+        let kept_neighbors: usize = prepared.neighbors.iter().map(|(_, rows)| rows.len()).sum();
+
+        assert_eq!(kept_results, total_results);
+        assert_eq!(kept_neighbors, total_neighbors);
+    }
+
+    #[test]
     fn empty_groups_are_omitted() {
         let mut pack = sample_pack();
         pack.results.retain(|entity| entity.entity_type != 0);
@@ -1716,8 +1752,12 @@ mod tests {
         };
 
         let parsed: Value =
-            serde_json::from_slice(&serialize_pack(&pack, &config(PackFormat::Json))).expect("json");
-        let other = parsed.get("other").and_then(Value::as_array).expect("other group");
+            serde_json::from_slice(&serialize_pack(&pack, &config(PackFormat::Json)))
+                .expect("json");
+        let other = parsed
+            .get("other")
+            .and_then(Value::as_array)
+            .expect("other group");
         assert_eq!(other.len(), 2);
         assert_eq!(other[0]["name"], "fifteen");
         assert_eq!(other[1]["name"], "twenty");
@@ -1753,7 +1793,8 @@ mod tests {
             stats: empty_stats(),
         };
 
-        let text = String::from_utf8(serialize_pack(&pack, &config(PackFormat::Yaml))).expect("utf8");
+        let text =
+            String::from_utf8(serialize_pack(&pack, &config(PackFormat::Yaml))).expect("utf8");
         assert!(text.contains("\"x:y\": value"));
         assert!(text.contains("\"true\": reserved"));
     }

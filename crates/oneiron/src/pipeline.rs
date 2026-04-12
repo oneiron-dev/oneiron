@@ -394,6 +394,8 @@ impl<'a> PipelineBuilder<'a> {
             )?;
 
             if self.apply_contiguity {
+                // Contiguity is O(n^2), so sort before pretruncating to the best
+                // candidates, then sort again after boost_contiguity mutates scores.
                 fusion::sort_scored_entities_desc(&mut scores);
                 pretruncate_for_contiguity(&mut scores, self.result_limit);
                 boost_contiguity(
@@ -1618,14 +1620,7 @@ mod tests {
 
         let anchor = 5_000_000;
         for index in 0..5_u8 {
-            put_entity(
-                &vault,
-                entity_id(170 + index),
-                0,
-                anchor,
-                anchor,
-                anchor,
-            )?;
+            put_entity(&vault, entity_id(170 + index), 0, anchor, anchor, anchor)?;
         }
         let keep = entity_id(180);
         put_entity(

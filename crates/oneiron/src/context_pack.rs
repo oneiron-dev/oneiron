@@ -1,7 +1,7 @@
+#[cfg(test)]
+use std::cell::Cell;
 use std::collections::{HashMap, HashSet};
 use std::io::Cursor;
-#[cfg(test)]
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Instant;
 
 use heed::RoTxn;
@@ -24,7 +24,9 @@ const DEFAULT_MAX_FIELD_CHARS: usize = 500;
 const MAX_EDGE_HOP: u32 = 5;
 const MAX_CONTEXT_NEIGHBORS: usize = 1000;
 #[cfg(test)]
-static EDGE_SCAN_COUNT: AtomicUsize = AtomicUsize::new(0);
+thread_local! {
+    static EDGE_SCAN_COUNT: Cell<usize> = const { Cell::new(0) };
+}
 
 #[derive(Debug, Default)]
 struct EdgeWalkResult {
@@ -317,13 +319,8 @@ impl<'a> ContextPackBuilder<'a> {
 
         let mut results = Vec::with_capacity(scored.len());
         for entry in scored.iter().copied() {
-            let Some(entity) = hydrate_entity(
-                self.vault,
-                &rtxn,
-                entry.id,
-                entry.score,
-                result_options,
-            )?
+            let Some(entity) =
+                hydrate_entity(self.vault, &rtxn, entry.id, entry.score, result_options)?
             else {
                 continue;
             };
@@ -354,20 +351,18 @@ impl<'a> ContextPackBuilder<'a> {
 
         if self.include_edges && self.edge_hop > 0 {
             for entity in &mut results {
-                entity.edges = Some(load_entity_edges(&self.vault.store, &rtxn, &entity.id, edge_cache)?);
+                entity.edges = Some(load_entity_edges(
+                    &self.vault.store,
+                    &rtxn,
+                    &entity.id,
+                    edge_cache,
+                )?);
             }
         }
 
         let mut neighbors = Vec::with_capacity(edge_walk.neighbor_ids.len());
         for id in edge_walk.neighbor_ids {
-            let Some(entity) = hydrate_entity(
-                self.vault,
-                &rtxn,
-                id,
-                0.0,
-                neighbor_options,
-            )?
-            else {
+            let Some(entity) = hydrate_entity(self.vault, &rtxn, id, 0.0, neighbor_options)? else {
                 continue;
             };
             neighbors.push(entity);
@@ -460,7 +455,12 @@ fn hydrate_entity(
         read_short_id(&vault.store, rtxn, &id)?.unwrap_or_else(|| (id.to_hex(), 0));
 
     let edges = if options.include_edges {
-        Some(load_entity_edges(&vault.store, rtxn, &id, options.edge_cache)?)
+        Some(load_entity_edges(
+            &vault.store,
+            rtxn,
+            &id,
+            options.edge_cache,
+        )?)
     } else {
         None
     };
@@ -590,7 +590,7 @@ fn load_entity_edges(
 
 fn scan_edges_for_entity(store: &Store, rtxn: &RoTxn<'_>, id: &EntityId) -> Result<Vec<EdgeInfo>> {
     #[cfg(test)]
-    EDGE_SCAN_COUNT.fetch_add(1, Ordering::Relaxed);
+    EDGE_SCAN_COUNT.with(|count| count.set(count.get().saturating_add(1)));
 
     let mut edges = Vec::new();
 
@@ -722,11 +722,11 @@ mod tests {
     use super::*;
 
     fn reset_edge_scan_count() {
-        EDGE_SCAN_COUNT.store(0, Ordering::Relaxed);
+        EDGE_SCAN_COUNT.with(|count| count.set(0));
     }
 
     fn edge_scan_count() -> usize {
-        EDGE_SCAN_COUNT.load(Ordering::Relaxed)
+        EDGE_SCAN_COUNT.with(Cell::get)
     }
 
     fn test_config() -> VaultConfig {
@@ -1039,17 +1039,11 @@ mod tests {
 
         reset_edge_scan_count();
         let rtxn = vault.store.env.read_txn()?;
-        let walked = walk_edges(
-            &vault.store,
-            &rtxn,
-            &[root],
-            1,
-            10,
-            &HashSet::from([root]),
-        )?;
+        let walked = walk_edges(&vault.store, &rtxn, &[root], 1, 10, &HashSet::from([root]))?;
         assert_eq!(edge_scan_count(), 1, "walk should scan the root once");
 
-        let cached_edges = load_entity_edges(&vault.store, &rtxn, &root, Some(&walked.scanned_edges))?;
+        let cached_edges =
+            load_entity_edges(&vault.store, &rtxn, &root, Some(&walked.scanned_edges))?;
         assert_eq!(cached_edges.len(), 1);
         assert_eq!(
             edge_scan_count(),
@@ -1057,7 +1051,8 @@ mod tests {
             "loading root edges from the walk cache should not rescan"
         );
 
-        let uncached_edges = load_entity_edges(&vault.store, &rtxn, &child, Some(&walked.scanned_edges))?;
+        let uncached_edges =
+            load_entity_edges(&vault.store, &rtxn, &child, Some(&walked.scanned_edges))?;
         assert!(uncached_edges.is_empty());
         assert_eq!(
             edge_scan_count(),
