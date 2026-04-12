@@ -718,7 +718,7 @@ fn apply_phonetic(
         let mut posting =
             existing.map_or_else(|| Vec::with_capacity(ENTITY_ID_LEN), |bytes| bytes.to_vec());
         if !posting.len().is_multiple_of(ENTITY_ID_LEN) {
-            return Err(Error::InvalidKey);
+            return Err(Error::CorruptedIndex);
         }
 
         if posting
@@ -756,7 +756,8 @@ fn upsert_short_id(
     let sentinel_key = short_id_counter_sentinel(entity_type);
     let current = match store.short_ids.get(wtxn, &sentinel_key)? {
         Some(raw) => {
-            let buf: [u8; SHORT_ID_COUNTER_LEN] = raw.try_into().map_err(|_| Error::InvalidKey)?;
+            let buf: [u8; SHORT_ID_COUNTER_LEN] =
+                raw.try_into().map_err(|_| Error::CorruptedIndex)?;
             u64::from_le_bytes(buf)
         }
         None => 0,
@@ -789,16 +790,18 @@ fn short_id_counter_sentinel(entity_type: u8) -> [u8; ENTITY_ID_LEN] {
 
 pub(crate) fn parse_short_id_value(value: &[u8]) -> Result<(&str, u8)> {
     if value.len() < 2 {
-        return Err(Error::InvalidKey);
+        return Err(Error::CorruptedIndex("short id value"));
     }
 
     let (short_id_bytes, hash_bytes) = value.split_at(value.len() - 1);
-    let short_id = str::from_utf8(short_id_bytes).map_err(|_| Error::InvalidKey)?;
+    let short_id =
+        str::from_utf8(short_id_bytes).map_err(|_| Error::CorruptedIndex("short id value"))?;
     Ok((short_id, hash_bytes[0]))
 }
 
 fn parse_entity_metadata(record: &[u8]) -> Result<(u8, TimeRange, u64)> {
-    let header = EntityMetadataHeader::parse(record).ok_or(Error::InvalidKey)?;
+    let header =
+        EntityMetadataHeader::parse(record).ok_or(Error::CorruptedIndex("entity metadata"))?;
 
     Ok((
         header.entity_type,
@@ -819,9 +822,10 @@ fn delete_related_edges(
     for entry in store.edges_out.prefix_iter(wtxn, id.as_bytes())? {
         let (key, value) = entry?;
         validate_edge_record(key, value)?;
-        let kind = EdgeKind::try_from_u8(key[16]).ok_or(Error::InvalidKey)?;
+        let kind = EdgeKind::try_from_u8(key[16]).ok_or(Error::CorruptedIndex("edge record"))?;
         let target =
-            EntityId::from_bytes(key[17..33].try_into().map_err(|_| Error::InvalidKey)?)?;
+            EntityId::from_bytes(key[17..33].try_into().map_err(|_| Error::CorruptedIndex("edge record"))?)
+                .map_err(|_| Error::CorruptedIndex("edge record"))?;
         outbound.push((kind, target));
     }
 
@@ -836,9 +840,10 @@ fn delete_related_edges(
     for entry in store.edges_in.prefix_iter(wtxn, id.as_bytes())? {
         let (key, value) = entry?;
         validate_edge_record(key, value)?;
-        let kind = EdgeKind::try_from_u8(key[16]).ok_or(Error::InvalidKey)?;
+        let kind = EdgeKind::try_from_u8(key[16]).ok_or(Error::CorruptedIndex("edge record"))?;
         let source =
-            EntityId::from_bytes(key[17..33].try_into().map_err(|_| Error::InvalidKey)?)?;
+            EntityId::from_bytes(key[17..33].try_into().map_err(|_| Error::CorruptedIndex("edge record"))?)
+                .map_err(|_| Error::CorruptedIndex("edge record"))?;
         inbound.push((kind, source));
     }
 
@@ -889,7 +894,7 @@ fn delete_from_phonetic_postings(store: &Store, wtxn: &mut RwTxn<'_>, id: &Entit
 
 fn posting_without_entity(posting: &[u8], id: &EntityId) -> Result<Option<Vec<u8>>> {
     if !posting.len().is_multiple_of(ENTITY_ID_LEN) {
-        return Err(Error::InvalidKey);
+        return Err(Error::CorruptedIndex("phonetic posting"));
     }
 
     let retained: Vec<u8> = posting
@@ -903,11 +908,11 @@ fn posting_without_entity(posting: &[u8], id: &EntityId) -> Result<Option<Vec<u8
 
 fn validate_edge_record(key: &[u8], value: &[u8]) -> Result<()> {
     if key.len() != EDGE_KEY_LEN || value.len() != EDGE_VALUE_LEN {
-        return Err(Error::InvalidKey);
+        return Err(Error::CorruptedIndex("edge record"));
     }
 
     if EdgeKind::try_from_u8(key[16]).is_none() {
-        return Err(Error::InvalidKey);
+        return Err(Error::CorruptedIndex("edge record"));
     }
 
     let weight = f32::from_le_bytes(value[..4].try_into().unwrap());
