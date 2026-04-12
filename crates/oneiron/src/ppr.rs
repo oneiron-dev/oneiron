@@ -118,6 +118,13 @@ pub(crate) fn ppr_query(
         (scores, version)
     };
 
+    {
+        let rtxn = store.env.read_txn()?;
+        if read_graph_version(store, &rtxn)? != graph_version {
+            return Ok(scores);
+        }
+    }
+
     let mut wtxn = store.env.write_txn()?;
     if store_cache_entry(
         store,
@@ -139,7 +146,6 @@ pub(crate) fn cleanup_ppr_cache(
     max_age_secs: u64,
     now: u64,
 ) -> Result<(u64, u64)> {
-    let mut evicted_hashes = HashSet::<[u8; SEED_HASH_LEN]>::new();
     let mut cache_keys_to_delete = Vec::new();
     for entry in store.ppr_cache.iter(&*wtxn)? {
         let (seed_hash_key, value) = entry?;
@@ -148,11 +154,8 @@ pub(crate) fn cleanup_ppr_cache(
             continue;
         }
 
-        let seed_hash: [u8; SEED_HASH_LEN] =
-            seed_hash_key.try_into().map_err(|_| Error::InvalidKey)?;
         let (computed_at, _, stale) = parse_cache_header(value)?;
         if stale != 0 || now.saturating_sub(computed_at) > max_age_secs {
-            evicted_hashes.insert(seed_hash);
             cache_keys_to_delete.push(seed_hash_key.to_vec());
         }
     }
@@ -161,7 +164,10 @@ pub(crate) fn cleanup_ppr_cache(
         store.ppr_cache.delete(wtxn, key)?;
     }
 
+    let mut seed_liveness = HashMap::<EntityId, bool>::new();
+    let mut dead_seed_hashes = HashSet::<[u8; SEED_HASH_LEN]>::new();
     let mut dep_keys_to_delete = Vec::new();
+    let mut surviving_dep_rows = Vec::<(Vec<u8>, [u8; SEED_HASH_LEN])>::new();
     for entry in store.ppr_cache_deps.iter(&*wtxn)? {
         let (dep_key, _) = entry?;
         if dep_key.len() != CACHE_DEP_KEY_LEN {
@@ -178,11 +184,33 @@ pub(crate) fn cleanup_ppr_cache(
             .try_into()
             .map_err(|_| Error::InvalidKey)?;
 
-        if !seed_is_live_for_ppr(store, &*wtxn, &entity_id)?
-            || evicted_hashes.contains(&seed_hash)
-            || store.ppr_cache.get(&*wtxn, &seed_hash)?.is_none()
-        {
+        if store.ppr_cache.get(&*wtxn, &seed_hash)?.is_none() {
             dep_keys_to_delete.push(dep_key.to_vec());
+            continue;
+        }
+
+        let is_live = if let Some(&cached) = seed_liveness.get(&entity_id) {
+            cached
+        } else {
+            let live = seed_is_live_for_ppr(store, &*wtxn, &entity_id)?;
+            seed_liveness.insert(entity_id, live);
+            live
+        };
+
+        if !is_live {
+            dead_seed_hashes.insert(seed_hash);
+        }
+
+        surviving_dep_rows.push((dep_key.to_vec(), seed_hash));
+    }
+
+    for seed_hash in &dead_seed_hashes {
+        store.ppr_cache.delete(wtxn, seed_hash)?;
+    }
+
+    for (dep_key, seed_hash) in surviving_dep_rows {
+        if dead_seed_hashes.contains(&seed_hash) {
+            dep_keys_to_delete.push(dep_key);
         }
     }
 
@@ -191,7 +219,7 @@ pub(crate) fn cleanup_ppr_cache(
     }
 
     Ok((
-        cache_keys_to_delete.len() as u64,
+        (cache_keys_to_delete.len() + dead_seed_hashes.len()) as u64,
         dep_keys_to_delete.len() as u64,
     ))
 }
@@ -751,7 +779,7 @@ mod tests {
     }
 
     #[test]
-    fn cleanup_ppr_cache_removes_orphaned_deps_for_missing_entities() -> Result<()> {
+    fn cleanup_conservatively_evicts_cache_for_missing_dep_entities() -> Result<()> {
         let temp_dir = tempdir()?;
         let vault = Vault::open(temp_dir.path(), test_config())?;
         let a = entity(31);
@@ -777,9 +805,9 @@ mod tests {
         assert_eq!(count_entries(&vault.store.ppr_cache_deps, &vault)?, 2);
 
         let report = vault.maintain().cleanup_ppr_cache(CACHE_TTL_SECS).run()?;
-        assert_eq!(report.ppr_caches_evicted, 0);
-        assert_eq!(count_entries(&vault.store.ppr_cache, &vault)?, 1);
-        assert_eq!(count_entries(&vault.store.ppr_cache_deps, &vault)?, 1);
+        assert_eq!(report.ppr_caches_evicted, 1);
+        assert_eq!(count_entries(&vault.store.ppr_cache, &vault)?, 0);
+        assert_eq!(count_entries(&vault.store.ppr_cache_deps, &vault)?, 0);
         Ok(())
     }
 
@@ -875,11 +903,35 @@ mod tests {
     }
 
     #[test]
-    fn ppr_query_reuses_cache_after_unrelated_graph_version_change() -> Result<()> {
+    fn cleanup_evicts_cache_for_dead_seed_without_live_graph_presence() -> Result<()> {
         let temp_dir = tempdir()?;
         let vault = Vault::open(temp_dir.path(), test_config())?;
         let a = entity(41);
         let b = entity(42);
+
+        let first = ppr_query(&vault.store, &vault.config, &[a], 3, 0.15)?;
+        assert!(score_for(&first, a) > 0.0);
+        assert!(score_for(&first, b) <= SCORE_EPSILON);
+        assert_eq!(count_entries(&vault.store.ppr_cache, &vault)?, 1);
+        assert_eq!(count_entries(&vault.store.ppr_cache_deps, &vault)?, 1);
+
+        let report = vault.maintain().cleanup_ppr_cache(CACHE_TTL_SECS).run()?;
+        assert_eq!(report.ppr_caches_evicted, 1);
+        assert_eq!(count_entries(&vault.store.ppr_cache, &vault)?, 0);
+        assert_eq!(count_entries(&vault.store.ppr_cache_deps, &vault)?, 0);
+
+        vault.put_edge(&a, EdgeKind::BelongsTo, &b, 1.0)?;
+        let second = ppr_query(&vault.store, &vault.config, &[a], 3, 0.15)?;
+        assert!(score_for(&second, b) > 0.0);
+        Ok(())
+    }
+
+    #[test]
+    fn ppr_query_reuses_cache_after_unrelated_graph_version_change() -> Result<()> {
+        let temp_dir = tempdir()?;
+        let vault = Vault::open(temp_dir.path(), test_config())?;
+        let a = entity(43);
+        let b = entity(44);
 
         vault.put_edge(&a, EdgeKind::BelongsTo, &b, 1.0)?;
         let first = ppr_query(&vault.store, &vault.config, &[a], 3, 0.15)?;
@@ -910,8 +962,8 @@ mod tests {
     fn cache_write_is_skipped_when_graph_version_changes_before_store() -> Result<()> {
         let temp_dir = tempdir()?;
         let vault = Vault::open(temp_dir.path(), test_config())?;
-        let a = entity(43);
-        let b = entity(44);
+        let a = entity(45);
+        let b = entity(46);
         let seed_hash = hash_seeds(&[a], 3, 0.15);
 
         vault.put_edge(&a, EdgeKind::BelongsTo, &b, 1.0)?;

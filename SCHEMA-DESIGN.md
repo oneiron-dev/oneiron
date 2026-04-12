@@ -192,7 +192,7 @@ struct EdgeValue {
 Where scores are `[(entity_id: 16B, score: f32 4B)]` packed = N×20B.
 
 - `computed_at`: timestamp for TTL checks (active=24h, recent=72h, dormant=168h)
-- `graph_version`: monotonic counter, incremented once per batch of graph mutations. If current > cached, may be stale.
+- `graph_version`: monotonic counter, incremented once per batch of graph mutations. Used as a write-side guard so PPR does not persist results computed against an older graph snapshot.
 - `stale`: set to 1 when entity's edges change (via ppr_cache_deps lookup). Search skips stale entries.
 
 ---
