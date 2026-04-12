@@ -209,16 +209,18 @@ impl Vault {
     /// Deletes a directed edge and its reverse index entry.
     pub fn delete_edge(&self, src: &EntityId, kind: EdgeKind, tgt: &EntityId) -> Result<bool> {
         let key_out = Store::encode_edge_key(src, kind, tgt);
-        let rtxn = self.store.env.read_txn()?;
-        let existed = self.store.edges_out.get(&rtxn, &key_out)?.is_some();
-        drop(rtxn);
+        let key_in = Store::encode_edge_key(tgt, kind, src);
 
-        if !existed {
-            return Ok(false);
-        }
+        self.with_write_txn(|wtxn| {
+            let existed = self.store.edges_out.delete(wtxn, &key_out)?;
+            if !existed {
+                return Ok(false);
+            }
 
-        self.batch().delete_edge(src, kind, tgt).commit()?;
-        Ok(true)
+            self.store.edges_in.delete(wtxn, &key_in)?;
+            ppr::invalidate_ppr_for_edge(&self.store, wtxn, src, tgt)?;
+            Ok(true)
+        })
     }
 
     /// Returns outbound edges for `src`.

@@ -79,6 +79,11 @@ impl Store {
         std::fs::create_dir_all(path.as_ref())?;
 
         let env = unsafe {
+            // SAFETY: heed/LMDB require a single Env per filesystem path, the
+            // path must not be on NFS or another unsupported network
+            // filesystem, and map_size must not be changed concurrently while
+            // the environment is open elsewhere. The path existence/writability
+            // precondition is established by create_dir_all above.
             EnvOpenOptions::new()
                 .map_size(config.map_size)
                 .max_readers(config.max_readers)
