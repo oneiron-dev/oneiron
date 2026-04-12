@@ -383,15 +383,6 @@ impl<'a> PipelineBuilder<'a> {
                 fusion::boost_confidence(&mut scores, &self.vault.store, &rtxn)?;
             }
 
-            if self.apply_contiguity {
-                boost_contiguity(
-                    &mut scores,
-                    self.temporal_search.as_ref(),
-                    &self.vault.store,
-                    &rtxn,
-                )?;
-            }
-
             apply_filters(
                 &mut scores,
                 &self.vault.store,
@@ -401,6 +392,17 @@ impl<'a> PipelineBuilder<'a> {
                 self.occurred_range,
                 self.learned_range,
             )?;
+
+            if self.apply_contiguity {
+                fusion::sort_scored_entities_desc(&mut scores);
+                pretruncate_for_contiguity(&mut scores, self.result_limit);
+                boost_contiguity(
+                    &mut scores,
+                    self.temporal_search.as_ref(),
+                    &self.vault.store,
+                    &rtxn,
+                )?;
+            }
         }
 
         fusion::sort_scored_entities_desc(&mut scores);
@@ -795,6 +797,13 @@ fn boost_contiguity(
     }
 
     Ok(())
+}
+
+fn pretruncate_for_contiguity(scores: &mut Vec<ScoredEntity>, result_limit: usize) {
+    let cap = result_limit.saturating_mul(2);
+    if scores.len() > cap {
+        scores.truncate(cap);
+    }
 }
 
 fn apply_filters(
@@ -1535,6 +1544,21 @@ mod tests {
     }
 
     #[test]
+    fn pretruncate_for_contiguity_caps_working_set() {
+        let mut scores = (0..10_u8)
+            .map(|n| ScoredEntity {
+                id: entity_id(n),
+                score: 10.0 - n as f32,
+            })
+            .collect::<Vec<_>>();
+
+        pretruncate_for_contiguity(&mut scores, 3);
+        assert_eq!(scores.len(), 6);
+        assert_eq!(scores[0].id, entity_id(0));
+        assert_eq!(scores[5].id, entity_id(5));
+    }
+
+    #[test]
     fn overlap_tiebreak_prefers_closer_midpoint() -> Result<()> {
         let temp_dir = tempfile::tempdir()?;
         let vault = Vault::open(temp_dir.path(), test_config())?;
@@ -1580,6 +1604,45 @@ mod tests {
             .filter_since(190)
             .filter_occurred_range(100, 120)
             .filter_learned_range(190, 210)
+            .run()?;
+
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].id, keep);
+        Ok(())
+    }
+
+    #[test]
+    fn filters_apply_before_contiguity_pretruncate() -> Result<()> {
+        let temp_dir = tempfile::tempdir()?;
+        let vault = Vault::open(temp_dir.path(), test_config())?;
+
+        let anchor = 5_000_000;
+        for index in 0..5_u8 {
+            put_entity(
+                &vault,
+                entity_id(170 + index),
+                0,
+                anchor,
+                anchor,
+                anchor,
+            )?;
+        }
+        let keep = entity_id(180);
+        put_entity(
+            &vault,
+            keep,
+            1,
+            anchor + 86_400,
+            anchor + 86_400,
+            anchor + 86_400,
+        )?;
+
+        let results = vault
+            .query()
+            .search_temporal_with_sigma(anchor, anchor, 86_400, TemporalAnchorMode::Occurred, 20)
+            .filter_types(&[1])
+            .limit(1)
+            .boost_contiguity()
             .run()?;
 
         assert_eq!(results.len(), 1);
