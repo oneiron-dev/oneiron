@@ -820,7 +820,8 @@ fn delete_related_edges(
         let (key, value) = entry?;
         validate_edge_record(key, value)?;
         let kind = EdgeKind::try_from_u8(key[16]).ok_or(Error::InvalidKey)?;
-        let target = EntityId::from_bytes(key[17..33].try_into().map_err(|_| Error::InvalidKey)?);
+        let target =
+            EntityId::from_bytes(key[17..33].try_into().map_err(|_| Error::InvalidKey)?)?;
         outbound.push((kind, target));
     }
 
@@ -836,7 +837,8 @@ fn delete_related_edges(
         let (key, value) = entry?;
         validate_edge_record(key, value)?;
         let kind = EdgeKind::try_from_u8(key[16]).ok_or(Error::InvalidKey)?;
-        let source = EntityId::from_bytes(key[17..33].try_into().map_err(|_| Error::InvalidKey)?);
+        let source =
+            EntityId::from_bytes(key[17..33].try_into().map_err(|_| Error::InvalidKey)?)?;
         inbound.push((kind, source));
     }
 

@@ -460,7 +460,8 @@ fn propagate_edge(
     }
 
     let kind = EdgeKind::try_from_u8(key[16]).ok_or(Error::InvalidKey)?;
-    let neighbor = EntityId::from_bytes(key[17..33].try_into().map_err(|_| Error::InvalidKey)?);
+    let neighbor =
+        EntityId::from_bytes(key[17..33].try_into().map_err(|_| Error::InvalidKey)?)?;
     let weight = f32::from_le_bytes(value[..4].try_into().map_err(|_| Error::InvalidKey)?);
     if weight == 0.0 {
         return Ok(());
@@ -539,7 +540,7 @@ fn decode_cache_scores(payload: &[u8]) -> Result<Vec<ScoredEntity>> {
                 chunk[..ENTITY_ID_LEN]
                     .try_into()
                     .map_err(|_| Error::InvalidKey)?,
-            );
+            )?;
             let score = f32::from_le_bytes(
                 chunk[ENTITY_ID_LEN..CACHE_ENTRY_LEN]
                     .try_into()
@@ -602,7 +603,7 @@ mod tests {
     }
 
     fn entity(byte: u8) -> EntityId {
-        EntityId::from_bytes([byte; ENTITY_ID_LEN])
+        EntityId::from_bytes_unchecked([byte; ENTITY_ID_LEN])
     }
 
     fn score_for(scores: &[ScoredEntity], id: EntityId) -> f32 {

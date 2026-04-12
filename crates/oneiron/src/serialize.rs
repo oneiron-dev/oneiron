@@ -1342,7 +1342,7 @@ mod tests {
         ContextPack {
             results: vec![
                 ContextEntity {
-                    id: EntityId::from_bytes([1; 16]),
+                    id: EntityId::from_bytes_unchecked([1; 16]),
                     short_id: "cl88".to_owned(),
                     content_hash: 0xf2,
                     entity_type: 0,
@@ -1352,7 +1352,7 @@ mod tests {
                     vector: None,
                 },
                 ContextEntity {
-                    id: EntityId::from_bytes([2; 16]),
+                    id: EntityId::from_bytes_unchecked([2; 16]),
                     short_id: "tn17".to_owned(),
                     content_hash: 0xa1,
                     entity_type: 1,
@@ -1363,7 +1363,7 @@ mod tests {
                 },
             ],
             neighbors: vec![ContextEntity {
-                id: EntityId::from_bytes([3; 16]),
+                id: EntityId::from_bytes_unchecked([3; 16]),
                 short_id: "pr05".to_owned(),
                 content_hash: 0xb3,
                 entity_type: 4,
@@ -1556,7 +1556,7 @@ mod tests {
         let mut pack = sample_pack();
         for i in 0..40_u8 {
             pack.results.push(ContextEntity {
-                id: EntityId::from_bytes([50 + i; 16]),
+                id: EntityId::from_bytes_unchecked([50 + i; 16]),
                 short_id: format!("cl{i}"),
                 content_hash: i,
                 entity_type: 0,
@@ -1685,7 +1685,7 @@ mod tests {
 
         for i in 0..8_u8 {
             pack.results.push(ContextEntity {
-                id: EntityId::from_bytes([10 + i; 16]),
+                id: EntityId::from_bytes_unchecked([10 + i; 16]),
                 short_id: format!("cl{i}"),
                 content_hash: i,
                 entity_type: 0,
@@ -1699,7 +1699,7 @@ mod tests {
             });
 
             pack.results.push(ContextEntity {
-                id: EntityId::from_bytes([40 + i; 16]),
+                id: EntityId::from_bytes_unchecked([40 + i; 16]),
                 short_id: format!("tn{i}"),
                 content_hash: i,
                 entity_type: 1,
@@ -1713,7 +1713,7 @@ mod tests {
             });
 
             pack.results.push(ContextEntity {
-                id: EntityId::from_bytes([80 + i; 16]),
+                id: EntityId::from_bytes_unchecked([80 + i; 16]),
                 short_id: format!("sm{i}"),
                 content_hash: i,
                 entity_type: 8,
@@ -1727,7 +1727,7 @@ mod tests {
             });
 
             pack.results.push(ContextEntity {
-                id: EntityId::from_bytes([120 + i; 16]),
+                id: EntityId::from_bytes_unchecked([120 + i; 16]),
                 short_id: format!("pr{i}"),
                 content_hash: i,
                 entity_type: 4,
@@ -1741,7 +1741,7 @@ mod tests {
             });
 
             pack.results.push(ContextEntity {
-                id: EntityId::from_bytes([160 + i; 16]),
+                id: EntityId::from_bytes_unchecked([160 + i; 16]),
                 short_id: format!("ev{i}"),
                 content_hash: i,
                 entity_type: 6,
@@ -1936,7 +1936,7 @@ mod tests {
 
         // Single turn — very small, won't fill its allocation.
         pack.results.push(ContextEntity {
-            id: EntityId::from_bytes([99; 16]),
+            id: EntityId::from_bytes_unchecked([99; 16]),
             short_id: "tn01".to_owned(),
             content_hash: 0x01,
             entity_type: 1,
@@ -1952,7 +1952,7 @@ mod tests {
         // 40 claims — will exceed claims budget at low token limits.
         for i in 0..40_u8 {
             pack.results.push(ContextEntity {
-                id: EntityId::from_bytes([50 + i; 16]),
+                id: EntityId::from_bytes_unchecked([50 + i; 16]),
                 short_id: format!("cl{i}"),
                 content_hash: i,
                 entity_type: 0,
@@ -2032,7 +2032,7 @@ mod tests {
         );
 
         let entity = ContextEntity {
-            id: EntityId::from_bytes([60; 16]),
+            id: EntityId::from_bytes_unchecked([60; 16]),
             short_id: "tl01".to_owned(),
             content_hash: 0xaa,
             entity_type: 60,
@@ -2129,7 +2129,7 @@ mod tests {
         );
 
         let entity = ContextEntity {
-            id: EntityId::from_bytes([61; 16]),
+            id: EntityId::from_bytes_unchecked([61; 16]),
             short_id: "tk01".to_owned(),
             content_hash: 0xbb,
             entity_type: 61,
@@ -2219,7 +2219,7 @@ mod tests {
         fields.insert("dueDate".to_owned(), Value::Number(Number::from(due)));
 
         let entity = ContextEntity {
-            id: EntityId::from_bytes([61; 16]),
+            id: EntityId::from_bytes_unchecked([61; 16]),
             short_id: "tk02".to_owned(),
             content_hash: 0xcc,
             entity_type: 61,

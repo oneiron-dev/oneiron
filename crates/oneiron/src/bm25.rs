@@ -221,7 +221,7 @@ fn validate_posting_alignment(posting: &[u8]) -> Result<()> {
 }
 
 fn decode_posting_entry(chunk: &[u8]) -> Result<(EntityId, u32)> {
-    let id = EntityId::from_bytes(chunk[..16].try_into().map_err(|_| Error::InvalidKey)?);
+    let id = EntityId::from_bytes(chunk[..16].try_into().map_err(|_| Error::InvalidKey)?)?;
     let tf = u32::from_le_bytes(chunk[16..20].try_into().map_err(|_| Error::InvalidKey)?);
     Ok((id, tf))
 }

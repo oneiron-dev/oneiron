@@ -602,9 +602,10 @@ fn read_entry_point(store: &Store, txn: &RoTxn<'_>) -> Result<Option<EntityId>> 
     parse_entity_id(raw, ERR_ENTRY_POINT_BYTES).map(Some)
 }
 
+<<<<<<< HEAD
 fn parse_entity_id(bytes: &[u8], err: &'static str) -> Result<EntityId> {
     let raw: [u8; ENTITY_ID_LEN] = bytes.try_into().map_err(|_| Error::CorruptedIndex(err))?;
-    Ok(EntityId::from_bytes(raw))
+    EntityId::from_bytes(raw).map_err(|_| Error::CorruptedIndex(err))
 }
 
 fn load_neighbors(store: &Store, txn: &RoTxn<'_>, id: &EntityId) -> Result<Vec<EntityId>> {
@@ -616,9 +617,17 @@ fn load_neighbors(store: &Store, txn: &RoTxn<'_>, id: &EntityId) -> Result<Vec<E
         return Err(Error::CorruptedIndex(ERR_NEIGHBOR_VALUE_BYTES));
     }
 
-    raw.chunks_exact(ENTITY_ID_LEN)
-        .map(|chunk| parse_entity_id(chunk, ERR_NEIGHBOR_VALUE_BYTES))
-        .collect()
+    let mut neighbors = Vec::with_capacity(raw.len() / ENTITY_ID_LEN);
+    for chunk in raw.chunks_exact(ENTITY_ID_LEN) {
+        // Best-effort: reserved sentinel garbage in neighbor payload should not
+        // take whole search path down.
+        let Ok(neighbor) = parse_entity_id(chunk, ERR_NEIGHBOR_VALUE_BYTES) else {
+            continue;
+        };
+        neighbors.push(neighbor);
+    }
+
+    Ok(neighbors)
 }
 
 fn write_neighbors(
