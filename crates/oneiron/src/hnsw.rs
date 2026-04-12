@@ -618,13 +618,14 @@ fn parse_neighbor_key(key: &[u8]) -> Result<EntityId> {
 }
 
 fn scrub_neighbor_bytes(raw: &[u8], target: &EntityId) -> Result<Option<Vec<u8>>> {
-    if raw.len() % ENTITY_ID_LEN != 0 {
+    let mut chunks = raw.chunks_exact(ENTITY_ID_LEN);
+    if !chunks.remainder().is_empty() {
         return Err(Error::CorruptedIndex(ERR_NEIGHBOR_VALUE_BYTES));
     }
 
     let mut changed = false;
     let mut scrubbed = Vec::with_capacity(raw.len());
-    for chunk in raw.chunks_exact(ENTITY_ID_LEN) {
+    for chunk in &mut chunks {
         if chunk == target.as_bytes() {
             changed = true;
             continue;
@@ -636,13 +637,14 @@ fn scrub_neighbor_bytes(raw: &[u8], target: &EntityId) -> Result<Option<Vec<u8>>
 }
 
 fn decode_vector_into<'a>(raw: &[u8], scratch: &'a mut Vec<f32>) -> Result<&'a [f32]> {
-    if raw.len() % 4 != 0 {
+    let mut chunks = raw.chunks_exact(4);
+    if !chunks.remainder().is_empty() {
         return Err(Error::InvalidKey);
     }
 
     let len = raw.len() / 4;
     scratch.resize(len, 0.0);
-    for (slot, chunk) in scratch.iter_mut().zip(raw.chunks_exact(4)) {
+    for (slot, chunk) in scratch.iter_mut().zip(&mut chunks) {
         *slot = f32::from_le_bytes(chunk.try_into().unwrap());
     }
 
