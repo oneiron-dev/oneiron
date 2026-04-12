@@ -808,11 +808,11 @@ mod tests {
             .split(|b| *b == 0)
             .map(|chunk| {
                 if chunk.is_empty() {
-                    return Err(Error::InvalidKey);
+                    return Err(Error::CorruptedIndex("phonetic forward test decode"));
                 }
                 str::from_utf8(chunk)
                     .map(str::to_owned)
-                    .map_err(|_| Error::InvalidKey)
+                    .map_err(|_| Error::CorruptedIndex("phonetic forward test decode"))
             })
             .collect::<Result<_>>()?;
         codes.sort();

@@ -28,7 +28,7 @@ impl EntityId {
     ///
     /// Reserved for internal construction where the caller already knows the
     /// bytes are either valid entity IDs or intentional sentinel values.
-    #[allow(dead_code)]
+    #[cfg(test)]
     pub(crate) fn from_bytes_unchecked(bytes: [u8; 16]) -> Self {
         Self(bytes)
     }

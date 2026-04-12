@@ -727,7 +727,7 @@ fn apply_phonetic(
         let mut posting =
             existing.map_or_else(|| Vec::with_capacity(ENTITY_ID_LEN), |bytes| bytes.to_vec());
         if !posting.len().is_multiple_of(ENTITY_ID_LEN) {
-            return Err(Error::CorruptedIndex);
+            return Err(Error::CorruptedIndex("phonetic posting"));
         }
 
         if posting
@@ -778,7 +778,7 @@ fn upsert_short_id(
     let current = match store.short_ids.get(wtxn, &sentinel_key)? {
         Some(raw) => {
             let buf: [u8; SHORT_ID_COUNTER_LEN] =
-                raw.try_into().map_err(|_| Error::CorruptedIndex)?;
+                raw.try_into().map_err(|_| Error::CorruptedIndex("short id counter"))?;
             u64::from_le_bytes(buf)
         }
         None => 0,
@@ -897,10 +897,14 @@ fn delete_from_phonetic_postings(store: &Store, wtxn: &mut RwTxn<'_>, id: &Entit
                     store.phonetic_forward.delete(wtxn, id.as_bytes())?;
                     return Ok(());
                 }
-                Err(Error::MissingPostingEntry) => {}
+                Err(Error::MissingPostingEntry) => {
+                    log_phonetic_forward_fallback(id, "missing_posting_entry");
+                }
                 Err(err) => return Err(err),
             },
-            Err(Error::CorruptedIndex) => {}
+            Err(Error::CorruptedIndex(_)) => {
+                log_phonetic_forward_fallback(id, "corrupted_forward_row");
+            }
             Err(err) => return Err(err),
         }
     }
@@ -932,6 +936,18 @@ fn delete_from_phonetic_postings(store: &Store, wtxn: &mut RwTxn<'_>, id: &Entit
     store.phonetic_forward.delete(wtxn, id.as_bytes())?;
     Ok(())
 }
+
+#[cfg(feature = "sync")]
+fn log_phonetic_forward_fallback(id: &EntityId, reason: &'static str) {
+    tracing::warn!(
+        entity = %id.to_hex(),
+        reason,
+        "phonetic_forward unavailable during delete; falling back to full scan"
+    );
+}
+
+#[cfg(not(feature = "sync"))]
+fn log_phonetic_forward_fallback(_id: &EntityId, _reason: &'static str) {}
 
 fn delete_from_known_phonetic_codes(
     store: &Store,
@@ -987,11 +1003,11 @@ fn decode_phonetic_forward_codes(raw: &[u8]) -> Result<Vec<String>> {
         .split(|b| *b == 0)
         .map(|chunk| {
             if chunk.is_empty() {
-                return Err(Error::CorruptedIndex);
+                return Err(Error::CorruptedIndex("phonetic forward row"));
             }
             str::from_utf8(chunk)
                 .map(str::to_owned)
-                .map_err(|_| Error::CorruptedIndex)
+                .map_err(|_| Error::CorruptedIndex("phonetic forward row"))
         })
         .collect::<Result<_>>()?;
     codes.sort();
