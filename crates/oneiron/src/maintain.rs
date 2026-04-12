@@ -696,6 +696,17 @@ mod tests {
             .put(&id, 0, test_time_range(100, 100), 101, b"payload")
             .commit()?;
 
+        let short_id = {
+            let rtxn = vault.store.env.read_txn()?;
+            let value = vault
+                .store
+                .short_ids
+                .get(&rtxn, id.as_bytes())?
+                .ok_or(Error::EntityNotFound)?;
+            let (short_id, _) = parse_short_id_value(value)?;
+            short_id.to_owned()
+        };
+
         {
             let mut wtxn = vault.store.env.write_txn()?;
             vault.store.entities.delete(&mut wtxn, id.as_bytes())?;
@@ -708,6 +719,11 @@ mod tests {
 
         let rtxn = vault.store.env.read_txn()?;
         assert!(vault.store.short_ids.get(&rtxn, id.as_bytes())?.is_none());
+        assert!(vault
+            .store
+            .short_ids_reverse
+            .get(&rtxn, short_id.as_bytes())?
+            .is_none());
         Ok(())
     }
 
