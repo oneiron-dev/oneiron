@@ -722,6 +722,7 @@ fn apply_phonetic(
     let mut forward_changed = false;
 
     for code in codes {
+        validate_phonetic_code(code)?;
         let existing = store.phonetic_index.get(wtxn, code.as_bytes())?;
         let mut posting =
             existing.map_or_else(|| Vec::with_capacity(ENTITY_ID_LEN), |bytes| bytes.to_vec());
@@ -803,6 +804,10 @@ fn upsert_short_id(
 }
 
 fn short_id_counter_sentinel(entity_type: u8) -> [u8; ENTITY_ID_LEN] {
+    debug_assert_ne!(
+        entity_type, 0xFF,
+        "0xFF is reserved for short-id sentinel keys"
+    );
     let mut key = [0xFF_u8; ENTITY_ID_LEN];
     key[0] = entity_type;
     key
@@ -886,23 +891,18 @@ fn delete_related_edges(
 
 fn delete_from_phonetic_postings(store: &Store, wtxn: &mut RwTxn<'_>, id: &EntityId) -> Result<()> {
     if let Some(raw) = store.phonetic_forward.get(wtxn, id.as_bytes())? {
-        let codes = decode_phonetic_forward_codes(raw)?;
-        for code in &codes {
-            let posting = store
-                .phonetic_index
-                .get(wtxn, code.as_bytes())?
-                .ok_or(Error::MissingPostingEntry)?;
-            let updated = posting_without_entity(posting, id)?.ok_or(Error::MissingPostingEntry)?;
-
-            if updated.is_empty() {
-                store.phonetic_index.delete(wtxn, code.as_bytes())?;
-            } else {
-                store.phonetic_index.put(wtxn, code.as_bytes(), &updated)?;
-            }
+        match decode_phonetic_forward_codes(raw) {
+            Ok(codes) => match delete_from_known_phonetic_codes(store, wtxn, id, &codes) {
+                Ok(()) => {
+                    store.phonetic_forward.delete(wtxn, id.as_bytes())?;
+                    return Ok(());
+                }
+                Err(Error::MissingPostingEntry) => {}
+                Err(err) => return Err(err),
+            },
+            Err(Error::CorruptedIndex) => {}
+            Err(err) => return Err(err),
         }
-
-        store.phonetic_forward.delete(wtxn, id.as_bytes())?;
-        return Ok(());
     }
 
     let mut updates = Vec::new();
@@ -930,6 +930,37 @@ fn delete_from_phonetic_postings(store: &Store, wtxn: &mut RwTxn<'_>, id: &Entit
     }
 
     store.phonetic_forward.delete(wtxn, id.as_bytes())?;
+    Ok(())
+}
+
+fn delete_from_known_phonetic_codes(
+    store: &Store,
+    wtxn: &mut RwTxn<'_>,
+    id: &EntityId,
+    codes: &[String],
+) -> Result<()> {
+    for code in codes {
+        let posting = store
+            .phonetic_index
+            .get(wtxn, code.as_bytes())?
+            .ok_or(Error::MissingPostingEntry)?;
+        let updated = posting_without_entity(posting, id)?.ok_or(Error::MissingPostingEntry)?;
+
+        if updated.is_empty() {
+            store.phonetic_index.delete(wtxn, code.as_bytes())?;
+        } else {
+            store.phonetic_index.put(wtxn, code.as_bytes(), &updated)?;
+        }
+    }
+
+    Ok(())
+}
+
+fn validate_phonetic_code(code: &str) -> Result<()> {
+    if code.is_empty() || code.as_bytes().contains(&0) {
+        return Err(Error::InvalidKey);
+    }
+
     Ok(())
 }
 

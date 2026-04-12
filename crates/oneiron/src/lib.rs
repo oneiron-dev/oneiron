@@ -61,8 +61,7 @@ fn first_child_of_parent(
         if key.len() != EDGE_KEY_LEN {
             continue;
         }
-        let parent =
-            EntityId::from_bytes(key[17..33].try_into().map_err(|_| Error::InvalidKey)?)?;
+        let parent = EntityId::from_bytes(key[17..33].try_into().map_err(|_| Error::InvalidKey)?)?;
         return Ok(Some(parent));
     }
     Ok(None)
@@ -312,8 +311,7 @@ impl Vault {
             if ts >= end {
                 break; // temporal keys are sorted by timestamp (BE), so we can stop
             }
-            let id =
-                EntityId::from_bytes(key[8..24].try_into().map_err(|_| Error::InvalidKey)?)?;
+            let id = EntityId::from_bytes(key[8..24].try_into().map_err(|_| Error::InvalidKey)?)?;
             ids.push(id);
         }
         Ok(ids)
@@ -398,8 +396,7 @@ impl Vault {
             if key.len() != 17 {
                 continue;
             }
-            let id =
-                EntityId::from_bytes(key[1..17].try_into().map_err(|_| Error::InvalidKey)?)?;
+            let id = EntityId::from_bytes(key[1..17].try_into().map_err(|_| Error::InvalidKey)?)?;
             ids.push(id);
             if ids.len() >= MAX_TYPE_QUERY_RESULTS {
                 break;
@@ -686,6 +683,7 @@ mod tests {
     use std::str;
     use std::time::Instant;
 
+    use crate::types::ENTITY_ID_LEN;
     use heed::types::Bytes;
     use rand::rngs::StdRng;
     use rand::{Rng, SeedableRng};
@@ -976,6 +974,34 @@ mod tests {
         let results = vault.search_vector(&[0.98_f32, 0.05, 0.0, 0.0], 3)?;
         assert!(!results.iter().any(|item| item.id == deleted));
         assert!(results.iter().any(|item| item.id == entry));
+        Ok(())
+    }
+
+    #[test]
+    fn search_vector_ignores_reserved_sentinel_neighbors() -> Result<()> {
+        let temp_dir = tempfile::tempdir()?;
+        let vault = Vault::open(temp_dir.path(), test_config())?;
+        let entry = EntityId::now();
+        let live = EntityId::now();
+
+        vault.put_entity(&entry, 0, test_time_range(1, 1), 1, b"entry")?;
+        vault.put_entity(&live, 0, test_time_range(1, 1), 1, b"live")?;
+        vault.put_vector(&entry, &[1.0_f32, 0.0, 0.0, 0.0])?;
+        vault.put_vector(&live, &[0.0_f32, 1.0, 0.0, 0.0])?;
+
+        let mut corrupted = Vec::with_capacity(ENTITY_ID_LEN * 2);
+        corrupted.extend_from_slice(&[0x00; ENTITY_ID_LEN]);
+        corrupted.extend_from_slice(live.as_bytes());
+
+        let mut wtxn = vault.store.env.write_txn()?;
+        vault
+            .store
+            .hnsw_neighbors
+            .put(&mut wtxn, entry.as_bytes(), &corrupted)?;
+        wtxn.commit()?;
+
+        let results = vault.search_vector(&[0.0_f32, 1.0, 0.0, 0.0], 5)?;
+        assert!(results.iter().any(|item| item.id == live));
         Ok(())
     }
 
@@ -1797,6 +1823,27 @@ mod tests {
     }
 
     #[test]
+    fn phonetic_rejects_embedded_nul_codes() -> Result<()> {
+        let temp_dir = tempfile::tempdir()?;
+        let vault = Vault::open(temp_dir.path(), test_config())?;
+        let id = EntityId::now();
+
+        let err = vault
+            .batch()
+            .put(&id, 0, test_time_range(1, 1), 2, b"phonetic-invalid")
+            .phonetic(&id, &["BAD\0CODE"])
+            .commit()
+            .expect_err("expected invalid phonetic code to fail");
+        assert!(matches!(err, Error::InvalidKey));
+        assert!(
+            vault.get(&id)?.is_none(),
+            "batch should remain atomic on phonetic validation failure"
+        );
+
+        Ok(())
+    }
+
+    #[test]
     fn full_delete_deindexes_everything() -> Result<()> {
         let temp_dir = tempfile::tempdir()?;
         let vault = Vault::open(temp_dir.path(), test_config())?;
@@ -1858,7 +1905,11 @@ mod tests {
                 assert!(!posting.chunks_exact(16).any(|chunk| chunk == id.as_bytes()));
             }
         }
-        assert!(vault.store.phonetic_forward.get(&rtxn, id.as_bytes())?.is_none());
+        assert!(vault
+            .store
+            .phonetic_forward
+            .get(&rtxn, id.as_bytes())?
+            .is_none());
 
         assert!(vault.store.short_ids.get(&rtxn, id.as_bytes())?.is_none());
         assert!(vault
@@ -1882,7 +1933,10 @@ mod tests {
             .commit()?;
 
         let mut wtxn = vault.store.env.write_txn()?;
-        vault.store.phonetic_forward.delete(&mut wtxn, id.as_bytes())?;
+        vault
+            .store
+            .phonetic_forward
+            .delete(&mut wtxn, id.as_bytes())?;
         wtxn.commit()?;
 
         assert!(vault.delete_entity(&id)?);
@@ -1892,6 +1946,37 @@ mod tests {
             if let Some(posting) = vault.store.phonetic_index.get(&rtxn, code.as_bytes())? {
                 assert!(!posting.chunks_exact(16).any(|chunk| chunk == id.as_bytes()));
             }
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn delete_entity_falls_back_when_phonetic_forward_is_stale() -> Result<()> {
+        let temp_dir = tempfile::tempdir()?;
+        let vault = Vault::open(temp_dir.path(), test_config())?;
+        let id = EntityId::now();
+
+        vault
+            .batch()
+            .put(&id, 0, test_time_range(1, 1), 2, b"phonetic-stale-forward")
+            .phonetic(&id, &["SMTH", "SMT"])
+            .commit()?;
+
+        let mut wtxn = vault.store.env.write_txn()?;
+        vault.store.phonetic_index.delete(&mut wtxn, b"SMTH")?;
+        wtxn.commit()?;
+
+        assert!(vault.delete_entity(&id)?);
+
+        let rtxn = vault.store.env.read_txn()?;
+        assert!(vault
+            .store
+            .phonetic_forward
+            .get(&rtxn, id.as_bytes())?
+            .is_none());
+        if let Some(posting) = vault.store.phonetic_index.get(&rtxn, b"SMT")? {
+            assert!(!posting.chunks_exact(16).any(|chunk| chunk == id.as_bytes()));
         }
 
         Ok(())
