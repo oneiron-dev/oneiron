@@ -223,7 +223,11 @@ fn validate_posting_alignment(posting: &[u8]) -> Result<()> {
 fn decode_posting_entry(chunk: &[u8]) -> Result<(EntityId, u32)> {
     let id = EntityId::from_bytes(chunk[..16].try_into().map_err(|_| Error::CorruptedIndex)?)
         .map_err(|_| Error::CorruptedIndex)?;
-    let tf = u32::from_le_bytes(chunk[16..20].try_into().map_err(|_| Error::CorruptedIndex)?);
+    let tf = u32::from_le_bytes(
+        chunk[16..20]
+            .try_into()
+            .map_err(|_| Error::CorruptedIndex)?,
+    );
     Ok((id, tf))
 }
 
@@ -266,8 +270,7 @@ fn decode_doc_meta(raw: &[u8]) -> Result<(u32, u32)> {
         return Err(Error::CorruptedIndex);
     }
     let doc_len = u32::from_le_bytes(raw[..4].try_into().map_err(|_| Error::CorruptedIndex)?);
-    let field_count =
-        u32::from_le_bytes(raw[4..8].try_into().map_err(|_| Error::CorruptedIndex)?);
+    let field_count = u32::from_le_bytes(raw[4..8].try_into().map_err(|_| Error::CorruptedIndex)?);
     Ok((doc_len, field_count))
 }
 

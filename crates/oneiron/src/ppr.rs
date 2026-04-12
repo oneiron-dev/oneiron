@@ -460,8 +460,7 @@ fn propagate_edge(
     }
 
     let kind = EdgeKind::try_from_u8(key[16]).ok_or(Error::InvalidKey)?;
-    let neighbor =
-        EntityId::from_bytes(key[17..33].try_into().map_err(|_| Error::InvalidKey)?)?;
+    let neighbor = EntityId::from_bytes(key[17..33].try_into().map_err(|_| Error::InvalidKey)?)?;
     let weight = f32::from_le_bytes(value[..4].try_into().map_err(|_| Error::InvalidKey)?);
     if weight == 0.0 {
         return Ok(());

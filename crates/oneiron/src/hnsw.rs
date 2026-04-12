@@ -619,9 +619,10 @@ fn load_neighbors(store: &Store, txn: &RoTxn<'_>, id: &EntityId) -> Result<Vec<E
 
     let mut neighbors = Vec::with_capacity(raw.len() / ENTITY_ID_LEN);
     for chunk in raw.chunks_exact(ENTITY_ID_LEN) {
-        // Best-effort: reserved sentinel garbage in neighbor payload should not
-        // take whole search path down.
-        let Ok(neighbor) = parse_entity_id(chunk, ERR_NEIGHBOR_VALUE_BYTES) else {
+        let bytes: [u8; ENTITY_ID_LEN] = chunk.try_into().expect("chunk length is exact");
+        // HNSW neighbor lists are best-effort graph data. Reserved sentinel
+        // garbage should not take whole search path down.
+        let Ok(neighbor) = EntityId::from_bytes(bytes) else {
             continue;
         };
         neighbors.push(neighbor);
