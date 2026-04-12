@@ -1,5 +1,7 @@
 use std::collections::{HashMap, HashSet};
 use std::io::Cursor;
+#[cfg(test)]
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Instant;
 
 use heed::RoTxn;
@@ -19,6 +21,24 @@ use crate::{le_bytes_to_f32_vec, Vault};
 const DEFAULT_MAX_NEIGHBORS: usize = 50;
 const DEFAULT_TOKEN_BUDGET: usize = 4000;
 const DEFAULT_MAX_FIELD_CHARS: usize = 500;
+const MAX_EDGE_HOP: u32 = 5;
+const MAX_CONTEXT_NEIGHBORS: usize = 1000;
+#[cfg(test)]
+static EDGE_SCAN_COUNT: AtomicUsize = AtomicUsize::new(0);
+
+#[derive(Debug, Default)]
+struct EdgeWalkResult {
+    neighbor_ids: Vec<EntityId>,
+    scanned_edges: HashMap<EntityId, Vec<EdgeInfo>>,
+}
+
+#[derive(Clone, Copy)]
+struct HydrateOptions<'a> {
+    hydrate_fields: bool,
+    include_edges: bool,
+    include_vectors: bool,
+    edge_cache: Option<&'a HashMap<EntityId, Vec<EdgeInfo>>>,
+}
 
 pub struct ContextPackBuilder<'a> {
     pipeline: PipelineBuilder<'a>,
@@ -233,12 +253,12 @@ impl<'a> ContextPackBuilder<'a> {
     }
 
     pub fn edge_hop(mut self, depth: u32) -> Self {
-        self.edge_hop = depth;
+        self.edge_hop = depth.min(MAX_EDGE_HOP);
         self
     }
 
     pub fn max_neighbors(mut self, n: usize) -> Self {
-        self.max_neighbors = n;
+        self.max_neighbors = n.min(MAX_CONTEXT_NEIGHBORS);
         self
     }
 
@@ -287,10 +307,13 @@ impl<'a> ContextPackBuilder<'a> {
         let scored = self.pipeline.run()?;
 
         let rtxn = self.vault.store.env.read_txn()?;
-        let mut result_ids = HashSet::with_capacity(scored.len());
-        for entry in &scored {
-            result_ids.insert(entry.id);
-        }
+        let hydrate_result_edges = self.include_edges && self.edge_hop == 0;
+        let result_options = HydrateOptions {
+            hydrate_fields: self.hydrate,
+            include_edges: hydrate_result_edges,
+            include_vectors: self.include_vectors,
+            edge_cache: None,
+        };
 
         let mut results = Vec::with_capacity(scored.len());
         for entry in scored.iter().copied() {
@@ -299,9 +322,7 @@ impl<'a> ContextPackBuilder<'a> {
                 &rtxn,
                 entry.id,
                 entry.score,
-                self.hydrate,
-                self.include_edges,
-                self.include_vectors,
+                result_options,
             )?
             else {
                 continue;
@@ -310,7 +331,8 @@ impl<'a> ContextPackBuilder<'a> {
         }
 
         let seed_ids: Vec<EntityId> = results.iter().map(|entity| entity.id).collect();
-        let neighbor_ids = if self.edge_hop > 0 && self.max_neighbors > 0 {
+        let result_ids: HashSet<EntityId> = seed_ids.iter().copied().collect();
+        let edge_walk = if self.edge_hop > 0 && self.max_neighbors > 0 {
             walk_edges(
                 &self.vault.store,
                 &rtxn,
@@ -320,19 +342,30 @@ impl<'a> ContextPackBuilder<'a> {
                 &result_ids,
             )?
         } else {
-            Vec::new()
+            EdgeWalkResult::default()
+        };
+        let edge_cache = self.include_edges.then_some(&edge_walk.scanned_edges);
+        let neighbor_options = HydrateOptions {
+            hydrate_fields: self.hydrate,
+            include_edges: self.include_edges,
+            include_vectors: self.include_vectors,
+            edge_cache,
         };
 
-        let mut neighbors = Vec::with_capacity(neighbor_ids.len());
-        for id in neighbor_ids {
+        if self.include_edges && self.edge_hop > 0 {
+            for entity in &mut results {
+                entity.edges = Some(load_entity_edges(&self.vault.store, &rtxn, &entity.id, edge_cache)?);
+            }
+        }
+
+        let mut neighbors = Vec::with_capacity(edge_walk.neighbor_ids.len());
+        for id in edge_walk.neighbor_ids {
             let Some(entity) = hydrate_entity(
                 self.vault,
                 &rtxn,
                 id,
                 0.0,
-                self.hydrate,
-                self.include_edges,
-                self.include_vectors,
+                neighbor_options,
             )?
             else {
                 continue;
@@ -407,9 +440,7 @@ fn hydrate_entity(
     rtxn: &RoTxn<'_>,
     id: EntityId,
     score: f32,
-    hydrate_fields: bool,
-    include_edges: bool,
-    include_vectors: bool,
+    options: HydrateOptions<'_>,
 ) -> Result<Option<ContextEntity>> {
     let Some(raw) = vault.store.entities.get(rtxn, id.as_bytes())? else {
         return Ok(None);
@@ -419,7 +450,7 @@ fn hydrate_entity(
         return Ok(None);
     };
 
-    let fields = if hydrate_fields {
+    let fields = if options.hydrate_fields {
         Some(decode_entity_fields(raw).unwrap_or_default())
     } else {
         None
@@ -428,13 +459,13 @@ fn hydrate_entity(
     let (short_id, content_hash) =
         read_short_id(&vault.store, rtxn, &id)?.unwrap_or_else(|| (id.to_hex(), 0));
 
-    let edges = if include_edges {
-        Some(scan_edges_for_entity(&vault.store, rtxn, &id)?)
+    let edges = if options.include_edges {
+        Some(load_entity_edges(&vault.store, rtxn, &id, options.edge_cache)?)
     } else {
         None
     };
 
-    let vector = if include_vectors {
+    let vector = if options.include_vectors {
         read_vector(vault, rtxn, &id)?
     } else {
         None
@@ -544,7 +575,23 @@ fn read_vector(vault: &Vault, rtxn: &RoTxn<'_>, id: &EntityId) -> Result<Option<
     Ok(Some(vector))
 }
 
+fn load_entity_edges(
+    store: &Store,
+    rtxn: &RoTxn<'_>,
+    id: &EntityId,
+    edge_cache: Option<&HashMap<EntityId, Vec<EdgeInfo>>>,
+) -> Result<Vec<EdgeInfo>> {
+    if let Some(edges) = edge_cache.and_then(|cache| cache.get(id)) {
+        Ok(edges.clone())
+    } else {
+        scan_edges_for_entity(store, rtxn, id)
+    }
+}
+
 fn scan_edges_for_entity(store: &Store, rtxn: &RoTxn<'_>, id: &EntityId) -> Result<Vec<EdgeInfo>> {
+    #[cfg(test)]
+    EDGE_SCAN_COUNT.fetch_add(1, Ordering::Relaxed);
+
     let mut edges = Vec::new();
 
     for entry in store.edges_out.prefix_iter(rtxn, id.as_bytes())? {
@@ -597,43 +644,73 @@ fn walk_edges(
     hops: u32,
     max_neighbors: usize,
     exclude: &HashSet<EntityId>,
-) -> Result<Vec<EntityId>> {
+) -> Result<EdgeWalkResult> {
     if hops == 0 || max_neighbors == 0 || seed_ids.is_empty() {
-        return Ok(Vec::new());
+        return Ok(EdgeWalkResult::default());
     }
 
     let mut visited = HashSet::with_capacity(max_neighbors);
+    let mut ordered_neighbors = Vec::with_capacity(max_neighbors);
     let mut frontier = seed_ids.to_vec();
+    frontier.sort_unstable_by(|a, b| a.as_bytes().cmp(b.as_bytes()));
+    let mut scanned_edges = HashMap::<EntityId, Vec<EdgeInfo>>::new();
 
     for _ in 0..hops {
-        let mut next_frontier = Vec::new();
-
-        for id in &frontier {
-            let edges = scan_edges_for_entity(store, rtxn, id)?;
-            for edge in edges {
-                if visited.len() >= max_neighbors {
-                    break;
-                }
-                if exclude.contains(&edge.target) || !visited.insert(edge.target) {
-                    continue;
-                }
-                next_frontier.push(edge.target);
-            }
-            if visited.len() >= max_neighbors {
-                break;
-            }
-        }
-
-        if next_frontier.is_empty() || visited.len() >= max_neighbors {
+        if frontier.is_empty() || visited.len() >= max_neighbors {
             break;
         }
 
-        frontier = next_frontier;
+        let mut candidates = HashMap::<EntityId, f32>::new();
+
+        for id in &frontier {
+            if !scanned_edges.contains_key(id) {
+                scanned_edges.insert(*id, scan_edges_for_entity(store, rtxn, id)?);
+            }
+
+            let Some(edges) = scanned_edges.get(id) else {
+                continue;
+            };
+            for edge in edges {
+                if exclude.contains(&edge.target) || visited.contains(&edge.target) {
+                    continue;
+                }
+                candidates
+                    .entry(edge.target)
+                    .and_modify(|best_weight| {
+                        if edge.weight.total_cmp(best_weight).is_gt() {
+                            *best_weight = edge.weight;
+                        }
+                    })
+                    .or_insert(edge.weight);
+            }
+        }
+
+        if candidates.is_empty() {
+            break;
+        }
+
+        let remaining = max_neighbors.saturating_sub(visited.len());
+        let mut next_frontier: Vec<(EntityId, f32)> = candidates.into_iter().collect();
+        next_frontier.sort_unstable_by(|a, b| {
+            b.1.total_cmp(&a.1)
+                .then_with(|| a.0.as_bytes().cmp(b.0.as_bytes()))
+        });
+        next_frontier.truncate(remaining);
+
+        frontier = next_frontier
+            .into_iter()
+            .map(|(id, _)| {
+                visited.insert(id);
+                ordered_neighbors.push(id);
+                id
+            })
+            .collect();
     }
 
-    let mut out: Vec<EntityId> = visited.into_iter().collect();
-    out.sort_unstable_by(|a, b| a.as_bytes().cmp(b.as_bytes()));
-    Ok(out)
+    Ok(EdgeWalkResult {
+        neighbor_ids: ordered_neighbors,
+        scanned_edges,
+    })
 }
 
 #[cfg(test)]
@@ -643,6 +720,14 @@ mod tests {
     use crate::types::{HnswConfig, TimeRange, VaultConfig};
 
     use super::*;
+
+    fn reset_edge_scan_count() {
+        EDGE_SCAN_COUNT.store(0, Ordering::Relaxed);
+    }
+
+    fn edge_scan_count() -> usize {
+        EDGE_SCAN_COUNT.load(Ordering::Relaxed)
+    }
 
     fn test_config() -> VaultConfig {
         VaultConfig {
@@ -708,6 +793,17 @@ mod tests {
             Some("goal.learning")
         );
         assert_eq!(fields.get("conf").and_then(|v| v.as_f64()), Some(0.9));
+        Ok(())
+    }
+
+    #[test]
+    fn builder_clamps_edge_expansion_settings() -> Result<()> {
+        let temp_dir = tempfile::tempdir()?;
+        let vault = Vault::open(temp_dir.path(), test_config())?;
+
+        let builder = vault.context_pack().edge_hop(99).max_neighbors(10_000);
+        assert_eq!(builder.edge_hop, MAX_EDGE_HOP);
+        assert_eq!(builder.max_neighbors, MAX_CONTEXT_NEIGHBORS);
         Ok(())
     }
 
@@ -868,6 +964,106 @@ mod tests {
             .run()?;
 
         assert!(pack.neighbors.len() <= 5);
+        Ok(())
+    }
+
+    #[test]
+    fn neighbor_selection_prefers_highest_weight_edges() -> Result<()> {
+        let temp_dir = tempfile::tempdir()?;
+        let vault = Vault::open(temp_dir.path(), test_config())?;
+
+        let root = EntityId::from_bytes([1; 16]);
+        put_text_entity(
+            &vault,
+            &root,
+            0,
+            "root",
+            serde_json::json!({"pred": "root", "val": "root"}),
+        )?;
+
+        let weighted = [
+            (EntityId::from_bytes([2; 16]), 0.4_f32),
+            (EntityId::from_bytes([3; 16]), 0.9_f32),
+            (EntityId::from_bytes([4; 16]), 0.7_f32),
+            (EntityId::from_bytes([5; 16]), 0.2_f32),
+        ];
+
+        for (id, weight) in weighted {
+            put_text_entity(
+                &vault,
+                &id,
+                4,
+                "neighbor",
+                serde_json::json!({"name": format!("P{:?}", id.as_bytes()[0])}),
+            )?;
+            vault.put_edge(&root, crate::types::EdgeKind::Mentions, &id, weight)?;
+        }
+
+        let pack = vault
+            .context_pack()
+            .search_text("root", 10)
+            .edge_hop(1)
+            .max_neighbors(2)
+            .run()?;
+
+        let neighbor_ids: Vec<EntityId> = pack.neighbors.iter().map(|entity| entity.id).collect();
+        assert_eq!(
+            neighbor_ids,
+            vec![EntityId::from_bytes([3; 16]), EntityId::from_bytes([4; 16])]
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn include_edges_reuses_walk_scans_for_results() -> Result<()> {
+        let temp_dir = tempfile::tempdir()?;
+        let vault = Vault::open(temp_dir.path(), test_config())?;
+
+        let root = EntityId::from_bytes([7; 16]);
+        let child = EntityId::from_bytes([8; 16]);
+        put_text_entity(
+            &vault,
+            &root,
+            0,
+            "root",
+            serde_json::json!({"pred": "root", "val": "root"}),
+        )?;
+        put_text_entity(
+            &vault,
+            &child,
+            4,
+            "child",
+            serde_json::json!({"name": "Child"}),
+        )?;
+        vault.put_edge(&root, crate::types::EdgeKind::Supports, &child, 1.0)?;
+
+        reset_edge_scan_count();
+        let rtxn = vault.store.env.read_txn()?;
+        let walked = walk_edges(
+            &vault.store,
+            &rtxn,
+            &[root],
+            1,
+            10,
+            &HashSet::from([root]),
+        )?;
+        assert_eq!(edge_scan_count(), 1, "walk should scan the root once");
+
+        let cached_edges = load_entity_edges(&vault.store, &rtxn, &root, Some(&walked.scanned_edges))?;
+        assert_eq!(cached_edges.len(), 1);
+        assert_eq!(
+            edge_scan_count(),
+            1,
+            "loading root edges from the walk cache should not rescan"
+        );
+
+        let uncached_edges = load_entity_edges(&vault.store, &rtxn, &child, Some(&walked.scanned_edges))?;
+        assert!(uncached_edges.is_empty());
+        assert_eq!(
+            edge_scan_count(),
+            2,
+            "loading uncached neighbor edges should perform one scan"
+        );
         Ok(())
     }
 
