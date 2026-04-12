@@ -1158,6 +1158,29 @@ mod tests {
     }
 
     #[test]
+    fn batch_put_writes_long_interval_index_by_end_time() -> Result<()> {
+        let temp_dir = tempfile::tempdir()?;
+        let vault = Vault::open(temp_dir.path(), test_config())?;
+        let id = EntityId::now();
+        let end = 1_000 + crate::batch::LONG_INTERVAL_THRESHOLD_SECS + 1;
+
+        vault
+            .batch()
+            .put(&id, 6, test_time_range(1_000, end), 3_000, b"long-range")
+            .commit()?;
+
+        let key = Store::encode_temporal_key(end, &id);
+        let rtxn = vault.store.env.read_txn()?;
+        let value = vault
+            .store
+            .temporal_long_intervals
+            .get(&rtxn, &key)?
+            .ok_or(Error::EntityNotFound)?;
+        assert_eq!(u64::from_be_bytes(value.try_into().map_err(|_| Error::InvalidKey)?), 1_000);
+        Ok(())
+    }
+
+    #[test]
     fn batch_put_assigns_short_id() -> Result<()> {
         let temp_dir = tempfile::tempdir()?;
         let vault = Vault::open(temp_dir.path(), test_config())?;
@@ -1382,6 +1405,56 @@ mod tests {
         }
 
         assert!(vault.delete_entity(&id)?);
+        Ok(())
+    }
+
+    #[test]
+    fn reput_rekeys_long_interval_index_and_drops_shortened_range() -> Result<()> {
+        let temp_dir = tempfile::tempdir()?;
+        let vault = Vault::open(temp_dir.path(), test_config())?;
+        let id = EntityId::now();
+        let old_end = 1_000 + crate::batch::LONG_INTERVAL_THRESHOLD_SECS + 10;
+        let new_end = 5_000 + crate::batch::LONG_INTERVAL_THRESHOLD_SECS + 20;
+
+        vault
+            .batch()
+            .put(&id, 0, test_time_range(1_000, old_end), 300, b"long-old")
+            .commit()?;
+
+        let old_key = Store::encode_temporal_key(old_end, &id);
+        let new_key = Store::encode_temporal_key(new_end, &id);
+
+        vault
+            .batch()
+            .put(&id, 0, test_time_range(5_000, new_end), 300, b"long-new")
+            .commit()?;
+
+        {
+            let rtxn = vault.store.env.read_txn()?;
+            assert!(vault
+                .store
+                .temporal_long_intervals
+                .get(&rtxn, &old_key)?
+                .is_none());
+            let value = vault
+                .store
+                .temporal_long_intervals
+                .get(&rtxn, &new_key)?
+                .ok_or(Error::EntityNotFound)?;
+            assert_eq!(u64::from_be_bytes(value.try_into().map_err(|_| Error::InvalidKey)?), 5_000);
+        }
+
+        vault
+            .batch()
+            .put(&id, 0, test_time_range(10_000, 10_001), 300, b"short")
+            .commit()?;
+
+        let rtxn = vault.store.env.read_txn()?;
+        assert!(vault
+            .store
+            .temporal_long_intervals
+            .get(&rtxn, &new_key)?
+            .is_none());
         Ok(())
     }
 
