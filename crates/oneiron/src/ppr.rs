@@ -6,7 +6,7 @@ use xxhash_rust::xxh3::xxh3_128;
 use crate::error::{Error, Result};
 use crate::store::Store;
 use crate::types::{
-    EdgeKind, EntityId, ScoredEntity, VaultConfig, EDGE_KEY_LEN, EDGE_VALUE_LEN, ENTITY_ID_LEN,
+    EdgeKind, EntityId, ScoredEntity, EDGE_KEY_LEN, EDGE_VALUE_LEN, ENTITY_ID_LEN,
 };
 
 const SEED_HASH_LEN: usize = 16;
@@ -92,6 +92,17 @@ pub(crate) fn ppr_query(
     depth: u32,
     alpha: f32,
 ) -> Result<Vec<ScoredEntity>> {
+    let rtxn = store.env.read_txn()?;
+    ppr_query_in_txn(store, &rtxn, seeds, depth, alpha)
+}
+
+pub(crate) fn ppr_query_in_txn(
+    store: &Store,
+    txn: &RoTxn<'_>,
+    seeds: &[EntityId],
+    depth: u32,
+    alpha: f32,
+) -> Result<Vec<ScoredEntity>> {
     if seeds.is_empty() {
         return Ok(Vec::new());
     }
@@ -99,29 +110,33 @@ pub(crate) fn ppr_query(
     let seed_hash = hash_seeds(seeds, depth, alpha);
     let now = crate::unix_seconds_now();
 
-    {
-        let rtxn = store.env.read_txn()?;
-        if let Some(raw) = store.ppr_cache.get(&rtxn, &seed_hash)? {
-            let (computed_at, _, stale) = parse_cache_header(raw)?;
-            if stale == 0 && now.saturating_sub(computed_at) <= CACHE_TTL_SECS {
-                let mut scores = decode_cache_scores(&raw[CACHE_HEADER_LEN..])?;
-                sort_scores(&mut scores);
-                return Ok(scores);
-            }
+    if let Some(raw) = store.ppr_cache.get(txn, &seed_hash)? {
+        let (computed_at, _, stale) = parse_cache_header(raw)?;
+        if stale == 0 && now.saturating_sub(computed_at) <= CACHE_TTL_SECS {
+            let mut scores = decode_cache_scores(&raw[CACHE_HEADER_LEN..])?;
+            sort_scores(&mut scores);
+            return Ok(scores);
         }
     }
 
-    let (scores, graph_version) = {
-        let rtxn = store.env.read_txn()?;
-        let scores = ppr_compute(store, &rtxn, seeds, depth, alpha)?;
-        let version = read_graph_version(store, &rtxn)?;
-        (scores, version)
-    };
+    let scores = ppr_compute(store, txn, seeds, depth, alpha)?;
+    let graph_version = read_graph_version(store, txn)?;
+    write_ppr_cache(store, &seed_hash, seeds, now, graph_version, &scores)?;
+    Ok(scores)
+}
 
+fn write_ppr_cache(
+    store: &Store,
+    seed_hash: &[u8; SEED_HASH_LEN],
+    seeds: &[EntityId],
+    computed_at: u64,
+    graph_version: u64,
+    scores: &[ScoredEntity],
+) -> Result<()> {
     {
         let rtxn = store.env.read_txn()?;
         if read_graph_version(store, &rtxn)? != graph_version {
-            return Ok(scores);
+            return Ok(());
         }
     }
 
@@ -129,15 +144,15 @@ pub(crate) fn ppr_query(
     if store_cache_entry(
         store,
         &mut wtxn,
-        &seed_hash,
+        seed_hash,
         seeds,
-        now,
+        computed_at,
         graph_version,
-        &scores,
+        scores,
     )? {
         wtxn.commit()?;
     }
-    Ok(scores)
+    Ok(())
 }
 
 pub(crate) fn cleanup_ppr_cache(
@@ -1065,6 +1080,29 @@ mod tests {
         assert!(!stored);
         let rtxn = vault.store.env.read_txn()?;
         assert!(vault.store.ppr_cache.get(&rtxn, &seed_hash)?.is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn ppr_query_in_txn_uses_borrowed_snapshot_without_caching_stale_results() -> Result<()> {
+        let temp_dir = tempdir()?;
+        let vault = Vault::open(temp_dir.path(), test_config())?;
+        let a = entity(50);
+        let b = entity(51);
+        let c = entity(52);
+
+        vault.put_edge(&a, EdgeKind::BelongsTo, &b, 1.0)?;
+
+        let snapshot = vault.store.env.read_txn()?;
+        vault.put_edge(&a, EdgeKind::BelongsTo, &c, 1.0)?;
+
+        let borrowed = ppr_query_in_txn(&vault.store, &snapshot, &[a], 3, 0.15)?;
+        assert!(score_for(&borrowed, b) > 0.0);
+        assert!(score_for(&borrowed, c) <= SCORE_EPSILON);
+        drop(snapshot);
+
+        let latest = ppr_query(&vault.store, &vault.config, &[a], 3, 0.15)?;
+        assert!(score_for(&latest, c) > 0.0);
         Ok(())
     }
 }
