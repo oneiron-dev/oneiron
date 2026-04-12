@@ -124,9 +124,9 @@ if has claude; then
   launch "claude-code"
 else skip "claude-code" "claude"; fi
 
-# 3. Codex — review
+# 3. Codex — review (xhigh reasoning)
 if has codex; then
-  codex review --base "$BASE" \
+  codex review -c 'model_reasoning_effort="xhigh"' --base "$BASE" \
     > "$REVIEW_DIR/codex.md" 2>&1 &
   launch "codex"
 else skip "codex" "codex"; fi
@@ -139,19 +139,7 @@ if has gemini; then
   launch "gemini"
 else skip "gemini" "gemini"; fi
 
-# 5. Qodo — combined security + code review
-if has qodo; then
-  qodo oneiron_review \
-    --model gpt-5.4 \
-    --set target_branch="$BASE" \
-    --set reasoning_effort=high \
-    --yes \
-    --silent \
-    > "$REVIEW_DIR/qodo.md" 2>&1 &
-  launch "qodo"
-else skip "qodo" "qodo"; fi
-
-# 6. CodeRabbit — pattern analysis + learnings
+# 5. CodeRabbit — pattern analysis + learnings
 if has coderabbit; then
   coderabbit review \
     --base "$BASE" \
