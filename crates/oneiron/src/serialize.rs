@@ -5,6 +5,7 @@ use serde_json::{Map, Number, Value};
 use crate::types::{ContextEntity, ContextPack, FieldProfile, PackFormat, Signal, TokenAllocation};
 
 const GROUP_ORDER: &[u8] = &[0, 1, 8, 6, 4, 7, 10, 9];
+// Use an impossible entity type as the shared sink for unknown groups.
 const OTHER_ENTITY_TYPE: u8 = u8::MAX;
 
 #[derive(Debug, Clone)]

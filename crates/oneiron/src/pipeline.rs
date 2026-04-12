@@ -802,7 +802,9 @@ fn boost_contiguity(
 }
 
 fn pretruncate_for_contiguity(scores: &mut Vec<ScoredEntity>, result_limit: usize) {
-    let cap = result_limit.saturating_mul(2);
+    const CONTIGUITY_PRETRUNCATE_HEADROOM: usize = 2;
+
+    let cap = result_limit.saturating_mul(CONTIGUITY_PRETRUNCATE_HEADROOM);
     if scores.len() > cap {
         scores.truncate(cap);
     }

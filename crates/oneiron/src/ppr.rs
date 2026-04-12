@@ -1,5 +1,3 @@
-#![cfg_attr(not(test), allow(dead_code))]
-
 use std::collections::{HashMap, HashSet};
 
 use heed::{RoTxn, RwTxn};
@@ -12,11 +10,13 @@ use crate::types::{
 };
 
 const SEED_HASH_LEN: usize = 16;
+#[cfg(test)]
 const LEGACY_SEED_HASH_LEN: usize = 32;
 const CACHE_HEADER_LEN: usize = 17;
 const CACHE_STALE_OFFSET: usize = 16;
 const CACHE_ENTRY_LEN: usize = 20;
 const CACHE_DEP_KEY_LEN: usize = ENTITY_ID_LEN + SEED_HASH_LEN;
+#[cfg(test)]
 const LEGACY_CACHE_DEP_KEY_LEN: usize = ENTITY_ID_LEN + LEGACY_SEED_HASH_LEN;
 const CACHE_TTL_SECS: u64 = 86_400;
 use crate::store::GRAPH_VERSION_KEY;
@@ -265,16 +265,20 @@ fn seed_is_live_for_ppr(store: &Store, txn: &RoTxn<'_>, entity_id: &EntityId) ->
         return Ok(true);
     }
 
-    let mut out_iter = store.edges_out.prefix_iter(txn, entity_id.as_bytes())?;
-    if let Some(entry) = out_iter.next() {
-        entry?;
-        return Ok(true);
+    {
+        let mut out_iter = store.edges_out.prefix_iter(txn, entity_id.as_bytes())?;
+        if let Some(entry) = out_iter.next() {
+            entry?;
+            return Ok(true);
+        }
     }
 
-    let mut in_iter = store.edges_in.prefix_iter(txn, entity_id.as_bytes())?;
-    if let Some(entry) = in_iter.next() {
-        entry?;
-        return Ok(true);
+    {
+        let mut in_iter = store.edges_in.prefix_iter(txn, entity_id.as_bytes())?;
+        if let Some(entry) = in_iter.next() {
+            entry?;
+            return Ok(true);
+        }
     }
 
     Ok(false)
@@ -811,12 +815,52 @@ mod tests {
     }
 
     #[test]
-    fn cleanup_conservatively_evicts_cache_for_missing_dep_entities() -> Result<()> {
+    fn delete_isolated_entity_increments_graph_version_once() -> Result<()> {
         let temp_dir = tempdir()?;
         let vault = Vault::open(temp_dir.path(), test_config())?;
         let a = entity(34);
-        let b = entity(35);
-        let missing = entity(36);
+        let tr = TimeRange { start: 1, end: 1 };
+
+        vault.put_entity(&a, 1, tr, 1, b"a-data")?;
+
+        let before = graph_version(&vault)?;
+        assert!(vault.delete_entity(&a)?);
+        let after_delete = graph_version(&vault)?;
+        assert_eq!(after_delete, before + 1);
+
+        assert!(!vault.delete_entity(&a)?);
+        let after_missing = graph_version(&vault)?;
+        assert_eq!(after_missing, after_delete);
+        Ok(())
+    }
+
+    #[test]
+    fn batch_delete_isolated_entity_increments_graph_version_once() -> Result<()> {
+        let temp_dir = tempdir()?;
+        let vault = Vault::open(temp_dir.path(), test_config())?;
+        let a = entity(35);
+        let tr = TimeRange { start: 1, end: 1 };
+
+        vault.put_entity(&a, 1, tr, 1, b"a-data")?;
+
+        let before = graph_version(&vault)?;
+        vault.batch().delete(&a).commit()?;
+        let after_delete = graph_version(&vault)?;
+        assert_eq!(after_delete, before + 1);
+
+        vault.batch().delete(&a).commit()?;
+        let after_missing = graph_version(&vault)?;
+        assert_eq!(after_missing, after_delete);
+        Ok(())
+    }
+
+    #[test]
+    fn cleanup_conservatively_evicts_cache_for_missing_dep_entities() -> Result<()> {
+        let temp_dir = tempdir()?;
+        let vault = Vault::open(temp_dir.path(), test_config())?;
+        let a = entity(36);
+        let b = entity(37);
+        let missing = entity(38);
         let tr = TimeRange { start: 1, end: 1 };
 
         vault.put_entity(&a, 1, tr, 1, b"a-data")?;
@@ -887,8 +931,8 @@ mod tests {
     fn edge_invalidation_self_heals_legacy_dep_rows() -> Result<()> {
         let temp_dir = tempdir()?;
         let vault = Vault::open(temp_dir.path(), test_config())?;
-        let a = entity(36);
-        let b = entity(37);
+        let a = entity(39);
+        let b = entity(40);
         let legacy_hash = legacy_cache_key(0xCD);
         let legacy_dep = legacy_dep_key(a, legacy_hash);
 
@@ -911,9 +955,9 @@ mod tests {
     fn cleanup_keeps_graph_only_seed_deps_and_invalidation_still_works() -> Result<()> {
         let temp_dir = tempdir()?;
         let vault = Vault::open(temp_dir.path(), test_config())?;
-        let a = entity(38);
-        let b = entity(39);
-        let c = entity(40);
+        let a = entity(41);
+        let b = entity(42);
+        let c = entity(43);
         let tr = TimeRange { start: 1, end: 1 };
 
         vault.put_entity(&b, 1, tr, 1, b"b-data")?;
@@ -938,8 +982,8 @@ mod tests {
     fn cleanup_evicts_cache_for_dead_seed_without_live_graph_presence() -> Result<()> {
         let temp_dir = tempdir()?;
         let vault = Vault::open(temp_dir.path(), test_config())?;
-        let a = entity(41);
-        let b = entity(42);
+        let a = entity(44);
+        let b = entity(45);
 
         let first = ppr_query(&vault.store, &vault.config, &[a], 3, 0.15)?;
         assert!(score_for(&first, a) > 0.0);
@@ -962,8 +1006,8 @@ mod tests {
     fn ppr_query_reuses_cache_after_unrelated_graph_version_change() -> Result<()> {
         let temp_dir = tempdir()?;
         let vault = Vault::open(temp_dir.path(), test_config())?;
-        let a = entity(43);
-        let b = entity(44);
+        let a = entity(46);
+        let b = entity(47);
 
         vault.put_edge(&a, EdgeKind::BelongsTo, &b, 1.0)?;
         let first = ppr_query(&vault.store, &vault.config, &[a], 3, 0.15)?;
@@ -994,8 +1038,8 @@ mod tests {
     fn cache_write_is_skipped_when_graph_version_changes_before_store() -> Result<()> {
         let temp_dir = tempdir()?;
         let vault = Vault::open(temp_dir.path(), test_config())?;
-        let a = entity(45);
-        let b = entity(46);
+        let a = entity(48);
+        let b = entity(49);
         let seed_hash = hash_seeds(&[a], 3, 0.15);
 
         vault.put_edge(&a, EdgeKind::BelongsTo, &b, 1.0)?;

@@ -455,9 +455,9 @@ pub(crate) fn apply_ops(
                 apply_phonetic(store, wtxn, id, &codes)?;
             }
             BatchOp::Delete { id } => {
-                let (_, neighbors) = deindex_entity(store, wtxn, &id)?;
+                let (existed, neighbors) = deindex_entity(store, wtxn, &id)?;
                 ppr::invalidate_ppr_for_delete(store, wtxn, &id, &neighbors)?;
-                had_graph_mutation |= !neighbors.is_empty();
+                had_graph_mutation |= existed;
             }
             BatchOp::DeleteEdge { src, kind, tgt } => {
                 if apply_delete_edge(store, wtxn, src, kind, tgt)? {
