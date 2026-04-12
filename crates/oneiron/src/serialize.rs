@@ -34,6 +34,8 @@ struct PreparedPack {
     neighbors: Vec<(u8, Vec<PreparedEntity>)>,
 }
 
+type PreparedGroups = Vec<(u8, Vec<PreparedEntity>)>;
+
 pub fn serialize_pack(pack: &ContextPack, config: &SerializeConfig) -> Vec<u8> {
     match config.format {
         PackFormat::Json => serialize_json(pack, config),
@@ -199,44 +201,12 @@ fn prepare_pack(pack: &ContextPack, config: &SerializeConfig, json_mode: bool) -
         let (results, neighbors) = if skip_budget {
             (results_source, neighbors_source)
         } else {
-            let results_need = estimate_groups_chars(&results_source);
-            let neighbors_need = estimate_groups_chars(&neighbors_source);
-
-            let mut section_budgets =
-                allocate_section_budgets([results_need, neighbors_need], char_budget);
-            let (budgeted_results, results_used) =
-                budget_groups(&results_source, &config.allocation, section_budgets[0]);
-            let (budgeted_neighbors, neighbors_used) =
-                budget_groups(&neighbors_source, &config.allocation, section_budgets[1]);
-
-            let mut results = budgeted_results;
-            let mut neighbors = budgeted_neighbors;
-
-            let leftover = char_budget.saturating_sub(results_used.saturating_add(neighbors_used));
-            if leftover > 0 {
-                let unmet = [
-                    results_need.saturating_sub(results_used),
-                    neighbors_need.saturating_sub(neighbors_used),
-                ];
-                if unmet.iter().any(|need| *need > 0) {
-                    let extra = allocate_section_budgets(unmet, leftover);
-                    if extra[0] > 0 || extra[1] > 0 {
-                        section_budgets[0] = section_budgets[0].saturating_add(extra[0]);
-                        section_budgets[1] = section_budgets[1].saturating_add(extra[1]);
-                        results =
-                            budget_groups(&results_source, &config.allocation, section_budgets[0])
-                                .0;
-                        neighbors = budget_groups(
-                            &neighbors_source,
-                            &config.allocation,
-                            section_budgets[1],
-                        )
-                        .0;
-                    }
-                }
-            }
-
-            (results, neighbors)
+            budget_split_sections(
+                &results_source,
+                &neighbors_source,
+                &config.allocation,
+                char_budget,
+            )
         };
 
         PreparedPack {
@@ -245,6 +215,48 @@ fn prepare_pack(pack: &ContextPack, config: &SerializeConfig, json_mode: bool) -
             neighbors,
         }
     }
+}
+
+fn budget_split_sections(
+    results_source: &PreparedGroups,
+    neighbors_source: &PreparedGroups,
+    allocation: &TokenAllocation,
+    char_budget: usize,
+) -> (PreparedGroups, PreparedGroups) {
+    let results_need = estimate_groups_chars(results_source);
+    let neighbors_need = estimate_groups_chars(neighbors_source);
+
+    let section_budgets = allocate_section_budgets([results_need, neighbors_need], char_budget);
+    let (mut results, results_used) = budget_groups(results_source, allocation, section_budgets[0]);
+    let (mut neighbors, neighbors_used) =
+        budget_groups(neighbors_source, allocation, section_budgets[1]);
+
+    let leftover = char_budget.saturating_sub(results_used.saturating_add(neighbors_used));
+    if leftover == 0 {
+        return (results, neighbors);
+    }
+
+    let unmet = [
+        results_need.saturating_sub(results_used),
+        neighbors_need.saturating_sub(neighbors_used),
+    ];
+    if !unmet.iter().any(|need| *need > 0) {
+        return (results, neighbors);
+    }
+
+    let extra = allocate_section_budgets(unmet, leftover);
+    let final_budgets = [
+        results_used.saturating_add(extra[0]),
+        neighbors_used.saturating_add(extra[1]),
+    ];
+    debug_assert!(final_budgets[0].saturating_add(final_budgets[1]) <= char_budget);
+
+    if final_budgets[0] != section_budgets[0] || final_budgets[1] != section_budgets[1] {
+        results = budget_groups(results_source, allocation, final_budgets[0]).0;
+        neighbors = budget_groups(neighbors_source, allocation, final_budgets[1]).0;
+    }
+
+    (results, neighbors)
 }
 
 fn prepare_entities(
@@ -421,7 +433,8 @@ fn enforce_token_budget(
     char_budget: usize,
 ) -> usize {
     if char_budget == 0 {
-        return estimate_groups_chars(groups);
+        groups.clear();
+        return 0;
     }
 
     // Normalize fractions so they sum to 1.0 (multiple "other" types each
@@ -492,9 +505,9 @@ fn enforce_token_budget(
 fn estimate_entity_chars(entity: &PreparedEntity) -> usize {
     let mut chars = entity.id.len() + 12;
     for (key, value) in &entity.fields {
-        chars += key.len();
+        chars += estimate_json_string_chars(key);
         chars += estimate_value_chars(value);
-        chars += 4;
+        chars += 2;
     }
     chars
 }
@@ -526,9 +539,7 @@ fn allocate_section_budgets(needs: [usize; 2], total_budget: usize) -> [usize; 2
     if total_need <= total_budget {
         return needs;
     }
-    if total_need == 0 {
-        return [0, 0];
-    }
+    debug_assert!(total_need > 0);
 
     let total_budget = total_budget as u128;
     let total_need = total_need as u128;
@@ -1071,7 +1082,7 @@ fn estimate_json_string_chars(text: &str) -> usize {
         len += match ch {
             '"' | '\\' | '\n' | '\r' | '\t' => 2,
             '\u{08}' | '\u{0C}' => 2,
-            c if c.is_control() => 6,
+            c if (c as u32) <= 0x1F => 6,
             c => c.len_utf8(),
         };
     }
@@ -1384,6 +1395,15 @@ mod tests {
         }
     }
 
+    fn prepared_entity_for_test(id_len: usize, fields: Vec<(String, Value)>) -> PreparedEntity {
+        PreparedEntity {
+            entity_type: 0,
+            score: 0.0,
+            id: "x".repeat(id_len),
+            fields,
+        }
+    }
+
     #[test]
     fn json_round_trip() {
         let pack = sample_pack();
@@ -1482,6 +1502,36 @@ mod tests {
     }
 
     #[test]
+    fn split_rebudgeting_reuses_consumed_slack_without_overshooting_total_cap() {
+        let allocation = TokenAllocation::default();
+        let results_source = vec![(
+            0,
+            vec![
+                prepared_entity_for_test(18, Vec::new()),
+                prepared_entity_for_test(1, Vec::new()),
+            ],
+        )];
+        let neighbors_source = vec![(
+            4,
+            vec![
+                prepared_entity_for_test(18, Vec::new()),
+                prepared_entity_for_test(1, Vec::new()),
+            ],
+        )];
+
+        let (results, neighbors) =
+            budget_split_sections(&results_source, &neighbors_source, &allocation, 80);
+        let total_chars = estimate_groups_chars(&results) + estimate_groups_chars(&neighbors);
+
+        assert_eq!(results[0].1.len(), 1);
+        assert_eq!(neighbors[0].1.len(), 1);
+        assert!(
+            total_chars <= 80,
+            "rebudgeted sections should stay within the shared cap: {total_chars}"
+        );
+    }
+
+    #[test]
     fn field_profile_changes_output() {
         let pack = sample_pack();
 
@@ -1563,6 +1613,17 @@ mod tests {
 
         assert_eq!(kept_results, total_results);
         assert_eq!(kept_neighbors, total_neighbors);
+    }
+
+    #[test]
+    fn zero_section_budget_drops_all_rows() {
+        let allocation = TokenAllocation::default();
+        let source = vec![(0, vec![prepared_entity_for_test(18, Vec::new())])];
+
+        let (groups, used) = budget_groups(&source, &allocation, 0);
+
+        assert!(groups.is_empty());
+        assert_eq!(used, 0);
     }
 
     #[test]
@@ -1816,6 +1877,50 @@ mod tests {
                 serde_json::to_string(&value).expect("json").len()
             );
         }
+    }
+
+    #[test]
+    fn estimate_json_string_chars_matches_serde_json_escape_rules() {
+        let values = [
+            "",
+            "plain",
+            "line\nbreak",
+            "\u{1F}",
+            "\u{7F}",
+            "\u{85}",
+            "\"\\",
+        ];
+
+        for value in values {
+            assert_eq!(
+                estimate_json_string_chars(value),
+                serde_json::to_string(value).expect("json").len(),
+                "mismatch for {value:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn estimate_entity_chars_accounts_for_escaped_field_names() {
+        let plain = prepared_entity_for_test(
+            16,
+            vec![("ab".to_owned(), Value::String("value".to_owned()))],
+        );
+        let escaped = prepared_entity_for_test(
+            16,
+            vec![("a\"".to_owned(), Value::String("value".to_owned()))],
+        );
+
+        let plain_json = serde_json::to_string(&json_rows(std::slice::from_ref(&plain), false)[0])
+            .expect("json");
+        let escaped_json =
+            serde_json::to_string(&json_rows(std::slice::from_ref(&escaped), false)[0])
+                .expect("json");
+
+        assert_eq!(
+            estimate_entity_chars(&escaped).saturating_sub(estimate_entity_chars(&plain)),
+            escaped_json.len().saturating_sub(plain_json.len())
+        );
     }
 
     #[test]
