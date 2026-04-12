@@ -20,6 +20,7 @@ const ERR_VECTOR_BYTES: &str = "hnsw vector bytes are malformed";
 const ERR_COUNT_UNDERFLOW: &str = "hnsw node count underflowed during delete";
 const ERR_COUNT_OVERFLOW: &str = "hnsw node count overflowed during insert";
 const ERR_REMAINING_NODES_MISSING: &str = "hnsw count > 0 but no nodes remain";
+const ERR_EXISTING_NODE_ZERO_COUNT: &str = "hnsw node exists but count is zero";
 
 #[derive(Debug)]
 pub(crate) struct RebuiltHnswGraph {
@@ -64,10 +65,7 @@ pub(crate) fn hnsw_insert(
     vector: &[f32],
 ) -> Result<()> {
     if store.hnsw_neighbors.get(&*wtxn, id.as_bytes())?.is_some() {
-        // Vector refreshes keep their current graph links. Reusing full delete
-        // semantics here can disconnect live nodes that are only reachable
-        // through the refreshed node.
-        return Ok(());
+        return hnsw_refresh(store, config, wtxn, id, vector);
     }
 
     let mut count = read_count(store, &*wtxn)?;
@@ -118,6 +116,68 @@ pub(crate) fn hnsw_insert(
         .checked_add(1)
         .ok_or(Error::IndexOverflow(ERR_COUNT_OVERFLOW))?;
     store.hnsw_meta.put(wtxn, COUNT_KEY, &count.to_le_bytes())?;
+
+    Ok(())
+}
+
+fn hnsw_refresh(
+    store: &Store,
+    config: &VaultConfig,
+    wtxn: &mut RwTxn<'_>,
+    id: &EntityId,
+    vector: &[f32],
+) -> Result<()> {
+    let count = read_count(store, &*wtxn)?;
+    if count == 0 {
+        return Err(Error::CorruptedIndex(ERR_EXISTING_NODE_ZERO_COUNT));
+    }
+    if count == 1 {
+        return Ok(());
+    }
+
+    let entry_point =
+        read_entry_point(store, &*wtxn)?.ok_or(Error::CorruptedIndex(ERR_ENTRY_POINT_MISSING))?;
+    let mut nearest = beam_search(
+        store,
+        &*wtxn,
+        vector,
+        entry_point,
+        config.hnsw.ef_construction,
+        false,
+    )?;
+    nearest.retain(|entry| entry.id != *id);
+    nearest.truncate(config.hnsw.m_max_0);
+
+    let mut merged_neighbors = load_neighbors(store, &*wtxn, id)?;
+    let mut added_neighbors = Vec::new();
+    for entry in nearest {
+        if merged_neighbors.contains(&entry.id) {
+            continue;
+        }
+        merged_neighbors.push(entry.id);
+        added_neighbors.push(entry.id);
+    }
+
+    if added_neighbors.is_empty() {
+        return Ok(());
+    }
+
+    write_neighbors(store, wtxn, id, &merged_neighbors)?;
+
+    for neighbor_id in added_neighbors {
+        let mut neighbors = load_neighbors(store, &*wtxn, &neighbor_id)?;
+        if neighbors.contains(id) {
+            continue;
+        }
+
+        neighbors.push(*id);
+        if neighbors.len() > config.hnsw.m_max_0 {
+            neighbors =
+                prune_neighbors_for_node(store, &*wtxn, &neighbor_id, &neighbors, config.hnsw.m_max_0)?;
+        }
+
+        write_neighbors(store, wtxn, &neighbor_id, &neighbors)?;
+    }
 
     Ok(())
 }
@@ -240,7 +300,6 @@ pub(crate) fn increment_vector_version(store: &Store, wtxn: &mut RwTxn<'_>) -> R
         .put(wtxn, VECTOR_VERSION_KEY, &next.to_le_bytes())?;
     Ok(next)
 }
-
 pub(crate) fn hnsw_search(
     store: &Store,
     config: &VaultConfig,
@@ -344,7 +403,7 @@ fn beam_search(
     let mut results: BinaryHeap<HeapEntry> = BinaryHeap::new();
     // Reserve extra headroom so the visited set can absorb frontier growth
     // without immediately rehashing.
-    let mut visited: HashSet<EntityId> = HashSet::with_capacity(ef * 2);
+    let mut visited: HashSet<EntityId> = HashSet::with_capacity(ef.saturating_mul(2));
 
     visited.insert(entry_point);
     candidates.push(Reverse(entry));
@@ -519,7 +578,7 @@ fn load_neighbors(store: &Store, txn: &RoTxn<'_>, id: &EntityId) -> Result<Vec<E
     }
 
     raw.chunks_exact(ENTITY_ID_LEN)
-        .map(|chunk| parse_entity_id(chunk, ERR_NEIGHBOR_KEY_BYTES))
+        .map(|chunk| parse_entity_id(chunk, ERR_NEIGHBOR_VALUE_BYTES))
         .collect()
 }
 
@@ -602,8 +661,8 @@ fn collect_backlink_updates(
     id: &EntityId,
 ) -> Result<Vec<(EntityId, Vec<u8>)>> {
     let mut updates = Vec::new();
-    // Deletes scrub backlinks eagerly. This requires a full scan of the
-    // neighbor table because we do not maintain a reverse-adjacency index.
+    // TODO: Replace this delete-time full scan with a reverse-adjacency index
+    // once we need sublinear delete performance at larger graph sizes.
     for entry in store.hnsw_neighbors.iter(txn)? {
         let (key, raw) = entry?;
         let node_id = parse_entity_id(key, ERR_NEIGHBOR_KEY_BYTES)?;
@@ -728,7 +787,7 @@ mod tests {
     }
 
     #[test]
-    fn hnsw_insert_existing_node_keeps_links_and_count() -> Result<()> {
+    fn hnsw_insert_existing_node_updates_neighbors_and_count() -> Result<()> {
         let temp_dir = tempdir()?;
         let store = Store::open(temp_dir.path(), &test_config())?;
         let mut wtxn = store.env.write_txn()?;
@@ -750,9 +809,9 @@ mod tests {
         hnsw_insert(&store, &test_config(), &mut wtxn, &a, &[0.0, 1.0, 0.0, 0.0])?;
 
         assert_eq!(read_count(&store, &wtxn)?, 3);
-        assert_eq!(load_neighbors(&store, &wtxn, &a)?, vec![b]);
+        assert_eq!(load_neighbors(&store, &wtxn, &a)?, vec![b, c]);
         assert_eq!(load_neighbors(&store, &wtxn, &b)?, vec![a, c]);
-        assert_eq!(load_neighbors(&store, &wtxn, &c)?, vec![b]);
+        assert_eq!(load_neighbors(&store, &wtxn, &c)?, vec![a]);
         Ok(())
     }
 
@@ -798,6 +857,11 @@ mod tests {
         assert!(
             after.iter().any(|entry| entry.id == b),
             "expected B to remain reachable after refresh, got {after:?}"
+        );
+        let rtxn = vault.store.env.read_txn()?;
+        assert!(
+            load_neighbors(&vault.store, &rtxn, &a)?.contains(&c),
+            "expected refreshed node to pick up a new outgoing link toward its new region"
         );
         Ok(())
     }
