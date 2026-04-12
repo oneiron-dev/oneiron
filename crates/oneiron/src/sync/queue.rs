@@ -318,7 +318,7 @@ fn decode_embed_key(key: &[u8]) -> Result<EntityId> {
     }
     let mut bytes = [0u8; 16];
     bytes.copy_from_slice(&key[2..18]);
-    Ok(EntityId::from_bytes(bytes))
+    EntityId::from_bytes(bytes)
 }
 
 #[cfg(test)]

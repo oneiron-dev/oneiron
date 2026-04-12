@@ -61,7 +61,8 @@ fn first_child_of_parent(
         if key.len() != EDGE_KEY_LEN {
             continue;
         }
-        let parent = EntityId::from_bytes(key[17..33].try_into().map_err(|_| Error::InvalidKey)?);
+        let parent =
+            EntityId::from_bytes(key[17..33].try_into().map_err(|_| Error::InvalidKey)?)?;
         return Ok(Some(parent));
     }
     Ok(None)
@@ -309,7 +310,8 @@ impl Vault {
             if ts >= end {
                 break; // temporal keys are sorted by timestamp (BE), so we can stop
             }
-            let id = EntityId::from_bytes(key[8..24].try_into().map_err(|_| Error::InvalidKey)?);
+            let id =
+                EntityId::from_bytes(key[8..24].try_into().map_err(|_| Error::InvalidKey)?)?;
             ids.push(id);
         }
         Ok(ids)
@@ -394,7 +396,8 @@ impl Vault {
             if key.len() != 17 {
                 continue;
             }
-            let id = EntityId::from_bytes(key[1..17].try_into().map_err(|_| Error::InvalidKey)?);
+            let id =
+                EntityId::from_bytes(key[1..17].try_into().map_err(|_| Error::InvalidKey)?)?;
             ids.push(id);
             if ids.len() >= MAX_TYPE_QUERY_RESULTS {
                 break;
@@ -461,7 +464,8 @@ impl Vault {
             if key.len() != EDGE_KEY_LEN {
                 continue;
             }
-            let peer = EntityId::from_bytes(key[17..33].try_into().map_err(|_| Error::InvalidKey)?);
+            let peer =
+                EntityId::from_bytes(key[17..33].try_into().map_err(|_| Error::InvalidKey)?)?;
 
             if let Some(req_type) = peer_type {
                 if !self.entity_has_type(rtxn, &peer, req_type)? {
@@ -536,7 +540,7 @@ impl Vault {
                     continue;
                 }
                 let child =
-                    EntityId::from_bytes(key[17..33].try_into().map_err(|_| Error::InvalidKey)?);
+                    EntityId::from_bytes(key[17..33].try_into().map_err(|_| Error::InvalidKey)?)?;
                 if visited.insert(child) {
                     frontier.push_back((child, depth + 1));
                 }
@@ -653,7 +657,7 @@ fn parse_edge_record(key: &[u8], value: &[u8]) -> Result<EdgeInfo> {
     }
 
     let kind = EdgeKind::try_from_u8(key[16]).ok_or(Error::InvalidKey)?;
-    let target = EntityId::from_bytes(key[17..33].try_into().map_err(|_| Error::InvalidKey)?);
+    let target = EntityId::from_bytes(key[17..33].try_into().map_err(|_| Error::InvalidKey)?)?;
     let weight = f32::from_le_bytes(value[..4].try_into().map_err(|_| Error::InvalidKey)?);
     let created_at = u64::from_le_bytes(value[4..12].try_into().map_err(|_| Error::InvalidKey)?);
     let vad = parse_vad(value);
@@ -795,8 +799,8 @@ mod tests {
 
     #[test]
     fn encode_edge_key_has_exact_layout() {
-        let src = EntityId::from_bytes([0x11; 16]);
-        let tgt = EntityId::from_bytes([0x22; 16]);
+        let src = EntityId::from_bytes_unchecked([0x11; 16]);
+        let tgt = EntityId::from_bytes_unchecked([0x22; 16]);
         let kind = EdgeKind::DerivedFrom;
 
         let key = Store::encode_edge_key(&src, kind, &tgt);
@@ -2369,6 +2373,18 @@ mod tests {
         assert!(short_id_prefix(99).is_err());
         assert!(short_id_prefix(255).is_err());
         assert!(short_id_prefix(30).is_err()); // companion range, not yet defined
+    }
+
+    #[test]
+    fn entity_id_rejects_reserved_sentinel_bytes() {
+        assert!(EntityId::from_bytes([0x00; 16]).is_err());
+        assert!(EntityId::from_bytes([0xFF; 16]).is_err());
+    }
+
+    #[test]
+    fn entity_id_from_hex_rejects_reserved_sentinel_bytes() {
+        assert!(EntityId::from_hex("00000000000000000000000000000000").is_err());
+        assert!(EntityId::from_hex("ffffffffffffffffffffffffffffffff").is_err());
     }
 
     #[test]

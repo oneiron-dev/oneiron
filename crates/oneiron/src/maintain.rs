@@ -310,7 +310,7 @@ fn commit_rebuilt_hnsw(
 
 fn parse_entity_id(bytes: &[u8]) -> Result<EntityId> {
     let raw: [u8; ENTITY_ID_LEN] = bytes.try_into().map_err(|_| Error::InvalidKey)?;
-    Ok(EntityId::from_bytes(raw))
+    EntityId::from_bytes(raw)
 }
 
 fn decode_u64_opt(raw: Option<&[u8]>) -> Result<Option<u64>> {
@@ -358,7 +358,7 @@ mod tests {
     }
 
     fn entity(byte: u8) -> EntityId {
-        EntityId::from_bytes([byte; ENTITY_ID_LEN])
+        EntityId::from_bytes_unchecked([byte; ENTITY_ID_LEN])
     }
 
     fn read_u64_meta(vault: &Vault, key: &[u8]) -> Result<u64> {

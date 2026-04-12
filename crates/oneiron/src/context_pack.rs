@@ -607,7 +607,9 @@ fn scan_edges_for_entity(store: &Store, rtxn: &RoTxn<'_>, id: &EntityId) -> Resu
         let Ok(target_bytes) = key[17..33].try_into() else {
             continue;
         };
-        let target = EntityId::from_bytes(target_bytes);
+        let Ok(target) = EntityId::from_bytes(target_bytes) else {
+            continue;
+        };
 
         let Ok(weight_bytes) = value[..4].try_into() else {
             continue;
@@ -945,7 +947,7 @@ mod tests {
         )?;
 
         for i in 0..20_u8 {
-            let id = EntityId::from_bytes([i + 1; 16]);
+            let id = EntityId::from_bytes_unchecked([i + 1; 16]);
             put_text_entity(
                 &vault,
                 &id,

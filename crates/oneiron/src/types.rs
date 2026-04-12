@@ -16,8 +16,19 @@ impl EntityId {
         Self(Uuid::now_v7().into_bytes())
     }
 
-    /// Creates an identifier from raw bytes.
-    pub fn from_bytes(bytes: [u8; 16]) -> Self {
+    /// Creates an identifier from raw bytes, rejecting reserved sentinel IDs.
+    pub fn from_bytes(bytes: [u8; 16]) -> crate::error::Result<Self> {
+        if bytes == [0x00; ENTITY_ID_LEN] || bytes == [0xFF; ENTITY_ID_LEN] {
+            return Err(crate::error::Error::InvalidKey);
+        }
+        Ok(Self(bytes))
+    }
+
+    /// Creates an identifier from raw bytes without validating sentinel patterns.
+    ///
+    /// Reserved for internal construction where the caller already knows the
+    /// bytes are either valid entity IDs or intentional sentinel values.
+    pub fn from_bytes_unchecked(bytes: [u8; 16]) -> Self {
         Self(bytes)
     }
 
@@ -48,7 +59,7 @@ impl EntityId {
             let lo = hex_nibble(chunk[1]).ok_or(crate::error::Error::InvalidKey)?;
             bytes[i] = (hi << 4) | lo;
         }
-        Ok(Self(bytes))
+        Self::from_bytes(bytes)
     }
 }
 

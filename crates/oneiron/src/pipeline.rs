@@ -511,7 +511,7 @@ fn execute_phonetic(
         }
 
         for chunk in posting.chunks_exact(ENTITY_ID_LEN) {
-            let id = EntityId::from_bytes(chunk.try_into().map_err(|_| Error::InvalidKey)?);
+            let id = EntityId::from_bytes(chunk.try_into().map_err(|_| Error::InvalidKey)?)?;
             let entry = accumulators.entry(id).or_default();
             entry.score += 1.0;
             entry.matches += 1;
@@ -915,7 +915,7 @@ fn decode_temporal_index_row(key: &[u8]) -> Result<TemporalIndexRow> {
         key[8..TEMPORAL_KEY_LEN]
             .try_into()
             .map_err(|_| Error::InvalidKey)?,
-    );
+    )?;
     Ok(TemporalIndexRow { timestamp, id })
 }
 
@@ -1323,7 +1323,7 @@ mod tests {
     }
 
     fn entity_id(byte: u8) -> EntityId {
-        EntityId::from_bytes([byte; 16])
+        EntityId::from_bytes_unchecked([byte; 16])
     }
 
     fn put_entity(

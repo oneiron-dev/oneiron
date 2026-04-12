@@ -424,8 +424,8 @@ mod tests {
 
     #[test]
     fn parse_edge_key_valid() {
-        let src = EntityId::from_bytes([0x11; 16]);
-        let tgt = EntityId::from_bytes([0x22; 16]);
+        let src = EntityId::from_bytes_unchecked([0x11; 16]);
+        let tgt = EntityId::from_bytes_unchecked([0x22; 16]);
         let key = format_edge_key(&src, EdgeKind::Mentions, &tgt);
         let (s, k, t) = parse_edge_key(&key).unwrap();
         assert_eq!(s, src);
