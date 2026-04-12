@@ -3,7 +3,7 @@
 use std::collections::{HashMap, HashSet};
 
 use heed::{RoTxn, RwTxn};
-use xxhash_rust::xxh32::xxh32;
+use xxhash_rust::xxh3::xxh3_128;
 
 use crate::error::{Error, Result};
 use crate::store::Store;
@@ -11,11 +11,13 @@ use crate::types::{
     EdgeKind, EntityId, ScoredEntity, VaultConfig, EDGE_KEY_LEN, EDGE_VALUE_LEN, ENTITY_ID_LEN,
 };
 
-const SEED_HASH_LEN: usize = 32;
+const SEED_HASH_LEN: usize = 16;
+const LEGACY_SEED_HASH_LEN: usize = 32;
 const CACHE_HEADER_LEN: usize = 17;
 const CACHE_STALE_OFFSET: usize = 16;
 const CACHE_ENTRY_LEN: usize = 20;
 const CACHE_DEP_KEY_LEN: usize = ENTITY_ID_LEN + SEED_HASH_LEN;
+const LEGACY_CACHE_DEP_KEY_LEN: usize = ENTITY_ID_LEN + LEGACY_SEED_HASH_LEN;
 const CACHE_TTL_SECS: u64 = 86_400;
 use crate::store::GRAPH_VERSION_KEY;
 const SCORE_EPSILON: f32 = 1e-10;
@@ -94,7 +96,7 @@ pub(crate) fn ppr_query(
         return Ok(Vec::new());
     }
 
-    let seed_hash = hash_seeds(seeds);
+    let seed_hash = hash_seeds(seeds, depth, alpha);
     let now = crate::unix_seconds_now();
 
     {
@@ -136,31 +138,47 @@ pub(crate) fn cleanup_ppr_cache(
     now: u64,
 ) -> Result<(u64, u64)> {
     let mut evicted_hashes = HashSet::<[u8; SEED_HASH_LEN]>::new();
+    let mut cache_keys_to_delete = Vec::new();
     for entry in store.ppr_cache.iter(&*wtxn)? {
         let (seed_hash_key, value) = entry?;
+        if seed_hash_key.len() != SEED_HASH_LEN {
+            cache_keys_to_delete.push(seed_hash_key.to_vec());
+            continue;
+        }
+
         let seed_hash: [u8; SEED_HASH_LEN] =
             seed_hash_key.try_into().map_err(|_| Error::InvalidKey)?;
         let (computed_at, _, stale) = parse_cache_header(value)?;
         if stale != 0 || now.saturating_sub(computed_at) > max_age_secs {
             evicted_hashes.insert(seed_hash);
+            cache_keys_to_delete.push(seed_hash_key.to_vec());
         }
     }
 
-    for seed_hash in &evicted_hashes {
-        store.ppr_cache.delete(wtxn, seed_hash)?;
+    for key in &cache_keys_to_delete {
+        store.ppr_cache.delete(wtxn, key)?;
     }
 
     let mut dep_keys_to_delete = Vec::new();
     for entry in store.ppr_cache_deps.iter(&*wtxn)? {
         let (dep_key, _) = entry?;
         if dep_key.len() != CACHE_DEP_KEY_LEN {
-            return Err(Error::InvalidKey);
+            dep_keys_to_delete.push(dep_key.to_vec());
+            continue;
         }
 
+        let entity_id = EntityId::from_bytes(
+            dep_key[..ENTITY_ID_LEN]
+                .try_into()
+                .map_err(|_| Error::InvalidKey)?,
+        );
         let seed_hash: [u8; SEED_HASH_LEN] = dep_key[ENTITY_ID_LEN..]
             .try_into()
             .map_err(|_| Error::InvalidKey)?;
-        if evicted_hashes.contains(&seed_hash) || store.ppr_cache.get(&*wtxn, &seed_hash)?.is_none()
+
+        if store.entities.get(&*wtxn, entity_id.as_bytes())?.is_none()
+            || evicted_hashes.contains(&seed_hash)
+            || store.ppr_cache.get(&*wtxn, &seed_hash)?.is_none()
         {
             dep_keys_to_delete.push(dep_key.to_vec());
         }
@@ -170,23 +188,32 @@ pub(crate) fn cleanup_ppr_cache(
         store.ppr_cache_deps.delete(wtxn, key)?;
     }
 
-    Ok((evicted_hashes.len() as u64, dep_keys_to_delete.len() as u64))
+    Ok((
+        cache_keys_to_delete.len() as u64,
+        dep_keys_to_delete.len() as u64,
+    ))
 }
 
 fn invalidate_ppr_caches(store: &Store, wtxn: &mut RwTxn<'_>, entity_id: &EntityId) -> Result<()> {
     let mut hashes = HashSet::<[u8; SEED_HASH_LEN]>::new();
+    let mut dep_keys_to_delete = Vec::new();
     for entry in store
         .ppr_cache_deps
         .prefix_iter(&*wtxn, entity_id.as_bytes())?
     {
         let (key, _) = entry?;
         if key.len() != CACHE_DEP_KEY_LEN {
-            return Err(Error::InvalidKey);
+            dep_keys_to_delete.push(key.to_vec());
+            continue;
         }
 
         let mut seed_hash = [0_u8; SEED_HASH_LEN];
         seed_hash.copy_from_slice(&key[ENTITY_ID_LEN..CACHE_DEP_KEY_LEN]);
         hashes.insert(seed_hash);
+    }
+
+    for key in &dep_keys_to_delete {
+        store.ppr_cache_deps.delete(wtxn, key)?;
     }
 
     for seed_hash in hashes {
@@ -210,8 +237,7 @@ pub(crate) fn invalidate_ppr_for_edge(
     tgt: &EntityId,
 ) -> Result<()> {
     invalidate_ppr_caches(store, wtxn, src)?;
-    invalidate_ppr_caches(store, wtxn, tgt)?;
-    increment_graph_version(store, wtxn)
+    invalidate_ppr_caches(store, wtxn, tgt)
 }
 
 pub(crate) fn invalidate_ppr_for_delete(
@@ -224,13 +250,10 @@ pub(crate) fn invalidate_ppr_for_delete(
     for neighbor in neighbors {
         invalidate_ppr_caches(store, wtxn, neighbor)?;
     }
-    if !neighbors.is_empty() {
-        increment_graph_version(store, wtxn)?;
-    }
     Ok(())
 }
 
-fn increment_graph_version(store: &Store, wtxn: &mut RwTxn<'_>) -> Result<()> {
+pub(crate) fn increment_graph_version(store: &Store, wtxn: &mut RwTxn<'_>) -> Result<()> {
     let current = read_graph_version(store, &*wtxn)?;
     let next = current.checked_add(1).ok_or(Error::InvalidKey)?;
     store
@@ -282,15 +305,20 @@ fn sort_scores(scores: &mut [ScoredEntity]) {
     });
 }
 
-fn hash_seeds(seeds: &[EntityId]) -> [u8; SEED_HASH_LEN] {
+fn hash_seeds(seeds: &[EntityId], depth: u32, alpha: f32) -> [u8; SEED_HASH_LEN] {
     let mut sorted = seeds.to_vec();
     sorted.sort_unstable_by(|a, b| a.as_bytes().cmp(b.as_bytes()));
 
-    let bytes: Vec<u8> = sorted.iter().flat_map(|seed| *seed.as_bytes()).collect();
+    let mut bytes = Vec::with_capacity(
+        sorted.len() * ENTITY_ID_LEN + std::mem::size_of::<u32>() + std::mem::size_of::<f32>(),
+    );
+    for seed in &sorted {
+        bytes.extend_from_slice(seed.as_bytes());
+    }
+    bytes.extend_from_slice(&depth.to_le_bytes());
+    bytes.extend_from_slice(&alpha.to_le_bytes());
 
-    let mut out = [0_u8; SEED_HASH_LEN];
-    out[..4].copy_from_slice(&xxh32(&bytes, 0).to_le_bytes());
-    out
+    xxh3_128(&bytes).to_le_bytes()
 }
 
 fn encode_dep_key(
@@ -368,6 +396,7 @@ fn decode_u64(raw: &[u8]) -> Result<u64> {
 
 #[cfg(test)]
 mod tests {
+    use heed::types::Bytes;
     use tempfile::tempdir;
 
     use super::*;
@@ -406,8 +435,8 @@ mod tests {
         }
     }
 
-    fn cache_row(vault: &Vault, seeds: &[EntityId]) -> Result<Vec<u8>> {
-        let hash = hash_seeds(seeds);
+    fn cache_row(vault: &Vault, seeds: &[EntityId], depth: u32, alpha: f32) -> Result<Vec<u8>> {
+        let hash = hash_seeds(seeds, depth, alpha);
         let rtxn = vault.store.env.read_txn()?;
         let row = vault
             .store
@@ -415,6 +444,35 @@ mod tests {
             .get(&rtxn, &hash)?
             .ok_or(Error::EntityNotFound)?;
         Ok(row.to_vec())
+    }
+
+    fn graph_version(vault: &Vault) -> Result<u64> {
+        let rtxn = vault.store.env.read_txn()?;
+        read_graph_version(&vault.store, &rtxn)
+    }
+
+    fn count_entries(db: &heed::Database<Bytes, Bytes>, vault: &Vault) -> Result<usize> {
+        let rtxn = vault.store.env.read_txn()?;
+        let mut count = 0;
+        for entry in db.iter(&rtxn)? {
+            entry?;
+            count += 1;
+        }
+        Ok(count)
+    }
+
+    fn legacy_cache_key(byte: u8) -> [u8; LEGACY_SEED_HASH_LEN] {
+        [byte; LEGACY_SEED_HASH_LEN]
+    }
+
+    fn legacy_dep_key(
+        entity_id: EntityId,
+        seed_hash: [u8; LEGACY_SEED_HASH_LEN],
+    ) -> [u8; LEGACY_CACHE_DEP_KEY_LEN] {
+        let mut key = [0_u8; LEGACY_CACHE_DEP_KEY_LEN];
+        key[..ENTITY_ID_LEN].copy_from_slice(entity_id.as_bytes());
+        key[ENTITY_ID_LEN..].copy_from_slice(&seed_hash);
+        key
     }
 
     #[test]
@@ -512,9 +570,9 @@ mod tests {
         vault.put_edge(&a, EdgeKind::BelongsTo, &b, 1.0)?;
 
         let first = ppr_query(&vault.store, &vault.config, &[a], 3, 0.15)?;
-        let cache_after_first = cache_row(&vault, &[a])?;
+        let cache_after_first = cache_row(&vault, &[a], 3, 0.15)?;
         let second = ppr_query(&vault.store, &vault.config, &[a], 3, 0.15)?;
-        let cache_after_second = cache_row(&vault, &[a])?;
+        let cache_after_second = cache_row(&vault, &[a], 3, 0.15)?;
 
         assert_scores_equal(&first, &second);
         assert_eq!(cache_after_first, cache_after_second);
@@ -531,15 +589,15 @@ mod tests {
         vault.put_edge(&a, EdgeKind::BelongsTo, &b, 1.0)?;
 
         let first = ppr_query(&vault.store, &vault.config, &[a], 3, 0.15)?;
-        let cache_before = cache_row(&vault, &[a])?;
+        let cache_before = cache_row(&vault, &[a], 3, 0.15)?;
         assert_eq!(cache_before[16], 0);
 
         vault.put_edge(&a, EdgeKind::BelongsTo, &b, 0.2)?;
-        let cache_stale = cache_row(&vault, &[a])?;
+        let cache_stale = cache_row(&vault, &[a], 3, 0.15)?;
         assert_eq!(cache_stale[16], 1);
 
         let second = ppr_query(&vault.store, &vault.config, &[a], 3, 0.15)?;
-        let cache_after = cache_row(&vault, &[a])?;
+        let cache_after = cache_row(&vault, &[a], 3, 0.15)?;
         assert_eq!(cache_after[16], 0);
         assert_ne!(cache_stale, cache_after);
 
@@ -568,15 +626,178 @@ mod tests {
 
         // Populate the cache for seeds [a].
         let _scores = ppr_query(&vault.store, &vault.config, &[a], 3, 0.15)?;
-        let cache_before = cache_row(&vault, &[a])?;
+        let cache_before = cache_row(&vault, &[a], 3, 0.15)?;
         assert_eq!(cache_before[CACHE_STALE_OFFSET], 0);
 
         // Delete entity b — removes a->b and b->c edges.
         vault.delete_entity(&b)?;
 
         // Cache for seeds [a] must now be stale because a's edge to b was removed.
-        let cache_after = cache_row(&vault, &[a])?;
+        let cache_after = cache_row(&vault, &[a], 3, 0.15)?;
         assert_eq!(cache_after[CACHE_STALE_OFFSET], 1);
+        Ok(())
+    }
+
+    #[test]
+    fn ppr_cache_key_changes_with_depth_and_alpha() -> Result<()> {
+        let temp_dir = tempdir()?;
+        let vault = Vault::open(temp_dir.path(), test_config())?;
+        let a = entity(23);
+        let b = entity(24);
+
+        vault.put_edge(&a, EdgeKind::BelongsTo, &b, 1.0)?;
+
+        let _ = ppr_query(&vault.store, &vault.config, &[a], 3, 0.15)?;
+        let _ = ppr_query(&vault.store, &vault.config, &[a], 4, 0.15)?;
+        let _ = ppr_query(&vault.store, &vault.config, &[a], 3, 0.25)?;
+
+        let hash_depth_3 = hash_seeds(&[a], 3, 0.15);
+        let hash_depth_4 = hash_seeds(&[a], 4, 0.15);
+        let hash_alpha_25 = hash_seeds(&[a], 3, 0.25);
+
+        assert_ne!(hash_depth_3, hash_depth_4);
+        assert_ne!(hash_depth_3, hash_alpha_25);
+        assert_eq!(count_entries(&vault.store.ppr_cache, &vault)?, 3);
+        Ok(())
+    }
+
+    #[test]
+    fn batch_graph_mutations_increment_version_once() -> Result<()> {
+        let temp_dir = tempdir()?;
+        let vault = Vault::open(temp_dir.path(), test_config())?;
+        let a = entity(25);
+        let b = entity(26);
+        let c = entity(27);
+
+        assert_eq!(graph_version(&vault)?, 0);
+
+        vault
+            .batch()
+            .edge(&a, EdgeKind::BelongsTo, &b, 1.0)
+            .edge(&a, EdgeKind::BelongsTo, &c, 0.5)
+            .commit()?;
+
+        assert_eq!(graph_version(&vault)?, 1);
+        Ok(())
+    }
+
+    #[test]
+    fn delete_entity_increments_graph_version_once_when_edges_removed() -> Result<()> {
+        let temp_dir = tempdir()?;
+        let vault = Vault::open(temp_dir.path(), test_config())?;
+        let a = entity(28);
+        let b = entity(29);
+        let c = entity(30);
+        let tr = TimeRange { start: 1, end: 1 };
+
+        vault.put_entity(&a, 1, tr, 1, b"a-data")?;
+        vault.put_entity(&b, 1, tr, 1, b"b-data")?;
+        vault.put_entity(&c, 1, tr, 1, b"c-data")?;
+        vault.put_edge(&a, EdgeKind::BelongsTo, &b, 1.0)?;
+        vault.put_edge(&b, EdgeKind::BelongsTo, &c, 1.0)?;
+
+        let before = graph_version(&vault)?;
+        assert!(vault.delete_entity(&b)?);
+        let after = graph_version(&vault)?;
+
+        assert_eq!(after, before + 1);
+        Ok(())
+    }
+
+    #[test]
+    fn cleanup_ppr_cache_removes_orphaned_deps_for_missing_entities() -> Result<()> {
+        let temp_dir = tempdir()?;
+        let vault = Vault::open(temp_dir.path(), test_config())?;
+        let a = entity(31);
+        let b = entity(32);
+        let missing = entity(33);
+        let tr = TimeRange { start: 1, end: 1 };
+
+        vault.put_entity(&a, 1, tr, 1, b"a-data")?;
+        vault.put_entity(&b, 1, tr, 1, b"b-data")?;
+        vault.put_edge(&a, EdgeKind::BelongsTo, &b, 1.0)?;
+        let _ = ppr_query(&vault.store, &vault.config, &[a], 3, 0.15)?;
+        let seed_hash = hash_seeds(&[a], 3, 0.15);
+
+        let mut wtxn = vault.store.env.write_txn()?;
+        let orphan_dep = encode_dep_key(&missing, &seed_hash);
+        vault
+            .store
+            .ppr_cache_deps
+            .put(&mut wtxn, &orphan_dep, &[])?;
+        wtxn.commit()?;
+
+        assert_eq!(count_entries(&vault.store.ppr_cache, &vault)?, 1);
+        assert_eq!(count_entries(&vault.store.ppr_cache_deps, &vault)?, 2);
+
+        let report = vault.maintain().cleanup_ppr_cache(CACHE_TTL_SECS).run()?;
+        assert_eq!(report.ppr_caches_evicted, 0);
+        assert_eq!(count_entries(&vault.store.ppr_cache, &vault)?, 1);
+        assert_eq!(count_entries(&vault.store.ppr_cache_deps, &vault)?, 1);
+        Ok(())
+    }
+
+    #[test]
+    fn cleanup_ppr_cache_removes_legacy_rows() -> Result<()> {
+        let temp_dir = tempdir()?;
+        let vault = Vault::open(temp_dir.path(), test_config())?;
+        let a = entity(34);
+        let b = entity(35);
+        let tr = TimeRange { start: 1, end: 1 };
+
+        vault.put_entity(&a, 1, tr, 1, b"a-data")?;
+        vault.put_entity(&b, 1, tr, 1, b"b-data")?;
+        vault.put_edge(&a, EdgeKind::BelongsTo, &b, 1.0)?;
+        let _ = ppr_query(&vault.store, &vault.config, &[a], 3, 0.15)?;
+
+        let now = crate::unix_seconds_now();
+        let legacy_hash = legacy_cache_key(0xAB);
+        let legacy_dep = legacy_dep_key(a, legacy_hash);
+        let legacy_value = encode_cache_value(now, 0, 0, &[]);
+
+        let mut wtxn = vault.store.env.write_txn()?;
+        vault
+            .store
+            .ppr_cache
+            .put(&mut wtxn, &legacy_hash, &legacy_value)?;
+        vault
+            .store
+            .ppr_cache_deps
+            .put(&mut wtxn, &legacy_dep, &[])?;
+        wtxn.commit()?;
+
+        assert_eq!(count_entries(&vault.store.ppr_cache, &vault)?, 2);
+        assert_eq!(count_entries(&vault.store.ppr_cache_deps, &vault)?, 2);
+
+        let report = vault.maintain().cleanup_ppr_cache(CACHE_TTL_SECS).run()?;
+        assert!(report.ppr_caches_evicted >= 1);
+        assert!(report.ppr_deps_cleaned >= 1);
+        assert_eq!(count_entries(&vault.store.ppr_cache, &vault)?, 1);
+        assert_eq!(count_entries(&vault.store.ppr_cache_deps, &vault)?, 1);
+        Ok(())
+    }
+
+    #[test]
+    fn edge_invalidation_self_heals_legacy_dep_rows() -> Result<()> {
+        let temp_dir = tempdir()?;
+        let vault = Vault::open(temp_dir.path(), test_config())?;
+        let a = entity(36);
+        let b = entity(37);
+        let legacy_hash = legacy_cache_key(0xCD);
+        let legacy_dep = legacy_dep_key(a, legacy_hash);
+
+        let mut wtxn = vault.store.env.write_txn()?;
+        vault
+            .store
+            .ppr_cache_deps
+            .put(&mut wtxn, &legacy_dep, &[])?;
+        wtxn.commit()?;
+
+        assert_eq!(count_entries(&vault.store.ppr_cache_deps, &vault)?, 1);
+
+        vault.put_edge(&a, EdgeKind::BelongsTo, &b, 1.0)?;
+
+        assert_eq!(count_entries(&vault.store.ppr_cache_deps, &vault)?, 0);
         Ok(())
     }
 }

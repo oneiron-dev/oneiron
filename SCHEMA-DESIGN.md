@@ -18,8 +18,8 @@
 | 7 | `text_postings` | `term` (UTF-8) | variable | `[(entity_id(16), tf(u32 4B))]` packed | N×20B | BM25 inverted index |
 | 8 | `text_meta` | `entity_id` (16B) | 16B | `doc_len(u32 4B) \| field_count(u32 4B)` | 8B | BM25 document metadata |
 | 9 | `text_forward` | `entity_id` (16B) | 16B | `[term1\0term2\0...]` packed UTF-8 | variable | BM25 forward index (for deindexing) |
-| 10 | `ppr_cache` | `seed_set_hash` (32B, SHA-256) | 32B | `[meta(17B)] [scores N×20B]` | variable | Cached PPR results |
-| 11 | `ppr_cache_deps` | `entity_id(16) \| seed_hash(32)` | 48B | empty | 0B | PPR cache invalidation index |
+| 10 | `ppr_cache` | `seed_set_hash` (16B, XXH3-128 of sorted seeds + depth + alpha) | 16B | `[meta(17B)] [scores N×20B]` | variable | Cached PPR results |
+| 11 | `ppr_cache_deps` | `entity_id(16) \| seed_hash(16)` | 32B | empty | 0B | PPR cache invalidation index |
 | 12 | `type_index` | `entity_type(1) \| entity_id(16)` | 17B | empty | 0B | Entity type filtering |
 | 13 | `temporal_occurred_start` | `start_ts(u64 8B BE) \| entity_id(16)` | 24B | empty | 0B | Bi-temporal: when it started |
 | 14 | `temporal_occurred_end` | `end_ts(u64 8B BE) \| entity_id(16)` | 24B | empty | 0B | Bi-temporal: when it ended |
@@ -192,7 +192,7 @@ struct EdgeValue {
 Where scores are `[(entity_id: 16B, score: f32 4B)]` packed = N×20B.
 
 - `computed_at`: timestamp for TTL checks (active=24h, recent=72h, dormant=168h)
-- `graph_version`: monotonic counter, incremented on edge writes. If current > cached, may be stale.
+- `graph_version`: monotonic counter, incremented once per batch of graph mutations. If current > cached, may be stale.
 - `stale`: set to 1 when entity's edges change (via ppr_cache_deps lookup). Search skips stale entries.
 
 ---
@@ -205,7 +205,7 @@ Where scores are `[(entity_id: 16B, score: f32 4B)]` packed = N×20B.
 | `"count"` | u64 (8B LE) | Total nodes in graph |
 | `"model_id"` | UTF-8 string | e.g., "qwen3-8b-v1" |
 | `"model_version"` | UTF-8 string | e.g., "2026-01-15" |
-| `"graph_version"` | u64 (8B LE) | Monotonic counter, incremented on edge writes |
+| `"graph_version"` | u64 (8B LE) | Monotonic counter, incremented once per batch of graph mutations |
 
 ---
 
@@ -460,6 +460,7 @@ When `delete_entity(E)` is called, one write transaction does:
    prefix scan edges_out[E|*] → delete each, plus matching edges_in entry
    prefix scan edges_in[E|*] → delete each, plus matching edges_out entry
    for each affected entity: check ppr_cache_deps, mark stale
+   after batch graph mutations commit: increment `graph_version` once
 
 5. TYPE + TEMPORAL
    delete type_index[type|E]
@@ -1004,7 +1005,7 @@ pub struct TokenAllocation {
 
 2. **Temporal α parameter:** How does the pipeline decide whether "occurred" or "learned" matters more for a given query? Heuristic from query text? Explicit parameter? LLM decides?
 
-3. **PPR graph_version counter:** Stored where? Proposed: `hnsw_meta["graph_version"]` as u64, incremented on every edge write. Same LMDB environment, atomic with the edge write.
+3. **PPR graph_version counter:** Stored where? `hnsw_meta["graph_version"]` as u64, incremented once per batch of graph mutations in the same LMDB environment.
 
 4. **Collection stats atomicity:** BM25 total_docs and total_length (sentinel keys in text_meta) are updated on every index/deindex. Under concurrent reads, readers see a consistent snapshot (LMDB MVCC). No issue.
 

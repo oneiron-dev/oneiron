@@ -408,6 +408,8 @@ pub(crate) fn apply_ops(
     wtxn: &mut RwTxn<'_>,
     ops: Vec<BatchOp>,
 ) -> Result<()> {
+    let mut had_graph_mutation = false;
+
     for op in ops {
         match op {
             BatchOp::Put {
@@ -432,6 +434,7 @@ pub(crate) fn apply_ops(
             } => {
                 apply_edge(store, wtxn, src, kind, tgt, weight, vad)?;
                 ppr::invalidate_ppr_for_edge(store, wtxn, &src, &tgt)?;
+                had_graph_mutation = true;
             }
             BatchOp::EdgeWithCreatedAt {
                 src,
@@ -443,6 +446,7 @@ pub(crate) fn apply_ops(
             } => {
                 apply_edge_with_created_at(store, wtxn, src, kind, tgt, weight, created_at, vad)?;
                 ppr::invalidate_ppr_for_edge(store, wtxn, &src, &tgt)?;
+                had_graph_mutation = true;
             }
             BatchOp::Text { id, fields } => {
                 crate::bm25::index_text(store, wtxn, &id, &fields)?;
@@ -453,13 +457,20 @@ pub(crate) fn apply_ops(
             BatchOp::Delete { id } => {
                 let (_, neighbors) = deindex_entity(store, wtxn, &id)?;
                 ppr::invalidate_ppr_for_delete(store, wtxn, &id, &neighbors)?;
+                had_graph_mutation |= !neighbors.is_empty();
             }
             BatchOp::DeleteEdge { src, kind, tgt } => {
                 apply_delete_edge(store, wtxn, src, kind, tgt)?;
                 ppr::invalidate_ppr_for_edge(store, wtxn, &src, &tgt)?;
+                had_graph_mutation = true;
             }
         }
     }
+
+    if had_graph_mutation {
+        ppr::increment_graph_version(store, wtxn)?;
+    }
+
     Ok(())
 }
 
