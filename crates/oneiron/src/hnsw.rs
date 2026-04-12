@@ -1,5 +1,5 @@
 use std::cmp::Reverse;
-use std::collections::{BinaryHeap, HashSet};
+use std::collections::{BinaryHeap, HashMap, HashSet};
 
 use heed::{RoTxn, RwTxn};
 
@@ -9,8 +9,14 @@ use crate::le_bytes_to_f32_vec;
 use crate::store::Store;
 use crate::types::{EntityId, ScoredEntity, VaultConfig, ENTITY_ID_LEN};
 
-const ENTRY_POINT_KEY: &[u8] = b"entry_point";
+pub(crate) const ENTRY_POINT_KEY: &[u8] = b"entry_point";
 pub(crate) const COUNT_KEY: &[u8] = b"count";
+
+pub(crate) struct RebuiltHnswGraph {
+    pub entry_point: Option<EntityId>,
+    pub count: u64,
+    pub neighbors: Vec<(EntityId, Vec<EntityId>)>,
+}
 
 #[derive(Clone, Copy, Debug)]
 struct HeapEntry {
@@ -97,6 +103,102 @@ pub(crate) fn hnsw_insert(
 
     count = count.checked_add(1).ok_or(Error::InvalidKey)?;
     store.hnsw_meta.put(wtxn, COUNT_KEY, &count.to_le_bytes())?;
+
+    Ok(())
+}
+
+pub(crate) fn build_hnsw_graph(
+    config: &VaultConfig,
+    vectors: &[(EntityId, Vec<f32>)],
+) -> Result<RebuiltHnswGraph> {
+    let vector_index: HashMap<EntityId, &[f32]> = vectors
+        .iter()
+        .map(|(id, vector)| (*id, vector.as_slice()))
+        .collect();
+    let mut neighbors_by_id = HashMap::<EntityId, Vec<EntityId>>::with_capacity(vectors.len());
+    let mut entry_point = None;
+    let mut count = 0_u64;
+
+    for (id, vector) in vectors {
+        if count == 0 {
+            entry_point = Some(*id);
+            neighbors_by_id.insert(*id, Vec::new());
+            count = 1;
+            continue;
+        }
+
+        let graph_entry_point = entry_point.ok_or(Error::InvalidKey)?;
+        let mut nearest = beam_search_in_memory(
+            &neighbors_by_id,
+            &vector_index,
+            vector,
+            graph_entry_point,
+            config.hnsw.ef_construction,
+        )?;
+
+        nearest.retain(|entry| entry.id != *id);
+        nearest.truncate(config.hnsw.m_max_0);
+
+        let selected: Vec<EntityId> = nearest.into_iter().map(|entry| entry.id).collect();
+        neighbors_by_id.insert(*id, selected.clone());
+
+        for neighbor_id in &selected {
+            let mut neighbor_neighbors = neighbors_by_id
+                .get(neighbor_id)
+                .cloned()
+                .unwrap_or_default();
+            if !neighbor_neighbors.contains(id) {
+                neighbor_neighbors.push(*id);
+            }
+
+            if neighbor_neighbors.len() > config.hnsw.m_max_0 {
+                neighbor_neighbors = prune_neighbors_for_node_in_memory(
+                    &vector_index,
+                    neighbor_id,
+                    &neighbor_neighbors,
+                    config.hnsw.m_max_0,
+                )?;
+            }
+
+            neighbors_by_id.insert(*neighbor_id, neighbor_neighbors);
+        }
+
+        count = count.checked_add(1).ok_or(Error::InvalidKey)?;
+    }
+
+    let neighbors = vectors
+        .iter()
+        .map(|(id, _)| (*id, neighbors_by_id.remove(id).unwrap_or_default()))
+        .collect();
+
+    Ok(RebuiltHnswGraph {
+        entry_point,
+        count,
+        neighbors,
+    })
+}
+
+pub(crate) fn write_rebuilt_hnsw(
+    store: &Store,
+    wtxn: &mut RwTxn<'_>,
+    rebuilt: &RebuiltHnswGraph,
+) -> Result<()> {
+    store.hnsw_neighbors.clear(wtxn)?;
+    store.hnsw_meta.delete(wtxn, COUNT_KEY)?;
+    store.hnsw_meta.delete(wtxn, ENTRY_POINT_KEY)?;
+
+    if let Some(entry_point) = rebuilt.entry_point {
+        store
+            .hnsw_meta
+            .put(wtxn, ENTRY_POINT_KEY, entry_point.as_bytes())?;
+    }
+    store
+        .hnsw_meta
+        .put(wtxn, COUNT_KEY, &rebuilt.count.to_le_bytes())?;
+
+    for (id, neighbors) in &rebuilt.neighbors {
+        write_neighbors(store, wtxn, id, neighbors)?;
+    }
 
     Ok(())
 }
@@ -250,6 +352,83 @@ fn beam_search(
     Ok(found)
 }
 
+fn beam_search_in_memory(
+    neighbors_by_id: &HashMap<EntityId, Vec<EntityId>>,
+    vectors_by_id: &HashMap<EntityId, &[f32]>,
+    query_vector: &[f32],
+    entry_point: EntityId,
+    ef: usize,
+) -> Result<Vec<HeapEntry>> {
+    let ef = ef.max(1);
+
+    let Some(entry_vector) = vectors_by_id.get(&entry_point) else {
+        return Ok(Vec::new());
+    };
+
+    let entry = HeapEntry {
+        id: entry_point,
+        distance: cosine_distance(query_vector, entry_vector),
+    };
+
+    let mut candidates: BinaryHeap<Reverse<HeapEntry>> = BinaryHeap::new();
+    let mut results: BinaryHeap<HeapEntry> = BinaryHeap::new();
+    let mut visited: HashSet<EntityId> = HashSet::new();
+
+    visited.insert(entry_point);
+    candidates.push(Reverse(entry));
+    results.push(entry);
+
+    while let Some(Reverse(current)) = candidates.pop() {
+        let worst_distance = results
+            .peek()
+            .map(|entry| entry.distance)
+            .unwrap_or(f32::INFINITY);
+
+        if results.len() >= ef && current.distance > worst_distance {
+            break;
+        }
+
+        for neighbor_id in neighbors_by_id
+            .get(&current.id)
+            .map(Vec::as_slice)
+            .unwrap_or(&[])
+        {
+            if !visited.insert(*neighbor_id) {
+                continue;
+            }
+
+            let Some(neighbor_vector) = vectors_by_id.get(neighbor_id) else {
+                continue;
+            };
+
+            let distance = cosine_distance(query_vector, neighbor_vector);
+            let should_add = results.len() < ef
+                || distance
+                    < results
+                        .peek()
+                        .map(|entry| entry.distance)
+                        .unwrap_or(f32::INFINITY);
+
+            if should_add {
+                let candidate = HeapEntry {
+                    id: *neighbor_id,
+                    distance,
+                };
+                candidates.push(Reverse(candidate));
+                results.push(candidate);
+
+                if results.len() > ef {
+                    results.pop();
+                }
+            }
+        }
+    }
+
+    let mut found = results.into_vec();
+    found.sort_unstable();
+    Ok(found)
+}
+
 fn read_count(store: &Store, txn: &RoTxn<'_>) -> Result<u64> {
     let Some(raw) = store.hnsw_meta.get(txn, COUNT_KEY)? else {
         return Ok(0);
@@ -335,6 +514,40 @@ fn prune_neighbors_for_node(
         scored.push(HeapEntry {
             id: *neighbor_id,
             distance: cosine_distance(&node_vector, &neighbor_vector),
+        });
+    }
+
+    scored.sort_unstable();
+    scored.truncate(max_neighbors);
+
+    Ok(scored.into_iter().map(|entry| entry.id).collect())
+}
+
+fn prune_neighbors_for_node_in_memory(
+    vectors_by_id: &HashMap<EntityId, &[f32]>,
+    node_id: &EntityId,
+    neighbors: &[EntityId],
+    max_neighbors: usize,
+) -> Result<Vec<EntityId>> {
+    let Some(node_vector) = vectors_by_id.get(node_id) else {
+        return Ok(neighbors.iter().copied().take(max_neighbors).collect());
+    };
+
+    let mut seen = HashSet::with_capacity(neighbors.len());
+    let mut scored = Vec::with_capacity(neighbors.len());
+
+    for neighbor_id in neighbors {
+        if *neighbor_id == *node_id || !seen.insert(*neighbor_id) {
+            continue;
+        }
+
+        let Some(neighbor_vector) = vectors_by_id.get(neighbor_id) else {
+            continue;
+        };
+
+        scored.push(HeapEntry {
+            id: *neighbor_id,
+            distance: cosine_distance(node_vector, neighbor_vector),
         });
     }
 
