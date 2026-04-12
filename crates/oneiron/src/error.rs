@@ -34,6 +34,12 @@ pub enum Error {
     /// Requested entity does not exist.
     #[error("entity not found")]
     EntityNotFound,
+    /// A concurrent write invalidated an operation that relied on a stable snapshot.
+    #[error("concurrent write detected: {0}")]
+    ConcurrentWrite(&'static str),
+    /// A counter or version increment exceeded supported bounds.
+    #[error("arithmetic overflow: {0}")]
+    ArithmeticOverflow(&'static str),
     /// Encountered malformed key or value bytes.
     #[error("invalid key or value bytes")]
     InvalidKey,

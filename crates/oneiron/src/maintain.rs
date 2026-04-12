@@ -273,7 +273,7 @@ mod tests {
     use heed::types::Bytes;
 
     use super::*;
-    use crate::store::{GRAPH_VERSION_KEY, MODEL_ID_KEY};
+    use crate::store::{GRAPH_VERSION_KEY, MODEL_ID_KEY, VECTOR_VERSION_KEY};
     use crate::types::{EdgeKind, HnswConfig, TimeRange, VaultConfig};
 
     fn test_config() -> VaultConfig {
@@ -494,6 +494,47 @@ mod tests {
         let neighbors_after = read_neighbor_bytes(&vault, &a)?;
         assert_eq!(count_before, count_after);
         assert_eq!(neighbors_before, neighbors_after);
+        assert_eq!(count_entries(&vault.store.hnsw_neighbors, &vault)?, 2);
+        Ok(())
+    }
+
+    #[test]
+    fn rebuild_hnsw_rejects_stale_vector_snapshot() -> Result<()> {
+        let temp_dir = tempfile::tempdir()?;
+        let vault = Vault::open(temp_dir.path(), test_config())?;
+        let a = entity(94);
+        let b = entity(95);
+
+        for (id, vector) in [(a, [1.0, 0.0, 0.0, 0.0]), (b, [0.0, 1.0, 0.0, 0.0])] {
+            vault.put_entity(&id, 0, test_time_range(1, 1), 1, b"node")?;
+            vault.put_vector(&id, &vector)?;
+        }
+
+        let count_before = read_u64_meta(&vault, COUNT_KEY)?;
+        let vector_version_before = read_u64_meta(&vault, VECTOR_VERSION_KEY)?;
+        let neighbors_before = read_neighbor_bytes(&vault, &a)?;
+
+        let (_, vector_version, vectors, invalid_vectors_skipped) =
+            load_rebuild_vectors(&vault, false)?;
+        assert_eq!(vector_version, vector_version_before);
+        assert_eq!(invalid_vectors_skipped, 0);
+
+        let rebuilt = build_hnsw_graph(&vault.config, &vectors)?;
+
+        vault.put_vector(&b, &[0.0, 0.5, 0.5, 0.0])?;
+
+        let err = commit_rebuilt_hnsw(&vault, &rebuilt, vector_version).unwrap_err();
+        assert!(matches!(
+            err,
+            Error::ConcurrentWrite("vectors changed during hnsw rebuild; retry maintenance")
+        ));
+
+        let count_after = read_u64_meta(&vault, COUNT_KEY)?;
+        let vector_version_after = read_u64_meta(&vault, VECTOR_VERSION_KEY)?;
+        let neighbors_after = read_neighbor_bytes(&vault, &a)?;
+        assert_eq!(count_before, count_after);
+        assert_eq!(neighbors_before, neighbors_after);
+        assert!(vector_version_after > vector_version_before);
         assert_eq!(count_entries(&vault.store.hnsw_neighbors, &vault)?, 2);
         Ok(())
     }

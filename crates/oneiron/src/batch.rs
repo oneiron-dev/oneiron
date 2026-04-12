@@ -424,6 +424,7 @@ pub(crate) fn apply_ops(
             BatchOp::Vector { id, vector } => {
                 apply_vector(store, config, wtxn, id, &vector)?;
                 crate::hnsw::hnsw_insert(store, config, wtxn, &id, &vector)?;
+                crate::hnsw::increment_vector_version(store, wtxn)?;
             }
             BatchOp::Edge {
                 src,
@@ -484,8 +485,11 @@ pub(crate) fn deindex_entity(
     // entity record (e.g. text indexed via batch().text() without a preceding put()).
     crate::bm25::deindex_text(store, wtxn, id)?;
     delete_from_phonetic_postings(store, wtxn, id)?;
-    store.vectors.delete(wtxn, id.as_bytes())?;
+    let had_vector = store.vectors.delete(wtxn, id.as_bytes())?;
     crate::hnsw::hnsw_deindex(store, wtxn, id)?;
+    if had_vector {
+        crate::hnsw::increment_vector_version(store, wtxn)?;
+    }
 
     let Some(entity_record) = store.entities.get(wtxn, id.as_bytes())? else {
         return Ok((false, Vec::new()));
@@ -754,7 +758,9 @@ fn upsert_short_id(
         None => 0,
     };
 
-    let next = current.checked_add(1).ok_or(Error::InvalidKey)?;
+    let next = current
+        .checked_add(1)
+        .ok_or(Error::ArithmeticOverflow("short id counter"))?;
     store
         .short_ids
         .put(wtxn, &sentinel_key, &next.to_le_bytes())?;

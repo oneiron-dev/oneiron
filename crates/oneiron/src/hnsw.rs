@@ -7,9 +7,10 @@ use crate::distance::cosine_distance;
 use crate::error::{Error, Result};
 use crate::le_bytes_to_f32_vec;
 use crate::store::Store;
+use crate::store::VECTOR_VERSION_KEY;
 use crate::types::{EntityId, ScoredEntity, VaultConfig, ENTITY_ID_LEN};
 
-pub(crate) const ENTRY_POINT_KEY: &[u8] = b"entry_point";
+const ENTRY_POINT_KEY: &[u8] = b"entry_point";
 pub(crate) const COUNT_KEY: &[u8] = b"count";
 
 pub(crate) struct RebuiltHnswGraph {
@@ -101,7 +102,9 @@ pub(crate) fn hnsw_insert(
         write_neighbors(store, wtxn, neighbor_id, &neighbors)?;
     }
 
-    count = count.checked_add(1).ok_or(Error::InvalidKey)?;
+    count = count
+        .checked_add(1)
+        .ok_or(Error::ArithmeticOverflow("hnsw node count"))?;
     store.hnsw_meta.put(wtxn, COUNT_KEY, &count.to_le_bytes())?;
 
     Ok(())
@@ -140,13 +143,9 @@ pub(crate) fn build_hnsw_graph(
         nearest.truncate(config.hnsw.m_max_0);
 
         let selected: Vec<EntityId> = nearest.into_iter().map(|entry| entry.id).collect();
-        neighbors_by_id.insert(*id, selected.clone());
 
         for neighbor_id in &selected {
-            let mut neighbor_neighbors = neighbors_by_id
-                .get(neighbor_id)
-                .cloned()
-                .unwrap_or_default();
+            let mut neighbor_neighbors = neighbors_by_id.remove(neighbor_id).unwrap_or_default();
             if !neighbor_neighbors.contains(id) {
                 neighbor_neighbors.push(*id);
             }
@@ -163,7 +162,10 @@ pub(crate) fn build_hnsw_graph(
             neighbors_by_id.insert(*neighbor_id, neighbor_neighbors);
         }
 
-        count = count.checked_add(1).ok_or(Error::InvalidKey)?;
+        neighbors_by_id.insert(*id, selected);
+        count = count
+            .checked_add(1)
+            .ok_or(Error::ArithmeticOverflow("hnsw node count"))?;
     }
 
     let neighbors = vectors
@@ -201,6 +203,26 @@ pub(crate) fn write_rebuilt_hnsw(
     }
 
     Ok(())
+}
+
+pub(crate) fn read_vector_version(store: &Store, txn: &RoTxn<'_>) -> Result<u64> {
+    let Some(raw) = store.hnsw_meta.get(txn, VECTOR_VERSION_KEY)? else {
+        return Ok(0);
+    };
+
+    let bytes: [u8; 8] = raw.try_into().map_err(|_| Error::InvalidKey)?;
+    Ok(u64::from_le_bytes(bytes))
+}
+
+pub(crate) fn increment_vector_version(store: &Store, wtxn: &mut RwTxn<'_>) -> Result<u64> {
+    let current = read_vector_version(store, &*wtxn)?;
+    let next = current
+        .checked_add(1)
+        .ok_or(Error::ArithmeticOverflow("vector version"))?;
+    store
+        .hnsw_meta
+        .put(wtxn, VECTOR_VERSION_KEY, &next.to_le_bytes())?;
+    Ok(next)
 }
 
 pub(crate) fn hnsw_search(
