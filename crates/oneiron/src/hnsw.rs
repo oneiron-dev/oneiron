@@ -5,7 +5,6 @@ use heed::{RoTxn, RwTxn};
 
 use crate::distance::cosine_distance;
 use crate::error::{Error, Result};
-use crate::le_bytes_to_f32_vec;
 use crate::store::Store;
 use crate::store::VECTOR_VERSION_KEY;
 use crate::types::{EntityId, ScoredEntity, VaultConfig, ENTITY_ID_LEN};
@@ -325,19 +324,20 @@ fn beam_search(
     check_existence: bool,
 ) -> Result<Vec<HeapEntry>> {
     let ef = ef.max(1);
+    let mut vector_buffer = Vec::with_capacity(query_vector.len());
 
-    let Some(entry_vector) = load_vector(store, txn, &entry_point)? else {
+    let Some(entry_vector) = load_vector_into(store, txn, &entry_point, &mut vector_buffer)? else {
         return Ok(Vec::new());
     };
 
     let entry = HeapEntry {
         id: entry_point,
-        distance: cosine_distance(query_vector, &entry_vector),
+        distance: cosine_distance(query_vector, entry_vector),
     };
 
     let mut candidates: BinaryHeap<Reverse<HeapEntry>> = BinaryHeap::new();
     let mut results: BinaryHeap<HeapEntry> = BinaryHeap::new();
-    let mut visited: HashSet<EntityId> = HashSet::new();
+    let mut visited: HashSet<EntityId> = HashSet::with_capacity(ef * 2);
 
     visited.insert(entry_point);
     candidates.push(Reverse(entry));
@@ -366,11 +366,13 @@ fn beam_search(
                 continue;
             }
 
-            let Some(neighbor_vector) = load_vector(store, txn, &neighbor_id)? else {
+            let Some(neighbor_vector) =
+                load_vector_into(store, txn, &neighbor_id, &mut vector_buffer)?
+            else {
                 continue;
             };
 
-            let distance = cosine_distance(query_vector, &neighbor_vector);
+            let distance = cosine_distance(query_vector, neighbor_vector);
             let should_add = results.len() < ef
                 || distance
                     < results
@@ -529,12 +531,17 @@ fn write_neighbors(
     Ok(())
 }
 
-fn load_vector(store: &Store, txn: &RoTxn<'_>, id: &EntityId) -> Result<Option<Vec<f32>>> {
+fn load_vector_into<'a>(
+    store: &Store,
+    txn: &RoTxn<'_>,
+    id: &EntityId,
+    scratch: &'a mut Vec<f32>,
+) -> Result<Option<&'a [f32]>> {
     let Some(raw) = store.vectors.get(txn, id.as_bytes())? else {
         return Ok(None);
     };
 
-    le_bytes_to_f32_vec(raw).map(Some)
+    decode_vector_into(raw, scratch).map(Some)
 }
 
 fn load_required_vector(store: &Store, txn: &RoTxn<'_>, id: &EntityId) -> Result<Vec<f32>> {
@@ -550,9 +557,11 @@ fn prune_neighbors_for_node(
     neighbors: &[EntityId],
     max_neighbors: usize,
 ) -> Result<Vec<EntityId>> {
-    let Some(node_vector) = load_vector(store, txn, node_id)? else {
+    let mut node_buffer = Vec::new();
+    let Some(node_vector) = load_vector_into(store, txn, node_id, &mut node_buffer)? else {
         return Ok(neighbors.iter().copied().take(max_neighbors).collect());
     };
+    let mut neighbor_buffer = Vec::with_capacity(node_vector.len());
 
     let mut seen = HashSet::with_capacity(neighbors.len());
     let mut scored = Vec::with_capacity(neighbors.len());
@@ -562,13 +571,15 @@ fn prune_neighbors_for_node(
             continue;
         }
 
-        let Some(neighbor_vector) = load_vector(store, txn, neighbor_id)? else {
+        let Some(neighbor_vector) =
+            load_vector_into(store, txn, neighbor_id, &mut neighbor_buffer)?
+        else {
             continue;
         };
 
         scored.push(HeapEntry {
             id: *neighbor_id,
-            distance: cosine_distance(&node_vector, &neighbor_vector),
+            distance: cosine_distance(node_vector, neighbor_vector),
         });
     }
 
@@ -622,6 +633,20 @@ fn scrub_neighbor_bytes(raw: &[u8], target: &EntityId) -> Result<Option<Vec<u8>>
     }
 
     Ok(changed.then_some(scrubbed))
+}
+
+fn decode_vector_into<'a>(raw: &[u8], scratch: &'a mut Vec<f32>) -> Result<&'a [f32]> {
+    if raw.len() % 4 != 0 {
+        return Err(Error::InvalidKey);
+    }
+
+    let len = raw.len() / 4;
+    scratch.resize(len, 0.0);
+    for (slot, chunk) in scratch.iter_mut().zip(raw.chunks_exact(4)) {
+        *slot = f32::from_le_bytes(chunk.try_into().unwrap());
+    }
+
+    Ok(scratch.as_slice())
 }
 
 #[cfg(test)]
