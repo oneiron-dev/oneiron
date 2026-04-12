@@ -16,7 +16,7 @@ const DEFAULT_RESULT_LIMIT: usize = 20;
 const DEFAULT_SIGMA_SECS: u64 = 86_400;
 const MIN_WINDOW_RADIUS_SECS: u64 = 7 * 86_400;
 const TEMPORAL_KEY_LEN: usize = 24;
-const LONG_INTERVAL_ROW_LEN: usize = 16;
+const LONG_INTERVAL_VALUE_LEN: usize = 8;
 const TEMPORAL_FLOOR: f64 = 0.05;
 const SECONDS_PER_DAY_F64: f64 = 86_400.0;
 const RECENCY_DECAY_TAU_SECS: f64 = 28.0 * SECONDS_PER_DAY_F64;
@@ -695,11 +695,17 @@ fn collect_temporal_candidates(
     }
 
     if config.anchor_mode != TemporalAnchorMode::Learned {
-        for entry in store.temporal_long_intervals.iter(rtxn)? {
-            let (id_bytes, value) = entry?;
-            let (id, occurred_start, occurred_end) = decode_long_interval_row(id_bytes, value)?;
-
-            if occurred_start < occurred_window_start && occurred_end > occurred_window_end {
+        let long_interval_lower = temporal_key_upper_bound(occurred_window_end);
+        for entry in store.temporal_long_intervals.range(
+            rtxn,
+            &(
+                std::ops::Bound::Excluded(&long_interval_lower[..]),
+                std::ops::Bound::Unbounded,
+            ),
+        )? {
+            let (key, value) = entry?;
+            let (id, occurred_start, _) = decode_long_interval_row(key, value)?;
+            if occurred_start < occurred_window_start {
                 out.insert(id);
             }
         }
@@ -842,18 +848,19 @@ fn temporal_key_upper_bound(ts: u64) -> [u8; TEMPORAL_KEY_LEN] {
     key
 }
 
-fn decode_long_interval_row(id_bytes: &[u8], value: &[u8]) -> Result<(EntityId, u64, u64)> {
-    if id_bytes.len() != ENTITY_ID_LEN || value.len() != LONG_INTERVAL_ROW_LEN {
+fn decode_long_interval_row(key: &[u8], value: &[u8]) -> Result<(EntityId, u64, u64)> {
+    if key.len() != TEMPORAL_KEY_LEN || value.len() != LONG_INTERVAL_VALUE_LEN {
         return Err(Error::InvalidKey);
     }
 
-    let id = EntityId::from_bytes(id_bytes.try_into().map_err(|_| Error::InvalidKey)?);
-    let occurred_start = u64::from_be_bytes(value[..8].try_into().map_err(|_| Error::InvalidKey)?);
-    let occurred_end = u64::from_be_bytes(
-        value[8..LONG_INTERVAL_ROW_LEN]
+    let occurred_end = u64::from_be_bytes(key[..8].try_into().map_err(|_| Error::InvalidKey)?);
+    let id = EntityId::from_bytes(
+        key[8..TEMPORAL_KEY_LEN]
             .try_into()
             .map_err(|_| Error::InvalidKey)?,
     );
+    let occurred_start =
+        u64::from_be_bytes(value.try_into().map_err(|_| Error::InvalidKey)?);
     Ok((id, occurred_start, occurred_end))
 }
 
@@ -1342,6 +1349,33 @@ mod tests {
         let candidate = entity_id(40);
 
         put_entity(&vault, candidate, 0, 1_000_000, 1_500_000, 10_000_000)?;
+
+        let results = vault
+            .query()
+            .search_temporal_with_sigma(anchor, anchor, 86_400, TemporalAnchorMode::Occurred, 10)
+            .run()?;
+
+        assert!(results.iter().any(|entry| entry.id == candidate));
+        Ok(())
+    }
+
+    #[test]
+    fn long_interval_spanner_is_discovered_via_range_query() -> Result<()> {
+        let temp_dir = tempfile::tempdir()?;
+        let vault = Vault::open(temp_dir.path(), test_config())?;
+
+        let anchor = 2_000_000_u64;
+        let candidate = entity_id(41);
+        let span = 30_u64 * 86_400;
+
+        put_entity(
+            &vault,
+            candidate,
+            0,
+            anchor.saturating_sub(span),
+            anchor.saturating_add(span),
+            anchor,
+        )?;
 
         let results = vault
             .query()
