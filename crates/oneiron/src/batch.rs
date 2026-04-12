@@ -486,7 +486,6 @@ pub(crate) fn deindex_entity(
     delete_from_phonetic_postings(store, wtxn, id)?;
     store.vectors.delete(wtxn, id.as_bytes())?;
     crate::hnsw::hnsw_deindex(store, wtxn, id)?;
-    store.temporal_long_intervals.delete(wtxn, id.as_bytes())?;
 
     let Some(entity_record) = store.entities.get(wtxn, id.as_bytes())? else {
         return Ok((false, Vec::new()));
@@ -540,8 +539,6 @@ fn apply_put(
     if occurred.start > occurred.end {
         std::mem::swap(&mut occurred.start, &mut occurred.end);
     }
-
-    store.temporal_long_intervals.delete(wtxn, id.as_bytes())?;
 
     if let Some(old_record) = store.entities.get(wtxn, id.as_bytes())? {
         let (old_type, old_occurred, old_learned) = parse_entity_metadata(old_record)?;

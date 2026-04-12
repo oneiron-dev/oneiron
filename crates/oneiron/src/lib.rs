@@ -677,6 +677,7 @@ mod tests {
     use xxhash_rust::xxh32::xxh32;
 
     use super::*;
+    use crate::store::TEMPORAL_LONG_INTERVALS_SCHEMA_VERSION_KEY;
 
     #[cfg(not(feature = "sync"))]
     const DB_NAMES: [&str; 19] = [
@@ -1175,6 +1176,53 @@ mod tests {
             .store
             .temporal_long_intervals
             .get(&rtxn, &key)?
+            .ok_or(Error::EntityNotFound)?;
+        assert_eq!(u64::from_be_bytes(value.try_into().map_err(|_| Error::InvalidKey)?), 1_000);
+        Ok(())
+    }
+
+    #[test]
+    fn open_migrates_legacy_long_interval_rows() -> Result<()> {
+        let temp_dir = tempfile::tempdir()?;
+        let path = temp_dir.path();
+        let id = EntityId::now();
+        let end = 1_000 + crate::batch::LONG_INTERVAL_THRESHOLD_SECS + 10;
+
+        let vault = Vault::open(path, test_config())?;
+        vault
+            .batch()
+            .put(&id, 6, test_time_range(1_000, end), 3_000, b"legacy-long-range")
+            .commit()?;
+
+        let new_key = Store::encode_temporal_key(end, &id);
+        let mut legacy_value = [0_u8; 16];
+        legacy_value[..8].copy_from_slice(&1_000_u64.to_be_bytes());
+        legacy_value[8..].copy_from_slice(&end.to_be_bytes());
+
+        let mut wtxn = vault.store.env.write_txn()?;
+        vault.store.temporal_long_intervals.delete(&mut wtxn, &new_key)?;
+        vault
+            .store
+            .temporal_long_intervals
+            .put(&mut wtxn, id.as_bytes(), &legacy_value)?;
+        vault
+            .store
+            .hnsw_meta
+            .delete(&mut wtxn, TEMPORAL_LONG_INTERVALS_SCHEMA_VERSION_KEY)?;
+        wtxn.commit()?;
+        drop(vault);
+
+        let reopened = Vault::open(path, test_config())?;
+        let rtxn = reopened.store.env.read_txn()?;
+        assert!(reopened
+            .store
+            .temporal_long_intervals
+            .get(&rtxn, id.as_bytes())?
+            .is_none());
+        let value = reopened
+            .store
+            .temporal_long_intervals
+            .get(&rtxn, &new_key)?
             .ok_or(Error::EntityNotFound)?;
         assert_eq!(u64::from_be_bytes(value.try_into().map_err(|_| Error::InvalidKey)?), 1_000);
         Ok(())

@@ -11,6 +11,9 @@ use crate::types::{EdgeKind, EntityId, VaultConfig};
 const MAX_DBS: u32 = 24;
 pub(crate) const MODEL_ID_KEY: &[u8] = b"model_id";
 pub(crate) const GRAPH_VERSION_KEY: &[u8] = b"graph_version";
+pub(crate) const TEMPORAL_LONG_INTERVALS_SCHEMA_VERSION_KEY: &[u8] =
+    b"temporal_long_intervals_schema_version";
+const TEMPORAL_LONG_INTERVALS_SCHEMA_VERSION: u8 = 2;
 
 /// LMDB environment and database handles for a vault.
 pub struct Store {
@@ -81,6 +84,8 @@ impl Store {
         #[cfg(feature = "sync")]
         let sync_queue = create_db(&env, &mut wtxn, "sync_queue")?;
         wtxn.commit()?;
+
+        migrate_temporal_long_intervals_if_needed(&env, &hnsw_meta, &temporal_long_intervals)?;
 
         if let Some(requested) = config.embedding_model.as_deref() {
             let mut wtxn = env.write_txn()?;
@@ -157,6 +162,57 @@ impl Store {
 
 fn create_db(env: &Env, wtxn: &mut RwTxn<'_>, name: &str) -> Result<Database<Bytes, Bytes>> {
     Ok(env.create_database::<Bytes, Bytes>(wtxn, Some(name))?)
+}
+
+fn migrate_temporal_long_intervals_if_needed(
+    env: &Env,
+    hnsw_meta: &Database<Bytes, Bytes>,
+    temporal_long_intervals: &Database<Bytes, Bytes>,
+) -> Result<()> {
+    let mut wtxn = env.write_txn()?;
+    let version = hnsw_meta.get(&wtxn, TEMPORAL_LONG_INTERVALS_SCHEMA_VERSION_KEY)?;
+    if version == Some(&[TEMPORAL_LONG_INTERVALS_SCHEMA_VERSION][..]) {
+        wtxn.commit()?;
+        return Ok(());
+    }
+
+    let mut legacy_rows = Vec::<([u8; 16], [u8; 16])>::new();
+    for entry in temporal_long_intervals.iter(&wtxn)? {
+        let (key, value) = entry?;
+        match (key.len(), value.len()) {
+            (24, 8) => {}
+            (16, 16) => {
+                let old_key = key.try_into().map_err(|_| Error::InvalidKey)?;
+                let old_value = value.try_into().map_err(|_| Error::InvalidKey)?;
+                legacy_rows.push((old_key, old_value));
+            }
+            _ => return Err(Error::InvalidKey),
+        }
+    }
+
+    for (legacy_key, legacy_value) in legacy_rows {
+        let occurred_start =
+            u64::from_be_bytes(legacy_value[..8].try_into().map_err(|_| Error::InvalidKey)?);
+        let occurred_end =
+            u64::from_be_bytes(legacy_value[8..].try_into().map_err(|_| Error::InvalidKey)?);
+        let new_key = {
+            let mut key = [0_u8; 24];
+            key[..8].copy_from_slice(&occurred_end.to_be_bytes());
+            key[8..].copy_from_slice(&legacy_key);
+            key
+        };
+
+        temporal_long_intervals.delete(&mut wtxn, &legacy_key)?;
+        temporal_long_intervals.put(&mut wtxn, &new_key, &occurred_start.to_be_bytes())?;
+    }
+
+    hnsw_meta.put(
+        &mut wtxn,
+        TEMPORAL_LONG_INTERVALS_SCHEMA_VERSION_KEY,
+        &[TEMPORAL_LONG_INTERVALS_SCHEMA_VERSION],
+    )?;
+    wtxn.commit()?;
+    Ok(())
 }
 
 fn parse_utf8_bytes(bytes: &[u8]) -> Result<String> {

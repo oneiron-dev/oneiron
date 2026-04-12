@@ -26,6 +26,7 @@ const ALPHA_TAU_SECS: f64 = 90.0 * SECONDS_PER_DAY_F64;
 const PPR_DAMPING: f32 = 0.15;
 const ADAPTIVE_ROUNDS: usize = 3;
 const PER_SCAN_CAP_FACTOR: usize = 4;
+const MAX_TEMPORAL_SEEK_BUFFER: usize = 8_192;
 const RRF_K: f32 = 60.0;
 
 #[derive(Debug, Clone)]
@@ -761,7 +762,9 @@ fn collect_index_candidates(
     let window_end_key = temporal_key_upper_bound(window_end);
     let anchor_key = temporal_key_lower_bound(anchor_mid);
 
-    let mut rows = Vec::<TemporalIndexRow>::with_capacity(cap.saturating_mul(2));
+    let mut rows = Vec::<TemporalIndexRow>::with_capacity(
+        cap.saturating_mul(2).min(MAX_TEMPORAL_SEEK_BUFFER),
+    );
 
     let mut forward = db.range(
         rtxn,
@@ -784,12 +787,7 @@ fn collect_index_candidates(
             std::ops::Bound::Excluded(&anchor_key[..]),
         ),
     )?;
-    for _ in 0..cap {
-        let Some(row) = next_temporal_index_row(&mut backward)? else {
-            break;
-        };
-        rows.push(row);
-    }
+    rows.extend(collect_temporal_index_rows(&mut backward, cap, true)?);
 
     rows.sort_unstable_by(|a, b| compare_temporal_index_rows(a, b, anchor_mid));
     for row in rows.into_iter().take(cap) {
@@ -822,6 +820,37 @@ fn decode_temporal_index_row(key: &[u8]) -> Result<TemporalIndexRow> {
             .map_err(|_| Error::InvalidKey)?,
     );
     Ok(TemporalIndexRow { timestamp, id })
+}
+
+fn collect_temporal_index_rows<'a, I>(
+    iter: &mut I,
+    cap: usize,
+    preserve_boundary_bucket: bool,
+) -> Result<Vec<TemporalIndexRow>>
+where
+    I: Iterator<Item = std::result::Result<(&'a [u8], &'a [u8]), heed::Error>>,
+{
+    let mut rows = Vec::with_capacity(cap.min(MAX_TEMPORAL_SEEK_BUFFER));
+    let mut boundary_timestamp = None;
+
+    while rows.len() < cap {
+        let Some(row) = next_temporal_index_row(iter)? else {
+            return Ok(rows);
+        };
+        boundary_timestamp = Some(row.timestamp);
+        rows.push(row);
+    }
+
+    if preserve_boundary_bucket {
+        while let Some(row) = next_temporal_index_row(iter)? {
+            if Some(row.timestamp) != boundary_timestamp {
+                break;
+            }
+            rows.push(row);
+        }
+    }
+
+    Ok(rows)
 }
 
 fn compare_temporal_index_rows(
@@ -1383,6 +1412,37 @@ mod tests {
             .run()?;
 
         assert!(results.iter().any(|entry| entry.id == candidate));
+        Ok(())
+    }
+
+    #[test]
+    fn backward_seek_preserves_lowest_ids_with_same_timestamp() -> Result<()> {
+        let temp_dir = tempfile::tempdir()?;
+        let vault = Vault::open(temp_dir.path(), test_config())?;
+        let timestamp = 99;
+
+        for byte in [40_u8, 41, 42, 43, 44] {
+            let id = entity_id(byte);
+            put_entity(&vault, id, 0, timestamp, timestamp, timestamp)?;
+        }
+
+        let rtxn = vault.store.env.read_txn()?;
+        let mut out = HashSet::new();
+        collect_index_candidates(
+            &vault.store.temporal_occurred_start,
+            &rtxn,
+            0,
+            timestamp,
+            100,
+            4,
+            &mut out,
+        )?;
+
+        assert!(out.contains(&entity_id(40)));
+        assert!(out.contains(&entity_id(41)));
+        assert!(out.contains(&entity_id(42)));
+        assert!(out.contains(&entity_id(43)));
+        assert!(!out.contains(&entity_id(44)));
         Ok(())
     }
 
