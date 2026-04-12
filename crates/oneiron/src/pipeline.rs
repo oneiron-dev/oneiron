@@ -55,6 +55,12 @@ struct TemporalCandidateScore {
     overlap_tiebreak: u64,
 }
 
+#[derive(Debug, Clone, Copy)]
+struct TemporalIndexRow {
+    timestamp: u64,
+    id: EntityId,
+}
+
 #[derive(Debug, Clone, Copy, Default)]
 struct PhoneticAccumulator {
     score: f32,
@@ -676,38 +682,99 @@ fn collect_index_candidates(
     cap: usize,
     out: &mut HashSet<EntityId>,
 ) -> Result<()> {
-    let mut rows = Vec::<(u64, u64, EntityId)>::new();
-
-    for entry in db.iter(rtxn)? {
-        let (key, _) = entry?;
-        if key.len() != TEMPORAL_KEY_LEN {
-            return Err(Error::InvalidKey);
-        }
-
-        let timestamp = u64::from_be_bytes(key[..8].try_into().map_err(|_| Error::InvalidKey)?);
-        if timestamp < window_start || timestamp > window_end {
-            continue;
-        }
-
-        let id = EntityId::from_bytes(
-            key[8..TEMPORAL_KEY_LEN]
-                .try_into()
-                .map_err(|_| Error::InvalidKey)?,
-        );
-        rows.push((anchor_mid.abs_diff(timestamp), timestamp, id));
+    if cap == 0 || window_start > window_end {
+        return Ok(());
     }
 
-    rows.sort_unstable_by(|a, b| {
-        a.0.cmp(&b.0)
-            .then_with(|| a.1.cmp(&b.1))
-            .then_with(|| a.2.as_bytes().cmp(b.2.as_bytes()))
-    });
+    let window_start_key = temporal_key_lower_bound(window_start);
+    let window_end_key = temporal_key_upper_bound(window_end);
+    let anchor_key = temporal_key_lower_bound(anchor_mid);
 
-    for (_, _, id) in rows.into_iter().take(cap) {
-        out.insert(id);
+    let mut rows = Vec::<TemporalIndexRow>::with_capacity(cap.saturating_mul(2));
+
+    let mut forward = db.range(
+        rtxn,
+        &(
+            std::ops::Bound::Included(&anchor_key[..]),
+            std::ops::Bound::Included(&window_end_key[..]),
+        ),
+    )?;
+    for _ in 0..cap {
+        let Some(row) = next_temporal_index_row(&mut forward)? else {
+            break;
+        };
+        rows.push(row);
+    }
+
+    let mut backward = db.rev_range(
+        rtxn,
+        &(
+            std::ops::Bound::Included(&window_start_key[..]),
+            std::ops::Bound::Excluded(&anchor_key[..]),
+        ),
+    )?;
+    for _ in 0..cap {
+        let Some(row) = next_temporal_index_row(&mut backward)? else {
+            break;
+        };
+        rows.push(row);
+    }
+
+    rows.sort_unstable_by(|a, b| compare_temporal_index_rows(a, b, anchor_mid));
+    for row in rows.into_iter().take(cap) {
+        out.insert(row.id);
     }
 
     Ok(())
+}
+
+fn next_temporal_index_row<'a, I>(iter: &mut I) -> Result<Option<TemporalIndexRow>>
+where
+    I: Iterator<Item = std::result::Result<(&'a [u8], &'a [u8]), heed::Error>>,
+{
+    let Some(entry) = iter.next() else {
+        return Ok(None);
+    };
+    let (key, _) = entry?;
+    decode_temporal_index_row(key).map(Some)
+}
+
+fn decode_temporal_index_row(key: &[u8]) -> Result<TemporalIndexRow> {
+    if key.len() != TEMPORAL_KEY_LEN {
+        return Err(Error::InvalidKey);
+    }
+
+    let timestamp = u64::from_be_bytes(key[..8].try_into().map_err(|_| Error::InvalidKey)?);
+    let id = EntityId::from_bytes(
+        key[8..TEMPORAL_KEY_LEN]
+            .try_into()
+            .map_err(|_| Error::InvalidKey)?,
+    );
+    Ok(TemporalIndexRow { timestamp, id })
+}
+
+fn compare_temporal_index_rows(
+    left: &TemporalIndexRow,
+    right: &TemporalIndexRow,
+    anchor_mid: u64,
+) -> std::cmp::Ordering {
+    anchor_mid
+        .abs_diff(left.timestamp)
+        .cmp(&anchor_mid.abs_diff(right.timestamp))
+        .then_with(|| left.timestamp.cmp(&right.timestamp))
+        .then_with(|| left.id.as_bytes().cmp(right.id.as_bytes()))
+}
+
+fn temporal_key_lower_bound(ts: u64) -> [u8; TEMPORAL_KEY_LEN] {
+    let mut key = [0_u8; TEMPORAL_KEY_LEN];
+    key[..8].copy_from_slice(&ts.to_be_bytes());
+    key
+}
+
+fn temporal_key_upper_bound(ts: u64) -> [u8; TEMPORAL_KEY_LEN] {
+    let mut key = [0xFF_u8; TEMPORAL_KEY_LEN];
+    key[..8].copy_from_slice(&ts.to_be_bytes());
+    key
 }
 
 fn decode_long_interval_row(id_bytes: &[u8], value: &[u8]) -> Result<(EntityId, u64, u64)> {
