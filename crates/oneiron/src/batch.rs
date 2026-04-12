@@ -545,6 +545,8 @@ fn apply_put(
     learned_at: u64,
     data: &[u8],
 ) -> Result<()> {
+    short_id_prefix(entity_type)?;
+
     let mut occurred = occurred;
     if occurred.start > occurred.end {
         std::mem::swap(&mut occurred.start, &mut occurred.end);
@@ -713,6 +715,12 @@ fn apply_phonetic(
     id: EntityId,
     codes: &[String],
 ) -> Result<()> {
+    let mut forward_codes = match store.phonetic_forward.get(wtxn, id.as_bytes())? {
+        Some(raw) => decode_phonetic_forward_codes(raw)?,
+        None => Vec::new(),
+    };
+    let mut forward_changed = false;
+
     for code in codes {
         let existing = store.phonetic_index.get(wtxn, code.as_bytes())?;
         let mut posting =
@@ -730,6 +738,18 @@ fn apply_phonetic(
 
         posting.extend_from_slice(id.as_bytes());
         store.phonetic_index.put(wtxn, code.as_bytes(), &posting)?;
+
+        if !forward_codes.iter().any(|known| known == code) {
+            forward_codes.push(code.clone());
+            forward_changed = true;
+        }
+    }
+
+    if forward_changed {
+        forward_codes.sort();
+        forward_codes.dedup();
+        let encoded = encode_phonetic_forward_codes(&forward_codes);
+        store.phonetic_forward.put(wtxn, id.as_bytes(), &encoded)?;
     }
 
     Ok(())
@@ -865,6 +885,26 @@ fn delete_related_edges(
 }
 
 fn delete_from_phonetic_postings(store: &Store, wtxn: &mut RwTxn<'_>, id: &EntityId) -> Result<()> {
+    if let Some(raw) = store.phonetic_forward.get(wtxn, id.as_bytes())? {
+        let codes = decode_phonetic_forward_codes(raw)?;
+        for code in &codes {
+            let posting = store
+                .phonetic_index
+                .get(wtxn, code.as_bytes())?
+                .ok_or(Error::MissingPostingEntry)?;
+            let updated = posting_without_entity(posting, id)?.ok_or(Error::MissingPostingEntry)?;
+
+            if updated.is_empty() {
+                store.phonetic_index.delete(wtxn, code.as_bytes())?;
+            } else {
+                store.phonetic_index.put(wtxn, code.as_bytes(), &updated)?;
+            }
+        }
+
+        store.phonetic_forward.delete(wtxn, id.as_bytes())?;
+        return Ok(());
+    }
+
     let mut updates = Vec::new();
     let mut deletes = Vec::new();
 
@@ -889,6 +929,7 @@ fn delete_from_phonetic_postings(store: &Store, wtxn: &mut RwTxn<'_>, id: &Entit
         store.phonetic_index.put(wtxn, &code, &posting)?;
     }
 
+    store.phonetic_forward.delete(wtxn, id.as_bytes())?;
     Ok(())
 }
 
@@ -904,6 +945,31 @@ fn posting_without_entity(posting: &[u8], id: &EntityId) -> Result<Option<Vec<u8
         .collect();
 
     Ok((retained.len() != posting.len()).then_some(retained))
+}
+
+fn decode_phonetic_forward_codes(raw: &[u8]) -> Result<Vec<String>> {
+    if raw.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let mut codes: Vec<String> = raw
+        .split(|b| *b == 0)
+        .map(|chunk| {
+            if chunk.is_empty() {
+                return Err(Error::CorruptedIndex);
+            }
+            str::from_utf8(chunk)
+                .map(str::to_owned)
+                .map_err(|_| Error::CorruptedIndex)
+        })
+        .collect::<Result<_>>()?;
+    codes.sort();
+    codes.dedup();
+    Ok(codes)
+}
+
+fn encode_phonetic_forward_codes(codes: &[String]) -> Vec<u8> {
+    codes.join("\0").into_bytes()
 }
 
 fn validate_edge_record(key: &[u8], value: &[u8]) -> Result<()> {

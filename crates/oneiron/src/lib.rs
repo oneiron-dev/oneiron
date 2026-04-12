@@ -696,7 +696,7 @@ mod tests {
     };
 
     #[cfg(not(feature = "sync"))]
-    const DB_NAMES: [&str; 19] = [
+    const DB_NAMES: [&str; 20] = [
         "entities",
         "edges_out",
         "edges_in",
@@ -714,12 +714,13 @@ mod tests {
         "temporal_learned",
         "temporal_long_intervals",
         "phonetic_index",
+        "phonetic_forward",
         "short_ids",
         "short_ids_reverse",
     ];
 
     #[cfg(feature = "sync")]
-    const DB_NAMES: [&str; 21] = [
+    const DB_NAMES: [&str; 22] = [
         "entities",
         "edges_out",
         "edges_in",
@@ -737,6 +738,7 @@ mod tests {
         "temporal_learned",
         "temporal_long_intervals",
         "phonetic_index",
+        "phonetic_forward",
         "short_ids",
         "short_ids_reverse",
         "sync_state",
@@ -795,6 +797,27 @@ mod tests {
         Ok(u64::from_le_bytes(
             raw.try_into().map_err(|_| Error::InvalidKey)?,
         ))
+    }
+
+    fn decode_forward_codes(raw: &[u8]) -> Result<Vec<String>> {
+        if raw.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let mut codes: Vec<String> = raw
+            .split(|b| *b == 0)
+            .map(|chunk| {
+                if chunk.is_empty() {
+                    return Err(Error::InvalidKey);
+                }
+                str::from_utf8(chunk)
+                    .map(str::to_owned)
+                    .map_err(|_| Error::InvalidKey)
+            })
+            .collect::<Result<_>>()?;
+        codes.sort();
+        codes.dedup();
+        Ok(codes)
     }
 
     #[test]
@@ -1686,6 +1709,16 @@ mod tests {
             assert!(posting.len().is_multiple_of(16));
             assert!(posting.chunks_exact(16).any(|chunk| chunk == id.as_bytes()));
         }
+
+        let forward = vault
+            .store
+            .phonetic_forward
+            .get(&rtxn, id.as_bytes())?
+            .ok_or(Error::EntityNotFound)?;
+        assert_eq!(
+            decode_forward_codes(forward)?,
+            vec!["SMT".to_owned(), "SMTH".to_owned()]
+        );
         Ok(())
     }
 
@@ -1715,6 +1748,49 @@ mod tests {
             .filter(|chunk| *chunk == id.as_bytes())
             .count();
         assert_eq!(count, 1);
+
+        let forward = vault
+            .store
+            .phonetic_forward
+            .get(&rtxn, id.as_bytes())?
+            .ok_or(Error::EntityNotFound)?;
+        assert_eq!(decode_forward_codes(forward)?, vec!["ABC".to_owned()]);
+        Ok(())
+    }
+
+    #[test]
+    fn phonetic_reindex_remains_additive() -> Result<()> {
+        let temp_dir = tempfile::tempdir()?;
+        let vault = Vault::open(temp_dir.path(), test_config())?;
+        let id = EntityId::now();
+
+        vault
+            .batch()
+            .put(&id, 0, test_time_range(1, 2), 3, b"union")
+            .phonetic(&id, &["ABC"])
+            .commit()?;
+
+        vault.batch().phonetic(&id, &["DEF"]).commit()?;
+
+        let rtxn = vault.store.env.read_txn()?;
+        for code in ["ABC", "DEF"] {
+            let posting = vault
+                .store
+                .phonetic_index
+                .get(&rtxn, code.as_bytes())?
+                .ok_or(Error::EntityNotFound)?;
+            assert!(posting.chunks_exact(16).any(|chunk| chunk == id.as_bytes()));
+        }
+
+        let forward = vault
+            .store
+            .phonetic_forward
+            .get(&rtxn, id.as_bytes())?
+            .ok_or(Error::EntityNotFound)?;
+        assert_eq!(
+            decode_forward_codes(forward)?,
+            vec!["ABC".to_owned(), "DEF".to_owned()]
+        );
         Ok(())
     }
 
@@ -1780,6 +1856,7 @@ mod tests {
                 assert!(!posting.chunks_exact(16).any(|chunk| chunk == id.as_bytes()));
             }
         }
+        assert!(vault.store.phonetic_forward.get(&rtxn, id.as_bytes())?.is_none());
 
         assert!(vault.store.short_ids.get(&rtxn, id.as_bytes())?.is_none());
         assert!(vault
@@ -1787,6 +1864,34 @@ mod tests {
             .short_ids_reverse
             .get(&rtxn, short_id_before_delete.as_bytes())?
             .is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn delete_entity_falls_back_when_phonetic_forward_is_missing() -> Result<()> {
+        let temp_dir = tempfile::tempdir()?;
+        let vault = Vault::open(temp_dir.path(), test_config())?;
+        let id = EntityId::now();
+
+        vault
+            .batch()
+            .put(&id, 0, test_time_range(1, 1), 2, b"phonetic-fallback")
+            .phonetic(&id, &["SMTH", "SMT"])
+            .commit()?;
+
+        let mut wtxn = vault.store.env.write_txn()?;
+        vault.store.phonetic_forward.delete(&mut wtxn, id.as_bytes())?;
+        wtxn.commit()?;
+
+        assert!(vault.delete_entity(&id)?);
+
+        let rtxn = vault.store.env.read_txn()?;
+        for code in ["SMTH", "SMT"] {
+            if let Some(posting) = vault.store.phonetic_index.get(&rtxn, code.as_bytes())? {
+                assert!(!posting.chunks_exact(16).any(|chunk| chunk == id.as_bytes()));
+            }
+        }
+
         Ok(())
     }
 
@@ -2405,6 +2510,29 @@ mod tests {
 
         // Verify nothing was written
         assert!(vault.get(&id)?.is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn txn_batch_put_invalid_entity_type_returns_error() -> Result<()> {
+        let temp_dir = tempfile::tempdir()?;
+        let vault = Vault::open(temp_dir.path(), test_config())?;
+        let id = EntityId::now();
+
+        let err = vault
+            .with_write_txn(|wtxn| {
+                vault
+                    .batch_in()
+                    .put(&id, 255, test_time_range(1, 1), 2, b"bad-type")
+                    .apply(wtxn)
+            })
+            .expect_err("expected InvalidEntityType for type 255");
+        assert!(
+            matches!(err, Error::InvalidEntityType(255)),
+            "expected InvalidEntityType(255), got {err:?}"
+        );
+        assert!(vault.get(&id)?.is_none());
+
         Ok(())
     }
 
