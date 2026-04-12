@@ -102,12 +102,8 @@ pub(crate) fn ppr_query(
     {
         let rtxn = store.env.read_txn()?;
         if let Some(raw) = store.ppr_cache.get(&rtxn, &seed_hash)? {
-            let (computed_at, cached_graph_version, stale) = parse_cache_header(raw)?;
-            let current_graph_version = read_graph_version(store, &rtxn)?;
-            if stale == 0
-                && cached_graph_version == current_graph_version
-                && now.saturating_sub(computed_at) <= CACHE_TTL_SECS
-            {
+            let (computed_at, _, stale) = parse_cache_header(raw)?;
+            if stale == 0 && now.saturating_sub(computed_at) <= CACHE_TTL_SECS {
                 let mut scores = decode_cache_scores(&raw[CACHE_HEADER_LEN..])?;
                 sort_scores(&mut scores);
                 return Ok(scores);
@@ -879,14 +875,14 @@ mod tests {
     }
 
     #[test]
-    fn ppr_query_recomputes_when_graph_version_changes() -> Result<()> {
+    fn ppr_query_reuses_cache_after_unrelated_graph_version_change() -> Result<()> {
         let temp_dir = tempdir()?;
         let vault = Vault::open(temp_dir.path(), test_config())?;
         let a = entity(41);
         let b = entity(42);
 
         vault.put_edge(&a, EdgeKind::BelongsTo, &b, 1.0)?;
-        let _ = ppr_query(&vault.store, &vault.config, &[a], 3, 0.15)?;
+        let first = ppr_query(&vault.store, &vault.config, &[a], 3, 0.15)?;
         let cache_before = cache_row(&vault, &[a], 3, 0.15)?;
         let (_, version_before, stale_before) = parse_cache_header(&cache_before)?;
         assert_eq!(stale_before, 0);
@@ -899,13 +895,14 @@ mod tests {
             .put(&mut wtxn, GRAPH_VERSION_KEY, &new_version.to_le_bytes())?;
         wtxn.commit()?;
 
-        let _ = ppr_query(&vault.store, &vault.config, &[a], 3, 0.15)?;
+        let second = ppr_query(&vault.store, &vault.config, &[a], 3, 0.15)?;
         let cache_after = cache_row(&vault, &[a], 3, 0.15)?;
         let (_, version_after, stale_after) = parse_cache_header(&cache_after)?;
 
         assert_eq!(stale_after, 0);
-        assert_eq!(version_after, new_version);
-        assert_ne!(cache_before, cache_after);
+        assert_eq!(version_after, version_before);
+        assert_eq!(first, second);
+        assert_eq!(cache_before, cache_after);
         Ok(())
     }
 
