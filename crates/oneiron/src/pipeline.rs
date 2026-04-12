@@ -507,6 +507,7 @@ fn execute_temporal(
     let anchor_mid = midpoint(config.anchor_start, config.anchor_end);
 
     let learned_anchor = learned_anchor_range(config)?;
+    let learned_anchor_mid = midpoint(learned_anchor.0, learned_anchor.1);
 
     let mut scored = Vec::<TemporalCandidateScore>::new();
 
@@ -536,10 +537,30 @@ fn execute_temporal(
         let alpha = ALPHA_BASE + ALPHA_RANGE * (1.0 - (-anchor_age / ALPHA_TAU_SECS).exp());
 
         let score = (alpha * s_proximity + (1.0 - alpha) * s_recency) as f32;
-        let overlap_tiebreak = if d_occ == 0 {
-            midpoint(meta.occurred_start, meta.occurred_end).abs_diff(anchor_mid)
-        } else {
-            u64::MAX
+        let overlap_tiebreak = match config.anchor_mode {
+            TemporalAnchorMode::Learned => {
+                if d_lrn == 0 {
+                    meta.learned_at.abs_diff(learned_anchor_mid)
+                } else {
+                    u64::MAX
+                }
+            }
+            TemporalAnchorMode::Both => {
+                if d_occ == 0 && d_lrn == 0 {
+                    midpoint(meta.occurred_start, meta.occurred_end)
+                        .abs_diff(anchor_mid)
+                        .saturating_add(meta.learned_at.abs_diff(learned_anchor_mid))
+                } else {
+                    u64::MAX
+                }
+            }
+            TemporalAnchorMode::Occurred | TemporalAnchorMode::Auto => {
+                if d_occ == 0 {
+                    midpoint(meta.occurred_start, meta.occurred_end).abs_diff(anchor_mid)
+                } else {
+                    u64::MAX
+                }
+            }
         };
 
         scored.push(TemporalCandidateScore {
@@ -1642,6 +1663,41 @@ mod tests {
                 anchor_end,
                 86_400,
                 TemporalAnchorMode::Occurred,
+                10,
+            )
+            .run()?;
+
+        assert_eq!(results[0].id, closer);
+        Ok(())
+    }
+
+    #[test]
+    fn learned_overlap_tiebreak_uses_learned_axis() -> Result<()> {
+        let temp_dir = tempfile::tempdir()?;
+        let vault = Vault::open(temp_dir.path(), test_config())?;
+
+        let anchor_start = crate::unix_seconds_now() + 100;
+        let anchor_end = anchor_start + 100;
+        let closer = entity_id(142);
+        let farther = entity_id(143);
+
+        put_entity(&vault, closer, 0, anchor_start, anchor_start + 10, anchor_start + 49)?;
+        put_entity(
+            &vault,
+            farther,
+            0,
+            anchor_start + 49,
+            anchor_start + 50,
+            anchor_start + 80,
+        )?;
+
+        let results = vault
+            .query()
+            .search_temporal_with_sigma(
+                anchor_start,
+                anchor_end,
+                86_400,
+                TemporalAnchorMode::Learned,
                 10,
             )
             .run()?;
