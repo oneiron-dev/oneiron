@@ -404,13 +404,6 @@ pub(crate) fn parse_vad(value: &[u8]) -> Vad {
     }
 }
 
-/// Which retrieval signal produced a hit and its raw score.
-#[derive(Debug, Clone, Copy)]
-pub struct SignalHit {
-    pub signal: Signal,
-    pub score: f32,
-}
-
 /// Stats about the context pack query.
 #[derive(Debug, Clone)]
 pub struct PackStats {

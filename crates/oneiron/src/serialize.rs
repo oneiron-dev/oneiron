@@ -5,6 +5,7 @@ use serde_json::{Map, Number, Value};
 use crate::types::{ContextEntity, ContextPack, FieldProfile, PackFormat, Signal, TokenAllocation};
 
 const GROUP_ORDER: &[u8] = &[0, 1, 8, 6, 4, 7, 10, 9];
+const OTHER_ENTITY_TYPE: u8 = u8::MAX;
 
 #[derive(Debug, Clone)]
 pub struct SerializeConfig {
@@ -97,7 +98,7 @@ fn serialize_toon(pack: &ContextPack, config: &SerializeConfig) -> String {
     }
 
     if config.include_stats {
-        append_stats_line(&mut out, pack);
+        append_stats_line(&mut out, pack, config.format);
     }
 
     out
@@ -121,7 +122,7 @@ fn serialize_markdown(pack: &ContextPack, config: &SerializeConfig) -> String {
     }
 
     if config.include_stats {
-        append_stats_line(&mut out, pack);
+        append_stats_line(&mut out, pack, config.format);
     }
 
     out
@@ -145,7 +146,7 @@ fn serialize_plaintext(pack: &ContextPack, config: &SerializeConfig) -> String {
     }
 
     if config.include_stats {
-        append_stats_line(&mut out, pack);
+        append_stats_line(&mut out, pack, config.format);
     }
 
     out
@@ -166,7 +167,7 @@ fn serialize_yaml(pack: &ContextPack, config: &SerializeConfig) -> String {
     }
 
     if config.include_stats {
-        append_stats_line(&mut out, pack);
+        append_stats_line(&mut out, pack, config.format);
     }
 
     out
@@ -174,6 +175,7 @@ fn serialize_yaml(pack: &ContextPack, config: &SerializeConfig) -> String {
 
 fn prepare_pack(pack: &ContextPack, config: &SerializeConfig, json_mode: bool) -> PreparedPack {
     let skip_budget = config.format == PackFormat::Json;
+    let char_budget = config.budget.saturating_mul(4);
 
     if config.merge_neighbors {
         let mut merged = Vec::with_capacity(pack.results.len() + pack.neighbors.len());
@@ -182,7 +184,7 @@ fn prepare_pack(pack: &ContextPack, config: &SerializeConfig, json_mode: bool) -
 
         let mut groups = group_entities(merged);
         if !skip_budget {
-            enforce_token_budget(&mut groups, config);
+            enforce_token_budget(&mut groups, &config.allocation, char_budget);
         }
 
         PreparedPack {
@@ -191,11 +193,42 @@ fn prepare_pack(pack: &ContextPack, config: &SerializeConfig, json_mode: bool) -
             neighbors: Vec::new(),
         }
     } else {
-        let mut results = group_entities(prepare_entities(&pack.results, config, json_mode));
-        let mut neighbors = group_entities(prepare_entities(&pack.neighbors, config, json_mode));
+        let results_source = group_entities(prepare_entities(&pack.results, config, json_mode));
+        let neighbors_source = group_entities(prepare_entities(&pack.neighbors, config, json_mode));
+        let mut results = results_source.clone();
+        let mut neighbors = neighbors_source.clone();
+
         if !skip_budget {
-            enforce_token_budget(&mut results, config);
-            enforce_token_budget(&mut neighbors, config);
+            let results_need = estimate_groups_chars(&results_source);
+            let neighbors_need = estimate_groups_chars(&neighbors_source);
+
+            let mut section_budgets =
+                allocate_section_budgets([results_need, neighbors_need], char_budget);
+            let (budgeted_results, results_used) =
+                budget_groups(&results_source, &config.allocation, section_budgets[0]);
+            let (budgeted_neighbors, neighbors_used) =
+                budget_groups(&neighbors_source, &config.allocation, section_budgets[1]);
+
+            results = budgeted_results;
+            neighbors = budgeted_neighbors;
+
+            let leftover = char_budget.saturating_sub(results_used.saturating_add(neighbors_used));
+            if leftover > 0 {
+                let unmet = [
+                    results_need.saturating_sub(results_used),
+                    neighbors_need.saturating_sub(neighbors_used),
+                ];
+                if unmet.iter().any(|need| *need > 0) {
+                    let extra = allocate_section_budgets(unmet, leftover);
+                    if extra[0] > 0 || extra[1] > 0 {
+                        section_budgets[0] = section_budgets[0].saturating_add(extra[0]);
+                        section_budgets[1] = section_budgets[1].saturating_add(extra[1]);
+                        results = budget_groups(&results_source, &config.allocation, section_budgets[0]).0;
+                        neighbors =
+                            budget_groups(&neighbors_source, &config.allocation, section_budgets[1]).0;
+                    }
+                }
+            }
         }
 
         PreparedPack {
@@ -336,7 +369,8 @@ fn truncate_strings(value: &mut Value, max_field_chars: usize) {
 
 fn group_entities(entities: Vec<PreparedEntity>) -> Vec<(u8, Vec<PreparedEntity>)> {
     let mut buckets = HashMap::<u8, Vec<PreparedEntity>>::new();
-    for entity in entities {
+    for mut entity in entities {
+        entity.entity_type = normalize_group_entity_type(entity.entity_type);
         buckets.entry(entity.entity_type).or_default().push(entity);
     }
 
@@ -373,18 +407,21 @@ fn type_fraction(entity_type: u8, allocation: &TokenAllocation) -> f32 {
     }
 }
 
-fn enforce_token_budget(groups: &mut Vec<(u8, Vec<PreparedEntity>)>, config: &SerializeConfig) {
-    if config.budget == 0 {
-        return;
+fn enforce_token_budget(
+    groups: &mut Vec<(u8, Vec<PreparedEntity>)>,
+    allocation: &TokenAllocation,
+    char_budget: usize,
+) -> usize {
+    if char_budget == 0 {
+        groups.clear();
+        return 0;
     }
-
-    let char_budget = config.budget.saturating_mul(4);
 
     // Normalize fractions so they sum to 1.0 (multiple "other" types each
     // get allocation.other, so raw sum can exceed 1.0).
     let raw: Vec<f32> = groups
         .iter()
-        .map(|(et, _)| type_fraction(*et, &config.allocation))
+        .map(|(et, _)| type_fraction(*et, allocation))
         .collect();
     let total: f32 = raw.iter().sum();
     let norm = if total > 0.0 { 1.0 / total } else { 0.0 };
@@ -409,6 +446,7 @@ fn enforce_token_budget(groups: &mut Vec<(u8, Vec<PreparedEntity>)>, config: &Se
     }
 
     // Second pass: redistribute surplus to hungry types, then truncate.
+    let mut total_used = 0_usize;
     for (i, (_, rows)) in groups.iter_mut().enumerate() {
         let final_budget = if needs[i] <= budgets[i] {
             // Satisfied — cap at what it needs, release rest.
@@ -437,19 +475,78 @@ fn enforce_token_budget(groups: &mut Vec<(u8, Vec<PreparedEntity>)>, config: &Se
             used += chars;
         }
         rows.truncate(keep);
+        total_used = total_used.saturating_add(used);
     }
 
     groups.retain(|(_, rows)| !rows.is_empty());
+    total_used
 }
 
 fn estimate_entity_chars(entity: &PreparedEntity) -> usize {
     let mut chars = entity.id.len() + 12;
     for (key, value) in &entity.fields {
         chars += key.len();
-        chars += value_to_compact_string(value).len();
+        chars += estimate_value_chars(value);
         chars += 4;
     }
     chars
+}
+
+fn estimate_groups_chars(groups: &[(u8, Vec<PreparedEntity>)]) -> usize {
+    groups
+        .iter()
+        .flat_map(|(_, rows)| rows.iter())
+        .map(estimate_entity_chars)
+        .sum()
+}
+
+fn budget_groups(
+    source: &[(u8, Vec<PreparedEntity>)],
+    allocation: &TokenAllocation,
+    char_budget: usize,
+) -> (Vec<(u8, Vec<PreparedEntity>)>, usize) {
+    let mut groups = source.to_vec();
+    let used = enforce_token_budget(&mut groups, allocation, char_budget);
+    (groups, used)
+}
+
+fn allocate_section_budgets(needs: [usize; 2], total_budget: usize) -> [usize; 2] {
+    if total_budget == 0 {
+        return [0, 0];
+    }
+
+    let total_need = needs[0].saturating_add(needs[1]);
+    if total_need <= total_budget {
+        return needs;
+    }
+    if total_need == 0 {
+        return [0, 0];
+    }
+
+    let total_budget = total_budget as u128;
+    let total_need = total_need as u128;
+    let mut budgets = [0_usize, 0_usize];
+    let mut remainders = [(0_usize, 0_u128), (1_usize, 0_u128)];
+    let mut allocated = 0_usize;
+
+    for (index, need) in needs.into_iter().enumerate() {
+        let product = total_budget.saturating_mul(need as u128);
+        budgets[index] = (product / total_need) as usize;
+        remainders[index] = (index, product % total_need);
+        allocated = allocated.saturating_add(budgets[index]);
+    }
+
+    let mut leftover = (total_budget as usize).saturating_sub(allocated);
+    remainders.sort_unstable_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+    for (index, _) in remainders {
+        if leftover == 0 {
+            break;
+        }
+        budgets[index] = budgets[index].saturating_add(1);
+        leftover -= 1;
+    }
+
+    budgets
 }
 
 fn section_object(groups: &[(u8, Vec<PreparedEntity>)], include_score: bool) -> Map<String, Value> {
@@ -617,7 +714,7 @@ fn write_yaml_groups(out: &mut String, groups: &[(u8, Vec<PreparedEntity>)], ind
 
             for (key, value) in &row.fields {
                 write_indent(out, indent + 4);
-                out.push_str(key);
+                out.push_str(&yaml_key(key));
                 out.push_str(": ");
                 out.push_str(&yaml_scalar(value));
                 out.push('\n');
@@ -836,7 +933,7 @@ fn fields_for_profile(entity_type: u8, profile: FieldProfile) -> &'static [&'sta
     }
 }
 
-fn append_stats_line(out: &mut String, pack: &ContextPack) {
+fn append_stats_line(out: &mut String, pack: &ContextPack, format: PackFormat) {
     if !out.is_empty() && !out.ends_with('\n') {
         out.push('\n');
     }
@@ -850,11 +947,18 @@ fn append_stats_line(out: &mut String, pack: &ContextPack) {
         .collect::<Vec<_>>()
         .join(",");
 
-    out.push_str("---\n");
-    out.push_str(&format!(
+    let stats_line = format!(
         "query: {ms:.1}ms | {} candidates | signals: {}",
         pack.stats.candidates_considered, signals
-    ));
+    );
+    if format == PackFormat::Yaml {
+        out.push_str("# ");
+        out.push_str(&stats_line);
+        out.push('\n');
+    } else {
+        out.push_str("---\n");
+        out.push_str(&stats_line);
+    }
 }
 
 fn json_stats(pack: &ContextPack) -> Value {
@@ -920,12 +1024,64 @@ fn value_to_compact_string(value: &Value) -> String {
     serde_json::to_string(value).unwrap_or_default()
 }
 
+fn estimate_value_chars(value: &Value) -> usize {
+    match value {
+        Value::Null => 4,
+        Value::Bool(true) => 4,
+        Value::Bool(false) => 5,
+        Value::Number(number) => number.to_string().len(),
+        Value::String(text) => estimate_json_string_chars(text),
+        Value::Array(values) => {
+            if values.is_empty() {
+                2
+            } else {
+                2 + values.iter().map(estimate_value_chars).sum::<usize>() + (values.len() - 1)
+            }
+        }
+        Value::Object(map) => {
+            if map.is_empty() {
+                2
+            } else {
+                let pairs_len: usize = map
+                    .iter()
+                    .map(|(key, value)| estimate_json_string_chars(key) + 1 + estimate_value_chars(value))
+                    .sum();
+                2 + pairs_len + (map.len() - 1)
+            }
+        }
+    }
+}
+
+fn estimate_json_string_chars(text: &str) -> usize {
+    let mut len = 2;
+    for ch in text.chars() {
+        len += match ch {
+            '"' | '\\' | '\n' | '\r' | '\t' => 2,
+            '\u{08}' | '\u{0C}' => 2,
+            c if c.is_control() => {
+                let _ = c;
+                6
+            }
+            c => c.len_utf8(),
+        };
+    }
+    len
+}
+
 fn escape_markdown(value: &str) -> String {
     value.replace('|', "\\|").replace('\n', "<br>")
 }
 
 fn escape_plaintext(value: &str) -> String {
     value.replace('|', "\\|").replace('\n', "\\n")
+}
+
+fn yaml_key(key: &str) -> String {
+    if needs_yaml_quotes(key) {
+        format!("\"{}\"", yaml_escape_quoted(key))
+    } else {
+        key.to_owned()
+    }
 }
 
 /// Escape a string for YAML double-quoted scalar output.
@@ -958,6 +1114,21 @@ fn yaml_escape_quoted(s: &str) -> String {
         }
     }
     out
+}
+
+fn normalize_group_entity_type(entity_type: u8) -> u8 {
+    if is_known_group_type(entity_type) {
+        entity_type
+    } else {
+        OTHER_ENTITY_TYPE
+    }
+}
+
+fn is_known_group_type(entity_type: u8) -> bool {
+    matches!(
+        entity_type,
+        0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13 | 14 | 60 | 61 | 62
+    )
 }
 
 fn yaml_scalar(value: &Value) -> String {
@@ -1255,6 +1426,59 @@ mod tests {
     }
 
     #[test]
+    fn split_mode_uses_shared_budget_pool() {
+        let mut pack = ContextPack {
+            results: Vec::new(),
+            neighbors: Vec::new(),
+            stats: empty_stats(),
+        };
+
+        for i in 0..6_u8 {
+            pack.results.push(ContextEntity {
+                id: EntityId::from_bytes([10 + i; 16]),
+                short_id: format!("r{i}"),
+                content_hash: i,
+                entity_type: 0,
+                score: 1.0,
+                fields: Some(HashMap::from([
+                    ("pred".to_owned(), Value::String("p".to_owned())),
+                    ("val".to_owned(), Value::String("v".repeat(12))),
+                ])),
+                edges: None,
+                vector: None,
+            });
+            pack.neighbors.push(ContextEntity {
+                id: EntityId::from_bytes([30 + i; 16]),
+                short_id: format!("n{i}"),
+                content_hash: i,
+                entity_type: 4,
+                score: 0.0,
+                fields: Some(HashMap::from([(
+                    "name".to_owned(),
+                    Value::String("neighbor".to_owned()),
+                )])),
+                edges: None,
+                vector: None,
+            });
+        }
+
+        let mut cfg = config(PackFormat::Toon);
+        cfg.merge_neighbors = false;
+        cfg.budget = 30;
+
+        let prepared = prepare_pack(&pack, &cfg, false);
+        let total_chars =
+            estimate_groups_chars(&prepared.results) + estimate_groups_chars(&prepared.neighbors);
+
+        assert!(
+            total_chars <= cfg.budget * 4,
+            "shared split-mode budget should cap total chars: {total_chars}"
+        );
+        assert!(!prepared.results.is_empty());
+        assert!(!prepared.neighbors.is_empty());
+    }
+
+    #[test]
     fn field_profile_changes_output() {
         let pack = sample_pack();
 
@@ -1454,6 +1678,102 @@ mod tests {
             events_count, 1,
             "events should be constrained by normalized 'other' share"
         );
+    }
+
+    #[test]
+    fn unknown_entity_types_share_single_other_group() {
+        let pack = ContextPack {
+            results: vec![
+                ContextEntity {
+                    id: EntityId::from_bytes([15; 16]),
+                    short_id: "u15".to_owned(),
+                    content_hash: 0x15,
+                    entity_type: 15,
+                    score: 0.9,
+                    fields: Some(HashMap::from([(
+                        "name".to_owned(),
+                        Value::String("fifteen".to_owned()),
+                    )])),
+                    edges: None,
+                    vector: None,
+                },
+                ContextEntity {
+                    id: EntityId::from_bytes([20; 16]),
+                    short_id: "u20".to_owned(),
+                    content_hash: 0x20,
+                    entity_type: 20,
+                    score: 0.8,
+                    fields: Some(HashMap::from([(
+                        "name".to_owned(),
+                        Value::String("twenty".to_owned()),
+                    )])),
+                    edges: None,
+                    vector: None,
+                },
+            ],
+            neighbors: vec![],
+            stats: empty_stats(),
+        };
+
+        let parsed: Value =
+            serde_json::from_slice(&serialize_pack(&pack, &config(PackFormat::Json))).expect("json");
+        let other = parsed.get("other").and_then(Value::as_array).expect("other group");
+        assert_eq!(other.len(), 2);
+        assert_eq!(other[0]["name"], "fifteen");
+        assert_eq!(other[1]["name"], "twenty");
+    }
+
+    #[test]
+    fn yaml_stats_are_emitted_as_comments() {
+        let mut cfg = config(PackFormat::Yaml);
+        cfg.include_stats = true;
+
+        let text = String::from_utf8(serialize_pack(&sample_pack(), &cfg)).expect("utf8");
+        assert!(text.contains("# query:"));
+        assert!(!text.contains("\n---\nquery:"));
+    }
+
+    #[test]
+    fn yaml_quotes_unsafe_field_keys() {
+        let pack = ContextPack {
+            results: vec![ContextEntity {
+                id: EntityId::from_bytes([62; 16]),
+                short_id: "mc01".to_owned(),
+                content_hash: 0x01,
+                entity_type: 62,
+                score: 0.5,
+                fields: Some(HashMap::from([
+                    ("x:y".to_owned(), Value::String("value".to_owned())),
+                    ("true".to_owned(), Value::String("reserved".to_owned())),
+                ])),
+                edges: None,
+                vector: None,
+            }],
+            neighbors: vec![],
+            stats: empty_stats(),
+        };
+
+        let text = String::from_utf8(serialize_pack(&pack, &config(PackFormat::Yaml))).expect("utf8");
+        assert!(text.contains("\"x:y\": value"));
+        assert!(text.contains("\"true\": reserved"));
+    }
+
+    #[test]
+    fn estimate_value_chars_matches_compact_json() {
+        let values = vec![
+            Value::Null,
+            Value::Bool(true),
+            Value::String("hello\nworld".to_owned()),
+            serde_json::json!(["alpha", 3, false]),
+            serde_json::json!({"a": "b", "nested": {"x": [1, 2, {"k": "v"}]}}),
+        ];
+
+        for value in values {
+            assert_eq!(
+                estimate_value_chars(&value),
+                serde_json::to_string(&value).expect("json").len()
+            );
+        }
     }
 
     #[test]
