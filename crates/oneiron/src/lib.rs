@@ -30,8 +30,8 @@ use crate::store::Store;
 use crate::types::{parse_vad, EDGE_KEY_LEN, EDGE_VALUE_LEN};
 pub use crate::types::{
     ContextEntity, ContextPack, EdgeInfo, EdgeKind, EntityId, FieldProfile, HnswConfig, PackFormat,
-    PackStats, ScoredEntity, Signal, TemporalAnchorMode, TemporalGranularity, TimeRange, TokenAllocation,
-    Vad, VaultConfig,
+    PackStats, ScoredEntity, Signal, TemporalAnchorMode, TemporalGranularity, TimeRange,
+    TokenAllocation, Vad, VaultConfig,
 };
 
 const MIN_MAP_SIZE_BYTES: usize = 1 << 20;
