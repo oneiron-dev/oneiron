@@ -102,8 +102,12 @@ pub(crate) fn ppr_query(
     {
         let rtxn = store.env.read_txn()?;
         if let Some(raw) = store.ppr_cache.get(&rtxn, &seed_hash)? {
-            let (computed_at, _, stale) = parse_cache_header(raw)?;
-            if stale == 0 && now.saturating_sub(computed_at) <= CACHE_TTL_SECS {
+            let (computed_at, cached_graph_version, stale) = parse_cache_header(raw)?;
+            let current_graph_version = read_graph_version(store, &rtxn)?;
+            if stale == 0
+                && cached_graph_version == current_graph_version
+                && now.saturating_sub(computed_at) <= CACHE_TTL_SECS
+            {
                 let mut scores = decode_cache_scores(&raw[CACHE_HEADER_LEN..])?;
                 sort_scores(&mut scores);
                 return Ok(scores);
@@ -118,16 +122,18 @@ pub(crate) fn ppr_query(
         (scores, version)
     };
 
-    let encoded = encode_cache_value(now, graph_version, 0, &scores);
     let mut wtxn = store.env.write_txn()?;
-    store.ppr_cache.put(&mut wtxn, &seed_hash, &encoded)?;
-
-    for seed in seeds {
-        let dep_key = encode_dep_key(seed, &seed_hash);
-        store.ppr_cache_deps.put(&mut wtxn, &dep_key, &[])?;
+    if store_cache_entry(
+        store,
+        &mut wtxn,
+        &seed_hash,
+        seeds,
+        now,
+        graph_version,
+        &scores,
+    )? {
+        wtxn.commit()?;
     }
-
-    wtxn.commit()?;
     Ok(scores)
 }
 
@@ -176,7 +182,7 @@ pub(crate) fn cleanup_ppr_cache(
             .try_into()
             .map_err(|_| Error::InvalidKey)?;
 
-        if store.entities.get(&*wtxn, entity_id.as_bytes())?.is_none()
+        if !seed_is_live_for_ppr(store, &*wtxn, &entity_id)?
             || evicted_hashes.contains(&seed_hash)
             || store.ppr_cache.get(&*wtxn, &seed_hash)?.is_none()
         {
@@ -228,6 +234,50 @@ fn invalidate_ppr_caches(store: &Store, wtxn: &mut RwTxn<'_>, entity_id: &Entity
     }
 
     Ok(())
+}
+
+fn seed_is_live_for_ppr(store: &Store, txn: &RoTxn<'_>, entity_id: &EntityId) -> Result<bool> {
+    if store.entities.get(txn, entity_id.as_bytes())?.is_some() {
+        return Ok(true);
+    }
+
+    let mut out_iter = store.edges_out.prefix_iter(txn, entity_id.as_bytes())?;
+    if let Some(entry) = out_iter.next() {
+        entry?;
+        return Ok(true);
+    }
+
+    let mut in_iter = store.edges_in.prefix_iter(txn, entity_id.as_bytes())?;
+    if let Some(entry) = in_iter.next() {
+        entry?;
+        return Ok(true);
+    }
+
+    Ok(false)
+}
+
+fn store_cache_entry(
+    store: &Store,
+    wtxn: &mut RwTxn<'_>,
+    seed_hash: &[u8; SEED_HASH_LEN],
+    seeds: &[EntityId],
+    computed_at: u64,
+    graph_version: u64,
+    scores: &[ScoredEntity],
+) -> Result<bool> {
+    if read_graph_version(store, &*wtxn)? != graph_version {
+        return Ok(false);
+    }
+
+    let encoded = encode_cache_value(computed_at, graph_version, 0, scores);
+    store.ppr_cache.put(wtxn, seed_hash, &encoded)?;
+
+    for seed in seeds {
+        let dep_key = encode_dep_key(seed, seed_hash);
+        store.ppr_cache_deps.put(wtxn, &dep_key, &[])?;
+    }
+
+    Ok(true)
 }
 
 pub(crate) fn invalidate_ppr_for_edge(
@@ -798,6 +848,98 @@ mod tests {
         vault.put_edge(&a, EdgeKind::BelongsTo, &b, 1.0)?;
 
         assert_eq!(count_entries(&vault.store.ppr_cache_deps, &vault)?, 0);
+        Ok(())
+    }
+
+    #[test]
+    fn cleanup_keeps_graph_only_seed_deps_and_invalidation_still_works() -> Result<()> {
+        let temp_dir = tempdir()?;
+        let vault = Vault::open(temp_dir.path(), test_config())?;
+        let a = entity(38);
+        let b = entity(39);
+        let c = entity(40);
+        let tr = TimeRange { start: 1, end: 1 };
+
+        vault.put_entity(&b, 1, tr, 1, b"b-data")?;
+        vault.put_entity(&c, 1, tr, 1, b"c-data")?;
+        vault.put_edge(&a, EdgeKind::BelongsTo, &b, 1.0)?;
+
+        let first = ppr_query(&vault.store, &vault.config, &[a], 3, 0.15)?;
+        assert!(score_for(&first, b) > 0.0);
+        assert!(score_for(&first, c) <= SCORE_EPSILON);
+
+        let report = vault.maintain().cleanup_ppr_cache(CACHE_TTL_SECS).run()?;
+        assert_eq!(report.ppr_caches_evicted, 0);
+        assert_eq!(count_entries(&vault.store.ppr_cache_deps, &vault)?, 1);
+
+        vault.put_edge(&a, EdgeKind::BelongsTo, &c, 1.0)?;
+        let second = ppr_query(&vault.store, &vault.config, &[a], 3, 0.15)?;
+        assert!(score_for(&second, c) > 0.0);
+        Ok(())
+    }
+
+    #[test]
+    fn ppr_query_recomputes_when_graph_version_changes() -> Result<()> {
+        let temp_dir = tempdir()?;
+        let vault = Vault::open(temp_dir.path(), test_config())?;
+        let a = entity(41);
+        let b = entity(42);
+
+        vault.put_edge(&a, EdgeKind::BelongsTo, &b, 1.0)?;
+        let _ = ppr_query(&vault.store, &vault.config, &[a], 3, 0.15)?;
+        let cache_before = cache_row(&vault, &[a], 3, 0.15)?;
+        let (_, version_before, stale_before) = parse_cache_header(&cache_before)?;
+        assert_eq!(stale_before, 0);
+
+        let new_version = version_before + 1;
+        let mut wtxn = vault.store.env.write_txn()?;
+        vault
+            .store
+            .hnsw_meta
+            .put(&mut wtxn, GRAPH_VERSION_KEY, &new_version.to_le_bytes())?;
+        wtxn.commit()?;
+
+        let _ = ppr_query(&vault.store, &vault.config, &[a], 3, 0.15)?;
+        let cache_after = cache_row(&vault, &[a], 3, 0.15)?;
+        let (_, version_after, stale_after) = parse_cache_header(&cache_after)?;
+
+        assert_eq!(stale_after, 0);
+        assert_eq!(version_after, new_version);
+        assert_ne!(cache_before, cache_after);
+        Ok(())
+    }
+
+    #[test]
+    fn cache_write_is_skipped_when_graph_version_changes_before_store() -> Result<()> {
+        let temp_dir = tempdir()?;
+        let vault = Vault::open(temp_dir.path(), test_config())?;
+        let a = entity(43);
+        let b = entity(44);
+        let seed_hash = hash_seeds(&[a], 3, 0.15);
+
+        vault.put_edge(&a, EdgeKind::BelongsTo, &b, 1.0)?;
+
+        let stale_version = graph_version(&vault)?;
+        let mut wtxn = vault.store.env.write_txn()?;
+        increment_graph_version(&vault.store, &mut wtxn)?;
+        wtxn.commit()?;
+
+        let scores = vec![ScoredEntity { id: b, score: 1.0 }];
+        let mut wtxn = vault.store.env.write_txn()?;
+        let stored = store_cache_entry(
+            &vault.store,
+            &mut wtxn,
+            &seed_hash,
+            &[a],
+            crate::unix_seconds_now(),
+            stale_version,
+            &scores,
+        )?;
+        wtxn.commit()?;
+
+        assert!(!stored);
+        let rtxn = vault.store.env.read_txn()?;
+        assert!(vault.store.ppr_cache.get(&rtxn, &seed_hash)?.is_none());
         Ok(())
     }
 }
