@@ -195,6 +195,19 @@ fn cosine_similarity_neon(a: &[f32], b: &[f32]) -> f32 {
         i += 8;
     }
 
+    while i + 4 <= len {
+        unsafe {
+            let va = vld1q_f32(a.as_ptr().add(i));
+            let vb = vld1q_f32(b.as_ptr().add(i));
+
+            dot0 = vfmaq_f32(dot0, va, vb);
+            norm_a0 = vfmaq_f32(norm_a0, va, va);
+            norm_b0 = vfmaq_f32(norm_b0, vb, vb);
+        }
+
+        i += 4;
+    }
+
     let (mut dot_sum, mut norm_a_sum, mut norm_b_sum) = unsafe {
         (
             vaddvq_f32(vaddq_f32(dot0, dot1)),

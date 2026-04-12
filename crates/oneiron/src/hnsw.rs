@@ -12,9 +12,11 @@ use crate::types::{EntityId, ScoredEntity, VaultConfig, ENTITY_ID_LEN};
 const ENTRY_POINT_KEY: &[u8] = b"entry_point";
 pub(crate) const COUNT_KEY: &[u8] = b"count";
 const ERR_ENTRY_POINT_MISSING: &str = "hnsw count > 0 but entry point is missing";
+const ERR_ENTRY_POINT_BYTES: &str = "hnsw entry point bytes are malformed";
 const ERR_COUNT_BYTES: &str = "hnsw count bytes are malformed";
 const ERR_NEIGHBOR_KEY_BYTES: &str = "hnsw neighbor key bytes are malformed";
 const ERR_NEIGHBOR_VALUE_BYTES: &str = "hnsw neighbor list bytes are malformed";
+const ERR_VECTOR_BYTES: &str = "hnsw vector bytes are malformed";
 const ERR_COUNT_UNDERFLOW: &str = "hnsw node count underflowed during delete";
 const ERR_COUNT_OVERFLOW: &str = "hnsw node count overflowed during insert";
 const ERR_REMAINING_NODES_MISSING: &str = "hnsw count > 0 but no nodes remain";
@@ -62,7 +64,10 @@ pub(crate) fn hnsw_insert(
     vector: &[f32],
 ) -> Result<()> {
     if store.hnsw_neighbors.get(&*wtxn, id.as_bytes())?.is_some() {
-        hnsw_deindex(store, wtxn, id)?;
+        // Vector refreshes keep their current graph links. Reusing full delete
+        // semantics here can disconnect live nodes that are only reachable
+        // through the refreshed node.
+        return Ok(());
     }
 
     let mut count = read_count(store, &*wtxn)?;
@@ -306,7 +311,7 @@ pub(crate) fn hnsw_deindex(store: &Store, wtxn: &mut RwTxn<'_>, id: &EntityId) -
             .hnsw_neighbors
             .first(&*wtxn)?
             .ok_or(Error::CorruptedIndex(ERR_REMAINING_NODES_MISSING))?;
-        let replacement = parse_neighbor_key(replacement_key)?;
+        let replacement = parse_entity_id(replacement_key, ERR_NEIGHBOR_KEY_BYTES)?;
         store
             .hnsw_meta
             .put(wtxn, ENTRY_POINT_KEY, replacement.as_bytes())?;
@@ -337,6 +342,8 @@ fn beam_search(
 
     let mut candidates: BinaryHeap<Reverse<HeapEntry>> = BinaryHeap::new();
     let mut results: BinaryHeap<HeapEntry> = BinaryHeap::new();
+    // Reserve extra headroom so the visited set can absorb frontier growth
+    // without immediately rehashing.
     let mut visited: HashSet<EntityId> = HashSet::with_capacity(ef * 2);
 
     visited.insert(entry_point);
@@ -492,13 +499,13 @@ fn read_entry_point(store: &Store, txn: &RoTxn<'_>) -> Result<Option<EntityId>> 
         return Ok(None);
     };
 
-    parse_entity_id(raw).map(Some)
+    parse_entity_id(raw, ERR_ENTRY_POINT_BYTES).map(Some)
 }
 
-fn parse_entity_id(bytes: &[u8]) -> Result<EntityId> {
+fn parse_entity_id(bytes: &[u8], err: &'static str) -> Result<EntityId> {
     let raw: [u8; ENTITY_ID_LEN] = bytes
         .try_into()
-        .map_err(|_| Error::CorruptedIndex(ERR_NEIGHBOR_KEY_BYTES))?;
+        .map_err(|_| Error::CorruptedIndex(err))?;
     Ok(EntityId::from_bytes(raw))
 }
 
@@ -512,7 +519,7 @@ fn load_neighbors(store: &Store, txn: &RoTxn<'_>, id: &EntityId) -> Result<Vec<E
     }
 
     raw.chunks_exact(ENTITY_ID_LEN)
-        .map(parse_entity_id)
+        .map(|chunk| parse_entity_id(chunk, ERR_NEIGHBOR_KEY_BYTES))
         .collect()
 }
 
@@ -595,9 +602,11 @@ fn collect_backlink_updates(
     id: &EntityId,
 ) -> Result<Vec<(EntityId, Vec<u8>)>> {
     let mut updates = Vec::new();
+    // Deletes scrub backlinks eagerly. This requires a full scan of the
+    // neighbor table because we do not maintain a reverse-adjacency index.
     for entry in store.hnsw_neighbors.iter(txn)? {
         let (key, raw) = entry?;
-        let node_id = parse_neighbor_key(key)?;
+        let node_id = parse_entity_id(key, ERR_NEIGHBOR_KEY_BYTES)?;
         if node_id == *id {
             continue;
         }
@@ -608,13 +617,6 @@ fn collect_backlink_updates(
         updates.push((node_id, scrubbed));
     }
     Ok(updates)
-}
-
-fn parse_neighbor_key(key: &[u8]) -> Result<EntityId> {
-    let raw: [u8; ENTITY_ID_LEN] = key
-        .try_into()
-        .map_err(|_| Error::CorruptedIndex(ERR_NEIGHBOR_KEY_BYTES))?;
-    Ok(EntityId::from_bytes(raw))
 }
 
 fn scrub_neighbor_bytes(raw: &[u8], target: &EntityId) -> Result<Option<Vec<u8>>> {
@@ -639,13 +641,17 @@ fn scrub_neighbor_bytes(raw: &[u8], target: &EntityId) -> Result<Option<Vec<u8>>
 fn decode_vector_into<'a>(raw: &[u8], scratch: &'a mut Vec<f32>) -> Result<&'a [f32]> {
     let mut chunks = raw.chunks_exact(4);
     if !chunks.remainder().is_empty() {
-        return Err(Error::InvalidKey);
+        return Err(Error::CorruptedIndex(ERR_VECTOR_BYTES));
     }
 
     let len = raw.len() / 4;
     scratch.resize(len, 0.0);
     for (slot, chunk) in scratch.iter_mut().zip(&mut chunks) {
-        *slot = f32::from_le_bytes(chunk.try_into().unwrap());
+        *slot = f32::from_le_bytes(
+            chunk
+                .try_into()
+                .expect("chunks_exact(4) yields only 4-byte chunks"),
+        );
     }
 
     Ok(scratch.as_slice())
@@ -722,7 +728,7 @@ mod tests {
     }
 
     #[test]
-    fn hnsw_insert_reinserts_existing_node_without_double_counting() -> Result<()> {
+    fn hnsw_insert_existing_node_keeps_links_and_count() -> Result<()> {
         let temp_dir = tempdir()?;
         let store = Store::open(temp_dir.path(), &test_config())?;
         let mut wtxn = store.env.write_txn()?;
@@ -744,9 +750,55 @@ mod tests {
         hnsw_insert(&store, &test_config(), &mut wtxn, &a, &[0.0, 1.0, 0.0, 0.0])?;
 
         assert_eq!(read_count(&store, &wtxn)?, 3);
-        assert_eq!(load_neighbors(&store, &wtxn, &a)?, vec![c]);
-        assert_eq!(load_neighbors(&store, &wtxn, &b)?, vec![c]);
-        assert_eq!(load_neighbors(&store, &wtxn, &c)?, vec![a]);
+        assert_eq!(load_neighbors(&store, &wtxn, &a)?, vec![b]);
+        assert_eq!(load_neighbors(&store, &wtxn, &b)?, vec![a, c]);
+        assert_eq!(load_neighbors(&store, &wtxn, &c)?, vec![b]);
+        Ok(())
+    }
+
+    #[test]
+    fn put_vector_refresh_preserves_search_connectivity() -> Result<()> {
+        let temp_dir = tempdir()?;
+        let vault = Vault::open(temp_dir.path(), test_config())?;
+        let a = EntityId::now();
+        let b = EntityId::now();
+        let c = EntityId::now();
+
+        for id in [a, b, c] {
+            vault.put_entity(&id, 0, point(1, 1), 1, b"node")?;
+        }
+
+        let mut wtxn = vault.store.env.write_txn()?;
+        put_vector_raw(&vault.store, &mut wtxn, &a, &[0.8, 0.2, 0.0, 0.0])?;
+        put_vector_raw(&vault.store, &mut wtxn, &b, &[1.0, 0.0, 0.0, 0.0])?;
+        put_vector_raw(&vault.store, &mut wtxn, &c, &[0.0, 1.0, 0.0, 0.0])?;
+        write_neighbors(&vault.store, &mut wtxn, &c, &[a])?;
+        write_neighbors(&vault.store, &mut wtxn, &a, &[b])?;
+        write_neighbors(&vault.store, &mut wtxn, &b, &[a])?;
+        vault
+            .store
+            .hnsw_meta
+            .put(&mut wtxn, ENTRY_POINT_KEY, c.as_bytes())?;
+        vault
+            .store
+            .hnsw_meta
+            .put(&mut wtxn, COUNT_KEY, &3_u64.to_le_bytes())?;
+        wtxn.commit()?;
+
+        let query = [1.0_f32, 0.0, 0.0, 0.0];
+        let before = vault.search_vector(&query, 3)?;
+        assert!(
+            before.iter().any(|entry| entry.id == b),
+            "expected B to be reachable before refresh, got {before:?}"
+        );
+
+        vault.put_vector(&a, &[0.0, 1.0, 0.0, 0.0])?;
+
+        let after = vault.search_vector(&query, 3)?;
+        assert!(
+            after.iter().any(|entry| entry.id == b),
+            "expected B to remain reachable after refresh, got {after:?}"
+        );
         Ok(())
     }
 
@@ -771,6 +823,53 @@ mod tests {
         assert!(matches!(
             err,
             Error::CorruptedIndex(message) if message == ERR_NEIGHBOR_VALUE_BYTES
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn hnsw_search_reports_corrupted_vector_bytes() -> Result<()> {
+        let temp_dir = tempdir()?;
+        let vault = Vault::open(temp_dir.path(), test_config())?;
+        let id = EntityId::now();
+        vault.put_entity(&id, 0, point(1, 1), 1, b"node")?;
+        vault.put_vector(&id, &[1.0, 0.0, 0.0, 0.0])?;
+
+        let mut wtxn = vault.store.env.write_txn()?;
+        vault.store.vectors.put(&mut wtxn, id.as_bytes(), &[1, 2, 3])?;
+        wtxn.commit()?;
+
+        let err = vault
+            .search_vector(&[1.0, 0.0, 0.0, 0.0], 1)
+            .expect_err("expected corrupted vector bytes");
+        assert!(matches!(
+            err,
+            Error::CorruptedIndex(message) if message == ERR_VECTOR_BYTES
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn hnsw_search_reports_corrupted_entry_point_bytes() -> Result<()> {
+        let temp_dir = tempdir()?;
+        let vault = Vault::open(temp_dir.path(), test_config())?;
+        let id = EntityId::now();
+        vault.put_entity(&id, 0, point(1, 1), 1, b"node")?;
+        vault.put_vector(&id, &[1.0, 0.0, 0.0, 0.0])?;
+
+        let mut wtxn = vault.store.env.write_txn()?;
+        vault
+            .store
+            .hnsw_meta
+            .put(&mut wtxn, ENTRY_POINT_KEY, &[1, 2, 3])?;
+        wtxn.commit()?;
+
+        let err = vault
+            .search_vector(&[1.0, 0.0, 0.0, 0.0], 1)
+            .expect_err("expected corrupted entry point bytes");
+        assert!(matches!(
+            err,
+            Error::CorruptedIndex(message) if message == ERR_ENTRY_POINT_BYTES
         ));
         Ok(())
     }
