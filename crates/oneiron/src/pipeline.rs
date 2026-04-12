@@ -283,52 +283,48 @@ impl<'a> PipelineBuilder<'a> {
 
     pub fn run(self) -> Result<Vec<ScoredEntity>> {
         let mut ranked_lists = Vec::new();
+        let rtxn = self.vault.store.env.read_txn()?;
 
-        {
-            let rtxn = self.vault.store.env.read_txn()?;
-
-            if let Some((query_vector, limit)) = &self.vector_search {
-                if query_vector.len() != self.vault.config.dimensions {
-                    return Err(Error::DimensionMismatch {
-                        expected: self.vault.config.dimensions,
-                        got: query_vector.len(),
-                    });
-                }
-                if query_vector.iter().any(|value| !value.is_finite()) {
-                    return Err(Error::InvalidVector);
-                }
-
-                let vector_results = crate::hnsw::hnsw_search(
-                    &self.vault.store,
-                    &self.vault.config,
-                    &rtxn,
-                    query_vector,
-                    *limit,
-                )?;
-                ranked_lists.push(vector_results);
+        if let Some((query_vector, limit)) = &self.vector_search {
+            if query_vector.len() != self.vault.config.dimensions {
+                return Err(Error::DimensionMismatch {
+                    expected: self.vault.config.dimensions,
+                    got: query_vector.len(),
+                });
+            }
+            if query_vector.iter().any(|value| !value.is_finite()) {
+                return Err(Error::InvalidVector);
             }
 
-            if let Some((query, limit)) = &self.text_search {
-                let text_results =
-                    crate::bm25::search_text(&self.vault.store, &rtxn, query, *limit)?;
-                ranked_lists.push(text_results);
-            }
+            let vector_results = crate::hnsw::hnsw_search(
+                &self.vault.store,
+                &self.vault.config,
+                &rtxn,
+                query_vector,
+                *limit,
+            )?;
+            ranked_lists.push(vector_results);
+        }
 
-            if let Some(codes) = &self.phonetic_search {
-                let phonetic_results = execute_phonetic(&self.vault.store, &rtxn, codes)?;
-                ranked_lists.push(phonetic_results);
-            }
+        if let Some((query, limit)) = &self.text_search {
+            let text_results = crate::bm25::search_text(&self.vault.store, &rtxn, query, *limit)?;
+            ranked_lists.push(text_results);
+        }
 
-            if let Some(config) = &self.temporal_search {
-                let temporal_results = execute_temporal(&self.vault.store, &rtxn, config)?;
-                ranked_lists.push(temporal_results);
-            }
+        if let Some(codes) = &self.phonetic_search {
+            let phonetic_results = execute_phonetic(&self.vault.store, &rtxn, codes)?;
+            ranked_lists.push(phonetic_results);
+        }
+
+        if let Some(config) = &self.temporal_search {
+            let temporal_results = execute_temporal(&self.vault.store, &rtxn, config)?;
+            ranked_lists.push(temporal_results);
         }
 
         if let Some((seeds, depth)) = &self.ppr_search {
-            let ppr_results = crate::ppr::ppr_query(
+            let ppr_results = crate::ppr::ppr_query_in_txn(
                 &self.vault.store,
-                &self.vault.config,
+                &rtxn,
                 seeds,
                 *depth,
                 PPR_DAMPING,
@@ -355,9 +351,9 @@ impl<'a> PipelineBuilder<'a> {
                 let mut seeds: Vec<EntityId> = combined.into_iter().collect();
                 seeds.sort_unstable_by(|a, b| a.as_bytes().cmp(b.as_bytes()));
 
-                let ppr_results = crate::ppr::ppr_query(
+                let ppr_results = crate::ppr::ppr_query_in_txn(
                     &self.vault.store,
-                    &self.vault.config,
+                    &rtxn,
                     &seeds,
                     *depth,
                     PPR_DAMPING,
@@ -366,45 +362,40 @@ impl<'a> PipelineBuilder<'a> {
             }
         }
 
+        if let (None, Some(half_life_days)) = (self.temporal_search.as_ref(), self.recency_half_life)
         {
-            let rtxn = self.vault.store.env.read_txn()?;
+            fusion::boost_recency(&mut scores, half_life_days, &self.vault.store, &rtxn)?;
+        }
 
-            if let (None, Some(half_life_days)) =
-                (self.temporal_search.as_ref(), self.recency_half_life)
-            {
-                fusion::boost_recency(&mut scores, half_life_days, &self.vault.store, &rtxn)?;
-            }
+        if self.apply_salience {
+            fusion::boost_salience(&mut scores, &self.vault.store, &rtxn)?;
+        }
 
-            if self.apply_salience {
-                fusion::boost_salience(&mut scores, &self.vault.store, &rtxn)?;
-            }
+        if self.apply_confidence {
+            fusion::boost_confidence(&mut scores, &self.vault.store, &rtxn)?;
+        }
 
-            if self.apply_confidence {
-                fusion::boost_confidence(&mut scores, &self.vault.store, &rtxn)?;
-            }
+        apply_filters(
+            &mut scores,
+            &self.vault.store,
+            &rtxn,
+            self.type_filter.as_deref(),
+            self.since_filter,
+            self.occurred_range,
+            self.learned_range,
+        )?;
 
-            apply_filters(
+        if self.apply_contiguity {
+            // Contiguity is O(n^2), so sort before pretruncating to the best
+            // candidates, then sort again after boost_contiguity mutates scores.
+            fusion::sort_scored_entities_desc(&mut scores);
+            pretruncate_for_contiguity(&mut scores, self.result_limit);
+            boost_contiguity(
                 &mut scores,
+                self.temporal_search.as_ref(),
                 &self.vault.store,
                 &rtxn,
-                self.type_filter.as_deref(),
-                self.since_filter,
-                self.occurred_range,
-                self.learned_range,
             )?;
-
-            if self.apply_contiguity {
-                // Contiguity is O(n^2), so sort before pretruncating to the best
-                // candidates, then sort again after boost_contiguity mutates scores.
-                fusion::sort_scored_entities_desc(&mut scores);
-                pretruncate_for_contiguity(&mut scores, self.result_limit);
-                boost_contiguity(
-                    &mut scores,
-                    self.temporal_search.as_ref(),
-                    &self.vault.store,
-                    &rtxn,
-                )?;
-            }
         }
 
         fusion::sort_scored_entities_desc(&mut scores);
