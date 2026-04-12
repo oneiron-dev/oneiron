@@ -14,6 +14,7 @@ pub(crate) const GRAPH_VERSION_KEY: &[u8] = b"graph_version";
 pub(crate) const TEMPORAL_LONG_INTERVALS_SCHEMA_VERSION_KEY: &[u8] =
     b"temporal_long_intervals_schema_version";
 const TEMPORAL_LONG_INTERVALS_SCHEMA_VERSION: u8 = 2;
+pub(crate) const VECTOR_VERSION_KEY: &[u8] = b"vector_version";
 
 /// LMDB environment and database handles for a vault.
 pub struct Store {

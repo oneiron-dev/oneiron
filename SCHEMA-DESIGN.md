@@ -773,7 +773,7 @@ pub struct MaintenanceReport {
 
 | Operation | What it does | When to call |
 |---|---|---|
-| `rebuild_hnsw` | Strict rebuild: re-insert all live vectors into fresh graph, discard dead nodes, fail on invalid stored vectors before opening the write txn | Dead ratio > 10% |
+| `rebuild_hnsw` | Strict rebuild: re-insert all live vectors into fresh graph, discard dead nodes, fail on invalid stored vectors or concurrent vector changes before the final write txn | Dead ratio > 10% |
 | `rebuild_hnsw_heal_invalid_vectors` | Repair rebuild: re-insert only valid vectors into a fresh graph, skip invalid stored vectors, preserve raw vector rows for later inspection | Operator-triggered repair |
 | `cleanup_ppr_cache` | Evict stale + expired cache entries from `ppr_cache` + `ppr_cache_deps` | Nightly |
 | `compact_postings` | Remove empty posting lists from `text_postings` | After bulk deletes |
