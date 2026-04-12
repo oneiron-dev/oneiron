@@ -166,6 +166,8 @@ fn cosine_similarity_neon(a: &[f32], b: &[f32]) -> f32 {
     let len = a.len();
     let mut i = 0;
 
+    // SAFETY: NEON is mandatory on aarch64, and these intrinsics do not touch
+    // memory. The loaded vectors below are separately guarded by loop bounds.
     let (mut dot0, mut dot1, mut norm_a0, mut norm_a1, mut norm_b0, mut norm_b1) = unsafe {
         (
             vdupq_n_f32(0.0),
@@ -178,6 +180,7 @@ fn cosine_similarity_neon(a: &[f32], b: &[f32]) -> f32 {
     };
 
     while i + 8 <= len {
+        // SAFETY: `i + 8 <= len` guarantees both 4-lane loads stay in-bounds.
         unsafe {
             let va0 = vld1q_f32(a.as_ptr().add(i));
             let vb0 = vld1q_f32(b.as_ptr().add(i));
@@ -196,6 +199,7 @@ fn cosine_similarity_neon(a: &[f32], b: &[f32]) -> f32 {
     }
 
     while i + 4 <= len {
+        // SAFETY: `i + 4 <= len` guarantees the 4-lane loads stay in-bounds.
         unsafe {
             let va = vld1q_f32(a.as_ptr().add(i));
             let vb = vld1q_f32(b.as_ptr().add(i));
@@ -208,6 +212,7 @@ fn cosine_similarity_neon(a: &[f32], b: &[f32]) -> f32 {
         i += 4;
     }
 
+    // SAFETY: lane-wise adds operate on initialized NEON accumulators only.
     let (mut dot_sum, mut norm_a_sum, mut norm_b_sum) = unsafe {
         (
             vaddvq_f32(vaddq_f32(dot0, dot1)),
