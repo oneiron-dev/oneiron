@@ -67,6 +67,36 @@ struct PhoneticAccumulator {
     matches: usize,
 }
 
+#[derive(Debug, Clone, Copy)]
+struct PipelineFilterConfig<'a> {
+    type_filter: Option<&'a [u8]>,
+    since_filter: Option<u64>,
+    occurred_range: Option<(u64, u64)>,
+    learned_range: Option<(u64, u64)>,
+}
+
+#[derive(Default)]
+struct EntityMetadataCache {
+    entries: HashMap<EntityId, Option<EntityMetadata>>,
+}
+
+impl EntityMetadataCache {
+    fn get(
+        &mut self,
+        store: &Store,
+        rtxn: &RoTxn<'_>,
+        id: &EntityId,
+    ) -> Result<Option<EntityMetadata>> {
+        if let Some(cached) = self.entries.get(id) {
+            return Ok(*cached);
+        }
+
+        let metadata = read_entity_metadata(store, rtxn, id)?;
+        self.entries.insert(*id, metadata);
+        Ok(metadata)
+    }
+}
+
 pub struct PipelineBuilder<'a> {
     vault: &'a Vault,
     vector_search: Option<(Vec<f32>, usize)>,
@@ -290,6 +320,7 @@ impl<'a> PipelineBuilder<'a> {
     pub fn run(self) -> Result<Vec<ScoredEntity>> {
         let mut ranked_lists = Vec::new();
         let rtxn = self.vault.store.env.read_txn()?;
+        let mut metadata_cache = EntityMetadataCache::default();
 
         if let Some((query_vector, limit)) = &self.vector_search {
             if query_vector.len() != self.vault.config.dimensions {
@@ -323,7 +354,8 @@ impl<'a> PipelineBuilder<'a> {
         }
 
         if let Some(config) = &self.temporal_search {
-            let temporal_results = execute_temporal(&self.vault.store, &rtxn, config)?;
+            let temporal_results =
+                execute_temporal(&self.vault.store, &rtxn, config, &mut metadata_cache)?;
             ranked_lists.push(temporal_results);
         }
 
@@ -370,7 +402,13 @@ impl<'a> PipelineBuilder<'a> {
 
         if let (None, Some(half_life_days)) = (self.temporal_search.as_ref(), self.recency_half_life)
         {
-            fusion::boost_recency(&mut scores, half_life_days, &self.vault.store, &rtxn)?;
+            boost_recency_with_cache(
+                &mut scores,
+                half_life_days,
+                &self.vault.store,
+                &rtxn,
+                &mut metadata_cache,
+            )?;
         }
 
         if self.apply_salience {
@@ -381,14 +419,18 @@ impl<'a> PipelineBuilder<'a> {
             fusion::boost_confidence(&mut scores, &self.vault.store, &rtxn)?;
         }
 
+        let filter_config = PipelineFilterConfig {
+            type_filter: self.type_filter.as_deref(),
+            since_filter: self.since_filter,
+            occurred_range: self.occurred_range,
+            learned_range: self.learned_range,
+        };
         apply_filters(
             &mut scores,
             &self.vault.store,
             &rtxn,
-            self.type_filter.as_deref(),
-            self.since_filter,
-            self.occurred_range,
-            self.learned_range,
+            filter_config,
+            &mut metadata_cache,
         )?;
 
         if self.apply_contiguity {
@@ -401,6 +443,7 @@ impl<'a> PipelineBuilder<'a> {
                 self.temporal_search.as_ref(),
                 &self.vault.store,
                 &rtxn,
+                &mut metadata_cache,
             )?;
         }
 
@@ -458,6 +501,7 @@ fn execute_temporal(
     store: &Store,
     rtxn: &RoTxn<'_>,
     config: &TemporalSearchConfig,
+    metadata_cache: &mut EntityMetadataCache,
 ) -> Result<Vec<ScoredEntity>> {
     if config.limit == 0 {
         return Ok(Vec::new());
@@ -512,7 +556,7 @@ fn execute_temporal(
     let mut scored = Vec::<TemporalCandidateScore>::new();
 
     for id in candidates {
-        let Some(meta) = read_entity_metadata(store, rtxn, &id)? else {
+        let Some(meta) = metadata_cache.get(store, rtxn, &id)? else {
             continue;
         };
 
@@ -818,6 +862,7 @@ fn boost_contiguity(
     temporal_config: Option<&TemporalSearchConfig>,
     store: &Store,
     rtxn: &RoTxn<'_>,
+    metadata_cache: &mut EntityMetadataCache,
 ) -> Result<()> {
     let Some(config) = temporal_config else {
         return Ok(());
@@ -835,7 +880,7 @@ fn boost_contiguity(
     let intervals: Vec<Option<(u64, u64)>> = scores
         .iter()
         .map(|scored| {
-            let meta = read_entity_metadata(store, rtxn, &scored.id)?;
+            let meta = metadata_cache.get(store, rtxn, &scored.id)?;
             Ok(meta.map(|m| {
                 if use_learned {
                     (m.learned_at, m.learned_at)
@@ -895,37 +940,35 @@ fn apply_filters(
     scores: &mut Vec<ScoredEntity>,
     store: &Store,
     rtxn: &RoTxn<'_>,
-    type_filter: Option<&[u8]>,
-    since_filter: Option<u64>,
-    occurred_range: Option<(u64, u64)>,
-    learned_range: Option<(u64, u64)>,
+    filters: PipelineFilterConfig<'_>,
+    metadata_cache: &mut EntityMetadataCache,
 ) -> Result<()> {
     let mut filtered = Vec::with_capacity(scores.len());
 
     for scored in scores.iter().copied() {
-        let Some(meta) = read_entity_metadata(store, rtxn, &scored.id)? else {
+        let Some(meta) = metadata_cache.get(store, rtxn, &scored.id)? else {
             continue;
         };
 
-        if let Some(types) = type_filter {
+        if let Some(types) = filters.type_filter {
             if !types.contains(&meta.entity_type) {
                 continue;
             }
         }
 
-        if let Some(timestamp) = since_filter {
+        if let Some(timestamp) = filters.since_filter {
             if meta.learned_at < timestamp {
                 continue;
             }
         }
 
-        if let Some((start, end)) = occurred_range {
+        if let Some((start, end)) = filters.occurred_range {
             if !intervals_overlap(meta.occurred_start, meta.occurred_end, start, end) {
                 continue;
             }
         }
 
-        if let Some((start, end)) = learned_range {
+        if let Some((start, end)) = filters.learned_range {
             if meta.learned_at < start || meta.learned_at > end {
                 continue;
             }
@@ -935,6 +978,38 @@ fn apply_filters(
     }
 
     *scores = filtered;
+    Ok(())
+}
+
+fn boost_recency_with_cache(
+    scores: &mut [ScoredEntity],
+    half_life_days: f32,
+    store: &Store,
+    rtxn: &RoTxn<'_>,
+    metadata_cache: &mut EntityMetadataCache,
+) -> Result<()> {
+    if !half_life_days.is_finite() || half_life_days <= 0.0 {
+        return Ok(());
+    }
+
+    let seconds_per_half_life = f64::from(half_life_days) * SECONDS_PER_DAY_F64;
+    if seconds_per_half_life <= 0.0 {
+        return Ok(());
+    }
+
+    let decay = std::f64::consts::LN_2 / seconds_per_half_life;
+    let now = crate::unix_seconds_now();
+
+    for scored in scores {
+        let Some(meta) = metadata_cache.get(store, rtxn, &scored.id)? else {
+            continue;
+        };
+
+        let age_secs = now.saturating_sub(meta.learned_at) as f64;
+        let recency = (-decay * age_secs).exp();
+        scored.score *= (1.0 + 0.5 * recency) as f32;
+    }
+
     Ok(())
 }
 
@@ -1300,7 +1375,8 @@ mod tests {
             limit: 10,
         };
         let rtxn = vault.store.env.read_txn()?;
-        let results = execute_temporal(&vault.store, &rtxn, &config)?;
+        let mut metadata_cache = EntityMetadataCache::default();
+        let results = execute_temporal(&vault.store, &rtxn, &config, &mut metadata_cache)?;
 
         let scored = results
             .iter()
@@ -1416,9 +1492,13 @@ mod tests {
         };
 
         let rtxn = vault.store.env.read_txn()?;
-        let exact = execute_temporal(&vault.store, &rtxn, &exact_config)?[0].score;
-        let hour = execute_temporal(&vault.store, &rtxn, &hour_config)?[0].score;
-        let day = execute_temporal(&vault.store, &rtxn, &day_config)?[0].score;
+        let mut metadata_cache = EntityMetadataCache::default();
+        let exact = execute_temporal(&vault.store, &rtxn, &exact_config, &mut metadata_cache)?[0]
+            .score;
+        let hour = execute_temporal(&vault.store, &rtxn, &hour_config, &mut metadata_cache)?[0]
+            .score;
+        let day =
+            execute_temporal(&vault.store, &rtxn, &day_config, &mut metadata_cache)?[0].score;
 
         assert!(exact < hour);
         assert!(hour < day);
@@ -1809,8 +1889,9 @@ mod tests {
         };
 
         let rtxn = vault.store.env.read_txn()?;
-        let day = execute_temporal(&vault.store, &rtxn, &day_config)?;
-        let year = execute_temporal(&vault.store, &rtxn, &year_config)?;
+        let mut metadata_cache = EntityMetadataCache::default();
+        let day = execute_temporal(&vault.store, &rtxn, &day_config, &mut metadata_cache)?;
+        let year = execute_temporal(&vault.store, &rtxn, &year_config, &mut metadata_cache)?;
 
         let day_far = day
             .iter()
