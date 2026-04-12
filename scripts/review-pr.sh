@@ -34,6 +34,23 @@ echo "Changed files:"
 echo "$DIFF"
 echo ""
 
+TOTAL=0
+SKIPPED=0
+
+run_reviewer() {
+  local name="$1" cmd="$2" outfile="$REVIEW_DIR/$name.md"
+  local tool="${cmd%% *}"
+  if ! command -v "$tool" >/dev/null 2>&1; then
+    echo "  [$name] skipped ($tool not installed)"
+    SKIPPED=$((SKIPPED + 1))
+    return 1
+  fi
+  TOTAL=$((TOTAL + 1))
+  eval "$cmd" > "$outfile" 2>&1 &
+  eval "PID_$name=$!"
+  return 0
+}
+
 REVIEW_CONTEXT="You are reviewing branch '$BRANCH' against '$BASE' in the oneiron repo.
 Use git diff $BASE...$BRANCH to see the full diff. Read changed files as needed.
 Read CLAUDE.md, BUILD-PROMPT.md, and SCHEMA-DESIGN.md for project context.
@@ -44,9 +61,12 @@ Sync layer: CrdtEngine trait abstraction with Loro implementation, time-windowed
 
 Output your findings as markdown with sections: Summary, Issues (severity: critical/major/minor/nit), and Verdict (approve/request-changes)."
 
-# 1. Claude — security review
-echo "[1/6] Claude security review..."
-claude -p "$REVIEW_CONTEXT
+# Launch reviewers — missing tools are skipped gracefully
+PIDS=""
+
+echo "Launching reviewers..."
+
+run_reviewer "claude-security" "claude -p \"$REVIEW_CONTEXT
 
 Focus on SECURITY concerns only:
 - Unsafe Rust usage (soundness, UB potential)
@@ -57,17 +77,10 @@ Focus on SECURITY concerns only:
 - FFI boundary safety (for future napi-rs consumers)
 - Data corruption vectors (key encoding, byte layout, edge value format)
 
-You may use subagents to split the review across files if the diff is large." \
-  --model claude-opus-4-6 \
-  --dangerously-skip-permissions \
-  --no-session-persistence \
-  --max-turns 200 \
-  > "$REVIEW_DIR/claude-security.md" 2>/dev/null &
-PID1=$!
+You may use subagents to split the review across files if the diff is large.\" --model claude-opus-4-6 --dangerously-skip-permissions --no-session-persistence --max-turns 200" \
+  && PIDS="$PIDS claude-security"
 
-# 2. Claude — code quality review
-echo "[2/6] Claude code review..."
-claude -p "$REVIEW_CONTEXT
+run_reviewer "claude-code" "claude -p \"$REVIEW_CONTEXT
 
 Focus on CODE QUALITY:
 - Bugs, logic errors, race conditions
@@ -78,62 +91,35 @@ Focus on CODE QUALITY:
 - Type safety, API ergonomics
 - Naming, structure, dead code
 
-You may use subagents to split the review across files if the diff is large." \
-  --model claude-opus-4-6 \
-  --dangerously-skip-permissions \
-  --no-session-persistence \
-  --max-turns 200 \
-  > "$REVIEW_DIR/claude-code.md" 2>/dev/null &
-PID2=$!
+You may use subagents to split the review across files if the diff is large.\" --model claude-opus-4-6 --dangerously-skip-permissions --no-session-persistence --max-turns 200" \
+  && PIDS="$PIDS claude-code"
 
-# 3. Codex — review
-echo "[3/6] Codex review..."
-codex review --base "$BASE" \
-  > "$REVIEW_DIR/codex.md" 2>&1 &
-PID3=$!
+run_reviewer "codex" "codex review --base \"$BASE\"" \
+  && PIDS="$PIDS codex"
 
-# 4. Gemini — code review
-echo "[4/6] Gemini code review..."
-gemini -p "$REVIEW_CONTEXT
+run_reviewer "gemini" "gemini -p \"$REVIEW_CONTEXT
 
 Provide a thorough code review covering:
 - Correctness and potential bugs
 - Design and architecture alignment with SCHEMA-DESIGN.md
 - Performance and scalability
 - Test coverage gaps
-- Sync layer spec compliance (ONEIRON-ARCH-023/023b)" \
-  --yolo \
-  > "$REVIEW_DIR/gemini.md" 2>&1 &
-PID4=$!
+- Sync layer spec compliance (ONEIRON-ARCH-023/023b)\" --yolo" \
+  && PIDS="$PIDS gemini"
 
-# 5. Qodo — combined security + code review (GPT-5.4, high reasoning)
-echo "[5/6] Qodo review (GPT-5.4)..."
-qodo oneiron_review \
-  --model gpt-5.4 \
-  --set target_branch="$BASE" \
-  --set reasoning_effort=high \
-  --yes \
-  --silent \
-  > "$REVIEW_DIR/qodo.md" 2>&1 &
-PID5=$!
+run_reviewer "qodo" "qodo oneiron_review --model gpt-5.4 --set target_branch=\"$BASE\" --set reasoning_effort=high --yes --silent" \
+  && PIDS="$PIDS qodo"
 
-# 6. CodeRabbit — pattern analysis + learnings
-echo "[6/6] CodeRabbit review..."
-coderabbit review \
-  --base "$BASE" \
-  --plain \
-  > "$REVIEW_DIR/coderabbit.md" 2>&1 &
-PID6=$!
+run_reviewer "coderabbit" "coderabbit review --base \"$BASE\" --plain" \
+  && PIDS="$PIDS coderabbit"
 
 echo ""
-echo "All reviews running in parallel. Waiting..."
+echo "Running $TOTAL reviewer(s) in parallel ($SKIPPED skipped). Waiting..."
 echo ""
 
 FAILED=0
-PID_NAMES="PID1:claude-security PID2:claude-code PID3:codex PID4:gemini PID5:qodo PID6:coderabbit"
-for PID_NAME in $PID_NAMES; do
-  PID_VAR="${PID_NAME%%:*}"
-  NAME="${PID_NAME##*:}"
+for NAME in $PIDS; do
+  PID_VAR="PID_$NAME"
   PID="${!PID_VAR}"
   if wait "$PID" 2>/dev/null; then
     SIZE=$(wc -c < "$REVIEW_DIR/$NAME.md" 2>/dev/null || echo "0")
@@ -145,8 +131,15 @@ for PID_NAME in $PID_NAMES; do
 done
 
 echo ""
+if [ "$SKIPPED" -gt 0 ]; then
+  echo "Note: $SKIPPED reviewer(s) skipped (not installed)."
+fi
 if [ "$FAILED" -gt 0 ]; then
   echo "Warning: $FAILED review(s) failed. Check output files for details."
+fi
+if [ "$TOTAL" -eq 0 ]; then
+  echo "Error: no review tools found. Install at least claude."
+  exit 1
 fi
 echo "Reviews saved to $REVIEW_DIR/"
 echo "Run /validate-reviews in Claude Code to triage findings."
