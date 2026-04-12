@@ -40,6 +40,7 @@ SKIPPED=0
 run_reviewer() {
   local name="$1" cmd="$2" outfile="$REVIEW_DIR/$name.md"
   local tool="${cmd%% *}"
+  local var_name="${name//-/_}"
   if ! command -v "$tool" >/dev/null 2>&1; then
     echo "  [$name] skipped ($tool not installed)"
     SKIPPED=$((SKIPPED + 1))
@@ -47,7 +48,7 @@ run_reviewer() {
   fi
   TOTAL=$((TOTAL + 1))
   eval "$cmd" > "$outfile" 2>&1 &
-  eval "PID_$name=$!"
+  eval "PID_$var_name=$!"
   return 0
 }
 
@@ -119,7 +120,8 @@ echo ""
 
 FAILED=0
 for NAME in $PIDS; do
-  PID_VAR="PID_$NAME"
+  VAR_NAME="${NAME//-/_}"
+  PID_VAR="PID_$VAR_NAME"
   PID="${!PID_VAR}"
   if wait "$PID" 2>/dev/null; then
     SIZE=$(wc -c < "$REVIEW_DIR/$NAME.md" 2>/dev/null || echo "0")
