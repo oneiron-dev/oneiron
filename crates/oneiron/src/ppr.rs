@@ -6,7 +6,7 @@ use xxhash_rust::xxh3::xxh3_128;
 use crate::error::{Error, Result};
 use crate::store::Store;
 use crate::types::{
-    EdgeKind, EntityId, ScoredEntity, EDGE_KEY_LEN, EDGE_VALUE_LEN, ENTITY_ID_LEN,
+    EdgeKind, EntityId, ScoredEntity, VaultConfig, EDGE_KEY_LEN, EDGE_VALUE_LEN, ENTITY_ID_LEN,
 };
 
 const SEED_HASH_LEN: usize = 16;
@@ -566,6 +566,30 @@ mod tests {
         key[..ENTITY_ID_LEN].copy_from_slice(entity_id.as_bytes());
         key[ENTITY_ID_LEN..].copy_from_slice(&seed_hash);
         key
+    }
+
+    #[test]
+    fn hash_seeds_uses_full_xxh3_digest_and_is_order_insensitive() {
+        let a = entity(1);
+        let b = entity(2);
+        let depth = 3;
+        let alpha = 0.15;
+
+        let mut bytes = Vec::with_capacity(
+            ENTITY_ID_LEN * 2 + std::mem::size_of::<u32>() + std::mem::size_of::<f32>(),
+        );
+        bytes.extend_from_slice(a.as_bytes());
+        bytes.extend_from_slice(b.as_bytes());
+        bytes.extend_from_slice(&depth.to_le_bytes());
+        bytes.extend_from_slice(&alpha.to_le_bytes());
+
+        let expected = xxh3_128(&bytes).to_le_bytes();
+
+        assert_eq!(hash_seeds(&[a, b], depth, alpha), expected);
+        assert_eq!(
+            hash_seeds(&[a, b], depth, alpha),
+            hash_seeds(&[b, a], depth, alpha)
+        );
     }
 
     #[test]
