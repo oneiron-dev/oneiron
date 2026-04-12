@@ -125,6 +125,9 @@ impl Vault {
         let mut wtxn = self.store.env.write_txn()?;
         let (existed, neighbors) = deindex_entity(&self.store, &mut wtxn, id)?;
         ppr::invalidate_ppr_for_delete(&self.store, &mut wtxn, id, &neighbors)?;
+        if !neighbors.is_empty() {
+            ppr::increment_graph_version(&self.store, &mut wtxn)?;
+        }
         wtxn.commit()?;
         Ok(existed)
     }
