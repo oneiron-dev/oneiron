@@ -2,15 +2,18 @@ use xxhash_rust::xxh32::xxh32;
 
 use crate::batch::{parse_short_id_value, ENTITY_METADATA_HEADER_LEN};
 use crate::error::{Error, Result};
-use crate::hnsw::{hnsw_insert, COUNT_KEY};
-use crate::store::{GRAPH_VERSION_KEY, MODEL_ID_KEY, TEMPORAL_LONG_INTERVALS_SCHEMA_VERSION_KEY};
+use crate::hnsw::{build_hnsw_graph, read_vector_version, write_rebuilt_hnsw, COUNT_KEY};
 use crate::types::{EntityId, ENTITY_ID_LEN};
 use crate::{le_bytes_to_f32_vec, ppr, Vault};
+
+type VectorRecord = (EntityId, Vec<f32>);
+type RebuildVectors = (u64, u64, Vec<VectorRecord>, u64);
 
 /// Builder for running maintenance operations against a vault.
 pub struct MaintenanceBuilder<'a> {
     vault: &'a Vault,
     do_rebuild_hnsw: bool,
+    heal_invalid_vectors_on_rebuild: bool,
     do_cleanup_ppr: bool,
     ppr_max_age_secs: u64,
     do_compact_postings: bool,
@@ -22,9 +25,11 @@ pub struct MaintenanceBuilder<'a> {
 pub struct MaintenanceReport {
     pub hnsw_dead_nodes_removed: u64,
     pub hnsw_live_nodes: u64,
+    pub hnsw_invalid_vectors_skipped: u64,
     pub ppr_caches_evicted: u64,
     pub ppr_deps_cleaned: u64,
     pub postings_compacted: u64,
+    pub orphan_short_ids_deleted: u64,
     pub short_id_hashes_updated: u64,
 }
 
@@ -33,6 +38,7 @@ impl<'a> MaintenanceBuilder<'a> {
         Self {
             vault,
             do_rebuild_hnsw: false,
+            heal_invalid_vectors_on_rebuild: false,
             do_cleanup_ppr: false,
             ppr_max_age_secs: 0,
             do_compact_postings: false,
@@ -42,6 +48,12 @@ impl<'a> MaintenanceBuilder<'a> {
 
     pub fn rebuild_hnsw(mut self) -> Self {
         self.do_rebuild_hnsw = true;
+        self
+    }
+
+    pub fn rebuild_hnsw_heal_invalid_vectors(mut self) -> Self {
+        self.do_rebuild_hnsw = true;
+        self.heal_invalid_vectors_on_rebuild = true;
         self
     }
 
@@ -65,9 +77,11 @@ impl<'a> MaintenanceBuilder<'a> {
         let mut report = MaintenanceReport::default();
 
         if self.do_rebuild_hnsw {
-            let (dead_removed, live_nodes) = rebuild_hnsw(self.vault)?;
+            let (dead_removed, live_nodes, invalid_vectors_skipped) =
+                rebuild_hnsw(self.vault, self.heal_invalid_vectors_on_rebuild)?;
             report.hnsw_dead_nodes_removed = dead_removed;
             report.hnsw_live_nodes = live_nodes;
+            report.hnsw_invalid_vectors_skipped = invalid_vectors_skipped;
         }
 
         if self.do_cleanup_ppr {
@@ -81,77 +95,25 @@ impl<'a> MaintenanceBuilder<'a> {
         }
 
         if self.do_recompute_hashes {
-            report.short_id_hashes_updated = recompute_short_id_hashes(self.vault)?;
+            let (updated, deleted) = recompute_short_id_hashes(self.vault)?;
+            report.short_id_hashes_updated = updated;
+            report.orphan_short_ids_deleted = deleted;
         }
 
         Ok(report)
     }
 }
 
-fn rebuild_hnsw(vault: &Vault) -> Result<(u64, u64)> {
-    let mut wtxn = vault.store.env.write_txn()?;
+fn rebuild_hnsw(vault: &Vault, heal_invalid_vectors: bool) -> Result<(u64, u64, u64)> {
+    let (old_count, vector_version, vectors, invalid_vectors_skipped) =
+        load_rebuild_vectors(vault, heal_invalid_vectors)?;
+    let rebuilt = build_hnsw_graph(&vault.config, &vectors)?;
 
-    let graph_version = decode_u64_opt(vault.store.hnsw_meta.get(&wtxn, GRAPH_VERSION_KEY)?)?;
-    let old_count = decode_u64_opt(vault.store.hnsw_meta.get(&wtxn, COUNT_KEY)?)?.unwrap_or(0);
-    let stored_model_id = vault
-        .store
-        .hnsw_meta
-        .get(&wtxn, MODEL_ID_KEY)?
-        .map(|v| v.to_vec());
-    let temporal_long_intervals_schema_version = vault
-        .store
-        .hnsw_meta
-        .get(&wtxn, TEMPORAL_LONG_INTERVALS_SCHEMA_VERSION_KEY)?
-        .map(|v| v.to_vec());
+    commit_rebuilt_hnsw(vault, &rebuilt, vector_version)?;
 
-    let mut vectors = Vec::<(EntityId, Vec<f32>)>::with_capacity(old_count.min(1_000_000) as usize);
-    for entry in vault.store.vectors.iter(&wtxn)? {
-        let (id_bytes, vector_bytes) = entry?;
-        let id = parse_entity_id(id_bytes)?;
-        let vector = le_bytes_to_f32_vec(vector_bytes)?;
-        vectors.push((id, vector));
-    }
-
-    vault.store.hnsw_neighbors.clear(&mut wtxn)?;
-    vault.store.hnsw_meta.clear(&mut wtxn)?;
-
-    if let Some(version) = graph_version {
-        vault
-            .store
-            .hnsw_meta
-            .put(&mut wtxn, GRAPH_VERSION_KEY, &version.to_le_bytes())?;
-    }
-    if let Some(version) = temporal_long_intervals_schema_version {
-        vault.store.hnsw_meta.put(
-            &mut wtxn,
-            TEMPORAL_LONG_INTERVALS_SCHEMA_VERSION_KEY,
-            &version,
-        )?;
-    }
-
-    if let Some(model) = vault
-        .config
-        .embedding_model
-        .as_deref()
-        .filter(|m| !m.is_empty())
-    {
-        vault
-            .store
-            .hnsw_meta
-            .put(&mut wtxn, MODEL_ID_KEY, model.as_bytes())?;
-    } else if let Some(stored) = &stored_model_id {
-        vault.store.hnsw_meta.put(&mut wtxn, MODEL_ID_KEY, stored)?;
-    }
-
-    for (id, vector) in &vectors {
-        hnsw_insert(&vault.store, &vault.config, &mut wtxn, id, vector)?;
-    }
-
-    wtxn.commit()?;
-
-    let live_nodes = vectors.len() as u64;
+    let live_nodes = rebuilt.count;
     let dead_nodes_removed = old_count.saturating_sub(live_nodes);
-    Ok((dead_nodes_removed, live_nodes))
+    Ok((dead_nodes_removed, live_nodes, invalid_vectors_skipped))
 }
 
 fn cleanup_ppr_cache(vault: &Vault, max_age_secs: u64) -> Result<(u64, u64)> {
@@ -180,9 +142,10 @@ fn compact_postings(vault: &Vault) -> Result<u64> {
     Ok(keys_to_delete.len() as u64)
 }
 
-fn recompute_short_id_hashes(vault: &Vault) -> Result<u64> {
+fn recompute_short_id_hashes(vault: &Vault) -> Result<(u64, u64)> {
     let mut wtxn = vault.store.env.write_txn()?;
     let mut updates = Vec::new();
+    let mut deletes = Vec::new();
     for entry in vault.store.short_ids.iter(&wtxn)? {
         let (key, value) = entry?;
 
@@ -192,6 +155,7 @@ fn recompute_short_id_hashes(vault: &Vault) -> Result<u64> {
 
         let (short_id, current_hash) = parse_short_id_value(value)?;
         let Some(blob) = vault.store.entities.get(&wtxn, key)? else {
+            deletes.push((key.to_vec(), short_id.as_bytes().to_vec()));
             continue;
         };
 
@@ -214,9 +178,77 @@ fn recompute_short_id_hashes(vault: &Vault) -> Result<u64> {
     for (key, value) in &updates {
         vault.store.short_ids.put(&mut wtxn, key, value)?;
     }
+    for (key, short_id) in &deletes {
+        vault.store.short_ids_reverse.delete(&mut wtxn, short_id)?;
+        vault.store.short_ids.delete(&mut wtxn, key)?;
+    }
 
     wtxn.commit()?;
-    Ok(updates.len() as u64)
+    Ok((updates.len() as u64, deletes.len() as u64))
+}
+
+fn load_rebuild_vectors(vault: &Vault, heal_invalid_vectors: bool) -> Result<RebuildVectors> {
+    let rtxn = vault.store.env.read_txn()?;
+    let old_count = decode_u64_opt(vault.store.hnsw_meta.get(&rtxn, COUNT_KEY)?)?.unwrap_or(0);
+    let vector_version = read_vector_version(&vault.store, &rtxn)?;
+    let mut vectors = Vec::<VectorRecord>::with_capacity(old_count.min(1_000_000) as usize);
+    let mut invalid_vectors_skipped = 0_u64;
+
+    for entry in vault.store.vectors.iter(&rtxn)? {
+        let (id_bytes, vector_bytes) = entry?;
+        match parse_rebuild_vector(vault, id_bytes, vector_bytes) {
+            Ok(vector) => vectors.push(vector),
+            Err(error) if heal_invalid_vectors && is_healable_rebuild_error(&error) => {
+                invalid_vectors_skipped += 1;
+            }
+            Err(error) => return Err(error),
+        }
+    }
+
+    Ok((old_count, vector_version, vectors, invalid_vectors_skipped))
+}
+
+fn parse_rebuild_vector(
+    vault: &Vault,
+    id_bytes: &[u8],
+    vector_bytes: &[u8],
+) -> Result<VectorRecord> {
+    let id = parse_entity_id(id_bytes)?;
+    let vector = le_bytes_to_f32_vec(vector_bytes)?;
+    if vector.len() != vault.config.dimensions {
+        return Err(Error::DimensionMismatch {
+            expected: vault.config.dimensions,
+            got: vector.len(),
+        });
+    }
+    if vector.iter().any(|value| !value.is_finite()) {
+        return Err(Error::InvalidVector);
+    }
+    Ok((id, vector))
+}
+
+fn is_healable_rebuild_error(error: &Error) -> bool {
+    matches!(
+        error,
+        Error::InvalidKey | Error::InvalidVector | Error::DimensionMismatch { .. }
+    )
+}
+
+fn commit_rebuilt_hnsw(
+    vault: &Vault,
+    rebuilt: &crate::hnsw::RebuiltHnswGraph,
+    expected_vector_version: u64,
+) -> Result<()> {
+    let mut wtxn = vault.store.env.write_txn()?;
+    let current_vector_version = read_vector_version(&vault.store, &wtxn)?;
+    if current_vector_version != expected_vector_version {
+        return Err(Error::ConcurrentWrite(
+            "vectors changed during hnsw rebuild; retry maintenance",
+        ));
+    }
+    write_rebuilt_hnsw(&vault.store, &mut wtxn, rebuilt)?;
+    wtxn.commit()?;
+    Ok(())
 }
 
 fn parse_entity_id(bytes: &[u8]) -> Result<EntityId> {
@@ -241,6 +273,7 @@ mod tests {
     use heed::types::Bytes;
 
     use super::*;
+    use crate::store::{GRAPH_VERSION_KEY, MODEL_ID_KEY};
     use crate::types::{EdgeKind, HnswConfig, TimeRange, VaultConfig};
 
     fn test_config() -> VaultConfig {
@@ -284,6 +317,16 @@ mod tests {
             count += 1;
         }
         Ok(count)
+    }
+
+    fn read_neighbor_bytes(vault: &Vault, id: &EntityId) -> Result<Vec<u8>> {
+        let rtxn = vault.store.env.read_txn()?;
+        let raw = vault
+            .store
+            .hnsw_neighbors
+            .get(&rtxn, id.as_bytes())?
+            .ok_or(Error::EntityNotFound)?;
+        Ok(raw.to_vec())
     }
 
     #[test]
@@ -387,6 +430,116 @@ mod tests {
     }
 
     #[test]
+    fn rebuild_hnsw_preserves_unrelated_hnsw_meta() -> Result<()> {
+        let temp_dir = tempfile::tempdir()?;
+        let vault = Vault::open(temp_dir.path(), test_config())?;
+        let id = entity(85);
+
+        vault.put_entity(&id, 0, test_time_range(1, 1), 1, b"node")?;
+        vault.put_vector(&id, &[1.0, 0.0, 0.0, 0.0])?;
+
+        {
+            let mut wtxn = vault.store.env.write_txn()?;
+            vault
+                .store
+                .hnsw_meta
+                .put(&mut wtxn, b"custom-meta", b"keep-me")?;
+            wtxn.commit()?;
+        }
+
+        vault.maintain().rebuild_hnsw().run()?;
+
+        let rtxn = vault.store.env.read_txn()?;
+        let custom_meta = vault.store.hnsw_meta.get(&rtxn, b"custom-meta")?;
+        assert_eq!(custom_meta, Some(b"keep-me".as_slice()));
+        Ok(())
+    }
+
+    #[test]
+    fn rebuild_hnsw_strict_preserves_committed_graph_on_invalid_vector() -> Result<()> {
+        let temp_dir = tempfile::tempdir()?;
+        let vault = Vault::open(temp_dir.path(), test_config())?;
+        let a = entity(86);
+        let b = entity(87);
+
+        for (id, vector) in [(a, [1.0, 0.0, 0.0, 0.0]), (b, [0.0, 1.0, 0.0, 0.0])] {
+            vault.put_entity(&id, 0, test_time_range(1, 1), 1, b"node")?;
+            vault.put_vector(&id, &vector)?;
+        }
+
+        let count_before = read_u64_meta(&vault, COUNT_KEY)?;
+        let neighbors_before = read_neighbor_bytes(&vault, &a)?;
+
+        {
+            let mut invalid = Vec::new();
+            invalid.extend_from_slice(&1.0_f32.to_le_bytes());
+            invalid.extend_from_slice(&2.0_f32.to_le_bytes());
+            invalid.extend_from_slice(&3.0_f32.to_le_bytes());
+
+            let mut wtxn = vault.store.env.write_txn()?;
+            vault.store.vectors.put(&mut wtxn, b.as_bytes(), &invalid)?;
+            wtxn.commit()?;
+        }
+
+        let err = vault.maintain().rebuild_hnsw().run().unwrap_err();
+        assert!(matches!(
+            err,
+            Error::DimensionMismatch {
+                expected: 4,
+                got: 3,
+            }
+        ));
+
+        let count_after = read_u64_meta(&vault, COUNT_KEY)?;
+        let neighbors_after = read_neighbor_bytes(&vault, &a)?;
+        assert_eq!(count_before, count_after);
+        assert_eq!(neighbors_before, neighbors_after);
+        assert_eq!(count_entries(&vault.store.hnsw_neighbors, &vault)?, 2);
+        Ok(())
+    }
+
+    #[test]
+    fn rebuild_hnsw_heal_invalid_vectors_skips_bad_rows() -> Result<()> {
+        let temp_dir = tempfile::tempdir()?;
+        let vault = Vault::open(temp_dir.path(), test_config())?;
+        let a = entity(88);
+        let b = entity(89);
+
+        for (id, vector) in [(a, [1.0, 0.0, 0.0, 0.0]), (b, [0.0, 1.0, 0.0, 0.0])] {
+            vault.put_entity(&id, 0, test_time_range(1, 1), 1, b"node")?;
+            vault.put_vector(&id, &vector)?;
+        }
+
+        {
+            let mut invalid = Vec::new();
+            invalid.extend_from_slice(&1.0_f32.to_le_bytes());
+            invalid.extend_from_slice(&2.0_f32.to_le_bytes());
+            invalid.extend_from_slice(&3.0_f32.to_le_bytes());
+
+            let mut wtxn = vault.store.env.write_txn()?;
+            vault.store.vectors.put(&mut wtxn, b.as_bytes(), &invalid)?;
+            wtxn.commit()?;
+        }
+
+        let report = vault.maintain().rebuild_hnsw_heal_invalid_vectors().run()?;
+        assert_eq!(report.hnsw_invalid_vectors_skipped, 1);
+        assert_eq!(report.hnsw_live_nodes, 1);
+        assert_eq!(report.hnsw_dead_nodes_removed, 1);
+
+        let count = read_u64_meta(&vault, COUNT_KEY)?;
+        assert_eq!(count, 1);
+
+        let rtxn = vault.store.env.read_txn()?;
+        assert!(vault
+            .store
+            .hnsw_neighbors
+            .get(&rtxn, b.as_bytes())?
+            .is_none());
+        assert!(vault.store.vectors.get(&rtxn, b.as_bytes())?.is_some());
+        Ok(())
+    }
+
+    #[test]
     fn cleanup_ppr_cache_evicts_stale_and_expired() -> Result<()> {
         let temp_dir = tempfile::tempdir()?;
         let vault = Vault::open(temp_dir.path(), test_config())?;
@@ -477,6 +630,7 @@ mod tests {
 
         let report = vault.maintain().recompute_short_id_hashes().run()?;
         assert_eq!(report.short_id_hashes_updated, 1);
+        assert_eq!(report.orphan_short_ids_deleted, 0);
 
         let rtxn = vault.store.env.read_txn()?;
         let updated_value = vault
@@ -487,6 +641,32 @@ mod tests {
         let (short_id_after, hash_after) = parse_short_id_value(updated_value)?;
         assert_eq!(short_id_after, short_id_before);
         assert_eq!(hash_after, (xxh32(&new_payload, 0) % 256) as u8);
+        Ok(())
+    }
+
+    #[test]
+    fn recompute_short_id_hashes_deletes_orphans() -> Result<()> {
+        let temp_dir = tempfile::tempdir()?;
+        let vault = Vault::open(temp_dir.path(), test_config())?;
+        let id = entity(93);
+
+        vault
+            .batch()
+            .put(&id, 0, test_time_range(100, 100), 101, b"payload")
+            .commit()?;
+
+        {
+            let mut wtxn = vault.store.env.write_txn()?;
+            vault.store.entities.delete(&mut wtxn, id.as_bytes())?;
+            wtxn.commit()?;
+        }
+
+        let report = vault.maintain().recompute_short_id_hashes().run()?;
+        assert_eq!(report.short_id_hashes_updated, 0);
+        assert_eq!(report.orphan_short_ids_deleted, 1);
+
+        let rtxn = vault.store.env.read_txn()?;
+        assert!(vault.store.short_ids.get(&rtxn, id.as_bytes())?.is_none());
         Ok(())
     }
 
@@ -509,6 +689,7 @@ mod tests {
         {
             let mut wtxn = vault.store.env.write_txn()?;
             vault.store.vectors.delete(&mut wtxn, c.as_bytes())?;
+            vault.store.entities.delete(&mut wtxn, c.as_bytes())?;
             vault
                 .store
                 .text_postings
@@ -564,6 +745,7 @@ mod tests {
         assert!(report.ppr_caches_evicted > 0);
         assert!(report.ppr_deps_cleaned > 0);
         assert!(report.postings_compacted > 0);
+        assert!(report.orphan_short_ids_deleted > 0);
         assert!(report.short_id_hashes_updated > 0);
         Ok(())
     }
@@ -586,6 +768,7 @@ mod tests {
         let report = vault.maintain().rebuild_hnsw().run()?;
         assert_eq!(report.hnsw_dead_nodes_removed, 0);
         assert_eq!(report.hnsw_live_nodes, 0);
+        assert_eq!(report.hnsw_invalid_vectors_skipped, 0);
         Ok(())
     }
 }
