@@ -409,6 +409,7 @@ pub(crate) fn apply_ops(
     ops: Vec<BatchOp>,
 ) -> Result<()> {
     let mut had_graph_mutation = false;
+    let mut had_vector_mutation = false;
 
     for op in ops {
         match op {
@@ -424,7 +425,7 @@ pub(crate) fn apply_ops(
             BatchOp::Vector { id, vector } => {
                 apply_vector(store, config, wtxn, id, &vector)?;
                 crate::hnsw::hnsw_insert(store, config, wtxn, &id, &vector)?;
-                crate::hnsw::increment_vector_version(store, wtxn)?;
+                had_vector_mutation = true;
             }
             BatchOp::Edge {
                 src,
@@ -456,9 +457,10 @@ pub(crate) fn apply_ops(
                 apply_phonetic(store, wtxn, id, &codes)?;
             }
             BatchOp::Delete { id } => {
-                let (existed, neighbors) = deindex_entity(store, wtxn, &id)?;
+                let (existed, had_vector, neighbors) = deindex_entity(store, wtxn, &id)?;
                 ppr::invalidate_ppr_for_delete(store, wtxn, &id, &neighbors)?;
                 had_graph_mutation |= existed;
+                had_vector_mutation |= had_vector;
             }
             BatchOp::DeleteEdge { src, kind, tgt } => {
                 if apply_delete_edge(store, wtxn, src, kind, tgt)? {
@@ -472,6 +474,9 @@ pub(crate) fn apply_ops(
     if had_graph_mutation {
         ppr::increment_graph_version(store, wtxn)?;
     }
+    if had_vector_mutation {
+        crate::hnsw::increment_vector_version(store, wtxn)?;
+    }
 
     Ok(())
 }
@@ -480,19 +485,16 @@ pub(crate) fn deindex_entity(
     store: &Store,
     wtxn: &mut RwTxn<'_>,
     id: &EntityId,
-) -> Result<(bool, Vec<EntityId>)> {
+) -> Result<(bool, bool, Vec<EntityId>)> {
     // Clean secondary indexes unconditionally — they may exist even without an
     // entity record (e.g. text indexed via batch().text() without a preceding put()).
     crate::bm25::deindex_text(store, wtxn, id)?;
     delete_from_phonetic_postings(store, wtxn, id)?;
     let had_vector = store.vectors.delete(wtxn, id.as_bytes())?;
     crate::hnsw::hnsw_deindex(store, wtxn, id)?;
-    if had_vector {
-        crate::hnsw::increment_vector_version(store, wtxn)?;
-    }
 
     let Some(entity_record) = store.entities.get(wtxn, id.as_bytes())? else {
-        return Ok((false, Vec::new()));
+        return Ok((false, had_vector, Vec::new()));
     };
 
     let (entity_type, occurred, learned_at) = parse_entity_metadata(entity_record)?;
@@ -529,7 +531,7 @@ pub(crate) fn deindex_entity(
     }
 
     store.entities.delete(wtxn, id.as_bytes())?;
-    Ok((true, neighbors))
+    Ok((true, had_vector, neighbors))
 }
 
 fn apply_put(

@@ -67,7 +67,9 @@ pub(crate) fn hnsw_insert(
         return Ok(());
     }
 
-    let entry_point = read_entry_point(store, &*wtxn)?.ok_or(Error::InvalidKey)?;
+    let entry_point = read_entry_point(store, &*wtxn)?.ok_or(Error::InvariantViolation(
+        "hnsw entry point missing while graph count is non-zero",
+    ))?;
     let mut nearest = beam_search(
         store,
         &*wtxn,
@@ -110,19 +112,17 @@ pub(crate) fn hnsw_insert(
     Ok(())
 }
 
-pub(crate) fn build_hnsw_graph(
+pub(crate) fn build_hnsw_graph_from_snapshot(
+    store: &Store,
     config: &VaultConfig,
-    vectors: &[(EntityId, Vec<f32>)],
+    rtxn: &RoTxn<'_>,
+    vector_ids: &[EntityId],
 ) -> Result<RebuiltHnswGraph> {
-    let vector_index: HashMap<EntityId, &[f32]> = vectors
-        .iter()
-        .map(|(id, vector)| (*id, vector.as_slice()))
-        .collect();
-    let mut neighbors_by_id = HashMap::<EntityId, Vec<EntityId>>::with_capacity(vectors.len());
+    let mut neighbors_by_id = HashMap::<EntityId, Vec<EntityId>>::with_capacity(vector_ids.len());
     let mut entry_point = None;
     let mut count = 0_u64;
 
-    for (id, vector) in vectors {
+    for id in vector_ids {
         if count == 0 {
             entry_point = Some(*id);
             neighbors_by_id.insert(*id, Vec::new());
@@ -130,11 +130,14 @@ pub(crate) fn build_hnsw_graph(
             continue;
         }
 
-        let graph_entry_point = entry_point.ok_or(Error::InvalidKey)?;
-        let mut nearest = beam_search_in_memory(
+        let graph_entry_point = entry_point.ok_or(Error::InvariantViolation(
+            "rebuild entry point missing while validated vector set is non-empty",
+        ))?;
+        let mut nearest = beam_search_snapshot(
+            store,
+            rtxn,
             &neighbors_by_id,
-            &vector_index,
-            vector,
+            id,
             graph_entry_point,
             config.hnsw.ef_construction,
         )?;
@@ -151,8 +154,9 @@ pub(crate) fn build_hnsw_graph(
             }
 
             if neighbor_neighbors.len() > config.hnsw.m_max_0 {
-                neighbor_neighbors = prune_neighbors_for_node_in_memory(
-                    &vector_index,
+                neighbor_neighbors = prune_neighbors_for_node_snapshot(
+                    store,
+                    rtxn,
                     neighbor_id,
                     &neighbor_neighbors,
                     config.hnsw.m_max_0,
@@ -168,9 +172,9 @@ pub(crate) fn build_hnsw_graph(
             .ok_or(Error::ArithmeticOverflow("hnsw node count"))?;
     }
 
-    let neighbors = vectors
+    let neighbors = vector_ids
         .iter()
-        .map(|(id, _)| (*id, neighbors_by_id.remove(id).unwrap_or_default()))
+        .map(|id| (*id, neighbors_by_id.remove(id).unwrap_or_default()))
         .collect();
 
     Ok(RebuiltHnswGraph {
@@ -186,6 +190,8 @@ pub(crate) fn write_rebuilt_hnsw(
     rebuilt: &RebuiltHnswGraph,
 ) -> Result<()> {
     store.hnsw_neighbors.clear(wtxn)?;
+    // Rebuild owns only the live graph shape. Preserve unrelated metadata such as
+    // graph/version markers, persisted model ids, and schema/config keys.
     store.hnsw_meta.delete(wtxn, COUNT_KEY)?;
     store.hnsw_meta.delete(wtxn, ENTRY_POINT_KEY)?;
 
@@ -374,22 +380,23 @@ fn beam_search(
     Ok(found)
 }
 
-fn beam_search_in_memory(
+fn beam_search_snapshot(
+    store: &Store,
+    rtxn: &RoTxn<'_>,
     neighbors_by_id: &HashMap<EntityId, Vec<EntityId>>,
-    vectors_by_id: &HashMap<EntityId, &[f32]>,
-    query_vector: &[f32],
+    query_id: &EntityId,
     entry_point: EntityId,
     ef: usize,
 ) -> Result<Vec<HeapEntry>> {
     let ef = ef.max(1);
-
-    let Some(entry_vector) = vectors_by_id.get(&entry_point) else {
+    let query_vector = load_required_vector(store, rtxn, query_id)?;
+    let Some(entry_vector) = load_vector(store, rtxn, &entry_point)? else {
         return Ok(Vec::new());
     };
 
     let entry = HeapEntry {
         id: entry_point,
-        distance: cosine_distance(query_vector, entry_vector),
+        distance: cosine_distance(&query_vector, &entry_vector),
     };
 
     let mut candidates: BinaryHeap<Reverse<HeapEntry>> = BinaryHeap::new();
@@ -419,11 +426,11 @@ fn beam_search_in_memory(
                 continue;
             }
 
-            let Some(neighbor_vector) = vectors_by_id.get(neighbor_id) else {
+            let Some(neighbor_vector) = load_vector(store, rtxn, neighbor_id)? else {
                 continue;
             };
 
-            let distance = cosine_distance(query_vector, neighbor_vector);
+            let distance = cosine_distance(&query_vector, &neighbor_vector);
             let should_add = results.len() < ef
                 || distance
                     < results
@@ -510,6 +517,12 @@ fn load_vector(store: &Store, txn: &RoTxn<'_>, id: &EntityId) -> Result<Option<V
     le_bytes_to_f32_vec(raw).map(Some)
 }
 
+fn load_required_vector(store: &Store, txn: &RoTxn<'_>, id: &EntityId) -> Result<Vec<f32>> {
+    load_vector(store, txn, id)?.ok_or(Error::InvariantViolation(
+        "validated rebuild vector disappeared within the same read snapshot",
+    ))
+}
+
 fn prune_neighbors_for_node(
     store: &Store,
     txn: &RoTxn<'_>,
@@ -545,13 +558,14 @@ fn prune_neighbors_for_node(
     Ok(scored.into_iter().map(|entry| entry.id).collect())
 }
 
-fn prune_neighbors_for_node_in_memory(
-    vectors_by_id: &HashMap<EntityId, &[f32]>,
+fn prune_neighbors_for_node_snapshot(
+    store: &Store,
+    rtxn: &RoTxn<'_>,
     node_id: &EntityId,
     neighbors: &[EntityId],
     max_neighbors: usize,
 ) -> Result<Vec<EntityId>> {
-    let Some(node_vector) = vectors_by_id.get(node_id) else {
+    let Some(node_vector) = load_vector(store, rtxn, node_id)? else {
         return Ok(neighbors.iter().copied().take(max_neighbors).collect());
     };
 
@@ -563,13 +577,13 @@ fn prune_neighbors_for_node_in_memory(
             continue;
         }
 
-        let Some(neighbor_vector) = vectors_by_id.get(neighbor_id) else {
+        let Some(neighbor_vector) = load_vector(store, rtxn, neighbor_id)? else {
             continue;
         };
 
         scored.push(HeapEntry {
             id: *neighbor_id,
-            distance: cosine_distance(node_vector, neighbor_vector),
+            distance: cosine_distance(&node_vector, &neighbor_vector),
         });
     }
 

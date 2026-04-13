@@ -25,6 +25,9 @@ pub enum Error {
     /// Stored embedding model differs from requested model.
     #[error("embedding model changed: stored={stored}, requested={requested}")]
     EmbeddingModelChanged { stored: String, requested: String },
+    /// Persisted HNSW config differs from the requested runtime config.
+    #[error("hnsw config changed: stored={stored}, requested={requested}")]
+    HnswConfigChanged { stored: String, requested: String },
     /// LMDB map is full and requires a larger map size.
     #[error("lmdb map is full")]
     MapFull,
@@ -40,6 +43,9 @@ pub enum Error {
     /// A counter or version increment exceeded supported bounds.
     #[error("arithmetic overflow: {0}")]
     ArithmeticOverflow(&'static str),
+    /// Internal state violated an invariant that should be preserved by the crate.
+    #[error("invariant violation: {0}")]
+    InvariantViolation(&'static str),
     /// Encountered malformed key or value bytes.
     #[error("invalid key or value bytes")]
     InvalidKey,
