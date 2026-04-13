@@ -319,137 +319,156 @@ impl<'a> PipelineBuilder<'a> {
     }
 
     pub fn run(self) -> Result<Vec<ScoredEntity>> {
-        let mut ranked_lists = Vec::new();
-        let rtxn = self.vault.store.env.read_txn()?;
-        let mut metadata_cache = EntityMetadataCache::default();
+        let (scores, deferred_ppr_cache_writes) = {
+            let mut ranked_lists = Vec::new();
+            let rtxn = self.vault.store.env.read_txn()?;
+            let mut metadata_cache = EntityMetadataCache::default();
+            let mut deferred_ppr_cache_writes = Vec::new();
 
-        if let Some((query_vector, limit)) = &self.vector_search {
-            if query_vector.len() != self.vault.config.dimensions {
-                return Err(Error::DimensionMismatch {
-                    expected: self.vault.config.dimensions,
-                    got: query_vector.len(),
-                });
-            }
-            if query_vector.iter().any(|value| !value.is_finite()) {
-                return Err(Error::InvalidVector);
-            }
+            if let Some((query_vector, limit)) = &self.vector_search {
+                if query_vector.len() != self.vault.config.dimensions {
+                    return Err(Error::DimensionMismatch {
+                        expected: self.vault.config.dimensions,
+                        got: query_vector.len(),
+                    });
+                }
+                if query_vector.iter().any(|value| !value.is_finite()) {
+                    return Err(Error::InvalidVector);
+                }
 
-            let vector_results = crate::hnsw::hnsw_search(
-                &self.vault.store,
-                &self.vault.config,
-                &rtxn,
-                query_vector,
-                *limit,
-            )?;
-            ranked_lists.push(vector_results);
-        }
-
-        if let Some((query, limit)) = &self.text_search {
-            let text_results = crate::bm25::search_text(&self.vault.store, &rtxn, query, *limit)?;
-            ranked_lists.push(text_results);
-        }
-
-        if let Some(codes) = &self.phonetic_search {
-            let phonetic_results = execute_phonetic(&self.vault.store, &rtxn, codes)?;
-            ranked_lists.push(phonetic_results);
-        }
-
-        if let Some(config) = &self.temporal_search {
-            let temporal_results =
-                execute_temporal(&self.vault.store, &rtxn, config, &mut metadata_cache)?;
-            ranked_lists.push(temporal_results);
-        }
-
-        if let Some((seeds, depth)) = &self.ppr_search {
-            let ppr_results = crate::ppr::ppr_query_in_txn(
-                &self.vault.store,
-                &rtxn,
-                seeds,
-                *depth,
-                PPR_DAMPING,
-            )?;
-            ranked_lists.push(ppr_results);
-        }
-
-        if ranked_lists.is_empty() {
-            return Ok(Vec::new());
-        }
-
-        let mut scores = fusion::rrf_fuse(&ranked_lists, RRF_K);
-
-        if let Some((explicit_seeds, depth)) = &self.ppr_expand {
-            let mut combined = HashSet::<EntityId>::new();
-            for scored in scores.iter().take(self.result_limit) {
-                combined.insert(scored.id);
-            }
-            for seed in explicit_seeds {
-                combined.insert(*seed);
+                let vector_results = crate::hnsw::hnsw_search(
+                    &self.vault.store,
+                    &self.vault.config,
+                    &rtxn,
+                    query_vector,
+                    *limit,
+                )?;
+                ranked_lists.push(vector_results);
             }
 
-            if !combined.is_empty() {
-                let mut seeds: Vec<EntityId> = combined.into_iter().collect();
-                seeds.sort_unstable_by(|a, b| a.as_bytes().cmp(b.as_bytes()));
+            if let Some((query, limit)) = &self.text_search {
+                let text_results =
+                    crate::bm25::search_text(&self.vault.store, &rtxn, query, *limit)?;
+                ranked_lists.push(text_results);
+            }
 
-                let ppr_results = crate::ppr::ppr_query_in_txn(
+            if let Some(codes) = &self.phonetic_search {
+                let phonetic_results = execute_phonetic(&self.vault.store, &rtxn, codes)?;
+                ranked_lists.push(phonetic_results);
+            }
+
+            if let Some(config) = &self.temporal_search {
+                let temporal_results =
+                    execute_temporal(&self.vault.store, &rtxn, config, &mut metadata_cache)?;
+                ranked_lists.push(temporal_results);
+            }
+
+            if let Some((seeds, depth)) = &self.ppr_search {
+                let (ppr_results, deferred_cache_write) =
+                    crate::ppr::ppr_query_in_txn_with_deferred_cache(
+                        &self.vault.store,
+                        &rtxn,
+                        seeds,
+                        *depth,
+                        PPR_DAMPING,
+                    )?;
+                if let Some(deferred_cache_write) = deferred_cache_write {
+                    deferred_ppr_cache_writes.push(deferred_cache_write);
+                }
+                ranked_lists.push(ppr_results);
+            }
+
+            if ranked_lists.is_empty() {
+                return Ok(Vec::new());
+            }
+
+            let mut scores = fusion::rrf_fuse(&ranked_lists, RRF_K);
+
+            if let Some((explicit_seeds, depth)) = &self.ppr_expand {
+                let mut combined = HashSet::<EntityId>::new();
+                for scored in scores.iter().take(self.result_limit) {
+                    combined.insert(scored.id);
+                }
+                for seed in explicit_seeds {
+                    combined.insert(*seed);
+                }
+
+                if !combined.is_empty() {
+                    let mut seeds: Vec<EntityId> = combined.into_iter().collect();
+                    seeds.sort_unstable_by(|a, b| a.as_bytes().cmp(b.as_bytes()));
+
+                    let (ppr_results, deferred_cache_write) =
+                        crate::ppr::ppr_query_in_txn_with_deferred_cache(
+                            &self.vault.store,
+                            &rtxn,
+                            &seeds,
+                            *depth,
+                            PPR_DAMPING,
+                        )?;
+                    if let Some(deferred_cache_write) = deferred_cache_write {
+                        deferred_ppr_cache_writes.push(deferred_cache_write);
+                    }
+                    scores = fusion::rrf_fuse(&[scores, ppr_results], RRF_K);
+                }
+            }
+
+            if let (None, Some(half_life_days)) =
+                (self.temporal_search.as_ref(), self.recency_half_life)
+            {
+                boost_recency_with_cache(
+                    &mut scores,
+                    half_life_days,
                     &self.vault.store,
                     &rtxn,
-                    &seeds,
-                    *depth,
-                    PPR_DAMPING,
+                    &mut metadata_cache,
                 )?;
-                scores = fusion::rrf_fuse(&[scores, ppr_results], RRF_K);
             }
-        }
 
-        if let (None, Some(half_life_days)) = (self.temporal_search.as_ref(), self.recency_half_life)
-        {
-            boost_recency_with_cache(
+            if self.apply_salience {
+                fusion::boost_salience(&mut scores, &self.vault.store, &rtxn)?;
+            }
+
+            if self.apply_confidence {
+                fusion::boost_confidence(&mut scores, &self.vault.store, &rtxn)?;
+            }
+
+            let filter_config = PipelineFilterConfig {
+                type_filter: self.type_filter.as_deref(),
+                since_filter: self.since_filter,
+                occurred_range: self.occurred_range,
+                learned_range: self.learned_range,
+            };
+            apply_filters(
                 &mut scores,
-                half_life_days,
                 &self.vault.store,
                 &rtxn,
+                filter_config,
                 &mut metadata_cache,
             )?;
-        }
 
-        if self.apply_salience {
-            fusion::boost_salience(&mut scores, &self.vault.store, &rtxn)?;
-        }
+            if self.apply_contiguity {
+                // Contiguity is O(n^2), so sort before pretruncating to the best
+                // candidates, then sort again after boost_contiguity mutates scores.
+                fusion::sort_scored_entities_desc(&mut scores);
+                pretruncate_for_contiguity(&mut scores, self.result_limit);
+                boost_contiguity(
+                    &mut scores,
+                    self.temporal_search.as_ref(),
+                    &self.vault.store,
+                    &rtxn,
+                    &mut metadata_cache,
+                )?;
+            }
 
-        if self.apply_confidence {
-            fusion::boost_confidence(&mut scores, &self.vault.store, &rtxn)?;
-        }
-
-        let filter_config = PipelineFilterConfig {
-            type_filter: self.type_filter.as_deref(),
-            since_filter: self.since_filter,
-            occurred_range: self.occurred_range,
-            learned_range: self.learned_range,
-        };
-        apply_filters(
-            &mut scores,
-            &self.vault.store,
-            &rtxn,
-            filter_config,
-            &mut metadata_cache,
-        )?;
-
-        if self.apply_contiguity {
-            // Contiguity is O(n^2), so sort before pretruncating to the best
-            // candidates, then sort again after boost_contiguity mutates scores.
             fusion::sort_scored_entities_desc(&mut scores);
-            pretruncate_for_contiguity(&mut scores, self.result_limit);
-            boost_contiguity(
-                &mut scores,
-                self.temporal_search.as_ref(),
-                &self.vault.store,
-                &rtxn,
-                &mut metadata_cache,
-            )?;
-        }
+            scores.truncate(self.result_limit);
+            (scores, deferred_ppr_cache_writes)
+        };
 
-        fusion::sort_scored_entities_desc(&mut scores);
-        scores.truncate(self.result_limit);
+        crate::ppr::flush_deferred_ppr_cache_writes(
+            &self.vault.store,
+            &deferred_ppr_cache_writes,
+        )?;
         Ok(scores)
     }
 }
@@ -697,13 +716,17 @@ fn collect_temporal_candidates(
 
     if config.anchor_mode != TemporalAnchorMode::Learned {
         let long_interval_lower = temporal_key_upper_bound(occurred_window_end);
-        for entry in store.temporal_long_intervals.range(
-            rtxn,
-            &(
-                std::ops::Bound::Excluded(&long_interval_lower[..]),
-                std::ops::Bound::Unbounded,
-            ),
-        )? {
+        for entry in store
+            .temporal_long_intervals
+            .range(
+                rtxn,
+                &(
+                    std::ops::Bound::Excluded(&long_interval_lower[..]),
+                    std::ops::Bound::Unbounded,
+                ),
+            )?
+            .take(per_scan_cap)
+        {
             let (key, value) = entry?;
             let (id, occurred_start, _) = decode_long_interval_row(key, value)?;
             if occurred_start < occurred_window_start {
@@ -1192,6 +1215,8 @@ fn combine_proximity(mode: TemporalAnchorMode, occurred: f64, learned: f64, floo
 mod tests {
     use std::collections::HashMap;
 
+    use heed::types::Bytes;
+
     use crate::types::{HnswConfig, VaultConfig};
 
     use super::*;
@@ -1245,6 +1270,16 @@ mod tests {
             .put(&id, 0, TimeRange { start: 1, end: 1 }, 1, b"payload")
             .vector(&id, &vector)
             .commit()
+    }
+
+    fn count_entries(db: &heed::Database<Bytes, Bytes>, vault: &Vault) -> Result<usize> {
+        let rtxn = vault.store.env.read_txn()?;
+        let mut count = 0;
+        for entry in db.iter(&rtxn)? {
+            entry?;
+            count += 1;
+        }
+        Ok(count)
     }
 
     fn to_score_map(scores: &[ScoredEntity]) -> HashMap<EntityId, f32> {
@@ -1335,6 +1370,45 @@ mod tests {
 
         let results = vault.query().search_ppr(&[a], 3).run()?;
         assert!(results.iter().any(|entry| entry.id == b));
+        Ok(())
+    }
+
+    #[test]
+    fn search_ppr_warms_cache_after_pipeline_snapshot() -> Result<()> {
+        let temp_dir = tempfile::tempdir()?;
+        let vault = Vault::open(temp_dir.path(), test_config())?;
+
+        let a = entity_id(24);
+        let b = entity_id(25);
+
+        vault
+            .batch()
+            .put(&a, 0, TimeRange { start: 10, end: 10 }, 10, b"payload")
+            .put(&b, 0, TimeRange { start: 11, end: 11 }, 11, b"payload")
+            .edge(&a, crate::types::EdgeKind::Supports, &b, 1.0)
+            .commit()?;
+
+        assert_eq!(count_entries(&vault.store.ppr_cache, &vault)?, 0);
+        assert_eq!(count_entries(&vault.store.ppr_cache_deps, &vault)?, 0);
+
+        let results = vault.query().search_ppr(&[a], 3).run()?;
+        assert!(results.iter().any(|entry| entry.id == b));
+        assert_eq!(count_entries(&vault.store.ppr_cache, &vault)?, 1);
+        assert_eq!(count_entries(&vault.store.ppr_cache_deps, &vault)?, 1);
+        Ok(())
+    }
+
+    #[test]
+    fn search_ppr_rejects_excessive_seed_count_and_depth() -> Result<()> {
+        let temp_dir = tempfile::tempdir()?;
+        let vault = Vault::open(temp_dir.path(), test_config())?;
+        let seeds = vec![entity_id(0); 257];
+
+        let too_many_seeds = vault.query().search_ppr(&seeds, 3).run();
+        assert!(matches!(too_many_seeds, Err(Error::InvalidConfig(_))));
+
+        let too_deep = vault.query().search_ppr(&[entity_id(1)], 11).run();
+        assert!(matches!(too_deep, Err(Error::InvalidConfig(_))));
         Ok(())
     }
 

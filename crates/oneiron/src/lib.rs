@@ -1229,6 +1229,26 @@ mod tests {
     }
 
     #[test]
+    fn open_rejects_newer_long_interval_schema_version() -> Result<()> {
+        let temp_dir = tempfile::tempdir()?;
+        let path = temp_dir.path();
+
+        let vault = Vault::open(path, test_config())?;
+        let mut wtxn = vault.store.env.write_txn()?;
+        vault.store.hnsw_meta.put(
+            &mut wtxn,
+            TEMPORAL_LONG_INTERVALS_SCHEMA_VERSION_KEY,
+            &[3_u8],
+        )?;
+        wtxn.commit()?;
+        drop(vault);
+
+        let reopened = Vault::open(path, test_config());
+        assert!(matches!(reopened, Err(Error::InvalidKey)));
+        Ok(())
+    }
+
+    #[test]
     fn batch_put_assigns_short_id() -> Result<()> {
         let temp_dir = tempfile::tempdir()?;
         let vault = Vault::open(temp_dir.path(), test_config())?;
