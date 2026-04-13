@@ -94,9 +94,7 @@ impl Store {
                 .embedding_model
                 .as_deref()
                 .ok_or_else(|| Error::InvalidConfig("missing embedding model".to_owned()))?;
-            let mut wtxn = env.write_txn()?;
-            hnsw_meta.put(&mut wtxn, MODEL_ID_KEY, requested.as_bytes())?;
-            wtxn.commit()?;
+            persist_model_id_if_missing(&env, &hnsw_meta, requested)?;
         }
 
         Ok(Self {
@@ -180,6 +178,30 @@ fn preflight_embedding_model(
         }
         None => Ok(true),
     }
+}
+
+fn persist_model_id_if_missing(
+    env: &Env,
+    hnsw_meta: &Database<Bytes, Bytes>,
+    requested: &str,
+) -> Result<()> {
+    let mut wtxn = env.write_txn()?;
+    match hnsw_meta.get(&wtxn, MODEL_ID_KEY)? {
+        Some(raw) => {
+            let stored = parse_utf8_bytes(raw)?;
+            if stored != requested {
+                return Err(Error::EmbeddingModelChanged {
+                    stored,
+                    requested: requested.to_owned(),
+                });
+            }
+        }
+        None => {
+            hnsw_meta.put(&mut wtxn, MODEL_ID_KEY, requested.as_bytes())?;
+            wtxn.commit()?;
+        }
+    }
+    Ok(())
 }
 
 fn migrate_temporal_long_intervals_if_needed(
