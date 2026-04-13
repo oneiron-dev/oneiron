@@ -339,15 +339,15 @@ This ensures **closest-to-anchor** candidates are collected first. Under `per_sc
 LONG_INTERVAL_THRESHOLD = 14 × 86400   // 14 days
 
 New database: temporal_long_intervals
-    Key: entity_id (16 bytes)
-    Value: [occurred_start(8 BE) | occurred_end(8 BE)]  (16 bytes)
+    Key: [occurred_end(8 BE) | entity_id(16)]  (24 bytes)
+    Value: [occurred_start(8 BE)]  (8 bytes)
 ```
 
-**Write path:** On entity put, if `occurred_end.saturating_sub(occurred_start) > LONG_INTERVAL_THRESHOLD`, insert entity_id with `[occurred_start(8 BE) | occurred_end(8 BE)]` value into `temporal_long_intervals`. On entity delete, always remove (harmless if absent). Note: `saturating_sub` guards against malformed entities where `start > end` — these produce 0, safely excluded from the index.
+**Write path:** On entity put, if `occurred_end.saturating_sub(occurred_start) > LONG_INTERVAL_THRESHOLD`, insert `[occurred_end(8 BE) | entity_id(16)]` with `[occurred_start(8 BE)]` as the value. On entity update or delete, remove the old end-keyed row before writing the new one. Note: `saturating_sub` guards against malformed entities where `start > end` — these produce 0, safely excluded from the index.
 
 **Input validation at ingest:** `put_entity` should enforce `occurred_start <= occurred_end`. If `start > end`, swap them before storing. This is defense-in-depth — the temporal indexes and scoring functions use `saturating_sub` throughout, but preventing malformed data at the source is cleaner.
 
-**Read path:** After the three bidirectional scans and deduplication, scan `temporal_long_intervals`. For each entry, read the `[occurred_start, occurred_end]` directly from the value (no entity header fetch needed). Apply **true-spanner filter**: only add entities where `occurred_start < window_start AND occurred_end > window_end` — these are the entities invisible to start/end scans because neither timestamp falls within the window. Dedup with existing candidates.
+**Read path:** After the three bidirectional scans and deduplication, range-seek `temporal_long_intervals` for rows with `occurred_end > window_end`. Decode `occurred_end` from the key and `occurred_start` from the value, then apply the **true-spanner filter**: only add entities where `occurred_start < window_start AND occurred_end > window_end` — these are the entities invisible to start/end scans because neither timestamp falls within the window. Dedup with existing candidates.
 
 **Anchor mode gating:** Skip the spanner scan entirely in `Learned` mode — the spanner index is occurred-axis only and adds nothing when scoring only against learned timestamps.
 
@@ -355,7 +355,7 @@ New database: temporal_long_intervals
 
 **Why 14 days:** The minimum scan radius is 7 days (from the `7 × 86400` floor). A spanner must span more than `2 × radius + range_width` to be invisible. The smallest possible `2 × radius` is 14 days. Setting the threshold at 14 days catches all spanners for all queries.
 
-**Cost:** Personal vault: ~50-500 long-interval entities, scanning values ≈ ~16KB, <1ms. B2B vault with 100K entities: maybe 5-10K long intervals, <5ms. Acceptable. Storing bounds in the value avoids entity header reads during scan — the overlap check uses the value directly. If the set ever grows too large (>50K), the approach can be replaced with a bucketed overlap index (one key per month-bucket per interval) — see Considered Alternatives (§12).
+**Cost:** Personal vault: ~50-500 long-interval entities, and the end-keyed range usually touches only the tail whose `occurred_end` extends beyond the query window. Storing `occurred_start` in the value still avoids entity header reads during the spanner pass. If the tail cardinality ever grows too large (>50K), the approach can be replaced with a bucketed overlap index (one key per month-bucket per interval) — see Considered Alternatives (§12).
 
 ### Adaptive σ widening
 

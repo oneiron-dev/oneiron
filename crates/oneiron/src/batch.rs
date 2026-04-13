@@ -486,7 +486,6 @@ pub(crate) fn deindex_entity(
     delete_from_phonetic_postings(store, wtxn, id)?;
     store.vectors.delete(wtxn, id.as_bytes())?;
     crate::hnsw::hnsw_deindex(store, wtxn, id)?;
-    store.temporal_long_intervals.delete(wtxn, id.as_bytes())?;
 
     let Some(entity_record) = store.entities.get(wtxn, id.as_bytes())? else {
         return Ok((false, Vec::new()));
@@ -505,6 +504,12 @@ pub(crate) fn deindex_entity(
         store
             .temporal_occurred_end
             .delete(wtxn, &occurred_end_key)?;
+    }
+    if occurred.end.saturating_sub(occurred.start) > LONG_INTERVAL_THRESHOLD_SECS {
+        let long_interval_key = Store::encode_temporal_key(occurred.end, id);
+        store
+            .temporal_long_intervals
+            .delete(wtxn, &long_interval_key)?;
     }
 
     let learned_key = Store::encode_temporal_key(learned_at, id);
@@ -537,10 +542,14 @@ fn apply_put(
         std::mem::swap(&mut occurred.start, &mut occurred.end);
     }
 
-    store.temporal_long_intervals.delete(wtxn, id.as_bytes())?;
-
     if let Some(old_record) = store.entities.get(wtxn, id.as_bytes())? {
         let (old_type, old_occurred, old_learned) = parse_entity_metadata(old_record)?;
+        if old_occurred.end.saturating_sub(old_occurred.start) > LONG_INTERVAL_THRESHOLD_SECS {
+            let old_long_interval_key = Store::encode_temporal_key(old_occurred.end, &id);
+            store
+                .temporal_long_intervals
+                .delete(wtxn, &old_long_interval_key)?;
+        }
 
         if old_type != entity_type {
             let old_type_key = Store::encode_type_key(old_type, &id);
@@ -593,12 +602,11 @@ fn apply_put(
     store.temporal_learned.put(wtxn, &learned_key, &[])?;
 
     if occurred.end.saturating_sub(occurred.start) > LONG_INTERVAL_THRESHOLD_SECS {
-        let mut value = [0_u8; 16];
-        value[..8].copy_from_slice(&occurred.start.to_be_bytes());
-        value[8..].copy_from_slice(&occurred.end.to_be_bytes());
+        let long_interval_key = Store::encode_temporal_key(occurred.end, &id);
+        let occurred_start_value = occurred.start.to_be_bytes();
         store
             .temporal_long_intervals
-            .put(wtxn, id.as_bytes(), &value)?;
+            .put(wtxn, &long_interval_key, &occurred_start_value)?;
     }
 
     upsert_short_id(store, wtxn, &id, entity_type, data)?;
