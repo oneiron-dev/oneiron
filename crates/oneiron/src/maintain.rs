@@ -273,7 +273,10 @@ mod tests {
     use heed::types::Bytes;
 
     use super::*;
-    use crate::store::{GRAPH_VERSION_KEY, MODEL_ID_KEY, VECTOR_VERSION_KEY};
+    use crate::store::{
+        GRAPH_VERSION_KEY, MODEL_ID_KEY, TEMPORAL_LONG_INTERVALS_SCHEMA_VERSION_KEY,
+        VECTOR_VERSION_KEY,
+    };
     use crate::types::{EdgeKind, HnswConfig, TimeRange, VaultConfig};
 
     fn test_config() -> VaultConfig {
