@@ -340,7 +340,7 @@ Implement the `BatchBuilder` for atomic multi-database writes, and all secondary
   - Adaptive σ widening: doubles σ up to 3 rounds, skips rescan when radius unchanged
 - **4 API tiers:** inferred σ, explicit σ, TemporalGranularity enum, TemporalAnchorMode
 - **Contiguity boost:** post-RRF, `score *= 1 + 0.2 * contiguity`, O(n log n)
-- **Spanner index (new DB):** `temporal_long_intervals[entity_id(16)] → [occ_start(8 BE) | occ_end(8 BE)]`
+- **Spanner index (new DB):** `temporal_long_intervals[occ_end(8 BE) | entity_id(16)] → [occ_start(8 BE)]`
   - True-spanner filter: `start < window_start AND end > window_end`
   - Skip in Learned mode
   - Write-time threshold: fixed 14 days (`occ_end - occ_start > 14 × 86400`)
@@ -349,7 +349,7 @@ Implement the `BatchBuilder` for atomic multi-database writes, and all secondary
 **Pipeline Builder (`pipeline.rs`):**
 - `PipelineBuilder<'a>` struct borrowing `&'a Vault`
 - Lazy: accumulates search/filter/boost config, executes on `run()`
-- `run()` — two-transaction flow: txn A (signals) → drop → PPR (internal txns) → txn B (boosts/filters)
+- `run()` — single-snapshot flow: one shared `RoTxn` across signals, PPR, boosts, and filters
 - Methods: `search_vector`, `search_text`, `search_phonetic`, `search_temporal`, `search_temporal_with_sigma`, `search_temporal_with_granularity`, `search` (convenience), `search_ppr`, `expand_ppr`, `boost_recency`, `boost_salience`, `boost_confidence`, `filter_types`, `filter_since`, `filter_occurred_range`, `filter_learned_range`, `limit`
 
 **Phonetic search (in pipeline):**
@@ -385,12 +385,12 @@ Implement the `BatchBuilder` for atomic multi-database writes, and all secondary
 **Depends on:** Task 6
 
 **Review follow-ups from Task 6:**
-- [ ] Replace full DB scan in `collect_index_candidates` (`pipeline.rs:687`) with bidirectional range seek from anchor midpoint — O(N) → O(cap). Flagged by all 6 reviewers. Currently uses `db.iter(rtxn)?` which walks entire temporal index.
-- [ ] Overlap tiebreak axis mismatch in Learned mode (`pipeline.rs:539-543`) — always uses occurred midpoint, should use learned axis when `anchor_mode == Learned`. Minor impact (only affects equal-score entities with d_occ==0 in Learned mode).
-- [ ] Two separate `RoTxn` in `PipelineBuilder::run()` (lines 289 and 371) breaks snapshot consistency — entities could change between signal retrieval and boost/filter phases. Requires PPR refactor to accept borrowed `RoTxn` instead of opening internal txns.
-- [ ] Cache `EntityMetadataHeader` per-entity within pipeline `run()` to avoid redundant LMDB lookups across `execute_temporal`, `boost_recency`, `boost_salience`, `boost_confidence`, and `apply_filters`. LMDB page cache mitigates I/O cost but parsing overhead remains.
+- [x] Replace full DB scan in `collect_index_candidates` with bidirectional `range` / `rev_range` seeks from the anchor midpoint.
+- [x] Fix overlap tiebreak axis mismatch in Learned mode so learned anchors break ties on the learned axis.
+- [x] Run the full pipeline under one shared `RoTxn`, including PPR, to preserve snapshot consistency.
+- [x] Cache `EntityMetadataHeader` per-entity within pipeline `run()` to avoid redundant LMDB lookups across temporal scoring, recency boosting, contiguity boosting, and filters.
 - [ ] `boost_contiguity` O(n²) runs on full fused set before `scores.truncate(result_limit)` at `pipeline.rs:407`. For stacked signals (vector+BM25+PPR), fused set can be ~300+ entities. Pre-truncate to 2× `result_limit` before contiguity to bound work.
-- [ ] `temporal_long_intervals` full scan at `pipeline.rs:632-639` — `store.temporal_long_intervals.iter(rtxn)?` walks all spanner entries. Lower impact than `collect_index_candidates` (table is small — only entities with duration >14 days) but same O(N) class.
+- [x] Replace `temporal_long_intervals` full scan with an `occurred_end` keyed range query and value-side `occurred_start` filter.
 
 **Context Pack Builder (`context_pack.rs`):**
 - `ContextPackBuilder<'a>` — extends pipeline with hydration options

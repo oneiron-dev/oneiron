@@ -677,6 +677,7 @@ mod tests {
     use xxhash_rust::xxh32::xxh32;
 
     use super::*;
+    use crate::store::TEMPORAL_LONG_INTERVALS_SCHEMA_VERSION_KEY;
 
     #[cfg(not(feature = "sync"))]
     const DB_NAMES: [&str; 19] = [
@@ -1158,6 +1159,184 @@ mod tests {
     }
 
     #[test]
+    fn batch_put_writes_long_interval_index_by_end_time() -> Result<()> {
+        let temp_dir = tempfile::tempdir()?;
+        let vault = Vault::open(temp_dir.path(), test_config())?;
+        let id = EntityId::now();
+        let end = 1_000 + crate::batch::LONG_INTERVAL_THRESHOLD_SECS + 1;
+
+        vault
+            .batch()
+            .put(&id, 6, test_time_range(1_000, end), 3_000, b"long-range")
+            .commit()?;
+
+        let key = Store::encode_temporal_key(end, &id);
+        let rtxn = vault.store.env.read_txn()?;
+        let value = vault
+            .store
+            .temporal_long_intervals
+            .get(&rtxn, &key)?
+            .ok_or(Error::EntityNotFound)?;
+        assert_eq!(
+            u64::from_be_bytes(value.try_into().map_err(|_| Error::InvalidKey)?),
+            1_000
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn open_migrates_legacy_long_interval_rows() -> Result<()> {
+        let temp_dir = tempfile::tempdir()?;
+        let path = temp_dir.path();
+        let id = EntityId::now();
+        let end = 1_000 + crate::batch::LONG_INTERVAL_THRESHOLD_SECS + 10;
+
+        let vault = Vault::open(path, test_config())?;
+        vault
+            .batch()
+            .put(
+                &id,
+                6,
+                test_time_range(1_000, end),
+                3_000,
+                b"legacy-long-range",
+            )
+            .commit()?;
+
+        let new_key = Store::encode_temporal_key(end, &id);
+        let mut legacy_value = [0_u8; 16];
+        legacy_value[..8].copy_from_slice(&1_000_u64.to_be_bytes());
+        legacy_value[8..].copy_from_slice(&end.to_be_bytes());
+
+        let mut wtxn = vault.store.env.write_txn()?;
+        vault
+            .store
+            .temporal_long_intervals
+            .delete(&mut wtxn, &new_key)?;
+        vault
+            .store
+            .temporal_long_intervals
+            .put(&mut wtxn, id.as_bytes(), &legacy_value)?;
+        vault
+            .store
+            .hnsw_meta
+            .delete(&mut wtxn, TEMPORAL_LONG_INTERVALS_SCHEMA_VERSION_KEY)?;
+        wtxn.commit()?;
+        drop(vault);
+
+        let reopened = Vault::open(path, test_config())?;
+        let rtxn = reopened.store.env.read_txn()?;
+        assert!(reopened
+            .store
+            .temporal_long_intervals
+            .get(&rtxn, id.as_bytes())?
+            .is_none());
+        let value = reopened
+            .store
+            .temporal_long_intervals
+            .get(&rtxn, &new_key)?
+            .ok_or(Error::EntityNotFound)?;
+        assert_eq!(
+            u64::from_be_bytes(value.try_into().map_err(|_| Error::InvalidKey)?),
+            1_000
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn open_rejects_newer_long_interval_schema_version() -> Result<()> {
+        let temp_dir = tempfile::tempdir()?;
+        let path = temp_dir.path();
+
+        let vault = Vault::open(path, test_config())?;
+        let mut wtxn = vault.store.env.write_txn()?;
+        vault.store.hnsw_meta.put(
+            &mut wtxn,
+            TEMPORAL_LONG_INTERVALS_SCHEMA_VERSION_KEY,
+            &[3_u8],
+        )?;
+        wtxn.commit()?;
+        drop(vault);
+
+        let reopened = Vault::open(path, test_config());
+        assert!(matches!(reopened, Err(Error::InvalidKey)));
+        Ok(())
+    }
+
+    #[test]
+    fn open_checks_model_id_before_migrating_long_interval_schema() -> Result<()> {
+        let temp_dir = tempfile::tempdir()?;
+        let path = temp_dir.path();
+        let id = EntityId::now();
+        let end = 1_000 + crate::batch::LONG_INTERVAL_THRESHOLD_SECS + 10;
+
+        let mut cfg = test_config();
+        cfg.embedding_model = Some("model-a".to_owned());
+        let vault = Vault::open(path, cfg)?;
+        vault
+            .batch()
+            .put(
+                &id,
+                6,
+                test_time_range(1_000, end),
+                3_000,
+                b"legacy-long-range",
+            )
+            .commit()?;
+
+        let new_key = Store::encode_temporal_key(end, &id);
+        let mut legacy_value = [0_u8; 16];
+        legacy_value[..8].copy_from_slice(&1_000_u64.to_be_bytes());
+        legacy_value[8..].copy_from_slice(&end.to_be_bytes());
+
+        let mut wtxn = vault.store.env.write_txn()?;
+        vault
+            .store
+            .temporal_long_intervals
+            .delete(&mut wtxn, &new_key)?;
+        vault
+            .store
+            .temporal_long_intervals
+            .put(&mut wtxn, id.as_bytes(), &legacy_value)?;
+        vault
+            .store
+            .hnsw_meta
+            .delete(&mut wtxn, TEMPORAL_LONG_INTERVALS_SCHEMA_VERSION_KEY)?;
+        wtxn.commit()?;
+        drop(vault);
+
+        let mut mismatch_cfg = test_config();
+        mismatch_cfg.embedding_model = Some("model-b".to_owned());
+        assert!(matches!(
+            Vault::open(path, mismatch_cfg),
+            Err(Error::EmbeddingModelChanged { .. })
+        ));
+
+        let cfg = test_config();
+        let env = unsafe {
+            heed::EnvOpenOptions::new()
+                .map_size(cfg.map_size)
+                .max_readers(cfg.max_readers)
+                .max_dbs(24)
+                .open(path)?
+        };
+        let rtxn = env.read_txn()?;
+        let hnsw_meta = env
+            .open_database::<Bytes, Bytes>(&rtxn, Some("hnsw_meta"))?
+            .ok_or(Error::EntityNotFound)?;
+        let temporal_long_intervals = env
+            .open_database::<Bytes, Bytes>(&rtxn, Some("temporal_long_intervals"))?
+            .ok_or(Error::EntityNotFound)?;
+
+        assert!(temporal_long_intervals.get(&rtxn, id.as_bytes())?.is_some());
+        assert!(temporal_long_intervals.get(&rtxn, &new_key)?.is_none());
+        assert!(hnsw_meta
+            .get(&rtxn, TEMPORAL_LONG_INTERVALS_SCHEMA_VERSION_KEY)?
+            .is_none());
+        Ok(())
+    }
+
+    #[test]
     fn batch_put_assigns_short_id() -> Result<()> {
         let temp_dir = tempfile::tempdir()?;
         let vault = Vault::open(temp_dir.path(), test_config())?;
@@ -1382,6 +1561,59 @@ mod tests {
         }
 
         assert!(vault.delete_entity(&id)?);
+        Ok(())
+    }
+
+    #[test]
+    fn reput_rekeys_long_interval_index_and_drops_shortened_range() -> Result<()> {
+        let temp_dir = tempfile::tempdir()?;
+        let vault = Vault::open(temp_dir.path(), test_config())?;
+        let id = EntityId::now();
+        let old_end = 1_000 + crate::batch::LONG_INTERVAL_THRESHOLD_SECS + 10;
+        let new_end = 5_000 + crate::batch::LONG_INTERVAL_THRESHOLD_SECS + 20;
+
+        vault
+            .batch()
+            .put(&id, 0, test_time_range(1_000, old_end), 300, b"long-old")
+            .commit()?;
+
+        let old_key = Store::encode_temporal_key(old_end, &id);
+        let new_key = Store::encode_temporal_key(new_end, &id);
+
+        vault
+            .batch()
+            .put(&id, 0, test_time_range(5_000, new_end), 300, b"long-new")
+            .commit()?;
+
+        {
+            let rtxn = vault.store.env.read_txn()?;
+            assert!(vault
+                .store
+                .temporal_long_intervals
+                .get(&rtxn, &old_key)?
+                .is_none());
+            let value = vault
+                .store
+                .temporal_long_intervals
+                .get(&rtxn, &new_key)?
+                .ok_or(Error::EntityNotFound)?;
+            assert_eq!(
+                u64::from_be_bytes(value.try_into().map_err(|_| Error::InvalidKey)?),
+                5_000
+            );
+        }
+
+        vault
+            .batch()
+            .put(&id, 0, test_time_range(10_000, 10_001), 300, b"short")
+            .commit()?;
+
+        let rtxn = vault.store.env.read_txn()?;
+        assert!(vault
+            .store
+            .temporal_long_intervals
+            .get(&rtxn, &new_key)?
+            .is_none());
         Ok(())
     }
 

@@ -3,7 +3,7 @@ use xxhash_rust::xxh32::xxh32;
 use crate::batch::{parse_short_id_value, ENTITY_METADATA_HEADER_LEN};
 use crate::error::{Error, Result};
 use crate::hnsw::{hnsw_insert, COUNT_KEY};
-use crate::store::{GRAPH_VERSION_KEY, MODEL_ID_KEY};
+use crate::store::{GRAPH_VERSION_KEY, MODEL_ID_KEY, TEMPORAL_LONG_INTERVALS_SCHEMA_VERSION_KEY};
 use crate::types::{EntityId, ENTITY_ID_LEN};
 use crate::{le_bytes_to_f32_vec, ppr, Vault};
 
@@ -98,6 +98,11 @@ fn rebuild_hnsw(vault: &Vault) -> Result<(u64, u64)> {
         .hnsw_meta
         .get(&wtxn, MODEL_ID_KEY)?
         .map(|v| v.to_vec());
+    let temporal_long_intervals_schema_version = vault
+        .store
+        .hnsw_meta
+        .get(&wtxn, TEMPORAL_LONG_INTERVALS_SCHEMA_VERSION_KEY)?
+        .map(|v| v.to_vec());
 
     let mut vectors = Vec::<(EntityId, Vec<f32>)>::with_capacity(old_count.min(1_000_000) as usize);
     for entry in vault.store.vectors.iter(&wtxn)? {
@@ -115,6 +120,13 @@ fn rebuild_hnsw(vault: &Vault) -> Result<(u64, u64)> {
             .store
             .hnsw_meta
             .put(&mut wtxn, GRAPH_VERSION_KEY, &version.to_le_bytes())?;
+    }
+    if let Some(version) = temporal_long_intervals_schema_version {
+        vault.store.hnsw_meta.put(
+            &mut wtxn,
+            TEMPORAL_LONG_INTERVALS_SCHEMA_VERSION_KEY,
+            &version,
+        )?;
     }
 
     if let Some(model) = vault
@@ -318,6 +330,36 @@ mod tests {
         assert_eq!(report.hnsw_dead_nodes_removed, 0);
 
         let after = read_u64_meta(&vault, GRAPH_VERSION_KEY)?;
+        assert_eq!(before, after);
+        Ok(())
+    }
+
+    #[test]
+    fn rebuild_hnsw_preserves_long_interval_schema_version() -> Result<()> {
+        let temp_dir = tempfile::tempdir()?;
+        let vault = Vault::open(temp_dir.path(), test_config())?;
+
+        let before = {
+            let rtxn = vault.store.env.read_txn()?;
+            vault
+                .store
+                .hnsw_meta
+                .get(&rtxn, TEMPORAL_LONG_INTERVALS_SCHEMA_VERSION_KEY)?
+                .ok_or(Error::EntityNotFound)?
+                .to_vec()
+        };
+
+        vault.maintain().rebuild_hnsw().run()?;
+
+        let after = {
+            let rtxn = vault.store.env.read_txn()?;
+            vault
+                .store
+                .hnsw_meta
+                .get(&rtxn, TEMPORAL_LONG_INTERVALS_SCHEMA_VERSION_KEY)?
+                .ok_or(Error::EntityNotFound)?
+                .to_vec()
+        };
         assert_eq!(before, after);
         Ok(())
     }

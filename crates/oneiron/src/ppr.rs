@@ -21,6 +21,17 @@ const LEGACY_CACHE_DEP_KEY_LEN: usize = ENTITY_ID_LEN + LEGACY_SEED_HASH_LEN;
 const CACHE_TTL_SECS: u64 = 86_400;
 use crate::store::GRAPH_VERSION_KEY;
 const SCORE_EPSILON: f32 = 1e-10;
+pub(crate) const MAX_PPR_SEEDS: usize = 256;
+const MAX_PPR_DEPTH: u32 = 10;
+
+#[derive(Debug, Clone)]
+pub(crate) struct DeferredPprCacheWrite {
+    seed_hash: [u8; SEED_HASH_LEN],
+    seeds: Vec<EntityId>,
+    computed_at: u64,
+    graph_version: u64,
+    scores: Vec<ScoredEntity>,
+}
 
 pub(crate) fn ppr_compute(
     store: &Store,
@@ -85,6 +96,7 @@ pub(crate) fn ppr_compute(
     Ok(ranked)
 }
 
+#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) fn ppr_query(
     store: &Store,
     _config: &VaultConfig,
@@ -92,36 +104,131 @@ pub(crate) fn ppr_query(
     depth: u32,
     alpha: f32,
 ) -> Result<Vec<ScoredEntity>> {
+    let (scores, deferred_write) = {
+        let rtxn = store.env.read_txn()?;
+        ppr_query_in_txn_impl(store, &rtxn, seeds, depth, alpha, true)?
+    };
+
+    if let Some(deferred_write) = deferred_write {
+        write_ppr_cache(
+            store,
+            &deferred_write.seed_hash,
+            &deferred_write.seeds,
+            deferred_write.computed_at,
+            deferred_write.graph_version,
+            &deferred_write.scores,
+        )?;
+    }
+
+    Ok(scores)
+}
+
+#[cfg_attr(not(test), allow(dead_code))]
+pub(crate) fn ppr_query_in_txn(
+    store: &Store,
+    txn: &RoTxn<'_>,
+    seeds: &[EntityId],
+    depth: u32,
+    alpha: f32,
+) -> Result<Vec<ScoredEntity>> {
+    ppr_query_in_txn_impl(store, txn, seeds, depth, alpha, false).map(|(scores, _)| scores)
+}
+
+pub(crate) fn ppr_query_in_txn_with_deferred_cache(
+    store: &Store,
+    txn: &RoTxn<'_>,
+    seeds: &[EntityId],
+    depth: u32,
+    alpha: f32,
+) -> Result<(Vec<ScoredEntity>, Option<DeferredPprCacheWrite>)> {
+    ppr_query_in_txn_impl(store, txn, seeds, depth, alpha, true)
+}
+
+pub(crate) fn flush_deferred_ppr_cache_writes(
+    store: &Store,
+    writes: &[DeferredPprCacheWrite],
+) -> Result<()> {
+    for write in writes {
+        write_ppr_cache(
+            store,
+            &write.seed_hash,
+            &write.seeds,
+            write.computed_at,
+            write.graph_version,
+            &write.scores,
+        )?;
+    }
+    Ok(())
+}
+
+fn ppr_query_in_txn_impl(
+    store: &Store,
+    txn: &RoTxn<'_>,
+    seeds: &[EntityId],
+    depth: u32,
+    alpha: f32,
+    defer_cache_writes: bool,
+) -> Result<(Vec<ScoredEntity>, Option<DeferredPprCacheWrite>)> {
+    validate_ppr_request(seeds, depth)?;
+
     if seeds.is_empty() {
-        return Ok(Vec::new());
+        return Ok((Vec::new(), None));
     }
 
     let seed_hash = hash_seeds(seeds, depth, alpha);
     let now = crate::unix_seconds_now();
 
-    {
-        let rtxn = store.env.read_txn()?;
-        if let Some(raw) = store.ppr_cache.get(&rtxn, &seed_hash)? {
-            let (computed_at, _, stale) = parse_cache_header(raw)?;
-            if stale == 0 && now.saturating_sub(computed_at) <= CACHE_TTL_SECS {
-                let mut scores = decode_cache_scores(&raw[CACHE_HEADER_LEN..])?;
-                sort_scores(&mut scores);
-                return Ok(scores);
-            }
+    if let Some(raw) = store.ppr_cache.get(txn, &seed_hash)? {
+        let (computed_at, _, stale) = parse_cache_header(raw)?;
+        if stale == 0 && now.saturating_sub(computed_at) <= CACHE_TTL_SECS {
+            let mut scores = decode_cache_scores(&raw[CACHE_HEADER_LEN..])?;
+            sort_scores(&mut scores);
+            return Ok((scores, None));
         }
     }
 
-    let (scores, graph_version) = {
-        let rtxn = store.env.read_txn()?;
-        let scores = ppr_compute(store, &rtxn, seeds, depth, alpha)?;
-        let version = read_graph_version(store, &rtxn)?;
-        (scores, version)
-    };
+    let scores = ppr_compute(store, txn, seeds, depth, alpha)?;
+    if !defer_cache_writes {
+        return Ok((scores, None));
+    }
 
+    let graph_version = read_graph_version(store, txn)?;
+    let deferred_write = DeferredPprCacheWrite {
+        seed_hash,
+        seeds: seeds.to_vec(),
+        computed_at: now,
+        graph_version,
+        scores: scores.clone(),
+    };
+    Ok((scores, Some(deferred_write)))
+}
+
+fn validate_ppr_request(seeds: &[EntityId], depth: u32) -> Result<()> {
+    if seeds.len() > MAX_PPR_SEEDS {
+        return Err(Error::InvalidConfig(format!(
+            "ppr seed count exceeds maximum of {MAX_PPR_SEEDS}"
+        )));
+    }
+    if depth > MAX_PPR_DEPTH {
+        return Err(Error::InvalidConfig(format!(
+            "ppr depth exceeds maximum of {MAX_PPR_DEPTH}"
+        )));
+    }
+    Ok(())
+}
+
+fn write_ppr_cache(
+    store: &Store,
+    seed_hash: &[u8; SEED_HASH_LEN],
+    seeds: &[EntityId],
+    computed_at: u64,
+    graph_version: u64,
+    scores: &[ScoredEntity],
+) -> Result<()> {
     {
         let rtxn = store.env.read_txn()?;
         if read_graph_version(store, &rtxn)? != graph_version {
-            return Ok(scores);
+            return Ok(());
         }
     }
 
@@ -129,15 +236,15 @@ pub(crate) fn ppr_query(
     if store_cache_entry(
         store,
         &mut wtxn,
-        &seed_hash,
+        seed_hash,
         seeds,
-        now,
+        computed_at,
         graph_version,
-        &scores,
+        scores,
     )? {
         wtxn.commit()?;
     }
-    Ok(scores)
+    Ok(())
 }
 
 pub(crate) fn cleanup_ppr_cache(
@@ -551,6 +658,30 @@ mod tests {
         key[..ENTITY_ID_LEN].copy_from_slice(entity_id.as_bytes());
         key[ENTITY_ID_LEN..].copy_from_slice(&seed_hash);
         key
+    }
+
+    #[test]
+    fn hash_seeds_uses_full_xxh3_digest_and_is_order_insensitive() {
+        let a = entity(1);
+        let b = entity(2);
+        let depth: u32 = 3;
+        let alpha: f32 = 0.15;
+
+        let mut bytes = Vec::with_capacity(
+            ENTITY_ID_LEN * 2 + std::mem::size_of::<u32>() + std::mem::size_of::<f32>(),
+        );
+        bytes.extend_from_slice(a.as_bytes());
+        bytes.extend_from_slice(b.as_bytes());
+        bytes.extend_from_slice(&depth.to_le_bytes());
+        bytes.extend_from_slice(&alpha.to_le_bytes());
+
+        let expected = xxh3_128(&bytes).to_le_bytes();
+
+        assert_eq!(hash_seeds(&[a, b], depth, alpha), expected);
+        assert_eq!(
+            hash_seeds(&[a, b], depth, alpha),
+            hash_seeds(&[b, a], depth, alpha)
+        );
     }
 
     #[test]
@@ -1065,6 +1196,29 @@ mod tests {
         assert!(!stored);
         let rtxn = vault.store.env.read_txn()?;
         assert!(vault.store.ppr_cache.get(&rtxn, &seed_hash)?.is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn ppr_query_in_txn_uses_borrowed_snapshot_without_caching_stale_results() -> Result<()> {
+        let temp_dir = tempdir()?;
+        let vault = Vault::open(temp_dir.path(), test_config())?;
+        let a = entity(50);
+        let b = entity(51);
+        let c = entity(52);
+
+        vault.put_edge(&a, EdgeKind::BelongsTo, &b, 1.0)?;
+
+        let snapshot = vault.store.env.read_txn()?;
+        vault.put_edge(&a, EdgeKind::BelongsTo, &c, 1.0)?;
+
+        let borrowed = ppr_query_in_txn(&vault.store, &snapshot, &[a], 3, 0.15)?;
+        assert!(score_for(&borrowed, b) > 0.0);
+        assert!(score_for(&borrowed, c) <= SCORE_EPSILON);
+        drop(snapshot);
+
+        let latest = ppr_query(&vault.store, &vault.config, &[a], 3, 0.15)?;
+        assert!(score_for(&latest, c) > 0.0);
         Ok(())
     }
 }

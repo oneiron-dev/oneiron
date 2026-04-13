@@ -11,6 +11,9 @@ use crate::types::{EdgeKind, EntityId, VaultConfig};
 const MAX_DBS: u32 = 24;
 pub(crate) const MODEL_ID_KEY: &[u8] = b"model_id";
 pub(crate) const GRAPH_VERSION_KEY: &[u8] = b"graph_version";
+pub(crate) const TEMPORAL_LONG_INTERVALS_SCHEMA_VERSION_KEY: &[u8] =
+    b"temporal_long_intervals_schema_version";
+const TEMPORAL_LONG_INTERVALS_SCHEMA_VERSION: u8 = 2;
 
 /// LMDB environment and database handles for a vault.
 pub struct Store {
@@ -82,23 +85,16 @@ impl Store {
         let sync_queue = create_db(&env, &mut wtxn, "sync_queue")?;
         wtxn.commit()?;
 
-        if let Some(requested) = config.embedding_model.as_deref() {
-            let mut wtxn = env.write_txn()?;
-            match hnsw_meta.get(&wtxn, MODEL_ID_KEY)? {
-                Some(raw) => {
-                    let stored = parse_utf8_bytes(raw)?;
-                    if stored != requested {
-                        return Err(Error::EmbeddingModelChanged {
-                            stored,
-                            requested: requested.to_owned(),
-                        });
-                    }
-                }
-                None => {
-                    hnsw_meta.put(&mut wtxn, MODEL_ID_KEY, requested.as_bytes())?;
-                }
-            }
-            wtxn.commit()?;
+        let should_persist_model_id =
+            preflight_embedding_model(&env, &hnsw_meta, config.embedding_model.as_deref())?;
+        migrate_temporal_long_intervals_if_needed(&env, &hnsw_meta, &temporal_long_intervals)?;
+
+        if should_persist_model_id {
+            let requested = config
+                .embedding_model
+                .as_deref()
+                .ok_or_else(|| Error::InvalidConfig("missing embedding model".to_owned()))?;
+            persist_model_id_if_missing(&env, &hnsw_meta, requested)?;
         }
 
         Ok(Self {
@@ -157,6 +153,121 @@ impl Store {
 
 fn create_db(env: &Env, wtxn: &mut RwTxn<'_>, name: &str) -> Result<Database<Bytes, Bytes>> {
     Ok(env.create_database::<Bytes, Bytes>(wtxn, Some(name))?)
+}
+
+fn preflight_embedding_model(
+    env: &Env,
+    hnsw_meta: &Database<Bytes, Bytes>,
+    requested: Option<&str>,
+) -> Result<bool> {
+    let Some(requested) = requested else {
+        return Ok(false);
+    };
+
+    let rtxn = env.read_txn()?;
+    match hnsw_meta.get(&rtxn, MODEL_ID_KEY)? {
+        Some(raw) => {
+            let stored = parse_utf8_bytes(raw)?;
+            if stored != requested {
+                return Err(Error::EmbeddingModelChanged {
+                    stored,
+                    requested: requested.to_owned(),
+                });
+            }
+            Ok(false)
+        }
+        None => Ok(true),
+    }
+}
+
+fn persist_model_id_if_missing(
+    env: &Env,
+    hnsw_meta: &Database<Bytes, Bytes>,
+    requested: &str,
+) -> Result<()> {
+    let mut wtxn = env.write_txn()?;
+    match hnsw_meta.get(&wtxn, MODEL_ID_KEY)? {
+        Some(raw) => {
+            let stored = parse_utf8_bytes(raw)?;
+            if stored != requested {
+                return Err(Error::EmbeddingModelChanged {
+                    stored,
+                    requested: requested.to_owned(),
+                });
+            }
+        }
+        None => {
+            hnsw_meta.put(&mut wtxn, MODEL_ID_KEY, requested.as_bytes())?;
+            wtxn.commit()?;
+        }
+    }
+    Ok(())
+}
+
+fn migrate_temporal_long_intervals_if_needed(
+    env: &Env,
+    hnsw_meta: &Database<Bytes, Bytes>,
+    temporal_long_intervals: &Database<Bytes, Bytes>,
+) -> Result<()> {
+    let rtxn = env.read_txn()?;
+    let stored_version = match hnsw_meta.get(&rtxn, TEMPORAL_LONG_INTERVALS_SCHEMA_VERSION_KEY)? {
+        Some(raw) if raw.len() == 1 => raw[0],
+        Some(_) => return Err(Error::InvalidKey),
+        None => 0,
+    };
+    drop(rtxn);
+
+    if stored_version > TEMPORAL_LONG_INTERVALS_SCHEMA_VERSION {
+        return Err(Error::InvalidKey);
+    }
+    if stored_version == TEMPORAL_LONG_INTERVALS_SCHEMA_VERSION {
+        return Ok(());
+    }
+
+    let mut wtxn = env.write_txn()?;
+    let mut legacy_rows = Vec::<([u8; 16], [u8; 16])>::new();
+    for entry in temporal_long_intervals.iter(&wtxn)? {
+        let (key, value) = entry?;
+        match (key.len(), value.len()) {
+            (24, 8) => {}
+            (16, 16) => {
+                let old_key = key.try_into().map_err(|_| Error::InvalidKey)?;
+                let old_value = value.try_into().map_err(|_| Error::InvalidKey)?;
+                legacy_rows.push((old_key, old_value));
+            }
+            _ => return Err(Error::InvalidKey),
+        }
+    }
+
+    for (legacy_key, legacy_value) in legacy_rows {
+        let occurred_start = u64::from_be_bytes(
+            legacy_value[..8]
+                .try_into()
+                .map_err(|_| Error::InvalidKey)?,
+        );
+        let occurred_end = u64::from_be_bytes(
+            legacy_value[8..]
+                .try_into()
+                .map_err(|_| Error::InvalidKey)?,
+        );
+        let new_key = {
+            let mut key = [0_u8; 24];
+            key[..8].copy_from_slice(&occurred_end.to_be_bytes());
+            key[8..].copy_from_slice(&legacy_key);
+            key
+        };
+
+        temporal_long_intervals.delete(&mut wtxn, &legacy_key)?;
+        temporal_long_intervals.put(&mut wtxn, &new_key, &occurred_start.to_be_bytes())?;
+    }
+
+    hnsw_meta.put(
+        &mut wtxn,
+        TEMPORAL_LONG_INTERVALS_SCHEMA_VERSION_KEY,
+        &[TEMPORAL_LONG_INTERVALS_SCHEMA_VERSION],
+    )?;
+    wtxn.commit()?;
+    Ok(())
 }
 
 fn parse_utf8_bytes(bytes: &[u8]) -> Result<String> {
