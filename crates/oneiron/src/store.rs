@@ -169,13 +169,22 @@ fn migrate_temporal_long_intervals_if_needed(
     hnsw_meta: &Database<Bytes, Bytes>,
     temporal_long_intervals: &Database<Bytes, Bytes>,
 ) -> Result<()> {
-    let mut wtxn = env.write_txn()?;
-    let version = hnsw_meta.get(&wtxn, TEMPORAL_LONG_INTERVALS_SCHEMA_VERSION_KEY)?;
-    if version == Some(&[TEMPORAL_LONG_INTERVALS_SCHEMA_VERSION][..]) {
-        wtxn.commit()?;
+    let rtxn = env.read_txn()?;
+    let stored_version = match hnsw_meta.get(&rtxn, TEMPORAL_LONG_INTERVALS_SCHEMA_VERSION_KEY)? {
+        Some(raw) if raw.len() == 1 => raw[0],
+        Some(_) => return Err(Error::InvalidKey),
+        None => 0,
+    };
+    drop(rtxn);
+
+    if stored_version > TEMPORAL_LONG_INTERVALS_SCHEMA_VERSION {
+        return Err(Error::InvalidKey);
+    }
+    if stored_version == TEMPORAL_LONG_INTERVALS_SCHEMA_VERSION {
         return Ok(());
     }
 
+    let mut wtxn = env.write_txn()?;
     let mut legacy_rows = Vec::<([u8; 16], [u8; 16])>::new();
     for entry in temporal_long_intervals.iter(&wtxn)? {
         let (key, value) = entry?;

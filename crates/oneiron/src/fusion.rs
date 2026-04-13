@@ -37,6 +37,7 @@ pub(crate) fn rrf_fuse(ranked_lists: &[Vec<ScoredEntity>], k: f32) -> Vec<Scored
     out
 }
 
+#[allow(dead_code)]
 pub(crate) fn boost_recency(
     scores: &mut [ScoredEntity],
     half_life_days: f32,

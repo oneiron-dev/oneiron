@@ -3,7 +3,9 @@ use xxhash_rust::xxh32::xxh32;
 use crate::batch::{parse_short_id_value, ENTITY_METADATA_HEADER_LEN};
 use crate::error::{Error, Result};
 use crate::hnsw::{hnsw_insert, COUNT_KEY};
-use crate::store::{GRAPH_VERSION_KEY, MODEL_ID_KEY};
+use crate::store::{
+    GRAPH_VERSION_KEY, MODEL_ID_KEY, TEMPORAL_LONG_INTERVALS_SCHEMA_VERSION_KEY,
+};
 use crate::types::{EntityId, ENTITY_ID_LEN};
 use crate::{le_bytes_to_f32_vec, ppr, Vault};
 
@@ -98,6 +100,11 @@ fn rebuild_hnsw(vault: &Vault) -> Result<(u64, u64)> {
         .hnsw_meta
         .get(&wtxn, MODEL_ID_KEY)?
         .map(|v| v.to_vec());
+    let temporal_long_intervals_schema_version = vault
+        .store
+        .hnsw_meta
+        .get(&wtxn, TEMPORAL_LONG_INTERVALS_SCHEMA_VERSION_KEY)?
+        .map(|v| v.to_vec());
 
     let mut vectors = Vec::<(EntityId, Vec<f32>)>::with_capacity(old_count.min(1_000_000) as usize);
     for entry in vault.store.vectors.iter(&wtxn)? {
@@ -115,6 +122,13 @@ fn rebuild_hnsw(vault: &Vault) -> Result<(u64, u64)> {
             .store
             .hnsw_meta
             .put(&mut wtxn, GRAPH_VERSION_KEY, &version.to_le_bytes())?;
+    }
+    if let Some(version) = temporal_long_intervals_schema_version {
+        vault.store.hnsw_meta.put(
+            &mut wtxn,
+            TEMPORAL_LONG_INTERVALS_SCHEMA_VERSION_KEY,
+            &version,
+        )?;
     }
 
     if let Some(model) = vault
@@ -352,7 +366,7 @@ mod tests {
         let b = entity(83);
 
         vault.put_edge(&a, EdgeKind::BelongsTo, &b, 1.0)?;
-        let _ = ppr::ppr_query(&vault.store, &vault.config, &[a], 3, 0.15)?;
+        let _ = vault.query().search_ppr(&[a], 3).limit(10).run()?;
         vault.put_edge(&a, EdgeKind::BelongsTo, &b, 0.2)?;
 
         let report = vault.maintain().cleanup_ppr_cache(0).run()?;
@@ -475,7 +489,7 @@ mod tests {
         }
 
         vault.put_edge(&a, EdgeKind::BelongsTo, &b, 1.0)?;
-        let _ = ppr::ppr_query(&vault.store, &vault.config, &[a], 3, 0.15)?;
+        let _ = vault.query().search_ppr(&[a], 3).limit(10).run()?;
         vault.put_edge(&a, EdgeKind::BelongsTo, &b, 0.25)?;
 
         let current_hash = {
