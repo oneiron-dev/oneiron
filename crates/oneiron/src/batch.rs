@@ -507,7 +507,9 @@ pub(crate) fn deindex_entity(
     }
     if occurred.end.saturating_sub(occurred.start) > LONG_INTERVAL_THRESHOLD_SECS {
         let long_interval_key = Store::encode_temporal_key(occurred.end, id);
-        store.temporal_long_intervals.delete(wtxn, &long_interval_key)?;
+        store
+            .temporal_long_intervals
+            .delete(wtxn, &long_interval_key)?;
     }
 
     let learned_key = Store::encode_temporal_key(learned_at, id);

@@ -1177,7 +1177,10 @@ mod tests {
             .temporal_long_intervals
             .get(&rtxn, &key)?
             .ok_or(Error::EntityNotFound)?;
-        assert_eq!(u64::from_be_bytes(value.try_into().map_err(|_| Error::InvalidKey)?), 1_000);
+        assert_eq!(
+            u64::from_be_bytes(value.try_into().map_err(|_| Error::InvalidKey)?),
+            1_000
+        );
         Ok(())
     }
 
@@ -1191,7 +1194,13 @@ mod tests {
         let vault = Vault::open(path, test_config())?;
         vault
             .batch()
-            .put(&id, 6, test_time_range(1_000, end), 3_000, b"legacy-long-range")
+            .put(
+                &id,
+                6,
+                test_time_range(1_000, end),
+                3_000,
+                b"legacy-long-range",
+            )
             .commit()?;
 
         let new_key = Store::encode_temporal_key(end, &id);
@@ -1200,7 +1209,10 @@ mod tests {
         legacy_value[8..].copy_from_slice(&end.to_be_bytes());
 
         let mut wtxn = vault.store.env.write_txn()?;
-        vault.store.temporal_long_intervals.delete(&mut wtxn, &new_key)?;
+        vault
+            .store
+            .temporal_long_intervals
+            .delete(&mut wtxn, &new_key)?;
         vault
             .store
             .temporal_long_intervals
@@ -1224,7 +1236,10 @@ mod tests {
             .temporal_long_intervals
             .get(&rtxn, &new_key)?
             .ok_or(Error::EntityNotFound)?;
-        assert_eq!(u64::from_be_bytes(value.try_into().map_err(|_| Error::InvalidKey)?), 1_000);
+        assert_eq!(
+            u64::from_be_bytes(value.try_into().map_err(|_| Error::InvalidKey)?),
+            1_000
+        );
         Ok(())
     }
 
@@ -1509,7 +1524,10 @@ mod tests {
                 .temporal_long_intervals
                 .get(&rtxn, &new_key)?
                 .ok_or(Error::EntityNotFound)?;
-            assert_eq!(u64::from_be_bytes(value.try_into().map_err(|_| Error::InvalidKey)?), 5_000);
+            assert_eq!(
+                u64::from_be_bytes(value.try_into().map_err(|_| Error::InvalidKey)?),
+                5_000
+            );
         }
 
         vault

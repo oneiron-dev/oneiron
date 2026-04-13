@@ -200,10 +200,16 @@ fn migrate_temporal_long_intervals_if_needed(
     }
 
     for (legacy_key, legacy_value) in legacy_rows {
-        let occurred_start =
-            u64::from_be_bytes(legacy_value[..8].try_into().map_err(|_| Error::InvalidKey)?);
-        let occurred_end =
-            u64::from_be_bytes(legacy_value[8..].try_into().map_err(|_| Error::InvalidKey)?);
+        let occurred_start = u64::from_be_bytes(
+            legacy_value[..8]
+                .try_into()
+                .map_err(|_| Error::InvalidKey)?,
+        );
+        let occurred_end = u64::from_be_bytes(
+            legacy_value[8..]
+                .try_into()
+                .map_err(|_| Error::InvalidKey)?,
+        );
         let new_key = {
             let mut key = [0_u8; 24];
             key[..8].copy_from_slice(&occurred_end.to_be_bytes());
