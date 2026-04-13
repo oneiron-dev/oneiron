@@ -816,7 +816,9 @@ fn collect_index_candidates(
             std::ops::Bound::Excluded(&anchor_key[..]),
         ),
     )?;
-    rows.extend(collect_temporal_index_rows(&mut backward, cap, true)?);
+    let mut backward_rows = collect_temporal_index_rows(&mut backward, cap)?;
+    normalize_backward_boundary_bucket(db, rtxn, &mut backward_rows)?;
+    rows.extend(backward_rows);
 
     rows.sort_unstable_by(|a, b| compare_temporal_index_rows(a, b, anchor_mid));
     for row in rows.into_iter().take(cap) {
@@ -851,35 +853,60 @@ fn decode_temporal_index_row(key: &[u8]) -> Result<TemporalIndexRow> {
     Ok(TemporalIndexRow { timestamp, id })
 }
 
-fn collect_temporal_index_rows<'a, I>(
-    iter: &mut I,
-    cap: usize,
-    preserve_boundary_bucket: bool,
-) -> Result<Vec<TemporalIndexRow>>
+fn collect_temporal_index_rows<'a, I>(iter: &mut I, cap: usize) -> Result<Vec<TemporalIndexRow>>
 where
     I: Iterator<Item = std::result::Result<(&'a [u8], &'a [u8]), heed::Error>>,
 {
     let mut rows = Vec::with_capacity(cap.min(MAX_TEMPORAL_SEEK_BUFFER));
-    let mut boundary_timestamp = None;
 
     while rows.len() < cap {
         let Some(row) = next_temporal_index_row(iter)? else {
             return Ok(rows);
         };
-        boundary_timestamp = Some(row.timestamp);
         rows.push(row);
     }
 
-    if preserve_boundary_bucket {
-        while let Some(row) = next_temporal_index_row(iter)? {
-            if Some(row.timestamp) != boundary_timestamp {
-                break;
-            }
-            rows.push(row);
-        }
+    Ok(rows)
+}
+
+fn normalize_backward_boundary_bucket(
+    db: &Database<Bytes, Bytes>,
+    rtxn: &RoTxn<'_>,
+    rows: &mut Vec<TemporalIndexRow>,
+) -> Result<()> {
+    let Some(boundary_timestamp) = rows.last().map(|row| row.timestamp) else {
+        return Ok(());
+    };
+
+    let boundary_count = rows
+        .iter()
+        .rev()
+        .take_while(|row| row.timestamp == boundary_timestamp)
+        .count();
+    if boundary_count == 0 {
+        return Ok(());
     }
 
-    Ok(rows)
+    rows.truncate(rows.len().saturating_sub(boundary_count));
+
+    let boundary_start_key = temporal_key_lower_bound(boundary_timestamp);
+    let boundary_end_key = temporal_key_upper_bound(boundary_timestamp);
+    let mut boundary_rows = Vec::with_capacity(boundary_count);
+    let mut boundary_iter = db.range(
+        rtxn,
+        &(
+            std::ops::Bound::Included(&boundary_start_key[..]),
+            std::ops::Bound::Included(&boundary_end_key[..]),
+        ),
+    )?;
+    for _ in 0..boundary_count {
+        let Some(row) = next_temporal_index_row(&mut boundary_iter)? else {
+            break;
+        };
+        boundary_rows.push(row);
+    }
+    rows.extend(boundary_rows);
+    Ok(())
 }
 
 fn compare_temporal_index_rows(
