@@ -13,7 +13,7 @@ use crate::types::{
 use crate::Vault;
 
 pub(crate) const ENTITY_METADATA_HEADER_LEN: usize = 25;
-const SHORT_ID_COUNTER_LEN: usize = 8;
+pub(crate) const SHORT_ID_COUNTER_LEN: usize = 8;
 pub(crate) const LONG_INTERVAL_THRESHOLD_SECS: u64 = 14 * 86_400;
 
 #[derive(Debug, Clone, Copy)]
@@ -457,9 +457,10 @@ pub(crate) fn apply_ops(
                 apply_phonetic(store, wtxn, id, &codes)?;
             }
             BatchOp::Delete { id } => {
-                let (existed, had_vector, neighbors) = deindex_entity(store, wtxn, &id)?;
+                let (_existed, had_vector, deleted_graph_state, neighbors) =
+                    deindex_entity(store, wtxn, &id)?;
                 ppr::invalidate_ppr_for_delete(store, wtxn, &id, &neighbors)?;
-                had_graph_mutation |= existed;
+                had_graph_mutation |= deleted_graph_state;
                 had_vector_mutation |= had_vector;
             }
             BatchOp::DeleteEdge { src, kind, tgt } => {
@@ -485,17 +486,27 @@ pub(crate) fn deindex_entity(
     store: &Store,
     wtxn: &mut RwTxn<'_>,
     id: &EntityId,
-) -> Result<(bool, bool, Vec<EntityId>)> {
+) -> Result<(bool, bool, bool, Vec<EntityId>)> {
     // Clean secondary indexes unconditionally — they may exist even without an
     // entity record (e.g. text indexed via batch().text() without a preceding put()).
     crate::bm25::deindex_text(store, wtxn, id)?;
     delete_from_phonetic_postings(store, wtxn, id)?;
     let had_vector = store.vectors.delete(wtxn, id.as_bytes())?;
     crate::hnsw::hnsw_deindex(store, wtxn, id)?;
+    let neighbors = delete_related_edges(store, wtxn, id)?;
+    let mut had_graph_mutation = !neighbors.is_empty();
+
+    if let Some(raw) = store.short_ids.get(wtxn, id.as_bytes())? {
+        let (short_id, _) = parse_short_id_value(raw)?;
+        let short_id = short_id.to_owned();
+        store.short_ids_reverse.delete(wtxn, short_id.as_bytes())?;
+        store.short_ids.delete(wtxn, id.as_bytes())?;
+    }
 
     let Some(entity_record) = store.entities.get(wtxn, id.as_bytes())? else {
-        return Ok((false, had_vector, Vec::new()));
+        return Ok((false, had_vector, had_graph_mutation, neighbors));
     };
+    had_graph_mutation = true;
 
     let (entity_type, occurred, learned_at) = parse_entity_metadata(entity_record)?;
     let type_key = Store::encode_type_key(entity_type, id);
@@ -521,17 +532,8 @@ pub(crate) fn deindex_entity(
     let learned_key = Store::encode_temporal_key(learned_at, id);
     store.temporal_learned.delete(wtxn, &learned_key)?;
 
-    let neighbors = delete_related_edges(store, wtxn, id)?;
-
-    if let Some(raw) = store.short_ids.get(wtxn, id.as_bytes())? {
-        let (short_id, _) = parse_short_id_value(raw)?;
-        let short_id = short_id.to_owned();
-        store.short_ids_reverse.delete(wtxn, short_id.as_bytes())?;
-        store.short_ids.delete(wtxn, id.as_bytes())?;
-    }
-
     store.entities.delete(wtxn, id.as_bytes())?;
-    Ok((true, had_vector, neighbors))
+    Ok((true, had_vector, had_graph_mutation, neighbors))
 }
 
 fn apply_put(

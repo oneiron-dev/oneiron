@@ -1,11 +1,11 @@
 use xxhash_rust::xxh32::xxh32;
 
-use crate::batch::{parse_short_id_value, ENTITY_METADATA_HEADER_LEN};
+use crate::batch::{parse_short_id_value, ENTITY_METADATA_HEADER_LEN, SHORT_ID_COUNTER_LEN};
 use crate::error::{Error, Result};
 use crate::hnsw::{
     build_hnsw_graph_from_snapshot, read_vector_version, write_rebuilt_hnsw, COUNT_KEY,
 };
-use crate::types::{EntityId, ENTITY_ID_LEN};
+use crate::types::{short_id_prefix, EntityId, ENTITY_ID_LEN};
 use crate::{le_bytes_to_f32_vec, ppr, Vault};
 
 struct PreparedHnswRebuild {
@@ -158,11 +158,12 @@ fn compact_postings(vault: &Vault) -> Result<u64> {
 fn recompute_short_id_hashes(vault: &Vault) -> Result<(u64, u64)> {
     let mut wtxn = vault.store.env.write_txn()?;
     let mut updates = Vec::new();
+    let mut reverse_repairs = Vec::new();
     let mut forward_deletes = Vec::new();
     for entry in vault.store.short_ids.iter(&wtxn)? {
         let (key, value) = entry?;
 
-        if is_sentinel_short_id_key(key) {
+        if is_short_id_counter_entry(key, value) {
             continue;
         }
 
@@ -171,6 +172,15 @@ fn recompute_short_id_hashes(vault: &Vault) -> Result<(u64, u64)> {
             forward_deletes.push((key.to_vec(), short_id.as_bytes().to_vec()));
             continue;
         };
+
+        match vault
+            .store
+            .short_ids_reverse
+            .get(&wtxn, short_id.as_bytes())?
+        {
+            Some(reverse_id) if reverse_id == key => {}
+            _ => reverse_repairs.push((short_id.as_bytes().to_vec(), key.to_vec())),
+        }
 
         if blob.len() < ENTITY_METADATA_HEADER_LEN {
             return Err(Error::InvalidKey);
@@ -190,6 +200,9 @@ fn recompute_short_id_hashes(vault: &Vault) -> Result<(u64, u64)> {
 
     for (key, value) in &updates {
         vault.store.short_ids.put(&mut wtxn, key, value)?;
+    }
+    for (short_id, id) in &reverse_repairs {
+        vault.store.short_ids_reverse.put(&mut wtxn, short_id, id)?;
     }
     for (key, short_id) in &forward_deletes {
         vault.store.short_ids_reverse.delete(&mut wtxn, short_id)?;
@@ -306,8 +319,11 @@ fn decode_u64_opt(raw: Option<&[u8]>) -> Result<Option<u64>> {
     Ok(Some(u64::from_le_bytes(bytes)))
 }
 
-fn is_sentinel_short_id_key(key: &[u8]) -> bool {
-    key.len() == ENTITY_ID_LEN && key[1..].iter().all(|&b| b == 0xFF)
+fn is_short_id_counter_entry(key: &[u8], value: &[u8]) -> bool {
+    key.len() == ENTITY_ID_LEN
+        && value.len() == SHORT_ID_COUNTER_LEN
+        && short_id_prefix(key[0]).is_ok()
+        && key[1..].iter().all(|&b| b == 0xFF)
 }
 
 #[cfg(test)]
@@ -847,6 +863,147 @@ mod tests {
             .short_ids_reverse
             .get(&rtxn, short_id.as_bytes())?
             .is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn recompute_short_id_hashes_repairs_missing_reverse_mapping() -> Result<()> {
+        let temp_dir = tempfile::tempdir()?;
+        let vault = Vault::open(temp_dir.path(), test_config())?;
+        let id = entity(99);
+
+        vault
+            .batch()
+            .put(&id, 0, test_time_range(100, 100), 101, b"payload")
+            .commit()?;
+
+        let short_id = {
+            let rtxn = vault.store.env.read_txn()?;
+            let value = vault
+                .store
+                .short_ids
+                .get(&rtxn, id.as_bytes())?
+                .ok_or(Error::EntityNotFound)?;
+            let (short_id, _) = parse_short_id_value(value)?;
+            short_id.to_owned()
+        };
+
+        {
+            let mut wtxn = vault.store.env.write_txn()?;
+            vault
+                .store
+                .short_ids_reverse
+                .delete(&mut wtxn, short_id.as_bytes())?;
+            wtxn.commit()?;
+        }
+
+        let report = vault.maintain().recompute_short_id_hashes().run()?;
+        assert_eq!(report.short_id_hashes_updated, 0);
+        assert_eq!(report.orphan_short_ids_deleted, 0);
+
+        let rtxn = vault.store.env.read_txn()?;
+        assert_eq!(
+            vault
+                .store
+                .short_ids_reverse
+                .get(&rtxn, short_id.as_bytes())?,
+            Some(id.as_bytes().as_slice())
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn recompute_short_id_hashes_repairs_stale_reverse_mapping() -> Result<()> {
+        let temp_dir = tempfile::tempdir()?;
+        let vault = Vault::open(temp_dir.path(), test_config())?;
+        let id = entity(100);
+        let wrong_id = entity(101);
+
+        vault
+            .batch()
+            .put(&id, 0, test_time_range(100, 100), 101, b"payload")
+            .commit()?;
+
+        let short_id = {
+            let rtxn = vault.store.env.read_txn()?;
+            let value = vault
+                .store
+                .short_ids
+                .get(&rtxn, id.as_bytes())?
+                .ok_or(Error::EntityNotFound)?;
+            let (short_id, _) = parse_short_id_value(value)?;
+            short_id.to_owned()
+        };
+
+        {
+            let mut wtxn = vault.store.env.write_txn()?;
+            vault.store.short_ids_reverse.put(
+                &mut wtxn,
+                short_id.as_bytes(),
+                wrong_id.as_bytes(),
+            )?;
+            wtxn.commit()?;
+        }
+
+        vault.maintain().recompute_short_id_hashes().run()?;
+
+        let rtxn = vault.store.env.read_txn()?;
+        assert_eq!(
+            vault
+                .store
+                .short_ids_reverse
+                .get(&rtxn, short_id.as_bytes())?,
+            Some(id.as_bytes().as_slice())
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn recompute_short_id_hashes_processes_custom_ids_near_sentinel_pattern() -> Result<()> {
+        let temp_dir = tempfile::tempdir()?;
+        let vault = Vault::open(temp_dir.path(), test_config())?;
+        let id = EntityId::from_bytes([0xFF; ENTITY_ID_LEN]);
+
+        vault
+            .batch()
+            .put(&id, 0, test_time_range(100, 100), 101, b"initial-payload")
+            .commit()?;
+
+        let hash_before = {
+            let rtxn = vault.store.env.read_txn()?;
+            let value = vault
+                .store
+                .short_ids
+                .get(&rtxn, id.as_bytes())?
+                .ok_or(Error::EntityNotFound)?;
+            let (_, hash) = parse_short_id_value(value)?;
+            hash
+        };
+
+        let mut new_payload = b"updated-payload".to_vec();
+        while ((xxh32(&new_payload, 0) % 256) as u8) == hash_before {
+            new_payload.push(0);
+        }
+
+        {
+            let mut wtxn = vault.store.env.write_txn()?;
+            let record = vault
+                .store
+                .entities
+                .get(&wtxn, id.as_bytes())?
+                .ok_or(Error::EntityNotFound)?;
+            let mut updated = record[..ENTITY_METADATA_HEADER_LEN].to_vec();
+            updated.extend_from_slice(&new_payload);
+            vault
+                .store
+                .entities
+                .put(&mut wtxn, id.as_bytes(), &updated)?;
+            wtxn.commit()?;
+        }
+
+        let report = vault.maintain().recompute_short_id_hashes().run()?;
+        assert_eq!(report.short_id_hashes_updated, 1);
+        assert_eq!(report.orphan_short_ids_deleted, 0);
         Ok(())
     }
 
