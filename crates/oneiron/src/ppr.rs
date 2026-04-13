@@ -85,6 +85,7 @@ pub(crate) fn ppr_compute(
     Ok(ranked)
 }
 
+#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) fn ppr_query(
     store: &Store,
     _config: &VaultConfig,
@@ -92,8 +93,34 @@ pub(crate) fn ppr_query(
     depth: u32,
     alpha: f32,
 ) -> Result<Vec<ScoredEntity>> {
-    let rtxn = store.env.read_txn()?;
-    ppr_query_in_txn(store, &rtxn, seeds, depth, alpha)
+    if seeds.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let seed_hash = hash_seeds(seeds, depth, alpha);
+    let now = crate::unix_seconds_now();
+
+    {
+        let rtxn = store.env.read_txn()?;
+        if let Some(raw) = store.ppr_cache.get(&rtxn, &seed_hash)? {
+            let (computed_at, _, stale) = parse_cache_header(raw)?;
+            if stale == 0 && now.saturating_sub(computed_at) <= CACHE_TTL_SECS {
+                let mut scores = decode_cache_scores(&raw[CACHE_HEADER_LEN..])?;
+                sort_scores(&mut scores);
+                return Ok(scores);
+            }
+        }
+    }
+
+    let (scores, graph_version) = {
+        let rtxn = store.env.read_txn()?;
+        let scores = ppr_compute(store, &rtxn, seeds, depth, alpha)?;
+        let graph_version = read_graph_version(store, &rtxn)?;
+        (scores, graph_version)
+    };
+
+    write_ppr_cache(store, &seed_hash, seeds, now, graph_version, &scores)?;
+    Ok(scores)
 }
 
 pub(crate) fn ppr_query_in_txn(
@@ -119,10 +146,9 @@ pub(crate) fn ppr_query_in_txn(
         }
     }
 
-    let scores = ppr_compute(store, txn, seeds, depth, alpha)?;
-    let graph_version = read_graph_version(store, txn)?;
-    write_ppr_cache(store, &seed_hash, seeds, now, graph_version, &scores)?;
-    Ok(scores)
+    // Borrowed read snapshots must stay read-only; promote results into the
+    // cache through `ppr_query`, which can safely drop its read txn first.
+    ppr_compute(store, txn, seeds, depth, alpha)
 }
 
 fn write_ppr_cache(
@@ -572,8 +598,8 @@ mod tests {
     fn hash_seeds_uses_full_xxh3_digest_and_is_order_insensitive() {
         let a = entity(1);
         let b = entity(2);
-        let depth = 3;
-        let alpha = 0.15;
+        let depth: u32 = 3;
+        let alpha: f32 = 0.15;
 
         let mut bytes = Vec::with_capacity(
             ENTITY_ID_LEN * 2 + std::mem::size_of::<u32>() + std::mem::size_of::<f32>(),

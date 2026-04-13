@@ -352,7 +352,7 @@ mod tests {
         let b = entity(83);
 
         vault.put_edge(&a, EdgeKind::BelongsTo, &b, 1.0)?;
-        let _ = vault.query().search_ppr(&[a], 3).limit(10).run()?;
+        let _ = ppr::ppr_query(&vault.store, &vault.config, &[a], 3, 0.15)?;
         vault.put_edge(&a, EdgeKind::BelongsTo, &b, 0.2)?;
 
         let report = vault.maintain().cleanup_ppr_cache(0).run()?;
@@ -475,7 +475,7 @@ mod tests {
         }
 
         vault.put_edge(&a, EdgeKind::BelongsTo, &b, 1.0)?;
-        let _ = vault.query().search_ppr(&[a], 3).limit(10).run()?;
+        let _ = ppr::ppr_query(&vault.store, &vault.config, &[a], 3, 0.15)?;
         vault.put_edge(&a, EdgeKind::BelongsTo, &b, 0.25)?;
 
         let current_hash = {
