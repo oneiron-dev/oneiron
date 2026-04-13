@@ -875,7 +875,6 @@ pub struct ContextEntity {
     pub fields: Option<HashMap<String, rmpv::Value>>,  // decoded fields (if hydrate)
     pub edges: Option<Vec<EdgeInfo>>,    // outbound edges
     pub vector: Option<Vec<f32>>,        // if include_vectors
-    pub source_signals: Vec<SignalHit>,  // which signals matched
 }
 
 pub struct EdgeInfo {
@@ -885,11 +884,6 @@ pub struct EdgeInfo {
     pub weight: f32,
     pub created_at: u64,
     pub vad: Vad,
-}
-
-pub struct SignalHit {
-    pub signal: Signal,
-    pub score: f32,
 }
 
 pub enum Signal {
