@@ -30,7 +30,7 @@ use crate::store::Store;
 use crate::types::{parse_vad, EDGE_KEY_LEN, EDGE_VALUE_LEN};
 pub use crate::types::{
     ContextEntity, ContextPack, EdgeInfo, EdgeKind, EntityId, FieldProfile, HnswConfig, PackFormat,
-    PackStats, ScoredEntity, Signal, SignalHit, TemporalAnchorMode, TemporalGranularity, TimeRange,
+    PackStats, ScoredEntity, Signal, TemporalAnchorMode, TemporalGranularity, TimeRange,
     TokenAllocation, Vad, VaultConfig,
 };
 
@@ -125,7 +125,7 @@ impl Vault {
         let mut wtxn = self.store.env.write_txn()?;
         let (existed, neighbors) = deindex_entity(&self.store, &mut wtxn, id)?;
         ppr::invalidate_ppr_for_delete(&self.store, &mut wtxn, id, &neighbors)?;
-        if !neighbors.is_empty() {
+        if existed {
             ppr::increment_graph_version(&self.store, &mut wtxn)?;
         }
         wtxn.commit()?;
