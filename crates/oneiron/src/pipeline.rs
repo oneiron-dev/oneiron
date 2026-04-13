@@ -57,6 +57,21 @@ struct TemporalCandidateScore {
 }
 
 #[derive(Debug, Clone, Copy)]
+struct TemporalScoringContext {
+    sigma: u64,
+    now: u64,
+    anchor_mid: u64,
+    learned_anchor: (u64, u64),
+    learned_anchor_mid: u64,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct TemporalCandidateCollectionContext {
+    radius: u64,
+    per_scan_cap: usize,
+}
+
+#[derive(Debug, Clone, Copy)]
 struct TemporalIndexRow {
     timestamp: u64,
     id: EntityId,
@@ -456,10 +471,6 @@ impl<'a> PipelineBuilder<'a> {
             )?;
 
             if self.apply_contiguity {
-                // Contiguity is O(n^2), so sort before pretruncating to the best
-                // candidates, then sort again after boost_contiguity mutates scores.
-                fusion::sort_scored_entities_desc(&mut scores);
-                pretruncate_for_contiguity(&mut scores, self.result_limit);
                 boost_contiguity(
                     &mut scores,
                     self.temporal_search.as_ref(),
@@ -542,6 +553,10 @@ fn execute_temporal(
     }
 
     let sigma_initial = resolve_sigma_secs(config.sigma_secs);
+    let now = crate::unix_seconds_now();
+    let anchor_mid = midpoint(config.anchor_start, config.anchor_end);
+    let learned_anchor = learned_anchor_range(config)?;
+    let learned_anchor_mid = midpoint(learned_anchor.0, learned_anchor.1);
 
     let range_width = effective_range_width(config.anchor_start, config.anchor_end);
     let per_scan_cap = config.limit.saturating_mul(PER_SCAN_CAP_FACTOR).max(1);
@@ -554,12 +569,24 @@ fn execute_temporal(
         let radius = compute_radius(range_width, sigma);
 
         if round == 0 || previous_radius != Some(radius) {
+            let collection = TemporalCandidateCollectionContext {
+                radius,
+                per_scan_cap,
+            };
+            let scoring = TemporalScoringContext {
+                sigma,
+                now,
+                anchor_mid,
+                learned_anchor,
+                learned_anchor_mid,
+            };
             collect_temporal_candidates(
                 store,
                 rtxn,
                 config,
-                radius,
-                per_scan_cap,
+                collection,
+                metadata_cache,
+                &scoring,
                 &mut candidates,
             )?;
         }
@@ -573,11 +600,13 @@ fn execute_temporal(
         sigma = sigma.saturating_mul(2).max(1);
     }
 
-    let now = crate::unix_seconds_now();
-    let anchor_mid = midpoint(config.anchor_start, config.anchor_end);
-
-    let learned_anchor = learned_anchor_range(config)?;
-    let learned_anchor_mid = midpoint(learned_anchor.0, learned_anchor.1);
+    let scoring = TemporalScoringContext {
+        sigma,
+        now,
+        anchor_mid,
+        learned_anchor,
+        learned_anchor_mid,
+    };
 
     let mut scored = Vec::<TemporalCandidateScore>::new();
 
@@ -585,67 +614,10 @@ fn execute_temporal(
         let Some(meta) = metadata_cache.get(store, rtxn, &id)? else {
             continue;
         };
-
-        let d_occ = interval_distance(
-            meta.occurred_start,
-            meta.occurred_end,
-            config.anchor_start,
-            config.anchor_end,
-        );
-        let d_lrn = point_interval_distance(meta.learned_at, learned_anchor.0, learned_anchor.1);
-
-        let s_occ_prox = sigmoid(d_occ, sigma, TEMPORAL_FLOOR);
-        let s_lrn_prox = sigmoid(d_lrn, sigma, TEMPORAL_FLOOR);
-
-        let s_proximity =
-            combine_proximity(config.anchor_mode, s_occ_prox, s_lrn_prox, TEMPORAL_FLOOR);
-
-        let age = now.saturating_sub(meta.learned_at) as f64;
-        let s_recency = (-age / RECENCY_DECAY_TAU_SECS).exp();
-
-        let anchor_age = now.abs_diff(config.anchor_end) as f64;
-        let alpha = ALPHA_BASE + ALPHA_RANGE * (1.0 - (-anchor_age / ALPHA_TAU_SECS).exp());
-
-        let score = (alpha * s_proximity + (1.0 - alpha) * s_recency) as f32;
-        let overlap_tiebreak = match config.anchor_mode {
-            TemporalAnchorMode::Learned => {
-                if d_lrn == 0 {
-                    meta.learned_at.abs_diff(learned_anchor_mid)
-                } else {
-                    u64::MAX
-                }
-            }
-            TemporalAnchorMode::Both => {
-                if d_occ == 0 && d_lrn == 0 {
-                    midpoint(meta.occurred_start, meta.occurred_end)
-                        .abs_diff(anchor_mid)
-                        .saturating_add(meta.learned_at.abs_diff(learned_anchor_mid))
-                } else {
-                    u64::MAX
-                }
-            }
-            TemporalAnchorMode::Occurred | TemporalAnchorMode::Auto => {
-                if d_occ == 0 {
-                    midpoint(meta.occurred_start, meta.occurred_end).abs_diff(anchor_mid)
-                } else {
-                    u64::MAX
-                }
-            }
-        };
-
-        scored.push(TemporalCandidateScore {
-            id,
-            score,
-            overlap_tiebreak,
-        });
+        scored.push(score_temporal_candidate(id, meta, config, &scoring));
     }
 
-    scored.sort_unstable_by(|a, b| {
-        b.score
-            .total_cmp(&a.score)
-            .then_with(|| a.overlap_tiebreak.cmp(&b.overlap_tiebreak))
-            .then_with(|| a.id.as_bytes().cmp(b.id.as_bytes()))
-    });
+    sort_temporal_candidate_scores(&mut scored);
     scored.truncate(config.limit);
 
     Ok(scored
@@ -661,10 +633,13 @@ fn collect_temporal_candidates(
     store: &Store,
     rtxn: &RoTxn<'_>,
     config: &TemporalSearchConfig,
-    radius: u64,
-    per_scan_cap: usize,
+    collection: TemporalCandidateCollectionContext,
+    metadata_cache: &mut EntityMetadataCache,
+    scoring: &TemporalScoringContext,
     out: &mut HashSet<EntityId>,
 ) -> Result<()> {
+    let radius = collection.radius;
+    let per_scan_cap = collection.per_scan_cap;
     let occurred_window_start = config.anchor_start.saturating_sub(radius);
     let occurred_window_end = config.anchor_end.saturating_add(radius);
     let occurred_mid = midpoint(config.anchor_start, config.anchor_end);
@@ -722,7 +697,14 @@ fn collect_temporal_candidates(
 
     if config.anchor_mode != TemporalAnchorMode::Learned {
         let long_interval_lower = temporal_key_upper_bound(occurred_window_end);
-        let mut accepted = 0_usize;
+        // Keep the top `per_scan_cap` spanners by the same exact temporal score
+        // used later in `execute_temporal()`. Since `per_scan_cap` is 4x the
+        // final result limit, anything outside this top-k cannot enter the
+        // final top-k after exact scoring.
+        let mut spanners = Vec::<TemporalCandidateScore>::new();
+        let trim_threshold = per_scan_cap
+            .saturating_mul(2)
+            .min(std::cmp::max(MAX_TEMPORAL_SEEK_BUFFER, per_scan_cap));
         for entry in store.temporal_long_intervals.range(
             rtxn,
             &(
@@ -732,17 +714,101 @@ fn collect_temporal_candidates(
         )? {
             let (key, value) = entry?;
             let (id, occurred_start, _) = decode_long_interval_row(key, value)?;
-            if occurred_start < occurred_window_start {
-                out.insert(id);
-                accepted = accepted.saturating_add(1);
-                if accepted == per_scan_cap {
-                    break;
-                }
+            if occurred_start >= occurred_window_start {
+                continue;
             }
+
+            let Some(meta) = metadata_cache.get(store, rtxn, &id)? else {
+                continue;
+            };
+            spanners.push(score_temporal_candidate(id, meta, config, scoring));
+
+            if spanners.len() > trim_threshold {
+                sort_temporal_candidate_scores(&mut spanners);
+                spanners.truncate(per_scan_cap);
+            }
+        }
+
+        sort_temporal_candidate_scores(&mut spanners);
+        spanners.truncate(per_scan_cap);
+        for candidate in spanners {
+            out.insert(candidate.id);
         }
     }
 
     Ok(())
+}
+
+fn score_temporal_candidate(
+    id: EntityId,
+    meta: EntityMetadata,
+    config: &TemporalSearchConfig,
+    scoring: &TemporalScoringContext,
+) -> TemporalCandidateScore {
+    let d_occ = interval_distance(
+        meta.occurred_start,
+        meta.occurred_end,
+        config.anchor_start,
+        config.anchor_end,
+    );
+    let d_lrn = point_interval_distance(
+        meta.learned_at,
+        scoring.learned_anchor.0,
+        scoring.learned_anchor.1,
+    );
+
+    let s_occ_prox = sigmoid(d_occ, scoring.sigma, TEMPORAL_FLOOR);
+    let s_lrn_prox = sigmoid(d_lrn, scoring.sigma, TEMPORAL_FLOOR);
+
+    let s_proximity = combine_proximity(config.anchor_mode, s_occ_prox, s_lrn_prox, TEMPORAL_FLOOR);
+
+    let age = scoring.now.saturating_sub(meta.learned_at) as f64;
+    let s_recency = (-age / RECENCY_DECAY_TAU_SECS).exp();
+
+    let anchor_age = scoring.now.abs_diff(config.anchor_end) as f64;
+    let alpha = ALPHA_BASE + ALPHA_RANGE * (1.0 - (-anchor_age / ALPHA_TAU_SECS).exp());
+
+    let score = (alpha * s_proximity + (1.0 - alpha) * s_recency) as f32;
+    let overlap_tiebreak = match config.anchor_mode {
+        TemporalAnchorMode::Learned => {
+            if d_lrn == 0 {
+                meta.learned_at.abs_diff(scoring.learned_anchor_mid)
+            } else {
+                u64::MAX
+            }
+        }
+        TemporalAnchorMode::Both => {
+            if d_occ == 0 && d_lrn == 0 {
+                midpoint(meta.occurred_start, meta.occurred_end)
+                    .abs_diff(scoring.anchor_mid)
+                    .saturating_add(meta.learned_at.abs_diff(scoring.learned_anchor_mid))
+            } else {
+                u64::MAX
+            }
+        }
+        TemporalAnchorMode::Occurred | TemporalAnchorMode::Auto => {
+            if d_occ == 0 {
+                midpoint(meta.occurred_start, meta.occurred_end).abs_diff(scoring.anchor_mid)
+            } else {
+                u64::MAX
+            }
+        }
+    };
+
+    TemporalCandidateScore {
+        id,
+        score,
+        overlap_tiebreak,
+    }
+}
+
+fn sort_temporal_candidate_scores(scores: &mut [TemporalCandidateScore]) {
+    scores.sort_unstable_by(|a, b| {
+        b.score
+            .total_cmp(&a.score)
+            .then_with(|| a.overlap_tiebreak.cmp(&b.overlap_tiebreak))
+            .then_with(|| a.id.as_bytes().cmp(b.id.as_bytes()))
+    });
 }
 
 fn collect_occurred_candidates(
@@ -1014,17 +1080,6 @@ fn boost_contiguity(
     }
 
     Ok(())
-}
-
-fn pretruncate_for_contiguity(scores: &mut Vec<ScoredEntity>, result_limit: usize) {
-    const CONTIGUITY_PRETRUNCATE_HEADROOM: usize = 2;
-
-    // Contiguity tops out at a 1.2x multiplier, so candidates below the top
-    // 2x window cannot overtake the current front of the working set.
-    let cap = result_limit.saturating_mul(CONTIGUITY_PRETRUNCATE_HEADROOM);
-    if scores.len() > cap {
-        scores.truncate(cap);
-    }
 }
 
 fn apply_filters(
@@ -1467,7 +1522,7 @@ mod tests {
     fn search_ppr_rejects_excessive_seed_count_and_depth() -> Result<()> {
         let temp_dir = tempfile::tempdir()?;
         let vault = Vault::open(temp_dir.path(), test_config())?;
-        let seeds = vec![entity_id(0); 257];
+        let seeds = vec![entity_id(0); crate::ppr::MAX_PPR_SEEDS + 1];
 
         let too_many_seeds = vault.query().search_ppr(&seeds, 3).run();
         assert!(matches!(too_many_seeds, Err(Error::InvalidConfig(_))));
@@ -1596,17 +1651,131 @@ mod tests {
             adaptive: true,
             limit: 1,
         };
+        let mut metadata_cache = EntityMetadataCache::default();
+        let scoring = TemporalScoringContext {
+            sigma: window,
+            now: crate::unix_seconds_now(),
+            anchor_mid: anchor,
+            learned_anchor: (anchor, anchor),
+            learned_anchor_mid: anchor,
+        };
         let mut candidates = HashSet::new();
         collect_temporal_candidates(
             &vault.store,
             &rtxn,
             &config,
-            window,
-            PER_SCAN_CAP_FACTOR,
+            TemporalCandidateCollectionContext {
+                radius: window,
+                per_scan_cap: PER_SCAN_CAP_FACTOR,
+            },
+            &mut metadata_cache,
+            &scoring,
             &mut candidates,
         )?;
 
         assert!(candidates.contains(&spanner));
+        Ok(())
+    }
+
+    #[test]
+    fn long_interval_scan_keeps_best_spanners_beyond_end_order_cap() -> Result<()> {
+        let temp_dir = tempfile::tempdir()?;
+        let vault = Vault::open(temp_dir.path(), test_config())?;
+
+        let anchor = crate::unix_seconds_now();
+        let span = LONG_INTERVAL_THRESHOLD_SECS + 86_400;
+        let best = entity_id(214);
+
+        for i in 0..5_u8 {
+            let id = entity_id(210 + i);
+            let learned_at = if id == best {
+                anchor
+            } else {
+                anchor.saturating_sub((30 + u64::from(i)) * 86_400)
+            };
+            put_entity(
+                &vault,
+                id,
+                0,
+                anchor.saturating_sub(span + 10),
+                anchor.saturating_add(span + u64::from(i)),
+                learned_at,
+            )?;
+        }
+
+        let results = vault
+            .query()
+            .search_temporal_with_sigma(anchor, anchor, 86_400, TemporalAnchorMode::Occurred, 1)
+            .run()?;
+
+        assert_eq!(results[0].id, best);
+        Ok(())
+    }
+
+    #[test]
+    fn long_interval_scan_does_not_spend_cap_on_preexisting_ids() -> Result<()> {
+        let temp_dir = tempfile::tempdir()?;
+        let vault = Vault::open(temp_dir.path(), test_config())?;
+
+        let anchor = crate::unix_seconds_now();
+        let span = LONG_INTERVAL_THRESHOLD_SECS + 86_400;
+        let best = entity_id(224);
+        let mut preexisting = HashSet::new();
+
+        for i in 0..5_u8 {
+            let id = entity_id(220 + i);
+            let learned_at = if id == best {
+                anchor
+            } else {
+                anchor.saturating_sub((30 + u64::from(i)) * 86_400)
+            };
+            put_entity(
+                &vault,
+                id,
+                0,
+                anchor.saturating_sub(span + 10),
+                anchor.saturating_add(span + u64::from(i)),
+                learned_at,
+            )?;
+            if id != best {
+                preexisting.insert(id);
+            }
+        }
+
+        let rtxn = vault.store.env.read_txn()?;
+        let config = TemporalSearchConfig {
+            anchor_start: anchor,
+            anchor_end: anchor,
+            learned_start: None,
+            learned_end: None,
+            sigma_secs: 86_400,
+            anchor_mode: TemporalAnchorMode::Occurred,
+            adaptive: false,
+            limit: 1,
+        };
+        let scoring = TemporalScoringContext {
+            sigma: 86_400,
+            now: anchor,
+            anchor_mid: anchor,
+            learned_anchor: (anchor, anchor),
+            learned_anchor_mid: anchor,
+        };
+        let mut metadata_cache = EntityMetadataCache::default();
+
+        collect_temporal_candidates(
+            &vault.store,
+            &rtxn,
+            &config,
+            TemporalCandidateCollectionContext {
+                radius: 86_400,
+                per_scan_cap: PER_SCAN_CAP_FACTOR,
+            },
+            &mut metadata_cache,
+            &scoring,
+            &mut preexisting,
+        )?;
+
+        assert!(preexisting.contains(&best));
         Ok(())
     }
 
@@ -1997,21 +2166,6 @@ mod tests {
     }
 
     #[test]
-    fn pretruncate_for_contiguity_caps_working_set() {
-        let mut scores = (0..10_u8)
-            .map(|n| ScoredEntity {
-                id: entity_id(n),
-                score: 10.0 - n as f32,
-            })
-            .collect::<Vec<_>>();
-
-        pretruncate_for_contiguity(&mut scores, 3);
-        assert_eq!(scores.len(), 6);
-        assert_eq!(scores[0].id, entity_id(0));
-        assert_eq!(scores[5].id, entity_id(5));
-    }
-
-    #[test]
     fn overlap_tiebreak_prefers_closer_midpoint() -> Result<()> {
         let temp_dir = tempfile::tempdir()?;
         let vault = Vault::open(temp_dir.path(), test_config())?;
@@ -2107,7 +2261,7 @@ mod tests {
     }
 
     #[test]
-    fn filters_apply_before_contiguity_pretruncate() -> Result<()> {
+    fn filters_apply_before_contiguity() -> Result<()> {
         let temp_dir = tempfile::tempdir()?;
         let vault = Vault::open(temp_dir.path(), test_config())?;
 
