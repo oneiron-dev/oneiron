@@ -465,10 +465,7 @@ impl<'a> PipelineBuilder<'a> {
             (scores, deferred_ppr_cache_writes)
         };
 
-        crate::ppr::flush_deferred_ppr_cache_writes(
-            &self.vault.store,
-            &deferred_ppr_cache_writes,
-        )?;
+        crate::ppr::flush_deferred_ppr_cache_writes(&self.vault.store, &deferred_ppr_cache_writes)?;
         Ok(scores)
     }
 }
@@ -785,9 +782,8 @@ fn collect_index_candidates(
     let window_end_key = temporal_key_upper_bound(window_end);
     let anchor_key = temporal_key_lower_bound(anchor_mid);
 
-    let mut rows = Vec::<TemporalIndexRow>::with_capacity(
-        cap.saturating_mul(2).min(MAX_TEMPORAL_SEEK_BUFFER),
-    );
+    let mut rows =
+        Vec::<TemporalIndexRow>::with_capacity(cap.saturating_mul(2).min(MAX_TEMPORAL_SEEK_BUFFER));
 
     let mut forward = db.range(
         rtxn,
@@ -911,8 +907,7 @@ fn decode_long_interval_row(key: &[u8], value: &[u8]) -> Result<(EntityId, u64, 
             .try_into()
             .map_err(|_| Error::InvalidKey)?,
     );
-    let occurred_start =
-        u64::from_be_bytes(value.try_into().map_err(|_| Error::InvalidKey)?);
+    let occurred_start = u64::from_be_bytes(value.try_into().map_err(|_| Error::InvalidKey)?);
     Ok((id, occurred_start, occurred_end))
 }
 
@@ -1661,12 +1656,11 @@ mod tests {
 
         let rtxn = vault.store.env.read_txn()?;
         let mut metadata_cache = EntityMetadataCache::default();
-        let exact = execute_temporal(&vault.store, &rtxn, &exact_config, &mut metadata_cache)?[0]
-            .score;
-        let hour = execute_temporal(&vault.store, &rtxn, &hour_config, &mut metadata_cache)?[0]
-            .score;
-        let day =
-            execute_temporal(&vault.store, &rtxn, &day_config, &mut metadata_cache)?[0].score;
+        let exact =
+            execute_temporal(&vault.store, &rtxn, &exact_config, &mut metadata_cache)?[0].score;
+        let hour =
+            execute_temporal(&vault.store, &rtxn, &hour_config, &mut metadata_cache)?[0].score;
+        let day = execute_temporal(&vault.store, &rtxn, &day_config, &mut metadata_cache)?[0].score;
 
         assert!(exact < hour);
         assert!(hour < day);
@@ -1929,7 +1923,14 @@ mod tests {
         let closer = entity_id(142);
         let farther = entity_id(143);
 
-        put_entity(&vault, closer, 0, anchor_start, anchor_start + 10, anchor_start + 49)?;
+        put_entity(
+            &vault,
+            closer,
+            0,
+            anchor_start,
+            anchor_start + 10,
+            anchor_start + 49,
+        )?;
         put_entity(
             &vault,
             farther,

@@ -3,9 +3,7 @@ use xxhash_rust::xxh32::xxh32;
 use crate::batch::{parse_short_id_value, ENTITY_METADATA_HEADER_LEN};
 use crate::error::{Error, Result};
 use crate::hnsw::{hnsw_insert, COUNT_KEY};
-use crate::store::{
-    GRAPH_VERSION_KEY, MODEL_ID_KEY, TEMPORAL_LONG_INTERVALS_SCHEMA_VERSION_KEY,
-};
+use crate::store::{GRAPH_VERSION_KEY, MODEL_ID_KEY, TEMPORAL_LONG_INTERVALS_SCHEMA_VERSION_KEY};
 use crate::types::{EntityId, ENTITY_ID_LEN};
 use crate::{le_bytes_to_f32_vec, ppr, Vault};
 
