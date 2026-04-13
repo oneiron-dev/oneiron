@@ -154,7 +154,7 @@ pub(crate) fn build_hnsw_graph_from_snapshot(
             }
 
             if neighbor_neighbors.len() > config.hnsw.m_max_0 {
-                neighbor_neighbors = prune_neighbors_for_node_snapshot(
+                neighbor_neighbors = prune_neighbors_for_node(
                     store,
                     rtxn,
                     neighbor_id,
@@ -543,41 +543,6 @@ fn prune_neighbors_for_node(
         }
 
         let Some(neighbor_vector) = load_vector(store, txn, neighbor_id)? else {
-            continue;
-        };
-
-        scored.push(HeapEntry {
-            id: *neighbor_id,
-            distance: cosine_distance(&node_vector, &neighbor_vector),
-        });
-    }
-
-    scored.sort_unstable();
-    scored.truncate(max_neighbors);
-
-    Ok(scored.into_iter().map(|entry| entry.id).collect())
-}
-
-fn prune_neighbors_for_node_snapshot(
-    store: &Store,
-    rtxn: &RoTxn<'_>,
-    node_id: &EntityId,
-    neighbors: &[EntityId],
-    max_neighbors: usize,
-) -> Result<Vec<EntityId>> {
-    let Some(node_vector) = load_vector(store, rtxn, node_id)? else {
-        return Ok(neighbors.iter().copied().take(max_neighbors).collect());
-    };
-
-    let mut seen = HashSet::with_capacity(neighbors.len());
-    let mut scored = Vec::with_capacity(neighbors.len());
-
-    for neighbor_id in neighbors {
-        if *neighbor_id == *node_id || !seen.insert(*neighbor_id) {
-            continue;
-        }
-
-        let Some(neighbor_vector) = load_vector(store, rtxn, neighbor_id)? else {
             continue;
         };
 

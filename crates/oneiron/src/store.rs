@@ -16,6 +16,31 @@ pub(crate) const TEMPORAL_LONG_INTERVALS_SCHEMA_VERSION_KEY: &[u8] =
     b"temporal_long_intervals_schema_version";
 const TEMPORAL_LONG_INTERVALS_SCHEMA_VERSION: u8 = 2;
 pub(crate) const VECTOR_VERSION_KEY: &[u8] = b"vector_version";
+const HNSW_COMPATIBILITY_VERSION: u8 = 1;
+const HNSW_COMPATIBILITY_LEN: usize = 25;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct PersistedHnswCompatibility {
+    dimensions: usize,
+    m_max_0: usize,
+    ef_construction: usize,
+}
+
+impl PersistedHnswCompatibility {
+    fn from_config(config: &VaultConfig) -> Self {
+        Self {
+            dimensions: config.dimensions,
+            m_max_0: config.hnsw.m_max_0,
+            ef_construction: config.hnsw.ef_construction,
+        }
+    }
+}
+
+enum HnswCompatibilityState {
+    Missing,
+    Legacy,
+    Current(PersistedHnswCompatibility),
+}
 
 /// LMDB environment and database handles for a vault.
 pub struct Store {
@@ -87,13 +112,14 @@ impl Store {
         let sync_queue = create_db(&env, &mut wtxn, "sync_queue")?;
         wtxn.commit()?;
 
-        let should_persist_hnsw_config = preflight_hnsw_config(&env, &hnsw_meta, &config.hnsw)?;
+        let should_persist_hnsw_config =
+            preflight_hnsw_config(&env, &hnsw_meta, &vectors, &hnsw_neighbors, config)?;
         let should_persist_model_id =
             preflight_embedding_model(&env, &hnsw_meta, config.embedding_model.as_deref())?;
         migrate_temporal_long_intervals_if_needed(&env, &hnsw_meta, &temporal_long_intervals)?;
 
         if should_persist_hnsw_config {
-            persist_hnsw_config_if_missing(&env, &hnsw_meta, &config.hnsw)?;
+            persist_hnsw_config_if_missing(&env, &hnsw_meta, &vectors, &hnsw_neighbors, config)?;
         }
 
         if should_persist_model_id {
@@ -190,42 +216,58 @@ fn preflight_embedding_model(
 fn preflight_hnsw_config(
     env: &Env,
     hnsw_meta: &Database<Bytes, Bytes>,
-    requested: &crate::types::HnswConfig,
+    vectors: &Database<Bytes, Bytes>,
+    hnsw_neighbors: &Database<Bytes, Bytes>,
+    requested: &VaultConfig,
 ) -> Result<bool> {
     let rtxn = env.read_txn()?;
-    match hnsw_meta.get(&rtxn, HNSW_CONFIG_KEY)? {
-        Some(raw) => {
-            let stored = decode_hnsw_config(raw)?;
-            if stored != *requested {
+    match read_hnsw_compatibility(hnsw_meta, &rtxn)? {
+        HnswCompatibilityState::Current(stored) => {
+            let requested = PersistedHnswCompatibility::from_config(requested);
+            if stored != requested {
                 return Err(Error::HnswConfigChanged {
-                    stored: format_hnsw_config(&stored),
-                    requested: format_hnsw_config(requested),
+                    stored: format_hnsw_compatibility(&stored),
+                    requested: format_hnsw_compatibility(&requested),
                 });
             }
             Ok(false)
         }
-        None => Ok(true),
+        HnswCompatibilityState::Missing | HnswCompatibilityState::Legacy => {
+            if has_persisted_vector_or_hnsw_data(vectors, hnsw_neighbors, &rtxn)? {
+                return Err(Error::InvalidConfig(
+                    "populated vault is missing complete vector/hnsw compatibility metadata; rebuild or migrate it before reopening".to_owned(),
+                ));
+            }
+            Ok(true)
+        }
     }
 }
 
 fn persist_hnsw_config_if_missing(
     env: &Env,
     hnsw_meta: &Database<Bytes, Bytes>,
-    requested: &crate::types::HnswConfig,
+    vectors: &Database<Bytes, Bytes>,
+    hnsw_neighbors: &Database<Bytes, Bytes>,
+    requested: &VaultConfig,
 ) -> Result<()> {
-    let encoded = encode_hnsw_config(requested)?;
+    let requested = PersistedHnswCompatibility::from_config(requested);
+    let encoded = encode_hnsw_config(&requested)?;
     let mut wtxn = env.write_txn()?;
-    match hnsw_meta.get(&wtxn, HNSW_CONFIG_KEY)? {
-        Some(raw) => {
-            let stored = decode_hnsw_config(raw)?;
-            if stored != *requested {
+    match read_hnsw_compatibility(hnsw_meta, &wtxn)? {
+        HnswCompatibilityState::Current(stored) => {
+            if stored != requested {
                 return Err(Error::HnswConfigChanged {
-                    stored: format_hnsw_config(&stored),
-                    requested: format_hnsw_config(requested),
+                    stored: format_hnsw_compatibility(&stored),
+                    requested: format_hnsw_compatibility(&requested),
                 });
             }
         }
-        None => {
+        HnswCompatibilityState::Missing | HnswCompatibilityState::Legacy => {
+            if has_persisted_vector_or_hnsw_data(vectors, hnsw_neighbors, &wtxn)? {
+                return Err(Error::InvalidConfig(
+                    "populated vault is missing complete vector/hnsw compatibility metadata; rebuild or migrate it before reopening".to_owned(),
+                ));
+            }
             hnsw_meta.put(&mut wtxn, HNSW_CONFIG_KEY, &encoded)?;
             wtxn.commit()?;
         }
@@ -257,51 +299,81 @@ fn persist_model_id_if_missing(
     Ok(())
 }
 
-fn encode_hnsw_config(config: &crate::types::HnswConfig) -> Result<[u8; 24]> {
+fn encode_hnsw_config(config: &PersistedHnswCompatibility) -> Result<[u8; HNSW_COMPATIBILITY_LEN]> {
+    let dimensions = u64::try_from(config.dimensions)
+        .map_err(|_| Error::InvalidConfig("dimensions too large".to_owned()))?;
     let m_max_0 = u64::try_from(config.m_max_0)
         .map_err(|_| Error::InvalidConfig("hnsw m_max_0 too large".to_owned()))?;
     let ef_construction = u64::try_from(config.ef_construction)
         .map_err(|_| Error::InvalidConfig("hnsw ef_construction too large".to_owned()))?;
-    let ef_search = u64::try_from(config.ef_search)
-        .map_err(|_| Error::InvalidConfig("hnsw ef_search too large".to_owned()))?;
 
-    let mut encoded = [0_u8; 24];
-    encoded[..8].copy_from_slice(&m_max_0.to_le_bytes());
-    encoded[8..16].copy_from_slice(&ef_construction.to_le_bytes());
-    encoded[16..24].copy_from_slice(&ef_search.to_le_bytes());
+    let mut encoded = [0_u8; HNSW_COMPATIBILITY_LEN];
+    encoded[0] = HNSW_COMPATIBILITY_VERSION;
+    encoded[1..9].copy_from_slice(&dimensions.to_le_bytes());
+    encoded[9..17].copy_from_slice(&m_max_0.to_le_bytes());
+    encoded[17..25].copy_from_slice(&ef_construction.to_le_bytes());
     Ok(encoded)
 }
 
-fn decode_hnsw_config(raw: &[u8]) -> Result<crate::types::HnswConfig> {
-    if raw.len() != 24 {
+fn read_hnsw_compatibility(
+    hnsw_meta: &Database<Bytes, Bytes>,
+    txn: &heed::RoTxn<'_>,
+) -> Result<HnswCompatibilityState> {
+    let Some(raw) = hnsw_meta.get(txn, HNSW_CONFIG_KEY)? else {
+        return Ok(HnswCompatibilityState::Missing);
+    };
+
+    match raw.len() {
+        HNSW_COMPATIBILITY_LEN => {
+            decode_hnsw_compatibility(raw).map(HnswCompatibilityState::Current)
+        }
+        24 => Ok(HnswCompatibilityState::Legacy),
+        _ => Err(Error::InvalidKey),
+    }
+}
+
+fn decode_hnsw_compatibility(raw: &[u8]) -> Result<PersistedHnswCompatibility> {
+    if raw.len() != HNSW_COMPATIBILITY_LEN || raw[0] != HNSW_COMPATIBILITY_VERSION {
         return Err(Error::InvalidKey);
     }
 
+    let dimensions = usize::try_from(u64::from_le_bytes(
+        raw[1..9].try_into().map_err(|_| Error::InvalidKey)?,
+    ))
+    .map_err(|_| Error::InvalidKey)?;
     let m_max_0 = usize::try_from(u64::from_le_bytes(
-        raw[..8].try_into().map_err(|_| Error::InvalidKey)?,
+        raw[9..17].try_into().map_err(|_| Error::InvalidKey)?,
     ))
     .map_err(|_| Error::InvalidKey)?;
     let ef_construction = usize::try_from(u64::from_le_bytes(
-        raw[8..16].try_into().map_err(|_| Error::InvalidKey)?,
-    ))
-    .map_err(|_| Error::InvalidKey)?;
-    let ef_search = usize::try_from(u64::from_le_bytes(
-        raw[16..24].try_into().map_err(|_| Error::InvalidKey)?,
+        raw[17..25].try_into().map_err(|_| Error::InvalidKey)?,
     ))
     .map_err(|_| Error::InvalidKey)?;
 
-    Ok(crate::types::HnswConfig {
+    Ok(PersistedHnswCompatibility {
+        dimensions,
         m_max_0,
         ef_construction,
-        ef_search,
     })
 }
 
-fn format_hnsw_config(config: &crate::types::HnswConfig) -> String {
+fn format_hnsw_compatibility(config: &PersistedHnswCompatibility) -> String {
     format!(
-        "m_max_0={},ef_construction={},ef_search={}",
-        config.m_max_0, config.ef_construction, config.ef_search
+        "dimensions={},m_max_0={},ef_construction={}",
+        config.dimensions, config.m_max_0, config.ef_construction
     )
+}
+
+fn has_persisted_vector_or_hnsw_data(
+    vectors: &Database<Bytes, Bytes>,
+    hnsw_neighbors: &Database<Bytes, Bytes>,
+    txn: &heed::RoTxn<'_>,
+) -> Result<bool> {
+    Ok(database_has_entries(vectors, txn)? || database_has_entries(hnsw_neighbors, txn)?)
+}
+
+fn database_has_entries(db: &Database<Bytes, Bytes>, txn: &heed::RoTxn<'_>) -> Result<bool> {
+    Ok(db.iter(txn)?.next().transpose()?.is_some())
 }
 
 fn migrate_temporal_long_intervals_if_needed(

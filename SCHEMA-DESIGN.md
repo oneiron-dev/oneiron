@@ -204,7 +204,7 @@ Where scores are `[(entity_id: 16B, score: f32 4B)]` packed = N×20B.
 | `"entry_point"` | entity_id (16B) | Flat NSW, no level needed |
 | `"count"` | u64 (8B LE) | Total nodes in graph |
 | `"model_id"` | UTF-8 string | e.g., "qwen3-8b-v1" |
-| `"hnsw_config"` | `m_max_0(u64 LE) + ef_construction(u64 LE) + ef_search(u64 LE)` | Persisted at open; reopening with a different HNSW config fails fast instead of silently mixing graph semantics |
+| `"hnsw_config"` | `version(u8) + dimensions(u64 LE) + m_max_0(u64 LE) + ef_construction(u64 LE)` | Persisted at open as a vector/HNSW compatibility record. Reopening with different vector dimensions or graph-shaping HNSW settings fails fast; `ef_search` stays runtime-tunable because it does not change the stored graph. Populated legacy vaults missing this metadata fail open instead of being auto-stamped. |
 | `"graph_version"` | u64 (8B LE) | Monotonic counter, incremented once per batch of graph mutations |
 | `"vector_version"` | u64 (8B LE) | Monotonic counter, incremented once per batch of vector mutations; rebuild uses it as an OCC guard between read/build and final swap |
 | `"temporal_long_intervals_schema_version"` | u8 | Migration marker for the `temporal_long_intervals` key layout |
@@ -365,7 +365,6 @@ pub struct VaultConfig {
 }
 
 pub struct HnswConfig {
-    pub m: usize,               // 32 (upper layers — unused for flat NSW, kept for future)
     pub m_max_0: usize,         // 64 (neighbors per node, flat NSW)
     pub ef_construction: usize, // 200 (beam width during insert)
     pub ef_search: usize,       // 128 (beam width during search)
@@ -782,7 +781,7 @@ pub struct MaintenanceReport {
 | `rebuild_hnsw_heal_invalid_vectors` | Repair rebuild: same snapshot/swap flow, but skip invalid stored vectors while preserving the raw vector rows for later inspection | Operator-triggered repair |
 | `cleanup_ppr_cache` | Evict stale + expired cache entries from `ppr_cache` + `ppr_cache_deps` | Nightly |
 | `compact_postings` | Remove empty posting lists from `text_postings` | After bulk deletes |
-| `recompute_short_id_hashes` | Recompute content hashes for all entities in `short_ids` and delete stale/orphaned mappings from both `short_ids` and `short_ids_reverse` | After bulk updates |
+| `recompute_short_id_hashes` | Recompute content hashes for all entities in `short_ids`, repair missing/stale live `short_ids_reverse` rows, and delete stale/orphaned mappings from both short-id indexes | After bulk updates |
 
 **Boundary:** The crate provides `maintain()`. The dreamer (private, in `oneiron-internal`) decides *when* to call it and *what entities to write/update*. The dreamer's intelligence (LLM-driven consolidation, skill extraction, edge weight tuning, ML service orchestration) is proprietary.
 
