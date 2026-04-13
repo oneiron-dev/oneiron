@@ -85,24 +85,17 @@ impl Store {
         let sync_queue = create_db(&env, &mut wtxn, "sync_queue")?;
         wtxn.commit()?;
 
+        let should_persist_model_id =
+            preflight_embedding_model(&env, &hnsw_meta, config.embedding_model.as_deref())?;
         migrate_temporal_long_intervals_if_needed(&env, &hnsw_meta, &temporal_long_intervals)?;
 
-        if let Some(requested) = config.embedding_model.as_deref() {
+        if should_persist_model_id {
+            let requested = config
+                .embedding_model
+                .as_deref()
+                .ok_or_else(|| Error::InvalidConfig("missing embedding model".to_owned()))?;
             let mut wtxn = env.write_txn()?;
-            match hnsw_meta.get(&wtxn, MODEL_ID_KEY)? {
-                Some(raw) => {
-                    let stored = parse_utf8_bytes(raw)?;
-                    if stored != requested {
-                        return Err(Error::EmbeddingModelChanged {
-                            stored,
-                            requested: requested.to_owned(),
-                        });
-                    }
-                }
-                None => {
-                    hnsw_meta.put(&mut wtxn, MODEL_ID_KEY, requested.as_bytes())?;
-                }
-            }
+            hnsw_meta.put(&mut wtxn, MODEL_ID_KEY, requested.as_bytes())?;
             wtxn.commit()?;
         }
 
@@ -162,6 +155,31 @@ impl Store {
 
 fn create_db(env: &Env, wtxn: &mut RwTxn<'_>, name: &str) -> Result<Database<Bytes, Bytes>> {
     Ok(env.create_database::<Bytes, Bytes>(wtxn, Some(name))?)
+}
+
+fn preflight_embedding_model(
+    env: &Env,
+    hnsw_meta: &Database<Bytes, Bytes>,
+    requested: Option<&str>,
+) -> Result<bool> {
+    let Some(requested) = requested else {
+        return Ok(false);
+    };
+
+    let rtxn = env.read_txn()?;
+    match hnsw_meta.get(&rtxn, MODEL_ID_KEY)? {
+        Some(raw) => {
+            let stored = parse_utf8_bytes(raw)?;
+            if stored != requested {
+                return Err(Error::EmbeddingModelChanged {
+                    stored,
+                    requested: requested.to_owned(),
+                });
+            }
+            Ok(false)
+        }
+        None => Ok(true),
+    }
 }
 
 fn migrate_temporal_long_intervals_if_needed(

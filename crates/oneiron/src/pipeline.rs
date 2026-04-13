@@ -385,16 +385,25 @@ impl<'a> PipelineBuilder<'a> {
             let mut scores = fusion::rrf_fuse(&ranked_lists, RRF_K);
 
             if let Some((explicit_seeds, depth)) = &self.ppr_expand {
-                let mut combined = HashSet::<EntityId>::new();
-                for scored in scores.iter().take(self.result_limit) {
-                    combined.insert(scored.id);
-                }
+                let mut seen = HashSet::<EntityId>::new();
+                let mut seeds = Vec::<EntityId>::new();
                 for seed in explicit_seeds {
-                    combined.insert(*seed);
+                    if seen.insert(*seed) {
+                        seeds.push(*seed);
+                    }
+                }
+                if seeds.len() < crate::ppr::MAX_PPR_SEEDS {
+                    for scored in scores.iter().take(self.result_limit) {
+                        if seen.insert(scored.id) {
+                            seeds.push(scored.id);
+                            if seeds.len() == crate::ppr::MAX_PPR_SEEDS {
+                                break;
+                            }
+                        }
+                    }
                 }
 
-                if !combined.is_empty() {
-                    let mut seeds: Vec<EntityId> = combined.into_iter().collect();
+                if !seeds.is_empty() {
                     seeds.sort_unstable_by(|a, b| a.as_bytes().cmp(b.as_bytes()));
 
                     let (ppr_results, deferred_cache_write) =
@@ -713,21 +722,22 @@ fn collect_temporal_candidates(
 
     if config.anchor_mode != TemporalAnchorMode::Learned {
         let long_interval_lower = temporal_key_upper_bound(occurred_window_end);
-        for entry in store
-            .temporal_long_intervals
-            .range(
-                rtxn,
-                &(
-                    std::ops::Bound::Excluded(&long_interval_lower[..]),
-                    std::ops::Bound::Unbounded,
-                ),
-            )?
-            .take(per_scan_cap)
-        {
+        let mut accepted = 0_usize;
+        for entry in store.temporal_long_intervals.range(
+            rtxn,
+            &(
+                std::ops::Bound::Excluded(&long_interval_lower[..]),
+                std::ops::Bound::Unbounded,
+            ),
+        )? {
             let (key, value) = entry?;
             let (id, occurred_start, _) = decode_long_interval_row(key, value)?;
             if occurred_start < occurred_window_start {
                 out.insert(id);
+                accepted = accepted.saturating_add(1);
+                if accepted == per_scan_cap {
+                    break;
+                }
             }
         }
     }
@@ -1349,6 +1359,39 @@ mod tests {
     }
 
     #[test]
+    fn expand_ppr_clamps_internal_seed_growth() -> Result<()> {
+        let temp_dir = tempfile::tempdir()?;
+        let vault = Vault::open(temp_dir.path(), test_config())?;
+
+        for i in 0..=crate::ppr::MAX_PPR_SEEDS {
+            let id = EntityId::from_bytes((i as u128 + 1).to_be_bytes());
+            vault
+                .batch()
+                .put(
+                    &id,
+                    0,
+                    TimeRange {
+                        start: 10 + i as u64,
+                        end: 10 + i as u64,
+                    },
+                    10,
+                    b"payload",
+                )
+                .text(&id, &[("body", "alpha")])
+                .commit()?;
+        }
+
+        let expanded = vault
+            .query()
+            .search_text("alpha", crate::ppr::MAX_PPR_SEEDS + 1)
+            .expand_ppr(&[], 3)
+            .run()?;
+
+        assert!(!expanded.is_empty());
+        Ok(())
+    }
+
+    #[test]
     fn search_ppr_as_pre_rrf_signal() -> Result<()> {
         let temp_dir = tempfile::tempdir()?;
         let vault = Vault::open(temp_dir.path(), test_config())?;
@@ -1481,6 +1524,62 @@ mod tests {
             .run()?;
 
         assert!(results.iter().any(|entry| entry.id == candidate));
+        Ok(())
+    }
+
+    #[test]
+    fn long_interval_scan_counts_only_spanners_toward_cap() -> Result<()> {
+        let temp_dir = tempfile::tempdir()?;
+        let vault = Vault::open(temp_dir.path(), test_config())?;
+
+        let anchor = 2_000_000_u64;
+        let window = 86_400_u64;
+        let long_span = LONG_INTERVAL_THRESHOLD_SECS + window;
+
+        for i in 0..PER_SCAN_CAP_FACTOR {
+            let id = entity_id(120 + i as u8);
+            put_entity(
+                &vault,
+                id,
+                0,
+                anchor + i as u64,
+                anchor + long_span + i as u64,
+                anchor,
+            )?;
+        }
+
+        let spanner = entity_id(140);
+        put_entity(
+            &vault,
+            spanner,
+            0,
+            anchor.saturating_sub(long_span),
+            anchor + long_span + PER_SCAN_CAP_FACTOR as u64,
+            anchor,
+        )?;
+
+        let rtxn = vault.store.env.read_txn()?;
+        let config = TemporalSearchConfig {
+            anchor_start: anchor,
+            anchor_end: anchor,
+            learned_start: None,
+            learned_end: None,
+            sigma_secs: window,
+            anchor_mode: TemporalAnchorMode::Occurred,
+            adaptive: true,
+            limit: 1,
+        };
+        let mut candidates = HashSet::new();
+        collect_temporal_candidates(
+            &vault.store,
+            &rtxn,
+            &config,
+            window,
+            PER_SCAN_CAP_FACTOR,
+            &mut candidates,
+        )?;
+
+        assert!(candidates.contains(&spanner));
         Ok(())
     }
 

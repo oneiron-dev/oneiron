@@ -1264,6 +1264,79 @@ mod tests {
     }
 
     #[test]
+    fn open_checks_model_id_before_migrating_long_interval_schema() -> Result<()> {
+        let temp_dir = tempfile::tempdir()?;
+        let path = temp_dir.path();
+        let id = EntityId::now();
+        let end = 1_000 + crate::batch::LONG_INTERVAL_THRESHOLD_SECS + 10;
+
+        let mut cfg = test_config();
+        cfg.embedding_model = Some("model-a".to_owned());
+        let vault = Vault::open(path, cfg)?;
+        vault
+            .batch()
+            .put(
+                &id,
+                6,
+                test_time_range(1_000, end),
+                3_000,
+                b"legacy-long-range",
+            )
+            .commit()?;
+
+        let new_key = Store::encode_temporal_key(end, &id);
+        let mut legacy_value = [0_u8; 16];
+        legacy_value[..8].copy_from_slice(&1_000_u64.to_be_bytes());
+        legacy_value[8..].copy_from_slice(&end.to_be_bytes());
+
+        let mut wtxn = vault.store.env.write_txn()?;
+        vault
+            .store
+            .temporal_long_intervals
+            .delete(&mut wtxn, &new_key)?;
+        vault
+            .store
+            .temporal_long_intervals
+            .put(&mut wtxn, id.as_bytes(), &legacy_value)?;
+        vault
+            .store
+            .hnsw_meta
+            .delete(&mut wtxn, TEMPORAL_LONG_INTERVALS_SCHEMA_VERSION_KEY)?;
+        wtxn.commit()?;
+        drop(vault);
+
+        let mut mismatch_cfg = test_config();
+        mismatch_cfg.embedding_model = Some("model-b".to_owned());
+        assert!(matches!(
+            Vault::open(path, mismatch_cfg),
+            Err(Error::EmbeddingModelChanged { .. })
+        ));
+
+        let cfg = test_config();
+        let env = unsafe {
+            heed::EnvOpenOptions::new()
+                .map_size(cfg.map_size)
+                .max_readers(cfg.max_readers)
+                .max_dbs(24)
+                .open(path)?
+        };
+        let rtxn = env.read_txn()?;
+        let hnsw_meta = env
+            .open_database::<Bytes, Bytes>(&rtxn, Some("hnsw_meta"))?
+            .ok_or(Error::EntityNotFound)?;
+        let temporal_long_intervals = env
+            .open_database::<Bytes, Bytes>(&rtxn, Some("temporal_long_intervals"))?
+            .ok_or(Error::EntityNotFound)?;
+
+        assert!(temporal_long_intervals.get(&rtxn, id.as_bytes())?.is_some());
+        assert!(temporal_long_intervals.get(&rtxn, &new_key)?.is_none());
+        assert!(hnsw_meta
+            .get(&rtxn, TEMPORAL_LONG_INTERVALS_SCHEMA_VERSION_KEY)?
+            .is_none());
+        Ok(())
+    }
+
+    #[test]
     fn batch_put_assigns_short_id() -> Result<()> {
         let temp_dir = tempfile::tempdir()?;
         let vault = Vault::open(temp_dir.path(), test_config())?;

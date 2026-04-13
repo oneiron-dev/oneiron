@@ -335,6 +335,36 @@ mod tests {
     }
 
     #[test]
+    fn rebuild_hnsw_preserves_long_interval_schema_version() -> Result<()> {
+        let temp_dir = tempfile::tempdir()?;
+        let vault = Vault::open(temp_dir.path(), test_config())?;
+
+        let before = {
+            let rtxn = vault.store.env.read_txn()?;
+            vault
+                .store
+                .hnsw_meta
+                .get(&rtxn, TEMPORAL_LONG_INTERVALS_SCHEMA_VERSION_KEY)?
+                .ok_or(Error::EntityNotFound)?
+                .to_vec()
+        };
+
+        vault.maintain().rebuild_hnsw().run()?;
+
+        let after = {
+            let rtxn = vault.store.env.read_txn()?;
+            vault
+                .store
+                .hnsw_meta
+                .get(&rtxn, TEMPORAL_LONG_INTERVALS_SCHEMA_VERSION_KEY)?
+                .ok_or(Error::EntityNotFound)?
+                .to_vec()
+        };
+        assert_eq!(before, after);
+        Ok(())
+    }
+
+    #[test]
     fn rebuild_hnsw_preserves_model_id_when_config_is_none() -> Result<()> {
         let temp_dir = tempfile::tempdir()?;
         let vault = Vault::open(temp_dir.path(), test_config())?;

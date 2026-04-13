@@ -21,7 +21,7 @@ const LEGACY_CACHE_DEP_KEY_LEN: usize = ENTITY_ID_LEN + LEGACY_SEED_HASH_LEN;
 const CACHE_TTL_SECS: u64 = 86_400;
 use crate::store::GRAPH_VERSION_KEY;
 const SCORE_EPSILON: f32 = 1e-10;
-const MAX_PPR_SEEDS: usize = 256;
+pub(crate) const MAX_PPR_SEEDS: usize = 256;
 const MAX_PPR_DEPTH: u32 = 10;
 
 #[derive(Debug, Clone)]
