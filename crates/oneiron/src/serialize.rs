@@ -251,8 +251,10 @@ fn budget_split_sections(
     ];
     debug_assert!(final_budgets[0].saturating_add(final_budgets[1]) <= char_budget);
 
-    if final_budgets[0] > section_budgets[0] || final_budgets[1] > section_budgets[1] {
+    if final_budgets[0] > section_budgets[0] {
         results = budget_groups(results_source, allocation, final_budgets[0]).0;
+    }
+    if final_budgets[1] > section_budgets[1] {
         neighbors = budget_groups(neighbors_source, allocation, final_budgets[1]).0;
     }
 
