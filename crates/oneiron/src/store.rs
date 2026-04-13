@@ -11,6 +11,7 @@ use crate::types::{EdgeKind, EntityId, VaultConfig};
 const MAX_DBS: u32 = 24;
 pub(crate) const MODEL_ID_KEY: &[u8] = b"model_id";
 pub(crate) const GRAPH_VERSION_KEY: &[u8] = b"graph_version";
+pub(crate) const HNSW_CONFIG_KEY: &[u8] = b"hnsw_config";
 pub(crate) const TEMPORAL_LONG_INTERVALS_SCHEMA_VERSION_KEY: &[u8] =
     b"temporal_long_intervals_schema_version";
 const TEMPORAL_LONG_INTERVALS_SCHEMA_VERSION: u8 = 2;
@@ -86,9 +87,14 @@ impl Store {
         let sync_queue = create_db(&env, &mut wtxn, "sync_queue")?;
         wtxn.commit()?;
 
+        let should_persist_hnsw_config = preflight_hnsw_config(&env, &hnsw_meta, &config.hnsw)?;
         let should_persist_model_id =
             preflight_embedding_model(&env, &hnsw_meta, config.embedding_model.as_deref())?;
         migrate_temporal_long_intervals_if_needed(&env, &hnsw_meta, &temporal_long_intervals)?;
+
+        if should_persist_hnsw_config {
+            persist_hnsw_config_if_missing(&env, &hnsw_meta, &config.hnsw)?;
+        }
 
         if should_persist_model_id {
             let requested = config
@@ -181,6 +187,52 @@ fn preflight_embedding_model(
     }
 }
 
+fn preflight_hnsw_config(
+    env: &Env,
+    hnsw_meta: &Database<Bytes, Bytes>,
+    requested: &crate::types::HnswConfig,
+) -> Result<bool> {
+    let rtxn = env.read_txn()?;
+    match hnsw_meta.get(&rtxn, HNSW_CONFIG_KEY)? {
+        Some(raw) => {
+            let stored = decode_hnsw_config(raw)?;
+            if stored != *requested {
+                return Err(Error::HnswConfigChanged {
+                    stored: format_hnsw_config(&stored),
+                    requested: format_hnsw_config(requested),
+                });
+            }
+            Ok(false)
+        }
+        None => Ok(true),
+    }
+}
+
+fn persist_hnsw_config_if_missing(
+    env: &Env,
+    hnsw_meta: &Database<Bytes, Bytes>,
+    requested: &crate::types::HnswConfig,
+) -> Result<()> {
+    let encoded = encode_hnsw_config(requested)?;
+    let mut wtxn = env.write_txn()?;
+    match hnsw_meta.get(&wtxn, HNSW_CONFIG_KEY)? {
+        Some(raw) => {
+            let stored = decode_hnsw_config(raw)?;
+            if stored != *requested {
+                return Err(Error::HnswConfigChanged {
+                    stored: format_hnsw_config(&stored),
+                    requested: format_hnsw_config(requested),
+                });
+            }
+        }
+        None => {
+            hnsw_meta.put(&mut wtxn, HNSW_CONFIG_KEY, &encoded)?;
+            wtxn.commit()?;
+        }
+    }
+    Ok(())
+}
+
 fn persist_model_id_if_missing(
     env: &Env,
     hnsw_meta: &Database<Bytes, Bytes>,
@@ -203,6 +255,53 @@ fn persist_model_id_if_missing(
         }
     }
     Ok(())
+}
+
+fn encode_hnsw_config(config: &crate::types::HnswConfig) -> Result<[u8; 24]> {
+    let m_max_0 = u64::try_from(config.m_max_0)
+        .map_err(|_| Error::InvalidConfig("hnsw m_max_0 too large".to_owned()))?;
+    let ef_construction = u64::try_from(config.ef_construction)
+        .map_err(|_| Error::InvalidConfig("hnsw ef_construction too large".to_owned()))?;
+    let ef_search = u64::try_from(config.ef_search)
+        .map_err(|_| Error::InvalidConfig("hnsw ef_search too large".to_owned()))?;
+
+    let mut encoded = [0_u8; 24];
+    encoded[..8].copy_from_slice(&m_max_0.to_le_bytes());
+    encoded[8..16].copy_from_slice(&ef_construction.to_le_bytes());
+    encoded[16..24].copy_from_slice(&ef_search.to_le_bytes());
+    Ok(encoded)
+}
+
+fn decode_hnsw_config(raw: &[u8]) -> Result<crate::types::HnswConfig> {
+    if raw.len() != 24 {
+        return Err(Error::InvalidKey);
+    }
+
+    let m_max_0 = usize::try_from(u64::from_le_bytes(
+        raw[..8].try_into().map_err(|_| Error::InvalidKey)?,
+    ))
+    .map_err(|_| Error::InvalidKey)?;
+    let ef_construction = usize::try_from(u64::from_le_bytes(
+        raw[8..16].try_into().map_err(|_| Error::InvalidKey)?,
+    ))
+    .map_err(|_| Error::InvalidKey)?;
+    let ef_search = usize::try_from(u64::from_le_bytes(
+        raw[16..24].try_into().map_err(|_| Error::InvalidKey)?,
+    ))
+    .map_err(|_| Error::InvalidKey)?;
+
+    Ok(crate::types::HnswConfig {
+        m_max_0,
+        ef_construction,
+        ef_search,
+    })
+}
+
+fn format_hnsw_config(config: &crate::types::HnswConfig) -> String {
+    format!(
+        "m_max_0={},ef_construction={},ef_search={}",
+        config.m_max_0, config.ef_construction, config.ef_search
+    )
 }
 
 fn migrate_temporal_long_intervals_if_needed(

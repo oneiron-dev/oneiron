@@ -46,7 +46,7 @@ const MAX_DBS: u32 = 24; // 18 core + room for sync, entity_vad, future
 | +`temporal_learned` | didn't exist | ts(8)\|id(16) → empty | "When did we learn this?" vs "when did it happen?" — different temporal dimensions. |
 | +`phonetic_index` | didn't exist | code → [(id)] | Voice-first product needs phonetic matching for ASR misspellings (CROSS-ARCH-013). 5th retrieval signal. |
 | +`text_forward` | didn't exist | entity_id → [terms] | Forward index for O(terms) deindexing without requiring original text. |
-| +`hnsw_meta` keys | entry_point, count | + model_id, model_version | Detect embedding model changes on vault open. Prevents silent vector space corruption. |
+| +`hnsw_meta` keys | entry_point, count | + model_id, hnsw_config, graph_version, vector_version, temporal schema version | Persist vector-space compatibility + maintenance guard metadata without clearing unrelated keys during rebuild. |
 | +`short_ids` | didn't exist | entity_id → short_id + hash | Vault-scoped permanent short IDs (`cl88`) + 1-byte content hash for freshness detection. |
 | +`short_ids_reverse` | didn't exist | short_id → entity_id | Reverse lookup for hydration endpoint. |
 | Entity blob format | opaque `&[u8]` | MessagePack | Self-describing binary format. ~30% smaller than JSON, enables field extraction in context_pack without schema registration. |
@@ -204,8 +204,10 @@ Where scores are `[(entity_id: 16B, score: f32 4B)]` packed = N×20B.
 | `"entry_point"` | entity_id (16B) | Flat NSW, no level needed |
 | `"count"` | u64 (8B LE) | Total nodes in graph |
 | `"model_id"` | UTF-8 string | e.g., "qwen3-8b-v1" |
-| `"model_version"` | UTF-8 string | e.g., "2026-01-15" |
+| `"hnsw_config"` | `m_max_0(u64 LE) + ef_construction(u64 LE) + ef_search(u64 LE)` | Persisted at open; reopening with a different HNSW config fails fast instead of silently mixing graph semantics |
 | `"graph_version"` | u64 (8B LE) | Monotonic counter, incremented once per batch of graph mutations |
+| `"vector_version"` | u64 (8B LE) | Monotonic counter, incremented once per batch of vector mutations; rebuild uses it as an OCC guard between read/build and final swap |
+| `"temporal_long_intervals_schema_version"` | u8 | Migration marker for the `temporal_long_intervals` key layout |
 
 ---
 
@@ -771,13 +773,16 @@ pub struct MaintenanceReport {
 }
 ```
 
+- `hnsw_dead_nodes_removed` counts nodes omitted from the rebuilt graph compared with the previously committed `count`. In heal mode that includes invalid-vector skips; use `hnsw_invalid_vectors_skipped` for the explicit invalid-row breakdown.
+- `orphan_short_ids_deleted` counts logical stale/orphan short-id repairs across the forward and reverse short-id indexes.
+
 | Operation | What it does | When to call |
 |---|---|---|
-| `rebuild_hnsw` | Strict rebuild: re-insert all live vectors into fresh graph, discard dead nodes, fail on invalid stored vectors or concurrent vector changes before the final write txn | Dead ratio > 10% |
-| `rebuild_hnsw_heal_invalid_vectors` | Repair rebuild: re-insert only valid vectors into a fresh graph, skip invalid stored vectors, preserve raw vector rows for later inspection | Operator-triggered repair |
+| `rebuild_hnsw` | Strict rebuild: validate vectors from a read snapshot, rebuild from that snapshot, then do a single final swap write txn. Fails on invalid stored vectors or if `vector_version` changed before commit. | Dead ratio > 10% |
+| `rebuild_hnsw_heal_invalid_vectors` | Repair rebuild: same snapshot/swap flow, but skip invalid stored vectors while preserving the raw vector rows for later inspection | Operator-triggered repair |
 | `cleanup_ppr_cache` | Evict stale + expired cache entries from `ppr_cache` + `ppr_cache_deps` | Nightly |
 | `compact_postings` | Remove empty posting lists from `text_postings` | After bulk deletes |
-| `recompute_short_id_hashes` | Recompute content hashes for all entities in `short_ids` and delete orphaned mappings whose entity row no longer exists | After bulk updates |
+| `recompute_short_id_hashes` | Recompute content hashes for all entities in `short_ids` and delete stale/orphaned mappings from both `short_ids` and `short_ids_reverse` | After bulk updates |
 
 **Boundary:** The crate provides `maintain()`. The dreamer (private, in `oneiron-internal`) decides *when* to call it and *what entities to write/update*. The dreamer's intelligence (LLM-driven consolidation, skill extraction, edge weight tuning, ML service orchestration) is proprietary.
 
