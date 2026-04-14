@@ -994,7 +994,9 @@ mod tests {
     fn recompute_short_id_hashes_processes_custom_ids_near_sentinel_pattern() -> Result<()> {
         let temp_dir = tempfile::tempdir()?;
         let vault = Vault::open(temp_dir.path(), test_config())?;
-        let id = EntityId::from_bytes([0xFF; ENTITY_ID_LEN]);
+        let mut raw = [0xFF; ENTITY_ID_LEN];
+        raw[0] = 0xFE;
+        let id = EntityId::from_bytes(raw)?;
 
         vault
             .batch()

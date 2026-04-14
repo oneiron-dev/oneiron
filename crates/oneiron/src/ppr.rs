@@ -286,7 +286,7 @@ pub(crate) fn cleanup_ppr_cache(
             dep_key[..ENTITY_ID_LEN]
                 .try_into()
                 .map_err(|_| Error::InvalidKey)?,
-        );
+        )?;
         let seed_hash: [u8; SEED_HASH_LEN] = dep_key[ENTITY_ID_LEN..]
             .try_into()
             .map_err(|_| Error::InvalidKey)?;

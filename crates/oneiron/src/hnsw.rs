@@ -601,8 +601,6 @@ fn read_entry_point(store: &Store, txn: &RoTxn<'_>) -> Result<Option<EntityId>> 
 
     parse_entity_id(raw, ERR_ENTRY_POINT_BYTES).map(Some)
 }
-
-<<<<<<< HEAD
 fn parse_entity_id(bytes: &[u8], err: &'static str) -> Result<EntityId> {
     let raw: [u8; ENTITY_ID_LEN] = bytes.try_into().map_err(|_| Error::CorruptedIndex(err))?;
     EntityId::from_bytes(raw).map_err(|_| Error::CorruptedIndex(err))

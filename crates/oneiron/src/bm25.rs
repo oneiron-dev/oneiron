@@ -42,8 +42,10 @@ pub(crate) fn index_text(
         return Ok(());
     }
 
-    let doc_len = u32::try_from(terms.len()).map_err(|_| Error::ArithmeticOverflow)?;
-    let field_count = u32::try_from(fields.len()).map_err(|_| Error::ArithmeticOverflow)?;
+    let doc_len =
+        u32::try_from(terms.len()).map_err(|_| Error::ArithmeticOverflow("bm25 doc length"))?;
+    let field_count =
+        u32::try_from(fields.len()).map_err(|_| Error::ArithmeticOverflow("bm25 field count"))?;
 
     let mut term_freq = HashMap::<String, u32>::new();
     for term in terms {
@@ -70,10 +72,12 @@ pub(crate) fn index_text(
     store.text_forward.put(wtxn, id.as_bytes(), &forward)?;
 
     let (total_docs, total_length) = read_collection_stats(store, wtxn)?;
-    let total_docs = total_docs.checked_add(1).ok_or(Error::ArithmeticOverflow)?;
+    let total_docs = total_docs
+        .checked_add(1)
+        .ok_or(Error::ArithmeticOverflow("bm25 total docs"))?;
     let total_length = total_length
         .checked_add(u64::from(doc_len))
-        .ok_or(Error::ArithmeticOverflow)?;
+        .ok_or(Error::ArithmeticOverflow("bm25 total length"))?;
     write_collection_stats(store, wtxn, total_docs, total_length)?;
 
     Ok(())
@@ -121,10 +125,12 @@ pub(crate) fn deindex_text(store: &Store, wtxn: &mut RwTxn<'_>, id: &EntityId) -
     }
 
     let (total_docs, total_length) = read_collection_stats(store, wtxn)?;
-    let total_docs = total_docs.checked_sub(1).ok_or(Error::ArithmeticOverflow)?;
+    let total_docs = total_docs
+        .checked_sub(1)
+        .ok_or(Error::ArithmeticOverflow("bm25 total docs"))?;
     let total_length = total_length
         .checked_sub(u64::from(doc_len))
-        .ok_or(Error::ArithmeticOverflow)?;
+        .ok_or(Error::ArithmeticOverflow("bm25 total length"))?;
     write_collection_stats(store, wtxn, total_docs, total_length)?;
 
     store.text_meta.delete(wtxn, id.as_bytes())?;
@@ -176,7 +182,7 @@ pub(crate) fn search_text(
         for chunk in posting.chunks_exact(POSTING_ENTRY_LEN) {
             let (id, tf) = decode_posting_entry(chunk)?;
             if tf == 0 {
-                return Err(Error::CorruptedIndex);
+                return Err(Error::CorruptedIndex("bm25 posting"));
             }
 
             let doc_meta = store
@@ -190,7 +196,7 @@ pub(crate) fn search_text(
             let norm = if avgdl > 0.0 { dl / avgdl } else { 0.0 };
             let denom = tf + K1 * (1.0 - B + B * norm);
             if denom == 0.0 {
-                return Err(Error::CorruptedIndex);
+                return Err(Error::CorruptedIndex("bm25 posting"));
             }
             let score = idf * (tf * (K1 + 1.0)) / denom;
             *scores.entry(id).or_insert(0.0) += score;
@@ -215,18 +221,22 @@ pub(crate) fn search_text(
 
 fn validate_posting_alignment(posting: &[u8]) -> Result<()> {
     if !posting.len().is_multiple_of(POSTING_ENTRY_LEN) {
-        return Err(Error::CorruptedIndex);
+        return Err(Error::CorruptedIndex("bm25 posting"));
     }
     Ok(())
 }
 
 fn decode_posting_entry(chunk: &[u8]) -> Result<(EntityId, u32)> {
-    let id = EntityId::from_bytes(chunk[..16].try_into().map_err(|_| Error::CorruptedIndex)?)
-        .map_err(|_| Error::CorruptedIndex)?;
+    let id = EntityId::from_bytes(
+        chunk[..16]
+            .try_into()
+            .map_err(|_| Error::CorruptedIndex("bm25 posting"))?,
+    )
+    .map_err(|_| Error::CorruptedIndex("bm25 posting"))?;
     let tf = u32::from_le_bytes(
         chunk[16..20]
             .try_into()
-            .map_err(|_| Error::CorruptedIndex)?,
+            .map_err(|_| Error::CorruptedIndex("bm25 posting"))?,
     );
     Ok((id, tf))
 }
@@ -240,11 +250,17 @@ fn read_posting(store: &Store, wtxn: &mut RwTxn<'_>, term: &str) -> Result<Vec<u
 
 fn read_collection_stats(store: &Store, txn: &RoTxn<'_>) -> Result<(u32, u64)> {
     let total_docs = match store.text_meta.get(txn, &TOTAL_DOCS_KEY)? {
-        Some(raw) => u32::from_le_bytes(raw.try_into().map_err(|_| Error::CorruptedIndex)?),
+        Some(raw) => u32::from_le_bytes(
+            raw.try_into()
+                .map_err(|_| Error::CorruptedIndex("bm25 collection stats"))?,
+        ),
         None => 0,
     };
     let total_length = match store.text_meta.get(txn, &TOTAL_LENGTH_KEY)? {
-        Some(raw) => u64::from_le_bytes(raw.try_into().map_err(|_| Error::CorruptedIndex)?),
+        Some(raw) => u64::from_le_bytes(
+            raw.try_into()
+                .map_err(|_| Error::CorruptedIndex("bm25 collection stats"))?,
+        ),
         None => 0,
     };
     Ok((total_docs, total_length))
@@ -267,24 +283,34 @@ fn write_collection_stats(
 
 fn decode_doc_meta(raw: &[u8]) -> Result<(u32, u32)> {
     if raw.len() != DOC_META_LEN {
-        return Err(Error::CorruptedIndex);
+        return Err(Error::CorruptedIndex("bm25 doc meta"));
     }
-    let doc_len = u32::from_le_bytes(raw[..4].try_into().map_err(|_| Error::CorruptedIndex)?);
-    let field_count = u32::from_le_bytes(raw[4..8].try_into().map_err(|_| Error::CorruptedIndex)?);
+    let doc_len = u32::from_le_bytes(
+        raw[..4]
+            .try_into()
+            .map_err(|_| Error::CorruptedIndex("bm25 doc meta"))?,
+    );
+    let field_count = u32::from_le_bytes(
+        raw[4..8]
+            .try_into()
+            .map_err(|_| Error::CorruptedIndex("bm25 doc meta"))?,
+    );
     Ok((doc_len, field_count))
 }
 
 #[cfg(test)]
 fn decode_u32(raw: &[u8]) -> Result<u32> {
     Ok(u32::from_le_bytes(
-        raw.try_into().map_err(|_| Error::CorruptedIndex)?,
+        raw.try_into()
+            .map_err(|_| Error::CorruptedIndex("bm25 test decode"))?,
     ))
 }
 
 #[cfg(test)]
 fn decode_u64(raw: &[u8]) -> Result<u64> {
     Ok(u64::from_le_bytes(
-        raw.try_into().map_err(|_| Error::CorruptedIndex)?,
+        raw.try_into()
+            .map_err(|_| Error::CorruptedIndex("bm25 test decode"))?,
     ))
 }
 
@@ -296,11 +322,11 @@ fn decode_forward_terms(raw: &[u8]) -> Result<Vec<String>> {
     raw.split(|b| *b == 0)
         .map(|chunk| {
             if chunk.is_empty() {
-                return Err(Error::CorruptedIndex);
+                return Err(Error::CorruptedIndex("bm25 forward terms"));
             }
             str::from_utf8(chunk)
                 .map(str::to_owned)
-                .map_err(|_| Error::CorruptedIndex)
+                .map_err(|_| Error::CorruptedIndex("bm25 forward terms"))
         })
         .collect()
 }
@@ -560,7 +586,7 @@ mod tests {
         let err = vault
             .search_text("apple", 10)
             .expect_err("expected CorruptedIndex for zero-tf posting");
-        assert!(matches!(err, Error::CorruptedIndex));
+        assert!(matches!(err, Error::CorruptedIndex(_)));
 
         Ok(())
     }

@@ -777,8 +777,9 @@ fn upsert_short_id(
     let sentinel_key = short_id_counter_sentinel(entity_type);
     let current = match store.short_ids.get(wtxn, &sentinel_key)? {
         Some(raw) => {
-            let buf: [u8; SHORT_ID_COUNTER_LEN] =
-                raw.try_into().map_err(|_| Error::CorruptedIndex("short id counter"))?;
+            let buf: [u8; SHORT_ID_COUNTER_LEN] = raw
+                .try_into()
+                .map_err(|_| Error::CorruptedIndex("short id counter"))?;
             u64::from_le_bytes(buf)
         }
         None => 0,
@@ -848,9 +849,12 @@ fn delete_related_edges(
         let (key, value) = entry?;
         validate_edge_record(key, value)?;
         let kind = EdgeKind::try_from_u8(key[16]).ok_or(Error::CorruptedIndex("edge record"))?;
-        let target =
-            EntityId::from_bytes(key[17..33].try_into().map_err(|_| Error::CorruptedIndex("edge record"))?)
-                .map_err(|_| Error::CorruptedIndex("edge record"))?;
+        let target = EntityId::from_bytes(
+            key[17..33]
+                .try_into()
+                .map_err(|_| Error::CorruptedIndex("edge record"))?,
+        )
+        .map_err(|_| Error::CorruptedIndex("edge record"))?;
         outbound.push((kind, target));
     }
 
@@ -866,9 +870,12 @@ fn delete_related_edges(
         let (key, value) = entry?;
         validate_edge_record(key, value)?;
         let kind = EdgeKind::try_from_u8(key[16]).ok_or(Error::CorruptedIndex("edge record"))?;
-        let source =
-            EntityId::from_bytes(key[17..33].try_into().map_err(|_| Error::CorruptedIndex("edge record"))?)
-                .map_err(|_| Error::CorruptedIndex("edge record"))?;
+        let source = EntityId::from_bytes(
+            key[17..33]
+                .try_into()
+                .map_err(|_| Error::CorruptedIndex("edge record"))?,
+        )
+        .map_err(|_| Error::CorruptedIndex("edge record"))?;
         inbound.push((kind, source));
     }
 

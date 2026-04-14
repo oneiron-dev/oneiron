@@ -974,7 +974,7 @@ mod tests {
         let temp_dir = tempfile::tempdir()?;
         let vault = Vault::open(temp_dir.path(), test_config())?;
 
-        let root = EntityId::from_bytes([1; 16]);
+        let root = EntityId::from_bytes_unchecked([1; 16]);
         put_text_entity(
             &vault,
             &root,
@@ -984,10 +984,10 @@ mod tests {
         )?;
 
         let weighted = [
-            (EntityId::from_bytes([2; 16]), 0.4_f32),
-            (EntityId::from_bytes([3; 16]), 0.9_f32),
-            (EntityId::from_bytes([4; 16]), 0.7_f32),
-            (EntityId::from_bytes([5; 16]), 0.2_f32),
+            (EntityId::from_bytes_unchecked([2; 16]), 0.4_f32),
+            (EntityId::from_bytes_unchecked([3; 16]), 0.9_f32),
+            (EntityId::from_bytes_unchecked([4; 16]), 0.7_f32),
+            (EntityId::from_bytes_unchecked([5; 16]), 0.2_f32),
         ];
 
         for (id, weight) in weighted {
@@ -1011,7 +1011,10 @@ mod tests {
         let neighbor_ids: Vec<EntityId> = pack.neighbors.iter().map(|entity| entity.id).collect();
         assert_eq!(
             neighbor_ids,
-            vec![EntityId::from_bytes([3; 16]), EntityId::from_bytes([4; 16])]
+            vec![
+                EntityId::from_bytes_unchecked([3; 16]),
+                EntityId::from_bytes_unchecked([4; 16])
+            ]
         );
         Ok(())
     }
@@ -1021,8 +1024,8 @@ mod tests {
         let temp_dir = tempfile::tempdir()?;
         let vault = Vault::open(temp_dir.path(), test_config())?;
 
-        let root = EntityId::from_bytes([7; 16]);
-        let child = EntityId::from_bytes([8; 16]);
+        let root = EntityId::from_bytes_unchecked([7; 16]);
+        let child = EntityId::from_bytes_unchecked([8; 16]);
         put_text_entity(
             &vault,
             &root,
