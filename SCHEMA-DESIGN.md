@@ -481,11 +481,9 @@ When `delete_entity(E)` is called, one write transaction does:
 7. COMMIT
 ```
 
-Note: phonetic deindexing needs the codes. Two options:
-- Store codes in entity blob (app deserializes before delete)
-- Add `phonetic_forward` database (like text_forward)
+Note: phonetic deindexing uses `phonetic_forward` as the primary path. Each entity stores the deduped set of phonetic codes it participates in, which keeps delete-time cleanup O(codes-for-entity), matching the `text_forward` design for BM25 terms.
 
-For v1: require codes to be in the entity blob. The `delete_entity` implementation reads the blob first, extracts phonetic codes (caller provides a decoder), then deindexes. If the blob is opaque, the simple API's `delete_entity` handles it by also reading `phonetic_index` entries that reference E (reverse scan — phonetic vocabulary is small enough).
+For migrated or partially repaired data where the forward row is missing or stale, the implementation falls back to a reverse scan of `phonetic_index`, repairs what it can, and removes the forward row when delete completes.
 
 ---
 
@@ -521,9 +519,9 @@ s_temporal = α × s_occurred + (1-α) × s_learned
 
 ## Future Additions (Not v1)
 
-### Database #17: `entity_vad` (Companion Plugin — Emotional Scoring)
+### Future Database: `entity_vad` (Companion Plugin — Emotional Scoring)
 
-```
+```text
 Key:   entity_id (16B)
 Value: valence(f32 4B) + arousal(f32 4B) + dominance(f32 4B) = 12B
 ```
@@ -532,15 +530,14 @@ Entity-level aggregate emotional metadata. Per ARCH-022/023, edge-level VAD (sto
 Only populated for entities with emotional data (messages, turns, events).
 Add when companion plugin is built.
 
-### Databases #21-22: Sync (Device Mode)
+### Optional Databases #21-22: Sync (Device Mode)
 
-```
+```text
 sync_state:   string key → value (doc state, state vectors, sequence metadata)
 sync_queue:   queue_key(bytes) → pending sync update or embed job
 ```
 
-For offline-first device mode. Convex cloud is sync hub.
-Add when device sync is implemented.
+Present in sync-enabled builds for offline-first device mode. Convex cloud is the sync hub.
 
 ### HNSW Multi-Index (Multimodal Embeddings — v2)
 
@@ -1010,12 +1007,10 @@ pub struct TokenAllocation {
 
 ## Open Questions
 
-1. **Phonetic deindexing:** Add `phonetic_forward` database (#17, bumping entity_vad to #18)? Or rely on phonetic vocabulary being small enough for reverse lookup? Decision: defer, measure first.
+1. **Temporal α parameter:** How does the pipeline decide whether "occurred" or "learned" matters more for a given query? Heuristic from query text? Explicit parameter? LLM decides?
 
-2. **Temporal α parameter:** How does the pipeline decide whether "occurred" or "learned" matters more for a given query? Heuristic from query text? Explicit parameter? LLM decides?
+2. **PPR graph_version counter:** Stored where? `hnsw_meta["graph_version"]` as u64, incremented once per batch of graph mutations in the same LMDB environment.
 
-3. **PPR graph_version counter:** Stored where? `hnsw_meta["graph_version"]` as u64, incremented once per batch of graph mutations in the same LMDB environment.
+3. **Collection stats atomicity:** BM25 total_docs and total_length (sentinel keys in text_meta) are updated on every index/deindex. Under concurrent reads, readers see a consistent snapshot (LMDB MVCC). No issue.
 
-4. **Collection stats atomicity:** BM25 total_docs and total_length (sentinel keys in text_meta) are updated on every index/deindex. Under concurrent reads, readers see a consistent snapshot (LMDB MVCC). No issue.
-
-5. **Multi-party EdgeKinds:** `AddressedTo` (18) and `RepliesTo` (19) — add to enum now (reserved) or add when multi-party ships? Recommendation: reserve the values now, don't implement until needed.
+4. **Multi-party EdgeKinds:** `AddressedTo` (18) and `RepliesTo` (19) — add to enum now (reserved) or add when multi-party ships? Recommendation: reserve the values now, don't implement until needed.
