@@ -61,9 +61,12 @@ fn first_child_of_parent(
         if key.len() != EDGE_KEY_LEN {
             continue;
         }
-        let parent =
-            EntityId::from_bytes(key[17..33].try_into().map_err(|_| Error::CorruptedIndex)?)
-                .map_err(|_| Error::CorruptedIndex)?;
+        let parent = EntityId::from_bytes(
+            key[17..33]
+                .try_into()
+                .map_err(|_| Error::CorruptedIndex("edge record"))?,
+        )
+        .map_err(|_| Error::CorruptedIndex("edge record"))?;
         return Ok(Some(parent));
     }
     Ok(None)
@@ -307,16 +310,23 @@ impl Vault {
             if key.len() != 24 {
                 continue;
             }
-            let ts = u64::from_be_bytes(key[..8].try_into().map_err(|_| Error::CorruptedIndex)?);
+            let ts = u64::from_be_bytes(
+                key[..8]
+                    .try_into()
+                    .map_err(|_| Error::CorruptedIndex("temporal learned key"))?,
+            );
             if ts < start {
                 continue;
             }
             if ts >= end {
                 break; // temporal keys are sorted by timestamp (BE), so we can stop
             }
-            let id =
-                EntityId::from_bytes(key[8..24].try_into().map_err(|_| Error::CorruptedIndex)?)
-                    .map_err(|_| Error::CorruptedIndex)?;
+            let id = EntityId::from_bytes(
+                key[8..24]
+                    .try_into()
+                    .map_err(|_| Error::CorruptedIndex("temporal learned key"))?,
+            )
+            .map_err(|_| Error::CorruptedIndex("temporal learned key"))?;
             ids.push(id);
         }
         Ok(ids)
@@ -401,9 +411,12 @@ impl Vault {
             if key.len() != 17 {
                 continue;
             }
-            let id =
-                EntityId::from_bytes(key[1..17].try_into().map_err(|_| Error::CorruptedIndex)?)
-                    .map_err(|_| Error::CorruptedIndex)?;
+            let id = EntityId::from_bytes(
+                key[1..17]
+                    .try_into()
+                    .map_err(|_| Error::CorruptedIndex("type index key"))?,
+            )
+            .map_err(|_| Error::CorruptedIndex("type index key"))?;
             ids.push(id);
             if ids.len() >= MAX_TYPE_QUERY_RESULTS {
                 break;
@@ -470,9 +483,12 @@ impl Vault {
             if key.len() != EDGE_KEY_LEN {
                 continue;
             }
-            let peer =
-                EntityId::from_bytes(key[17..33].try_into().map_err(|_| Error::CorruptedIndex)?)
-                    .map_err(|_| Error::CorruptedIndex)?;
+            let peer = EntityId::from_bytes(
+                key[17..33]
+                    .try_into()
+                    .map_err(|_| Error::CorruptedIndex("edge record"))?,
+            )
+            .map_err(|_| Error::CorruptedIndex("edge record"))?;
 
             if let Some(req_type) = peer_type {
                 if !self.entity_has_type(rtxn, &peer, req_type)? {
@@ -547,9 +563,11 @@ impl Vault {
                     continue;
                 }
                 let child = EntityId::from_bytes(
-                    key[17..33].try_into().map_err(|_| Error::CorruptedIndex)?,
+                    key[17..33]
+                        .try_into()
+                        .map_err(|_| Error::CorruptedIndex("edge record"))?,
                 )
-                .map_err(|_| Error::CorruptedIndex)?;
+                .map_err(|_| Error::CorruptedIndex("edge record"))?;
                 if visited.insert(child) {
                     frontier.push_back((child, depth + 1));
                 }
@@ -662,15 +680,26 @@ fn scan_edges(
 
 fn parse_edge_record(key: &[u8], value: &[u8]) -> Result<EdgeInfo> {
     if key.len() != EDGE_KEY_LEN || value.len() != EDGE_VALUE_LEN {
-        return Err(Error::CorruptedIndex);
+        return Err(Error::CorruptedIndex("edge record"));
     }
 
-    let kind = EdgeKind::try_from_u8(key[16]).ok_or(Error::CorruptedIndex)?;
-    let target = EntityId::from_bytes(key[17..33].try_into().map_err(|_| Error::CorruptedIndex)?)
-        .map_err(|_| Error::CorruptedIndex)?;
-    let weight = f32::from_le_bytes(value[..4].try_into().map_err(|_| Error::CorruptedIndex)?);
-    let created_at =
-        u64::from_le_bytes(value[4..12].try_into().map_err(|_| Error::CorruptedIndex)?);
+    let kind = EdgeKind::try_from_u8(key[16]).ok_or(Error::CorruptedIndex("edge record"))?;
+    let target = EntityId::from_bytes(
+        key[17..33]
+            .try_into()
+            .map_err(|_| Error::CorruptedIndex("edge record"))?,
+    )
+    .map_err(|_| Error::CorruptedIndex("edge record"))?;
+    let weight = f32::from_le_bytes(
+        value[..4]
+            .try_into()
+            .map_err(|_| Error::CorruptedIndex("edge record"))?,
+    );
+    let created_at = u64::from_le_bytes(
+        value[4..12]
+            .try_into()
+            .map_err(|_| Error::CorruptedIndex("edge record"))?,
+    );
     let vad = parse_vad(value);
     if !weight.is_finite() {
         return Err(Error::InvalidEdgeWeight);
@@ -1450,7 +1479,7 @@ mod tests {
             heed::EnvOpenOptions::new()
                 .map_size(cfg.map_size)
                 .max_readers(cfg.max_readers)
-                .max_dbs(24)
+                .max_dbs(25)
                 .open(path)?
         };
         let rtxn = env.read_txn()?;

@@ -1009,7 +1009,7 @@ fn decode_long_interval_row(key: &[u8], value: &[u8]) -> Result<(EntityId, u64, 
         key[8..TEMPORAL_KEY_LEN]
             .try_into()
             .map_err(|_| Error::InvalidKey)?,
-    );
+    )?;
     let occurred_start = u64::from_be_bytes(value.try_into().map_err(|_| Error::InvalidKey)?);
     Ok((id, occurred_start, occurred_end))
 }
@@ -1446,7 +1446,7 @@ mod tests {
         let vault = Vault::open(temp_dir.path(), test_config())?;
 
         for i in 0..=crate::ppr::MAX_PPR_SEEDS {
-            let id = EntityId::from_bytes((i as u128 + 1).to_be_bytes());
+            let id = EntityId::from_bytes((i as u128 + 1).to_be_bytes())?;
             vault
                 .batch()
                 .put(

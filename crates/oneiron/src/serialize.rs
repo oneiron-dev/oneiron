@@ -1460,7 +1460,7 @@ mod tests {
 
         for i in 0..6_u8 {
             pack.results.push(ContextEntity {
-                id: EntityId::from_bytes([10 + i; 16]),
+                id: EntityId::from_bytes_unchecked([10 + i; 16]),
                 short_id: format!("r{i}"),
                 content_hash: i,
                 entity_type: 0,
@@ -1473,7 +1473,7 @@ mod tests {
                 vector: None,
             });
             pack.neighbors.push(ContextEntity {
-                id: EntityId::from_bytes([30 + i; 16]),
+                id: EntityId::from_bytes_unchecked([30 + i; 16]),
                 short_id: format!("n{i}"),
                 content_hash: i,
                 entity_type: 4,
@@ -1588,7 +1588,7 @@ mod tests {
         let mut pack = sample_pack();
         for i in 0..12_u8 {
             pack.results.push(ContextEntity {
-                id: EntityId::from_bytes([50 + i; 16]),
+                id: EntityId::from_bytes_unchecked([50 + i; 16]),
                 short_id: format!("cl{i}"),
                 content_hash: i,
                 entity_type: 0,
@@ -1785,7 +1785,7 @@ mod tests {
         let pack = ContextPack {
             results: vec![
                 ContextEntity {
-                    id: EntityId::from_bytes([15; 16]),
+                    id: EntityId::from_bytes_unchecked([15; 16]),
                     short_id: "u15".to_owned(),
                     content_hash: 0x15,
                     entity_type: 15,
@@ -1798,7 +1798,7 @@ mod tests {
                     vector: None,
                 },
                 ContextEntity {
-                    id: EntityId::from_bytes([20; 16]),
+                    id: EntityId::from_bytes_unchecked([20; 16]),
                     short_id: "u20".to_owned(),
                     content_hash: 0x20,
                     entity_type: 20,
@@ -1841,7 +1841,7 @@ mod tests {
     fn yaml_quotes_unsafe_field_keys() {
         let pack = ContextPack {
             results: vec![ContextEntity {
-                id: EntityId::from_bytes([62; 16]),
+                id: EntityId::from_bytes_unchecked([62; 16]),
                 short_id: "mc01".to_owned(),
                 content_hash: 0x01,
                 entity_type: 62,
