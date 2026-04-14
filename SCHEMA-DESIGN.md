@@ -422,15 +422,15 @@ The app decides how to handle model changes (wipe and re-embed, or abort).
 
 ## HNSW Deletion Strategy
 
-**v1: Lazy deletion.** When an entity is deleted:
+**Current v1 behavior: eager delete cleanup.** When an entity is deleted:
 - Remove from `entities`, `vectors`, all indexes
-- Do NOT touch `hnsw_neighbors` — the node stays in the graph as a ghost
-- During search, check each candidate against `entities` db — skip if missing
-- Cost: one existence check per HNSW candidate (~128 checks at ef=128, ~0.5ms)
+- Delete `hnsw_neighbors[E]`
+- Scan surviving HNSW rows and scrub `E` from their neighbor lists
+- Decrement `hnsw_meta["count"]` and repair `hnsw_meta["entry_point"]` if needed
+- During search, still check candidate existence defensively because vectors/entities can become partially inconsistent outside normal HNSW bookkeeping
 
-**Later: Dreamer-driven rebuild.** New dreamer job kind `index_maintenance`:
-- Nightly: count dead nodes (entries in `hnsw_neighbors` with no matching `entities` entry)
-- If dead ratio > 10%: full HNSW rebuild (re-insert all live vectors into fresh graph)
+**Maintenance rebuilds still matter.** Rebuild is now primarily for graph healing, compatibility checks, and larger maintenance work rather than routine dead-node cleanup:
+- Run maintenance rebuilds when graph quality has degraded or operator workflows require it
 - At 50K scale, rebuild takes seconds
 
 ---
@@ -448,10 +448,12 @@ When `delete_entity(E)` is called, one write transaction does:
    delete text_meta[E]
    delete text_forward[E]
 
-2. VECTOR (lazy HNSW delete)
+2. VECTOR (eager HNSW delete)
    delete vectors[E]
+   delete hnsw_neighbors[E]
+   scrub E from surviving neighbor lists
    hnsw_meta["count"] -= 1
-   (hnsw_neighbors untouched — lazy deletion)
+   repair hnsw_meta["entry_point"] if needed
 
 3. PHONETIC DEINDEX
    for each code associated with E:
