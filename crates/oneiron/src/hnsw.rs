@@ -437,9 +437,11 @@ fn beam_search(
 
     let mut candidates: BinaryHeap<Reverse<HeapEntry>> = BinaryHeap::new();
     let mut results: BinaryHeap<HeapEntry> = BinaryHeap::new();
+    let graph_nodes = usize::try_from(store.hnsw_neighbors.len(txn)?).unwrap_or(usize::MAX);
     // Reserve extra headroom so the visited set can absorb frontier growth
     // without immediately rehashing.
-    let mut visited: HashSet<EntityId> = HashSet::with_capacity(ef.saturating_mul(2));
+    let mut visited: HashSet<EntityId> =
+        HashSet::with_capacity(visited_capacity_hint(ef, graph_nodes));
 
     visited.insert(entry_point);
     candidates.push(Reverse(entry));
@@ -522,7 +524,8 @@ fn beam_search_snapshot(
 
     let mut candidates: BinaryHeap<Reverse<HeapEntry>> = BinaryHeap::new();
     let mut results: BinaryHeap<HeapEntry> = BinaryHeap::new();
-    let mut visited: HashSet<EntityId> = HashSet::with_capacity(ef.saturating_mul(2));
+    let mut visited: HashSet<EntityId> =
+        HashSet::with_capacity(visited_capacity_hint(ef, neighbors_by_id.len()));
 
     visited.insert(entry_point);
     candidates.push(Reverse(entry));
@@ -579,6 +582,10 @@ fn beam_search_snapshot(
     let mut found = results.into_vec();
     found.sort_unstable();
     Ok(found)
+}
+
+fn visited_capacity_hint(ef: usize, graph_nodes: usize) -> usize {
+    ef.saturating_mul(2).min(graph_nodes.max(1))
 }
 
 fn read_count(store: &Store, txn: &RoTxn<'_>) -> Result<u64> {
@@ -792,6 +799,13 @@ mod tests {
             bytes.extend_from_slice(&value.to_le_bytes());
         }
         bytes
+    }
+
+    #[test]
+    fn visited_capacity_hint_caps_by_graph_size() {
+        assert_eq!(visited_capacity_hint(8, 3), 3);
+        assert_eq!(visited_capacity_hint(2, 16), 4);
+        assert_eq!(visited_capacity_hint(1, 0), 1);
     }
 
     fn put_vector_raw(
