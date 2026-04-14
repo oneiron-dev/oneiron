@@ -97,7 +97,12 @@ fn cosine_similarity_scalar(a: &[f32], b: &[f32]) -> f32 {
 
 #[inline]
 fn normalize(dot: f32, norm_a: f32, norm_b: f32) -> f32 {
-    if norm_a <= 0.0 || norm_b <= 0.0 {
+    if !dot.is_finite()
+        || !norm_a.is_finite()
+        || !norm_b.is_finite()
+        || norm_a <= 0.0
+        || norm_b <= 0.0
+    {
         return 0.0;
     }
 
@@ -112,6 +117,8 @@ unsafe fn cosine_similarity_avx2(a: &[f32], b: &[f32]) -> f32 {
     use std::arch::x86_64::{
         __m256, _mm256_fmadd_ps, _mm256_loadu_ps, _mm256_setzero_ps, _mm256_storeu_ps,
     };
+
+    debug_assert_eq!(a.len(), b.len());
 
     let len = a.len();
     let mut i = 0;
@@ -160,6 +167,8 @@ unsafe fn cosine_similarity_avx2(a: &[f32], b: &[f32]) -> f32 {
 /// before calling into the aarch64 NEON hot path.
 fn cosine_similarity_neon(a: &[f32], b: &[f32]) -> f32 {
     use std::arch::aarch64::{vaddq_f32, vaddvq_f32, vdupq_n_f32, vfmaq_f32, vld1q_f32};
+
+    debug_assert_eq!(a.len(), b.len());
 
     let len = a.len();
     let mut i = 0;
@@ -250,7 +259,12 @@ mod tests {
             norm_b += bi * bi;
         }
 
-        if norm_a <= 0.0 || norm_b <= 0.0 {
+        if !dot.is_finite()
+            || !norm_a.is_finite()
+            || !norm_b.is_finite()
+            || norm_a <= 0.0
+            || norm_b <= 0.0
+        {
             return 0.0;
         }
 
@@ -299,6 +313,18 @@ mod tests {
 
         approx_eq(cosine_similarity(&a, &b), 0.0, 1e-6);
         approx_eq(cosine_distance(&a, &b), 1.0, 1e-6);
+    }
+
+    #[test]
+    fn cosine_returns_zero_for_non_finite_inputs() {
+        let nan = [f32::NAN, 1.0, 2.0, 3.0];
+        let inf = [f32::INFINITY, 1.0, 2.0, 3.0];
+        let finite = [1.0_f32, 2.0, 3.0, 4.0];
+
+        approx_eq(cosine_similarity(&nan, &finite), 0.0, 1e-6);
+        approx_eq(cosine_distance(&nan, &finite), 1.0, 1e-6);
+        approx_eq(cosine_similarity(&inf, &finite), 0.0, 1e-6);
+        approx_eq(cosine_distance(&inf, &finite), 1.0, 1e-6);
     }
 
     #[test]

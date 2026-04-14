@@ -81,6 +81,11 @@ impl Vault {
                 "dimensions must be greater than zero".to_owned(),
             ));
         }
+        if config.hnsw.m_max_0 == 0 {
+            return Err(Error::InvalidConfig(
+                "hnsw m_max_0 must be greater than zero".to_owned(),
+            ));
+        }
         if config.map_size < MIN_MAP_SIZE_BYTES {
             return Err(Error::InvalidConfig(format!(
                 "map_size must be at least {MIN_MAP_SIZE_BYTES} bytes"
@@ -1863,7 +1868,7 @@ mod tests {
     }
 
     #[test]
-    fn validates_dimensions_and_map_size() -> Result<()> {
+    fn validates_dimensions_hnsw_and_map_size() -> Result<()> {
         let temp_dir = tempfile::tempdir()?;
 
         let mut invalid_dims = test_config();
@@ -1873,6 +1878,17 @@ mod tests {
             Err(err) => err,
         };
         assert!(matches!(err, Error::InvalidConfig(_)));
+
+        let mut invalid_hnsw = test_config();
+        invalid_hnsw.hnsw.m_max_0 = 0;
+        let err = match Vault::open(temp_dir.path(), invalid_hnsw) {
+            Ok(_) => panic!("expected invalid config"),
+            Err(err) => err,
+        };
+        assert!(matches!(
+            err,
+            Error::InvalidConfig(ref message) if message == "hnsw m_max_0 must be greater than zero"
+        ));
 
         let mut invalid_map = test_config();
         invalid_map.map_size = 0;
