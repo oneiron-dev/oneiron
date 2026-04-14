@@ -45,6 +45,13 @@ fn edge_kind_prefix(id: &EntityId, kind: EdgeKind) -> [u8; 17] {
     prefix
 }
 
+fn require_key_len(key: &[u8], expected: usize, context: &'static str) -> Result<()> {
+    if key.len() != expected {
+        return Err(Error::CorruptedIndex(context));
+    }
+    Ok(())
+}
+
 /// Returns the first outbound ChildOf parent for `node`, or `None` if it has
 /// no ChildOf edge (i.e. it is a root).
 ///
@@ -56,11 +63,9 @@ fn first_child_of_parent(
     node: &EntityId,
 ) -> Result<Option<EntityId>> {
     let prefix = edge_kind_prefix(node, EdgeKind::ChildOf);
-    for entry in store.edges_out.prefix_iter(rtxn, &prefix)? {
+    if let Some(entry) = store.edges_out.prefix_iter(rtxn, &prefix)?.next() {
         let (key, _) = entry?;
-        if key.len() != EDGE_KEY_LEN {
-            continue;
-        }
+        require_key_len(key, EDGE_KEY_LEN, "edge record")?;
         let parent = EntityId::from_bytes(
             key[17..33]
                 .try_into()
@@ -311,9 +316,7 @@ impl Vault {
         let mut ids = Vec::new();
         for entry in self.store.temporal_learned.iter(&rtxn)? {
             let (key, _) = entry?;
-            if key.len() != 24 {
-                continue;
-            }
+            require_key_len(key, 24, "temporal learned key")?;
             let ts = u64::from_be_bytes(
                 key[..8]
                     .try_into()
@@ -412,9 +415,7 @@ impl Vault {
         let mut ids = Vec::new();
         for entry in self.store.type_index.prefix_iter(&rtxn, &[entity_type])? {
             let (key, _) = entry?;
-            if key.len() != 17 {
-                continue;
-            }
+            require_key_len(key, 17, "type index key")?;
             let id = EntityId::from_bytes(
                 key[1..17]
                     .try_into()
@@ -484,9 +485,7 @@ impl Vault {
         let mut ids = Vec::new();
         for entry in db.prefix_iter(rtxn, &prefix)? {
             let (key, _) = entry?;
-            if key.len() != EDGE_KEY_LEN {
-                continue;
-            }
+            require_key_len(key, EDGE_KEY_LEN, "edge record")?;
             let peer = EntityId::from_bytes(
                 key[17..33]
                     .try_into()
@@ -563,9 +562,7 @@ impl Vault {
             let child_prefix = edge_kind_prefix(&node, EdgeKind::ChildOf);
             for entry in self.store.edges_in.prefix_iter(&rtxn, &child_prefix)? {
                 let (key, _) = entry?;
-                if key.len() != EDGE_KEY_LEN {
-                    continue;
-                }
+                require_key_len(key, EDGE_KEY_LEN, "edge record")?;
                 let child = EntityId::from_bytes(
                     key[17..33]
                         .try_into()
