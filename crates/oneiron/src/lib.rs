@@ -217,13 +217,17 @@ impl Vault {
 
         self.with_write_txn(|wtxn| {
             let existed_out = self.store.edges_out.delete(wtxn, &key_out)?;
-            self.store.edges_in.delete(wtxn, &key_in)?;
+            let deleted_in = self.store.edges_in.delete(wtxn, &key_in)?;
 
             if !existed_out {
+                // Inbound-only rows are opportunistic cleanup for an inconsistent
+                // reverse index and do not affect the outbound graph PPR uses.
+                let _ = deleted_in;
                 return Ok(false);
             }
 
             ppr::invalidate_ppr_for_edge(&self.store, wtxn, src, tgt)?;
+            ppr::increment_graph_version(&self.store, wtxn)?;
             Ok(true)
         })
     }
@@ -1883,6 +1887,50 @@ mod tests {
             decode_forward_codes(forward)?,
             vec!["ABC".to_owned(), "DEF".to_owned()]
         );
+        Ok(())
+    }
+
+    #[test]
+    fn phonetic_reindex_repairs_missing_forward_codes() -> Result<()> {
+        let temp_dir = tempfile::tempdir()?;
+        let vault = Vault::open(temp_dir.path(), test_config())?;
+        let id = EntityId::now();
+
+        vault
+            .batch()
+            .put(&id, 0, test_time_range(1, 2), 3, b"migrated")
+            .phonetic(&id, &["ABC"])
+            .commit()?;
+
+        let mut wtxn = vault.store.env.write_txn()?;
+        vault
+            .store
+            .phonetic_forward
+            .delete(&mut wtxn, id.as_bytes())?;
+        wtxn.commit()?;
+
+        vault.batch().phonetic(&id, &["ABC", "DEF"]).commit()?;
+
+        let rtxn = vault.store.env.read_txn()?;
+        let forward = vault
+            .store
+            .phonetic_forward
+            .get(&rtxn, id.as_bytes())?
+            .ok_or(Error::EntityNotFound)?;
+        assert_eq!(
+            decode_forward_codes(forward)?,
+            vec!["ABC".to_owned(), "DEF".to_owned()]
+        );
+        drop(rtxn);
+
+        assert!(vault.delete_entity(&id)?);
+
+        let rtxn = vault.store.env.read_txn()?;
+        for code in ["ABC", "DEF"] {
+            if let Some(posting) = vault.store.phonetic_index.get(&rtxn, code.as_bytes())? {
+                assert!(!posting.chunks_exact(16).any(|chunk| chunk == id.as_bytes()));
+            }
+        }
         Ok(())
     }
 
