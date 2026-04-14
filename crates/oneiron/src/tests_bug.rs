@@ -1,3 +1,4 @@
+use super::EDGE_VALUE_LEN;
 use crate::*;
 
 #[test]
@@ -35,5 +36,63 @@ fn test_intra_batch_cycle() {
     assert!(
         !vault.edge_exists(&b, EdgeKind::ChildOf, &a).unwrap(),
         "b→a edge should not persist after cycle abort"
+    );
+}
+
+#[test]
+fn learned_range_rejects_corrupted_key_length() {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let vault = Vault::open(temp_dir.path(), VaultConfig::device()).unwrap();
+
+    vault
+        .with_write_txn(|wtxn| {
+            vault
+                .store
+                .temporal_learned
+                .put(wtxn, &[0_u8; 23], &[])
+                .unwrap();
+            Ok(())
+        })
+        .unwrap();
+
+    let result = vault.entities_in_learned_range(0, 10);
+    assert!(
+        matches!(result, Err(Error::CorruptedIndex("temporal learned key"))),
+        "expected corrupted temporal learned key, got {result:?}"
+    );
+}
+
+#[test]
+fn sources_reject_corrupted_edge_key_length() {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let vault = Vault::open(temp_dir.path(), VaultConfig::device()).unwrap();
+    let parent = EntityId::now();
+
+    vault
+        .batch()
+        .put(&parent, 61, TimeRange { start: 1, end: 1 }, 2, b"parent")
+        .commit()
+        .unwrap();
+
+    let mut bad_key = Vec::with_capacity(32);
+    bad_key.extend_from_slice(parent.as_bytes());
+    bad_key.push(EdgeKind::ChildOf as u8);
+    bad_key.extend_from_slice(&[0_u8; 15]);
+
+    vault
+        .with_write_txn(|wtxn| {
+            vault
+                .store
+                .edges_in
+                .put(wtxn, &bad_key, &[0_u8; EDGE_VALUE_LEN])
+                .unwrap();
+            Ok(())
+        })
+        .unwrap();
+
+    let result = vault.sources(&parent, EdgeKind::ChildOf, None);
+    assert!(
+        matches!(result, Err(Error::CorruptedIndex("edge record"))),
+        "expected corrupted edge record, got {result:?}"
     );
 }
