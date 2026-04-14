@@ -31,8 +31,10 @@ pub struct MaintenanceBuilder<'a> {
 pub struct MaintenanceReport {
     /// Nodes omitted from the rebuilt HNSW graph versus the previously committed count.
     ///
-    /// In heal mode this includes invalid vector rows that were skipped; consult
-    /// `hnsw_invalid_vectors_skipped` for the explicit invalid-row breakdown.
+    /// In heal mode this can overlap with skipped invalid rows only when those rows
+    /// were already present in the previously committed graph; consult
+    /// `hnsw_invalid_vectors_skipped` for the explicit invalid-row breakdown, and do
+    /// not assume the two counters are mutually inclusive.
     pub hnsw_dead_nodes_removed: u64,
     /// Live HNSW nodes after the rebuild commits.
     pub hnsw_live_nodes: u64,
@@ -674,6 +676,36 @@ mod tests {
                 expected: 4,
                 got: 3,
             }
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn build_hnsw_graph_from_snapshot_rejects_missing_entry_point_vector() -> Result<()> {
+        let temp_dir = tempfile::tempdir()?;
+        let vault = Vault::open(temp_dir.path(), test_config())?;
+        let a = entity(98);
+        let b = entity(99);
+
+        for (id, vector) in [(a, [1.0, 0.0, 0.0, 0.0]), (b, [0.0, 1.0, 0.0, 0.0])] {
+            vault.put_entity(&id, 0, test_time_range(1, 1), 1, b"node")?;
+            vault.put_vector(&id, &vector)?;
+        }
+
+        {
+            let mut wtxn = vault.store.env.write_txn()?;
+            vault.store.vectors.delete(&mut wtxn, a.as_bytes())?;
+            wtxn.commit()?;
+        }
+
+        let rtxn = vault.store.env.read_txn()?;
+        let err = build_hnsw_graph_from_snapshot(&vault.store, &vault.config, &rtxn, &[a, b])
+            .unwrap_err();
+        assert!(matches!(
+            err,
+            Error::InvariantViolation(
+                "validated rebuild vector disappeared within the same read snapshot"
+            )
         ));
         Ok(())
     }

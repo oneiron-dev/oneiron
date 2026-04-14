@@ -13,6 +13,7 @@ use crate::types::{EntityId, ScoredEntity, VaultConfig, ENTITY_ID_LEN};
 const ENTRY_POINT_KEY: &[u8] = b"entry_point";
 pub(crate) const COUNT_KEY: &[u8] = b"count";
 
+#[derive(Debug)]
 pub(crate) struct RebuiltHnswGraph {
     pub entry_point: Option<EntityId>,
     pub count: u64,
@@ -390,9 +391,7 @@ fn beam_search_snapshot(
 ) -> Result<Vec<HeapEntry>> {
     let ef = ef.max(1);
     let query_vector = load_required_vector(store, rtxn, query_id)?;
-    let Some(entry_vector) = load_vector(store, rtxn, &entry_point)? else {
-        return Ok(Vec::new());
-    };
+    let entry_vector = load_required_vector(store, rtxn, &entry_point)?;
 
     let entry = HeapEntry {
         id: entry_point,
