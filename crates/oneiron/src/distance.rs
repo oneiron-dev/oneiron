@@ -59,10 +59,8 @@ fn cosine_similarity_scalar(a: &[f32], b: &[f32]) -> f32 {
         let b7 = b[i + 7];
 
         dot += a0 * b0 + a1 * b1 + a2 * b2 + a3 * b3 + a4 * b4 + a5 * b5 + a6 * b6 + a7 * b7;
-        norm_a +=
-            a0 * a0 + a1 * a1 + a2 * a2 + a3 * a3 + a4 * a4 + a5 * a5 + a6 * a6 + a7 * a7;
-        norm_b +=
-            b0 * b0 + b1 * b1 + b2 * b2 + b3 * b3 + b4 * b4 + b5 * b5 + b6 * b6 + b7 * b7;
+        norm_a += a0 * a0 + a1 * a1 + a2 * a2 + a3 * a3 + a4 * a4 + a5 * a5 + a6 * a6 + a7 * a7;
+        norm_b += b0 * b0 + b1 * b1 + b2 * b2 + b3 * b3 + b4 * b4 + b5 * b5 + b6 * b6 + b7 * b7;
 
         i += 8;
     }
@@ -159,9 +157,7 @@ unsafe fn cosine_similarity_avx2(a: &[f32], b: &[f32]) -> f32 {
 
 #[cfg(target_arch = "aarch64")]
 fn cosine_similarity_neon(a: &[f32], b: &[f32]) -> f32 {
-    use std::arch::aarch64::{
-        vaddq_f32, vaddvq_f32, vdupq_n_f32, vfmaq_f32, vld1q_f32,
-    };
+    use std::arch::aarch64::{vaddq_f32, vaddvq_f32, vdupq_n_f32, vfmaq_f32, vld1q_f32};
 
     let len = a.len();
     let mut i = 0;
@@ -306,12 +302,10 @@ mod tests {
     #[test]
     fn cosine_matches_manual_formula_across_unroll_boundaries() {
         let a = [
-            0.5_f32, -0.75, 1.25, 0.125, -1.0, 0.625, 0.875, -0.5, 1.5, -1.25, 0.25, 0.75,
-            -0.375,
+            0.5_f32, -0.75, 1.25, 0.125, -1.0, 0.625, 0.875, -0.5, 1.5, -1.25, 0.25, 0.75, -0.375,
         ];
         let b = [
-            -0.25_f32, 0.5, 0.75, -1.0, 0.125, 1.25, -0.625, 0.375, -1.5, 0.875, 0.5, -0.25,
-            1.125,
+            -0.25_f32, 0.5, 0.75, -1.0, 0.125, 1.25, -0.625, 0.375, -1.5, 0.875, 0.5, -0.25, 1.125,
         ];
 
         let expected = manual_cosine_similarity(&a, &b);
