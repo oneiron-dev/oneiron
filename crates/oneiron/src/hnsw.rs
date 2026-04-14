@@ -597,6 +597,16 @@ fn write_neighbors(
     Ok(())
 }
 
+fn load_vector(store: &Store, txn: &RoTxn<'_>, id: &EntityId) -> Result<Option<Vec<f32>>> {
+    let Some(raw) = store.vectors.get(txn, id.as_bytes())? else {
+        return Ok(None);
+    };
+
+    let mut vector = Vec::new();
+    decode_vector_into(raw, &mut vector)?;
+    Ok(Some(vector))
+}
+
 fn load_vector_into<'a>(
     store: &Store,
     txn: &RoTxn<'_>,
