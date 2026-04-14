@@ -123,10 +123,14 @@ impl Vault {
     /// Deletes an entity blob by ID.
     pub fn delete_entity(&self, id: &EntityId) -> Result<bool> {
         let mut wtxn = self.store.env.write_txn()?;
-        let (existed, neighbors) = deindex_entity(&self.store, &mut wtxn, id)?;
+        let (existed, had_vector, had_graph_mutation, neighbors) =
+            deindex_entity(&self.store, &mut wtxn, id)?;
         ppr::invalidate_ppr_for_delete(&self.store, &mut wtxn, id, &neighbors)?;
-        if existed {
+        if had_graph_mutation {
             ppr::increment_graph_version(&self.store, &mut wtxn)?;
+        }
+        if had_vector {
+            crate::hnsw::increment_vector_version(&self.store, &mut wtxn)?;
         }
         wtxn.commit()?;
         Ok(existed)
@@ -677,7 +681,10 @@ mod tests {
     use xxhash_rust::xxh32::xxh32;
 
     use super::*;
-    use crate::store::TEMPORAL_LONG_INTERVALS_SCHEMA_VERSION_KEY;
+    use crate::store::{
+        GRAPH_VERSION_KEY, HNSW_CONFIG_KEY, TEMPORAL_LONG_INTERVALS_SCHEMA_VERSION_KEY,
+        VECTOR_VERSION_KEY,
+    };
 
     #[cfg(not(feature = "sync"))]
     const DB_NAMES: [&str; 19] = [
@@ -771,6 +778,16 @@ mod tests {
             .ok_or(Error::EntityNotFound)
     }
 
+    fn read_hnsw_meta_u64(vault: &Vault, key: &[u8]) -> Result<u64> {
+        let rtxn = vault.store.env.read_txn()?;
+        let Some(raw) = vault.store.hnsw_meta.get(&rtxn, key)? else {
+            return Ok(0);
+        };
+        Ok(u64::from_le_bytes(
+            raw.try_into().map_err(|_| Error::InvalidKey)?,
+        ))
+    }
+
     #[test]
     fn encode_edge_key_has_exact_layout() {
         let src = EntityId::from_bytes([0x11; 16]);
@@ -859,6 +876,27 @@ mod tests {
             .hnsw_neighbors
             .get(&rtxn, id.as_bytes())?
             .is_some());
+        Ok(())
+    }
+
+    #[test]
+    fn vector_version_bumps_once_per_batch_commit() -> Result<()> {
+        let temp_dir = tempfile::tempdir()?;
+        let vault = Vault::open(temp_dir.path(), test_config())?;
+        let a = EntityId::now();
+        let b = EntityId::now();
+
+        assert_eq!(read_hnsw_meta_u64(&vault, VECTOR_VERSION_KEY)?, 0);
+
+        vault
+            .batch()
+            .vector(&a, &[0.1_f32, 0.2, 0.3, 0.4])
+            .vector(&b, &[0.4_f32, 0.3, 0.2, 0.1])
+            .commit()?;
+        assert_eq!(read_hnsw_meta_u64(&vault, VECTOR_VERSION_KEY)?, 1);
+
+        vault.batch().delete(&a).delete(&b).commit()?;
+        assert_eq!(read_hnsw_meta_u64(&vault, VECTOR_VERSION_KEY)?, 2);
         Ok(())
     }
 
@@ -1760,6 +1798,25 @@ mod tests {
     }
 
     #[test]
+    fn delete_entity_cleans_edge_only_nodes_and_bumps_graph_version() -> Result<()> {
+        let temp_dir = tempfile::tempdir()?;
+        let vault = Vault::open(temp_dir.path(), test_config())?;
+        let src = EntityId::now();
+        let tgt = EntityId::now();
+
+        vault.put_edge(&src, EdgeKind::Supports, &tgt, 0.9)?;
+        let before = read_hnsw_meta_u64(&vault, GRAPH_VERSION_KEY)?;
+
+        assert!(!vault.delete_entity(&src)?);
+        assert!(vault.edges_out(&src)?.is_empty());
+        assert!(vault.edges_in(&tgt)?.is_empty());
+
+        let after = read_hnsw_meta_u64(&vault, GRAPH_VERSION_KEY)?;
+        assert_eq!(after, before + 1);
+        Ok(())
+    }
+
+    #[test]
     fn put_entity_simple_api_uses_batch() -> Result<()> {
         let temp_dir = tempfile::tempdir()?;
         let vault = Vault::open(temp_dir.path(), test_config())?;
@@ -1910,6 +1967,95 @@ mod tests {
             } if stored == "model-a" && requested == "model-b"
         ));
 
+        Ok(())
+    }
+
+    #[test]
+    fn detects_hnsw_config_mismatch_on_open() -> Result<()> {
+        let temp_dir = tempfile::tempdir()?;
+        let vault = Vault::open(temp_dir.path(), test_config())?;
+        drop(vault);
+
+        let mut cfg = test_config();
+        cfg.hnsw.ef_construction += 1;
+        let Err(err) = Vault::open(temp_dir.path(), cfg) else {
+            panic!("expected hnsw config mismatch");
+        };
+        assert!(matches!(
+            err,
+            Error::HnswConfigChanged {
+                ref stored,
+                ref requested
+            } if stored == "dimensions=4,m_max_0=64,ef_construction=200"
+                && requested == "dimensions=4,m_max_0=64,ef_construction=201"
+        ));
+
+        Ok(())
+    }
+
+    #[test]
+    fn detects_dimension_mismatch_on_open() -> Result<()> {
+        let temp_dir = tempfile::tempdir()?;
+        let vault = Vault::open(temp_dir.path(), test_config())?;
+        drop(vault);
+
+        let mut cfg = test_config();
+        cfg.dimensions = 8;
+        let Err(err) = Vault::open(temp_dir.path(), cfg) else {
+            panic!("expected hnsw config mismatch");
+        };
+        assert!(matches!(
+            err,
+            Error::HnswConfigChanged {
+                ref stored,
+                ref requested
+            } if stored == "dimensions=4,m_max_0=64,ef_construction=200"
+                && requested == "dimensions=8,m_max_0=64,ef_construction=200"
+        ));
+
+        Ok(())
+    }
+
+    #[test]
+    fn allows_ef_search_retuning_on_open() -> Result<()> {
+        let temp_dir = tempfile::tempdir()?;
+        let vault = Vault::open(temp_dir.path(), test_config())?;
+        let id = EntityId::now();
+        vault.put_entity(&id, 0, test_time_range(1, 1), 1, b"node")?;
+        vault.put_vector(&id, &[0.1, 0.2, 0.3, 0.4])?;
+        drop(vault);
+
+        let mut cfg = test_config();
+        cfg.hnsw.ef_search = 512;
+        let reopened = Vault::open(temp_dir.path(), cfg)?;
+        drop(reopened);
+        Ok(())
+    }
+
+    #[test]
+    fn rejects_populated_vault_missing_hnsw_compatibility_metadata() -> Result<()> {
+        let temp_dir = tempfile::tempdir()?;
+        let path = temp_dir.path();
+        let vault = Vault::open(path, test_config())?;
+        let id = EntityId::now();
+        vault.put_entity(&id, 0, test_time_range(1, 1), 1, b"node")?;
+        vault.put_vector(&id, &[0.1, 0.2, 0.3, 0.4])?;
+
+        {
+            let mut wtxn = vault.store.env.write_txn()?;
+            vault.store.hnsw_meta.delete(&mut wtxn, HNSW_CONFIG_KEY)?;
+            wtxn.commit()?;
+        }
+        drop(vault);
+
+        let Err(err) = Vault::open(path, test_config()) else {
+            panic!("expected missing compatibility metadata rejection");
+        };
+        assert!(matches!(
+            err,
+            Error::InvalidConfig(ref message)
+                if message.contains("missing complete vector/hnsw compatibility metadata")
+        ));
         Ok(())
     }
 
