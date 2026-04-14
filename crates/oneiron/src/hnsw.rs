@@ -366,7 +366,7 @@ fn beam_search(
 
     let mut candidates: BinaryHeap<Reverse<HeapEntry>> = BinaryHeap::new();
     let mut results: BinaryHeap<HeapEntry> = BinaryHeap::new();
-    let graph_nodes = usize::try_from(store.hnsw_neighbors.len(txn)?).unwrap_or(usize::MAX);
+    let graph_nodes = usize::try_from(store.hnsw_neighbors.len(txn)?).unwrap_or(0);
     // Reserve extra headroom so the visited set can absorb frontier growth
     // without immediately rehashing.
     let mut visited: HashSet<EntityId> =
@@ -528,7 +528,7 @@ fn rebuild_hnsw_from_current_snapshot(
 }
 
 fn collect_vector_ids(store: &Store, txn: &RoTxn<'_>) -> Result<Vec<EntityId>> {
-    let capacity = usize::try_from(store.vectors.len(txn)?).unwrap_or(usize::MAX);
+    let capacity = usize::try_from(store.vectors.len(txn)?).unwrap_or(0);
     let mut vector_ids = Vec::with_capacity(capacity);
     for entry in store.vectors.iter(txn)? {
         let (key, _) = entry?;
