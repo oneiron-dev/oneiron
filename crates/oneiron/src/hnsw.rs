@@ -172,8 +172,13 @@ fn hnsw_refresh(
 
         neighbors.push(*id);
         if neighbors.len() > config.hnsw.m_max_0 {
-            neighbors =
-                prune_neighbors_for_node(store, &*wtxn, &neighbor_id, &neighbors, config.hnsw.m_max_0)?;
+            neighbors = prune_neighbors_for_node(
+                store,
+                &*wtxn,
+                &neighbor_id,
+                &neighbors,
+                config.hnsw.m_max_0,
+            )?;
         }
 
         write_neighbors(store, wtxn, &neighbor_id, &neighbors)?;
@@ -347,7 +352,9 @@ pub(crate) fn hnsw_deindex(store: &Store, wtxn: &mut RwTxn<'_>, id: &EntityId) -
     let backlink_updates = collect_backlink_updates(store, &*wtxn, id)?;
     store.hnsw_neighbors.delete(wtxn, id.as_bytes())?;
     for (node_id, neighbors) in backlink_updates {
-        store.hnsw_neighbors.put(wtxn, node_id.as_bytes(), &neighbors)?;
+        store
+            .hnsw_neighbors
+            .put(wtxn, node_id.as_bytes(), &neighbors)?;
     }
 
     let count = read_count(store, &*wtxn)?;
@@ -562,9 +569,7 @@ fn read_entry_point(store: &Store, txn: &RoTxn<'_>) -> Result<Option<EntityId>> 
 }
 
 fn parse_entity_id(bytes: &[u8], err: &'static str) -> Result<EntityId> {
-    let raw: [u8; ENTITY_ID_LEN] = bytes
-        .try_into()
-        .map_err(|_| Error::CorruptedIndex(err))?;
+    let raw: [u8; ENTITY_ID_LEN] = bytes.try_into().map_err(|_| Error::CorruptedIndex(err))?;
     Ok(EntityId::from_bytes(raw))
 }
 
@@ -780,8 +785,12 @@ mod tests {
         write_neighbors(&store, &mut wtxn, &a, &[b, c])?;
         write_neighbors(&store, &mut wtxn, &b, &[a])?;
         write_neighbors(&store, &mut wtxn, &c, &[a])?;
-        store.hnsw_meta.put(&mut wtxn, ENTRY_POINT_KEY, a.as_bytes())?;
-        store.hnsw_meta.put(&mut wtxn, COUNT_KEY, &3_u64.to_le_bytes())?;
+        store
+            .hnsw_meta
+            .put(&mut wtxn, ENTRY_POINT_KEY, a.as_bytes())?;
+        store
+            .hnsw_meta
+            .put(&mut wtxn, COUNT_KEY, &3_u64.to_le_bytes())?;
 
         hnsw_deindex(&store, &mut wtxn, &a)?;
 
@@ -812,8 +821,12 @@ mod tests {
         write_neighbors(&store, &mut wtxn, &a, &[b])?;
         write_neighbors(&store, &mut wtxn, &b, &[a, c])?;
         write_neighbors(&store, &mut wtxn, &c, &[b])?;
-        store.hnsw_meta.put(&mut wtxn, ENTRY_POINT_KEY, b.as_bytes())?;
-        store.hnsw_meta.put(&mut wtxn, COUNT_KEY, &3_u64.to_le_bytes())?;
+        store
+            .hnsw_meta
+            .put(&mut wtxn, ENTRY_POINT_KEY, b.as_bytes())?;
+        store
+            .hnsw_meta
+            .put(&mut wtxn, COUNT_KEY, &3_u64.to_le_bytes())?;
 
         put_vector_raw(&store, &mut wtxn, &a, &[0.0, 1.0, 0.0, 0.0])?;
         hnsw_insert(&store, &test_config(), &mut wtxn, &a, &[0.0, 1.0, 0.0, 0.0])?;
@@ -910,7 +923,10 @@ mod tests {
         vault.put_vector(&id, &[1.0, 0.0, 0.0, 0.0])?;
 
         let mut wtxn = vault.store.env.write_txn()?;
-        vault.store.vectors.put(&mut wtxn, id.as_bytes(), &[1, 2, 3])?;
+        vault
+            .store
+            .vectors
+            .put(&mut wtxn, id.as_bytes(), &[1, 2, 3])?;
         wtxn.commit()?;
 
         let err = vault
