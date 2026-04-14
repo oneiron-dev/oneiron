@@ -946,10 +946,40 @@ mod tests {
     }
 
     #[test]
-    fn delete_isolated_entity_increments_graph_version_once() -> Result<()> {
+    fn direct_delete_edge_increments_graph_version_and_stales_cache() -> Result<()> {
         let temp_dir = tempdir()?;
         let vault = Vault::open(temp_dir.path(), test_config())?;
         let a = entity(34);
+        let b = entity(35);
+        let tr = TimeRange { start: 1, end: 1 };
+
+        vault.put_entity(&a, 1, tr, 1, b"a-data")?;
+        vault.put_entity(&b, 1, tr, 1, b"b-data")?;
+        vault.put_edge(&a, EdgeKind::BelongsTo, &b, 1.0)?;
+        let _ = ppr_query(&vault.store, &vault.config, &[a], 3, 0.15)?;
+        let seed_hash = hash_seeds(&[a], 3, 0.15);
+
+        let before = graph_version(&vault)?;
+        assert!(vault.delete_edge(&a, EdgeKind::BelongsTo, &b)?);
+        let after = graph_version(&vault)?;
+        assert_eq!(after, before + 1);
+
+        let rtxn = vault.store.env.read_txn()?;
+        let raw = vault
+            .store
+            .ppr_cache
+            .get(&rtxn, &seed_hash)?
+            .ok_or(Error::InvalidKey)?;
+        let (_, _, stale) = parse_cache_header(raw)?;
+        assert_eq!(stale, 1);
+        Ok(())
+    }
+
+    #[test]
+    fn delete_isolated_entity_increments_graph_version_once() -> Result<()> {
+        let temp_dir = tempdir()?;
+        let vault = Vault::open(temp_dir.path(), test_config())?;
+        let a = entity(36);
         let tr = TimeRange { start: 1, end: 1 };
 
         vault.put_entity(&a, 1, tr, 1, b"a-data")?;
@@ -969,7 +999,7 @@ mod tests {
     fn batch_delete_isolated_entity_increments_graph_version_once() -> Result<()> {
         let temp_dir = tempdir()?;
         let vault = Vault::open(temp_dir.path(), test_config())?;
-        let a = entity(35);
+        let a = entity(37);
         let tr = TimeRange { start: 1, end: 1 };
 
         vault.put_entity(&a, 1, tr, 1, b"a-data")?;
@@ -989,9 +1019,9 @@ mod tests {
     fn cleanup_conservatively_evicts_cache_for_missing_dep_entities() -> Result<()> {
         let temp_dir = tempdir()?;
         let vault = Vault::open(temp_dir.path(), test_config())?;
-        let a = entity(36);
-        let b = entity(37);
-        let missing = entity(38);
+        let a = entity(38);
+        let b = entity(39);
+        let missing = entity(40);
         let tr = TimeRange { start: 1, end: 1 };
 
         vault.put_entity(&a, 1, tr, 1, b"a-data")?;

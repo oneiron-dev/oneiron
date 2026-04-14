@@ -24,7 +24,7 @@
 | 13 | `temporal_occurred_start` | `start_ts(u64 8B BE) \| entity_id(16)` | 24B | empty | 0B | Bi-temporal: when it started |
 | 14 | `temporal_occurred_end` | `end_ts(u64 8B BE) \| entity_id(16)` | 24B | empty | 0B | Bi-temporal: when it ended |
 | 15 | `temporal_learned` | `learned_ts(u64 8B BE) \| entity_id(16)` | 24B | empty | 0B | Bi-temporal: when we recorded it |
-| 16 | `temporal_long_intervals` | `entity_id` (16B) | 16B | `start_ts(u64 8B BE) \| end_ts(u64 8B BE)` | 16B | Long-interval "spanner" temporal index |
+| 16 | `temporal_long_intervals` | `end_ts(u64 8B BE) \| entity_id(16)` | 24B | `start_ts(u64 8B BE)` | 8B | Long-interval "spanner" temporal index |
 | 17 | `phonetic_index` | `phonetic_code` (UTF-8) | variable | `[(entity_id(16))]` packed | N×16B | Phonetic code → entity lookup |
 | 18 | `phonetic_forward` | `entity_id` (16B) | 16B | `[code1\0code2\0...]` packed UTF-8 | variable | Phonetic forward index (for deindexing) |
 | 19 | `short_ids` | `entity_id` (16B) | 16B | `short_id(var) \| content_hash(1B)` | variable | Short ID + content hash mapping |
@@ -46,7 +46,7 @@ const MAX_DBS: u32 = 25; // 20 core + room for sync and future databases
 | +`type_index` | didn't exist | type(1)\|id(16) → empty | Entity type filtering in Rust, not across FFI. Post-filtering 300 blobs in TypeScript is bad. |
 | +`temporal_occurred_start/end` | didn't exist | ts(8)\|id(16) → empty | Bi-temporal interval indexing. Temporal is a 5th retrieval signal, not just a filter. Hindsight showed +46.7% on temporal reasoning. |
 | +`temporal_learned` | didn't exist | ts(8)\|id(16) → empty | "When did we learn this?" vs "when did it happen?" — different temporal dimensions. |
-| +`temporal_long_intervals` | didn't exist | entity_id → (start,end) | Long-range temporal "spanner" index for wide-window queries. |
+| +`temporal_long_intervals` | didn't exist | end_ts\|entity_id → start_ts | Long-range temporal "spanner" index for wide-window queries. |
 | +`phonetic_index` | didn't exist | code → [(id)] | Voice-first product needs phonetic matching for ASR misspellings (CROSS-ARCH-013). 5th retrieval signal. |
 | +`phonetic_forward` | didn't exist | entity_id → [codes] | Forward index for O(codes) phonetic deindexing. |
 | +`text_forward` | didn't exist | entity_id → [terms] | Forward index for O(terms) deindexing without requiring original text. |

@@ -389,7 +389,7 @@ fn beam_search(
             break;
         }
 
-        let neighbors = load_neighbors(store, txn, &current.id)?;
+        let neighbors = load_neighbors_lenient(store, txn, &current.id)?;
         for neighbor_id in neighbors {
             if !visited.insert(neighbor_id) {
                 continue;
@@ -606,20 +606,32 @@ fn parse_entity_id(bytes: &[u8], err: &'static str) -> Result<EntityId> {
     EntityId::from_bytes(raw).map_err(|_| Error::CorruptedIndex(err))
 }
 
-fn load_neighbors(store: &Store, txn: &RoTxn<'_>, id: &EntityId) -> Result<Vec<EntityId>> {
-    let Some(raw) = store.hnsw_neighbors.get(txn, id.as_bytes())? else {
-        return Ok(Vec::new());
-    };
-
-    if raw.len() % ENTITY_ID_LEN != 0 {
+fn decode_neighbors_strict(raw: &[u8]) -> Result<Vec<EntityId>> {
+    if !raw.len().is_multiple_of(ENTITY_ID_LEN) {
         return Err(Error::CorruptedIndex(ERR_NEIGHBOR_VALUE_BYTES));
     }
 
     let mut neighbors = Vec::with_capacity(raw.len() / ENTITY_ID_LEN);
     for chunk in raw.chunks_exact(ENTITY_ID_LEN) {
         let bytes: [u8; ENTITY_ID_LEN] = chunk.try_into().expect("chunk length is exact");
-        // HNSW neighbor lists are best-effort graph data. Reserved sentinel
-        // garbage should not take whole search path down.
+        let neighbor = EntityId::from_bytes(bytes)
+            .map_err(|_| Error::CorruptedIndex(ERR_NEIGHBOR_VALUE_BYTES))?;
+        neighbors.push(neighbor);
+    }
+
+    Ok(neighbors)
+}
+
+fn decode_neighbors_lenient(raw: &[u8]) -> Result<Vec<EntityId>> {
+    if !raw.len().is_multiple_of(ENTITY_ID_LEN) {
+        return Err(Error::CorruptedIndex(ERR_NEIGHBOR_VALUE_BYTES));
+    }
+
+    let mut neighbors = Vec::with_capacity(raw.len() / ENTITY_ID_LEN);
+    for chunk in raw.chunks_exact(ENTITY_ID_LEN) {
+        let bytes: [u8; ENTITY_ID_LEN] = chunk.try_into().expect("chunk length is exact");
+        // Search traversal is best-effort. Reserved sentinel garbage should not
+        // take the whole query path down.
         let Ok(neighbor) = EntityId::from_bytes(bytes) else {
             continue;
         };
@@ -627,6 +639,22 @@ fn load_neighbors(store: &Store, txn: &RoTxn<'_>, id: &EntityId) -> Result<Vec<E
     }
 
     Ok(neighbors)
+}
+
+fn load_neighbors(store: &Store, txn: &RoTxn<'_>, id: &EntityId) -> Result<Vec<EntityId>> {
+    let Some(raw) = store.hnsw_neighbors.get(txn, id.as_bytes())? else {
+        return Ok(Vec::new());
+    };
+
+    decode_neighbors_strict(raw)
+}
+
+fn load_neighbors_lenient(store: &Store, txn: &RoTxn<'_>, id: &EntityId) -> Result<Vec<EntityId>> {
+    let Some(raw) = store.hnsw_neighbors.get(txn, id.as_bytes())? else {
+        return Ok(Vec::new());
+    };
+
+    decode_neighbors_lenient(raw)
 }
 
 fn write_neighbors(
@@ -1111,6 +1139,34 @@ mod tests {
         let err = vault
             .search_vector(&[1.0, 0.0, 0.0, 0.0], 1)
             .expect_err("expected corrupted neighbor list");
+        assert!(matches!(
+            err,
+            Error::CorruptedIndex(message) if message == ERR_NEIGHBOR_VALUE_BYTES
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn hnsw_insert_rejects_corrupted_neighbor_lists() -> Result<()> {
+        let temp_dir = tempdir()?;
+        let vault = Vault::open(temp_dir.path(), test_config())?;
+        let a = EntityId::now();
+        let b = EntityId::now();
+
+        vault.put_entity(&a, 0, point(1, 1), 1, b"a")?;
+        vault.put_entity(&b, 0, point(1, 1), 1, b"b")?;
+        vault.put_vector(&a, &[1.0, 0.0, 0.0, 0.0])?;
+
+        let mut wtxn = vault.store.env.write_txn()?;
+        vault
+            .store
+            .hnsw_neighbors
+            .put(&mut wtxn, a.as_bytes(), &[0; ENTITY_ID_LEN])?;
+        wtxn.commit()?;
+
+        let err = vault
+            .put_vector(&b, &[0.9, 0.1, 0.0, 0.0])
+            .expect_err("expected corrupted write-side neighbors to fail");
         assert!(matches!(
             err,
             Error::CorruptedIndex(message) if message == ERR_NEIGHBOR_VALUE_BYTES

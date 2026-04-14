@@ -734,6 +734,10 @@ fn apply_phonetic(
             .chunks_exact(ENTITY_ID_LEN)
             .any(|chunk| chunk == id.as_bytes())
         {
+            if !forward_codes.iter().any(|known| known == code) {
+                forward_codes.push(code.clone());
+                forward_changed = true;
+            }
             continue;
         }
 
@@ -944,7 +948,6 @@ fn delete_from_phonetic_postings(store: &Store, wtxn: &mut RwTxn<'_>, id: &Entit
     Ok(())
 }
 
-#[cfg(feature = "sync")]
 fn log_phonetic_forward_fallback(id: &EntityId, reason: &'static str) {
     tracing::warn!(
         entity = %id.to_hex(),
@@ -952,9 +955,6 @@ fn log_phonetic_forward_fallback(id: &EntityId, reason: &'static str) {
         "phonetic_forward unavailable during delete; falling back to full scan"
     );
 }
-
-#[cfg(not(feature = "sync"))]
-fn log_phonetic_forward_fallback(_id: &EntityId, _reason: &'static str) {}
 
 fn delete_from_known_phonetic_codes(
     store: &Store,
