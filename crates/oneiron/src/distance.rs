@@ -156,6 +156,8 @@ unsafe fn cosine_similarity_avx2(a: &[f32], b: &[f32]) -> f32 {
 }
 
 #[cfg(target_arch = "aarch64")]
+/// Requires `a.len() == b.len()`. The dispatcher enforces that precondition
+/// before calling into the aarch64 NEON hot path.
 fn cosine_similarity_neon(a: &[f32], b: &[f32]) -> f32 {
     use std::arch::aarch64::{vaddq_f32, vaddvq_f32, vdupq_n_f32, vfmaq_f32, vld1q_f32};
 

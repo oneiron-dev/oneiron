@@ -311,14 +311,14 @@ pub(crate) fn hnsw_deindex(store: &Store, wtxn: &mut RwTxn<'_>, id: &EntityId) -
         return Ok(());
     }
 
-    let backlink_targets = collect_backlink_targets(store, &*wtxn, id)?;
-    store.hnsw_neighbors.delete(wtxn, id.as_bytes())?;
-    scrub_backlinks_in_place(store, wtxn, id, &backlink_targets)?;
-
     let count = read_count(store, &*wtxn)?;
     let new_count = count
         .checked_sub(1)
         .ok_or(Error::CorruptedIndex(ERR_COUNT_UNDERFLOW))?;
+    let backlink_targets = collect_backlink_targets(store, &*wtxn, id)?;
+    store.hnsw_neighbors.delete(wtxn, id.as_bytes())?;
+    scrub_backlinks_in_place(store, wtxn, id, &backlink_targets)?;
+
     store
         .hnsw_meta
         .put(wtxn, COUNT_KEY, &new_count.to_le_bytes())?;
