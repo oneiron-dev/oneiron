@@ -309,6 +309,14 @@ mod tests {
         ];
 
         let expected = manual_cosine_similarity(&a, &b);
+        approx_eq(super::cosine_similarity_scalar(&a, &b), expected, 1e-6);
+        approx_eq(
+            1.0 - super::cosine_similarity_scalar(&a, &b),
+            1.0 - expected,
+            1e-6,
+        );
+
+        // Keep the public dispatcher covered as well.
         approx_eq(cosine_similarity(&a, &b), expected, 1e-6);
         approx_eq(cosine_distance(&a, &b), 1.0 - expected, 1e-6);
     }

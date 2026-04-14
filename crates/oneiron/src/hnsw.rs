@@ -17,10 +17,13 @@ const ERR_COUNT_BYTES: &str = "hnsw count bytes are malformed";
 const ERR_NEIGHBOR_KEY_BYTES: &str = "hnsw neighbor key bytes are malformed";
 const ERR_NEIGHBOR_VALUE_BYTES: &str = "hnsw neighbor list bytes are malformed";
 const ERR_VECTOR_BYTES: &str = "hnsw vector bytes are malformed";
+const ERR_VECTOR_VERSION_BYTES: &str = "hnsw vector version bytes are malformed";
 const ERR_COUNT_UNDERFLOW: &str = "hnsw node count underflowed during delete";
-const ERR_COUNT_OVERFLOW: &str = "hnsw node count overflowed during insert";
+const ERR_COUNT_OVERFLOW: &str = "hnsw node count overflowed";
 const ERR_REMAINING_NODES_MISSING: &str = "hnsw count > 0 but no nodes remain";
 const ERR_EXISTING_NODE_ZERO_COUNT: &str = "hnsw node exists but count is zero";
+const ERR_ZERO_COUNT_GRAPH_NOT_EMPTY: &str =
+    "hnsw metadata says count is zero but graph rows still exist";
 
 #[derive(Debug)]
 pub(crate) struct RebuiltHnswGraph {
@@ -70,6 +73,11 @@ pub(crate) fn hnsw_insert(
 
     let mut count = read_count(store, &*wtxn)?;
     if count == 0 {
+        if read_entry_point(store, &*wtxn)?.is_some()
+            || store.hnsw_neighbors.first(&*wtxn)?.is_some()
+        {
+            return Err(Error::CorruptedIndex(ERR_ZERO_COUNT_GRAPH_NOT_EMPTY));
+        }
         store.hnsw_meta.put(wtxn, ENTRY_POINT_KEY, id.as_bytes())?;
         store.hnsw_meta.put(wtxn, COUNT_KEY, &1_u64.to_le_bytes())?;
         store.hnsw_neighbors.put(wtxn, id.as_bytes(), &[])?;
@@ -148,24 +156,29 @@ fn hnsw_refresh(
     nearest.retain(|entry| entry.id != *id);
     nearest.truncate(config.hnsw.m_max_0);
 
-    let mut merged_neighbors = load_neighbors(store, &*wtxn, id)?;
-    let mut added_neighbors = Vec::new();
+    let previous_neighbors = load_neighbors(store, &*wtxn, id)?;
+    let mut merged_neighbors = previous_neighbors.clone();
     for entry in nearest {
         if merged_neighbors.contains(&entry.id) {
             continue;
         }
         merged_neighbors.push(entry.id);
-        added_neighbors.push(entry.id);
     }
 
-    if added_neighbors.is_empty() {
-        return Ok(());
+    let pruned_neighbors =
+        prune_neighbors_for_node(store, &*wtxn, id, &merged_neighbors, config.hnsw.m_max_0)?;
+    let previous_set: HashSet<EntityId> = previous_neighbors.iter().copied().collect();
+    let pruned_set: HashSet<EntityId> = pruned_neighbors.iter().copied().collect();
+
+    if pruned_neighbors != previous_neighbors {
+        write_neighbors(store, wtxn, id, &pruned_neighbors)?;
     }
 
-    write_neighbors(store, wtxn, id, &merged_neighbors)?;
-
-    for neighbor_id in added_neighbors {
-        let mut neighbors = load_neighbors(store, &*wtxn, &neighbor_id)?;
+    for neighbor_id in pruned_neighbors
+        .iter()
+        .filter(|neighbor_id| !previous_set.contains(neighbor_id))
+    {
+        let mut neighbors = load_neighbors(store, &*wtxn, neighbor_id)?;
         if neighbors.contains(id) {
             continue;
         }
@@ -175,13 +188,27 @@ fn hnsw_refresh(
             neighbors = prune_neighbors_for_node(
                 store,
                 &*wtxn,
-                &neighbor_id,
+                neighbor_id,
                 &neighbors,
                 config.hnsw.m_max_0,
             )?;
         }
 
-        write_neighbors(store, wtxn, &neighbor_id, &neighbors)?;
+        write_neighbors(store, wtxn, neighbor_id, &neighbors)?;
+    }
+
+    for neighbor_id in previous_set
+        .iter()
+        .filter(|neighbor_id| !pruned_set.contains(neighbor_id))
+    {
+        let mut neighbors = load_neighbors(store, &*wtxn, neighbor_id)?;
+        let original_len = neighbors.len();
+        neighbors.retain(|neighbor| neighbor != id);
+        if neighbors.len() == original_len {
+            continue;
+        }
+
+        write_neighbors(store, wtxn, neighbor_id, &neighbors)?;
     }
 
     Ok(())
@@ -244,7 +271,7 @@ pub(crate) fn build_hnsw_graph_from_snapshot(
         neighbors_by_id.insert(*id, selected);
         count = count
             .checked_add(1)
-            .ok_or(Error::ArithmeticOverflow("hnsw node count"))?;
+            .ok_or(Error::IndexOverflow(ERR_COUNT_OVERFLOW))?;
     }
 
     let neighbors = vector_ids
@@ -291,7 +318,9 @@ pub(crate) fn read_vector_version(store: &Store, txn: &RoTxn<'_>) -> Result<u64>
         return Ok(0);
     };
 
-    let bytes: [u8; 8] = raw.try_into().map_err(|_| Error::InvalidKey)?;
+    let bytes: [u8; 8] = raw
+        .try_into()
+        .map_err(|_| Error::CorruptedIndex(ERR_VECTOR_VERSION_BYTES))?;
     Ok(u64::from_le_bytes(bytes))
 }
 
@@ -484,6 +513,7 @@ fn beam_search_snapshot(
     let ef = ef.max(1);
     let query_vector = load_required_vector(store, rtxn, query_id)?;
     let entry_vector = load_required_vector(store, rtxn, &entry_point)?;
+    let mut vector_buffer = Vec::with_capacity(query_vector.len());
 
     let entry = HeapEntry {
         id: entry_point,
@@ -492,7 +522,7 @@ fn beam_search_snapshot(
 
     let mut candidates: BinaryHeap<Reverse<HeapEntry>> = BinaryHeap::new();
     let mut results: BinaryHeap<HeapEntry> = BinaryHeap::new();
-    let mut visited: HashSet<EntityId> = HashSet::new();
+    let mut visited: HashSet<EntityId> = HashSet::with_capacity(ef.saturating_mul(2));
 
     visited.insert(entry_point);
     candidates.push(Reverse(entry));
@@ -517,11 +547,13 @@ fn beam_search_snapshot(
                 continue;
             }
 
-            let Some(neighbor_vector) = load_vector(store, rtxn, neighbor_id)? else {
+            let Some(neighbor_vector) =
+                load_vector_into(store, rtxn, neighbor_id, &mut vector_buffer)?
+            else {
                 continue;
             };
 
-            let distance = cosine_distance(&query_vector, &neighbor_vector);
+            let distance = cosine_distance(&query_vector, neighbor_vector);
             let should_add = results.len() < ef
                 || distance
                     < results
@@ -832,8 +864,39 @@ mod tests {
         hnsw_insert(&store, &test_config(), &mut wtxn, &a, &[0.0, 1.0, 0.0, 0.0])?;
 
         assert_eq!(read_count(&store, &wtxn)?, 3);
-        assert_eq!(load_neighbors(&store, &wtxn, &a)?, vec![b, c]);
-        assert_eq!(load_neighbors(&store, &wtxn, &b)?, vec![a, c]);
+        assert_eq!(load_neighbors(&store, &wtxn, &a)?, vec![c]);
+        assert_eq!(load_neighbors(&store, &wtxn, &b)?, vec![c]);
+        assert_eq!(load_neighbors(&store, &wtxn, &c)?, vec![a]);
+        Ok(())
+    }
+
+    #[test]
+    fn hnsw_refresh_prunes_stale_neighbors_without_new_ids() -> Result<()> {
+        let temp_dir = tempdir()?;
+        let store = Store::open(temp_dir.path(), &test_config())?;
+        let mut wtxn = store.env.write_txn()?;
+        let a = EntityId::now();
+        let b = EntityId::now();
+        let c = EntityId::now();
+
+        put_vector_raw(&store, &mut wtxn, &a, &[0.0, 1.0, 0.0, 0.0])?;
+        put_vector_raw(&store, &mut wtxn, &b, &[1.0, 0.0, 0.0, 0.0])?;
+        put_vector_raw(&store, &mut wtxn, &c, &[0.0, 1.0, 0.0, 0.0])?;
+
+        write_neighbors(&store, &mut wtxn, &a, &[b, c])?;
+        write_neighbors(&store, &mut wtxn, &b, &[a])?;
+        write_neighbors(&store, &mut wtxn, &c, &[a])?;
+        store
+            .hnsw_meta
+            .put(&mut wtxn, ENTRY_POINT_KEY, b.as_bytes())?;
+        store
+            .hnsw_meta
+            .put(&mut wtxn, COUNT_KEY, &3_u64.to_le_bytes())?;
+
+        hnsw_insert(&store, &test_config(), &mut wtxn, &a, &[0.0, 1.0, 0.0, 0.0])?;
+
+        assert_eq!(load_neighbors(&store, &wtxn, &a)?, vec![c]);
+        assert_eq!(load_neighbors(&store, &wtxn, &b)?, Vec::<EntityId>::new());
         assert_eq!(load_neighbors(&store, &wtxn, &c)?, vec![a]);
         Ok(())
     }
@@ -841,7 +904,9 @@ mod tests {
     #[test]
     fn put_vector_refresh_preserves_search_connectivity() -> Result<()> {
         let temp_dir = tempdir()?;
-        let vault = Vault::open(temp_dir.path(), test_config())?;
+        let mut config = test_config();
+        config.hnsw.m_max_0 = 2;
+        let vault = Vault::open(temp_dir.path(), config.clone())?;
         let a = EntityId::now();
         let b = EntityId::now();
         let c = EntityId::now();
@@ -991,6 +1056,52 @@ mod tests {
         assert!(matches!(
             err,
             Error::CorruptedIndex(message) if message == ERR_COUNT_BYTES
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn hnsw_insert_reports_non_empty_graph_when_count_is_zero() -> Result<()> {
+        let temp_dir = tempdir()?;
+        let store = Store::open(temp_dir.path(), &test_config())?;
+        let mut wtxn = store.env.write_txn()?;
+        let existing = EntityId::now();
+        let new_id = EntityId::now();
+
+        write_neighbors(&store, &mut wtxn, &existing, &[])?;
+        store
+            .hnsw_meta
+            .put(&mut wtxn, ENTRY_POINT_KEY, existing.as_bytes())?;
+        put_vector_raw(&store, &mut wtxn, &new_id, &[0.0, 1.0, 0.0, 0.0])?;
+
+        let err = hnsw_insert(
+            &store,
+            &test_config(),
+            &mut wtxn,
+            &new_id,
+            &[0.0, 1.0, 0.0, 0.0],
+        )
+        .expect_err("expected non-empty graph corruption");
+        assert!(matches!(
+            err,
+            Error::CorruptedIndex(message) if message == ERR_ZERO_COUNT_GRAPH_NOT_EMPTY
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn read_vector_version_reports_corrupted_bytes() -> Result<()> {
+        let temp_dir = tempdir()?;
+        let store = Store::open(temp_dir.path(), &test_config())?;
+        let mut wtxn = store.env.write_txn()?;
+        store
+            .hnsw_meta
+            .put(&mut wtxn, VECTOR_VERSION_KEY, &[1, 2, 3])?;
+
+        let err = read_vector_version(&store, &wtxn).expect_err("expected corrupted version bytes");
+        assert!(matches!(
+            err,
+            Error::CorruptedIndex(message) if message == ERR_VECTOR_VERSION_BYTES
         ));
         Ok(())
     }
