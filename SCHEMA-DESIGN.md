@@ -5,7 +5,7 @@
 
 ---
 
-## Database Layout (v1 — 18 databases)
+## Database Layout (v1 — 20 core databases, 22 with sync)
 
 | # | Database | Key Format | Key Size | Value Format | Value Size | Purpose |
 |---|----------|-----------|----------|-------------|-----------|---------|
@@ -24,12 +24,14 @@
 | 13 | `temporal_occurred_start` | `start_ts(u64 8B BE) \| entity_id(16)` | 24B | empty | 0B | Bi-temporal: when it started |
 | 14 | `temporal_occurred_end` | `end_ts(u64 8B BE) \| entity_id(16)` | 24B | empty | 0B | Bi-temporal: when it ended |
 | 15 | `temporal_learned` | `learned_ts(u64 8B BE) \| entity_id(16)` | 24B | empty | 0B | Bi-temporal: when we recorded it |
-| 16 | `phonetic_index` | `phonetic_code` (UTF-8) | variable | `[(entity_id(16))]` packed | N×16B | Phonetic code → entity lookup |
-| 17 | `short_ids` | `entity_id` (16B) | 16B | `short_id(var) \| content_hash(1B)` | variable | Short ID + content hash mapping |
-| 18 | `short_ids_reverse` | `short_id` (UTF-8, e.g. "cl88") | variable | `entity_id` (16B) | 16B | Short ID → full ID lookup |
+| 16 | `temporal_long_intervals` | `entity_id` (16B) | 16B | `start_ts(u64 8B BE) \| end_ts(u64 8B BE)` | 16B | Long-interval "spanner" temporal index |
+| 17 | `phonetic_index` | `phonetic_code` (UTF-8) | variable | `[(entity_id(16))]` packed | N×16B | Phonetic code → entity lookup |
+| 18 | `phonetic_forward` | `entity_id` (16B) | 16B | `[code1\0code2\0...]` packed UTF-8 | variable | Phonetic forward index (for deindexing) |
+| 19 | `short_ids` | `entity_id` (16B) | 16B | `short_id(var) \| content_hash(1B)` | variable | Short ID + content hash mapping |
+| 20 | `short_ids_reverse` | `short_id` (UTF-8, e.g. "cl88") | variable | `entity_id` (16B) | 16B | Short ID → full ID lookup |
 
 ```rust
-const MAX_DBS: u32 = 24; // 18 core + room for sync, entity_vad, future
+const MAX_DBS: u32 = 25; // 20 core + room for sync and future databases
 ```
 
 ---
@@ -44,14 +46,16 @@ const MAX_DBS: u32 = 24; // 18 core + room for sync, entity_vad, future
 | +`type_index` | didn't exist | type(1)\|id(16) → empty | Entity type filtering in Rust, not across FFI. Post-filtering 300 blobs in TypeScript is bad. |
 | +`temporal_occurred_start/end` | didn't exist | ts(8)\|id(16) → empty | Bi-temporal interval indexing. Temporal is a 5th retrieval signal, not just a filter. Hindsight showed +46.7% on temporal reasoning. |
 | +`temporal_learned` | didn't exist | ts(8)\|id(16) → empty | "When did we learn this?" vs "when did it happen?" — different temporal dimensions. |
+| +`temporal_long_intervals` | didn't exist | entity_id → (start,end) | Long-range temporal "spanner" index for wide-window queries. |
 | +`phonetic_index` | didn't exist | code → [(id)] | Voice-first product needs phonetic matching for ASR misspellings (CROSS-ARCH-013). 5th retrieval signal. |
+| +`phonetic_forward` | didn't exist | entity_id → [codes] | Forward index for O(codes) phonetic deindexing. |
 | +`text_forward` | didn't exist | entity_id → [terms] | Forward index for O(terms) deindexing without requiring original text. |
 | +`hnsw_meta` keys | entry_point, count | + model_id, hnsw_config, graph_version, vector_version, temporal schema version | Persist vector-space compatibility + maintenance guard metadata without clearing unrelated keys during rebuild. |
 | +`short_ids` | didn't exist | entity_id → short_id + hash | Vault-scoped permanent short IDs (`cl88`) + 1-byte content hash for freshness detection. |
 | +`short_ids_reverse` | didn't exist | short_id → entity_id | Reverse lookup for hydration endpoint. |
 | Entity blob format | opaque `&[u8]` | MessagePack | Self-describing binary format. ~30% smaller than JSON, enables field extraction in context_pack without schema registration. |
-| Database count | 9 | 18 | |
-| MAX_DBS | 12 | 24 | |
+| Database count | 9 | 20 core / 22 with sync | |
+| MAX_DBS | 12 | 25 | |
 
 ---
 
@@ -528,11 +532,11 @@ Entity-level aggregate emotional metadata. Per ARCH-022/023, edge-level VAD (sto
 Only populated for entities with emotional data (messages, turns, events).
 Add when companion plugin is built.
 
-### Databases #18-19: Sync (Device Mode)
+### Databases #21-22: Sync (Device Mode)
 
 ```
-sync_deltas:  (timestamp_ulid(16) | doc_id(16)) → serialized CRDT delta
-sync_meta:    string key → value (cursors, device_id, last_sync)
+sync_state:   string key → value (doc state, state vectors, sequence metadata)
+sync_queue:   queue_key(bytes) → pending sync update or embed job
 ```
 
 For offline-first device mode. Convex cloud is sync hub.
@@ -629,7 +633,7 @@ Default weights are used when `put_edge` is called without an explicit weight. T
 ## LMDB Configuration
 
 ```rust
-const MAX_DBS: u32 = 24;           // 16 core + 8 headroom
+const MAX_DBS: u32 = 25;           // 20 core + sync/future headroom
 const DEFAULT_MAX_READERS: u32 = 126;
 
 // Map sizes (virtual memory, not physical RAM)

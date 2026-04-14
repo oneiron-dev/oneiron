@@ -17,6 +17,10 @@ impl EntityId {
     }
 
     /// Creates an identifier from raw bytes, rejecting reserved sentinel IDs.
+    ///
+    /// Only exact all-zero and all-`0xFF` byte patterns are reserved at the
+    /// `EntityId` layer. Other byte patterns remain valid IDs even if other
+    /// LMDB indexes use similar-looking internal sentinel keys.
     pub fn from_bytes(bytes: [u8; 16]) -> crate::error::Result<Self> {
         if bytes == [0x00; ENTITY_ID_LEN] || bytes == [0xFF; ENTITY_ID_LEN] {
             return Err(crate::error::Error::InvalidKey);

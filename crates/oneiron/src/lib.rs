@@ -61,7 +61,9 @@ fn first_child_of_parent(
         if key.len() != EDGE_KEY_LEN {
             continue;
         }
-        let parent = EntityId::from_bytes(key[17..33].try_into().map_err(|_| Error::InvalidKey)?)?;
+        let parent =
+            EntityId::from_bytes(key[17..33].try_into().map_err(|_| Error::CorruptedIndex)?)
+                .map_err(|_| Error::CorruptedIndex)?;
         return Ok(Some(parent));
     }
     Ok(None)
@@ -211,12 +213,13 @@ impl Vault {
         let key_in = Store::encode_edge_key(tgt, kind, src);
 
         self.with_write_txn(|wtxn| {
-            let existed = self.store.edges_out.delete(wtxn, &key_out)?;
-            if !existed {
+            let existed_out = self.store.edges_out.delete(wtxn, &key_out)?;
+            self.store.edges_in.delete(wtxn, &key_in)?;
+
+            if !existed_out {
                 return Ok(false);
             }
 
-            self.store.edges_in.delete(wtxn, &key_in)?;
             ppr::invalidate_ppr_for_edge(&self.store, wtxn, src, tgt)?;
             Ok(true)
         })
@@ -304,14 +307,16 @@ impl Vault {
             if key.len() != 24 {
                 continue;
             }
-            let ts = u64::from_be_bytes(key[..8].try_into().map_err(|_| Error::InvalidKey)?);
+            let ts = u64::from_be_bytes(key[..8].try_into().map_err(|_| Error::CorruptedIndex)?);
             if ts < start {
                 continue;
             }
             if ts >= end {
                 break; // temporal keys are sorted by timestamp (BE), so we can stop
             }
-            let id = EntityId::from_bytes(key[8..24].try_into().map_err(|_| Error::InvalidKey)?)?;
+            let id =
+                EntityId::from_bytes(key[8..24].try_into().map_err(|_| Error::CorruptedIndex)?)
+                    .map_err(|_| Error::CorruptedIndex)?;
             ids.push(id);
         }
         Ok(ids)
@@ -396,7 +401,9 @@ impl Vault {
             if key.len() != 17 {
                 continue;
             }
-            let id = EntityId::from_bytes(key[1..17].try_into().map_err(|_| Error::InvalidKey)?)?;
+            let id =
+                EntityId::from_bytes(key[1..17].try_into().map_err(|_| Error::CorruptedIndex)?)
+                    .map_err(|_| Error::CorruptedIndex)?;
             ids.push(id);
             if ids.len() >= MAX_TYPE_QUERY_RESULTS {
                 break;
@@ -464,7 +471,8 @@ impl Vault {
                 continue;
             }
             let peer =
-                EntityId::from_bytes(key[17..33].try_into().map_err(|_| Error::InvalidKey)?)?;
+                EntityId::from_bytes(key[17..33].try_into().map_err(|_| Error::CorruptedIndex)?)
+                    .map_err(|_| Error::CorruptedIndex)?;
 
             if let Some(req_type) = peer_type {
                 if !self.entity_has_type(rtxn, &peer, req_type)? {
@@ -538,8 +546,10 @@ impl Vault {
                 if key.len() != EDGE_KEY_LEN {
                     continue;
                 }
-                let child =
-                    EntityId::from_bytes(key[17..33].try_into().map_err(|_| Error::InvalidKey)?)?;
+                let child = EntityId::from_bytes(
+                    key[17..33].try_into().map_err(|_| Error::CorruptedIndex)?,
+                )
+                .map_err(|_| Error::CorruptedIndex)?;
                 if visited.insert(child) {
                     frontier.push_back((child, depth + 1));
                 }
@@ -652,13 +662,15 @@ fn scan_edges(
 
 fn parse_edge_record(key: &[u8], value: &[u8]) -> Result<EdgeInfo> {
     if key.len() != EDGE_KEY_LEN || value.len() != EDGE_VALUE_LEN {
-        return Err(Error::InvalidKey);
+        return Err(Error::CorruptedIndex);
     }
 
-    let kind = EdgeKind::try_from_u8(key[16]).ok_or(Error::InvalidKey)?;
-    let target = EntityId::from_bytes(key[17..33].try_into().map_err(|_| Error::InvalidKey)?)?;
-    let weight = f32::from_le_bytes(value[..4].try_into().map_err(|_| Error::InvalidKey)?);
-    let created_at = u64::from_le_bytes(value[4..12].try_into().map_err(|_| Error::InvalidKey)?);
+    let kind = EdgeKind::try_from_u8(key[16]).ok_or(Error::CorruptedIndex)?;
+    let target = EntityId::from_bytes(key[17..33].try_into().map_err(|_| Error::CorruptedIndex)?)
+        .map_err(|_| Error::CorruptedIndex)?;
+    let weight = f32::from_le_bytes(value[..4].try_into().map_err(|_| Error::CorruptedIndex)?);
+    let created_at =
+        u64::from_le_bytes(value[4..12].try_into().map_err(|_| Error::CorruptedIndex)?);
     let vad = parse_vad(value);
     if !weight.is_finite() {
         return Err(Error::InvalidEdgeWeight);
@@ -1150,6 +1162,29 @@ mod tests {
         assert!(vault.edges_in(&tgt)?.is_empty());
         assert!(!vault.delete_edge(&src, kind, &tgt)?);
 
+        Ok(())
+    }
+
+    #[test]
+    fn delete_edge_cleans_inbound_orphans() -> Result<()> {
+        let temp_dir = tempfile::tempdir()?;
+        let vault = Vault::open(temp_dir.path(), test_config())?;
+        let src = EntityId::now();
+        let tgt = EntityId::now();
+        let kind = EdgeKind::Supports;
+
+        vault.put_edge(&src, kind, &tgt, 0.5)?;
+
+        let key_out = Store::encode_edge_key(&src, kind, &tgt);
+        let key_in = Store::encode_edge_key(&tgt, kind, &src);
+        let mut wtxn = vault.store.env.write_txn()?;
+        assert!(vault.store.edges_out.delete(&mut wtxn, &key_out)?);
+        wtxn.commit()?;
+
+        assert!(!vault.delete_edge(&src, kind, &tgt)?);
+
+        let rtxn = vault.store.env.read_txn()?;
+        assert!(vault.store.edges_in.get(&rtxn, &key_in)?.is_none());
         Ok(())
     }
 
