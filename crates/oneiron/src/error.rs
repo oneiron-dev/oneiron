@@ -49,6 +49,12 @@ pub enum Error {
     /// Encountered malformed key or value bytes.
     #[error("invalid key or value bytes")]
     InvalidKey,
+    /// Index metadata or neighbor storage is internally inconsistent.
+    #[error("corrupted index: {0}")]
+    CorruptedIndex(&'static str),
+    /// Index bookkeeping overflowed its supported range.
+    #[error("index overflow: {0}")]
+    IndexOverflow(&'static str),
     /// Entity type byte is not in any known range.
     #[error("invalid entity type: {0}")]
     InvalidEntityType(u8),

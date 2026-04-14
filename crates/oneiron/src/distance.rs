@@ -24,8 +24,7 @@ pub(crate) fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
             return cosine_similarity_scalar(a, b);
         }
 
-        // SAFETY: NEON is a required feature on aarch64.
-        unsafe { cosine_similarity_neon(a, b) }
+        cosine_similarity_neon(a, b)
     }
 
     #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
@@ -39,6 +38,32 @@ fn cosine_similarity_scalar(a: &[f32], b: &[f32]) -> f32 {
     let mut dot = 0.0_f32;
     let mut norm_a = 0.0_f32;
     let mut norm_b = 0.0_f32;
+
+    while i + 8 <= len {
+        let a0 = a[i];
+        let a1 = a[i + 1];
+        let a2 = a[i + 2];
+        let a3 = a[i + 3];
+        let a4 = a[i + 4];
+        let a5 = a[i + 5];
+        let a6 = a[i + 6];
+        let a7 = a[i + 7];
+
+        let b0 = b[i];
+        let b1 = b[i + 1];
+        let b2 = b[i + 2];
+        let b3 = b[i + 3];
+        let b4 = b[i + 4];
+        let b5 = b[i + 5];
+        let b6 = b[i + 6];
+        let b7 = b[i + 7];
+
+        dot += a0 * b0 + a1 * b1 + a2 * b2 + a3 * b3 + a4 * b4 + a5 * b5 + a6 * b6 + a7 * b7;
+        norm_a += a0 * a0 + a1 * a1 + a2 * a2 + a3 * a3 + a4 * a4 + a5 * a5 + a6 * a6 + a7 * a7;
+        norm_b += b0 * b0 + b1 * b1 + b2 * b2 + b3 * b3 + b4 * b4 + b5 * b5 + b6 * b6 + b7 * b7;
+
+        i += 8;
+    }
 
     while i + 4 <= len {
         let a0 = a[i];
@@ -72,7 +97,12 @@ fn cosine_similarity_scalar(a: &[f32], b: &[f32]) -> f32 {
 
 #[inline]
 fn normalize(dot: f32, norm_a: f32, norm_b: f32) -> f32 {
-    if norm_a <= 0.0 || norm_b <= 0.0 {
+    if !dot.is_finite()
+        || !norm_a.is_finite()
+        || !norm_b.is_finite()
+        || norm_a <= 0.0
+        || norm_b <= 0.0
+    {
         return 0.0;
     }
 
@@ -87,6 +117,8 @@ unsafe fn cosine_similarity_avx2(a: &[f32], b: &[f32]) -> f32 {
     use std::arch::x86_64::{
         __m256, _mm256_fmadd_ps, _mm256_loadu_ps, _mm256_setzero_ps, _mm256_storeu_ps,
     };
+
+    debug_assert_eq!(a.len(), b.len());
 
     let len = a.len();
     let mut i = 0;
@@ -131,31 +163,70 @@ unsafe fn cosine_similarity_avx2(a: &[f32], b: &[f32]) -> f32 {
 }
 
 #[cfg(target_arch = "aarch64")]
-#[target_feature(enable = "neon")]
-unsafe fn cosine_similarity_neon(a: &[f32], b: &[f32]) -> f32 {
-    use std::arch::aarch64::{float32x4_t, vaddvq_f32, vdupq_n_f32, vfmaq_f32, vld1q_f32};
+/// Requires `a.len() == b.len()`. The dispatcher enforces that precondition
+/// before calling into the aarch64 NEON hot path.
+fn cosine_similarity_neon(a: &[f32], b: &[f32]) -> f32 {
+    use std::arch::aarch64::{vaddq_f32, vaddvq_f32, vdupq_n_f32, vfmaq_f32, vld1q_f32};
+
+    debug_assert_eq!(a.len(), b.len());
 
     let len = a.len();
     let mut i = 0;
 
-    let mut dot: float32x4_t = vdupq_n_f32(0.0);
-    let mut norm_a: float32x4_t = vdupq_n_f32(0.0);
-    let mut norm_b: float32x4_t = vdupq_n_f32(0.0);
+    // SAFETY: NEON is mandatory on aarch64, and these intrinsics do not touch
+    // memory. The loaded vectors below are separately guarded by loop bounds.
+    let (mut dot0, mut dot1, mut norm_a0, mut norm_a1, mut norm_b0, mut norm_b1) = unsafe {
+        (
+            vdupq_n_f32(0.0),
+            vdupq_n_f32(0.0),
+            vdupq_n_f32(0.0),
+            vdupq_n_f32(0.0),
+            vdupq_n_f32(0.0),
+            vdupq_n_f32(0.0),
+        )
+    };
+
+    while i + 8 <= len {
+        // SAFETY: `i + 8 <= len` guarantees both 4-lane loads stay in-bounds.
+        unsafe {
+            let va0 = vld1q_f32(a.as_ptr().add(i));
+            let vb0 = vld1q_f32(b.as_ptr().add(i));
+            let va1 = vld1q_f32(a.as_ptr().add(i + 4));
+            let vb1 = vld1q_f32(b.as_ptr().add(i + 4));
+
+            dot0 = vfmaq_f32(dot0, va0, vb0);
+            dot1 = vfmaq_f32(dot1, va1, vb1);
+            norm_a0 = vfmaq_f32(norm_a0, va0, va0);
+            norm_a1 = vfmaq_f32(norm_a1, va1, va1);
+            norm_b0 = vfmaq_f32(norm_b0, vb0, vb0);
+            norm_b1 = vfmaq_f32(norm_b1, vb1, vb1);
+        }
+
+        i += 8;
+    }
 
     while i + 4 <= len {
-        let va = vld1q_f32(a.as_ptr().add(i));
-        let vb = vld1q_f32(b.as_ptr().add(i));
+        // SAFETY: `i + 4 <= len` guarantees the 4-lane loads stay in-bounds.
+        unsafe {
+            let va = vld1q_f32(a.as_ptr().add(i));
+            let vb = vld1q_f32(b.as_ptr().add(i));
 
-        dot = vfmaq_f32(dot, va, vb);
-        norm_a = vfmaq_f32(norm_a, va, va);
-        norm_b = vfmaq_f32(norm_b, vb, vb);
+            dot0 = vfmaq_f32(dot0, va, vb);
+            norm_a0 = vfmaq_f32(norm_a0, va, va);
+            norm_b0 = vfmaq_f32(norm_b0, vb, vb);
+        }
 
         i += 4;
     }
 
-    let mut dot_sum = vaddvq_f32(dot);
-    let mut norm_a_sum = vaddvq_f32(norm_a);
-    let mut norm_b_sum = vaddvq_f32(norm_b);
+    // SAFETY: lane-wise adds operate on initialized NEON accumulators only.
+    let (mut dot_sum, mut norm_a_sum, mut norm_b_sum) = unsafe {
+        (
+            vaddvq_f32(vaddq_f32(dot0, dot1)),
+            vaddvq_f32(vaddq_f32(norm_a0, norm_a1)),
+            vaddvq_f32(vaddq_f32(norm_b0, norm_b1)),
+        )
+    };
 
     while i < len {
         let ai = a[i];
@@ -175,6 +246,29 @@ mod tests {
 
     fn approx_eq(a: f32, b: f32, eps: f32) {
         assert!((a - b).abs() <= eps, "left={a}, right={b}, eps={eps}");
+    }
+
+    fn manual_cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
+        let mut dot = 0.0_f32;
+        let mut norm_a = 0.0_f32;
+        let mut norm_b = 0.0_f32;
+
+        for (&ai, &bi) in a.iter().zip(b.iter()) {
+            dot += ai * bi;
+            norm_a += ai * ai;
+            norm_b += bi * bi;
+        }
+
+        if !dot.is_finite()
+            || !norm_a.is_finite()
+            || !norm_b.is_finite()
+            || norm_a <= 0.0
+            || norm_b <= 0.0
+        {
+            return 0.0;
+        }
+
+        (dot / (norm_a.sqrt() * norm_b.sqrt())).clamp(-1.0, 1.0)
     }
 
     #[test]
@@ -210,5 +304,48 @@ mod tests {
 
         approx_eq(cosine_similarity(&a, &b), 1.0, 1e-6);
         approx_eq(cosine_distance(&a, &b), 0.0, 1e-6);
+    }
+
+    #[test]
+    fn cosine_returns_zero_for_mismatched_lengths() {
+        let a = [1.0_f32, 2.0, 3.0];
+        let b = [1.0_f32, 2.0];
+
+        approx_eq(cosine_similarity(&a, &b), 0.0, 1e-6);
+        approx_eq(cosine_distance(&a, &b), 1.0, 1e-6);
+    }
+
+    #[test]
+    fn cosine_returns_zero_for_non_finite_inputs() {
+        let nan = [f32::NAN, 1.0, 2.0, 3.0];
+        let inf = [f32::INFINITY, 1.0, 2.0, 3.0];
+        let finite = [1.0_f32, 2.0, 3.0, 4.0];
+
+        approx_eq(cosine_similarity(&nan, &finite), 0.0, 1e-6);
+        approx_eq(cosine_distance(&nan, &finite), 1.0, 1e-6);
+        approx_eq(cosine_similarity(&inf, &finite), 0.0, 1e-6);
+        approx_eq(cosine_distance(&inf, &finite), 1.0, 1e-6);
+    }
+
+    #[test]
+    fn cosine_matches_manual_formula_across_unroll_boundaries() {
+        let a = [
+            0.5_f32, -0.75, 1.25, 0.125, -1.0, 0.625, 0.875, -0.5, 1.5, -1.25, 0.25, 0.75, -0.375,
+        ];
+        let b = [
+            -0.25_f32, 0.5, 0.75, -1.0, 0.125, 1.25, -0.625, 0.375, -1.5, 0.875, 0.5, -0.25, 1.125,
+        ];
+
+        let expected = manual_cosine_similarity(&a, &b);
+        approx_eq(super::cosine_similarity_scalar(&a, &b), expected, 1e-6);
+        approx_eq(
+            1.0 - super::cosine_similarity_scalar(&a, &b),
+            1.0 - expected,
+            1e-6,
+        );
+
+        // Keep the public dispatcher covered as well.
+        approx_eq(cosine_similarity(&a, &b), expected, 1e-6);
+        approx_eq(cosine_distance(&a, &b), 1.0 - expected, 1e-6);
     }
 }
