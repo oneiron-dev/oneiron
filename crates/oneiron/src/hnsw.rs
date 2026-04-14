@@ -17,6 +17,7 @@ const ERR_COUNT_BYTES: &str = "hnsw count bytes are malformed";
 const ERR_NEIGHBOR_KEY_BYTES: &str = "hnsw neighbor key bytes are malformed";
 const ERR_NEIGHBOR_VALUE_BYTES: &str = "hnsw neighbor list bytes are malformed";
 const ERR_VECTOR_BYTES: &str = "hnsw vector bytes are malformed";
+const ERR_VECTOR_KEY_BYTES: &str = "hnsw vector key bytes are malformed";
 const ERR_VECTOR_VERSION_BYTES: &str = "hnsw vector version bytes are malformed";
 const ERR_COUNT_UNDERFLOW: &str = "hnsw node count underflowed during delete";
 const ERR_COUNT_OVERFLOW: &str = "hnsw node count overflowed";
@@ -132,86 +133,16 @@ fn hnsw_refresh(
     store: &Store,
     config: &VaultConfig,
     wtxn: &mut RwTxn<'_>,
-    id: &EntityId,
-    vector: &[f32],
+    _id: &EntityId,
+    _vector: &[f32],
 ) -> Result<()> {
     let count = read_count(store, &*wtxn)?;
     if count == 0 {
         return Err(Error::CorruptedIndex(ERR_EXISTING_NODE_ZERO_COUNT));
     }
-    if count == 1 {
-        return Ok(());
-    }
-
-    let entry_point =
+    let _entry_point =
         read_entry_point(store, &*wtxn)?.ok_or(Error::CorruptedIndex(ERR_ENTRY_POINT_MISSING))?;
-    let mut nearest = beam_search(
-        store,
-        &*wtxn,
-        vector,
-        entry_point,
-        config.hnsw.ef_construction,
-        false,
-    )?;
-    nearest.retain(|entry| entry.id != *id);
-    nearest.truncate(config.hnsw.m_max_0);
-
-    let previous_neighbors = load_neighbors(store, &*wtxn, id)?;
-    let mut merged_neighbors = previous_neighbors.clone();
-    for entry in nearest {
-        if merged_neighbors.contains(&entry.id) {
-            continue;
-        }
-        merged_neighbors.push(entry.id);
-    }
-
-    let pruned_neighbors =
-        prune_neighbors_for_node(store, &*wtxn, id, &merged_neighbors, config.hnsw.m_max_0)?;
-    let previous_set: HashSet<EntityId> = previous_neighbors.iter().copied().collect();
-    let pruned_set: HashSet<EntityId> = pruned_neighbors.iter().copied().collect();
-
-    if pruned_neighbors != previous_neighbors {
-        write_neighbors(store, wtxn, id, &pruned_neighbors)?;
-    }
-
-    for neighbor_id in pruned_neighbors
-        .iter()
-        .filter(|neighbor_id| !previous_set.contains(neighbor_id))
-    {
-        let mut neighbors = load_neighbors(store, &*wtxn, neighbor_id)?;
-        if neighbors.contains(id) {
-            continue;
-        }
-
-        neighbors.push(*id);
-        if neighbors.len() > config.hnsw.m_max_0 {
-            neighbors = prune_neighbors_for_node(
-                store,
-                &*wtxn,
-                neighbor_id,
-                &neighbors,
-                config.hnsw.m_max_0,
-            )?;
-        }
-
-        write_neighbors(store, wtxn, neighbor_id, &neighbors)?;
-    }
-
-    for neighbor_id in previous_set
-        .iter()
-        .filter(|neighbor_id| !pruned_set.contains(neighbor_id))
-    {
-        let mut neighbors = load_neighbors(store, &*wtxn, neighbor_id)?;
-        let original_len = neighbors.len();
-        neighbors.retain(|neighbor| neighbor != id);
-        if neighbors.len() == original_len {
-            continue;
-        }
-
-        write_neighbors(store, wtxn, neighbor_id, &neighbors)?;
-    }
-
-    Ok(())
+    rebuild_hnsw_from_current_snapshot(store, config, wtxn)
 }
 
 pub(crate) fn build_hnsw_graph_from_snapshot(
@@ -273,6 +204,8 @@ pub(crate) fn build_hnsw_graph_from_snapshot(
             .checked_add(1)
             .ok_or(Error::IndexOverflow(ERR_COUNT_OVERFLOW))?;
     }
+
+    entry_point = select_best_entry_point(&neighbors_by_id, entry_point);
 
     let neighbors = vector_ids
         .iter()
@@ -378,13 +311,9 @@ pub(crate) fn hnsw_deindex(store: &Store, wtxn: &mut RwTxn<'_>, id: &EntityId) -
         return Ok(());
     }
 
-    let backlink_updates = collect_backlink_updates(store, &*wtxn, id)?;
+    let backlink_targets = collect_backlink_targets(store, &*wtxn, id)?;
     store.hnsw_neighbors.delete(wtxn, id.as_bytes())?;
-    for (node_id, neighbors) in backlink_updates {
-        store
-            .hnsw_neighbors
-            .put(wtxn, node_id.as_bytes(), &neighbors)?;
-    }
+    scrub_backlinks_in_place(store, wtxn, id, &backlink_targets)?;
 
     let count = read_count(store, &*wtxn)?;
     let new_count = count
@@ -588,6 +517,72 @@ fn visited_capacity_hint(ef: usize, graph_nodes: usize) -> usize {
     ef.saturating_mul(2).min(graph_nodes.max(1))
 }
 
+fn rebuild_hnsw_from_current_snapshot(
+    store: &Store,
+    config: &VaultConfig,
+    wtxn: &mut RwTxn<'_>,
+) -> Result<()> {
+    let vector_ids = collect_vector_ids(store, &*wtxn)?;
+    let rebuilt = build_hnsw_graph_from_snapshot(store, config, &*wtxn, &vector_ids)?;
+    write_rebuilt_hnsw(store, wtxn, &rebuilt)
+}
+
+fn collect_vector_ids(store: &Store, txn: &RoTxn<'_>) -> Result<Vec<EntityId>> {
+    let capacity = usize::try_from(store.vectors.len(txn)?).unwrap_or(usize::MAX);
+    let mut vector_ids = Vec::with_capacity(capacity);
+    for entry in store.vectors.iter(txn)? {
+        let (key, _) = entry?;
+        vector_ids.push(parse_entity_id(key, ERR_VECTOR_KEY_BYTES)?);
+    }
+    Ok(vector_ids)
+}
+
+fn select_best_entry_point(
+    neighbors_by_id: &HashMap<EntityId, Vec<EntityId>>,
+    suggested: Option<EntityId>,
+) -> Option<EntityId> {
+    let mut best = suggested.or_else(|| neighbors_by_id.keys().copied().next())?;
+    let mut best_reach = reachable_from_entry(neighbors_by_id, best).len();
+    if best_reach == neighbors_by_id.len() {
+        return Some(best);
+    }
+
+    for candidate in neighbors_by_id.keys().copied() {
+        if candidate == best {
+            continue;
+        }
+        let reach = reachable_from_entry(neighbors_by_id, candidate).len();
+        if reach > best_reach || (reach == best_reach && candidate.as_bytes() < best.as_bytes()) {
+            best = candidate;
+            best_reach = reach;
+            if best_reach == neighbors_by_id.len() {
+                break;
+            }
+        }
+    }
+
+    Some(best)
+}
+
+fn reachable_from_entry(
+    neighbors_by_id: &HashMap<EntityId, Vec<EntityId>>,
+    entry_point: EntityId,
+) -> HashSet<EntityId> {
+    let mut visited = HashSet::with_capacity(neighbors_by_id.len().max(1));
+    let mut frontier = vec![entry_point];
+
+    while let Some(current) = frontier.pop() {
+        if !visited.insert(current) {
+            continue;
+        }
+        if let Some(neighbors) = neighbors_by_id.get(&current) {
+            frontier.extend(neighbors.iter().copied());
+        }
+    }
+
+    visited
+}
+
 fn read_count(store: &Store, txn: &RoTxn<'_>) -> Result<u64> {
     let Some(raw) = store.hnsw_meta.get(txn, COUNT_KEY)? else {
         return Ok(0);
@@ -709,12 +704,12 @@ fn prune_neighbors_for_node(
     Ok(scored.into_iter().map(|entry| entry.id).collect())
 }
 
-fn collect_backlink_updates(
+fn collect_backlink_targets(
     store: &Store,
     txn: &RoTxn<'_>,
     id: &EntityId,
-) -> Result<Vec<(EntityId, Vec<u8>)>> {
-    let mut updates = Vec::new();
+) -> Result<Vec<EntityId>> {
+    let mut targets = Vec::new();
     // TODO: Replace this delete-time full scan with a reverse-adjacency index
     // once we need sublinear delete performance at larger graph sizes.
     for entry in store.hnsw_neighbors.iter(txn)? {
@@ -724,12 +719,41 @@ fn collect_backlink_updates(
             continue;
         }
 
+        if !neighbor_bytes_contain(raw, id)? {
+            continue;
+        }
+        targets.push(node_id);
+    }
+    Ok(targets)
+}
+
+fn scrub_backlinks_in_place(
+    store: &Store,
+    wtxn: &mut RwTxn<'_>,
+    id: &EntityId,
+    targets: &[EntityId],
+) -> Result<()> {
+    for node_id in targets {
+        let Some(raw) = store.hnsw_neighbors.get(&*wtxn, node_id.as_bytes())? else {
+            continue;
+        };
         let Some(scrubbed) = scrub_neighbor_bytes(raw, id)? else {
             continue;
         };
-        updates.push((node_id, scrubbed));
+        store
+            .hnsw_neighbors
+            .put(wtxn, node_id.as_bytes(), &scrubbed)?;
     }
-    Ok(updates)
+    Ok(())
+}
+
+fn neighbor_bytes_contain(raw: &[u8], target: &EntityId) -> Result<bool> {
+    let mut chunks = raw.chunks_exact(ENTITY_ID_LEN);
+    if !chunks.remainder().is_empty() {
+        return Err(Error::CorruptedIndex(ERR_NEIGHBOR_VALUE_BYTES));
+    }
+
+    Ok(chunks.any(|chunk| chunk == target.as_bytes()))
 }
 
 fn scrub_neighbor_bytes(raw: &[u8], target: &EntityId) -> Result<Option<Vec<u8>>> {
@@ -879,7 +903,7 @@ mod tests {
 
         assert_eq!(read_count(&store, &wtxn)?, 3);
         assert_eq!(load_neighbors(&store, &wtxn, &a)?, vec![c]);
-        assert_eq!(load_neighbors(&store, &wtxn, &b)?, vec![c]);
+        assert_eq!(load_neighbors(&store, &wtxn, &b)?, vec![a]);
         assert_eq!(load_neighbors(&store, &wtxn, &c)?, vec![a]);
         Ok(())
     }
@@ -910,8 +934,12 @@ mod tests {
         hnsw_insert(&store, &test_config(), &mut wtxn, &a, &[0.0, 1.0, 0.0, 0.0])?;
 
         assert_eq!(load_neighbors(&store, &wtxn, &a)?, vec![c]);
-        assert_eq!(load_neighbors(&store, &wtxn, &b)?, Vec::<EntityId>::new());
+        assert_eq!(load_neighbors(&store, &wtxn, &b)?, vec![a]);
         assert_eq!(load_neighbors(&store, &wtxn, &c)?, vec![a]);
+        assert_eq!(
+            read_entry_point(&store, &wtxn)?.expect("rebuilt entry point"),
+            b
+        );
         Ok(())
     }
 
@@ -965,6 +993,95 @@ mod tests {
             load_neighbors(&vault.store, &rtxn, &a)?.contains(&c),
             "expected refreshed node to pick up a new outgoing link toward its new region"
         );
+        Ok(())
+    }
+
+    #[test]
+    fn put_vector_refresh_repairs_entry_point_reachability() -> Result<()> {
+        let temp_dir = tempdir()?;
+        let vault = Vault::open(temp_dir.path(), test_config())?;
+        let a = EntityId::now();
+        let b = EntityId::now();
+        let c = EntityId::now();
+
+        for id in [a, b, c] {
+            vault.put_entity(&id, 0, point(1, 1), 1, b"node")?;
+        }
+
+        let mut wtxn = vault.store.env.write_txn()?;
+        put_vector_raw(&vault.store, &mut wtxn, &a, &[1.0, 0.0, 0.0, 0.0])?;
+        put_vector_raw(&vault.store, &mut wtxn, &b, &[0.9, 0.1, 0.0, 0.0])?;
+        put_vector_raw(&vault.store, &mut wtxn, &c, &[0.0, 1.0, 0.0, 0.0])?;
+        write_neighbors(&vault.store, &mut wtxn, &a, &[b])?;
+        write_neighbors(&vault.store, &mut wtxn, &b, &[a])?;
+        write_neighbors(&vault.store, &mut wtxn, &c, &[a])?;
+        vault
+            .store
+            .hnsw_meta
+            .put(&mut wtxn, ENTRY_POINT_KEY, a.as_bytes())?;
+        vault
+            .store
+            .hnsw_meta
+            .put(&mut wtxn, COUNT_KEY, &3_u64.to_le_bytes())?;
+        wtxn.commit()?;
+
+        vault.put_vector(&a, &[0.0, 1.0, 0.0, 0.0])?;
+
+        let rtxn = vault.store.env.read_txn()?;
+        assert_eq!(
+            read_entry_point(&vault.store, &rtxn)?.expect("reachable entry point"),
+            b
+        );
+        assert_eq!(load_neighbors(&vault.store, &rtxn, &a)?, vec![c]);
+        assert!(
+            load_neighbors(&vault.store, &rtxn, &b)?.contains(&a),
+            "expected the rebuilt graph to stay searchable from the refreshed entry region"
+        );
+        drop(rtxn);
+
+        let results = vault.search_vector(&[1.0, 0.0, 0.0, 0.0], 3)?;
+        assert!(
+            results.iter().any(|entry| entry.id == b),
+            "expected old-region node to remain reachable after entry-point refresh, got {results:?}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn put_vector_refresh_rewrites_stale_incoming_only_links() -> Result<()> {
+        let temp_dir = tempdir()?;
+        let vault = Vault::open(temp_dir.path(), test_config())?;
+        let a = EntityId::now();
+        let b = EntityId::now();
+        let c = EntityId::now();
+
+        for id in [a, b, c] {
+            vault.put_entity(&id, 0, point(1, 1), 1, b"node")?;
+        }
+
+        let mut wtxn = vault.store.env.write_txn()?;
+        put_vector_raw(&vault.store, &mut wtxn, &a, &[1.0, 0.0, 0.0, 0.0])?;
+        put_vector_raw(&vault.store, &mut wtxn, &b, &[1.0, 0.0, 0.0, 0.0])?;
+        put_vector_raw(&vault.store, &mut wtxn, &c, &[1.0, 0.0, 0.0, 0.0])?;
+        write_neighbors(&vault.store, &mut wtxn, &a, &[c])?;
+        write_neighbors(&vault.store, &mut wtxn, &b, &[a])?;
+        write_neighbors(&vault.store, &mut wtxn, &c, &[a])?;
+        vault
+            .store
+            .hnsw_meta
+            .put(&mut wtxn, ENTRY_POINT_KEY, a.as_bytes())?;
+        vault
+            .store
+            .hnsw_meta
+            .put(&mut wtxn, COUNT_KEY, &3_u64.to_le_bytes())?;
+        wtxn.commit()?;
+
+        vault.put_vector(&a, &[0.0, 1.0, 0.0, 0.0])?;
+
+        let rtxn = vault.store.env.read_txn()?;
+        assert_eq!(load_neighbors(&vault.store, &rtxn, &a)?, vec![b]);
+        assert_eq!(load_neighbors(&vault.store, &rtxn, &b)?, vec![c]);
+        assert_eq!(load_neighbors(&vault.store, &rtxn, &c)?, vec![b]);
         Ok(())
     }
 
@@ -1118,5 +1235,16 @@ mod tests {
             Error::CorruptedIndex(message) if message == ERR_VECTOR_VERSION_BYTES
         ));
         Ok(())
+    }
+
+    #[test]
+    fn select_best_entry_point_prefers_full_reachability() {
+        let a = EntityId::now();
+        let b = EntityId::now();
+        let c = EntityId::now();
+        let neighbors = HashMap::from([(a, vec![c]), (b, vec![a]), (c, vec![a])]);
+
+        assert_eq!(select_best_entry_point(&neighbors, Some(a)), Some(b));
+        assert_eq!(reachable_from_entry(&neighbors, b).len(), neighbors.len());
     }
 }
