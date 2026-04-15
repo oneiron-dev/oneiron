@@ -703,10 +703,10 @@ fn parse_edge_record(key: &[u8], value: &[u8]) -> Result<EdgeInfo> {
     );
     let vad = parse_vad(value);
     if !weight.is_finite() {
-        return Err(Error::InvalidEdgeWeight);
+        return Err(Error::CorruptedIndex("edge record"));
     }
     if !vad.is_finite() || !vad.is_in_range() {
-        return Err(Error::InvalidVad);
+        return Err(Error::CorruptedIndex("edge record"));
     }
 
     Ok(EdgeInfo {
@@ -858,7 +858,6 @@ mod tests {
             })
             .collect::<Result<_>>()?;
         codes.sort();
-        codes.dedup();
         Ok(codes)
     }
 

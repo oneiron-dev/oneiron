@@ -480,6 +480,9 @@ fn propagate_edge(
             .try_into()
             .map_err(|_| Error::CorruptedIndex("edge record"))?,
     );
+    if !weight.is_finite() {
+        return Err(Error::CorruptedIndex("edge record"));
+    }
     if weight == 0.0 {
         return Ok(());
     }
@@ -565,6 +568,9 @@ fn decode_cache_scores(payload: &[u8]) -> Result<Vec<ScoredEntity>> {
                     .try_into()
                     .map_err(|_| Error::CorruptedIndex("ppr cache scores"))?,
             );
+            if !score.is_finite() {
+                return Err(Error::CorruptedIndex("ppr cache scores"));
+            }
             Ok(ScoredEntity { id, score })
         })
         .collect()
@@ -1363,6 +1369,54 @@ mod tests {
 
         let latest = ppr_query(&vault.store, &vault.config, &[a], 3, 0.15)?;
         assert!(score_for(&latest, c) > 0.0);
+        Ok(())
+    }
+
+    #[test]
+    fn ppr_query_rejects_non_finite_persisted_edge_weight() -> Result<()> {
+        let temp_dir = tempdir()?;
+        let vault = Vault::open(temp_dir.path(), test_config())?;
+        let a = entity(53);
+        let b = entity(54);
+
+        let key = Store::encode_edge_key(&a, EdgeKind::BelongsTo, &b);
+        let mut value = [0_u8; EDGE_VALUE_LEN];
+        value[..4].copy_from_slice(&f32::NAN.to_le_bytes());
+
+        let mut wtxn = vault.store.env.write_txn()?;
+        vault.store.edges_out.put(&mut wtxn, &key, &value)?;
+        wtxn.commit()?;
+
+        let err = ppr_query(&vault.store, &vault.config, &[a], 3, 0.15)
+            .expect_err("expected corrupted edge record");
+        assert!(matches!(err, Error::CorruptedIndex("edge record")));
+        Ok(())
+    }
+
+    #[test]
+    fn ppr_query_rejects_non_finite_cached_scores() -> Result<()> {
+        let temp_dir = tempdir()?;
+        let vault = Vault::open(temp_dir.path(), test_config())?;
+        let a = entity(55);
+        let b = entity(56);
+        let seed_hash = hash_seeds(&[a], 3, 0.15);
+        let cache = encode_cache_value(
+            crate::unix_seconds_now(),
+            0,
+            0,
+            &[ScoredEntity {
+                id: b,
+                score: f32::INFINITY,
+            }],
+        );
+
+        let mut wtxn = vault.store.env.write_txn()?;
+        vault.store.ppr_cache.put(&mut wtxn, &seed_hash, &cache)?;
+        wtxn.commit()?;
+
+        let err = ppr_query(&vault.store, &vault.config, &[a], 3, 0.15)
+            .expect_err("expected corrupted cache row");
+        assert!(matches!(err, Error::CorruptedIndex("ppr cache scores")));
         Ok(())
     }
 }

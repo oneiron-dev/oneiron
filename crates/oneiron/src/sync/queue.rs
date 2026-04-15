@@ -134,35 +134,18 @@ impl SyncQueue {
             if !key.starts_with(EMBED_PREFIX) {
                 continue;
             }
-            let entity_id = match decode_embed_key(key) {
-                Ok(entity_id) => entity_id,
+            let job = match decode_embed_job_row(key, value) {
+                Ok(job) => job,
                 Err(_) => {
                     malformed_keys.push(key.to_vec());
                     continue;
                 }
             };
-            if value.len() < 9 {
-                malformed_keys.push(key.to_vec());
-                continue;
-            }
-            let priority = value[0];
-            let queued_at =
-                u64::from_be_bytes(value[1..9].try_into().map_err(|_| Error::InvalidKey)?);
-            jobs.push(QueuedEmbedJob {
-                entity_id,
-                priority,
-                queued_at,
-            });
+            jobs.push(job);
         }
         drop(rtxn);
 
-        if !malformed_keys.is_empty() {
-            let mut wtxn = self.vault.store.env.write_txn()?;
-            for key in &malformed_keys {
-                self.vault.store.sync_queue.delete(&mut wtxn, key)?;
-            }
-            wtxn.commit()?;
-        }
+        self.prune_malformed_embed_rows(&malformed_keys)?;
 
         Ok(jobs)
     }
@@ -272,6 +255,24 @@ impl SyncQueue {
 
         Ok(max_seq)
     }
+
+    fn prune_malformed_embed_rows(&self, malformed_keys: &[Vec<u8>]) -> Result<()> {
+        if malformed_keys.is_empty() {
+            return Ok(());
+        }
+
+        let mut wtxn = self.vault.store.env.write_txn()?;
+        for key in malformed_keys {
+            let Some(value) = self.vault.store.sync_queue.get(&wtxn, key)? else {
+                continue;
+            };
+            if decode_embed_job_row(key, value).is_err() {
+                self.vault.store.sync_queue.delete(&mut wtxn, key)?;
+            }
+        }
+        wtxn.commit()?;
+        Ok(())
+    }
 }
 
 // ─── Key Encoding ────────────────────────────────────────────────────────────
@@ -336,6 +337,20 @@ fn decode_embed_key(key: &[u8]) -> Result<EntityId> {
     let mut bytes = [0u8; 16];
     bytes.copy_from_slice(&key[2..18]);
     EntityId::from_bytes(bytes)
+}
+
+fn decode_embed_job_row(key: &[u8], value: &[u8]) -> Result<QueuedEmbedJob> {
+    let entity_id = decode_embed_key(key)?;
+    if value.len() < 9 {
+        return Err(Error::InvalidKey);
+    }
+    let priority = value[0];
+    let queued_at = u64::from_be_bytes(value[1..9].try_into().map_err(|_| Error::InvalidKey)?);
+    Ok(QueuedEmbedJob {
+        entity_id,
+        priority,
+        queued_at,
+    })
 }
 
 #[cfg(test)]
@@ -474,6 +489,56 @@ mod tests {
             .get(&rtxn, &bad_key)
             .unwrap()
             .is_none());
+    }
+
+    #[test]
+    fn prune_malformed_embed_rows_keeps_repaired_row() {
+        let vault = test_vault();
+        let queue = SyncQueue::new(vault).unwrap();
+
+        let id = EntityId::now();
+        let key = encode_embed_key(&id);
+
+        let mut wtxn = queue.vault.store.env.write_txn().unwrap();
+        queue
+            .vault
+            .store
+            .sync_queue
+            .put(&mut wtxn, &key, &[1, 2, 3])
+            .unwrap();
+        wtxn.commit().unwrap();
+
+        let stale_candidates = vec![key.to_vec()];
+
+        let mut repaired = Vec::with_capacity(9);
+        repaired.push(2);
+        repaired.extend_from_slice(&456u64.to_be_bytes());
+        let mut wtxn = queue.vault.store.env.write_txn().unwrap();
+        queue
+            .vault
+            .store
+            .sync_queue
+            .put(&mut wtxn, &key, &repaired)
+            .unwrap();
+        wtxn.commit().unwrap();
+
+        queue.prune_malformed_embed_rows(&stale_candidates).unwrap();
+
+        let rtxn = queue.vault.store.env.read_txn().unwrap();
+        assert!(queue
+            .vault
+            .store
+            .sync_queue
+            .get(&rtxn, &key)
+            .unwrap()
+            .is_some());
+        drop(rtxn);
+
+        let jobs = queue.drain_embed_jobs().unwrap();
+        assert_eq!(jobs.len(), 1);
+        assert_eq!(jobs[0].entity_id, id);
+        assert_eq!(jobs[0].priority, 2);
+        assert_eq!(jobs[0].queued_at, 456);
     }
 
     #[test]

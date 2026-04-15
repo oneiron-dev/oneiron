@@ -617,9 +617,8 @@ pub enum EdgeKind {
     InWorld = 15,       // ARCH-022: person → world
     FacetOf = 16,       // ARCH-023: claim → facet
     SetIn = 17,         // ARCH-023: relationship → world
-    // Future (multi-party, CROSS-ARCH-010):
-    // AddressedTo = 18,  // default weight 0.4
-    // RepliesTo = 19,    // default weight 0.3
+    ChildOf = 18,       // default weight 1.0
+    AssignedTo = 19,    // default weight 0.8
 }
 ```
 
@@ -1013,4 +1012,4 @@ pub struct TokenAllocation {
 
 3. **Collection stats atomicity:** BM25 total_docs and total_length (sentinel keys in text_meta) are updated on every index/deindex. Under concurrent reads, readers see a consistent snapshot (LMDB MVCC). No issue.
 
-4. **Multi-party EdgeKinds:** `AddressedTo` (18) and `RepliesTo` (19) — add to enum now (reserved) or add when multi-party ships? Recommendation: reserve the values now, don't implement until needed.
+4. **Future multi-party EdgeKinds:** values `18/19` are no longer available for reservation because shipped code now uses `ChildOf = 18` and `AssignedTo = 19`. Any future `AddressedTo` / `RepliesTo` work will need new discriminants.
