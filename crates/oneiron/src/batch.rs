@@ -705,8 +705,8 @@ fn apply_delete_edge(
     let key_out = Store::encode_edge_key(&src, kind, &tgt);
     let key_in = Store::encode_edge_key(&tgt, kind, &src);
     let deleted_out = store.edges_out.delete(wtxn, &key_out)?;
-    let deleted_in = store.edges_in.delete(wtxn, &key_in)?;
-    Ok(deleted_out || deleted_in)
+    let _deleted_in = store.edges_in.delete(wtxn, &key_in)?;
+    Ok(deleted_out)
 }
 
 fn apply_phonetic(
@@ -716,7 +716,11 @@ fn apply_phonetic(
     codes: &[String],
 ) -> Result<()> {
     let mut forward_codes = match store.phonetic_forward.get(wtxn, id.as_bytes())? {
-        Some(raw) => decode_phonetic_forward_codes(raw)?,
+        Some(raw) => match decode_phonetic_forward_codes(raw) {
+            Ok(codes) => codes,
+            Err(Error::CorruptedIndex(_)) => Vec::new(),
+            Err(err) => return Err(err),
+        },
         None => Vec::new(),
     };
     let mut forward_changed = false;
@@ -905,6 +909,9 @@ fn delete_from_phonetic_postings(store: &Store, wtxn: &mut RwTxn<'_>, id: &Entit
         match decode_phonetic_forward_codes(raw) {
             Ok(codes) => match delete_from_known_phonetic_codes(store, wtxn, id, &codes) {
                 Ok(()) => {
+                    if reconcile_phonetic_postings(store, wtxn, id)? {
+                        log_phonetic_forward_fallback(id, "stale_forward_row");
+                    }
                     store.phonetic_forward.delete(wtxn, id.as_bytes())?;
                     return Ok(());
                 }
@@ -1001,9 +1008,39 @@ fn posting_without_entity(posting: &[u8], id: &EntityId) -> Result<Option<Vec<u8
     Ok((retained.len() != posting.len()).then_some(retained))
 }
 
+fn reconcile_phonetic_postings(store: &Store, wtxn: &mut RwTxn<'_>, id: &EntityId) -> Result<bool> {
+    let mut repaired = false;
+    let mut updates = Vec::new();
+    let mut deletes = Vec::new();
+
+    for entry in store.phonetic_index.iter(wtxn)? {
+        let (code, posting) = entry?;
+        let Some(updated) = posting_without_entity(posting, id)? else {
+            continue;
+        };
+
+        repaired = true;
+        if updated.is_empty() {
+            deletes.push(code.to_vec());
+        } else {
+            updates.push((code.to_vec(), updated));
+        }
+    }
+
+    for code in deletes {
+        store.phonetic_index.delete(wtxn, &code)?;
+    }
+
+    for (code, posting) in updates {
+        store.phonetic_index.put(wtxn, &code, &posting)?;
+    }
+
+    Ok(repaired)
+}
+
 fn decode_phonetic_forward_codes(raw: &[u8]) -> Result<Vec<String>> {
     if raw.is_empty() {
-        return Ok(Vec::new());
+        return Err(Error::CorruptedIndex("phonetic forward row"));
     }
 
     let mut codes: Vec<String> = raw
