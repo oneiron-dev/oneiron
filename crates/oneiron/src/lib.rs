@@ -2092,6 +2092,78 @@ mod tests {
     }
 
     #[test]
+    fn delete_entity_falls_back_when_phonetic_forward_is_empty() -> Result<()> {
+        let temp_dir = tempfile::tempdir()?;
+        let vault = Vault::open(temp_dir.path(), test_config())?;
+        let id = EntityId::now();
+
+        vault
+            .batch()
+            .put(&id, 0, test_time_range(1, 1), 2, b"phonetic-empty-forward")
+            .phonetic(&id, &["SMTH", "SMT"])
+            .commit()?;
+
+        let mut wtxn = vault.store.env.write_txn()?;
+        vault
+            .store
+            .phonetic_forward
+            .put(&mut wtxn, id.as_bytes(), &[])?;
+        wtxn.commit()?;
+
+        assert!(vault.delete_entity(&id)?);
+
+        let rtxn = vault.store.env.read_txn()?;
+        assert!(vault
+            .store
+            .phonetic_forward
+            .get(&rtxn, id.as_bytes())?
+            .is_none());
+        for code in ["SMTH", "SMT"] {
+            if let Some(posting) = vault.store.phonetic_index.get(&rtxn, code.as_bytes())? {
+                assert!(!posting.chunks_exact(16).any(|chunk| chunk == id.as_bytes()));
+            }
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn delete_entity_reconciles_subset_phonetic_forward_rows() -> Result<()> {
+        let temp_dir = tempfile::tempdir()?;
+        let vault = Vault::open(temp_dir.path(), test_config())?;
+        let id = EntityId::now();
+
+        vault
+            .batch()
+            .put(&id, 0, test_time_range(1, 1), 2, b"phonetic-subset-forward")
+            .phonetic(&id, &["SMTH", "SMT"])
+            .commit()?;
+
+        let mut wtxn = vault.store.env.write_txn()?;
+        vault
+            .store
+            .phonetic_forward
+            .put(&mut wtxn, id.as_bytes(), b"SMT")?;
+        wtxn.commit()?;
+
+        assert!(vault.delete_entity(&id)?);
+
+        let rtxn = vault.store.env.read_txn()?;
+        assert!(vault
+            .store
+            .phonetic_forward
+            .get(&rtxn, id.as_bytes())?
+            .is_none());
+        for code in ["SMTH", "SMT"] {
+            if let Some(posting) = vault.store.phonetic_index.get(&rtxn, code.as_bytes())? {
+                assert!(!posting.chunks_exact(16).any(|chunk| chunk == id.as_bytes()));
+            }
+        }
+
+        Ok(())
+    }
+
+    #[test]
     fn delete_entity_returns_bool() -> Result<()> {
         let temp_dir = tempfile::tempdir()?;
         let vault = Vault::open(temp_dir.path(), test_config())?;

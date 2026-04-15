@@ -261,7 +261,14 @@ pub(crate) fn cleanup_ppr_cache(
             continue;
         }
 
-        let (computed_at, _, stale) = parse_cache_header(value)?;
+        let (computed_at, _, stale) = match parse_cache_header(value) {
+            Ok(header) => header,
+            Err(Error::CorruptedIndex(_)) => {
+                cache_keys_to_delete.push(seed_hash_key.to_vec());
+                continue;
+            }
+            Err(err) => return Err(err),
+        };
         if stale != 0 || now.saturating_sub(computed_at) > max_age_secs {
             cache_keys_to_delete.push(seed_hash_key.to_vec());
         }
@@ -282,14 +289,14 @@ pub(crate) fn cleanup_ppr_cache(
             continue;
         }
 
-        let entity_id = EntityId::from_bytes(
-            dep_key[..ENTITY_ID_LEN]
-                .try_into()
-                .map_err(|_| Error::InvalidKey)?,
-        )?;
-        let seed_hash: [u8; SEED_HASH_LEN] = dep_key[ENTITY_ID_LEN..]
-            .try_into()
-            .map_err(|_| Error::InvalidKey)?;
+        let (entity_id, seed_hash) = match decode_dep_key(dep_key) {
+            Ok(decoded) => decoded,
+            Err(Error::CorruptedIndex(_)) => {
+                dep_keys_to_delete.push(dep_key.to_vec());
+                continue;
+            }
+            Err(err) => return Err(err),
+        };
 
         if store.ppr_cache.get(&*wtxn, &seed_hash)?.is_none() {
             dep_keys_to_delete.push(dep_key.to_vec());
@@ -356,7 +363,7 @@ fn invalidate_ppr_caches(store: &Store, wtxn: &mut RwTxn<'_>, entity_id: &Entity
     for seed_hash in hashes {
         if let Some(raw) = store.ppr_cache.get(&*wtxn, &seed_hash)? {
             if raw.len() < CACHE_HEADER_LEN {
-                return Err(Error::InvalidKey);
+                return Err(Error::CorruptedIndex("ppr cache header"));
             }
             let mut patched = raw.to_vec();
             patched[CACHE_STALE_OFFSET] = 1;
@@ -440,7 +447,9 @@ pub(crate) fn invalidate_ppr_for_delete(
 
 pub(crate) fn increment_graph_version(store: &Store, wtxn: &mut RwTxn<'_>) -> Result<()> {
     let current = read_graph_version(store, &*wtxn)?;
-    let next = current.checked_add(1).ok_or(Error::InvalidKey)?;
+    let next = current
+        .checked_add(1)
+        .ok_or(Error::ArithmeticOverflow("ppr graph version"))?;
     store
         .hnsw_meta
         .put(wtxn, GRAPH_VERSION_KEY, &next.to_le_bytes())?;
@@ -456,12 +465,21 @@ fn propagate_edge(
     next: &mut HashMap<(EntityId, u32), f32>,
 ) -> Result<()> {
     if key.len() != EDGE_KEY_LEN || value.len() != EDGE_VALUE_LEN {
-        return Err(Error::InvalidKey);
+        return Err(Error::CorruptedIndex("edge record"));
     }
 
-    let kind = EdgeKind::try_from_u8(key[16]).ok_or(Error::InvalidKey)?;
-    let neighbor = EntityId::from_bytes(key[17..33].try_into().map_err(|_| Error::InvalidKey)?)?;
-    let weight = f32::from_le_bytes(value[..4].try_into().map_err(|_| Error::InvalidKey)?);
+    let kind = EdgeKind::try_from_u8(key[16]).ok_or(Error::CorruptedIndex("edge record"))?;
+    let neighbor = EntityId::from_bytes(
+        key[17..33]
+            .try_into()
+            .map_err(|_| Error::CorruptedIndex("edge record"))?,
+    )
+    .map_err(|_| Error::CorruptedIndex("edge record"))?;
+    let weight = f32::from_le_bytes(
+        value[..4]
+            .try_into()
+            .map_err(|_| Error::CorruptedIndex("edge record"))?,
+    );
     if weight == 0.0 {
         return Ok(());
     }
@@ -469,7 +487,8 @@ fn propagate_edge(
     // PartOf edges count as structural hops; cap at 2 to limit hierarchy depth.
     // ChildOf edges do NOT count as structural hops — task trees can be arbitrarily deep.
     let new_hops = if kind == EdgeKind::PartOf {
-        hops.checked_add(1).ok_or(Error::InvalidKey)?
+        hops.checked_add(1)
+            .ok_or(Error::ArithmeticOverflow("ppr structural hops"))?
     } else {
         hops
     };
@@ -518,18 +537,18 @@ fn encode_dep_key(
 
 fn parse_cache_header(bytes: &[u8]) -> Result<(u64, u64, u8)> {
     if bytes.len() < CACHE_HEADER_LEN {
-        return Err(Error::InvalidKey);
+        return Err(Error::CorruptedIndex("ppr cache header"));
     }
 
-    let computed_at = decode_u64(&bytes[..8])?;
-    let graph_version = decode_u64(&bytes[8..16])?;
+    let computed_at = decode_u64(&bytes[..8], "ppr cache header")?;
+    let graph_version = decode_u64(&bytes[8..16], "ppr cache header")?;
     let stale = bytes[CACHE_STALE_OFFSET];
     Ok((computed_at, graph_version, stale))
 }
 
 fn decode_cache_scores(payload: &[u8]) -> Result<Vec<ScoredEntity>> {
     if !payload.len().is_multiple_of(CACHE_ENTRY_LEN) {
-        return Err(Error::InvalidKey);
+        return Err(Error::CorruptedIndex("ppr cache scores"));
     }
 
     payload
@@ -538,12 +557,13 @@ fn decode_cache_scores(payload: &[u8]) -> Result<Vec<ScoredEntity>> {
             let id = EntityId::from_bytes(
                 chunk[..ENTITY_ID_LEN]
                     .try_into()
-                    .map_err(|_| Error::InvalidKey)?,
-            )?;
+                    .map_err(|_| Error::CorruptedIndex("ppr cache scores"))?,
+            )
+            .map_err(|_| Error::CorruptedIndex("ppr cache scores"))?;
             let score = f32::from_le_bytes(
                 chunk[ENTITY_ID_LEN..CACHE_ENTRY_LEN]
                     .try_into()
-                    .map_err(|_| Error::InvalidKey)?,
+                    .map_err(|_| Error::CorruptedIndex("ppr cache scores"))?,
             );
             Ok(ScoredEntity { id, score })
         })
@@ -571,12 +591,29 @@ fn read_graph_version(store: &Store, txn: &RoTxn<'_>) -> Result<u64> {
     let Some(raw) = store.hnsw_meta.get(txn, GRAPH_VERSION_KEY)? else {
         return Ok(0);
     };
-    decode_u64(raw)
+    decode_u64(raw, "ppr graph version")
 }
 
-fn decode_u64(raw: &[u8]) -> Result<u64> {
-    let bytes: [u8; 8] = raw.try_into().map_err(|_| Error::InvalidKey)?;
+fn decode_u64(raw: &[u8], context: &'static str) -> Result<u64> {
+    let bytes: [u8; 8] = raw.try_into().map_err(|_| Error::CorruptedIndex(context))?;
     Ok(u64::from_le_bytes(bytes))
+}
+
+fn decode_dep_key(dep_key: &[u8]) -> Result<(EntityId, [u8; SEED_HASH_LEN])> {
+    if dep_key.len() != CACHE_DEP_KEY_LEN {
+        return Err(Error::CorruptedIndex("ppr cache dep"));
+    }
+
+    let entity_id = EntityId::from_bytes(
+        dep_key[..ENTITY_ID_LEN]
+            .try_into()
+            .map_err(|_| Error::CorruptedIndex("ppr cache dep"))?,
+    )
+    .map_err(|_| Error::CorruptedIndex("ppr cache dep"))?;
+    let seed_hash = dep_key[ENTITY_ID_LEN..]
+        .try_into()
+        .map_err(|_| Error::CorruptedIndex("ppr cache dep"))?;
+    Ok((entity_id, seed_hash))
 }
 
 #[cfg(test)]
@@ -976,6 +1013,46 @@ mod tests {
     }
 
     #[test]
+    fn batch_delete_edge_cleans_inbound_orphans_without_staling_cache() -> Result<()> {
+        let temp_dir = tempdir()?;
+        let vault = Vault::open(temp_dir.path(), test_config())?;
+        let a = entity(50);
+        let b = entity(51);
+        let tr = TimeRange { start: 1, end: 1 };
+
+        vault.put_entity(&a, 1, tr, 1, b"a-data")?;
+        vault.put_entity(&b, 1, tr, 1, b"b-data")?;
+        vault.put_edge(&a, EdgeKind::BelongsTo, &b, 1.0)?;
+        let _ = ppr_query(&vault.store, &vault.config, &[a], 3, 0.15)?;
+        let seed_hash = hash_seeds(&[a], 3, 0.15);
+
+        let key_out = Store::encode_edge_key(&a, EdgeKind::BelongsTo, &b);
+        let key_in = Store::encode_edge_key(&b, EdgeKind::BelongsTo, &a);
+        let mut wtxn = vault.store.env.write_txn()?;
+        assert!(vault.store.edges_out.delete(&mut wtxn, &key_out)?);
+        wtxn.commit()?;
+
+        let before = graph_version(&vault)?;
+        vault
+            .batch()
+            .delete_edge(&a, EdgeKind::BelongsTo, &b)
+            .commit()?;
+        let after = graph_version(&vault)?;
+        assert_eq!(after, before);
+
+        let rtxn = vault.store.env.read_txn()?;
+        assert!(vault.store.edges_in.get(&rtxn, &key_in)?.is_none());
+        let raw = vault
+            .store
+            .ppr_cache
+            .get(&rtxn, &seed_hash)?
+            .ok_or(Error::EntityNotFound)?;
+        let (_, _, stale) = parse_cache_header(raw)?;
+        assert_eq!(stale, 0);
+        Ok(())
+    }
+
+    #[test]
     fn delete_isolated_entity_increments_graph_version_once() -> Result<()> {
         let temp_dir = tempdir()?;
         let vault = Vault::open(temp_dir.path(), test_config())?;
@@ -1085,6 +1162,43 @@ mod tests {
         assert!(report.ppr_deps_cleaned >= 1);
         assert_eq!(count_entries(&vault.store.ppr_cache, &vault)?, 1);
         assert_eq!(count_entries(&vault.store.ppr_cache_deps, &vault)?, 1);
+        Ok(())
+    }
+
+    #[test]
+    fn cleanup_ppr_cache_prunes_malformed_dep_rows() -> Result<()> {
+        let temp_dir = tempdir()?;
+        let vault = Vault::open(temp_dir.path(), test_config())?;
+        let a = entity(52);
+        let b = entity(53);
+        let tr = TimeRange { start: 1, end: 1 };
+
+        vault.put_entity(&a, 1, tr, 1, b"a-data")?;
+        vault.put_entity(&b, 1, tr, 1, b"b-data")?;
+        vault.put_edge(&a, EdgeKind::BelongsTo, &b, 1.0)?;
+        let _ = ppr_query(&vault.store, &vault.config, &[a], 3, 0.15)?;
+        let seed_hash = hash_seeds(&[a], 3, 0.15);
+
+        let mut malformed_dep = [0_u8; CACHE_DEP_KEY_LEN];
+        malformed_dep[ENTITY_ID_LEN..].copy_from_slice(&seed_hash);
+
+        let mut wtxn = vault.store.env.write_txn()?;
+        vault
+            .store
+            .ppr_cache_deps
+            .put(&mut wtxn, &malformed_dep, &[])?;
+        wtxn.commit()?;
+
+        let report = vault.maintain().cleanup_ppr_cache(CACHE_TTL_SECS).run()?;
+        assert_eq!(report.ppr_caches_evicted, 0);
+        assert!(report.ppr_deps_cleaned >= 1);
+
+        let rtxn = vault.store.env.read_txn()?;
+        assert!(vault
+            .store
+            .ppr_cache_deps
+            .get(&rtxn, &malformed_dep)?
+            .is_none());
         Ok(())
     }
 
