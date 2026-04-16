@@ -813,7 +813,7 @@ fn upsert_short_id(
 }
 
 fn short_id_counter_sentinel(entity_type: u8) -> [u8; ENTITY_ID_LEN] {
-    assert_ne!(
+    debug_assert_ne!(
         entity_type, 0xFF,
         "0xFF is reserved for short-id sentinel keys"
     );
