@@ -94,6 +94,7 @@ pub(crate) fn hnsw_insert(
         entry_point,
         config.hnsw.ef_construction,
         false,
+        false,
     )?;
 
     nearest.retain(|entry| entry.id != *id);
@@ -289,6 +290,7 @@ pub(crate) fn hnsw_search(
         entry_point,
         config.hnsw.ef_search.max(limit),
         true,
+        true,
     )?;
 
     nearest.truncate(limit);
@@ -350,6 +352,7 @@ fn beam_search(
     query_vector: &[f32],
     entry_point: EntityId,
     ef: usize,
+    lenient_neighbors: bool,
     check_existence: bool,
 ) -> Result<Vec<HeapEntry>> {
     let ef = ef.max(1);
@@ -389,7 +392,11 @@ fn beam_search(
             break;
         }
 
-        let neighbors = load_neighbors_lenient(store, txn, &current.id)?;
+        let neighbors = if lenient_neighbors {
+            load_neighbors_lenient(store, txn, &current.id)?
+        } else {
+            load_neighbors(store, txn, &current.id)?
+        };
         for neighbor_id in neighbors {
             if !visited.insert(neighbor_id) {
                 continue;
@@ -1167,6 +1174,48 @@ mod tests {
         let err = vault
             .put_vector(&b, &[0.9, 0.1, 0.0, 0.0])
             .expect_err("expected corrupted write-side neighbors to fail");
+        assert!(matches!(
+            err,
+            Error::CorruptedIndex(message) if message == ERR_NEIGHBOR_VALUE_BYTES
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn beam_search_strict_rejects_corrupted_neighbor_rows() -> Result<()> {
+        let temp_dir = tempdir()?;
+        let store = Store::open(temp_dir.path(), &test_config())?;
+        let a = EntityId::now();
+        let b = EntityId::now();
+
+        let mut wtxn = store.env.write_txn()?;
+        store
+            .entities
+            .put(&mut wtxn, a.as_bytes(), &[0, 0, 0, 0, 0, 0, 0, 0])?;
+        store
+            .entities
+            .put(&mut wtxn, b.as_bytes(), &[0, 0, 0, 0, 0, 0, 0, 0])?;
+        store.vectors.put(
+            &mut wtxn,
+            a.as_bytes(),
+            &vector_bytes(&[1.0, 0.0, 0.0, 0.0]),
+        )?;
+        store.vectors.put(
+            &mut wtxn,
+            b.as_bytes(),
+            &vector_bytes(&[0.9, 0.1, 0.0, 0.0]),
+        )?;
+        store
+            .hnsw_neighbors
+            .put(&mut wtxn, a.as_bytes(), b.as_bytes())?;
+        store
+            .hnsw_neighbors
+            .put(&mut wtxn, b.as_bytes(), &[0; ENTITY_ID_LEN])?;
+        wtxn.commit()?;
+
+        let rtxn = store.env.read_txn()?;
+        let err = beam_search(&store, &rtxn, &[1.0, 0.0, 0.0, 0.0], a, 2, false, false)
+            .expect_err("strict beam search should reject corrupted neighbors");
         assert!(matches!(
             err,
             Error::CorruptedIndex(message) if message == ERR_NEIGHBOR_VALUE_BYTES
