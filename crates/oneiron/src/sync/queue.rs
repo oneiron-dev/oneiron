@@ -11,6 +11,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
 use crate::error::{Error, Result};
+use crate::sync::transport::MAX_WINDOW_KEY_LEN;
 use crate::types::EntityId;
 use crate::Vault;
 
@@ -67,9 +68,9 @@ impl SyncQueue {
     ///
     /// Returns the assigned sequence number.
     pub fn push(&self, window_key: &str, update_bytes: &[u8]) -> Result<u64> {
+        let value = encode_update_value(window_key, update_bytes)?;
         let seq = self.seq.fetch_add(1, Ordering::Relaxed) + 1;
         let key = encode_update_key(seq);
-        let value = encode_update_value(window_key, update_bytes);
 
         let mut wtxn = self.vault.store.env.write_txn()?;
         self.vault.store.sync_queue.put(&mut wtxn, &key, &value)?;
@@ -154,9 +155,6 @@ impl SyncQueue {
     ///
     /// Called after convergence confirms the server has received all updates.
     pub fn clear_through(&self, max_seq: u64) -> Result<()> {
-        let mut wtxn = self.vault.store.env.write_txn()?;
-
-        // We need to collect keys first since we can't mutate during iteration.
         let rtxn = self.vault.store.env.read_txn()?;
         let mut keys_to_delete = Vec::new();
         let iter = self.vault.store.sync_queue.iter(&rtxn)?;
@@ -172,6 +170,7 @@ impl SyncQueue {
         }
         drop(rtxn);
 
+        let mut wtxn = self.vault.store.env.write_txn()?;
         for key in &keys_to_delete {
             self.vault.store.sync_queue.delete(&mut wtxn, key)?;
         }
@@ -296,13 +295,16 @@ fn decode_update_key(key: &[u8]) -> Result<u64> {
 }
 
 /// Encodes an update value: `[window_key_len:1][window_key][encoded_update]`.
-fn encode_update_value(window_key: &str, update_bytes: &[u8]) -> Vec<u8> {
+fn encode_update_value(window_key: &str, update_bytes: &[u8]) -> Result<Vec<u8>> {
     let key_bytes = window_key.as_bytes();
+    if key_bytes.is_empty() || key_bytes.len() > MAX_WINDOW_KEY_LEN {
+        return Err(Error::InvalidKey);
+    }
     let mut value = Vec::with_capacity(1 + key_bytes.len() + update_bytes.len());
     value.push(key_bytes.len() as u8);
     value.extend_from_slice(key_bytes);
     value.extend_from_slice(update_bytes);
-    value
+    Ok(value)
 }
 
 /// Decodes an update value into (window_key, encoded_update).
@@ -311,6 +313,9 @@ fn decode_update_value(value: &[u8]) -> Result<(String, Vec<u8>)> {
         return Err(Error::InvalidKey);
     }
     let key_len = value[0] as usize;
+    if key_len == 0 || key_len > MAX_WINDOW_KEY_LEN {
+        return Err(Error::InvalidKey);
+    }
     if value.len() < 1 + key_len {
         return Err(Error::InvalidKey);
     }
@@ -396,6 +401,32 @@ mod tests {
         let updates = queue.drain_updates().unwrap();
         assert_eq!(updates.len(), 1);
         assert_eq!(updates[0].seq, 3);
+    }
+
+    #[test]
+    fn push_rejects_invalid_window_key_without_burning_sequence() {
+        let vault = test_vault();
+        let queue = SyncQueue::new(vault).unwrap();
+
+        let err = queue
+            .push("", &[1])
+            .expect_err("empty window key must fail");
+        assert!(matches!(err, Error::InvalidKey));
+
+        let overlong = "x".repeat(MAX_WINDOW_KEY_LEN + 1);
+        let err = queue
+            .push(&overlong, &[2])
+            .expect_err("overlong window key must fail");
+        assert!(matches!(err, Error::InvalidKey));
+
+        let seq = queue.push("2026-03", &[3]).unwrap();
+        assert_eq!(seq, 1);
+
+        let updates = queue.drain_updates().unwrap();
+        assert_eq!(updates.len(), 1);
+        assert_eq!(updates[0].seq, 1);
+        assert_eq!(updates[0].window_key, "2026-03");
+        assert_eq!(updates[0].encoded, vec![3]);
     }
 
     #[test]

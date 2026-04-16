@@ -12,12 +12,14 @@
 //! Observer B callbacks check the event origin and skip bridge-tagged events
 //! to avoid circular LMDB→CRDT→LMDB loops.
 
+use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 
 use super::engine::{CrdtDoc, Subscription};
 use super::loro_engine::LoroDocument;
-use crate::batch::{EntityMetadataHeader, ENTITY_METADATA_HEADER_LEN};
+use crate::batch::{self, BatchOp, EntityMetadataHeader, ENTITY_METADATA_HEADER_LEN};
+use crate::store::Store;
 use crate::types::{EdgeKind, EntityId, Vad};
 use crate::Vault;
 
@@ -277,6 +279,7 @@ fn materialize_entities_from_delta(delta: &loro::event::MapDelta<'_>, vault: &Va
 /// transaction instead of committing per-edge.
 fn materialize_edges_from_delta(delta: &loro::event::MapDelta<'_>, vault: &Vault) {
     let result = vault.with_write_txn(|wtxn| {
+        let mut ops = Vec::<BatchOp>::new();
         for (key, new_val) in &delta.updated {
             match new_val {
                 Some(loro::ValueOrContainer::Value(loro::LoroValue::Binary(buf))) => {
@@ -297,37 +300,163 @@ fn materialize_edges_from_delta(delta: &loro::event::MapDelta<'_>, vault: &Vault
                             continue;
                         }
                     };
-
-                    if let Err(e) = vault
-                        .batch_in()
-                        .edge_with_created_at_and_vad(&src, kind, &tgt, weight, created_at, vad)
-                        .apply(wtxn)
-                    {
-                        tracing::warn!(
-                            edge = %key,
-                            error = %e,
-                            "observer-b: edge materialization failed"
-                        );
+                    if !weight.is_finite() || !vad.is_finite() || !vad.is_in_range() {
+                        tracing::warn!(edge = %key, "observer-b: edge invalid value");
+                        continue;
                     }
+                    ops.push(BatchOp::EdgeWithCreatedAt {
+                        src,
+                        kind,
+                        tgt,
+                        weight,
+                        created_at,
+                        vad,
+                    });
                 }
                 None => {
                     // Deleted
                     let Some((src, kind, tgt)) = parse_edge_key(key.as_ref()) else {
                         continue;
                     };
-                    if let Err(e) = vault.batch_in().delete_edge(&src, kind, &tgt).apply(wtxn) {
-                        tracing::warn!(edge = %key, error = %e, "observer-b: edge remove failed");
-                    }
+                    ops.push(BatchOp::DeleteEdge { src, kind, tgt });
                 }
                 _ => {}
             }
         }
+        apply_materialized_edge_ops(vault, wtxn, ops);
         Ok(())
     });
 
     if let Err(e) = result {
         tracing::error!(error = %e, "observer-b: edge batch commit failed");
     }
+}
+
+#[derive(Clone)]
+struct PendingChildOfOp {
+    index: usize,
+    src: EntityId,
+    tgt: EntityId,
+    op: BatchOp,
+}
+
+fn apply_materialized_edge_ops(vault: &Vault, wtxn: &mut heed::RwTxn<'_>, ops: Vec<BatchOp>) {
+    let mut child_of_adds = Vec::<PendingChildOfOp>::new();
+    let mut child_of_deletes = Vec::<PendingChildOfOp>::new();
+
+    for (index, op) in ops.into_iter().enumerate() {
+        match &op {
+            BatchOp::EdgeWithCreatedAt { src, kind, tgt, .. }
+            | BatchOp::Edge { src, kind, tgt, .. }
+                if *kind == EdgeKind::ChildOf =>
+            {
+                child_of_adds.push(PendingChildOfOp {
+                    index,
+                    src: *src,
+                    tgt: *tgt,
+                    op,
+                });
+            }
+            BatchOp::DeleteEdge { src, kind, tgt } if *kind == EdgeKind::ChildOf => {
+                child_of_deletes.push(PendingChildOfOp {
+                    index,
+                    src: *src,
+                    tgt: *tgt,
+                    op,
+                });
+            }
+            _ => {
+                if let Err(e) = batch::apply_ops(&vault.store, &vault.config, wtxn, vec![op]) {
+                    tracing::warn!(error = %e, "observer-b: edge materialization failed");
+                }
+            }
+        }
+    }
+
+    child_of_deletes.sort_by(cmp_pending_child_of_ops);
+    for pending in child_of_deletes {
+        if let Err(e) = batch::apply_ops(&vault.store, &vault.config, wtxn, vec![pending.op]) {
+            tracing::warn!(error = %e, "observer-b: edge materialization failed");
+        }
+    }
+
+    let mut components = child_of_components(&child_of_adds);
+    components.sort_by(|left, right| {
+        child_of_component_sort_key(left)
+            .cmp(&child_of_component_sort_key(right))
+            .then_with(|| left.len().cmp(&right.len()))
+    });
+    for component in components {
+        let mut component_ops = component;
+        component_ops.sort_by(cmp_pending_child_of_ops);
+        let ops = component_ops.into_iter().map(|entry| entry.op).collect();
+        if let Err(e) = batch::apply_ops(&vault.store, &vault.config, wtxn, ops) {
+            tracing::warn!(error = %e, "observer-b: edge materialization failed");
+        }
+    }
+}
+
+fn child_of_components(ops: &[PendingChildOfOp]) -> Vec<Vec<PendingChildOfOp>> {
+    let mut adjacency = HashMap::<EntityId, HashSet<EntityId>>::new();
+    for op in ops {
+        adjacency.entry(op.src).or_default().insert(op.tgt);
+        adjacency.entry(op.tgt).or_default().insert(op.src);
+    }
+
+    let mut components = Vec::new();
+    let mut visited = HashSet::<EntityId>::new();
+    let mut starts = adjacency.keys().copied().collect::<Vec<_>>();
+    starts.sort_by(|left, right| left.as_bytes().cmp(right.as_bytes()));
+    for start in starts {
+        if !visited.insert(start) {
+            continue;
+        }
+
+        let mut stack = vec![start];
+        let mut nodes = HashSet::from([start]);
+        while let Some(node) = stack.pop() {
+            if let Some(neighbors) = adjacency.get(&node) {
+                let mut sorted_neighbors = neighbors.iter().copied().collect::<Vec<_>>();
+                sorted_neighbors.sort_by(|left, right| left.as_bytes().cmp(right.as_bytes()));
+                for neighbor in sorted_neighbors {
+                    if visited.insert(neighbor) {
+                        stack.push(neighbor);
+                        nodes.insert(neighbor);
+                    }
+                }
+            }
+        }
+
+        components.push(
+            ops.iter()
+                .filter(|op| nodes.contains(&op.src))
+                .cloned()
+                .collect(),
+        );
+    }
+
+    components
+}
+
+fn pending_child_of_sort_key(op: &PendingChildOfOp) -> [u8; 33] {
+    Store::encode_edge_key(&op.src, EdgeKind::ChildOf, &op.tgt)
+}
+
+fn cmp_pending_child_of_ops(
+    left: &PendingChildOfOp,
+    right: &PendingChildOfOp,
+) -> std::cmp::Ordering {
+    pending_child_of_sort_key(left)
+        .cmp(&pending_child_of_sort_key(right))
+        .then_with(|| left.index.cmp(&right.index))
+}
+
+fn child_of_component_sort_key(component: &[PendingChildOfOp]) -> [u8; 33] {
+    component
+        .iter()
+        .map(pending_child_of_sort_key)
+        .min()
+        .expect("child-of component must be non-empty")
 }
 
 /// Materialize tombstone changes — delete entities from LMDB.
@@ -421,6 +550,14 @@ pub fn format_edge_key(src: &EntityId, kind: EdgeKind, tgt: &EntityId) -> String
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::types::{TimeRange, VaultConfig};
+    use crate::Vault;
+    use std::sync::Arc;
+
+    fn test_vault() -> Arc<Vault> {
+        let dir = tempfile::tempdir().unwrap();
+        Arc::new(Vault::open(dir.path(), VaultConfig::device()).unwrap())
+    }
 
     #[test]
     fn parse_edge_key_valid() {
@@ -452,5 +589,150 @@ mod tests {
         assert!((v.valence - 0.5).abs() < f32::EPSILON);
         assert!((v.arousal - 0.3).abs() < f32::EPSILON);
         assert!((v.dominance - 0.7).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn apply_materialized_edge_ops_keeps_other_edges_after_child_of_failure() {
+        let vault = test_vault();
+        let a = EntityId::now();
+        let b = EntityId::now();
+        let c = EntityId::now();
+
+        vault
+            .batch()
+            .put(&a, 61, TimeRange { start: 1, end: 1 }, 2, b"a")
+            .put(&b, 61, TimeRange { start: 3, end: 3 }, 4, b"b")
+            .put(&c, 61, TimeRange { start: 5, end: 5 }, 6, b"c")
+            .edge(&b, EdgeKind::ChildOf, &a, 1.0)
+            .commit()
+            .unwrap();
+
+        vault
+            .with_write_txn(|wtxn| {
+                apply_materialized_edge_ops(
+                    &vault,
+                    wtxn,
+                    vec![
+                        BatchOp::EdgeWithCreatedAt {
+                            src: a,
+                            kind: EdgeKind::ChildOf,
+                            tgt: b,
+                            weight: 1.0,
+                            created_at: 10,
+                            vad: Vad::NEUTRAL,
+                        },
+                        BatchOp::EdgeWithCreatedAt {
+                            src: c,
+                            kind: EdgeKind::Mentions,
+                            tgt: a,
+                            weight: 0.8,
+                            created_at: 11,
+                            vad: Vad::NEUTRAL,
+                        },
+                    ],
+                );
+                Ok(())
+            })
+            .unwrap();
+
+        assert!(!vault.edge_exists(&a, EdgeKind::ChildOf, &b).unwrap());
+        assert!(vault.edge_exists(&c, EdgeKind::Mentions, &a).unwrap());
+    }
+
+    #[test]
+    fn apply_materialized_edge_ops_keeps_valid_child_of_delete_when_add_fails() {
+        let vault = test_vault();
+        let a = EntityId::now();
+        let b = EntityId::now();
+        let c = EntityId::now();
+
+        vault
+            .batch()
+            .put(&a, 61, TimeRange { start: 1, end: 1 }, 2, b"a")
+            .put(&b, 61, TimeRange { start: 3, end: 3 }, 4, b"b")
+            .put(&c, 61, TimeRange { start: 5, end: 5 }, 6, b"c")
+            .edge(&c, EdgeKind::ChildOf, &b, 1.0)
+            .edge(&b, EdgeKind::ChildOf, &a, 1.0)
+            .commit()
+            .unwrap();
+
+        vault
+            .with_write_txn(|wtxn| {
+                apply_materialized_edge_ops(
+                    &vault,
+                    wtxn,
+                    vec![
+                        BatchOp::DeleteEdge {
+                            src: c,
+                            kind: EdgeKind::ChildOf,
+                            tgt: b,
+                        },
+                        BatchOp::EdgeWithCreatedAt {
+                            src: a,
+                            kind: EdgeKind::ChildOf,
+                            tgt: b,
+                            weight: 1.0,
+                            created_at: 10,
+                            vad: Vad::NEUTRAL,
+                        },
+                    ],
+                );
+                Ok(())
+            })
+            .unwrap();
+
+        assert!(!vault.edge_exists(&c, EdgeKind::ChildOf, &b).unwrap());
+        assert!(!vault.edge_exists(&a, EdgeKind::ChildOf, &b).unwrap());
+    }
+
+    #[test]
+    fn apply_materialized_edge_ops_child_of_subset_is_deterministic() {
+        let vault = test_vault();
+        let a = EntityId::from_bytes_unchecked([1; 16]);
+        let x = EntityId::from_bytes_unchecked([2; 16]);
+        let b = EntityId::from_bytes_unchecked([3; 16]);
+        let y = EntityId::from_bytes_unchecked([4; 16]);
+
+        vault
+            .batch()
+            .put(&a, 61, TimeRange { start: 1, end: 1 }, 2, b"a")
+            .put(&x, 61, TimeRange { start: 3, end: 3 }, 4, b"x")
+            .put(&b, 61, TimeRange { start: 5, end: 5 }, 6, b"b")
+            .put(&y, 61, TimeRange { start: 7, end: 7 }, 8, b"y")
+            .edge(&a, EdgeKind::ChildOf, &x, 1.0)
+            .edge(&b, EdgeKind::ChildOf, &y, 1.0)
+            .commit()
+            .unwrap();
+
+        vault
+            .with_write_txn(|wtxn| {
+                apply_materialized_edge_ops(
+                    &vault,
+                    wtxn,
+                    vec![
+                        BatchOp::EdgeWithCreatedAt {
+                            src: y,
+                            kind: EdgeKind::ChildOf,
+                            tgt: a,
+                            weight: 1.0,
+                            created_at: 10,
+                            vad: Vad::NEUTRAL,
+                        },
+                        BatchOp::EdgeWithCreatedAt {
+                            src: x,
+                            kind: EdgeKind::ChildOf,
+                            tgt: b,
+                            weight: 1.0,
+                            created_at: 11,
+                            vad: Vad::NEUTRAL,
+                        },
+                    ],
+                );
+                Ok(())
+            })
+            .unwrap();
+
+        assert!(vault.edge_exists(&x, EdgeKind::ChildOf, &b).unwrap());
+        assert!(!vault.edge_exists(&y, EdgeKind::ChildOf, &a).unwrap());
     }
 }

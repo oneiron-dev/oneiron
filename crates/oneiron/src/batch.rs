@@ -1,4 +1,4 @@
-use std::collections::{HashSet, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::str;
 
 use heed::RwTxn;
@@ -52,6 +52,7 @@ pub struct BatchBuilder<'a> {
     validation_error: Option<Error>,
 }
 
+#[derive(Clone)]
 pub(crate) enum BatchOp {
     Put {
         id: EntityId,
@@ -390,6 +391,8 @@ pub(crate) fn apply_ops(
     wtxn: &mut RwTxn<'_>,
     ops: Vec<BatchOp>,
 ) -> Result<()> {
+    let child_of_overlay = ChildOfBatchOverlay::from_ops(&ops);
+    validate_child_of_batch(store, &*wtxn, &child_of_overlay)?;
     let mut had_graph_mutation = false;
     let mut had_vector_mutation = false;
 
@@ -462,6 +465,106 @@ pub(crate) fn apply_ops(
     }
 
     Ok(())
+}
+
+#[derive(Debug, Default)]
+struct ChildOfBatchOverlay {
+    entity_clears: HashMap<EntityId, usize>,
+    edge_ops: HashMap<(EntityId, EntityId), (usize, bool)>,
+    edge_candidates: HashMap<EntityId, HashSet<EntityId>>,
+}
+
+impl ChildOfBatchOverlay {
+    fn from_ops(ops: &[BatchOp]) -> Self {
+        let mut overlay = Self::default();
+
+        for (index, op) in ops.iter().enumerate() {
+            match op {
+                BatchOp::Edge { src, kind, tgt, .. }
+                | BatchOp::EdgeWithCreatedAt { src, kind, tgt, .. }
+                    if *kind == EdgeKind::ChildOf =>
+                {
+                    overlay.edge_ops.insert((*src, *tgt), (index, true));
+                    overlay
+                        .edge_candidates
+                        .entry(*src)
+                        .or_default()
+                        .insert(*tgt);
+                }
+                BatchOp::DeleteEdge { src, kind, tgt } if *kind == EdgeKind::ChildOf => {
+                    overlay.edge_ops.insert((*src, *tgt), (index, false));
+                    overlay
+                        .edge_candidates
+                        .entry(*src)
+                        .or_default()
+                        .insert(*tgt);
+                }
+                BatchOp::Delete { id } => {
+                    overlay.entity_clears.insert(*id, index);
+                }
+                _ => {}
+            }
+        }
+
+        overlay
+    }
+
+    fn final_edge_override(&self, child: &EntityId, parent: &EntityId) -> Option<bool> {
+        let clear_seq = self
+            .entity_clears
+            .get(child)
+            .copied()
+            .into_iter()
+            .chain(self.entity_clears.get(parent).copied())
+            .max();
+        let edge_seq = self.edge_ops.get(&(*child, *parent)).copied();
+
+        match (clear_seq, edge_seq) {
+            (Some(clear_seq), Some((op_seq, present))) if op_seq > clear_seq => Some(present),
+            (Some(_), _) => Some(false),
+            (None, Some((_, present))) => Some(present),
+            (None, None) => None,
+        }
+    }
+
+    fn effective_parents(
+        &self,
+        store: &Store,
+        rtxn: &heed::RoTxn<'_>,
+        child: &EntityId,
+    ) -> Result<HashSet<EntityId>> {
+        let mut parents = HashSet::new();
+        let prefix = child_of_prefix(child);
+
+        for entry in store.edges_out.prefix_iter(rtxn, &prefix)? {
+            let (key, value) = entry?;
+            validate_edge_record(key, value)?;
+            let parent = EntityId::from_bytes(
+                key[17..33]
+                    .try_into()
+                    .map_err(|_| Error::CorruptedIndex("edge record"))?,
+            )
+            .map_err(|_| Error::CorruptedIndex("edge record"))?;
+
+            if self.final_edge_override(child, &parent).unwrap_or(true) {
+                parents.insert(parent);
+            }
+        }
+
+        if let Some(candidates) = self.edge_candidates.get(child) {
+            for parent in candidates {
+                if self.final_edge_override(child, parent) == Some(true) {
+                    parents.insert(*parent);
+                }
+            }
+        }
+
+        Ok(parents)
+    }
+
+    fn affected_children(&self) -> impl Iterator<Item = EntityId> + '_ {
+        self.edge_candidates.keys().copied()
+    }
 }
 
 pub(crate) fn deindex_entity(
@@ -630,6 +733,7 @@ fn apply_vector(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)] // Keeps edge apply path flat and mirrors explicit write params
 fn apply_edge(
     store: &Store,
     wtxn: &mut RwTxn<'_>,
@@ -668,9 +772,6 @@ fn apply_edge_with_created_at(
     if !vad.is_finite() || !vad.is_in_range() {
         return Err(Error::InvalidVad);
     }
-    if kind == EdgeKind::ChildOf {
-        validate_child_of_write(store, &*wtxn, &src, &tgt)?;
-    }
 
     let key_out = Store::encode_edge_key(&src, kind, &tgt);
     let key_in = Store::encode_edge_key(&tgt, kind, &src);
@@ -680,35 +781,26 @@ fn apply_edge_with_created_at(
     Ok(())
 }
 
-fn validate_child_of_write(
+fn validate_child_of_batch(
     store: &Store,
     rtxn: &heed::RoTxn<'_>,
-    child: &EntityId,
-    proposed_parent: &EntityId,
+    child_of_overlay: &ChildOfBatchOverlay,
 ) -> Result<()> {
-    if child == proposed_parent {
-        return Err(Error::CycleDetected);
-    }
-
-    let prefix = child_of_prefix(child);
-    for entry in store.edges_out.prefix_iter(rtxn, &prefix)? {
-        let (key, value) = entry?;
-        validate_edge_record(key, value)?;
-        let existing_parent = EntityId::from_bytes(
-            key[17..33]
-                .try_into()
-                .map_err(|_| Error::CorruptedIndex("edge record"))?,
-        )
-        .map_err(|_| Error::CorruptedIndex("edge record"))?;
-        if existing_parent != *proposed_parent {
+    for child in child_of_overlay.affected_children() {
+        let parents = child_of_overlay.effective_parents(store, rtxn, &child)?;
+        if parents.len() > 1 {
             return Err(Error::InvariantViolation(
                 "childof requires a single parent",
             ));
         }
-    }
-
-    if would_create_child_of_cycle(store, rtxn, child, proposed_parent)? {
-        return Err(Error::CycleDetected);
+        if let Some(parent) = parents.iter().next() {
+            if child == *parent {
+                return Err(Error::CycleDetected);
+            }
+            if would_create_child_of_cycle(store, rtxn, child_of_overlay, &child, parent)? {
+                return Err(Error::CycleDetected);
+            }
+        }
     }
 
     Ok(())
@@ -717,6 +809,7 @@ fn validate_child_of_write(
 fn would_create_child_of_cycle(
     store: &Store,
     rtxn: &heed::RoTxn<'_>,
+    child_of_overlay: &ChildOfBatchOverlay,
     child: &EntityId,
     proposed_parent: &EntityId,
 ) -> Result<bool> {
@@ -726,16 +819,7 @@ fn would_create_child_of_cycle(
     visited.insert(*proposed_parent);
 
     while let Some(node) = frontier.pop_front() {
-        let prefix = child_of_prefix(&node);
-        for entry in store.edges_out.prefix_iter(rtxn, &prefix)? {
-            let (key, value) = entry?;
-            validate_edge_record(key, value)?;
-            let parent = EntityId::from_bytes(
-                key[17..33]
-                    .try_into()
-                    .map_err(|_| Error::CorruptedIndex("edge record"))?,
-            )
-            .map_err(|_| Error::CorruptedIndex("edge record"))?;
+        for parent in child_of_overlay.effective_parents(store, rtxn, &node)? {
             if parent == *child {
                 return Ok(true);
             }
@@ -1134,11 +1218,11 @@ fn validate_edge_record(key: &[u8], value: &[u8]) -> Result<()> {
 
     let weight = f32::from_le_bytes(value[..4].try_into().unwrap());
     if !weight.is_finite() {
-        return Err(Error::InvalidEdgeWeight);
+        return Err(Error::CorruptedIndex("edge record"));
     }
     let vad = parse_vad(value);
     if !vad.is_finite() || !vad.is_in_range() {
-        return Err(Error::InvalidVad);
+        return Err(Error::CorruptedIndex("edge record"));
     }
 
     Ok(())

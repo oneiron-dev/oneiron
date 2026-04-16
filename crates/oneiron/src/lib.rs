@@ -3321,6 +3321,86 @@ mod tests {
     }
 
     #[test]
+    fn generic_child_of_reparent_is_order_independent() -> Result<()> {
+        let temp_dir = tempfile::tempdir()?;
+        let vault = Vault::open(temp_dir.path(), test_config())?;
+
+        let child = EntityId::now();
+        let parent_a = EntityId::now();
+        let parent_b = EntityId::now();
+
+        vault
+            .batch()
+            .put(&child, 61, test_time_range(1, 1), 2, b"child")
+            .put(&parent_a, 61, test_time_range(3, 3), 4, b"pa")
+            .put(&parent_b, 61, test_time_range(5, 5), 6, b"pb")
+            .edge(&child, EdgeKind::ChildOf, &parent_a, 1.0)
+            .commit()?;
+
+        vault
+            .batch()
+            .edge(&child, EdgeKind::ChildOf, &parent_b, 1.0)
+            .delete_edge(&child, EdgeKind::ChildOf, &parent_a)
+            .commit()?;
+
+        let parents = vault.targets(&child, EdgeKind::ChildOf, None)?;
+        assert_eq!(parents, vec![parent_b]);
+        Ok(())
+    }
+
+    #[test]
+    fn txn_batch_child_of_reparent_is_order_independent() -> Result<()> {
+        let temp_dir = tempfile::tempdir()?;
+        let vault = Vault::open(temp_dir.path(), test_config())?;
+
+        let child = EntityId::now();
+        let parent_a = EntityId::now();
+        let parent_b = EntityId::now();
+
+        vault
+            .batch()
+            .put(&child, 61, test_time_range(1, 1), 2, b"child")
+            .put(&parent_a, 61, test_time_range(3, 3), 4, b"pa")
+            .put(&parent_b, 61, test_time_range(5, 5), 6, b"pb")
+            .edge(&child, EdgeKind::ChildOf, &parent_a, 1.0)
+            .commit()?;
+
+        vault.with_write_txn(|wtxn| {
+            vault
+                .batch_in()
+                .edge(&child, EdgeKind::ChildOf, &parent_b, 1.0)
+                .delete_edge(&child, EdgeKind::ChildOf, &parent_a)
+                .apply(wtxn)
+        })?;
+
+        let parents = vault.targets(&child, EdgeKind::ChildOf, None)?;
+        assert_eq!(parents, vec![parent_b]);
+        Ok(())
+    }
+
+    #[test]
+    fn child_of_batch_allows_add_delete_then_reverse_edge() -> Result<()> {
+        let temp_dir = tempfile::tempdir()?;
+        let vault = Vault::open(temp_dir.path(), test_config())?;
+
+        let a = EntityId::now();
+        let b = EntityId::now();
+
+        vault
+            .batch()
+            .put(&a, 61, test_time_range(1, 1), 2, b"a")
+            .put(&b, 61, test_time_range(3, 3), 4, b"b")
+            .edge(&a, EdgeKind::ChildOf, &b, 1.0)
+            .delete_edge(&a, EdgeKind::ChildOf, &b)
+            .edge(&b, EdgeKind::ChildOf, &a, 1.0)
+            .commit()?;
+
+        assert!(!vault.edge_exists(&a, EdgeKind::ChildOf, &b)?);
+        assert!(vault.edge_exists(&b, EdgeKind::ChildOf, &a)?);
+        Ok(())
+    }
+
+    #[test]
     fn edge_checked_detects_cycle_atomically() -> Result<()> {
         let temp_dir = tempfile::tempdir()?;
         let vault = Vault::open(temp_dir.path(), test_config())?;
