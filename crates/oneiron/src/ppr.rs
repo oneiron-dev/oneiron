@@ -254,6 +254,7 @@ pub(crate) fn cleanup_ppr_cache(
     now: u64,
 ) -> Result<(u64, u64)> {
     let mut cache_keys_to_delete = Vec::new();
+    let mut cache_seed_hashes = HashSet::<[u8; SEED_HASH_LEN]>::new();
     for entry in store.ppr_cache.iter(&*wtxn)? {
         let (seed_hash_key, value) = entry?;
         if seed_hash_key.len() != SEED_HASH_LEN {
@@ -271,7 +272,12 @@ pub(crate) fn cleanup_ppr_cache(
         };
         if stale != 0 || now.saturating_sub(computed_at) > max_age_secs {
             cache_keys_to_delete.push(seed_hash_key.to_vec());
+            continue;
         }
+
+        let mut seed_hash = [0_u8; SEED_HASH_LEN];
+        seed_hash.copy_from_slice(seed_hash_key);
+        cache_seed_hashes.insert(seed_hash);
     }
 
     for key in &cache_keys_to_delete {
@@ -280,6 +286,7 @@ pub(crate) fn cleanup_ppr_cache(
 
     let mut seed_liveness = HashMap::<EntityId, bool>::new();
     let mut dead_seed_hashes = HashSet::<[u8; SEED_HASH_LEN]>::new();
+    let mut surviving_seed_hashes = HashSet::<[u8; SEED_HASH_LEN]>::new();
     let mut dep_keys_to_delete = Vec::new();
     let mut surviving_dep_rows = Vec::<(Vec<u8>, [u8; SEED_HASH_LEN])>::new();
     for entry in store.ppr_cache_deps.iter(&*wtxn)? {
@@ -313,9 +320,17 @@ pub(crate) fn cleanup_ppr_cache(
 
         if !is_live {
             dead_seed_hashes.insert(seed_hash);
+        } else {
+            surviving_seed_hashes.insert(seed_hash);
         }
 
         surviving_dep_rows.push((dep_key.to_vec(), seed_hash));
+    }
+
+    for seed_hash in cache_seed_hashes {
+        if !dead_seed_hashes.contains(&seed_hash) && !surviving_seed_hashes.contains(&seed_hash) {
+            dead_seed_hashes.insert(seed_hash);
+        }
     }
 
     for seed_hash in &dead_seed_hashes {
@@ -363,7 +378,8 @@ fn invalidate_ppr_caches(store: &Store, wtxn: &mut RwTxn<'_>, entity_id: &Entity
     for seed_hash in hashes {
         if let Some(raw) = store.ppr_cache.get(&*wtxn, &seed_hash)? {
             if raw.len() < CACHE_HEADER_LEN {
-                return Err(Error::CorruptedIndex("ppr cache header"));
+                store.ppr_cache.delete(wtxn, &seed_hash)?;
+                continue;
             }
             let mut patched = raw.to_vec();
             patched[CACHE_STALE_OFFSET] = 1;
@@ -1200,11 +1216,81 @@ mod tests {
         assert!(report.ppr_deps_cleaned >= 1);
 
         let rtxn = vault.store.env.read_txn()?;
+        assert!(vault.store.ppr_cache.get(&rtxn, &seed_hash)?.is_some());
         assert!(vault
             .store
             .ppr_cache_deps
             .get(&rtxn, &malformed_dep)?
             .is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn cleanup_ppr_cache_evicts_cache_when_last_dep_row_is_malformed() -> Result<()> {
+        let temp_dir = tempdir()?;
+        let vault = Vault::open(temp_dir.path(), test_config())?;
+        let a = entity(54);
+        let b = entity(55);
+        let tr = TimeRange { start: 1, end: 1 };
+
+        vault.put_entity(&a, 1, tr, 1, b"a-data")?;
+        vault.put_entity(&b, 1, tr, 1, b"b-data")?;
+        vault.put_edge(&a, EdgeKind::BelongsTo, &b, 1.0)?;
+        let _ = ppr_query(&vault.store, &vault.config, &[a], 3, 0.15)?;
+        let seed_hash = hash_seeds(&[a], 3, 0.15);
+        let dep_key = encode_dep_key(&a, &seed_hash);
+
+        let mut malformed_dep = [0_u8; CACHE_DEP_KEY_LEN];
+        malformed_dep[ENTITY_ID_LEN..].copy_from_slice(&seed_hash);
+
+        let mut wtxn = vault.store.env.write_txn()?;
+        vault.store.ppr_cache_deps.delete(&mut wtxn, &dep_key)?;
+        vault
+            .store
+            .ppr_cache_deps
+            .put(&mut wtxn, &malformed_dep, &[])?;
+        wtxn.commit()?;
+
+        let report = vault.maintain().cleanup_ppr_cache(CACHE_TTL_SECS).run()?;
+        assert_eq!(report.ppr_caches_evicted, 1);
+        assert!(report.ppr_deps_cleaned >= 1);
+
+        let rtxn = vault.store.env.read_txn()?;
+        assert!(vault.store.ppr_cache.get(&rtxn, &seed_hash)?.is_none());
+        assert!(vault
+            .store
+            .ppr_cache_deps
+            .get(&rtxn, &malformed_dep)?
+            .is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn invalidate_ppr_caches_prunes_malformed_cache_rows() -> Result<()> {
+        let temp_dir = tempdir()?;
+        let vault = Vault::open(temp_dir.path(), test_config())?;
+        let a = entity(60);
+        let b = entity(61);
+        let seed_hash = hash_seeds(&[a], 3, 0.15);
+        let dep_key = encode_dep_key(&a, &seed_hash);
+
+        vault.put_entity(&a, 1, TimeRange { start: 1, end: 1 }, 1, b"a-data")?;
+        vault.put_entity(&b, 1, TimeRange { start: 2, end: 2 }, 2, b"b-data")?;
+
+        let mut wtxn = vault.store.env.write_txn()?;
+        vault
+            .store
+            .ppr_cache
+            .put(&mut wtxn, &seed_hash, &[1, 2, 3])?;
+        vault.store.ppr_cache_deps.put(&mut wtxn, &dep_key, &[])?;
+        wtxn.commit()?;
+
+        vault.put_edge(&a, EdgeKind::BelongsTo, &b, 1.0)?;
+
+        let rtxn = vault.store.env.read_txn()?;
+        assert!(vault.store.ppr_cache.get(&rtxn, &seed_hash)?.is_none());
+        drop(rtxn);
+        assert!(vault.edge_exists(&a, EdgeKind::BelongsTo, &b)?);
         Ok(())
     }
 

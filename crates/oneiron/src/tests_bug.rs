@@ -129,3 +129,37 @@ fn edges_out_rejects_non_finite_persisted_edge_payload() {
         "expected corrupted edge record, got {result:?}"
     );
 }
+
+#[test]
+fn delete_entity_rejects_non_finite_persisted_edge_payload() {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let vault = Vault::open(temp_dir.path(), VaultConfig::device()).unwrap();
+    let src = EntityId::now();
+    let tgt = EntityId::now();
+
+    vault
+        .batch()
+        .put(&src, 61, TimeRange { start: 1, end: 1 }, 2, b"src")
+        .put(&tgt, 61, TimeRange { start: 1, end: 1 }, 2, b"tgt")
+        .commit()
+        .unwrap();
+
+    let key_out = Store::encode_edge_key(&src, EdgeKind::ChildOf, &tgt);
+    let key_in = Store::encode_edge_key(&tgt, EdgeKind::ChildOf, &src);
+    let mut value = [0_u8; EDGE_VALUE_LEN];
+    value[..4].copy_from_slice(&f32::INFINITY.to_le_bytes());
+
+    vault
+        .with_write_txn(|wtxn| {
+            vault.store.edges_out.put(wtxn, &key_out, &value).unwrap();
+            vault.store.edges_in.put(wtxn, &key_in, &value).unwrap();
+            Ok(())
+        })
+        .unwrap();
+
+    let result = vault.delete_entity(&src);
+    assert!(
+        matches!(result, Err(Error::CorruptedIndex("edge record"))),
+        "expected corrupted edge record, got {result:?}"
+    );
+}
