@@ -443,7 +443,7 @@ impl Vault {
     /// Outbound edge targets filtered by kind and optional target entity type.
     ///
     /// For a ChildOf edge (child → parent), calling `targets(child, ChildOf, None)`
-    /// returns the parent(s).
+    /// returns the parent.
     pub fn targets(
         &self,
         src: &EntityId,
@@ -2751,12 +2751,26 @@ mod tests {
     fn entity_id_rejects_reserved_sentinel_bytes() {
         assert!(EntityId::from_bytes([0x00; 16]).is_err());
         assert!(EntityId::from_bytes([0xFF; 16]).is_err());
+
+        let mut claim_counter = [0xFF; 16];
+        claim_counter[0] = 0;
+        assert!(EntityId::from_bytes(claim_counter).is_err());
+
+        let mut task_list_counter = [0xFF; 16];
+        task_list_counter[0] = 60;
+        assert!(EntityId::from_bytes(task_list_counter).is_err());
+
+        let mut non_reserved = [0xFF; 16];
+        non_reserved[0] = 15;
+        assert!(EntityId::from_bytes(non_reserved).is_ok());
     }
 
     #[test]
     fn entity_id_from_hex_rejects_reserved_sentinel_bytes() {
         assert!(EntityId::from_hex("00000000000000000000000000000000").is_err());
         assert!(EntityId::from_hex("ffffffffffffffffffffffffffffffff").is_err());
+        assert!(EntityId::from_hex("00ffffffffffffffffffffffffffffff").is_err());
+        assert!(EntityId::from_hex("3cffffffffffffffffffffffffffffff").is_err());
     }
 
     #[test]
@@ -3243,6 +3257,66 @@ mod tests {
             "ChildOf should not count toward PartOf hop limit in mixed paths, got score={place1_score}"
         );
 
+        Ok(())
+    }
+
+    #[test]
+    fn generic_child_of_writes_reject_cycles() -> Result<()> {
+        let temp_dir = tempfile::tempdir()?;
+        let vault = Vault::open(temp_dir.path(), test_config())?;
+
+        let a = EntityId::now();
+        let b = EntityId::now();
+        let c = EntityId::now();
+
+        vault
+            .batch()
+            .put(&a, 61, test_time_range(1, 1), 2, b"a")
+            .put(&b, 61, test_time_range(3, 3), 4, b"b")
+            .put(&c, 61, test_time_range(5, 5), 6, b"c")
+            .edge(&b, EdgeKind::ChildOf, &a, 1.0)
+            .edge(&c, EdgeKind::ChildOf, &b, 1.0)
+            .commit()?;
+
+        let err = vault
+            .put_edge(&a, EdgeKind::ChildOf, &c, 1.0)
+            .expect_err("generic ChildOf write should reject cycles");
+        assert!(matches!(err, Error::CycleDetected));
+        assert!(!vault.edge_exists(&a, EdgeKind::ChildOf, &c)?);
+        Ok(())
+    }
+
+    #[test]
+    fn generic_child_of_writes_reject_second_parent() -> Result<()> {
+        let temp_dir = tempfile::tempdir()?;
+        let vault = Vault::open(temp_dir.path(), test_config())?;
+
+        let child = EntityId::now();
+        let parent_a = EntityId::now();
+        let parent_b = EntityId::now();
+
+        vault
+            .batch()
+            .put(&child, 61, test_time_range(1, 1), 2, b"child")
+            .put(&parent_a, 61, test_time_range(3, 3), 4, b"pa")
+            .put(&parent_b, 61, test_time_range(5, 5), 6, b"pb")
+            .edge(&child, EdgeKind::ChildOf, &parent_a, 1.0)
+            .commit()?;
+
+        let err = vault
+            .batch()
+            .edge(&child, EdgeKind::ChildOf, &parent_b, 1.0)
+            .commit()
+            .expect_err("generic ChildOf write should reject second parent");
+        assert!(matches!(
+            err,
+            Error::InvariantViolation("childof requires a single parent")
+        ));
+        assert!(!vault.edge_exists(&child, EdgeKind::ChildOf, &parent_b)?);
+
+        vault.put_edge(&child, EdgeKind::ChildOf, &parent_a, 0.5)?;
+        let parents = vault.targets(&child, EdgeKind::ChildOf, None)?;
+        assert_eq!(parents, vec![parent_a]);
         Ok(())
     }
 

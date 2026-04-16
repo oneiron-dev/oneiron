@@ -1,3 +1,4 @@
+use std::collections::{HashSet, VecDeque};
 use std::str;
 
 use heed::RwTxn;
@@ -49,7 +50,6 @@ pub struct BatchBuilder<'a> {
     vault: &'a Vault,
     ops: Vec<BatchOp>,
     validation_error: Option<Error>,
-    cycle_checks: Vec<(EntityId, EntityId)>, // (child, proposed_parent)
 }
 
 pub(crate) enum BatchOp {
@@ -103,7 +103,6 @@ impl<'a> BatchBuilder<'a> {
             vault,
             ops: Vec::new(),
             validation_error: None,
-            cycle_checks: Vec::new(),
         }
     }
 
@@ -155,14 +154,11 @@ impl<'a> BatchBuilder<'a> {
         self
     }
 
-    /// Adds a ChildOf edge with an atomic cycle check during commit.
+    /// Adds a ChildOf edge write operation.
     ///
-    /// The cycle check runs inside the write transaction, eliminating the
-    /// TOCTOU race in the standalone `would_create_cycle()` + `put_edge()` pattern.
-    /// Also detects cycles formed by multiple checked edges within the same batch.
-    /// Returns `Err(CycleDetected)` at commit time if the edge would create a cycle.
-    pub fn edge_checked(mut self, src: &EntityId, tgt: &EntityId, weight: f32) -> Self {
-        self.cycle_checks.push((*src, *tgt));
+    /// All `ChildOf` writes are validated atomically during commit/apply to
+    /// enforce single-parent tree semantics and reject cycles.
+    pub fn edge_checked(self, src: &EntityId, tgt: &EntityId, weight: f32) -> Self {
         self.edge(src, EdgeKind::ChildOf, tgt, weight)
     }
 
@@ -277,20 +273,6 @@ impl<'a> BatchBuilder<'a> {
         let mut wtxn = self.vault.store.env.write_txn()?;
 
         apply_ops(&self.vault.store, &self.vault.config, &mut wtxn, self.ops)?;
-
-        // Run cycle checks inside the write transaction (TOCTOU-safe).
-        // The RwTxn dereferences to RoTxn for read operations.
-        // We run this after apply_ops so the read transaction can see the newly written edges.
-        for (child, proposed_parent) in &self.cycle_checks {
-            if self
-                .vault
-                .would_create_cycle_in_txn(&wtxn, child, proposed_parent)?
-            {
-                wtxn.abort();
-                return Err(Error::CycleDetected);
-            }
-        }
-
         wtxn.commit()?;
         Ok(())
     }
@@ -686,6 +668,9 @@ fn apply_edge_with_created_at(
     if !vad.is_finite() || !vad.is_in_range() {
         return Err(Error::InvalidVad);
     }
+    if kind == EdgeKind::ChildOf {
+        validate_child_of_write(store, &*wtxn, &src, &tgt)?;
+    }
 
     let key_out = Store::encode_edge_key(&src, kind, &tgt);
     let key_in = Store::encode_edge_key(&tgt, kind, &src);
@@ -693,6 +678,81 @@ fn apply_edge_with_created_at(
     store.edges_out.put(wtxn, &key_out, &value)?;
     store.edges_in.put(wtxn, &key_in, &value)?;
     Ok(())
+}
+
+fn validate_child_of_write(
+    store: &Store,
+    rtxn: &heed::RoTxn<'_>,
+    child: &EntityId,
+    proposed_parent: &EntityId,
+) -> Result<()> {
+    if child == proposed_parent {
+        return Err(Error::CycleDetected);
+    }
+
+    let prefix = child_of_prefix(child);
+    for entry in store.edges_out.prefix_iter(rtxn, &prefix)? {
+        let (key, value) = entry?;
+        validate_edge_record(key, value)?;
+        let existing_parent = EntityId::from_bytes(
+            key[17..33]
+                .try_into()
+                .map_err(|_| Error::CorruptedIndex("edge record"))?,
+        )
+        .map_err(|_| Error::CorruptedIndex("edge record"))?;
+        if existing_parent != *proposed_parent {
+            return Err(Error::InvariantViolation(
+                "childof requires a single parent",
+            ));
+        }
+    }
+
+    if would_create_child_of_cycle(store, rtxn, child, proposed_parent)? {
+        return Err(Error::CycleDetected);
+    }
+
+    Ok(())
+}
+
+fn would_create_child_of_cycle(
+    store: &Store,
+    rtxn: &heed::RoTxn<'_>,
+    child: &EntityId,
+    proposed_parent: &EntityId,
+) -> Result<bool> {
+    let mut frontier = VecDeque::new();
+    frontier.push_back(*proposed_parent);
+    let mut visited = HashSet::new();
+    visited.insert(*proposed_parent);
+
+    while let Some(node) = frontier.pop_front() {
+        let prefix = child_of_prefix(&node);
+        for entry in store.edges_out.prefix_iter(rtxn, &prefix)? {
+            let (key, value) = entry?;
+            validate_edge_record(key, value)?;
+            let parent = EntityId::from_bytes(
+                key[17..33]
+                    .try_into()
+                    .map_err(|_| Error::CorruptedIndex("edge record"))?,
+            )
+            .map_err(|_| Error::CorruptedIndex("edge record"))?;
+            if parent == *child {
+                return Ok(true);
+            }
+            if visited.insert(parent) {
+                frontier.push_back(parent);
+            }
+        }
+    }
+
+    Ok(false)
+}
+
+fn child_of_prefix(id: &EntityId) -> [u8; 17] {
+    let mut prefix = [0u8; 17];
+    prefix[..ENTITY_ID_LEN].copy_from_slice(id.as_bytes());
+    prefix[ENTITY_ID_LEN] = EdgeKind::ChildOf as u8;
+    prefix
 }
 
 fn apply_delete_edge(
