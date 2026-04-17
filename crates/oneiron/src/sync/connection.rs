@@ -23,6 +23,7 @@ use tokio_tungstenite::tungstenite::Message;
 use crate::sync::client::{next_backoff, SyncClient, SyncClientConfig, SyncEvent, SyncStatus};
 use crate::sync::queue::SyncQueue;
 use crate::sync::transport::{self, window_sub_tags};
+use crate::sync::types::parse_window_key_str;
 use crate::Vault;
 
 /// Maximum convergence rounds before forcing re-bootstrap.
@@ -410,6 +411,13 @@ impl SyncConnection {
                 update = local_rx.recv() => {
                     match update {
                         Some(local_update) => {
+                            if parse_window_key_str(&local_update.window_key).is_none() {
+                                let _ = event_tx.send(SyncEvent::Error(format!(
+                                    "Rejected invalid local update window key: {}",
+                                    local_update.window_key
+                                )));
+                                continue;
+                            }
                             debounce_buffer.push(local_update);
                             debounce_deadline = Some(Instant::now() + Duration::from_millis(debounce_ms));
                         }
@@ -474,6 +482,13 @@ impl SyncConnection {
 /// Logs errors but does not fail — best-effort during disconnect/shutdown.
 fn flush_to_queue(queue: &SyncQueue, buffer: &mut Vec<LocalUpdate>) {
     for local_update in buffer.drain(..) {
+        if parse_window_key_str(&local_update.window_key).is_none() {
+            tracing::error!(
+                "Rejected invalid local update window key during queue flush: {}",
+                local_update.window_key
+            );
+            continue;
+        }
         if let Err(e) = queue.push(&local_update.window_key, &local_update.update_bytes) {
             tracing::error!("Failed to persist update to offline queue: {e}");
         }
@@ -516,6 +531,29 @@ mod tests {
         conn.queue().push("2026-02", &[4, 5, 6]).unwrap();
 
         assert_eq!(conn.queue().len().unwrap(), 2);
+    }
+
+    #[test]
+    fn flush_to_queue_skips_invalid_window_keys() {
+        let vault = test_vault();
+        let conn = SyncConnection::new(vault, ConnectionConfig::default()).unwrap();
+        let mut buffer = vec![
+            LocalUpdate {
+                window_key: "2026-13".to_string(),
+                update_bytes: vec![1, 2, 3],
+            },
+            LocalUpdate {
+                window_key: "2026-03".to_string(),
+                update_bytes: vec![4, 5, 6],
+            },
+        ];
+
+        flush_to_queue(conn.queue(), &mut buffer);
+
+        let queued = conn.queue().drain_updates().unwrap();
+        assert_eq!(queued.len(), 1);
+        assert_eq!(queued[0].window_key, "2026-03");
+        assert_eq!(queued[0].encoded, vec![4, 5, 6]);
     }
 
     #[test]

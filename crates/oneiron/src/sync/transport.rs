@@ -4,6 +4,8 @@
 //! and encoding/decoding for WindowSync, BulkTransfer, BulkTransferDone.
 //! Engine-agnostic — no CRDT library types here.
 
+use crate::sync::types::parse_window_key_str;
+
 // ─── Custom Message Tags ──────────────────────────────────────────────────────
 
 /// CRDT update bytes for the root doc.
@@ -45,7 +47,9 @@ pub const MAX_WINDOW_KEY_LEN: usize = 7;
 pub fn encode_window_sync(window_key: &str, sub_tag: u8, payload: &[u8]) -> Vec<u8> {
     let key_bytes = window_key.as_bytes();
     assert!(
-        !key_bytes.is_empty() && key_bytes.len() <= MAX_WINDOW_KEY_LEN,
+        !key_bytes.is_empty()
+            && key_bytes.len() <= MAX_WINDOW_KEY_LEN
+            && parse_window_key_str(window_key).is_some(),
         "window key length {} exceeds MAX_WINDOW_KEY_LEN ({})",
         key_bytes.len(),
         MAX_WINDOW_KEY_LEN,
@@ -74,6 +78,9 @@ pub fn decode_window_sync(data: &[u8]) -> Result<(&str, u8, &[u8]), TransportErr
     }
     let key =
         std::str::from_utf8(&data[1..1 + key_len]).map_err(|_| TransportError::InvalidWindowKey)?;
+    if parse_window_key_str(key).is_none() {
+        return Err(TransportError::InvalidWindowKey);
+    }
     let sub_tag = data[1 + key_len];
     let payload = &data[2 + key_len..];
     Ok((key, sub_tag, payload))
@@ -87,7 +94,9 @@ pub fn decode_window_sync(data: &[u8]) -> Result<(&str, u8, &[u8]), TransportErr
 pub fn encode_bulk_transfer(window_key: &str, zstd_data: &[u8]) -> Vec<u8> {
     let key_bytes = window_key.as_bytes();
     assert!(
-        !key_bytes.is_empty() && key_bytes.len() <= MAX_WINDOW_KEY_LEN,
+        !key_bytes.is_empty()
+            && key_bytes.len() <= MAX_WINDOW_KEY_LEN
+            && parse_window_key_str(window_key).is_some(),
         "window key length {} exceeds MAX_WINDOW_KEY_LEN ({})",
         key_bytes.len(),
         MAX_WINDOW_KEY_LEN,
@@ -114,6 +123,9 @@ pub fn decode_bulk_transfer(data: &[u8]) -> Result<(&str, &[u8]), TransportError
     }
     let key =
         std::str::from_utf8(&data[1..1 + key_len]).map_err(|_| TransportError::InvalidWindowKey)?;
+    if parse_window_key_str(key).is_none() {
+        return Err(TransportError::InvalidWindowKey);
+    }
     Ok((key, &data[1 + key_len..]))
 }
 
@@ -125,7 +137,9 @@ pub fn decode_bulk_transfer(data: &[u8]) -> Result<(&str, &[u8]), TransportError
 pub fn encode_bulk_transfer_done(window_key: &str, doc_state: &[u8]) -> Vec<u8> {
     let key_bytes = window_key.as_bytes();
     assert!(
-        !key_bytes.is_empty() && key_bytes.len() <= MAX_WINDOW_KEY_LEN,
+        !key_bytes.is_empty()
+            && key_bytes.len() <= MAX_WINDOW_KEY_LEN
+            && parse_window_key_str(window_key).is_some(),
         "window key length {} exceeds MAX_WINDOW_KEY_LEN ({})",
         key_bytes.len(),
         MAX_WINDOW_KEY_LEN,
@@ -153,6 +167,9 @@ pub fn decode_bulk_transfer_done(data: &[u8]) -> Result<(&str, &[u8]), Transport
     }
     let key =
         std::str::from_utf8(&data[1..1 + key_len]).map_err(|_| TransportError::InvalidWindowKey)?;
+    if parse_window_key_str(key).is_none() {
+        return Err(TransportError::InvalidWindowKey);
+    }
     let off = 1 + key_len;
     let state_len = u32::from_be_bytes(
         data[off..off + 4]
@@ -247,5 +264,43 @@ mod tests {
         d.extend_from_slice(b"12345678");
         d.push(0); // sub_tag
         assert!(decode_window_sync(&d).is_err()); // key_len = 8
+    }
+
+    #[test]
+    fn reject_invalid_calendar_window_keys() {
+        let mut invalid = vec![7];
+        invalid.extend_from_slice(b"2026-13");
+        invalid.push(window_sub_tags::UPDATE);
+        assert!(matches!(
+            decode_window_sync(&invalid),
+            Err(TransportError::InvalidWindowKey)
+        ));
+
+        let mut pre_epoch = vec![7];
+        pre_epoch.extend_from_slice(b"1969-12");
+        pre_epoch.push(window_sub_tags::UPDATE);
+        assert!(matches!(
+            decode_window_sync(&pre_epoch),
+            Err(TransportError::InvalidWindowKey)
+        ));
+    }
+
+    #[test]
+    fn reject_invalid_bulk_window_keys() {
+        let mut invalid = vec![7];
+        invalid.extend_from_slice(b"2026-13");
+        invalid.extend_from_slice(&[1, 2, 3]);
+        assert!(matches!(
+            decode_bulk_transfer(&invalid),
+            Err(TransportError::InvalidWindowKey)
+        ));
+
+        let mut pre_epoch = vec![7];
+        pre_epoch.extend_from_slice(b"1969-12");
+        pre_epoch.extend_from_slice(&[0, 0, 0, 0]);
+        assert!(matches!(
+            decode_bulk_transfer_done(&pre_epoch),
+            Err(TransportError::InvalidWindowKey) | Err(TransportError::InvalidPayload(_))
+        ));
     }
 }
