@@ -1099,10 +1099,17 @@ mod tests {
 
         {
             let mut wtxn = vault.store.env.write_txn()?;
+            let valid_vector = [
+                1.0_f32.to_le_bytes(),
+                0.0_f32.to_le_bytes(),
+                0.0_f32.to_le_bytes(),
+                0.0_f32.to_le_bytes(),
+            ]
+            .concat();
             vault
                 .store
                 .vectors
-                .put(&mut wtxn, &[0xFF; ENTITY_ID_LEN], &1.0_f32.to_le_bytes())?;
+                .put(&mut wtxn, &[0xFF; ENTITY_ID_LEN], &valid_vector)?;
             wtxn.commit()?;
         }
 

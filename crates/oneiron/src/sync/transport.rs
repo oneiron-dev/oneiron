@@ -300,7 +300,7 @@ mod tests {
         pre_epoch.extend_from_slice(&[0, 0, 0, 0]);
         assert!(matches!(
             decode_bulk_transfer_done(&pre_epoch),
-            Err(TransportError::InvalidWindowKey) | Err(TransportError::InvalidPayload(_))
+            Err(TransportError::InvalidWindowKey)
         ));
     }
 }

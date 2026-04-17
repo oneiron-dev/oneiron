@@ -79,6 +79,27 @@ impl SyncConnection {
         &self.queue
     }
 
+    fn handle_queue_overflow_check(
+        &self,
+        event_tx: &mpsc::UnboundedSender<SyncEvent>,
+        is_full: crate::error::Result<bool>,
+    ) {
+        match is_full {
+            Ok(true) => {
+                let _ = event_tx.send(SyncEvent::Error(
+                    "Queue overflow — performing re-bootstrap".to_string(),
+                ));
+                if let Err(e) = self.queue.clear_all() {
+                    let _ = event_tx.send(SyncEvent::Error(format!("Clear queue failed: {e}")));
+                }
+            }
+            Ok(false) => {}
+            Err(e) => {
+                let _ = event_tx.send(SyncEvent::Error(format!("Queue inspection failed: {e}")));
+            }
+        }
+    }
+
     /// Main event loop. Runs until the shutdown signal is received.
     ///
     /// # Arguments
@@ -148,15 +169,7 @@ impl SyncConnection {
             }
 
             // Check for queue overflow → re-bootstrap
-            if self.queue.is_full() {
-                let _ = event_tx.send(SyncEvent::Error(
-                    "Queue overflow — performing re-bootstrap".to_string(),
-                ));
-                if let Err(e) = self.queue.clear_all() {
-                    let _ = event_tx.send(SyncEvent::Error(format!("Clear queue failed: {e}")));
-                }
-                // Client windows will be repopulated on next connect
-            }
+            self.handle_queue_overflow_check(&event_tx, self.queue.is_full());
 
             // Wait with backoff before reconnecting
             let delay = Duration::from_millis(backoff_ms as u64);
@@ -277,10 +290,10 @@ impl SyncConnection {
         // Phase 3: Drain offline queue
         let queued = self.queue.drain_updates().map_err(|e| format!("{e}"))?;
         if !queued.is_empty() {
-            let _ = event_tx.send(SyncEvent::Error(format!(
-                "Replaying {} queued updates",
-                queued.len()
-            )));
+            tracing::info!(
+                queued_updates = queued.len(),
+                "replaying queued sync updates"
+            );
             for update in &queued {
                 // Re-encode as WindowSync wire message
                 let msg = transport::encode_window_sync(
@@ -518,7 +531,7 @@ mod tests {
     fn connection_creation() {
         let vault = test_vault();
         let conn = SyncConnection::new(vault, ConnectionConfig::default()).unwrap();
-        assert!(!conn.queue().is_full());
+        assert!(!conn.queue().is_full().unwrap());
     }
 
     #[test]
@@ -587,5 +600,25 @@ mod tests {
         assert_eq!(updates.len(), 2);
         assert_eq!(updates[0].encoded, vec![10, 20]);
         assert_eq!(updates[1].encoded, vec![30, 40]);
+    }
+
+    #[test]
+    fn queue_inspection_error_does_not_clear_queue() {
+        let vault = test_vault();
+        let conn = SyncConnection::new(vault, ConnectionConfig::default()).unwrap();
+        conn.queue().push("2026-03", &[1, 2, 3]).unwrap();
+
+        let (event_tx, mut event_rx) = mpsc::unbounded_channel();
+        conn.handle_queue_overflow_check(
+            &event_tx,
+            Err(crate::error::Error::CorruptedIndex("sync queue metadata")),
+        );
+
+        assert_eq!(conn.queue().len().unwrap(), 1);
+        let event = event_rx.try_recv().unwrap();
+        assert!(matches!(
+            event,
+            SyncEvent::Error(msg) if msg.contains("Queue inspection failed")
+        ));
     }
 }
