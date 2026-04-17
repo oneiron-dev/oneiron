@@ -378,12 +378,6 @@ impl<'a> TxnBatchBuilder<'a> {
         self
     }
 
-    /// Adds a full entity delete/deindex operation.
-    pub fn delete(mut self, id: &EntityId) -> Self {
-        self.ops.push(BatchOp::Delete { id: *id });
-        self
-    }
-
     /// Applies all queued operations to the given write transaction without committing.
     pub fn apply(self, wtxn: &mut RwTxn<'_>) -> Result<()> {
         apply_ops(&self.vault.store, &self.vault.config, wtxn, self.ops)
