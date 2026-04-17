@@ -303,7 +303,11 @@ impl SyncConnection {
             self.run_convergence(client, event_tx, max_seq).await;
         } else {
             // No queue — clear stale updates but preserve embed jobs
-            let _ = self.queue.clear_updates();
+            if let Err(e) = self.queue.clear_updates() {
+                let _ = event_tx.send(SyncEvent::Error(format!(
+                    "Failed to clear stale queue updates: {e}"
+                )));
+            }
         }
 
         let _ = event_tx.send(SyncEvent::StatusChanged(SyncStatus::Synced));

@@ -24,6 +24,7 @@ const EMBED_PREFIX: &[u8] = b"e:";
 /// Metadata key storing the last allocated update sequence number.
 const LAST_UPDATE_SEQ_KEY: &[u8] = b"m:last_update_seq";
 const ERR_SYNC_QUEUE_UPDATE_ROW: &str = "sync queue update row";
+const ERR_SYNC_QUEUE_EMBED_ROW: &str = "sync queue embed row";
 
 /// A queued update ready for replay on reconnect.
 #[derive(Debug)]
@@ -160,6 +161,13 @@ impl SyncQueue {
         let rtxn = self.vault.store.env.read_txn()?;
         let mut keys_to_delete = Vec::new();
         let mut malformed_keys = Vec::new();
+        let metadata_seq = self
+            .vault
+            .store
+            .sync_queue
+            .get(&rtxn, LAST_UPDATE_SEQ_KEY)?
+            .and_then(|raw| decode_last_update_seq_metadata(raw).ok());
+        let mut remaining_max_seq = 0_u64;
         let iter = self.vault.store.sync_queue.iter(&rtxn)?;
         for result in iter {
             let (key, _) = result?;
@@ -176,6 +184,8 @@ impl SyncQueue {
             };
             if seq <= max_seq {
                 keys_to_delete.push(key.to_vec());
+            } else {
+                remaining_max_seq = remaining_max_seq.max(seq);
             }
         }
         drop(rtxn);
@@ -184,6 +194,15 @@ impl SyncQueue {
         for key in &keys_to_delete {
             self.vault.store.sync_queue.delete(&mut wtxn, key)?;
         }
+        let preserved_seq = metadata_seq
+            .unwrap_or(0)
+            .max(remaining_max_seq)
+            .max(max_seq);
+        self.vault.store.sync_queue.put(
+            &mut wtxn,
+            LAST_UPDATE_SEQ_KEY,
+            &preserved_seq.to_le_bytes(),
+        )?;
         wtxn.commit()?;
 
         self.prune_malformed_update_rows(&malformed_keys)?;
@@ -216,11 +235,13 @@ impl SyncQueue {
     /// Clears all entries (updates + embed jobs). Used for re-bootstrap.
     pub fn clear_all(&self) -> Result<()> {
         let mut wtxn = self.vault.store.env.write_txn()?;
+        let preserved_seq = self.recover_last_update_seq_for_clear(&wtxn)?;
         self.vault.store.sync_queue.clear(&mut wtxn)?;
-        self.vault
-            .store
-            .sync_queue
-            .put(&mut wtxn, LAST_UPDATE_SEQ_KEY, &0_u64.to_le_bytes())?;
+        self.vault.store.sync_queue.put(
+            &mut wtxn,
+            LAST_UPDATE_SEQ_KEY,
+            &preserved_seq.to_le_bytes(),
+        )?;
         wtxn.commit()?;
         Ok(())
     }
@@ -263,35 +284,72 @@ impl SyncQueue {
 
     /// Ensures queue sequence metadata exists and matches the persisted queue.
     fn ensure_last_update_seq_metadata(&self, wtxn: &mut heed::RwTxn<'_>) -> Result<u64> {
-        if let Some(raw) = self
+        match self
             .vault
             .store
             .sync_queue
             .get(&*wtxn, LAST_UPDATE_SEQ_KEY)?
         {
-            if raw.len() != 8 {
-                return Err(Error::CorruptedIndex("sync queue metadata"));
+            Some(raw) => match decode_last_update_seq_metadata(raw) {
+                Ok(seq) => Ok(seq),
+                Err(err) => {
+                    if self.has_any_update_rows(wtxn)? {
+                        Err(err)
+                    } else {
+                        self.vault.store.sync_queue.put(
+                            wtxn,
+                            LAST_UPDATE_SEQ_KEY,
+                            &0_u64.to_le_bytes(),
+                        )?;
+                        Ok(0)
+                    }
+                }
+            },
+            None => {
+                if self.has_any_update_rows(wtxn)? {
+                    Err(Error::CorruptedIndex("sync queue metadata"))
+                } else {
+                    self.vault.store.sync_queue.put(
+                        wtxn,
+                        LAST_UPDATE_SEQ_KEY,
+                        &0_u64.to_le_bytes(),
+                    )?;
+                    Ok(0)
+                }
             }
-            return Ok(u64::from_le_bytes(raw.try_into().unwrap()));
         }
+    }
 
-        if self
+    fn has_any_update_rows(&self, wtxn: &heed::RwTxn<'_>) -> Result<bool> {
+        Ok(self
             .vault
             .store
             .sync_queue
-            .prefix_iter(&*wtxn, UPDATE_PREFIX)?
+            .prefix_iter(wtxn, UPDATE_PREFIX)?
             .next()
             .transpose()?
-            .is_some()
-        {
-            return Err(Error::CorruptedIndex("sync queue metadata"));
-        }
+            .is_some())
+    }
 
-        self.vault
+    fn recover_last_update_seq_for_clear(&self, wtxn: &heed::RwTxn<'_>) -> Result<u64> {
+        let metadata_seq = self
+            .vault
             .store
             .sync_queue
-            .put(wtxn, LAST_UPDATE_SEQ_KEY, &0_u64.to_le_bytes())?;
-        Ok(0)
+            .get(wtxn, LAST_UPDATE_SEQ_KEY)?
+            .and_then(|raw| decode_last_update_seq_metadata(raw).ok());
+        let mut max_valid_seq = 0_u64;
+        let iter = self.vault.store.sync_queue.iter(wtxn)?;
+        for result in iter {
+            let (key, _) = result?;
+            if !key.starts_with(UPDATE_PREFIX) {
+                continue;
+            }
+            if let Ok(seq) = decode_update_key(key) {
+                max_valid_seq = max_valid_seq.max(seq);
+            }
+        }
+        Ok(metadata_seq.unwrap_or(0).max(max_valid_seq))
     }
 
     fn prune_malformed_embed_rows(&self, malformed_keys: &[Vec<u8>]) -> Result<()> {
@@ -343,7 +401,7 @@ fn encode_update_key(seq: u64) -> [u8; 10] {
 
 /// Decodes the sequence number from an update queue key.
 fn decode_update_key(key: &[u8]) -> Result<u64> {
-    if key.len() < 10 || !key.starts_with(UPDATE_PREFIX) {
+    if key.len() != 10 || !key.starts_with(UPDATE_PREFIX) {
         return Err(Error::CorruptedIndex(ERR_SYNC_QUEUE_UPDATE_ROW));
     }
     Ok(u64::from_be_bytes(key[2..10].try_into().map_err(|_| {
@@ -403,26 +461,37 @@ fn encode_embed_key(entity_id: &EntityId) -> [u8; 18] {
 
 /// Decodes an entity ID from an embed job key.
 fn decode_embed_key(key: &[u8]) -> Result<EntityId> {
-    if key.len() < 18 || !key.starts_with(EMBED_PREFIX) {
-        return Err(Error::InvalidKey);
+    if key.len() != 18 || !key.starts_with(EMBED_PREFIX) {
+        return Err(Error::CorruptedIndex(ERR_SYNC_QUEUE_EMBED_ROW));
     }
     let mut bytes = [0u8; 16];
     bytes.copy_from_slice(&key[2..18]);
-    EntityId::from_bytes(bytes)
+    EntityId::from_bytes(bytes).map_err(|_| Error::CorruptedIndex(ERR_SYNC_QUEUE_EMBED_ROW))
 }
 
 fn decode_embed_job_row(key: &[u8], value: &[u8]) -> Result<QueuedEmbedJob> {
     let entity_id = decode_embed_key(key)?;
     if value.len() < 9 {
-        return Err(Error::InvalidKey);
+        return Err(Error::CorruptedIndex(ERR_SYNC_QUEUE_EMBED_ROW));
     }
     let priority = value[0];
-    let queued_at = u64::from_be_bytes(value[1..9].try_into().map_err(|_| Error::InvalidKey)?);
+    let queued_at = u64::from_be_bytes(
+        value[1..9]
+            .try_into()
+            .map_err(|_| Error::CorruptedIndex(ERR_SYNC_QUEUE_EMBED_ROW))?,
+    );
     Ok(QueuedEmbedJob {
         entity_id,
         priority,
         queued_at,
     })
+}
+
+fn decode_last_update_seq_metadata(raw: &[u8]) -> Result<u64> {
+    if raw.len() != 8 {
+        return Err(Error::CorruptedIndex("sync queue metadata"));
+    }
+    Ok(u64::from_le_bytes(raw.try_into().unwrap()))
 }
 
 #[cfg(test)]
@@ -510,7 +579,7 @@ mod tests {
         assert!(!queue.is_full());
 
         let seq = queue.push("2026-03", &[3]).unwrap();
-        assert_eq!(seq, 1);
+        assert_eq!(seq, 3);
     }
 
     #[test]
@@ -583,7 +652,7 @@ mod tests {
 
         assert_eq!(queue.len().unwrap(), 0);
         let seq = queue.push("2026-03", &[1]).unwrap();
-        assert_eq!(seq, 1);
+        assert_eq!(seq, 8);
     }
 
     #[test]
@@ -596,6 +665,11 @@ mod tests {
             .store
             .sync_queue
             .put(&mut wtxn, LAST_UPDATE_SEQ_KEY, &[1, 2, 3])
+            .unwrap();
+        vault
+            .store
+            .sync_queue
+            .put(&mut wtxn, &encode_update_key(4), &[7, b'x'])
             .unwrap();
         wtxn.commit().unwrap();
 
@@ -627,6 +701,72 @@ mod tests {
 
         assert_eq!(queue.len().unwrap(), 0);
         let seq = queue.push("2026-03", &[1]).unwrap();
+        assert_eq!(seq, 10);
+    }
+
+    #[test]
+    fn clear_all_preserves_sequence_generation_for_stale_clear_through() {
+        let vault = test_vault();
+        let queue = SyncQueue::new(vault).unwrap();
+
+        for seq in 1..=5u8 {
+            queue.push("2026-03", &[seq]).unwrap();
+        }
+
+        queue.clear_all().unwrap();
+
+        let fresh_seq = queue.push("2026-03", &[9]).unwrap();
+        assert_eq!(fresh_seq, 6);
+
+        queue.clear_through(5).unwrap();
+
+        let updates = queue.drain_updates().unwrap();
+        assert_eq!(updates.len(), 1);
+        assert_eq!(updates[0].seq, 6);
+        assert_eq!(updates[0].encoded, vec![9]);
+    }
+
+    #[test]
+    fn push_self_heals_missing_metadata_without_update_rows() {
+        let vault = test_vault();
+        let queue = SyncQueue::new(vault.clone()).unwrap();
+
+        let seq = queue.push("2026-03", &[1]).unwrap();
+        assert_eq!(seq, 1);
+
+        let mut wtxn = vault.store.env.write_txn().unwrap();
+        vault
+            .store
+            .sync_queue
+            .delete(&mut wtxn, LAST_UPDATE_SEQ_KEY)
+            .unwrap();
+        vault
+            .store
+            .sync_queue
+            .delete(&mut wtxn, &encode_update_key(1))
+            .unwrap();
+        wtxn.commit().unwrap();
+
+        let seq = queue.push("2026-03", &[2]).unwrap();
+        assert_eq!(seq, 1);
+    }
+
+    #[test]
+    fn clear_updates_self_heals_malformed_metadata_without_update_rows() {
+        let vault = test_vault();
+        let queue = SyncQueue::new(vault.clone()).unwrap();
+
+        let mut wtxn = vault.store.env.write_txn().unwrap();
+        vault
+            .store
+            .sync_queue
+            .put(&mut wtxn, LAST_UPDATE_SEQ_KEY, &[1, 2, 3])
+            .unwrap();
+        wtxn.commit().unwrap();
+
+        queue.clear_updates().unwrap();
+
+        let seq = queue.push("2026-03", &[1]).unwrap();
         assert_eq!(seq, 1);
     }
 
@@ -646,6 +786,37 @@ mod tests {
             .store
             .sync_queue
             .put(&mut wtxn, &bad_key, &[0])
+            .unwrap();
+        wtxn.commit().unwrap();
+
+        let updates = queue.drain_updates().unwrap();
+        assert_eq!(updates.len(), 1);
+        assert_eq!(updates[0].seq, 1);
+
+        let rtxn = vault.store.env.read_txn().unwrap();
+        assert!(vault
+            .store
+            .sync_queue
+            .get(&rtxn, &bad_key)
+            .unwrap()
+            .is_none());
+    }
+
+    #[test]
+    fn drain_updates_prunes_overlong_update_keys() {
+        let vault = test_vault();
+        let queue = SyncQueue::new(vault.clone()).unwrap();
+
+        queue.push("2026-03", &[1]).unwrap();
+
+        let mut bad_key = Vec::from(encode_update_key(2));
+        bad_key.push(0xAA);
+
+        let mut wtxn = vault.store.env.write_txn().unwrap();
+        vault
+            .store
+            .sync_queue
+            .put(&mut wtxn, &bad_key, &[7, b'x'])
             .unwrap();
         wtxn.commit().unwrap();
 
@@ -730,6 +901,43 @@ mod tests {
 
         let mut bad_key = [0u8; 18];
         bad_key[..2].copy_from_slice(EMBED_PREFIX);
+        let mut bad_value = Vec::with_capacity(9);
+        bad_value.push(2);
+        bad_value.extend_from_slice(&123u64.to_be_bytes());
+
+        let mut wtxn = queue.vault.store.env.write_txn().unwrap();
+        queue
+            .vault
+            .store
+            .sync_queue
+            .put(&mut wtxn, &bad_key, &bad_value)
+            .unwrap();
+        wtxn.commit().unwrap();
+
+        let jobs = queue.drain_embed_jobs().unwrap();
+        assert_eq!(jobs.len(), 1);
+        assert_eq!(jobs[0].entity_id, valid_id);
+
+        let rtxn = queue.vault.store.env.read_txn().unwrap();
+        assert!(queue
+            .vault
+            .store
+            .sync_queue
+            .get(&rtxn, &bad_key)
+            .unwrap()
+            .is_none());
+    }
+
+    #[test]
+    fn drain_embed_jobs_prunes_overlong_keys() {
+        let vault = test_vault();
+        let queue = SyncQueue::new(vault.clone()).unwrap();
+
+        let valid_id = EntityId::now();
+        queue.push_embed_job(&valid_id, 1).unwrap();
+
+        let mut bad_key = Vec::from(encode_embed_key(&EntityId::now()));
+        bad_key.push(0xAA);
         let mut bad_value = Vec::with_capacity(9);
         bad_value.push(2);
         bad_value.extend_from_slice(&123u64.to_be_bytes());
