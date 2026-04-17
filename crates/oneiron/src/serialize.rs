@@ -364,17 +364,16 @@ fn is_timestamp_field(key: &str) -> bool {
 
 fn truncate_strings(value: &mut Value, max_field_chars: usize) {
     match value {
-        Value::String(text) => {
-            if text.chars().count() > max_field_chars {
-                let take = max_field_chars.saturating_sub(1);
-                let truncated: String = text.chars().take(take).collect();
-                *text = if take == 0 {
-                    "…".to_owned()
-                } else {
-                    format!("{truncated}…")
-                };
-            }
+        Value::String(text) if text.chars().count() > max_field_chars => {
+            let take = max_field_chars.saturating_sub(1);
+            let truncated: String = text.chars().take(take).collect();
+            *text = if take == 0 {
+                "…".to_owned()
+            } else {
+                format!("{truncated}…")
+            };
         }
+        Value::String(_) => {}
         Value::Array(values) => {
             for value in values {
                 truncate_strings(value, max_field_chars);
