@@ -19,6 +19,7 @@ use std::sync::{Arc, Mutex};
 use super::engine::{CrdtDoc, CrdtMap, Subscription};
 use super::loro_engine::LoroDocument;
 use crate::batch::{self, BatchOp, EntityMetadataHeader, ENTITY_METADATA_HEADER_LEN};
+use crate::error::Error;
 use crate::store::Store;
 use crate::types::{EdgeKind, EntityId, Vad};
 use crate::{Result, Vault};
@@ -225,6 +226,9 @@ fn materialize_entities_from_delta(
                     }
                     if let Err(e) = materialize_entity_blob_in_txn(vault, wtxn, key.as_ref(), blob)
                     {
+                        if matches!(e, Error::CorruptedIndex(_)) {
+                            return Err(e);
+                        }
                         tracing::warn!(
                             entity = %key,
                             error = %e,
@@ -287,6 +291,9 @@ fn materialize_edges_from_delta(
                         (Ok(true), Ok(true)) => {}
                         (Ok(_), Ok(_)) => continue,
                         (Err(e), _) | (_, Err(e)) => {
+                            if matches!(e, Error::CorruptedIndex(_)) {
+                                return Err(e);
+                            }
                             tracing::warn!(
                                 edge = %key,
                                 error = %e,
@@ -547,7 +554,8 @@ fn ensure_entity_materialized_from_crdt(
         return Ok(false);
     };
 
-    if vault.store.entities.get(&*wtxn, id.as_bytes())?.is_some() {
+    if let Some(existing) = vault.store.entities.get(&*wtxn, id.as_bytes())? {
+        EntityMetadataHeader::parse(existing).ok_or(Error::CorruptedIndex("entity metadata"))?;
         return Ok(true);
     }
 
@@ -997,5 +1005,98 @@ mod tests {
         assert!(!vault
             .edge_exists(&stale, EdgeKind::Mentions, &live)
             .unwrap());
+    }
+
+    #[test]
+    fn observer_b_entity_batch_aborts_on_corrupt_existing_entity_row() {
+        let vault = test_vault();
+        let doc = LoroDocument::new();
+        let entities = doc.get_or_create_map("entities");
+        let corrupt = EntityId::now();
+        let fresh = EntityId::now();
+
+        let mut wtxn = vault.store.env.write_txn().unwrap();
+        vault
+            .store
+            .entities
+            .put(&mut wtxn, corrupt.as_bytes(), &[0xFF])
+            .unwrap();
+        wtxn.commit().unwrap();
+
+        let materializer = Arc::new(Materializer::new());
+        let _subs = register_observer_b(&doc, &vault, &materializer);
+
+        entities
+            .insert(
+                &corrupt.to_hex(),
+                &entity_blob(61, TimeRange { start: 1, end: 1 }, 2, b"fixed"),
+            )
+            .unwrap();
+        entities
+            .insert(
+                &fresh.to_hex(),
+                &entity_blob(61, TimeRange { start: 3, end: 3 }, 4, b"fresh"),
+            )
+            .unwrap();
+        doc.commit();
+
+        let rtxn = vault.store.env.read_txn().unwrap();
+        assert_eq!(
+            vault
+                .store
+                .entities
+                .get(&rtxn, corrupt.as_bytes())
+                .unwrap()
+                .unwrap(),
+            &[0xFF]
+        );
+        assert!(vault
+            .store
+            .entities
+            .get(&rtxn, fresh.as_bytes())
+            .unwrap()
+            .is_none());
+    }
+
+    #[test]
+    fn ensure_entity_materialized_from_crdt_rejects_corrupt_existing_lmdb_entity() {
+        let vault = test_vault();
+        let doc = LoroDocument::new();
+        let entities = doc.get_or_create_map("entities");
+        let tombstones = doc.get_or_create_map("tombstones");
+        let corrupt = EntityId::now();
+
+        let mut wtxn = vault.store.env.write_txn().unwrap();
+        vault
+            .store
+            .entities
+            .put(&mut wtxn, corrupt.as_bytes(), &[0xFF])
+            .unwrap();
+        wtxn.commit().unwrap();
+
+        entities
+            .insert(
+                &corrupt.to_hex(),
+                &entity_blob(61, TimeRange { start: 1, end: 1 }, 2, b"fixed"),
+            )
+            .unwrap();
+        doc.commit();
+
+        vault
+            .with_write_txn(|wtxn| {
+                let ready = ensure_entity_materialized_from_crdt(
+                    &vault,
+                    wtxn,
+                    &entities,
+                    &tombstones,
+                    &corrupt,
+                );
+                assert!(matches!(
+                    ready,
+                    Err(Error::CorruptedIndex("entity metadata"))
+                ));
+                Ok(())
+            })
+            .unwrap();
     }
 }
