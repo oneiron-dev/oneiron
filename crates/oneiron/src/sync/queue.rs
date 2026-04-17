@@ -551,7 +551,9 @@ mod tests {
             .expect_err("overlong window key must fail");
         assert!(matches!(err, Error::InvalidKey));
 
-        for invalid in ["2026-13", "2026-00", "abcdefg", "2026-3"] {
+        for invalid in [
+            "2026-13", "2026-00", "abcdefg", "2026-3", "1969-12", "0000-01",
+        ] {
             let err = queue
                 .push(invalid, &[9])
                 .expect_err("invalid calendar window key must fail");
@@ -870,6 +872,39 @@ mod tests {
         let mut bad_value = Vec::new();
         bad_value.push(7);
         bad_value.extend_from_slice(b"2026-13");
+        bad_value.extend_from_slice(&[9, 9]);
+
+        let mut wtxn = vault.store.env.write_txn().unwrap();
+        vault
+            .store
+            .sync_queue
+            .put(&mut wtxn, &encode_update_key(2), &bad_value)
+            .unwrap();
+        wtxn.commit().unwrap();
+
+        let updates = queue.drain_updates().unwrap();
+        assert_eq!(updates.len(), 1);
+        assert_eq!(updates[0].seq, 1);
+
+        let rtxn = vault.store.env.read_txn().unwrap();
+        assert!(vault
+            .store
+            .sync_queue
+            .get(&rtxn, &encode_update_key(2))
+            .unwrap()
+            .is_none());
+    }
+
+    #[test]
+    fn drain_updates_prunes_pre_epoch_window_keys() {
+        let vault = test_vault();
+        let queue = SyncQueue::new(vault.clone()).unwrap();
+
+        queue.push("2026-03", &[1]).unwrap();
+
+        let mut bad_value = Vec::new();
+        bad_value.push(7);
+        bad_value.extend_from_slice(b"1969-12");
         bad_value.extend_from_slice(&[9, 9]);
 
         let mut wtxn = vault.store.env.write_txn().unwrap();

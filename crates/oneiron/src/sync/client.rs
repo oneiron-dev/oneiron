@@ -19,7 +19,7 @@ use crate::sync::transport::{
     self, window_sub_tags, TransportError, TAG_BULK_TRANSFER, TAG_BULK_TRANSFER_DONE,
     TAG_SYNC_UPDATE, TAG_VERSION_VECTOR, TAG_WINDOW_SYNC,
 };
-use crate::sync::types::WindowKey;
+use crate::sync::types::{parse_window_key_str, WindowKey};
 use crate::Vault;
 
 /// Client-side sync configuration.
@@ -117,6 +117,12 @@ impl SyncClient {
 
     /// Queues a local update for a window to be sent to the server.
     pub fn queue_update(&mut self, window_key: &str, update_bytes: Vec<u8>) {
+        if parse_window_key_str(window_key).is_none() {
+            let _ = self.event_tx.send(SyncEvent::Error(format!(
+                "Invalid window key for local update: {window_key}"
+            )));
+            return;
+        }
         let msg = transport::encode_window_sync(window_key, window_sub_tags::UPDATE, &update_bytes);
         self.pending_updates.push(PendingUpdate {
             _window_key: window_key.to_string(),
@@ -126,6 +132,10 @@ impl SyncClient {
 
     /// Ensures a window LoroDoc exists for the given key.
     pub fn ensure_window(&mut self, key: &str) -> &LoroDoc {
+        debug_assert!(
+            parse_window_key_str(key).is_some(),
+            "ensure_window called with invalid key: {key}"
+        );
         self.windows.entry(key.to_string()).or_insert_with(|| {
             let doc = LoroDoc::new();
             let _entities = doc.get_map("entities");
@@ -374,6 +384,18 @@ mod tests {
         let (mut client, _rx) = SyncClient::new(vault, SyncClientConfig::default());
         client.queue_update("2026-03", vec![1, 2, 3]);
         assert_eq!(client.pending_updates.len(), 1);
+    }
+
+    #[test]
+    fn sync_client_rejects_invalid_queue_update() {
+        let vault = test_vault();
+        let (mut client, mut rx) = SyncClient::new(vault, SyncClientConfig::default());
+        client.queue_update("2026-13", vec![1, 2, 3]);
+        assert!(client.pending_updates.is_empty());
+        match rx.try_recv() {
+            Ok(SyncEvent::Error(msg)) => assert!(msg.contains("Invalid window key")),
+            other => panic!("expected invalid window key error, got {other:?}"),
+        }
     }
 
     #[test]

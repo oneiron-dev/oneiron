@@ -112,6 +112,9 @@ impl WindowKey {
         } else {
             (year, month - 1)
         };
+        if prev_year < 1970 {
+            return None;
+        }
         Some(WindowKey(format!("{prev_year:04}-{prev_month:02}")))
     }
 
@@ -131,7 +134,7 @@ pub(crate) fn parse_window_key_str(key: &str) -> Option<(i32, u32)> {
 
     let year: i32 = key[..4].parse().ok()?;
     let month: u32 = key[5..7].parse().ok()?;
-    if !(1..=12).contains(&month) {
+    if year < 1970 || !(1..=12).contains(&month) {
         return None;
     }
     Some((year, month))
@@ -238,7 +241,9 @@ mod tests {
 
     #[test]
     fn window_key_rejects_invalid_calendar_shapes() {
-        for invalid in ["2026-13", "2026-00", "abcdefg", "2026-3"] {
+        for invalid in [
+            "2026-13", "2026-00", "abcdefg", "2026-3", "1969-12", "0000-01",
+        ] {
             let key = WindowKey::new(invalid);
             assert!(
                 key.start_timestamp().is_none(),
@@ -246,5 +251,11 @@ mod tests {
             );
             assert!(key.end_timestamp().is_none(), "{invalid} should be invalid");
         }
+    }
+
+    #[test]
+    fn previous_month_stops_at_epoch() {
+        let key = WindowKey::new("1970-01");
+        assert!(key.previous_month().is_none());
     }
 }
