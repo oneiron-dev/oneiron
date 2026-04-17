@@ -45,6 +45,13 @@ fn edge_kind_prefix(id: &EntityId, kind: EdgeKind) -> [u8; 17] {
     prefix
 }
 
+fn require_key_len(key: &[u8], expected: usize, context: &'static str) -> Result<()> {
+    if key.len() != expected {
+        return Err(Error::CorruptedIndex(context));
+    }
+    Ok(())
+}
+
 /// Returns the first outbound ChildOf parent for `node`, or `None` if it has
 /// no ChildOf edge (i.e. it is a root).
 ///
@@ -56,12 +63,15 @@ fn first_child_of_parent(
     node: &EntityId,
 ) -> Result<Option<EntityId>> {
     let prefix = edge_kind_prefix(node, EdgeKind::ChildOf);
-    for entry in store.edges_out.prefix_iter(rtxn, &prefix)? {
+    if let Some(entry) = store.edges_out.prefix_iter(rtxn, &prefix)?.next() {
         let (key, _) = entry?;
-        if key.len() != EDGE_KEY_LEN {
-            continue;
-        }
-        let parent = EntityId::from_bytes(key[17..33].try_into().map_err(|_| Error::InvalidKey)?);
+        require_key_len(key, EDGE_KEY_LEN, "edge record")?;
+        let parent = EntityId::from_bytes(
+            key[17..33]
+                .try_into()
+                .map_err(|_| Error::CorruptedIndex("edge record"))?,
+        )
+        .map_err(|_| Error::CorruptedIndex("edge record"))?;
         return Ok(Some(parent));
     }
     Ok(None)
@@ -208,16 +218,23 @@ impl Vault {
     /// Deletes a directed edge and its reverse index entry.
     pub fn delete_edge(&self, src: &EntityId, kind: EdgeKind, tgt: &EntityId) -> Result<bool> {
         let key_out = Store::encode_edge_key(src, kind, tgt);
-        let rtxn = self.store.env.read_txn()?;
-        let existed = self.store.edges_out.get(&rtxn, &key_out)?.is_some();
-        drop(rtxn);
+        let key_in = Store::encode_edge_key(tgt, kind, src);
 
-        if !existed {
-            return Ok(false);
-        }
+        self.with_write_txn(|wtxn| {
+            let existed_out = self.store.edges_out.delete(wtxn, &key_out)?;
+            let deleted_in = self.store.edges_in.delete(wtxn, &key_in)?;
 
-        self.batch().delete_edge(src, kind, tgt).commit()?;
-        Ok(true)
+            if !existed_out {
+                // Inbound-only rows are opportunistic cleanup for an inconsistent
+                // reverse index and do not affect the outbound graph PPR uses.
+                let _ = deleted_in;
+                return Ok(false);
+            }
+
+            ppr::invalidate_ppr_for_edge(&self.store, wtxn, src, tgt)?;
+            ppr::increment_graph_version(&self.store, wtxn)?;
+            Ok(true)
+        })
     }
 
     /// Returns outbound edges for `src`.
@@ -299,17 +316,24 @@ impl Vault {
         let mut ids = Vec::new();
         for entry in self.store.temporal_learned.iter(&rtxn)? {
             let (key, _) = entry?;
-            if key.len() != 24 {
-                continue;
-            }
-            let ts = u64::from_be_bytes(key[..8].try_into().map_err(|_| Error::InvalidKey)?);
+            require_key_len(key, 24, "temporal learned key")?;
+            let ts = u64::from_be_bytes(
+                key[..8]
+                    .try_into()
+                    .map_err(|_| Error::CorruptedIndex("temporal learned key"))?,
+            );
             if ts < start {
                 continue;
             }
             if ts >= end {
                 break; // temporal keys are sorted by timestamp (BE), so we can stop
             }
-            let id = EntityId::from_bytes(key[8..24].try_into().map_err(|_| Error::InvalidKey)?);
+            let id = EntityId::from_bytes(
+                key[8..24]
+                    .try_into()
+                    .map_err(|_| Error::CorruptedIndex("temporal learned key"))?,
+            )
+            .map_err(|_| Error::CorruptedIndex("temporal learned key"))?;
             ids.push(id);
         }
         Ok(ids)
@@ -391,10 +415,13 @@ impl Vault {
         let mut ids = Vec::new();
         for entry in self.store.type_index.prefix_iter(&rtxn, &[entity_type])? {
             let (key, _) = entry?;
-            if key.len() != 17 {
-                continue;
-            }
-            let id = EntityId::from_bytes(key[1..17].try_into().map_err(|_| Error::InvalidKey)?);
+            require_key_len(key, 17, "type index key")?;
+            let id = EntityId::from_bytes(
+                key[1..17]
+                    .try_into()
+                    .map_err(|_| Error::CorruptedIndex("type index key"))?,
+            )
+            .map_err(|_| Error::CorruptedIndex("type index key"))?;
             ids.push(id);
             if ids.len() >= MAX_TYPE_QUERY_RESULTS {
                 break;
@@ -416,7 +443,7 @@ impl Vault {
     /// Outbound edge targets filtered by kind and optional target entity type.
     ///
     /// For a ChildOf edge (child → parent), calling `targets(child, ChildOf, None)`
-    /// returns the parent(s).
+    /// returns the parent.
     pub fn targets(
         &self,
         src: &EntityId,
@@ -458,10 +485,13 @@ impl Vault {
         let mut ids = Vec::new();
         for entry in db.prefix_iter(rtxn, &prefix)? {
             let (key, _) = entry?;
-            if key.len() != EDGE_KEY_LEN {
-                continue;
-            }
-            let peer = EntityId::from_bytes(key[17..33].try_into().map_err(|_| Error::InvalidKey)?);
+            require_key_len(key, EDGE_KEY_LEN, "edge record")?;
+            let peer = EntityId::from_bytes(
+                key[17..33]
+                    .try_into()
+                    .map_err(|_| Error::CorruptedIndex("edge record"))?,
+            )
+            .map_err(|_| Error::CorruptedIndex("edge record"))?;
 
             if let Some(req_type) = peer_type {
                 if !self.entity_has_type(rtxn, &peer, req_type)? {
@@ -532,11 +562,13 @@ impl Vault {
             let child_prefix = edge_kind_prefix(&node, EdgeKind::ChildOf);
             for entry in self.store.edges_in.prefix_iter(&rtxn, &child_prefix)? {
                 let (key, _) = entry?;
-                if key.len() != EDGE_KEY_LEN {
-                    continue;
-                }
-                let child =
-                    EntityId::from_bytes(key[17..33].try_into().map_err(|_| Error::InvalidKey)?);
+                require_key_len(key, EDGE_KEY_LEN, "edge record")?;
+                let child = EntityId::from_bytes(
+                    key[17..33]
+                        .try_into()
+                        .map_err(|_| Error::CorruptedIndex("edge record"))?,
+                )
+                .map_err(|_| Error::CorruptedIndex("edge record"))?;
                 if visited.insert(child) {
                     frontier.push_back((child, depth + 1));
                 }
@@ -649,19 +681,32 @@ fn scan_edges(
 
 fn parse_edge_record(key: &[u8], value: &[u8]) -> Result<EdgeInfo> {
     if key.len() != EDGE_KEY_LEN || value.len() != EDGE_VALUE_LEN {
-        return Err(Error::InvalidKey);
+        return Err(Error::CorruptedIndex("edge record"));
     }
 
-    let kind = EdgeKind::try_from_u8(key[16]).ok_or(Error::InvalidKey)?;
-    let target = EntityId::from_bytes(key[17..33].try_into().map_err(|_| Error::InvalidKey)?);
-    let weight = f32::from_le_bytes(value[..4].try_into().map_err(|_| Error::InvalidKey)?);
-    let created_at = u64::from_le_bytes(value[4..12].try_into().map_err(|_| Error::InvalidKey)?);
+    let kind = EdgeKind::try_from_u8(key[16]).ok_or(Error::CorruptedIndex("edge record"))?;
+    let target = EntityId::from_bytes(
+        key[17..33]
+            .try_into()
+            .map_err(|_| Error::CorruptedIndex("edge record"))?,
+    )
+    .map_err(|_| Error::CorruptedIndex("edge record"))?;
+    let weight = f32::from_le_bytes(
+        value[..4]
+            .try_into()
+            .map_err(|_| Error::CorruptedIndex("edge record"))?,
+    );
+    let created_at = u64::from_le_bytes(
+        value[4..12]
+            .try_into()
+            .map_err(|_| Error::CorruptedIndex("edge record"))?,
+    );
     let vad = parse_vad(value);
     if !weight.is_finite() {
-        return Err(Error::InvalidEdgeWeight);
+        return Err(Error::CorruptedIndex("edge record"));
     }
     if !vad.is_finite() || !vad.is_in_range() {
-        return Err(Error::InvalidVad);
+        return Err(Error::CorruptedIndex("edge record"));
     }
 
     Ok(EdgeInfo {
@@ -680,6 +725,7 @@ mod tests {
     use std::str;
     use std::time::Instant;
 
+    use crate::types::ENTITY_ID_LEN;
     use heed::types::Bytes;
     use rand::rngs::StdRng;
     use rand::{Rng, SeedableRng};
@@ -692,7 +738,7 @@ mod tests {
     };
 
     #[cfg(not(feature = "sync"))]
-    const DB_NAMES: [&str; 19] = [
+    const DB_NAMES: [&str; 20] = [
         "entities",
         "edges_out",
         "edges_in",
@@ -710,12 +756,13 @@ mod tests {
         "temporal_learned",
         "temporal_long_intervals",
         "phonetic_index",
+        "phonetic_forward",
         "short_ids",
         "short_ids_reverse",
     ];
 
     #[cfg(feature = "sync")]
-    const DB_NAMES: [&str; 21] = [
+    const DB_NAMES: [&str; 22] = [
         "entities",
         "edges_out",
         "edges_in",
@@ -733,6 +780,7 @@ mod tests {
         "temporal_learned",
         "temporal_long_intervals",
         "phonetic_index",
+        "phonetic_forward",
         "short_ids",
         "short_ids_reverse",
         "sync_state",
@@ -793,10 +841,30 @@ mod tests {
         ))
     }
 
+    fn decode_forward_codes(raw: &[u8]) -> Result<Vec<String>> {
+        if raw.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let mut codes: Vec<String> = raw
+            .split(|b| *b == 0)
+            .map(|chunk| {
+                if chunk.is_empty() {
+                    return Err(Error::CorruptedIndex("phonetic forward test decode"));
+                }
+                str::from_utf8(chunk)
+                    .map(str::to_owned)
+                    .map_err(|_| Error::CorruptedIndex("phonetic forward test decode"))
+            })
+            .collect::<Result<_>>()?;
+        codes.sort();
+        Ok(codes)
+    }
+
     #[test]
     fn encode_edge_key_has_exact_layout() {
-        let src = EntityId::from_bytes([0x11; 16]);
-        let tgt = EntityId::from_bytes([0x22; 16]);
+        let src = EntityId::from_bytes_unchecked([0x11; 16]);
+        let tgt = EntityId::from_bytes_unchecked([0x22; 16]);
         let kind = EdgeKind::DerivedFrom;
 
         let key = Store::encode_edge_key(&src, kind, &tgt);
@@ -951,6 +1019,34 @@ mod tests {
     }
 
     #[test]
+    fn search_vector_ignores_reserved_sentinel_neighbors() -> Result<()> {
+        let temp_dir = tempfile::tempdir()?;
+        let vault = Vault::open(temp_dir.path(), test_config())?;
+        let entry = EntityId::now();
+        let live = EntityId::now();
+
+        vault.put_entity(&entry, 0, test_time_range(1, 1), 1, b"entry")?;
+        vault.put_entity(&live, 0, test_time_range(1, 1), 1, b"live")?;
+        vault.put_vector(&entry, &[1.0_f32, 0.0, 0.0, 0.0])?;
+        vault.put_vector(&live, &[0.0_f32, 1.0, 0.0, 0.0])?;
+
+        let mut corrupted = Vec::with_capacity(ENTITY_ID_LEN * 2);
+        corrupted.extend_from_slice(&[0x00; ENTITY_ID_LEN]);
+        corrupted.extend_from_slice(live.as_bytes());
+
+        let mut wtxn = vault.store.env.write_txn()?;
+        vault
+            .store
+            .hnsw_neighbors
+            .put(&mut wtxn, entry.as_bytes(), &corrupted)?;
+        wtxn.commit()?;
+
+        let results = vault.search_vector(&[0.0_f32, 1.0, 0.0, 0.0], 5)?;
+        assert!(results.iter().any(|item| item.id == live));
+        Ok(())
+    }
+
+    #[test]
     fn search_after_entry_point_deleted() -> Result<()> {
         let temp_dir = tempfile::tempdir()?;
         let vault = Vault::open(temp_dir.path(), test_config())?;
@@ -1095,6 +1191,29 @@ mod tests {
         assert!(vault.edges_in(&tgt)?.is_empty());
         assert!(!vault.delete_edge(&src, kind, &tgt)?);
 
+        Ok(())
+    }
+
+    #[test]
+    fn delete_edge_cleans_inbound_orphans() -> Result<()> {
+        let temp_dir = tempfile::tempdir()?;
+        let vault = Vault::open(temp_dir.path(), test_config())?;
+        let src = EntityId::now();
+        let tgt = EntityId::now();
+        let kind = EdgeKind::Supports;
+
+        vault.put_edge(&src, kind, &tgt, 0.5)?;
+
+        let key_out = Store::encode_edge_key(&src, kind, &tgt);
+        let key_in = Store::encode_edge_key(&tgt, kind, &src);
+        let mut wtxn = vault.store.env.write_txn()?;
+        assert!(vault.store.edges_out.delete(&mut wtxn, &key_out)?);
+        wtxn.commit()?;
+
+        assert!(!vault.delete_edge(&src, kind, &tgt)?);
+
+        let rtxn = vault.store.env.read_txn()?;
+        assert!(vault.store.edges_in.get(&rtxn, &key_in)?.is_none());
         Ok(())
     }
 
@@ -1360,7 +1479,7 @@ mod tests {
             heed::EnvOpenOptions::new()
                 .map_size(cfg.map_size)
                 .max_readers(cfg.max_readers)
-                .max_dbs(24)
+                .max_dbs(25)
                 .open(path)?
         };
         let rtxn = env.read_txn()?;
@@ -1682,6 +1801,16 @@ mod tests {
             assert!(posting.len().is_multiple_of(16));
             assert!(posting.chunks_exact(16).any(|chunk| chunk == id.as_bytes()));
         }
+
+        let forward = vault
+            .store
+            .phonetic_forward
+            .get(&rtxn, id.as_bytes())?
+            .ok_or(Error::EntityNotFound)?;
+        assert_eq!(
+            decode_forward_codes(forward)?,
+            vec!["SMT".to_owned(), "SMTH".to_owned()]
+        );
         Ok(())
     }
 
@@ -1711,6 +1840,114 @@ mod tests {
             .filter(|chunk| *chunk == id.as_bytes())
             .count();
         assert_eq!(count, 1);
+
+        let forward = vault
+            .store
+            .phonetic_forward
+            .get(&rtxn, id.as_bytes())?
+            .ok_or(Error::EntityNotFound)?;
+        assert_eq!(decode_forward_codes(forward)?, vec!["ABC".to_owned()]);
+        Ok(())
+    }
+
+    #[test]
+    fn phonetic_reindex_remains_additive() -> Result<()> {
+        let temp_dir = tempfile::tempdir()?;
+        let vault = Vault::open(temp_dir.path(), test_config())?;
+        let id = EntityId::now();
+
+        vault
+            .batch()
+            .put(&id, 0, test_time_range(1, 2), 3, b"union")
+            .phonetic(&id, &["ABC"])
+            .commit()?;
+
+        vault.batch().phonetic(&id, &["DEF"]).commit()?;
+
+        let rtxn = vault.store.env.read_txn()?;
+        for code in ["ABC", "DEF"] {
+            let posting = vault
+                .store
+                .phonetic_index
+                .get(&rtxn, code.as_bytes())?
+                .ok_or(Error::EntityNotFound)?;
+            assert!(posting.chunks_exact(16).any(|chunk| chunk == id.as_bytes()));
+        }
+
+        let forward = vault
+            .store
+            .phonetic_forward
+            .get(&rtxn, id.as_bytes())?
+            .ok_or(Error::EntityNotFound)?;
+        assert_eq!(
+            decode_forward_codes(forward)?,
+            vec!["ABC".to_owned(), "DEF".to_owned()]
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn phonetic_reindex_repairs_missing_forward_codes() -> Result<()> {
+        let temp_dir = tempfile::tempdir()?;
+        let vault = Vault::open(temp_dir.path(), test_config())?;
+        let id = EntityId::now();
+
+        vault
+            .batch()
+            .put(&id, 0, test_time_range(1, 2), 3, b"migrated")
+            .phonetic(&id, &["ABC"])
+            .commit()?;
+
+        let mut wtxn = vault.store.env.write_txn()?;
+        vault
+            .store
+            .phonetic_forward
+            .delete(&mut wtxn, id.as_bytes())?;
+        wtxn.commit()?;
+
+        vault.batch().phonetic(&id, &["ABC", "DEF"]).commit()?;
+
+        let rtxn = vault.store.env.read_txn()?;
+        let forward = vault
+            .store
+            .phonetic_forward
+            .get(&rtxn, id.as_bytes())?
+            .ok_or(Error::EntityNotFound)?;
+        assert_eq!(
+            decode_forward_codes(forward)?,
+            vec!["ABC".to_owned(), "DEF".to_owned()]
+        );
+        drop(rtxn);
+
+        assert!(vault.delete_entity(&id)?);
+
+        let rtxn = vault.store.env.read_txn()?;
+        for code in ["ABC", "DEF"] {
+            if let Some(posting) = vault.store.phonetic_index.get(&rtxn, code.as_bytes())? {
+                assert!(!posting.chunks_exact(16).any(|chunk| chunk == id.as_bytes()));
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn phonetic_rejects_embedded_nul_codes() -> Result<()> {
+        let temp_dir = tempfile::tempdir()?;
+        let vault = Vault::open(temp_dir.path(), test_config())?;
+        let id = EntityId::now();
+
+        let err = vault
+            .batch()
+            .put(&id, 0, test_time_range(1, 1), 2, b"phonetic-invalid")
+            .phonetic(&id, &["BAD\0CODE"])
+            .commit()
+            .expect_err("expected invalid phonetic code to fail");
+        assert!(matches!(err, Error::InvalidKey));
+        assert!(
+            vault.get(&id)?.is_none(),
+            "batch should remain atomic on phonetic validation failure"
+        );
+
         Ok(())
     }
 
@@ -1776,6 +2013,11 @@ mod tests {
                 assert!(!posting.chunks_exact(16).any(|chunk| chunk == id.as_bytes()));
             }
         }
+        assert!(vault
+            .store
+            .phonetic_forward
+            .get(&rtxn, id.as_bytes())?
+            .is_none());
 
         assert!(vault.store.short_ids.get(&rtxn, id.as_bytes())?.is_none());
         assert!(vault
@@ -1783,6 +2025,140 @@ mod tests {
             .short_ids_reverse
             .get(&rtxn, short_id_before_delete.as_bytes())?
             .is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn delete_entity_falls_back_when_phonetic_forward_is_missing() -> Result<()> {
+        let temp_dir = tempfile::tempdir()?;
+        let vault = Vault::open(temp_dir.path(), test_config())?;
+        let id = EntityId::now();
+
+        vault
+            .batch()
+            .put(&id, 0, test_time_range(1, 1), 2, b"phonetic-fallback")
+            .phonetic(&id, &["SMTH", "SMT"])
+            .commit()?;
+
+        let mut wtxn = vault.store.env.write_txn()?;
+        vault
+            .store
+            .phonetic_forward
+            .delete(&mut wtxn, id.as_bytes())?;
+        wtxn.commit()?;
+
+        assert!(vault.delete_entity(&id)?);
+
+        let rtxn = vault.store.env.read_txn()?;
+        for code in ["SMTH", "SMT"] {
+            if let Some(posting) = vault.store.phonetic_index.get(&rtxn, code.as_bytes())? {
+                assert!(!posting.chunks_exact(16).any(|chunk| chunk == id.as_bytes()));
+            }
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn delete_entity_falls_back_when_phonetic_forward_is_stale() -> Result<()> {
+        let temp_dir = tempfile::tempdir()?;
+        let vault = Vault::open(temp_dir.path(), test_config())?;
+        let id = EntityId::now();
+
+        vault
+            .batch()
+            .put(&id, 0, test_time_range(1, 1), 2, b"phonetic-stale-forward")
+            .phonetic(&id, &["SMTH", "SMT"])
+            .commit()?;
+
+        let mut wtxn = vault.store.env.write_txn()?;
+        vault.store.phonetic_index.delete(&mut wtxn, b"SMTH")?;
+        wtxn.commit()?;
+
+        assert!(vault.delete_entity(&id)?);
+
+        let rtxn = vault.store.env.read_txn()?;
+        assert!(vault
+            .store
+            .phonetic_forward
+            .get(&rtxn, id.as_bytes())?
+            .is_none());
+        if let Some(posting) = vault.store.phonetic_index.get(&rtxn, b"SMT")? {
+            assert!(!posting.chunks_exact(16).any(|chunk| chunk == id.as_bytes()));
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn delete_entity_falls_back_when_phonetic_forward_is_empty() -> Result<()> {
+        let temp_dir = tempfile::tempdir()?;
+        let vault = Vault::open(temp_dir.path(), test_config())?;
+        let id = EntityId::now();
+
+        vault
+            .batch()
+            .put(&id, 0, test_time_range(1, 1), 2, b"phonetic-empty-forward")
+            .phonetic(&id, &["SMTH", "SMT"])
+            .commit()?;
+
+        let mut wtxn = vault.store.env.write_txn()?;
+        vault
+            .store
+            .phonetic_forward
+            .put(&mut wtxn, id.as_bytes(), &[])?;
+        wtxn.commit()?;
+
+        assert!(vault.delete_entity(&id)?);
+
+        let rtxn = vault.store.env.read_txn()?;
+        assert!(vault
+            .store
+            .phonetic_forward
+            .get(&rtxn, id.as_bytes())?
+            .is_none());
+        for code in ["SMTH", "SMT"] {
+            if let Some(posting) = vault.store.phonetic_index.get(&rtxn, code.as_bytes())? {
+                assert!(!posting.chunks_exact(16).any(|chunk| chunk == id.as_bytes()));
+            }
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn delete_entity_reconciles_subset_phonetic_forward_rows() -> Result<()> {
+        let temp_dir = tempfile::tempdir()?;
+        let vault = Vault::open(temp_dir.path(), test_config())?;
+        let id = EntityId::now();
+
+        vault
+            .batch()
+            .put(&id, 0, test_time_range(1, 1), 2, b"phonetic-subset-forward")
+            .phonetic(&id, &["SMTH", "SMT"])
+            .commit()?;
+
+        let mut wtxn = vault.store.env.write_txn()?;
+        vault
+            .store
+            .phonetic_forward
+            .put(&mut wtxn, id.as_bytes(), b"SMT")?;
+        wtxn.commit()?;
+
+        assert!(vault.delete_entity(&id)?);
+
+        let rtxn = vault.store.env.read_txn()?;
+        assert!(vault
+            .store
+            .phonetic_forward
+            .get(&rtxn, id.as_bytes())?
+            .is_none());
+        for code in ["SMTH", "SMT"] {
+            if let Some(posting) = vault.store.phonetic_index.get(&rtxn, code.as_bytes())? {
+                assert!(!posting.chunks_exact(16).any(|chunk| chunk == id.as_bytes()));
+            }
+        }
+
         Ok(())
     }
 
@@ -2372,6 +2748,32 @@ mod tests {
     }
 
     #[test]
+    fn entity_id_rejects_reserved_sentinel_bytes() {
+        assert!(EntityId::from_bytes([0x00; 16]).is_err());
+        assert!(EntityId::from_bytes([0xFF; 16]).is_err());
+
+        let mut claim_counter = [0xFF; 16];
+        claim_counter[0] = 0;
+        assert!(EntityId::from_bytes(claim_counter).is_err());
+
+        let mut task_list_counter = [0xFF; 16];
+        task_list_counter[0] = 60;
+        assert!(EntityId::from_bytes(task_list_counter).is_err());
+
+        let mut non_reserved = [0xFF; 16];
+        non_reserved[0] = 15;
+        assert!(EntityId::from_bytes(non_reserved).is_ok());
+    }
+
+    #[test]
+    fn entity_id_from_hex_rejects_reserved_sentinel_bytes() {
+        assert!(EntityId::from_hex("00000000000000000000000000000000").is_err());
+        assert!(EntityId::from_hex("ffffffffffffffffffffffffffffffff").is_err());
+        assert!(EntityId::from_hex("00ffffffffffffffffffffffffffffff").is_err());
+        assert!(EntityId::from_hex("3cffffffffffffffffffffffffffffff").is_err());
+    }
+
+    #[test]
     fn batch_put_invalid_entity_type_returns_early_error() -> Result<()> {
         let temp_dir = tempfile::tempdir()?;
         let vault = Vault::open(temp_dir.path(), test_config())?;
@@ -2389,6 +2791,29 @@ mod tests {
 
         // Verify nothing was written
         assert!(vault.get(&id)?.is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn txn_batch_put_invalid_entity_type_returns_error() -> Result<()> {
+        let temp_dir = tempfile::tempdir()?;
+        let vault = Vault::open(temp_dir.path(), test_config())?;
+        let id = EntityId::now();
+
+        let err = vault
+            .with_write_txn(|wtxn| {
+                vault
+                    .batch_in()
+                    .put(&id, 255, test_time_range(1, 1), 2, b"bad-type")
+                    .apply(wtxn)
+            })
+            .expect_err("expected InvalidEntityType for type 255");
+        assert!(
+            matches!(err, Error::InvalidEntityType(255)),
+            "expected InvalidEntityType(255), got {err:?}"
+        );
+        assert!(vault.get(&id)?.is_none());
+
         Ok(())
     }
 
@@ -2832,6 +3257,146 @@ mod tests {
             "ChildOf should not count toward PartOf hop limit in mixed paths, got score={place1_score}"
         );
 
+        Ok(())
+    }
+
+    #[test]
+    fn generic_child_of_writes_reject_cycles() -> Result<()> {
+        let temp_dir = tempfile::tempdir()?;
+        let vault = Vault::open(temp_dir.path(), test_config())?;
+
+        let a = EntityId::now();
+        let b = EntityId::now();
+        let c = EntityId::now();
+
+        vault
+            .batch()
+            .put(&a, 61, test_time_range(1, 1), 2, b"a")
+            .put(&b, 61, test_time_range(3, 3), 4, b"b")
+            .put(&c, 61, test_time_range(5, 5), 6, b"c")
+            .edge(&b, EdgeKind::ChildOf, &a, 1.0)
+            .edge(&c, EdgeKind::ChildOf, &b, 1.0)
+            .commit()?;
+
+        let err = vault
+            .put_edge(&a, EdgeKind::ChildOf, &c, 1.0)
+            .expect_err("generic ChildOf write should reject cycles");
+        assert!(matches!(err, Error::CycleDetected));
+        assert!(!vault.edge_exists(&a, EdgeKind::ChildOf, &c)?);
+        Ok(())
+    }
+
+    #[test]
+    fn generic_child_of_writes_reject_second_parent() -> Result<()> {
+        let temp_dir = tempfile::tempdir()?;
+        let vault = Vault::open(temp_dir.path(), test_config())?;
+
+        let child = EntityId::now();
+        let parent_a = EntityId::now();
+        let parent_b = EntityId::now();
+
+        vault
+            .batch()
+            .put(&child, 61, test_time_range(1, 1), 2, b"child")
+            .put(&parent_a, 61, test_time_range(3, 3), 4, b"pa")
+            .put(&parent_b, 61, test_time_range(5, 5), 6, b"pb")
+            .edge(&child, EdgeKind::ChildOf, &parent_a, 1.0)
+            .commit()?;
+
+        let err = vault
+            .batch()
+            .edge(&child, EdgeKind::ChildOf, &parent_b, 1.0)
+            .commit()
+            .expect_err("generic ChildOf write should reject second parent");
+        assert!(matches!(
+            err,
+            Error::InvariantViolation("childof requires a single parent")
+        ));
+        assert!(!vault.edge_exists(&child, EdgeKind::ChildOf, &parent_b)?);
+
+        vault.put_edge(&child, EdgeKind::ChildOf, &parent_a, 0.5)?;
+        let parents = vault.targets(&child, EdgeKind::ChildOf, None)?;
+        assert_eq!(parents, vec![parent_a]);
+        Ok(())
+    }
+
+    #[test]
+    fn generic_child_of_reparent_is_order_independent() -> Result<()> {
+        let temp_dir = tempfile::tempdir()?;
+        let vault = Vault::open(temp_dir.path(), test_config())?;
+
+        let child = EntityId::now();
+        let parent_a = EntityId::now();
+        let parent_b = EntityId::now();
+
+        vault
+            .batch()
+            .put(&child, 61, test_time_range(1, 1), 2, b"child")
+            .put(&parent_a, 61, test_time_range(3, 3), 4, b"pa")
+            .put(&parent_b, 61, test_time_range(5, 5), 6, b"pb")
+            .edge(&child, EdgeKind::ChildOf, &parent_a, 1.0)
+            .commit()?;
+
+        vault
+            .batch()
+            .edge(&child, EdgeKind::ChildOf, &parent_b, 1.0)
+            .delete_edge(&child, EdgeKind::ChildOf, &parent_a)
+            .commit()?;
+
+        let parents = vault.targets(&child, EdgeKind::ChildOf, None)?;
+        assert_eq!(parents, vec![parent_b]);
+        Ok(())
+    }
+
+    #[test]
+    fn txn_batch_child_of_reparent_is_order_independent() -> Result<()> {
+        let temp_dir = tempfile::tempdir()?;
+        let vault = Vault::open(temp_dir.path(), test_config())?;
+
+        let child = EntityId::now();
+        let parent_a = EntityId::now();
+        let parent_b = EntityId::now();
+
+        vault
+            .batch()
+            .put(&child, 61, test_time_range(1, 1), 2, b"child")
+            .put(&parent_a, 61, test_time_range(3, 3), 4, b"pa")
+            .put(&parent_b, 61, test_time_range(5, 5), 6, b"pb")
+            .edge(&child, EdgeKind::ChildOf, &parent_a, 1.0)
+            .commit()?;
+
+        vault.with_write_txn(|wtxn| {
+            vault
+                .batch_in()
+                .edge(&child, EdgeKind::ChildOf, &parent_b, 1.0)
+                .delete_edge(&child, EdgeKind::ChildOf, &parent_a)
+                .apply(wtxn)
+        })?;
+
+        let parents = vault.targets(&child, EdgeKind::ChildOf, None)?;
+        assert_eq!(parents, vec![parent_b]);
+        Ok(())
+    }
+
+    #[test]
+    fn child_of_batch_allows_add_delete_then_reverse_edge() -> Result<()> {
+        let temp_dir = tempfile::tempdir()?;
+        let vault = Vault::open(temp_dir.path(), test_config())?;
+
+        let a = EntityId::now();
+        let b = EntityId::now();
+
+        vault
+            .batch()
+            .put(&a, 61, test_time_range(1, 1), 2, b"a")
+            .put(&b, 61, test_time_range(3, 3), 4, b"b")
+            .edge(&a, EdgeKind::ChildOf, &b, 1.0)
+            .delete_edge(&a, EdgeKind::ChildOf, &b)
+            .edge(&b, EdgeKind::ChildOf, &a, 1.0)
+            .commit()?;
+
+        assert!(!vault.edge_exists(&a, EdgeKind::ChildOf, &b)?);
+        assert!(vault.edge_exists(&b, EdgeKind::ChildOf, &a)?);
         Ok(())
     }
 

@@ -8,7 +8,7 @@ use heed::{Database, Env, EnvOpenOptions, RwTxn};
 use crate::error::{Error, Result};
 use crate::types::{EdgeKind, EntityId, VaultConfig};
 
-const MAX_DBS: u32 = 24;
+const MAX_DBS: u32 = 25;
 pub(crate) const MODEL_ID_KEY: &[u8] = b"model_id";
 pub(crate) const GRAPH_VERSION_KEY: &[u8] = b"graph_version";
 pub(crate) const HNSW_CONFIG_KEY: &[u8] = b"hnsw_config";
@@ -62,6 +62,7 @@ pub struct Store {
     pub(crate) temporal_learned: Database<Bytes, Bytes>,
     pub(crate) temporal_long_intervals: Database<Bytes, Bytes>,
     pub(crate) phonetic_index: Database<Bytes, Bytes>,
+    pub(crate) phonetic_forward: Database<Bytes, Bytes>,
     pub(crate) short_ids: Database<Bytes, Bytes>,
     pub(crate) short_ids_reverse: Database<Bytes, Bytes>,
     /// CRDT Doc states, state vectors, pending updates, metadata (sync feature only).
@@ -78,6 +79,11 @@ impl Store {
         std::fs::create_dir_all(path.as_ref())?;
 
         let env = unsafe {
+            // SAFETY: heed/LMDB require a single Env per filesystem path, the
+            // path must not be on NFS or another unsupported network
+            // filesystem, and map_size must not be changed concurrently while
+            // the environment is open elsewhere. The path existence/writability
+            // precondition is established by create_dir_all above.
             EnvOpenOptions::new()
                 .map_size(config.map_size)
                 .max_readers(config.max_readers)
@@ -103,6 +109,7 @@ impl Store {
         let temporal_learned = create_db(&env, &mut wtxn, "temporal_learned")?;
         let temporal_long_intervals = create_db(&env, &mut wtxn, "temporal_long_intervals")?;
         let phonetic_index = create_db(&env, &mut wtxn, "phonetic_index")?;
+        let phonetic_forward = create_db(&env, &mut wtxn, "phonetic_forward")?;
         let short_ids = create_db(&env, &mut wtxn, "short_ids")?;
         let short_ids_reverse = create_db(&env, &mut wtxn, "short_ids_reverse")?;
         #[cfg(feature = "sync")]
@@ -149,6 +156,7 @@ impl Store {
             temporal_learned,
             temporal_long_intervals,
             phonetic_index,
+            phonetic_forward,
             short_ids,
             short_ids_reverse,
             #[cfg(feature = "sync")]

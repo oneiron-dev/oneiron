@@ -364,17 +364,16 @@ fn is_timestamp_field(key: &str) -> bool {
 
 fn truncate_strings(value: &mut Value, max_field_chars: usize) {
     match value {
-        Value::String(text) => {
-            if text.chars().count() > max_field_chars {
-                let take = max_field_chars.saturating_sub(1);
-                let truncated: String = text.chars().take(take).collect();
-                *text = if take == 0 {
-                    "…".to_owned()
-                } else {
-                    format!("{truncated}…")
-                };
-            }
+        Value::String(text) if text.chars().count() > max_field_chars => {
+            let take = max_field_chars.saturating_sub(1);
+            let truncated: String = text.chars().take(take).collect();
+            *text = if take == 0 {
+                "…".to_owned()
+            } else {
+                format!("{truncated}…")
+            };
         }
+        Value::String(_) => {}
         Value::Array(values) => {
             for value in values {
                 truncate_strings(value, max_field_chars);
@@ -1342,7 +1341,7 @@ mod tests {
         ContextPack {
             results: vec![
                 ContextEntity {
-                    id: EntityId::from_bytes([1; 16]),
+                    id: EntityId::from_bytes_unchecked([1; 16]),
                     short_id: "cl88".to_owned(),
                     content_hash: 0xf2,
                     entity_type: 0,
@@ -1352,7 +1351,7 @@ mod tests {
                     vector: None,
                 },
                 ContextEntity {
-                    id: EntityId::from_bytes([2; 16]),
+                    id: EntityId::from_bytes_unchecked([2; 16]),
                     short_id: "tn17".to_owned(),
                     content_hash: 0xa1,
                     entity_type: 1,
@@ -1363,7 +1362,7 @@ mod tests {
                 },
             ],
             neighbors: vec![ContextEntity {
-                id: EntityId::from_bytes([3; 16]),
+                id: EntityId::from_bytes_unchecked([3; 16]),
                 short_id: "pr05".to_owned(),
                 content_hash: 0xb3,
                 entity_type: 4,
@@ -1460,7 +1459,7 @@ mod tests {
 
         for i in 0..6_u8 {
             pack.results.push(ContextEntity {
-                id: EntityId::from_bytes([10 + i; 16]),
+                id: EntityId::from_bytes_unchecked([10 + i; 16]),
                 short_id: format!("r{i}"),
                 content_hash: i,
                 entity_type: 0,
@@ -1473,7 +1472,7 @@ mod tests {
                 vector: None,
             });
             pack.neighbors.push(ContextEntity {
-                id: EntityId::from_bytes([30 + i; 16]),
+                id: EntityId::from_bytes_unchecked([30 + i; 16]),
                 short_id: format!("n{i}"),
                 content_hash: i,
                 entity_type: 4,
@@ -1556,7 +1555,7 @@ mod tests {
         let mut pack = sample_pack();
         for i in 0..40_u8 {
             pack.results.push(ContextEntity {
-                id: EntityId::from_bytes([50 + i; 16]),
+                id: EntityId::from_bytes_unchecked([50 + i; 16]),
                 short_id: format!("cl{i}"),
                 content_hash: i,
                 entity_type: 0,
@@ -1588,7 +1587,7 @@ mod tests {
         let mut pack = sample_pack();
         for i in 0..12_u8 {
             pack.results.push(ContextEntity {
-                id: EntityId::from_bytes([50 + i; 16]),
+                id: EntityId::from_bytes_unchecked([50 + i; 16]),
                 short_id: format!("cl{i}"),
                 content_hash: i,
                 entity_type: 0,
@@ -1685,7 +1684,7 @@ mod tests {
 
         for i in 0..8_u8 {
             pack.results.push(ContextEntity {
-                id: EntityId::from_bytes([10 + i; 16]),
+                id: EntityId::from_bytes_unchecked([10 + i; 16]),
                 short_id: format!("cl{i}"),
                 content_hash: i,
                 entity_type: 0,
@@ -1699,7 +1698,7 @@ mod tests {
             });
 
             pack.results.push(ContextEntity {
-                id: EntityId::from_bytes([40 + i; 16]),
+                id: EntityId::from_bytes_unchecked([40 + i; 16]),
                 short_id: format!("tn{i}"),
                 content_hash: i,
                 entity_type: 1,
@@ -1713,7 +1712,7 @@ mod tests {
             });
 
             pack.results.push(ContextEntity {
-                id: EntityId::from_bytes([80 + i; 16]),
+                id: EntityId::from_bytes_unchecked([80 + i; 16]),
                 short_id: format!("sm{i}"),
                 content_hash: i,
                 entity_type: 8,
@@ -1727,7 +1726,7 @@ mod tests {
             });
 
             pack.results.push(ContextEntity {
-                id: EntityId::from_bytes([120 + i; 16]),
+                id: EntityId::from_bytes_unchecked([120 + i; 16]),
                 short_id: format!("pr{i}"),
                 content_hash: i,
                 entity_type: 4,
@@ -1741,7 +1740,7 @@ mod tests {
             });
 
             pack.results.push(ContextEntity {
-                id: EntityId::from_bytes([160 + i; 16]),
+                id: EntityId::from_bytes_unchecked([160 + i; 16]),
                 short_id: format!("ev{i}"),
                 content_hash: i,
                 entity_type: 6,
@@ -1785,7 +1784,7 @@ mod tests {
         let pack = ContextPack {
             results: vec![
                 ContextEntity {
-                    id: EntityId::from_bytes([15; 16]),
+                    id: EntityId::from_bytes_unchecked([15; 16]),
                     short_id: "u15".to_owned(),
                     content_hash: 0x15,
                     entity_type: 15,
@@ -1798,7 +1797,7 @@ mod tests {
                     vector: None,
                 },
                 ContextEntity {
-                    id: EntityId::from_bytes([20; 16]),
+                    id: EntityId::from_bytes_unchecked([20; 16]),
                     short_id: "u20".to_owned(),
                     content_hash: 0x20,
                     entity_type: 20,
@@ -1841,7 +1840,7 @@ mod tests {
     fn yaml_quotes_unsafe_field_keys() {
         let pack = ContextPack {
             results: vec![ContextEntity {
-                id: EntityId::from_bytes([62; 16]),
+                id: EntityId::from_bytes_unchecked([62; 16]),
                 short_id: "mc01".to_owned(),
                 content_hash: 0x01,
                 entity_type: 62,
@@ -1936,7 +1935,7 @@ mod tests {
 
         // Single turn — very small, won't fill its allocation.
         pack.results.push(ContextEntity {
-            id: EntityId::from_bytes([99; 16]),
+            id: EntityId::from_bytes_unchecked([99; 16]),
             short_id: "tn01".to_owned(),
             content_hash: 0x01,
             entity_type: 1,
@@ -1952,7 +1951,7 @@ mod tests {
         // 40 claims — will exceed claims budget at low token limits.
         for i in 0..40_u8 {
             pack.results.push(ContextEntity {
-                id: EntityId::from_bytes([50 + i; 16]),
+                id: EntityId::from_bytes_unchecked([50 + i; 16]),
                 short_id: format!("cl{i}"),
                 content_hash: i,
                 entity_type: 0,
@@ -2032,7 +2031,7 @@ mod tests {
         );
 
         let entity = ContextEntity {
-            id: EntityId::from_bytes([60; 16]),
+            id: EntityId::from_bytes_unchecked([60; 16]),
             short_id: "tl01".to_owned(),
             content_hash: 0xaa,
             entity_type: 60,
@@ -2129,7 +2128,7 @@ mod tests {
         );
 
         let entity = ContextEntity {
-            id: EntityId::from_bytes([61; 16]),
+            id: EntityId::from_bytes_unchecked([61; 16]),
             short_id: "tk01".to_owned(),
             content_hash: 0xbb,
             entity_type: 61,
@@ -2219,7 +2218,7 @@ mod tests {
         fields.insert("dueDate".to_owned(), Value::Number(Number::from(due)));
 
         let entity = ContextEntity {
-            id: EntityId::from_bytes([61; 16]),
+            id: EntityId::from_bytes_unchecked([61; 16]),
             short_id: "tk02".to_owned(),
             content_hash: 0xcc,
             entity_type: 61,

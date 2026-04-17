@@ -23,6 +23,7 @@ use tokio_tungstenite::tungstenite::Message;
 use crate::sync::client::{next_backoff, SyncClient, SyncClientConfig, SyncEvent, SyncStatus};
 use crate::sync::queue::SyncQueue;
 use crate::sync::transport::{self, window_sub_tags};
+use crate::sync::types::parse_window_key_str;
 use crate::Vault;
 
 /// Maximum convergence rounds before forcing re-bootstrap.
@@ -76,6 +77,27 @@ impl SyncConnection {
     /// Returns a reference to the offline queue for external inspection.
     pub fn queue(&self) -> &SyncQueue {
         &self.queue
+    }
+
+    fn handle_queue_overflow_check(
+        &self,
+        event_tx: &mpsc::UnboundedSender<SyncEvent>,
+        is_full: crate::error::Result<bool>,
+    ) {
+        match is_full {
+            Ok(true) => {
+                let _ = event_tx.send(SyncEvent::Error(
+                    "Queue overflow — performing re-bootstrap".to_string(),
+                ));
+                if let Err(e) = self.queue.clear_all() {
+                    let _ = event_tx.send(SyncEvent::Error(format!("Clear queue failed: {e}")));
+                }
+            }
+            Ok(false) => {}
+            Err(e) => {
+                let _ = event_tx.send(SyncEvent::Error(format!("Queue inspection failed: {e}")));
+            }
+        }
     }
 
     /// Main event loop. Runs until the shutdown signal is received.
@@ -147,15 +169,7 @@ impl SyncConnection {
             }
 
             // Check for queue overflow → re-bootstrap
-            if self.queue.is_full() {
-                let _ = event_tx.send(SyncEvent::Error(
-                    "Queue overflow — performing re-bootstrap".to_string(),
-                ));
-                if let Err(e) = self.queue.clear_all() {
-                    let _ = event_tx.send(SyncEvent::Error(format!("Clear queue failed: {e}")));
-                }
-                // Client windows will be repopulated on next connect
-            }
+            self.handle_queue_overflow_check(&event_tx, self.queue.is_full());
 
             // Wait with backoff before reconnecting
             let delay = Duration::from_millis(backoff_ms as u64);
@@ -276,10 +290,10 @@ impl SyncConnection {
         // Phase 3: Drain offline queue
         let queued = self.queue.drain_updates().map_err(|e| format!("{e}"))?;
         if !queued.is_empty() {
-            let _ = event_tx.send(SyncEvent::Error(format!(
-                "Replaying {} queued updates",
-                queued.len()
-            )));
+            tracing::info!(
+                queued_updates = queued.len(),
+                "replaying queued sync updates"
+            );
             for update in &queued {
                 // Re-encode as WindowSync wire message
                 let msg = transport::encode_window_sync(
@@ -303,7 +317,11 @@ impl SyncConnection {
             self.run_convergence(client, event_tx, max_seq).await;
         } else {
             // No queue — clear stale updates but preserve embed jobs
-            let _ = self.queue.clear_updates();
+            if let Err(e) = self.queue.clear_updates() {
+                let _ = event_tx.send(SyncEvent::Error(format!(
+                    "Failed to clear stale queue updates: {e}"
+                )));
+            }
         }
 
         let _ = event_tx.send(SyncEvent::StatusChanged(SyncStatus::Synced));
@@ -406,6 +424,13 @@ impl SyncConnection {
                 update = local_rx.recv() => {
                     match update {
                         Some(local_update) => {
+                            if parse_window_key_str(&local_update.window_key).is_none() {
+                                let _ = event_tx.send(SyncEvent::Error(format!(
+                                    "Rejected invalid local update window key: {}",
+                                    local_update.window_key
+                                )));
+                                continue;
+                            }
                             debounce_buffer.push(local_update);
                             debounce_deadline = Some(Instant::now() + Duration::from_millis(debounce_ms));
                         }
@@ -470,6 +495,13 @@ impl SyncConnection {
 /// Logs errors but does not fail — best-effort during disconnect/shutdown.
 fn flush_to_queue(queue: &SyncQueue, buffer: &mut Vec<LocalUpdate>) {
     for local_update in buffer.drain(..) {
+        if parse_window_key_str(&local_update.window_key).is_none() {
+            tracing::error!(
+                "Rejected invalid local update window key during queue flush: {}",
+                local_update.window_key
+            );
+            continue;
+        }
         if let Err(e) = queue.push(&local_update.window_key, &local_update.update_bytes) {
             tracing::error!("Failed to persist update to offline queue: {e}");
         }
@@ -499,7 +531,7 @@ mod tests {
     fn connection_creation() {
         let vault = test_vault();
         let conn = SyncConnection::new(vault, ConnectionConfig::default()).unwrap();
-        assert!(!conn.queue().is_full());
+        assert!(!conn.queue().is_full().unwrap());
     }
 
     #[test]
@@ -512,6 +544,29 @@ mod tests {
         conn.queue().push("2026-02", &[4, 5, 6]).unwrap();
 
         assert_eq!(conn.queue().len().unwrap(), 2);
+    }
+
+    #[test]
+    fn flush_to_queue_skips_invalid_window_keys() {
+        let vault = test_vault();
+        let conn = SyncConnection::new(vault, ConnectionConfig::default()).unwrap();
+        let mut buffer = vec![
+            LocalUpdate {
+                window_key: "2026-13".to_string(),
+                update_bytes: vec![1, 2, 3],
+            },
+            LocalUpdate {
+                window_key: "2026-03".to_string(),
+                update_bytes: vec![4, 5, 6],
+            },
+        ];
+
+        flush_to_queue(conn.queue(), &mut buffer);
+
+        let queued = conn.queue().drain_updates().unwrap();
+        assert_eq!(queued.len(), 1);
+        assert_eq!(queued[0].window_key, "2026-03");
+        assert_eq!(queued[0].encoded, vec![4, 5, 6]);
     }
 
     #[test]
@@ -545,5 +600,25 @@ mod tests {
         assert_eq!(updates.len(), 2);
         assert_eq!(updates[0].encoded, vec![10, 20]);
         assert_eq!(updates[1].encoded, vec![30, 40]);
+    }
+
+    #[test]
+    fn queue_inspection_error_does_not_clear_queue() {
+        let vault = test_vault();
+        let conn = SyncConnection::new(vault, ConnectionConfig::default()).unwrap();
+        conn.queue().push("2026-03", &[1, 2, 3]).unwrap();
+
+        let (event_tx, mut event_rx) = mpsc::unbounded_channel();
+        conn.handle_queue_overflow_check(
+            &event_tx,
+            Err(crate::error::Error::CorruptedIndex("sync queue metadata")),
+        );
+
+        assert_eq!(conn.queue().len().unwrap(), 1);
+        let event = event_rx.try_recv().unwrap();
+        assert!(matches!(
+            event,
+            SyncEvent::Error(msg) if msg.contains("Queue inspection failed")
+        ));
     }
 }

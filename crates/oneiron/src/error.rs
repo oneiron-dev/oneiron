@@ -55,6 +55,9 @@ pub enum Error {
     /// Index bookkeeping overflowed its supported range.
     #[error("index overflow: {0}")]
     IndexOverflow(&'static str),
+    /// Expected posting or metadata row is missing from an index.
+    #[error("missing posting entry")]
+    MissingPostingEntry,
     /// Entity type byte is not in any known range.
     #[error("invalid entity type: {0}")]
     InvalidEntityType(u8),

@@ -507,11 +507,16 @@ fn execute_phonetic(
         };
 
         if !posting.len().is_multiple_of(ENTITY_ID_LEN) {
-            return Err(Error::InvalidKey);
+            return Err(Error::CorruptedIndex("phonetic posting"));
         }
 
         for chunk in posting.chunks_exact(ENTITY_ID_LEN) {
-            let id = EntityId::from_bytes(chunk.try_into().map_err(|_| Error::InvalidKey)?);
+            let id = EntityId::from_bytes(
+                chunk
+                    .try_into()
+                    .map_err(|_| Error::CorruptedIndex("phonetic posting"))?,
+            )
+            .map_err(|_| Error::CorruptedIndex("phonetic posting"))?;
             let entry = accumulators.entry(id).or_default();
             entry.score += 1.0;
             entry.matches += 1;
@@ -907,15 +912,20 @@ where
 
 fn decode_temporal_index_row(key: &[u8]) -> Result<TemporalIndexRow> {
     if key.len() != TEMPORAL_KEY_LEN {
-        return Err(Error::InvalidKey);
+        return Err(Error::CorruptedIndex("temporal index"));
     }
 
-    let timestamp = u64::from_be_bytes(key[..8].try_into().map_err(|_| Error::InvalidKey)?);
+    let timestamp = u64::from_be_bytes(
+        key[..8]
+            .try_into()
+            .map_err(|_| Error::CorruptedIndex("temporal index"))?,
+    );
     let id = EntityId::from_bytes(
         key[8..TEMPORAL_KEY_LEN]
             .try_into()
-            .map_err(|_| Error::InvalidKey)?,
-    );
+            .map_err(|_| Error::CorruptedIndex("temporal index"))?,
+    )
+    .map_err(|_| Error::CorruptedIndex("temporal index"))?;
     Ok(TemporalIndexRow { timestamp, id })
 }
 
@@ -1001,16 +1011,25 @@ fn temporal_key_upper_bound(ts: u64) -> [u8; TEMPORAL_KEY_LEN] {
 
 fn decode_long_interval_row(key: &[u8], value: &[u8]) -> Result<(EntityId, u64, u64)> {
     if key.len() != TEMPORAL_KEY_LEN || value.len() != LONG_INTERVAL_VALUE_LEN {
-        return Err(Error::InvalidKey);
+        return Err(Error::CorruptedIndex("temporal long interval"));
     }
 
-    let occurred_end = u64::from_be_bytes(key[..8].try_into().map_err(|_| Error::InvalidKey)?);
+    let occurred_end = u64::from_be_bytes(
+        key[..8]
+            .try_into()
+            .map_err(|_| Error::CorruptedIndex("temporal long interval"))?,
+    );
     let id = EntityId::from_bytes(
         key[8..TEMPORAL_KEY_LEN]
             .try_into()
-            .map_err(|_| Error::InvalidKey)?,
+            .map_err(|_| Error::CorruptedIndex("temporal long interval"))?,
+    )
+    .map_err(|_| Error::CorruptedIndex("temporal long interval"))?;
+    let occurred_start = u64::from_be_bytes(
+        value
+            .try_into()
+            .map_err(|_| Error::CorruptedIndex("temporal long interval"))?,
     );
-    let occurred_start = u64::from_be_bytes(value.try_into().map_err(|_| Error::InvalidKey)?);
     Ok((id, occurred_start, occurred_end))
 }
 
@@ -1323,7 +1342,11 @@ mod tests {
     }
 
     fn entity_id(byte: u8) -> EntityId {
-        EntityId::from_bytes([byte; 16])
+        let byte = match byte {
+            0x00 | 0xFF => 0x01,
+            other => other,
+        };
+        EntityId::from_bytes([byte; 16]).expect("test ids should be valid")
     }
 
     fn put_entity(
@@ -1446,7 +1469,7 @@ mod tests {
         let vault = Vault::open(temp_dir.path(), test_config())?;
 
         for i in 0..=crate::ppr::MAX_PPR_SEEDS {
-            let id = EntityId::from_bytes((i as u128 + 1).to_be_bytes());
+            let id = EntityId::from_bytes((i as u128 + 1).to_be_bytes())?;
             vault
                 .batch()
                 .put(
@@ -1522,7 +1545,7 @@ mod tests {
     fn search_ppr_rejects_excessive_seed_count_and_depth() -> Result<()> {
         let temp_dir = tempfile::tempdir()?;
         let vault = Vault::open(temp_dir.path(), test_config())?;
-        let seeds = vec![entity_id(0); crate::ppr::MAX_PPR_SEEDS + 1];
+        let seeds = vec![entity_id(1); crate::ppr::MAX_PPR_SEEDS + 1];
 
         let too_many_seeds = vault.query().search_ppr(&seeds, 3).run();
         assert!(matches!(too_many_seeds, Err(Error::InvalidConfig(_))));

@@ -8,6 +8,9 @@ use crate::hnsw::{
 use crate::types::{short_id_prefix, EntityId, ENTITY_ID_LEN};
 use crate::{le_bytes_to_f32_vec, ppr, Vault};
 
+const ERR_VECTOR_KEY: &str = "vector key";
+const ERR_SHORT_IDS_REVERSE_VALUE: &str = "short_ids_reverse value";
+
 struct PreparedHnswRebuild {
     old_count: u64,
     vector_version: u64,
@@ -214,7 +217,14 @@ fn recompute_short_id_hashes(vault: &Vault) -> Result<(u64, u64)> {
     let mut reverse_only_deletes = Vec::new();
     for entry in vault.store.short_ids_reverse.iter(&wtxn)? {
         let (short_id_bytes, id_bytes) = entry?;
-        let id = parse_entity_id(id_bytes)?;
+        let id = match parse_entity_id(id_bytes, ERR_SHORT_IDS_REVERSE_VALUE) {
+            Ok(id) => id,
+            Err(Error::CorruptedIndex(_)) => {
+                reverse_only_deletes.push(short_id_bytes.to_vec());
+                continue;
+            }
+            Err(other) => return Err(other),
+        };
         let Some(forward) = vault.store.short_ids.get(&wtxn, id.as_bytes())? else {
             reverse_only_deletes.push(short_id_bytes.to_vec());
             continue;
@@ -270,7 +280,7 @@ fn validate_rebuild_vector(
     id_bytes: &[u8],
     vector_bytes: &[u8],
 ) -> Result<EntityId> {
-    let id = parse_entity_id(id_bytes)?;
+    let id = parse_entity_id(id_bytes, ERR_VECTOR_KEY)?;
     let vector = le_bytes_to_f32_vec(vector_bytes)?;
     if vector.len() != vault.config.dimensions {
         return Err(Error::DimensionMismatch {
@@ -287,7 +297,10 @@ fn validate_rebuild_vector(
 fn is_healable_rebuild_error(error: &Error) -> bool {
     matches!(
         error,
-        Error::InvalidKey | Error::InvalidVector | Error::DimensionMismatch { .. }
+        Error::InvalidKey
+            | Error::InvalidVector
+            | Error::DimensionMismatch { .. }
+            | Error::CorruptedIndex(_)
     )
 }
 
@@ -308,9 +321,11 @@ fn commit_rebuilt_hnsw(
     Ok(())
 }
 
-fn parse_entity_id(bytes: &[u8]) -> Result<EntityId> {
-    let raw: [u8; ENTITY_ID_LEN] = bytes.try_into().map_err(|_| Error::InvalidKey)?;
-    Ok(EntityId::from_bytes(raw))
+fn parse_entity_id(bytes: &[u8], context: &'static str) -> Result<EntityId> {
+    let raw: [u8; ENTITY_ID_LEN] = bytes
+        .try_into()
+        .map_err(|_| Error::CorruptedIndex(context))?;
+    EntityId::from_bytes(raw).map_err(|_| Error::CorruptedIndex(context))
 }
 
 fn decode_u64_opt(raw: Option<&[u8]>) -> Result<Option<u64>> {
@@ -358,7 +373,7 @@ mod tests {
     }
 
     fn entity(byte: u8) -> EntityId {
-        EntityId::from_bytes([byte; ENTITY_ID_LEN])
+        EntityId::from_bytes_unchecked([byte; ENTITY_ID_LEN])
     }
 
     fn read_u64_meta(vault: &Vault, key: &[u8]) -> Result<u64> {
@@ -994,7 +1009,9 @@ mod tests {
     fn recompute_short_id_hashes_processes_custom_ids_near_sentinel_pattern() -> Result<()> {
         let temp_dir = tempfile::tempdir()?;
         let vault = Vault::open(temp_dir.path(), test_config())?;
-        let id = EntityId::from_bytes([0xFF; ENTITY_ID_LEN]);
+        let mut raw = [0xFF; ENTITY_ID_LEN];
+        raw[0] = 0xFE;
+        let id = EntityId::from_bytes(raw)?;
 
         vault
             .batch()
@@ -1036,6 +1053,69 @@ mod tests {
         let report = vault.maintain().recompute_short_id_hashes().run()?;
         assert_eq!(report.short_id_hashes_updated, 1);
         assert_eq!(report.orphan_short_ids_deleted, 0);
+        Ok(())
+    }
+
+    #[test]
+    fn recompute_short_id_hashes_prunes_corrupt_reverse_rows() -> Result<()> {
+        let temp_dir = tempfile::tempdir()?;
+        let vault = Vault::open(temp_dir.path(), test_config())?;
+        let id = entity(102);
+
+        vault
+            .batch()
+            .put(&id, 0, test_time_range(100, 100), 101, b"payload")
+            .commit()?;
+
+        {
+            let mut wtxn = vault.store.env.write_txn()?;
+            vault
+                .store
+                .short_ids_reverse
+                .put(&mut wtxn, b"deadbeef", &[0xFF; ENTITY_ID_LEN])?;
+            wtxn.commit()?;
+        }
+
+        let report = vault.maintain().recompute_short_id_hashes().run()?;
+        assert_eq!(report.orphan_short_ids_deleted, 1);
+
+        let rtxn = vault.store.env.read_txn()?;
+        assert!(vault
+            .store
+            .short_ids_reverse
+            .get(&rtxn, b"deadbeef")?
+            .is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn rebuild_hnsw_heal_invalid_vectors_skips_reserved_id_rows() -> Result<()> {
+        let temp_dir = tempfile::tempdir()?;
+        let vault = Vault::open(temp_dir.path(), test_config())?;
+        let live = entity(103);
+
+        vault.put_entity(&live, 0, test_time_range(1, 1), 1, b"node")?;
+        vault.put_vector(&live, &[1.0, 0.0, 0.0, 0.0])?;
+
+        {
+            let mut wtxn = vault.store.env.write_txn()?;
+            let valid_vector = [
+                1.0_f32.to_le_bytes(),
+                0.0_f32.to_le_bytes(),
+                0.0_f32.to_le_bytes(),
+                0.0_f32.to_le_bytes(),
+            ]
+            .concat();
+            vault
+                .store
+                .vectors
+                .put(&mut wtxn, &[0xFF; ENTITY_ID_LEN], &valid_vector)?;
+            wtxn.commit()?;
+        }
+
+        let report = vault.maintain().rebuild_hnsw_heal_invalid_vectors().run()?;
+        assert_eq!(report.hnsw_invalid_vectors_skipped, 1);
+        assert_eq!(report.hnsw_live_nodes, 1);
         Ok(())
     }
 

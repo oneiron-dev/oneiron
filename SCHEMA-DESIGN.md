@@ -5,7 +5,7 @@
 
 ---
 
-## Database Layout (v1 — 18 databases)
+## Database Layout (v1 — 20 core databases, 22 with sync)
 
 | # | Database | Key Format | Key Size | Value Format | Value Size | Purpose |
 |---|----------|-----------|----------|-------------|-----------|---------|
@@ -24,12 +24,14 @@
 | 13 | `temporal_occurred_start` | `start_ts(u64 8B BE) \| entity_id(16)` | 24B | empty | 0B | Bi-temporal: when it started |
 | 14 | `temporal_occurred_end` | `end_ts(u64 8B BE) \| entity_id(16)` | 24B | empty | 0B | Bi-temporal: when it ended |
 | 15 | `temporal_learned` | `learned_ts(u64 8B BE) \| entity_id(16)` | 24B | empty | 0B | Bi-temporal: when we recorded it |
-| 16 | `phonetic_index` | `phonetic_code` (UTF-8) | variable | `[(entity_id(16))]` packed | N×16B | Phonetic code → entity lookup |
-| 17 | `short_ids` | `entity_id` (16B) | 16B | `short_id(var) \| content_hash(1B)` | variable | Short ID + content hash mapping |
-| 18 | `short_ids_reverse` | `short_id` (UTF-8, e.g. "cl88") | variable | `entity_id` (16B) | 16B | Short ID → full ID lookup |
+| 16 | `temporal_long_intervals` | `end_ts(u64 8B BE) \| entity_id(16)` | 24B | `start_ts(u64 8B BE)` | 8B | Long-interval "spanner" temporal index |
+| 17 | `phonetic_index` | `phonetic_code` (UTF-8) | variable | `[(entity_id(16))]` packed | N×16B | Phonetic code → entity lookup |
+| 18 | `phonetic_forward` | `entity_id` (16B) | 16B | `[code1\0code2\0...]` packed UTF-8 | variable | Phonetic forward index (for deindexing) |
+| 19 | `short_ids` | `entity_id` (16B) | 16B | `short_id(var) \| content_hash(1B)` | variable | Short ID + content hash mapping |
+| 20 | `short_ids_reverse` | `short_id` (UTF-8, e.g. "cl88") | variable | `entity_id` (16B) | 16B | Short ID → full ID lookup |
 
 ```rust
-const MAX_DBS: u32 = 24; // 18 core + room for sync, entity_vad, future
+const MAX_DBS: u32 = 25; // 20 core + room for sync and future databases
 ```
 
 ---
@@ -44,14 +46,16 @@ const MAX_DBS: u32 = 24; // 18 core + room for sync, entity_vad, future
 | +`type_index` | didn't exist | type(1)\|id(16) → empty | Entity type filtering in Rust, not across FFI. Post-filtering 300 blobs in TypeScript is bad. |
 | +`temporal_occurred_start/end` | didn't exist | ts(8)\|id(16) → empty | Bi-temporal interval indexing. Temporal is a 5th retrieval signal, not just a filter. Hindsight showed +46.7% on temporal reasoning. |
 | +`temporal_learned` | didn't exist | ts(8)\|id(16) → empty | "When did we learn this?" vs "when did it happen?" — different temporal dimensions. |
+| +`temporal_long_intervals` | didn't exist | end_ts\|entity_id → start_ts | Long-range temporal "spanner" index for wide-window queries. |
 | +`phonetic_index` | didn't exist | code → [(id)] | Voice-first product needs phonetic matching for ASR misspellings (CROSS-ARCH-013). 5th retrieval signal. |
+| +`phonetic_forward` | didn't exist | entity_id → [codes] | Forward index for O(codes) phonetic deindexing. |
 | +`text_forward` | didn't exist | entity_id → [terms] | Forward index for O(terms) deindexing without requiring original text. |
 | +`hnsw_meta` keys | entry_point, count | + model_id, hnsw_config, graph_version, vector_version, temporal schema version | Persist vector-space compatibility + maintenance guard metadata without clearing unrelated keys during rebuild. |
 | +`short_ids` | didn't exist | entity_id → short_id + hash | Vault-scoped permanent short IDs (`cl88`) + 1-byte content hash for freshness detection. |
 | +`short_ids_reverse` | didn't exist | short_id → entity_id | Reverse lookup for hydration endpoint. |
 | Entity blob format | opaque `&[u8]` | MessagePack | Self-describing binary format. ~30% smaller than JSON, enables field extraction in context_pack without schema registration. |
-| Database count | 9 | 18 | |
-| MAX_DBS | 12 | 24 | |
+| Database count | 9 | 20 core / 22 with sync | |
+| MAX_DBS | 12 | 25 | |
 
 ---
 
@@ -477,11 +481,9 @@ When `delete_entity(E)` is called, one write transaction does:
 7. COMMIT
 ```
 
-Note: phonetic deindexing needs the codes. Two options:
-- Store codes in entity blob (app deserializes before delete)
-- Add `phonetic_forward` database (like text_forward)
+Note: phonetic deindexing uses `phonetic_forward` as the primary path. Each entity stores the deduped set of phonetic codes it participates in, which keeps delete-time cleanup O(codes-for-entity), matching the `text_forward` design for BM25 terms.
 
-For v1: require codes to be in the entity blob. The `delete_entity` implementation reads the blob first, extracts phonetic codes (caller provides a decoder), then deindexes. If the blob is opaque, the simple API's `delete_entity` handles it by also reading `phonetic_index` entries that reference E (reverse scan — phonetic vocabulary is small enough).
+For migrated or partially repaired data where the forward row is missing or stale, the implementation falls back to a reverse scan of `phonetic_index`, repairs what it can, and removes the forward row when delete completes.
 
 ---
 
@@ -517,9 +519,9 @@ s_temporal = α × s_occurred + (1-α) × s_learned
 
 ## Future Additions (Not v1)
 
-### Database #17: `entity_vad` (Companion Plugin — Emotional Scoring)
+### Future Database: `entity_vad` (Companion Plugin — Emotional Scoring)
 
-```
+```text
 Key:   entity_id (16B)
 Value: valence(f32 4B) + arousal(f32 4B) + dominance(f32 4B) = 12B
 ```
@@ -528,15 +530,14 @@ Entity-level aggregate emotional metadata. Per ARCH-022/023, edge-level VAD (sto
 Only populated for entities with emotional data (messages, turns, events).
 Add when companion plugin is built.
 
-### Databases #18-19: Sync (Device Mode)
+### Optional Databases #21-22: Sync (Device Mode)
 
-```
-sync_deltas:  (timestamp_ulid(16) | doc_id(16)) → serialized CRDT delta
-sync_meta:    string key → value (cursors, device_id, last_sync)
+```text
+sync_state:   string key → value (doc state, state vectors, sequence metadata)
+sync_queue:   queue_key(bytes) → pending sync update or embed job
 ```
 
-For offline-first device mode. Convex cloud is sync hub.
-Add when device sync is implemented.
+Present in sync-enabled builds for offline-first device mode. Convex cloud is the sync hub.
 
 ### HNSW Multi-Index (Multimodal Embeddings — v2)
 
@@ -616,9 +617,8 @@ pub enum EdgeKind {
     InWorld = 15,       // ARCH-022: person → world
     FacetOf = 16,       // ARCH-023: claim → facet
     SetIn = 17,         // ARCH-023: relationship → world
-    // Future (multi-party, CROSS-ARCH-010):
-    // AddressedTo = 18,  // default weight 0.4
-    // RepliesTo = 19,    // default weight 0.3
+    ChildOf = 18,       // default weight 1.0
+    AssignedTo = 19,    // default weight 0.8
 }
 ```
 
@@ -629,7 +629,7 @@ Default weights are used when `put_edge` is called without an explicit weight. T
 ## LMDB Configuration
 
 ```rust
-const MAX_DBS: u32 = 24;           // 16 core + 8 headroom
+const MAX_DBS: u32 = 25;           // 20 core + sync/future headroom
 const DEFAULT_MAX_READERS: u32 = 126;
 
 // Map sizes (virtual memory, not physical RAM)
@@ -1006,12 +1006,10 @@ pub struct TokenAllocation {
 
 ## Open Questions
 
-1. **Phonetic deindexing:** Add `phonetic_forward` database (#17, bumping entity_vad to #18)? Or rely on phonetic vocabulary being small enough for reverse lookup? Decision: defer, measure first.
+1. **Temporal α parameter:** How does the pipeline decide whether "occurred" or "learned" matters more for a given query? Heuristic from query text? Explicit parameter? LLM decides?
 
-2. **Temporal α parameter:** How does the pipeline decide whether "occurred" or "learned" matters more for a given query? Heuristic from query text? Explicit parameter? LLM decides?
+2. **PPR graph_version counter:** Stored where? `hnsw_meta["graph_version"]` as u64, incremented once per batch of graph mutations in the same LMDB environment.
 
-3. **PPR graph_version counter:** Stored where? `hnsw_meta["graph_version"]` as u64, incremented once per batch of graph mutations in the same LMDB environment.
+3. **Collection stats atomicity:** BM25 total_docs and total_length (sentinel keys in text_meta) are updated on every index/deindex. Under concurrent reads, readers see a consistent snapshot (LMDB MVCC). No issue.
 
-4. **Collection stats atomicity:** BM25 total_docs and total_length (sentinel keys in text_meta) are updated on every index/deindex. Under concurrent reads, readers see a consistent snapshot (LMDB MVCC). No issue.
-
-5. **Multi-party EdgeKinds:** `AddressedTo` (18) and `RepliesTo` (19) — add to enum now (reserved) or add when multi-party ships? Recommendation: reserve the values now, don't implement until needed.
+4. **Future multi-party EdgeKinds:** values `18/19` are no longer available for reservation because shipped code now uses `ChildOf = 18` and `AssignedTo = 19`. Any future `AddressedTo` / `RepliesTo` work will need new discriminants.
