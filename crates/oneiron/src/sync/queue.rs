@@ -11,6 +11,7 @@ use std::sync::Arc;
 
 use crate::error::{Error, Result};
 use crate::sync::transport::MAX_WINDOW_KEY_LEN;
+use crate::sync::types::parse_window_key_str;
 use crate::types::EntityId;
 use crate::Vault;
 
@@ -275,6 +276,15 @@ impl SyncQueue {
         let next = current
             .checked_add(1)
             .ok_or(Error::ArithmeticOverflow("sync queue sequence"))?;
+        if self
+            .vault
+            .store
+            .sync_queue
+            .get(&*wtxn, &encode_update_key(next))?
+            .is_some()
+        {
+            return Err(Error::CorruptedIndex("sync queue metadata"));
+        }
         self.vault
             .store
             .sync_queue
@@ -284,51 +294,41 @@ impl SyncQueue {
 
     /// Ensures queue sequence metadata exists and matches the persisted queue.
     fn ensure_last_update_seq_metadata(&self, wtxn: &mut heed::RwTxn<'_>) -> Result<u64> {
-        match self
+        let metadata = match self
             .vault
             .store
             .sync_queue
             .get(&*wtxn, LAST_UPDATE_SEQ_KEY)?
         {
-            Some(raw) => match decode_last_update_seq_metadata(raw) {
-                Ok(seq) => Ok(seq),
-                Err(err) => {
-                    if self.has_any_update_rows(wtxn)? {
-                        Err(err)
-                    } else {
-                        self.vault.store.sync_queue.put(
-                            wtxn,
-                            LAST_UPDATE_SEQ_KEY,
-                            &0_u64.to_le_bytes(),
-                        )?;
-                        Ok(0)
-                    }
-                }
-            },
-            None => {
-                if self.has_any_update_rows(wtxn)? {
-                    Err(Error::CorruptedIndex("sync queue metadata"))
-                } else {
-                    self.vault.store.sync_queue.put(
-                        wtxn,
-                        LAST_UPDATE_SEQ_KEY,
-                        &0_u64.to_le_bytes(),
-                    )?;
-                    Ok(0)
-                }
-            }
-        }
+            Some(raw) => decode_last_update_seq_metadata(raw).ok(),
+            None => None,
+        };
+        let max_valid_seq = self.max_valid_update_seq(wtxn)?;
+        let repaired = match metadata {
+            Some(seq) if seq >= max_valid_seq => seq,
+            _ => max_valid_seq,
+        };
+        self.vault
+            .store
+            .sync_queue
+            .put(wtxn, LAST_UPDATE_SEQ_KEY, &repaired.to_le_bytes())?;
+        Ok(repaired)
     }
 
-    fn has_any_update_rows(&self, wtxn: &heed::RwTxn<'_>) -> Result<bool> {
-        Ok(self
+    fn max_valid_update_seq(&self, wtxn: &heed::RwTxn<'_>) -> Result<u64> {
+        let mut max_valid_seq = 0_u64;
+        let iter = self
             .vault
             .store
             .sync_queue
-            .prefix_iter(wtxn, UPDATE_PREFIX)?
-            .next()
-            .transpose()?
-            .is_some())
+            .prefix_iter(wtxn, UPDATE_PREFIX)?;
+        for result in iter {
+            let (key, _) = result?;
+            if let Ok(seq) = decode_update_key(key) {
+                max_valid_seq = max_valid_seq.max(seq);
+            }
+        }
+        Ok(max_valid_seq)
     }
 
     fn recover_last_update_seq_for_clear(&self, wtxn: &heed::RwTxn<'_>) -> Result<u64> {
@@ -338,17 +338,7 @@ impl SyncQueue {
             .sync_queue
             .get(wtxn, LAST_UPDATE_SEQ_KEY)?
             .and_then(|raw| decode_last_update_seq_metadata(raw).ok());
-        let mut max_valid_seq = 0_u64;
-        let iter = self.vault.store.sync_queue.iter(wtxn)?;
-        for result in iter {
-            let (key, _) = result?;
-            if !key.starts_with(UPDATE_PREFIX) {
-                continue;
-            }
-            if let Ok(seq) = decode_update_key(key) {
-                max_valid_seq = max_valid_seq.max(seq);
-            }
-        }
+        let max_valid_seq = self.max_valid_update_seq(wtxn)?;
         Ok(metadata_seq.unwrap_or(0).max(max_valid_seq))
     }
 
@@ -412,7 +402,10 @@ fn decode_update_key(key: &[u8]) -> Result<u64> {
 /// Encodes an update value: `[window_key_len:1][window_key][encoded_update]`.
 fn encode_update_value(window_key: &str, update_bytes: &[u8]) -> Result<Vec<u8>> {
     let key_bytes = window_key.as_bytes();
-    if key_bytes.is_empty() || key_bytes.len() > MAX_WINDOW_KEY_LEN {
+    if key_bytes.is_empty()
+        || key_bytes.len() > MAX_WINDOW_KEY_LEN
+        || parse_window_key_str(window_key).is_none()
+    {
         return Err(Error::InvalidKey);
     }
     let mut value = Vec::with_capacity(1 + key_bytes.len() + update_bytes.len());
@@ -437,6 +430,9 @@ fn decode_update_value(value: &[u8]) -> Result<(String, Vec<u8>)> {
     let window_key = std::str::from_utf8(&value[1..1 + key_len])
         .map_err(|_| Error::CorruptedIndex(ERR_SYNC_QUEUE_UPDATE_ROW))?
         .to_string();
+    if parse_window_key_str(&window_key).is_none() {
+        return Err(Error::CorruptedIndex(ERR_SYNC_QUEUE_UPDATE_ROW));
+    }
     let encoded = value[1 + key_len..].to_vec();
     Ok((window_key, encoded))
 }
@@ -555,6 +551,13 @@ mod tests {
             .expect_err("overlong window key must fail");
         assert!(matches!(err, Error::InvalidKey));
 
+        for invalid in ["2026-13", "2026-00", "abcdefg", "2026-3"] {
+            let err = queue
+                .push(invalid, &[9])
+                .expect_err("invalid calendar window key must fail");
+            assert!(matches!(err, Error::InvalidKey));
+        }
+
         let seq = queue.push("2026-03", &[3]).unwrap();
         assert_eq!(seq, 1);
 
@@ -617,7 +620,7 @@ mod tests {
     }
 
     #[test]
-    fn missing_sequence_metadata_with_existing_rows_is_corruption() {
+    fn missing_sequence_metadata_with_existing_rows_repairs_upward() {
         let vault = test_vault();
         let queue = SyncQueue::new(vault.clone()).unwrap();
 
@@ -629,10 +632,8 @@ mod tests {
             .unwrap();
         wtxn.commit().unwrap();
 
-        let err = queue
-            .push("2026-03", &[1])
-            .expect_err("queue rows without metadata should fail");
-        assert!(matches!(err, Error::CorruptedIndex("sync queue metadata")));
+        let next = queue.push("2026-03", &[1]).unwrap();
+        assert_eq!(next, 8);
     }
 
     #[test]
@@ -656,7 +657,7 @@ mod tests {
     }
 
     #[test]
-    fn malformed_sequence_metadata_is_corruption() {
+    fn malformed_sequence_metadata_repairs_upward() {
         let vault = test_vault();
         let queue = SyncQueue::new(vault.clone()).unwrap();
 
@@ -673,10 +674,8 @@ mod tests {
             .unwrap();
         wtxn.commit().unwrap();
 
-        let err = queue
-            .push("2026-03", &[1])
-            .expect_err("malformed queue metadata should fail");
-        assert!(matches!(err, Error::CorruptedIndex("sync queue metadata")));
+        let next = queue.push("2026-03", &[1]).unwrap();
+        assert_eq!(next, 5);
     }
 
     #[test]
@@ -724,6 +723,34 @@ mod tests {
         assert_eq!(updates.len(), 1);
         assert_eq!(updates[0].seq, 6);
         assert_eq!(updates[0].encoded, vec![9]);
+    }
+
+    #[test]
+    fn stale_but_parseable_metadata_repairs_upward_before_push() {
+        let vault = test_vault();
+        let queue = SyncQueue::new(vault.clone()).unwrap();
+
+        for seq in 1..=5u8 {
+            queue.push("2026-03", &[seq]).unwrap();
+        }
+
+        let mut wtxn = vault.store.env.write_txn().unwrap();
+        vault
+            .store
+            .sync_queue
+            .put(&mut wtxn, LAST_UPDATE_SEQ_KEY, &1_u64.to_le_bytes())
+            .unwrap();
+        wtxn.commit().unwrap();
+
+        let next = queue.push("2026-03", &[9]).unwrap();
+        assert_eq!(next, 6);
+
+        let updates = queue.drain_updates().unwrap();
+        assert_eq!(updates.len(), 6);
+        assert_eq!(updates[1].seq, 2);
+        assert_eq!(updates[1].encoded, vec![2]);
+        assert_eq!(updates[5].seq, 6);
+        assert_eq!(updates[5].encoded, vec![9]);
     }
 
     #[test]
@@ -829,6 +856,39 @@ mod tests {
             .store
             .sync_queue
             .get(&rtxn, &bad_key)
+            .unwrap()
+            .is_none());
+    }
+
+    #[test]
+    fn drain_updates_prunes_invalid_calendar_window_keys() {
+        let vault = test_vault();
+        let queue = SyncQueue::new(vault.clone()).unwrap();
+
+        queue.push("2026-03", &[1]).unwrap();
+
+        let mut bad_value = Vec::new();
+        bad_value.push(7);
+        bad_value.extend_from_slice(b"2026-13");
+        bad_value.extend_from_slice(&[9, 9]);
+
+        let mut wtxn = vault.store.env.write_txn().unwrap();
+        vault
+            .store
+            .sync_queue
+            .put(&mut wtxn, &encode_update_key(2), &bad_value)
+            .unwrap();
+        wtxn.commit().unwrap();
+
+        let updates = queue.drain_updates().unwrap();
+        assert_eq!(updates.len(), 1);
+        assert_eq!(updates[0].seq, 1);
+
+        let rtxn = vault.store.env.read_txn().unwrap();
+        assert!(vault
+            .store
+            .sync_queue
+            .get(&rtxn, &encode_update_key(2))
             .unwrap()
             .is_none());
     }
