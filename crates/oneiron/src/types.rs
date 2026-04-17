@@ -16,8 +16,25 @@ impl EntityId {
         Self(Uuid::now_v7().into_bytes())
     }
 
-    /// Creates an identifier from raw bytes.
-    pub fn from_bytes(bytes: [u8; 16]) -> Self {
+    /// Creates an identifier from raw bytes, rejecting reserved sentinel IDs.
+    ///
+    /// The all-zero, all-`0xFF`, and known `[entity_type, 0xFF×15]` short-id
+    /// counter sentinel patterns are reserved at the public `EntityId` layer.
+    /// Other byte patterns remain valid IDs even if other LMDB indexes use
+    /// similar-looking internal sentinel keys.
+    pub fn from_bytes(bytes: [u8; 16]) -> crate::error::Result<Self> {
+        if is_reserved_entity_id_bytes(&bytes) {
+            return Err(crate::error::Error::InvalidKey);
+        }
+        Ok(Self(bytes))
+    }
+
+    /// Creates an identifier from raw bytes without validating sentinel patterns.
+    ///
+    /// Reserved for internal construction where the caller already knows the
+    /// bytes are either valid entity IDs or intentional sentinel values.
+    #[cfg(test)]
+    pub(crate) fn from_bytes_unchecked(bytes: [u8; 16]) -> Self {
         Self(bytes)
     }
 
@@ -48,8 +65,16 @@ impl EntityId {
             let lo = hex_nibble(chunk[1]).ok_or(crate::error::Error::InvalidKey)?;
             bytes[i] = (hi << 4) | lo;
         }
-        Ok(Self(bytes))
+        Self::from_bytes(bytes)
     }
+}
+
+fn is_reserved_entity_id_bytes(bytes: &[u8; ENTITY_ID_LEN]) -> bool {
+    if *bytes == [0x00; ENTITY_ID_LEN] || *bytes == [0xFF; ENTITY_ID_LEN] {
+        return true;
+    }
+
+    bytes[1..].iter().all(|&b| b == 0xFF) && short_id_prefix(bytes[0]).is_ok()
 }
 
 /// Converts an ASCII hex character to its nibble value.

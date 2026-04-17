@@ -162,7 +162,7 @@ mod tests {
 
     fn scored(id: [u8; 16], score: f32) -> ScoredEntity {
         ScoredEntity {
-            id: EntityId::from_bytes(id),
+            id: EntityId::from_bytes_unchecked(id),
             score,
         }
     }
@@ -187,11 +187,11 @@ mod tests {
 
         let first = fused
             .iter()
-            .find(|entry| entry.id == EntityId::from_bytes([1; 16]))
+            .find(|entry| entry.id == EntityId::from_bytes_unchecked([1; 16]))
             .expect("missing entity 1");
         let second = fused
             .iter()
-            .find(|entry| entry.id == EntityId::from_bytes([2; 16]))
+            .find(|entry| entry.id == EntityId::from_bytes_unchecked([2; 16]))
             .expect("missing entity 2");
 
         let expected_1 = 1.0 / 61.0 + 1.0 / 62.0;

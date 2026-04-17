@@ -12,6 +12,7 @@ use crate::types::{EntityId, ScoredEntity, VaultConfig, ENTITY_ID_LEN};
 const ENTRY_POINT_KEY: &[u8] = b"entry_point";
 pub(crate) const COUNT_KEY: &[u8] = b"count";
 const ERR_ENTRY_POINT_MISSING: &str = "hnsw count > 0 but entry point is missing";
+const ERR_ENTRY_POINT_VECTOR_MISSING: &str = "hnsw count > 0 but entry point vector is missing";
 const ERR_ENTRY_POINT_BYTES: &str = "hnsw entry point bytes are malformed";
 const ERR_COUNT_BYTES: &str = "hnsw count bytes are malformed";
 const ERR_NEIGHBOR_KEY_BYTES: &str = "hnsw neighbor key bytes are malformed";
@@ -93,6 +94,7 @@ pub(crate) fn hnsw_insert(
         vector,
         entry_point,
         config.hnsw.ef_construction,
+        false,
         false,
     )?;
 
@@ -278,9 +280,16 @@ pub(crate) fn hnsw_search(
         return Ok(Vec::new());
     }
 
-    let Some(entry_point) = read_entry_point(store, rtxn)? else {
+    let count = read_count(store, rtxn)?;
+    let entry_point = read_entry_point(store, rtxn)?;
+    if count == 0 {
+        if entry_point.is_some() || store.hnsw_neighbors.first(rtxn)?.is_some() {
+            return Err(Error::CorruptedIndex(ERR_ZERO_COUNT_GRAPH_NOT_EMPTY));
+        }
         return Ok(Vec::new());
-    };
+    }
+
+    let entry_point = entry_point.ok_or(Error::CorruptedIndex(ERR_ENTRY_POINT_MISSING))?;
 
     let mut nearest = beam_search(
         store,
@@ -288,6 +297,7 @@ pub(crate) fn hnsw_search(
         query_vector,
         entry_point,
         config.hnsw.ef_search.max(limit),
+        true,
         true,
     )?;
 
@@ -350,13 +360,14 @@ fn beam_search(
     query_vector: &[f32],
     entry_point: EntityId,
     ef: usize,
+    lenient_neighbors: bool,
     check_existence: bool,
 ) -> Result<Vec<HeapEntry>> {
     let ef = ef.max(1);
     let mut vector_buffer = Vec::with_capacity(query_vector.len());
 
     let Some(entry_vector) = load_vector_into(store, txn, &entry_point, &mut vector_buffer)? else {
-        return Ok(Vec::new());
+        return Err(Error::CorruptedIndex(ERR_ENTRY_POINT_VECTOR_MISSING));
     };
 
     let entry = HeapEntry {
@@ -389,7 +400,11 @@ fn beam_search(
             break;
         }
 
-        let neighbors = load_neighbors(store, txn, &current.id)?;
+        let neighbors = if lenient_neighbors {
+            load_neighbors_lenient(store, txn, &current.id)?
+        } else {
+            load_neighbors(store, txn, &current.id)?
+        };
         for neighbor_id in neighbors {
             if !visited.insert(neighbor_id) {
                 continue;
@@ -601,10 +616,44 @@ fn read_entry_point(store: &Store, txn: &RoTxn<'_>) -> Result<Option<EntityId>> 
 
     parse_entity_id(raw, ERR_ENTRY_POINT_BYTES).map(Some)
 }
-
 fn parse_entity_id(bytes: &[u8], err: &'static str) -> Result<EntityId> {
     let raw: [u8; ENTITY_ID_LEN] = bytes.try_into().map_err(|_| Error::CorruptedIndex(err))?;
-    Ok(EntityId::from_bytes(raw))
+    EntityId::from_bytes(raw).map_err(|_| Error::CorruptedIndex(err))
+}
+
+fn decode_neighbors_strict(raw: &[u8]) -> Result<Vec<EntityId>> {
+    if !raw.len().is_multiple_of(ENTITY_ID_LEN) {
+        return Err(Error::CorruptedIndex(ERR_NEIGHBOR_VALUE_BYTES));
+    }
+
+    let mut neighbors = Vec::with_capacity(raw.len() / ENTITY_ID_LEN);
+    for chunk in raw.chunks_exact(ENTITY_ID_LEN) {
+        let bytes: [u8; ENTITY_ID_LEN] = chunk.try_into().expect("chunk length is exact");
+        let neighbor = EntityId::from_bytes(bytes)
+            .map_err(|_| Error::CorruptedIndex(ERR_NEIGHBOR_VALUE_BYTES))?;
+        neighbors.push(neighbor);
+    }
+
+    Ok(neighbors)
+}
+
+fn decode_neighbors_lenient(raw: &[u8]) -> Result<Vec<EntityId>> {
+    if !raw.len().is_multiple_of(ENTITY_ID_LEN) {
+        return Err(Error::CorruptedIndex(ERR_NEIGHBOR_VALUE_BYTES));
+    }
+
+    let mut neighbors = Vec::with_capacity(raw.len() / ENTITY_ID_LEN);
+    for chunk in raw.chunks_exact(ENTITY_ID_LEN) {
+        let bytes: [u8; ENTITY_ID_LEN] = chunk.try_into().expect("chunk length is exact");
+        // Search traversal is best-effort. Reserved sentinel garbage should not
+        // take the whole query path down.
+        let Ok(neighbor) = EntityId::from_bytes(bytes) else {
+            continue;
+        };
+        neighbors.push(neighbor);
+    }
+
+    Ok(neighbors)
 }
 
 fn load_neighbors(store: &Store, txn: &RoTxn<'_>, id: &EntityId) -> Result<Vec<EntityId>> {
@@ -612,13 +661,15 @@ fn load_neighbors(store: &Store, txn: &RoTxn<'_>, id: &EntityId) -> Result<Vec<E
         return Ok(Vec::new());
     };
 
-    if raw.len() % ENTITY_ID_LEN != 0 {
-        return Err(Error::CorruptedIndex(ERR_NEIGHBOR_VALUE_BYTES));
-    }
+    decode_neighbors_strict(raw)
+}
 
-    raw.chunks_exact(ENTITY_ID_LEN)
-        .map(|chunk| parse_entity_id(chunk, ERR_NEIGHBOR_VALUE_BYTES))
-        .collect()
+fn load_neighbors_lenient(store: &Store, txn: &RoTxn<'_>, id: &EntityId) -> Result<Vec<EntityId>> {
+    let Some(raw) = store.hnsw_neighbors.get(txn, id.as_bytes())? else {
+        return Ok(Vec::new());
+    };
+
+    decode_neighbors_lenient(raw)
 }
 
 fn write_neighbors(
@@ -1111,6 +1162,76 @@ mod tests {
     }
 
     #[test]
+    fn hnsw_insert_rejects_corrupted_neighbor_lists() -> Result<()> {
+        let temp_dir = tempdir()?;
+        let vault = Vault::open(temp_dir.path(), test_config())?;
+        let a = EntityId::now();
+        let b = EntityId::now();
+
+        vault.put_entity(&a, 0, point(1, 1), 1, b"a")?;
+        vault.put_entity(&b, 0, point(1, 1), 1, b"b")?;
+        vault.put_vector(&a, &[1.0, 0.0, 0.0, 0.0])?;
+
+        let mut wtxn = vault.store.env.write_txn()?;
+        vault
+            .store
+            .hnsw_neighbors
+            .put(&mut wtxn, a.as_bytes(), &[0; ENTITY_ID_LEN])?;
+        wtxn.commit()?;
+
+        let err = vault
+            .put_vector(&b, &[0.9, 0.1, 0.0, 0.0])
+            .expect_err("expected corrupted write-side neighbors to fail");
+        assert!(matches!(
+            err,
+            Error::CorruptedIndex(message) if message == ERR_NEIGHBOR_VALUE_BYTES
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn beam_search_strict_rejects_corrupted_neighbor_rows() -> Result<()> {
+        let temp_dir = tempdir()?;
+        let store = Store::open(temp_dir.path(), &test_config())?;
+        let a = EntityId::now();
+        let b = EntityId::now();
+
+        let mut wtxn = store.env.write_txn()?;
+        store
+            .entities
+            .put(&mut wtxn, a.as_bytes(), &[0, 0, 0, 0, 0, 0, 0, 0])?;
+        store
+            .entities
+            .put(&mut wtxn, b.as_bytes(), &[0, 0, 0, 0, 0, 0, 0, 0])?;
+        store.vectors.put(
+            &mut wtxn,
+            a.as_bytes(),
+            &vector_bytes(&[1.0, 0.0, 0.0, 0.0]),
+        )?;
+        store.vectors.put(
+            &mut wtxn,
+            b.as_bytes(),
+            &vector_bytes(&[0.9, 0.1, 0.0, 0.0]),
+        )?;
+        store
+            .hnsw_neighbors
+            .put(&mut wtxn, a.as_bytes(), b.as_bytes())?;
+        store
+            .hnsw_neighbors
+            .put(&mut wtxn, b.as_bytes(), &[0; ENTITY_ID_LEN])?;
+        wtxn.commit()?;
+
+        let rtxn = store.env.read_txn()?;
+        let err = beam_search(&store, &rtxn, &[1.0, 0.0, 0.0, 0.0], a, 2, false, false)
+            .expect_err("strict beam search should reject corrupted neighbors");
+        assert!(matches!(
+            err,
+            Error::CorruptedIndex(message) if message == ERR_NEIGHBOR_VALUE_BYTES
+        ));
+        Ok(())
+    }
+
+    #[test]
     fn hnsw_search_reports_corrupted_vector_bytes() -> Result<()> {
         let temp_dir = tempdir()?;
         let vault = Vault::open(temp_dir.path(), test_config())?;
@@ -1156,6 +1277,75 @@ mod tests {
         assert!(matches!(
             err,
             Error::CorruptedIndex(message) if message == ERR_ENTRY_POINT_BYTES
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn hnsw_search_reports_missing_entry_point_when_count_is_nonzero() -> Result<()> {
+        let temp_dir = tempdir()?;
+        let vault = Vault::open(temp_dir.path(), test_config())?;
+        let id = EntityId::now();
+        vault.put_entity(&id, 0, point(1, 1), 1, b"node")?;
+        vault.put_vector(&id, &[1.0, 0.0, 0.0, 0.0])?;
+
+        let mut wtxn = vault.store.env.write_txn()?;
+        vault.store.hnsw_meta.delete(&mut wtxn, ENTRY_POINT_KEY)?;
+        wtxn.commit()?;
+
+        let err = vault
+            .search_vector(&[1.0, 0.0, 0.0, 0.0], 1)
+            .expect_err("expected missing entry point corruption");
+        assert!(matches!(
+            err,
+            Error::CorruptedIndex(message) if message == ERR_ENTRY_POINT_MISSING
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn hnsw_search_reports_missing_entry_point_vector_when_count_is_nonzero() -> Result<()> {
+        let temp_dir = tempdir()?;
+        let vault = Vault::open(temp_dir.path(), test_config())?;
+        let id = EntityId::now();
+        vault.put_entity(&id, 0, point(1, 1), 1, b"node")?;
+        vault.put_vector(&id, &[1.0, 0.0, 0.0, 0.0])?;
+
+        let mut wtxn = vault.store.env.write_txn()?;
+        vault.store.vectors.delete(&mut wtxn, id.as_bytes())?;
+        wtxn.commit()?;
+
+        let err = vault
+            .search_vector(&[1.0, 0.0, 0.0, 0.0], 1)
+            .expect_err("expected missing entry point vector corruption");
+        assert!(matches!(
+            err,
+            Error::CorruptedIndex(message) if message == ERR_ENTRY_POINT_VECTOR_MISSING
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn hnsw_search_reports_non_empty_graph_when_count_is_zero() -> Result<()> {
+        let temp_dir = tempdir()?;
+        let vault = Vault::open(temp_dir.path(), test_config())?;
+        let id = EntityId::now();
+        vault.put_entity(&id, 0, point(1, 1), 1, b"node")?;
+        vault.put_vector(&id, &[1.0, 0.0, 0.0, 0.0])?;
+
+        let mut wtxn = vault.store.env.write_txn()?;
+        vault
+            .store
+            .hnsw_meta
+            .put(&mut wtxn, COUNT_KEY, &0_u64.to_le_bytes())?;
+        wtxn.commit()?;
+
+        let err = vault
+            .search_vector(&[1.0, 0.0, 0.0, 0.0], 1)
+            .expect_err("expected zero-count graph corruption");
+        assert!(matches!(
+            err,
+            Error::CorruptedIndex(message) if message == ERR_ZERO_COUNT_GRAPH_NOT_EMPTY
         ));
         Ok(())
     }
@@ -1216,6 +1406,38 @@ mod tests {
         assert!(matches!(
             err,
             Error::CorruptedIndex(message) if message == ERR_ZERO_COUNT_GRAPH_NOT_EMPTY
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn hnsw_insert_reports_missing_entry_point_vector() -> Result<()> {
+        let temp_dir = tempdir()?;
+        let store = Store::open(temp_dir.path(), &test_config())?;
+        let mut wtxn = store.env.write_txn()?;
+        let existing = EntityId::now();
+        let new_id = EntityId::now();
+
+        write_neighbors(&store, &mut wtxn, &existing, &[])?;
+        store
+            .hnsw_meta
+            .put(&mut wtxn, ENTRY_POINT_KEY, existing.as_bytes())?;
+        store
+            .hnsw_meta
+            .put(&mut wtxn, COUNT_KEY, &1_u64.to_le_bytes())?;
+        put_vector_raw(&store, &mut wtxn, &new_id, &[0.0, 1.0, 0.0, 0.0])?;
+
+        let err = hnsw_insert(
+            &store,
+            &test_config(),
+            &mut wtxn,
+            &new_id,
+            &[0.0, 1.0, 0.0, 0.0],
+        )
+        .expect_err("expected missing entry point vector corruption");
+        assert!(matches!(
+            err,
+            Error::CorruptedIndex(message) if message == ERR_ENTRY_POINT_VECTOR_MISSING
         ));
         Ok(())
     }

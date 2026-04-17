@@ -19,7 +19,7 @@ fn parse_entity_id(buf: &Buffer) -> napi::Result<EntityId> {
         .as_ref()
         .try_into()
         .map_err(|_| napi::Error::from_reason("EntityId must be exactly 16 bytes"))?;
-    Ok(EntityId::from_bytes(bytes))
+    EntityId::from_bytes(bytes).map_err(to_napi_err)
 }
 
 /// Convert a signed i64 timestamp to u64, clamping negatives to 0.

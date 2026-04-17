@@ -112,21 +112,32 @@ impl WindowKey {
         } else {
             (year, month - 1)
         };
+        if prev_year < 1970 {
+            return None;
+        }
         Some(WindowKey(format!("{prev_year:04}-{prev_month:02}")))
     }
 
     fn parse_year_month(&self) -> Option<(i32, u32)> {
-        let parts: Vec<&str> = self.0.split('-').collect();
-        if parts.len() != 2 {
-            return None;
-        }
-        let year: i32 = parts[0].parse().ok()?;
-        let month: u32 = parts[1].parse().ok()?;
-        if !(1..=12).contains(&month) {
-            return None;
-        }
-        Some((year, month))
+        parse_window_key_str(&self.0)
     }
+}
+
+pub(crate) fn parse_window_key_str(key: &str) -> Option<(i32, u32)> {
+    let bytes = key.as_bytes();
+    if bytes.len() != 7 || bytes[4] != b'-' {
+        return None;
+    }
+    if !bytes[..4].iter().all(u8::is_ascii_digit) || !bytes[5..].iter().all(u8::is_ascii_digit) {
+        return None;
+    }
+
+    let year: i32 = key[..4].parse().ok()?;
+    let month: u32 = key[5..7].parse().ok()?;
+    if year < 1970 || !(1..=12).contains(&month) {
+        return None;
+    }
+    Some((year, month))
 }
 
 impl std::fmt::Display for WindowKey {
@@ -226,5 +237,25 @@ mod tests {
     fn window_doc_guid_format() {
         let key = WindowKey::new("2026-02");
         assert_eq!(window_doc_guid("user123", &key), "vault:user123:w:2026-02");
+    }
+
+    #[test]
+    fn window_key_rejects_invalid_calendar_shapes() {
+        for invalid in [
+            "2026-13", "2026-00", "abcdefg", "2026-3", "1969-12", "0000-01",
+        ] {
+            let key = WindowKey::new(invalid);
+            assert!(
+                key.start_timestamp().is_none(),
+                "{invalid} should be invalid"
+            );
+            assert!(key.end_timestamp().is_none(), "{invalid} should be invalid");
+        }
+    }
+
+    #[test]
+    fn previous_month_stops_at_epoch() {
+        let key = WindowKey::new("1970-01");
+        assert!(key.previous_month().is_none());
     }
 }
