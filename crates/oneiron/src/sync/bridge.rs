@@ -12,7 +12,6 @@
 //! Observer B callbacks check the event origin and skip bridge-tagged events
 //! to avoid circular LMDB→CRDT→LMDB loops.
 
-use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 
@@ -20,12 +19,22 @@ use super::engine::{CrdtDoc, CrdtMap, Subscription};
 use super::loro_engine::LoroDocument;
 use crate::batch::{self, BatchOp, EntityMetadataHeader, ENTITY_METADATA_HEADER_LEN};
 use crate::error::Error;
-use crate::store::Store;
 use crate::types::{EdgeKind, EntityId, Vad};
 use crate::{Result, Vault};
 
 /// Origin tag used for LMDB→CRDT bridge writes.
 pub const BRIDGE_ORIGIN: &str = "bridge";
+
+enum BridgeMaterializationError {
+    MalformedCrdtEntityBlob,
+    Store(Error),
+}
+
+impl From<Error> for BridgeMaterializationError {
+    fn from(value: Error) -> Self {
+        Self::Store(value)
+    }
+}
 
 /// Shared materializer state for serializing LMDB writes across observers.
 pub struct Materializer {
@@ -226,14 +235,17 @@ fn materialize_entities_from_delta(
                     }
                     if let Err(e) = materialize_entity_blob_in_txn(vault, wtxn, key.as_ref(), blob)
                     {
-                        if matches!(e, Error::CorruptedIndex(_)) {
-                            return Err(e);
+                        match e {
+                            BridgeMaterializationError::MalformedCrdtEntityBlob => {
+                                tracing::warn!(
+                                    entity = %key,
+                                    "observer-b: entity malformed CRDT blob"
+                                );
+                            }
+                            BridgeMaterializationError::Store(err) => {
+                                return Err(err);
+                            }
                         }
-                        tracing::warn!(
-                            entity = %key,
-                            error = %e,
-                            "observer-b: entity materialization failed"
-                        );
                     }
                 }
                 None => {
@@ -290,17 +302,18 @@ fn materialize_edges_from_delta(
                     match (src_ready, tgt_ready) {
                         (Ok(true), Ok(true)) => {}
                         (Ok(_), Ok(_)) => continue,
-                        (Err(e), _) | (_, Err(e)) => {
-                            if matches!(e, Error::CorruptedIndex(_)) {
-                                return Err(e);
+                        (Err(e), _) | (_, Err(e)) => match e {
+                            BridgeMaterializationError::MalformedCrdtEntityBlob => {
+                                tracing::warn!(
+                                    edge = %key,
+                                    "observer-b: edge endpoint malformed CRDT blob"
+                                );
+                                continue;
                             }
-                            tracing::warn!(
-                                edge = %key,
-                                error = %e,
-                                "observer-b: edge endpoint materialization failed"
-                            );
-                            continue;
-                        }
+                            BridgeMaterializationError::Store(err) => {
+                                return Err(err);
+                            }
+                        },
                     }
 
                     let (weight, created_at, vad) = match parse_edge_value(buf) {
@@ -333,7 +346,7 @@ fn materialize_edges_from_delta(
                 _ => {}
             }
         }
-        apply_materialized_edge_ops(vault, wtxn, ops);
+        apply_materialized_edge_ops(vault, wtxn, ops)?;
         Ok(())
     });
 
@@ -342,131 +355,15 @@ fn materialize_edges_from_delta(
     }
 }
 
-#[derive(Clone)]
-struct PendingChildOfOp {
-    index: usize,
-    src: EntityId,
-    tgt: EntityId,
-    op: BatchOp,
-}
-
-fn apply_materialized_edge_ops(vault: &Vault, wtxn: &mut heed::RwTxn<'_>, ops: Vec<BatchOp>) {
-    let mut child_of_adds = Vec::<PendingChildOfOp>::new();
-    let mut child_of_deletes = Vec::<PendingChildOfOp>::new();
-
-    for (index, op) in ops.into_iter().enumerate() {
-        match &op {
-            BatchOp::EdgeWithCreatedAt { src, kind, tgt, .. }
-            | BatchOp::Edge { src, kind, tgt, .. }
-                if *kind == EdgeKind::ChildOf =>
-            {
-                child_of_adds.push(PendingChildOfOp {
-                    index,
-                    src: *src,
-                    tgt: *tgt,
-                    op,
-                });
-            }
-            BatchOp::DeleteEdge { src, kind, tgt } if *kind == EdgeKind::ChildOf => {
-                child_of_deletes.push(PendingChildOfOp {
-                    index,
-                    src: *src,
-                    tgt: *tgt,
-                    op,
-                });
-            }
-            _ => {
-                if let Err(e) = batch::apply_ops(&vault.store, &vault.config, wtxn, vec![op]) {
-                    tracing::warn!(error = %e, "observer-b: edge materialization failed");
-                }
-            }
-        }
+fn apply_materialized_edge_ops(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    ops: Vec<BatchOp>,
+) -> Result<()> {
+    if ops.is_empty() {
+        return Ok(());
     }
-
-    child_of_deletes.sort_by(cmp_pending_child_of_ops);
-    for pending in child_of_deletes {
-        if let Err(e) = batch::apply_ops(&vault.store, &vault.config, wtxn, vec![pending.op]) {
-            tracing::warn!(error = %e, "observer-b: edge materialization failed");
-        }
-    }
-
-    let mut components = child_of_components(&child_of_adds);
-    components.sort_by(|left, right| {
-        child_of_component_sort_key(left)
-            .cmp(&child_of_component_sort_key(right))
-            .then_with(|| left.len().cmp(&right.len()))
-    });
-    for component in components {
-        let mut component_ops = component;
-        component_ops.sort_by(cmp_pending_child_of_ops);
-        let ops = component_ops.into_iter().map(|entry| entry.op).collect();
-        if let Err(e) = batch::apply_ops(&vault.store, &vault.config, wtxn, ops) {
-            tracing::warn!(error = %e, "observer-b: edge materialization failed");
-        }
-    }
-}
-
-fn child_of_components(ops: &[PendingChildOfOp]) -> Vec<Vec<PendingChildOfOp>> {
-    let mut adjacency = HashMap::<EntityId, HashSet<EntityId>>::new();
-    for op in ops {
-        adjacency.entry(op.src).or_default().insert(op.tgt);
-        adjacency.entry(op.tgt).or_default().insert(op.src);
-    }
-
-    let mut components = Vec::new();
-    let mut visited = HashSet::<EntityId>::new();
-    let mut starts = adjacency.keys().copied().collect::<Vec<_>>();
-    starts.sort_by(|left, right| left.as_bytes().cmp(right.as_bytes()));
-    for start in starts {
-        if !visited.insert(start) {
-            continue;
-        }
-
-        let mut stack = vec![start];
-        let mut nodes = HashSet::from([start]);
-        while let Some(node) = stack.pop() {
-            if let Some(neighbors) = adjacency.get(&node) {
-                let mut sorted_neighbors = neighbors.iter().copied().collect::<Vec<_>>();
-                sorted_neighbors.sort_by(|left, right| left.as_bytes().cmp(right.as_bytes()));
-                for neighbor in sorted_neighbors {
-                    if visited.insert(neighbor) {
-                        stack.push(neighbor);
-                        nodes.insert(neighbor);
-                    }
-                }
-            }
-        }
-
-        components.push(
-            ops.iter()
-                .filter(|op| nodes.contains(&op.src))
-                .cloned()
-                .collect(),
-        );
-    }
-
-    components
-}
-
-fn pending_child_of_sort_key(op: &PendingChildOfOp) -> [u8; 33] {
-    Store::encode_edge_key(&op.src, EdgeKind::ChildOf, &op.tgt)
-}
-
-fn cmp_pending_child_of_ops(
-    left: &PendingChildOfOp,
-    right: &PendingChildOfOp,
-) -> std::cmp::Ordering {
-    pending_child_of_sort_key(left)
-        .cmp(&pending_child_of_sort_key(right))
-        .then_with(|| left.index.cmp(&right.index))
-}
-
-fn child_of_component_sort_key(component: &[PendingChildOfOp]) -> [u8; 33] {
-    component
-        .iter()
-        .map(pending_child_of_sort_key)
-        .min()
-        .expect("child-of component must be non-empty")
+    batch::apply_ops(&vault.store, &vault.config, wtxn, ops)
 }
 
 /// Materialize tombstone changes — delete entities from LMDB.
@@ -511,12 +408,13 @@ fn materialize_entity_blob_in_txn(
     wtxn: &mut heed::RwTxn<'_>,
     key: &str,
     blob: &[u8],
-) -> Result<()> {
+) -> std::result::Result<(), BridgeMaterializationError> {
     let Some(header) = EntityMetadataHeader::parse(blob) else {
-        return Err(crate::Error::CorruptedIndex("entity metadata"));
+        return Err(BridgeMaterializationError::MalformedCrdtEntityBlob);
     };
 
-    let id = EntityId::from_hex(key).map_err(|_| crate::Error::InvalidKey)?;
+    let id = EntityId::from_hex(key)
+        .map_err(|_| BridgeMaterializationError::Store(crate::Error::InvalidKey))?;
     let data = if blob.len() > ENTITY_METADATA_HEADER_LEN {
         &blob[ENTITY_METADATA_HEADER_LEN..]
     } else {
@@ -536,6 +434,7 @@ fn materialize_entity_blob_in_txn(
             data,
         )
         .apply(wtxn)
+        .map_err(BridgeMaterializationError::Store)
 }
 
 fn ensure_entity_materialized_from_crdt(
@@ -544,9 +443,18 @@ fn ensure_entity_materialized_from_crdt(
     entities_map: &super::loro_engine::LoroMapHandle,
     tombstones_map: &super::loro_engine::LoroMapHandle,
     id: &EntityId,
-) -> Result<bool> {
+) -> std::result::Result<bool, BridgeMaterializationError> {
     let hex_id = id.to_hex();
     if tombstones_map.get(&hex_id).is_some() {
+        if vault
+            .store
+            .entities
+            .get(&*wtxn, id.as_bytes())
+            .map_err(Error::from)?
+            .is_some()
+        {
+            vault.batch_in().delete(id).apply(wtxn)?;
+        }
         return Ok(false);
     }
 
@@ -554,9 +462,18 @@ fn ensure_entity_materialized_from_crdt(
         return Ok(false);
     };
 
-    if let Some(existing) = vault.store.entities.get(&*wtxn, id.as_bytes())? {
-        EntityMetadataHeader::parse(existing).ok_or(Error::CorruptedIndex("entity metadata"))?;
-        return Ok(true);
+    if let Some(existing) = vault
+        .store
+        .entities
+        .get(&*wtxn, id.as_bytes())
+        .map_err(Error::from)?
+    {
+        EntityMetadataHeader::parse(existing).ok_or(BridgeMaterializationError::Store(
+            Error::CorruptedIndex("entity metadata"),
+        ))?;
+        if existing == blob {
+            return Ok(true);
+        }
     }
 
     materialize_entity_blob_in_txn(vault, wtxn, &hex_id, &blob)?;
@@ -673,7 +590,7 @@ mod tests {
     }
 
     #[test]
-    fn apply_materialized_edge_ops_keeps_other_edges_after_child_of_failure() {
+    fn apply_materialized_edge_ops_fails_closed_with_other_edges_present() {
         let vault = test_vault();
         let a = EntityId::now();
         let b = EntityId::now();
@@ -690,38 +607,41 @@ mod tests {
 
         vault
             .with_write_txn(|wtxn| {
-                apply_materialized_edge_ops(
-                    &vault,
-                    wtxn,
-                    vec![
-                        BatchOp::EdgeWithCreatedAt {
-                            src: a,
-                            kind: EdgeKind::ChildOf,
-                            tgt: b,
-                            weight: 1.0,
-                            created_at: 10,
-                            vad: Vad::NEUTRAL,
-                        },
-                        BatchOp::EdgeWithCreatedAt {
-                            src: c,
-                            kind: EdgeKind::Mentions,
-                            tgt: a,
-                            weight: 0.8,
-                            created_at: 11,
-                            vad: Vad::NEUTRAL,
-                        },
-                    ],
-                );
+                assert!(matches!(
+                    apply_materialized_edge_ops(
+                        &vault,
+                        wtxn,
+                        vec![
+                            BatchOp::EdgeWithCreatedAt {
+                                src: a,
+                                kind: EdgeKind::ChildOf,
+                                tgt: b,
+                                weight: 1.0,
+                                created_at: 10,
+                                vad: Vad::NEUTRAL,
+                            },
+                            BatchOp::EdgeWithCreatedAt {
+                                src: c,
+                                kind: EdgeKind::Mentions,
+                                tgt: a,
+                                weight: 0.8,
+                                created_at: 11,
+                                vad: Vad::NEUTRAL,
+                            },
+                        ],
+                    ),
+                    Err(Error::CycleDetected)
+                ));
                 Ok(())
             })
             .unwrap();
 
         assert!(!vault.edge_exists(&a, EdgeKind::ChildOf, &b).unwrap());
-        assert!(vault.edge_exists(&c, EdgeKind::Mentions, &a).unwrap());
+        assert!(!vault.edge_exists(&c, EdgeKind::Mentions, &a).unwrap());
     }
 
     #[test]
-    fn apply_materialized_edge_ops_keeps_valid_child_of_delete_when_add_fails() {
+    fn apply_materialized_edge_ops_fails_closed_when_child_of_add_fails() {
         let vault = test_vault();
         let a = EntityId::now();
         let b = EntityId::now();
@@ -739,35 +659,38 @@ mod tests {
 
         vault
             .with_write_txn(|wtxn| {
-                apply_materialized_edge_ops(
-                    &vault,
-                    wtxn,
-                    vec![
-                        BatchOp::DeleteEdge {
-                            src: c,
-                            kind: EdgeKind::ChildOf,
-                            tgt: b,
-                        },
-                        BatchOp::EdgeWithCreatedAt {
-                            src: a,
-                            kind: EdgeKind::ChildOf,
-                            tgt: b,
-                            weight: 1.0,
-                            created_at: 10,
-                            vad: Vad::NEUTRAL,
-                        },
-                    ],
-                );
+                assert!(matches!(
+                    apply_materialized_edge_ops(
+                        &vault,
+                        wtxn,
+                        vec![
+                            BatchOp::DeleteEdge {
+                                src: c,
+                                kind: EdgeKind::ChildOf,
+                                tgt: b,
+                            },
+                            BatchOp::EdgeWithCreatedAt {
+                                src: a,
+                                kind: EdgeKind::ChildOf,
+                                tgt: b,
+                                weight: 1.0,
+                                created_at: 10,
+                                vad: Vad::NEUTRAL,
+                            },
+                        ],
+                    ),
+                    Err(Error::CycleDetected)
+                ));
                 Ok(())
             })
             .unwrap();
 
-        assert!(!vault.edge_exists(&c, EdgeKind::ChildOf, &b).unwrap());
+        assert!(vault.edge_exists(&c, EdgeKind::ChildOf, &b).unwrap());
         assert!(!vault.edge_exists(&a, EdgeKind::ChildOf, &b).unwrap());
     }
 
     #[test]
-    fn apply_materialized_edge_ops_child_of_subset_is_deterministic() {
+    fn apply_materialized_edge_ops_rejects_whole_child_of_component() {
         let vault = test_vault();
         let a = EntityId::from_bytes_unchecked([1; 16]);
         let x = EntityId::from_bytes_unchecked([2; 16]);
@@ -787,33 +710,36 @@ mod tests {
 
         vault
             .with_write_txn(|wtxn| {
-                apply_materialized_edge_ops(
-                    &vault,
-                    wtxn,
-                    vec![
-                        BatchOp::EdgeWithCreatedAt {
-                            src: y,
-                            kind: EdgeKind::ChildOf,
-                            tgt: a,
-                            weight: 1.0,
-                            created_at: 10,
-                            vad: Vad::NEUTRAL,
-                        },
-                        BatchOp::EdgeWithCreatedAt {
-                            src: x,
-                            kind: EdgeKind::ChildOf,
-                            tgt: b,
-                            weight: 1.0,
-                            created_at: 11,
-                            vad: Vad::NEUTRAL,
-                        },
-                    ],
-                );
+                assert!(matches!(
+                    apply_materialized_edge_ops(
+                        &vault,
+                        wtxn,
+                        vec![
+                            BatchOp::EdgeWithCreatedAt {
+                                src: y,
+                                kind: EdgeKind::ChildOf,
+                                tgt: a,
+                                weight: 1.0,
+                                created_at: 10,
+                                vad: Vad::NEUTRAL,
+                            },
+                            BatchOp::EdgeWithCreatedAt {
+                                src: x,
+                                kind: EdgeKind::ChildOf,
+                                tgt: b,
+                                weight: 1.0,
+                                created_at: 11,
+                                vad: Vad::NEUTRAL,
+                            },
+                        ],
+                    ),
+                    Err(Error::CycleDetected)
+                ));
                 Ok(())
             })
             .unwrap();
 
-        assert!(vault.edge_exists(&x, EdgeKind::ChildOf, &b).unwrap());
+        assert!(!vault.edge_exists(&x, EdgeKind::ChildOf, &b).unwrap());
         assert!(!vault.edge_exists(&y, EdgeKind::ChildOf, &a).unwrap());
     }
 
@@ -960,7 +886,7 @@ mod tests {
             .unwrap();
         doc.commit();
 
-        assert!(vault.get(&deleted).unwrap().is_some());
+        assert!(vault.get(&deleted).unwrap().is_none());
         assert!(!vault
             .edge_exists(&deleted, EdgeKind::Mentions, &live)
             .unwrap());
@@ -1005,6 +931,76 @@ mod tests {
         assert!(!vault
             .edge_exists(&stale, EdgeKind::Mentions, &live)
             .unwrap());
+    }
+
+    #[test]
+    fn observer_b_refreshes_stale_parseable_lmdb_entity_from_crdt() {
+        let vault = test_vault();
+        let doc = LoroDocument::new();
+        let entities = doc.get_or_create_map("entities");
+        let edges = doc.get_or_create_map("edges");
+        let stale = EntityId::now();
+        let live = EntityId::now();
+        let fresh_blob = entity_blob(61, TimeRange { start: 11, end: 11 }, 12, b"fresh");
+
+        vault
+            .batch()
+            .put(&stale, 61, TimeRange { start: 1, end: 1 }, 2, b"stale")
+            .put(&live, 61, TimeRange { start: 3, end: 3 }, 4, b"live")
+            .commit()
+            .unwrap();
+
+        entities.insert(&stale.to_hex(), &fresh_blob).unwrap();
+        entities
+            .insert(
+                &live.to_hex(),
+                &entity_blob(61, TimeRange { start: 3, end: 3 }, 4, b"live"),
+            )
+            .unwrap();
+        doc.commit();
+
+        let materializer = Arc::new(Materializer::new());
+        let _subs = register_observer_b(&doc, &vault, &materializer);
+
+        edges
+            .insert(
+                &format_edge_key(&stale, EdgeKind::Mentions, &live),
+                &encode_edge_value_for_crdt(0.8, 10, Vad::NEUTRAL),
+            )
+            .unwrap();
+        doc.commit();
+
+        assert_eq!(vault.get_raw(&stale).unwrap().unwrap(), fresh_blob);
+        assert!(vault
+            .edge_exists(&stale, EdgeKind::Mentions, &live)
+            .unwrap());
+    }
+
+    #[test]
+    fn observer_b_skips_malformed_crdt_blob_but_keeps_other_entities() {
+        let vault = test_vault();
+        let doc = LoroDocument::new();
+        let entities = doc.get_or_create_map("entities");
+        let bad = EntityId::now();
+        let good = EntityId::now();
+
+        let materializer = Arc::new(Materializer::new());
+        let _subs = register_observer_b(&doc, &vault, &materializer);
+
+        entities.insert(&bad.to_hex(), &[0xFF]).unwrap();
+        entities
+            .insert(
+                &good.to_hex(),
+                &entity_blob(61, TimeRange { start: 3, end: 3 }, 4, b"good"),
+            )
+            .unwrap();
+        doc.commit();
+
+        assert!(vault.get(&bad).unwrap().is_none());
+        assert_eq!(
+            vault.get_raw(&good).unwrap().unwrap(),
+            entity_blob(61, TimeRange { start: 3, end: 3 }, 4, b"good")
+        );
     }
 
     #[test]
@@ -1093,7 +1089,9 @@ mod tests {
                 );
                 assert!(matches!(
                     ready,
-                    Err(Error::CorruptedIndex("entity metadata"))
+                    Err(BridgeMaterializationError::Store(Error::CorruptedIndex(
+                        "entity metadata"
+                    )))
                 ));
                 Ok(())
             })
