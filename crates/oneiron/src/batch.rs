@@ -631,6 +631,7 @@ fn apply_put(
     data: &[u8],
 ) -> Result<()> {
     short_id_prefix(entity_type)?;
+    let short_id_plan = plan_short_id_update(store, &*wtxn, &id, entity_type, data)?;
 
     let mut occurred = occurred;
     if occurred.start > occurred.end {
@@ -704,7 +705,7 @@ fn apply_put(
             .put(wtxn, &long_interval_key, &occurred_start_value)?;
     }
 
-    upsert_short_id(store, wtxn, &id, entity_type, data)?;
+    apply_short_id_plan(store, wtxn, &id, short_id_plan)?;
     Ok(())
 }
 
@@ -908,26 +909,38 @@ fn apply_phonetic(
     Ok(())
 }
 
-fn upsert_short_id(
+enum ShortIdPlan {
+    UpdateExisting {
+        short_id: String,
+        content_hash: u8,
+    },
+    InsertNew {
+        sentinel_key: [u8; ENTITY_ID_LEN],
+        next_counter: u64,
+        short_id: String,
+        content_hash: u8,
+    },
+}
+
+fn plan_short_id_update(
     store: &Store,
-    wtxn: &mut RwTxn<'_>,
+    txn: &heed::RwTxn<'_>,
     id: &EntityId,
     entity_type: u8,
     data: &[u8],
-) -> Result<()> {
+) -> Result<ShortIdPlan> {
     let content_hash = (xxh32(data, 0) % 256) as u8;
 
-    if let Some(existing) = store.short_ids.get(wtxn, id.as_bytes())? {
+    if let Some(existing) = store.short_ids.get(txn, id.as_bytes())? {
         let (short_id, _) = parse_short_id_value(existing)?;
-        let mut value = Vec::with_capacity(short_id.len() + 1);
-        value.extend_from_slice(short_id.as_bytes());
-        value.push(content_hash);
-        store.short_ids.put(wtxn, id.as_bytes(), &value)?;
-        return Ok(());
+        return Ok(ShortIdPlan::UpdateExisting {
+            short_id: short_id.to_owned(),
+            content_hash,
+        });
     }
 
     let sentinel_key = short_id_counter_sentinel(entity_type);
-    let current = match store.short_ids.get(wtxn, &sentinel_key)? {
+    let current = match store.short_ids.get(txn, &sentinel_key)? {
         Some(raw) => {
             let buf: [u8; SHORT_ID_COUNTER_LEN] = raw
                 .try_into()
@@ -940,19 +953,52 @@ fn upsert_short_id(
     let next = current
         .checked_add(1)
         .ok_or(Error::ArithmeticOverflow("short id counter"))?;
-    store
-        .short_ids
-        .put(wtxn, &sentinel_key, &next.to_le_bytes())?;
-
     let short_id = format!("{}{}", short_id_prefix(entity_type)?, next);
-    let mut short_id_value = Vec::with_capacity(short_id.len() + 1);
-    short_id_value.extend_from_slice(short_id.as_bytes());
-    short_id_value.push(content_hash);
+    Ok(ShortIdPlan::InsertNew {
+        sentinel_key,
+        next_counter: next,
+        short_id,
+        content_hash,
+    })
+}
 
-    store.short_ids.put(wtxn, id.as_bytes(), &short_id_value)?;
-    store
-        .short_ids_reverse
-        .put(wtxn, short_id.as_bytes(), id.as_bytes())?;
+fn apply_short_id_plan(
+    store: &Store,
+    wtxn: &mut RwTxn<'_>,
+    id: &EntityId,
+    plan: ShortIdPlan,
+) -> Result<()> {
+    match plan {
+        ShortIdPlan::UpdateExisting {
+            short_id,
+            content_hash,
+        } => {
+            let mut value = Vec::with_capacity(short_id.len() + 1);
+            value.extend_from_slice(short_id.as_bytes());
+            value.push(content_hash);
+            store.short_ids.put(wtxn, id.as_bytes(), &value)?;
+        }
+        ShortIdPlan::InsertNew {
+            sentinel_key,
+            next_counter,
+            short_id,
+            content_hash,
+        } => {
+            store
+                .short_ids
+                .put(wtxn, &sentinel_key, &next_counter.to_le_bytes())?;
+
+            let mut short_id_value = Vec::with_capacity(short_id.len() + 1);
+            short_id_value.extend_from_slice(short_id.as_bytes());
+            short_id_value.push(content_hash);
+
+            store.short_ids.put(wtxn, id.as_bytes(), &short_id_value)?;
+            store
+                .short_ids_reverse
+                .put(wtxn, short_id.as_bytes(), id.as_bytes())?;
+        }
+    }
+
     Ok(())
 }
 

@@ -177,10 +177,14 @@ fn ppr_query_in_txn_impl(
 
     let seed_hash = hash_seeds(seeds, depth, alpha);
     let now = crate::unix_seconds_now();
+    let current_graph_version = read_graph_version(store, txn)?;
 
     if let Some(raw) = store.ppr_cache.get(txn, &seed_hash)? {
-        let (computed_at, _, stale) = parse_cache_header(raw)?;
-        if stale == 0 && now.saturating_sub(computed_at) <= CACHE_TTL_SECS {
+        let (computed_at, cached_graph_version, stale) = parse_cache_header(raw)?;
+        if stale == 0
+            && cached_graph_version == current_graph_version
+            && now.saturating_sub(computed_at) <= CACHE_TTL_SECS
+        {
             let mut scores = decode_cache_scores(&raw[CACHE_HEADER_LEN..])?;
             sort_scores(&mut scores);
             return Ok((scores, None));
@@ -192,12 +196,11 @@ fn ppr_query_in_txn_impl(
         return Ok((scores, None));
     }
 
-    let graph_version = read_graph_version(store, txn)?;
     let deferred_write = DeferredPprCacheWrite {
         seed_hash,
         seeds: seeds.to_vec(),
         computed_at: now,
-        graph_version,
+        graph_version: current_graph_version,
         scores: scores.clone(),
     };
     Ok((scores, Some(deferred_write)))
@@ -1370,7 +1373,7 @@ mod tests {
     }
 
     #[test]
-    fn ppr_query_reuses_cache_after_unrelated_graph_version_change() -> Result<()> {
+    fn ppr_query_recomputes_cache_after_graph_version_change() -> Result<()> {
         let temp_dir = tempdir()?;
         let vault = Vault::open(temp_dir.path(), test_config())?;
         let a = entity(46);
@@ -1395,9 +1398,28 @@ mod tests {
         let (_, version_after, stale_after) = parse_cache_header(&cache_after)?;
 
         assert_eq!(stale_after, 0);
-        assert_eq!(version_after, version_before);
+        assert_eq!(version_after, new_version);
         assert_eq!(first, second);
-        assert_eq!(cache_before, cache_after);
+        assert_ne!(cache_before, cache_after);
+        Ok(())
+    }
+
+    #[test]
+    fn ppr_query_recomputes_after_downstream_graph_change() -> Result<()> {
+        let temp_dir = tempdir()?;
+        let vault = Vault::open(temp_dir.path(), test_config())?;
+        let a = entity(57);
+        let b = entity(58);
+        let c = entity(59);
+
+        vault.put_edge(&a, EdgeKind::BelongsTo, &b, 1.0)?;
+        let first = ppr_query(&vault.store, &vault.config, &[a], 3, 0.15)?;
+        assert!(score_for(&first, b) > 0.0);
+        assert!(score_for(&first, c) <= SCORE_EPSILON);
+
+        vault.put_edge(&b, EdgeKind::BelongsTo, &c, 1.0)?;
+        let second = ppr_query(&vault.store, &vault.config, &[a], 3, 0.15)?;
+        assert!(score_for(&second, c) > 0.0);
         Ok(())
     }
 
@@ -1439,9 +1461,9 @@ mod tests {
     fn ppr_query_in_txn_uses_borrowed_snapshot_without_caching_stale_results() -> Result<()> {
         let temp_dir = tempdir()?;
         let vault = Vault::open(temp_dir.path(), test_config())?;
-        let a = entity(50);
-        let b = entity(51);
-        let c = entity(52);
+        let a = entity(60);
+        let b = entity(61);
+        let c = entity(62);
 
         vault.put_edge(&a, EdgeKind::BelongsTo, &b, 1.0)?;
 
@@ -1462,8 +1484,8 @@ mod tests {
     fn ppr_query_rejects_non_finite_persisted_edge_weight() -> Result<()> {
         let temp_dir = tempdir()?;
         let vault = Vault::open(temp_dir.path(), test_config())?;
-        let a = entity(53);
-        let b = entity(54);
+        let a = entity(63);
+        let b = entity(64);
 
         let key = Store::encode_edge_key(&a, EdgeKind::BelongsTo, &b);
         let mut value = [0_u8; EDGE_VALUE_LEN];
@@ -1483,8 +1505,8 @@ mod tests {
     fn ppr_query_rejects_non_finite_cached_scores() -> Result<()> {
         let temp_dir = tempdir()?;
         let vault = Vault::open(temp_dir.path(), test_config())?;
-        let a = entity(55);
-        let b = entity(56);
+        let a = entity(65);
+        let b = entity(66);
         let seed_hash = hash_seeds(&[a], 3, 0.15);
         let cache = encode_cache_value(
             crate::unix_seconds_now(),

@@ -279,9 +279,16 @@ pub(crate) fn hnsw_search(
         return Ok(Vec::new());
     }
 
-    let Some(entry_point) = read_entry_point(store, rtxn)? else {
+    let count = read_count(store, rtxn)?;
+    let entry_point = read_entry_point(store, rtxn)?;
+    if count == 0 {
+        if entry_point.is_some() || store.hnsw_neighbors.first(rtxn)?.is_some() {
+            return Err(Error::CorruptedIndex(ERR_ZERO_COUNT_GRAPH_NOT_EMPTY));
+        }
         return Ok(Vec::new());
-    };
+    }
+
+    let entry_point = entry_point.ok_or(Error::CorruptedIndex(ERR_ENTRY_POINT_MISSING))?;
 
     let mut nearest = beam_search(
         store,
@@ -1269,6 +1276,53 @@ mod tests {
         assert!(matches!(
             err,
             Error::CorruptedIndex(message) if message == ERR_ENTRY_POINT_BYTES
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn hnsw_search_reports_missing_entry_point_when_count_is_nonzero() -> Result<()> {
+        let temp_dir = tempdir()?;
+        let vault = Vault::open(temp_dir.path(), test_config())?;
+        let id = EntityId::now();
+        vault.put_entity(&id, 0, point(1, 1), 1, b"node")?;
+        vault.put_vector(&id, &[1.0, 0.0, 0.0, 0.0])?;
+
+        let mut wtxn = vault.store.env.write_txn()?;
+        vault.store.hnsw_meta.delete(&mut wtxn, ENTRY_POINT_KEY)?;
+        wtxn.commit()?;
+
+        let err = vault
+            .search_vector(&[1.0, 0.0, 0.0, 0.0], 1)
+            .expect_err("expected missing entry point corruption");
+        assert!(matches!(
+            err,
+            Error::CorruptedIndex(message) if message == ERR_ENTRY_POINT_MISSING
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn hnsw_search_reports_non_empty_graph_when_count_is_zero() -> Result<()> {
+        let temp_dir = tempdir()?;
+        let vault = Vault::open(temp_dir.path(), test_config())?;
+        let id = EntityId::now();
+        vault.put_entity(&id, 0, point(1, 1), 1, b"node")?;
+        vault.put_vector(&id, &[1.0, 0.0, 0.0, 0.0])?;
+
+        let mut wtxn = vault.store.env.write_txn()?;
+        vault
+            .store
+            .hnsw_meta
+            .put(&mut wtxn, COUNT_KEY, &0_u64.to_le_bytes())?;
+        wtxn.commit()?;
+
+        let err = vault
+            .search_vector(&[1.0, 0.0, 0.0, 0.0], 1)
+            .expect_err("expected zero-count graph corruption");
+        assert!(matches!(
+            err,
+            Error::CorruptedIndex(message) if message == ERR_ZERO_COUNT_GRAPH_NOT_EMPTY
         ));
         Ok(())
     }

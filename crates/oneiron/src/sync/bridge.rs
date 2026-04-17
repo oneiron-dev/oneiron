@@ -16,12 +16,12 @@ use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 
-use super::engine::{CrdtDoc, Subscription};
+use super::engine::{CrdtDoc, CrdtMap, Subscription};
 use super::loro_engine::LoroDocument;
 use crate::batch::{self, BatchOp, EntityMetadataHeader, ENTITY_METADATA_HEADER_LEN};
 use crate::store::Store;
 use crate::types::{EdgeKind, EntityId, Vad};
-use crate::Vault;
+use crate::{Result, Vault};
 
 /// Origin tag used for LMDB→CRDT bridge writes.
 pub const BRIDGE_ORIGIN: &str = "bridge";
@@ -180,14 +180,16 @@ fn subscribe_map_observer(
     map: &super::loro_engine::LoroMapHandle,
     vault: &Arc<Vault>,
     materializer: &Arc<Materializer>,
-    materialize: fn(&loro::event::MapDelta<'_>, &Vault),
+    materialize: fn(&LoroDocument, &loro::event::MapDelta<'_>, &Vault),
 ) -> Subscription {
     use loro::ContainerTrait;
 
+    let callback_doc = LoroDocument(doc.0.clone());
+    let subscription_doc = doc.0.clone();
     let vault = vault.clone();
     let materializer = materializer.clone();
     let cid = map.map.id();
-    let sub = doc.0.subscribe(
+    let sub = subscription_doc.subscribe(
         &cid,
         Arc::new(move |event| {
             if event.origin == BRIDGE_ORIGIN {
@@ -196,7 +198,7 @@ fn subscribe_map_observer(
             let _guard = materializer.lock();
             for cdiff in &event.events {
                 if let Some(map_delta) = cdiff.diff.as_map() {
-                    materialize(map_delta, &vault);
+                    materialize(&callback_doc, map_delta, &vault);
                 }
             }
         }),
@@ -208,47 +210,16 @@ fn subscribe_map_observer(
 ///
 /// Accumulates all entity ops from the delta into a single LMDB write
 /// transaction instead of committing per-entity.
-fn materialize_entities_from_delta(delta: &loro::event::MapDelta<'_>, vault: &Vault) {
+fn materialize_entities_from_delta(
+    _doc: &LoroDocument,
+    delta: &loro::event::MapDelta<'_>,
+    vault: &Vault,
+) {
     let result = vault.with_write_txn(|wtxn| {
         for (key, new_val) in &delta.updated {
             match new_val {
                 Some(loro::ValueOrContainer::Value(loro::LoroValue::Binary(blob))) => {
-                    let Some(header) = EntityMetadataHeader::parse(blob) else {
-                        tracing::warn!(
-                            entity = %key,
-                            blob_len = blob.len(),
-                            "observer-b: entity invalid header"
-                        );
-                        continue;
-                    };
-
-                    let id = match EntityId::from_hex(key.as_ref()) {
-                        Ok(id) => id,
-                        Err(_) => {
-                            tracing::warn!(entity = %key, "observer-b: entity invalid hex id");
-                            continue;
-                        }
-                    };
-
-                    let data = if blob.len() > ENTITY_METADATA_HEADER_LEN {
-                        &blob[ENTITY_METADATA_HEADER_LEN..]
-                    } else {
-                        &[]
-                    };
-
-                    if let Err(e) = vault
-                        .batch_in()
-                        .put(
-                            &id,
-                            header.entity_type,
-                            crate::types::TimeRange {
-                                start: header.occurred_start,
-                                end: header.occurred_end,
-                            },
-                            header.learned_at,
-                            data,
-                        )
-                        .apply(wtxn)
+                    if let Err(e) = materialize_entity_blob_in_txn(vault, wtxn, key.as_ref(), blob)
                     {
                         tracing::warn!(
                             entity = %key,
@@ -277,8 +248,14 @@ fn materialize_entities_from_delta(delta: &loro::event::MapDelta<'_>, vault: &Va
 ///
 /// Accumulates all edge ops from the delta into a single LMDB write
 /// transaction instead of committing per-edge.
-fn materialize_edges_from_delta(delta: &loro::event::MapDelta<'_>, vault: &Vault) {
+fn materialize_edges_from_delta(
+    doc: &LoroDocument,
+    delta: &loro::event::MapDelta<'_>,
+    vault: &Vault,
+) {
     let result = vault.with_write_txn(|wtxn| {
+        let entities_map = doc.get_or_create_map("entities");
+        let tombstones_map = doc.get_or_create_map("tombstones");
         let mut ops = Vec::<BatchOp>::new();
         for (key, new_val) in &delta.updated {
             match new_val {
@@ -288,9 +265,31 @@ fn materialize_edges_from_delta(delta: &loro::event::MapDelta<'_>, vault: &Vault
                         continue;
                     };
 
-                    match (vault.entity_exists(&src), vault.entity_exists(&tgt)) {
+                    let src_ready = ensure_entity_materialized_from_crdt(
+                        vault,
+                        wtxn,
+                        &entities_map,
+                        &tombstones_map,
+                        &src,
+                    );
+                    let tgt_ready = ensure_entity_materialized_from_crdt(
+                        vault,
+                        wtxn,
+                        &entities_map,
+                        &tombstones_map,
+                        &tgt,
+                    );
+                    match (src_ready, tgt_ready) {
                         (Ok(true), Ok(true)) => {}
-                        _ => continue,
+                        (Ok(_), Ok(_)) => continue,
+                        (Err(e), _) | (_, Err(e)) => {
+                            tracing::warn!(
+                                edge = %key,
+                                error = %e,
+                                "observer-b: edge endpoint materialization failed"
+                            );
+                            continue;
+                        }
                     }
 
                     let (weight, created_at, vad) = match parse_edge_value(buf) {
@@ -464,7 +463,11 @@ fn child_of_component_sort_key(component: &[PendingChildOfOp]) -> [u8; 33] {
 /// Each tombstone triggers a delete_entity which involves multiple LMDB
 /// writes (entity + edges + indexes). These are already internally
 /// transactional via delete_entity, so we just replace the logging.
-fn materialize_tombstones_from_delta(delta: &loro::event::MapDelta<'_>, vault: &Vault) {
+fn materialize_tombstones_from_delta(
+    _doc: &LoroDocument,
+    delta: &loro::event::MapDelta<'_>,
+    vault: &Vault,
+) {
     for (key, new_val) in &delta.updated {
         match new_val {
             Some(_) => {
@@ -490,6 +493,61 @@ fn materialize_tombstones_from_delta(delta: &loro::event::MapDelta<'_>, vault: &
             }
         }
     }
+}
+
+fn materialize_entity_blob_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    key: &str,
+    blob: &[u8],
+) -> Result<()> {
+    let Some(header) = EntityMetadataHeader::parse(blob) else {
+        return Err(crate::Error::CorruptedIndex("entity metadata"));
+    };
+
+    let id = EntityId::from_hex(key).map_err(|_| crate::Error::InvalidKey)?;
+    let data = if blob.len() > ENTITY_METADATA_HEADER_LEN {
+        &blob[ENTITY_METADATA_HEADER_LEN..]
+    } else {
+        &[]
+    };
+
+    vault
+        .batch_in()
+        .put(
+            &id,
+            header.entity_type,
+            crate::types::TimeRange {
+                start: header.occurred_start,
+                end: header.occurred_end,
+            },
+            header.learned_at,
+            data,
+        )
+        .apply(wtxn)
+}
+
+fn ensure_entity_materialized_from_crdt(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    entities_map: &super::loro_engine::LoroMapHandle,
+    tombstones_map: &super::loro_engine::LoroMapHandle,
+    id: &EntityId,
+) -> Result<bool> {
+    if vault.store.entities.get(&*wtxn, id.as_bytes())?.is_some() {
+        return Ok(true);
+    }
+
+    let hex_id = id.to_hex();
+    if tombstones_map.get(&hex_id).is_some() {
+        return Ok(false);
+    }
+
+    let Some(blob) = entities_map.get(&hex_id) else {
+        return Ok(false);
+    };
+    materialize_entity_blob_in_txn(vault, wtxn, &hex_id, &blob)?;
+    Ok(true)
 }
 
 /// Parses an edge key: `{src_hex}:{kind_u8:02}:{tgt_hex}` → (src, kind, tgt).
@@ -557,6 +615,16 @@ mod tests {
     fn test_vault() -> Arc<Vault> {
         let dir = tempfile::tempdir().unwrap();
         Arc::new(Vault::open(dir.path(), VaultConfig::device()).unwrap())
+    }
+
+    fn entity_blob(entity_type: u8, occurred: TimeRange, learned_at: u64, data: &[u8]) -> Vec<u8> {
+        let mut blob = Vec::with_capacity(ENTITY_METADATA_HEADER_LEN + data.len());
+        blob.push(entity_type);
+        blob.extend_from_slice(&occurred.start.to_be_bytes());
+        blob.extend_from_slice(&occurred.end.to_be_bytes());
+        blob.extend_from_slice(&learned_at.to_be_bytes());
+        blob.extend_from_slice(data);
+        blob
     }
 
     #[test]
@@ -734,5 +802,86 @@ mod tests {
 
         assert!(vault.edge_exists(&x, EdgeKind::ChildOf, &b).unwrap());
         assert!(!vault.edge_exists(&y, EdgeKind::ChildOf, &a).unwrap());
+    }
+
+    #[test]
+    fn observer_b_hydrates_edge_endpoints_from_current_crdt_state() {
+        let vault = test_vault();
+        let doc = LoroDocument::new();
+        let entities = doc.get_or_create_map("entities");
+        let edges = doc.get_or_create_map("edges");
+        let a = EntityId::now();
+        let b = EntityId::now();
+
+        entities
+            .insert(
+                &a.to_hex(),
+                &entity_blob(61, TimeRange { start: 1, end: 1 }, 2, b"a"),
+            )
+            .unwrap();
+        entities
+            .insert(
+                &b.to_hex(),
+                &entity_blob(61, TimeRange { start: 3, end: 3 }, 4, b"b"),
+            )
+            .unwrap();
+        doc.commit();
+
+        let materializer = Arc::new(Materializer::new());
+        let _subs = register_observer_b(&doc, &vault, &materializer);
+
+        edges
+            .insert(
+                &format_edge_key(&a, EdgeKind::Mentions, &b),
+                &encode_edge_value_for_crdt(0.8, 10, Vad::NEUTRAL),
+            )
+            .unwrap();
+        doc.commit();
+
+        assert!(vault.get(&a).unwrap().is_some());
+        assert!(vault.get(&b).unwrap().is_some());
+        assert!(vault.edge_exists(&a, EdgeKind::Mentions, &b).unwrap());
+    }
+
+    #[test]
+    fn observer_b_does_not_rehydrate_tombstoned_edge_endpoint() {
+        let vault = test_vault();
+        let doc = LoroDocument::new();
+        let entities = doc.get_or_create_map("entities");
+        let edges = doc.get_or_create_map("edges");
+        let tombstones = doc.get_or_create_map("tombstones");
+        let deleted = EntityId::now();
+        let live = EntityId::now();
+
+        entities
+            .insert(
+                &deleted.to_hex(),
+                &entity_blob(61, TimeRange { start: 1, end: 1 }, 2, b"deleted"),
+            )
+            .unwrap();
+        entities
+            .insert(
+                &live.to_hex(),
+                &entity_blob(61, TimeRange { start: 3, end: 3 }, 4, b"live"),
+            )
+            .unwrap();
+        tombstones.insert(&deleted.to_hex(), b"1").unwrap();
+        doc.commit();
+
+        let materializer = Arc::new(Materializer::new());
+        let _subs = register_observer_b(&doc, &vault, &materializer);
+
+        edges
+            .insert(
+                &format_edge_key(&deleted, EdgeKind::Mentions, &live),
+                &encode_edge_value_for_crdt(0.8, 10, Vad::NEUTRAL),
+            )
+            .unwrap();
+        doc.commit();
+
+        assert!(vault.get(&deleted).unwrap().is_none());
+        assert!(!vault
+            .edge_exists(&deleted, EdgeKind::Mentions, &live)
+            .unwrap());
     }
 }
