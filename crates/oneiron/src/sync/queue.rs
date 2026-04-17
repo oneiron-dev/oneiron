@@ -216,12 +216,11 @@ impl SyncQueue {
     /// Clears all entries (updates + embed jobs). Used for re-bootstrap.
     pub fn clear_all(&self) -> Result<()> {
         let mut wtxn = self.vault.store.env.write_txn()?;
-        let last_seq = self.ensure_last_update_seq_metadata(&mut wtxn)?;
         self.vault.store.sync_queue.clear(&mut wtxn)?;
         self.vault
             .store
             .sync_queue
-            .put(&mut wtxn, LAST_UPDATE_SEQ_KEY, &last_seq.to_le_bytes())?;
+            .put(&mut wtxn, LAST_UPDATE_SEQ_KEY, &0_u64.to_le_bytes())?;
         wtxn.commit()?;
         Ok(())
     }
@@ -511,7 +510,7 @@ mod tests {
         assert!(!queue.is_full());
 
         let seq = queue.push("2026-03", &[3]).unwrap();
-        assert_eq!(seq, 3);
+        assert_eq!(seq, 1);
     }
 
     #[test]
@@ -568,6 +567,26 @@ mod tests {
     }
 
     #[test]
+    fn clear_all_recovers_missing_metadata_with_existing_rows() {
+        let vault = test_vault();
+        let queue = SyncQueue::new(vault.clone()).unwrap();
+
+        let mut wtxn = vault.store.env.write_txn().unwrap();
+        vault
+            .store
+            .sync_queue
+            .put(&mut wtxn, &encode_update_key(7), &[7, b'x'])
+            .unwrap();
+        wtxn.commit().unwrap();
+
+        queue.clear_all().unwrap();
+
+        assert_eq!(queue.len().unwrap(), 0);
+        let seq = queue.push("2026-03", &[1]).unwrap();
+        assert_eq!(seq, 1);
+    }
+
+    #[test]
     fn malformed_sequence_metadata_is_corruption() {
         let vault = test_vault();
         let queue = SyncQueue::new(vault.clone()).unwrap();
@@ -584,6 +603,31 @@ mod tests {
             .push("2026-03", &[1])
             .expect_err("malformed queue metadata should fail");
         assert!(matches!(err, Error::CorruptedIndex("sync queue metadata")));
+    }
+
+    #[test]
+    fn clear_all_recovers_malformed_metadata() {
+        let vault = test_vault();
+        let queue = SyncQueue::new(vault.clone()).unwrap();
+
+        let mut wtxn = vault.store.env.write_txn().unwrap();
+        vault
+            .store
+            .sync_queue
+            .put(&mut wtxn, LAST_UPDATE_SEQ_KEY, &[1, 2, 3])
+            .unwrap();
+        vault
+            .store
+            .sync_queue
+            .put(&mut wtxn, &encode_update_key(9), &[7, b'x'])
+            .unwrap();
+        wtxn.commit().unwrap();
+
+        queue.clear_all().unwrap();
+
+        assert_eq!(queue.len().unwrap(), 0);
+        let seq = queue.push("2026-03", &[1]).unwrap();
+        assert_eq!(seq, 1);
     }
 
     #[test]

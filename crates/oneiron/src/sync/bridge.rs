@@ -543,13 +543,14 @@ fn ensure_entity_materialized_from_crdt(
         return Ok(false);
     }
 
+    let Some(blob) = entities_map.get(&hex_id) else {
+        return Ok(false);
+    };
+
     if vault.store.entities.get(&*wtxn, id.as_bytes())?.is_some() {
         return Ok(true);
     }
 
-    let Some(blob) = entities_map.get(&hex_id) else {
-        return Ok(false);
-    };
     materialize_entity_blob_in_txn(vault, wtxn, &hex_id, &blob)?;
     Ok(true)
 }
@@ -954,6 +955,47 @@ mod tests {
         assert!(vault.get(&deleted).unwrap().is_some());
         assert!(!vault
             .edge_exists(&deleted, EdgeKind::Mentions, &live)
+            .unwrap());
+    }
+
+    #[test]
+    fn observer_b_does_not_accept_stale_lmdb_entity_missing_from_crdt_entities() {
+        let vault = test_vault();
+        let doc = LoroDocument::new();
+        let entities = doc.get_or_create_map("entities");
+        let edges = doc.get_or_create_map("edges");
+        let stale = EntityId::now();
+        let live = EntityId::now();
+
+        vault
+            .batch()
+            .put(&stale, 61, TimeRange { start: 1, end: 1 }, 2, b"stale")
+            .put(&live, 61, TimeRange { start: 3, end: 3 }, 4, b"live")
+            .commit()
+            .unwrap();
+
+        entities
+            .insert(
+                &live.to_hex(),
+                &entity_blob(61, TimeRange { start: 3, end: 3 }, 4, b"live"),
+            )
+            .unwrap();
+        doc.commit();
+
+        let materializer = Arc::new(Materializer::new());
+        let _subs = register_observer_b(&doc, &vault, &materializer);
+
+        edges
+            .insert(
+                &format_edge_key(&stale, EdgeKind::Mentions, &live),
+                &encode_edge_value_for_crdt(0.8, 10, Vad::NEUTRAL),
+            )
+            .unwrap();
+        doc.commit();
+
+        assert!(vault.get(&stale).unwrap().is_some());
+        assert!(!vault
+            .edge_exists(&stale, EdgeKind::Mentions, &live)
             .unwrap());
     }
 }
