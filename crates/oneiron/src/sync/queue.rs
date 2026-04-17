@@ -23,6 +23,7 @@ const UPDATE_PREFIX: &[u8] = b"q:";
 const EMBED_PREFIX: &[u8] = b"e:";
 /// Metadata key storing the last allocated update sequence number.
 const LAST_UPDATE_SEQ_KEY: &[u8] = b"m:last_update_seq";
+const ERR_SYNC_QUEUE_UPDATE_ROW: &str = "sync queue update row";
 
 /// A queued update ready for replay on reconnect.
 #[derive(Debug)]
@@ -99,6 +100,7 @@ impl SyncQueue {
     pub fn drain_updates(&self) -> Result<Vec<QueuedUpdate>> {
         let rtxn = self.vault.store.env.read_txn()?;
         let mut updates = Vec::new();
+        let mut malformed_keys = Vec::new();
 
         let iter = self.vault.store.sync_queue.iter(&rtxn)?;
         for result in iter {
@@ -106,14 +108,19 @@ impl SyncQueue {
             if !key.starts_with(UPDATE_PREFIX) {
                 continue;
             }
-            let seq = decode_update_key(key)?;
-            let (window_key, encoded) = decode_update_value(value)?;
-            updates.push(QueuedUpdate {
-                seq,
-                window_key,
-                encoded,
-            });
+            let update = match decode_update_row(key, value) {
+                Ok(update) => update,
+                Err(Error::CorruptedIndex(_)) => {
+                    malformed_keys.push(key.to_vec());
+                    continue;
+                }
+                Err(err) => return Err(err),
+            };
+            updates.push(update);
         }
+        drop(rtxn);
+
+        self.prune_malformed_update_rows(&malformed_keys)?;
 
         Ok(updates)
     }
@@ -152,13 +159,21 @@ impl SyncQueue {
     pub fn clear_through(&self, max_seq: u64) -> Result<()> {
         let rtxn = self.vault.store.env.read_txn()?;
         let mut keys_to_delete = Vec::new();
+        let mut malformed_keys = Vec::new();
         let iter = self.vault.store.sync_queue.iter(&rtxn)?;
         for result in iter {
             let (key, _) = result?;
             if !key.starts_with(UPDATE_PREFIX) {
                 continue;
             }
-            let seq = decode_update_key(key)?;
+            let seq = match decode_update_key(key) {
+                Ok(seq) => seq,
+                Err(Error::CorruptedIndex(_)) => {
+                    malformed_keys.push(key.to_vec());
+                    continue;
+                }
+                Err(err) => return Err(err),
+            };
             if seq <= max_seq {
                 keys_to_delete.push(key.to_vec());
             }
@@ -170,6 +185,8 @@ impl SyncQueue {
             self.vault.store.sync_queue.delete(&mut wtxn, key)?;
         }
         wtxn.commit()?;
+
+        self.prune_malformed_update_rows(&malformed_keys)?;
 
         Ok(())
     }
@@ -295,6 +312,24 @@ impl SyncQueue {
         wtxn.commit()?;
         Ok(())
     }
+
+    fn prune_malformed_update_rows(&self, malformed_keys: &[Vec<u8>]) -> Result<()> {
+        if malformed_keys.is_empty() {
+            return Ok(());
+        }
+
+        let mut wtxn = self.vault.store.env.write_txn()?;
+        for key in malformed_keys {
+            let Some(value) = self.vault.store.sync_queue.get(&wtxn, key)? else {
+                continue;
+            };
+            if decode_update_row(key, value).is_err() {
+                self.vault.store.sync_queue.delete(&mut wtxn, key)?;
+            }
+        }
+        wtxn.commit()?;
+        Ok(())
+    }
 }
 
 // ─── Key Encoding ────────────────────────────────────────────────────────────
@@ -310,11 +345,11 @@ fn encode_update_key(seq: u64) -> [u8; 10] {
 /// Decodes the sequence number from an update queue key.
 fn decode_update_key(key: &[u8]) -> Result<u64> {
     if key.len() < 10 || !key.starts_with(UPDATE_PREFIX) {
-        return Err(Error::InvalidKey);
+        return Err(Error::CorruptedIndex(ERR_SYNC_QUEUE_UPDATE_ROW));
     }
-    Ok(u64::from_be_bytes(
-        key[2..10].try_into().map_err(|_| Error::InvalidKey)?,
-    ))
+    Ok(u64::from_be_bytes(key[2..10].try_into().map_err(|_| {
+        Error::CorruptedIndex(ERR_SYNC_QUEUE_UPDATE_ROW)
+    })?))
 }
 
 /// Encodes an update value: `[window_key_len:1][window_key][encoded_update]`.
@@ -333,20 +368,30 @@ fn encode_update_value(window_key: &str, update_bytes: &[u8]) -> Result<Vec<u8>>
 /// Decodes an update value into (window_key, encoded_update).
 fn decode_update_value(value: &[u8]) -> Result<(String, Vec<u8>)> {
     if value.is_empty() {
-        return Err(Error::InvalidKey);
+        return Err(Error::CorruptedIndex(ERR_SYNC_QUEUE_UPDATE_ROW));
     }
     let key_len = value[0] as usize;
     if key_len == 0 || key_len > MAX_WINDOW_KEY_LEN {
-        return Err(Error::InvalidKey);
+        return Err(Error::CorruptedIndex(ERR_SYNC_QUEUE_UPDATE_ROW));
     }
     if value.len() < 1 + key_len {
-        return Err(Error::InvalidKey);
+        return Err(Error::CorruptedIndex(ERR_SYNC_QUEUE_UPDATE_ROW));
     }
     let window_key = std::str::from_utf8(&value[1..1 + key_len])
-        .map_err(|_| Error::InvalidKey)?
+        .map_err(|_| Error::CorruptedIndex(ERR_SYNC_QUEUE_UPDATE_ROW))?
         .to_string();
     let encoded = value[1 + key_len..].to_vec();
     Ok((window_key, encoded))
+}
+
+fn decode_update_row(key: &[u8], value: &[u8]) -> Result<QueuedUpdate> {
+    let seq = decode_update_key(key)?;
+    let (window_key, encoded) = decode_update_value(value)?;
+    Ok(QueuedUpdate {
+        seq,
+        window_key,
+        encoded,
+    })
 }
 
 /// Encodes an embed job key: `e:{entity_id:16}` (18 bytes).
@@ -539,6 +584,71 @@ mod tests {
             .push("2026-03", &[1])
             .expect_err("malformed queue metadata should fail");
         assert!(matches!(err, Error::CorruptedIndex("sync queue metadata")));
+    }
+
+    #[test]
+    fn drain_updates_prunes_malformed_update_rows() {
+        let vault = test_vault();
+        let queue = SyncQueue::new(vault.clone()).unwrap();
+
+        queue.push("2026-03", &[1]).unwrap();
+
+        let mut bad_key = [0u8; 10];
+        bad_key[..2].copy_from_slice(UPDATE_PREFIX);
+        bad_key[2..].copy_from_slice(&2_u64.to_be_bytes());
+
+        let mut wtxn = vault.store.env.write_txn().unwrap();
+        vault
+            .store
+            .sync_queue
+            .put(&mut wtxn, &bad_key, &[0])
+            .unwrap();
+        wtxn.commit().unwrap();
+
+        let updates = queue.drain_updates().unwrap();
+        assert_eq!(updates.len(), 1);
+        assert_eq!(updates[0].seq, 1);
+
+        let rtxn = vault.store.env.read_txn().unwrap();
+        assert!(vault
+            .store
+            .sync_queue
+            .get(&rtxn, &bad_key)
+            .unwrap()
+            .is_none());
+    }
+
+    #[test]
+    fn clear_through_prunes_malformed_update_keys() {
+        let vault = test_vault();
+        let queue = SyncQueue::new(vault.clone()).unwrap();
+
+        queue.push("2026-03", &[1]).unwrap();
+
+        let bad_key = b"q:\x00".to_vec();
+        let mut wtxn = vault.store.env.write_txn().unwrap();
+        vault
+            .store
+            .sync_queue
+            .put(&mut wtxn, &bad_key, &[1, b'x'])
+            .unwrap();
+        wtxn.commit().unwrap();
+
+        queue.clear_through(1).unwrap();
+
+        let rtxn = vault.store.env.read_txn().unwrap();
+        assert!(vault
+            .store
+            .sync_queue
+            .get(&rtxn, &bad_key)
+            .unwrap()
+            .is_none());
+        assert!(vault
+            .store
+            .sync_queue
+            .get(&rtxn, &encode_update_key(1))
+            .unwrap()
+            .is_none());
     }
 
     #[test]

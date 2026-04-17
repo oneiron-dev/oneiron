@@ -12,6 +12,7 @@ use crate::types::{EntityId, ScoredEntity, VaultConfig, ENTITY_ID_LEN};
 const ENTRY_POINT_KEY: &[u8] = b"entry_point";
 pub(crate) const COUNT_KEY: &[u8] = b"count";
 const ERR_ENTRY_POINT_MISSING: &str = "hnsw count > 0 but entry point is missing";
+const ERR_ENTRY_POINT_VECTOR_MISSING: &str = "hnsw count > 0 but entry point vector is missing";
 const ERR_ENTRY_POINT_BYTES: &str = "hnsw entry point bytes are malformed";
 const ERR_COUNT_BYTES: &str = "hnsw count bytes are malformed";
 const ERR_NEIGHBOR_KEY_BYTES: &str = "hnsw neighbor key bytes are malformed";
@@ -366,7 +367,7 @@ fn beam_search(
     let mut vector_buffer = Vec::with_capacity(query_vector.len());
 
     let Some(entry_vector) = load_vector_into(store, txn, &entry_point, &mut vector_buffer)? else {
-        return Ok(Vec::new());
+        return Err(Error::CorruptedIndex(ERR_ENTRY_POINT_VECTOR_MISSING));
     };
 
     let entry = HeapEntry {
@@ -1303,6 +1304,28 @@ mod tests {
     }
 
     #[test]
+    fn hnsw_search_reports_missing_entry_point_vector_when_count_is_nonzero() -> Result<()> {
+        let temp_dir = tempdir()?;
+        let vault = Vault::open(temp_dir.path(), test_config())?;
+        let id = EntityId::now();
+        vault.put_entity(&id, 0, point(1, 1), 1, b"node")?;
+        vault.put_vector(&id, &[1.0, 0.0, 0.0, 0.0])?;
+
+        let mut wtxn = vault.store.env.write_txn()?;
+        vault.store.vectors.delete(&mut wtxn, id.as_bytes())?;
+        wtxn.commit()?;
+
+        let err = vault
+            .search_vector(&[1.0, 0.0, 0.0, 0.0], 1)
+            .expect_err("expected missing entry point vector corruption");
+        assert!(matches!(
+            err,
+            Error::CorruptedIndex(message) if message == ERR_ENTRY_POINT_VECTOR_MISSING
+        ));
+        Ok(())
+    }
+
+    #[test]
     fn hnsw_search_reports_non_empty_graph_when_count_is_zero() -> Result<()> {
         let temp_dir = tempdir()?;
         let vault = Vault::open(temp_dir.path(), test_config())?;
@@ -1383,6 +1406,38 @@ mod tests {
         assert!(matches!(
             err,
             Error::CorruptedIndex(message) if message == ERR_ZERO_COUNT_GRAPH_NOT_EMPTY
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn hnsw_insert_reports_missing_entry_point_vector() -> Result<()> {
+        let temp_dir = tempdir()?;
+        let store = Store::open(temp_dir.path(), &test_config())?;
+        let mut wtxn = store.env.write_txn()?;
+        let existing = EntityId::now();
+        let new_id = EntityId::now();
+
+        write_neighbors(&store, &mut wtxn, &existing, &[])?;
+        store
+            .hnsw_meta
+            .put(&mut wtxn, ENTRY_POINT_KEY, existing.as_bytes())?;
+        store
+            .hnsw_meta
+            .put(&mut wtxn, COUNT_KEY, &1_u64.to_le_bytes())?;
+        put_vector_raw(&store, &mut wtxn, &new_id, &[0.0, 1.0, 0.0, 0.0])?;
+
+        let err = hnsw_insert(
+            &store,
+            &test_config(),
+            &mut wtxn,
+            &new_id,
+            &[0.0, 1.0, 0.0, 0.0],
+        )
+        .expect_err("expected missing entry point vector corruption");
+        assert!(matches!(
+            err,
+            Error::CorruptedIndex(message) if message == ERR_ENTRY_POINT_VECTOR_MISSING
         ));
         Ok(())
     }

@@ -211,14 +211,18 @@ fn subscribe_map_observer(
 /// Accumulates all entity ops from the delta into a single LMDB write
 /// transaction instead of committing per-entity.
 fn materialize_entities_from_delta(
-    _doc: &LoroDocument,
+    doc: &LoroDocument,
     delta: &loro::event::MapDelta<'_>,
     vault: &Vault,
 ) {
     let result = vault.with_write_txn(|wtxn| {
+        let tombstones_map = doc.get_or_create_map("tombstones");
         for (key, new_val) in &delta.updated {
             match new_val {
                 Some(loro::ValueOrContainer::Value(loro::LoroValue::Binary(blob))) => {
+                    if tombstones_map.get(key.as_ref()).is_some() {
+                        continue;
+                    }
                     if let Err(e) = materialize_entity_blob_in_txn(vault, wtxn, key.as_ref(), blob)
                     {
                         tracing::warn!(
@@ -534,13 +538,13 @@ fn ensure_entity_materialized_from_crdt(
     tombstones_map: &super::loro_engine::LoroMapHandle,
     id: &EntityId,
 ) -> Result<bool> {
-    if vault.store.entities.get(&*wtxn, id.as_bytes())?.is_some() {
-        return Ok(true);
-    }
-
     let hex_id = id.to_hex();
     if tombstones_map.get(&hex_id).is_some() {
         return Ok(false);
+    }
+
+    if vault.store.entities.get(&*wtxn, id.as_bytes())?.is_some() {
+        return Ok(true);
     }
 
     let Some(blob) = entities_map.get(&hex_id) else {
@@ -880,6 +884,74 @@ mod tests {
         doc.commit();
 
         assert!(vault.get(&deleted).unwrap().is_none());
+        assert!(!vault
+            .edge_exists(&deleted, EdgeKind::Mentions, &live)
+            .unwrap());
+    }
+
+    #[test]
+    fn observer_b_skips_entity_delta_for_tombstoned_id() {
+        let vault = test_vault();
+        let doc = LoroDocument::new();
+        let entities = doc.get_or_create_map("entities");
+        let tombstones = doc.get_or_create_map("tombstones");
+        let deleted = EntityId::now();
+
+        let materializer = Arc::new(Materializer::new());
+        let _subs = register_observer_b(&doc, &vault, &materializer);
+
+        tombstones.insert(&deleted.to_hex(), b"1").unwrap();
+        doc.commit();
+
+        entities
+            .insert(
+                &deleted.to_hex(),
+                &entity_blob(61, TimeRange { start: 1, end: 1 }, 2, b"deleted"),
+            )
+            .unwrap();
+        doc.commit();
+
+        assert!(vault.get(&deleted).unwrap().is_none());
+    }
+
+    #[test]
+    fn observer_b_does_not_accept_stale_lmdb_entity_for_tombstoned_edge_endpoint() {
+        let vault = test_vault();
+        let doc = LoroDocument::new();
+        let entities = doc.get_or_create_map("entities");
+        let edges = doc.get_or_create_map("edges");
+        let tombstones = doc.get_or_create_map("tombstones");
+        let deleted = EntityId::now();
+        let live = EntityId::now();
+
+        vault
+            .batch()
+            .put(&deleted, 61, TimeRange { start: 1, end: 1 }, 2, b"stale")
+            .put(&live, 61, TimeRange { start: 3, end: 3 }, 4, b"live")
+            .commit()
+            .unwrap();
+
+        entities
+            .insert(
+                &live.to_hex(),
+                &entity_blob(61, TimeRange { start: 3, end: 3 }, 4, b"live"),
+            )
+            .unwrap();
+        tombstones.insert(&deleted.to_hex(), b"1").unwrap();
+        doc.commit();
+
+        let materializer = Arc::new(Materializer::new());
+        let _subs = register_observer_b(&doc, &vault, &materializer);
+
+        edges
+            .insert(
+                &format_edge_key(&deleted, EdgeKind::Mentions, &live),
+                &encode_edge_value_for_crdt(0.8, 10, Vad::NEUTRAL),
+            )
+            .unwrap();
+        doc.commit();
+
+        assert!(vault.get(&deleted).unwrap().is_some());
         assert!(!vault
             .edge_exists(&deleted, EdgeKind::Mentions, &live)
             .unwrap());
