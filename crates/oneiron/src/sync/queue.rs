@@ -262,13 +262,13 @@ impl SyncQueue {
     }
 
     /// Returns true if the queue has no update entries.
-    pub fn is_empty(&self) -> bool {
-        self.len().unwrap_or(0) == 0
+    pub fn is_empty(&self) -> Result<bool> {
+        Ok(self.len()? == 0)
     }
 
     /// Returns true if the queue has reached its maximum capacity.
-    pub fn is_full(&self) -> bool {
-        self.len().unwrap_or(MAX_QUEUE_SIZE) >= MAX_QUEUE_SIZE
+    pub fn is_full(&self) -> Result<bool> {
+        Ok(self.len()? >= MAX_QUEUE_SIZE)
     }
 
     fn allocate_next_update_seq(&self, wtxn: &mut heed::RwTxn<'_>) -> Result<u64> {
@@ -467,7 +467,7 @@ fn decode_embed_key(key: &[u8]) -> Result<EntityId> {
 
 fn decode_embed_job_row(key: &[u8], value: &[u8]) -> Result<QueuedEmbedJob> {
     let entity_id = decode_embed_key(key)?;
-    if value.len() < 9 {
+    if value.len() != 9 {
         return Err(Error::CorruptedIndex(ERR_SYNC_QUEUE_EMBED_ROW));
     }
     let priority = value[0];
@@ -581,7 +581,7 @@ mod tests {
         queue.clear_all().unwrap();
 
         assert_eq!(queue.len().unwrap(), 0);
-        assert!(!queue.is_full());
+        assert!(!queue.is_full().unwrap());
 
         let seq = queue.push("2026-03", &[3]).unwrap();
         assert_eq!(seq, 3);
@@ -968,7 +968,7 @@ mod tests {
 
         // We don't actually insert 10,000 entries (slow), but we can test
         // that an empty queue is not full.
-        assert!(!queue.is_full());
+        assert!(!queue.is_full().unwrap());
     }
 
     #[test]
@@ -1036,6 +1036,43 @@ mod tests {
         let mut bad_value = Vec::with_capacity(9);
         bad_value.push(2);
         bad_value.extend_from_slice(&123u64.to_be_bytes());
+
+        let mut wtxn = queue.vault.store.env.write_txn().unwrap();
+        queue
+            .vault
+            .store
+            .sync_queue
+            .put(&mut wtxn, &bad_key, &bad_value)
+            .unwrap();
+        wtxn.commit().unwrap();
+
+        let jobs = queue.drain_embed_jobs().unwrap();
+        assert_eq!(jobs.len(), 1);
+        assert_eq!(jobs[0].entity_id, valid_id);
+
+        let rtxn = queue.vault.store.env.read_txn().unwrap();
+        assert!(queue
+            .vault
+            .store
+            .sync_queue
+            .get(&rtxn, &bad_key)
+            .unwrap()
+            .is_none());
+    }
+
+    #[test]
+    fn drain_embed_jobs_prunes_overlong_values() {
+        let vault = test_vault();
+        let queue = SyncQueue::new(vault).unwrap();
+
+        let valid_id = EntityId::now();
+        queue.push_embed_job(&valid_id, 1).unwrap();
+
+        let bad_key = encode_embed_key(&EntityId::now());
+        let mut bad_value = Vec::with_capacity(10);
+        bad_value.push(2);
+        bad_value.extend_from_slice(&123u64.to_be_bytes());
+        bad_value.push(0xAA);
 
         let mut wtxn = queue.vault.store.env.write_txn().unwrap();
         queue

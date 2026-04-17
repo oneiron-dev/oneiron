@@ -1342,7 +1342,11 @@ mod tests {
     }
 
     fn entity_id(byte: u8) -> EntityId {
-        EntityId::from_bytes_unchecked([byte; 16])
+        let byte = match byte {
+            0x00 | 0xFF => 0x01,
+            other => other,
+        };
+        EntityId::from_bytes([byte; 16]).expect("test ids should be valid")
     }
 
     fn put_entity(
@@ -1541,7 +1545,7 @@ mod tests {
     fn search_ppr_rejects_excessive_seed_count_and_depth() -> Result<()> {
         let temp_dir = tempfile::tempdir()?;
         let vault = Vault::open(temp_dir.path(), test_config())?;
-        let seeds = vec![entity_id(0); crate::ppr::MAX_PPR_SEEDS + 1];
+        let seeds = vec![entity_id(1); crate::ppr::MAX_PPR_SEEDS + 1];
 
         let too_many_seeds = vault.query().search_ppr(&seeds, 3).run();
         assert!(matches!(too_many_seeds, Err(Error::InvalidConfig(_))));
