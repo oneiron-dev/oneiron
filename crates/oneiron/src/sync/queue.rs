@@ -7,7 +7,6 @@
 //! - `q:{seq:8BE}` → `[window_key_len:1][window_key][encoded_update]`
 //! - `e:{entity_id:16}` → `[priority:1][queued_at:8BE]`
 
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
 use crate::error::{Error, Result};
@@ -22,6 +21,8 @@ const MAX_QUEUE_SIZE: usize = 10_000;
 const UPDATE_PREFIX: &[u8] = b"q:";
 /// Prefix for embed job entries.
 const EMBED_PREFIX: &[u8] = b"e:";
+/// Metadata key storing the last allocated update sequence number.
+const LAST_UPDATE_SEQ_KEY: &[u8] = b"m:last_update_seq";
 
 /// A queued update ready for replay on reconnect.
 #[derive(Debug)]
@@ -47,21 +48,16 @@ pub struct QueuedEmbedJob {
 
 /// Persistent offline queue backed by LMDB `sync_queue` database.
 ///
-/// Thread-safe: sequence counter is atomic, LMDB handles concurrent reads.
-/// Write serialization is handled by LMDB's single-writer model.
+/// Thread-safe: LMDB metadata coordinates monotonic update sequence numbers
+/// across handles, and LMDB itself serializes writers.
 pub struct SyncQueue {
     vault: Arc<Vault>,
-    seq: AtomicU64,
 }
 
 impl SyncQueue {
-    /// Creates a new queue, initializing the sequence counter from persisted state.
+    /// Creates a new queue.
     pub fn new(vault: Arc<Vault>) -> Result<Self> {
-        let max_seq = Self::read_max_seq(&vault)?;
-        Ok(Self {
-            vault,
-            seq: AtomicU64::new(max_seq),
-        })
+        Ok(Self { vault })
     }
 
     /// Pushes a sync update to the persistent queue.
@@ -69,10 +65,9 @@ impl SyncQueue {
     /// Returns the assigned sequence number.
     pub fn push(&self, window_key: &str, update_bytes: &[u8]) -> Result<u64> {
         let value = encode_update_value(window_key, update_bytes)?;
-        let seq = self.seq.fetch_add(1, Ordering::Relaxed) + 1;
-        let key = encode_update_key(seq);
-
         let mut wtxn = self.vault.store.env.write_txn()?;
+        let seq = self.allocate_next_update_seq(&mut wtxn)?;
+        let key = encode_update_key(seq);
         self.vault.store.sync_queue.put(&mut wtxn, &key, &value)?;
         wtxn.commit()?;
 
@@ -184,32 +179,33 @@ impl SyncQueue {
     /// Use this after convergence or when clearing stale updates without
     /// disrupting pending embed work.
     pub fn clear_updates(&self) -> Result<()> {
-        let rtxn = self.vault.store.env.read_txn()?;
+        let mut wtxn = self.vault.store.env.write_txn()?;
+        let _ = self.ensure_last_update_seq_metadata(&mut wtxn)?;
         let mut keys_to_delete = Vec::new();
-        let iter = self.vault.store.sync_queue.iter(&rtxn)?;
+        let iter = self.vault.store.sync_queue.iter(&wtxn)?;
         for result in iter {
             let (key, _) = result?;
             if key.starts_with(UPDATE_PREFIX) {
                 keys_to_delete.push(key.to_vec());
             }
         }
-        drop(rtxn);
-
-        let mut wtxn = self.vault.store.env.write_txn()?;
         for key in &keys_to_delete {
             self.vault.store.sync_queue.delete(&mut wtxn, key)?;
         }
         wtxn.commit()?;
-        self.seq.store(0, Ordering::Relaxed);
         Ok(())
     }
 
     /// Clears all entries (updates + embed jobs). Used for re-bootstrap.
     pub fn clear_all(&self) -> Result<()> {
         let mut wtxn = self.vault.store.env.write_txn()?;
+        let last_seq = self.ensure_last_update_seq_metadata(&mut wtxn)?;
         self.vault.store.sync_queue.clear(&mut wtxn)?;
+        self.vault
+            .store
+            .sync_queue
+            .put(&mut wtxn, LAST_UPDATE_SEQ_KEY, &last_seq.to_le_bytes())?;
         wtxn.commit()?;
-        self.seq.store(0, Ordering::Relaxed);
         Ok(())
     }
 
@@ -237,22 +233,49 @@ impl SyncQueue {
         self.len().unwrap_or(MAX_QUEUE_SIZE) >= MAX_QUEUE_SIZE
     }
 
-    /// Reads the maximum sequence number from the persisted queue.
-    fn read_max_seq(vault: &Vault) -> Result<u64> {
-        let rtxn = vault.store.env.read_txn()?;
-        let mut max_seq = 0u64;
+    fn allocate_next_update_seq(&self, wtxn: &mut heed::RwTxn<'_>) -> Result<u64> {
+        let current = self.ensure_last_update_seq_metadata(wtxn)?;
+        let next = current
+            .checked_add(1)
+            .ok_or(Error::ArithmeticOverflow("sync queue sequence"))?;
+        self.vault
+            .store
+            .sync_queue
+            .put(wtxn, LAST_UPDATE_SEQ_KEY, &next.to_le_bytes())?;
+        Ok(next)
+    }
 
-        let iter = vault.store.sync_queue.iter(&rtxn)?;
-        for result in iter {
-            let (key, _) = result?;
-            if key.starts_with(UPDATE_PREFIX) {
-                if let Ok(seq) = decode_update_key(key) {
-                    max_seq = max_seq.max(seq);
-                }
+    /// Ensures queue sequence metadata exists and matches the persisted queue.
+    fn ensure_last_update_seq_metadata(&self, wtxn: &mut heed::RwTxn<'_>) -> Result<u64> {
+        if let Some(raw) = self
+            .vault
+            .store
+            .sync_queue
+            .get(&*wtxn, LAST_UPDATE_SEQ_KEY)?
+        {
+            if raw.len() != 8 {
+                return Err(Error::CorruptedIndex("sync queue metadata"));
             }
+            return Ok(u64::from_le_bytes(raw.try_into().unwrap()));
         }
 
-        Ok(max_seq)
+        if self
+            .vault
+            .store
+            .sync_queue
+            .prefix_iter(&*wtxn, UPDATE_PREFIX)?
+            .next()
+            .transpose()?
+            .is_some()
+        {
+            return Err(Error::CorruptedIndex("sync queue metadata"));
+        }
+
+        self.vault
+            .store
+            .sync_queue
+            .put(wtxn, LAST_UPDATE_SEQ_KEY, &0_u64.to_le_bytes())?;
+        Ok(0)
     }
 
     fn prune_malformed_embed_rows(&self, malformed_keys: &[Vec<u8>]) -> Result<()> {
@@ -441,6 +464,9 @@ mod tests {
 
         assert_eq!(queue.len().unwrap(), 0);
         assert!(!queue.is_full());
+
+        let seq = queue.push("2026-03", &[3]).unwrap();
+        assert_eq!(seq, 3);
     }
 
     #[test]
@@ -458,6 +484,61 @@ mod tests {
             assert_eq!(u.seq, (i + 1) as u64);
             assert_eq!(u.encoded, vec![i as u8]);
         }
+    }
+
+    #[test]
+    fn multiple_handles_allocate_distinct_sequences() {
+        let vault = test_vault();
+        let queue_a = SyncQueue::new(vault.clone()).unwrap();
+        let queue_b = SyncQueue::new(vault).unwrap();
+
+        let first = queue_a.push("2026-03", &[1]).unwrap();
+        let second = queue_b.push("2026-03", &[2]).unwrap();
+
+        assert_eq!(first, 1);
+        assert_eq!(second, 2);
+        let updates = queue_a.drain_updates().unwrap();
+        assert_eq!(updates.len(), 2);
+        assert_eq!(updates[0].seq, 1);
+        assert_eq!(updates[1].seq, 2);
+    }
+
+    #[test]
+    fn missing_sequence_metadata_with_existing_rows_is_corruption() {
+        let vault = test_vault();
+        let queue = SyncQueue::new(vault.clone()).unwrap();
+
+        let mut wtxn = vault.store.env.write_txn().unwrap();
+        vault
+            .store
+            .sync_queue
+            .put(&mut wtxn, &encode_update_key(7), &[7, b'x'])
+            .unwrap();
+        wtxn.commit().unwrap();
+
+        let err = queue
+            .push("2026-03", &[1])
+            .expect_err("queue rows without metadata should fail");
+        assert!(matches!(err, Error::CorruptedIndex("sync queue metadata")));
+    }
+
+    #[test]
+    fn malformed_sequence_metadata_is_corruption() {
+        let vault = test_vault();
+        let queue = SyncQueue::new(vault.clone()).unwrap();
+
+        let mut wtxn = vault.store.env.write_txn().unwrap();
+        vault
+            .store
+            .sync_queue
+            .put(&mut wtxn, LAST_UPDATE_SEQ_KEY, &[1, 2, 3])
+            .unwrap();
+        wtxn.commit().unwrap();
+
+        let err = queue
+            .push("2026-03", &[1])
+            .expect_err("malformed queue metadata should fail");
+        assert!(matches!(err, Error::CorruptedIndex("sync queue metadata")));
     }
 
     #[test]

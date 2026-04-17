@@ -163,3 +163,93 @@ fn delete_entity_rejects_non_finite_persisted_edge_payload() {
         "expected corrupted edge record, got {result:?}"
     );
 }
+
+#[test]
+fn batch_in_put_failure_does_not_commit_partial_entity_update() {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let vault = Vault::open(temp_dir.path(), VaultConfig::device()).unwrap();
+    let id = EntityId::now();
+    let old_occurred = TimeRange { start: 10, end: 10 };
+    let new_occurred = TimeRange { start: 20, end: 25 };
+
+    vault.put_entity(&id, 61, old_occurred, 11, b"old").unwrap();
+    let before_raw = vault.get_raw(&id).unwrap().unwrap();
+
+    vault
+        .with_write_txn(|wtxn| {
+            vault
+                .store
+                .short_ids
+                .put(wtxn, id.as_bytes(), &[1])
+                .unwrap();
+            Ok(())
+        })
+        .unwrap();
+
+    vault
+        .with_write_txn(|wtxn| {
+            let err = vault
+                .batch_in()
+                .put(&id, 62, new_occurred, 21, b"new")
+                .apply(wtxn)
+                .expect_err("expected malformed short id value to fail");
+            assert!(matches!(err, Error::CorruptedIndex("short id value")));
+            Ok(())
+        })
+        .unwrap();
+
+    let after_raw = vault.get_raw(&id).unwrap().unwrap();
+    assert_eq!(after_raw, before_raw);
+
+    let rtxn = vault.store.env.read_txn().unwrap();
+    let old_type_key = Store::encode_type_key(61, &id);
+    let new_type_key = Store::encode_type_key(62, &id);
+    let old_start_key = Store::encode_temporal_key(old_occurred.start, &id);
+    let new_start_key = Store::encode_temporal_key(new_occurred.start, &id);
+    let new_end_key = Store::encode_temporal_key(new_occurred.end, &id);
+    let old_learned_key = Store::encode_temporal_key(11, &id);
+    let new_learned_key = Store::encode_temporal_key(21, &id);
+
+    assert!(vault
+        .store
+        .type_index
+        .get(&rtxn, &old_type_key)
+        .unwrap()
+        .is_some());
+    assert!(vault
+        .store
+        .type_index
+        .get(&rtxn, &new_type_key)
+        .unwrap()
+        .is_none());
+    assert!(vault
+        .store
+        .temporal_occurred_start
+        .get(&rtxn, &old_start_key)
+        .unwrap()
+        .is_some());
+    assert!(vault
+        .store
+        .temporal_occurred_start
+        .get(&rtxn, &new_start_key)
+        .unwrap()
+        .is_none());
+    assert!(vault
+        .store
+        .temporal_occurred_end
+        .get(&rtxn, &new_end_key)
+        .unwrap()
+        .is_none());
+    assert!(vault
+        .store
+        .temporal_learned
+        .get(&rtxn, &old_learned_key)
+        .unwrap()
+        .is_some());
+    assert!(vault
+        .store
+        .temporal_learned
+        .get(&rtxn, &new_learned_key)
+        .unwrap()
+        .is_none());
+}
