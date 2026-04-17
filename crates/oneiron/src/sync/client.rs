@@ -131,19 +131,18 @@ impl SyncClient {
     }
 
     /// Ensures a window LoroDoc exists for the given key.
-    pub fn ensure_window(&mut self, key: &str) -> &LoroDoc {
-        debug_assert!(
-            parse_window_key_str(key).is_some(),
-            "ensure_window called with invalid key: {key}"
-        );
-        self.windows.entry(key.to_string()).or_insert_with(|| {
+    pub fn ensure_window(&mut self, key: &str) -> Result<&LoroDoc, TransportError> {
+        if parse_window_key_str(key).is_none() {
+            return Err(TransportError::InvalidWindowKey);
+        }
+        Ok(self.windows.entry(key.to_string()).or_insert_with(|| {
             let doc = LoroDoc::new();
             let _entities = doc.get_map("entities");
             let _edges = doc.get_map("edges");
             let _tombstones = doc.get_map("tombstones");
             doc.commit();
             doc
-        })
+        }))
     }
 
     pub fn window(&self, key: &str) -> Option<&LoroDoc> {
@@ -165,7 +164,18 @@ impl SyncClient {
         });
 
         match windows_str {
-            Some(s) if !s.is_empty() => s.split(',').map(|s| s.to_string()).collect(),
+            Some(s) if !s.is_empty() => s
+                .split(',')
+                .filter_map(|s| {
+                    let key = s.trim();
+                    if parse_window_key_str(key).is_some() {
+                        Some(key.to_string())
+                    } else {
+                        tracing::warn!(window_key = %key, "sync client: ignoring invalid server window key");
+                        None
+                    }
+                })
+                .collect(),
             _ => Vec::new(),
         }
     }
@@ -218,7 +228,7 @@ impl SyncClient {
         sub_tag: u8,
         payload: &[u8],
     ) -> Result<Option<Vec<u8>>, TransportError> {
-        self.ensure_window(window_key);
+        self.ensure_window(window_key)?;
         let doc = self.windows.get(window_key).unwrap();
 
         match sub_tag {
@@ -319,10 +329,20 @@ impl SyncClient {
             .as_secs();
 
         let current_key = WindowKey::from_timestamp(now_secs);
-        self.ensure_window(current_key.as_str());
+        if let Err(e) = self.ensure_window(current_key.as_str()) {
+            let _ = self.event_tx.send(SyncEvent::Error(format!(
+                "Initial sync invalid current window key: {e}"
+            )));
+            return messages;
+        }
 
         if let Some(prev_key) = current_key.previous_month() {
-            self.ensure_window(prev_key.as_str());
+            if let Err(e) = self.ensure_window(prev_key.as_str()) {
+                let _ = self.event_tx.send(SyncEvent::Error(format!(
+                    "Initial sync invalid previous window key: {e}"
+                )));
+                return messages;
+            }
         }
 
         // Send VV request for each default window
@@ -364,9 +384,23 @@ mod tests {
     fn sync_client_ensure_window() {
         let vault = test_vault();
         let (mut client, _rx) = SyncClient::new(vault, SyncClientConfig::default());
-        client.ensure_window("2026-03");
+        client.ensure_window("2026-03").unwrap();
         assert!(client.window("2026-03").is_some());
         assert!(client.window("2026-04").is_none());
+    }
+
+    #[test]
+    fn sync_client_rejects_invalid_window_creation() {
+        let vault = test_vault();
+        let (mut client, _rx) = SyncClient::new(vault, SyncClientConfig::default());
+        assert!(matches!(
+            client.ensure_window("2026-13"),
+            Err(TransportError::InvalidWindowKey)
+        ));
+        assert!(matches!(
+            client.ensure_window("1969-12"),
+            Err(TransportError::InvalidWindowKey)
+        ));
     }
 
     #[test]
@@ -396,6 +430,19 @@ mod tests {
             Ok(SyncEvent::Error(msg)) => assert!(msg.contains("Invalid window key")),
             other => panic!("expected invalid window key error, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn sync_client_filters_invalid_server_windows() {
+        let vault = test_vault();
+        let (client, _rx) = SyncClient::new(vault, SyncClientConfig::default());
+        let meta = client.root_doc.get_map("meta");
+        meta.insert("windows", "2026-03,1969-12,2026-13,2026-04")
+            .unwrap();
+        client.root_doc.commit();
+
+        let windows = client.server_windows();
+        assert_eq!(windows, vec!["2026-03".to_string(), "2026-04".to_string()]);
     }
 
     #[test]
