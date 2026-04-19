@@ -1,5 +1,5 @@
-use super::EDGE_VALUE_LEN;
 use crate::store::Store;
+use crate::types::EDGE_VALUE_LEN;
 use crate::*;
 
 #[test]

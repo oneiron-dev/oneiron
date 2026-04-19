@@ -9,8 +9,9 @@ use rand::{Rng, SeedableRng};
 use xxhash_rust::xxh32::xxh32;
 
 use super::*;
+use crate::batch::ENTITY_METADATA_HEADER_LEN;
 use crate::store::{
-    GRAPH_VERSION_KEY, HNSW_CONFIG_KEY, TEMPORAL_LONG_INTERVALS_SCHEMA_VERSION_KEY,
+    GRAPH_VERSION_KEY, HNSW_CONFIG_KEY, Store, TEMPORAL_LONG_INTERVALS_SCHEMA_VERSION_KEY,
     VECTOR_VERSION_KEY,
 };
 
