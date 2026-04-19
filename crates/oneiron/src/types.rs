@@ -252,6 +252,17 @@ impl Default for HnswConfig {
 }
 
 /// Vault runtime configuration.
+///
+/// The struct is `#[non_exhaustive]`, so downstream callers cannot build it
+/// with a struct literal. Use one of the presets (`VaultConfig::device()`
+/// or `VaultConfig::server()`, or `VaultConfig::default()` which aliases
+/// `device()`) and mutate fields as needed:
+///
+/// ```
+/// # use oneiron::VaultConfig;
+/// let mut cfg = VaultConfig::default();
+/// cfg.dimensions = 768;
+/// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct VaultConfig {
@@ -265,6 +276,14 @@ pub struct VaultConfig {
     pub max_readers: u32,
     /// HNSW tuning configuration.
     pub hnsw: HnswConfig,
+}
+
+impl Default for VaultConfig {
+    /// Aliases `VaultConfig::device()` — the common default. Call
+    /// `VaultConfig::server()` explicitly if you want the server preset.
+    fn default() -> Self {
+        Self::device()
+    }
 }
 
 impl VaultConfig {

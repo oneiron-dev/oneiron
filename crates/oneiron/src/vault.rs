@@ -1,4 +1,6 @@
-//! Vault struct + impl + private edge helpers. Extracted from lib.rs (ONE-321).
+//! Top-level `Vault` API: the crate's main entry point for all LMDB-backed
+//! entity / vector / edge / text / temporal operations. Also hosts the private
+//! edge-record helpers used exclusively by Vault methods.
 
 use std::path::Path;
 
@@ -9,8 +11,8 @@ use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader, deindex_ent
 use crate::error::{Error, Result};
 use crate::store::Store;
 use crate::types::{
-    EDGE_KEY_LEN, EDGE_VALUE_LEN, EdgeInfo, EdgeKind, EntityId, ScoredEntity, TimeRange, Vad,
-    VaultConfig, parse_vad,
+    EDGE_KEY_LEN, EDGE_VALUE_LEN, ENTITY_ID_LEN, EdgeInfo, EdgeKind, EntityId, ScoredEntity,
+    TimeRange, Vad, VaultConfig, parse_vad,
 };
 use crate::{
     BatchBuilder, ContextPackBuilder, MaintenanceBuilder, PipelineBuilder, TxnBatchBuilder, bm25,
@@ -19,12 +21,24 @@ use crate::{
 
 const MIN_MAP_SIZE_BYTES: usize = 1 << 20;
 
-/// Build a 17-byte edge prefix `[entity_id(16) | kind(1)]` for targeted
-/// LMDB prefix scans. Avoids scanning all edge kinds for a given entity.
-fn edge_kind_prefix(id: &EntityId, kind: EdgeKind) -> [u8; 17] {
-    let mut prefix = [0u8; 17];
-    prefix[..16].copy_from_slice(id.as_bytes());
-    prefix[16] = kind as u8;
+/// Length of the edge-kind prefix: `entity_id (16) | kind (1)`.
+const EDGE_KIND_PREFIX_LEN: usize = ENTITY_ID_LEN + 1;
+
+/// Cap for `entities_by_type` to prevent unbounded allocation on large indexes.
+const MAX_TYPE_QUERY_RESULTS: usize = 100_000;
+
+/// Cap for `targets`/`sources` to prevent unbounded allocation.
+const MAX_EDGE_QUERY_RESULTS: usize = 100_000;
+
+/// Cap for `subtree` to prevent unbounded allocation on deep trees.
+const MAX_SUBTREE_RESULTS: usize = 50_000;
+
+/// Build an edge prefix `[entity_id | kind]` for targeted LMDB prefix scans.
+/// Avoids scanning all edge kinds for a given entity.
+fn edge_kind_prefix(id: &EntityId, kind: EdgeKind) -> [u8; EDGE_KIND_PREFIX_LEN] {
+    let mut prefix = [0u8; EDGE_KIND_PREFIX_LEN];
+    prefix[..ENTITY_ID_LEN].copy_from_slice(id.as_bytes());
+    prefix[ENTITY_ID_LEN] = kind as u8;
     prefix
 }
 
@@ -391,9 +405,8 @@ impl Vault {
 
     /// Returns all entity IDs of a given type via prefix scan on type_index.
     ///
-    /// Returns up to `MAX_TYPE_QUERY_RESULTS` entities to prevent unbounded allocation.
+    /// Returns up to `MAX_TYPE_QUERY_RESULTS` entities (cap defined at module top) to prevent unbounded allocation.
     pub fn entities_by_type(&self, entity_type: u8) -> Result<Vec<EntityId>> {
-        const MAX_TYPE_QUERY_RESULTS: usize = 100_000;
         let rtxn = self.store.env.read_txn()?;
         let mut ids = Vec::new();
         for entry in self.store.type_index.prefix_iter(&rtxn, &[entity_type])? {
@@ -463,7 +476,6 @@ impl Vault {
         kind: EdgeKind,
         peer_type: Option<u8>,
     ) -> Result<Vec<EntityId>> {
-        const MAX_EDGE_QUERY_RESULTS: usize = 100_000;
         let prefix = edge_kind_prefix(prefix_id, kind);
         let mut ids = Vec::new();
         for entry in db.prefix_iter(rtxn, &prefix)? {
@@ -523,7 +535,6 @@ impl Vault {
     ///
     /// Returns up to `MAX_SUBTREE_RESULTS` nodes to prevent unbounded allocation.
     pub fn subtree(&self, root: &EntityId, max_depth: u32) -> Result<Vec<(EntityId, u32)>> {
-        const MAX_SUBTREE_RESULTS: usize = 50_000;
         let rtxn = self.store.env.read_txn()?;
         let mut result = Vec::new();
         let mut frontier = std::collections::VecDeque::from([(*root, 0_u32)]);

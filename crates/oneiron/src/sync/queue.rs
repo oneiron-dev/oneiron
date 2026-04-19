@@ -51,8 +51,13 @@ pub struct QueuedEmbedJob {
 
 /// Persistent offline queue backed by LMDB `sync_queue` database.
 ///
-/// Thread-safe: LMDB metadata coordinates monotonic update sequence numbers
-/// across handles, and LMDB itself serializes writers.
+/// LMDB serializes writers and the queue relies on monotonic `u64` sequence
+/// numbers in metadata for ordering. `drain_updates`, `drain_embed_jobs`,
+/// and `clear_through` drop their read txn before opening a fresh write
+/// txn for the prune/metadata step — concurrent writers between the two
+/// txns would race. Under the single-sync-client design (one `SyncClient`
+/// per `Vault`) this is benign. If multi-writer semantics are ever
+/// required, collapse read-then-prune into a single write txn.
 pub struct SyncQueue {
     vault: Arc<Vault>,
 }
