@@ -15,13 +15,13 @@ use oneiron::types::{EdgeKind, TimeRange, Vad};
 use oneiron::{EntityId, HnswConfig, Vault, VaultConfig};
 
 fn test_config() -> VaultConfig {
-    VaultConfig {
-        map_size: 16 * 1024 * 1024,
-        dimensions: 4,
-        embedding_model: None,
-        max_readers: 16,
-        hnsw: HnswConfig::default(),
-    }
+    let mut cfg = VaultConfig::device();
+    cfg.map_size = 16 * 1024 * 1024;
+    cfg.dimensions = 4;
+    cfg.embedding_model = None;
+    cfg.max_readers = 16;
+    cfg.hnsw = HnswConfig::default();
+    cfg
 }
 
 fn make_entity_blob(entity_type: u8, learned_at: u64, data: &[u8]) -> Vec<u8> {

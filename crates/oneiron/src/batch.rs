@@ -46,6 +46,7 @@ impl EntityMetadataHeader {
 }
 
 /// Builder for atomic multi-database write batches.
+#[must_use = "BatchBuilder performs no writes until `.commit()` is called"]
 pub struct BatchBuilder<'a> {
     vault: &'a Vault,
     ops: Vec<BatchOp>,
@@ -283,6 +284,7 @@ impl<'a> BatchBuilder<'a> {
 ///
 /// Created by [`Vault::batch_in`]. Writes are applied via [`apply()`](TxnBatchBuilder::apply)
 /// without committing — the caller controls transaction commit via `with_write_txn`.
+#[must_use = "TxnBatchBuilder performs no writes until `.apply()` is called"]
 pub struct TxnBatchBuilder<'a> {
     vault: &'a Vault,
     ops: Vec<BatchOp>,
@@ -734,7 +736,10 @@ fn apply_vector(
     Ok(())
 }
 
-#[allow(clippy::too_many_arguments)] // Keeps edge apply path flat and mirrors explicit write params
+#[expect(
+    clippy::too_many_arguments,
+    reason = "direct LMDB edge apply keeps write params explicit"
+)]
 fn apply_edge(
     store: &Store,
     wtxn: &mut RwTxn<'_>,
@@ -756,7 +761,10 @@ fn apply_edge(
     )
 }
 
-#[allow(clippy::too_many_arguments)] // Decomposing would obscure the direct LMDB write logic
+#[expect(
+    clippy::too_many_arguments,
+    reason = "decomposing would obscure direct LMDB write logic"
+)]
 fn apply_edge_with_created_at(
     store: &Store,
     wtxn: &mut RwTxn<'_>,

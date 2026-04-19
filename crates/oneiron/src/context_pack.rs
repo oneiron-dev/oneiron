@@ -42,6 +42,7 @@ struct HydrateOptions<'a> {
     edge_cache: Option<&'a HashMap<EntityId, Vec<EdgeInfo>>>,
 }
 
+#[must_use = "ContextPackBuilder executes no query until a terminal `.run*()` method is called"]
 pub struct ContextPackBuilder<'a> {
     pipeline: PipelineBuilder<'a>,
     vault: &'a Vault,

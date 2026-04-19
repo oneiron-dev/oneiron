@@ -113,6 +113,7 @@ impl EntityMetadataCache {
     }
 }
 
+#[must_use = "PipelineBuilder executes no query until a terminal `.run*()` method is called"]
 pub struct PipelineBuilder<'a> {
     vault: &'a Vault,
     vector_search: Option<(Vec<f32>, usize)>,

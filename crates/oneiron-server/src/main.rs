@@ -33,13 +33,9 @@ async fn main() -> anyhow::Result<()> {
     );
 
     // Open vault
-    let vault_config = oneiron::VaultConfig {
-        dimensions: args.dimensions,
-        embedding_model: None,
-        map_size: args.map_size,
-        max_readers: 126,
-        hnsw: oneiron::HnswConfig::default(),
-    };
+    let mut vault_config = oneiron::VaultConfig::device();
+    vault_config.dimensions = args.dimensions;
+    vault_config.map_size = args.map_size;
 
     let vault = oneiron::Vault::open(&args.vault_path, vault_config)?;
 

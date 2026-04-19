@@ -64,14 +64,10 @@ impl NapiVault {
     /// `dimensions` controls the embedding vector size (default: 1024 for device preset).
     #[napi(constructor)]
     pub fn new(path: String, dimensions: Option<u32>) -> napi::Result<Self> {
-        let config = if let Some(dims) = dimensions {
-            VaultConfig {
-                dimensions: dims as usize,
-                ..VaultConfig::device()
-            }
-        } else {
-            VaultConfig::device()
-        };
+        let mut config = VaultConfig::device();
+        if let Some(dims) = dimensions {
+            config.dimensions = dims as usize;
+        }
 
         let vault = Vault::open(&path, config).map_err(to_napi_err)?;
         Ok(Self {
