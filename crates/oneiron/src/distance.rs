@@ -339,13 +339,20 @@ mod tests {
         approx_eq(cosine_distance(&inf, &finite), 1.0, 1e-6);
     }
 
-    #[cfg(all(
-        target_arch = "x86_64",
-        target_feature = "avx2",
-        target_feature = "fma"
-    ))]
+    #[cfg(target_arch = "x86_64")]
     #[test]
     fn cosine_avx2_matches_scalar_across_lengths() {
+        // Runtime detection so the test actually runs on default CI builds
+        // (which don't include +avx2/+fma in their target_features), not only
+        // under `-C target-cpu=native`.
+        if !std::arch::is_x86_feature_detected!("avx2")
+            || !std::arch::is_x86_feature_detected!("fma")
+        {
+            // Skip on CPUs without AVX2 + FMA; dispatcher coverage still exercises
+            // the scalar fallback via `cosine_similarity`.
+            return;
+        }
+
         // Exercise the AVX2 path directly against the scalar reference across
         // lengths that stress the 8-lane main loop + scalar tail.
         for len in [1, 4, 7, 8, 15, 16, 17, 31, 32, 33, 64, 129] {
@@ -353,9 +360,8 @@ mod tests {
             let b: Vec<f32> = (0..len).map(|i| ((i as f32) * 0.0625).sin()).collect();
 
             let scalar = super::cosine_similarity_scalar(&a, &b);
-            // SAFETY: cfg-gated on target_feature = avx2 + fma, so calling the
-            // AVX2 variant here is sound. Slice lengths match (constructed
-            // equal above).
+            // SAFETY: AVX2 + FMA were runtime-detected above; calling the
+            // AVX2 variant is sound. Slice lengths match (constructed equal).
             let avx = unsafe { super::cosine_similarity_avx2(&a, &b) };
             approx_eq(avx, scalar, 1e-5);
         }

@@ -33,7 +33,7 @@ async fn main() -> anyhow::Result<()> {
     );
 
     // Open vault
-    let mut vault_config = oneiron::VaultConfig::device();
+    let mut vault_config = oneiron::VaultConfig::server();
     vault_config.dimensions = args.dimensions;
     vault_config.map_size = args.map_size;
 
