@@ -35,8 +35,8 @@ pub use engine::{CrdtDoc, CrdtMap, MapChange, Subscription};
 pub use loro_engine::{LoroDocument, LoroMapHandle};
 pub use queue::{QueuedEmbedJob, QueuedUpdate, SyncQueue};
 pub use transport::{
+    TAG_BULK_TRANSFER, TAG_BULK_TRANSFER_DONE, TAG_WINDOW_SYNC, TransportError,
     decode_bulk_transfer, decode_bulk_transfer_done, decode_window_sync, encode_bulk_transfer,
-    encode_bulk_transfer_done, encode_window_sync, TransportError, TAG_BULK_TRANSFER,
-    TAG_BULK_TRANSFER_DONE, TAG_WINDOW_SYNC,
+    encode_bulk_transfer_done, encode_window_sync,
 };
 pub use types::{SyncConfig, WindowKey};

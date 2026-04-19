@@ -1,8 +1,8 @@
 use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use heed::types::Bytes;
 use heed::Database;
+use heed::types::Bytes;
 
 pub mod batch;
 pub(crate) mod bm25;
@@ -20,19 +20,19 @@ pub mod store;
 pub mod sync;
 pub mod types;
 
-use crate::batch::{deindex_entity, EntityMetadataHeader, ENTITY_METADATA_HEADER_LEN};
 pub use crate::batch::{BatchBuilder, TxnBatchBuilder};
+use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader, deindex_entity};
 pub use crate::context_pack::ContextPackBuilder;
 pub use crate::error::{Error, Result};
 pub use crate::maintain::{MaintenanceBuilder, MaintenanceReport};
 pub use crate::pipeline::PipelineBuilder;
 use crate::store::Store;
-use crate::types::{parse_vad, EDGE_KEY_LEN, EDGE_VALUE_LEN};
 pub use crate::types::{
     ContextEntity, ContextPack, EdgeInfo, EdgeKind, EntityId, FieldProfile, HnswConfig, PackFormat,
     PackStats, ScoredEntity, Signal, TemporalAnchorMode, TemporalGranularity, TimeRange,
     TokenAllocation, Vad, VaultConfig,
 };
+use crate::types::{EDGE_KEY_LEN, EDGE_VALUE_LEN, parse_vad};
 
 const MIN_MAP_SIZE_BYTES: usize = 1 << 20;
 
@@ -493,10 +493,10 @@ impl Vault {
             )
             .map_err(|_| Error::CorruptedIndex("edge record"))?;
 
-            if let Some(req_type) = peer_type {
-                if !self.entity_has_type(rtxn, &peer, req_type)? {
-                    continue;
-                }
+            if let Some(req_type) = peer_type
+                && !self.entity_has_type(rtxn, &peer, req_type)?
+            {
+                continue;
             }
 
             ids.push(peer);
@@ -944,11 +944,13 @@ mod tests {
             .ok_or(Error::EntityNotFound)?;
         assert_eq!(entry_point, id.as_bytes());
 
-        assert!(vault
-            .store
-            .hnsw_neighbors
-            .get(&rtxn, id.as_bytes())?
-            .is_some());
+        assert!(
+            vault
+                .store
+                .hnsw_neighbors
+                .get(&rtxn, id.as_bytes())?
+                .is_some()
+        );
         Ok(())
     }
 
@@ -1281,21 +1283,27 @@ mod tests {
             let start_key = Store::encode_temporal_key(1_000, &id);
             let end_key = Store::encode_temporal_key(2_000, &id);
             let learned_key = Store::encode_temporal_key(3_000, &id);
-            assert!(vault
-                .store
-                .temporal_occurred_start
-                .get(&rtxn, &start_key)?
-                .is_some());
-            assert!(vault
-                .store
-                .temporal_occurred_end
-                .get(&rtxn, &end_key)?
-                .is_some());
-            assert!(vault
-                .store
-                .temporal_learned
-                .get(&rtxn, &learned_key)?
-                .is_some());
+            assert!(
+                vault
+                    .store
+                    .temporal_occurred_start
+                    .get(&rtxn, &start_key)?
+                    .is_some()
+            );
+            assert!(
+                vault
+                    .store
+                    .temporal_occurred_end
+                    .get(&rtxn, &end_key)?
+                    .is_some()
+            );
+            assert!(
+                vault
+                    .store
+                    .temporal_learned
+                    .get(&rtxn, &learned_key)?
+                    .is_some()
+            );
         }
 
         let point_id = EntityId::now();
@@ -1311,11 +1319,13 @@ mod tests {
             .commit()?;
         let point_end_key = Store::encode_temporal_key(7_777, &point_id);
         let rtxn = vault.store.env.read_txn()?;
-        assert!(vault
-            .store
-            .temporal_occurred_end
-            .get(&rtxn, &point_end_key)?
-            .is_none());
+        assert!(
+            vault
+                .store
+                .temporal_occurred_end
+                .get(&rtxn, &point_end_key)?
+                .is_none()
+        );
 
         Ok(())
     }
@@ -1388,11 +1398,13 @@ mod tests {
 
         let reopened = Vault::open(path, test_config())?;
         let rtxn = reopened.store.env.read_txn()?;
-        assert!(reopened
-            .store
-            .temporal_long_intervals
-            .get(&rtxn, id.as_bytes())?
-            .is_none());
+        assert!(
+            reopened
+                .store
+                .temporal_long_intervals
+                .get(&rtxn, id.as_bytes())?
+                .is_none()
+        );
         let value = reopened
             .store
             .temporal_long_intervals
@@ -1492,9 +1504,11 @@ mod tests {
 
         assert!(temporal_long_intervals.get(&rtxn, id.as_bytes())?.is_some());
         assert!(temporal_long_intervals.get(&rtxn, &new_key)?.is_none());
-        assert!(hnsw_meta
-            .get(&rtxn, TEMPORAL_LONG_INTERVALS_SCHEMA_VERSION_KEY)?
-            .is_none());
+        assert!(
+            hnsw_meta
+                .get(&rtxn, TEMPORAL_LONG_INTERVALS_SCHEMA_VERSION_KEY)?
+                .is_none()
+        );
         Ok(())
     }
 
@@ -1607,21 +1621,27 @@ mod tests {
         {
             let rtxn = vault.store.env.read_txn()?;
             assert!(vault.store.type_index.get(&rtxn, &old_type_key)?.is_some());
-            assert!(vault
-                .store
-                .temporal_occurred_start
-                .get(&rtxn, &old_start_key)?
-                .is_some());
-            assert!(vault
-                .store
-                .temporal_occurred_end
-                .get(&rtxn, &old_end_key)?
-                .is_some());
-            assert!(vault
-                .store
-                .temporal_learned
-                .get(&rtxn, &old_learned_key)?
-                .is_some());
+            assert!(
+                vault
+                    .store
+                    .temporal_occurred_start
+                    .get(&rtxn, &old_start_key)?
+                    .is_some()
+            );
+            assert!(
+                vault
+                    .store
+                    .temporal_occurred_end
+                    .get(&rtxn, &old_end_key)?
+                    .is_some()
+            );
+            assert!(
+                vault
+                    .store
+                    .temporal_learned
+                    .get(&rtxn, &old_learned_key)?
+                    .is_some()
+            );
         }
 
         let (short_id_before, hash_before) =
@@ -1640,37 +1660,49 @@ mod tests {
         {
             let rtxn = vault.store.env.read_txn()?;
             assert!(vault.store.type_index.get(&rtxn, &old_type_key)?.is_none());
-            assert!(vault
-                .store
-                .temporal_occurred_start
-                .get(&rtxn, &old_start_key)?
-                .is_none());
-            assert!(vault
-                .store
-                .temporal_occurred_end
-                .get(&rtxn, &old_end_key)?
-                .is_none());
-            assert!(vault
-                .store
-                .temporal_learned
-                .get(&rtxn, &old_learned_key)?
-                .is_none());
+            assert!(
+                vault
+                    .store
+                    .temporal_occurred_start
+                    .get(&rtxn, &old_start_key)?
+                    .is_none()
+            );
+            assert!(
+                vault
+                    .store
+                    .temporal_occurred_end
+                    .get(&rtxn, &old_end_key)?
+                    .is_none()
+            );
+            assert!(
+                vault
+                    .store
+                    .temporal_learned
+                    .get(&rtxn, &old_learned_key)?
+                    .is_none()
+            );
             assert!(vault.store.type_index.get(&rtxn, &new_type_key)?.is_some());
-            assert!(vault
-                .store
-                .temporal_occurred_start
-                .get(&rtxn, &new_start_key)?
-                .is_some());
-            assert!(vault
-                .store
-                .temporal_occurred_end
-                .get(&rtxn, &new_end_key)?
-                .is_some());
-            assert!(vault
-                .store
-                .temporal_learned
-                .get(&rtxn, &new_learned_key)?
-                .is_some());
+            assert!(
+                vault
+                    .store
+                    .temporal_occurred_start
+                    .get(&rtxn, &new_start_key)?
+                    .is_some()
+            );
+            assert!(
+                vault
+                    .store
+                    .temporal_occurred_end
+                    .get(&rtxn, &new_end_key)?
+                    .is_some()
+            );
+            assert!(
+                vault
+                    .store
+                    .temporal_learned
+                    .get(&rtxn, &new_learned_key)?
+                    .is_some()
+            );
         }
 
         assert_eq!(vault.get(&id)?.ok_or(Error::EntityNotFound)?, new_data);
@@ -1698,11 +1730,13 @@ mod tests {
         let old_end_key = Store::encode_temporal_key(200, &id);
         {
             let rtxn = vault.store.env.read_txn()?;
-            assert!(vault
-                .store
-                .temporal_occurred_end
-                .get(&rtxn, &old_end_key)?
-                .is_some());
+            assert!(
+                vault
+                    .store
+                    .temporal_occurred_end
+                    .get(&rtxn, &old_end_key)?
+                    .is_some()
+            );
         }
 
         vault
@@ -1749,11 +1783,13 @@ mod tests {
 
         {
             let rtxn = vault.store.env.read_txn()?;
-            assert!(vault
-                .store
-                .temporal_long_intervals
-                .get(&rtxn, &old_key)?
-                .is_none());
+            assert!(
+                vault
+                    .store
+                    .temporal_long_intervals
+                    .get(&rtxn, &old_key)?
+                    .is_none()
+            );
             let value = vault
                 .store
                 .temporal_long_intervals
@@ -1771,11 +1807,13 @@ mod tests {
             .commit()?;
 
         let rtxn = vault.store.env.read_txn()?;
-        assert!(vault
-            .store
-            .temporal_long_intervals
-            .get(&rtxn, &new_key)?
-            .is_none());
+        assert!(
+            vault
+                .store
+                .temporal_long_intervals
+                .get(&rtxn, &new_key)?
+                .is_none()
+        );
         Ok(())
     }
 
@@ -1992,39 +2030,49 @@ mod tests {
         let learned_key = Store::encode_temporal_key(learned_at, &id);
         let rtxn = vault.store.env.read_txn()?;
         assert!(vault.store.type_index.get(&rtxn, &type_key)?.is_none());
-        assert!(vault
-            .store
-            .temporal_occurred_start
-            .get(&rtxn, &start_key)?
-            .is_none());
-        assert!(vault
-            .store
-            .temporal_occurred_end
-            .get(&rtxn, &end_key)?
-            .is_none());
-        assert!(vault
-            .store
-            .temporal_learned
-            .get(&rtxn, &learned_key)?
-            .is_none());
+        assert!(
+            vault
+                .store
+                .temporal_occurred_start
+                .get(&rtxn, &start_key)?
+                .is_none()
+        );
+        assert!(
+            vault
+                .store
+                .temporal_occurred_end
+                .get(&rtxn, &end_key)?
+                .is_none()
+        );
+        assert!(
+            vault
+                .store
+                .temporal_learned
+                .get(&rtxn, &learned_key)?
+                .is_none()
+        );
 
         for code in ["SMTH", "SMT"] {
             if let Some(posting) = vault.store.phonetic_index.get(&rtxn, code.as_bytes())? {
                 assert!(!posting.chunks_exact(16).any(|chunk| chunk == id.as_bytes()));
             }
         }
-        assert!(vault
-            .store
-            .phonetic_forward
-            .get(&rtxn, id.as_bytes())?
-            .is_none());
+        assert!(
+            vault
+                .store
+                .phonetic_forward
+                .get(&rtxn, id.as_bytes())?
+                .is_none()
+        );
 
         assert!(vault.store.short_ids.get(&rtxn, id.as_bytes())?.is_none());
-        assert!(vault
-            .store
-            .short_ids_reverse
-            .get(&rtxn, short_id_before_delete.as_bytes())?
-            .is_none());
+        assert!(
+            vault
+                .store
+                .short_ids_reverse
+                .get(&rtxn, short_id_before_delete.as_bytes())?
+                .is_none()
+        );
         Ok(())
     }
 
@@ -2078,11 +2126,13 @@ mod tests {
         assert!(vault.delete_entity(&id)?);
 
         let rtxn = vault.store.env.read_txn()?;
-        assert!(vault
-            .store
-            .phonetic_forward
-            .get(&rtxn, id.as_bytes())?
-            .is_none());
+        assert!(
+            vault
+                .store
+                .phonetic_forward
+                .get(&rtxn, id.as_bytes())?
+                .is_none()
+        );
         if let Some(posting) = vault.store.phonetic_index.get(&rtxn, b"SMT")? {
             assert!(!posting.chunks_exact(16).any(|chunk| chunk == id.as_bytes()));
         }
@@ -2112,11 +2162,13 @@ mod tests {
         assert!(vault.delete_entity(&id)?);
 
         let rtxn = vault.store.env.read_txn()?;
-        assert!(vault
-            .store
-            .phonetic_forward
-            .get(&rtxn, id.as_bytes())?
-            .is_none());
+        assert!(
+            vault
+                .store
+                .phonetic_forward
+                .get(&rtxn, id.as_bytes())?
+                .is_none()
+        );
         for code in ["SMTH", "SMT"] {
             if let Some(posting) = vault.store.phonetic_index.get(&rtxn, code.as_bytes())? {
                 assert!(!posting.chunks_exact(16).any(|chunk| chunk == id.as_bytes()));
@@ -2148,11 +2200,13 @@ mod tests {
         assert!(vault.delete_entity(&id)?);
 
         let rtxn = vault.store.env.read_txn()?;
-        assert!(vault
-            .store
-            .phonetic_forward
-            .get(&rtxn, id.as_bytes())?
-            .is_none());
+        assert!(
+            vault
+                .store
+                .phonetic_forward
+                .get(&rtxn, id.as_bytes())?
+                .is_none()
+        );
         for code in ["SMTH", "SMT"] {
             if let Some(posting) = vault.store.phonetic_index.get(&rtxn, code.as_bytes())? {
                 assert!(!posting.chunks_exact(16).any(|chunk| chunk == id.as_bytes()));
@@ -2223,21 +2277,27 @@ mod tests {
         let end_key = Store::encode_temporal_key(occurred.end, &id);
         let learned_key = Store::encode_temporal_key(learned_at, &id);
         assert!(vault.store.type_index.get(&rtxn, &type_key)?.is_some());
-        assert!(vault
-            .store
-            .temporal_occurred_start
-            .get(&rtxn, &start_key)?
-            .is_some());
-        assert!(vault
-            .store
-            .temporal_occurred_end
-            .get(&rtxn, &end_key)?
-            .is_some());
-        assert!(vault
-            .store
-            .temporal_learned
-            .get(&rtxn, &learned_key)?
-            .is_some());
+        assert!(
+            vault
+                .store
+                .temporal_occurred_start
+                .get(&rtxn, &start_key)?
+                .is_some()
+        );
+        assert!(
+            vault
+                .store
+                .temporal_occurred_end
+                .get(&rtxn, &end_key)?
+                .is_some()
+        );
+        assert!(
+            vault
+                .store
+                .temporal_learned
+                .get(&rtxn, &learned_key)?
+                .is_some()
+        );
         assert!(vault.store.short_ids.get(&rtxn, id.as_bytes())?.is_some());
 
         Ok(())
@@ -2830,12 +2890,14 @@ mod tests {
 
         let out = vault.edges_out(&child)?;
         assert_eq!(out.len(), 2);
-        assert!(out
-            .iter()
-            .any(|e| e.kind == EdgeKind::ChildOf && e.target == parent));
-        assert!(out
-            .iter()
-            .any(|e| e.kind == EdgeKind::AssignedTo && e.target == machine));
+        assert!(
+            out.iter()
+                .any(|e| e.kind == EdgeKind::ChildOf && e.target == parent)
+        );
+        assert!(
+            out.iter()
+                .any(|e| e.kind == EdgeKind::AssignedTo && e.target == machine)
+        );
 
         assert_eq!(EdgeKind::ChildOf.default_weight(), 1.0);
         assert_eq!(EdgeKind::AssignedTo.default_weight(), 0.8);

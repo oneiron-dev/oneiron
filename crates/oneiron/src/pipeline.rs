@@ -3,14 +3,14 @@ use std::collections::{HashMap, HashSet};
 use heed::types::Bytes;
 use heed::{Database, RoTxn};
 
+use crate::Vault;
 use crate::batch::{EntityMetadataHeader, LONG_INTERVAL_THRESHOLD_SECS};
 use crate::error::{Error, Result};
 use crate::fusion;
 use crate::store::Store;
 use crate::types::{
-    EntityId, ScoredEntity, TemporalAnchorMode, TemporalGranularity, TimeRange, ENTITY_ID_LEN,
+    ENTITY_ID_LEN, EntityId, ScoredEntity, TemporalAnchorMode, TemporalGranularity, TimeRange,
 };
-use crate::Vault;
 
 const DEFAULT_RESULT_LIMIT: usize = 20;
 const DEFAULT_SIGMA_SECS: u64 = 86_400;
@@ -1115,28 +1115,28 @@ fn apply_filters(
             continue;
         };
 
-        if let Some(types) = filters.type_filter {
-            if !types.contains(&meta.entity_type) {
-                continue;
-            }
+        if let Some(types) = filters.type_filter
+            && !types.contains(&meta.entity_type)
+        {
+            continue;
         }
 
-        if let Some(timestamp) = filters.since_filter {
-            if meta.learned_at < timestamp {
-                continue;
-            }
+        if let Some(timestamp) = filters.since_filter
+            && meta.learned_at < timestamp
+        {
+            continue;
         }
 
-        if let Some((start, end)) = filters.occurred_range {
-            if !intervals_overlap(meta.occurred_start, meta.occurred_end, start, end) {
-                continue;
-            }
+        if let Some((start, end)) = filters.occurred_range
+            && !intervals_overlap(meta.occurred_start, meta.occurred_end, start, end)
+        {
+            continue;
         }
 
-        if let Some((start, end)) = filters.learned_range {
-            if meta.learned_at < start || meta.learned_at > end {
-                continue;
-            }
+        if let Some((start, end)) = filters.learned_range
+            && (meta.learned_at < start || meta.learned_at > end)
+        {
+            continue;
         }
 
         filtered.push(scored);

@@ -7,16 +7,16 @@
 use std::sync::Arc;
 
 use super::bridge::{
-    self, encode_edge_value_for_crdt, format_edge_key, Materializer, ObserverAState, BRIDGE_ORIGIN,
+    self, BRIDGE_ORIGIN, Materializer, ObserverAState, encode_edge_value_for_crdt, format_edge_key,
 };
 use super::engine::{CrdtDoc, CrdtMap, Subscription};
 use super::loro_engine::LoroDocument;
 use super::schema::create_window_doc;
 use super::types::WindowKey;
-use crate::batch::{EntityMetadataHeader, ENTITY_METADATA_HEADER_LEN};
+use crate::Vault;
+use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::error::{Error, Result};
 use crate::types::EntityId;
-use crate::Vault;
 
 /// A loaded window Doc with its observer subscriptions.
 pub struct LoadedWindow {
@@ -131,7 +131,8 @@ pub fn replay_pending_mirrors(
     for entry in iter {
         let (k, _) = entry?;
         let hex = &k[prefix.len()..];
-        if let Ok(id) = EntityId::from_hex(hex) {
+        let parsed_id = EntityId::from_hex(hex);
+        if let Ok(id) = parsed_id {
             markers.push((k.to_string(), id));
         }
     }
@@ -169,14 +170,14 @@ pub fn replay_pending_mirrors(
         }
 
         // Byte-compare with existing CRDT value
-        if let Some(existing) = entities_map.get(&hex_id) {
-            if existing.as_slice() == raw.as_slice() {
-                vault.with_write_txn(|wtxn| {
-                    vault.store.sync_state.delete(wtxn, marker_key)?;
-                    Ok(())
-                })?;
-                continue;
-            }
+        if let Some(existing) = entities_map.get(&hex_id)
+            && existing.as_slice() == raw.as_slice()
+        {
+            vault.with_write_txn(|wtxn| {
+                vault.store.sync_state.delete(wtxn, marker_key)?;
+                Ok(())
+            })?;
+            continue;
         }
 
         // Mirror to CRDT under bridge origin

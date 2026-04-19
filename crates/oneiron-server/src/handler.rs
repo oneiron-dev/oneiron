@@ -9,16 +9,16 @@
 use std::io::Read;
 use std::sync::Arc;
 
-use axum::extract::ws::{Message as WsMessage, WebSocket, WebSocketUpgrade};
+use axum::Router;
 use axum::extract::State;
+use axum::extract::ws::{Message as WsMessage, WebSocket, WebSocketUpgrade};
 use axum::response::IntoResponse;
 use axum::routing::get;
-use axum::Router;
 use futures_util::{SinkExt, StreamExt};
 use loro::ExportMode;
 
 use crate::broadcast::BroadcastSubscriber;
-use crate::protocol::{self, window_sub_tags, ProtocolError, SyncMessage};
+use crate::protocol::{self, ProtocolError, SyncMessage, window_sub_tags};
 use crate::server::SyncServer;
 
 /// Builds the WebSocket routes for the sync server.
@@ -107,7 +107,11 @@ async fn handle_connection(socket: WebSocket, server: Arc<SyncServer>, conn_id: 
     };
 
     // Inbound loop: process messages from client
-    while let Some(msg_result) = ws_stream.next().await {
+    loop {
+        let next_message = ws_stream.next().await;
+        let Some(msg_result) = next_message else {
+            break;
+        };
         let data = match msg_result {
             Ok(WsMessage::Binary(data)) => data.to_vec(),
             Ok(WsMessage::Close(_)) => {
@@ -134,7 +138,8 @@ async fn handle_connection(socket: WebSocket, server: Arc<SyncServer>, conn_id: 
         // Parse and dispatch the message
         match protocol::parse_message(&data) {
             Ok(msg) => {
-                if let Err(e) = handle_sync_message(&server, conn_id, msg, &direct_tx).await {
+                let handle_result = handle_sync_message(&server, conn_id, msg, &direct_tx).await;
+                if let Err(e) = handle_result {
                     match &e {
                         ProtocolError::UnknownTag(tag) => {
                             tracing::warn!(conn_id, tag, "unknown tag — closing");

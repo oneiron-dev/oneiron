@@ -401,10 +401,10 @@ fn group_entities(entities: Vec<PreparedEntity>) -> Vec<(u8, Vec<PreparedEntity>
 
     let mut out = Vec::new();
     for entity_type in GROUP_ORDER {
-        if let Some(rows) = buckets.remove(entity_type) {
-            if !rows.is_empty() {
-                out.push((*entity_type, rows));
-            }
+        if let Some(rows) = buckets.remove(entity_type)
+            && !rows.is_empty()
+        {
+            out.push((*entity_type, rows));
         }
     }
 
@@ -588,10 +588,8 @@ fn json_rows(entities: &[PreparedEntity], include_score: bool) -> Vec<Value> {
         .map(|entity| {
             let mut row = Map::new();
             row.insert("id".to_owned(), Value::String(entity.id.clone()));
-            if include_score {
-                if let Some(score) = Number::from_f64(entity.score as f64) {
-                    row.insert("score".to_owned(), Value::Number(score));
-                }
+            if include_score && let Some(score) = Number::from_f64(entity.score as f64) {
+                row.insert("score".to_owned(), Value::Number(score));
             }
             for (key, value) in &entity.fields {
                 row.insert(key.clone(), value.clone());

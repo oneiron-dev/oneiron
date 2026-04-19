@@ -9,11 +9,11 @@
 
 use std::sync::Arc;
 
+use crate::Vault;
 use crate::error::{Error, Result};
 use crate::sync::transport::MAX_WINDOW_KEY_LEN;
 use crate::sync::types::parse_window_key_str;
 use crate::types::EntityId;
-use crate::Vault;
 
 /// Maximum number of queue entries before triggering re-bootstrap.
 const MAX_QUEUE_SIZE: usize = 10_000;
@@ -324,7 +324,8 @@ impl SyncQueue {
             .prefix_iter(wtxn, UPDATE_PREFIX)?;
         for result in iter {
             let (key, _) = result?;
-            if let Ok(seq) = decode_update_key(key) {
+            let decoded_seq = decode_update_key(key);
+            if let Ok(seq) = decoded_seq {
                 max_valid_seq = max_valid_seq.max(seq);
             }
         }
@@ -823,12 +824,14 @@ mod tests {
         assert_eq!(updates[0].seq, 1);
 
         let rtxn = vault.store.env.read_txn().unwrap();
-        assert!(vault
-            .store
-            .sync_queue
-            .get(&rtxn, &bad_key)
-            .unwrap()
-            .is_none());
+        assert!(
+            vault
+                .store
+                .sync_queue
+                .get(&rtxn, &bad_key)
+                .unwrap()
+                .is_none()
+        );
     }
 
     #[test]
@@ -854,12 +857,14 @@ mod tests {
         assert_eq!(updates[0].seq, 1);
 
         let rtxn = vault.store.env.read_txn().unwrap();
-        assert!(vault
-            .store
-            .sync_queue
-            .get(&rtxn, &bad_key)
-            .unwrap()
-            .is_none());
+        assert!(
+            vault
+                .store
+                .sync_queue
+                .get(&rtxn, &bad_key)
+                .unwrap()
+                .is_none()
+        );
     }
 
     #[test]
@@ -887,12 +892,14 @@ mod tests {
         assert_eq!(updates[0].seq, 1);
 
         let rtxn = vault.store.env.read_txn().unwrap();
-        assert!(vault
-            .store
-            .sync_queue
-            .get(&rtxn, &encode_update_key(2))
-            .unwrap()
-            .is_none());
+        assert!(
+            vault
+                .store
+                .sync_queue
+                .get(&rtxn, &encode_update_key(2))
+                .unwrap()
+                .is_none()
+        );
     }
 
     #[test]
@@ -920,12 +927,14 @@ mod tests {
         assert_eq!(updates[0].seq, 1);
 
         let rtxn = vault.store.env.read_txn().unwrap();
-        assert!(vault
-            .store
-            .sync_queue
-            .get(&rtxn, &encode_update_key(2))
-            .unwrap()
-            .is_none());
+        assert!(
+            vault
+                .store
+                .sync_queue
+                .get(&rtxn, &encode_update_key(2))
+                .unwrap()
+                .is_none()
+        );
     }
 
     #[test]
@@ -947,18 +956,22 @@ mod tests {
         queue.clear_through(1).unwrap();
 
         let rtxn = vault.store.env.read_txn().unwrap();
-        assert!(vault
-            .store
-            .sync_queue
-            .get(&rtxn, &bad_key)
-            .unwrap()
-            .is_none());
-        assert!(vault
-            .store
-            .sync_queue
-            .get(&rtxn, &encode_update_key(1))
-            .unwrap()
-            .is_none());
+        assert!(
+            vault
+                .store
+                .sync_queue
+                .get(&rtxn, &bad_key)
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            vault
+                .store
+                .sync_queue
+                .get(&rtxn, &encode_update_key(1))
+                .unwrap()
+                .is_none()
+        );
     }
 
     #[test]
@@ -1014,13 +1027,15 @@ mod tests {
         assert_eq!(jobs[0].entity_id, valid_id);
 
         let rtxn = queue.vault.store.env.read_txn().unwrap();
-        assert!(queue
-            .vault
-            .store
-            .sync_queue
-            .get(&rtxn, &bad_key)
-            .unwrap()
-            .is_none());
+        assert!(
+            queue
+                .vault
+                .store
+                .sync_queue
+                .get(&rtxn, &bad_key)
+                .unwrap()
+                .is_none()
+        );
     }
 
     #[test]
@@ -1051,13 +1066,15 @@ mod tests {
         assert_eq!(jobs[0].entity_id, valid_id);
 
         let rtxn = queue.vault.store.env.read_txn().unwrap();
-        assert!(queue
-            .vault
-            .store
-            .sync_queue
-            .get(&rtxn, &bad_key)
-            .unwrap()
-            .is_none());
+        assert!(
+            queue
+                .vault
+                .store
+                .sync_queue
+                .get(&rtxn, &bad_key)
+                .unwrap()
+                .is_none()
+        );
     }
 
     #[test]
@@ -1088,13 +1105,15 @@ mod tests {
         assert_eq!(jobs[0].entity_id, valid_id);
 
         let rtxn = queue.vault.store.env.read_txn().unwrap();
-        assert!(queue
-            .vault
-            .store
-            .sync_queue
-            .get(&rtxn, &bad_key)
-            .unwrap()
-            .is_none());
+        assert!(
+            queue
+                .vault
+                .store
+                .sync_queue
+                .get(&rtxn, &bad_key)
+                .unwrap()
+                .is_none()
+        );
     }
 
     #[test]
@@ -1131,13 +1150,15 @@ mod tests {
         queue.prune_malformed_embed_rows(&stale_candidates).unwrap();
 
         let rtxn = queue.vault.store.env.read_txn().unwrap();
-        assert!(queue
-            .vault
-            .store
-            .sync_queue
-            .get(&rtxn, &key)
-            .unwrap()
-            .is_some());
+        assert!(
+            queue
+                .vault
+                .store
+                .sync_queue
+                .get(&rtxn, &key)
+                .unwrap()
+                .is_some()
+        );
         drop(rtxn);
 
         let jobs = queue.drain_embed_jobs().unwrap();

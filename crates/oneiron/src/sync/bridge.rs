@@ -18,7 +18,7 @@ use std::sync::{Arc, Mutex};
 
 use super::engine::{CrdtDoc, CrdtMap, Subscription};
 use super::loro_engine::LoroDocument;
-use crate::batch::{self, BatchOp, EntityMetadataHeader, ENTITY_METADATA_HEADER_LEN};
+use crate::batch::{self, BatchOp, ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::store::Store;
 use crate::types::{EdgeKind, EntityId, Vad};
 use crate::{Result, Vault};
@@ -219,8 +219,9 @@ fn materialize_entities_from_delta(
         for (key, new_val) in &delta.updated {
             match new_val {
                 Some(loro::ValueOrContainer::Value(loro::LoroValue::Binary(blob))) => {
-                    if let Err(e) = materialize_entity_blob_in_txn(vault, wtxn, key.as_ref(), blob)
-                    {
+                    let materialize_result =
+                        materialize_entity_blob_in_txn(vault, wtxn, key.as_ref(), blob);
+                    if let Err(e) = materialize_result {
                         tracing::warn!(
                             entity = %key,
                             error = %e,
@@ -365,7 +366,8 @@ fn apply_materialized_edge_ops(vault: &Vault, wtxn: &mut heed::RwTxn<'_>, ops: V
                 });
             }
             _ => {
-                if let Err(e) = batch::apply_ops(&vault.store, &vault.config, wtxn, vec![op]) {
+                let apply_result = batch::apply_ops(&vault.store, &vault.config, wtxn, vec![op]);
+                if let Err(e) = apply_result {
                     tracing::warn!(error = %e, "observer-b: edge materialization failed");
                 }
             }
@@ -374,7 +376,8 @@ fn apply_materialized_edge_ops(vault: &Vault, wtxn: &mut heed::RwTxn<'_>, ops: V
 
     child_of_deletes.sort_by(cmp_pending_child_of_ops);
     for pending in child_of_deletes {
-        if let Err(e) = batch::apply_ops(&vault.store, &vault.config, wtxn, vec![pending.op]) {
+        let apply_result = batch::apply_ops(&vault.store, &vault.config, wtxn, vec![pending.op]);
+        if let Err(e) = apply_result {
             tracing::warn!(error = %e, "observer-b: edge materialization failed");
         }
     }
@@ -389,7 +392,8 @@ fn apply_materialized_edge_ops(vault: &Vault, wtxn: &mut heed::RwTxn<'_>, ops: V
         let mut component_ops = component;
         component_ops.sort_by(cmp_pending_child_of_ops);
         let ops = component_ops.into_iter().map(|entry| entry.op).collect();
-        if let Err(e) = batch::apply_ops(&vault.store, &vault.config, wtxn, ops) {
+        let apply_result = batch::apply_ops(&vault.store, &vault.config, wtxn, ops);
+        if let Err(e) = apply_result {
             tracing::warn!(error = %e, "observer-b: edge materialization failed");
         }
     }
@@ -480,7 +484,8 @@ fn materialize_tombstones_from_delta(
                     }
                 };
 
-                if let Err(e) = vault.delete_entity(&id) {
+                let delete_result = vault.delete_entity(&id);
+                if let Err(e) = delete_result {
                     tracing::warn!(
                         tombstone = %key,
                         error = %e,
@@ -608,8 +613,8 @@ pub fn format_edge_key(src: &EntityId, kind: EdgeKind, tgt: &EntityId) -> String
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::types::{TimeRange, VaultConfig};
     use crate::Vault;
+    use crate::types::{TimeRange, VaultConfig};
     use std::sync::Arc;
 
     fn test_vault() -> Arc<Vault> {
@@ -880,8 +885,10 @@ mod tests {
         doc.commit();
 
         assert!(vault.get(&deleted).unwrap().is_none());
-        assert!(!vault
-            .edge_exists(&deleted, EdgeKind::Mentions, &live)
-            .unwrap());
+        assert!(
+            !vault
+                .edge_exists(&deleted, EdgeKind::Mentions, &live)
+                .unwrap()
+        );
     }
 }

@@ -7,11 +7,11 @@
 
 use std::sync::Arc;
 
+use axum::Router;
 use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Json};
 use axum::routing::{get, post};
-use axum::Router;
 use serde::{Deserialize, Serialize};
 
 use crate::server::SyncServer;
