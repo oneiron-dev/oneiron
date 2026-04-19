@@ -301,7 +301,8 @@ impl Vault {
             .entities
             .get(&rtxn, id.as_bytes())?
             .ok_or(Error::EntityNotFound)?;
-        let header = EntityMetadataHeader::parse(raw).ok_or(Error::CorruptedIndex("entity header"))?;
+        let header =
+            EntityMetadataHeader::parse(raw).ok_or(Error::CorruptedIndex("entity header"))?;
         Ok(header.learned_at)
     }
 
@@ -435,7 +436,8 @@ impl Vault {
         let Some(raw) = self.store.entities.get(&rtxn, id.as_bytes())? else {
             return Ok(None);
         };
-        let header = EntityMetadataHeader::parse(raw).ok_or(Error::CorruptedIndex("entity header"))?;
+        let header =
+            EntityMetadataHeader::parse(raw).ok_or(Error::CorruptedIndex("entity header"))?;
         Ok(Some(header.entity_type))
     }
 
