@@ -327,10 +327,12 @@ impl SyncClient {
         messages.push(vv_msg);
 
         // Phase 2: Default window VV requests for current + previous month
+        // Saturate to 0 on pre-epoch wall clock (NTP regression, suspended VM,
+        // embedded device with reset RTC). Matches sync/queue.rs push_embed_job.
         let now_secs = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_secs();
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
 
         let current_key = WindowKey::from_timestamp(now_secs);
         if let Err(e) = self.ensure_window(current_key.as_str()) {

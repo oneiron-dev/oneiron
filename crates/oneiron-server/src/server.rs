@@ -54,9 +54,18 @@ impl SyncServer {
         }
     }
 
-    /// Allocates a new unique connection ID.
+    /// Allocates a new unique nonzero connection ID.
+    ///
+    /// `conn_id = 0` is reserved as the bridge/local-broadcast sender
+    /// sentinel; a real connection returning 0 would silently bypass echo
+    /// suppression. `fetch_update` skips 0 on wraparound.
     pub(crate) fn alloc_conn_id(&self) -> u32 {
-        self.next_conn_id.fetch_add(1, Ordering::Relaxed)
+        self.next_conn_id
+            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |current| {
+                let next = current.wrapping_add(1);
+                Some(if next == 0 { 1 } else { next })
+            })
+            .expect("fetch_update closure always returns Some")
     }
 
     /// Returns the window key (YYYY-MM) for a Unix timestamp.
