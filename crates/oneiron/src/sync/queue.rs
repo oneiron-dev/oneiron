@@ -80,10 +80,13 @@ impl SyncQueue {
     /// Pushes an embed job for background processing.
     pub fn push_embed_job(&self, entity_id: &EntityId, priority: u8) -> Result<()> {
         let key = encode_embed_key(entity_id);
+        // Saturate to 0 if the wall clock is pre-epoch (NTP regression,
+        // suspended VM, embedded device with reset RTC). Panicking here would
+        // break enqueue on perfectly recoverable system state.
         let queued_at = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_millis() as u64;
+            .map(|d| d.as_millis() as u64)
+            .unwrap_or(0);
 
         let mut value = Vec::with_capacity(9);
         value.push(priority);
@@ -122,7 +125,7 @@ impl SyncQueue {
         }
         drop(rtxn);
 
-        self.prune_malformed_update_rows(&malformed_keys)?;
+        self.prune_malformed_rows(&malformed_keys, decode_update_row)?;
 
         Ok(updates)
     }
@@ -141,16 +144,17 @@ impl SyncQueue {
             }
             let job = match decode_embed_job_row(key, value) {
                 Ok(job) => job,
-                Err(_) => {
+                Err(Error::CorruptedIndex(_)) => {
                     malformed_keys.push(key.to_vec());
                     continue;
                 }
+                Err(err) => return Err(err),
             };
             jobs.push(job);
         }
         drop(rtxn);
 
-        self.prune_malformed_embed_rows(&malformed_keys)?;
+        self.prune_malformed_rows(&malformed_keys, decode_embed_job_row)?;
 
         Ok(jobs)
     }
@@ -206,7 +210,7 @@ impl SyncQueue {
         )?;
         wtxn.commit()?;
 
-        self.prune_malformed_update_rows(&malformed_keys)?;
+        self.prune_malformed_rows(&malformed_keys, decode_update_row)?;
 
         Ok(())
     }
@@ -343,7 +347,14 @@ impl SyncQueue {
         Ok(metadata_seq.unwrap_or(0).max(max_valid_seq))
     }
 
-    fn prune_malformed_embed_rows(&self, malformed_keys: &[Vec<u8>]) -> Result<()> {
+    /// Deletes persisted rows whose decode still fails under a fresh write
+    /// transaction. The `decode` closure determines what "malformed" means for
+    /// a given row family (update vs embed job).
+    fn prune_malformed_rows<T>(
+        &self,
+        malformed_keys: &[Vec<u8>],
+        decode: impl Fn(&[u8], &[u8]) -> Result<T>,
+    ) -> Result<()> {
         if malformed_keys.is_empty() {
             return Ok(());
         }
@@ -353,25 +364,7 @@ impl SyncQueue {
             let Some(value) = self.vault.store.sync_queue.get(&wtxn, key)? else {
                 continue;
             };
-            if decode_embed_job_row(key, value).is_err() {
-                self.vault.store.sync_queue.delete(&mut wtxn, key)?;
-            }
-        }
-        wtxn.commit()?;
-        Ok(())
-    }
-
-    fn prune_malformed_update_rows(&self, malformed_keys: &[Vec<u8>]) -> Result<()> {
-        if malformed_keys.is_empty() {
-            return Ok(());
-        }
-
-        let mut wtxn = self.vault.store.env.write_txn()?;
-        for key in malformed_keys {
-            let Some(value) = self.vault.store.sync_queue.get(&wtxn, key)? else {
-                continue;
-            };
-            if decode_update_row(key, value).is_err() {
+            if decode(key, value).is_err() {
                 self.vault.store.sync_queue.delete(&mut wtxn, key)?;
             }
         }
@@ -1117,7 +1110,7 @@ mod tests {
     }
 
     #[test]
-    fn prune_malformed_embed_rows_keeps_repaired_row() {
+    fn prune_malformed_rows_keeps_repaired_embed_row() {
         let vault = test_vault();
         let queue = SyncQueue::new(vault).unwrap();
 
@@ -1147,7 +1140,9 @@ mod tests {
             .unwrap();
         wtxn.commit().unwrap();
 
-        queue.prune_malformed_embed_rows(&stale_candidates).unwrap();
+        queue
+            .prune_malformed_rows(&stale_candidates, decode_embed_job_row)
+            .unwrap();
 
         let rtxn = queue.vault.store.env.read_txn().unwrap();
         assert!(

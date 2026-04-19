@@ -339,6 +339,28 @@ mod tests {
         approx_eq(cosine_distance(&inf, &finite), 1.0, 1e-6);
     }
 
+    #[cfg(all(target_arch = "x86_64", target_feature = "avx2", target_feature = "fma"))]
+    #[test]
+    fn cosine_avx2_matches_scalar_across_lengths() {
+        // Exercise the AVX2 path directly against the scalar reference across
+        // lengths that stress the 8-lane main loop + scalar tail.
+        for len in [1, 4, 7, 8, 15, 16, 17, 31, 32, 33, 64, 129] {
+            let a: Vec<f32> = (0..len)
+                .map(|i| (i as f32) * 0.125 - 0.375)
+                .collect();
+            let b: Vec<f32> = (0..len)
+                .map(|i| ((i as f32) * 0.0625).sin())
+                .collect();
+
+            let scalar = super::cosine_similarity_scalar(&a, &b);
+            // SAFETY: cfg-gated on target_feature = avx2 + fma, so calling the
+            // AVX2 variant here is sound. Slice lengths match (constructed
+            // equal above).
+            let avx = unsafe { super::cosine_similarity_avx2(&a, &b) };
+            approx_eq(avx, scalar, 1e-5);
+        }
+    }
+
     #[test]
     fn cosine_matches_manual_formula_across_unroll_boundaries() {
         let a = [
