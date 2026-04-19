@@ -509,7 +509,7 @@ impl Vault {
 
     /// Returns true if the entity exists and has the given type byte.
     ///
-    /// Returns `Ok(false)` for missing entities or unparseable headers (corruption).
+    /// Returns `Ok(false)` for missing entities or unparsable headers (corruption).
     /// This is intentional for edge filtering: a corrupted peer should be skipped,
     /// not fail the entire query. Compare with `get_entity_type()` which returns
     /// `Err(InvalidKey)` on corruption — appropriate for direct lookups where the
