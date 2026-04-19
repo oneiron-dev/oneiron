@@ -126,7 +126,7 @@ impl Vault {
         };
 
         if EntityMetadataHeader::parse(bytes).is_none() {
-            return Err(Error::InvalidKey);
+            return Err(Error::CorruptedIndex("entity header"));
         }
 
         Ok(Some(bytes[ENTITY_METADATA_HEADER_LEN..].to_vec()))
@@ -301,7 +301,7 @@ impl Vault {
             .entities
             .get(&rtxn, id.as_bytes())?
             .ok_or(Error::EntityNotFound)?;
-        let header = EntityMetadataHeader::parse(raw).ok_or(Error::InvalidKey)?;
+        let header = EntityMetadataHeader::parse(raw).ok_or(Error::CorruptedIndex("entity header"))?;
         Ok(header.learned_at)
     }
 
@@ -332,6 +332,9 @@ impl Vault {
             )
             .map_err(|_| Error::CorruptedIndex("temporal learned key"))?;
             ids.push(id);
+            if ids.len() >= MAX_TYPE_QUERY_RESULTS {
+                break; // Defensive cap; see ONE-336 for the range-seek perf fix.
+            }
         }
         Ok(ids)
     }
@@ -432,7 +435,7 @@ impl Vault {
         let Some(raw) = self.store.entities.get(&rtxn, id.as_bytes())? else {
             return Ok(None);
         };
-        let header = EntityMetadataHeader::parse(raw).ok_or(Error::InvalidKey)?;
+        let header = EntityMetadataHeader::parse(raw).ok_or(Error::CorruptedIndex("entity header"))?;
         Ok(Some(header.entity_type))
     }
 
@@ -595,6 +598,9 @@ impl Vault {
             }
             result.push(parent);
             current = parent;
+            if result.len() >= MAX_SUBTREE_RESULTS {
+                break; // Pathological ancestor chain cap — matches subtree bound.
+            }
         }
 
         Ok(result)
@@ -647,13 +653,15 @@ fn scan_edges(
     rtxn: &heed::RoTxn<'_>,
     prefix: &[u8; 16],
 ) -> Result<Vec<EdgeInfo>> {
-    database
-        .prefix_iter(rtxn, prefix.as_slice())?
-        .map(|entry| {
-            let (key, value) = entry?;
-            parse_edge_record(key, value)
-        })
-        .collect()
+    let mut edges = Vec::new();
+    for entry in database.prefix_iter(rtxn, prefix.as_slice())? {
+        if edges.len() >= MAX_EDGE_QUERY_RESULTS {
+            break;
+        }
+        let (key, value) = entry?;
+        edges.push(parse_edge_record(key, value)?);
+    }
+    Ok(edges)
 }
 
 fn parse_edge_record(key: &[u8], value: &[u8]) -> Result<EdgeInfo> {
