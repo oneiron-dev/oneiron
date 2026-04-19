@@ -208,7 +208,7 @@ mod tests {
         msg.extend_from_slice(&update);
         match parse_message(&msg).unwrap() {
             SyncMessage::RootUpdate(data) => assert_eq!(data, update),
-            other => panic!("expected RootUpdate, got {:?}", other),
+            other => panic!("expected RootUpdate, got {other:?}"),
         }
     }
 
@@ -222,7 +222,7 @@ mod tests {
         let encoded = encode_awareness(&state);
         match parse_message(&encoded).unwrap() {
             SyncMessage::Awareness(s) => assert_eq!(s, state),
-            other => panic!("expected Awareness, got {:?}", other),
+            other => panic!("expected Awareness, got {other:?}"),
         }
     }
 
@@ -244,7 +244,7 @@ mod tests {
                 assert_eq!(sub_tag, window_sub_tags::UPDATE);
                 assert_eq!(payload, b"data");
             }
-            other => panic!("expected WindowSync, got {:?}", other),
+            other => panic!("expected WindowSync, got {other:?}"),
         }
     }
 

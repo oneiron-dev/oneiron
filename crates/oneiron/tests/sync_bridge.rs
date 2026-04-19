@@ -240,7 +240,7 @@ fn crash_recovery_pm_markers() {
         )
         .unwrap();
 
-    let pm_key = format!("pm:{}:{}", key, hex_id);
+    let pm_key = format!("pm:{key}:{hex_id}");
     vault.sync_state_put(&pm_key, &[1u8]).unwrap();
 
     let doc = create_window_doc("test-user", &key);
@@ -284,7 +284,7 @@ fn pm_replay_skips_tombstoned_entities() {
         )
         .unwrap();
 
-    let pm_key = format!("pm:{}:{}", key, hex_id);
+    let pm_key = format!("pm:{key}:{hex_id}");
     vault.sync_state_put(&pm_key, &[1u8]).unwrap();
 
     let doc = create_window_doc("test-user", &key);

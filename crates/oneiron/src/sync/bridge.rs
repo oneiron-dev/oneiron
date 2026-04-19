@@ -89,7 +89,7 @@ pub fn register_observer_a(
 
     doc.subscribe_local_updates(Box::new(move |update_bytes| {
         let result = vault.with_write_txn(|wtxn| {
-            let seq_key = format!("m:u_seq:w:{}", window_key);
+            let seq_key = format!("m:u_seq:w:{window_key}");
             let seq: u32 = match vault.store.sync_state.get(wtxn, &seq_key)? {
                 Some(raw) if raw.len() == 4 => u32::from_le_bytes(raw.try_into().unwrap()),
                 _ => 0,
@@ -100,13 +100,13 @@ pub fn register_observer_a(
                 .sync_state
                 .put(wtxn, &seq_key, &next_seq.to_le_bytes())?;
 
-            let update_key = format!("u:w:{}:{:08x}", window_key, next_seq);
+            let update_key = format!("u:w:{window_key}:{next_seq:08x}");
             vault
                 .store
                 .sync_state
                 .put(wtxn, &update_key, update_bytes)?;
 
-            let svf_key = format!("svf:w:{}", window_key);
+            let svf_key = format!("svf:w:{window_key}");
             vault.store.sync_state.put(wtxn, &svf_key, &[0u8])?;
 
             Ok(())
