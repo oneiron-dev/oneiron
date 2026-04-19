@@ -20,11 +20,11 @@ use tokio::sync::mpsc;
 use tokio::time::{Duration, Instant};
 use tokio_tungstenite::tungstenite::Message;
 
-use crate::sync::client::{next_backoff, SyncClient, SyncClientConfig, SyncEvent, SyncStatus};
+use crate::Vault;
+use crate::sync::client::{SyncClient, SyncClientConfig, SyncEvent, SyncStatus, next_backoff};
 use crate::sync::queue::SyncQueue;
 use crate::sync::transport::{self, window_sub_tags};
 use crate::sync::types::parse_window_key_str;
-use crate::Vault;
 
 /// Maximum convergence rounds before forcing re-bootstrap.
 const MAX_CONVERGENCE_ROUNDS: u32 = 5;
@@ -241,7 +241,9 @@ impl SyncConnection {
                     // If we've received at least 1 message and there's nothing
                     // pending within 200ms, consider initial sync done
                     if init_messages_received >= 1 {
-                        match tokio::time::timeout(Duration::from_millis(200), read.next()).await {
+                        let quiet_check =
+                            tokio::time::timeout(Duration::from_millis(200), read.next()).await;
+                        match quiet_check {
                             Ok(Some(Ok(Message::Binary(data)))) => {
                                 let responses = client
                                     .handle_server_message(&data)
@@ -274,7 +276,7 @@ impl SyncConnection {
                             }
                             // Timeout means initial sync is done
                             Err(_) => break,
-                        }
+                        };
                     }
                 }
                 Some(Ok(Message::Close(_))) | None => {
@@ -392,7 +394,9 @@ impl SyncConnection {
                             match client.handle_server_message(&data) {
                                 Ok(responses) => {
                                     for resp in responses {
-                                        if let Err(e) = write.send(Message::Binary(resp.into())).await {
+                                        let send_result =
+                                            write.send(Message::Binary(resp.into())).await;
+                                        if let Err(e) = send_result {
                                             return LoopExit::Disconnected(format!("Send failed: {e}"));
                                         }
                                     }
@@ -403,7 +407,8 @@ impl SyncConnection {
                             }
                         }
                         Some(Ok(Message::Ping(data))) => {
-                            if let Err(e) = write.send(Message::Pong(data)).await {
+                            let pong_result = write.send(Message::Pong(data)).await;
+                            if let Err(e) = pong_result {
                                 return LoopExit::Disconnected(format!("Pong failed: {e}"));
                             }
                         }
@@ -456,7 +461,8 @@ impl SyncConnection {
                             &local_update.update_bytes,
                         );
 
-                        if let Err(e) = write.send(Message::Binary(wire_msg.into())).await {
+                        let send_result = write.send(Message::Binary(wire_msg.into())).await;
+                        if let Err(e) = send_result {
                             failed_at = Some((i, format!("Send failed: {e}")));
                             break;
                         }
@@ -465,10 +471,11 @@ impl SyncConnection {
                     if let Some((fail_idx, err)) = failed_at {
                         // Queue all unsent updates (including the failed one)
                         for local_update in &pending[fail_idx..] {
-                            if let Err(e) = self.queue.push(
+                            let queue_result = self.queue.push(
                                 &local_update.window_key,
                                 &local_update.update_bytes,
-                            ) {
+                            );
+                            if let Err(e) = queue_result {
                                 tracing::error!("Failed to persist update to offline queue: {e}");
                             }
                         }
@@ -502,7 +509,8 @@ fn flush_to_queue(queue: &SyncQueue, buffer: &mut Vec<LocalUpdate>) {
             );
             continue;
         }
-        if let Err(e) = queue.push(&local_update.window_key, &local_update.update_bytes) {
+        let queue_result = queue.push(&local_update.window_key, &local_update.update_bytes);
+        if let Err(e) = queue_result {
             tracing::error!("Failed to persist update to offline queue: {e}");
         }
     }

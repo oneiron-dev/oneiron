@@ -114,52 +114,54 @@ fn normalize(dot: f32, norm_a: f32, norm_b: f32) -> f32 {
 #[target_feature(enable = "avx2")]
 #[target_feature(enable = "fma")]
 unsafe fn cosine_similarity_avx2(a: &[f32], b: &[f32]) -> f32 {
-    use std::arch::x86_64::{
-        __m256, _mm256_fmadd_ps, _mm256_loadu_ps, _mm256_setzero_ps, _mm256_storeu_ps,
-    };
+    unsafe {
+        use std::arch::x86_64::{
+            __m256, _mm256_fmadd_ps, _mm256_loadu_ps, _mm256_setzero_ps, _mm256_storeu_ps,
+        };
 
-    debug_assert_eq!(a.len(), b.len());
+        debug_assert_eq!(a.len(), b.len());
 
-    let len = a.len();
-    let mut i = 0;
+        let len = a.len();
+        let mut i = 0;
 
-    let mut dot: __m256 = _mm256_setzero_ps();
-    let mut norm_a: __m256 = _mm256_setzero_ps();
-    let mut norm_b: __m256 = _mm256_setzero_ps();
+        let mut dot: __m256 = _mm256_setzero_ps();
+        let mut norm_a: __m256 = _mm256_setzero_ps();
+        let mut norm_b: __m256 = _mm256_setzero_ps();
 
-    while i + 8 <= len {
-        let va = _mm256_loadu_ps(a.as_ptr().add(i));
-        let vb = _mm256_loadu_ps(b.as_ptr().add(i));
+        while i + 8 <= len {
+            let va = _mm256_loadu_ps(a.as_ptr().add(i));
+            let vb = _mm256_loadu_ps(b.as_ptr().add(i));
 
-        dot = _mm256_fmadd_ps(va, vb, dot);
-        norm_a = _mm256_fmadd_ps(va, va, norm_a);
-        norm_b = _mm256_fmadd_ps(vb, vb, norm_b);
+            dot = _mm256_fmadd_ps(va, vb, dot);
+            norm_a = _mm256_fmadd_ps(va, va, norm_a);
+            norm_b = _mm256_fmadd_ps(vb, vb, norm_b);
 
-        i += 8;
+            i += 8;
+        }
+
+        let mut dot_buf = [0.0_f32; 8];
+        let mut norm_a_buf = [0.0_f32; 8];
+        let mut norm_b_buf = [0.0_f32; 8];
+
+        _mm256_storeu_ps(dot_buf.as_mut_ptr(), dot);
+        _mm256_storeu_ps(norm_a_buf.as_mut_ptr(), norm_a);
+        _mm256_storeu_ps(norm_b_buf.as_mut_ptr(), norm_b);
+
+        let mut dot_sum: f32 = dot_buf.into_iter().sum();
+        let mut norm_a_sum: f32 = norm_a_buf.into_iter().sum();
+        let mut norm_b_sum: f32 = norm_b_buf.into_iter().sum();
+
+        while i < len {
+            let ai = a[i];
+            let bi = b[i];
+            dot_sum += ai * bi;
+            norm_a_sum += ai * ai;
+            norm_b_sum += bi * bi;
+            i += 1;
+        }
+
+        normalize(dot_sum, norm_a_sum, norm_b_sum)
     }
-
-    let mut dot_buf = [0.0_f32; 8];
-    let mut norm_a_buf = [0.0_f32; 8];
-    let mut norm_b_buf = [0.0_f32; 8];
-
-    _mm256_storeu_ps(dot_buf.as_mut_ptr(), dot);
-    _mm256_storeu_ps(norm_a_buf.as_mut_ptr(), norm_a);
-    _mm256_storeu_ps(norm_b_buf.as_mut_ptr(), norm_b);
-
-    let mut dot_sum: f32 = dot_buf.into_iter().sum();
-    let mut norm_a_sum: f32 = norm_a_buf.into_iter().sum();
-    let mut norm_b_sum: f32 = norm_b_buf.into_iter().sum();
-
-    while i < len {
-        let ai = a[i];
-        let bi = b[i];
-        dot_sum += ai * bi;
-        norm_a_sum += ai * ai;
-        norm_b_sum += bi * bi;
-        i += 1;
-    }
-
-    normalize(dot_sum, norm_a_sum, norm_b_sum)
 }
 
 #[cfg(target_arch = "aarch64")]

@@ -6,8 +6,8 @@
 
 // Re-export shared wire constants and encode/decode functions.
 pub use oneiron::sync::{
-    decode_bulk_transfer, decode_bulk_transfer_done, decode_window_sync, encode_window_sync,
-    TAG_BULK_TRANSFER, TAG_BULK_TRANSFER_DONE, TAG_WINDOW_SYNC,
+    TAG_BULK_TRANSFER, TAG_BULK_TRANSFER_DONE, TAG_WINDOW_SYNC, decode_bulk_transfer,
+    decode_bulk_transfer_done, decode_window_sync, encode_window_sync,
 };
 
 // Re-export tag constants from shared transport (avoid redefinition).

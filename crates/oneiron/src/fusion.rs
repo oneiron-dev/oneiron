@@ -6,7 +6,7 @@ use std::io::Cursor;
 use heed::RoTxn;
 use rmpv::Value;
 
-use crate::batch::{EntityMetadataHeader, ENTITY_METADATA_HEADER_LEN};
+use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::error::Result;
 use crate::store::Store;
 use crate::types::{EntityId, ScoredEntity};
