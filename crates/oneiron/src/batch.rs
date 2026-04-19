@@ -4,14 +4,14 @@ use std::str;
 use heed::RwTxn;
 use xxhash_rust::xxh32::xxh32;
 
+use crate::Vault;
 use crate::error::{Error, Result};
 use crate::ppr;
 use crate::store::Store;
 use crate::types::{
-    parse_vad, short_id_prefix, EdgeKind, EntityId, TimeRange, Vad, EDGE_KEY_LEN, EDGE_VALUE_LEN,
-    ENTITY_ID_LEN,
+    EDGE_KEY_LEN, EDGE_VALUE_LEN, ENTITY_ID_LEN, EdgeKind, EntityId, TimeRange, Vad, parse_vad,
+    short_id_prefix,
 };
-use crate::Vault;
 
 pub(crate) const ENTITY_METADATA_HEADER_LEN: usize = 25;
 pub(crate) const SHORT_ID_COUNTER_LEN: usize = 8;
@@ -119,10 +119,10 @@ impl<'a> BatchBuilder<'a> {
         learned_at: u64,
         data: &[u8],
     ) -> Self {
-        if self.validation_error.is_none() {
-            if let Err(e) = short_id_prefix(entity_type) {
-                self.validation_error = Some(e);
-            }
+        if self.validation_error.is_none()
+            && let Err(e) = short_id_prefix(entity_type)
+        {
+            self.validation_error = Some(e);
         }
         self.ops.push(BatchOp::Put {
             id: *id,

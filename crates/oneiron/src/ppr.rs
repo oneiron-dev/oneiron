@@ -6,7 +6,7 @@ use xxhash_rust::xxh3::xxh3_128;
 use crate::error::{Error, Result};
 use crate::store::Store;
 use crate::types::{
-    EdgeKind, EntityId, ScoredEntity, VaultConfig, EDGE_KEY_LEN, EDGE_VALUE_LEN, ENTITY_ID_LEN,
+    EDGE_KEY_LEN, EDGE_VALUE_LEN, ENTITY_ID_LEN, EdgeKind, EntityId, ScoredEntity, VaultConfig,
 };
 
 const SEED_HASH_LEN: usize = 16;
@@ -400,7 +400,8 @@ fn seed_is_live_for_ppr(store: &Store, txn: &RoTxn<'_>, entity_id: &EntityId) ->
 
     {
         let mut out_iter = store.edges_out.prefix_iter(txn, entity_id.as_bytes())?;
-        if let Some(entry) = out_iter.next() {
+        let next_entry = out_iter.next();
+        if let Some(entry) = next_entry {
             entry?;
             return Ok(true);
         }
@@ -408,7 +409,8 @@ fn seed_is_live_for_ppr(store: &Store, txn: &RoTxn<'_>, entity_id: &EntityId) ->
 
     {
         let mut in_iter = store.edges_in.prefix_iter(txn, entity_id.as_bytes())?;
-        if let Some(entry) = in_iter.next() {
+        let next_entry = in_iter.next();
+        if let Some(entry) = next_entry {
             entry?;
             return Ok(true);
         }
@@ -1220,11 +1222,13 @@ mod tests {
 
         let rtxn = vault.store.env.read_txn()?;
         assert!(vault.store.ppr_cache.get(&rtxn, &seed_hash)?.is_some());
-        assert!(vault
-            .store
-            .ppr_cache_deps
-            .get(&rtxn, &malformed_dep)?
-            .is_none());
+        assert!(
+            vault
+                .store
+                .ppr_cache_deps
+                .get(&rtxn, &malformed_dep)?
+                .is_none()
+        );
         Ok(())
     }
 
@@ -1260,11 +1264,13 @@ mod tests {
 
         let rtxn = vault.store.env.read_txn()?;
         assert!(vault.store.ppr_cache.get(&rtxn, &seed_hash)?.is_none());
-        assert!(vault
-            .store
-            .ppr_cache_deps
-            .get(&rtxn, &malformed_dep)?
-            .is_none());
+        assert!(
+            vault
+                .store
+                .ppr_cache_deps
+                .get(&rtxn, &malformed_dep)?
+                .is_none()
+        );
         Ok(())
     }
 

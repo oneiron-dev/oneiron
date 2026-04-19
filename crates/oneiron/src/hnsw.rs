@@ -7,7 +7,7 @@ use crate::distance::cosine_distance;
 use crate::error::{Error, Result};
 use crate::store::Store;
 use crate::store::VECTOR_VERSION_KEY;
-use crate::types::{EntityId, ScoredEntity, VaultConfig, ENTITY_ID_LEN};
+use crate::types::{ENTITY_ID_LEN, EntityId, ScoredEntity, VaultConfig};
 
 const ENTRY_POINT_KEY: &[u8] = b"entry_point";
 pub(crate) const COUNT_KEY: &[u8] = b"count";
@@ -850,9 +850,9 @@ mod tests {
     use tempfile::tempdir;
 
     use super::*;
+    use crate::Vault;
     use crate::store::Store;
     use crate::types::{TimeRange, VaultConfig};
-    use crate::Vault;
 
     fn test_config() -> VaultConfig {
         let mut config = VaultConfig::device();

@@ -6,7 +6,7 @@ use heed::{RoTxn, RwTxn};
 
 use crate::error::{Error, Result};
 use crate::store::Store;
-use crate::types::{short_id_prefix, EntityId, ScoredEntity};
+use crate::types::{EntityId, ScoredEntity, short_id_prefix};
 
 const POSTING_ENTRY_LEN: usize = 20;
 const DOC_META_LEN: usize = 8;
@@ -1114,11 +1114,13 @@ mod tests {
         assert!(matches!(err, Error::CorruptedIndex(_)));
 
         let rtxn = vault.store.env.read_txn()?;
-        assert!(vault
-            .store
-            .text_forward
-            .get(&rtxn, id.as_bytes())?
-            .is_none());
+        assert!(
+            vault
+                .store
+                .text_forward
+                .get(&rtxn, id.as_bytes())?
+                .is_none()
+        );
         assert!(vault.store.text_meta.get(&rtxn, id.as_bytes())?.is_some());
         assert_eq!(read_collection_stats(&vault.store, &rtxn)?, (1, 1));
 
@@ -1146,11 +1148,13 @@ mod tests {
         wtxn.commit()?;
 
         let rtxn = vault.store.env.read_txn()?;
-        assert!(vault
-            .store
-            .text_forward
-            .get(&rtxn, id.as_bytes())?
-            .is_none());
+        assert!(
+            vault
+                .store
+                .text_forward
+                .get(&rtxn, id.as_bytes())?
+                .is_none()
+        );
         assert!(vault.store.text_meta.get(&rtxn, id.as_bytes())?.is_none());
         assert_eq!(read_collection_stats(&vault.store, &rtxn)?, (0, 0));
 
@@ -1187,11 +1191,13 @@ mod tests {
         wtxn.commit()?;
 
         let rtxn = vault.store.env.read_txn()?;
-        assert!(vault
-            .store
-            .text_forward
-            .get(&rtxn, id.as_bytes())?
-            .is_none());
+        assert!(
+            vault
+                .store
+                .text_forward
+                .get(&rtxn, id.as_bytes())?
+                .is_none()
+        );
         assert!(vault.store.text_meta.get(&rtxn, id.as_bytes())?.is_none());
         assert_eq!(read_collection_stats(&vault.store, &rtxn)?, (0, 0));
         assert_eq!(
