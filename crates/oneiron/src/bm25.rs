@@ -33,8 +33,12 @@ pub(crate) fn index_text(
 ) -> Result<()> {
     validate_text_doc_id(id)?;
 
-    if store.text_forward.get(wtxn, id.as_bytes())?.is_some() {
-        deindex_text(store, wtxn, id)?;
+    match store.text_forward.get(wtxn, id.as_bytes())? {
+        Some(_) => deindex_text(store, wtxn, id)?,
+        None if store.text_meta.get(wtxn, id.as_bytes())?.is_some() => {
+            return Err(corrupted("missing forward index for indexed document"));
+        }
+        None => {}
     }
 
     let mut doc_len = 0_u32;
@@ -223,9 +227,6 @@ pub(crate) fn search_text(
             let dl = f64::from(dl);
             let norm = if avgdl > 0.0 { dl / avgdl } else { 0.0 };
             let denom = tf + K1 * (1.0 - B + B * norm);
-            if denom == 0.0 {
-                return Err(corrupted("bm25 denominator is zero"));
-            }
             let score = idf * (tf * (K1 + 1.0)) / denom;
             *scores.entry(id).or_insert(0.0) += score;
         }
@@ -1031,6 +1032,39 @@ mod tests {
 
         let err = deindex_text(&vault.store, &mut wtxn, &id).unwrap_err();
         assert!(matches!(err, Error::CorruptedIndex(_)));
+
+        Ok(())
+    }
+
+    #[test]
+    fn reindex_with_orphaned_text_meta_returns_corrupted_index() -> Result<()> {
+        let temp_dir = tempfile::tempdir()?;
+        let vault = Vault::open(temp_dir.path(), test_config())?;
+        let id = EntityId::now();
+
+        let mut wtxn = vault.store.env.write_txn()?;
+        vault
+            .store
+            .text_meta
+            .put(&mut wtxn, id.as_bytes(), &encoded_doc_meta(1, 1))?;
+        write_collection_stats(&vault.store, &mut wtxn, 1, 1)?;
+        wtxn.commit()?;
+
+        let err = vault
+            .batch()
+            .text(&id, &[("body", "hello world")])
+            .commit()
+            .unwrap_err();
+        assert!(matches!(err, Error::CorruptedIndex(_)));
+
+        let rtxn = vault.store.env.read_txn()?;
+        assert!(vault
+            .store
+            .text_forward
+            .get(&rtxn, id.as_bytes())?
+            .is_none());
+        assert!(vault.store.text_meta.get(&rtxn, id.as_bytes())?.is_some());
+        assert_eq!(read_collection_stats(&vault.store, &rtxn)?, (1, 1));
 
         Ok(())
     }
