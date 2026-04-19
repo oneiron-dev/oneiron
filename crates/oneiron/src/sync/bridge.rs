@@ -21,7 +21,7 @@ use super::loro_engine::LoroDocument;
 use crate::batch::{self, BatchOp, ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::store::Store;
 use crate::types::{EdgeKind, EntityId, Vad};
-use crate::{Result, Vault};
+use crate::{Error, Result, Vault};
 
 /// Origin tag used for LMDB→CRDT bridge writes.
 pub const BRIDGE_ORIGIN: &str = "bridge";
@@ -94,7 +94,13 @@ pub fn register_observer_a(
                 Some(raw) if raw.len() == 4 => u32::from_le_bytes(raw.try_into().unwrap()),
                 _ => 0,
             };
-            let next_seq = seq.wrapping_add(1);
+            // checked_add surfaces overflow as a typed error rather than
+            // `wrapping_add`-ing to 0 and silently overwriting update key
+            // `u:w:{window}:00000000`. Matches SyncQueue's update-seq policy.
+            // u32 widening to u64 is tracked as a follow-up schema change.
+            let next_seq = seq
+                .checked_add(1)
+                .ok_or(Error::ArithmeticOverflow("observer a u_seq"))?;
             vault
                 .store
                 .sync_state
