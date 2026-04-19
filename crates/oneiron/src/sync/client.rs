@@ -292,6 +292,10 @@ impl SyncClient {
         Ok(())
     }
 
+    #[expect(
+        clippy::unnecessary_wraps,
+        reason = "Result<(), TransportError> preserved for forward-compat; LMDB persistence in handler body is TODO"
+    )]
     fn handle_bulk_transfer_done(
         &mut self,
         window_key: &str,

@@ -12,10 +12,10 @@ use crate::protocol::AwarenessState;
 /// Broadcast payload: (conn_id, encoded_message).
 /// conn_id 0 = local/bridge writes (broadcast to all devices).
 /// conn_id >= 1 = specific connection (echo suppression skips sender).
-pub type BroadcastPayload = (u32, Vec<u8>);
+pub(crate) type BroadcastPayload = (u32, Vec<u8>);
 
 /// Core sync server state shared across all connections.
-pub struct SyncServer {
+pub(crate) struct SyncServer {
     pub vault: Arc<oneiron::Vault>,
     /// Root LoroDoc (server-authoritative, contains meta.windows).
     pub root_doc: LoroDoc,
@@ -33,7 +33,7 @@ pub struct SyncServer {
 
 impl SyncServer {
     /// Creates a new SyncServer with an empty root doc and no windows loaded.
-    pub fn new(vault: oneiron::Vault, config: SyncServerConfig) -> Self {
+    pub(crate) fn new(vault: oneiron::Vault, config: SyncServerConfig) -> Self {
         let root_doc = LoroDoc::new();
         // Initialize root doc meta map
         let meta = root_doc.get_map("meta");
@@ -55,33 +55,33 @@ impl SyncServer {
     }
 
     /// Allocates a new unique connection ID.
-    pub fn alloc_conn_id(&self) -> u32 {
+    pub(crate) fn alloc_conn_id(&self) -> u32 {
         self.next_conn_id.fetch_add(1, Ordering::Relaxed)
     }
 
     /// Returns the window key (YYYY-MM) for a Unix timestamp.
     #[allow(dead_code)] // Used when WebSocket connected
-    pub fn window_key_for_timestamp(ts: u64) -> String {
+    pub(crate) fn window_key_for_timestamp(ts: u64) -> String {
         WindowKey::from_timestamp(ts).as_str().to_string()
     }
 
     /// Exports root doc updates since the given version vector.
     #[allow(dead_code)] // Used when WebSocket connected
-    pub fn export_root_updates(&self, from_vv: &VersionVector) -> Result<Vec<u8>, String> {
+    pub(crate) fn export_root_updates(&self, from_vv: &VersionVector) -> Result<Vec<u8>, String> {
         self.root_doc
             .export(ExportMode::updates(from_vv))
             .map_err(|e| format!("root doc export failed: {e}"))
     }
 
     /// Exports all root doc state for a new client.
-    pub fn export_root_snapshot(&self) -> Result<Vec<u8>, String> {
+    pub(crate) fn export_root_snapshot(&self) -> Result<Vec<u8>, String> {
         self.root_doc
             .export(ExportMode::Snapshot)
             .map_err(|e| format!("root doc snapshot failed: {e}"))
     }
 
     /// Gets or creates a window LoroDoc. Returns a clone (reference-counted).
-    pub async fn get_or_create_window(&self, key: &str) -> LoroDoc {
+    pub(crate) async fn get_or_create_window(&self, key: &str) -> LoroDoc {
         {
             let windows = self.windows.read().await;
             if let Some(doc) = windows.get(key) {

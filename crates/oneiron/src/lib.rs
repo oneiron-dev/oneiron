@@ -1487,6 +1487,10 @@ mod tests {
         ));
 
         let cfg = test_config();
+        // SAFETY: test-only reopen of the same LMDB path. The prior Vault has
+        // been dropped; single-Env-per-path invariant holds inside the test
+        // scope. tmp path is local (not NFS), and map_size matches the
+        // original open above.
         let env = unsafe {
             heed::EnvOpenOptions::new()
                 .map_size(cfg.map_size)

@@ -3,7 +3,7 @@ use clap::Parser;
 /// Oneiron sync server configuration.
 #[derive(Debug, Clone)]
 #[allow(dead_code)] // Config fields consumed by WebSocket handler in Phase 1D
-pub struct SyncServerConfig {
+pub(crate) struct SyncServerConfig {
     /// Number of default windows to load (current + previous months).
     pub default_window_count: u8,
     /// Byte threshold that triggers CRDT Doc compaction.
@@ -52,7 +52,7 @@ impl Default for SyncServerConfig {
 /// CLI arguments for the sync server binary.
 #[derive(Parser, Debug)]
 #[command(name = "oneiron-server", about = "Oneiron CRDT sync server")]
-pub struct CliArgs {
+pub(crate) struct CliArgs {
     /// Path to the LMDB vault directory.
     #[arg(long, default_value = "./vault")]
     pub vault_path: String,

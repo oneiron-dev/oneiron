@@ -17,7 +17,7 @@ use serde::{Deserialize, Serialize};
 use crate::server::SyncServer;
 
 /// Builds the HTTP API routes.
-pub fn api_routes(server: Arc<SyncServer>) -> Router {
+pub(crate) fn api_routes(server: Arc<SyncServer>) -> Router {
     Router::new()
         .route("/api/health", get(health))
         .route("/api/search/vector", get(search_vector))

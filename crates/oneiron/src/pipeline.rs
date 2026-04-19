@@ -1962,11 +1962,11 @@ mod tests {
         };
         let exact_config = TemporalSearchConfig {
             sigma_secs: TemporalGranularity::Exact.sigma_secs(),
-            ..base_config.clone()
+            ..base_config
         };
         let hour_config = TemporalSearchConfig {
             sigma_secs: TemporalGranularity::Hour.sigma_secs(),
-            ..base_config.clone()
+            ..base_config
         };
         let day_config = TemporalSearchConfig {
             sigma_secs: TemporalGranularity::Day.sigma_secs(),
@@ -2354,7 +2354,7 @@ mod tests {
         };
         let day_config = TemporalSearchConfig {
             sigma_secs: TemporalGranularity::Day.sigma_secs(),
-            ..base_config.clone()
+            ..base_config
         };
         let year_config = TemporalSearchConfig {
             sigma_secs: TemporalGranularity::Year.sigma_secs(),

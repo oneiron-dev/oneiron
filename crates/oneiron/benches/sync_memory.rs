@@ -141,6 +141,9 @@ fn get_rss_bytes() -> u64 {
         std::fs::read_to_string("/proc/self/statm").expect("failed to read /proc/self/statm");
     let fields: Vec<&str> = statm.split_whitespace().collect();
     let rss_pages: u64 = fields[1].parse().expect("failed to parse RSS pages");
+    // SAFETY: libc::sysconf is always safe to call with _SC_PAGESIZE;
+    // returns host page size (a positive long), cast to u64 cannot truncate
+    // on any supported target (page sizes are <= u32 max).
     let page_size: u64 = unsafe { libc::sysconf(libc::_SC_PAGESIZE) as u64 };
     rss_pages * page_size
 }

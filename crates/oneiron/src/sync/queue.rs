@@ -1041,7 +1041,7 @@ mod tests {
     #[test]
     fn drain_embed_jobs_prunes_overlong_keys() {
         let vault = test_vault();
-        let queue = SyncQueue::new(vault.clone()).unwrap();
+        let queue = SyncQueue::new(vault).unwrap();
 
         let valid_id = EntityId::now();
         queue.push_embed_job(&valid_id, 1).unwrap();

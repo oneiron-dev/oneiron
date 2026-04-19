@@ -5,17 +5,17 @@
 //! and close codes.
 
 // Re-export shared wire constants and encode/decode functions.
-pub use oneiron::sync::{
+pub(crate) use oneiron::sync::{
     TAG_BULK_TRANSFER, TAG_BULK_TRANSFER_DONE, TAG_WINDOW_SYNC, decode_bulk_transfer,
     decode_bulk_transfer_done, decode_window_sync, encode_window_sync,
 };
 
 // Re-export tag constants from shared transport (avoid redefinition).
-pub use oneiron::sync::transport::{TAG_AWARENESS, TAG_SYNC_UPDATE, TAG_VERSION_VECTOR};
+pub(crate) use oneiron::sync::transport::{TAG_AWARENESS, TAG_SYNC_UPDATE, TAG_VERSION_VECTOR};
 
 /// Sub-tags within WindowSync messages.
-pub mod window_sub_tags {
-    pub use oneiron::sync::transport::window_sub_tags::*;
+pub(crate) mod window_sub_tags {
+    pub(crate) use oneiron::sync::transport::window_sub_tags::*;
 }
 
 // ─── Awareness ────────────────────────────────────────────────────────────────
@@ -23,7 +23,7 @@ pub mod window_sub_tags {
 /// Custom awareness state (Loro doesn't have built-in awareness).
 /// Simple JSON-serializable presence state per device.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq)]
-pub struct AwarenessState {
+pub(crate) struct AwarenessState {
     pub online: bool,
     pub typing: bool,
     pub device_name: String,
@@ -42,7 +42,7 @@ impl Default for AwarenessState {
 /// Encodes an awareness message for the wire.
 ///
 /// Format: `[TAG_AWARENESS:1][json_bytes]`
-pub fn encode_awareness(state: &AwarenessState) -> Vec<u8> {
+pub(crate) fn encode_awareness(state: &AwarenessState) -> Vec<u8> {
     let json = serde_json::to_vec(state).expect("AwarenessState serialization cannot fail");
     let mut buf = Vec::with_capacity(1 + json.len());
     buf.push(TAG_AWARENESS);
@@ -51,7 +51,7 @@ pub fn encode_awareness(state: &AwarenessState) -> Vec<u8> {
 }
 
 /// Decodes an awareness message (after tag byte has been consumed).
-pub fn decode_awareness(data: &[u8]) -> Result<AwarenessState, ProtocolError> {
+pub(crate) fn decode_awareness(data: &[u8]) -> Result<AwarenessState, ProtocolError> {
     serde_json::from_slice(data)
         .map_err(|_| ProtocolError::InvalidPayload("invalid awareness JSON"))
 }
@@ -60,7 +60,7 @@ pub fn decode_awareness(data: &[u8]) -> Result<AwarenessState, ProtocolError> {
 
 /// Parsed top-level message from the wire.
 #[derive(Debug)]
-pub enum SyncMessage {
+pub(crate) enum SyncMessage {
     /// Root doc update bytes (tag 0). Server rejects these from clients.
     RootUpdate(Vec<u8>),
     /// Awareness state (tag 1). Bidirectional.
@@ -86,7 +86,7 @@ pub enum SyncMessage {
 }
 
 /// Parses a raw wire message into a typed SyncMessage.
-pub fn parse_message(data: &[u8]) -> Result<SyncMessage, ProtocolError> {
+pub(crate) fn parse_message(data: &[u8]) -> Result<SyncMessage, ProtocolError> {
     if data.is_empty() {
         return Err(ProtocolError::InvalidPayload("empty message"));
     }
@@ -144,7 +144,7 @@ fn transport_err_msg(e: oneiron::sync::TransportError) -> &'static str {
 /// Encodes a root doc update for the wire.
 ///
 /// Format: `[TAG_SYNC_UPDATE:1][update_bytes]`
-pub fn encode_root_update(update_bytes: &[u8]) -> Vec<u8> {
+pub(crate) fn encode_root_update(update_bytes: &[u8]) -> Vec<u8> {
     let mut buf = Vec::with_capacity(1 + update_bytes.len());
     buf.push(TAG_SYNC_UPDATE);
     buf.extend_from_slice(update_bytes);
@@ -156,7 +156,7 @@ pub fn encode_root_update(update_bytes: &[u8]) -> Vec<u8> {
 /// Protocol-level errors specific to Oneiron's custom sync protocol.
 #[derive(Debug, thiserror::Error)]
 #[allow(dead_code)] // Variants used in match arms; some constructed only in future Phase 2+ paths
-pub enum ProtocolError {
+pub(crate) enum ProtocolError {
     #[error("invalid payload: {0}")]
     InvalidPayload(&'static str),
     #[error("unknown custom tag: {0}")]
@@ -171,17 +171,17 @@ pub enum ProtocolError {
 
 /// WebSocket close codes per ARCH-023 section 3.5.
 #[allow(dead_code)] // Used when WebSocket handler sends close frames
-pub mod close_codes {
+pub(crate) mod close_codes {
     /// JWT expired mid-session or device lease expired.
-    pub const AUTH_EXPIRED: u16 = 4001;
+    pub(crate) const AUTH_EXPIRED: u16 = 4001;
     /// CRDT decode error (malformed update bytes).
-    pub const DECODE_ERROR: u16 = 4002;
+    pub(crate) const DECODE_ERROR: u16 = 4002;
     /// Unknown custom tag.
-    pub const UNKNOWN_TAG: u16 = 4003;
+    pub(crate) const UNKNOWN_TAG: u16 = 4003;
     /// Frame/payload exceeds size limit.
-    pub const FRAME_TOO_LARGE: u16 = 4004;
+    pub(crate) const FRAME_TOO_LARGE: u16 = 4004;
     /// BulkTransfer decompression/decode failure.
-    pub const BULK_DECODE_FAILURE: u16 = 4005;
+    pub(crate) const BULK_DECODE_FAILURE: u16 = 4005;
 }
 
 #[cfg(test)]
