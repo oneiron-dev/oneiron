@@ -6,7 +6,7 @@ use heed::{RoTxn, RwTxn};
 
 use crate::error::{Error, Result};
 use crate::store::Store;
-use crate::types::{EntityId, ScoredEntity};
+use crate::types::{short_id_prefix, EntityId, ScoredEntity};
 
 const POSTING_ENTRY_LEN: usize = 20;
 const DOC_META_LEN: usize = 8;
@@ -46,7 +46,11 @@ pub(crate) fn index_text(
             doc_len = doc_len
                 .checked_add(1)
                 .ok_or(Error::ArithmeticOverflow("bm25 doc length"))?;
-            *term_freq.entry(term.into_owned()).or_default() += 1;
+            if let Some(count) = term_freq.get_mut(term.as_ref()) {
+                *count += 1;
+            } else {
+                term_freq.insert(term.into_owned(), 1);
+            }
         }
     }
 
@@ -157,7 +161,7 @@ pub(crate) fn search_text(
         return Ok(Vec::new());
     }
 
-    let mut tokens: Vec<String> = tokenize(query).map(Cow::into_owned).collect();
+    let mut tokens: Vec<Cow<'_, str>> = tokenize(query).collect();
     if tokens.is_empty() {
         return Ok(Vec::new());
     }
@@ -170,13 +174,15 @@ pub(crate) fn search_text(
     }
 
     let n = f64::from(total_docs);
+    // BM25 scoring already uses f64; precision beyond 2^53 tokens is not
+    // material for the local corpora this engine targets.
     let avgdl = total_length as f64 / n;
 
     let mut scores = HashMap::<EntityId, f64>::new();
     let mut doc_len_cache = HashMap::<EntityId, u32>::new();
 
     for token in tokens {
-        let Some(posting) = store.text_postings.get(rtxn, token.as_bytes())? else {
+        let Some(posting) = store.text_postings.get(rtxn, token.as_ref().as_bytes())? else {
             continue;
         };
         validate_posting_alignment(posting)?;
@@ -260,9 +266,16 @@ fn decode_posting_entry(chunk: &[u8]) -> Result<(EntityId, u32)> {
     Ok((id, tf))
 }
 
-fn read_posting(store: &Store, wtxn: &mut RwTxn<'_>, term: &str) -> Result<Vec<u8>> {
-    let existing = store.text_postings.get(wtxn, term.as_bytes())?;
-    let posting = existing.map_or_else(Vec::new, |bytes| bytes.to_vec());
+fn read_posting(store: &Store, txn: &RoTxn<'_>, term: &str) -> Result<Vec<u8>> {
+    let existing = store.text_postings.get(txn, term.as_bytes())?;
+    let posting = existing.map_or_else(
+        || Vec::with_capacity(POSTING_ENTRY_LEN),
+        |bytes| {
+            let mut posting = Vec::with_capacity(bytes.len() + POSTING_ENTRY_LEN);
+            posting.extend_from_slice(bytes);
+            posting
+        },
+    );
     validate_posting_alignment(&posting)?;
     Ok(posting)
 }
@@ -305,7 +318,11 @@ fn corrupted(message: &'static str) -> Error {
 }
 
 fn validate_text_doc_id(id: &EntityId) -> Result<()> {
-    if id.as_bytes() == &TOTAL_DOCS_KEY || id.as_bytes() == &TOTAL_LENGTH_KEY {
+    let bytes = id.as_bytes();
+    if bytes == &TOTAL_DOCS_KEY
+        || bytes == &TOTAL_LENGTH_KEY
+        || (bytes[1..].iter().all(|&b| b == 0xFF) && short_id_prefix(bytes[0]).is_ok())
+    {
         return Err(Error::InvalidKey);
     }
     Ok(())
@@ -346,7 +363,10 @@ impl<'a> Iterator for Tokenizer<'a> {
             let start = self.offset - ch.len_utf8();
             let cjk = is_cjk(ch);
             while self.offset < self.text.len() {
-                let next = self.text[self.offset..].chars().next().unwrap();
+                let next = self.text[self.offset..]
+                    .chars()
+                    .next()
+                    .expect("offset stays on a valid char boundary");
                 if !next.is_alphanumeric() || is_cjk(next) != cjk {
                     break;
                 }
@@ -425,6 +445,7 @@ fn is_cjk(ch: char) -> bool {
         ch as u32,
         0x3400..=0x4DBF
             | 0x4E00..=0x9FFF
+            | 0x20000..=0x2A6DF
             | 0xF900..=0xFAFF
             | 0x3040..=0x309F
             | 0x30A0..=0x30FF
@@ -574,6 +595,7 @@ mod tests {
     #[test]
     fn tokenizer_extended_cjk_ranges() {
         assert_eq!(collect_tokens("㐀"), vec!["㐀"]);
+        assert_eq!(collect_tokens("𠀀"), vec!["𠀀"]);
         assert_eq!(collect_tokens("神"), vec!["神"]);
     }
 
@@ -779,7 +801,10 @@ mod tests {
         let temp_dir = tempfile::tempdir()?;
         let vault = Vault::open(temp_dir.path(), test_config())?;
 
-        for raw_id in [TOTAL_DOCS_KEY, TOTAL_LENGTH_KEY] {
+        let mut short_id_sentinel = [0xFF; 16];
+        short_id_sentinel[0] = 1;
+
+        for raw_id in [TOTAL_DOCS_KEY, TOTAL_LENGTH_KEY, short_id_sentinel] {
             let id = EntityId::from_bytes_unchecked(raw_id);
             let err = vault
                 .batch()
