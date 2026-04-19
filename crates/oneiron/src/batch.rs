@@ -736,10 +736,6 @@ fn apply_vector(
     Ok(())
 }
 
-#[expect(
-    clippy::too_many_arguments,
-    reason = "direct LMDB edge apply keeps write params explicit"
-)]
 fn apply_edge(
     store: &Store,
     wtxn: &mut RwTxn<'_>,
