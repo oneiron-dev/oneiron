@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::collections::HashMap;
 use std::str;
 
@@ -5,7 +6,7 @@ use heed::{RoTxn, RwTxn};
 
 use crate::error::{Error, Result};
 use crate::store::Store;
-use crate::types::{EntityId, ScoredEntity};
+use crate::types::{short_id_prefix, EntityId, ScoredEntity};
 
 const POSTING_ENTRY_LEN: usize = 20;
 const DOC_META_LEN: usize = 8;
@@ -16,11 +17,12 @@ const B: f64 = 0.75;
 const TOTAL_DOCS_KEY: [u8; 16] = [0x00; 16];
 const TOTAL_LENGTH_KEY: [u8; 16] = [0xFF; 16];
 
-pub(crate) fn tokenize(text: &str) -> Vec<String> {
-    text.split(|c: char| !c.is_alphanumeric())
-        .map(str::to_lowercase)
-        .filter(|token| !token.is_empty())
-        .collect()
+fn tokenize(text: &str) -> Tokenizer<'_> {
+    Tokenizer {
+        text,
+        offset: 0,
+        cjk_state: None,
+    }
 }
 
 pub(crate) fn index_text(
@@ -29,27 +31,35 @@ pub(crate) fn index_text(
     id: &EntityId,
     fields: &[(String, String)],
 ) -> Result<()> {
-    if store.text_forward.get(wtxn, id.as_bytes())?.is_some() {
-        deindex_text(store, wtxn, id)?;
+    validate_text_doc_id(id)?;
+
+    match store.text_forward.get(wtxn, id.as_bytes())? {
+        Some(_) => deindex_text(store, wtxn, id)?,
+        None if store.text_meta.get(wtxn, id.as_bytes())?.is_some() => {
+            return Err(corrupted("missing forward index for indexed document"));
+        }
+        None => {}
     }
 
-    let mut terms = Vec::new();
-    for (_, value) in fields {
-        terms.extend(tokenize(value));
-    }
-
-    if terms.is_empty() {
-        return Ok(());
-    }
-
-    let doc_len =
-        u32::try_from(terms.len()).map_err(|_| Error::ArithmeticOverflow("bm25 doc length"))?;
+    let mut doc_len = 0_u32;
     let field_count =
         u32::try_from(fields.len()).map_err(|_| Error::ArithmeticOverflow("bm25 field count"))?;
-
     let mut term_freq = HashMap::<String, u32>::new();
-    for term in terms {
-        *term_freq.entry(term).or_default() += 1;
+    for (_, value) in fields {
+        for term in tokenize(value) {
+            doc_len = doc_len
+                .checked_add(1)
+                .ok_or(Error::ArithmeticOverflow("bm25 doc length"))?;
+            if let Some(count) = term_freq.get_mut(term.as_ref()) {
+                *count += 1;
+            } else {
+                term_freq.insert(term.into_owned(), 1);
+            }
+        }
+    }
+
+    if term_freq.is_empty() {
+        return Ok(());
     }
 
     let mut unique_terms: Vec<String> = term_freq.keys().cloned().collect();
@@ -74,17 +84,22 @@ pub(crate) fn index_text(
     let (total_docs, total_length) = read_collection_stats(store, wtxn)?;
     let total_docs = total_docs
         .checked_add(1)
-        .ok_or(Error::ArithmeticOverflow("bm25 total docs"))?;
+        .ok_or(Error::ArithmeticOverflow("bm25 total_docs"))?;
     let total_length = total_length
         .checked_add(u64::from(doc_len))
-        .ok_or(Error::ArithmeticOverflow("bm25 total length"))?;
+        .ok_or(Error::ArithmeticOverflow("bm25 total_length"))?;
     write_collection_stats(store, wtxn, total_docs, total_length)?;
 
     Ok(())
 }
 
 pub(crate) fn deindex_text(store: &Store, wtxn: &mut RwTxn<'_>, id: &EntityId) -> Result<()> {
+    validate_text_doc_id(id)?;
+
     let Some(forward_raw) = store.text_forward.get(wtxn, id.as_bytes())? else {
+        if store.text_meta.get(wtxn, id.as_bytes())?.is_some() {
+            return Err(corrupted("missing forward index for indexed document"));
+        }
         return Ok(());
     };
 
@@ -93,14 +108,18 @@ pub(crate) fn deindex_text(store: &Store, wtxn: &mut RwTxn<'_>, id: &EntityId) -
     let doc_meta = store
         .text_meta
         .get(wtxn, id.as_bytes())?
-        .ok_or(Error::MissingPostingEntry)?;
+        .ok_or_else(|| corrupted("missing text metadata for deindex"))?;
     let (doc_len, _) = decode_doc_meta(doc_meta)?;
+    if terms.is_empty() != (doc_len == 0) {
+        return Err(corrupted(
+            "forward index emptiness does not match stored document length",
+        ));
+    }
 
     for term in terms {
-        let posting = store
-            .text_postings
-            .get(wtxn, term.as_bytes())?
-            .ok_or(Error::MissingPostingEntry)?;
+        let Some(posting) = store.text_postings.get(wtxn, term.as_bytes())? else {
+            continue;
+        };
         validate_posting_alignment(posting)?;
 
         let mut retained = Vec::with_capacity(posting.len());
@@ -114,7 +133,7 @@ pub(crate) fn deindex_text(store: &Store, wtxn: &mut RwTxn<'_>, id: &EntityId) -
         }
 
         if !removed {
-            return Err(Error::MissingPostingEntry);
+            continue;
         }
 
         if retained.is_empty() {
@@ -127,10 +146,10 @@ pub(crate) fn deindex_text(store: &Store, wtxn: &mut RwTxn<'_>, id: &EntityId) -
     let (total_docs, total_length) = read_collection_stats(store, wtxn)?;
     let total_docs = total_docs
         .checked_sub(1)
-        .ok_or(Error::ArithmeticOverflow("bm25 total docs"))?;
+        .ok_or_else(|| corrupted("total_docs underflow during deindex"))?;
     let total_length = total_length
         .checked_sub(u64::from(doc_len))
-        .ok_or(Error::ArithmeticOverflow("bm25 total length"))?;
+        .ok_or_else(|| corrupted("total_length underflow during deindex"))?;
     write_collection_stats(store, wtxn, total_docs, total_length)?;
 
     store.text_meta.delete(wtxn, id.as_bytes())?;
@@ -149,7 +168,7 @@ pub(crate) fn search_text(
         return Ok(Vec::new());
     }
 
-    let mut tokens = tokenize(query);
+    let mut tokens: Vec<Cow<'_, str>> = tokenize(query).collect();
     if tokens.is_empty() {
         return Ok(Vec::new());
     }
@@ -162,15 +181,22 @@ pub(crate) fn search_text(
     }
 
     let n = f64::from(total_docs);
+    // BM25 scoring already uses f64; precision beyond 2^53 tokens is not
+    // material for the local corpora this engine targets.
     let avgdl = total_length as f64 / n;
 
     let mut scores = HashMap::<EntityId, f64>::new();
+    let mut doc_len_cache = HashMap::<EntityId, u32>::new();
 
     for token in tokens {
-        let Some(posting) = store.text_postings.get(rtxn, token.as_bytes())? else {
+        let Some(posting) = store.text_postings.get(rtxn, token.as_ref().as_bytes())? else {
             continue;
         };
         validate_posting_alignment(posting)?;
+
+        if scores.is_empty() {
+            scores = HashMap::with_capacity(posting.len() / POSTING_ENTRY_LEN);
+        }
 
         let df = posting.len() / POSTING_ENTRY_LEN;
         if df == 0 {
@@ -182,22 +208,30 @@ pub(crate) fn search_text(
         for chunk in posting.chunks_exact(POSTING_ENTRY_LEN) {
             let (id, tf) = decode_posting_entry(chunk)?;
             if tf == 0 {
-                return Err(Error::CorruptedIndex("bm25 posting"));
+                return Err(corrupted("posting entry has zero term frequency"));
             }
 
-            let doc_meta = store
-                .text_meta
-                .get(rtxn, id.as_bytes())?
-                .ok_or(Error::MissingPostingEntry)?;
-            let (dl, _) = decode_doc_meta(doc_meta)?;
+            let dl = if let Some(&cached) = doc_len_cache.get(&id) {
+                cached
+            } else {
+                let doc_meta = store
+                    .text_meta
+                    .get(rtxn, id.as_bytes())?
+                    .ok_or_else(|| corrupted("missing text metadata during scoring"))?;
+                let (dl, _) = decode_doc_meta(doc_meta)?;
+                doc_len_cache.insert(id, dl);
+                dl
+            };
+            if dl == 0 {
+                return Err(corrupted(
+                    "posting entry references document with zero length",
+                ));
+            }
 
             let tf = f64::from(tf);
             let dl = f64::from(dl);
             let norm = if avgdl > 0.0 { dl / avgdl } else { 0.0 };
             let denom = tf + K1 * (1.0 - B + B * norm);
-            if denom == 0.0 {
-                return Err(Error::CorruptedIndex("bm25 posting"));
-            }
             let score = idf * (tf * (K1 + 1.0)) / denom;
             *scores.entry(id).or_insert(0.0) += score;
         }
@@ -221,7 +255,7 @@ pub(crate) fn search_text(
 
 fn validate_posting_alignment(posting: &[u8]) -> Result<()> {
     if !posting.len().is_multiple_of(POSTING_ENTRY_LEN) {
-        return Err(Error::CorruptedIndex("bm25 posting"));
+        return Err(corrupted("posting list has invalid byte length"));
     }
     Ok(())
 }
@@ -230,20 +264,27 @@ fn decode_posting_entry(chunk: &[u8]) -> Result<(EntityId, u32)> {
     let id = EntityId::from_bytes(
         chunk[..16]
             .try_into()
-            .map_err(|_| Error::CorruptedIndex("bm25 posting"))?,
+            .map_err(|_| corrupted("posting entry is missing entity id bytes"))?,
     )
-    .map_err(|_| Error::CorruptedIndex("bm25 posting"))?;
+    .map_err(|_| corrupted("posting entry has invalid entity id"))?;
     let tf = u32::from_le_bytes(
         chunk[16..20]
             .try_into()
-            .map_err(|_| Error::CorruptedIndex("bm25 posting"))?,
+            .map_err(|_| corrupted("posting entry is missing tf bytes"))?,
     );
     Ok((id, tf))
 }
 
-fn read_posting(store: &Store, wtxn: &mut RwTxn<'_>, term: &str) -> Result<Vec<u8>> {
-    let existing = store.text_postings.get(wtxn, term.as_bytes())?;
-    let posting = existing.map_or_else(Vec::new, |bytes| bytes.to_vec());
+fn read_posting(store: &Store, txn: &RoTxn<'_>, term: &str) -> Result<Vec<u8>> {
+    let existing = store.text_postings.get(txn, term.as_bytes())?;
+    let posting = existing.map_or_else(
+        || Vec::with_capacity(POSTING_ENTRY_LEN),
+        |bytes| {
+            let mut posting = Vec::with_capacity(bytes.len() + POSTING_ENTRY_LEN);
+            posting.extend_from_slice(bytes);
+            posting
+        },
+    );
     validate_posting_alignment(&posting)?;
     Ok(posting)
 }
@@ -252,14 +293,14 @@ fn read_collection_stats(store: &Store, txn: &RoTxn<'_>) -> Result<(u32, u64)> {
     let total_docs = match store.text_meta.get(txn, &TOTAL_DOCS_KEY)? {
         Some(raw) => u32::from_le_bytes(
             raw.try_into()
-                .map_err(|_| Error::CorruptedIndex("bm25 collection stats"))?,
+                .map_err(|_| corrupted("total_docs sentinel has invalid length"))?,
         ),
         None => 0,
     };
     let total_length = match store.text_meta.get(txn, &TOTAL_LENGTH_KEY)? {
         Some(raw) => u64::from_le_bytes(
             raw.try_into()
-                .map_err(|_| Error::CorruptedIndex("bm25 collection stats"))?,
+                .map_err(|_| corrupted("total_length sentinel has invalid length"))?,
         ),
         None => 0,
     };
@@ -281,19 +322,159 @@ fn write_collection_stats(
     Ok(())
 }
 
+fn corrupted(message: &'static str) -> Error {
+    Error::CorruptedIndex(message)
+}
+
+fn validate_text_doc_id(id: &EntityId) -> Result<()> {
+    let bytes = id.as_bytes();
+    if bytes == &TOTAL_DOCS_KEY
+        || bytes == &TOTAL_LENGTH_KEY
+        || (bytes[1..].iter().all(|&b| b == 0xFF) && short_id_prefix(bytes[0]).is_ok())
+    {
+        return Err(Error::InvalidKey);
+    }
+    Ok(())
+}
+
+struct Tokenizer<'a> {
+    text: &'a str,
+    offset: usize,
+    cjk_state: Option<CjkState<'a>>,
+}
+
+struct CjkState<'a> {
+    run: &'a str,
+    boundaries: Vec<usize>,
+    next_index: usize,
+}
+
+impl<'a> Iterator for Tokenizer<'a> {
+    type Item = Cow<'a, str>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if let Some(state) = &mut self.cjk_state {
+            if let Some(token) = state.next_token() {
+                return Some(Cow::Borrowed(token));
+            }
+            self.cjk_state = None;
+        }
+
+        while self.offset < self.text.len() {
+            let tail = &self.text[self.offset..];
+            let ch = tail.chars().next()?;
+            self.offset += ch.len_utf8();
+
+            if !ch.is_alphanumeric() {
+                continue;
+            }
+
+            let start = self.offset - ch.len_utf8();
+            let cjk = is_cjk(ch);
+            while self.offset < self.text.len() {
+                let next = self.text[self.offset..]
+                    .chars()
+                    .next()
+                    .expect("offset stays on a valid char boundary");
+                if !next.is_alphanumeric() || is_cjk(next) != cjk {
+                    break;
+                }
+                self.offset += next.len_utf8();
+            }
+
+            let run = &self.text[start..self.offset];
+            if cjk {
+                let mut state = CjkState::new(run);
+                let token = state.next_token().expect("cjk runs are non-empty");
+                self.cjk_state = Some(state);
+                return Some(Cow::Borrowed(token));
+            }
+
+            return Some(normalize_non_cjk(run));
+        }
+
+        None
+    }
+}
+
+impl<'a> CjkState<'a> {
+    fn new(run: &'a str) -> Self {
+        let mut boundaries = run.char_indices().map(|(idx, _)| idx).collect::<Vec<_>>();
+        boundaries.push(run.len());
+        Self {
+            run,
+            boundaries,
+            next_index: 0,
+        }
+    }
+
+    fn next_token(&mut self) -> Option<&'a str> {
+        let char_count = self.boundaries.len().checked_sub(1)?;
+        if char_count == 0 {
+            return None;
+        }
+
+        if char_count == 1 {
+            if self.next_index == 0 {
+                self.next_index = 1;
+                return Some(self.run);
+            }
+            return None;
+        }
+
+        if self.next_index < char_count {
+            let start = self.boundaries[self.next_index];
+            let end = self.boundaries[self.next_index + 1];
+            self.next_index += 1;
+            return Some(&self.run[start..end]);
+        }
+
+        let bigram_index = self.next_index - char_count;
+        if bigram_index + 2 >= self.boundaries.len() {
+            return None;
+        }
+
+        let start = self.boundaries[bigram_index];
+        let end = self.boundaries[bigram_index + 2];
+        self.next_index += 1;
+        Some(&self.run[start..end])
+    }
+}
+
+fn normalize_non_cjk<'a>(run: &'a str) -> Cow<'a, str> {
+    if run.is_ascii() && !run.bytes().any(|byte| byte.is_ascii_uppercase()) {
+        Cow::Borrowed(run)
+    } else {
+        Cow::Owned(run.to_lowercase())
+    }
+}
+
+fn is_cjk(ch: char) -> bool {
+    matches!(
+        ch as u32,
+        0x3400..=0x4DBF
+            | 0x4E00..=0x9FFF
+            | 0x20000..=0x2A6DF
+            | 0xF900..=0xFAFF
+            | 0x3040..=0x309F
+            | 0x30A0..=0x30FF
+            | 0xAC00..=0xD7AF
+    )
+}
+
 fn decode_doc_meta(raw: &[u8]) -> Result<(u32, u32)> {
     if raw.len() != DOC_META_LEN {
-        return Err(Error::CorruptedIndex("bm25 doc meta"));
+        return Err(corrupted("document metadata has invalid byte length"));
     }
     let doc_len = u32::from_le_bytes(
         raw[..4]
             .try_into()
-            .map_err(|_| Error::CorruptedIndex("bm25 doc meta"))?,
+            .map_err(|_| corrupted("document metadata is missing doc_len bytes"))?,
     );
     let field_count = u32::from_le_bytes(
         raw[4..8]
             .try_into()
-            .map_err(|_| Error::CorruptedIndex("bm25 doc meta"))?,
+            .map_err(|_| corrupted("document metadata is missing field_count bytes"))?,
     );
     Ok((doc_len, field_count))
 }
@@ -322,11 +503,11 @@ fn decode_forward_terms(raw: &[u8]) -> Result<Vec<String>> {
     raw.split(|b| *b == 0)
         .map(|chunk| {
             if chunk.is_empty() {
-                return Err(Error::CorruptedIndex("bm25 forward terms"));
+                return Err(corrupted("forward index contains an empty term segment"));
             }
             str::from_utf8(chunk)
                 .map(str::to_owned)
-                .map_err(|_| Error::CorruptedIndex("bm25 forward terms"))
+                .map_err(|_| corrupted("forward index contains non-utf8 term bytes"))
         })
         .collect()
 }
@@ -373,14 +554,58 @@ mod tests {
             .join(" ")
     }
 
+    fn collect_tokens(text: &str) -> Vec<String> {
+        tokenize(text).map(Cow::into_owned).collect()
+    }
+
+    fn encoded_doc_meta(doc_len: u32, field_count: u32) -> [u8; DOC_META_LEN] {
+        let mut raw = [0_u8; DOC_META_LEN];
+        raw[..4].copy_from_slice(&doc_len.to_le_bytes());
+        raw[4..].copy_from_slice(&field_count.to_le_bytes());
+        raw
+    }
+
     #[test]
     fn tokenizer_basic() {
-        assert_eq!(tokenize("Hello World"), vec!["hello", "world"]);
-        assert_eq!(tokenize("Rust, BM25! 2026"), vec!["rust", "bm25", "2026"]);
+        assert_eq!(collect_tokens("Hello World"), vec!["hello", "world"]);
         assert_eq!(
-            tokenize("Caf\u{e9} \u{41f}\u{440}\u{438}\u{432}\u{435}\u{442}"),
+            collect_tokens("Rust, BM25! 2026"),
+            vec!["rust", "bm25", "2026"]
+        );
+        assert_eq!(
+            collect_tokens("Caf\u{e9} \u{41f}\u{440}\u{438}\u{432}\u{435}\u{442}"),
             vec!["caf\u{e9}", "\u{43f}\u{440}\u{438}\u{432}\u{435}\u{442}"]
         );
+    }
+
+    #[test]
+    fn tokenizer_cjk_bigrams() {
+        assert_eq!(
+            collect_tokens("東京塔"),
+            vec!["東", "京", "塔", "東京", "京塔"]
+        );
+        assert_eq!(collect_tokens("東"), vec!["東"]);
+        assert_eq!(
+            collect_tokens("とう東京"),
+            vec!["と", "う", "東", "京", "とう", "う東", "東京"]
+        );
+    }
+
+    #[test]
+    fn tokenizer_mixed_cjk_boundaries() {
+        assert_eq!(collect_tokens("東京abc"), vec!["東", "京", "東京", "abc"]);
+        assert_eq!(collect_tokens("abc東京"), vec!["abc", "東", "京", "東京"]);
+        assert_eq!(
+            collect_tokens("Rust東京2026"),
+            vec!["rust", "東", "京", "東京", "2026"]
+        );
+    }
+
+    #[test]
+    fn tokenizer_extended_cjk_ranges() {
+        assert_eq!(collect_tokens("㐀"), vec!["㐀"]);
+        assert_eq!(collect_tokens("𠀀"), vec!["𠀀"]);
+        assert_eq!(collect_tokens("神"), vec!["神"]);
     }
 
     #[test]
@@ -487,6 +712,30 @@ mod tests {
     }
 
     #[test]
+    fn zero_limit_returns_empty() -> Result<()> {
+        let temp_dir = tempfile::tempdir()?;
+        let vault = Vault::open(temp_dir.path(), test_config())?;
+        let id = EntityId::now();
+        put_text_doc(&vault, &id, "hello world")?;
+
+        let results = vault.search_text("hello", 0)?;
+        assert!(results.is_empty());
+
+        Ok(())
+    }
+
+    #[test]
+    fn empty_vault_query_returns_empty() -> Result<()> {
+        let temp_dir = tempfile::tempdir()?;
+        let vault = Vault::open(temp_dir.path(), test_config())?;
+
+        let results = vault.search_text("hello", 10)?;
+        assert!(results.is_empty());
+
+        Ok(())
+    }
+
+    #[test]
     fn empty_document() -> Result<()> {
         let temp_dir = tempfile::tempdir()?;
         let vault = Vault::open(temp_dir.path(), test_config())?;
@@ -513,6 +762,69 @@ mod tests {
         put_text_doc(&vault, &id, "solitary")?;
         let results = vault.search_text("solitary", 10)?;
         assert!(contains_id(&results, &id));
+
+        Ok(())
+    }
+
+    #[test]
+    fn cjk_query_matches_bigrams() -> Result<()> {
+        let temp_dir = tempfile::tempdir()?;
+        let vault = Vault::open(temp_dir.path(), test_config())?;
+        let id = EntityId::now();
+
+        put_text_doc(&vault, &id, "東京塔")?;
+        let results = vault.search_text("東京", 10)?;
+        assert!(contains_id(&results, &id));
+
+        Ok(())
+    }
+
+    #[test]
+    fn single_character_cjk_document_is_searchable() -> Result<()> {
+        let temp_dir = tempfile::tempdir()?;
+        let vault = Vault::open(temp_dir.path(), test_config())?;
+        let id = EntityId::now();
+
+        put_text_doc(&vault, &id, "東")?;
+        let results = vault.search_text("東", 10)?;
+        assert!(contains_id(&results, &id));
+
+        Ok(())
+    }
+
+    #[test]
+    fn single_character_query_matches_inside_multi_char_cjk_run() -> Result<()> {
+        let temp_dir = tempfile::tempdir()?;
+        let vault = Vault::open(temp_dir.path(), test_config())?;
+        let id = EntityId::now();
+
+        put_text_doc(&vault, &id, "東京塔")?;
+        let results = vault.search_text("京", 10)?;
+        assert!(contains_id(&results, &id));
+
+        Ok(())
+    }
+
+    #[test]
+    fn reserved_bm25_doc_ids_are_rejected() -> Result<()> {
+        let temp_dir = tempfile::tempdir()?;
+        let vault = Vault::open(temp_dir.path(), test_config())?;
+
+        let mut short_id_sentinel = [0xFF; 16];
+        short_id_sentinel[0] = 1;
+
+        for raw_id in [TOTAL_DOCS_KEY, TOTAL_LENGTH_KEY, short_id_sentinel] {
+            let id = EntityId::from_bytes_unchecked(raw_id);
+            let err = vault
+                .batch()
+                .text(&id, &[("body", "reserved")])
+                .commit()
+                .unwrap_err();
+            assert!(matches!(err, Error::InvalidKey));
+        }
+
+        let rtxn = vault.store.env.read_txn()?;
+        assert_eq!(read_collection_stats(&vault.store, &rtxn)?, (0, 0));
 
         Ok(())
     }
@@ -566,47 +878,326 @@ mod tests {
     }
 
     #[test]
-    fn search_reports_corrupted_index_for_zero_tf_posting() -> Result<()> {
+    fn malformed_posting_returns_corrupted_index() -> Result<()> {
         let temp_dir = tempfile::tempdir()?;
         let vault = Vault::open(temp_dir.path(), test_config())?;
-        let id = EntityId::now();
-
-        put_text_doc(&vault, &id, "apple")?;
 
         let mut wtxn = vault.store.env.write_txn()?;
-        let mut corrupted_posting = Vec::with_capacity(POSTING_ENTRY_LEN);
-        corrupted_posting.extend_from_slice(id.as_bytes());
-        corrupted_posting.extend_from_slice(&0_u32.to_le_bytes());
         vault
             .store
             .text_postings
-            .put(&mut wtxn, b"apple", &corrupted_posting)?;
+            .put(&mut wtxn, b"bad", &[1, 2, 3])?;
+        write_collection_stats(&vault.store, &mut wtxn, 1, 1)?;
         wtxn.commit()?;
 
-        let err = vault
-            .search_text("apple", 10)
-            .expect_err("expected CorruptedIndex for zero-tf posting");
+        let err = vault.search_text("bad", 10).unwrap_err();
         assert!(matches!(err, Error::CorruptedIndex(_)));
 
         Ok(())
     }
 
     #[test]
-    fn deindex_reports_missing_posting_entry() -> Result<()> {
+    fn zero_tf_posting_returns_corrupted_index() -> Result<()> {
         let temp_dir = tempfile::tempdir()?;
         let vault = Vault::open(temp_dir.path(), test_config())?;
         let id = EntityId::now();
 
-        put_text_doc(&vault, &id, "apple")?;
+        let mut posting = Vec::new();
+        posting.extend_from_slice(id.as_bytes());
+        posting.extend_from_slice(&0_u32.to_le_bytes());
 
         let mut wtxn = vault.store.env.write_txn()?;
-        vault.store.text_postings.delete(&mut wtxn, b"apple")?;
+        vault
+            .store
+            .text_postings
+            .put(&mut wtxn, b"alpha", &posting)?;
+        vault
+            .store
+            .text_meta
+            .put(&mut wtxn, id.as_bytes(), &encoded_doc_meta(1, 1))?;
+        write_collection_stats(&vault.store, &mut wtxn, 1, 1)?;
+        wtxn.commit()?;
+
+        let err = vault.search_text("alpha", 10).unwrap_err();
+        assert!(matches!(err, Error::CorruptedIndex(_)));
+
+        Ok(())
+    }
+
+    #[test]
+    fn missing_doc_meta_returns_corrupted_index() -> Result<()> {
+        let temp_dir = tempfile::tempdir()?;
+        let vault = Vault::open(temp_dir.path(), test_config())?;
+        let id = EntityId::now();
+
+        let mut posting = Vec::new();
+        posting.extend_from_slice(id.as_bytes());
+        posting.extend_from_slice(&1_u32.to_le_bytes());
+
+        let mut wtxn = vault.store.env.write_txn()?;
+        vault
+            .store
+            .text_postings
+            .put(&mut wtxn, b"alpha", &posting)?;
+        write_collection_stats(&vault.store, &mut wtxn, 1, 1)?;
+        wtxn.commit()?;
+
+        let err = vault.search_text("alpha", 10).unwrap_err();
+        assert!(matches!(err, Error::CorruptedIndex(_)));
+
+        Ok(())
+    }
+
+    #[test]
+    fn malformed_doc_meta_returns_corrupted_index() -> Result<()> {
+        let temp_dir = tempfile::tempdir()?;
+        let vault = Vault::open(temp_dir.path(), test_config())?;
+        let id = EntityId::now();
+
+        let mut posting = Vec::new();
+        posting.extend_from_slice(id.as_bytes());
+        posting.extend_from_slice(&1_u32.to_le_bytes());
+
+        let mut wtxn = vault.store.env.write_txn()?;
+        vault
+            .store
+            .text_postings
+            .put(&mut wtxn, b"alpha", &posting)?;
+        vault
+            .store
+            .text_meta
+            .put(&mut wtxn, id.as_bytes(), &[1, 2, 3])?;
+        write_collection_stats(&vault.store, &mut wtxn, 1, 1)?;
+        wtxn.commit()?;
+
+        let err = vault.search_text("alpha", 10).unwrap_err();
+        assert!(matches!(err, Error::CorruptedIndex(_)));
+
+        Ok(())
+    }
+
+    #[test]
+    fn zero_doc_len_during_scoring_returns_corrupted_index() -> Result<()> {
+        let temp_dir = tempfile::tempdir()?;
+        let vault = Vault::open(temp_dir.path(), test_config())?;
+        let id = EntityId::now();
+
+        let mut posting = Vec::new();
+        posting.extend_from_slice(id.as_bytes());
+        posting.extend_from_slice(&1_u32.to_le_bytes());
+
+        let mut wtxn = vault.store.env.write_txn()?;
+        vault
+            .store
+            .text_postings
+            .put(&mut wtxn, b"alpha", &posting)?;
+        vault
+            .store
+            .text_meta
+            .put(&mut wtxn, id.as_bytes(), &encoded_doc_meta(0, 0))?;
+        write_collection_stats(&vault.store, &mut wtxn, 1, 0)?;
+        wtxn.commit()?;
+
+        let err = vault.search_text("alpha", 10).unwrap_err();
+        assert!(matches!(err, Error::CorruptedIndex(_)));
+
+        Ok(())
+    }
+
+    #[test]
+    fn malformed_forward_index_returns_corrupted_index() -> Result<()> {
+        let temp_dir = tempfile::tempdir()?;
+        let vault = Vault::open(temp_dir.path(), test_config())?;
+        let id = EntityId::now();
+
+        let mut wtxn = vault.store.env.write_txn()?;
+        vault
+            .store
+            .text_forward
+            .put(&mut wtxn, id.as_bytes(), b"alpha\0\0beta")?;
+        vault
+            .store
+            .text_meta
+            .put(&mut wtxn, id.as_bytes(), &encoded_doc_meta(1, 1))?;
+        write_collection_stats(&vault.store, &mut wtxn, 1, 1)?;
+
+        let err = deindex_text(&vault.store, &mut wtxn, &id).unwrap_err();
+        assert!(matches!(err, Error::CorruptedIndex(_)));
+
+        Ok(())
+    }
+
+    #[test]
+    fn empty_forward_index_for_non_empty_doc_returns_corrupted_index() -> Result<()> {
+        let temp_dir = tempfile::tempdir()?;
+        let vault = Vault::open(temp_dir.path(), test_config())?;
+        let id = EntityId::now();
+
+        let mut wtxn = vault.store.env.write_txn()?;
+        vault
+            .store
+            .text_forward
+            .put(&mut wtxn, id.as_bytes(), b"")?;
+        vault
+            .store
+            .text_meta
+            .put(&mut wtxn, id.as_bytes(), &encoded_doc_meta(1, 1))?;
+        write_collection_stats(&vault.store, &mut wtxn, 1, 1)?;
+
+        let err = deindex_text(&vault.store, &mut wtxn, &id).unwrap_err();
+        assert!(matches!(err, Error::CorruptedIndex(_)));
+
+        Ok(())
+    }
+
+    #[test]
+    fn non_empty_forward_index_for_zero_length_doc_returns_corrupted_index() -> Result<()> {
+        let temp_dir = tempfile::tempdir()?;
+        let vault = Vault::open(temp_dir.path(), test_config())?;
+        let id = EntityId::now();
+
+        let mut wtxn = vault.store.env.write_txn()?;
+        vault
+            .store
+            .text_forward
+            .put(&mut wtxn, id.as_bytes(), b"alpha")?;
+        vault
+            .store
+            .text_meta
+            .put(&mut wtxn, id.as_bytes(), &encoded_doc_meta(0, 0))?;
+        write_collection_stats(&vault.store, &mut wtxn, 1, 0)?;
+
+        let err = deindex_text(&vault.store, &mut wtxn, &id).unwrap_err();
+        assert!(matches!(err, Error::CorruptedIndex(_)));
+
+        Ok(())
+    }
+
+    #[test]
+    fn missing_forward_index_for_indexed_doc_returns_corrupted_index() -> Result<()> {
+        let temp_dir = tempfile::tempdir()?;
+        let vault = Vault::open(temp_dir.path(), test_config())?;
+        let id = EntityId::now();
+
+        let mut wtxn = vault.store.env.write_txn()?;
+        vault
+            .store
+            .text_meta
+            .put(&mut wtxn, id.as_bytes(), &encoded_doc_meta(1, 1))?;
+        write_collection_stats(&vault.store, &mut wtxn, 1, 1)?;
+
+        let err = deindex_text(&vault.store, &mut wtxn, &id).unwrap_err();
+        assert!(matches!(err, Error::CorruptedIndex(_)));
+
+        Ok(())
+    }
+
+    #[test]
+    fn reindex_with_orphaned_text_meta_returns_corrupted_index() -> Result<()> {
+        let temp_dir = tempfile::tempdir()?;
+        let vault = Vault::open(temp_dir.path(), test_config())?;
+        let id = EntityId::now();
+
+        let mut wtxn = vault.store.env.write_txn()?;
+        vault
+            .store
+            .text_meta
+            .put(&mut wtxn, id.as_bytes(), &encoded_doc_meta(1, 1))?;
+        write_collection_stats(&vault.store, &mut wtxn, 1, 1)?;
         wtxn.commit()?;
 
         let err = vault
-            .delete_entity(&id)
-            .expect_err("expected MissingPostingEntry when text posting is missing");
-        assert!(matches!(err, Error::MissingPostingEntry));
+            .batch()
+            .text(&id, &[("body", "hello world")])
+            .commit()
+            .unwrap_err();
+        assert!(matches!(err, Error::CorruptedIndex(_)));
+
+        let rtxn = vault.store.env.read_txn()?;
+        assert!(vault
+            .store
+            .text_forward
+            .get(&rtxn, id.as_bytes())?
+            .is_none());
+        assert!(vault.store.text_meta.get(&rtxn, id.as_bytes())?.is_some());
+        assert_eq!(read_collection_stats(&vault.store, &rtxn)?, (1, 1));
+
+        Ok(())
+    }
+
+    #[test]
+    fn deindex_skips_missing_posting_list() -> Result<()> {
+        let temp_dir = tempfile::tempdir()?;
+        let vault = Vault::open(temp_dir.path(), test_config())?;
+        let id = EntityId::now();
+
+        let mut wtxn = vault.store.env.write_txn()?;
+        vault
+            .store
+            .text_forward
+            .put(&mut wtxn, id.as_bytes(), b"alpha")?;
+        vault
+            .store
+            .text_meta
+            .put(&mut wtxn, id.as_bytes(), &encoded_doc_meta(1, 1))?;
+        write_collection_stats(&vault.store, &mut wtxn, 1, 1)?;
+
+        deindex_text(&vault.store, &mut wtxn, &id)?;
+        wtxn.commit()?;
+
+        let rtxn = vault.store.env.read_txn()?;
+        assert!(vault
+            .store
+            .text_forward
+            .get(&rtxn, id.as_bytes())?
+            .is_none());
+        assert!(vault.store.text_meta.get(&rtxn, id.as_bytes())?.is_none());
+        assert_eq!(read_collection_stats(&vault.store, &rtxn)?, (0, 0));
+
+        Ok(())
+    }
+
+    #[test]
+    fn deindex_skips_entity_missing_from_posting() -> Result<()> {
+        let temp_dir = tempfile::tempdir()?;
+        let vault = Vault::open(temp_dir.path(), test_config())?;
+        let id = EntityId::now();
+        let other_id = EntityId::now();
+
+        let mut posting = Vec::new();
+        posting.extend_from_slice(other_id.as_bytes());
+        posting.extend_from_slice(&1_u32.to_le_bytes());
+
+        let mut wtxn = vault.store.env.write_txn()?;
+        vault
+            .store
+            .text_postings
+            .put(&mut wtxn, b"alpha", &posting)?;
+        vault
+            .store
+            .text_forward
+            .put(&mut wtxn, id.as_bytes(), b"alpha")?;
+        vault
+            .store
+            .text_meta
+            .put(&mut wtxn, id.as_bytes(), &encoded_doc_meta(1, 1))?;
+        write_collection_stats(&vault.store, &mut wtxn, 1, 1)?;
+
+        deindex_text(&vault.store, &mut wtxn, &id)?;
+        wtxn.commit()?;
+
+        let rtxn = vault.store.env.read_txn()?;
+        assert!(vault
+            .store
+            .text_forward
+            .get(&rtxn, id.as_bytes())?
+            .is_none());
+        assert!(vault.store.text_meta.get(&rtxn, id.as_bytes())?.is_none());
+        assert_eq!(read_collection_stats(&vault.store, &rtxn)?, (0, 0));
+        assert_eq!(
+            vault.store.text_postings.get(&rtxn, b"alpha")?,
+            Some(posting.as_slice())
+        );
 
         Ok(())
     }
