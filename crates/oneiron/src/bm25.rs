@@ -93,6 +93,9 @@ pub(crate) fn deindex_text(store: &Store, wtxn: &mut RwTxn<'_>, id: &EntityId) -
     validate_text_doc_id(id)?;
 
     let Some(forward_raw) = store.text_forward.get(wtxn, id.as_bytes())? else {
+        if store.text_meta.get(wtxn, id.as_bytes())?.is_some() {
+            return Err(corrupted("missing forward index for indexed document"));
+        }
         return Ok(());
     };
 
@@ -1001,6 +1004,25 @@ mod tests {
             .store
             .text_forward
             .put(&mut wtxn, id.as_bytes(), b"")?;
+        vault
+            .store
+            .text_meta
+            .put(&mut wtxn, id.as_bytes(), &encoded_doc_meta(1, 1))?;
+        write_collection_stats(&vault.store, &mut wtxn, 1, 1)?;
+
+        let err = deindex_text(&vault.store, &mut wtxn, &id).unwrap_err();
+        assert!(matches!(err, Error::CorruptedIndex(_)));
+
+        Ok(())
+    }
+
+    #[test]
+    fn missing_forward_index_for_indexed_doc_returns_corrupted_index() -> Result<()> {
+        let temp_dir = tempfile::tempdir()?;
+        let vault = Vault::open(temp_dir.path(), test_config())?;
+        let id = EntityId::now();
+
+        let mut wtxn = vault.store.env.write_txn()?;
         vault
             .store
             .text_meta
