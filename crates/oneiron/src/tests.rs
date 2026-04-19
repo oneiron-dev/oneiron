@@ -66,17 +66,17 @@ const DB_NAMES: [&str; 22] = [
 ];
 
 fn test_config() -> VaultConfig {
-    VaultConfig {
-        map_size: 16 * 1024 * 1024,
-        dimensions: 4,
-        embedding_model: None,
-        max_readers: 16,
-        hnsw: HnswConfig {
-            m_max_0: 64,
-            ef_construction: 200,
-            ef_search: 128,
-        },
-    }
+    // Build from the public preset so tests exercise the same construction
+    // path external callers must use with `#[non_exhaustive]` VaultConfig.
+    let mut config = VaultConfig::device();
+    config.map_size = 16 * 1024 * 1024;
+    config.dimensions = 4;
+    config.max_readers = 16;
+    config.hnsw = HnswConfig::default();
+    config.hnsw.m_max_0 = 64;
+    config.hnsw.ef_construction = 200;
+    config.hnsw.ef_search = 128;
+    config
 }
 
 fn test_time_range(start: u64, end: u64) -> TimeRange {
@@ -1868,15 +1868,18 @@ fn context_pack_run_serialized_toon_end_to_end() -> Result<()> {
 
 #[test]
 fn entity_id_now_is_monotonic_lexicographically() {
+    let mut prev = EntityId::now();
+    let mut saw_increase = false;
     for _ in 0..128 {
-        let a = EntityId::now();
-        let b = EntityId::now();
-        if a < b {
-            return;
-        }
+        let next = EntityId::now();
+        assert!(prev <= next, "EntityId::now() regressed: prev > next");
+        saw_increase |= prev < next;
+        prev = next;
     }
-
-    panic!("expected two consecutive EntityId::now() values to increase");
+    assert!(
+        saw_increase,
+        "expected EntityId::now() to advance at least once"
+    );
 }
 
 #[test]
