@@ -15,12 +15,12 @@ use std::sync::Arc;
 use loro::{ExportMode, LoroDoc};
 use tokio::sync::mpsc;
 
-use crate::sync::transport::{
-    self, window_sub_tags, TransportError, TAG_BULK_TRANSFER, TAG_BULK_TRANSFER_DONE,
-    TAG_SYNC_UPDATE, TAG_VERSION_VECTOR, TAG_WINDOW_SYNC,
-};
-use crate::sync::types::{parse_window_key_str, WindowKey};
 use crate::Vault;
+use crate::sync::transport::{
+    self, TAG_BULK_TRANSFER, TAG_BULK_TRANSFER_DONE, TAG_SYNC_UPDATE, TAG_VERSION_VECTOR,
+    TAG_WINDOW_SYNC, TransportError, window_sub_tags,
+};
+use crate::sync::types::{WindowKey, parse_window_key_str};
 
 /// Client-side sync configuration.
 #[derive(Debug, Clone)]
@@ -336,13 +336,13 @@ impl SyncClient {
             return messages;
         }
 
-        if let Some(prev_key) = current_key.previous_month() {
-            if let Err(e) = self.ensure_window(prev_key.as_str()) {
-                let _ = self.event_tx.send(SyncEvent::Error(format!(
-                    "Initial sync invalid previous window key: {e}"
-                )));
-                return messages;
-            }
+        if let Some(prev_key) = current_key.previous_month()
+            && let Err(e) = self.ensure_window(prev_key.as_str())
+        {
+            let _ = self.event_tx.send(SyncEvent::Error(format!(
+                "Initial sync invalid previous window key: {e}"
+            )));
+            return messages;
         }
 
         // Send VV request for each default window

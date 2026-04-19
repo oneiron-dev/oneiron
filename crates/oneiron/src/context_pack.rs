@@ -6,17 +6,17 @@ use std::time::Instant;
 
 use heed::RoTxn;
 
-use crate::batch::{EntityMetadataHeader, ENTITY_METADATA_HEADER_LEN};
+use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::error::{Error, Result};
 use crate::pipeline::PipelineBuilder;
-use crate::serialize::{serialize_pack, SerializeConfig};
+use crate::serialize::{SerializeConfig, serialize_pack};
 use crate::store::Store;
 use crate::types::{
-    parse_vad, ContextEntity, ContextPack, EdgeInfo, EntityId, FieldProfile, PackFormat, PackStats,
-    Signal, TemporalAnchorMode, TemporalGranularity, TimeRange, TokenAllocation, EDGE_KEY_LEN,
-    EDGE_VALUE_LEN,
+    ContextEntity, ContextPack, EDGE_KEY_LEN, EDGE_VALUE_LEN, EdgeInfo, EntityId, FieldProfile,
+    PackFormat, PackStats, Signal, TemporalAnchorMode, TemporalGranularity, TimeRange,
+    TokenAllocation, parse_vad,
 };
-use crate::{le_bytes_to_f32_vec, Vault};
+use crate::{Vault, le_bytes_to_f32_vec};
 
 const DEFAULT_MAX_NEIGHBORS: usize = 50;
 const DEFAULT_TOKEN_BUDGET: usize = 4000;

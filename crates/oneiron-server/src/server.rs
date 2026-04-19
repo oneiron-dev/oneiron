@@ -1,10 +1,10 @@
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU32, Ordering};
 
 use loro::{ExportMode, LoroDoc, VersionVector};
 use oneiron::sync::WindowKey;
-use tokio::sync::{broadcast, RwLock};
+use tokio::sync::{RwLock, broadcast};
 
 use crate::config::SyncServerConfig;
 use crate::protocol::AwarenessState;
@@ -125,12 +125,14 @@ mod tests {
             *meta_map.get("schema_version").unwrap().as_i64().unwrap(),
             1i64
         );
-        assert!(meta_map
-            .get("windows")
-            .unwrap()
-            .as_string()
-            .unwrap()
-            .is_empty());
+        assert!(
+            meta_map
+                .get("windows")
+                .unwrap()
+                .as_string()
+                .unwrap()
+                .is_empty()
+        );
     }
 
     #[tokio::test]

@@ -5,7 +5,7 @@
 use std::sync::Arc;
 
 use oneiron::sync::bridge::{
-    encode_edge_value_for_crdt, format_edge_key, Materializer, BRIDGE_ORIGIN,
+    BRIDGE_ORIGIN, Materializer, encode_edge_value_for_crdt, format_edge_key,
 };
 use oneiron::sync::engine::{CrdtDoc, CrdtMap};
 use oneiron::sync::schema::create_window_doc;

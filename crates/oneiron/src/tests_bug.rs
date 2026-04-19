@@ -210,46 +210,60 @@ fn batch_in_put_failure_does_not_commit_partial_entity_update() {
     let old_learned_key = Store::encode_temporal_key(11, &id);
     let new_learned_key = Store::encode_temporal_key(21, &id);
 
-    assert!(vault
-        .store
-        .type_index
-        .get(&rtxn, &old_type_key)
-        .unwrap()
-        .is_some());
-    assert!(vault
-        .store
-        .type_index
-        .get(&rtxn, &new_type_key)
-        .unwrap()
-        .is_none());
-    assert!(vault
-        .store
-        .temporal_occurred_start
-        .get(&rtxn, &old_start_key)
-        .unwrap()
-        .is_some());
-    assert!(vault
-        .store
-        .temporal_occurred_start
-        .get(&rtxn, &new_start_key)
-        .unwrap()
-        .is_none());
-    assert!(vault
-        .store
-        .temporal_occurred_end
-        .get(&rtxn, &new_end_key)
-        .unwrap()
-        .is_none());
-    assert!(vault
-        .store
-        .temporal_learned
-        .get(&rtxn, &old_learned_key)
-        .unwrap()
-        .is_some());
-    assert!(vault
-        .store
-        .temporal_learned
-        .get(&rtxn, &new_learned_key)
-        .unwrap()
-        .is_none());
+    assert!(
+        vault
+            .store
+            .type_index
+            .get(&rtxn, &old_type_key)
+            .unwrap()
+            .is_some()
+    );
+    assert!(
+        vault
+            .store
+            .type_index
+            .get(&rtxn, &new_type_key)
+            .unwrap()
+            .is_none()
+    );
+    assert!(
+        vault
+            .store
+            .temporal_occurred_start
+            .get(&rtxn, &old_start_key)
+            .unwrap()
+            .is_some()
+    );
+    assert!(
+        vault
+            .store
+            .temporal_occurred_start
+            .get(&rtxn, &new_start_key)
+            .unwrap()
+            .is_none()
+    );
+    assert!(
+        vault
+            .store
+            .temporal_occurred_end
+            .get(&rtxn, &new_end_key)
+            .unwrap()
+            .is_none()
+    );
+    assert!(
+        vault
+            .store
+            .temporal_learned
+            .get(&rtxn, &old_learned_key)
+            .unwrap()
+            .is_some()
+    );
+    assert!(
+        vault
+            .store
+            .temporal_learned
+            .get(&rtxn, &new_learned_key)
+            .unwrap()
+            .is_none()
+    );
 }

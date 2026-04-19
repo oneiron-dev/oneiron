@@ -1,12 +1,12 @@
 use xxhash_rust::xxh32::xxh32;
 
-use crate::batch::{parse_short_id_value, ENTITY_METADATA_HEADER_LEN, SHORT_ID_COUNTER_LEN};
+use crate::batch::{ENTITY_METADATA_HEADER_LEN, SHORT_ID_COUNTER_LEN, parse_short_id_value};
 use crate::error::{Error, Result};
 use crate::hnsw::{
-    build_hnsw_graph_from_snapshot, read_vector_version, write_rebuilt_hnsw, COUNT_KEY,
+    COUNT_KEY, build_hnsw_graph_from_snapshot, read_vector_version, write_rebuilt_hnsw,
 };
-use crate::types::{short_id_prefix, EntityId, ENTITY_ID_LEN};
-use crate::{le_bytes_to_f32_vec, ppr, Vault};
+use crate::types::{ENTITY_ID_LEN, EntityId, short_id_prefix};
+use crate::{Vault, le_bytes_to_f32_vec, ppr};
 
 const ERR_VECTOR_KEY: &str = "vector key";
 const ERR_SHORT_IDS_REVERSE_VALUE: &str = "short_ids_reverse value";
@@ -255,7 +255,8 @@ fn prepare_rebuild_hnsw(vault: &Vault, heal_invalid_vectors: bool) -> Result<Pre
 
     for entry in vault.store.vectors.iter(&rtxn)? {
         let (id_bytes, vector_bytes) = entry?;
-        match validate_rebuild_vector(vault, id_bytes, vector_bytes) {
+        let validation = validate_rebuild_vector(vault, id_bytes, vector_bytes);
+        match validation {
             Ok(id) => vector_ids.push(id),
             Err(error) if heal_invalid_vectors && is_healable_rebuild_error(&error) => {
                 invalid_vectors_skipped += 1;
@@ -647,11 +648,13 @@ mod tests {
         assert_eq!(count, 1);
 
         let rtxn = vault.store.env.read_txn()?;
-        assert!(vault
-            .store
-            .hnsw_neighbors
-            .get(&rtxn, b.as_bytes())?
-            .is_none());
+        assert!(
+            vault
+                .store
+                .hnsw_neighbors
+                .get(&rtxn, b.as_bytes())?
+                .is_none()
+        );
         assert!(vault.store.vectors.get(&rtxn, b.as_bytes())?.is_some());
         Ok(())
     }
@@ -864,11 +867,13 @@ mod tests {
 
         let rtxn = vault.store.env.read_txn()?;
         assert!(vault.store.short_ids.get(&rtxn, id.as_bytes())?.is_none());
-        assert!(vault
-            .store
-            .short_ids_reverse
-            .get(&rtxn, short_id.as_bytes())?
-            .is_none());
+        assert!(
+            vault
+                .store
+                .short_ids_reverse
+                .get(&rtxn, short_id.as_bytes())?
+                .is_none()
+        );
         Ok(())
     }
 
@@ -905,11 +910,13 @@ mod tests {
         assert_eq!(report.orphan_short_ids_deleted, 1);
 
         let rtxn = vault.store.env.read_txn()?;
-        assert!(vault
-            .store
-            .short_ids_reverse
-            .get(&rtxn, short_id.as_bytes())?
-            .is_none());
+        assert!(
+            vault
+                .store
+                .short_ids_reverse
+                .get(&rtxn, short_id.as_bytes())?
+                .is_none()
+        );
         Ok(())
     }
 
@@ -1080,11 +1087,13 @@ mod tests {
         assert_eq!(report.orphan_short_ids_deleted, 1);
 
         let rtxn = vault.store.env.read_txn()?;
-        assert!(vault
-            .store
-            .short_ids_reverse
-            .get(&rtxn, b"deadbeef")?
-            .is_none());
+        assert!(
+            vault
+                .store
+                .short_ids_reverse
+                .get(&rtxn, b"deadbeef")?
+                .is_none()
+        );
         Ok(())
     }
 
