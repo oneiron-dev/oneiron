@@ -76,10 +76,10 @@ pub(crate) fn index_text(
     let (total_docs, total_length) = read_collection_stats(store, wtxn)?;
     let total_docs = total_docs
         .checked_add(1)
-        .ok_or_else(|| corrupted("total_docs overflow during index"))?;
+        .ok_or(Error::ArithmeticOverflow("bm25 total_docs"))?;
     let total_length = total_length
         .checked_add(u64::from(doc_len))
-        .ok_or_else(|| corrupted("total_length overflow during index"))?;
+        .ok_or(Error::ArithmeticOverflow("bm25 total_length"))?;
     write_collection_stats(store, wtxn, total_docs, total_length)?;
 
     Ok(())
@@ -99,6 +99,11 @@ pub(crate) fn deindex_text(store: &Store, wtxn: &mut RwTxn<'_>, id: &EntityId) -
         .get(wtxn, id.as_bytes())?
         .ok_or_else(|| corrupted("missing text metadata for deindex"))?;
     let (doc_len, _) = decode_doc_meta(doc_meta)?;
+    if terms.is_empty() && doc_len > 0 {
+        return Err(corrupted(
+            "empty forward index cannot describe non-empty document",
+        ));
+    }
 
     for term in terms {
         let Some(posting) = store.text_postings.get(wtxn, term.as_bytes())? else {
@@ -301,7 +306,7 @@ fn corrupted(message: &'static str) -> Error {
 
 fn validate_text_doc_id(id: &EntityId) -> Result<()> {
     if id.as_bytes() == &TOTAL_DOCS_KEY || id.as_bytes() == &TOTAL_LENGTH_KEY {
-        return Err(corrupted("reserved entity id collides with bm25 stats key"));
+        return Err(Error::InvalidKey);
     }
     Ok(())
 }
@@ -781,7 +786,7 @@ mod tests {
                 .text(&id, &[("body", "reserved")])
                 .commit()
                 .unwrap_err();
-            assert!(matches!(err, Error::CorruptedIndex(_)));
+            assert!(matches!(err, Error::InvalidKey));
         }
 
         let rtxn = vault.store.env.read_txn()?;
@@ -948,6 +953,29 @@ mod tests {
             .store
             .text_forward
             .put(&mut wtxn, id.as_bytes(), b"alpha\0\0beta")?;
+        vault
+            .store
+            .text_meta
+            .put(&mut wtxn, id.as_bytes(), &encoded_doc_meta(1, 1))?;
+        write_collection_stats(&vault.store, &mut wtxn, 1, 1)?;
+
+        let err = deindex_text(&vault.store, &mut wtxn, &id).unwrap_err();
+        assert!(matches!(err, Error::CorruptedIndex(_)));
+
+        Ok(())
+    }
+
+    #[test]
+    fn empty_forward_index_for_non_empty_doc_returns_corrupted_index() -> Result<()> {
+        let temp_dir = tempfile::tempdir()?;
+        let vault = Vault::open(temp_dir.path(), test_config())?;
+        let id = EntityId::now();
+
+        let mut wtxn = vault.store.env.write_txn()?;
+        vault
+            .store
+            .text_forward
+            .put(&mut wtxn, id.as_bytes(), b"")?;
         vault
             .store
             .text_meta
