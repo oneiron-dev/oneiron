@@ -110,9 +110,9 @@ pub(crate) fn deindex_text(store: &Store, wtxn: &mut RwTxn<'_>, id: &EntityId) -
         .get(wtxn, id.as_bytes())?
         .ok_or_else(|| corrupted("missing text metadata for deindex"))?;
     let (doc_len, _) = decode_doc_meta(doc_meta)?;
-    if terms.is_empty() && doc_len > 0 {
+    if terms.is_empty() != (doc_len == 0) {
         return Err(corrupted(
-            "empty forward index cannot describe non-empty document",
+            "forward index emptiness does not match stored document length",
         ));
     }
 
@@ -222,6 +222,11 @@ pub(crate) fn search_text(
                 doc_len_cache.insert(id, dl);
                 dl
             };
+            if dl == 0 {
+                return Err(corrupted(
+                    "posting entry references document with zero length",
+                ));
+            }
 
             let tf = f64::from(tf);
             let dl = f64::from(dl);
@@ -972,6 +977,34 @@ mod tests {
     }
 
     #[test]
+    fn zero_doc_len_during_scoring_returns_corrupted_index() -> Result<()> {
+        let temp_dir = tempfile::tempdir()?;
+        let vault = Vault::open(temp_dir.path(), test_config())?;
+        let id = EntityId::now();
+
+        let mut posting = Vec::new();
+        posting.extend_from_slice(id.as_bytes());
+        posting.extend_from_slice(&1_u32.to_le_bytes());
+
+        let mut wtxn = vault.store.env.write_txn()?;
+        vault
+            .store
+            .text_postings
+            .put(&mut wtxn, b"alpha", &posting)?;
+        vault
+            .store
+            .text_meta
+            .put(&mut wtxn, id.as_bytes(), &encoded_doc_meta(0, 0))?;
+        write_collection_stats(&vault.store, &mut wtxn, 1, 0)?;
+        wtxn.commit()?;
+
+        let err = vault.search_text("alpha", 10).unwrap_err();
+        assert!(matches!(err, Error::CorruptedIndex(_)));
+
+        Ok(())
+    }
+
+    #[test]
     fn malformed_forward_index_returns_corrupted_index() -> Result<()> {
         let temp_dir = tempfile::tempdir()?;
         let vault = Vault::open(temp_dir.path(), test_config())?;
@@ -1010,6 +1043,29 @@ mod tests {
             .text_meta
             .put(&mut wtxn, id.as_bytes(), &encoded_doc_meta(1, 1))?;
         write_collection_stats(&vault.store, &mut wtxn, 1, 1)?;
+
+        let err = deindex_text(&vault.store, &mut wtxn, &id).unwrap_err();
+        assert!(matches!(err, Error::CorruptedIndex(_)));
+
+        Ok(())
+    }
+
+    #[test]
+    fn non_empty_forward_index_for_zero_length_doc_returns_corrupted_index() -> Result<()> {
+        let temp_dir = tempfile::tempdir()?;
+        let vault = Vault::open(temp_dir.path(), test_config())?;
+        let id = EntityId::now();
+
+        let mut wtxn = vault.store.env.write_txn()?;
+        vault
+            .store
+            .text_forward
+            .put(&mut wtxn, id.as_bytes(), b"alpha")?;
+        vault
+            .store
+            .text_meta
+            .put(&mut wtxn, id.as_bytes(), &encoded_doc_meta(0, 0))?;
+        write_collection_stats(&vault.store, &mut wtxn, 1, 0)?;
 
         let err = deindex_text(&vault.store, &mut wtxn, &id).unwrap_err();
         assert!(matches!(err, Error::CorruptedIndex(_)));
