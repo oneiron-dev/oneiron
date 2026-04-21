@@ -113,6 +113,7 @@ impl EntityMetadataCache {
     }
 }
 
+#[must_use = "PipelineBuilder executes no query until a terminal `.run*()` method is called"]
 pub struct PipelineBuilder<'a> {
     vault: &'a Vault,
     vector_search: Option<(Vec<f32>, usize)>,
@@ -1961,11 +1962,11 @@ mod tests {
         };
         let exact_config = TemporalSearchConfig {
             sigma_secs: TemporalGranularity::Exact.sigma_secs(),
-            ..base_config.clone()
+            ..base_config
         };
         let hour_config = TemporalSearchConfig {
             sigma_secs: TemporalGranularity::Hour.sigma_secs(),
-            ..base_config.clone()
+            ..base_config
         };
         let day_config = TemporalSearchConfig {
             sigma_secs: TemporalGranularity::Day.sigma_secs(),
@@ -2353,7 +2354,7 @@ mod tests {
         };
         let day_config = TemporalSearchConfig {
             sigma_secs: TemporalGranularity::Day.sigma_secs(),
-            ..base_config.clone()
+            ..base_config
         };
         let year_config = TemporalSearchConfig {
             sigma_secs: TemporalGranularity::Year.sigma_secs(),

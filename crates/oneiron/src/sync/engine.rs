@@ -36,7 +36,13 @@ pub enum MapChange {
 
 /// Opaque subscription handle — the observer fires as long as this lives.
 /// The inner value is never read; dropping it unsubscribes the observer.
-pub struct Subscription(#[allow(dead_code)] pub(crate) Box<dyn std::any::Any + Send + Sync>);
+pub struct Subscription(
+    #[expect(
+        dead_code,
+        reason = "RAII subscription handle; payload intentionally unused by consumers, lifetime is the point"
+    )]
+    pub(crate) Box<dyn std::any::Any + Send + Sync>,
+);
 
 impl Subscription {
     pub fn new(inner: impl std::any::Any + Send + Sync + 'static) -> Self {

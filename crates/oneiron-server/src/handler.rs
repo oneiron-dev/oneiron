@@ -22,7 +22,7 @@ use crate::protocol::{self, ProtocolError, SyncMessage, window_sub_tags};
 use crate::server::SyncServer;
 
 /// Builds the WebSocket routes for the sync server.
-pub fn ws_routes(server: Arc<SyncServer>) -> Router {
+pub(crate) fn ws_routes(server: Arc<SyncServer>) -> Router {
     Router::new()
         .route("/ws", get(ws_upgrade_handler))
         .with_state(server)
@@ -352,7 +352,7 @@ fn decompress_bounded(
 /// BulkTransfer payload schema (MessagePack).
 #[allow(dead_code)] // Protocol schema — used for server→client BulkTransfer generation
 #[derive(Debug, serde::Deserialize, serde::Serialize)]
-pub struct BulkTransferPayload {
+pub(crate) struct BulkTransferPayload {
     pub entities: Vec<BulkEntity>,
     pub edges: Vec<BulkEdge>,
     pub tombstones: Vec<BulkTombstone>,
@@ -360,7 +360,7 @@ pub struct BulkTransferPayload {
 
 #[allow(dead_code)]
 #[derive(Debug, serde::Deserialize, serde::Serialize)]
-pub struct BulkEntity {
+pub(crate) struct BulkEntity {
     #[serde(with = "serde_bytes")]
     pub id: Vec<u8>,
     #[serde(with = "serde_bytes")]
@@ -369,7 +369,7 @@ pub struct BulkEntity {
 
 #[allow(dead_code)]
 #[derive(Debug, serde::Deserialize, serde::Serialize)]
-pub struct BulkEdge {
+pub(crate) struct BulkEdge {
     #[serde(with = "serde_bytes")]
     pub src: Vec<u8>,
     pub kind: u8,
@@ -384,7 +384,7 @@ pub struct BulkEdge {
 
 #[allow(dead_code)]
 #[derive(Debug, serde::Deserialize, serde::Serialize)]
-pub struct BulkTombstone {
+pub(crate) struct BulkTombstone {
     #[serde(with = "serde_bytes")]
     pub id: Vec<u8>,
     pub deleted_at: u64,

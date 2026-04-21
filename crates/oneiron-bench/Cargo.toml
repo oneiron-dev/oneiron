@@ -7,3 +7,6 @@ license.workspace = true
 
 [dependencies]
 oneiron = { path = "../oneiron" }
+
+[lints]
+workspace = true

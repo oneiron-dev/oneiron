@@ -95,7 +95,7 @@ pub fn load_window_from_state(
 ) -> Result<LoroDocument> {
     let rtxn = vault.store.env.read_txn()?;
 
-    let doc_key = format!("d:w:{}", key);
+    let doc_key = format!("d:w:{key}");
     let state = vault
         .store
         .sync_state
@@ -106,7 +106,7 @@ pub fn load_window_from_state(
     let doc = LoroDocument::from_snapshot(state)?;
 
     // Apply pending updates using prefix iterator (B-tree range seek)
-    let prefix = format!("u:w:{}:", key);
+    let prefix = format!("u:w:{key}:");
     let iter = vault.store.sync_state.prefix_iter(&rtxn, &prefix)?;
     for entry in iter {
         let (_k, v) = entry?;
@@ -123,7 +123,7 @@ pub fn replay_pending_mirrors(
     window_key: &WindowKey,
 ) -> Result<u32> {
     let rtxn = vault.store.env.read_txn()?;
-    let prefix = format!("pm:{}:", window_key);
+    let prefix = format!("pm:{window_key}:");
 
     let mut markers: Vec<(String, EntityId)> = Vec::new();
 

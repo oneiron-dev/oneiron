@@ -21,7 +21,7 @@ use super::loro_engine::LoroDocument;
 use crate::batch::{self, BatchOp, ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::store::Store;
 use crate::types::{EdgeKind, EntityId, Vad};
-use crate::{Result, Vault};
+use crate::{Error, Result, Vault};
 
 /// Origin tag used for LMDB→CRDT bridge writes.
 pub const BRIDGE_ORIGIN: &str = "bridge";
@@ -89,24 +89,36 @@ pub fn register_observer_a(
 
     doc.subscribe_local_updates(Box::new(move |update_bytes| {
         let result = vault.with_write_txn(|wtxn| {
-            let seq_key = format!("m:u_seq:w:{}", window_key);
+            let seq_key = format!("m:u_seq:w:{window_key}");
+            // Distinguish a missing key (fresh window — start at 0) from a
+            // present-but-malformed seq row (on-disk corruption). The latter
+            // must not silently reset to 0; doing so would let next_seq=1
+            // collide with whatever update was already persisted at
+            // `u:w:{window}:00000001` before the row was corrupted.
             let seq: u32 = match vault.store.sync_state.get(wtxn, &seq_key)? {
+                None => 0,
                 Some(raw) if raw.len() == 4 => u32::from_le_bytes(raw.try_into().unwrap()),
-                _ => 0,
+                Some(_) => return Err(Error::CorruptedIndex("observer a u_seq row")),
             };
-            let next_seq = seq.wrapping_add(1);
+            // checked_add surfaces overflow as a typed error rather than
+            // `wrapping_add`-ing to 0 and silently overwriting update key
+            // `u:w:{window}:00000000`. Matches SyncQueue's update-seq policy.
+            // u32 widening to u64 is tracked as a follow-up schema change.
+            let next_seq = seq
+                .checked_add(1)
+                .ok_or(Error::ArithmeticOverflow("observer a u_seq"))?;
             vault
                 .store
                 .sync_state
                 .put(wtxn, &seq_key, &next_seq.to_le_bytes())?;
 
-            let update_key = format!("u:w:{}:{:08x}", window_key, next_seq);
+            let update_key = format!("u:w:{window_key}:{next_seq:08x}");
             vault
                 .store
                 .sync_state
                 .put(wtxn, &update_key, update_bytes)?;
 
-            let svf_key = format!("svf:w:{}", window_key);
+            let svf_key = format!("svf:w:{window_key}");
             vault.store.sync_state.put(wtxn, &svf_key, &[0u8])?;
 
             Ok(())

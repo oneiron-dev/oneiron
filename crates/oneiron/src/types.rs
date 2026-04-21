@@ -12,6 +12,7 @@ pub struct EntityId([u8; ENTITY_ID_LEN]);
 
 impl EntityId {
     /// Creates a new identifier using the current UUIDv7 timestamp.
+    #[must_use]
     pub fn now() -> Self {
         Self(Uuid::now_v7().into_bytes())
     }
@@ -119,6 +120,7 @@ pub fn short_id_prefix(entity_type: u8) -> crate::error::Result<&'static str> {
 /// Relationship kind used by graph edges.
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub enum EdgeKind {
     /// Entity belongs to another entity.
     BelongsTo = 0,
@@ -229,6 +231,7 @@ pub struct TimeRange {
 
 /// HNSW configuration values.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct HnswConfig {
     /// Maximum neighbors per node in layer 0.
     pub m_max_0: usize,
@@ -249,7 +252,19 @@ impl Default for HnswConfig {
 }
 
 /// Vault runtime configuration.
+///
+/// The struct is `#[non_exhaustive]`, so downstream callers cannot build it
+/// with a struct literal. Use one of the presets (`VaultConfig::device()`
+/// or `VaultConfig::server()`, or `VaultConfig::default()` which aliases
+/// `device()`) and mutate fields as needed:
+///
+/// ```
+/// # use oneiron::VaultConfig;
+/// let mut cfg = VaultConfig::default();
+/// cfg.dimensions = 768;
+/// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct VaultConfig {
     /// Embedding vector dimension.
     pub dimensions: usize,
@@ -263,8 +278,17 @@ pub struct VaultConfig {
     pub hnsw: HnswConfig,
 }
 
+impl Default for VaultConfig {
+    /// Aliases `VaultConfig::device()` — the common default. Call
+    /// `VaultConfig::server()` explicitly if you want the server preset.
+    fn default() -> Self {
+        Self::device()
+    }
+}
+
 impl VaultConfig {
     /// Returns a device-optimized preset.
+    #[must_use]
     pub fn device() -> Self {
         Self {
             dimensions: 1024,
@@ -276,6 +300,7 @@ impl VaultConfig {
     }
 
     /// Returns a server-optimized preset.
+    #[must_use]
     pub fn server() -> Self {
         Self {
             dimensions: 4096,
@@ -298,6 +323,7 @@ pub struct ScoredEntity {
 
 /// Retrieval signal type.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub enum Signal {
     Vector,
     Text,
@@ -308,6 +334,7 @@ pub enum Signal {
 
 /// Temporal query precision controls sigmoid width for temporal scoring.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub enum TemporalGranularity {
     Exact,
     Hour,
@@ -337,6 +364,7 @@ impl TemporalGranularity {
 
 /// Temporal anchor intent for bitemporal scoring.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+#[non_exhaustive]
 pub enum TemporalAnchorMode {
     Occurred,
     Learned,
@@ -347,6 +375,7 @@ pub enum TemporalAnchorMode {
 
 /// Output serialization format for context packing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+#[non_exhaustive]
 pub enum PackFormat {
     #[default]
     Json,
@@ -358,6 +387,7 @@ pub enum PackFormat {
 
 /// Field selection profile for context packing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+#[non_exhaustive]
 pub enum FieldProfile {
     Minimal,
     #[default]

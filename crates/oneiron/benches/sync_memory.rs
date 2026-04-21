@@ -32,7 +32,7 @@ const EDGE_VALUE_SIZE: usize = 24;
 
 /// Generate a 32-char hex string simulating a UUIDv7 hex encoding.
 fn make_entity_id(index: usize) -> String {
-    format!("{:032x}", index)
+    format!("{index:032x}")
 }
 
 /// Create a realistic entity blob: 25-byte header + ~325-byte JSON body.
@@ -141,7 +141,12 @@ fn get_rss_bytes() -> u64 {
         std::fs::read_to_string("/proc/self/statm").expect("failed to read /proc/self/statm");
     let fields: Vec<&str> = statm.split_whitespace().collect();
     let rss_pages: u64 = fields[1].parse().expect("failed to parse RSS pages");
-    let page_size: u64 = unsafe { libc::sysconf(libc::_SC_PAGESIZE) as u64 };
+    // SAFETY: libc::sysconf is always safe to call with _SC_PAGESIZE.
+    // POSIX permits returning -1 on error; guard explicitly so the cast to
+    // u64 can't wrap into `u64::MAX` and poison the RSS calculation.
+    let raw = unsafe { libc::sysconf(libc::_SC_PAGESIZE) };
+    assert!(raw > 0, "sysconf(_SC_PAGESIZE) returned {raw}");
+    let page_size = raw as u64;
     rss_pages * page_size
 }
 
@@ -164,10 +169,7 @@ fn main() {
     let _tombstones = doc.get_or_insert_map("tombstones");
 
     // ── Insert N entities ───────────────────────────────────────────────────
-    println!(
-        "\nInserting {} entities (~{} bytes each)...",
-        NUM_ENTITIES, ENTITY_BLOB_SIZE
-    );
+    println!("\nInserting {NUM_ENTITIES} entities (~{ENTITY_BLOB_SIZE} bytes each)...");
     {
         let mut txn = doc.transact_mut();
         for i in 0..NUM_ENTITIES {
@@ -189,8 +191,7 @@ fn main() {
     // ── Rewrite M entities K times (Dreamer consolidation) ──────────────────
     let total_rewrites = NUM_REWRITES * REWRITES_PER_ENTITY;
     println!(
-        "\nRewriting {} entities x{} ({} total overwrites)...",
-        NUM_REWRITES, REWRITES_PER_ENTITY, total_rewrites
+        "\nRewriting {NUM_REWRITES} entities x{REWRITES_PER_ENTITY} ({total_rewrites} total overwrites)..."
     );
     for round in 0..REWRITES_PER_ENTITY {
         let mut txn = doc.transact_mut();
@@ -215,10 +216,7 @@ fn main() {
 
     // ── Insert edges (~2 per entity = 6,000 edges) ──────────────────────────
     let num_edges = NUM_ENTITIES * EDGES_PER_ENTITY;
-    println!(
-        "\nInserting {} edges ({} bytes each)...",
-        num_edges, EDGE_VALUE_SIZE
-    );
+    println!("\nInserting {num_edges} edges ({EDGE_VALUE_SIZE} bytes each)...");
     {
         let mut txn = doc.transact_mut();
         for i in 0..NUM_ENTITIES {
@@ -266,36 +264,17 @@ fn main() {
     println!("\n╔══════════════════════════════════════════════════════╗");
     println!("║            BENCHMARK RESULTS                        ║");
     println!("╠══════════════════════════════════════════════════════╣");
+    println!("║  Entities:       {NUM_ENTITIES:>6}                              ║");
     println!(
-        "║  Entities:       {:>6}                              ║",
-        NUM_ENTITIES
+        "║  Rewrites:       {total_rewrites:>6} ({NUM_REWRITES} entities x{REWRITES_PER_ENTITY})        ║"
     );
-    println!(
-        "║  Rewrites:       {:>6} ({} entities x{})        ║",
-        total_rewrites, NUM_REWRITES, REWRITES_PER_ENTITY
-    );
-    println!(
-        "║  Edges:          {:>6}                              ║",
-        num_edges
-    );
+    println!("║  Edges:          {num_edges:>6}                              ║");
     println!("║  Tombstones map: empty                              ║");
     println!("╠══════════════════════════════════════════════════════╣");
-    println!(
-        "║  Raw data size:  {:>7.2} MB                         ║",
-        raw_total_mb
-    );
-    println!(
-        "║  RSS delta:      {:>7.2} MB                         ║",
-        rss_delta_mb
-    );
-    println!(
-        "║  Overhead ratio: {:>7.2}x                           ║",
-        overhead_ratio
-    );
-    println!(
-        "║  Per-entity:     {:>7.0} bytes                      ║",
-        per_entity_overhead
-    );
+    println!("║  Raw data size:  {raw_total_mb:>7.2} MB                         ║");
+    println!("║  RSS delta:      {rss_delta_mb:>7.2} MB                         ║");
+    println!("║  Overhead ratio: {overhead_ratio:>7.2}x                           ║");
+    println!("║  Per-entity:     {per_entity_overhead:>7.0} bytes                      ║");
     println!("╠══════════════════════════════════════════════════════╣");
 
     let pass = rss_delta_mb < 15.0;

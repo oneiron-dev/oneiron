@@ -1,5 +1,5 @@
-use super::EDGE_VALUE_LEN;
 use crate::store::Store;
+use crate::types::EDGE_VALUE_LEN;
 use crate::*;
 
 #[test]
@@ -25,8 +25,7 @@ fn test_intra_batch_cycle() {
 
     assert!(
         matches!(result, Err(Error::CycleDetected)),
-        "Intra-batch cycle should return CycleDetected, got {:?}",
-        result
+        "Intra-batch cycle should return CycleDetected, got {result:?}"
     );
 
     // Verify abort rolled back both edges

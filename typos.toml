@@ -1,0 +1,12 @@
+[files]
+extend-exclude = [
+    "docs/**/*.svg",
+    "target/**",
+    "**/*.lock",
+]
+
+[default.extend-words]
+anc = "anc"
+Caf = "Caf"
+caf = "caf"
+SINIC = "SINIC"
