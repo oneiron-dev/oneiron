@@ -695,7 +695,8 @@ fn parse_edge_record(key: &[u8], value: &[u8]) -> Result<EdgeInfo> {
         return Err(Error::CorruptedIndex("edge record"));
     }
 
-    let kind = EdgeKind::try_from_u8(key[16]).ok_or(Error::CorruptedIndex("edge record"))?;
+    let kind =
+        EdgeKind::try_from_u8(key[ENTITY_ID_LEN]).ok_or(Error::CorruptedIndex("edge record"))?;
     let target = EntityId::from_bytes(
         key[EDGE_KIND_PREFIX_LEN..EDGE_KEY_LEN]
             .try_into()
