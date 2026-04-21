@@ -162,10 +162,11 @@ impl Vault {
 
         let vector = le_bytes_to_f32_vec(bytes)?;
         if vector.len() != self.config.dimensions {
-            return Err(Error::DimensionMismatch {
-                expected: self.config.dimensions,
-                got: vector.len(),
-            });
+            // Persisted-data corruption — the LMDB row decoded to a vector
+            // whose length does not match the configured dimensionality.
+            // Distinct from `DimensionMismatch`, which is reserved for
+            // caller input validation in `search_vector` / `index_vector`.
+            return Err(Error::CorruptedIndex("vector value"));
         }
 
         Ok(Some(vector))
@@ -326,6 +327,13 @@ impl Vault {
             if ts >= end {
                 break; // temporal keys are sorted by timestamp (BE), so we can stop
             }
+            // Cap check BEFORE push so an exact-MAX result set returns Ok,
+            // matching scan_edges semantics. Only an MAX+1-th in-range row
+            // triggers IndexOverflow. See ONE-336 for the range-seek perf
+            // fix that lifts the cap.
+            if ids.len() >= MAX_TYPE_QUERY_RESULTS {
+                return Err(Error::IndexOverflow("entities_in_learned_range"));
+            }
             let id = EntityId::from_bytes(
                 key[8..24]
                     .try_into()
@@ -333,12 +341,6 @@ impl Vault {
             )
             .map_err(|_| Error::CorruptedIndex("temporal learned key"))?;
             ids.push(id);
-            if ids.len() >= MAX_TYPE_QUERY_RESULTS {
-                // Fail loud — callers like sync rematerialization must not
-                // silently rebuild from a partial set. See ONE-336 for the
-                // range-seek perf fix that lifts the cap.
-                return Err(Error::IndexOverflow("entities_in_learned_range"));
-            }
         }
         Ok(ids)
     }
@@ -601,13 +603,14 @@ impl Vault {
             if !visited.insert(parent) {
                 break; // Cycle detected — stop walking but don't error
             }
-            result.push(parent);
-            current = parent;
+            // Cap check BEFORE push so an exact-MAX chain returns Ok,
+            // matching scan_edges semantics. Only an MAX+1-th ancestor
+            // triggers IndexOverflow.
             if result.len() >= MAX_SUBTREE_RESULTS {
-                // Pathological ancestor chain — fail loud to match
-                // entities_in_learned_range / scan_edges semantics.
                 return Err(Error::IndexOverflow("ancestors"));
             }
+            result.push(parent);
+            current = parent;
         }
 
         Ok(result)

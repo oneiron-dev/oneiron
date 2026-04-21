@@ -90,9 +90,15 @@ pub fn register_observer_a(
     doc.subscribe_local_updates(Box::new(move |update_bytes| {
         let result = vault.with_write_txn(|wtxn| {
             let seq_key = format!("m:u_seq:w:{window_key}");
+            // Distinguish a missing key (fresh window — start at 0) from a
+            // present-but-malformed seq row (on-disk corruption). The latter
+            // must not silently reset to 0; doing so would let next_seq=1
+            // collide with whatever update was already persisted at
+            // `u:w:{window}:00000001` before the row was corrupted.
             let seq: u32 = match vault.store.sync_state.get(wtxn, &seq_key)? {
+                None => 0,
                 Some(raw) if raw.len() == 4 => u32::from_le_bytes(raw.try_into().unwrap()),
-                _ => 0,
+                Some(_) => return Err(Error::CorruptedIndex("observer a u_seq row")),
             };
             // checked_add surfaces overflow as a typed error rather than
             // `wrapping_add`-ing to 0 and silently overwriting update key
