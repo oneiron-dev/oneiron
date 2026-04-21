@@ -64,7 +64,7 @@ fn first_child_of_parent(
         let (key, _) = entry?;
         require_key_len(key, EDGE_KEY_LEN, "edge record")?;
         let parent = EntityId::from_bytes(
-            key[17..33]
+            key[EDGE_KIND_PREFIX_LEN..EDGE_KEY_LEN]
                 .try_into()
                 .map_err(|_| Error::CorruptedIndex("edge record"))?,
         )
@@ -334,7 +334,10 @@ impl Vault {
             .map_err(|_| Error::CorruptedIndex("temporal learned key"))?;
             ids.push(id);
             if ids.len() >= MAX_TYPE_QUERY_RESULTS {
-                break; // Defensive cap; see ONE-336 for the range-seek perf fix.
+                // Fail loud — callers like sync rematerialization must not
+                // silently rebuild from a partial set. See ONE-336 for the
+                // range-seek perf fix that lifts the cap.
+                return Err(Error::IndexOverflow("entities_in_learned_range"));
             }
         }
         Ok(ids)
@@ -512,8 +515,8 @@ impl Vault {
     /// Returns `Ok(false)` for missing entities or unparsable headers (corruption).
     /// This is intentional for edge filtering: a corrupted peer should be skipped,
     /// not fail the entire query. Compare with `get_entity_type()` which returns
-    /// `Err(InvalidKey)` on corruption — appropriate for direct lookups where the
-    /// caller should know about data issues.
+    /// `Err(CorruptedIndex("entity header"))` on corruption — appropriate for
+    /// direct lookups where the caller should know about data issues.
     fn entity_has_type(
         &self,
         rtxn: &heed::RoTxn<'_>,
@@ -601,7 +604,9 @@ impl Vault {
             result.push(parent);
             current = parent;
             if result.len() >= MAX_SUBTREE_RESULTS {
-                break; // Pathological ancestor chain cap — matches subtree bound.
+                // Pathological ancestor chain — fail loud to match
+                // entities_in_learned_range / scan_edges semantics.
+                return Err(Error::IndexOverflow("ancestors"));
             }
         }
 
@@ -658,7 +663,10 @@ fn scan_edges(
     let mut edges = Vec::new();
     for entry in database.prefix_iter(rtxn, prefix.as_slice())? {
         if edges.len() >= MAX_EDGE_QUERY_RESULTS {
-            break;
+            // Fail loud — sync mirror paths (replay_pending_mirrors,
+            // reverse_rematerialize) must not silently truncate edges
+            // for high-degree nodes.
+            return Err(Error::IndexOverflow("scan_edges"));
         }
         let (key, value) = entry?;
         edges.push(parse_edge_record(key, value)?);
