@@ -40,3 +40,6 @@ required-features = ["sync"]
 name = "sync_memory"
 harness = false
 required-features = ["sync"]
+
+[lints]
+workspace = true

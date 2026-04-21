@@ -12,7 +12,7 @@ use crate::server::BroadcastPayload;
 
 /// A subscriber handle for a single WebSocket connection.
 /// Wraps a broadcast receiver and filters out echo messages.
-pub struct BroadcastSubscriber {
+pub(crate) struct BroadcastSubscriber {
     /// The connection ID this subscriber belongs to.
     conn_id: u32,
     /// Receiver end of the broadcast channel.
@@ -23,7 +23,7 @@ pub struct BroadcastSubscriber {
 
 impl BroadcastSubscriber {
     /// Creates a new subscriber for the given connection.
-    pub fn new(conn_id: u32, tx: &broadcast::Sender<BroadcastPayload>) -> Self {
+    pub(crate) fn new(conn_id: u32, tx: &broadcast::Sender<BroadcastPayload>) -> Self {
         Self {
             conn_id,
             rx: tx.subscribe(),
@@ -36,7 +36,7 @@ impl BroadcastSubscriber {
     /// Returns `Ok(Some(data))` for a message to forward, `Ok(None)` if the channel
     /// is closed, or `Err(BroadcastError::Lagged)` if the receiver fell behind.
     /// After 3 lags in rapid succession, returns `Err(BroadcastError::TooManyLags)`.
-    pub async fn recv(&mut self) -> Result<Option<Vec<u8>>, BroadcastError> {
+    pub(crate) async fn recv(&mut self) -> Result<Option<Vec<u8>>, BroadcastError> {
         loop {
             match self.rx.recv().await {
                 Ok((sender_conn_id, data)) => {
@@ -74,14 +74,14 @@ impl BroadcastSubscriber {
 
     /// Returns the connection ID for this subscriber.
     #[allow(dead_code)] // Used when WebSocket connected
-    pub fn conn_id(&self) -> u32 {
+    pub(crate) fn conn_id(&self) -> u32 {
         self.conn_id
     }
 }
 
 /// Errors from broadcast subscriber.
 #[derive(Debug)]
-pub enum BroadcastError {
+pub(crate) enum BroadcastError {
     /// Receiver fell behind; n messages were skipped.
     /// Connection should trigger per-window SyncStep resync.
     Lagged(u64),
@@ -94,7 +94,7 @@ pub enum BroadcastError {
 /// `conn_id` identifies the sender:
 /// - 0 = local/bridge write (broadcast to all devices)
 /// - >= 1 = specific connection (echo suppression skips sender)
-pub fn broadcast(
+pub(crate) fn broadcast(
     tx: &broadcast::Sender<BroadcastPayload>,
     conn_id: u32,
     data: Vec<u8>,

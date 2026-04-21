@@ -3,6 +3,7 @@ pub type Result<T> = std::result::Result<T, Error>;
 
 /// Crate error type.
 #[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
 pub enum Error {
     /// LMDB-backed storage error.
     #[error("storage error: {0}")]

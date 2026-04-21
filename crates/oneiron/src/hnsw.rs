@@ -999,7 +999,7 @@ mod tests {
         let temp_dir = tempdir()?;
         let mut config = test_config();
         config.hnsw.m_max_0 = 2;
-        let vault = Vault::open(temp_dir.path(), config.clone())?;
+        let vault = Vault::open(temp_dir.path(), config)?;
         let a = EntityId::now();
         let b = EntityId::now();
         let c = EntityId::now();

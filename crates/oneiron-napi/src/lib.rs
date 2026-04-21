@@ -64,14 +64,10 @@ impl NapiVault {
     /// `dimensions` controls the embedding vector size (default: 1024 for device preset).
     #[napi(constructor)]
     pub fn new(path: String, dimensions: Option<u32>) -> napi::Result<Self> {
-        let config = if let Some(dims) = dimensions {
-            VaultConfig {
-                dimensions: dims as usize,
-                ..VaultConfig::device()
-            }
-        } else {
-            VaultConfig::device()
-        };
+        let mut config = VaultConfig::device();
+        if let Some(dims) = dimensions {
+            config.dimensions = dims as usize;
+        }
 
         let vault = Vault::open(&path, config).map_err(to_napi_err)?;
         Ok(Self {
@@ -157,7 +153,7 @@ impl NapiVault {
                 kind: e.kind as u32,
                 tgt: Buffer::from(e.target.as_bytes().as_slice()),
                 weight: e.weight as f64,
-                created_at: e.created_at as i64,
+                created_at: i64::try_from(e.created_at).unwrap_or(i64::MAX),
                 valence: e.vad.valence as f64,
                 arousal: e.vad.arousal as f64,
                 dominance: e.vad.dominance as f64,
@@ -177,7 +173,7 @@ impl NapiVault {
                 kind: e.kind as u32,
                 tgt: Buffer::from(tgt_id.as_bytes().as_slice()),
                 weight: e.weight as f64,
-                created_at: e.created_at as i64,
+                created_at: i64::try_from(e.created_at).unwrap_or(i64::MAX),
                 valence: e.vad.valence as f64,
                 arousal: e.vad.arousal as f64,
                 dominance: e.vad.dominance as f64,

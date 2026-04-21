@@ -19,6 +19,7 @@ struct PreparedHnswRebuild {
 }
 
 /// Builder for running maintenance operations against a vault.
+#[must_use = "MaintenanceBuilder performs no work until `.run()` is called"]
 pub struct MaintenanceBuilder<'a> {
     vault: &'a Vault,
     do_rebuild_hnsw: bool,

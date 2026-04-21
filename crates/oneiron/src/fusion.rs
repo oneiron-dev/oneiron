@@ -6,7 +6,7 @@ use std::io::Cursor;
 use heed::RoTxn;
 use rmpv::Value;
 
-use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
+use crate::batch::ENTITY_METADATA_HEADER_LEN;
 use crate::error::Result;
 use crate::store::Store;
 use crate::types::{EntityId, ScoredEntity};
@@ -35,41 +35,6 @@ pub(crate) fn rrf_fuse(ranked_lists: &[Vec<ScoredEntity>], k: f32) -> Vec<Scored
         .collect();
     sort_scored_entities_desc(&mut out);
     out
-}
-
-#[allow(dead_code)]
-pub(crate) fn boost_recency(
-    scores: &mut [ScoredEntity],
-    half_life_days: f32,
-    store: &Store,
-    rtxn: &RoTxn<'_>,
-) -> Result<()> {
-    if !half_life_days.is_finite() || half_life_days <= 0.0 {
-        return Ok(());
-    }
-
-    let seconds_per_half_life = f64::from(half_life_days) * 86_400.0;
-    if seconds_per_half_life <= 0.0 {
-        return Ok(());
-    }
-
-    let decay = std::f64::consts::LN_2 / seconds_per_half_life;
-    let now = crate::unix_seconds_now();
-
-    for scored in scores {
-        let Some(raw) = store.entities.get(rtxn, scored.id.as_bytes())? else {
-            continue;
-        };
-        let Some(header) = EntityMetadataHeader::parse(raw) else {
-            continue;
-        };
-
-        let age_secs = now.saturating_sub(header.learned_at) as f64;
-        let recency = (-decay * age_secs).exp();
-        scored.score *= (1.0 + 0.5 * recency) as f32;
-    }
-
-    Ok(())
 }
 
 pub(crate) fn boost_salience(

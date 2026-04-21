@@ -10,3 +10,6 @@ crate-type = ["cdylib"]
 
 [dependencies]
 oneiron = { path = "../oneiron" }
+
+[lints]
+workspace = true
