@@ -27,6 +27,11 @@ const EDGE_KIND_PREFIX_LEN: usize = ENTITY_ID_LEN + 1;
 /// Cap for `entities_by_type` to prevent unbounded allocation on large indexes.
 const MAX_TYPE_QUERY_RESULTS: usize = 100_000;
 
+/// Cap for `entities_in_learned_range` to prevent unbounded allocation on
+/// wide time-range queries. Distinct from `MAX_TYPE_QUERY_RESULTS` so the two
+/// APIs can be tuned independently.
+const MAX_LEARNED_RANGE_RESULTS: usize = 100_000;
+
 /// Cap for `targets`/`sources` to prevent unbounded allocation.
 const MAX_EDGE_QUERY_RESULTS: usize = 100_000;
 
@@ -335,7 +340,7 @@ impl Vault {
             // matching scan_edges semantics. Only an MAX+1-th in-range row
             // triggers IndexOverflow. See ONE-336 for the range-seek perf
             // fix that lifts the cap.
-            if ids.len() >= MAX_TYPE_QUERY_RESULTS {
+            if ids.len() >= MAX_LEARNED_RANGE_RESULTS {
                 return Err(Error::IndexOverflow("entities_in_learned_range"));
             }
             let id = EntityId::from_bytes(
