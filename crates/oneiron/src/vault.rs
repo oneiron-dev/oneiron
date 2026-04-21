@@ -33,6 +33,10 @@ const MAX_EDGE_QUERY_RESULTS: usize = 100_000;
 /// Cap for `subtree` to prevent unbounded allocation on deep trees.
 const MAX_SUBTREE_RESULTS: usize = 50_000;
 
+/// Cap for `sync_state_keys_with_prefix` to prevent unbounded allocation when
+/// a pathological prefix scans a very large sync_state database.
+const MAX_SYNC_STATE_KEYS: usize = 10_000;
+
 /// Build an edge prefix `[entity_id | kind]` for targeted LMDB prefix scans.
 /// Avoids scanning all edge kinds for a given entity.
 fn edge_kind_prefix(id: &EntityId, kind: EdgeKind) -> [u8; EDGE_KIND_PREFIX_LEN] {
@@ -392,6 +396,10 @@ impl Vault {
         let mut keys = Vec::new();
         let iter = self.store.sync_state.prefix_iter(&rtxn, prefix)?;
         for entry in iter {
+            // Cap check BEFORE push — matches scan_edges semantics.
+            if keys.len() >= MAX_SYNC_STATE_KEYS {
+                return Err(Error::IndexOverflow("sync_state_keys_with_prefix"));
+            }
             let (k, _) = entry?;
             keys.push(k.to_string());
         }
@@ -492,7 +500,7 @@ impl Vault {
             let (key, _) = entry?;
             require_key_len(key, EDGE_KEY_LEN, "edge record")?;
             let peer = EntityId::from_bytes(
-                key[17..33]
+                key[EDGE_KIND_PREFIX_LEN..EDGE_KEY_LEN]
                     .try_into()
                     .map_err(|_| Error::CorruptedIndex("edge record"))?,
             )
@@ -568,7 +576,7 @@ impl Vault {
                 let (key, _) = entry?;
                 require_key_len(key, EDGE_KEY_LEN, "edge record")?;
                 let child = EntityId::from_bytes(
-                    key[17..33]
+                    key[EDGE_KIND_PREFIX_LEN..EDGE_KEY_LEN]
                         .try_into()
                         .map_err(|_| Error::CorruptedIndex("edge record"))?,
                 )
@@ -684,7 +692,7 @@ fn parse_edge_record(key: &[u8], value: &[u8]) -> Result<EdgeInfo> {
 
     let kind = EdgeKind::try_from_u8(key[16]).ok_or(Error::CorruptedIndex("edge record"))?;
     let target = EntityId::from_bytes(
-        key[17..33]
+        key[EDGE_KIND_PREFIX_LEN..EDGE_KEY_LEN]
             .try_into()
             .map_err(|_| Error::CorruptedIndex("edge record"))?,
     )
