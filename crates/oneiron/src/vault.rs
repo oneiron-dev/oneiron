@@ -9,7 +9,9 @@ use heed::types::Bytes;
 
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader, deindex_entity};
 use crate::error::{Error, Result};
-use crate::limits::{ERR_CHILD_OF_CYCLE_CHECK, MAX_CHILD_OF_CYCLE_TRAVERSAL_STEPS};
+use crate::limits::{
+    ERR_CHILD_OF_CYCLE_CHECK, MAX_ANCESTOR_DEPTH, MAX_CHILD_OF_CYCLE_TRAVERSAL_STEPS,
+};
 use crate::store::Store;
 use crate::types::{
     EDGE_KEY_LEN, EDGE_VALUE_LEN, ENTITY_ID_LEN, EdgeInfo, EdgeKind, EntityId, ScoredEntity,
@@ -38,9 +40,6 @@ const MAX_EDGE_QUERY_RESULTS: usize = 100_000;
 
 /// Cap for `subtree` to prevent unbounded allocation on deep trees.
 const MAX_SUBTREE_RESULTS: usize = 50_000;
-
-/// Cap for ancestor and cycle-check traversals to prevent pathological walks.
-const MAX_ANCESTOR_DEPTH: usize = 10_000;
 
 /// Cap for `sync_state_keys_with_prefix` to prevent unbounded allocation when
 /// a pathological prefix scans a very large sync_state database.
@@ -502,7 +501,8 @@ impl Vault {
     /// Scans an edge database (edges_out or edges_in) for entries matching `kind`,
     /// returning the peer entity IDs. Optionally filters by the peer's entity type.
     ///
-    /// Capped at `MAX_EDGE_QUERY_RESULTS` to prevent unbounded allocation.
+    /// Capped at `MAX_EDGE_QUERY_RESULTS` scanned peer rows to prevent
+    /// unbounded allocation and worst-case filtered scans.
     fn filtered_edge_peers(
         &self,
         rtxn: &heed::RoTxn<'_>,
@@ -514,7 +514,10 @@ impl Vault {
     ) -> Result<Vec<EntityId>> {
         let prefix = edge_kind_prefix(prefix_id, kind);
         let mut ids = Vec::new();
-        for entry in db.prefix_iter(rtxn, &prefix)? {
+        for (scanned, entry) in db.prefix_iter(rtxn, &prefix)?.enumerate() {
+            if scanned >= MAX_EDGE_QUERY_RESULTS {
+                return Err(Error::IndexOverflow(overflow_context));
+            }
             let (key, value) = entry?;
             let peer = parse_edge_record(key, value)?.target;
 
@@ -524,9 +527,6 @@ impl Vault {
                 continue;
             }
 
-            if ids.len() >= MAX_EDGE_QUERY_RESULTS {
-                return Err(Error::IndexOverflow(overflow_context));
-            }
             ids.push(peer);
         }
         Ok(ids)

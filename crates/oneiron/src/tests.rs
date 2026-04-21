@@ -2,7 +2,7 @@ use std::collections::HashSet;
 use std::str;
 use std::time::Instant;
 
-use crate::limits::MAX_CHILD_OF_CYCLE_TRAVERSAL_STEPS;
+use crate::limits::{MAX_ANCESTOR_DEPTH, MAX_CHILD_OF_CYCLE_TRAVERSAL_STEPS};
 use crate::types::{EDGE_VALUE_LEN, ENTITY_ID_LEN};
 use heed::types::Bytes;
 use rand::rngs::StdRng;
@@ -98,6 +98,16 @@ fn seeded_entity_id(counter: u128) -> EntityId {
 
 fn valid_edge_value() -> [u8; EDGE_VALUE_LEN] {
     [0_u8; EDGE_VALUE_LEN]
+}
+
+fn encoded_entity_record(entity_type: u8, payload: &[u8]) -> Vec<u8> {
+    let mut row = Vec::with_capacity(ENTITY_METADATA_HEADER_LEN + payload.len());
+    row.push(entity_type);
+    row.extend_from_slice(&0_u64.to_be_bytes());
+    row.extend_from_slice(&0_u64.to_be_bytes());
+    row.extend_from_slice(&0_u64.to_be_bytes());
+    row.extend_from_slice(payload);
+    row
 }
 
 fn content_hash(data: &[u8]) -> u8 {
@@ -2361,6 +2371,52 @@ fn targets_and_sources_overflow_when_peer_cap_exceeded() -> Result<()> {
 }
 
 #[test]
+fn targets_and_sources_fail_loud_when_type_filter_overscans_peer_cap() -> Result<()> {
+    const EDGE_CAP: usize = 100_000;
+
+    let temp_dir = tempfile::tempdir()?;
+    let vault = Vault::open(temp_dir.path(), large_test_config())?;
+    let src = seeded_entity_id(100_000);
+    let tgt = seeded_entity_id(200_000);
+    let value = valid_edge_value();
+
+    vault.with_write_txn(|wtxn| {
+        for i in 0..EDGE_CAP {
+            let peer = seeded_entity_id(300_000 + i as u128);
+            let row = encoded_entity_record(61, b"peer");
+            let out_key = Store::encode_edge_key(&src, EdgeKind::BelongsTo, &peer);
+            let in_key = Store::encode_edge_key(&tgt, EdgeKind::BelongsTo, &peer);
+            vault.store.entities.put(wtxn, peer.as_bytes(), &row)?;
+            vault.store.edges_out.put(wtxn, &out_key, &value)?;
+            vault.store.edges_in.put(wtxn, &in_key, &value)?;
+        }
+
+        let matching_peer = seeded_entity_id(400_001);
+        let matching_row = encoded_entity_record(60, b"peer");
+        let out_key = Store::encode_edge_key(&src, EdgeKind::BelongsTo, &matching_peer);
+        let in_key = Store::encode_edge_key(&tgt, EdgeKind::BelongsTo, &matching_peer);
+        vault
+            .store
+            .entities
+            .put(wtxn, matching_peer.as_bytes(), &matching_row)?;
+        vault.store.edges_out.put(wtxn, &out_key, &value)?;
+        vault.store.edges_in.put(wtxn, &in_key, &value)?;
+        Ok(())
+    })?;
+
+    let targets_err = vault
+        .targets(&src, EdgeKind::BelongsTo, Some(60))
+        .expect_err("type-filtered targets should fail loud once scan cap is exceeded");
+    assert!(matches!(targets_err, Error::IndexOverflow("targets")));
+
+    let sources_err = vault
+        .sources(&tgt, EdgeKind::BelongsTo, Some(60))
+        .expect_err("type-filtered sources should fail loud once scan cap is exceeded");
+    assert!(matches!(sources_err, Error::IndexOverflow("sources")));
+    Ok(())
+}
+
+#[test]
 fn subtree_four_level_tree() -> Result<()> {
     let temp_dir = tempfile::tempdir()?;
     let vault = Vault::open(temp_dir.path(), test_config())?;
@@ -2577,7 +2633,7 @@ fn test_deep_ancestor_chain() -> Result<()> {
 
 #[test]
 fn ancestors_and_cycle_checks_overflow_on_depth_cap() -> Result<()> {
-    const ANCESTOR_CAP: usize = MAX_CHILD_OF_CYCLE_TRAVERSAL_STEPS;
+    const ANCESTOR_CAP: usize = MAX_ANCESTOR_DEPTH;
 
     let temp_dir = tempfile::tempdir()?;
     let vault = Vault::open(temp_dir.path(), large_test_config())?;
