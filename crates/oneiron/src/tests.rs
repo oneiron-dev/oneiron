@@ -2,7 +2,8 @@ use std::collections::HashSet;
 use std::str;
 use std::time::Instant;
 
-use crate::types::ENTITY_ID_LEN;
+use crate::limits::{MAX_ANCESTOR_DEPTH, MAX_CHILD_OF_CYCLE_TRAVERSAL_STEPS};
+use crate::types::{EDGE_VALUE_LEN, ENTITY_ID_LEN};
 use heed::types::Bytes;
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
@@ -79,8 +80,34 @@ fn test_config() -> VaultConfig {
     config
 }
 
+fn large_test_config() -> VaultConfig {
+    let mut config = test_config();
+    config.map_size = 128 * 1024 * 1024;
+    config
+}
+
 fn test_time_range(start: u64, end: u64) -> TimeRange {
     TimeRange { start, end }
+}
+
+fn seeded_entity_id(counter: u128) -> EntityId {
+    let mut bytes = counter.to_be_bytes();
+    bytes[0] = 0x7e;
+    EntityId::from_bytes(bytes).expect("seeded test id should be valid")
+}
+
+fn valid_edge_value() -> [u8; EDGE_VALUE_LEN] {
+    [0_u8; EDGE_VALUE_LEN]
+}
+
+fn encoded_entity_record(entity_type: u8, payload: &[u8]) -> Vec<u8> {
+    let mut row = Vec::with_capacity(ENTITY_METADATA_HEADER_LEN + payload.len());
+    row.push(entity_type);
+    row.extend_from_slice(&0_u64.to_be_bytes());
+    row.extend_from_slice(&0_u64.to_be_bytes());
+    row.extend_from_slice(&0_u64.to_be_bytes());
+    row.extend_from_slice(payload);
+    row
 }
 
 fn content_hash(data: &[u8]) -> u8 {
@@ -2219,6 +2246,39 @@ fn entities_by_type_returns_correct_ids() -> Result<()> {
 }
 
 #[test]
+fn entities_by_type_allows_exact_cap_and_overflows_on_next_row() -> Result<()> {
+    const TYPE_CAP: usize = 100_000;
+
+    let temp_dir = tempfile::tempdir()?;
+    let vault = Vault::open(temp_dir.path(), large_test_config())?;
+
+    vault.with_write_txn(|wtxn| {
+        for i in 0..TYPE_CAP {
+            let id = seeded_entity_id(i as u128);
+            let key = Store::encode_type_key(60, &id);
+            vault.store.type_index.put(wtxn, &key, &[])?;
+        }
+        Ok(())
+    })?;
+
+    let ids = vault.entities_by_type(60)?;
+    assert_eq!(ids.len(), TYPE_CAP);
+
+    let overflow_id = seeded_entity_id(TYPE_CAP as u128);
+    vault.with_write_txn(|wtxn| {
+        let key = Store::encode_type_key(60, &overflow_id);
+        vault.store.type_index.put(wtxn, &key, &[])?;
+        Ok(())
+    })?;
+
+    let err = vault
+        .entities_by_type(60)
+        .expect_err("type scan should fail loud once cap is exceeded");
+    assert!(matches!(err, Error::IndexOverflow("entities_by_type")));
+    Ok(())
+}
+
+#[test]
 fn targets_and_sources_with_kind_filter() -> Result<()> {
     let temp_dir = tempfile::tempdir()?;
     let vault = Vault::open(temp_dir.path(), test_config())?;
@@ -2255,6 +2315,104 @@ fn targets_and_sources_with_kind_filter() -> Result<()> {
     // targets with wrong type filter: should be empty
     let wrong = vault.targets(&child, EdgeKind::BelongsTo, Some(61))?;
     assert!(wrong.is_empty());
+    Ok(())
+}
+
+#[test]
+fn targets_and_sources_overflow_when_peer_cap_exceeded() -> Result<()> {
+    const EDGE_CAP: usize = 100_000;
+
+    let temp_dir = tempfile::tempdir()?;
+    let vault = Vault::open(temp_dir.path(), large_test_config())?;
+    let src = seeded_entity_id(1);
+    let tgt = seeded_entity_id(2);
+    let value = valid_edge_value();
+
+    vault.with_write_txn(|wtxn| {
+        for i in 0..EDGE_CAP {
+            let peer = seeded_entity_id(10 + i as u128);
+            let out_key = Store::encode_edge_key(&src, EdgeKind::BelongsTo, &peer);
+            let in_key = Store::encode_edge_key(&tgt, EdgeKind::BelongsTo, &peer);
+            vault.store.edges_out.put(wtxn, &out_key, &value)?;
+            vault.store.edges_in.put(wtxn, &in_key, &value)?;
+        }
+        Ok(())
+    })?;
+
+    assert_eq!(
+        vault.targets(&src, EdgeKind::BelongsTo, None)?.len(),
+        EDGE_CAP
+    );
+    assert_eq!(
+        vault.sources(&tgt, EdgeKind::BelongsTo, None)?.len(),
+        EDGE_CAP
+    );
+
+    let overflow_target = seeded_entity_id(10 + EDGE_CAP as u128);
+    let overflow_source = seeded_entity_id(11 + EDGE_CAP as u128);
+    vault.with_write_txn(|wtxn| {
+        let out_key = Store::encode_edge_key(&src, EdgeKind::BelongsTo, &overflow_target);
+        let in_key = Store::encode_edge_key(&tgt, EdgeKind::BelongsTo, &overflow_source);
+        vault.store.edges_out.put(wtxn, &out_key, &value)?;
+        vault.store.edges_in.put(wtxn, &in_key, &value)?;
+        Ok(())
+    })?;
+
+    let targets_err = vault
+        .targets(&src, EdgeKind::BelongsTo, None)
+        .expect_err("targets should fail loud once cap is exceeded");
+    assert!(matches!(targets_err, Error::IndexOverflow("targets")));
+
+    let sources_err = vault
+        .sources(&tgt, EdgeKind::BelongsTo, None)
+        .expect_err("sources should fail loud once cap is exceeded");
+    assert!(matches!(sources_err, Error::IndexOverflow("sources")));
+    Ok(())
+}
+
+#[test]
+fn targets_and_sources_fail_loud_when_type_filter_overscans_peer_cap() -> Result<()> {
+    const EDGE_CAP: usize = 100_000;
+
+    let temp_dir = tempfile::tempdir()?;
+    let vault = Vault::open(temp_dir.path(), large_test_config())?;
+    let src = seeded_entity_id(100_000);
+    let tgt = seeded_entity_id(200_000);
+    let value = valid_edge_value();
+
+    vault.with_write_txn(|wtxn| {
+        for i in 0..EDGE_CAP {
+            let peer = seeded_entity_id(300_000 + i as u128);
+            let row = encoded_entity_record(61, b"peer");
+            let out_key = Store::encode_edge_key(&src, EdgeKind::BelongsTo, &peer);
+            let in_key = Store::encode_edge_key(&tgt, EdgeKind::BelongsTo, &peer);
+            vault.store.entities.put(wtxn, peer.as_bytes(), &row)?;
+            vault.store.edges_out.put(wtxn, &out_key, &value)?;
+            vault.store.edges_in.put(wtxn, &in_key, &value)?;
+        }
+
+        let matching_peer = seeded_entity_id(400_001);
+        let matching_row = encoded_entity_record(60, b"peer");
+        let out_key = Store::encode_edge_key(&src, EdgeKind::BelongsTo, &matching_peer);
+        let in_key = Store::encode_edge_key(&tgt, EdgeKind::BelongsTo, &matching_peer);
+        vault
+            .store
+            .entities
+            .put(wtxn, matching_peer.as_bytes(), &matching_row)?;
+        vault.store.edges_out.put(wtxn, &out_key, &value)?;
+        vault.store.edges_in.put(wtxn, &in_key, &value)?;
+        Ok(())
+    })?;
+
+    let targets_err = vault
+        .targets(&src, EdgeKind::BelongsTo, Some(60))
+        .expect_err("type-filtered targets should fail loud once scan cap is exceeded");
+    assert!(matches!(targets_err, Error::IndexOverflow("targets")));
+
+    let sources_err = vault
+        .sources(&tgt, EdgeKind::BelongsTo, Some(60))
+        .expect_err("type-filtered sources should fail loud once scan cap is exceeded");
+    assert!(matches!(sources_err, Error::IndexOverflow("sources")));
     Ok(())
 }
 
@@ -2299,6 +2457,41 @@ fn subtree_four_level_tree() -> Result<()> {
     assert_eq!(shallow.len(), 2);
     assert!(shallow.iter().all(|(_, d)| *d == 1));
 
+    Ok(())
+}
+
+#[test]
+fn subtree_allows_exact_cap_and_overflows_on_next_descendant() -> Result<()> {
+    const SUBTREE_CAP: usize = 50_000;
+
+    let temp_dir = tempfile::tempdir()?;
+    let vault = Vault::open(temp_dir.path(), large_test_config())?;
+    let root = seeded_entity_id(1);
+    let value = valid_edge_value();
+
+    vault.with_write_txn(|wtxn| {
+        for i in 0..SUBTREE_CAP {
+            let child = seeded_entity_id(100 + i as u128);
+            let key = Store::encode_edge_key(&root, EdgeKind::ChildOf, &child);
+            vault.store.edges_in.put(wtxn, &key, &value)?;
+        }
+        Ok(())
+    })?;
+
+    let tree = vault.subtree(&root, 1)?;
+    assert_eq!(tree.len(), SUBTREE_CAP);
+
+    let overflow_child = seeded_entity_id(100 + SUBTREE_CAP as u128);
+    vault.with_write_txn(|wtxn| {
+        let key = Store::encode_edge_key(&root, EdgeKind::ChildOf, &overflow_child);
+        vault.store.edges_in.put(wtxn, &key, &value)?;
+        Ok(())
+    })?;
+
+    let err = vault
+        .subtree(&root, 1)
+        .expect_err("subtree should fail loud once cap is exceeded");
+    assert!(matches!(err, Error::IndexOverflow("subtree")));
     Ok(())
 }
 
@@ -2435,6 +2628,103 @@ fn test_deep_ancestor_chain() -> Result<()> {
     )?;
     assert!(!vault.would_create_cycle(&unrelated, &nodes[DEPTH])?);
 
+    Ok(())
+}
+
+#[test]
+fn ancestors_and_cycle_checks_overflow_on_depth_cap() -> Result<()> {
+    const ANCESTOR_CAP: usize = MAX_ANCESTOR_DEPTH;
+
+    let temp_dir = tempfile::tempdir()?;
+    let vault = Vault::open(temp_dir.path(), large_test_config())?;
+    let value = valid_edge_value();
+
+    let exact_nodes: Vec<_> = (0..=ANCESTOR_CAP)
+        .map(|i| seeded_entity_id(1_000_000 + i as u128))
+        .collect();
+
+    vault.with_write_txn(|wtxn| {
+        for i in 0..ANCESTOR_CAP {
+            let key =
+                Store::encode_edge_key(&exact_nodes[i + 1], EdgeKind::ChildOf, &exact_nodes[i]);
+            vault.store.edges_out.put(wtxn, &key, &value)?;
+        }
+        Ok(())
+    })?;
+
+    let ancestors = vault.ancestors(&exact_nodes[ANCESTOR_CAP])?;
+    assert_eq!(ancestors.len(), ANCESTOR_CAP);
+
+    let overflow_root = seeded_entity_id(2_000_000);
+    vault.with_write_txn(|wtxn| {
+        let key = Store::encode_edge_key(&exact_nodes[0], EdgeKind::ChildOf, &overflow_root);
+        vault.store.edges_out.put(wtxn, &key, &value)?;
+        Ok(())
+    })?;
+
+    let anc_err = vault
+        .ancestors(&exact_nodes[ANCESTOR_CAP])
+        .expect_err("ancestors should fail loud once depth cap is exceeded");
+    assert!(matches!(anc_err, Error::IndexOverflow("ancestors")));
+
+    let unrelated = seeded_entity_id(3_000_000);
+    let cycle_err = vault
+        .would_create_cycle(&unrelated, &exact_nodes[ANCESTOR_CAP])
+        .expect_err("public cycle check should fail loud once depth cap is exceeded");
+    assert!(matches!(
+        cycle_err,
+        Error::IndexOverflow("child_of_cycle_check")
+    ));
+
+    let batch_err = vault
+        .batch()
+        .edge_checked(&unrelated, &exact_nodes[ANCESTOR_CAP], 1.0)
+        .commit()
+        .expect_err("batch cycle check should fail loud once depth cap is exceeded");
+    assert!(matches!(
+        batch_err,
+        Error::IndexOverflow("child_of_cycle_check")
+    ));
+    Ok(())
+}
+
+#[test]
+fn cycle_checks_fail_loud_before_positive_match_beyond_traversal_cap() -> Result<()> {
+    const TRAVERSAL_CAP: usize = MAX_CHILD_OF_CYCLE_TRAVERSAL_STEPS;
+
+    let temp_dir = tempfile::tempdir()?;
+    let vault = Vault::open(temp_dir.path(), large_test_config())?;
+    let value = valid_edge_value();
+
+    let nodes: Vec<_> = (0..=TRAVERSAL_CAP + 1)
+        .map(|i| seeded_entity_id(4_000_000 + i as u128))
+        .collect();
+
+    vault.with_write_txn(|wtxn| {
+        for i in 0..=TRAVERSAL_CAP {
+            let key = Store::encode_edge_key(&nodes[i + 1], EdgeKind::ChildOf, &nodes[i]);
+            vault.store.edges_out.put(wtxn, &key, &value)?;
+        }
+        Ok(())
+    })?;
+
+    let public_err = vault
+        .would_create_cycle(&nodes[0], &nodes[TRAVERSAL_CAP + 1])
+        .expect_err("public cycle check should overflow before reporting a deep positive match");
+    assert!(matches!(
+        public_err,
+        Error::IndexOverflow("child_of_cycle_check")
+    ));
+
+    let batch_err = vault
+        .batch()
+        .edge_checked(&nodes[0], &nodes[TRAVERSAL_CAP + 1], 1.0)
+        .commit()
+        .expect_err("batch cycle check should overflow before reporting a deep positive match");
+    assert!(matches!(
+        batch_err,
+        Error::IndexOverflow("child_of_cycle_check")
+    ));
     Ok(())
 }
 

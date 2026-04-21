@@ -6,6 +6,7 @@ use xxhash_rust::xxh32::xxh32;
 
 use crate::Vault;
 use crate::error::{Error, Result};
+use crate::limits::{ERR_CHILD_OF_CYCLE_CHECK, MAX_CHILD_OF_CYCLE_TRAVERSAL_STEPS};
 use crate::ppr;
 use crate::store::Store;
 use crate::types::{
@@ -822,9 +823,14 @@ fn would_create_child_of_cycle(
     frontier.push_back(*proposed_parent);
     let mut visited = HashSet::new();
     visited.insert(*proposed_parent);
+    let mut traversed_steps = 0usize;
 
     while let Some(node) = frontier.pop_front() {
         for parent in child_of_overlay.effective_parents(store, rtxn, &node)? {
+            if traversed_steps >= MAX_CHILD_OF_CYCLE_TRAVERSAL_STEPS {
+                return Err(Error::IndexOverflow(ERR_CHILD_OF_CYCLE_CHECK));
+            }
+            traversed_steps += 1;
             if parent == *child {
                 return Ok(true);
             }

@@ -9,6 +9,9 @@ use heed::types::Bytes;
 
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader, deindex_entity};
 use crate::error::{Error, Result};
+use crate::limits::{
+    ERR_CHILD_OF_CYCLE_CHECK, MAX_ANCESTOR_DEPTH, MAX_CHILD_OF_CYCLE_TRAVERSAL_STEPS,
+};
 use crate::store::Store;
 use crate::types::{
     EDGE_KEY_LEN, EDGE_VALUE_LEN, ENTITY_ID_LEN, EdgeInfo, EdgeKind, EntityId, ScoredEntity,
@@ -70,15 +73,8 @@ fn first_child_of_parent(
 ) -> Result<Option<EntityId>> {
     let prefix = edge_kind_prefix(node, EdgeKind::ChildOf);
     if let Some(entry) = store.edges_out.prefix_iter(rtxn, &prefix)?.next() {
-        let (key, _) = entry?;
-        require_key_len(key, EDGE_KEY_LEN, "edge record")?;
-        let parent = EntityId::from_bytes(
-            key[EDGE_KIND_PREFIX_LEN..EDGE_KEY_LEN]
-                .try_into()
-                .map_err(|_| Error::CorruptedIndex("edge record"))?,
-        )
-        .map_err(|_| Error::CorruptedIndex("edge record"))?;
-        return Ok(Some(parent));
+        let (key, value) = entry?;
+        return Ok(Some(parse_edge_record(key, value)?.target));
     }
     Ok(None)
 }
@@ -427,11 +423,15 @@ impl Vault {
 
     /// Returns all entity IDs of a given type via prefix scan on type_index.
     ///
-    /// Returns up to `MAX_TYPE_QUERY_RESULTS` entities (cap defined at module top) to prevent unbounded allocation.
+    /// Returns all matching entity IDs, or `Err(IndexOverflow("entities_by_type"))`
+    /// if the scan would exceed `MAX_TYPE_QUERY_RESULTS`.
     pub fn entities_by_type(&self, entity_type: u8) -> Result<Vec<EntityId>> {
         let rtxn = self.store.env.read_txn()?;
         let mut ids = Vec::new();
         for entry in self.store.type_index.prefix_iter(&rtxn, &[entity_type])? {
+            if ids.len() >= MAX_TYPE_QUERY_RESULTS {
+                return Err(Error::IndexOverflow("entities_by_type"));
+            }
             let (key, _) = entry?;
             require_key_len(key, 17, "type index key")?;
             let id = EntityId::from_bytes(
@@ -441,9 +441,6 @@ impl Vault {
             )
             .map_err(|_| Error::CorruptedIndex("type index key"))?;
             ids.push(id);
-            if ids.len() >= MAX_TYPE_QUERY_RESULTS {
-                break;
-            }
         }
         Ok(ids)
     }
@@ -470,7 +467,14 @@ impl Vault {
         target_type: Option<u8>,
     ) -> Result<Vec<EntityId>> {
         let rtxn = self.store.env.read_txn()?;
-        self.filtered_edge_peers(&rtxn, &self.store.edges_out, src, kind, target_type)
+        self.filtered_edge_peers(
+            &rtxn,
+            &self.store.edges_out,
+            src,
+            kind,
+            target_type,
+            "targets",
+        )
     }
 
     /// Inbound edge sources filtered by kind and optional source entity type.
@@ -484,13 +488,21 @@ impl Vault {
         source_type: Option<u8>,
     ) -> Result<Vec<EntityId>> {
         let rtxn = self.store.env.read_txn()?;
-        self.filtered_edge_peers(&rtxn, &self.store.edges_in, tgt, kind, source_type)
+        self.filtered_edge_peers(
+            &rtxn,
+            &self.store.edges_in,
+            tgt,
+            kind,
+            source_type,
+            "sources",
+        )
     }
 
     /// Scans an edge database (edges_out or edges_in) for entries matching `kind`,
     /// returning the peer entity IDs. Optionally filters by the peer's entity type.
     ///
-    /// Capped at `MAX_EDGE_QUERY_RESULTS` to prevent unbounded allocation.
+    /// Capped at `MAX_EDGE_QUERY_RESULTS` scanned peer rows to prevent
+    /// unbounded allocation and worst-case filtered scans.
     fn filtered_edge_peers(
         &self,
         rtxn: &heed::RoTxn<'_>,
@@ -498,18 +510,16 @@ impl Vault {
         prefix_id: &EntityId,
         kind: EdgeKind,
         peer_type: Option<u8>,
+        overflow_context: &'static str,
     ) -> Result<Vec<EntityId>> {
         let prefix = edge_kind_prefix(prefix_id, kind);
         let mut ids = Vec::new();
-        for entry in db.prefix_iter(rtxn, &prefix)? {
-            let (key, _) = entry?;
-            require_key_len(key, EDGE_KEY_LEN, "edge record")?;
-            let peer = EntityId::from_bytes(
-                key[EDGE_KIND_PREFIX_LEN..EDGE_KEY_LEN]
-                    .try_into()
-                    .map_err(|_| Error::CorruptedIndex("edge record"))?,
-            )
-            .map_err(|_| Error::CorruptedIndex("edge record"))?;
+        for (scanned, entry) in db.prefix_iter(rtxn, &prefix)?.enumerate() {
+            if scanned >= MAX_EDGE_QUERY_RESULTS {
+                return Err(Error::IndexOverflow(overflow_context));
+            }
+            let (key, value) = entry?;
+            let peer = parse_edge_record(key, value)?.target;
 
             if let Some(req_type) = peer_type
                 && !self.entity_has_type(rtxn, &peer, req_type)?
@@ -518,9 +528,6 @@ impl Vault {
             }
 
             ids.push(peer);
-            if ids.len() >= MAX_EDGE_QUERY_RESULTS {
-                break;
-            }
         }
         Ok(ids)
     }
@@ -556,7 +563,8 @@ impl Vault {
     /// Children are found via inbound ChildOf edges (since ChildOf direction is
     /// child → parent, children appear in the parent's edges_in).
     ///
-    /// Returns up to `MAX_SUBTREE_RESULTS` nodes to prevent unbounded allocation.
+    /// Returns all descendants, or `Err(IndexOverflow("subtree"))` if the
+    /// result set or pending frontier would exceed `MAX_SUBTREE_RESULTS`.
     pub fn subtree(&self, root: &EntityId, max_depth: u32) -> Result<Vec<(EntityId, u32)>> {
         let rtxn = self.store.env.read_txn()?;
         let mut result = Vec::new();
@@ -566,10 +574,10 @@ impl Vault {
 
         while let Some((node, depth)) = frontier.pop_front() {
             if depth > 0 {
-                result.push((node, depth));
                 if result.len() >= MAX_SUBTREE_RESULTS {
-                    break;
+                    return Err(Error::IndexOverflow("subtree"));
                 }
+                result.push((node, depth));
             }
             if depth >= max_depth {
                 continue;
@@ -578,15 +586,12 @@ impl Vault {
             // Find children: inbound ChildOf edges (child --ChildOf--> node)
             let child_prefix = edge_kind_prefix(&node, EdgeKind::ChildOf);
             for entry in self.store.edges_in.prefix_iter(&rtxn, &child_prefix)? {
-                let (key, _) = entry?;
-                require_key_len(key, EDGE_KEY_LEN, "edge record")?;
-                let child = EntityId::from_bytes(
-                    key[EDGE_KIND_PREFIX_LEN..EDGE_KEY_LEN]
-                        .try_into()
-                        .map_err(|_| Error::CorruptedIndex("edge record"))?,
-                )
-                .map_err(|_| Error::CorruptedIndex("edge record"))?;
+                let (key, value) = entry?;
+                let child = parse_edge_record(key, value)?.target;
                 if visited.insert(child) {
+                    if result.len() + frontier.len() >= MAX_SUBTREE_RESULTS {
+                        return Err(Error::IndexOverflow("subtree"));
+                    }
                     frontier.push_back((child, depth + 1));
                 }
             }
@@ -604,7 +609,8 @@ impl Vault {
     /// Walk ancestors via outbound ChildOf edges.
     ///
     /// Returns ancestor IDs from immediate parent to root (nearest first).
-    /// The `visited` set prevents infinite loops on corrupted cyclic data.
+    /// The `visited` set prevents infinite loops on corrupted cyclic data, and
+    /// `MAX_ANCESTOR_DEPTH` bounds pathological acyclic chains.
     pub fn ancestors(&self, node: &EntityId) -> Result<Vec<EntityId>> {
         let rtxn = self.store.env.read_txn()?;
         let mut result = Vec::new();
@@ -616,10 +622,7 @@ impl Vault {
             if !visited.insert(parent) {
                 break; // Cycle detected — stop walking but don't error
             }
-            // Cap check BEFORE push so an exact-MAX chain returns Ok,
-            // matching scan_edges semantics. Only an MAX+1-th ancestor
-            // triggers IndexOverflow.
-            if result.len() >= MAX_SUBTREE_RESULTS {
+            if result.len() >= MAX_ANCESTOR_DEPTH {
                 return Err(Error::IndexOverflow("ancestors"));
             }
             result.push(parent);
@@ -644,7 +647,8 @@ impl Vault {
     ///
     /// Walks ancestors of `target` — if `node` is found among them, it's a cycle.
     /// Short-circuits as soon as `node` is found instead of collecting all ancestors.
-    /// The `visited` set prevents infinite loops on corrupted cyclic data.
+    /// The `visited` set prevents infinite loops on corrupted cyclic data, and
+    /// `MAX_CHILD_OF_CYCLE_TRAVERSAL_STEPS` bounds pathological acyclic chains.
     pub(crate) fn would_create_cycle_in_txn(
         &self,
         rtxn: &heed::RoTxn<'_>,
@@ -657,8 +661,13 @@ impl Vault {
         let mut current = *target;
         let mut visited = std::collections::HashSet::new();
         visited.insert(current);
+        let mut traversed_steps = 0usize;
 
         while let Some(parent) = first_child_of_parent(&self.store, rtxn, &current)? {
+            if traversed_steps >= MAX_CHILD_OF_CYCLE_TRAVERSAL_STEPS {
+                return Err(Error::IndexOverflow(ERR_CHILD_OF_CYCLE_CHECK));
+            }
+            traversed_steps += 1;
             if parent == *node {
                 return Ok(true);
             }

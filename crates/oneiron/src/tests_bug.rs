@@ -2,6 +2,12 @@ use crate::store::Store;
 use crate::types::EDGE_VALUE_LEN;
 use crate::*;
 
+fn non_finite_edge_value(weight: f32) -> [u8; EDGE_VALUE_LEN] {
+    let mut value = [0_u8; EDGE_VALUE_LEN];
+    value[..4].copy_from_slice(&weight.to_le_bytes());
+    value
+}
+
 #[test]
 fn test_intra_batch_cycle() {
     let temp_dir = tempfile::tempdir().unwrap();
@@ -98,6 +104,75 @@ fn sources_reject_corrupted_edge_key_length() {
 }
 
 #[test]
+fn targets_reject_non_finite_persisted_edge_payload() {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let vault = Vault::open(temp_dir.path(), VaultConfig::device()).unwrap();
+    let src = EntityId::now();
+    let tgt = EntityId::now();
+    let value = non_finite_edge_value(f32::NAN);
+
+    vault
+        .with_write_txn(|wtxn| {
+            let key = Store::encode_edge_key(&src, EdgeKind::BelongsTo, &tgt);
+            vault.store.edges_out.put(wtxn, &key, &value).unwrap();
+            Ok(())
+        })
+        .unwrap();
+
+    let result = vault.targets(&src, EdgeKind::BelongsTo, None);
+    assert!(
+        matches!(result, Err(Error::CorruptedIndex("edge record"))),
+        "expected corrupted edge record, got {result:?}"
+    );
+}
+
+#[test]
+fn subtree_rejects_non_finite_persisted_edge_payload() {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let vault = Vault::open(temp_dir.path(), VaultConfig::device()).unwrap();
+    let root = EntityId::now();
+    let child = EntityId::now();
+    let value = non_finite_edge_value(f32::NAN);
+
+    vault
+        .with_write_txn(|wtxn| {
+            let key = Store::encode_edge_key(&root, EdgeKind::ChildOf, &child);
+            vault.store.edges_in.put(wtxn, &key, &value).unwrap();
+            Ok(())
+        })
+        .unwrap();
+
+    let result = vault.subtree(&root, 1);
+    assert!(
+        matches!(result, Err(Error::CorruptedIndex("edge record"))),
+        "expected corrupted edge record, got {result:?}"
+    );
+}
+
+#[test]
+fn ancestors_reject_non_finite_persisted_edge_payload() {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let vault = Vault::open(temp_dir.path(), VaultConfig::device()).unwrap();
+    let child = EntityId::now();
+    let parent = EntityId::now();
+    let value = non_finite_edge_value(f32::NAN);
+
+    vault
+        .with_write_txn(|wtxn| {
+            let key = Store::encode_edge_key(&child, EdgeKind::ChildOf, &parent);
+            vault.store.edges_out.put(wtxn, &key, &value).unwrap();
+            Ok(())
+        })
+        .unwrap();
+
+    let result = vault.ancestors(&child);
+    assert!(
+        matches!(result, Err(Error::CorruptedIndex("edge record"))),
+        "expected corrupted edge record, got {result:?}"
+    );
+}
+
+#[test]
 fn edges_out_rejects_non_finite_persisted_edge_payload() {
     let temp_dir = tempfile::tempdir().unwrap();
     let vault = Vault::open(temp_dir.path(), VaultConfig::device()).unwrap();
@@ -112,8 +187,7 @@ fn edges_out_rejects_non_finite_persisted_edge_payload() {
         .unwrap();
 
     let key = Store::encode_edge_key(&src, EdgeKind::ChildOf, &tgt);
-    let mut value = [0_u8; EDGE_VALUE_LEN];
-    value[..4].copy_from_slice(&f32::NAN.to_le_bytes());
+    let value = non_finite_edge_value(f32::NAN);
 
     vault
         .with_write_txn(|wtxn| {
@@ -145,8 +219,7 @@ fn delete_entity_rejects_non_finite_persisted_edge_payload() {
 
     let key_out = Store::encode_edge_key(&src, EdgeKind::ChildOf, &tgt);
     let key_in = Store::encode_edge_key(&tgt, EdgeKind::ChildOf, &src);
-    let mut value = [0_u8; EDGE_VALUE_LEN];
-    value[..4].copy_from_slice(&f32::INFINITY.to_le_bytes());
+    let value = non_finite_edge_value(f32::INFINITY);
 
     vault
         .with_write_txn(|wtxn| {
