@@ -6,6 +6,7 @@ use xxhash_rust::xxh32::xxh32;
 
 use crate::Vault;
 use crate::error::{Error, Result};
+use crate::limits::{ERR_CHILD_OF_CYCLE_CHECK, MAX_CHILD_OF_CYCLE_TRAVERSAL_STEPS};
 use crate::ppr;
 use crate::store::Store;
 use crate::types::{
@@ -16,8 +17,6 @@ use crate::types::{
 pub(crate) const ENTITY_METADATA_HEADER_LEN: usize = 25;
 pub(crate) const SHORT_ID_COUNTER_LEN: usize = 8;
 pub(crate) const LONG_INTERVAL_THRESHOLD_SECS: u64 = 14 * 86_400;
-const MAX_CHILD_OF_CYCLE_CHECK_DEPTH: usize = 10_000;
-const ERR_CHILD_OF_CYCLE_CHECK: &str = "child_of_cycle_check";
 
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct EntityMetadataHeader {
@@ -824,18 +823,18 @@ fn would_create_child_of_cycle(
     frontier.push_back(*proposed_parent);
     let mut visited = HashSet::new();
     visited.insert(*proposed_parent);
-    let mut traversed = 0usize;
+    let mut traversed_steps = 0usize;
 
     while let Some(node) = frontier.pop_front() {
         for parent in child_of_overlay.effective_parents(store, rtxn, &node)? {
+            if traversed_steps >= MAX_CHILD_OF_CYCLE_TRAVERSAL_STEPS {
+                return Err(Error::IndexOverflow(ERR_CHILD_OF_CYCLE_CHECK));
+            }
+            traversed_steps += 1;
             if parent == *child {
                 return Ok(true);
             }
             if visited.insert(parent) {
-                if traversed >= MAX_CHILD_OF_CYCLE_CHECK_DEPTH {
-                    return Err(Error::IndexOverflow(ERR_CHILD_OF_CYCLE_CHECK));
-                }
-                traversed += 1;
                 frontier.push_back(parent);
             }
         }

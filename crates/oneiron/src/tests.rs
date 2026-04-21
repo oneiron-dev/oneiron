@@ -2,6 +2,7 @@ use std::collections::HashSet;
 use std::str;
 use std::time::Instant;
 
+use crate::limits::MAX_CHILD_OF_CYCLE_TRAVERSAL_STEPS;
 use crate::types::{EDGE_VALUE_LEN, ENTITY_ID_LEN};
 use heed::types::Bytes;
 use rand::rngs::StdRng;
@@ -2576,7 +2577,7 @@ fn test_deep_ancestor_chain() -> Result<()> {
 
 #[test]
 fn ancestors_and_cycle_checks_overflow_on_depth_cap() -> Result<()> {
-    const ANCESTOR_CAP: usize = 10_000;
+    const ANCESTOR_CAP: usize = MAX_CHILD_OF_CYCLE_TRAVERSAL_STEPS;
 
     let temp_dir = tempfile::tempdir()?;
     let vault = Vault::open(temp_dir.path(), large_test_config())?;
@@ -2624,6 +2625,46 @@ fn ancestors_and_cycle_checks_overflow_on_depth_cap() -> Result<()> {
         .edge_checked(&unrelated, &exact_nodes[ANCESTOR_CAP], 1.0)
         .commit()
         .expect_err("batch cycle check should fail loud once depth cap is exceeded");
+    assert!(matches!(
+        batch_err,
+        Error::IndexOverflow("child_of_cycle_check")
+    ));
+    Ok(())
+}
+
+#[test]
+fn cycle_checks_fail_loud_before_positive_match_beyond_traversal_cap() -> Result<()> {
+    const TRAVERSAL_CAP: usize = MAX_CHILD_OF_CYCLE_TRAVERSAL_STEPS;
+
+    let temp_dir = tempfile::tempdir()?;
+    let vault = Vault::open(temp_dir.path(), large_test_config())?;
+    let value = valid_edge_value();
+
+    let nodes: Vec<_> = (0..=TRAVERSAL_CAP + 1)
+        .map(|i| seeded_entity_id(4_000_000 + i as u128))
+        .collect();
+
+    vault.with_write_txn(|wtxn| {
+        for i in 0..=TRAVERSAL_CAP {
+            let key = Store::encode_edge_key(&nodes[i + 1], EdgeKind::ChildOf, &nodes[i]);
+            vault.store.edges_out.put(wtxn, &key, &value)?;
+        }
+        Ok(())
+    })?;
+
+    let public_err = vault
+        .would_create_cycle(&nodes[0], &nodes[TRAVERSAL_CAP + 1])
+        .expect_err("public cycle check should overflow before reporting a deep positive match");
+    assert!(matches!(
+        public_err,
+        Error::IndexOverflow("child_of_cycle_check")
+    ));
+
+    let batch_err = vault
+        .batch()
+        .edge_checked(&nodes[0], &nodes[TRAVERSAL_CAP + 1], 1.0)
+        .commit()
+        .expect_err("batch cycle check should overflow before reporting a deep positive match");
     assert!(matches!(
         batch_err,
         Error::IndexOverflow("child_of_cycle_check")

@@ -9,6 +9,7 @@ use heed::types::Bytes;
 
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader, deindex_entity};
 use crate::error::{Error, Result};
+use crate::limits::{ERR_CHILD_OF_CYCLE_CHECK, MAX_CHILD_OF_CYCLE_TRAVERSAL_STEPS};
 use crate::store::Store;
 use crate::types::{
     EDGE_KEY_LEN, EDGE_VALUE_LEN, ENTITY_ID_LEN, EdgeInfo, EdgeKind, EntityId, ScoredEntity,
@@ -44,9 +45,6 @@ const MAX_ANCESTOR_DEPTH: usize = 10_000;
 /// Cap for `sync_state_keys_with_prefix` to prevent unbounded allocation when
 /// a pathological prefix scans a very large sync_state database.
 const MAX_SYNC_STATE_KEYS: usize = 10_000;
-
-/// Error label for ChildOf cycle checks that exceed the traversal safety cap.
-const ERR_CHILD_OF_CYCLE_CHECK: &str = "child_of_cycle_check";
 
 /// Build an edge prefix `[entity_id | kind]` for targeted LMDB prefix scans.
 /// Avoids scanning all edge kinds for a given entity.
@@ -649,7 +647,8 @@ impl Vault {
     ///
     /// Walks ancestors of `target` — if `node` is found among them, it's a cycle.
     /// Short-circuits as soon as `node` is found instead of collecting all ancestors.
-    /// The `visited` set prevents infinite loops on corrupted cyclic data.
+    /// The `visited` set prevents infinite loops on corrupted cyclic data, and
+    /// `MAX_CHILD_OF_CYCLE_TRAVERSAL_STEPS` bounds pathological acyclic chains.
     pub(crate) fn would_create_cycle_in_txn(
         &self,
         rtxn: &heed::RoTxn<'_>,
@@ -662,16 +661,16 @@ impl Vault {
         let mut current = *target;
         let mut visited = std::collections::HashSet::new();
         visited.insert(current);
-        let mut traversed = 0usize;
+        let mut traversed_steps = 0usize;
 
         while let Some(parent) = first_child_of_parent(&self.store, rtxn, &current)? {
+            if traversed_steps >= MAX_CHILD_OF_CYCLE_TRAVERSAL_STEPS {
+                return Err(Error::IndexOverflow(ERR_CHILD_OF_CYCLE_CHECK));
+            }
+            traversed_steps += 1;
             if parent == *node {
                 return Ok(true);
             }
-            if traversed >= MAX_ANCESTOR_DEPTH {
-                return Err(Error::IndexOverflow(ERR_CHILD_OF_CYCLE_CHECK));
-            }
-            traversed += 1;
             if !visited.insert(parent) {
                 break; // Existing cycle in data — stop walking
             }
