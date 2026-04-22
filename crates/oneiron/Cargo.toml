@@ -31,6 +31,7 @@ whichlang = "0.1.1"
 rust-stemmers = "1.2.0"
 sudachi = { git = "https://github.com/WorksApplications/sudachi.rs", tag = "v0.6.11" }
 jieba-rs = { version = "0.9", default-features = false }
+lindera = { version = "3.0", default-features = false }
 
 [features]
 sync = ["loro", "dep:tokio", "dep:tokio-tungstenite", "dep:futures-util", "dep:zstd"]

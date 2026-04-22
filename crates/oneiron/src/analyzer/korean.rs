@@ -1,0 +1,272 @@
+//! Korean analyzer.
+//!
+//! Per plan §7: Lindera morphological segmentation (via mecab-ko-dic) when
+//! a `<path>/ko/` dict directory is discoverable, with a Hangul syllable
+//! bigram overlay on the `CjkNgram` channel. When no dict is discoverable
+//! (Portable mode), defers to [`cjk_ngram::analyze`].
+//!
+//! mecab-ko-dic data is Apache-2.0 — the default Korean dict bundle per
+//! plan §2.3. Lindera exposes the segmenter with byte offsets, so no
+//! char→byte translation is needed (contrast with jieba-rs).
+
+use std::borrow::Cow;
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
+
+use lindera::dictionary::{Dictionary, load_fs_dictionary};
+use lindera::mode::Mode;
+use lindera::segmenter::Segmenter;
+
+use super::cjk_ngram;
+use super::manifest::AnalyzerMode;
+use super::token::{AnalyzerChannel, Token, TokenKind};
+
+pub const DICT_SUBDIR: &str = "ko";
+/// Characteristic file that signals a loadable Lindera dict directory.
+pub const DICT_MARKER: &str = "metadata.json";
+
+/// Korean analyzer. Cheaply cloneable — Segmenter is held in `Arc`.
+#[derive(Clone)]
+pub struct KoreanAnalyzer {
+    segmenter: Option<Arc<Segmenter>>,
+    dict_path: Option<PathBuf>,
+}
+
+impl std::fmt::Debug for KoreanAnalyzer {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("KoreanAnalyzer")
+            .field("mode", &self.mode())
+            .field("dict_path", &self.dict_path)
+            .finish()
+    }
+}
+
+impl KoreanAnalyzer {
+    /// Analyzer with no dict — Portable path only.
+    pub fn portable() -> Self {
+        Self {
+            segmenter: None,
+            dict_path: None,
+        }
+    }
+
+    /// Walk `search_paths` in order and load the first `<path>/ko/` directory
+    /// that looks like a Lindera dict (contains `metadata.json`). Returns
+    /// Portable if none found.
+    pub fn discover(search_paths: &[PathBuf]) -> Result<Self, DictLoadError> {
+        for root in search_paths {
+            let candidate = root.join(DICT_SUBDIR);
+            if candidate.is_dir() && candidate.join(DICT_MARKER).is_file() {
+                return Self::with_dict_dir(&candidate);
+            }
+        }
+        Ok(Self::portable())
+    }
+
+    /// Build a Korean analyzer around a specific Lindera dict directory.
+    pub fn with_dict_dir(path: &Path) -> Result<Self, DictLoadError> {
+        let dictionary: Dictionary = load_fs_dictionary(path).map_err(|e| DictLoadError::Lindera {
+            path: path.to_path_buf(),
+            source: Box::new(e),
+        })?;
+        let segmenter = Segmenter::new(Mode::Normal, dictionary, None);
+        Ok(Self {
+            segmenter: Some(Arc::new(segmenter)),
+            dict_path: Some(path.to_path_buf()),
+        })
+    }
+
+    pub fn mode(&self) -> AnalyzerMode {
+        if self.segmenter.is_some() {
+            AnalyzerMode::Morphological
+        } else {
+            AnalyzerMode::Portable
+        }
+    }
+
+    pub fn dict_path(&self) -> Option<&Path> {
+        self.dict_path.as_deref()
+    }
+
+    /// Analyze `text` as Korean and append tokens to `out`.
+    ///
+    /// Morphological path (dict present):
+    /// * Lindera morphemes → `Surface` tokens at positions 0..N
+    /// * Hangul syllable bigrams → `CjkNgram` overlay tokens
+    ///
+    /// Portable path (no dict): delegates to [`cjk_ngram::analyze`].
+    pub fn analyze(
+        &self,
+        text: &str,
+        offset_base: u32,
+        position_base: u32,
+        _query_mode: bool,
+        out: &mut Vec<Token>,
+    ) -> u32 {
+        if text.is_empty() {
+            return position_base;
+        }
+        match self.segmenter.as_ref() {
+            None => cjk_ngram::analyze(text, offset_base, position_base, out),
+            Some(seg) => self.analyze_morphological(seg, text, offset_base, position_base, out),
+        }
+    }
+
+    fn analyze_morphological(
+        &self,
+        seg: &Segmenter,
+        text: &str,
+        offset_base: u32,
+        position_base: u32,
+        out: &mut Vec<Token>,
+    ) -> u32 {
+        let tokens = match seg.segment(Cow::Borrowed(text)) {
+            Ok(v) => v,
+            Err(_) => return cjk_ngram::analyze(text, offset_base, position_base, out),
+        };
+
+        let mut position = position_base;
+        for t in tokens {
+            let start = offset_base + t.byte_start as u32;
+            let end = offset_base + t.byte_end as u32;
+            out.push(Token::new(
+                t.surface.into_owned(),
+                start,
+                end,
+                position,
+                AnalyzerChannel::Surface,
+                TokenKind::Cjk,
+            ));
+            position += 1;
+        }
+
+        emit_hangul_bigram_overlay(text, offset_base, position_base, out);
+
+        position
+    }
+}
+
+fn emit_hangul_bigram_overlay(
+    text: &str,
+    offset_base: u32,
+    position_base: u32,
+    out: &mut Vec<Token>,
+) {
+    let chars: Vec<(u32, &str)> = text
+        .char_indices()
+        .map(|(i, c)| {
+            let start = i as u32;
+            let end = start + c.len_utf8() as u32;
+            (start, &text[start as usize..end as usize])
+        })
+        .collect();
+
+    let mut char_position = position_base;
+    for (i, &(local_start, ch)) in chars.iter().enumerate() {
+        if let Some(&(next_local_start, next_ch)) = chars.get(i + 1) {
+            let start = offset_base + local_start;
+            let end = offset_base + next_local_start + next_ch.len() as u32;
+            let mut term = String::with_capacity(ch.len() + next_ch.len());
+            term.push_str(ch);
+            term.push_str(next_ch);
+            out.push(
+                Token::new(
+                    term,
+                    start,
+                    end,
+                    char_position,
+                    AnalyzerChannel::CjkNgram,
+                    TokenKind::Cjk,
+                )
+                .overlay(),
+            );
+        }
+        char_position += 1;
+    }
+}
+
+/// Errors returned when a Korean dictionary directory cannot be loaded.
+#[derive(Debug, thiserror::Error)]
+pub enum DictLoadError {
+    #[error("lindera rejected KO dictionary at {path:?}: {source}")]
+    Lindera {
+        path: PathBuf,
+        #[source]
+        source: Box<dyn std::error::Error + Send + Sync>,
+    },
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn portable_analyzer_has_portable_mode() {
+        let ko = KoreanAnalyzer::portable();
+        assert_eq!(ko.mode(), AnalyzerMode::Portable);
+        assert!(ko.dict_path().is_none());
+    }
+
+    #[test]
+    fn discover_with_no_paths_returns_portable() {
+        let ko = KoreanAnalyzer::discover(&[]).unwrap();
+        assert_eq!(ko.mode(), AnalyzerMode::Portable);
+    }
+
+    #[test]
+    fn discover_with_empty_dir_returns_portable() {
+        let dir = tempfile::tempdir().unwrap();
+        let ko = KoreanAnalyzer::discover(&[dir.path().to_path_buf()]).unwrap();
+        assert_eq!(ko.mode(), AnalyzerMode::Portable);
+    }
+
+    #[test]
+    fn discover_dir_without_marker_returns_portable() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir(dir.path().join("ko")).unwrap();
+        let ko = KoreanAnalyzer::discover(&[dir.path().to_path_buf()]).unwrap();
+        assert_eq!(ko.mode(), AnalyzerMode::Portable);
+    }
+
+    #[test]
+    fn portable_path_delegates_to_cjk_ngram() {
+        let ko = KoreanAnalyzer::portable();
+        let mut out = Vec::new();
+        ko.analyze("안녕하세요", 0, 0, false, &mut out);
+        let surface: Vec<&str> = out
+            .iter()
+            .filter(|t| t.channel == AnalyzerChannel::Surface)
+            .map(|t| t.term.as_ref())
+            .collect();
+        assert_eq!(surface, vec!["안", "녕", "하", "세", "요"]);
+    }
+
+    #[test]
+    fn empty_input_returns_position_base() {
+        let ko = KoreanAnalyzer::portable();
+        let mut out = Vec::new();
+        let next = ko.analyze("", 0, 7, false, &mut out);
+        assert_eq!(next, 7);
+        assert!(out.is_empty());
+    }
+
+    /// Morphological-mode integration: only runs when a ko-dic dict
+    /// directory is available via `ONEIRON_TEST_KODIC_DIR` (absolute path).
+    #[test]
+    fn morphological_path_with_env_dict() {
+        let Ok(dict_path) = std::env::var("ONEIRON_TEST_KODIC_DIR") else {
+            return;
+        };
+        let ko = KoreanAnalyzer::with_dict_dir(Path::new(&dict_path))
+            .expect("ko-dic should load");
+        assert_eq!(ko.mode(), AnalyzerMode::Morphological);
+
+        let mut out = Vec::new();
+        ko.analyze("한국어는 재미있어요", 0, 0, false, &mut out);
+        assert!(!out.is_empty());
+        for tok in out.iter().filter(|t| t.channel == AnalyzerChannel::Surface) {
+            let slice = &"한국어는 재미있어요"[tok.byte_start as usize..tok.byte_end as usize];
+            assert_eq!(slice, tok.term.as_ref());
+        }
+    }
+}
