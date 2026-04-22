@@ -14,6 +14,8 @@ use std::path::Path;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
+use crate::types::bytes_to_hex_lower;
+
 pub const ANALYZER_VERSION: &str = "v1";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -108,23 +110,78 @@ impl AnalyzerAssetManifest {
         path: &Path,
     ) -> io::Result<Self> {
         use std::fs::File;
-        use std::io::Read;
         let mut file = File::open(path)?;
-        let size_bytes = file.metadata()?.len();
         let mut hasher = Sha256::new();
-        let mut buf = [0_u8; 64 * 1024];
-        loop {
-            let n = file.read(&mut buf)?;
-            if n == 0 {
-                break;
+        // `sha2::Sha256` implements `io::Write`, so streaming the file
+        // through `io::copy` lets libstd own buffering and the final byte
+        // count. Avoids a separate `metadata()?.len()` syscall and the
+        // TOCTOU window between stat and read.
+        let size_bytes = io::copy(&mut file, &mut hasher)?;
+        let digest: [u8; 32] = hasher.finalize().into();
+        Ok(Self {
+            name: name.into(),
+            version: version.into(),
+            sha256: bytes_to_hex_lower(&digest),
+            size_bytes,
+            license: license.into(),
+            source,
+        })
+    }
+
+    /// Fingerprint a whole dict *directory* by streaming every regular
+    /// file, in sorted filename order, through a single sha256. Each file
+    /// contributes its filename length, filename bytes, content length,
+    /// then content — so reordering or swapping files always changes the
+    /// digest. Used by [`super::korean::KoreanAnalyzer`] since Lindera
+    /// loads a multi-file dict tree rather than a single binary blob.
+    /// Subdirectories are not descended into (all current Lindera dicts
+    /// are flat).
+    pub fn probe_directory(
+        name: impl Into<String>,
+        version: impl Into<String>,
+        license: impl Into<String>,
+        source: Option<String>,
+        dir: &Path,
+    ) -> io::Result<Self> {
+        use std::fs::File;
+        let mut entries: Vec<(std::ffi::OsString, std::path::PathBuf)> = std::fs::read_dir(dir)?
+            .filter_map(|r| r.ok())
+            .filter_map(|e| {
+                let ft = e.file_type().ok()?;
+                if ft.is_file() {
+                    Some((e.file_name(), e.path()))
+                } else {
+                    None
+                }
+            })
+            .collect();
+        entries.sort_by(|a, b| a.0.cmp(&b.0));
+
+        let mut hasher = Sha256::new();
+        let mut size_bytes: u64 = 0;
+        for (file_name, file_path) in &entries {
+            let name_bytes = file_name.as_encoded_bytes();
+            hasher.update((name_bytes.len() as u64).to_le_bytes());
+            hasher.update(name_bytes);
+            let mut file = File::open(file_path)?;
+            let file_size = file.metadata()?.len();
+            hasher.update(file_size.to_le_bytes());
+            let copied = io::copy(&mut file, &mut hasher)?;
+            if copied != file_size {
+                return Err(io::Error::new(
+                    io::ErrorKind::UnexpectedEof,
+                    format!(
+                        "{file_path:?} changed during fingerprint (expected {file_size} bytes, got {copied})"
+                    ),
+                ));
             }
-            hasher.update(&buf[..n]);
+            size_bytes = size_bytes.saturating_add(file_size);
         }
         let digest: [u8; 32] = hasher.finalize().into();
         Ok(Self {
             name: name.into(),
             version: version.into(),
-            sha256: hex_encode(&digest),
+            sha256: bytes_to_hex_lower(&digest),
             size_bytes,
             license: license.into(),
             source,
@@ -145,17 +202,7 @@ pub fn canonical_hash<T: Serialize>(value: &T) -> Result<[u8; 32], serde_json::E
 
 pub fn canonical_hash_hex<T: Serialize>(value: &T) -> Result<String, serde_json::Error> {
     let bytes = canonical_hash(value)?;
-    Ok(hex_encode(&bytes))
-}
-
-fn hex_encode(bytes: &[u8]) -> String {
-    const HEX: &[u8; 16] = b"0123456789abcdef";
-    let mut out = String::with_capacity(bytes.len() * 2);
-    for &b in bytes {
-        out.push(HEX[(b >> 4) as usize] as char);
-        out.push(HEX[(b & 0x0f) as usize] as char);
-    }
-    out
+    Ok(bytes_to_hex_lower(&bytes))
 }
 
 #[cfg(test)]
@@ -266,6 +313,35 @@ mod tests {
     fn normalization_policy_default_enables_all() {
         let n = NormalizationPolicy::default();
         assert!(n.nfkc && n.casefold && n.kana_fold);
+    }
+
+    #[test]
+    fn probe_directory_is_sorted_and_detects_swaps() {
+        use std::fs::{File, write};
+        use std::io::Write;
+        let dir = tempfile::tempdir().unwrap();
+        write(dir.path().join("b.bin"), b"second").unwrap();
+        write(dir.path().join("a.bin"), b"first").unwrap();
+        let baseline =
+            AnalyzerAssetManifest::probe_directory("d", "v", "Apache-2.0", None, dir.path())
+                .unwrap();
+        assert_eq!(baseline.size_bytes, (b"second".len() + b"first".len()) as u64);
+        assert_eq!(baseline.sha256.len(), 64);
+
+        // Re-probing is deterministic.
+        let again =
+            AnalyzerAssetManifest::probe_directory("d", "v", "Apache-2.0", None, dir.path())
+                .unwrap();
+        assert_eq!(baseline.sha256, again.sha256);
+
+        // Swapping file *contents* (same filenames) must change the hash.
+        let mut f = File::create(dir.path().join("a.bin")).unwrap();
+        f.write_all(b"FIRST").unwrap();
+        drop(f);
+        let mutated =
+            AnalyzerAssetManifest::probe_directory("d", "v", "Apache-2.0", None, dir.path())
+                .unwrap();
+        assert_ne!(baseline.sha256, mutated.sha256);
     }
 
     #[test]

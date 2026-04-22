@@ -25,11 +25,10 @@ pub const DICT_SUBDIR: &str = "ko";
 /// Characteristic file that signals a loadable Lindera dict directory.
 pub const DICT_MARKER: &str = "metadata.json";
 /// Asset identity recorded in the manifest when a KO dict is loaded.
-/// We fingerprint `metadata.json` (rather than the whole directory) — it
-/// is the one file Lindera always emits for its generated dicts, and its
-/// hash binds to the same corpus. Good enough for manifest identity;
-/// packagers who want tighter bounds can replace this with a bespoke
-/// tarball digest.
+/// Fingerprinting is performed over every regular file in the dict
+/// directory (via [`AnalyzerAssetManifest::probe_directory`]) so the
+/// vault manifest hash binds to the exact bytes Lindera ingested, not
+/// just to `metadata.json`.
 const KO_ASSET_NAME: &str = "mecab-ko-dic";
 const KO_ASSET_LICENSE: &str = "Apache-2.0";
 
@@ -80,16 +79,15 @@ impl KoreanAnalyzer {
             source: Box::new(e),
         })?;
         let segmenter = Segmenter::new(Mode::Normal, dictionary, None);
-        let marker = path.join(DICT_MARKER);
-        let asset = AnalyzerAssetManifest::probe_file(
+        let asset = AnalyzerAssetManifest::probe_directory(
             KO_ASSET_NAME,
             "unknown",
             KO_ASSET_LICENSE,
             None,
-            &marker,
+            path,
         )
         .map_err(|e| DictLoadError::Io {
-            path: marker,
+            path: path.to_path_buf(),
             source: e,
         })?;
         Ok(Self {
@@ -132,13 +130,9 @@ impl KoreanAnalyzer {
         _query_mode: bool,
         out: &mut Vec<Token>,
     ) -> u32 {
-        // `query_mode` is intentionally ignored. Plan §1.2 suppresses
-        // overlays at query time to avoid inflating IDF — but the bigram
-        // overlay here lands on `CjkNgram`, a different channel than the
-        // morpheme-bearing `Surface`. A Hangul query like "한국" needs to
-        // hit the CjkNgram channel to recall docs whose Surface-channel
-        // segmentation split that bigram across morpheme boundaries.
-        // Mirrors the same decision in [`chinese::ChineseAnalyzer`].
+        // `query_mode` is intentionally ignored for the CjkNgram overlay;
+        // see [`super::chinese::ChineseAnalyzer::analyze_morphological`]
+        // for the rationale (same decision, same channel).
         if text.is_empty() {
             return position_base;
         }

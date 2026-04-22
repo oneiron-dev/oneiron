@@ -47,13 +47,7 @@ impl EntityId {
 
     /// Returns the lowercase hex-encoded string (32 chars).
     pub fn to_hex(&self) -> String {
-        const HEX: &[u8; 16] = b"0123456789abcdef";
-        let mut out = String::with_capacity(self.0.len() * 2);
-        for byte in self.0 {
-            out.push(HEX[(byte >> 4) as usize] as char);
-            out.push(HEX[(byte & 0x0f) as usize] as char);
-        }
-        out
+        bytes_to_hex_lower(&self.0)
     }
 
     /// Parses a 32-char hex string (case-insensitive) into an EntityId.
@@ -77,6 +71,19 @@ fn is_reserved_entity_id_bytes(bytes: &[u8; ENTITY_ID_LEN]) -> bool {
     }
 
     bytes[1..].iter().all(|&b| b == 0xFF) && short_id_prefix(bytes[0]).is_ok()
+}
+
+/// Lowercase hex-encodes an arbitrary byte slice. Shared with the
+/// analyzer manifest hasher so every hex rendering in the crate goes
+/// through one implementation.
+pub(crate) fn bytes_to_hex_lower(bytes: &[u8]) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut out = String::with_capacity(bytes.len() * 2);
+    for &byte in bytes {
+        out.push(HEX[(byte >> 4) as usize] as char);
+        out.push(HEX[(byte & 0x0f) as usize] as char);
+    }
+    out
 }
 
 /// Converts an ASCII hex character to its nibble value.

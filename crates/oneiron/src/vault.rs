@@ -790,6 +790,15 @@ fn handshake_text_index_manifest(store: &Store, analyzer: &MultilingualAnalyzer)
 
     let mut wtxn = store.env.write_txn()?;
     let total_docs = bm25::read_total_docs(store, &wtxn)?;
+
+    if total_docs == 0 {
+        // Empty text index — safe to (re)write the manifest. Clears any
+        // stale pre-ONE-317 metadata by overwriting the known keys.
+        write_text_index_manifest(store, &mut wtxn, analyzer)?;
+        wtxn.commit()?;
+        return Ok(());
+    }
+
     let stored_manifest_hash = store
         .vault_meta
         .get(&wtxn, TEXT_ANALYZER_MANIFEST_HASH_KEY)?
@@ -803,15 +812,6 @@ fn handshake_text_index_manifest(store: &Store, analyzer: &MultilingualAnalyzer)
         .get(&wtxn, TEXT_ANALYZER_MANIFEST_KEY)?
         .map(|b| b.to_vec());
 
-    if total_docs == 0 {
-        // Empty text index — safe to (re)write the manifest. Clears any
-        // stale pre-ONE-317 metadata by overwriting the known keys.
-        write_text_index_manifest(store, &mut wtxn, analyzer)?;
-        wtxn.commit()?;
-        return Ok(());
-    }
-
-    // Non-empty index: every key must be present and match the current values.
     let Some(stored_hash) = stored_manifest_hash else {
         // Pre-ONE-317 vault with docs in it: fail closed.
         return Err(Error::IncompatibleAnalyzer {
@@ -821,11 +821,8 @@ fn handshake_text_index_manifest(store: &Store, analyzer: &MultilingualAnalyzer)
         });
     };
 
-    // Field schema: must be present (written atomically alongside the
-    // manifest hash above) and byte-equal to the current schema. A present
-    // manifest with a missing field-schema hash signals partial corruption
-    // — fail closed with IncompatibleAnalyzer rather than Bm25FieldSchemaChanged,
-    // which would incorrectly imply an ordinary schema evolution.
+    // A present manifest with a missing field-schema hash signals partial
+    // corruption, not schema evolution — route it to IncompatibleAnalyzer.
     match stored_field_schema_hash {
         Some(hash) if hash == current_field_schema_hash => {}
         Some(_) => return Err(Error::Bm25FieldSchemaChanged),
