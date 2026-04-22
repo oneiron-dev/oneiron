@@ -1,5 +1,6 @@
 use std::time::{SystemTime, UNIX_EPOCH};
 
+pub mod analyzer;
 pub mod batch;
 pub(crate) mod bm25;
 pub mod context_pack;
@@ -18,6 +19,10 @@ pub mod sync;
 pub mod types;
 mod vault;
 
+pub use crate::analyzer::{
+    ANALYZER_VERSION, AnalyzerAssetManifest, AnalyzerChannel, AnalyzerContext, AnalyzerManifest,
+    AnalyzerMode, LangPolicy, LanguageHint, NormalizationPolicy, Token, TokenKind,
+};
 pub use crate::batch::{BatchBuilder, TxnBatchBuilder};
 pub use crate::context_pack::ContextPackBuilder;
 pub use crate::error::{Error, Result};
