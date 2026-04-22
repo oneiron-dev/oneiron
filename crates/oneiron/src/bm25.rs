@@ -662,7 +662,7 @@ fn write_field_stats(
     Ok(())
 }
 
-fn read_total_docs(store: &Store, txn: &RoTxn<'_>) -> Result<u32> {
+pub(crate) fn read_total_docs(store: &Store, txn: &RoTxn<'_>) -> Result<u32> {
     match store.text_meta.get(txn, &TOTAL_DOCS_KEY)? {
         Some(raw) => Ok(u32::from_le_bytes(raw.try_into().map_err(|_| {
             corrupted("total_docs sentinel has invalid length")
