@@ -1345,6 +1345,8 @@ mod tests {
                 ef_construction: 200,
                 ef_search: 128,
             },
+            text_analyzer: crate::types::TextAnalyzerConfig::default(),
+            dict_search_paths: Vec::new(),
         }
     }
 

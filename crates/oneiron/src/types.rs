@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::path::PathBuf;
 
 use uuid::Uuid;
 
@@ -276,6 +277,32 @@ pub struct VaultConfig {
     pub max_readers: u32,
     /// HNSW tuning configuration.
     pub hnsw: HnswConfig,
+    /// Text analyzer configuration (plan ONE-317 §2.3).
+    pub text_analyzer: TextAnalyzerConfig,
+    /// Roots probed at open time for per-language dictionaries
+    /// (`<path>/ja/system.dic`, `<path>/ko/system.dic`,
+    /// `<path>/zh/jieba.dict.utf8`). First-found wins per-language; missing
+    /// dicts silently downgrade the affected language to Portable mode.
+    pub dict_search_paths: Vec<PathBuf>,
+}
+
+/// Text analyzer configuration. Kept minimal in v1 — the full analyzer
+/// manifest (normalization policy, per-channel schema, lang modes) is
+/// computed from dict discovery at open time and stored in the vault's
+/// on-disk manifest. Fields here cover caller-controllable knobs only.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct TextAnalyzerConfig {}
+
+/// Per-call overrides for `BatchBuilder::text`. Reserved; v1 ignores all
+/// fields but the struct is public so downstream can adopt without a
+/// minor-version bump later.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct TextIndexOptions {
+    /// Explicit language hint for this batch of text fields. Overrides
+    /// script-class inference and `whichlang` detection.
+    pub language_hint: Option<crate::analyzer::LanguageHint>,
 }
 
 impl Default for VaultConfig {
@@ -296,6 +323,8 @@ impl VaultConfig {
             map_size: 1 << 30,
             max_readers: 126,
             hnsw: HnswConfig::default(),
+            text_analyzer: TextAnalyzerConfig::default(),
+            dict_search_paths: Vec::new(),
         }
     }
 
@@ -308,6 +337,8 @@ impl VaultConfig {
             map_size: 1 << 33,
             max_readers: 126,
             hnsw: HnswConfig::default(),
+            text_analyzer: TextAnalyzerConfig::default(),
+            dict_search_paths: Vec::new(),
         }
     }
 }
