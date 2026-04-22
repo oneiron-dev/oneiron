@@ -131,8 +131,8 @@ impl KoreanAnalyzer {
         out: &mut Vec<Token>,
     ) -> u32 {
         // `query_mode` is intentionally ignored for the CjkNgram overlay;
-        // see [`super::chinese::ChineseAnalyzer::analyze_morphological`]
-        // for the rationale (same decision, same channel).
+        // see the Chinese analyzer's morphological path for rationale
+        // (same decision, same channel).
         if text.is_empty() {
             return position_base;
         }

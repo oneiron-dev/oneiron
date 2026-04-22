@@ -130,9 +130,9 @@ impl AnalyzerAssetManifest {
 
     /// Fingerprint a whole dict *directory* by streaming every regular
     /// file, in sorted filename order, through a single sha256. Each file
-    /// contributes its filename length, filename bytes, content length,
-    /// then content — so reordering or swapping files always changes the
-    /// digest. Used by [`super::korean::KoreanAnalyzer`] since Lindera
+    /// contributes its filename length, filename bytes, content, then
+    /// content length — so reordering or swapping files always changes
+    /// the digest. Used by [`super::korean::KoreanAnalyzer`] since Lindera
     /// loads a multi-file dict tree rather than a single binary blob.
     /// Subdirectories are not descended into (all current Lindera dicts
     /// are flat).
@@ -164,18 +164,13 @@ impl AnalyzerAssetManifest {
             hasher.update((name_bytes.len() as u64).to_le_bytes());
             hasher.update(name_bytes);
             let mut file = File::open(file_path)?;
-            let file_size = file.metadata()?.len();
-            hasher.update(file_size.to_le_bytes());
+            // Frame is `name_len | name | content | content_len`. Hashing
+            // the observed byte count after `io::copy` means a single
+            // streaming read per file and no pre-read `metadata().len()` —
+            // same stat syscall saved, plus no TOCTOU window to police.
             let copied = io::copy(&mut file, &mut hasher)?;
-            if copied != file_size {
-                return Err(io::Error::new(
-                    io::ErrorKind::UnexpectedEof,
-                    format!(
-                        "{file_path:?} changed during fingerprint (expected {file_size} bytes, got {copied})"
-                    ),
-                ));
-            }
-            size_bytes = size_bytes.saturating_add(file_size);
+            hasher.update(copied.to_le_bytes());
+            size_bytes = size_bytes.saturating_add(copied);
         }
         let digest: [u8; 32] = hasher.finalize().into();
         Ok(Self {
@@ -316,23 +311,31 @@ mod tests {
     }
 
     #[test]
-    fn probe_directory_is_sorted_and_detects_swaps() {
+    fn probe_directory_matches_reference_hash_and_detects_swaps() {
         use std::fs::{File, write};
         use std::io::Write;
         let dir = tempfile::tempdir().unwrap();
+        // Write in reverse-alphabetical creation order so the test
+        // exercises the sort step rather than raw read_dir iteration.
         write(dir.path().join("b.bin"), b"second").unwrap();
         write(dir.path().join("a.bin"), b"first").unwrap();
-        let baseline =
+        let probed =
             AnalyzerAssetManifest::probe_directory("d", "v", "Apache-2.0", None, dir.path())
                 .unwrap();
-        assert_eq!(baseline.size_bytes, (b"second".len() + b"first".len()) as u64);
-        assert_eq!(baseline.sha256.len(), 64);
+        assert_eq!(probed.size_bytes, (b"first".len() + b"second".len()) as u64);
 
-        // Re-probing is deterministic.
-        let again =
-            AnalyzerAssetManifest::probe_directory("d", "v", "Apache-2.0", None, dir.path())
-                .unwrap();
-        assert_eq!(baseline.sha256, again.sha256);
+        // Reference digest: sorted order is a.bin, b.bin; frame each as
+        // `name_len | name | content | content_len`. If the sort step were
+        // dropped or the framing changed, this assertion would fail.
+        let mut reference = Sha256::new();
+        for (name, content) in [("a.bin", &b"first"[..]), ("b.bin", &b"second"[..])] {
+            reference.update((name.len() as u64).to_le_bytes());
+            reference.update(name.as_bytes());
+            reference.update(content);
+            reference.update((content.len() as u64).to_le_bytes());
+        }
+        let expected: [u8; 32] = reference.finalize().into();
+        assert_eq!(probed.sha256, bytes_to_hex_lower(&expected));
 
         // Swapping file *contents* (same filenames) must change the hash.
         let mut f = File::create(dir.path().join("a.bin")).unwrap();
@@ -341,7 +344,7 @@ mod tests {
         let mutated =
             AnalyzerAssetManifest::probe_directory("d", "v", "Apache-2.0", None, dir.path())
                 .unwrap();
-        assert_ne!(baseline.sha256, mutated.sha256);
+        assert_ne!(probed.sha256, mutated.sha256);
     }
 
     #[test]
