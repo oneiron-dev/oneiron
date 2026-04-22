@@ -275,7 +275,13 @@ impl<'a> BatchBuilder<'a> {
         }
         let mut wtxn = self.vault.store.env.write_txn()?;
 
-        apply_ops(&self.vault.store, &self.vault.config, &mut wtxn, self.ops)?;
+        apply_ops(
+            &self.vault.store,
+            &self.vault.config,
+            &self.vault.analyzer,
+            &mut wtxn,
+            self.ops,
+        )?;
         wtxn.commit()?;
         Ok(())
     }
@@ -383,7 +389,13 @@ impl<'a> TxnBatchBuilder<'a> {
 
     /// Applies all queued operations to the given write transaction without committing.
     pub fn apply(self, wtxn: &mut RwTxn<'_>) -> Result<()> {
-        apply_ops(&self.vault.store, &self.vault.config, wtxn, self.ops)
+        apply_ops(
+            &self.vault.store,
+            &self.vault.config,
+            &self.vault.analyzer,
+            wtxn,
+            self.ops,
+        )
     }
 }
 
@@ -391,6 +403,7 @@ impl<'a> TxnBatchBuilder<'a> {
 pub(crate) fn apply_ops(
     store: &Store,
     config: &crate::types::VaultConfig,
+    analyzer: &crate::analyzer::MultilingualAnalyzer,
     wtxn: &mut RwTxn<'_>,
     ops: Vec<BatchOp>,
 ) -> Result<()> {
@@ -439,7 +452,7 @@ pub(crate) fn apply_ops(
                 had_graph_mutation = true;
             }
             BatchOp::Text { id, fields } => {
-                crate::bm25::index_text(store, wtxn, &id, &fields)?;
+                crate::bm25::index_text(store, wtxn, analyzer, &id, &fields)?;
             }
             BatchOp::Phonetic { id, codes } => {
                 apply_phonetic(store, wtxn, id, &codes)?;
