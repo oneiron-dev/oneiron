@@ -36,3 +36,6 @@ wildcards = "allow"
 unknown-registry = "deny"
 unknown-git = "deny"
 allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+# Sudachi is Apache-2.0 but not yet published to crates.io;
+# pinned to tagged release v0.6.11 via git.
+allow-git = ["https://github.com/WorksApplications/sudachi.rs"]
