@@ -7,6 +7,7 @@
 
 pub mod cjk_ngram;
 pub mod detect;
+pub mod japanese;
 pub mod latin;
 pub mod manifest;
 pub mod normalize;
