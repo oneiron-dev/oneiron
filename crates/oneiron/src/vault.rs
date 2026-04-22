@@ -84,6 +84,7 @@ fn first_child_of_parent(
 pub struct Vault {
     pub(crate) store: Store,
     pub(crate) config: VaultConfig,
+    pub(crate) analyzer: crate::analyzer::MultilingualAnalyzer,
 }
 
 impl Vault {
@@ -106,7 +107,15 @@ impl Vault {
         }
 
         let store = Store::open(path, &config)?;
-        Ok(Self { store, config })
+        // Commit 13 will upgrade this to `discover(&config.dict_search_paths)`
+        // and wire in manifest write/validate. For now the analyzer runs in
+        // Portable mode for every language so the build stays green.
+        let analyzer = crate::analyzer::MultilingualAnalyzer::portable();
+        Ok(Self {
+            store,
+            config,
+            analyzer,
+        })
     }
 
     /// Stores an entity blob.
@@ -256,7 +265,14 @@ impl Vault {
     /// Returns BM25 text matches for a query.
     pub fn search_text(&self, query: &str, limit: usize) -> Result<Vec<ScoredEntity>> {
         let rtxn = self.store.env.read_txn()?;
-        bm25::search_text(&self.store, &rtxn, query, limit)
+        bm25::search_text(
+            &self.store,
+            &rtxn,
+            &self.analyzer,
+            &bm25::Bm25Config::default(),
+            query,
+            limit,
+        )
     }
 
     /// Creates a new write batch builder bound to this vault.

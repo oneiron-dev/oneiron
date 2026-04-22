@@ -363,8 +363,14 @@ impl<'a> PipelineBuilder<'a> {
             }
 
             if let Some((query, limit)) = &self.text_search {
-                let text_results =
-                    crate::bm25::search_text(&self.vault.store, &rtxn, query, *limit)?;
+                let text_results = crate::bm25::search_text(
+                    &self.vault.store,
+                    &rtxn,
+                    &self.vault.analyzer,
+                    &crate::bm25::Bm25Config::default(),
+                    query,
+                    *limit,
+                )?;
                 ranked_lists.push(text_results);
             }
 

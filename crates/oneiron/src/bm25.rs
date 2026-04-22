@@ -1,33 +1,161 @@
-use std::borrow::Cow;
+//! Analyzer-driven fielded inverted index + BM25F scorer.
+//!
+//! Indexing and scoring go through [`MultilingualAnalyzer`]. Each emitted
+//! [`Token`] lands on exactly one channel (`Surface`, `Stem`,
+//! `NormalizedOverlay`, `CjkNgram`); each channel is an independent BM25F
+//! field with its own weight, `b`, and length-normalization policy (plan
+//! §1.3). Posting lists are still document-granular — `df(t)` counts
+//! logical docs in the posting, not per-field occurrences — but each
+//! entry carries a small per-field TF map so the scorer can combine
+//! channels into a single `x_t,d` per the BM25F formula.
+//!
+//! Storage (plan §4.1):
+//! * `text_postings` value: `[(entity_id(16) | field_count(u8) |
+//!   (field_id_u16_be | tf_u32_le)*)]×N`
+//! * `text_forward` value: `[(term_len_u16_le | term_bytes |
+//!   field_id_u16_be | tf_u32_le)*]`
+//! * `text_meta` value: `[doc_len_u32_le | field_count_u32_le]` where
+//!   `doc_len` is the sum of [`Token::length_increment`] across all emitted
+//!   tokens (for debug / status output; scoring uses the per-field lengths)
+//! * `text_bm25_field_stats` value: `[doc_count_u32_le | total_length_u64_le]`
+//! * `text_doc_field_lengths` value: `[(field_id_u16_be | length_u32_le)*]`
+//!
+//! Rank profile weights (`Bm25Config`) are scoring-only and live separate
+//! from the index — changing them does not require a reindex.
+
+use std::collections::BTreeMap;
 use std::collections::HashMap;
 use std::str;
 
 use heed::{RoTxn, RwTxn};
 
+use crate::analyzer::{AnalyzerChannel, AnalyzerContext, MultilingualAnalyzer, Token};
 use crate::error::{Error, Result};
 use crate::store::Store;
 use crate::types::{EntityId, ScoredEntity, short_id_prefix};
 
-const POSTING_ENTRY_LEN: usize = 20;
+// === Layout constants ===
+
+const ENTITY_ID_LEN: usize = 16;
+/// Sum of `field_id_u16_be + tf_u32_le`.
+const FIELD_TF_LEN: usize = 6;
+/// `doc_count_u32_le + total_length_u64_le`.
+const FIELD_STATS_LEN: usize = 12;
+/// `field_id_u16_be + length_u32_le`.
+const FIELD_LENGTH_LEN: usize = 6;
 const DOC_META_LEN: usize = 8;
 
-const K1: f64 = 1.2;
-const B: f64 = 0.75;
-
 const TOTAL_DOCS_KEY: [u8; 16] = [0x00; 16];
+/// Deprecated total-length sentinel kept as a reserved key so fresh vaults
+/// never collide with a legacy entry. Per-field lengths live in
+/// `text_bm25_field_stats` (plan §4.1).
 const TOTAL_LENGTH_KEY: [u8; 16] = [0xFF; 16];
 
-fn tokenize(text: &str) -> Tokenizer<'_> {
-    Tokenizer {
-        text,
-        offset: 0,
-        cjk_state: None,
+// === Rank profile configuration ===
+
+/// Per-channel length normalization policy.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum FieldLengthPolicy {
+    /// Denominator uses `(1 - b) + b * len_f / avgdl_f`, i.e. classical
+    /// BM25 length norm.
+    CountLengthIncrement,
+    /// No length norm — denominator is `1.0`. Useful for overlay channels
+    /// whose token counts are mechanical (diacritic folds, kana folds)
+    /// and should not drag long docs down.
+    NoNorm,
+}
+
+/// Per-field (channel) BM25F parameters.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) struct FieldConfig {
+    pub weight: f64,
+    pub b: f64,
+    pub length_policy: FieldLengthPolicy,
+}
+
+impl FieldConfig {
+    const fn disabled() -> Self {
+        Self {
+            weight: 0.0,
+            b: 0.0,
+            length_policy: FieldLengthPolicy::NoNorm,
+        }
     }
 }
+
+/// BM25 scoring variant. `Okapi` is the default; `Plus` adds a constant
+/// offset to the TF term per Lv & Zhai 2011.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) enum Bm25Formula {
+    Okapi,
+    #[allow(dead_code)] // exposed through Bm25Config once types.rs plumbs user config
+    Plus {
+        delta: f64,
+    },
+}
+
+/// Global BM25F configuration. `fields` is indexed by channel — only
+/// channels with non-zero weight contribute to scoring. Rank profile is a
+/// scoring-only parameter (plan §4.2) — changing it does **not** require
+/// a reindex, so this config lives outside the on-disk manifest.
+#[derive(Debug, Clone)]
+pub(crate) struct Bm25Config {
+    pub(crate) k1: f64,
+    pub(crate) formula: Bm25Formula,
+    /// Per-channel config, indexed by [`AnalyzerChannel::field_id`]. The
+    /// array has one slot per reserved channel, so adding a new channel
+    /// in [`AnalyzerChannel`] requires extending this.
+    pub(crate) fields: [FieldConfig; 7],
+}
+
+impl Bm25Config {
+    pub(crate) fn field(&self, channel: AnalyzerChannel) -> FieldConfig {
+        self.fields[channel.field_id() as usize]
+    }
+}
+
+impl Default for Bm25Config {
+    fn default() -> Self {
+        // Plan §1.3 default rank profile. Weights and `b` are research-band
+        // starting values; ONE-318 bench tuning will replace them with
+        // empirically-derived numbers.
+        let mut fields = [FieldConfig::disabled(); 7];
+        fields[AnalyzerChannel::Surface.field_id() as usize] = FieldConfig {
+            weight: 1.00,
+            b: 0.75,
+            length_policy: FieldLengthPolicy::CountLengthIncrement,
+        };
+        fields[AnalyzerChannel::Stem.field_id() as usize] = FieldConfig {
+            weight: 0.35,
+            b: 0.65,
+            length_policy: FieldLengthPolicy::CountLengthIncrement,
+        };
+        fields[AnalyzerChannel::NormalizedOverlay.field_id() as usize] = FieldConfig {
+            weight: 0.55,
+            b: 0.00,
+            length_policy: FieldLengthPolicy::NoNorm,
+        };
+        fields[AnalyzerChannel::CjkNgram.field_id() as usize] = FieldConfig {
+            weight: 0.45,
+            b: 0.30,
+            length_policy: FieldLengthPolicy::CountLengthIncrement,
+        };
+        // Shingle / Synonym / Phonetic remain disabled; v1 analyzers do
+        // not emit on these channels but the storage round-trips them.
+        Self {
+            k1: 1.2,
+            formula: Bm25Formula::Okapi,
+            fields,
+        }
+    }
+}
+
+// === Indexing ===
 
 pub(crate) fn index_text(
     store: &Store,
     wtxn: &mut RwTxn<'_>,
+    analyzer: &MultilingualAnalyzer,
     id: &EntityId,
     fields: &[(String, String)],
 ) -> Result<()> {
@@ -41,54 +169,90 @@ pub(crate) fn index_text(
         None => {}
     }
 
-    let mut doc_len = 0_u32;
-    let field_count =
-        u32::try_from(fields.len()).map_err(|_| Error::ArithmeticOverflow("bm25 field count"))?;
-    let mut term_freq = HashMap::<String, u32>::new();
+    let mut tokens: Vec<Token> = Vec::new();
+    let ctx = AnalyzerContext::for_index();
     for (_, value) in fields {
-        for term in tokenize(value) {
-            doc_len = doc_len
-                .checked_add(1)
-                .ok_or(Error::ArithmeticOverflow("bm25 doc length"))?;
-            if let Some(count) = term_freq.get_mut(term.as_ref()) {
-                *count += 1;
-            } else {
-                term_freq.insert(term.into_owned(), 1);
-            }
-        }
+        analyzer.analyze(value, &ctx, &mut tokens);
     }
 
-    if term_freq.is_empty() {
+    if tokens.is_empty() {
         return Ok(());
     }
 
-    let mut unique_terms: Vec<String> = term_freq.keys().cloned().collect();
-    unique_terms.sort();
+    // Aggregate tokens by (channel, term) → tf, and by channel → length.
+    // Terms within the same channel collide on identical folded text, so
+    // tf = count of matching tokens regardless of offset.
+    let mut per_field: HashMap<u16, HashMap<String, u32>> = HashMap::new();
+    let mut per_field_len: HashMap<u16, u32> = HashMap::new();
+    let mut doc_len_total: u32 = 0;
 
-    for term in &unique_terms {
-        let tf = term_freq[term];
+    for tok in &tokens {
+        let fid = tok.channel.field_id();
+        let entry = per_field.entry(fid).or_default();
+        *entry.entry(tok.term.as_ref().to_owned()).or_insert(0) += 1;
+        *per_field_len.entry(fid).or_insert(0) =
+            per_field_len.get(&fid).copied().unwrap_or(0) + u32::from(tok.length_increment);
+        doc_len_total = doc_len_total
+            .checked_add(u32::from(tok.length_increment))
+            .ok_or(Error::ArithmeticOverflow("bm25 doc length"))?;
+    }
+
+    if per_field.is_empty() {
+        return Ok(());
+    }
+
+    // Build the flat (term, field, tf) list, sorted lexicographically by
+    // term then ascending field_id so the forward index is canonical.
+    let mut per_term: BTreeMap<String, BTreeMap<u16, u32>> = BTreeMap::new();
+    for (fid, terms) in per_field {
+        for (term, tf) in terms {
+            per_term.entry(term).or_default().insert(fid, tf);
+        }
+    }
+
+    // === Postings: append one (entity_id, field_tfs) entry per term ===
+    for (term, fields_tf) in &per_term {
         let mut posting = read_posting(store, wtxn, term)?;
-        posting.extend_from_slice(id.as_bytes());
-        posting.extend_from_slice(&tf.to_le_bytes());
+        encode_posting_entry(id, fields_tf, &mut posting)?;
         store.text_postings.put(wtxn, term.as_bytes(), &posting)?;
     }
 
+    // === Forward index: (term_len, term, field_id, tf) records ===
+    let forward_bytes = encode_forward(&per_term)?;
+    store.text_forward.put(wtxn, id.as_bytes(), &forward_bytes)?;
+
+    // === Per-doc field lengths ===
+    let field_lengths_bytes = encode_field_lengths(&per_field_len);
+    store
+        .text_doc_field_lengths
+        .put(wtxn, id.as_bytes(), &field_lengths_bytes)?;
+
+    // === Document metadata (doc_len kept for status reporting) ===
+    let field_count =
+        u32::try_from(per_field_len.len()).map_err(|_| Error::ArithmeticOverflow("bm25 field count"))?;
     let mut doc_meta = [0_u8; DOC_META_LEN];
-    doc_meta[..4].copy_from_slice(&doc_len.to_le_bytes());
+    doc_meta[..4].copy_from_slice(&doc_len_total.to_le_bytes());
     doc_meta[4..].copy_from_slice(&field_count.to_le_bytes());
     store.text_meta.put(wtxn, id.as_bytes(), &doc_meta)?;
 
-    let forward: Vec<u8> = unique_terms.join("\0").into_bytes();
-    store.text_forward.put(wtxn, id.as_bytes(), &forward)?;
+    // === Per-field corpus stats ===
+    for (&fid, &len) in &per_field_len {
+        let (doc_count, total_length) = read_field_stats(store, wtxn, fid)?;
+        let doc_count = doc_count
+            .checked_add(1)
+            .ok_or(Error::ArithmeticOverflow("bm25 field doc_count"))?;
+        let total_length = total_length
+            .checked_add(u64::from(len))
+            .ok_or(Error::ArithmeticOverflow("bm25 field total_length"))?;
+        write_field_stats(store, wtxn, fid, doc_count, total_length)?;
+    }
 
-    let (total_docs, total_length) = read_collection_stats(store, wtxn)?;
+    // === Collection-wide doc count (plan §4.1 keeps TOTAL_DOCS_KEY only) ===
+    let total_docs = read_total_docs(store, wtxn)?;
     let total_docs = total_docs
         .checked_add(1)
         .ok_or(Error::ArithmeticOverflow("bm25 total_docs"))?;
-    let total_length = total_length
-        .checked_add(u64::from(doc_len))
-        .ok_or(Error::ArithmeticOverflow("bm25 total_length"))?;
-    write_collection_stats(store, wtxn, total_docs, total_length)?;
+    write_total_docs(store, wtxn, total_docs)?;
 
     Ok(())
 }
@@ -102,40 +266,33 @@ pub(crate) fn deindex_text(store: &Store, wtxn: &mut RwTxn<'_>, id: &EntityId) -
         }
         return Ok(());
     };
+    let forward = decode_forward(forward_raw)?;
 
-    let terms = decode_forward_terms(forward_raw)?;
-
-    let doc_meta = store
-        .text_meta
-        .get(wtxn, id.as_bytes())?
-        .ok_or_else(|| corrupted("missing text metadata for deindex"))?;
-    let (doc_len, _) = decode_doc_meta(doc_meta)?;
-    if terms.is_empty() != (doc_len == 0) {
-        return Err(corrupted(
-            "forward index emptiness does not match stored document length",
-        ));
+    if store.text_meta.get(wtxn, id.as_bytes())?.is_none() {
+        return Err(corrupted("missing text metadata for deindex"));
     }
 
-    for term in terms {
+    // Pull per-field lengths so we can decrement corpus stats correctly.
+    let lengths = match store.text_doc_field_lengths.get(wtxn, id.as_bytes())? {
+        Some(raw) => decode_field_lengths(raw)?,
+        None => HashMap::new(),
+    };
+
+    // Group (term, fields) so each posting is rewritten once regardless of
+    // how many channels a term appears on.
+    let mut per_term: BTreeMap<String, Vec<u16>> = BTreeMap::new();
+    for rec in forward {
+        per_term.entry(rec.term).or_default().push(rec.field_id);
+    }
+
+    for term in per_term.keys() {
         let Some(posting) = store.text_postings.get(wtxn, term.as_bytes())? else {
             continue;
         };
-        validate_posting_alignment(posting)?;
-
-        let mut retained = Vec::with_capacity(posting.len());
-        let mut removed = false;
-        for chunk in posting.chunks_exact(POSTING_ENTRY_LEN) {
-            if &chunk[..16] == id.as_bytes() {
-                removed = true;
-                continue;
-            }
-            retained.extend_from_slice(chunk);
-        }
-
+        let (retained, removed) = strip_entity_from_posting(posting, id)?;
         if !removed {
             continue;
         }
-
         if retained.is_empty() {
             store.text_postings.delete(wtxn, term.as_bytes())?;
         } else {
@@ -143,24 +300,42 @@ pub(crate) fn deindex_text(store: &Store, wtxn: &mut RwTxn<'_>, id: &EntityId) -
         }
     }
 
-    let (total_docs, total_length) = read_collection_stats(store, wtxn)?;
+    // Decrement per-field stats using the per-doc lengths we recorded.
+    for (&fid, &len) in &lengths {
+        let (doc_count, total_length) = read_field_stats(store, wtxn, fid)?;
+        let doc_count = doc_count
+            .checked_sub(1)
+            .ok_or_else(|| corrupted("field doc_count underflow during deindex"))?;
+        let total_length = total_length
+            .checked_sub(u64::from(len))
+            .ok_or_else(|| corrupted("field total_length underflow during deindex"))?;
+        if doc_count == 0 && total_length == 0 {
+            store.text_bm25_field_stats.delete(wtxn, &fid.to_be_bytes())?;
+        } else {
+            write_field_stats(store, wtxn, fid, doc_count, total_length)?;
+        }
+    }
+
+    let total_docs = read_total_docs(store, wtxn)?;
     let total_docs = total_docs
         .checked_sub(1)
         .ok_or_else(|| corrupted("total_docs underflow during deindex"))?;
-    let total_length = total_length
-        .checked_sub(u64::from(doc_len))
-        .ok_or_else(|| corrupted("total_length underflow during deindex"))?;
-    write_collection_stats(store, wtxn, total_docs, total_length)?;
+    write_total_docs(store, wtxn, total_docs)?;
 
     store.text_meta.delete(wtxn, id.as_bytes())?;
     store.text_forward.delete(wtxn, id.as_bytes())?;
+    store.text_doc_field_lengths.delete(wtxn, id.as_bytes())?;
 
     Ok(())
 }
 
+// === Scoring ===
+
 pub(crate) fn search_text(
     store: &Store,
     rtxn: &RoTxn<'_>,
+    analyzer: &MultilingualAnalyzer,
+    config: &Bm25Config,
     query: &str,
     limit: usize,
 ) -> Result<Vec<ScoredEntity>> {
@@ -168,72 +343,108 @@ pub(crate) fn search_text(
         return Ok(Vec::new());
     }
 
-    let mut tokens: Vec<Cow<'_, str>> = tokenize(query).collect();
+    let mut tokens: Vec<Token> = Vec::new();
+    analyzer.analyze(query, &AnalyzerContext::for_query(), &mut tokens);
     if tokens.is_empty() {
         return Ok(Vec::new());
     }
-    tokens.sort();
-    tokens.dedup();
 
-    let (total_docs, total_length) = read_collection_stats(store, rtxn)?;
+    // Dedupe query terms across channels — one term per unique string
+    // (scorer looks up posting list then combines field TFs from the
+    // posting entries themselves). This preserves the pre-ONE-317
+    // "query dedupe" semantics.
+    let mut unique_terms: Vec<String> = tokens
+        .into_iter()
+        .map(|t| t.term.as_ref().to_owned())
+        .collect();
+    unique_terms.sort();
+    unique_terms.dedup();
+
+    let total_docs = read_total_docs(store, rtxn)?;
     if total_docs == 0 {
         return Ok(Vec::new());
     }
-
     let n = f64::from(total_docs);
-    // BM25 scoring already uses f64; precision beyond 2^53 tokens is not
-    // material for the local corpora this engine targets.
-    let avgdl = total_length as f64 / n;
 
-    let mut scores = HashMap::<EntityId, f64>::new();
-    let mut doc_len_cache = HashMap::<EntityId, u32>::new();
+    // Cache per-field avgdl and per-(doc, field) length so we don't reopen
+    // the same DB entries once per query term.
+    let mut avgdl_cache: HashMap<u16, f64> = HashMap::new();
+    let mut field_length_cache: HashMap<EntityId, HashMap<u16, u32>> = HashMap::new();
+    let mut scores: HashMap<EntityId, f64> = HashMap::new();
 
-    for token in tokens {
-        let Some(posting) = store.text_postings.get(rtxn, token.as_ref().as_bytes())? else {
+    for term in unique_terms {
+        let Some(posting) = store.text_postings.get(rtxn, term.as_bytes())? else {
             continue;
         };
-        validate_posting_alignment(posting)?;
 
-        if scores.is_empty() {
-            scores = HashMap::with_capacity(posting.len() / POSTING_ENTRY_LEN);
-        }
-
-        let df = posting.len() / POSTING_ENTRY_LEN;
-        if df == 0 {
+        let entries = decode_posting(posting)?;
+        if entries.is_empty() {
             continue;
         }
-        let df = df as f64;
+        let df = entries.len() as f64;
         let idf = ((n - df + 0.5) / (df + 0.5) + 1.0).ln();
 
-        for chunk in posting.chunks_exact(POSTING_ENTRY_LEN) {
-            let (id, tf) = decode_posting_entry(chunk)?;
-            if tf == 0 {
-                return Err(corrupted("posting entry has zero term frequency"));
+        for entry in entries {
+            let id = entry.id;
+            let mut x_t_d = 0.0_f64;
+
+            for (fid, tf) in &entry.fields {
+                let Some(channel) = AnalyzerChannel::from_field_id(*fid) else {
+                    continue;
+                };
+                let cfg = config.field(channel);
+                if cfg.weight == 0.0 {
+                    continue;
+                }
+
+                let len_f = if matches!(cfg.length_policy, FieldLengthPolicy::NoNorm) {
+                    0.0
+                } else {
+                    let lens = if let Some(cached) = field_length_cache.get(&id) {
+                        cached
+                    } else {
+                        let raw = store.text_doc_field_lengths.get(rtxn, id.as_bytes())?;
+                        let map = match raw {
+                            Some(bytes) => decode_field_lengths(bytes)?,
+                            None => HashMap::new(),
+                        };
+                        field_length_cache.entry(id).or_insert(map)
+                    };
+                    f64::from(lens.get(fid).copied().unwrap_or(0))
+                };
+
+                let avgdl = if matches!(cfg.length_policy, FieldLengthPolicy::NoNorm) {
+                    0.0
+                } else {
+                    *avgdl_cache.entry(*fid).or_insert_with(|| {
+                        compute_avgdl(store, rtxn, *fid).unwrap_or(0.0)
+                    })
+                };
+
+                let norm = match cfg.length_policy {
+                    FieldLengthPolicy::NoNorm => 1.0,
+                    FieldLengthPolicy::CountLengthIncrement => {
+                        if avgdl > 0.0 {
+                            1.0 - cfg.b + cfg.b * (len_f / avgdl)
+                        } else {
+                            1.0
+                        }
+                    }
+                };
+
+                x_t_d += cfg.weight * f64::from(*tf) / norm;
             }
 
-            let dl = if let Some(&cached) = doc_len_cache.get(&id) {
-                cached
-            } else {
-                let doc_meta = store
-                    .text_meta
-                    .get(rtxn, id.as_bytes())?
-                    .ok_or_else(|| corrupted("missing text metadata during scoring"))?;
-                let (dl, _) = decode_doc_meta(doc_meta)?;
-                doc_len_cache.insert(id, dl);
-                dl
-            };
-            if dl == 0 {
-                return Err(corrupted(
-                    "posting entry references document with zero length",
-                ));
+            if x_t_d == 0.0 {
+                continue;
             }
 
-            let tf = f64::from(tf);
-            let dl = f64::from(dl);
-            let norm = if avgdl > 0.0 { dl / avgdl } else { 0.0 };
-            let denom = tf + K1 * (1.0 - B + B * norm);
-            let score = idf * (tf * (K1 + 1.0)) / denom;
-            *scores.entry(id).or_insert(0.0) += score;
+            let saturated = (config.k1 + 1.0) * x_t_d / (config.k1 + x_t_d);
+            let mut contribution = idf * saturated;
+            if let Bm25Formula::Plus { delta } = config.formula {
+                contribution += idf * delta;
+            }
+            *scores.entry(id).or_insert(0.0) += contribution;
         }
     }
 
@@ -253,73 +464,244 @@ pub(crate) fn search_text(
         .collect())
 }
 
-fn validate_posting_alignment(posting: &[u8]) -> Result<()> {
-    if !posting.len().is_multiple_of(POSTING_ENTRY_LEN) {
-        return Err(corrupted("posting list has invalid byte length"));
+fn compute_avgdl(store: &Store, rtxn: &RoTxn<'_>, field_id: u16) -> Result<f64> {
+    let (doc_count, total_length) = read_field_stats(store, rtxn, field_id)?;
+    if doc_count == 0 {
+        return Ok(0.0);
+    }
+    Ok(total_length as f64 / f64::from(doc_count))
+}
+
+// === Encoders / decoders ===
+
+#[derive(Debug)]
+struct PostingEntry {
+    id: EntityId,
+    fields: Vec<(u16, u32)>,
+}
+
+fn decode_posting(raw: &[u8]) -> Result<Vec<PostingEntry>> {
+    let mut entries = Vec::new();
+    let mut i = 0;
+    while i < raw.len() {
+        if i + ENTITY_ID_LEN + 1 > raw.len() {
+            return Err(corrupted("posting truncated at entry header"));
+        }
+        let id_bytes: [u8; ENTITY_ID_LEN] = raw[i..i + ENTITY_ID_LEN]
+            .try_into()
+            .map_err(|_| corrupted("posting entry id slice"))?;
+        let id =
+            EntityId::from_bytes(id_bytes).map_err(|_| corrupted("posting entry has invalid id"))?;
+        let field_count = raw[i + ENTITY_ID_LEN] as usize;
+        if field_count == 0 {
+            return Err(corrupted("posting entry has zero field count"));
+        }
+        let body_start = i + ENTITY_ID_LEN + 1;
+        let body_end = body_start + field_count * FIELD_TF_LEN;
+        if body_end > raw.len() {
+            return Err(corrupted("posting truncated at field-tf body"));
+        }
+        let mut fields = Vec::with_capacity(field_count);
+        for chunk in raw[body_start..body_end].chunks_exact(FIELD_TF_LEN) {
+            let fid = u16::from_be_bytes([chunk[0], chunk[1]]);
+            let tf = u32::from_le_bytes(
+                chunk[2..6]
+                    .try_into()
+                    .map_err(|_| corrupted("posting tf slice"))?,
+            );
+            if tf == 0 {
+                return Err(corrupted("posting entry has zero term frequency"));
+            }
+            fields.push((fid, tf));
+        }
+        entries.push(PostingEntry { id, fields });
+        i = body_end;
+    }
+    Ok(entries)
+}
+
+fn encode_posting_entry(
+    id: &EntityId,
+    fields: &BTreeMap<u16, u32>,
+    out: &mut Vec<u8>,
+) -> Result<()> {
+    let count = u8::try_from(fields.len())
+        .map_err(|_| Error::ArithmeticOverflow("bm25 posting field count"))?;
+    if count == 0 {
+        return Err(corrupted("posting entry has zero field count"));
+    }
+    out.extend_from_slice(id.as_bytes());
+    out.push(count);
+    for (fid, tf) in fields {
+        out.extend_from_slice(&fid.to_be_bytes());
+        out.extend_from_slice(&tf.to_le_bytes());
     }
     Ok(())
 }
 
-fn decode_posting_entry(chunk: &[u8]) -> Result<(EntityId, u32)> {
-    let id = EntityId::from_bytes(
-        chunk[..16]
-            .try_into()
-            .map_err(|_| corrupted("posting entry is missing entity id bytes"))?,
-    )
-    .map_err(|_| corrupted("posting entry has invalid entity id"))?;
-    let tf = u32::from_le_bytes(
-        chunk[16..20]
-            .try_into()
-            .map_err(|_| corrupted("posting entry is missing tf bytes"))?,
-    );
-    Ok((id, tf))
+struct ForwardRecord {
+    term: String,
+    field_id: u16,
+    #[allow(dead_code)] // read only when we need to regenerate postings
+    tf: u32,
 }
 
-fn read_posting(store: &Store, txn: &RoTxn<'_>, term: &str) -> Result<Vec<u8>> {
-    let existing = store.text_postings.get(txn, term.as_bytes())?;
-    let posting = existing.map_or_else(
-        || Vec::with_capacity(POSTING_ENTRY_LEN),
-        |bytes| {
-            let mut posting = Vec::with_capacity(bytes.len() + POSTING_ENTRY_LEN);
-            posting.extend_from_slice(bytes);
-            posting
-        },
-    );
-    validate_posting_alignment(&posting)?;
-    Ok(posting)
+fn encode_forward(per_term: &BTreeMap<String, BTreeMap<u16, u32>>) -> Result<Vec<u8>> {
+    let mut out = Vec::new();
+    for (term, fields) in per_term {
+        let len = u16::try_from(term.len())
+            .map_err(|_| Error::ArithmeticOverflow("bm25 forward term length"))?;
+        for (fid, tf) in fields {
+            out.extend_from_slice(&len.to_le_bytes());
+            out.extend_from_slice(term.as_bytes());
+            out.extend_from_slice(&fid.to_be_bytes());
+            out.extend_from_slice(&tf.to_le_bytes());
+        }
+    }
+    Ok(out)
 }
 
-fn read_collection_stats(store: &Store, txn: &RoTxn<'_>) -> Result<(u32, u64)> {
-    let total_docs = match store.text_meta.get(txn, &TOTAL_DOCS_KEY)? {
-        Some(raw) => u32::from_le_bytes(
-            raw.try_into()
-                .map_err(|_| corrupted("total_docs sentinel has invalid length"))?,
-        ),
-        None => 0,
-    };
-    let total_length = match store.text_meta.get(txn, &TOTAL_LENGTH_KEY)? {
-        Some(raw) => u64::from_le_bytes(
-            raw.try_into()
-                .map_err(|_| corrupted("total_length sentinel has invalid length"))?,
-        ),
-        None => 0,
-    };
-    Ok((total_docs, total_length))
+fn decode_forward(raw: &[u8]) -> Result<Vec<ForwardRecord>> {
+    let mut records = Vec::new();
+    let mut i = 0;
+    while i < raw.len() {
+        if i + 2 > raw.len() {
+            return Err(corrupted("forward index truncated at term-len"));
+        }
+        let term_len = u16::from_le_bytes([raw[i], raw[i + 1]]) as usize;
+        i += 2;
+        if term_len == 0 {
+            return Err(corrupted("forward index has zero-length term"));
+        }
+        let term_end = i + term_len;
+        if term_end + FIELD_TF_LEN > raw.len() {
+            return Err(corrupted("forward index truncated at term body"));
+        }
+        let term = str::from_utf8(&raw[i..term_end])
+            .map(str::to_owned)
+            .map_err(|_| corrupted("forward index has non-utf8 term"))?;
+        i = term_end;
+        let field_id = u16::from_be_bytes([raw[i], raw[i + 1]]);
+        let tf = u32::from_le_bytes(
+            raw[i + 2..i + 6]
+                .try_into()
+                .map_err(|_| corrupted("forward index tf slice"))?,
+        );
+        if tf == 0 {
+            return Err(corrupted("forward index has zero tf"));
+        }
+        i += FIELD_TF_LEN;
+        records.push(ForwardRecord { term, field_id, tf });
+    }
+    Ok(records)
 }
 
-fn write_collection_stats(
+fn encode_field_lengths(lengths: &HashMap<u16, u32>) -> Vec<u8> {
+    let mut pairs: Vec<(u16, u32)> = lengths.iter().map(|(k, v)| (*k, *v)).collect();
+    pairs.sort_by_key(|&(fid, _)| fid);
+    let mut out = Vec::with_capacity(pairs.len() * FIELD_LENGTH_LEN);
+    for (fid, len) in pairs {
+        out.extend_from_slice(&fid.to_be_bytes());
+        out.extend_from_slice(&len.to_le_bytes());
+    }
+    out
+}
+
+fn decode_field_lengths(raw: &[u8]) -> Result<HashMap<u16, u32>> {
+    if !raw.len().is_multiple_of(FIELD_LENGTH_LEN) {
+        return Err(corrupted("per-doc field lengths has invalid byte length"));
+    }
+    let mut map = HashMap::with_capacity(raw.len() / FIELD_LENGTH_LEN);
+    for chunk in raw.chunks_exact(FIELD_LENGTH_LEN) {
+        let fid = u16::from_be_bytes([chunk[0], chunk[1]]);
+        let len = u32::from_le_bytes(
+            chunk[2..6]
+                .try_into()
+                .map_err(|_| corrupted("field length slice"))?,
+        );
+        map.insert(fid, len);
+    }
+    Ok(map)
+}
+
+fn read_field_stats(store: &Store, txn: &RoTxn<'_>, field_id: u16) -> Result<(u32, u64)> {
+    let key = field_id.to_be_bytes();
+    match store.text_bm25_field_stats.get(txn, &key)? {
+        Some(raw) => {
+            if raw.len() != FIELD_STATS_LEN {
+                return Err(corrupted("field stats has invalid byte length"));
+            }
+            let doc_count = u32::from_le_bytes(
+                raw[..4]
+                    .try_into()
+                    .map_err(|_| corrupted("field stats doc_count slice"))?,
+            );
+            let total_length = u64::from_le_bytes(
+                raw[4..]
+                    .try_into()
+                    .map_err(|_| corrupted("field stats total_length slice"))?,
+            );
+            Ok((doc_count, total_length))
+        }
+        None => Ok((0, 0)),
+    }
+}
+
+fn write_field_stats(
     store: &Store,
     wtxn: &mut RwTxn<'_>,
-    total_docs: u32,
+    field_id: u16,
+    doc_count: u32,
     total_length: u64,
 ) -> Result<()> {
+    let mut value = [0_u8; FIELD_STATS_LEN];
+    value[..4].copy_from_slice(&doc_count.to_le_bytes());
+    value[4..].copy_from_slice(&total_length.to_le_bytes());
+    let key = field_id.to_be_bytes();
+    store.text_bm25_field_stats.put(wtxn, &key, &value)?;
+    Ok(())
+}
+
+fn read_total_docs(store: &Store, txn: &RoTxn<'_>) -> Result<u32> {
+    match store.text_meta.get(txn, &TOTAL_DOCS_KEY)? {
+        Some(raw) => Ok(u32::from_le_bytes(raw.try_into().map_err(|_| {
+            corrupted("total_docs sentinel has invalid length")
+        })?)),
+        None => Ok(0),
+    }
+}
+
+fn write_total_docs(store: &Store, wtxn: &mut RwTxn<'_>, total_docs: u32) -> Result<()> {
     store
         .text_meta
         .put(wtxn, &TOTAL_DOCS_KEY, &total_docs.to_le_bytes())?;
-    store
-        .text_meta
-        .put(wtxn, &TOTAL_LENGTH_KEY, &total_length.to_le_bytes())?;
     Ok(())
+}
+
+fn read_posting(store: &Store, txn: &RoTxn<'_>, term: &str) -> Result<Vec<u8>> {
+    Ok(store
+        .text_postings
+        .get(txn, term.as_bytes())?
+        .map(|bytes| bytes.to_vec())
+        .unwrap_or_default())
+}
+
+fn strip_entity_from_posting(posting: &[u8], id: &EntityId) -> Result<(Vec<u8>, bool)> {
+    let entries = decode_posting(posting)?;
+    let mut out = Vec::with_capacity(posting.len());
+    let mut removed = false;
+    for entry in entries {
+        if &entry.id == id {
+            removed = true;
+            continue;
+        }
+        let mut fields = BTreeMap::new();
+        for (fid, tf) in entry.fields {
+            fields.insert(fid, tf);
+        }
+        encode_posting_entry(&entry.id, &fields, &mut out)?;
+    }
+    Ok((out, removed))
 }
 
 fn corrupted(message: &'static str) -> Error {
@@ -335,181 +717,6 @@ fn validate_text_doc_id(id: &EntityId) -> Result<()> {
         return Err(Error::InvalidKey);
     }
     Ok(())
-}
-
-struct Tokenizer<'a> {
-    text: &'a str,
-    offset: usize,
-    cjk_state: Option<CjkState<'a>>,
-}
-
-struct CjkState<'a> {
-    run: &'a str,
-    boundaries: Vec<usize>,
-    next_index: usize,
-}
-
-impl<'a> Iterator for Tokenizer<'a> {
-    type Item = Cow<'a, str>;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        if let Some(state) = &mut self.cjk_state {
-            if let Some(token) = state.next_token() {
-                return Some(Cow::Borrowed(token));
-            }
-            self.cjk_state = None;
-        }
-
-        while self.offset < self.text.len() {
-            let tail = &self.text[self.offset..];
-            let ch = tail.chars().next()?;
-            self.offset += ch.len_utf8();
-
-            if !ch.is_alphanumeric() {
-                continue;
-            }
-
-            let start = self.offset - ch.len_utf8();
-            let cjk = is_cjk(ch);
-            while self.offset < self.text.len() {
-                let next = self.text[self.offset..]
-                    .chars()
-                    .next()
-                    .expect("offset stays on a valid char boundary");
-                if !next.is_alphanumeric() || is_cjk(next) != cjk {
-                    break;
-                }
-                self.offset += next.len_utf8();
-            }
-
-            let run = &self.text[start..self.offset];
-            if cjk {
-                let mut state = CjkState::new(run);
-                let token = state.next_token().expect("cjk runs are non-empty");
-                self.cjk_state = Some(state);
-                return Some(Cow::Borrowed(token));
-            }
-
-            return Some(normalize_non_cjk(run));
-        }
-
-        None
-    }
-}
-
-impl<'a> CjkState<'a> {
-    fn new(run: &'a str) -> Self {
-        let mut boundaries = run.char_indices().map(|(idx, _)| idx).collect::<Vec<_>>();
-        boundaries.push(run.len());
-        Self {
-            run,
-            boundaries,
-            next_index: 0,
-        }
-    }
-
-    fn next_token(&mut self) -> Option<&'a str> {
-        let char_count = self.boundaries.len().checked_sub(1)?;
-        if char_count == 0 {
-            return None;
-        }
-
-        if char_count == 1 {
-            if self.next_index == 0 {
-                self.next_index = 1;
-                return Some(self.run);
-            }
-            return None;
-        }
-
-        if self.next_index < char_count {
-            let start = self.boundaries[self.next_index];
-            let end = self.boundaries[self.next_index + 1];
-            self.next_index += 1;
-            return Some(&self.run[start..end]);
-        }
-
-        let bigram_index = self.next_index - char_count;
-        if bigram_index + 2 >= self.boundaries.len() {
-            return None;
-        }
-
-        let start = self.boundaries[bigram_index];
-        let end = self.boundaries[bigram_index + 2];
-        self.next_index += 1;
-        Some(&self.run[start..end])
-    }
-}
-
-fn normalize_non_cjk<'a>(run: &'a str) -> Cow<'a, str> {
-    if run.is_ascii() && !run.bytes().any(|byte| byte.is_ascii_uppercase()) {
-        Cow::Borrowed(run)
-    } else {
-        Cow::Owned(run.to_lowercase())
-    }
-}
-
-fn is_cjk(ch: char) -> bool {
-    matches!(
-        ch as u32,
-        0x3400..=0x4DBF
-            | 0x4E00..=0x9FFF
-            | 0x20000..=0x2A6DF
-            | 0xF900..=0xFAFF
-            | 0x3040..=0x309F
-            | 0x30A0..=0x30FF
-            | 0xAC00..=0xD7AF
-    )
-}
-
-fn decode_doc_meta(raw: &[u8]) -> Result<(u32, u32)> {
-    if raw.len() != DOC_META_LEN {
-        return Err(corrupted("document metadata has invalid byte length"));
-    }
-    let doc_len = u32::from_le_bytes(
-        raw[..4]
-            .try_into()
-            .map_err(|_| corrupted("document metadata is missing doc_len bytes"))?,
-    );
-    let field_count = u32::from_le_bytes(
-        raw[4..8]
-            .try_into()
-            .map_err(|_| corrupted("document metadata is missing field_count bytes"))?,
-    );
-    Ok((doc_len, field_count))
-}
-
-#[cfg(test)]
-fn decode_u32(raw: &[u8]) -> Result<u32> {
-    Ok(u32::from_le_bytes(
-        raw.try_into()
-            .map_err(|_| Error::CorruptedIndex("bm25 test decode"))?,
-    ))
-}
-
-#[cfg(test)]
-fn decode_u64(raw: &[u8]) -> Result<u64> {
-    Ok(u64::from_le_bytes(
-        raw.try_into()
-            .map_err(|_| Error::CorruptedIndex("bm25 test decode"))?,
-    ))
-}
-
-fn decode_forward_terms(raw: &[u8]) -> Result<Vec<String>> {
-    if raw.is_empty() {
-        return Ok(Vec::new());
-    }
-
-    raw.split(|b| *b == 0)
-        .map(|chunk| {
-            if chunk.is_empty() {
-                return Err(corrupted("forward index contains an empty term segment"));
-            }
-            str::from_utf8(chunk)
-                .map(str::to_owned)
-                .map_err(|_| corrupted("forward index contains non-utf8 term bytes"))
-        })
-        .collect()
 }
 
 #[cfg(test)]
@@ -537,7 +744,7 @@ mod tests {
     }
 
     fn contains_id(results: &[ScoredEntity], id: &EntityId) -> bool {
-        results.iter().any(|result| result.id == *id)
+        results.iter().any(|r| r.id == *id)
     }
 
     fn put_text_doc(vault: &Vault, id: &EntityId, text: &str) -> Result<()> {
@@ -554,58 +761,24 @@ mod tests {
             .join(" ")
     }
 
-    fn collect_tokens(text: &str) -> Vec<String> {
-        tokenize(text).map(Cow::into_owned).collect()
-    }
-
-    fn encoded_doc_meta(doc_len: u32, field_count: u32) -> [u8; DOC_META_LEN] {
-        let mut raw = [0_u8; DOC_META_LEN];
-        raw[..4].copy_from_slice(&doc_len.to_le_bytes());
-        raw[4..].copy_from_slice(&field_count.to_le_bytes());
-        raw
-    }
-
     #[test]
-    fn tokenizer_basic() {
-        assert_eq!(collect_tokens("Hello World"), vec!["hello", "world"]);
-        assert_eq!(
-            collect_tokens("Rust, BM25! 2026"),
-            vec!["rust", "bm25", "2026"]
-        );
-        assert_eq!(
-            collect_tokens("Caf\u{e9} \u{41f}\u{440}\u{438}\u{432}\u{435}\u{442}"),
-            vec!["caf\u{e9}", "\u{43f}\u{440}\u{438}\u{432}\u{435}\u{442}"]
-        );
-    }
-
-    #[test]
-    fn tokenizer_cjk_bigrams() {
-        assert_eq!(
-            collect_tokens("東京塔"),
-            vec!["東", "京", "塔", "東京", "京塔"]
-        );
-        assert_eq!(collect_tokens("東"), vec!["東"]);
-        assert_eq!(
-            collect_tokens("とう東京"),
-            vec!["と", "う", "東", "京", "とう", "う東", "東京"]
-        );
-    }
-
-    #[test]
-    fn tokenizer_mixed_cjk_boundaries() {
-        assert_eq!(collect_tokens("東京abc"), vec!["東", "京", "東京", "abc"]);
-        assert_eq!(collect_tokens("abc東京"), vec!["abc", "東", "京", "東京"]);
-        assert_eq!(
-            collect_tokens("Rust東京2026"),
-            vec!["rust", "東", "京", "東京", "2026"]
-        );
-    }
-
-    #[test]
-    fn tokenizer_extended_cjk_ranges() {
-        assert_eq!(collect_tokens("㐀"), vec!["㐀"]);
-        assert_eq!(collect_tokens("𠀀"), vec!["𠀀"]);
-        assert_eq!(collect_tokens("神"), vec!["神"]);
+    fn default_config_matches_plan_defaults() {
+        let c = Bm25Config::default();
+        assert_eq!(c.k1, 1.2);
+        assert_eq!(c.formula, Bm25Formula::Okapi);
+        let surface = c.field(AnalyzerChannel::Surface);
+        assert_eq!(surface.weight, 1.00);
+        assert_eq!(surface.b, 0.75);
+        assert_eq!(surface.length_policy, FieldLengthPolicy::CountLengthIncrement);
+        let ngram = c.field(AnalyzerChannel::CjkNgram);
+        assert_eq!(ngram.weight, 0.45);
+        assert_eq!(ngram.b, 0.30);
+        let overlay = c.field(AnalyzerChannel::NormalizedOverlay);
+        assert_eq!(overlay.length_policy, FieldLengthPolicy::NoNorm);
+        // Reserved channels disabled.
+        assert_eq!(c.field(AnalyzerChannel::Shingle).weight, 0.0);
+        assert_eq!(c.field(AnalyzerChannel::Synonym).weight, 0.0);
+        assert_eq!(c.field(AnalyzerChannel::Phonetic).weight, 0.0);
     }
 
     #[test]
@@ -624,7 +797,6 @@ mod tests {
         assert!(contains_id(&results, &id1));
         assert!(!contains_id(&results, &id2));
         assert!(!contains_id(&results, &id3));
-
         Ok(())
     }
 
@@ -644,13 +816,7 @@ mod tests {
             let tf = if idx == best_idx { 20 } else { 1 };
             let text = repeated("apple", tf);
             batch = batch
-                .put(
-                    &id,
-                    0,
-                    test_time_range(idx as u64, idx as u64),
-                    idx as u64,
-                    b"doc",
-                )
+                .put(&id, 0, test_time_range(idx as u64, idx as u64), idx as u64, b"doc")
                 .text(&id, &[("body", &text)]);
         }
         batch.commit()?;
@@ -659,7 +825,6 @@ mod tests {
         let results = vault.search_text("apple", 10)?;
         assert!(!results.is_empty());
         assert_eq!(results[0].id, best_id);
-
         Ok(())
     }
 
@@ -676,7 +841,6 @@ mod tests {
         assert!(vault.delete_entity(&id)?);
         let after = vault.search_text("deindex", 10)?;
         assert!(!contains_id(&after, &id));
-
         Ok(())
     }
 
@@ -694,7 +858,6 @@ mod tests {
 
         let results = vault.search_text("alpha beta", 10)?;
         assert_eq!(results[0].id, id_both);
-
         Ok(())
     }
 
@@ -707,7 +870,6 @@ mod tests {
 
         let results = vault.search_text("", 10)?;
         assert!(results.is_empty());
-
         Ok(())
     }
 
@@ -720,7 +882,6 @@ mod tests {
 
         let results = vault.search_text("hello", 0)?;
         assert!(results.is_empty());
-
         Ok(())
     }
 
@@ -728,10 +889,8 @@ mod tests {
     fn empty_vault_query_returns_empty() -> Result<()> {
         let temp_dir = tempfile::tempdir()?;
         let vault = Vault::open(temp_dir.path(), test_config())?;
-
         let results = vault.search_text("hello", 10)?;
         assert!(results.is_empty());
-
         Ok(())
     }
 
@@ -749,33 +908,36 @@ mod tests {
 
         let results = vault.search_text("anything", 10)?;
         assert!(!contains_id(&results, &id));
-
         Ok(())
     }
 
     #[test]
-    fn single_term_document() -> Result<()> {
+    fn reindex_overwrites_cleanly() -> Result<()> {
         let temp_dir = tempfile::tempdir()?;
         let vault = Vault::open(temp_dir.path(), test_config())?;
         let id = EntityId::now();
 
-        put_text_doc(&vault, &id, "solitary")?;
-        let results = vault.search_text("solitary", 10)?;
-        assert!(contains_id(&results, &id));
+        put_text_doc(&vault, &id, "foo bar")?;
+        vault.batch().text(&id, &[("body", "baz qux")]).commit()?;
 
+        let foo_results = vault.search_text("foo", 10)?;
+        let baz_results = vault.search_text("baz", 10)?;
+
+        assert!(!contains_id(&foo_results, &id));
+        assert!(contains_id(&baz_results, &id));
         Ok(())
     }
 
     #[test]
-    fn cjk_query_matches_bigrams() -> Result<()> {
+    fn cjk_query_matches_bigram_channel() -> Result<()> {
         let temp_dir = tempfile::tempdir()?;
         let vault = Vault::open(temp_dir.path(), test_config())?;
         let id = EntityId::now();
 
         put_text_doc(&vault, &id, "東京塔")?;
+        // "東京" matches the `東京` bigram on the CjkNgram channel.
         let results = vault.search_text("東京", 10)?;
         assert!(contains_id(&results, &id));
-
         Ok(())
     }
 
@@ -788,20 +950,6 @@ mod tests {
         put_text_doc(&vault, &id, "東")?;
         let results = vault.search_text("東", 10)?;
         assert!(contains_id(&results, &id));
-
-        Ok(())
-    }
-
-    #[test]
-    fn single_character_query_matches_inside_multi_char_cjk_run() -> Result<()> {
-        let temp_dir = tempfile::tempdir()?;
-        let vault = Vault::open(temp_dir.path(), test_config())?;
-        let id = EntityId::now();
-
-        put_text_doc(&vault, &id, "東京塔")?;
-        let results = vault.search_text("京", 10)?;
-        assert!(contains_id(&results, &id));
-
         Ok(())
     }
 
@@ -824,387 +972,119 @@ mod tests {
         }
 
         let rtxn = vault.store.env.read_txn()?;
-        assert_eq!(read_collection_stats(&vault.store, &rtxn)?, (0, 0));
-
+        assert_eq!(read_total_docs(&vault.store, &rtxn)?, 0);
         Ok(())
     }
 
     #[test]
-    fn collection_stats_accuracy() -> Result<()> {
+    fn bm25_plus_formula_does_not_require_reindex() -> Result<()> {
+        // Changing the rank profile is scoring-only — same index, same
+        // postings, different score. Plan §4.2.
         let temp_dir = tempfile::tempdir()?;
         let vault = Vault::open(temp_dir.path(), test_config())?;
-        let id1 = EntityId::now();
-        let id2 = EntityId::now();
-        let id3 = EntityId::now();
+        let id = EntityId::now();
+        put_text_doc(&vault, &id, "hello world")?;
 
-        put_text_doc(&vault, &id1, "alpha beta")?;
-        put_text_doc(&vault, &id2, "gamma")?;
-        put_text_doc(&vault, &id3, "")?;
+        let okapi = vault.search_text("hello", 10)?;
+        assert!(contains_id(&okapi, &id));
 
         let rtxn = vault.store.env.read_txn()?;
-        let total_docs = vault
-            .store
-            .text_meta
-            .get(&rtxn, &TOTAL_DOCS_KEY)?
-            .ok_or(Error::InvalidKey)?;
-        let total_length = vault
-            .store
-            .text_meta
-            .get(&rtxn, &TOTAL_LENGTH_KEY)?
-            .ok_or(Error::InvalidKey)?;
-
-        assert_eq!(decode_u32(total_docs)?, 2);
-        assert_eq!(decode_u64(total_length)?, 3);
-
+        let plus_cfg = Bm25Config {
+            formula: Bm25Formula::Plus { delta: 1.0 },
+            ..Bm25Config::default()
+        };
+        let plus = search_text(
+            &vault.store,
+            &rtxn,
+            &MultilingualAnalyzer::portable(),
+            &plus_cfg,
+            "hello",
+            10,
+        )?;
+        assert!(contains_id(&plus, &id));
+        // BM25+ adds a positive delta·idf term per query term, so the
+        // scored value must be strictly greater than Okapi's.
+        let okapi_score = okapi.iter().find(|r| r.id == id).unwrap().score;
+        let plus_score = plus.iter().find(|r| r.id == id).unwrap().score;
+        assert!(plus_score > okapi_score);
         Ok(())
     }
 
     #[test]
-    fn reindex_overwrites_cleanly() -> Result<()> {
+    fn field_stats_track_per_field_lengths() -> Result<()> {
         let temp_dir = tempfile::tempdir()?;
         let vault = Vault::open(temp_dir.path(), test_config())?;
         let id = EntityId::now();
+        put_text_doc(&vault, &id, "alpha beta gamma")?;
 
-        put_text_doc(&vault, &id, "foo bar")?;
-        vault.batch().text(&id, &[("body", "baz qux")]).commit()?;
-
-        let foo_results = vault.search_text("foo", 10)?;
-        let baz_results = vault.search_text("baz", 10)?;
-
-        assert!(!contains_id(&foo_results, &id));
-        assert!(contains_id(&baz_results, &id));
-
+        let rtxn = vault.store.env.read_txn()?;
+        let (doc_count, total_length) =
+            read_field_stats(&vault.store, &rtxn, AnalyzerChannel::Surface.field_id())?;
+        assert_eq!(doc_count, 1);
+        assert_eq!(total_length, 3);
         Ok(())
     }
 
     #[test]
-    fn malformed_posting_returns_corrupted_index() -> Result<()> {
-        let temp_dir = tempfile::tempdir()?;
-        let vault = Vault::open(temp_dir.path(), test_config())?;
-
-        let mut wtxn = vault.store.env.write_txn()?;
-        vault
-            .store
-            .text_postings
-            .put(&mut wtxn, b"bad", &[1, 2, 3])?;
-        write_collection_stats(&vault.store, &mut wtxn, 1, 1)?;
-        wtxn.commit()?;
-
-        let err = vault.search_text("bad", 10).unwrap_err();
-        assert!(matches!(err, Error::CorruptedIndex(_)));
-
-        Ok(())
-    }
-
-    #[test]
-    fn zero_tf_posting_returns_corrupted_index() -> Result<()> {
+    fn deindex_decrements_per_field_stats() -> Result<()> {
         let temp_dir = tempfile::tempdir()?;
         let vault = Vault::open(temp_dir.path(), test_config())?;
         let id = EntityId::now();
+        put_text_doc(&vault, &id, "alpha beta")?;
+        assert!(vault.delete_entity(&id)?);
 
+        let rtxn = vault.store.env.read_txn()?;
+        let (doc_count, total_length) =
+            read_field_stats(&vault.store, &rtxn, AnalyzerChannel::Surface.field_id())?;
+        assert_eq!(doc_count, 0);
+        assert_eq!(total_length, 0);
+        Ok(())
+    }
+
+    #[test]
+    fn posting_decode_rejects_zero_tf() {
         let mut posting = Vec::new();
+        let id = EntityId::now();
         posting.extend_from_slice(id.as_bytes());
+        posting.push(1);
+        posting.extend_from_slice(&AnalyzerChannel::Surface.field_id().to_be_bytes());
         posting.extend_from_slice(&0_u32.to_le_bytes());
-
-        let mut wtxn = vault.store.env.write_txn()?;
-        vault
-            .store
-            .text_postings
-            .put(&mut wtxn, b"alpha", &posting)?;
-        vault
-            .store
-            .text_meta
-            .put(&mut wtxn, id.as_bytes(), &encoded_doc_meta(1, 1))?;
-        write_collection_stats(&vault.store, &mut wtxn, 1, 1)?;
-        wtxn.commit()?;
-
-        let err = vault.search_text("alpha", 10).unwrap_err();
+        let err = decode_posting(&posting).unwrap_err();
         assert!(matches!(err, Error::CorruptedIndex(_)));
-
-        Ok(())
     }
 
     #[test]
-    fn missing_doc_meta_returns_corrupted_index() -> Result<()> {
-        let temp_dir = tempfile::tempdir()?;
-        let vault = Vault::open(temp_dir.path(), test_config())?;
+    fn posting_decode_rejects_truncated_entry() {
         let id = EntityId::now();
-
-        let mut posting = Vec::new();
-        posting.extend_from_slice(id.as_bytes());
-        posting.extend_from_slice(&1_u32.to_le_bytes());
-
-        let mut wtxn = vault.store.env.write_txn()?;
-        vault
-            .store
-            .text_postings
-            .put(&mut wtxn, b"alpha", &posting)?;
-        write_collection_stats(&vault.store, &mut wtxn, 1, 1)?;
-        wtxn.commit()?;
-
-        let err = vault.search_text("alpha", 10).unwrap_err();
+        let mut posting = id.as_bytes().to_vec();
+        posting.push(1); // claim one field but supply no bytes
+        let err = decode_posting(&posting).unwrap_err();
         assert!(matches!(err, Error::CorruptedIndex(_)));
+    }
 
+    #[test]
+    fn forward_roundtrips_utf8_terms() -> Result<()> {
+        let mut m: BTreeMap<String, BTreeMap<u16, u32>> = BTreeMap::new();
+        m.entry("東京".into()).or_default().insert(0, 1);
+        m.entry("hello".into()).or_default().insert(0, 2);
+        m.get_mut("hello").unwrap().insert(1, 1);
+        let bytes = encode_forward(&m)?;
+        let back = decode_forward(&bytes)?;
+        assert_eq!(back.len(), 3);
+        assert_eq!(back[0].term, "hello");
+        assert_eq!(back[2].term, "東京");
         Ok(())
     }
 
     #[test]
-    fn malformed_doc_meta_returns_corrupted_index() -> Result<()> {
-        let temp_dir = tempfile::tempdir()?;
-        let vault = Vault::open(temp_dir.path(), test_config())?;
-        let id = EntityId::now();
-
-        let mut posting = Vec::new();
-        posting.extend_from_slice(id.as_bytes());
-        posting.extend_from_slice(&1_u32.to_le_bytes());
-
-        let mut wtxn = vault.store.env.write_txn()?;
-        vault
-            .store
-            .text_postings
-            .put(&mut wtxn, b"alpha", &posting)?;
-        vault
-            .store
-            .text_meta
-            .put(&mut wtxn, id.as_bytes(), &[1, 2, 3])?;
-        write_collection_stats(&vault.store, &mut wtxn, 1, 1)?;
-        wtxn.commit()?;
-
-        let err = vault.search_text("alpha", 10).unwrap_err();
-        assert!(matches!(err, Error::CorruptedIndex(_)));
-
-        Ok(())
-    }
-
-    #[test]
-    fn zero_doc_len_during_scoring_returns_corrupted_index() -> Result<()> {
-        let temp_dir = tempfile::tempdir()?;
-        let vault = Vault::open(temp_dir.path(), test_config())?;
-        let id = EntityId::now();
-
-        let mut posting = Vec::new();
-        posting.extend_from_slice(id.as_bytes());
-        posting.extend_from_slice(&1_u32.to_le_bytes());
-
-        let mut wtxn = vault.store.env.write_txn()?;
-        vault
-            .store
-            .text_postings
-            .put(&mut wtxn, b"alpha", &posting)?;
-        vault
-            .store
-            .text_meta
-            .put(&mut wtxn, id.as_bytes(), &encoded_doc_meta(0, 0))?;
-        write_collection_stats(&vault.store, &mut wtxn, 1, 0)?;
-        wtxn.commit()?;
-
-        let err = vault.search_text("alpha", 10).unwrap_err();
-        assert!(matches!(err, Error::CorruptedIndex(_)));
-
-        Ok(())
-    }
-
-    #[test]
-    fn malformed_forward_index_returns_corrupted_index() -> Result<()> {
-        let temp_dir = tempfile::tempdir()?;
-        let vault = Vault::open(temp_dir.path(), test_config())?;
-        let id = EntityId::now();
-
-        let mut wtxn = vault.store.env.write_txn()?;
-        vault
-            .store
-            .text_forward
-            .put(&mut wtxn, id.as_bytes(), b"alpha\0\0beta")?;
-        vault
-            .store
-            .text_meta
-            .put(&mut wtxn, id.as_bytes(), &encoded_doc_meta(1, 1))?;
-        write_collection_stats(&vault.store, &mut wtxn, 1, 1)?;
-
-        let err = deindex_text(&vault.store, &mut wtxn, &id).unwrap_err();
-        assert!(matches!(err, Error::CorruptedIndex(_)));
-
-        Ok(())
-    }
-
-    #[test]
-    fn empty_forward_index_for_non_empty_doc_returns_corrupted_index() -> Result<()> {
-        let temp_dir = tempfile::tempdir()?;
-        let vault = Vault::open(temp_dir.path(), test_config())?;
-        let id = EntityId::now();
-
-        let mut wtxn = vault.store.env.write_txn()?;
-        vault
-            .store
-            .text_forward
-            .put(&mut wtxn, id.as_bytes(), b"")?;
-        vault
-            .store
-            .text_meta
-            .put(&mut wtxn, id.as_bytes(), &encoded_doc_meta(1, 1))?;
-        write_collection_stats(&vault.store, &mut wtxn, 1, 1)?;
-
-        let err = deindex_text(&vault.store, &mut wtxn, &id).unwrap_err();
-        assert!(matches!(err, Error::CorruptedIndex(_)));
-
-        Ok(())
-    }
-
-    #[test]
-    fn non_empty_forward_index_for_zero_length_doc_returns_corrupted_index() -> Result<()> {
-        let temp_dir = tempfile::tempdir()?;
-        let vault = Vault::open(temp_dir.path(), test_config())?;
-        let id = EntityId::now();
-
-        let mut wtxn = vault.store.env.write_txn()?;
-        vault
-            .store
-            .text_forward
-            .put(&mut wtxn, id.as_bytes(), b"alpha")?;
-        vault
-            .store
-            .text_meta
-            .put(&mut wtxn, id.as_bytes(), &encoded_doc_meta(0, 0))?;
-        write_collection_stats(&vault.store, &mut wtxn, 1, 0)?;
-
-        let err = deindex_text(&vault.store, &mut wtxn, &id).unwrap_err();
-        assert!(matches!(err, Error::CorruptedIndex(_)));
-
-        Ok(())
-    }
-
-    #[test]
-    fn missing_forward_index_for_indexed_doc_returns_corrupted_index() -> Result<()> {
-        let temp_dir = tempfile::tempdir()?;
-        let vault = Vault::open(temp_dir.path(), test_config())?;
-        let id = EntityId::now();
-
-        let mut wtxn = vault.store.env.write_txn()?;
-        vault
-            .store
-            .text_meta
-            .put(&mut wtxn, id.as_bytes(), &encoded_doc_meta(1, 1))?;
-        write_collection_stats(&vault.store, &mut wtxn, 1, 1)?;
-
-        let err = deindex_text(&vault.store, &mut wtxn, &id).unwrap_err();
-        assert!(matches!(err, Error::CorruptedIndex(_)));
-
-        Ok(())
-    }
-
-    #[test]
-    fn reindex_with_orphaned_text_meta_returns_corrupted_index() -> Result<()> {
-        let temp_dir = tempfile::tempdir()?;
-        let vault = Vault::open(temp_dir.path(), test_config())?;
-        let id = EntityId::now();
-
-        let mut wtxn = vault.store.env.write_txn()?;
-        vault
-            .store
-            .text_meta
-            .put(&mut wtxn, id.as_bytes(), &encoded_doc_meta(1, 1))?;
-        write_collection_stats(&vault.store, &mut wtxn, 1, 1)?;
-        wtxn.commit()?;
-
-        let err = vault
-            .batch()
-            .text(&id, &[("body", "hello world")])
-            .commit()
-            .unwrap_err();
-        assert!(matches!(err, Error::CorruptedIndex(_)));
-
-        let rtxn = vault.store.env.read_txn()?;
-        assert!(
-            vault
-                .store
-                .text_forward
-                .get(&rtxn, id.as_bytes())?
-                .is_none()
-        );
-        assert!(vault.store.text_meta.get(&rtxn, id.as_bytes())?.is_some());
-        assert_eq!(read_collection_stats(&vault.store, &rtxn)?, (1, 1));
-
-        Ok(())
-    }
-
-    #[test]
-    fn deindex_skips_missing_posting_list() -> Result<()> {
-        let temp_dir = tempfile::tempdir()?;
-        let vault = Vault::open(temp_dir.path(), test_config())?;
-        let id = EntityId::now();
-
-        let mut wtxn = vault.store.env.write_txn()?;
-        vault
-            .store
-            .text_forward
-            .put(&mut wtxn, id.as_bytes(), b"alpha")?;
-        vault
-            .store
-            .text_meta
-            .put(&mut wtxn, id.as_bytes(), &encoded_doc_meta(1, 1))?;
-        write_collection_stats(&vault.store, &mut wtxn, 1, 1)?;
-
-        deindex_text(&vault.store, &mut wtxn, &id)?;
-        wtxn.commit()?;
-
-        let rtxn = vault.store.env.read_txn()?;
-        assert!(
-            vault
-                .store
-                .text_forward
-                .get(&rtxn, id.as_bytes())?
-                .is_none()
-        );
-        assert!(vault.store.text_meta.get(&rtxn, id.as_bytes())?.is_none());
-        assert_eq!(read_collection_stats(&vault.store, &rtxn)?, (0, 0));
-
-        Ok(())
-    }
-
-    #[test]
-    fn deindex_skips_entity_missing_from_posting() -> Result<()> {
-        let temp_dir = tempfile::tempdir()?;
-        let vault = Vault::open(temp_dir.path(), test_config())?;
-        let id = EntityId::now();
-        let other_id = EntityId::now();
-
-        let mut posting = Vec::new();
-        posting.extend_from_slice(other_id.as_bytes());
-        posting.extend_from_slice(&1_u32.to_le_bytes());
-
-        let mut wtxn = vault.store.env.write_txn()?;
-        vault
-            .store
-            .text_postings
-            .put(&mut wtxn, b"alpha", &posting)?;
-        vault
-            .store
-            .text_forward
-            .put(&mut wtxn, id.as_bytes(), b"alpha")?;
-        vault
-            .store
-            .text_meta
-            .put(&mut wtxn, id.as_bytes(), &encoded_doc_meta(1, 1))?;
-        write_collection_stats(&vault.store, &mut wtxn, 1, 1)?;
-
-        deindex_text(&vault.store, &mut wtxn, &id)?;
-        wtxn.commit()?;
-
-        let rtxn = vault.store.env.read_txn()?;
-        assert!(
-            vault
-                .store
-                .text_forward
-                .get(&rtxn, id.as_bytes())?
-                .is_none()
-        );
-        assert!(vault.store.text_meta.get(&rtxn, id.as_bytes())?.is_none());
-        assert_eq!(read_collection_stats(&vault.store, &rtxn)?, (0, 0));
-        assert_eq!(
-            vault.store.text_postings.get(&rtxn, b"alpha")?,
-            Some(posting.as_slice())
-        );
-
+    fn field_lengths_roundtrip() -> Result<()> {
+        let mut m = HashMap::new();
+        m.insert(0, 5);
+        m.insert(2, 1);
+        m.insert(3, 8);
+        let bytes = encode_field_lengths(&m);
+        let back = decode_field_lengths(&bytes)?;
+        assert_eq!(back, m);
         Ok(())
     }
 }
