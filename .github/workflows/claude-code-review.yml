@@ -27,4 +27,6 @@ jobs:
           plugin_marketplaces: 'https://github.com/anthropics/claude-code.git'
           plugins: 'code-review@claude-code-plugins'
           prompt: '/code-review:code-review ${{ github.repository }}/pull/${{ github.event.pull_request.number }}'
+          track_progress: true
+          use_sticky_comment: true
           claude_args: '--model claude-opus-4-7 --max-turns 100 --allowedTools "Bash(cargo check*),Bash(cargo clippy*),Bash(cargo test*),Bash(cargo build*),Bash(rustc *),Bash(gh pr *),Bash(gh api *),WebSearch"'
