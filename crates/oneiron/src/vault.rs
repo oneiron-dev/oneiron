@@ -43,6 +43,7 @@ const MAX_SUBTREE_RESULTS: usize = 50_000;
 
 /// Cap for `sync_state_keys_with_prefix` to prevent unbounded allocation when
 /// a pathological prefix scans a very large sync_state database.
+#[cfg(feature = "sync")]
 const MAX_SYNC_STATE_KEYS: usize = 10_000;
 
 /// Build an edge prefix `[entity_id | kind]` for targeted LMDB prefix scans.

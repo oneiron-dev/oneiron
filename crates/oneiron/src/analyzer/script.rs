@@ -111,7 +111,7 @@ impl ScriptRun {
 /// trailing `Common` characters; a leading `Common` prefix before any real
 /// script attaches to the following run. If the entire input is `Common`
 /// (e.g., pure punctuation / digits), a single `Common` run is emitted.
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone, Copy)]
 pub struct ScriptRunSplitter;
 
 impl ScriptRunSplitter {

@@ -337,7 +337,7 @@ mod tests {
             .map(|t| t.term.as_ref())
             .collect();
         // Mode A should segment at least to 東京 / 大学 / で / 研究 / する boundaries.
-        assert!(surface.iter().any(|t| *t == "東京"));
-        assert!(surface.iter().any(|t| *t == "大学"));
+        assert!(surface.contains(&"東京"));
+        assert!(surface.contains(&"大学"));
     }
 }
