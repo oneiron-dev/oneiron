@@ -190,10 +190,13 @@ pub(crate) fn index_text(
         let fid = tok.channel.field_id();
         let entry = per_field.entry(fid).or_default();
         *entry.entry(tok.term.as_ref().to_owned()).or_insert(0) += 1;
-        *per_field_len.entry(fid).or_insert(0) =
-            per_field_len.get(&fid).copied().unwrap_or(0) + u32::from(tok.length_increment);
+        let inc = u32::from(tok.length_increment);
+        let slot = per_field_len.entry(fid).or_insert(0);
+        *slot = slot
+            .checked_add(inc)
+            .ok_or(Error::ArithmeticOverflow("bm25 per-field length"))?;
         doc_len_total = doc_len_total
-            .checked_add(u32::from(tok.length_increment))
+            .checked_add(inc)
             .ok_or(Error::ArithmeticOverflow("bm25 doc length"))?;
     }
 

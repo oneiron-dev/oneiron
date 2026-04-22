@@ -821,9 +821,21 @@ fn handshake_text_index_manifest(store: &Store, analyzer: &MultilingualAnalyzer)
         });
     };
 
+    // Field schema: must be present (written atomically alongside the
+    // manifest hash above) and byte-equal to the current schema. A present
+    // manifest with a missing field-schema hash signals partial corruption
+    // — fail closed with IncompatibleAnalyzer rather than Bm25FieldSchemaChanged,
+    // which would incorrectly imply an ordinary schema evolution.
     match stored_field_schema_hash {
         Some(hash) if hash == current_field_schema_hash => {}
-        _ => return Err(Error::Bm25FieldSchemaChanged),
+        Some(_) => return Err(Error::Bm25FieldSchemaChanged),
+        None => {
+            return Err(Error::IncompatibleAnalyzer {
+                lang: "*".to_owned(),
+                stored_mode: "corrupt",
+                current_mode: "any",
+            });
+        }
     }
 
     if stored_hash == current_manifest_hash {

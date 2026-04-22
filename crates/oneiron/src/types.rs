@@ -283,6 +283,15 @@ pub struct VaultConfig {
     /// (`<path>/ja/system.dic`, `<path>/ko/system.dic`,
     /// `<path>/zh/jieba.dict.utf8`). First-found wins per-language; missing
     /// dicts silently downgrade the affected language to Portable mode.
+    ///
+    /// **Security.** Every path here is opened and (for Sudachi/jieba)
+    /// read in full at `Vault::open`. Callers MUST only include paths they
+    /// trust — e.g. the iOS app bundle's `Resources/` directory, or a
+    /// packager-controlled cache directory. Do NOT pass user-uploaded
+    /// directories, network mounts, or world-writable locations: a hostile
+    /// dict file can drive Sudachi / jieba / Lindera into unexpected
+    /// behavior, and the dict-bytes hash is then baked into the LMDB
+    /// analyzer manifest, silently pinning the vault to that dict.
     pub dict_search_paths: Vec<PathBuf>,
 }
 
