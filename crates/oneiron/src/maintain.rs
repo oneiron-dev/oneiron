@@ -7,6 +7,7 @@ use crate::hnsw::{
 };
 use crate::types::{ENTITY_ID_LEN, EntityId, short_id_prefix};
 use crate::{Vault, le_bytes_to_f32_vec, ppr};
+use crate::vault::write_text_index_manifest;
 
 const ERR_VECTOR_KEY: &str = "vector key";
 const ERR_SHORT_IDS_REVERSE_VALUE: &str = "short_ids_reverse value";
@@ -28,6 +29,7 @@ pub struct MaintenanceBuilder<'a> {
     ppr_max_age_secs: u64,
     do_compact_postings: bool,
     do_recompute_hashes: bool,
+    do_clear_text_index: bool,
 }
 
 /// Aggregate counters for maintenance operations.
@@ -50,6 +52,18 @@ pub struct MaintenanceReport {
     /// Orphaned or stale short-id mappings removed from the forward/reverse indexes.
     pub orphan_short_ids_deleted: u64,
     pub short_id_hashes_updated: u64,
+    /// Posting-list rows removed by `clear_text_index`.
+    pub text_postings_removed: u64,
+    /// `text_meta` rows removed by `clear_text_index` (excludes the
+    /// `TOTAL_DOCS_KEY` / `TOTAL_LENGTH_KEY` sentinel rows, which are
+    /// rewritten rather than deleted).
+    pub text_meta_removed: u64,
+    /// Forward-index rows removed by `clear_text_index`.
+    pub text_forward_removed: u64,
+    /// Per-field length rows removed by `clear_text_index`.
+    pub text_doc_field_lengths_removed: u64,
+    /// Per-field stats rows removed by `clear_text_index`.
+    pub text_bm25_field_stats_removed: u64,
 }
 
 impl<'a> MaintenanceBuilder<'a> {
@@ -62,6 +76,7 @@ impl<'a> MaintenanceBuilder<'a> {
             ppr_max_age_secs: 0,
             do_compact_postings: false,
             do_recompute_hashes: false,
+            do_clear_text_index: false,
         }
     }
 
@@ -93,6 +108,22 @@ impl<'a> MaintenanceBuilder<'a> {
         self
     }
 
+    /// Drop every text-index row and rewrite the analyzer manifest from
+    /// the currently-discovered dict set. Use after
+    /// [`Error::IncompatibleAnalyzer`] or [`Error::Bm25FieldSchemaChanged`]
+    /// to rebuild under the current analyzer. Leaves entities, vectors,
+    /// edges, and PPR cache untouched — only text-index state is cleared.
+    ///
+    /// After `clear_text_index` commits, callers must re-run their
+    /// indexing pipeline (`batch.text(...)`) to repopulate the index.
+    ///
+    /// [`Error::IncompatibleAnalyzer`]: crate::Error::IncompatibleAnalyzer
+    /// [`Error::Bm25FieldSchemaChanged`]: crate::Error::Bm25FieldSchemaChanged
+    pub fn clear_text_index(mut self) -> Self {
+        self.do_clear_text_index = true;
+        self
+    }
+
     pub fn run(self) -> Result<MaintenanceReport> {
         let mut report = MaintenanceReport::default();
 
@@ -120,8 +151,55 @@ impl<'a> MaintenanceBuilder<'a> {
             report.orphan_short_ids_deleted = deleted;
         }
 
+        if self.do_clear_text_index {
+            let counts = clear_text_index(self.vault)?;
+            report.text_postings_removed = counts.postings;
+            report.text_meta_removed = counts.meta;
+            report.text_forward_removed = counts.forward;
+            report.text_doc_field_lengths_removed = counts.doc_field_lengths;
+            report.text_bm25_field_stats_removed = counts.field_stats;
+        }
+
         Ok(report)
     }
+}
+
+struct ClearTextIndexCounts {
+    postings: u64,
+    meta: u64,
+    forward: u64,
+    doc_field_lengths: u64,
+    field_stats: u64,
+}
+
+fn clear_text_index(vault: &Vault) -> Result<ClearTextIndexCounts> {
+    let mut wtxn = vault.store.env.write_txn()?;
+
+    let postings = vault.store.text_postings.len(&wtxn)?;
+    vault.store.text_postings.clear(&mut wtxn)?;
+
+    let meta = vault.store.text_meta.len(&wtxn)?;
+    vault.store.text_meta.clear(&mut wtxn)?;
+
+    let forward = vault.store.text_forward.len(&wtxn)?;
+    vault.store.text_forward.clear(&mut wtxn)?;
+
+    let doc_field_lengths = vault.store.text_doc_field_lengths.len(&wtxn)?;
+    vault.store.text_doc_field_lengths.clear(&mut wtxn)?;
+
+    let field_stats = vault.store.text_bm25_field_stats.len(&wtxn)?;
+    vault.store.text_bm25_field_stats.clear(&mut wtxn)?;
+
+    write_text_index_manifest(&vault.store, &mut wtxn, &vault.analyzer)?;
+
+    wtxn.commit()?;
+    Ok(ClearTextIndexCounts {
+        postings,
+        meta,
+        forward,
+        doc_field_lengths,
+        field_stats,
+    })
 }
 
 fn rebuild_hnsw(vault: &Vault, heal_invalid_vectors: bool) -> Result<(u64, u64, u64)> {
@@ -1218,6 +1296,87 @@ mod tests {
 
         let report = vault.maintain().run()?;
         assert_eq!(report, MaintenanceReport::default());
+        Ok(())
+    }
+
+    #[test]
+    fn clear_text_index_removes_all_text_rows_and_rewrites_manifest() -> Result<()> {
+        use crate::store::{
+            TEXT_ANALYZER_MANIFEST_HASH_KEY, TEXT_BM25_FIELD_SCHEMA_HASH_KEY,
+            TEXT_INDEX_SCHEMA_VERSION_KEY,
+        };
+
+        let temp_dir = tempfile::tempdir()?;
+        let vault = Vault::open(temp_dir.path(), test_config())?;
+        let a = entity(120);
+        let b = entity(121);
+
+        vault
+            .batch()
+            .put(&a, 0, test_time_range(1, 1), 1, b"a")
+            .put(&b, 0, test_time_range(1, 1), 1, b"b")
+            .text(&a, &[("body", "hello world")])
+            .text(&b, &[("body", "world of rust")])
+            .commit()?;
+
+        let hits = vault.search_text("world", 10)?;
+        assert_eq!(hits.len(), 2);
+
+        let manifest_hash_before = {
+            let rtxn = vault.store.env.read_txn()?;
+            vault
+                .store
+                .vault_meta
+                .get(&rtxn, TEXT_ANALYZER_MANIFEST_HASH_KEY)?
+                .map(|b| b.to_vec())
+        };
+        assert!(manifest_hash_before.is_some());
+
+        let report = vault.maintain().clear_text_index().run()?;
+        assert!(report.text_postings_removed > 0);
+        assert!(report.text_meta_removed > 0);
+        assert!(report.text_forward_removed > 0);
+        assert!(report.text_doc_field_lengths_removed > 0);
+        assert!(report.text_bm25_field_stats_removed > 0);
+
+        assert_eq!(count_entries(&vault.store.text_postings, &vault)?, 0);
+        assert_eq!(count_entries(&vault.store.text_meta, &vault)?, 0);
+        assert_eq!(count_entries(&vault.store.text_forward, &vault)?, 0);
+        assert_eq!(count_entries(&vault.store.text_doc_field_lengths, &vault)?, 0);
+        assert_eq!(count_entries(&vault.store.text_bm25_field_stats, &vault)?, 0);
+
+        let rtxn = vault.store.env.read_txn()?;
+        assert!(
+            vault
+                .store
+                .vault_meta
+                .get(&rtxn, TEXT_INDEX_SCHEMA_VERSION_KEY)?
+                .is_some()
+        );
+        assert!(
+            vault
+                .store
+                .vault_meta
+                .get(&rtxn, TEXT_ANALYZER_MANIFEST_HASH_KEY)?
+                .is_some()
+        );
+        assert!(
+            vault
+                .store
+                .vault_meta
+                .get(&rtxn, TEXT_BM25_FIELD_SCHEMA_HASH_KEY)?
+                .is_some()
+        );
+        drop(rtxn);
+
+        // Entities still present — clear_text_index only touches text DBs.
+        assert!(vault.get_entity_type(&a)?.is_some());
+        assert!(vault.get_entity_type(&b)?.is_some());
+
+        // Index reusable after clear.
+        vault.batch().text(&a, &[("body", "hello again")]).commit()?;
+        let hits = vault.search_text("hello", 10)?;
+        assert!(!hits.is_empty());
         Ok(())
     }
 

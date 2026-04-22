@@ -786,9 +786,6 @@ fn handshake_text_index_manifest(store: &Store, analyzer: &MultilingualAnalyzer)
     let current_manifest_hash = current_manifest
         .canonical_hash()
         .map_err(|e| Error::AnalyzerError(format!("manifest hash: {e}")))?;
-    let current_manifest_json = current_manifest
-        .canonical_json()
-        .map_err(|e| Error::AnalyzerError(format!("manifest json: {e}")))?;
     let current_field_schema_hash = bm25_field_schema_hash();
 
     let mut wtxn = store.env.write_txn()?;
@@ -809,20 +806,7 @@ fn handshake_text_index_manifest(store: &Store, analyzer: &MultilingualAnalyzer)
     if total_docs == 0 {
         // Empty text index — safe to (re)write the manifest. Clears any
         // stale pre-ONE-317 metadata by overwriting the known keys.
-        store.vault_meta.put(
-            &mut wtxn,
-            TEXT_INDEX_SCHEMA_VERSION_KEY,
-            &TEXT_INDEX_SCHEMA_VERSION.to_le_bytes(),
-        )?;
-        store
-            .vault_meta
-            .put(&mut wtxn, TEXT_ANALYZER_MANIFEST_KEY, current_manifest_json.as_bytes())?;
-        store
-            .vault_meta
-            .put(&mut wtxn, TEXT_ANALYZER_MANIFEST_HASH_KEY, &current_manifest_hash)?;
-        store
-            .vault_meta
-            .put(&mut wtxn, TEXT_BM25_FIELD_SCHEMA_HASH_KEY, &current_field_schema_hash)?;
+        write_text_index_manifest(store, &mut wtxn, analyzer)?;
         wtxn.commit()?;
         return Ok(());
     }
@@ -869,6 +853,40 @@ fn handshake_text_index_manifest(store: &Store, analyzer: &MultilingualAnalyzer)
         stored_mode: "mismatched",
         current_mode: "mismatched",
     })
+}
+
+/// Write the current analyzer manifest + field-schema hash + schema
+/// version into `vault_meta`. Used by open-on-empty-index and by
+/// `MaintenanceBuilder::clear_text_index`.
+pub(crate) fn write_text_index_manifest(
+    store: &Store,
+    wtxn: &mut heed::RwTxn<'_>,
+    analyzer: &MultilingualAnalyzer,
+) -> Result<()> {
+    let manifest = analyzer.manifest();
+    let manifest_json = manifest
+        .canonical_json()
+        .map_err(|e| Error::AnalyzerError(format!("manifest json: {e}")))?;
+    let manifest_hash = manifest
+        .canonical_hash()
+        .map_err(|e| Error::AnalyzerError(format!("manifest hash: {e}")))?;
+    let field_schema_hash = bm25_field_schema_hash();
+
+    store.vault_meta.put(
+        wtxn,
+        TEXT_INDEX_SCHEMA_VERSION_KEY,
+        &TEXT_INDEX_SCHEMA_VERSION.to_le_bytes(),
+    )?;
+    store
+        .vault_meta
+        .put(wtxn, TEXT_ANALYZER_MANIFEST_KEY, manifest_json.as_bytes())?;
+    store
+        .vault_meta
+        .put(wtxn, TEXT_ANALYZER_MANIFEST_HASH_KEY, &manifest_hash)?;
+    store
+        .vault_meta
+        .put(wtxn, TEXT_BM25_FIELD_SCHEMA_HASH_KEY, &field_schema_hash)?;
+    Ok(())
 }
 
 fn parse_edge_record(key: &[u8], value: &[u8]) -> Result<EdgeInfo> {
