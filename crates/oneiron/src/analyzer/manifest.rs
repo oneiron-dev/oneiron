@@ -8,6 +8,8 @@
 //! sha256 hashing without pulling in a dedicated canonical-JSON crate.
 
 use std::collections::BTreeMap;
+use std::io;
+use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -37,11 +39,13 @@ impl AnalyzerManifest {
     }
 }
 
+/// Normalization flags carried in the analyzer manifest. Every bit is honored
+/// by [`super::normalize::apply_pretokenize`] / [`super::normalize::kana_fold_overlay`].
+/// Toggling any flag changes the manifest hash and thus requires a reindex.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct NormalizationPolicy {
     pub nfkc: bool,
     pub casefold: bool,
-    pub width_fold: bool,
     pub kana_fold: bool,
 }
 
@@ -50,7 +54,6 @@ impl Default for NormalizationPolicy {
         Self {
             nfkc: true,
             casefold: true,
-            width_fold: true,
             kana_fold: true,
         }
     }
@@ -90,6 +93,43 @@ pub struct AnalyzerAssetManifest {
     pub license: String,
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub source: Option<String>,
+}
+
+impl AnalyzerAssetManifest {
+    /// Fingerprint a dict file at `path` into an [`AnalyzerAssetManifest`].
+    /// Streams the file once to compute sha256 without allocating a second
+    /// buffer of dict bytes. Fails only on IO errors; caller is responsible
+    /// for filling in the name / version / license fields per dict identity.
+    pub fn probe_file(
+        name: impl Into<String>,
+        version: impl Into<String>,
+        license: impl Into<String>,
+        source: Option<String>,
+        path: &Path,
+    ) -> io::Result<Self> {
+        use std::fs::File;
+        use std::io::Read;
+        let mut file = File::open(path)?;
+        let size_bytes = file.metadata()?.len();
+        let mut hasher = Sha256::new();
+        let mut buf = [0_u8; 64 * 1024];
+        loop {
+            let n = file.read(&mut buf)?;
+            if n == 0 {
+                break;
+            }
+            hasher.update(&buf[..n]);
+        }
+        let digest: [u8; 32] = hasher.finalize().into();
+        Ok(Self {
+            name: name.into(),
+            version: version.into(),
+            sha256: hex_encode(&digest),
+            size_bytes,
+            license: license.into(),
+            source,
+        })
+    }
 }
 
 pub fn canonical_json<T: Serialize>(value: &T) -> Result<String, serde_json::Error> {
@@ -225,7 +265,7 @@ mod tests {
     #[test]
     fn normalization_policy_default_enables_all() {
         let n = NormalizationPolicy::default();
-        assert!(n.nfkc && n.casefold && n.width_fold && n.kana_fold);
+        assert!(n.nfkc && n.casefold && n.kana_fold);
     }
 
     #[test]

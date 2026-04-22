@@ -18,17 +18,24 @@ use std::sync::Arc;
 use jieba_rs::{Jieba, Token as JiebaToken, TokenizeMode};
 
 use super::cjk_ngram;
-use super::manifest::AnalyzerMode;
+use super::manifest::{AnalyzerAssetManifest, AnalyzerMode};
 use super::token::{AnalyzerChannel, Token, TokenKind};
 
 pub const DICT_FILENAME: &str = "jieba.dict.utf8";
 pub const DICT_SUBDIR: &str = "zh";
+/// Identity recorded in the manifest when a Chinese dict is loaded. The
+/// license is "user-supplied" on purpose — plan §2.3 disallows shipping a
+/// default ZH dict, so the asset-policy gate (tests/analyzer_asset_policy.rs)
+/// treats any discovered ZH asset as a soft warning, not a hard allow.
+const ZH_ASSET_NAME: &str = "jieba-user-dict";
+const ZH_ASSET_LICENSE: &str = "user-supplied";
 
 /// Chinese analyzer. Cheaply cloneable — internal Jieba is `Arc`-shared.
 #[derive(Clone)]
 pub struct ChineseAnalyzer {
     jieba: Option<Arc<Jieba>>,
     dict_path: Option<PathBuf>,
+    asset: Option<AnalyzerAssetManifest>,
 }
 
 impl std::fmt::Debug for ChineseAnalyzer {
@@ -46,6 +53,7 @@ impl ChineseAnalyzer {
         Self {
             jieba: None,
             dict_path: None,
+            asset: None,
         }
     }
 
@@ -72,9 +80,21 @@ impl ChineseAnalyzer {
             path: path.to_path_buf(),
             source: Box::new(e),
         })?;
+        let asset = AnalyzerAssetManifest::probe_file(
+            ZH_ASSET_NAME,
+            "unknown",
+            ZH_ASSET_LICENSE,
+            None,
+            path,
+        )
+        .map_err(|e| DictLoadError::Io {
+            path: path.to_path_buf(),
+            source: e,
+        })?;
         Ok(Self {
             jieba: Some(Arc::new(jieba)),
             dict_path: Some(path.to_path_buf()),
+            asset: Some(asset),
         })
     }
 
@@ -88,6 +108,13 @@ impl ChineseAnalyzer {
 
     pub fn dict_path(&self) -> Option<&Path> {
         self.dict_path.as_deref()
+    }
+
+    /// Fingerprint of the currently-loaded jieba dict, or None in Portable
+    /// mode. Wired into the analyzer manifest so the LMDB text-index hash
+    /// binds to the exact dict bytes.
+    pub fn asset_manifest(&self) -> Option<&AnalyzerAssetManifest> {
+        self.asset.as_ref()
     }
 
     /// Analyze `text` as Chinese and append tokens to `out`.
@@ -226,9 +253,14 @@ pub fn char_to_byte_table(text: &str) -> CharByteTable {
     let mut byte_of_char: Vec<usize> = Vec::with_capacity(text.chars().count() + 1);
     let mut char_of_byte: Vec<usize> = vec![0; text.len() + 1];
     let mut char_idx = 0usize;
-    for (b, _) in text.char_indices() {
+    for (b, c) in text.char_indices() {
         byte_of_char.push(b);
-        for entry in char_of_byte.iter_mut().skip(b) {
+        // Every intermediate byte of this char reports the char index.
+        // `b..b + len_utf8` covers exactly this code point's bytes; the
+        // next iteration's start (or the trailing `text.len()` slot) picks
+        // up from there. O(N) total across all chars.
+        let end = b + c.len_utf8();
+        for entry in &mut char_of_byte[b..end] {
             *entry = char_idx;
         }
         char_idx += 1;

@@ -18,18 +18,27 @@ use lindera::mode::Mode;
 use lindera::segmenter::Segmenter;
 
 use super::cjk_ngram;
-use super::manifest::AnalyzerMode;
+use super::manifest::{AnalyzerAssetManifest, AnalyzerMode};
 use super::token::{AnalyzerChannel, Token, TokenKind};
 
 pub const DICT_SUBDIR: &str = "ko";
 /// Characteristic file that signals a loadable Lindera dict directory.
 pub const DICT_MARKER: &str = "metadata.json";
+/// Asset identity recorded in the manifest when a KO dict is loaded.
+/// We fingerprint `metadata.json` (rather than the whole directory) — it
+/// is the one file Lindera always emits for its generated dicts, and its
+/// hash binds to the same corpus. Good enough for manifest identity;
+/// packagers who want tighter bounds can replace this with a bespoke
+/// tarball digest.
+const KO_ASSET_NAME: &str = "mecab-ko-dic";
+const KO_ASSET_LICENSE: &str = "Apache-2.0";
 
 /// Korean analyzer. Cheaply cloneable — Segmenter is held in `Arc`.
 #[derive(Clone)]
 pub struct KoreanAnalyzer {
     segmenter: Option<Arc<Segmenter>>,
     dict_path: Option<PathBuf>,
+    asset: Option<AnalyzerAssetManifest>,
 }
 
 impl std::fmt::Debug for KoreanAnalyzer {
@@ -47,6 +56,7 @@ impl KoreanAnalyzer {
         Self {
             segmenter: None,
             dict_path: None,
+            asset: None,
         }
     }
 
@@ -70,9 +80,22 @@ impl KoreanAnalyzer {
             source: Box::new(e),
         })?;
         let segmenter = Segmenter::new(Mode::Normal, dictionary, None);
+        let marker = path.join(DICT_MARKER);
+        let asset = AnalyzerAssetManifest::probe_file(
+            KO_ASSET_NAME,
+            "unknown",
+            KO_ASSET_LICENSE,
+            None,
+            &marker,
+        )
+        .map_err(|e| DictLoadError::Io {
+            path: marker,
+            source: e,
+        })?;
         Ok(Self {
             segmenter: Some(Arc::new(segmenter)),
             dict_path: Some(path.to_path_buf()),
+            asset: Some(asset),
         })
     }
 
@@ -86,6 +109,12 @@ impl KoreanAnalyzer {
 
     pub fn dict_path(&self) -> Option<&Path> {
         self.dict_path.as_deref()
+    }
+
+    /// Fingerprint of the currently-loaded ko-dic metadata, or None in
+    /// Portable mode. Binds the LMDB text-index hash to the dict identity.
+    pub fn asset_manifest(&self) -> Option<&AnalyzerAssetManifest> {
+        self.asset.as_ref()
     }
 
     /// Analyze `text` as Korean and append tokens to `out`.
@@ -103,6 +132,13 @@ impl KoreanAnalyzer {
         _query_mode: bool,
         out: &mut Vec<Token>,
     ) -> u32 {
+        // `query_mode` is intentionally ignored. Plan §1.2 suppresses
+        // overlays at query time to avoid inflating IDF — but the bigram
+        // overlay here lands on `CjkNgram`, a different channel than the
+        // morpheme-bearing `Surface`. A Hangul query like "한국" needs to
+        // hit the CjkNgram channel to recall docs whose Surface-channel
+        // segmentation split that bigram across morpheme boundaries.
+        // Mirrors the same decision in [`chinese::ChineseAnalyzer`].
         if text.is_empty() {
             return position_base;
         }
@@ -193,6 +229,12 @@ pub enum DictLoadError {
         path: PathBuf,
         #[source]
         source: Box<dyn std::error::Error + Send + Sync>,
+    },
+    #[error("failed to read KO dictionary file at {path:?}: {source}")]
+    Io {
+        path: PathBuf,
+        #[source]
+        source: std::io::Error,
     },
 }
 
