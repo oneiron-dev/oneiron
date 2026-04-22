@@ -5,6 +5,7 @@
 //! implementations (normalization, script splitter, language detection,
 //! per-script analyzers, composer) land in subsequent commits.
 
+pub mod chinese;
 pub mod cjk_ngram;
 pub mod detect;
 pub mod japanese;
