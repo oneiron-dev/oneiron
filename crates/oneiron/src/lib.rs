@@ -30,8 +30,8 @@ pub use crate::maintain::{MaintenanceBuilder, MaintenanceReport};
 pub use crate::pipeline::PipelineBuilder;
 pub use crate::types::{
     ContextEntity, ContextPack, EdgeInfo, EdgeKind, EntityId, FieldProfile, HnswConfig, PackFormat,
-    PackStats, ScoredEntity, Signal, TemporalAnchorMode, TemporalGranularity, TimeRange,
-    TokenAllocation, Vad, VaultConfig,
+    PackStats, ScoredEntity, Signal, TemporalAnchorMode, TemporalGranularity, TextAnalyzerConfig,
+    TextIndexOptions, TimeRange, TokenAllocation, Vad, VaultConfig,
 };
 pub use crate::vault::Vault;
 
