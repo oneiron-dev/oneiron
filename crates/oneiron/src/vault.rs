@@ -929,3 +929,212 @@ fn parse_edge_record(key: &[u8], value: &[u8]) -> Result<EdgeInfo> {
         vad,
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use std::path::PathBuf;
+
+    use super::*;
+    use crate::store::{
+        TEXT_ANALYZER_MANIFEST_HASH_KEY, TEXT_ANALYZER_MANIFEST_KEY,
+        TEXT_BM25_FIELD_SCHEMA_HASH_KEY, TEXT_INDEX_SCHEMA_VERSION_KEY,
+    };
+    use crate::types::{HnswConfig, TextAnalyzerConfig, TimeRange, VaultConfig};
+
+    fn test_config() -> VaultConfig {
+        VaultConfig {
+            map_size: 32 * 1024 * 1024,
+            dimensions: 4,
+            embedding_model: Some("test-model-v1".to_owned()),
+            max_readers: 16,
+            hnsw: HnswConfig {
+                m_max_0: 64,
+                ef_construction: 200,
+                ef_search: 128,
+            },
+            text_analyzer: TextAnalyzerConfig::default(),
+            dict_search_paths: Vec::<PathBuf>::new(),
+        }
+    }
+
+    fn entity(byte: u8) -> EntityId {
+        EntityId::from_bytes_unchecked([byte; ENTITY_ID_LEN])
+    }
+
+    fn range(start: u64, end: u64) -> TimeRange {
+        TimeRange { start, end }
+    }
+
+    #[test]
+    fn new_empty_vault_writes_manifest_keys() -> Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let vault = Vault::open(tmp.path(), test_config())?;
+
+        let status = vault.text_index_status()?;
+        assert_eq!(status.total_docs, 0);
+        assert_eq!(status.schema_version, Some(2));
+        assert!(!status.analyzer_manifest.channels.is_empty());
+
+        let rtxn = vault.store.env.read_txn()?;
+        for key in [
+            TEXT_INDEX_SCHEMA_VERSION_KEY,
+            TEXT_ANALYZER_MANIFEST_KEY,
+            TEXT_ANALYZER_MANIFEST_HASH_KEY,
+            TEXT_BM25_FIELD_SCHEMA_HASH_KEY,
+        ] {
+            assert!(
+                vault.store.vault_meta.get(&rtxn, key)?.is_some(),
+                "missing handshake key {:?}",
+                std::str::from_utf8(key).unwrap(),
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn reopen_same_manifest_preserves_text_index() -> Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let a = entity(11);
+
+        {
+            let vault = Vault::open(tmp.path(), test_config())?;
+            vault
+                .batch()
+                .put(&a, 0, range(1, 1), 1, b"a")
+                .text(&a, &[("body", "hello world")])
+                .commit()?;
+            assert_eq!(vault.search_text("hello", 10)?.len(), 1);
+        }
+
+        let vault = Vault::open(tmp.path(), test_config())?;
+        assert_eq!(vault.search_text("hello", 10)?.len(), 1);
+        Ok(())
+    }
+
+    #[test]
+    fn reopen_missing_manifest_on_populated_vault_fails_closed() -> Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let a = entity(21);
+
+        {
+            let vault = Vault::open(tmp.path(), test_config())?;
+            vault
+                .batch()
+                .put(&a, 0, range(1, 1), 1, b"a")
+                .text(&a, &[("body", "hello world")])
+                .commit()?;
+        }
+
+        // Simulate a pre-ONE-317 populated vault by deleting the handshake
+        // hash key while leaving text_postings populated.
+        {
+            let vault = Vault::open(tmp.path(), test_config())?;
+            let mut wtxn = vault.store.env.write_txn()?;
+            vault
+                .store
+                .vault_meta
+                .delete(&mut wtxn, TEXT_ANALYZER_MANIFEST_HASH_KEY)?;
+            wtxn.commit()?;
+        }
+
+        let err = match Vault::open(tmp.path(), test_config()) {
+            Ok(_) => panic!("expected Vault::open to fail"),
+            Err(e) => e,
+        };
+        assert!(
+            matches!(err, Error::IncompatibleAnalyzer { .. }),
+            "expected IncompatibleAnalyzer, got {err:?}",
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn field_schema_hash_mismatch_fails_closed() -> Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let a = entity(31);
+
+        {
+            let vault = Vault::open(tmp.path(), test_config())?;
+            vault
+                .batch()
+                .put(&a, 0, range(1, 1), 1, b"a")
+                .text(&a, &[("body", "hello world")])
+                .commit()?;
+        }
+
+        {
+            let vault = Vault::open(tmp.path(), test_config())?;
+            let mut wtxn = vault.store.env.write_txn()?;
+            vault
+                .store
+                .vault_meta
+                .put(&mut wtxn, TEXT_BM25_FIELD_SCHEMA_HASH_KEY, &[0xEE; 32])?;
+            wtxn.commit()?;
+        }
+
+        let err = match Vault::open(tmp.path(), test_config()) {
+            Ok(_) => panic!("expected Vault::open to fail"),
+            Err(e) => e,
+        };
+        assert!(
+            matches!(err, Error::Bm25FieldSchemaChanged),
+            "expected Bm25FieldSchemaChanged, got {err:?}",
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn analyzer_manifest_hash_mismatch_fails_closed() -> Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let a = entity(41);
+
+        {
+            let vault = Vault::open(tmp.path(), test_config())?;
+            vault
+                .batch()
+                .put(&a, 0, range(1, 1), 1, b"a")
+                .text(&a, &[("body", "hello world")])
+                .commit()?;
+        }
+
+        // Overwrite the stored manifest hash to simulate a dict mode flip.
+        {
+            let vault = Vault::open(tmp.path(), test_config())?;
+            let mut wtxn = vault.store.env.write_txn()?;
+            vault
+                .store
+                .vault_meta
+                .put(&mut wtxn, TEXT_ANALYZER_MANIFEST_HASH_KEY, &[0xCC; 32])?;
+            wtxn.commit()?;
+        }
+
+        let err = match Vault::open(tmp.path(), test_config()) {
+            Ok(_) => panic!("expected Vault::open to fail"),
+            Err(e) => e,
+        };
+        assert!(
+            matches!(err, Error::IncompatibleAnalyzer { .. }),
+            "expected IncompatibleAnalyzer, got {err:?}",
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn text_index_status_reflects_indexed_docs() -> Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let vault = Vault::open(tmp.path(), test_config())?;
+        let a = entity(51);
+        let b = entity(52);
+
+        vault
+            .batch()
+            .put(&a, 0, range(1, 1), 1, b"a")
+            .put(&b, 0, range(1, 1), 1, b"b")
+            .text(&a, &[("body", "first")])
+            .text(&b, &[("body", "second")])
+            .commit()?;
+
+        assert_eq!(vault.text_index_status()?.total_docs, 2);
+        Ok(())
+    }
+}
