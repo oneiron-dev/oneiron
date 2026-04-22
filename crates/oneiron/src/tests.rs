@@ -800,7 +800,7 @@ fn open_checks_model_id_before_migrating_long_interval_schema() -> Result<()> {
         heed::EnvOpenOptions::new()
             .map_size(cfg.map_size)
             .max_readers(cfg.max_readers)
-            .max_dbs(25)
+            .max_dbs(32)
             .open(path)?
     };
     let rtxn = env.read_txn()?;
