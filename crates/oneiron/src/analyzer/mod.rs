@@ -213,28 +213,31 @@ impl MultilingualAnalyzer {
     }
 
     /// Canonical manifest for this analyzer configuration. Gates LMDB
-    /// text-index compatibility (plan §4.2).
+    /// text-index compatibility (plan §4.2). The per-lang `dict` field is
+    /// populated from each backend's [`asset_manifest`] so the manifest
+    /// hash binds not just to mode (Morph/Portable) but to the exact dict
+    /// bytes — a dict swap forces a reindex via fail-closed handshake.
     pub fn manifest(&self) -> AnalyzerManifest {
         let mut langs: BTreeMap<String, LangPolicy> = BTreeMap::new();
         langs.insert(
             "ja".into(),
             LangPolicy {
                 mode: self.japanese.mode(),
-                dict: None,
+                dict: self.japanese.asset_manifest().cloned(),
             },
         );
         langs.insert(
             "zh".into(),
             LangPolicy {
                 mode: self.chinese.mode(),
-                dict: None,
+                dict: self.chinese.asset_manifest().cloned(),
             },
         );
         langs.insert(
             "ko".into(),
             LangPolicy {
                 mode: self.korean.mode(),
-                dict: None,
+                dict: self.korean.asset_manifest().cloned(),
             },
         );
         langs.insert(

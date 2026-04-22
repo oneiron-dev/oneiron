@@ -128,7 +128,6 @@ mod tests {
         let policy = NormalizationPolicy {
             nfkc: false,
             casefold: false,
-            width_fold: false,
             kana_fold: false,
         };
         let out = apply_pretokenize("ＨＥＬＬＯ", &policy);
@@ -140,7 +139,6 @@ mod tests {
         let policy = NormalizationPolicy {
             nfkc: false,
             casefold: false,
-            width_fold: false,
             kana_fold: false,
         };
         assert!(kana_fold_overlay("トウキョウ", &policy).is_none());

@@ -16,6 +16,7 @@
 //! report byte offsets into the input it was given, so the translation
 //! is a single addition.
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -27,7 +28,7 @@ use sudachi::dic::dictionary::JapaneseDictionary;
 use sudachi::dic::storage::SudachiDicData;
 
 use super::cjk_ngram;
-use super::manifest::AnalyzerMode;
+use super::manifest::{AnalyzerAssetManifest, AnalyzerMode};
 use super::normalize::kana_fold;
 use super::token::{AnalyzerChannel, Token, TokenKind};
 
@@ -35,12 +36,20 @@ use super::token::{AnalyzerChannel, Token, TokenKind};
 pub const DICT_FILENAME: &str = "system.dic";
 /// Subdirectory under each dict-search path where the JP dict should live.
 pub const DICT_SUBDIR: &str = "ja";
+/// Asset identity used in the manifest when a JP dict is loaded. Version
+/// is "unknown" because Sudachi binary dicts don't self-report a version
+/// string; packagers override this at build time if stronger identity is
+/// required (plan §2.3).
+const JA_ASSET_NAME: &str = "SudachiDict";
+const JA_ASSET_LICENSE: &str = "Apache-2.0";
+const JA_ASSET_SOURCE: &str = "https://github.com/WorksApplications/SudachiDict";
 
 /// Japanese analyzer. Cheaply cloneable — internal dict is `Arc`-shared.
 #[derive(Clone)]
 pub struct JapaneseAnalyzer {
     dict: Option<Arc<JapaneseDictionary>>,
     dict_path: Option<PathBuf>,
+    asset: Option<AnalyzerAssetManifest>,
 }
 
 impl std::fmt::Debug for JapaneseAnalyzer {
@@ -58,6 +67,7 @@ impl JapaneseAnalyzer {
         Self {
             dict: None,
             dict_path: None,
+            asset: None,
         }
     }
 
@@ -91,9 +101,21 @@ impl JapaneseAnalyzer {
                 path: path.to_path_buf(),
                 source: Box::new(e),
             })?;
+        let asset = AnalyzerAssetManifest::probe_file(
+            JA_ASSET_NAME,
+            "unknown",
+            JA_ASSET_LICENSE,
+            Some(JA_ASSET_SOURCE.to_string()),
+            path,
+        )
+        .map_err(|e| DictLoadError::Io {
+            path: path.to_path_buf(),
+            source: e,
+        })?;
         Ok(Self {
             dict: Some(Arc::new(dict)),
             dict_path: Some(path.to_path_buf()),
+            asset: Some(asset),
         })
     }
 
@@ -107,6 +129,13 @@ impl JapaneseAnalyzer {
 
     pub fn dict_path(&self) -> Option<&Path> {
         self.dict_path.as_deref()
+    }
+
+    /// Fingerprint of the currently-loaded dict, or None in Portable mode.
+    /// Surfaced into [`super::manifest::AnalyzerManifest::langs`] so the
+    /// LMDB manifest hash binds to the exact dict bytes.
+    pub fn asset_manifest(&self) -> Option<&AnalyzerAssetManifest> {
+        self.asset.as_ref()
     }
 
     /// Analyze `text` as Japanese and append tokens to `out`.
@@ -154,9 +183,11 @@ impl JapaneseAnalyzer {
         };
 
         // Collect Mode A morpheme byte ranges for Mode C overlay matching.
-        // Positions map 1:1 to Mode A morpheme indices.
+        // Positions map 1:1 to Mode A morpheme indices. The `a_by_start`
+        // map lets Mode C look up its covering Mode A morpheme in O(1).
         let a_count = morphemes_a.len();
         let mut a_ranges: Vec<(u32, u32)> = Vec::with_capacity(a_count);
+        let mut a_by_start: HashMap<u32, usize> = HashMap::with_capacity(a_count);
 
         for i in 0..a_count {
             let m: Morpheme<'_, _> = morphemes_a.get(i);
@@ -165,6 +196,7 @@ impl JapaneseAnalyzer {
             let surface = m.surface().to_string();
             let position = position_base + i as u32;
             a_ranges.push((start, end));
+            a_by_start.insert(start, i);
 
             out.push(Token::new(
                 surface.clone(),
@@ -202,7 +234,7 @@ impl JapaneseAnalyzer {
                 let start = offset_base + m.begin() as u32;
                 let end = offset_base + m.end() as u32;
                 // Find the Mode A morpheme that begins at this start offset.
-                let Some(first_a_idx) = a_ranges.iter().position(|&(s, _)| s == start) else {
+                let Some(&first_a_idx) = a_by_start.get(&start) else {
                     continue;
                 };
                 let (_, first_a_end) = a_ranges[first_a_idx];

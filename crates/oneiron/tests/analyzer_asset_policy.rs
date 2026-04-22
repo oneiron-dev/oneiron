@@ -15,6 +15,7 @@
 //!    and a `source` URL.
 
 use std::collections::BTreeSet;
+use std::io::Write;
 
 use oneiron::analyzer::{AnalyzerAssetManifest, MultilingualAnalyzer};
 
@@ -82,8 +83,46 @@ fn default_analyzer_emits_no_disallowed_assets() {
         let Some(asset) = policy.dict.as_ref() else {
             continue;
         };
+        // ZH dicts are user-supplied per plan §2.3 — the packager is
+        // responsible for provenance; the "user-supplied" sentinel
+        // license is accepted only for `zh`.
+        if lang == "zh" && asset.license == "user-supplied" {
+            continue;
+        }
         assert_asset_policy(lang, asset, &allowed);
     }
+}
+
+/// Exercises [`AnalyzerAssetManifest::probe_file`] end-to-end against a
+/// real file. CI never has dicts on disk, so the loop above is vacuous;
+/// this test ensures the fingerprint code itself is covered (plan §11).
+#[test]
+fn probe_file_fingerprints_temp_file_correctly() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().join("fake.dic");
+    let mut f = std::fs::File::create(&path).expect("create");
+    f.write_all(b"hello world").expect("write");
+    drop(f);
+
+    let asset = AnalyzerAssetManifest::probe_file(
+        "test-dict",
+        "v0",
+        "Apache-2.0",
+        Some("https://example.invalid/src".to_string()),
+        &path,
+    )
+    .expect("probe must succeed on readable file");
+
+    assert_eq!(asset.name, "test-dict");
+    assert_eq!(asset.version, "v0");
+    assert_eq!(asset.license, "Apache-2.0");
+    assert_eq!(asset.size_bytes, 11);
+    // sha256("hello world") = b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9
+    assert_eq!(
+        asset.sha256,
+        "b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9"
+    );
+    assert_asset_policy("test", &asset, &allowed_licenses());
 }
 
 fn assert_asset_policy(lang: &str, asset: &AnalyzerAssetManifest, allowed: &BTreeSet<&str>) {
