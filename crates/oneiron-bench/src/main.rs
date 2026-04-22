@@ -159,14 +159,37 @@ fn run_smoke() -> ExitCode {
         return ExitCode::FAILURE;
     }
 
-    let queries = ["Tokyo", "東京", "京大", "quick", "gato", "北京大学", "서울"];
+    // Each query is paired with the expected top hit's entity byte so a
+    // regression that flips ranking (e.g. a query matching a noisy doc
+    // higher than its intended target) is caught even when all 8 docs
+    // return non-empty hit sets. Byte maps back to the `docs` table above.
+    let queries: &[(&str, u8)] = &[
+        ("Tokyo", 1),
+        ("東京", 2),
+        ("京大", 2),
+        ("quick", 3),
+        ("gato", 4),
+        ("北京大学", 5),
+        ("서울", 6),
+    ];
     let mut all_passed = true;
-    for q in queries {
+    for &(q, expected) in queries {
         match vault.search_text(q, 10) {
-            Ok(hits) if !hits.is_empty() => println!("  [pass] `{q}` -> {} hits", hits.len()),
-            Ok(_) => {
+            Ok(hits) if hits.is_empty() => {
                 println!("  [fail] `{q}` -> 0 hits");
                 all_passed = false;
+            }
+            Ok(hits) => {
+                let top = hits[0].id.as_bytes()[0];
+                if top == expected {
+                    println!("  [pass] `{q}` -> top id byte={top} ({} hits)", hits.len());
+                } else {
+                    println!(
+                        "  [fail] `{q}` -> top id byte={top}, expected {expected} ({} hits)",
+                        hits.len()
+                    );
+                    all_passed = false;
+                }
             }
             Err(e) => {
                 println!("  [fail] `{q}` -> error: {e}");
