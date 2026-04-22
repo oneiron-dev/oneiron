@@ -49,8 +49,11 @@ pub fn algorithm_for(hint: LanguageHint) -> Option<Algorithm> {
 /// * `hint` — language hint; if it maps to a Snowball algorithm, a `Stem`
 ///   overlay is emitted at the same position whenever the stem differs
 ///   from the case-folded surface term.
-/// * `query_mode` — when true, overlay emission is suppressed (plan §1.2
-///   rationale: query-side overlays only inflate IDF without helping recall).
+/// * `_query_mode` — currently unused. Stems must be emitted on both index
+///   and query sides, otherwise a query like `running` never probes the
+///   `Stem` postings that hold `run` from a document containing `runs`.
+///   Kept as a parameter for dispatch symmetry with CJK analyzers that use
+///   it for overlay shaping.
 ///
 /// Returns the next position that the caller should use when continuing
 /// to emit tokens after this run.
@@ -59,7 +62,7 @@ pub fn analyze(
     offset_base: u32,
     position_base: u32,
     hint: Option<LanguageHint>,
-    query_mode: bool,
+    _query_mode: bool,
     out: &mut Vec<Token>,
 ) -> u32 {
     if text.is_empty() {
@@ -84,9 +87,7 @@ pub fn analyze(
             TokenKind::Word,
         ));
 
-        if !query_mode
-            && let Some(stemmer) = stemmer.as_ref()
-        {
+        if let Some(stemmer) = stemmer.as_ref() {
             let stem = stemmer.stem(folded_str);
             if stem.as_ref() != folded_str {
                 out.push(
@@ -192,11 +193,11 @@ mod tests {
     }
 
     #[test]
-    fn query_mode_suppresses_stem_overlay() {
+    fn query_mode_still_emits_stem_overlay() {
         let mut out = Vec::new();
         analyze("running", 0, 0, Some(LanguageHint::En), true, &mut out);
-        assert!(stem_terms(&out).is_empty());
         assert_eq!(surface_terms(&out), vec!["running"]);
+        assert_eq!(stem_terms(&out), vec!["run"]);
     }
 
     #[test]

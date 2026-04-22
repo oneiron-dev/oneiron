@@ -25,8 +25,33 @@ pub fn detect_with_whichlang(text: &str) -> Option<LanguageHint> {
     if text.is_empty() {
         return None;
     }
+    // Pure-ASCII Latin text short-circuits to English. whichlang is a
+    // byte-n-gram classifier whose top-1 output is unstable on short or
+    // low-entropy pure-ASCII inputs — `running` alone surfaces as `Ita`,
+    // `"apple "` repeated surfaces as `Fra`. Asymmetric detection between
+    // index (long doc) and query (short phrase) would write French stems
+    // for a doc and probe English stems from the query, defeating the
+    // `Stem` channel (see `latin::analyze`). Non-ASCII Latin (Spanish
+    // `está`, German `straße`) still routes through whichlang and reaches
+    // the correct Snowball algorithm.
+    if is_pure_ascii_latin(text) {
+        return Some(LanguageHint::En);
+    }
     let window = truncate_at_char_boundary(text, DETECT_WINDOW_BYTES);
     map_whichlang_lang(whichlang_detect(window))
+}
+
+fn is_pure_ascii_latin(text: &str) -> bool {
+    let mut has_letter = false;
+    for b in text.bytes() {
+        if !b.is_ascii() {
+            return false;
+        }
+        if b.is_ascii_alphabetic() {
+            has_letter = true;
+        }
+    }
+    has_letter
 }
 
 pub fn map_whichlang_lang(lang: Lang) -> Option<LanguageHint> {
@@ -190,6 +215,21 @@ mod tests {
     #[test]
     fn hindi_maps_to_none() {
         assert_eq!(map_whichlang_lang(Lang::Hin), None);
+    }
+
+    #[test]
+    fn pure_ascii_latin_defaults_to_english() {
+        assert_eq!(detect_with_whichlang("running"), Some(LanguageHint::En));
+        assert_eq!(detect_with_whichlang("runs"), Some(LanguageHint::En));
+        assert_eq!(detect_with_whichlang(&"apple ".repeat(20)), Some(LanguageHint::En));
+        let prose = "she runs every morning before work near the riverbank";
+        assert_eq!(detect_with_whichlang(prose), Some(LanguageHint::En));
+    }
+
+    #[test]
+    fn non_ascii_latin_still_uses_whichlang() {
+        let hint = detect_with_whichlang("está durmiendo en la silla");
+        assert_eq!(hint, Some(LanguageHint::Es));
     }
 
     #[test]

@@ -40,6 +40,7 @@ pub use manifest::{
     NormalizationPolicy, canonical_hash, canonical_hash_hex, canonical_json,
 };
 pub use detect::{DETECT_WINDOW_BYTES, PerDocCache};
+pub use normalize::NormalizedText;
 pub use script::{ScriptClass, ScriptRun, ScriptRunSplitter};
 pub use token::{AnalyzerChannel, AnalyzerContext, LanguageHint, Token, TokenKind};
 
@@ -110,21 +111,38 @@ impl MultilingualAnalyzer {
 
     /// Analyze `text` and append tokens to `out`. Returns the next unused
     /// position index. Offsets on every emitted token are absolute byte
-    /// positions into the caller's `text`.
+    /// positions into the caller's `text` — even when normalization
+    /// rewrites the input, offsets are remapped back through the
+    /// [`NormalizedText`] boundary table (plan §3.3).
     pub fn analyze(&self, text: &str, ctx: &AnalyzerContext, out: &mut Vec<Token>) -> u32 {
         if text.is_empty() {
             return 0;
         }
 
-        let runs = self.splitter.runs(text);
+        // Pre-tokenization normalization (plan §6). Segmentation and
+        // every sub-analyzer see the *normalized* slice so NFKC'd forms
+        // like ＡＢＣ or ｶﾀｶﾅ reach the same postings as their canonical
+        // counterparts. Emitted offsets are remapped at the end.
+        let normalized = normalize::normalize_with_offset_map(text, &self.normalization);
+        let analysis_text = normalized.as_str();
+
+        let runs = self.splitter.runs(analysis_text);
         let mut cache = PerDocCache::new();
         let mut position: u32 = 0;
+        let token_start = out.len();
 
         for run in &runs {
-            let slice = run.as_slice(text);
+            let slice = run.as_slice(analysis_text);
             let run_hint = detect::infer_from_script(run.script)
-                .or_else(|| cache.resolve(ctx.language_hint, &runs, text));
+                .or_else(|| cache.resolve(ctx.language_hint, &runs, analysis_text));
             position = self.dispatch_run(run, slice, run_hint, ctx.query_mode, position, out);
+        }
+
+        if !normalized.is_unchanged() {
+            for tok in &mut out[token_start..] {
+                tok.byte_start = normalized.remap(tok.byte_start);
+                tok.byte_end = normalized.remap(tok.byte_end);
+            }
         }
 
         position
@@ -469,6 +487,54 @@ mod tests {
         assert_eq!(m.langs["ja"].mode, AnalyzerMode::Portable);
         assert_eq!(m.langs["zh"].mode, AnalyzerMode::Portable);
         assert_eq!(m.langs["ko"].mode, AnalyzerMode::Portable);
+    }
+
+    #[test]
+    fn fullwidth_ascii_folds_to_ascii_with_original_offsets() {
+        let a = MultilingualAnalyzer::portable();
+        let text = "ＡＢＣ";
+        let mut out = Vec::new();
+        a.analyze(text, &AnalyzerContext::for_index(), &mut out);
+        let surface = surface_terms(&out);
+        assert_eq!(surface, vec!["abc"]);
+        let tok = &out[0];
+        // Offsets must reference the ORIGINAL UTF-8 (9 bytes), not the
+        // normalized form (3 bytes).
+        assert_eq!(tok.byte_start, 0);
+        assert_eq!(tok.byte_end, text.len() as u32);
+        let slice = &text[tok.byte_start as usize..tok.byte_end as usize];
+        assert_eq!(slice, "ＡＢＣ");
+    }
+
+    #[test]
+    fn halfwidth_katakana_indexes_like_fullwidth() {
+        let a = MultilingualAnalyzer::portable();
+        let mut half = Vec::new();
+        let mut full = Vec::new();
+        a.analyze("ｶﾀｶﾅ", &AnalyzerContext::for_index(), &mut half);
+        a.analyze("カタカナ", &AnalyzerContext::for_index(), &mut full);
+        // After NFKC, halfwidth katakana indexes the same surface terms
+        // as the fullwidth form. Byte offsets differ since the sources
+        // have different lengths — equality of terms is what matters.
+        assert_eq!(surface_terms(&half), surface_terms(&full));
+    }
+
+    #[test]
+    fn original_offsets_survive_mixed_normalization() {
+        // Mixed-script sample with a fullwidth-ASCII prefix; every emitted
+        // token must still slice valid UTF-8 out of the ORIGINAL input.
+        let a = MultilingualAnalyzer::portable();
+        let text = "ＡＢＣ 東京";
+        let mut out = Vec::new();
+        a.analyze(text, &AnalyzerContext::for_index(), &mut out);
+        assert!(!out.is_empty());
+        for tok in &out {
+            let s = tok.byte_start as usize;
+            let e = tok.byte_end as usize;
+            assert!(s <= e && e <= text.len(), "offsets out of range: {s}..{e}");
+            let _ = &text[s..e];
+        }
+        assert!(surface_terms(&out).contains(&"abc"));
     }
 
     #[test]

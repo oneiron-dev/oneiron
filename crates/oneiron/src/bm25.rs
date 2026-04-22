@@ -934,6 +934,40 @@ mod tests {
     }
 
     #[test]
+    fn fullwidth_ascii_document_matches_ascii_query() -> Result<()> {
+        let temp_dir = tempfile::tempdir()?;
+        let vault = Vault::open(temp_dir.path(), test_config())?;
+        let id = EntityId::now();
+        put_text_doc(&vault, &id, "ＡＢＣ fullwidth mixed with regular ABC")?;
+
+        let lower = vault.search_text("abc", 10)?;
+        assert!(contains_id(&lower, &id));
+        let upper = vault.search_text("ABC", 10)?;
+        assert!(contains_id(&upper, &id));
+        let fullwidth = vault.search_text("ＡＢＣ", 10)?;
+        assert!(contains_id(&fullwidth, &id));
+        Ok(())
+    }
+
+    #[test]
+    fn stem_channel_enables_cross_inflection_recall() -> Result<()> {
+        let temp_dir = tempfile::tempdir()?;
+        let vault = Vault::open(temp_dir.path(), test_config())?;
+        let id_runs = EntityId::now();
+        let id_ran = EntityId::now();
+        put_text_doc(&vault, &id_runs, "she runs every morning before work")?;
+        // `runs`, `running`, `runnings` all Snowball-stem to `run`, so a
+        // `running` query must reach a doc that only carries a sibling
+        // inflection. Regression guard for symmetric stem emission.
+        put_text_doc(&vault, &id_ran, "he runnings the marathon next spring")?;
+
+        let hits = vault.search_text("running", 10)?;
+        assert!(contains_id(&hits, &id_runs));
+        assert!(contains_id(&hits, &id_ran));
+        Ok(())
+    }
+
+    #[test]
     fn cjk_query_matches_bigram_channel() -> Result<()> {
         let temp_dir = tempfile::tempdir()?;
         let vault = Vault::open(temp_dir.path(), test_config())?;
