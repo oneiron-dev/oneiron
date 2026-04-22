@@ -8,7 +8,10 @@ use heed::{Database, Env, EnvOpenOptions, RwTxn};
 use crate::error::{Error, Result};
 use crate::types::{EdgeKind, EntityId, VaultConfig};
 
-const MAX_DBS: u32 = 25;
+// Bumped from 25 → 32 in ONE-317 to make room for the BM25F schema v2 DBs
+// (`vault_meta`, `text_bm25_field_stats`, `text_doc_field_lengths`) plus
+// headroom for follow-up analyzer work.
+const MAX_DBS: u32 = 32;
 pub(crate) const MODEL_ID_KEY: &[u8] = b"model_id";
 pub(crate) const GRAPH_VERSION_KEY: &[u8] = b"graph_version";
 pub(crate) const HNSW_CONFIG_KEY: &[u8] = b"hnsw_config";
@@ -18,6 +21,22 @@ const TEMPORAL_LONG_INTERVALS_SCHEMA_VERSION: u8 = 2;
 pub(crate) const VECTOR_VERSION_KEY: &[u8] = b"vector_version";
 const HNSW_COMPATIBILITY_VERSION: u8 = 1;
 const HNSW_COMPATIBILITY_LEN: usize = 25;
+
+// BM25F / analyzer schema v2 keys. All live in the new `vault_meta` DB.
+// Wired up by commits 12 + 13 (scorer and Vault::open manifest validation).
+#[allow(dead_code)]
+pub(crate) const TEXT_INDEX_SCHEMA_VERSION_KEY: &[u8] = b"text_index_schema_version";
+#[allow(dead_code)]
+pub(crate) const TEXT_ANALYZER_MANIFEST_KEY: &[u8] = b"text_analyzer_manifest";
+#[allow(dead_code)]
+pub(crate) const TEXT_ANALYZER_MANIFEST_HASH_KEY: &[u8] = b"text_analyzer_manifest_hash";
+#[allow(dead_code)]
+pub(crate) const TEXT_BM25_FIELD_SCHEMA_HASH_KEY: &[u8] = b"text_bm25_field_schema_hash";
+/// Current text-index schema version written on new vaults.
+/// * v1 = pre-ONE-317 hand-rolled tokenizer (never written — greenfield).
+/// * v2 = ONE-317 analyzer + BM25F (this release).
+#[allow(dead_code)] // wired up by the BM25F scorer in commit 12
+pub(crate) const TEXT_INDEX_SCHEMA_VERSION: u16 = 2;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct PersistedHnswCompatibility {
@@ -54,6 +73,20 @@ pub struct Store {
     pub(crate) text_postings: Database<Bytes, Bytes>,
     pub(crate) text_meta: Database<Bytes, Bytes>,
     pub(crate) text_forward: Database<Bytes, Bytes>,
+    /// BM25F per-field corpus stats.
+    /// Key: `field_id` big-endian u16.
+    /// Value: `[doc_count_u32_le | total_length_u64_le]`.
+    #[allow(dead_code)] // wired up by the BM25F indexer in commit 11
+    pub(crate) text_bm25_field_stats: Database<Bytes, Bytes>,
+    /// Per-doc, per-field surface-token lengths used by the BM25F length
+    /// normalization term. Key: entity_id (16B). Value: a flat
+    /// `[(field_id_u16_be | length_u32_le)*]` list over present fields.
+    #[allow(dead_code)] // wired up by the BM25F indexer in commit 11
+    pub(crate) text_doc_field_lengths: Database<Bytes, Bytes>,
+    /// Vault-level metadata (analyzer manifest, schema version, field
+    /// schema hash). Read on `Vault::open` to gate index compatibility.
+    #[allow(dead_code)] // wired up by vault::open in commit 13
+    pub(crate) vault_meta: Database<Bytes, Bytes>,
     pub(crate) ppr_cache: Database<Bytes, Bytes>,
     pub(crate) ppr_cache_deps: Database<Bytes, Bytes>,
     pub(crate) type_index: Database<Bytes, Bytes>,
@@ -101,6 +134,9 @@ impl Store {
         let text_postings = create_db(&env, &mut wtxn, "text_postings")?;
         let text_meta = create_db(&env, &mut wtxn, "text_meta")?;
         let text_forward = create_db(&env, &mut wtxn, "text_forward")?;
+        let text_bm25_field_stats = create_db(&env, &mut wtxn, "text_bm25_field_stats")?;
+        let text_doc_field_lengths = create_db(&env, &mut wtxn, "text_doc_field_lengths")?;
+        let vault_meta = create_db(&env, &mut wtxn, "vault_meta")?;
         let ppr_cache = create_db(&env, &mut wtxn, "ppr_cache")?;
         let ppr_cache_deps = create_db(&env, &mut wtxn, "ppr_cache_deps")?;
         let type_index = create_db(&env, &mut wtxn, "type_index")?;
@@ -148,6 +184,9 @@ impl Store {
             text_postings,
             text_meta,
             text_forward,
+            text_bm25_field_stats,
+            text_doc_field_lengths,
+            vault_meta,
             ppr_cache,
             ppr_cache_deps,
             type_index,
