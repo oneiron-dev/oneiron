@@ -70,6 +70,17 @@ pub enum AnalyzerMode {
     Portable,
 }
 
+impl AnalyzerMode {
+    /// Stable machine identifier. Matches the serde-serialized form so
+    /// round-tripping the manifest never changes mode strings.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Morphological => "morphological",
+            Self::Portable => "portable",
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AnalyzerAssetManifest {
     pub name: String,

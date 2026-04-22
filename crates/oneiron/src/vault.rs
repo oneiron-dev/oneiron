@@ -7,12 +7,16 @@ use std::path::Path;
 use heed::Database;
 use heed::types::Bytes;
 
+use crate::analyzer::{AnalyzerChannel, AnalyzerManifest, AnalyzerMode, MultilingualAnalyzer};
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader, deindex_entity};
 use crate::error::{Error, Result};
 use crate::limits::{
     ERR_CHILD_OF_CYCLE_CHECK, MAX_ANCESTOR_DEPTH, MAX_CHILD_OF_CYCLE_TRAVERSAL_STEPS,
 };
-use crate::store::Store;
+use crate::store::{
+    Store, TEXT_ANALYZER_MANIFEST_HASH_KEY, TEXT_ANALYZER_MANIFEST_KEY,
+    TEXT_BM25_FIELD_SCHEMA_HASH_KEY, TEXT_INDEX_SCHEMA_VERSION, TEXT_INDEX_SCHEMA_VERSION_KEY,
+};
 use crate::types::{
     EDGE_KEY_LEN, EDGE_VALUE_LEN, ENTITY_ID_LEN, EdgeInfo, EdgeKind, EntityId, ScoredEntity,
     TimeRange, Vad, VaultConfig, parse_vad,
@@ -84,7 +88,7 @@ fn first_child_of_parent(
 pub struct Vault {
     pub(crate) store: Store,
     pub(crate) config: VaultConfig,
-    pub(crate) analyzer: crate::analyzer::MultilingualAnalyzer,
+    pub(crate) analyzer: MultilingualAnalyzer,
 }
 
 impl Vault {
@@ -107,14 +111,28 @@ impl Vault {
         }
 
         let store = Store::open(path, &config)?;
-        // Commit 13 will upgrade this to `discover(&config.dict_search_paths)`
-        // and wire in manifest write/validate. For now the analyzer runs in
-        // Portable mode for every language so the build stays green.
-        let analyzer = crate::analyzer::MultilingualAnalyzer::portable();
+        let analyzer = MultilingualAnalyzer::discover(&config.dict_search_paths)
+            .map_err(|e| Error::AnalyzerError(e.to_string()))?;
+        handshake_text_index_manifest(&store, &analyzer)?;
+
         Ok(Self {
             store,
             config,
             analyzer,
+        })
+    }
+
+    /// Current text-index status. `analyzer_manifest` reflects the analyzer
+    /// this vault was opened with; `schema_version` and `total_docs` reflect
+    /// what was persisted by prior writes.
+    pub fn text_index_status(&self) -> Result<TextIndexStatus> {
+        let rtxn = self.store.env.read_txn()?;
+        let total_docs = bm25::read_total_docs(&self.store, &rtxn)?;
+        let schema_version = read_text_schema_version(&self.store, &rtxn)?;
+        Ok(TextIndexStatus {
+            total_docs,
+            schema_version,
+            analyzer_manifest: self.analyzer.manifest(),
         })
     }
 
@@ -714,6 +732,143 @@ fn scan_edges(
         edges.push(parse_edge_record(key, value)?);
     }
     Ok(edges)
+}
+
+/// Snapshot of a vault's text-index state. Returned from
+/// [`Vault::text_index_status`].
+#[derive(Debug, Clone)]
+pub struct TextIndexStatus {
+    /// Number of logical documents currently indexed.
+    pub total_docs: u32,
+    /// Schema version recorded on disk. `None` for vaults with no text
+    /// index writes yet.
+    pub schema_version: Option<u16>,
+    /// Analyzer manifest resolved at open time (reflects dict discovery
+    /// against `VaultConfig.dict_search_paths`).
+    pub analyzer_manifest: AnalyzerManifest,
+}
+
+/// Canonical hash over the ordered list of BM25F channels currently
+/// compiled into the analyzer. Changes when the channel set is added to,
+/// removed from, or renumbered — in other words, when the posting binary
+/// layout is no longer compatible with older indexes.
+fn bm25_field_schema_hash() -> [u8; 32] {
+    use sha2::{Digest, Sha256};
+    let mut h = Sha256::new();
+    for channel in AnalyzerChannel::ALL_V1 {
+        h.update(channel.as_str().as_bytes());
+        h.update(b"|");
+    }
+    h.finalize().into()
+}
+
+fn read_text_schema_version(store: &Store, rtxn: &heed::RoTxn<'_>) -> Result<Option<u16>> {
+    let Some(raw) = store.vault_meta.get(rtxn, TEXT_INDEX_SCHEMA_VERSION_KEY)? else {
+        return Ok(None);
+    };
+    let bytes: [u8; 2] = raw
+        .try_into()
+        .map_err(|_| Error::CorruptedIndex("text schema version"))?;
+    Ok(Some(u16::from_le_bytes(bytes)))
+}
+
+/// Validate the on-disk analyzer manifest against the in-memory one. Runs
+/// once at `Vault::open`. States are handled per plan ONE-317 §4.2:
+///
+/// * empty index, any stored state → rewrite manifest, proceed
+/// * non-empty, matching hashes → proceed
+/// * non-empty, field schema mismatch → `Bm25FieldSchemaChanged`
+/// * non-empty, manifest hash mismatch → `IncompatibleAnalyzer` naming the
+///   first language whose mode flipped (or `*` when the stored manifest is
+///   absent / unparseable, i.e. pre-ONE-317 vault)
+fn handshake_text_index_manifest(store: &Store, analyzer: &MultilingualAnalyzer) -> Result<()> {
+    let current_manifest = analyzer.manifest();
+    let current_manifest_hash = current_manifest
+        .canonical_hash()
+        .map_err(|e| Error::AnalyzerError(format!("manifest hash: {e}")))?;
+    let current_manifest_json = current_manifest
+        .canonical_json()
+        .map_err(|e| Error::AnalyzerError(format!("manifest json: {e}")))?;
+    let current_field_schema_hash = bm25_field_schema_hash();
+
+    let mut wtxn = store.env.write_txn()?;
+    let total_docs = bm25::read_total_docs(store, &wtxn)?;
+    let stored_manifest_hash = store
+        .vault_meta
+        .get(&wtxn, TEXT_ANALYZER_MANIFEST_HASH_KEY)?
+        .map(|b| b.to_vec());
+    let stored_field_schema_hash = store
+        .vault_meta
+        .get(&wtxn, TEXT_BM25_FIELD_SCHEMA_HASH_KEY)?
+        .map(|b| b.to_vec());
+    let stored_manifest_bytes = store
+        .vault_meta
+        .get(&wtxn, TEXT_ANALYZER_MANIFEST_KEY)?
+        .map(|b| b.to_vec());
+
+    if total_docs == 0 {
+        // Empty text index — safe to (re)write the manifest. Clears any
+        // stale pre-ONE-317 metadata by overwriting the known keys.
+        store.vault_meta.put(
+            &mut wtxn,
+            TEXT_INDEX_SCHEMA_VERSION_KEY,
+            &TEXT_INDEX_SCHEMA_VERSION.to_le_bytes(),
+        )?;
+        store
+            .vault_meta
+            .put(&mut wtxn, TEXT_ANALYZER_MANIFEST_KEY, current_manifest_json.as_bytes())?;
+        store
+            .vault_meta
+            .put(&mut wtxn, TEXT_ANALYZER_MANIFEST_HASH_KEY, &current_manifest_hash)?;
+        store
+            .vault_meta
+            .put(&mut wtxn, TEXT_BM25_FIELD_SCHEMA_HASH_KEY, &current_field_schema_hash)?;
+        wtxn.commit()?;
+        return Ok(());
+    }
+
+    // Non-empty index: every key must be present and match the current values.
+    let Some(stored_hash) = stored_manifest_hash else {
+        // Pre-ONE-317 vault with docs in it: fail closed.
+        return Err(Error::IncompatibleAnalyzer {
+            lang: "*".to_owned(),
+            stored_mode: "unknown",
+            current_mode: AnalyzerMode::Portable.as_str(),
+        });
+    };
+
+    match stored_field_schema_hash {
+        Some(hash) if hash == current_field_schema_hash => {}
+        _ => return Err(Error::Bm25FieldSchemaChanged),
+    }
+
+    if stored_hash == current_manifest_hash {
+        return Ok(());
+    }
+
+    // Manifest hash changed. Try to name the specific language whose mode
+    // flipped; fall back to `*` if the stored manifest doesn't parse.
+    if let Some(bytes) = stored_manifest_bytes
+        && let Ok(stored) = serde_json::from_slice::<AnalyzerManifest>(&bytes)
+    {
+        for (lang, current_policy) in &current_manifest.langs {
+            if let Some(stored_policy) = stored.langs.get(lang)
+                && stored_policy.mode != current_policy.mode
+            {
+                return Err(Error::IncompatibleAnalyzer {
+                    lang: lang.clone(),
+                    stored_mode: stored_policy.mode.as_str(),
+                    current_mode: current_policy.mode.as_str(),
+                });
+            }
+        }
+    }
+
+    Err(Error::IncompatibleAnalyzer {
+        lang: "*".to_owned(),
+        stored_mode: "mismatched",
+        current_mode: "mismatched",
+    })
 }
 
 fn parse_edge_record(key: &[u8], value: &[u8]) -> Result<EdgeInfo> {
