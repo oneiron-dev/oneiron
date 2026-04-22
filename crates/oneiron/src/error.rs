@@ -65,6 +65,37 @@ pub enum Error {
     /// Tree operation would create a cycle.
     #[error("cycle detected in tree hierarchy")]
     CycleDetected,
+    /// Text analyzer manifest on disk does not match the current analyzer
+    /// configuration. Per-language mode (Morphological vs Portable) flipped
+    /// because a dict appeared or disappeared between index time and open
+    /// time (plan ONE-317 §4.2). Call [`MaintenanceBuilder::clear_text_index`]
+    /// to rebuild the text index under the current analyzer.
+    ///
+    /// [`MaintenanceBuilder::clear_text_index`]: crate::MaintenanceBuilder
+    #[error("text analyzer changed since index was built (lang={lang:?}): stored={stored_mode} current={current_mode}; run clear_text_index to rebuild")]
+    IncompatibleAnalyzer {
+        lang: String,
+        stored_mode: &'static str,
+        current_mode: &'static str,
+    },
+    /// BM25F field schema on disk does not match the current build. Channels
+    /// in [`crate::analyzer::AnalyzerChannel`] were added, removed, or
+    /// renumbered between index time and open time.
+    #[error("bm25f field schema changed since index was built; run clear_text_index to rebuild")]
+    Bm25FieldSchemaChanged,
+    /// A dict asset declared in the stored manifest is missing from disk
+    /// (e.g., `system.dic` was deleted after indexing). Restore the file or
+    /// run [`MaintenanceBuilder::clear_text_index`] to rebuild under the
+    /// current search-path state.
+    ///
+    /// [`MaintenanceBuilder::clear_text_index`]: crate::MaintenanceBuilder
+    #[error("analyzer asset missing: {0}")]
+    AnalyzerAssetMissing(String),
+    /// Generic analyzer error (dict load failure, manifest encode failure,
+    /// etc.). Wraps the underlying cause as a string to avoid leaking
+    /// transitive Sudachi/jieba/lindera error types into the public surface.
+    #[error("analyzer error: {0}")]
+    AnalyzerError(String),
     /// Malformed CRDT update bytes.
     #[cfg(feature = "sync")]
     #[error("crdt decode error: {0}")]
