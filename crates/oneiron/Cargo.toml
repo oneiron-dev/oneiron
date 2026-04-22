@@ -27,6 +27,7 @@ tokio-tungstenite = { version = "0.26", optional = true }
 futures-util = { version = "0.3", optional = true }
 zstd = { version = "0.13", optional = true }
 tracing = { version = "0.1" }
+whichlang = "0.1.1"
 
 [features]
 sync = ["loro", "dep:tokio", "dep:tokio-tungstenite", "dep:futures-util", "dep:zstd"]
