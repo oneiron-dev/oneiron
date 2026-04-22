@@ -144,7 +144,7 @@ fn run_smoke() -> ExitCode {
     let entity_ids: Vec<EntityId> = match docs
         .iter()
         .map(|(byte, _)| EntityId::from_bytes([*byte; 16]))
-        .collect::<Result<Vec<_>, _>>()
+        .collect()
     {
         Ok(v) => v,
         Err(e) => {
