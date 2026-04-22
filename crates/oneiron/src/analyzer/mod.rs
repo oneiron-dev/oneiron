@@ -6,6 +6,7 @@
 //! per-script analyzers, composer) land in subsequent commits.
 
 pub mod detect;
+pub mod latin;
 pub mod manifest;
 pub mod normalize;
 pub mod script;
