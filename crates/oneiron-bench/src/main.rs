@@ -141,36 +141,39 @@ fn run_smoke() -> ExitCode {
         (7, "emoji adjacent text launch pad"),
         (8, "ＡＢＣ fullwidth ASCII mixed with regular ABC"),
     ];
+    let entity_ids: Vec<EntityId> = match docs
+        .iter()
+        .map(|(byte, _)| EntityId::from_bytes([*byte; 16]))
+        .collect::<Result<Vec<_>, _>>()
+    {
+        Ok(v) => v,
+        Err(e) => {
+            eprintln!("entity id failed: {e}");
+            return ExitCode::FAILURE;
+        }
+    };
     let mut batch = vault.batch();
-    for (byte, text) in docs {
-        let id = match EntityId::from_bytes([*byte; 16]) {
-            Ok(id) => id,
-            Err(e) => {
-                eprintln!("entity id failed: {e}");
-                return ExitCode::FAILURE;
-            }
-        };
+    for ((_, text), id) in docs.iter().zip(&entity_ids) {
         batch = batch
-            .put(&id, 0, TimeRange { start: 1, end: 1 }, 1, b"doc")
-            .text(&id, &[("body", *text)]);
+            .put(id, 0, TimeRange { start: 1, end: 1 }, 1, b"doc")
+            .text(id, &[("body", *text)]);
     }
     if let Err(e) = batch.commit() {
         eprintln!("batch commit failed: {e}");
         return ExitCode::FAILURE;
     }
 
-    // Each query is paired with the expected top hit's entity byte so a
-    // regression that flips ranking (e.g. a query matching a noisy doc
-    // higher than its intended target) is caught even when all 8 docs
-    // return non-empty hit sets. Byte maps back to the `docs` table above.
-    let queries: &[(&str, u8)] = &[
-        ("Tokyo", 1),
-        ("東京", 2),
-        ("京大", 2),
-        ("quick", 3),
-        ("gato", 4),
-        ("北京大学", 5),
-        ("서울", 6),
+    // Each query carries the expected top-ranked doc so a regression that
+    // lets a noisier doc outrank the intended surface match is caught
+    // even when hits are non-empty.
+    let queries: &[(&str, &EntityId)] = &[
+        ("Tokyo", &entity_ids[0]),
+        ("東京", &entity_ids[1]),
+        ("京大", &entity_ids[1]),
+        ("quick", &entity_ids[2]),
+        ("gato", &entity_ids[3]),
+        ("北京大学", &entity_ids[4]),
+        ("서울", &entity_ids[5]),
     ];
     let mut all_passed = true;
     for &(q, expected) in queries {
@@ -180,12 +183,14 @@ fn run_smoke() -> ExitCode {
                 all_passed = false;
             }
             Ok(hits) => {
-                let top = hits[0].id.as_bytes()[0];
+                let top = &hits[0].id;
                 if top == expected {
-                    println!("  [pass] `{q}` -> top id byte={top} ({} hits)", hits.len());
+                    println!("  [pass] `{q}` -> {} ({} hits)", top.to_hex(), hits.len());
                 } else {
                     println!(
-                        "  [fail] `{q}` -> top id byte={top}, expected {expected} ({} hits)",
+                        "  [fail] `{q}` -> top {}, expected {} ({} hits)",
+                        top.to_hex(),
+                        expected.to_hex(),
                         hits.len()
                     );
                     all_passed = false;
