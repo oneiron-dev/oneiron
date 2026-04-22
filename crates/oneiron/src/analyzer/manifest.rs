@@ -42,7 +42,7 @@ impl AnalyzerManifest {
 }
 
 /// Normalization flags carried in the analyzer manifest. Every bit is honored
-/// by [`super::normalize::apply_pretokenize`] / [`super::normalize::kana_fold_overlay`].
+/// by [`super::normalize::normalize_with_offset_map`] / [`super::normalize::kana_fold_overlay`].
 /// Toggling any flag changes the manifest hash and thus requires a reindex.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct NormalizationPolicy {
