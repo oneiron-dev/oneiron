@@ -5,6 +5,7 @@
 //! implementations (normalization, script splitter, language detection,
 //! per-script analyzers, composer) land in subsequent commits.
 
+pub mod detect;
 pub mod manifest;
 pub mod normalize;
 pub mod script;
@@ -14,5 +15,6 @@ pub use manifest::{
     ANALYZER_VERSION, AnalyzerAssetManifest, AnalyzerManifest, AnalyzerMode, LangPolicy,
     NormalizationPolicy, canonical_hash, canonical_hash_hex, canonical_json,
 };
+pub use detect::{DETECT_WINDOW_BYTES, PerDocCache};
 pub use script::{ScriptClass, ScriptRun, ScriptRunSplitter};
 pub use token::{AnalyzerChannel, AnalyzerContext, LanguageHint, Token, TokenKind};
