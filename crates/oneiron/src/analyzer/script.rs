@@ -3,9 +3,10 @@
 //! Groups consecutive characters of the same script into byte-range runs.
 //! `Common` / `Inherited` characters attach to the adjacent non-CJK run so
 //! that Latin boundaries only appear between real script transitions; when
-//! CJK runs are followed by `Common` the Common chars are split into their
-//! own run, so cjk_ngram never absorbs digits or punctuation into CJK
-//! bigrams (plan §1.1 no-cross-script-bigram invariant).
+//! CJK runs would absorb `Common` on either side the Common chars are split
+//! into their own run, so cjk_ngram never absorbs digits or punctuation
+//! into CJK bigrams (plan §1.1 no-cross-script-bigram invariant). Both
+//! trailing `Common` after CJK and leading `Common` before CJK are split.
 
 use unicode_script::{Script, UnicodeScript};
 
@@ -110,9 +111,10 @@ impl ScriptRun {
 /// exactly (no gaps, no overlaps). Non-CJK runs absorb trailing `Common`
 /// characters; CJK runs do not (trailing `Common` starts a fresh `Common`
 /// run so cjk_ngram never produces cross-script bigrams). A leading
-/// `Common` prefix before any real script attaches to the following run.
-/// If the entire input is `Common` (e.g., pure punctuation / digits), a
-/// single `Common` run is emitted.
+/// `Common` prefix before a non-CJK run attaches to that run; before a
+/// CJK run the leading `Common` is split off into its own run for the
+/// same invariant. If the entire input is `Common` (e.g., pure punctuation
+/// / digits), a single `Common` run is emitted.
 #[derive(Debug, Default, Clone, Copy)]
 pub struct ScriptRunSplitter;
 
@@ -141,7 +143,22 @@ impl ScriptRunSplitter {
                     }
                 }
                 (None, other) => {
-                    let run_start = pending_start.take().unwrap_or(start);
+                    let run_start = match pending_start.take() {
+                        // Leading Common before CJK splits into its own
+                        // run — otherwise the CJK analyzer would bigram
+                        // across the Common/CJK boundary (e.g. `4東`
+                        // from `2024東京`), breaking plan §1.1.
+                        Some(p_start) if other.is_cjk() => {
+                            runs.push(ScriptRun {
+                                byte_start: p_start,
+                                byte_end: start,
+                                script: ScriptClass::Common,
+                            });
+                            start
+                        }
+                        Some(p_start) => p_start,
+                        None => start,
+                    };
                     active = Some(other);
                     runs.push(ScriptRun {
                         byte_start: run_start,
@@ -343,6 +360,39 @@ mod tests {
                 ("、", ScriptClass::Common),
                 ("大学", ScriptClass::Han),
             ]
+        );
+    }
+
+    #[test]
+    fn leading_digits_split_off_han_run() {
+        let text = "2024東京";
+        let runs = ScriptRunSplitter::new().runs(text);
+        let sliced = run_slices(text, &runs);
+        assert_eq!(
+            sliced,
+            vec![("2024", ScriptClass::Common), ("東京", ScriptClass::Han)]
+        );
+    }
+
+    #[test]
+    fn leading_punct_splits_off_cjk_run() {
+        let text = "【東京";
+        let runs = ScriptRunSplitter::new().runs(text);
+        let sliced = run_slices(text, &runs);
+        assert_eq!(
+            sliced,
+            vec![("【", ScriptClass::Common), ("東京", ScriptClass::Han)]
+        );
+    }
+
+    #[test]
+    fn leading_common_before_hangul_splits() {
+        let text = "...안녕";
+        let runs = ScriptRunSplitter::new().runs(text);
+        let sliced = run_slices(text, &runs);
+        assert_eq!(
+            sliced,
+            vec![("...", ScriptClass::Common), ("안녕", ScriptClass::Hangul)]
         );
     }
 

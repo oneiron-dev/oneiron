@@ -184,12 +184,14 @@ mod tests {
     }
 
     #[test]
-    fn stem_overlay_has_zero_increments() {
+    fn stem_overlay_has_zero_position_but_counts_length() {
         let mut out = Vec::new();
         analyze("running", 0, 0, Some(LanguageHint::En), false, &mut out);
         let stem = out.iter().find(|t| t.channel == AnalyzerChannel::Stem).unwrap();
         assert_eq!(stem.position_increment, 0);
-        assert_eq!(stem.length_increment, 0);
+        // Stem channel uses `CountLengthIncrement` normalization, so each
+        // overlay must contribute to that field's length.
+        assert_eq!(stem.length_increment, 1);
     }
 
     #[test]

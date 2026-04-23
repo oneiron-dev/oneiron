@@ -1116,6 +1116,89 @@ mod tests {
     }
 
     #[test]
+    fn cjk_ngram_field_length_reflects_bigram_count() -> Result<()> {
+        let temp_dir = tempfile::tempdir()?;
+        let vault = Vault::open(temp_dir.path(), test_config())?;
+        let short_id = EntityId::now();
+        let long_id = EntityId::now();
+        put_text_doc(&vault, &short_id, "東京")?;
+        put_text_doc(&vault, &long_id, "東京大学研究所")?;
+
+        let rtxn = vault.store.env.read_txn()?;
+        let ngram_fid = AnalyzerChannel::CjkNgram.field_id();
+
+        let read_len = |id: &EntityId| -> Result<u32> {
+            let raw = vault
+                .store
+                .text_doc_field_lengths
+                .get(&rtxn, id.as_bytes())?
+                .expect("doc must have field lengths");
+            let map = decode_field_lengths(raw)?;
+            Ok(map.get(&ngram_fid).copied().unwrap_or(0))
+        };
+
+        let short_len = read_len(&short_id)?;
+        let long_len = read_len(&long_id)?;
+        // "東京" → 1 bigram; "東京大学研究所" → 6 bigrams.
+        assert_eq!(short_len, 1);
+        assert_eq!(long_len, 6);
+
+        let (doc_count, total_length) = read_field_stats(&vault.store, &rtxn, ngram_fid)?;
+        assert_eq!(doc_count, 2);
+        assert_eq!(total_length, u64::from(short_len) + u64::from(long_len));
+        Ok(())
+    }
+
+    #[test]
+    fn long_cjk_document_loses_to_short_one_on_shared_bigram() -> Result<()> {
+        // Isolate CjkNgram by zeroing every other field so the assertion
+        // doesn't ride on Surface/Stem length norm.
+        let temp_dir = tempfile::tempdir()?;
+        let vault = Vault::open(temp_dir.path(), test_config())?;
+        let short_id = EntityId::now();
+        let long_id = EntityId::now();
+        put_text_doc(&vault, &short_id, "東京")?;
+        put_text_doc(&vault, &long_id, "東京研究所大学図書館")?;
+
+        let mut fields = [FieldConfig::disabled(); 7];
+        fields[AnalyzerChannel::CjkNgram.field_id() as usize] = FieldConfig {
+            weight: 1.0,
+            b: 0.30,
+            length_policy: FieldLengthPolicy::CountLengthIncrement,
+        };
+        let cjk_only = Bm25Config {
+            k1: 1.2,
+            formula: Bm25Formula::Okapi,
+            fields,
+        };
+
+        let rtxn = vault.store.env.read_txn()?;
+        let results = search_text(
+            &vault.store,
+            &rtxn,
+            &MultilingualAnalyzer::portable(),
+            &cjk_only,
+            "東京",
+            10,
+        )?;
+        let short_score = results
+            .iter()
+            .find(|r| r.id == short_id)
+            .expect("short doc in results")
+            .score;
+        let long_score = results
+            .iter()
+            .find(|r| r.id == long_id)
+            .expect("long doc in results")
+            .score;
+        assert!(
+            short_score > long_score,
+            "expected short doc to outrank long doc on CjkNgram channel once length norm fires: short={short_score} long={long_score}",
+        );
+        Ok(())
+    }
+
+    #[test]
     fn posting_decode_rejects_zero_tf() {
         let mut posting = Vec::new();
         let id = EntityId::now();
