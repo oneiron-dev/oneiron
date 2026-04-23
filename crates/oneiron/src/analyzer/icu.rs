@@ -38,13 +38,19 @@ pub fn analyze(text: &str, offset_base: u32, position_base: u32, out: &mut Vec<T
     let seg = segmenter();
     let mut iter = seg.segment_str(text).iter_with_word_type();
 
-    let Some((mut prev_offset, mut prev_type)) = iter.next() else {
+    // `iter_with_word_type()` yields `(boundary, word_type_of_segment_ending_
+    // at_boundary)` (icu_segmenter 2.x). The first yield is the start
+    // boundary (0, None); each subsequent yield's `segment_type` describes
+    // the segment `[prev_offset, end)` that we're about to consider — so
+    // the word-likeness test must look at the *current* yield's type, not
+    // the one we held over from the previous iteration.
+    let Some((mut prev_offset, _)) = iter.next() else {
         return position_base;
     };
     let mut position = position_base;
 
-    for (end, next_type) in iter {
-        if prev_type.is_word_like() {
+    for (end, segment_type) in iter {
+        if segment_type.is_word_like() {
             let slice = &text[prev_offset..end];
             let start = offset_base + prev_offset as u32;
             let end_abs = offset_base + end as u32;
@@ -60,7 +66,6 @@ pub fn analyze(text: &str, offset_base: u32, position_base: u32, out: &mut Vec<T
             position += 1;
         }
         prev_offset = end;
-        prev_type = next_type;
     }
 
     position
@@ -102,11 +107,67 @@ mod tests {
         let text = "hello world";
         let mut out = Vec::new();
         analyze(text, 0, 0, &mut out);
+        // Guard against a regression where the loop emits the wrong
+        // segment but the case-fold identity still satisfies the
+        // per-token equality check: require both words to land as
+        // distinct tokens.
+        assert!(
+            out.len() >= 2,
+            "expected at least 2 tokens for `hello world`, got {}: {:?}",
+            out.len(),
+            surface_terms(&out),
+        );
         for tok in &out {
             let slice = &text[tok.byte_start as usize..tok.byte_end as usize];
             assert!(!slice.is_empty());
             assert!(slice.eq_ignore_ascii_case(&tok.term));
         }
+    }
+
+    #[test]
+    fn ascii_words_emit_expected_tokens() {
+        let text = "hello world";
+        let mut out = Vec::new();
+        analyze(text, 0, 0, &mut out);
+        let terms = surface_terms(&out);
+        assert_eq!(terms, vec!["hello", "world"]);
+        let offsets: Vec<(u32, u32)> = out
+            .iter()
+            .filter(|t| t.channel == AnalyzerChannel::Surface)
+            .map(|t| (t.byte_start, t.byte_end))
+            .collect();
+        assert_eq!(offsets, vec![(0, 5), (6, 11)]);
+    }
+
+    #[test]
+    fn pure_numeric_emits_number_token() {
+        let text = "123";
+        let mut out = Vec::new();
+        analyze(text, 0, 0, &mut out);
+        let terms = surface_terms(&out);
+        assert_eq!(terms, vec!["123"]);
+        let tok = out
+            .iter()
+            .find(|t| t.channel == AnalyzerChannel::Surface)
+            .expect("numeric segment must emit a token");
+        assert_eq!((tok.byte_start, tok.byte_end), (0, 3));
+    }
+
+    #[test]
+    fn thai_first_segment_is_emitted() {
+        let text = "ไปโรงเรียน";
+        let mut out = Vec::new();
+        analyze(text, 0, 0, &mut out);
+        // Regression guard: the off-by-one bug in the word-type loop
+        // dropped the first segment of every ICU-dispatched input
+        // because `prev_type` for the initial `(0, None)` boundary was
+        // never `word_like`. Require at least one token to start at
+        // byte 0 to prove the first segment survives.
+        assert!(
+            out.iter().any(|t| t.byte_start == 0),
+            "expected a token starting at byte 0, got: {:?}",
+            surface_terms(&out),
+        );
     }
 
     #[test]

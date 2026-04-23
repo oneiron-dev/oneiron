@@ -47,9 +47,15 @@ impl Token {
         }
     }
 
+    /// Mark this token as a positional overlay: it shares its `position`
+    /// with an underlying primary token so phrase queries see one
+    /// position, not two. Does *not* zero `length_increment` — overlay
+    /// tokens that live on their own field (e.g., CJK bigrams on
+    /// `CjkNgram`) still contribute to that field's length so BM25
+    /// length normalization can fire. For channels with `NoNorm` policy
+    /// (e.g. `NormalizedOverlay`), the preserved length is ignored.
     pub fn overlay(mut self) -> Self {
         self.position_increment = 0;
-        self.length_increment = 0;
         self
     }
 
@@ -285,11 +291,11 @@ mod tests {
     }
 
     #[test]
-    fn token_overlay_zeros_increments() {
+    fn token_overlay_zeros_position_increment_only() {
         let tok = Token::new("hi", 0, 2, 0, AnalyzerChannel::NormalizedOverlay, TokenKind::Word)
             .overlay();
         assert_eq!(tok.position_increment, 0);
-        assert_eq!(tok.length_increment, 0);
+        assert_eq!(tok.length_increment, 1);
     }
 
     #[test]

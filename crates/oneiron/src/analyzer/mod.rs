@@ -471,6 +471,32 @@ mod tests {
     }
 
     #[test]
+    fn cjk_with_leading_common_no_cross_boundary_bigram() {
+        let a = MultilingualAnalyzer::portable();
+        // `2024` 0..4, `東京` 4..10. No cjk_ngram token may contain an
+        // ASCII digit, and no cjk_ngram token may span byte 4.
+        let text = "2024東京";
+        let mut out = Vec::new();
+        a.analyze(text, &AnalyzerContext::for_index(), &mut out);
+        for tok in out.iter().filter(|t| t.channel == AnalyzerChannel::CjkNgram) {
+            let s = tok.byte_start as usize;
+            let e = tok.byte_end as usize;
+            assert!(
+                s >= 4,
+                "cjk_ngram {:?} [{}..{}] must start at/after the CJK boundary (byte 4)",
+                tok.term,
+                s,
+                e,
+            );
+            assert!(
+                !tok.term.chars().any(|c| c.is_ascii_digit()),
+                "cjk_ngram token {:?} must not contain ASCII digits",
+                tok.term,
+            );
+        }
+    }
+
+    #[test]
     fn cjk_punct_mix_no_cross_boundary_bigram() {
         let a = MultilingualAnalyzer::portable();
         // `北京` 0..6, `、` 6..9, `大学` 9..15. No cjk_ngram may contain the
