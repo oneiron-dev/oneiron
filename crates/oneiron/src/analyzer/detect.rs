@@ -1,40 +1,56 @@
 //! Language detection + `LanguageHint` resolution.
 //!
-//! Resolution chain (per plan §1.2, cheapest first):
-//!   1. explicit hint passed through `AnalyzerContext`
-//!   2. script-class inference for unambiguous scripts (Hiragana/Katakana → Ja,
+//! Per-run resolution chain (applied by the composer, cheapest first):
+//!   1. script-class inference for unambiguous scripts (Hiragana/Katakana → Ja,
 //!      Hangul → Ko, Hebrew → He, Thai → Th, Lao → Lo, Khmer → Km, Myanmar → My)
-//!   3. whichlang classifier over the first 512 bytes of the input
+//!   2. explicit hint passed through `AnalyzerContext`
+//!   3. `detect_with_whichlang` over the run's own bytes (first 512)
 //!   4. `None` — caller falls back to DualHanFallback (Han-only runs) or
 //!      Portable (everything else)
-//!
-//! `PerDocCache` memoizes the resolution so a single document with multiple
-//! text fields runs whichlang at most once.
 //!
 //! whichlang does not cover Hindi in the `LanguageHint` v1 variant set; it
 //! maps to `None` here and falls through to the caller's Portable path.
 
 use whichlang::{Lang, detect_language as whichlang_detect};
 
-use super::script::{ScriptClass, ScriptRun};
+use super::script::ScriptClass;
 use super::token::LanguageHint;
 
 pub const DETECT_WINDOW_BYTES: usize = 512;
 
+/// Minimum byte count before whichlang is trusted on pure-ASCII Latin input.
+/// whichlang 0.1.1 misroutes short pure-ASCII (`"running"` → Ita,
+/// `"runs"` → Deu) because it is a bare byte-n-gram argmax with no
+/// confidence signal. Below this threshold we short-circuit to English to
+/// preserve symmetry between short English queries and English docs.
+const MIN_WHICHLANG_ASCII_BYTES: usize = 64;
+/// Minimum distinct ASCII letter tokens before whichlang is trusted on
+/// pure-ASCII. Catches the low-entropy failure case (`"apple "` ×20)
+/// that byte count alone lets through — 120 bytes of repeated `"apple "`
+/// still surfaces as `Fra` empirically.
+const MIN_WHICHLANG_ASCII_UNIQUE_WORDS: usize = 3;
+
+/// Resolve a `LanguageHint` from free-form text.
+///
+/// Pure-ASCII Latin that is short (< [`MIN_WHICHLANG_ASCII_BYTES`] bytes)
+/// or low-entropy (< [`MIN_WHICHLANG_ASCII_UNIQUE_WORDS`] unique letter
+/// tokens) short-circuits to [`LanguageHint::En`] because whichlang
+/// misclassifies such inputs; longer, diverser pure-ASCII routes through
+/// whichlang and can resolve to Spanish/Portuguese/etc. correctly on the
+/// index side. Queries are usually short and thus continue to resolve to
+/// English; callers indexing accent-less non-English Latin who want
+/// symmetric stem recall must pass an explicit
+/// [`AnalyzerContext::with_language`](super::token::AnalyzerContext::with_language)
+/// on the query side as well. A confidence-aware detector will obsolete
+/// this heuristic (tracked as a follow-up).
 pub fn detect_with_whichlang(text: &str) -> Option<LanguageHint> {
     if text.is_empty() {
         return None;
     }
-    // Pure-ASCII Latin text short-circuits to English. whichlang is a
-    // byte-n-gram classifier whose top-1 output is unstable on short or
-    // low-entropy pure-ASCII inputs — `running` alone surfaces as `Ita`,
-    // `"apple "` repeated surfaces as `Fra`. Asymmetric detection between
-    // index (long doc) and query (short phrase) would write French stems
-    // for a doc and probe English stems from the query, defeating the
-    // `Stem` channel (see `latin::analyze`). Non-ASCII Latin (Spanish
-    // `está`, German `straße`) still routes through whichlang and reaches
-    // the correct Snowball algorithm.
-    if is_pure_ascii_latin(text) {
+    if is_pure_ascii_latin(text)
+        && (text.len() < MIN_WHICHLANG_ASCII_BYTES
+            || unique_ascii_letter_tokens(text) < MIN_WHICHLANG_ASCII_UNIQUE_WORDS)
+    {
         return Some(LanguageHint::En);
     }
     let window = truncate_at_char_boundary(text, DETECT_WINDOW_BYTES);
@@ -52,6 +68,36 @@ fn is_pure_ascii_latin(text: &str) -> bool {
         }
     }
     has_letter
+}
+
+/// Count distinct ASCII letter-runs in `text`, case-insensitive.
+///
+/// Input is bounded by the caller's 512-byte detection window, so the
+/// `Vec` backing the uniqueness check never exceeds ~50 entries.
+fn unique_ascii_letter_tokens(text: &str) -> usize {
+    let mut seen: Vec<&str> = Vec::new();
+    let mut start: Option<usize> = None;
+    for (i, b) in text.bytes().enumerate() {
+        let is_letter = b.is_ascii_alphabetic();
+        match (start, is_letter) {
+            (None, true) => start = Some(i),
+            (Some(s), false) => {
+                push_unique(&mut seen, &text[s..i]);
+                start = None;
+            }
+            _ => {}
+        }
+    }
+    if let Some(s) = start {
+        push_unique(&mut seen, &text[s..]);
+    }
+    seen.len()
+}
+
+fn push_unique<'a>(seen: &mut Vec<&'a str>, word: &'a str) {
+    if !seen.iter().any(|w| w.eq_ignore_ascii_case(word)) {
+        seen.push(word);
+    }
 }
 
 pub fn map_whichlang_lang(lang: Lang) -> Option<LanguageHint> {
@@ -88,53 +134,6 @@ pub fn infer_from_script(class: ScriptClass) -> Option<LanguageHint> {
     }
 }
 
-pub fn resolve(
-    explicit: Option<LanguageHint>,
-    runs: &[ScriptRun],
-    text: &str,
-) -> Option<LanguageHint> {
-    if let Some(hint) = explicit {
-        return Some(hint);
-    }
-    for run in runs {
-        if let Some(hint) = infer_from_script(run.script) {
-            return Some(hint);
-        }
-    }
-    detect_with_whichlang(text)
-}
-
-/// Per-document language cache used by the composer to avoid re-running
-/// whichlang on every field of a multi-field document.
-#[derive(Debug, Default)]
-pub struct PerDocCache {
-    resolved: Option<Option<LanguageHint>>,
-}
-
-impl PerDocCache {
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    pub fn resolve(
-        &mut self,
-        explicit: Option<LanguageHint>,
-        runs: &[ScriptRun],
-        text: &str,
-    ) -> Option<LanguageHint> {
-        if let Some(cached) = self.resolved {
-            return cached;
-        }
-        let resolved = resolve(explicit, runs, text);
-        self.resolved = Some(resolved);
-        resolved
-    }
-
-    pub fn invalidate(&mut self) {
-        self.resolved = None;
-    }
-}
-
 fn truncate_at_char_boundary(text: &str, max_bytes: usize) -> &str {
     if text.len() <= max_bytes {
         return text;
@@ -149,67 +148,41 @@ fn truncate_at_char_boundary(text: &str, max_bytes: usize) -> &str {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::analyzer::script::ScriptRunSplitter;
 
     #[test]
-    fn explicit_hint_short_circuits_chain() {
-        let runs = ScriptRunSplitter::new().runs("東京大学");
-        let hint = resolve(Some(LanguageHint::Zh), &runs, "東京大学");
-        assert_eq!(hint, Some(LanguageHint::Zh));
+    fn infer_from_script_covers_unambiguous_scripts() {
+        assert_eq!(infer_from_script(ScriptClass::Hiragana), Some(LanguageHint::Ja));
+        assert_eq!(infer_from_script(ScriptClass::Katakana), Some(LanguageHint::Ja));
+        assert_eq!(infer_from_script(ScriptClass::Hangul), Some(LanguageHint::Ko));
+        assert_eq!(infer_from_script(ScriptClass::Hebrew), Some(LanguageHint::He));
+        assert_eq!(infer_from_script(ScriptClass::Thai), Some(LanguageHint::Th));
+        assert_eq!(infer_from_script(ScriptClass::Lao), Some(LanguageHint::Lo));
+        assert_eq!(infer_from_script(ScriptClass::Khmer), Some(LanguageHint::Km));
+        assert_eq!(infer_from_script(ScriptClass::Myanmar), Some(LanguageHint::My));
     }
 
     #[test]
-    fn hiragana_infers_japanese() {
-        let runs = ScriptRunSplitter::new().runs("とうきょう");
-        assert_eq!(resolve(None, &runs, "とうきょう"), Some(LanguageHint::Ja));
+    fn infer_from_script_returns_none_for_ambiguous_scripts() {
+        assert_eq!(infer_from_script(ScriptClass::Latin), None);
+        assert_eq!(infer_from_script(ScriptClass::Han), None);
+        assert_eq!(infer_from_script(ScriptClass::Cyrillic), None);
+        assert_eq!(infer_from_script(ScriptClass::Common), None);
     }
 
     #[test]
-    fn katakana_infers_japanese() {
-        let runs = ScriptRunSplitter::new().runs("トウキョウ");
-        assert_eq!(resolve(None, &runs, "トウキョウ"), Some(LanguageHint::Ja));
-    }
-
-    #[test]
-    fn hangul_infers_korean() {
-        let runs = ScriptRunSplitter::new().runs("안녕하세요");
-        assert_eq!(resolve(None, &runs, "안녕하세요"), Some(LanguageHint::Ko));
-    }
-
-    #[test]
-    fn hebrew_infers_hebrew() {
-        let text = "שלום עולם";
-        let runs = ScriptRunSplitter::new().runs(text);
-        assert_eq!(resolve(None, &runs, text), Some(LanguageHint::He));
-    }
-
-    #[test]
-    fn thai_infers_thai() {
-        let text = "สวัสดี";
-        let runs = ScriptRunSplitter::new().runs(text);
-        assert_eq!(resolve(None, &runs, text), Some(LanguageHint::Th));
-    }
-
-    #[test]
-    fn han_only_falls_through_to_whichlang() {
-        let text = "我喜欢学习中文";
-        let runs = ScriptRunSplitter::new().runs(text);
-        let hint = resolve(None, &runs, text);
-        assert_eq!(hint, Some(LanguageHint::Zh));
+    fn han_only_routes_to_whichlang() {
+        assert_eq!(detect_with_whichlang("我喜欢学习中文"), Some(LanguageHint::Zh));
     }
 
     #[test]
     fn spanish_latin_routes_via_whichlang() {
         let text = "El gato está durmiendo en la silla con el perro blanco";
-        let runs = ScriptRunSplitter::new().runs(text);
-        let hint = resolve(None, &runs, text);
-        assert_eq!(hint, Some(LanguageHint::Es));
+        assert_eq!(detect_with_whichlang(text), Some(LanguageHint::Es));
     }
 
     #[test]
     fn empty_text_returns_none() {
         assert_eq!(detect_with_whichlang(""), None);
-        assert_eq!(resolve(None, &[], ""), None);
     }
 
     #[test]
@@ -233,25 +206,6 @@ mod tests {
     }
 
     #[test]
-    fn per_doc_cache_memoizes_resolution() {
-        let text = "El gato está durmiendo en la silla";
-        let runs = ScriptRunSplitter::new().runs(text);
-        let mut cache = PerDocCache::new();
-        let first = cache.resolve(None, &runs, text);
-        let second = cache.resolve(None, &[], "");
-        assert_eq!(first, second);
-        assert_eq!(first, Some(LanguageHint::Es));
-    }
-
-    #[test]
-    fn per_doc_cache_invalidate_reruns() {
-        let mut cache = PerDocCache::new();
-        assert_eq!(cache.resolve(Some(LanguageHint::Ja), &[], ""), Some(LanguageHint::Ja));
-        cache.invalidate();
-        assert_eq!(cache.resolve(Some(LanguageHint::Ko), &[], ""), Some(LanguageHint::Ko));
-    }
-
-    #[test]
     fn detect_window_truncates_at_char_boundary() {
         let text = "とう".repeat(1000);
         let out = truncate_at_char_boundary(&text, DETECT_WINDOW_BYTES);
@@ -260,17 +214,42 @@ mod tests {
     }
 
     #[test]
-    fn pure_common_input_falls_through_to_whichlang_without_panic() {
-        let text = "   !?? ...";
-        let runs = ScriptRunSplitter::new().runs(text);
-        let _ = resolve(None, &runs, text);
+    fn pure_common_input_does_not_panic() {
+        let _ = detect_with_whichlang("   !?? ...");
     }
 
     #[test]
-    fn leading_common_does_not_force_inference() {
-        let text = "   안녕하세요";
-        let runs = ScriptRunSplitter::new().runs(text);
-        let hint = resolve(None, &runs, text);
-        assert_eq!(hint, Some(LanguageHint::Ko));
+    fn long_accentless_spanish_resolves_to_spanish() {
+        // ≥ 64 bytes AND ≥ 3 unique letter tokens — passes the length gate,
+        // whichlang routes accent-less Spanish to `Spa`.
+        let text =
+            "el gato blanco come manzanas rojas en el jardin grande con su amigo pequeno";
+        assert!(text.len() >= MIN_WHICHLANG_ASCII_BYTES);
+        assert_eq!(detect_with_whichlang(text), Some(LanguageHint::Es));
+    }
+
+    #[test]
+    fn short_accentless_spanish_falls_back_to_english() {
+        // Residual asymmetry accepted for this PR: short non-English Latin
+        // queries resolve to English via the length-gated short-circuit.
+        // The follow-up confidence-aware detector will lift this.
+        assert_eq!(detect_with_whichlang("hablando"), Some(LanguageHint::En));
+    }
+
+    #[test]
+    fn low_entropy_long_ascii_stays_english() {
+        // 120 bytes but 1 unique token — unique-word gate blocks whichlang
+        // from misrouting repeated `"apple "` as `Fra`.
+        let text = "apple ".repeat(20);
+        assert_eq!(detect_with_whichlang(&text), Some(LanguageHint::En));
+    }
+
+    #[test]
+    fn unique_ascii_letter_tokens_counts_distinct_casefolded_words() {
+        assert_eq!(unique_ascii_letter_tokens("the the THE"), 1);
+        assert_eq!(unique_ascii_letter_tokens("apple pear apple"), 2);
+        assert_eq!(unique_ascii_letter_tokens("one two three"), 3);
+        assert_eq!(unique_ascii_letter_tokens(""), 0);
+        assert_eq!(unique_ascii_letter_tokens("   "), 0);
     }
 }
