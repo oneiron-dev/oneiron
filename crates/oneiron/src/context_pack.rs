@@ -745,6 +745,7 @@ mod tests {
             },
             text_analyzer: crate::types::TextAnalyzerConfig::default(),
             dict_search_paths: Vec::new(),
+            skip_text_index_manifest_check: false,
         }
     }
 

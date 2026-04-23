@@ -445,6 +445,58 @@ mod tests {
     }
 
     #[test]
+    fn cjk_digit_mix_no_cross_boundary_bigram() {
+        let a = MultilingualAnalyzer::portable();
+        // `東京` ends at byte 6; `123` starts at byte 6. No cjk_ngram token
+        // may span byte 6, and no cjk_ngram token may contain ASCII digits.
+        let text = "東京123";
+        let mut out = Vec::new();
+        a.analyze(text, &AnalyzerContext::for_index(), &mut out);
+        for tok in out.iter().filter(|t| t.channel == AnalyzerChannel::CjkNgram) {
+            let s = tok.byte_start as usize;
+            let e = tok.byte_end as usize;
+            assert!(
+                e <= 6 || s >= 6,
+                "bigram {:?} [{}..{}] crosses script boundary at byte 6",
+                tok.term,
+                s,
+                e,
+            );
+            assert!(
+                !tok.term.chars().any(|c| c.is_ascii_digit()),
+                "cjk_ngram token {:?} must not contain ASCII digits",
+                tok.term,
+            );
+        }
+    }
+
+    #[test]
+    fn cjk_punct_mix_no_cross_boundary_bigram() {
+        let a = MultilingualAnalyzer::portable();
+        // `北京` 0..6, `、` 6..9, `大学` 9..15. No cjk_ngram may contain the
+        // fullwidth comma or span across it.
+        let text = "北京、大学";
+        let mut out = Vec::new();
+        a.analyze(text, &AnalyzerContext::for_index(), &mut out);
+        for tok in out.iter().filter(|t| t.channel == AnalyzerChannel::CjkNgram) {
+            let s = tok.byte_start as usize;
+            let e = tok.byte_end as usize;
+            assert!(
+                (e <= 6) || (s >= 9),
+                "bigram {:?} [{}..{}] crosses CJK/punct boundary",
+                tok.term,
+                s,
+                e,
+            );
+            assert!(
+                !tok.term.contains('、'),
+                "cjk_ngram token {:?} must not contain fullwidth comma",
+                tok.term,
+            );
+        }
+    }
+
+    #[test]
     fn thai_routes_to_icu_segmenter() {
         let a = MultilingualAnalyzer::portable();
         let mut out = Vec::new();

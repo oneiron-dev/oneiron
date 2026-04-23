@@ -300,6 +300,17 @@ pub struct VaultConfig {
     /// behavior, and the dict-bytes hash is then baked into the LMDB
     /// analyzer manifest, silently pinning the vault to that dict.
     pub dict_search_paths: Vec<PathBuf>,
+    /// Skip the text-index manifest handshake at [`Vault::open`] so the
+    /// caller can reach [`crate::MaintenanceBuilder::clear_text_index`]
+    /// after a dict swap or BM25 field-schema change. Without this escape
+    /// hatch, [`crate::Error::IncompatibleAnalyzer`] and
+    /// [`crate::Error::Bm25FieldSchemaChanged`] trap the user before any
+    /// `Vault` exists to call `.maintain()` on.
+    ///
+    /// Only use this to immediately run `clear_text_index`. The existing
+    /// postings are tokenized under the *old* analyzer manifest; running
+    /// queries before the clear is committed returns garbage.
+    pub skip_text_index_manifest_check: bool,
 }
 
 /// Text analyzer configuration. Kept minimal in v1 — the full analyzer
@@ -341,6 +352,7 @@ impl VaultConfig {
             hnsw: HnswConfig::default(),
             text_analyzer: TextAnalyzerConfig::default(),
             dict_search_paths: Vec::new(),
+            skip_text_index_manifest_check: false,
         }
     }
 
@@ -355,6 +367,7 @@ impl VaultConfig {
             hnsw: HnswConfig::default(),
             text_analyzer: TextAnalyzerConfig::default(),
             dict_search_paths: Vec::new(),
+            skip_text_index_manifest_check: false,
         }
     }
 }
