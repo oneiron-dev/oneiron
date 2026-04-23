@@ -25,6 +25,7 @@
 
 use std::collections::BTreeMap;
 use std::collections::HashMap;
+use std::collections::hash_map::Entry;
 use std::str;
 
 use heed::{RoTxn, RwTxn};
@@ -419,9 +420,14 @@ pub(crate) fn search_text(
                 let avgdl = if matches!(cfg.length_policy, FieldLengthPolicy::NoNorm) {
                     0.0
                 } else {
-                    *avgdl_cache.entry(*fid).or_insert_with(|| {
-                        compute_avgdl(store, rtxn, *fid).unwrap_or(0.0)
-                    })
+                    // Fail closed on a corrupted `text_bm25_field_stats`
+                    // row — scoring without a real avgdl would silently
+                    // return wrong rankings instead of the caller's
+                    // `Err(CorruptedIndex)`.
+                    match avgdl_cache.entry(*fid) {
+                        Entry::Occupied(o) => *o.get(),
+                        Entry::Vacant(v) => *v.insert(compute_avgdl(store, rtxn, *fid)?),
+                    }
                 };
 
                 let norm = match cfg.length_policy {
@@ -1195,6 +1201,42 @@ mod tests {
             short_score > long_score,
             "expected short doc to outrank long doc on CjkNgram channel once length norm fires: short={short_score} long={long_score}",
         );
+        Ok(())
+    }
+
+    #[test]
+    fn search_fails_closed_on_corrupted_field_stats() -> Result<()> {
+        // A `text_bm25_field_stats` row with the wrong byte length must
+        // propagate `CorruptedIndex` through the scorer rather than being
+        // silently swallowed as `avgdl = 0` (which would return wrong
+        // rankings instead of failing closed).
+        let temp_dir = tempfile::tempdir()?;
+        let vault = Vault::open(temp_dir.path(), test_config())?;
+        let id = EntityId::now();
+        put_text_doc(&vault, &id, "alpha beta")?;
+
+        let surface_fid = AnalyzerChannel::Surface.field_id();
+        let mut wtxn = vault.store.env.write_txn()?;
+        // Valid row is FIELD_STATS_LEN (12) bytes; a 4-byte row trips
+        // `read_field_stats`'s length check.
+        let short = [0_u8; 4];
+        vault
+            .store
+            .text_bm25_field_stats
+            .put(&mut wtxn, &surface_fid.to_be_bytes(), &short)?;
+        wtxn.commit()?;
+
+        let rtxn = vault.store.env.read_txn()?;
+        let err = search_text(
+            &vault.store,
+            &rtxn,
+            &MultilingualAnalyzer::portable(),
+            &Bm25Config::default(),
+            "alpha",
+            10,
+        )
+        .unwrap_err();
+        assert!(matches!(err, Error::CorruptedIndex(_)), "expected CorruptedIndex, got {err:?}");
         Ok(())
     }
 

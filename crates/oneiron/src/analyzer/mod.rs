@@ -39,7 +39,7 @@ pub use manifest::{
     ANALYZER_VERSION, AnalyzerAssetManifest, AnalyzerManifest, AnalyzerMode, LangPolicy,
     NormalizationPolicy, canonical_hash, canonical_hash_hex, canonical_json,
 };
-pub use detect::{DETECT_WINDOW_BYTES, PerDocCache};
+pub use detect::DETECT_WINDOW_BYTES;
 pub use normalize::NormalizedText;
 pub use script::{ScriptClass, ScriptRun, ScriptRunSplitter};
 pub use token::{AnalyzerChannel, AnalyzerContext, LanguageHint, Token, TokenKind};
@@ -127,14 +127,17 @@ impl MultilingualAnalyzer {
         let analysis_text = normalized.as_str();
 
         let runs = self.splitter.runs(analysis_text);
-        let mut cache = PerDocCache::new();
         let mut position: u32 = 0;
         let token_start = out.len();
 
         for run in &runs {
             let slice = run.as_slice(analysis_text);
+            // Resolve hint per run so a CJK run cannot poison an adjacent
+            // Latin run's stemmer selection. `detect_with_whichlang` runs on
+            // the run's own bytes, not on cross-run analysis_text.
             let run_hint = detect::infer_from_script(run.script)
-                .or_else(|| cache.resolve(ctx.language_hint, &runs, analysis_text));
+                .or(ctx.language_hint)
+                .or_else(|| detect::detect_with_whichlang(slice));
             position = self.dispatch_run(run, slice, run_hint, ctx.query_mode, position, out);
         }
 
@@ -613,6 +616,61 @@ mod tests {
             let _ = &text[s..e];
         }
         assert!(surface_terms(&out).contains(&"abc"));
+    }
+
+    #[test]
+    fn latin_run_before_hiragana_still_stems_english() {
+        // Regression guard for cross-run hint bleed: `とうきょう` must not
+        // hand `LanguageHint::Ja` to the Latin analyzer, because that would
+        // disable the English Snowball stemmer (`running` → no stem).
+        let a = MultilingualAnalyzer::portable();
+        let mut out = Vec::new();
+        a.analyze("running とうきょう", &AnalyzerContext::for_index(), &mut out);
+        let stems: Vec<&str> = out
+            .iter()
+            .filter(|t| t.channel == AnalyzerChannel::Stem)
+            .map(|t| t.term.as_ref())
+            .collect();
+        assert!(
+            stems.contains(&"run"),
+            "expected English stem `run` from `running`, got stems: {stems:?}",
+        );
+    }
+
+    #[test]
+    fn latin_run_after_hiragana_still_stems_english() {
+        let a = MultilingualAnalyzer::portable();
+        let mut out = Vec::new();
+        a.analyze("とうきょう running", &AnalyzerContext::for_index(), &mut out);
+        let stems: Vec<&str> = out
+            .iter()
+            .filter(|t| t.channel == AnalyzerChannel::Stem)
+            .map(|t| t.term.as_ref())
+            .collect();
+        assert!(
+            stems.contains(&"run"),
+            "expected English stem `run` from `running`, got stems: {stems:?}",
+        );
+    }
+
+    #[test]
+    fn explicit_hint_overrides_per_run_inference_for_latin() {
+        // Short accent-less Spanish falls back to English under the
+        // length-gated ASCII short-circuit; the explicit hint is the
+        // caller's escape hatch for symmetric Spanish stem recall.
+        let a = MultilingualAnalyzer::portable();
+        let mut out = Vec::new();
+        let ctx = AnalyzerContext::for_index().with_language(LanguageHint::Es);
+        a.analyze("hablando", &ctx, &mut out);
+        let stems: Vec<&str> = out
+            .iter()
+            .filter(|t| t.channel == AnalyzerChannel::Stem)
+            .map(|t| t.term.as_ref())
+            .collect();
+        assert!(
+            stems.iter().any(|s| *s != "hablando"),
+            "expected Spanish stem distinct from surface, got stems: {stems:?}",
+        );
     }
 
     #[test]
