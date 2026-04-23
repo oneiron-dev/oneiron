@@ -113,7 +113,9 @@ impl Vault {
         let store = Store::open(path, &config)?;
         let analyzer = MultilingualAnalyzer::discover(&config.dict_search_paths)
             .map_err(|e| Error::AnalyzerError(e.to_string()))?;
-        handshake_text_index_manifest(&store, &analyzer)?;
+        if !config.skip_text_index_manifest_check {
+            handshake_text_index_manifest(&store, &analyzer)?;
+        }
 
         Ok(Self {
             store,
@@ -963,6 +965,7 @@ mod tests {
             },
             text_analyzer: TextAnalyzerConfig::default(),
             dict_search_paths: Vec::<PathBuf>::new(),
+            skip_text_index_manifest_check: false,
         }
     }
 
@@ -1125,6 +1128,50 @@ mod tests {
             matches!(err, Error::IncompatibleAnalyzer { .. }),
             "expected IncompatibleAnalyzer, got {err:?}",
         );
+        Ok(())
+    }
+
+    #[test]
+    fn skip_manifest_check_unblocks_clear_text_index_recovery() -> Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let a = entity(61);
+
+        {
+            let vault = Vault::open(tmp.path(), test_config())?;
+            vault
+                .batch()
+                .put(&a, 0, range(1, 1), 1, b"a")
+                .text(&a, &[("body", "hello world")])
+                .commit()?;
+        }
+
+        // Corrupt the analyzer manifest hash so a normal open fails closed.
+        {
+            let vault = Vault::open(tmp.path(), test_config())?;
+            let mut wtxn = vault.store.env.write_txn()?;
+            vault
+                .store
+                .vault_meta
+                .put(&mut wtxn, TEXT_ANALYZER_MANIFEST_HASH_KEY, &[0xAB; 32])?;
+            wtxn.commit()?;
+        }
+
+        assert!(matches!(
+            Vault::open(tmp.path(), test_config()),
+            Err(Error::IncompatibleAnalyzer { .. })
+        ));
+
+        // Bypass the handshake just long enough to rebuild.
+        {
+            let mut cfg = test_config();
+            cfg.skip_text_index_manifest_check = true;
+            let vault = Vault::open(tmp.path(), cfg)?;
+            vault.maintain().clear_text_index().run()?;
+        }
+
+        // Normal open now succeeds — clear_text_index rewrote the manifest.
+        let vault = Vault::open(tmp.path(), test_config())?;
+        assert_eq!(vault.text_index_status()?.total_docs, 0);
         Ok(())
     }
 

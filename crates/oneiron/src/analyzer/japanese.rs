@@ -207,9 +207,13 @@ impl JapaneseAnalyzer {
                 TokenKind::Word,
             ));
 
-            if !query_mode
-                && let Some(folded) = kana_fold_if_changed(&surface)
-            {
+            // Kana-fold overlay (katakana → hiragana) is a true
+            // normalization: both index and query sides must emit the
+            // same folded term for the posting to hit. Unlike the Mode C
+            // compound overlay below, this does not inflate IDF because
+            // the fold collapses existing surface tokens to a canonical
+            // form rather than emitting additional lemmas.
+            if let Some(folded) = kana_fold_if_changed(&surface) {
                 out.push(
                     Token::new(
                         folded,
@@ -371,5 +375,34 @@ mod tests {
         // Mode A should segment at least to 東京 / 大学 / で / 研究 / する boundaries.
         assert!(surface.contains(&"東京"));
         assert!(surface.contains(&"大学"));
+    }
+
+    /// Query-side kana-fold overlay must fire so katakana queries retrieve
+    /// hiragana documents (fold is a symmetric normalization, not a lemma
+    /// expansion). Uses the real Sudachi dict via `ONEIRON_TEST_SUDACHI_DICT`.
+    #[test]
+    fn kana_fold_overlay_fires_on_query() {
+        let Ok(dict_path) = std::env::var("ONEIRON_TEST_SUDACHI_DICT") else {
+            return;
+        };
+        let ja = JapaneseAnalyzer::with_system_dict(Path::new(&dict_path))
+            .expect("dict should load");
+        let mut out = Vec::new();
+        ja.analyze("トウキョウ", 0, 0, /* query_mode */ true, &mut out);
+        let overlay_terms: Vec<&str> = out
+            .iter()
+            .filter(|t| t.channel == AnalyzerChannel::NormalizedOverlay)
+            .map(|t| t.term.as_ref())
+            .collect();
+        assert!(
+            !overlay_terms.is_empty(),
+            "katakana query must emit at least one kana-folded overlay",
+        );
+        for term in &overlay_terms {
+            assert!(
+                !term.chars().any(|c| ('\u{30A0}'..='\u{30FF}').contains(&c)),
+                "overlay {term:?} still contains katakana — fold did not run",
+            );
+        }
     }
 }

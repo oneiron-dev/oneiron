@@ -68,11 +68,18 @@ pub enum Error {
     /// Text analyzer manifest on disk does not match the current analyzer
     /// configuration. Per-language mode (Morphological vs Portable) flipped
     /// because a dict appeared or disappeared between index time and open
-    /// time (plan ONE-317 §4.2). Call [`MaintenanceBuilder::clear_text_index`]
-    /// to rebuild the text index under the current analyzer.
+    /// time (plan ONE-317 §4.2).
     ///
+    /// # Recovery
+    ///
+    /// Reopen with [`VaultConfig::skip_text_index_manifest_check`] set to
+    /// `true`, call [`MaintenanceBuilder::clear_text_index`] to rebuild the
+    /// postings + rewrite the manifest, then reopen with the default
+    /// `false` value.
+    ///
+    /// [`VaultConfig::skip_text_index_manifest_check`]: crate::VaultConfig::skip_text_index_manifest_check
     /// [`MaintenanceBuilder::clear_text_index`]: crate::MaintenanceBuilder
-    #[error("text analyzer changed since index was built (lang={lang:?}): stored={stored_mode} current={current_mode}; run clear_text_index to rebuild")]
+    #[error("text analyzer changed since index was built (lang={lang:?}): stored={stored_mode} current={current_mode}; reopen with VaultConfig::skip_text_index_manifest_check=true and run clear_text_index to rebuild")]
     IncompatibleAnalyzer {
         lang: String,
         stored_mode: &'static str,
@@ -81,13 +88,24 @@ pub enum Error {
     /// BM25F field schema on disk does not match the current build. Channels
     /// in [`crate::analyzer::AnalyzerChannel`] were added, removed, or
     /// renumbered between index time and open time.
-    #[error("bm25f field schema changed since index was built; run clear_text_index to rebuild")]
+    ///
+    /// # Recovery
+    ///
+    /// Same as [`Error::IncompatibleAnalyzer`]: reopen with
+    /// [`VaultConfig::skip_text_index_manifest_check`] set to `true`, run
+    /// [`MaintenanceBuilder::clear_text_index`], then reopen normally.
+    ///
+    /// [`VaultConfig::skip_text_index_manifest_check`]: crate::VaultConfig::skip_text_index_manifest_check
+    /// [`MaintenanceBuilder::clear_text_index`]: crate::MaintenanceBuilder
+    #[error("bm25f field schema changed since index was built; reopen with VaultConfig::skip_text_index_manifest_check=true and run clear_text_index to rebuild")]
     Bm25FieldSchemaChanged,
     /// A dict asset declared in the stored manifest is missing from disk
     /// (e.g., `system.dic` was deleted after indexing). Restore the file or
-    /// run [`MaintenanceBuilder::clear_text_index`] to rebuild under the
-    /// current search-path state.
+    /// use the same recovery path as [`Error::IncompatibleAnalyzer`]:
+    /// reopen with [`VaultConfig::skip_text_index_manifest_check`] set to
+    /// `true`, run [`MaintenanceBuilder::clear_text_index`], reopen.
     ///
+    /// [`VaultConfig::skip_text_index_manifest_check`]: crate::VaultConfig::skip_text_index_manifest_check
     /// [`MaintenanceBuilder::clear_text_index`]: crate::MaintenanceBuilder
     #[error("analyzer asset missing: {0}")]
     AnalyzerAssetMissing(String),

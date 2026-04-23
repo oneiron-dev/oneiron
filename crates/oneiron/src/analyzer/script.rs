@@ -1,11 +1,11 @@
 //! Script-run splitter.
 //!
 //! Groups consecutive characters of the same script into byte-range runs.
-//! `Common` / `Inherited` characters attach to the adjacent non-Common run
-//! so that boundaries only appear between real script transitions. The
-//! script-boundary invariant from plan §1.1 — "no generated bigram crosses
-//! a script-class boundary" — is enforced by downstream analyzers that
-//! consume these runs, not by the splitter itself.
+//! `Common` / `Inherited` characters attach to the adjacent non-CJK run so
+//! that Latin boundaries only appear between real script transitions; when
+//! CJK runs are followed by `Common` the Common chars are split into their
+//! own run, so cjk_ngram never absorbs digits or punctuation into CJK
+//! bigrams (plan §1.1 no-cross-script-bigram invariant).
 
 use unicode_script::{Script, UnicodeScript};
 
@@ -107,10 +107,12 @@ impl ScriptRun {
 ///
 /// Returns an empty `Vec` for empty input. Every returned run has
 /// `byte_start < byte_end`, and the concatenated ranges cover the input
-/// exactly (no gaps, no overlaps). Runs with a non-`Common` script absorb
-/// trailing `Common` characters; a leading `Common` prefix before any real
-/// script attaches to the following run. If the entire input is `Common`
-/// (e.g., pure punctuation / digits), a single `Common` run is emitted.
+/// exactly (no gaps, no overlaps). Non-CJK runs absorb trailing `Common`
+/// characters; CJK runs do not (trailing `Common` starts a fresh `Common`
+/// run so cjk_ngram never produces cross-script bigrams). A leading
+/// `Common` prefix before any real script attaches to the following run.
+/// If the entire input is `Common` (e.g., pure punctuation / digits), a
+/// single `Common` run is emitted.
 #[derive(Debug, Default, Clone, Copy)]
 pub struct ScriptRunSplitter;
 
@@ -148,9 +150,23 @@ impl ScriptRunSplitter {
                     });
                 }
                 (Some(prev), ScriptClass::Common) => {
-                    let last = runs.last_mut().expect("active implies last run exists");
-                    debug_assert_eq!(last.script, prev);
-                    last.byte_end = start + ch.len_utf8() as u32;
+                    if prev.is_cjk() {
+                        // Starting a fresh Common run — otherwise cjk_ngram
+                        // would absorb trailing digits/punctuation into a CJK
+                        // run and emit unigrams like `1`/`、` plus bigrams
+                        // like `京1`/`京、`, breaking the plan §1.1
+                        // no-cross-script-bigram invariant.
+                        active = Some(ScriptClass::Common);
+                        runs.push(ScriptRun {
+                            byte_start: start,
+                            byte_end: start + ch.len_utf8() as u32,
+                            script: ScriptClass::Common,
+                        });
+                    } else {
+                        let last = runs.last_mut().expect("active implies last run exists");
+                        debug_assert_eq!(last.script, prev);
+                        last.byte_end = start + ch.len_utf8() as u32;
+                    }
                 }
                 (Some(prev), other) if prev == other => {
                     let last = runs.last_mut().expect("active implies last run exists");
@@ -302,6 +318,43 @@ mod tests {
         for r in &runs {
             let _ = r.as_slice(text); // would panic on invalid boundary
         }
+    }
+
+    #[test]
+    fn han_digit_mix_splits_into_separate_runs() {
+        let text = "東京123";
+        let runs = ScriptRunSplitter::new().runs(text);
+        let sliced = run_slices(text, &runs);
+        assert_eq!(
+            sliced,
+            vec![("東京", ScriptClass::Han), ("123", ScriptClass::Common)]
+        );
+    }
+
+    #[test]
+    fn han_punct_mix_splits() {
+        let text = "北京、大学";
+        let runs = ScriptRunSplitter::new().runs(text);
+        let sliced = run_slices(text, &runs);
+        assert_eq!(
+            sliced,
+            vec![
+                ("北京", ScriptClass::Han),
+                ("、", ScriptClass::Common),
+                ("大学", ScriptClass::Han),
+            ]
+        );
+    }
+
+    #[test]
+    fn hiragana_digit_mix_splits() {
+        let text = "とう123";
+        let runs = ScriptRunSplitter::new().runs(text);
+        let sliced = run_slices(text, &runs);
+        assert_eq!(
+            sliced,
+            vec![("とう", ScriptClass::Hiragana), ("123", ScriptClass::Common)]
+        );
     }
 
     #[test]

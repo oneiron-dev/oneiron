@@ -741,6 +741,7 @@ mod tests {
             },
             text_analyzer: crate::types::TextAnalyzerConfig::default(),
             dict_search_paths: Vec::new(),
+            skip_text_index_manifest_check: false,
         }
     }
 
@@ -964,6 +965,40 @@ mod tests {
         let hits = vault.search_text("running", 10)?;
         assert!(contains_id(&hits, &id_runs));
         assert!(contains_id(&hits, &id_ran));
+        Ok(())
+    }
+
+    /// Katakana query must retrieve a hiragana-only doc via the kana-fold
+    /// overlay. Runs only with `ONEIRON_TEST_SUDACHI_DICT` pointing at
+    /// `system.dic`: the portable/cjk_ngram path doesn't apply kana-fold,
+    /// so this regression guard requires the morphological analyzer.
+    #[test]
+    fn katakana_query_matches_hiragana_document() -> Result<()> {
+        let Ok(dict_path) = std::env::var("ONEIRON_TEST_SUDACHI_DICT") else {
+            return Ok(());
+        };
+        let dict_dir = match std::path::Path::new(&dict_path).parent() {
+            Some(p) => p.to_path_buf(),
+            None => return Ok(()),
+        };
+
+        let temp_dir = tempfile::tempdir()?;
+        let mut config = test_config();
+        config.dict_search_paths = vec![dict_dir];
+        let vault = Vault::open(temp_dir.path(), config)?;
+
+        let id = EntityId::now();
+        put_text_doc(&vault, &id, "とうきょう")?;
+        let hits = vault.search_text("トウキョウ", 10)?;
+        assert!(
+            contains_id(&hits, &id),
+            "katakana query must retrieve hiragana doc via kana-fold overlay",
+        );
+        // Inverse direction (regression guard for index-side overlay).
+        let id2 = EntityId::now();
+        put_text_doc(&vault, &id2, "トウキョウ")?;
+        let hits2 = vault.search_text("とうきょう", 10)?;
+        assert!(contains_id(&hits2, &id2));
         Ok(())
     }
 
