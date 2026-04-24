@@ -170,48 +170,9 @@ impl KoreanAnalyzer {
             position += 1;
         }
 
-        emit_hangul_bigram_overlay(text, offset_base, position_base, out);
+        cjk_ngram::emit_bigram_overlay(text, offset_base, position_base, out);
 
         position
-    }
-}
-
-fn emit_hangul_bigram_overlay(
-    text: &str,
-    offset_base: u32,
-    position_base: u32,
-    out: &mut Vec<Token>,
-) {
-    let chars: Vec<(u32, &str)> = text
-        .char_indices()
-        .map(|(i, c)| {
-            let start = i as u32;
-            let end = start + c.len_utf8() as u32;
-            (start, &text[start as usize..end as usize])
-        })
-        .collect();
-
-    let mut char_position = position_base;
-    for (i, &(local_start, ch)) in chars.iter().enumerate() {
-        if let Some(&(next_local_start, next_ch)) = chars.get(i + 1) {
-            let start = offset_base + local_start;
-            let end = offset_base + next_local_start + next_ch.len() as u32;
-            let mut term = String::with_capacity(ch.len() + next_ch.len());
-            term.push_str(ch);
-            term.push_str(next_ch);
-            out.push(
-                Token::new(
-                    term,
-                    start,
-                    end,
-                    char_position,
-                    AnalyzerChannel::CjkNgram,
-                    TokenKind::Cjk,
-                )
-                .overlay(),
-            );
-        }
-        char_position += 1;
     }
 }
 

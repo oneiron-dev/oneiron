@@ -78,6 +78,46 @@ pub fn analyze(text: &str, offset_base: u32, position_base: u32, out: &mut Vec<T
     position
 }
 
+/// Emit char-adjacent bigrams on `CjkNgram` without surface unigrams.
+/// Called by the ZH / JP / KO morph paths after their tokenizers run; the
+/// bigrams provide recall across morpheme boundaries.
+pub(crate) fn emit_bigram_overlay(
+    text: &str,
+    offset_base: u32,
+    position_base: u32,
+    out: &mut Vec<Token>,
+) {
+    let chars: Vec<(u32, &str)> = text
+        .char_indices()
+        .map(|(i, c)| {
+            let start = i as u32;
+            let end = start + c.len_utf8() as u32;
+            (start, &text[start as usize..end as usize])
+        })
+        .collect();
+
+    for (i, &(local_start, ch)) in chars.iter().enumerate() {
+        if let Some(&(next_local_start, next_ch)) = chars.get(i + 1) {
+            let start = offset_base + local_start;
+            let end = offset_base + next_local_start + next_ch.len() as u32;
+            let mut term = String::with_capacity(ch.len() + next_ch.len());
+            term.push_str(ch);
+            term.push_str(next_ch);
+            out.push(
+                Token::new(
+                    term,
+                    start,
+                    end,
+                    position_base + i as u32,
+                    AnalyzerChannel::CjkNgram,
+                    TokenKind::Cjk,
+                )
+                .overlay(),
+            );
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -277,9 +277,12 @@ pub(crate) fn deindex_text(store: &Store, wtxn: &mut RwTxn<'_>, id: &EntityId) -
     }
 
     // Pull per-field lengths so we can decrement corpus stats correctly.
+    // Without this row, `total_docs--` would fire at the end without the
+    // per-field `doc_count` / `total_length` decrements, permanently
+    // drifting the corpus.
     let lengths = match store.text_doc_field_lengths.get(wtxn, id.as_bytes())? {
         Some(raw) => decode_field_lengths(raw)?,
-        None => HashMap::new(),
+        None => return Err(corrupted("missing field lengths for indexed document")),
     };
 
     // Group (term, fields) so each posting is rewritten once regardless of
@@ -407,10 +410,12 @@ pub(crate) fn search_text(
                     let lens = if let Some(cached) = field_length_cache.get(&id) {
                         cached
                     } else {
+                        // A posting entry referenced this doc, so its
+                        // field-lengths row must exist.
                         let raw = store.text_doc_field_lengths.get(rtxn, id.as_bytes())?;
                         let map = match raw {
                             Some(bytes) => decode_field_lengths(bytes)?,
-                            None => HashMap::new(),
+                            None => return Err(corrupted("missing field lengths for scored doc")),
                         };
                         field_length_cache.entry(id).or_insert(map)
                     };
@@ -433,11 +438,12 @@ pub(crate) fn search_text(
                 let norm = match cfg.length_policy {
                     FieldLengthPolicy::NoNorm => 1.0,
                     FieldLengthPolicy::CountLengthIncrement => {
-                        if avgdl > 0.0 {
-                            1.0 - cfg.b + cfg.b * (len_f / avgdl)
-                        } else {
-                            1.0
+                        // avgdl must be positive for any field that has
+                        // postings — absence means stats corruption.
+                        if avgdl <= 0.0 {
+                            return Err(corrupted("field stats missing for scored field"));
                         }
+                        1.0 - cfg.b + cfg.b * (len_f / avgdl)
                     }
                 };
 
@@ -1236,6 +1242,76 @@ mod tests {
             10,
         )
         .unwrap_err();
+        assert!(matches!(err, Error::CorruptedIndex(_)), "expected CorruptedIndex, got {err:?}");
+        Ok(())
+    }
+
+    #[test]
+    fn search_fails_closed_on_missing_field_lengths() -> Result<()> {
+        let temp_dir = tempfile::tempdir()?;
+        let vault = Vault::open(temp_dir.path(), test_config())?;
+        let id = EntityId::now();
+        put_text_doc(&vault, &id, "alpha beta")?;
+
+        let mut wtxn = vault.store.env.write_txn()?;
+        assert!(vault.store.text_doc_field_lengths.delete(&mut wtxn, id.as_bytes())?);
+        wtxn.commit()?;
+
+        let rtxn = vault.store.env.read_txn()?;
+        let err = search_text(
+            &vault.store,
+            &rtxn,
+            &MultilingualAnalyzer::portable(),
+            &Bm25Config::default(),
+            "alpha",
+            10,
+        )
+        .unwrap_err();
+        assert!(matches!(err, Error::CorruptedIndex(_)), "expected CorruptedIndex, got {err:?}");
+        Ok(())
+    }
+
+    #[test]
+    fn search_fails_closed_on_missing_field_stats_for_used_field() -> Result<()> {
+        let temp_dir = tempfile::tempdir()?;
+        let vault = Vault::open(temp_dir.path(), test_config())?;
+        let id = EntityId::now();
+        put_text_doc(&vault, &id, "alpha beta")?;
+
+        let surface_fid = AnalyzerChannel::Surface.field_id();
+        let mut wtxn = vault.store.env.write_txn()?;
+        assert!(
+            vault
+                .store
+                .text_bm25_field_stats
+                .delete(&mut wtxn, &surface_fid.to_be_bytes())?
+        );
+        wtxn.commit()?;
+
+        let rtxn = vault.store.env.read_txn()?;
+        let err = search_text(
+            &vault.store,
+            &rtxn,
+            &MultilingualAnalyzer::portable(),
+            &Bm25Config::default(),
+            "alpha",
+            10,
+        )
+        .unwrap_err();
+        assert!(matches!(err, Error::CorruptedIndex(_)), "expected CorruptedIndex, got {err:?}");
+        Ok(())
+    }
+
+    #[test]
+    fn deindex_fails_closed_on_missing_field_lengths() -> Result<()> {
+        let temp_dir = tempfile::tempdir()?;
+        let vault = Vault::open(temp_dir.path(), test_config())?;
+        let id = EntityId::now();
+        put_text_doc(&vault, &id, "alpha beta")?;
+
+        let mut wtxn = vault.store.env.write_txn()?;
+        assert!(vault.store.text_doc_field_lengths.delete(&mut wtxn, id.as_bytes())?);
+        let err = deindex_text(&vault.store, &mut wtxn, &id).unwrap_err();
         assert!(matches!(err, Error::CorruptedIndex(_)), "expected CorruptedIndex, got {err:?}");
         Ok(())
     }

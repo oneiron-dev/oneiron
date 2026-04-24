@@ -171,55 +171,15 @@ impl ChineseAnalyzer {
             position += 1;
         }
 
-        // Character bigram overlay — emit regardless of query_mode? Plan §1.2
-        // says overlays suppressed in query mode to avoid IDF inflation, but
-        // CjkNgram is specifically the generated-ngram channel and a query
-        // like "京大" needs to hit the bigram channel to recall docs indexed
-        // via jieba-segmented "東京大学". So emit overlay even in query mode
-        // for the ngram channel — its contribution is additive across docs,
-        // not an IDF inflation risk for the same doc.
+        // Character bigram overlay — emit regardless of query_mode. CjkNgram
+        // is the generated-ngram channel and a query like "京大" needs to
+        // hit the bigram channel to recall docs indexed via jieba-segmented
+        // "東京大学". Its contribution is additive across docs, not an IDF
+        // inflation risk for the same doc.
         let _ = query_mode;
-        emit_char_bigram_overlay(text, offset_base, &c2b, position_base, out);
+        cjk_ngram::emit_bigram_overlay(text, offset_base, position_base, out);
 
         position
-    }
-}
-
-fn emit_char_bigram_overlay(
-    text: &str,
-    offset_base: u32,
-    c2b: &CharByteTable,
-    position_base: u32,
-    out: &mut Vec<Token>,
-) {
-    let chars: Vec<(u32, &str)> = text
-        .char_indices()
-        .map(|(i, c)| {
-            let start = i as u32;
-            let end = start + c.len_utf8() as u32;
-            (start, &text[start as usize..end as usize])
-        })
-        .collect();
-
-    for (i, &(local_start, ch)) in chars.iter().enumerate() {
-        if let Some(&(next_local_start, next_ch)) = chars.get(i + 1) {
-            let start = offset_base + local_start;
-            let end = offset_base + next_local_start + next_ch.len() as u32;
-            let mut term = String::with_capacity(ch.len() + next_ch.len());
-            term.push_str(ch);
-            term.push_str(next_ch);
-            out.push(
-                Token::new(
-                    term,
-                    start,
-                    end,
-                    position_base + c2b.char_of_byte(local_start as usize) as u32,
-                    AnalyzerChannel::CjkNgram,
-                    TokenKind::Cjk,
-                )
-                .overlay(),
-            );
-        }
     }
 }
 
