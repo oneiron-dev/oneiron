@@ -6,8 +6,8 @@ use crate::hnsw::{
     COUNT_KEY, build_hnsw_graph_from_snapshot, read_vector_version, write_rebuilt_hnsw,
 };
 use crate::types::{ENTITY_ID_LEN, EntityId, short_id_prefix};
-use crate::{Vault, le_bytes_to_f32_vec, ppr};
 use crate::vault::write_text_index_manifest;
+use crate::{Vault, le_bytes_to_f32_vec, ppr};
 
 const ERR_VECTOR_KEY: &str = "vector key";
 const ERR_SHORT_IDS_REVERSE_VALUE: &str = "short_ids_reverse value";
@@ -1343,8 +1343,14 @@ mod tests {
         assert_eq!(count_entries(&vault.store.text_postings, &vault)?, 0);
         assert_eq!(count_entries(&vault.store.text_meta, &vault)?, 0);
         assert_eq!(count_entries(&vault.store.text_forward, &vault)?, 0);
-        assert_eq!(count_entries(&vault.store.text_doc_field_lengths, &vault)?, 0);
-        assert_eq!(count_entries(&vault.store.text_bm25_field_stats, &vault)?, 0);
+        assert_eq!(
+            count_entries(&vault.store.text_doc_field_lengths, &vault)?,
+            0
+        );
+        assert_eq!(
+            count_entries(&vault.store.text_bm25_field_stats, &vault)?,
+            0
+        );
 
         let rtxn = vault.store.env.read_txn()?;
         assert!(
@@ -1375,7 +1381,10 @@ mod tests {
         assert!(vault.get_entity_type(&b)?.is_some());
 
         // Index reusable after clear.
-        vault.batch().text(&a, &[("body", "hello again")]).commit()?;
+        vault
+            .batch()
+            .text(&a, &[("body", "hello again")])
+            .commit()?;
         let hits = vault.search_text("hello", 10)?;
         assert!(!hits.is_empty());
         Ok(())

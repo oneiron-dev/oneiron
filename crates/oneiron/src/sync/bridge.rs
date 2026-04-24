@@ -378,13 +378,8 @@ fn apply_materialized_edge_ops(vault: &Vault, wtxn: &mut heed::RwTxn<'_>, ops: V
                 });
             }
             _ => {
-                let apply_result = batch::apply_ops(
-                    &vault.store,
-                    &vault.config,
-                    &vault.analyzer,
-                    wtxn,
-                    vec![op],
-                );
+                let apply_result =
+                    batch::apply_ops(&vault.store, &vault.config, &vault.analyzer, wtxn, vec![op]);
                 if let Err(e) = apply_result {
                     tracing::warn!(error = %e, "observer-b: edge materialization failed");
                 }
@@ -416,13 +411,8 @@ fn apply_materialized_edge_ops(vault: &Vault, wtxn: &mut heed::RwTxn<'_>, ops: V
         let mut component_ops = component;
         component_ops.sort_by(cmp_pending_child_of_ops);
         let ops = component_ops.into_iter().map(|entry| entry.op).collect();
-        let apply_result = batch::apply_ops(
-            &vault.store,
-            &vault.config,
-            &vault.analyzer,
-            wtxn,
-            ops,
-        );
+        let apply_result =
+            batch::apply_ops(&vault.store, &vault.config, &vault.analyzer, wtxn, ops);
         if let Err(e) = apply_result {
             tracing::warn!(error = %e, "observer-b: edge materialization failed");
         }

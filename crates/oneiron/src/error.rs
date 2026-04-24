@@ -79,7 +79,9 @@ pub enum Error {
     ///
     /// [`VaultConfig::skip_text_index_manifest_check`]: crate::VaultConfig::skip_text_index_manifest_check
     /// [`MaintenanceBuilder::clear_text_index`]: crate::MaintenanceBuilder
-    #[error("text analyzer changed since index was built (lang={lang:?}): stored={stored_mode} current={current_mode}; reopen with VaultConfig::skip_text_index_manifest_check=true and run clear_text_index to rebuild")]
+    #[error(
+        "text analyzer changed since index was built (lang={lang:?}): stored={stored_mode} current={current_mode}; reopen with VaultConfig::skip_text_index_manifest_check=true and run clear_text_index to rebuild"
+    )]
     IncompatibleAnalyzer {
         lang: String,
         stored_mode: &'static str,
@@ -97,7 +99,9 @@ pub enum Error {
     ///
     /// [`VaultConfig::skip_text_index_manifest_check`]: crate::VaultConfig::skip_text_index_manifest_check
     /// [`MaintenanceBuilder::clear_text_index`]: crate::MaintenanceBuilder
-    #[error("bm25f field schema changed since index was built; reopen with VaultConfig::skip_text_index_manifest_check=true and run clear_text_index to rebuild")]
+    #[error(
+        "bm25f field schema changed since index was built; reopen with VaultConfig::skip_text_index_manifest_check=true and run clear_text_index to rebuild"
+    )]
     Bm25FieldSchemaChanged,
     /// A dict asset declared in the stored manifest is missing from disk
     /// (e.g., `system.dic` was deleted after indexing). Restore the file or

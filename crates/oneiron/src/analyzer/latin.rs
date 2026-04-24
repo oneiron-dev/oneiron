@@ -133,7 +133,14 @@ mod tests {
     #[test]
     fn english_words_emit_surface_and_stem() {
         let mut out = Vec::new();
-        analyze("running runs runner", 0, 0, Some(LanguageHint::En), false, &mut out);
+        analyze(
+            "running runs runner",
+            0,
+            0,
+            Some(LanguageHint::En),
+            false,
+            &mut out,
+        );
         assert_eq!(surface_terms(&out), vec!["running", "runs", "runner"]);
         // "runner" stems to itself — no overlay emitted when stem == surface.
         assert_eq!(stem_terms(&out), vec!["run", "run"]);
@@ -173,7 +180,14 @@ mod tests {
     #[test]
     fn position_increments_one_per_surface_word() {
         let mut out = Vec::new();
-        let next = analyze("one two three", 0, 42, Some(LanguageHint::En), false, &mut out);
+        let next = analyze(
+            "one two three",
+            0,
+            42,
+            Some(LanguageHint::En),
+            false,
+            &mut out,
+        );
         let positions: Vec<u32> = out
             .iter()
             .filter(|t| t.channel == AnalyzerChannel::Surface)
@@ -187,7 +201,10 @@ mod tests {
     fn stem_overlay_has_zero_position_but_counts_length() {
         let mut out = Vec::new();
         analyze("running", 0, 0, Some(LanguageHint::En), false, &mut out);
-        let stem = out.iter().find(|t| t.channel == AnalyzerChannel::Stem).unwrap();
+        let stem = out
+            .iter()
+            .find(|t| t.channel == AnalyzerChannel::Stem)
+            .unwrap();
         assert_eq!(stem.position_increment, 0);
         // Stem channel uses `CountLengthIncrement` normalization, so each
         // overlay must contribute to that field's length.
@@ -220,7 +237,14 @@ mod tests {
     #[test]
     fn spanish_stemmer_reduces_inflections() {
         let mut out = Vec::new();
-        analyze("gatos gato gata", 0, 0, Some(LanguageHint::Es), false, &mut out);
+        analyze(
+            "gatos gato gata",
+            0,
+            0,
+            Some(LanguageHint::Es),
+            false,
+            &mut out,
+        );
         let stems = stem_terms(&out);
         assert!(stems.iter().all(|s| s.starts_with("gat")));
     }

@@ -357,7 +357,10 @@ mod tests {
     fn kana_fold_if_changed_identifies_only_katakana_bearing_input() {
         assert!(kana_fold_if_changed("ひらがな").is_none());
         assert!(kana_fold_if_changed("ascii").is_none());
-        assert_eq!(kana_fold_if_changed("カタカナ"), Some("かたかな".to_string()));
+        assert_eq!(
+            kana_fold_if_changed("カタカナ"),
+            Some("かたかな".to_string())
+        );
     }
 
     /// Morphological-mode integration: only runs when a real Sudachi dict is
@@ -369,8 +372,8 @@ mod tests {
         let Ok(dict_path) = std::env::var("ONEIRON_TEST_SUDACHI_DICT") else {
             return;
         };
-        let ja = JapaneseAnalyzer::with_system_dict(Path::new(&dict_path))
-            .expect("dict should load");
+        let ja =
+            JapaneseAnalyzer::with_system_dict(Path::new(&dict_path)).expect("dict should load");
         assert_eq!(ja.mode(), AnalyzerMode::Morphological);
 
         let mut out = Vec::new();
@@ -394,8 +397,8 @@ mod tests {
         let Ok(dict_path) = std::env::var("ONEIRON_TEST_SUDACHI_DICT") else {
             return;
         };
-        let ja = JapaneseAnalyzer::with_system_dict(Path::new(&dict_path))
-            .expect("dict should load");
+        let ja =
+            JapaneseAnalyzer::with_system_dict(Path::new(&dict_path)).expect("dict should load");
         let mut out = Vec::new();
         ja.analyze("トウキョウ", 0, 0, /* query_mode */ true, &mut out);
         let overlay_terms: Vec<&str> = out
@@ -423,8 +426,8 @@ mod tests {
         let Ok(dict_path) = std::env::var("ONEIRON_TEST_SUDACHI_DICT") else {
             return;
         };
-        let ja = JapaneseAnalyzer::with_system_dict(Path::new(&dict_path))
-            .expect("dict should load");
+        let ja =
+            JapaneseAnalyzer::with_system_dict(Path::new(&dict_path)).expect("dict should load");
         let mut out = Vec::new();
         ja.analyze("東京大学", 0, 0, false, &mut out);
         let ngrams: Vec<&str> = out
@@ -432,9 +435,18 @@ mod tests {
             .filter(|t| t.channel == AnalyzerChannel::CjkNgram)
             .map(|t| t.term.as_ref())
             .collect();
-        assert!(ngrams.contains(&"東京"), "missing 東京 bigram in {ngrams:?}");
-        assert!(ngrams.contains(&"京大"), "missing 京大 bigram in {ngrams:?}");
-        assert!(ngrams.contains(&"大学"), "missing 大学 bigram in {ngrams:?}");
+        assert!(
+            ngrams.contains(&"東京"),
+            "missing 東京 bigram in {ngrams:?}"
+        );
+        assert!(
+            ngrams.contains(&"京大"),
+            "missing 京大 bigram in {ngrams:?}"
+        );
+        assert!(
+            ngrams.contains(&"大学"),
+            "missing 大学 bigram in {ngrams:?}"
+        );
     }
 
     /// After F3's U+30FC remap, `スーパー` is a single Katakana run — the
@@ -445,8 +457,8 @@ mod tests {
         let Ok(dict_path) = std::env::var("ONEIRON_TEST_SUDACHI_DICT") else {
             return;
         };
-        let ja = JapaneseAnalyzer::with_system_dict(Path::new(&dict_path))
-            .expect("dict should load");
+        let ja =
+            JapaneseAnalyzer::with_system_dict(Path::new(&dict_path)).expect("dict should load");
         let mut out = Vec::new();
         ja.analyze("スーパーマン", 0, 0, false, &mut out);
         let ngrams: Vec<&str> = out
@@ -470,8 +482,8 @@ mod tests {
         let Ok(dict_path) = std::env::var("ONEIRON_TEST_SUDACHI_DICT") else {
             return;
         };
-        let ja = JapaneseAnalyzer::with_system_dict(Path::new(&dict_path))
-            .expect("dict should load");
+        let ja =
+            JapaneseAnalyzer::with_system_dict(Path::new(&dict_path)).expect("dict should load");
         let mut out = Vec::new();
         // `トウキョウ` covers the kana-fold overlay; `大阪大学` covers the
         // Mode C compound overlay.
@@ -488,7 +500,10 @@ mod tests {
                 );
             }
         }
-        assert!(saw_overlay, "no NormalizedOverlay tokens emitted — test did not exercise the contract");
+        assert!(
+            saw_overlay,
+            "no NormalizedOverlay tokens emitted — test did not exercise the contract"
+        );
     }
 
     /// Mode C overlay must fire in query mode so `"大阪大学"` as a query
@@ -498,8 +513,8 @@ mod tests {
         let Ok(dict_path) = std::env::var("ONEIRON_TEST_SUDACHI_DICT") else {
             return;
         };
-        let ja = JapaneseAnalyzer::with_system_dict(Path::new(&dict_path))
-            .expect("dict should load");
+        let ja =
+            JapaneseAnalyzer::with_system_dict(Path::new(&dict_path)).expect("dict should load");
         let mut out = Vec::new();
         ja.analyze("大阪大学", 0, 0, /* query_mode */ true, &mut out);
         let overlay_terms: Vec<&str> = out

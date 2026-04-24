@@ -74,10 +74,11 @@ impl KoreanAnalyzer {
 
     /// Build a Korean analyzer around a specific Lindera dict directory.
     pub fn with_dict_dir(path: &Path) -> Result<Self, DictLoadError> {
-        let dictionary: Dictionary = load_fs_dictionary(path).map_err(|e| DictLoadError::Lindera {
-            path: path.to_path_buf(),
-            source: Box::new(e),
-        })?;
+        let dictionary: Dictionary =
+            load_fs_dictionary(path).map_err(|e| DictLoadError::Lindera {
+                path: path.to_path_buf(),
+                source: Box::new(e),
+            })?;
         let segmenter = Segmenter::new(Mode::Normal, dictionary, None);
         let asset = AnalyzerAssetManifest::probe_directory(
             KO_ASSET_NAME,
@@ -254,8 +255,7 @@ mod tests {
         let Ok(dict_path) = std::env::var("ONEIRON_TEST_KODIC_DIR") else {
             return;
         };
-        let ko = KoreanAnalyzer::with_dict_dir(Path::new(&dict_path))
-            .expect("ko-dic should load");
+        let ko = KoreanAnalyzer::with_dict_dir(Path::new(&dict_path)).expect("ko-dic should load");
         assert_eq!(ko.mode(), AnalyzerMode::Morphological);
 
         let mut out = Vec::new();
