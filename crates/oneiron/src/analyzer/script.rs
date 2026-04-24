@@ -142,7 +142,15 @@ impl ScriptRunSplitter {
 
         for (idx, ch) in text.char_indices() {
             let start = idx as u32;
-            let class = ScriptClass::from_char(ch);
+            // U+30FC has Script_Extensions={Hira, Kana} but primary
+            // Script=Common. `from_char` defaults it to Katakana; override
+            // to Hiragana when the active run is Hiragana so `らーめん`
+            // stays one run instead of splitting Hira/Kata/Hira.
+            let class = if ch == '\u{30FC}' && active == Some(ScriptClass::Hiragana) {
+                ScriptClass::Hiragana
+            } else {
+                ScriptClass::from_char(ch)
+            };
 
             match (active, class) {
                 (None, ScriptClass::Common) => {
@@ -421,6 +429,24 @@ mod tests {
         let runs = ScriptRunSplitter::new().runs(text);
         assert_eq!(runs.len(), 1);
         assert_eq!(runs[0].script, ScriptClass::Katakana);
+        assert_eq!(runs[0].as_slice(text), text);
+    }
+
+    #[test]
+    fn hiragana_prolonged_mark_attaches_to_hiragana_run() {
+        let text = "らーめん";
+        let runs = ScriptRunSplitter::new().runs(text);
+        assert_eq!(runs.len(), 1);
+        assert_eq!(runs[0].script, ScriptClass::Hiragana);
+        assert_eq!(runs[0].as_slice(text), text);
+    }
+
+    #[test]
+    fn leading_hiragana_prolonged_mark_defaults_to_katakana() {
+        let text = "あー";
+        let runs = ScriptRunSplitter::new().runs(text);
+        assert_eq!(runs.len(), 1);
+        assert_eq!(runs[0].script, ScriptClass::Hiragana);
         assert_eq!(runs[0].as_slice(text), text);
     }
 
