@@ -190,7 +190,10 @@ mod tests {
     fn bigram_overlay_has_zero_position_but_counts_length() {
         let mut out = Vec::new();
         analyze("東京", 0, 0, &mut out);
-        let bigram = out.iter().find(|t| t.channel == AnalyzerChannel::CjkNgram).unwrap();
+        let bigram = out
+            .iter()
+            .find(|t| t.channel == AnalyzerChannel::CjkNgram)
+            .unwrap();
         assert_eq!(bigram.position_increment, 0);
         // Bigrams live on their own BM25 field (CjkNgram) and must
         // contribute to that field's length so `b` normalization can fire.

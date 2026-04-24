@@ -128,7 +128,10 @@ pub fn normalize_with_offset_map<'a>(
     // All-ASCII-lowercase bytes are a fixpoint of NFKC + default casefold;
     // skip the grapheme walk that would otherwise dominate the latency of
     // typical English indexing.
-    if input.bytes().all(|b| b.is_ascii() && !b.is_ascii_uppercase()) {
+    if input
+        .bytes()
+        .all(|b| b.is_ascii() && !b.is_ascii_uppercase())
+    {
         return NormalizedText::unchanged(input);
     }
 

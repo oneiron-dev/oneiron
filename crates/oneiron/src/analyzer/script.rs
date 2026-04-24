@@ -69,10 +69,7 @@ impl ScriptClass {
     pub fn is_cjk(self) -> bool {
         matches!(
             self,
-            ScriptClass::Han
-                | ScriptClass::Hiragana
-                | ScriptClass::Katakana
-                | ScriptClass::Hangul
+            ScriptClass::Han | ScriptClass::Hiragana | ScriptClass::Katakana | ScriptClass::Hangul
         )
     }
 
@@ -419,7 +416,10 @@ mod tests {
         let sliced = run_slices(text, &runs);
         assert_eq!(
             sliced,
-            vec![("とう", ScriptClass::Hiragana), ("123", ScriptClass::Common)]
+            vec![
+                ("とう", ScriptClass::Hiragana),
+                ("123", ScriptClass::Common)
+            ]
         );
     }
 

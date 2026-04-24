@@ -35,11 +35,11 @@ pub mod token;
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
+pub use detect::DETECT_WINDOW_BYTES;
 pub use manifest::{
     ANALYZER_VERSION, AnalyzerAssetManifest, AnalyzerManifest, AnalyzerMode, LangPolicy,
     NormalizationPolicy, canonical_hash, canonical_hash_hex, canonical_json,
 };
-pub use detect::DETECT_WINDOW_BYTES;
 pub use normalize::NormalizedText;
 pub use script::{ScriptClass, ScriptRun, ScriptRunSplitter};
 pub use token::{AnalyzerChannel, AnalyzerContext, LanguageHint, Token, TokenKind};
@@ -369,7 +369,10 @@ mod tests {
     fn manifest_channels_match_v1() {
         let a = MultilingualAnalyzer::portable();
         let m = a.manifest();
-        assert_eq!(m.channels, vec!["surface", "stem", "normalized_overlay", "cjk_ngram"]);
+        assert_eq!(
+            m.channels,
+            vec!["surface", "stem", "normalized_overlay", "cjk_ngram"]
+        );
     }
 
     #[test]
@@ -449,7 +452,10 @@ mod tests {
         // Any cjk_ngram token must not span the hiragana→han boundary.
         // `とう` ends at byte 6; `東京` starts at byte 6. Reject any token
         // whose [start, end) crosses the boundary of 6.
-        for tok in out.iter().filter(|t| t.channel == AnalyzerChannel::CjkNgram) {
+        for tok in out
+            .iter()
+            .filter(|t| t.channel == AnalyzerChannel::CjkNgram)
+        {
             let s = tok.byte_start as usize;
             let e = tok.byte_end as usize;
             assert!(
@@ -470,7 +476,10 @@ mod tests {
         let text = "東京123";
         let mut out = Vec::new();
         a.analyze(text, &AnalyzerContext::for_index(), &mut out);
-        for tok in out.iter().filter(|t| t.channel == AnalyzerChannel::CjkNgram) {
+        for tok in out
+            .iter()
+            .filter(|t| t.channel == AnalyzerChannel::CjkNgram)
+        {
             let s = tok.byte_start as usize;
             let e = tok.byte_end as usize;
             assert!(
@@ -496,7 +505,10 @@ mod tests {
         let text = "2024東京";
         let mut out = Vec::new();
         a.analyze(text, &AnalyzerContext::for_index(), &mut out);
-        for tok in out.iter().filter(|t| t.channel == AnalyzerChannel::CjkNgram) {
+        for tok in out
+            .iter()
+            .filter(|t| t.channel == AnalyzerChannel::CjkNgram)
+        {
             let s = tok.byte_start as usize;
             let e = tok.byte_end as usize;
             assert!(
@@ -522,7 +534,10 @@ mod tests {
         let text = "北京、大学";
         let mut out = Vec::new();
         a.analyze(text, &AnalyzerContext::for_index(), &mut out);
-        for tok in out.iter().filter(|t| t.channel == AnalyzerChannel::CjkNgram) {
+        for tok in out
+            .iter()
+            .filter(|t| t.channel == AnalyzerChannel::CjkNgram)
+        {
             let s = tok.byte_start as usize;
             let e = tok.byte_end as usize;
             assert!(
@@ -640,7 +655,11 @@ mod tests {
         // disable the English Snowball stemmer (`running` → no stem).
         let a = MultilingualAnalyzer::portable();
         let mut out = Vec::new();
-        a.analyze("running とうきょう", &AnalyzerContext::for_index(), &mut out);
+        a.analyze(
+            "running とうきょう",
+            &AnalyzerContext::for_index(),
+            &mut out,
+        );
         let stems: Vec<&str> = out
             .iter()
             .filter(|t| t.channel == AnalyzerChannel::Stem)
@@ -656,7 +675,11 @@ mod tests {
     fn latin_run_after_hiragana_still_stems_english() {
         let a = MultilingualAnalyzer::portable();
         let mut out = Vec::new();
-        a.analyze("とうきょう running", &AnalyzerContext::for_index(), &mut out);
+        a.analyze(
+            "とうきょう running",
+            &AnalyzerContext::for_index(),
+            &mut out,
+        );
         let stems: Vec<&str> = out
             .iter()
             .filter(|t| t.channel == AnalyzerChannel::Stem)
@@ -724,8 +747,8 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let dict_path = dir.path().join("tiny.dict.utf8");
         std::fs::write(&dict_path, "北京 100 ns\n大学 80 n\n").unwrap();
-        let chinese = chinese::ChineseAnalyzer::with_dict(&dict_path)
-            .expect("inline dict should load");
+        let chinese =
+            chinese::ChineseAnalyzer::with_dict(&dict_path).expect("inline dict should load");
         assert_eq!(chinese.mode(), AnalyzerMode::Morphological);
 
         let analyzer = MultilingualAnalyzer {

@@ -151,14 +151,32 @@ mod tests {
 
     #[test]
     fn infer_from_script_covers_unambiguous_scripts() {
-        assert_eq!(infer_from_script(ScriptClass::Hiragana), Some(LanguageHint::Ja));
-        assert_eq!(infer_from_script(ScriptClass::Katakana), Some(LanguageHint::Ja));
-        assert_eq!(infer_from_script(ScriptClass::Hangul), Some(LanguageHint::Ko));
-        assert_eq!(infer_from_script(ScriptClass::Hebrew), Some(LanguageHint::He));
+        assert_eq!(
+            infer_from_script(ScriptClass::Hiragana),
+            Some(LanguageHint::Ja)
+        );
+        assert_eq!(
+            infer_from_script(ScriptClass::Katakana),
+            Some(LanguageHint::Ja)
+        );
+        assert_eq!(
+            infer_from_script(ScriptClass::Hangul),
+            Some(LanguageHint::Ko)
+        );
+        assert_eq!(
+            infer_from_script(ScriptClass::Hebrew),
+            Some(LanguageHint::He)
+        );
         assert_eq!(infer_from_script(ScriptClass::Thai), Some(LanguageHint::Th));
         assert_eq!(infer_from_script(ScriptClass::Lao), Some(LanguageHint::Lo));
-        assert_eq!(infer_from_script(ScriptClass::Khmer), Some(LanguageHint::Km));
-        assert_eq!(infer_from_script(ScriptClass::Myanmar), Some(LanguageHint::My));
+        assert_eq!(
+            infer_from_script(ScriptClass::Khmer),
+            Some(LanguageHint::Km)
+        );
+        assert_eq!(
+            infer_from_script(ScriptClass::Myanmar),
+            Some(LanguageHint::My)
+        );
     }
 
     #[test]
@@ -171,7 +189,10 @@ mod tests {
 
     #[test]
     fn han_only_routes_to_whichlang() {
-        assert_eq!(detect_with_whichlang("我喜欢学习中文"), Some(LanguageHint::Zh));
+        assert_eq!(
+            detect_with_whichlang("我喜欢学习中文"),
+            Some(LanguageHint::Zh)
+        );
     }
 
     #[test]
@@ -194,7 +215,10 @@ mod tests {
     fn pure_ascii_latin_defaults_to_english() {
         assert_eq!(detect_with_whichlang("running"), Some(LanguageHint::En));
         assert_eq!(detect_with_whichlang("runs"), Some(LanguageHint::En));
-        assert_eq!(detect_with_whichlang(&"apple ".repeat(20)), Some(LanguageHint::En));
+        assert_eq!(
+            detect_with_whichlang(&"apple ".repeat(20)),
+            Some(LanguageHint::En)
+        );
         let prose = "she runs every morning before work near the riverbank";
         assert_eq!(detect_with_whichlang(prose), Some(LanguageHint::En));
     }
@@ -222,8 +246,7 @@ mod tests {
     fn long_accentless_spanish_resolves_to_spanish() {
         // ≥ 64 bytes AND ≥ 3 unique letter tokens — passes the length gate,
         // whichlang routes accent-less Spanish to `Spa`.
-        let text =
-            "el gato blanco come manzanas rojas en el jardin grande con su amigo pequeno";
+        let text = "el gato blanco come manzanas rojas en el jardin grande con su amigo pequeno";
         assert!(text.len() >= MIN_WHICHLANG_ASCII_BYTES);
         assert_eq!(detect_with_whichlang(text), Some(LanguageHint::Es));
     }

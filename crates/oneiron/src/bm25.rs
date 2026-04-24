@@ -224,7 +224,9 @@ pub(crate) fn index_text(
 
     // === Forward index: (term_len, term, field_id, tf) records ===
     let forward_bytes = encode_forward(&per_term)?;
-    store.text_forward.put(wtxn, id.as_bytes(), &forward_bytes)?;
+    store
+        .text_forward
+        .put(wtxn, id.as_bytes(), &forward_bytes)?;
 
     // === Per-doc field lengths ===
     let field_lengths_bytes = encode_field_lengths(&per_field_len);
@@ -233,8 +235,8 @@ pub(crate) fn index_text(
         .put(wtxn, id.as_bytes(), &field_lengths_bytes)?;
 
     // === Document metadata (doc_len kept for status reporting) ===
-    let field_count =
-        u32::try_from(per_field_len.len()).map_err(|_| Error::ArithmeticOverflow("bm25 field count"))?;
+    let field_count = u32::try_from(per_field_len.len())
+        .map_err(|_| Error::ArithmeticOverflow("bm25 field count"))?;
     let mut doc_meta = [0_u8; DOC_META_LEN];
     doc_meta[..4].copy_from_slice(&doc_len_total.to_le_bytes());
     doc_meta[4..].copy_from_slice(&field_count.to_le_bytes());
@@ -350,7 +352,9 @@ pub(crate) fn deindex_text(store: &Store, wtxn: &mut RwTxn<'_>, id: &EntityId) -
             .checked_sub(u64::from(len))
             .ok_or_else(|| corrupted("field total_length underflow during deindex"))?;
         if doc_count == 0 && total_length == 0 {
-            store.text_bm25_field_stats.delete(wtxn, &fid.to_be_bytes())?;
+            store
+                .text_bm25_field_stats
+                .delete(wtxn, &fid.to_be_bytes())?;
         } else {
             write_field_stats(store, wtxn, fid, doc_count, total_length)?;
         }
@@ -559,8 +563,8 @@ fn decode_posting(raw: &[u8]) -> Result<Vec<PostingEntry>> {
         let id_bytes: [u8; ENTITY_ID_LEN] = raw[i..i + ENTITY_ID_LEN]
             .try_into()
             .map_err(|_| corrupted("posting entry id slice"))?;
-        let id =
-            EntityId::from_bytes(id_bytes).map_err(|_| corrupted("posting entry has invalid id"))?;
+        let id = EntityId::from_bytes(id_bytes)
+            .map_err(|_| corrupted("posting entry has invalid id"))?;
         let field_count = raw[i + ENTITY_ID_LEN] as usize;
         if field_count == 0 {
             return Err(corrupted("posting entry has zero field count"));
@@ -733,9 +737,11 @@ fn write_field_stats(
 
 pub(crate) fn read_total_docs(store: &Store, txn: &RoTxn<'_>) -> Result<u32> {
     match store.text_meta.get(txn, &TOTAL_DOCS_KEY)? {
-        Some(raw) => Ok(u32::from_le_bytes(raw.try_into().map_err(|_| {
-            corrupted("total_docs sentinel has invalid length")
-        })?)),
+        Some(raw) => {
+            Ok(u32::from_le_bytes(raw.try_into().map_err(|_| {
+                corrupted("total_docs sentinel has invalid length")
+            })?))
+        }
         None => Ok(0),
     }
 }
@@ -841,7 +847,10 @@ mod tests {
         let surface = c.field(AnalyzerChannel::Surface);
         assert_eq!(surface.weight, 1.00);
         assert_eq!(surface.b, 0.75);
-        assert_eq!(surface.length_policy, FieldLengthPolicy::CountLengthIncrement);
+        assert_eq!(
+            surface.length_policy,
+            FieldLengthPolicy::CountLengthIncrement
+        );
         let ngram = c.field(AnalyzerChannel::CjkNgram);
         assert_eq!(ngram.weight, 0.45);
         assert_eq!(ngram.b, 0.30);
@@ -888,7 +897,13 @@ mod tests {
             let tf = if idx == best_idx { 20 } else { 1 };
             let text = repeated("apple", tf);
             batch = batch
-                .put(&id, 0, test_time_range(idx as u64, idx as u64), idx as u64, b"doc")
+                .put(
+                    &id,
+                    0,
+                    test_time_range(idx as u64, idx as u64),
+                    idx as u64,
+                    b"doc",
+                )
                 .text(&id, &[("body", &text)]);
         }
         batch.commit()?;
@@ -1104,8 +1119,7 @@ mod tests {
                 Some(0),
                 "NormalizedOverlay field length must be 0 under zero-length-token contract",
             );
-            let (doc_count, total_length) =
-                read_field_stats(&vault.store, &rtxn, overlay_fid)?;
+            let (doc_count, total_length) = read_field_stats(&vault.store, &rtxn, overlay_fid)?;
             assert_eq!(doc_count, 1);
             assert_eq!(total_length, 0);
         }
@@ -1342,7 +1356,10 @@ mod tests {
             10,
         )
         .unwrap_err();
-        assert!(matches!(err, Error::CorruptedIndex(_)), "expected CorruptedIndex, got {err:?}");
+        assert!(
+            matches!(err, Error::CorruptedIndex(_)),
+            "expected CorruptedIndex, got {err:?}"
+        );
         Ok(())
     }
 
@@ -1354,7 +1371,12 @@ mod tests {
         put_text_doc(&vault, &id, "alpha beta")?;
 
         let mut wtxn = vault.store.env.write_txn()?;
-        assert!(vault.store.text_doc_field_lengths.delete(&mut wtxn, id.as_bytes())?);
+        assert!(
+            vault
+                .store
+                .text_doc_field_lengths
+                .delete(&mut wtxn, id.as_bytes())?
+        );
         wtxn.commit()?;
 
         let rtxn = vault.store.env.read_txn()?;
@@ -1367,7 +1389,10 @@ mod tests {
             10,
         )
         .unwrap_err();
-        assert!(matches!(err, Error::CorruptedIndex(_)), "expected CorruptedIndex, got {err:?}");
+        assert!(
+            matches!(err, Error::CorruptedIndex(_)),
+            "expected CorruptedIndex, got {err:?}"
+        );
         Ok(())
     }
 
@@ -1398,7 +1423,10 @@ mod tests {
             10,
         )
         .unwrap_err();
-        assert!(matches!(err, Error::CorruptedIndex(_)), "expected CorruptedIndex, got {err:?}");
+        assert!(
+            matches!(err, Error::CorruptedIndex(_)),
+            "expected CorruptedIndex, got {err:?}"
+        );
         Ok(())
     }
 
@@ -1410,9 +1438,17 @@ mod tests {
         put_text_doc(&vault, &id, "alpha beta")?;
 
         let mut wtxn = vault.store.env.write_txn()?;
-        assert!(vault.store.text_doc_field_lengths.delete(&mut wtxn, id.as_bytes())?);
+        assert!(
+            vault
+                .store
+                .text_doc_field_lengths
+                .delete(&mut wtxn, id.as_bytes())?
+        );
         let err = deindex_text(&vault.store, &mut wtxn, &id).unwrap_err();
-        assert!(matches!(err, Error::CorruptedIndex(_)), "expected CorruptedIndex, got {err:?}");
+        assert!(
+            matches!(err, Error::CorruptedIndex(_)),
+            "expected CorruptedIndex, got {err:?}"
+        );
         Ok(())
     }
 
@@ -1453,7 +1489,10 @@ mod tests {
             10,
         )
         .unwrap_err();
-        assert!(matches!(err, Error::CorruptedIndex(_)), "expected CorruptedIndex, got {err:?}");
+        assert!(
+            matches!(err, Error::CorruptedIndex(_)),
+            "expected CorruptedIndex, got {err:?}"
+        );
         Ok(())
     }
 
@@ -1485,7 +1524,10 @@ mod tests {
             .put(&mut wtxn, id.as_bytes(), &patched)?;
 
         let err = deindex_text(&vault.store, &mut wtxn, &id).unwrap_err();
-        assert!(matches!(err, Error::CorruptedIndex(_)), "expected CorruptedIndex, got {err:?}");
+        assert!(
+            matches!(err, Error::CorruptedIndex(_)),
+            "expected CorruptedIndex, got {err:?}"
+        );
         Ok(())
     }
 
@@ -1516,7 +1558,10 @@ mod tests {
             .put(&mut wtxn, id.as_bytes(), &patched)?;
 
         let err = deindex_text(&vault.store, &mut wtxn, &id).unwrap_err();
-        assert!(matches!(err, Error::CorruptedIndex(_)), "expected CorruptedIndex, got {err:?}");
+        assert!(
+            matches!(err, Error::CorruptedIndex(_)),
+            "expected CorruptedIndex, got {err:?}"
+        );
         Ok(())
     }
 
@@ -1547,7 +1592,10 @@ mod tests {
             .put(&mut wtxn, id.as_bytes(), &patched)?;
 
         let err = deindex_text(&vault.store, &mut wtxn, &id).unwrap_err();
-        assert!(matches!(err, Error::CorruptedIndex(_)), "expected CorruptedIndex, got {err:?}");
+        assert!(
+            matches!(err, Error::CorruptedIndex(_)),
+            "expected CorruptedIndex, got {err:?}"
+        );
         Ok(())
     }
 
@@ -1562,7 +1610,12 @@ mod tests {
         put_text_doc(&vault, &id, "alpha")?;
 
         let mut wtxn = vault.store.env.write_txn()?;
-        assert!(vault.store.text_doc_field_lengths.delete(&mut wtxn, id.as_bytes())?);
+        assert!(
+            vault
+                .store
+                .text_doc_field_lengths
+                .delete(&mut wtxn, id.as_bytes())?
+        );
         wtxn.commit()?;
 
         let mut config = Bm25Config::default();
@@ -1580,7 +1633,10 @@ mod tests {
             10,
         )
         .unwrap_err();
-        assert!(matches!(err, Error::CorruptedIndex(_)), "expected CorruptedIndex, got {err:?}");
+        assert!(
+            matches!(err, Error::CorruptedIndex(_)),
+            "expected CorruptedIndex, got {err:?}"
+        );
         Ok(())
     }
 

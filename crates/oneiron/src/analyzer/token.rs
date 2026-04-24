@@ -312,8 +312,15 @@ mod tests {
 
     #[test]
     fn token_overlay_zeros_position_increment_only() {
-        let tok = Token::new("hi", 0, 2, 0, AnalyzerChannel::NormalizedOverlay, TokenKind::Word)
-            .overlay();
+        let tok = Token::new(
+            "hi",
+            0,
+            2,
+            0,
+            AnalyzerChannel::NormalizedOverlay,
+            TokenKind::Word,
+        )
+        .overlay();
         assert_eq!(tok.position_increment, 0);
         assert_eq!(tok.length_increment, 1);
     }
