@@ -228,11 +228,14 @@ impl JapaneseAnalyzer {
             }
         }
 
-        // Mode C overlay: emit longer compound spans on NormalizedOverlay.
-        // Suppressed in query_mode (plan §1.2 — overlays only inflate IDF).
-        if !query_mode
-            && let Ok(morphemes_c) = tokenizer.tokenize(text, Mode::C, false)
-        {
+        // Mode C overlay: emit longer compound spans on NormalizedOverlay
+        // on both index and query sides. Without the query-side emission a
+        // query `"大阪大学"` would only yield Mode A tokens `[大阪, 大学]`
+        // and never hit indexed Mode C compounds. The scorer dedupes query
+        // terms per posting, so adding the compound is a recall boost, not
+        // an IDF inflation risk.
+        let _ = query_mode;
+        if let Ok(morphemes_c) = tokenizer.tokenize(text, Mode::C, false) {
             for i in 0..morphemes_c.len() {
                 let m: Morpheme<'_, _> = morphemes_c.get(i);
                 let start = offset_base + m.begin() as u32;
@@ -261,6 +264,10 @@ impl JapaneseAnalyzer {
                 }
             }
         }
+
+        // CjkNgram overlay: char bigrams so `"東京"` recalls docs indexed
+        // via Sudachi-segmented `"東京大学"`.
+        cjk_ngram::emit_bigram_overlay(text, offset_base, position_base, out);
 
         position_base + a_count as u32
     }
@@ -404,5 +411,72 @@ mod tests {
                 "overlay {term:?} still contains katakana — fold did not run",
             );
         }
+    }
+
+    /// Morph path must emit CjkNgram bigrams alongside surface morphemes so
+    /// a query `"東京"` recalls docs indexed via Sudachi-segmented input —
+    /// parity with the ZH / KO morph paths.
+    #[test]
+    fn jp_morph_emits_cjk_bigrams() {
+        let Ok(dict_path) = std::env::var("ONEIRON_TEST_SUDACHI_DICT") else {
+            return;
+        };
+        let ja = JapaneseAnalyzer::with_system_dict(Path::new(&dict_path))
+            .expect("dict should load");
+        let mut out = Vec::new();
+        ja.analyze("東京大学", 0, 0, false, &mut out);
+        let ngrams: Vec<&str> = out
+            .iter()
+            .filter(|t| t.channel == AnalyzerChannel::CjkNgram)
+            .map(|t| t.term.as_ref())
+            .collect();
+        assert!(ngrams.contains(&"東京"), "missing 東京 bigram in {ngrams:?}");
+        assert!(ngrams.contains(&"京大"), "missing 京大 bigram in {ngrams:?}");
+        assert!(ngrams.contains(&"大学"), "missing 大学 bigram in {ngrams:?}");
+    }
+
+    /// After F3's U+30FC remap, `スーパー` is a single Katakana run — the
+    /// JP morph path should still form a bigram across the prolonged sound
+    /// mark (e.g. `スー`) via the shared `cjk_ngram::emit_bigram_overlay`.
+    #[test]
+    fn jp_morph_emits_bigram_across_prolonged_mark() {
+        let Ok(dict_path) = std::env::var("ONEIRON_TEST_SUDACHI_DICT") else {
+            return;
+        };
+        let ja = JapaneseAnalyzer::with_system_dict(Path::new(&dict_path))
+            .expect("dict should load");
+        let mut out = Vec::new();
+        ja.analyze("スーパーマン", 0, 0, false, &mut out);
+        let ngrams: Vec<&str> = out
+            .iter()
+            .filter(|t| t.channel == AnalyzerChannel::CjkNgram)
+            .map(|t| t.term.as_ref())
+            .collect();
+        assert!(
+            ngrams.iter().any(|t| t.contains('ー')),
+            "expected at least one bigram spanning ー in {ngrams:?}",
+        );
+    }
+
+    /// Mode C overlay must fire in query mode so `"大阪大学"` as a query
+    /// can reach indexed Mode C compounds that don't split under Mode A.
+    #[test]
+    fn jp_mode_c_overlay_emitted_in_query_mode() {
+        let Ok(dict_path) = std::env::var("ONEIRON_TEST_SUDACHI_DICT") else {
+            return;
+        };
+        let ja = JapaneseAnalyzer::with_system_dict(Path::new(&dict_path))
+            .expect("dict should load");
+        let mut out = Vec::new();
+        ja.analyze("大阪大学", 0, 0, /* query_mode */ true, &mut out);
+        let overlay_terms: Vec<&str> = out
+            .iter()
+            .filter(|t| t.channel == AnalyzerChannel::NormalizedOverlay)
+            .map(|t| t.term.as_ref())
+            .collect();
+        assert!(
+            overlay_terms.contains(&"大阪大学"),
+            "Mode C compound missing from query-side overlay: {overlay_terms:?}",
+        );
     }
 }

@@ -134,10 +134,18 @@ impl MultilingualAnalyzer {
             let slice = run.as_slice(analysis_text);
             // Resolve hint per run so a CJK run cannot poison an adjacent
             // Latin run's stemmer selection. `detect_with_whichlang` runs on
-            // the run's own bytes, not on cross-run analysis_text.
+            // the run's own bytes, not on cross-run analysis_text. Han runs
+            // skip whichlang (bare argmax on short input) so DualHanFallback
+            // owns JP-vs-ZH routing; explicit caller hints still apply.
             let run_hint = detect::infer_from_script(run.script)
                 .or(ctx.language_hint)
-                .or_else(|| detect::detect_with_whichlang(slice));
+                .or_else(|| {
+                    if matches!(run.script, ScriptClass::Han) {
+                        None
+                    } else {
+                        detect::detect_with_whichlang(slice)
+                    }
+                });
             position = self.dispatch_run(run, slice, run_hint, ctx.query_mode, position, out);
         }
 
@@ -683,5 +691,21 @@ mod tests {
         let ctx = AnalyzerContext::for_index().with_language(LanguageHint::Ja);
         a.analyze("東京", &ctx, &mut out);
         assert_eq!(surface_terms(&out), vec!["東", "京"]);
+    }
+
+    /// Han-only runs must suppress whichlang so Portable mode falls through
+    /// to cjk_ngram regardless of the detector's bare-argmax guess.
+    #[test]
+    fn han_only_run_uses_dualhan_fallback_without_explicit_hint() {
+        let a = MultilingualAnalyzer::portable();
+        let mut out = Vec::new();
+        a.analyze("我喜欢", &AnalyzerContext::for_index(), &mut out);
+        assert_eq!(surface_terms(&out), vec!["我", "喜", "欢"]);
+        let bigrams: Vec<&str> = out
+            .iter()
+            .filter(|t| t.channel == AnalyzerChannel::CjkNgram)
+            .map(|t| t.term.as_ref())
+            .collect();
+        assert_eq!(bigrams, vec!["我喜", "喜欢"]);
     }
 }

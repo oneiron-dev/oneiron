@@ -37,6 +37,14 @@ pub enum ScriptClass {
 
 impl ScriptClass {
     pub fn from_char(c: char) -> ScriptClass {
+        // U+30FC (プロロンゲッドサウンドマーク ー) has Script=Common but
+        // Script_Extensions={Hira, Kana}. Treating it as Common splits
+        // Katakana words like `スーパー` into single-char runs so no
+        // CjkNgram bigram can form. Remap to Katakana so the splitter
+        // keeps the word intact.
+        if c == '\u{30FC}' {
+            return ScriptClass::Katakana;
+        }
         match c.script() {
             Script::Latin => ScriptClass::Latin,
             Script::Cyrillic => ScriptClass::Cyrillic,
@@ -405,6 +413,15 @@ mod tests {
             sliced,
             vec![("とう", ScriptClass::Hiragana), ("123", ScriptClass::Common)]
         );
+    }
+
+    #[test]
+    fn katakana_prolonged_mark_stays_in_run() {
+        let text = "スーパー";
+        let runs = ScriptRunSplitter::new().runs(text);
+        assert_eq!(runs.len(), 1);
+        assert_eq!(runs[0].script, ScriptClass::Katakana);
+        assert_eq!(runs[0].as_slice(text), text);
     }
 
     #[test]
