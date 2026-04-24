@@ -782,7 +782,7 @@ fn read_text_schema_version(store: &Store, rtxn: &heed::RoTxn<'_>) -> Result<Opt
 /// * non-empty, field schema mismatch → `Bm25FieldSchemaChanged`
 /// * non-empty, manifest hash mismatch → `IncompatibleAnalyzer` naming the
 ///   first language whose mode flipped (or `*` when the stored manifest is
-///   absent / unparseable, i.e. pre-ONE-317 vault)
+///   absent / unparsable, i.e. pre-ONE-317 vault)
 fn handshake_text_index_manifest(store: &Store, analyzer: &MultilingualAnalyzer) -> Result<()> {
     let current_manifest = analyzer.manifest();
     let current_manifest_hash = current_manifest
