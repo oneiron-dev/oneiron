@@ -309,7 +309,7 @@ pub(crate) fn deindex_text(store: &Store, wtxn: &mut RwTxn<'_>, id: &EntityId) -
         // still fires, drifting `avgdl` for every subsequent score. Only
         // overlay channels legitimately carry zero-length tokens.
         if let Some(channel) = AnalyzerChannel::from_field_id(*fid)
-            && !channel.emits_length_zero_tokens()
+            && !channel.permits_zero_doc_field_length()
             && len == 0
         {
             return Err(corrupted(
@@ -1065,6 +1065,52 @@ mod tests {
         put_text_doc(&vault, &id2, "トウキョウ")?;
         let hits2 = vault.search_text("とうきょう", 10)?;
         assert!(contains_id(&hits2, &id2));
+        Ok(())
+    }
+
+    /// End-to-end check on the analyzer contract: kana-fold emissions on
+    /// `NormalizedOverlay` must persist a zero field length (Surface
+    /// still records its own length), and deindex must tolerate that
+    /// zero given the matching forward-index entry.
+    #[test]
+    fn normalized_overlay_persists_zero_field_length() -> Result<()> {
+        let Ok(dict_path) = std::env::var("ONEIRON_TEST_SUDACHI_DICT") else {
+            return Ok(());
+        };
+        let dict_dir = match std::path::Path::new(&dict_path).parent() {
+            Some(p) => p.to_path_buf(),
+            None => return Ok(()),
+        };
+
+        let temp_dir = tempfile::tempdir()?;
+        let mut config = test_config();
+        config.dict_search_paths = vec![dict_dir];
+        let vault = Vault::open(temp_dir.path(), config)?;
+
+        let id = EntityId::now();
+        put_text_doc(&vault, &id, "トウキョウ")?;
+
+        let overlay_fid = AnalyzerChannel::NormalizedOverlay.field_id();
+        {
+            let rtxn = vault.store.env.read_txn()?;
+            let raw = vault
+                .store
+                .text_doc_field_lengths
+                .get(&rtxn, id.as_bytes())?
+                .expect("lengths row written");
+            let lens = decode_field_lengths(raw)?;
+            assert_eq!(
+                lens.get(&overlay_fid).copied(),
+                Some(0),
+                "NormalizedOverlay field length must be 0 under zero-length-token contract",
+            );
+            let (doc_count, total_length) =
+                read_field_stats(&vault.store, &rtxn, overlay_fid)?;
+            assert_eq!(doc_count, 1);
+            assert_eq!(total_length, 0);
+        }
+
+        assert!(vault.delete_entity(&id)?);
         Ok(())
     }
 

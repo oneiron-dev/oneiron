@@ -49,11 +49,12 @@ impl Token {
 
     /// Mark this token as a positional overlay: it shares its `position`
     /// with an underlying primary token so phrase queries see one
-    /// position, not two. Does *not* zero `length_increment` — overlay
-    /// tokens that live on their own field (e.g., CJK bigrams on
-    /// `CjkNgram`) still contribute to that field's length so BM25
-    /// length normalization can fire. For channels with `NoNorm` policy
-    /// (e.g. `NormalizedOverlay`), the preserved length is ignored.
+    /// position, not two. Does *not* zero `length_increment` — callers on
+    /// `CountLengthIncrement` channels (e.g. CJK bigrams on `CjkNgram`,
+    /// Latin stems on `Stem`) want the length-1 contribution so BM25
+    /// length normalization can fire. Callers on `NoNorm` channels (e.g.
+    /// `NormalizedOverlay`) chain `.with_length_increment(0)` to honor
+    /// the `permits_zero_doc_field_length` contract.
     pub fn overlay(mut self) -> Self {
         self.position_increment = 0;
         self
@@ -128,13 +129,15 @@ impl AnalyzerChannel {
         }
     }
 
-    /// Whether this channel may legitimately carry tokens with
-    /// `length_increment = 0`. Overlay-style channels (JP Mode C compounds,
-    /// synonym expansions) mark emitted tokens as zero-length so they
-    /// don't count toward `avgdl`; other channels always contribute ≥1.
-    /// Indexing / deindex consult this to distinguish "zero because the
-    /// analyzer said so" from "zero because the lengths row got corrupted".
-    pub fn emits_length_zero_tokens(self) -> bool {
+    /// Whether this channel may legitimately persist a per-doc field
+    /// length of zero while still having forward-index terms for the same
+    /// doc. Overlay-style channels (JP Mode C compounds, kana-folds,
+    /// synonym expansions) emit `length_increment = 0` so their tokens
+    /// don't count toward `avgdl`; other channels always contribute ≥1
+    /// per token. Deindex consults this to distinguish "zero because the
+    /// analyzer contract says so" from "zero because the lengths row got
+    /// corrupted".
+    pub fn permits_zero_doc_field_length(self) -> bool {
         match self {
             AnalyzerChannel::NormalizedOverlay | AnalyzerChannel::Synonym => true,
             AnalyzerChannel::Surface

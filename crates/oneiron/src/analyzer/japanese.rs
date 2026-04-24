@@ -223,7 +223,8 @@ impl JapaneseAnalyzer {
                         AnalyzerChannel::NormalizedOverlay,
                         TokenKind::Word,
                     )
-                    .overlay(),
+                    .overlay()
+                    .with_length_increment(0),
                 );
             }
         }
@@ -259,7 +260,8 @@ impl JapaneseAnalyzer {
                             AnalyzerChannel::NormalizedOverlay,
                             TokenKind::Word,
                         )
-                        .overlay(),
+                        .overlay()
+                        .with_length_increment(0),
                     );
                 }
             }
@@ -456,6 +458,37 @@ mod tests {
             ngrams.iter().any(|t| t.contains('ー')),
             "expected at least one bigram spanning ー in {ngrams:?}",
         );
+    }
+
+    /// `NormalizedOverlay` uses `NoNorm` — its tokens must not count
+    /// toward `avgdl`. Both overlay emitters (kana-fold and Mode C
+    /// compound) therefore carry `length_increment = 0`, which is the
+    /// analyzer contract that
+    /// `AnalyzerChannel::permits_zero_doc_field_length()` relies on.
+    #[test]
+    fn normalized_overlay_tokens_have_zero_length_increment() {
+        let Ok(dict_path) = std::env::var("ONEIRON_TEST_SUDACHI_DICT") else {
+            return;
+        };
+        let ja = JapaneseAnalyzer::with_system_dict(Path::new(&dict_path))
+            .expect("dict should load");
+        let mut out = Vec::new();
+        // `トウキョウ` covers the kana-fold overlay; `大阪大学` covers the
+        // Mode C compound overlay.
+        ja.analyze("トウキョウ", 0, 0, false, &mut out);
+        ja.analyze("大阪大学", 5, 0, false, &mut out);
+        let mut saw_overlay = false;
+        for t in &out {
+            if t.channel == AnalyzerChannel::NormalizedOverlay {
+                saw_overlay = true;
+                assert_eq!(
+                    t.length_increment, 0,
+                    "NormalizedOverlay token {:?} must not contribute to avgdl",
+                    t.term,
+                );
+            }
+        }
+        assert!(saw_overlay, "no NormalizedOverlay tokens emitted — test did not exercise the contract");
     }
 
     /// Mode C overlay must fire in query mode so `"大阪大学"` as a query
