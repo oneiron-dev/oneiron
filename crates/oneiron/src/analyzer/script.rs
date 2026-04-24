@@ -442,7 +442,7 @@ mod tests {
     }
 
     #[test]
-    fn leading_hiragana_prolonged_mark_defaults_to_katakana() {
+    fn trailing_prolonged_mark_after_hiragana_stays_hiragana() {
         let text = "あー";
         let runs = ScriptRunSplitter::new().runs(text);
         assert_eq!(runs.len(), 1);
