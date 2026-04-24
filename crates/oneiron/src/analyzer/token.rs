@@ -127,6 +127,23 @@ impl AnalyzerChannel {
             _ => None,
         }
     }
+
+    /// Whether this channel may legitimately carry tokens with
+    /// `length_increment = 0`. Overlay-style channels (JP Mode C compounds,
+    /// synonym expansions) mark emitted tokens as zero-length so they
+    /// don't count toward `avgdl`; other channels always contribute ≥1.
+    /// Indexing / deindex consult this to distinguish "zero because the
+    /// analyzer said so" from "zero because the lengths row got corrupted".
+    pub fn emits_length_zero_tokens(self) -> bool {
+        match self {
+            AnalyzerChannel::NormalizedOverlay | AnalyzerChannel::Synonym => true,
+            AnalyzerChannel::Surface
+            | AnalyzerChannel::Stem
+            | AnalyzerChannel::CjkNgram
+            | AnalyzerChannel::Shingle
+            | AnalyzerChannel::Phonetic => false,
+        }
+    }
 }
 
 impl fmt::Display for AnalyzerChannel {

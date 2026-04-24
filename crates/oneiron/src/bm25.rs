@@ -300,9 +300,20 @@ pub(crate) fn deindex_text(store: &Store, wtxn: &mut RwTxn<'_>, id: &EntityId) -
     // posting rewrite below and the length-loop decrement cover different
     // field sets, but `total_docs--` unconditionally fires once.
     for fid in &forward_fields {
-        if !lengths.contains_key(fid) {
+        let Some(&len) = lengths.get(fid) else {
             return Err(corrupted(
                 "forward field missing from per-doc field lengths",
+            ));
+        };
+        // `total_length -= 0` would silently succeed while `doc_count--`
+        // still fires, drifting `avgdl` for every subsequent score. Only
+        // overlay channels legitimately carry zero-length tokens.
+        if let Some(channel) = AnalyzerChannel::from_field_id(*fid)
+            && !channel.emits_length_zero_tokens()
+            && len == 0
+        {
+            return Err(corrupted(
+                "zero length for indexed field that does not emit zero-length tokens",
             ));
         }
     }
@@ -415,6 +426,19 @@ pub(crate) fn search_text(
 
         for entry in entries {
             let id = entry.id;
+
+            // Enforce row-existence for every scored entry, not only those
+            // that reach a `CountLengthIncrement` branch — otherwise a
+            // NoNorm-only match silently skips the corruption guard.
+            if let Entry::Vacant(v) = field_length_cache.entry(id) {
+                let raw = store.text_doc_field_lengths.get(rtxn, id.as_bytes())?;
+                let map = match raw {
+                    Some(bytes) => decode_field_lengths(bytes)?,
+                    None => return Err(corrupted("missing field lengths for scored doc")),
+                };
+                v.insert(map);
+            }
+
             let mut x_t_d = 0.0_f64;
 
             for (fid, tf) in &entry.fields {
@@ -429,18 +453,9 @@ pub(crate) fn search_text(
                 let len_f = if matches!(cfg.length_policy, FieldLengthPolicy::NoNorm) {
                     0.0
                 } else {
-                    let lens = if let Some(cached) = field_length_cache.get(&id) {
-                        cached
-                    } else {
-                        // A posting entry referenced this doc, so its
-                        // field-lengths row must exist.
-                        let raw = store.text_doc_field_lengths.get(rtxn, id.as_bytes())?;
-                        let map = match raw {
-                            Some(bytes) => decode_field_lengths(bytes)?,
-                            None => return Err(corrupted("missing field lengths for scored doc")),
-                        };
-                        field_length_cache.entry(id).or_insert(map)
-                    };
+                    let lens = field_length_cache
+                        .get(&id)
+                        .expect("field-lengths row loaded above for this entry id");
                     // The same posting-entry-implies-row invariant applies
                     // per-field: a referenced `fid` must have an entry in
                     // the length row. Silently defaulting to 0 would yield
@@ -1455,6 +1470,70 @@ mod tests {
             .put(&mut wtxn, id.as_bytes(), &patched)?;
 
         let err = deindex_text(&vault.store, &mut wtxn, &id).unwrap_err();
+        assert!(matches!(err, Error::CorruptedIndex(_)), "expected CorruptedIndex, got {err:?}");
+        Ok(())
+    }
+
+    /// A zero length on Surface (a channel that never emits zero-length
+    /// tokens) means the lengths row was corrupted — deindex must refuse
+    /// rather than silently underflow `total_length` decrement.
+    #[test]
+    fn deindex_fails_closed_on_zero_length_count_field() -> Result<()> {
+        let temp_dir = tempfile::tempdir()?;
+        let vault = Vault::open(temp_dir.path(), test_config())?;
+        let id = EntityId::now();
+        put_text_doc(&vault, &id, "alpha beta")?;
+
+        let surface_fid = AnalyzerChannel::Surface.field_id();
+        let mut wtxn = vault.store.env.write_txn()?;
+        let raw = vault
+            .store
+            .text_doc_field_lengths
+            .get(&wtxn, id.as_bytes())?
+            .expect("length row written on index")
+            .to_vec();
+        let mut lens = decode_field_lengths(&raw)?;
+        lens.insert(surface_fid, 0);
+        let patched = encode_field_lengths(&lens);
+        vault
+            .store
+            .text_doc_field_lengths
+            .put(&mut wtxn, id.as_bytes(), &patched)?;
+
+        let err = deindex_text(&vault.store, &mut wtxn, &id).unwrap_err();
+        assert!(matches!(err, Error::CorruptedIndex(_)), "expected CorruptedIndex, got {err:?}");
+        Ok(())
+    }
+
+    /// Row-existence must fire even when no `CountLengthIncrement` field
+    /// has non-zero weight in the rank profile — pre-fix the lookup was
+    /// nested inside that branch and a NoNorm-only match slipped past.
+    #[test]
+    fn search_fails_closed_on_missing_lengths_for_nonorm_only_match() -> Result<()> {
+        let temp_dir = tempfile::tempdir()?;
+        let vault = Vault::open(temp_dir.path(), test_config())?;
+        let id = EntityId::now();
+        put_text_doc(&vault, &id, "alpha")?;
+
+        let mut wtxn = vault.store.env.write_txn()?;
+        assert!(vault.store.text_doc_field_lengths.delete(&mut wtxn, id.as_bytes())?);
+        wtxn.commit()?;
+
+        let mut config = Bm25Config::default();
+        config.fields[AnalyzerChannel::Surface.field_id() as usize].weight = 0.0;
+        config.fields[AnalyzerChannel::Stem.field_id() as usize].weight = 0.0;
+        config.fields[AnalyzerChannel::CjkNgram.field_id() as usize].weight = 0.0;
+
+        let rtxn = vault.store.env.read_txn()?;
+        let err = search_text(
+            &vault.store,
+            &rtxn,
+            &MultilingualAnalyzer::portable(),
+            &config,
+            "alpha",
+            10,
+        )
+        .unwrap_err();
         assert!(matches!(err, Error::CorruptedIndex(_)), "expected CorruptedIndex, got {err:?}");
         Ok(())
     }
