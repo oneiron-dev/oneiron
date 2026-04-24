@@ -206,9 +206,11 @@ impl MultilingualAnalyzer {
     }
 
     /// DualHanFallback (plan §1.2): Han-only runs are ambiguous between JP
-    /// kanji and ZH. If the caller gave an explicit hint we honor it;
-    /// otherwise we prefer whichever dict is loaded. With neither loaded
-    /// we fall through to [`cjk_ngram::analyze`].
+    /// kanji and ZH. Explicit caller hints are authoritative: `Ja`/`Zh`
+    /// route to the hinted analyzer regardless of dict presence, and the
+    /// sub-analyzer's portable path handles the dict-absent case. With no
+    /// hint, prefer whichever dict is loaded (JP first when both);
+    /// with neither loaded we fall through to [`cjk_ngram::analyze`].
     fn dispatch_han(
         &self,
         slice: &str,
@@ -218,23 +220,28 @@ impl MultilingualAnalyzer {
         query_mode: bool,
         out: &mut Vec<Token>,
     ) -> u32 {
+        match hint {
+            Some(LanguageHint::Ja) => {
+                return self
+                    .japanese
+                    .analyze(slice, offset_base, position_base, query_mode, out);
+            }
+            Some(LanguageHint::Zh) => {
+                return self
+                    .chinese
+                    .analyze(slice, offset_base, position_base, query_mode, out);
+            }
+            _ => {}
+        }
+
         let ja_has_dict = matches!(self.japanese.mode(), AnalyzerMode::Morphological);
         let zh_has_dict = matches!(self.chinese.mode(), AnalyzerMode::Morphological);
 
-        let prefer_ja = match hint {
-            Some(LanguageHint::Ja) => true,
-            Some(LanguageHint::Zh) => false,
-            _ => ja_has_dict || !zh_has_dict,
-        };
-
-        if prefer_ja && ja_has_dict {
+        if ja_has_dict {
             self.japanese
                 .analyze(slice, offset_base, position_base, query_mode, out)
         } else if zh_has_dict {
             self.chinese
-                .analyze(slice, offset_base, position_base, query_mode, out)
-        } else if ja_has_dict {
-            self.japanese
                 .analyze(slice, offset_base, position_base, query_mode, out)
         } else {
             cjk_ngram::analyze(slice, offset_base, position_base, out)
@@ -707,5 +714,48 @@ mod tests {
             .map(|t| t.term.as_ref())
             .collect();
         assert_eq!(bigrams, vec!["我喜", "喜欢"]);
+    }
+
+    /// Explicit `LanguageHint::Ja` must route Han runs to the JP analyzer
+    /// even when only the ZH dict is loaded. Prior DualHanFallback preferred
+    /// the loaded dict, so an explicit JP caller lost to a ZH-indexed corpus.
+    #[test]
+    fn explicit_ja_hint_does_not_route_to_loaded_zh_dict() {
+        let dir = tempfile::tempdir().unwrap();
+        let dict_path = dir.path().join("tiny.dict.utf8");
+        std::fs::write(&dict_path, "北京 100 ns\n大学 80 n\n").unwrap();
+        let chinese = chinese::ChineseAnalyzer::with_dict(&dict_path)
+            .expect("inline dict should load");
+        assert_eq!(chinese.mode(), AnalyzerMode::Morphological);
+
+        let analyzer = MultilingualAnalyzer {
+            splitter: script::ScriptRunSplitter::new(),
+            japanese: japanese::JapaneseAnalyzer::portable(),
+            chinese,
+            korean: korean::KoreanAnalyzer::portable(),
+            normalization: NormalizationPolicy::default(),
+        };
+        let ctx = AnalyzerContext::for_index().with_language(LanguageHint::Ja);
+        let mut out = Vec::new();
+        analyzer.analyze("北京大学", &ctx, &mut out);
+
+        // Jieba with the inline dict would emit multi-char Surface tokens
+        // `北京` + `大学`. Ja hint routes to the JP portable path, which
+        // delegates to cjk_ngram and emits per-char Surface.
+        assert_eq!(surface_terms(&out), vec!["北", "京", "大", "学"]);
+    }
+
+    /// Symmetric: explicit `LanguageHint::Zh` must route even if only JP is
+    /// loaded. We can't build a morphological JP without env dict, so we
+    /// assert the mirror-image invariant via a portable-ZH analyzer — the
+    /// output is cjk_ngram-shaped either way, but the dispatch target
+    /// differs, and `dispatch_han`'s match arm ordering is what we exercise.
+    #[test]
+    fn explicit_zh_hint_routes_to_chinese_on_portable_analyzer() {
+        let a = MultilingualAnalyzer::portable();
+        let ctx = AnalyzerContext::for_index().with_language(LanguageHint::Zh);
+        let mut out = Vec::new();
+        a.analyze("東京", &ctx, &mut out);
+        assert_eq!(surface_terms(&out), vec!["東", "京"]);
     }
 }

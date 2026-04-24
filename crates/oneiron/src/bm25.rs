@@ -24,6 +24,7 @@
 //! from the index — changing them does not require a reindex.
 
 use std::collections::BTreeMap;
+use std::collections::BTreeSet;
 use std::collections::HashMap;
 use std::collections::hash_map::Entry;
 use std::str;
@@ -288,8 +289,29 @@ pub(crate) fn deindex_text(store: &Store, wtxn: &mut RwTxn<'_>, id: &EntityId) -
     // Group (term, fields) so each posting is rewritten once regardless of
     // how many channels a term appears on.
     let mut per_term: BTreeMap<String, Vec<u16>> = BTreeMap::new();
+    let mut forward_fields: BTreeSet<u16> = BTreeSet::new();
     for rec in forward {
+        forward_fields.insert(rec.field_id);
         per_term.entry(rec.term).or_default().push(rec.field_id);
+    }
+
+    // Forward and per-doc lengths must reference the same field set. Any
+    // asymmetry drifts `text_bm25_field_stats` against `total_docs`: the
+    // posting rewrite below and the length-loop decrement cover different
+    // field sets, but `total_docs--` unconditionally fires once.
+    for fid in &forward_fields {
+        if !lengths.contains_key(fid) {
+            return Err(corrupted(
+                "forward field missing from per-doc field lengths",
+            ));
+        }
+    }
+    for fid in lengths.keys() {
+        if !forward_fields.contains(fid) {
+            return Err(corrupted(
+                "per-doc field length has no matching forward field",
+            ));
+        }
     }
 
     for term in per_term.keys() {
@@ -419,7 +441,24 @@ pub(crate) fn search_text(
                         };
                         field_length_cache.entry(id).or_insert(map)
                     };
-                    f64::from(lens.get(fid).copied().unwrap_or(0))
+                    // The same posting-entry-implies-row invariant applies
+                    // per-field: a referenced `fid` must have an entry in
+                    // the length row. Silently defaulting to 0 would yield
+                    // `norm = 1 - b = 0.25` for the default `b=0.75` — a 4×
+                    // artificial boost for the corrupted document.
+                    match lens.get(fid).copied() {
+                        None => {
+                            return Err(corrupted(
+                                "posting field missing from per-doc field lengths",
+                            ));
+                        }
+                        Some(0) => {
+                            return Err(corrupted(
+                                "zero length for scored CountLengthIncrement field",
+                            ));
+                        }
+                        Some(n) => f64::from(n),
+                    }
                 };
 
                 let avgdl = if matches!(cfg.length_policy, FieldLengthPolicy::NoNorm) {
@@ -1311,6 +1350,110 @@ mod tests {
 
         let mut wtxn = vault.store.env.write_txn()?;
         assert!(vault.store.text_doc_field_lengths.delete(&mut wtxn, id.as_bytes())?);
+        let err = deindex_text(&vault.store, &mut wtxn, &id).unwrap_err();
+        assert!(matches!(err, Error::CorruptedIndex(_)), "expected CorruptedIndex, got {err:?}");
+        Ok(())
+    }
+
+    /// Row present but missing the `Surface` fid. Scorer must not silently
+    /// default `len_f = 0`, which would yield `norm = 1 - b` (a 4× boost
+    /// under default b=0.75) for the corrupted document.
+    #[test]
+    fn search_fails_closed_on_partial_field_lengths() -> Result<()> {
+        let temp_dir = tempfile::tempdir()?;
+        let vault = Vault::open(temp_dir.path(), test_config())?;
+        let id = EntityId::now();
+        put_text_doc(&vault, &id, "alpha beta")?;
+
+        let surface_fid = AnalyzerChannel::Surface.field_id();
+        let mut wtxn = vault.store.env.write_txn()?;
+        let raw = vault
+            .store
+            .text_doc_field_lengths
+            .get(&wtxn, id.as_bytes())?
+            .expect("length row written on index")
+            .to_vec();
+        let mut lens = decode_field_lengths(&raw)?;
+        assert!(lens.remove(&surface_fid).is_some());
+        let patched = encode_field_lengths(&lens);
+        vault
+            .store
+            .text_doc_field_lengths
+            .put(&mut wtxn, id.as_bytes(), &patched)?;
+        wtxn.commit()?;
+
+        let rtxn = vault.store.env.read_txn()?;
+        let err = search_text(
+            &vault.store,
+            &rtxn,
+            &MultilingualAnalyzer::portable(),
+            &Bm25Config::default(),
+            "alpha",
+            10,
+        )
+        .unwrap_err();
+        assert!(matches!(err, Error::CorruptedIndex(_)), "expected CorruptedIndex, got {err:?}");
+        Ok(())
+    }
+
+    /// Row present but missing a forward-referenced fid. Deindex must refuse
+    /// to run: the per-field `text_bm25_field_stats` decrement at the
+    /// length-loop site would silently skip while `total_docs--` still
+    /// fires, drifting the corpus.
+    #[test]
+    fn deindex_fails_closed_on_partial_field_lengths() -> Result<()> {
+        let temp_dir = tempfile::tempdir()?;
+        let vault = Vault::open(temp_dir.path(), test_config())?;
+        let id = EntityId::now();
+        put_text_doc(&vault, &id, "alpha beta")?;
+
+        let surface_fid = AnalyzerChannel::Surface.field_id();
+        let mut wtxn = vault.store.env.write_txn()?;
+        let raw = vault
+            .store
+            .text_doc_field_lengths
+            .get(&wtxn, id.as_bytes())?
+            .expect("length row written on index")
+            .to_vec();
+        let mut lens = decode_field_lengths(&raw)?;
+        assert!(lens.remove(&surface_fid).is_some());
+        let patched = encode_field_lengths(&lens);
+        vault
+            .store
+            .text_doc_field_lengths
+            .put(&mut wtxn, id.as_bytes(), &patched)?;
+
+        let err = deindex_text(&vault.store, &mut wtxn, &id).unwrap_err();
+        assert!(matches!(err, Error::CorruptedIndex(_)), "expected CorruptedIndex, got {err:?}");
+        Ok(())
+    }
+
+    /// Inverse: length row lists a fid with no matching forward entry.
+    /// Same drift class — forward-loop decrements fire for a subset of
+    /// fields that doesn't cover the lengths map.
+    #[test]
+    fn deindex_fails_closed_on_orphan_length_entry() -> Result<()> {
+        let temp_dir = tempfile::tempdir()?;
+        let vault = Vault::open(temp_dir.path(), test_config())?;
+        let id = EntityId::now();
+        put_text_doc(&vault, &id, "alpha beta")?;
+
+        let mut wtxn = vault.store.env.write_txn()?;
+        let raw = vault
+            .store
+            .text_doc_field_lengths
+            .get(&wtxn, id.as_bytes())?
+            .expect("length row written on index")
+            .to_vec();
+        let mut lens = decode_field_lengths(&raw)?;
+        // Inject an orphan fid that no forward record will reference.
+        lens.insert(9999, 7);
+        let patched = encode_field_lengths(&lens);
+        vault
+            .store
+            .text_doc_field_lengths
+            .put(&mut wtxn, id.as_bytes(), &patched)?;
+
         let err = deindex_text(&vault.store, &mut wtxn, &id).unwrap_err();
         assert!(matches!(err, Error::CorruptedIndex(_)), "expected CorruptedIndex, got {err:?}");
         Ok(())
