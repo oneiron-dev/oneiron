@@ -28,8 +28,20 @@ pub enum ScriptClass {
     Myanmar,
     Devanagari,
     Tamil,
-    /// Common / Inherited / Unknown — never emitted as its own run after
-    /// [`ScriptRunSplitter::runs`] has attached it to a neighbor.
+    /// Common / Inherited / Unknown.
+    ///
+    /// `ScriptRunSplitter::runs` attaches Common runs to an adjacent
+    /// non-CJK neighbor when one exists, but Common can still surface as
+    /// its own run when:
+    /// * the input is purely Common (e.g. `"!?@"`),
+    /// * Common bytes lead or trail the input with no non-CJK neighbor to
+    ///   absorb them,
+    /// * Common bytes sit between two CJK runs — they never merge into a
+    ///   CJK run because that would let punctuation cross the n-gram
+    ///   boundary, so they stand alone.
+    ///
+    /// Consumers must handle Common runs (the dispatcher routes them to
+    /// `icu::analyze`).
     Common,
     /// Scripts outside the explicit list above.
     Other,

@@ -95,12 +95,13 @@ impl<'a> NormalizedText<'a> {
         matches!(self.inner, Inner::Unchanged(_))
     }
 
-    /// Translate a byte offset in the normalized text back to the original.
+    /// Translate a token's start byte offset back to the original.
     ///
-    /// Falls back to the preceding grapheme boundary if `norm_off` lands
-    /// mid-grapheme. Word-aware segmenters (`unicode_word_indices`, ICU4X,
-    /// Sudachi/jieba/Lindera) respect grapheme boundaries, so the fallback
-    /// only matters for pathological inputs.
+    /// Rounds DOWN to the preceding grapheme boundary on a mid-grapheme
+    /// offset — pairs with [`remap_end`] which rounds UP, so a token
+    /// emitted on an interior NFKC-expanded grapheme (e.g. `㍻`→`平成`)
+    /// gets pinned to the full original grapheme rather than collapsing
+    /// to a zero-width span.
     pub fn remap(&self, norm_off: u32) -> u32 {
         match &self.inner {
             Inner::Unchanged(_) => norm_off,
@@ -108,6 +109,29 @@ impl<'a> NormalizedText<'a> {
                 match boundaries.binary_search_by_key(&norm_off, |&(n, _)| n) {
                     Ok(i) => boundaries[i].1,
                     Err(i) => boundaries[i.saturating_sub(1)].1,
+                }
+            }
+        }
+    }
+
+    /// Translate a token's end byte offset back to the original, rounding
+    /// UP to the next grapheme boundary on a mid-grapheme offset.
+    ///
+    /// Without rounding-up, NFKC expansions like `㍻` (3 bytes, 1 grapheme)
+    /// → `平成` (6 bytes, 2 graphemes) would collapse the first emitted
+    /// CJK token's `byte_end=3` to original `0` (preceding boundary),
+    /// violating the public `Token` invariant `byte_start < byte_end`.
+    pub fn remap_end(&self, norm_off: u32) -> u32 {
+        match &self.inner {
+            Inner::Unchanged(_) => norm_off,
+            Inner::Owned { boundaries, .. } => {
+                match boundaries.binary_search_by_key(&norm_off, |&(n, _)| n) {
+                    Ok(i) => boundaries[i].1,
+                    Err(i) => boundaries
+                        .get(i)
+                        .or_else(|| boundaries.last())
+                        .map(|&(_, o)| o)
+                        .unwrap_or(0),
                 }
             }
         }
@@ -276,6 +300,24 @@ mod tests {
         assert_eq!(out.remap(0), 0);
         // `ガ` is 3 bytes in UTF-8; the original `ｶﾞ` is 6.
         assert_eq!(out.remap(3), 6);
+    }
+
+    #[test]
+    fn remap_end_rounds_up_through_nfkc_expansion() {
+        // `㍻` (U+337B, 3 bytes, 1 grapheme) → `平成` (6 bytes, 2 graphemes).
+        // boundaries = [(0,0), (6,3)] — interior offsets must NOT collapse
+        // a token's byte_end to 0 (preceding boundary). `remap_end` rounds
+        // UP to the next boundary so the token stays pinned to the
+        // original 3-byte grapheme.
+        let policy = NormalizationPolicy::default();
+        let out = normalize_with_offset_map("㍻", &policy);
+        assert_eq!(out.as_str(), "平成");
+        // Two normalized tokens at 0..3 (`平`) and 3..6 (`成`) must both
+        // map to the original 0..3 span.
+        assert_eq!(out.remap(0), 0);
+        assert_eq!(out.remap_end(3), 3);
+        assert_eq!(out.remap(3), 0);
+        assert_eq!(out.remap_end(6), 3);
     }
 
     #[test]

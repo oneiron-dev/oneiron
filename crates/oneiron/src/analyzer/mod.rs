@@ -152,7 +152,7 @@ impl MultilingualAnalyzer {
         if !normalized.is_unchanged() {
             for tok in &mut out[token_start..] {
                 tok.byte_start = normalized.remap(tok.byte_start);
-                tok.byte_end = normalized.remap(tok.byte_end);
+                tok.byte_end = normalized.remap_end(tok.byte_end);
             }
         }
 
@@ -292,6 +292,12 @@ impl MultilingualAnalyzer {
                 .iter()
                 .map(|c| c.as_str().to_string())
                 .collect(),
+            // Reflects what `dispatch_run` actually invokes Snowball on.
+            // Arabic / Hebrew / Indic / SEA scripts route to `icu::analyze`,
+            // which performs no stemming, so they are intentionally absent —
+            // adding them would bind the manifest hash to a capability that
+            // never fires and trigger false-positive reindex on stemmer
+            // version bumps.
             stemmer_langs: vec![
                 "en".into(),
                 "es".into(),
@@ -309,7 +315,6 @@ impl MultilingualAnalyzer {
                 "ro".into(),
                 "tr".into(),
                 "el".into(),
-                "ar".into(),
             ],
         }
     }
