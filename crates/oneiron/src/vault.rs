@@ -134,6 +134,11 @@ impl Vault {
             let rtxn = store.env.read_txn()?;
             let empty = text_index_is_empty(&store, &rtxn)?;
             drop(rtxn);
+            if empty {
+                let mut wtxn = store.env.write_txn()?;
+                write_text_index_manifest(&store, &mut wtxn, &analyzer)?;
+                wtxn.commit()?;
+            }
             empty
         } else {
             handshake_text_index_manifest(&store, &analyzer)?;
@@ -713,7 +718,7 @@ impl Vault {
     /// Checks whether making `target` a parent of `node` would create a cycle.
     ///
     /// Convenience wrapper that opens its own read transaction.
-    /// For atomic check+insert, use [`would_create_cycle_in_txn`] within a
+    /// For atomic check+insert, use `would_create_cycle_in_txn` within a
     /// write transaction (see `BatchBuilder::edge_checked`).
     pub fn would_create_cycle(&self, node: &EntityId, target: &EntityId) -> Result<bool> {
         let rtxn = self.store.env.read_txn()?;
@@ -815,6 +820,16 @@ fn read_text_schema_version(store: &Store, rtxn: &heed::RoTxn<'_>) -> Result<Opt
     Ok(Some(u16::from_le_bytes(bytes)))
 }
 
+fn read_hash_32(store: &Store, rtxn: &heed::RoTxn<'_>, key: &[u8]) -> Result<Option<[u8; 32]>> {
+    let Some(raw) = store.vault_meta.get(rtxn, key)? else {
+        return Ok(None);
+    };
+    let arr: [u8; 32] = raw
+        .try_into()
+        .map_err(|_| Error::CorruptedIndex("text index hash"))?;
+    Ok(Some(arr))
+}
+
 /// Returns `true` when none of the text-index DBs hold residual rows.
 ///
 /// The `total_docs` sentinel alone isn't authoritative — a zero or missing
@@ -878,14 +893,8 @@ fn handshake_text_index_manifest(store: &Store, analyzer: &MultilingualAnalyzer)
         return Ok(());
     }
 
-    let stored_manifest_hash = store
-        .vault_meta
-        .get(&rtxn, TEXT_ANALYZER_MANIFEST_HASH_KEY)?
-        .map(|b| b.to_vec());
-    let stored_field_schema_hash = store
-        .vault_meta
-        .get(&rtxn, TEXT_BM25_FIELD_SCHEMA_HASH_KEY)?
-        .map(|b| b.to_vec());
+    let stored_manifest_hash = read_hash_32(store, &rtxn, TEXT_ANALYZER_MANIFEST_HASH_KEY)?;
+    let stored_field_schema_hash = read_hash_32(store, &rtxn, TEXT_BM25_FIELD_SCHEMA_HASH_KEY)?;
     let stored_manifest_bytes = store
         .vault_meta
         .get(&rtxn, TEXT_ANALYZER_MANIFEST_KEY)?
@@ -1082,6 +1091,27 @@ mod tests {
     }
 
     #[test]
+    fn bypass_on_empty_persists_manifest_for_normal_reopen() -> Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let a = entity(10);
+
+        {
+            let mut cfg = test_config();
+            cfg.skip_text_index_manifest_check = true;
+            let vault = Vault::open(tmp.path(), cfg)?;
+            vault
+                .batch()
+                .put(&a, 0, range(1, 1), 1, b"a")
+                .text(&a, &[("body", "hello world")])
+                .commit()?;
+        }
+
+        let vault = Vault::open(tmp.path(), test_config())?;
+        assert_eq!(vault.search_text("hello", 10)?.len(), 1);
+        Ok(())
+    }
+
+    #[test]
     fn reopen_same_manifest_preserves_text_index() -> Result<()> {
         let tmp = tempfile::tempdir()?;
         let a = entity(11);
@@ -1205,6 +1235,41 @@ mod tests {
         assert!(
             matches!(err, Error::IncompatibleAnalyzer { .. }),
             "expected IncompatibleAnalyzer, got {err:?}",
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn handshake_rejects_truncated_stored_hash() -> Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let a = entity(51);
+
+        {
+            let vault = Vault::open(tmp.path(), test_config())?;
+            vault
+                .batch()
+                .put(&a, 0, range(1, 1), 1, b"a")
+                .text(&a, &[("body", "hello world")])
+                .commit()?;
+        }
+
+        {
+            let vault = Vault::open(tmp.path(), test_config())?;
+            let mut wtxn = vault.store.env.write_txn()?;
+            vault
+                .store
+                .vault_meta
+                .put(&mut wtxn, TEXT_ANALYZER_MANIFEST_HASH_KEY, &[0xCC; 16])?;
+            wtxn.commit()?;
+        }
+
+        let err = match Vault::open(tmp.path(), test_config()) {
+            Ok(_) => panic!("expected Vault::open to fail"),
+            Err(e) => e,
+        };
+        assert!(
+            matches!(err, Error::CorruptedIndex(_)),
+            "expected CorruptedIndex, got {err:?}",
         );
         Ok(())
     }

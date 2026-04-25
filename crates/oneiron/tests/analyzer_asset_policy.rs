@@ -133,7 +133,11 @@ fn assert_asset_policy(lang: &str, asset: &AnalyzerAssetManifest, allowed: &BTre
         asset.license
     );
     assert!(
-        asset.sha256.len() == 64 && asset.sha256.chars().all(|c| c.is_ascii_hexdigit()),
+        asset.sha256.len() == 64
+            && asset
+                .sha256
+                .chars()
+                .all(|c| c.is_ascii_digit() || ('a'..='f').contains(&c)),
         "analyzer asset for lang `{lang}` has malformed sha256 `{}` \
          (expected 64 lowercase hex chars)",
         asset.sha256

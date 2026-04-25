@@ -450,6 +450,9 @@ pub(crate) fn search_text(
             continue;
         }
         let df = entries.len() as f64;
+        if df > n {
+            return Err(corrupted("posting list length exceeds total_docs"));
+        }
         let idf = ((n - df + 0.5) / (df + 0.5) + 1.0).ln();
 
         for entry in entries {
@@ -471,7 +474,7 @@ pub(crate) fn search_text(
 
             for (fid, tf) in &entry.fields {
                 let Some(channel) = AnalyzerChannel::from_field_id(*fid) else {
-                    continue;
+                    return Err(corrupted("posting field_id not in current schema"));
                 };
                 let cfg = config.field(channel);
                 if cfg.weight == 0.0 {
@@ -1439,6 +1442,86 @@ mod tests {
                 .text_bm25_field_stats
                 .delete(&mut wtxn, &surface_fid.to_be_bytes())?
         );
+        wtxn.commit()?;
+
+        let rtxn = vault.store.env.read_txn()?;
+        let err = search_text(
+            &vault.store,
+            &rtxn,
+            &MultilingualAnalyzer::portable(),
+            &Bm25Config::default(),
+            "alpha",
+            10,
+        )
+        .unwrap_err();
+        assert!(
+            matches!(err, Error::CorruptedIndex(_)),
+            "expected CorruptedIndex, got {err:?}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn search_fails_closed_on_unknown_field_id() -> Result<()> {
+        let temp_dir = tempfile::tempdir()?;
+        let vault = Vault::open(temp_dir.path(), test_config())?;
+        let id = EntityId::now();
+        put_text_doc(&vault, &id, "alpha beta")?;
+
+        let mut wtxn = vault.store.env.write_txn()?;
+        let mut posting = vault
+            .store
+            .text_postings
+            .get(&wtxn, b"alpha")?
+            .expect("alpha posting written")
+            .to_vec();
+        let fid_offset = ENTITY_ID_LEN + 1;
+        posting[fid_offset..fid_offset + 2].copy_from_slice(&9999_u16.to_be_bytes());
+        vault
+            .store
+            .text_postings
+            .put(&mut wtxn, b"alpha", &posting)?;
+        wtxn.commit()?;
+
+        let rtxn = vault.store.env.read_txn()?;
+        let err = search_text(
+            &vault.store,
+            &rtxn,
+            &MultilingualAnalyzer::portable(),
+            &Bm25Config::default(),
+            "alpha",
+            10,
+        )
+        .unwrap_err();
+        assert!(
+            matches!(err, Error::CorruptedIndex(_)),
+            "expected CorruptedIndex, got {err:?}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn search_fails_closed_on_df_exceeds_total_docs() -> Result<()> {
+        let temp_dir = tempfile::tempdir()?;
+        let vault = Vault::open(temp_dir.path(), test_config())?;
+        let id = EntityId::now();
+        put_text_doc(&vault, &id, "alpha beta")?;
+
+        let mut wtxn = vault.store.env.write_txn()?;
+        let mut posting = vault
+            .store
+            .text_postings
+            .get(&wtxn, b"alpha")?
+            .expect("alpha posting written")
+            .to_vec();
+        let phantom = EntityId::now();
+        let mut fields = std::collections::BTreeMap::new();
+        fields.insert(AnalyzerChannel::Surface.field_id(), 1);
+        encode_posting_entry(&phantom, &fields, &mut posting)?;
+        vault
+            .store
+            .text_postings
+            .put(&mut wtxn, b"alpha", &posting)?;
         wtxn.commit()?;
 
         let rtxn = vault.store.env.read_txn()?;

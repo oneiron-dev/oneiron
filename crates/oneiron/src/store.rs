@@ -23,19 +23,13 @@ const HNSW_COMPATIBILITY_VERSION: u8 = 1;
 const HNSW_COMPATIBILITY_LEN: usize = 25;
 
 // BM25F / analyzer schema v2 keys. All live in the new `vault_meta` DB.
-// Wired up by commits 12 + 13 (scorer and Vault::open manifest validation).
-#[allow(dead_code)]
 pub(crate) const TEXT_INDEX_SCHEMA_VERSION_KEY: &[u8] = b"text_index_schema_version";
-#[allow(dead_code)]
 pub(crate) const TEXT_ANALYZER_MANIFEST_KEY: &[u8] = b"text_analyzer_manifest";
-#[allow(dead_code)]
 pub(crate) const TEXT_ANALYZER_MANIFEST_HASH_KEY: &[u8] = b"text_analyzer_manifest_hash";
-#[allow(dead_code)]
 pub(crate) const TEXT_BM25_FIELD_SCHEMA_HASH_KEY: &[u8] = b"text_bm25_field_schema_hash";
 /// Current text-index schema version written on new vaults.
 /// * v1 = pre-ONE-317 hand-rolled tokenizer (never written — greenfield).
 /// * v2 = ONE-317 analyzer + BM25F (this release).
-#[allow(dead_code)] // wired up by the BM25F scorer in commit 12
 pub(crate) const TEXT_INDEX_SCHEMA_VERSION: u16 = 2;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -76,16 +70,13 @@ pub struct Store {
     /// BM25F per-field corpus stats.
     /// Key: `field_id` big-endian u16.
     /// Value: `[doc_count_u32_le | total_length_u64_le]`.
-    #[allow(dead_code)] // wired up by the BM25F indexer in commit 11
     pub(crate) text_bm25_field_stats: Database<Bytes, Bytes>,
     /// Per-doc, per-field surface-token lengths used by the BM25F length
     /// normalization term. Key: entity_id (16B). Value: a flat
     /// `[(field_id_u16_be | length_u32_le)*]` list over present fields.
-    #[allow(dead_code)] // wired up by the BM25F indexer in commit 11
     pub(crate) text_doc_field_lengths: Database<Bytes, Bytes>,
     /// Vault-level metadata (analyzer manifest, schema version, field
     /// schema hash). Read on `Vault::open` to gate index compatibility.
-    #[allow(dead_code)] // wired up by vault::open in commit 13
     pub(crate) vault_meta: Database<Bytes, Bytes>,
     pub(crate) ppr_cache: Database<Bytes, Bytes>,
     pub(crate) ppr_cache_deps: Database<Bytes, Bytes>,
