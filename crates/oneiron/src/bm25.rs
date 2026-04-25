@@ -107,8 +107,26 @@ pub(crate) struct Bm25Config {
     /// Per-channel config, indexed by [`AnalyzerChannel::field_id`]. The
     /// array has one slot per reserved channel, so adding a new channel
     /// in [`AnalyzerChannel`] requires extending this.
-    pub(crate) fields: [FieldConfig; 7],
+    pub(crate) fields: [FieldConfig; BM25_FIELD_COUNT],
 }
+
+/// One slot per reserved [`AnalyzerChannel`]. A new channel whose
+/// `field_id()` falls outside `0..BM25_FIELD_COUNT` would silently
+/// out-of-bounds index `Bm25Config::fields`; the const block below ties
+/// this constant to the highest-id channel so adding a variant without
+/// growing the array breaks the build.
+pub(crate) const BM25_FIELD_COUNT: usize = 7;
+
+const _: () = {
+    // The reserved-channel set is `Surface, Stem, NormalizedOverlay,
+    // CjkNgram, Shingle, Synonym, Phonetic`. `Phonetic` carries the
+    // highest `field_id` (6), so this assert fires whenever a future
+    // variant pushes the highest id past `BM25_FIELD_COUNT - 1`.
+    assert!(
+        AnalyzerChannel::Phonetic.field_id() as usize == BM25_FIELD_COUNT - 1,
+        "Bm25Config::fields must grow when AnalyzerChannel gains a higher-id variant"
+    );
+};
 
 impl Bm25Config {
     pub(crate) fn field(&self, channel: AnalyzerChannel) -> FieldConfig {
@@ -121,7 +139,7 @@ impl Default for Bm25Config {
         // Plan §1.3 default rank profile. Weights and `b` are research-band
         // starting values; ONE-318 bench tuning will replace them with
         // empirically-derived numbers.
-        let mut fields = [FieldConfig::disabled(); 7];
+        let mut fields = [FieldConfig::disabled(); BM25_FIELD_COUNT];
         fields[AnalyzerChannel::Surface.field_id() as usize] = FieldConfig {
             weight: 1.00,
             b: 0.75,
@@ -1292,7 +1310,7 @@ mod tests {
         put_text_doc(&vault, &short_id, "東京")?;
         put_text_doc(&vault, &long_id, "東京研究所大学図書館")?;
 
-        let mut fields = [FieldConfig::disabled(); 7];
+        let mut fields = [FieldConfig::disabled(); BM25_FIELD_COUNT];
         fields[AnalyzerChannel::CjkNgram.field_id() as usize] = FieldConfig {
             weight: 1.0,
             b: 0.30,

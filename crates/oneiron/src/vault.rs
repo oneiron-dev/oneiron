@@ -89,6 +89,15 @@ pub struct Vault {
     pub(crate) store: Store,
     pub(crate) config: VaultConfig,
     pub(crate) analyzer: MultilingualAnalyzer,
+    /// `false` only when `Vault::open` ran with
+    /// `skip_text_index_manifest_check = true` against a populated index.
+    /// In that state the on-disk postings may have been written under a
+    /// different analyzer manifest than the in-memory one, so scoring
+    /// against them silently returns wrong results. `search_text` returns
+    /// `Error::CorruptedIndex` until `MaintenanceBuilder::clear_text_index`
+    /// rewrites the manifest. Reopening cleanly also restores trust via
+    /// the regular handshake path.
+    pub(crate) text_index_trusted: std::sync::atomic::AtomicBool,
 }
 
 impl Vault {
@@ -113,15 +122,44 @@ impl Vault {
         let store = Store::open(path, &config)?;
         let analyzer = MultilingualAnalyzer::discover(&config.dict_search_paths)
             .map_err(|e| Error::AnalyzerError(e.to_string()))?;
-        if !config.skip_text_index_manifest_check {
+        let text_index_trusted = if config.skip_text_index_manifest_check {
+            // Bypass-on-empty-index is fine — there are no postings under any
+            // analyzer manifest yet, so anything we write next will be the
+            // first authoritative state. Bypass-on-populated-index leaves the
+            // on-disk postings potentially analyzer-incompatible with the
+            // in-memory analyzer; mark the index untrusted so search fails
+            // closed until `clear_text_index` runs.
+            let rtxn = store.env.read_txn()?;
+            let total_docs = bm25::read_total_docs(&store, &rtxn)?;
+            drop(rtxn);
+            total_docs == 0
+        } else {
             handshake_text_index_manifest(&store, &analyzer)?;
-        }
+            true
+        };
 
         Ok(Self {
             store,
             config,
             analyzer,
+            text_index_trusted: std::sync::atomic::AtomicBool::new(text_index_trusted),
         })
+    }
+
+    /// Internal guard: read paths over the text index must refuse to score
+    /// when the analyzer-manifest handshake was bypassed on a populated
+    /// index. See the docstring on `Vault::text_index_trusted`.
+    pub(crate) fn ensure_text_index_trusted(&self) -> Result<()> {
+        if self
+            .text_index_trusted
+            .load(std::sync::atomic::Ordering::Relaxed)
+        {
+            Ok(())
+        } else {
+            Err(Error::CorruptedIndex(
+                "text index handshake bypassed on populated index",
+            ))
+        }
     }
 
     /// Current text-index status. `analyzer_manifest` reflects the analyzer
@@ -284,6 +322,7 @@ impl Vault {
 
     /// Returns BM25 text matches for a query.
     pub fn search_text(&self, query: &str, limit: usize) -> Result<Vec<ScoredEntity>> {
+        self.ensure_text_index_trusted()?;
         let rtxn = self.store.env.read_txn()?;
         bm25::search_text(
             &self.store,
@@ -797,6 +836,20 @@ fn handshake_text_index_manifest(store: &Store, analyzer: &MultilingualAnalyzer)
     let total_docs = bm25::read_total_docs(store, &rtxn)?;
 
     if total_docs == 0 {
+        // The `total_docs` sentinel alone isn't sufficient to declare the
+        // index empty: a missing or zeroed sentinel coexisting with rows
+        // in the inverted/forward/length/stats DBs would let us silently
+        // rewrite the manifest over a populated incompatible index. Refuse
+        // to rewrite unless every text DB is actually empty.
+        let residual = store.text_postings.len(&rtxn)?
+            + store.text_forward.len(&rtxn)?
+            + store.text_doc_field_lengths.len(&rtxn)?
+            + store.text_bm25_field_stats.len(&rtxn)?;
+        if residual > 0 {
+            return Err(Error::CorruptedIndex(
+                "text index sentinel missing with residual rows",
+            ));
+        }
         drop(rtxn);
         let mut wtxn = store.env.write_txn()?;
         write_text_index_manifest(store, &mut wtxn, analyzer)?;
@@ -1176,6 +1229,72 @@ mod tests {
         // Normal open now succeeds — clear_text_index rewrote the manifest.
         let vault = Vault::open(tmp.path(), test_config())?;
         assert_eq!(vault.text_index_status()?.total_docs, 0);
+        Ok(())
+    }
+
+    #[test]
+    fn search_text_fails_closed_when_handshake_bypassed_on_populated_index() -> Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let a = entity(71);
+
+        {
+            let vault = Vault::open(tmp.path(), test_config())?;
+            vault
+                .batch()
+                .put(&a, 0, range(1, 1), 1, b"a")
+                .text(&a, &[("body", "hello world")])
+                .commit()?;
+        }
+
+        // Open with the bypass set — the index has rows but the handshake
+        // didn't run. `search_text` would otherwise score against postings
+        // that may have been written under a different analyzer manifest.
+        let mut cfg = test_config();
+        cfg.skip_text_index_manifest_check = true;
+        let vault = Vault::open(tmp.path(), cfg)?;
+        let err = vault
+            .search_text("hello", 10)
+            .expect_err("search_text must refuse on bypassed-and-populated state");
+        assert!(
+            matches!(err, Error::CorruptedIndex(_)),
+            "expected CorruptedIndex, got {err:?}",
+        );
+
+        // After clear_text_index, trust is restored within the same vault.
+        vault.maintain().clear_text_index().run()?;
+        assert!(vault.search_text("hello", 10).is_ok());
+        Ok(())
+    }
+
+    #[test]
+    fn handshake_rejects_residual_rows_with_missing_total_docs_sentinel() -> Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let a = entity(72);
+
+        {
+            let vault = Vault::open(tmp.path(), test_config())?;
+            vault
+                .batch()
+                .put(&a, 0, range(1, 1), 1, b"a")
+                .text(&a, &[("body", "alpha")])
+                .commit()?;
+
+            // Wipe the `total_docs` sentinel out of `text_meta` while
+            // leaving `text_postings` / `text_forward` /
+            // `text_doc_field_lengths` / `text_bm25_field_stats` populated.
+            let mut wtxn = vault.store.env.write_txn()?;
+            vault.store.text_meta.clear(&mut wtxn)?;
+            wtxn.commit()?;
+        }
+
+        let err = match Vault::open(tmp.path(), test_config()) {
+            Ok(_) => panic!("expected Vault::open to fail closed"),
+            Err(e) => e,
+        };
+        assert!(
+            matches!(err, Error::CorruptedIndex(_)),
+            "expected CorruptedIndex, got {err:?}",
+        );
         Ok(())
     }
 

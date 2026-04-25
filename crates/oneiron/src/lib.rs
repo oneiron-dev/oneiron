@@ -33,7 +33,7 @@ pub use crate::types::{
     PackStats, ScoredEntity, Signal, TemporalAnchorMode, TemporalGranularity, TextAnalyzerConfig,
     TextIndexOptions, TimeRange, TokenAllocation, Vad, VaultConfig,
 };
-pub use crate::vault::Vault;
+pub use crate::vault::{TextIndexStatus, Vault};
 
 pub(crate) fn unix_seconds_now() -> u64 {
     SystemTime::now()
