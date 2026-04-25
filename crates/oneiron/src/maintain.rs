@@ -54,9 +54,10 @@ pub struct MaintenanceReport {
     pub short_id_hashes_updated: u64,
     /// Posting-list rows removed by `clear_text_index`.
     pub text_postings_removed: u64,
-    /// `text_meta` rows removed by `clear_text_index` (excludes the
-    /// `TOTAL_DOCS_KEY` / `TOTAL_LENGTH_KEY` sentinel rows, which are
-    /// rewritten rather than deleted).
+    /// `text_meta` rows removed by `clear_text_index`. Includes the
+    /// `TOTAL_DOCS_KEY` / `TOTAL_LENGTH_KEY` sentinel rows; absence of those
+    /// keys is read by `bm25::read_total_docs` as zero, so the deletion is
+    /// equivalent to a rewrite-to-zero.
     pub text_meta_removed: u64,
     /// Forward-index rows removed by `clear_text_index`.
     pub text_forward_removed: u64,
@@ -193,6 +194,14 @@ fn clear_text_index(vault: &Vault) -> Result<ClearTextIndexCounts> {
     write_text_index_manifest(&vault.store, &mut wtxn, &vault.analyzer)?;
 
     wtxn.commit()?;
+
+    // The on-disk manifest now matches the in-memory analyzer; subsequent
+    // search_text calls within the same Vault instance can proceed. See
+    // `Vault::text_index_trusted`.
+    vault
+        .text_index_trusted
+        .store(true, std::sync::atomic::Ordering::Relaxed);
+
     Ok(ClearTextIndexCounts {
         postings,
         meta,

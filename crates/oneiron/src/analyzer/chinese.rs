@@ -210,7 +210,9 @@ impl CharByteTable {
 }
 
 pub fn char_to_byte_table(text: &str) -> CharByteTable {
-    let mut byte_of_char: Vec<usize> = Vec::with_capacity(text.chars().count() + 1);
+    // `text.len() + 1` is always >= `chars().count() + 1`, so it's a sufficient
+    // upper bound for capacity and avoids a separate O(n) walk just to count.
+    let mut byte_of_char: Vec<usize> = Vec::with_capacity(text.len() + 1);
     let mut char_of_byte: Vec<usize> = vec![0; text.len() + 1];
     let mut char_idx = 0usize;
     for (b, c) in text.char_indices() {

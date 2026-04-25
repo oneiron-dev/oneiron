@@ -104,7 +104,7 @@ impl AnalyzerChannel {
         }
     }
 
-    pub fn field_id(self) -> u16 {
+    pub const fn field_id(self) -> u16 {
         match self {
             AnalyzerChannel::Surface => 0,
             AnalyzerChannel::Stem => 1,
