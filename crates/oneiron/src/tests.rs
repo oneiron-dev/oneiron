@@ -17,7 +17,7 @@ use crate::store::{
 };
 
 #[cfg(not(feature = "sync"))]
-const DB_NAMES: [&str; 20] = [
+const DB_NAMES: [&str; 23] = [
     "entities",
     "edges_out",
     "edges_in",
@@ -27,6 +27,9 @@ const DB_NAMES: [&str; 20] = [
     "text_postings",
     "text_meta",
     "text_forward",
+    "text_bm25_field_stats",
+    "text_doc_field_lengths",
+    "vault_meta",
     "ppr_cache",
     "ppr_cache_deps",
     "type_index",
@@ -41,7 +44,7 @@ const DB_NAMES: [&str; 20] = [
 ];
 
 #[cfg(feature = "sync")]
-const DB_NAMES: [&str; 22] = [
+const DB_NAMES: [&str; 25] = [
     "entities",
     "edges_out",
     "edges_in",
@@ -51,6 +54,9 @@ const DB_NAMES: [&str; 22] = [
     "text_postings",
     "text_meta",
     "text_forward",
+    "text_bm25_field_stats",
+    "text_doc_field_lengths",
+    "vault_meta",
     "ppr_cache",
     "ppr_cache_deps",
     "type_index",

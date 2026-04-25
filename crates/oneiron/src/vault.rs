@@ -128,11 +128,13 @@ impl Vault {
             // first authoritative state. Bypass-on-populated-index leaves the
             // on-disk postings potentially analyzer-incompatible with the
             // in-memory analyzer; mark the index untrusted so search fails
-            // closed until `clear_text_index` runs.
+            // closed until `clear_text_index` runs. The same residual-rows
+            // check used by the handshake applies — `total_docs == 0` alone
+            // can still hide stale postings/forward/length/stats rows.
             let rtxn = store.env.read_txn()?;
-            let total_docs = bm25::read_total_docs(&store, &rtxn)?;
+            let empty = text_index_is_empty(&store, &rtxn)?;
             drop(rtxn);
-            total_docs == 0
+            empty
         } else {
             handshake_text_index_manifest(&store, &analyzer)?;
             true
@@ -813,6 +815,29 @@ fn read_text_schema_version(store: &Store, rtxn: &heed::RoTxn<'_>) -> Result<Opt
     Ok(Some(u16::from_le_bytes(bytes)))
 }
 
+/// Returns `true` when none of the text-index DBs hold residual rows.
+///
+/// The `total_docs` sentinel alone isn't authoritative — a zero or missing
+/// sentinel coexisting with rows in any of the text DBs is corruption, not
+/// emptiness.
+fn text_index_residual_rows_empty(store: &Store, rtxn: &heed::RoTxn<'_>) -> Result<bool> {
+    let residual = store.text_postings.len(rtxn)?
+        + store.text_forward.len(rtxn)?
+        + store.text_doc_field_lengths.len(rtxn)?
+        + store.text_bm25_field_stats.len(rtxn)?;
+    Ok(residual == 0)
+}
+
+/// Whether the on-disk text index is fully empty: zero `total_docs` AND
+/// no residual rows in any text DB. Used by `Vault::open` to decide
+/// whether bypassing the manifest handshake is safe.
+fn text_index_is_empty(store: &Store, rtxn: &heed::RoTxn<'_>) -> Result<bool> {
+    if bm25::read_total_docs(store, rtxn)? != 0 {
+        return Ok(false);
+    }
+    text_index_residual_rows_empty(store, rtxn)
+}
+
 /// Validate the on-disk analyzer manifest against the in-memory one. Runs
 /// once at `Vault::open`. States are handled per plan ONE-317 §4.2:
 ///
@@ -841,11 +866,7 @@ fn handshake_text_index_manifest(store: &Store, analyzer: &MultilingualAnalyzer)
         // in the inverted/forward/length/stats DBs would let us silently
         // rewrite the manifest over a populated incompatible index. Refuse
         // to rewrite unless every text DB is actually empty.
-        let residual = store.text_postings.len(&rtxn)?
-            + store.text_forward.len(&rtxn)?
-            + store.text_doc_field_lengths.len(&rtxn)?
-            + store.text_bm25_field_stats.len(&rtxn)?;
-        if residual > 0 {
+        if !text_index_residual_rows_empty(store, &rtxn)? {
             return Err(Error::CorruptedIndex(
                 "text index sentinel missing with residual rows",
             ));
