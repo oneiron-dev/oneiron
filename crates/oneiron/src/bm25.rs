@@ -328,8 +328,14 @@ pub(crate) fn deindex_text(store: &Store, wtxn: &mut RwTxn<'_>, id: &EntityId) -
     }
 
     for term in per_term.keys() {
+        // Forward index says this term exists for this doc; an absent
+        // posting row is corruption, not a normal "term gone" condition.
+        // Silently skipping would let `total_docs--` fire below while the
+        // already-missing posting bytes remain unaccounted for.
         let Some(posting) = store.text_postings.get(wtxn, term.as_bytes())? else {
-            continue;
+            return Err(corrupted(
+                "forward term references missing posting row during deindex",
+            ));
         };
         let (retained, removed) = strip_entity_from_posting(posting, id)?;
         if !removed {

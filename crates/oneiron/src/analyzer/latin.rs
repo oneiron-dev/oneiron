@@ -34,7 +34,10 @@ pub fn algorithm_for(hint: LanguageHint) -> Option<Algorithm> {
         LanguageHint::Ro => Some(Algorithm::Romanian),
         LanguageHint::Tr => Some(Algorithm::Turkish),
         LanguageHint::El => Some(Algorithm::Greek),
-        LanguageHint::Ar => Some(Algorithm::Arabic),
+        // Arabic routes to `icu::analyze` in the composer (script != Latin),
+        // so the Snowball Arabic stemmer is unreachable through the public
+        // analyzer pipeline. Keep it out of the map so the manifest's
+        // `stemmer_langs` mirrors what actually executes.
         _ => None,
     }
 }
@@ -284,7 +287,6 @@ mod tests {
             (LanguageHint::Ro, Algorithm::Romanian),
             (LanguageHint::Tr, Algorithm::Turkish),
             (LanguageHint::El, Algorithm::Greek),
-            (LanguageHint::Ar, Algorithm::Arabic),
         ];
         for (hint, algo) in expected {
             assert_eq!(algorithm_for(hint), Some(algo));
@@ -293,6 +295,7 @@ mod tests {
 
     #[test]
     fn algorithm_for_returns_none_for_cjk_and_sea() {
+        // Includes `Ar` because Arabic routes to ICU, not Snowball.
         for hint in [
             LanguageHint::Ja,
             LanguageHint::Ko,
@@ -303,6 +306,7 @@ mod tests {
             LanguageHint::My,
             LanguageHint::Vi,
             LanguageHint::He,
+            LanguageHint::Ar,
         ] {
             assert_eq!(algorithm_for(hint), None);
         }

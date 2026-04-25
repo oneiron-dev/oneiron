@@ -790,12 +790,15 @@ fn handshake_text_index_manifest(store: &Store, analyzer: &MultilingualAnalyzer)
         .map_err(|e| Error::AnalyzerError(format!("manifest hash: {e}")))?;
     let current_field_schema_hash = bm25_field_schema_hash();
 
-    let mut wtxn = store.env.write_txn()?;
-    let total_docs = bm25::read_total_docs(store, &wtxn)?;
+    // Hash-match is the common path on Vault::open and is read-only; only
+    // the empty-index rewrite branch mutates. Take a read txn first and
+    // upgrade only when we actually need to write.
+    let rtxn = store.env.read_txn()?;
+    let total_docs = bm25::read_total_docs(store, &rtxn)?;
 
     if total_docs == 0 {
-        // Empty text index — safe to (re)write the manifest. Clears any
-        // stale pre-ONE-317 metadata by overwriting the known keys.
+        drop(rtxn);
+        let mut wtxn = store.env.write_txn()?;
         write_text_index_manifest(store, &mut wtxn, analyzer)?;
         wtxn.commit()?;
         return Ok(());
@@ -803,16 +806,17 @@ fn handshake_text_index_manifest(store: &Store, analyzer: &MultilingualAnalyzer)
 
     let stored_manifest_hash = store
         .vault_meta
-        .get(&wtxn, TEXT_ANALYZER_MANIFEST_HASH_KEY)?
+        .get(&rtxn, TEXT_ANALYZER_MANIFEST_HASH_KEY)?
         .map(|b| b.to_vec());
     let stored_field_schema_hash = store
         .vault_meta
-        .get(&wtxn, TEXT_BM25_FIELD_SCHEMA_HASH_KEY)?
+        .get(&rtxn, TEXT_BM25_FIELD_SCHEMA_HASH_KEY)?
         .map(|b| b.to_vec());
     let stored_manifest_bytes = store
         .vault_meta
-        .get(&wtxn, TEXT_ANALYZER_MANIFEST_KEY)?
+        .get(&rtxn, TEXT_ANALYZER_MANIFEST_KEY)?
         .map(|b| b.to_vec());
+    drop(rtxn);
 
     let Some(stored_hash) = stored_manifest_hash else {
         // Pre-ONE-317 vault with docs in it: fail closed.
