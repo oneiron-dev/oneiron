@@ -307,9 +307,11 @@ pub struct VaultConfig {
     /// [`crate::Error::Bm25FieldSchemaChanged`] trap the user before any
     /// `Vault` exists to call `.maintain()` on.
     ///
-    /// Only use this to immediately run `clear_text_index`. The existing
-    /// postings are tokenized under the *old* analyzer manifest; running
-    /// queries before the clear is committed returns garbage.
+    /// Only use this to immediately run `clear_text_index`. On a populated
+    /// vault, [`crate::Vault::open`] marks the text index untrusted and
+    /// [`crate::Vault::search_text`] (and the pipeline / context_pack
+    /// callers that go through [`crate::Vault::ensure_text_index_trusted`])
+    /// returns [`crate::Error::CorruptedIndex`] until the clear commits.
     pub skip_text_index_manifest_check: bool,
 }
 

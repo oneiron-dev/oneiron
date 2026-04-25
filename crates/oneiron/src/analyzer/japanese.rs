@@ -268,10 +268,15 @@ impl JapaneseAnalyzer {
         }
 
         // CjkNgram overlay: char bigrams so `"東京"` recalls docs indexed
-        // via Sudachi-segmented `"東京大学"`.
+        // via Sudachi-segmented `"東京大学"`. Bigrams sit at char-index
+        // positions, which can exceed `a_count` when Mode A produces
+        // multi-char morphemes (`"東京大学"` → 2 morphemes, 3 bigrams at
+        // positions 0..=2). The next unused position is therefore
+        // `max(a_count, char_count - 1)` past `position_base`.
         cjk_ngram::emit_bigram_overlay(text, offset_base, position_base, out);
 
-        position_base + a_count as u32
+        let char_count = text.chars().count() as u32;
+        position_base + std::cmp::max(a_count as u32, char_count.saturating_sub(1))
     }
 }
 
@@ -525,6 +530,27 @@ mod tests {
         assert!(
             overlay_terms.contains(&"大阪大学"),
             "Mode C compound missing from query-side overlay: {overlay_terms:?}",
+        );
+    }
+
+    /// `analyze_morphological` must return a position past every emitted
+    /// token, including bigram-overlay positions. For `"東京大学"`, Mode A
+    /// produces 2 morphemes (`a_count = 2`) but the bigram overlay assigns
+    /// positions 0..=2; returning `position_base + a_count` would let the
+    /// next run start on already-used position 2.
+    #[test]
+    fn jp_morph_returns_position_past_bigram_overlay() {
+        let Ok(dict_path) = std::env::var("ONEIRON_TEST_SUDACHI_DICT") else {
+            return;
+        };
+        let ja =
+            JapaneseAnalyzer::with_system_dict(Path::new(&dict_path)).expect("dict should load");
+        let mut out = Vec::new();
+        let next = ja.analyze("東京大学", 0, 0, false, &mut out);
+        let max_emitted = out.iter().map(|t| t.position).max().unwrap_or(0);
+        assert!(
+            next > max_emitted,
+            "analyze_morphological returned {next} but emitted token at position {max_emitted}",
         );
     }
 }
