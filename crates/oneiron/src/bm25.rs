@@ -478,29 +478,33 @@ pub(crate) fn search_text(
                     continue;
                 }
 
-                let len_f = if matches!(cfg.length_policy, FieldLengthPolicy::NoNorm) {
-                    0.0
-                } else {
-                    let lens = field_length_cache
-                        .get(&id)
-                        .expect("field-lengths row loaded above for this entry id");
-                    // The same posting-entry-implies-row invariant applies
-                    // per-field: a referenced `fid` must have an entry in
-                    // the length row. Silently defaulting to 0 would yield
-                    // `norm = 1 - b = 0.25` for the default `b=0.75` — a 4×
-                    // artificial boost for the corrupted document.
-                    match lens.get(fid).copied() {
-                        None => {
-                            return Err(corrupted(
-                                "posting field missing from per-doc field lengths",
-                            ));
-                        }
-                        Some(0) => {
+                let lens = field_length_cache
+                    .get(&id)
+                    .expect("field-lengths row loaded above for this entry id");
+                // The posting-entry-implies-row invariant applies per-field:
+                // a referenced `fid` must have an entry in the length row,
+                // including on NoNorm channels where the value is unused.
+                // Indexing always inserts the entry (including a 0 for
+                // overlay-only channels), so absence is corruption. Silently
+                // defaulting would yield `norm = 1 - b = 0.25` for the
+                // default `b=0.75` — a 4× artificial boost.
+                let stored_len = match lens.get(fid).copied() {
+                    None => {
+                        return Err(corrupted(
+                            "posting field missing from per-doc field lengths",
+                        ));
+                    }
+                    Some(n) => n,
+                };
+                let len_f = match cfg.length_policy {
+                    FieldLengthPolicy::NoNorm => 0.0,
+                    FieldLengthPolicy::CountLengthIncrement => {
+                        if stored_len == 0 {
                             return Err(corrupted(
                                 "zero length for scored CountLengthIncrement field",
                             ));
                         }
-                        Some(n) => f64::from(n),
+                        f64::from(stored_len)
                     }
                 };
 
