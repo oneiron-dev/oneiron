@@ -32,8 +32,8 @@ const MIN_WHICHLANG_ASCII_UNIQUE_WORDS: usize = 3;
 
 /// Resolve a `LanguageHint` from free-form text.
 ///
-/// Pure-ASCII Latin that is short (< [`MIN_WHICHLANG_ASCII_BYTES`] bytes)
-/// or low-entropy (< [`MIN_WHICHLANG_ASCII_UNIQUE_WORDS`] unique letter
+/// Pure-ASCII Latin that is short (< `MIN_WHICHLANG_ASCII_BYTES` bytes)
+/// or low-entropy (< `MIN_WHICHLANG_ASCII_UNIQUE_WORDS` unique letter
 /// tokens) short-circuits to [`LanguageHint::En`] because whichlang
 /// misclassifies such inputs; longer, diverser pure-ASCII routes through
 /// whichlang and can resolve to Spanish/Portuguese/etc. correctly on the
@@ -47,13 +47,13 @@ pub fn detect_with_whichlang(text: &str) -> Option<LanguageHint> {
     if text.is_empty() {
         return None;
     }
-    if is_pure_ascii_latin(text)
-        && (text.len() < MIN_WHICHLANG_ASCII_BYTES
-            || unique_ascii_letter_tokens(text) < MIN_WHICHLANG_ASCII_UNIQUE_WORDS)
+    let window = truncate_at_char_boundary(text, DETECT_WINDOW_BYTES);
+    if is_pure_ascii_latin(window)
+        && (window.len() < MIN_WHICHLANG_ASCII_BYTES
+            || unique_ascii_letter_tokens(window) < MIN_WHICHLANG_ASCII_UNIQUE_WORDS)
     {
         return Some(LanguageHint::En);
     }
-    let window = truncate_at_char_boundary(text, DETECT_WINDOW_BYTES);
     map_whichlang_lang(whichlang_detect(window))
 }
 
@@ -264,6 +264,12 @@ mod tests {
         // 120 bytes but 1 unique token — unique-word gate blocks whichlang
         // from misrouting repeated `"apple "` as `Fra`.
         let text = "apple ".repeat(20);
+        assert_eq!(detect_with_whichlang(&text), Some(LanguageHint::En));
+    }
+
+    #[test]
+    fn ascii_short_circuit_uses_window_not_full_text() {
+        let text = format!("{}é", "a".repeat(DETECT_WINDOW_BYTES));
         assert_eq!(detect_with_whichlang(&text), Some(LanguageHint::En));
     }
 

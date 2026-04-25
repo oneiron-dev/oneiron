@@ -8,8 +8,8 @@
 //!
 //! Dict discovery probes `<path>/ja/system.dic` across
 //! `VaultConfig.dict_search_paths` at `Vault::open` (plan §2.3). Dict file
-//! bytes are mmapped by Sudachi; we hold an `Arc<JapaneseDictionary>` so
-//! the analyzer is cheaply cloneable for per-thread use.
+//! bytes are read into an owned buffer (`std::fs::read`) and handed to
+//! Sudachi as `Storage::Owned`.
 //!
 //! Offsets in emitted tokens are always absolute byte offsets into the
 //! caller's original UTF-8 (`offset_base + local`). Sudachi morphemes
@@ -84,7 +84,7 @@ impl JapaneseAnalyzer {
     }
 
     /// Build an analyzer around a specific `system.dic` file. The file is
-    /// mmapped and its bytes kept alive by the returned analyzer.
+    /// read into an owned byte buffer that Sudachi keeps alive.
     pub fn with_system_dict(path: &Path) -> Result<Self, DictLoadError> {
         let bytes = std::fs::read(path).map_err(|e| DictLoadError::Io {
             path: path.to_path_buf(),

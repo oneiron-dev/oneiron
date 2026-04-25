@@ -98,7 +98,7 @@ impl<'a> NormalizedText<'a> {
     /// Translate a token's start byte offset back to the original.
     ///
     /// Rounds DOWN to the preceding grapheme boundary on a mid-grapheme
-    /// offset — pairs with [`remap_end`] which rounds UP, so a token
+    /// offset — pairs with [`Self::remap_end`] which rounds UP, so a token
     /// emitted on an interior NFKC-expanded grapheme (e.g. `㍻`→`平成`)
     /// gets pinned to the full original grapheme rather than collapsing
     /// to a zero-width span.

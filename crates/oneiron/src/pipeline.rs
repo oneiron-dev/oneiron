@@ -363,6 +363,7 @@ impl<'a> PipelineBuilder<'a> {
             }
 
             if let Some((query, limit)) = &self.text_search {
+                self.vault.ensure_text_index_trusted()?;
                 let text_results = crate::bm25::search_text(
                     &self.vault.store,
                     &rtxn,
@@ -1423,6 +1424,31 @@ mod tests {
         let results = vault.query().search_text("alpha", 10).run()?;
         assert!(!results.is_empty());
         assert_eq!(results[0].id, a);
+        Ok(())
+    }
+
+    #[test]
+    fn pipeline_search_fails_closed_on_untrusted_text_index() -> Result<()> {
+        let temp_dir = tempfile::tempdir()?;
+        let a = entity_id(7);
+
+        {
+            let vault = Vault::open(temp_dir.path(), test_config())?;
+            put_text(&vault, a, "alpha world")?;
+        }
+
+        let mut cfg = test_config();
+        cfg.skip_text_index_manifest_check = true;
+        let vault = Vault::open(temp_dir.path(), cfg)?;
+        let err = vault
+            .query()
+            .search_text("alpha", 10)
+            .run()
+            .expect_err("pipeline text search must refuse untrusted index");
+        assert!(
+            matches!(err, Error::CorruptedIndex(_)),
+            "expected CorruptedIndex, got {err:?}",
+        );
         Ok(())
     }
 

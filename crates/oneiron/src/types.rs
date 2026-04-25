@@ -300,7 +300,7 @@ pub struct VaultConfig {
     /// behavior, and the dict-bytes hash is then baked into the LMDB
     /// analyzer manifest, silently pinning the vault to that dict.
     pub dict_search_paths: Vec<PathBuf>,
-    /// Skip the text-index manifest handshake at [`Vault::open`] so the
+    /// Skip the text-index manifest handshake at [`crate::Vault::open`] so the
     /// caller can reach [`crate::MaintenanceBuilder::clear_text_index`]
     /// after a dict swap or BM25 field-schema change. Without this escape
     /// hatch, [`crate::Error::IncompatibleAnalyzer`] and
@@ -328,7 +328,11 @@ pub struct TextAnalyzerConfig {}
 #[non_exhaustive]
 pub struct TextIndexOptions {
     /// Explicit language hint for this batch of text fields. Overrides
-    /// script-class inference and `whichlang` detection.
+    /// `whichlang` detection on Latin/Cyrillic/Greek runs and the
+    /// DualHanFallback decision on Han runs. Unambiguous-script runs
+    /// (Hiragana, Katakana, Hangul, Hebrew, Thai, Lao, Khmer, Myanmar)
+    /// route by their own script class regardless of this hint — the
+    /// script is the stronger signal.
     pub language_hint: Option<crate::analyzer::LanguageHint>,
 }
 

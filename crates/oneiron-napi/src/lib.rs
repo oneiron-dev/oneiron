@@ -65,9 +65,9 @@ impl NapiVault {
     ///
     /// `dictSearchPaths` lists directories searched at open time for
     /// per-language analyzer dictionaries (e.g. `ja/system.dic`,
-    /// `ko/system.dic`, `zh/jieba.dict.utf8`). On iOS, pass the bundle
-    /// path (`Bundle.main.resourcePath + "/oneiron-dicts"`). When a
-    /// language's dict is absent, oneiron falls back to a Portable
+    /// `ko/` containing `metadata.json`, `zh/jieba.dict.utf8`). On iOS,
+    /// pass the bundle path (`Bundle.main.resourcePath + "/oneiron-dicts"`).
+    /// When a language's dict is absent, oneiron falls back to a Portable
     /// (ICU4X + n-gram) analyzer for that language.
     #[napi(constructor)]
     pub fn new(

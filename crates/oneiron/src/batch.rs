@@ -388,6 +388,11 @@ impl<'a> TxnBatchBuilder<'a> {
     }
 
     /// Applies all queued operations to the given write transaction without committing.
+    ///
+    /// Note: operations are staged eagerly into `wtxn`. If this returns an
+    /// error, earlier writes may already be present in the transaction, so
+    /// callers must abort the transaction (drop without committing) to discard
+    /// it.
     pub fn apply(self, wtxn: &mut RwTxn<'_>) -> Result<()> {
         apply_ops(
             &self.vault.store,

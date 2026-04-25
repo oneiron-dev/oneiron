@@ -6,7 +6,7 @@
 //! dispatches each script run to the right backend per plan §7.
 //!
 //! Dict discovery happens once at [`MultilingualAnalyzer::discover`] time;
-//! each per-lang backend probes [`VaultConfig::dict_search_paths`] (plan
+//! each per-lang backend probes [`crate::VaultConfig::dict_search_paths`] (plan
 //! §2.3) and caches its loaded dict. The resulting [`AnalyzerManifest`]
 //! reports the per-lang mode (Morphological / Portable) and — when a dict
 //! was loaded — the dict's license + version. The manifest is what gates
@@ -250,7 +250,7 @@ impl MultilingualAnalyzer {
 
     /// Canonical manifest for this analyzer configuration. Gates LMDB
     /// text-index compatibility (plan §4.2). The per-lang `dict` field is
-    /// populated from each backend's [`asset_manifest`] so the manifest
+    /// populated from each backend's `asset_manifest` so the manifest
     /// hash binds not just to mode (Morph/Portable) but to the exact dict
     /// bytes — a dict swap forces a reindex via fail-closed handshake.
     pub fn manifest(&self) -> AnalyzerManifest {
