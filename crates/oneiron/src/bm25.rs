@@ -357,7 +357,9 @@ pub(crate) fn deindex_text(store: &Store, wtxn: &mut RwTxn<'_>, id: &EntityId) -
         };
         let (retained, removed) = strip_entity_from_posting(posting, id)?;
         if !removed {
-            continue;
+            return Err(corrupted(
+                "forward term missing entity in posting during deindex",
+            ));
         }
         if retained.is_empty() {
             store.text_postings.delete(wtxn, term.as_bytes())?;
@@ -585,6 +587,9 @@ struct PostingEntry {
 }
 
 fn decode_posting(raw: &[u8]) -> Result<Vec<PostingEntry>> {
+    if raw.is_empty() {
+        return Err(corrupted("empty posting row"));
+    }
     let mut entries = Vec::new();
     let mut i = 0;
     while i < raw.len() {
@@ -666,6 +671,9 @@ fn encode_forward(per_term: &BTreeMap<String, BTreeMap<u16, u32>>) -> Result<Vec
 }
 
 fn decode_forward(raw: &[u8]) -> Result<Vec<ForwardRecord>> {
+    if raw.is_empty() {
+        return Err(corrupted("empty forward row"));
+    }
     let mut records = Vec::new();
     let mut i = 0;
     while i < raw.len() {
@@ -712,6 +720,9 @@ fn encode_field_lengths(lengths: &HashMap<u16, u32>) -> Vec<u8> {
 }
 
 fn decode_field_lengths(raw: &[u8]) -> Result<HashMap<u16, u32>> {
+    if raw.is_empty() {
+        return Err(corrupted("empty field lengths row"));
+    }
     if !raw.len().is_multiple_of(FIELD_LENGTH_LEN) {
         return Err(corrupted("per-doc field lengths has invalid byte length"));
     }
@@ -785,11 +796,11 @@ fn write_total_docs(store: &Store, wtxn: &mut RwTxn<'_>, total_docs: u32) -> Res
 }
 
 fn read_posting(store: &Store, txn: &RoTxn<'_>, term: &str) -> Result<Vec<u8>> {
-    Ok(store
-        .text_postings
-        .get(txn, term.as_bytes())?
-        .map(|bytes| bytes.to_vec())
-        .unwrap_or_default())
+    match store.text_postings.get(txn, term.as_bytes())? {
+        Some([]) => Err(corrupted("empty posting row")),
+        Some(bytes) => Ok(bytes.to_vec()),
+        None => Ok(Vec::new()),
+    }
 }
 
 fn strip_entity_from_posting(posting: &[u8], id: &EntityId) -> Result<(Vec<u8>, bool)> {
@@ -1563,6 +1574,43 @@ mod tests {
         Ok(())
     }
 
+    #[test]
+    fn deindex_fails_closed_on_forward_posting_membership_mismatch() -> Result<()> {
+        let temp_dir = tempfile::tempdir()?;
+        let vault = Vault::open(temp_dir.path(), test_config())?;
+        let id = EntityId::now();
+        let other = EntityId::now();
+        put_text_doc(&vault, &id, "alpha")?;
+        put_text_doc(&vault, &other, "alpha")?;
+
+        let mut wtxn = vault.store.env.write_txn()?;
+        let posting = vault
+            .store
+            .text_postings
+            .get(&wtxn, b"alpha")?
+            .expect("alpha posting written");
+        let entries = decode_posting(posting)?;
+        let mut patched = Vec::new();
+        for entry in entries {
+            if entry.id == id {
+                continue;
+            }
+            let fields = entry.fields.into_iter().collect::<BTreeMap<_, _>>();
+            encode_posting_entry(&entry.id, &fields, &mut patched)?;
+        }
+        vault
+            .store
+            .text_postings
+            .put(&mut wtxn, b"alpha", &patched)?;
+
+        let err = deindex_text(&vault.store, &mut wtxn, &id).unwrap_err();
+        assert!(
+            matches!(err, Error::CorruptedIndex(_)),
+            "expected CorruptedIndex, got {err:?}"
+        );
+        Ok(())
+    }
+
     /// Row present but missing the `Surface` fid. Scorer must not silently
     /// default `len_f = 0`, which would yield `norm = 1 - b` (a 4× boost
     /// under default b=0.75) for the corrupted document.
@@ -1770,6 +1818,13 @@ mod tests {
         posting.push(1); // claim one field but supply no bytes
         let err = decode_posting(&posting).unwrap_err();
         assert!(matches!(err, Error::CorruptedIndex(_)));
+    }
+
+    #[test]
+    fn decode_rejects_empty_rows() {
+        assert!(decode_posting(&[]).is_err());
+        assert!(decode_forward(&[]).is_err());
+        assert!(decode_field_lengths(&[]).is_err());
     }
 
     #[test]

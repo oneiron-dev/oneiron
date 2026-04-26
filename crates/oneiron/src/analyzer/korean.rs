@@ -173,7 +173,9 @@ impl KoreanAnalyzer {
 
         cjk_ngram::emit_bigram_overlay(text, offset_base, position_base, out);
 
-        position
+        let morph_count = position - position_base;
+        let bigram_count = (text.chars().count() as u32).saturating_sub(1);
+        position_base + morph_count.max(bigram_count)
     }
 }
 
@@ -265,5 +267,29 @@ mod tests {
             let slice = &"한국어는 재미있어요"[tok.byte_start as usize..tok.byte_end as usize];
             assert_eq!(slice, tok.term.as_ref());
         }
+    }
+
+    #[test]
+    fn ko_morph_returns_position_past_bigram_overlay() {
+        let Ok(dict_path) = std::env::var("ONEIRON_TEST_KODIC_DIR") else {
+            return;
+        };
+        let ko = KoreanAnalyzer::with_dict_dir(Path::new(&dict_path)).expect("ko-dic should load");
+        let text = "대한민국";
+        let mut out = Vec::new();
+        let next = ko.analyze(text, 0, 0, false, &mut out);
+        let surface_count = out
+            .iter()
+            .filter(|t| t.channel == AnalyzerChannel::Surface)
+            .count() as u32;
+        let bigram_count = (text.chars().count() as u32).saturating_sub(1);
+        if surface_count >= bigram_count {
+            return;
+        }
+        let max_emitted = out.iter().map(|t| t.position).max().unwrap_or(0);
+        assert!(
+            next > max_emitted,
+            "Korean analyzer returned {next} but emitted token at position {max_emitted}",
+        );
     }
 }
