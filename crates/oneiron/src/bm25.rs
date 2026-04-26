@@ -52,6 +52,8 @@ const TOTAL_DOCS_KEY: [u8; 16] = [0x00; 16];
 /// never collide with a legacy entry. Per-field lengths live in
 /// `text_bm25_field_stats` (plan §4.1).
 const TOTAL_LENGTH_KEY: [u8; 16] = [0xFF; 16];
+/// Version of the binary value layout used in `text_postings`.
+pub(crate) const POSTINGS_VALUE_FORMAT_VERSION: u16 = 1;
 
 // === Rank profile configuration ===
 
@@ -65,6 +67,15 @@ pub(crate) enum FieldLengthPolicy {
     /// whose token counts are mechanical (diacritic folds, kana folds)
     /// and should not drag long docs down.
     NoNorm,
+}
+
+impl FieldLengthPolicy {
+    pub(crate) fn manifest_tag(self) -> &'static str {
+        match self {
+            FieldLengthPolicy::CountLengthIncrement => "count_length_increment",
+            FieldLengthPolicy::NoNorm => "no_norm",
+        }
+    }
 }
 
 /// Per-field (channel) BM25F parameters.
