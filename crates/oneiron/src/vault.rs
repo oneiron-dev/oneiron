@@ -136,7 +136,7 @@ impl Vault {
             drop(rtxn);
             if empty {
                 let mut wtxn = store.env.write_txn()?;
-                write_text_index_manifest(&store, &mut wtxn, &analyzer)?;
+                write_text_index_manifest_if_empty(&store, &mut wtxn, &analyzer)?;
                 wtxn.commit()?;
             }
             empty
@@ -159,7 +159,7 @@ impl Vault {
     pub(crate) fn ensure_text_index_trusted(&self) -> Result<()> {
         if self
             .text_index_trusted
-            .load(std::sync::atomic::Ordering::Relaxed)
+            .load(std::sync::atomic::Ordering::Acquire)
         {
             Ok(())
         } else {
@@ -835,22 +835,22 @@ fn read_hash_32(store: &Store, rtxn: &heed::RoTxn<'_>, key: &[u8]) -> Result<Opt
 /// The `total_docs` sentinel alone isn't authoritative — a zero or missing
 /// sentinel coexisting with rows in any of the text DBs is corruption, not
 /// emptiness.
-fn text_index_residual_rows_empty(store: &Store, rtxn: &heed::RoTxn<'_>) -> Result<bool> {
-    let residual = store.text_postings.len(rtxn)?
-        + store.text_forward.len(rtxn)?
-        + store.text_doc_field_lengths.len(rtxn)?
-        + store.text_bm25_field_stats.len(rtxn)?;
+fn text_index_residual_rows_empty(store: &Store, txn: &heed::RoTxn<'_>) -> Result<bool> {
+    let residual = store.text_postings.len(txn)?
+        + store.text_forward.len(txn)?
+        + store.text_doc_field_lengths.len(txn)?
+        + store.text_bm25_field_stats.len(txn)?;
     Ok(residual == 0)
 }
 
 /// Whether the on-disk text index is fully empty: zero `total_docs` AND
 /// no residual rows in any text DB. Used by `Vault::open` to decide
 /// whether bypassing the manifest handshake is safe.
-fn text_index_is_empty(store: &Store, rtxn: &heed::RoTxn<'_>) -> Result<bool> {
-    if bm25::read_total_docs(store, rtxn)? != 0 {
+fn text_index_is_empty(store: &Store, txn: &heed::RoTxn<'_>) -> Result<bool> {
+    if bm25::read_total_docs(store, txn)? != 0 {
         return Ok(false);
     }
-    text_index_residual_rows_empty(store, rtxn)
+    text_index_residual_rows_empty(store, txn)
 }
 
 /// Validate the on-disk analyzer manifest against the in-memory one. Runs
@@ -888,7 +888,7 @@ fn handshake_text_index_manifest(store: &Store, analyzer: &MultilingualAnalyzer)
         }
         drop(rtxn);
         let mut wtxn = store.env.write_txn()?;
-        write_text_index_manifest(store, &mut wtxn, analyzer)?;
+        write_text_index_manifest_if_empty(store, &mut wtxn, analyzer)?;
         wtxn.commit()?;
         return Ok(());
     }
@@ -928,6 +928,16 @@ fn handshake_text_index_manifest(store: &Store, analyzer: &MultilingualAnalyzer)
         return Ok(());
     }
 
+    Err(manifest_mismatch_error(
+        &current_manifest,
+        stored_manifest_bytes,
+    ))
+}
+
+fn manifest_mismatch_error(
+    current_manifest: &AnalyzerManifest,
+    stored_manifest_bytes: Option<Vec<u8>>,
+) -> Error {
     // Manifest hash changed. Try to name the specific language whose mode
     // flipped; fall back to `*` if the stored manifest doesn't parse.
     if let Some(bytes) = stored_manifest_bytes
@@ -937,20 +947,101 @@ fn handshake_text_index_manifest(store: &Store, analyzer: &MultilingualAnalyzer)
             if let Some(stored_policy) = stored.langs.get(lang)
                 && stored_policy.mode != current_policy.mode
             {
-                return Err(Error::IncompatibleAnalyzer {
+                return Error::IncompatibleAnalyzer {
                     lang: lang.clone(),
                     stored_mode: stored_policy.mode.as_str(),
                     current_mode: current_policy.mode.as_str(),
-                });
+                };
             }
         }
     }
 
-    Err(Error::IncompatibleAnalyzer {
+    Error::IncompatibleAnalyzer {
         lang: "*".to_owned(),
         stored_mode: "mismatched",
         current_mode: "mismatched",
-    })
+    }
+}
+
+/// Validate that a text-index write can append rows compatible with the
+/// current on-disk manifest in the same LMDB write transaction that will
+/// receive the postings. If the index is still empty, stamp the current
+/// manifest as the first authoritative text-index state.
+pub(crate) fn ensure_text_index_manifest_matches_wtxn(
+    store: &Store,
+    wtxn: &mut heed::RwTxn<'_>,
+    analyzer: &MultilingualAnalyzer,
+) -> Result<()> {
+    if text_index_is_empty(store, &*wtxn)? {
+        write_text_index_manifest(store, wtxn, analyzer)?;
+        return Ok(());
+    }
+
+    match read_text_schema_version(store, &*wtxn)? {
+        Some(TEXT_INDEX_SCHEMA_VERSION) => {}
+        Some(_) => return Err(Error::Bm25FieldSchemaChanged),
+        None => {
+            return Err(Error::IncompatibleAnalyzer {
+                lang: "*".to_owned(),
+                stored_mode: "corrupt",
+                current_mode: "any",
+            });
+        }
+    }
+
+    let current_manifest = analyzer.manifest();
+    let current_manifest_hash = current_manifest
+        .canonical_hash()
+        .map_err(|e| Error::AnalyzerError(format!("manifest hash: {e}")))?;
+    let current_field_schema_hash = bm25_field_schema_hash();
+    let stored_manifest_hash = read_hash_32(store, &*wtxn, TEXT_ANALYZER_MANIFEST_HASH_KEY)?;
+    let stored_field_schema_hash = read_hash_32(store, &*wtxn, TEXT_BM25_FIELD_SCHEMA_HASH_KEY)?;
+    let stored_manifest_bytes = store
+        .vault_meta
+        .get(&*wtxn, TEXT_ANALYZER_MANIFEST_KEY)?
+        .map(|b| b.to_vec());
+
+    let Some(stored_hash) = stored_manifest_hash else {
+        return Err(Error::IncompatibleAnalyzer {
+            lang: "*".to_owned(),
+            stored_mode: "unknown",
+            current_mode: AnalyzerMode::Portable.as_str(),
+        });
+    };
+
+    match stored_field_schema_hash {
+        Some(hash) if hash == current_field_schema_hash => {}
+        Some(_) => return Err(Error::Bm25FieldSchemaChanged),
+        None => {
+            return Err(Error::IncompatibleAnalyzer {
+                lang: "*".to_owned(),
+                stored_mode: "corrupt",
+                current_mode: "any",
+            });
+        }
+    }
+
+    if stored_hash == current_manifest_hash {
+        Ok(())
+    } else {
+        Err(manifest_mismatch_error(
+            &current_manifest,
+            stored_manifest_bytes,
+        ))
+    }
+}
+
+fn write_text_index_manifest_if_empty(
+    store: &Store,
+    wtxn: &mut heed::RwTxn<'_>,
+    analyzer: &MultilingualAnalyzer,
+) -> Result<()> {
+    if !text_index_is_empty(store, &*wtxn)? {
+        return Err(Error::CorruptedIndex(
+            "text index populated before manifest write",
+        ));
+    }
+    write_text_index_manifest(store, wtxn, analyzer)
 }
 
 /// Write the current analyzer manifest + field-schema hash + schema
@@ -1349,6 +1440,90 @@ mod tests {
         // After clear_text_index, trust is restored within the same vault.
         vault.maintain().clear_text_index().run()?;
         assert!(vault.search_text("hello", 10).is_ok());
+        Ok(())
+    }
+
+    #[test]
+    fn text_write_fails_closed_when_trust_bypassed() -> Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let a = entity(73);
+        let b = entity(74);
+
+        {
+            let vault = Vault::open(tmp.path(), test_config())?;
+            vault
+                .batch()
+                .put(&a, 0, range(1, 1), 1, b"a")
+                .text(&a, &[("body", "hello world")])
+                .commit()?;
+        }
+
+        let mut cfg = test_config();
+        cfg.skip_text_index_manifest_check = true;
+        let vault = Vault::open(tmp.path(), cfg)?;
+        let err = vault
+            .batch()
+            .put(&b, 0, range(1, 1), 1, b"b")
+            .text(&b, &[("body", "new text")])
+            .commit()
+            .expect_err("text write must refuse bypassed populated index");
+        assert!(
+            matches!(err, Error::CorruptedIndex(_)),
+            "expected CorruptedIndex, got {err:?}",
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn text_write_fails_closed_when_stored_manifest_diverged() -> Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let a = entity(75);
+        let b = entity(76);
+        let vault = Vault::open(tmp.path(), test_config())?;
+        vault
+            .batch()
+            .put(&a, 0, range(1, 1), 1, b"a")
+            .text(&a, &[("body", "hello world")])
+            .commit()?;
+
+        {
+            let mut wtxn = vault.store.env.write_txn()?;
+            vault
+                .store
+                .vault_meta
+                .put(&mut wtxn, TEXT_ANALYZER_MANIFEST_HASH_KEY, &[0xCC; 32])?;
+            wtxn.commit()?;
+        }
+
+        let err = vault
+            .batch()
+            .put(&b, 0, range(1, 1), 1, b"b")
+            .text(&b, &[("body", "new text")])
+            .commit()
+            .expect_err("text write must refuse manifest divergence");
+        assert!(
+            matches!(err, Error::IncompatibleAnalyzer { .. }),
+            "expected IncompatibleAnalyzer, got {err:?}",
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn manifest_write_fails_closed_if_index_populated_during_writer() -> Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let vault = Vault::open(tmp.path(), test_config())?;
+        let mut wtxn = vault.store.env.write_txn()?;
+        vault
+            .store
+            .text_postings
+            .put(&mut wtxn, b"residual", b"x")?;
+
+        let err = write_text_index_manifest_if_empty(&vault.store, &mut wtxn, &vault.analyzer)
+            .expect_err("manifest write must re-check emptiness in writer");
+        assert!(
+            matches!(err, Error::CorruptedIndex(_)),
+            "expected CorruptedIndex, got {err:?}",
+        );
         Ok(())
     }
 

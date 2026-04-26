@@ -335,6 +335,10 @@ impl<'a> PipelineBuilder<'a> {
     }
 
     pub fn run(self) -> Result<Vec<ScoredEntity>> {
+        if self.text_search.is_some() {
+            self.vault.ensure_text_index_trusted()?;
+        }
+
         let (scores, deferred_ppr_cache_writes) = {
             let mut ranked_lists = Vec::new();
             let rtxn = self.vault.store.env.read_txn()?;
@@ -363,7 +367,6 @@ impl<'a> PipelineBuilder<'a> {
             }
 
             if let Some((query, limit)) = &self.text_search {
-                self.vault.ensure_text_index_trusted()?;
                 let text_results = crate::bm25::search_text(
                     &self.vault.store,
                     &rtxn,

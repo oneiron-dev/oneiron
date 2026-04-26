@@ -144,17 +144,14 @@ impl AnalyzerAssetManifest {
         dir: &Path,
     ) -> io::Result<Self> {
         use std::fs::File;
-        let mut entries: Vec<(std::ffi::OsString, std::path::PathBuf)> = std::fs::read_dir(dir)?
-            .filter_map(|r| r.ok())
-            .filter_map(|e| {
-                let ft = e.file_type().ok()?;
-                if ft.is_file() {
-                    Some((e.file_name(), e.path()))
-                } else {
-                    None
-                }
-            })
-            .collect();
+        let mut entries: Vec<(std::ffi::OsString, std::path::PathBuf)> = Vec::new();
+        for entry in std::fs::read_dir(dir)? {
+            let entry = entry?;
+            let ft = entry.file_type()?;
+            if ft.is_file() {
+                entries.push((entry.file_name(), entry.path()));
+            }
+        }
         entries.sort_by(|a, b| a.0.cmp(&b.0));
 
         let mut hasher = Sha256::new();
@@ -348,6 +345,16 @@ mod tests {
             AnalyzerAssetManifest::probe_directory("d", "v", "Apache-2.0", None, dir.path())
                 .unwrap();
         assert_ne!(probed.sha256, mutated.sha256);
+    }
+
+    #[test]
+    fn probe_directory_propagates_read_dir_error() {
+        let dir = tempfile::tempdir().unwrap();
+        let file_path = dir.path().join("not-a-directory");
+        std::fs::write(&file_path, b"x").unwrap();
+        let err = AnalyzerAssetManifest::probe_directory("d", "v", "Apache-2.0", None, &file_path)
+            .unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::NotADirectory);
     }
 
     #[test]

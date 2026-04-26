@@ -273,6 +273,9 @@ impl<'a> BatchBuilder<'a> {
         if let Some(err) = self.validation_error {
             return Err(err);
         }
+        if contains_text_op(&self.ops) {
+            self.vault.ensure_text_index_trusted()?;
+        }
         let mut wtxn = self.vault.store.env.write_txn()?;
 
         apply_ops(
@@ -394,6 +397,9 @@ impl<'a> TxnBatchBuilder<'a> {
     /// callers must abort the transaction (drop without committing) to discard
     /// it.
     pub fn apply(self, wtxn: &mut RwTxn<'_>) -> Result<()> {
+        if contains_text_op(&self.ops) {
+            self.vault.ensure_text_index_trusted()?;
+        }
         apply_ops(
             &self.vault.store,
             &self.vault.config,
@@ -416,6 +422,7 @@ pub(crate) fn apply_ops(
     validate_child_of_batch(store, &*wtxn, &child_of_overlay)?;
     let mut had_graph_mutation = false;
     let mut had_vector_mutation = false;
+    let mut text_manifest_checked = false;
 
     for op in ops {
         match op {
@@ -457,6 +464,10 @@ pub(crate) fn apply_ops(
                 had_graph_mutation = true;
             }
             BatchOp::Text { id, fields } => {
+                if !text_manifest_checked {
+                    crate::vault::ensure_text_index_manifest_matches_wtxn(store, wtxn, analyzer)?;
+                    text_manifest_checked = true;
+                }
                 crate::bm25::index_text(store, wtxn, analyzer, &id, &fields)?;
             }
             BatchOp::Phonetic { id, codes } => {
@@ -486,6 +497,10 @@ pub(crate) fn apply_ops(
     }
 
     Ok(())
+}
+
+fn contains_text_op(ops: &[BatchOp]) -> bool {
+    ops.iter().any(|op| matches!(op, BatchOp::Text { .. }))
 }
 
 #[derive(Debug, Default)]

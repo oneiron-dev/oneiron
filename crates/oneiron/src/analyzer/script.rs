@@ -49,12 +49,11 @@ pub enum ScriptClass {
 
 impl ScriptClass {
     pub fn from_char(c: char) -> ScriptClass {
-        // U+30FC (プロロンゲッドサウンドマーク ー) has Script=Common but
-        // Script_Extensions={Hira, Kana}. Treating it as Common splits
-        // Katakana words like `スーパー` into single-char runs so no
-        // CjkNgram bigram can form. Remap to Katakana so the splitter
-        // keeps the word intact.
-        if c == '\u{30FC}' {
+        // U+30FC (prolonged sound mark) and U+30A0 (double hyphen) have
+        // Script=Common but kana script-extension behavior. Treating them
+        // as Common splits kana words into separate runs, so default them
+        // to Katakana and let the splitter override active Hiragana runs.
+        if matches!(c, '\u{30FC}' | '\u{30A0}') {
             return ScriptClass::Katakana;
         }
         match c.script() {
@@ -151,15 +150,15 @@ impl ScriptRunSplitter {
 
         for (idx, ch) in text.char_indices() {
             let start = idx as u32;
-            // U+30FC has Script_Extensions={Hira, Kana} but primary
-            // Script=Common. `from_char` defaults it to Katakana; override
-            // to Hiragana when the active run is Hiragana so `らーめん`
-            // stays one run instead of splitting Hira/Kata/Hira.
-            let class = if ch == '\u{30FC}' && active == Some(ScriptClass::Hiragana) {
-                ScriptClass::Hiragana
-            } else {
-                ScriptClass::from_char(ch)
-            };
+            // Kana marks default to Katakana in `from_char`; override to
+            // Hiragana when the active run is Hiragana so `らーめん` and
+            // `ひ゠ら` stay one run instead of splitting Hira/Kata/Hira.
+            let class =
+                if matches!(ch, '\u{30FC}' | '\u{30A0}') && active == Some(ScriptClass::Hiragana) {
+                    ScriptClass::Hiragana
+                } else {
+                    ScriptClass::from_char(ch)
+                };
 
             match (active, class) {
                 (None, ScriptClass::Common) => {
@@ -456,6 +455,24 @@ mod tests {
     #[test]
     fn trailing_prolonged_mark_after_hiragana_stays_hiragana() {
         let text = "あー";
+        let runs = ScriptRunSplitter::new().runs(text);
+        assert_eq!(runs.len(), 1);
+        assert_eq!(runs[0].script, ScriptClass::Hiragana);
+        assert_eq!(runs[0].as_slice(text), text);
+    }
+
+    #[test]
+    fn katakana_double_hyphen_stays_in_run() {
+        let text = "カ゠ナ";
+        let runs = ScriptRunSplitter::new().runs(text);
+        assert_eq!(runs.len(), 1);
+        assert_eq!(runs[0].script, ScriptClass::Katakana);
+        assert_eq!(runs[0].as_slice(text), text);
+    }
+
+    #[test]
+    fn hiragana_double_hyphen_stays_in_run() {
+        let text = "ひ゠ら";
         let runs = ScriptRunSplitter::new().runs(text);
         assert_eq!(runs.len(), 1);
         assert_eq!(runs[0].script, ScriptClass::Hiragana);
