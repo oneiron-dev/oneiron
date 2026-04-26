@@ -796,16 +796,57 @@ pub struct TextIndexStatus {
     pub analyzer_manifest: AnalyzerManifest,
 }
 
-/// Canonical hash over the ordered list of BM25F channels currently
-/// compiled into the analyzer. Changes when the channel set is added to,
-/// removed from, or renumbered — in other words, when the posting binary
-/// layout is no longer compatible with older indexes.
+/// Canonical hash over BM25F field-schema semantics that make existing
+/// posting, forward, and field-length rows compatible with this build.
+/// Scoring-only knobs such as weights and `b` are deliberately excluded.
 fn bm25_field_schema_hash() -> [u8; 32] {
+    bm25_field_schema_hash_for_records(&bm25_field_schema_records(
+        &bm25::Bm25Config::default(),
+        bm25::POSTINGS_VALUE_FORMAT_VERSION,
+    ))
+}
+
+#[derive(Clone, Copy)]
+struct Bm25FieldSchemaRecord {
+    field_id: u16,
+    channel_name: &'static str,
+    length_policy: bm25::FieldLengthPolicy,
+    permits_zero_doc_field_length: bool,
+    postings_value_format_version: u16,
+}
+
+fn bm25_field_schema_records(
+    config: &bm25::Bm25Config,
+    postings_value_format_version: u16,
+) -> Vec<Bm25FieldSchemaRecord> {
+    AnalyzerChannel::ALL_V1
+        .into_iter()
+        .map(|channel| Bm25FieldSchemaRecord {
+            field_id: channel.field_id(),
+            channel_name: channel.as_str(),
+            length_policy: config.field(channel).length_policy,
+            permits_zero_doc_field_length: channel.permits_zero_doc_field_length(),
+            postings_value_format_version,
+        })
+        .collect()
+}
+
+fn bm25_field_schema_hash_for_records(records: &[Bm25FieldSchemaRecord]) -> [u8; 32] {
     use sha2::{Digest, Sha256};
     let mut h = Sha256::new();
-    for channel in AnalyzerChannel::ALL_V1 {
-        h.update(channel.as_str().as_bytes());
-        h.update(b"|");
+    h.update(b"oneiron-bm25-field-schema-v2");
+    h.update([0]);
+    for record in records {
+        h.update(record.field_id.to_le_bytes());
+        h.update([0]);
+        h.update(record.channel_name.as_bytes());
+        h.update([0]);
+        h.update(record.length_policy.manifest_tag().as_bytes());
+        h.update([0]);
+        h.update([u8::from(record.permits_zero_doc_field_length)]);
+        h.update([0]);
+        h.update(record.postings_value_format_version.to_le_bytes());
+        h.update([0]);
     }
     h.finalize().into()
 }
@@ -1292,6 +1333,59 @@ mod tests {
             "expected Bm25FieldSchemaChanged, got {err:?}",
         );
         Ok(())
+    }
+
+    #[test]
+    fn bm25_field_schema_hash_binds_on_disk_semantics() {
+        let records = bm25_field_schema_records(
+            &bm25::Bm25Config::default(),
+            bm25::POSTINGS_VALUE_FORMAT_VERSION,
+        );
+        let baseline = bm25_field_schema_hash_for_records(&records);
+
+        let mut changed = records.clone();
+        changed[0].field_id = changed[0].field_id.saturating_add(1);
+        assert_ne!(baseline, bm25_field_schema_hash_for_records(&changed));
+
+        let mut changed = records.clone();
+        changed[0].channel_name = "renamed_surface";
+        assert_ne!(baseline, bm25_field_schema_hash_for_records(&changed));
+
+        let mut changed = records.clone();
+        changed[0].length_policy = bm25::FieldLengthPolicy::NoNorm;
+        assert_ne!(baseline, bm25_field_schema_hash_for_records(&changed));
+
+        let mut changed = records.clone();
+        changed[0].permits_zero_doc_field_length = !changed[0].permits_zero_doc_field_length;
+        assert_ne!(baseline, bm25_field_schema_hash_for_records(&changed));
+
+        let mut changed = records;
+        changed[0].postings_value_format_version += 1;
+        assert_ne!(baseline, bm25_field_schema_hash_for_records(&changed));
+    }
+
+    #[test]
+    fn bm25_field_schema_hash_ignores_scoring_knobs() {
+        let default = bm25::Bm25Config::default();
+        let mut fields = default.fields;
+        fields[AnalyzerChannel::Surface.field_id() as usize].weight = 9.0;
+        fields[AnalyzerChannel::Surface.field_id() as usize].b = 0.1;
+        let scoring = bm25::Bm25Config {
+            k1: 2.0,
+            formula: bm25::Bm25Formula::Plus { delta: 0.5 },
+            fields,
+        };
+
+        assert_eq!(
+            bm25_field_schema_hash_for_records(&bm25_field_schema_records(
+                &default,
+                bm25::POSTINGS_VALUE_FORMAT_VERSION,
+            )),
+            bm25_field_schema_hash_for_records(&bm25_field_schema_records(
+                &scoring,
+                bm25::POSTINGS_VALUE_FORMAT_VERSION,
+            )),
+        );
     }
 
     #[test]
