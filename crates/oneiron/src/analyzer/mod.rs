@@ -374,10 +374,11 @@ mod tests {
     fn manifest_channels_match_v1() {
         let a = MultilingualAnalyzer::portable();
         let m = a.manifest();
-        assert_eq!(
-            m.channels,
-            vec!["surface", "stem", "normalized_overlay", "cjk_ngram"]
-        );
+        let expected: Vec<String> = AnalyzerChannel::ALL_V1
+            .iter()
+            .map(|channel| channel.as_str().to_string())
+            .collect();
+        assert_eq!(m.channels, expected);
     }
 
     #[test]
