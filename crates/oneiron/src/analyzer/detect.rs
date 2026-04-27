@@ -178,7 +178,10 @@ mod tests {
             infer_from_script(ScriptClass::Myanmar),
             Some(LanguageHint::My)
         );
-        assert_eq!(infer_from_script(ScriptClass::Greek), Some(LanguageHint::El));
+        assert_eq!(
+            infer_from_script(ScriptClass::Greek),
+            Some(LanguageHint::El)
+        );
     }
 
     #[test]
