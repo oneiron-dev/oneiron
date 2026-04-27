@@ -7,12 +7,16 @@ use std::path::Path;
 use heed::Database;
 use heed::types::Bytes;
 
+use crate::analyzer::{AnalyzerChannel, AnalyzerManifest, AnalyzerMode, MultilingualAnalyzer};
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader, deindex_entity};
 use crate::error::{Error, Result};
 use crate::limits::{
     ERR_CHILD_OF_CYCLE_CHECK, MAX_ANCESTOR_DEPTH, MAX_CHILD_OF_CYCLE_TRAVERSAL_STEPS,
 };
-use crate::store::Store;
+use crate::store::{
+    Store, TEXT_ANALYZER_MANIFEST_HASH_KEY, TEXT_ANALYZER_MANIFEST_KEY,
+    TEXT_BM25_FIELD_SCHEMA_HASH_KEY, TEXT_INDEX_SCHEMA_VERSION, TEXT_INDEX_SCHEMA_VERSION_KEY,
+};
 use crate::types::{
     EDGE_KEY_LEN, EDGE_VALUE_LEN, ENTITY_ID_LEN, EdgeInfo, EdgeKind, EntityId, ScoredEntity,
     TimeRange, Vad, VaultConfig, parse_vad,
@@ -43,6 +47,7 @@ const MAX_SUBTREE_RESULTS: usize = 50_000;
 
 /// Cap for `sync_state_keys_with_prefix` to prevent unbounded allocation when
 /// a pathological prefix scans a very large sync_state database.
+#[cfg(feature = "sync")]
 const MAX_SYNC_STATE_KEYS: usize = 10_000;
 
 /// Build an edge prefix `[entity_id | kind]` for targeted LMDB prefix scans.
@@ -83,6 +88,16 @@ fn first_child_of_parent(
 pub struct Vault {
     pub(crate) store: Store,
     pub(crate) config: VaultConfig,
+    pub(crate) analyzer: MultilingualAnalyzer,
+    /// `false` only when `Vault::open` ran with
+    /// `skip_text_index_manifest_check = true` against a populated index.
+    /// In that state the on-disk postings may have been written under a
+    /// different analyzer manifest than the in-memory one, so scoring
+    /// against them silently returns wrong results. `search_text` returns
+    /// `Error::CorruptedIndex` until `MaintenanceBuilder::clear_text_index`
+    /// rewrites the manifest. Reopening cleanly also restores trust via
+    /// the regular handshake path.
+    pub(crate) text_index_trusted: std::sync::atomic::AtomicBool,
 }
 
 impl Vault {
@@ -105,7 +120,67 @@ impl Vault {
         }
 
         let store = Store::open(path, &config)?;
-        Ok(Self { store, config })
+        let analyzer = MultilingualAnalyzer::discover(&config.dict_search_paths)
+            .map_err(|e| Error::AnalyzerError(e.to_string()))?;
+        let text_index_trusted = if config.skip_text_index_manifest_check {
+            // Bypass-on-empty-index is fine — there are no postings under any
+            // analyzer manifest yet, so anything we write next will be the
+            // first authoritative state. Bypass-on-populated-index leaves the
+            // on-disk postings potentially analyzer-incompatible with the
+            // in-memory analyzer; mark the index untrusted so search fails
+            // closed until `clear_text_index` runs. The same residual-rows
+            // check used by the handshake applies — `total_docs == 0` alone
+            // can still hide stale postings/forward/length/stats rows.
+            let rtxn = store.env.read_txn()?;
+            let empty = text_index_is_empty(&store, &rtxn)?;
+            drop(rtxn);
+            if empty {
+                let mut wtxn = store.env.write_txn()?;
+                write_text_index_manifest_if_empty(&store, &mut wtxn, &analyzer)?;
+                wtxn.commit()?;
+            }
+            empty
+        } else {
+            handshake_text_index_manifest(&store, &analyzer)?;
+            true
+        };
+
+        Ok(Self {
+            store,
+            config,
+            analyzer,
+            text_index_trusted: std::sync::atomic::AtomicBool::new(text_index_trusted),
+        })
+    }
+
+    /// Internal guard: read paths over the text index must refuse to score
+    /// when the analyzer-manifest handshake was bypassed on a populated
+    /// index. See the docstring on `Vault::text_index_trusted`.
+    pub(crate) fn ensure_text_index_trusted(&self) -> Result<()> {
+        if self
+            .text_index_trusted
+            .load(std::sync::atomic::Ordering::Acquire)
+        {
+            Ok(())
+        } else {
+            Err(Error::CorruptedIndex(
+                "text index handshake bypassed on populated index",
+            ))
+        }
+    }
+
+    /// Current text-index status. `analyzer_manifest` reflects the analyzer
+    /// this vault was opened with; `schema_version` and `total_docs` reflect
+    /// what was persisted by prior writes.
+    pub fn text_index_status(&self) -> Result<TextIndexStatus> {
+        let rtxn = self.store.env.read_txn()?;
+        let total_docs = bm25::read_total_docs(&self.store, &rtxn)?;
+        let schema_version = read_text_schema_version(&self.store, &rtxn)?;
+        Ok(TextIndexStatus {
+            total_docs,
+            schema_version,
+            analyzer_manifest: self.analyzer.manifest(),
+        })
     }
 
     /// Stores an entity blob.
@@ -254,8 +329,16 @@ impl Vault {
 
     /// Returns BM25 text matches for a query.
     pub fn search_text(&self, query: &str, limit: usize) -> Result<Vec<ScoredEntity>> {
+        self.ensure_text_index_trusted()?;
         let rtxn = self.store.env.read_txn()?;
-        bm25::search_text(&self.store, &rtxn, query, limit)
+        bm25::search_text(
+            &self.store,
+            &rtxn,
+            &self.analyzer,
+            &bm25::Bm25Config::default(),
+            query,
+            limit,
+        )
     }
 
     /// Creates a new write batch builder bound to this vault.
@@ -635,7 +718,7 @@ impl Vault {
     /// Checks whether making `target` a parent of `node` would create a cycle.
     ///
     /// Convenience wrapper that opens its own read transaction.
-    /// For atomic check+insert, use [`would_create_cycle_in_txn`] within a
+    /// For atomic check+insert, use `would_create_cycle_in_txn` within a
     /// write transaction (see `BatchBuilder::edge_checked`).
     pub fn would_create_cycle(&self, node: &EntityId, target: &EntityId) -> Result<bool> {
         let rtxn = self.store.env.read_txn()?;
@@ -699,6 +782,343 @@ fn scan_edges(
     Ok(edges)
 }
 
+/// Snapshot of a vault's text-index state. Returned from
+/// [`Vault::text_index_status`].
+#[derive(Debug, Clone)]
+pub struct TextIndexStatus {
+    /// Number of logical documents currently indexed.
+    pub total_docs: u32,
+    /// Schema version recorded on disk. `None` for vaults with no text
+    /// index writes yet.
+    pub schema_version: Option<u16>,
+    /// Analyzer manifest resolved at open time (reflects dict discovery
+    /// against `VaultConfig.dict_search_paths`).
+    pub analyzer_manifest: AnalyzerManifest,
+}
+
+/// Canonical hash over BM25F field-schema semantics that make existing
+/// posting, forward, and field-length rows compatible with this build.
+/// Scoring-only knobs such as weights and `b` are deliberately excluded.
+fn bm25_field_schema_hash() -> [u8; 32] {
+    bm25_field_schema_hash_for_records(&bm25_field_schema_records(
+        &bm25::Bm25Config::default(),
+        bm25::POSTINGS_VALUE_FORMAT_VERSION,
+    ))
+}
+
+#[derive(Clone, Copy)]
+struct Bm25FieldSchemaRecord {
+    field_id: u16,
+    channel_name: &'static str,
+    length_policy: bm25::FieldLengthPolicy,
+    permits_zero_doc_field_length: bool,
+    postings_value_format_version: u16,
+}
+
+fn bm25_field_schema_records(
+    config: &bm25::Bm25Config,
+    postings_value_format_version: u16,
+) -> Vec<Bm25FieldSchemaRecord> {
+    AnalyzerChannel::ALL_V1
+        .into_iter()
+        .map(|channel| Bm25FieldSchemaRecord {
+            field_id: channel.field_id(),
+            channel_name: channel.as_str(),
+            length_policy: config.field(channel).length_policy,
+            permits_zero_doc_field_length: channel.permits_zero_doc_field_length(),
+            postings_value_format_version,
+        })
+        .collect()
+}
+
+fn bm25_field_schema_hash_for_records(records: &[Bm25FieldSchemaRecord]) -> [u8; 32] {
+    use sha2::{Digest, Sha256};
+    let mut h = Sha256::new();
+    h.update(b"oneiron-bm25-field-schema-v2");
+    h.update([0]);
+    for record in records {
+        h.update(record.field_id.to_le_bytes());
+        h.update([0]);
+        h.update(record.channel_name.as_bytes());
+        h.update([0]);
+        h.update(record.length_policy.manifest_tag().as_bytes());
+        h.update([0]);
+        h.update([u8::from(record.permits_zero_doc_field_length)]);
+        h.update([0]);
+        h.update(record.postings_value_format_version.to_le_bytes());
+        h.update([0]);
+    }
+    h.finalize().into()
+}
+
+fn read_text_schema_version(store: &Store, rtxn: &heed::RoTxn<'_>) -> Result<Option<u16>> {
+    let Some(raw) = store.vault_meta.get(rtxn, TEXT_INDEX_SCHEMA_VERSION_KEY)? else {
+        return Ok(None);
+    };
+    let bytes: [u8; 2] = raw
+        .try_into()
+        .map_err(|_| Error::CorruptedIndex("text schema version"))?;
+    Ok(Some(u16::from_le_bytes(bytes)))
+}
+
+fn read_hash_32(store: &Store, rtxn: &heed::RoTxn<'_>, key: &[u8]) -> Result<Option<[u8; 32]>> {
+    let Some(raw) = store.vault_meta.get(rtxn, key)? else {
+        return Ok(None);
+    };
+    let arr: [u8; 32] = raw
+        .try_into()
+        .map_err(|_| Error::CorruptedIndex("text index hash"))?;
+    Ok(Some(arr))
+}
+
+/// Returns `true` when none of the text-index DBs hold residual rows.
+///
+/// The `total_docs` sentinel alone isn't authoritative — a zero or missing
+/// sentinel coexisting with rows in any of the text DBs is corruption, not
+/// emptiness.
+fn text_index_residual_rows_empty(store: &Store, txn: &heed::RoTxn<'_>) -> Result<bool> {
+    let residual = store.text_postings.len(txn)?
+        + store.text_forward.len(txn)?
+        + store.text_doc_field_lengths.len(txn)?
+        + store.text_bm25_field_stats.len(txn)?;
+    Ok(residual == 0)
+}
+
+/// Whether the on-disk text index is fully empty: zero `total_docs` AND
+/// no residual rows in any text DB. Used by `Vault::open` to decide
+/// whether bypassing the manifest handshake is safe.
+fn text_index_is_empty(store: &Store, txn: &heed::RoTxn<'_>) -> Result<bool> {
+    if bm25::read_total_docs(store, txn)? != 0 {
+        return Ok(false);
+    }
+    text_index_residual_rows_empty(store, txn)
+}
+
+/// Validate the on-disk analyzer manifest against the in-memory one. Runs
+/// once at `Vault::open`. States are handled per plan ONE-317 §4.2:
+///
+/// * empty index, any stored state → rewrite manifest, proceed
+/// * non-empty, matching hashes → proceed
+/// * non-empty, field schema mismatch → `Bm25FieldSchemaChanged`
+/// * non-empty, manifest hash mismatch → `IncompatibleAnalyzer` naming the
+///   first language whose mode flipped (or `*` when the stored manifest is
+///   absent / unparsable, i.e. pre-ONE-317 vault)
+fn handshake_text_index_manifest(store: &Store, analyzer: &MultilingualAnalyzer) -> Result<()> {
+    let current_manifest = analyzer.manifest();
+    let current_manifest_hash = current_manifest
+        .canonical_hash()
+        .map_err(|e| Error::AnalyzerError(format!("manifest hash: {e}")))?;
+    let current_field_schema_hash = bm25_field_schema_hash();
+
+    // Hash-match is the common path on Vault::open and is read-only; only
+    // the empty-index rewrite branch mutates. Take a read txn first and
+    // upgrade only when we actually need to write.
+    let rtxn = store.env.read_txn()?;
+    let total_docs = bm25::read_total_docs(store, &rtxn)?;
+
+    if total_docs == 0 {
+        // The `total_docs` sentinel alone isn't sufficient to declare the
+        // index empty: a missing or zeroed sentinel coexisting with rows
+        // in the inverted/forward/length/stats DBs would let us silently
+        // rewrite the manifest over a populated incompatible index. Refuse
+        // to rewrite unless every text DB is actually empty.
+        if !text_index_residual_rows_empty(store, &rtxn)? {
+            return Err(Error::CorruptedIndex(
+                "text index sentinel missing with residual rows",
+            ));
+        }
+        drop(rtxn);
+        let mut wtxn = store.env.write_txn()?;
+        write_text_index_manifest_if_empty(store, &mut wtxn, analyzer)?;
+        wtxn.commit()?;
+        return Ok(());
+    }
+
+    let stored_manifest_hash = read_hash_32(store, &rtxn, TEXT_ANALYZER_MANIFEST_HASH_KEY)?;
+    let stored_field_schema_hash = read_hash_32(store, &rtxn, TEXT_BM25_FIELD_SCHEMA_HASH_KEY)?;
+    let stored_manifest_bytes = store
+        .vault_meta
+        .get(&rtxn, TEXT_ANALYZER_MANIFEST_KEY)?
+        .map(|b| b.to_vec());
+    drop(rtxn);
+
+    let Some(stored_hash) = stored_manifest_hash else {
+        // Pre-ONE-317 vault with docs in it: fail closed.
+        return Err(Error::IncompatibleAnalyzer {
+            lang: "*".to_owned(),
+            stored_mode: "unknown",
+            current_mode: AnalyzerMode::Portable.as_str(),
+        });
+    };
+
+    // A present manifest with a missing field-schema hash signals partial
+    // corruption, not schema evolution — route it to IncompatibleAnalyzer.
+    match stored_field_schema_hash {
+        Some(hash) if hash == current_field_schema_hash => {}
+        Some(_) => return Err(Error::Bm25FieldSchemaChanged),
+        None => {
+            return Err(Error::IncompatibleAnalyzer {
+                lang: "*".to_owned(),
+                stored_mode: "corrupt",
+                current_mode: "any",
+            });
+        }
+    }
+
+    if stored_hash == current_manifest_hash {
+        return Ok(());
+    }
+
+    Err(manifest_mismatch_error(
+        &current_manifest,
+        stored_manifest_bytes,
+    ))
+}
+
+fn manifest_mismatch_error(
+    current_manifest: &AnalyzerManifest,
+    stored_manifest_bytes: Option<Vec<u8>>,
+) -> Error {
+    // Manifest hash changed. Try to name the specific language whose mode
+    // flipped; fall back to `*` if the stored manifest doesn't parse.
+    if let Some(bytes) = stored_manifest_bytes
+        && let Ok(stored) = serde_json::from_slice::<AnalyzerManifest>(&bytes)
+    {
+        for (lang, current_policy) in &current_manifest.langs {
+            if let Some(stored_policy) = stored.langs.get(lang)
+                && stored_policy.mode != current_policy.mode
+            {
+                return Error::IncompatibleAnalyzer {
+                    lang: lang.clone(),
+                    stored_mode: stored_policy.mode.as_str(),
+                    current_mode: current_policy.mode.as_str(),
+                };
+            }
+        }
+    }
+
+    Error::IncompatibleAnalyzer {
+        lang: "*".to_owned(),
+        stored_mode: "mismatched",
+        current_mode: "mismatched",
+    }
+}
+
+/// Validate that a text-index write can append rows compatible with the
+/// current on-disk manifest in the same LMDB write transaction that will
+/// receive the postings. If the index is still empty, stamp the current
+/// manifest as the first authoritative text-index state.
+pub(crate) fn ensure_text_index_manifest_matches_wtxn(
+    store: &Store,
+    wtxn: &mut heed::RwTxn<'_>,
+    analyzer: &MultilingualAnalyzer,
+) -> Result<()> {
+    if text_index_is_empty(store, &*wtxn)? {
+        write_text_index_manifest(store, wtxn, analyzer)?;
+        return Ok(());
+    }
+
+    match read_text_schema_version(store, &*wtxn)? {
+        Some(TEXT_INDEX_SCHEMA_VERSION) => {}
+        Some(_) => return Err(Error::Bm25FieldSchemaChanged),
+        None => {
+            return Err(Error::IncompatibleAnalyzer {
+                lang: "*".to_owned(),
+                stored_mode: "corrupt",
+                current_mode: "any",
+            });
+        }
+    }
+
+    let current_manifest = analyzer.manifest();
+    let current_manifest_hash = current_manifest
+        .canonical_hash()
+        .map_err(|e| Error::AnalyzerError(format!("manifest hash: {e}")))?;
+    let current_field_schema_hash = bm25_field_schema_hash();
+    let stored_manifest_hash = read_hash_32(store, &*wtxn, TEXT_ANALYZER_MANIFEST_HASH_KEY)?;
+    let stored_field_schema_hash = read_hash_32(store, &*wtxn, TEXT_BM25_FIELD_SCHEMA_HASH_KEY)?;
+    let stored_manifest_bytes = store
+        .vault_meta
+        .get(&*wtxn, TEXT_ANALYZER_MANIFEST_KEY)?
+        .map(|b| b.to_vec());
+
+    let Some(stored_hash) = stored_manifest_hash else {
+        return Err(Error::IncompatibleAnalyzer {
+            lang: "*".to_owned(),
+            stored_mode: "unknown",
+            current_mode: AnalyzerMode::Portable.as_str(),
+        });
+    };
+
+    match stored_field_schema_hash {
+        Some(hash) if hash == current_field_schema_hash => {}
+        Some(_) => return Err(Error::Bm25FieldSchemaChanged),
+        None => {
+            return Err(Error::IncompatibleAnalyzer {
+                lang: "*".to_owned(),
+                stored_mode: "corrupt",
+                current_mode: "any",
+            });
+        }
+    }
+
+    if stored_hash == current_manifest_hash {
+        Ok(())
+    } else {
+        Err(manifest_mismatch_error(
+            &current_manifest,
+            stored_manifest_bytes,
+        ))
+    }
+}
+
+fn write_text_index_manifest_if_empty(
+    store: &Store,
+    wtxn: &mut heed::RwTxn<'_>,
+    analyzer: &MultilingualAnalyzer,
+) -> Result<()> {
+    if !text_index_is_empty(store, &*wtxn)? {
+        return Err(Error::CorruptedIndex(
+            "text index populated before manifest write",
+        ));
+    }
+    write_text_index_manifest(store, wtxn, analyzer)
+}
+
+/// Write the current analyzer manifest + field-schema hash + schema
+/// version into `vault_meta`. Used by open-on-empty-index and by
+/// `MaintenanceBuilder::clear_text_index`.
+pub(crate) fn write_text_index_manifest(
+    store: &Store,
+    wtxn: &mut heed::RwTxn<'_>,
+    analyzer: &MultilingualAnalyzer,
+) -> Result<()> {
+    let manifest = analyzer.manifest();
+    let manifest_json = manifest
+        .canonical_json()
+        .map_err(|e| Error::AnalyzerError(format!("manifest json: {e}")))?;
+    let manifest_hash = manifest
+        .canonical_hash()
+        .map_err(|e| Error::AnalyzerError(format!("manifest hash: {e}")))?;
+    let field_schema_hash = bm25_field_schema_hash();
+
+    store.vault_meta.put(
+        wtxn,
+        TEXT_INDEX_SCHEMA_VERSION_KEY,
+        &TEXT_INDEX_SCHEMA_VERSION.to_le_bytes(),
+    )?;
+    store
+        .vault_meta
+        .put(wtxn, TEXT_ANALYZER_MANIFEST_KEY, manifest_json.as_bytes())?;
+    store
+        .vault_meta
+        .put(wtxn, TEXT_ANALYZER_MANIFEST_HASH_KEY, &manifest_hash)?;
+    store
+        .vault_meta
+        .put(wtxn, TEXT_BM25_FIELD_SCHEMA_HASH_KEY, &field_schema_hash)?;
+    Ok(())
+}
+
 fn parse_edge_record(key: &[u8], value: &[u8]) -> Result<EdgeInfo> {
     if key.len() != EDGE_KEY_LEN || value.len() != EDGE_VALUE_LEN {
         return Err(Error::CorruptedIndex("edge record"));
@@ -738,4 +1158,517 @@ fn parse_edge_record(key: &[u8], value: &[u8]) -> Result<EdgeInfo> {
         created_at,
         vad,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::PathBuf;
+
+    use super::*;
+    use crate::store::{
+        TEXT_ANALYZER_MANIFEST_HASH_KEY, TEXT_ANALYZER_MANIFEST_KEY,
+        TEXT_BM25_FIELD_SCHEMA_HASH_KEY, TEXT_INDEX_SCHEMA_VERSION_KEY,
+    };
+    use crate::types::{HnswConfig, TextAnalyzerConfig, TimeRange, VaultConfig};
+
+    fn test_config() -> VaultConfig {
+        VaultConfig {
+            map_size: 32 * 1024 * 1024,
+            dimensions: 4,
+            embedding_model: Some("test-model-v1".to_owned()),
+            max_readers: 16,
+            hnsw: HnswConfig {
+                m_max_0: 64,
+                ef_construction: 200,
+                ef_search: 128,
+            },
+            text_analyzer: TextAnalyzerConfig::default(),
+            dict_search_paths: Vec::<PathBuf>::new(),
+            skip_text_index_manifest_check: false,
+        }
+    }
+
+    fn entity(byte: u8) -> EntityId {
+        EntityId::from_bytes_unchecked([byte; ENTITY_ID_LEN])
+    }
+
+    fn range(start: u64, end: u64) -> TimeRange {
+        TimeRange { start, end }
+    }
+
+    #[test]
+    fn new_empty_vault_writes_manifest_keys() -> Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let vault = Vault::open(tmp.path(), test_config())?;
+
+        let status = vault.text_index_status()?;
+        assert_eq!(status.total_docs, 0);
+        assert_eq!(status.schema_version, Some(2));
+        assert!(!status.analyzer_manifest.channels.is_empty());
+
+        let rtxn = vault.store.env.read_txn()?;
+        for key in [
+            TEXT_INDEX_SCHEMA_VERSION_KEY,
+            TEXT_ANALYZER_MANIFEST_KEY,
+            TEXT_ANALYZER_MANIFEST_HASH_KEY,
+            TEXT_BM25_FIELD_SCHEMA_HASH_KEY,
+        ] {
+            assert!(
+                vault.store.vault_meta.get(&rtxn, key)?.is_some(),
+                "missing handshake key {:?}",
+                std::str::from_utf8(key).unwrap(),
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn bypass_on_empty_persists_manifest_for_normal_reopen() -> Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let a = entity(10);
+
+        {
+            let mut cfg = test_config();
+            cfg.skip_text_index_manifest_check = true;
+            let vault = Vault::open(tmp.path(), cfg)?;
+            vault
+                .batch()
+                .put(&a, 0, range(1, 1), 1, b"a")
+                .text(&a, &[("body", "hello world")])
+                .commit()?;
+        }
+
+        let vault = Vault::open(tmp.path(), test_config())?;
+        assert_eq!(vault.search_text("hello", 10)?.len(), 1);
+        Ok(())
+    }
+
+    #[test]
+    fn reopen_same_manifest_preserves_text_index() -> Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let a = entity(11);
+
+        {
+            let vault = Vault::open(tmp.path(), test_config())?;
+            vault
+                .batch()
+                .put(&a, 0, range(1, 1), 1, b"a")
+                .text(&a, &[("body", "hello world")])
+                .commit()?;
+            assert_eq!(vault.search_text("hello", 10)?.len(), 1);
+        }
+
+        let vault = Vault::open(tmp.path(), test_config())?;
+        assert_eq!(vault.search_text("hello", 10)?.len(), 1);
+        Ok(())
+    }
+
+    #[test]
+    fn reopen_missing_manifest_on_populated_vault_fails_closed() -> Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let a = entity(21);
+
+        {
+            let vault = Vault::open(tmp.path(), test_config())?;
+            vault
+                .batch()
+                .put(&a, 0, range(1, 1), 1, b"a")
+                .text(&a, &[("body", "hello world")])
+                .commit()?;
+        }
+
+        // Simulate a pre-ONE-317 populated vault by deleting the handshake
+        // hash key while leaving text_postings populated.
+        {
+            let vault = Vault::open(tmp.path(), test_config())?;
+            let mut wtxn = vault.store.env.write_txn()?;
+            vault
+                .store
+                .vault_meta
+                .delete(&mut wtxn, TEXT_ANALYZER_MANIFEST_HASH_KEY)?;
+            wtxn.commit()?;
+        }
+
+        let err = match Vault::open(tmp.path(), test_config()) {
+            Ok(_) => panic!("expected Vault::open to fail"),
+            Err(e) => e,
+        };
+        assert!(
+            matches!(err, Error::IncompatibleAnalyzer { .. }),
+            "expected IncompatibleAnalyzer, got {err:?}",
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn field_schema_hash_mismatch_fails_closed() -> Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let a = entity(31);
+
+        {
+            let vault = Vault::open(tmp.path(), test_config())?;
+            vault
+                .batch()
+                .put(&a, 0, range(1, 1), 1, b"a")
+                .text(&a, &[("body", "hello world")])
+                .commit()?;
+        }
+
+        {
+            let vault = Vault::open(tmp.path(), test_config())?;
+            let mut wtxn = vault.store.env.write_txn()?;
+            vault
+                .store
+                .vault_meta
+                .put(&mut wtxn, TEXT_BM25_FIELD_SCHEMA_HASH_KEY, &[0xEE; 32])?;
+            wtxn.commit()?;
+        }
+
+        let err = match Vault::open(tmp.path(), test_config()) {
+            Ok(_) => panic!("expected Vault::open to fail"),
+            Err(e) => e,
+        };
+        assert!(
+            matches!(err, Error::Bm25FieldSchemaChanged),
+            "expected Bm25FieldSchemaChanged, got {err:?}",
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn bm25_field_schema_hash_binds_on_disk_semantics() {
+        let records = bm25_field_schema_records(
+            &bm25::Bm25Config::default(),
+            bm25::POSTINGS_VALUE_FORMAT_VERSION,
+        );
+        let baseline = bm25_field_schema_hash_for_records(&records);
+
+        let mut changed = records.clone();
+        changed[0].field_id = changed[0].field_id.saturating_add(1);
+        assert_ne!(baseline, bm25_field_schema_hash_for_records(&changed));
+
+        let mut changed = records.clone();
+        changed[0].channel_name = "renamed_surface";
+        assert_ne!(baseline, bm25_field_schema_hash_for_records(&changed));
+
+        let mut changed = records.clone();
+        changed[0].length_policy = bm25::FieldLengthPolicy::NoNorm;
+        assert_ne!(baseline, bm25_field_schema_hash_for_records(&changed));
+
+        let mut changed = records.clone();
+        changed[0].permits_zero_doc_field_length = !changed[0].permits_zero_doc_field_length;
+        assert_ne!(baseline, bm25_field_schema_hash_for_records(&changed));
+
+        let mut changed = records;
+        changed[0].postings_value_format_version += 1;
+        assert_ne!(baseline, bm25_field_schema_hash_for_records(&changed));
+    }
+
+    #[test]
+    fn bm25_field_schema_hash_ignores_scoring_knobs() {
+        let default = bm25::Bm25Config::default();
+        let mut fields = default.fields;
+        fields[AnalyzerChannel::Surface.field_id() as usize].weight = 9.0;
+        fields[AnalyzerChannel::Surface.field_id() as usize].b = 0.1;
+        let scoring = bm25::Bm25Config {
+            k1: 2.0,
+            formula: bm25::Bm25Formula::Plus { delta: 0.5 },
+            fields,
+        };
+
+        assert_eq!(
+            bm25_field_schema_hash_for_records(&bm25_field_schema_records(
+                &default,
+                bm25::POSTINGS_VALUE_FORMAT_VERSION,
+            )),
+            bm25_field_schema_hash_for_records(&bm25_field_schema_records(
+                &scoring,
+                bm25::POSTINGS_VALUE_FORMAT_VERSION,
+            )),
+        );
+    }
+
+    #[test]
+    fn analyzer_manifest_hash_mismatch_fails_closed() -> Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let a = entity(41);
+
+        {
+            let vault = Vault::open(tmp.path(), test_config())?;
+            vault
+                .batch()
+                .put(&a, 0, range(1, 1), 1, b"a")
+                .text(&a, &[("body", "hello world")])
+                .commit()?;
+        }
+
+        // Overwrite the stored manifest hash to simulate a dict mode flip.
+        {
+            let vault = Vault::open(tmp.path(), test_config())?;
+            let mut wtxn = vault.store.env.write_txn()?;
+            vault
+                .store
+                .vault_meta
+                .put(&mut wtxn, TEXT_ANALYZER_MANIFEST_HASH_KEY, &[0xCC; 32])?;
+            wtxn.commit()?;
+        }
+
+        let err = match Vault::open(tmp.path(), test_config()) {
+            Ok(_) => panic!("expected Vault::open to fail"),
+            Err(e) => e,
+        };
+        assert!(
+            matches!(err, Error::IncompatibleAnalyzer { .. }),
+            "expected IncompatibleAnalyzer, got {err:?}",
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn handshake_rejects_truncated_stored_hash() -> Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let a = entity(51);
+
+        {
+            let vault = Vault::open(tmp.path(), test_config())?;
+            vault
+                .batch()
+                .put(&a, 0, range(1, 1), 1, b"a")
+                .text(&a, &[("body", "hello world")])
+                .commit()?;
+        }
+
+        {
+            let vault = Vault::open(tmp.path(), test_config())?;
+            let mut wtxn = vault.store.env.write_txn()?;
+            vault
+                .store
+                .vault_meta
+                .put(&mut wtxn, TEXT_ANALYZER_MANIFEST_HASH_KEY, &[0xCC; 16])?;
+            wtxn.commit()?;
+        }
+
+        let err = match Vault::open(tmp.path(), test_config()) {
+            Ok(_) => panic!("expected Vault::open to fail"),
+            Err(e) => e,
+        };
+        assert!(
+            matches!(err, Error::CorruptedIndex(_)),
+            "expected CorruptedIndex, got {err:?}",
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn skip_manifest_check_unblocks_clear_text_index_recovery() -> Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let a = entity(61);
+
+        {
+            let vault = Vault::open(tmp.path(), test_config())?;
+            vault
+                .batch()
+                .put(&a, 0, range(1, 1), 1, b"a")
+                .text(&a, &[("body", "hello world")])
+                .commit()?;
+        }
+
+        // Corrupt the analyzer manifest hash so a normal open fails closed.
+        {
+            let vault = Vault::open(tmp.path(), test_config())?;
+            let mut wtxn = vault.store.env.write_txn()?;
+            vault
+                .store
+                .vault_meta
+                .put(&mut wtxn, TEXT_ANALYZER_MANIFEST_HASH_KEY, &[0xAB; 32])?;
+            wtxn.commit()?;
+        }
+
+        assert!(matches!(
+            Vault::open(tmp.path(), test_config()),
+            Err(Error::IncompatibleAnalyzer { .. })
+        ));
+
+        // Bypass the handshake just long enough to rebuild.
+        {
+            let mut cfg = test_config();
+            cfg.skip_text_index_manifest_check = true;
+            let vault = Vault::open(tmp.path(), cfg)?;
+            vault.maintain().clear_text_index().run()?;
+        }
+
+        // Normal open now succeeds — clear_text_index rewrote the manifest.
+        let vault = Vault::open(tmp.path(), test_config())?;
+        assert_eq!(vault.text_index_status()?.total_docs, 0);
+        Ok(())
+    }
+
+    #[test]
+    fn search_text_fails_closed_when_handshake_bypassed_on_populated_index() -> Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let a = entity(71);
+
+        {
+            let vault = Vault::open(tmp.path(), test_config())?;
+            vault
+                .batch()
+                .put(&a, 0, range(1, 1), 1, b"a")
+                .text(&a, &[("body", "hello world")])
+                .commit()?;
+        }
+
+        // Open with the bypass set — the index has rows but the handshake
+        // didn't run. `search_text` would otherwise score against postings
+        // that may have been written under a different analyzer manifest.
+        let mut cfg = test_config();
+        cfg.skip_text_index_manifest_check = true;
+        let vault = Vault::open(tmp.path(), cfg)?;
+        let err = vault
+            .search_text("hello", 10)
+            .expect_err("search_text must refuse on bypassed-and-populated state");
+        assert!(
+            matches!(err, Error::CorruptedIndex(_)),
+            "expected CorruptedIndex, got {err:?}",
+        );
+
+        // After clear_text_index, trust is restored within the same vault.
+        vault.maintain().clear_text_index().run()?;
+        assert!(vault.search_text("hello", 10).is_ok());
+        Ok(())
+    }
+
+    #[test]
+    fn text_write_fails_closed_when_trust_bypassed() -> Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let a = entity(73);
+        let b = entity(74);
+
+        {
+            let vault = Vault::open(tmp.path(), test_config())?;
+            vault
+                .batch()
+                .put(&a, 0, range(1, 1), 1, b"a")
+                .text(&a, &[("body", "hello world")])
+                .commit()?;
+        }
+
+        let mut cfg = test_config();
+        cfg.skip_text_index_manifest_check = true;
+        let vault = Vault::open(tmp.path(), cfg)?;
+        let err = vault
+            .batch()
+            .put(&b, 0, range(1, 1), 1, b"b")
+            .text(&b, &[("body", "new text")])
+            .commit()
+            .expect_err("text write must refuse bypassed populated index");
+        assert!(
+            matches!(err, Error::CorruptedIndex(_)),
+            "expected CorruptedIndex, got {err:?}",
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn text_write_fails_closed_when_stored_manifest_diverged() -> Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let a = entity(75);
+        let b = entity(76);
+        let vault = Vault::open(tmp.path(), test_config())?;
+        vault
+            .batch()
+            .put(&a, 0, range(1, 1), 1, b"a")
+            .text(&a, &[("body", "hello world")])
+            .commit()?;
+
+        {
+            let mut wtxn = vault.store.env.write_txn()?;
+            vault
+                .store
+                .vault_meta
+                .put(&mut wtxn, TEXT_ANALYZER_MANIFEST_HASH_KEY, &[0xCC; 32])?;
+            wtxn.commit()?;
+        }
+
+        let err = vault
+            .batch()
+            .put(&b, 0, range(1, 1), 1, b"b")
+            .text(&b, &[("body", "new text")])
+            .commit()
+            .expect_err("text write must refuse manifest divergence");
+        assert!(
+            matches!(err, Error::IncompatibleAnalyzer { .. }),
+            "expected IncompatibleAnalyzer, got {err:?}",
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn manifest_write_fails_closed_if_index_populated_during_writer() -> Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let vault = Vault::open(tmp.path(), test_config())?;
+        let mut wtxn = vault.store.env.write_txn()?;
+        vault
+            .store
+            .text_postings
+            .put(&mut wtxn, b"residual", b"x")?;
+
+        let err = write_text_index_manifest_if_empty(&vault.store, &mut wtxn, &vault.analyzer)
+            .expect_err("manifest write must re-check emptiness in writer");
+        assert!(
+            matches!(err, Error::CorruptedIndex(_)),
+            "expected CorruptedIndex, got {err:?}",
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn handshake_rejects_residual_rows_with_missing_total_docs_sentinel() -> Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let a = entity(72);
+
+        {
+            let vault = Vault::open(tmp.path(), test_config())?;
+            vault
+                .batch()
+                .put(&a, 0, range(1, 1), 1, b"a")
+                .text(&a, &[("body", "alpha")])
+                .commit()?;
+
+            // Wipe the `total_docs` sentinel out of `text_meta` while
+            // leaving `text_postings` / `text_forward` /
+            // `text_doc_field_lengths` / `text_bm25_field_stats` populated.
+            let mut wtxn = vault.store.env.write_txn()?;
+            vault.store.text_meta.clear(&mut wtxn)?;
+            wtxn.commit()?;
+        }
+
+        let err = match Vault::open(tmp.path(), test_config()) {
+            Ok(_) => panic!("expected Vault::open to fail closed"),
+            Err(e) => e,
+        };
+        assert!(
+            matches!(err, Error::CorruptedIndex(_)),
+            "expected CorruptedIndex, got {err:?}",
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn text_index_status_reflects_indexed_docs() -> Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let vault = Vault::open(tmp.path(), test_config())?;
+        let a = entity(51);
+        let b = entity(52);
+
+        vault
+            .batch()
+            .put(&a, 0, range(1, 1), 1, b"a")
+            .put(&b, 0, range(1, 1), 1, b"b")
+            .text(&a, &[("body", "first")])
+            .text(&b, &[("body", "second")])
+            .commit()?;
+
+        assert_eq!(vault.text_index_status()?.total_docs, 2);
+        Ok(())
+    }
 }

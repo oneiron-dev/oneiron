@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::path::PathBuf;
 
 use uuid::Uuid;
 
@@ -46,13 +47,7 @@ impl EntityId {
 
     /// Returns the lowercase hex-encoded string (32 chars).
     pub fn to_hex(&self) -> String {
-        const HEX: &[u8; 16] = b"0123456789abcdef";
-        let mut out = String::with_capacity(self.0.len() * 2);
-        for byte in self.0 {
-            out.push(HEX[(byte >> 4) as usize] as char);
-            out.push(HEX[(byte & 0x0f) as usize] as char);
-        }
-        out
+        bytes_to_hex_lower(&self.0)
     }
 
     /// Parses a 32-char hex string (case-insensitive) into an EntityId.
@@ -76,6 +71,19 @@ fn is_reserved_entity_id_bytes(bytes: &[u8; ENTITY_ID_LEN]) -> bool {
     }
 
     bytes[1..].iter().all(|&b| b == 0xFF) && short_id_prefix(bytes[0]).is_ok()
+}
+
+/// Lowercase hex-encodes an arbitrary byte slice. Shared with the
+/// analyzer manifest hasher so every hex rendering in the crate goes
+/// through one implementation.
+pub(crate) fn bytes_to_hex_lower(bytes: &[u8]) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut out = String::with_capacity(bytes.len() * 2);
+    for &byte in bytes {
+        out.push(HEX[(byte >> 4) as usize] as char);
+        out.push(HEX[(byte & 0x0f) as usize] as char);
+    }
+    out
 }
 
 /// Converts an ASCII hex character to its nibble value.
@@ -276,6 +284,58 @@ pub struct VaultConfig {
     pub max_readers: u32,
     /// HNSW tuning configuration.
     pub hnsw: HnswConfig,
+    /// Text analyzer configuration (plan ONE-317 §2.3).
+    pub text_analyzer: TextAnalyzerConfig,
+    /// Roots probed at open time for per-language dictionaries
+    /// (`<path>/ja/system.dic`, `<path>/ko/system.dic`,
+    /// `<path>/zh/jieba.dict.utf8`). First-found wins per-language; missing
+    /// dicts silently downgrade the affected language to Portable mode.
+    ///
+    /// **Security.** Every path here is opened and (for Sudachi/jieba)
+    /// read in full at `Vault::open`. Callers MUST only include paths they
+    /// trust — e.g. the iOS app bundle's `Resources/` directory, or a
+    /// packager-controlled cache directory. Do NOT pass user-uploaded
+    /// directories, network mounts, or world-writable locations: a hostile
+    /// dict file can drive Sudachi / jieba / Lindera into unexpected
+    /// behavior, and the dict-bytes hash is then baked into the LMDB
+    /// analyzer manifest, silently pinning the vault to that dict.
+    pub dict_search_paths: Vec<PathBuf>,
+    /// Skip the text-index manifest handshake at [`crate::Vault::open`] so the
+    /// caller can reach [`crate::MaintenanceBuilder::clear_text_index`]
+    /// after a dict swap or BM25 field-schema change. Without this escape
+    /// hatch, [`crate::Error::IncompatibleAnalyzer`] and
+    /// [`crate::Error::Bm25FieldSchemaChanged`] trap the user before any
+    /// `Vault` exists to call `.maintain()` on.
+    ///
+    /// Only use this to immediately run `clear_text_index`. On a populated
+    /// vault, [`crate::Vault::open`] marks the text index untrusted and
+    /// [`crate::Vault::search_text`] (and the pipeline / context_pack
+    /// callers that go through the same internal trust gate)
+    /// returns [`crate::Error::CorruptedIndex`] until the clear commits.
+    pub skip_text_index_manifest_check: bool,
+}
+
+/// Text analyzer configuration. Kept minimal in v1 — the full analyzer
+/// manifest (normalization policy, per-channel schema, lang modes) is
+/// computed from dict discovery at open time and stored in the vault's
+/// on-disk manifest. Fields here cover caller-controllable knobs only.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct TextAnalyzerConfig {}
+
+/// Per-call overrides for `BatchBuilder::text`. Reserved; v1 ignores all
+/// fields but the struct is public so downstream can adopt without a
+/// minor-version bump later.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct TextIndexOptions {
+    /// Explicit language hint for this batch of text fields. Overrides
+    /// `whichlang` detection on Latin/Cyrillic/Greek runs and the
+    /// DualHanFallback decision on Han runs. Unambiguous-script runs
+    /// (Hiragana, Katakana, Hangul, Hebrew, Thai, Lao, Khmer, Myanmar)
+    /// route by their own script class regardless of this hint — the
+    /// script is the stronger signal.
+    pub language_hint: Option<crate::analyzer::LanguageHint>,
 }
 
 impl Default for VaultConfig {
@@ -296,6 +356,9 @@ impl VaultConfig {
             map_size: 1 << 30,
             max_readers: 126,
             hnsw: HnswConfig::default(),
+            text_analyzer: TextAnalyzerConfig::default(),
+            dict_search_paths: Vec::new(),
+            skip_text_index_manifest_check: false,
         }
     }
 
@@ -308,6 +371,9 @@ impl VaultConfig {
             map_size: 1 << 33,
             max_readers: 126,
             hnsw: HnswConfig::default(),
+            text_analyzer: TextAnalyzerConfig::default(),
+            dict_search_paths: Vec::new(),
+            skip_text_index_manifest_check: false,
         }
     }
 }

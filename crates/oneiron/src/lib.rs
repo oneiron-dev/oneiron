@@ -1,5 +1,6 @@
 use std::time::{SystemTime, UNIX_EPOCH};
 
+pub mod analyzer;
 pub mod batch;
 pub(crate) mod bm25;
 pub mod context_pack;
@@ -18,6 +19,10 @@ pub mod sync;
 pub mod types;
 mod vault;
 
+pub use crate::analyzer::{
+    ANALYZER_VERSION, AnalyzerAssetManifest, AnalyzerChannel, AnalyzerContext, AnalyzerManifest,
+    AnalyzerMode, LangPolicy, LanguageHint, NormalizationPolicy, Token, TokenKind,
+};
 pub use crate::batch::{BatchBuilder, TxnBatchBuilder};
 pub use crate::context_pack::ContextPackBuilder;
 pub use crate::error::{Error, Result};
@@ -25,10 +30,10 @@ pub use crate::maintain::{MaintenanceBuilder, MaintenanceReport};
 pub use crate::pipeline::PipelineBuilder;
 pub use crate::types::{
     ContextEntity, ContextPack, EdgeInfo, EdgeKind, EntityId, FieldProfile, HnswConfig, PackFormat,
-    PackStats, ScoredEntity, Signal, TemporalAnchorMode, TemporalGranularity, TimeRange,
-    TokenAllocation, Vad, VaultConfig,
+    PackStats, ScoredEntity, Signal, TemporalAnchorMode, TemporalGranularity, TextAnalyzerConfig,
+    TextIndexOptions, TimeRange, TokenAllocation, Vad, VaultConfig,
 };
-pub use crate::vault::Vault;
+pub use crate::vault::{TextIndexStatus, Vault};
 
 pub(crate) fn unix_seconds_now() -> u64 {
     SystemTime::now()
