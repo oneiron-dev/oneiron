@@ -123,6 +123,7 @@ pub fn map_whichlang_lang(lang: Lang) -> Option<LanguageHint> {
 
 pub fn infer_from_script(class: ScriptClass) -> Option<LanguageHint> {
     match class {
+        ScriptClass::Greek => Some(LanguageHint::El),
         ScriptClass::Hiragana | ScriptClass::Katakana => Some(LanguageHint::Ja),
         ScriptClass::Hangul => Some(LanguageHint::Ko),
         ScriptClass::Hebrew => Some(LanguageHint::He),
@@ -177,6 +178,7 @@ mod tests {
             infer_from_script(ScriptClass::Myanmar),
             Some(LanguageHint::My)
         );
+        assert_eq!(infer_from_script(ScriptClass::Greek), Some(LanguageHint::El));
     }
 
     #[test]

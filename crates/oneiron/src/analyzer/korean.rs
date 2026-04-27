@@ -31,6 +31,7 @@ pub const DICT_MARKER: &str = "metadata.json";
 /// just to `metadata.json`.
 const KO_ASSET_NAME: &str = "mecab-ko-dic";
 const KO_ASSET_LICENSE: &str = "Apache-2.0";
+const KO_ASSET_SOURCE: &str = "https://bitbucket.org/eunjeon/mecab-ko-dic";
 
 /// Korean analyzer. Cheaply cloneable — Segmenter is held in `Arc`.
 #[derive(Clone)]
@@ -84,7 +85,7 @@ impl KoreanAnalyzer {
             KO_ASSET_NAME,
             "unknown",
             KO_ASSET_LICENSE,
-            None,
+            Some(KO_ASSET_SOURCE.to_string()),
             path,
         )
         .map_err(|e| DictLoadError::Io {

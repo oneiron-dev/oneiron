@@ -73,14 +73,15 @@ pub enum Error {
     /// # Recovery
     ///
     /// Reopen with [`VaultConfig::skip_text_index_manifest_check`] set to
-    /// `true`, call [`MaintenanceBuilder::clear_text_index`] to rebuild the
-    /// postings + rewrite the manifest, then reopen with the default
-    /// `false` value.
+    /// `true`, call [`MaintenanceBuilder::clear_text_index`] to drop the
+    /// stale postings, reopen with the default `false` value so the empty
+    /// index seeds a fresh manifest, then reindex documents to restore
+    /// search results.
     ///
     /// [`VaultConfig::skip_text_index_manifest_check`]: crate::VaultConfig::skip_text_index_manifest_check
     /// [`MaintenanceBuilder::clear_text_index`]: crate::MaintenanceBuilder::clear_text_index
     #[error(
-        "text analyzer changed since index was built (lang={lang:?}): stored={stored_mode} current={current_mode}; reopen with VaultConfig::skip_text_index_manifest_check=true and run clear_text_index to rebuild"
+        "text analyzer changed since index was built (lang={lang:?}): stored={stored_mode} current={current_mode}; reopen with VaultConfig::skip_text_index_manifest_check=true, run clear_text_index, reopen normally, and reindex documents to restore search"
     )]
     IncompatibleAnalyzer {
         lang: String,
@@ -95,19 +96,21 @@ pub enum Error {
     ///
     /// Same as [`Error::IncompatibleAnalyzer`]: reopen with
     /// [`VaultConfig::skip_text_index_manifest_check`] set to `true`, run
-    /// [`MaintenanceBuilder::clear_text_index`], then reopen normally.
+    /// [`MaintenanceBuilder::clear_text_index`], reopen normally, then
+    /// reindex documents.
     ///
     /// [`VaultConfig::skip_text_index_manifest_check`]: crate::VaultConfig::skip_text_index_manifest_check
     /// [`MaintenanceBuilder::clear_text_index`]: crate::MaintenanceBuilder::clear_text_index
     #[error(
-        "bm25f field schema changed since index was built; reopen with VaultConfig::skip_text_index_manifest_check=true and run clear_text_index to rebuild"
+        "bm25f field schema changed since index was built; reopen with VaultConfig::skip_text_index_manifest_check=true, run clear_text_index, reopen normally, and reindex documents to restore search"
     )]
     Bm25FieldSchemaChanged,
     /// A dict asset declared in the stored manifest is missing from disk
     /// (e.g., `system.dic` was deleted after indexing). Restore the file or
     /// use the same recovery path as [`Error::IncompatibleAnalyzer`]:
     /// reopen with [`VaultConfig::skip_text_index_manifest_check`] set to
-    /// `true`, run [`MaintenanceBuilder::clear_text_index`], reopen.
+    /// `true`, run [`MaintenanceBuilder::clear_text_index`], reopen
+    /// normally, and reindex documents.
     ///
     /// [`VaultConfig::skip_text_index_manifest_check`]: crate::VaultConfig::skip_text_index_manifest_check
     /// [`MaintenanceBuilder::clear_text_index`]: crate::MaintenanceBuilder::clear_text_index

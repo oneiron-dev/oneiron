@@ -192,18 +192,11 @@ pub struct CharByteTable {
     /// `byte_of_char[i]` = byte offset of the i-th char start.
     /// Length = char_count + 1 (last entry = input byte length).
     byte_of_char: Vec<usize>,
-    /// `char_of_byte[b]` = char index at byte offset b for every valid
-    /// char-boundary byte. Intermediate bytes repeat the prior char index.
-    char_of_byte: Vec<usize>,
 }
 
 impl CharByteTable {
     pub fn byte_of_char(&self, char_idx: usize) -> usize {
         self.byte_of_char[char_idx]
-    }
-
-    pub fn char_of_byte(&self, byte_idx: usize) -> usize {
-        self.char_of_byte[byte_idx]
     }
 
     pub fn char_count(&self) -> usize {
@@ -212,32 +205,12 @@ impl CharByteTable {
 }
 
 pub fn char_to_byte_table(text: &str) -> CharByteTable {
-    // `text.len() + 1` is always >= `chars().count() + 1`, so it's a sufficient
-    // upper bound for capacity and avoids a separate O(n) walk just to count.
     let mut byte_of_char: Vec<usize> = Vec::with_capacity(text.len() + 1);
-    let mut char_of_byte: Vec<usize> = vec![0; text.len() + 1];
-    let mut char_idx = 0usize;
-    for (b, c) in text.char_indices() {
+    for (b, _) in text.char_indices() {
         byte_of_char.push(b);
-        // Every intermediate byte of this char reports the char index.
-        // `b..b + len_utf8` covers exactly this code point's bytes; the
-        // next iteration's start (or the trailing `text.len()` slot) picks
-        // up from there. O(N) total across all chars.
-        let end = b + c.len_utf8();
-        for entry in &mut char_of_byte[b..end] {
-            *entry = char_idx;
-        }
-        char_idx += 1;
     }
     byte_of_char.push(text.len());
-    // Byte offset equal to text.len() is "one past last char" = char_idx.
-    if let Some(last) = char_of_byte.last_mut() {
-        *last = char_idx;
-    }
-    CharByteTable {
-        byte_of_char,
-        char_of_byte,
-    }
+    CharByteTable { byte_of_char }
 }
 
 /// Errors returned when a Chinese dictionary file cannot be loaded.
@@ -313,10 +286,6 @@ mod tests {
         assert_eq!(t.byte_of_char(2), 4); // after '北' (3 bytes)
         assert_eq!(t.byte_of_char(3), 5); // after 'b'
         assert_eq!(t.byte_of_char(4), 8); // after '京'
-        assert_eq!(t.char_of_byte(0), 0);
-        assert_eq!(t.char_of_byte(1), 1);
-        assert_eq!(t.char_of_byte(4), 2);
-        assert_eq!(t.char_of_byte(5), 3);
     }
 
     #[test]
@@ -325,7 +294,6 @@ mod tests {
         assert_eq!(t.char_count(), 5);
         for i in 0..=5 {
             assert_eq!(t.byte_of_char(i), i);
-            assert_eq!(t.char_of_byte(i), i.min(5));
         }
     }
 
