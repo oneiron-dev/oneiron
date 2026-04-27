@@ -134,16 +134,16 @@ impl MultilingualAnalyzer {
             let slice = run.as_slice(analysis_text);
             // Resolve hint per run so a CJK run cannot poison an adjacent
             // Latin run's stemmer selection. `detect_with_whichlang` runs on
-            // the run's own bytes, not on cross-run analysis_text. Han runs
-            // skip whichlang (bare argmax on short input) so DualHanFallback
-            // owns JP-vs-ZH routing; explicit caller hints still apply.
+            // the run's own bytes, not on cross-run analysis_text. Scripts
+            // routed by fixed script class skip whichlang because their
+            // downstream analyzers do not consume those hints.
             let run_hint = detect::infer_from_script(run.script)
                 .or(ctx.language_hint)
                 .or_else(|| {
-                    if matches!(run.script, ScriptClass::Han) {
-                        None
-                    } else {
+                    if whichlang_eligible(run.script) {
                         detect::detect_with_whichlang(slice)
+                    } else {
+                        None
                     }
                 });
             position = self.dispatch_run(run, slice, run_hint, ctx.query_mode, position, out);
@@ -320,6 +320,13 @@ impl MultilingualAnalyzer {
     }
 }
 
+fn whichlang_eligible(class: ScriptClass) -> bool {
+    matches!(
+        class,
+        ScriptClass::Latin | ScriptClass::Cyrillic | ScriptClass::Greek | ScriptClass::Han
+    )
+}
+
 impl Default for MultilingualAnalyzer {
     fn default() -> Self {
         Self::portable()
@@ -358,6 +365,46 @@ mod tests {
             .filter(|t| t.channel == AnalyzerChannel::Surface)
             .map(|t| t.term.as_ref())
             .collect()
+    }
+
+    #[test]
+    fn whichlang_eligible_only_for_latin_family_and_han() {
+        let eligible = [
+            ScriptClass::Latin,
+            ScriptClass::Cyrillic,
+            ScriptClass::Greek,
+            ScriptClass::Han,
+        ];
+        for class in eligible {
+            assert!(
+                whichlang_eligible(class),
+                "expected {} to be whichlang-eligible",
+                class.as_str(),
+            );
+        }
+
+        let ineligible = [
+            ScriptClass::Hebrew,
+            ScriptClass::Arabic,
+            ScriptClass::Hiragana,
+            ScriptClass::Katakana,
+            ScriptClass::Hangul,
+            ScriptClass::Thai,
+            ScriptClass::Lao,
+            ScriptClass::Khmer,
+            ScriptClass::Myanmar,
+            ScriptClass::Devanagari,
+            ScriptClass::Tamil,
+            ScriptClass::Common,
+            ScriptClass::Other,
+        ];
+        for class in ineligible {
+            assert!(
+                !whichlang_eligible(class),
+                "expected {} to skip whichlang",
+                class.as_str(),
+            );
+        }
     }
 
     #[test]
@@ -728,8 +775,8 @@ mod tests {
         assert_eq!(surface_terms(&out), vec!["東", "京"]);
     }
 
-    /// Han-only runs must suppress whichlang so Portable mode falls through
-    /// to cjk_ngram regardless of the detector's bare-argmax guess.
+    /// Han-only runs without dicts still fall through to cjk_ngram in
+    /// Portable mode.
     #[test]
     fn han_only_run_uses_dualhan_fallback_without_explicit_hint() {
         let a = MultilingualAnalyzer::portable();
