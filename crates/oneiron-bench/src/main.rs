@@ -1,3 +1,240 @@
-fn main() {
-    println!("oneiron-bench — benchmarks not yet implemented");
+//! oneiron-bench — benchmark harness skeleton.
+//!
+//! Subcommands (plan ONE-317 §9, ONE-318):
+//!
+//! * `analyzer throughput` — tokenization MiB/s microbench over a
+//!   built-in mixed-script corpus.
+//! * `analyzer smoke` — hand-crafted query sanity check that the
+//!   analyzer + BM25F pipe isn't inverted (exact surface matches beat
+//!   n-gram-only matches; mixed-script queries return their docs).
+//!
+//! The full MIRACL / Mr.TyDi / internal SEA judgment-set retrieval
+//! matrix lives in ONE-318; this binary only ships the skeleton and
+//! cheap in-workspace checks.
+
+use std::process::ExitCode;
+use std::time::Instant;
+
+use oneiron::analyzer::{AnalyzerContext, MultilingualAnalyzer, Token};
+use oneiron::{EntityId, TimeRange, Vault, VaultConfig};
+
+fn main() -> ExitCode {
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    match args.as_slice() {
+        [] => {
+            print_help();
+            ExitCode::SUCCESS
+        }
+        [cmd] if cmd == "analyzer" => run_analyzer_default(),
+        [cmd, sub] if cmd == "analyzer" => match sub.as_str() {
+            "throughput" => run_throughput(),
+            "smoke" => run_smoke(),
+            other => {
+                eprintln!("unknown analyzer subcommand: {other}");
+                print_help();
+                ExitCode::FAILURE
+            }
+        },
+        _ => {
+            eprintln!("unknown invocation: {args:?}");
+            print_help();
+            ExitCode::FAILURE
+        }
+    }
+}
+
+fn print_help() {
+    println!(
+        "usage: oneiron-bench <command> [<subcommand>]\n\
+         \n\
+         commands:\n\
+           analyzer              run all analyzer benches (throughput + smoke)\n\
+           analyzer throughput   tokenization MiB/s microbench\n\
+           analyzer smoke        hand-crafted BM25F retrieval smoke test\n\
+         \n\
+         note: MIRACL / Mr.TyDi / internal SEA retrieval quality matrix\n\
+         lives in ONE-318 (not yet implemented)."
+    );
+}
+
+fn run_analyzer_default() -> ExitCode {
+    let a = run_throughput();
+    let b = run_smoke();
+    if matches!((a, b), (ExitCode::SUCCESS, ExitCode::SUCCESS)) {
+        ExitCode::SUCCESS
+    } else {
+        ExitCode::FAILURE
+    }
+}
+
+fn run_throughput() -> ExitCode {
+    println!("== analyzer throughput ==");
+    let analyzer = match MultilingualAnalyzer::discover(&[]) {
+        Ok(a) => a,
+        Err(e) => {
+            eprintln!("analyzer init failed: {e:?}");
+            return ExitCode::FAILURE;
+        }
+    };
+    let ctx = AnalyzerContext::for_index();
+    let corpus = sample_corpus();
+    let warmup_iters = 3;
+    let bench_iters = 20;
+
+    let mut buf: Vec<Token> = Vec::with_capacity(8192);
+    for _ in 0..warmup_iters {
+        for doc in &corpus {
+            buf.clear();
+            analyzer.analyze(doc, &ctx, &mut buf);
+        }
+    }
+
+    let total_bytes: usize = corpus.iter().map(|s| s.len()).sum();
+    let mut total_tokens: u64 = 0;
+    let start = Instant::now();
+    for _ in 0..bench_iters {
+        for doc in &corpus {
+            buf.clear();
+            analyzer.analyze(doc, &ctx, &mut buf);
+            total_tokens += buf.len() as u64;
+        }
+    }
+    let elapsed = start.elapsed().as_secs_f64();
+    let bytes = (total_bytes * bench_iters) as f64;
+    let mib_per_s = (bytes / (1024.0 * 1024.0)) / elapsed;
+    let tokens_per_s = total_tokens as f64 / elapsed;
+
+    println!("  docs per iter: {}", corpus.len());
+    println!("  iters: {bench_iters}");
+    println!("  bytes analyzed: {bytes:.0}");
+    println!("  elapsed: {elapsed:.3}s");
+    println!("  throughput: {mib_per_s:.2} MiB/s");
+    println!("  tokens/s:   {tokens_per_s:.0}");
+    ExitCode::SUCCESS
+}
+
+fn run_smoke() -> ExitCode {
+    println!("== analyzer retrieval smoke ==");
+    let tmp = match tempfile::tempdir() {
+        Ok(d) => d,
+        Err(e) => {
+            eprintln!("tempdir failed: {e}");
+            return ExitCode::FAILURE;
+        }
+    };
+
+    let vault = match Vault::open(tmp.path(), smoke_config()) {
+        Ok(v) => v,
+        Err(e) => {
+            eprintln!("vault open failed: {e}");
+            return ExitCode::FAILURE;
+        }
+    };
+
+    let docs: &[(u8, &str)] = &[
+        (1, "Tokyo University conducts advanced research"),
+        (2, "東京大学で研究する学生"),
+        (3, "The quick brown fox jumps over the lazy dog"),
+        (4, "El gato duerme en la silla"),
+        (5, "北京大学是中国的知名学府"),
+        (6, "서울대학교에서 연구를 진행합니다"),
+        (7, "emoji adjacent text launch pad"),
+        (8, "ＡＢＣ fullwidth ASCII mixed with regular ABC"),
+    ];
+    let entity_ids: Vec<EntityId> = match docs
+        .iter()
+        .map(|(byte, _)| EntityId::from_bytes([*byte; 16]))
+        .collect()
+    {
+        Ok(v) => v,
+        Err(e) => {
+            eprintln!("entity id failed: {e}");
+            return ExitCode::FAILURE;
+        }
+    };
+    let mut batch = vault.batch();
+    for ((_, text), id) in docs.iter().zip(&entity_ids) {
+        batch = batch
+            .put(id, 0, TimeRange { start: 1, end: 1 }, 1, b"doc")
+            .text(id, &[("body", *text)]);
+    }
+    if let Err(e) = batch.commit() {
+        eprintln!("batch commit failed: {e}");
+        return ExitCode::FAILURE;
+    }
+
+    // Each query carries the expected top-ranked doc so a regression that
+    // lets a noisier doc outrank the intended surface match is caught
+    // even when hits are non-empty.
+    let queries: &[(&str, &EntityId)] = &[
+        ("Tokyo", &entity_ids[0]),
+        ("東京", &entity_ids[1]),
+        ("京大", &entity_ids[1]),
+        ("quick", &entity_ids[2]),
+        ("gato", &entity_ids[3]),
+        ("北京大学", &entity_ids[4]),
+        ("서울", &entity_ids[5]),
+    ];
+    let mut all_passed = true;
+    for &(q, expected) in queries {
+        match vault.search_text(q, 10) {
+            Ok(hits) if hits.is_empty() => {
+                println!("  [fail] `{q}` -> 0 hits");
+                all_passed = false;
+            }
+            Ok(hits) => {
+                let top = &hits[0].id;
+                if top == expected {
+                    println!("  [pass] `{q}` -> {} ({} hits)", top.to_hex(), hits.len());
+                } else {
+                    println!(
+                        "  [fail] `{q}` -> top {}, expected {} ({} hits)",
+                        top.to_hex(),
+                        expected.to_hex(),
+                        hits.len()
+                    );
+                    all_passed = false;
+                }
+            }
+            Err(e) => {
+                println!("  [fail] `{q}` -> error: {e}");
+                all_passed = false;
+            }
+        }
+    }
+
+    if all_passed {
+        ExitCode::SUCCESS
+    } else {
+        ExitCode::FAILURE
+    }
+}
+
+fn smoke_config() -> VaultConfig {
+    let mut cfg = VaultConfig::device();
+    cfg.map_size = 32 * 1024 * 1024;
+    cfg.dimensions = 4;
+    cfg.embedding_model = Some("bench-smoke".to_owned());
+    cfg.max_readers = 16;
+    cfg
+}
+
+fn sample_corpus() -> Vec<String> {
+    [
+        "The quick brown fox jumps over the lazy dog near the riverbank.",
+        "東京大学の研究チームは新しい言語モデルを発表しました。",
+        "北京的清华大学是中国著名的高等学府之一。",
+        "서울 대학교 연구소에서 자연어 처리 기술을 개발 중입니다。",
+        "El rápido zorro marrón salta sobre el perro perezoso.",
+        "Le renard brun rapide saute par-dessus le chien paresseux.",
+        "Der schnelle braune Fuchs springt über den faulen Hund.",
+        "Быстрая коричневая лиса перепрыгивает через ленивую собаку.",
+        "emoji adjacent text rocket launch pad with unicode marks.",
+        "ＡＢＣ fullwidth ASCII side by side with regular ABC ABC ABC.",
+        "ไปโรงเรียนทุกวันเพื่อเรียนรู้สิ่งใหม่ๆ",
+        "Chào bạn, hôm nay bạn có khỏe không?",
+    ]
+    .iter()
+    .map(|s| s.to_string())
+    .collect()
 }

@@ -62,11 +62,25 @@ impl NapiVault {
     /// Open or create a vault at the given filesystem path.
     ///
     /// `dimensions` controls the embedding vector size (default: 1024 for device preset).
+    ///
+    /// `dictSearchPaths` lists directories searched at open time for
+    /// per-language analyzer dictionaries (e.g. `ja/system.dic`,
+    /// `ko/` containing `metadata.json`, `zh/jieba.dict.utf8`). On iOS,
+    /// pass the bundle path (`Bundle.main.resourcePath + "/oneiron-dicts"`).
+    /// When a language's dict is absent, oneiron falls back to a Portable
+    /// (ICU4X + n-gram) analyzer for that language.
     #[napi(constructor)]
-    pub fn new(path: String, dimensions: Option<u32>) -> napi::Result<Self> {
+    pub fn new(
+        path: String,
+        dimensions: Option<u32>,
+        dict_search_paths: Option<Vec<String>>,
+    ) -> napi::Result<Self> {
         let mut config = VaultConfig::device();
         if let Some(dims) = dimensions {
             config.dimensions = dims as usize;
+        }
+        if let Some(paths) = dict_search_paths {
+            config.dict_search_paths = paths.into_iter().map(std::path::PathBuf::from).collect();
         }
 
         let vault = Vault::open(&path, config).map_err(to_napi_err)?;

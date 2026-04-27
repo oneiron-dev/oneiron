@@ -15,12 +15,23 @@ xxhash-rust = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 toon-format = { workspace = true }
+sha2 = "0.10"
+icu_normalizer = { version = "2.2", default-features = false, features = ["compiled_data"] }
+icu_casemap = { version = "2.2", default-features = false, features = ["compiled_data"] }
+icu_segmenter = { version = "2.2", default-features = false, features = ["compiled_data", "auto"] }
+unicode-script = "0.5"
+unicode-segmentation = "1"
 loro = { version = "1.10", optional = true }
 tokio = { version = "1", features = ["net", "sync", "time", "rt", "macros"], optional = true }
 tokio-tungstenite = { version = "0.26", optional = true }
 futures-util = { version = "0.3", optional = true }
 zstd = { version = "0.13", optional = true }
 tracing = { version = "0.1" }
+whichlang = "0.1.1"
+rust-stemmers = "1.2.0"
+sudachi = { git = "https://github.com/WorksApplications/sudachi.rs", tag = "v0.6.11" }
+jieba-rs = { version = "0.9", default-features = false }
+lindera = { version = "3.0", default-features = false }
 
 [features]
 sync = ["loro", "dep:tokio", "dep:tokio-tungstenite", "dep:futures-util", "dep:zstd"]

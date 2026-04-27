@@ -65,6 +65,62 @@ pub enum Error {
     /// Tree operation would create a cycle.
     #[error("cycle detected in tree hierarchy")]
     CycleDetected,
+    /// Text analyzer manifest on disk does not match the current analyzer
+    /// configuration. Per-language mode (Morphological vs Portable) flipped
+    /// because a dict appeared or disappeared between index time and open
+    /// time (plan ONE-317 §4.2).
+    ///
+    /// # Recovery
+    ///
+    /// Reopen with [`VaultConfig::skip_text_index_manifest_check`] set to
+    /// `true`, call [`MaintenanceBuilder::clear_text_index`] to drop the
+    /// stale postings, reopen with the default `false` value so the empty
+    /// index seeds a fresh manifest, then reindex documents to restore
+    /// search results.
+    ///
+    /// [`VaultConfig::skip_text_index_manifest_check`]: crate::VaultConfig::skip_text_index_manifest_check
+    /// [`MaintenanceBuilder::clear_text_index`]: crate::MaintenanceBuilder::clear_text_index
+    #[error(
+        "text analyzer changed since index was built (lang={lang:?}): stored={stored_mode} current={current_mode}; reopen with VaultConfig::skip_text_index_manifest_check=true, run clear_text_index, reopen normally, and reindex documents to restore search"
+    )]
+    IncompatibleAnalyzer {
+        lang: String,
+        stored_mode: &'static str,
+        current_mode: &'static str,
+    },
+    /// BM25F field schema on disk does not match the current build. Channels
+    /// in [`crate::analyzer::AnalyzerChannel`] were added, removed, or
+    /// renumbered between index time and open time.
+    ///
+    /// # Recovery
+    ///
+    /// Same as [`Error::IncompatibleAnalyzer`]: reopen with
+    /// [`VaultConfig::skip_text_index_manifest_check`] set to `true`, run
+    /// [`MaintenanceBuilder::clear_text_index`], reopen normally, then
+    /// reindex documents.
+    ///
+    /// [`VaultConfig::skip_text_index_manifest_check`]: crate::VaultConfig::skip_text_index_manifest_check
+    /// [`MaintenanceBuilder::clear_text_index`]: crate::MaintenanceBuilder::clear_text_index
+    #[error(
+        "bm25f field schema changed since index was built; reopen with VaultConfig::skip_text_index_manifest_check=true, run clear_text_index, reopen normally, and reindex documents to restore search"
+    )]
+    Bm25FieldSchemaChanged,
+    /// A dict asset declared in the stored manifest is missing from disk
+    /// (e.g., `system.dic` was deleted after indexing). Restore the file or
+    /// use the same recovery path as [`Error::IncompatibleAnalyzer`]:
+    /// reopen with [`VaultConfig::skip_text_index_manifest_check`] set to
+    /// `true`, run [`MaintenanceBuilder::clear_text_index`], reopen
+    /// normally, and reindex documents.
+    ///
+    /// [`VaultConfig::skip_text_index_manifest_check`]: crate::VaultConfig::skip_text_index_manifest_check
+    /// [`MaintenanceBuilder::clear_text_index`]: crate::MaintenanceBuilder::clear_text_index
+    #[error("analyzer asset missing: {0}")]
+    AnalyzerAssetMissing(String),
+    /// Generic analyzer error (dict load failure, manifest encode failure,
+    /// etc.). Wraps the underlying cause as a string to avoid leaking
+    /// transitive Sudachi/jieba/lindera error types into the public surface.
+    #[error("analyzer error: {0}")]
+    AnalyzerError(String),
     /// Malformed CRDT update bytes.
     #[cfg(feature = "sync")]
     #[error("crdt decode error: {0}")]

@@ -335,6 +335,10 @@ impl<'a> PipelineBuilder<'a> {
     }
 
     pub fn run(self) -> Result<Vec<ScoredEntity>> {
+        if self.text_search.is_some() {
+            self.vault.ensure_text_index_trusted()?;
+        }
+
         let (scores, deferred_ppr_cache_writes) = {
             let mut ranked_lists = Vec::new();
             let rtxn = self.vault.store.env.read_txn()?;
@@ -363,8 +367,14 @@ impl<'a> PipelineBuilder<'a> {
             }
 
             if let Some((query, limit)) = &self.text_search {
-                let text_results =
-                    crate::bm25::search_text(&self.vault.store, &rtxn, query, *limit)?;
+                let text_results = crate::bm25::search_text(
+                    &self.vault.store,
+                    &rtxn,
+                    &self.vault.analyzer,
+                    &crate::bm25::Bm25Config::default(),
+                    query,
+                    *limit,
+                )?;
                 ranked_lists.push(text_results);
             }
 
@@ -1339,6 +1349,9 @@ mod tests {
                 ef_construction: 200,
                 ef_search: 128,
             },
+            text_analyzer: crate::types::TextAnalyzerConfig::default(),
+            dict_search_paths: Vec::new(),
+            skip_text_index_manifest_check: false,
         }
     }
 
@@ -1414,6 +1427,31 @@ mod tests {
         let results = vault.query().search_text("alpha", 10).run()?;
         assert!(!results.is_empty());
         assert_eq!(results[0].id, a);
+        Ok(())
+    }
+
+    #[test]
+    fn pipeline_search_fails_closed_on_untrusted_text_index() -> Result<()> {
+        let temp_dir = tempfile::tempdir()?;
+        let a = entity_id(7);
+
+        {
+            let vault = Vault::open(temp_dir.path(), test_config())?;
+            put_text(&vault, a, "alpha world")?;
+        }
+
+        let mut cfg = test_config();
+        cfg.skip_text_index_manifest_check = true;
+        let vault = Vault::open(temp_dir.path(), cfg)?;
+        let err = vault
+            .query()
+            .search_text("alpha", 10)
+            .run()
+            .expect_err("pipeline text search must refuse untrusted index");
+        assert!(
+            matches!(err, Error::CorruptedIndex(_)),
+            "expected CorruptedIndex, got {err:?}",
+        );
         Ok(())
     }
 
