@@ -49,7 +49,7 @@ hooks:
     cd /home/lexi/code/oneiron
     git worktree remove --force "$WS" 2>/dev/null || true
 agent:
-  max_concurrent_agents: 5
+  max_concurrent_agents: 8
   # No max_turns — the user has generous Codex quota and the prompt-level
   # guards (forbidden surfaces, gate checks) bound blast radius.
 codex:
