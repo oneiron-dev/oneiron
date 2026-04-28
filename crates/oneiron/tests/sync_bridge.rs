@@ -3,6 +3,7 @@
 #![cfg(feature = "sync")]
 
 use std::sync::Arc;
+use std::sync::atomic::Ordering;
 
 use oneiron::sync::bridge::{
     BRIDGE_ORIGIN, Materializer, encode_edge_value_for_crdt, format_edge_key,
@@ -202,6 +203,10 @@ fn observer_a_sequence_overflow_preserves_zero_update_slot() {
         .sync_state_put(&seq_key, &u32::MAX.to_le_bytes())
         .unwrap();
     vault.sync_state_put(&zero_key, b"sentinel").unwrap();
+    let pending_before = window
+        .observer_a_state
+        .pending_bytes
+        .load(Ordering::Relaxed);
 
     let id = EntityId::now();
     let blob = make_entity_blob(0, 1_772_000_000, b"overflow-test");
@@ -209,6 +214,11 @@ fn observer_a_sequence_overflow_preserves_zero_update_slot() {
     entities.insert(id.to_hex().as_str(), &blob).unwrap();
     window.doc.commit();
 
+    let pending_after = window
+        .observer_a_state
+        .pending_bytes
+        .load(Ordering::Relaxed);
+    assert!(pending_after > pending_before);
     let seq = vault.sync_state_get(&seq_key).unwrap().unwrap();
     assert_eq!(seq.as_slice(), &u32::MAX.to_le_bytes());
     assert_eq!(

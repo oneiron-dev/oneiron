@@ -50,16 +50,12 @@ fn learned_range_rejects_corrupted_key_length() {
     let temp_dir = tempfile::tempdir().unwrap();
     let vault = Vault::open(temp_dir.path(), VaultConfig::device()).unwrap();
 
-    let mut bad_key = Vec::with_capacity(23);
-    bad_key.extend_from_slice(&5_u64.to_be_bytes());
-    bad_key.extend_from_slice(&[0xff; 15]);
-
     vault
         .with_write_txn(|wtxn| {
             vault
                 .store
                 .temporal_learned
-                .put(wtxn, &bad_key, &[])
+                .put(wtxn, &[0_u8; 23], &[])
                 .unwrap();
             Ok(())
         })
