@@ -222,46 +222,49 @@ pub fn forward_rematerialize(
     let mut count = 0u32;
 
     // Entities
-    entities_map.for_each(&mut |key, blob| {
-        let id = match EntityId::from_hex(key) {
-            Ok(id) => id,
-            Err(_) => return,
-        };
+    {
+        let rtxn = vault.store.env.read_txn()?;
+        entities_map.for_each(&mut |key, blob| {
+            let id = match EntityId::from_hex(key) {
+                Ok(id) => id,
+                Err(_) => return,
+            };
 
-        let lmdb_blob = match vault.get_raw(&id) {
-            Ok(v) => v,
-            Err(_) => return,
-        };
-        if lmdb_blob.as_deref() == Some(blob) {
-            return;
-        }
+            let lmdb_blob = match vault.get_raw_in(&rtxn, &id) {
+                Ok(v) => v,
+                Err(_) => return,
+            };
+            if lmdb_blob.as_deref() == Some(blob) {
+                return;
+            }
 
-        let header = match EntityMetadataHeader::parse(blob) {
-            Some(h) => h,
-            None => return,
-        };
-        let data = if blob.len() > ENTITY_METADATA_HEADER_LEN {
-            &blob[ENTITY_METADATA_HEADER_LEN..]
-        } else {
-            &[]
-        };
-        let result = vault
-            .batch()
-            .put(
-                &id,
-                header.entity_type,
-                crate::types::TimeRange {
-                    start: header.occurred_start,
-                    end: header.occurred_end,
-                },
-                header.learned_at,
-                data,
-            )
-            .commit();
-        if result.is_ok() {
-            count += 1;
-        }
-    });
+            let header = match EntityMetadataHeader::parse(blob) {
+                Some(h) => h,
+                None => return,
+            };
+            let data = if blob.len() > ENTITY_METADATA_HEADER_LEN {
+                &blob[ENTITY_METADATA_HEADER_LEN..]
+            } else {
+                &[]
+            };
+            let result = vault
+                .batch()
+                .put(
+                    &id,
+                    header.entity_type,
+                    crate::types::TimeRange {
+                        start: header.occurred_start,
+                        end: header.occurred_end,
+                    },
+                    header.learned_at,
+                    data,
+                )
+                .commit();
+            if result.is_ok() {
+                count += 1;
+            }
+        });
+    }
 
     // Edges (with endpoint filtering)
     edges_map.for_each(&mut |key, buf| {
