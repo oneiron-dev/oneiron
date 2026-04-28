@@ -492,6 +492,15 @@ pub struct Vad {
     pub dominance: f32,
 }
 
+/// VAD coordinate rejected during validation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum VadComponent {
+    Valence,
+    Arousal,
+    Dominance,
+}
+
 impl Vad {
     pub const NEUTRAL: Self = Self {
         valence: 0.0,
@@ -507,6 +516,19 @@ impl Vad {
         (-1.0..=1.0).contains(&self.valence)
             && (0.0..=1.0).contains(&self.arousal)
             && (0.0..=1.0).contains(&self.dominance)
+    }
+
+    pub(crate) fn invalid_component(&self) -> Option<(VadComponent, f32)> {
+        if !self.valence.is_finite() || !(-1.0..=1.0).contains(&self.valence) {
+            return Some((VadComponent::Valence, self.valence));
+        }
+        if !self.arousal.is_finite() || !(0.0..=1.0).contains(&self.arousal) {
+            return Some((VadComponent::Arousal, self.arousal));
+        }
+        if !self.dominance.is_finite() || !(0.0..=1.0).contains(&self.dominance) {
+            return Some((VadComponent::Dominance, self.dominance));
+        }
+        None
     }
 }
 

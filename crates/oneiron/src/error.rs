@@ -1,5 +1,43 @@
+use crate::types::VadComponent;
+
 /// Result type used throughout the crate.
 pub type Result<T> = std::result::Result<T, Error>;
+
+/// Stable coarse-grained category for [`Error`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum ErrorKind {
+    Storage,
+    Io,
+    DimensionMismatch,
+    InvalidVector,
+    InvalidEdgeWeight,
+    InvalidVad,
+    EmbeddingModelChanged,
+    HnswConfigChanged,
+    MapFull,
+    InvalidConfig,
+    EntityNotFound,
+    ConcurrentWrite,
+    ArithmeticOverflow,
+    InvariantViolation,
+    InvalidKey,
+    CorruptedIndex,
+    IndexOverflow,
+    MissingPostingEntry,
+    InvalidEntityType,
+    CycleDetected,
+    IncompatibleAnalyzer,
+    Bm25FieldSchemaChanged,
+    AnalyzerAssetMissing,
+    AnalyzerError,
+    #[cfg(feature = "sync")]
+    CrdtDecodeError,
+    #[cfg(feature = "sync")]
+    WindowNotFound,
+    #[cfg(feature = "sync")]
+    SyncProtocolError,
+}
 
 /// Crate error type.
 #[derive(Debug, thiserror::Error)]
@@ -15,14 +53,14 @@ pub enum Error {
     #[error("dimension mismatch: expected {expected}, got {got}")]
     DimensionMismatch { expected: usize, got: usize },
     /// Vector contains NaN or infinity values.
-    #[error("vector contains non-finite values (NaN or Inf)")]
-    InvalidVector,
+    #[error("invalid vector component at index {index}: {value}")]
+    InvalidVector { index: usize, value: f32 },
     /// Edge weight contains NaN or infinity values.
-    #[error("edge weight is non-finite (NaN or Inf)")]
-    InvalidEdgeWeight,
+    #[error("invalid edge weight: {value}")]
+    InvalidEdgeWeight { value: f32 },
     /// VAD tuple contains non-finite or out-of-range values.
-    #[error("vad contains non-finite or out-of-range values")]
-    InvalidVad,
+    #[error("invalid VAD component {component:?}: {value}")]
+    InvalidVad { component: VadComponent, value: f32 },
     /// Stored embedding model differs from requested model.
     #[error("embedding model changed: stored={stored}, requested={requested}")]
     EmbeddingModelChanged { stored: String, requested: String },
@@ -123,16 +161,88 @@ pub enum Error {
     AnalyzerError(String),
     /// Malformed CRDT update bytes.
     #[cfg(feature = "sync")]
-    #[error("crdt decode error: {0}")]
-    CrdtDecodeError(String),
+    #[error("crdt decode error ({context}): {source}")]
+    CrdtDecodeError {
+        context: &'static str,
+        #[source]
+        source: loro::LoroError,
+    },
     /// No persisted state for the requested window.
     #[cfg(feature = "sync")]
-    #[error("window not found: {0}")]
-    WindowNotFound(String),
+    #[error("sync window not found: {window_key}")]
+    WindowNotFound { window_key: String },
     /// Sync protocol violation.
     #[cfg(feature = "sync")]
     #[error("sync protocol error: {0}")]
     SyncProtocolError(String),
+}
+
+impl Error {
+    pub(crate) fn invalid_vector_component(vector: &[f32]) -> Option<Self> {
+        vector
+            .iter()
+            .copied()
+            .enumerate()
+            .find_map(|(index, value)| {
+                (!value.is_finite()).then_some(Self::InvalidVector { index, value })
+            })
+    }
+
+    /// Returns the stable category for this error.
+    #[must_use]
+    pub fn kind(&self) -> ErrorKind {
+        match self {
+            Self::Storage(_) => ErrorKind::Storage,
+            Self::Io(_) => ErrorKind::Io,
+            Self::DimensionMismatch { .. } => ErrorKind::DimensionMismatch,
+            Self::InvalidVector { .. } => ErrorKind::InvalidVector,
+            Self::InvalidEdgeWeight { .. } => ErrorKind::InvalidEdgeWeight,
+            Self::InvalidVad { .. } => ErrorKind::InvalidVad,
+            Self::EmbeddingModelChanged { .. } => ErrorKind::EmbeddingModelChanged,
+            Self::HnswConfigChanged { .. } => ErrorKind::HnswConfigChanged,
+            Self::MapFull => ErrorKind::MapFull,
+            Self::InvalidConfig(_) => ErrorKind::InvalidConfig,
+            Self::EntityNotFound => ErrorKind::EntityNotFound,
+            Self::ConcurrentWrite(_) => ErrorKind::ConcurrentWrite,
+            Self::ArithmeticOverflow(_) => ErrorKind::ArithmeticOverflow,
+            Self::InvariantViolation(_) => ErrorKind::InvariantViolation,
+            Self::InvalidKey => ErrorKind::InvalidKey,
+            Self::CorruptedIndex(_) => ErrorKind::CorruptedIndex,
+            Self::IndexOverflow(_) => ErrorKind::IndexOverflow,
+            Self::MissingPostingEntry => ErrorKind::MissingPostingEntry,
+            Self::InvalidEntityType(_) => ErrorKind::InvalidEntityType,
+            Self::CycleDetected => ErrorKind::CycleDetected,
+            Self::IncompatibleAnalyzer { .. } => ErrorKind::IncompatibleAnalyzer,
+            Self::Bm25FieldSchemaChanged => ErrorKind::Bm25FieldSchemaChanged,
+            Self::AnalyzerAssetMissing(_) => ErrorKind::AnalyzerAssetMissing,
+            Self::AnalyzerError(_) => ErrorKind::AnalyzerError,
+            #[cfg(feature = "sync")]
+            Self::CrdtDecodeError { .. } => ErrorKind::CrdtDecodeError,
+            #[cfg(feature = "sync")]
+            Self::WindowNotFound { .. } => ErrorKind::WindowNotFound,
+            #[cfg(feature = "sync")]
+            Self::SyncProtocolError(_) => ErrorKind::SyncProtocolError,
+        }
+    }
+
+    /// Returns whether retrying the same operation may succeed.
+    #[must_use]
+    pub fn is_retryable(&self) -> bool {
+        match self {
+            Self::ConcurrentWrite(_) => true,
+            Self::Io(error) => matches!(
+                error.kind(),
+                std::io::ErrorKind::Interrupted
+                    | std::io::ErrorKind::WouldBlock
+                    | std::io::ErrorKind::TimedOut
+                    | std::io::ErrorKind::ConnectionAborted
+                    | std::io::ErrorKind::ConnectionRefused
+                    | std::io::ErrorKind::ConnectionReset
+                    | std::io::ErrorKind::NotConnected
+            ),
+            _ => false,
+        }
+    }
 }
 
 impl From<heed::Error> for Error {
