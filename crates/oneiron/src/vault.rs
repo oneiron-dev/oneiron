@@ -427,7 +427,7 @@ impl Vault {
                     .map_err(|_| Error::CorruptedIndex("temporal learned key"))?,
             );
             if ts >= end {
-                break; // temporal keys are sorted by timestamp (BE), so we can stop
+                break; // Defensive: the range upper bound should exclude end and beyond.
             }
             // Cap check BEFORE push so an exact-MAX result set returns Ok,
             // matching scan_edges semantics. Only an MAX+1-th in-range row
@@ -1233,6 +1233,7 @@ mod tests {
             vault.entities_in_learned_range(100, 102)?,
             vec![start_low, start_high, inside]
         );
+        assert!(vault.entities_in_learned_range(100, 100)?.is_empty());
         Ok(())
     }
 
