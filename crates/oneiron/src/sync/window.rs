@@ -226,7 +226,12 @@ pub fn forward_rematerialize(
     {
         let rtxn = vault.store.env.read_txn()?;
         let mut materialized_blobs = HashMap::<EntityId, Vec<u8>>::new();
+        let mut entity_read_error = None;
         entities_map.for_each(&mut |key, blob| {
+            if entity_read_error.is_some() {
+                return;
+            }
+
             let id = match EntityId::from_hex(key) {
                 Ok(id) => id,
                 Err(_) => return,
@@ -239,7 +244,10 @@ pub fn forward_rematerialize(
             } else {
                 let lmdb_blob = match vault.get_raw_in(&rtxn, &id) {
                     Ok(v) => v,
-                    Err(_) => return,
+                    Err(err) => {
+                        entity_read_error = Some(err);
+                        return;
+                    }
                 };
                 if lmdb_blob.as_deref() == Some(blob) {
                     return;
@@ -273,6 +281,9 @@ pub fn forward_rematerialize(
                 count += 1;
             }
         });
+        if let Some(err) = entity_read_error {
+            return Err(err);
+        }
     }
 
     // Edges (with endpoint filtering)
