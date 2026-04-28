@@ -377,8 +377,8 @@ fn validate_rebuild_vector(
             got: vector.len(),
         });
     }
-    if vector.iter().any(|value| !value.is_finite()) {
-        return Err(Error::InvalidVector);
+    if let Some(error) = Error::invalid_vector_component(&vector) {
+        return Err(error);
     }
     Ok(id)
 }
@@ -387,7 +387,7 @@ fn is_healable_rebuild_error(error: &Error) -> bool {
     matches!(
         error,
         Error::InvalidKey
-            | Error::InvalidVector
+            | Error::InvalidVector { .. }
             | Error::DimensionMismatch { .. }
             | Error::CorruptedIndex(_)
     )

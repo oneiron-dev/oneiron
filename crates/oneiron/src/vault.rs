@@ -260,8 +260,8 @@ impl Vault {
                 got: query.len(),
             });
         }
-        if query.iter().any(|v| !v.is_finite()) {
-            return Err(Error::InvalidVector);
+        if let Some(error) = Error::invalid_vector_component(query) {
+            return Err(error);
         }
 
         let rtxn = self.store.env.read_txn()?;
