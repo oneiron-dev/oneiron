@@ -824,7 +824,7 @@ mod tests {
     }
 
     #[test]
-    fn detected_zh_han_run_uses_chinese_morphological_path() {
+    fn zh_han_run_with_loaded_chinese_dict_uses_chinese_morphological_path() {
         assert_eq!(
             detect::detect_with_whichlang("我喜欢学习中文"),
             Some(LanguageHint::Zh)
@@ -850,7 +850,7 @@ mod tests {
         let surfaces = surface_terms(&out);
         assert!(
             surfaces.iter().any(|term| term.chars().count() > 1),
-            "expected detector-derived Zh hint to reach Chinese morphological path, got {surfaces:?}",
+            "expected Chinese morphological path to emit multi-character surface, got {surfaces:?}",
         );
     }
 

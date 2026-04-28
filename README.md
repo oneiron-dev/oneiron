@@ -66,9 +66,10 @@ cargo test
 
 - `ANALYZER_VERSION = "v2"` changes analyzer-manifest hashes to capture
   Han `whichlang` routing behavior. Existing text indexes built with older
-  analyzer manifests must be rebuilt after upgrading; reopen with
-  `VaultConfig::skip_text_index_manifest_check = true`, run
-  `clear_text_index`, reopen normally, then reindex documents.
+  analyzer manifests must be rebuilt after upgrading; create a `VaultConfig`,
+  set `config.skip_text_index_manifest_check = true`, reopen with that config,
+  run `MaintenanceBuilder::clear_text_index`, reopen normally, then reindex
+  documents.
 
 ## Design
 
