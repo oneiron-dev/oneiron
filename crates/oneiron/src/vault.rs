@@ -31,6 +31,9 @@ const MIN_MAP_SIZE_BYTES: usize = 1 << 20;
 /// Length of the edge-kind prefix: `entity_id (16) | kind (1)`.
 const EDGE_KIND_PREFIX_LEN: usize = ENTITY_ID_LEN + 1;
 
+const TEMPORAL_TIMESTAMP_PREFIX_LEN: usize = 8;
+const TEMPORAL_KEY_LEN: usize = TEMPORAL_TIMESTAMP_PREFIX_LEN + ENTITY_ID_LEN;
+
 /// Cap for `entities_by_type` to prevent unbounded allocation on large indexes.
 const MAX_TYPE_QUERY_RESULTS: usize = 100_000;
 
@@ -57,6 +60,10 @@ fn edge_kind_prefix(id: &EntityId, kind: EdgeKind) -> [u8; EDGE_KIND_PREFIX_LEN]
     prefix[..ENTITY_ID_LEN].copy_from_slice(id.as_bytes());
     prefix[ENTITY_ID_LEN] = kind as u8;
     prefix
+}
+
+fn temporal_timestamp_prefix(ts: u64) -> [u8; TEMPORAL_TIMESTAMP_PREFIX_LEN] {
+    ts.to_be_bytes()
 }
 
 fn require_key_len(key: &[u8], expected: usize, context: &'static str) -> Result<()> {
@@ -397,21 +404,28 @@ impl Vault {
 
     /// Returns entity IDs whose `learned_at` falls within `[start, end)`.
     ///
-    /// Iterates the `temporal_learned` index and filters by timestamp range.
+    /// Seeks into the `temporal_learned` index by timestamp range.
     pub fn entities_in_learned_range(&self, start: u64, end: u64) -> Result<Vec<EntityId>> {
+        if start >= end {
+            return Ok(Vec::new());
+        }
+
         let rtxn = self.store.env.read_txn()?;
         let mut ids = Vec::new();
-        for entry in self.store.temporal_learned.iter(&rtxn)? {
+        let start_key = temporal_timestamp_prefix(start);
+        let end_key = temporal_timestamp_prefix(end);
+        let range = (
+            std::ops::Bound::Included(&start_key[..]),
+            std::ops::Bound::Excluded(&end_key[..]),
+        );
+        for entry in self.store.temporal_learned.range(&rtxn, &range)? {
             let (key, _) = entry?;
-            require_key_len(key, 24, "temporal learned key")?;
+            require_key_len(key, TEMPORAL_KEY_LEN, "temporal learned key")?;
             let ts = u64::from_be_bytes(
                 key[..8]
                     .try_into()
                     .map_err(|_| Error::CorruptedIndex("temporal learned key"))?,
             );
-            if ts < start {
-                continue;
-            }
             if ts >= end {
                 break; // temporal keys are sorted by timestamp (BE), so we can stop
             }
@@ -423,7 +437,7 @@ impl Vault {
                 return Err(Error::IndexOverflow("entities_in_learned_range"));
             }
             let id = EntityId::from_bytes(
-                key[8..24]
+                key[8..TEMPORAL_KEY_LEN]
                     .try_into()
                     .map_err(|_| Error::CorruptedIndex("temporal learned key"))?,
             )
@@ -1194,6 +1208,32 @@ mod tests {
 
     fn range(start: u64, end: u64) -> TimeRange {
         TimeRange { start, end }
+    }
+
+    #[test]
+    fn entities_in_learned_range_seeks_without_skipping_start_bucket() -> Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let vault = Vault::open(tmp.path(), test_config())?;
+        let before = entity(1);
+        let start_low = entity(2);
+        let start_high = entity(3);
+        let inside = entity(4);
+        let at_end = entity(5);
+
+        vault
+            .batch()
+            .put(&before, 0, range(99, 99), 99, b"before")
+            .put(&start_low, 0, range(100, 100), 100, b"start-low")
+            .put(&start_high, 0, range(100, 100), 100, b"start-high")
+            .put(&inside, 0, range(101, 101), 101, b"inside")
+            .put(&at_end, 0, range(102, 102), 102, b"at-end")
+            .commit()?;
+
+        assert_eq!(
+            vault.entities_in_learned_range(100, 102)?,
+            vec![start_low, start_high, inside]
+        );
+        Ok(())
     }
 
     #[test]
