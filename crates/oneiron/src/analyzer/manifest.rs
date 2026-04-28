@@ -200,6 +200,7 @@ pub fn canonical_hash_hex<T: Serialize>(value: &T) -> Result<String, serde_json:
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::analyzer::AnalyzerChannel;
 
     fn sample_manifest() -> AnalyzerManifest {
         let mut langs = BTreeMap::new();
@@ -236,12 +237,10 @@ mod tests {
     struct AnalyzerChannelList;
     impl AnalyzerChannelList {
         fn v1() -> Vec<String> {
-            vec![
-                "surface".into(),
-                "stem".into(),
-                "normalized_overlay".into(),
-                "cjk_ngram".into(),
-            ]
+            AnalyzerChannel::ALL_V1
+                .iter()
+                .map(|channel| channel.as_str().to_string())
+                .collect()
         }
     }
 
