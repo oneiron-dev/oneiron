@@ -73,8 +73,9 @@ You are working on Linear ticket `{{ issue.identifier }}` in
 `/home/lexi/code/oneiron` (greenfield Rust workspace, single-user). Codex is
 running with `--dangerously-bypass-approvals-and-sandbox` — there is no
 filesystem sandbox layer. Only touch files inside the worktree at
-`{{ workspace.path }}`. Do not edit `/home/lexi/code/oneiron` (the main
-worktree), `/home/lexi/code/eiri-docs` (read-only reference), or anything
+`/home/lexi/code/oneiron/.worktrees/symphony/{{ issue.identifier }}`. Do
+not edit `/home/lexi/code/oneiron` (the main worktree),
+`/home/lexi/code/eiri-docs` (read-only reference), or anything else
 under `~/`. The forbidden-surface grep in step 4 is the only automated
 guard; keep it tight.
 
