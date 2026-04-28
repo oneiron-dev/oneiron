@@ -18,26 +18,34 @@ tracker:
 polling:
   interval_ms: 30000
 workspace:
-  # Use the existing .worktrees convention so Codex worktrees live alongside
-  # the manual ones. Symphony creates one subdir per ticket identifier.
-  root: ~/code/oneiron/.worktrees
+  # Nest under .worktrees/symphony so autopilot dirs don't intermix with
+  # manual worktrees. Symphony creates one subdir per ticket identifier.
+  root: ~/code/oneiron/.worktrees/symphony
 hooks:
   # Each new workspace becomes a git worktree off main, branched per ticket.
   # The worktree shares the object DB with /home/lexi/code/oneiron, so no
   # heavy clone, no extra disk.
   after_create: |
     set -euo pipefail
+    # Symphony runs hooks with cwd=workspace, no env vars injected.
+    # Capture before changing dirs.
+    WS="$PWD"
     BRANCH="symphony/{{ issue.identifier | downcase }}"
     cd /home/lexi/code/oneiron
     git fetch origin main
+    # Symphony pre-creates the empty workspace dir. git worktree add needs
+    # the path to either not exist or be a worktree. Drop the empty dir.
+    rmdir "$WS" 2>/dev/null || true
     if ! git show-ref --verify --quiet "refs/heads/$BRANCH"; then
-      git worktree add -b "$BRANCH" "$WORKSPACE_PATH" origin/main
+      git worktree add -b "$BRANCH" "$WS" origin/main
     else
-      git worktree add "$WORKSPACE_PATH" "$BRANCH"
+      git worktree add "$WS" "$BRANCH"
     fi
   before_remove: |
+    set -euo pipefail
+    WS="$PWD"
     cd /home/lexi/code/oneiron
-    git worktree remove --force "$WORKSPACE_PATH" 2>/dev/null || true
+    git worktree remove --force "$WS" 2>/dev/null || true
 agent:
   max_concurrent_agents: 2
   # No max_turns — the user has generous Codex quota and the prompt-level
@@ -97,7 +105,7 @@ state, and exit.
 - [ ] The ticket description specifies the file path(s) and the change shape
       concretely (one or two paragraphs at most). If the description is vague,
       open-ended, or asks for a design decision, exit and ask for clarification.
-- [ ] You are in `/home/lexi/code/oneiron/.worktrees/{{ issue.identifier | downcase }}`.
+- [ ] You are in `/home/lexi/code/oneiron/.worktrees/symphony/{{ issue.identifier }}` (Symphony preserves identifier case).
 
 ## 1. Plan (read before writing)
 
@@ -216,7 +224,7 @@ Run the cloud-reviewer harness once before opening the PR. This is the only
 pre-PR cloud review pass; don't re-run on each fix iteration.
 
 ```bash
-cd /home/lexi/code/oneiron/.worktrees/{{ issue.identifier | downcase }}
+cd /home/lexi/code/oneiron/.worktrees/symphony/{{ issue.identifier }}
 bash scripts/review-pr.sh
 ```
 
