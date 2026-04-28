@@ -259,3 +259,15 @@ impl From<std::io::Error> for Error {
         Self::Io(value)
     }
 }
+
+#[cfg(all(test, feature = "sync"))]
+mod tests {
+    use super::Error;
+
+    fn assert_send_sync_static<T: Send + Sync + 'static>() {}
+
+    #[test]
+    fn error_is_send_sync_static() {
+        assert_send_sync_static::<Error>();
+    }
+}
