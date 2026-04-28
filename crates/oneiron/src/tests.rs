@@ -389,7 +389,16 @@ fn validates_non_finite_vector_and_edge_weights() -> Result<()> {
     let vector_err = vault
         .put_vector(&EntityId::now(), &[1.0_f32, f32::NAN, 2.0, 3.0])
         .expect_err("expected invalid vector");
-    assert!(matches!(vector_err, Error::InvalidVector));
+    let vector_message = vector_err.to_string();
+    match vector_err {
+        Error::InvalidVector { index, value } => {
+            assert_eq!(index, 1);
+            assert!(value.is_nan());
+        }
+        other => panic!("expected invalid vector, got {other:?}"),
+    }
+    assert!(vector_message.contains("index 1"));
+    assert!(vector_message.contains("NaN"));
 
     let edge_err = vault
         .put_edge(
@@ -399,8 +408,31 @@ fn validates_non_finite_vector_and_edge_weights() -> Result<()> {
             f32::INFINITY,
         )
         .expect_err("expected invalid edge weight");
-    assert!(matches!(edge_err, Error::InvalidEdgeWeight));
+    let edge_message = edge_err.to_string();
+    match edge_err {
+        Error::InvalidEdgeWeight { value } => assert!(value.is_infinite()),
+        other => panic!("expected invalid edge weight, got {other:?}"),
+    }
+    assert!(edge_message.contains("inf"));
     Ok(())
+}
+
+#[test]
+fn error_kind_and_retryable_classify_validation_errors() {
+    let vector = Error::InvalidVector {
+        index: 0,
+        value: f32::NAN,
+    };
+    assert_eq!(vector.kind(), ErrorKind::InvalidVector);
+    assert!(!vector.is_retryable());
+
+    let concurrent = Error::ConcurrentWrite("retry maintenance");
+    assert_eq!(concurrent.kind(), ErrorKind::ConcurrentWrite);
+    assert!(concurrent.is_retryable());
+
+    let timeout = Error::Io(std::io::Error::from(std::io::ErrorKind::TimedOut));
+    assert_eq!(timeout.kind(), ErrorKind::Io);
+    assert!(timeout.is_retryable());
 }
 
 #[test]
@@ -2008,7 +2040,7 @@ fn put_edge_with_vad_rejects_non_finite() -> Result<()> {
             },
         )
         .expect_err("expected invalid vad");
-    assert!(matches!(err, Error::InvalidVad));
+    assert_invalid_vad(err, VadComponent::Valence, f32::NAN);
 
     let err = vault
         .put_edge_with_vad(
@@ -2023,7 +2055,7 @@ fn put_edge_with_vad_rejects_non_finite() -> Result<()> {
             },
         )
         .expect_err("expected invalid vad");
-    assert!(matches!(err, Error::InvalidVad));
+    assert_invalid_vad(err, VadComponent::Arousal, f32::INFINITY);
 
     let err = vault
         .put_edge_with_vad(
@@ -2038,7 +2070,7 @@ fn put_edge_with_vad_rejects_non_finite() -> Result<()> {
             },
         )
         .expect_err("expected invalid vad for out-of-range valence");
-    assert!(matches!(err, Error::InvalidVad));
+    assert_invalid_vad(err, VadComponent::Valence, 1.5);
 
     let err = vault
         .put_edge_with_vad(
@@ -2053,8 +2085,41 @@ fn put_edge_with_vad_rejects_non_finite() -> Result<()> {
             },
         )
         .expect_err("expected invalid vad for negative arousal");
-    assert!(matches!(err, Error::InvalidVad));
+    assert_invalid_vad(err, VadComponent::Arousal, -0.1);
+
+    let err = vault
+        .put_edge_with_vad(
+            &src,
+            EdgeKind::Supports,
+            &tgt,
+            0.5,
+            Vad {
+                valence: 0.0,
+                arousal: 0.0,
+                dominance: 1.1,
+            },
+        )
+        .expect_err("expected invalid vad for out-of-range dominance");
+    assert_invalid_vad(err, VadComponent::Dominance, 1.1);
     Ok(())
+}
+
+fn assert_invalid_vad(err: Error, expected_component: VadComponent, expected_value: f32) {
+    let message = err.to_string();
+    match err {
+        Error::InvalidVad { component, value } => {
+            assert_eq!(component, expected_component);
+            if expected_value.is_nan() {
+                assert!(value.is_nan());
+            } else {
+                assert_eq!(value, expected_value);
+            }
+        }
+        other => panic!("expected invalid vad, got {other:?}"),
+    }
+
+    assert!(message.contains(&format!("{expected_component:?}")));
+    assert!(message.contains(&expected_value.to_string()));
 }
 
 #[test]

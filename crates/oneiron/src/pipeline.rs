@@ -352,8 +352,8 @@ impl<'a> PipelineBuilder<'a> {
                         got: query_vector.len(),
                     });
                 }
-                if query_vector.iter().any(|value| !value.is_finite()) {
-                    return Err(Error::InvalidVector);
+                if let Some(error) = Error::invalid_vector_component(query_vector) {
+                    return Err(error);
                 }
 
                 let vector_results = crate::hnsw::hnsw_search(

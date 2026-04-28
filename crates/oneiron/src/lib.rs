@@ -25,13 +25,13 @@ pub use crate::analyzer::{
 };
 pub use crate::batch::{BatchBuilder, TxnBatchBuilder};
 pub use crate::context_pack::ContextPackBuilder;
-pub use crate::error::{Error, Result};
+pub use crate::error::{Error, ErrorKind, Result};
 pub use crate::maintain::{MaintenanceBuilder, MaintenanceReport};
 pub use crate::pipeline::PipelineBuilder;
 pub use crate::types::{
     ContextEntity, ContextPack, EdgeInfo, EdgeKind, EntityId, FieldProfile, HnswConfig, PackFormat,
     PackStats, ScoredEntity, Signal, TemporalAnchorMode, TemporalGranularity, TextAnalyzerConfig,
-    TextIndexOptions, TimeRange, TokenAllocation, Vad, VaultConfig,
+    TextIndexOptions, TimeRange, TokenAllocation, Vad, VadComponent, VaultConfig,
 };
 pub use crate::vault::{TextIndexStatus, Vault};
 
