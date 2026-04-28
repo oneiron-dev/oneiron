@@ -101,7 +101,9 @@ pub fn load_window_from_state(
         .store
         .sync_state
         .get(&rtxn, &doc_key)?
-        .ok_or_else(|| Error::WindowNotFound(key.as_str().to_string()))?;
+        .ok_or_else(|| Error::WindowNotFound {
+            window_key: key.as_str().to_string(),
+        })?;
 
     // Load from snapshot
     let doc = LoroDocument::from_snapshot(state)?;

@@ -758,8 +758,8 @@ fn apply_vector(
             got: vector.len(),
         });
     }
-    if vector.iter().any(|value| !value.is_finite()) {
-        return Err(Error::InvalidVector);
+    if let Some(error) = Error::invalid_vector_component(vector) {
+        return Err(error);
     }
 
     let mut bytes = Vec::with_capacity(vector.len() * 4);
@@ -806,10 +806,10 @@ fn apply_edge_with_created_at(
     vad: Vad,
 ) -> Result<()> {
     if !weight.is_finite() {
-        return Err(Error::InvalidEdgeWeight);
+        return Err(Error::InvalidEdgeWeight { value: weight });
     }
-    if !vad.is_finite() || !vad.is_in_range() {
-        return Err(Error::InvalidVad);
+    if let Some((component, value)) = vad.invalid_component() {
+        return Err(Error::InvalidVad { component, value });
     }
 
     let key_out = Store::encode_edge_key(&src, kind, &tgt);

@@ -45,8 +45,10 @@ impl CrdtDoc for LoroDocument {
     }
 
     fn export_updates_since(&self, remote_vv: &[u8]) -> Result<Vec<u8>> {
-        let vv = VersionVector::decode(remote_vv)
-            .map_err(|e| Error::CrdtDecodeError(format!("decode version vector: {e}")))?;
+        let vv = VersionVector::decode(remote_vv).map_err(|source| Error::CrdtDecodeError {
+            context: "decode version vector",
+            source,
+        })?;
         self.0
             .export(ExportMode::updates(&vv))
             .map_err(|e| Error::SyncProtocolError(e.to_string()))
@@ -59,7 +61,10 @@ impl CrdtDoc for LoroDocument {
     fn import(&self, bytes: &[u8]) -> Result<()> {
         self.0
             .import(bytes)
-            .map_err(|e| Error::CrdtDecodeError(e.to_string()))?;
+            .map_err(|source| Error::CrdtDecodeError {
+                context: "import update",
+                source,
+            })?;
         Ok(())
     }
 
@@ -86,8 +91,10 @@ impl CrdtDoc for LoroDocument {
     }
 
     fn from_snapshot(bytes: &[u8]) -> Result<Self> {
-        let doc =
-            LoroDoc::from_snapshot(bytes).map_err(|e| Error::CrdtDecodeError(e.to_string()))?;
+        let doc = LoroDoc::from_snapshot(bytes).map_err(|source| Error::CrdtDecodeError {
+            context: "from snapshot",
+            source,
+        })?;
         Ok(LoroDocument(doc))
     }
 
