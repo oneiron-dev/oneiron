@@ -73,8 +73,9 @@ You are working on Linear ticket `{{ issue.identifier }}` in
 `<host-home>/code/oneiron` (greenfield Rust workspace, single-user). Codex is
 running with `--dangerously-bypass-approvals-and-sandbox` — there is no
 filesystem sandbox layer. Only touch files inside the worktree at
-`{{ workspace.path }}`. Do not edit `<host-home>/code/oneiron` (the main
-worktree), `<host-home>/code/eiri-docs` (read-only reference), or anything
+`{{ issue.identifier }}`. Do
+not edit `<host-home>/code/oneiron` (the main worktree),
+`<host-home>/code/eiri-docs` (read-only reference), or anything else
 under `~/`. The forbidden-surface grep in step 4 is the only automated
 guard; keep it tight.
 
