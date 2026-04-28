@@ -49,16 +49,24 @@ hooks:
     cd /home/lexi/code/oneiron
     git worktree remove --force "$WS" 2>/dev/null || true
 agent:
-  max_concurrent_agents: 2
+  max_concurrent_agents: 5
   # No max_turns — the user has generous Codex quota and the prompt-level
   # guards (forbidden surfaces, gate checks) bound blast radius.
 codex:
   # Bypass + multi_agent matches the user's normal invocation pattern.
-  # Bypass removes Codex's sandbox; the forbidden-surface grep in step 4
-  # is now the ONLY automated guard between the agent and main. Keep it
-  # strict.
+  # Symphony talks to Codex via the app-server protocol and sends sandbox
+  # config per turn — the CLI flag is a no-op under app-server, so the
+  # thread_sandbox + turn_sandbox_policy below are what actually take
+  # effect. Both set to full access because Symphony worktrees need to
+  # write to /home/lexi/code/oneiron/.git/worktrees/<id>/ for git ops
+  # (commit, push) which sits outside the per-issue workspace dir. The
+  # forbidden-surface grep in step 4 is now the ONLY automated guard
+  # between the agent and main. Keep it strict.
   command: codex --dangerously-bypass-approvals-and-sandbox --enable multi_agent --config shell_environment_policy.inherit=all --config 'model="gpt-5.5"' --config model_reasoning_effort=xhigh app-server
   approval_policy: never
+  thread_sandbox: danger-full-access
+  turn_sandbox_policy:
+    type: dangerFullAccess
 env:
   LINEAR_API_KEY:
     secret_command: skate get linear_api_token
