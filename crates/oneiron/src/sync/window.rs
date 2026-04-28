@@ -4,6 +4,7 @@
 //! independent CRDT Doc (Loro). Only 2 windows are loaded by default
 //! (current + previous month); older windows are ON-DISK in sync_state.
 
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use super::bridge::{
@@ -222,46 +223,68 @@ pub fn forward_rematerialize(
     let mut count = 0u32;
 
     // Entities
-    entities_map.for_each(&mut |key, blob| {
-        let id = match EntityId::from_hex(key) {
-            Ok(id) => id,
-            Err(_) => return,
-        };
+    {
+        let rtxn = vault.store.env.read_txn()?;
+        let mut materialized_blobs = HashMap::<EntityId, Vec<u8>>::new();
+        let mut entity_read_error = None;
+        entities_map.for_each(&mut |key, blob| {
+            if entity_read_error.is_some() {
+                return;
+            }
 
-        let lmdb_blob = match vault.get_raw(&id) {
-            Ok(v) => v,
-            Err(_) => return,
-        };
-        if lmdb_blob.as_deref() == Some(blob) {
-            return;
-        }
+            let id = match EntityId::from_hex(key) {
+                Ok(id) => id,
+                Err(_) => return,
+            };
 
-        let header = match EntityMetadataHeader::parse(blob) {
-            Some(h) => h,
-            None => return,
-        };
-        let data = if blob.len() > ENTITY_METADATA_HEADER_LEN {
-            &blob[ENTITY_METADATA_HEADER_LEN..]
-        } else {
-            &[]
-        };
-        let result = vault
-            .batch()
-            .put(
-                &id,
-                header.entity_type,
-                crate::types::TimeRange {
-                    start: header.occurred_start,
-                    end: header.occurred_end,
-                },
-                header.learned_at,
-                data,
-            )
-            .commit();
-        if result.is_ok() {
-            count += 1;
+            if let Some(latest) = materialized_blobs.get(&id) {
+                if latest.as_slice() == blob {
+                    return;
+                }
+            } else {
+                let lmdb_blob = match vault.get_raw_in(&rtxn, &id) {
+                    Ok(v) => v,
+                    Err(err) => {
+                        entity_read_error = Some(err);
+                        return;
+                    }
+                };
+                if lmdb_blob.as_deref() == Some(blob) {
+                    return;
+                }
+            }
+
+            let header = match EntityMetadataHeader::parse(blob) {
+                Some(h) => h,
+                None => return,
+            };
+            let data = if blob.len() > ENTITY_METADATA_HEADER_LEN {
+                &blob[ENTITY_METADATA_HEADER_LEN..]
+            } else {
+                &[]
+            };
+            let result = vault
+                .batch()
+                .put(
+                    &id,
+                    header.entity_type,
+                    crate::types::TimeRange {
+                        start: header.occurred_start,
+                        end: header.occurred_end,
+                    },
+                    header.learned_at,
+                    data,
+                )
+                .commit();
+            if result.is_ok() {
+                materialized_blobs.insert(id, blob.to_vec());
+                count += 1;
+            }
+        });
+        if let Some(err) = entity_read_error {
+            return Err(err);
         }
-    });
+    }
 
     // Edges (with endpoint filtering)
     edges_map.for_each(&mut |key, buf| {

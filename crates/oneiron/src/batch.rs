@@ -10,8 +10,8 @@ use crate::limits::{ERR_CHILD_OF_CYCLE_CHECK, MAX_CHILD_OF_CYCLE_TRAVERSAL_STEPS
 use crate::ppr;
 use crate::store::Store;
 use crate::types::{
-    EDGE_KEY_LEN, EDGE_VALUE_LEN, ENTITY_ID_LEN, EdgeKind, EntityId, TimeRange, Vad, parse_vad,
-    short_id_prefix,
+    EDGE_KEY_LEN, EDGE_VALUE_LEN, ENTITY_ID_LEN, EdgeKind, EntityId, TimeRange, Vad,
+    encode_edge_value, parse_vad, short_id_prefix,
 };
 
 pub(crate) const ENTITY_METADATA_HEADER_LEN: usize = 25;
@@ -1315,14 +1315,4 @@ fn validate_edge_record(key: &[u8], value: &[u8]) -> Result<()> {
     }
 
     Ok(())
-}
-
-fn encode_edge_value(weight: f32, created_at: u64, vad: Vad) -> [u8; EDGE_VALUE_LEN] {
-    let mut value = [0_u8; EDGE_VALUE_LEN];
-    value[..4].copy_from_slice(&weight.to_le_bytes());
-    value[4..12].copy_from_slice(&created_at.to_le_bytes());
-    value[12..16].copy_from_slice(&vad.valence.to_le_bytes());
-    value[16..20].copy_from_slice(&vad.arousal.to_le_bytes());
-    value[20..24].copy_from_slice(&vad.dominance.to_le_bytes());
-    value
 }

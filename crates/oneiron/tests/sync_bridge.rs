@@ -3,6 +3,7 @@
 #![cfg(feature = "sync")]
 
 use std::sync::Arc;
+use std::sync::atomic::Ordering;
 
 use oneiron::sync::bridge::{
     BRIDGE_ORIGIN, Materializer, encode_edge_value_for_crdt, format_edge_key,
@@ -188,6 +189,46 @@ fn bridge_origin_writes_dont_trigger_observer_b() {
 }
 
 #[test]
+fn observer_a_sequence_overflow_preserves_zero_update_slot() {
+    let temp = tempfile::tempdir().unwrap();
+    let vault = Arc::new(Vault::open(temp.path(), test_config()).unwrap());
+    let materializer = Arc::new(Materializer::new());
+
+    let key = WindowKey::new("2026-03");
+    let window = LoadedWindow::new("test-user", key.clone(), &vault, &materializer);
+    let seq_key = format!("m:u_seq:w:{key}");
+    let zero_key = format!("u:w:{key}:00000000");
+    let max_key = format!("u:w:{key}:ffffffff");
+    vault
+        .sync_state_put(&seq_key, &u32::MAX.to_le_bytes())
+        .unwrap();
+    vault.sync_state_put(&zero_key, b"sentinel").unwrap();
+    let pending_before = window
+        .observer_a_state
+        .pending_bytes
+        .load(Ordering::Relaxed);
+
+    let id = EntityId::now();
+    let blob = make_entity_blob(0, 1_772_000_000, b"overflow-test");
+    let entities = window.doc.get_or_create_map("entities");
+    entities.insert(id.to_hex().as_str(), &blob).unwrap();
+    window.doc.commit();
+
+    let pending_after = window
+        .observer_a_state
+        .pending_bytes
+        .load(Ordering::Relaxed);
+    assert!(pending_after > pending_before);
+    let seq = vault.sync_state_get(&seq_key).unwrap().unwrap();
+    assert_eq!(seq.as_slice(), &u32::MAX.to_le_bytes());
+    assert_eq!(
+        vault.sync_state_get(&zero_key).unwrap().unwrap(),
+        b"sentinel"
+    );
+    assert!(vault.sync_state_get(&max_key).unwrap().is_none());
+}
+
+#[test]
 fn window_persist_and_load_roundtrip() {
     let temp = tempfile::tempdir().unwrap();
     let vault = Arc::new(Vault::open(temp.path(), test_config()).unwrap());
@@ -259,6 +300,51 @@ fn crash_recovery_pm_markers() {
         vault.sync_state_get(&pm_key).unwrap().is_none(),
         "pm marker should be cleared after replay"
     );
+}
+
+#[test]
+fn forward_rematerialize_materializes_entities_with_single_read_snapshot() {
+    let temp = tempfile::tempdir().unwrap();
+    let vault = Vault::open(temp.path(), test_config()).unwrap();
+    let materializer = Materializer::new();
+    let key = WindowKey::new("2026-03");
+    let doc = create_window_doc("test-user", &key);
+    let id = EntityId::now();
+    let hex_id = id.to_hex();
+    let blob = make_entity_blob(0, 1_772_000_000, b"forward-remat");
+
+    let entities = doc.get_or_create_map("entities");
+    entities.insert(hex_id.as_str(), &blob).unwrap();
+    doc.commit();
+
+    let materialized = window::forward_rematerialize(&vault, &doc, &materializer).unwrap();
+    assert_eq!(materialized, 1);
+    assert_eq!(vault.get(&id).unwrap().unwrap(), b"forward-remat");
+
+    let unchanged = window::forward_rematerialize(&vault, &doc, &materializer).unwrap();
+    assert_eq!(unchanged, 0);
+}
+
+#[test]
+fn forward_rematerialize_deduplicates_same_entity_aliases() {
+    let temp = tempfile::tempdir().unwrap();
+    let vault = Vault::open(temp.path(), test_config()).unwrap();
+    let materializer = Materializer::new();
+    let key = WindowKey::new("2026-03");
+    let doc = create_window_doc("test-user", &key);
+    let id = EntityId::from_hex("11111111111111111111111111111111").unwrap();
+    let blob = make_entity_blob(0, 1_772_000_000, b"alias");
+
+    let entities = doc.get_or_create_map("entities");
+    entities.insert(id.to_hex().as_str(), &blob).unwrap();
+    entities
+        .insert(id.to_hex().to_uppercase().as_str(), &blob)
+        .unwrap();
+    doc.commit();
+
+    let materialized = window::forward_rematerialize(&vault, &doc, &materializer).unwrap();
+    assert_eq!(materialized, 1);
+    assert_eq!(vault.get(&id).unwrap().unwrap(), b"alias");
 }
 
 #[test]

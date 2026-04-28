@@ -59,6 +59,10 @@ fn edge_kind_prefix(id: &EntityId, kind: EdgeKind) -> [u8; EDGE_KIND_PREFIX_LEN]
     prefix
 }
 
+fn temporal_timestamp_bound(ts: u64) -> [u8; 8] {
+    ts.to_be_bytes()
+}
+
 fn require_key_len(key: &[u8], expected: usize, context: &'static str) -> Result<()> {
     if key.len() != expected {
         return Err(Error::CorruptedIndex(context));
@@ -397,28 +401,29 @@ impl Vault {
 
     /// Returns entity IDs whose `learned_at` falls within `[start, end)`.
     ///
-    /// Iterates the `temporal_learned` index and filters by timestamp range.
+    /// Range-seeks the `temporal_learned` index by timestamp prefix.
+    /// Returns an empty result when `start >= end`.
     pub fn entities_in_learned_range(&self, start: u64, end: u64) -> Result<Vec<EntityId>> {
+        if start >= end {
+            return Ok(Vec::new());
+        }
+
         let rtxn = self.store.env.read_txn()?;
         let mut ids = Vec::new();
-        for entry in self.store.temporal_learned.iter(&rtxn)? {
+        let start_key = temporal_timestamp_bound(start);
+        let end_key = temporal_timestamp_bound(end);
+        for entry in self.store.temporal_learned.range(
+            &rtxn,
+            &(
+                std::ops::Bound::Included(&start_key[..]),
+                std::ops::Bound::Excluded(&end_key[..]),
+            ),
+        )? {
             let (key, _) = entry?;
             require_key_len(key, 24, "temporal learned key")?;
-            let ts = u64::from_be_bytes(
-                key[..8]
-                    .try_into()
-                    .map_err(|_| Error::CorruptedIndex("temporal learned key"))?,
-            );
-            if ts < start {
-                continue;
-            }
-            if ts >= end {
-                break; // temporal keys are sorted by timestamp (BE), so we can stop
-            }
             // Cap check BEFORE push so an exact-MAX result set returns Ok,
             // matching scan_edges semantics. Only an MAX+1-th in-range row
-            // triggers IndexOverflow. See ONE-336 for the range-seek perf
-            // fix that lifts the cap.
+            // triggers IndexOverflow.
             if ids.len() >= MAX_LEARNED_RANGE_RESULTS {
                 return Err(Error::IndexOverflow("entities_in_learned_range"));
             }
@@ -495,10 +500,18 @@ impl Vault {
     /// Unlike `get()` which strips the header, this returns the full LMDB value.
     pub fn get_raw(&self, id: &EntityId) -> Result<Option<Vec<u8>>> {
         let rtxn = self.store.env.read_txn()?;
+        self.get_raw_in(&rtxn, id)
+    }
+
+    pub(crate) fn get_raw_in(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        id: &EntityId,
+    ) -> Result<Option<Vec<u8>>> {
         Ok(self
             .store
             .entities
-            .get(&rtxn, id.as_bytes())?
+            .get(rtxn, id.as_bytes())?
             .map(|bytes| bytes.to_vec()))
     }
 
