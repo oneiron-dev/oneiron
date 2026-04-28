@@ -151,6 +151,96 @@ fn targets_reject_non_finite_persisted_edge_payload() {
 }
 
 #[test]
+fn topology_reads_reject_truncated_persisted_edge_payload() {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let vault = Vault::open(temp_dir.path(), VaultConfig::device()).unwrap();
+    let truncated_value = [0_u8; EDGE_VALUE_LEN - 1];
+
+    let targets_src = EntityId::now();
+    let targets_tgt = EntityId::now();
+    let sources_src = EntityId::now();
+    let sources_tgt = EntityId::now();
+    let subtree_root = EntityId::now();
+    let subtree_child = EntityId::now();
+    let ancestor_child = EntityId::now();
+    let ancestor_parent = EntityId::now();
+    let cycle_node = EntityId::now();
+    let cycle_target = EntityId::now();
+    let cycle_parent = EntityId::now();
+
+    vault
+        .with_write_txn(|wtxn| {
+            let targets_key =
+                Store::encode_edge_key(&targets_src, EdgeKind::BelongsTo, &targets_tgt);
+            let sources_key =
+                Store::encode_edge_key(&sources_tgt, EdgeKind::BelongsTo, &sources_src);
+            let subtree_key =
+                Store::encode_edge_key(&subtree_root, EdgeKind::ChildOf, &subtree_child);
+            let ancestor_key =
+                Store::encode_edge_key(&ancestor_child, EdgeKind::ChildOf, &ancestor_parent);
+            let cycle_key = Store::encode_edge_key(&cycle_target, EdgeKind::ChildOf, &cycle_parent);
+
+            vault
+                .store
+                .edges_out
+                .put(wtxn, &targets_key, &truncated_value)
+                .unwrap();
+            vault
+                .store
+                .edges_in
+                .put(wtxn, &sources_key, &truncated_value)
+                .unwrap();
+            vault
+                .store
+                .edges_in
+                .put(wtxn, &subtree_key, &truncated_value)
+                .unwrap();
+            vault
+                .store
+                .edges_out
+                .put(wtxn, &ancestor_key, &truncated_value)
+                .unwrap();
+            vault
+                .store
+                .edges_out
+                .put(wtxn, &cycle_key, &truncated_value)
+                .unwrap();
+            Ok(())
+        })
+        .unwrap();
+
+    let targets_result = vault.targets(&targets_src, EdgeKind::BelongsTo, None);
+    assert!(
+        matches!(targets_result, Err(Error::CorruptedIndex("edge record"))),
+        "expected corrupted edge record from targets, got {targets_result:?}"
+    );
+
+    let sources_result = vault.sources(&sources_tgt, EdgeKind::BelongsTo, None);
+    assert!(
+        matches!(sources_result, Err(Error::CorruptedIndex("edge record"))),
+        "expected corrupted edge record from sources, got {sources_result:?}"
+    );
+
+    let subtree_result = vault.subtree(&subtree_root, 1);
+    assert!(
+        matches!(subtree_result, Err(Error::CorruptedIndex("edge record"))),
+        "expected corrupted edge record from subtree, got {subtree_result:?}"
+    );
+
+    let ancestors_result = vault.ancestors(&ancestor_child);
+    assert!(
+        matches!(ancestors_result, Err(Error::CorruptedIndex("edge record"))),
+        "expected corrupted edge record from ancestors, got {ancestors_result:?}"
+    );
+
+    let cycle_result = vault.would_create_cycle(&cycle_node, &cycle_target);
+    assert!(
+        matches!(cycle_result, Err(Error::CorruptedIndex("edge record"))),
+        "expected corrupted edge record from cycle check, got {cycle_result:?}"
+    );
+}
+
+#[test]
 fn subtree_rejects_non_finite_persisted_edge_payload() {
     let temp_dir = tempfile::tempdir().unwrap();
     let vault = Vault::open(temp_dir.path(), VaultConfig::device()).unwrap();
