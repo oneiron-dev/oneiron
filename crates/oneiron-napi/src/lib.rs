@@ -12,6 +12,7 @@ const DEFAULT_NAPI_SEARCH_LIMIT: u32 = 10;
 const MAX_NAPI_SEARCH_LIMIT: u32 = 1_000;
 const MAX_NAPI_QUERY_BYTES: usize = 8 * 1024;
 const MAX_NAPI_BATCH_ENTITIES: usize = 10_000;
+const MAX_NAPI_DIMENSIONS: usize = 16_384;
 
 type BoundaryResult<T> = std::result::Result<T, String>;
 
@@ -88,6 +89,16 @@ fn validate_batch_size(len: usize) -> BoundaryResult<()> {
     Ok(())
 }
 
+/// Validate configured vector dimensions before opening a vault.
+fn validate_dimensions(dimensions: usize) -> BoundaryResult<()> {
+    if dimensions > MAX_NAPI_DIMENSIONS {
+        return Err(format!(
+            "dimensions must be <= {MAX_NAPI_DIMENSIONS}, got {dimensions}"
+        ));
+    }
+    Ok(())
+}
+
 /// Validate vector length before allocating the narrowed f32 copy.
 fn validate_vector_len(len: usize, expected: usize, label: &str) -> BoundaryResult<()> {
     if len != expected {
@@ -138,6 +149,7 @@ impl NapiVault {
             config.dict_search_paths = paths.into_iter().map(std::path::PathBuf::from).collect();
         }
 
+        validate_dimensions(config.dimensions).map_err(napi::Error::from_reason)?;
         let dimensions = config.dimensions;
         let vault = Vault::open(&path, config).map_err(to_napi_err)?;
         Ok(Self {
@@ -562,6 +574,17 @@ mod tests {
         assert_eq!(
             reason(validate_vector_len(5, 4, "query vector")),
             "query vector length must equal vault dimensions (4), got 5"
+        );
+    }
+
+    #[test]
+    fn napi_boundary_rejects_oversized_dimensions() {
+        assert!(validate_dimensions(MAX_NAPI_DIMENSIONS).is_ok());
+
+        let dimensions = MAX_NAPI_DIMENSIONS + 1;
+        assert_eq!(
+            reason(validate_dimensions(dimensions)),
+            format!("dimensions must be <= {MAX_NAPI_DIMENSIONS}, got {dimensions}")
         );
     }
 }
