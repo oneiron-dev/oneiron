@@ -12,8 +12,8 @@ use oneiron::sync::client::{SyncClient, SyncClientConfig, SyncEvent};
 use oneiron::sync::engine::{CrdtDoc, CrdtMap};
 use oneiron::sync::schema::create_window_doc;
 use oneiron::sync::transport::{
-    self, TAG_BULK_TRANSFER, TAG_BULK_TRANSFER_DONE, TAG_SYNC_UPDATE, TransportError,
-    window_sub_tags,
+    self, TAG_BULK_TRANSFER, TAG_BULK_TRANSFER_DONE, TAG_SYNC_UPDATE, TAG_WINDOW_SYNC,
+    TransportError, window_sub_tags,
 };
 use oneiron::sync::types::WindowKey;
 use oneiron::sync::window::{self, LoadedWindow};
@@ -39,6 +39,8 @@ fn make_entity_blob(entity_type: u8, learned_at: u64, data: &[u8]) -> Vec<u8> {
     blob.extend_from_slice(data);
     blob
 }
+
+const ROOT_VV_TAG: u8 = 2;
 
 fn put_entity_in_window(window: &LoadedWindow, id: &EntityId, learned_at: u64, data: &[u8]) {
     let blob = make_entity_blob(0, learned_at, data);
@@ -520,10 +522,19 @@ fn sync_client_handle_server_message_accepts_version_vector() {
     let temp = tempfile::tempdir().unwrap();
     let vault = Arc::new(Vault::open(temp.path(), test_config()).unwrap());
     let (mut client, _rx) = SyncClient::new(vault, SyncClientConfig::default());
-    let vv_tag = client.generate_initial_sync()[0][0];
+    let initial_sync = client.generate_initial_sync();
+    assert_eq!(
+        initial_sync
+            .first()
+            .and_then(|message| message.first())
+            .copied(),
+        Some(ROOT_VV_TAG)
+    );
 
     // Root version-vector handling is currently an intentional no-op.
-    let responses = client.handle_server_message(&[vv_tag, 1, 2, 3]).unwrap();
+    let responses = client
+        .handle_server_message(&[ROOT_VV_TAG, 1, 2, 3])
+        .unwrap();
 
     assert!(responses.is_empty());
 }
@@ -539,6 +550,7 @@ fn sync_client_handle_server_message_dispatches_window_sync() {
 
     assert!(client.window("2026-03").is_some());
     assert_eq!(responses.len(), 1);
+    assert_eq!(responses[0][0], TAG_WINDOW_SYNC);
     let (window_key, sub_tag, payload) = transport::decode_window_sync(&responses[0][1..]).unwrap();
     assert_eq!(window_key, "2026-03");
     assert_eq!(sub_tag, window_sub_tags::UPDATE);
