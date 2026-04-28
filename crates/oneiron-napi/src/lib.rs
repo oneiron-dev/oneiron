@@ -8,6 +8,14 @@ use oneiron::{EdgeKind, EntityId, TimeRange, Vault, VaultConfig};
 
 use types::{NapiBatchEntity, NapiEdgeInfo, NapiScoredEntity, NapiSubtreeEntry};
 
+const DEFAULT_NAPI_SEARCH_LIMIT: u32 = 10;
+const MAX_NAPI_SEARCH_LIMIT: u32 = 1_000;
+const MAX_NAPI_QUERY_BYTES: usize = 8 * 1024;
+const MAX_NAPI_BATCH_ENTITIES: usize = 10_000;
+const MAX_NAPI_DIMENSIONS: usize = 16_384;
+
+type BoundaryResult<T> = std::result::Result<T, String>;
+
 /// Convert an oneiron error to a napi error.
 fn to_napi_err(e: oneiron::Error) -> napi::Error {
     napi::Error::from_reason(e.to_string())
@@ -44,6 +52,63 @@ fn parse_edge_kind(kind: u32) -> napi::Result<EdgeKind> {
         .ok_or_else(|| napi::Error::from_reason(format!("invalid edge kind: {kind}")))
 }
 
+/// Validate and narrow a Rust timestamp before returning it to JS.
+fn parse_created_at(created_at: u64) -> BoundaryResult<i64> {
+    i64::try_from(created_at)
+        .map_err(|_| format!("created_at must fit in signed 64-bit integer, got {created_at}"))
+}
+
+/// Validate a user-provided search limit before passing it to core search.
+fn parse_search_limit(limit: u32) -> BoundaryResult<usize> {
+    if limit > MAX_NAPI_SEARCH_LIMIT {
+        return Err(format!(
+            "limit must be <= {MAX_NAPI_SEARCH_LIMIT}, got {limit}"
+        ));
+    }
+    Ok(limit as usize)
+}
+
+/// Validate text query size before it crosses into core search.
+fn validate_query_len(query: &str) -> BoundaryResult<()> {
+    let len = query.len();
+    if len > MAX_NAPI_QUERY_BYTES {
+        return Err(format!(
+            "query must be <= {MAX_NAPI_QUERY_BYTES} bytes, got {len}"
+        ));
+    }
+    Ok(())
+}
+
+/// Validate batch write size before opening a write transaction.
+fn validate_batch_size(len: usize) -> BoundaryResult<()> {
+    if len > MAX_NAPI_BATCH_ENTITIES {
+        return Err(format!(
+            "batch_put_entities accepts at most {MAX_NAPI_BATCH_ENTITIES} entities, got {len}"
+        ));
+    }
+    Ok(())
+}
+
+/// Validate configured vector dimensions before opening a vault.
+fn validate_dimensions(dimensions: usize) -> BoundaryResult<()> {
+    if dimensions > MAX_NAPI_DIMENSIONS {
+        return Err(format!(
+            "dimensions must be <= {MAX_NAPI_DIMENSIONS}, got {dimensions}"
+        ));
+    }
+    Ok(())
+}
+
+/// Validate vector length before allocating the narrowed f32 copy.
+fn validate_vector_len(len: usize, expected: usize, label: &str) -> BoundaryResult<()> {
+    if len != expected {
+        return Err(format!(
+            "{label} length must equal vault dimensions ({expected}), got {len}"
+        ));
+    }
+    Ok(())
+}
+
 /// Convert a slice of EntityIds to Buffers.
 fn entity_ids_to_buffers(ids: Vec<EntityId>) -> Vec<Buffer> {
     ids.into_iter()
@@ -55,6 +120,7 @@ fn entity_ids_to_buffers(ids: Vec<EntityId>) -> Vec<Buffer> {
 #[napi]
 pub struct NapiVault {
     vault: Arc<Vault>,
+    dimensions: usize,
 }
 
 #[napi]
@@ -83,9 +149,12 @@ impl NapiVault {
             config.dict_search_paths = paths.into_iter().map(std::path::PathBuf::from).collect();
         }
 
+        validate_dimensions(config.dimensions).map_err(napi::Error::from_reason)?;
+        let dimensions = config.dimensions;
         let vault = Vault::open(&path, config).map_err(to_napi_err)?;
         Ok(Self {
             vault: Arc::new(vault),
+            dimensions,
         })
     }
 
@@ -160,19 +229,20 @@ impl NapiVault {
     pub fn edges_out(&self, src: Buffer) -> napi::Result<Vec<NapiEdgeInfo>> {
         let src_id = parse_entity_id(&src)?;
         let edges = self.vault.edges_out(&src_id).map_err(to_napi_err)?;
-        Ok(edges
-            .into_iter()
-            .map(|e| NapiEdgeInfo {
+        let mut out = Vec::with_capacity(edges.len());
+        for e in edges {
+            out.push(NapiEdgeInfo {
                 src: Buffer::from(src_id.as_bytes().as_slice()),
                 kind: e.kind as u32,
                 tgt: Buffer::from(e.target.as_bytes().as_slice()),
                 weight: e.weight as f64,
-                created_at: i64::try_from(e.created_at).unwrap_or(i64::MAX),
+                created_at: parse_created_at(e.created_at).map_err(napi::Error::from_reason)?,
                 valence: e.vad.valence as f64,
                 arousal: e.vad.arousal as f64,
                 dominance: e.vad.dominance as f64,
-            })
-            .collect())
+            });
+        }
+        Ok(out)
     }
 
     /// Return inbound edges for a target entity.
@@ -180,19 +250,20 @@ impl NapiVault {
     pub fn edges_in(&self, tgt: Buffer) -> napi::Result<Vec<NapiEdgeInfo>> {
         let tgt_id = parse_entity_id(&tgt)?;
         let edges = self.vault.edges_in(&tgt_id).map_err(to_napi_err)?;
-        Ok(edges
-            .into_iter()
-            .map(|e| NapiEdgeInfo {
+        let mut out = Vec::with_capacity(edges.len());
+        for e in edges {
+            out.push(NapiEdgeInfo {
                 src: Buffer::from(e.target.as_bytes().as_slice()),
                 kind: e.kind as u32,
                 tgt: Buffer::from(tgt_id.as_bytes().as_slice()),
                 weight: e.weight as f64,
-                created_at: i64::try_from(e.created_at).unwrap_or(i64::MAX),
+                created_at: parse_created_at(e.created_at).map_err(napi::Error::from_reason)?,
                 valence: e.vad.valence as f64,
                 arousal: e.vad.arousal as f64,
                 dominance: e.vad.dominance as f64,
-            })
-            .collect())
+            });
+        }
+        Ok(out)
     }
 
     // ─── Search ────────────────────────────────────────────────
@@ -204,10 +275,13 @@ impl NapiVault {
         query: Vec<f64>,
         limit: u32,
     ) -> napi::Result<Vec<NapiScoredEntity>> {
+        let limit = parse_search_limit(limit).map_err(napi::Error::from_reason)?;
+        validate_vector_len(query.len(), self.dimensions, "query vector")
+            .map_err(napi::Error::from_reason)?;
         let f32_query: Vec<f32> = query.iter().map(|&v| v as f32).collect();
         let results = self
             .vault
-            .search_vector(&f32_query, limit as usize)
+            .search_vector(&f32_query, limit)
             .map_err(to_napi_err)?;
         Ok(results
             .into_iter()
@@ -221,10 +295,9 @@ impl NapiVault {
     /// Search for entities by BM25 text matching.
     #[napi]
     pub fn search_text(&self, query: String, limit: u32) -> napi::Result<Vec<NapiScoredEntity>> {
-        let results = self
-            .vault
-            .search_text(&query, limit as usize)
-            .map_err(to_napi_err)?;
+        validate_query_len(&query).map_err(napi::Error::from_reason)?;
+        let limit = parse_search_limit(limit).map_err(napi::Error::from_reason)?;
+        let results = self.vault.search_text(&query, limit).map_err(to_napi_err)?;
         Ok(results
             .into_iter()
             .map(|s| NapiScoredEntity {
@@ -240,6 +313,8 @@ impl NapiVault {
     #[napi]
     pub fn put_vector(&self, id: Buffer, vector: Vec<f64>) -> napi::Result<()> {
         let eid = parse_entity_id(&id)?;
+        validate_vector_len(vector.len(), self.dimensions, "vector")
+            .map_err(napi::Error::from_reason)?;
         let f32_vec: Vec<f32> = vector.iter().map(|&v| v as f32).collect();
         self.vault.put_vector(&eid, &f32_vec).map_err(to_napi_err)
     }
@@ -261,7 +336,8 @@ impl NapiVault {
         limit: Option<u32>,
         format: Option<String>,
     ) -> napi::Result<String> {
-        let limit = limit.unwrap_or(10) as usize;
+        let limit = parse_search_limit(limit.unwrap_or(DEFAULT_NAPI_SEARCH_LIMIT))
+            .map_err(napi::Error::from_reason)?;
         let pack_format = match format.as_deref() {
             Some("yaml") => oneiron::PackFormat::Yaml,
             Some("toon") => oneiron::PackFormat::Toon,
@@ -274,10 +350,13 @@ impl NapiVault {
         let mut builder = self.vault.context_pack().format(pack_format);
 
         if let Some(text) = &query_text {
+            validate_query_len(text).map_err(napi::Error::from_reason)?;
             builder = builder.search_text(text, limit);
         }
 
         if let Some(vec) = &query_vector {
+            validate_vector_len(vec.len(), self.dimensions, "query vector")
+                .map_err(napi::Error::from_reason)?;
             let f32_vec: Vec<f32> = vec.iter().map(|&v| v as f32).collect();
             builder = builder.search_vector(&f32_vec, limit);
         }
@@ -292,6 +371,7 @@ impl NapiVault {
     /// Write multiple entities in a single atomic transaction.
     #[napi]
     pub fn batch_put_entities(&self, entities: Vec<NapiBatchEntity>) -> napi::Result<()> {
+        validate_batch_size(entities.len()).map_err(napi::Error::from_reason)?;
         let mut batch = self.vault.batch();
 
         for e in &entities {
@@ -423,5 +503,88 @@ impl NapiVault {
         Err(napi::Error::from_reason(
             "N-API sync bindings not yet wired up",
         ))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn reason<T: std::fmt::Debug>(result: std::result::Result<T, String>) -> String {
+        result.expect_err("expected N-API boundary error")
+    }
+
+    #[test]
+    fn napi_boundary_rejects_created_at_overflow() {
+        assert_eq!(parse_created_at(i64::MAX as u64).unwrap(), i64::MAX);
+
+        let overflow = i64::MAX as u64 + 1;
+        assert_eq!(
+            reason(parse_created_at(overflow)),
+            format!("created_at must fit in signed 64-bit integer, got {overflow}")
+        );
+    }
+
+    #[test]
+    fn napi_boundary_rejects_oversized_limit() {
+        assert_eq!(
+            parse_search_limit(MAX_NAPI_SEARCH_LIMIT).unwrap(),
+            MAX_NAPI_SEARCH_LIMIT as usize
+        );
+
+        let limit = MAX_NAPI_SEARCH_LIMIT + 1;
+        assert_eq!(
+            reason(parse_search_limit(limit)),
+            format!("limit must be <= {MAX_NAPI_SEARCH_LIMIT}, got {limit}")
+        );
+    }
+
+    #[test]
+    fn napi_boundary_rejects_oversized_query() {
+        let ok = "x".repeat(MAX_NAPI_QUERY_BYTES);
+        assert!(validate_query_len(&ok).is_ok());
+
+        let too_long = "x".repeat(MAX_NAPI_QUERY_BYTES + 1);
+        assert_eq!(
+            reason(validate_query_len(&too_long)),
+            format!(
+                "query must be <= {MAX_NAPI_QUERY_BYTES} bytes, got {}",
+                MAX_NAPI_QUERY_BYTES + 1
+            )
+        );
+    }
+
+    #[test]
+    fn napi_boundary_rejects_oversized_batch() {
+        assert!(validate_batch_size(MAX_NAPI_BATCH_ENTITIES).is_ok());
+
+        let len = MAX_NAPI_BATCH_ENTITIES + 1;
+        assert_eq!(
+            reason(validate_batch_size(len)),
+            format!(
+                "batch_put_entities accepts at most {MAX_NAPI_BATCH_ENTITIES} entities, got {len}"
+            )
+        );
+    }
+
+    #[test]
+    fn napi_boundary_rejects_wrong_vector_len() {
+        assert!(validate_vector_len(4, 4, "query vector").is_ok());
+
+        assert_eq!(
+            reason(validate_vector_len(5, 4, "query vector")),
+            "query vector length must equal vault dimensions (4), got 5"
+        );
+    }
+
+    #[test]
+    fn napi_boundary_rejects_oversized_dimensions() {
+        assert!(validate_dimensions(MAX_NAPI_DIMENSIONS).is_ok());
+
+        let dimensions = MAX_NAPI_DIMENSIONS + 1;
+        assert_eq!(
+            reason(validate_dimensions(dimensions)),
+            format!("dimensions must be <= {MAX_NAPI_DIMENSIONS}, got {dimensions}")
+        );
     }
 }
