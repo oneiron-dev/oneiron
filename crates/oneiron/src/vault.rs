@@ -59,10 +59,8 @@ fn edge_kind_prefix(id: &EntityId, kind: EdgeKind) -> [u8; EDGE_KIND_PREFIX_LEN]
     prefix
 }
 
-fn temporal_key_lower_bound(ts: u64) -> [u8; 8 + ENTITY_ID_LEN] {
-    let mut key = [0u8; 8 + ENTITY_ID_LEN];
-    key[..8].copy_from_slice(&ts.to_be_bytes());
-    key
+fn temporal_timestamp_bound(ts: u64) -> [u8; 8] {
+    ts.to_be_bytes()
 }
 
 fn require_key_len(key: &[u8], expected: usize, context: &'static str) -> Result<()> {
@@ -404,6 +402,7 @@ impl Vault {
     /// Returns entity IDs whose `learned_at` falls within `[start, end)`.
     ///
     /// Range-seeks the `temporal_learned` index by timestamp prefix.
+    /// Returns an empty result when `start >= end`.
     pub fn entities_in_learned_range(&self, start: u64, end: u64) -> Result<Vec<EntityId>> {
         if start >= end {
             return Ok(Vec::new());
@@ -411,8 +410,8 @@ impl Vault {
 
         let rtxn = self.store.env.read_txn()?;
         let mut ids = Vec::new();
-        let start_key = temporal_key_lower_bound(start);
-        let end_key = temporal_key_lower_bound(end);
+        let start_key = temporal_timestamp_bound(start);
+        let end_key = temporal_timestamp_bound(end);
         for entry in self.store.temporal_learned.range(
             &rtxn,
             &(
