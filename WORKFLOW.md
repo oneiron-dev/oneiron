@@ -27,10 +27,12 @@ hooks:
   # heavy clone, no extra disk.
   after_create: |
     set -euo pipefail
-    # Symphony runs hooks with cwd=workspace, no env vars injected.
-    # Capture before changing dirs.
+    # Symphony runs hooks with cwd=workspace, no Liquid templating in
+    # front matter, no env vars injected. Derive the ticket id from PWD's
+    # basename (Symphony names the dir after issue.identifier).
     WS="$PWD"
-    BRANCH="symphony/{{ issue.identifier | downcase }}"
+    TICKET="$(basename "$WS")"
+    BRANCH="symphony/$(echo "$TICKET" | tr '[:upper:]' '[:lower:]')"
     cd /home/lexi/code/oneiron
     git fetch origin main
     # Symphony pre-creates the empty workspace dir. git worktree add needs
