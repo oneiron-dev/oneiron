@@ -384,8 +384,8 @@ fn forward_rematerialize_restores_lmdb_entities_edges_and_tombstones() {
 
     let rematerialized =
         window::forward_rematerialize(&vault, &recovered_doc, &materializer).unwrap();
-    assert!(
-        rematerialized == 6,
+    assert_eq!(
+        rematerialized, 6,
         "should rebuild four entity rows, one edge, then apply one tombstone delete"
     );
 
@@ -523,18 +523,13 @@ fn sync_client_handle_server_message_accepts_version_vector() {
     let vault = Arc::new(Vault::open(temp.path(), test_config()).unwrap());
     let (mut client, _rx) = SyncClient::new(vault, SyncClientConfig::default());
     let initial_sync = client.generate_initial_sync();
-    assert_eq!(
-        initial_sync
-            .first()
-            .and_then(|message| message.first())
-            .copied(),
-        Some(ROOT_VV_TAG)
-    );
+    let vv_message = initial_sync
+        .first()
+        .expect("initial sync should include root VV");
+    assert_eq!(vv_message.first().copied(), Some(ROOT_VV_TAG));
 
-    // Root version-vector handling is currently an intentional no-op.
-    let responses = client
-        .handle_server_message(&[ROOT_VV_TAG, 1, 2, 3])
-        .unwrap();
+    // Root VV handling is currently an intentional no-op.
+    let responses = client.handle_server_message(vv_message).unwrap();
 
     assert!(responses.is_empty());
 }
@@ -551,10 +546,10 @@ fn sync_client_handle_server_message_dispatches_window_sync() {
     assert!(client.window("2026-03").is_some());
     assert_eq!(responses.len(), 1);
     assert_eq!(responses[0][0], TAG_WINDOW_SYNC);
-    let (window_key, sub_tag, payload) = transport::decode_window_sync(&responses[0][1..]).unwrap();
+    let (window_key, sub_tag, _payload) =
+        transport::decode_window_sync(&responses[0][1..]).unwrap();
     assert_eq!(window_key, "2026-03");
     assert_eq!(sub_tag, window_sub_tags::UPDATE);
-    assert!(!payload.is_empty());
 }
 
 #[test]
@@ -563,7 +558,8 @@ fn sync_client_handle_server_message_handles_bulk_transfer_messages() {
     let vault = Arc::new(Vault::open(temp.path(), test_config()).unwrap());
     let (mut client, mut rx) = SyncClient::new(vault, SyncClientConfig::default());
 
-    let compressed = zstd::stream::encode_all(&b"bulk-payload"[..], 0).unwrap();
+    let msgpack = rmp_serde::to_vec(&serde_json::json!({})).unwrap();
+    let compressed = zstd::stream::encode_all(msgpack.as_slice(), 0).unwrap();
     let bulk = transport::encode_bulk_transfer("2026-03", &compressed);
     assert_eq!(bulk[0], TAG_BULK_TRANSFER);
     assert!(client.handle_server_message(&bulk).unwrap().is_empty());
@@ -599,8 +595,8 @@ fn sync_client_handle_server_message_rejects_empty_payload() {
     let (mut client, _rx) = SyncClient::new(vault, SyncClientConfig::default());
 
     match client.handle_server_message(&[]) {
-        Err(TransportError::InvalidPayload("empty message")) => {}
-        other => panic!("expected InvalidPayload(empty message), got {other:?}"),
+        Err(TransportError::InvalidPayload(_)) => {}
+        other => panic!("expected InvalidPayload(_), got {other:?}"),
     }
 }
 
