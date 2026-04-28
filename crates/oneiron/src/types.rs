@@ -525,6 +525,16 @@ pub(crate) fn parse_vad(value: &[u8]) -> Vad {
     }
 }
 
+pub(crate) fn encode_edge_value(weight: f32, created_at: u64, vad: Vad) -> [u8; EDGE_VALUE_LEN] {
+    let mut value = [0_u8; EDGE_VALUE_LEN];
+    value[..4].copy_from_slice(&weight.to_le_bytes());
+    value[4..12].copy_from_slice(&created_at.to_le_bytes());
+    value[12..16].copy_from_slice(&vad.valence.to_le_bytes());
+    value[16..20].copy_from_slice(&vad.arousal.to_le_bytes());
+    value[20..24].copy_from_slice(&vad.dominance.to_le_bytes());
+    value
+}
+
 /// Stats about the context pack query.
 #[derive(Debug, Clone)]
 pub struct PackStats {

@@ -20,7 +20,7 @@ use super::engine::{CrdtDoc, CrdtMap, Subscription};
 use super::loro_engine::LoroDocument;
 use crate::batch::{self, BatchOp, ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::store::Store;
-use crate::types::{EdgeKind, EntityId, Vad};
+use crate::types::{EdgeKind, EntityId, Vad, encode_edge_value};
 use crate::{Error, Result, Vault};
 
 /// Origin tag used for LMDB→CRDT bridge writes.
@@ -616,13 +616,7 @@ pub fn parse_edge_value(buf: &[u8]) -> Option<(f32, u64, Vad)> {
 
 /// Encodes an edge value as 24 bytes for CRDT map storage.
 pub fn encode_edge_value_for_crdt(weight: f32, created_at: u64, vad: Vad) -> Vec<u8> {
-    let mut buf = Vec::with_capacity(24);
-    buf.extend_from_slice(&weight.to_le_bytes());
-    buf.extend_from_slice(&created_at.to_le_bytes());
-    buf.extend_from_slice(&vad.valence.to_le_bytes());
-    buf.extend_from_slice(&vad.arousal.to_le_bytes());
-    buf.extend_from_slice(&vad.dominance.to_le_bytes());
-    buf
+    encode_edge_value(weight, created_at, vad).to_vec()
 }
 
 /// Formats an edge key for CRDT map: `{src_hex}:{kind:02}:{tgt_hex}`.
