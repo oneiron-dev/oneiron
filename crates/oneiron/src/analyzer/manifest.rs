@@ -16,7 +16,7 @@ use sha2::{Digest, Sha256};
 
 use crate::types::bytes_to_hex_lower;
 
-pub const ANALYZER_VERSION: &str = "v1";
+pub const ANALYZER_VERSION: &str = "v2";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AnalyzerManifest {

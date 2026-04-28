@@ -13,12 +13,13 @@
 //! LMDB text-index compatibility; opening an index whose on-disk manifest
 //! hash no longer matches the current analyzer must fail closed (plan §4.2).
 //!
-//! Han-only runs with no language hint invoke the "DualHanFallback" of
-//! plan §1.2: prefer the Japanese dict when both JP and ZH dicts are
-//! loaded, else use whichever is present, else fall through to
-//! [`cjk_ngram::analyze`]. The picked backend still emits on `Surface` +
-//! `CjkNgram`; the ambiguity matters only for morpheme segmentation, not
-//! for the character-bigram overlay.
+//! Han-only runs can receive explicit or detector-derived `Ja`/`Zh` hints
+//! and route directly to the hinted analyzer. If no usable hint exists,
+//! they invoke the "DualHanFallback" of plan §1.2: prefer the Japanese dict
+//! when both JP and ZH dicts are loaded, else use whichever is present, else
+//! fall through to [`cjk_ngram::analyze`]. The picked backend still emits on
+//! `Surface` + `CjkNgram`; the ambiguity matters only for morpheme
+//! segmentation, not for the character-bigram overlay.
 
 pub mod chinese;
 pub mod cjk_ngram;
@@ -134,16 +135,16 @@ impl MultilingualAnalyzer {
             let slice = run.as_slice(analysis_text);
             // Resolve hint per run so a CJK run cannot poison an adjacent
             // Latin run's stemmer selection. `detect_with_whichlang` runs on
-            // the run's own bytes, not on cross-run analysis_text. Han runs
-            // skip whichlang (bare argmax on short input) so DualHanFallback
-            // owns JP-vs-ZH routing; explicit caller hints still apply.
+            // the run's own bytes, not on cross-run analysis_text. We skip
+            // whichlang when script inference already yields a hint, or when
+            // the downstream analyzer ignores language hints.
             let run_hint = detect::infer_from_script(run.script)
                 .or(ctx.language_hint)
                 .or_else(|| {
-                    if matches!(run.script, ScriptClass::Han) {
-                        None
-                    } else {
+                    if whichlang_eligible(run.script) {
                         detect::detect_with_whichlang(slice)
+                    } else {
+                        None
                     }
                 });
             position = self.dispatch_run(run, slice, run_hint, ctx.query_mode, position, out);
@@ -205,12 +206,14 @@ impl MultilingualAnalyzer {
         }
     }
 
-    /// DualHanFallback (plan §1.2): Han-only runs are ambiguous between JP
-    /// kanji and ZH. Explicit caller hints are authoritative: `Ja`/`Zh`
+    /// Han-only runs are ambiguous between JP kanji and ZH. Explicit caller
+    /// hints and detector-derived `Ja`/`Zh` hints are authoritative: they
     /// route to the hinted analyzer regardless of dict presence, and the
-    /// sub-analyzer's portable path handles the dict-absent case. With no
-    /// hint, prefer whichever dict is loaded (JP first when both);
-    /// with neither loaded we fall through to [`cjk_ngram::analyze`].
+    /// sub-analyzer's portable path handles the dict-absent case.
+    ///
+    /// If no usable hint exists, DualHanFallback (plan §1.2) prefers
+    /// whichever dict is loaded (JP first when both); with neither loaded we
+    /// fall through to [`cjk_ngram::analyze`].
     fn dispatch_han(
         &self,
         slice: &str,
@@ -320,6 +323,28 @@ impl MultilingualAnalyzer {
     }
 }
 
+fn whichlang_eligible(class: ScriptClass) -> bool {
+    // Eligibility describes scripts whose downstream analyzer can consume a
+    // language hint. Some classes, such as Greek, normally resolve earlier via
+    // `infer_from_script` and never reach the detector branch.
+    match class {
+        ScriptClass::Latin | ScriptClass::Cyrillic | ScriptClass::Greek | ScriptClass::Han => true,
+        ScriptClass::Hebrew
+        | ScriptClass::Arabic
+        | ScriptClass::Hiragana
+        | ScriptClass::Katakana
+        | ScriptClass::Hangul
+        | ScriptClass::Thai
+        | ScriptClass::Lao
+        | ScriptClass::Khmer
+        | ScriptClass::Myanmar
+        | ScriptClass::Devanagari
+        | ScriptClass::Tamil
+        | ScriptClass::Common
+        | ScriptClass::Other => false,
+    }
+}
+
 impl Default for MultilingualAnalyzer {
     fn default() -> Self {
         Self::portable()
@@ -358,6 +383,60 @@ mod tests {
             .filter(|t| t.channel == AnalyzerChannel::Surface)
             .map(|t| t.term.as_ref())
             .collect()
+    }
+
+    #[test]
+    fn whichlang_eligible_only_for_latin_cyrillic_greek_and_han() {
+        fn expected(class: ScriptClass) -> bool {
+            match class {
+                ScriptClass::Latin
+                | ScriptClass::Cyrillic
+                | ScriptClass::Greek
+                | ScriptClass::Han => true,
+                ScriptClass::Hebrew
+                | ScriptClass::Arabic
+                | ScriptClass::Hiragana
+                | ScriptClass::Katakana
+                | ScriptClass::Hangul
+                | ScriptClass::Thai
+                | ScriptClass::Lao
+                | ScriptClass::Khmer
+                | ScriptClass::Myanmar
+                | ScriptClass::Devanagari
+                | ScriptClass::Tamil
+                | ScriptClass::Common
+                | ScriptClass::Other => false,
+            }
+        }
+
+        let classes = [
+            ScriptClass::Latin,
+            ScriptClass::Cyrillic,
+            ScriptClass::Greek,
+            ScriptClass::Hebrew,
+            ScriptClass::Arabic,
+            ScriptClass::Han,
+            ScriptClass::Hiragana,
+            ScriptClass::Katakana,
+            ScriptClass::Hangul,
+            ScriptClass::Thai,
+            ScriptClass::Lao,
+            ScriptClass::Khmer,
+            ScriptClass::Myanmar,
+            ScriptClass::Devanagari,
+            ScriptClass::Tamil,
+            ScriptClass::Common,
+            ScriptClass::Other,
+        ];
+
+        for class in classes {
+            assert_eq!(
+                whichlang_eligible(class),
+                expected(class),
+                "unexpected whichlang eligibility for {}",
+                class.as_str(),
+            );
+        }
     }
 
     #[test]
@@ -730,10 +809,10 @@ mod tests {
         assert_eq!(surface_terms(&out), vec!["東", "京"]);
     }
 
-    /// Han-only runs must suppress whichlang so Portable mode falls through
-    /// to cjk_ngram regardless of the detector's bare-argmax guess.
+    /// Han-only runs in Portable mode still yield surface tokens plus
+    /// cjk_ngram-shaped output.
     #[test]
-    fn han_only_run_uses_dualhan_fallback_without_explicit_hint() {
+    fn portable_han_only_run_yields_cjk_ngram_shaped_output() {
         let a = MultilingualAnalyzer::portable();
         let mut out = Vec::new();
         a.analyze("我喜欢", &AnalyzerContext::for_index(), &mut out);
@@ -744,6 +823,37 @@ mod tests {
             .map(|t| t.term.as_ref())
             .collect();
         assert_eq!(bigrams, vec!["我喜", "喜欢"]);
+    }
+
+    #[test]
+    fn zh_han_run_with_loaded_chinese_dict_uses_chinese_morphological_path() {
+        assert_eq!(
+            detect::detect_with_whichlang("我喜欢学习中文"),
+            Some(LanguageHint::Zh)
+        );
+
+        let dir = tempfile::tempdir().unwrap();
+        let dict_path = dir.path().join("tiny.dict.utf8");
+        std::fs::write(&dict_path, "我喜欢 100 n\n学习 80 v\n中文 80 n\n").unwrap();
+        let chinese =
+            chinese::ChineseAnalyzer::with_dict(&dict_path).expect("inline dict should load");
+        assert_eq!(chinese.mode(), AnalyzerMode::Morphological);
+
+        let analyzer = MultilingualAnalyzer {
+            splitter: script::ScriptRunSplitter::new(),
+            japanese: japanese::JapaneseAnalyzer::portable(),
+            chinese,
+            korean: korean::KoreanAnalyzer::portable(),
+            normalization: NormalizationPolicy::default(),
+        };
+
+        let mut out = Vec::new();
+        analyzer.analyze("我喜欢学习中文", &AnalyzerContext::for_index(), &mut out);
+        let surfaces = surface_terms(&out);
+        assert!(
+            surfaces.iter().any(|term| term.chars().count() > 1),
+            "expected Chinese morphological path to emit multi-character surface, got {surfaces:?}",
+        );
     }
 
     /// Explicit `LanguageHint::Ja` must route Han runs to the JP analyzer
