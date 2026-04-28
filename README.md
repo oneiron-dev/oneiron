@@ -62,6 +62,14 @@ cargo build --release
 cargo test
 ```
 
+## Upgrade Notes
+
+- `ANALYZER_VERSION = "v2"` changes analyzer-manifest hashes to capture
+  Han `whichlang` routing behavior. Existing text indexes built with older
+  analyzer manifests must be rebuilt after upgrading; reopen with
+  `VaultConfig::skip_text_index_manifest_check = true`, run
+  `clear_text_index`, reopen normally, then reindex documents.
+
 ## Design
 
 18 LMDB databases per vault. Atomic multi-database writes via `BatchBuilder`. MessagePack entity blobs. Context packing into LLM-ready formats.
