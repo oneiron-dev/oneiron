@@ -4,6 +4,7 @@
 //! independent CRDT Doc (Loro). Only 2 windows are loaded by default
 //! (current + previous month); older windows are ON-DISK in sync_state.
 
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use super::bridge::{
@@ -224,18 +225,25 @@ pub fn forward_rematerialize(
     // Entities
     {
         let rtxn = vault.store.env.read_txn()?;
+        let mut materialized_blobs = HashMap::<EntityId, Vec<u8>>::new();
         entities_map.for_each(&mut |key, blob| {
             let id = match EntityId::from_hex(key) {
                 Ok(id) => id,
                 Err(_) => return,
             };
 
-            let lmdb_blob = match vault.get_raw_in(&rtxn, &id) {
-                Ok(v) => v,
-                Err(_) => return,
-            };
-            if lmdb_blob.as_deref() == Some(blob) {
-                return;
+            if let Some(latest) = materialized_blobs.get(&id) {
+                if latest.as_slice() == blob {
+                    return;
+                }
+            } else {
+                let lmdb_blob = match vault.get_raw_in(&rtxn, &id) {
+                    Ok(v) => v,
+                    Err(_) => return,
+                };
+                if lmdb_blob.as_deref() == Some(blob) {
+                    return;
+                }
             }
 
             let header = match EntityMetadataHeader::parse(blob) {
@@ -261,6 +269,7 @@ pub fn forward_rematerialize(
                 )
                 .commit();
             if result.is_ok() {
+                materialized_blobs.insert(id, blob.to_vec());
                 count += 1;
             }
         });

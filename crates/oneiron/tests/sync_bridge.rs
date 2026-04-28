@@ -326,6 +326,28 @@ fn forward_rematerialize_materializes_entities_with_single_read_snapshot() {
 }
 
 #[test]
+fn forward_rematerialize_deduplicates_same_entity_aliases() {
+    let temp = tempfile::tempdir().unwrap();
+    let vault = Vault::open(temp.path(), test_config()).unwrap();
+    let materializer = Materializer::new();
+    let key = WindowKey::new("2026-03");
+    let doc = create_window_doc("test-user", &key);
+    let id = EntityId::from_hex("11111111111111111111111111111111").unwrap();
+    let blob = make_entity_blob(0, 1_772_000_000, b"alias");
+
+    let entities = doc.get_or_create_map("entities");
+    entities.insert(id.to_hex().as_str(), &blob).unwrap();
+    entities
+        .insert(id.to_hex().to_uppercase().as_str(), &blob)
+        .unwrap();
+    doc.commit();
+
+    let materialized = window::forward_rematerialize(&vault, &doc, &materializer).unwrap();
+    assert_eq!(materialized, 1);
+    assert_eq!(vault.get(&id).unwrap().unwrap(), b"alias");
+}
+
+#[test]
 fn pm_replay_skips_tombstoned_entities() {
     let temp = tempfile::tempdir().unwrap();
     let vault = Arc::new(Vault::open(temp.path(), test_config()).unwrap());
