@@ -160,6 +160,13 @@ The following changes ARE NOT permitted under autopilot, ever:
 If the ticket needs any of the above, exit with `Human Review` state and a
 comment explaining which forbidden surface is required.
 
+**Override mechanism.** If the ticket description contains an
+`## AUTOPILOT_OVERRIDE` block listing one or more forbidden surfaces, the
+agent MAY touch the listed surfaces for this ticket only — but only those
+listed, and only the change shape spelled out in the rest of the ticket.
+The agent must still escalate to `Human Review` if a forbidden surface is
+required AND not listed in `AUTOPILOT_OVERRIDE`.
+
 ### Toolchain commands
 
 Use `rtk proxy` for cargo (token-optimized wrapper):
