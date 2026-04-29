@@ -1469,4 +1469,22 @@ mod tests {
         assert_eq!(select_best_entry_point(&neighbors, Some(a)), Some(b));
         assert_eq!(reachable_from_entry(&neighbors, b).len(), neighbors.len());
     }
+
+    #[test]
+    fn select_best_entry_point_tie_breaks_by_entity_id() {
+        let low = EntityId::from_bytes([0x10; ENTITY_ID_LEN]).expect("test id should be valid");
+        let mid = EntityId::from_bytes([0x20; ENTITY_ID_LEN]).expect("test id should be valid");
+        let high = EntityId::from_bytes([0x30; ENTITY_ID_LEN]).expect("test id should be valid");
+        let neighbors = HashMap::from([
+            (high, Vec::<EntityId>::new()),
+            (mid, Vec::<EntityId>::new()),
+            (low, Vec::<EntityId>::new()),
+        ]);
+
+        assert_eq!(reachable_from_entry(&neighbors, low).len(), 1);
+        assert_eq!(reachable_from_entry(&neighbors, mid).len(), 1);
+        assert_eq!(reachable_from_entry(&neighbors, high).len(), 1);
+        assert!(reachable_from_entry(&neighbors, low).len() < neighbors.len());
+        assert_eq!(select_best_entry_point(&neighbors, Some(high)), Some(low));
+    }
 }
