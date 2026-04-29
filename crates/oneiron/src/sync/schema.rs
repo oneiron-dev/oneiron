@@ -76,24 +76,31 @@ pub fn read_window_list(doc: &LoroDocument) -> Vec<WindowKey> {
 
 /// Adds a new window key to a root doc's `meta.windows` field.
 pub fn add_window_to_root(doc: &LoroDocument, key: &WindowKey) {
+    let key = key.as_str().trim();
+    if parse_window_key_str(key).is_none() {
+        if !key.is_empty() {
+            tracing::warn!(
+                window_key = %key,
+                "sync schema: ignoring invalid root window key"
+            );
+        }
+        return;
+    }
+
     let meta = doc.get_or_create_map("meta");
     let current = meta
         .get("windows")
         .map(|raw| String::from_utf8_lossy(&raw).to_string())
         .unwrap_or_default();
 
-    if !current.is_empty()
-        && current
-            .split(',')
-            .any(|window| window.trim() == key.as_str())
-    {
+    if !current.is_empty() && current.split(',').any(|window| window.trim() == key) {
         return;
     }
 
     let new_list = if current.is_empty() {
-        key.as_str().to_string()
+        key.to_string()
     } else {
-        format!("{},{}", current, key.as_str())
+        format!("{current},{key}")
     };
     meta.insert("windows", new_list.as_bytes()).unwrap();
     doc.commit();
@@ -207,5 +214,29 @@ mod tests {
         assert_eq!(windows[0].as_str(), "2026-01");
         assert_eq!(windows[1].as_str(), "2026-02");
         assert_eq!(windows[2].as_str(), "2026-03");
+    }
+
+    #[test]
+    fn add_window_to_root_normalizes_incoming_key_before_insert() {
+        let doc = create_root_doc("user1", "vault-abc", &[WindowKey::new("2026-01")]);
+
+        add_window_to_root(&doc, &WindowKey::new(" 2026-01 "));
+
+        let windows = read_window_list(&doc);
+        assert_eq!(windows.len(), 1);
+        assert_eq!(windows[0].as_str(), "2026-01");
+    }
+
+    #[test]
+    fn add_window_to_root_rejects_invalid_key() {
+        let doc = create_root_doc("user1", "vault-abc", &[WindowKey::new("2026-01")]);
+
+        add_window_to_root(&doc, &WindowKey::new("2026-02,evil"));
+
+        let meta = doc.get_or_create_map("meta");
+        assert_eq!(meta.get("windows").unwrap().as_slice(), b"2026-01");
+        let windows = read_window_list(&doc);
+        assert_eq!(windows.len(), 1);
+        assert_eq!(windows[0].as_str(), "2026-01");
     }
 }
