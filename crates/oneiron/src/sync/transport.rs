@@ -271,7 +271,19 @@ mod tests {
 
         assert!(matches!(
             decode_bulk_transfer_done(&encoded[1..]),
-            Err(TransportError::InvalidPayload(_))
+            Err(TransportError::InvalidPayload("state has trailing bytes"))
+        ));
+    }
+
+    #[test]
+    fn bulk_transfer_done_rejects_truncated_state() {
+        let state = vec![10, 20];
+        let mut encoded = encode_bulk_transfer_done("2025-09", &state);
+        encoded.pop();
+
+        assert!(matches!(
+            decode_bulk_transfer_done(&encoded[1..]),
+            Err(TransportError::InvalidPayload("state truncated"))
         ));
     }
 
