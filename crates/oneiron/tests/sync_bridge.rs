@@ -217,6 +217,9 @@ fn bridge_origin_writes_dont_trigger_observer_b() {
         !keys.is_empty(),
         "Observer A should persist even bridge-origin updates"
     );
+    let seq_key = "m:u_seq:w:2026-03";
+    let seq = vault.sync_state_get(seq_key).unwrap().unwrap();
+    assert_eq!(seq.as_slice(), &1u32.to_le_bytes());
 }
 
 #[test]
