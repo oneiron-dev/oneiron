@@ -1310,7 +1310,10 @@ fn validate_edge_record(key: &[u8], value: &[u8]) -> Result<()> {
         return Err(Error::CorruptedIndex("edge record"));
     }
 
-    let weight = f32::from_le_bytes(value[..4].try_into().unwrap());
+    let weight_bytes: [u8; 4] = value[..4]
+        .try_into()
+        .map_err(|_| Error::CorruptedIndex("edge record"))?;
+    let weight = f32::from_le_bytes(weight_bytes);
     if !weight.is_finite() {
         return Err(Error::CorruptedIndex("edge record"));
     }
