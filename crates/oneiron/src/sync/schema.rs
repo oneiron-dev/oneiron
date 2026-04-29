@@ -53,9 +53,20 @@ pub fn read_window_list(doc: &LoroDocument) -> Vec<WindowKey> {
                 Vec::new()
             } else {
                 s.split(',')
-                    .map(str::trim)
-                    .filter(|w| parse_window_key_str(w).is_some())
-                    .map(WindowKey::new)
+                    .filter_map(|w| {
+                        let key = w.trim();
+                        if parse_window_key_str(key).is_some() {
+                            Some(WindowKey::new(key))
+                        } else {
+                            if !key.is_empty() {
+                                tracing::warn!(
+                                    window_key = %key,
+                                    "sync schema: ignoring invalid root window key"
+                                );
+                            }
+                            None
+                        }
+                    })
                     .collect()
             }
         }
