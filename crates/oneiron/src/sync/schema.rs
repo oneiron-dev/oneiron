@@ -5,7 +5,7 @@
 
 use super::engine::{CrdtDoc, CrdtMap};
 use super::loro_engine::LoroDocument;
-use super::types::WindowKey;
+use super::types::{WindowKey, parse_window_key_str};
 
 /// Creates a new root Doc with the standard schema.
 ///
@@ -52,7 +52,22 @@ pub fn read_window_list(doc: &LoroDocument) -> Vec<WindowKey> {
             if s.is_empty() {
                 Vec::new()
             } else {
-                s.split(',').map(|w| WindowKey::new(w.trim())).collect()
+                s.split(',')
+                    .filter_map(|w| {
+                        let key = w.trim();
+                        if parse_window_key_str(key).is_some() {
+                            Some(WindowKey::new(key))
+                        } else {
+                            if !key.is_empty() {
+                                tracing::warn!(
+                                    window_key = %key,
+                                    "sync schema: ignoring invalid root window key"
+                                );
+                            }
+                            None
+                        }
+                    })
+                    .collect()
             }
         }
         None => Vec::new(),
@@ -136,5 +151,21 @@ mod tests {
         let windows = read_window_list(&doc);
         assert_eq!(windows.len(), 3);
         assert_eq!(windows[2].as_str(), "2026-03");
+    }
+
+    #[test]
+    fn read_window_list_skips_blank_and_invalid_tokens() {
+        let doc = create_root_doc("user1", "vault-abc", &[]);
+        let meta = doc.get_or_create_map("meta");
+        let raw_windows = b"2026-01,,2026-13,garbage,2026-02";
+        meta.insert("windows", raw_windows).unwrap();
+        doc.commit();
+
+        let windows = read_window_list(&doc);
+        assert_eq!(
+            windows,
+            vec![WindowKey::new("2026-01"), WindowKey::new("2026-02")]
+        );
+        assert_eq!(meta.get("windows").unwrap().as_slice(), raw_windows);
     }
 }
