@@ -452,10 +452,11 @@ impl Vault {
         Ok(result)
     }
 
-    // These helpers intentionally remain behind `feature = "sync"` instead of
-    // `cfg(test)` because the sync bridge regression suite is an integration
-    // test crate. Production bridge code still uses direct transactional
-    // `sync_state` access when multiple keys must update atomically.
+    // Read/write/list helpers intentionally remain behind `feature = "sync"`
+    // instead of `cfg(test)` because the sync bridge regression suite is an
+    // integration test crate. Production bridge code still uses direct
+    // transactional `sync_state` access when multiple keys must update
+    // atomically.
 
     /// Reads a value from the sync_state database for sync integration tests
     /// and diagnostics.
