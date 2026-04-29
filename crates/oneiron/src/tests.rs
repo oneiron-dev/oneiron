@@ -1682,6 +1682,26 @@ fn validates_dimensions_hnsw_and_map_size() -> Result<()> {
 }
 
 #[test]
+fn vault_open_rejects_second_live_env_for_same_path() -> Result<()> {
+    let temp_dir = tempfile::tempdir()?;
+    let path = temp_dir.path();
+
+    let first_vault = Vault::open(path, test_config())?;
+    let Err(err) = Vault::open(path, test_config()) else {
+        panic!("expected second live vault open to fail");
+    };
+    assert!(matches!(
+        err,
+        Error::InvalidConfig(_) | Error::InvariantViolation(_)
+    ));
+
+    drop(first_vault);
+    let reopened = Vault::open(path, test_config())?;
+    drop(reopened);
+    Ok(())
+}
+
+#[test]
 fn batch_with_edges_and_entities() -> Result<()> {
     let temp_dir = tempfile::tempdir()?;
     let vault = Vault::open(temp_dir.path(), test_config())?;
