@@ -769,6 +769,22 @@ mod tests {
     }
 
     #[test]
+    fn dedupe_signals_preserves_first_occurrence_order() {
+        let signals = vec![
+            Signal::Text,
+            Signal::Vector,
+            Signal::Text,
+            Signal::Temporal,
+            Signal::Vector,
+        ];
+
+        assert_eq!(
+            dedupe_signals(signals),
+            vec![Signal::Text, Signal::Vector, Signal::Temporal]
+        );
+    }
+
+    #[test]
     fn basic_hydration_populates_fields() -> Result<()> {
         let temp_dir = tempfile::tempdir()?;
         let vault = Vault::open(temp_dir.path(), test_config())?;
