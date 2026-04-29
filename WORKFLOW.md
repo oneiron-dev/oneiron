@@ -324,14 +324,19 @@ If any gate fails:
 
 | Situation | State | Action |
 |---|---|---|
-| Description vague | (unchanged) | Comment requesting clarification, exit |
-| Forbidden surface required | `Human Review` | Comment why, exit |
-| Verification gate red on first run, unrelated to your diff | `Human Review` | Comment quoting failure, exit |
-| Merge conflict on rebase | `Human Review` | Comment, exit (no auto-resolve) |
-| `review-pr.sh` errors out (auth expiry, etc.) | `Human Review` | Comment with which reviewer failed, exit |
+| Description vague (file paths missing, scope ambiguous) | `AI Review` | Comment naming what's missing, exit |
+| Forbidden surface required (no AUTOPILOT_OVERRIDE) | `Human Review` | Comment why, exit |
+| Verification gate red on first run, unrelated to your diff | `AI Review` | Comment quoting failure (the watch will rerun once before escalating) |
+| Merge conflict on rebase | `AI Review` | Comment, exit (no auto-resolve by Codex; the watch will rebase if conflict is mechanical) |
+| `review-pr.sh` errors out (auth expiry, etc.) | `AI Review` | Comment with which reviewer failed |
+| Cross-crate edit required on a child ticket | `AI Review` | Comment which file forced the cross-crate hit; the watch may descope/split |
 | > 5 commits to reach green | `Human Review` | Stop, let user inspect |
+| Real correctness finding from cloud reviewer that you can't address in scope | `Human Review` | Leave PR open, comment, exit |
 
-The Oneiron team only has `Human Review` for all "needs-human" cases. There is no separate `Blocked` state; everything escalation-class routes through `Human Review`.
+**Escalation tiers:**
+
+- `AI Review` — mechanical recovery the night-watch loop can attempt: rebase, retrigger CI, re-run review-pr.sh, tighten description, descope cross-crate hits. The watch caps actions at 2 per ticket per 24h before promoting to `Human Review`.
+- `Human Review` — needs the user's judgment: scope decisions, design tradeoffs, > 5-commit churn, forbidden surface needed but not justifiable.
 
 NEVER:
 - Force-push
