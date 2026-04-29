@@ -1251,8 +1251,9 @@ fn phonetic_dedups_duplicate_codes_within_single_batch() -> Result<()> {
         .phonetic_index
         .get(&rtxn, b"ABC")?
         .ok_or(Error::EntityNotFound)?;
+    assert!(posting.len().is_multiple_of(ENTITY_ID_LEN));
     let count = posting
-        .chunks_exact(16)
+        .chunks_exact(ENTITY_ID_LEN)
         .filter(|chunk| *chunk == id.as_bytes())
         .count();
     assert_eq!(count, 1);

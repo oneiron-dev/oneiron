@@ -913,7 +913,7 @@ fn apply_phonetic(
     };
     let mut forward_changed = false;
 
-    let mut seen_codes = HashSet::new();
+    let mut seen_codes = HashSet::with_capacity(codes.len());
     for code in codes {
         validate_phonetic_code(code)?;
         if !seen_codes.insert(code.as_str()) {
