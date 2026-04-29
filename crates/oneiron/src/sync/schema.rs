@@ -220,7 +220,7 @@ mod tests {
     fn add_window_to_root_normalizes_incoming_key_before_insert() {
         let doc = create_root_doc("user1", "vault-abc", &[]);
 
-        add_window_to_root(&doc, &WindowKey::new(" 2026-01 "));
+        add_window_to_root(&doc, &WindowKey::new_unchecked_for_test(" 2026-01 "));
 
         let meta = doc.get_or_create_map("meta");
         assert_eq!(meta.get("windows").unwrap().as_slice(), b"2026-01");
@@ -233,7 +233,7 @@ mod tests {
     fn add_window_to_root_rejects_invalid_key() {
         let doc = create_root_doc("user1", "vault-abc", &[WindowKey::new("2026-01")]);
 
-        add_window_to_root(&doc, &WindowKey::new("2026-02,evil"));
+        add_window_to_root(&doc, &WindowKey::new_unchecked_for_test("2026-02,evil"));
 
         let meta = doc.get_or_create_map("meta");
         assert_eq!(meta.get("windows").unwrap().as_slice(), b"2026-01");
