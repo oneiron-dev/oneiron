@@ -326,10 +326,12 @@ If any gate fails:
 |---|---|---|
 | Description vague | (unchanged) | Comment requesting clarification, exit |
 | Forbidden surface required | `Human Review` | Comment why, exit |
-| Verification gate red on first run, unrelated to your diff | `Blocked` | Comment quoting failure, exit |
-| Merge conflict on rebase | `Blocked` | Comment, exit (no auto-resolve) |
-| `review-pr.sh` errors out (auth expiry, etc.) | `Blocked` | Comment with which reviewer failed, exit |
+| Verification gate red on first run, unrelated to your diff | `Human Review` | Comment quoting failure, exit |
+| Merge conflict on rebase | `Human Review` | Comment, exit (no auto-resolve) |
+| `review-pr.sh` errors out (auth expiry, etc.) | `Human Review` | Comment with which reviewer failed, exit |
 | > 5 commits to reach green | `Human Review` | Stop, let user inspect |
+
+The Oneiron team only has `Human Review` for all "needs-human" cases. There is no separate `Blocked` state; everything escalation-class routes through `Human Review`.
 
 NEVER:
 - Force-push
