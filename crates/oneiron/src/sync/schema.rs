@@ -157,8 +157,8 @@ mod tests {
     fn read_window_list_skips_blank_and_invalid_tokens() {
         let doc = create_root_doc("user1", "vault-abc", &[]);
         let meta = doc.get_or_create_map("meta");
-        meta.insert("windows", b"2026-01,,2026-13,garbage,2026-02")
-            .unwrap();
+        let raw_windows = b"2026-01,,2026-13,garbage,2026-02";
+        meta.insert("windows", raw_windows).unwrap();
         doc.commit();
 
         let windows = read_window_list(&doc);
@@ -166,5 +166,6 @@ mod tests {
             windows,
             vec![WindowKey::new("2026-01"), WindowKey::new("2026-02")]
         );
+        assert_eq!(meta.get("windows").unwrap().as_slice(), raw_windows);
     }
 }
