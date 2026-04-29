@@ -18,7 +18,11 @@ tracker:
     - Canceled
     - Duplicate
 polling:
-  interval_ms: 30000
+  # 30s was too aggressive — each respawn of a settle-window-exiting agent
+  # still costs the GraphQL fetch in step 7.0 (~1-2k tokens). 2 min is
+  # the sweet spot: idle PRs stop burning, new Backlog tickets still
+  # pick up within 2 min of being labeled.
+  interval_ms: 120000
 workspace:
   # Nest under .worktrees/symphony so autopilot dirs don't intermix with
   # manual worktrees. Symphony creates one subdir per ticket identifier.
@@ -297,8 +301,8 @@ Before classifying any threads, verify reviewers have stopped posting:
 - Only after 10 minutes of cloud-reviewer silence proceed to step 7.1.
 
 **Do NOT post settle-status comments on Linear**. Repeated polling under
-Symphony's 30s active_states cycle would spam the ticket. Silent exit is
-the contract.
+Symphony's active_states cycle would spam the ticket. Silent exit is the
+contract.
 
 ### 7.1. Triage and respond
 
