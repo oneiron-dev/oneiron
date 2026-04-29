@@ -133,13 +133,23 @@ pub fn decode_bulk_transfer(data: &[u8]) -> Result<(&str, &[u8]), TransportError
 ///
 /// # Panics
 ///
-/// Panics if `window_key` is empty or exceeds `MAX_WINDOW_KEY_LEN` bytes.
+/// Panics if `window_key` is empty or exceeds `MAX_WINDOW_KEY_LEN` bytes, or if
+/// `doc_state` exceeds the BulkTransferDone u32 state-length field.
 pub fn encode_bulk_transfer_done(window_key: &str, doc_state: &[u8]) -> Vec<u8> {
     encode_bulk_transfer_done_checked(window_key, doc_state)
         .expect("BulkTransferDone state length must fit in u32")
 }
 
 /// Encodes a BulkTransferDone message for the wire with checked state length.
+///
+/// Returns `Err(TransportError::InvalidPayload(_))` if `doc_state` exceeds the
+/// BulkTransferDone u32 state-length field. Use this variant when callers need
+/// to propagate oversized state errors; `encode_bulk_transfer_done` keeps the
+/// existing panicking API.
+///
+/// # Panics
+///
+/// Panics if `window_key` is empty or exceeds `MAX_WINDOW_KEY_LEN` bytes.
 pub fn encode_bulk_transfer_done_checked(
     window_key: &str,
     doc_state: &[u8],
@@ -272,6 +282,7 @@ mod tests {
         assert!(s.is_empty());
     }
 
+    #[cfg(target_pointer_width = "64")]
     #[test]
     fn bulk_transfer_done_checked_encoder_rejects_u32_overflow_len() {
         let err = checked_bulk_transfer_done_state_len(u32::MAX as usize + 1).unwrap_err();
