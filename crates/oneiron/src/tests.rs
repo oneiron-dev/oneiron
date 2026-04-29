@@ -1730,6 +1730,26 @@ fn put_entity_simple_api_uses_batch() -> Result<()> {
 }
 
 #[test]
+fn get_learned_at_rejects_truncated_entity_header() -> Result<()> {
+    let temp_dir = tempfile::tempdir()?;
+    let vault = Vault::open(temp_dir.path(), test_config())?;
+    let id = EntityId::now();
+
+    vault.with_write_txn(|wtxn| {
+        let truncated = [0_u8; ENTITY_METADATA_HEADER_LEN - 1];
+        vault.store.entities.put(wtxn, id.as_bytes(), &truncated)?;
+        Ok(())
+    })?;
+
+    let err = vault
+        .get_learned_at(&id)
+        .expect_err("truncated entity header should fail loud");
+    assert!(matches!(err, Error::CorruptedIndex("entity header")));
+
+    Ok(())
+}
+
+#[test]
 fn validates_dimensions_hnsw_and_map_size() -> Result<()> {
     let temp_dir = tempfile::tempdir()?;
 
