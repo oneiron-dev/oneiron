@@ -851,6 +851,40 @@ mod tests {
     }
 
     #[test]
+    fn include_edges_skips_malformed_edge_rows() -> Result<()> {
+        let temp_dir = tempfile::tempdir()?;
+        let vault = Vault::open(temp_dir.path(), test_config())?;
+
+        let src = EntityId::now();
+        let tgt = EntityId::now();
+        put_text_entity(
+            &vault,
+            &src,
+            0,
+            "alpha",
+            serde_json::json!({"pred": "x", "val": "y"}),
+        )?;
+
+        let key = Store::encode_edge_key(&src, crate::types::EdgeKind::Supports, &tgt);
+        let value = [0_u8; EDGE_VALUE_LEN - 1];
+        vault.with_write_txn(|wtxn| {
+            vault.store.edges_out.put(wtxn, &key, &value)?;
+            Ok(())
+        })?;
+
+        let pack = vault
+            .context_pack()
+            .search_text("alpha", 10)
+            .include_edges(true)
+            .run()?;
+
+        assert_eq!(pack.results.len(), 1);
+        assert_eq!(pack.results[0].id, src);
+        assert!(pack.results[0].edges.as_ref().is_some_and(Vec::is_empty));
+        Ok(())
+    }
+
+    #[test]
     fn vad_round_trip_through_hydration() -> Result<()> {
         let temp_dir = tempfile::tempdir()?;
         let vault = Vault::open(temp_dir.path(), test_config())?;
