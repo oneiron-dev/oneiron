@@ -279,18 +279,40 @@ In the PR body's footer, tag for re-review: `@claude @codex @greptile @coderabbi
 
 ## 7. Cloud-reviewer feedback loop
 
-Watch for new comments. Use the `respond-reviews` skill flow:
+Watch for new comments. Use the `respond-reviews` skill flow.
 
-1. Wait for cloud reviewers to comment (allow up to 10 minutes idle).
-2. Fetch unreplied threads via the GraphQL pattern in `respond-reviews`.
-3. Triage each comment using the same Fix / Follow-up / Dismissed lens.
-4. Skip grammar/typo/wording-only comments — reply once: "Doc nit, dismissed."
-5. Fix substantive findings. Push a follow-up commit.
-6. Reply to each thread with the per-classification template from
-   `respond-reviews`.
-7. Post one Round-N summary comment with the per-classification breakdown.
-8. Repeat until reviewers fall silent for 10 minutes OR until reviewers post
-   only nits / dismissed-class comments.
+### 7.0. Settle window (FAIL FAST IF NOT SETTLED)
+
+Before classifying any threads, verify reviewers have stopped posting:
+
+- Fetch the most recent comment timestamp from any thread on this PR by
+  any of: `claude`, `codex`, `greptile`, `coderabbitai`, `copilot-pull-request-reviewer`,
+  `augmentcode`, `claude-security`, `gemini-pull-request-reviewer`.
+- If the newest cloud-reviewer comment is < 5 minutes old → **exit this
+  turn**. Post a brief Linear comment: "Cloud reviewers still active
+  (last comment: <reviewer> at <ts>). Will retry on next watch tick."
+  Leave the ticket state at `In Review`. The watch's next cron tick will
+  re-evaluate.
+- Only after 5 minutes of cloud-reviewer silence proceed to step 7.1.
+
+### 7.1. Triage and respond
+
+1. Fetch unresolved threads via the GraphQL pattern in `respond-reviews`.
+2. Triage each comment using the Fix / Follow-up / Dismissed lens.
+3. Skip grammar / typo / wording-only comments — reply once: "Doc nit,
+   dismissed." Resolve the thread.
+4. Fix substantive findings. Push a follow-up commit.
+5. Reply to each thread with the per-classification template.
+6. Post one Round-N summary comment with the per-classification breakdown.
+
+### 7.2. Iteration cap
+
+Repeat 7.0 → 7.1 until reviewers post only nits / dismissed-class comments
+in two consecutive settle windows. NEVER move state to `Human Review` based
+on a cloud-reviewer thread alone — threads are the agent's normal work.
+Genuinely-beyond-scope findings: leave thread open, comment explaining why,
+exit. State stays `In Review`. The watch loop will eventually escalate
+after multiple stable ticks if the human needs to weigh in.
 
 ## 8. Auto-merge gate (ALL must hold)
 
