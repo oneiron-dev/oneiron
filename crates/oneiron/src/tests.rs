@@ -1591,8 +1591,7 @@ fn delete_entity_corrupted_edge_record_returns_error_not_panic() -> Result<()> {
 
     vault.with_write_txn(|wtxn| {
         let key = Store::encode_edge_key(&id, EdgeKind::Supports, &target);
-        let mut value = valid_edge_value();
-        value[..4].copy_from_slice(&f32::NAN.to_le_bytes());
+        let value = [0_u8; 3];
         vault.store.edges_out.put(wtxn, &key, &value)?;
         Ok(())
     })?;
