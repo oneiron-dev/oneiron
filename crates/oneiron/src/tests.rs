@@ -2436,6 +2436,46 @@ fn entities_by_type_returns_correct_ids() -> Result<()> {
 }
 
 #[test]
+fn entities_by_type_rejects_corrupted_type_index_key() -> Result<()> {
+    let entity_type = 60_u8;
+
+    {
+        let temp_dir = tempfile::tempdir()?;
+        let vault = Vault::open(temp_dir.path(), test_config())?;
+        let short_key = [entity_type, 0xaa];
+
+        vault.with_write_txn(|wtxn| {
+            vault.store.type_index.put(wtxn, &short_key, &[])?;
+            Ok(())
+        })?;
+
+        let err = vault
+            .entities_by_type(entity_type)
+            .expect_err("short type index key should fail loud");
+        assert!(matches!(err, Error::CorruptedIndex("type index key")));
+    }
+
+    {
+        let temp_dir = tempfile::tempdir()?;
+        let vault = Vault::open(temp_dir.path(), test_config())?;
+        let mut reserved_id_key = [0_u8; 17];
+        reserved_id_key[0] = entity_type;
+
+        vault.with_write_txn(|wtxn| {
+            vault.store.type_index.put(wtxn, &reserved_id_key, &[])?;
+            Ok(())
+        })?;
+
+        let err = vault
+            .entities_by_type(entity_type)
+            .expect_err("reserved-id type index key should fail loud");
+        assert!(matches!(err, Error::CorruptedIndex("type index key")));
+    }
+
+    Ok(())
+}
+
+#[test]
 fn entities_by_type_allows_exact_cap_and_overflows_on_next_row() -> Result<()> {
     const TYPE_CAP: usize = 100_000;
 
