@@ -288,12 +288,12 @@ Before classifying any threads, verify reviewers have stopped posting:
 - Fetch the most recent comment timestamp from any thread on this PR by
   any of: `claude`, `codex`, `greptile`, `coderabbitai`, `copilot-pull-request-reviewer`,
   `augmentcode`, `claude-security`, `gemini-pull-request-reviewer`.
-- If the newest cloud-reviewer comment is < 5 minutes old → **exit this
+- If the newest cloud-reviewer comment is < 10 minutes old → **exit this
   turn**. Post a brief Linear comment: "Cloud reviewers still active
   (last comment: <reviewer> at <ts>). Will retry on next watch tick."
   Leave the ticket state at `In Review`. The watch's next cron tick will
   re-evaluate.
-- Only after 5 minutes of cloud-reviewer silence proceed to step 7.1.
+- Only after 10 minutes of cloud-reviewer silence proceed to step 7.1.
 
 ### 7.1. Triage and respond
 
