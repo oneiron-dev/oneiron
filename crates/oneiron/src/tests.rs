@@ -1578,6 +1578,32 @@ fn delete_entity_returns_bool() -> Result<()> {
 }
 
 #[test]
+fn delete_entity_corrupted_edge_record_returns_error_not_panic() -> Result<()> {
+    let temp_dir = tempfile::tempdir()?;
+    let vault = Vault::open(temp_dir.path(), test_config())?;
+    let id = EntityId::now();
+    let target = EntityId::now();
+
+    vault
+        .batch()
+        .put(&id, 0, test_time_range(1, 2), 3, b"exists")
+        .commit()?;
+
+    vault.with_write_txn(|wtxn| {
+        let key = Store::encode_edge_key(&id, EdgeKind::Supports, &target);
+        let value = [0_u8; EDGE_VALUE_LEN - 1];
+        vault.store.edges_out.put(wtxn, &key, &value)?;
+        Ok(())
+    })?;
+
+    let err = vault
+        .delete_entity(&id)
+        .expect_err("corrupted edge record should fail loud");
+    assert!(matches!(err, Error::CorruptedIndex("edge record")));
+    Ok(())
+}
+
+#[test]
 fn delete_entity_cleans_edge_only_nodes_and_bumps_graph_version() -> Result<()> {
     let temp_dir = tempfile::tempdir()?;
     let vault = Vault::open(temp_dir.path(), test_config())?;
