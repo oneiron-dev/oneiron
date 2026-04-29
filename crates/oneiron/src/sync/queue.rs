@@ -260,11 +260,17 @@ impl SyncQueue {
     pub fn len(&self) -> Result<usize> {
         let rtxn = self.vault.store.env.read_txn()?;
         let mut count = 0;
-        let iter = self.vault.store.sync_queue.iter(&rtxn)?;
+        let iter = self
+            .vault
+            .store
+            .sync_queue
+            .prefix_iter(&rtxn, UPDATE_PREFIX)?;
         for result in iter {
-            let (key, _) = result?;
-            if key.starts_with(UPDATE_PREFIX) {
-                count += 1;
+            let (key, value) = result?;
+            match decode_update_row(key, value) {
+                Ok(_) => count += 1,
+                Err(Error::CorruptedIndex(_)) => continue,
+                Err(err) => return Err(err),
             }
         }
         Ok(count)
@@ -819,6 +825,31 @@ mod tests {
 
         let seq = queue.push("2026-03", &[1]).unwrap();
         assert_eq!(seq, 1);
+    }
+
+    #[test]
+    fn len_ignores_malformed_update_rows() {
+        let vault = test_vault();
+        let queue = SyncQueue::new(vault.clone()).unwrap();
+
+        queue.push("2026-03", &[1]).unwrap();
+
+        let bad_key = b"q:\x00".to_vec();
+        let mut wtxn = vault.store.env.write_txn().unwrap();
+        vault
+            .store
+            .sync_queue
+            .put(&mut wtxn, &bad_key, &[1, b'x'])
+            .unwrap();
+        wtxn.commit().unwrap();
+
+        assert_eq!(queue.len().unwrap(), 1);
+
+        let updates = queue.drain_updates().unwrap();
+        assert_eq!(updates.len(), 1);
+        assert_eq!(updates[0].seq, 1);
+        assert_eq!(updates[0].window_key, "2026-03");
+        assert_eq!(updates[0].encoded, vec![1]);
     }
 
     #[test]
