@@ -3,7 +3,9 @@ tracker:
   kind: linear
   # Create a Linear project "Oneiron Autopilot" in the Oneiron team
   # and drop autopilot-eligible tickets there. Symphony filters by
-  # project_slug; the `autopilot` label is informational only.
+  # project_slug; the agent additionally requires the `autopilot` label
+  # at pre-flight (defense in depth — project membership = "execute now",
+  # label = "passes pre-flight safety").
   project_slug: "oneiron-autopilot-bc290f043ea7"
   active_states:
     - Backlog
@@ -111,8 +113,10 @@ Before any other action, verify ALL of the following. If any fails, post one
 Linear comment explaining which check failed, leave the ticket in its current
 state, and exit.
 
-- [ ] `autopilot` is in the ticket's label set. If not, this ticket was routed
-      here by mistake — exit immediately.
+- [ ] The ticket's `project` is `Oneiron Autopilot` AND `autopilot` is in
+      its label set. Both must hold — project membership alone is not
+      enough. If either is missing, the ticket was routed here by mistake;
+      exit immediately.
 - [ ] The ticket description specifies the file path(s) and the change shape
       concretely (one or two paragraphs at most). If the description is vague,
       open-ended, or asks for a design decision, exit and ask for clarification.
@@ -295,8 +299,12 @@ Merge the PR ONLY when ALL of:
 - [ ] CI green (`gh pr checks`)
 - [ ] No open thread with severity P0 or P1 (only P2/P3 nits or resolved)
 - [ ] No forbidden surface in the diff (`git diff main...$(gh pr view --json baseRefName --jq .baseRefName)`)
-- [ ] Total commits on the branch ≤ 5 (more than that means too much fixing
-      churn — escalate)
+- [ ] Total commits on the branch ≤ 5 — OR ≤ 8 if EVERY commit beyond the
+      first stays within the original files touched by the first commit
+      AND introduces no new behavior area (i.e. all extras are
+      reviewer-driven fixes inside the original scope). The per-file
+      containment check: `git diff main...HEAD --name-only` must be a
+      subset of the file list at the first commit. If unsure, escalate.
 
 If all gates hold:
 
