@@ -98,6 +98,8 @@ pub struct Store {
     /// Offline update queue and embed job queue (sync feature only).
     #[cfg(feature = "sync")]
     pub(crate) sync_queue: Database<Bytes, Bytes>,
+    // Keep this field after `env`; fields drop in declaration order, so the
+    // registry releases the path only after the LMDB environment closes.
     _registered_path: RegisteredPath,
 }
 
@@ -254,10 +256,10 @@ impl RegisteredPath {
 
 impl Drop for RegisteredPath {
     fn drop(&mut self) {
-        let mut open_paths = match OPEN_STORE_PATHS
-            .get_or_init(|| Mutex::new(HashSet::new()))
-            .lock()
-        {
+        let Some(open_paths) = OPEN_STORE_PATHS.get() else {
+            return;
+        };
+        let mut open_paths = match open_paths.lock() {
             Ok(open_paths) => open_paths,
             Err(poisoned) => poisoned.into_inner(),
         };
