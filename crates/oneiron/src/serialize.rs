@@ -1394,6 +1394,18 @@ mod tests {
         }
     }
 
+    fn savings_config(format: PackFormat, profile: FieldProfile) -> SerializeConfig {
+        SerializeConfig {
+            format,
+            profile,
+            budget: 0,
+            allocation: TokenAllocation::default(),
+            include_stats: false,
+            merge_neighbors: true,
+            max_field_chars: 500,
+        }
+    }
+
     fn prepared_entity_for_test(id_len: usize, fields: Vec<(String, Value)>) -> PreparedEntity {
         PreparedEntity {
             entity_type: 0,
@@ -1401,6 +1413,166 @@ mod tests {
             id: "x".repeat(id_len),
             fields,
         }
+    }
+
+    fn token_savings_regression_pack() -> ContextPack {
+        let mut pack = ContextPack {
+            results: Vec::new(),
+            neighbors: Vec::new(),
+            stats: PackStats {
+                candidates_considered: 28,
+                signals_used: vec![Signal::Vector, Signal::Text, Signal::Temporal],
+                query_time_us: 3_800,
+                entities_hydrated: 28,
+                neighbors_hydrated: 0,
+            },
+        };
+
+        let now = crate::unix_seconds_now();
+
+        for i in 0..10_u8 {
+            pack.results.push(ContextEntity {
+                id: EntityId::from_bytes_unchecked([20 + i; 16]),
+                short_id: format!("cl{i:02}"),
+                content_hash: 0x40 + i,
+                entity_type: 0,
+                score: 0.92 - f32::from(i) * 0.02,
+                fields: Some(HashMap::from([
+                    ("pred".to_owned(), Value::String(format!("priority.claim.{i}"))),
+                    (
+                        "val".to_owned(),
+                        Value::String(format!(
+                            "Claim {i} captures the current architecture decision, expected impact, and rollout constraint for the active workstream."
+                        )),
+                    ),
+                    (
+                        "conf".to_owned(),
+                        Value::Number(Number::from_f64(0.71 + f64::from(i) * 0.01).expect("finite confidence")),
+                    ),
+                    (
+                        "sal".to_owned(),
+                        Value::Number(Number::from_f64(0.88 - f64::from(i) * 0.01).expect("finite salience")),
+                    ),
+                    (
+                        "evid".to_owned(),
+                        Value::Array(vec![
+                            Value::String(format!("tn{i:02}:aa")),
+                            Value::String(format!("sm{:02}:bb", i % 3)),
+                        ]),
+                    ),
+                    (
+                        "from".to_owned(),
+                        Value::Number(Number::from(
+                            now.saturating_sub(((u64::from(i) + 1) * 86_400) + 3_600),
+                        )),
+                    ),
+                    (
+                        "to".to_owned(),
+                        Value::Number(Number::from(
+                            now.saturating_add(((u64::from(i) + 2) * 86_400) + 3_600),
+                        )),
+                    ),
+                    (
+                        "src".to_owned(),
+                        Value::String(format!(
+                            "research-log://autopilot/claims/{i}/evidence-chain/response-format-savings-regression"
+                        )),
+                    ),
+                    ("world".to_owned(), Value::String("oneiron.autopilot".to_owned())),
+                    (
+                        "subj".to_owned(),
+                        Value::String(format!("response-format-savings-target-{i}")),
+                    ),
+                    (
+                        "scope".to_owned(),
+                        Value::String(format!(
+                            "Scope note {i}: preserve compact serializer output while carrying enough metadata for audits, provenance review, and future regression diagnosis."
+                        )),
+                    ),
+                ])),
+                edges: None,
+                vector: None,
+            });
+        }
+
+        for i in 0..15_u8 {
+            pack.results.push(ContextEntity {
+                id: EntityId::from_bytes_unchecked([60 + i; 16]),
+                short_id: format!("tn{i:02}"),
+                content_hash: 0x70 + i,
+                entity_type: 1,
+                score: 0.74 - f32::from(i) * 0.01,
+                fields: Some(HashMap::from([
+                    (
+                        "txt".to_owned(),
+                        Value::String(format!(
+                            "Turn {i}: reviewer asks whether compact outputs still carry the critical claim, turn, and summary context without excess envelope bytes."
+                        )),
+                    ),
+                    (
+                        "spkr".to_owned(),
+                        Value::String(if i % 2 == 0 { "user" } else { "assistant" }.to_owned()),
+                    ),
+                    (
+                        "at".to_owned(),
+                        Value::Number(Number::from(now.saturating_sub((u64::from(i) + 1) * 3_600))),
+                    ),
+                    (
+                        "sess".to_owned(),
+                        Value::String(format!(
+                            "architecture-review-session-response-format-token-budget-{i:02}"
+                        )),
+                    ),
+                ])),
+                edges: None,
+                vector: None,
+            });
+        }
+
+        for i in 0..3_u8 {
+            pack.results.push(ContextEntity {
+                id: EntityId::from_bytes_unchecked([100 + i; 16]),
+                short_id: format!("sm{i:02}"),
+                content_hash: 0xa0 + i,
+                entity_type: 8,
+                score: 0.65 - f32::from(i) * 0.03,
+                fields: Some(HashMap::from([
+                    (
+                        "txt".to_owned(),
+                        Value::String(format!(
+                            "Summary {i}: the pack gathers recent implementation details, reviewer concerns, acceptance criteria, and follow-up constraints for token-efficient response formats."
+                        )),
+                    ),
+                    ("lvl".to_owned(), Value::String("session".to_owned())),
+                    (
+                        "at".to_owned(),
+                        Value::Number(Number::from(now.saturating_sub((u64::from(i) + 1) * 7_200))),
+                    ),
+                    (
+                        "src".to_owned(),
+                        Value::String(format!(
+                            "summary-source://oneiron/autopilot/response-format-regression/{i}/expanded-provenance"
+                        )),
+                    ),
+                ])),
+                edges: None,
+                vector: None,
+            });
+        }
+
+        pack
+    }
+
+    fn serialized_len(pack: &ContextPack, format: PackFormat, profile: FieldProfile) -> usize {
+        serialize_pack(pack, &savings_config(format, profile)).len()
+    }
+
+    fn savings_ratio(json_full_len: usize, compact_len: usize) -> f64 {
+        assert!(
+            json_full_len > 0,
+            "json_full_len must be > 0 for savings ratio computation"
+        );
+        1.0 - (compact_len as f64 / json_full_len as f64)
     }
 
     #[test]
@@ -1598,6 +1770,99 @@ mod tests {
         }
 
         assert_eq!(payload["object"]["short"], "ok");
+    }
+
+    #[test]
+    fn toon_minimal_saves_at_least_60_percent_vs_json_full() {
+        let pack = token_savings_regression_pack();
+        let json_full_len = serialized_len(&pack, PackFormat::Json, FieldProfile::Full);
+        let toon_minimal_len = serialized_len(&pack, PackFormat::Toon, FieldProfile::Minimal);
+        let savings = savings_ratio(json_full_len, toon_minimal_len);
+
+        assert!(
+            savings >= 0.60,
+            "TOON Minimal savings {savings:.3} below 0.60; json_full_len={json_full_len}, toon_minimal_len={toon_minimal_len}"
+        );
+    }
+
+    #[test]
+    fn toon_standard_saves_at_least_45_percent_vs_json_full() {
+        let pack = token_savings_regression_pack();
+        let json_full_len = serialized_len(&pack, PackFormat::Json, FieldProfile::Full);
+        let toon_standard_len = serialized_len(&pack, PackFormat::Toon, FieldProfile::Standard);
+        let savings = savings_ratio(json_full_len, toon_standard_len);
+
+        assert!(
+            savings >= 0.45,
+            "TOON Standard savings {savings:.3} below 0.45; json_full_len={json_full_len}, toon_standard_len={toon_standard_len}"
+        );
+    }
+
+    #[test]
+    fn plaintext_saves_at_least_55_percent_vs_json_full() {
+        let pack = token_savings_regression_pack();
+        let json_full_len = serialized_len(&pack, PackFormat::Json, FieldProfile::Full);
+        let plaintext_len = serialized_len(&pack, PackFormat::Plaintext, FieldProfile::Standard);
+        let savings = savings_ratio(json_full_len, plaintext_len);
+
+        assert!(
+            savings >= 0.55,
+            "Plaintext savings {savings:.3} below 0.55; json_full_len={json_full_len}, plaintext_len={plaintext_len}"
+        );
+    }
+
+    #[test]
+    fn short_id_serialization_uses_at_most_two_tokens_per_reference() {
+        let pack = ContextPack {
+            results: vec![ContextEntity {
+                id: EntityId::from_bytes_unchecked([42; 16]),
+                short_id: "cl42".to_owned(),
+                content_hash: 0x2a,
+                entity_type: 0,
+                score: 0.5,
+                fields: Some(HashMap::from([
+                    (
+                        "pred".to_owned(),
+                        Value::String("goal.compact-id".to_owned()),
+                    ),
+                    (
+                        "val".to_owned(),
+                        Value::String("Keep compact claim references cheap.".to_owned()),
+                    ),
+                ])),
+                edges: None,
+                vector: None,
+            }],
+            neighbors: vec![],
+            stats: empty_stats(),
+        };
+
+        let bytes = serialize_pack(
+            &pack,
+            &savings_config(PackFormat::Plaintext, FieldProfile::Minimal),
+        );
+        let text = String::from_utf8(bytes).expect("utf8");
+        let rendered_ref = text
+            .split(|ch: char| !(ch.is_ascii_alphanumeric() || ch == ':'))
+            .find(|part| part.starts_with("cl42"))
+            .expect("cl42 reference in serialized output");
+        let short_id = rendered_ref.split(':').next().expect("short id segment");
+        let estimated_bpe_tokens = rendered_ref.len().div_ceil(4);
+
+        assert!(
+            short_id.is_ascii() && short_id.len() <= 6,
+            "short id reference should fit <= 6 ASCII bytes: short_id={short_id:?}, bytes={}",
+            short_id.len()
+        );
+        assert!(
+            rendered_ref.is_ascii() && estimated_bpe_tokens <= 2,
+            "rendered short id reference should fit <= 2 estimated BPE tokens: rendered_ref={rendered_ref:?}, bytes={}, estimated_bpe_tokens={estimated_bpe_tokens}",
+            rendered_ref.len()
+        );
+        assert!(
+            text.contains("cl42:2a"),
+            "serialized output should include rendered short id with hash: {text}"
+        );
     }
 
     #[test]
