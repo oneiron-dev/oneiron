@@ -82,9 +82,10 @@ pub fn add_window_to_root(doc: &LoroDocument, key: &WindowKey) {
         .map(|raw| String::from_utf8_lossy(&raw).to_string())
         .unwrap_or_default();
 
-    if current
-        .split(',')
-        .any(|window| window.trim() == key.as_str())
+    if !current.is_empty()
+        && current
+            .split(',')
+            .any(|window| window.trim() == key.as_str())
     {
         return;
     }
