@@ -269,7 +269,7 @@ mod tests {
     assert_window_key_new_panics!(window_key_new_panics_on_empty_input, "");
 
     #[test]
-    fn window_key_rejects_invalid_calendar_shapes() {
+    fn parse_window_key_rejects_invalid_calendar_shapes() {
         for invalid in [
             "2026-13", "2026-00", "abcdefg", "2026-3", "1969-12", "0000-01",
         ] {
