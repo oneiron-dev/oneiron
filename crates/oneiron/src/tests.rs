@@ -1335,6 +1335,27 @@ fn phonetic_rejects_embedded_nul_codes() -> Result<()> {
 }
 
 #[test]
+fn phonetic_rejects_empty_codes_atomically() -> Result<()> {
+    let temp_dir = tempfile::tempdir()?;
+    let vault = Vault::open(temp_dir.path(), test_config())?;
+    let id = EntityId::now();
+
+    let err = vault
+        .batch()
+        .put(&id, 0, test_time_range(1, 1), 2, b"phonetic-empty")
+        .phonetic(&id, &[""])
+        .commit()
+        .expect_err("expected empty phonetic code to fail");
+    assert!(matches!(err, Error::InvalidKey));
+    assert!(
+        vault.get(&id)?.is_none(),
+        "batch should remain atomic on phonetic validation failure"
+    );
+
+    Ok(())
+}
+
+#[test]
 fn full_delete_deindexes_everything() -> Result<()> {
     let temp_dir = tempfile::tempdir()?;
     let vault = Vault::open(temp_dir.path(), test_config())?;
