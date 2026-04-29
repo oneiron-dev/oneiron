@@ -177,10 +177,16 @@ pub fn decode_bulk_transfer_done(data: &[u8]) -> Result<(&str, &[u8]), Transport
             .map_err(|_| TransportError::InvalidPayload("bad state_len"))?,
     ) as usize;
     let state_start = off + 4;
-    if data.len() < state_start + state_len {
+    let state_end = state_start
+        .checked_add(state_len)
+        .ok_or(TransportError::InvalidPayload("state length overflow"))?;
+    if data.len() < state_end {
         return Err(TransportError::InvalidPayload("state truncated"));
     }
-    Ok((key, &data[state_start..state_start + state_len]))
+    if data.len() > state_end {
+        return Err(TransportError::InvalidPayload("state has trailing bytes"));
+    }
+    Ok((key, &data[state_start..state_end]))
 }
 
 // ─── Transport Error ──────────────────────────────────────────────────────────
@@ -255,6 +261,30 @@ mod tests {
         let (k, s) = decode_bulk_transfer_done(&encoded[1..]).unwrap();
         assert_eq!(k, "2025-08");
         assert!(s.is_empty());
+    }
+
+    #[test]
+    fn bulk_transfer_done_rejects_trailing_bytes() {
+        let state = vec![10, 20];
+        let mut encoded = encode_bulk_transfer_done("2025-09", &state);
+        encoded.push(30);
+
+        assert!(matches!(
+            decode_bulk_transfer_done(&encoded[1..]),
+            Err(TransportError::InvalidPayload("state has trailing bytes"))
+        ));
+    }
+
+    #[test]
+    fn bulk_transfer_done_rejects_truncated_state() {
+        let state = vec![10, 20];
+        let mut encoded = encode_bulk_transfer_done("2025-09", &state);
+        encoded.pop();
+
+        assert!(matches!(
+            decode_bulk_transfer_done(&encoded[1..]),
+            Err(TransportError::InvalidPayload("state truncated"))
+        ));
     }
 
     #[test]
