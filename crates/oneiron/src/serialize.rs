@@ -1667,6 +1667,42 @@ mod tests {
     }
 
     #[test]
+    fn max_field_chars_zero_disables_and_one_emits_ellipsis() {
+        let overlong = "overlong claim value".to_owned();
+        let pack = ContextPack {
+            results: vec![ContextEntity {
+                id: EntityId::from_bytes_unchecked([42; 16]),
+                short_id: "cl42".to_owned(),
+                content_hash: 0x42,
+                entity_type: 0,
+                score: 0.5,
+                fields: Some(HashMap::from([
+                    ("pred".to_owned(), Value::String("goal.note".to_owned())),
+                    ("val".to_owned(), Value::String(overlong.clone())),
+                ])),
+                edges: None,
+                vector: None,
+            }],
+            neighbors: vec![],
+            stats: empty_stats(),
+        };
+
+        let mut unlimited = config(PackFormat::Json);
+        unlimited.merge_neighbors = true;
+        unlimited.max_field_chars = 0;
+        let parsed: Value =
+            serde_json::from_slice(&serialize_pack(&pack, &unlimited)).expect("json");
+        assert_eq!(parsed["claims"][0]["val"].as_str(), Some(overlong.as_str()));
+
+        let mut single_char = config(PackFormat::Json);
+        single_char.merge_neighbors = true;
+        single_char.max_field_chars = 1;
+        let parsed: Value =
+            serde_json::from_slice(&serialize_pack(&pack, &single_char)).expect("json");
+        assert_eq!(parsed["claims"][0]["val"].as_str(), Some("…"));
+    }
+
+    #[test]
     fn zero_section_budget_drops_all_rows() {
         let allocation = TokenAllocation::default();
         let source = vec![(0, vec![prepared_entity_for_test(18, Vec::new())])];
