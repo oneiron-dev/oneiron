@@ -5,7 +5,7 @@
 
 use super::engine::{CrdtDoc, CrdtMap};
 use super::loro_engine::LoroDocument;
-use super::types::WindowKey;
+use super::types::{WindowKey, parse_window_key_str};
 
 /// Creates a new root Doc with the standard schema.
 ///
@@ -52,7 +52,11 @@ pub fn read_window_list(doc: &LoroDocument) -> Vec<WindowKey> {
             if s.is_empty() {
                 Vec::new()
             } else {
-                s.split(',').map(|w| WindowKey::new(w.trim())).collect()
+                s.split(',')
+                    .map(str::trim)
+                    .filter(|w| parse_window_key_str(w).is_some())
+                    .map(WindowKey::new)
+                    .collect()
             }
         }
         None => Vec::new(),
@@ -136,5 +140,20 @@ mod tests {
         let windows = read_window_list(&doc);
         assert_eq!(windows.len(), 3);
         assert_eq!(windows[2].as_str(), "2026-03");
+    }
+
+    #[test]
+    fn read_window_list_skips_blank_and_invalid_tokens() {
+        let doc = create_root_doc("user1", "vault-abc", &[]);
+        let meta = doc.get_or_create_map("meta");
+        meta.insert("windows", b"2026-01,,2026-13,garbage,2026-02")
+            .unwrap();
+        doc.commit();
+
+        let windows = read_window_list(&doc);
+        assert_eq!(
+            windows,
+            vec![WindowKey::new("2026-01"), WindowKey::new("2026-02")]
+        );
     }
 }
