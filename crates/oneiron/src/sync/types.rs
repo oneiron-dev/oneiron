@@ -41,6 +41,11 @@ impl WindowKey {
         Self(key)
     }
 
+    #[cfg(test)]
+    pub(crate) fn new_unchecked_for_test(key: impl Into<String>) -> Self {
+        Self(key.into())
+    }
+
     /// Creates a window key from a Unix timestamp (seconds).
     pub fn from_timestamp(ts: u64) -> Self {
         // Convert unix seconds to YYYY-MM
