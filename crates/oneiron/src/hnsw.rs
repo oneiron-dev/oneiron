@@ -1484,6 +1484,7 @@ mod tests {
         assert_eq!(reachable_from_entry(&neighbors, low).len(), 1);
         assert_eq!(reachable_from_entry(&neighbors, mid).len(), 1);
         assert_eq!(reachable_from_entry(&neighbors, high).len(), 1);
+        assert!(reachable_from_entry(&neighbors, low).len() < neighbors.len());
         assert_eq!(select_best_entry_point(&neighbors, Some(high)), Some(low));
     }
 }
