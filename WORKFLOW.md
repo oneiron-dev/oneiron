@@ -289,11 +289,16 @@ Before classifying any threads, verify reviewers have stopped posting:
   any of: `claude`, `codex`, `greptile`, `coderabbitai`, `copilot-pull-request-reviewer`,
   `augmentcode`, `claude-security`, `gemini-pull-request-reviewer`.
 - If the newest cloud-reviewer comment is < 10 minutes old → **exit this
-  turn**. Post a brief Linear comment: "Cloud reviewers still active
-  (last comment: <reviewer> at <ts>). Will retry on next watch tick."
-  Leave the ticket state at `In Review`. The watch's next cron tick will
-  re-evaluate.
+  turn SILENTLY**. Do NOT post a Linear comment. Leave the ticket state
+  at `In Review`. Symphony will respawn this agent on its next poll; you
+  will exit silently again until reviewers have settled. The night-watch
+  cron also checks open PRs in sub-sweep A every 15 min and will pick up
+  the work regardless.
 - Only after 10 minutes of cloud-reviewer silence proceed to step 7.1.
+
+**Do NOT post settle-status comments on Linear**. Repeated polling under
+Symphony's 30s active_states cycle would spam the ticket. Silent exit is
+the contract.
 
 ### 7.1. Triage and respond
 
