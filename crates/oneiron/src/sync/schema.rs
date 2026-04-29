@@ -218,10 +218,12 @@ mod tests {
 
     #[test]
     fn add_window_to_root_normalizes_incoming_key_before_insert() {
-        let doc = create_root_doc("user1", "vault-abc", &[WindowKey::new("2026-01")]);
+        let doc = create_root_doc("user1", "vault-abc", &[]);
 
         add_window_to_root(&doc, &WindowKey::new(" 2026-01 "));
 
+        let meta = doc.get_or_create_map("meta");
+        assert_eq!(meta.get("windows").unwrap().as_slice(), b"2026-01");
         let windows = read_window_list(&doc);
         assert_eq!(windows.len(), 1);
         assert_eq!(windows[0].as_str(), "2026-01");
