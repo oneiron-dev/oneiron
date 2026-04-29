@@ -1,4 +1,6 @@
-use std::path::Path;
+use std::collections::HashSet;
+use std::path::{Path, PathBuf};
+use std::sync::{Mutex, OnceLock};
 
 use heed::types::Bytes;
 #[cfg(feature = "sync")]
@@ -21,6 +23,7 @@ const TEMPORAL_LONG_INTERVALS_SCHEMA_VERSION: u8 = 2;
 pub(crate) const VECTOR_VERSION_KEY: &[u8] = b"vector_version";
 const HNSW_COMPATIBILITY_VERSION: u8 = 1;
 const HNSW_COMPATIBILITY_LEN: usize = 25;
+static OPEN_STORE_PATHS: OnceLock<Mutex<HashSet<PathBuf>>> = OnceLock::new();
 
 // BM25F / analyzer schema v2 keys. All live in the new `vault_meta` DB.
 pub(crate) const TEXT_INDEX_SCHEMA_VERSION_KEY: &[u8] = b"text_index_schema_version";
@@ -95,24 +98,33 @@ pub struct Store {
     /// Offline update queue and embed job queue (sync feature only).
     #[cfg(feature = "sync")]
     pub(crate) sync_queue: Database<Bytes, Bytes>,
+    // DROP-ORDER: keep this field after `env`. Fields drop in declaration
+    // order, so the registry releases the path only after the LMDB
+    // environment closes.
+    _registered_path: RegisteredPath,
 }
 
 impl Store {
     /// Opens or creates a store at `path` and initializes all named databases.
     pub fn open(path: impl AsRef<Path>, config: &VaultConfig) -> Result<Self> {
         std::fs::create_dir_all(path.as_ref())?;
+        let canonical_path = path.as_ref().canonicalize()?;
+        let registered_path = RegisteredPath::reserve(canonical_path.clone())?;
 
         // SAFETY: heed/LMDB require a single Env per filesystem path, the path
         // must not be on NFS or another unsupported network filesystem, and
         // map_size must not be changed concurrently while the environment is
         // open elsewhere. The path existence/writability precondition is
-        // established by create_dir_all above.
+        // established by create_dir_all above. The caller must not retarget the
+        // canonicalized filesystem path while it is being opened, and the
+        // process-local registry above rejects a second live Env for the same
+        // canonical path.
         let env = unsafe {
             EnvOpenOptions::new()
                 .map_size(config.map_size)
                 .max_readers(config.max_readers)
                 .max_dbs(MAX_DBS)
-                .open(path.as_ref())?
+                .open(&canonical_path)?
         };
 
         let mut wtxn = env.write_txn()?;
@@ -193,6 +205,7 @@ impl Store {
             sync_state,
             #[cfg(feature = "sync")]
             sync_queue,
+            _registered_path: registered_path,
         })
     }
 
@@ -219,6 +232,41 @@ impl Store {
         key[0] = entity_type;
         key[1..].copy_from_slice(id.as_bytes());
         key
+    }
+}
+
+struct RegisteredPath {
+    path: PathBuf,
+}
+
+impl RegisteredPath {
+    fn reserve(path: PathBuf) -> Result<Self> {
+        let mut open_paths = OPEN_STORE_PATHS
+            .get_or_init(|| Mutex::new(HashSet::new()))
+            .lock()
+            .map_err(|_| Error::InvariantViolation("store path registry mutex poisoned"))?;
+
+        if !open_paths.insert(path.clone()) {
+            return Err(Error::InvalidConfig(format!(
+                "vault path is already open in this process: {}",
+                path.display()
+            )));
+        }
+
+        Ok(Self { path })
+    }
+}
+
+impl Drop for RegisteredPath {
+    fn drop(&mut self) {
+        let Some(open_paths) = OPEN_STORE_PATHS.get() else {
+            return;
+        };
+        let mut open_paths = match open_paths.lock() {
+            Ok(open_paths) => open_paths,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        open_paths.remove(&self.path);
     }
 }
 

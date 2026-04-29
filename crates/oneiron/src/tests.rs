@@ -1763,6 +1763,44 @@ fn validates_dimensions_hnsw_and_map_size() -> Result<()> {
 }
 
 #[test]
+fn vault_open_rejects_second_live_env_for_same_path() -> Result<()> {
+    let temp_dir = tempfile::tempdir()?;
+    let path = temp_dir.path();
+
+    let first_vault = Vault::open(path, test_config())?;
+    let Err(err) = Vault::open(path, test_config()) else {
+        panic!("expected second live vault open to fail");
+    };
+    assert!(matches!(err, Error::InvalidConfig(ref message) if message.contains("already open")));
+
+    drop(first_vault);
+    let reopened = Vault::open(path, test_config())?;
+    drop(reopened);
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
+fn vault_open_rejects_second_live_env_for_symlinked_path() -> Result<()> {
+    let temp_dir = tempfile::tempdir()?;
+    let real_path = temp_dir.path().join("vault");
+    let link_path = temp_dir.path().join("vault-link");
+    std::fs::create_dir_all(&real_path)?;
+    std::os::unix::fs::symlink(&real_path, &link_path)?;
+
+    let first_vault = Vault::open(&real_path, test_config())?;
+    let Err(err) = Vault::open(&link_path, test_config()) else {
+        panic!("expected symlinked second live vault open to fail");
+    };
+    assert!(matches!(err, Error::InvalidConfig(ref message) if message.contains("already open")));
+
+    drop(first_vault);
+    let reopened = Vault::open(&link_path, test_config())?;
+    drop(reopened);
+    Ok(())
+}
+
+#[test]
 fn batch_with_edges_and_entities() -> Result<()> {
     let temp_dir = tempfile::tempdir()?;
     let vault = Vault::open(temp_dir.path(), test_config())?;
