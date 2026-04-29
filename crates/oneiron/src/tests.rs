@@ -2437,20 +2437,41 @@ fn entities_by_type_returns_correct_ids() -> Result<()> {
 
 #[test]
 fn entities_by_type_rejects_corrupted_type_index_key() -> Result<()> {
-    let temp_dir = tempfile::tempdir()?;
-    let vault = Vault::open(temp_dir.path(), test_config())?;
     let entity_type = 60_u8;
-    let malformed_key = [entity_type, 0xaa];
 
-    vault.with_write_txn(|wtxn| {
-        vault.store.type_index.put(wtxn, &malformed_key, &[])?;
-        Ok(())
-    })?;
+    {
+        let temp_dir = tempfile::tempdir()?;
+        let vault = Vault::open(temp_dir.path(), test_config())?;
+        let short_key = [entity_type, 0xaa];
 
-    let err = vault
-        .entities_by_type(entity_type)
-        .expect_err("type index scan should fail loud on malformed keys");
-    assert!(matches!(err, Error::CorruptedIndex("type index key")));
+        vault.with_write_txn(|wtxn| {
+            vault.store.type_index.put(wtxn, &short_key, &[])?;
+            Ok(())
+        })?;
+
+        let err = vault
+            .entities_by_type(entity_type)
+            .expect_err("short type index key should fail loud");
+        assert!(matches!(err, Error::CorruptedIndex("type index key")));
+    }
+
+    {
+        let temp_dir = tempfile::tempdir()?;
+        let vault = Vault::open(temp_dir.path(), test_config())?;
+        let mut reserved_id_key = [0_u8; 17];
+        reserved_id_key[0] = entity_type;
+
+        vault.with_write_txn(|wtxn| {
+            vault.store.type_index.put(wtxn, &reserved_id_key, &[])?;
+            Ok(())
+        })?;
+
+        let err = vault
+            .entities_by_type(entity_type)
+            .expect_err("reserved-id type index key should fail loud");
+        assert!(matches!(err, Error::CorruptedIndex("type index key")));
+    }
+
     Ok(())
 }
 
