@@ -1305,6 +1305,8 @@ fn validate_edge_record(key: &[u8], value: &[u8]) -> Result<()> {
         return Err(Error::CorruptedIndex("edge record"));
     }
 
+    // Keep this conversion fallible even after the length guard so future
+    // edge-value layout changes fail closed instead of reintroducing a panic.
     let weight = f32::from_le_bytes(
         value
             .get(..4)
