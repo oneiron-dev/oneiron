@@ -164,7 +164,8 @@ pub fn encode_bulk_transfer_done_checked(
         MAX_WINDOW_KEY_LEN,
     );
     let state_len = checked_bulk_transfer_done_state_len(doc_state.len())?;
-    let mut buf = Vec::with_capacity(2 + key_bytes.len() + 4 + doc_state.len());
+    let capacity = checked_bulk_transfer_done_capacity(key_bytes.len(), doc_state.len())?;
+    let mut buf = Vec::with_capacity(capacity);
     buf.push(TAG_BULK_TRANSFER_DONE);
     buf.push(key_bytes.len() as u8);
     buf.extend_from_slice(key_bytes);
@@ -176,6 +177,19 @@ pub fn encode_bulk_transfer_done_checked(
 fn checked_bulk_transfer_done_state_len(state_len: usize) -> Result<u32, TransportError> {
     u32::try_from(state_len)
         .map_err(|_| TransportError::InvalidPayload("BulkTransferDone state too large"))
+}
+
+fn checked_bulk_transfer_done_capacity(
+    key_len: usize,
+    state_len: usize,
+) -> Result<usize, TransportError> {
+    2usize
+        .checked_add(key_len)
+        .and_then(|len| len.checked_add(4))
+        .and_then(|len| len.checked_add(state_len))
+        .ok_or(TransportError::InvalidPayload(
+            "BulkTransferDone state too large",
+        ))
 }
 
 /// Decodes a BulkTransferDone payload (after tag byte has been consumed).
@@ -275,6 +289,17 @@ mod tests {
     }
 
     #[test]
+    fn bulk_transfer_done_checked_roundtrip() {
+        let key = "2025-09";
+        let state = vec![10, 20];
+        let encoded = encode_bulk_transfer_done_checked(key, &state).unwrap();
+        assert_eq!(encoded[0], TAG_BULK_TRANSFER_DONE);
+        let (dk, ds) = decode_bulk_transfer_done(&encoded[1..]).unwrap();
+        assert_eq!(dk, key);
+        assert_eq!(ds, &state[..]);
+    }
+
+    #[test]
     fn bulk_transfer_done_empty_state() {
         let encoded = encode_bulk_transfer_done("2025-08", &[]);
         let (k, s) = decode_bulk_transfer_done(&encoded[1..]).unwrap();
@@ -286,6 +311,16 @@ mod tests {
     #[test]
     fn bulk_transfer_done_checked_encoder_rejects_u32_overflow_len() {
         let err = checked_bulk_transfer_done_state_len(u32::MAX as usize + 1).unwrap_err();
+
+        assert!(matches!(
+            err,
+            TransportError::InvalidPayload("BulkTransferDone state too large")
+        ));
+    }
+
+    #[test]
+    fn bulk_transfer_done_capacity_rejects_usize_overflow() {
+        let err = checked_bulk_transfer_done_capacity(MAX_WINDOW_KEY_LEN, usize::MAX).unwrap_err();
 
         assert!(matches!(
             err,
