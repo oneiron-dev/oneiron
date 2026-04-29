@@ -674,6 +674,29 @@ fn batch_put_writes_temporal_indexes() -> Result<()> {
 }
 
 #[test]
+fn entities_in_learned_range_rejects_corrupted_temporal_key() -> Result<()> {
+    let temp_dir = tempfile::tempdir()?;
+    let vault = Vault::open(temp_dir.path(), test_config())?;
+
+    let mut key = [0_u8; 24];
+    key[..8].copy_from_slice(&50_u64.to_be_bytes());
+    key[8..].fill(0xFF);
+
+    vault.with_write_txn(|wtxn| {
+        vault.store.temporal_learned.put(wtxn, &key, &[])?;
+        Ok(())
+    })?;
+
+    let result = vault.entities_in_learned_range(40, 60);
+    assert!(
+        matches!(result, Err(Error::CorruptedIndex("temporal learned key"))),
+        "expected corrupted temporal learned key, got {result:?}"
+    );
+
+    Ok(())
+}
+
+#[test]
 fn batch_put_writes_long_interval_index_by_end_time() -> Result<()> {
     let temp_dir = tempfile::tempdir()?;
     let vault = Vault::open(temp_dir.path(), test_config())?;
