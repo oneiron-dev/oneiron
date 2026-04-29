@@ -30,7 +30,19 @@ pub struct WindowKey(String);
 
 impl WindowKey {
     /// Creates a new window key from a "YYYY-MM" string.
+    ///
+    /// Panics on malformed input.
     pub fn new(key: impl Into<String>) -> Self {
+        let key = key.into();
+        assert!(
+            parse_window_key_str(&key).is_some(),
+            "malformed window key {key:?}; expected YYYY-MM with year >= 1970 and month 01-12"
+        );
+        Self(key)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn new_unchecked_for_test(key: impl Into<String>) -> Self {
         Self(key.into())
     }
 
@@ -239,17 +251,32 @@ mod tests {
         assert_eq!(window_doc_guid("user123", &key), "vault:user123:w:2026-02");
     }
 
+    macro_rules! assert_window_key_new_panics {
+        ($name:ident, $input:expr) => {
+            #[test]
+            #[should_panic(expected = "malformed window key")]
+            fn $name() {
+                let _ = WindowKey::new($input);
+            }
+        };
+    }
+
+    assert_window_key_new_panics!(window_key_new_panics_on_malformed_input, "2026:03");
+    assert_window_key_new_panics!(window_key_new_panics_on_whitespace_input, "2026-03 ");
+    assert_window_key_new_panics!(window_key_new_panics_on_invalid_month, "2026-13");
+    assert_window_key_new_panics!(window_key_new_panics_on_zero_month, "2026-00");
+    assert_window_key_new_panics!(window_key_new_panics_on_pre_epoch_year, "1969-12");
+    assert_window_key_new_panics!(window_key_new_panics_on_empty_input, "");
+
     #[test]
-    fn window_key_rejects_invalid_calendar_shapes() {
+    fn parse_window_key_rejects_invalid_calendar_shapes() {
         for invalid in [
             "2026-13", "2026-00", "abcdefg", "2026-3", "1969-12", "0000-01",
         ] {
-            let key = WindowKey::new(invalid);
             assert!(
-                key.start_timestamp().is_none(),
+                parse_window_key_str(invalid).is_none(),
                 "{invalid} should be invalid"
             );
-            assert!(key.end_timestamp().is_none(), "{invalid} should be invalid");
         }
     }
 
