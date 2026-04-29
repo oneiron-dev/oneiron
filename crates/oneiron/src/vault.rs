@@ -452,7 +452,18 @@ impl Vault {
         Ok(result)
     }
 
-    /// Reads a value from the sync_state database.
+    // Read/write/list helpers intentionally remain behind `feature = "sync"`
+    // instead of `cfg(test)` because the sync bridge regression suite is an
+    // integration test crate. Production bridge code still uses direct
+    // transactional `sync_state` access when multiple keys must update
+    // atomically.
+
+    /// Reads a value from the sync_state database for sync integration tests
+    /// and diagnostics.
+    ///
+    /// Production bridge code uses direct transactional access so multi-key
+    /// sync-state updates stay atomic.
+    #[doc(hidden)]
     #[cfg(feature = "sync")]
     pub fn sync_state_get(&self, key: &str) -> Result<Option<Vec<u8>>> {
         let rtxn = self.store.env.read_txn()?;
@@ -463,7 +474,12 @@ impl Vault {
             .map(|bytes| bytes.to_vec()))
     }
 
-    /// Writes a value to the sync_state database.
+    /// Writes a value to the sync_state database for sync integration tests
+    /// and diagnostics.
+    ///
+    /// Production bridge code uses direct transactional access so multi-key
+    /// sync-state updates stay atomic.
+    #[doc(hidden)]
     #[cfg(feature = "sync")]
     pub fn sync_state_put(&self, key: &str, value: &[u8]) -> Result<()> {
         self.with_write_txn(|wtxn| {
@@ -472,13 +488,18 @@ impl Vault {
         })
     }
 
-    /// Deletes a key from the sync_state database.
-    #[cfg(feature = "sync")]
+    /// Test utility for deleting a key from the sync_state database.
+    #[cfg(all(feature = "sync", test))]
     pub fn sync_state_delete(&self, key: &str) -> Result<bool> {
         self.with_write_txn(|wtxn| Ok(self.store.sync_state.delete(wtxn, key)?))
     }
 
-    /// Lists all keys with the given prefix in sync_state.
+    /// Lists all keys with the given prefix in sync_state for sync integration
+    /// tests and diagnostics.
+    ///
+    /// Production bridge code uses direct transactional access so multi-key
+    /// sync-state updates stay atomic.
+    #[doc(hidden)]
     #[cfg(feature = "sync")]
     pub fn sync_state_keys_with_prefix(&self, prefix: &str) -> Result<Vec<String>> {
         let rtxn = self.store.env.read_txn()?;
