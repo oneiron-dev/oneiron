@@ -7,7 +7,7 @@ use std::time::Instant;
 use heed::RoTxn;
 
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
-use crate::error::{Error, Result};
+use crate::error::Result;
 use crate::pipeline::PipelineBuilder;
 use crate::serialize::{SerializeConfig, serialize_pack};
 use crate::store::Store;
@@ -553,11 +553,11 @@ fn read_short_id(store: &Store, rtxn: &RoTxn<'_>, id: &EntityId) -> Result<Optio
     }
 
     let (short_id_bytes, hash) = value.split_at(value.len() - 1);
-    let short_id = std::str::from_utf8(short_id_bytes)
-        .map_err(|_| Error::InvalidKey)?
-        .to_owned();
+    let Ok(short_id) = std::str::from_utf8(short_id_bytes) else {
+        return Ok(None);
+    };
 
-    Ok(Some((short_id, hash[0])))
+    Ok(Some((short_id.to_owned(), hash[0])))
 }
 
 fn read_vector(vault: &Vault, rtxn: &RoTxn<'_>, id: &EntityId) -> Result<Option<Vec<f32>>> {
@@ -1166,6 +1166,34 @@ mod tests {
         wtxn.commit()?;
 
         let pack = vault.context_pack().search_text("fallback", 10).run()?;
+        assert_eq!(pack.results.len(), 1);
+        assert_eq!(pack.results[0].id, id);
+        assert_eq!(pack.results[0].short_id.len(), 32);
+        Ok(())
+    }
+
+    #[test]
+    fn corrupt_short_id_falls_back_without_crashing() -> Result<()> {
+        let temp_dir = tempfile::tempdir()?;
+        let vault = Vault::open(temp_dir.path(), test_config())?;
+
+        let id = EntityId::now();
+        put_text_entity(
+            &vault,
+            &id,
+            0,
+            "corrupt fallback",
+            serde_json::json!({"pred": "a", "val": "b"}),
+        )?;
+
+        let mut wtxn = vault.store.env.write_txn()?;
+        vault
+            .store
+            .short_ids
+            .put(&mut wtxn, id.as_bytes(), &[0xff, 0xfe, 7])?;
+        wtxn.commit()?;
+
+        let pack = vault.context_pack().search_text("corrupt", 10).run()?;
         assert_eq!(pack.results.len(), 1);
         assert_eq!(pack.results[0].id, id);
         assert_eq!(pack.results[0].short_id.len(), 32);
