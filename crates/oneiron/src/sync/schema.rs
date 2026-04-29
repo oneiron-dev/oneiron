@@ -187,4 +187,25 @@ mod tests {
         assert_eq!(windows.len(), 1);
         assert_eq!(windows[0].as_str(), "2026-01");
     }
+
+    #[test]
+    fn add_window_to_root_is_idempotent_for_existing_middle_entry() {
+        let doc = create_root_doc(
+            "user1",
+            "vault-abc",
+            &[
+                WindowKey::new("2026-01"),
+                WindowKey::new("2026-02"),
+                WindowKey::new("2026-03"),
+            ],
+        );
+
+        add_window_to_root(&doc, &WindowKey::new("2026-02"));
+
+        let windows = read_window_list(&doc);
+        assert_eq!(windows.len(), 3);
+        assert_eq!(windows[0].as_str(), "2026-01");
+        assert_eq!(windows[1].as_str(), "2026-02");
+        assert_eq!(windows[2].as_str(), "2026-03");
+    }
 }
