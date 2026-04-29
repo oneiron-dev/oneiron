@@ -1462,11 +1462,15 @@ mod tests {
                     ),
                     (
                         "from".to_owned(),
-                        Value::Number(Number::from(now.saturating_sub((u64::from(i) + 1) * 86_400))),
+                        Value::Number(Number::from(
+                            now.saturating_sub(((u64::from(i) + 1) * 86_400) + 3_600),
+                        )),
                     ),
                     (
                         "to".to_owned(),
-                        Value::Number(Number::from(now.saturating_add((u64::from(i) + 2) * 86_400))),
+                        Value::Number(Number::from(
+                            now.saturating_add(((u64::from(i) + 2) * 86_400) + 3_600),
+                        )),
                     ),
                     (
                         "src".to_owned(),
@@ -1564,6 +1568,10 @@ mod tests {
     }
 
     fn savings_ratio(json_full_len: usize, compact_len: usize) -> f64 {
+        assert!(
+            json_full_len > 0,
+            "json_full_len must be > 0 for savings ratio computation"
+        );
         1.0 - (compact_len as f64 / json_full_len as f64)
     }
 
@@ -1839,11 +1847,17 @@ mod tests {
             .find(|part| part.starts_with("cl42"))
             .expect("cl42 reference in serialized output");
         let short_id = rendered_ref.split(':').next().expect("short id segment");
+        let estimated_bpe_tokens = rendered_ref.len().div_ceil(4);
 
         assert!(
             short_id.is_ascii() && short_id.len() <= 6,
             "short id reference should fit <= 6 ASCII bytes: short_id={short_id:?}, bytes={}",
             short_id.len()
+        );
+        assert!(
+            rendered_ref.is_ascii() && estimated_bpe_tokens <= 2,
+            "rendered short id reference should fit <= 2 estimated BPE tokens: rendered_ref={rendered_ref:?}, bytes={}, estimated_bpe_tokens={estimated_bpe_tokens}",
+            rendered_ref.len()
         );
         assert!(
             text.contains("cl42:2a"),
