@@ -194,6 +194,8 @@ fn bridge_origin_writes_dont_trigger_observer_b() {
     let materializer = Arc::new(Materializer::new());
 
     let key = WindowKey::new("2026-03");
+    let update_prefix = format!("u:w:{}:", key.as_str());
+    let seq_key = format!("m:u_seq:w:{}", key.as_str());
     let window = LoadedWindow::new("test-user", key, &vault, &materializer);
 
     let id = EntityId::now();
@@ -212,13 +214,12 @@ fn bridge_origin_writes_dont_trigger_observer_b() {
     );
 
     // Observer A should have persisted the update
-    let keys = vault.sync_state_keys_with_prefix("u:w:2026-03:").unwrap();
+    let keys = vault.sync_state_keys_with_prefix(&update_prefix).unwrap();
     assert!(
         !keys.is_empty(),
         "Observer A should persist even bridge-origin updates"
     );
-    let seq_key = "m:u_seq:w:2026-03";
-    let seq = vault.sync_state_get(seq_key).unwrap().unwrap();
+    let seq = vault.sync_state_get(&seq_key).unwrap().unwrap();
     assert_eq!(seq.as_slice(), &1u32.to_le_bytes());
 }
 
