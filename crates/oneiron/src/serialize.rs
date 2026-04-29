@@ -1636,16 +1636,18 @@ mod tests {
         };
 
         let mut unlimited = config(PackFormat::Json);
+        unlimited.merge_neighbors = true;
         unlimited.max_field_chars = 0;
         let parsed: Value =
             serde_json::from_slice(&serialize_pack(&pack, &unlimited)).expect("json");
-        assert_eq!(parsed["claims"][0]["val"], overlong);
+        assert_eq!(parsed["claims"][0]["val"].as_str(), Some(overlong.as_str()));
 
         let mut single_char = config(PackFormat::Json);
+        single_char.merge_neighbors = true;
         single_char.max_field_chars = 1;
         let parsed: Value =
             serde_json::from_slice(&serialize_pack(&pack, &single_char)).expect("json");
-        assert_eq!(parsed["claims"][0]["val"], "…");
+        assert_eq!(parsed["claims"][0]["val"].as_str(), Some("…"));
     }
 
     #[test]
