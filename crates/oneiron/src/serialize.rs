@@ -1549,6 +1549,58 @@ mod tests {
     }
 
     #[test]
+    fn max_field_chars_truncates_nested_json_strings() {
+        let pack = ContextPack {
+            results: vec![ContextEntity {
+                id: EntityId::from_bytes_unchecked([42; 16]),
+                short_id: "js01".to_owned(),
+                content_hash: 0x42,
+                entity_type: OTHER_ENTITY_TYPE,
+                score: 0.7,
+                fields: Some(HashMap::from([(
+                    "payload".to_owned(),
+                    serde_json::json!({
+                        "object": {
+                            "label": "abcdef",
+                            "short": "ok",
+                        },
+                        "array": [
+                            "ghijklmnop",
+                            {
+                                "label": "mnopqr",
+                            },
+                        ],
+                    }),
+                )])),
+                edges: None,
+                vector: None,
+            }],
+            neighbors: vec![],
+            stats: empty_stats(),
+        };
+
+        let mut cfg = config(PackFormat::Json);
+        cfg.max_field_chars = 4;
+
+        let parsed: Value =
+            serde_json::from_slice(&serialize_pack(&pack, &cfg)).expect("json parse");
+        let payload = &parsed["other"][0]["payload"];
+
+        for (value, expected) in [
+            (&payload["object"]["label"], "abc…"),
+            (&payload["array"][0], "ghi…"),
+            (&payload["array"][1]["label"], "mno…"),
+        ] {
+            let text = value.as_str().expect("nested string");
+            assert_eq!(text, expected);
+            assert_eq!(text.chars().count(), 4);
+            assert!(text.ends_with('…'));
+        }
+
+        assert_eq!(payload["object"]["short"], "ok");
+    }
+
+    #[test]
     fn token_budget_truncates_groups() {
         let mut pack = sample_pack();
         for i in 0..40_u8 {
