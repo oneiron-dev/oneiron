@@ -135,6 +135,16 @@ pub fn decode_bulk_transfer(data: &[u8]) -> Result<(&str, &[u8]), TransportError
 ///
 /// Panics if `window_key` is empty or exceeds `MAX_WINDOW_KEY_LEN` bytes.
 pub fn encode_bulk_transfer_done(window_key: &str, doc_state: &[u8]) -> Vec<u8> {
+    encode_bulk_transfer_done_checked(window_key, doc_state)
+        .expect("BulkTransferDone state length must fit in u32")
+}
+
+/// Encodes a BulkTransferDone message for the wire with checked state length.
+pub fn encode_bulk_transfer_done_checked(
+    window_key: &str,
+    doc_state: &[u8],
+) -> Result<Vec<u8>, TransportError> {
+    let state_len = checked_bulk_transfer_done_state_len(doc_state.len())?;
     let key_bytes = window_key.as_bytes();
     assert!(
         !key_bytes.is_empty()
@@ -148,9 +158,14 @@ pub fn encode_bulk_transfer_done(window_key: &str, doc_state: &[u8]) -> Vec<u8> 
     buf.push(TAG_BULK_TRANSFER_DONE);
     buf.push(key_bytes.len() as u8);
     buf.extend_from_slice(key_bytes);
-    buf.extend_from_slice(&(doc_state.len() as u32).to_be_bytes());
+    buf.extend_from_slice(&state_len.to_be_bytes());
     buf.extend_from_slice(doc_state);
-    buf
+    Ok(buf)
+}
+
+fn checked_bulk_transfer_done_state_len(state_len: usize) -> Result<u32, TransportError> {
+    u32::try_from(state_len)
+        .map_err(|_| TransportError::InvalidPayload("BulkTransferDone state too large"))
 }
 
 /// Decodes a BulkTransferDone payload (after tag byte has been consumed).
@@ -255,6 +270,16 @@ mod tests {
         let (k, s) = decode_bulk_transfer_done(&encoded[1..]).unwrap();
         assert_eq!(k, "2025-08");
         assert!(s.is_empty());
+    }
+
+    #[test]
+    fn bulk_transfer_done_checked_encoder_rejects_u32_overflow_len() {
+        let err = checked_bulk_transfer_done_state_len(u32::MAX as usize + 1).unwrap_err();
+
+        assert!(matches!(
+            err,
+            TransportError::InvalidPayload("BulkTransferDone state too large")
+        ));
     }
 
     #[test]
