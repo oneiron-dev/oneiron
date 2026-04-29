@@ -927,6 +927,35 @@ mod tests {
     }
 
     #[test]
+    fn hnsw_deindex_non_entry_preserves_entry_point() -> Result<()> {
+        let temp_dir = tempdir()?;
+        let store = Store::open(temp_dir.path(), &test_config())?;
+        let mut wtxn = store.env.write_txn()?;
+        let a = EntityId::now();
+        let b = EntityId::now();
+        let c = EntityId::now();
+
+        write_neighbors(&store, &mut wtxn, &a, &[b, c])?;
+        write_neighbors(&store, &mut wtxn, &b, &[a, c])?;
+        write_neighbors(&store, &mut wtxn, &c, &[a, b])?;
+        store
+            .hnsw_meta
+            .put(&mut wtxn, ENTRY_POINT_KEY, a.as_bytes())?;
+        store
+            .hnsw_meta
+            .put(&mut wtxn, COUNT_KEY, &3_u64.to_le_bytes())?;
+
+        hnsw_deindex(&store, &mut wtxn, &c)?;
+
+        assert!(store.hnsw_neighbors.get(&wtxn, c.as_bytes())?.is_none());
+        assert_eq!(load_neighbors(&store, &wtxn, &a)?, vec![b]);
+        assert_eq!(load_neighbors(&store, &wtxn, &b)?, vec![a]);
+        assert_eq!(read_count(&store, &wtxn)?, 2);
+        assert_eq!(read_entry_point(&store, &wtxn)?.expect("entry point"), a);
+        Ok(())
+    }
+
+    #[test]
     fn hnsw_insert_existing_node_updates_neighbors_and_count() -> Result<()> {
         let temp_dir = tempdir()?;
         let store = Store::open(temp_dir.path(), &test_config())?;
