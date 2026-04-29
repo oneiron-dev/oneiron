@@ -133,8 +133,27 @@ pub fn decode_bulk_transfer(data: &[u8]) -> Result<(&str, &[u8]), TransportError
 ///
 /// # Panics
 ///
-/// Panics if `window_key` is empty or exceeds `MAX_WINDOW_KEY_LEN` bytes.
+/// Panics if `window_key` is empty or exceeds `MAX_WINDOW_KEY_LEN` bytes, or if
+/// `doc_state` exceeds the BulkTransferDone u32 state-length field.
 pub fn encode_bulk_transfer_done(window_key: &str, doc_state: &[u8]) -> Vec<u8> {
+    encode_bulk_transfer_done_checked(window_key, doc_state)
+        .expect("BulkTransferDone state length must fit in u32")
+}
+
+/// Encodes a BulkTransferDone message for the wire with checked state length.
+///
+/// Returns `Err(TransportError::InvalidPayload(_))` if `doc_state` exceeds the
+/// BulkTransferDone u32 state-length field. Use this variant when callers need
+/// to propagate oversized state errors; `encode_bulk_transfer_done` keeps the
+/// existing panicking API.
+///
+/// # Panics
+///
+/// Panics if `window_key` is empty or exceeds `MAX_WINDOW_KEY_LEN` bytes.
+pub fn encode_bulk_transfer_done_checked(
+    window_key: &str,
+    doc_state: &[u8],
+) -> Result<Vec<u8>, TransportError> {
     let key_bytes = window_key.as_bytes();
     assert!(
         !key_bytes.is_empty()
@@ -144,13 +163,33 @@ pub fn encode_bulk_transfer_done(window_key: &str, doc_state: &[u8]) -> Vec<u8> 
         key_bytes.len(),
         MAX_WINDOW_KEY_LEN,
     );
-    let mut buf = Vec::with_capacity(2 + key_bytes.len() + 4 + doc_state.len());
+    let state_len = checked_bulk_transfer_done_state_len(doc_state.len())?;
+    let capacity = checked_bulk_transfer_done_capacity(key_bytes.len(), doc_state.len())?;
+    let mut buf = Vec::with_capacity(capacity);
     buf.push(TAG_BULK_TRANSFER_DONE);
     buf.push(key_bytes.len() as u8);
     buf.extend_from_slice(key_bytes);
-    buf.extend_from_slice(&(doc_state.len() as u32).to_be_bytes());
+    buf.extend_from_slice(&state_len.to_be_bytes());
     buf.extend_from_slice(doc_state);
-    buf
+    Ok(buf)
+}
+
+fn checked_bulk_transfer_done_state_len(state_len: usize) -> Result<u32, TransportError> {
+    u32::try_from(state_len)
+        .map_err(|_| TransportError::InvalidPayload("BulkTransferDone state too large"))
+}
+
+fn checked_bulk_transfer_done_capacity(
+    key_len: usize,
+    state_len: usize,
+) -> Result<usize, TransportError> {
+    2usize
+        .checked_add(key_len)
+        .and_then(|len| len.checked_add(4))
+        .and_then(|len| len.checked_add(state_len))
+        .ok_or(TransportError::InvalidPayload(
+            "BulkTransferDone state too large",
+        ))
 }
 
 /// Decodes a BulkTransferDone payload (after tag byte has been consumed).
@@ -256,11 +295,43 @@ mod tests {
     }
 
     #[test]
+    fn bulk_transfer_done_checked_roundtrip() {
+        let key = "2025-09";
+        let state = vec![10, 20];
+        let encoded = encode_bulk_transfer_done_checked(key, &state).unwrap();
+        assert_eq!(encoded[0], TAG_BULK_TRANSFER_DONE);
+        let (dk, ds) = decode_bulk_transfer_done(&encoded[1..]).unwrap();
+        assert_eq!(dk, key);
+        assert_eq!(ds, &state[..]);
+    }
+
+    #[test]
     fn bulk_transfer_done_empty_state() {
         let encoded = encode_bulk_transfer_done("2025-08", &[]);
         let (k, s) = decode_bulk_transfer_done(&encoded[1..]).unwrap();
         assert_eq!(k, "2025-08");
         assert!(s.is_empty());
+    }
+
+    #[cfg(target_pointer_width = "64")]
+    #[test]
+    fn bulk_transfer_done_checked_encoder_rejects_u32_overflow_len() {
+        let err = checked_bulk_transfer_done_state_len(u32::MAX as usize + 1).unwrap_err();
+
+        assert!(matches!(
+            err,
+            TransportError::InvalidPayload("BulkTransferDone state too large")
+        ));
+    }
+
+    #[test]
+    fn bulk_transfer_done_capacity_rejects_usize_overflow() {
+        let err = checked_bulk_transfer_done_capacity(MAX_WINDOW_KEY_LEN, usize::MAX).unwrap_err();
+
+        assert!(matches!(
+            err,
+            TransportError::InvalidPayload("BulkTransferDone state too large")
+        ));
     }
 
     #[test]
