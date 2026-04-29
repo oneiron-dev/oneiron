@@ -913,8 +913,13 @@ fn apply_phonetic(
     };
     let mut forward_changed = false;
 
+    let mut seen_codes = HashSet::new();
     for code in codes {
         validate_phonetic_code(code)?;
+        if !seen_codes.insert(code.as_str()) {
+            continue;
+        }
+
         let existing = store.phonetic_index.get(wtxn, code.as_bytes())?;
         let mut posting =
             existing.map_or_else(|| Vec::with_capacity(ENTITY_ID_LEN), |bytes| bytes.to_vec());

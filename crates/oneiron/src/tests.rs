@@ -1234,6 +1234,39 @@ fn phonetic_dedup_on_reindex() -> Result<()> {
 }
 
 #[test]
+fn phonetic_dedups_duplicate_codes_within_single_batch() -> Result<()> {
+    let temp_dir = tempfile::tempdir()?;
+    let vault = Vault::open(temp_dir.path(), test_config())?;
+    let id = EntityId::now();
+
+    vault
+        .batch()
+        .put(&id, 0, test_time_range(1, 2), 3, b"dedup-in-batch")
+        .phonetic(&id, &["ABC", "ABC"])
+        .commit()?;
+
+    let rtxn = vault.store.env.read_txn()?;
+    let posting = vault
+        .store
+        .phonetic_index
+        .get(&rtxn, b"ABC")?
+        .ok_or(Error::EntityNotFound)?;
+    let count = posting
+        .chunks_exact(16)
+        .filter(|chunk| *chunk == id.as_bytes())
+        .count();
+    assert_eq!(count, 1);
+
+    let forward = vault
+        .store
+        .phonetic_forward
+        .get(&rtxn, id.as_bytes())?
+        .ok_or(Error::EntityNotFound)?;
+    assert_eq!(decode_forward_codes(forward)?, vec!["ABC".to_owned()]);
+    Ok(())
+}
+
+#[test]
 fn phonetic_reindex_remains_additive() -> Result<()> {
     let temp_dir = tempfile::tempdir()?;
     let vault = Vault::open(temp_dir.path(), test_config())?;
