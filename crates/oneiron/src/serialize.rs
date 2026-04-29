@@ -1549,6 +1549,54 @@ mod tests {
     }
 
     #[test]
+    fn max_field_chars_truncates_nested_json_strings() {
+        let pack = ContextPack {
+            results: vec![ContextEntity {
+                id: EntityId::from_bytes_unchecked([42; 16]),
+                short_id: "js01".to_owned(),
+                content_hash: 0x42,
+                entity_type: 42,
+                score: 0.7,
+                fields: Some(HashMap::from([(
+                    "payload".to_owned(),
+                    serde_json::json!({
+                        "object": {
+                            "label": "abcdef",
+                        },
+                        "array": [
+                            "ghijkl",
+                            {
+                                "label": "mnopqr",
+                            },
+                        ],
+                    }),
+                )])),
+                edges: None,
+                vector: None,
+            }],
+            neighbors: vec![],
+            stats: empty_stats(),
+        };
+
+        let mut cfg = config(PackFormat::Json);
+        cfg.max_field_chars = 4;
+
+        let parsed: Value =
+            serde_json::from_slice(&serialize_pack(&pack, &cfg)).expect("json parse");
+        let payload = &parsed["other"][0]["payload"];
+
+        for value in [
+            &payload["object"]["label"],
+            &payload["array"][0],
+            &payload["array"][1]["label"],
+        ] {
+            let text = value.as_str().expect("nested string");
+            assert_eq!(text.chars().count(), 4);
+            assert!(text.ends_with('…'));
+        }
+    }
+
+    #[test]
     fn token_budget_truncates_groups() {
         let mut pack = sample_pack();
         for i in 0..40_u8 {
