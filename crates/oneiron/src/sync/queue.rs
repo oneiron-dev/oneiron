@@ -486,7 +486,10 @@ fn decode_last_update_seq_metadata(raw: &[u8]) -> Result<u64> {
     if raw.len() != 8 {
         return Err(Error::CorruptedIndex("sync queue metadata"));
     }
-    Ok(u64::from_le_bytes(raw.try_into().unwrap()))
+    let bytes = raw
+        .try_into()
+        .map_err(|_| Error::CorruptedIndex("sync queue metadata"))?;
+    Ok(u64::from_le_bytes(bytes))
 }
 
 #[cfg(test)]
@@ -702,6 +705,26 @@ mod tests {
         assert_eq!(queue.len().unwrap(), 0);
         let seq = queue.push("2026-03", &[1]).unwrap();
         assert_eq!(seq, 10);
+    }
+
+    #[test]
+    fn decode_last_update_seq_metadata_rejects_bad_len_without_panic() {
+        let decoded = decode_last_update_seq_metadata(&42_u64.to_le_bytes()).unwrap();
+        assert_eq!(decoded, 42);
+
+        let short = decode_last_update_seq_metadata(&[1, 2, 3])
+            .expect_err("short metadata must be rejected");
+        assert!(matches!(
+            short,
+            Error::CorruptedIndex("sync queue metadata")
+        ));
+
+        let overlong = decode_last_update_seq_metadata(&[0_u8; 9])
+            .expect_err("overlong metadata must be rejected");
+        assert!(matches!(
+            overlong,
+            Error::CorruptedIndex("sync queue metadata")
+        ));
     }
 
     #[test]
