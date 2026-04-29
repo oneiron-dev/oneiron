@@ -98,8 +98,9 @@ pub struct Store {
     /// Offline update queue and embed job queue (sync feature only).
     #[cfg(feature = "sync")]
     pub(crate) sync_queue: Database<Bytes, Bytes>,
-    // Keep this field after `env`; fields drop in declaration order, so the
-    // registry releases the path only after the LMDB environment closes.
+    // DROP-ORDER: keep this field after `env`. Fields drop in declaration
+    // order, so the registry releases the path only after the LMDB
+    // environment closes.
     _registered_path: RegisteredPath,
 }
 
@@ -114,8 +115,10 @@ impl Store {
         // must not be on NFS or another unsupported network filesystem, and
         // map_size must not be changed concurrently while the environment is
         // open elsewhere. The path existence/writability precondition is
-        // established by create_dir_all above, and the process-local registry
-        // above rejects a second live Env for the same canonical path.
+        // established by create_dir_all above. The caller must not retarget the
+        // canonicalized filesystem path while it is being opened, and the
+        // process-local registry above rejects a second live Env for the same
+        // canonical path.
         let env = unsafe {
             EnvOpenOptions::new()
                 .map_size(config.map_size)
