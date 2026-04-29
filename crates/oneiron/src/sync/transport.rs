@@ -154,7 +154,6 @@ pub fn encode_bulk_transfer_done_checked(
     window_key: &str,
     doc_state: &[u8],
 ) -> Result<Vec<u8>, TransportError> {
-    let state_len = checked_bulk_transfer_done_state_len(doc_state.len())?;
     let key_bytes = window_key.as_bytes();
     assert!(
         !key_bytes.is_empty()
@@ -164,6 +163,7 @@ pub fn encode_bulk_transfer_done_checked(
         key_bytes.len(),
         MAX_WINDOW_KEY_LEN,
     );
+    let state_len = checked_bulk_transfer_done_state_len(doc_state.len())?;
     let mut buf = Vec::with_capacity(2 + key_bytes.len() + 4 + doc_state.len());
     buf.push(TAG_BULK_TRANSFER_DONE);
     buf.push(key_bytes.len() as u8);
