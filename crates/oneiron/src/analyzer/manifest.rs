@@ -253,12 +253,28 @@ mod tests {
         assert!(star < ja, "BTreeMap must emit '*' before 'ja'");
     }
 
+    /// Combined determinism check: the canonical hash is stable across
+    /// repeated calls, and a manifest roundtrips losslessly through serde.
+    /// These two properties were originally split into
+    /// `canonical_hash_is_stable_across_calls` and
+    /// `manifest_roundtrips_through_serde`; both probe the same
+    /// canonicalization contract, so they're folded into one test.
     #[test]
-    fn canonical_hash_is_stable_across_calls() {
+    fn manifest_canonical_hash_and_serde_roundtrip_are_stable() {
         let m = sample_manifest();
+
+        // Determinism of canonical_hash across repeated calls.
         let h1 = m.canonical_hash().unwrap();
         let h2 = m.canonical_hash().unwrap();
-        assert_eq!(h1, h2);
+        assert_eq!(
+            h1, h2,
+            "canonical_hash should be stable across repeated calls"
+        );
+
+        // Lossless serde roundtrip.
+        let json = serde_json::to_string(&m).unwrap();
+        let back: AnalyzerManifest = serde_json::from_str(&json).unwrap();
+        assert_eq!(m, back, "manifest did not survive serde roundtrip");
     }
 
     #[test]
@@ -295,13 +311,8 @@ mod tests {
         assert_eq!(portable, "\"portable\"");
     }
 
-    #[test]
-    fn manifest_roundtrips_through_serde() {
-        let m = sample_manifest();
-        let json = serde_json::to_string(&m).unwrap();
-        let back: AnalyzerManifest = serde_json::from_str(&json).unwrap();
-        assert_eq!(m, back);
-    }
+    // `manifest_roundtrips_through_serde` folded into
+    // `manifest_canonical_hash_and_serde_roundtrip_are_stable` above.
 
     #[test]
     fn normalization_policy_default_enables_all() {

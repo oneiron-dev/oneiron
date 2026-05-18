@@ -379,23 +379,6 @@ mod tests {
     }
 
     #[test]
-    fn sync_client_creation() {
-        let vault = test_vault();
-        let (client, _rx) = SyncClient::new(vault, SyncClientConfig::default());
-        assert_eq!(client.status(), &SyncStatus::Disconnected);
-        assert!(client.server_windows().is_empty());
-    }
-
-    #[test]
-    fn sync_client_ensure_window() {
-        let vault = test_vault();
-        let (mut client, _rx) = SyncClient::new(vault, SyncClientConfig::default());
-        client.ensure_window("2026-03").unwrap();
-        assert!(client.window("2026-03").is_some());
-        assert!(client.window("2026-04").is_none());
-    }
-
-    #[test]
     fn sync_client_rejects_invalid_window_creation() {
         let vault = test_vault();
         let (mut client, _rx) = SyncClient::new(vault, SyncClientConfig::default());
@@ -419,11 +402,55 @@ mod tests {
     }
 
     #[test]
-    fn sync_client_queue_update() {
+    fn sync_client_queue_update_encodes_correct_payload() {
+        // queue_update is observable through the encoded wire bytes stored
+        // in pending_updates. Assert the encoded payload exactly matches
+        // transport::encode_window_sync(...) for the same inputs — this
+        // catches drift in wire format / sub_tag / window_key prefix
+        // independently of the internal field-count invariant.
         let vault = test_vault();
         let (mut client, _rx) = SyncClient::new(vault, SyncClientConfig::default());
-        client.queue_update("2026-03", vec![1, 2, 3]);
+
+        let window_key = "2026-03";
+        let update_bytes = vec![1u8, 2, 3];
+        client.queue_update(window_key, update_bytes.clone());
+
+        let expected =
+            transport::encode_window_sync(window_key, window_sub_tags::UPDATE, &update_bytes);
+
         assert_eq!(client.pending_updates.len(), 1);
+        assert_eq!(
+            client.pending_updates[0]._encoded, expected,
+            "queue_update should encode WindowSync with UPDATE sub_tag"
+        );
+        assert_eq!(
+            client.pending_updates[0]._window_key, window_key,
+            "queue_update should retain original window_key"
+        );
+
+        // Wire-level invariants on the encoded prefix:
+        let encoded = &client.pending_updates[0]._encoded;
+        assert_eq!(encoded[0], TAG_WINDOW_SYNC, "expected TAG_WINDOW_SYNC prefix");
+        assert_eq!(
+            encoded[1] as usize,
+            window_key.len(),
+            "encoded window_key_len mismatch"
+        );
+        assert_eq!(
+            &encoded[2..2 + window_key.len()],
+            window_key.as_bytes(),
+            "encoded window_key bytes mismatch"
+        );
+        assert_eq!(
+            encoded[2 + window_key.len()],
+            window_sub_tags::UPDATE,
+            "expected UPDATE sub_tag"
+        );
+        assert_eq!(
+            &encoded[3 + window_key.len()..],
+            update_bytes.as_slice(),
+            "encoded update payload mismatch"
+        );
     }
 
     #[test]

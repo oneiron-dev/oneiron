@@ -150,46 +150,36 @@ fn truncate_at_char_boundary(text: &str, max_bytes: usize) -> &str {
 mod tests {
     use super::*;
 
+    /// Exhaustive coverage of `infer_from_script`: maps each `ScriptClass`
+    /// to either its language hint or `None` when the script is ambiguous
+    /// (covers multiple languages).
     #[test]
-    fn infer_from_script_covers_unambiguous_scripts() {
-        assert_eq!(
-            infer_from_script(ScriptClass::Hiragana),
-            Some(LanguageHint::Ja)
-        );
-        assert_eq!(
-            infer_from_script(ScriptClass::Katakana),
-            Some(LanguageHint::Ja)
-        );
-        assert_eq!(
-            infer_from_script(ScriptClass::Hangul),
-            Some(LanguageHint::Ko)
-        );
-        assert_eq!(
-            infer_from_script(ScriptClass::Hebrew),
-            Some(LanguageHint::He)
-        );
-        assert_eq!(infer_from_script(ScriptClass::Thai), Some(LanguageHint::Th));
-        assert_eq!(infer_from_script(ScriptClass::Lao), Some(LanguageHint::Lo));
-        assert_eq!(
-            infer_from_script(ScriptClass::Khmer),
-            Some(LanguageHint::Km)
-        );
-        assert_eq!(
-            infer_from_script(ScriptClass::Myanmar),
-            Some(LanguageHint::My)
-        );
-        assert_eq!(
-            infer_from_script(ScriptClass::Greek),
-            Some(LanguageHint::El)
-        );
-    }
+    fn infer_from_script_coverage() {
+        let cases: Vec<(ScriptClass, Option<LanguageHint>)> = vec![
+            // Unambiguous → Some(LanguageHint).
+            (ScriptClass::Hiragana, Some(LanguageHint::Ja)),
+            (ScriptClass::Katakana, Some(LanguageHint::Ja)),
+            (ScriptClass::Hangul, Some(LanguageHint::Ko)),
+            (ScriptClass::Hebrew, Some(LanguageHint::He)),
+            (ScriptClass::Thai, Some(LanguageHint::Th)),
+            (ScriptClass::Lao, Some(LanguageHint::Lo)),
+            (ScriptClass::Khmer, Some(LanguageHint::Km)),
+            (ScriptClass::Myanmar, Some(LanguageHint::My)),
+            (ScriptClass::Greek, Some(LanguageHint::El)),
+            // Ambiguous → None.
+            (ScriptClass::Latin, None),
+            (ScriptClass::Han, None),
+            (ScriptClass::Cyrillic, None),
+            (ScriptClass::Common, None),
+        ];
 
-    #[test]
-    fn infer_from_script_returns_none_for_ambiguous_scripts() {
-        assert_eq!(infer_from_script(ScriptClass::Latin), None);
-        assert_eq!(infer_from_script(ScriptClass::Han), None);
-        assert_eq!(infer_from_script(ScriptClass::Cyrillic), None);
-        assert_eq!(infer_from_script(ScriptClass::Common), None);
+        for (script, expected) in cases {
+            assert_eq!(
+                infer_from_script(script),
+                expected,
+                "case {script:?}: unexpected language hint"
+            );
+        }
     }
 
     #[test]

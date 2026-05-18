@@ -10,8 +10,7 @@ fn non_finite_edge_value(weight: f32) -> [u8; EDGE_VALUE_LEN] {
 
 #[test]
 fn test_intra_batch_cycle() {
-    let temp_dir = tempfile::tempdir().unwrap();
-    let vault = Vault::open(temp_dir.path(), VaultConfig::device()).unwrap();
+    let (_temp_dir, vault) = crate::test_util::open_test_vault_with(VaultConfig::device());
 
     let a = EntityId::now();
     let b = EntityId::now();
@@ -47,8 +46,7 @@ fn test_intra_batch_cycle() {
 
 #[test]
 fn learned_range_rejects_corrupted_key_length() {
-    let temp_dir = tempfile::tempdir().unwrap();
-    let vault = Vault::open(temp_dir.path(), VaultConfig::device()).unwrap();
+    let (_temp_dir, vault) = crate::test_util::open_test_vault_with(VaultConfig::device());
 
     vault
         .with_write_txn(|wtxn| {
@@ -70,8 +68,7 @@ fn learned_range_rejects_corrupted_key_length() {
 
 #[test]
 fn learned_range_seek_starts_at_lower_bound() {
-    let temp_dir = tempfile::tempdir().unwrap();
-    let vault = Vault::open(temp_dir.path(), VaultConfig::device()).unwrap();
+    let (_temp_dir, vault) = crate::test_util::open_test_vault_with(VaultConfig::device());
     let id = EntityId::now();
 
     vault
@@ -94,8 +91,7 @@ fn learned_range_seek_starts_at_lower_bound() {
 
 #[test]
 fn sources_reject_corrupted_edge_key_length() {
-    let temp_dir = tempfile::tempdir().unwrap();
-    let vault = Vault::open(temp_dir.path(), VaultConfig::device()).unwrap();
+    let (_temp_dir, vault) = crate::test_util::open_test_vault_with(VaultConfig::device());
     let parent = EntityId::now();
 
     vault
@@ -129,8 +125,7 @@ fn sources_reject_corrupted_edge_key_length() {
 
 #[test]
 fn targets_reject_non_finite_persisted_edge_payload() {
-    let temp_dir = tempfile::tempdir().unwrap();
-    let vault = Vault::open(temp_dir.path(), VaultConfig::device()).unwrap();
+    let (_temp_dir, vault) = crate::test_util::open_test_vault_with(VaultConfig::device());
     let src = EntityId::now();
     let tgt = EntityId::now();
     let value = non_finite_edge_value(f32::NAN);
@@ -152,8 +147,7 @@ fn targets_reject_non_finite_persisted_edge_payload() {
 
 #[test]
 fn topology_reads_reject_truncated_persisted_edge_payload() {
-    let temp_dir = tempfile::tempdir().unwrap();
-    let vault = Vault::open(temp_dir.path(), VaultConfig::device()).unwrap();
+    let (_temp_dir, vault) = crate::test_util::open_test_vault_with(VaultConfig::device());
     let truncated_value = [0_u8; EDGE_VALUE_LEN - 1];
 
     let targets_src = EntityId::now();
@@ -241,119 +235,119 @@ fn topology_reads_reject_truncated_persisted_edge_payload() {
 }
 
 #[test]
-fn subtree_rejects_non_finite_persisted_edge_payload() {
-    let temp_dir = tempfile::tempdir().unwrap();
-    let vault = Vault::open(temp_dir.path(), VaultConfig::device()).unwrap();
-    let root = EntityId::now();
-    let child = EntityId::now();
-    let value = non_finite_edge_value(f32::NAN);
+fn non_finite_edge_payload_rejected_by_all_read_paths() {
+    // Per-case setup signature: open vault, mutate it to inject a non-finite payload.
+    // Returned `EntityId` is the value the API under test will be called with.
+    type SetupFn = fn(&Vault) -> EntityId;
+    // Per-case API invocation signature: call the read path; returns the Result.
+    // We unify the OK type as () since we never inspect it.
+    type ApiFn = fn(&Vault, EntityId) -> Result<()>;
 
-    vault
-        .with_write_txn(|wtxn| {
-            let key = Store::encode_edge_key(&root, EdgeKind::ChildOf, &child);
-            vault.store.edges_in.put(wtxn, &key, &value).unwrap();
-            Ok(())
-        })
-        .unwrap();
+    let cases: &[(&str, SetupFn, ApiFn)] = &[
+        // subtree: corrupt edges_in with NaN, then call subtree(root, 1)
+        (
+            "subtree",
+            |vault| {
+                let root = EntityId::now();
+                let child = EntityId::now();
+                let value = non_finite_edge_value(f32::NAN);
+                vault
+                    .with_write_txn(|wtxn| {
+                        let key = Store::encode_edge_key(&root, EdgeKind::ChildOf, &child);
+                        vault.store.edges_in.put(wtxn, &key, &value).unwrap();
+                        Ok(())
+                    })
+                    .unwrap();
+                root
+            },
+            |vault, root| vault.subtree(&root, 1).map(|_| ()),
+        ),
+        // ancestors: corrupt edges_out with NaN, then call ancestors(child)
+        (
+            "ancestors",
+            |vault| {
+                let child = EntityId::now();
+                let parent = EntityId::now();
+                let value = non_finite_edge_value(f32::NAN);
+                vault
+                    .with_write_txn(|wtxn| {
+                        let key = Store::encode_edge_key(&child, EdgeKind::ChildOf, &parent);
+                        vault.store.edges_out.put(wtxn, &key, &value).unwrap();
+                        Ok(())
+                    })
+                    .unwrap();
+                child
+            },
+            |vault, child| vault.ancestors(&child).map(|_| ()),
+        ),
+        // edges_out: commit entities, corrupt edges_out with NaN, then call edges_out(src)
+        (
+            "edges_out",
+            |vault| {
+                let src = EntityId::now();
+                let tgt = EntityId::now();
+                vault
+                    .batch()
+                    .put(&src, 61, TimeRange { start: 1, end: 1 }, 2, b"src")
+                    .put(&tgt, 61, TimeRange { start: 1, end: 1 }, 2, b"tgt")
+                    .commit()
+                    .unwrap();
+                let key = Store::encode_edge_key(&src, EdgeKind::ChildOf, &tgt);
+                let value = non_finite_edge_value(f32::NAN);
+                vault
+                    .with_write_txn(|wtxn| {
+                        vault.store.edges_out.put(wtxn, &key, &value).unwrap();
+                        Ok(())
+                    })
+                    .unwrap();
+                src
+            },
+            |vault, src| vault.edges_out(&src).map(|_| ()),
+        ),
+        // delete_entity: commit entities, corrupt BOTH edges_out and edges_in with INFINITY,
+        // then call delete_entity(src). Note the variant uses f32::INFINITY (not NaN) to
+        // preserve the original test's coverage of both non-finite forms.
+        (
+            "delete_entity",
+            |vault| {
+                let src = EntityId::now();
+                let tgt = EntityId::now();
+                vault
+                    .batch()
+                    .put(&src, 61, TimeRange { start: 1, end: 1 }, 2, b"src")
+                    .put(&tgt, 61, TimeRange { start: 1, end: 1 }, 2, b"tgt")
+                    .commit()
+                    .unwrap();
+                let key_out = Store::encode_edge_key(&src, EdgeKind::ChildOf, &tgt);
+                let key_in = Store::encode_edge_key(&tgt, EdgeKind::ChildOf, &src);
+                let value = non_finite_edge_value(f32::INFINITY);
+                vault
+                    .with_write_txn(|wtxn| {
+                        vault.store.edges_out.put(wtxn, &key_out, &value).unwrap();
+                        vault.store.edges_in.put(wtxn, &key_in, &value).unwrap();
+                        Ok(())
+                    })
+                    .unwrap();
+                src
+            },
+            |vault, src| vault.delete_entity(&src).map(|_| ()),
+        ),
+    ];
 
-    let result = vault.subtree(&root, 1);
-    assert!(
-        matches!(result, Err(Error::CorruptedIndex("edge record"))),
-        "expected corrupted edge record, got {result:?}"
-    );
-}
-
-#[test]
-fn ancestors_reject_non_finite_persisted_edge_payload() {
-    let temp_dir = tempfile::tempdir().unwrap();
-    let vault = Vault::open(temp_dir.path(), VaultConfig::device()).unwrap();
-    let child = EntityId::now();
-    let parent = EntityId::now();
-    let value = non_finite_edge_value(f32::NAN);
-
-    vault
-        .with_write_txn(|wtxn| {
-            let key = Store::encode_edge_key(&child, EdgeKind::ChildOf, &parent);
-            vault.store.edges_out.put(wtxn, &key, &value).unwrap();
-            Ok(())
-        })
-        .unwrap();
-
-    let result = vault.ancestors(&child);
-    assert!(
-        matches!(result, Err(Error::CorruptedIndex("edge record"))),
-        "expected corrupted edge record, got {result:?}"
-    );
-}
-
-#[test]
-fn edges_out_rejects_non_finite_persisted_edge_payload() {
-    let temp_dir = tempfile::tempdir().unwrap();
-    let vault = Vault::open(temp_dir.path(), VaultConfig::device()).unwrap();
-    let src = EntityId::now();
-    let tgt = EntityId::now();
-
-    vault
-        .batch()
-        .put(&src, 61, TimeRange { start: 1, end: 1 }, 2, b"src")
-        .put(&tgt, 61, TimeRange { start: 1, end: 1 }, 2, b"tgt")
-        .commit()
-        .unwrap();
-
-    let key = Store::encode_edge_key(&src, EdgeKind::ChildOf, &tgt);
-    let value = non_finite_edge_value(f32::NAN);
-
-    vault
-        .with_write_txn(|wtxn| {
-            vault.store.edges_out.put(wtxn, &key, &value).unwrap();
-            Ok(())
-        })
-        .unwrap();
-
-    let result = vault.edges_out(&src);
-    assert!(
-        matches!(result, Err(Error::CorruptedIndex("edge record"))),
-        "expected corrupted edge record, got {result:?}"
-    );
-}
-
-#[test]
-fn delete_entity_rejects_non_finite_persisted_edge_payload() {
-    let temp_dir = tempfile::tempdir().unwrap();
-    let vault = Vault::open(temp_dir.path(), VaultConfig::device()).unwrap();
-    let src = EntityId::now();
-    let tgt = EntityId::now();
-
-    vault
-        .batch()
-        .put(&src, 61, TimeRange { start: 1, end: 1 }, 2, b"src")
-        .put(&tgt, 61, TimeRange { start: 1, end: 1 }, 2, b"tgt")
-        .commit()
-        .unwrap();
-
-    let key_out = Store::encode_edge_key(&src, EdgeKind::ChildOf, &tgt);
-    let key_in = Store::encode_edge_key(&tgt, EdgeKind::ChildOf, &src);
-    let value = non_finite_edge_value(f32::INFINITY);
-
-    vault
-        .with_write_txn(|wtxn| {
-            vault.store.edges_out.put(wtxn, &key_out, &value).unwrap();
-            vault.store.edges_in.put(wtxn, &key_in, &value).unwrap();
-            Ok(())
-        })
-        .unwrap();
-
-    let result = vault.delete_entity(&src);
-    assert!(
-        matches!(result, Err(Error::CorruptedIndex("edge record"))),
-        "expected corrupted edge record, got {result:?}"
-    );
+    for (name, setup, api) in cases {
+        let (_temp_dir, vault) = crate::test_util::open_test_vault_with(VaultConfig::device());
+        let id = setup(&vault);
+        let result = api(&vault, id);
+        assert!(
+            matches!(result, Err(Error::CorruptedIndex("edge record"))),
+            "case {name}: expected corrupted edge record, got {result:?}"
+        );
+    }
 }
 
 #[test]
 fn batch_in_put_failure_does_not_commit_partial_entity_update() {
-    let temp_dir = tempfile::tempdir().unwrap();
-    let vault = Vault::open(temp_dir.path(), VaultConfig::device()).unwrap();
+    let (_temp_dir, vault) = crate::test_util::open_test_vault_with(VaultConfig::device());
     let id = EntityId::now();
     let old_occurred = TimeRange { start: 10, end: 10 };
     let new_occurred = TimeRange { start: 20, end: 25 };

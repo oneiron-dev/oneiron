@@ -111,19 +111,19 @@ mod tests {
     use super::*;
 
     #[test]
-    fn root_doc_has_meta_map() {
+    fn root_doc_schema() {
+        // Single root doc creation must populate every meta field:
+        //   - vault_id (raw bytes)
+        //   - schema_version (i64 LE = 1)
+        // Verified together to keep this as one creation-time invariant.
         let doc = create_root_doc("user1", "vault-abc", &[]);
         let meta = doc.get_or_create_map("meta");
-        let vid = meta.get("vault_id").unwrap();
-        assert_eq!(vid, b"vault-abc");
-    }
 
-    #[test]
-    fn root_doc_schema_version() {
-        let doc = create_root_doc("user1", "vault-abc", &[]);
-        let meta = doc.get_or_create_map("meta");
+        let vid = meta.get("vault_id").unwrap();
+        assert_eq!(vid, b"vault-abc", "vault_id mismatch");
+
         let sv = meta.get("schema_version").unwrap();
-        assert_eq!(sv, 1i64.to_le_bytes());
+        assert_eq!(sv, 1i64.to_le_bytes(), "schema_version mismatch");
     }
 
     #[test]
@@ -186,34 +186,41 @@ mod tests {
 
     #[test]
     fn add_window_to_root_is_idempotent() {
-        let doc = create_root_doc("user1", "vault-abc", &[WindowKey::new("2026-01")]);
+        // Idempotency holds at any insertion position — single-entry list
+        // (only/first slot) and middle of a 3-entry list. Each case re-adds
+        // an existing window and asserts the list stays unchanged.
+        let cases: &[(&str, &[&str], &str, &[&str])] = &[
+            // (case_name, initial_windows, reinsert_key, expected_windows)
+            ("first_slot", &["2026-01"], "2026-01", &["2026-01"]),
+            (
+                "middle_slot",
+                &["2026-01", "2026-02", "2026-03"],
+                "2026-02",
+                &["2026-01", "2026-02", "2026-03"],
+            ),
+        ];
 
-        add_window_to_root(&doc, &WindowKey::new("2026-01"));
+        for (case_name, initial, reinsert, expected) in cases {
+            let initial_keys: Vec<WindowKey> =
+                initial.iter().map(|k| WindowKey::new(*k)).collect();
+            let doc = create_root_doc("user1", "vault-abc", &initial_keys);
 
-        let windows = read_window_list(&doc);
-        assert_eq!(windows.len(), 1);
-        assert_eq!(windows[0].as_str(), "2026-01");
-    }
+            add_window_to_root(&doc, &WindowKey::new(*reinsert));
 
-    #[test]
-    fn add_window_to_root_is_idempotent_for_existing_middle_entry() {
-        let doc = create_root_doc(
-            "user1",
-            "vault-abc",
-            &[
-                WindowKey::new("2026-01"),
-                WindowKey::new("2026-02"),
-                WindowKey::new("2026-03"),
-            ],
-        );
-
-        add_window_to_root(&doc, &WindowKey::new("2026-02"));
-
-        let windows = read_window_list(&doc);
-        assert_eq!(windows.len(), 3);
-        assert_eq!(windows[0].as_str(), "2026-01");
-        assert_eq!(windows[1].as_str(), "2026-02");
-        assert_eq!(windows[2].as_str(), "2026-03");
+            let windows = read_window_list(&doc);
+            assert_eq!(
+                windows.len(),
+                expected.len(),
+                "case {case_name}: list length changed"
+            );
+            for (i, expected_key) in expected.iter().enumerate() {
+                assert_eq!(
+                    windows[i].as_str(),
+                    *expected_key,
+                    "case {case_name}: index {i} mismatch"
+                );
+            }
+        }
     }
 
     #[test]

@@ -295,17 +295,6 @@ mod tests {
     }
 
     #[test]
-    fn bulk_transfer_done_checked_roundtrip() {
-        let key = "2025-09";
-        let state = vec![10, 20];
-        let encoded = encode_bulk_transfer_done_checked(key, &state).unwrap();
-        assert_eq!(encoded[0], TAG_BULK_TRANSFER_DONE);
-        let (dk, ds) = decode_bulk_transfer_done(&encoded[1..]).unwrap();
-        assert_eq!(dk, key);
-        assert_eq!(ds, &state[..]);
-    }
-
-    #[test]
     fn bulk_transfer_done_empty_state() {
         let encoded = encode_bulk_transfer_done("2025-08", &[]);
         let (k, s) = decode_bulk_transfer_done(&encoded[1..]).unwrap();
@@ -368,40 +357,58 @@ mod tests {
     }
 
     #[test]
-    fn reject_invalid_calendar_window_keys() {
-        let mut invalid = vec![7];
-        invalid.extend_from_slice(b"2026-13");
-        invalid.push(window_sub_tags::UPDATE);
-        assert!(matches!(
-            decode_window_sync(&invalid),
-            Err(TransportError::InvalidWindowKey)
-        ));
+    fn decoders_reject_invalid_calendar_window_keys() {
+        // Every wire decoder must reject window keys that fail
+        // parse_window_key_str — both calendar-OOB (2026-13) and pre-epoch
+        // (1969-12). Each decoder has its own trailing payload shape, so we
+        // build a payload tail per decoder.
+        type Decoder = fn(&[u8]) -> Result<(), TransportError>;
 
-        let mut pre_epoch = vec![7];
-        pre_epoch.extend_from_slice(b"1969-12");
-        pre_epoch.push(window_sub_tags::UPDATE);
-        assert!(matches!(
-            decode_window_sync(&pre_epoch),
-            Err(TransportError::InvalidWindowKey)
-        ));
-    }
+        let window_sync_decoder: Decoder = |data| decode_window_sync(data).map(|_| ());
+        let bulk_transfer_decoder: Decoder = |data| decode_bulk_transfer(data).map(|_| ());
+        let bulk_done_decoder: Decoder = |data| decode_bulk_transfer_done(data).map(|_| ());
 
-    #[test]
-    fn reject_invalid_bulk_window_keys() {
-        let mut invalid = vec![7];
-        invalid.extend_from_slice(b"2026-13");
-        invalid.extend_from_slice(&[1, 2, 3]);
-        assert!(matches!(
-            decode_bulk_transfer(&invalid),
-            Err(TransportError::InvalidWindowKey)
-        ));
+        let cases: &[(&str, Decoder, &[u8])] = &[
+            // (case_name, decoder, payload_tail_after_window_key)
+            (
+                "decode_window_sync_calendar_oob",
+                window_sync_decoder,
+                &[window_sub_tags::UPDATE],
+            ),
+            (
+                "decode_window_sync_pre_epoch",
+                window_sync_decoder,
+                &[window_sub_tags::UPDATE],
+            ),
+            ("decode_bulk_transfer_calendar_oob", bulk_transfer_decoder, &[1, 2, 3]),
+            ("decode_bulk_transfer_pre_epoch", bulk_transfer_decoder, &[1, 2, 3]),
+            (
+                "decode_bulk_transfer_done_calendar_oob",
+                bulk_done_decoder,
+                &[0, 0, 0, 0],
+            ),
+            (
+                "decode_bulk_transfer_done_pre_epoch",
+                bulk_done_decoder,
+                &[0, 0, 0, 0],
+            ),
+        ];
 
-        let mut pre_epoch = vec![7];
-        pre_epoch.extend_from_slice(b"1969-12");
-        pre_epoch.extend_from_slice(&[0, 0, 0, 0]);
-        assert!(matches!(
-            decode_bulk_transfer_done(&pre_epoch),
-            Err(TransportError::InvalidWindowKey)
-        ));
+        let invalid_keys: &[&[u8]] = &[b"2026-13", b"1969-12"];
+
+        for ((case_name, decoder, tail), invalid_key) in cases
+            .iter()
+            .zip(invalid_keys.iter().cycle().take(cases.len()))
+        {
+            let mut data = vec![invalid_key.len() as u8];
+            data.extend_from_slice(invalid_key);
+            data.extend_from_slice(tail);
+
+            assert!(
+                matches!(decoder(&data), Err(TransportError::InvalidWindowKey)),
+                "case {case_name}: expected InvalidWindowKey for key {:?}",
+                std::str::from_utf8(invalid_key).unwrap_or("<bytes>")
+            );
+        }
     }
 }

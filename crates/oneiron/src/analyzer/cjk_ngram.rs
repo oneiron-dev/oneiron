@@ -146,20 +146,47 @@ mod tests {
         assert_eq!(ngram_terms(&out), vec!["東京", "京大", "大学"]);
     }
 
+    /// Boundary inputs for `analyze`: empty string and single-char input.
+    /// Both share the property "no bigram should be emitted"; only the
+    /// empty case additionally asserts that `analyze` returns the
+    /// `position_base` unchanged.
+    ///
+    /// Variants:
+    /// - `empty_returns_position_base`: input `""`, position_base 42,
+    ///   returns 42 and emits zero tokens.
+    /// - `single_char_has_no_bigram`: input `"東"`, surface=[東], bigrams=[].
     #[test]
-    fn empty_input_returns_position_base() {
-        let mut out = Vec::new();
-        let next = analyze("", 0, 42, &mut out);
-        assert_eq!(next, 42);
-        assert!(out.is_empty());
-    }
+    fn cjk_ngram_boundary_inputs() {
+        // (case_name, text, position_base, expected_next_position,
+        //  expected_surface, check_empty_out)
+        let cases: Vec<(&str, &str, u32, u32, Vec<&str>, bool)> = vec![
+            ("empty_returns_position_base", "", 42, 42, vec![], true),
+            ("single_char_has_no_bigram", "東", 0, 1, vec!["東"], false),
+        ];
 
-    #[test]
-    fn single_char_has_no_bigram() {
-        let mut out = Vec::new();
-        analyze("東", 0, 0, &mut out);
-        assert_eq!(surface_terms(&out), vec!["東"]);
-        assert!(ngram_terms(&out).is_empty());
+        for (case_name, text, position_base, expected_next, expected_surface, check_empty_out) in
+            cases
+        {
+            let mut out = Vec::new();
+            let next = analyze(text, 0, position_base, &mut out);
+            assert_eq!(
+                next, expected_next,
+                "case {case_name}: unexpected return value from analyze"
+            );
+            if check_empty_out {
+                assert!(out.is_empty(), "case {case_name}: expected empty tokens");
+            } else {
+                assert_eq!(
+                    surface_terms(&out),
+                    expected_surface,
+                    "case {case_name}: unexpected Surface tokens"
+                );
+                assert!(
+                    ngram_terms(&out).is_empty(),
+                    "case {case_name}: expected no CjkNgram bigrams"
+                );
+            }
+        }
     }
 
     #[test]
@@ -173,17 +200,75 @@ mod tests {
         }
     }
 
+    /// Each variant runs `analyze(text, offset_base, position_base)` then
+    /// asserts a specific facet of the per-token coordinates.
+    ///
+    /// Variants:
+    /// - `offset_base_shifts_absolute_offsets` (offset_base=100): Surface
+    ///   token offsets are shifted by 100; '東' is 3 bytes so emits
+    ///   `[(100,103),(103,106)]`.
+    /// - `bigram_shares_position_with_first_char` (no shift): interleaved
+    ///   tokens carry the expected `(position, channel, term)` sequence.
+    /// - `position_base_is_honored` (position_base=10): Surface positions
+    ///   shift by 10 (`[10, 11]`) and `analyze` returns 12.
     #[test]
-    fn offset_base_shifts_absolute_offsets() {
-        let mut out = Vec::new();
-        analyze("東京", 100, 0, &mut out);
-        let surface_offsets: Vec<(u32, u32)> = out
-            .iter()
-            .filter(|t| t.channel == AnalyzerChannel::Surface)
-            .map(|t| (t.byte_start, t.byte_end))
-            .collect();
-        // '東' is 3 UTF-8 bytes; run starts at 100.
-        assert_eq!(surface_offsets, vec![(100, 103), (103, 106)]);
+    fn cjk_ngram_offset_and_position_handling() {
+        // Variant 1: offset_base_shifts_absolute_offsets.
+        {
+            let mut out = Vec::new();
+            analyze("東京", 100, 0, &mut out);
+            let surface_offsets: Vec<(u32, u32)> = out
+                .iter()
+                .filter(|t| t.channel == AnalyzerChannel::Surface)
+                .map(|t| (t.byte_start, t.byte_end))
+                .collect();
+            assert_eq!(
+                surface_offsets,
+                vec![(100, 103), (103, 106)],
+                "case offset_base_shifts_absolute_offsets: surface offsets did not shift"
+            );
+        }
+
+        // Variant 2: bigram_shares_position_with_first_char.
+        {
+            let mut out = Vec::new();
+            analyze("東京大", 0, 0, &mut out);
+            let positions: Vec<(u32, AnalyzerChannel, &str)> = out
+                .iter()
+                .map(|t| (t.position, t.channel, t.term.as_ref()))
+                .collect();
+            assert_eq!(
+                positions,
+                vec![
+                    (0, AnalyzerChannel::Surface, "東"),
+                    (0, AnalyzerChannel::CjkNgram, "東京"),
+                    (1, AnalyzerChannel::Surface, "京"),
+                    (1, AnalyzerChannel::CjkNgram, "京大"),
+                    (2, AnalyzerChannel::Surface, "大"),
+                ],
+                "case bigram_shares_position_with_first_char: interleaving wrong"
+            );
+        }
+
+        // Variant 3: position_base_is_honored.
+        {
+            let mut out = Vec::new();
+            let next = analyze("東京", 0, 10, &mut out);
+            let surface_positions: Vec<u32> = out
+                .iter()
+                .filter(|t| t.channel == AnalyzerChannel::Surface)
+                .map(|t| t.position)
+                .collect();
+            assert_eq!(
+                surface_positions,
+                vec![10, 11],
+                "case position_base_is_honored: surface positions did not shift"
+            );
+            assert_eq!(
+                next, 12,
+                "case position_base_is_honored: unexpected next-position return"
+            );
+        }
     }
 
     #[test]
@@ -200,40 +285,8 @@ mod tests {
         assert_eq!(bigram.length_increment, 1);
     }
 
-    #[test]
-    fn bigram_shares_position_with_first_char() {
-        let mut out = Vec::new();
-        analyze("東京大", 0, 0, &mut out);
-        let positions: Vec<(u32, AnalyzerChannel, &str)> = out
-            .iter()
-            .map(|t| (t.position, t.channel, t.term.as_ref()))
-            .collect();
-        // Interleaved: (0, Surface, 東), (0, CjkNgram, 東京), (1, Surface, 京),
-        // (1, CjkNgram, 京大), (2, Surface, 大).
-        assert_eq!(
-            positions,
-            vec![
-                (0, AnalyzerChannel::Surface, "東"),
-                (0, AnalyzerChannel::CjkNgram, "東京"),
-                (1, AnalyzerChannel::Surface, "京"),
-                (1, AnalyzerChannel::CjkNgram, "京大"),
-                (2, AnalyzerChannel::Surface, "大"),
-            ]
-        );
-    }
-
-    #[test]
-    fn position_base_is_honored() {
-        let mut out = Vec::new();
-        let next = analyze("東京", 0, 10, &mut out);
-        let surface_positions: Vec<u32> = out
-            .iter()
-            .filter(|t| t.channel == AnalyzerChannel::Surface)
-            .map(|t| t.position)
-            .collect();
-        assert_eq!(surface_positions, vec![10, 11]);
-        assert_eq!(next, 12);
-    }
+    // `bigram_shares_position_with_first_char` and `position_base_is_honored`
+    // are folded into `cjk_ngram_offset_and_position_handling` above.
 
     #[test]
     fn hangul_syllable_bigrams() {

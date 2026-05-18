@@ -59,10 +59,6 @@ fn edge_kind_prefix(id: &EntityId, kind: EdgeKind) -> [u8; EDGE_KIND_PREFIX_LEN]
     prefix
 }
 
-fn temporal_timestamp_bound(ts: u64) -> [u8; 8] {
-    ts.to_be_bytes()
-}
-
 fn require_key_len(key: &[u8], expected: usize, context: &'static str) -> Result<()> {
     if key.len() != expected {
         return Err(Error::CorruptedIndex(context));
@@ -410,8 +406,8 @@ impl Vault {
 
         let rtxn = self.store.env.read_txn()?;
         let mut ids = Vec::new();
-        let start_key = temporal_timestamp_bound(start);
-        let end_key = temporal_timestamp_bound(end);
+        let start_key = start.to_be_bytes();
+        let end_key = end.to_be_bytes();
         for entry in self.store.temporal_learned.range(
             &rtxn,
             &(
@@ -976,6 +972,28 @@ fn handshake_text_index_manifest(store: &Store, analyzer: &MultilingualAnalyzer)
         .map(|b| b.to_vec());
     drop(rtxn);
 
+    validate_stored_manifest_hashes(
+        stored_manifest_hash,
+        stored_field_schema_hash,
+        current_manifest_hash,
+        current_field_schema_hash,
+        &current_manifest,
+        stored_manifest_bytes,
+    )
+}
+
+/// Compare a stored text-index manifest+field-schema hash pair against the
+/// current analyzer state. Returns `Ok(())` on compatibility, or the
+/// appropriate `IncompatibleAnalyzer` / `Bm25FieldSchemaChanged` /
+/// `manifest_mismatch_error` outcome otherwise.
+fn validate_stored_manifest_hashes(
+    stored_manifest_hash: Option<[u8; 32]>,
+    stored_field_schema_hash: Option<[u8; 32]>,
+    current_manifest_hash: [u8; 32],
+    current_field_schema_hash: [u8; 32],
+    current_manifest: &AnalyzerManifest,
+    stored_manifest_bytes: Option<Vec<u8>>,
+) -> Result<()> {
     let Some(stored_hash) = stored_manifest_hash else {
         // Pre-ONE-317 vault with docs in it: fail closed.
         return Err(Error::IncompatibleAnalyzer {
@@ -1004,7 +1022,7 @@ fn handshake_text_index_manifest(store: &Store, analyzer: &MultilingualAnalyzer)
     }
 
     Err(manifest_mismatch_error(
-        &current_manifest,
+        current_manifest,
         stored_manifest_bytes,
     ))
 }
@@ -1076,34 +1094,14 @@ pub(crate) fn ensure_text_index_manifest_matches_wtxn(
         .get(&*wtxn, TEXT_ANALYZER_MANIFEST_KEY)?
         .map(|b| b.to_vec());
 
-    let Some(stored_hash) = stored_manifest_hash else {
-        return Err(Error::IncompatibleAnalyzer {
-            lang: "*".to_owned(),
-            stored_mode: "unknown",
-            current_mode: AnalyzerMode::Portable.as_str(),
-        });
-    };
-
-    match stored_field_schema_hash {
-        Some(hash) if hash == current_field_schema_hash => {}
-        Some(_) => return Err(Error::Bm25FieldSchemaChanged),
-        None => {
-            return Err(Error::IncompatibleAnalyzer {
-                lang: "*".to_owned(),
-                stored_mode: "corrupt",
-                current_mode: "any",
-            });
-        }
-    }
-
-    if stored_hash == current_manifest_hash {
-        Ok(())
-    } else {
-        Err(manifest_mismatch_error(
-            &current_manifest,
-            stored_manifest_bytes,
-        ))
-    }
+    validate_stored_manifest_hashes(
+        stored_manifest_hash,
+        stored_field_schema_hash,
+        current_manifest_hash,
+        current_field_schema_hash,
+        &current_manifest,
+        stored_manifest_bytes,
+    )
 }
 
 fn write_text_index_manifest_if_empty(
@@ -1297,75 +1295,103 @@ mod tests {
         Ok(())
     }
 
+    /// `Vault::open` runs the handshake. Each variant corrupts a different
+    /// `vault_meta` row on a populated vault and asserts the expected
+    /// handshake error.
+    ///
+    /// Variants:
+    /// - `reopen_missing_manifest_on_populated_vault`:
+    ///   `delete(TEXT_ANALYZER_MANIFEST_HASH_KEY)` simulates pre-ONE-317
+    ///   populated vault. Expects `IncompatibleAnalyzer`.
+    /// - `field_schema_hash_mismatch`:
+    ///   `put(TEXT_BM25_FIELD_SCHEMA_HASH_KEY, &[0xEE; 32])` simulates
+    ///   `Bm25Config` field schema flip. Expects `Bm25FieldSchemaChanged`.
+    /// - `analyzer_manifest_hash_mismatch`:
+    ///   `put(TEXT_ANALYZER_MANIFEST_HASH_KEY, &[0xCC; 32])` simulates a
+    ///   dict mode flip. Expects `IncompatibleAnalyzer`.
+    /// - `truncated_stored_hash`:
+    ///   `put(TEXT_ANALYZER_MANIFEST_HASH_KEY, &[0xCC; 16])` — half-length
+    ///   payload should fail closed, not be silently rehashed. Expects
+    ///   `CorruptedIndex`.
     #[test]
-    fn reopen_missing_manifest_on_populated_vault_fails_closed() -> Result<()> {
-        let tmp = tempfile::tempdir()?;
-        let a = entity(21);
-
-        {
-            let vault = Vault::open(tmp.path(), test_config())?;
-            vault
-                .batch()
-                .put(&a, 0, range(1, 1), 1, b"a")
-                .text(&a, &[("body", "hello world")])
-                .commit()?;
+    fn handshake_rejects_corrupted_manifest() -> Result<()> {
+        enum Corrupt {
+            Delete(&'static [u8]),
+            Put(&'static [u8], Vec<u8>),
+        }
+        enum Expect {
+            IncompatibleAnalyzer,
+            Bm25FieldSchemaChanged,
+            CorruptedIndex,
         }
 
-        // Simulate a pre-ONE-317 populated vault by deleting the handshake
-        // hash key while leaving text_postings populated.
-        {
-            let vault = Vault::open(tmp.path(), test_config())?;
-            let mut wtxn = vault.store.env.write_txn()?;
-            vault
-                .store
-                .vault_meta
-                .delete(&mut wtxn, TEXT_ANALYZER_MANIFEST_HASH_KEY)?;
-            wtxn.commit()?;
+        let cases: Vec<(&str, u8, Corrupt, Expect)> = vec![
+            (
+                "reopen_missing_manifest_on_populated_vault",
+                21,
+                Corrupt::Delete(TEXT_ANALYZER_MANIFEST_HASH_KEY),
+                Expect::IncompatibleAnalyzer,
+            ),
+            (
+                "field_schema_hash_mismatch",
+                31,
+                Corrupt::Put(TEXT_BM25_FIELD_SCHEMA_HASH_KEY, vec![0xEE; 32]),
+                Expect::Bm25FieldSchemaChanged,
+            ),
+            (
+                "analyzer_manifest_hash_mismatch",
+                41,
+                Corrupt::Put(TEXT_ANALYZER_MANIFEST_HASH_KEY, vec![0xCC; 32]),
+                Expect::IncompatibleAnalyzer,
+            ),
+            (
+                "truncated_stored_hash",
+                51,
+                Corrupt::Put(TEXT_ANALYZER_MANIFEST_HASH_KEY, vec![0xCC; 16]),
+                Expect::CorruptedIndex,
+            ),
+        ];
+
+        for (case_name, byte, corrupt, expect) in cases {
+            let tmp = tempfile::tempdir()?;
+            let a = entity(byte);
+
+            {
+                let vault = Vault::open(tmp.path(), test_config())?;
+                vault
+                    .batch()
+                    .put(&a, 0, range(1, 1), 1, b"a")
+                    .text(&a, &[("body", "hello world")])
+                    .commit()?;
+            }
+
+            {
+                let vault = Vault::open(tmp.path(), test_config())?;
+                let mut wtxn = vault.store.env.write_txn()?;
+                match &corrupt {
+                    Corrupt::Delete(key) => {
+                        vault.store.vault_meta.delete(&mut wtxn, key)?;
+                    }
+                    Corrupt::Put(key, value) => {
+                        vault.store.vault_meta.put(&mut wtxn, key, value)?;
+                    }
+                }
+                wtxn.commit()?;
+            }
+
+            let err = match Vault::open(tmp.path(), test_config()) {
+                Ok(_) => panic!("case {case_name}: expected Vault::open to fail"),
+                Err(e) => e,
+            };
+            let ok = match expect {
+                Expect::IncompatibleAnalyzer => {
+                    matches!(err, Error::IncompatibleAnalyzer { .. })
+                }
+                Expect::Bm25FieldSchemaChanged => matches!(err, Error::Bm25FieldSchemaChanged),
+                Expect::CorruptedIndex => matches!(err, Error::CorruptedIndex(_)),
+            };
+            assert!(ok, "case {case_name}: unexpected error {err:?}");
         }
-
-        let err = match Vault::open(tmp.path(), test_config()) {
-            Ok(_) => panic!("expected Vault::open to fail"),
-            Err(e) => e,
-        };
-        assert!(
-            matches!(err, Error::IncompatibleAnalyzer { .. }),
-            "expected IncompatibleAnalyzer, got {err:?}",
-        );
-        Ok(())
-    }
-
-    #[test]
-    fn field_schema_hash_mismatch_fails_closed() -> Result<()> {
-        let tmp = tempfile::tempdir()?;
-        let a = entity(31);
-
-        {
-            let vault = Vault::open(tmp.path(), test_config())?;
-            vault
-                .batch()
-                .put(&a, 0, range(1, 1), 1, b"a")
-                .text(&a, &[("body", "hello world")])
-                .commit()?;
-        }
-
-        {
-            let vault = Vault::open(tmp.path(), test_config())?;
-            let mut wtxn = vault.store.env.write_txn()?;
-            vault
-                .store
-                .vault_meta
-                .put(&mut wtxn, TEXT_BM25_FIELD_SCHEMA_HASH_KEY, &[0xEE; 32])?;
-            wtxn.commit()?;
-        }
-
-        let err = match Vault::open(tmp.path(), test_config()) {
-            Ok(_) => panic!("expected Vault::open to fail"),
-            Err(e) => e,
-        };
-        assert!(
-            matches!(err, Error::Bm25FieldSchemaChanged),
-            "expected Bm25FieldSchemaChanged, got {err:?}",
-        );
         Ok(())
     }
 
@@ -1422,76 +1448,8 @@ mod tests {
         );
     }
 
-    #[test]
-    fn analyzer_manifest_hash_mismatch_fails_closed() -> Result<()> {
-        let tmp = tempfile::tempdir()?;
-        let a = entity(41);
-
-        {
-            let vault = Vault::open(tmp.path(), test_config())?;
-            vault
-                .batch()
-                .put(&a, 0, range(1, 1), 1, b"a")
-                .text(&a, &[("body", "hello world")])
-                .commit()?;
-        }
-
-        // Overwrite the stored manifest hash to simulate a dict mode flip.
-        {
-            let vault = Vault::open(tmp.path(), test_config())?;
-            let mut wtxn = vault.store.env.write_txn()?;
-            vault
-                .store
-                .vault_meta
-                .put(&mut wtxn, TEXT_ANALYZER_MANIFEST_HASH_KEY, &[0xCC; 32])?;
-            wtxn.commit()?;
-        }
-
-        let err = match Vault::open(tmp.path(), test_config()) {
-            Ok(_) => panic!("expected Vault::open to fail"),
-            Err(e) => e,
-        };
-        assert!(
-            matches!(err, Error::IncompatibleAnalyzer { .. }),
-            "expected IncompatibleAnalyzer, got {err:?}",
-        );
-        Ok(())
-    }
-
-    #[test]
-    fn handshake_rejects_truncated_stored_hash() -> Result<()> {
-        let tmp = tempfile::tempdir()?;
-        let a = entity(51);
-
-        {
-            let vault = Vault::open(tmp.path(), test_config())?;
-            vault
-                .batch()
-                .put(&a, 0, range(1, 1), 1, b"a")
-                .text(&a, &[("body", "hello world")])
-                .commit()?;
-        }
-
-        {
-            let vault = Vault::open(tmp.path(), test_config())?;
-            let mut wtxn = vault.store.env.write_txn()?;
-            vault
-                .store
-                .vault_meta
-                .put(&mut wtxn, TEXT_ANALYZER_MANIFEST_HASH_KEY, &[0xCC; 16])?;
-            wtxn.commit()?;
-        }
-
-        let err = match Vault::open(tmp.path(), test_config()) {
-            Ok(_) => panic!("expected Vault::open to fail"),
-            Err(e) => e,
-        };
-        assert!(
-            matches!(err, Error::CorruptedIndex(_)),
-            "expected CorruptedIndex, got {err:?}",
-        );
-        Ok(())
-    }
+    // `analyzer_manifest_hash_mismatch` and `handshake_rejects_truncated_stored_hash`
+    // are folded into `handshake_rejects_corrupted_manifest` above.
 
     #[test]
     fn skip_manifest_check_unblocks_clear_text_index_recovery() -> Result<()> {
