@@ -749,6 +749,10 @@ mod tests {
         }
     }
 
+    fn open_test_vault() -> (tempfile::TempDir, Vault) {
+        crate::test_util::open_test_vault_with(test_config())
+    }
+
     fn msgpack_entity(fields: serde_json::Value) -> Vec<u8> {
         rmp_serde::to_vec_named(&fields).expect("msgpack encode")
     }
@@ -786,8 +790,7 @@ mod tests {
 
     #[test]
     fn basic_hydration_populates_fields() -> Result<()> {
-        let temp_dir = tempfile::tempdir()?;
-        let vault = Vault::open(temp_dir.path(), test_config())?;
+        let (_dir, vault) = open_test_vault();
         let id = EntityId::now();
 
         put_text_entity(
@@ -820,8 +823,7 @@ mod tests {
 
     #[test]
     fn builder_clamps_edge_expansion_settings() -> Result<()> {
-        let temp_dir = tempfile::tempdir()?;
-        let vault = Vault::open(temp_dir.path(), test_config())?;
+        let (_dir, vault) = open_test_vault();
 
         let builder = vault.context_pack().edge_hop(99).max_neighbors(10_000);
         assert_eq!(builder.edge_hop, MAX_EDGE_HOP);
@@ -831,8 +833,7 @@ mod tests {
 
     #[test]
     fn include_edges_returns_edge_info() -> Result<()> {
-        let temp_dir = tempfile::tempdir()?;
-        let vault = Vault::open(temp_dir.path(), test_config())?;
+        let (_dir, vault) = open_test_vault();
 
         let src = EntityId::now();
         let tgt = EntityId::now();
@@ -868,8 +869,7 @@ mod tests {
 
     #[test]
     fn include_edges_skips_malformed_edge_rows() -> Result<()> {
-        let temp_dir = tempfile::tempdir()?;
-        let vault = Vault::open(temp_dir.path(), test_config())?;
+        let (_dir, vault) = open_test_vault();
 
         let src = EntityId::now();
         let tgt = EntityId::now();
@@ -902,8 +902,7 @@ mod tests {
 
     #[test]
     fn vad_round_trip_through_hydration() -> Result<()> {
-        let temp_dir = tempfile::tempdir()?;
-        let vault = Vault::open(temp_dir.path(), test_config())?;
+        let (_dir, vault) = open_test_vault();
 
         let src = EntityId::now();
         let tgt = EntityId::now();
@@ -946,8 +945,7 @@ mod tests {
 
     #[test]
     fn edge_hops_collect_neighbors() -> Result<()> {
-        let temp_dir = tempfile::tempdir()?;
-        let vault = Vault::open(temp_dir.path(), test_config())?;
+        let (_dir, vault) = open_test_vault();
 
         let a = EntityId::now();
         let b = EntityId::now();
@@ -988,8 +986,7 @@ mod tests {
 
     #[test]
     fn max_neighbors_caps_neighbor_count() -> Result<()> {
-        let temp_dir = tempfile::tempdir()?;
-        let vault = Vault::open(temp_dir.path(), test_config())?;
+        let (_dir, vault) = open_test_vault();
 
         let root = EntityId::now();
         put_text_entity(
@@ -1025,8 +1022,7 @@ mod tests {
 
     #[test]
     fn neighbor_selection_prefers_highest_weight_edges() -> Result<()> {
-        let temp_dir = tempfile::tempdir()?;
-        let vault = Vault::open(temp_dir.path(), test_config())?;
+        let (_dir, vault) = open_test_vault();
 
         let root = EntityId::from_bytes_unchecked([1; 16]);
         put_text_entity(
@@ -1075,8 +1071,7 @@ mod tests {
 
     #[test]
     fn include_edges_reuses_walk_scans_for_results() -> Result<()> {
-        let temp_dir = tempfile::tempdir()?;
-        let vault = Vault::open(temp_dir.path(), test_config())?;
+        let (_dir, vault) = open_test_vault();
 
         let root = EntityId::from_bytes_unchecked([7; 16]);
         let child = EntityId::from_bytes_unchecked([8; 16]);
@@ -1123,8 +1118,7 @@ mod tests {
 
     #[test]
     fn include_vectors_controls_vector_hydration() -> Result<()> {
-        let temp_dir = tempfile::tempdir()?;
-        let vault = Vault::open(temp_dir.path(), test_config())?;
+        let (_dir, vault) = open_test_vault();
         let id = EntityId::now();
 
         put_text_entity(
@@ -1154,8 +1148,7 @@ mod tests {
 
     #[test]
     fn empty_results_return_empty_pack() -> Result<()> {
-        let temp_dir = tempfile::tempdir()?;
-        let vault = Vault::open(temp_dir.path(), test_config())?;
+        let (_dir, vault) = open_test_vault();
 
         let pack = vault.context_pack().search_text("nothing", 10).run()?;
         assert!(pack.results.is_empty());
@@ -1166,8 +1159,7 @@ mod tests {
 
     #[test]
     fn scores_match_pipeline_scores() -> Result<()> {
-        let temp_dir = tempfile::tempdir()?;
-        let vault = Vault::open(temp_dir.path(), test_config())?;
+        let (_dir, vault) = open_test_vault();
 
         let a = EntityId::now();
         let b = EntityId::now();
@@ -1198,55 +1190,63 @@ mod tests {
     }
 
     #[test]
-    fn missing_short_id_falls_back_without_crashing() -> Result<()> {
-        let temp_dir = tempfile::tempdir()?;
-        let vault = Vault::open(temp_dir.path(), test_config())?;
+    fn short_id_falls_back_to_hex_on_corruption() -> Result<()> {
+        // (case_name, ingest_text, search_query, corrupt_fn)
+        // After each corruption, `context_pack().search_text(query).run()` must
+        // still return the entity with a 32-char (hex) short_id fallback.
+        type CorruptFn = fn(&Vault, &EntityId) -> Result<()>;
+        let cases: &[(&str, &str, &str, CorruptFn)] = &[
+            (
+                "missing",
+                "fallback",
+                "fallback",
+                |vault, id| {
+                    let mut wtxn = vault.store.env.write_txn()?;
+                    vault.store.short_ids.delete(&mut wtxn, id.as_bytes())?;
+                    wtxn.commit()?;
+                    Ok(())
+                },
+            ),
+            (
+                "corrupt",
+                "corrupt fallback",
+                "corrupt",
+                |vault, id| {
+                    let mut wtxn = vault.store.env.write_txn()?;
+                    vault
+                        .store
+                        .short_ids
+                        .put(&mut wtxn, id.as_bytes(), &[0xff, 0xfe, 7])?;
+                    wtxn.commit()?;
+                    Ok(())
+                },
+            ),
+        ];
 
-        let id = EntityId::now();
-        put_text_entity(
-            &vault,
-            &id,
-            0,
-            "fallback",
-            serde_json::json!({"pred": "a", "val": "b"}),
-        )?;
+        for (name, ingest_text, search_query, corrupt) in cases {
+            let (_dir, vault) = open_test_vault();
+            let id = EntityId::now();
 
-        let mut wtxn = vault.store.env.write_txn()?;
-        vault.store.short_ids.delete(&mut wtxn, id.as_bytes())?;
-        wtxn.commit()?;
+            put_text_entity(
+                &vault,
+                &id,
+                0,
+                ingest_text,
+                serde_json::json!({"pred": "a", "val": "b"}),
+            )?;
 
-        let pack = vault.context_pack().search_text("fallback", 10).run()?;
-        assert_eq!(pack.results.len(), 1);
-        assert_eq!(pack.results[0].id, id);
-        assert_eq!(pack.results[0].short_id.len(), 32);
-        Ok(())
-    }
+            corrupt(&vault, &id)?;
 
-    #[test]
-    fn corrupt_short_id_falls_back_without_crashing() -> Result<()> {
-        let temp_dir = tempfile::tempdir()?;
-        let vault = Vault::open(temp_dir.path(), test_config())?;
+            let pack = vault.context_pack().search_text(search_query, 10).run()?;
+            assert_eq!(pack.results.len(), 1, "case {name}");
+            assert_eq!(pack.results[0].id, id, "case {name}");
+            assert_eq!(
+                pack.results[0].short_id.len(),
+                32,
+                "case {name}: short_id should fall back to 32-char hex"
+            );
+        }
 
-        let id = EntityId::now();
-        put_text_entity(
-            &vault,
-            &id,
-            0,
-            "corrupt fallback",
-            serde_json::json!({"pred": "a", "val": "b"}),
-        )?;
-
-        let mut wtxn = vault.store.env.write_txn()?;
-        vault
-            .store
-            .short_ids
-            .put(&mut wtxn, id.as_bytes(), &[0xff, 0xfe, 7])?;
-        wtxn.commit()?;
-
-        let pack = vault.context_pack().search_text("corrupt", 10).run()?;
-        assert_eq!(pack.results.len(), 1);
-        assert_eq!(pack.results[0].id, id);
-        assert_eq!(pack.results[0].short_id.len(), 32);
         Ok(())
     }
 }

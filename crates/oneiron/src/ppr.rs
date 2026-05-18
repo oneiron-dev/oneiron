@@ -6,8 +6,10 @@ use xxhash_rust::xxh3::xxh3_128;
 use crate::error::{Error, Result};
 use crate::store::Store;
 use crate::types::{
-    EDGE_KEY_LEN, EDGE_VALUE_LEN, ENTITY_ID_LEN, EdgeKind, EntityId, ScoredEntity, VaultConfig,
+    EDGE_KEY_LEN, EDGE_VALUE_LEN, ENTITY_ID_LEN, EdgeKind, EntityId, ScoredEntity,
 };
+#[cfg(test)]
+use crate::types::VaultConfig;
 
 const SEED_HASH_LEN: usize = 16;
 #[cfg(test)]
@@ -96,7 +98,7 @@ pub(crate) fn ppr_compute(
     Ok(ranked)
 }
 
-#[cfg_attr(not(test), allow(dead_code))]
+#[cfg(test)]
 pub(crate) fn ppr_query(
     store: &Store,
     _config: &VaultConfig,
@@ -123,7 +125,7 @@ pub(crate) fn ppr_query(
     Ok(scores)
 }
 
-#[cfg_attr(not(test), allow(dead_code))]
+#[cfg(test)]
 pub(crate) fn ppr_query_in_txn(
     store: &Store,
     txn: &RoTxn<'_>,
@@ -398,22 +400,24 @@ fn seed_is_live_for_ppr(store: &Store, txn: &RoTxn<'_>, entity_id: &EntityId) ->
         return Ok(true);
     }
 
+    if store
+        .edges_out
+        .prefix_iter(txn, entity_id.as_bytes())?
+        .next()
+        .transpose()?
+        .is_some()
     {
-        let mut out_iter = store.edges_out.prefix_iter(txn, entity_id.as_bytes())?;
-        let next_entry = out_iter.next();
-        if let Some(entry) = next_entry {
-            entry?;
-            return Ok(true);
-        }
+        return Ok(true);
     }
 
+    if store
+        .edges_in
+        .prefix_iter(txn, entity_id.as_bytes())?
+        .next()
+        .transpose()?
+        .is_some()
     {
-        let mut in_iter = store.edges_in.prefix_iter(txn, entity_id.as_bytes())?;
-        let next_entry = in_iter.next();
-        if let Some(entry) = next_entry {
-            entry?;
-            return Ok(true);
-        }
+        return Ok(true);
     }
 
     Ok(false)
@@ -1082,43 +1086,71 @@ mod tests {
         Ok(())
     }
 
+    /// Deleting an isolated entity must bump GRAPH_VERSION exactly once;
+    /// a follow-up delete attempt on the now-missing id must not bump it
+    /// again. Variants run the delete through different API paths.
+    ///
+    /// Variants:
+    /// - `direct`: `vault.delete_entity(&a)` — returns `bool` for found/missing.
+    /// - `batch`: `vault.batch().delete(&a).commit()` — must observe the
+    ///   same "second commit is a no-op" guarantee.
     #[test]
     fn delete_isolated_entity_increments_graph_version_once() -> Result<()> {
-        let temp_dir = tempdir()?;
-        let vault = Vault::open(temp_dir.path(), test_config())?;
-        let a = entity(36);
-        let tr = TimeRange { start: 1, end: 1 };
+        #[derive(Clone, Copy)]
+        enum Path {
+            Direct,
+            Batch,
+        }
 
-        vault.put_entity(&a, 1, tr, 1, b"a-data")?;
+        let cases: Vec<(&str, Path, u8)> = vec![
+            ("direct", Path::Direct, 36),
+            ("batch", Path::Batch, 37),
+        ];
 
-        let before = graph_version(&vault)?;
-        assert!(vault.delete_entity(&a)?);
-        let after_delete = graph_version(&vault)?;
-        assert_eq!(after_delete, before + 1);
+        for (case_name, path, byte) in cases {
+            let temp_dir = tempdir()?;
+            let vault = Vault::open(temp_dir.path(), test_config())?;
+            let a = entity(byte);
+            let tr = TimeRange { start: 1, end: 1 };
 
-        assert!(!vault.delete_entity(&a)?);
-        let after_missing = graph_version(&vault)?;
-        assert_eq!(after_missing, after_delete);
-        Ok(())
-    }
+            vault.put_entity(&a, 1, tr, 1, b"a-data")?;
 
-    #[test]
-    fn batch_delete_isolated_entity_increments_graph_version_once() -> Result<()> {
-        let temp_dir = tempdir()?;
-        let vault = Vault::open(temp_dir.path(), test_config())?;
-        let a = entity(37);
-        let tr = TimeRange { start: 1, end: 1 };
+            let before = graph_version(&vault)?;
+            match path {
+                Path::Direct => {
+                    assert!(
+                        vault.delete_entity(&a)?,
+                        "case {case_name}: first direct delete should report found"
+                    );
+                }
+                Path::Batch => {
+                    vault.batch().delete(&a).commit()?;
+                }
+            }
+            let after_delete = graph_version(&vault)?;
+            assert_eq!(
+                after_delete,
+                before + 1,
+                "case {case_name}: first delete should bump GRAPH_VERSION by 1"
+            );
 
-        vault.put_entity(&a, 1, tr, 1, b"a-data")?;
-
-        let before = graph_version(&vault)?;
-        vault.batch().delete(&a).commit()?;
-        let after_delete = graph_version(&vault)?;
-        assert_eq!(after_delete, before + 1);
-
-        vault.batch().delete(&a).commit()?;
-        let after_missing = graph_version(&vault)?;
-        assert_eq!(after_missing, after_delete);
+            match path {
+                Path::Direct => {
+                    assert!(
+                        !vault.delete_entity(&a)?,
+                        "case {case_name}: second direct delete should report missing"
+                    );
+                }
+                Path::Batch => {
+                    vault.batch().delete(&a).commit()?;
+                }
+            }
+            let after_missing = graph_version(&vault)?;
+            assert_eq!(
+                after_missing, after_delete,
+                "case {case_name}: redundant delete must not bump GRAPH_VERSION"
+            );
+        }
         Ok(())
     }
 
@@ -1489,51 +1521,79 @@ mod tests {
         Ok(())
     }
 
+    /// `ppr_query` must refuse to produce scores when non-finite values are
+    /// persisted in either the edge-weight payload or the cached score
+    /// payload. Variants inject the bad value at a different site.
+    ///
+    /// Variants:
+    /// - `persisted_edge_weight`: writes `f32::NAN` into the first 4 bytes
+    ///   of an `edges_out` record. Expected error: `CorruptedIndex("edge record")`.
+    /// - `cached_scores`: writes `f32::INFINITY` into a `ppr_cache` entry.
+    ///   Expected error: `CorruptedIndex("ppr cache scores")`.
     #[test]
-    fn ppr_query_rejects_non_finite_persisted_edge_weight() -> Result<()> {
-        let temp_dir = tempdir()?;
-        let vault = Vault::open(temp_dir.path(), test_config())?;
-        let a = entity(63);
-        let b = entity(64);
+    fn ppr_query_rejects_non_finite_inputs() -> Result<()> {
+        #[derive(Clone, Copy)]
+        enum Site {
+            EdgeWeight,
+            CachedScores,
+        }
 
-        let key = Store::encode_edge_key(&a, EdgeKind::BelongsTo, &b);
-        let mut value = [0_u8; EDGE_VALUE_LEN];
-        value[..4].copy_from_slice(&f32::NAN.to_le_bytes());
+        let cases: Vec<(&str, Site, u8, u8, &str)> = vec![
+            (
+                "persisted_edge_weight",
+                Site::EdgeWeight,
+                63,
+                64,
+                "edge record",
+            ),
+            (
+                "cached_scores",
+                Site::CachedScores,
+                65,
+                66,
+                "ppr cache scores",
+            ),
+        ];
 
-        let mut wtxn = vault.store.env.write_txn()?;
-        vault.store.edges_out.put(&mut wtxn, &key, &value)?;
-        wtxn.commit()?;
+        for (case_name, site, a_byte, b_byte, expected_msg) in cases {
+            let temp_dir = tempdir()?;
+            let vault = Vault::open(temp_dir.path(), test_config())?;
+            let a = entity(a_byte);
+            let b = entity(b_byte);
 
-        let err = ppr_query(&vault.store, &vault.config, &[a], 3, 0.15)
-            .expect_err("expected corrupted edge record");
-        assert!(matches!(err, Error::CorruptedIndex("edge record")));
-        Ok(())
-    }
+            let mut wtxn = vault.store.env.write_txn()?;
+            match site {
+                Site::EdgeWeight => {
+                    let key = Store::encode_edge_key(&a, EdgeKind::BelongsTo, &b);
+                    let mut value = [0_u8; EDGE_VALUE_LEN];
+                    value[..4].copy_from_slice(&f32::NAN.to_le_bytes());
+                    vault.store.edges_out.put(&mut wtxn, &key, &value)?;
+                }
+                Site::CachedScores => {
+                    let seed_hash = hash_seeds(&[a], 3, 0.15);
+                    let cache = encode_cache_value(
+                        crate::unix_seconds_now(),
+                        0,
+                        0,
+                        &[ScoredEntity {
+                            id: b,
+                            score: f32::INFINITY,
+                        }],
+                    );
+                    vault.store.ppr_cache.put(&mut wtxn, &seed_hash, &cache)?;
+                }
+            }
+            wtxn.commit()?;
 
-    #[test]
-    fn ppr_query_rejects_non_finite_cached_scores() -> Result<()> {
-        let temp_dir = tempdir()?;
-        let vault = Vault::open(temp_dir.path(), test_config())?;
-        let a = entity(65);
-        let b = entity(66);
-        let seed_hash = hash_seeds(&[a], 3, 0.15);
-        let cache = encode_cache_value(
-            crate::unix_seconds_now(),
-            0,
-            0,
-            &[ScoredEntity {
-                id: b,
-                score: f32::INFINITY,
-            }],
-        );
-
-        let mut wtxn = vault.store.env.write_txn()?;
-        vault.store.ppr_cache.put(&mut wtxn, &seed_hash, &cache)?;
-        wtxn.commit()?;
-
-        let err = ppr_query(&vault.store, &vault.config, &[a], 3, 0.15)
-            .expect_err("expected corrupted cache row");
-        assert!(matches!(err, Error::CorruptedIndex("ppr cache scores")));
+            let err = ppr_query(&vault.store, &vault.config, &[a], 3, 0.15)
+                .expect_err("expected corrupted state");
+            match err {
+                Error::CorruptedIndex(msg) if msg == expected_msg => {}
+                other => panic!(
+                    "case {case_name}: expected CorruptedIndex({expected_msg:?}), got {other:?}"
+                ),
+            }
+        }
         Ok(())
     }
 }

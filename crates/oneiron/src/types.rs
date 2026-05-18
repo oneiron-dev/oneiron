@@ -65,6 +65,27 @@ impl EntityId {
     }
 }
 
+/// Parses a `&[u8]` slice into an `EntityId`, returning
+/// `Error::CorruptedIndex(context)` if the length is wrong, or
+/// `Error::InvalidKey` if the bytes match a reserved sentinel pattern (used
+/// by short_id counters and similar internal rows that must not be hydrated
+/// as live entities). Used by index readers (HNSW neighbor keys, vector keys,
+/// short_id reverse values) where a malformed key is on-disk corruption.
+pub(crate) fn parse_entity_id(
+    bytes: &[u8],
+    context: &'static str,
+) -> crate::error::Result<EntityId> {
+    if bytes.len() != ENTITY_ID_LEN {
+        return Err(crate::error::Error::CorruptedIndex(context));
+    }
+    let mut arr = [0u8; ENTITY_ID_LEN];
+    arr.copy_from_slice(bytes);
+    if is_reserved_entity_id_bytes(&arr) {
+        return Err(crate::error::Error::InvalidKey);
+    }
+    Ok(EntityId(arr))
+}
+
 fn is_reserved_entity_id_bytes(bytes: &[u8; ENTITY_ID_LEN]) -> bool {
     if *bytes == [0x00; ENTITY_ID_LEN] || *bytes == [0xFF; ENTITY_ID_LEN] {
         return true;
@@ -608,5 +629,25 @@ impl Default for TokenAllocation {
             summaries: 0.25,
             other: 0.20,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn entity_id_hex_round_trip() {
+        let id = EntityId::now();
+        let hex = id.to_hex();
+        assert_eq!(hex.len(), 32);
+        let recovered = EntityId::from_hex(&hex).unwrap();
+        assert_eq!(id, recovered);
+    }
+
+    #[test]
+    fn entity_id_from_hex_rejects_invalid() {
+        assert!(EntityId::from_hex("too_short").is_err());
+        assert!(EntityId::from_hex("gggggggggggggggggggggggggggggggg").is_err());
     }
 }

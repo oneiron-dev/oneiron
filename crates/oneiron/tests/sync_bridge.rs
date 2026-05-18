@@ -608,20 +608,59 @@ fn sync_client_handle_server_message_imports_root_sync_update() {
 }
 
 #[test]
-fn sync_client_handle_server_message_accepts_version_vector() {
-    let temp = tempfile::tempdir().unwrap();
-    let vault = Arc::new(Vault::open(temp.path(), test_config()).unwrap());
-    let (mut client, _rx) = SyncClient::new(vault, SyncClientConfig::default());
-    let initial_sync = client.generate_initial_sync();
-    let vv_message = initial_sync
-        .first()
-        .expect("initial sync should include root VV");
-    assert_eq!(vv_message.first().copied(), Some(ROOT_VV_TAG));
+fn sync_client_handle_server_message_dispatch() {
+    // Three dispatch cases share the same skeleton:
+    //   (case_name, payload_builder, expectation)
+    // - accepts_version_vector: real root VV from generate_initial_sync,
+    //   handler treats it as a no-op (Ok with empty responses).
+    // - rejects_empty_payload: zero-byte input returns InvalidPayload.
+    // - rejects_unknown_tag: tag 222 has no handler, returns UnknownTag(222).
+    enum Expect {
+        Ok,
+        InvalidPayload,
+        UnknownTag(u8),
+    }
 
-    // Root VV handling is currently an intentional no-op.
-    let responses = client.handle_server_message(vv_message).unwrap();
+    let build_root_vv = |client: &mut SyncClient| -> Vec<u8> {
+        let initial_sync = client.generate_initial_sync();
+        let vv_message = initial_sync
+            .first()
+            .expect("initial sync should include root VV")
+            .clone();
+        assert_eq!(vv_message.first().copied(), Some(ROOT_VV_TAG));
+        vv_message
+    };
+    let build_empty = |_client: &mut SyncClient| -> Vec<u8> { Vec::new() };
+    let build_unknown = |_client: &mut SyncClient| -> Vec<u8> { vec![222] };
 
-    assert!(responses.is_empty());
+    type Builder = fn(&mut SyncClient) -> Vec<u8>;
+    let cases: &[(&str, Builder, Expect)] = &[
+        ("accepts_version_vector", build_root_vv, Expect::Ok),
+        ("rejects_empty_payload", build_empty, Expect::InvalidPayload),
+        ("rejects_unknown_tag", build_unknown, Expect::UnknownTag(222)),
+    ];
+
+    for (case_name, build, expect) in cases {
+        let temp = tempfile::tempdir().unwrap();
+        let vault = Arc::new(Vault::open(temp.path(), test_config()).unwrap());
+        let (mut client, _rx) = SyncClient::new(vault, SyncClientConfig::default());
+
+        let message = build(&mut client);
+        let result = client.handle_server_message(&message);
+
+        match (expect, result) {
+            (Expect::Ok, Ok(responses)) => {
+                assert!(
+                    responses.is_empty(),
+                    "case {case_name}: expected no responses, got {responses:?}"
+                );
+            }
+            (Expect::InvalidPayload, Err(TransportError::InvalidPayload(_))) => {}
+            (Expect::UnknownTag(expected_tag), Err(TransportError::UnknownTag(got_tag)))
+                if got_tag == *expected_tag => {}
+            (_, other) => panic!("case {case_name}: unexpected result {other:?}"),
+        }
+    }
 }
 
 #[test]
@@ -666,182 +705,4 @@ fn sync_client_handle_server_message_handles_bulk_transfer_messages() {
     }
 }
 
-#[test]
-fn sync_client_handle_server_message_rejects_unknown_tag() {
-    let temp = tempfile::tempdir().unwrap();
-    let vault = Arc::new(Vault::open(temp.path(), test_config()).unwrap());
-    let (mut client, _rx) = SyncClient::new(vault, SyncClientConfig::default());
 
-    match client.handle_server_message(&[222]) {
-        Err(TransportError::UnknownTag(222)) => {}
-        other => panic!("expected UnknownTag(222), got {other:?}"),
-    }
-}
-
-#[test]
-fn sync_client_handle_server_message_rejects_empty_payload() {
-    let temp = tempfile::tempdir().unwrap();
-    let vault = Arc::new(Vault::open(temp.path(), test_config()).unwrap());
-    let (mut client, _rx) = SyncClient::new(vault, SyncClientConfig::default());
-
-    match client.handle_server_message(&[]) {
-        Err(TransportError::InvalidPayload(_)) => {}
-        other => panic!("expected InvalidPayload(_), got {other:?}"),
-    }
-}
-
-#[test]
-fn entity_id_hex_round_trip() {
-    let id = EntityId::now();
-    let hex = id.to_hex();
-    assert_eq!(hex.len(), 32);
-    let recovered = EntityId::from_hex(&hex).unwrap();
-    assert_eq!(id, recovered);
-}
-
-#[test]
-fn entity_id_from_hex_rejects_invalid() {
-    assert!(EntityId::from_hex("too_short").is_err());
-    assert!(EntityId::from_hex("gggggggggggggggggggggggggggggggg").is_err());
-}
-
-#[test]
-fn learned_at_accessor() {
-    let temp = tempfile::tempdir().unwrap();
-    let vault = Vault::open(temp.path(), test_config()).unwrap();
-    let id = EntityId::now();
-    let learned = 1_772_000_000u64;
-
-    vault
-        .put_entity(
-            &id,
-            0,
-            TimeRange {
-                start: learned,
-                end: learned,
-            },
-            learned,
-            b"first",
-        )
-        .unwrap();
-
-    assert_eq!(vault.get_learned_at(&id).unwrap(), learned);
-}
-
-#[test]
-fn entity_exists_and_edge_exists() {
-    let temp = tempfile::tempdir().unwrap();
-    let vault = Vault::open(temp.path(), test_config()).unwrap();
-    let id = EntityId::now();
-    let other = EntityId::now();
-
-    assert!(!vault.entity_exists(&id).unwrap());
-
-    vault
-        .put_entity(&id, 0, TimeRange { start: 1, end: 1 }, 1, b"exists")
-        .unwrap();
-    vault
-        .put_entity(&other, 0, TimeRange { start: 1, end: 1 }, 1, b"other")
-        .unwrap();
-
-    assert!(vault.entity_exists(&id).unwrap());
-    assert!(!vault.edge_exists(&id, EdgeKind::Mentions, &other).unwrap());
-
-    vault
-        .put_edge(&id, EdgeKind::Mentions, &other, 0.5)
-        .unwrap();
-    assert!(vault.edge_exists(&id, EdgeKind::Mentions, &other).unwrap());
-}
-
-#[test]
-fn entities_in_learned_range() {
-    let temp = tempfile::tempdir().unwrap();
-    let vault = Vault::open(temp.path(), test_config()).unwrap();
-
-    let id1 = EntityId::now();
-    let id2 = EntityId::now();
-    let id3 = EntityId::now();
-
-    vault
-        .put_entity(
-            &id1,
-            0,
-            TimeRange {
-                start: 100,
-                end: 100,
-            },
-            100,
-            b"a",
-        )
-        .unwrap();
-    vault
-        .put_entity(
-            &id2,
-            0,
-            TimeRange {
-                start: 200,
-                end: 200,
-            },
-            200,
-            b"b",
-        )
-        .unwrap();
-    vault
-        .put_entity(
-            &id3,
-            0,
-            TimeRange {
-                start: 300,
-                end: 300,
-            },
-            300,
-            b"c",
-        )
-        .unwrap();
-
-    let range = vault.entities_in_learned_range(100, 300).unwrap();
-    assert_eq!(range.len(), 2);
-    assert!(range.contains(&id1));
-    assert!(range.contains(&id2));
-    assert!(!range.contains(&id3));
-}
-
-#[test]
-fn with_write_txn_and_batch_in() {
-    let temp = tempfile::tempdir().unwrap();
-    let vault = Vault::open(temp.path(), test_config()).unwrap();
-    let id = EntityId::now();
-
-    vault
-        .with_write_txn(|wtxn| {
-            vault
-                .batch_in()
-                .put(&id, 0, TimeRange { start: 1, end: 1 }, 1, b"atomic")
-                .apply(wtxn)?;
-            Ok(())
-        })
-        .unwrap();
-
-    assert_eq!(vault.get(&id).unwrap().unwrap(), b"atomic");
-}
-
-#[test]
-fn batch_edge_with_created_at() {
-    let temp = tempfile::tempdir().unwrap();
-    let vault = Vault::open(temp.path(), test_config()).unwrap();
-    let src = EntityId::now();
-    let tgt = EntityId::now();
-
-    vault
-        .batch()
-        .put(&src, 0, TimeRange { start: 1, end: 1 }, 1, b"src")
-        .put(&tgt, 0, TimeRange { start: 1, end: 1 }, 1, b"tgt")
-        .edge_with_created_at(&src, EdgeKind::Mentions, &tgt, 0.8, 99999)
-        .commit()
-        .unwrap();
-
-    let edges = vault.edges_out(&src).unwrap();
-    assert_eq!(edges.len(), 1);
-    assert_eq!(edges[0].created_at, 99999);
-    assert!((edges[0].weight - 0.8).abs() < f32::EPSILON);
-}

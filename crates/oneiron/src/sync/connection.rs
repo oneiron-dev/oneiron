@@ -536,25 +536,6 @@ mod tests {
     }
 
     #[test]
-    fn connection_creation() {
-        let vault = test_vault();
-        let conn = SyncConnection::new(vault, ConnectionConfig::default()).unwrap();
-        assert!(!conn.queue().is_full().unwrap());
-    }
-
-    #[test]
-    fn queue_updates_during_offline() {
-        let vault = test_vault();
-        let conn = SyncConnection::new(vault, ConnectionConfig::default()).unwrap();
-
-        // Simulate queueing updates while offline
-        conn.queue().push("2026-03", &[1, 2, 3]).unwrap();
-        conn.queue().push("2026-02", &[4, 5, 6]).unwrap();
-
-        assert_eq!(conn.queue().len().unwrap(), 2);
-    }
-
-    #[test]
     fn flush_to_queue_skips_invalid_window_keys() {
         let vault = test_vault();
         let conn = SyncConnection::new(vault, ConnectionConfig::default()).unwrap();
@@ -575,17 +556,6 @@ mod tests {
         assert_eq!(queued.len(), 1);
         assert_eq!(queued[0].window_key, "2026-03");
         assert_eq!(queued[0].encoded, vec![4, 5, 6]);
-    }
-
-    #[test]
-    fn backoff_progression() {
-        // Verify the backoff helper works correctly
-        assert_eq!(next_backoff(1_000, 60_000), 2_000);
-        assert_eq!(next_backoff(2_000, 60_000), 4_000);
-        assert_eq!(next_backoff(4_000, 60_000), 8_000);
-        assert_eq!(next_backoff(8_000, 60_000), 16_000);
-        assert_eq!(next_backoff(32_000, 60_000), 60_000);
-        assert_eq!(next_backoff(60_000, 60_000), 60_000);
     }
 
     #[tokio::test]

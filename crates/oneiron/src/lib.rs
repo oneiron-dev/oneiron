@@ -57,3 +57,20 @@ mod tests;
 
 #[cfg(test)]
 mod tests_bug;
+
+#[cfg(test)]
+pub(crate) mod test_util {
+    //! Shared test helpers. Centralized to avoid drift between per-module
+    //! copies of `open_test_vault`. Each module keeps its own `test_config()`
+    //! because configs diverge (map sizes, dimensions, embedding model).
+    use crate::vault::Vault;
+    use crate::types::VaultConfig;
+
+    /// Opens a temporary vault with the supplied config. Returns the
+    /// `TempDir` so callers keep the directory alive for the vault's lifetime.
+    pub(crate) fn open_test_vault_with(cfg: VaultConfig) -> (tempfile::TempDir, Vault) {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let vault = Vault::open(dir.path(), cfg).expect("open vault");
+        (dir, vault)
+    }
+}
