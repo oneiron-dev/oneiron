@@ -380,8 +380,16 @@ mod tests {
                 window_sync_decoder,
                 &[window_sub_tags::UPDATE],
             ),
-            ("decode_bulk_transfer_calendar_oob", bulk_transfer_decoder, &[1, 2, 3]),
-            ("decode_bulk_transfer_pre_epoch", bulk_transfer_decoder, &[1, 2, 3]),
+            (
+                "decode_bulk_transfer_calendar_oob",
+                bulk_transfer_decoder,
+                &[1, 2, 3],
+            ),
+            (
+                "decode_bulk_transfer_pre_epoch",
+                bulk_transfer_decoder,
+                &[1, 2, 3],
+            ),
             (
                 "decode_bulk_transfer_done_calendar_oob",
                 bulk_done_decoder,

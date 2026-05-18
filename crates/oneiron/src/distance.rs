@@ -296,6 +296,7 @@ mod tests {
     /// - `non_finite_inputs_nan`: NaN inputs short-circuit to 0/1.
     /// - `non_finite_inputs_inf`: ±Inf inputs short-circuit to 0/1.
     #[test]
+    #[allow(clippy::type_complexity)]
     fn cosine_distance_cases() {
         let identical: Vec<f32> = vec![0.1, -0.2, 0.3, 0.4, -0.5];
         let zero7: Vec<f32> = vec![0.0; 7];
@@ -305,13 +306,7 @@ mod tests {
         let finite4: Vec<f32> = vec![1.0, 2.0, 3.0, 4.0];
 
         let cases: Vec<(&str, Vec<f32>, Vec<f32>, f32, f32)> = vec![
-            (
-                "identical_vectors",
-                identical.clone(),
-                identical.clone(),
-                1.0,
-                0.0,
-            ),
+            ("identical_vectors", identical.clone(), identical, 1.0, 0.0),
             (
                 "orthogonal_vectors",
                 vec![1.0, 0.0, 0.0, 0.0, 0.0],
@@ -322,17 +317,11 @@ mod tests {
             (
                 "zero_norm_zero_vs_non_zero",
                 zero7.clone(),
-                non_zero7.clone(),
+                non_zero7,
                 0.0,
                 1.0,
             ),
-            (
-                "zero_norm_zero_vs_zero",
-                zero7.clone(),
-                zero7.clone(),
-                0.0,
-                1.0,
-            ),
+            ("zero_norm_zero_vs_zero", zero7.clone(), zero7, 0.0, 1.0),
             (
                 "mismatched_lengths",
                 vec![1.0, 2.0, 3.0],
@@ -340,20 +329,8 @@ mod tests {
                 0.0,
                 1.0,
             ),
-            (
-                "non_finite_inputs_nan",
-                nan.clone(),
-                finite4.clone(),
-                0.0,
-                1.0,
-            ),
-            (
-                "non_finite_inputs_inf",
-                inf.clone(),
-                finite4.clone(),
-                0.0,
-                1.0,
-            ),
+            ("non_finite_inputs_nan", nan, finite4.clone(), 0.0, 1.0),
+            ("non_finite_inputs_inf", inf, finite4, 0.0, 1.0),
         ];
 
         for (case_name, a, b, expected_sim, expected_dist) in cases {

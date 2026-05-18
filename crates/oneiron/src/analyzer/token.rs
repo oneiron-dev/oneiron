@@ -316,5 +316,4 @@ mod tests {
         assert_eq!(tok.position_increment, 0);
         assert_eq!(tok.length_increment, 1);
     }
-
 }

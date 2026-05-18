@@ -224,14 +224,14 @@ impl ScriptRunSplitter {
             }
         }
 
-        if runs.is_empty() {
-            if let Some(start) = pending_start {
-                runs.push(ScriptRun {
-                    byte_start: start,
-                    byte_end: text.len() as u32,
-                    script: ScriptClass::Common,
-                });
-            }
+        if runs.is_empty()
+            && let Some(start) = pending_start
+        {
+            runs.push(ScriptRun {
+                byte_start: start,
+                byte_end: text.len() as u32,
+                script: ScriptClass::Common,
+            });
         }
 
         runs

@@ -201,8 +201,7 @@ mod tests {
         ];
 
         for (case_name, initial, reinsert, expected) in cases {
-            let initial_keys: Vec<WindowKey> =
-                initial.iter().map(|k| WindowKey::new(*k)).collect();
+            let initial_keys: Vec<WindowKey> = initial.iter().map(|k| WindowKey::new(*k)).collect();
             let doc = create_root_doc("user1", "vault-abc", &initial_keys);
 
             add_window_to_root(&doc, &WindowKey::new(*reinsert));

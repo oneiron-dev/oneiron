@@ -1772,8 +1772,18 @@ mod tests {
         // Each row asserts the compact (format, profile) pair saves at least
         // `min_savings` fraction of bytes vs the json/Full baseline.
         let cases: &[(&str, PackFormat, FieldProfile, f64)] = &[
-            ("toon_minimal", PackFormat::Toon, FieldProfile::Minimal, 0.60),
-            ("toon_standard", PackFormat::Toon, FieldProfile::Standard, 0.45),
+            (
+                "toon_minimal",
+                PackFormat::Toon,
+                FieldProfile::Minimal,
+                0.60,
+            ),
+            (
+                "toon_standard",
+                PackFormat::Toon,
+                FieldProfile::Standard,
+                0.45,
+            ),
             (
                 "plaintext_standard",
                 PackFormat::Plaintext,
@@ -2444,7 +2454,10 @@ mod tests {
                 max_field_chars: 500,
             };
             let text = String::from_utf8(serialize_pack(pack, &cfg_plain)).expect("utf8");
-            assert!(text.contains("TASK_LISTS"), "group name should be TASK_LISTS");
+            assert!(
+                text.contains("TASK_LISTS"),
+                "group name should be TASK_LISTS"
+            );
             assert!(text.contains("tl01:aa"), "short_id:hash should appear");
             assert!(text.contains("Sprint 42"));
             assert!(text.contains("Ship the MVP"));
@@ -2540,9 +2553,9 @@ mod tests {
             };
             let bytes = serialize_pack(&pack, &cfg_json);
             let parsed: Value = serde_json::from_slice(&bytes).expect("json parse");
-            let group = parsed
-                .get(case.group_key)
-                .unwrap_or_else(|| panic!("case {}: missing group key {}", case.name, case.group_key));
+            let group = parsed.get(case.group_key).unwrap_or_else(|| {
+                panic!("case {}: missing group key {}", case.name, case.group_key)
+            });
             let first = &group[0];
             for field in case.present_in_standard {
                 assert!(
@@ -2562,8 +2575,7 @@ mod tests {
             // Standard profile ordering matches the documented schema.
             let standard = fields_for_profile(case.entity_type, FieldProfile::Standard);
             assert_eq!(
-                standard,
-                case.expected_standard_order,
+                standard, case.expected_standard_order,
                 "case {}: Standard profile ordering mismatch",
                 case.name
             );

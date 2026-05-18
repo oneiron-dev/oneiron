@@ -1397,9 +1397,9 @@ mod tests {
     ///   weight in the rank profile (pre-fix this was nested inside that
     ///   branch and NoNorm-only matches slipped past).
     #[test]
+    #[allow(clippy::type_complexity)]
     fn search_fails_closed_on_all_corruption_variants() -> Result<()> {
-        type Setup =
-            fn(&Vault, &EntityId) -> Result<()>;
+        type Setup = fn(&Vault, &EntityId) -> Result<()>;
         fn setup_corrupted_field_stats(vault: &Vault, _id: &EntityId) -> Result<()> {
             let surface_fid = AnalyzerChannel::Surface.field_id();
             let mut wtxn = vault.store.env.write_txn()?;
@@ -1489,10 +1489,7 @@ mod tests {
             wtxn.commit()?;
             Ok(())
         }
-        fn setup_missing_lengths_for_nonorm_only_match(
-            vault: &Vault,
-            id: &EntityId,
-        ) -> Result<()> {
+        fn setup_missing_lengths_for_nonorm_only_match(vault: &Vault, id: &EntityId) -> Result<()> {
             let mut wtxn = vault.store.env.write_txn()?;
             assert!(
                 vault
@@ -1639,10 +1636,7 @@ mod tests {
                 let fields = entry.fields.into_iter().collect::<BTreeMap<_, _>>();
                 encode_posting_entry(&entry.id, &fields, &mut patched)?;
             }
-            vault
-                .store
-                .text_postings
-                .put(wtxn, b"alpha", &patched)?;
+            vault.store.text_postings.put(wtxn, b"alpha", &patched)?;
             Ok(())
         }
         fn setup_partial_field_lengths(

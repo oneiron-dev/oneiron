@@ -5,11 +5,9 @@ use xxhash_rust::xxh3::xxh3_128;
 
 use crate::error::{Error, Result};
 use crate::store::Store;
-use crate::types::{
-    EDGE_KEY_LEN, EDGE_VALUE_LEN, ENTITY_ID_LEN, EdgeKind, EntityId, ScoredEntity,
-};
 #[cfg(test)]
 use crate::types::VaultConfig;
+use crate::types::{EDGE_KEY_LEN, EDGE_VALUE_LEN, ENTITY_ID_LEN, EdgeKind, EntityId, ScoredEntity};
 
 const SEED_HASH_LEN: usize = 16;
 #[cfg(test)]
@@ -1102,10 +1100,8 @@ mod tests {
             Batch,
         }
 
-        let cases: Vec<(&str, Path, u8)> = vec![
-            ("direct", Path::Direct, 36),
-            ("batch", Path::Batch, 37),
-        ];
+        let cases: Vec<(&str, Path, u8)> =
+            vec![("direct", Path::Direct, 36), ("batch", Path::Batch, 37)];
 
         for (case_name, path, byte) in cases {
             let temp_dir = tempdir()?;
