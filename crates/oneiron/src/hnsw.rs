@@ -345,7 +345,11 @@ pub(crate) fn hnsw_deindex(store: &Store, wtxn: &mut RwTxn<'_>, id: &EntityId) -
             .hnsw_neighbors
             .first(&*wtxn)?
             .ok_or(Error::CorruptedIndex(ERR_REMAINING_NODES_MISSING))?;
-        let replacement = parse_entity_id(replacement_key, ERR_NEIGHBOR_KEY_BYTES)?;
+        let replacement =
+            parse_entity_id(replacement_key, ERR_NEIGHBOR_KEY_BYTES).map_err(|e| match e {
+                Error::InvalidKey => Error::CorruptedIndex(ERR_NEIGHBOR_KEY_BYTES),
+                other => other,
+            })?;
         store
             .hnsw_meta
             .put(wtxn, ENTRY_POINT_KEY, replacement.as_bytes())?;
@@ -547,7 +551,12 @@ fn collect_vector_ids(store: &Store, txn: &RoTxn<'_>) -> Result<Vec<EntityId>> {
     let mut vector_ids = Vec::with_capacity(capacity);
     for entry in store.vectors.iter(txn)? {
         let (key, _) = entry?;
-        vector_ids.push(parse_entity_id(key, ERR_VECTOR_KEY_BYTES)?);
+        vector_ids.push(
+            parse_entity_id(key, ERR_VECTOR_KEY_BYTES).map_err(|e| match e {
+                Error::InvalidKey => Error::CorruptedIndex(ERR_VECTOR_KEY_BYTES),
+                other => other,
+            })?,
+        );
     }
     Ok(vector_ids)
 }
@@ -614,7 +623,12 @@ fn read_entry_point(store: &Store, txn: &RoTxn<'_>) -> Result<Option<EntityId>> 
         return Ok(None);
     };
 
-    parse_entity_id(raw, ERR_ENTRY_POINT_BYTES).map(Some)
+    parse_entity_id(raw, ERR_ENTRY_POINT_BYTES)
+        .map_err(|e| match e {
+            Error::InvalidKey => Error::CorruptedIndex(ERR_ENTRY_POINT_BYTES),
+            other => other,
+        })
+        .map(Some)
 }
 
 fn decode_neighbors(raw: &[u8], lenient: bool) -> Result<Vec<EntityId>> {
@@ -627,8 +641,10 @@ fn decode_neighbors(raw: &[u8], lenient: bool) -> Result<Vec<EntityId>> {
         let bytes: [u8; ENTITY_ID_LEN] = chunk.try_into().expect("chunk length is exact");
         match EntityId::from_bytes(bytes) {
             Ok(neighbor) => neighbors.push(neighbor),
-            // Search traversal is best-effort. Reserved sentinel garbage should
-            // not take the whole query path down in lenient mode.
+            // Reserved sentinel keys are the only `from_bytes` failure mode possible
+            // after `chunks_exact(EID_LEN)` — length is fixed by the iterator. So
+            // `lenient` mode never silently swallows length corruption; only the
+            // sentinel-rejection branch is skipped.
             Err(_) if lenient => continue,
             Err(_) => return Err(Error::CorruptedIndex(ERR_NEIGHBOR_VALUE_BYTES)),
         }
@@ -746,7 +762,10 @@ fn collect_backlink_targets(
     // once we need sublinear delete performance at larger graph sizes.
     for entry in store.hnsw_neighbors.iter(txn)? {
         let (key, raw) = entry?;
-        let node_id = parse_entity_id(key, ERR_NEIGHBOR_KEY_BYTES)?;
+        let node_id = parse_entity_id(key, ERR_NEIGHBOR_KEY_BYTES).map_err(|e| match e {
+            Error::InvalidKey => Error::CorruptedIndex(ERR_NEIGHBOR_KEY_BYTES),
+            other => other,
+        })?;
         if node_id == *id {
             continue;
         }
