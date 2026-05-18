@@ -1723,17 +1723,14 @@ mod tests {
             let temp_dir = tempfile::tempdir()?;
             let vault = Vault::open(temp_dir.path(), test_config())?;
             let id = EntityId::now();
-            let doc_text = if needs_second_doc {
+            if needs_second_doc {
                 // Membership-mismatch variant needs a second doc on "alpha".
                 let other = EntityId::now();
                 put_text_doc(&vault, &id, "alpha")?;
                 put_text_doc(&vault, &other, "alpha")?;
-                "alpha"
             } else {
                 put_text_doc(&vault, &id, "alpha beta")?;
-                "alpha beta"
-            };
-            let _ = doc_text;
+            }
 
             let mut wtxn = vault.store.env.write_txn()?;
             setup(&vault, &id, &mut wtxn)?;

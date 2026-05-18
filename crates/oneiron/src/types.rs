@@ -71,6 +71,10 @@ impl EntityId {
 /// by short_id counters and similar internal rows that must not be hydrated
 /// as live entities). Used by index readers (HNSW neighbor keys, vector keys,
 /// short_id reverse values) where a malformed key is on-disk corruption.
+///
+/// **Note:** callers needing contextual `CorruptedIndex` for diagnostics
+/// should `.map_err` the `InvalidKey` variant. The HNSW read path does
+/// this; `maintain.rs::recompute_short_id_hashes` handles both variants.
 pub(crate) fn parse_entity_id(
     bytes: &[u8],
     context: &'static str,
