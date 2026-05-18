@@ -1256,8 +1256,8 @@ mod tests {
             Ok((err, ERR_ENTRY_POINT_MISSING))
         }
 
-        fn search_missing_entry_point_vector_when_count_is_nonzero()
-        -> Result<(Error, &'static str)> {
+        fn search_missing_entry_point_vector_when_count_is_nonzero() -> Result<(Error, &'static str)>
+        {
             let temp_dir = tempdir()?;
             let vault = Vault::open(temp_dir.path(), test_config())?;
             let id = EntityId::now();
@@ -1379,15 +1379,24 @@ mod tests {
                 .hnsw_meta
                 .put(&mut wtxn, VECTOR_VERSION_KEY, &[1, 2, 3])?;
 
-            let err = read_vector_version(&store, &wtxn)
-                .expect_err("expected corrupted version bytes");
+            let err =
+                read_vector_version(&store, &wtxn).expect_err("expected corrupted version bytes");
             Ok((err, ERR_VECTOR_VERSION_BYTES))
         }
 
         let variants: Vec<(&str, Variant)> = vec![
-            ("search/corrupted_neighbor_bytes", search_corrupted_neighbor_bytes),
-            ("search/corrupted_vector_bytes", search_corrupted_vector_bytes),
-            ("search/corrupted_entry_point_bytes", search_corrupted_entry_point_bytes),
+            (
+                "search/corrupted_neighbor_bytes",
+                search_corrupted_neighbor_bytes,
+            ),
+            (
+                "search/corrupted_vector_bytes",
+                search_corrupted_vector_bytes,
+            ),
+            (
+                "search/corrupted_entry_point_bytes",
+                search_corrupted_entry_point_bytes,
+            ),
             (
                 "search/missing_entry_point_when_count_is_nonzero",
                 search_missing_entry_point_when_count_is_nonzero,
@@ -1405,8 +1414,14 @@ mod tests {
                 "insert/non_empty_graph_when_count_is_zero",
                 insert_non_empty_graph_when_count_is_zero,
             ),
-            ("insert/missing_entry_point_vector", insert_missing_entry_point_vector),
-            ("read_vector_version/corrupted_bytes", read_vector_version_corrupted_bytes),
+            (
+                "insert/missing_entry_point_vector",
+                insert_missing_entry_point_vector,
+            ),
+            (
+                "read_vector_version/corrupted_bytes",
+                read_vector_version_corrupted_bytes,
+            ),
         ];
 
         for (case_name, variant) in variants {

@@ -822,13 +822,12 @@ mod tests {
     }
 
     #[test]
-    fn builder_clamps_edge_expansion_settings() -> Result<()> {
+    fn builder_clamps_edge_expansion_settings() {
         let (_dir, vault) = open_test_vault();
 
         let builder = vault.context_pack().edge_hop(99).max_neighbors(10_000);
         assert_eq!(builder.edge_hop, MAX_EDGE_HOP);
         assert_eq!(builder.max_neighbors, MAX_CONTEXT_NEIGHBORS);
-        Ok(())
     }
 
     #[test]
@@ -1196,31 +1195,21 @@ mod tests {
         // still return the entity with a 32-char (hex) short_id fallback.
         type CorruptFn = fn(&Vault, &EntityId) -> Result<()>;
         let cases: &[(&str, &str, &str, CorruptFn)] = &[
-            (
-                "missing",
-                "fallback",
-                "fallback",
-                |vault, id| {
-                    let mut wtxn = vault.store.env.write_txn()?;
-                    vault.store.short_ids.delete(&mut wtxn, id.as_bytes())?;
-                    wtxn.commit()?;
-                    Ok(())
-                },
-            ),
-            (
-                "corrupt",
-                "corrupt fallback",
-                "corrupt",
-                |vault, id| {
-                    let mut wtxn = vault.store.env.write_txn()?;
-                    vault
-                        .store
-                        .short_ids
-                        .put(&mut wtxn, id.as_bytes(), &[0xff, 0xfe, 7])?;
-                    wtxn.commit()?;
-                    Ok(())
-                },
-            ),
+            ("missing", "fallback", "fallback", |vault, id| {
+                let mut wtxn = vault.store.env.write_txn()?;
+                vault.store.short_ids.delete(&mut wtxn, id.as_bytes())?;
+                wtxn.commit()?;
+                Ok(())
+            }),
+            ("corrupt", "corrupt fallback", "corrupt", |vault, id| {
+                let mut wtxn = vault.store.env.write_txn()?;
+                vault
+                    .store
+                    .short_ids
+                    .put(&mut wtxn, id.as_bytes(), &[0xff, 0xfe, 7])?;
+                wtxn.commit()?;
+                Ok(())
+            }),
         ];
 
         for (name, ingest_text, search_query, corrupt) in cases {

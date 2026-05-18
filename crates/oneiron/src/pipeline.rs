@@ -1569,7 +1569,7 @@ mod tests {
     }
 
     #[test]
-    fn search_ppr_rejects_excessive_seed_count_and_depth() -> Result<()> {
+    fn search_ppr_rejects_excessive_seed_count_and_depth() {
         let (_dir, vault) = open_test_vault();
         let seeds = vec![entity_id(1); crate::ppr::MAX_PPR_SEEDS + 1];
 
@@ -1578,7 +1578,6 @@ mod tests {
 
         let too_deep = vault.query().search_ppr(&[entity_id(1)], 11).run();
         assert!(matches!(too_deep, Err(Error::InvalidConfig(_))));
-        Ok(())
     }
 
     #[test]

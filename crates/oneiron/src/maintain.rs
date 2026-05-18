@@ -1007,10 +1007,7 @@ mod tests {
         /// returns `Error::InvalidKey`. The reverse-scan in
         /// `recompute_short_id_hashes` must treat that row as corrupt and
         /// prune it, not propagate the error.
-        fn inject_invalid_key_reverse(
-            vault: &Vault,
-            _id: &EntityId,
-        ) -> Result<Option<Vec<u8>>> {
+        fn inject_invalid_key_reverse(vault: &Vault, _id: &EntityId) -> Result<Option<Vec<u8>>> {
             // `cl-bogus99` is a synthetic short_id that won't collide with
             // the legit row's value (UUIDv7 hex). The prefix `cl` matches
             // entity_type 0 (Claim), which is what we batched above.

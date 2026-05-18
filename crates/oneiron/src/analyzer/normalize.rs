@@ -265,8 +265,16 @@ mod tests {
         let default_policy = NormalizationPolicy::default();
 
         let cases: Vec<(&str, &NormalizationPolicy, &str)> = vec![
-            ("disabled_policy_with_katakana_input", &disabled, "トウキョウ"),
-            ("default_policy_with_ascii_no_change", &default_policy, "hello"),
+            (
+                "disabled_policy_with_katakana_input",
+                &disabled,
+                "トウキョウ",
+            ),
+            (
+                "default_policy_with_ascii_no_change",
+                &default_policy,
+                "hello",
+            ),
             (
                 "default_policy_with_hiragana_no_change",
                 &default_policy,

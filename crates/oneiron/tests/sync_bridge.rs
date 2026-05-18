@@ -637,7 +637,11 @@ fn sync_client_handle_server_message_dispatch() {
     let cases: &[(&str, Builder, Expect)] = &[
         ("accepts_version_vector", build_root_vv, Expect::Ok),
         ("rejects_empty_payload", build_empty, Expect::InvalidPayload),
-        ("rejects_unknown_tag", build_unknown, Expect::UnknownTag(222)),
+        (
+            "rejects_unknown_tag",
+            build_unknown,
+            Expect::UnknownTag(222),
+        ),
     ];
 
     for (case_name, build, expect) in cases {
@@ -704,5 +708,3 @@ fn sync_client_handle_server_message_handles_bulk_transfer_messages() {
         other => panic!("expected bulk transfer completion event, got {other:?}"),
     }
 }
-
-

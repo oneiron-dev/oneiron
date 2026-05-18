@@ -895,11 +895,7 @@ mod tests {
                 well_formed_key.clone(),
                 invalid_calendar_value,
             ),
-            (
-                "pre_epoch_window_key",
-                well_formed_key,
-                pre_epoch_value,
-            ),
+            ("pre_epoch_window_key", well_formed_key, pre_epoch_value),
         ];
 
         for (case_name, bad_key, bad_value) in cases {

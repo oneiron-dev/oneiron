@@ -156,6 +156,7 @@ mod tests {
     ///   returns 42 and emits zero tokens.
     /// - `single_char_has_no_bigram`: input `"東"`, surface=[東], bigrams=[].
     #[test]
+    #[allow(clippy::type_complexity)]
     fn cjk_ngram_boundary_inputs() {
         // (case_name, text, position_base, expected_next_position,
         //  expected_surface, check_empty_out)

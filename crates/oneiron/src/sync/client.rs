@@ -430,7 +430,10 @@ mod tests {
 
         // Wire-level invariants on the encoded prefix:
         let encoded = &client.pending_updates[0]._encoded;
-        assert_eq!(encoded[0], TAG_WINDOW_SYNC, "expected TAG_WINDOW_SYNC prefix");
+        assert_eq!(
+            encoded[0], TAG_WINDOW_SYNC,
+            "expected TAG_WINDOW_SYNC prefix"
+        );
         assert_eq!(
             encoded[1] as usize,
             window_key.len(),

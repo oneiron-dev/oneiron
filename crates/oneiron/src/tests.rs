@@ -378,7 +378,7 @@ fn search_after_entry_point_deleted() -> Result<()> {
 }
 
 #[test]
-fn validates_non_finite_vector_and_edge_weights() -> Result<()> {
+fn validates_non_finite_vector_and_edge_weights() {
     let (_dir, vault) = open_test_vault();
 
     let vector_err = vault
@@ -409,7 +409,6 @@ fn validates_non_finite_vector_and_edge_weights() -> Result<()> {
         other => panic!("expected invalid edge weight, got {other:?}"),
     }
     assert!(edge_message.contains("inf"));
-    Ok(())
 }
 
 #[test]
@@ -1486,8 +1485,16 @@ fn delete_entity_phonetic_fallback_variants() -> Result<()> {
     //  3. (variants StaleIndex, EmptyForward, SubsetForward) phonetic_forward is cleared
     let cases: &[(&str, &[u8], Corruption)] = &[
         ("missing", b"phonetic-fallback", Corruption::Missing),
-        ("stale_index", b"phonetic-stale-forward", Corruption::StaleIndex),
-        ("empty_forward", b"phonetic-empty-forward", Corruption::EmptyForward),
+        (
+            "stale_index",
+            b"phonetic-stale-forward",
+            Corruption::StaleIndex,
+        ),
+        (
+            "empty_forward",
+            b"phonetic-empty-forward",
+            Corruption::EmptyForward,
+        ),
         (
             "subset_forward",
             b"phonetic-subset-forward",
@@ -1843,7 +1850,7 @@ fn detects_embedding_model_mismatch_on_open() -> Result<()> {
 }
 
 #[test]
-fn detects_hnsw_config_mismatch_on_open() -> Result<()> {
+fn detects_hnsw_config_mismatch_on_open() {
     let (temp_dir, vault) = open_test_vault();
     drop(vault);
 
@@ -1860,12 +1867,10 @@ fn detects_hnsw_config_mismatch_on_open() -> Result<()> {
         } if stored == "dimensions=4,m_max_0=64,ef_construction=200"
             && requested == "dimensions=4,m_max_0=64,ef_construction=201"
     ));
-
-    Ok(())
 }
 
 #[test]
-fn detects_dimension_mismatch_on_open() -> Result<()> {
+fn detects_dimension_mismatch_on_open() {
     let (temp_dir, vault) = open_test_vault();
     drop(vault);
 
@@ -1882,8 +1887,6 @@ fn detects_dimension_mismatch_on_open() -> Result<()> {
         } if stored == "dimensions=4,m_max_0=64,ef_construction=200"
             && requested == "dimensions=8,m_max_0=64,ef_construction=200"
     ));
-
-    Ok(())
 }
 
 #[test]
@@ -2119,7 +2122,7 @@ fn put_edge_with_vad_round_trip() -> Result<()> {
 }
 
 #[test]
-fn put_edge_with_vad_rejects_non_finite() -> Result<()> {
+fn put_edge_with_vad_rejects_non_finite() {
     let (_dir, vault) = open_test_vault();
     let src = EntityId::now();
     let tgt = EntityId::now();
@@ -2198,7 +2201,6 @@ fn put_edge_with_vad_rejects_non_finite() -> Result<()> {
         )
         .expect_err("expected invalid vad for out-of-range dominance");
     assert_invalid_vad(err, VadComponent::Dominance, 1.1);
-    Ok(())
 }
 
 fn assert_invalid_vad(err: Error, expected_component: VadComponent, expected_value: f32) {
