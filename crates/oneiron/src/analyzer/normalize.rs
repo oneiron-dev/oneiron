@@ -246,21 +246,48 @@ mod tests {
         assert_eq!(&*out, input);
     }
 
+    /// `kana_fold_overlay` returns `None` in two distinct scenarios.
+    ///
+    /// Variants:
+    /// - `disabled_policy_with_katakana_input`: policy disables `kana_fold`,
+    ///   so even katakana input that would normally fold returns `None`.
+    /// - `default_policy_with_ascii_no_change`: default policy enabled, but
+    ///   ASCII input has no katakana to fold — returns `None`.
+    /// - `default_policy_with_hiragana_no_change`: default policy enabled,
+    ///   already-hiragana input is unchanged — returns `None`.
     #[test]
-    fn kana_fold_overlay_returns_none_when_disabled() {
-        let policy = NormalizationPolicy {
+    fn kana_fold_overlay_none_cases() {
+        let disabled = NormalizationPolicy {
             nfkc: false,
             casefold: false,
             kana_fold: false,
         };
-        assert!(kana_fold_overlay("トウキョウ", &policy).is_none());
-    }
+        let default_policy = NormalizationPolicy::default();
 
-    #[test]
-    fn kana_fold_overlay_returns_none_when_no_change() {
-        let policy = NormalizationPolicy::default();
-        assert!(kana_fold_overlay("hello", &policy).is_none());
-        assert!(kana_fold_overlay("とうきょう", &policy).is_none());
+        let cases: Vec<(&str, &NormalizationPolicy, &str)> = vec![
+            (
+                "disabled_policy_with_katakana_input",
+                &disabled,
+                "トウキョウ",
+            ),
+            (
+                "default_policy_with_ascii_no_change",
+                &default_policy,
+                "hello",
+            ),
+            (
+                "default_policy_with_hiragana_no_change",
+                &default_policy,
+                "とうきょう",
+            ),
+        ];
+
+        for (case_name, policy, input) in cases {
+            assert!(
+                kana_fold_overlay(input, policy).is_none(),
+                "case {case_name}: expected None, got Some"
+            );
+        }
     }
 
     #[test]

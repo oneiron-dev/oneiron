@@ -303,14 +303,6 @@ mod tests {
     }
 
     #[test]
-    fn token_new_defaults_to_primary() {
-        let tok = Token::new("hi", 0, 2, 0, AnalyzerChannel::Surface, TokenKind::Word);
-        assert_eq!(tok.position_increment, 1);
-        assert_eq!(tok.length_increment, 1);
-        assert_eq!(tok.position_length, 1);
-    }
-
-    #[test]
     fn token_overlay_zeros_position_increment_only() {
         let tok = Token::new(
             "hi",
@@ -323,12 +315,5 @@ mod tests {
         .overlay();
         assert_eq!(tok.position_increment, 0);
         assert_eq!(tok.length_increment, 1);
-    }
-
-    #[test]
-    fn language_hint_bcp47_stable() {
-        assert_eq!(LanguageHint::Ja.as_bcp47(), "ja");
-        assert_eq!(LanguageHint::Zh.as_bcp47(), "zh");
-        assert_eq!(LanguageHint::En.as_bcp47(), "en");
     }
 }

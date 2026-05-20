@@ -659,11 +659,11 @@ fn encode_posting_entry(
     Ok(())
 }
 
+// TODO(schema-bump): tf byte still written/skipped by encode_forward/decode_forward
+// for on-disk LMDB compat. Drop when bm25 postings format version is next bumped.
 struct ForwardRecord {
     term: String,
     field_id: u16,
-    #[allow(dead_code)] // read only when we need to regenerate postings
-    tf: u32,
 }
 
 fn encode_forward(per_term: &BTreeMap<String, BTreeMap<u16, u32>>) -> Result<Vec<u8>> {
@@ -714,7 +714,7 @@ fn decode_forward(raw: &[u8]) -> Result<Vec<ForwardRecord>> {
             return Err(corrupted("forward index has zero tf"));
         }
         i += FIELD_TF_LEN;
-        records.push(ForwardRecord { term, field_id, tf });
+        records.push(ForwardRecord { term, field_id });
     }
     Ok(records)
 }
@@ -823,10 +823,7 @@ fn strip_entity_from_posting(posting: &[u8], id: &EntityId) -> Result<(Vec<u8>, 
             removed = true;
             continue;
         }
-        let mut fields = BTreeMap::new();
-        for (fid, tf) in entry.fields {
-            fields.insert(fid, tf);
-        }
+        let fields: BTreeMap<u16, u32> = entry.fields.into_iter().collect();
         encode_posting_entry(&entry.id, &fields, &mut out)?;
     }
     Ok((out, removed))
@@ -1377,436 +1374,372 @@ mod tests {
         Ok(())
     }
 
+    /// Each search-side variant corrupts BM25 state in a different way, then
+    /// asserts `search_text` propagates `CorruptedIndex` rather than silently
+    /// returning wrong rankings.
+    ///
+    /// Variants:
+    /// - `corrupted_field_stats`: a `text_bm25_field_stats` row with the
+    ///   wrong byte length (4 vs FIELD_STATS_LEN=12) — `read_field_stats`'s
+    ///   length check must fire instead of swallowing as `avgdl = 0`.
+    /// - `missing_field_lengths`: full `text_doc_field_lengths` row deleted.
+    /// - `missing_field_stats_for_used_field`: stats row deleted for the
+    ///   Surface fid that the corpus actually references.
+    /// - `unknown_field_id`: posting entry rewritten to a fid that no
+    ///   field schema covers (9999).
+    /// - `df_exceeds_total_docs`: posting entry appends a phantom doc id,
+    ///   driving DF above the corpus size.
+    /// - `partial_field_lengths`: length row present but missing the
+    ///   Surface fid — must not default `len_f = 0` (would give
+    ///   `norm = 1 - b`, a 4× boost under default b=0.75).
+    /// - `missing_lengths_for_nonorm_only_match`: the row-existence check
+    ///   must fire even when no `CountLengthIncrement` field has non-zero
+    ///   weight in the rank profile (pre-fix this was nested inside that
+    ///   branch and NoNorm-only matches slipped past).
     #[test]
-    fn search_fails_closed_on_corrupted_field_stats() -> Result<()> {
-        // A `text_bm25_field_stats` row with the wrong byte length must
-        // propagate `CorruptedIndex` through the scorer rather than being
-        // silently swallowed as `avgdl = 0` (which would return wrong
-        // rankings instead of failing closed).
-        let temp_dir = tempfile::tempdir()?;
-        let vault = Vault::open(temp_dir.path(), test_config())?;
-        let id = EntityId::now();
-        put_text_doc(&vault, &id, "alpha beta")?;
-
-        let surface_fid = AnalyzerChannel::Surface.field_id();
-        let mut wtxn = vault.store.env.write_txn()?;
-        // Valid row is FIELD_STATS_LEN (12) bytes; a 4-byte row trips
-        // `read_field_stats`'s length check.
-        let short = [0_u8; 4];
-        vault
-            .store
-            .text_bm25_field_stats
-            .put(&mut wtxn, &surface_fid.to_be_bytes(), &short)?;
-        wtxn.commit()?;
-
-        let rtxn = vault.store.env.read_txn()?;
-        let err = search_text(
-            &vault.store,
-            &rtxn,
-            &MultilingualAnalyzer::portable(),
-            &Bm25Config::default(),
-            "alpha",
-            10,
-        )
-        .unwrap_err();
-        assert!(
-            matches!(err, Error::CorruptedIndex(_)),
-            "expected CorruptedIndex, got {err:?}"
-        );
-        Ok(())
-    }
-
-    #[test]
-    fn search_fails_closed_on_missing_field_lengths() -> Result<()> {
-        let temp_dir = tempfile::tempdir()?;
-        let vault = Vault::open(temp_dir.path(), test_config())?;
-        let id = EntityId::now();
-        put_text_doc(&vault, &id, "alpha beta")?;
-
-        let mut wtxn = vault.store.env.write_txn()?;
-        assert!(
-            vault
-                .store
-                .text_doc_field_lengths
-                .delete(&mut wtxn, id.as_bytes())?
-        );
-        wtxn.commit()?;
-
-        let rtxn = vault.store.env.read_txn()?;
-        let err = search_text(
-            &vault.store,
-            &rtxn,
-            &MultilingualAnalyzer::portable(),
-            &Bm25Config::default(),
-            "alpha",
-            10,
-        )
-        .unwrap_err();
-        assert!(
-            matches!(err, Error::CorruptedIndex(_)),
-            "expected CorruptedIndex, got {err:?}"
-        );
-        Ok(())
-    }
-
-    #[test]
-    fn search_fails_closed_on_missing_field_stats_for_used_field() -> Result<()> {
-        let temp_dir = tempfile::tempdir()?;
-        let vault = Vault::open(temp_dir.path(), test_config())?;
-        let id = EntityId::now();
-        put_text_doc(&vault, &id, "alpha beta")?;
-
-        let surface_fid = AnalyzerChannel::Surface.field_id();
-        let mut wtxn = vault.store.env.write_txn()?;
-        assert!(
+    #[allow(clippy::type_complexity)]
+    fn search_fails_closed_on_all_corruption_variants() -> Result<()> {
+        type Setup = fn(&Vault, &EntityId) -> Result<()>;
+        fn setup_corrupted_field_stats(vault: &Vault, _id: &EntityId) -> Result<()> {
+            let surface_fid = AnalyzerChannel::Surface.field_id();
+            let mut wtxn = vault.store.env.write_txn()?;
+            let short = [0_u8; 4];
             vault
                 .store
                 .text_bm25_field_stats
-                .delete(&mut wtxn, &surface_fid.to_be_bytes())?
-        );
-        wtxn.commit()?;
-
-        let rtxn = vault.store.env.read_txn()?;
-        let err = search_text(
-            &vault.store,
-            &rtxn,
-            &MultilingualAnalyzer::portable(),
-            &Bm25Config::default(),
-            "alpha",
-            10,
-        )
-        .unwrap_err();
-        assert!(
-            matches!(err, Error::CorruptedIndex(_)),
-            "expected CorruptedIndex, got {err:?}"
-        );
-        Ok(())
-    }
-
-    #[test]
-    fn search_fails_closed_on_unknown_field_id() -> Result<()> {
-        let temp_dir = tempfile::tempdir()?;
-        let vault = Vault::open(temp_dir.path(), test_config())?;
-        let id = EntityId::now();
-        put_text_doc(&vault, &id, "alpha beta")?;
-
-        let mut wtxn = vault.store.env.write_txn()?;
-        let mut posting = vault
-            .store
-            .text_postings
-            .get(&wtxn, b"alpha")?
-            .expect("alpha posting written")
-            .to_vec();
-        let fid_offset = ENTITY_ID_LEN + 1;
-        posting[fid_offset..fid_offset + 2].copy_from_slice(&9999_u16.to_be_bytes());
-        vault
-            .store
-            .text_postings
-            .put(&mut wtxn, b"alpha", &posting)?;
-        wtxn.commit()?;
-
-        let rtxn = vault.store.env.read_txn()?;
-        let err = search_text(
-            &vault.store,
-            &rtxn,
-            &MultilingualAnalyzer::portable(),
-            &Bm25Config::default(),
-            "alpha",
-            10,
-        )
-        .unwrap_err();
-        assert!(
-            matches!(err, Error::CorruptedIndex(_)),
-            "expected CorruptedIndex, got {err:?}"
-        );
-        Ok(())
-    }
-
-    #[test]
-    fn search_fails_closed_on_df_exceeds_total_docs() -> Result<()> {
-        let temp_dir = tempfile::tempdir()?;
-        let vault = Vault::open(temp_dir.path(), test_config())?;
-        let id = EntityId::now();
-        put_text_doc(&vault, &id, "alpha beta")?;
-
-        let mut wtxn = vault.store.env.write_txn()?;
-        let mut posting = vault
-            .store
-            .text_postings
-            .get(&wtxn, b"alpha")?
-            .expect("alpha posting written")
-            .to_vec();
-        let phantom = EntityId::now();
-        let mut fields = std::collections::BTreeMap::new();
-        fields.insert(AnalyzerChannel::Surface.field_id(), 1);
-        encode_posting_entry(&phantom, &fields, &mut posting)?;
-        vault
-            .store
-            .text_postings
-            .put(&mut wtxn, b"alpha", &posting)?;
-        wtxn.commit()?;
-
-        let rtxn = vault.store.env.read_txn()?;
-        let err = search_text(
-            &vault.store,
-            &rtxn,
-            &MultilingualAnalyzer::portable(),
-            &Bm25Config::default(),
-            "alpha",
-            10,
-        )
-        .unwrap_err();
-        assert!(
-            matches!(err, Error::CorruptedIndex(_)),
-            "expected CorruptedIndex, got {err:?}"
-        );
-        Ok(())
-    }
-
-    #[test]
-    fn deindex_fails_closed_on_missing_field_lengths() -> Result<()> {
-        let temp_dir = tempfile::tempdir()?;
-        let vault = Vault::open(temp_dir.path(), test_config())?;
-        let id = EntityId::now();
-        put_text_doc(&vault, &id, "alpha beta")?;
-
-        let mut wtxn = vault.store.env.write_txn()?;
-        assert!(
-            vault
-                .store
-                .text_doc_field_lengths
-                .delete(&mut wtxn, id.as_bytes())?
-        );
-        let err = deindex_text(&vault.store, &mut wtxn, &id).unwrap_err();
-        assert!(
-            matches!(err, Error::CorruptedIndex(_)),
-            "expected CorruptedIndex, got {err:?}"
-        );
-        Ok(())
-    }
-
-    #[test]
-    fn deindex_fails_closed_on_forward_posting_membership_mismatch() -> Result<()> {
-        let temp_dir = tempfile::tempdir()?;
-        let vault = Vault::open(temp_dir.path(), test_config())?;
-        let id = EntityId::now();
-        let other = EntityId::now();
-        put_text_doc(&vault, &id, "alpha")?;
-        put_text_doc(&vault, &other, "alpha")?;
-
-        let mut wtxn = vault.store.env.write_txn()?;
-        let posting = vault
-            .store
-            .text_postings
-            .get(&wtxn, b"alpha")?
-            .expect("alpha posting written");
-        let entries = decode_posting(posting)?;
-        let mut patched = Vec::new();
-        for entry in entries {
-            if entry.id == id {
-                continue;
-            }
-            let fields = entry.fields.into_iter().collect::<BTreeMap<_, _>>();
-            encode_posting_entry(&entry.id, &fields, &mut patched)?;
+                .put(&mut wtxn, &surface_fid.to_be_bytes(), &short)?;
+            wtxn.commit()?;
+            Ok(())
         }
-        vault
-            .store
-            .text_postings
-            .put(&mut wtxn, b"alpha", &patched)?;
-
-        let err = deindex_text(&vault.store, &mut wtxn, &id).unwrap_err();
-        assert!(
-            matches!(err, Error::CorruptedIndex(_)),
-            "expected CorruptedIndex, got {err:?}"
-        );
-        Ok(())
-    }
-
-    /// Row present but missing the `Surface` fid. Scorer must not silently
-    /// default `len_f = 0`, which would yield `norm = 1 - b` (a 4× boost
-    /// under default b=0.75) for the corrupted document.
-    #[test]
-    fn search_fails_closed_on_partial_field_lengths() -> Result<()> {
-        let temp_dir = tempfile::tempdir()?;
-        let vault = Vault::open(temp_dir.path(), test_config())?;
-        let id = EntityId::now();
-        put_text_doc(&vault, &id, "alpha beta")?;
-
-        let surface_fid = AnalyzerChannel::Surface.field_id();
-        let mut wtxn = vault.store.env.write_txn()?;
-        let raw = vault
-            .store
-            .text_doc_field_lengths
-            .get(&wtxn, id.as_bytes())?
-            .expect("length row written on index")
-            .to_vec();
-        let mut lens = decode_field_lengths(&raw)?;
-        assert!(lens.remove(&surface_fid).is_some());
-        let patched = encode_field_lengths(&lens);
-        vault
-            .store
-            .text_doc_field_lengths
-            .put(&mut wtxn, id.as_bytes(), &patched)?;
-        wtxn.commit()?;
-
-        let rtxn = vault.store.env.read_txn()?;
-        let err = search_text(
-            &vault.store,
-            &rtxn,
-            &MultilingualAnalyzer::portable(),
-            &Bm25Config::default(),
-            "alpha",
-            10,
-        )
-        .unwrap_err();
-        assert!(
-            matches!(err, Error::CorruptedIndex(_)),
-            "expected CorruptedIndex, got {err:?}"
-        );
-        Ok(())
-    }
-
-    /// Row present but missing a forward-referenced fid. Deindex must refuse
-    /// to run: the per-field `text_bm25_field_stats` decrement at the
-    /// length-loop site would silently skip while `total_docs--` still
-    /// fires, drifting the corpus.
-    #[test]
-    fn deindex_fails_closed_on_partial_field_lengths() -> Result<()> {
-        let temp_dir = tempfile::tempdir()?;
-        let vault = Vault::open(temp_dir.path(), test_config())?;
-        let id = EntityId::now();
-        put_text_doc(&vault, &id, "alpha beta")?;
-
-        let surface_fid = AnalyzerChannel::Surface.field_id();
-        let mut wtxn = vault.store.env.write_txn()?;
-        let raw = vault
-            .store
-            .text_doc_field_lengths
-            .get(&wtxn, id.as_bytes())?
-            .expect("length row written on index")
-            .to_vec();
-        let mut lens = decode_field_lengths(&raw)?;
-        assert!(lens.remove(&surface_fid).is_some());
-        let patched = encode_field_lengths(&lens);
-        vault
-            .store
-            .text_doc_field_lengths
-            .put(&mut wtxn, id.as_bytes(), &patched)?;
-
-        let err = deindex_text(&vault.store, &mut wtxn, &id).unwrap_err();
-        assert!(
-            matches!(err, Error::CorruptedIndex(_)),
-            "expected CorruptedIndex, got {err:?}"
-        );
-        Ok(())
-    }
-
-    /// Inverse: length row lists a fid with no matching forward entry.
-    /// Same drift class — forward-loop decrements fire for a subset of
-    /// fields that doesn't cover the lengths map.
-    #[test]
-    fn deindex_fails_closed_on_orphan_length_entry() -> Result<()> {
-        let temp_dir = tempfile::tempdir()?;
-        let vault = Vault::open(temp_dir.path(), test_config())?;
-        let id = EntityId::now();
-        put_text_doc(&vault, &id, "alpha beta")?;
-
-        let mut wtxn = vault.store.env.write_txn()?;
-        let raw = vault
-            .store
-            .text_doc_field_lengths
-            .get(&wtxn, id.as_bytes())?
-            .expect("length row written on index")
-            .to_vec();
-        let mut lens = decode_field_lengths(&raw)?;
-        // Inject an orphan fid that no forward record will reference.
-        lens.insert(9999, 7);
-        let patched = encode_field_lengths(&lens);
-        vault
-            .store
-            .text_doc_field_lengths
-            .put(&mut wtxn, id.as_bytes(), &patched)?;
-
-        let err = deindex_text(&vault.store, &mut wtxn, &id).unwrap_err();
-        assert!(
-            matches!(err, Error::CorruptedIndex(_)),
-            "expected CorruptedIndex, got {err:?}"
-        );
-        Ok(())
-    }
-
-    /// A zero length on Surface (a channel that never emits zero-length
-    /// tokens) means the lengths row was corrupted — deindex must refuse
-    /// rather than silently underflow `total_length` decrement.
-    #[test]
-    fn deindex_fails_closed_on_zero_length_count_field() -> Result<()> {
-        let temp_dir = tempfile::tempdir()?;
-        let vault = Vault::open(temp_dir.path(), test_config())?;
-        let id = EntityId::now();
-        put_text_doc(&vault, &id, "alpha beta")?;
-
-        let surface_fid = AnalyzerChannel::Surface.field_id();
-        let mut wtxn = vault.store.env.write_txn()?;
-        let raw = vault
-            .store
-            .text_doc_field_lengths
-            .get(&wtxn, id.as_bytes())?
-            .expect("length row written on index")
-            .to_vec();
-        let mut lens = decode_field_lengths(&raw)?;
-        lens.insert(surface_fid, 0);
-        let patched = encode_field_lengths(&lens);
-        vault
-            .store
-            .text_doc_field_lengths
-            .put(&mut wtxn, id.as_bytes(), &patched)?;
-
-        let err = deindex_text(&vault.store, &mut wtxn, &id).unwrap_err();
-        assert!(
-            matches!(err, Error::CorruptedIndex(_)),
-            "expected CorruptedIndex, got {err:?}"
-        );
-        Ok(())
-    }
-
-    /// Row-existence must fire even when no `CountLengthIncrement` field
-    /// has non-zero weight in the rank profile — pre-fix the lookup was
-    /// nested inside that branch and a NoNorm-only match slipped past.
-    #[test]
-    fn search_fails_closed_on_missing_lengths_for_nonorm_only_match() -> Result<()> {
-        let temp_dir = tempfile::tempdir()?;
-        let vault = Vault::open(temp_dir.path(), test_config())?;
-        let id = EntityId::now();
-        put_text_doc(&vault, &id, "alpha")?;
-
-        let mut wtxn = vault.store.env.write_txn()?;
-        assert!(
+        fn setup_missing_field_lengths(vault: &Vault, id: &EntityId) -> Result<()> {
+            let mut wtxn = vault.store.env.write_txn()?;
+            assert!(
+                vault
+                    .store
+                    .text_doc_field_lengths
+                    .delete(&mut wtxn, id.as_bytes())?
+            );
+            wtxn.commit()?;
+            Ok(())
+        }
+        fn setup_missing_field_stats_for_used_field(vault: &Vault, _id: &EntityId) -> Result<()> {
+            let surface_fid = AnalyzerChannel::Surface.field_id();
+            let mut wtxn = vault.store.env.write_txn()?;
+            assert!(
+                vault
+                    .store
+                    .text_bm25_field_stats
+                    .delete(&mut wtxn, &surface_fid.to_be_bytes())?
+            );
+            wtxn.commit()?;
+            Ok(())
+        }
+        fn setup_unknown_field_id(vault: &Vault, _id: &EntityId) -> Result<()> {
+            let mut wtxn = vault.store.env.write_txn()?;
+            let mut posting = vault
+                .store
+                .text_postings
+                .get(&wtxn, b"alpha")?
+                .expect("alpha posting written")
+                .to_vec();
+            let fid_offset = ENTITY_ID_LEN + 1;
+            posting[fid_offset..fid_offset + 2].copy_from_slice(&9999_u16.to_be_bytes());
+            vault
+                .store
+                .text_postings
+                .put(&mut wtxn, b"alpha", &posting)?;
+            wtxn.commit()?;
+            Ok(())
+        }
+        fn setup_df_exceeds_total_docs(vault: &Vault, _id: &EntityId) -> Result<()> {
+            let mut wtxn = vault.store.env.write_txn()?;
+            let mut posting = vault
+                .store
+                .text_postings
+                .get(&wtxn, b"alpha")?
+                .expect("alpha posting written")
+                .to_vec();
+            let phantom = EntityId::now();
+            let mut fields = std::collections::BTreeMap::new();
+            fields.insert(AnalyzerChannel::Surface.field_id(), 1);
+            encode_posting_entry(&phantom, &fields, &mut posting)?;
+            vault
+                .store
+                .text_postings
+                .put(&mut wtxn, b"alpha", &posting)?;
+            wtxn.commit()?;
+            Ok(())
+        }
+        fn setup_partial_field_lengths(vault: &Vault, id: &EntityId) -> Result<()> {
+            let surface_fid = AnalyzerChannel::Surface.field_id();
+            let mut wtxn = vault.store.env.write_txn()?;
+            let raw = vault
+                .store
+                .text_doc_field_lengths
+                .get(&wtxn, id.as_bytes())?
+                .expect("length row written on index")
+                .to_vec();
+            let mut lens = decode_field_lengths(&raw)?;
+            assert!(lens.remove(&surface_fid).is_some());
+            let patched = encode_field_lengths(&lens);
             vault
                 .store
                 .text_doc_field_lengths
-                .delete(&mut wtxn, id.as_bytes())?
-        );
-        wtxn.commit()?;
+                .put(&mut wtxn, id.as_bytes(), &patched)?;
+            wtxn.commit()?;
+            Ok(())
+        }
+        fn setup_missing_lengths_for_nonorm_only_match(vault: &Vault, id: &EntityId) -> Result<()> {
+            let mut wtxn = vault.store.env.write_txn()?;
+            assert!(
+                vault
+                    .store
+                    .text_doc_field_lengths
+                    .delete(&mut wtxn, id.as_bytes())?
+            );
+            wtxn.commit()?;
+            Ok(())
+        }
 
-        let mut config = Bm25Config::default();
-        config.fields[AnalyzerChannel::Surface.field_id() as usize].weight = 0.0;
-        config.fields[AnalyzerChannel::Stem.field_id() as usize].weight = 0.0;
-        config.fields[AnalyzerChannel::CjkNgram.field_id() as usize].weight = 0.0;
+        // Default config + custom config for the NoNorm-only variant.
+        let default_cfg = || Bm25Config::default();
+        let nonorm_only_cfg = || {
+            let mut config = Bm25Config::default();
+            config.fields[AnalyzerChannel::Surface.field_id() as usize].weight = 0.0;
+            config.fields[AnalyzerChannel::Stem.field_id() as usize].weight = 0.0;
+            config.fields[AnalyzerChannel::CjkNgram.field_id() as usize].weight = 0.0;
+            config
+        };
 
-        let rtxn = vault.store.env.read_txn()?;
-        let err = search_text(
-            &vault.store,
-            &rtxn,
-            &MultilingualAnalyzer::portable(),
-            &config,
-            "alpha",
-            10,
-        )
-        .unwrap_err();
-        assert!(
-            matches!(err, Error::CorruptedIndex(_)),
-            "expected CorruptedIndex, got {err:?}"
-        );
+        // (case_name, setup_fn, config_builder, doc_text)
+        let cases: Vec<(&str, Setup, fn() -> Bm25Config, &str)> = vec![
+            (
+                "corrupted_field_stats",
+                setup_corrupted_field_stats,
+                default_cfg,
+                "alpha beta",
+            ),
+            (
+                "missing_field_lengths",
+                setup_missing_field_lengths,
+                default_cfg,
+                "alpha beta",
+            ),
+            (
+                "missing_field_stats_for_used_field",
+                setup_missing_field_stats_for_used_field,
+                default_cfg,
+                "alpha beta",
+            ),
+            (
+                "unknown_field_id",
+                setup_unknown_field_id,
+                default_cfg,
+                "alpha beta",
+            ),
+            (
+                "df_exceeds_total_docs",
+                setup_df_exceeds_total_docs,
+                default_cfg,
+                "alpha beta",
+            ),
+            (
+                "partial_field_lengths",
+                setup_partial_field_lengths,
+                default_cfg,
+                "alpha beta",
+            ),
+            (
+                "missing_lengths_for_nonorm_only_match",
+                setup_missing_lengths_for_nonorm_only_match,
+                nonorm_only_cfg,
+                "alpha",
+            ),
+        ];
+
+        for (case_name, setup, build_cfg, doc_text) in cases {
+            let temp_dir = tempfile::tempdir()?;
+            let vault = Vault::open(temp_dir.path(), test_config())?;
+            let id = EntityId::now();
+            put_text_doc(&vault, &id, doc_text)?;
+
+            setup(&vault, &id)?;
+
+            let cfg = build_cfg();
+            let rtxn = vault.store.env.read_txn()?;
+            let err = search_text(
+                &vault.store,
+                &rtxn,
+                &MultilingualAnalyzer::portable(),
+                &cfg,
+                "alpha",
+                10,
+            )
+            .unwrap_err();
+            assert!(
+                matches!(err, Error::CorruptedIndex(_)),
+                "case {case_name}: expected CorruptedIndex, got {err:?}"
+            );
+        }
+        Ok(())
+    }
+
+    /// Each deindex-side variant corrupts the BM25 state then asserts
+    /// `deindex_text` propagates `CorruptedIndex` rather than drifting the
+    /// corpus stats.
+    ///
+    /// Variants:
+    /// - `missing_field_lengths`: full lengths row deleted.
+    /// - `forward_posting_membership_mismatch`: forward record lists the doc
+    ///   for "alpha" but posting list has been rewritten without it.
+    /// - `partial_field_lengths`: lengths row present but missing the
+    ///   Surface fid — per-field stats decrement would silently skip while
+    ///   total_docs-- still fires.
+    /// - `orphan_length_entry`: lengths row carries a fid (9999) that no
+    ///   forward record references — same drift class, inverse direction.
+    /// - `zero_length_count_field`: zero length on the Surface channel
+    ///   (which never emits zero-length tokens) would underflow
+    ///   `total_length` decrement.
+    #[test]
+    fn deindex_fails_closed_on_all_corruption_variants() -> Result<()> {
+        type Setup = fn(&Vault, &EntityId, &mut heed::RwTxn<'_>) -> Result<()>;
+        fn setup_missing_field_lengths(
+            vault: &Vault,
+            id: &EntityId,
+            wtxn: &mut heed::RwTxn<'_>,
+        ) -> Result<()> {
+            assert!(
+                vault
+                    .store
+                    .text_doc_field_lengths
+                    .delete(wtxn, id.as_bytes())?
+            );
+            Ok(())
+        }
+        fn setup_forward_posting_membership_mismatch(
+            vault: &Vault,
+            id: &EntityId,
+            wtxn: &mut heed::RwTxn<'_>,
+        ) -> Result<()> {
+            // Caller pre-inserted a second doc "other" so the posting has >1 entry.
+            let posting = vault
+                .store
+                .text_postings
+                .get(wtxn, b"alpha")?
+                .expect("alpha posting written");
+            let entries = decode_posting(posting)?;
+            let mut patched = Vec::new();
+            for entry in entries {
+                if entry.id == *id {
+                    continue;
+                }
+                let fields = entry.fields.into_iter().collect::<BTreeMap<_, _>>();
+                encode_posting_entry(&entry.id, &fields, &mut patched)?;
+            }
+            vault.store.text_postings.put(wtxn, b"alpha", &patched)?;
+            Ok(())
+        }
+        fn setup_partial_field_lengths(
+            vault: &Vault,
+            id: &EntityId,
+            wtxn: &mut heed::RwTxn<'_>,
+        ) -> Result<()> {
+            let surface_fid = AnalyzerChannel::Surface.field_id();
+            let raw = vault
+                .store
+                .text_doc_field_lengths
+                .get(wtxn, id.as_bytes())?
+                .expect("length row written on index")
+                .to_vec();
+            let mut lens = decode_field_lengths(&raw)?;
+            assert!(lens.remove(&surface_fid).is_some());
+            let patched = encode_field_lengths(&lens);
+            vault
+                .store
+                .text_doc_field_lengths
+                .put(wtxn, id.as_bytes(), &patched)?;
+            Ok(())
+        }
+        fn setup_orphan_length_entry(
+            vault: &Vault,
+            id: &EntityId,
+            wtxn: &mut heed::RwTxn<'_>,
+        ) -> Result<()> {
+            let raw = vault
+                .store
+                .text_doc_field_lengths
+                .get(wtxn, id.as_bytes())?
+                .expect("length row written on index")
+                .to_vec();
+            let mut lens = decode_field_lengths(&raw)?;
+            lens.insert(9999, 7);
+            let patched = encode_field_lengths(&lens);
+            vault
+                .store
+                .text_doc_field_lengths
+                .put(wtxn, id.as_bytes(), &patched)?;
+            Ok(())
+        }
+        fn setup_zero_length_count_field(
+            vault: &Vault,
+            id: &EntityId,
+            wtxn: &mut heed::RwTxn<'_>,
+        ) -> Result<()> {
+            let surface_fid = AnalyzerChannel::Surface.field_id();
+            let raw = vault
+                .store
+                .text_doc_field_lengths
+                .get(wtxn, id.as_bytes())?
+                .expect("length row written on index")
+                .to_vec();
+            let mut lens = decode_field_lengths(&raw)?;
+            lens.insert(surface_fid, 0);
+            let patched = encode_field_lengths(&lens);
+            vault
+                .store
+                .text_doc_field_lengths
+                .put(wtxn, id.as_bytes(), &patched)?;
+            Ok(())
+        }
+
+        // (case_name, setup_fn, needs_second_doc)
+        let cases: Vec<(&str, Setup, bool)> = vec![
+            ("missing_field_lengths", setup_missing_field_lengths, false),
+            (
+                "forward_posting_membership_mismatch",
+                setup_forward_posting_membership_mismatch,
+                true,
+            ),
+            ("partial_field_lengths", setup_partial_field_lengths, false),
+            ("orphan_length_entry", setup_orphan_length_entry, false),
+            (
+                "zero_length_count_field",
+                setup_zero_length_count_field,
+                false,
+            ),
+        ];
+
+        for (case_name, setup, needs_second_doc) in cases {
+            let temp_dir = tempfile::tempdir()?;
+            let vault = Vault::open(temp_dir.path(), test_config())?;
+            let id = EntityId::now();
+            if needs_second_doc {
+                // Membership-mismatch variant needs a second doc on "alpha".
+                let other = EntityId::now();
+                put_text_doc(&vault, &id, "alpha")?;
+                put_text_doc(&vault, &other, "alpha")?;
+            } else {
+                put_text_doc(&vault, &id, "alpha beta")?;
+            }
+
+            let mut wtxn = vault.store.env.write_txn()?;
+            setup(&vault, &id, &mut wtxn)?;
+            let err = deindex_text(&vault.store, &mut wtxn, &id).unwrap_err();
+            assert!(
+                matches!(err, Error::CorruptedIndex(_)),
+                "case {case_name}: expected CorruptedIndex, got {err:?}"
+            );
+        }
         Ok(())
     }
 

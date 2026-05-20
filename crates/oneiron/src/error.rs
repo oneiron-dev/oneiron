@@ -260,14 +260,10 @@ impl From<std::io::Error> for Error {
     }
 }
 
-#[cfg(all(test, feature = "sync"))]
-mod tests {
-    use super::Error;
-
+// Compile-time assertion that Error: Send + Sync + 'static.
+// Ungated (runs in all profiles); replaces the previous runtime test
+// that was gated behind #[cfg(all(test, feature = "sync"))].
+const _: fn() = || {
     fn assert_send_sync_static<T: Send + Sync + 'static>() {}
-
-    #[test]
-    fn error_is_send_sync_static() {
-        assert_send_sync_static::<Error>();
-    }
-}
+    assert_send_sync_static::<Error>();
+};

@@ -712,7 +712,7 @@ fn collect_temporal_candidates(
     }
 
     if config.anchor_mode != TemporalAnchorMode::Learned {
-        let long_interval_lower = temporal_key_upper_bound(occurred_window_end);
+        let long_interval_lower = temporal_key_bound(occurred_window_end, 0xFF);
         // Keep the top `per_scan_cap` spanners by the same exact temporal score
         // used later in `execute_temporal()`. Since `per_scan_cap` is 4x the
         // final result limit, anything outside this top-k cannot enter the
@@ -870,9 +870,9 @@ fn collect_index_candidates(
         return Ok(());
     }
 
-    let window_start_key = temporal_key_lower_bound(window_start);
-    let window_end_key = temporal_key_upper_bound(window_end);
-    let anchor_key = temporal_key_lower_bound(anchor_mid);
+    let window_start_key = temporal_key_bound(window_start, 0x00);
+    let window_end_key = temporal_key_bound(window_end, 0xFF);
+    let anchor_key = temporal_key_bound(anchor_mid, 0x00);
 
     let mut rows =
         Vec::<TemporalIndexRow>::with_capacity(cap.saturating_mul(2).min(MAX_TEMPORAL_SEEK_BUFFER));
@@ -976,8 +976,8 @@ fn normalize_backward_boundary_bucket(
 
     rows.truncate(rows.len().saturating_sub(boundary_count));
 
-    let boundary_start_key = temporal_key_lower_bound(boundary_timestamp);
-    let boundary_end_key = temporal_key_upper_bound(boundary_timestamp);
+    let boundary_start_key = temporal_key_bound(boundary_timestamp, 0x00);
+    let boundary_end_key = temporal_key_bound(boundary_timestamp, 0xFF);
     let mut boundary_rows = Vec::with_capacity(boundary_count);
     let mut boundary_iter = db.range(
         rtxn,
@@ -1008,14 +1008,8 @@ fn compare_temporal_index_rows(
         .then_with(|| left.id.as_bytes().cmp(right.id.as_bytes()))
 }
 
-fn temporal_key_lower_bound(ts: u64) -> [u8; TEMPORAL_KEY_LEN] {
-    let mut key = [0_u8; TEMPORAL_KEY_LEN];
-    key[..8].copy_from_slice(&ts.to_be_bytes());
-    key
-}
-
-fn temporal_key_upper_bound(ts: u64) -> [u8; TEMPORAL_KEY_LEN] {
-    let mut key = [0xFF_u8; TEMPORAL_KEY_LEN];
+fn temporal_key_bound(ts: u64, fill: u8) -> [u8; TEMPORAL_KEY_LEN] {
+    let mut key = [fill; TEMPORAL_KEY_LEN];
     key[..8].copy_from_slice(&ts.to_be_bytes());
     key
 }
@@ -1303,27 +1297,23 @@ fn learned_anchor_range(config: &TemporalSearchConfig) -> Result<(u64, u64)> {
     }
 }
 
-fn remove_floor(score: f64, floor: f64) -> f64 {
-    ((score - floor) / (1.0 - floor)).clamp(0.0, 1.0)
-}
-
-fn apply_floor(score: f64, floor: f64) -> f64 {
-    score * (1.0 - floor) + floor
-}
-
 fn combine_proximity(mode: TemporalAnchorMode, occurred: f64, learned: f64, floor: f64) -> f64 {
     match mode {
         TemporalAnchorMode::Occurred => occurred,
         TemporalAnchorMode::Learned => learned,
         TemporalAnchorMode::Both => {
-            let occurred_net = remove_floor(occurred, floor);
-            let learned_net = remove_floor(learned, floor);
-            apply_floor(occurred_net * learned_net, floor)
+            // Strip the per-axis floor before combining, then re-add it once.
+            let span = 1.0 - floor;
+            let occurred_net = ((occurred - floor) / span).clamp(0.0, 1.0);
+            let learned_net = ((learned - floor) / span).clamp(0.0, 1.0);
+            occurred_net * learned_net * span + floor
         }
         TemporalAnchorMode::Auto => {
-            let occurred_net = remove_floor(occurred, floor);
-            let learned_net = remove_floor(learned, floor);
-            apply_floor(1.0 - (1.0 - occurred_net) * (1.0 - learned_net), floor)
+            // Normalized noisy-OR with a shared floor.
+            let span = 1.0 - floor;
+            let occurred_net = ((occurred - floor) / span).clamp(0.0, 1.0);
+            let learned_net = ((learned - floor) / span).clamp(0.0, 1.0);
+            (1.0 - (1.0 - occurred_net) * (1.0 - learned_net)) * span + floor
         }
     }
 }
@@ -1353,6 +1343,10 @@ mod tests {
             dict_search_paths: Vec::new(),
             skip_text_index_manifest_check: false,
         }
+    }
+
+    fn open_test_vault() -> (tempfile::TempDir, Vault) {
+        crate::test_util::open_test_vault_with(test_config())
     }
 
     fn entity_id(byte: u8) -> EntityId {
@@ -1416,8 +1410,7 @@ mod tests {
 
     #[test]
     fn text_only_query() -> Result<()> {
-        let temp_dir = tempfile::tempdir()?;
-        let vault = Vault::open(temp_dir.path(), test_config())?;
+        let (_dir, vault) = open_test_vault();
         let a = entity_id(3);
         let b = entity_id(4);
 
@@ -1457,8 +1450,7 @@ mod tests {
 
     #[test]
     fn vector_only_query() -> Result<()> {
-        let temp_dir = tempfile::tempdir()?;
-        let vault = Vault::open(temp_dir.path(), test_config())?;
+        let (_dir, vault) = open_test_vault();
         let a = entity_id(10);
         let b = entity_id(11);
 
@@ -1476,8 +1468,7 @@ mod tests {
 
     #[test]
     fn expand_ppr_uses_rrf_results_as_seeds() -> Result<()> {
-        let temp_dir = tempfile::tempdir()?;
-        let vault = Vault::open(temp_dir.path(), test_config())?;
+        let (_dir, vault) = open_test_vault();
 
         let a = entity_id(20);
         let b = entity_id(21);
@@ -1504,8 +1495,7 @@ mod tests {
 
     #[test]
     fn expand_ppr_clamps_internal_seed_growth() -> Result<()> {
-        let temp_dir = tempfile::tempdir()?;
-        let vault = Vault::open(temp_dir.path(), test_config())?;
+        let (_dir, vault) = open_test_vault();
 
         for i in 0..=crate::ppr::MAX_PPR_SEEDS {
             let id = EntityId::from_bytes((i as u128 + 1).to_be_bytes())?;
@@ -1537,8 +1527,7 @@ mod tests {
 
     #[test]
     fn search_ppr_as_pre_rrf_signal() -> Result<()> {
-        let temp_dir = tempfile::tempdir()?;
-        let vault = Vault::open(temp_dir.path(), test_config())?;
+        let (_dir, vault) = open_test_vault();
 
         let a = entity_id(22);
         let b = entity_id(23);
@@ -1557,8 +1546,7 @@ mod tests {
 
     #[test]
     fn search_ppr_warms_cache_after_pipeline_snapshot() -> Result<()> {
-        let temp_dir = tempfile::tempdir()?;
-        let vault = Vault::open(temp_dir.path(), test_config())?;
+        let (_dir, vault) = open_test_vault();
 
         let a = entity_id(24);
         let b = entity_id(25);
@@ -1581,9 +1569,8 @@ mod tests {
     }
 
     #[test]
-    fn search_ppr_rejects_excessive_seed_count_and_depth() -> Result<()> {
-        let temp_dir = tempfile::tempdir()?;
-        let vault = Vault::open(temp_dir.path(), test_config())?;
+    fn search_ppr_rejects_excessive_seed_count_and_depth() {
+        let (_dir, vault) = open_test_vault();
         let seeds = vec![entity_id(1); crate::ppr::MAX_PPR_SEEDS + 1];
 
         let too_many_seeds = vault.query().search_ppr(&seeds, 3).run();
@@ -1591,13 +1578,11 @@ mod tests {
 
         let too_deep = vault.query().search_ppr(&[entity_id(1)], 11).run();
         assert!(matches!(too_deep, Err(Error::InvalidConfig(_))));
-        Ok(())
     }
 
     #[test]
     fn recency_boost_auto_skips_when_temporal_search_present() -> Result<()> {
-        let temp_dir = tempfile::tempdir()?;
-        let vault = Vault::open(temp_dir.path(), test_config())?;
+        let (_dir, vault) = open_test_vault();
 
         let anchor = 2_000_000;
         let a = entity_id(30);
@@ -1627,8 +1612,7 @@ mod tests {
 
     #[test]
     fn three_index_scan_discovers_end_only_candidate() -> Result<()> {
-        let temp_dir = tempfile::tempdir()?;
-        let vault = Vault::open(temp_dir.path(), test_config())?;
+        let (_dir, vault) = open_test_vault();
 
         let anchor = 2_000_000;
         let candidate = entity_id(40);
@@ -1646,8 +1630,7 @@ mod tests {
 
     #[test]
     fn long_interval_spanner_is_discovered_via_range_query() -> Result<()> {
-        let temp_dir = tempfile::tempdir()?;
-        let vault = Vault::open(temp_dir.path(), test_config())?;
+        let (_dir, vault) = open_test_vault();
 
         let anchor = 2_000_000_u64;
         let candidate = entity_id(41);
@@ -1673,8 +1656,7 @@ mod tests {
 
     #[test]
     fn long_interval_scan_counts_only_spanners_toward_cap() -> Result<()> {
-        let temp_dir = tempfile::tempdir()?;
-        let vault = Vault::open(temp_dir.path(), test_config())?;
+        let (_dir, vault) = open_test_vault();
 
         let anchor = 2_000_000_u64;
         let window = 86_400_u64;
@@ -1741,8 +1723,7 @@ mod tests {
 
     #[test]
     fn long_interval_scan_keeps_best_spanners_beyond_end_order_cap() -> Result<()> {
-        let temp_dir = tempfile::tempdir()?;
-        let vault = Vault::open(temp_dir.path(), test_config())?;
+        let (_dir, vault) = open_test_vault();
 
         let anchor = crate::unix_seconds_now();
         let span = LONG_INTERVAL_THRESHOLD_SECS + 86_400;
@@ -1776,8 +1757,7 @@ mod tests {
 
     #[test]
     fn long_interval_scan_does_not_spend_cap_on_preexisting_ids() -> Result<()> {
-        let temp_dir = tempfile::tempdir()?;
-        let vault = Vault::open(temp_dir.path(), test_config())?;
+        let (_dir, vault) = open_test_vault();
 
         let anchor = crate::unix_seconds_now();
         let span = LONG_INTERVAL_THRESHOLD_SECS + 86_400;
@@ -1843,8 +1823,7 @@ mod tests {
 
     #[test]
     fn backward_seek_preserves_lowest_ids_with_same_timestamp() -> Result<()> {
-        let temp_dir = tempfile::tempdir()?;
-        let vault = Vault::open(temp_dir.path(), test_config())?;
+        let (_dir, vault) = open_test_vault();
         let timestamp = 99;
 
         for byte in [40_u8, 41, 42, 43, 44] {
@@ -1874,8 +1853,7 @@ mod tests {
 
     #[test]
     fn future_events_are_scored() -> Result<()> {
-        let temp_dir = tempfile::tempdir()?;
-        let vault = Vault::open(temp_dir.path(), test_config())?;
+        let (_dir, vault) = open_test_vault();
 
         let now = crate::unix_seconds_now();
         let start = now + 7 * 86_400;
@@ -1908,8 +1886,7 @@ mod tests {
 
     #[test]
     fn temporal_tier_equivalence() -> Result<()> {
-        let temp_dir = tempfile::tempdir()?;
-        let vault = Vault::open(temp_dir.path(), test_config())?;
+        let (_dir, vault) = open_test_vault();
 
         let a = entity_id(60);
         let b = entity_id(61);
@@ -1937,8 +1914,7 @@ mod tests {
 
     #[test]
     fn per_scan_cap_isolation_keeps_learned_candidates() -> Result<()> {
-        let temp_dir = tempfile::tempdir()?;
-        let vault = Vault::open(temp_dir.path(), test_config())?;
+        let (_dir, vault) = open_test_vault();
 
         let anchor = 2_000_000;
         for i in 0..40_u8 {
@@ -1973,62 +1949,96 @@ mod tests {
     }
 
     #[test]
-    fn sigma_not_clamped_and_granularity_tiers_differ() -> Result<()> {
-        let temp_dir = tempfile::tempdir()?;
-        let vault = Vault::open(temp_dir.path(), test_config())?;
+    fn granularity_sigma_ordering() -> Result<()> {
+        // For a fixed entity-to-anchor distance, increasing sigma should
+        // monotonically increase the temporal-similarity score (wider Gaussian =
+        // higher density at the same offset). The two original tests both
+        // assert this monotonicity; we collapse them into a single ordering
+        // table that walks adjacent sigma pairs.
+        //
+        // (case_name, distance_secs, sigma_a (smaller), sigma_b (larger))
+        // Assertion per case: score_a < score_b for an entity placed
+        // `distance_secs` past the anchor.
+        let cases: &[(&str, u64, u64, u64)] = &[
+            // From sigma_not_clamped_and_granularity_tiers_differ: distance = 20_000s
+            (
+                "20ks_exact_lt_hour",
+                20_000,
+                TemporalGranularity::Exact.sigma_secs(),
+                TemporalGranularity::Hour.sigma_secs(),
+            ),
+            (
+                "20ks_hour_lt_day",
+                20_000,
+                TemporalGranularity::Hour.sigma_secs(),
+                TemporalGranularity::Day.sigma_secs(),
+            ),
+            // From granularity_day_vs_year_distributions_differ: distance = 5 days
+            (
+                "5d_day_lt_year",
+                5 * 86_400,
+                TemporalGranularity::Day.sigma_secs(),
+                TemporalGranularity::Year.sigma_secs(),
+            ),
+        ];
 
-        let anchor = 1_000_000;
-        let id = entity_id(90);
-        put_entity(
-            &vault,
-            id,
-            0,
-            anchor + 20_000,
-            anchor + 20_000,
-            anchor + 20_000,
-        )?;
+        // Use a distinct entity per case to keep score lookup unambiguous.
+        // entity_id(90) was the original ID in the first test; use 90+i so
+        // there's no collision with other tests in this module.
+        for (i, (name, distance, sigma_a, sigma_b)) in cases.iter().enumerate() {
+            let (_dir, vault) = open_test_vault();
+            let anchor: u64 = 1_000_000;
+            let id = entity_id(90_u8.saturating_add(i as u8));
+            let ts = anchor + *distance;
+            put_entity(&vault, id, 0, ts, ts, ts)?;
 
-        let base_config = TemporalSearchConfig {
-            anchor_start: anchor,
-            anchor_end: anchor,
-            learned_start: None,
-            learned_end: None,
-            sigma_secs: 0,
-            anchor_mode: TemporalAnchorMode::Occurred,
-            adaptive: true,
-            limit: 10,
-        };
-        let exact_config = TemporalSearchConfig {
-            sigma_secs: TemporalGranularity::Exact.sigma_secs(),
-            ..base_config
-        };
-        let hour_config = TemporalSearchConfig {
-            sigma_secs: TemporalGranularity::Hour.sigma_secs(),
-            ..base_config
-        };
-        let day_config = TemporalSearchConfig {
-            sigma_secs: TemporalGranularity::Day.sigma_secs(),
-            ..base_config
-        };
+            let base_config = TemporalSearchConfig {
+                anchor_start: anchor,
+                anchor_end: anchor,
+                learned_start: None,
+                learned_end: None,
+                sigma_secs: 0,
+                anchor_mode: TemporalAnchorMode::Occurred,
+                adaptive: true,
+                limit: 10,
+            };
+            let cfg_a = TemporalSearchConfig {
+                sigma_secs: *sigma_a,
+                ..base_config
+            };
+            let cfg_b = TemporalSearchConfig {
+                sigma_secs: *sigma_b,
+                ..base_config
+            };
 
-        let rtxn = vault.store.env.read_txn()?;
-        let mut metadata_cache = EntityMetadataCache::default();
-        let exact =
-            execute_temporal(&vault.store, &rtxn, &exact_config, &mut metadata_cache)?[0].score;
-        let hour =
-            execute_temporal(&vault.store, &rtxn, &hour_config, &mut metadata_cache)?[0].score;
-        let day = execute_temporal(&vault.store, &rtxn, &day_config, &mut metadata_cache)?[0].score;
+            let rtxn = vault.store.env.read_txn()?;
+            let mut metadata_cache = EntityMetadataCache::default();
+            let results_a = execute_temporal(&vault.store, &rtxn, &cfg_a, &mut metadata_cache)?;
+            let results_b = execute_temporal(&vault.store, &rtxn, &cfg_b, &mut metadata_cache)?;
 
-        assert!(exact < hour);
-        assert!(hour < day);
+            let score_a = results_a
+                .iter()
+                .find(|entry| entry.id == id)
+                .unwrap_or_else(|| panic!("case {name}: entity missing in sigma_a results"))
+                .score;
+            let score_b = results_b
+                .iter()
+                .find(|entry| entry.id == id)
+                .unwrap_or_else(|| panic!("case {name}: entity missing in sigma_b results"))
+                .score;
+
+            assert!(
+                score_a < score_b,
+                "case {name}: expected score_a < score_b (sigma_a={sigma_a}, sigma_b={sigma_b}, distance={distance}); got score_a={score_a}, score_b={score_b}"
+            );
+        }
 
         Ok(())
     }
 
     #[test]
     fn sigma_driven_discovery_for_year_granularity() -> Result<()> {
-        let temp_dir = tempfile::tempdir()?;
-        let vault = Vault::open(temp_dir.path(), test_config())?;
+        let (_dir, vault) = open_test_vault();
 
         let anchor = 1_000_000;
         let far = entity_id(100);
@@ -2072,8 +2082,7 @@ mod tests {
 
     #[test]
     fn bidirectional_priority_favors_nearest_candidates() -> Result<()> {
-        let temp_dir = tempfile::tempdir()?;
-        let vault = Vault::open(temp_dir.path(), test_config())?;
+        let (_dir, vault) = open_test_vault();
 
         let anchor = 2_000_000;
         let near = entity_id(110);
@@ -2116,8 +2125,7 @@ mod tests {
 
     #[test]
     fn adaptive_widening_and_disable() -> Result<()> {
-        let temp_dir = tempfile::tempdir()?;
-        let vault = Vault::open(temp_dir.path(), test_config())?;
+        let (_dir, vault) = open_test_vault();
 
         let anchor = 5_000_000;
         let target = entity_id(120);
@@ -2161,8 +2169,7 @@ mod tests {
 
     #[test]
     fn contiguity_boost_behavior() -> Result<()> {
-        let temp_dir = tempfile::tempdir()?;
-        let vault = Vault::open(temp_dir.path(), test_config())?;
+        let (_dir, vault) = open_test_vault();
 
         let anchor = 3_000_000;
         let cluster_a = entity_id(130);
@@ -2229,8 +2236,7 @@ mod tests {
 
     #[test]
     fn overlap_tiebreak_prefers_closer_midpoint() -> Result<()> {
-        let temp_dir = tempfile::tempdir()?;
-        let vault = Vault::open(temp_dir.path(), test_config())?;
+        let (_dir, vault) = open_test_vault();
 
         let anchor_start = 100;
         let anchor_end = 200;
@@ -2257,8 +2263,7 @@ mod tests {
 
     #[test]
     fn learned_overlap_tiebreak_uses_learned_axis() -> Result<()> {
-        let temp_dir = tempfile::tempdir()?;
-        let vault = Vault::open(temp_dir.path(), test_config())?;
+        let (_dir, vault) = open_test_vault();
 
         let anchor_start = crate::unix_seconds_now() + 100;
         let anchor_end = anchor_start + 100;
@@ -2299,8 +2304,7 @@ mod tests {
 
     #[test]
     fn filters_work() -> Result<()> {
-        let temp_dir = tempfile::tempdir()?;
-        let vault = Vault::open(temp_dir.path(), test_config())?;
+        let (_dir, vault) = open_test_vault();
 
         let keep = entity_id(150);
         let drop = entity_id(151);
@@ -2324,8 +2328,7 @@ mod tests {
 
     #[test]
     fn filters_apply_before_contiguity() -> Result<()> {
-        let temp_dir = tempfile::tempdir()?;
-        let vault = Vault::open(temp_dir.path(), test_config())?;
+        let (_dir, vault) = open_test_vault();
 
         let anchor = 5_000_000;
         for index in 0..5_u8 {
@@ -2355,74 +2358,8 @@ mod tests {
     }
 
     #[test]
-    fn granularity_day_vs_year_distributions_differ() -> Result<()> {
-        let temp_dir = tempfile::tempdir()?;
-        let vault = Vault::open(temp_dir.path(), test_config())?;
-
-        let anchor = 1_000_000;
-        let near = entity_id(160);
-        let far = entity_id(161);
-
-        put_entity(
-            &vault,
-            near,
-            0,
-            anchor + 3_600,
-            anchor + 3_600,
-            anchor + 3_600,
-        )?;
-        put_entity(
-            &vault,
-            far,
-            0,
-            anchor + 5 * 86_400,
-            anchor + 5 * 86_400,
-            anchor + 5 * 86_400,
-        )?;
-
-        let base_config = TemporalSearchConfig {
-            anchor_start: anchor,
-            anchor_end: anchor,
-            learned_start: None,
-            learned_end: None,
-            sigma_secs: 0,
-            anchor_mode: TemporalAnchorMode::Occurred,
-            adaptive: true,
-            limit: 10,
-        };
-        let day_config = TemporalSearchConfig {
-            sigma_secs: TemporalGranularity::Day.sigma_secs(),
-            ..base_config
-        };
-        let year_config = TemporalSearchConfig {
-            sigma_secs: TemporalGranularity::Year.sigma_secs(),
-            ..base_config
-        };
-
-        let rtxn = vault.store.env.read_txn()?;
-        let mut metadata_cache = EntityMetadataCache::default();
-        let day = execute_temporal(&vault.store, &rtxn, &day_config, &mut metadata_cache)?;
-        let year = execute_temporal(&vault.store, &rtxn, &year_config, &mut metadata_cache)?;
-
-        let day_far = day
-            .iter()
-            .find(|entry| entry.id == far)
-            .expect("missing far day")
-            .score;
-        let year_far = year
-            .iter()
-            .find(|entry| entry.id == far)
-            .expect("missing far year")
-            .score;
-
-        assert!(year_far > day_far);
-        Ok(())
-    }
-
-    #[test]
     fn inverted_ranges_are_swapped_on_put() -> Result<()> {
-        let temp_dir = tempfile::tempdir()?;
-        let vault = Vault::open(temp_dir.path(), test_config())?;
+        let (_dir, vault) = open_test_vault();
 
         let id = entity_id(170);
         vault.put_entity(

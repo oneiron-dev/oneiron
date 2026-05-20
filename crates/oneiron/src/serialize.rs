@@ -111,17 +111,13 @@ fn serialize_markdown(pack: &ContextPack, config: &SerializeConfig) -> String {
     let prepared = prepare_pack(pack, config, false);
     let mut out = String::new();
 
-    if prepared.merged {
-        write_markdown_groups(&mut out, &prepared.results, "##");
-    } else {
-        write_markdown_groups(&mut out, &prepared.results, "##");
-        if !prepared.neighbors.is_empty() {
-            if !out.is_empty() {
-                out.push_str("\n---\n\n");
-            }
-            out.push_str("### Neighbors\n\n");
-            write_markdown_groups(&mut out, &prepared.neighbors, "####");
+    write_markdown_groups(&mut out, &prepared.results, "##");
+    if !prepared.merged && !prepared.neighbors.is_empty() {
+        if !out.is_empty() {
+            out.push_str("\n---\n\n");
         }
+        out.push_str("### Neighbors\n\n");
+        write_markdown_groups(&mut out, &prepared.neighbors, "####");
     }
 
     if config.include_stats {
@@ -135,17 +131,13 @@ fn serialize_plaintext(pack: &ContextPack, config: &SerializeConfig) -> String {
     let prepared = prepare_pack(pack, config, false);
     let mut out = String::new();
 
-    if prepared.merged {
-        write_plaintext_groups(&mut out, &prepared.results);
-    } else {
-        write_plaintext_groups(&mut out, &prepared.results);
-        if !prepared.neighbors.is_empty() {
-            if !out.is_empty() {
-                out.push('\n');
-            }
-            out.push_str("---NEIGHBORS\n\n");
-            write_plaintext_groups(&mut out, &prepared.neighbors);
+    write_plaintext_groups(&mut out, &prepared.results);
+    if !prepared.merged && !prepared.neighbors.is_empty() {
+        if !out.is_empty() {
+            out.push('\n');
         }
+        out.push_str("---NEIGHBORS\n\n");
+        write_plaintext_groups(&mut out, &prepared.neighbors);
     }
 
     if config.include_stats {
@@ -747,8 +739,10 @@ fn write_indent(out: &mut String, indent: usize) {
 }
 
 fn collect_columns(rows: &[PreparedEntity]) -> Vec<String> {
-    let mut columns = vec!["id".to_owned()];
-    let mut seen = HashSet::<String>::from(["id".to_owned()]);
+    let id_col = "id".to_owned();
+    let mut seen = HashSet::<String>::new();
+    seen.insert(id_col.clone());
+    let mut columns = vec![id_col];
 
     for row in rows {
         for (key, _) in &row.fields {
@@ -1773,42 +1767,42 @@ mod tests {
     }
 
     #[test]
-    fn toon_minimal_saves_at_least_60_percent_vs_json_full() {
+    fn serialization_token_savings_regressions() {
+        // (case_name, format, profile, min_savings_vs_json_full)
+        // Each row asserts the compact (format, profile) pair saves at least
+        // `min_savings` fraction of bytes vs the json/Full baseline.
+        let cases: &[(&str, PackFormat, FieldProfile, f64)] = &[
+            (
+                "toon_minimal",
+                PackFormat::Toon,
+                FieldProfile::Minimal,
+                0.60,
+            ),
+            (
+                "toon_standard",
+                PackFormat::Toon,
+                FieldProfile::Standard,
+                0.45,
+            ),
+            (
+                "plaintext_standard",
+                PackFormat::Plaintext,
+                FieldProfile::Standard,
+                0.55,
+            ),
+        ];
+
         let pack = token_savings_regression_pack();
         let json_full_len = serialized_len(&pack, PackFormat::Json, FieldProfile::Full);
-        let toon_minimal_len = serialized_len(&pack, PackFormat::Toon, FieldProfile::Minimal);
-        let savings = savings_ratio(json_full_len, toon_minimal_len);
 
-        assert!(
-            savings >= 0.60,
-            "TOON Minimal savings {savings:.3} below 0.60; json_full_len={json_full_len}, toon_minimal_len={toon_minimal_len}"
-        );
-    }
-
-    #[test]
-    fn toon_standard_saves_at_least_45_percent_vs_json_full() {
-        let pack = token_savings_regression_pack();
-        let json_full_len = serialized_len(&pack, PackFormat::Json, FieldProfile::Full);
-        let toon_standard_len = serialized_len(&pack, PackFormat::Toon, FieldProfile::Standard);
-        let savings = savings_ratio(json_full_len, toon_standard_len);
-
-        assert!(
-            savings >= 0.45,
-            "TOON Standard savings {savings:.3} below 0.45; json_full_len={json_full_len}, toon_standard_len={toon_standard_len}"
-        );
-    }
-
-    #[test]
-    fn plaintext_saves_at_least_55_percent_vs_json_full() {
-        let pack = token_savings_regression_pack();
-        let json_full_len = serialized_len(&pack, PackFormat::Json, FieldProfile::Full);
-        let plaintext_len = serialized_len(&pack, PackFormat::Plaintext, FieldProfile::Standard);
-        let savings = savings_ratio(json_full_len, plaintext_len);
-
-        assert!(
-            savings >= 0.55,
-            "Plaintext savings {savings:.3} below 0.55; json_full_len={json_full_len}, plaintext_len={plaintext_len}"
-        );
+        for (name, format, profile, threshold) in cases {
+            let compact_len = serialized_len(&pack, *format, *profile);
+            let savings = savings_ratio(json_full_len, compact_len);
+            assert!(
+                savings >= *threshold,
+                "case {name}: savings {savings:.3} below {threshold:.2}; json_full_len={json_full_len}, compact_len={compact_len}"
+            );
+        }
     }
 
     #[test]
@@ -2364,196 +2358,230 @@ mod tests {
     }
 
     #[test]
-    fn test_task_list_field_profiles() {
-        let mut fields = HashMap::new();
-        fields.insert("name".to_owned(), Value::String("Sprint 42".to_owned()));
-        fields.insert(
-            "description".to_owned(),
-            Value::String("Q2 deliverables".to_owned()),
-        );
-        fields.insert("goal".to_owned(), Value::String("Ship the MVP".to_owned()));
-        fields.insert("icon".to_owned(), Value::String("rocket".to_owned()));
-        fields.insert("status".to_owned(), Value::String("active".to_owned()));
-        // Extra fields not in Standard/Minimal — only appear in Full profile or fallback.
-        fields.insert("color".to_owned(), Value::String("#ff0000".to_owned()));
-        fields.insert(
-            "repoUrl".to_owned(),
-            Value::String("https://github.com/example".to_owned()),
-        );
+    fn productivity_field_profiles() {
+        // (case_name, entity_type, short_id, content_hash, group_key,
+        //  raw_fields, present_in_standard_json, absent_from_standard_json,
+        //  expected_standard_order, extra_assertions)
+        //
+        // `extra_assertions` runs after the common JSON/Standard checks; use it for
+        // per-variant tails (plaintext rendering, full-profile membership checks,
+        // Minimal-profile ordering). It receives `(pack, fields_for_profile_fn)` so
+        // it can build additional configs as needed.
+        struct Case<'a> {
+            name: &'a str,
+            entity_type: u8,
+            short_id: &'a str,
+            content_hash: u8,
+            group_key: &'a str,
+            build_fields: fn() -> HashMap<String, Value>,
+            present_in_standard: &'a [&'a str],
+            absent_from_standard: &'a [&'a str],
+            expected_standard_order: &'a [&'a str],
+            extra: fn(&ContextPack),
+        }
 
-        let entity = ContextEntity {
-            id: EntityId::from_bytes_unchecked([60; 16]),
-            short_id: "tl01".to_owned(),
-            content_hash: 0xaa,
-            entity_type: 60,
-            score: 0.8,
-            fields: Some(fields),
-            edges: None,
-            vector: None,
-        };
+        fn task_list_fields() -> HashMap<String, Value> {
+            let mut fields = HashMap::new();
+            fields.insert("name".to_owned(), Value::String("Sprint 42".to_owned()));
+            fields.insert(
+                "description".to_owned(),
+                Value::String("Q2 deliverables".to_owned()),
+            );
+            fields.insert("goal".to_owned(), Value::String("Ship the MVP".to_owned()));
+            fields.insert("icon".to_owned(), Value::String("rocket".to_owned()));
+            fields.insert("status".to_owned(), Value::String("active".to_owned()));
+            // Extras only in Full / fallback.
+            fields.insert("color".to_owned(), Value::String("#ff0000".to_owned()));
+            fields.insert(
+                "repoUrl".to_owned(),
+                Value::String("https://github.com/example".to_owned()),
+            );
+            fields
+        }
 
-        let pack = ContextPack {
-            results: vec![entity],
-            neighbors: vec![],
-            stats: empty_stats(),
-        };
+        fn task_fields() -> HashMap<String, Value> {
+            let mut fields = HashMap::new();
+            fields.insert("role".to_owned(), Value::String("habit".to_owned()));
+            fields.insert("title".to_owned(), Value::String("Morning run".to_owned()));
+            fields.insert("status".to_owned(), Value::String("active".to_owned()));
+            fields.insert(
+                "dueDate".to_owned(),
+                Value::Number(Number::from(
+                    crate::unix_seconds_now().saturating_add(2 * 86_400),
+                )),
+            );
+            fields.insert("priority".to_owned(), Value::Number(Number::from(2_u64)));
+            fields.insert("frequency".to_owned(), Value::String("daily".to_owned()));
+            // Extras only in Full.
+            fields.insert(
+                "frequencyDetail".to_owned(),
+                Value::String("weekdays".to_owned()),
+            );
+            fields.insert(
+                "currentStreak".to_owned(),
+                Value::Number(Number::from(5_u64)),
+            );
+            fields
+        }
 
-        // --- JSON with Standard profile ---
-        let cfg_json = SerializeConfig {
-            format: PackFormat::Json,
-            profile: FieldProfile::Standard,
-            budget: 4000,
-            allocation: TokenAllocation::default(),
-            include_stats: false,
-            merge_neighbors: true,
-            max_field_chars: 500,
-        };
+        fn task_list_extra(pack: &ContextPack) {
+            // Re-assert specific value equality for Standard fields (was in the
+            // original test_task_list_field_profiles via assert_eq!).
+            let cfg_json = SerializeConfig {
+                format: PackFormat::Json,
+                profile: FieldProfile::Standard,
+                budget: 4000,
+                allocation: TokenAllocation::default(),
+                include_stats: false,
+                merge_neighbors: true,
+                max_field_chars: 500,
+            };
+            let parsed: Value =
+                serde_json::from_slice(&serialize_pack(pack, &cfg_json)).expect("json parse");
+            let first = &parsed["task_lists"][0];
+            assert_eq!(first["name"], "Sprint 42");
+            assert_eq!(first["goal"], "Ship the MVP");
+            assert_eq!(first["status"], "active");
 
-        let bytes = serialize_pack(&pack, &cfg_json);
-        let parsed: Value = serde_json::from_slice(&bytes).expect("json parse");
+            // Plaintext Standard: assert group-name uppercasing + short_id:hash + text payload.
+            let cfg_plain = SerializeConfig {
+                format: PackFormat::Plaintext,
+                profile: FieldProfile::Standard,
+                budget: 4000,
+                allocation: TokenAllocation::default(),
+                include_stats: false,
+                merge_neighbors: true,
+                max_field_chars: 500,
+            };
+            let text = String::from_utf8(serialize_pack(pack, &cfg_plain)).expect("utf8");
+            assert!(
+                text.contains("TASK_LISTS"),
+                "group name should be TASK_LISTS"
+            );
+            assert!(text.contains("tl01:aa"), "short_id:hash should appear");
+            assert!(text.contains("Sprint 42"));
+            assert!(text.contains("Ship the MVP"));
+        }
 
-        // Should appear under the "task_lists" group key.
-        let task_lists = parsed.get("task_lists").expect("task_lists key missing");
-        let first = &task_lists[0];
-        assert_eq!(first["name"], "Sprint 42");
-        assert_eq!(first["goal"], "Ship the MVP");
-        assert_eq!(first["status"], "active");
-        // Standard profile for type 60 is ["name", "goal", "status"].
-        // "description" and "icon" are NOT in Standard, so they should be absent.
-        assert!(
-            first.get("description").is_none(),
-            "description should not appear in Standard profile"
-        );
-        assert!(
-            first.get("icon").is_none(),
-            "icon should not appear in Standard profile"
-        );
+        fn task_extra(pack: &ContextPack) {
+            // Re-assert specific string value equality for title/role/status
+            // (was in the original test_task_field_profiles via assert_eq!).
+            let cfg_json = SerializeConfig {
+                format: PackFormat::Json,
+                profile: FieldProfile::Standard,
+                budget: 4000,
+                allocation: TokenAllocation::default(),
+                include_stats: false,
+                merge_neighbors: true,
+                max_field_chars: 500,
+            };
+            let parsed: Value =
+                serde_json::from_slice(&serialize_pack(pack, &cfg_json)).expect("json parse");
+            let first = &parsed["tasks"][0];
+            assert_eq!(first["title"], "Morning run");
+            assert_eq!(first["role"], "habit");
+            assert_eq!(first["status"], "active");
 
-        // --- Plaintext with Standard profile ---
-        let cfg_plain = SerializeConfig {
-            format: PackFormat::Plaintext,
-            profile: FieldProfile::Standard,
-            budget: 4000,
-            allocation: TokenAllocation::default(),
-            include_stats: false,
-            merge_neighbors: true,
-            max_field_chars: 500,
-        };
+            // Minimal ordering for type 61.
+            let minimal = fields_for_profile(61, FieldProfile::Minimal);
+            assert_eq!(minimal, &["title", "role"]);
 
-        let text = String::from_utf8(serialize_pack(&pack, &cfg_plain)).expect("utf8");
-        assert!(
-            text.contains("TASK_LISTS"),
-            "group name should be TASK_LISTS"
-        );
-        assert!(text.contains("tl01:aa"), "short_id:hash should appear");
-        assert!(text.contains("Sprint 42"));
-        assert!(text.contains("Ship the MVP"));
+            // Full membership for type 61.
+            let full = fields_for_profile(61, FieldProfile::Full);
+            assert!(full.contains(&"frequency"));
+            assert!(full.contains(&"frequencyDetail"));
+            assert!(full.contains(&"currentStreak"));
+            assert!(full.contains(&"longestStreak"));
+            assert!(full.contains(&"parentId"));
+            assert!(full.contains(&"listId"));
+            assert!(full.contains(&"position"));
+        }
 
-        // --- Verify field ordering matches fields_for_profile ---
-        let expected = fields_for_profile(60, FieldProfile::Standard);
-        assert_eq!(expected, &["name", "goal", "status"]);
-    }
+        let cases: &[Case] = &[
+            Case {
+                name: "task_list",
+                entity_type: 60,
+                short_id: "tl01",
+                content_hash: 0xaa,
+                group_key: "task_lists",
+                build_fields: task_list_fields,
+                present_in_standard: &["name", "goal", "status"],
+                absent_from_standard: &["description", "icon"],
+                expected_standard_order: &["name", "goal", "status"],
+                extra: task_list_extra,
+            },
+            Case {
+                name: "task",
+                entity_type: 61,
+                short_id: "tk01",
+                content_hash: 0xbb,
+                group_key: "tasks",
+                build_fields: task_fields,
+                present_in_standard: &["title", "role", "status", "priority", "dueDate"],
+                absent_from_standard: &["frequency", "frequencyDetail", "currentStreak"],
+                expected_standard_order: &["title", "role", "status", "priority", "dueDate"],
+                extra: task_extra,
+            },
+        ];
 
-    #[test]
-    fn test_task_field_profiles() {
-        let mut fields = HashMap::new();
-        fields.insert("role".to_owned(), Value::String("habit".to_owned()));
-        fields.insert("title".to_owned(), Value::String("Morning run".to_owned()));
-        fields.insert("status".to_owned(), Value::String("active".to_owned()));
-        fields.insert(
-            "dueDate".to_owned(),
-            Value::Number(Number::from(
-                crate::unix_seconds_now().saturating_add(2 * 86_400),
-            )),
-        );
-        fields.insert("priority".to_owned(), Value::Number(Number::from(2_u64)));
-        fields.insert("frequency".to_owned(), Value::String("daily".to_owned()));
-        // Extra fields only in Full profile.
-        fields.insert(
-            "frequencyDetail".to_owned(),
-            Value::String("weekdays".to_owned()),
-        );
-        fields.insert(
-            "currentStreak".to_owned(),
-            Value::Number(Number::from(5_u64)),
-        );
+        for case in cases {
+            let entity = ContextEntity {
+                id: EntityId::from_bytes_unchecked([case.entity_type; 16]),
+                short_id: case.short_id.to_owned(),
+                content_hash: case.content_hash,
+                entity_type: case.entity_type,
+                score: 0.8,
+                fields: Some((case.build_fields)()),
+                edges: None,
+                vector: None,
+            };
+            let pack = ContextPack {
+                results: vec![entity],
+                neighbors: vec![],
+                stats: empty_stats(),
+            };
 
-        let entity = ContextEntity {
-            id: EntityId::from_bytes_unchecked([61; 16]),
-            short_id: "tk01".to_owned(),
-            content_hash: 0xbb,
-            entity_type: 61,
-            score: 0.75,
-            fields: Some(fields),
-            edges: None,
-            vector: None,
-        };
+            // JSON / Standard profile inclusion + exclusion.
+            let cfg_json = SerializeConfig {
+                format: PackFormat::Json,
+                profile: FieldProfile::Standard,
+                budget: 4000,
+                allocation: TokenAllocation::default(),
+                include_stats: false,
+                merge_neighbors: true,
+                max_field_chars: 500,
+            };
+            let bytes = serialize_pack(&pack, &cfg_json);
+            let parsed: Value = serde_json::from_slice(&bytes).expect("json parse");
+            let group = parsed.get(case.group_key).unwrap_or_else(|| {
+                panic!("case {}: missing group key {}", case.name, case.group_key)
+            });
+            let first = &group[0];
+            for field in case.present_in_standard {
+                assert!(
+                    first.get(field).is_some(),
+                    "case {}: field {field:?} should be present in Standard JSON",
+                    case.name
+                );
+            }
+            for field in case.absent_from_standard {
+                assert!(
+                    first.get(field).is_none(),
+                    "case {}: field {field:?} should be absent from Standard JSON",
+                    case.name
+                );
+            }
 
-        let pack = ContextPack {
-            results: vec![entity],
-            neighbors: vec![],
-            stats: empty_stats(),
-        };
+            // Standard profile ordering matches the documented schema.
+            let standard = fields_for_profile(case.entity_type, FieldProfile::Standard);
+            assert_eq!(
+                standard, case.expected_standard_order,
+                "case {}: Standard profile ordering mismatch",
+                case.name
+            );
 
-        // --- JSON Standard profile ---
-        let cfg = SerializeConfig {
-            format: PackFormat::Json,
-            profile: FieldProfile::Standard,
-            budget: 4000,
-            allocation: TokenAllocation::default(),
-            include_stats: false,
-            merge_neighbors: true,
-            max_field_chars: 500,
-        };
-
-        let bytes = serialize_pack(&pack, &cfg);
-        let parsed: Value = serde_json::from_slice(&bytes).expect("json parse");
-
-        let tasks = parsed.get("tasks").expect("tasks key missing");
-        let first = &tasks[0];
-        assert_eq!(first["title"], "Morning run");
-        assert_eq!(first["role"], "habit");
-        assert_eq!(first["status"], "active");
-        assert!(
-            first.get("priority").is_some(),
-            "priority should be present in Standard"
-        );
-        assert!(
-            first.get("dueDate").is_some(),
-            "dueDate should be present in Standard"
-        );
-        // "frequency" is NOT in Standard profile for type 61.
-        assert!(
-            first.get("frequency").is_none(),
-            "frequency should not appear in Standard profile"
-        );
-        assert!(
-            first.get("frequencyDetail").is_none(),
-            "frequencyDetail should not appear in Standard profile"
-        );
-        assert!(
-            first.get("currentStreak").is_none(),
-            "currentStreak should not appear in Standard profile"
-        );
-
-        // --- Verify field ordering for all profiles ---
-        let minimal = fields_for_profile(61, FieldProfile::Minimal);
-        assert_eq!(minimal, &["title", "role"]);
-
-        let standard = fields_for_profile(61, FieldProfile::Standard);
-        assert_eq!(
-            standard,
-            &["title", "role", "status", "priority", "dueDate"]
-        );
-
-        let full = fields_for_profile(61, FieldProfile::Full);
-        assert!(full.contains(&"frequency"));
-        assert!(full.contains(&"frequencyDetail"));
-        assert!(full.contains(&"currentStreak"));
-        assert!(full.contains(&"longestStreak"));
-        assert!(full.contains(&"parentId"));
-        assert!(full.contains(&"listId"));
-        assert!(full.contains(&"position"));
+            (case.extra)(&pack);
+        }
     }
 
     #[test]

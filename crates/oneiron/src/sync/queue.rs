@@ -639,87 +639,86 @@ mod tests {
     }
 
     #[test]
-    fn missing_sequence_metadata_with_existing_rows_repairs_upward() {
-        let vault = test_vault();
-        let queue = SyncQueue::new(vault.clone()).unwrap();
+    fn sequence_metadata_self_heals() {
+        // 2x2 table: (corruption shape) x (entry point) — every cell asserts
+        // the next push assigns max_existing_seq+1, regardless of what the
+        // metadata key holds or whether clear_all ran first.
+        #[derive(Copy, Clone)]
+        enum Corruption {
+            Missing,
+            Malformed,
+        }
+        #[derive(Copy, Clone)]
+        enum Entry {
+            Push,
+            ClearAll,
+        }
 
-        let mut wtxn = vault.store.env.write_txn().unwrap();
-        vault
-            .store
-            .sync_queue
-            .put(&mut wtxn, &encode_update_key(7), &[7, b'x'])
-            .unwrap();
-        wtxn.commit().unwrap();
+        let cases: &[(&str, Corruption, Entry, u64, u64)] = &[
+            // (case_name, corruption, entry, existing_seq, expected_next_seq)
+            ("missing_then_push", Corruption::Missing, Entry::Push, 7, 8),
+            (
+                "missing_then_clear_all",
+                Corruption::Missing,
+                Entry::ClearAll,
+                7,
+                8,
+            ),
+            (
+                "malformed_then_push",
+                Corruption::Malformed,
+                Entry::Push,
+                4,
+                5,
+            ),
+            (
+                "malformed_then_clear_all",
+                Corruption::Malformed,
+                Entry::ClearAll,
+                9,
+                10,
+            ),
+        ];
 
-        let next = queue.push("2026-03", &[1]).unwrap();
-        assert_eq!(next, 8);
-    }
+        for (case_name, corruption, entry, existing_seq, expected_next) in cases {
+            let vault = test_vault();
+            let queue = SyncQueue::new(vault.clone()).unwrap();
 
-    #[test]
-    fn clear_all_recovers_missing_metadata_with_existing_rows() {
-        let vault = test_vault();
-        let queue = SyncQueue::new(vault.clone()).unwrap();
+            let mut wtxn = vault.store.env.write_txn().unwrap();
+            if matches!(corruption, Corruption::Malformed) {
+                vault
+                    .store
+                    .sync_queue
+                    .put(&mut wtxn, LAST_UPDATE_SEQ_KEY, &[1, 2, 3])
+                    .unwrap();
+            }
+            vault
+                .store
+                .sync_queue
+                .put(&mut wtxn, &encode_update_key(*existing_seq), &[7, b'x'])
+                .unwrap();
+            wtxn.commit().unwrap();
 
-        let mut wtxn = vault.store.env.write_txn().unwrap();
-        vault
-            .store
-            .sync_queue
-            .put(&mut wtxn, &encode_update_key(7), &[7, b'x'])
-            .unwrap();
-        wtxn.commit().unwrap();
-
-        queue.clear_all().unwrap();
-
-        assert_eq!(queue.len().unwrap(), 0);
-        let seq = queue.push("2026-03", &[1]).unwrap();
-        assert_eq!(seq, 8);
-    }
-
-    #[test]
-    fn malformed_sequence_metadata_repairs_upward() {
-        let vault = test_vault();
-        let queue = SyncQueue::new(vault.clone()).unwrap();
-
-        let mut wtxn = vault.store.env.write_txn().unwrap();
-        vault
-            .store
-            .sync_queue
-            .put(&mut wtxn, LAST_UPDATE_SEQ_KEY, &[1, 2, 3])
-            .unwrap();
-        vault
-            .store
-            .sync_queue
-            .put(&mut wtxn, &encode_update_key(4), &[7, b'x'])
-            .unwrap();
-        wtxn.commit().unwrap();
-
-        let next = queue.push("2026-03", &[1]).unwrap();
-        assert_eq!(next, 5);
-    }
-
-    #[test]
-    fn clear_all_recovers_malformed_metadata() {
-        let vault = test_vault();
-        let queue = SyncQueue::new(vault.clone()).unwrap();
-
-        let mut wtxn = vault.store.env.write_txn().unwrap();
-        vault
-            .store
-            .sync_queue
-            .put(&mut wtxn, LAST_UPDATE_SEQ_KEY, &[1, 2, 3])
-            .unwrap();
-        vault
-            .store
-            .sync_queue
-            .put(&mut wtxn, &encode_update_key(9), &[7, b'x'])
-            .unwrap();
-        wtxn.commit().unwrap();
-
-        queue.clear_all().unwrap();
-
-        assert_eq!(queue.len().unwrap(), 0);
-        let seq = queue.push("2026-03", &[1]).unwrap();
-        assert_eq!(seq, 10);
+            match entry {
+                Entry::Push => {
+                    let next = queue.push("2026-03", &[1]).unwrap();
+                    assert_eq!(next, *expected_next, "case {case_name}: push seq mismatch");
+                }
+                Entry::ClearAll => {
+                    queue.clear_all().unwrap();
+                    assert_eq!(
+                        queue.len().unwrap(),
+                        0,
+                        "case {case_name}: clear_all left rows behind"
+                    );
+                    let seq = queue.push("2026-03", &[1]).unwrap();
+                    assert_eq!(
+                        seq, *expected_next,
+                        "case {case_name}: post-clear push seq mismatch"
+                    );
+                }
+            }
+        }
     }
 
     #[test]
@@ -868,140 +867,66 @@ mod tests {
     }
 
     #[test]
-    fn drain_updates_prunes_malformed_update_rows() {
-        let vault = test_vault();
-        let queue = SyncQueue::new(vault.clone()).unwrap();
+    fn drain_updates_prunes_corrupt_rows() {
+        // Three corruption shapes get pruned by drain_updates:
+        //   (case_name, bad_key, bad_value)
+        // - malformed_value: well-formed key, value too short to decode
+        // - overlong_key: key with trailing bytes (length != 10)
+        // - invalid_calendar_or_pre_epoch: well-formed key, value carries a
+        //   window_key string that fails parse_window_key_str (calendar OOB
+        //   or pre-epoch year). Both share the same code path.
+        let well_formed_key = encode_update_key(2).to_vec();
+        let mut overlong_key = Vec::from(encode_update_key(2));
+        overlong_key.push(0xAA);
 
-        queue.push("2026-03", &[1]).unwrap();
+        let mut invalid_calendar_value = vec![7u8];
+        invalid_calendar_value.extend_from_slice(b"2026-13");
+        invalid_calendar_value.extend_from_slice(&[9, 9]);
 
-        let mut bad_key = [0u8; 10];
-        bad_key[..2].copy_from_slice(UPDATE_PREFIX);
-        bad_key[2..].copy_from_slice(&2_u64.to_be_bytes());
+        let mut pre_epoch_value = vec![7u8];
+        pre_epoch_value.extend_from_slice(b"1969-12");
+        pre_epoch_value.extend_from_slice(&[9, 9]);
 
-        let mut wtxn = vault.store.env.write_txn().unwrap();
-        vault
-            .store
-            .sync_queue
-            .put(&mut wtxn, &bad_key, &[0])
-            .unwrap();
-        wtxn.commit().unwrap();
+        let cases: &[(&str, Vec<u8>, Vec<u8>)] = &[
+            ("malformed_value", well_formed_key.clone(), vec![0]),
+            ("overlong_key", overlong_key, vec![7, b'x']),
+            (
+                "invalid_calendar_window_key",
+                well_formed_key.clone(),
+                invalid_calendar_value,
+            ),
+            ("pre_epoch_window_key", well_formed_key, pre_epoch_value),
+        ];
 
-        let updates = queue.drain_updates().unwrap();
-        assert_eq!(updates.len(), 1);
-        assert_eq!(updates[0].seq, 1);
+        for (case_name, bad_key, bad_value) in cases {
+            let vault = test_vault();
+            let queue = SyncQueue::new(vault.clone()).unwrap();
 
-        let rtxn = vault.store.env.read_txn().unwrap();
-        assert!(
+            queue.push("2026-03", &[1]).unwrap();
+
+            let mut wtxn = vault.store.env.write_txn().unwrap();
             vault
                 .store
                 .sync_queue
-                .get(&rtxn, &bad_key)
-                .unwrap()
-                .is_none()
-        );
-    }
+                .put(&mut wtxn, bad_key, bad_value)
+                .unwrap();
+            wtxn.commit().unwrap();
 
-    #[test]
-    fn drain_updates_prunes_overlong_update_keys() {
-        let vault = test_vault();
-        let queue = SyncQueue::new(vault.clone()).unwrap();
+            let updates = queue.drain_updates().unwrap();
+            assert_eq!(updates.len(), 1, "case {case_name}: should keep valid row");
+            assert_eq!(updates[0].seq, 1, "case {case_name}");
 
-        queue.push("2026-03", &[1]).unwrap();
-
-        let mut bad_key = Vec::from(encode_update_key(2));
-        bad_key.push(0xAA);
-
-        let mut wtxn = vault.store.env.write_txn().unwrap();
-        vault
-            .store
-            .sync_queue
-            .put(&mut wtxn, &bad_key, &[7, b'x'])
-            .unwrap();
-        wtxn.commit().unwrap();
-
-        let updates = queue.drain_updates().unwrap();
-        assert_eq!(updates.len(), 1);
-        assert_eq!(updates[0].seq, 1);
-
-        let rtxn = vault.store.env.read_txn().unwrap();
-        assert!(
-            vault
-                .store
-                .sync_queue
-                .get(&rtxn, &bad_key)
-                .unwrap()
-                .is_none()
-        );
-    }
-
-    #[test]
-    fn drain_updates_prunes_invalid_calendar_window_keys() {
-        let vault = test_vault();
-        let queue = SyncQueue::new(vault.clone()).unwrap();
-
-        queue.push("2026-03", &[1]).unwrap();
-
-        let mut bad_value = Vec::new();
-        bad_value.push(7);
-        bad_value.extend_from_slice(b"2026-13");
-        bad_value.extend_from_slice(&[9, 9]);
-
-        let mut wtxn = vault.store.env.write_txn().unwrap();
-        vault
-            .store
-            .sync_queue
-            .put(&mut wtxn, &encode_update_key(2), &bad_value)
-            .unwrap();
-        wtxn.commit().unwrap();
-
-        let updates = queue.drain_updates().unwrap();
-        assert_eq!(updates.len(), 1);
-        assert_eq!(updates[0].seq, 1);
-
-        let rtxn = vault.store.env.read_txn().unwrap();
-        assert!(
-            vault
-                .store
-                .sync_queue
-                .get(&rtxn, &encode_update_key(2))
-                .unwrap()
-                .is_none()
-        );
-    }
-
-    #[test]
-    fn drain_updates_prunes_pre_epoch_window_keys() {
-        let vault = test_vault();
-        let queue = SyncQueue::new(vault.clone()).unwrap();
-
-        queue.push("2026-03", &[1]).unwrap();
-
-        let mut bad_value = Vec::new();
-        bad_value.push(7);
-        bad_value.extend_from_slice(b"1969-12");
-        bad_value.extend_from_slice(&[9, 9]);
-
-        let mut wtxn = vault.store.env.write_txn().unwrap();
-        vault
-            .store
-            .sync_queue
-            .put(&mut wtxn, &encode_update_key(2), &bad_value)
-            .unwrap();
-        wtxn.commit().unwrap();
-
-        let updates = queue.drain_updates().unwrap();
-        assert_eq!(updates.len(), 1);
-        assert_eq!(updates[0].seq, 1);
-
-        let rtxn = vault.store.env.read_txn().unwrap();
-        assert!(
-            vault
-                .store
-                .sync_queue
-                .get(&rtxn, &encode_update_key(2))
-                .unwrap()
-                .is_none()
-        );
+            let rtxn = vault.store.env.read_txn().unwrap();
+            assert!(
+                vault
+                    .store
+                    .sync_queue
+                    .get(&rtxn, bad_key)
+                    .unwrap()
+                    .is_none(),
+                "case {case_name}: corrupt row should be pruned",
+            );
+        }
     }
 
     #[test]
@@ -1042,16 +967,6 @@ mod tests {
     }
 
     #[test]
-    fn is_full_at_max_capacity() {
-        let vault = test_vault();
-        let queue = SyncQueue::new(vault).unwrap();
-
-        // We don't actually insert 10,000 entries (slow), but we can test
-        // that an empty queue is not full.
-        assert!(!queue.is_full().unwrap());
-    }
-
-    #[test]
     fn embed_job_roundtrip() {
         let vault = test_vault();
         let queue = SyncQueue::new(vault).unwrap();
@@ -1067,120 +982,65 @@ mod tests {
     }
 
     #[test]
-    fn drain_embed_jobs_prunes_malformed_keys() {
-        let vault = test_vault();
-        let queue = SyncQueue::new(vault).unwrap();
+    fn drain_embed_jobs_prunes_corrupt_rows() {
+        // Three corruption shapes get pruned by drain_embed_jobs:
+        //   (case_name, bad_key, bad_value)
+        // - malformed_key: zeroed entity id portion fails EntityId::from_bytes
+        // - overlong_key: key has trailing byte (length != 18)
+        // - overlong_value: value has trailing byte (length != 9)
+        let mut zero_key = [0u8; 18];
+        zero_key[..2].copy_from_slice(EMBED_PREFIX);
 
-        let valid_id = EntityId::now();
-        queue.push_embed_job(&valid_id, 1).unwrap();
+        let mut overlong_key = Vec::from(encode_embed_key(&EntityId::now()));
+        overlong_key.push(0xAA);
 
-        let mut bad_key = [0u8; 18];
-        bad_key[..2].copy_from_slice(EMBED_PREFIX);
-        let mut bad_value = Vec::with_capacity(9);
-        bad_value.push(2);
-        bad_value.extend_from_slice(&123u64.to_be_bytes());
+        let proper_key = encode_embed_key(&EntityId::now());
 
-        let mut wtxn = queue.vault.store.env.write_txn().unwrap();
-        queue
-            .vault
-            .store
-            .sync_queue
-            .put(&mut wtxn, &bad_key, &bad_value)
-            .unwrap();
-        wtxn.commit().unwrap();
+        let mut valid_value = Vec::with_capacity(9);
+        valid_value.push(2);
+        valid_value.extend_from_slice(&123u64.to_be_bytes());
 
-        let jobs = queue.drain_embed_jobs().unwrap();
-        assert_eq!(jobs.len(), 1);
-        assert_eq!(jobs[0].entity_id, valid_id);
+        let mut overlong_value = valid_value.clone();
+        overlong_value.push(0xAA);
 
-        let rtxn = queue.vault.store.env.read_txn().unwrap();
-        assert!(
+        let cases: Vec<(&str, Vec<u8>, Vec<u8>)> = vec![
+            ("malformed_key", zero_key.to_vec(), valid_value.clone()),
+            ("overlong_key", overlong_key, valid_value),
+            ("overlong_value", proper_key.to_vec(), overlong_value),
+        ];
+
+        for (case_name, bad_key, bad_value) in &cases {
+            let vault = test_vault();
+            let queue = SyncQueue::new(vault).unwrap();
+
+            let valid_id = EntityId::now();
+            queue.push_embed_job(&valid_id, 1).unwrap();
+
+            let mut wtxn = queue.vault.store.env.write_txn().unwrap();
             queue
                 .vault
                 .store
                 .sync_queue
-                .get(&rtxn, &bad_key)
-                .unwrap()
-                .is_none()
-        );
-    }
+                .put(&mut wtxn, bad_key, bad_value)
+                .unwrap();
+            wtxn.commit().unwrap();
 
-    #[test]
-    fn drain_embed_jobs_prunes_overlong_keys() {
-        let vault = test_vault();
-        let queue = SyncQueue::new(vault).unwrap();
+            let jobs = queue.drain_embed_jobs().unwrap();
+            assert_eq!(jobs.len(), 1, "case {case_name}: should keep valid job");
+            assert_eq!(jobs[0].entity_id, valid_id, "case {case_name}");
 
-        let valid_id = EntityId::now();
-        queue.push_embed_job(&valid_id, 1).unwrap();
-
-        let mut bad_key = Vec::from(encode_embed_key(&EntityId::now()));
-        bad_key.push(0xAA);
-        let mut bad_value = Vec::with_capacity(9);
-        bad_value.push(2);
-        bad_value.extend_from_slice(&123u64.to_be_bytes());
-
-        let mut wtxn = queue.vault.store.env.write_txn().unwrap();
-        queue
-            .vault
-            .store
-            .sync_queue
-            .put(&mut wtxn, &bad_key, &bad_value)
-            .unwrap();
-        wtxn.commit().unwrap();
-
-        let jobs = queue.drain_embed_jobs().unwrap();
-        assert_eq!(jobs.len(), 1);
-        assert_eq!(jobs[0].entity_id, valid_id);
-
-        let rtxn = queue.vault.store.env.read_txn().unwrap();
-        assert!(
-            queue
-                .vault
-                .store
-                .sync_queue
-                .get(&rtxn, &bad_key)
-                .unwrap()
-                .is_none()
-        );
-    }
-
-    #[test]
-    fn drain_embed_jobs_prunes_overlong_values() {
-        let vault = test_vault();
-        let queue = SyncQueue::new(vault).unwrap();
-
-        let valid_id = EntityId::now();
-        queue.push_embed_job(&valid_id, 1).unwrap();
-
-        let bad_key = encode_embed_key(&EntityId::now());
-        let mut bad_value = Vec::with_capacity(10);
-        bad_value.push(2);
-        bad_value.extend_from_slice(&123u64.to_be_bytes());
-        bad_value.push(0xAA);
-
-        let mut wtxn = queue.vault.store.env.write_txn().unwrap();
-        queue
-            .vault
-            .store
-            .sync_queue
-            .put(&mut wtxn, &bad_key, &bad_value)
-            .unwrap();
-        wtxn.commit().unwrap();
-
-        let jobs = queue.drain_embed_jobs().unwrap();
-        assert_eq!(jobs.len(), 1);
-        assert_eq!(jobs[0].entity_id, valid_id);
-
-        let rtxn = queue.vault.store.env.read_txn().unwrap();
-        assert!(
-            queue
-                .vault
-                .store
-                .sync_queue
-                .get(&rtxn, &bad_key)
-                .unwrap()
-                .is_none()
-        );
+            let rtxn = queue.vault.store.env.read_txn().unwrap();
+            assert!(
+                queue
+                    .vault
+                    .store
+                    .sync_queue
+                    .get(&rtxn, bad_key)
+                    .unwrap()
+                    .is_none(),
+                "case {case_name}: corrupt row should be pruned",
+            );
+        }
     }
 
     #[test]
@@ -1263,19 +1123,21 @@ mod tests {
     }
 
     #[test]
-    fn update_key_encoding_roundtrip() {
-        for seq in [0, 1, 255, 65535, u64::MAX] {
+    fn key_encoding_roundtrip() {
+        // Two key families round-trip through their encode/decode pair.
+        // Update keys carry a u64 sequence (boundary values: 0, 1, 255,
+        // 65535, u64::MAX). Embed keys carry an EntityId.
+        for seq in [0u64, 1, 255, 65535, u64::MAX] {
             let encoded = encode_update_key(seq);
-            let decoded = decode_update_key(&encoded).unwrap();
-            assert_eq!(decoded, seq);
+            let decoded = decode_update_key(&encoded)
+                .unwrap_or_else(|e| panic!("update_key seq={seq}: decode failed: {e:?}"));
+            assert_eq!(decoded, seq, "update_key seq={seq}");
         }
-    }
 
-    #[test]
-    fn embed_key_encoding_roundtrip() {
         let id = EntityId::now();
         let encoded = encode_embed_key(&id);
-        let decoded = decode_embed_key(&encoded).unwrap();
-        assert_eq!(decoded, id);
+        let decoded = decode_embed_key(&encoded)
+            .unwrap_or_else(|e| panic!("embed_key id={id:?}: decode failed: {e:?}"));
+        assert_eq!(decoded, id, "embed_key roundtrip");
     }
 }

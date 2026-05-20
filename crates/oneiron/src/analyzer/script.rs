@@ -224,14 +224,14 @@ impl ScriptRunSplitter {
             }
         }
 
-        if runs.is_empty() {
-            if let Some(start) = pending_start {
-                runs.push(ScriptRun {
-                    byte_start: start,
-                    byte_end: text.len() as u32,
-                    script: ScriptClass::Common,
-                });
-            }
+        if runs.is_empty()
+            && let Some(start) = pending_start
+        {
+            runs.push(ScriptRun {
+                byte_start: start,
+                byte_end: text.len() as u32,
+                script: ScriptClass::Common,
+            });
         }
 
         runs
@@ -252,30 +252,43 @@ mod tests {
         assert!(runs.is_empty());
     }
 
+    /// Pure-script inputs yield a single run classified as the expected
+    /// script. Variants cover the three originally-separate cases.
+    ///
+    /// Variants:
+    /// - `pure_latin`: `"hello world"` → Latin, slice equals input.
+    /// - `pure_han`: `"東京大学"` → Han, slice equals input.
+    /// - `pure_punct_is_common`: `"!!!,,,"` → Common (slice not asserted, the
+    ///   original test only checked classification).
     #[test]
-    fn pure_latin_single_run() {
-        let text = "hello world";
-        let runs = ScriptRunSplitter::new().runs(text);
-        assert_eq!(runs.len(), 1);
-        assert_eq!(runs[0].script, ScriptClass::Latin);
-        assert_eq!(runs[0].as_slice(text), text);
-    }
+    fn pure_script_produces_single_run() {
+        // (case_name, text, expected_script, assert_slice_equals_text)
+        let cases: Vec<(&str, &str, ScriptClass, bool)> = vec![
+            ("pure_latin", "hello world", ScriptClass::Latin, true),
+            ("pure_han", "東京大学", ScriptClass::Han, true),
+            ("pure_punct_is_common", "!!!,,,", ScriptClass::Common, false),
+        ];
 
-    #[test]
-    fn pure_han_single_run() {
-        let text = "東京大学";
-        let runs = ScriptRunSplitter::new().runs(text);
-        assert_eq!(runs.len(), 1);
-        assert_eq!(runs[0].script, ScriptClass::Han);
-        assert_eq!(runs[0].as_slice(text), text);
-    }
-
-    #[test]
-    fn pure_punct_single_common_run() {
-        let text = "!!!,,,";
-        let runs = ScriptRunSplitter::new().runs(text);
-        assert_eq!(runs.len(), 1);
-        assert_eq!(runs[0].script, ScriptClass::Common);
+        for (case_name, text, expected_script, assert_slice) in cases {
+            let runs = ScriptRunSplitter::new().runs(text);
+            assert_eq!(
+                runs.len(),
+                1,
+                "case {case_name}: expected exactly one run, got {}",
+                runs.len()
+            );
+            assert_eq!(
+                runs[0].script, expected_script,
+                "case {case_name}: unexpected script class"
+            );
+            if assert_slice {
+                assert_eq!(
+                    runs[0].as_slice(text),
+                    text,
+                    "case {case_name}: run slice did not cover full input"
+                );
+            }
+        }
     }
 
     #[test]
@@ -434,22 +447,37 @@ mod tests {
         );
     }
 
+    /// The Japanese prolonged sound mark `ー` must not split a kana run.
+    /// Variants cover both hiragana and katakana host runs.
+    ///
+    /// Variants:
+    /// - `katakana`: `"スーパー"` → single Katakana run.
+    /// - `hiragana`: `"らーめん"` → single Hiragana run.
     #[test]
-    fn katakana_prolonged_mark_stays_in_run() {
-        let text = "スーパー";
-        let runs = ScriptRunSplitter::new().runs(text);
-        assert_eq!(runs.len(), 1);
-        assert_eq!(runs[0].script, ScriptClass::Katakana);
-        assert_eq!(runs[0].as_slice(text), text);
-    }
+    fn prolonged_mark_stays_in_preceding_script() {
+        let cases: Vec<(&str, &str, ScriptClass)> = vec![
+            ("katakana", "スーパー", ScriptClass::Katakana),
+            ("hiragana", "らーめん", ScriptClass::Hiragana),
+        ];
 
-    #[test]
-    fn hiragana_prolonged_mark_attaches_to_hiragana_run() {
-        let text = "らーめん";
-        let runs = ScriptRunSplitter::new().runs(text);
-        assert_eq!(runs.len(), 1);
-        assert_eq!(runs[0].script, ScriptClass::Hiragana);
-        assert_eq!(runs[0].as_slice(text), text);
+        for (case_name, text, expected_script) in cases {
+            let runs = ScriptRunSplitter::new().runs(text);
+            assert_eq!(
+                runs.len(),
+                1,
+                "case {case_name}: expected single run, got {}",
+                runs.len()
+            );
+            assert_eq!(
+                runs[0].script, expected_script,
+                "case {case_name}: unexpected script class"
+            );
+            assert_eq!(
+                runs[0].as_slice(text),
+                text,
+                "case {case_name}: run slice did not cover full input"
+            );
+        }
     }
 
     #[test]
