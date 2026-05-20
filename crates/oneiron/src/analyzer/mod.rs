@@ -439,15 +439,9 @@ mod tests {
         }
     }
 
-    #[test]
-    fn portable_analyzer_reports_portable_for_all_cjk() {
-        let a = MultilingualAnalyzer::portable();
-        let m = a.manifest();
-        assert_eq!(m.langs["ja"].mode, AnalyzerMode::Portable);
-        assert_eq!(m.langs["zh"].mode, AnalyzerMode::Portable);
-        assert_eq!(m.langs["ko"].mode, AnalyzerMode::Portable);
-        assert_eq!(m.langs["*"].mode, AnalyzerMode::Portable);
-    }
+    // `portable_analyzer_reports_portable_for_all_cjk` deleted as a
+    // tautology — asserting a portable analyzer reports portable mode for
+    // every lang adds no coverage beyond `MultilingualAnalyzer::portable()`.
 
     #[test]
     fn manifest_channels_match_v1() {
@@ -514,19 +508,52 @@ mod tests {
         assert_eq!(terms, vec!["안", "녕", "하", "세", "요"]);
     }
 
+    /// Han-only runs in Portable mode yield both unigram Surface tokens and
+    /// a bigram CjkNgram overlay. Variants exercise the same path with
+    /// different inputs to confirm the overlay shape across multiple
+    /// realistic strings.
+    ///
+    /// Variants:
+    /// - `four_char_japanese_word` (was `han_portable_produces_unigrams_and_bigram_overlay`):
+    ///   `"東京大学"` → surface `[東,京,大,学]`, bigrams `[東京,京大,大学]`.
+    /// - `three_char_chinese_phrase` (was `portable_han_only_run_yields_cjk_ngram_shaped_output`):
+    ///   `"我喜欢"` → surface `[我,喜,欢]`, bigrams `[我喜,喜欢]`.
     #[test]
-    fn han_portable_produces_unigrams_and_bigram_overlay() {
-        let a = MultilingualAnalyzer::portable();
-        let mut out = Vec::new();
-        a.analyze("東京大学", &AnalyzerContext::for_index(), &mut out);
-        let surface = surface_terms(&out);
-        assert_eq!(surface, vec!["東", "京", "大", "学"]);
-        let bigrams: Vec<&str> = out
-            .iter()
-            .filter(|t| t.channel == AnalyzerChannel::CjkNgram)
-            .map(|t| t.term.as_ref())
-            .collect();
-        assert_eq!(bigrams, vec!["東京", "京大", "大学"]);
+    fn portable_han_yields_unigrams_and_bigram_overlay() {
+        let cases: Vec<(&str, &str, Vec<&str>, Vec<&str>)> = vec![
+            (
+                "four_char_japanese_word",
+                "東京大学",
+                vec!["東", "京", "大", "学"],
+                vec!["東京", "京大", "大学"],
+            ),
+            (
+                "three_char_chinese_phrase",
+                "我喜欢",
+                vec!["我", "喜", "欢"],
+                vec!["我喜", "喜欢"],
+            ),
+        ];
+
+        for (case_name, input, expected_surface, expected_bigrams) in cases {
+            let a = MultilingualAnalyzer::portable();
+            let mut out = Vec::new();
+            a.analyze(input, &AnalyzerContext::for_index(), &mut out);
+            let surface = surface_terms(&out);
+            assert_eq!(
+                surface, expected_surface,
+                "case {case_name}: unexpected Surface tokens"
+            );
+            let bigrams: Vec<&str> = out
+                .iter()
+                .filter(|t| t.channel == AnalyzerChannel::CjkNgram)
+                .map(|t| t.term.as_ref())
+                .collect();
+            assert_eq!(
+                bigrams, expected_bigrams,
+                "case {case_name}: unexpected CjkNgram bigrams"
+            );
+        }
     }
 
     #[test]
@@ -734,47 +761,35 @@ mod tests {
         assert!(surface_terms(&out).contains(&"abc"));
     }
 
+    /// Regression guard for cross-run hint bleed: a hiragana run must not
+    /// hand `LanguageHint::Ja` to the Latin analyzer in the *other* run, or
+    /// the English Snowball stemmer would silently disable (so `running`
+    /// would emit no `run` stem). Variants flip the run order.
+    ///
+    /// Variants:
+    /// - `latin_before_hiragana`: `"running とうきょう"`.
+    /// - `latin_after_hiragana`:  `"とうきょう running"`.
     #[test]
-    fn latin_run_before_hiragana_still_stems_english() {
-        // Regression guard for cross-run hint bleed: `とうきょう` must not
-        // hand `LanguageHint::Ja` to the Latin analyzer, because that would
-        // disable the English Snowball stemmer (`running` → no stem).
-        let a = MultilingualAnalyzer::portable();
-        let mut out = Vec::new();
-        a.analyze(
-            "running とうきょう",
-            &AnalyzerContext::for_index(),
-            &mut out,
-        );
-        let stems: Vec<&str> = out
-            .iter()
-            .filter(|t| t.channel == AnalyzerChannel::Stem)
-            .map(|t| t.term.as_ref())
-            .collect();
-        assert!(
-            stems.contains(&"run"),
-            "expected English stem `run` from `running`, got stems: {stems:?}",
-        );
-    }
+    fn latin_run_with_hiragana_still_stems_english() {
+        let cases: Vec<(&str, &str)> = vec![
+            ("latin_before_hiragana", "running とうきょう"),
+            ("latin_after_hiragana", "とうきょう running"),
+        ];
 
-    #[test]
-    fn latin_run_after_hiragana_still_stems_english() {
-        let a = MultilingualAnalyzer::portable();
-        let mut out = Vec::new();
-        a.analyze(
-            "とうきょう running",
-            &AnalyzerContext::for_index(),
-            &mut out,
-        );
-        let stems: Vec<&str> = out
-            .iter()
-            .filter(|t| t.channel == AnalyzerChannel::Stem)
-            .map(|t| t.term.as_ref())
-            .collect();
-        assert!(
-            stems.contains(&"run"),
-            "expected English stem `run` from `running`, got stems: {stems:?}",
-        );
+        for (case_name, input) in cases {
+            let a = MultilingualAnalyzer::portable();
+            let mut out = Vec::new();
+            a.analyze(input, &AnalyzerContext::for_index(), &mut out);
+            let stems: Vec<&str> = out
+                .iter()
+                .filter(|t| t.channel == AnalyzerChannel::Stem)
+                .map(|t| t.term.as_ref())
+                .collect();
+            assert!(
+                stems.contains(&"run"),
+                "case {case_name}: expected English stem `run` from `running`, got stems: {stems:?}",
+            );
+        }
     }
 
     #[test]
@@ -809,21 +824,8 @@ mod tests {
         assert_eq!(surface_terms(&out), vec!["東", "京"]);
     }
 
-    /// Han-only runs in Portable mode still yield surface tokens plus
-    /// cjk_ngram-shaped output.
-    #[test]
-    fn portable_han_only_run_yields_cjk_ngram_shaped_output() {
-        let a = MultilingualAnalyzer::portable();
-        let mut out = Vec::new();
-        a.analyze("我喜欢", &AnalyzerContext::for_index(), &mut out);
-        assert_eq!(surface_terms(&out), vec!["我", "喜", "欢"]);
-        let bigrams: Vec<&str> = out
-            .iter()
-            .filter(|t| t.channel == AnalyzerChannel::CjkNgram)
-            .map(|t| t.term.as_ref())
-            .collect();
-        assert_eq!(bigrams, vec!["我喜", "喜欢"]);
-    }
+    // `portable_han_only_run_yields_cjk_ngram_shaped_output` folded into
+    // `portable_han_yields_unigrams_and_bigram_overlay` above.
 
     #[test]
     fn zh_han_run_with_loaded_chinese_dict_uses_chinese_morphological_path() {

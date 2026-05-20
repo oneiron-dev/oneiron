@@ -235,13 +235,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn portable_analyzer_has_portable_mode() {
-        let zh = ChineseAnalyzer::portable();
-        assert_eq!(zh.mode(), AnalyzerMode::Portable);
-        assert!(zh.dict_path().is_none());
-    }
-
-    #[test]
     fn discover_with_no_paths_returns_portable() {
         let zh = ChineseAnalyzer::discover(&[]).unwrap();
         assert_eq!(zh.mode(), AnalyzerMode::Portable);
@@ -276,32 +269,46 @@ mod tests {
         assert!(out.is_empty());
     }
 
+    /// `char_to_byte_table` must round-trip char index → byte offset across
+    /// multibyte, pure-ASCII, and empty inputs.
+    ///
+    /// Variants:
+    /// - `multibyte`: `"a北b京"` mixes 1- and 3-byte chars.
+    /// - `ascii_only`: `"hello"` — char index equals byte index.
+    /// - `empty`: `""` — zero chars, `byte_of_char(0) == 0`.
     #[test]
     fn char_to_byte_roundtrip_multibyte() {
-        let text = "a北b京";
-        let t = char_to_byte_table(text);
-        assert_eq!(t.char_count(), 4);
-        assert_eq!(t.byte_of_char(0), 0);
-        assert_eq!(t.byte_of_char(1), 1); // after 'a'
-        assert_eq!(t.byte_of_char(2), 4); // after '北' (3 bytes)
-        assert_eq!(t.byte_of_char(3), 5); // after 'b'
-        assert_eq!(t.byte_of_char(4), 8); // after '京'
-    }
-
-    #[test]
-    fn char_to_byte_ascii_only() {
-        let t = char_to_byte_table("hello");
-        assert_eq!(t.char_count(), 5);
-        for i in 0..=5 {
-            assert_eq!(t.byte_of_char(i), i);
+        // multibyte
+        {
+            let text = "a北b京";
+            let t = char_to_byte_table(text);
+            assert_eq!(t.char_count(), 4, "case multibyte: char_count");
+            assert_eq!(t.byte_of_char(0), 0, "case multibyte: char 0");
+            assert_eq!(t.byte_of_char(1), 1, "case multibyte: char 1 after 'a'");
+            assert_eq!(
+                t.byte_of_char(2),
+                4,
+                "case multibyte: char 2 after '北' (3 bytes)"
+            );
+            assert_eq!(t.byte_of_char(3), 5, "case multibyte: char 3 after 'b'");
+            assert_eq!(t.byte_of_char(4), 8, "case multibyte: char 4 after '京'");
         }
-    }
 
-    #[test]
-    fn char_to_byte_empty() {
-        let t = char_to_byte_table("");
-        assert_eq!(t.char_count(), 0);
-        assert_eq!(t.byte_of_char(0), 0);
+        // ascii_only
+        {
+            let t = char_to_byte_table("hello");
+            assert_eq!(t.char_count(), 5, "case ascii_only: char_count");
+            for i in 0..=5 {
+                assert_eq!(t.byte_of_char(i), i, "case ascii_only: char {i}");
+            }
+        }
+
+        // empty
+        {
+            let t = char_to_byte_table("");
+            assert_eq!(t.char_count(), 0, "case empty: char_count");
+            assert_eq!(t.byte_of_char(0), 0, "case empty: char 0");
+        }
     }
 
     /// Morphological-mode integration: only runs when a jieba dict file is

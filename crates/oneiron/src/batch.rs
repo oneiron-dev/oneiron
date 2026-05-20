@@ -1165,6 +1165,22 @@ fn delete_from_phonetic_postings(store: &Store, wtxn: &mut RwTxn<'_>, id: &Entit
         }
     }
 
+    scan_and_strip_phonetic_postings(store, wtxn, id)?;
+    store.phonetic_forward.delete(wtxn, id.as_bytes())?;
+    Ok(())
+}
+
+/// Scan the entire phonetic posting index, drop `id` from every row that
+/// contains it, persist the updates, and report whether any row changed.
+/// Shared by the full-scan fallback in `delete_from_phonetic_postings` and
+/// the reconcile pass that runs after a forward-row-driven delete to catch
+/// stale references.
+fn scan_and_strip_phonetic_postings(
+    store: &Store,
+    wtxn: &mut RwTxn<'_>,
+    id: &EntityId,
+) -> Result<bool> {
+    let mut repaired = false;
     let mut updates = Vec::new();
     let mut deletes = Vec::new();
 
@@ -1174,6 +1190,7 @@ fn delete_from_phonetic_postings(store: &Store, wtxn: &mut RwTxn<'_>, id: &Entit
             continue;
         };
 
+        repaired = true;
         if updated.is_empty() {
             deletes.push(code.to_vec());
         } else {
@@ -1189,8 +1206,7 @@ fn delete_from_phonetic_postings(store: &Store, wtxn: &mut RwTxn<'_>, id: &Entit
         store.phonetic_index.put(wtxn, &code, &posting)?;
     }
 
-    store.phonetic_forward.delete(wtxn, id.as_bytes())?;
-    Ok(())
+    Ok(repaired)
 }
 
 fn log_phonetic_forward_fallback(id: &EntityId, reason: &'static str) {
@@ -1247,33 +1263,7 @@ fn posting_without_entity(posting: &[u8], id: &EntityId) -> Result<Option<Vec<u8
 }
 
 fn reconcile_phonetic_postings(store: &Store, wtxn: &mut RwTxn<'_>, id: &EntityId) -> Result<bool> {
-    let mut repaired = false;
-    let mut updates = Vec::new();
-    let mut deletes = Vec::new();
-
-    for entry in store.phonetic_index.iter(wtxn)? {
-        let (code, posting) = entry?;
-        let Some(updated) = posting_without_entity(posting, id)? else {
-            continue;
-        };
-
-        repaired = true;
-        if updated.is_empty() {
-            deletes.push(code.to_vec());
-        } else {
-            updates.push((code.to_vec(), updated));
-        }
-    }
-
-    for code in deletes {
-        store.phonetic_index.delete(wtxn, &code)?;
-    }
-
-    for (code, posting) in updates {
-        store.phonetic_index.put(wtxn, &code, &posting)?;
-    }
-
-    Ok(repaired)
+    scan_and_strip_phonetic_postings(store, wtxn, id)
 }
 
 fn decode_phonetic_forward_codes(raw: &[u8]) -> Result<Vec<String>> {

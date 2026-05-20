@@ -202,13 +202,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn portable_analyzer_has_portable_mode() {
-        let ko = KoreanAnalyzer::portable();
-        assert_eq!(ko.mode(), AnalyzerMode::Portable);
-        assert!(ko.dict_path().is_none());
-    }
-
-    #[test]
     fn discover_with_no_paths_returns_portable() {
         let ko = KoreanAnalyzer::discover(&[]).unwrap();
         assert_eq!(ko.mode(), AnalyzerMode::Portable);

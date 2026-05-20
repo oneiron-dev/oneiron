@@ -189,26 +189,47 @@ mod tests {
     use super::*;
 
     #[test]
-    fn window_sync_roundtrip() {
-        let key = "2026-02";
-        let payload = b"hello world";
-        let encoded = encode_window_sync(key, window_sub_tags::UPDATE, payload);
-        assert_eq!(encoded[0], TAG_WINDOW_SYNC);
+    fn parse_message_dispatch() {
+        // Two top-level wire tags get routed to their typed SyncMessage
+        // variant by parse_message:
+        //   (case_name, encoded_message, assertion)
+        // - root_update: TAG_SYNC_UPDATE + payload -> SyncMessage::RootUpdate
+        // - window_sync: encode_window_sync(...) -> SyncMessage::WindowSync
+        //   with the original window_key/sub_tag/payload preserved.
+        let root_update_payload = vec![1u8, 2, 3];
+        let mut root_msg = vec![TAG_SYNC_UPDATE];
+        root_msg.extend_from_slice(&root_update_payload);
 
-        let (dk, sub, dp) = decode_window_sync(&encoded[1..]).unwrap();
-        assert_eq!(dk, key);
-        assert_eq!(sub, window_sub_tags::UPDATE);
-        assert_eq!(dp, payload);
-    }
+        let window_msg = encode_window_sync("2026-02", window_sub_tags::UPDATE, b"data");
 
-    #[test]
-    fn parse_message_root_update() {
-        let update = vec![1, 2, 3];
-        let mut msg = vec![TAG_SYNC_UPDATE];
-        msg.extend_from_slice(&update);
-        match parse_message(&msg).unwrap() {
-            SyncMessage::RootUpdate(data) => assert_eq!(data, update),
+        // (case_name, encoded, assertion_fn)
+        type Asserter = fn(SyncMessage);
+        let assert_root: Asserter = |msg| match msg {
+            SyncMessage::RootUpdate(data) => assert_eq!(data, vec![1u8, 2, 3]),
             other => panic!("expected RootUpdate, got {other:?}"),
+        };
+        let assert_window: Asserter = |msg| match msg {
+            SyncMessage::WindowSync {
+                window_key,
+                sub_tag,
+                payload,
+            } => {
+                assert_eq!(window_key, "2026-02");
+                assert_eq!(sub_tag, window_sub_tags::UPDATE);
+                assert_eq!(payload, b"data");
+            }
+            other => panic!("expected WindowSync, got {other:?}"),
+        };
+
+        let cases: &[(&str, Vec<u8>, Asserter)] = &[
+            ("root_update", root_msg, assert_root),
+            ("window_sync", window_msg, assert_window),
+        ];
+
+        for (case_name, encoded, asserter) in cases {
+            let parsed = parse_message(encoded)
+                .unwrap_or_else(|e| panic!("case {case_name}: parse failed: {e:?}"));
+            asserter(parsed);
         }
     }
 
@@ -229,23 +250,6 @@ mod tests {
     #[test]
     fn parse_message_unknown_tag() {
         assert!(parse_message(&[50, 1, 2, 3]).is_err());
-    }
-
-    #[test]
-    fn parse_message_window_sync() {
-        let encoded = encode_window_sync("2026-02", window_sub_tags::UPDATE, b"data");
-        match parse_message(&encoded).unwrap() {
-            SyncMessage::WindowSync {
-                window_key,
-                sub_tag,
-                payload,
-            } => {
-                assert_eq!(window_key, "2026-02");
-                assert_eq!(sub_tag, window_sub_tags::UPDATE);
-                assert_eq!(payload, b"data");
-            }
-            other => panic!("expected WindowSync, got {other:?}"),
-        }
     }
 
     #[test]

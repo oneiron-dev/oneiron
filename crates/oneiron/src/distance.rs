@@ -283,30 +283,68 @@ mod tests {
         (dot / (norm_a.sqrt() * norm_b.sqrt())).clamp(-1.0, 1.0)
     }
 
+    /// Table of `(a, b, expected_similarity, expected_distance)` pairs
+    /// covering the public `cosine_similarity` / `cosine_distance` contract
+    /// across the originally-separate fixture tests.
+    ///
+    /// Variants:
+    /// - `identical_vectors`: sim==1, dist==0.
+    /// - `orthogonal_vectors`: sim==0, dist==1.
+    /// - `zero_norm_zero_vs_non_zero`: degenerate one-zero pair returns dist==1.
+    /// - `zero_norm_zero_vs_zero`: degenerate both-zero pair returns dist==1.
+    /// - `mismatched_lengths`: short-circuit returns 0/1.
+    /// - `non_finite_inputs_nan`: NaN inputs short-circuit to 0/1.
+    /// - `non_finite_inputs_inf`: ±Inf inputs short-circuit to 0/1.
     #[test]
-    fn cosine_identical_vectors() {
-        let a = [0.1_f32, -0.2, 0.3, 0.4, -0.5];
-        let sim = cosine_similarity(&a, &a);
-        approx_eq(sim, 1.0, 1e-6);
-        approx_eq(cosine_distance(&a, &a), 0.0, 1e-6);
-    }
+    #[allow(clippy::type_complexity)]
+    fn cosine_distance_cases() {
+        let identical: Vec<f32> = vec![0.1, -0.2, 0.3, 0.4, -0.5];
+        let zero7: Vec<f32> = vec![0.0; 7];
+        let non_zero7: Vec<f32> = vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0];
+        let nan: Vec<f32> = vec![f32::NAN, 1.0, 2.0, 3.0];
+        let inf: Vec<f32> = vec![f32::INFINITY, 1.0, 2.0, 3.0];
+        let finite4: Vec<f32> = vec![1.0, 2.0, 3.0, 4.0];
 
-    #[test]
-    fn cosine_orthogonal_vectors() {
-        let a = [1.0_f32, 0.0, 0.0, 0.0, 0.0];
-        let b = [0.0_f32, 1.0, 0.0, 0.0, 0.0];
-        approx_eq(cosine_similarity(&a, &b), 0.0, 1e-6);
-        approx_eq(cosine_distance(&a, &b), 1.0, 1e-6);
-    }
+        let cases: Vec<(&str, Vec<f32>, Vec<f32>, f32, f32)> = vec![
+            ("identical_vectors", identical.clone(), identical, 1.0, 0.0),
+            (
+                "orthogonal_vectors",
+                vec![1.0, 0.0, 0.0, 0.0, 0.0],
+                vec![0.0, 1.0, 0.0, 0.0, 0.0],
+                0.0,
+                1.0,
+            ),
+            (
+                "zero_norm_zero_vs_non_zero",
+                zero7.clone(),
+                non_zero7,
+                0.0,
+                1.0,
+            ),
+            ("zero_norm_zero_vs_zero", zero7.clone(), zero7, 0.0, 1.0),
+            (
+                "mismatched_lengths",
+                vec![1.0, 2.0, 3.0],
+                vec![1.0, 2.0],
+                0.0,
+                1.0,
+            ),
+            ("non_finite_inputs_nan", nan, finite4.clone(), 0.0, 1.0),
+            ("non_finite_inputs_inf", inf, finite4, 0.0, 1.0),
+        ];
 
-    #[test]
-    fn cosine_zero_norm_returns_max_distance() {
-        let zero = [0.0_f32; 7];
-        let non_zero = [1.0_f32, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0];
-
-        approx_eq(cosine_similarity(&zero, &non_zero), 0.0, 1e-6);
-        approx_eq(cosine_distance(&zero, &non_zero), 1.0, 1e-6);
-        approx_eq(cosine_distance(&zero, &zero), 1.0, 1e-6);
+        for (case_name, a, b, expected_sim, expected_dist) in cases {
+            let sim = cosine_similarity(&a, &b);
+            let dist = cosine_distance(&a, &b);
+            assert!(
+                (sim - expected_sim).abs() <= 1e-6,
+                "case {case_name}: similarity left={sim}, right={expected_sim}"
+            );
+            assert!(
+                (dist - expected_dist).abs() <= 1e-6,
+                "case {case_name}: distance left={dist}, right={expected_dist}"
+            );
+        }
     }
 
     #[test]
@@ -318,26 +356,8 @@ mod tests {
         approx_eq(cosine_distance(&a, &b), 0.0, 1e-6);
     }
 
-    #[test]
-    fn cosine_returns_zero_for_mismatched_lengths() {
-        let a = [1.0_f32, 2.0, 3.0];
-        let b = [1.0_f32, 2.0];
-
-        approx_eq(cosine_similarity(&a, &b), 0.0, 1e-6);
-        approx_eq(cosine_distance(&a, &b), 1.0, 1e-6);
-    }
-
-    #[test]
-    fn cosine_returns_zero_for_non_finite_inputs() {
-        let nan = [f32::NAN, 1.0, 2.0, 3.0];
-        let inf = [f32::INFINITY, 1.0, 2.0, 3.0];
-        let finite = [1.0_f32, 2.0, 3.0, 4.0];
-
-        approx_eq(cosine_similarity(&nan, &finite), 0.0, 1e-6);
-        approx_eq(cosine_distance(&nan, &finite), 1.0, 1e-6);
-        approx_eq(cosine_similarity(&inf, &finite), 0.0, 1e-6);
-        approx_eq(cosine_distance(&inf, &finite), 1.0, 1e-6);
-    }
+    // mismatched_lengths and non_finite_inputs are folded into
+    // `cosine_distance_cases` above.
 
     #[cfg(target_arch = "x86_64")]
     #[test]

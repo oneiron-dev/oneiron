@@ -92,6 +92,10 @@ fn large_test_config() -> VaultConfig {
     config
 }
 
+fn open_test_vault() -> (tempfile::TempDir, Vault) {
+    crate::test_util::open_test_vault_with(test_config())
+}
+
 fn test_time_range(start: u64, end: u64) -> TimeRange {
     TimeRange { start, end }
 }
@@ -188,8 +192,7 @@ fn encode_edge_key_has_exact_layout() {
 
 #[test]
 fn open_put_get_delete_entities() -> Result<()> {
-    let temp_dir = tempfile::tempdir()?;
-    let vault = Vault::open(temp_dir.path(), test_config())?;
+    let (_dir, vault) = open_test_vault();
     let id = EntityId::now();
     let data = b"entity-payload";
 
@@ -206,8 +209,7 @@ fn open_put_get_delete_entities() -> Result<()> {
 
 #[test]
 fn put_get_vectors_and_validate_dimensions() -> Result<()> {
-    let temp_dir = tempfile::tempdir()?;
-    let vault = Vault::open(temp_dir.path(), test_config())?;
+    let (_dir, vault) = open_test_vault();
     let id = EntityId::now();
     let vector = [0.1_f32, 0.2, 0.3, 0.4];
 
@@ -232,8 +234,7 @@ fn put_get_vectors_and_validate_dimensions() -> Result<()> {
 
 #[test]
 fn put_vector_routes_through_hnsw_insert() -> Result<()> {
-    let temp_dir = tempfile::tempdir()?;
-    let vault = Vault::open(temp_dir.path(), test_config())?;
+    let (_dir, vault) = open_test_vault();
     let id = EntityId::now();
     let vector = [0.1_f32, 0.2, 0.3, 0.4];
 
@@ -267,8 +268,7 @@ fn put_vector_routes_through_hnsw_insert() -> Result<()> {
 
 #[test]
 fn vector_version_bumps_once_per_batch_commit() -> Result<()> {
-    let temp_dir = tempfile::tempdir()?;
-    let vault = Vault::open(temp_dir.path(), test_config())?;
+    let (_dir, vault) = open_test_vault();
     let a = EntityId::now();
     let b = EntityId::now();
 
@@ -288,8 +288,7 @@ fn vector_version_bumps_once_per_batch_commit() -> Result<()> {
 
 #[test]
 fn search_vector_empty_graph_and_dimension_validation() -> Result<()> {
-    let temp_dir = tempfile::tempdir()?;
-    let vault = Vault::open(temp_dir.path(), test_config())?;
+    let (_dir, vault) = open_test_vault();
 
     let empty = vault.search_vector(&[0.1_f32, 0.2, 0.3, 0.4], 10)?;
     assert!(empty.is_empty());
@@ -309,8 +308,7 @@ fn search_vector_empty_graph_and_dimension_validation() -> Result<()> {
 
 #[test]
 fn search_vector_skips_deleted_nodes() -> Result<()> {
-    let temp_dir = tempfile::tempdir()?;
-    let vault = Vault::open(temp_dir.path(), test_config())?;
+    let (_dir, vault) = open_test_vault();
     let entry = EntityId::now();
     let deleted = EntityId::now();
     let live = EntityId::now();
@@ -333,8 +331,7 @@ fn search_vector_skips_deleted_nodes() -> Result<()> {
 
 #[test]
 fn search_vector_ignores_reserved_sentinel_neighbors() -> Result<()> {
-    let temp_dir = tempfile::tempdir()?;
-    let vault = Vault::open(temp_dir.path(), test_config())?;
+    let (_dir, vault) = open_test_vault();
     let entry = EntityId::now();
     let live = EntityId::now();
 
@@ -361,8 +358,7 @@ fn search_vector_ignores_reserved_sentinel_neighbors() -> Result<()> {
 
 #[test]
 fn search_after_entry_point_deleted() -> Result<()> {
-    let temp_dir = tempfile::tempdir()?;
-    let vault = Vault::open(temp_dir.path(), test_config())?;
+    let (_dir, vault) = open_test_vault();
     let entry = EntityId::now();
     let survivor = EntityId::now();
 
@@ -382,9 +378,8 @@ fn search_after_entry_point_deleted() -> Result<()> {
 }
 
 #[test]
-fn validates_non_finite_vector_and_edge_weights() -> Result<()> {
-    let temp_dir = tempfile::tempdir()?;
-    let vault = Vault::open(temp_dir.path(), test_config())?;
+fn validates_non_finite_vector_and_edge_weights() {
+    let (_dir, vault) = open_test_vault();
 
     let vector_err = vault
         .put_vector(&EntityId::now(), &[1.0_f32, f32::NAN, 2.0, 3.0])
@@ -414,7 +409,6 @@ fn validates_non_finite_vector_and_edge_weights() -> Result<()> {
         other => panic!("expected invalid edge weight, got {other:?}"),
     }
     assert!(edge_message.contains("inf"));
-    Ok(())
 }
 
 #[test]
@@ -510,8 +504,7 @@ fn hnsw_recall_at_10_vs_bruteforce() -> Result<()> {
 
 #[test]
 fn put_query_and_delete_edges() -> Result<()> {
-    let temp_dir = tempfile::tempdir()?;
-    let vault = Vault::open(temp_dir.path(), test_config())?;
+    let (_dir, vault) = open_test_vault();
     let src = EntityId::now();
     let tgt = EntityId::now();
     let kind = EdgeKind::Supports;
@@ -541,8 +534,7 @@ fn put_query_and_delete_edges() -> Result<()> {
 
 #[test]
 fn delete_edge_cleans_inbound_orphans() -> Result<()> {
-    let temp_dir = tempfile::tempdir()?;
-    let vault = Vault::open(temp_dir.path(), test_config())?;
+    let (_dir, vault) = open_test_vault();
     let src = EntityId::now();
     let tgt = EntityId::now();
     let kind = EdgeKind::Supports;
@@ -564,8 +556,7 @@ fn delete_edge_cleans_inbound_orphans() -> Result<()> {
 
 #[test]
 fn batch_put_multiple_entities_atomically() -> Result<()> {
-    let temp_dir = tempfile::tempdir()?;
-    let vault = Vault::open(temp_dir.path(), test_config())?;
+    let (_dir, vault) = open_test_vault();
     let id_a = EntityId::now();
     let id_b = EntityId::now();
     let id_c = EntityId::now();
@@ -585,8 +576,7 @@ fn batch_put_multiple_entities_atomically() -> Result<()> {
 
 #[test]
 fn batch_put_writes_type_index() -> Result<()> {
-    let temp_dir = tempfile::tempdir()?;
-    let vault = Vault::open(temp_dir.path(), test_config())?;
+    let (_dir, vault) = open_test_vault();
     let id = EntityId::now();
     let entity_type = 0_u8;
 
@@ -612,8 +602,7 @@ fn batch_put_writes_type_index() -> Result<()> {
 
 #[test]
 fn batch_put_writes_temporal_indexes() -> Result<()> {
-    let temp_dir = tempfile::tempdir()?;
-    let vault = Vault::open(temp_dir.path(), test_config())?;
+    let (_dir, vault) = open_test_vault();
     let id = EntityId::now();
 
     vault
@@ -675,8 +664,7 @@ fn batch_put_writes_temporal_indexes() -> Result<()> {
 
 #[test]
 fn entities_in_learned_range_rejects_corrupted_temporal_key() -> Result<()> {
-    let temp_dir = tempfile::tempdir()?;
-    let vault = Vault::open(temp_dir.path(), test_config())?;
+    let (_dir, vault) = open_test_vault();
 
     let mut key = [0_u8; 24];
     key[..8].copy_from_slice(&50_u64.to_be_bytes());
@@ -698,8 +686,7 @@ fn entities_in_learned_range_rejects_corrupted_temporal_key() -> Result<()> {
 
 #[test]
 fn batch_put_writes_long_interval_index_by_end_time() -> Result<()> {
-    let temp_dir = tempfile::tempdir()?;
-    let vault = Vault::open(temp_dir.path(), test_config())?;
+    let (_dir, vault) = open_test_vault();
     let id = EntityId::now();
     let end = 1_000 + crate::batch::LONG_INTERVAL_THRESHOLD_SECS + 1;
 
@@ -884,8 +871,7 @@ fn open_checks_model_id_before_migrating_long_interval_schema() -> Result<()> {
 
 #[test]
 fn batch_put_assigns_short_id() -> Result<()> {
-    let temp_dir = tempfile::tempdir()?;
-    let vault = Vault::open(temp_dir.path(), test_config())?;
+    let (_dir, vault) = open_test_vault();
     let id1 = EntityId::now();
     let id2 = EntityId::now();
     let data1 = b"entity-one";
@@ -908,8 +894,7 @@ fn batch_put_assigns_short_id() -> Result<()> {
 
 #[test]
 fn batch_put_short_id_reverse_lookup() -> Result<()> {
-    let temp_dir = tempfile::tempdir()?;
-    let vault = Vault::open(temp_dir.path(), test_config())?;
+    let (_dir, vault) = open_test_vault();
     let id = EntityId::now();
     let data = b"reverse";
 
@@ -933,8 +918,7 @@ fn batch_put_short_id_reverse_lookup() -> Result<()> {
 
 #[test]
 fn batch_put_updates_content_hash_on_reput() -> Result<()> {
-    let temp_dir = tempfile::tempdir()?;
-    let vault = Vault::open(temp_dir.path(), test_config())?;
+    let (_dir, vault) = open_test_vault();
     let id = EntityId::now();
     let data1 = b"initial";
     let mut data2 = b"updated".to_vec();
@@ -963,8 +947,7 @@ fn batch_put_updates_content_hash_on_reput() -> Result<()> {
 
 #[test]
 fn reput_deindexes_stale_secondary_indexes() -> Result<()> {
-    let temp_dir = tempfile::tempdir()?;
-    let vault = Vault::open(temp_dir.path(), test_config())?;
+    let (_dir, vault) = open_test_vault();
     let id = EntityId::now();
     let old_type = 0_u8;
     let old_occurred = test_time_range(100, 200);
@@ -1086,8 +1069,7 @@ fn reput_deindexes_stale_secondary_indexes() -> Result<()> {
 
 #[test]
 fn reput_range_to_point_deindexes_stale_end_key() -> Result<()> {
-    let temp_dir = tempfile::tempdir()?;
-    let vault = Vault::open(temp_dir.path(), test_config())?;
+    let (_dir, vault) = open_test_vault();
     let id = EntityId::now();
 
     vault
@@ -1130,8 +1112,7 @@ fn reput_range_to_point_deindexes_stale_end_key() -> Result<()> {
 
 #[test]
 fn reput_rekeys_long_interval_index_and_drops_shortened_range() -> Result<()> {
-    let temp_dir = tempfile::tempdir()?;
-    let vault = Vault::open(temp_dir.path(), test_config())?;
+    let (_dir, vault) = open_test_vault();
     let id = EntityId::now();
     let old_end = 1_000 + crate::batch::LONG_INTERVAL_THRESHOLD_SECS + 10;
     let new_end = 5_000 + crate::batch::LONG_INTERVAL_THRESHOLD_SECS + 20;
@@ -1187,8 +1168,7 @@ fn reput_rekeys_long_interval_index_and_drops_shortened_range() -> Result<()> {
 
 #[test]
 fn batch_phonetic_index() -> Result<()> {
-    let temp_dir = tempfile::tempdir()?;
-    let vault = Vault::open(temp_dir.path(), test_config())?;
+    let (_dir, vault) = open_test_vault();
     let id = EntityId::now();
 
     vault
@@ -1222,8 +1202,7 @@ fn batch_phonetic_index() -> Result<()> {
 
 #[test]
 fn phonetic_dedup_on_reindex() -> Result<()> {
-    let temp_dir = tempfile::tempdir()?;
-    let vault = Vault::open(temp_dir.path(), test_config())?;
+    let (_dir, vault) = open_test_vault();
     let id = EntityId::now();
 
     vault
@@ -1258,8 +1237,7 @@ fn phonetic_dedup_on_reindex() -> Result<()> {
 
 #[test]
 fn phonetic_dedups_duplicate_codes_within_single_batch() -> Result<()> {
-    let temp_dir = tempfile::tempdir()?;
-    let vault = Vault::open(temp_dir.path(), test_config())?;
+    let (_dir, vault) = open_test_vault();
     let id = EntityId::now();
 
     vault
@@ -1292,8 +1270,7 @@ fn phonetic_dedups_duplicate_codes_within_single_batch() -> Result<()> {
 
 #[test]
 fn phonetic_reindex_remains_additive() -> Result<()> {
-    let temp_dir = tempfile::tempdir()?;
-    let vault = Vault::open(temp_dir.path(), test_config())?;
+    let (_dir, vault) = open_test_vault();
     let id = EntityId::now();
 
     vault
@@ -1328,8 +1305,7 @@ fn phonetic_reindex_remains_additive() -> Result<()> {
 
 #[test]
 fn phonetic_reindex_repairs_missing_forward_codes() -> Result<()> {
-    let temp_dir = tempfile::tempdir()?;
-    let vault = Vault::open(temp_dir.path(), test_config())?;
+    let (_dir, vault) = open_test_vault();
     let id = EntityId::now();
 
     vault
@@ -1371,51 +1347,40 @@ fn phonetic_reindex_repairs_missing_forward_codes() -> Result<()> {
 }
 
 #[test]
-fn phonetic_rejects_embedded_nul_codes() -> Result<()> {
-    let temp_dir = tempfile::tempdir()?;
-    let vault = Vault::open(temp_dir.path(), test_config())?;
-    let id = EntityId::now();
+fn phonetic_rejects_invalid_codes_atomically() -> Result<()> {
+    // (case_name, invalid_code, payload)
+    let cases: &[(&str, &str, &[u8])] = &[
+        ("embedded_nul", "BAD\0CODE", b"phonetic-invalid"),
+        ("empty", "", b"phonetic-empty"),
+    ];
 
-    let err = vault
-        .batch()
-        .put(&id, 0, test_time_range(1, 1), 2, b"phonetic-invalid")
-        .phonetic(&id, &["BAD\0CODE"])
-        .commit()
-        .expect_err("expected invalid phonetic code to fail");
-    assert!(matches!(err, Error::InvalidKey));
-    assert!(
-        vault.get(&id)?.is_none(),
-        "batch should remain atomic on phonetic validation failure"
-    );
+    for (name, code, payload) in cases {
+        let (_dir, vault) = open_test_vault();
+        let id = EntityId::now();
 
-    Ok(())
-}
-
-#[test]
-fn phonetic_rejects_empty_codes_atomically() -> Result<()> {
-    let temp_dir = tempfile::tempdir()?;
-    let vault = Vault::open(temp_dir.path(), test_config())?;
-    let id = EntityId::now();
-
-    let err = vault
-        .batch()
-        .put(&id, 0, test_time_range(1, 1), 2, b"phonetic-empty")
-        .phonetic(&id, &[""])
-        .commit()
-        .expect_err("expected empty phonetic code to fail");
-    assert!(matches!(err, Error::InvalidKey));
-    assert!(
-        vault.get(&id)?.is_none(),
-        "batch should remain atomic on phonetic validation failure"
-    );
-
+        let result = vault
+            .batch()
+            .put(&id, 0, test_time_range(1, 1), 2, payload)
+            .phonetic(&id, &[*code])
+            .commit();
+        let err = result
+            .err()
+            .unwrap_or_else(|| panic!("case {name}: expected invalid phonetic code to fail"));
+        assert!(
+            matches!(err, Error::InvalidKey),
+            "case {name}: expected InvalidKey, got {err:?}"
+        );
+        assert!(
+            vault.get(&id)?.is_none(),
+            "case {name}: batch should remain atomic on phonetic validation failure"
+        );
+    }
     Ok(())
 }
 
 #[test]
 fn full_delete_deindexes_everything() -> Result<()> {
-    let temp_dir = tempfile::tempdir()?;
-    let vault = Vault::open(temp_dir.path(), test_config())?;
+    let (_dir, vault) = open_test_vault();
     let id = EntityId::now();
     let out_target = EntityId::now();
     let in_source = EntityId::now();
@@ -1500,165 +1465,125 @@ fn full_delete_deindexes_everything() -> Result<()> {
 }
 
 #[test]
-fn delete_entity_falls_back_when_phonetic_forward_is_missing() -> Result<()> {
-    let temp_dir = tempfile::tempdir()?;
-    let vault = Vault::open(temp_dir.path(), test_config())?;
-    let id = EntityId::now();
+fn delete_entity_phonetic_fallback_variants() -> Result<()> {
+    /// What kind of phonetic-index corruption to inject before `delete_entity`.
+    enum Corruption {
+        /// `phonetic_forward[id]` row deleted entirely.
+        Missing,
+        /// One of the `phonetic_index[code]` postings deleted (forward row intact).
+        StaleIndex,
+        /// `phonetic_forward[id]` overwritten with empty bytes.
+        EmptyForward,
+        /// `phonetic_forward[id]` overwritten with a subset of original codes.
+        SubsetForward,
+    }
 
-    vault
-        .batch()
-        .put(&id, 0, test_time_range(1, 1), 2, b"phonetic-fallback")
-        .phonetic(&id, &["SMTH", "SMT"])
-        .commit()?;
+    // Every variant inserts an entity with the same two phonetic codes,
+    // injects its corruption, then asserts:
+    //  1. `delete_entity` returns Ok(true)
+    //  2. Both phonetic postings no longer reference the deleted entity
+    //  3. (variants StaleIndex, EmptyForward, SubsetForward) phonetic_forward is cleared
+    let cases: &[(&str, &[u8], Corruption)] = &[
+        ("missing", b"phonetic-fallback", Corruption::Missing),
+        (
+            "stale_index",
+            b"phonetic-stale-forward",
+            Corruption::StaleIndex,
+        ),
+        (
+            "empty_forward",
+            b"phonetic-empty-forward",
+            Corruption::EmptyForward,
+        ),
+        (
+            "subset_forward",
+            b"phonetic-subset-forward",
+            Corruption::SubsetForward,
+        ),
+    ];
 
-    let mut wtxn = vault.store.env.write_txn()?;
-    vault
-        .store
-        .phonetic_forward
-        .delete(&mut wtxn, id.as_bytes())?;
-    wtxn.commit()?;
+    for (name, payload, corruption) in cases {
+        let (_dir, vault) = open_test_vault();
+        let id = EntityId::now();
 
-    assert!(vault.delete_entity(&id)?);
+        vault
+            .batch()
+            .put(&id, 0, test_time_range(1, 1), 2, payload)
+            .phonetic(&id, &["SMTH", "SMT"])
+            .commit()?;
 
-    let rtxn = vault.store.env.read_txn()?;
-    for code in ["SMTH", "SMT"] {
-        if let Some(posting) = vault.store.phonetic_index.get(&rtxn, code.as_bytes())? {
-            assert!(!posting.chunks_exact(16).any(|chunk| chunk == id.as_bytes()));
+        let mut wtxn = vault.store.env.write_txn()?;
+        match corruption {
+            Corruption::Missing => {
+                vault
+                    .store
+                    .phonetic_forward
+                    .delete(&mut wtxn, id.as_bytes())?;
+            }
+            Corruption::StaleIndex => {
+                vault.store.phonetic_index.delete(&mut wtxn, b"SMTH")?;
+            }
+            Corruption::EmptyForward => {
+                vault
+                    .store
+                    .phonetic_forward
+                    .put(&mut wtxn, id.as_bytes(), &[])?;
+            }
+            Corruption::SubsetForward => {
+                vault
+                    .store
+                    .phonetic_forward
+                    .put(&mut wtxn, id.as_bytes(), b"SMT")?;
+            }
+        }
+        wtxn.commit()?;
+
+        assert!(
+            vault.delete_entity(&id)?,
+            "case {name}: delete_entity should return true"
+        );
+
+        let rtxn = vault.store.env.read_txn()?;
+
+        // Variants that wrote to phonetic_forward must end with it cleared.
+        let must_clear_forward = matches!(
+            corruption,
+            Corruption::StaleIndex | Corruption::EmptyForward | Corruption::SubsetForward
+        );
+        if must_clear_forward {
+            assert!(
+                vault
+                    .store
+                    .phonetic_forward
+                    .get(&rtxn, id.as_bytes())?
+                    .is_none(),
+                "case {name}: phonetic_forward should be cleared after delete"
+            );
+        }
+
+        // For the stale_index variant the SMTH posting was already deleted; only
+        // assert SMT (the surviving posting) no longer references the entity.
+        let codes_to_check: &[&[u8]] = match corruption {
+            Corruption::StaleIndex => &[b"SMT"],
+            _ => &[b"SMTH", b"SMT"],
+        };
+        for code in codes_to_check {
+            if let Some(posting) = vault.store.phonetic_index.get(&rtxn, code)? {
+                assert!(
+                    !posting.chunks_exact(16).any(|chunk| chunk == id.as_bytes()),
+                    "case {name}: code {:?} still references deleted entity",
+                    std::str::from_utf8(code).unwrap_or("<bin>")
+                );
+            }
         }
     }
 
-    Ok(())
-}
-
-#[test]
-fn delete_entity_falls_back_when_phonetic_forward_is_stale() -> Result<()> {
-    let temp_dir = tempfile::tempdir()?;
-    let vault = Vault::open(temp_dir.path(), test_config())?;
-    let id = EntityId::now();
-
-    vault
-        .batch()
-        .put(&id, 0, test_time_range(1, 1), 2, b"phonetic-stale-forward")
-        .phonetic(&id, &["SMTH", "SMT"])
-        .commit()?;
-
-    let mut wtxn = vault.store.env.write_txn()?;
-    vault.store.phonetic_index.delete(&mut wtxn, b"SMTH")?;
-    wtxn.commit()?;
-
-    assert!(vault.delete_entity(&id)?);
-
-    let rtxn = vault.store.env.read_txn()?;
-    assert!(
-        vault
-            .store
-            .phonetic_forward
-            .get(&rtxn, id.as_bytes())?
-            .is_none()
-    );
-    if let Some(posting) = vault.store.phonetic_index.get(&rtxn, b"SMT")? {
-        assert!(!posting.chunks_exact(16).any(|chunk| chunk == id.as_bytes()));
-    }
-
-    Ok(())
-}
-
-#[test]
-fn delete_entity_falls_back_when_phonetic_forward_is_empty() -> Result<()> {
-    let temp_dir = tempfile::tempdir()?;
-    let vault = Vault::open(temp_dir.path(), test_config())?;
-    let id = EntityId::now();
-
-    vault
-        .batch()
-        .put(&id, 0, test_time_range(1, 1), 2, b"phonetic-empty-forward")
-        .phonetic(&id, &["SMTH", "SMT"])
-        .commit()?;
-
-    let mut wtxn = vault.store.env.write_txn()?;
-    vault
-        .store
-        .phonetic_forward
-        .put(&mut wtxn, id.as_bytes(), &[])?;
-    wtxn.commit()?;
-
-    assert!(vault.delete_entity(&id)?);
-
-    let rtxn = vault.store.env.read_txn()?;
-    assert!(
-        vault
-            .store
-            .phonetic_forward
-            .get(&rtxn, id.as_bytes())?
-            .is_none()
-    );
-    for code in ["SMTH", "SMT"] {
-        if let Some(posting) = vault.store.phonetic_index.get(&rtxn, code.as_bytes())? {
-            assert!(!posting.chunks_exact(16).any(|chunk| chunk == id.as_bytes()));
-        }
-    }
-
-    Ok(())
-}
-
-#[test]
-fn delete_entity_reconciles_subset_phonetic_forward_rows() -> Result<()> {
-    let temp_dir = tempfile::tempdir()?;
-    let vault = Vault::open(temp_dir.path(), test_config())?;
-    let id = EntityId::now();
-
-    vault
-        .batch()
-        .put(&id, 0, test_time_range(1, 1), 2, b"phonetic-subset-forward")
-        .phonetic(&id, &["SMTH", "SMT"])
-        .commit()?;
-
-    let mut wtxn = vault.store.env.write_txn()?;
-    vault
-        .store
-        .phonetic_forward
-        .put(&mut wtxn, id.as_bytes(), b"SMT")?;
-    wtxn.commit()?;
-
-    assert!(vault.delete_entity(&id)?);
-
-    let rtxn = vault.store.env.read_txn()?;
-    assert!(
-        vault
-            .store
-            .phonetic_forward
-            .get(&rtxn, id.as_bytes())?
-            .is_none()
-    );
-    for code in ["SMTH", "SMT"] {
-        if let Some(posting) = vault.store.phonetic_index.get(&rtxn, code.as_bytes())? {
-            assert!(!posting.chunks_exact(16).any(|chunk| chunk == id.as_bytes()));
-        }
-    }
-
-    Ok(())
-}
-
-#[test]
-fn delete_entity_returns_bool() -> Result<()> {
-    let temp_dir = tempfile::tempdir()?;
-    let vault = Vault::open(temp_dir.path(), test_config())?;
-    let id = EntityId::now();
-
-    vault
-        .batch()
-        .put(&id, 0, test_time_range(1, 2), 3, b"exists")
-        .commit()?;
-
-    assert!(vault.delete_entity(&id)?);
-    assert!(!vault.delete_entity(&id)?);
     Ok(())
 }
 
 #[test]
 fn delete_entity_corrupted_edge_record_returns_error_not_panic() -> Result<()> {
-    let temp_dir = tempfile::tempdir()?;
-    let vault = Vault::open(temp_dir.path(), test_config())?;
+    let (_dir, vault) = open_test_vault();
     let id = EntityId::now();
     let target = EntityId::now();
 
@@ -1683,8 +1608,7 @@ fn delete_entity_corrupted_edge_record_returns_error_not_panic() -> Result<()> {
 
 #[test]
 fn delete_entity_cleans_edge_only_nodes_and_bumps_graph_version() -> Result<()> {
-    let temp_dir = tempfile::tempdir()?;
-    let vault = Vault::open(temp_dir.path(), test_config())?;
+    let (_dir, vault) = open_test_vault();
     let src = EntityId::now();
     let tgt = EntityId::now();
 
@@ -1702,8 +1626,7 @@ fn delete_entity_cleans_edge_only_nodes_and_bumps_graph_version() -> Result<()> 
 
 #[test]
 fn put_entity_simple_api_uses_batch() -> Result<()> {
-    let temp_dir = tempfile::tempdir()?;
-    let vault = Vault::open(temp_dir.path(), test_config())?;
+    let (_dir, vault) = open_test_vault();
     let id = EntityId::now();
     let occurred = test_time_range(123, 456);
     let learned_at = 789;
@@ -1754,8 +1677,7 @@ fn put_entity_simple_api_uses_batch() -> Result<()> {
 
 #[test]
 fn get_learned_at_rejects_truncated_entity_header() -> Result<()> {
-    let temp_dir = tempfile::tempdir()?;
-    let vault = Vault::open(temp_dir.path(), test_config())?;
+    let (_dir, vault) = open_test_vault();
     let id = EntityId::now();
 
     vault.with_write_txn(|wtxn| {
@@ -1845,8 +1767,7 @@ fn vault_open_rejects_second_live_env_for_symlinked_path() -> Result<()> {
 
 #[test]
 fn batch_with_edges_and_entities() -> Result<()> {
-    let temp_dir = tempfile::tempdir()?;
-    let vault = Vault::open(temp_dir.path(), test_config())?;
+    let (_dir, vault) = open_test_vault();
     let src = EntityId::now();
     let tgt = EntityId::now();
     let vector = [0.9_f32, 0.8, 0.7, 0.6];
@@ -1875,8 +1796,7 @@ fn batch_with_edges_and_entities() -> Result<()> {
 
 #[test]
 fn edges_out_returns_all_edges_for_same_source() -> Result<()> {
-    let temp_dir = tempfile::tempdir()?;
-    let vault = Vault::open(temp_dir.path(), test_config())?;
+    let (_dir, vault) = open_test_vault();
     let src = EntityId::now();
     let tgt_a = EntityId::now();
     let tgt_b = EntityId::now();
@@ -1930,9 +1850,8 @@ fn detects_embedding_model_mismatch_on_open() -> Result<()> {
 }
 
 #[test]
-fn detects_hnsw_config_mismatch_on_open() -> Result<()> {
-    let temp_dir = tempfile::tempdir()?;
-    let vault = Vault::open(temp_dir.path(), test_config())?;
+fn detects_hnsw_config_mismatch_on_open() {
+    let (temp_dir, vault) = open_test_vault();
     drop(vault);
 
     let mut cfg = test_config();
@@ -1948,14 +1867,11 @@ fn detects_hnsw_config_mismatch_on_open() -> Result<()> {
         } if stored == "dimensions=4,m_max_0=64,ef_construction=200"
             && requested == "dimensions=4,m_max_0=64,ef_construction=201"
     ));
-
-    Ok(())
 }
 
 #[test]
-fn detects_dimension_mismatch_on_open() -> Result<()> {
-    let temp_dir = tempfile::tempdir()?;
-    let vault = Vault::open(temp_dir.path(), test_config())?;
+fn detects_dimension_mismatch_on_open() {
+    let (temp_dir, vault) = open_test_vault();
     drop(vault);
 
     let mut cfg = test_config();
@@ -1971,14 +1887,11 @@ fn detects_dimension_mismatch_on_open() -> Result<()> {
         } if stored == "dimensions=4,m_max_0=64,ef_construction=200"
             && requested == "dimensions=8,m_max_0=64,ef_construction=200"
     ));
-
-    Ok(())
 }
 
 #[test]
 fn allows_ef_search_retuning_on_open() -> Result<()> {
-    let temp_dir = tempfile::tempdir()?;
-    let vault = Vault::open(temp_dir.path(), test_config())?;
+    let (temp_dir, vault) = open_test_vault();
     let id = EntityId::now();
     vault.put_entity(&id, 0, test_time_range(1, 1), 1, b"node")?;
     vault.put_vector(&id, &[0.1, 0.2, 0.3, 0.4])?;
@@ -2042,8 +1955,7 @@ fn embedding_model_first_write_is_atomic() -> Result<()> {
 
 #[test]
 fn creates_all_databases() -> Result<()> {
-    let temp_dir = tempfile::tempdir()?;
-    let vault = Vault::open(temp_dir.path(), test_config())?;
+    let (_dir, vault) = open_test_vault();
     let rtxn = vault.store.env.read_txn()?;
 
     for name in DB_NAMES {
@@ -2059,8 +1971,7 @@ fn creates_all_databases() -> Result<()> {
 
 #[test]
 fn context_pack_run_serialized_toon_end_to_end() -> Result<()> {
-    let temp_dir = tempfile::tempdir()?;
-    let vault = Vault::open(temp_dir.path(), test_config())?;
+    let (_dir, vault) = open_test_vault();
     let a = EntityId::now();
     let b = EntityId::now();
 
@@ -2129,27 +2040,55 @@ fn new_edge_kinds_round_trip_through_u8() {
 }
 
 #[test]
-fn new_edge_kinds_have_default_weights() {
-    assert_eq!(EdgeKind::EmployedBy.default_weight(), 0.8);
-    assert_eq!(EdgeKind::HasFacet.default_weight(), 0.7);
-    assert_eq!(EdgeKind::InWorld.default_weight(), 0.7);
-    assert_eq!(EdgeKind::FacetOf.default_weight(), 0.7);
-    assert_eq!(EdgeKind::SetIn.default_weight(), 0.7);
-}
-
-#[test]
-fn new_entity_type_prefixes() {
+fn all_entity_type_prefixes() {
     use crate::types::short_id_prefix;
-    assert_eq!(short_id_prefix(12).unwrap(), "og");
-    assert_eq!(short_id_prefix(13).unwrap(), "fc");
-    assert_eq!(short_id_prefix(14).unwrap(), "wd");
-    assert!(short_id_prefix(15).is_err());
+
+    enum Expect {
+        Ok(&'static str),
+        Err,
+    }
+
+    // Named cases: (case_name, entity_type_byte, expected).
+    // Covers both the "new" entity types (12-14) and the productivity range (60-62),
+    // plus negative cases pulled from the former `invalid_entity_type_rejected` test.
+    let cases: &[(&str, u8, Expect)] = &[
+        ("organization", 12, Expect::Ok("og")),
+        ("facet", 13, Expect::Ok("fc")),
+        ("world", 14, Expect::Ok("wd")),
+        ("reserved_15", 15, Expect::Err),
+        ("task_list", 60, Expect::Ok("tl")),
+        ("task", 61, Expect::Ok("tk")),
+        ("milestone", 62, Expect::Ok("mc")),
+        ("invalid_99", 99, Expect::Err),
+        ("invalid_255", 255, Expect::Err),
+        // companion range, not yet defined
+        ("companion_30", 30, Expect::Err),
+    ];
+
+    for (name, byte, expected) in cases {
+        let actual = short_id_prefix(*byte);
+        match expected {
+            Expect::Ok(prefix) => {
+                let got = actual.unwrap_or_else(|err| {
+                    panic!("case {name}: expected prefix {prefix:?}, got err {err:?}")
+                });
+                assert_eq!(
+                    got, *prefix,
+                    "case {name}: expected prefix {prefix:?}, got {got:?}"
+                );
+            }
+            Expect::Err => assert!(
+                actual.is_err(),
+                "case {name}: expected error, got Ok({:?})",
+                actual.ok()
+            ),
+        }
+    }
 }
 
 #[test]
 fn put_edge_with_vad_round_trip() -> Result<()> {
-    let temp_dir = tempfile::tempdir()?;
-    let vault = Vault::open(temp_dir.path(), test_config())?;
+    let (_dir, vault) = open_test_vault();
     let src = EntityId::now();
     let tgt = EntityId::now();
 
@@ -2183,9 +2122,8 @@ fn put_edge_with_vad_round_trip() -> Result<()> {
 }
 
 #[test]
-fn put_edge_with_vad_rejects_non_finite() -> Result<()> {
-    let temp_dir = tempfile::tempdir()?;
-    let vault = Vault::open(temp_dir.path(), test_config())?;
+fn put_edge_with_vad_rejects_non_finite() {
+    let (_dir, vault) = open_test_vault();
     let src = EntityId::now();
     let tgt = EntityId::now();
 
@@ -2263,7 +2201,6 @@ fn put_edge_with_vad_rejects_non_finite() -> Result<()> {
         )
         .expect_err("expected invalid vad for out-of-range dominance");
     assert_invalid_vad(err, VadComponent::Dominance, 1.1);
-    Ok(())
 }
 
 fn assert_invalid_vad(err: Error, expected_component: VadComponent, expected_value: f32) {
@@ -2286,8 +2223,7 @@ fn assert_invalid_vad(err: Error, expected_component: VadComponent, expected_val
 
 #[test]
 fn batch_edge_with_vad_api() -> Result<()> {
-    let temp_dir = tempfile::tempdir()?;
-    let vault = Vault::open(temp_dir.path(), test_config())?;
+    let (_dir, vault) = open_test_vault();
     let src = EntityId::now();
     let tgt = EntityId::now();
 
@@ -2318,8 +2254,7 @@ fn batch_edge_with_vad_api() -> Result<()> {
 
 #[test]
 fn productivity_entity_types_round_trip() -> Result<()> {
-    let temp_dir = tempfile::tempdir()?;
-    let vault = Vault::open(temp_dir.path(), test_config())?;
+    let (_dir, vault) = open_test_vault();
     let task_list = EntityId::now();
     let task = EntityId::now();
 
@@ -2332,22 +2267,6 @@ fn productivity_entity_types_round_trip() -> Result<()> {
     assert_eq!(vault.get(&task_list)?.unwrap(), b"project");
     assert_eq!(vault.get(&task)?.unwrap(), b"task-data");
     Ok(())
-}
-
-#[test]
-fn productivity_short_id_prefixes() {
-    use crate::types::short_id_prefix;
-    assert_eq!(short_id_prefix(60).unwrap(), "tl");
-    assert_eq!(short_id_prefix(61).unwrap(), "tk");
-    assert_eq!(short_id_prefix(62).unwrap(), "mc");
-}
-
-#[test]
-fn invalid_entity_type_rejected() {
-    use crate::types::short_id_prefix;
-    assert!(short_id_prefix(99).is_err());
-    assert!(short_id_prefix(255).is_err());
-    assert!(short_id_prefix(30).is_err()); // companion range, not yet defined
 }
 
 #[test]
@@ -2378,8 +2297,7 @@ fn entity_id_from_hex_rejects_reserved_sentinel_bytes() {
 
 #[test]
 fn batch_put_invalid_entity_type_returns_early_error() -> Result<()> {
-    let temp_dir = tempfile::tempdir()?;
-    let vault = Vault::open(temp_dir.path(), test_config())?;
+    let (_dir, vault) = open_test_vault();
     let id = EntityId::now();
 
     let err = vault
@@ -2399,8 +2317,7 @@ fn batch_put_invalid_entity_type_returns_early_error() -> Result<()> {
 
 #[test]
 fn txn_batch_put_invalid_entity_type_returns_error() -> Result<()> {
-    let temp_dir = tempfile::tempdir()?;
-    let vault = Vault::open(temp_dir.path(), test_config())?;
+    let (_dir, vault) = open_test_vault();
     let id = EntityId::now();
 
     let err = vault
@@ -2422,8 +2339,7 @@ fn txn_batch_put_invalid_entity_type_returns_error() -> Result<()> {
 
 #[test]
 fn edge_kinds_child_of_and_assigned_to() -> Result<()> {
-    let temp_dir = tempfile::tempdir()?;
-    let vault = Vault::open(temp_dir.path(), test_config())?;
+    let (_dir, vault) = open_test_vault();
     let child = EntityId::now();
     let parent = EntityId::now();
     let machine = EntityId::now();
@@ -2451,8 +2367,7 @@ fn edge_kinds_child_of_and_assigned_to() -> Result<()> {
 
 #[test]
 fn entities_by_type_returns_correct_ids() -> Result<()> {
-    let temp_dir = tempfile::tempdir()?;
-    let vault = Vault::open(temp_dir.path(), test_config())?;
+    let (_dir, vault) = open_test_vault();
     let tl1 = EntityId::now();
     let tl2 = EntityId::now();
     let tk1 = EntityId::now();
@@ -2483,8 +2398,7 @@ fn entities_by_type_rejects_corrupted_type_index_key() -> Result<()> {
     let entity_type = 60_u8;
 
     {
-        let temp_dir = tempfile::tempdir()?;
-        let vault = Vault::open(temp_dir.path(), test_config())?;
+        let (_dir, vault) = open_test_vault();
         let short_key = [entity_type, 0xaa];
 
         vault.with_write_txn(|wtxn| {
@@ -2499,8 +2413,7 @@ fn entities_by_type_rejects_corrupted_type_index_key() -> Result<()> {
     }
 
     {
-        let temp_dir = tempfile::tempdir()?;
-        let vault = Vault::open(temp_dir.path(), test_config())?;
+        let (_dir, vault) = open_test_vault();
         let mut reserved_id_key = [0_u8; 17];
         reserved_id_key[0] = entity_type;
 
@@ -2553,8 +2466,7 @@ fn entities_by_type_allows_exact_cap_and_overflows_on_next_row() -> Result<()> {
 
 #[test]
 fn targets_and_sources_with_kind_filter() -> Result<()> {
-    let temp_dir = tempfile::tempdir()?;
-    let vault = Vault::open(temp_dir.path(), test_config())?;
+    let (_dir, vault) = open_test_vault();
     let child = EntityId::now();
     let parent = EntityId::now();
     let sibling = EntityId::now();
@@ -2691,8 +2603,7 @@ fn targets_and_sources_fail_loud_when_type_filter_overscans_peer_cap() -> Result
 
 #[test]
 fn subtree_four_level_tree() -> Result<()> {
-    let temp_dir = tempfile::tempdir()?;
-    let vault = Vault::open(temp_dir.path(), test_config())?;
+    let (_dir, vault) = open_test_vault();
 
     // Build: root → child1 → grandchild → great_grandchild
     //             → child2
@@ -2770,8 +2681,7 @@ fn subtree_allows_exact_cap_and_overflows_on_next_descendant() -> Result<()> {
 
 #[test]
 fn ancestors_walks_to_root() -> Result<()> {
-    let temp_dir = tempfile::tempdir()?;
-    let vault = Vault::open(temp_dir.path(), test_config())?;
+    let (_dir, vault) = open_test_vault();
 
     let root = EntityId::now();
     let mid = EntityId::now();
@@ -2798,8 +2708,7 @@ fn ancestors_walks_to_root() -> Result<()> {
 
 #[test]
 fn cycle_prevention_rejects_self_parent() -> Result<()> {
-    let temp_dir = tempfile::tempdir()?;
-    let vault = Vault::open(temp_dir.path(), test_config())?;
+    let (_dir, vault) = open_test_vault();
     let node = EntityId::now();
     vault.put_entity(&node, 61, test_time_range(1, 1), 2, b"self")?;
 
@@ -2809,8 +2718,7 @@ fn cycle_prevention_rejects_self_parent() -> Result<()> {
 
 #[test]
 fn cycle_prevention_detects_ancestor_cycle() -> Result<()> {
-    let temp_dir = tempfile::tempdir()?;
-    let vault = Vault::open(temp_dir.path(), test_config())?;
+    let (_dir, vault) = open_test_vault();
 
     // A → B → C (ChildOf chain)
     let a = EntityId::now();
@@ -2839,8 +2747,7 @@ fn cycle_prevention_detects_ancestor_cycle() -> Result<()> {
 
 #[test]
 fn test_deep_ancestor_chain() -> Result<()> {
-    let temp_dir = tempfile::tempdir()?;
-    let vault = Vault::open(temp_dir.path(), test_config())?;
+    let (_dir, vault) = open_test_vault();
 
     // Build a 200-deep ChildOf chain: node[0] ← node[1] ← ... ← node[200]
     // (each node[i+1] --ChildOf--> node[i])
@@ -3002,36 +2909,8 @@ fn cycle_checks_fail_loud_before_positive_match_beyond_traversal_cap() -> Result
 }
 
 #[test]
-fn belongs_to_edge_for_task_list_membership() -> Result<()> {
-    let temp_dir = tempfile::tempdir()?;
-    let vault = Vault::open(temp_dir.path(), test_config())?;
-
-    let project = EntityId::now();
-    let task1 = EntityId::now();
-    let task2 = EntityId::now();
-
-    vault
-        .batch()
-        .put(&project, 60, test_time_range(1, 1), 2, b"proj")
-        .put(&task1, 61, test_time_range(3, 3), 4, b"t1")
-        .put(&task2, 61, test_time_range(5, 5), 6, b"t2")
-        .edge(&task1, EdgeKind::BelongsTo, &project, 1.0)
-        .edge(&task2, EdgeKind::BelongsTo, &project, 1.0)
-        .commit()?;
-
-    // Query: all tasks belonging to project (sources of BelongsTo)
-    let members = vault.sources(&project, EdgeKind::BelongsTo, Some(61))?;
-    assert_eq!(members.len(), 2);
-    assert!(members.contains(&task1));
-    assert!(members.contains(&task2));
-
-    Ok(())
-}
-
-#[test]
 fn get_entity_type_returns_correct_type() -> Result<()> {
-    let temp_dir = tempfile::tempdir()?;
-    let vault = Vault::open(temp_dir.path(), test_config())?;
+    let (_dir, vault) = open_test_vault();
     let tl = EntityId::now();
     let tk = EntityId::now();
 
@@ -3049,8 +2928,7 @@ fn get_entity_type_returns_correct_type() -> Result<()> {
 
 #[test]
 fn child_of_has_no_ppr_hop_limit() -> Result<()> {
-    let temp_dir = tempfile::tempdir()?;
-    let vault = Vault::open(temp_dir.path(), test_config())?;
+    let (_dir, vault) = open_test_vault();
 
     // Build a 5-level deep ChildOf chain: a → b → c → d → e
     let a = EntityId::now();
@@ -3127,8 +3005,7 @@ fn child_of_has_no_ppr_hop_limit() -> Result<()> {
 
 #[test]
 fn child_of_survives_mixed_part_of_path() -> Result<()> {
-    let temp_dir = tempfile::tempdir()?;
-    let vault = Vault::open(temp_dir.path(), test_config())?;
+    let (_dir, vault) = open_test_vault();
 
     // Build a mixed path: place1 --PartOf--> place2 --PartOf--> place3 --ChildOf--> task
     // After 2 PartOf hops (place1→place3), the next edge is ChildOf.
@@ -3170,8 +3047,7 @@ fn child_of_survives_mixed_part_of_path() -> Result<()> {
 
 #[test]
 fn generic_child_of_writes_reject_cycles() -> Result<()> {
-    let temp_dir = tempfile::tempdir()?;
-    let vault = Vault::open(temp_dir.path(), test_config())?;
+    let (_dir, vault) = open_test_vault();
 
     let a = EntityId::now();
     let b = EntityId::now();
@@ -3196,8 +3072,7 @@ fn generic_child_of_writes_reject_cycles() -> Result<()> {
 
 #[test]
 fn generic_child_of_writes_reject_second_parent() -> Result<()> {
-    let temp_dir = tempfile::tempdir()?;
-    let vault = Vault::open(temp_dir.path(), test_config())?;
+    let (_dir, vault) = open_test_vault();
 
     let child = EntityId::now();
     let parent_a = EntityId::now();
@@ -3228,10 +3103,15 @@ fn generic_child_of_writes_reject_second_parent() -> Result<()> {
     Ok(())
 }
 
-#[test]
-fn generic_child_of_reparent_is_order_independent() -> Result<()> {
-    let temp_dir = tempfile::tempdir()?;
-    let vault = Vault::open(temp_dir.path(), test_config())?;
+// Shared helper for both `batch()` and `batch_in()` reparent variants.
+// `apply_reparent` is a closure that, given the vault and the three entity ids,
+// performs the reparent operation (add edge to parent_b + delete edge to parent_a)
+// via the API surface under test.
+fn assert_reparent_order_independent<F>(apply_reparent: F) -> Result<()>
+where
+    F: FnOnce(&Vault, EntityId, EntityId, EntityId) -> Result<()>,
+{
+    let (_dir, vault) = open_test_vault();
 
     let child = EntityId::now();
     let parent_a = EntityId::now();
@@ -3245,51 +3125,40 @@ fn generic_child_of_reparent_is_order_independent() -> Result<()> {
         .edge(&child, EdgeKind::ChildOf, &parent_a, 1.0)
         .commit()?;
 
-    vault
-        .batch()
-        .edge(&child, EdgeKind::ChildOf, &parent_b, 1.0)
-        .delete_edge(&child, EdgeKind::ChildOf, &parent_a)
-        .commit()?;
+    apply_reparent(&vault, child, parent_a, parent_b)?;
 
     let parents = vault.targets(&child, EdgeKind::ChildOf, None)?;
     assert_eq!(parents, vec![parent_b]);
     Ok(())
+}
+
+#[test]
+fn generic_child_of_reparent_is_order_independent() -> Result<()> {
+    assert_reparent_order_independent(|vault, child, parent_a, parent_b| {
+        vault
+            .batch()
+            .edge(&child, EdgeKind::ChildOf, &parent_b, 1.0)
+            .delete_edge(&child, EdgeKind::ChildOf, &parent_a)
+            .commit()
+    })
 }
 
 #[test]
 fn txn_batch_child_of_reparent_is_order_independent() -> Result<()> {
-    let temp_dir = tempfile::tempdir()?;
-    let vault = Vault::open(temp_dir.path(), test_config())?;
-
-    let child = EntityId::now();
-    let parent_a = EntityId::now();
-    let parent_b = EntityId::now();
-
-    vault
-        .batch()
-        .put(&child, 61, test_time_range(1, 1), 2, b"child")
-        .put(&parent_a, 61, test_time_range(3, 3), 4, b"pa")
-        .put(&parent_b, 61, test_time_range(5, 5), 6, b"pb")
-        .edge(&child, EdgeKind::ChildOf, &parent_a, 1.0)
-        .commit()?;
-
-    vault.with_write_txn(|wtxn| {
-        vault
-            .batch_in()
-            .edge(&child, EdgeKind::ChildOf, &parent_b, 1.0)
-            .delete_edge(&child, EdgeKind::ChildOf, &parent_a)
-            .apply(wtxn)
-    })?;
-
-    let parents = vault.targets(&child, EdgeKind::ChildOf, None)?;
-    assert_eq!(parents, vec![parent_b]);
-    Ok(())
+    assert_reparent_order_independent(|vault, child, parent_a, parent_b| {
+        vault.with_write_txn(|wtxn| {
+            vault
+                .batch_in()
+                .edge(&child, EdgeKind::ChildOf, &parent_b, 1.0)
+                .delete_edge(&child, EdgeKind::ChildOf, &parent_a)
+                .apply(wtxn)
+        })
+    })
 }
 
 #[test]
 fn child_of_batch_allows_add_delete_then_reverse_edge() -> Result<()> {
-    let temp_dir = tempfile::tempdir()?;
-    let vault = Vault::open(temp_dir.path(), test_config())?;
+    let (_dir, vault) = open_test_vault();
 
     let a = EntityId::now();
     let b = EntityId::now();
@@ -3310,8 +3179,7 @@ fn child_of_batch_allows_add_delete_then_reverse_edge() -> Result<()> {
 
 #[test]
 fn edge_checked_detects_cycle_atomically() -> Result<()> {
-    let temp_dir = tempfile::tempdir()?;
-    let vault = Vault::open(temp_dir.path(), test_config())?;
+    let (_dir, vault) = open_test_vault();
 
     // Build: a → b → c (ChildOf chain)
     let a = EntityId::now();
@@ -3357,8 +3225,7 @@ fn edge_checked_detects_cycle_atomically() -> Result<()> {
 
 #[test]
 fn edge_checked_rejects_self_cycle() -> Result<()> {
-    let temp_dir = tempfile::tempdir()?;
-    let vault = Vault::open(temp_dir.path(), test_config())?;
+    let (_dir, vault) = open_test_vault();
     let node = EntityId::now();
 
     vault
@@ -3381,8 +3248,7 @@ fn edge_checked_rejects_self_cycle() -> Result<()> {
 
 #[test]
 fn subtree_excludes_root() -> Result<()> {
-    let temp_dir = tempfile::tempdir()?;
-    let vault = Vault::open(temp_dir.path(), test_config())?;
+    let (_dir, vault) = open_test_vault();
     let root = EntityId::now();
     let child = EntityId::now();
 
@@ -3402,4 +3268,145 @@ fn subtree_excludes_root() -> Result<()> {
     );
 
     Ok(())
+}
+
+#[test]
+fn learned_at_accessor() {
+    let temp = tempfile::tempdir().unwrap();
+    let vault = Vault::open(temp.path(), test_config()).unwrap();
+    let id = EntityId::now();
+    let learned = 1_772_000_000u64;
+
+    vault
+        .put_entity(
+            &id,
+            0,
+            TimeRange {
+                start: learned,
+                end: learned,
+            },
+            learned,
+            b"first",
+        )
+        .unwrap();
+
+    assert_eq!(vault.get_learned_at(&id).unwrap(), learned);
+}
+
+#[test]
+fn entity_exists_and_edge_exists() {
+    let temp = tempfile::tempdir().unwrap();
+    let vault = Vault::open(temp.path(), test_config()).unwrap();
+    let id = EntityId::now();
+    let other = EntityId::now();
+
+    assert!(!vault.entity_exists(&id).unwrap());
+
+    vault
+        .put_entity(&id, 0, TimeRange { start: 1, end: 1 }, 1, b"exists")
+        .unwrap();
+    vault
+        .put_entity(&other, 0, TimeRange { start: 1, end: 1 }, 1, b"other")
+        .unwrap();
+
+    assert!(vault.entity_exists(&id).unwrap());
+    assert!(!vault.edge_exists(&id, EdgeKind::Mentions, &other).unwrap());
+
+    vault
+        .put_edge(&id, EdgeKind::Mentions, &other, 0.5)
+        .unwrap();
+    assert!(vault.edge_exists(&id, EdgeKind::Mentions, &other).unwrap());
+}
+
+#[test]
+fn entities_in_learned_range() {
+    let temp = tempfile::tempdir().unwrap();
+    let vault = Vault::open(temp.path(), test_config()).unwrap();
+
+    let id1 = EntityId::now();
+    let id2 = EntityId::now();
+    let id3 = EntityId::now();
+
+    vault
+        .put_entity(
+            &id1,
+            0,
+            TimeRange {
+                start: 100,
+                end: 100,
+            },
+            100,
+            b"a",
+        )
+        .unwrap();
+    vault
+        .put_entity(
+            &id2,
+            0,
+            TimeRange {
+                start: 200,
+                end: 200,
+            },
+            200,
+            b"b",
+        )
+        .unwrap();
+    vault
+        .put_entity(
+            &id3,
+            0,
+            TimeRange {
+                start: 300,
+                end: 300,
+            },
+            300,
+            b"c",
+        )
+        .unwrap();
+
+    let range = vault.entities_in_learned_range(100, 300).unwrap();
+    assert_eq!(range.len(), 2);
+    assert!(range.contains(&id1));
+    assert!(range.contains(&id2));
+    assert!(!range.contains(&id3));
+}
+
+#[test]
+fn with_write_txn_and_batch_in() {
+    let temp = tempfile::tempdir().unwrap();
+    let vault = Vault::open(temp.path(), test_config()).unwrap();
+    let id = EntityId::now();
+
+    vault
+        .with_write_txn(|wtxn| {
+            vault
+                .batch_in()
+                .put(&id, 0, TimeRange { start: 1, end: 1 }, 1, b"atomic")
+                .apply(wtxn)?;
+            Ok(())
+        })
+        .unwrap();
+
+    assert_eq!(vault.get(&id).unwrap().unwrap(), b"atomic");
+}
+
+#[test]
+fn batch_edge_with_created_at() {
+    let temp = tempfile::tempdir().unwrap();
+    let vault = Vault::open(temp.path(), test_config()).unwrap();
+    let src = EntityId::now();
+    let tgt = EntityId::now();
+
+    vault
+        .batch()
+        .put(&src, 0, TimeRange { start: 1, end: 1 }, 1, b"src")
+        .put(&tgt, 0, TimeRange { start: 1, end: 1 }, 1, b"tgt")
+        .edge_with_created_at(&src, EdgeKind::Mentions, &tgt, 0.8, 99999)
+        .commit()
+        .unwrap();
+
+    let edges = vault.edges_out(&src).unwrap();
+    assert_eq!(edges.len(), 1);
+    assert_eq!(edges[0].created_at, 99999);
+    assert!((edges[0].weight - 0.8).abs() < f32::EPSILON);
 }
