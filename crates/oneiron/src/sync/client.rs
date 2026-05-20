@@ -16,6 +16,8 @@ use loro::{ExportMode, LoroDoc};
 use tokio::sync::mpsc;
 
 use crate::Vault;
+use crate::sync::LoroDocument;
+use crate::sync::schema::read_window_list;
 use crate::sync::transport::{
     self, TAG_BULK_TRANSFER, TAG_BULK_TRANSFER_DONE, TAG_SYNC_UPDATE, TAG_VERSION_VECTOR,
     TAG_WINDOW_SYNC, TransportError, window_sub_tags,
@@ -155,29 +157,14 @@ impl SyncClient {
 
     /// Returns the list of window keys from the root doc (set by server).
     pub fn server_windows(&self) -> Vec<String> {
-        let windows_str = self.root_doc.get_deep_value().as_map().and_then(|m| {
-            m.get("meta")?
-                .as_map()?
-                .get("windows")?
-                .as_string()
-                .cloned()
-        });
-
-        match windows_str {
-            Some(s) if !s.is_empty() => s
-                .split(',')
-                .filter_map(|s| {
-                    let key = s.trim();
-                    if parse_window_key_str(key).is_some() {
-                        Some(key.to_string())
-                    } else {
-                        tracing::warn!(window_key = %key, "sync client: ignoring invalid server window key");
-                        None
-                    }
-                })
-                .collect(),
-            _ => Vec::new(),
-        }
+        // `meta.windows` is byte-encoded by the schema helpers
+        // (`create_root_doc` / `add_window_to_root`). Decode through the shared
+        // `read_window_list` path so the encoding stays consistent — reading it
+        // as a `LoroValue::String` silently yields an empty list (ONE-637).
+        read_window_list(&LoroDocument(self.root_doc.clone()))
+            .into_iter()
+            .map(|k| k.as_str().to_string())
+            .collect()
     }
 
     /// Handles an incoming wire message from the server.
@@ -473,12 +460,42 @@ mod tests {
         let vault = test_vault();
         let (client, _rx) = SyncClient::new(vault, SyncClientConfig::default());
         let meta = client.root_doc.get_map("meta");
-        meta.insert("windows", "2026-03,1969-12,2026-13,2026-04")
+        // Schema helpers byte-encode `meta.windows`; mirror that here so the
+        // test exercises the real on-disk encoding (ONE-637).
+        meta.insert("windows", "2026-03,1969-12,2026-13,2026-04".as_bytes())
             .unwrap();
         client.root_doc.commit();
 
         let windows = client.server_windows();
         assert_eq!(windows, vec!["2026-03".to_string(), "2026-04".to_string()]);
+    }
+
+    #[test]
+    fn server_windows_reads_schema_written_byte_encoded_root_doc() {
+        // Regression for ONE-637: schema::create_root_doc writes meta.windows
+        // as bytes (LoroValue::Binary). server_windows() must decode it via the
+        // same byte path the schema helpers use.
+        use crate::sync::CrdtDoc;
+        use crate::sync::schema::create_root_doc;
+
+        let vault = test_vault();
+        let (mut client, _rx) = SyncClient::new(vault, SyncClientConfig::default());
+
+        let server_root = create_root_doc(
+            "user-1",
+            "vault-1",
+            &[WindowKey::new("2026-01"), WindowKey::new("2026-02")],
+        );
+        let snapshot = server_root.export_snapshot().unwrap();
+
+        let mut msg = vec![TAG_SYNC_UPDATE];
+        msg.extend_from_slice(&snapshot);
+        client.handle_server_message(&msg).unwrap();
+
+        assert_eq!(
+            client.server_windows(),
+            vec!["2026-01".to_string(), "2026-02".to_string()],
+        );
     }
 
     #[test]
