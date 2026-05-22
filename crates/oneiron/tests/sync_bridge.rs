@@ -595,7 +595,9 @@ fn sync_client_handle_server_message_imports_root_sync_update() {
 
     let server_doc = LoroDoc::new();
     let meta = server_doc.get_map("meta");
-    meta.insert("windows", "2026-03").unwrap();
+    // Byte-encode `meta.windows` to match the schema helpers and the server's
+    // root-doc init — `read_window_list` only decodes `LoroValue::Binary`.
+    meta.insert("windows", "2026-03".as_bytes()).unwrap();
     server_doc.commit();
     let update = server_doc.export(ExportMode::all_updates()).unwrap();
 
