@@ -38,7 +38,10 @@ impl SyncServer {
         // Initialize root doc meta map
         let meta = root_doc.get_map("meta");
         meta.insert("schema_version", 1i64).unwrap();
-        meta.insert("windows", "").unwrap();
+        // `meta.windows` must be byte-encoded to match the schema helpers
+        // (`schema::create_root_doc` / `add_window_to_root`) and the client's
+        // `read_window_list` decoder, which only accept `LoroValue::Binary`.
+        meta.insert("windows", "".as_bytes()).unwrap();
         root_doc.commit();
 
         let (broadcast_tx, _) = broadcast::channel(256);
@@ -138,7 +141,7 @@ mod tests {
             meta_map
                 .get("windows")
                 .unwrap()
-                .as_string()
+                .as_binary()
                 .unwrap()
                 .is_empty()
         );
