@@ -511,6 +511,95 @@ fn gdpr_and_policy_deletes_soft_erase_then_active_purge_with_receipts() -> Resul
     Ok(())
 }
 
+#[test]
+fn receipt_reason_purges_orphan_vector_with_receipt_and_sweep() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let id = EntityId::now();
+
+    vault.put_vector(&id, &[0.1, 0.2, 0.3, 0.4])?;
+    assert!(vault.get(&id)?.is_none());
+    assert!(vault.get_vector(&id)?.is_some());
+
+    let outcome = vault.delete_entity_with_reason(&id, DeleteReason::GdprDelete)?;
+
+    assert!(
+        !outcome.existed,
+        "orphan cleanup should not report an entity payload"
+    );
+    assert!(
+        outcome.receipt_id.is_some(),
+        "receipt-writing delete must account for orphan active data"
+    );
+    assert!(
+        outcome.sweep_key.is_some(),
+        "orphan active purge still queues the bounded historical-carrier sweep"
+    );
+    assert!(vault.get_vector(&id)?.is_none());
+
+    let receipt_raw = vault
+        .get_raw(&outcome.receipt_id.unwrap())?
+        .expect("orphan purge receipt should be persisted");
+    let receipt = receipt_body(&receipt_raw);
+    assert_eq!(receipt["reason"], "gdpr_delete");
+    assert_eq!(receipt["scope"]["entity_ids"][0], id.to_hex());
+    assert!(receipt["sweep_complete_at"].is_null());
+
+    let rows = hard_erase_sweep_rows(&vault)?;
+    assert_eq!(rows.len(), 1);
+    Ok(())
+}
+
+#[cfg(feature = "sync")]
+#[test]
+fn user_delete_soft_shell_survives_sync_rematerialization() -> Result<()> {
+    use crate::sync::bridge::Materializer;
+    use crate::sync::loro_support::map_get_bytes;
+    use crate::sync::schema::create_window_doc;
+    use crate::sync::types::WindowKey;
+    use crate::sync::window;
+
+    let (_dir, vault) = open_test_vault();
+    let id = EntityId::now();
+    let learned_at = 1_772_000_000;
+
+    vault
+        .batch()
+        .put(
+            &id,
+            0,
+            test_time_range(learned_at, learned_at),
+            learned_at,
+            b"soft-delete-sync-body",
+        )
+        .commit()?;
+
+    let outcome = vault.delete_entity_with_reason(&id, DeleteReason::UserDelete)?;
+    assert!(outcome.existed);
+    assert_eq!(vault.get(&id)?.as_deref(), Some([].as_slice()));
+
+    let window_key = WindowKey::from_timestamp(learned_at);
+    let doc = match window::load_window_from_state(&vault, "local", &window_key) {
+        Ok(doc) => doc,
+        Err(Error::WindowNotFound { .. }) => create_window_doc("local", &window_key),
+        Err(err) => return Err(err),
+    };
+
+    let materializer = Materializer::new();
+    let _ = window::forward_rematerialize(&vault, &doc, &materializer)?;
+
+    let tombstones = doc.get_map("tombstones");
+    assert!(
+        map_get_bytes(&tombstones, id.to_hex().as_str()).is_none(),
+        "user_delete must not write the hard-purge CRDT tombstone; synced soft-delete propagation is deferred to ONE-1090"
+    );
+    assert_eq!(
+        vault.get(&id)?.as_deref(),
+        Some([].as_slice()),
+        "sync rematerialization must preserve the SoftErase shell"
+    );
+    Ok(())
+}
+
 #[cfg(feature = "sync")]
 #[test]
 fn hard_delete_persists_crdt_tombstone_before_active_purge() -> Result<()> {

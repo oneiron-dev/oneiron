@@ -236,18 +236,13 @@ impl Vault {
     ) -> Result<DeleteEntityOutcome> {
         let requested_at = unix_seconds_now();
         let Some(header) = self.read_entity_header(id)? else {
-            let existed = self.purge_entity_active_store(id)?;
-            return Ok(DeleteEntityOutcome {
-                existed,
-                receipt_id: None,
-                sweep_key: None,
-            });
+            return self.delete_entity_without_header(id, reason, requested_at);
         };
 
-        self.write_crdt_tombstone(id, header.learned_at, requested_at)?;
-        let tombstone_complete_at = unix_seconds_now();
-
         if !reason.active_store_hard_purge_v1() {
+            // ARCH-0038's CRDT tombstone drives destructive HardErase replay.
+            // `user_delete` is a local SoftErase shell in M0-6; cross-device
+            // soft-delete propagation is deferred to ONE-1090 (M4).
             let existed = self.soft_erase_active_store(id)?;
             return Ok(DeleteEntityOutcome {
                 existed,
@@ -255,6 +250,9 @@ impl Vault {
                 sweep_key: None,
             });
         }
+
+        self.write_crdt_tombstone(id, header.learned_at, requested_at)?;
+        let tombstone_complete_at = unix_seconds_now();
 
         let soft_complete_at = if matches!(
             reason,
@@ -277,38 +275,74 @@ impl Vault {
         }
 
         let hard_purge_complete_at = unix_seconds_now();
-        let sweep_queued_at = reason
-            .queues_historical_sweep()
-            .then_some(hard_purge_complete_at);
-        let sweep_key = if let Some(queued_at) = sweep_queued_at {
-            Some(self.enqueue_hard_erase_sweep_in_txn(&mut wtxn, scope.clone(), queued_at)?)
-        } else {
-            None
-        };
-
-        if reason.writes_receipt() {
-            let body = encode_redaction_audit_receipt(RedactionReceiptInput {
+        let sweep_key = self.write_redaction_receipt_and_sweep_in_txn(
+            &mut wtxn,
+            &receipt_id,
+            RedactionReceiptInput {
                 request_id,
                 scope,
                 reason,
                 requested_at,
                 soft_complete_at,
                 hard_purge_complete_at,
-                sweep_queued_at,
-            })?;
-            self.put_redaction_audit_receipt_in_txn(
-                &mut wtxn,
-                &receipt_id,
-                hard_purge_complete_at,
-                &body,
-            )?;
-        }
+                sweep_queued_at: reason
+                    .queues_historical_sweep()
+                    .then_some(hard_purge_complete_at),
+            },
+        )?;
 
         wtxn.commit()?;
         Ok(DeleteEntityOutcome {
             existed,
-            receipt_id: reason.writes_receipt().then_some(receipt_id),
-            sweep_key,
+            receipt_id: Some(receipt_id),
+            sweep_key: Some(sweep_key),
+        })
+    }
+
+    fn delete_entity_without_header(
+        &self,
+        id: &EntityId,
+        reason: DeleteReason,
+        requested_at: u64,
+    ) -> Result<DeleteEntityOutcome> {
+        let mut wtxn = self.store.env.write_txn()?;
+        let had_active_data = self.active_delete_scope_exists_in_txn(&wtxn, id)?;
+        let existed = self.purge_entity_active_store_in_txn(&mut wtxn, id)?;
+        if !had_active_data && !existed {
+            wtxn.commit()?;
+            return Ok(DeleteEntityOutcome::missing());
+        }
+        if !reason.writes_receipt() {
+            wtxn.commit()?;
+            return Ok(DeleteEntityOutcome {
+                existed,
+                receipt_id: None,
+                sweep_key: None,
+            });
+        }
+
+        let receipt_id = EntityId::now();
+        let hard_purge_complete_at = unix_seconds_now();
+        let sweep_key = self.write_redaction_receipt_and_sweep_in_txn(
+            &mut wtxn,
+            &receipt_id,
+            RedactionReceiptInput {
+                request_id: Uuid::now_v7().to_string(),
+                scope: RedactionScope::entity(id),
+                reason,
+                requested_at,
+                soft_complete_at: hard_purge_complete_at,
+                hard_purge_complete_at,
+                sweep_queued_at: reason
+                    .queues_historical_sweep()
+                    .then_some(hard_purge_complete_at),
+            },
+        )?;
+        wtxn.commit()?;
+        Ok(DeleteEntityOutcome {
+            existed,
+            receipt_id: Some(receipt_id),
+            sweep_key: Some(sweep_key),
         })
     }
 
@@ -378,6 +412,38 @@ impl Vault {
             .map(Some)
     }
 
+    fn active_delete_scope_exists_in_txn(
+        &self,
+        txn: &heed::RwTxn<'_>,
+        id: &EntityId,
+    ) -> Result<bool> {
+        if self.store.entities.get(txn, id.as_bytes())?.is_some()
+            || self.store.vectors.get(txn, id.as_bytes())?.is_some()
+            || self.store.text_forward.get(txn, id.as_bytes())?.is_some()
+            || self.store.text_meta.get(txn, id.as_bytes())?.is_some()
+            || self
+                .store
+                .text_doc_field_lengths
+                .get(txn, id.as_bytes())?
+                .is_some()
+            || self
+                .store
+                .phonetic_forward
+                .get(txn, id.as_bytes())?
+                .is_some()
+            || self.store.short_ids.get(txn, id.as_bytes())?.is_some()
+        {
+            return Ok(true);
+        }
+
+        let mut edges_out = self.store.edges_out.prefix_iter(txn, id.as_bytes())?;
+        if edges_out.next().transpose()?.is_some() {
+            return Ok(true);
+        }
+        let mut edges_in = self.store.edges_in.prefix_iter(txn, id.as_bytes())?;
+        Ok(edges_in.next().transpose()?.is_some())
+    }
+
     #[cfg(feature = "sync")]
     fn write_crdt_tombstone(&self, id: &EntityId, learned_at: u64, deleted_at: u64) -> Result<()> {
         use crate::sync::loro_support::{doc_version_vector, export_snapshot, map_insert_bytes};
@@ -443,6 +509,24 @@ impl Vault {
         let learned_key = Store::encode_temporal_key(learned_at, receipt_id);
         self.store.temporal_learned.put(wtxn, &learned_key, &[])?;
         Ok(())
+    }
+
+    fn write_redaction_receipt_and_sweep_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        receipt_id: &EntityId,
+        input: RedactionReceiptInput,
+    ) -> Result<Vec<u8>> {
+        let sweep_key = if let Some(queued_at) = input.sweep_queued_at {
+            self.enqueue_hard_erase_sweep_in_txn(wtxn, input.scope.clone(), queued_at)?
+        } else {
+            Vec::new()
+        };
+
+        let hard_purge_complete_at = input.hard_purge_complete_at;
+        let body = encode_redaction_audit_receipt(input)?;
+        self.put_redaction_audit_receipt_in_txn(wtxn, receipt_id, hard_purge_complete_at, &body)?;
+        Ok(sweep_key)
     }
 
     fn enqueue_hard_erase_sweep_in_txn(

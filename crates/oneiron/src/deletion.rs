@@ -40,15 +40,24 @@ impl DeleteReason {
     }
 
     pub(crate) const fn writes_receipt(self) -> bool {
-        !matches!(self, Self::UserDelete)
+        match self {
+            Self::UserDelete => false,
+            Self::UserHardDelete | Self::GdprDelete | Self::PolicyDelete => true,
+        }
     }
 
     pub(crate) const fn active_store_hard_purge_v1(self) -> bool {
-        !matches!(self, Self::UserDelete)
+        match self {
+            Self::UserDelete => false,
+            Self::UserHardDelete | Self::GdprDelete | Self::PolicyDelete => true,
+        }
     }
 
     pub(crate) const fn queues_historical_sweep(self) -> bool {
-        !matches!(self, Self::UserDelete)
+        match self {
+            Self::UserDelete => false,
+            Self::UserHardDelete | Self::GdprDelete | Self::PolicyDelete => true,
+        }
     }
 }
 
