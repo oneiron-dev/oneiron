@@ -627,7 +627,7 @@ pub fn format_edge_key(src: &EntityId, kind: EdgeKind, tgt: &EntityId) -> String
 mod tests {
     use super::*;
     use crate::Vault;
-    use crate::types::{TimeRange, VaultConfig};
+    use crate::types::{ENTITY_TYPE_TASK, TimeRange, VaultConfig};
     use std::sync::Arc;
 
     fn test_vault() -> Arc<Vault> {
@@ -688,9 +688,27 @@ mod tests {
 
         vault
             .batch()
-            .put(&a, 61, TimeRange { start: 1, end: 1 }, 2, b"a")
-            .put(&b, 61, TimeRange { start: 3, end: 3 }, 4, b"b")
-            .put(&c, 61, TimeRange { start: 5, end: 5 }, 6, b"c")
+            .put(
+                &a,
+                ENTITY_TYPE_TASK,
+                TimeRange { start: 1, end: 1 },
+                2,
+                b"a",
+            )
+            .put(
+                &b,
+                ENTITY_TYPE_TASK,
+                TimeRange { start: 3, end: 3 },
+                4,
+                b"b",
+            )
+            .put(
+                &c,
+                ENTITY_TYPE_TASK,
+                TimeRange { start: 5, end: 5 },
+                6,
+                b"c",
+            )
             .edge(&b, EdgeKind::ChildOf, &a, 1.0)
             .commit()
             .unwrap();
@@ -738,9 +756,27 @@ mod tests {
 
         vault
             .batch()
-            .put(&a, 61, TimeRange { start: 1, end: 1 }, 2, b"a")
-            .put(&b, 61, TimeRange { start: 3, end: 3 }, 4, b"b")
-            .put(&c, 61, TimeRange { start: 5, end: 5 }, 6, b"c")
+            .put(
+                &a,
+                ENTITY_TYPE_TASK,
+                TimeRange { start: 1, end: 1 },
+                2,
+                b"a",
+            )
+            .put(
+                &b,
+                ENTITY_TYPE_TASK,
+                TimeRange { start: 3, end: 3 },
+                4,
+                b"b",
+            )
+            .put(
+                &c,
+                ENTITY_TYPE_TASK,
+                TimeRange { start: 5, end: 5 },
+                6,
+                b"c",
+            )
             .edge(&c, EdgeKind::ChildOf, &b, 1.0)
             .edge(&b, EdgeKind::ChildOf, &a, 1.0)
             .commit()
@@ -786,10 +822,34 @@ mod tests {
 
         vault
             .batch()
-            .put(&a, 61, TimeRange { start: 1, end: 1 }, 2, b"a")
-            .put(&x, 61, TimeRange { start: 3, end: 3 }, 4, b"x")
-            .put(&b, 61, TimeRange { start: 5, end: 5 }, 6, b"b")
-            .put(&y, 61, TimeRange { start: 7, end: 7 }, 8, b"y")
+            .put(
+                &a,
+                ENTITY_TYPE_TASK,
+                TimeRange { start: 1, end: 1 },
+                2,
+                b"a",
+            )
+            .put(
+                &x,
+                ENTITY_TYPE_TASK,
+                TimeRange { start: 3, end: 3 },
+                4,
+                b"x",
+            )
+            .put(
+                &b,
+                ENTITY_TYPE_TASK,
+                TimeRange { start: 5, end: 5 },
+                6,
+                b"b",
+            )
+            .put(
+                &y,
+                ENTITY_TYPE_TASK,
+                TimeRange { start: 7, end: 7 },
+                8,
+                b"y",
+            )
             .edge(&a, EdgeKind::ChildOf, &x, 1.0)
             .edge(&b, EdgeKind::ChildOf, &y, 1.0)
             .commit()
@@ -841,13 +901,13 @@ mod tests {
         entities
             .insert(
                 &a.to_hex(),
-                &entity_blob(61, TimeRange { start: 1, end: 1 }, 2, b"a"),
+                &entity_blob(ENTITY_TYPE_TASK, TimeRange { start: 1, end: 1 }, 2, b"a"),
             )
             .unwrap();
         entities
             .insert(
                 &b.to_hex(),
-                &entity_blob(61, TimeRange { start: 3, end: 3 }, 4, b"b"),
+                &entity_blob(ENTITY_TYPE_TASK, TimeRange { start: 3, end: 3 }, 4, b"b"),
             )
             .unwrap();
         doc.commit();
@@ -882,13 +942,18 @@ mod tests {
         entities
             .insert(
                 &deleted.to_hex(),
-                &entity_blob(61, TimeRange { start: 1, end: 1 }, 2, b"deleted"),
+                &entity_blob(
+                    ENTITY_TYPE_TASK,
+                    TimeRange { start: 1, end: 1 },
+                    2,
+                    b"deleted",
+                ),
             )
             .unwrap();
         entities
             .insert(
                 &live.to_hex(),
-                &entity_blob(61, TimeRange { start: 3, end: 3 }, 4, b"live"),
+                &entity_blob(ENTITY_TYPE_TASK, TimeRange { start: 3, end: 3 }, 4, b"live"),
             )
             .unwrap();
         tombstones.insert(&deleted.to_hex(), b"1").unwrap();

@@ -1,5 +1,5 @@
 use crate::store::Store;
-use crate::types::EDGE_VALUE_STRUCTURAL_LEN;
+use crate::types::{EDGE_VALUE_STRUCTURAL_LEN, ENTITY_TYPE_MACHINE, ENTITY_TYPE_TASK};
 use crate::*;
 
 fn non_finite_edge_value(weight: f32) -> [u8; EDGE_VALUE_STRUCTURAL_LEN] {
@@ -17,8 +17,20 @@ fn test_intra_batch_cycle() {
 
     vault
         .batch()
-        .put(&a, 61, TimeRange { start: 1, end: 1 }, 2, b"a")
-        .put(&b, 61, TimeRange { start: 3, end: 3 }, 4, b"b")
+        .put(
+            &a,
+            ENTITY_TYPE_TASK,
+            TimeRange { start: 1, end: 1 },
+            2,
+            b"a",
+        )
+        .put(
+            &b,
+            ENTITY_TYPE_TASK,
+            TimeRange { start: 3, end: 3 },
+            4,
+            b"b",
+        )
         .commit()
         .unwrap();
 
@@ -96,7 +108,13 @@ fn sources_reject_corrupted_edge_key_length() {
 
     vault
         .batch()
-        .put(&parent, 61, TimeRange { start: 1, end: 1 }, 2, b"parent")
+        .put(
+            &parent,
+            ENTITY_TYPE_TASK,
+            TimeRange { start: 1, end: 1 },
+            2,
+            b"parent",
+        )
         .commit()
         .unwrap();
 
@@ -288,8 +306,20 @@ fn non_finite_edge_payload_rejected_by_all_read_paths() {
                 let tgt = EntityId::now();
                 vault
                     .batch()
-                    .put(&src, 61, TimeRange { start: 1, end: 1 }, 2, b"src")
-                    .put(&tgt, 61, TimeRange { start: 1, end: 1 }, 2, b"tgt")
+                    .put(
+                        &src,
+                        ENTITY_TYPE_TASK,
+                        TimeRange { start: 1, end: 1 },
+                        2,
+                        b"src",
+                    )
+                    .put(
+                        &tgt,
+                        ENTITY_TYPE_TASK,
+                        TimeRange { start: 1, end: 1 },
+                        2,
+                        b"tgt",
+                    )
                     .commit()
                     .unwrap();
                 let key = Store::encode_edge_key(&src, EdgeKind::ChildOf, &tgt);
@@ -314,8 +344,20 @@ fn non_finite_edge_payload_rejected_by_all_read_paths() {
                 let tgt = EntityId::now();
                 vault
                     .batch()
-                    .put(&src, 61, TimeRange { start: 1, end: 1 }, 2, b"src")
-                    .put(&tgt, 61, TimeRange { start: 1, end: 1 }, 2, b"tgt")
+                    .put(
+                        &src,
+                        ENTITY_TYPE_TASK,
+                        TimeRange { start: 1, end: 1 },
+                        2,
+                        b"src",
+                    )
+                    .put(
+                        &tgt,
+                        ENTITY_TYPE_TASK,
+                        TimeRange { start: 1, end: 1 },
+                        2,
+                        b"tgt",
+                    )
                     .commit()
                     .unwrap();
                 let key_out = Store::encode_edge_key(&src, EdgeKind::ChildOf, &tgt);
@@ -352,7 +394,9 @@ fn batch_in_put_failure_does_not_commit_partial_entity_update() {
     let old_occurred = TimeRange { start: 10, end: 10 };
     let new_occurred = TimeRange { start: 20, end: 25 };
 
-    vault.put_entity(&id, 61, old_occurred, 11, b"old").unwrap();
+    vault
+        .put_entity(&id, ENTITY_TYPE_TASK, old_occurred, 11, b"old")
+        .unwrap();
     let before_raw = vault.get_raw(&id).unwrap().unwrap();
 
     vault
@@ -370,7 +414,7 @@ fn batch_in_put_failure_does_not_commit_partial_entity_update() {
         .with_write_txn(|wtxn| {
             let err = vault
                 .batch_in()
-                .put(&id, 62, new_occurred, 21, b"new")
+                .put(&id, ENTITY_TYPE_MACHINE, new_occurred, 21, b"new")
                 .apply(wtxn)
                 .expect_err("expected malformed short id value to fail");
             assert!(matches!(err, Error::CorruptedIndex("short id value")));
@@ -382,8 +426,8 @@ fn batch_in_put_failure_does_not_commit_partial_entity_update() {
     assert_eq!(after_raw, before_raw);
 
     let rtxn = vault.store.env.read_txn().unwrap();
-    let old_type_key = Store::encode_type_key(61, &id);
-    let new_type_key = Store::encode_type_key(62, &id);
+    let old_type_key = Store::encode_type_key(ENTITY_TYPE_TASK, &id);
+    let new_type_key = Store::encode_type_key(ENTITY_TYPE_MACHINE, &id);
     let old_start_key = Store::encode_temporal_key(old_occurred.start, &id);
     let new_start_key = Store::encode_temporal_key(new_occurred.start, &id);
     let new_end_key = Store::encode_temporal_key(new_occurred.end, &id);
