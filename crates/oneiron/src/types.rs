@@ -9,6 +9,144 @@ pub(crate) const EDGE_VALUE_STRUCTURAL_LEN: usize = 12;
 pub(crate) const EDGE_VALUE_SEMANTIC_LEN: usize = 24;
 pub(crate) const EDGE_VALUE_SEMANTIC_PROVENANCED_LEN: usize = 26;
 
+/// Byte 0 is the ARCH-0003 semantic CLAIM type byte, not a StructuralKind.
+pub const ENTITY_TYPE_CLAIM: u8 = 0;
+pub const ENTITY_TYPE_TURN: u8 = 1;
+pub const ENTITY_TYPE_SESSION: u8 = 2;
+pub const ENTITY_TYPE_MESSAGE: u8 = 3;
+pub const ENTITY_TYPE_PERSON: u8 = 4;
+pub const ENTITY_TYPE_RELATIONSHIP: u8 = 5;
+pub const ENTITY_TYPE_EVENT: u8 = 6;
+pub const ENTITY_TYPE_SKILL: u8 = 7;
+pub const ENTITY_TYPE_SUMMARY: u8 = 8;
+pub const ENTITY_TYPE_PLACE: u8 = 9;
+pub const ENTITY_TYPE_ASSET_TEXT: u8 = 10;
+pub const ENTITY_TYPE_CONVERSATION: u8 = 11;
+pub const ENTITY_TYPE_ORG: u8 = 12;
+pub const ENTITY_TYPE_FACET: u8 = 13;
+pub const ENTITY_TYPE_WORLD: u8 = 14;
+pub const ENTITY_TYPE_ASSET: u8 = 15;
+pub const ENTITY_TYPE_NOTIFICATION: u8 = 16;
+pub const ENTITY_TYPE_TASK_LIST: u8 = 80;
+pub const ENTITY_TYPE_TASK: u8 = 81;
+pub const ENTITY_TYPE_MACHINE: u8 = 82;
+pub const ENTITY_TYPE_REDACTION_AUDIT: u8 = 120;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct EntityTypeRegistryEntry {
+    pub kind: &'static str,
+    pub type_byte: u8,
+    pub short_id_prefix: Option<&'static str>,
+}
+
+pub const ENTITY_TYPE_REGISTRY: &[EntityTypeRegistryEntry] = &[
+    EntityTypeRegistryEntry {
+        kind: "CLAIM",
+        type_byte: ENTITY_TYPE_CLAIM,
+        short_id_prefix: Some("cl"),
+    },
+    EntityTypeRegistryEntry {
+        kind: "TURN",
+        type_byte: ENTITY_TYPE_TURN,
+        short_id_prefix: Some("tn"),
+    },
+    EntityTypeRegistryEntry {
+        kind: "SESSION",
+        type_byte: ENTITY_TYPE_SESSION,
+        short_id_prefix: Some("ss"),
+    },
+    EntityTypeRegistryEntry {
+        kind: "MESSAGE",
+        type_byte: ENTITY_TYPE_MESSAGE,
+        short_id_prefix: Some("ms"),
+    },
+    EntityTypeRegistryEntry {
+        kind: "PERSON",
+        type_byte: ENTITY_TYPE_PERSON,
+        short_id_prefix: Some("pr"),
+    },
+    EntityTypeRegistryEntry {
+        kind: "RELATIONSHIP",
+        type_byte: ENTITY_TYPE_RELATIONSHIP,
+        short_id_prefix: Some("rl"),
+    },
+    EntityTypeRegistryEntry {
+        kind: "EVENT",
+        type_byte: ENTITY_TYPE_EVENT,
+        short_id_prefix: Some("ev"),
+    },
+    EntityTypeRegistryEntry {
+        kind: "SKILL",
+        type_byte: ENTITY_TYPE_SKILL,
+        short_id_prefix: Some("sk"),
+    },
+    EntityTypeRegistryEntry {
+        kind: "SUMMARY",
+        type_byte: ENTITY_TYPE_SUMMARY,
+        short_id_prefix: Some("sm"),
+    },
+    EntityTypeRegistryEntry {
+        kind: "PLACE",
+        type_byte: ENTITY_TYPE_PLACE,
+        short_id_prefix: Some("pl"),
+    },
+    EntityTypeRegistryEntry {
+        kind: "ASSET_TEXT",
+        type_byte: ENTITY_TYPE_ASSET_TEXT,
+        short_id_prefix: Some("tx"),
+    },
+    EntityTypeRegistryEntry {
+        kind: "CONVERSATION",
+        type_byte: ENTITY_TYPE_CONVERSATION,
+        short_id_prefix: Some("cv"),
+    },
+    EntityTypeRegistryEntry {
+        kind: "ORG",
+        type_byte: ENTITY_TYPE_ORG,
+        short_id_prefix: Some("og"),
+    },
+    EntityTypeRegistryEntry {
+        kind: "FACET",
+        type_byte: ENTITY_TYPE_FACET,
+        short_id_prefix: Some("fc"),
+    },
+    EntityTypeRegistryEntry {
+        kind: "WORLD",
+        type_byte: ENTITY_TYPE_WORLD,
+        short_id_prefix: Some("wd"),
+    },
+    EntityTypeRegistryEntry {
+        kind: "ASSET",
+        type_byte: ENTITY_TYPE_ASSET,
+        short_id_prefix: Some("as"),
+    },
+    EntityTypeRegistryEntry {
+        kind: "NOTIFICATION",
+        type_byte: ENTITY_TYPE_NOTIFICATION,
+        short_id_prefix: Some("nt"),
+    },
+    EntityTypeRegistryEntry {
+        kind: "TASK_LIST",
+        type_byte: ENTITY_TYPE_TASK_LIST,
+        short_id_prefix: Some("tl"),
+    },
+    EntityTypeRegistryEntry {
+        kind: "TASK",
+        type_byte: ENTITY_TYPE_TASK,
+        short_id_prefix: Some("tk"),
+    },
+    EntityTypeRegistryEntry {
+        kind: "MACHINE",
+        type_byte: ENTITY_TYPE_MACHINE,
+        short_id_prefix: Some("mc"),
+    },
+    EntityTypeRegistryEntry {
+        kind: "REDACTION_AUDIT",
+        type_byte: ENTITY_TYPE_REDACTION_AUDIT,
+        short_id_prefix: None,
+    },
+];
+
 /// A time-ordered entity identifier backed by UUIDv7 bytes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct EntityId([u8; ENTITY_ID_LEN]);
@@ -125,31 +263,25 @@ fn hex_nibble(b: u8) -> Option<u8> {
 
 /// Returns the short ID prefix for an entity type byte.
 ///
-/// Returns an error for unknown entity type IDs.
+/// Returns an error for unknown entity type IDs and registered maintenance
+/// types with no short-ID prefix.
 pub fn short_id_prefix(entity_type: u8) -> crate::error::Result<&'static str> {
-    match entity_type {
-        // Core (0-19)
-        0 => Ok("cl"),  // Claim
-        1 => Ok("tn"),  // Turn
-        2 => Ok("ss"),  // Session
-        3 => Ok("ms"),  // Message
-        4 => Ok("pr"),  // Person
-        5 => Ok("rl"),  // Relationship
-        6 => Ok("ev"),  // Event
-        7 => Ok("sk"),  // Skill
-        8 => Ok("sm"),  // Summary
-        9 => Ok("pl"),  // Place
-        10 => Ok("tx"), // Text
-        11 => Ok("cv"), // Conversation
-        12 => Ok("og"), // Organization
-        13 => Ok("fc"), // Facet
-        14 => Ok("wd"), // World
-        // Productivity (60-79)
-        60 => Ok("tl"), // TaskList
-        61 => Ok("tk"), // Task
-        62 => Ok("mc"), // Machine
-        _ => Err(crate::error::Error::InvalidEntityType(entity_type)),
-    }
+    entity_type_registry_entry(entity_type)
+        .and_then(|entry| entry.short_id_prefix)
+        .ok_or(crate::error::Error::InvalidEntityType(entity_type))
+}
+
+#[must_use]
+pub fn entity_type_registry_entry(entity_type: u8) -> Option<&'static EntityTypeRegistryEntry> {
+    ENTITY_TYPE_REGISTRY
+        .iter()
+        .find(|entry| entry.type_byte == entity_type)
+}
+
+pub(crate) fn validate_entity_type(entity_type: u8) -> crate::error::Result<()> {
+    entity_type_registry_entry(entity_type)
+        .map(|_| ())
+        .ok_or(crate::error::Error::InvalidEntityType(entity_type))
 }
 
 /// Relationship kind used by graph edges.

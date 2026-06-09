@@ -2,9 +2,25 @@ use std::collections::{HashMap, HashSet};
 
 use serde_json::{Map, Number, Value};
 
-use crate::types::{ContextEntity, ContextPack, FieldProfile, PackFormat, Signal, TokenAllocation};
+use crate::types::{
+    ContextEntity, ContextPack, ENTITY_TYPE_ASSET, ENTITY_TYPE_ASSET_TEXT, ENTITY_TYPE_CLAIM,
+    ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_EVENT, ENTITY_TYPE_FACET, ENTITY_TYPE_MACHINE,
+    ENTITY_TYPE_MESSAGE, ENTITY_TYPE_NOTIFICATION, ENTITY_TYPE_ORG, ENTITY_TYPE_PERSON,
+    ENTITY_TYPE_PLACE, ENTITY_TYPE_RELATIONSHIP, ENTITY_TYPE_SESSION, ENTITY_TYPE_SKILL,
+    ENTITY_TYPE_SUMMARY, ENTITY_TYPE_TASK, ENTITY_TYPE_TASK_LIST, ENTITY_TYPE_TURN,
+    ENTITY_TYPE_WORLD, FieldProfile, PackFormat, Signal, TokenAllocation,
+};
 
-const GROUP_ORDER: &[u8] = &[0, 1, 8, 6, 4, 7, 10, 9];
+const GROUP_ORDER: &[u8] = &[
+    ENTITY_TYPE_CLAIM,
+    ENTITY_TYPE_TURN,
+    ENTITY_TYPE_SUMMARY,
+    ENTITY_TYPE_EVENT,
+    ENTITY_TYPE_PERSON,
+    ENTITY_TYPE_SKILL,
+    ENTITY_TYPE_ASSET_TEXT,
+    ENTITY_TYPE_PLACE,
+];
 // Use an impossible entity type as the shared sink for unknown groups.
 const OTHER_ENTITY_TYPE: u8 = u8::MAX;
 
@@ -774,93 +790,103 @@ fn group_labels(entity_type: u8) -> GroupLabels {
 
 fn known_group_labels(entity_type: u8) -> Option<GroupLabels> {
     match entity_type {
-        0 => Some(GroupLabels {
+        ENTITY_TYPE_CLAIM => Some(GroupLabels {
             key: "claims",
             name: "CLAIMS",
             title: "Claims",
         }),
-        1 => Some(GroupLabels {
+        ENTITY_TYPE_TURN => Some(GroupLabels {
             key: "turns",
             name: "TURNS",
             title: "Turns",
         }),
-        2 => Some(GroupLabels {
+        ENTITY_TYPE_SESSION => Some(GroupLabels {
             key: "sessions",
             name: "SESSIONS",
             title: "Sessions",
         }),
-        3 => Some(GroupLabels {
+        ENTITY_TYPE_MESSAGE => Some(GroupLabels {
             key: "messages",
             name: "MESSAGES",
             title: "Messages",
         }),
-        4 => Some(GroupLabels {
+        ENTITY_TYPE_PERSON => Some(GroupLabels {
             key: "persons",
             name: "PERSONS",
             title: "Persons",
         }),
-        5 => Some(GroupLabels {
+        ENTITY_TYPE_RELATIONSHIP => Some(GroupLabels {
             key: "relationships",
             name: "RELATIONSHIPS",
             title: "Relationships",
         }),
-        6 => Some(GroupLabels {
+        ENTITY_TYPE_EVENT => Some(GroupLabels {
             key: "events",
             name: "EVENTS",
             title: "Events",
         }),
-        7 => Some(GroupLabels {
+        ENTITY_TYPE_SKILL => Some(GroupLabels {
             key: "skills",
             name: "SKILLS",
             title: "Skills",
         }),
-        8 => Some(GroupLabels {
+        ENTITY_TYPE_SUMMARY => Some(GroupLabels {
             key: "summaries",
             name: "SUMMARIES",
             title: "Summaries",
         }),
-        9 => Some(GroupLabels {
+        ENTITY_TYPE_PLACE => Some(GroupLabels {
             key: "places",
             name: "PLACES",
             title: "Places",
         }),
-        10 => Some(GroupLabels {
+        ENTITY_TYPE_ASSET_TEXT => Some(GroupLabels {
             key: "texts",
             name: "TEXTS",
             title: "Texts",
         }),
-        11 => Some(GroupLabels {
+        ENTITY_TYPE_CONVERSATION => Some(GroupLabels {
             key: "conversations",
             name: "CONVERSATIONS",
             title: "Conversations",
         }),
-        12 => Some(GroupLabels {
+        ENTITY_TYPE_ORG => Some(GroupLabels {
             key: "organizations",
             name: "ORGANIZATIONS",
             title: "Organizations",
         }),
-        13 => Some(GroupLabels {
+        ENTITY_TYPE_FACET => Some(GroupLabels {
             key: "facets",
             name: "FACETS",
             title: "Facets",
         }),
-        14 => Some(GroupLabels {
+        ENTITY_TYPE_WORLD => Some(GroupLabels {
             key: "worlds",
             name: "WORLDS",
             title: "Worlds",
         }),
-        // Productivity (60-79)
-        60 => Some(GroupLabels {
+        ENTITY_TYPE_ASSET => Some(GroupLabels {
+            key: "assets",
+            name: "ASSETS",
+            title: "Assets",
+        }),
+        ENTITY_TYPE_NOTIFICATION => Some(GroupLabels {
+            key: "notifications",
+            name: "NOTIFICATIONS",
+            title: "Notifications",
+        }),
+        // Productivity (80-99)
+        ENTITY_TYPE_TASK_LIST => Some(GroupLabels {
             key: "task_lists",
             name: "TASK_LISTS",
             title: "Task Lists",
         }),
-        61 => Some(GroupLabels {
+        ENTITY_TYPE_TASK => Some(GroupLabels {
             key: "tasks",
             name: "TASKS",
             title: "Tasks",
         }),
-        62 => Some(GroupLabels {
+        ENTITY_TYPE_MACHINE => Some(GroupLabels {
             key: "machines",
             name: "MACHINES",
             title: "Machines",
@@ -883,31 +909,31 @@ fn group_title(entity_type: u8) -> &'static str {
 
 fn fields_for_profile(entity_type: u8, profile: FieldProfile) -> &'static [&'static str] {
     match (entity_type, profile) {
-        (0, FieldProfile::Minimal) => &["pred", "val"],
-        (0, FieldProfile::Standard) => &["pred", "val", "conf", "sal", "evid"],
-        (0, FieldProfile::Full) => &[
+        (ENTITY_TYPE_CLAIM, FieldProfile::Minimal) => &["pred", "val"],
+        (ENTITY_TYPE_CLAIM, FieldProfile::Standard) => &["pred", "val", "conf", "sal", "evid"],
+        (ENTITY_TYPE_CLAIM, FieldProfile::Full) => &[
             "pred", "val", "conf", "sal", "evid", "from", "to", "src", "world", "subj", "scope",
         ],
 
-        (1, FieldProfile::Minimal) => &["txt"],
-        (1, FieldProfile::Standard) => &["txt", "spkr", "at"],
-        (1, FieldProfile::Full) => &["txt", "spkr", "at", "sess"],
+        (ENTITY_TYPE_TURN, FieldProfile::Minimal) => &["txt"],
+        (ENTITY_TYPE_TURN, FieldProfile::Standard) => &["txt", "spkr", "at"],
+        (ENTITY_TYPE_TURN, FieldProfile::Full) => &["txt", "spkr", "at", "sess"],
 
-        (8, FieldProfile::Minimal) => &["txt"],
-        (8, FieldProfile::Standard) => &["txt", "lvl", "at"],
-        (8, FieldProfile::Full) => &["txt", "lvl", "at", "src"],
+        (ENTITY_TYPE_SUMMARY, FieldProfile::Minimal) => &["txt"],
+        (ENTITY_TYPE_SUMMARY, FieldProfile::Standard) => &["txt", "lvl", "at"],
+        (ENTITY_TYPE_SUMMARY, FieldProfile::Full) => &["txt", "lvl", "at", "src"],
 
-        (6, FieldProfile::Minimal) => &["name"],
-        (6, FieldProfile::Standard) => &["name", "at", "ppl"],
-        (6, FieldProfile::Full) => &["name", "at", "ppl", "place", "desc"],
+        (ENTITY_TYPE_EVENT, FieldProfile::Minimal) => &["name"],
+        (ENTITY_TYPE_EVENT, FieldProfile::Standard) => &["name", "at", "ppl"],
+        (ENTITY_TYPE_EVENT, FieldProfile::Full) => &["name", "at", "ppl", "place", "desc"],
 
-        (4, FieldProfile::Minimal) => &["name"],
-        (4, FieldProfile::Standard) => &["name"],
-        (4, FieldProfile::Full) => &["name", "role", "rel"],
+        (ENTITY_TYPE_PERSON, FieldProfile::Minimal) => &["name"],
+        (ENTITY_TYPE_PERSON, FieldProfile::Standard) => &["name"],
+        (ENTITY_TYPE_PERSON, FieldProfile::Full) => &["name", "role", "rel"],
 
-        (7, FieldProfile::Minimal) => &["skillId"],
-        (7, FieldProfile::Standard) => &["skillId", "desc", "approvalStatus"],
-        (7, FieldProfile::Full) => &[
+        (ENTITY_TYPE_SKILL, FieldProfile::Minimal) => &["skillId"],
+        (ENTITY_TYPE_SKILL, FieldProfile::Standard) => &["skillId", "desc", "approvalStatus"],
+        (ENTITY_TYPE_SKILL, FieldProfile::Full) => &[
             "skillId",
             "desc",
             "version",
@@ -918,14 +944,18 @@ fn fields_for_profile(entity_type: u8, profile: FieldProfile) -> &'static [&'sta
         ],
 
         // TaskList (project container)
-        (60, FieldProfile::Minimal) => &["name"],
-        (60, FieldProfile::Standard) => &["name", "goal", "status"],
-        (60, FieldProfile::Full) => &["name", "goal", "status", "icon", "color", "repoUrl"],
+        (ENTITY_TYPE_TASK_LIST, FieldProfile::Minimal) => &["name"],
+        (ENTITY_TYPE_TASK_LIST, FieldProfile::Standard) => &["name", "goal", "status"],
+        (ENTITY_TYPE_TASK_LIST, FieldProfile::Full) => {
+            &["name", "goal", "status", "icon", "color", "repoUrl"]
+        }
 
         // Task (universal work unit)
-        (61, FieldProfile::Minimal) => &["title", "role"],
-        (61, FieldProfile::Standard) => &["title", "role", "status", "priority", "dueDate"],
-        (61, FieldProfile::Full) => &[
+        (ENTITY_TYPE_TASK, FieldProfile::Minimal) => &["title", "role"],
+        (ENTITY_TYPE_TASK, FieldProfile::Standard) => {
+            &["title", "role", "status", "priority", "dueDate"]
+        }
+        (ENTITY_TYPE_TASK, FieldProfile::Full) => &[
             "title",
             "role",
             "status",
@@ -940,9 +970,9 @@ fn fields_for_profile(entity_type: u8, profile: FieldProfile) -> &'static [&'sta
             "position",
         ],
 
-        // Machine (62): schema-reserved, no fields yet. Explicit empty arms so
+        // Machine: schema-reserved, no fields yet. Explicit empty arms so
         // future field additions don't silently fall through to alphabetical order.
-        (62, _) => &[],
+        (ENTITY_TYPE_MACHINE, _) => &[],
 
         _ => &[],
     }
@@ -1491,7 +1521,7 @@ mod tests {
 
         for i in 0..15_u8 {
             pack.results.push(ContextEntity {
-                id: EntityId::from_bytes_unchecked([60 + i; 16]),
+                id: EntityId::from_bytes_unchecked([0x90 + i; 16]),
                 short_id: format!("tn{i:02}"),
                 content_hash: 0x70 + i,
                 entity_type: 1,
@@ -1772,12 +1802,7 @@ mod tests {
         // Each row asserts the compact (format, profile) pair saves at least
         // `min_savings` fraction of bytes vs the json/Full baseline.
         let cases: &[(&str, PackFormat, FieldProfile, f64)] = &[
-            (
-                "toon_minimal",
-                PackFormat::Toon,
-                FieldProfile::Minimal,
-                0.60,
-            ),
+            ("toon_minimal", PackFormat::Toon, FieldProfile::Minimal, 0.6),
             (
                 "toon_standard",
                 PackFormat::Toon,
@@ -2129,14 +2154,14 @@ mod tests {
         let pack = ContextPack {
             results: vec![
                 ContextEntity {
-                    id: EntityId::from_bytes_unchecked([15; 16]),
-                    short_id: "u15".to_owned(),
-                    content_hash: 0x15,
-                    entity_type: 15,
+                    id: EntityId::from_bytes_unchecked([18; 16]),
+                    short_id: "u18".to_owned(),
+                    content_hash: 0x18,
+                    entity_type: 18,
                     score: 0.9,
                     fields: Some(HashMap::from([(
                         "name".to_owned(),
-                        Value::String("fifteen".to_owned()),
+                        Value::String("eighteen".to_owned()),
                     )])),
                     edges: None,
                     vector: None,
@@ -2167,7 +2192,7 @@ mod tests {
             .and_then(Value::as_array)
             .expect("other group");
         assert_eq!(other.len(), 2);
-        assert_eq!(other[0]["name"], "fifteen");
+        assert_eq!(other[0]["name"], "eighteen");
         assert_eq!(other[1]["name"], "twenty");
     }
 
@@ -2185,10 +2210,10 @@ mod tests {
     fn yaml_quotes_unsafe_field_keys() {
         let pack = ContextPack {
             results: vec![ContextEntity {
-                id: EntityId::from_bytes_unchecked([62; 16]),
+                id: EntityId::from_bytes_unchecked([0x92; 16]),
                 short_id: "mc01".to_owned(),
                 content_hash: 0x01,
-                entity_type: 62,
+                entity_type: ENTITY_TYPE_MACHINE,
                 score: 0.5,
                 fields: Some(HashMap::from([
                     ("x:y".to_owned(), Value::String("value".to_owned())),
@@ -2345,7 +2370,7 @@ mod tests {
         assert!(turns_count > 0);
     }
 
-    // ── TaskList (type 60) and Task (type 61) tests ──────────────────
+    // ── TaskList and Task productivity-band tests ──────────────────
 
     fn empty_stats() -> PackStats {
         PackStats {
@@ -2482,12 +2507,12 @@ mod tests {
             assert_eq!(first["role"], "habit");
             assert_eq!(first["status"], "active");
 
-            // Minimal ordering for type 61.
-            let minimal = fields_for_profile(61, FieldProfile::Minimal);
+            // Minimal ordering for TASK.
+            let minimal = fields_for_profile(ENTITY_TYPE_TASK, FieldProfile::Minimal);
             assert_eq!(minimal, &["title", "role"]);
 
-            // Full membership for type 61.
-            let full = fields_for_profile(61, FieldProfile::Full);
+            // Full membership for TASK.
+            let full = fields_for_profile(ENTITY_TYPE_TASK, FieldProfile::Full);
             assert!(full.contains(&"frequency"));
             assert!(full.contains(&"frequencyDetail"));
             assert!(full.contains(&"currentStreak"));
@@ -2500,7 +2525,7 @@ mod tests {
         let cases: &[Case] = &[
             Case {
                 name: "task_list",
-                entity_type: 60,
+                entity_type: ENTITY_TYPE_TASK_LIST,
                 short_id: "tl01",
                 content_hash: 0xaa,
                 group_key: "task_lists",
@@ -2512,7 +2537,7 @@ mod tests {
             },
             Case {
                 name: "task",
-                entity_type: 61,
+                entity_type: ENTITY_TYPE_TASK,
                 short_id: "tk01",
                 content_hash: 0xbb,
                 group_key: "tasks",
@@ -2597,10 +2622,10 @@ mod tests {
         fields.insert("dueDate".to_owned(), Value::Number(Number::from(due)));
 
         let entity = ContextEntity {
-            id: EntityId::from_bytes_unchecked([61; 16]),
+            id: EntityId::from_bytes_unchecked([0x91; 16]),
             short_id: "tk02".to_owned(),
             content_hash: 0xcc,
-            entity_type: 61,
+            entity_type: ENTITY_TYPE_TASK,
             score: 0.9,
             fields: Some(fields),
             edges: None,
@@ -2666,17 +2691,27 @@ mod tests {
 
     #[test]
     fn test_group_labels_sparse_ids() {
-        let tl = group_labels(60);
+        let asset = group_labels(ENTITY_TYPE_ASSET);
+        assert_eq!(asset.key, "assets");
+        assert_eq!(asset.name, "ASSETS");
+        assert_eq!(asset.title, "Assets");
+
+        let notification = group_labels(ENTITY_TYPE_NOTIFICATION);
+        assert_eq!(notification.key, "notifications");
+        assert_eq!(notification.name, "NOTIFICATIONS");
+        assert_eq!(notification.title, "Notifications");
+
+        let tl = group_labels(ENTITY_TYPE_TASK_LIST);
         assert_eq!(tl.key, "task_lists");
         assert_eq!(tl.name, "TASK_LISTS");
         assert_eq!(tl.title, "Task Lists");
 
-        let tk = group_labels(61);
+        let tk = group_labels(ENTITY_TYPE_TASK);
         assert_eq!(tk.key, "tasks");
         assert_eq!(tk.name, "TASKS");
         assert_eq!(tk.title, "Tasks");
 
-        let mc = group_labels(62);
+        let mc = group_labels(ENTITY_TYPE_MACHINE);
         assert_eq!(mc.key, "machines");
         assert_eq!(mc.name, "MACHINES");
         assert_eq!(mc.title, "Machines");
