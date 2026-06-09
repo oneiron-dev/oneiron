@@ -12,9 +12,15 @@ use crate::store::Store;
 use crate::types::{
     DecodedEdgeValue, EDGE_KEY_LEN, ENTITY_ID_LEN, EdgeKind, EdgeProvenanceFlags, EntityId,
     TimeRange, Vad, decode_edge_value_for_kind, encode_edge_value, short_id_prefix,
+    validate_entity_type,
 };
 
-pub(crate) const ENTITY_METADATA_HEADER_LEN: usize = 25;
+pub(crate) const ENTITY_TYPE_OFFSET: usize = 0;
+pub(crate) const ENTITY_OCCURRED_START_OFFSET: usize = 1;
+pub(crate) const ENTITY_OCCURRED_END_OFFSET: usize = 9;
+pub(crate) const ENTITY_LEARNED_AT_OFFSET: usize = 17;
+pub(crate) const ENTITY_BODY_OFFSET: usize = 25;
+pub(crate) const ENTITY_METADATA_HEADER_LEN: usize = ENTITY_BODY_OFFSET;
 pub(crate) const SHORT_ID_COUNTER_LEN: usize = 8;
 pub(crate) const LONG_INTERVAL_THRESHOLD_SECS: u64 = 14 * 86_400;
 
@@ -51,10 +57,22 @@ impl EntityMetadataHeader {
             return None;
         }
 
-        let entity_type = raw[0];
-        let occurred_start = u64::from_be_bytes(raw[1..9].try_into().ok()?);
-        let occurred_end = u64::from_be_bytes(raw[9..17].try_into().ok()?);
-        let learned_at = u64::from_be_bytes(raw[17..25].try_into().ok()?);
+        let entity_type = raw[ENTITY_TYPE_OFFSET];
+        let occurred_start = u64::from_be_bytes(
+            raw[ENTITY_OCCURRED_START_OFFSET..ENTITY_OCCURRED_END_OFFSET]
+                .try_into()
+                .ok()?,
+        );
+        let occurred_end = u64::from_be_bytes(
+            raw[ENTITY_OCCURRED_END_OFFSET..ENTITY_LEARNED_AT_OFFSET]
+                .try_into()
+                .ok()?,
+        );
+        let learned_at = u64::from_be_bytes(
+            raw[ENTITY_LEARNED_AT_OFFSET..ENTITY_BODY_OFFSET]
+                .try_into()
+                .ok()?,
+        );
 
         Some(Self {
             entity_type,
@@ -131,7 +149,7 @@ impl<'a> BatchBuilder<'a> {
 
     /// Adds an entity put operation to the batch.
     ///
-    /// Validates `entity_type` eagerly via [`short_id_prefix`]. If validation
+    /// Validates `entity_type` eagerly via the entity type registry. If validation
     /// fails, the error is stored and surfaced on [`commit()`](Self::commit).
     pub fn put(
         mut self,
@@ -142,7 +160,7 @@ impl<'a> BatchBuilder<'a> {
         data: &[u8],
     ) -> Self {
         if self.validation_error.is_none()
-            && let Err(e) = short_id_prefix(entity_type)
+            && let Err(e) = validate_entity_type(entity_type)
         {
             self.validation_error = Some(e);
         }
@@ -712,7 +730,7 @@ fn apply_put(
     learned_at: u64,
     data: &[u8],
 ) -> Result<()> {
-    short_id_prefix(entity_type)?;
+    validate_entity_type(entity_type)?;
     let short_id_plan = plan_short_id_update(store, &*wtxn, &id, entity_type, data)?;
 
     let mut occurred = occurred;

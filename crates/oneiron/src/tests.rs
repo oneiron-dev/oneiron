@@ -4,8 +4,9 @@ use std::time::Instant;
 
 use crate::limits::{MAX_ANCESTOR_DEPTH, MAX_CHILD_OF_CYCLE_TRAVERSAL_STEPS};
 use crate::types::{
-    ENTITY_ID_LEN, EdgeActorClass, EdgeConfirmationStatus, EdgeProvenanceFlags, decode_edge_value,
-    decode_edge_value_for_kind, encode_edge_value,
+    ENTITY_ID_LEN, ENTITY_TYPE_MACHINE, ENTITY_TYPE_REDACTION_AUDIT, ENTITY_TYPE_TASK,
+    ENTITY_TYPE_TASK_LIST, EdgeActorClass, EdgeConfirmationStatus, EdgeProvenanceFlags,
+    decode_edge_value, decode_edge_value_for_kind, encode_edge_value,
 };
 use heed::types::Bytes;
 use rand::rngs::StdRng;
@@ -2272,35 +2273,43 @@ fn decode_edge_value_for_kind_rejects_kind_layout_mismatches() {
 
 #[test]
 fn all_entity_type_prefixes() {
-    use crate::types::short_id_prefix;
+    use crate::types::{ENTITY_TYPE_REGISTRY, short_id_prefix};
 
-    enum Expect {
-        Ok(&'static str),
-        Err,
-    }
-
-    // Named cases: (case_name, entity_type_byte, expected).
-    // Covers both the "new" entity types (12-14) and the productivity range (60-62),
-    // plus negative cases pulled from the former `invalid_entity_type_rejected` test.
-    let cases: &[(&str, u8, Expect)] = &[
-        ("organization", 12, Expect::Ok("og")),
-        ("facet", 13, Expect::Ok("fc")),
-        ("world", 14, Expect::Ok("wd")),
-        ("reserved_15", 15, Expect::Err),
-        ("task_list", 60, Expect::Ok("tl")),
-        ("task", 61, Expect::Ok("tk")),
-        ("milestone", 62, Expect::Ok("mc")),
-        ("invalid_99", 99, Expect::Err),
-        ("invalid_255", 255, Expect::Err),
-        // companion range, not yet defined
-        ("companion_30", 30, Expect::Err),
+    // ARCH-0002 / oneiron-contracts.ts pinned storage ABI.
+    let expected: &[(&str, u8, Option<&str>)] = &[
+        ("CLAIM", 0, Some("cl")),
+        ("TURN", 1, Some("tn")),
+        ("SESSION", 2, Some("ss")),
+        ("MESSAGE", 3, Some("ms")),
+        ("PERSON", 4, Some("pr")),
+        ("RELATIONSHIP", 5, Some("rl")),
+        ("EVENT", 6, Some("ev")),
+        ("SKILL", 7, Some("sk")),
+        ("SUMMARY", 8, Some("sm")),
+        ("PLACE", 9, Some("pl")),
+        ("ASSET_TEXT", 10, Some("tx")),
+        ("CONVERSATION", 11, Some("cv")),
+        ("ORG", 12, Some("og")),
+        ("FACET", 13, Some("fc")),
+        ("WORLD", 14, Some("wd")),
+        ("ASSET", 15, Some("as")),
+        ("NOTIFICATION", 16, Some("nt")),
+        ("TASK_LIST", 80, Some("tl")),
+        ("TASK", 81, Some("tk")),
+        ("MACHINE", 82, Some("mc")),
+        ("REDACTION_AUDIT", 120, None),
     ];
 
-    for (name, byte, expected) in cases {
-        let actual = short_id_prefix(*byte);
-        match expected {
-            Expect::Ok(prefix) => {
-                let got = actual.unwrap_or_else(|err| {
+    let actual: Vec<_> = ENTITY_TYPE_REGISTRY
+        .iter()
+        .map(|entry| (entry.kind, entry.type_byte, entry.short_id_prefix))
+        .collect();
+    assert_eq!(actual.as_slice(), expected);
+
+    for (name, byte, prefix) in expected {
+        match prefix {
+            Some(prefix) => {
+                let got = short_id_prefix(*byte).unwrap_or_else(|err| {
                     panic!("case {name}: expected prefix {prefix:?}, got err {err:?}")
                 });
                 assert_eq!(
@@ -2308,13 +2317,71 @@ fn all_entity_type_prefixes() {
                     "case {name}: expected prefix {prefix:?}, got {got:?}"
                 );
             }
-            Expect::Err => assert!(
-                actual.is_err(),
-                "case {name}: expected error, got Ok({:?})",
-                actual.ok()
+            None => assert!(
+                short_id_prefix(*byte).is_err(),
+                "case {name}: expected no short-id prefix"
             ),
         }
     }
+
+    assert!(short_id_prefix(99).is_err());
+    assert!(short_id_prefix(255).is_err());
+}
+
+#[test]
+fn entity_value_envelope_matches_arch_0002_layout() -> Result<()> {
+    use crate::batch::{
+        ENTITY_BODY_OFFSET, ENTITY_LEARNED_AT_OFFSET, ENTITY_OCCURRED_END_OFFSET,
+        ENTITY_OCCURRED_START_OFFSET, ENTITY_TYPE_OFFSET, EntityMetadataHeader,
+    };
+
+    let (_dir, vault) = open_test_vault();
+    let id = EntityId::now();
+    let entity_type = 0_u8;
+    let occurred = test_time_range(0x0102_0304_0506_0708, 0x1112_1314_1516_1718);
+    let learned_at = 0x2122_2324_2526_2728;
+    let body_value = serde_json::json!({
+        "kind": "envelope-pin",
+        "value": 42,
+    });
+    let body = rmp_serde::to_vec_named(&body_value).expect("encode MessagePack body");
+
+    vault.put_entity(&id, entity_type, occurred, learned_at, &body)?;
+
+    let rtxn = vault.store.env.read_txn()?;
+    let raw = vault
+        .store
+        .entities
+        .get(&rtxn, id.as_bytes())?
+        .ok_or(Error::EntityNotFound)?;
+
+    assert_eq!(raw.len(), ENTITY_METADATA_HEADER_LEN + body.len());
+    assert_eq!(ENTITY_METADATA_HEADER_LEN, ENTITY_BODY_OFFSET);
+    assert_eq!(raw[ENTITY_TYPE_OFFSET], entity_type);
+    assert_eq!(
+        &raw[ENTITY_OCCURRED_START_OFFSET..ENTITY_OCCURRED_END_OFFSET],
+        occurred.start.to_be_bytes().as_slice()
+    );
+    assert_eq!(
+        &raw[ENTITY_OCCURRED_END_OFFSET..ENTITY_LEARNED_AT_OFFSET],
+        occurred.end.to_be_bytes().as_slice()
+    );
+    assert_eq!(
+        &raw[ENTITY_LEARNED_AT_OFFSET..ENTITY_BODY_OFFSET],
+        learned_at.to_be_bytes().as_slice()
+    );
+    assert_eq!(&raw[ENTITY_BODY_OFFSET..], body.as_slice());
+
+    let header = EntityMetadataHeader::parse(raw).expect("parse entity header");
+    assert_eq!(header.entity_type, entity_type);
+    assert_eq!(header.occurred_start, occurred.start);
+    assert_eq!(header.occurred_end, occurred.end);
+    assert_eq!(header.learned_at, learned_at);
+
+    let decoded: serde_json::Value =
+        rmp_serde::from_slice(&raw[ENTITY_BODY_OFFSET..]).expect("decode MessagePack body");
+    assert_eq!(decoded, body_value);
+    Ok(())
 }
 
 #[test]
@@ -2492,8 +2559,20 @@ fn productivity_entity_types_round_trip() -> Result<()> {
 
     vault
         .batch()
-        .put(&task_list, 60, test_time_range(100, 100), 101, b"project")
-        .put(&task, 61, test_time_range(200, 200), 201, b"task-data")
+        .put(
+            &task_list,
+            ENTITY_TYPE_TASK_LIST,
+            test_time_range(100, 100),
+            101,
+            b"project",
+        )
+        .put(
+            &task,
+            ENTITY_TYPE_TASK,
+            test_time_range(200, 200),
+            201,
+            b"task-data",
+        )
         .commit()?;
 
     assert_eq!(vault.get(&task_list)?.unwrap(), b"project");
@@ -2511,11 +2590,11 @@ fn entity_id_rejects_reserved_sentinel_bytes() {
     assert!(EntityId::from_bytes(claim_counter).is_err());
 
     let mut task_list_counter = [0xFF; 16];
-    task_list_counter[0] = 60;
+    task_list_counter[0] = ENTITY_TYPE_TASK_LIST;
     assert!(EntityId::from_bytes(task_list_counter).is_err());
 
     let mut non_reserved = [0xFF; 16];
-    non_reserved[0] = 15;
+    non_reserved[0] = ENTITY_TYPE_REDACTION_AUDIT;
     assert!(EntityId::from_bytes(non_reserved).is_ok());
 }
 
@@ -2524,7 +2603,7 @@ fn entity_id_from_hex_rejects_reserved_sentinel_bytes() {
     assert!(EntityId::from_hex("00000000000000000000000000000000").is_err());
     assert!(EntityId::from_hex("ffffffffffffffffffffffffffffffff").is_err());
     assert!(EntityId::from_hex("00ffffffffffffffffffffffffffffff").is_err());
-    assert!(EntityId::from_hex("3cffffffffffffffffffffffffffffff").is_err());
+    assert!(EntityId::from_hex("50ffffffffffffffffffffffffffffff").is_err());
 }
 
 #[test]
@@ -2606,28 +2685,40 @@ fn entities_by_type_returns_correct_ids() -> Result<()> {
 
     vault
         .batch()
-        .put(&tl1, 60, test_time_range(1, 1), 2, b"project-1")
-        .put(&tl2, 60, test_time_range(3, 3), 4, b"project-2")
-        .put(&tk1, 61, test_time_range(5, 5), 6, b"task-1")
+        .put(
+            &tl1,
+            ENTITY_TYPE_TASK_LIST,
+            test_time_range(1, 1),
+            2,
+            b"project-1",
+        )
+        .put(
+            &tl2,
+            ENTITY_TYPE_TASK_LIST,
+            test_time_range(3, 3),
+            4,
+            b"project-2",
+        )
+        .put(&tk1, ENTITY_TYPE_TASK, test_time_range(5, 5), 6, b"task-1")
         .commit()?;
 
-    let task_lists = vault.entities_by_type(60)?;
+    let task_lists = vault.entities_by_type(ENTITY_TYPE_TASK_LIST)?;
     assert_eq!(task_lists.len(), 2);
     assert!(task_lists.contains(&tl1));
     assert!(task_lists.contains(&tl2));
 
-    let tasks = vault.entities_by_type(61)?;
+    let tasks = vault.entities_by_type(ENTITY_TYPE_TASK)?;
     assert_eq!(tasks.len(), 1);
     assert!(tasks.contains(&tk1));
 
-    let empty = vault.entities_by_type(62)?;
+    let empty = vault.entities_by_type(ENTITY_TYPE_MACHINE)?;
     assert!(empty.is_empty());
     Ok(())
 }
 
 #[test]
 fn entities_by_type_rejects_corrupted_type_index_key() -> Result<()> {
-    let entity_type = 60_u8;
+    let entity_type = ENTITY_TYPE_TASK_LIST;
 
     {
         let (_dir, vault) = open_test_vault();
@@ -2673,24 +2764,24 @@ fn entities_by_type_allows_exact_cap_and_overflows_on_next_row() -> Result<()> {
     vault.with_write_txn(|wtxn| {
         for i in 0..TYPE_CAP {
             let id = seeded_entity_id(i as u128);
-            let key = Store::encode_type_key(60, &id);
+            let key = Store::encode_type_key(ENTITY_TYPE_TASK_LIST, &id);
             vault.store.type_index.put(wtxn, &key, &[])?;
         }
         Ok(())
     })?;
 
-    let ids = vault.entities_by_type(60)?;
+    let ids = vault.entities_by_type(ENTITY_TYPE_TASK_LIST)?;
     assert_eq!(ids.len(), TYPE_CAP);
 
     let overflow_id = seeded_entity_id(TYPE_CAP as u128);
     vault.with_write_txn(|wtxn| {
-        let key = Store::encode_type_key(60, &overflow_id);
+        let key = Store::encode_type_key(ENTITY_TYPE_TASK_LIST, &overflow_id);
         vault.store.type_index.put(wtxn, &key, &[])?;
         Ok(())
     })?;
 
     let err = vault
-        .entities_by_type(60)
+        .entities_by_type(ENTITY_TYPE_TASK_LIST)
         .expect_err("type scan should fail loud once cap is exceeded");
     assert!(matches!(err, Error::IndexOverflow("entities_by_type")));
     Ok(())
@@ -2706,10 +2797,28 @@ fn targets_and_sources_with_kind_filter() -> Result<()> {
 
     vault
         .batch()
-        .put(&child, 61, test_time_range(1, 1), 2, b"child")
-        .put(&parent, 61, test_time_range(3, 3), 4, b"parent")
-        .put(&sibling, 61, test_time_range(5, 5), 6, b"sibling")
-        .put(&task_list, 60, test_time_range(7, 7), 8, b"project")
+        .put(&child, ENTITY_TYPE_TASK, test_time_range(1, 1), 2, b"child")
+        .put(
+            &parent,
+            ENTITY_TYPE_TASK,
+            test_time_range(3, 3),
+            4,
+            b"parent",
+        )
+        .put(
+            &sibling,
+            ENTITY_TYPE_TASK,
+            test_time_range(5, 5),
+            6,
+            b"sibling",
+        )
+        .put(
+            &task_list,
+            ENTITY_TYPE_TASK_LIST,
+            test_time_range(7, 7),
+            8,
+            b"project",
+        )
         .edge(&child, EdgeKind::ChildOf, &parent, 1.0)
         .edge(&sibling, EdgeKind::ChildOf, &parent, 1.0)
         .edge(&child, EdgeKind::BelongsTo, &task_list, 1.0)
@@ -2725,12 +2834,12 @@ fn targets_and_sources_with_kind_filter() -> Result<()> {
     assert!(children.contains(&child));
     assert!(children.contains(&sibling));
 
-    // targets with type filter: child's BelongsTo targets of type 60
-    let lists = vault.targets(&child, EdgeKind::BelongsTo, Some(60))?;
+    // targets with type filter: child's BelongsTo targets of task-list type
+    let lists = vault.targets(&child, EdgeKind::BelongsTo, Some(ENTITY_TYPE_TASK_LIST))?;
     assert_eq!(lists, vec![task_list]);
 
     // targets with wrong type filter: should be empty
-    let wrong = vault.targets(&child, EdgeKind::BelongsTo, Some(61))?;
+    let wrong = vault.targets(&child, EdgeKind::BelongsTo, Some(ENTITY_TYPE_TASK))?;
     assert!(wrong.is_empty());
     Ok(())
 }
@@ -2800,7 +2909,7 @@ fn targets_and_sources_fail_loud_when_type_filter_overscans_peer_cap() -> Result
     vault.with_write_txn(|wtxn| {
         for i in 0..EDGE_CAP {
             let peer = seeded_entity_id(300_000 + i as u128);
-            let row = encoded_entity_record(61, b"peer");
+            let row = encoded_entity_record(ENTITY_TYPE_TASK, b"peer");
             let out_key = Store::encode_edge_key(&src, EdgeKind::BelongsTo, &peer);
             let in_key = Store::encode_edge_key(&tgt, EdgeKind::BelongsTo, &peer);
             vault.store.entities.put(wtxn, peer.as_bytes(), &row)?;
@@ -2809,7 +2918,7 @@ fn targets_and_sources_fail_loud_when_type_filter_overscans_peer_cap() -> Result
         }
 
         let matching_peer = seeded_entity_id(400_001);
-        let matching_row = encoded_entity_record(60, b"peer");
+        let matching_row = encoded_entity_record(ENTITY_TYPE_TASK_LIST, b"peer");
         let out_key = Store::encode_edge_key(&src, EdgeKind::BelongsTo, &matching_peer);
         let in_key = Store::encode_edge_key(&tgt, EdgeKind::BelongsTo, &matching_peer);
         vault
@@ -2822,12 +2931,12 @@ fn targets_and_sources_fail_loud_when_type_filter_overscans_peer_cap() -> Result
     })?;
 
     let targets_err = vault
-        .targets(&src, EdgeKind::BelongsTo, Some(60))
+        .targets(&src, EdgeKind::BelongsTo, Some(ENTITY_TYPE_TASK_LIST))
         .expect_err("type-filtered targets should fail loud once scan cap is exceeded");
     assert!(matches!(targets_err, Error::IndexOverflow("targets")));
 
     let sources_err = vault
-        .sources(&tgt, EdgeKind::BelongsTo, Some(60))
+        .sources(&tgt, EdgeKind::BelongsTo, Some(ENTITY_TYPE_TASK_LIST))
         .expect_err("type-filtered sources should fail loud once scan cap is exceeded");
     assert!(matches!(sources_err, Error::IndexOverflow("sources")));
     Ok(())
@@ -2847,11 +2956,35 @@ fn subtree_four_level_tree() -> Result<()> {
 
     vault
         .batch()
-        .put(&root, 61, test_time_range(1, 1), 2, b"root")
-        .put(&child1, 61, test_time_range(3, 3), 4, b"child1")
-        .put(&child2, 61, test_time_range(5, 5), 6, b"child2")
-        .put(&grandchild, 61, test_time_range(7, 7), 8, b"gc")
-        .put(&great_grandchild, 61, test_time_range(9, 9), 10, b"ggc")
+        .put(&root, ENTITY_TYPE_TASK, test_time_range(1, 1), 2, b"root")
+        .put(
+            &child1,
+            ENTITY_TYPE_TASK,
+            test_time_range(3, 3),
+            4,
+            b"child1",
+        )
+        .put(
+            &child2,
+            ENTITY_TYPE_TASK,
+            test_time_range(5, 5),
+            6,
+            b"child2",
+        )
+        .put(
+            &grandchild,
+            ENTITY_TYPE_TASK,
+            test_time_range(7, 7),
+            8,
+            b"gc",
+        )
+        .put(
+            &great_grandchild,
+            ENTITY_TYPE_TASK,
+            test_time_range(9, 9),
+            10,
+            b"ggc",
+        )
         .edge(&child1, EdgeKind::ChildOf, &root, 1.0)
         .edge(&child2, EdgeKind::ChildOf, &root, 1.0)
         .edge(&grandchild, EdgeKind::ChildOf, &child1, 1.0)
@@ -2921,9 +3054,9 @@ fn ancestors_walks_to_root() -> Result<()> {
 
     vault
         .batch()
-        .put(&root, 61, test_time_range(1, 1), 2, b"root")
-        .put(&mid, 61, test_time_range(3, 3), 4, b"mid")
-        .put(&leaf, 61, test_time_range(5, 5), 6, b"leaf")
+        .put(&root, ENTITY_TYPE_TASK, test_time_range(1, 1), 2, b"root")
+        .put(&mid, ENTITY_TYPE_TASK, test_time_range(3, 3), 4, b"mid")
+        .put(&leaf, ENTITY_TYPE_TASK, test_time_range(5, 5), 6, b"leaf")
         .edge(&mid, EdgeKind::ChildOf, &root, 1.0)
         .edge(&leaf, EdgeKind::ChildOf, &mid, 1.0)
         .commit()?;
@@ -2942,7 +3075,7 @@ fn ancestors_walks_to_root() -> Result<()> {
 fn cycle_prevention_rejects_self_parent() -> Result<()> {
     let (_dir, vault) = open_test_vault();
     let node = EntityId::now();
-    vault.put_entity(&node, 61, test_time_range(1, 1), 2, b"self")?;
+    vault.put_entity(&node, ENTITY_TYPE_TASK, test_time_range(1, 1), 2, b"self")?;
 
     assert!(vault.would_create_cycle(&node, &node)?);
     Ok(())
@@ -2959,9 +3092,9 @@ fn cycle_prevention_detects_ancestor_cycle() -> Result<()> {
 
     vault
         .batch()
-        .put(&a, 61, test_time_range(1, 1), 2, b"a")
-        .put(&b, 61, test_time_range(3, 3), 4, b"b")
-        .put(&c, 61, test_time_range(5, 5), 6, b"c")
+        .put(&a, ENTITY_TYPE_TASK, test_time_range(1, 1), 2, b"a")
+        .put(&b, ENTITY_TYPE_TASK, test_time_range(3, 3), 4, b"b")
+        .put(&c, ENTITY_TYPE_TASK, test_time_range(5, 5), 6, b"c")
         .edge(&b, EdgeKind::ChildOf, &a, 1.0)
         .edge(&c, EdgeKind::ChildOf, &b, 1.0)
         .commit()?;
@@ -2971,7 +3104,7 @@ fn cycle_prevention_detects_ancestor_cycle() -> Result<()> {
 
     // Making D a child of C is fine (D doesn't appear in C's ancestors)
     let d = EntityId::now();
-    vault.put_entity(&d, 61, test_time_range(7, 7), 8, b"d")?;
+    vault.put_entity(&d, ENTITY_TYPE_TASK, test_time_range(7, 7), 8, b"d")?;
     assert!(!vault.would_create_cycle(&d, &c)?);
 
     Ok(())
@@ -2995,7 +3128,7 @@ fn test_deep_ancestor_chain() -> Result<()> {
         for (i, node) in nodes.iter().enumerate() {
             batch = batch.put(
                 node,
-                61,
+                ENTITY_TYPE_TASK,
                 test_time_range(i as u64, i as u64),
                 i as u64 + 1,
                 format!("node-{i}").as_bytes(),
@@ -3033,7 +3166,7 @@ fn test_deep_ancestor_chain() -> Result<()> {
     let unrelated = EntityId::now();
     vault.put_entity(
         &unrelated,
-        61,
+        ENTITY_TYPE_TASK,
         test_time_range(999, 999),
         1000,
         b"unrelated",
@@ -3148,12 +3281,12 @@ fn get_entity_type_returns_correct_type() -> Result<()> {
 
     vault
         .batch()
-        .put(&tl, 60, test_time_range(1, 1), 2, b"tl")
-        .put(&tk, 61, test_time_range(3, 3), 4, b"tk")
+        .put(&tl, ENTITY_TYPE_TASK_LIST, test_time_range(1, 1), 2, b"tl")
+        .put(&tk, ENTITY_TYPE_TASK, test_time_range(3, 3), 4, b"tk")
         .commit()?;
 
-    assert_eq!(vault.get_entity_type(&tl)?, Some(60));
-    assert_eq!(vault.get_entity_type(&tk)?, Some(61));
+    assert_eq!(vault.get_entity_type(&tl)?, Some(ENTITY_TYPE_TASK_LIST));
+    assert_eq!(vault.get_entity_type(&tk)?, Some(ENTITY_TYPE_TASK));
     assert_eq!(vault.get_entity_type(&EntityId::now())?, None);
     Ok(())
 }
@@ -3171,11 +3304,11 @@ fn child_of_has_no_ppr_hop_limit() -> Result<()> {
 
     vault
         .batch()
-        .put(&a, 61, test_time_range(1, 1), 2, b"a")
-        .put(&b, 61, test_time_range(3, 3), 4, b"b")
-        .put(&c, 61, test_time_range(5, 5), 6, b"c")
-        .put(&d, 61, test_time_range(7, 7), 8, b"d")
-        .put(&e, 61, test_time_range(9, 9), 10, b"e")
+        .put(&a, ENTITY_TYPE_TASK, test_time_range(1, 1), 2, b"a")
+        .put(&b, ENTITY_TYPE_TASK, test_time_range(3, 3), 4, b"b")
+        .put(&c, ENTITY_TYPE_TASK, test_time_range(5, 5), 6, b"c")
+        .put(&d, ENTITY_TYPE_TASK, test_time_range(7, 7), 8, b"d")
+        .put(&e, ENTITY_TYPE_TASK, test_time_range(9, 9), 10, b"e")
         .edge(&b, EdgeKind::ChildOf, &a, 1.0)
         .edge(&c, EdgeKind::ChildOf, &b, 1.0)
         .edge(&d, EdgeKind::ChildOf, &c, 1.0)
@@ -3252,7 +3385,7 @@ fn child_of_survives_mixed_part_of_path() -> Result<()> {
         .put(&place1, 9, test_time_range(1, 1), 2, b"p1") // Place
         .put(&place2, 9, test_time_range(3, 3), 4, b"p2")
         .put(&place3, 9, test_time_range(5, 5), 6, b"p3")
-        .put(&task, 61, test_time_range(7, 7), 8, b"task")
+        .put(&task, ENTITY_TYPE_TASK, test_time_range(7, 7), 8, b"task")
         .edge(&place2, EdgeKind::PartOf, &place1, 1.0)
         .edge(&place3, EdgeKind::PartOf, &place2, 1.0)
         .edge(&task, EdgeKind::ChildOf, &place3, 1.0)
@@ -3287,9 +3420,9 @@ fn generic_child_of_writes_reject_cycles() -> Result<()> {
 
     vault
         .batch()
-        .put(&a, 61, test_time_range(1, 1), 2, b"a")
-        .put(&b, 61, test_time_range(3, 3), 4, b"b")
-        .put(&c, 61, test_time_range(5, 5), 6, b"c")
+        .put(&a, ENTITY_TYPE_TASK, test_time_range(1, 1), 2, b"a")
+        .put(&b, ENTITY_TYPE_TASK, test_time_range(3, 3), 4, b"b")
+        .put(&c, ENTITY_TYPE_TASK, test_time_range(5, 5), 6, b"c")
         .edge(&b, EdgeKind::ChildOf, &a, 1.0)
         .edge(&c, EdgeKind::ChildOf, &b, 1.0)
         .commit()?;
@@ -3312,9 +3445,9 @@ fn generic_child_of_writes_reject_second_parent() -> Result<()> {
 
     vault
         .batch()
-        .put(&child, 61, test_time_range(1, 1), 2, b"child")
-        .put(&parent_a, 61, test_time_range(3, 3), 4, b"pa")
-        .put(&parent_b, 61, test_time_range(5, 5), 6, b"pb")
+        .put(&child, ENTITY_TYPE_TASK, test_time_range(1, 1), 2, b"child")
+        .put(&parent_a, ENTITY_TYPE_TASK, test_time_range(3, 3), 4, b"pa")
+        .put(&parent_b, ENTITY_TYPE_TASK, test_time_range(5, 5), 6, b"pb")
         .edge(&child, EdgeKind::ChildOf, &parent_a, 1.0)
         .commit()?;
 
@@ -3351,9 +3484,9 @@ where
 
     vault
         .batch()
-        .put(&child, 61, test_time_range(1, 1), 2, b"child")
-        .put(&parent_a, 61, test_time_range(3, 3), 4, b"pa")
-        .put(&parent_b, 61, test_time_range(5, 5), 6, b"pb")
+        .put(&child, ENTITY_TYPE_TASK, test_time_range(1, 1), 2, b"child")
+        .put(&parent_a, ENTITY_TYPE_TASK, test_time_range(3, 3), 4, b"pa")
+        .put(&parent_b, ENTITY_TYPE_TASK, test_time_range(5, 5), 6, b"pb")
         .edge(&child, EdgeKind::ChildOf, &parent_a, 1.0)
         .commit()?;
 
@@ -3397,8 +3530,8 @@ fn child_of_batch_allows_add_delete_then_reverse_edge() -> Result<()> {
 
     vault
         .batch()
-        .put(&a, 61, test_time_range(1, 1), 2, b"a")
-        .put(&b, 61, test_time_range(3, 3), 4, b"b")
+        .put(&a, ENTITY_TYPE_TASK, test_time_range(1, 1), 2, b"a")
+        .put(&b, ENTITY_TYPE_TASK, test_time_range(3, 3), 4, b"b")
         .edge(&a, EdgeKind::ChildOf, &b, 1.0)
         .delete_edge(&a, EdgeKind::ChildOf, &b)
         .edge(&b, EdgeKind::ChildOf, &a, 1.0)
@@ -3420,9 +3553,9 @@ fn edge_checked_detects_cycle_atomically() -> Result<()> {
 
     vault
         .batch()
-        .put(&a, 61, test_time_range(1, 1), 2, b"a")
-        .put(&b, 61, test_time_range(3, 3), 4, b"b")
-        .put(&c, 61, test_time_range(5, 5), 6, b"c")
+        .put(&a, ENTITY_TYPE_TASK, test_time_range(1, 1), 2, b"a")
+        .put(&b, ENTITY_TYPE_TASK, test_time_range(3, 3), 4, b"b")
+        .put(&c, ENTITY_TYPE_TASK, test_time_range(5, 5), 6, b"c")
         .edge(&b, EdgeKind::ChildOf, &a, 1.0)
         .edge(&c, EdgeKind::ChildOf, &b, 1.0)
         .commit()?;
@@ -3444,7 +3577,7 @@ fn edge_checked_detects_cycle_atomically() -> Result<()> {
     let d = EntityId::now();
     vault
         .batch()
-        .put(&d, 61, test_time_range(7, 7), 8, b"d")
+        .put(&d, ENTITY_TYPE_TASK, test_time_range(7, 7), 8, b"d")
         .edge_checked(&d, &c, 1.0)
         .commit()?;
 
@@ -3462,7 +3595,7 @@ fn edge_checked_rejects_self_cycle() -> Result<()> {
 
     vault
         .batch()
-        .put(&node, 61, test_time_range(1, 1), 2, b"self")
+        .put(&node, ENTITY_TYPE_TASK, test_time_range(1, 1), 2, b"self")
         .commit()?;
 
     let result = vault.batch().edge_checked(&node, &node, 1.0).commit();
@@ -3486,8 +3619,8 @@ fn subtree_excludes_root() -> Result<()> {
 
     vault
         .batch()
-        .put(&root, 61, test_time_range(1, 1), 2, b"root")
-        .put(&child, 61, test_time_range(3, 3), 4, b"child")
+        .put(&root, ENTITY_TYPE_TASK, test_time_range(1, 1), 2, b"root")
+        .put(&child, ENTITY_TYPE_TASK, test_time_range(3, 3), 4, b"child")
         .edge(&child, EdgeKind::ChildOf, &root, 1.0)
         .commit()?;
 
