@@ -569,7 +569,24 @@ impl Vault {
             .get(&*wtxn, &encode_hard_erase_sweep_key(next))?
             .is_some()
         {
-            return Err(Error::CorruptedIndex("hard erase sweep metadata"));
+            let repaired_current = self.max_hard_erase_sweep_seq(wtxn)?;
+            let repaired_next = repaired_current
+                .checked_add(1)
+                .ok_or(Error::ArithmeticOverflow("hard erase sweep sequence"))?;
+            if self
+                .store
+                .sync_queue
+                .get(&*wtxn, &encode_hard_erase_sweep_key(repaired_next))?
+                .is_some()
+            {
+                return Err(Error::CorruptedIndex("hard erase sweep metadata"));
+            }
+            self.store.sync_queue.put(
+                wtxn,
+                LAST_HARD_ERASE_SWEEP_SEQ_KEY,
+                &repaired_next.to_le_bytes(),
+            )?;
+            return Ok(repaired_next);
         }
         self.store
             .sync_queue

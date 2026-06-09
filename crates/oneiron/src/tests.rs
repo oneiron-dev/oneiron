@@ -17,7 +17,10 @@ use xxhash_rust::xxh32::xxh32;
 
 use super::*;
 use crate::batch::ENTITY_METADATA_HEADER_LEN;
-use crate::deletion::DeleteReason;
+use crate::deletion::{
+    DeleteReason, LAST_HARD_ERASE_SWEEP_SEQ_KEY, RedactionScope, encode_hard_erase_sweep_job,
+    encode_hard_erase_sweep_key,
+};
 use crate::store::{
     DB_MANIFEST, GRAPH_VERSION_KEY, HNSW_CONFIG_KEY, MAX_DBS, STORAGE_ABI_VERSION,
     STORAGE_ABI_VERSION_KEY, STORAGE_SCHEMA_VERSION, STORAGE_SCHEMA_VERSION_KEY, Store,
@@ -481,6 +484,63 @@ fn hard_delete_enqueues_bounded_historical_carrier_sweep() -> Result<()> {
 }
 
 #[test]
+fn hard_delete_sweep_sequence_self_heals_stale_cursor_on_collision() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let id = EntityId::now();
+    vault.put_entity(
+        &id,
+        0,
+        test_time_range(250, 250),
+        251,
+        b"repair-sweep-cursor",
+    )?;
+
+    let stale_seq = 6_u64;
+    let existing_seq = 7_u64;
+    let repaired_seq = 8_u64;
+    let existing_key = encode_hard_erase_sweep_key(existing_seq);
+    let existing_value =
+        encode_hard_erase_sweep_job(RedactionScope::entity(&EntityId::now()), 1_772_000_000)?;
+
+    vault.with_write_txn(|wtxn| {
+        vault.store.sync_queue.put(
+            wtxn,
+            LAST_HARD_ERASE_SWEEP_SEQ_KEY,
+            &stale_seq.to_le_bytes(),
+        )?;
+        vault
+            .store
+            .sync_queue
+            .put(wtxn, &existing_key, &existing_value)?;
+        Ok(())
+    })?;
+
+    let outcome = vault.delete_entity_with_reason(&id, DeleteReason::UserHardDelete)?;
+    assert_eq!(
+        outcome.sweep_key.as_deref(),
+        Some(encode_hard_erase_sweep_key(repaired_seq).as_slice())
+    );
+
+    let rtxn = vault.store.env.read_txn()?;
+    assert_eq!(
+        vault
+            .store
+            .sync_queue
+            .get(&rtxn, LAST_HARD_ERASE_SWEEP_SEQ_KEY)?,
+        Some(repaired_seq.to_le_bytes().as_slice())
+    );
+    assert!(
+        vault
+            .store
+            .sync_queue
+            .get(&rtxn, &encode_hard_erase_sweep_key(repaired_seq))?
+            .is_some(),
+        "new sweep job should be written after repairing the stale cursor",
+    );
+    Ok(())
+}
+
+#[test]
 fn gdpr_and_policy_deletes_soft_erase_then_active_purge_with_receipts() -> Result<()> {
     for reason in [DeleteReason::GdprDelete, DeleteReason::PolicyDelete] {
         let (_dir, vault) = open_test_vault();
@@ -554,7 +614,7 @@ fn receipt_reason_purges_orphan_vector_with_receipt_and_sweep() -> Result<()> {
 #[test]
 fn user_delete_soft_shell_survives_sync_rematerialization() -> Result<()> {
     use crate::sync::bridge::Materializer;
-    use crate::sync::loro_support::map_contains_key;
+    use crate::sync::loro_support::map_contains_binary;
     use crate::sync::schema::create_window_doc;
     use crate::sync::types::WindowKey;
     use crate::sync::window;
@@ -590,7 +650,7 @@ fn user_delete_soft_shell_survives_sync_rematerialization() -> Result<()> {
 
     let tombstones = doc.get_map("tombstones");
     assert!(
-        !map_contains_key(&tombstones, id.to_hex().as_str()),
+        !map_contains_binary(&tombstones, id.to_hex().as_str()),
         "user_delete must not write the hard-purge CRDT tombstone; synced soft-delete propagation is deferred to ONE-1090"
     );
     assert_eq!(
@@ -604,7 +664,7 @@ fn user_delete_soft_shell_survives_sync_rematerialization() -> Result<()> {
 #[cfg(feature = "sync")]
 #[test]
 fn hard_delete_persists_crdt_tombstone_before_active_purge() -> Result<()> {
-    use crate::sync::loro_support::map_contains_key;
+    use crate::sync::loro_support::map_contains_binary;
     use crate::sync::types::WindowKey;
     use crate::sync::window;
 
@@ -642,7 +702,7 @@ fn hard_delete_persists_crdt_tombstone_before_active_purge() -> Result<()> {
     let doc = window::load_window_from_state(&vault, "local", &window_key)?;
     let tombstones = doc.get_map("tombstones");
     assert!(
-        map_contains_key(&tombstones, id.to_hex().as_str()),
+        map_contains_binary(&tombstones, id.to_hex().as_str()),
         "CRDT tombstone must persist before destructive purge starts"
     );
     Ok(())

@@ -18,7 +18,7 @@ use std::sync::{Arc, Mutex};
 
 use loro::{ContainerTrait, LoroDoc, LoroMap, Subscription};
 
-use super::loro_support::{map_contains_key, map_get_bytes};
+use super::loro_support::{map_contains_binary, map_get_bytes};
 use crate::batch::{self, BatchOp, ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::store::Store;
 use crate::types::{
@@ -554,7 +554,7 @@ fn ensure_entity_materialized_from_crdt(
     }
 
     let hex_id = id.to_hex();
-    if map_contains_key(tombstones_map, &hex_id) {
+    if map_contains_binary(tombstones_map, &hex_id) {
         return Ok(false);
     }
 
