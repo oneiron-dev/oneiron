@@ -16,7 +16,6 @@ use loro::{ExportMode, LoroDoc};
 use tokio::sync::mpsc;
 
 use crate::Vault;
-use crate::sync::LoroDocument;
 use crate::sync::schema::read_window_list;
 use crate::sync::transport::{
     self, TAG_BULK_TRANSFER, TAG_BULK_TRANSFER_DONE, TAG_SYNC_UPDATE, TAG_VERSION_VECTOR,
@@ -161,7 +160,7 @@ impl SyncClient {
         // (`create_root_doc` / `add_window_to_root`). Decode through the shared
         // `read_window_list` path so the encoding stays consistent — reading it
         // as a `LoroValue::String` silently yields an empty list (ONE-637).
-        read_window_list(&LoroDocument(self.root_doc.clone()))
+        read_window_list(&self.root_doc)
             .into_iter()
             .map(|k| k.as_str().to_string())
             .collect()
@@ -475,7 +474,7 @@ mod tests {
         // Regression for ONE-637: schema::create_root_doc writes meta.windows
         // as bytes (LoroValue::Binary). server_windows() must decode it via the
         // same byte path the schema helpers use.
-        use crate::sync::CrdtDoc;
+        use crate::sync::loro_support::export_snapshot;
         use crate::sync::schema::create_root_doc;
 
         let vault = test_vault();
@@ -486,7 +485,7 @@ mod tests {
             "vault-1",
             &[WindowKey::new("2026-01"), WindowKey::new("2026-02")],
         );
-        let snapshot = server_root.export_snapshot().unwrap();
+        let snapshot = export_snapshot(&server_root).unwrap();
 
         let mut msg = vec![TAG_SYNC_UPDATE];
         msg.extend_from_slice(&snapshot);

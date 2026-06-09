@@ -1,6 +1,6 @@
 //! Entity bridge: CRDT ↔ LMDB materialization observers.
 //!
-//! **Observer A** (`subscribe_local_updates`): Fires for ALL local commits.
+//! **Observer A** (`subscribe_local_update`): Fires for ALL local commits.
 //! Persists update bytes to sync_state and broadcasts.
 //!
 //! **Observer B** (`doc.subscribe(container_id)` × 3): Fires for all commits.
@@ -8,7 +8,7 @@
 //! via the doc's container event system. Materializes key-level changes to LMDB,
 //! skipping bridge-origin writes.
 //!
-//! Origin tracking: bridge writes use `commit_with_origin(BRIDGE_ORIGIN)`.
+//! Origin tracking: bridge writes use `commit_with(CommitOptions::origin(BRIDGE_ORIGIN))`.
 //! Observer B callbacks check the event origin and skip bridge-tagged events
 //! to avoid circular LMDB→CRDT→LMDB loops.
 
@@ -16,8 +16,9 @@ use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 
-use super::engine::{CrdtDoc, CrdtMap, Subscription};
-use super::loro_engine::LoroDocument;
+use loro::{ContainerTrait, LoroDoc, LoroMap, Subscription};
+
+use super::loro_support::map_get_bytes;
 use crate::batch::{self, BatchOp, ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::store::Store;
 use crate::types::{
@@ -82,7 +83,7 @@ impl ObserverAState {
 ///
 /// Returns the Subscription handle (must be kept alive for the observer to fire).
 pub fn register_observer_a(
-    doc: &LoroDocument,
+    doc: &LoroDoc,
     vault: &Arc<Vault>,
     window_key: &str,
     state: Arc<ObserverAState>,
@@ -90,7 +91,7 @@ pub fn register_observer_a(
     let vault = vault.clone();
     let window_key = window_key.to_string();
 
-    doc.subscribe_local_updates(Box::new(move |update_bytes| {
+    doc.subscribe_local_update(Box::new(move |update_bytes| {
         let result = vault.with_write_txn(|wtxn| {
             let seq_key = format!("m:u_seq:w:{window_key}");
             // Distinguish a missing key (fresh window — start at 0) from a
@@ -151,17 +152,13 @@ pub fn register_observer_a(
 ///
 /// Returns three Subscription handles (entities, edges, tombstones).
 pub fn register_observer_b(
-    doc: &LoroDocument,
+    doc: &LoroDoc,
     vault: &Arc<Vault>,
     materializer: &Arc<Materializer>,
 ) -> (Subscription, Subscription, Subscription) {
-    let entities_map = doc.get_or_create_map("entities");
-    let edges_map = doc.get_or_create_map("edges");
-    let tombstones_map = doc.get_or_create_map("tombstones");
-
-    // Loro's CrdtMap `subscribe_changes` does not expose origin info, so we
-    // subscribe via the doc's container event system directly. This lets us
-    // skip bridge-origin events and avoid circular LMDB->CRDT->LMDB loops.
+    let entities_map = doc.get_map("entities");
+    let edges_map = doc.get_map("edges");
+    let tombstones_map = doc.get_map("tombstones");
 
     let entity_sub = subscribe_map_observer(
         doc,
@@ -191,20 +188,18 @@ pub fn register_observer_b(
 /// Subscribes to a map's changes, filtering out bridge-origin events and
 /// delegating to a materializer function under the materializer lock.
 fn subscribe_map_observer(
-    doc: &LoroDocument,
-    map: &super::loro_engine::LoroMapHandle,
+    doc: &LoroDoc,
+    map: &LoroMap,
     vault: &Arc<Vault>,
     materializer: &Arc<Materializer>,
-    materialize: fn(&LoroDocument, &loro::event::MapDelta<'_>, &Vault),
+    materialize: fn(&LoroDoc, &loro::event::MapDelta<'_>, &Vault),
 ) -> Subscription {
-    use loro::ContainerTrait;
-
-    let callback_doc = LoroDocument(doc.0.clone());
-    let subscription_doc = doc.0.clone();
+    let callback_doc = doc.clone();
+    let subscription_doc = doc.clone();
     let vault = vault.clone();
     let materializer = materializer.clone();
-    let cid = map.map.id();
-    let sub = subscription_doc.subscribe(
+    let cid = map.id();
+    subscription_doc.subscribe(
         &cid,
         Arc::new(move |event| {
             if event.origin == BRIDGE_ORIGIN {
@@ -217,8 +212,7 @@ fn subscribe_map_observer(
                 }
             }
         }),
-    );
-    Subscription::new(sub)
+    )
 }
 
 /// Materialize entity changes from a Loro MapDelta to LMDB.
@@ -226,7 +220,7 @@ fn subscribe_map_observer(
 /// Accumulates all entity ops from the delta into a single LMDB write
 /// transaction instead of committing per-entity.
 fn materialize_entities_from_delta(
-    _doc: &LoroDocument,
+    _doc: &LoroDoc,
     delta: &loro::event::MapDelta<'_>,
     vault: &Vault,
 ) {
@@ -264,14 +258,10 @@ fn materialize_entities_from_delta(
 ///
 /// Accumulates all edge ops from the delta into a single LMDB write
 /// transaction instead of committing per-edge.
-fn materialize_edges_from_delta(
-    doc: &LoroDocument,
-    delta: &loro::event::MapDelta<'_>,
-    vault: &Vault,
-) {
+fn materialize_edges_from_delta(doc: &LoroDoc, delta: &loro::event::MapDelta<'_>, vault: &Vault) {
     let result = vault.with_write_txn(|wtxn| {
-        let entities_map = doc.get_or_create_map("entities");
-        let tombstones_map = doc.get_or_create_map("tombstones");
+        let entities_map = doc.get_map("entities");
+        let tombstones_map = doc.get_map("tombstones");
         let mut ops = Vec::<BatchOp>::new();
         for (key, new_val) in &delta.updated {
             match new_val {
@@ -488,7 +478,7 @@ fn child_of_component_sort_key(component: &[PendingChildOfOp]) -> [u8; 33] {
 /// writes (entity + edges + indexes). These are already internally
 /// transactional via delete_entity, so we just replace the logging.
 fn materialize_tombstones_from_delta(
-    _doc: &LoroDocument,
+    _doc: &LoroDoc,
     delta: &loro::event::MapDelta<'_>,
     vault: &Vault,
 ) {
@@ -555,8 +545,8 @@ fn materialize_entity_blob_in_txn(
 fn ensure_entity_materialized_from_crdt(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
-    entities_map: &super::loro_engine::LoroMapHandle,
-    tombstones_map: &super::loro_engine::LoroMapHandle,
+    entities_map: &LoroMap,
+    tombstones_map: &LoroMap,
     id: &EntityId,
 ) -> Result<bool> {
     if vault.store.entities.get(&*wtxn, id.as_bytes())?.is_some() {
@@ -564,11 +554,11 @@ fn ensure_entity_materialized_from_crdt(
     }
 
     let hex_id = id.to_hex();
-    if tombstones_map.get(&hex_id).is_some() {
+    if map_get_bytes(tombstones_map, &hex_id).is_some() {
         return Ok(false);
     }
 
-    let Some(blob) = entities_map.get(&hex_id) else {
+    let Some(blob) = map_get_bytes(entities_map, &hex_id) else {
         return Ok(false);
     };
     materialize_entity_blob_in_txn(vault, wtxn, &hex_id, &blob)?;
@@ -627,6 +617,7 @@ pub fn format_edge_key(src: &EntityId, kind: EdgeKind, tgt: &EntityId) -> String
 mod tests {
     use super::*;
     use crate::Vault;
+    use crate::sync::loro_support::map_insert_bytes;
     use crate::types::{ENTITY_TYPE_TASK, TimeRange, VaultConfig};
     use std::sync::Arc;
 
@@ -892,36 +883,36 @@ mod tests {
     #[test]
     fn observer_b_hydrates_edge_endpoints_from_current_crdt_state() {
         let vault = test_vault();
-        let doc = LoroDocument::new();
-        let entities = doc.get_or_create_map("entities");
-        let edges = doc.get_or_create_map("edges");
+        let doc = LoroDoc::new();
+        let entities = doc.get_map("entities");
+        let edges = doc.get_map("edges");
         let a = EntityId::now();
         let b = EntityId::now();
 
-        entities
-            .insert(
-                &a.to_hex(),
-                &entity_blob(ENTITY_TYPE_TASK, TimeRange { start: 1, end: 1 }, 2, b"a"),
-            )
-            .unwrap();
-        entities
-            .insert(
-                &b.to_hex(),
-                &entity_blob(ENTITY_TYPE_TASK, TimeRange { start: 3, end: 3 }, 4, b"b"),
-            )
-            .unwrap();
+        map_insert_bytes(
+            &entities,
+            &a.to_hex(),
+            &entity_blob(ENTITY_TYPE_TASK, TimeRange { start: 1, end: 1 }, 2, b"a"),
+        )
+        .unwrap();
+        map_insert_bytes(
+            &entities,
+            &b.to_hex(),
+            &entity_blob(ENTITY_TYPE_TASK, TimeRange { start: 3, end: 3 }, 4, b"b"),
+        )
+        .unwrap();
         doc.commit();
 
         let materializer = Arc::new(Materializer::new());
         let _subs = register_observer_b(&doc, &vault, &materializer);
 
-        edges
-            .insert(
-                &format_edge_key(&a, EdgeKind::Mentions, &b),
-                &encode_edge_value_for_crdt(EdgeKind::Mentions, 0.8, 10, Some(Vad::NEUTRAL), None)
-                    .unwrap(),
-            )
-            .unwrap();
+        map_insert_bytes(
+            &edges,
+            &format_edge_key(&a, EdgeKind::Mentions, &b),
+            &encode_edge_value_for_crdt(EdgeKind::Mentions, 0.8, 10, Some(Vad::NEUTRAL), None)
+                .unwrap(),
+        )
+        .unwrap();
         doc.commit();
 
         assert!(vault.get(&a).unwrap().is_some());
@@ -932,43 +923,43 @@ mod tests {
     #[test]
     fn observer_b_does_not_rehydrate_tombstoned_edge_endpoint() {
         let vault = test_vault();
-        let doc = LoroDocument::new();
-        let entities = doc.get_or_create_map("entities");
-        let edges = doc.get_or_create_map("edges");
-        let tombstones = doc.get_or_create_map("tombstones");
+        let doc = LoroDoc::new();
+        let entities = doc.get_map("entities");
+        let edges = doc.get_map("edges");
+        let tombstones = doc.get_map("tombstones");
         let deleted = EntityId::now();
         let live = EntityId::now();
 
-        entities
-            .insert(
-                &deleted.to_hex(),
-                &entity_blob(
-                    ENTITY_TYPE_TASK,
-                    TimeRange { start: 1, end: 1 },
-                    2,
-                    b"deleted",
-                ),
-            )
-            .unwrap();
-        entities
-            .insert(
-                &live.to_hex(),
-                &entity_blob(ENTITY_TYPE_TASK, TimeRange { start: 3, end: 3 }, 4, b"live"),
-            )
-            .unwrap();
+        map_insert_bytes(
+            &entities,
+            &deleted.to_hex(),
+            &entity_blob(
+                ENTITY_TYPE_TASK,
+                TimeRange { start: 1, end: 1 },
+                2,
+                b"deleted",
+            ),
+        )
+        .unwrap();
+        map_insert_bytes(
+            &entities,
+            &live.to_hex(),
+            &entity_blob(ENTITY_TYPE_TASK, TimeRange { start: 3, end: 3 }, 4, b"live"),
+        )
+        .unwrap();
         tombstones.insert(&deleted.to_hex(), b"1").unwrap();
         doc.commit();
 
         let materializer = Arc::new(Materializer::new());
         let _subs = register_observer_b(&doc, &vault, &materializer);
 
-        edges
-            .insert(
-                &format_edge_key(&deleted, EdgeKind::Mentions, &live),
-                &encode_edge_value_for_crdt(EdgeKind::Mentions, 0.8, 10, Some(Vad::NEUTRAL), None)
-                    .unwrap(),
-            )
-            .unwrap();
+        map_insert_bytes(
+            &edges,
+            &format_edge_key(&deleted, EdgeKind::Mentions, &live),
+            &encode_edge_value_for_crdt(EdgeKind::Mentions, 0.8, 10, Some(Vad::NEUTRAL), None)
+                .unwrap(),
+        )
+        .unwrap();
         doc.commit();
 
         assert!(vault.get(&deleted).unwrap().is_none());

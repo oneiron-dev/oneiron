@@ -10,19 +10,22 @@ use std::sync::Arc;
 use super::bridge::{
     self, BRIDGE_ORIGIN, Materializer, ObserverAState, encode_edge_value_for_crdt, format_edge_key,
 };
-use super::engine::{CrdtDoc, CrdtMap, Subscription};
-use super::loro_engine::LoroDocument;
+use super::loro_support::{
+    doc_from_snapshot, doc_version_vector, export_snapshot, import_doc, map_for_each_bytes,
+    map_get_bytes, map_insert_bytes,
+};
 use super::schema::create_window_doc;
 use super::types::WindowKey;
 use crate::Vault;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EdgeValueFields, EntityMetadataHeader};
 use crate::error::{Error, Result};
 use crate::types::{EntityId, decode_edge_value_for_kind};
+use loro::{CommitOptions, LoroDoc, Subscription};
 
 /// A loaded window Doc with its observer subscriptions.
 pub struct LoadedWindow {
     /// The Loro Doc for this window.
-    pub doc: LoroDocument,
+    pub doc: LoroDoc,
     /// Window key (YYYY-MM).
     pub key: WindowKey,
     /// Observer A subscription (persistence + broadcast).
@@ -47,7 +50,7 @@ impl LoadedWindow {
 
     /// Creates a window from an existing Doc (e.g., loaded from sync_state).
     pub fn from_doc(
-        doc: LoroDocument,
+        doc: LoroDoc,
         key: WindowKey,
         vault: &Arc<Vault>,
         materializer: &Arc<Materializer>,
@@ -69,8 +72,8 @@ impl LoadedWindow {
     /// Persists the window Doc state to sync_state and returns the encoded state.
     pub fn persist_state(&self, vault: &Vault) -> Result<Vec<u8>> {
         // Export full snapshot for persistence
-        let state = self.doc.export_snapshot()?;
-        let vv = self.doc.version_vector();
+        let state = export_snapshot(&self.doc)?;
+        let vv = doc_version_vector(&self.doc);
 
         vault.with_write_txn(|wtxn| {
             let doc_key = format!("d:w:{}", self.key);
@@ -89,11 +92,7 @@ impl LoadedWindow {
 }
 
 /// Loads a window Doc from persisted state in sync_state.
-pub fn load_window_from_state(
-    vault: &Vault,
-    _user_id: &str,
-    key: &WindowKey,
-) -> Result<LoroDocument> {
+pub fn load_window_from_state(vault: &Vault, _user_id: &str, key: &WindowKey) -> Result<LoroDoc> {
     let rtxn = vault.store.env.read_txn()?;
 
     let doc_key = format!("d:w:{key}");
@@ -106,25 +105,21 @@ pub fn load_window_from_state(
         })?;
 
     // Load from snapshot
-    let doc = LoroDocument::from_snapshot(state)?;
+    let doc = doc_from_snapshot(state)?;
 
     // Apply pending updates using prefix iterator (B-tree range seek)
     let prefix = format!("u:w:{key}:");
     let iter = vault.store.sync_state.prefix_iter(&rtxn, &prefix)?;
     for entry in iter {
         let (_k, v) = entry?;
-        doc.import(v)?;
+        import_doc(&doc, v)?;
     }
 
     Ok(doc)
 }
 
 /// Replays pending-mirror markers (pm:*) for crash recovery.
-pub fn replay_pending_mirrors(
-    vault: &Vault,
-    doc: &LoroDocument,
-    window_key: &WindowKey,
-) -> Result<u32> {
+pub fn replay_pending_mirrors(vault: &Vault, doc: &LoroDoc, window_key: &WindowKey) -> Result<u32> {
     let rtxn = vault.store.env.read_txn()?;
     let prefix = format!("pm:{window_key}:");
 
@@ -141,9 +136,9 @@ pub fn replay_pending_mirrors(
     }
     drop(rtxn);
 
-    let entities_map = doc.get_or_create_map("entities");
-    let tombstones_map = doc.get_or_create_map("tombstones");
-    let edges_map = doc.get_or_create_map("edges");
+    let entities_map = doc.get_map("entities");
+    let tombstones_map = doc.get_map("tombstones");
+    let edges_map = doc.get_map("edges");
 
     let mut replayed = 0u32;
 
@@ -164,7 +159,7 @@ pub fn replay_pending_mirrors(
         };
 
         // Check if tombstoned in CRDT
-        if tombstones_map.get(&hex_id).is_some() {
+        if map_get_bytes(&tombstones_map, &hex_id).is_some() {
             vault.with_write_txn(|wtxn| {
                 vault.store.sync_state.delete(wtxn, marker_key)?;
                 Ok(())
@@ -173,7 +168,7 @@ pub fn replay_pending_mirrors(
         }
 
         // Byte-compare with existing CRDT value
-        if let Some(existing) = entities_map.get(&hex_id)
+        if let Some(existing) = map_get_bytes(&entities_map, &hex_id)
             && existing.as_slice() == raw.as_slice()
         {
             vault.with_write_txn(|wtxn| {
@@ -184,8 +179,7 @@ pub fn replay_pending_mirrors(
         }
 
         // Mirror to CRDT under bridge origin
-        entities_map
-            .insert(hex_id.as_str(), raw.as_slice())
+        map_insert_bytes(&entities_map, hex_id.as_str(), raw.as_slice())
             .map_err(|e| Error::SyncProtocolError(format!("pm replay entity insert: {e}")))?;
 
         let edges_out = vault.edges_out(id)?;
@@ -198,12 +192,11 @@ pub fn replay_pending_mirrors(
                 edge.vad,
                 edge.provenance,
             )?;
-            edges_map
-                .insert(edge_key.as_str(), &edge_val)
+            map_insert_bytes(&edges_map, edge_key.as_str(), &edge_val)
                 .map_err(|e| Error::SyncProtocolError(format!("pm replay edge insert: {e}")))?;
         }
 
-        doc.commit_with_origin(BRIDGE_ORIGIN);
+        doc.commit_with(CommitOptions::new().origin(BRIDGE_ORIGIN));
 
         // Clear the marker
         vault.with_write_txn(|wtxn| {
@@ -220,13 +213,13 @@ pub fn replay_pending_mirrors(
 /// Forward re-materialization: CRDT→LMDB.
 pub fn forward_rematerialize(
     vault: &Vault,
-    doc: &LoroDocument,
+    doc: &LoroDoc,
     materializer: &Materializer,
 ) -> Result<u32> {
     let _guard = materializer.lock();
-    let entities_map = doc.get_or_create_map("entities");
-    let edges_map = doc.get_or_create_map("edges");
-    let tombstones_map = doc.get_or_create_map("tombstones");
+    let entities_map = doc.get_map("entities");
+    let edges_map = doc.get_map("edges");
+    let tombstones_map = doc.get_map("tombstones");
 
     let mut count = 0u32;
 
@@ -235,7 +228,7 @@ pub fn forward_rematerialize(
         let rtxn = vault.store.env.read_txn()?;
         let mut materialized_blobs = HashMap::<EntityId, Vec<u8>>::new();
         let mut entity_read_error = None;
-        entities_map.for_each(&mut |key, blob| {
+        map_for_each_bytes(&entities_map, |key, blob| {
             if entity_read_error.is_some() {
                 return;
             }
@@ -295,7 +288,7 @@ pub fn forward_rematerialize(
     }
 
     // Edges (with endpoint filtering)
-    edges_map.for_each(&mut |key, buf| {
+    map_for_each_bytes(&edges_map, |key, buf| {
         let Some((src, kind, tgt)) = bridge::parse_edge_key(key) else {
             return;
         };
@@ -324,7 +317,7 @@ pub fn forward_rematerialize(
     });
 
     // Tombstones
-    tombstones_map.for_each(&mut |key, _| {
+    map_for_each_bytes(&tombstones_map, |key, _| {
         let id = match EntityId::from_hex(key) {
             Ok(id) => id,
             Err(_) => return,
@@ -339,11 +332,7 @@ pub fn forward_rematerialize(
 }
 
 /// Reverse re-materialization: LMDB→CRDT (missing only).
-pub fn reverse_rematerialize(
-    vault: &Vault,
-    doc: &LoroDocument,
-    window_key: &WindowKey,
-) -> Result<u32> {
+pub fn reverse_rematerialize(vault: &Vault, doc: &LoroDoc, window_key: &WindowKey) -> Result<u32> {
     let start_ts = window_key
         .start_timestamp()
         .ok_or_else(|| Error::InvalidConfig("invalid window key".to_string()))?;
@@ -353,19 +342,19 @@ pub fn reverse_rematerialize(
 
     let entities_in_range = vault.entities_in_learned_range(start_ts, end_ts)?;
 
-    let entities_map = doc.get_or_create_map("entities");
-    let edges_map = doc.get_or_create_map("edges");
-    let tombstones_map = doc.get_or_create_map("tombstones");
+    let entities_map = doc.get_map("entities");
+    let edges_map = doc.get_map("edges");
+    let tombstones_map = doc.get_map("tombstones");
 
     let mut count = 0u32;
 
     for id in &entities_in_range {
         let hex_id = id.to_hex();
 
-        if tombstones_map.get(&hex_id).is_some() {
+        if map_get_bytes(&tombstones_map, &hex_id).is_some() {
             continue;
         }
-        if entities_map.get(&hex_id).is_some() {
+        if map_get_bytes(&entities_map, &hex_id).is_some() {
             continue;
         }
 
@@ -374,14 +363,13 @@ pub fn reverse_rematerialize(
             None => continue,
         };
 
-        entities_map
-            .insert(hex_id.as_str(), raw.as_slice())
+        map_insert_bytes(&entities_map, hex_id.as_str(), raw.as_slice())
             .map_err(|e| Error::SyncProtocolError(format!("reverse remat entity insert: {e}")))?;
 
         let edges_out = vault.edges_out(id)?;
         for edge in &edges_out {
             let edge_key = format_edge_key(id, edge.kind, &edge.target);
-            if edges_map.get(&edge_key).is_some() {
+            if map_get_bytes(&edges_map, &edge_key).is_some() {
                 continue;
             }
             let edge_val = encode_edge_value_for_crdt(
@@ -391,8 +379,7 @@ pub fn reverse_rematerialize(
                 edge.vad,
                 edge.provenance,
             )?;
-            edges_map
-                .insert(edge_key.as_str(), &edge_val)
+            map_insert_bytes(&edges_map, edge_key.as_str(), &edge_val)
                 .map_err(|e| Error::SyncProtocolError(format!("reverse remat edge insert: {e}")))?;
         }
 
@@ -401,7 +388,7 @@ pub fn reverse_rematerialize(
 
     // Commit all bridge writes with origin tag
     if count > 0 {
-        doc.commit_with_origin(BRIDGE_ORIGIN);
+        doc.commit_with(CommitOptions::new().origin(BRIDGE_ORIGIN));
     }
 
     Ok(count)
