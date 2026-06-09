@@ -1,4 +1,5 @@
 use std::collections::HashSet;
+use std::path::Path;
 use std::str;
 use std::time::Instant;
 
@@ -10,7 +11,7 @@ use crate::types::{
     decode_edge_value, decode_edge_value_for_kind, encode_edge_value,
 };
 use heed::EnvOpenOptions;
-use heed::types::Bytes;
+use heed::types::{Bytes, Str};
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 use xxhash_rust::xxh32::xxh32;
@@ -151,6 +152,22 @@ fn materialized_database_names(vault: &Vault) -> Result<Vec<String>> {
     Ok(names)
 }
 
+fn gate_required_manifest_names() -> Vec<&'static str> {
+    let mut names: Vec<&'static str> = DB_MANIFEST[..23].iter().map(|entry| entry.name).collect();
+    #[cfg(feature = "sync")]
+    names.extend(DB_MANIFEST[23..].iter().map(|entry| entry.name));
+    names.sort_unstable();
+    names
+}
+
+fn opened_manifest_names_for_build() -> Vec<&'static str> {
+    let mut names = gate_required_manifest_names();
+    #[cfg(not(feature = "sync"))]
+    names.push("sync_queue");
+    names.sort_unstable();
+    names
+}
+
 fn set_raw_storage_abi_version(path: &std::path::Path, value: Option<u16>) -> Result<()> {
     let mut config = test_config();
     config.map_size = 16 * 1024 * 1024;
@@ -172,6 +189,58 @@ fn set_raw_storage_abi_version(path: &std::path::Path, value: Option<u16>) -> Re
             vault_meta.delete(&mut wtxn, STORAGE_ABI_VERSION_KEY)?;
         }
     }
+    wtxn.commit()?;
+    Ok(())
+}
+
+fn create_raw_vault_with_manifest_names(path: &Path, names: &[&str]) -> Result<()> {
+    let config = test_config();
+    let _guard = lmdb_database_open_guard()?;
+    // SAFETY: test-only creation of a local temporary LMDB environment.
+    let env = unsafe {
+        EnvOpenOptions::new()
+            .map_size(config.map_size)
+            .max_readers(config.max_readers)
+            .max_dbs(MAX_DBS)
+            .open(path)?
+    };
+    let mut wtxn = env.write_txn()?;
+    for name in names {
+        if *name == "sync_state" {
+            let _: heed::Database<Str, Bytes> = env.create_database(&mut wtxn, Some(name))?;
+        } else {
+            let _: heed::Database<Bytes, Bytes> = env.create_database(&mut wtxn, Some(name))?;
+        }
+    }
+    let vault_meta = env.create_database::<Bytes, Bytes>(&mut wtxn, Some("vault_meta"))?;
+    vault_meta.put(
+        &mut wtxn,
+        STORAGE_ABI_VERSION_KEY,
+        &STORAGE_ABI_VERSION.to_le_bytes(),
+    )?;
+    vault_meta.put(
+        &mut wtxn,
+        STORAGE_SCHEMA_VERSION_KEY,
+        &STORAGE_SCHEMA_VERSION.to_le_bytes(),
+    )?;
+    wtxn.commit()?;
+    Ok(())
+}
+
+fn create_raw_named_database(path: &Path, name: &str) -> Result<()> {
+    let config = test_config();
+    let _guard = lmdb_database_open_guard()?;
+    // SAFETY: test-only reopen of a local temporary LMDB environment after
+    // the normal Vault/Store handle has been dropped.
+    let env = unsafe {
+        EnvOpenOptions::new()
+            .map_size(config.map_size)
+            .max_readers(config.max_readers)
+            .max_dbs(MAX_DBS)
+            .open(path)?
+    };
+    let mut wtxn = env.write_txn()?;
+    let _: heed::Database<Bytes, Bytes> = env.create_database(&mut wtxn, Some(name))?;
     wtxn.commit()?;
     Ok(())
 }
@@ -2630,13 +2699,120 @@ fn creates_contract_manifest_databases() -> Result<()> {
     assert_eq!(DB_MANIFEST[24].n, 25);
     assert_eq!(DB_MANIFEST[24].name, "sync_queue");
 
-    let mut expected_materialized: Vec<String> = contract_names
+    let expected_materialized: Vec<String> = opened_manifest_names_for_build()
         .iter()
         .map(|name| (*name).to_owned())
         .collect();
-    expected_materialized.sort();
     assert_eq!(materialized_database_names(&vault)?, expected_materialized);
 
+    Ok(())
+}
+
+#[test]
+fn open_valid_existing_vault_passes_manifest_set_gate() -> Result<()> {
+    let temp_dir = tempfile::tempdir()?;
+    let path = temp_dir.path();
+    {
+        let vault = Vault::open(path, test_config())?;
+        assert_eq!(
+            materialized_database_names(&vault)?,
+            opened_manifest_names_for_build()
+                .iter()
+                .map(|name| (*name).to_owned())
+                .collect::<Vec<_>>()
+        );
+    }
+
+    let reopened = Vault::open(path, test_config())?;
+    drop(reopened);
+    Ok(())
+}
+
+#[test]
+fn open_rejects_rogue_manifest_database_name() -> Result<()> {
+    let temp_dir = tempfile::tempdir()?;
+    let path = temp_dir.path();
+    {
+        let vault = Vault::open(path, test_config())?;
+        drop(vault);
+    }
+    create_raw_named_database(path, "future_manifest_26")?;
+
+    let err = match Vault::open(path, test_config()) {
+        Ok(_) => panic!("expected Vault::open to fail closed on rogue named DB"),
+        Err(err) => err,
+    };
+    assert!(
+        matches!(
+            err,
+            Error::DbManifestMismatch {
+                ref missing,
+                ref unexpected
+            } if missing.is_empty() && unexpected == &vec!["future_manifest_26".to_owned()]
+        ),
+        "expected DB manifest mismatch for rogue name, got {err:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn open_rejects_missing_required_manifest_database_name() -> Result<()> {
+    let temp_dir = tempfile::tempdir()?;
+    let mut names = gate_required_manifest_names();
+    names.retain(|name| *name != "hnsw_meta");
+    create_raw_vault_with_manifest_names(temp_dir.path(), &names)?;
+
+    let err = match Vault::open(temp_dir.path(), test_config()) {
+        Ok(_) => panic!("expected Vault::open to fail closed on missing manifest DB"),
+        Err(err) => err,
+    };
+    assert!(
+        matches!(
+            err,
+            Error::DbManifestMismatch {
+                ref missing,
+                ref unexpected
+            } if missing == &vec!["hnsw_meta".to_owned()] && unexpected.is_empty()
+        ),
+        "expected DB manifest mismatch for missing hnsw_meta, got {err:?}"
+    );
+    Ok(())
+}
+
+#[cfg(not(feature = "sync"))]
+#[test]
+fn non_sync_open_allows_manifest_known_inert_sync_databases() -> Result<()> {
+    let temp_dir = tempfile::tempdir()?;
+    let names: Vec<&str> = DB_MANIFEST.iter().map(|entry| entry.name).collect();
+    create_raw_vault_with_manifest_names(temp_dir.path(), &names)?;
+
+    let vault = Vault::open(temp_dir.path(), test_config())?;
+    drop(vault);
+    Ok(())
+}
+
+#[cfg(feature = "sync")]
+#[test]
+fn sync_open_requires_sync_manifest_database_names() -> Result<()> {
+    let temp_dir = tempfile::tempdir()?;
+    let mut names = gate_required_manifest_names();
+    names.retain(|name| *name != "sync_state");
+    create_raw_vault_with_manifest_names(temp_dir.path(), &names)?;
+
+    let err = match Vault::open(temp_dir.path(), test_config()) {
+        Ok(_) => panic!("expected sync Vault::open to fail closed on missing sync_state DB"),
+        Err(err) => err,
+    };
+    assert!(
+        matches!(
+            err,
+            Error::DbManifestMismatch {
+                ref missing,
+                ref unexpected
+            } if missing == &vec!["sync_state".to_owned()] && unexpected.is_empty()
+        ),
+        "expected DB manifest mismatch for missing sync_state, got {err:?}"
+    );
     Ok(())
 }
 
