@@ -22,7 +22,7 @@ use crate::batch::{self, BatchOp, ENTITY_METADATA_HEADER_LEN, EntityMetadataHead
 use crate::store::Store;
 use crate::types::{
     DecodedEdgeValue, EdgeKind, EdgeProvenanceFlags, EntityId, Vad, decode_edge_value,
-    encode_edge_value,
+    decode_edge_value_for_kind, encode_edge_value,
 };
 use crate::{Error, Result, Vault};
 
@@ -308,9 +308,9 @@ fn materialize_edges_from_delta(
                         }
                     }
 
-                    let decoded = match parse_edge_value(buf) {
-                        Some(v) => v,
-                        None => {
+                    let decoded = match decode_edge_value_for_kind(kind, buf) {
+                        Ok(v) => v,
+                        Err(_) => {
                             tracing::warn!(edge = %key, "observer-b: edge malformed value");
                             continue;
                         }

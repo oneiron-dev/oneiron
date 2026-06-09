@@ -19,7 +19,7 @@ use crate::store::{
 };
 use crate::types::{
     EDGE_KEY_LEN, ENTITY_ID_LEN, EdgeInfo, EdgeKind, EntityId, ScoredEntity, TimeRange, Vad,
-    VaultConfig, decode_edge_value,
+    VaultConfig, decode_edge_value_for_kind,
 };
 use crate::{
     BatchBuilder, ContextPackBuilder, MaintenanceBuilder, PipelineBuilder, TxnBatchBuilder, bm25,
@@ -1164,7 +1164,8 @@ fn parse_edge_record(key: &[u8], value: &[u8]) -> Result<EdgeInfo> {
             .map_err(|_| Error::CorruptedIndex("edge record"))?,
     )
     .map_err(|_| Error::CorruptedIndex("edge record"))?;
-    let decoded = decode_edge_value(value).map_err(|_| Error::CorruptedIndex("edge record"))?;
+    let decoded = decode_edge_value_for_kind(kind, value)
+        .map_err(|_| Error::CorruptedIndex("edge record"))?;
 
     Ok(EdgeInfo {
         kind,

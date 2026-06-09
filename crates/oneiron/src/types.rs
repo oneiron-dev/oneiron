@@ -769,6 +769,26 @@ pub(crate) fn decode_edge_value(value: &[u8]) -> crate::error::Result<DecodedEdg
     })
 }
 
+pub(crate) fn decode_edge_value_for_kind(
+    kind: EdgeKind,
+    value: &[u8],
+) -> crate::error::Result<DecodedEdgeValue> {
+    let decoded = decode_edge_value(value)?;
+    let legal = match edge_value_layout_for_kind(kind, false) {
+        EdgeValueLayout::Structural => decoded.layout == EdgeValueLayout::Structural,
+        EdgeValueLayout::SemanticBare | EdgeValueLayout::SemanticProvenanced => matches!(
+            decoded.layout,
+            EdgeValueLayout::SemanticBare | EdgeValueLayout::SemanticProvenanced
+        ),
+    };
+
+    if !legal {
+        return Err(crate::error::Error::CorruptedIndex("edge value"));
+    }
+
+    Ok(decoded)
+}
+
 pub(crate) fn encode_edge_value(
     kind: EdgeKind,
     weight: f32,

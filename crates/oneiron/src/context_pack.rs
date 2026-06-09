@@ -14,7 +14,7 @@ use crate::store::Store;
 use crate::types::{
     ContextEntity, ContextPack, EDGE_KEY_LEN, EdgeInfo, EntityId, FieldProfile, PackFormat,
     PackStats, Signal, TemporalAnchorMode, TemporalGranularity, TimeRange, TokenAllocation,
-    decode_edge_value,
+    decode_edge_value_for_kind,
 };
 use crate::{Vault, le_bytes_to_f32_vec};
 
@@ -612,7 +612,7 @@ fn scan_edges_for_entity(store: &Store, rtxn: &RoTxn<'_>, id: &EntityId) -> Resu
             continue;
         };
 
-        let Ok(decoded) = decode_edge_value(value) else {
+        let Ok(decoded) = decode_edge_value_for_kind(kind, value) else {
             continue;
         };
 

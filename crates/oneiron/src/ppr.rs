@@ -10,7 +10,7 @@ use crate::types::EDGE_VALUE_STRUCTURAL_LEN;
 #[cfg(test)]
 use crate::types::VaultConfig;
 use crate::types::{
-    EDGE_KEY_LEN, ENTITY_ID_LEN, EdgeKind, EntityId, ScoredEntity, decode_edge_value,
+    EDGE_KEY_LEN, ENTITY_ID_LEN, EdgeKind, EntityId, ScoredEntity, decode_edge_value_for_kind,
 };
 
 const SEED_HASH_LEN: usize = 16;
@@ -502,7 +502,8 @@ fn propagate_edge(
             .map_err(|_| Error::CorruptedIndex("edge record"))?,
     )
     .map_err(|_| Error::CorruptedIndex("edge record"))?;
-    let decoded = decode_edge_value(value).map_err(|_| Error::CorruptedIndex("edge record"))?;
+    let decoded = decode_edge_value_for_kind(kind, value)
+        .map_err(|_| Error::CorruptedIndex("edge record"))?;
     let weight = decoded.weight;
     if weight == 0.0 {
         return Ok(());

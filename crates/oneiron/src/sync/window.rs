@@ -15,9 +15,9 @@ use super::loro_engine::LoroDocument;
 use super::schema::create_window_doc;
 use super::types::WindowKey;
 use crate::Vault;
-use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
+use crate::batch::{ENTITY_METADATA_HEADER_LEN, EdgeValueFields, EntityMetadataHeader};
 use crate::error::{Error, Result};
-use crate::types::EntityId;
+use crate::types::{EntityId, decode_edge_value_for_kind};
 
 /// A loaded window Doc with its observer subscriptions.
 pub struct LoadedWindow {
@@ -306,7 +306,7 @@ pub fn forward_rematerialize(
             return;
         }
 
-        let Some(decoded) = bridge::parse_edge_value(buf) else {
+        let Ok(decoded) = decode_edge_value_for_kind(kind, buf) else {
             return;
         };
 
@@ -316,15 +316,7 @@ pub fn forward_rematerialize(
 
         let result = vault
             .batch()
-            .edge_with_created_at_vad_and_provenance(
-                &src,
-                kind,
-                &tgt,
-                decoded.weight,
-                decoded.created_at,
-                decoded.vad.unwrap_or(crate::types::Vad::NEUTRAL),
-                decoded.provenance,
-            )
+            .edge_with_value_fields(&src, kind, &tgt, EdgeValueFields::from_decoded(decoded))
             .commit();
         if result.is_ok() {
             count += 1;

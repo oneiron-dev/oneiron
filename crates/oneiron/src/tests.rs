@@ -5,7 +5,7 @@ use std::time::Instant;
 use crate::limits::{MAX_ANCESTOR_DEPTH, MAX_CHILD_OF_CYCLE_TRAVERSAL_STEPS};
 use crate::types::{
     ENTITY_ID_LEN, EdgeActorClass, EdgeConfirmationStatus, EdgeProvenanceFlags, decode_edge_value,
-    encode_edge_value,
+    decode_edge_value_for_kind, encode_edge_value,
 };
 use heed::types::Bytes;
 use rand::rngs::StdRng;
@@ -179,6 +179,31 @@ fn assert_vad_bytes(value: &[u8], vad: Vad) {
     assert_eq!(&value[12..16], &vad.valence.to_le_bytes());
     assert_eq!(&value[16..20], &vad.arousal.to_le_bytes());
     assert_eq!(&value[20..24], &vad.dominance.to_le_bytes());
+}
+
+fn contract_structural_value(weight: f32, created_at: u64) -> Vec<u8> {
+    let mut value = Vec::with_capacity(12);
+    value.extend_from_slice(&weight.to_le_bytes());
+    value.extend_from_slice(&created_at.to_le_bytes());
+    assert_eq!(value.len(), 12);
+    value
+}
+
+fn contract_semantic_bare_value(weight: f32, created_at: u64, vad: Vad) -> Vec<u8> {
+    let mut value = contract_structural_value(weight, created_at);
+    value.extend_from_slice(&vad.valence.to_le_bytes());
+    value.extend_from_slice(&vad.arousal.to_le_bytes());
+    value.extend_from_slice(&vad.dominance.to_le_bytes());
+    assert_eq!(value.len(), 24);
+    value
+}
+
+fn contract_semantic_provenanced_value(weight: f32, created_at: u64, vad: Vad) -> Vec<u8> {
+    let mut value = contract_semantic_bare_value(weight, created_at, vad);
+    value.push(1); // confirmation_status = confirmed
+    value.push(1); // actor_class = agent
+    assert_eq!(value.len(), 26);
+    value
 }
 
 fn encoded_entity_record(entity_type: u8, payload: &[u8]) -> Vec<u8> {
@@ -2146,7 +2171,7 @@ fn edge_value_layout_round_trips_all_contract_edge_kinds() -> Result<()> {
         );
         assert_common_edge_value_fields(&value, weight, created_at);
 
-        let decoded = decode_edge_value(&value)?;
+        let decoded = decode_edge_value_for_kind(kind, &value)?;
         assert_f32_exact(decoded.weight, weight);
         assert_eq!(decoded.created_at, created_at);
         assert_eq!(decoded.provenance, None);
@@ -2189,7 +2214,7 @@ fn semantic_provenance_round_trips_vad_and_hot_flags() -> Result<()> {
         assert_eq!(value[24], EdgeConfirmationStatus::Confirmed as u8);
         assert_eq!(value[25], EdgeActorClass::Agent as u8);
 
-        let decoded = decode_edge_value(&value)?;
+        let decoded = decode_edge_value_for_kind(kind, &value)?;
         assert_f32_exact(decoded.weight, weight);
         assert_eq!(decoded.created_at, created_at);
         assert_vad_exact(decoded.vad.expect("provenanced edge must carry VAD"), vad);
@@ -2207,6 +2232,40 @@ fn decode_edge_value_rejects_non_contract_lengths() {
         assert!(
             matches!(err, Error::CorruptedIndex("edge value")),
             "length {len} returned wrong error: {err:?}"
+        );
+    }
+}
+
+#[test]
+fn decode_edge_value_for_kind_rejects_kind_layout_mismatches() {
+    let vad = Vad {
+        valence: 0.25,
+        arousal: 0.5,
+        dominance: 0.75,
+    };
+    let cases = [
+        (
+            "structural kind with semantic-bare value",
+            EdgeKind::ChildOf,
+            contract_semantic_bare_value(0.8, 1_772_000_100, vad),
+        ),
+        (
+            "structural kind with semantic-provenanced value",
+            EdgeKind::AssignedTo,
+            contract_semantic_provenanced_value(0.7, 1_772_000_101, vad),
+        ),
+        (
+            "semantic kind with structural value",
+            EdgeKind::Mentions,
+            contract_structural_value(0.6, 1_772_000_102),
+        ),
+    ];
+
+    for (name, kind, value) in cases {
+        let err = decode_edge_value_for_kind(kind, &value).expect_err(name);
+        assert!(
+            matches!(err, Error::CorruptedIndex("edge value")),
+            "{name}: wrong error: {err:?}"
         );
     }
 }

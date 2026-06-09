@@ -10,13 +10,32 @@ use crate::limits::{ERR_CHILD_OF_CYCLE_CHECK, MAX_CHILD_OF_CYCLE_TRAVERSAL_STEPS
 use crate::ppr;
 use crate::store::Store;
 use crate::types::{
-    EDGE_KEY_LEN, ENTITY_ID_LEN, EdgeKind, EdgeProvenanceFlags, EntityId, TimeRange, Vad,
-    decode_edge_value, encode_edge_value, short_id_prefix,
+    DecodedEdgeValue, EDGE_KEY_LEN, ENTITY_ID_LEN, EdgeKind, EdgeProvenanceFlags, EntityId,
+    TimeRange, Vad, decode_edge_value_for_kind, encode_edge_value, short_id_prefix,
 };
 
 pub(crate) const ENTITY_METADATA_HEADER_LEN: usize = 25;
 pub(crate) const SHORT_ID_COUNTER_LEN: usize = 8;
 pub(crate) const LONG_INTERVAL_THRESHOLD_SECS: u64 = 14 * 86_400;
+
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct EdgeValueFields {
+    pub(crate) weight: f32,
+    pub(crate) created_at: u64,
+    pub(crate) vad: Vad,
+    pub(crate) provenance: Option<EdgeProvenanceFlags>,
+}
+
+impl EdgeValueFields {
+    pub(crate) fn from_decoded(decoded: DecodedEdgeValue) -> Self {
+        Self {
+            weight: decoded.weight,
+            created_at: decoded.created_at,
+            vad: decoded.vad.unwrap_or(Vad::NEUTRAL),
+            provenance: decoded.provenance,
+        }
+    }
+}
 
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct EntityMetadataHeader {
@@ -231,24 +250,21 @@ impl<'a> BatchBuilder<'a> {
         self
     }
 
-    pub(crate) fn edge_with_created_at_vad_and_provenance(
+    pub(crate) fn edge_with_value_fields(
         mut self,
         src: &EntityId,
         kind: EdgeKind,
         tgt: &EntityId,
-        weight: f32,
-        created_at: u64,
-        vad: Vad,
-        provenance: Option<EdgeProvenanceFlags>,
+        value: EdgeValueFields,
     ) -> Self {
         self.ops.push(BatchOp::EdgeWithCreatedAt {
             src: *src,
             kind,
             tgt: *tgt,
-            weight,
-            created_at,
-            vad,
-            provenance,
+            weight: value.weight,
+            created_at: value.created_at,
+            vad: value.vad,
+            provenance: value.provenance,
         });
         self
     }
@@ -1328,11 +1344,8 @@ fn validate_edge_record(key: &[u8], value: &[u8]) -> Result<()> {
         return Err(Error::CorruptedIndex("edge record"));
     }
 
-    if EdgeKind::try_from_u8(key[16]).is_none() {
-        return Err(Error::CorruptedIndex("edge record"));
-    }
-
-    decode_edge_value(value).map_err(|_| Error::CorruptedIndex("edge record"))?;
+    let kind = EdgeKind::try_from_u8(key[16]).ok_or(Error::CorruptedIndex("edge record"))?;
+    decode_edge_value_for_kind(kind, value).map_err(|_| Error::CorruptedIndex("edge record"))?;
 
     Ok(())
 }
