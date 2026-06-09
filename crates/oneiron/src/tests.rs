@@ -14,6 +14,7 @@ use heed::EnvOpenOptions;
 use heed::types::{Bytes, Str};
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
+use sha2::{Digest, Sha256};
 use xxhash_rust::xxh32::xxh32;
 
 use super::*;
@@ -3085,13 +3086,16 @@ fn doctor_does_not_write_data_file() -> Result<()> {
     let data_file = temp_dir.path().join("data.mdb");
     let before = std::fs::metadata(&data_file)?;
     let before_modified = before.modified()?;
+    let before_digest = Sha256::digest(std::fs::read(&data_file)?);
 
     let report = vault.doctor()?;
     assert_eq!(report.db_manifest.present_count, 25);
 
     let after = std::fs::metadata(&data_file)?;
+    let after_digest = Sha256::digest(std::fs::read(&data_file)?);
     assert_eq!(after.len(), before.len());
     assert_eq!(after.modified()?, before_modified);
+    assert_eq!(after_digest, before_digest);
     Ok(())
 }
 

@@ -26,6 +26,7 @@ use crate::store::{
     DB_MANIFEST, HnswCompatibilityState, MODEL_ID_KEY, STORAGE_ABI_VERSION_KEY,
     STORAGE_SCHEMA_VERSION_KEY, Store, TEXT_ANALYZER_MANIFEST_HASH_KEY, TEXT_ANALYZER_MANIFEST_KEY,
     TEXT_BM25_FIELD_SCHEMA_HASH_KEY, TEXT_INDEX_SCHEMA_VERSION, TEXT_INDEX_SCHEMA_VERSION_KEY,
+    lmdb_database_open_guard,
 };
 use crate::types::{
     EDGE_KEY_LEN, ENTITY_ID_LEN, ENTITY_TYPE_REDACTION_AUDIT, EdgeInfo, EdgeKind, EntityId,
@@ -222,7 +223,11 @@ impl Vault {
             doctor_hash_hex(&self.store, &rtxn, TEXT_BM25_FIELD_SCHEMA_HASH_KEY)?;
         let text_index_schema_version =
             doctor_optional_u16(read_text_schema_version(&self.store, &rtxn))?;
-        let db_manifest = doctor_db_manifest(&self.store, &rtxn)?;
+        let db_manifest = {
+            // Held for consistency with `Store::open`'s DB-open serialization.
+            let _db_open_guard = lmdb_database_open_guard()?;
+            doctor_db_manifest(&self.store, &rtxn)?
+        };
 
         Ok(VaultDoctorReport {
             storage_abi_version,
