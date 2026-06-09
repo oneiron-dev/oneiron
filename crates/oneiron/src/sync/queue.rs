@@ -244,11 +244,21 @@ impl SyncQueue {
         Ok(())
     }
 
-    /// Clears all entries (updates + embed jobs). Used for re-bootstrap.
+    /// Clears update and embed-job rows for re-bootstrap.
+    ///
+    /// Hard-delete sweep jobs (`h:`) and metadata counters (`m:`) are
+    /// intentionally preserved. Reconnect overflow is about the offline
+    /// update queue only; wiping sweep jobs after a GDPR delete receipt has
+    /// committed would strand historical carriers past the Art.17 SLA.
     pub fn clear_all(&self) -> Result<()> {
         let mut wtxn = self.vault.store.env.write_txn()?;
         let preserved_seq = self.recover_last_update_seq_for_clear(&wtxn)?;
-        self.vault.store.sync_queue.clear(&mut wtxn)?;
+        let mut keys_to_delete = self.keys_with_prefix(&wtxn, UPDATE_PREFIX)?;
+        keys_to_delete.extend(self.keys_with_prefix(&wtxn, EMBED_PREFIX)?);
+
+        for key in &keys_to_delete {
+            self.vault.store.sync_queue.delete(&mut wtxn, key)?;
+        }
         self.vault.store.sync_queue.put(
             &mut wtxn,
             LAST_UPDATE_SEQ_KEY,
@@ -358,6 +368,16 @@ impl SyncQueue {
             .and_then(|raw| decode_last_update_seq_metadata(raw).ok());
         let max_valid_seq = self.max_valid_update_seq(wtxn)?;
         Ok(metadata_seq.unwrap_or(0).max(max_valid_seq))
+    }
+
+    fn keys_with_prefix(&self, wtxn: &heed::RwTxn<'_>, prefix: &[u8]) -> Result<Vec<Vec<u8>>> {
+        let mut keys = Vec::new();
+        let iter = self.vault.store.sync_queue.prefix_iter(wtxn, prefix)?;
+        for result in iter {
+            let (key, _) = result?;
+            keys.push(key.to_vec());
+        }
+        Ok(keys)
     }
 
     /// Deletes persisted rows whose decode still fails under a fresh write
@@ -512,6 +532,10 @@ fn decode_last_update_seq_metadata(raw: &[u8]) -> Result<u64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::deletion::{
+        LAST_HARD_ERASE_SWEEP_SEQ_KEY, RedactionScope, encode_hard_erase_sweep_job,
+        encode_hard_erase_sweep_key,
+    };
     use crate::types::VaultConfig;
 
     fn test_vault() -> Arc<Vault> {
@@ -604,6 +628,85 @@ mod tests {
 
         let seq = queue.push("2026-03", &[3]).unwrap();
         assert_eq!(seq, 3);
+    }
+
+    #[test]
+    fn clear_all_preserves_hard_erase_sweeps_and_metadata_counters() {
+        let vault = test_vault();
+        let queue = SyncQueue::new(vault.clone()).unwrap();
+
+        let update_seq = queue.push("2026-03", &[1]).unwrap();
+        let embed_id = EntityId::now();
+        queue.push_embed_job(&embed_id, 1).unwrap();
+
+        let sweep_seq = 7_u64;
+        let sweep_key = encode_hard_erase_sweep_key(sweep_seq);
+        let sweep_value =
+            encode_hard_erase_sweep_job(RedactionScope::entity(&EntityId::now()), 1_772_000_000)
+                .unwrap();
+        let embed_key = encode_embed_key(&embed_id);
+
+        let mut wtxn = vault.store.env.write_txn().unwrap();
+        vault
+            .store
+            .sync_queue
+            .put(&mut wtxn, &sweep_key, &sweep_value)
+            .unwrap();
+        vault
+            .store
+            .sync_queue
+            .put(
+                &mut wtxn,
+                LAST_HARD_ERASE_SWEEP_SEQ_KEY,
+                &sweep_seq.to_le_bytes(),
+            )
+            .unwrap();
+        wtxn.commit().unwrap();
+
+        queue.clear_all().unwrap();
+
+        let rtxn = vault.store.env.read_txn().unwrap();
+        assert!(
+            vault
+                .store
+                .sync_queue
+                .get(&rtxn, &encode_update_key(update_seq))
+                .unwrap()
+                .is_none(),
+            "clear_all must drop queued update rows",
+        );
+        assert!(
+            vault
+                .store
+                .sync_queue
+                .get(&rtxn, &embed_key)
+                .unwrap()
+                .is_none(),
+            "clear_all must drop queued embed-job rows",
+        );
+        assert_eq!(
+            vault.store.sync_queue.get(&rtxn, &sweep_key).unwrap(),
+            Some(sweep_value.as_slice()),
+            "clear_all must preserve hard-erase sweep jobs",
+        );
+        assert_eq!(
+            vault
+                .store
+                .sync_queue
+                .get(&rtxn, LAST_UPDATE_SEQ_KEY)
+                .unwrap(),
+            Some(update_seq.to_le_bytes().as_slice()),
+            "clear_all must preserve the update sequence cursor",
+        );
+        assert_eq!(
+            vault
+                .store
+                .sync_queue
+                .get(&rtxn, LAST_HARD_ERASE_SWEEP_SEQ_KEY)
+                .unwrap(),
+            Some(sweep_seq.to_le_bytes().as_slice()),
+            "clear_all must preserve the hard-erase sweep cursor",
+        );
     }
 
     #[test]

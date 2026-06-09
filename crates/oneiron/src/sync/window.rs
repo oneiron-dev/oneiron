@@ -11,8 +11,8 @@ use super::bridge::{
     self, BRIDGE_ORIGIN, Materializer, ObserverAState, encode_edge_value_for_crdt, format_edge_key,
 };
 use super::loro_support::{
-    doc_from_snapshot, doc_version_vector, export_snapshot, import_doc, map_for_each_bytes,
-    map_get_bytes, map_insert_bytes,
+    doc_from_snapshot, doc_version_vector, export_snapshot, import_doc, map_contains_binary,
+    map_for_each_bytes, map_get_bytes, map_insert_bytes,
 };
 use super::schema::create_window_doc;
 use super::types::WindowKey;
@@ -159,7 +159,7 @@ pub fn replay_pending_mirrors(vault: &Vault, doc: &LoroDoc, window_key: &WindowK
         };
 
         // Check if tombstoned in CRDT
-        if map_get_bytes(&tombstones_map, &hex_id).is_some() {
+        if map_contains_binary(&tombstones_map, &hex_id) {
             vault.with_write_txn(|wtxn| {
                 vault.store.sync_state.delete(wtxn, marker_key)?;
                 Ok(())
@@ -352,10 +352,10 @@ pub fn reverse_rematerialize(vault: &Vault, doc: &LoroDoc, window_key: &WindowKe
     for id in &entities_in_range {
         let hex_id = id.to_hex();
 
-        if map_get_bytes(&tombstones_map, &hex_id).is_some() {
+        if map_contains_binary(&tombstones_map, &hex_id) {
             continue;
         }
-        if map_get_bytes(&entities_map, &hex_id).is_some() {
+        if map_contains_binary(&entities_map, &hex_id) {
             continue;
         }
 
@@ -370,7 +370,7 @@ pub fn reverse_rematerialize(vault: &Vault, doc: &LoroDoc, window_key: &WindowKe
         let edges_out = vault.edges_out(id)?;
         for edge in &edges_out {
             let edge_key = format_edge_key(id, edge.kind, &edge.target);
-            if map_get_bytes(&edges_map, &edge_key).is_some() {
+            if map_contains_binary(&edges_map, &edge_key) {
                 continue;
             }
             let edge_val = encode_edge_value_for_crdt(

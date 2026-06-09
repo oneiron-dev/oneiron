@@ -295,7 +295,7 @@ impl Store {
                 .open(&canonical_path)?
         };
 
-        let _db_open_guard = lmdb_database_open_guard()?;
+        let db_open_guard = lmdb_database_open_guard()?;
         let mut wtxn = env.write_txn()?;
         let entities = create_manifest_db(&env, &mut wtxn, 0)?;
         let type_index = create_manifest_db(&env, &mut wtxn, 1)?;
@@ -324,6 +324,7 @@ impl Store {
         let sync_state = create_manifest_str_db(&env, &mut wtxn, 23)?;
         let sync_queue = create_manifest_db(&env, &mut wtxn, 24)?;
         wtxn.commit()?;
+        drop(db_open_guard);
         #[cfg(not(feature = "sync"))]
         {
             let _ = sync_state;

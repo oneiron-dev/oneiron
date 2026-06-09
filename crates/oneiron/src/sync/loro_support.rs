@@ -22,9 +22,11 @@ pub(crate) fn map_get_bytes(map: &LoroMap, key: &str) -> Option<Vec<u8>> {
     }
 }
 
-#[cfg(test)]
-pub(crate) fn map_contains_key(map: &LoroMap, key: &str) -> bool {
-    map.get(key).is_some()
+pub(crate) fn map_contains_binary(map: &LoroMap, key: &str) -> bool {
+    matches!(
+        map.get(key),
+        Some(ValueOrContainer::Value(LoroValue::Binary(_)))
+    )
 }
 
 pub(crate) fn map_for_each_bytes(map: &LoroMap, mut f: impl FnMut(&str, &[u8])) {
@@ -88,17 +90,18 @@ mod tests {
         let map = doc.get_map("test");
 
         map_insert_bytes(&map, "key1", b"hello").unwrap();
+        map.insert("text", "not-binary").unwrap();
         doc.commit();
 
-        assert!(map_contains_key(&map, "key1"));
+        assert!(map_contains_binary(&map, "key1"));
         assert_eq!(map_get_bytes(&map, "key1").unwrap(), b"hello");
-        assert!(!map_contains_key(&map, "missing"));
-        assert!(map_get_bytes(&map, "missing").is_none());
+        assert!(!map_contains_binary(&map, "text"));
+        assert!(!map_contains_binary(&map, "missing"));
 
         map.delete("key1").unwrap();
         doc.commit();
 
-        assert!(!map_contains_key(&map, "key1"));
+        assert!(!map_contains_binary(&map, "key1"));
     }
 
     #[test]

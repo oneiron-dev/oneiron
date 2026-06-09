@@ -166,7 +166,7 @@ fn targets_reject_non_finite_persisted_edge_payload() {
 #[test]
 fn topology_reads_reject_truncated_persisted_edge_payload() {
     let (_temp_dir, vault) = crate::test_util::open_test_vault_with(VaultConfig::device());
-    let truncated_value = [0_u8; 13];
+    let truncated_value = [0_u8; 11];
 
     let targets_src = EntityId::now();
     let targets_tgt = EntityId::now();

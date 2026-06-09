@@ -11,7 +11,7 @@
 //!
 //! # Modules
 //!
-//! - `loro_support` — Loro-native byte map and encoding helpers
+//! - `loro_support` — internal Loro-native byte map and encoding helpers
 //! - `types` — Sync configuration, window keys
 //! - `schema` — CRDT Doc schema creation (root + window)
 //! - `bridge` — Observer-based CRDT ↔ LMDB materialization

@@ -4,6 +4,7 @@ use std::time::Instant;
 
 use crate::limits::{MAX_ANCESTOR_DEPTH, MAX_CHILD_OF_CYCLE_TRAVERSAL_STEPS};
 use crate::types::{
+    EDGE_VALUE_SEMANTIC_LEN, EDGE_VALUE_SEMANTIC_PROVENANCED_LEN, EDGE_VALUE_STRUCTURAL_LEN,
     ENTITY_ID_LEN, ENTITY_TYPE_MACHINE, ENTITY_TYPE_REDACTION_AUDIT, ENTITY_TYPE_TASK,
     ENTITY_TYPE_TASK_LIST, EdgeActorClass, EdgeConfirmationStatus, EdgeProvenanceFlags,
     decode_edge_value, decode_edge_value_for_kind, encode_edge_value,
@@ -16,7 +17,10 @@ use xxhash_rust::xxh32::xxh32;
 
 use super::*;
 use crate::batch::ENTITY_METADATA_HEADER_LEN;
-use crate::deletion::DeleteReason;
+use crate::deletion::{
+    DeleteReason, LAST_HARD_ERASE_SWEEP_SEQ_KEY, RedactionScope, encode_hard_erase_sweep_job,
+    encode_hard_erase_sweep_key,
+};
 use crate::store::{
     DB_MANIFEST, GRAPH_VERSION_KEY, HNSW_CONFIG_KEY, MAX_DBS, STORAGE_ABI_VERSION,
     STORAGE_ABI_VERSION_KEY, STORAGE_SCHEMA_VERSION, STORAGE_SCHEMA_VERSION_KEY, Store,
@@ -179,8 +183,8 @@ enum ContractEdgeLayout {
 impl ContractEdgeLayout {
     fn bytes(self) -> usize {
         match self {
-            Self::Structural => 12,
-            Self::SemanticBare => 24,
+            Self::Structural => EDGE_VALUE_STRUCTURAL_LEN,
+            Self::SemanticBare => EDGE_VALUE_SEMANTIC_LEN,
         }
     }
 }
@@ -238,10 +242,10 @@ fn assert_vad_bytes(value: &[u8], vad: Vad) {
 }
 
 fn contract_structural_value(weight: f32, created_at: u64) -> Vec<u8> {
-    let mut value = Vec::with_capacity(12);
+    let mut value = Vec::with_capacity(EDGE_VALUE_STRUCTURAL_LEN);
     value.extend_from_slice(&weight.to_le_bytes());
     value.extend_from_slice(&created_at.to_le_bytes());
-    assert_eq!(value.len(), 12);
+    assert_eq!(value.len(), EDGE_VALUE_STRUCTURAL_LEN);
     value
 }
 
@@ -250,7 +254,7 @@ fn contract_semantic_bare_value(weight: f32, created_at: u64, vad: Vad) -> Vec<u
     value.extend_from_slice(&vad.valence.to_le_bytes());
     value.extend_from_slice(&vad.arousal.to_le_bytes());
     value.extend_from_slice(&vad.dominance.to_le_bytes());
-    assert_eq!(value.len(), 24);
+    assert_eq!(value.len(), EDGE_VALUE_SEMANTIC_LEN);
     value
 }
 
@@ -258,7 +262,7 @@ fn contract_semantic_provenanced_value(weight: f32, created_at: u64, vad: Vad) -
     let mut value = contract_semantic_bare_value(weight, created_at, vad);
     value.push(1); // confirmation_status = confirmed
     value.push(1); // actor_class = agent
-    assert_eq!(value.len(), 26);
+    assert_eq!(value.len(), EDGE_VALUE_SEMANTIC_PROVENANCED_LEN);
     value
 }
 
@@ -480,6 +484,63 @@ fn hard_delete_enqueues_bounded_historical_carrier_sweep() -> Result<()> {
 }
 
 #[test]
+fn hard_delete_sweep_sequence_self_heals_stale_cursor_on_collision() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let id = EntityId::now();
+    vault.put_entity(
+        &id,
+        0,
+        test_time_range(250, 250),
+        251,
+        b"repair-sweep-cursor",
+    )?;
+
+    let stale_seq = 6_u64;
+    let existing_seq = 7_u64;
+    let repaired_seq = 8_u64;
+    let existing_key = encode_hard_erase_sweep_key(existing_seq);
+    let existing_value =
+        encode_hard_erase_sweep_job(RedactionScope::entity(&EntityId::now()), 1_772_000_000)?;
+
+    vault.with_write_txn(|wtxn| {
+        vault.store.sync_queue.put(
+            wtxn,
+            LAST_HARD_ERASE_SWEEP_SEQ_KEY,
+            &stale_seq.to_le_bytes(),
+        )?;
+        vault
+            .store
+            .sync_queue
+            .put(wtxn, &existing_key, &existing_value)?;
+        Ok(())
+    })?;
+
+    let outcome = vault.delete_entity_with_reason(&id, DeleteReason::UserHardDelete)?;
+    assert_eq!(
+        outcome.sweep_key.as_deref(),
+        Some(encode_hard_erase_sweep_key(repaired_seq).as_slice())
+    );
+
+    let rtxn = vault.store.env.read_txn()?;
+    assert_eq!(
+        vault
+            .store
+            .sync_queue
+            .get(&rtxn, LAST_HARD_ERASE_SWEEP_SEQ_KEY)?,
+        Some(repaired_seq.to_le_bytes().as_slice())
+    );
+    assert!(
+        vault
+            .store
+            .sync_queue
+            .get(&rtxn, &encode_hard_erase_sweep_key(repaired_seq))?
+            .is_some(),
+        "new sweep job should be written after repairing the stale cursor",
+    );
+    Ok(())
+}
+
+#[test]
 fn gdpr_and_policy_deletes_soft_erase_then_active_purge_with_receipts() -> Result<()> {
     for reason in [DeleteReason::GdprDelete, DeleteReason::PolicyDelete] {
         let (_dir, vault) = open_test_vault();
@@ -553,7 +614,7 @@ fn receipt_reason_purges_orphan_vector_with_receipt_and_sweep() -> Result<()> {
 #[test]
 fn user_delete_soft_shell_survives_sync_rematerialization() -> Result<()> {
     use crate::sync::bridge::Materializer;
-    use crate::sync::loro_support::map_get_bytes;
+    use crate::sync::loro_support::map_contains_binary;
     use crate::sync::schema::create_window_doc;
     use crate::sync::types::WindowKey;
     use crate::sync::window;
@@ -589,7 +650,7 @@ fn user_delete_soft_shell_survives_sync_rematerialization() -> Result<()> {
 
     let tombstones = doc.get_map("tombstones");
     assert!(
-        map_get_bytes(&tombstones, id.to_hex().as_str()).is_none(),
+        !map_contains_binary(&tombstones, id.to_hex().as_str()),
         "user_delete must not write the hard-purge CRDT tombstone; synced soft-delete propagation is deferred to ONE-1090"
     );
     assert_eq!(
@@ -603,7 +664,7 @@ fn user_delete_soft_shell_survives_sync_rematerialization() -> Result<()> {
 #[cfg(feature = "sync")]
 #[test]
 fn hard_delete_persists_crdt_tombstone_before_active_purge() -> Result<()> {
-    use crate::sync::loro_support::map_get_bytes;
+    use crate::sync::loro_support::map_contains_binary;
     use crate::sync::types::WindowKey;
     use crate::sync::window;
 
@@ -641,7 +702,7 @@ fn hard_delete_persists_crdt_tombstone_before_active_purge() -> Result<()> {
     let doc = window::load_window_from_state(&vault, "local", &window_key)?;
     let tombstones = doc.get_map("tombstones");
     assert!(
-        map_get_bytes(&tombstones, id.to_hex().as_str()).is_some(),
+        map_contains_binary(&tombstones, id.to_hex().as_str()),
         "CRDT tombstone must persist before destructive purge starts"
     );
     Ok(())
@@ -2550,8 +2611,12 @@ fn edge_value_layout_round_trips_all_contract_edge_kinds() -> Result<()> {
         let weight = 0.25 + (i as f32 * 0.03125);
         let created_at = 1_772_000_000 + i as u64;
         let vad = contract_vad(i);
+        let encode_vad = match layout {
+            ContractEdgeLayout::Structural => Vad::NEUTRAL,
+            ContractEdgeLayout::SemanticBare => vad,
+        };
 
-        let value = encode_edge_value(kind, weight, created_at, vad, None)?;
+        let value = encode_edge_value(kind, weight, created_at, encode_vad, None)?;
         assert_eq!(
             value.len(),
             layout.bytes(),
@@ -2596,7 +2661,11 @@ fn semantic_provenance_round_trips_vad_and_hot_flags() -> Result<()> {
         let vad = contract_vad(i);
 
         let value = encode_edge_value(kind, weight, created_at, vad, Some(flags))?;
-        assert_eq!(value.len(), 26, "provenanced {kind:?} must write 26 B");
+        assert_eq!(
+            value.len(),
+            EDGE_VALUE_SEMANTIC_PROVENANCED_LEN,
+            "provenanced {kind:?} must write {EDGE_VALUE_SEMANTIC_PROVENANCED_LEN} B"
+        );
         assert_common_edge_value_fields(&value, weight, created_at);
         assert_vad_bytes(&value, vad);
         assert_eq!(value[24], EdgeConfirmationStatus::Confirmed as u8);
@@ -2656,6 +2725,30 @@ fn decode_edge_value_for_kind_rejects_kind_layout_mismatches() {
             "{name}: wrong error: {err:?}"
         );
     }
+}
+
+#[test]
+fn encode_edge_value_rejects_structural_non_neutral_vad() {
+    let err = encode_edge_value(
+        EdgeKind::BelongsTo,
+        0.5,
+        1_772_000_103,
+        Vad {
+            valence: 0.25,
+            arousal: 0.0,
+            dominance: 0.0,
+        },
+        None,
+    )
+    .expect_err("structural edge must reject non-neutral VAD");
+
+    assert!(
+        matches!(
+            err,
+            Error::InvariantViolation("structural edges do not carry VAD")
+        ),
+        "wrong error: {err:?}"
+    );
 }
 
 #[test]
