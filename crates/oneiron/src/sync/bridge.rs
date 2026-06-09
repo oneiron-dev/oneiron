@@ -8,7 +8,7 @@
 //! via the doc's container event system. Materializes key-level changes to LMDB,
 //! skipping bridge-origin writes.
 //!
-//! Origin tracking: bridge writes use `commit_with(CommitOptions::origin(BRIDGE_ORIGIN))`.
+//! Origin tracking: bridge writes use `commit_with(CommitOptions::new().origin(BRIDGE_ORIGIN))`.
 //! Observer B callbacks check the event origin and skip bridge-tagged events
 //! to avoid circular LMDB→CRDT→LMDB loops.
 
@@ -18,7 +18,7 @@ use std::sync::{Arc, Mutex};
 
 use loro::{ContainerTrait, LoroDoc, LoroMap, Subscription};
 
-use super::loro_support::map_get_bytes;
+use super::loro_support::{map_contains_key, map_get_bytes};
 use crate::batch::{self, BatchOp, ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::store::Store;
 use crate::types::{
@@ -554,7 +554,7 @@ fn ensure_entity_materialized_from_crdt(
     }
 
     let hex_id = id.to_hex();
-    if map_get_bytes(tombstones_map, &hex_id).is_some() {
+    if map_contains_key(tombstones_map, &hex_id) {
         return Ok(false);
     }
 

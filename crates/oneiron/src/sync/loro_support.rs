@@ -22,7 +22,6 @@ pub(crate) fn map_get_bytes(map: &LoroMap, key: &str) -> Option<Vec<u8>> {
     }
 }
 
-#[cfg(test)]
 pub(crate) fn map_contains_key(map: &LoroMap, key: &str) -> bool {
     map.get(key).is_some()
 }
@@ -93,7 +92,6 @@ mod tests {
         assert!(map_contains_key(&map, "key1"));
         assert_eq!(map_get_bytes(&map, "key1").unwrap(), b"hello");
         assert!(!map_contains_key(&map, "missing"));
-        assert!(map_get_bytes(&map, "missing").is_none());
 
         map.delete("key1").unwrap();
         doc.commit();

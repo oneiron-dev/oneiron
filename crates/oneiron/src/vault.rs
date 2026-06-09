@@ -556,9 +556,10 @@ impl Vault {
             Some(_) => return Err(Error::CorruptedIndex("hard erase sweep metadata")),
             None => None,
         };
-        let current = metadata_seq
-            .unwrap_or(0)
-            .max(self.max_hard_erase_sweep_seq(wtxn)?);
+        let current = match metadata_seq {
+            Some(seq) => seq,
+            None => self.max_hard_erase_sweep_seq(wtxn)?,
+        };
         let next = current
             .checked_add(1)
             .ok_or(Error::ArithmeticOverflow("hard erase sweep sequence"))?;

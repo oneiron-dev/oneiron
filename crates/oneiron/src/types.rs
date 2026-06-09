@@ -941,6 +941,12 @@ pub(crate) fn encode_edge_value(
             "structural edges do not carry provenance hot flags",
         ));
     }
+    if vad != Vad::NEUTRAL && edge_value_layout_for_kind(kind, false) == EdgeValueLayout::Structural
+    {
+        return Err(crate::error::Error::InvariantViolation(
+            "structural edges do not carry VAD",
+        ));
+    }
 
     let layout = edge_value_layout_for_kind(kind, provenance.is_some());
     let mut value = vec![0_u8; layout.bytes()];
