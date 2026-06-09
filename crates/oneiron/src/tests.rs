@@ -14,6 +14,7 @@ use heed::EnvOpenOptions;
 use heed::types::{Bytes, Str};
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
+use sha2::{Digest, Sha256};
 use xxhash_rust::xxh32::xxh32;
 
 use super::*;
@@ -2989,6 +2990,202 @@ fn open_persists_storage_versions_on_create() -> Result<()> {
     assert_eq!(
         read_meta_u16(&vault, STORAGE_SCHEMA_VERSION_KEY)?,
         Some(STORAGE_SCHEMA_VERSION)
+    );
+    Ok(())
+}
+
+#[test]
+fn doctor_reflects_persisted_open_compatibility_values() -> Result<()> {
+    let temp_dir = tempfile::tempdir()?;
+    let mut cfg = test_config();
+    cfg.embedding_model = Some("doctor-model-v1".to_owned());
+    let vault = Vault::open(temp_dir.path(), cfg)?;
+
+    let report = vault.doctor()?;
+    serde_json::to_value(&report).expect("doctor report must serialize");
+
+    assert_eq!(report.storage_abi_version, Some(2));
+    assert_eq!(report.storage_schema_version, Some(1));
+    assert_eq!(
+        report.embedding_model_id,
+        Some("doctor-model-v1".to_owned())
+    );
+    assert_eq!(
+        report.hnsw.record_state,
+        VaultDoctorHnswRecordState::Current
+    );
+    assert_eq!(report.hnsw.vector_dimensions, Some(4));
+    assert_eq!(report.hnsw.m_max_0, Some(64));
+    assert_eq!(report.hnsw.ef_construction, Some(200));
+    assert_eq!(report.hnsw.distance_metric.as_deref(), Some("cosine"));
+    assert_eq!(report.hnsw.index_structure.as_deref(), Some("flat_nsw"));
+    assert_eq!(
+        report.analyzer_manifest_hash.as_deref(),
+        Some("acc359f173a6fcf5a7c4dc1ffcbbfe63d0c41878733fb4d20d033dea03640ce1")
+    );
+    assert_eq!(
+        report.bm25_field_schema_hash.as_deref(),
+        Some("2d59ed83e21963518570270aa88dd8dc8aac8c8308e092eb70654767fa3aef7d")
+    );
+    assert_eq!(report.text_index_schema_version, Some(2));
+    assert!(report.unreadable_fields.is_empty());
+    assert_eq!(report.db_manifest.expected_count, 25);
+    assert_eq!(report.db_manifest.present_count, 25);
+    assert!(report.db_manifest.missing_names.is_empty());
+    assert!(report.db_manifest.unexpected_names.is_empty());
+    assert!(
+        report
+            .db_manifest
+            .present_names
+            .contains(&"vault_meta".to_owned())
+    );
+    assert!(
+        report
+            .db_manifest
+            .present_names
+            .contains(&"hnsw_meta".to_owned())
+    );
+    Ok(())
+}
+
+#[test]
+fn doctor_reads_persisted_text_hash_keys() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let analyzer_hash = [0xAB; 32];
+    let field_schema_hash = [0xCD; 32];
+
+    {
+        let mut wtxn = vault.store.env.write_txn()?;
+        vault.store.vault_meta.put(
+            &mut wtxn,
+            crate::store::TEXT_ANALYZER_MANIFEST_HASH_KEY,
+            &analyzer_hash,
+        )?;
+        vault.store.vault_meta.put(
+            &mut wtxn,
+            crate::store::TEXT_BM25_FIELD_SCHEMA_HASH_KEY,
+            &field_schema_hash,
+        )?;
+        wtxn.commit()?;
+    }
+
+    let report = vault.doctor()?;
+    assert_eq!(
+        report.analyzer_manifest_hash.as_deref(),
+        Some("abababababababababababababababababababababababababababababababab")
+    );
+    assert_eq!(
+        report.bm25_field_schema_hash.as_deref(),
+        Some("cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd")
+    );
+    assert!(report.unreadable_fields.is_empty());
+    Ok(())
+}
+
+#[test]
+fn doctor_does_not_write_data_file() -> Result<()> {
+    let (temp_dir, vault) = open_test_vault();
+    let data_file = temp_dir.path().join("data.mdb");
+    let before = std::fs::metadata(&data_file)?;
+    let before_modified = before.modified()?;
+    let before_digest = Sha256::digest(std::fs::read(&data_file)?);
+
+    let report = vault.doctor()?;
+    assert_eq!(report.db_manifest.present_count, 25);
+
+    let after = std::fs::metadata(&data_file)?;
+    let after_digest = Sha256::digest(std::fs::read(&data_file)?);
+    assert_eq!(after.len(), before.len());
+    assert_eq!(after.modified()?, before_modified);
+    assert_eq!(after_digest, before_digest);
+    Ok(())
+}
+
+#[test]
+fn doctor_reports_missing_and_legacy_metadata_without_gating() -> Result<()> {
+    let temp_dir = tempfile::tempdir()?;
+    let cfg = test_config();
+    let vault = Vault::open(temp_dir.path(), cfg.clone())?;
+
+    {
+        let mut wtxn = vault.store.env.write_txn()?;
+        vault
+            .store
+            .vault_meta
+            .delete(&mut wtxn, STORAGE_ABI_VERSION_KEY)?;
+        vault
+            .store
+            .vault_meta
+            .delete(&mut wtxn, STORAGE_SCHEMA_VERSION_KEY)?;
+        vault
+            .store
+            .vault_meta
+            .delete(&mut wtxn, crate::store::TEXT_INDEX_SCHEMA_VERSION_KEY)?;
+        vault
+            .store
+            .vault_meta
+            .delete(&mut wtxn, crate::store::TEXT_ANALYZER_MANIFEST_HASH_KEY)?;
+        vault
+            .store
+            .vault_meta
+            .delete(&mut wtxn, crate::store::TEXT_BM25_FIELD_SCHEMA_HASH_KEY)?;
+        vault.store.hnsw_meta.delete(&mut wtxn, MODEL_ID_KEY)?;
+        vault.store.hnsw_meta.delete(&mut wtxn, HNSW_CONFIG_KEY)?;
+        wtxn.commit()?;
+    }
+
+    let report = vault.doctor()?;
+    assert_eq!(report.storage_abi_version, None);
+    assert_eq!(report.storage_schema_version, None);
+    assert_eq!(report.embedding_model_id, None);
+    assert_eq!(
+        report.hnsw.record_state,
+        VaultDoctorHnswRecordState::Missing
+    );
+    assert_eq!(report.hnsw.vector_dimensions, None);
+    assert_eq!(report.hnsw.distance_metric, None);
+    assert_eq!(report.analyzer_manifest_hash, None);
+    assert_eq!(report.bm25_field_schema_hash, None);
+    assert_eq!(report.text_index_schema_version, None);
+    assert!(report.unreadable_fields.is_empty());
+
+    let legacy = legacy_hnsw_compatibility_record(&cfg);
+    write_hnsw_config_record(&vault, &legacy)?;
+    let report = vault.doctor()?;
+    assert_eq!(report.hnsw.record_state, VaultDoctorHnswRecordState::Legacy);
+    assert_eq!(report.hnsw.vector_dimensions, Some(4));
+    assert_eq!(report.hnsw.m_max_0, Some(64));
+    assert_eq!(report.hnsw.ef_construction, Some(200));
+    assert_eq!(report.hnsw.distance_metric, None);
+    assert_eq!(report.hnsw.index_structure, None);
+    assert!(report.unreadable_fields.is_empty());
+    Ok(())
+}
+
+#[test]
+fn doctor_surfaces_corrupt_metadata_without_gating() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+
+    {
+        let mut wtxn = vault.store.env.write_txn()?;
+        vault
+            .store
+            .vault_meta
+            .put(&mut wtxn, STORAGE_ABI_VERSION_KEY, &[0x01])?;
+        wtxn.commit()?;
+    }
+
+    let report = vault.doctor()?;
+    assert_eq!(report.storage_abi_version, None);
+    assert!(
+        report
+            .unreadable_fields
+            .contains(&"vault_meta.storage_abi_version".to_owned())
+    );
+    assert!(
+        !report
+            .unreadable_fields
+            .contains(&"vault_meta.schema_version".to_owned())
     );
     Ok(())
 }
