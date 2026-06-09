@@ -11,8 +11,7 @@
 //!
 //! # Modules
 //!
-//! - `engine` — Engine-agnostic CRDT traits (`CrdtDoc`, `CrdtMap`)
-//! - `loro_engine` — Loro implementation of the engine traits
+//! - `loro_support` — Loro-native byte map and encoding helpers
 //! - `types` — Sync configuration, window keys
 //! - `schema` — CRDT Doc schema creation (root + window)
 //! - `bridge` — Observer-based CRDT ↔ LMDB materialization
@@ -21,8 +20,7 @@
 pub mod bridge;
 pub mod client;
 pub mod connection;
-pub mod engine;
-pub mod loro_engine;
+mod loro_support;
 pub mod queue;
 pub mod schema;
 pub mod transport;
@@ -31,8 +29,7 @@ pub mod window;
 
 pub use client::{SyncClient, SyncClientConfig, SyncEvent, SyncStatus};
 pub use connection::{ConnectionConfig, LocalUpdate, SyncConnection};
-pub use engine::{CrdtDoc, CrdtMap, MapChange, Subscription};
-pub use loro_engine::{LoroDocument, LoroMapHandle};
+pub use loro::Subscription;
 pub use queue::{QueuedEmbedJob, QueuedUpdate, SyncQueue};
 pub use transport::{
     TAG_BULK_TRANSFER, TAG_BULK_TRANSFER_DONE, TAG_WINDOW_SYNC, TransportError,
