@@ -16,6 +16,7 @@ use xxhash_rust::xxh32::xxh32;
 
 use super::*;
 use crate::batch::ENTITY_METADATA_HEADER_LEN;
+use crate::deletion::DeleteReason;
 use crate::store::{
     DB_MANIFEST, GRAPH_VERSION_KEY, HNSW_CONFIG_KEY, MAX_DBS, STORAGE_ABI_VERSION,
     STORAGE_ABI_VERSION_KEY, STORAGE_SCHEMA_VERSION, STORAGE_SCHEMA_VERSION_KEY, Store,
@@ -68,6 +69,55 @@ fn read_meta_u16(vault: &Vault, key: &[u8]) -> Result<Option<u16>> {
     };
     let bytes: [u8; 2] = raw.try_into().map_err(|_| Error::InvalidKey)?;
     Ok(Some(u16::from_le_bytes(bytes)))
+}
+
+fn redaction_audit_receipts(vault: &Vault) -> Result<Vec<EntityId>> {
+    vault.entities_by_type(ENTITY_TYPE_REDACTION_AUDIT)
+}
+
+fn hard_erase_sweep_rows(vault: &Vault) -> Result<Vec<(Vec<u8>, Vec<u8>)>> {
+    let rtxn = vault.store.env.read_txn()?;
+    let mut rows = Vec::new();
+    for row in vault.store.sync_queue.prefix_iter(&rtxn, b"h:")? {
+        let (key, value) = row?;
+        rows.push((key.to_vec(), value.to_vec()));
+    }
+    Ok(rows)
+}
+
+fn receipt_body(raw: &[u8]) -> serde_json::Value {
+    rmp_serde::from_slice(&raw[ENTITY_METADATA_HEADER_LEN..]).expect("decode receipt body")
+}
+
+fn assert_receipt_fields(receipt: &serde_json::Value) {
+    let object = receipt.as_object().expect("receipt must be object");
+    let mut fields: Vec<&str> = object.keys().map(String::as_str).collect();
+    fields.sort_unstable();
+    assert_eq!(
+        fields,
+        vec![
+            "affected_revision_ids",
+            "hard_purge_complete_at",
+            "reason",
+            "request_id",
+            "requested_at",
+            "scope",
+            "soft_complete_at",
+            "sweep_complete_at",
+            "sweep_queued_at",
+            "verification",
+        ]
+    );
+}
+
+fn assert_no_receipt_payload_leak(raw: &[u8], needles: &[&[u8]]) {
+    for needle in needles {
+        assert!(
+            !raw.windows(needle.len()).any(|window| window == *needle),
+            "receipt leaked forbidden content bytes: {:?}",
+            String::from_utf8_lossy(needle)
+        );
+    }
 }
 
 fn materialized_database_names(vault: &Vault) -> Result<Vec<String>> {
@@ -306,6 +356,205 @@ fn open_put_get_delete_entities() -> Result<()> {
     assert!(vault.get(&id)?.is_none());
     assert!(!vault.delete_entity(&id)?);
 
+    Ok(())
+}
+
+#[test]
+fn user_delete_soft_erases_active_payload_without_receipt_or_sweep() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let id = EntityId::now();
+    let secret = b"soft-erase-active-secret";
+
+    vault
+        .batch()
+        .put(&id, 0, test_time_range(10, 10), 20, secret)
+        .text(&id, &[("body", "soft-erase-active-secret")])
+        .commit()?;
+
+    assert_eq!(vault.get(&id)?.as_deref(), Some(secret.as_slice()));
+    assert_eq!(vault.search_text("active-secret", 10)?.len(), 1);
+
+    let outcome = vault.delete_entity_with_reason(&id, DeleteReason::UserDelete)?;
+
+    assert!(outcome.existed);
+    assert!(outcome.receipt_id.is_none());
+    assert!(outcome.sweep_key.is_none());
+    assert_eq!(vault.get(&id)?.as_deref(), Some([].as_slice()));
+    assert!(vault.search_text("active-secret", 10)?.is_empty());
+    assert!(vault.entities_by_type(0)?.contains(&id));
+    assert!(redaction_audit_receipts(&vault)?.is_empty());
+    assert!(hard_erase_sweep_rows(&vault)?.is_empty());
+    Ok(())
+}
+
+#[test]
+fn user_hard_delete_writes_opaque_redaction_audit_receipt() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let id = EntityId::now();
+    let payload = b"Alice secret body predicate should never enter receipt";
+
+    vault.put_entity(&id, 0, test_time_range(100, 100), 101, payload)?;
+
+    let outcome = vault.delete_entity_with_reason(&id, DeleteReason::UserHardDelete)?;
+    let receipt_id = outcome
+        .receipt_id
+        .expect("user_hard_delete must write REDACTION_AUDIT receipt");
+    assert_eq!(
+        vault.get_entity_type(&receipt_id)?,
+        Some(ENTITY_TYPE_REDACTION_AUDIT)
+    );
+
+    let raw = vault
+        .get_raw(&receipt_id)?
+        .expect("receipt entity should be persisted");
+    assert_no_receipt_payload_leak(&raw, &[b"Alice", b"secret body", b"predicate"]);
+
+    let receipt = receipt_body(&raw);
+    assert_receipt_fields(&receipt);
+    assert_eq!(receipt["reason"], "user_hard_delete");
+    assert_eq!(receipt["scope"]["entity_ids"][0], id.to_hex());
+    assert_eq!(
+        receipt["scope"]["revision_ids"].as_array().unwrap().len(),
+        0
+    );
+    assert!(
+        receipt["affected_revision_ids"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+    assert!(receipt["sweep_queued_at"].as_u64().is_some());
+    assert!(receipt["sweep_complete_at"].is_null());
+    assert!(receipt["verification"].as_object().unwrap().is_empty());
+    Ok(())
+}
+
+#[test]
+fn hard_delete_enqueues_bounded_historical_carrier_sweep() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let id = EntityId::now();
+
+    vault.put_entity(&id, 0, test_time_range(200, 200), 201, b"sweep-me")?;
+
+    let outcome = vault.delete_entity_with_reason(&id, DeleteReason::UserHardDelete)?;
+    let sweep_key = outcome
+        .sweep_key
+        .expect("user_hard_delete must enqueue historical-carrier sweep");
+    assert!(sweep_key.starts_with(b"h:"));
+
+    let rows = hard_erase_sweep_rows(&vault)?;
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].0, sweep_key);
+
+    let job: serde_json::Value = rmp_serde::from_slice(&rows[0].1).expect("decode sweep job");
+    let mut job_fields: Vec<&str> = job
+        .as_object()
+        .unwrap()
+        .keys()
+        .map(String::as_str)
+        .collect();
+    job_fields.sort_unstable();
+    assert_eq!(job_fields, vec!["retry_state", "scope"]);
+    assert_eq!(job["scope"]["entity_ids"][0], id.to_hex());
+    assert_eq!(
+        job["scope"]["carrier_classes"],
+        serde_json::json!([
+            "historical_loro_updates",
+            "historical_loro_snapshots",
+            "derived_carriers"
+        ])
+    );
+    assert_eq!(job["retry_state"]["attempt_count"], 0);
+    assert!(job["retry_state"]["last_error_code"].is_null());
+    let queued_at = job["retry_state"]["queued_at"].as_u64().unwrap();
+    let deadline_at = job["retry_state"]["deadline_at"].as_u64().unwrap();
+    assert!(deadline_at >= queued_at);
+    assert!(deadline_at <= queued_at + 30 * 86_400);
+
+    let receipt_id = outcome.receipt_id.expect("receipt id");
+    let receipt_raw = vault.get_raw(&receipt_id)?.expect("receipt");
+    let receipt = receipt_body(&receipt_raw);
+    assert_eq!(receipt["sweep_queued_at"].as_u64(), Some(queued_at));
+    assert!(receipt["sweep_complete_at"].is_null());
+    Ok(())
+}
+
+#[test]
+fn gdpr_and_policy_deletes_soft_erase_then_active_purge_with_receipts() -> Result<()> {
+    for reason in [DeleteReason::GdprDelete, DeleteReason::PolicyDelete] {
+        let (_dir, vault) = open_test_vault();
+        let id = EntityId::now();
+        vault
+            .batch()
+            .put(&id, 0, test_time_range(300, 300), 301, b"regulated secret")
+            .text(&id, &[("body", "regulated secret")])
+            .commit()?;
+
+        let outcome = vault.delete_entity_with_reason(&id, reason)?;
+
+        assert!(outcome.existed);
+        assert!(vault.get(&id)?.is_none());
+        assert!(vault.search_text("regulated", 10)?.is_empty());
+        assert!(outcome.receipt_id.is_some());
+        assert!(outcome.sweep_key.is_some());
+
+        let receipt_raw = vault
+            .get_raw(&outcome.receipt_id.unwrap())?
+            .expect("receipt should be persisted");
+        let receipt = receipt_body(&receipt_raw);
+        assert_eq!(receipt["reason"], reason.as_str());
+        assert!(
+            receipt["soft_complete_at"].as_u64().unwrap()
+                <= receipt["hard_purge_complete_at"].as_u64().unwrap()
+        );
+    }
+    Ok(())
+}
+
+#[cfg(feature = "sync")]
+#[test]
+fn hard_delete_persists_crdt_tombstone_before_active_purge() -> Result<()> {
+    use crate::sync::loro_support::map_get_bytes;
+    use crate::sync::types::WindowKey;
+    use crate::sync::window;
+
+    let (_dir, vault) = open_test_vault();
+    let id = EntityId::now();
+    let target = EntityId::now();
+    let learned_at = 1_772_000_000;
+
+    vault
+        .batch()
+        .put(
+            &id,
+            0,
+            test_time_range(learned_at, learned_at),
+            learned_at,
+            b"must-tombstone-before-purge",
+        )
+        .commit()?;
+    vault.with_write_txn(|wtxn| {
+        let key = Store::encode_edge_key(&id, EdgeKind::Supports, &target);
+        vault.store.edges_out.put(wtxn, &key, &[0_u8; 3])?;
+        Ok(())
+    })?;
+
+    let err = vault
+        .delete_entity_with_reason(&id, DeleteReason::UserHardDelete)
+        .expect_err("corrupted edge record should fail active purge");
+    assert!(matches!(err, Error::CorruptedIndex("edge record")));
+    assert!(
+        vault.entity_exists(&id)?,
+        "active purge failed, so entity payload should remain for retry"
+    );
+
+    let window_key = WindowKey::from_timestamp(learned_at);
+    let doc = window::load_window_from_state(&vault, "local", &window_key)?;
+    let tombstones = doc.get_map("tombstones");
+    assert!(
+        map_get_bytes(&tombstones, id.to_hex().as_str()).is_some(),
+        "CRDT tombstone must persist before destructive purge starts"
+    );
     Ok(())
 }
 

@@ -323,7 +323,8 @@ pub fn forward_rematerialize(
             Err(_) => return,
         };
 
-        if vault.entity_exists(&id).unwrap_or(false) && vault.delete_entity(&id).is_ok() {
+        if vault.entity_exists(&id).unwrap_or(false) && vault.purge_entity_active_store(&id).is_ok()
+        {
             count += 1;
         }
     });

@@ -20,7 +20,7 @@
 pub mod bridge;
 pub mod client;
 pub mod connection;
-mod loro_support;
+pub(crate) mod loro_support;
 pub mod queue;
 pub mod schema;
 pub mod transport;
