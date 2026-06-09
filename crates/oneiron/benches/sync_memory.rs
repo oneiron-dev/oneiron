@@ -10,6 +10,7 @@
 
 use std::sync::Arc;
 
+use oneiron::EdgeKind;
 use yrs::{Any, Doc, Map, Transact};
 
 // ─── Constants ───────────────────────────────────────────────────────────────
@@ -18,6 +19,7 @@ const NUM_ENTITIES: usize = 3_000;
 const NUM_REWRITES: usize = 1_000;
 const REWRITES_PER_ENTITY: usize = 3;
 const EDGES_PER_ENTITY: usize = 2;
+const BENCH_EDGE_KINDS: [EdgeKind; EDGES_PER_ENTITY] = [EdgeKind::Mentions, EdgeKind::Supports];
 
 /// 25-byte header: entity_type(1) + occurred_start(8BE) + occurred_end(8BE) + learned_at(8BE)
 const HEADER_SIZE: usize = 25;
@@ -108,11 +110,11 @@ fn make_edge_value(index: usize) -> Vec<u8> {
 }
 
 /// Build an edge key: `{src_hex}:{kind:02}:{tgt_hex}` (32+1+2+1+32 = 68 chars)
-fn make_edge_key(src_index: usize, kind: u8, tgt_index: usize) -> String {
+fn make_edge_key(src_index: usize, kind: EdgeKind, tgt_index: usize) -> String {
     format!(
         "{}:{:02}:{}",
         make_entity_id(src_index),
-        kind,
+        kind as u8,
         make_entity_id(tgt_index)
     )
 }
@@ -222,7 +224,7 @@ fn main() {
         for i in 0..NUM_ENTITIES {
             for e in 0..EDGES_PER_ENTITY {
                 let tgt = (i + e + 1) % NUM_ENTITIES;
-                let kind = (e as u8) % 10;
+                let kind = BENCH_EDGE_KINDS[e % BENCH_EDGE_KINDS.len()];
                 let key = make_edge_key(i, kind, tgt);
                 let val = Any::Buffer(Arc::from(
                     make_edge_value(i * EDGES_PER_ENTITY + e).as_slice(),
