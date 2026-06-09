@@ -12,9 +12,9 @@ use crate::pipeline::PipelineBuilder;
 use crate::serialize::{SerializeConfig, serialize_pack};
 use crate::store::Store;
 use crate::types::{
-    ContextEntity, ContextPack, EDGE_KEY_LEN, EDGE_VALUE_LEN, EdgeInfo, EntityId, FieldProfile,
-    PackFormat, PackStats, Signal, TemporalAnchorMode, TemporalGranularity, TimeRange,
-    TokenAllocation, parse_vad,
+    ContextEntity, ContextPack, EDGE_KEY_LEN, EdgeInfo, EntityId, FieldProfile, PackFormat,
+    PackStats, Signal, TemporalAnchorMode, TemporalGranularity, TimeRange, TokenAllocation,
+    decode_edge_value_for_kind,
 };
 use crate::{Vault, le_bytes_to_f32_vec};
 
@@ -597,7 +597,7 @@ fn scan_edges_for_entity(store: &Store, rtxn: &RoTxn<'_>, id: &EntityId) -> Resu
 
     for entry in store.edges_out.prefix_iter(rtxn, id.as_bytes())? {
         let (key, value) = entry?;
-        if key.len() != EDGE_KEY_LEN || value.len() != EDGE_VALUE_LEN {
+        if key.len() != EDGE_KEY_LEN {
             continue;
         }
 
@@ -612,28 +612,18 @@ fn scan_edges_for_entity(store: &Store, rtxn: &RoTxn<'_>, id: &EntityId) -> Resu
             continue;
         };
 
-        let Ok(weight_bytes) = value[..4].try_into() else {
+        let Ok(decoded) = decode_edge_value_for_kind(kind, value) else {
             continue;
         };
-        let weight = f32::from_le_bytes(weight_bytes);
-
-        let Ok(created_at_bytes) = value[4..12].try_into() else {
-            continue;
-        };
-        let created_at = u64::from_le_bytes(created_at_bytes);
-
-        let vad = parse_vad(value);
-        if !weight.is_finite() || !vad.is_finite() || !vad.is_in_range() {
-            continue;
-        }
 
         edges.push(EdgeInfo {
             kind,
             target,
             target_short_id: None,
-            weight,
-            created_at,
-            vad,
+            weight: decoded.weight,
+            created_at: decoded.created_at,
+            vad: decoded.vad,
+            provenance: decoded.provenance,
         });
     }
 
@@ -881,7 +871,7 @@ mod tests {
         )?;
 
         let key = Store::encode_edge_key(&src, crate::types::EdgeKind::Supports, &tgt);
-        let value = [0_u8; EDGE_VALUE_LEN - 1];
+        let value = [0_u8; 13];
         vault.with_write_txn(|wtxn| {
             vault.store.edges_out.put(wtxn, &key, &value)?;
             Ok(())
@@ -936,9 +926,10 @@ mod tests {
         assert_eq!(edges.len(), 1);
         assert_eq!(edges[0].kind, crate::types::EdgeKind::HasFacet);
         assert!((edges[0].weight - 0.8).abs() < f32::EPSILON);
-        assert!((edges[0].vad.valence - 0.6).abs() < f32::EPSILON);
-        assert!((edges[0].vad.arousal - 0.3).abs() < f32::EPSILON);
-        assert!((edges[0].vad.dominance - 0.9).abs() < f32::EPSILON);
+        let vad = edges[0].vad.expect("semantic edge should hydrate VAD");
+        assert!((vad.valence - 0.6).abs() < f32::EPSILON);
+        assert!((vad.arousal - 0.3).abs() < f32::EPSILON);
+        assert!((vad.dominance - 0.9).abs() < f32::EPSILON);
         Ok(())
     }
 

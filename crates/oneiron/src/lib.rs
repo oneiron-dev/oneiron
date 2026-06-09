@@ -29,7 +29,8 @@ pub use crate::error::{Error, ErrorKind, Result};
 pub use crate::maintain::{MaintenanceBuilder, MaintenanceReport};
 pub use crate::pipeline::PipelineBuilder;
 pub use crate::types::{
-    ContextEntity, ContextPack, EdgeInfo, EdgeKind, EntityId, FieldProfile, HnswConfig, PackFormat,
+    ContextEntity, ContextPack, DecodedEdgeValue, EdgeActorClass, EdgeConfirmationStatus, EdgeInfo,
+    EdgeKind, EdgeProvenanceFlags, EdgeValueLayout, EntityId, FieldProfile, HnswConfig, PackFormat,
     PackStats, ScoredEntity, Signal, TemporalAnchorMode, TemporalGranularity, TextAnalyzerConfig,
     TextIndexOptions, TimeRange, TokenAllocation, Vad, VadComponent, VaultConfig,
 };

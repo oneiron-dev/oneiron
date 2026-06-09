@@ -60,7 +60,7 @@ fn put_edge_in_window(
     vad: Vad,
 ) {
     let edge_key = format_edge_key(src, kind, tgt);
-    let edge_val = encode_edge_value_for_crdt(weight, created_at, vad);
+    let edge_val = encode_edge_value_for_crdt(kind, weight, created_at, Some(vad), None).unwrap();
     let edges = window.doc.get_or_create_map("edges");
     edges.insert(edge_key.as_str(), &edge_val).unwrap();
     window.doc.commit();
@@ -144,7 +144,9 @@ fn edge_materializes_when_both_endpoints_exist() {
     window.doc.commit();
 
     let edge_key = format_edge_key(&src, EdgeKind::Mentions, &tgt);
-    let edge_val = encode_edge_value_for_crdt(0.75, 12345, Vad::NEUTRAL);
+    let edge_val =
+        encode_edge_value_for_crdt(EdgeKind::Mentions, 0.75, 12345, Some(Vad::NEUTRAL), None)
+            .unwrap();
 
     let edges = window.doc.get_or_create_map("edges");
     edges.insert(edge_key.as_str(), &edge_val).unwrap();
@@ -175,7 +177,9 @@ fn edge_skipped_when_endpoint_missing() {
     window.doc.commit();
 
     let edge_key = format_edge_key(&src, EdgeKind::Supports, &tgt);
-    let edge_val = encode_edge_value_for_crdt(0.5, 12345, Vad::NEUTRAL);
+    let edge_val =
+        encode_edge_value_for_crdt(EdgeKind::Supports, 0.5, 12345, Some(Vad::NEUTRAL), None)
+            .unwrap();
 
     let edges = window.doc.get_or_create_map("edges");
     edges.insert(edge_key.as_str(), &edge_val).unwrap();
@@ -581,10 +585,10 @@ fn reverse_rematerialize_mirrors_lmdb_entities_edges_and_skips_tombstones() {
     let edges = reverse_doc.get_or_create_map("edges");
     let edge_key = format_edge_key(&src, EdgeKind::Supports, &tgt);
     let edge_value = edges.get(edge_key.as_str()).unwrap();
-    let (weight, created_at, vad) = parse_edge_value(&edge_value).unwrap();
-    assert!((weight - 0.5).abs() < f32::EPSILON);
-    assert_eq!(created_at, learned_at + 2);
-    assert_eq!(vad, Vad::NEUTRAL);
+    let decoded = parse_edge_value(&edge_value).unwrap();
+    assert!((decoded.weight - 0.5).abs() < f32::EPSILON);
+    assert_eq!(decoded.created_at, learned_at + 2);
+    assert_eq!(decoded.vad, Some(Vad::NEUTRAL));
 }
 
 #[test]

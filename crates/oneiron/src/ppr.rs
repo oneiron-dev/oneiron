@@ -6,8 +6,12 @@ use xxhash_rust::xxh3::xxh3_128;
 use crate::error::{Error, Result};
 use crate::store::Store;
 #[cfg(test)]
+use crate::types::EDGE_VALUE_STRUCTURAL_LEN;
+#[cfg(test)]
 use crate::types::VaultConfig;
-use crate::types::{EDGE_KEY_LEN, EDGE_VALUE_LEN, ENTITY_ID_LEN, EdgeKind, EntityId, ScoredEntity};
+use crate::types::{
+    EDGE_KEY_LEN, ENTITY_ID_LEN, EdgeKind, EntityId, ScoredEntity, decode_edge_value_for_kind,
+};
 
 const SEED_HASH_LEN: usize = 16;
 #[cfg(test)]
@@ -487,7 +491,7 @@ fn propagate_edge(
     alpha: f32,
     next: &mut HashMap<(EntityId, u32), f32>,
 ) -> Result<()> {
-    if key.len() != EDGE_KEY_LEN || value.len() != EDGE_VALUE_LEN {
+    if key.len() != EDGE_KEY_LEN {
         return Err(Error::CorruptedIndex("edge record"));
     }
 
@@ -498,14 +502,9 @@ fn propagate_edge(
             .map_err(|_| Error::CorruptedIndex("edge record"))?,
     )
     .map_err(|_| Error::CorruptedIndex("edge record"))?;
-    let weight = f32::from_le_bytes(
-        value[..4]
-            .try_into()
-            .map_err(|_| Error::CorruptedIndex("edge record"))?,
-    );
-    if !weight.is_finite() {
-        return Err(Error::CorruptedIndex("edge record"));
-    }
+    let decoded = decode_edge_value_for_kind(kind, value)
+        .map_err(|_| Error::CorruptedIndex("edge record"))?;
+    let weight = decoded.weight;
     if weight == 0.0 {
         return Ok(());
     }
@@ -1561,7 +1560,7 @@ mod tests {
             match site {
                 Site::EdgeWeight => {
                     let key = Store::encode_edge_key(&a, EdgeKind::BelongsTo, &b);
-                    let mut value = [0_u8; EDGE_VALUE_LEN];
+                    let mut value = [0_u8; EDGE_VALUE_STRUCTURAL_LEN];
                     value[..4].copy_from_slice(&f32::NAN.to_le_bytes());
                     vault.store.edges_out.put(&mut wtxn, &key, &value)?;
                 }

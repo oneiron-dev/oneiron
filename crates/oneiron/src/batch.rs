@@ -10,13 +10,32 @@ use crate::limits::{ERR_CHILD_OF_CYCLE_CHECK, MAX_CHILD_OF_CYCLE_TRAVERSAL_STEPS
 use crate::ppr;
 use crate::store::Store;
 use crate::types::{
-    EDGE_KEY_LEN, EDGE_VALUE_LEN, ENTITY_ID_LEN, EdgeKind, EntityId, TimeRange, Vad,
-    encode_edge_value, parse_vad, short_id_prefix,
+    DecodedEdgeValue, EDGE_KEY_LEN, ENTITY_ID_LEN, EdgeKind, EdgeProvenanceFlags, EntityId,
+    TimeRange, Vad, decode_edge_value_for_kind, encode_edge_value, short_id_prefix,
 };
 
 pub(crate) const ENTITY_METADATA_HEADER_LEN: usize = 25;
 pub(crate) const SHORT_ID_COUNTER_LEN: usize = 8;
 pub(crate) const LONG_INTERVAL_THRESHOLD_SECS: u64 = 14 * 86_400;
+
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct EdgeValueFields {
+    pub(crate) weight: f32,
+    pub(crate) created_at: u64,
+    pub(crate) vad: Vad,
+    pub(crate) provenance: Option<EdgeProvenanceFlags>,
+}
+
+impl EdgeValueFields {
+    pub(crate) fn from_decoded(decoded: DecodedEdgeValue) -> Self {
+        Self {
+            weight: decoded.weight,
+            created_at: decoded.created_at,
+            vad: decoded.vad.unwrap_or(Vad::NEUTRAL),
+            provenance: decoded.provenance,
+        }
+    }
+}
 
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct EntityMetadataHeader {
@@ -81,6 +100,7 @@ pub(crate) enum BatchOp {
         weight: f32,
         created_at: u64,
         vad: Vad,
+        provenance: Option<EdgeProvenanceFlags>,
     },
     Text {
         id: EntityId,
@@ -203,6 +223,7 @@ impl<'a> BatchBuilder<'a> {
             weight,
             created_at,
             vad: Vad::NEUTRAL,
+            provenance: None,
         });
         self
     }
@@ -224,6 +245,26 @@ impl<'a> BatchBuilder<'a> {
             weight,
             created_at,
             vad,
+            provenance: None,
+        });
+        self
+    }
+
+    pub(crate) fn edge_with_value_fields(
+        mut self,
+        src: &EntityId,
+        kind: EdgeKind,
+        tgt: &EntityId,
+        value: EdgeValueFields,
+    ) -> Self {
+        self.ops.push(BatchOp::EdgeWithCreatedAt {
+            src: *src,
+            kind,
+            tgt: *tgt,
+            weight: value.weight,
+            created_at: value.created_at,
+            vad: value.vad,
+            provenance: value.provenance,
         });
         self
     }
@@ -355,6 +396,7 @@ impl<'a> TxnBatchBuilder<'a> {
             weight,
             created_at,
             vad: Vad::NEUTRAL,
+            provenance: None,
         });
         self
     }
@@ -376,6 +418,7 @@ impl<'a> TxnBatchBuilder<'a> {
             weight,
             created_at,
             vad,
+            provenance: None,
         });
         self
     }
@@ -458,8 +501,11 @@ pub(crate) fn apply_ops(
                 weight,
                 created_at,
                 vad,
+                provenance,
             } => {
-                apply_edge_with_created_at(store, wtxn, src, kind, tgt, weight, created_at, vad)?;
+                apply_edge_with_created_at(
+                    store, wtxn, src, kind, tgt, weight, created_at, vad, provenance,
+                )?;
                 ppr::invalidate_ppr_for_edge(store, wtxn, &src, &tgt)?;
                 had_graph_mutation = true;
             }
@@ -788,6 +834,7 @@ fn apply_edge(
         weight,
         crate::unix_seconds_now(),
         vad,
+        None,
     )
 }
 
@@ -804,6 +851,7 @@ fn apply_edge_with_created_at(
     weight: f32,
     created_at: u64,
     vad: Vad,
+    provenance: Option<EdgeProvenanceFlags>,
 ) -> Result<()> {
     if !weight.is_finite() {
         return Err(Error::InvalidEdgeWeight { value: weight });
@@ -814,7 +862,7 @@ fn apply_edge_with_created_at(
 
     let key_out = Store::encode_edge_key(&src, kind, &tgt);
     let key_in = Store::encode_edge_key(&tgt, kind, &src);
-    let value = encode_edge_value(weight, created_at, vad);
+    let value = encode_edge_value(kind, weight, created_at, vad, provenance)?;
     store.edges_out.put(wtxn, &key_out, &value)?;
     store.edges_in.put(wtxn, &key_in, &value)?;
     Ok(())
@@ -1292,25 +1340,12 @@ fn encode_phonetic_forward_codes(codes: &[String]) -> Vec<u8> {
 }
 
 fn validate_edge_record(key: &[u8], value: &[u8]) -> Result<()> {
-    if key.len() != EDGE_KEY_LEN || value.len() != EDGE_VALUE_LEN {
+    if key.len() != EDGE_KEY_LEN {
         return Err(Error::CorruptedIndex("edge record"));
     }
 
-    if EdgeKind::try_from_u8(key[16]).is_none() {
-        return Err(Error::CorruptedIndex("edge record"));
-    }
-
-    let weight_bytes: [u8; 4] = value[..4]
-        .try_into()
-        .map_err(|_| Error::CorruptedIndex("edge record"))?;
-    let weight = f32::from_le_bytes(weight_bytes);
-    if !weight.is_finite() {
-        return Err(Error::CorruptedIndex("edge record"));
-    }
-    let vad = parse_vad(value);
-    if !vad.is_finite() || !vad.is_in_range() {
-        return Err(Error::CorruptedIndex("edge record"));
-    }
+    let kind = EdgeKind::try_from_u8(key[16]).ok_or(Error::CorruptedIndex("edge record"))?;
+    decode_edge_value_for_kind(kind, value).map_err(|_| Error::CorruptedIndex("edge record"))?;
 
     Ok(())
 }

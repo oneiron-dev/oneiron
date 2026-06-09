@@ -15,9 +15,9 @@ use super::loro_engine::LoroDocument;
 use super::schema::create_window_doc;
 use super::types::WindowKey;
 use crate::Vault;
-use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
+use crate::batch::{ENTITY_METADATA_HEADER_LEN, EdgeValueFields, EntityMetadataHeader};
 use crate::error::{Error, Result};
-use crate::types::EntityId;
+use crate::types::{EntityId, decode_edge_value_for_kind};
 
 /// A loaded window Doc with its observer subscriptions.
 pub struct LoadedWindow {
@@ -191,7 +191,13 @@ pub fn replay_pending_mirrors(
         let edges_out = vault.edges_out(id)?;
         for edge in &edges_out {
             let edge_key = format_edge_key(id, edge.kind, &edge.target);
-            let edge_val = encode_edge_value_for_crdt(edge.weight, edge.created_at, edge.vad);
+            let edge_val = encode_edge_value_for_crdt(
+                edge.kind,
+                edge.weight,
+                edge.created_at,
+                edge.vad,
+                edge.provenance,
+            )?;
             edges_map
                 .insert(edge_key.as_str(), &edge_val)
                 .map_err(|e| Error::SyncProtocolError(format!("pm replay edge insert: {e}")))?;
@@ -300,7 +306,7 @@ pub fn forward_rematerialize(
             return;
         }
 
-        let Some((weight, created_at, vad)) = bridge::parse_edge_value(buf) else {
+        let Ok(decoded) = decode_edge_value_for_kind(kind, buf) else {
             return;
         };
 
@@ -310,7 +316,7 @@ pub fn forward_rematerialize(
 
         let result = vault
             .batch()
-            .edge_with_created_at_and_vad(&src, kind, &tgt, weight, created_at, vad)
+            .edge_with_value_fields(&src, kind, &tgt, EdgeValueFields::from_decoded(decoded))
             .commit();
         if result.is_ok() {
             count += 1;
@@ -378,7 +384,13 @@ pub fn reverse_rematerialize(
             if edges_map.get(&edge_key).is_some() {
                 continue;
             }
-            let edge_val = encode_edge_value_for_crdt(edge.weight, edge.created_at, edge.vad);
+            let edge_val = encode_edge_value_for_crdt(
+                edge.kind,
+                edge.weight,
+                edge.created_at,
+                edge.vad,
+                edge.provenance,
+            )?;
             edges_map
                 .insert(edge_key.as_str(), &edge_val)
                 .map_err(|e| Error::SyncProtocolError(format!("reverse remat edge insert: {e}")))?;

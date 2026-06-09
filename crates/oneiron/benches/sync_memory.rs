@@ -27,8 +27,8 @@ const HEADER_SIZE: usize = 25;
 const JSON_DATA_SIZE: usize = 325;
 const ENTITY_BLOB_SIZE: usize = HEADER_SIZE + JSON_DATA_SIZE;
 
-/// 24 bytes: weight(4LE) + created_at(8LE) + valence(4LE) + arousal(4LE) + dominance(4LE)
-const EDGE_VALUE_SIZE: usize = 24;
+/// Semantic-bare edge value: weight(4LE) + created_at(8LE) + VAD(12LE).
+const SEMANTIC_BARE_EDGE_VALUE_SIZE: usize = 24;
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -81,9 +81,9 @@ fn make_entity_blob(index: usize) -> Vec<u8> {
     buf
 }
 
-/// Create a 24-byte edge value blob.
+/// Create a semantic-bare edge value blob for the semantic bench kinds.
 fn make_edge_value(index: usize) -> Vec<u8> {
-    let mut buf = Vec::with_capacity(EDGE_VALUE_SIZE);
+    let mut buf = Vec::with_capacity(SEMANTIC_BARE_EDGE_VALUE_SIZE);
 
     // weight: f32 as 4 bytes LE
     let weight: f32 = 0.5 + (index as f32 * 0.001);
@@ -105,7 +105,7 @@ fn make_edge_value(index: usize) -> Vec<u8> {
     let dominance: f32 = 0.5;
     buf.extend_from_slice(&dominance.to_le_bytes());
 
-    assert_eq!(buf.len(), EDGE_VALUE_SIZE);
+    assert_eq!(buf.len(), SEMANTIC_BARE_EDGE_VALUE_SIZE);
     buf
 }
 
@@ -218,7 +218,9 @@ fn main() {
 
     // ── Insert edges (~2 per entity = 6,000 edges) ──────────────────────────
     let num_edges = NUM_ENTITIES * EDGES_PER_ENTITY;
-    println!("\nInserting {num_edges} edges ({EDGE_VALUE_SIZE} bytes each)...");
+    println!(
+        "\nInserting {num_edges} semantic-bare edges ({SEMANTIC_BARE_EDGE_VALUE_SIZE} bytes each)..."
+    );
     {
         let mut txn = doc.transact_mut();
         for i in 0..NUM_ENTITIES {
@@ -249,7 +251,7 @@ fn main() {
 
     // Calculate raw data sizes for reference
     let raw_entity_data = NUM_ENTITIES * ENTITY_BLOB_SIZE;
-    let raw_edge_data = num_edges * EDGE_VALUE_SIZE;
+    let raw_edge_data = num_edges * SEMANTIC_BARE_EDGE_VALUE_SIZE;
     let raw_edge_keys = num_edges * 68; // 68 chars per edge key
     let raw_entity_keys = NUM_ENTITIES * 32; // 32 chars per entity key
     let raw_total = raw_entity_data + raw_edge_data + raw_edge_keys + raw_entity_keys;

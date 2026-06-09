@@ -231,15 +231,16 @@ impl NapiVault {
         let edges = self.vault.edges_out(&src_id).map_err(to_napi_err)?;
         let mut out = Vec::with_capacity(edges.len());
         for e in edges {
+            let vad = e.vad;
             out.push(NapiEdgeInfo {
                 src: Buffer::from(src_id.as_bytes().as_slice()),
                 kind: e.kind as u32,
                 tgt: Buffer::from(e.target.as_bytes().as_slice()),
                 weight: e.weight as f64,
                 created_at: parse_created_at(e.created_at).map_err(napi::Error::from_reason)?,
-                valence: e.vad.valence as f64,
-                arousal: e.vad.arousal as f64,
-                dominance: e.vad.dominance as f64,
+                valence: vad.map(|v| v.valence as f64),
+                arousal: vad.map(|v| v.arousal as f64),
+                dominance: vad.map(|v| v.dominance as f64),
             });
         }
         Ok(out)
@@ -252,15 +253,16 @@ impl NapiVault {
         let edges = self.vault.edges_in(&tgt_id).map_err(to_napi_err)?;
         let mut out = Vec::with_capacity(edges.len());
         for e in edges {
+            let vad = e.vad;
             out.push(NapiEdgeInfo {
                 src: Buffer::from(e.target.as_bytes().as_slice()),
                 kind: e.kind as u32,
                 tgt: Buffer::from(tgt_id.as_bytes().as_slice()),
                 weight: e.weight as f64,
                 created_at: parse_created_at(e.created_at).map_err(napi::Error::from_reason)?,
-                valence: e.vad.valence as f64,
-                arousal: e.vad.arousal as f64,
-                dominance: e.vad.dominance as f64,
+                valence: vad.map(|v| v.valence as f64),
+                arousal: vad.map(|v| v.arousal as f64),
+                dominance: vad.map(|v| v.dominance as f64),
             });
         }
         Ok(out)
