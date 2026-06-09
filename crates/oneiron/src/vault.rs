@@ -203,26 +203,49 @@ impl Vault {
     /// treated as gate failures.
     pub fn doctor(&self) -> Result<VaultDoctorReport> {
         let rtxn = self.store.env.read_txn()?;
-        let storage_abi_version = doctor_optional_u16(crate::store::read_vault_meta_u16(
-            &self.store.vault_meta,
+        let mut unreadable_fields = Vec::new();
+        let storage_abi_version = doctor_optional_u16(
+            crate::store::read_vault_meta_u16(
+                &self.store.vault_meta,
+                &rtxn,
+                STORAGE_ABI_VERSION_KEY,
+                "storage ABI version",
+            ),
+            "vault_meta.storage_abi_version",
+            &mut unreadable_fields,
+        )?;
+        let storage_schema_version = doctor_optional_u16(
+            crate::store::read_vault_meta_u16(
+                &self.store.vault_meta,
+                &rtxn,
+                STORAGE_SCHEMA_VERSION_KEY,
+                "storage schema version",
+            ),
+            "vault_meta.schema_version",
+            &mut unreadable_fields,
+        )?;
+        let embedding_model_id =
+            doctor_embedding_model_id(&self.store, &rtxn, &mut unreadable_fields)?;
+        let hnsw = doctor_hnsw(&self.store, &rtxn, &mut unreadable_fields)?;
+        let analyzer_manifest_hash = doctor_hash_hex(
+            &self.store,
             &rtxn,
-            STORAGE_ABI_VERSION_KEY,
-            "storage ABI version",
-        ))?;
-        let storage_schema_version = doctor_optional_u16(crate::store::read_vault_meta_u16(
-            &self.store.vault_meta,
+            TEXT_ANALYZER_MANIFEST_HASH_KEY,
+            "vault_meta.text_analyzer_manifest_hash",
+            &mut unreadable_fields,
+        )?;
+        let bm25_field_schema_hash = doctor_hash_hex(
+            &self.store,
             &rtxn,
-            STORAGE_SCHEMA_VERSION_KEY,
-            "storage schema version",
-        ))?;
-        let embedding_model_id = doctor_embedding_model_id(&self.store, &rtxn)?;
-        let hnsw = doctor_hnsw(&self.store, &rtxn)?;
-        let analyzer_manifest_hash =
-            doctor_hash_hex(&self.store, &rtxn, TEXT_ANALYZER_MANIFEST_HASH_KEY)?;
-        let bm25_field_schema_hash =
-            doctor_hash_hex(&self.store, &rtxn, TEXT_BM25_FIELD_SCHEMA_HASH_KEY)?;
-        let text_index_schema_version =
-            doctor_optional_u16(read_text_schema_version(&self.store, &rtxn))?;
+            TEXT_BM25_FIELD_SCHEMA_HASH_KEY,
+            "vault_meta.text_bm25_field_schema_hash",
+            &mut unreadable_fields,
+        )?;
+        let text_index_schema_version = doctor_optional_u16(
+            read_text_schema_version(&self.store, &rtxn),
+            "vault_meta.text_index_schema_version",
+            &mut unreadable_fields,
+        )?;
         let db_manifest = {
             // Held for consistency with `Store::open`'s DB-open serialization.
             let _db_open_guard = lmdb_database_open_guard()?;
@@ -238,6 +261,7 @@ impl Vault {
             bm25_field_schema_hash,
             text_index_schema_version,
             db_manifest,
+            unreadable_fields,
         })
     }
 
@@ -1260,6 +1284,7 @@ pub struct TextIndexStatus {
 /// Read-only report of vault open-integrity metadata returned by
 /// [`Vault::doctor`].
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[non_exhaustive]
 pub struct VaultDoctorReport {
     /// Value read from `vault_meta["storage_abi_version"]`.
     pub storage_abi_version: Option<u16>,
@@ -1277,10 +1302,13 @@ pub struct VaultDoctorReport {
     pub text_index_schema_version: Option<u16>,
     /// ARCH-0019 named database manifest presence.
     pub db_manifest: VaultDoctorDbManifestReport,
+    /// Metadata fields whose rows were present but could not be decoded.
+    pub unreadable_fields: Vec<String>,
 }
 
 /// State of the persisted HNSW compatibility row.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[non_exhaustive]
 #[serde(rename_all = "snake_case")]
 pub enum VaultDoctorHnswRecordState {
     /// No `hnsw_config` row is present.
@@ -1295,6 +1323,7 @@ pub enum VaultDoctorHnswRecordState {
 
 /// Vector/HNSW compatibility values persisted in `hnsw_meta`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[non_exhaustive]
 pub struct VaultDoctorHnswReport {
     /// Encoding state of `hnsw_meta["hnsw_config"]`.
     pub record_state: VaultDoctorHnswRecordState,
@@ -1312,6 +1341,7 @@ pub struct VaultDoctorHnswReport {
 
 /// Presence report for the ARCH-0019 named LMDB database manifest.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[non_exhaustive]
 pub struct VaultDoctorDbManifestReport {
     /// Number of databases required by `DB_MANIFEST`.
     pub expected_count: usize,
@@ -1400,35 +1430,62 @@ fn read_hash_32(store: &Store, rtxn: &heed::RoTxn<'_>, key: &[u8]) -> Result<Opt
     Ok(Some(arr))
 }
 
-fn doctor_optional_u16(value: Result<Option<u16>>) -> Result<Option<u16>> {
+fn doctor_optional_u16(
+    value: Result<Option<u16>>,
+    field: &'static str,
+    unreadable_fields: &mut Vec<String>,
+) -> Result<Option<u16>> {
     match value {
         Ok(value) => Ok(value),
-        Err(Error::CorruptedIndex(_) | Error::InvalidKey) => Ok(None),
+        Err(Error::CorruptedIndex(_) | Error::InvalidKey) => {
+            unreadable_fields.push(field.to_owned());
+            Ok(None)
+        }
         Err(err) => Err(err),
     }
 }
 
-fn doctor_hash_hex(store: &Store, rtxn: &heed::RoTxn<'_>, key: &[u8]) -> Result<Option<String>> {
+fn doctor_hash_hex(
+    store: &Store,
+    rtxn: &heed::RoTxn<'_>,
+    key: &[u8],
+    field: &'static str,
+    unreadable_fields: &mut Vec<String>,
+) -> Result<Option<String>> {
     match read_hash_32(store, rtxn, key) {
         Ok(Some(hash)) => Ok(Some(bytes_to_hex_lower(&hash))),
         Ok(None) => Ok(None),
-        Err(Error::CorruptedIndex(_) | Error::InvalidKey) => Ok(None),
+        Err(Error::CorruptedIndex(_) | Error::InvalidKey) => {
+            unreadable_fields.push(field.to_owned());
+            Ok(None)
+        }
         Err(err) => Err(err),
     }
 }
 
-fn doctor_embedding_model_id(store: &Store, rtxn: &heed::RoTxn<'_>) -> Result<Option<String>> {
+fn doctor_embedding_model_id(
+    store: &Store,
+    rtxn: &heed::RoTxn<'_>,
+    unreadable_fields: &mut Vec<String>,
+) -> Result<Option<String>> {
     let Some(raw) = store.hnsw_meta.get(rtxn, MODEL_ID_KEY)? else {
         return Ok(None);
     };
     match crate::store::parse_utf8_bytes(raw) {
         Ok(model_id) => Ok(Some(model_id)),
-        Err(Error::InvalidKey | Error::CorruptedIndex(_)) => Ok(None),
+        Err(Error::InvalidKey | Error::CorruptedIndex(_)) => {
+            unreadable_fields.push("hnsw_meta.model_id".to_owned());
+            Ok(None)
+        }
         Err(err) => Err(err),
     }
 }
 
-fn doctor_hnsw(store: &Store, rtxn: &heed::RoTxn<'_>) -> Result<VaultDoctorHnswReport> {
+fn doctor_hnsw(
+    store: &Store,
+    rtxn: &heed::RoTxn<'_>,
+    unreadable_fields: &mut Vec<String>,
+) -> Result<VaultDoctorHnswReport> {
     match crate::store::read_hnsw_compatibility(&store.hnsw_meta, rtxn) {
         Ok(HnswCompatibilityState::Missing) => Ok(VaultDoctorHnswReport {
             record_state: VaultDoctorHnswRecordState::Missing,
@@ -1458,14 +1515,17 @@ fn doctor_hnsw(store: &Store, rtxn: &heed::RoTxn<'_>) -> Result<VaultDoctorHnswR
                 config.index_structure,
             )),
         }),
-        Err(Error::InvalidKey | Error::CorruptedIndex(_)) => Ok(VaultDoctorHnswReport {
-            record_state: VaultDoctorHnswRecordState::Invalid,
-            vector_dimensions: None,
-            m_max_0: None,
-            ef_construction: None,
-            distance_metric: None,
-            index_structure: None,
-        }),
+        Err(Error::InvalidKey | Error::CorruptedIndex(_)) => {
+            unreadable_fields.push("hnsw_meta.hnsw_config".to_owned());
+            Ok(VaultDoctorHnswReport {
+                record_state: VaultDoctorHnswRecordState::Invalid,
+                vector_dimensions: None,
+                m_max_0: None,
+                ef_construction: None,
+                distance_metric: None,
+                index_structure: None,
+            })
+        }
         Err(err) => Err(err),
     }
 }

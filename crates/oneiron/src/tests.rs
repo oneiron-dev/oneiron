@@ -3028,6 +3028,7 @@ fn doctor_reflects_persisted_open_compatibility_values() -> Result<()> {
         Some("2d59ed83e21963518570270aa88dd8dc8aac8c8308e092eb70654767fa3aef7d")
     );
     assert_eq!(report.text_index_schema_version, Some(2));
+    assert!(report.unreadable_fields.is_empty());
     assert_eq!(report.db_manifest.expected_count, 25);
     assert_eq!(report.db_manifest.present_count, 25);
     assert!(report.db_manifest.missing_names.is_empty());
@@ -3077,6 +3078,7 @@ fn doctor_reads_persisted_text_hash_keys() -> Result<()> {
         report.bm25_field_schema_hash.as_deref(),
         Some("cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd")
     );
+    assert!(report.unreadable_fields.is_empty());
     Ok(())
 }
 
@@ -3145,6 +3147,7 @@ fn doctor_reports_missing_and_legacy_metadata_without_gating() -> Result<()> {
     assert_eq!(report.analyzer_manifest_hash, None);
     assert_eq!(report.bm25_field_schema_hash, None);
     assert_eq!(report.text_index_schema_version, None);
+    assert!(report.unreadable_fields.is_empty());
 
     let legacy = legacy_hnsw_compatibility_record(&cfg);
     write_hnsw_config_record(&vault, &legacy)?;
@@ -3155,6 +3158,35 @@ fn doctor_reports_missing_and_legacy_metadata_without_gating() -> Result<()> {
     assert_eq!(report.hnsw.ef_construction, Some(200));
     assert_eq!(report.hnsw.distance_metric, None);
     assert_eq!(report.hnsw.index_structure, None);
+    assert!(report.unreadable_fields.is_empty());
+    Ok(())
+}
+
+#[test]
+fn doctor_surfaces_corrupt_metadata_without_gating() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+
+    {
+        let mut wtxn = vault.store.env.write_txn()?;
+        vault
+            .store
+            .vault_meta
+            .put(&mut wtxn, STORAGE_ABI_VERSION_KEY, &[0x01])?;
+        wtxn.commit()?;
+    }
+
+    let report = vault.doctor()?;
+    assert_eq!(report.storage_abi_version, None);
+    assert!(
+        report
+            .unreadable_fields
+            .contains(&"vault_meta.storage_abi_version".to_owned())
+    );
+    assert!(
+        !report
+            .unreadable_fields
+            .contains(&"vault_meta.schema_version".to_owned())
+    );
     Ok(())
 }
 
