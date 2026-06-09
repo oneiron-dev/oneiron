@@ -18,8 +18,8 @@ use crate::store::{
     TEXT_BM25_FIELD_SCHEMA_HASH_KEY, TEXT_INDEX_SCHEMA_VERSION, TEXT_INDEX_SCHEMA_VERSION_KEY,
 };
 use crate::types::{
-    EDGE_KEY_LEN, EDGE_VALUE_LEN, ENTITY_ID_LEN, EdgeInfo, EdgeKind, EntityId, ScoredEntity,
-    TimeRange, Vad, VaultConfig, parse_vad,
+    EDGE_KEY_LEN, ENTITY_ID_LEN, EdgeInfo, EdgeKind, EntityId, ScoredEntity, TimeRange, Vad,
+    VaultConfig, decode_edge_value_for_kind,
 };
 use crate::{
     BatchBuilder, ContextPackBuilder, MaintenanceBuilder, PipelineBuilder, TxnBatchBuilder, bm25,
@@ -1152,7 +1152,7 @@ pub(crate) fn write_text_index_manifest(
 }
 
 fn parse_edge_record(key: &[u8], value: &[u8]) -> Result<EdgeInfo> {
-    if key.len() != EDGE_KEY_LEN || value.len() != EDGE_VALUE_LEN {
+    if key.len() != EDGE_KEY_LEN {
         return Err(Error::CorruptedIndex("edge record"));
     }
 
@@ -1164,31 +1164,17 @@ fn parse_edge_record(key: &[u8], value: &[u8]) -> Result<EdgeInfo> {
             .map_err(|_| Error::CorruptedIndex("edge record"))?,
     )
     .map_err(|_| Error::CorruptedIndex("edge record"))?;
-    let weight = f32::from_le_bytes(
-        value[..4]
-            .try_into()
-            .map_err(|_| Error::CorruptedIndex("edge record"))?,
-    );
-    let created_at = u64::from_le_bytes(
-        value[4..12]
-            .try_into()
-            .map_err(|_| Error::CorruptedIndex("edge record"))?,
-    );
-    let vad = parse_vad(value);
-    if !weight.is_finite() {
-        return Err(Error::CorruptedIndex("edge record"));
-    }
-    if !vad.is_finite() || !vad.is_in_range() {
-        return Err(Error::CorruptedIndex("edge record"));
-    }
+    let decoded = decode_edge_value_for_kind(kind, value)
+        .map_err(|_| Error::CorruptedIndex("edge record"))?;
 
     Ok(EdgeInfo {
         kind,
         target,
         target_short_id: None,
-        weight,
-        created_at,
-        vad,
+        weight: decoded.weight,
+        created_at: decoded.created_at,
+        vad: decoded.vad,
+        provenance: decoded.provenance,
     })
 }
 
