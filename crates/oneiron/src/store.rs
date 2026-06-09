@@ -22,8 +22,16 @@ pub(crate) const TEMPORAL_LONG_INTERVALS_SCHEMA_VERSION_KEY: &[u8] =
     b"temporal_long_intervals_schema_version";
 const TEMPORAL_LONG_INTERVALS_SCHEMA_VERSION: u8 = 2;
 pub(crate) const VECTOR_VERSION_KEY: &[u8] = b"vector_version";
-const HNSW_COMPATIBILITY_VERSION: u8 = 1;
-const HNSW_COMPATIBILITY_LEN: usize = 25;
+const HNSW_COMPATIBILITY_VERSION: u8 = 2;
+const HNSW_COMPATIBILITY_V0_LEN: usize = 24;
+const HNSW_COMPATIBILITY_V1_LEN: usize = 25;
+const HNSW_COMPATIBILITY_LEN: usize = 27;
+const HNSW_DISTANCE_METRIC_MISSING: u8 = 0;
+const HNSW_DISTANCE_METRIC_COSINE: u8 = 1;
+const HNSW_INDEX_STRUCTURE_MISSING: u8 = 0;
+// ARCH-0019 fixes the graph as flat single-layer NSW; the upper-layer M value
+// stays compile-time-only because this structure has no upper layers.
+const HNSW_INDEX_STRUCTURE_FLAT_NSW: u8 = 1;
 const ERR_POPULATED_MISSING_MODEL_ID: &str =
     "populated vault is missing embedding model identity; rebuild or migrate it before reopening";
 const ERR_POPULATED_REQUIRES_EMBEDDING_MODEL: &str =
@@ -215,6 +223,8 @@ struct PersistedHnswCompatibility {
     dimensions: usize,
     m_max_0: usize,
     ef_construction: usize,
+    distance_metric: u8,
+    index_structure: u8,
 }
 
 impl PersistedHnswCompatibility {
@@ -223,13 +233,18 @@ impl PersistedHnswCompatibility {
             dimensions: config.dimensions,
             m_max_0: config.hnsw.m_max_0,
             ef_construction: config.hnsw.ef_construction,
+            // `ef_search` is intentionally excluded: it is a search-time beam
+            // width and can be retuned without changing persisted graph shape
+            // or vector scoring semantics.
+            distance_metric: HNSW_DISTANCE_METRIC_COSINE,
+            index_structure: HNSW_INDEX_STRUCTURE_FLAT_NSW,
         }
     }
 }
 
 enum HnswCompatibilityState {
     Missing,
-    Legacy,
+    Legacy(PersistedHnswCompatibility),
     Current(PersistedHnswCompatibility),
 }
 
@@ -671,11 +686,21 @@ fn preflight_hnsw_config(
             }
             Ok(false)
         }
-        HnswCompatibilityState::Missing | HnswCompatibilityState::Legacy => {
+        HnswCompatibilityState::Missing => {
             if has_persisted_vector_or_hnsw_data(hnsw_meta, vectors, hnsw_neighbors, &rtxn)? {
                 return Err(Error::InvalidConfig(
                     "populated vault is missing complete vector/hnsw compatibility metadata; rebuild or migrate it before reopening".to_owned(),
                 ));
+            }
+            Ok(true)
+        }
+        HnswCompatibilityState::Legacy(stored) => {
+            let requested = PersistedHnswCompatibility::from_config(requested);
+            if has_persisted_vector_or_hnsw_data(hnsw_meta, vectors, hnsw_neighbors, &rtxn)? {
+                return Err(Error::HnswConfigChanged {
+                    stored: format_hnsw_compatibility(&stored),
+                    requested: format_hnsw_compatibility(&requested),
+                });
             }
             Ok(true)
         }
@@ -701,11 +726,21 @@ fn persist_hnsw_config_if_missing(
                 });
             }
         }
-        HnswCompatibilityState::Missing | HnswCompatibilityState::Legacy => {
+        HnswCompatibilityState::Missing => {
             if has_persisted_vector_or_hnsw_data(hnsw_meta, vectors, hnsw_neighbors, &wtxn)? {
                 return Err(Error::InvalidConfig(
                     "populated vault is missing complete vector/hnsw compatibility metadata; rebuild or migrate it before reopening".to_owned(),
                 ));
+            }
+            hnsw_meta.put(&mut wtxn, HNSW_CONFIG_KEY, &encoded)?;
+            wtxn.commit()?;
+        }
+        HnswCompatibilityState::Legacy(stored) => {
+            if has_persisted_vector_or_hnsw_data(hnsw_meta, vectors, hnsw_neighbors, &wtxn)? {
+                return Err(Error::HnswConfigChanged {
+                    stored: format_hnsw_compatibility(&stored),
+                    requested: format_hnsw_compatibility(&requested),
+                });
             }
             hnsw_meta.put(&mut wtxn, HNSW_CONFIG_KEY, &encoded)?;
             wtxn.commit()?;
@@ -795,6 +830,8 @@ fn encode_hnsw_config(config: &PersistedHnswCompatibility) -> Result<[u8; HNSW_C
     encoded[1..9].copy_from_slice(&dimensions.to_le_bytes());
     encoded[9..17].copy_from_slice(&m_max_0.to_le_bytes());
     encoded[17..25].copy_from_slice(&ef_construction.to_le_bytes());
+    encoded[25] = config.distance_metric;
+    encoded[26] = config.index_structure;
     Ok(encoded)
 }
 
@@ -810,7 +847,9 @@ fn read_hnsw_compatibility(
         HNSW_COMPATIBILITY_LEN => {
             decode_hnsw_compatibility(raw).map(HnswCompatibilityState::Current)
         }
-        24 => Ok(HnswCompatibilityState::Legacy),
+        HNSW_COMPATIBILITY_V1_LEN | HNSW_COMPATIBILITY_V0_LEN => {
+            decode_legacy_hnsw_compatibility(raw).map(HnswCompatibilityState::Legacy)
+        }
         _ => Err(Error::InvalidKey),
     }
 }
@@ -832,19 +871,83 @@ fn decode_hnsw_compatibility(raw: &[u8]) -> Result<PersistedHnswCompatibility> {
         raw[17..25].try_into().map_err(|_| Error::InvalidKey)?,
     ))
     .map_err(|_| Error::InvalidKey)?;
+    let distance_metric = raw[25];
+    let index_structure = raw[26];
 
     Ok(PersistedHnswCompatibility {
         dimensions,
         m_max_0,
         ef_construction,
+        distance_metric,
+        index_structure,
+    })
+}
+
+fn decode_legacy_hnsw_compatibility(raw: &[u8]) -> Result<PersistedHnswCompatibility> {
+    let field_offset = match raw.len() {
+        HNSW_COMPATIBILITY_V1_LEN => {
+            if raw[0] != 1 {
+                return Err(Error::InvalidKey);
+            }
+            1
+        }
+        HNSW_COMPATIBILITY_V0_LEN => 0,
+        _ => return Err(Error::InvalidKey),
+    };
+
+    let dimensions = usize::try_from(u64::from_le_bytes(
+        raw[field_offset..field_offset + 8]
+            .try_into()
+            .map_err(|_| Error::InvalidKey)?,
+    ))
+    .map_err(|_| Error::InvalidKey)?;
+    let m_max_0 = usize::try_from(u64::from_le_bytes(
+        raw[field_offset + 8..field_offset + 16]
+            .try_into()
+            .map_err(|_| Error::InvalidKey)?,
+    ))
+    .map_err(|_| Error::InvalidKey)?;
+    let ef_construction = usize::try_from(u64::from_le_bytes(
+        raw[field_offset + 16..field_offset + 24]
+            .try_into()
+            .map_err(|_| Error::InvalidKey)?,
+    ))
+    .map_err(|_| Error::InvalidKey)?;
+
+    Ok(PersistedHnswCompatibility {
+        dimensions,
+        m_max_0,
+        ef_construction,
+        distance_metric: HNSW_DISTANCE_METRIC_MISSING,
+        index_structure: HNSW_INDEX_STRUCTURE_MISSING,
     })
 }
 
 fn format_hnsw_compatibility(config: &PersistedHnswCompatibility) -> String {
     format!(
-        "dimensions={},m_max_0={},ef_construction={}",
-        config.dimensions, config.m_max_0, config.ef_construction
+        "dimensions={},m_max_0={},ef_construction={},distance_metric={},index_structure={}",
+        config.dimensions,
+        config.m_max_0,
+        config.ef_construction,
+        format_hnsw_distance_metric(config.distance_metric),
+        format_hnsw_index_structure(config.index_structure)
     )
+}
+
+fn format_hnsw_distance_metric(code: u8) -> String {
+    match code {
+        HNSW_DISTANCE_METRIC_MISSING => "missing".to_owned(),
+        HNSW_DISTANCE_METRIC_COSINE => "cosine".to_owned(),
+        unknown => format!("unknown({unknown})"),
+    }
+}
+
+fn format_hnsw_index_structure(code: u8) -> String {
+    match code {
+        HNSW_INDEX_STRUCTURE_MISSING => "missing".to_owned(),
+        HNSW_INDEX_STRUCTURE_FLAT_NSW => "flat_nsw".to_owned(),
+        unknown => format!("unknown({unknown})"),
+    }
 }
 
 fn has_persisted_vector_or_hnsw_data(
