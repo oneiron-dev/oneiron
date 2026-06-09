@@ -219,12 +219,12 @@ pub trait StorageMigrationRunner {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct PersistedHnswCompatibility {
-    dimensions: usize,
-    m_max_0: usize,
-    ef_construction: usize,
-    distance_metric: u8,
-    index_structure: u8,
+pub(crate) struct PersistedHnswCompatibility {
+    pub(crate) dimensions: usize,
+    pub(crate) m_max_0: usize,
+    pub(crate) ef_construction: usize,
+    pub(crate) distance_metric: u8,
+    pub(crate) index_structure: u8,
 }
 
 impl PersistedHnswCompatibility {
@@ -242,7 +242,7 @@ impl PersistedHnswCompatibility {
     }
 }
 
-enum HnswCompatibilityState {
+pub(crate) enum HnswCompatibilityState {
     Missing,
     Legacy(PersistedHnswCompatibility),
     Current(PersistedHnswCompatibility),
@@ -530,13 +530,13 @@ fn validate_db_manifest_set(env: &Env, wtxn: &RwTxn<'_>) -> Result<()> {
     }
 }
 
-fn materialized_database_names(env: &Env, wtxn: &RwTxn<'_>) -> Result<Vec<String>> {
+pub(crate) fn materialized_database_names(env: &Env, txn: &heed::RoTxn<'_>) -> Result<Vec<String>> {
     let main = env
-        .open_database::<Bytes, Bytes>(wtxn, None)?
+        .open_database::<Bytes, Bytes>(txn, None)?
         .ok_or(Error::InvariantViolation("missing unnamed lmdb database"))?;
 
     let mut names = Vec::new();
-    for row in main.iter(wtxn)? {
+    for row in main.iter(txn)? {
         let (key, _) = row?;
         if key.contains(&0) {
             continue;
@@ -611,7 +611,7 @@ fn gate_storage_versions(
     Ok(())
 }
 
-fn read_vault_meta_u16(
+pub(crate) fn read_vault_meta_u16(
     vault_meta: &Database<Bytes, Bytes>,
     txn: &heed::RoTxn<'_>,
     key: &[u8],
@@ -835,7 +835,7 @@ fn encode_hnsw_config(config: &PersistedHnswCompatibility) -> Result<[u8; HNSW_C
     Ok(encoded)
 }
 
-fn read_hnsw_compatibility(
+pub(crate) fn read_hnsw_compatibility(
     hnsw_meta: &Database<Bytes, Bytes>,
     txn: &heed::RoTxn<'_>,
 ) -> Result<HnswCompatibilityState> {
@@ -934,7 +934,7 @@ fn format_hnsw_compatibility(config: &PersistedHnswCompatibility) -> String {
     )
 }
 
-fn format_hnsw_distance_metric(code: u8) -> String {
+pub(crate) fn format_hnsw_distance_metric(code: u8) -> String {
     match code {
         HNSW_DISTANCE_METRIC_MISSING => "missing".to_owned(),
         HNSW_DISTANCE_METRIC_COSINE => "cosine".to_owned(),
@@ -942,7 +942,7 @@ fn format_hnsw_distance_metric(code: u8) -> String {
     }
 }
 
-fn format_hnsw_index_structure(code: u8) -> String {
+pub(crate) fn format_hnsw_index_structure(code: u8) -> String {
     match code {
         HNSW_INDEX_STRUCTURE_MISSING => "missing".to_owned(),
         HNSW_INDEX_STRUCTURE_FLAT_NSW => "flat_nsw".to_owned(),
@@ -1031,7 +1031,7 @@ fn migrate_temporal_long_intervals_if_needed(
     Ok(())
 }
 
-fn parse_utf8_bytes(bytes: &[u8]) -> Result<String> {
+pub(crate) fn parse_utf8_bytes(bytes: &[u8]) -> Result<String> {
     std::str::from_utf8(bytes)
         .map(str::to_owned)
         .map_err(|_| Error::InvalidKey)
