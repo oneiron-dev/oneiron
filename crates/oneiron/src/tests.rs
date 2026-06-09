@@ -21,6 +21,7 @@ use crate::deletion::{
     DeleteReason, LAST_HARD_ERASE_SWEEP_SEQ_KEY, RedactionScope, encode_hard_erase_sweep_job,
     encode_hard_erase_sweep_key,
 };
+use crate::hnsw::COUNT_KEY;
 use crate::store::{
     DB_MANIFEST, GRAPH_VERSION_KEY, HNSW_CONFIG_KEY, MAX_DBS, MODEL_ID_KEY, STORAGE_ABI_VERSION,
     STORAGE_ABI_VERSION_KEY, STORAGE_SCHEMA_VERSION, STORAGE_SCHEMA_VERSION_KEY, Store,
@@ -2391,6 +2392,37 @@ fn rejects_populated_vault_missing_embedding_model_identity() -> Result<()> {
     {
         let mut wtxn = vault.store.env.write_txn()?;
         vault.store.hnsw_meta.delete(&mut wtxn, MODEL_ID_KEY)?;
+        wtxn.commit()?;
+    }
+    drop(vault);
+
+    let Err(err) = Vault::open(path, cfg) else {
+        panic!("expected missing embedding model identity rejection");
+    };
+    assert!(matches!(
+        err,
+        Error::InvalidConfig(ref message)
+            if message.contains("missing embedding model identity")
+    ));
+
+    Ok(())
+}
+
+#[test]
+fn rejects_vault_missing_model_identity_when_hnsw_meta_marks_population() -> Result<()> {
+    let temp_dir = tempfile::tempdir()?;
+    let path = temp_dir.path();
+    let mut cfg = test_config();
+    cfg.embedding_model = Some("model-a".to_owned());
+    let vault = Vault::open(path, cfg.clone())?;
+
+    {
+        let mut wtxn = vault.store.env.write_txn()?;
+        vault.store.hnsw_meta.delete(&mut wtxn, MODEL_ID_KEY)?;
+        vault
+            .store
+            .hnsw_meta
+            .put(&mut wtxn, COUNT_KEY, &1_u64.to_le_bytes())?;
         wtxn.commit()?;
     }
     drop(vault);

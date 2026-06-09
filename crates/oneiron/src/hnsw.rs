@@ -1,7 +1,8 @@
 use std::cmp::Reverse;
 use std::collections::{BinaryHeap, HashMap, HashSet};
 
-use heed::{RoTxn, RwTxn};
+use heed::types::Bytes;
+use heed::{Database, RoTxn, RwTxn};
 
 use crate::distance::cosine_distance;
 use crate::error::{Error, Result};
@@ -257,6 +258,19 @@ pub(crate) fn read_vector_version(store: &Store, txn: &RoTxn<'_>) -> Result<u64>
         .try_into()
         .map_err(|_| Error::CorruptedIndex(ERR_VECTOR_VERSION_BYTES))?;
     Ok(u64::from_le_bytes(bytes))
+}
+
+pub(crate) fn has_population(hnsw_meta: &Database<Bytes, Bytes>, txn: &RoTxn<'_>) -> Result<bool> {
+    if let Some(raw) = hnsw_meta.get(txn, COUNT_KEY)? {
+        let bytes: [u8; 8] = raw
+            .try_into()
+            .map_err(|_| Error::CorruptedIndex(ERR_COUNT_BYTES))?;
+        if u64::from_le_bytes(bytes) > 0 {
+            return Ok(true);
+        }
+    }
+
+    Ok(hnsw_meta.get(txn, ENTRY_POINT_KEY)?.is_some())
 }
 
 pub(crate) fn increment_vector_version(store: &Store, wtxn: &mut RwTxn<'_>) -> Result<u64> {

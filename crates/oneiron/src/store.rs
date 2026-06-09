@@ -574,7 +574,8 @@ fn preflight_embedding_model(
                     Ok(false)
                 }
                 None => {
-                    if has_persisted_vector_or_hnsw_data(vectors, hnsw_neighbors, &rtxn)? {
+                    if has_persisted_vector_or_hnsw_data(hnsw_meta, vectors, hnsw_neighbors, &rtxn)?
+                    {
                         return Err(Error::InvalidConfig(
                             ERR_POPULATED_REQUIRES_EMBEDDING_MODEL.to_owned(),
                         ));
@@ -584,7 +585,7 @@ fn preflight_embedding_model(
             }
         }
         None => {
-            if has_persisted_vector_or_hnsw_data(vectors, hnsw_neighbors, &rtxn)? {
+            if has_persisted_vector_or_hnsw_data(hnsw_meta, vectors, hnsw_neighbors, &rtxn)? {
                 return Err(Error::InvalidConfig(
                     ERR_POPULATED_MISSING_MODEL_ID.to_owned(),
                 ));
@@ -614,7 +615,7 @@ fn preflight_hnsw_config(
             Ok(false)
         }
         HnswCompatibilityState::Missing | HnswCompatibilityState::Legacy => {
-            if has_persisted_vector_or_hnsw_data(vectors, hnsw_neighbors, &rtxn)? {
+            if has_persisted_vector_or_hnsw_data(hnsw_meta, vectors, hnsw_neighbors, &rtxn)? {
                 return Err(Error::InvalidConfig(
                     "populated vault is missing complete vector/hnsw compatibility metadata; rebuild or migrate it before reopening".to_owned(),
                 ));
@@ -644,7 +645,7 @@ fn persist_hnsw_config_if_missing(
             }
         }
         HnswCompatibilityState::Missing | HnswCompatibilityState::Legacy => {
-            if has_persisted_vector_or_hnsw_data(vectors, hnsw_neighbors, &wtxn)? {
+            if has_persisted_vector_or_hnsw_data(hnsw_meta, vectors, hnsw_neighbors, &wtxn)? {
                 return Err(Error::InvalidConfig(
                     "populated vault is missing complete vector/hnsw compatibility metadata; rebuild or migrate it before reopening".to_owned(),
                 ));
@@ -675,7 +676,7 @@ fn persist_model_id_if_missing(
             }
         }
         None => {
-            if has_persisted_vector_or_hnsw_data(vectors, hnsw_neighbors, &wtxn)? {
+            if has_persisted_vector_or_hnsw_data(hnsw_meta, vectors, hnsw_neighbors, &wtxn)? {
                 return Err(Error::InvalidConfig(
                     ERR_POPULATED_MISSING_MODEL_ID.to_owned(),
                 ));
@@ -706,7 +707,12 @@ pub(crate) fn ensure_model_id_for_vector_write(
             }
         }
         None => {
-            if has_persisted_vector_or_hnsw_data(&store.vectors, &store.hnsw_neighbors, &*wtxn)? {
+            if has_persisted_vector_or_hnsw_data(
+                &store.hnsw_meta,
+                &store.vectors,
+                &store.hnsw_neighbors,
+                &*wtxn,
+            )? {
                 return Err(Error::InvalidConfig(
                     ERR_POPULATED_MISSING_MODEL_ID.to_owned(),
                 ));
@@ -785,11 +791,14 @@ fn format_hnsw_compatibility(config: &PersistedHnswCompatibility) -> String {
 }
 
 fn has_persisted_vector_or_hnsw_data(
+    hnsw_meta: &Database<Bytes, Bytes>,
     vectors: &Database<Bytes, Bytes>,
     hnsw_neighbors: &Database<Bytes, Bytes>,
     txn: &heed::RoTxn<'_>,
 ) -> Result<bool> {
-    Ok(database_has_entries(vectors, txn)? || database_has_entries(hnsw_neighbors, txn)?)
+    Ok(database_has_entries(vectors, txn)?
+        || database_has_entries(hnsw_neighbors, txn)?
+        || crate::hnsw::has_population(hnsw_meta, txn)?)
 }
 
 fn database_has_entries(db: &Database<Bytes, Bytes>, txn: &heed::RoTxn<'_>) -> Result<bool> {
