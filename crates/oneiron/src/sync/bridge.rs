@@ -494,7 +494,7 @@ fn materialize_tombstones_from_delta(
                     }
                 };
 
-                let delete_result = vault.delete_entity(&id);
+                let delete_result = vault.purge_entity_active_store(&id);
                 if let Err(e) = delete_result {
                     tracing::warn!(
                         tombstone = %key,

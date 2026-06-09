@@ -4,6 +4,7 @@ pub mod analyzer;
 pub mod batch;
 pub(crate) mod bm25;
 pub mod context_pack;
+pub mod deletion;
 pub(crate) mod distance;
 pub mod error;
 pub(crate) mod fusion;
@@ -25,6 +26,7 @@ pub use crate::analyzer::{
 };
 pub use crate::batch::{BatchBuilder, TxnBatchBuilder};
 pub use crate::context_pack::ContextPackBuilder;
+pub use crate::deletion::{DeleteEntityOutcome, DeleteReason};
 pub use crate::error::{Error, ErrorKind, Result};
 pub use crate::maintain::{MaintenanceBuilder, MaintenanceReport};
 pub use crate::pipeline::PipelineBuilder;

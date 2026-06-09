@@ -263,8 +263,7 @@ pub struct Store {
     /// CRDT Doc states, state vectors, pending updates, metadata (sync feature only).
     #[cfg(feature = "sync")]
     pub(crate) sync_state: Database<Str, Bytes>,
-    /// Offline update queue and embed job queue (sync feature only).
-    #[cfg(feature = "sync")]
+    /// Offline update queue, embed job queue, and hard-delete sweep queue.
     pub(crate) sync_queue: Database<Bytes, Bytes>,
     // DROP-ORDER: keep this field after `env`. Fields drop in declaration
     // order, so the registry releases the path only after the LMDB
@@ -328,7 +327,6 @@ impl Store {
         #[cfg(not(feature = "sync"))]
         {
             let _ = sync_state;
-            let _ = sync_queue;
         }
 
         let should_persist_hnsw_config =
@@ -376,7 +374,6 @@ impl Store {
             short_ids_reverse,
             #[cfg(feature = "sync")]
             sync_state,
-            #[cfg(feature = "sync")]
             sync_queue,
             _registered_path: registered_path,
         })
