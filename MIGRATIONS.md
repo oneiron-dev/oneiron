@@ -30,3 +30,15 @@ This changes persisted `type_index` keys and the type byte at offset 0 in the
 25-byte entity value header. Existing vaults written with the old productivity
 bytes must fail closed under the open-time gate planned for M0-4 (ONE-1081);
 no migration tooling is added here.
+
+## M0-4 / ONE-1081: Storage ABI version gate
+
+`STORAGE_ABI_VERSION=1` is now written to `vault_meta` when a vault is created.
+It covers the M0-1 EdgeKind discriminant order, the M0-2 12/24/26 B edge value
+layouts, and the M0-3 entity type-byte registry.
+
+`Vault::open` fails closed when the storage ABI marker is missing or differs
+from the current build before any edge or entity bytes are decoded. Pre-M0
+vaults are rejected under v1 behavior. A `schema_version` marker and migration
+plan seam were added for future work, but this release intentionally ships no
+migration runner.

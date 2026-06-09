@@ -8,6 +8,7 @@ use crate::types::{
     ENTITY_TYPE_TASK_LIST, EdgeActorClass, EdgeConfirmationStatus, EdgeProvenanceFlags,
     decode_edge_value, decode_edge_value_for_kind, encode_edge_value,
 };
+use heed::EnvOpenOptions;
 use heed::types::Bytes;
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
@@ -16,65 +17,10 @@ use xxhash_rust::xxh32::xxh32;
 use super::*;
 use crate::batch::ENTITY_METADATA_HEADER_LEN;
 use crate::store::{
-    GRAPH_VERSION_KEY, HNSW_CONFIG_KEY, Store, TEMPORAL_LONG_INTERVALS_SCHEMA_VERSION_KEY,
-    VECTOR_VERSION_KEY,
+    DB_MANIFEST, GRAPH_VERSION_KEY, HNSW_CONFIG_KEY, MAX_DBS, STORAGE_ABI_VERSION,
+    STORAGE_ABI_VERSION_KEY, STORAGE_SCHEMA_VERSION, STORAGE_SCHEMA_VERSION_KEY, Store,
+    TEMPORAL_LONG_INTERVALS_SCHEMA_VERSION_KEY, VECTOR_VERSION_KEY, lmdb_database_open_guard,
 };
-
-#[cfg(not(feature = "sync"))]
-const DB_NAMES: [&str; 23] = [
-    "entities",
-    "edges_out",
-    "edges_in",
-    "vectors",
-    "hnsw_neighbors",
-    "hnsw_meta",
-    "text_postings",
-    "text_meta",
-    "text_forward",
-    "text_bm25_field_stats",
-    "text_doc_field_lengths",
-    "vault_meta",
-    "ppr_cache",
-    "ppr_cache_deps",
-    "type_index",
-    "temporal_occurred_start",
-    "temporal_occurred_end",
-    "temporal_learned",
-    "temporal_long_intervals",
-    "phonetic_index",
-    "phonetic_forward",
-    "short_ids",
-    "short_ids_reverse",
-];
-
-#[cfg(feature = "sync")]
-const DB_NAMES: [&str; 25] = [
-    "entities",
-    "edges_out",
-    "edges_in",
-    "vectors",
-    "hnsw_neighbors",
-    "hnsw_meta",
-    "text_postings",
-    "text_meta",
-    "text_forward",
-    "text_bm25_field_stats",
-    "text_doc_field_lengths",
-    "vault_meta",
-    "ppr_cache",
-    "ppr_cache_deps",
-    "type_index",
-    "temporal_occurred_start",
-    "temporal_occurred_end",
-    "temporal_learned",
-    "temporal_long_intervals",
-    "phonetic_index",
-    "phonetic_forward",
-    "short_ids",
-    "short_ids_reverse",
-    "sync_state",
-    "sync_queue",
-];
 
 fn test_config() -> VaultConfig {
     // Build from the public preset so tests exercise the same construction
@@ -113,6 +59,65 @@ fn seeded_entity_id(counter: u128) -> EntityId {
 fn valid_edge_value() -> Vec<u8> {
     encode_edge_value(EdgeKind::BelongsTo, 0.0, 0, Vad::NEUTRAL, None)
         .expect("valid structural edge value")
+}
+
+fn read_meta_u16(vault: &Vault, key: &[u8]) -> Result<Option<u16>> {
+    let rtxn = vault.store.env.read_txn()?;
+    let Some(raw) = vault.store.vault_meta.get(&rtxn, key)? else {
+        return Ok(None);
+    };
+    let bytes: [u8; 2] = raw.try_into().map_err(|_| Error::InvalidKey)?;
+    Ok(Some(u16::from_le_bytes(bytes)))
+}
+
+fn materialized_database_names(vault: &Vault) -> Result<Vec<String>> {
+    let _guard = lmdb_database_open_guard()?;
+    let rtxn = vault.store.env.read_txn()?;
+    let main = vault
+        .store
+        .env
+        .open_database::<Bytes, Bytes>(&rtxn, None)?
+        .ok_or(Error::InvariantViolation("missing unnamed lmdb database"))?;
+
+    let mut names = Vec::new();
+    for row in main.iter(&rtxn)? {
+        let (key, _) = row?;
+        if key.contains(&0) {
+            continue;
+        }
+        names.push(
+            str::from_utf8(key)
+                .map_err(|_| Error::InvalidKey)?
+                .to_owned(),
+        );
+    }
+    names.sort();
+    Ok(names)
+}
+
+fn set_raw_storage_abi_version(path: &std::path::Path, value: Option<u16>) -> Result<()> {
+    let mut config = test_config();
+    config.map_size = 16 * 1024 * 1024;
+    let _guard = lmdb_database_open_guard()?;
+    // SAFETY: the normal Vault/Store handle has been dropped before this helper
+    // is called, and tests open only local temporary LMDB directories.
+    let env = unsafe {
+        EnvOpenOptions::new()
+            .map_size(config.map_size)
+            .max_readers(config.max_readers)
+            .max_dbs(MAX_DBS)
+            .open(path)?
+    };
+    let mut wtxn = env.write_txn()?;
+    let vault_meta = env.create_database::<Bytes, Bytes>(&mut wtxn, Some("vault_meta"))?;
+    match value {
+        Some(value) => vault_meta.put(&mut wtxn, STORAGE_ABI_VERSION_KEY, &value.to_le_bytes())?,
+        None => {
+            vault_meta.delete(&mut wtxn, STORAGE_ABI_VERSION_KEY)?;
+        }
+    }
+    wtxn.commit()?;
+    Ok(())
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -937,6 +942,7 @@ fn open_checks_model_id_before_migrating_long_interval_schema() -> Result<()> {
     ));
 
     let cfg = test_config();
+    let _guard = lmdb_database_open_guard()?;
     // SAFETY: test-only reopen of the same LMDB path. The prior Vault has
     // been dropped; single-Env-per-path invariant holds inside the test
     // scope. tmp path is local (not NFS), and map_size matches the
@@ -2051,16 +2057,59 @@ fn embedding_model_first_write_is_atomic() -> Result<()> {
 }
 
 #[test]
-fn creates_all_databases() -> Result<()> {
+fn creates_contract_manifest_databases() -> Result<()> {
     let (_dir, vault) = open_test_vault();
-    let rtxn = vault.store.env.read_txn()?;
 
-    for name in DB_NAMES {
-        let db = vault
-            .store
-            .env
-            .open_database::<Bytes, Bytes>(&rtxn, Some(name))?;
-        assert!(db.is_some(), "missing database: {name}");
+    let contract_names: Vec<&str> = DB_MANIFEST.iter().map(|entry| entry.name).collect();
+    assert_eq!(contract_names.len(), 25);
+    assert_eq!(MAX_DBS, 32);
+    assert_eq!(DB_MANIFEST[23].n, 24);
+    assert_eq!(DB_MANIFEST[23].name, "sync_state");
+    assert_eq!(DB_MANIFEST[24].n, 25);
+    assert_eq!(DB_MANIFEST[24].name, "sync_queue");
+
+    let mut expected_materialized: Vec<String> = contract_names
+        .iter()
+        .map(|name| (*name).to_owned())
+        .collect();
+    expected_materialized.sort();
+    assert_eq!(materialized_database_names(&vault)?, expected_materialized);
+
+    Ok(())
+}
+
+#[test]
+fn open_persists_storage_versions_on_create() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    assert_eq!(
+        read_meta_u16(&vault, STORAGE_ABI_VERSION_KEY)?,
+        Some(STORAGE_ABI_VERSION)
+    );
+    assert_eq!(
+        read_meta_u16(&vault, STORAGE_SCHEMA_VERSION_KEY)?,
+        Some(STORAGE_SCHEMA_VERSION)
+    );
+    Ok(())
+}
+
+#[test]
+fn open_rejects_missing_or_stale_storage_abi_version() -> Result<()> {
+    for (case_name, stale_value) in [("missing", None), ("older", Some(0_u16))] {
+        let temp_dir = tempfile::tempdir()?;
+        let path = temp_dir.path();
+        {
+            let _vault = Vault::open(path, test_config())?;
+        }
+
+        set_raw_storage_abi_version(path, stale_value)?;
+        let err = match Vault::open(path, test_config()) {
+            Ok(_) => panic!("case {case_name}: expected Vault::open to fail closed"),
+            Err(err) => err,
+        };
+        assert!(
+            matches!(err, Error::StorageAbiVersionChanged { .. }),
+            "case {case_name}: expected storage ABI version error, got {err:?}"
+        );
     }
 
     Ok(())

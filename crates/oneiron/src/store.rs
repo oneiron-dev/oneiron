@@ -1,19 +1,19 @@
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Mutex, MutexGuard, OnceLock};
 
-use heed::types::Bytes;
-#[cfg(feature = "sync")]
-use heed::types::Str;
+use heed::types::{Bytes, Str};
 use heed::{Database, Env, EnvOpenOptions, RwTxn};
 
 use crate::error::{Error, Result};
 use crate::types::{EdgeKind, EntityId, VaultConfig};
 
-// Bumped from 25 → 32 in ONE-317 to make room for the BM25F schema v2 DBs
-// (`vault_meta`, `text_bm25_field_stats`, `text_doc_field_lengths`) plus
-// headroom for follow-up analyzer work.
-const MAX_DBS: u32 = 32;
+// Contract-pinned at 32 by ARCH-0019/ARCH-0031: 25 named DBs plus headroom.
+pub const MAX_DBS: u32 = 32;
+pub const STORAGE_ABI_VERSION: u16 = 1;
+pub(crate) const STORAGE_ABI_VERSION_KEY: &[u8] = b"storage_abi_version";
+pub const STORAGE_SCHEMA_VERSION: u16 = 1;
+pub(crate) const STORAGE_SCHEMA_VERSION_KEY: &[u8] = b"schema_version";
 pub(crate) const MODEL_ID_KEY: &[u8] = b"model_id";
 pub(crate) const GRAPH_VERSION_KEY: &[u8] = b"graph_version";
 pub(crate) const HNSW_CONFIG_KEY: &[u8] = b"hnsw_config";
@@ -23,6 +23,7 @@ const TEMPORAL_LONG_INTERVALS_SCHEMA_VERSION: u8 = 2;
 pub(crate) const VECTOR_VERSION_KEY: &[u8] = b"vector_version";
 const HNSW_COMPATIBILITY_VERSION: u8 = 1;
 const HNSW_COMPATIBILITY_LEN: usize = 25;
+static LMDB_DATABASE_OPEN_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 static OPEN_STORE_PATHS: OnceLock<Mutex<HashSet<PathBuf>>> = OnceLock::new();
 
 // BM25F / analyzer schema v2 keys. All live in the new `vault_meta` DB.
@@ -34,6 +35,173 @@ pub(crate) const TEXT_BM25_FIELD_SCHEMA_HASH_KEY: &[u8] = b"text_bm25_field_sche
 /// * v1 = pre-ONE-317 hand-rolled tokenizer (never written — greenfield).
 /// * v2 = ONE-317 analyzer + BM25F (this release).
 pub(crate) const TEXT_INDEX_SCHEMA_VERSION: u16 = 2;
+
+/// Oneiron DB manifest derived from the ARCH-0019 contract.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DbManifestEntry {
+    pub n: u8,
+    pub name: &'static str,
+    pub group: &'static str,
+}
+
+pub const DB_MANIFEST: [DbManifestEntry; 25] = [
+    DbManifestEntry {
+        n: 1,
+        name: "entities",
+        group: "Core",
+    },
+    DbManifestEntry {
+        n: 2,
+        name: "type_index",
+        group: "Core",
+    },
+    DbManifestEntry {
+        n: 3,
+        name: "short_ids",
+        group: "Core",
+    },
+    DbManifestEntry {
+        n: 4,
+        name: "short_ids_reverse",
+        group: "Core",
+    },
+    DbManifestEntry {
+        n: 5,
+        name: "vault_meta",
+        group: "Core",
+    },
+    DbManifestEntry {
+        n: 6,
+        name: "vectors",
+        group: "Vector",
+    },
+    DbManifestEntry {
+        n: 7,
+        name: "hnsw_neighbors",
+        group: "Vector",
+    },
+    DbManifestEntry {
+        n: 8,
+        name: "hnsw_meta",
+        group: "Vector",
+    },
+    DbManifestEntry {
+        n: 9,
+        name: "text_postings",
+        group: "Text",
+    },
+    DbManifestEntry {
+        n: 10,
+        name: "text_meta",
+        group: "Text",
+    },
+    DbManifestEntry {
+        n: 11,
+        name: "text_forward",
+        group: "Text",
+    },
+    DbManifestEntry {
+        n: 12,
+        name: "text_bm25_field_stats",
+        group: "Text",
+    },
+    DbManifestEntry {
+        n: 13,
+        name: "text_doc_field_lengths",
+        group: "Text",
+    },
+    DbManifestEntry {
+        n: 14,
+        name: "edges_out",
+        group: "Graph",
+    },
+    DbManifestEntry {
+        n: 15,
+        name: "edges_in",
+        group: "Graph",
+    },
+    DbManifestEntry {
+        n: 16,
+        name: "ppr_cache",
+        group: "Graph",
+    },
+    DbManifestEntry {
+        n: 17,
+        name: "ppr_cache_deps",
+        group: "Graph",
+    },
+    DbManifestEntry {
+        n: 18,
+        name: "temporal_occurred_start",
+        group: "Temporal",
+    },
+    DbManifestEntry {
+        n: 19,
+        name: "temporal_occurred_end",
+        group: "Temporal",
+    },
+    DbManifestEntry {
+        n: 20,
+        name: "temporal_learned",
+        group: "Temporal",
+    },
+    DbManifestEntry {
+        n: 21,
+        name: "temporal_long_intervals",
+        group: "Temporal",
+    },
+    DbManifestEntry {
+        n: 22,
+        name: "phonetic_index",
+        group: "Phonetic",
+    },
+    DbManifestEntry {
+        n: 23,
+        name: "phonetic_forward",
+        group: "Phonetic",
+    },
+    DbManifestEntry {
+        n: 24,
+        name: "sync_state",
+        group: "Sync",
+    },
+    DbManifestEntry {
+        n: 25,
+        name: "sync_queue",
+        group: "Sync",
+    },
+];
+
+/// Scaffold for a future storage-schema migration runner.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StorageMigrationPlan {
+    Initialize,
+    Current,
+    Required { from: Option<u16>, to: u16 },
+}
+
+impl StorageMigrationPlan {
+    #[must_use]
+    pub fn for_stored_schema_version(stored: Option<u16>, new_vault: bool) -> Self {
+        match stored {
+            Some(STORAGE_SCHEMA_VERSION) => Self::Current,
+            Some(from) => Self::Required {
+                from: Some(from),
+                to: STORAGE_SCHEMA_VERSION,
+            },
+            None if new_vault => Self::Initialize,
+            None => Self::Required {
+                from: None,
+                to: STORAGE_SCHEMA_VERSION,
+            },
+        }
+    }
+}
+
+/// Future migrations plug in here; v1 only classifies and rejects.
+pub trait StorageMigrationRunner {
+    fn run(&mut self, plan: StorageMigrationPlan) -> Result<()>;
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct PersistedHnswCompatibility {
@@ -109,6 +277,7 @@ impl Store {
     pub fn open(path: impl AsRef<Path>, config: &VaultConfig) -> Result<Self> {
         std::fs::create_dir_all(path.as_ref())?;
         let canonical_path = path.as_ref().canonicalize()?;
+        let is_new_vault = !canonical_path.join("data.mdb").exists();
         let registered_path = RegisteredPath::reserve(canonical_path.clone())?;
 
         // SAFETY: heed/LMDB require a single Env per filesystem path, the path
@@ -127,36 +296,40 @@ impl Store {
                 .open(&canonical_path)?
         };
 
+        let _db_open_guard = lmdb_database_open_guard()?;
         let mut wtxn = env.write_txn()?;
-        let entities = create_db(&env, &mut wtxn, "entities")?;
-        let edges_out = create_db(&env, &mut wtxn, "edges_out")?;
-        let edges_in = create_db(&env, &mut wtxn, "edges_in")?;
-        let vectors = create_db(&env, &mut wtxn, "vectors")?;
-        let hnsw_neighbors = create_db(&env, &mut wtxn, "hnsw_neighbors")?;
-        let hnsw_meta = create_db(&env, &mut wtxn, "hnsw_meta")?;
-        let text_postings = create_db(&env, &mut wtxn, "text_postings")?;
-        let text_meta = create_db(&env, &mut wtxn, "text_meta")?;
-        let text_forward = create_db(&env, &mut wtxn, "text_forward")?;
-        let text_bm25_field_stats = create_db(&env, &mut wtxn, "text_bm25_field_stats")?;
-        let text_doc_field_lengths = create_db(&env, &mut wtxn, "text_doc_field_lengths")?;
-        let vault_meta = create_db(&env, &mut wtxn, "vault_meta")?;
-        let ppr_cache = create_db(&env, &mut wtxn, "ppr_cache")?;
-        let ppr_cache_deps = create_db(&env, &mut wtxn, "ppr_cache_deps")?;
-        let type_index = create_db(&env, &mut wtxn, "type_index")?;
-        let temporal_occurred_start = create_db(&env, &mut wtxn, "temporal_occurred_start")?;
-        let temporal_occurred_end = create_db(&env, &mut wtxn, "temporal_occurred_end")?;
-        let temporal_learned = create_db(&env, &mut wtxn, "temporal_learned")?;
-        let temporal_long_intervals = create_db(&env, &mut wtxn, "temporal_long_intervals")?;
-        let phonetic_index = create_db(&env, &mut wtxn, "phonetic_index")?;
-        let phonetic_forward = create_db(&env, &mut wtxn, "phonetic_forward")?;
-        let short_ids = create_db(&env, &mut wtxn, "short_ids")?;
-        let short_ids_reverse = create_db(&env, &mut wtxn, "short_ids_reverse")?;
-        #[cfg(feature = "sync")]
-        let sync_state: Database<Str, Bytes> =
-            env.create_database(&mut wtxn, Some("sync_state"))?;
-        #[cfg(feature = "sync")]
-        let sync_queue = create_db(&env, &mut wtxn, "sync_queue")?;
+        let entities = create_manifest_db(&env, &mut wtxn, 0)?;
+        let type_index = create_manifest_db(&env, &mut wtxn, 1)?;
+        let short_ids = create_manifest_db(&env, &mut wtxn, 2)?;
+        let short_ids_reverse = create_manifest_db(&env, &mut wtxn, 3)?;
+        let vault_meta = create_manifest_db(&env, &mut wtxn, 4)?;
+        gate_storage_versions(&vault_meta, &mut wtxn, is_new_vault)?;
+        let vectors = create_manifest_db(&env, &mut wtxn, 5)?;
+        let hnsw_neighbors = create_manifest_db(&env, &mut wtxn, 6)?;
+        let hnsw_meta = create_manifest_db(&env, &mut wtxn, 7)?;
+        let text_postings = create_manifest_db(&env, &mut wtxn, 8)?;
+        let text_meta = create_manifest_db(&env, &mut wtxn, 9)?;
+        let text_forward = create_manifest_db(&env, &mut wtxn, 10)?;
+        let text_bm25_field_stats = create_manifest_db(&env, &mut wtxn, 11)?;
+        let text_doc_field_lengths = create_manifest_db(&env, &mut wtxn, 12)?;
+        let edges_out = create_manifest_db(&env, &mut wtxn, 13)?;
+        let edges_in = create_manifest_db(&env, &mut wtxn, 14)?;
+        let ppr_cache = create_manifest_db(&env, &mut wtxn, 15)?;
+        let ppr_cache_deps = create_manifest_db(&env, &mut wtxn, 16)?;
+        let temporal_occurred_start = create_manifest_db(&env, &mut wtxn, 17)?;
+        let temporal_occurred_end = create_manifest_db(&env, &mut wtxn, 18)?;
+        let temporal_learned = create_manifest_db(&env, &mut wtxn, 19)?;
+        let temporal_long_intervals = create_manifest_db(&env, &mut wtxn, 20)?;
+        let phonetic_index = create_manifest_db(&env, &mut wtxn, 21)?;
+        let phonetic_forward = create_manifest_db(&env, &mut wtxn, 22)?;
+        let sync_state = create_manifest_str_db(&env, &mut wtxn, 23)?;
+        let sync_queue = create_manifest_db(&env, &mut wtxn, 24)?;
         wtxn.commit()?;
+        #[cfg(not(feature = "sync"))]
+        {
+            let _ = sync_state;
+            let _ = sync_queue;
+        }
 
         let should_persist_hnsw_config =
             preflight_hnsw_config(&env, &hnsw_meta, &vectors, &hnsw_neighbors, config)?;
@@ -272,6 +445,102 @@ impl Drop for RegisteredPath {
 
 fn create_db(env: &Env, wtxn: &mut RwTxn<'_>, name: &str) -> Result<Database<Bytes, Bytes>> {
     Ok(env.create_database::<Bytes, Bytes>(wtxn, Some(name))?)
+}
+
+pub(crate) fn lmdb_database_open_guard() -> Result<MutexGuard<'static, ()>> {
+    LMDB_DATABASE_OPEN_LOCK
+        .get_or_init(|| Mutex::new(()))
+        .lock()
+        .map_err(|_| Error::InvariantViolation("lmdb database-open mutex poisoned"))
+}
+
+fn create_manifest_db(
+    env: &Env,
+    wtxn: &mut RwTxn<'_>,
+    manifest_index: usize,
+) -> Result<Database<Bytes, Bytes>> {
+    create_db(env, wtxn, DB_MANIFEST[manifest_index].name)
+}
+
+fn create_manifest_str_db(
+    env: &Env,
+    wtxn: &mut RwTxn<'_>,
+    manifest_index: usize,
+) -> Result<Database<Str, Bytes>> {
+    Ok(env.create_database::<Str, Bytes>(wtxn, Some(DB_MANIFEST[manifest_index].name))?)
+}
+
+fn gate_storage_versions(
+    vault_meta: &Database<Bytes, Bytes>,
+    wtxn: &mut RwTxn<'_>,
+    new_vault: bool,
+) -> Result<()> {
+    let stored_abi = read_vault_meta_u16(
+        vault_meta,
+        &*wtxn,
+        STORAGE_ABI_VERSION_KEY,
+        "storage ABI version",
+    )?;
+    match stored_abi {
+        Some(STORAGE_ABI_VERSION) => {}
+        Some(stored) => {
+            return Err(Error::StorageAbiVersionChanged {
+                stored: Some(stored),
+                current: STORAGE_ABI_VERSION,
+            });
+        }
+        None if new_vault => {
+            vault_meta.put(
+                wtxn,
+                STORAGE_ABI_VERSION_KEY,
+                &STORAGE_ABI_VERSION.to_le_bytes(),
+            )?;
+        }
+        None => {
+            return Err(Error::StorageAbiVersionChanged {
+                stored: None,
+                current: STORAGE_ABI_VERSION,
+            });
+        }
+    }
+
+    let stored_schema = read_vault_meta_u16(
+        vault_meta,
+        &*wtxn,
+        STORAGE_SCHEMA_VERSION_KEY,
+        "storage schema version",
+    )?;
+    match StorageMigrationPlan::for_stored_schema_version(stored_schema, new_vault) {
+        StorageMigrationPlan::Initialize => {
+            vault_meta.put(
+                wtxn,
+                STORAGE_SCHEMA_VERSION_KEY,
+                &STORAGE_SCHEMA_VERSION.to_le_bytes(),
+            )?;
+        }
+        StorageMigrationPlan::Current => {}
+        StorageMigrationPlan::Required { from, to } => {
+            return Err(Error::StorageSchemaVersionChanged {
+                stored: from,
+                current: to,
+            });
+        }
+    }
+
+    Ok(())
+}
+
+fn read_vault_meta_u16(
+    vault_meta: &Database<Bytes, Bytes>,
+    txn: &heed::RoTxn<'_>,
+    key: &[u8],
+    context: &'static str,
+) -> Result<Option<u16>> {
+    let Some(raw) = vault_meta.get(txn, key)? else {
+        return Ok(None);
+    };
+    let bytes: [u8; 2] = raw.try_into().map_err(|_| Error::CorruptedIndex(context))?;
+    Ok(Some(u16::from_le_bytes(bytes)))
 }
 
 fn preflight_embedding_model(
