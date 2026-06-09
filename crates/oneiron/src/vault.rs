@@ -246,10 +246,15 @@ impl Vault {
             "vault_meta.text_index_schema_version",
             &mut unreadable_fields,
         )?;
+        drop(rtxn);
         let db_manifest = {
-            // Held for consistency with `Store::open`'s DB-open serialization.
+            // Held for consistency with `Store::open`'s DB-open serialization;
+            // the txn that performs `mdb_dbi_open` must finish before release.
             let _db_open_guard = lmdb_database_open_guard()?;
-            doctor_db_manifest(&self.store, &rtxn)?
+            let manifest_rtxn = self.store.env.read_txn()?;
+            let report = doctor_db_manifest(&self.store, &manifest_rtxn)?;
+            drop(manifest_rtxn);
+            report
         };
 
         Ok(VaultDoctorReport {
