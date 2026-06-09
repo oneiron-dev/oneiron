@@ -44,6 +44,12 @@ fn test_config() -> VaultConfig {
     config
 }
 
+const EXPECTED_HNSW_COMPATIBILITY_VERSION: u8 = 2;
+const EXPECTED_HNSW_COMPATIBILITY_LEN: usize = 27;
+const EXPECTED_HNSW_DISTANCE_METRIC_COSINE: u8 = 1;
+const EXPECTED_HNSW_INDEX_STRUCTURE_FLAT_NSW: u8 = 1;
+const LEGACY_HNSW_COMPATIBILITY_LEN: usize = 25;
+
 fn large_test_config() -> VaultConfig {
     let mut config = test_config();
     config.map_size = 128 * 1024 * 1024;
@@ -76,6 +82,35 @@ fn read_meta_u16(vault: &Vault, key: &[u8]) -> Result<Option<u16>> {
     };
     let bytes: [u8; 2] = raw.try_into().map_err(|_| Error::InvalidKey)?;
     Ok(Some(u16::from_le_bytes(bytes)))
+}
+
+fn legacy_hnsw_compatibility_record(config: &VaultConfig) -> [u8; LEGACY_HNSW_COMPATIBILITY_LEN] {
+    let dimensions = u64::try_from(config.dimensions).expect("test dimensions fit in u64");
+    let m_max_0 = u64::try_from(config.hnsw.m_max_0).expect("test m_max_0 fits in u64");
+    let ef_construction =
+        u64::try_from(config.hnsw.ef_construction).expect("test ef_construction fits in u64");
+
+    let mut encoded = [0_u8; LEGACY_HNSW_COMPATIBILITY_LEN];
+    encoded[0] = 1;
+    encoded[1..9].copy_from_slice(&dimensions.to_le_bytes());
+    encoded[9..17].copy_from_slice(&m_max_0.to_le_bytes());
+    encoded[17..25].copy_from_slice(&ef_construction.to_le_bytes());
+    encoded
+}
+
+fn read_hnsw_config_record(vault: &Vault) -> Result<Vec<u8>> {
+    let rtxn = vault.store.env.read_txn()?;
+    let Some(raw) = vault.store.hnsw_meta.get(&rtxn, HNSW_CONFIG_KEY)? else {
+        return Err(Error::InvalidKey);
+    };
+    Ok(raw.to_vec())
+}
+
+fn write_hnsw_config_record(vault: &Vault, raw: &[u8]) -> Result<()> {
+    let mut wtxn = vault.store.env.write_txn()?;
+    vault.store.hnsw_meta.put(&mut wtxn, HNSW_CONFIG_KEY, raw)?;
+    wtxn.commit()?;
+    Ok(())
 }
 
 fn redaction_audit_receipts(vault: &Vault) -> Result<Vec<EntityId>> {
@@ -2580,6 +2615,95 @@ fn rejects_vector_write_without_embedding_model_identity() -> Result<()> {
 }
 
 #[test]
+fn persists_hnsw_metric_and_structure_tags() -> Result<()> {
+    let (temp_dir, vault) = open_test_vault();
+    let raw = read_hnsw_config_record(&vault)?;
+    assert_eq!(raw.len(), EXPECTED_HNSW_COMPATIBILITY_LEN);
+    assert_eq!(raw[0], EXPECTED_HNSW_COMPATIBILITY_VERSION);
+    assert_eq!(raw[25], EXPECTED_HNSW_DISTANCE_METRIC_COSINE);
+    assert_eq!(raw[26], EXPECTED_HNSW_INDEX_STRUCTURE_FLAT_NSW);
+    drop(vault);
+
+    let reopened = Vault::open(temp_dir.path(), test_config())?;
+    let raw = read_hnsw_config_record(&reopened)?;
+    assert_eq!(raw.len(), EXPECTED_HNSW_COMPATIBILITY_LEN);
+    assert_eq!(raw[0], EXPECTED_HNSW_COMPATIBILITY_VERSION);
+    assert_eq!(raw[25], EXPECTED_HNSW_DISTANCE_METRIC_COSINE);
+    assert_eq!(raw[26], EXPECTED_HNSW_INDEX_STRUCTURE_FLAT_NSW);
+    Ok(())
+}
+
+#[test]
+fn upgrades_empty_vault_with_legacy_hnsw_compatibility_record() -> Result<()> {
+    let temp_dir = tempfile::tempdir()?;
+    let path = temp_dir.path();
+    let cfg = test_config();
+    let vault = Vault::open(path, cfg.clone())?;
+    let legacy = legacy_hnsw_compatibility_record(&cfg);
+    write_hnsw_config_record(&vault, &legacy)?;
+    drop(vault);
+
+    let reopened = Vault::open(path, cfg)?;
+    let raw = read_hnsw_config_record(&reopened)?;
+    assert_eq!(raw.len(), EXPECTED_HNSW_COMPATIBILITY_LEN);
+    assert_eq!(raw[0], EXPECTED_HNSW_COMPATIBILITY_VERSION);
+    assert_eq!(raw[25], EXPECTED_HNSW_DISTANCE_METRIC_COSINE);
+    assert_eq!(raw[26], EXPECTED_HNSW_INDEX_STRUCTURE_FLAT_NSW);
+    Ok(())
+}
+
+#[test]
+fn rejects_populated_vault_with_legacy_hnsw_compatibility_record() -> Result<()> {
+    let temp_dir = tempfile::tempdir()?;
+    let path = temp_dir.path();
+    let cfg = test_config();
+    let vault = Vault::open(path, cfg.clone())?;
+    let id = EntityId::now();
+    vault.put_entity(&id, 0, test_time_range(1, 1), 1, b"node")?;
+    vault.put_vector(&id, &[0.1, 0.2, 0.3, 0.4])?;
+    let legacy = legacy_hnsw_compatibility_record(&cfg);
+    write_hnsw_config_record(&vault, &legacy)?;
+    drop(vault);
+
+    let Err(err) = Vault::open(path, cfg) else {
+        panic!("expected legacy hnsw compatibility rejection");
+    };
+    assert!(matches!(
+        err,
+        Error::HnswConfigChanged {
+            ref stored,
+            ref requested
+        } if stored == "dimensions=4,m_max_0=64,ef_construction=200,distance_metric=missing,index_structure=missing"
+            && requested == "dimensions=4,m_max_0=64,ef_construction=200,distance_metric=cosine,index_structure=flat_nsw"
+    ));
+    Ok(())
+}
+
+#[test]
+fn detects_hnsw_metric_and_structure_mismatch_on_open() -> Result<()> {
+    let (temp_dir, vault) = open_test_vault();
+    let mut raw = read_hnsw_config_record(&vault)?;
+    assert_eq!(raw.len(), EXPECTED_HNSW_COMPATIBILITY_LEN);
+    raw[25] = 2;
+    raw[26] = 2;
+    write_hnsw_config_record(&vault, &raw)?;
+    drop(vault);
+
+    let Err(err) = Vault::open(temp_dir.path(), test_config()) else {
+        panic!("expected hnsw metric/structure mismatch");
+    };
+    assert!(matches!(
+        err,
+        Error::HnswConfigChanged {
+            ref stored,
+            ref requested
+        } if stored == "dimensions=4,m_max_0=64,ef_construction=200,distance_metric=unknown(2),index_structure=unknown(2)"
+            && requested == "dimensions=4,m_max_0=64,ef_construction=200,distance_metric=cosine,index_structure=flat_nsw"
+    ));
+    Ok(())
+}
+
+#[test]
 fn detects_hnsw_config_mismatch_on_open() {
     let (temp_dir, vault) = open_test_vault();
     drop(vault);
@@ -2594,8 +2718,8 @@ fn detects_hnsw_config_mismatch_on_open() {
         Error::HnswConfigChanged {
             ref stored,
             ref requested
-        } if stored == "dimensions=4,m_max_0=64,ef_construction=200"
-            && requested == "dimensions=4,m_max_0=64,ef_construction=201"
+        } if stored == "dimensions=4,m_max_0=64,ef_construction=200,distance_metric=cosine,index_structure=flat_nsw"
+            && requested == "dimensions=4,m_max_0=64,ef_construction=201,distance_metric=cosine,index_structure=flat_nsw"
     ));
 }
 
@@ -2614,8 +2738,8 @@ fn detects_dimension_mismatch_on_open() {
         Error::HnswConfigChanged {
             ref stored,
             ref requested
-        } if stored == "dimensions=4,m_max_0=64,ef_construction=200"
-            && requested == "dimensions=8,m_max_0=64,ef_construction=200"
+        } if stored == "dimensions=4,m_max_0=64,ef_construction=200,distance_metric=cosine,index_structure=flat_nsw"
+            && requested == "dimensions=8,m_max_0=64,ef_construction=200,distance_metric=cosine,index_structure=flat_nsw"
     ));
 }
 

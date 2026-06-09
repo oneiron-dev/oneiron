@@ -525,6 +525,9 @@ pub struct TimeRange {
 }
 
 /// HNSW configuration values.
+///
+/// The distance metric and index structure are fixed by the storage contract
+/// and persisted as compatibility tags, not exposed as runtime tuning knobs.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct HnswConfig {
@@ -532,7 +535,8 @@ pub struct HnswConfig {
     pub m_max_0: usize,
     /// Beam width used during graph construction.
     pub ef_construction: usize,
-    /// Beam width used during search.
+    /// Beam width used during search. Search-time only; not part of persisted
+    /// HNSW compatibility metadata.
     pub ef_search: usize,
 }
 
