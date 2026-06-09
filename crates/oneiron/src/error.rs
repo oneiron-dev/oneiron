@@ -17,6 +17,7 @@ pub enum ErrorKind {
     HnswConfigChanged,
     StorageAbiVersionChanged,
     StorageSchemaVersionChanged,
+    DbManifestMismatch,
     MapFull,
     InvalidConfig,
     EntityNotFound,
@@ -78,6 +79,12 @@ pub enum Error {
     /// future migration runner can use this as its dispatch point.
     #[error("storage schema version changed: stored={stored:?}, current={current}")]
     StorageSchemaVersionChanged { stored: Option<u16>, current: u16 },
+    /// The LMDB named database set does not match the ARCH-0019 manifest.
+    #[error("DB manifest mismatch: missing={missing:?}, unexpected={unexpected:?}")]
+    DbManifestMismatch {
+        missing: Vec<String>,
+        unexpected: Vec<String>,
+    },
     /// LMDB map is full and requires a larger map size.
     #[error("lmdb map is full")]
     MapFull,
@@ -213,6 +220,7 @@ impl Error {
             Self::HnswConfigChanged { .. } => ErrorKind::HnswConfigChanged,
             Self::StorageAbiVersionChanged { .. } => ErrorKind::StorageAbiVersionChanged,
             Self::StorageSchemaVersionChanged { .. } => ErrorKind::StorageSchemaVersionChanged,
+            Self::DbManifestMismatch { .. } => ErrorKind::DbManifestMismatch,
             Self::MapFull => ErrorKind::MapFull,
             Self::InvalidConfig(_) => ErrorKind::InvalidConfig,
             Self::EntityNotFound => ErrorKind::EntityNotFound,

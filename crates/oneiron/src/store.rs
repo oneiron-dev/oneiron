@@ -1,5 +1,6 @@
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
+use std::str;
 use std::sync::{Mutex, MutexGuard, OnceLock};
 
 use heed::types::{Bytes, Str};
@@ -10,7 +11,7 @@ use crate::types::{EdgeKind, EntityId, VaultConfig};
 
 // Contract-pinned at 32 by ARCH-0019/ARCH-0031: 25 named DBs plus headroom.
 pub const MAX_DBS: u32 = 32;
-pub const STORAGE_ABI_VERSION: u16 = 1;
+pub const STORAGE_ABI_VERSION: u16 = 2;
 pub(crate) const STORAGE_ABI_VERSION_KEY: &[u8] = b"storage_abi_version";
 pub const STORAGE_SCHEMA_VERSION: u16 = 1;
 pub(crate) const STORAGE_SCHEMA_VERSION_KEY: &[u8] = b"schema_version";
@@ -303,12 +304,16 @@ impl Store {
 
         let db_open_guard = lmdb_database_open_guard()?;
         let mut wtxn = env.write_txn()?;
+        let vault_meta = create_manifest_db(&env, &mut wtxn, 4)?;
+        gate_storage_versions(&vault_meta, &mut wtxn, is_new_vault)?;
+        if !is_new_vault {
+            validate_db_manifest_set(&env, &wtxn)?;
+        }
+
         let entities = create_manifest_db(&env, &mut wtxn, 0)?;
         let type_index = create_manifest_db(&env, &mut wtxn, 1)?;
         let short_ids = create_manifest_db(&env, &mut wtxn, 2)?;
         let short_ids_reverse = create_manifest_db(&env, &mut wtxn, 3)?;
-        let vault_meta = create_manifest_db(&env, &mut wtxn, 4)?;
-        gate_storage_versions(&vault_meta, &mut wtxn, is_new_vault)?;
         let vectors = create_manifest_db(&env, &mut wtxn, 5)?;
         let hnsw_neighbors = create_manifest_db(&env, &mut wtxn, 6)?;
         let hnsw_meta = create_manifest_db(&env, &mut wtxn, 7)?;
@@ -329,6 +334,9 @@ impl Store {
         let phonetic_forward = create_manifest_db(&env, &mut wtxn, 22)?;
         let sync_state = create_manifest_str_db(&env, &mut wtxn, 23)?;
         let sync_queue = create_manifest_db(&env, &mut wtxn, 24)?;
+        if is_new_vault {
+            validate_db_manifest_set(&env, &wtxn)?;
+        }
         wtxn.commit()?;
         drop(db_open_guard);
         #[cfg(not(feature = "sync"))]
@@ -477,6 +485,55 @@ fn create_manifest_str_db(
     manifest_index: usize,
 ) -> Result<Database<Str, Bytes>> {
     Ok(env.create_database::<Str, Bytes>(wtxn, Some(DB_MANIFEST[manifest_index].name))?)
+}
+
+fn validate_db_manifest_set(env: &Env, wtxn: &RwTxn<'_>) -> Result<()> {
+    let env_names = materialized_database_names(env, wtxn)?;
+    let expected: HashSet<&str> = DB_MANIFEST.iter().map(|entry| entry.name).collect();
+    let present: HashSet<&str> = env_names.iter().map(String::as_str).collect();
+
+    let mut missing: Vec<String> = DB_MANIFEST
+        .iter()
+        .map(|entry| entry.name)
+        .filter(|name| !present.contains(name))
+        .map(str::to_owned)
+        .collect();
+    let mut unexpected: Vec<String> = env_names
+        .into_iter()
+        .filter(|name| !expected.contains(name.as_str()))
+        .collect();
+
+    missing.sort();
+    unexpected.sort();
+    if missing.is_empty() && unexpected.is_empty() {
+        Ok(())
+    } else {
+        Err(Error::DbManifestMismatch {
+            missing,
+            unexpected,
+        })
+    }
+}
+
+fn materialized_database_names(env: &Env, wtxn: &RwTxn<'_>) -> Result<Vec<String>> {
+    let main = env
+        .open_database::<Bytes, Bytes>(wtxn, None)?
+        .ok_or(Error::InvariantViolation("missing unnamed lmdb database"))?;
+
+    let mut names = Vec::new();
+    for row in main.iter(wtxn)? {
+        let (key, _) = row?;
+        if key.contains(&0) {
+            continue;
+        }
+        names.push(
+            str::from_utf8(key)
+                .map_err(|_| Error::InvalidKey)?
+                .to_owned(),
+        );
+    }
+    names.sort();
+    Ok(names)
 }
 
 fn gate_storage_versions(

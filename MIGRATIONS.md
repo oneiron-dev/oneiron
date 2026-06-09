@@ -57,3 +57,16 @@ value is scope plus retry state (`attempt_count`, `next_attempt_at`,
 `last_error_code`, `queued_at`, `deadline_at`), with `deadline_at` capped to
 30 days from the delete request. This adds no new named LMDB database and is
 covered by the existing M0-4 storage ABI gate.
+
+## M1 / ONE-1093: Feature-independent 25-DB manifest
+
+`STORAGE_ABI_VERSION=2` makes the on-disk named LMDB database set
+feature-independent. Every vault now materializes all 25 ARCH-0019 manifest
+databases, including `sync_state` and `sync_queue`, regardless of whether the
+`sync` Cargo feature is enabled. The feature gates sync behavior only, not the
+physical database set.
+
+Pre-fix development vaults created by a non-sync build may have only 24 named
+databases because `sync_state` was not created. Those vaults are rejected by
+the storage ABI gate under v2. Oneiron is pre-launch, so no migration runner is
+provided; recreate affected development vaults.
