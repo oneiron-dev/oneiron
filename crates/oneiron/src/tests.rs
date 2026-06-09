@@ -1,4 +1,5 @@
 use std::collections::HashSet;
+use std::path::Path;
 use std::str;
 use std::time::Instant;
 
@@ -10,7 +11,7 @@ use crate::types::{
     decode_edge_value, decode_edge_value_for_kind, encode_edge_value,
 };
 use heed::EnvOpenOptions;
-use heed::types::Bytes;
+use heed::types::{Bytes, Str};
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 use xxhash_rust::xxh32::xxh32;
@@ -151,6 +152,18 @@ fn materialized_database_names(vault: &Vault) -> Result<Vec<String>> {
     Ok(names)
 }
 
+fn expected_manifest_names() -> Vec<&'static str> {
+    let mut names: Vec<&'static str> = DB_MANIFEST.iter().map(|entry| entry.name).collect();
+    names.sort_unstable();
+    names
+}
+
+fn create_raw_vault_missing_manifest_name(path: &Path, missing: &str) -> Result<()> {
+    let mut names = expected_manifest_names();
+    names.retain(|name| *name != missing);
+    create_raw_vault_with_manifest_names(path, &names)
+}
+
 fn set_raw_storage_abi_version(path: &std::path::Path, value: Option<u16>) -> Result<()> {
     let mut config = test_config();
     config.map_size = 16 * 1024 * 1024;
@@ -172,6 +185,58 @@ fn set_raw_storage_abi_version(path: &std::path::Path, value: Option<u16>) -> Re
             vault_meta.delete(&mut wtxn, STORAGE_ABI_VERSION_KEY)?;
         }
     }
+    wtxn.commit()?;
+    Ok(())
+}
+
+fn create_raw_vault_with_manifest_names(path: &Path, names: &[&str]) -> Result<()> {
+    let config = test_config();
+    let _guard = lmdb_database_open_guard()?;
+    // SAFETY: test-only creation of a local temporary LMDB environment.
+    let env = unsafe {
+        EnvOpenOptions::new()
+            .map_size(config.map_size)
+            .max_readers(config.max_readers)
+            .max_dbs(MAX_DBS)
+            .open(path)?
+    };
+    let mut wtxn = env.write_txn()?;
+    for name in names {
+        if *name == "sync_state" {
+            let _: heed::Database<Str, Bytes> = env.create_database(&mut wtxn, Some(name))?;
+        } else {
+            let _: heed::Database<Bytes, Bytes> = env.create_database(&mut wtxn, Some(name))?;
+        }
+    }
+    let vault_meta = env.create_database::<Bytes, Bytes>(&mut wtxn, Some("vault_meta"))?;
+    vault_meta.put(
+        &mut wtxn,
+        STORAGE_ABI_VERSION_KEY,
+        &STORAGE_ABI_VERSION.to_le_bytes(),
+    )?;
+    vault_meta.put(
+        &mut wtxn,
+        STORAGE_SCHEMA_VERSION_KEY,
+        &STORAGE_SCHEMA_VERSION.to_le_bytes(),
+    )?;
+    wtxn.commit()?;
+    Ok(())
+}
+
+fn create_raw_named_database(path: &Path, name: &str) -> Result<()> {
+    let config = test_config();
+    let _guard = lmdb_database_open_guard()?;
+    // SAFETY: test-only reopen of a local temporary LMDB environment after
+    // the normal Vault/Store handle has been dropped.
+    let env = unsafe {
+        EnvOpenOptions::new()
+            .map_size(config.map_size)
+            .max_readers(config.max_readers)
+            .max_dbs(MAX_DBS)
+            .open(path)?
+    };
+    let mut wtxn = env.write_txn()?;
+    let _: heed::Database<Bytes, Bytes> = env.create_database(&mut wtxn, Some(name))?;
     wtxn.commit()?;
     Ok(())
 }
@@ -2630,13 +2695,163 @@ fn creates_contract_manifest_databases() -> Result<()> {
     assert_eq!(DB_MANIFEST[24].n, 25);
     assert_eq!(DB_MANIFEST[24].name, "sync_queue");
 
-    let mut expected_materialized: Vec<String> = contract_names
+    let expected_materialized: Vec<String> = expected_manifest_names()
         .iter()
         .map(|name| (*name).to_owned())
         .collect();
-    expected_materialized.sort();
     assert_eq!(materialized_database_names(&vault)?, expected_materialized);
 
+    Ok(())
+}
+
+#[test]
+fn open_valid_existing_vault_passes_manifest_set_gate() -> Result<()> {
+    let temp_dir = tempfile::tempdir()?;
+    let path = temp_dir.path();
+    {
+        let vault = Vault::open(path, test_config())?;
+        assert_eq!(
+            materialized_database_names(&vault)?,
+            expected_manifest_names()
+                .iter()
+                .map(|name| (*name).to_owned())
+                .collect::<Vec<_>>()
+        );
+    }
+
+    let reopened = Vault::open(path, test_config())?;
+    drop(reopened);
+    Ok(())
+}
+
+#[test]
+fn open_rejects_rogue_manifest_database_name() -> Result<()> {
+    let temp_dir = tempfile::tempdir()?;
+    let path = temp_dir.path();
+    {
+        let vault = Vault::open(path, test_config())?;
+        drop(vault);
+    }
+    create_raw_named_database(path, "future_manifest_26")?;
+
+    let err = match Vault::open(path, test_config()) {
+        Ok(_) => panic!("expected Vault::open to fail closed on rogue named DB"),
+        Err(err) => err,
+    };
+    assert!(
+        matches!(
+            err,
+            Error::DbManifestMismatch {
+                ref missing,
+                ref unexpected
+            } if missing.is_empty() && unexpected == &vec!["future_manifest_26".to_owned()]
+        ),
+        "expected DB manifest mismatch for rogue name, got {err:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn open_rejects_missing_required_manifest_database_name() -> Result<()> {
+    let temp_dir = tempfile::tempdir()?;
+    create_raw_vault_missing_manifest_name(temp_dir.path(), "hnsw_meta")?;
+
+    let err = match Vault::open(temp_dir.path(), test_config()) {
+        Ok(_) => panic!("expected Vault::open to fail closed on missing manifest DB"),
+        Err(err) => err,
+    };
+    assert!(
+        matches!(
+            err,
+            Error::DbManifestMismatch {
+                ref missing,
+                ref unexpected
+            } if missing == &vec!["hnsw_meta".to_owned()] && unexpected.is_empty()
+        ),
+        "expected DB manifest mismatch for missing hnsw_meta, got {err:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn materialized_manifest_set_is_feature_independent_all_25() -> Result<()> {
+    let temp_dir = tempfile::tempdir()?;
+    let vault = Vault::open(temp_dir.path(), test_config())?;
+    let expected: Vec<String> = expected_manifest_names()
+        .iter()
+        .map(|name| (*name).to_owned())
+        .collect();
+
+    assert_eq!(materialized_database_names(&vault)?, expected);
+    Ok(())
+}
+
+#[test]
+fn open_rejects_missing_sync_state_manifest_database_name() -> Result<()> {
+    let temp_dir = tempfile::tempdir()?;
+    create_raw_vault_missing_manifest_name(temp_dir.path(), "sync_state")?;
+
+    let err = match Vault::open(temp_dir.path(), test_config()) {
+        Ok(_) => panic!("expected Vault::open to fail closed on missing sync_state DB"),
+        Err(err) => err,
+    };
+    assert!(
+        matches!(
+            err,
+            Error::DbManifestMismatch {
+                ref missing,
+                ref unexpected
+            } if missing == &vec!["sync_state".to_owned()] && unexpected.is_empty()
+        ),
+        "expected DB manifest mismatch for missing sync_state, got {err:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn open_rejects_missing_sync_queue_manifest_database_name() -> Result<()> {
+    let temp_dir = tempfile::tempdir()?;
+    create_raw_vault_missing_manifest_name(temp_dir.path(), "sync_queue")?;
+
+    let err = match Vault::open(temp_dir.path(), test_config()) {
+        Ok(_) => panic!("expected Vault::open to fail closed on missing sync_queue DB"),
+        Err(err) => err,
+    };
+    assert!(
+        matches!(
+            err,
+            Error::DbManifestMismatch {
+                ref missing,
+                ref unexpected
+            } if missing == &vec!["sync_queue".to_owned()] && unexpected.is_empty()
+        ),
+        "expected DB manifest mismatch for missing sync_queue, got {err:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn open_rejects_pre_fix_manifest_shape_at_storage_abi_gate() -> Result<()> {
+    let temp_dir = tempfile::tempdir()?;
+    let path = temp_dir.path();
+    let stale_abi = STORAGE_ABI_VERSION - 1;
+    create_raw_vault_missing_manifest_name(path, "sync_state")?;
+    set_raw_storage_abi_version(path, Some(stale_abi))?;
+
+    let err = match Vault::open(path, test_config()) {
+        Ok(_) => panic!("expected Vault::open to reject stale ABI before manifest validation"),
+        Err(err) => err,
+    };
+    assert!(
+        matches!(
+            err,
+            Error::StorageAbiVersionChanged {
+                stored: Some(stored),
+                current: STORAGE_ABI_VERSION
+            } if stored == stale_abi
+        ),
+        "expected storage ABI rejection for pre-fix manifest shape, got {err:?}"
+    );
     Ok(())
 }
 
