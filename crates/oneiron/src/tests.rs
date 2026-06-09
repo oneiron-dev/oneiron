@@ -152,20 +152,16 @@ fn materialized_database_names(vault: &Vault) -> Result<Vec<String>> {
     Ok(names)
 }
 
-fn gate_required_manifest_names() -> Vec<&'static str> {
-    let mut names: Vec<&'static str> = DB_MANIFEST[..23].iter().map(|entry| entry.name).collect();
-    #[cfg(feature = "sync")]
-    names.extend(DB_MANIFEST[23..].iter().map(|entry| entry.name));
+fn expected_manifest_names() -> Vec<&'static str> {
+    let mut names: Vec<&'static str> = DB_MANIFEST.iter().map(|entry| entry.name).collect();
     names.sort_unstable();
     names
 }
 
-fn opened_manifest_names_for_build() -> Vec<&'static str> {
-    let mut names = gate_required_manifest_names();
-    #[cfg(not(feature = "sync"))]
-    names.push("sync_queue");
-    names.sort_unstable();
-    names
+fn create_raw_vault_missing_manifest_name(path: &Path, missing: &str) -> Result<()> {
+    let mut names = expected_manifest_names();
+    names.retain(|name| *name != missing);
+    create_raw_vault_with_manifest_names(path, &names)
 }
 
 fn set_raw_storage_abi_version(path: &std::path::Path, value: Option<u16>) -> Result<()> {
@@ -2699,7 +2695,7 @@ fn creates_contract_manifest_databases() -> Result<()> {
     assert_eq!(DB_MANIFEST[24].n, 25);
     assert_eq!(DB_MANIFEST[24].name, "sync_queue");
 
-    let expected_materialized: Vec<String> = opened_manifest_names_for_build()
+    let expected_materialized: Vec<String> = expected_manifest_names()
         .iter()
         .map(|name| (*name).to_owned())
         .collect();
@@ -2716,7 +2712,7 @@ fn open_valid_existing_vault_passes_manifest_set_gate() -> Result<()> {
         let vault = Vault::open(path, test_config())?;
         assert_eq!(
             materialized_database_names(&vault)?,
-            opened_manifest_names_for_build()
+            expected_manifest_names()
                 .iter()
                 .map(|name| (*name).to_owned())
                 .collect::<Vec<_>>()
@@ -2758,9 +2754,7 @@ fn open_rejects_rogue_manifest_database_name() -> Result<()> {
 #[test]
 fn open_rejects_missing_required_manifest_database_name() -> Result<()> {
     let temp_dir = tempfile::tempdir()?;
-    let mut names = gate_required_manifest_names();
-    names.retain(|name| *name != "hnsw_meta");
-    create_raw_vault_with_manifest_names(temp_dir.path(), &names)?;
+    create_raw_vault_missing_manifest_name(temp_dir.path(), "hnsw_meta")?;
 
     let err = match Vault::open(temp_dir.path(), test_config()) {
         Ok(_) => panic!("expected Vault::open to fail closed on missing manifest DB"),
@@ -2779,28 +2773,26 @@ fn open_rejects_missing_required_manifest_database_name() -> Result<()> {
     Ok(())
 }
 
-#[cfg(not(feature = "sync"))]
 #[test]
-fn non_sync_open_allows_manifest_known_inert_sync_databases() -> Result<()> {
+fn materialized_manifest_set_is_feature_independent_all_25() -> Result<()> {
     let temp_dir = tempfile::tempdir()?;
-    let names: Vec<&str> = DB_MANIFEST.iter().map(|entry| entry.name).collect();
-    create_raw_vault_with_manifest_names(temp_dir.path(), &names)?;
-
     let vault = Vault::open(temp_dir.path(), test_config())?;
-    drop(vault);
+    let expected: Vec<String> = expected_manifest_names()
+        .iter()
+        .map(|name| (*name).to_owned())
+        .collect();
+
+    assert_eq!(materialized_database_names(&vault)?, expected);
     Ok(())
 }
 
-#[cfg(feature = "sync")]
 #[test]
-fn sync_open_requires_sync_manifest_database_names() -> Result<()> {
+fn open_rejects_missing_sync_state_manifest_database_name() -> Result<()> {
     let temp_dir = tempfile::tempdir()?;
-    let mut names = gate_required_manifest_names();
-    names.retain(|name| *name != "sync_state");
-    create_raw_vault_with_manifest_names(temp_dir.path(), &names)?;
+    create_raw_vault_missing_manifest_name(temp_dir.path(), "sync_state")?;
 
     let err = match Vault::open(temp_dir.path(), test_config()) {
-        Ok(_) => panic!("expected sync Vault::open to fail closed on missing sync_state DB"),
+        Ok(_) => panic!("expected Vault::open to fail closed on missing sync_state DB"),
         Err(err) => err,
     };
     assert!(
@@ -2812,6 +2804,53 @@ fn sync_open_requires_sync_manifest_database_names() -> Result<()> {
             } if missing == &vec!["sync_state".to_owned()] && unexpected.is_empty()
         ),
         "expected DB manifest mismatch for missing sync_state, got {err:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn open_rejects_missing_sync_queue_manifest_database_name() -> Result<()> {
+    let temp_dir = tempfile::tempdir()?;
+    create_raw_vault_missing_manifest_name(temp_dir.path(), "sync_queue")?;
+
+    let err = match Vault::open(temp_dir.path(), test_config()) {
+        Ok(_) => panic!("expected Vault::open to fail closed on missing sync_queue DB"),
+        Err(err) => err,
+    };
+    assert!(
+        matches!(
+            err,
+            Error::DbManifestMismatch {
+                ref missing,
+                ref unexpected
+            } if missing == &vec!["sync_queue".to_owned()] && unexpected.is_empty()
+        ),
+        "expected DB manifest mismatch for missing sync_queue, got {err:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn open_rejects_pre_fix_manifest_shape_at_storage_abi_gate() -> Result<()> {
+    let temp_dir = tempfile::tempdir()?;
+    let path = temp_dir.path();
+    let stale_abi = STORAGE_ABI_VERSION - 1;
+    create_raw_vault_missing_manifest_name(path, "sync_state")?;
+    set_raw_storage_abi_version(path, Some(stale_abi))?;
+
+    let err = match Vault::open(path, test_config()) {
+        Ok(_) => panic!("expected Vault::open to reject stale ABI before manifest validation"),
+        Err(err) => err,
+    };
+    assert!(
+        matches!(
+            err,
+            Error::StorageAbiVersionChanged {
+                stored: Some(stored),
+                current: STORAGE_ABI_VERSION
+            } if stored == stale_abi
+        ),
+        "expected storage ABI rejection for pre-fix manifest shape, got {err:?}"
     );
     Ok(())
 }

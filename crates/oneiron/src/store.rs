@@ -11,7 +11,7 @@ use crate::types::{EdgeKind, EntityId, VaultConfig};
 
 // Contract-pinned at 32 by ARCH-0019/ARCH-0031: 25 named DBs plus headroom.
 pub const MAX_DBS: u32 = 32;
-pub const STORAGE_ABI_VERSION: u16 = 1;
+pub const STORAGE_ABI_VERSION: u16 = 2;
 pub(crate) const STORAGE_ABI_VERSION_KEY: &[u8] = b"storage_abi_version";
 pub const STORAGE_SCHEMA_VERSION: u16 = 1;
 pub(crate) const STORAGE_SCHEMA_VERSION_KEY: &[u8] = b"schema_version";
@@ -332,7 +332,6 @@ impl Store {
         let temporal_long_intervals = create_manifest_db(&env, &mut wtxn, 20)?;
         let phonetic_index = create_manifest_db(&env, &mut wtxn, 21)?;
         let phonetic_forward = create_manifest_db(&env, &mut wtxn, 22)?;
-        #[cfg(feature = "sync")]
         let sync_state = create_manifest_str_db(&env, &mut wtxn, 23)?;
         let sync_queue = create_manifest_db(&env, &mut wtxn, 24)?;
         if is_new_vault {
@@ -340,6 +339,10 @@ impl Store {
         }
         wtxn.commit()?;
         drop(db_open_guard);
+        #[cfg(not(feature = "sync"))]
+        {
+            let _ = sync_state;
+        }
 
         let should_persist_hnsw_config =
             preflight_hnsw_config(&env, &hnsw_meta, &vectors, &hnsw_neighbors, config)?;
@@ -486,17 +489,18 @@ fn create_manifest_str_db(
 
 fn validate_db_manifest_set(env: &Env, wtxn: &RwTxn<'_>) -> Result<()> {
     let env_names = materialized_database_names(env, wtxn)?;
-    let allowed: HashSet<&str> = DB_MANIFEST.iter().map(|entry| entry.name).collect();
+    let expected: HashSet<&str> = DB_MANIFEST.iter().map(|entry| entry.name).collect();
     let present: HashSet<&str> = env_names.iter().map(String::as_str).collect();
 
-    let mut missing: Vec<String> = required_db_manifest_names()
-        .into_iter()
+    let mut missing: Vec<String> = DB_MANIFEST
+        .iter()
+        .map(|entry| entry.name)
         .filter(|name| !present.contains(name))
         .map(str::to_owned)
         .collect();
     let mut unexpected: Vec<String> = env_names
         .into_iter()
-        .filter(|name| !allowed.contains(name.as_str()))
+        .filter(|name| !expected.contains(name.as_str()))
         .collect();
 
     missing.sort();
@@ -509,13 +513,6 @@ fn validate_db_manifest_set(env: &Env, wtxn: &RwTxn<'_>) -> Result<()> {
             unexpected,
         })
     }
-}
-
-fn required_db_manifest_names() -> Vec<&'static str> {
-    let mut names: Vec<&'static str> = DB_MANIFEST[..23].iter().map(|entry| entry.name).collect();
-    #[cfg(feature = "sync")]
-    names.extend(DB_MANIFEST[23..].iter().map(|entry| entry.name));
-    names
 }
 
 fn materialized_database_names(env: &Env, wtxn: &RwTxn<'_>) -> Result<Vec<String>> {
