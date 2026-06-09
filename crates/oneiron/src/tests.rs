@@ -22,7 +22,7 @@ use crate::deletion::{
     encode_hard_erase_sweep_key,
 };
 use crate::store::{
-    DB_MANIFEST, GRAPH_VERSION_KEY, HNSW_CONFIG_KEY, MAX_DBS, STORAGE_ABI_VERSION,
+    DB_MANIFEST, GRAPH_VERSION_KEY, HNSW_CONFIG_KEY, MAX_DBS, MODEL_ID_KEY, STORAGE_ABI_VERSION,
     STORAGE_ABI_VERSION_KEY, STORAGE_SCHEMA_VERSION, STORAGE_SCHEMA_VERSION_KEY, Store,
     TEMPORAL_LONG_INTERVALS_SCHEMA_VERSION_KEY, VECTOR_VERSION_KEY, lmdb_database_open_guard,
 };
@@ -33,6 +33,7 @@ fn test_config() -> VaultConfig {
     let mut config = VaultConfig::device();
     config.map_size = 16 * 1024 * 1024;
     config.dimensions = 4;
+    config.embedding_model = Some("test-model-v1".to_owned());
     config.max_readers = 16;
     config.hnsw = HnswConfig::default();
     config.hnsw.m_max_0 = 64;
@@ -310,6 +311,16 @@ fn read_hnsw_meta_u64(vault: &Vault, key: &[u8]) -> Result<u64> {
     Ok(u64::from_le_bytes(
         raw.try_into().map_err(|_| Error::InvalidKey)?,
     ))
+}
+
+fn read_model_id(vault: &Vault) -> Result<Option<String>> {
+    let rtxn = vault.store.env.read_txn()?;
+    let Some(raw) = vault.store.hnsw_meta.get(&rtxn, MODEL_ID_KEY)? else {
+        return Ok(None);
+    };
+    String::from_utf8(raw.to_vec())
+        .map(Some)
+        .map_err(|_| Error::InvalidKey)
 }
 
 fn decode_forward_codes(raw: &[u8]) -> Result<Vec<String>> {
@@ -2328,11 +2339,109 @@ fn edges_out_returns_all_edges_for_same_source() -> Result<()> {
 }
 
 #[test]
-fn detects_embedding_model_mismatch_on_open() -> Result<()> {
+fn opens_empty_vault_without_embedding_model() -> Result<()> {
+    let temp_dir = tempfile::tempdir()?;
+    let mut cfg = test_config();
+    cfg.embedding_model = None;
+    let vault = Vault::open(temp_dir.path(), cfg)?;
+    assert_eq!(read_model_id(&vault)?, None);
+
+    Ok(())
+}
+
+#[test]
+fn stamps_embedding_model_on_empty_vault_open() -> Result<()> {
     let temp_dir = tempfile::tempdir()?;
     let mut cfg = test_config();
     cfg.embedding_model = Some("model-a".to_owned());
     let vault = Vault::open(temp_dir.path(), cfg)?;
+    assert_eq!(read_model_id(&vault)?, Some("model-a".to_owned()));
+
+    Ok(())
+}
+
+#[test]
+fn opens_populated_vault_with_matching_embedding_model() -> Result<()> {
+    let temp_dir = tempfile::tempdir()?;
+    let mut cfg = test_config();
+    cfg.embedding_model = Some("model-a".to_owned());
+    let vault = Vault::open(temp_dir.path(), cfg.clone())?;
+    let id = EntityId::now();
+    vault.put_entity(&id, 0, test_time_range(1, 1), 1, b"node")?;
+    vault.put_vector(&id, &[0.1, 0.2, 0.3, 0.4])?;
+    drop(vault);
+
+    let reopened = Vault::open(temp_dir.path(), cfg)?;
+    assert_eq!(reopened.get_vector(&id)?, Some(vec![0.1, 0.2, 0.3, 0.4]));
+
+    Ok(())
+}
+
+#[test]
+fn rejects_populated_vault_missing_embedding_model_identity() -> Result<()> {
+    let temp_dir = tempfile::tempdir()?;
+    let path = temp_dir.path();
+    let mut cfg = test_config();
+    cfg.embedding_model = Some("model-a".to_owned());
+    let vault = Vault::open(path, cfg.clone())?;
+    let id = EntityId::now();
+    vault.put_entity(&id, 0, test_time_range(1, 1), 1, b"node")?;
+    vault.put_vector(&id, &[0.1, 0.2, 0.3, 0.4])?;
+
+    {
+        let mut wtxn = vault.store.env.write_txn()?;
+        vault.store.hnsw_meta.delete(&mut wtxn, MODEL_ID_KEY)?;
+        wtxn.commit()?;
+    }
+    drop(vault);
+
+    let Err(err) = Vault::open(path, cfg) else {
+        panic!("expected missing embedding model identity rejection");
+    };
+    assert!(matches!(
+        err,
+        Error::InvalidConfig(ref message)
+            if message.contains("missing embedding model identity")
+    ));
+
+    Ok(())
+}
+
+#[test]
+fn rejects_populated_vault_open_without_requested_embedding_model() -> Result<()> {
+    let temp_dir = tempfile::tempdir()?;
+    let path = temp_dir.path();
+    let mut cfg = test_config();
+    cfg.embedding_model = Some("model-a".to_owned());
+    let vault = Vault::open(path, cfg)?;
+    let id = EntityId::now();
+    vault.put_entity(&id, 0, test_time_range(1, 1), 1, b"node")?;
+    vault.put_vector(&id, &[0.1, 0.2, 0.3, 0.4])?;
+    drop(vault);
+
+    let mut cfg = test_config();
+    cfg.embedding_model = None;
+    let Err(err) = Vault::open(path, cfg) else {
+        panic!("expected missing requested embedding model rejection");
+    };
+    assert!(matches!(
+        err,
+        Error::InvalidConfig(ref message)
+            if message.contains("embedding model is required to open")
+    ));
+
+    Ok(())
+}
+
+#[test]
+fn detects_embedding_model_mismatch_on_populated_open() -> Result<()> {
+    let temp_dir = tempfile::tempdir()?;
+    let mut cfg = test_config();
+    cfg.embedding_model = Some("model-a".to_owned());
+    let vault = Vault::open(temp_dir.path(), cfg)?;
+    let id = EntityId::now();
+    vault.put_entity(&id, 0, test_time_range(1, 1), 1, b"node")?;
+    vault.put_vector(&id, &[0.1, 0.2, 0.3, 0.4])?;
     drop(vault);
 
     let mut cfg = test_config();
@@ -2347,6 +2456,28 @@ fn detects_embedding_model_mismatch_on_open() -> Result<()> {
             ref requested
         } if stored == "model-a" && requested == "model-b"
     ));
+
+    Ok(())
+}
+
+#[test]
+fn rejects_vector_write_without_embedding_model_identity() -> Result<()> {
+    let temp_dir = tempfile::tempdir()?;
+    let mut cfg = test_config();
+    cfg.embedding_model = None;
+    let vault = Vault::open(temp_dir.path(), cfg)?;
+    let id = EntityId::now();
+    vault.put_entity(&id, 0, test_time_range(1, 1), 1, b"node")?;
+
+    let Err(err) = vault.put_vector(&id, &[0.1, 0.2, 0.3, 0.4]) else {
+        panic!("expected missing embedding model rejection");
+    };
+    assert!(matches!(
+        err,
+        Error::InvalidConfig(ref message)
+            if message.contains("embedding model is required before writing vectors")
+    ));
+    assert_eq!(vault.get_vector(&id)?, None);
 
     Ok(())
 }

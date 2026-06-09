@@ -816,6 +816,7 @@ fn apply_vector(
     id: EntityId,
     vector: &[f32],
 ) -> Result<()> {
+    crate::store::ensure_model_id_for_vector_write(store, wtxn, config.embedding_model.as_deref())?;
     if vector.len() != config.dimensions {
         return Err(Error::DimensionMismatch {
             expected: config.dimensions,

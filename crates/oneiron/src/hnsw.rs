@@ -857,6 +857,7 @@ mod tests {
     fn test_config() -> VaultConfig {
         let mut config = VaultConfig::device();
         config.dimensions = 4;
+        config.embedding_model = Some("test-model-v1".to_owned());
         config.map_size = 64 * 1024 * 1024;
         config.hnsw.m_max_0 = 1;
         config.hnsw.ef_construction = 8;

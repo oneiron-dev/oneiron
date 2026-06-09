@@ -23,6 +23,12 @@ const TEMPORAL_LONG_INTERVALS_SCHEMA_VERSION: u8 = 2;
 pub(crate) const VECTOR_VERSION_KEY: &[u8] = b"vector_version";
 const HNSW_COMPATIBILITY_VERSION: u8 = 1;
 const HNSW_COMPATIBILITY_LEN: usize = 25;
+const ERR_POPULATED_MISSING_MODEL_ID: &str =
+    "populated vault is missing embedding model identity; rebuild or migrate it before reopening";
+const ERR_POPULATED_REQUIRES_EMBEDDING_MODEL: &str =
+    "embedding model is required to open a populated vector vault";
+const ERR_VECTOR_WRITE_REQUIRES_EMBEDDING_MODEL: &str =
+    "embedding model is required before writing vectors";
 static LMDB_DATABASE_OPEN_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 static OPEN_STORE_PATHS: OnceLock<Mutex<HashSet<PathBuf>>> = OnceLock::new();
 
@@ -332,8 +338,13 @@ impl Store {
 
         let should_persist_hnsw_config =
             preflight_hnsw_config(&env, &hnsw_meta, &vectors, &hnsw_neighbors, config)?;
-        let should_persist_model_id =
-            preflight_embedding_model(&env, &hnsw_meta, config.embedding_model.as_deref())?;
+        let should_persist_model_id = preflight_embedding_model(
+            &env,
+            &hnsw_meta,
+            &vectors,
+            &hnsw_neighbors,
+            config.embedding_model.as_deref(),
+        )?;
         migrate_temporal_long_intervals_if_needed(&env, &hnsw_meta, &temporal_long_intervals)?;
 
         if should_persist_hnsw_config {
@@ -345,7 +356,7 @@ impl Store {
                 .embedding_model
                 .as_deref()
                 .ok_or_else(|| Error::InvalidConfig("missing embedding model".to_owned()))?;
-            persist_model_id_if_missing(&env, &hnsw_meta, requested)?;
+            persist_model_id_if_missing(&env, &hnsw_meta, &vectors, &hnsw_neighbors, requested)?;
         }
 
         Ok(Self {
@@ -544,25 +555,42 @@ fn read_vault_meta_u16(
 fn preflight_embedding_model(
     env: &Env,
     hnsw_meta: &Database<Bytes, Bytes>,
+    vectors: &Database<Bytes, Bytes>,
+    hnsw_neighbors: &Database<Bytes, Bytes>,
     requested: Option<&str>,
 ) -> Result<bool> {
-    let Some(requested) = requested else {
-        return Ok(false);
-    };
-
     let rtxn = env.read_txn()?;
     match hnsw_meta.get(&rtxn, MODEL_ID_KEY)? {
         Some(raw) => {
             let stored = parse_utf8_bytes(raw)?;
-            if stored != requested {
-                return Err(Error::EmbeddingModelChanged {
-                    stored,
-                    requested: requested.to_owned(),
-                });
+            match requested {
+                Some(requested) => {
+                    if stored != requested {
+                        return Err(Error::EmbeddingModelChanged {
+                            stored,
+                            requested: requested.to_owned(),
+                        });
+                    }
+                    Ok(false)
+                }
+                None => {
+                    if has_persisted_vector_or_hnsw_data(vectors, hnsw_neighbors, &rtxn)? {
+                        return Err(Error::InvalidConfig(
+                            ERR_POPULATED_REQUIRES_EMBEDDING_MODEL.to_owned(),
+                        ));
+                    }
+                    Ok(false)
+                }
             }
-            Ok(false)
         }
-        None => Ok(true),
+        None => {
+            if has_persisted_vector_or_hnsw_data(vectors, hnsw_neighbors, &rtxn)? {
+                return Err(Error::InvalidConfig(
+                    ERR_POPULATED_MISSING_MODEL_ID.to_owned(),
+                ));
+            }
+            Ok(requested.is_some())
+        }
     }
 }
 
@@ -631,6 +659,8 @@ fn persist_hnsw_config_if_missing(
 fn persist_model_id_if_missing(
     env: &Env,
     hnsw_meta: &Database<Bytes, Bytes>,
+    vectors: &Database<Bytes, Bytes>,
+    hnsw_neighbors: &Database<Bytes, Bytes>,
     requested: &str,
 ) -> Result<()> {
     let mut wtxn = env.write_txn()?;
@@ -645,8 +675,45 @@ fn persist_model_id_if_missing(
             }
         }
         None => {
+            if has_persisted_vector_or_hnsw_data(vectors, hnsw_neighbors, &wtxn)? {
+                return Err(Error::InvalidConfig(
+                    ERR_POPULATED_MISSING_MODEL_ID.to_owned(),
+                ));
+            }
             hnsw_meta.put(&mut wtxn, MODEL_ID_KEY, requested.as_bytes())?;
             wtxn.commit()?;
+        }
+    }
+    Ok(())
+}
+
+pub(crate) fn ensure_model_id_for_vector_write(
+    store: &Store,
+    wtxn: &mut RwTxn<'_>,
+    requested: Option<&str>,
+) -> Result<()> {
+    let requested = requested.ok_or_else(|| {
+        Error::InvalidConfig(ERR_VECTOR_WRITE_REQUIRES_EMBEDDING_MODEL.to_owned())
+    })?;
+    match store.hnsw_meta.get(&*wtxn, MODEL_ID_KEY)? {
+        Some(raw) => {
+            let stored = parse_utf8_bytes(raw)?;
+            if stored != requested {
+                return Err(Error::EmbeddingModelChanged {
+                    stored,
+                    requested: requested.to_owned(),
+                });
+            }
+        }
+        None => {
+            if has_persisted_vector_or_hnsw_data(&store.vectors, &store.hnsw_neighbors, &*wtxn)? {
+                return Err(Error::InvalidConfig(
+                    ERR_POPULATED_MISSING_MODEL_ID.to_owned(),
+                ));
+            }
+            store
+                .hnsw_meta
+                .put(wtxn, MODEL_ID_KEY, requested.as_bytes())?;
         }
     }
     Ok(())
