@@ -534,8 +534,8 @@ mod tests {
     ///   the rebuild's `u64` value must match the pre-rebuild snapshot.
     /// - `long_interval_schema_version`: raw bytes at
     ///   `TEMPORAL_LONG_INTERVALS_SCHEMA_VERSION_KEY` must match.
-    /// - `model_id_when_config_is_none`: closing the vault and reopening with
-    ///   `embedding_model = None` must leave `MODEL_ID_KEY` untouched
+    /// - `model_id_when_config_matches`: closing the vault and reopening with
+    ///   the same `embedding_model` must leave `MODEL_ID_KEY` untouched
     ///   (still `"test-model-v1"`).
     /// - `unrelated_hnsw_meta`: a custom key `b"custom-meta" -> b"keep-me"`
     ///   must not be scrubbed.
@@ -596,7 +596,7 @@ mod tests {
             );
         }
 
-        // model_id_when_config_is_none
+        // model_id_when_config_matches
         {
             let temp_dir = tempfile::tempdir()?;
             let vault = Vault::open(temp_dir.path(), test_config())?;
@@ -606,9 +606,7 @@ mod tests {
             vault.put_vector(&id, &[1.0, 0.0, 0.0, 0.0])?;
             drop(vault);
 
-            let mut config = test_config();
-            config.embedding_model = None;
-            let vault = Vault::open(temp_dir.path(), config)?;
+            let vault = Vault::open(temp_dir.path(), test_config())?;
 
             vault.maintain().rebuild_hnsw().run()?;
 
@@ -617,7 +615,7 @@ mod tests {
             assert_eq!(
                 stored,
                 Some(b"test-model-v1".as_slice()),
-                "case model_id_when_config_is_none: MODEL_ID_KEY changed"
+                "case model_id_when_config_matches: MODEL_ID_KEY changed"
             );
         }
 

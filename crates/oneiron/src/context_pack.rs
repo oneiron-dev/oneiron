@@ -726,7 +726,7 @@ mod tests {
         VaultConfig {
             map_size: 16 * 1024 * 1024,
             dimensions: 4,
-            embedding_model: None,
+            embedding_model: Some("test-model-v1".to_owned()),
             max_readers: 16,
             hnsw: HnswConfig {
                 m_max_0: 64,
