@@ -151,51 +151,57 @@ pub fn short_id_prefix(entity_type: u8) -> crate::error::Result<&'static str> {
 }
 
 /// Relationship kind used by graph edges.
+///
+/// Storage ABI: these discriminants are pinned to the ARCH-0034 `edgeKinds`
+/// registry. They are encoded into `edges_out`/`edges_in` keys and EdgeRef/CRDT
+/// edge-key refs; vaults written with the pre-M0-1 order need the M0-4
+/// schema-version migration (ONE-1081) before those bytes are read under this
+/// ordering.
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum EdgeKind {
     /// Entity belongs to another entity.
-    BelongsTo = 0,
+    BelongsTo = 4,
     /// Entity participates in another entity.
-    ParticipatesIn = 1,
+    ParticipatesIn = 13,
     /// Entity is attached to another entity.
-    Attached = 2,
+    Attached = 14,
     /// Entity was authored by another entity.
-    AuthoredBy = 3,
+    AuthoredBy = 0,
     /// Entity mentions another entity.
-    Mentions = 4,
+    Mentions = 9,
     /// Entity is about another entity.
-    About = 5,
+    About = 10,
     /// Entity supports another entity.
-    Supports = 6,
+    Supports = 11,
     /// Entity opposes another entity.
-    Opposes = 7,
+    Opposes = 12,
     /// Entity is a claim of another entity.
-    ClaimOf = 8,
+    ClaimOf = 5,
     /// Entity is scoped to another entity.
-    ScopedTo = 9,
+    ScopedTo = 1,
     /// Entity supersedes another entity.
-    Supersedes = 10,
+    Supersedes = 3,
     /// Entity is derived from another entity.
-    DerivedFrom = 11,
+    DerivedFrom = 8,
     /// Entity is part of another entity.
-    PartOf = 12,
+    PartOf = 2,
     /// Person is employed by an organization.
-    EmployedBy = 13,
+    EmployedBy = 15,
     /// Person has a behavioral facet.
-    HasFacet = 14,
+    HasFacet = 16,
     /// Person exists in a world context.
-    InWorld = 15,
+    InWorld = 18,
     /// Claim is scoped to a facet.
-    FacetOf = 16,
+    FacetOf = 17,
     /// Relationship is set in a world context.
-    SetIn = 17,
+    SetIn = 19,
     /// Task is a child of another task (tree hierarchy).
     /// No PPR hop limit — unlike PartOf which caps at 2.
-    ChildOf = 18,
+    ChildOf = 6,
     /// Task is assigned to a machine for execution.
-    AssignedTo = 19,
+    AssignedTo = 7,
 }
 
 impl EdgeKind {
@@ -228,26 +234,26 @@ impl EdgeKind {
     /// Converts a raw discriminant into an edge kind.
     pub fn try_from_u8(value: u8) -> Option<Self> {
         match value {
-            0 => Some(Self::BelongsTo),
-            1 => Some(Self::ParticipatesIn),
-            2 => Some(Self::Attached),
-            3 => Some(Self::AuthoredBy),
-            4 => Some(Self::Mentions),
-            5 => Some(Self::About),
-            6 => Some(Self::Supports),
-            7 => Some(Self::Opposes),
-            8 => Some(Self::ClaimOf),
-            9 => Some(Self::ScopedTo),
-            10 => Some(Self::Supersedes),
-            11 => Some(Self::DerivedFrom),
-            12 => Some(Self::PartOf),
-            13 => Some(Self::EmployedBy),
-            14 => Some(Self::HasFacet),
-            15 => Some(Self::InWorld),
-            16 => Some(Self::FacetOf),
-            17 => Some(Self::SetIn),
-            18 => Some(Self::ChildOf),
-            19 => Some(Self::AssignedTo),
+            0 => Some(Self::AuthoredBy),
+            1 => Some(Self::ScopedTo),
+            2 => Some(Self::PartOf),
+            3 => Some(Self::Supersedes),
+            4 => Some(Self::BelongsTo),
+            5 => Some(Self::ClaimOf),
+            6 => Some(Self::ChildOf),
+            7 => Some(Self::AssignedTo),
+            8 => Some(Self::DerivedFrom),
+            9 => Some(Self::Mentions),
+            10 => Some(Self::About),
+            11 => Some(Self::Supports),
+            12 => Some(Self::Opposes),
+            13 => Some(Self::ParticipatesIn),
+            14 => Some(Self::Attached),
+            15 => Some(Self::EmployedBy),
+            16 => Some(Self::HasFacet),
+            17 => Some(Self::FacetOf),
+            18 => Some(Self::InWorld),
+            19 => Some(Self::SetIn),
             _ => None,
         }
     }

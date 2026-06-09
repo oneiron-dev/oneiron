@@ -2020,18 +2020,39 @@ fn entity_id_now_is_monotonic_lexicographically() {
     );
 }
 
+const PINNED_EDGE_KIND_DISCRIMINANTS: [(u8, EdgeKind); 20] = [
+    (0, EdgeKind::AuthoredBy),
+    (1, EdgeKind::ScopedTo),
+    (2, EdgeKind::PartOf),
+    (3, EdgeKind::Supersedes),
+    (4, EdgeKind::BelongsTo),
+    (5, EdgeKind::ClaimOf),
+    (6, EdgeKind::ChildOf),
+    (7, EdgeKind::AssignedTo),
+    (8, EdgeKind::DerivedFrom),
+    (9, EdgeKind::Mentions),
+    (10, EdgeKind::About),
+    (11, EdgeKind::Supports),
+    (12, EdgeKind::Opposes),
+    (13, EdgeKind::ParticipatesIn),
+    (14, EdgeKind::Attached),
+    (15, EdgeKind::EmployedBy),
+    (16, EdgeKind::HasFacet),
+    (17, EdgeKind::FacetOf),
+    (18, EdgeKind::InWorld),
+    (19, EdgeKind::SetIn),
+];
+
 #[test]
-fn new_edge_kinds_round_trip_through_u8() {
-    let new_kinds = [
-        (13_u8, EdgeKind::EmployedBy),
-        (14, EdgeKind::HasFacet),
-        (15, EdgeKind::InWorld),
-        (16, EdgeKind::FacetOf),
-        (17, EdgeKind::SetIn),
-        (18, EdgeKind::ChildOf),
-        (19, EdgeKind::AssignedTo),
-    ];
-    for (disc, expected) in new_kinds {
+fn edge_kind_discriminants_match_arch_0034_contract() {
+    for (disc, kind) in PINNED_EDGE_KIND_DISCRIMINANTS {
+        assert_eq!(kind as u8, disc, "{kind:?} discriminant drifted");
+    }
+}
+
+#[test]
+fn edge_kind_u8_round_trip_accepts_pinned_range() {
+    for (disc, expected) in PINNED_EDGE_KIND_DISCRIMINANTS {
         let kind = EdgeKind::try_from_u8(disc).expect("valid discriminant");
         assert_eq!(kind, expected);
         assert_eq!(kind as u8, disc);
