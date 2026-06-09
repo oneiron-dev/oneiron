@@ -6,6 +6,7 @@ use std::path::Path;
 
 use heed::Database;
 use heed::types::Bytes;
+use serde::Serialize;
 use uuid::Uuid;
 
 use crate::analyzer::{AnalyzerChannel, AnalyzerManifest, AnalyzerMode, MultilingualAnalyzer};
@@ -22,12 +23,13 @@ use crate::limits::{
     ERR_CHILD_OF_CYCLE_CHECK, MAX_ANCESTOR_DEPTH, MAX_CHILD_OF_CYCLE_TRAVERSAL_STEPS,
 };
 use crate::store::{
-    Store, TEXT_ANALYZER_MANIFEST_HASH_KEY, TEXT_ANALYZER_MANIFEST_KEY,
+    DB_MANIFEST, HnswCompatibilityState, MODEL_ID_KEY, STORAGE_ABI_VERSION_KEY,
+    STORAGE_SCHEMA_VERSION_KEY, Store, TEXT_ANALYZER_MANIFEST_HASH_KEY, TEXT_ANALYZER_MANIFEST_KEY,
     TEXT_BM25_FIELD_SCHEMA_HASH_KEY, TEXT_INDEX_SCHEMA_VERSION, TEXT_INDEX_SCHEMA_VERSION_KEY,
 };
 use crate::types::{
     EDGE_KEY_LEN, ENTITY_ID_LEN, ENTITY_TYPE_REDACTION_AUDIT, EdgeInfo, EdgeKind, EntityId,
-    ScoredEntity, TimeRange, Vad, VaultConfig, decode_edge_value_for_kind,
+    ScoredEntity, TimeRange, Vad, VaultConfig, bytes_to_hex_lower, decode_edge_value_for_kind,
 };
 use crate::{
     BatchBuilder, ContextPackBuilder, MaintenanceBuilder, PipelineBuilder, TxnBatchBuilder, bm25,
@@ -188,6 +190,49 @@ impl Vault {
             total_docs,
             schema_version,
             analyzer_manifest: self.analyzer.manifest(),
+        })
+    }
+
+    /// Read-only diagnostic snapshot of the persisted compatibility metadata
+    /// that the open-time gates consume.
+    ///
+    /// This method describes the stored state without repairing, rebuilding,
+    /// seeding, or validating it. Missing or legacy compatibility rows are
+    /// reported as `None` plus an explicit state marker instead of being
+    /// treated as gate failures.
+    pub fn doctor(&self) -> Result<VaultDoctorReport> {
+        let rtxn = self.store.env.read_txn()?;
+        let storage_abi_version = doctor_optional_u16(crate::store::read_vault_meta_u16(
+            &self.store.vault_meta,
+            &rtxn,
+            STORAGE_ABI_VERSION_KEY,
+            "storage ABI version",
+        ))?;
+        let storage_schema_version = doctor_optional_u16(crate::store::read_vault_meta_u16(
+            &self.store.vault_meta,
+            &rtxn,
+            STORAGE_SCHEMA_VERSION_KEY,
+            "storage schema version",
+        ))?;
+        let embedding_model_id = doctor_embedding_model_id(&self.store, &rtxn)?;
+        let hnsw = doctor_hnsw(&self.store, &rtxn)?;
+        let analyzer_manifest_hash =
+            doctor_hash_hex(&self.store, &rtxn, TEXT_ANALYZER_MANIFEST_HASH_KEY)?;
+        let bm25_field_schema_hash =
+            doctor_hash_hex(&self.store, &rtxn, TEXT_BM25_FIELD_SCHEMA_HASH_KEY)?;
+        let text_index_schema_version =
+            doctor_optional_u16(read_text_schema_version(&self.store, &rtxn))?;
+        let db_manifest = doctor_db_manifest(&self.store, &rtxn)?;
+
+        Ok(VaultDoctorReport {
+            storage_abi_version,
+            storage_schema_version,
+            embedding_model_id,
+            hnsw,
+            analyzer_manifest_hash,
+            bm25_field_schema_hash,
+            text_index_schema_version,
+            db_manifest,
         })
     }
 
@@ -1207,6 +1252,74 @@ pub struct TextIndexStatus {
     pub analyzer_manifest: AnalyzerManifest,
 }
 
+/// Read-only report of vault open-integrity metadata returned by
+/// [`Vault::doctor`].
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct VaultDoctorReport {
+    /// Value read from `vault_meta["storage_abi_version"]`.
+    pub storage_abi_version: Option<u16>,
+    /// Value read from `vault_meta["schema_version"]`.
+    pub storage_schema_version: Option<u16>,
+    /// Value read from `hnsw_meta["model_id"]`.
+    pub embedding_model_id: Option<String>,
+    /// Vector/HNSW compatibility state read from `hnsw_meta["hnsw_config"]`.
+    pub hnsw: VaultDoctorHnswReport,
+    /// Lowercase hex of `vault_meta["text_analyzer_manifest_hash"]`.
+    pub analyzer_manifest_hash: Option<String>,
+    /// Lowercase hex of `vault_meta["text_bm25_field_schema_hash"]`.
+    pub bm25_field_schema_hash: Option<String>,
+    /// Value read from `vault_meta["text_index_schema_version"]`.
+    pub text_index_schema_version: Option<u16>,
+    /// ARCH-0019 named database manifest presence.
+    pub db_manifest: VaultDoctorDbManifestReport,
+}
+
+/// State of the persisted HNSW compatibility row.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum VaultDoctorHnswRecordState {
+    /// No `hnsw_config` row is present.
+    Missing,
+    /// Legacy row shape without metric/structure tags.
+    Legacy,
+    /// Current row shape with all compatibility fields.
+    Current,
+    /// Row exists but does not match any known compatibility encoding.
+    Invalid,
+}
+
+/// Vector/HNSW compatibility values persisted in `hnsw_meta`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct VaultDoctorHnswReport {
+    /// Encoding state of `hnsw_meta["hnsw_config"]`.
+    pub record_state: VaultDoctorHnswRecordState,
+    /// Persisted vector dimensions.
+    pub vector_dimensions: Option<usize>,
+    /// Persisted layer-0 HNSW neighbor cap.
+    pub m_max_0: Option<usize>,
+    /// Persisted HNSW construction beam width.
+    pub ef_construction: Option<usize>,
+    /// Persisted vector distance metric.
+    pub distance_metric: Option<String>,
+    /// Persisted vector index structure.
+    pub index_structure: Option<String>,
+}
+
+/// Presence report for the ARCH-0019 named LMDB database manifest.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct VaultDoctorDbManifestReport {
+    /// Number of databases required by `DB_MANIFEST`.
+    pub expected_count: usize,
+    /// Number of required databases found in the LMDB unnamed database.
+    pub present_count: usize,
+    /// Required database names found in the LMDB unnamed database.
+    pub present_names: Vec<String>,
+    /// Required database names missing from the LMDB unnamed database.
+    pub missing_names: Vec<String>,
+    /// Extra named databases not listed in `DB_MANIFEST`.
+    pub unexpected_names: Vec<String>,
+}
+
 /// Canonical hash over BM25F field-schema semantics that make existing
 /// posting, forward, and field-length rows compatible with this build.
 /// Scoring-only knobs such as weights and `b` are deliberately excluded.
@@ -1280,6 +1393,110 @@ fn read_hash_32(store: &Store, rtxn: &heed::RoTxn<'_>, key: &[u8]) -> Result<Opt
         .try_into()
         .map_err(|_| Error::CorruptedIndex("text index hash"))?;
     Ok(Some(arr))
+}
+
+fn doctor_optional_u16(value: Result<Option<u16>>) -> Result<Option<u16>> {
+    match value {
+        Ok(value) => Ok(value),
+        Err(Error::CorruptedIndex(_) | Error::InvalidKey) => Ok(None),
+        Err(err) => Err(err),
+    }
+}
+
+fn doctor_hash_hex(store: &Store, rtxn: &heed::RoTxn<'_>, key: &[u8]) -> Result<Option<String>> {
+    match read_hash_32(store, rtxn, key) {
+        Ok(Some(hash)) => Ok(Some(bytes_to_hex_lower(&hash))),
+        Ok(None) => Ok(None),
+        Err(Error::CorruptedIndex(_) | Error::InvalidKey) => Ok(None),
+        Err(err) => Err(err),
+    }
+}
+
+fn doctor_embedding_model_id(store: &Store, rtxn: &heed::RoTxn<'_>) -> Result<Option<String>> {
+    let Some(raw) = store.hnsw_meta.get(rtxn, MODEL_ID_KEY)? else {
+        return Ok(None);
+    };
+    match crate::store::parse_utf8_bytes(raw) {
+        Ok(model_id) => Ok(Some(model_id)),
+        Err(Error::InvalidKey | Error::CorruptedIndex(_)) => Ok(None),
+        Err(err) => Err(err),
+    }
+}
+
+fn doctor_hnsw(store: &Store, rtxn: &heed::RoTxn<'_>) -> Result<VaultDoctorHnswReport> {
+    match crate::store::read_hnsw_compatibility(&store.hnsw_meta, rtxn) {
+        Ok(HnswCompatibilityState::Missing) => Ok(VaultDoctorHnswReport {
+            record_state: VaultDoctorHnswRecordState::Missing,
+            vector_dimensions: None,
+            m_max_0: None,
+            ef_construction: None,
+            distance_metric: None,
+            index_structure: None,
+        }),
+        Ok(HnswCompatibilityState::Legacy(config)) => Ok(VaultDoctorHnswReport {
+            record_state: VaultDoctorHnswRecordState::Legacy,
+            vector_dimensions: Some(config.dimensions),
+            m_max_0: Some(config.m_max_0),
+            ef_construction: Some(config.ef_construction),
+            distance_metric: None,
+            index_structure: None,
+        }),
+        Ok(HnswCompatibilityState::Current(config)) => Ok(VaultDoctorHnswReport {
+            record_state: VaultDoctorHnswRecordState::Current,
+            vector_dimensions: Some(config.dimensions),
+            m_max_0: Some(config.m_max_0),
+            ef_construction: Some(config.ef_construction),
+            distance_metric: Some(crate::store::format_hnsw_distance_metric(
+                config.distance_metric,
+            )),
+            index_structure: Some(crate::store::format_hnsw_index_structure(
+                config.index_structure,
+            )),
+        }),
+        Err(Error::InvalidKey | Error::CorruptedIndex(_)) => Ok(VaultDoctorHnswReport {
+            record_state: VaultDoctorHnswRecordState::Invalid,
+            vector_dimensions: None,
+            m_max_0: None,
+            ef_construction: None,
+            distance_metric: None,
+            index_structure: None,
+        }),
+        Err(err) => Err(err),
+    }
+}
+
+fn doctor_db_manifest(
+    store: &Store,
+    rtxn: &heed::RoTxn<'_>,
+) -> Result<VaultDoctorDbManifestReport> {
+    let env_names = crate::store::materialized_database_names(&store.env, rtxn)?;
+    let mut present_names = Vec::new();
+    let mut missing_names = Vec::new();
+
+    for entry in DB_MANIFEST {
+        if env_names.iter().any(|name| name == entry.name) {
+            present_names.push(entry.name.to_owned());
+        } else {
+            missing_names.push(entry.name.to_owned());
+        }
+    }
+
+    let mut unexpected_names: Vec<String> = env_names
+        .into_iter()
+        .filter(|name| !DB_MANIFEST.iter().any(|entry| entry.name == name))
+        .collect();
+
+    present_names.sort();
+    missing_names.sort();
+    unexpected_names.sort();
+
+    Ok(VaultDoctorDbManifestReport {
+        expected_count: DB_MANIFEST.len(),
+        present_count: present_names.len(),
+        present_names,
+        missing_names,
+        unexpected_names,
+    })
 }
 
 /// Returns `true` when none of the text-index DBs hold residual rows.
