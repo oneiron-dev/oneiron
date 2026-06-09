@@ -1208,7 +1208,11 @@ fn delete_related_edges(
     Ok(neighbors)
 }
 
-fn delete_from_phonetic_postings(store: &Store, wtxn: &mut RwTxn<'_>, id: &EntityId) -> Result<()> {
+pub(crate) fn delete_from_phonetic_postings(
+    store: &Store,
+    wtxn: &mut RwTxn<'_>,
+    id: &EntityId,
+) -> Result<()> {
     if let Some(raw) = store.phonetic_forward.get(wtxn, id.as_bytes())? {
         match decode_phonetic_forward_codes(raw) {
             Ok(codes) => match delete_from_known_phonetic_codes(store, wtxn, id, &codes) {

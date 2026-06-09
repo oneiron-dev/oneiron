@@ -42,3 +42,18 @@ from the current build before any edge or entity bytes are decoded. Pre-M0
 vaults are rejected under v1 behavior. A `schema_version` marker and migration
 plan seam were added for future work, but this release intentionally ships no
 migration runner.
+
+## M0-6 / ONE-1083: ARCH-0038 deletion/redaction rows
+
+`REDACTION_AUDIT` receipts are now stored as normal entity-envelope records in
+`entities` with type byte `120` and MessagePack bodies containing only opaque
+IDs, reason values, timestamps, and verification placeholders. They deliberately
+have no short ID and must not contain erased names, content, predicates, or
+payload bytes.
+
+Hard-delete reasons also enqueue bounded historical-carrier sweep jobs in the
+existing `sync_queue` DB using the reserved `h:{seq:8BE}` key family. The row
+value is scope plus retry state (`attempt_count`, `next_attempt_at`,
+`last_error_code`, `queued_at`, `deadline_at`), with `deadline_at` capped to
+30 days from the delete request. This adds no new named LMDB database and is
+covered by the existing M0-4 storage ABI gate.

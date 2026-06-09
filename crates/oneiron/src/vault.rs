@@ -6,9 +6,17 @@ use std::path::Path;
 
 use heed::Database;
 use heed::types::Bytes;
+use uuid::Uuid;
 
 use crate::analyzer::{AnalyzerChannel, AnalyzerManifest, AnalyzerMode, MultilingualAnalyzer};
-use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader, deindex_entity};
+use crate::batch::{
+    ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader, deindex_entity, delete_from_phonetic_postings,
+};
+use crate::deletion::{
+    DeleteEntityOutcome, DeleteReason, HARD_ERASE_SWEEP_PREFIX, LAST_HARD_ERASE_SWEEP_SEQ_KEY,
+    RedactionReceiptInput, RedactionScope, decode_hard_erase_sweep_seq,
+    encode_hard_erase_sweep_job, encode_hard_erase_sweep_key, encode_redaction_audit_receipt,
+};
 use crate::error::{Error, Result};
 use crate::limits::{
     ERR_CHILD_OF_CYCLE_CHECK, MAX_ANCESTOR_DEPTH, MAX_CHILD_OF_CYCLE_TRAVERSAL_STEPS,
@@ -18,12 +26,12 @@ use crate::store::{
     TEXT_BM25_FIELD_SCHEMA_HASH_KEY, TEXT_INDEX_SCHEMA_VERSION, TEXT_INDEX_SCHEMA_VERSION_KEY,
 };
 use crate::types::{
-    EDGE_KEY_LEN, ENTITY_ID_LEN, EdgeInfo, EdgeKind, EntityId, ScoredEntity, TimeRange, Vad,
-    VaultConfig, decode_edge_value_for_kind,
+    EDGE_KEY_LEN, ENTITY_ID_LEN, ENTITY_TYPE_REDACTION_AUDIT, EdgeInfo, EdgeKind, EntityId,
+    ScoredEntity, TimeRange, Vad, VaultConfig, decode_edge_value_for_kind,
 };
 use crate::{
     BatchBuilder, ContextPackBuilder, MaintenanceBuilder, PipelineBuilder, TxnBatchBuilder, bm25,
-    hnsw, le_bytes_to_f32_vec, ppr,
+    hnsw, le_bytes_to_f32_vec, ppr, unix_seconds_now,
 };
 
 const MIN_MAP_SIZE_BYTES: usize = 1 << 20;
@@ -212,20 +220,375 @@ impl Vault {
         Ok(Some(bytes[ENTITY_METADATA_HEADER_LEN..].to_vec()))
     }
 
-    /// Deletes an entity blob by ID.
+    /// Deletes an entity blob by ID using the destructive user-hard-delete
+    /// contract.
     pub fn delete_entity(&self, id: &EntityId) -> Result<bool> {
-        let mut wtxn = self.store.env.write_txn()?;
-        let (existed, had_vector, had_graph_mutation, neighbors) =
-            deindex_entity(&self.store, &mut wtxn, id)?;
-        ppr::invalidate_ppr_for_delete(&self.store, &mut wtxn, id, &neighbors)?;
-        if had_graph_mutation {
-            ppr::increment_graph_version(&self.store, &mut wtxn)?;
+        Ok(self
+            .delete_entity_with_reason(id, DeleteReason::UserHardDelete)?
+            .existed)
+    }
+
+    /// Deletes an entity according to the pinned ARCH-0038 reason behavior.
+    pub fn delete_entity_with_reason(
+        &self,
+        id: &EntityId,
+        reason: DeleteReason,
+    ) -> Result<DeleteEntityOutcome> {
+        let requested_at = unix_seconds_now();
+        let Some(header) = self.read_entity_header(id)? else {
+            return self.delete_entity_without_header(id, reason, requested_at);
+        };
+
+        if !reason.active_store_hard_purge_v1() {
+            // ARCH-0038's CRDT tombstone drives destructive HardErase replay.
+            // `user_delete` is a local SoftErase shell in M0-6; cross-device
+            // soft-delete propagation is deferred to ONE-1090 (M4).
+            let existed = self.soft_erase_active_store(id)?;
+            return Ok(DeleteEntityOutcome {
+                existed,
+                receipt_id: None,
+                sweep_key: None,
+            });
         }
+
+        self.write_crdt_tombstone(id, header.learned_at, requested_at)?;
+        let tombstone_complete_at = unix_seconds_now();
+
+        let soft_complete_at = if matches!(
+            reason,
+            DeleteReason::GdprDelete | DeleteReason::PolicyDelete
+        ) {
+            let _ = self.soft_erase_active_store(id)?;
+            unix_seconds_now()
+        } else {
+            tombstone_complete_at
+        };
+
+        let request_id = Uuid::now_v7().to_string();
+        let receipt_id = EntityId::now();
+        let scope = RedactionScope::entity(id);
+        let mut wtxn = self.store.env.write_txn()?;
+        let existed = self.purge_entity_active_store_in_txn(&mut wtxn, id)?;
+        if !existed {
+            wtxn.commit()?;
+            return Ok(DeleteEntityOutcome::missing());
+        }
+
+        let hard_purge_complete_at = unix_seconds_now();
+        let sweep_key = self.write_redaction_receipt_and_sweep_in_txn(
+            &mut wtxn,
+            &receipt_id,
+            RedactionReceiptInput {
+                request_id,
+                scope,
+                reason,
+                requested_at,
+                soft_complete_at,
+                hard_purge_complete_at,
+                sweep_queued_at: reason
+                    .queues_historical_sweep()
+                    .then_some(hard_purge_complete_at),
+            },
+        )?;
+
+        wtxn.commit()?;
+        Ok(DeleteEntityOutcome {
+            existed,
+            receipt_id: Some(receipt_id),
+            sweep_key: Some(sweep_key),
+        })
+    }
+
+    fn delete_entity_without_header(
+        &self,
+        id: &EntityId,
+        reason: DeleteReason,
+        requested_at: u64,
+    ) -> Result<DeleteEntityOutcome> {
+        let mut wtxn = self.store.env.write_txn()?;
+        let had_active_data = self.active_delete_scope_exists_in_txn(&wtxn, id)?;
+        let existed = self.purge_entity_active_store_in_txn(&mut wtxn, id)?;
+        if !had_active_data && !existed {
+            wtxn.commit()?;
+            return Ok(DeleteEntityOutcome::missing());
+        }
+        if !reason.writes_receipt() {
+            wtxn.commit()?;
+            return Ok(DeleteEntityOutcome {
+                existed,
+                receipt_id: None,
+                sweep_key: None,
+            });
+        }
+
+        let receipt_id = EntityId::now();
+        let hard_purge_complete_at = unix_seconds_now();
+        let sweep_key = self.write_redaction_receipt_and_sweep_in_txn(
+            &mut wtxn,
+            &receipt_id,
+            RedactionReceiptInput {
+                request_id: Uuid::now_v7().to_string(),
+                scope: RedactionScope::entity(id),
+                reason,
+                requested_at,
+                soft_complete_at: hard_purge_complete_at,
+                hard_purge_complete_at,
+                sweep_queued_at: reason
+                    .queues_historical_sweep()
+                    .then_some(hard_purge_complete_at),
+            },
+        )?;
+        wtxn.commit()?;
+        Ok(DeleteEntityOutcome {
+            existed,
+            receipt_id: Some(receipt_id),
+            sweep_key: Some(sweep_key),
+        })
+    }
+
+    pub(crate) fn purge_entity_active_store(&self, id: &EntityId) -> Result<bool> {
+        let mut wtxn = self.store.env.write_txn()?;
+        let existed = self.purge_entity_active_store_in_txn(&mut wtxn, id)?;
+        wtxn.commit()?;
+        Ok(existed)
+    }
+
+    fn purge_entity_active_store_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        id: &EntityId,
+    ) -> Result<bool> {
+        let (existed, had_vector, had_graph_mutation, neighbors) =
+            deindex_entity(&self.store, wtxn, id)?;
+        ppr::invalidate_ppr_for_delete(&self.store, wtxn, id, &neighbors)?;
+        if had_graph_mutation {
+            ppr::increment_graph_version(&self.store, wtxn)?;
+        }
+        if had_vector {
+            crate::hnsw::increment_vector_version(&self.store, wtxn)?;
+        }
+        Ok(existed)
+    }
+
+    fn soft_erase_active_store(&self, id: &EntityId) -> Result<bool> {
+        let mut wtxn = self.store.env.write_txn()?;
+        let (existed, had_vector) = self.soft_erase_active_store_in_txn(&mut wtxn, id)?;
         if had_vector {
             crate::hnsw::increment_vector_version(&self.store, &mut wtxn)?;
         }
         wtxn.commit()?;
         Ok(existed)
+    }
+
+    fn soft_erase_active_store_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        id: &EntityId,
+    ) -> Result<(bool, bool)> {
+        bm25::deindex_text(&self.store, wtxn, id)?;
+        delete_from_phonetic_postings(&self.store, wtxn, id)?;
+        let had_vector = self.store.vectors.delete(wtxn, id.as_bytes())?;
+        crate::hnsw::hnsw_deindex(&self.store, wtxn, id)?;
+
+        let Some(entity_record) = self.store.entities.get(wtxn, id.as_bytes())? else {
+            return Ok((false, had_vector));
+        };
+        if EntityMetadataHeader::parse(entity_record).is_none() {
+            return Err(Error::CorruptedIndex("entity metadata"));
+        }
+
+        let payload = entity_record[..ENTITY_METADATA_HEADER_LEN].to_vec();
+        self.store.entities.put(wtxn, id.as_bytes(), &payload)?;
+        Ok((true, had_vector))
+    }
+
+    fn read_entity_header(&self, id: &EntityId) -> Result<Option<EntityMetadataHeader>> {
+        let rtxn = self.store.env.read_txn()?;
+        let Some(raw) = self.store.entities.get(&rtxn, id.as_bytes())? else {
+            return Ok(None);
+        };
+        EntityMetadataHeader::parse(raw)
+            .ok_or(Error::CorruptedIndex("entity metadata"))
+            .map(Some)
+    }
+
+    fn active_delete_scope_exists_in_txn(
+        &self,
+        txn: &heed::RwTxn<'_>,
+        id: &EntityId,
+    ) -> Result<bool> {
+        if self.store.entities.get(txn, id.as_bytes())?.is_some()
+            || self.store.vectors.get(txn, id.as_bytes())?.is_some()
+            || self.store.text_forward.get(txn, id.as_bytes())?.is_some()
+            || self.store.text_meta.get(txn, id.as_bytes())?.is_some()
+            || self
+                .store
+                .text_doc_field_lengths
+                .get(txn, id.as_bytes())?
+                .is_some()
+            || self
+                .store
+                .phonetic_forward
+                .get(txn, id.as_bytes())?
+                .is_some()
+            || self.store.short_ids.get(txn, id.as_bytes())?.is_some()
+        {
+            return Ok(true);
+        }
+
+        let mut edges_out = self.store.edges_out.prefix_iter(txn, id.as_bytes())?;
+        if edges_out.next().transpose()?.is_some() {
+            return Ok(true);
+        }
+        let mut edges_in = self.store.edges_in.prefix_iter(txn, id.as_bytes())?;
+        Ok(edges_in.next().transpose()?.is_some())
+    }
+
+    #[cfg(feature = "sync")]
+    fn write_crdt_tombstone(&self, id: &EntityId, learned_at: u64, deleted_at: u64) -> Result<()> {
+        use crate::sync::loro_support::{doc_version_vector, export_snapshot, map_insert_bytes};
+        use crate::sync::schema::create_window_doc;
+        use crate::sync::types::WindowKey;
+        use crate::sync::window::load_window_from_state;
+
+        let window_key = WindowKey::from_timestamp(learned_at);
+        let doc = match load_window_from_state(self, "local", &window_key) {
+            Ok(doc) => doc,
+            Err(Error::WindowNotFound { .. }) => create_window_doc("local", &window_key),
+            Err(err) => return Err(err),
+        };
+        let tombstones = doc.get_map("tombstones");
+        map_insert_bytes(&tombstones, id.to_hex().as_str(), &deleted_at.to_le_bytes())?;
+        doc.commit();
+
+        let snapshot = export_snapshot(&doc)?;
+        let vv = doc_version_vector(&doc);
+        self.with_write_txn(|wtxn| {
+            let doc_key = format!("d:w:{window_key}");
+            self.store.sync_state.put(wtxn, &doc_key, &snapshot)?;
+
+            let sv_key = format!("sv:w:{window_key}");
+            self.store.sync_state.put(wtxn, &sv_key, &vv)?;
+
+            let svf_key = format!("svf:w:{window_key}");
+            self.store.sync_state.put(wtxn, &svf_key, &[1_u8])?;
+            Ok(())
+        })
+    }
+
+    #[cfg(not(feature = "sync"))]
+    fn write_crdt_tombstone(
+        &self,
+        _id: &EntityId,
+        _learned_at: u64,
+        _deleted_at: u64,
+    ) -> Result<()> {
+        Ok(())
+    }
+
+    fn put_redaction_audit_receipt_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        receipt_id: &EntityId,
+        learned_at: u64,
+        body: &[u8],
+    ) -> Result<()> {
+        let mut payload = Vec::with_capacity(ENTITY_METADATA_HEADER_LEN + body.len());
+        payload.push(ENTITY_TYPE_REDACTION_AUDIT);
+        payload.extend_from_slice(&learned_at.to_be_bytes());
+        payload.extend_from_slice(&learned_at.to_be_bytes());
+        payload.extend_from_slice(&learned_at.to_be_bytes());
+        payload.extend_from_slice(body);
+        self.store
+            .entities
+            .put(wtxn, receipt_id.as_bytes(), &payload)?;
+
+        let type_key = Store::encode_type_key(ENTITY_TYPE_REDACTION_AUDIT, receipt_id);
+        self.store.type_index.put(wtxn, &type_key, &[])?;
+
+        let learned_key = Store::encode_temporal_key(learned_at, receipt_id);
+        self.store.temporal_learned.put(wtxn, &learned_key, &[])?;
+        Ok(())
+    }
+
+    fn write_redaction_receipt_and_sweep_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        receipt_id: &EntityId,
+        input: RedactionReceiptInput,
+    ) -> Result<Vec<u8>> {
+        let sweep_key = if let Some(queued_at) = input.sweep_queued_at {
+            self.enqueue_hard_erase_sweep_in_txn(wtxn, input.scope.clone(), queued_at)?
+        } else {
+            Vec::new()
+        };
+
+        let hard_purge_complete_at = input.hard_purge_complete_at;
+        let body = encode_redaction_audit_receipt(input)?;
+        self.put_redaction_audit_receipt_in_txn(wtxn, receipt_id, hard_purge_complete_at, &body)?;
+        Ok(sweep_key)
+    }
+
+    fn enqueue_hard_erase_sweep_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        scope: RedactionScope,
+        queued_at: u64,
+    ) -> Result<Vec<u8>> {
+        let seq = self.allocate_next_hard_erase_sweep_seq(wtxn)?;
+        let key = encode_hard_erase_sweep_key(seq);
+        let value = encode_hard_erase_sweep_job(scope, queued_at)?;
+        self.store.sync_queue.put(wtxn, &key, &value)?;
+        Ok(key.to_vec())
+    }
+
+    fn allocate_next_hard_erase_sweep_seq(&self, wtxn: &mut heed::RwTxn<'_>) -> Result<u64> {
+        let metadata_seq = match self
+            .store
+            .sync_queue
+            .get(&*wtxn, LAST_HARD_ERASE_SWEEP_SEQ_KEY)?
+        {
+            Some(raw) if raw.len() == 8 => {
+                Some(u64::from_le_bytes(raw.try_into().map_err(|_| {
+                    Error::CorruptedIndex("hard erase sweep metadata")
+                })?))
+            }
+            Some(_) => return Err(Error::CorruptedIndex("hard erase sweep metadata")),
+            None => None,
+        };
+        let current = metadata_seq
+            .unwrap_or(0)
+            .max(self.max_hard_erase_sweep_seq(wtxn)?);
+        let next = current
+            .checked_add(1)
+            .ok_or(Error::ArithmeticOverflow("hard erase sweep sequence"))?;
+        if self
+            .store
+            .sync_queue
+            .get(&*wtxn, &encode_hard_erase_sweep_key(next))?
+            .is_some()
+        {
+            return Err(Error::CorruptedIndex("hard erase sweep metadata"));
+        }
+        self.store
+            .sync_queue
+            .put(wtxn, LAST_HARD_ERASE_SWEEP_SEQ_KEY, &next.to_le_bytes())?;
+        Ok(next)
+    }
+
+    fn max_hard_erase_sweep_seq(&self, wtxn: &heed::RwTxn<'_>) -> Result<u64> {
+        let mut max_seq = 0_u64;
+        for row in self
+            .store
+            .sync_queue
+            .prefix_iter(wtxn, HARD_ERASE_SWEEP_PREFIX)?
+        {
+            let (key, _) = row?;
+            if let Some(seq) = decode_hard_erase_sweep_seq(key) {
+                max_seq = max_seq.max(seq);
+            }
+        }
+        Ok(max_seq)
     }
 
     /// Stores a vector for an entity.

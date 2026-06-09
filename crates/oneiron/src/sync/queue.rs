@@ -1,11 +1,13 @@
 //! Persistent offline queue backed by LMDB.
 //!
-//! Stores pending sync updates and embed jobs in the `sync_queue` database (#21).
+//! Stores pending sync updates, embed jobs, and hard-delete sweep jobs in the
+//! `sync_queue` database (#25).
 //! Updates are keyed by monotonic sequence number for ordered replay.
 //!
 //! Key format (per ARCH-023b §5.4):
 //! - `q:{seq:8BE}` → `[window_key_len:1][window_key][encoded_update]`
 //! - `e:{entity_id:16}` → `[priority:1][queued_at:8BE]`
+//! - `h:{seq:8BE}` → ARCH-0038 hard-delete historical-carrier sweep job
 
 use std::sync::Arc;
 
