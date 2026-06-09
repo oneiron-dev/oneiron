@@ -564,6 +564,11 @@ pub struct VaultConfig {
     /// Embedding vector dimension.
     pub dimensions: usize,
     /// Embedding model identifier used for vector compatibility checks.
+    ///
+    /// `None` is allowed only for genuinely vector-less vaults. Once vector
+    /// or HNSW data exists, opening the vault requires `Some` with the same
+    /// model identifier stored on disk, and vector writes require a stamped
+    /// model identity before the first vector is committed.
     pub embedding_model: Option<String>,
     /// LMDB map size in bytes.
     pub map_size: usize,
