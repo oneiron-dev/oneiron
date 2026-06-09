@@ -1,9 +1,9 @@
 use crate::store::Store;
-use crate::types::EDGE_VALUE_LEN;
+use crate::types::EDGE_VALUE_STRUCTURAL_LEN;
 use crate::*;
 
-fn non_finite_edge_value(weight: f32) -> [u8; EDGE_VALUE_LEN] {
-    let mut value = [0_u8; EDGE_VALUE_LEN];
+fn non_finite_edge_value(weight: f32) -> [u8; EDGE_VALUE_STRUCTURAL_LEN] {
+    let mut value = [0_u8; EDGE_VALUE_STRUCTURAL_LEN];
     value[..4].copy_from_slice(&weight.to_le_bytes());
     value
 }
@@ -110,7 +110,7 @@ fn sources_reject_corrupted_edge_key_length() {
             vault
                 .store
                 .edges_in
-                .put(wtxn, &bad_key, &[0_u8; EDGE_VALUE_LEN])
+                .put(wtxn, &bad_key, &[0_u8; EDGE_VALUE_STRUCTURAL_LEN])
                 .unwrap();
             Ok(())
         })
@@ -148,7 +148,7 @@ fn targets_reject_non_finite_persisted_edge_payload() {
 #[test]
 fn topology_reads_reject_truncated_persisted_edge_payload() {
     let (_temp_dir, vault) = crate::test_util::open_test_vault_with(VaultConfig::device());
-    let truncated_value = [0_u8; EDGE_VALUE_LEN - 1];
+    let truncated_value = [0_u8; 13];
 
     let targets_src = EntityId::now();
     let targets_tgt = EntityId::now();

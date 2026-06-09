@@ -191,7 +191,13 @@ pub fn replay_pending_mirrors(
         let edges_out = vault.edges_out(id)?;
         for edge in &edges_out {
             let edge_key = format_edge_key(id, edge.kind, &edge.target);
-            let edge_val = encode_edge_value_for_crdt(edge.weight, edge.created_at, edge.vad);
+            let edge_val = encode_edge_value_for_crdt(
+                edge.kind,
+                edge.weight,
+                edge.created_at,
+                edge.vad,
+                edge.provenance,
+            )?;
             edges_map
                 .insert(edge_key.as_str(), &edge_val)
                 .map_err(|e| Error::SyncProtocolError(format!("pm replay edge insert: {e}")))?;
@@ -300,7 +306,7 @@ pub fn forward_rematerialize(
             return;
         }
 
-        let Some((weight, created_at, vad)) = bridge::parse_edge_value(buf) else {
+        let Some(decoded) = bridge::parse_edge_value(buf) else {
             return;
         };
 
@@ -310,7 +316,15 @@ pub fn forward_rematerialize(
 
         let result = vault
             .batch()
-            .edge_with_created_at_and_vad(&src, kind, &tgt, weight, created_at, vad)
+            .edge_with_created_at_vad_and_provenance(
+                &src,
+                kind,
+                &tgt,
+                decoded.weight,
+                decoded.created_at,
+                decoded.vad.unwrap_or(crate::types::Vad::NEUTRAL),
+                decoded.provenance,
+            )
             .commit();
         if result.is_ok() {
             count += 1;
@@ -378,7 +392,13 @@ pub fn reverse_rematerialize(
             if edges_map.get(&edge_key).is_some() {
                 continue;
             }
-            let edge_val = encode_edge_value_for_crdt(edge.weight, edge.created_at, edge.vad);
+            let edge_val = encode_edge_value_for_crdt(
+                edge.kind,
+                edge.weight,
+                edge.created_at,
+                edge.vad,
+                edge.provenance,
+            )?;
             edges_map
                 .insert(edge_key.as_str(), &edge_val)
                 .map_err(|e| Error::SyncProtocolError(format!("reverse remat edge insert: {e}")))?;

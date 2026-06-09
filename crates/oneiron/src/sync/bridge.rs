@@ -20,7 +20,10 @@ use super::engine::{CrdtDoc, CrdtMap, Subscription};
 use super::loro_engine::LoroDocument;
 use crate::batch::{self, BatchOp, ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::store::Store;
-use crate::types::{EdgeKind, EntityId, Vad, encode_edge_value};
+use crate::types::{
+    DecodedEdgeValue, EdgeKind, EdgeProvenanceFlags, EntityId, Vad, decode_edge_value,
+    encode_edge_value,
+};
 use crate::{Error, Result, Vault};
 
 /// Origin tag used for LMDB→CRDT bridge writes.
@@ -305,24 +308,21 @@ fn materialize_edges_from_delta(
                         }
                     }
 
-                    let (weight, created_at, vad) = match parse_edge_value(buf) {
+                    let decoded = match parse_edge_value(buf) {
                         Some(v) => v,
                         None => {
                             tracing::warn!(edge = %key, "observer-b: edge malformed value");
                             continue;
                         }
                     };
-                    if !weight.is_finite() || !vad.is_finite() || !vad.is_in_range() {
-                        tracing::warn!(edge = %key, "observer-b: edge invalid value");
-                        continue;
-                    }
                     ops.push(BatchOp::EdgeWithCreatedAt {
                         src,
                         kind,
                         tgt,
-                        weight,
-                        created_at,
-                        vad,
+                        weight: decoded.weight,
+                        created_at: decoded.created_at,
+                        vad: decoded.vad.unwrap_or(Vad::NEUTRAL),
+                        provenance: decoded.provenance,
                     });
                 }
                 None => {
@@ -596,27 +596,26 @@ pub fn parse_edge_key(key: &str) -> Option<(EntityId, EdgeKind, EntityId)> {
     Some((src, kind, tgt))
 }
 
-/// Parses a 24-byte edge value.
-///
-/// Returns `None` if the buffer is too short (< 24 bytes) instead of
-/// fabricating default values from truncated data.
-pub fn parse_edge_value(buf: &[u8]) -> Option<(f32, u64, Vad)> {
-    if buf.len() < 24 {
-        return None;
-    }
-    let weight = f32::from_le_bytes(buf[..4].try_into().unwrap());
-    let created_at = u64::from_le_bytes(buf[4..12].try_into().unwrap());
-    let vad = Vad {
-        valence: f32::from_le_bytes(buf[12..16].try_into().unwrap()),
-        arousal: f32::from_le_bytes(buf[16..20].try_into().unwrap()),
-        dominance: f32::from_le_bytes(buf[20..24].try_into().unwrap()),
-    };
-    Some((weight, created_at, vad))
+/// Parses a 12/24/26-byte edge value.
+pub fn parse_edge_value(buf: &[u8]) -> Option<DecodedEdgeValue> {
+    decode_edge_value(buf).ok()
 }
 
-/// Encodes an edge value as 24 bytes for CRDT map storage.
-pub fn encode_edge_value_for_crdt(weight: f32, created_at: u64, vad: Vad) -> Vec<u8> {
-    encode_edge_value(weight, created_at, vad).to_vec()
+/// Encodes an edge value for CRDT map storage using the ARCH-0034 layout class.
+pub fn encode_edge_value_for_crdt(
+    kind: EdgeKind,
+    weight: f32,
+    created_at: u64,
+    vad: Option<Vad>,
+    provenance: Option<EdgeProvenanceFlags>,
+) -> Result<Vec<u8>> {
+    encode_edge_value(
+        kind,
+        weight,
+        created_at,
+        vad.unwrap_or(Vad::NEUTRAL),
+        provenance,
+    )
 }
 
 /// Formats an edge key for CRDT map: `{src_hex}:{kind:02}:{tgt_hex}`.
@@ -669,10 +668,12 @@ mod tests {
             arousal: 0.3,
             dominance: 0.7,
         };
-        let buf = encode_edge_value_for_crdt(0.8, 12345, vad);
-        let (w, c, v) = parse_edge_value(&buf).unwrap();
-        assert!((w - 0.8).abs() < f32::EPSILON);
-        assert_eq!(c, 12345);
+        let buf =
+            encode_edge_value_for_crdt(EdgeKind::Mentions, 0.8, 12345, Some(vad), None).unwrap();
+        let decoded = parse_edge_value(&buf).unwrap();
+        assert!((decoded.weight - 0.8).abs() < f32::EPSILON);
+        assert_eq!(decoded.created_at, 12345);
+        let v = decoded.vad.unwrap();
         assert!((v.valence - 0.5).abs() < f32::EPSILON);
         assert!((v.arousal - 0.3).abs() < f32::EPSILON);
         assert!((v.dominance - 0.7).abs() < f32::EPSILON);
@@ -707,6 +708,7 @@ mod tests {
                             weight: 1.0,
                             created_at: 10,
                             vad: Vad::NEUTRAL,
+                            provenance: None,
                         },
                         BatchOp::EdgeWithCreatedAt {
                             src: c,
@@ -715,6 +717,7 @@ mod tests {
                             weight: 0.8,
                             created_at: 11,
                             vad: Vad::NEUTRAL,
+                            provenance: None,
                         },
                     ],
                 );
@@ -761,6 +764,7 @@ mod tests {
                             weight: 1.0,
                             created_at: 10,
                             vad: Vad::NEUTRAL,
+                            provenance: None,
                         },
                     ],
                 );
@@ -804,6 +808,7 @@ mod tests {
                             weight: 1.0,
                             created_at: 10,
                             vad: Vad::NEUTRAL,
+                            provenance: None,
                         },
                         BatchOp::EdgeWithCreatedAt {
                             src: x,
@@ -812,6 +817,7 @@ mod tests {
                             weight: 1.0,
                             created_at: 11,
                             vad: Vad::NEUTRAL,
+                            provenance: None,
                         },
                     ],
                 );
@@ -852,7 +858,8 @@ mod tests {
         edges
             .insert(
                 &format_edge_key(&a, EdgeKind::Mentions, &b),
-                &encode_edge_value_for_crdt(0.8, 10, Vad::NEUTRAL),
+                &encode_edge_value_for_crdt(EdgeKind::Mentions, 0.8, 10, Some(Vad::NEUTRAL), None)
+                    .unwrap(),
             )
             .unwrap();
         doc.commit();
@@ -893,7 +900,8 @@ mod tests {
         edges
             .insert(
                 &format_edge_key(&deleted, EdgeKind::Mentions, &live),
-                &encode_edge_value_for_crdt(0.8, 10, Vad::NEUTRAL),
+                &encode_edge_value_for_crdt(EdgeKind::Mentions, 0.8, 10, Some(Vad::NEUTRAL), None)
+                    .unwrap(),
             )
             .unwrap();
         doc.commit();

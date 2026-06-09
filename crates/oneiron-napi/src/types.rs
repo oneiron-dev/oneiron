@@ -14,12 +14,12 @@ pub struct NapiEdgeInfo {
     pub weight: f64,
     /// Creation timestamp (UNIX seconds).
     pub created_at: i64,
-    /// VAD valence (-1.0 to 1.0).
-    pub valence: f64,
-    /// VAD arousal (0.0 to 1.0).
-    pub arousal: f64,
-    /// VAD dominance (0.0 to 1.0).
-    pub dominance: f64,
+    /// VAD valence (-1.0 to 1.0), absent for structural edges.
+    pub valence: Option<f64>,
+    /// VAD arousal (0.0 to 1.0), absent for structural edges.
+    pub arousal: Option<f64>,
+    /// VAD dominance (0.0 to 1.0), absent for structural edges.
+    pub dominance: Option<f64>,
 }
 
 /// A scored entity result from search operations.

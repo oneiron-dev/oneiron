@@ -3,7 +3,10 @@ use std::str;
 use std::time::Instant;
 
 use crate::limits::{MAX_ANCESTOR_DEPTH, MAX_CHILD_OF_CYCLE_TRAVERSAL_STEPS};
-use crate::types::{EDGE_VALUE_LEN, ENTITY_ID_LEN};
+use crate::types::{
+    ENTITY_ID_LEN, EdgeActorClass, EdgeConfirmationStatus, EdgeProvenanceFlags, decode_edge_value,
+    encode_edge_value,
+};
 use heed::types::Bytes;
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
@@ -106,8 +109,76 @@ fn seeded_entity_id(counter: u128) -> EntityId {
     EntityId::from_bytes(bytes).expect("seeded test id should be valid")
 }
 
-fn valid_edge_value() -> [u8; EDGE_VALUE_LEN] {
-    [0_u8; EDGE_VALUE_LEN]
+fn valid_edge_value() -> Vec<u8> {
+    encode_edge_value(EdgeKind::BelongsTo, 0.0, 0, Vad::NEUTRAL, None)
+        .expect("valid structural edge value")
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ContractEdgeLayout {
+    Structural,
+    SemanticBare,
+}
+
+impl ContractEdgeLayout {
+    fn bytes(self) -> usize {
+        match self {
+            Self::Structural => 12,
+            Self::SemanticBare => 24,
+        }
+    }
+}
+
+const CONTRACT_EDGE_VALUE_LAYOUTS: [(EdgeKind, ContractEdgeLayout); 20] = [
+    (EdgeKind::AuthoredBy, ContractEdgeLayout::Structural),
+    (EdgeKind::ScopedTo, ContractEdgeLayout::Structural),
+    (EdgeKind::PartOf, ContractEdgeLayout::Structural),
+    (EdgeKind::Supersedes, ContractEdgeLayout::Structural),
+    (EdgeKind::BelongsTo, ContractEdgeLayout::Structural),
+    (EdgeKind::ClaimOf, ContractEdgeLayout::Structural),
+    (EdgeKind::ChildOf, ContractEdgeLayout::Structural),
+    (EdgeKind::AssignedTo, ContractEdgeLayout::Structural),
+    (EdgeKind::DerivedFrom, ContractEdgeLayout::Structural),
+    (EdgeKind::Mentions, ContractEdgeLayout::SemanticBare),
+    (EdgeKind::About, ContractEdgeLayout::SemanticBare),
+    (EdgeKind::Supports, ContractEdgeLayout::SemanticBare),
+    (EdgeKind::Opposes, ContractEdgeLayout::SemanticBare),
+    (EdgeKind::ParticipatesIn, ContractEdgeLayout::SemanticBare),
+    (EdgeKind::Attached, ContractEdgeLayout::SemanticBare),
+    (EdgeKind::EmployedBy, ContractEdgeLayout::SemanticBare),
+    (EdgeKind::HasFacet, ContractEdgeLayout::SemanticBare),
+    (EdgeKind::FacetOf, ContractEdgeLayout::SemanticBare),
+    (EdgeKind::InWorld, ContractEdgeLayout::SemanticBare),
+    (EdgeKind::SetIn, ContractEdgeLayout::SemanticBare),
+];
+
+fn assert_f32_exact(actual: f32, expected: f32) {
+    assert_eq!(actual.to_bits(), expected.to_bits());
+}
+
+fn assert_vad_exact(actual: Vad, expected: Vad) {
+    assert_f32_exact(actual.valence, expected.valence);
+    assert_f32_exact(actual.arousal, expected.arousal);
+    assert_f32_exact(actual.dominance, expected.dominance);
+}
+
+fn contract_vad(i: usize) -> Vad {
+    Vad {
+        valence: -0.75 + (i as f32 * 0.05),
+        arousal: 0.10 + (i as f32 * 0.02),
+        dominance: 0.20 + (i as f32 * 0.03),
+    }
+}
+
+fn assert_common_edge_value_fields(value: &[u8], weight: f32, created_at: u64) {
+    assert_eq!(&value[0..4], &weight.to_le_bytes());
+    assert_eq!(&value[4..12], &created_at.to_le_bytes());
+}
+
+fn assert_vad_bytes(value: &[u8], vad: Vad) {
+    assert_eq!(&value[12..16], &vad.valence.to_le_bytes());
+    assert_eq!(&value[16..20], &vad.arousal.to_le_bytes());
+    assert_eq!(&value[20..24], &vad.dominance.to_le_bytes());
 }
 
 fn encoded_entity_record(entity_type: u8, payload: &[u8]) -> Vec<u8> {
@@ -2061,6 +2132,86 @@ fn edge_kind_u8_round_trip_accepts_pinned_range() {
 }
 
 #[test]
+fn edge_value_layout_round_trips_all_contract_edge_kinds() -> Result<()> {
+    for (i, (kind, layout)) in CONTRACT_EDGE_VALUE_LAYOUTS.iter().copied().enumerate() {
+        let weight = 0.25 + (i as f32 * 0.03125);
+        let created_at = 1_772_000_000 + i as u64;
+        let vad = contract_vad(i);
+
+        let value = encode_edge_value(kind, weight, created_at, vad, None)?;
+        assert_eq!(
+            value.len(),
+            layout.bytes(),
+            "wrong value length for {kind:?}"
+        );
+        assert_common_edge_value_fields(&value, weight, created_at);
+
+        let decoded = decode_edge_value(&value)?;
+        assert_f32_exact(decoded.weight, weight);
+        assert_eq!(decoded.created_at, created_at);
+        assert_eq!(decoded.provenance, None);
+
+        match layout {
+            ContractEdgeLayout::Structural => {
+                assert_eq!(decoded.vad, None, "structural {kind:?} must not carry VAD");
+            }
+            ContractEdgeLayout::SemanticBare => {
+                assert_vad_bytes(&value, vad);
+                let decoded_vad = decoded.vad.expect("semantic-bare edge must carry VAD");
+                assert_vad_exact(decoded_vad, vad);
+            }
+        }
+    }
+
+    Ok(())
+}
+
+#[test]
+fn semantic_provenance_round_trips_vad_and_hot_flags() -> Result<()> {
+    let flags = EdgeProvenanceFlags {
+        confirmation_status: EdgeConfirmationStatus::Confirmed,
+        actor_class: EdgeActorClass::Agent,
+    };
+
+    for (i, (kind, layout)) in CONTRACT_EDGE_VALUE_LAYOUTS.iter().copied().enumerate() {
+        if layout != ContractEdgeLayout::SemanticBare {
+            continue;
+        }
+
+        let weight = 0.5 + (i as f32 * 0.015625);
+        let created_at = 1_773_000_000 + i as u64;
+        let vad = contract_vad(i);
+
+        let value = encode_edge_value(kind, weight, created_at, vad, Some(flags))?;
+        assert_eq!(value.len(), 26, "provenanced {kind:?} must write 26 B");
+        assert_common_edge_value_fields(&value, weight, created_at);
+        assert_vad_bytes(&value, vad);
+        assert_eq!(value[24], EdgeConfirmationStatus::Confirmed as u8);
+        assert_eq!(value[25], EdgeActorClass::Agent as u8);
+
+        let decoded = decode_edge_value(&value)?;
+        assert_f32_exact(decoded.weight, weight);
+        assert_eq!(decoded.created_at, created_at);
+        assert_vad_exact(decoded.vad.expect("provenanced edge must carry VAD"), vad);
+        assert_eq!(decoded.provenance, Some(flags));
+    }
+
+    Ok(())
+}
+
+#[test]
+fn decode_edge_value_rejects_non_contract_lengths() {
+    for len in [0_usize, 13, 25, 27] {
+        let value = vec![0_u8; len];
+        let err = decode_edge_value(&value).expect_err("expected invalid edge value length");
+        assert!(
+            matches!(err, Error::CorruptedIndex("edge value")),
+            "length {len} returned wrong error: {err:?}"
+        );
+    }
+}
+
+#[test]
 fn all_entity_type_prefixes() {
     use crate::types::short_id_prefix;
 
@@ -2136,9 +2287,10 @@ fn put_edge_with_vad_round_trip() -> Result<()> {
     assert_eq!(out[0].kind, EdgeKind::Supports);
     assert_eq!(out[0].target, tgt);
     assert!((out[0].weight - 0.8).abs() < f32::EPSILON);
-    assert!((out[0].vad.valence - 0.6).abs() < f32::EPSILON);
-    assert!((out[0].vad.arousal - 0.3).abs() < f32::EPSILON);
-    assert!((out[0].vad.dominance - 0.9).abs() < f32::EPSILON);
+    let vad = out[0].vad.expect("semantic edge should hydrate VAD");
+    assert!((vad.valence - 0.6).abs() < f32::EPSILON);
+    assert!((vad.arousal - 0.3).abs() < f32::EPSILON);
+    assert!((vad.dominance - 0.9).abs() < f32::EPSILON);
     Ok(())
 }
 

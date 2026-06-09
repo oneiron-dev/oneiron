@@ -5,7 +5,9 @@ use uuid::Uuid;
 
 pub(crate) const ENTITY_ID_LEN: usize = 16;
 pub(crate) const EDGE_KEY_LEN: usize = 33;
-pub(crate) const EDGE_VALUE_LEN: usize = 24;
+pub(crate) const EDGE_VALUE_STRUCTURAL_LEN: usize = 12;
+pub(crate) const EDGE_VALUE_SEMANTIC_LEN: usize = 24;
+pub(crate) const EDGE_VALUE_SEMANTIC_PROVENANCED_LEN: usize = 26;
 
 /// A time-ordered entity identifier backed by UUIDv7 bytes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -255,6 +257,128 @@ impl EdgeKind {
             18 => Some(Self::InWorld),
             19 => Some(Self::SetIn),
             _ => None,
+        }
+    }
+}
+
+/// Storage layout class for an edge value.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EdgeValueLayout {
+    Structural,
+    SemanticBare,
+    SemanticProvenanced,
+}
+
+impl EdgeValueLayout {
+    #[must_use]
+    pub const fn bytes(self) -> usize {
+        match self {
+            Self::Structural => EDGE_VALUE_STRUCTURAL_LEN,
+            Self::SemanticBare => EDGE_VALUE_SEMANTIC_LEN,
+            Self::SemanticProvenanced => EDGE_VALUE_SEMANTIC_PROVENANCED_LEN,
+        }
+    }
+
+    fn from_len(len: usize) -> Option<Self> {
+        match len {
+            EDGE_VALUE_STRUCTURAL_LEN => Some(Self::Structural),
+            EDGE_VALUE_SEMANTIC_LEN => Some(Self::SemanticBare),
+            EDGE_VALUE_SEMANTIC_PROVENANCED_LEN => Some(Self::SemanticProvenanced),
+            _ => None,
+        }
+    }
+}
+
+/// Hot confirmation flag cached on a 26-byte semantic-provenanced edge.
+#[repr(u8)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EdgeConfirmationStatus {
+    Proposed = 0,
+    Confirmed = 1,
+    Disputed = 2,
+    Retracted = 3,
+}
+
+impl EdgeConfirmationStatus {
+    fn try_from_u8(value: u8) -> Option<Self> {
+        match value {
+            0 => Some(Self::Proposed),
+            1 => Some(Self::Confirmed),
+            2 => Some(Self::Disputed),
+            3 => Some(Self::Retracted),
+            _ => None,
+        }
+    }
+}
+
+/// Hot actor-class flag cached on a 26-byte semantic-provenanced edge.
+#[repr(u8)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EdgeActorClass {
+    Human = 0,
+    Agent = 1,
+    System = 2,
+}
+
+impl EdgeActorClass {
+    fn try_from_u8(value: u8) -> Option<Self> {
+        match value {
+            0 => Some(Self::Human),
+            1 => Some(Self::Agent),
+            2 => Some(Self::System),
+            _ => None,
+        }
+    }
+}
+
+/// Two hot provenance flags derived from the `edge.provenance` Claim.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct EdgeProvenanceFlags {
+    pub confirmation_status: EdgeConfirmationStatus,
+    pub actor_class: EdgeActorClass,
+}
+
+/// Decoded fixed-width edge value fields.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct DecodedEdgeValue {
+    pub layout: EdgeValueLayout,
+    pub weight: f32,
+    pub created_at: u64,
+    pub vad: Option<Vad>,
+    pub provenance: Option<EdgeProvenanceFlags>,
+}
+
+/// Selects the value layout for writes. Reads dispatch on value length.
+pub(crate) fn edge_value_layout_for_kind(
+    kind: EdgeKind,
+    has_provenance_claim: bool,
+) -> EdgeValueLayout {
+    match kind {
+        EdgeKind::AuthoredBy
+        | EdgeKind::ScopedTo
+        | EdgeKind::PartOf
+        | EdgeKind::Supersedes
+        | EdgeKind::BelongsTo
+        | EdgeKind::ClaimOf
+        | EdgeKind::ChildOf
+        | EdgeKind::AssignedTo
+        | EdgeKind::DerivedFrom => EdgeValueLayout::Structural,
+        EdgeKind::Mentions
+        | EdgeKind::About
+        | EdgeKind::Supports
+        | EdgeKind::Opposes
+        | EdgeKind::ParticipatesIn
+        | EdgeKind::Attached
+        | EdgeKind::EmployedBy
+        | EdgeKind::HasFacet
+        | EdgeKind::FacetOf
+        | EdgeKind::InWorld
+        | EdgeKind::SetIn => {
+            if has_provenance_claim {
+                EdgeValueLayout::SemanticProvenanced
+            } else {
+                EdgeValueLayout::SemanticBare
+            }
         }
     }
 }
@@ -513,7 +637,8 @@ pub struct EdgeInfo {
     pub target_short_id: Option<String>,
     pub weight: f32,
     pub created_at: u64,
-    pub vad: Vad,
+    pub vad: Option<Vad>,
+    pub provenance: Option<EdgeProvenanceFlags>,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
@@ -579,29 +704,112 @@ impl Vad {
     }
 }
 
-pub(crate) fn parse_vad(value: &[u8]) -> Vad {
-    let f = |offset: usize| -> f32 {
-        value
-            .get(offset..offset + 4)
-            .and_then(|b| b.try_into().ok())
-            .map(f32::from_le_bytes)
-            .unwrap_or(0.0)
-    };
-    Vad {
-        valence: f(12),
-        arousal: f(16),
-        dominance: f(20),
-    }
+fn read_f32_le(value: &[u8], offset: usize) -> crate::error::Result<f32> {
+    let bytes = value
+        .get(offset..offset + 4)
+        .and_then(|b| b.try_into().ok())
+        .ok_or(crate::error::Error::CorruptedIndex("edge value"))?;
+    Ok(f32::from_le_bytes(bytes))
 }
 
-pub(crate) fn encode_edge_value(weight: f32, created_at: u64, vad: Vad) -> [u8; EDGE_VALUE_LEN] {
-    let mut value = [0_u8; EDGE_VALUE_LEN];
-    value[..4].copy_from_slice(&weight.to_le_bytes());
+fn read_u64_le(value: &[u8], offset: usize) -> crate::error::Result<u64> {
+    let bytes = value
+        .get(offset..offset + 8)
+        .and_then(|b| b.try_into().ok())
+        .ok_or(crate::error::Error::CorruptedIndex("edge value"))?;
+    Ok(u64::from_le_bytes(bytes))
+}
+
+fn read_vad(value: &[u8]) -> crate::error::Result<Vad> {
+    Ok(Vad {
+        valence: read_f32_le(value, 12)?,
+        arousal: read_f32_le(value, 16)?,
+        dominance: read_f32_le(value, 20)?,
+    })
+}
+
+pub(crate) fn decode_edge_value(value: &[u8]) -> crate::error::Result<DecodedEdgeValue> {
+    let layout = EdgeValueLayout::from_len(value.len())
+        .ok_or(crate::error::Error::CorruptedIndex("edge value"))?;
+    let weight = read_f32_le(value, 0)?;
+    if !weight.is_finite() {
+        return Err(crate::error::Error::CorruptedIndex("edge value"));
+    }
+    let created_at = read_u64_le(value, 4)?;
+    let vad = match layout {
+        EdgeValueLayout::Structural => None,
+        EdgeValueLayout::SemanticBare | EdgeValueLayout::SemanticProvenanced => {
+            let vad = read_vad(value)?;
+            if !vad.is_finite() || !vad.is_in_range() {
+                return Err(crate::error::Error::CorruptedIndex("edge value"));
+            }
+            Some(vad)
+        }
+    };
+    let provenance = match layout {
+        EdgeValueLayout::SemanticProvenanced => {
+            let confirmation_status = EdgeConfirmationStatus::try_from_u8(value[24])
+                .ok_or(crate::error::Error::CorruptedIndex("edge value"))?;
+            let actor_class = EdgeActorClass::try_from_u8(value[25])
+                .ok_or(crate::error::Error::CorruptedIndex("edge value"))?;
+            Some(EdgeProvenanceFlags {
+                confirmation_status,
+                actor_class,
+            })
+        }
+        EdgeValueLayout::Structural | EdgeValueLayout::SemanticBare => None,
+    };
+
+    Ok(DecodedEdgeValue {
+        layout,
+        weight,
+        created_at,
+        vad,
+        provenance,
+    })
+}
+
+pub(crate) fn encode_edge_value(
+    kind: EdgeKind,
+    weight: f32,
+    created_at: u64,
+    vad: Vad,
+    provenance: Option<EdgeProvenanceFlags>,
+) -> crate::error::Result<Vec<u8>> {
+    if !weight.is_finite() {
+        return Err(crate::error::Error::InvalidEdgeWeight { value: weight });
+    }
+    if let Some((component, value)) = vad.invalid_component() {
+        return Err(crate::error::Error::InvalidVad { component, value });
+    }
+    if provenance.is_some()
+        && edge_value_layout_for_kind(kind, false) == EdgeValueLayout::Structural
+    {
+        return Err(crate::error::Error::InvariantViolation(
+            "structural edges do not carry provenance hot flags",
+        ));
+    }
+
+    let layout = edge_value_layout_for_kind(kind, provenance.is_some());
+    let mut value = vec![0_u8; layout.bytes()];
+    value[0..4].copy_from_slice(&weight.to_le_bytes());
     value[4..12].copy_from_slice(&created_at.to_le_bytes());
-    value[12..16].copy_from_slice(&vad.valence.to_le_bytes());
-    value[16..20].copy_from_slice(&vad.arousal.to_le_bytes());
-    value[20..24].copy_from_slice(&vad.dominance.to_le_bytes());
-    value
+
+    match layout {
+        EdgeValueLayout::Structural => {}
+        EdgeValueLayout::SemanticBare | EdgeValueLayout::SemanticProvenanced => {
+            value[12..16].copy_from_slice(&vad.valence.to_le_bytes());
+            value[16..20].copy_from_slice(&vad.arousal.to_le_bytes());
+            value[20..24].copy_from_slice(&vad.dominance.to_le_bytes());
+        }
+    }
+
+    if let Some(flags) = provenance {
+        value[24] = flags.confirmation_status as u8;
+        value[25] = flags.actor_class as u8;
+    }
+
+    Ok(value)
 }
 
 /// Stats about the context pack query.
