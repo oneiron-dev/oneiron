@@ -16,7 +16,7 @@ use crate::batch::{
 };
 use crate::claim::{
     ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSubject, encode_claim_body,
-    validate_claim_body_bytes,
+    is_reserved_predicate, validate_claim_body_bytes,
 };
 use crate::deletion::{
     DeleteEntityOutcome, DeleteReason, HARD_ERASE_SWEEP_PREFIX, LAST_HARD_ERASE_SWEEP_SEQ_KEY,
@@ -520,6 +520,160 @@ impl Vault {
         restamp_edge_flags(&self.store, &mut wtxn, subject, flags)?;
         ppr::invalidate_ppr_for_edge(&self.store, &mut wtxn, &subject.source, &subject.target)?;
 
+        wtxn.commit()?;
+        Ok(())
+    }
+
+    /// Reads, decodes, and gates a claim for a generic lifecycle transition
+    /// (`supersede_claim` / `retract_claim`). Fail-closed:
+    ///
+    /// * no entity under `id` → [`Error::EntityNotFound`];
+    /// * entity is not type 0 → [`Error::InvalidClaimBody`];
+    /// * reserved `edge.*` predicate → [`Error::ProvenanceClaimLifecycle`]
+    ///   — provenance Claims drive the subject edge's derived hot flags, so
+    ///   their lifecycle is owned exclusively by the edge-provenance API
+    ///   (`put_edge_provenance` / `retract_edge_provenance`); the generic
+    ///   ops REJECT rather than delegate, so they can never bypass the
+    ///   edge re-stamp.
+    fn claim_for_lifecycle_in(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        id: &EntityId,
+    ) -> Result<(ClaimBody, EntityMetadataHeader)> {
+        let Some(raw) = self.store.entities.get(rtxn, id.as_bytes())? else {
+            return Err(Error::EntityNotFound);
+        };
+        let header =
+            EntityMetadataHeader::parse(raw).ok_or(Error::CorruptedIndex("entity header"))?;
+        if header.entity_type != ENTITY_TYPE_CLAIM {
+            return Err(Error::InvalidClaimBody("entity is not a type-0 CLAIM"));
+        }
+        let body = crate::claim::decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true)?;
+        if is_reserved_predicate(&body.predicate) {
+            return Err(Error::ProvenanceClaimLifecycle {
+                predicate: body.predicate,
+            });
+        }
+        Ok((body, header))
+    }
+
+    /// Gates a lifecycle transition on the claim still being open: any
+    /// non-`active` `life` status is closed history and rejects with
+    /// [`Error::ClaimAlreadyClosed`] (ARCH-0003: superseded carries history,
+    /// retracted is a deliberate withdrawal — never edited again).
+    fn require_active_claim(body: &ClaimBody) -> Result<()> {
+        if body.lifecycle != ClaimLifecycleStatus::Active {
+            return Err(Error::ClaimAlreadyClosed {
+                status: body.lifecycle,
+            });
+        }
+        Ok(())
+    }
+
+    /// Supersedes the active claim `old_id` with the claim `new_id` — the
+    /// general ARCH-0003 claim lifecycle mechanics, in ONE write
+    /// transaction:
+    ///
+    /// * the old claim's body is closed: `life` = `superseded`, `to` = `now`;
+    /// * the old claim's envelope `occurred_end` is refreshed to `now` (the
+    ///   envelope copy mirrors the body's validity window for temporal
+    ///   index-key derivation, per the D15 principle);
+    /// * a `supersedes` edge (u8 = 3, structural 12 B, weight 0.3) is
+    ///   written `new_id` → `old_id` — the edge is canonical; no
+    ///   `supersedesId` body field is stored (D11).
+    ///
+    /// The old claim is KEPT fully readable: superseded carries history —
+    /// "all non-current states are still stored — claims are never silently
+    /// deleted" (ARCH-0003). Fail-closed, nothing written on any rejection:
+    ///
+    /// * `new_id == old_id` → [`Error::ClaimSelfSupersession`];
+    /// * either id missing → [`Error::EntityNotFound`]; either entity not
+    ///   type 0 → [`Error::InvalidClaimBody`];
+    /// * either claim carrying a reserved `edge.*` provenance predicate →
+    ///   [`Error::ProvenanceClaimLifecycle`] (the edge-provenance API owns
+    ///   that lifecycle; see [`Vault::claim_for_lifecycle_in`]);
+    /// * either claim's `life` ≠ `active` → [`Error::ClaimAlreadyClosed`]
+    ///   (closed claims neither supersede nor get superseded again).
+    ///
+    /// Deciding WHICH claims conflict (conflictSet), consent routing, and
+    /// predicate semantics stay above the engine (ARCH-0003 §G.1, D20) —
+    /// this method is transition mechanics only.
+    pub fn supersede_claim(&self, new_id: &EntityId, old_id: &EntityId, now: u64) -> Result<()> {
+        if new_id == old_id {
+            return Err(Error::ClaimSelfSupersession);
+        }
+
+        let mut wtxn = self.store.env.write_txn()?;
+        let (new_body, _new_header) = self.claim_for_lifecycle_in(&wtxn, new_id)?;
+        Self::require_active_claim(&new_body)?;
+        let (mut old_body, old_header) = self.claim_for_lifecycle_in(&wtxn, old_id)?;
+        Self::require_active_claim(&old_body)?;
+
+        old_body.lifecycle = ClaimLifecycleStatus::Superseded;
+        old_body.valid_to = Some(now);
+        let data = encode_claim_body(&old_body)?;
+
+        let ops = vec![
+            BatchOp::Put {
+                id: *old_id,
+                entity_type: ENTITY_TYPE_CLAIM,
+                occurred: TimeRange {
+                    start: old_header.occurred_start,
+                    end: now,
+                },
+                learned_at: old_header.learned_at,
+                data,
+                allow_maintenance: false,
+                allow_reserved_predicate: false,
+            },
+            BatchOp::EdgeWithCreatedAt {
+                src: *new_id,
+                kind: EdgeKind::Supersedes,
+                tgt: *old_id,
+                weight: EdgeKind::Supersedes.default_weight(),
+                created_at: now,
+                vad: Vad::NEUTRAL,
+                provenance: None,
+            },
+        ];
+        apply_ops(&self.store, &self.config, &self.analyzer, &mut wtxn, ops)?;
+        wtxn.commit()?;
+        Ok(())
+    }
+
+    /// Retracts the active claim `id` — a deliberate withdrawal (ARCH-0003
+    /// general claim lifecycle), in ONE write transaction: the body is
+    /// closed (`life` = `retracted`, `to` = `now`) and the envelope
+    /// `occurred_end` is refreshed to `now` (body ↔ envelope mirror, D15
+    /// principle). The record is PRESERVED — retraction never deletes.
+    ///
+    /// Fail-closed, nothing written on any rejection: missing id →
+    /// [`Error::EntityNotFound`]; not type 0 → [`Error::InvalidClaimBody`];
+    /// reserved `edge.*` provenance predicate →
+    /// [`Error::ProvenanceClaimLifecycle`] (the edge-provenance API owns
+    /// that lifecycle); `life` ≠ `active` → [`Error::ClaimAlreadyClosed`].
+    pub fn retract_claim(&self, id: &EntityId, now: u64) -> Result<()> {
+        let mut wtxn = self.store.env.write_txn()?;
+        let (mut body, header) = self.claim_for_lifecycle_in(&wtxn, id)?;
+        Self::require_active_claim(&body)?;
+
+        body.lifecycle = ClaimLifecycleStatus::Retracted;
+        body.valid_to = Some(now);
+        let data = encode_claim_body(&body)?;
+
+        let ops = vec![BatchOp::Put {
+            id: *id,
+            entity_type: ENTITY_TYPE_CLAIM,
+            occurred: TimeRange {
+                start: header.occurred_start,
+                end: now,
+            },
+            learned_at: header.learned_at,
+            data,
+            allow_maintenance: false,
+            allow_reserved_predicate: false,
+        }];
+        apply_ops(&self.store, &self.config, &self.analyzer, &mut wtxn, ops)?;
         wtxn.commit()?;
         Ok(())
     }

@@ -7837,3 +7837,657 @@ fn decode_edge_value_rejects_out_of_range_flag_bytes() {
         );
     }
 }
+
+// ═══════════════════════════════════════════════════════════════════════
+// ONE-1108: general Claim supersession / retraction mechanics (ARCH-0003
+// lifecycle — active | superseded | retracted; supersedes edge u8 = 3).
+// ═══════════════════════════════════════════════════════════════════════
+
+/// Stores a minimal ACTIVE claim about `subject` (point occurred + learned
+/// at `learned_at`) and returns its id.
+fn put_active_claim(
+    vault: &Vault,
+    subject: &EntityId,
+    pred: &str,
+    val: &str,
+    learned_at: u64,
+) -> Result<EntityId> {
+    let id = EntityId::now();
+    let body = ClaimBody::new(
+        pred,
+        ClaimSubject::Entity(*subject),
+        rmpv::Value::from(val),
+        0.9,
+        ClaimApprovalStatus::Auto,
+        ClaimLifecycleStatus::Active,
+    );
+    vault.put_claim(
+        &id,
+        &body,
+        test_time_range(learned_at, learned_at),
+        learned_at,
+    )?;
+    Ok(id)
+}
+
+/// Raw `[src(16) | kind_u8(1) | tgt(16)]` edge key built with a LITERAL
+/// discriminant byte so a renumbered EdgeKind enum cannot mask drift.
+fn raw_edge_key(src: &EntityId, kind_u8: u8, tgt: &EntityId) -> Vec<u8> {
+    let mut key = Vec::with_capacity(33);
+    key.extend_from_slice(src.as_bytes());
+    key.push(kind_u8);
+    key.extend_from_slice(tgt.as_bytes());
+    key
+}
+
+#[test]
+fn supersede_claim_closes_old_writes_edge_and_keeps_history() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let subject = EntityId::now();
+    vault.put_entity(&subject, 4, test_time_range(1, 1), 1, b"person")?;
+    let old = put_active_claim(&vault, &subject, "profile.lives_in", "osaka", 11)?;
+    let new = put_active_claim(&vault, &subject, "profile.lives_in", "tokyo", 22)?;
+
+    const NOW: u64 = 777;
+    vault.supersede_claim(&new, &old, NOW)?;
+
+    // Old body closed: life = superseded, to = now — and the old claim is
+    // STILL readable. A purge implementation fails right here.
+    let old_read = vault
+        .get_claim(&old)?
+        .expect("superseded claim must stay readable");
+    assert_eq!(old_read.lifecycle, ClaimLifecycleStatus::Superseded);
+    assert_eq!(old_read.valid_to, Some(NOW));
+    assert!(
+        vault.get(&old)?.is_some(),
+        "superseded claim record must persist"
+    );
+
+    // Envelope occurred_end refreshed to now. Offsets are the pinned
+    // 25-byte envelope LITERALS: type u8 @0, occurred_start u64 BE @1..9,
+    // occurred_end u64 BE @9..17, learned_at u64 BE @17..25.
+    let raw = vault.get_raw(&old)?.ok_or(Error::EntityNotFound)?;
+    assert_eq!(raw[0], 0, "type byte must stay CLAIM (0)");
+    assert_eq!(
+        &raw[1..9],
+        &11_u64.to_be_bytes(),
+        "occurred_start untouched"
+    );
+    assert_eq!(&raw[9..17], &NOW.to_be_bytes(), "occurred_end refreshed");
+    assert_eq!(&raw[17..25], &11_u64.to_be_bytes(), "learned_at untouched");
+
+    // supersedes edge new → old: discriminant 3, structural 12 B (weight
+    // f32 LE @0 = the contract's pinned pprWeight 0.3, created_at u64 LE
+    // @4 = now), identical bytes in BOTH directions.
+    let key_out = raw_edge_key(&new, 3, &old);
+    let key_in = raw_edge_key(&old, 3, &new);
+    let rtxn = vault.store.env.read_txn()?;
+    let out_value = vault
+        .store
+        .edges_out
+        .get(&rtxn, &key_out)?
+        .expect("supersedes edge missing from edges_out")
+        .to_vec();
+    let in_value = vault
+        .store
+        .edges_in
+        .get(&rtxn, &key_in)?
+        .expect("supersedes edge missing from edges_in")
+        .to_vec();
+    drop(rtxn);
+    assert_eq!(out_value.len(), 12, "supersedes must be structural 12 B");
+    assert_eq!(out_value, in_value);
+    assert_eq!(&out_value[0..4], &0.3_f32.to_le_bytes());
+    assert_eq!(&out_value[4..12], &NOW.to_le_bytes());
+    assert_eq!(
+        vault.targets(&new, EdgeKind::Supersedes, Some(0))?,
+        vec![old]
+    );
+
+    // The temporal index follows the refreshed envelope end.
+    let rtxn = vault.store.env.read_txn()?;
+    let end_key = Store::encode_temporal_key(NOW, &old);
+    assert!(
+        vault
+            .store
+            .temporal_occurred_end
+            .get(&rtxn, &end_key)?
+            .is_some(),
+        "refreshed occurred_end must be indexed"
+    );
+    drop(rtxn);
+
+    // The NEW claim is untouched — supersession closes only the old side.
+    let new_read = vault.get_claim(&new)?.expect("new claim");
+    assert_eq!(new_read.lifecycle, ClaimLifecycleStatus::Active);
+    assert_eq!(new_read.valid_to, None);
+
+    // History stays attached to the subject: BOTH claims remain linked.
+    let mut linked = vault.claims_for_subject(&subject)?;
+    linked.sort();
+    let mut expected = vec![old, new];
+    expected.sort();
+    assert_eq!(linked, expected, "superseded claim must stay in the graph");
+    Ok(())
+}
+
+#[test]
+fn retract_claim_marks_retracted_and_preserves_record() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let subject = EntityId::now();
+    vault.put_entity(&subject, 4, test_time_range(1, 1), 1, b"person")?;
+    let claim = put_active_claim(&vault, &subject, "profile.lives_in", "osaka", 11)?;
+
+    const NOW: u64 = 555;
+    vault.retract_claim(&claim, NOW)?;
+
+    let read = vault
+        .get_claim(&claim)?
+        .expect("retracted claim must stay readable");
+    assert_eq!(read.lifecycle, ClaimLifecycleStatus::Retracted);
+    assert_eq!(read.valid_to, Some(NOW));
+
+    // Pin the EXACT closed on-disk body: pinned D11 short keys in
+    // canonical order with the lifecycle fields stamped — to = now,
+    // life = "retracted". A long-key / reordered / purging implementation
+    // fails byte equality.
+    let raw = vault.get_raw(&claim)?.ok_or(Error::EntityNotFound)?;
+    let expected = rmpv_map_bytes(&[
+        ("pred".into(), "profile.lives_in".into()),
+        ("val".into(), "osaka".into()),
+        ("conf".into(), rmpv::Value::F32(0.9)),
+        ("to".into(), rmpv::Value::from(NOW)),
+        (
+            "subj".into(),
+            rmpv::Value::Binary(subject.as_bytes().to_vec()),
+        ),
+        ("appr".into(), "auto".into()),
+        ("life".into(), "retracted".into()),
+    ]);
+    assert_eq!(
+        &raw[ENTITY_METADATA_HEADER_LEN..],
+        expected.as_slice(),
+        "retracted on-disk body drifted from the pinned D11 ABI"
+    );
+
+    // Envelope occurred_end refreshed to now; record + index preserved.
+    assert_eq!(&raw[9..17], &NOW.to_be_bytes());
+    assert!(
+        vault.entities_by_type(0)?.contains(&claim),
+        "retracted claim must remain type-indexed"
+    );
+    assert_eq!(vault.claims_for_subject(&subject)?, vec![claim]);
+    Ok(())
+}
+
+/// Stores a minimal ACTIVE claim about `subject` with an INTERVAL
+/// `occurred` window and returns its id. The interval (start != end)
+/// matters: only interval entities own a `temporal_occurred_end` row, so
+/// these fixtures create the PRE-EXISTING end row that a lifecycle
+/// refresh must MOVE (delete stale, write refreshed) — an
+/// add-without-delete implementation cannot pass against them.
+fn put_active_interval_claim(
+    vault: &Vault,
+    subject: &EntityId,
+    pred: &str,
+    val: &str,
+    occurred: TimeRange,
+    learned_at: u64,
+) -> Result<EntityId> {
+    let id = EntityId::now();
+    let body = ClaimBody::new(
+        pred,
+        ClaimSubject::Entity(*subject),
+        rmpv::Value::from(val),
+        0.9,
+        ClaimApprovalStatus::Auto,
+        ClaimLifecycleStatus::Active,
+    );
+    vault.put_claim(&id, &body, occurred, learned_at)?;
+    Ok(id)
+}
+
+#[test]
+fn supersede_claim_moves_temporal_occurred_end_row() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let subject = EntityId::now();
+    vault.put_entity(&subject, 4, test_time_range(1, 1), 1, b"person")?;
+    let old = put_active_interval_claim(
+        &vault,
+        &subject,
+        "profile.lives_in",
+        "osaka",
+        test_time_range(11, 50),
+        11,
+    )?;
+    let new = put_active_claim(&vault, &subject, "profile.lives_in", "tokyo", 22)?;
+
+    // Fixture sanity: the interval claim pre-indexes occurred_end at
+    // ts = 50, so the absence assertion after the supersede is
+    // non-vacuous.
+    let stale_end_key = Store::encode_temporal_key(50, &old);
+    {
+        let rtxn = vault.store.env.read_txn()?;
+        assert!(
+            vault
+                .store
+                .temporal_occurred_end
+                .get(&rtxn, &stale_end_key)?
+                .is_some(),
+            "fixture must pre-index occurred_end at ts = 50"
+        );
+    }
+
+    const NOW: u64 = 777;
+    vault.supersede_claim(&new, &old, NOW)?;
+
+    // The envelope refresh must MOVE the temporal_occurred_end row: the
+    // stale ts = 50 row is deleted and the refreshed ts = 777 row is
+    // written. An implementation that only hand-adds the new row (never
+    // deleting the prior one) fails the first assertion.
+    let refreshed_end_key = Store::encode_temporal_key(NOW, &old);
+    let rtxn = vault.store.env.read_txn()?;
+    assert!(
+        vault
+            .store
+            .temporal_occurred_end
+            .get(&rtxn, &stale_end_key)?
+            .is_none(),
+        "stale occurred_end row at ts = 50 must be deleted by the refresh"
+    );
+    assert!(
+        vault
+            .store
+            .temporal_occurred_end
+            .get(&rtxn, &refreshed_end_key)?
+            .is_some(),
+        "refreshed occurred_end row at ts = 777 must be indexed"
+    );
+    drop(rtxn);
+
+    // The transition itself completed (close semantics are pinned in
+    // depth by supersede_claim_closes_old_writes_edge_and_keeps_history).
+    let old_read = vault.get_claim(&old)?.expect("superseded claim");
+    assert_eq!(old_read.lifecycle, ClaimLifecycleStatus::Superseded);
+    assert_eq!(old_read.valid_to, Some(NOW));
+    Ok(())
+}
+
+#[test]
+fn retract_claim_moves_temporal_occurred_end_row() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let subject = EntityId::now();
+    vault.put_entity(&subject, 4, test_time_range(1, 1), 1, b"person")?;
+    let claim = put_active_interval_claim(
+        &vault,
+        &subject,
+        "profile.lives_in",
+        "osaka",
+        test_time_range(11, 50),
+        11,
+    )?;
+
+    let stale_end_key = Store::encode_temporal_key(50, &claim);
+    {
+        let rtxn = vault.store.env.read_txn()?;
+        assert!(
+            vault
+                .store
+                .temporal_occurred_end
+                .get(&rtxn, &stale_end_key)?
+                .is_some(),
+            "fixture must pre-index occurred_end at ts = 50"
+        );
+    }
+
+    const NOW: u64 = 555;
+    vault.retract_claim(&claim, NOW)?;
+
+    let refreshed_end_key = Store::encode_temporal_key(NOW, &claim);
+    let rtxn = vault.store.env.read_txn()?;
+    assert!(
+        vault
+            .store
+            .temporal_occurred_end
+            .get(&rtxn, &stale_end_key)?
+            .is_none(),
+        "stale occurred_end row at ts = 50 must be deleted by the refresh"
+    );
+    assert!(
+        vault
+            .store
+            .temporal_occurred_end
+            .get(&rtxn, &refreshed_end_key)?
+            .is_some(),
+        "refreshed occurred_end row at ts = 555 must be indexed"
+    );
+    drop(rtxn);
+
+    let read = vault.get_claim(&claim)?.expect("retracted claim");
+    assert_eq!(read.lifecycle, ClaimLifecycleStatus::Retracted);
+    assert_eq!(read.valid_to, Some(NOW));
+    Ok(())
+}
+
+#[test]
+fn supersede_claim_rehomes_temporal_long_interval_row() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let subject = EntityId::now();
+    vault.put_entity(&subject, 4, test_time_range(1, 1), 1, b"person")?;
+
+    // Span > LONG_INTERVAL_THRESHOLD_SECS: the old claim owns a
+    // temporal_long_intervals row keyed by occurred_end, value =
+    // occurred_start u64 BE.
+    let old_end = 1_000 + crate::batch::LONG_INTERVAL_THRESHOLD_SECS + 10;
+    let old = put_active_interval_claim(
+        &vault,
+        &subject,
+        "profile.lives_in",
+        "osaka",
+        test_time_range(1_000, old_end),
+        1_000,
+    )?;
+    let new = put_active_claim(&vault, &subject, "profile.lives_in", "tokyo", 22)?;
+
+    let stale_key = Store::encode_temporal_key(old_end, &old);
+    {
+        let rtxn = vault.store.env.read_txn()?;
+        let value = vault
+            .store
+            .temporal_long_intervals
+            .get(&rtxn, &stale_key)?
+            .ok_or(Error::EntityNotFound)?;
+        assert_eq!(
+            u64::from_be_bytes(value.try_into().map_err(|_| Error::InvalidKey)?),
+            1_000,
+            "fixture must pre-index the long interval (value = occurred_start BE)"
+        );
+    }
+
+    // `now` keeps the refreshed window long (now − 1 000 > threshold), so
+    // the long-interval row must be RE-HOMED: deleted at the stale end
+    // key, re-written keyed by the refreshed occurred_end with the same
+    // occurred_start value. A refresh that never touches
+    // temporal_long_intervals fails both assertions.
+    let now = 1_000 + 2 * crate::batch::LONG_INTERVAL_THRESHOLD_SECS;
+    vault.supersede_claim(&new, &old, now)?;
+
+    let rehomed_key = Store::encode_temporal_key(now, &old);
+    let rtxn = vault.store.env.read_txn()?;
+    assert!(
+        vault
+            .store
+            .temporal_long_intervals
+            .get(&rtxn, &stale_key)?
+            .is_none(),
+        "stale long-interval row must be deleted by the refresh"
+    );
+    let value = vault
+        .store
+        .temporal_long_intervals
+        .get(&rtxn, &rehomed_key)?
+        .expect("long-interval row must be re-homed to the refreshed occurred_end");
+    assert_eq!(
+        u64::from_be_bytes(value.try_into().map_err(|_| Error::InvalidKey)?),
+        1_000,
+        "re-homed long-interval value must keep occurred_start"
+    );
+    // The occurred_end row moves with it.
+    assert!(
+        vault
+            .store
+            .temporal_occurred_end
+            .get(&rtxn, &stale_key)?
+            .is_none(),
+        "stale occurred_end row must be deleted by the refresh"
+    );
+    assert!(
+        vault
+            .store
+            .temporal_occurred_end
+            .get(&rtxn, &rehomed_key)?
+            .is_some(),
+        "refreshed occurred_end row must be indexed"
+    );
+    Ok(())
+}
+
+#[test]
+fn supersede_claim_rejects_self_supersession() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let subject = EntityId::now();
+    vault.put_entity(&subject, 4, test_time_range(1, 1), 1, b"person")?;
+    let claim = put_active_claim(&vault, &subject, "profile.name", "Alice", 2)?;
+    let before = vault.get_raw(&claim)?.expect("claim stored");
+
+    let err = vault
+        .supersede_claim(&claim, &claim, 9)
+        .expect_err("self-supersession must fail");
+    assert_eq!(err.kind(), ErrorKind::ClaimSelfSupersession);
+
+    // Nothing written: body + envelope byte-identical, still active, no
+    // supersedes edge (a self-loop edge would betray a partial write).
+    assert_eq!(vault.get_raw(&claim)?.expect("still stored"), before);
+    assert_eq!(
+        vault.get_claim(&claim)?.expect("claim").lifecycle,
+        ClaimLifecycleStatus::Active
+    );
+    assert!(
+        vault
+            .targets(&claim, EdgeKind::Supersedes, None)?
+            .is_empty()
+    );
+    Ok(())
+}
+
+#[test]
+fn claim_lifecycle_ops_reject_non_claims_and_missing_ids() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let subject = EntityId::now();
+    vault.put_entity(&subject, 4, test_time_range(1, 1), 1, b"person")?;
+    let claim = put_active_claim(&vault, &subject, "profile.name", "Alice", 2)?;
+    let before = vault.get_raw(&claim)?.expect("claim stored");
+
+    // Non-claim id in either position → typed InvalidClaimBody.
+    let err = vault
+        .supersede_claim(&claim, &subject, 9)
+        .expect_err("old = PERSON must fail typed");
+    assert_eq!(err.kind(), ErrorKind::InvalidClaimBody);
+    let err = vault
+        .supersede_claim(&subject, &claim, 9)
+        .expect_err("new = PERSON must fail typed");
+    assert_eq!(err.kind(), ErrorKind::InvalidClaimBody);
+    let err = vault
+        .retract_claim(&subject, 9)
+        .expect_err("retracting a PERSON must fail typed");
+    assert_eq!(err.kind(), ErrorKind::InvalidClaimBody);
+
+    // Missing id in either position → typed EntityNotFound.
+    let ghost = seeded_entity_id(0x1108);
+    let err = vault
+        .supersede_claim(&ghost, &claim, 9)
+        .expect_err("missing new id must fail typed");
+    assert_eq!(err.kind(), ErrorKind::EntityNotFound);
+    let err = vault
+        .supersede_claim(&claim, &ghost, 9)
+        .expect_err("missing old id must fail typed");
+    assert_eq!(err.kind(), ErrorKind::EntityNotFound);
+    let err = vault
+        .retract_claim(&ghost, 9)
+        .expect_err("retracting a missing id must fail typed");
+    assert_eq!(err.kind(), ErrorKind::EntityNotFound);
+
+    // Nothing was written by any failed attempt.
+    assert_eq!(vault.get_raw(&claim)?.expect("still stored"), before);
+    assert_eq!(
+        vault.get_claim(&claim)?.expect("claim").lifecycle,
+        ClaimLifecycleStatus::Active
+    );
+    assert!(
+        vault
+            .targets(&claim, EdgeKind::Supersedes, None)?
+            .is_empty()
+    );
+    assert!(
+        vault
+            .targets(&subject, EdgeKind::Supersedes, None)?
+            .is_empty()
+    );
+    assert_no_entity_state(&vault, &ghost)?;
+    Ok(())
+}
+
+#[test]
+fn claim_lifecycle_ops_reject_already_closed_claims() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let subject = EntityId::now();
+    vault.put_entity(&subject, 4, test_time_range(1, 1), 1, b"person")?;
+    let a = put_active_claim(&vault, &subject, "profile.lives_in", "osaka", 2)?;
+    let b = put_active_claim(&vault, &subject, "profile.lives_in", "tokyo", 3)?;
+    let c = put_active_claim(&vault, &subject, "profile.lives_in", "kyoto", 4)?;
+
+    const T1: u64 = 100;
+    const T2: u64 = 200;
+    vault.supersede_claim(&b, &a, T1)?;
+
+    // Superseding an already-superseded claim → typed already-closed; the
+    // FIRST close timestamp must survive (T1, not T2).
+    let err = vault
+        .supersede_claim(&c, &a, T2)
+        .expect_err("a is closed history");
+    assert_eq!(err.kind(), ErrorKind::ClaimAlreadyClosed);
+    assert!(matches!(
+        err,
+        Error::ClaimAlreadyClosed {
+            status: ClaimLifecycleStatus::Superseded
+        }
+    ));
+    let a_read = vault.get_claim(&a)?.expect("a");
+    assert_eq!(
+        a_read.valid_to,
+        Some(T1),
+        "failed supersede must not restamp `to`"
+    );
+    // …and the failed attempt wrote no c → a edge.
+    let rtxn = vault.store.env.read_txn()?;
+    assert!(
+        vault
+            .store
+            .edges_out
+            .get(&rtxn, &raw_edge_key(&c, 3, &a))?
+            .is_none(),
+        "failed supersede must not write a supersedes edge"
+    );
+    drop(rtxn);
+
+    // Retracting a superseded claim → already-closed.
+    let err = vault
+        .retract_claim(&a, T2)
+        .expect_err("retracting superseded must fail typed");
+    assert_eq!(err.kind(), ErrorKind::ClaimAlreadyClosed);
+
+    // Double retract → already-closed; the first timestamp survives.
+    vault.retract_claim(&c, T1)?;
+    let err = vault
+        .retract_claim(&c, T2)
+        .expect_err("double retract must fail typed");
+    assert_eq!(err.kind(), ErrorKind::ClaimAlreadyClosed);
+    assert!(matches!(
+        err,
+        Error::ClaimAlreadyClosed {
+            status: ClaimLifecycleStatus::Retracted
+        }
+    ));
+    assert_eq!(vault.get_claim(&c)?.expect("c").valid_to, Some(T1));
+
+    // Superseding a retracted claim → already-closed.
+    let err = vault
+        .supersede_claim(&b, &c, T2)
+        .expect_err("superseding retracted must fail typed");
+    assert_eq!(err.kind(), ErrorKind::ClaimAlreadyClosed);
+
+    // A closed claim cannot be the SUPERSEDING side either (fail-closed):
+    // the new claim must itself be active.
+    let d = put_active_claim(&vault, &subject, "profile.lives_in", "nara", 5)?;
+    let err = vault
+        .supersede_claim(&a, &d, T2)
+        .expect_err("closed new side must fail typed");
+    assert_eq!(err.kind(), ErrorKind::ClaimAlreadyClosed);
+    assert_eq!(
+        vault.get_claim(&d)?.expect("d").lifecycle,
+        ClaimLifecycleStatus::Active
+    );
+    Ok(())
+}
+
+#[test]
+fn claim_lifecycle_ops_reject_provenance_claims_toward_provenance_api() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let a = EntityId::now();
+    let b = EntityId::now();
+    vault.put_entity(&a, 4, test_time_range(1, 1), 1, b"a")?;
+    vault.put_entity(&b, 4, test_time_range(1, 1), 1, b"b")?;
+
+    // An edge.provenance Claim written through the pub(crate) reserved-
+    // namespace door (the provenance unit's path).
+    let prov = EntityId::now();
+    let prov_body = ClaimBody::new(
+        "edge.provenance",
+        ClaimSubject::Edge {
+            source: a,
+            kind: EdgeKind::Mentions,
+            target: b,
+        },
+        rmpv::Value::from("payload"),
+        0.9,
+        ClaimApprovalStatus::Auto,
+        ClaimLifecycleStatus::Active,
+    );
+    let prov_bytes = crate::claim::encode_claim_body(&prov_body)?;
+    vault.with_write_txn(|wtxn| {
+        vault
+            .batch_in()
+            .put_reserved_claim(&prov, test_time_range(1, 1), 2, &prov_bytes)
+            .apply(wtxn)
+    })?;
+    let normal = put_active_claim(&vault, &a, "profile.name", "Alice", 2)?;
+    let prov_before = vault.get_raw(&prov)?.expect("prov stored");
+    let normal_before = vault.get_raw(&normal)?.expect("normal stored");
+
+    // The generic ops must NOT bypass the edge-restamp lifecycle (M2-9):
+    // provenance-predicate claims are rejected typed in EVERY position,
+    // and the error points at the provenance API.
+    let err = vault
+        .retract_claim(&prov, 9)
+        .expect_err("retracting an edge.provenance claim must fail typed");
+    assert_eq!(err.kind(), ErrorKind::ProvenanceClaimLifecycle);
+    assert!(
+        err.to_string().contains("edge-provenance lifecycle API"),
+        "error must point at the provenance API: {err}"
+    );
+
+    let err = vault
+        .supersede_claim(&normal, &prov, 9)
+        .expect_err("old = provenance claim must fail typed");
+    assert_eq!(err.kind(), ErrorKind::ProvenanceClaimLifecycle);
+    let err = vault
+        .supersede_claim(&prov, &normal, 9)
+        .expect_err("new = provenance claim must fail typed");
+    assert_eq!(err.kind(), ErrorKind::ProvenanceClaimLifecycle);
+
+    // Nothing was written: bodies + envelopes byte-identical, lifecycle
+    // untouched, no supersedes edges anywhere.
+    assert_eq!(vault.get_raw(&prov)?.expect("prov"), prov_before);
+    assert_eq!(vault.get_raw(&normal)?.expect("normal"), normal_before);
+    assert_eq!(
+        vault.get_claim(&prov)?.expect("prov").lifecycle,
+        ClaimLifecycleStatus::Active
+    );
+    assert!(vault.targets(&prov, EdgeKind::Supersedes, None)?.is_empty());
+    assert!(
+        vault
+            .targets(&normal, EdgeKind::Supersedes, None)?
+            .is_empty()
+    );
+    Ok(())
+}
