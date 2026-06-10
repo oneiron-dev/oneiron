@@ -1168,6 +1168,12 @@ pub struct PackStats {
     pub query_time_us: u64,
     pub entities_hydrated: usize,
     pub neighbors_hydrated: usize,
+    /// CLAIM records silently excluded by the D19 read-path status gate
+    /// (ARCH-0003: surface only `appr ∈ {auto, approved}` ∧ `life = active`
+    /// ∧ `stale = false`) or by the fail-closed type-0 body decode, across
+    /// the pipeline stage and pack hydration (results + neighbors). A claim
+    /// suppressed in both stages counts once per stage.
+    pub claims_suppressed: usize,
 }
 
 /// A fully hydrated context pack ready for serialization or programmatic use.
