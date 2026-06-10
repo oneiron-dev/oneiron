@@ -18,7 +18,7 @@ use sha2::{Digest, Sha256};
 use xxhash_rust::xxh32::xxh32;
 
 use super::*;
-use crate::batch::ENTITY_METADATA_HEADER_LEN;
+use crate::batch::{ENTITY_METADATA_HEADER_LEN, LONG_INTERVAL_THRESHOLD_SECS};
 use crate::deletion::{
     DeleteReason, LAST_HARD_ERASE_SWEEP_SEQ_KEY, RedactionScope, encode_hard_erase_sweep_job,
     encode_hard_erase_sweep_key,
@@ -395,11 +395,23 @@ fn decode_short_id_value(value: &[u8]) -> Result<(String, u8)> {
     Ok((short_id, hash[0]))
 }
 
+/// Reads the entity-keyed `short_ids_reverse` row (ARCH-0019 manifest row n4:
+/// entity_id -> `short_id bytes ‖ content_hash u8`).
 fn read_short_id_value(vault: &Vault, id: &EntityId) -> Result<Vec<u8>> {
     let rtxn = vault.store.env.read_txn()?;
     vault
         .store
-        .short_ids
+        .short_ids_reverse
+        .get(&rtxn, id.as_bytes())?
+        .map(|bytes| bytes.to_vec())
+        .ok_or(Error::EntityNotFound)
+}
+
+fn read_raw_entity(vault: &Vault, id: &EntityId) -> Result<Vec<u8>> {
+    let rtxn = vault.store.env.read_txn()?;
+    vault
+        .store
+        .entities
         .get(&rtxn, id.as_bytes())?
         .map(|bytes| bytes.to_vec())
         .ok_or(Error::EntityNotFound)
@@ -1647,26 +1659,225 @@ fn batch_put_assigns_short_id() -> Result<()> {
 }
 
 #[test]
-fn batch_put_short_id_reverse_lookup() -> Result<()> {
+fn batch_put_short_id_round_trips_both_directions() -> Result<()> {
     let (_dir, vault) = open_test_vault();
     let id = EntityId::now();
     let data = b"reverse";
 
+    // TURN (type 1), not CLAIM (type 0): the parallel ONE-1104 branch validates
+    // all type-0 bodies (claim ABI), and merge rehearsal twice caught one of its
+    // bulk 0->1 migration hunks silently anchoring into the wrong test. Seeding
+    // type 1 keeps the round-trip purpose intact and removes the landmine.
     vault
         .batch()
-        .put(&id, 0, test_time_range(100, 100), 101, data)
+        .put(&id, 1, test_time_range(100, 100), 101, data)
         .commit()?;
 
+    // Reverse direction (row n4): entity_id -> (short_id, content_hash).
     let short_id_value = read_short_id_value(&vault, &id)?;
-    let (short_id, _) = decode_short_id_value(&short_id_value)?;
+    let (short_id, hash) = decode_short_id_value(&short_id_value)?;
+    assert_eq!(short_id, "tn1");
+    assert_eq!(hash, content_hash(data));
+
+    // Forward direction (row n3): (short_id, content_hash) -> entity_id.
+    let mut forward_key = short_id.as_bytes().to_vec();
+    forward_key.push(hash);
+    let rtxn = vault.store.env.read_txn()?;
+    let forward = vault
+        .store
+        .short_ids
+        .get(&rtxn, &forward_key)?
+        .ok_or(Error::EntityNotFound)?;
+    assert_eq!(forward, id.as_bytes());
+
+    // A stale forward probe (wrong content hash) must NOT resolve: the hash
+    // is part of the key, so it acts as a staleness check on resolution.
+    let mut stale_key = short_id.as_bytes().to_vec();
+    stale_key.push(hash.wrapping_add(1));
+    assert!(vault.store.short_ids.get(&rtxn, &stale_key)?.is_none());
+    Ok(())
+}
+
+/// ARCH-0019 dbManifest rows pinned byte-for-byte via a direct raw cursor
+/// (NOT the short-id API):
+///
+/// * row n3 `short_ids`: key `(short_id, content_hash)` → value `entity_id`
+/// * row n4 `short_ids_reverse`: key `entity_id` → value `(short_id, content_hash)`
+///
+/// A still-swapped implementation (short_ids keyed by the 16-byte entity id,
+/// short_ids_reverse keyed by the bare short id) FAILS every assertion here.
+#[test]
+fn short_id_dbs_match_pinned_manifest_rows_raw_layout() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let id = EntityId::now();
+    let data = b"short-id-layout-spec";
+
+    // Type 1 (TURN) fixture: keeps this raw-layout spec off the CLAIM type
+    // byte, whose body bytes are validated by the claim-body ABI.
+    vault
+        .batch()
+        .put(&id, 1, test_time_range(7, 7), 8, data)
+        .commit()?;
+
+    // content_hash = xxh32(data, 0) % 256; first issued TURN short id = "tn1".
+    let expected_hash = content_hash(data);
+    let mut expected_pair = b"tn1".to_vec();
+    expected_pair.push(expected_hash);
 
     let rtxn = vault.store.env.read_txn()?;
-    let reverse = vault
+
+    // Row n3: exactly ONE forward row — key = short_id bytes ‖ content_hash
+    // u8, value = the 16-byte entity id. No counter sentinel rows.
+    let forward_rows: Vec<(Vec<u8>, Vec<u8>)> = vault
+        .store
+        .short_ids
+        .iter(&rtxn)?
+        .map(|entry| entry.map(|(k, v)| (k.to_vec(), v.to_vec())))
+        .collect::<std::result::Result<_, _>>()?;
+    assert_eq!(
+        forward_rows.len(),
+        1,
+        "short_ids must hold only the manifest row (no sentinels): {forward_rows:?}"
+    );
+    assert_eq!(forward_rows[0].0, expected_pair, "forward KEY bytes");
+    assert_eq!(
+        forward_rows[0].1,
+        id.as_bytes().to_vec(),
+        "forward VALUE = 16-byte entity id"
+    );
+
+    // Row n4: exactly ONE reverse row — key = 16-byte entity id, value =
+    // short_id bytes ‖ content_hash u8.
+    let reverse_rows: Vec<(Vec<u8>, Vec<u8>)> = vault
         .store
         .short_ids_reverse
-        .get(&rtxn, short_id.as_bytes())?
-        .ok_or(Error::EntityNotFound)?;
-    assert_eq!(reverse, id.as_bytes());
+        .iter(&rtxn)?
+        .map(|entry| entry.map(|(k, v)| (k.to_vec(), v.to_vec())))
+        .collect::<std::result::Result<_, _>>()?;
+    assert_eq!(reverse_rows.len(), 1);
+    assert_eq!(
+        reverse_rows[0].0,
+        id.as_bytes().to_vec(),
+        "reverse KEY = 16-byte entity id"
+    );
+    assert_eq!(reverse_rows[0].1, expected_pair, "reverse VALUE bytes");
+    Ok(())
+}
+
+/// Per-type short-id counters live in `vault_meta` under the documented
+/// `b"sid_counter:" ‖ type_byte` scheme (u64 LE value) — NOT as
+/// `[type_byte, 0xFF×15]` sentinel rows inside `short_ids` (pre-ABI-v3
+/// layout). Scans the whole `short_ids` DB and asserts no sentinel remains.
+#[test]
+fn short_id_counters_live_in_vault_meta_not_short_ids() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let turn_a = EntityId::now();
+    let turn_b = EntityId::now();
+    let session = EntityId::now();
+
+    // Types 1 (TURN) and 2 (SESSION) exercise two distinct per-type counters
+    // while keeping fixtures off the CLAIM type byte, whose body bytes are
+    // validated by the claim-body ABI.
+    vault
+        .batch()
+        .put(&turn_a, 1, test_time_range(1, 1), 2, b"turn-a")
+        .put(&turn_b, 1, test_time_range(3, 3), 4, b"turn-b")
+        .put(&session, 2, test_time_range(5, 5), 6, b"session-a")
+        .commit()?;
+
+    let rtxn = vault.store.env.read_txn()?;
+
+    for entry in vault.store.short_ids.iter(&rtxn)? {
+        let (key, value) = entry?;
+        assert!(
+            !(key.len() == 16 && key[1..].iter().all(|&b| b == 0xFF)),
+            "short_ids must not contain [type_byte, 0xFF x15] counter sentinels: {key:?}"
+        );
+        assert_eq!(
+            value.len(),
+            16,
+            "every short_ids value must be a 16-byte entity id (counter rows were 8-byte): {value:?}"
+        );
+    }
+
+    // Documented key scheme, pinned as literal bytes: 12-byte ASCII prefix
+    // "sid_counter:" + raw type byte; value = last issued counter u64 LE.
+    let turn_counter = vault
+        .store
+        .vault_meta
+        .get(&rtxn, b"sid_counter:\x01")?
+        .expect("TURN counter must live in vault_meta");
+    assert_eq!(turn_counter, 2_u64.to_le_bytes());
+    let session_counter = vault
+        .store
+        .vault_meta
+        .get(&rtxn, b"sid_counter:\x02")?
+        .expect("SESSION counter must live in vault_meta");
+    assert_eq!(session_counter, 1_u64.to_le_bytes());
+    Ok(())
+}
+
+/// Pins the short-id content hash formula `xxh32(data, 0) % 256` (u8) with a
+/// precomputed literal so a formula/seed/width drift FAILS without relying on
+/// the engine's own helper.
+#[test]
+fn short_id_content_hash_is_xxh32_of_data_mod_256() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let id = EntityId::now();
+    // xxh32(b"short-id-hash-pin", seed 0) = 0xc8d57569; 0xc8d57569 % 256 = 105.
+    let data = b"short-id-hash-pin";
+    const EXPECTED_CONTENT_HASH: u8 = 105;
+
+    // Type 1 (TURN) fixture: the hash formula is type-independent, and this
+    // keeps the fixture off the CLAIM type byte, whose body bytes are
+    // validated by the claim-body ABI. First issued TURN short id = "tn1".
+    vault
+        .batch()
+        .put(&id, 1, test_time_range(1, 1), 2, data)
+        .commit()?;
+
+    let (_, hash) = decode_short_id_value(&read_short_id_value(&vault, &id)?)?;
+    assert_eq!(hash, EXPECTED_CONTENT_HASH);
+
+    // The same byte is embedded in the forward KEY.
+    let mut forward_key = b"tn1".to_vec();
+    forward_key.push(EXPECTED_CONTENT_HASH);
+    let rtxn = vault.store.env.read_txn()?;
+    assert_eq!(
+        vault.store.short_ids.get(&rtxn, &forward_key)?,
+        Some(id.as_bytes().as_slice())
+    );
+    Ok(())
+}
+
+/// M0-4 fail-closed gate over the M2-5 bump: vaults written under storage ABI
+/// v2 (pre short-id direction swap) are REJECTED at open with the typed gate
+/// error. Pins the literal versions 2 → 3 — an implementation that skipped
+/// the bump would open the old vault and FAIL this test.
+#[test]
+fn open_rejects_abi_v2_vault_after_short_id_swap() -> Result<()> {
+    let temp_dir = tempfile::tempdir()?;
+    let path = temp_dir.path();
+
+    {
+        let _vault = Vault::open(path, test_config())?;
+    }
+    set_raw_storage_abi_version(path, Some(2))?;
+
+    let err = match Vault::open(path, test_config()) {
+        Ok(_) => panic!("expected Vault::open to reject a pre-swap ABI v2 vault"),
+        Err(err) => err,
+    };
+    assert!(
+        matches!(
+            err,
+            Error::StorageAbiVersionChanged {
+                stored: Some(2),
+                current: 3,
+            }
+        ),
+        "expected StorageAbiVersionChanged {{ stored: Some(2), current: 3 }}, got {err:?}"
+    );
     Ok(())
 }
 
@@ -1696,6 +1907,27 @@ fn batch_put_updates_content_hash_on_reput() -> Result<()> {
     assert_eq!(hash1, content_hash(data1));
     assert_eq!(hash2, content_hash(&data2));
     assert_ne!(hash1, hash2);
+
+    // The content hash is part of the forward KEY (manifest row n3), so the
+    // re-put must reap the stale forward row and write the refreshed one — an
+    // implementation that leaves the old `(short_id, old_hash)` row FAILS.
+    let mut stale_forward_key = short_id1.as_bytes().to_vec();
+    stale_forward_key.push(hash1);
+    let mut fresh_forward_key = short_id1.as_bytes().to_vec();
+    fresh_forward_key.push(hash2);
+    let rtxn = vault.store.env.read_txn()?;
+    assert!(
+        vault
+            .store
+            .short_ids
+            .get(&rtxn, &stale_forward_key)?
+            .is_none(),
+        "stale forward short_ids row must be deleted on content update"
+    );
+    assert_eq!(
+        vault.store.short_ids.get(&rtxn, &fresh_forward_key)?,
+        Some(id.as_bytes().as_slice())
+    );
     Ok(())
 }
 
@@ -1703,11 +1935,14 @@ fn batch_put_updates_content_hash_on_reput() -> Result<()> {
 fn reput_deindexes_stale_secondary_indexes() -> Result<()> {
     let (_dir, vault) = open_test_vault();
     let id = EntityId::now();
-    let old_type = 0_u8;
+    // The type byte is immutable on re-put (D2, Error::EntityTypeImmutable);
+    // re-typing coverage lives in the EntityTypeImmutable tests. This test
+    // pins that a same-type re-put re-homes the temporal indexes while the
+    // short id stays stable and the content hash refreshes.
+    let entity_type = 0_u8;
     let old_occurred = test_time_range(100, 200);
     let old_learned = 300_u64;
     let old_data = b"old-data";
-    let new_type = 1_u8;
     let new_occurred = test_time_range(400, 500);
     let new_learned = 600_u64;
     let mut new_data = b"new-data".to_vec();
@@ -1717,17 +1952,17 @@ fn reput_deindexes_stale_secondary_indexes() -> Result<()> {
 
     vault
         .batch()
-        .put(&id, old_type, old_occurred, old_learned, old_data)
+        .put(&id, entity_type, old_occurred, old_learned, old_data)
         .commit()?;
 
-    let old_type_key = Store::encode_type_key(old_type, &id);
+    let type_key = Store::encode_type_key(entity_type, &id);
     let old_start_key = Store::encode_temporal_key(old_occurred.start, &id);
     let old_end_key = Store::encode_temporal_key(old_occurred.end, &id);
     let old_learned_key = Store::encode_temporal_key(old_learned, &id);
 
     {
         let rtxn = vault.store.env.read_txn()?;
-        assert!(vault.store.type_index.get(&rtxn, &old_type_key)?.is_some());
+        assert!(vault.store.type_index.get(&rtxn, &type_key)?.is_some());
         assert!(
             vault
                 .store
@@ -1755,17 +1990,16 @@ fn reput_deindexes_stale_secondary_indexes() -> Result<()> {
 
     vault
         .batch()
-        .put(&id, new_type, new_occurred, new_learned, &new_data)
+        .put(&id, entity_type, new_occurred, new_learned, &new_data)
         .commit()?;
 
-    let new_type_key = Store::encode_type_key(new_type, &id);
     let new_start_key = Store::encode_temporal_key(new_occurred.start, &id);
     let new_end_key = Store::encode_temporal_key(new_occurred.end, &id);
     let new_learned_key = Store::encode_temporal_key(new_learned, &id);
 
     {
         let rtxn = vault.store.env.read_txn()?;
-        assert!(vault.store.type_index.get(&rtxn, &old_type_key)?.is_none());
+        assert!(vault.store.type_index.get(&rtxn, &type_key)?.is_some());
         assert!(
             vault
                 .store
@@ -1787,7 +2021,6 @@ fn reput_deindexes_stale_secondary_indexes() -> Result<()> {
                 .get(&rtxn, &old_learned_key)?
                 .is_none()
         );
-        assert!(vault.store.type_index.get(&rtxn, &new_type_key)?.is_some());
         assert!(
             vault
                 .store
@@ -2152,11 +2385,8 @@ fn full_delete_deindexes_everything() -> Result<()> {
         .phonetic(&id, &["SMTH", "SMT"])
         .commit()?;
 
-    let short_id_before_delete = {
-        let value = read_short_id_value(&vault, &id)?;
-        let (short_id, _) = decode_short_id_value(&value)?;
-        short_id
-    };
+    // The reverse VALUE bytes double as the forward KEY (short_id ‖ hash).
+    let forward_key_before_delete = read_short_id_value(&vault, &id)?;
 
     assert!(vault.delete_entity(&id)?);
     assert!(vault.get(&id)?.is_none());
@@ -2207,12 +2437,18 @@ fn full_delete_deindexes_everything() -> Result<()> {
             .is_none()
     );
 
-    assert!(vault.store.short_ids.get(&rtxn, id.as_bytes())?.is_none());
     assert!(
         vault
             .store
             .short_ids_reverse
-            .get(&rtxn, short_id_before_delete.as_bytes())?
+            .get(&rtxn, id.as_bytes())?
+            .is_none()
+    );
+    assert!(
+        vault
+            .store
+            .short_ids
+            .get(&rtxn, &forward_key_before_delete)?
             .is_none()
     );
     Ok(())
@@ -2424,7 +2660,13 @@ fn put_entity_simple_api_uses_batch() -> Result<()> {
             .get(&rtxn, &learned_key)?
             .is_some()
     );
-    assert!(vault.store.short_ids.get(&rtxn, id.as_bytes())?.is_some());
+    assert!(
+        vault
+            .store
+            .short_ids_reverse
+            .get(&rtxn, id.as_bytes())?
+            .is_some()
+    );
 
     Ok(())
 }
@@ -3143,7 +3385,7 @@ fn doctor_reflects_persisted_open_compatibility_values() -> Result<()> {
     let report = vault.doctor()?;
     serde_json::to_value(&report).expect("doctor report must serialize");
 
-    assert_eq!(report.storage_abi_version, Some(2));
+    assert_eq!(report.storage_abi_version, Some(3));
     assert_eq!(report.storage_schema_version, Some(1));
     assert_eq!(
         report.embedding_model_id,
@@ -3964,40 +4206,188 @@ fn encode_edge_value_rejects_structural_non_neutral_vad() {
 
 #[test]
 fn all_entity_type_prefixes() {
-    use crate::types::{ENTITY_TYPE_REGISTRY, short_id_prefix};
+    use crate::types::{
+        ENTITY_TYPE_REGISTRY, EntityClassification, TypeByteBand, band_of, is_structural_kind,
+        short_id_prefix,
+    };
 
-    // ARCH-0002 / oneiron-contracts.ts pinned storage ABI.
-    let expected: &[(&str, u8, Option<&str>)] = &[
-        ("CLAIM", 0, Some("cl")),
-        ("TURN", 1, Some("tn")),
-        ("SESSION", 2, Some("ss")),
-        ("MESSAGE", 3, Some("ms")),
-        ("PERSON", 4, Some("pr")),
-        ("RELATIONSHIP", 5, Some("rl")),
-        ("EVENT", 6, Some("ev")),
-        ("SKILL", 7, Some("sk")),
-        ("SUMMARY", 8, Some("sm")),
-        ("PLACE", 9, Some("pl")),
-        ("ASSET_TEXT", 10, Some("tx")),
-        ("CONVERSATION", 11, Some("cv")),
-        ("ORG", 12, Some("og")),
-        ("FACET", 13, Some("fc")),
-        ("WORLD", 14, Some("wd")),
-        ("ASSET", 15, Some("as")),
-        ("NOTIFICATION", 16, Some("nt")),
-        ("TASK_LIST", 80, Some("tl")),
-        ("TASK", 81, Some("tk")),
-        ("MACHINE", 82, Some("mc")),
-        ("REDACTION_AUDIT", 120, None),
+    // ARCH-0002 / oneiron-contracts.ts §1 pinned storage ABI: per registry
+    // row (kind id, type byte, short-id prefix, classification, band).
+    // CLAIM=semantic ("deliberately NOT a StructuralKind"); TURN..NOTIFICATION
+    // = core (band 1–63); TASK_LIST/TASK/MACHINE = pack (productivity band
+    // 80–99); REDACTION_AUDIT = maintenance (band 120+).
+    type RegistryRow = (
+        &'static str,
+        u8,
+        Option<&'static str>,
+        EntityClassification,
+        TypeByteBand,
+    );
+    let expected: &[RegistryRow] = &[
+        (
+            "CLAIM",
+            0,
+            Some("cl"),
+            EntityClassification::Semantic,
+            TypeByteBand::Semantic,
+        ),
+        (
+            "TURN",
+            1,
+            Some("tn"),
+            EntityClassification::Core,
+            TypeByteBand::Core,
+        ),
+        (
+            "SESSION",
+            2,
+            Some("ss"),
+            EntityClassification::Core,
+            TypeByteBand::Core,
+        ),
+        (
+            "MESSAGE",
+            3,
+            Some("ms"),
+            EntityClassification::Core,
+            TypeByteBand::Core,
+        ),
+        (
+            "PERSON",
+            4,
+            Some("pr"),
+            EntityClassification::Core,
+            TypeByteBand::Core,
+        ),
+        (
+            "RELATIONSHIP",
+            5,
+            Some("rl"),
+            EntityClassification::Core,
+            TypeByteBand::Core,
+        ),
+        (
+            "EVENT",
+            6,
+            Some("ev"),
+            EntityClassification::Core,
+            TypeByteBand::Core,
+        ),
+        (
+            "SKILL",
+            7,
+            Some("sk"),
+            EntityClassification::Core,
+            TypeByteBand::Core,
+        ),
+        (
+            "SUMMARY",
+            8,
+            Some("sm"),
+            EntityClassification::Core,
+            TypeByteBand::Core,
+        ),
+        (
+            "PLACE",
+            9,
+            Some("pl"),
+            EntityClassification::Core,
+            TypeByteBand::Core,
+        ),
+        (
+            "ASSET_TEXT",
+            10,
+            Some("tx"),
+            EntityClassification::Core,
+            TypeByteBand::Core,
+        ),
+        (
+            "CONVERSATION",
+            11,
+            Some("cv"),
+            EntityClassification::Core,
+            TypeByteBand::Core,
+        ),
+        (
+            "ORG",
+            12,
+            Some("og"),
+            EntityClassification::Core,
+            TypeByteBand::Core,
+        ),
+        (
+            "FACET",
+            13,
+            Some("fc"),
+            EntityClassification::Core,
+            TypeByteBand::Core,
+        ),
+        (
+            "WORLD",
+            14,
+            Some("wd"),
+            EntityClassification::Core,
+            TypeByteBand::Core,
+        ),
+        (
+            "ASSET",
+            15,
+            Some("as"),
+            EntityClassification::Core,
+            TypeByteBand::Core,
+        ),
+        (
+            "NOTIFICATION",
+            16,
+            Some("nt"),
+            EntityClassification::Core,
+            TypeByteBand::Core,
+        ),
+        (
+            "TASK_LIST",
+            80,
+            Some("tl"),
+            EntityClassification::Pack,
+            TypeByteBand::Productivity,
+        ),
+        (
+            "TASK",
+            81,
+            Some("tk"),
+            EntityClassification::Pack,
+            TypeByteBand::Productivity,
+        ),
+        (
+            "MACHINE",
+            82,
+            Some("mc"),
+            EntityClassification::Pack,
+            TypeByteBand::Productivity,
+        ),
+        (
+            "REDACTION_AUDIT",
+            120,
+            None,
+            EntityClassification::Maintenance,
+            TypeByteBand::InducedDynamicMaintenance,
+        ),
     ];
 
-    let actual: Vec<_> = ENTITY_TYPE_REGISTRY
+    let actual: Vec<RegistryRow> = ENTITY_TYPE_REGISTRY
         .iter()
-        .map(|entry| (entry.kind, entry.type_byte, entry.short_id_prefix))
+        .map(|entry| {
+            (
+                entry.kind,
+                entry.type_byte,
+                entry.short_id_prefix,
+                entry.classification,
+                entry.band,
+            )
+        })
         .collect();
     assert_eq!(actual.as_slice(), expected);
 
-    for (name, byte, prefix) in expected {
+    for (name, byte, prefix, classification, band) in expected {
         match prefix {
             Some(prefix) => {
                 let got = short_id_prefix(*byte).unwrap_or_else(|err| {
@@ -4013,10 +4403,102 @@ fn all_entity_type_prefixes() {
                 "case {name}: expected no short-id prefix"
             ),
         }
+
+        // Registry band metadata must agree with the total band function.
+        assert_eq!(
+            band_of(*byte),
+            *band,
+            "case {name}: band_of({byte}) disagrees with registry band"
+        );
+
+        // StructuralKind = registered core|pack rows ONLY. CLAIM (semantic)
+        // and REDACTION_AUDIT (maintenance) are NOT StructuralKinds.
+        let expect_structural = matches!(
+            classification,
+            EntityClassification::Core | EntityClassification::Pack
+        );
+        assert_eq!(
+            is_structural_kind(*byte),
+            expect_structural,
+            "case {name}: is_structural_kind({byte})"
+        );
     }
 
     assert!(short_id_prefix(99).is_err());
     assert!(short_id_prefix(255).is_err());
+}
+
+#[test]
+fn type_byte_band_allocation_matches_contract() {
+    use crate::types::{
+        TYPE_BYTE_BAND_COMPANION_END, TYPE_BYTE_BAND_COMPANION_START, TYPE_BYTE_BAND_CORE_END,
+        TYPE_BYTE_BAND_CORE_START, TYPE_BYTE_BAND_CRM_END, TYPE_BYTE_BAND_CRM_START,
+        TYPE_BYTE_BAND_MAINTENANCE_START, TYPE_BYTE_BAND_PRODUCTIVITY_END,
+        TYPE_BYTE_BAND_PRODUCTIVITY_START, TYPE_BYTE_SEMANTIC, TypeByteBand, band_of,
+        is_structural_kind, validate_entity_type,
+    };
+
+    // contracts.ts §1 typeByteBands — the LOCKED 6-band allocation:
+    // 0 semantic / 1–63 CORE / 64–79 companion / 80–99 productivity /
+    // 100–119 CRM / 120+ induced-dynamic-maintenance. Boundary constants
+    // pinned as literals so an off-by-one allocation FAILS here.
+    assert_eq!(TYPE_BYTE_SEMANTIC, 0);
+    assert_eq!(TYPE_BYTE_BAND_CORE_START, 1);
+    assert_eq!(TYPE_BYTE_BAND_CORE_END, 63);
+    assert_eq!(TYPE_BYTE_BAND_COMPANION_START, 64);
+    assert_eq!(TYPE_BYTE_BAND_COMPANION_END, 79);
+    assert_eq!(TYPE_BYTE_BAND_PRODUCTIVITY_START, 80);
+    assert_eq!(TYPE_BYTE_BAND_PRODUCTIVITY_END, 99);
+    assert_eq!(TYPE_BYTE_BAND_CRM_START, 100);
+    assert_eq!(TYPE_BYTE_BAND_CRM_END, 119);
+    assert_eq!(TYPE_BYTE_BAND_MAINTENANCE_START, 120);
+
+    // band_of is total over all 256 bytes. Expected values are written from
+    // the contract's literal band edges, independent of the implementation.
+    for byte in u8::MIN..=u8::MAX {
+        let expected = if byte == 0 {
+            TypeByteBand::Semantic
+        } else if byte <= 63 {
+            TypeByteBand::Core
+        } else if byte <= 79 {
+            TypeByteBand::Companion
+        } else if byte <= 99 {
+            TypeByteBand::Productivity
+        } else if byte <= 119 {
+            TypeByteBand::Crm
+        } else {
+            TypeByteBand::InducedDynamicMaintenance
+        };
+        assert_eq!(band_of(byte), expected, "band_of({byte})");
+    }
+
+    // is_structural_kind: false for the semantic byte 0 and maintenance 120;
+    // true for every REGISTERED core (1..=16) and pack (80/81/82) kind.
+    assert!(!is_structural_kind(0), "CLAIM is NOT a StructuralKind");
+    assert!(
+        !is_structural_kind(120),
+        "REDACTION_AUDIT is NOT a StructuralKind"
+    );
+    for byte in 1..=16_u8 {
+        assert!(is_structural_kind(byte), "core byte {byte}");
+    }
+    for byte in [80_u8, 81, 82] {
+        assert!(is_structural_kind(byte), "pack byte {byte}");
+    }
+
+    // Unregistered bytes — including bytes INSIDE structural bands — are not
+    // StructuralKinds, and the existing write-path gate still rejects them
+    // with the same typed error (no behavior change in this unit).
+    for byte in [17_u8, 63, 64, 79, 83, 99, 100, 119, 121, 255] {
+        assert!(!is_structural_kind(byte), "unregistered byte {byte}");
+        assert!(
+            matches!(
+                validate_entity_type(byte),
+                Err(Error::InvalidEntityType(rejected)) if rejected == byte
+            ),
+            "unregistered byte {byte} must stay rejected by validate_entity_type"
+        );
+    }
 }
 
 #[test]
@@ -4440,6 +4922,493 @@ fn unknown_type_bytes_still_fail_with_invalid_entity_type() -> Result<()> {
         assert_eq!(err.kind(), ErrorKind::InvalidEntityType);
         assert!(vault.get(&id)?.is_none());
     }
+
+    Ok(())
+}
+
+#[test]
+fn reput_with_different_type_byte_is_rejected_with_no_index_residue() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let id = EntityId::now();
+
+    vault
+        .batch()
+        .put(&id, 1, test_time_range(100, 200), 300, b"old-data")
+        .commit()?;
+    let record_before = read_raw_entity(&vault, &id)?;
+    let short_id_before = read_short_id_value(&vault, &id)?;
+
+    // D2: the type byte is immutable once a record exists. The pre-D2 engine
+    // silently re-homed the type_index row and kept the old short id, leaving
+    // a SESSION entity addressed as "tn1".
+    let err = vault
+        .batch()
+        .put(&id, 2, test_time_range(400, 500), 600, b"new-data")
+        .commit()
+        .expect_err("re-put with a different type byte must be rejected");
+    assert!(
+        matches!(
+            err,
+            Error::EntityTypeImmutable {
+                id: err_id,
+                existing: 1,
+                attempted: 2,
+            } if err_id == id
+        ),
+        "expected EntityTypeImmutable {{ existing: 1, attempted: 2 }}, got {err:?}"
+    );
+
+    // Stored record and short-id row are byte-for-byte unchanged.
+    assert_eq!(read_raw_entity(&vault, &id)?, record_before);
+    assert_eq!(read_short_id_value(&vault, &id)?, short_id_before);
+
+    // Original index rows intact; no rows for the rejected attempt.
+    let rtxn = vault.store.env.read_txn()?;
+    assert!(
+        vault
+            .store
+            .type_index
+            .get(&rtxn, &Store::encode_type_key(1, &id))?
+            .is_some()
+    );
+    assert!(
+        vault
+            .store
+            .type_index
+            .get(&rtxn, &Store::encode_type_key(2, &id))?
+            .is_none()
+    );
+    assert!(
+        vault
+            .store
+            .temporal_occurred_start
+            .get(&rtxn, &Store::encode_temporal_key(100, &id))?
+            .is_some()
+    );
+    assert!(
+        vault
+            .store
+            .temporal_occurred_end
+            .get(&rtxn, &Store::encode_temporal_key(200, &id))?
+            .is_some()
+    );
+    assert!(
+        vault
+            .store
+            .temporal_learned
+            .get(&rtxn, &Store::encode_temporal_key(300, &id))?
+            .is_some()
+    );
+    assert!(
+        vault
+            .store
+            .temporal_occurred_start
+            .get(&rtxn, &Store::encode_temporal_key(400, &id))?
+            .is_none()
+    );
+    assert!(
+        vault
+            .store
+            .temporal_occurred_end
+            .get(&rtxn, &Store::encode_temporal_key(500, &id))?
+            .is_none()
+    );
+    assert!(
+        vault
+            .store
+            .temporal_learned
+            .get(&rtxn, &Store::encode_temporal_key(600, &id))?
+            .is_none()
+    );
+
+    Ok(())
+}
+
+#[test]
+fn txn_batch_reput_with_different_type_byte_rejects_before_staging_writes() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let id = EntityId::now();
+
+    vault.put_entity(&id, 1, test_time_range(100, 200), 300, b"old-data")?;
+    let record_before = read_raw_entity(&vault, &id)?;
+    let short_id_before = read_short_id_value(&vault, &id)?;
+
+    // Commit the externally-owned transaction DESPITE the error: the
+    // apply-time gate must reject before staging any write, so an
+    // implementation that re-homes index rows before checking the type byte
+    // leaves residue these assertions catch.
+    let mut wtxn = vault.store.env.write_txn()?;
+    let err = vault
+        .batch_in()
+        .put(&id, 2, test_time_range(400, 500), 600, b"new-data")
+        .apply(&mut wtxn)
+        .expect_err("re-put with a different type byte must be rejected");
+    assert!(
+        matches!(
+            err,
+            Error::EntityTypeImmutable {
+                id: err_id,
+                existing: 1,
+                attempted: 2,
+            } if err_id == id
+        ),
+        "expected EntityTypeImmutable {{ existing: 1, attempted: 2 }}, got {err:?}"
+    );
+    wtxn.commit()?;
+
+    assert_eq!(read_raw_entity(&vault, &id)?, record_before);
+    assert_eq!(read_short_id_value(&vault, &id)?, short_id_before);
+
+    let rtxn = vault.store.env.read_txn()?;
+    assert!(
+        vault
+            .store
+            .type_index
+            .get(&rtxn, &Store::encode_type_key(2, &id))?
+            .is_none()
+    );
+    assert!(
+        vault
+            .store
+            .temporal_occurred_start
+            .get(&rtxn, &Store::encode_temporal_key(400, &id))?
+            .is_none()
+    );
+    assert!(
+        vault
+            .store
+            .temporal_occurred_end
+            .get(&rtxn, &Store::encode_temporal_key(500, &id))?
+            .is_none()
+    );
+    assert!(
+        vault
+            .store
+            .temporal_learned
+            .get(&rtxn, &Store::encode_temporal_key(600, &id))?
+            .is_none()
+    );
+
+    Ok(())
+}
+
+#[test]
+fn txn_batch_reput_with_different_type_byte_preserves_long_interval_row() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let id = EntityId::now();
+
+    // Seed an entity whose occurred span exceeds the long-interval threshold,
+    // so a temporal_long_intervals row exists (manifest DB n21: key
+    // encode_temporal_key(occurred_end, id), value occurred_start BE).
+    let old_start = 100_u64;
+    let old_end = old_start + LONG_INTERVAL_THRESHOLD_SECS + 1;
+    vault.put_entity(
+        &id,
+        1,
+        test_time_range(old_start, old_end),
+        300,
+        b"old-data",
+    )?;
+
+    let long_interval_key = Store::encode_temporal_key(old_end, &id);
+    {
+        let rtxn = vault.store.env.read_txn()?;
+        let value = vault
+            .store
+            .temporal_long_intervals
+            .get(&rtxn, &long_interval_key)?
+            .expect("seed entity must have a temporal_long_intervals row");
+        assert_eq!(value, &old_start.to_be_bytes()[..]);
+    }
+
+    // D2 ordering: the immutability gate must fire BEFORE the old-row deletes
+    // in apply_put — a wrong implementation that runs the old-long-interval
+    // delete first would drop the row, then error. Commit the externally-owned
+    // transaction DESPITE the error to expose any such pre-gate delete.
+    let mut wtxn = vault.store.env.write_txn()?;
+    let err = vault
+        .batch_in()
+        .put(&id, 2, test_time_range(400, 500), 600, b"new-data")
+        .apply(&mut wtxn)
+        .expect_err("re-put with a different type byte must be rejected");
+    assert!(
+        matches!(
+            err,
+            Error::EntityTypeImmutable {
+                id: err_id,
+                existing: 1,
+                attempted: 2,
+            } if err_id == id
+        ),
+        "expected EntityTypeImmutable {{ existing: 1, attempted: 2 }}, got {err:?}"
+    );
+    wtxn.commit()?;
+
+    // The long-interval row survives the failed re-type, byte-for-byte.
+    let rtxn = vault.store.env.read_txn()?;
+    let value = vault
+        .store
+        .temporal_long_intervals
+        .get(&rtxn, &long_interval_key)?
+        .expect("temporal_long_intervals row must survive a rejected re-type");
+    assert_eq!(value, &old_start.to_be_bytes()[..]);
+
+    Ok(())
+}
+
+#[test]
+fn batch_double_put_same_id_different_type_rejects_and_writes_nothing() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let id = EntityId::now();
+
+    // Same-batch TOCTOU vector: two puts for the same id with different type
+    // bytes in one batch. The apply-time gate reads the stored envelope inside
+    // the batch's own write transaction (read-your-own-writes), so the second
+    // put must see the first put's staged record and reject.
+    let err = vault
+        .batch()
+        .put(&id, 1, test_time_range(100, 200), 300, b"first")
+        .put(&id, 2, test_time_range(400, 500), 600, b"second")
+        .commit()
+        .expect_err("second put with a different type byte must reject the batch");
+    assert!(
+        matches!(
+            err,
+            Error::EntityTypeImmutable {
+                id: err_id,
+                existing: 1,
+                attempted: 2,
+            } if err_id == id
+        ),
+        "expected EntityTypeImmutable {{ existing: 1, attempted: 2 }}, got {err:?}"
+    );
+
+    // Batch-abort atomicity: the builder owns the transaction and aborts on
+    // error, so NO record survives — not even the first (valid) put.
+    let rtxn = vault.store.env.read_txn()?;
+    assert!(vault.store.entities.get(&rtxn, id.as_bytes())?.is_none());
+    assert!(vault.store.short_ids.get(&rtxn, id.as_bytes())?.is_none());
+    assert!(
+        vault
+            .store
+            .type_index
+            .get(&rtxn, &Store::encode_type_key(1, &id))?
+            .is_none()
+    );
+    assert!(
+        vault
+            .store
+            .type_index
+            .get(&rtxn, &Store::encode_type_key(2, &id))?
+            .is_none()
+    );
+    assert!(
+        vault
+            .store
+            .temporal_occurred_start
+            .get(&rtxn, &Store::encode_temporal_key(100, &id))?
+            .is_none()
+    );
+    assert!(
+        vault
+            .store
+            .temporal_learned
+            .get(&rtxn, &Store::encode_temporal_key(300, &id))?
+            .is_none()
+    );
+
+    Ok(())
+}
+
+#[test]
+fn put_with_reversed_occurred_range_is_rejected_and_nothing_is_written() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let id = EntityId::now();
+
+    // D3: occurred_start > occurred_end is rejected with a typed error. The
+    // pre-D3 engine silently swapped the bounds and stored (100, 300).
+    let err = vault
+        .batch()
+        .put(&id, 0, test_time_range(300, 100), 400, b"payload")
+        .commit()
+        .expect_err("occurred_start > occurred_end must be rejected");
+    assert!(
+        matches!(
+            err,
+            Error::InvalidTimeRange {
+                start: 300,
+                end: 100
+            }
+        ),
+        "expected InvalidTimeRange {{ start: 300, end: 100 }}, got {err:?}"
+    );
+
+    {
+        let rtxn = vault.store.env.read_txn()?;
+        assert!(vault.store.entities.get(&rtxn, id.as_bytes())?.is_none());
+        assert!(vault.store.short_ids.get(&rtxn, id.as_bytes())?.is_none());
+        assert!(
+            vault
+                .store
+                .type_index
+                .get(&rtxn, &Store::encode_type_key(0, &id))?
+                .is_none()
+        );
+        // The pre-D3 swap stored (start: 100, end: 300) — assert both
+        // orientations are absent from every temporal index.
+        for ts in [100_u64, 300] {
+            let key = Store::encode_temporal_key(ts, &id);
+            assert!(
+                vault
+                    .store
+                    .temporal_occurred_start
+                    .get(&rtxn, &key)?
+                    .is_none()
+            );
+            assert!(
+                vault
+                    .store
+                    .temporal_occurred_end
+                    .get(&rtxn, &key)?
+                    .is_none()
+            );
+        }
+        assert!(
+            vault
+                .store
+                .temporal_learned
+                .get(&rtxn, &Store::encode_temporal_key(400, &id))?
+                .is_none()
+        );
+    }
+
+    // A reversed range whose swapped span exceeds the long-interval
+    // threshold: the pre-D3 swap would also have written a
+    // temporal_long_intervals row keyed on the (swapped) occurred_end.
+    let long_id = EntityId::now();
+    let reversed_start = 300 + LONG_INTERVAL_THRESHOLD_SECS + 1;
+    let err = vault
+        .batch()
+        .put(
+            &long_id,
+            0,
+            test_time_range(reversed_start, 100),
+            400,
+            b"payload",
+        )
+        .commit()
+        .expect_err("reversed long interval must be rejected");
+    assert!(
+        matches!(err, Error::InvalidTimeRange { start, end: 100 } if start == reversed_start),
+        "expected InvalidTimeRange {{ start: {reversed_start}, end: 100 }}, got {err:?}"
+    );
+
+    let rtxn = vault.store.env.read_txn()?;
+    assert!(
+        vault
+            .store
+            .entities
+            .get(&rtxn, long_id.as_bytes())?
+            .is_none()
+    );
+    assert!(
+        vault
+            .store
+            .temporal_long_intervals
+            .get(&rtxn, &Store::encode_temporal_key(reversed_start, &long_id))?
+            .is_none()
+    );
+
+    Ok(())
+}
+
+#[test]
+fn txn_batch_put_with_reversed_occurred_range_rejected_at_apply_time() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let id = EntityId::now();
+
+    // TxnBatchBuilder has no eager validation — this exercises the
+    // authoritative apply-time gate in apply_put. Commit the transaction
+    // despite the error to prove the gate rejected before staging any write.
+    let mut wtxn = vault.store.env.write_txn()?;
+    let err = vault
+        .batch_in()
+        .put(&id, 1, test_time_range(300, 100), 400, b"payload")
+        .apply(&mut wtxn)
+        .expect_err("occurred_start > occurred_end must be rejected");
+    assert!(
+        matches!(
+            err,
+            Error::InvalidTimeRange {
+                start: 300,
+                end: 100
+            }
+        ),
+        "expected InvalidTimeRange {{ start: 300, end: 100 }}, got {err:?}"
+    );
+    wtxn.commit()?;
+
+    let rtxn = vault.store.env.read_txn()?;
+    assert!(vault.store.entities.get(&rtxn, id.as_bytes())?.is_none());
+    assert!(vault.store.short_ids.get(&rtxn, id.as_bytes())?.is_none());
+    for ts in [100_u64, 300] {
+        let key = Store::encode_temporal_key(ts, &id);
+        assert!(
+            vault
+                .store
+                .temporal_occurred_start
+                .get(&rtxn, &key)?
+                .is_none()
+        );
+        assert!(
+            vault
+                .store
+                .temporal_occurred_end
+                .get(&rtxn, &key)?
+                .is_none()
+        );
+    }
+
+    Ok(())
+}
+
+#[test]
+fn point_event_start_equals_end_stays_accepted() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let id = EntityId::now();
+
+    // D3 boundary: start == end is a legal point event.
+    vault
+        .batch()
+        .put(&id, 1, test_time_range(777, 777), 800, b"point")
+        .commit()?;
+
+    let rtxn = vault.store.env.read_txn()?;
+    let raw = vault
+        .store
+        .entities
+        .get(&rtxn, id.as_bytes())?
+        .ok_or(Error::EntityNotFound)?;
+    assert_eq!(raw[1..9], 777_u64.to_be_bytes());
+    assert_eq!(raw[9..17], 777_u64.to_be_bytes());
+
+    // Point-event index convention: occurred_start row only, no occurred_end
+    // row (apply_put writes temporal_occurred_end only when start != end).
+    let key = Store::encode_temporal_key(777, &id);
+    assert!(
+        vault
+            .store
+            .temporal_occurred_start
+            .get(&rtxn, &key)?
+            .is_some()
+    );
+    assert!(
+        vault
+            .store
+            .temporal_occurred_end
+            .get(&rtxn, &key)?
+            .is_none()
+    );
 
     Ok(())
 }
@@ -5087,11 +6056,15 @@ fn get_entity_type_returns_correct_type() -> Result<()> {
     Ok(())
 }
 
+/// ONE-1100 AC1 — `child_of` is NEVER traversed by PPR (contract
+/// `lambda: null`, "Not traversed."): a deep ChildOf chain carries zero
+/// propagated mass from any seed, while the tree remains reachable through
+/// the dedicated `subtree` / `ancestors` read APIs.
 #[test]
-fn child_of_has_no_ppr_hop_limit() -> Result<()> {
+fn child_of_chain_carries_no_ppr_mass() -> Result<()> {
     let (_dir, vault) = open_test_vault();
 
-    // Build a 5-level deep ChildOf chain: a → b → c → d → e
+    // Build a 5-level deep ChildOf chain: e → d → c → b → a (child → parent).
     let a = EntityId::now();
     let b = EntityId::now();
     let c = EntityId::now();
@@ -5111,22 +6084,26 @@ fn child_of_has_no_ppr_hop_limit() -> Result<()> {
         .edge(&e, EdgeKind::ChildOf, &d, 1.0)
         .commit()?;
 
-    // PPR from e should reach a (5 hops via ChildOf, no limit)
+    // PPR from e must reach NOTHING: the only edges are ChildOf, which carry
+    // no PPR weight regardless of the stored 1.0 weight bytes.
     {
         let rtxn = vault.store.env.read_txn()?;
         let scores = ppr::ppr_compute(&vault.store, &rtxn, &[e], 6, 0.15)?;
-        let a_score = scores
-            .iter()
-            .find(|s| s.id == a)
-            .map(|s| s.score)
-            .unwrap_or(0.0);
-        assert!(
-            a_score > 0.0,
-            "ChildOf should propagate beyond 2 hops, got score={a_score}"
+        assert_eq!(
+            scores.len(),
+            1,
+            "ChildOf must not propagate; only the seed may be scored"
         );
+        assert_eq!(scores[0].id, e);
     }
 
-    // Compare with PartOf chain of same depth — d should be blocked at 3rd hop
+    // The tree APIs — not PPR — are the ChildOf read path: the full ancestor
+    // chain stays reachable.
+    let ancestors = vault.ancestors(&e)?;
+    assert_eq!(ancestors, vec![d, c, b, a]);
+
+    // PartOf comparison: its traversal is hop-capped at 2, so p1 (4 hops from
+    // p5) is blocked.
     let p1 = EntityId::now();
     let p2 = EntityId::now();
     let p3 = EntityId::now();
@@ -5164,13 +6141,14 @@ fn child_of_has_no_ppr_hop_limit() -> Result<()> {
     Ok(())
 }
 
+/// ONE-1100 AC1 — a mixed path whose first edge is `child_of` carries zero
+/// PPR mass past that edge: ChildOf is never traversed, so the PartOf tail
+/// of the path is unreachable from the task seed.
 #[test]
-fn child_of_survives_mixed_part_of_path() -> Result<()> {
+fn mixed_path_through_child_of_carries_no_ppr_mass() -> Result<()> {
     let (_dir, vault) = open_test_vault();
 
-    // Build a mixed path: place1 --PartOf--> place2 --PartOf--> place3 --ChildOf--> task
-    // After 2 PartOf hops (place1→place3), the next edge is ChildOf.
-    // Without the ChildOf exemption in PPR, this would be blocked at hop 3.
+    // place1 --PartOf--> place2 --PartOf--> place3 --ChildOf--> task
     let place1 = EntityId::now();
     let place2 = EntityId::now();
     let place3 = EntityId::now();
@@ -5190,18 +6168,14 @@ fn child_of_survives_mixed_part_of_path() -> Result<()> {
     let rtxn = vault.store.env.read_txn()?;
     let scores = ppr::ppr_compute(&vault.store, &rtxn, &[task], 6, 0.15)?;
 
-    // place1 is reachable via: task --ChildOf--> place3 --PartOf--> place2 --PartOf--> place1
-    // The ChildOf hop doesn't count, so only 2 PartOf hops (within limit).
-    // Without the ChildOf exemption, hops would be 3 and place1 would be blocked.
-    let place1_score = scores
-        .iter()
-        .find(|s| s.id == place1)
-        .map(|s| s.score)
-        .unwrap_or(0.0);
-    assert!(
-        place1_score > 0.0,
-        "ChildOf should not count toward PartOf hop limit in mixed paths, got score={place1_score}"
+    // The only edge at the seed is ChildOf (never traversed), so no node
+    // beyond the seed may receive mass — including the PartOf tail.
+    assert_eq!(
+        scores.len(),
+        1,
+        "ChildOf must block the entire mixed path; only the seed may be scored"
     );
+    assert_eq!(scores[0].id, task);
 
     Ok(())
 }

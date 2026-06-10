@@ -32,11 +32,115 @@ pub const ENTITY_TYPE_TASK: u8 = 81;
 pub const ENTITY_TYPE_MACHINE: u8 = 82;
 pub const ENTITY_TYPE_REDACTION_AUDIT: u8 = 120;
 
+/// Registry classification mirroring the contracts.ts §1
+/// `EntityClassification` enum: `"semantic" | "core" | "pack" | "maintenance"`.
+///
+/// CLAIM (byte 0) is the single SEMANTIC type (ARCH-0003) and deliberately
+/// NOT a StructuralKind; core and pack kinds ARE StructuralKinds; maintenance
+/// records (REDACTION_AUDIT) are engine-authored audit records, also not
+/// StructuralKinds.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum EntityClassification {
+    /// `"semantic"` — CLAIM, the single subject·predicate·value type.
+    Semantic,
+    /// `"core"` — universal CORE StructuralKinds (TURN … NOTIFICATION).
+    Core,
+    /// `"pack"` — pack-registered StructuralKinds (TASK_LIST / TASK / MACHINE
+    /// today; other pack kinds get bytes at pack registration).
+    Pack,
+    /// `"maintenance"` — system/maintenance records (REDACTION_AUDIT).
+    Maintenance,
+}
+
+/// The LOCKED type-byte band allocation from contracts.ts §1 `typeByteBands`.
+///
+/// Storage ABI: every u8 type byte falls in exactly one band; packs register
+/// kinds against their declared band and never collide with CORE.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum TypeByteBand {
+    /// Byte `0` — "Semantic core": CLAIM's semantic type byte, not a
+    /// StructuralKind.
+    Semantic,
+    /// Bytes `1–63` — "CORE StructuralKinds" (universal kinds, ARCH-0002
+    /// registry authority).
+    Core,
+    /// Bytes `64–79` — "Companion pack (Eiri)".
+    Companion,
+    /// Bytes `80–99` — "Productivity pack (cross-product)" (TASK_LIST=80,
+    /// TASK=81, MACHINE=82; NOTE assigned at pack registration).
+    Productivity,
+    /// Bytes `100–119` — "CRM pack".
+    Crm,
+    /// Bytes `120–255` — "Induced / dynamic / maintenance"
+    /// (REDACTION_AUDIT=120, runtime-induced and tenant-custom kinds).
+    InducedDynamicMaintenance,
+}
+
+/// The single semantic type byte (CLAIM) — the entirety of the `0` band.
+pub const TYPE_BYTE_SEMANTIC: u8 = 0;
+/// First byte of the CORE StructuralKinds band (`1–63`).
+pub const TYPE_BYTE_BAND_CORE_START: u8 = 1;
+/// Last byte of the CORE StructuralKinds band (`1–63`).
+pub const TYPE_BYTE_BAND_CORE_END: u8 = 63;
+/// First byte of the companion pack band (`64–79`).
+pub const TYPE_BYTE_BAND_COMPANION_START: u8 = 64;
+/// Last byte of the companion pack band (`64–79`).
+pub const TYPE_BYTE_BAND_COMPANION_END: u8 = 79;
+/// First byte of the productivity pack band (`80–99`).
+pub const TYPE_BYTE_BAND_PRODUCTIVITY_START: u8 = 80;
+/// Last byte of the productivity pack band (`80–99`).
+pub const TYPE_BYTE_BAND_PRODUCTIVITY_END: u8 = 99;
+/// First byte of the CRM pack band (`100–119`).
+pub const TYPE_BYTE_BAND_CRM_START: u8 = 100;
+/// Last byte of the CRM pack band (`100–119`).
+pub const TYPE_BYTE_BAND_CRM_END: u8 = 119;
+/// First byte of the open-ended induced/dynamic/maintenance band (`120+`).
+pub const TYPE_BYTE_BAND_MAINTENANCE_START: u8 = 120;
+
+/// Maps a type byte to its LOCKED band. Total over all 256 bytes.
+///
+/// Band membership is pure namespace allocation: an unregistered byte still
+/// has a band, but is rejected by [`validate_entity_type`] on every write
+/// path until a pack registers it (registration mechanism deferred post-M2).
+#[must_use]
+pub const fn band_of(type_byte: u8) -> TypeByteBand {
+    match type_byte {
+        TYPE_BYTE_SEMANTIC => TypeByteBand::Semantic,
+        TYPE_BYTE_BAND_CORE_START..=TYPE_BYTE_BAND_CORE_END => TypeByteBand::Core,
+        TYPE_BYTE_BAND_COMPANION_START..=TYPE_BYTE_BAND_COMPANION_END => TypeByteBand::Companion,
+        TYPE_BYTE_BAND_PRODUCTIVITY_START..=TYPE_BYTE_BAND_PRODUCTIVITY_END => {
+            TypeByteBand::Productivity
+        }
+        TYPE_BYTE_BAND_CRM_START..=TYPE_BYTE_BAND_CRM_END => TypeByteBand::Crm,
+        TYPE_BYTE_BAND_MAINTENANCE_START..=u8::MAX => TypeByteBand::InducedDynamicMaintenance,
+    }
+}
+
+/// Returns whether `type_byte` is a REGISTERED StructuralKind.
+///
+/// Per contracts.ts §1: byte 0 (CLAIM) is the semantic type and deliberately
+/// NOT a StructuralKind; maintenance records (REDACTION_AUDIT = 120) are not
+/// StructuralKinds either. Only registered `core` and `pack` kinds qualify.
+/// Unregistered bytes return `false` here AND remain rejected by
+/// [`validate_entity_type`] on every write path (unchanged behavior).
+#[must_use]
+pub fn is_structural_kind(type_byte: u8) -> bool {
+    matches!(
+        entity_type_registry_entry(type_byte).map(|entry| entry.classification),
+        Some(EntityClassification::Core | EntityClassification::Pack)
+    )
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct EntityTypeRegistryEntry {
     pub kind: &'static str,
     pub type_byte: u8,
     pub short_id_prefix: Option<&'static str>,
+    /// contracts.ts §1 classification for this kind.
+    pub classification: EntityClassification,
+    /// The LOCKED type-byte band this kind is allocated within. Always equal
+    /// to `band_of(self.type_byte)` (pinned by spec test).
+    pub band: TypeByteBand,
 }
 
 pub const ENTITY_TYPE_REGISTRY: &[EntityTypeRegistryEntry] = &[
@@ -44,106 +148,148 @@ pub const ENTITY_TYPE_REGISTRY: &[EntityTypeRegistryEntry] = &[
         kind: "CLAIM",
         type_byte: ENTITY_TYPE_CLAIM,
         short_id_prefix: Some("cl"),
+        classification: EntityClassification::Semantic,
+        band: TypeByteBand::Semantic,
     },
     EntityTypeRegistryEntry {
         kind: "TURN",
         type_byte: ENTITY_TYPE_TURN,
         short_id_prefix: Some("tn"),
+        classification: EntityClassification::Core,
+        band: TypeByteBand::Core,
     },
     EntityTypeRegistryEntry {
         kind: "SESSION",
         type_byte: ENTITY_TYPE_SESSION,
         short_id_prefix: Some("ss"),
+        classification: EntityClassification::Core,
+        band: TypeByteBand::Core,
     },
     EntityTypeRegistryEntry {
         kind: "MESSAGE",
         type_byte: ENTITY_TYPE_MESSAGE,
         short_id_prefix: Some("ms"),
+        classification: EntityClassification::Core,
+        band: TypeByteBand::Core,
     },
     EntityTypeRegistryEntry {
         kind: "PERSON",
         type_byte: ENTITY_TYPE_PERSON,
         short_id_prefix: Some("pr"),
+        classification: EntityClassification::Core,
+        band: TypeByteBand::Core,
     },
     EntityTypeRegistryEntry {
         kind: "RELATIONSHIP",
         type_byte: ENTITY_TYPE_RELATIONSHIP,
         short_id_prefix: Some("rl"),
+        classification: EntityClassification::Core,
+        band: TypeByteBand::Core,
     },
     EntityTypeRegistryEntry {
         kind: "EVENT",
         type_byte: ENTITY_TYPE_EVENT,
         short_id_prefix: Some("ev"),
+        classification: EntityClassification::Core,
+        band: TypeByteBand::Core,
     },
     EntityTypeRegistryEntry {
         kind: "SKILL",
         type_byte: ENTITY_TYPE_SKILL,
         short_id_prefix: Some("sk"),
+        classification: EntityClassification::Core,
+        band: TypeByteBand::Core,
     },
     EntityTypeRegistryEntry {
         kind: "SUMMARY",
         type_byte: ENTITY_TYPE_SUMMARY,
         short_id_prefix: Some("sm"),
+        classification: EntityClassification::Core,
+        band: TypeByteBand::Core,
     },
     EntityTypeRegistryEntry {
         kind: "PLACE",
         type_byte: ENTITY_TYPE_PLACE,
         short_id_prefix: Some("pl"),
+        classification: EntityClassification::Core,
+        band: TypeByteBand::Core,
     },
     EntityTypeRegistryEntry {
         kind: "ASSET_TEXT",
         type_byte: ENTITY_TYPE_ASSET_TEXT,
         short_id_prefix: Some("tx"),
+        classification: EntityClassification::Core,
+        band: TypeByteBand::Core,
     },
     EntityTypeRegistryEntry {
         kind: "CONVERSATION",
         type_byte: ENTITY_TYPE_CONVERSATION,
         short_id_prefix: Some("cv"),
+        classification: EntityClassification::Core,
+        band: TypeByteBand::Core,
     },
     EntityTypeRegistryEntry {
         kind: "ORG",
         type_byte: ENTITY_TYPE_ORG,
         short_id_prefix: Some("og"),
+        classification: EntityClassification::Core,
+        band: TypeByteBand::Core,
     },
     EntityTypeRegistryEntry {
         kind: "FACET",
         type_byte: ENTITY_TYPE_FACET,
         short_id_prefix: Some("fc"),
+        classification: EntityClassification::Core,
+        band: TypeByteBand::Core,
     },
     EntityTypeRegistryEntry {
         kind: "WORLD",
         type_byte: ENTITY_TYPE_WORLD,
         short_id_prefix: Some("wd"),
+        classification: EntityClassification::Core,
+        band: TypeByteBand::Core,
     },
     EntityTypeRegistryEntry {
         kind: "ASSET",
         type_byte: ENTITY_TYPE_ASSET,
         short_id_prefix: Some("as"),
+        classification: EntityClassification::Core,
+        band: TypeByteBand::Core,
     },
     EntityTypeRegistryEntry {
         kind: "NOTIFICATION",
         type_byte: ENTITY_TYPE_NOTIFICATION,
         short_id_prefix: Some("nt"),
+        classification: EntityClassification::Core,
+        band: TypeByteBand::Core,
     },
     EntityTypeRegistryEntry {
         kind: "TASK_LIST",
         type_byte: ENTITY_TYPE_TASK_LIST,
         short_id_prefix: Some("tl"),
+        classification: EntityClassification::Pack,
+        band: TypeByteBand::Productivity,
     },
     EntityTypeRegistryEntry {
         kind: "TASK",
         type_byte: ENTITY_TYPE_TASK,
         short_id_prefix: Some("tk"),
+        classification: EntityClassification::Pack,
+        band: TypeByteBand::Productivity,
     },
     EntityTypeRegistryEntry {
         kind: "MACHINE",
         type_byte: ENTITY_TYPE_MACHINE,
         short_id_prefix: Some("mc"),
+        classification: EntityClassification::Pack,
+        band: TypeByteBand::Productivity,
     },
     EntityTypeRegistryEntry {
         kind: "REDACTION_AUDIT",
         type_byte: ENTITY_TYPE_REDACTION_AUDIT,
         short_id_prefix: None,
+        classification: EntityClassification::Maintenance,
+        band: TypeByteBand::InducedDynamicMaintenance,
     },
 ];
 
@@ -160,10 +306,11 @@ impl EntityId {
 
     /// Creates an identifier from raw bytes, rejecting reserved sentinel IDs.
     ///
-    /// The all-zero, all-`0xFF`, and known `[entity_type, 0xFF×15]` short-id
-    /// counter sentinel patterns are reserved at the public `EntityId` layer.
-    /// Other byte patterns remain valid IDs even if other LMDB indexes use
-    /// similar-looking internal sentinel keys.
+    /// The all-zero, all-`0xFF`, and `[entity_type, 0xFF×15]` patterns are
+    /// reserved at the public `EntityId` layer. The latter were the pre-ABI-v3
+    /// short-id counter sentinel rows (counters now live in `vault_meta`, see
+    /// `store::SHORT_ID_COUNTER_KEY_PREFIX`); the reservation is kept so the
+    /// legacy patterns can never be hydrated as live entity IDs.
     pub fn from_bytes(bytes: [u8; 16]) -> crate::error::Result<Self> {
         if is_reserved_entity_id_bytes(&bytes) {
             return Err(crate::error::Error::InvalidKey);
@@ -207,10 +354,11 @@ impl EntityId {
 
 /// Parses a `&[u8]` slice into an `EntityId`, returning
 /// `Error::CorruptedIndex(context)` if the length is wrong, or
-/// `Error::InvalidKey` if the bytes match a reserved sentinel pattern (used
-/// by short_id counters and similar internal rows that must not be hydrated
-/// as live entities). Used by index readers (HNSW neighbor keys, vector keys,
-/// short_id reverse values) where a malformed key is on-disk corruption.
+/// `Error::InvalidKey` if the bytes match a reserved sentinel pattern
+/// (legacy short_id counter rows and similar internal patterns that must not
+/// be hydrated as live entities). Used by index readers (HNSW neighbor keys,
+/// vector keys, `short_ids_reverse` keys, `short_ids` forward values) where a
+/// malformed key is on-disk corruption.
 ///
 /// **Note:** callers needing contextual `CorruptedIndex` for diagnostics
 /// should `.map_err` the `InvalidKey` variant. The HNSW read path does
@@ -356,14 +504,23 @@ pub enum EdgeKind {
     /// Relationship is set in a world context.
     SetIn = 19,
     /// Task is a child of another task (tree hierarchy).
-    /// No PPR hop limit — unlike PartOf which caps at 2.
+    /// Never traversed by PPR (contract `lambda: null`, "Not traversed.");
+    /// read via the dedicated `subtree` / `ancestors` tree APIs.
     ChildOf = 6,
     /// Task is assigned to a machine for execution.
+    /// Never traversed by PPR (contract `lambda: null`, "Not traversed.").
     AssignedTo = 7,
 }
 
 impl EdgeKind {
-    /// Returns the default propagation weight for this edge kind.
+    /// Returns the default STORED edge weight for this edge kind (the legacy
+    /// `pprWeight` prior of the contract's `edgeKinds` table).
+    ///
+    /// This is NOT the PPR traversal multiplier: per-kind traversal budgets
+    /// are the λ_τ table (`ppr::lambda_for_kind`), which deliberately differs
+    /// from this prior for the five world-model kinds, and `ChildOf` /
+    /// `AssignedTo` are never traversed by PPR regardless of the weight
+    /// stored on their edges.
     pub fn default_weight(self) -> f32 {
         match self {
             Self::BelongsTo => 1.0,

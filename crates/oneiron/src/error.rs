@@ -1,4 +1,4 @@
-use crate::types::VadComponent;
+use crate::types::{EntityId, VadComponent};
 
 /// Result type used throughout the crate.
 pub type Result<T> = std::result::Result<T, Error>;
@@ -30,6 +30,8 @@ pub enum ErrorKind {
     MissingPostingEntry,
     InvalidEntityType,
     MaintenanceKindNotWritable,
+    EntityTypeImmutable,
+    InvalidTimeRange,
     CycleDetected,
     IncompatibleAnalyzer,
     Bm25FieldSchemaChanged,
@@ -125,6 +127,26 @@ pub enum Error {
     /// [`Error::InvalidEntityType`], which covers genuinely unknown bytes.
     #[error("maintenance entity kind {0} is engine-authored and not writable via the public API")]
     MaintenanceKindNotWritable(u8),
+    /// The type byte of an existing entity record is immutable on re-put
+    /// (M2 pinned decision D2). The short-id prefix is derived from the type
+    /// byte at first insert, so re-typing would leave the record addressed
+    /// under another type's prefix. Delete-and-recreate is the escape hatch.
+    #[error(
+        "entity type is immutable: entity {} has type {existing}, re-put attempted type {attempted}",
+        id.to_hex()
+    )]
+    EntityTypeImmutable {
+        id: EntityId,
+        existing: u8,
+        attempted: u8,
+    },
+    /// Occurred interval is reversed (`occurred_start > occurred_end`).
+    /// The entity envelope stores an interval (ARCH-0002 / contracts.ts
+    /// `entityValueEnvelope`); reversed input is rejected fail-closed, never
+    /// silently repaired (M2 pinned decision D3). `start == end` is a legal
+    /// point event.
+    #[error("invalid time range: occurred_start {start} > occurred_end {end}")]
+    InvalidTimeRange { start: u64, end: u64 },
     /// Tree operation would create a cycle.
     #[error("cycle detected in tree hierarchy")]
     CycleDetected,
@@ -240,6 +262,8 @@ impl Error {
             Self::MissingPostingEntry => ErrorKind::MissingPostingEntry,
             Self::InvalidEntityType(_) => ErrorKind::InvalidEntityType,
             Self::MaintenanceKindNotWritable(_) => ErrorKind::MaintenanceKindNotWritable,
+            Self::EntityTypeImmutable { .. } => ErrorKind::EntityTypeImmutable,
+            Self::InvalidTimeRange { .. } => ErrorKind::InvalidTimeRange,
             Self::CycleDetected => ErrorKind::CycleDetected,
             Self::IncompatibleAnalyzer { .. } => ErrorKind::IncompatibleAnalyzer,
             Self::Bm25FieldSchemaChanged => ErrorKind::Bm25FieldSchemaChanged,
