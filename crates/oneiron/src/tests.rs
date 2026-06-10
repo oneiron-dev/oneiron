@@ -1562,7 +1562,7 @@ fn batch_put_short_id_round_trips_both_directions() -> Result<()> {
 
     // TURN (type 1), not CLAIM (type 0): the parallel ONE-1104 branch validates
     // all type-0 bodies (claim ABI), and merge rehearsal twice caught one of its
-    // bulk 0->1 migration hunks silently mis-anchoring into this test. Seeding
+    // bulk 0->1 migration hunks silently anchoring into the wrong test. Seeding
     // type 1 keeps the round-trip purpose intact and removes the landmine.
     vault
         .batch()
