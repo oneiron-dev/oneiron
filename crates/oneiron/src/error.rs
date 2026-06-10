@@ -35,6 +35,10 @@ pub enum ErrorKind {
     MaintenanceKindNotWritable,
     EntityTypeImmutable,
     InvalidTimeRange,
+    EdgeNotFound,
+    ProvenanceOnStructuralEdge,
+    ActorClassMismatch,
+    InvalidProvenanceBody,
     CycleDetected,
     IncompatibleAnalyzer,
     Bm25FieldSchemaChanged,
@@ -165,6 +169,26 @@ pub enum Error {
     /// point event.
     #[error("invalid time range: occurred_start {start} > occurred_end {end}")]
     InvalidTimeRange { start: u64, end: u64 },
+    /// Requested edge record does not exist. The provenance path never
+    /// upserts a subject edge — it would have to invent weight/created_at.
+    #[error("edge not found")]
+    EdgeNotFound,
+    /// `edge.provenance` may only attach to SEMANTIC edge kinds; structural
+    /// kinds (12-byte layout) never carry the two hot flags.
+    #[error("edge.provenance subject kind {kind} is structural, not semantic")]
+    ProvenanceOnStructuralEdge { kind: u8 },
+    /// The caller-supplied `actor_class` is incompatible with the actor
+    /// entity's kind (D13: PERSON → human|agent, MACHINE → system, anything
+    /// else is never an actor). The engine never defaults an actor class.
+    #[error("actor class {actor_class} is incompatible with actor entity type {actor_entity_type}")]
+    ActorClassMismatch {
+        actor_entity_type: u8,
+        actor_class: u8,
+    },
+    /// An `edge.provenance` value record failed the pinned structural
+    /// validation (the 7-field snake_case ABI). Nothing was written.
+    #[error("invalid edge.provenance body: {0}")]
+    InvalidProvenanceBody(&'static str),
     /// Tree operation would create a cycle.
     #[error("cycle detected in tree hierarchy")]
     CycleDetected,
@@ -285,6 +309,10 @@ impl Error {
             Self::MaintenanceKindNotWritable(_) => ErrorKind::MaintenanceKindNotWritable,
             Self::EntityTypeImmutable { .. } => ErrorKind::EntityTypeImmutable,
             Self::InvalidTimeRange { .. } => ErrorKind::InvalidTimeRange,
+            Self::EdgeNotFound => ErrorKind::EdgeNotFound,
+            Self::ProvenanceOnStructuralEdge { .. } => ErrorKind::ProvenanceOnStructuralEdge,
+            Self::ActorClassMismatch { .. } => ErrorKind::ActorClassMismatch,
+            Self::InvalidProvenanceBody(_) => ErrorKind::InvalidProvenanceBody,
             Self::CycleDetected => ErrorKind::CycleDetected,
             Self::IncompatibleAnalyzer { .. } => ErrorKind::IncompatibleAnalyzer,
             Self::Bm25FieldSchemaChanged => ErrorKind::Bm25FieldSchemaChanged,

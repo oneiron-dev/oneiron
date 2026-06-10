@@ -7411,3 +7411,429 @@ fn get_claim_rejects_non_claim_types_and_handles_missing() -> Result<()> {
     assert_eq!(err.kind(), ErrorKind::InvalidClaimBody);
     Ok(())
 }
+
+// ═══════════════════════════════════════════════════════════════════════
+// ONE-1105: edge.provenance module + atomic provenanced-write API
+// ═══════════════════════════════════════════════════════════════════════
+
+/// Raw `(edges_out, edges_in)` value bytes for one edge.
+type RawEdgeValuePair = (Option<Vec<u8>>, Option<Vec<u8>>);
+
+/// Reads the raw `edges_out` / `edges_in` values for `edge` (both directions)
+/// without any decoding — byte-level test oracle.
+fn raw_edge_values(vault: &Vault, edge: &EdgeRef) -> Result<RawEdgeValuePair> {
+    let rtxn = vault.store.env.read_txn()?;
+    let key_out = Store::encode_edge_key(&edge.source, edge.kind, &edge.target);
+    let key_in = Store::encode_edge_key(&edge.target, edge.kind, &edge.source);
+    let out = vault
+        .store
+        .edges_out
+        .get(&rtxn, &key_out)?
+        .map(<[u8]>::to_vec);
+    let inn = vault
+        .store
+        .edges_in
+        .get(&rtxn, &key_in)?
+        .map(<[u8]>::to_vec);
+    Ok((out, inn))
+}
+
+#[test]
+fn put_edge_provenance_atomic_write_restamps_and_indexes() -> Result<()> {
+    let (dir, vault) = open_test_vault();
+    let actor = EntityId::now();
+    let source = EntityId::now();
+    let target = EntityId::now();
+    vault.put_entity(&actor, 4, test_time_range(1, 1), 1, b"person-actor")?;
+    vault.put_entity(&source, 4, test_time_range(1, 1), 1, b"src")?;
+    vault.put_entity(&target, 4, test_time_range(1, 1), 1, b"tgt")?;
+
+    let vad = Vad {
+        valence: 0.25,
+        arousal: 0.5,
+        dominance: 0.75,
+    };
+    vault.put_edge_with_vad(&source, EdgeKind::Mentions, &target, 0.875, vad)?;
+    let subject = EdgeRef::new(source, EdgeKind::Mentions, target);
+
+    let (before_out, before_in) = raw_edge_values(&vault, &subject)?;
+    let before_out = before_out.expect("subject edge missing");
+    assert_eq!(
+        before_out.len(),
+        EDGE_VALUE_SEMANTIC_LEN,
+        "pre-provenance edge must be 24 B"
+    );
+    assert_eq!(before_in.as_deref(), Some(before_out.as_slice()));
+
+    // Plant malformed PPR cache rows (3 B < header length) keyed to both
+    // endpoints so the AC5e invalidation is observable: invalidation
+    // DELETES sub-header cache rows.
+    let src_hash = [0xAB_u8; 16];
+    let tgt_hash = [0xAC_u8; 16];
+    {
+        let mut wtxn = vault.store.env.write_txn()?;
+        let mut src_dep = [0_u8; 32];
+        src_dep[..16].copy_from_slice(source.as_bytes());
+        src_dep[16..].copy_from_slice(&src_hash);
+        let mut tgt_dep = [0_u8; 32];
+        tgt_dep[..16].copy_from_slice(target.as_bytes());
+        tgt_dep[16..].copy_from_slice(&tgt_hash);
+        vault
+            .store
+            .ppr_cache
+            .put(&mut wtxn, &src_hash, &[1, 2, 3])?;
+        vault
+            .store
+            .ppr_cache
+            .put(&mut wtxn, &tgt_hash, &[1, 2, 3])?;
+        vault.store.ppr_cache_deps.put(&mut wtxn, &src_dep, &[])?;
+        vault.store.ppr_cache_deps.put(&mut wtxn, &tgt_dep, &[])?;
+        wtxn.commit()?;
+    }
+
+    let claim_id = EntityId::now();
+    let mut body = EdgeProvenanceClaimBody::new(actor, 0.75, SupersessionStatus::Confirmed);
+    body.source_revision_ref = Some([0x51; 16]);
+    body.body_snapshot_ref = Some([0x52; 16]);
+    let learned_at = 1_000_000_u64;
+    vault.put_edge_provenance(
+        &claim_id,
+        &subject,
+        &body,
+        EdgeActorClass::Human,
+        learned_at,
+    )?;
+
+    // 26-byte restamp at the pinned offsets, first 24 bytes preserved
+    // verbatim, IDENTICAL bytes in BOTH directions (read raw).
+    let (after_out, after_in) = raw_edge_values(&vault, &subject)?;
+    let after_out = after_out.expect("edges_out row");
+    let after_in = after_in.expect("edges_in row");
+    assert_eq!(after_out.len(), EDGE_VALUE_SEMANTIC_PROVENANCED_LEN);
+    assert_eq!(
+        &after_out[..24],
+        before_out.as_slice(),
+        "weight/created_at/VAD bytes must survive the restamp"
+    );
+    assert_eq!(after_out[24], 1, "confirmed = 1 at offset 24");
+    assert_eq!(after_out[25], 0, "human = 0 at offset 25");
+    assert_eq!(
+        after_in, after_out,
+        "edges_in must mirror edges_out byte-for-byte"
+    );
+
+    // PPR caches for both subject-edge endpoints invalidated (AC5e).
+    {
+        let rtxn = vault.store.env.read_txn()?;
+        assert!(
+            vault.store.ppr_cache.get(&rtxn, &src_hash)?.is_none(),
+            "source-endpoint PPR cache must be invalidated"
+        );
+        assert!(
+            vault.store.ppr_cache.get(&rtxn, &tgt_hash)?.is_none(),
+            "target-endpoint PPR cache must be invalidated"
+        );
+    }
+
+    // The Claim entity is a type-0 record whose envelope carries the D15
+    // open-window sentinels: start = learned_at, end = u64::MAX.
+    let raw = vault.get_raw(&claim_id)?.expect("claim entity");
+    assert_eq!(raw[0], 0, "claim type byte must be 0");
+    assert_eq!(
+        u64::from_be_bytes(raw[1..9].try_into().expect("occurred_start")),
+        learned_at,
+        "absent valid_from must derive occurred.start = learned_at (D15)"
+    );
+    assert_eq!(
+        u64::from_be_bytes(raw[9..17].try_into().expect("occurred_end")),
+        u64::MAX,
+        "absent valid_to must derive occurred.end = u64::MAX (D15)"
+    );
+
+    // claim_of (u8 = 5, structural 12 B) Claim → SOURCE entity (D12), and
+    // NOT to the target.
+    let rtxn = vault.store.env.read_txn()?;
+    let claim_of_src = Store::encode_edge_key(&claim_id, EdgeKind::ClaimOf, &source);
+    let claim_of_tgt = Store::encode_edge_key(&claim_id, EdgeKind::ClaimOf, &target);
+    let link = vault
+        .store
+        .edges_out
+        .get(&rtxn, &claim_of_src)?
+        .expect("claim_of edge to the subject edge's source");
+    assert_eq!(link.len(), EDGE_VALUE_STRUCTURAL_LEN);
+    assert!(
+        vault.store.edges_out.get(&rtxn, &claim_of_tgt)?.is_none(),
+        "claim_of must target the SOURCE entity only (D12)"
+    );
+    drop(rtxn);
+    assert_eq!(vault.claims_for_subject(&source)?, vec![claim_id]);
+
+    // The wrapping claim decodes: pinned predicate, EdgeRef subject, the
+    // 7-field value record, and the conf mirror.
+    let claim = vault.get_claim(&claim_id)?.expect("claim body");
+    assert_eq!(claim.predicate, PREDICATE_EDGE_PROVENANCE);
+    assert_eq!(claim.subject, ClaimSubject::from(subject));
+    assert_eq!(claim.confidence.to_bits(), 0.75_f32.to_bits());
+    let value = decode_edge_provenance_body(&claim.value)?;
+    assert_eq!(value, body);
+
+    // D15 temporal interplay: the open window indexes occurred_start at
+    // learned_at and occurred_end + long_intervals at u64::MAX.
+    let rtxn = vault.store.env.read_txn()?;
+    let start_key = Store::encode_temporal_key(learned_at, &claim_id);
+    let end_key = Store::encode_temporal_key(u64::MAX, &claim_id);
+    assert!(
+        vault
+            .store
+            .temporal_occurred_start
+            .get(&rtxn, &start_key)?
+            .is_some()
+    );
+    assert!(
+        vault
+            .store
+            .temporal_occurred_end
+            .get(&rtxn, &end_key)?
+            .is_some()
+    );
+    let long_row = vault
+        .store
+        .temporal_long_intervals
+        .get(&rtxn, &end_key)?
+        .expect("open validity window must index as a long interval");
+    assert_eq!(long_row, learned_at.to_be_bytes());
+    drop(rtxn);
+
+    // A SECOND provenance claim restamps only the two flag bytes
+    // (disputed = 2, agent = 1); the value stays 26 B with the original
+    // 24-byte prefix.
+    let claim2 = EntityId::now();
+    let body2 = EdgeProvenanceClaimBody::new(actor, 0.5, SupersessionStatus::Disputed);
+    vault.put_edge_provenance(
+        &claim2,
+        &subject,
+        &body2,
+        EdgeActorClass::Agent,
+        learned_at + 1,
+    )?;
+    let (out2, in2) = raw_edge_values(&vault, &subject)?;
+    let out2 = out2.expect("edges_out row");
+    assert_eq!(out2.len(), EDGE_VALUE_SEMANTIC_PROVENANCED_LEN);
+    assert_eq!(&out2[..24], before_out.as_slice());
+    assert_eq!(out2[24], 2, "disputed = 2");
+    assert_eq!(out2[25], 1, "agent = 1");
+    assert_eq!(in2.as_deref(), Some(out2.as_slice()));
+
+    // The u64::MAX envelope sentinel must not trip the long-interval
+    // migration guard at open (store.rs open-gate step 7) — D15's pinned
+    // verification.
+    drop(vault);
+    let reopened = Vault::open(dir.path(), test_config())?;
+    assert!(reopened.get_claim(&claim_id)?.is_some());
+    Ok(())
+}
+
+#[test]
+fn put_edge_provenance_explicit_validity_window_maps_envelope() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let actor = EntityId::now();
+    let a = EntityId::now();
+    let b = EntityId::now();
+    vault.put_entity(&actor, 4, test_time_range(1, 1), 1, b"person")?;
+    vault.put_entity(&a, 4, test_time_range(1, 1), 1, b"a")?;
+    vault.put_entity(&b, 4, test_time_range(1, 1), 1, b"b")?;
+    vault.put_edge(&a, EdgeKind::About, &b, 0.5)?;
+    let subject = EdgeRef::new(a, EdgeKind::About, b);
+
+    let claim_id = EntityId::now();
+    let mut body = EdgeProvenanceClaimBody::new(actor, 0.9, SupersessionStatus::Proposed);
+    body.valid_from = Some(100);
+    body.valid_to = Some(200);
+    vault.put_edge_provenance(&claim_id, &subject, &body, EdgeActorClass::Human, 300)?;
+
+    // Explicit window → envelope copies it verbatim (no sentinels).
+    let raw = vault.get_raw(&claim_id)?.expect("claim entity");
+    assert_eq!(
+        u64::from_be_bytes(raw[1..9].try_into().expect("occurred_start")),
+        100
+    );
+    assert_eq!(
+        u64::from_be_bytes(raw[9..17].try_into().expect("occurred_end")),
+        200
+    );
+
+    // 100-second span: NOT a long interval; closed end indexes normally.
+    let rtxn = vault.store.env.read_txn()?;
+    let end_key = Store::encode_temporal_key(200, &claim_id);
+    assert!(
+        vault
+            .store
+            .temporal_long_intervals
+            .get(&rtxn, &end_key)?
+            .is_none(),
+        "a 100 s window must not index as a long interval"
+    );
+    assert!(
+        vault
+            .store
+            .temporal_occurred_end
+            .get(&rtxn, &end_key)?
+            .is_some()
+    );
+    drop(rtxn);
+
+    // The claim-layer from/to mirrors carry the same window; the 7-field
+    // record stays authoritative.
+    let claim = vault.get_claim(&claim_id)?.expect("claim body");
+    assert_eq!(claim.valid_from, Some(100));
+    assert_eq!(claim.valid_to, Some(200));
+    let value = decode_edge_provenance_body(&claim.value)?;
+    assert_eq!(value.valid_from, Some(100));
+    assert_eq!(value.valid_to, Some(200));
+
+    // valid_to earlier than learned_at with absent valid_from would derive
+    // an inverted envelope — typed reject, nothing written, never silently
+    // reordered.
+    let bad_id = EntityId::now();
+    let mut bad_body = EdgeProvenanceClaimBody::new(actor, 0.5, SupersessionStatus::Proposed);
+    bad_body.valid_to = Some(50);
+    let err = vault
+        .put_edge_provenance(&bad_id, &subject, &bad_body, EdgeActorClass::Human, 100)
+        .expect_err("inverted derived envelope must be rejected");
+    assert_eq!(err.kind(), ErrorKind::InvalidProvenanceBody);
+    assert_no_entity_state(&vault, &bad_id)?;
+    Ok(())
+}
+
+#[test]
+fn put_edge_provenance_negative_paths_write_nothing() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let person = EntityId::now();
+    let machine = EntityId::now();
+    let a = EntityId::now();
+    let b = EntityId::now();
+    vault.put_entity(&person, 4, test_time_range(1, 1), 1, b"person")?;
+    vault.put_entity(
+        &machine,
+        ENTITY_TYPE_MACHINE,
+        test_time_range(1, 1),
+        1,
+        b"machine",
+    )?;
+    vault.put_entity(&a, 4, test_time_range(1, 1), 1, b"a")?;
+    vault.put_entity(&b, 4, test_time_range(1, 1), 1, b"b")?;
+
+    // Structural-kind subject edge (part_of u8 = 2, 12 B) → typed reject
+    // even though the edge EXISTS; the edge value is untouched.
+    vault.put_edge(&a, EdgeKind::PartOf, &b, 1.0)?;
+    let structural = EdgeRef::new(a, EdgeKind::PartOf, b);
+    let claim_id = EntityId::now();
+    let body = EdgeProvenanceClaimBody::new(person, 0.9, SupersessionStatus::Confirmed);
+    let err = vault
+        .put_edge_provenance(&claim_id, &structural, &body, EdgeActorClass::Human, 10)
+        .expect_err("structural subject kind must be rejected");
+    assert_eq!(err.kind(), ErrorKind::ProvenanceOnStructuralEdge);
+    assert_no_entity_state(&vault, &claim_id)?;
+    let (out, _) = raw_edge_values(&vault, &structural)?;
+    assert_eq!(
+        out.expect("structural edge").len(),
+        EDGE_VALUE_STRUCTURAL_LEN,
+        "structural edge must keep its 12 B value"
+    );
+
+    // Nonexistent semantic subject edge → EdgeNotFound (NO upsert — the
+    // path must never invent weight/created_at).
+    let missing = EdgeRef::new(a, EdgeKind::Mentions, b);
+    let claim_id = EntityId::now();
+    let err = vault
+        .put_edge_provenance(&claim_id, &missing, &body, EdgeActorClass::Human, 10)
+        .expect_err("missing subject edge must be rejected");
+    assert_eq!(err.kind(), ErrorKind::EdgeNotFound);
+    assert_no_entity_state(&vault, &claim_id)?;
+    let (out, inn) = raw_edge_values(&vault, &missing)?;
+    assert_eq!(out, None, "rejection must not upsert the edge");
+    assert_eq!(inn, None);
+
+    // From here on the subject edge exists as semantic-bare 24 B.
+    vault.put_edge(&a, EdgeKind::Mentions, &b, 0.5)?;
+    let subject = EdgeRef::new(a, EdgeKind::Mentions, b);
+    let (before, _) = raw_edge_values(&vault, &subject)?;
+    let before = before.expect("subject edge");
+    assert_eq!(before.len(), EDGE_VALUE_SEMANTIC_LEN);
+
+    // Nonexistent actor entity → typed EntityNotFound; edge untouched.
+    let claim_id = EntityId::now();
+    let ghost_body =
+        EdgeProvenanceClaimBody::new(seeded_entity_id(0xD00D), 0.9, SupersessionStatus::Confirmed);
+    let err = vault
+        .put_edge_provenance(&claim_id, &subject, &ghost_body, EdgeActorClass::Human, 10)
+        .expect_err("missing actor entity must be rejected");
+    assert_eq!(err.kind(), ErrorKind::EntityNotFound);
+    assert_no_entity_state(&vault, &claim_id)?;
+    let (out, _) = raw_edge_values(&vault, &subject)?;
+    assert_eq!(out.as_deref(), Some(before.as_slice()));
+
+    // D13 mismatches: PERSON+system, MACHINE+human, MACHINE+agent — each a
+    // typed ActorClassMismatch, nothing written, edge untouched in BOTH
+    // directions.
+    for (actor, class) in [
+        (person, EdgeActorClass::System),
+        (machine, EdgeActorClass::Human),
+        (machine, EdgeActorClass::Agent),
+    ] {
+        let claim_id = EntityId::now();
+        let body = EdgeProvenanceClaimBody::new(actor, 0.9, SupersessionStatus::Confirmed);
+        let err = vault
+            .put_edge_provenance(&claim_id, &subject, &body, class, 10)
+            .expect_err("actor kind/class mismatch must be rejected");
+        assert_eq!(err.kind(), ErrorKind::ActorClassMismatch, "class {class:?}");
+        assert_no_entity_state(&vault, &claim_id)?;
+        let (out, inn) = raw_edge_values(&vault, &subject)?;
+        assert_eq!(
+            out.as_deref(),
+            Some(before.as_slice()),
+            "subject edge must be untouched after a rejected write"
+        );
+        assert_eq!(inn.as_deref(), Some(before.as_slice()));
+    }
+
+    // Sanity: the SAME setup succeeds with a compatible pair — proving the
+    // rejections above came from the stated violations.
+    let ok_id = EntityId::now();
+    let ok_body = EdgeProvenanceClaimBody::new(person, 0.9, SupersessionStatus::Confirmed);
+    vault.put_edge_provenance(&ok_id, &subject, &ok_body, EdgeActorClass::Human, 10)?;
+    Ok(())
+}
+
+#[test]
+fn decode_edge_value_rejects_out_of_range_flag_bytes() {
+    let flags = EdgeProvenanceFlags {
+        confirmation_status: EdgeConfirmationStatus::Proposed,
+        actor_class: EdgeActorClass::Human,
+    };
+    let valid = encode_edge_value(EdgeKind::Mentions, 0.5, 1_000, Vad::NEUTRAL, Some(flags))
+        .expect("valid 26 B value");
+    assert_eq!(valid.len(), EDGE_VALUE_SEMANTIC_PROVENANCED_LEN);
+
+    // confirmation_status admits exactly {0, 1, 2, 3}: 4 is the first
+    // invalid byte.
+    for bad in [4_u8, 0x7F, 255] {
+        let mut value = valid.clone();
+        value[24] = bad;
+        let err = decode_edge_value(&value).expect_err("confirmation byte > 3 must be rejected");
+        assert!(
+            matches!(err, Error::CorruptedIndex("edge value")),
+            "byte {bad} returned wrong error: {err:?}"
+        );
+    }
+    // actor_class admits exactly {0, 1, 2}: 3 is the first invalid byte.
+    for bad in [3_u8, 0x7F, 255] {
+        let mut value = valid.clone();
+        value[25] = bad;
+        let err = decode_edge_value(&value).expect_err("actor byte > 2 must be rejected");
+        assert!(
+            matches!(err, Error::CorruptedIndex("edge value")),
+            "byte {bad} returned wrong error: {err:?}"
+        );
+    }
+}

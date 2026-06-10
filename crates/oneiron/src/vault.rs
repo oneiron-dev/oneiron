@@ -14,7 +14,10 @@ use crate::batch::{
     BatchOp, ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader, apply_ops, deindex_entity,
     delete_from_phonetic_postings,
 };
-use crate::claim::{ClaimBody, ClaimSubject, encode_claim_body, validate_claim_body_bytes};
+use crate::claim::{
+    ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSubject, encode_claim_body,
+    validate_claim_body_bytes,
+};
 use crate::deletion::{
     DeleteEntityOutcome, DeleteReason, HARD_ERASE_SWEEP_PREFIX, LAST_HARD_ERASE_SWEEP_SEQ_KEY,
     RedactionReceiptInput, RedactionScope, decode_hard_erase_sweep_seq,
@@ -24,6 +27,11 @@ use crate::error::{Error, Result};
 use crate::limits::{
     ERR_CHILD_OF_CYCLE_CHECK, MAX_ANCESTOR_DEPTH, MAX_CHILD_OF_CYCLE_TRAVERSAL_STEPS,
 };
+use crate::provenance::{
+    EdgeProvenanceClaimBody, EdgeRef, PREDICATE_EDGE_PROVENANCE, derive_confirmation_status,
+    encode_edge_provenance_value, restamp_edge_flags, validate_actor_class,
+    validate_edge_provenance_value,
+};
 use crate::store::{
     DB_MANIFEST, HnswCompatibilityState, MODEL_ID_KEY, STORAGE_ABI_VERSION_KEY,
     STORAGE_SCHEMA_VERSION_KEY, Store, TEXT_ANALYZER_MANIFEST_HASH_KEY, TEXT_ANALYZER_MANIFEST_KEY,
@@ -31,9 +39,9 @@ use crate::store::{
     lmdb_database_open_guard,
 };
 use crate::types::{
-    EDGE_KEY_LEN, ENTITY_ID_LEN, ENTITY_TYPE_CLAIM, ENTITY_TYPE_REDACTION_AUDIT, EdgeInfo,
-    EdgeKind, EntityId, ScoredEntity, TimeRange, Vad, VaultConfig, bytes_to_hex_lower,
-    decode_edge_value_for_kind,
+    EDGE_KEY_LEN, ENTITY_ID_LEN, ENTITY_TYPE_CLAIM, ENTITY_TYPE_REDACTION_AUDIT, EdgeActorClass,
+    EdgeInfo, EdgeKind, EdgeProvenanceFlags, EdgeValueLayout, EntityId, ScoredEntity, TimeRange,
+    Vad, VaultConfig, bytes_to_hex_lower, decode_edge_value_for_kind, edge_value_layout_for_kind,
 };
 use crate::{
     BatchBuilder, ContextPackBuilder, MaintenanceBuilder, PipelineBuilder, TxnBatchBuilder, bm25,
@@ -386,6 +394,134 @@ impl Vault {
     /// `sources(subject, EdgeKind::ClaimOf, Some(ENTITY_TYPE_CLAIM))`.
     pub fn claims_for_subject(&self, subject: &EntityId) -> Result<Vec<EntityId>> {
         self.sources(subject, EdgeKind::ClaimOf, Some(ENTITY_TYPE_CLAIM))
+    }
+
+    /// Writes an `edge.provenance` Claim for an EXISTING semantic edge and
+    /// re-stamps the edge's two hot flags — the atomic provenanced-write API
+    /// and the ONLY public door to provenance flags (D10: the Claim is truth;
+    /// the 26-byte stamp primitive stays `pub(crate)`).
+    ///
+    /// One LMDB write transaction performs ALL of:
+    ///
+    /// 1. subject-edge gate — `subject.kind` must be a SEMANTIC kind
+    ///    ([`Error::ProvenanceOnStructuralEdge`] otherwise) and the edge must
+    ///    already exist ([`Error::EdgeNotFound`]; the path never upserts — it
+    ///    would have to invent `weight`/`created_at`);
+    /// 2. actor gate (D13) — `body.actor_entity_ref` must exist
+    ///    ([`Error::EntityNotFound`]) and the CALLER-SUPPLIED `actor_class`
+    ///    must be compatible with the actor entity's kind
+    ///    ([`Error::ActorClassMismatch`]; never defaulted);
+    /// 3. the Claim entity (type 0, predicate
+    ///    [`crate::provenance::PREDICATE_EDGE_PROVENANCE`], `subj` = the
+    ///    33-byte EdgeRef, `val` = the pinned 7-field record) is written
+    ///    through the `pub(crate)` reserved-namespace door with full ONE-1104
+    ///    structural validation;
+    /// 4. a `claim_of` edge (u8 = 5, structural 12 B) is written from the
+    ///    Claim to the subject edge's SOURCE entity (D12);
+    /// 5. the subject edge value is re-stamped to 26 bytes with the derived
+    ///    flags (`confirmation_status` ← `supersession_status` identity
+    ///    mirror; `actor_class` = the validated caller value), IDENTICAL
+    ///    bytes in `edges_out` and `edges_in`, first 24 bytes preserved
+    ///    verbatim;
+    /// 6. PPR caches for the subject edge's endpoints are invalidated.
+    ///
+    /// The Claim envelope's `occurred` interval derives from the validity
+    /// window per D15: absent `valid_from` → `learned_at`; absent `valid_to`
+    /// → `u64::MAX`. A derived interval with `start > end` is rejected with
+    /// [`Error::InvalidProvenanceBody`] — never reordered. The wrapping
+    /// Claim stores `conf` = `body.confidence` and `from`/`to` =
+    /// `valid_from`/`valid_to` (claim-layer mirrors of the authoritative
+    /// 7-field record) with `appr` = `auto`, `life` = `active`; lifecycle
+    /// transitions belong to the retract/supersede unit (M2-9).
+    pub fn put_edge_provenance(
+        &self,
+        claim_id: &EntityId,
+        subject: &EdgeRef,
+        body: &EdgeProvenanceClaimBody,
+        actor_class: EdgeActorClass,
+        learned_at: u64,
+    ) -> Result<()> {
+        // Pure validation before any transaction is opened. Encoding does
+        // not validate; the decode validator is the single gate.
+        let value = encode_edge_provenance_value(body);
+        validate_edge_provenance_value(&value)?;
+
+        // Provenance only attaches to SEMANTIC kinds — a static property of
+        // the kind, checked before any I/O.
+        if edge_value_layout_for_kind(subject.kind, false) == EdgeValueLayout::Structural {
+            return Err(Error::ProvenanceOnStructuralEdge {
+                kind: subject.kind as u8,
+            });
+        }
+
+        // D15 envelope sentinels (index-key derivation only; the
+        // authoritative optionality stays in the MessagePack body).
+        let occurred = TimeRange {
+            start: body.valid_from.unwrap_or(learned_at),
+            end: body.valid_to.unwrap_or(u64::MAX),
+        };
+        if occurred.start > occurred.end {
+            return Err(Error::InvalidProvenanceBody(
+                "derived occurred envelope start exceeds end (valid_to before valid_from/learned_at)",
+            ));
+        }
+
+        let mut claim_body = ClaimBody::new(
+            PREDICATE_EDGE_PROVENANCE,
+            ClaimSubject::from(*subject),
+            value,
+            body.confidence,
+            ClaimApprovalStatus::Auto,
+            ClaimLifecycleStatus::Active,
+        );
+        claim_body.valid_from = body.valid_from;
+        claim_body.valid_to = body.valid_to;
+        let data = encode_claim_body(&claim_body)?;
+        validate_claim_body_bytes(&data, true)?;
+
+        let mut wtxn = self.store.env.write_txn()?;
+
+        // Subject edge must exist — no upsert.
+        let edge_key = Store::encode_edge_key(&subject.source, subject.kind, &subject.target);
+        if self.store.edges_out.get(&wtxn, &edge_key)?.is_none() {
+            return Err(Error::EdgeNotFound);
+        }
+
+        // Actor entity must exist; the caller-supplied class is validated
+        // against its kind (D13) — never defaulted.
+        let actor_raw = self
+            .store
+            .entities
+            .get(&wtxn, body.actor_entity_ref.as_bytes())?
+            .ok_or(Error::EntityNotFound)?;
+        let actor_header =
+            EntityMetadataHeader::parse(actor_raw).ok_or(Error::CorruptedIndex("entity header"))?;
+        validate_actor_class(actor_header.entity_type, actor_class)?;
+
+        let flags = EdgeProvenanceFlags {
+            confirmation_status: derive_confirmation_status(body.supersession_status),
+            actor_class,
+        };
+
+        // Claim through the reserved-namespace door + claim_of → the subject
+        // edge's SOURCE entity (D12), with full type-0 validation at apply.
+        self.batch_in()
+            .put_reserved_claim(claim_id, occurred, learned_at, &data)
+            .edge(
+                claim_id,
+                EdgeKind::ClaimOf,
+                &subject.source,
+                EdgeKind::ClaimOf.default_weight(),
+            )
+            .apply(&mut wtxn)?;
+
+        // Re-stamp the subject edge (both directions, identical bytes) and
+        // invalidate the PPR caches its endpoints feed.
+        restamp_edge_flags(&self.store, &mut wtxn, subject, flags)?;
+        ppr::invalidate_ppr_for_edge(&self.store, &mut wtxn, &subject.source, &subject.target)?;
+
+        wtxn.commit()?;
+        Ok(())
     }
 
     /// Retrieves an entity blob by ID.

@@ -14,6 +14,7 @@ pub(crate) mod limits;
 pub mod maintain;
 pub mod pipeline;
 pub(crate) mod ppr;
+pub mod provenance;
 pub mod serialize;
 pub mod store;
 #[cfg(feature = "sync")]
@@ -35,6 +36,11 @@ pub use crate::deletion::{DeleteEntityOutcome, DeleteReason};
 pub use crate::error::{Error, ErrorKind, Result};
 pub use crate::maintain::{MaintenanceBuilder, MaintenanceReport};
 pub use crate::pipeline::PipelineBuilder;
+pub use crate::provenance::{
+    EDGE_PROVENANCE_BODY_KEYS, EDGE_REF_LEN, EdgeProvenanceClaimBody, EdgeRef,
+    PREDICATE_EDGE_PROVENANCE, SupersessionStatus, decode_edge_provenance_body,
+    derive_confirmation_status, validate_actor_class,
+};
 pub use crate::types::{
     ContextEntity, ContextPack, DecodedEdgeValue, EdgeActorClass, EdgeConfirmationStatus, EdgeInfo,
     EdgeKind, EdgeProvenanceFlags, EdgeValueLayout, EntityId, FieldProfile, HnswConfig, PackFormat,
