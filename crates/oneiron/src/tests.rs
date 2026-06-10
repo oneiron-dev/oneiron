@@ -550,7 +550,10 @@ fn user_hard_delete_writes_opaque_redaction_audit_receipt() -> Result<()> {
 fn redaction_receipt_indexes_temporal_occurred_start_as_point_event() -> Result<()> {
     let (_dir, vault) = open_test_vault();
     let id = EntityId::now();
-    vault.put_entity(&id, 0, test_time_range(300, 300), 301, b"index-me")?;
+    // Seed the to-be-deleted subject as TURN (type 1), a non-claim type whose
+    // body stays opaque: type 0 is CLAIM and gains a validated body ABI
+    // (ONE-1104), which would reject this seed before the hard delete runs.
+    vault.put_entity(&id, 1, test_time_range(300, 300), 301, b"index-me")?;
 
     let outcome = vault.delete_entity_with_reason(&id, DeleteReason::UserHardDelete)?;
     let receipt_id = outcome.receipt_id.expect("receipt id");
