@@ -10,7 +10,8 @@ use crate::types::EDGE_VALUE_STRUCTURAL_LEN;
 #[cfg(test)]
 use crate::types::VaultConfig;
 use crate::types::{
-    EDGE_KEY_LEN, ENTITY_ID_LEN, EdgeKind, EntityId, ScoredEntity, decode_edge_value_for_kind,
+    EDGE_KEY_LEN, ENTITY_ID_LEN, EdgeConfirmationStatus, EdgeKind, EntityId, ScoredEntity,
+    decode_edge_value_for_kind,
 };
 
 const SEED_HASH_LEN: usize = 16;
@@ -28,6 +29,53 @@ const SCORE_EPSILON: f32 = 1e-10;
 pub(crate) const MAX_PPR_SEEDS: usize = 256;
 const MAX_PPR_DEPTH: u32 = 10;
 
+/// Version of the PPR propagation math, mixed into the cache key so persisted
+/// `ppr_cache` rows computed under an older formula can never be served after
+/// an upgrade (the rows are otherwise gated only by graph version + TTL, and a
+/// formula change bumps neither). Stale rows are reaped by the regular cache
+/// cleanup. v2 = ARCH-0039 Layer-1 normalization + λ_τ table + not-traversed
+/// gates + retracted skip (ONE-1100).
+const PPR_FORMULA_VERSION: u32 = 2;
+
+/// Per-kind λ_τ traversal budget (ARCH-0039 Layer 1). The values are the
+/// LITERAL `edgeKinds.lambda` column of the pinned contract module
+/// (`oneiron-docs` `site/src/data/oneiron-contracts.ts`):
+///
+/// - `None` — the kind is NEVER traversed by PPR (`child_of`, `assigned_to`;
+///   contract `lambda: null`, "Not traversed."). Tree queries go through the
+///   dedicated `subtree` / `ancestors` read APIs instead.
+/// - `Some(0.0)` — `opposes` blocks propagation at the KIND level regardless
+///   of the stored per-edge weight byte (contradiction isolation).
+/// - The five world-model kinds carry pinned ARCH-0039 budgets that
+///   deliberately DIFFER from their stored-weight priors (`pprWeight`):
+///   `employed_by` λ = 0.10 (prior 0.8); `has_facet` / `facet_of` /
+///   `in_world` / `set_in` λ = 0.05 (prior 0.7). Do NOT derive this table
+///   from `EdgeKind::default_weight`.
+pub(crate) const fn lambda_for_kind(kind: EdgeKind) -> Option<f32> {
+    match kind {
+        EdgeKind::AuthoredBy => Some(0.9),
+        EdgeKind::ScopedTo => Some(0.7),
+        EdgeKind::PartOf => Some(0.8),
+        EdgeKind::Supersedes => Some(0.3),
+        EdgeKind::BelongsTo => Some(1.0),
+        EdgeKind::ClaimOf => Some(1.0),
+        EdgeKind::ChildOf => None,
+        EdgeKind::AssignedTo => None,
+        EdgeKind::DerivedFrom => Some(0.2),
+        EdgeKind::Mentions => Some(0.6),
+        EdgeKind::About => Some(0.5),
+        EdgeKind::Supports => Some(1.0),
+        EdgeKind::Opposes => Some(0.0),
+        EdgeKind::ParticipatesIn => Some(1.0),
+        EdgeKind::Attached => Some(0.8),
+        EdgeKind::EmployedBy => Some(0.10),
+        EdgeKind::HasFacet => Some(0.05),
+        EdgeKind::FacetOf => Some(0.05),
+        EdgeKind::InWorld => Some(0.05),
+        EdgeKind::SetIn => Some(0.05),
+    }
+}
+
 #[derive(Debug, Clone)]
 pub(crate) struct DeferredPprCacheWrite {
     seed_hash: [u8; SEED_HASH_LEN],
@@ -37,6 +85,35 @@ pub(crate) struct DeferredPprCacheWrite {
     scores: Vec<ScoredEntity>,
 }
 
+/// Personalized PageRank over the edge graph.
+///
+/// Propagation follows the ARCH-0039 Layer-1 formula pinned by decision D7:
+///
+/// ```text
+/// propagated = score * (λ_τ * w_uv / s_out(u, τ)) * (1 − α)
+/// ```
+///
+/// where `τ` is the edge kind, `w_uv` the stored per-edge weight,
+/// `s_out(u, τ)` the sum of the weights of `u`'s outgoing edges of kind `τ`,
+/// and `λ_τ` the per-kind budget from [`lambda_for_kind`]. `s_out` is summed
+/// on the fly inside the walk's existing prefix scans — there is NO persisted
+/// per-type strength database (the pinned 25-DB manifest contains none).
+///
+/// Engine-defined extension (documented here pending an ARCH-0039 pin): the
+/// walk also expands over `edges_in`. Reverse hops use the symmetric
+/// `s_in(u, τ)` normalizer (sum of inbound same-kind weights at the node
+/// being expanded) with the SAME λ_τ budgets and traversal gates — the kind
+/// byte is direction-invariant in the edge key, so every gate applies
+/// identically in both directions.
+///
+/// Traversal gates (all direction-invariant, see [`gate_edge`]):
+/// - `child_of` / `assigned_to` are never traversed (contract `lambda: null`).
+/// - `opposes` is blocked at the kind level (λ = 0.0) regardless of the
+///   stored weight byte.
+/// - Provenanced (26 B) edges with `confirmation_status == retracted` are
+///   skipped entirely, including their `s_out`/`s_in` contribution (D8);
+///   proposed / confirmed / disputed propagate at full weight in v1.
+/// - `part_of` hops are capped at 2.
 pub(crate) fn ppr_compute(
     store: &Store,
     txn: &RoTxn<'_>,
@@ -72,10 +149,34 @@ pub(crate) fn ppr_compute(
                 continue;
             }
 
+            // Layer-1 normalization is per (node, kind, direction): the
+            // forward scan over `edges_out` normalizes by s_out(u, τ) and the
+            // reverse scan over `edges_in` by the symmetric s_in(u, τ), so
+            // each database scan gates and groups its rows independently.
             for db in edge_dbs {
+                let mut groups = HashMap::<EdgeKind, Vec<GatedEdge>>::new();
                 for entry in db.prefix_iter(txn, node.as_bytes())? {
                     let (key, value) = entry?;
-                    propagate_edge(key, value, hops, score, alpha, &mut next)?;
+                    if let Some(edge) = gate_edge(key, value, hops)? {
+                        groups.entry(edge.kind).or_default().push(edge);
+                    }
+                }
+
+                for group in groups.into_values() {
+                    // Same-kind strength normalizer (s_out on the forward
+                    // scan, s_in on the reverse scan), summed on the fly.
+                    // Every gated weight is finite and > 0, so `strength > 0`
+                    // for a non-empty group and the division below can never
+                    // produce NaN (an f32 overflow of the sum to +inf only
+                    // collapses the per-edge shares toward 0.0).
+                    let strength: f32 = group.iter().map(|edge| edge.weight).sum();
+                    for edge in &group {
+                        // ARCH-0039 Layer 1 (D7):
+                        //   propagated = score * (λ_τ * w_uv / s(u, τ)) * (1 − α)
+                        let propagated =
+                            score * (edge.lambda * edge.weight / strength) * (1.0 - alpha);
+                        *next.entry((edge.neighbor, edge.new_hops)).or_default() += propagated;
+                    }
                 }
             }
         }
@@ -483,14 +584,22 @@ pub(crate) fn increment_graph_version(store: &Store, wtxn: &mut RwTxn<'_>) -> Re
     Ok(())
 }
 
-fn propagate_edge(
-    key: &[u8],
-    value: &[u8],
-    hops: u32,
-    score: f32,
-    alpha: f32,
-    next: &mut HashMap<(EntityId, u32), f32>,
-) -> Result<()> {
+/// An edge row that passed every traversal gate, ready for Layer-1
+/// propagation once its same-kind strength normalizer is known.
+struct GatedEdge {
+    kind: EdgeKind,
+    lambda: f32,
+    weight: f32,
+    neighbor: EntityId,
+    new_hops: u32,
+}
+
+/// Decodes one raw edge row fail-closed, then applies the traversal gates.
+///
+/// Returns `Ok(None)` when the edge is valid but must not propagate; corrupt
+/// rows are always a typed error (gates never mask corruption — the row is
+/// decoded before any gate runs).
+fn gate_edge(key: &[u8], value: &[u8], hops: u32) -> Result<Option<GatedEdge>> {
     if key.len() != EDGE_KEY_LEN {
         return Err(Error::CorruptedIndex("edge record"));
     }
@@ -504,26 +613,56 @@ fn propagate_edge(
     .map_err(|_| Error::CorruptedIndex("edge record"))?;
     let decoded = decode_edge_value_for_kind(kind, value)
         .map_err(|_| Error::CorruptedIndex("edge record"))?;
-    let weight = decoded.weight;
-    if weight == 0.0 {
-        return Ok(());
+
+    // Gate 1 — not-traversed kinds: `child_of` and `assigned_to` are NEVER
+    // traversed, regardless of the stored weight bytes (contract
+    // `lambda: null`, "Not traversed.").
+    let Some(lambda) = lambda_for_kind(kind) else {
+        return Ok(None);
+    };
+
+    // Gate 2 — kind-level block: λ_τ = 0.0 (`opposes`) propagates nothing
+    // even when the stored weight byte is non-zero (contradiction isolation).
+    if lambda == 0.0 {
+        return Ok(None);
     }
 
-    // PartOf edges count as structural hops; cap at 2 to limit hierarchy depth.
-    // ChildOf edges do NOT count as structural hops — task trees can be arbitrarily deep.
+    // Gate 3 — D8: provenanced edges with confirmation_status == retracted
+    // are skipped entirely (factor 0), including their contribution to the
+    // same-kind strength normalizer. proposed / confirmed / disputed
+    // propagate at full weight in v1.
+    if let Some(flags) = decoded.provenance
+        && flags.confirmation_status == EdgeConfirmationStatus::Retracted
+    {
+        return Ok(None);
+    }
+
+    // Gate 4 — non-positive weights carry no propagation mass. Contract
+    // weights live in [0, 1]; gating `<= 0.0` keeps the strength normalizer
+    // strictly positive for every edge that reaches the formula.
+    if decoded.weight <= 0.0 {
+        return Ok(None);
+    }
+
+    // Gate 5 — PartOf edges count as structural hops; cap at 2 to limit
+    // hierarchy depth (contract: "Hop-limited (max 2)").
     let new_hops = if kind == EdgeKind::PartOf {
         hops.checked_add(1)
             .ok_or(Error::ArithmeticOverflow("ppr structural hops"))?
     } else {
         hops
     };
-    if new_hops > 2 && kind != EdgeKind::ChildOf {
-        return Ok(());
+    if new_hops > 2 {
+        return Ok(None);
     }
 
-    let propagated = score * weight * (1.0 - alpha);
-    *next.entry((neighbor, new_hops)).or_default() += propagated;
-    Ok(())
+    Ok(Some(GatedEdge {
+        kind,
+        lambda,
+        weight: decoded.weight,
+        neighbor,
+        new_hops,
+    }))
 }
 
 fn sort_scores(scores: &mut [ScoredEntity]) {
@@ -539,13 +678,14 @@ fn hash_seeds(seeds: &[EntityId], depth: u32, alpha: f32) -> [u8; SEED_HASH_LEN]
     sorted.sort_unstable_by(|a, b| a.as_bytes().cmp(b.as_bytes()));
 
     let mut bytes = Vec::with_capacity(
-        sorted.len() * ENTITY_ID_LEN + std::mem::size_of::<u32>() + std::mem::size_of::<f32>(),
+        sorted.len() * ENTITY_ID_LEN + 2 * std::mem::size_of::<u32>() + std::mem::size_of::<f32>(),
     );
     for seed in &sorted {
         bytes.extend_from_slice(seed.as_bytes());
     }
     bytes.extend_from_slice(&depth.to_le_bytes());
     bytes.extend_from_slice(&alpha.to_le_bytes());
+    bytes.extend_from_slice(&PPR_FORMULA_VERSION.to_le_bytes());
 
     xxh3_128(&bytes).to_le_bytes()
 }
@@ -650,7 +790,11 @@ mod tests {
     use tempfile::tempdir;
 
     use super::*;
-    use crate::{EdgeKind, Error, HnswConfig, TimeRange, Vault, VaultConfig};
+    use crate::batch::EdgeValueFields;
+    use crate::{
+        EdgeActorClass, EdgeKind, EdgeProvenanceFlags, Error, HnswConfig, TimeRange, Vad, Vault,
+        VaultConfig,
+    };
 
     fn test_config() -> VaultConfig {
         VaultConfig {
@@ -736,12 +880,13 @@ mod tests {
         let alpha: f32 = 0.15;
 
         let mut bytes = Vec::with_capacity(
-            ENTITY_ID_LEN * 2 + std::mem::size_of::<u32>() + std::mem::size_of::<f32>(),
+            ENTITY_ID_LEN * 2 + 2 * std::mem::size_of::<u32>() + std::mem::size_of::<f32>(),
         );
         bytes.extend_from_slice(a.as_bytes());
         bytes.extend_from_slice(b.as_bytes());
         bytes.extend_from_slice(&depth.to_le_bytes());
         bytes.extend_from_slice(&alpha.to_le_bytes());
+        bytes.extend_from_slice(&PPR_FORMULA_VERSION.to_le_bytes());
 
         let expected = xxh3_128(&bytes).to_le_bytes();
 
@@ -820,6 +965,323 @@ mod tests {
         Ok(())
     }
 
+    /// ONE-1100 AC2 — the λ_τ table must equal the contract's LITERAL
+    /// `edgeKinds.lambda` column (oneiron-contracts.ts). The five world-model
+    /// rows deliberately differ from the stored-weight prior (`pprWeight`),
+    /// so a copy-the-weight-column implementation fails this test.
+    #[test]
+    fn lambda_table_matches_contract_literals() {
+        let expected: [(EdgeKind, Option<f32>); 20] = [
+            (EdgeKind::AuthoredBy, Some(0.9)),
+            (EdgeKind::ScopedTo, Some(0.7)),
+            (EdgeKind::PartOf, Some(0.8)),
+            (EdgeKind::Supersedes, Some(0.3)),
+            (EdgeKind::BelongsTo, Some(1.0)),
+            (EdgeKind::ClaimOf, Some(1.0)),
+            (EdgeKind::ChildOf, None),
+            (EdgeKind::AssignedTo, None),
+            (EdgeKind::DerivedFrom, Some(0.2)),
+            (EdgeKind::Mentions, Some(0.6)),
+            (EdgeKind::About, Some(0.5)),
+            (EdgeKind::Supports, Some(1.0)),
+            (EdgeKind::Opposes, Some(0.0)),
+            (EdgeKind::ParticipatesIn, Some(1.0)),
+            (EdgeKind::Attached, Some(0.8)),
+            (EdgeKind::EmployedBy, Some(0.10)),
+            (EdgeKind::HasFacet, Some(0.05)),
+            (EdgeKind::FacetOf, Some(0.05)),
+            (EdgeKind::InWorld, Some(0.05)),
+            (EdgeKind::SetIn, Some(0.05)),
+        ];
+        for (kind, lambda) in expected {
+            assert_eq!(lambda_for_kind(kind), lambda, "λ mismatch for {kind:?}");
+        }
+
+        // Pinned ARCH-0039 world-model budgets: employed_by λ = 0.10 vs
+        // stored-weight prior 0.8; has_facet / facet_of / in_world / set_in
+        // λ = 0.05 vs prior 0.7.
+        for kind in [
+            EdgeKind::EmployedBy,
+            EdgeKind::HasFacet,
+            EdgeKind::FacetOf,
+            EdgeKind::InWorld,
+            EdgeKind::SetIn,
+        ] {
+            let lambda = lambda_for_kind(kind).expect("world-model kinds are traversed");
+            assert_ne!(
+                lambda,
+                kind.default_weight(),
+                "λ for {kind:?} must NOT be copied from the stored-weight prior"
+            );
+        }
+    }
+
+    /// ONE-1100 AC1 — `child_of` and `assigned_to` carry zero PPR mass in
+    /// either traversal direction, regardless of the non-zero stored weight
+    /// bytes (contract `lambda: null`, "Not traversed.").
+    #[test]
+    fn child_of_and_assigned_to_are_never_traversed() -> Result<()> {
+        let temp_dir = tempdir()?;
+        let vault = Vault::open(temp_dir.path(), test_config())?;
+        let child = entity(70);
+        let parent = entity(71);
+        let task = entity(72);
+        let machine = entity(73);
+
+        vault.put_edge(&child, EdgeKind::ChildOf, &parent, 1.0)?;
+        vault.put_edge(&task, EdgeKind::AssignedTo, &machine, 0.8)?;
+
+        let rtxn = vault.store.env.read_txn()?;
+        for seed in [child, parent, task, machine] {
+            let scores = ppr_compute(&vault.store, &rtxn, &[seed], 5, 0.15)?;
+            // The only path from every seed is a child_of / assigned_to edge
+            // (forward via edges_out or reverse via edges_in) — zero
+            // propagated mass means the seed is the single scored entity.
+            assert_eq!(
+                scores.len(),
+                1,
+                "seed {seed:?} must not propagate over child_of/assigned_to"
+            );
+            assert_eq!(scores[0].id, seed);
+        }
+        Ok(())
+    }
+
+    /// ONE-1100 AC3 — `opposes` blocks at the KIND level: an opposes edge
+    /// whose STORED weight byte is 1.0 still propagates zero (λ_opposes =
+    /// 0.0 — contradiction isolation must not depend on the weight byte).
+    #[test]
+    fn opposes_blocks_at_kind_level_with_nonzero_stored_weight() -> Result<()> {
+        let temp_dir = tempdir()?;
+        let vault = Vault::open(temp_dir.path(), test_config())?;
+        let a = entity(74);
+        let b = entity(75);
+
+        vault.put_edge(&a, EdgeKind::Opposes, &b, 1.0)?;
+
+        let rtxn = vault.store.env.read_txn()?;
+        let scores = ppr_compute(&vault.store, &rtxn, &[a], 3, 0.15)?;
+        assert_eq!(scores.len(), 1, "opposes must not propagate");
+        assert_eq!(scores[0].id, a);
+        assert_eq!(score_for(&scores, b), 0.0);
+        Ok(())
+    }
+
+    /// ONE-1100 AC4 — Layer-1 normalization (D7), exact values at depth 1:
+    ///   propagated = score * (λ_τ * w_uv / s_out(u, τ)) * (1 − α)
+    /// Graph: a −mentions(0.6)→ b, a −mentions(0.2)→ c, a −supports(0.5)→ d.
+    /// Seeds [a], depth 1, α = 0.15:
+    ///   s_out(a, mentions) = 0.6 + 0.2 = 0.8, λ_mentions = 0.6
+    ///     b = 1.0 * (0.6 * 0.6 / 0.8) * 0.85 = 0.3825
+    ///     c = 1.0 * (0.6 * 0.2 / 0.8) * 0.85 = 0.1275
+    ///   s_out(a, supports) = 0.5 (own kind budget), λ_supports = 1.0
+    ///     d = 1.0 * (1.0 * 0.5 / 0.5) * 0.85 = 0.85
+    ///   a = 1.0 (init) + 1.0 * 0.15 (teleport) = 1.15
+    /// A λ·w implementation without s_out yields b = 0.306; the legacy
+    /// stored-weight-only formula yields b = 0.51 — both must fail here.
+    #[test]
+    fn layer1_normalization_matches_derived_values() -> Result<()> {
+        let temp_dir = tempdir()?;
+        let vault = Vault::open(temp_dir.path(), test_config())?;
+        let a = entity(76);
+        let b = entity(77);
+        let c = entity(78);
+        let d = entity(79);
+
+        vault.put_edge(&a, EdgeKind::Mentions, &b, 0.6)?;
+        vault.put_edge(&a, EdgeKind::Mentions, &c, 0.2)?;
+        vault.put_edge(&a, EdgeKind::Supports, &d, 0.5)?;
+
+        let rtxn = vault.store.env.read_txn()?;
+        let scores = ppr_compute(&vault.store, &rtxn, &[a], 1, 0.15)?;
+
+        let cases = [(a, 1.15_f32), (b, 0.3825), (c, 0.1275), (d, 0.85)];
+        for (id, expected) in cases {
+            let got = score_for(&scores, id);
+            assert!(
+                (got - expected).abs() <= 1e-6,
+                "score for {id:?}: got {got}, want {expected}"
+            );
+        }
+        Ok(())
+    }
+
+    /// ONE-1100 AC4 (D7) — reverse hops over `edges_in` use the symmetric
+    /// s_in(u, τ) normalizer with the same λ + gates (engine-defined
+    /// extension pending the ARCH-0039 pin).
+    /// Graph: a −belongs_to(1.0)→ b, c −belongs_to(1.0)→ b. Seeds [b],
+    /// depth 1: b has no outgoing edges; the reverse scan at b sees two
+    /// inbound belongs_to edges, s_in(b, belongs_to) = 1.0 + 1.0 = 2.0:
+    ///   a = c = 1.0 * (1.0 * 1.0 / 2.0) * 0.85 = 0.425
+    ///   b = 1.0 (init) + 0.15 (teleport) = 1.15
+    /// An implementation reusing s_out (= 0 at b) would divide by zero; one
+    /// without reverse normalization would yield 0.85 per neighbor.
+    #[test]
+    fn reverse_hops_use_symmetric_s_in_normalizer() -> Result<()> {
+        let temp_dir = tempdir()?;
+        let vault = Vault::open(temp_dir.path(), test_config())?;
+        let a = entity(120);
+        let b = entity(121);
+        let c = entity(122);
+
+        vault.put_edge(&a, EdgeKind::BelongsTo, &b, 1.0)?;
+        vault.put_edge(&c, EdgeKind::BelongsTo, &b, 1.0)?;
+
+        let rtxn = vault.store.env.read_txn()?;
+        let scores = ppr_compute(&vault.store, &rtxn, &[b], 1, 0.15)?;
+
+        let cases = [(a, 0.425_f32), (b, 1.15), (c, 0.425)];
+        for (id, expected) in cases {
+            let got = score_for(&scores, id);
+            assert!(
+                (got - expected).abs() <= 1e-6,
+                "score for {id:?}: got {got}, want {expected}"
+            );
+        }
+        Ok(())
+    }
+
+    /// ONE-1100 AC2/AC4 — the five pinned world-model budgets BIND in
+    /// propagation. A single same-kind edge normalizes to w/s = 1.0, so the
+    /// neighbor score at depth 1 is exactly λ_τ * (1 − α):
+    ///   employed_by: 0.10 * 0.85 = 0.085  (copy-the-weight impl: 0.68)
+    ///   has_facet / facet_of / in_world / set_in: 0.05 * 0.85 = 0.0425
+    ///   (copy-the-weight impl: 0.595)
+    #[test]
+    fn world_model_lambda_budgets_bind_in_propagation() -> Result<()> {
+        let temp_dir = tempdir()?;
+        let vault = Vault::open(temp_dir.path(), test_config())?;
+        let cases: [(EdgeKind, f32, f32); 5] = [
+            (EdgeKind::EmployedBy, 0.8, 0.085),
+            (EdgeKind::HasFacet, 0.7, 0.0425),
+            (EdgeKind::FacetOf, 0.7, 0.0425),
+            (EdgeKind::InWorld, 0.7, 0.0425),
+            (EdgeKind::SetIn, 0.7, 0.0425),
+        ];
+
+        let mut byte = 80_u8;
+        for (kind, stored_weight, expected) in cases {
+            let src = entity(byte);
+            let tgt = entity(byte + 1);
+            byte += 2;
+            vault.put_edge(&src, kind, &tgt, stored_weight)?;
+
+            let rtxn = vault.store.env.read_txn()?;
+            let scores = ppr_compute(&vault.store, &rtxn, &[src], 1, 0.15)?;
+            let got = score_for(&scores, tgt);
+            assert!(
+                (got - expected).abs() <= 1e-6,
+                "{kind:?}: got {got}, want {expected} (λ must bind, not the stored weight)"
+            );
+        }
+        Ok(())
+    }
+
+    /// ONE-1100 AC6 (D8) — confirmation_status == retracted (3) skips the
+    /// edge entirely, INCLUDING its s_out contribution:
+    /// a −mentions(0.6)→ b (bare 24 B), a −mentions(0.6, retracted)→ c (26 B).
+    /// s_out(a, mentions) counts only the live edge = 0.6, so at depth 1
+    ///   b = 1.0 * (0.6 * 0.6 / 0.6) * 0.85 = 0.51
+    ///   (0.255 if the retracted edge still consumed normalizer mass)
+    ///   c = 0.0 (skipped entirely — D8 factor 0)
+    #[test]
+    fn retracted_edges_skip_propagation_and_strength() -> Result<()> {
+        let temp_dir = tempdir()?;
+        let vault = Vault::open(temp_dir.path(), test_config())?;
+        let a = entity(100);
+        let b = entity(101);
+        let c = entity(102);
+
+        vault.put_edge(&a, EdgeKind::Mentions, &b, 0.6)?;
+        vault
+            .batch()
+            .edge_with_value_fields(
+                &a,
+                EdgeKind::Mentions,
+                &c,
+                EdgeValueFields {
+                    weight: 0.6,
+                    created_at: 1,
+                    vad: Vad::NEUTRAL,
+                    provenance: Some(EdgeProvenanceFlags {
+                        confirmation_status: EdgeConfirmationStatus::Retracted,
+                        actor_class: EdgeActorClass::Human,
+                    }),
+                },
+            )
+            .commit()?;
+
+        let rtxn = vault.store.env.read_txn()?;
+
+        // The stamped row must really be the 26 B provenanced layout with the
+        // contract's retracted discriminant (3) at offset 24.
+        let key = Store::encode_edge_key(&a, EdgeKind::Mentions, &c);
+        let raw = vault
+            .store
+            .edges_out
+            .get(&rtxn, &key)?
+            .ok_or(Error::EntityNotFound)?;
+        assert_eq!(raw.len(), 26);
+        assert_eq!(raw[24], 3);
+
+        let scores = ppr_compute(&vault.store, &rtxn, &[a], 1, 0.15)?;
+        let b_score = score_for(&scores, b);
+        assert!(
+            (b_score - 0.51).abs() <= 1e-6,
+            "live edge must own the full normalizer, got {b_score}"
+        );
+        assert_eq!(score_for(&scores, c), 0.0, "retracted edge must be skipped");
+        Ok(())
+    }
+
+    /// ONE-1100 AC6 (D8) — proposed(0) / confirmed(1) / disputed(2)
+    /// propagate at FULL weight in v1 (no demotion): each equals the
+    /// bare-edge value λ_mentions * (w/s = 1.0) * (1 − 0.15) = 0.51 at
+    /// depth 1.
+    #[test]
+    fn non_retracted_statuses_propagate_at_full_weight() -> Result<()> {
+        let temp_dir = tempdir()?;
+        let vault = Vault::open(temp_dir.path(), test_config())?;
+        let statuses = [
+            EdgeConfirmationStatus::Proposed,
+            EdgeConfirmationStatus::Confirmed,
+            EdgeConfirmationStatus::Disputed,
+        ];
+
+        let mut byte = 110_u8;
+        for status in statuses {
+            let src = entity(byte);
+            let tgt = entity(byte + 1);
+            byte += 2;
+            vault
+                .batch()
+                .edge_with_value_fields(
+                    &src,
+                    EdgeKind::Mentions,
+                    &tgt,
+                    EdgeValueFields {
+                        weight: 0.6,
+                        created_at: 1,
+                        vad: Vad::NEUTRAL,
+                        provenance: Some(EdgeProvenanceFlags {
+                            confirmation_status: status,
+                            actor_class: EdgeActorClass::Agent,
+                        }),
+                    },
+                )
+                .commit()?;
+
+            let rtxn = vault.store.env.read_txn()?;
+            let scores = ppr_compute(&vault.store, &rtxn, &[src], 1, 0.15)?;
+            let got = score_for(&scores, tgt);
+            assert!(
+                (got - 0.51).abs() <= 1e-6,
+                "{status:?} must propagate at full weight, got {got}"
+            );
+        }
+        Ok(())
+    }
+
     #[test]
     fn ppr_bidirectional_scan_reaches_inbound_neighbors() -> Result<()> {
         let temp_dir = tempdir()?;
@@ -862,8 +1324,15 @@ mod tests {
         let vault = Vault::open(temp_dir.path(), test_config())?;
         let a = entity(18);
         let b = entity(19);
+        let c = entity(20);
 
+        // Two same-kind edges so a weight rewrite changes b's NORMALIZED
+        // share (a single edge always normalizes to w/s = 1.0, which would
+        // make the score weight-invariant):
+        //   before: b share = 1.0 / (1.0 + 1.0) = 0.5
+        //   after:  b share = 0.2 / (0.2 + 1.0) = 1/6
         vault.put_edge(&a, EdgeKind::BelongsTo, &b, 1.0)?;
+        vault.put_edge(&a, EdgeKind::BelongsTo, &c, 1.0)?;
 
         let first = ppr_query(&vault.store, &vault.config, &[a], 3, 0.15)?;
         let cache_before = cache_row(&vault, &[a], 3, 0.15)?;
