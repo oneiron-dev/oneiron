@@ -164,6 +164,12 @@ impl<'a> BatchBuilder<'a> {
         {
             self.validation_error = Some(e);
         }
+        if self.validation_error.is_none() && occurred.start > occurred.end {
+            self.validation_error = Some(Error::InvalidTimeRange {
+                start: occurred.start,
+                end: occurred.end,
+            });
+        }
         self.ops.push(BatchOp::Put {
             id: *id,
             entity_type,
@@ -731,25 +737,29 @@ fn apply_put(
     data: &[u8],
 ) -> Result<()> {
     validate_entity_type(entity_type)?;
-    let short_id_plan = plan_short_id_update(store, &*wtxn, &id, entity_type, data)?;
-
-    let mut occurred = occurred;
     if occurred.start > occurred.end {
-        std::mem::swap(&mut occurred.start, &mut occurred.end);
+        return Err(Error::InvalidTimeRange {
+            start: occurred.start,
+            end: occurred.end,
+        });
     }
+    let short_id_plan = plan_short_id_update(store, &*wtxn, &id, entity_type, data)?;
 
     if let Some(old_record) = store.entities.get(wtxn, id.as_bytes())? {
         let (old_type, old_occurred, old_learned) = parse_entity_metadata(old_record)?;
+        if old_type != entity_type {
+            return Err(Error::EntityTypeImmutable {
+                id,
+                existing: old_type,
+                attempted: entity_type,
+            });
+        }
+
         if old_occurred.end.saturating_sub(old_occurred.start) > LONG_INTERVAL_THRESHOLD_SECS {
             let old_long_interval_key = Store::encode_temporal_key(old_occurred.end, &id);
             store
                 .temporal_long_intervals
                 .delete(wtxn, &old_long_interval_key)?;
-        }
-
-        if old_type != entity_type {
-            let old_type_key = Store::encode_type_key(old_type, &id);
-            store.type_index.delete(wtxn, &old_type_key)?;
         }
 
         if old_occurred.start != occurred.start {

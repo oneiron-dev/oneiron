@@ -2358,32 +2358,41 @@ mod tests {
     }
 
     #[test]
-    fn inverted_ranges_are_swapped_on_put() -> Result<()> {
+    fn inverted_ranges_are_rejected_on_put() -> Result<()> {
         let (_dir, vault) = open_test_vault();
 
+        // The pre-D3 engine silently swapped reversed intervals into
+        // (start: 100, end: 300). The fail-closed gate must reject instead
+        // and leave nothing behind (M2 pinned decision D3).
         let id = entity_id(170);
-        vault.put_entity(
-            &id,
-            0,
-            TimeRange {
-                start: 300,
-                end: 100,
-            },
-            400,
-            b"payload",
-        )?;
+        let err = vault
+            .put_entity(
+                &id,
+                0,
+                TimeRange {
+                    start: 300,
+                    end: 100,
+                },
+                400,
+                b"payload",
+            )
+            .expect_err("reversed occurred interval must be rejected");
+        assert!(
+            matches!(
+                err,
+                Error::InvalidTimeRange {
+                    start: 300,
+                    end: 100
+                }
+            ),
+            "expected InvalidTimeRange {{ start: 300, end: 100 }}, got {err:?}"
+        );
 
         let rtxn = vault.store.env.read_txn()?;
-        let raw = vault
-            .store
-            .entities
-            .get(&rtxn, id.as_bytes())?
-            .ok_or(Error::EntityNotFound)?;
-
-        let start = u64::from_be_bytes(raw[1..9].try_into().map_err(|_| Error::InvalidKey)?);
-        let end = u64::from_be_bytes(raw[9..17].try_into().map_err(|_| Error::InvalidKey)?);
-        assert_eq!(start, 100);
-        assert_eq!(end, 300);
+        assert!(
+            vault.store.entities.get(&rtxn, id.as_bytes())?.is_none(),
+            "rejected put must not write an entity record"
+        );
 
         Ok(())
     }

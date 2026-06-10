@@ -18,7 +18,7 @@ use sha2::{Digest, Sha256};
 use xxhash_rust::xxh32::xxh32;
 
 use super::*;
-use crate::batch::ENTITY_METADATA_HEADER_LEN;
+use crate::batch::{ENTITY_METADATA_HEADER_LEN, LONG_INTERVAL_THRESHOLD_SECS};
 use crate::deletion::{
     DeleteReason, LAST_HARD_ERASE_SWEEP_SEQ_KEY, RedactionScope, encode_hard_erase_sweep_job,
     encode_hard_erase_sweep_key,
@@ -400,6 +400,16 @@ fn read_short_id_value(vault: &Vault, id: &EntityId) -> Result<Vec<u8>> {
     vault
         .store
         .short_ids
+        .get(&rtxn, id.as_bytes())?
+        .map(|bytes| bytes.to_vec())
+        .ok_or(Error::EntityNotFound)
+}
+
+fn read_raw_entity(vault: &Vault, id: &EntityId) -> Result<Vec<u8>> {
+    let rtxn = vault.store.env.read_txn()?;
+    vault
+        .store
+        .entities
         .get(&rtxn, id.as_bytes())?
         .map(|bytes| bytes.to_vec())
         .ok_or(Error::EntityNotFound)
@@ -1609,11 +1619,14 @@ fn batch_put_updates_content_hash_on_reput() -> Result<()> {
 fn reput_deindexes_stale_secondary_indexes() -> Result<()> {
     let (_dir, vault) = open_test_vault();
     let id = EntityId::now();
-    let old_type = 0_u8;
+    // The type byte is immutable on re-put (D2, Error::EntityTypeImmutable);
+    // re-typing coverage lives in the EntityTypeImmutable tests. This test
+    // pins that a same-type re-put re-homes the temporal indexes while the
+    // short id stays stable and the content hash refreshes.
+    let entity_type = 0_u8;
     let old_occurred = test_time_range(100, 200);
     let old_learned = 300_u64;
     let old_data = b"old-data";
-    let new_type = 1_u8;
     let new_occurred = test_time_range(400, 500);
     let new_learned = 600_u64;
     let mut new_data = b"new-data".to_vec();
@@ -1623,17 +1636,17 @@ fn reput_deindexes_stale_secondary_indexes() -> Result<()> {
 
     vault
         .batch()
-        .put(&id, old_type, old_occurred, old_learned, old_data)
+        .put(&id, entity_type, old_occurred, old_learned, old_data)
         .commit()?;
 
-    let old_type_key = Store::encode_type_key(old_type, &id);
+    let type_key = Store::encode_type_key(entity_type, &id);
     let old_start_key = Store::encode_temporal_key(old_occurred.start, &id);
     let old_end_key = Store::encode_temporal_key(old_occurred.end, &id);
     let old_learned_key = Store::encode_temporal_key(old_learned, &id);
 
     {
         let rtxn = vault.store.env.read_txn()?;
-        assert!(vault.store.type_index.get(&rtxn, &old_type_key)?.is_some());
+        assert!(vault.store.type_index.get(&rtxn, &type_key)?.is_some());
         assert!(
             vault
                 .store
@@ -1661,17 +1674,16 @@ fn reput_deindexes_stale_secondary_indexes() -> Result<()> {
 
     vault
         .batch()
-        .put(&id, new_type, new_occurred, new_learned, &new_data)
+        .put(&id, entity_type, new_occurred, new_learned, &new_data)
         .commit()?;
 
-    let new_type_key = Store::encode_type_key(new_type, &id);
     let new_start_key = Store::encode_temporal_key(new_occurred.start, &id);
     let new_end_key = Store::encode_temporal_key(new_occurred.end, &id);
     let new_learned_key = Store::encode_temporal_key(new_learned, &id);
 
     {
         let rtxn = vault.store.env.read_txn()?;
-        assert!(vault.store.type_index.get(&rtxn, &old_type_key)?.is_none());
+        assert!(vault.store.type_index.get(&rtxn, &type_key)?.is_some());
         assert!(
             vault
                 .store
@@ -1693,7 +1705,6 @@ fn reput_deindexes_stale_secondary_indexes() -> Result<()> {
                 .get(&rtxn, &old_learned_key)?
                 .is_none()
         );
-        assert!(vault.store.type_index.get(&rtxn, &new_type_key)?.is_some());
         assert!(
             vault
                 .store
@@ -4241,6 +4252,365 @@ fn txn_batch_put_invalid_entity_type_returns_error() -> Result<()> {
         "expected InvalidEntityType(255), got {err:?}"
     );
     assert!(vault.get(&id)?.is_none());
+
+    Ok(())
+}
+
+#[test]
+fn reput_with_different_type_byte_is_rejected_with_no_index_residue() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let id = EntityId::now();
+
+    vault
+        .batch()
+        .put(&id, 0, test_time_range(100, 200), 300, b"old-data")
+        .commit()?;
+    let record_before = read_raw_entity(&vault, &id)?;
+    let short_id_before = read_short_id_value(&vault, &id)?;
+
+    // D2: the type byte is immutable once a record exists. The pre-D2 engine
+    // silently re-homed the type_index row and kept the old short id, leaving
+    // a TURN entity addressed as "cl1".
+    let err = vault
+        .batch()
+        .put(&id, 1, test_time_range(400, 500), 600, b"new-data")
+        .commit()
+        .expect_err("re-put with a different type byte must be rejected");
+    assert!(
+        matches!(
+            err,
+            Error::EntityTypeImmutable {
+                id: err_id,
+                existing: 0,
+                attempted: 1,
+            } if err_id == id
+        ),
+        "expected EntityTypeImmutable {{ existing: 0, attempted: 1 }}, got {err:?}"
+    );
+
+    // Stored record and short-id row are byte-for-byte unchanged.
+    assert_eq!(read_raw_entity(&vault, &id)?, record_before);
+    assert_eq!(read_short_id_value(&vault, &id)?, short_id_before);
+
+    // Original index rows intact; no rows for the rejected attempt.
+    let rtxn = vault.store.env.read_txn()?;
+    assert!(
+        vault
+            .store
+            .type_index
+            .get(&rtxn, &Store::encode_type_key(0, &id))?
+            .is_some()
+    );
+    assert!(
+        vault
+            .store
+            .type_index
+            .get(&rtxn, &Store::encode_type_key(1, &id))?
+            .is_none()
+    );
+    assert!(
+        vault
+            .store
+            .temporal_occurred_start
+            .get(&rtxn, &Store::encode_temporal_key(100, &id))?
+            .is_some()
+    );
+    assert!(
+        vault
+            .store
+            .temporal_occurred_end
+            .get(&rtxn, &Store::encode_temporal_key(200, &id))?
+            .is_some()
+    );
+    assert!(
+        vault
+            .store
+            .temporal_learned
+            .get(&rtxn, &Store::encode_temporal_key(300, &id))?
+            .is_some()
+    );
+    assert!(
+        vault
+            .store
+            .temporal_occurred_start
+            .get(&rtxn, &Store::encode_temporal_key(400, &id))?
+            .is_none()
+    );
+    assert!(
+        vault
+            .store
+            .temporal_occurred_end
+            .get(&rtxn, &Store::encode_temporal_key(500, &id))?
+            .is_none()
+    );
+    assert!(
+        vault
+            .store
+            .temporal_learned
+            .get(&rtxn, &Store::encode_temporal_key(600, &id))?
+            .is_none()
+    );
+
+    Ok(())
+}
+
+#[test]
+fn txn_batch_reput_with_different_type_byte_rejects_before_staging_writes() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let id = EntityId::now();
+
+    vault.put_entity(&id, 0, test_time_range(100, 200), 300, b"old-data")?;
+    let record_before = read_raw_entity(&vault, &id)?;
+    let short_id_before = read_short_id_value(&vault, &id)?;
+
+    // Commit the externally-owned transaction DESPITE the error: the
+    // apply-time gate must reject before staging any write, so an
+    // implementation that re-homes index rows before checking the type byte
+    // leaves residue these assertions catch.
+    let mut wtxn = vault.store.env.write_txn()?;
+    let err = vault
+        .batch_in()
+        .put(&id, 1, test_time_range(400, 500), 600, b"new-data")
+        .apply(&mut wtxn)
+        .expect_err("re-put with a different type byte must be rejected");
+    assert!(
+        matches!(
+            err,
+            Error::EntityTypeImmutable {
+                id: err_id,
+                existing: 0,
+                attempted: 1,
+            } if err_id == id
+        ),
+        "expected EntityTypeImmutable {{ existing: 0, attempted: 1 }}, got {err:?}"
+    );
+    wtxn.commit()?;
+
+    assert_eq!(read_raw_entity(&vault, &id)?, record_before);
+    assert_eq!(read_short_id_value(&vault, &id)?, short_id_before);
+
+    let rtxn = vault.store.env.read_txn()?;
+    assert!(
+        vault
+            .store
+            .type_index
+            .get(&rtxn, &Store::encode_type_key(1, &id))?
+            .is_none()
+    );
+    assert!(
+        vault
+            .store
+            .temporal_occurred_start
+            .get(&rtxn, &Store::encode_temporal_key(400, &id))?
+            .is_none()
+    );
+    assert!(
+        vault
+            .store
+            .temporal_occurred_end
+            .get(&rtxn, &Store::encode_temporal_key(500, &id))?
+            .is_none()
+    );
+    assert!(
+        vault
+            .store
+            .temporal_learned
+            .get(&rtxn, &Store::encode_temporal_key(600, &id))?
+            .is_none()
+    );
+
+    Ok(())
+}
+
+#[test]
+fn put_with_reversed_occurred_range_is_rejected_and_nothing_is_written() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let id = EntityId::now();
+
+    // D3: occurred_start > occurred_end is rejected with a typed error. The
+    // pre-D3 engine silently swapped the bounds and stored (100, 300).
+    let err = vault
+        .batch()
+        .put(&id, 0, test_time_range(300, 100), 400, b"payload")
+        .commit()
+        .expect_err("occurred_start > occurred_end must be rejected");
+    assert!(
+        matches!(
+            err,
+            Error::InvalidTimeRange {
+                start: 300,
+                end: 100
+            }
+        ),
+        "expected InvalidTimeRange {{ start: 300, end: 100 }}, got {err:?}"
+    );
+
+    {
+        let rtxn = vault.store.env.read_txn()?;
+        assert!(vault.store.entities.get(&rtxn, id.as_bytes())?.is_none());
+        assert!(vault.store.short_ids.get(&rtxn, id.as_bytes())?.is_none());
+        assert!(
+            vault
+                .store
+                .type_index
+                .get(&rtxn, &Store::encode_type_key(0, &id))?
+                .is_none()
+        );
+        // The pre-D3 swap stored (start: 100, end: 300) — assert both
+        // orientations are absent from every temporal index.
+        for ts in [100_u64, 300] {
+            let key = Store::encode_temporal_key(ts, &id);
+            assert!(
+                vault
+                    .store
+                    .temporal_occurred_start
+                    .get(&rtxn, &key)?
+                    .is_none()
+            );
+            assert!(
+                vault
+                    .store
+                    .temporal_occurred_end
+                    .get(&rtxn, &key)?
+                    .is_none()
+            );
+        }
+        assert!(
+            vault
+                .store
+                .temporal_learned
+                .get(&rtxn, &Store::encode_temporal_key(400, &id))?
+                .is_none()
+        );
+    }
+
+    // A reversed range whose swapped span exceeds the long-interval
+    // threshold: the pre-D3 swap would also have written a
+    // temporal_long_intervals row keyed on the (swapped) occurred_end.
+    let long_id = EntityId::now();
+    let reversed_start = 300 + LONG_INTERVAL_THRESHOLD_SECS + 1;
+    let err = vault
+        .batch()
+        .put(
+            &long_id,
+            0,
+            test_time_range(reversed_start, 100),
+            400,
+            b"payload",
+        )
+        .commit()
+        .expect_err("reversed long interval must be rejected");
+    assert!(
+        matches!(err, Error::InvalidTimeRange { start, end: 100 } if start == reversed_start),
+        "expected InvalidTimeRange {{ start: {reversed_start}, end: 100 }}, got {err:?}"
+    );
+
+    let rtxn = vault.store.env.read_txn()?;
+    assert!(
+        vault
+            .store
+            .entities
+            .get(&rtxn, long_id.as_bytes())?
+            .is_none()
+    );
+    assert!(
+        vault
+            .store
+            .temporal_long_intervals
+            .get(&rtxn, &Store::encode_temporal_key(reversed_start, &long_id))?
+            .is_none()
+    );
+
+    Ok(())
+}
+
+#[test]
+fn txn_batch_put_with_reversed_occurred_range_rejected_at_apply_time() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let id = EntityId::now();
+
+    // TxnBatchBuilder has no eager validation — this exercises the
+    // authoritative apply-time gate in apply_put. Commit the transaction
+    // despite the error to prove the gate rejected before staging any write.
+    let mut wtxn = vault.store.env.write_txn()?;
+    let err = vault
+        .batch_in()
+        .put(&id, 0, test_time_range(300, 100), 400, b"payload")
+        .apply(&mut wtxn)
+        .expect_err("occurred_start > occurred_end must be rejected");
+    assert!(
+        matches!(
+            err,
+            Error::InvalidTimeRange {
+                start: 300,
+                end: 100
+            }
+        ),
+        "expected InvalidTimeRange {{ start: 300, end: 100 }}, got {err:?}"
+    );
+    wtxn.commit()?;
+
+    let rtxn = vault.store.env.read_txn()?;
+    assert!(vault.store.entities.get(&rtxn, id.as_bytes())?.is_none());
+    assert!(vault.store.short_ids.get(&rtxn, id.as_bytes())?.is_none());
+    for ts in [100_u64, 300] {
+        let key = Store::encode_temporal_key(ts, &id);
+        assert!(
+            vault
+                .store
+                .temporal_occurred_start
+                .get(&rtxn, &key)?
+                .is_none()
+        );
+        assert!(
+            vault
+                .store
+                .temporal_occurred_end
+                .get(&rtxn, &key)?
+                .is_none()
+        );
+    }
+
+    Ok(())
+}
+
+#[test]
+fn point_event_start_equals_end_stays_accepted() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let id = EntityId::now();
+
+    // D3 boundary: start == end is a legal point event.
+    vault
+        .batch()
+        .put(&id, 0, test_time_range(777, 777), 800, b"point")
+        .commit()?;
+
+    let rtxn = vault.store.env.read_txn()?;
+    let raw = vault
+        .store
+        .entities
+        .get(&rtxn, id.as_bytes())?
+        .ok_or(Error::EntityNotFound)?;
+    assert_eq!(raw[1..9], 777_u64.to_be_bytes());
+    assert_eq!(raw[9..17], 777_u64.to_be_bytes());
+
+    // Point-event index convention: occurred_start row only, no occurred_end
+    // row (apply_put writes temporal_occurred_end only when start != end).
+    let key = Store::encode_temporal_key(777, &id);
+    assert!(
+        vault
+            .store
+            .temporal_occurred_start
+            .get(&rtxn, &key)?
+            .is_some()
+    );
+    assert!(
+        vault
+            .store
+            .temporal_occurred_end
+            .get(&rtxn, &key)?
+            .is_none()
+    );
 
     Ok(())
 }
