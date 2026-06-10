@@ -946,8 +946,23 @@ mod tests {
         Ok(())
     }
 
+    /// ONE-1100 AC5 — `part_of` hops are capped at exactly 2 (contract:
+    /// "Hop-limited (max 2)"): mass MUST arrive at 2 part_of hops and MUST
+    /// NOT arrive at 3. Chain: a −part_of(1.0)→ b −part_of(1.0)→ c
+    /// −part_of(1.0)→ d, seeds [a], α = 0.15.
+    ///
+    /// Layer-1 derivation (D7), each hop a single same-kind edge so
+    /// w/s_out = 1.0 and λ_part_of = 0.8:
+    ///   hop 1: b = 1.0  * (0.8 * 1.0 / 1.0) * 0.85 = 0.68
+    ///   hop 2: c = 0.68 * (0.8 * 1.0 / 1.0) * 0.85 = 0.4624
+    ///   hop 3: d — gated by the cap, never scored
+    /// At depth 2 the hop-2 contribution is c's ONLY one, so c = 0.4624
+    /// exactly — an off-by-one cap at 1 hop yields c = 0.0 and fails. The
+    /// depth-5 run then proves the CAP (not the depth budget) is what blocks
+    /// d: c keeps accumulating while d stays at exactly 0.0 — a cap at 3
+    /// hops would score d and fail.
     #[test]
-    fn ppr_part_of_hop_limit_blocks_third_hop() -> Result<()> {
+    fn ppr_part_of_hop_limit_allows_second_hop_blocks_third() -> Result<()> {
         let temp_dir = tempdir()?;
         let vault = Vault::open(temp_dir.path(), test_config())?;
         let a = entity(9);
@@ -960,8 +975,24 @@ mod tests {
         vault.put_edge(&c, EdgeKind::PartOf, &d, 1.0)?;
 
         let rtxn = vault.store.env.read_txn()?;
+
+        // ALLOW side — exact Layer-1 value at depth 2 (derivation above).
+        let scores = ppr_compute(&vault.store, &rtxn, &[a], 2, 0.15)?;
+        let c_score = score_for(&scores, c);
+        assert!(
+            (c_score - 0.4624).abs() <= 1e-6,
+            "mass must arrive at exactly 2 part_of hops: got {c_score}, want 0.4624"
+        );
+        assert_eq!(score_for(&scores, d), 0.0);
+
+        // BLOCK side — depth budget well beyond the cap.
         let scores = ppr_compute(&vault.store, &rtxn, &[a], 5, 0.15)?;
-        assert!(score_for(&scores, d) <= 1e-6);
+        assert!(score_for(&scores, c) > 0.0);
+        assert_eq!(
+            score_for(&scores, d),
+            0.0,
+            "no mass may arrive at 3 part_of hops"
+        );
         Ok(())
     }
 
@@ -1277,6 +1308,60 @@ mod tests {
             assert!(
                 (got - 0.51).abs() <= 1e-6,
                 "{status:?} must propagate at full weight, got {got}"
+            );
+        }
+        Ok(())
+    }
+
+    /// ONE-1100 AC6 (D8) — mixed-status edges from ONE source share ONE
+    /// same-kind normalizer at FULL weight. The per-status test above uses
+    /// one edge per source, where single-edge Layer-1 normalization cancels
+    /// ANY per-status weight factor f (w·f / s_out = w·f / w·f = 1.0); here
+    /// the three edges compete inside the same s_out, so any weight scaling
+    /// skews the shares and fails.
+    /// Graph: a −mentions(0.6, proposed)→ t1, a −mentions(0.6, confirmed)→ t2,
+    /// a −mentions(0.6, disputed)→ t3. Seeds [a], depth 1, α = 0.15:
+    ///   s_out(a, mentions) = 0.6 + 0.6 + 0.6 = 1.8, λ_mentions = 0.6
+    ///   t1 = t2 = t3 = 1.0 * (0.6 * 0.6 / 1.8) * 0.85 = 0.17
+    /// e.g. a 0.5 weight demotion on disputed gives s_out = 1.5 →
+    /// t1 = t2 = 0.204, t3 = 0.102 — every share moves off 0.17.
+    #[test]
+    fn same_source_mixed_statuses_share_normalizer_at_full_weight() -> Result<()> {
+        let temp_dir = tempdir()?;
+        let vault = Vault::open(temp_dir.path(), test_config())?;
+        let a = entity(130);
+        let targets = [
+            (entity(131), EdgeConfirmationStatus::Proposed),
+            (entity(132), EdgeConfirmationStatus::Confirmed),
+            (entity(133), EdgeConfirmationStatus::Disputed),
+        ];
+
+        let mut batch = vault.batch();
+        for (target, status) in &targets {
+            batch = batch.edge_with_value_fields(
+                &a,
+                EdgeKind::Mentions,
+                target,
+                EdgeValueFields {
+                    weight: 0.6,
+                    created_at: 1,
+                    vad: Vad::NEUTRAL,
+                    provenance: Some(EdgeProvenanceFlags {
+                        confirmation_status: *status,
+                        actor_class: EdgeActorClass::Agent,
+                    }),
+                },
+            );
+        }
+        batch.commit()?;
+
+        let rtxn = vault.store.env.read_txn()?;
+        let scores = ppr_compute(&vault.store, &rtxn, &[a], 1, 0.15)?;
+        for (target, status) in targets {
+            let got = score_for(&scores, target);
+            assert!(
+                (got - 0.17).abs() <= 1e-6,
+                "{status:?} share must be 1.0 * (0.6 * 0.6 / 1.8) * 0.85 = 0.17, got {got}"
             );
         }
         Ok(())
