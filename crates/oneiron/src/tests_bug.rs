@@ -403,7 +403,7 @@ fn batch_in_put_failure_does_not_commit_partial_entity_update() {
         .with_write_txn(|wtxn| {
             vault
                 .store
-                .short_ids
+                .short_ids_reverse
                 .put(wtxn, id.as_bytes(), &[1])
                 .unwrap();
             Ok(())
