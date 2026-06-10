@@ -39,8 +39,69 @@
 //!
 //! Flag writes (D10): [`restamp_edge_flags`] is the ONLY 26-byte stamp
 //! primitive and it stays `pub(crate)`. The single public door to provenance
-//! flags is [`crate::Vault::put_edge_provenance`] — flags without a Claim
-//! would be an unauditable cache, so no public raw-flag API exists.
+//! flags is the Claim lifecycle ([`crate::Vault::put_edge_provenance`],
+//! [`crate::Vault::supersede_edge_provenance`],
+//! [`crate::Vault::retract_edge_provenance`]) — flags without a Claim would
+//! be an unauditable cache, so no public raw-flag API exists.
+//!
+//! # Lifecycle (retract + supersede, contracts.ts `retractionRules` + D14)
+//!
+//! A provenance Claim is **LIVE** iff its wrapping Claim's `life` status is
+//! `active`. Closed Claims (`superseded` / `retracted`) are never deleted —
+//! they stay readable as history.
+//!
+//! * **SUPERSEDE** — "a newer edge.provenance Claim … takes precedence; the
+//!   prior Claim gets valid_to set (closed, not deleted). Confidence breaks
+//!   ties among live Claims." Per D14, "newer" is the Claim ENTITY's
+//!   envelope `learned_at` (u64); `source_revision_ref` is opaque. Writing a
+//!   provenance Claim for an EdgeRef therefore:
+//!   - REJECTS (typed [`Error::ProvenancePrecedenceViolation`]) when the
+//!     incoming `learned_at` is OLDER than the live frontier — an older
+//!     Claim can never take precedence, and the engine refuses to write a
+//!     dead-on-arrival assertion;
+//!   - CLOSES every live Claim whose `learned_at` is strictly older than
+//!     the incoming one (`life` = superseded; `valid_to` set to the incoming
+//!     `learned_at` when the record had no `valid_to` of its own — an
+//!     already-closed validity window is preserved, never extended);
+//!   - lets equal-`learned_at` Claims COEXIST live (the contract's
+//!     "confidence breaks ties among live Claims" requires a live cohort);
+//!   - the explicit [`crate::Vault::supersede_edge_provenance`] form closes
+//!     its named prior Claim even on a `learned_at` tie.
+//!
+//! * **WINNER / DERIVE** — "whenever the Claim changes, re-stamp the edge's
+//!   two hot flags from it." With multiple live Claims the stamp source is
+//!   the WINNER under the total D14 order: greatest `learned_at`, then
+//!   greatest `confidence` ([`f32::total_cmp`]), then greatest claim-id
+//!   bytes (engine-defined final tiebreak so the winner is deterministic).
+//!   See [`winner_index`].
+//!
+//! * **RETRACT** — "set supersession_status = retracted (and typically
+//!   valid_to = now). The edge is KEPT with confirmation_status = retracted
+//!   … the edge is not physically removed on retraction." One transaction
+//!   sets the record's `supersession_status` = retracted and `valid_to` =
+//!   `now`, mirrors `life` = retracted / `to` = `now` on the wrapper,
+//!   re-puts the Claim with the envelope `occurred.end` refreshed per D15,
+//!   and restamps the edge: from the live WINNER when other live Claims
+//!   remain, else `confirmation_status` = retracted with the retracted
+//!   Claim's own persisted `actor_class`.
+//!
+//! * **Close-instant validation** — closing can never invert a validity
+//!   window: when the effective `valid_to` would precede `valid_from` (or
+//!   the derived envelope start), the operation fails typed
+//!   ([`Error::InvalidProvenanceBody`]) — never silently reordered.
+//!
+//! # Persisted `actor_class` (refresh seam)
+//!
+//! The edge's `actor_class` flag derives from `actor_entity_ref` (contracts
+//! `derivesEdgeFlags[1]`), but D13 makes the {human, agent} split for PERSON
+//! actors CALLER-SUPPLIED at write time — it is not recoverable from storage
+//! alone. So that a later winner-refresh (retract/supersede/D16 delete) can
+//! restamp a HISTORICAL Claim's flags without defaulting, the write path
+//! persists the write-time validated class on the wrapping Claim's `evid`
+//! field as the engine-owned map `{"actor_class": u8}` (the wrapper is only
+//! writable through the reserved-namespace door, so no app payload can
+//! collide). A provenance Claim without this evidence fails lifecycle
+//! operations typed — never a defaulted class.
 
 use heed::RwTxn;
 use rmpv::Value;
@@ -459,6 +520,141 @@ pub fn validate_actor_class(actor_entity_type: u8, actor_class: EdgeActorClass) 
     }
 }
 
+/// Engine-internal `evid` key persisting the WRITE-TIME validated
+/// `actor_class` on the wrapping Claim (see the module docs' "Persisted
+/// actor_class" section). Not part of the pinned 7-field value record.
+pub(crate) const EVIDENCE_KEY_ACTOR_CLASS: &str = "actor_class";
+
+/// Encodes the persisted actor-class evidence: the engine-owned MessagePack
+/// map `{"actor_class": u8}` stored in the wrapping Claim's `evid` field.
+pub(crate) fn encode_actor_class_evidence(actor_class: EdgeActorClass) -> Value {
+    Value::Map(vec![(
+        Value::from(EVIDENCE_KEY_ACTOR_CLASS),
+        Value::from(actor_class as u8),
+    )])
+}
+
+/// Decodes the persisted actor-class evidence fail-closed: the value must be
+/// exactly the engine-owned map `{"actor_class": u8 <= 2}`. A provenance
+/// Claim without it cannot participate in flag refresh — typed error, never
+/// a defaulted class (D13).
+pub(crate) fn decode_actor_class_evidence(evidence: Option<&Value>) -> Result<EdgeActorClass> {
+    let Some(Value::Map(entries)) = evidence else {
+        return Err(Error::InvalidProvenanceBody(
+            "provenance claim is missing its persisted actor_class evidence",
+        ));
+    };
+    let mut actor_class: Option<EdgeActorClass> = None;
+    for (key, value) in entries {
+        if key.as_str() != Some(EVIDENCE_KEY_ACTOR_CLASS) {
+            return Err(Error::InvalidProvenanceBody(
+                "unknown key in provenance actor_class evidence",
+            ));
+        }
+        if actor_class.is_some() {
+            return Err(Error::InvalidProvenanceBody(
+                "duplicate actor_class evidence key",
+            ));
+        }
+        let parsed = value
+            .as_u64()
+            .and_then(|raw| u8::try_from(raw).ok())
+            .and_then(actor_class_from_u8)
+            .ok_or(Error::InvalidProvenanceBody(
+                "actor_class evidence must be an integer u8 <= 2",
+            ))?;
+        actor_class = Some(parsed);
+    }
+    actor_class.ok_or(Error::InvalidProvenanceBody(
+        "provenance claim is missing its persisted actor_class evidence",
+    ))
+}
+
+fn actor_class_from_u8(value: u8) -> Option<EdgeActorClass> {
+    match value {
+        0 => Some(EdgeActorClass::Human),
+        1 => Some(EdgeActorClass::Agent),
+        2 => Some(EdgeActorClass::System),
+        _ => None,
+    }
+}
+
+/// D14 precedence key of one live provenance Claim, used to pick the
+/// deterministic flag-stamp WINNER.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct ProvenancePrecedence {
+    /// The Claim ENTITY's envelope `learned_at` (D14: "later
+    /// source_revision_ref" = envelope learned_at; the ref is opaque).
+    pub(crate) learned_at: u64,
+    /// The record's `confidence` — breaks `learned_at` ties.
+    pub(crate) confidence: f32,
+    /// Final engine-defined tiebreak: greatest claim-id bytes win, making
+    /// the order total and the winner deterministic.
+    pub(crate) claim_id: EntityId,
+}
+
+/// Returns the index of the WINNER among live provenance Claims under the
+/// documented total D14 order: greatest `learned_at`, then greatest
+/// `confidence` (`f32::total_cmp` — confidence is validated finite in
+/// `[0, 1]`), then greatest claim-id bytes. `None` for an empty slate.
+pub(crate) fn winner_index(candidates: &[ProvenancePrecedence]) -> Option<usize> {
+    candidates
+        .iter()
+        .enumerate()
+        .max_by(|(_, a), (_, b)| {
+            a.learned_at
+                .cmp(&b.learned_at)
+                .then_with(|| a.confidence.total_cmp(&b.confidence))
+                .then_with(|| a.claim_id.as_bytes().cmp(b.claim_id.as_bytes()))
+        })
+        .map(|(index, _)| index)
+}
+
+/// Closes a value record for SUPERSESSION: `valid_to` is set to `close_at`
+/// ONLY when the record had no `valid_to` of its own — an explicit,
+/// already-closed validity window is preserved, never extended. The
+/// `supersession_status` is untouched (the enum has no "superseded" state;
+/// closure lives in the wrapper's `life` + the validity window). Fails typed
+/// when the effective window would be inverted.
+pub(crate) fn close_record_for_supersession(
+    record: &EdgeProvenanceClaimBody,
+    close_at: u64,
+) -> Result<EdgeProvenanceClaimBody> {
+    let mut closed = *record;
+    if closed.valid_to.is_none() {
+        closed.valid_to = Some(close_at);
+    }
+    ensure_record_window(&closed)?;
+    Ok(closed)
+}
+
+/// Applies the contract's RETRACT rule to a value record:
+/// `supersession_status` = retracted and `valid_to` = `now` (the literal
+/// "set supersession_status = retracted (and typically valid_to = now)" —
+/// retraction is a deliberate withdrawal AT `now`, so an explicit prior
+/// `valid_to` is overwritten). Fails typed when `valid_from` exceeds `now`.
+pub(crate) fn retract_record(
+    record: &EdgeProvenanceClaimBody,
+    now: u64,
+) -> Result<EdgeProvenanceClaimBody> {
+    let mut retracted = *record;
+    retracted.supersession_status = SupersessionStatus::Retracted;
+    retracted.valid_to = Some(now);
+    ensure_record_window(&retracted)?;
+    Ok(retracted)
+}
+
+fn ensure_record_window(record: &EdgeProvenanceClaimBody) -> Result<()> {
+    if let (Some(from), Some(to)) = (record.valid_from, record.valid_to)
+        && from > to
+    {
+        return Err(Error::InvalidProvenanceBody(
+            "closing valid_to precedes valid_from",
+        ));
+    }
+    Ok(())
+}
+
 /// The 26-byte stamp primitive (D10): rewrites ONLY the two hot-flag bytes
 /// at offsets 24/25 of the subject edge's value, preserving the first 24
 /// bytes (weight + created_at + VAD) verbatim, and writes IDENTICAL bytes to
@@ -840,6 +1036,131 @@ mod tests {
                 }
                 other => panic!("expected ActorClassMismatch, got {other:?}"),
             }
+        }
+    }
+
+    #[test]
+    fn winner_ordering_pins_d14_precedence() {
+        let precedence = |learned_at, confidence, id_byte: u8| ProvenancePrecedence {
+            learned_at,
+            confidence,
+            claim_id: entity(id_byte),
+        };
+
+        // Empty slate → no winner.
+        assert_eq!(winner_index(&[]), None);
+
+        // learned_at DOMINATES confidence: t=2000/conf 0.1 beats
+        // t=1000/conf 0.9 — a confidence-first implementation fails here.
+        let by_learned = [precedence(1000, 0.9, 0x01), precedence(2000, 0.1, 0x02)];
+        assert_eq!(winner_index(&by_learned), Some(1));
+
+        // Confidence breaks learned_at ties.
+        let by_confidence = [
+            precedence(2000, 0.4, 0x01),
+            precedence(2000, 0.6, 0x02),
+            precedence(2000, 0.5, 0x03),
+        ];
+        assert_eq!(winner_index(&by_confidence), Some(1));
+
+        // Full (learned_at, confidence) tie → greatest claim-id bytes win
+        // (engine-defined determinism; order-of-input must not matter).
+        let by_id = [precedence(2000, 0.5, 0x09), precedence(2000, 0.5, 0x04)];
+        assert_eq!(winner_index(&by_id), Some(0));
+        let by_id_reversed = [precedence(2000, 0.5, 0x04), precedence(2000, 0.5, 0x09)];
+        assert_eq!(winner_index(&by_id_reversed), Some(1));
+    }
+
+    #[test]
+    fn close_and_retract_record_transforms_pin_window_rules() {
+        let open = EdgeProvenanceClaimBody::new(entity(0x31), 0.7, SupersessionStatus::Confirmed);
+
+        // SUPERSEDE close: absent valid_to → set to close_at; status untouched.
+        let closed = close_record_for_supersession(&open, 2000).expect("close open record");
+        assert_eq!(closed.valid_to, Some(2000));
+        assert_eq!(closed.supersession_status, SupersessionStatus::Confirmed);
+
+        // SUPERSEDE close: an explicit valid_to is PRESERVED, never extended.
+        let mut bounded = open;
+        bounded.valid_from = Some(100);
+        bounded.valid_to = Some(200);
+        let closed = close_record_for_supersession(&bounded, 5000).expect("close bounded record");
+        assert_eq!(closed.valid_to, Some(200), "explicit window must survive");
+
+        // SUPERSEDE close: future-dated valid_from inverts the window → typed.
+        let mut future = open;
+        future.valid_from = Some(9000);
+        assert!(matches!(
+            close_record_for_supersession(&future, 2000),
+            Err(Error::InvalidProvenanceBody(_))
+        ));
+
+        // RETRACT: status = retracted AND valid_to = now, OVERWRITING an
+        // explicit valid_to (deliberate withdrawal at `now`).
+        let retracted = retract_record(&bounded, 3000).expect("retract bounded record");
+        assert_eq!(retracted.supersession_status, SupersessionStatus::Retracted);
+        assert_eq!(retracted.valid_to, Some(3000));
+        assert_eq!(retracted.valid_from, Some(100), "valid_from untouched");
+
+        // RETRACT before valid_from → typed, never reordered.
+        assert!(matches!(
+            retract_record(&future, 2000),
+            Err(Error::InvalidProvenanceBody(_))
+        ));
+    }
+
+    #[test]
+    fn actor_class_evidence_codec_fail_closed() {
+        for (class, byte) in [
+            (EdgeActorClass::Human, 0_u8),
+            (EdgeActorClass::Agent, 1),
+            (EdgeActorClass::System, 2),
+        ] {
+            let evidence = encode_actor_class_evidence(class);
+            // Pinned shape: exactly {"actor_class": <u8>}.
+            let Value::Map(entries) = &evidence else {
+                panic!("evidence must be a map");
+            };
+            assert_eq!(entries.len(), 1);
+            assert_eq!(entries[0].0.as_str(), Some("actor_class"));
+            assert_eq!(entries[0].1.as_u64(), Some(u64::from(byte)));
+            assert_eq!(
+                decode_actor_class_evidence(Some(&evidence)).expect("round trip"),
+                class
+            );
+        }
+
+        // Fail-closed: missing, wrong shape, out-of-range byte, unknown key,
+        // duplicate key — each a typed InvalidProvenanceBody, never a default.
+        let cases: Vec<Option<Value>> = vec![
+            None,
+            Some(Value::from(0_u8)),
+            Some(Value::Map(vec![])),
+            Some(Value::Map(vec![(
+                Value::from("actor_class"),
+                Value::from(3_u8),
+            )])),
+            Some(Value::Map(vec![(
+                Value::from("actor_class"),
+                Value::from("human"),
+            )])),
+            Some(Value::Map(vec![(
+                Value::from("actorClass"),
+                Value::from(0_u8),
+            )])),
+            Some(Value::Map(vec![
+                (Value::from("actor_class"), Value::from(0_u8)),
+                (Value::from("actor_class"), Value::from(1_u8)),
+            ])),
+        ];
+        for case in &cases {
+            assert!(
+                matches!(
+                    decode_actor_class_evidence(case.as_ref()),
+                    Err(Error::InvalidProvenanceBody(_))
+                ),
+                "case {case:?} must be rejected"
+            );
         }
     }
 }

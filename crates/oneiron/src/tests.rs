@@ -8491,3 +8491,592 @@ fn claim_lifecycle_ops_reject_provenance_claims_toward_provenance_api() -> Resul
     );
     Ok(())
 }
+
+// ═══════════════════════════════════════════════════════════════════════
+// ONE-1106: provenance retract + supersede lifecycle
+// (retractionRules RETRACT / SUPERSEDE / DERIVE · D14 winner · D15 envelope)
+// ═══════════════════════════════════════════════════════════════════════
+
+/// Lifecycle fixture: PERSON + MACHINE actors and one semantic
+/// `a -mentions-> b` subject edge carrying VAD.
+struct LifecycleFixture {
+    _dir: tempfile::TempDir,
+    vault: Vault,
+    person: EntityId,
+    machine: EntityId,
+    subject: EdgeRef,
+}
+
+fn lifecycle_fixture() -> Result<LifecycleFixture> {
+    let (dir, vault) = open_test_vault();
+    let person = EntityId::now();
+    let machine = EntityId::now();
+    let a = EntityId::now();
+    let b = EntityId::now();
+    vault.put_entity(&person, 4, test_time_range(1, 1), 1, b"person")?;
+    vault.put_entity(
+        &machine,
+        ENTITY_TYPE_MACHINE,
+        test_time_range(1, 1),
+        1,
+        b"machine",
+    )?;
+    vault.put_entity(&a, 4, test_time_range(1, 1), 1, b"a")?;
+    vault.put_entity(&b, 4, test_time_range(1, 1), 1, b"b")?;
+    let vad = Vad {
+        valence: 0.25,
+        arousal: 0.5,
+        dominance: 0.75,
+    };
+    vault.put_edge_with_vad(&a, EdgeKind::Mentions, &b, 0.875, vad)?;
+    Ok(LifecycleFixture {
+        _dir: dir,
+        vault,
+        person,
+        machine,
+        subject: EdgeRef::new(a, EdgeKind::Mentions, b),
+    })
+}
+
+#[test]
+fn retract_edge_provenance_keeps_edge_and_closes_claim() -> Result<()> {
+    let fx = lifecycle_fixture()?;
+    let vault = &fx.vault;
+    let subject = fx.subject;
+
+    let claim_id = EntityId::now();
+    let body = EdgeProvenanceClaimBody::new(fx.person, 0.75, SupersessionStatus::Confirmed);
+    vault.put_edge_provenance(&claim_id, &subject, &body, EdgeActorClass::Human, 1_000)?;
+    let (stamped, _) = raw_edge_values(vault, &subject)?;
+    let stamped = stamped.expect("stamped edge");
+    assert_eq!(stamped[24], 1, "confirmed = 1 before the retract");
+
+    vault.retract_edge_provenance(&claim_id, 2_000)?;
+
+    // AC1: the edge row SURVIVES — edges_out AND edges_in still return it,
+    // 26 B, status byte 3. A delete-the-edge implementation FAILS here.
+    let out_infos = vault.edges_out(&subject.source)?;
+    let edge_out = out_infos
+        .iter()
+        .find(|info| info.kind == EdgeKind::Mentions && info.target == subject.target)
+        .expect("edges_out must still return the retracted edge");
+    let in_infos = vault.edges_in(&subject.target)?;
+    let edge_in = in_infos
+        .iter()
+        .find(|info| info.kind == EdgeKind::Mentions && info.target == subject.source)
+        .expect("edges_in must still return the retracted edge");
+    let expected_flags = EdgeProvenanceFlags {
+        confirmation_status: EdgeConfirmationStatus::Retracted,
+        actor_class: EdgeActorClass::Human,
+    };
+    assert_eq!(edge_out.provenance, Some(expected_flags));
+    assert_eq!(edge_in.provenance, Some(expected_flags));
+
+    let (out, inn) = raw_edge_values(vault, &subject)?;
+    let out = out.expect("edges_out row must survive retraction");
+    let inn = inn.expect("edges_in row must survive retraction");
+    assert_eq!(out.len(), EDGE_VALUE_SEMANTIC_PROVENANCED_LEN, "26 B kept");
+    assert_eq!(out[24], 3, "retracted = 3 at offset 24");
+    assert_eq!(out[25], 0, "actor_class stays the claim's own human = 0");
+    assert_eq!(
+        &out[..24],
+        &stamped[..24],
+        "weight/created_at/VAD bytes preserved verbatim"
+    );
+    assert_eq!(inn, out, "edges_in must mirror edges_out byte-for-byte");
+
+    // The Claim was re-put CLOSED, not deleted: supersession_status =
+    // retracted + valid_to = now in the value record, mirrored on the
+    // wrapper; confidence untouched.
+    let wrapper = vault
+        .get_claim(&claim_id)?
+        .expect("retracted claim stays readable");
+    assert_eq!(wrapper.lifecycle, ClaimLifecycleStatus::Retracted);
+    assert_eq!(wrapper.valid_to, Some(2_000));
+    let record = decode_edge_provenance_body(&wrapper.value)?;
+    assert_eq!(record.supersession_status, SupersessionStatus::Retracted);
+    assert_eq!(record.valid_to, Some(2_000));
+    assert_eq!(record.confidence.to_bits(), 0.75_f32.to_bits());
+
+    // D15: envelope occurred_end refreshed u64::MAX → now; occurred_start
+    // and learned_at (the D14 precedence key) never move on a lifecycle
+    // re-put.
+    let raw = vault.get_raw(&claim_id)?.expect("claim entity");
+    assert_eq!(raw[0], 0, "claim type byte must stay 0");
+    assert_eq!(
+        u64::from_be_bytes(raw[1..9].try_into().expect("occurred_start")),
+        1_000
+    );
+    assert_eq!(
+        u64::from_be_bytes(raw[9..17].try_into().expect("occurred_end")),
+        2_000
+    );
+    assert_eq!(
+        u64::from_be_bytes(raw[17..25].try_into().expect("learned_at")),
+        1_000
+    );
+
+    // Temporal rows follow the refreshed envelope: the u64::MAX open-end
+    // sentinel row and its long-interval row are gone; the closed end
+    // indexes at now.
+    let rtxn = vault.store.env.read_txn()?;
+    let old_end_key = Store::encode_temporal_key(u64::MAX, &claim_id);
+    let new_end_key = Store::encode_temporal_key(2_000, &claim_id);
+    assert!(
+        vault
+            .store
+            .temporal_occurred_end
+            .get(&rtxn, &old_end_key)?
+            .is_none(),
+        "open-end sentinel row must be replaced"
+    );
+    assert!(
+        vault
+            .store
+            .temporal_long_intervals
+            .get(&rtxn, &old_end_key)?
+            .is_none(),
+        "long-interval row must be dropped with the closed window"
+    );
+    assert!(
+        vault
+            .store
+            .temporal_occurred_end
+            .get(&rtxn, &new_end_key)?
+            .is_some()
+    );
+    drop(rtxn);
+    Ok(())
+}
+
+#[test]
+fn supersede_edge_provenance_closes_prior_and_restamps_winner() -> Result<()> {
+    let fx = lifecycle_fixture()?;
+    let vault = &fx.vault;
+    let subject = fx.subject;
+
+    let prior = EntityId::now();
+    let prior_body = EdgeProvenanceClaimBody::new(fx.person, 0.9, SupersessionStatus::Proposed);
+    vault.put_edge_provenance(&prior, &subject, &prior_body, EdgeActorClass::Human, 1_000)?;
+    let (before, _) = raw_edge_values(vault, &subject)?;
+    let before = before.expect("stamped edge");
+    assert_eq!(
+        (before[24], before[25]),
+        (0, 0),
+        "proposed/human before the supersede"
+    );
+
+    // D14: the newer claim wins on envelope learned_at even with LOWER
+    // confidence (0.2 < 0.9) — a confidence-first implementation FAILS this
+    // restamp.
+    let newer = EntityId::now();
+    let newer_body = EdgeProvenanceClaimBody::new(fx.machine, 0.2, SupersessionStatus::Disputed);
+    vault.supersede_edge_provenance(
+        &prior,
+        &newer,
+        &subject,
+        &newer_body,
+        EdgeActorClass::System,
+        2_000,
+    )?;
+
+    let (out, inn) = raw_edge_values(vault, &subject)?;
+    let out = out.expect("edges_out row");
+    assert_eq!(out.len(), EDGE_VALUE_SEMANTIC_PROVENANCED_LEN);
+    assert_eq!(out[24], 2, "disputed = 2 from the newer (winner) claim");
+    assert_eq!(out[25], 2, "system = 2 from the newer (winner) claim");
+    assert_eq!(&out[..24], &before[..24]);
+    assert_eq!(inn.as_deref(), Some(out.as_slice()));
+
+    // The prior is CLOSED, not deleted: still readable, life = superseded,
+    // valid_to = the new claim's learned_at; its supersession_status is
+    // untouched (closure lives in life + the validity window — only RETRACT
+    // rewrites the status).
+    let closed = vault.get_claim(&prior)?.expect("prior claim readable");
+    assert_eq!(closed.lifecycle, ClaimLifecycleStatus::Superseded);
+    assert_eq!(closed.valid_to, Some(2_000));
+    let closed_record = decode_edge_provenance_body(&closed.value)?;
+    assert_eq!(closed_record.valid_to, Some(2_000));
+    assert_eq!(
+        closed_record.supersession_status,
+        SupersessionStatus::Proposed
+    );
+    // Prior envelope end refreshed per D15 (was the u64::MAX sentinel).
+    let raw = vault.get_raw(&prior)?.expect("prior entity");
+    assert_eq!(
+        u64::from_be_bytes(raw[9..17].try_into().expect("occurred_end")),
+        2_000
+    );
+
+    let new_claim = vault.get_claim(&newer)?.expect("new claim");
+    assert_eq!(new_claim.lifecycle, ClaimLifecycleStatus::Active);
+    Ok(())
+}
+
+#[test]
+fn put_edge_provenance_implicitly_closes_strictly_older_live_claims() -> Result<()> {
+    let fx = lifecycle_fixture()?;
+    let vault = &fx.vault;
+    let subject = fx.subject;
+
+    let older = EntityId::now();
+    vault.put_edge_provenance(
+        &older,
+        &subject,
+        &EdgeProvenanceClaimBody::new(fx.person, 0.9, SupersessionStatus::Confirmed),
+        EdgeActorClass::Human,
+        1_000,
+    )?;
+
+    // AC2: writing a NEWER provenance Claim for the same EdgeRef closes the
+    // prior live Claim — even through the plain put API.
+    let newer = EntityId::now();
+    vault.put_edge_provenance(
+        &newer,
+        &subject,
+        &EdgeProvenanceClaimBody::new(fx.person, 0.1, SupersessionStatus::Proposed),
+        EdgeActorClass::Agent,
+        2_000,
+    )?;
+
+    let closed = vault.get_claim(&older)?.expect("prior claim readable");
+    assert_eq!(closed.lifecycle, ClaimLifecycleStatus::Superseded);
+    assert_eq!(
+        closed.valid_to,
+        Some(2_000),
+        "absent valid_to closes at the incoming learned_at"
+    );
+
+    let (out, _) = raw_edge_values(vault, &subject)?;
+    let out = out.expect("edge");
+    assert_eq!(
+        (out[24], out[25]),
+        (0, 1),
+        "flags restamp from the newer claim (proposed/agent)"
+    );
+
+    // Both claims remain attached to the source entity — history is kept.
+    let ids: HashSet<EntityId> = vault
+        .claims_for_subject(&subject.source)?
+        .into_iter()
+        .collect();
+    assert_eq!(ids, HashSet::from([older, newer]));
+    Ok(())
+}
+
+#[test]
+fn multi_claim_winner_and_retract_refresh_to_runner_up() -> Result<()> {
+    let fx = lifecycle_fixture()?;
+    let vault = &fx.vault;
+    let subject = fx.subject;
+    // Distinct actor entity (PERSON) for the runner-up so the actor_class
+    // refresh is observable on byte 25.
+    let person2 = EntityId::now();
+    vault.put_entity(&person2, 4, test_time_range(1, 1), 1, b"person2")?;
+
+    // c1 @ t1 — auto-superseded once the t2 cohort lands.
+    let c1 = EntityId::now();
+    vault.put_edge_provenance(
+        &c1,
+        &subject,
+        &EdgeProvenanceClaimBody::new(fx.person, 0.9, SupersessionStatus::Proposed),
+        EdgeActorClass::Human,
+        1_000,
+    )?;
+    // c2 @ t2, conf 0.6 — the winner.
+    let c2 = EntityId::now();
+    vault.put_edge_provenance(
+        &c2,
+        &subject,
+        &EdgeProvenanceClaimBody::new(fx.machine, 0.6, SupersessionStatus::Confirmed),
+        EdgeActorClass::System,
+        2_000,
+    )?;
+    // c3 @ t2, conf 0.4 — learned_at TIE with c2, broken by confidence: c3
+    // coexists live but the stamp stays c2's. A stamp-the-newest-write
+    // implementation FAILS these assertions.
+    let c3 = EntityId::now();
+    vault.put_edge_provenance(
+        &c3,
+        &subject,
+        &EdgeProvenanceClaimBody::new(person2, 0.4, SupersessionStatus::Disputed),
+        EdgeActorClass::Agent,
+        2_000,
+    )?;
+
+    let (out, _) = raw_edge_values(vault, &subject)?;
+    let out = out.expect("edge");
+    assert_eq!(
+        (out[24], out[25]),
+        (1, 2),
+        "winner = c2 (confirmed/system): the t2 tie is broken by confidence 0.6 > 0.4"
+    );
+
+    // Lifecycles: c1 superseded by the t2 cohort; c2 and c3 BOTH live.
+    assert_eq!(
+        vault.get_claim(&c1)?.expect("c1").lifecycle,
+        ClaimLifecycleStatus::Superseded
+    );
+    assert_eq!(
+        vault.get_claim(&c2)?.expect("c2").lifecycle,
+        ClaimLifecycleStatus::Active
+    );
+    assert_eq!(
+        vault.get_claim(&c3)?.expect("c3").lifecycle,
+        ClaimLifecycleStatus::Active
+    );
+
+    // AC4: retract the WINNER → flags refresh to the RUNNER-UP c3
+    // (disputed = 2, agent = 1) — and NOT to the closed c1 even though its
+    // confidence (0.9) is the highest on record: closed claims never win.
+    vault.retract_edge_provenance(&c2, 3_000)?;
+    let (out, inn) = raw_edge_values(vault, &subject)?;
+    let out = out.expect("edge survives");
+    assert_eq!(out.len(), EDGE_VALUE_SEMANTIC_PROVENANCED_LEN);
+    assert_eq!(
+        (out[24], out[25]),
+        (2, 1),
+        "runner-up c3 (disputed/agent) must stamp after the winner's retraction"
+    );
+    assert_eq!(inn.as_deref(), Some(out.as_slice()));
+
+    // Retract the last live claim → zero live: the contract's retracted
+    // stamp (3) with the retracted claim's own persisted actor class.
+    vault.retract_edge_provenance(&c3, 4_000)?;
+    let (out, inn) = raw_edge_values(vault, &subject)?;
+    let out = out.expect("edge survives full retraction");
+    assert_eq!(out.len(), EDGE_VALUE_SEMANTIC_PROVENANCED_LEN);
+    assert_eq!(
+        (out[24], out[25]),
+        (3, 1),
+        "no live claims: retracted = 3 with c3's agent class"
+    );
+    assert_eq!(inn.as_deref(), Some(out.as_slice()));
+
+    // History: all three claims remain readable — never deleted.
+    let ids: HashSet<EntityId> = vault
+        .claims_for_subject(&subject.source)?
+        .into_iter()
+        .collect();
+    assert_eq!(ids, HashSet::from([c1, c2, c3]));
+    Ok(())
+}
+
+#[test]
+fn provenance_lifecycle_negative_paths_fail_closed() -> Result<()> {
+    let fx = lifecycle_fixture()?;
+    let vault = &fx.vault;
+    let subject = fx.subject;
+
+    // A live claim to act against.
+    let live = EntityId::now();
+    vault.put_edge_provenance(
+        &live,
+        &subject,
+        &EdgeProvenanceClaimBody::new(fx.person, 0.8, SupersessionStatus::Confirmed),
+        EdgeActorClass::Human,
+        2_000,
+    )?;
+    let (stamped, _) = raw_edge_values(vault, &subject)?;
+    let stamped = stamped.expect("stamped edge");
+    let live_before = vault.get_claim(&live)?.expect("live claim");
+    let fresh_body = EdgeProvenanceClaimBody::new(fx.person, 0.5, SupersessionStatus::Proposed);
+
+    // Retract: missing claim id → EntityNotFound.
+    let err = vault
+        .retract_edge_provenance(&seeded_entity_id(0xF00D), 3_000)
+        .expect_err("missing claim must be rejected");
+    assert_eq!(err.kind(), ErrorKind::EntityNotFound);
+
+    // Retract on a non-claim entity (PERSON, type 4) → NotAProvenanceClaim.
+    let err = vault
+        .retract_edge_provenance(&fx.person, 3_000)
+        .expect_err("a PERSON entity is not a provenance claim");
+    assert_eq!(err.kind(), ErrorKind::NotAProvenanceClaim);
+
+    // Retract on an ORDINARY claim (wrong predicate) → NotAProvenanceClaim;
+    // the claim body is untouched.
+    let ordinary = EntityId::now();
+    let ordinary_body = ClaimBody::new(
+        "hobby.collects",
+        ClaimSubject::Entity(fx.person),
+        rmpv::Value::from("stamps"),
+        0.9,
+        ClaimApprovalStatus::Approved,
+        ClaimLifecycleStatus::Active,
+    );
+    vault.put_claim(&ordinary, &ordinary_body, test_time_range(5, 5), 5)?;
+    let err = vault
+        .retract_edge_provenance(&ordinary, 3_000)
+        .expect_err("ordinary claims must be rejected");
+    assert_eq!(err.kind(), ErrorKind::NotAProvenanceClaim);
+    assert_eq!(
+        vault.get_claim(&ordinary)?.expect("ordinary claim intact"),
+        ordinary_body
+    );
+
+    // Supersede with an ordinary-claim prior → NotAProvenanceClaim; the new
+    // claim must not exist afterwards.
+    let new_id = EntityId::now();
+    let err = vault
+        .supersede_edge_provenance(
+            &ordinary,
+            &new_id,
+            &subject,
+            &fresh_body,
+            EdgeActorClass::Human,
+            3_000,
+        )
+        .expect_err("ordinary prior must be rejected");
+    assert_eq!(err.kind(), ErrorKind::NotAProvenanceClaim);
+    assert_no_entity_state(vault, &new_id)?;
+
+    // SUBJECT MISMATCH (AC3): the prior names a DIFFERENT EdgeRef than the
+    // supersede call → typed; nothing written, prior untouched.
+    let c = EntityId::now();
+    vault.put_entity(&c, 4, test_time_range(1, 1), 1, b"c")?;
+    vault.put_edge(&subject.source, EdgeKind::About, &c, 0.5)?;
+    let other_subject = EdgeRef::new(subject.source, EdgeKind::About, c);
+    let (other_before, _) = raw_edge_values(vault, &other_subject)?;
+    let new_id = EntityId::now();
+    let err = vault
+        .supersede_edge_provenance(
+            &live,
+            &new_id,
+            &other_subject,
+            &fresh_body,
+            EdgeActorClass::Human,
+            3_000,
+        )
+        .expect_err("prior addressing a different EdgeRef must be rejected");
+    assert_eq!(err.kind(), ErrorKind::ProvenanceSubjectMismatch);
+    assert_no_entity_state(vault, &new_id)?;
+    assert_eq!(
+        vault.get_claim(&live)?.expect("live untouched"),
+        live_before
+    );
+    let (other_after, _) = raw_edge_values(vault, &other_subject)?;
+    assert_eq!(
+        other_after, other_before,
+        "the mismatched-subject edge must be untouched"
+    );
+
+    // Double-retract → ProvenanceClaimAlreadyClosed; the FIRST close wins.
+    vault.retract_edge_provenance(&live, 3_000)?;
+    let err = vault
+        .retract_edge_provenance(&live, 4_000)
+        .expect_err("double retract must be rejected");
+    assert_eq!(err.kind(), ErrorKind::ProvenanceClaimAlreadyClosed);
+    let after = vault.get_claim(&live)?.expect("claim");
+    assert_eq!(
+        after.valid_to,
+        Some(3_000),
+        "a rejected second retract must not move the close instant"
+    );
+    assert_eq!(after.lifecycle, ClaimLifecycleStatus::Retracted);
+
+    // Supersede a CLOSED prior → ProvenanceClaimAlreadyClosed; nothing
+    // written.
+    let new_id = EntityId::now();
+    let err = vault
+        .supersede_edge_provenance(
+            &live,
+            &new_id,
+            &subject,
+            &fresh_body,
+            EdgeActorClass::Human,
+            5_000,
+        )
+        .expect_err("closed prior must be rejected");
+    assert_eq!(err.kind(), ErrorKind::ProvenanceClaimAlreadyClosed);
+    assert_no_entity_state(vault, &new_id)?;
+
+    // D14 precedence: an incoming claim OLDER than the live frontier is
+    // rejected with the exact typed payload, on BOTH the implicit put path
+    // and the explicit supersede path.
+    let c4 = EntityId::now();
+    vault.put_edge_provenance(
+        &c4,
+        &subject,
+        &EdgeProvenanceClaimBody::new(fx.person, 0.7, SupersessionStatus::Confirmed),
+        EdgeActorClass::Human,
+        6_000,
+    )?;
+    let new_id = EntityId::now();
+    let err = vault
+        .put_edge_provenance(&new_id, &subject, &fresh_body, EdgeActorClass::Human, 5_000)
+        .expect_err("older-than-frontier put must be rejected");
+    match err {
+        Error::ProvenancePrecedenceViolation {
+            incoming_learned_at,
+            frontier_learned_at,
+        } => {
+            assert_eq!(incoming_learned_at, 5_000);
+            assert_eq!(frontier_learned_at, 6_000);
+        }
+        other => panic!("expected ProvenancePrecedenceViolation, got {other:?}"),
+    }
+    assert_no_entity_state(vault, &new_id)?;
+    let err = vault
+        .supersede_edge_provenance(
+            &c4,
+            &new_id,
+            &subject,
+            &fresh_body,
+            EdgeActorClass::Human,
+            5_000,
+        )
+        .expect_err("older-than-prior explicit supersede must be rejected");
+    assert_eq!(err.kind(), ErrorKind::ProvenancePrecedenceViolation);
+    assert_no_entity_state(vault, &new_id)?;
+
+    // Self-supersession → typed; the claim stays live.
+    let err = vault
+        .supersede_edge_provenance(
+            &c4,
+            &c4,
+            &subject,
+            &fresh_body,
+            EdgeActorClass::Human,
+            7_000,
+        )
+        .expect_err("self supersession must be rejected");
+    assert_eq!(err.kind(), ErrorKind::ProvenanceSelfSupersession);
+    assert_eq!(
+        vault.get_claim(&c4)?.expect("c4").lifecycle,
+        ClaimLifecycleStatus::Active
+    );
+
+    // Retract BEFORE valid_from would invert the validity window → typed
+    // InvalidProvenanceBody, never silently reordered; claim untouched.
+    let future = EntityId::now();
+    let mut future_body =
+        EdgeProvenanceClaimBody::new(fx.person, 0.6, SupersessionStatus::Proposed);
+    future_body.valid_from = Some(9_000);
+    vault.put_edge_provenance(
+        &future,
+        &subject,
+        &future_body,
+        EdgeActorClass::Human,
+        6_000,
+    )?;
+    let err = vault
+        .retract_edge_provenance(&future, 8_000)
+        .expect_err("retract before valid_from must be rejected");
+    assert_eq!(err.kind(), ErrorKind::InvalidProvenanceBody);
+    let intact = vault.get_claim(&future)?.expect("future claim intact");
+    assert_eq!(intact.lifecycle, ClaimLifecycleStatus::Active);
+    assert_eq!(
+        decode_edge_provenance_body(&intact.value)?.supersession_status,
+        SupersessionStatus::Proposed
+    );
+
+    // Through every rejection above, the subject edge bytes never moved
+    // from the last successful stamp (c4: confirmed/human) and the first 24
+    // bytes never changed at all.
+    let (out, _) = raw_edge_values(vault, &subject)?;
+    let out = out.expect("edge");
+    assert_eq!((out[24], out[25]), (1, 0));
+    assert_eq!(&out[..24], &stamped[..24]);
+    Ok(())
+}
