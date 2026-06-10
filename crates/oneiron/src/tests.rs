@@ -821,6 +821,51 @@ fn hard_delete_persists_crdt_tombstone_before_active_purge() -> Result<()> {
     Ok(())
 }
 
+/// Regression: `learned_at` is caller-supplied, and the hard-delete
+/// tombstone path routes it through `WindowKey::from_timestamp`. A
+/// far-future timestamp previously either hung (one loop iteration per
+/// year toward ~year 292e9) or produced a window key outside the pinned
+/// ARCH-0023b `YYYY-MM` format, so the tombstone-first guarantee silently
+/// broke: the `d:w:…` row landed under a key every validated reader
+/// rejects. The delete must complete promptly and persist its tombstone in
+/// the clamped, format-valid "9999-12" window.
+#[cfg(feature = "sync")]
+#[test]
+fn hard_delete_with_far_future_learned_at_tombstones_into_valid_window() -> Result<()> {
+    use crate::sync::loro_support::map_contains_binary;
+    use crate::sync::types::WindowKey;
+    use crate::sync::window;
+
+    let (_dir, vault) = open_test_vault();
+    let id = EntityId::now();
+
+    vault
+        .batch()
+        .put(
+            &id,
+            0,
+            test_time_range(u64::MAX, u64::MAX),
+            u64::MAX,
+            b"far-future-learned-at",
+        )
+        .commit()?;
+
+    let outcome = vault.delete_entity_with_reason(&id, DeleteReason::GdprDelete)?;
+    assert!(outcome.existed);
+    assert!(outcome.receipt_id.is_some());
+    assert!(vault.get(&id)?.is_none());
+
+    let window_key = WindowKey::from_timestamp(u64::MAX);
+    assert_eq!(window_key.as_str(), "9999-12");
+    let doc = window::load_window_from_state(&vault, "local", &window_key)?;
+    let tombstones = doc.get_map("tombstones");
+    assert!(
+        map_contains_binary(&tombstones, id.to_hex().as_str()),
+        "tombstone must land in the clamped format-valid window"
+    );
+    Ok(())
+}
+
 #[test]
 fn put_get_vectors_and_validate_dimensions() -> Result<()> {
     let (_dir, vault) = open_test_vault();
