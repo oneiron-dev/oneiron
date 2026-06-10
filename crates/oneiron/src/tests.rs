@@ -4888,11 +4888,15 @@ fn get_entity_type_returns_correct_type() -> Result<()> {
     Ok(())
 }
 
+/// ONE-1100 AC1 — `child_of` is NEVER traversed by PPR (contract
+/// `lambda: null`, "Not traversed."): a deep ChildOf chain carries zero
+/// propagated mass from any seed, while the tree remains reachable through
+/// the dedicated `subtree` / `ancestors` read APIs.
 #[test]
-fn child_of_has_no_ppr_hop_limit() -> Result<()> {
+fn child_of_chain_carries_no_ppr_mass() -> Result<()> {
     let (_dir, vault) = open_test_vault();
 
-    // Build a 5-level deep ChildOf chain: a → b → c → d → e
+    // Build a 5-level deep ChildOf chain: e → d → c → b → a (child → parent).
     let a = EntityId::now();
     let b = EntityId::now();
     let c = EntityId::now();
@@ -4912,22 +4916,26 @@ fn child_of_has_no_ppr_hop_limit() -> Result<()> {
         .edge(&e, EdgeKind::ChildOf, &d, 1.0)
         .commit()?;
 
-    // PPR from e should reach a (5 hops via ChildOf, no limit)
+    // PPR from e must reach NOTHING: the only edges are ChildOf, which carry
+    // no PPR weight regardless of the stored 1.0 weight bytes.
     {
         let rtxn = vault.store.env.read_txn()?;
         let scores = ppr::ppr_compute(&vault.store, &rtxn, &[e], 6, 0.15)?;
-        let a_score = scores
-            .iter()
-            .find(|s| s.id == a)
-            .map(|s| s.score)
-            .unwrap_or(0.0);
-        assert!(
-            a_score > 0.0,
-            "ChildOf should propagate beyond 2 hops, got score={a_score}"
+        assert_eq!(
+            scores.len(),
+            1,
+            "ChildOf must not propagate; only the seed may be scored"
         );
+        assert_eq!(scores[0].id, e);
     }
 
-    // Compare with PartOf chain of same depth — d should be blocked at 3rd hop
+    // The tree APIs — not PPR — are the ChildOf read path: the full ancestor
+    // chain stays reachable.
+    let ancestors = vault.ancestors(&e)?;
+    assert_eq!(ancestors, vec![d, c, b, a]);
+
+    // PartOf comparison: its traversal is hop-capped at 2, so p1 (4 hops from
+    // p5) is blocked.
     let p1 = EntityId::now();
     let p2 = EntityId::now();
     let p3 = EntityId::now();
@@ -4965,13 +4973,14 @@ fn child_of_has_no_ppr_hop_limit() -> Result<()> {
     Ok(())
 }
 
+/// ONE-1100 AC1 — a mixed path whose first edge is `child_of` carries zero
+/// PPR mass past that edge: ChildOf is never traversed, so the PartOf tail
+/// of the path is unreachable from the task seed.
 #[test]
-fn child_of_survives_mixed_part_of_path() -> Result<()> {
+fn mixed_path_through_child_of_carries_no_ppr_mass() -> Result<()> {
     let (_dir, vault) = open_test_vault();
 
-    // Build a mixed path: place1 --PartOf--> place2 --PartOf--> place3 --ChildOf--> task
-    // After 2 PartOf hops (place1→place3), the next edge is ChildOf.
-    // Without the ChildOf exemption in PPR, this would be blocked at hop 3.
+    // place1 --PartOf--> place2 --PartOf--> place3 --ChildOf--> task
     let place1 = EntityId::now();
     let place2 = EntityId::now();
     let place3 = EntityId::now();
@@ -4991,18 +5000,14 @@ fn child_of_survives_mixed_part_of_path() -> Result<()> {
     let rtxn = vault.store.env.read_txn()?;
     let scores = ppr::ppr_compute(&vault.store, &rtxn, &[task], 6, 0.15)?;
 
-    // place1 is reachable via: task --ChildOf--> place3 --PartOf--> place2 --PartOf--> place1
-    // The ChildOf hop doesn't count, so only 2 PartOf hops (within limit).
-    // Without the ChildOf exemption, hops would be 3 and place1 would be blocked.
-    let place1_score = scores
-        .iter()
-        .find(|s| s.id == place1)
-        .map(|s| s.score)
-        .unwrap_or(0.0);
-    assert!(
-        place1_score > 0.0,
-        "ChildOf should not count toward PartOf hop limit in mixed paths, got score={place1_score}"
+    // The only edge at the seed is ChildOf (never traversed), so no node
+    // beyond the seed may receive mass — including the PartOf tail.
+    assert_eq!(
+        scores.len(),
+        1,
+        "ChildOf must block the entire mixed path; only the seed may be scored"
     );
+    assert_eq!(scores[0].id, task);
 
     Ok(())
 }
