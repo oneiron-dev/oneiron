@@ -43,6 +43,12 @@ pub enum ErrorKind {
     ClaimAlreadyClosed,
     ClaimSelfSupersession,
     ProvenanceClaimLifecycle,
+    NotAProvenanceClaim,
+    ProvenanceClaimAlreadyClosed,
+    ProvenanceClaimIdInUse,
+    ProvenanceSubjectMismatch,
+    ProvenanceSelfSupersession,
+    ProvenancePrecedenceViolation,
     CycleDetected,
     IncompatibleAnalyzer,
     Bm25FieldSchemaChanged,
@@ -215,6 +221,46 @@ pub enum Error {
         "claim predicate {predicate:?} is a reserved edge.* provenance claim; use the edge-provenance lifecycle API (put_edge_provenance / retract_edge_provenance), not the generic claim lifecycle ops"
     )]
     ProvenanceClaimLifecycle { predicate: String },
+    /// A provenance lifecycle operation (retract / supersede) named an
+    /// entity that is not an `edge.provenance` Claim — wrong type byte or
+    /// wrong predicate. Nothing was written.
+    #[error("not an edge.provenance claim: {0}")]
+    NotAProvenanceClaim(&'static str),
+    /// A provenance lifecycle operation targeted a Claim whose lifecycle is
+    /// no longer `active` (double-retract, or supersede-after-close). The
+    /// first close wins; nothing was written.
+    #[error("edge.provenance claim is already closed: lifecycle is {lifecycle}")]
+    ProvenanceClaimAlreadyClosed { lifecycle: &'static str },
+    /// A provenance write named a `claim_id` that already exists in storage.
+    /// Provenance claim ids are WRITE-ONCE: re-putting an existing id would
+    /// overwrite the stored Claim in place — resurrecting a retracted or
+    /// superseded wrapper as a fresh `active` body, bypassing
+    /// [`Error::ProvenanceClaimAlreadyClosed`] (ARCH-0003: "claims are never
+    /// silently deleted"). The lifecycle operations (retract / supersede)
+    /// are the only mutators of an existing provenance Claim. Nothing was
+    /// written.
+    #[error("edge.provenance claim id already in use: provenance claim ids are write-once")]
+    ProvenanceClaimIdInUse,
+    /// The prior Claim named in a supersede call addresses a different
+    /// EdgeRef than the incoming Claim. Supersession is per subject edge —
+    /// two Claims naming different EdgeRefs never supersede each other.
+    #[error("edge.provenance subject mismatch: prior and new claims address different EdgeRefs")]
+    ProvenanceSubjectMismatch,
+    /// A provenance Claim cannot supersede itself (`prior_claim_id` equals
+    /// `new_claim_id`).
+    #[error("edge.provenance claim cannot supersede itself")]
+    ProvenanceSelfSupersession,
+    /// D14 precedence violation: the incoming Claim's envelope `learned_at`
+    /// is older than the live frontier for its subject edge, so it can never
+    /// take precedence ("a newer Claim takes precedence"). The engine
+    /// refuses to write a dead-on-arrival provenance Claim.
+    #[error(
+        "edge.provenance precedence violation: incoming learned_at {incoming_learned_at} predates the live frontier {frontier_learned_at}"
+    )]
+    ProvenancePrecedenceViolation {
+        incoming_learned_at: u64,
+        frontier_learned_at: u64,
+    },
     /// Tree operation would create a cycle.
     #[error("cycle detected in tree hierarchy")]
     CycleDetected,
@@ -342,6 +388,12 @@ impl Error {
             Self::ClaimAlreadyClosed { .. } => ErrorKind::ClaimAlreadyClosed,
             Self::ClaimSelfSupersession => ErrorKind::ClaimSelfSupersession,
             Self::ProvenanceClaimLifecycle { .. } => ErrorKind::ProvenanceClaimLifecycle,
+            Self::NotAProvenanceClaim(_) => ErrorKind::NotAProvenanceClaim,
+            Self::ProvenanceClaimAlreadyClosed { .. } => ErrorKind::ProvenanceClaimAlreadyClosed,
+            Self::ProvenanceClaimIdInUse => ErrorKind::ProvenanceClaimIdInUse,
+            Self::ProvenanceSubjectMismatch => ErrorKind::ProvenanceSubjectMismatch,
+            Self::ProvenanceSelfSupersession => ErrorKind::ProvenanceSelfSupersession,
+            Self::ProvenancePrecedenceViolation { .. } => ErrorKind::ProvenancePrecedenceViolation,
             Self::CycleDetected => ErrorKind::CycleDetected,
             Self::IncompatibleAnalyzer { .. } => ErrorKind::IncompatibleAnalyzer,
             Self::Bm25FieldSchemaChanged => ErrorKind::Bm25FieldSchemaChanged,
