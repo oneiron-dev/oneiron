@@ -9,7 +9,8 @@ use crate::error::{Error, Result};
 use crate::fusion;
 use crate::store::Store;
 use crate::types::{
-    ENTITY_ID_LEN, EntityId, ScoredEntity, TemporalAnchorMode, TemporalGranularity, TimeRange,
+    EDGE_KEY_LEN, ENTITY_ID_LEN, ENTITY_TYPE_CLAIM, EdgeKind, EntityId, ScoredEntity,
+    TemporalAnchorMode, TemporalGranularity, TimeRange,
 };
 
 const DEFAULT_RESULT_LIMIT: usize = 20;
@@ -113,6 +114,45 @@ impl EntityMetadataCache {
     }
 }
 
+/// Facet filter mode for the post-fusion claim facet filter (ARCH-0039
+/// facet modes table; ARCH-0022 retrieval-filter rule).
+///
+/// Selected per query via [`PipelineBuilder::facet`]. Not setting a facet on
+/// the builder is the contract's third mode — *(no facet)* — and performs no
+/// filtering at all (backward compatible).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum FacetMode {
+    /// Only core + active-facet claims surface — a claim whose `FacetOf`
+    /// edges all target other facets is removed from the results (never
+    /// leak RP claims into IRL). Claims with no `FacetOf` edge (core /
+    /// unfaceted) and entities of every non-CLAIM type pass untouched.
+    /// Strict never rescores.
+    Strict,
+    /// Return all, boost the active facet: nothing is removed; claims with
+    /// a `FacetOf` edge to the active facet have their fused score
+    /// multiplied by `boost` (cross-facet analysis, psych mirror
+    /// generation). The multiplier is CALLER-SUPPLIED — the contract pins
+    /// no constant — and must be finite and positive; it is applied at
+    /// most once per claim regardless of how many `FacetOf` edges match.
+    Prefer {
+        /// Score multiplier for active-facet claims. Must be finite and
+        /// `> 0`, enforced fail-closed at [`PipelineBuilder::run`] time
+        /// with [`Error::InvalidConfig`].
+        boost: f32,
+    },
+}
+
+/// A claim's facet scope relative to the query's active facet, derived from
+/// its outgoing `FacetOf` (`CLAIM → FACET`, u8 17) adjacency.
+enum ClaimFacetScope {
+    /// No `FacetOf` edge: a core / unfaceted claim. Passes every mode.
+    Unfaceted,
+    /// At least one `FacetOf` edge targets the active facet.
+    ActiveFacet,
+    /// Has `FacetOf` edges, none targeting the active facet.
+    OtherFacetsOnly,
+}
+
 #[must_use = "PipelineBuilder executes no query until a terminal `.run*()` method is called"]
 pub struct PipelineBuilder<'a> {
     vault: &'a Vault,
@@ -130,6 +170,7 @@ pub struct PipelineBuilder<'a> {
     since_filter: Option<u64>,
     occurred_range: Option<(u64, u64)>,
     learned_range: Option<(u64, u64)>,
+    facet_filter: Option<(EntityId, FacetMode)>,
     result_limit: usize,
     temporal_adaptive_default: bool,
 }
@@ -152,6 +193,7 @@ impl<'a> PipelineBuilder<'a> {
             since_filter: None,
             occurred_range: None,
             learned_range: None,
+            facet_filter: None,
             result_limit: DEFAULT_RESULT_LIMIT,
             temporal_adaptive_default: true,
         }
@@ -334,7 +376,31 @@ impl<'a> PipelineBuilder<'a> {
         self
     }
 
+    /// Activates the ARCH-0039 facet filter for this query: `facet_id` is
+    /// the active FACET entity and `mode` selects `strict` (only core +
+    /// active-facet claims) or `prefer` (return all, boost active facet).
+    /// Not calling this method is the contract's *(no facet)* mode — no
+    /// facet filtering at all.
+    ///
+    /// The filter runs post-fusion/post-boosts, before the
+    /// `result_limit` truncation and under the same read transaction, so
+    /// claims excluded by `strict` never consume result slots. It reads
+    /// each candidate CLAIM's outgoing `FacetOf` (`CLAIM → FACET`) edges;
+    /// claim bodies are never decoded by this stage.
+    pub fn facet(mut self, facet_id: &EntityId, mode: FacetMode) -> Self {
+        self.facet_filter = Some((*facet_id, mode));
+        self
+    }
+
     pub fn run(self) -> Result<Vec<ScoredEntity>> {
+        if let Some((_, FacetMode::Prefer { boost })) = self.facet_filter
+            && (!boost.is_finite() || boost <= 0.0)
+        {
+            return Err(Error::InvalidConfig(format!(
+                "facet prefer boost must be finite and positive, got {boost}"
+            )));
+        }
+
         if self.text_search.is_some() {
             self.vault.ensure_text_index_trusted()?;
         }
@@ -491,6 +557,20 @@ impl<'a> PipelineBuilder<'a> {
                 )?;
             }
 
+            // ARCH-0039 facet filter (ONE-1117): post-fusion / post-boosts,
+            // before truncate, same read txn — strict-excluded claims never
+            // consume `result_limit` slots.
+            if let Some((facet_id, mode)) = self.facet_filter {
+                apply_facet_filter(
+                    &mut scores,
+                    &self.vault.store,
+                    &rtxn,
+                    &mut metadata_cache,
+                    &facet_id,
+                    mode,
+                )?;
+            }
+
             fusion::sort_scored_entities_desc(&mut scores);
             scores.truncate(self.result_limit);
             (scores, deferred_ppr_cache_writes)
@@ -498,6 +578,101 @@ impl<'a> PipelineBuilder<'a> {
 
         crate::ppr::flush_deferred_ppr_cache_writes(&self.vault.store, &deferred_ppr_cache_writes)?;
         Ok(scores)
+    }
+}
+
+/// ARCH-0039 facet filter (its own pipeline stage, ONE-1117): the
+/// post-fusion claim filter for the `strict` / `prefer` facet modes.
+///
+/// Operates on type-0 (CLAIM) records only — entities of every other type
+/// byte pass through untouched, even when they carry `FacetOf` edges. A
+/// claim's facet scope is its outgoing `FacetOf` (`CLAIM → FACET`, u8 17)
+/// adjacency; no other edge kind participates and claim bodies are never
+/// decoded (so this stage shares nothing with the claim-status decode path
+/// beyond the entity-metadata cache).
+///
+/// * [`FacetMode::Strict`] — claims scoped exclusively to other facets are
+///   removed; core/unfaceted and active-facet claims pass with their score
+///   untouched. Removal is silent (no error) and happens before the
+///   `result_limit` truncation, so excluded claims free their slots.
+/// * [`FacetMode::Prefer`] — nothing is removed; active-facet claims have
+///   their score multiplied by the caller-supplied boost exactly once.
+///
+/// Fail-closed: a malformed `edges_out` key under the scanned
+/// `(claim, FacetOf)` prefix is a typed [`Error::CorruptedIndex`], never a
+/// skip.
+fn apply_facet_filter(
+    scores: &mut Vec<ScoredEntity>,
+    store: &Store,
+    rtxn: &RoTxn<'_>,
+    metadata_cache: &mut EntityMetadataCache,
+    active_facet: &EntityId,
+    mode: FacetMode,
+) -> Result<()> {
+    let mut kept = Vec::with_capacity(scores.len());
+
+    for mut scored in scores.iter().copied() {
+        // Entities without a parseable envelope are not a facet decision;
+        // `apply_filters` handles them downstream exactly as before.
+        let Some(meta) = metadata_cache.get(store, rtxn, &scored.id)? else {
+            kept.push(scored);
+            continue;
+        };
+        if meta.entity_type != ENTITY_TYPE_CLAIM {
+            kept.push(scored);
+            continue;
+        }
+
+        match claim_facet_scope(store, rtxn, &scored.id, active_facet)? {
+            ClaimFacetScope::Unfaceted => kept.push(scored),
+            ClaimFacetScope::ActiveFacet => {
+                if let FacetMode::Prefer { boost } = mode {
+                    scored.score *= boost;
+                }
+                kept.push(scored);
+            }
+            ClaimFacetScope::OtherFacetsOnly => {
+                if let FacetMode::Prefer { .. } = mode {
+                    kept.push(scored);
+                }
+                // Strict: removed — never leak another facet's claims.
+            }
+        }
+    }
+
+    *scores = kept;
+    Ok(())
+}
+
+/// Resolves a claim's [`ClaimFacetScope`] by prefix-scanning `edges_out`
+/// over the 17-byte `(claim_id ‖ FacetOf)` prefix. Only the edge KEY is
+/// read — `(source, kind, target)` carries the whole facet-scope signal.
+fn claim_facet_scope(
+    store: &Store,
+    rtxn: &RoTxn<'_>,
+    claim_id: &EntityId,
+    active_facet: &EntityId,
+) -> Result<ClaimFacetScope> {
+    let mut prefix = [0_u8; ENTITY_ID_LEN + 1];
+    prefix[..ENTITY_ID_LEN].copy_from_slice(claim_id.as_bytes());
+    prefix[ENTITY_ID_LEN] = EdgeKind::FacetOf as u8;
+
+    let mut any_facet_edge = false;
+    for row in store.edges_out.prefix_iter(rtxn, prefix.as_slice())? {
+        let (key, _value) = row?;
+        if key.len() != EDGE_KEY_LEN {
+            return Err(Error::CorruptedIndex("edge record"));
+        }
+        any_facet_edge = true;
+        if &key[ENTITY_ID_LEN + 1..] == active_facet.as_bytes() {
+            return Ok(ClaimFacetScope::ActiveFacet);
+        }
+    }
+
+    if any_facet_edge {
+        Ok(ClaimFacetScope::OtherFacetsOnly)
+    } else {
+        Ok(ClaimFacetScope::Unfaceted)
     }
 }
 
@@ -2394,6 +2569,421 @@ mod tests {
             "rejected put must not write an entity record"
         );
 
+        Ok(())
+    }
+
+    // ── ARCH-0039 facet filter (ONE-1117) ──────────────────────────
+
+    use crate::claim::{ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSubject};
+    use crate::types::{ENTITY_TYPE_EVENT, ENTITY_TYPE_FACET};
+
+    /// The query vector every facet test searches with.
+    const FACET_QUERY: [f32; 4] = [1.0, 0.0, 0.0, 0.0];
+
+    /// LITERAL single-channel RRF fused scores for ranks 0–3 with the
+    /// engine's pinned `RRF_K = 60`: `1 / (60 + rank + 1)`. Derived by hand,
+    /// NOT read back from the code under test.
+    const FACET_R0: f32 = 1.0 / 61.0;
+    const FACET_R1: f32 = 1.0 / 62.0;
+    const FACET_R2: f32 = 1.0 / 63.0;
+    const FACET_R3: f32 = 1.0 / 64.0;
+
+    struct FacetFixture {
+        facet_a: EntityId,
+        /// CLAIM, `FacetOf → facet_b`, vector rank 0.
+        claim_other: EntityId,
+        /// CLAIM, `FacetOf → facet_a`, vector rank 1.
+        claim_active: EntityId,
+        /// CLAIM, no `FacetOf` edge (core / unfaceted), vector rank 2.
+        claim_core: EntityId,
+        /// Non-claim (EVENT) carrying a `FacetOf → facet_b` edge, rank 3.
+        event_faceted: EntityId,
+    }
+
+    fn facet_claim_body() -> Vec<u8> {
+        let body = ClaimBody::new(
+            "facet.scope_test",
+            ClaimSubject::Entity(entity_id(0x7C)),
+            rmpv::Value::from("v"),
+            0.9,
+            ClaimApprovalStatus::Auto,
+            ClaimLifecycleStatus::Active,
+        );
+        crate::claim::encode_claim_body(&body).expect("encode claim body")
+    }
+
+    fn put_claim_with_vector(vault: &Vault, id: EntityId, vector: [f32; 4]) -> Result<()> {
+        vault
+            .batch()
+            .put(
+                &id,
+                ENTITY_TYPE_CLAIM,
+                TimeRange { start: 1, end: 1 },
+                1,
+                &facet_claim_body(),
+            )
+            .vector(&id, &vector)
+            .commit()
+    }
+
+    /// Two FACET entities + four vector-ranked candidates. Vector channel
+    /// distances to [`FACET_QUERY`] are strictly increasing, so the fused
+    /// baseline is exactly `[claim_other R0, claim_active R1, claim_core R2,
+    /// event_faceted R3]`.
+    fn setup_facet_fixture(vault: &Vault) -> Result<FacetFixture> {
+        let facet_a = entity_id(0xA1);
+        let facet_b = entity_id(0xB1);
+        put_entity(vault, facet_a, ENTITY_TYPE_FACET, 1, 1, 1)?;
+        put_entity(vault, facet_b, ENTITY_TYPE_FACET, 1, 1, 1)?;
+
+        let fixture = FacetFixture {
+            facet_a,
+            claim_other: entity_id(0x21),
+            claim_active: entity_id(0x22),
+            claim_core: entity_id(0x23),
+            event_faceted: entity_id(0x24),
+        };
+
+        put_claim_with_vector(vault, fixture.claim_other, [1.0, 0.0, 0.0, 0.0])?;
+        put_claim_with_vector(vault, fixture.claim_active, [0.8, 0.6, 0.0, 0.0])?;
+        put_claim_with_vector(vault, fixture.claim_core, [0.6, 0.8, 0.0, 0.0])?;
+        vault
+            .batch()
+            .put(
+                &fixture.event_faceted,
+                ENTITY_TYPE_EVENT,
+                TimeRange { start: 1, end: 1 },
+                1,
+                b"payload",
+            )
+            .vector(&fixture.event_faceted, &[0.0, 1.0, 0.0, 0.0])
+            .commit()?;
+
+        vault
+            .batch()
+            .edge(&fixture.claim_other, EdgeKind::FacetOf, &facet_b, 0.7)
+            .edge(&fixture.claim_active, EdgeKind::FacetOf, &facet_a, 0.7)
+            .edge(&fixture.event_faceted, EdgeKind::FacetOf, &facet_b, 0.7)
+            .commit()?;
+
+        Ok(fixture)
+    }
+
+    fn ordered_results(scores: &[ScoredEntity]) -> Vec<(EntityId, f32)> {
+        scores.iter().map(|entry| (entry.id, entry.score)).collect()
+    }
+
+    /// AC 3 — *(no facet)* mode regression pin: a query that never calls
+    /// `.facet()` returns every candidate, other-facet claims included,
+    /// with the exact unfiltered/unboosted RRF scores in the exact
+    /// pre-feature order. Any accidental default-on filtering or rescoring
+    /// fails this literal pin.
+    #[test]
+    fn facet_absent_is_a_no_op_regression_pin() -> Result<()> {
+        let (_dir, vault) = open_test_vault();
+        let fixture = setup_facet_fixture(&vault)?;
+
+        let results = vault.query().search_vector(&FACET_QUERY, 10).run()?;
+        assert_eq!(
+            ordered_results(&results),
+            vec![
+                (fixture.claim_other, FACET_R0),
+                (fixture.claim_active, FACET_R1),
+                (fixture.claim_core, FACET_R2),
+                (fixture.event_faceted, FACET_R3),
+            ],
+            "no-facet mode must be identical to the pre-feature pipeline"
+        );
+        Ok(())
+    }
+
+    /// AC 1 — strict mode: the claim whose `FacetOf` edge targets a
+    /// different facet is removed; the active-facet claim and the
+    /// core/unfaceted claim pass with their scores UNTOUCHED (strict never
+    /// boosts); the non-claim entity passes even though it carries a
+    /// `FacetOf` edge to the other facet.
+    #[test]
+    fn facet_strict_removes_other_facet_claims_only() -> Result<()> {
+        let (_dir, vault) = open_test_vault();
+        let fixture = setup_facet_fixture(&vault)?;
+
+        let results = vault
+            .query()
+            .search_vector(&FACET_QUERY, 10)
+            .facet(&fixture.facet_a, FacetMode::Strict)
+            .run()?;
+        assert_eq!(
+            ordered_results(&results),
+            vec![
+                (fixture.claim_active, FACET_R1),
+                (fixture.claim_core, FACET_R2),
+                (fixture.event_faceted, FACET_R3),
+            ],
+            "strict must drop claim_other, keep core + active claims and \
+             non-claim entities at unchanged scores"
+        );
+        Ok(())
+    }
+
+    /// AC 2 — prefer mode: nothing is removed; the active-facet claim's
+    /// score is multiplied by the caller-supplied boost EXACTLY
+    /// (`R1 * 3.0`), which reorders it above the baseline rank-0 entity;
+    /// every other score is byte-identical to the baseline.
+    #[test]
+    fn facet_prefer_boosts_active_facet_with_exact_derived_values() -> Result<()> {
+        let (_dir, vault) = open_test_vault();
+        let fixture = setup_facet_fixture(&vault)?;
+
+        let results = vault
+            .query()
+            .search_vector(&FACET_QUERY, 10)
+            .facet(&fixture.facet_a, FacetMode::Prefer { boost: 3.0 })
+            .run()?;
+        assert_eq!(
+            ordered_results(&results),
+            vec![
+                (fixture.claim_active, FACET_R1 * 3.0),
+                (fixture.claim_other, FACET_R0),
+                (fixture.claim_core, FACET_R2),
+                (fixture.event_faceted, FACET_R3),
+            ],
+            "prefer must keep all candidates, boost only the active-facet \
+             claim, and reorder it by the exact derived score"
+        );
+        Ok(())
+    }
+
+    /// AC 4 — strict-excluded claims do not consume `result_limit` slots:
+    /// with `limit(2)` and the top-ranked candidate excluded, BOTH
+    /// remaining passing candidates fill the page. A filter applied after
+    /// truncation would return a single result here.
+    #[test]
+    fn facet_strict_excluded_claims_free_result_limit_slots() -> Result<()> {
+        let (_dir, vault) = open_test_vault();
+        let fixture = setup_facet_fixture(&vault)?;
+
+        let results = vault
+            .query()
+            .search_vector(&FACET_QUERY, 10)
+            .limit(2)
+            .facet(&fixture.facet_a, FacetMode::Strict)
+            .run()?;
+        assert_eq!(
+            ordered_results(&results),
+            vec![
+                (fixture.claim_active, FACET_R1),
+                (fixture.claim_core, FACET_R2),
+            ],
+            "the excluded rank-0 claim must free its slot for claim_core"
+        );
+        Ok(())
+    }
+
+    /// AC 5 — a claim with no `FacetOf` edge surfaces under all three
+    /// modes with the exact same (never boosted) score.
+    #[test]
+    fn facet_unfaceted_claim_passes_all_three_modes_unchanged() -> Result<()> {
+        let (_dir, vault) = open_test_vault();
+        let fixture = setup_facet_fixture(&vault)?;
+
+        let no_facet = vault.query().search_vector(&FACET_QUERY, 10).run()?;
+        let strict = vault
+            .query()
+            .search_vector(&FACET_QUERY, 10)
+            .facet(&fixture.facet_a, FacetMode::Strict)
+            .run()?;
+        let prefer = vault
+            .query()
+            .search_vector(&FACET_QUERY, 10)
+            .facet(&fixture.facet_a, FacetMode::Prefer { boost: 2.5 })
+            .run()?;
+
+        for (label, results) in [
+            ("no facet", &no_facet),
+            ("strict", &strict),
+            ("prefer", &prefer),
+        ] {
+            let score = to_score_map(results)
+                .get(&fixture.claim_core)
+                .copied()
+                .unwrap_or_else(|| panic!("unfaceted claim missing under {label} mode"));
+            assert_eq!(
+                score, FACET_R2,
+                "unfaceted claim score must be exactly R2 under {label} mode"
+            );
+        }
+        Ok(())
+    }
+
+    /// Multi-facet claims: a claim with `FacetOf` edges to BOTH facets is
+    /// scoped to each of them — strict keeps it for either active facet,
+    /// removes it for a third facet, and prefer boosts it exactly ONCE.
+    #[test]
+    fn facet_multi_scoped_claim_matches_any_of_its_facets() -> Result<()> {
+        let (_dir, vault) = open_test_vault();
+        let facet_a = entity_id(0xA1);
+        let facet_b = entity_id(0xB1);
+        let facet_c = entity_id(0xC1);
+        put_entity(&vault, facet_a, ENTITY_TYPE_FACET, 1, 1, 1)?;
+        put_entity(&vault, facet_b, ENTITY_TYPE_FACET, 1, 1, 1)?;
+        put_entity(&vault, facet_c, ENTITY_TYPE_FACET, 1, 1, 1)?;
+
+        let claim_multi = entity_id(0x31);
+        put_claim_with_vector(&vault, claim_multi, [1.0, 0.0, 0.0, 0.0])?;
+        vault
+            .batch()
+            .edge(&claim_multi, EdgeKind::FacetOf, &facet_a, 0.7)
+            .edge(&claim_multi, EdgeKind::FacetOf, &facet_b, 0.7)
+            .commit()?;
+
+        for facet in [facet_a, facet_b] {
+            let results = vault
+                .query()
+                .search_vector(&FACET_QUERY, 10)
+                .facet(&facet, FacetMode::Strict)
+                .run()?;
+            assert_eq!(
+                ordered_results(&results),
+                vec![(claim_multi, FACET_R0)],
+                "strict must keep a claim scoped to the active facet"
+            );
+        }
+
+        let strict_c = vault
+            .query()
+            .search_vector(&FACET_QUERY, 10)
+            .facet(&facet_c, FacetMode::Strict)
+            .run()?;
+        assert!(
+            strict_c.is_empty(),
+            "strict must remove a claim scoped only to other facets, got {strict_c:?}"
+        );
+
+        // Two FacetOf edges, one matching: the boost applies exactly once.
+        let prefer = vault
+            .query()
+            .search_vector(&FACET_QUERY, 10)
+            .facet(&facet_a, FacetMode::Prefer { boost: 2.0 })
+            .run()?;
+        assert_eq!(
+            ordered_results(&prefer),
+            vec![(claim_multi, FACET_R0 * 2.0)],
+            "prefer must apply the boost exactly once per claim"
+        );
+        Ok(())
+    }
+
+    /// Only the `FacetOf` kind (u8 17) carries claim facet scope: a
+    /// `HasFacet` (u8 16) edge neither scopes a claim (strict treats it as
+    /// unfaceted) nor rescues one scoped elsewhere via `FacetOf`.
+    #[test]
+    fn facet_filter_reads_only_facet_of_edges() -> Result<()> {
+        let (_dir, vault) = open_test_vault();
+        let facet_a = entity_id(0xA1);
+        let facet_b = entity_id(0xB1);
+        put_entity(&vault, facet_a, ENTITY_TYPE_FACET, 1, 1, 1)?;
+        put_entity(&vault, facet_b, ENTITY_TYPE_FACET, 1, 1, 1)?;
+
+        // `HasFacet → facet_b` only: NOT facet scope — unfaceted.
+        let claim_has_facet = entity_id(0x41);
+        // `FacetOf → facet_b` + `HasFacet → facet_a`: scoped to facet_b;
+        // the HasFacet edge to the active facet must not rescue it.
+        let claim_scoped_b = entity_id(0x42);
+        put_claim_with_vector(&vault, claim_has_facet, [1.0, 0.0, 0.0, 0.0])?;
+        put_claim_with_vector(&vault, claim_scoped_b, [0.8, 0.6, 0.0, 0.0])?;
+        vault
+            .batch()
+            .edge(&claim_has_facet, EdgeKind::HasFacet, &facet_b, 0.7)
+            .edge(&claim_scoped_b, EdgeKind::FacetOf, &facet_b, 0.7)
+            .edge(&claim_scoped_b, EdgeKind::HasFacet, &facet_a, 0.7)
+            .commit()?;
+
+        let strict = vault
+            .query()
+            .search_vector(&FACET_QUERY, 10)
+            .facet(&facet_a, FacetMode::Strict)
+            .run()?;
+        assert_eq!(
+            ordered_results(&strict),
+            vec![(claim_has_facet, FACET_R0)],
+            "HasFacet must not scope a claim, and must not rescue a \
+             FacetOf-scoped one"
+        );
+
+        let prefer = vault
+            .query()
+            .search_vector(&FACET_QUERY, 10)
+            .facet(&facet_b, FacetMode::Prefer { boost: 4.0 })
+            .run()?;
+        assert_eq!(
+            ordered_results(&prefer),
+            vec![
+                (claim_scoped_b, FACET_R1 * 4.0),
+                (claim_has_facet, FACET_R0),
+            ],
+            "prefer must boost via FacetOf only — a HasFacet edge to the \
+             active facet earns no boost"
+        );
+        Ok(())
+    }
+
+    /// Non-claim entities are never boosted nor removed, whatever edges
+    /// they carry — the filter discriminates on the type byte first.
+    #[test]
+    fn facet_filter_never_rescores_non_claim_entities() -> Result<()> {
+        let (_dir, vault) = open_test_vault();
+        let facet_a = entity_id(0xA1);
+        put_entity(&vault, facet_a, ENTITY_TYPE_FACET, 1, 1, 1)?;
+
+        let event_active = entity_id(0x51);
+        vault
+            .batch()
+            .put(
+                &event_active,
+                ENTITY_TYPE_EVENT,
+                TimeRange { start: 1, end: 1 },
+                1,
+                b"payload",
+            )
+            .vector(&event_active, &[1.0, 0.0, 0.0, 0.0])
+            .edge(&event_active, EdgeKind::FacetOf, &facet_a, 0.7)
+            .commit()?;
+
+        for mode in [FacetMode::Strict, FacetMode::Prefer { boost: 5.0 }] {
+            let results = vault
+                .query()
+                .search_vector(&FACET_QUERY, 10)
+                .facet(&facet_a, mode)
+                .run()?;
+            assert_eq!(
+                ordered_results(&results),
+                vec![(event_active, FACET_R0)],
+                "non-claim entity must pass unchanged under {mode:?}"
+            );
+        }
+        Ok(())
+    }
+
+    /// Fail-closed: a non-finite or non-positive prefer boost is a typed
+    /// [`Error::InvalidConfig`] from `run()`, never a silent skip or a
+    /// poisoned score.
+    #[test]
+    fn facet_prefer_rejects_invalid_boost_typed() -> Result<()> {
+        let (_dir, vault) = open_test_vault();
+        let fixture = setup_facet_fixture(&vault)?;
+
+        for bad_boost in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY, 0.0, -1.0] {
+            let err = vault
+                .query()
+                .search_vector(&FACET_QUERY, 10)
+                .facet(&fixture.facet_a, FacetMode::Prefer { boost: bad_boost })
+                .run()
+                .expect_err("invalid prefer boost must be rejected");
+            assert!(
+                matches!(err, Error::InvalidConfig(_)),
+                "expected InvalidConfig for boost {bad_boost}, got {err:?}"
+            );
+        }
         Ok(())
     }
 }

@@ -35,7 +35,7 @@ pub use crate::context_pack::ContextPackBuilder;
 pub use crate::deletion::{DeleteEntityOutcome, DeleteReason};
 pub use crate::error::{Error, ErrorKind, Result};
 pub use crate::maintain::{MaintenanceBuilder, MaintenanceReport};
-pub use crate::pipeline::PipelineBuilder;
+pub use crate::pipeline::{FacetMode, PipelineBuilder};
 pub use crate::provenance::{
     EDGE_PROVENANCE_BODY_KEYS, EDGE_REF_LEN, EdgeProvenanceClaimBody, EdgeRef,
     PREDICATE_EDGE_PROVENANCE, SupersessionStatus, decode_edge_provenance_body,
