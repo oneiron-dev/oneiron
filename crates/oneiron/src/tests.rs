@@ -9080,3 +9080,131 @@ fn provenance_lifecycle_negative_paths_fail_closed() -> Result<()> {
     assert_eq!(&out[..24], &stamped[..24]);
     Ok(())
 }
+
+#[test]
+fn provenance_claim_ids_are_write_once_no_closed_claim_resurrection() -> Result<()> {
+    let fx = lifecycle_fixture()?;
+    let vault = &fx.vault;
+    let subject = fx.subject;
+
+    // One claim, then retract it: a CLOSED wrapper is now persisted under
+    // claim_id and the edge carries the retracted stamp (3, human = 0).
+    let claim_id = EntityId::now();
+    vault.put_edge_provenance(
+        &claim_id,
+        &subject,
+        &EdgeProvenanceClaimBody::new(fx.person, 0.75, SupersessionStatus::Confirmed),
+        EdgeActorClass::Human,
+        1_000,
+    )?;
+    vault.retract_edge_provenance(&claim_id, 2_000)?;
+    let closed_raw = vault.get_raw(&claim_id)?.expect("closed claim raw bytes");
+    let (edge_before, edge_before_in) = raw_edge_values(vault, &subject)?;
+    let edge_before = edge_before.expect("stamped edge");
+    assert_eq!(
+        (edge_before[24], edge_before[25]),
+        (3, 0),
+        "retracted/human stamp before the resurrection attempt"
+    );
+
+    // RESURRECTION ATTEMPT (the verifier's shipped-bug repro): re-put the
+    // SAME id with a LATER learned_at. Without a write-once gate this
+    // overwrites the closed wrapper with a fresh life=active body —
+    // bypassing ProvenanceClaimAlreadyClosed and violating ARCH-0003
+    // ("claims are never silently deleted"). An implementation that
+    // tolerates the overwrite FAILS the expect_err below.
+    let err = vault
+        .put_edge_provenance(
+            &claim_id,
+            &subject,
+            &EdgeProvenanceClaimBody::new(fx.person, 0.9, SupersessionStatus::Confirmed),
+            EdgeActorClass::Human,
+            3_000,
+        )
+        .expect_err("re-putting a retracted claim's id must be rejected");
+    assert_eq!(err.kind(), ErrorKind::ProvenanceClaimIdInUse);
+
+    // The closed claim's RAW bytes are untouched (envelope + wrapper +
+    // record byte-for-byte) and its lifecycle is still retracted.
+    assert_eq!(
+        vault.get_raw(&claim_id)?.expect("closed claim survives"),
+        closed_raw,
+        "a rejected re-put must not touch the closed claim's stored bytes"
+    );
+    assert_eq!(
+        vault.get_claim(&claim_id)?.expect("closed claim").lifecycle,
+        ClaimLifecycleStatus::Retracted,
+        "the closed claim must NOT come back life=active"
+    );
+
+    // The subject edge flags never moved, in BOTH directions.
+    let (out, inn) = raw_edge_values(vault, &subject)?;
+    assert_eq!(
+        out.as_deref(),
+        Some(edge_before.as_slice()),
+        "edge bytes must be unchanged after the rejected re-put"
+    );
+    assert_eq!(inn, edge_before_in);
+
+    // supersede_edge_provenance reusing an EXISTING id for its NEW claim is
+    // rejected by the same write-once gate — and writes nothing: the live
+    // prior stays open.
+    let live_prior = EntityId::now();
+    vault.put_edge_provenance(
+        &live_prior,
+        &subject,
+        &EdgeProvenanceClaimBody::new(fx.machine, 0.6, SupersessionStatus::Disputed),
+        EdgeActorClass::System,
+        3_000,
+    )?;
+    let live_prior_raw = vault.get_raw(&live_prior)?.expect("live prior raw");
+    let (edge_live, _) = raw_edge_values(vault, &subject)?;
+    let edge_live = edge_live.expect("stamped edge");
+    assert_eq!((edge_live[24], edge_live[25]), (2, 2), "disputed/system");
+    let err = vault
+        .supersede_edge_provenance(
+            &live_prior,
+            &claim_id,
+            &subject,
+            &EdgeProvenanceClaimBody::new(fx.person, 0.9, SupersessionStatus::Confirmed),
+            EdgeActorClass::Human,
+            4_000,
+        )
+        .expect_err("supersede must not reuse an existing id for its new claim");
+    assert_eq!(err.kind(), ErrorKind::ProvenanceClaimIdInUse);
+    assert_eq!(
+        vault.get_raw(&claim_id)?.expect("closed claim survives"),
+        closed_raw
+    );
+    assert_eq!(
+        vault.get_claim(&live_prior)?.expect("prior").lifecycle,
+        ClaimLifecycleStatus::Active,
+        "a rejected supersede must NOT close the named prior"
+    );
+
+    // Write-once also covers a LIVE claim's id: re-putting it (which the
+    // live-scan exclusion would otherwise tolerate as an in-place overwrite)
+    // is rejected and the stored bytes stay put.
+    let err = vault
+        .put_edge_provenance(
+            &live_prior,
+            &subject,
+            &EdgeProvenanceClaimBody::new(fx.person, 0.9, SupersessionStatus::Confirmed),
+            EdgeActorClass::Human,
+            5_000,
+        )
+        .expect_err("re-putting a LIVE claim's id must be rejected");
+    assert_eq!(err.kind(), ErrorKind::ProvenanceClaimIdInUse);
+    assert_eq!(
+        vault.get_raw(&live_prior)?.expect("live prior survives"),
+        live_prior_raw
+    );
+
+    // Edge flags through all three rejections: still the live prior's
+    // disputed/system stamp, identical bytes both directions.
+    let (out, inn) = raw_edge_values(vault, &subject)?;
+    let out = out.expect("edge");
+    assert_eq!((out[24], out[25]), (2, 2));
+    assert_eq!(inn.as_deref(), Some(out.as_slice()));
+    Ok(())
+}

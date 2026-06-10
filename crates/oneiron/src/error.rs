@@ -45,6 +45,7 @@ pub enum ErrorKind {
     ProvenanceClaimLifecycle,
     NotAProvenanceClaim,
     ProvenanceClaimAlreadyClosed,
+    ProvenanceClaimIdInUse,
     ProvenanceSubjectMismatch,
     ProvenanceSelfSupersession,
     ProvenancePrecedenceViolation,
@@ -230,6 +231,16 @@ pub enum Error {
     /// first close wins; nothing was written.
     #[error("edge.provenance claim is already closed: lifecycle is {lifecycle}")]
     ProvenanceClaimAlreadyClosed { lifecycle: &'static str },
+    /// A provenance write named a `claim_id` that already exists in storage.
+    /// Provenance claim ids are WRITE-ONCE: re-putting an existing id would
+    /// overwrite the stored Claim in place — resurrecting a retracted or
+    /// superseded wrapper as a fresh `active` body, bypassing
+    /// [`Error::ProvenanceClaimAlreadyClosed`] (ARCH-0003: "claims are never
+    /// silently deleted"). The lifecycle operations (retract / supersede)
+    /// are the only mutators of an existing provenance Claim. Nothing was
+    /// written.
+    #[error("edge.provenance claim id already in use: provenance claim ids are write-once")]
+    ProvenanceClaimIdInUse,
     /// The prior Claim named in a supersede call addresses a different
     /// EdgeRef than the incoming Claim. Supersession is per subject edge —
     /// two Claims naming different EdgeRefs never supersede each other.
@@ -379,6 +390,7 @@ impl Error {
             Self::ProvenanceClaimLifecycle { .. } => ErrorKind::ProvenanceClaimLifecycle,
             Self::NotAProvenanceClaim(_) => ErrorKind::NotAProvenanceClaim,
             Self::ProvenanceClaimAlreadyClosed { .. } => ErrorKind::ProvenanceClaimAlreadyClosed,
+            Self::ProvenanceClaimIdInUse => ErrorKind::ProvenanceClaimIdInUse,
             Self::ProvenanceSubjectMismatch => ErrorKind::ProvenanceSubjectMismatch,
             Self::ProvenanceSelfSupersession => ErrorKind::ProvenanceSelfSupersession,
             Self::ProvenancePrecedenceViolation { .. } => ErrorKind::ProvenancePrecedenceViolation,

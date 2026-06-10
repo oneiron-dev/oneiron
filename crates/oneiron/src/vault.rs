@@ -410,18 +410,22 @@ impl Vault {
     ///
     /// One LMDB write transaction performs ALL of:
     ///
-    /// 1. subject-edge gate — `subject.kind` must be a SEMANTIC kind
+    /// 1. write-once id gate — `claim_id` must not already name a stored
+    ///    entity ([`Error::ProvenanceClaimIdInUse`]; re-putting an existing
+    ///    id would resurrect a closed Claim in place — the lifecycle
+    ///    operations are the only mutators of a stored provenance Claim);
+    /// 2. subject-edge gate — `subject.kind` must be a SEMANTIC kind
     ///    ([`Error::ProvenanceOnStructuralEdge`] otherwise) and the edge must
     ///    already exist ([`Error::EdgeNotFound`]; the path never upserts — it
     ///    would have to invent `weight`/`created_at`);
-    /// 2. actor gate (D13) — `body.actor_entity_ref` must exist
+    /// 3. actor gate (D13) — `body.actor_entity_ref` must exist
     ///    ([`Error::EntityNotFound`]) and the CALLER-SUPPLIED `actor_class`
     ///    must be compatible with the actor entity's kind
     ///    ([`Error::ActorClassMismatch`]; never defaulted). The validated
     ///    class is persisted on the wrapping Claim's `evid` field so a later
     ///    winner refresh can restamp a HISTORICAL Claim's flags (see the
     ///    provenance module docs);
-    /// 3. supersession (retractionRules SUPERSEDE + D14) — an incoming
+    /// 4. supersession (retractionRules SUPERSEDE + D14) — an incoming
     ///    `learned_at` OLDER than the live frontier for this EdgeRef is
     ///    rejected typed ([`Error::ProvenancePrecedenceViolation`]); every
     ///    live Claim STRICTLY older than the incoming one is closed in the
@@ -429,19 +433,19 @@ impl Vault {
     ///    incoming `learned_at` when absent, envelope `occurred.end`
     ///    refreshed per D15 — closed, not deleted, still readable);
     ///    equal-`learned_at` Claims COEXIST live;
-    /// 4. the Claim entity (type 0, predicate
+    /// 5. the Claim entity (type 0, predicate
     ///    [`crate::provenance::PREDICATE_EDGE_PROVENANCE`], `subj` = the
     ///    33-byte EdgeRef, `val` = the pinned 7-field record) is written
     ///    through the `pub(crate)` reserved-namespace door with full ONE-1104
     ///    structural validation;
-    /// 5. a `claim_of` edge (u8 = 5, structural 12 B) is written from the
+    /// 6. a `claim_of` edge (u8 = 5, structural 12 B) is written from the
     ///    Claim to the subject edge's SOURCE entity (D12);
-    /// 6. the subject edge value is re-stamped to 26 bytes from the WINNER
+    /// 7. the subject edge value is re-stamped to 26 bytes from the WINNER
     ///    among post-write live Claims under the documented total D14 order
     ///    (greatest `learned_at`, then `confidence`, then claim-id bytes) —
     ///    NOT necessarily this Claim — with IDENTICAL bytes in `edges_out`
     ///    and `edges_in` and the first 24 bytes preserved verbatim;
-    /// 7. PPR caches for the subject edge's endpoints are invalidated.
+    /// 8. PPR caches for the subject edge's endpoints are invalidated.
     ///
     /// The Claim envelope's `occurred` interval derives from the validity
     /// window per D15: absent `valid_from` → `learned_at`; absent `valid_to`
@@ -477,6 +481,8 @@ impl Vault {
     /// Typed failure modes (nothing is written on any of them):
     /// * `prior_claim_id == new_claim_id` →
     ///   [`Error::ProvenanceSelfSupersession`];
+    /// * `new_claim_id` already names a stored entity →
+    ///   [`Error::ProvenanceClaimIdInUse`] (claim ids are write-once);
     /// * prior entity missing → [`Error::EntityNotFound`];
     /// * prior is not a type-0 Claim or its predicate is not
     ///   `edge.provenance` → [`Error::NotAProvenanceClaim`];
@@ -630,6 +636,23 @@ impl Vault {
         validate_claim_body_bytes(&data, true)?;
 
         let mut wtxn = self.store.env.write_txn()?;
+
+        // WRITE-ONCE ids: a `claim_id` that already names ANY stored entity
+        // is rejected before a single byte moves. Re-putting an existing id
+        // would overwrite the stored Claim in place — resurrecting a
+        // retracted/superseded wrapper as a fresh `active` body and
+        // bypassing [`Error::ProvenanceClaimAlreadyClosed`] (ARCH-0003:
+        // "claims are never silently deleted"). The lifecycle operations
+        // (retract / supersede) are the ONLY mutators of an existing
+        // provenance Claim.
+        if self
+            .store
+            .entities
+            .get(&wtxn, claim_id.as_bytes())?
+            .is_some()
+        {
+            return Err(Error::ProvenanceClaimIdInUse);
+        }
 
         // Subject edge must exist — no upsert.
         let edge_key = Store::encode_edge_key(&subject.source, subject.kind, &subject.target);
