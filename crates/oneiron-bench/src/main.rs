@@ -155,7 +155,7 @@ fn run_smoke() -> ExitCode {
     let mut batch = vault.batch();
     for ((_, text), id) in docs.iter().zip(&entity_ids) {
         batch = batch
-            .put(id, 0, TimeRange { start: 1, end: 1 }, 1, b"doc")
+            .put(id, 1, TimeRange { start: 1, end: 1 }, 1, b"doc")
             .text(id, &[("body", *text)]);
     }
     if let Err(e) = batch.commit() {

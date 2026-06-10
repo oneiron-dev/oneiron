@@ -3,6 +3,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 pub mod analyzer;
 pub mod batch;
 pub(crate) mod bm25;
+pub mod claim;
 pub mod context_pack;
 pub mod deletion;
 pub(crate) mod distance;
@@ -25,6 +26,10 @@ pub use crate::analyzer::{
     AnalyzerMode, LangPolicy, LanguageHint, NormalizationPolicy, Token, TokenKind,
 };
 pub use crate::batch::{BatchBuilder, TxnBatchBuilder};
+pub use crate::claim::{
+    CLAIM_BODY_KEYS, ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource,
+    ClaimSubject, MAX_PREDICATE_BYTES, RESERVED_PREDICATE_NAMESPACE,
+};
 pub use crate::context_pack::ContextPackBuilder;
 pub use crate::deletion::{DeleteEntityOutcome, DeleteReason};
 pub use crate::error::{Error, ErrorKind, Result};

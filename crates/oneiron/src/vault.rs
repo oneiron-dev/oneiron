@@ -11,8 +11,10 @@ use uuid::Uuid;
 
 use crate::analyzer::{AnalyzerChannel, AnalyzerManifest, AnalyzerMode, MultilingualAnalyzer};
 use crate::batch::{
-    ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader, deindex_entity, delete_from_phonetic_postings,
+    BatchOp, ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader, apply_ops, deindex_entity,
+    delete_from_phonetic_postings,
 };
+use crate::claim::{ClaimBody, ClaimSubject, encode_claim_body, validate_claim_body_bytes};
 use crate::deletion::{
     DeleteEntityOutcome, DeleteReason, HARD_ERASE_SWEEP_PREFIX, LAST_HARD_ERASE_SWEEP_SEQ_KEY,
     RedactionReceiptInput, RedactionScope, decode_hard_erase_sweep_seq,
@@ -29,8 +31,9 @@ use crate::store::{
     lmdb_database_open_guard,
 };
 use crate::types::{
-    EDGE_KEY_LEN, ENTITY_ID_LEN, ENTITY_TYPE_REDACTION_AUDIT, EdgeInfo, EdgeKind, EntityId,
-    ScoredEntity, TimeRange, Vad, VaultConfig, bytes_to_hex_lower, decode_edge_value_for_kind,
+    EDGE_KEY_LEN, ENTITY_ID_LEN, ENTITY_TYPE_CLAIM, ENTITY_TYPE_REDACTION_AUDIT, EdgeInfo,
+    EdgeKind, EntityId, ScoredEntity, TimeRange, Vad, VaultConfig, bytes_to_hex_lower,
+    decode_edge_value_for_kind,
 };
 use crate::{
     BatchBuilder, ContextPackBuilder, MaintenanceBuilder, PipelineBuilder, TxnBatchBuilder, bm25,
@@ -296,6 +299,93 @@ impl Vault {
         self.batch()
             .put(id, entity_type, occurred, learned_at, data)
             .commit()
+    }
+
+    /// Writes a typed CLAIM (type 0) entity with full structural validation
+    /// (D11 key set, D17 predicate gate, D18 fail-closed body validation).
+    ///
+    /// `occurred` and `learned_at` are caller-supplied, exactly like
+    /// [`Vault::put_entity`] — the valid_from/to ↔ envelope sentinel mapping
+    /// (D15) is the provenance unit's concern, not this method's.
+    ///
+    /// For an entity subject ([`ClaimSubject::Entity`]) this also writes the
+    /// `claim_of` edge (u8 = 5, structural 12 B) Claim → subject in the SAME
+    /// write transaction, and rejects with [`Error::EntityNotFound`] if the
+    /// subject entity does not exist — nothing is written on rejection. An
+    /// EdgeRef subject ([`ClaimSubject::Edge`]) is shape-validated only; its
+    /// `claim_of` wiring belongs to the provenance path, which is also the
+    /// only path allowed to write reserved `edge.*` predicates.
+    pub fn put_claim(
+        &self,
+        id: &EntityId,
+        body: &ClaimBody,
+        occurred: TimeRange,
+        learned_at: u64,
+    ) -> Result<()> {
+        let data = encode_claim_body(body)?;
+        // Public-path gate: full structural validation + reserved-namespace
+        // rejection before any transaction is opened. `apply_ops` re-runs
+        // the same validator at the write chokepoint.
+        validate_claim_body_bytes(&data, false)?;
+
+        let mut ops = vec![BatchOp::Put {
+            id: *id,
+            entity_type: ENTITY_TYPE_CLAIM,
+            occurred,
+            learned_at,
+            data,
+            allow_maintenance: false,
+            allow_reserved_predicate: false,
+        }];
+
+        let mut wtxn = self.store.env.write_txn()?;
+        if let ClaimSubject::Entity(subject) = body.subject {
+            if self
+                .store
+                .entities
+                .get(&wtxn, subject.as_bytes())?
+                .is_none()
+            {
+                return Err(Error::EntityNotFound);
+            }
+            ops.push(BatchOp::Edge {
+                src: *id,
+                kind: EdgeKind::ClaimOf,
+                tgt: subject,
+                weight: EdgeKind::ClaimOf.default_weight(),
+                vad: Vad::NEUTRAL,
+            });
+        }
+        apply_ops(&self.store, &self.config, &self.analyzer, &mut wtxn, ops)?;
+        wtxn.commit()?;
+        Ok(())
+    }
+
+    /// Retrieves and decodes a CLAIM (type 0) entity body.
+    ///
+    /// Returns `Ok(None)` when no entity exists under `id`, and a typed
+    /// [`Error::InvalidClaimBody`] when the stored entity is not a type-0
+    /// CLAIM or its body fails the pinned structural validation. The read
+    /// path allows reserved `edge.*` predicates so stored provenance Claims
+    /// stay decodable.
+    pub fn get_claim(&self, id: &EntityId) -> Result<Option<ClaimBody>> {
+        let rtxn = self.store.env.read_txn()?;
+        let Some(raw) = self.store.entities.get(&rtxn, id.as_bytes())? else {
+            return Ok(None);
+        };
+        let header =
+            EntityMetadataHeader::parse(raw).ok_or(Error::CorruptedIndex("entity header"))?;
+        if header.entity_type != ENTITY_TYPE_CLAIM {
+            return Err(Error::InvalidClaimBody("entity is not a type-0 CLAIM"));
+        }
+        crate::claim::decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true).map(Some)
+    }
+
+    /// Returns the CLAIM entity ids attached to `subject` via inbound
+    /// `claim_of` edges — a thin wrapper over
+    /// `sources(subject, EdgeKind::ClaimOf, Some(ENTITY_TYPE_CLAIM))`.
+    pub fn claims_for_subject(&self, subject: &EntityId) -> Result<Vec<EntityId>> {
+        self.sources(subject, EdgeKind::ClaimOf, Some(ENTITY_TYPE_CLAIM))
     }
 
     /// Retrieves an entity blob by ID.
@@ -1956,7 +2046,7 @@ mod tests {
             let vault = Vault::open(tmp.path(), cfg)?;
             vault
                 .batch()
-                .put(&a, 0, range(1, 1), 1, b"a")
+                .put(&a, 1, range(1, 1), 1, b"a")
                 .text(&a, &[("body", "hello world")])
                 .commit()?;
         }
@@ -1975,7 +2065,7 @@ mod tests {
             let vault = Vault::open(tmp.path(), test_config())?;
             vault
                 .batch()
-                .put(&a, 0, range(1, 1), 1, b"a")
+                .put(&a, 1, range(1, 1), 1, b"a")
                 .text(&a, &[("body", "hello world")])
                 .commit()?;
             assert_eq!(vault.search_text("hello", 10)?.len(), 1);
@@ -2051,7 +2141,7 @@ mod tests {
                 let vault = Vault::open(tmp.path(), test_config())?;
                 vault
                     .batch()
-                    .put(&a, 0, range(1, 1), 1, b"a")
+                    .put(&a, 1, range(1, 1), 1, b"a")
                     .text(&a, &[("body", "hello world")])
                     .commit()?;
             }
@@ -2151,7 +2241,7 @@ mod tests {
             let vault = Vault::open(tmp.path(), test_config())?;
             vault
                 .batch()
-                .put(&a, 0, range(1, 1), 1, b"a")
+                .put(&a, 1, range(1, 1), 1, b"a")
                 .text(&a, &[("body", "hello world")])
                 .commit()?;
         }
@@ -2195,7 +2285,7 @@ mod tests {
             let vault = Vault::open(tmp.path(), test_config())?;
             vault
                 .batch()
-                .put(&a, 0, range(1, 1), 1, b"a")
+                .put(&a, 1, range(1, 1), 1, b"a")
                 .text(&a, &[("body", "hello world")])
                 .commit()?;
         }
@@ -2230,7 +2320,7 @@ mod tests {
             let vault = Vault::open(tmp.path(), test_config())?;
             vault
                 .batch()
-                .put(&a, 0, range(1, 1), 1, b"a")
+                .put(&a, 1, range(1, 1), 1, b"a")
                 .text(&a, &[("body", "hello world")])
                 .commit()?;
         }
@@ -2240,7 +2330,7 @@ mod tests {
         let vault = Vault::open(tmp.path(), cfg)?;
         let err = vault
             .batch()
-            .put(&b, 0, range(1, 1), 1, b"b")
+            .put(&b, 1, range(1, 1), 1, b"b")
             .text(&b, &[("body", "new text")])
             .commit()
             .expect_err("text write must refuse bypassed populated index");
@@ -2259,7 +2349,7 @@ mod tests {
         let vault = Vault::open(tmp.path(), test_config())?;
         vault
             .batch()
-            .put(&a, 0, range(1, 1), 1, b"a")
+            .put(&a, 1, range(1, 1), 1, b"a")
             .text(&a, &[("body", "hello world")])
             .commit()?;
 
@@ -2274,7 +2364,7 @@ mod tests {
 
         let err = vault
             .batch()
-            .put(&b, 0, range(1, 1), 1, b"b")
+            .put(&b, 1, range(1, 1), 1, b"b")
             .text(&b, &[("body", "new text")])
             .commit()
             .expect_err("text write must refuse manifest divergence");
@@ -2313,7 +2403,7 @@ mod tests {
             let vault = Vault::open(tmp.path(), test_config())?;
             vault
                 .batch()
-                .put(&a, 0, range(1, 1), 1, b"a")
+                .put(&a, 1, range(1, 1), 1, b"a")
                 .text(&a, &[("body", "alpha")])
                 .commit()?;
 
@@ -2345,8 +2435,8 @@ mod tests {
 
         vault
             .batch()
-            .put(&a, 0, range(1, 1), 1, b"a")
-            .put(&b, 0, range(1, 1), 1, b"b")
+            .put(&a, 1, range(1, 1), 1, b"a")
+            .put(&b, 1, range(1, 1), 1, b"b")
             .text(&a, &[("body", "first")])
             .text(&b, &[("body", "second")])
             .commit()?;

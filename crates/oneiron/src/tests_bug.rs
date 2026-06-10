@@ -94,7 +94,7 @@ fn learned_range_seek_starts_at_lower_bound() {
         })
         .unwrap();
     vault
-        .put_entity(&id, 0, TimeRange { start: 20, end: 20 }, 20, b"in-range")
+        .put_entity(&id, 1, TimeRange { start: 20, end: 20 }, 20, b"in-range")
         .unwrap();
 
     let result = vault.entities_in_learned_range(10, 30).unwrap();
