@@ -12,7 +12,7 @@ use crate::store::Store;
 use crate::types::{
     DecodedEdgeValue, EDGE_KEY_LEN, ENTITY_ID_LEN, EdgeKind, EdgeProvenanceFlags, EntityId,
     TimeRange, Vad, decode_edge_value_for_kind, encode_edge_value, short_id_prefix,
-    validate_entity_type,
+    validate_entity_type, validate_public_entity_type,
 };
 
 pub(crate) const ENTITY_TYPE_OFFSET: usize = 0;
@@ -99,6 +99,14 @@ pub(crate) enum BatchOp {
         occurred: TimeRange,
         learned_at: u64,
         data: Vec<u8>,
+        /// When `true`, `apply_put` validates the type byte through the
+        /// registry-only [`validate_entity_type`] gate (which permits the
+        /// engine-authored maintenance band, e.g. REDACTION_AUDIT = 120)
+        /// instead of the public [`validate_public_entity_type`] gate. Only
+        /// the engine-internal sync rematerialization path sets this so GDPR
+        /// receipts survive cross-node sync / replay; every public write keeps
+        /// it `false` and stays subject to the maintenance-kind rejection.
+        allow_maintenance: bool,
     },
     Vector {
         id: EntityId,
@@ -160,6 +168,39 @@ impl<'a> BatchBuilder<'a> {
         data: &[u8],
     ) -> Self {
         if self.validation_error.is_none()
+            && let Err(e) = validate_public_entity_type(entity_type)
+        {
+            self.validation_error = Some(e);
+        }
+        self.ops.push(BatchOp::Put {
+            id: *id,
+            entity_type,
+            occurred,
+            learned_at,
+            data: data.to_vec(),
+            allow_maintenance: false,
+        });
+        self
+    }
+
+    /// Engine-internal put that admits the maintenance band (REDACTION_AUDIT =
+    /// 120) by validating via the registry-only [`validate_entity_type`] gate.
+    ///
+    /// Used exclusively by the sync rematerialization path (CRDT→LMDB) so
+    /// engine-authored GDPR REDACTION_AUDIT receipts survive cross-node sync
+    /// and replay. The public [`put`](Self::put) gate still rejects
+    /// user-written maintenance kinds with `MaintenanceKindNotWritable`;
+    /// genuinely unknown bytes still fail here with `InvalidEntityType`.
+    #[cfg(feature = "sync")]
+    pub(crate) fn put_internal(
+        mut self,
+        id: &EntityId,
+        entity_type: u8,
+        occurred: TimeRange,
+        learned_at: u64,
+        data: &[u8],
+    ) -> Self {
+        if self.validation_error.is_none()
             && let Err(e) = validate_entity_type(entity_type)
         {
             self.validation_error = Some(e);
@@ -176,6 +217,7 @@ impl<'a> BatchBuilder<'a> {
             occurred,
             learned_at,
             data: data.to_vec(),
+            allow_maintenance: true,
         });
         self
     }
@@ -388,6 +430,34 @@ impl<'a> TxnBatchBuilder<'a> {
             occurred,
             learned_at,
             data: data.to_vec(),
+            allow_maintenance: false,
+        });
+        self
+    }
+
+    /// Engine-internal put that admits the maintenance band (REDACTION_AUDIT =
+    /// 120), validating via the registry-only [`validate_entity_type`] gate in
+    /// `apply_put` instead of the public [`validate_public_entity_type`] gate.
+    ///
+    /// Used by Observer B's CRDT→LMDB rematerialization so engine-authored
+    /// GDPR REDACTION_AUDIT receipts survive sync. The public
+    /// [`put`](Self::put) path stays subject to the maintenance-kind rejection.
+    #[cfg(feature = "sync")]
+    pub(crate) fn put_internal(
+        mut self,
+        id: &EntityId,
+        entity_type: u8,
+        occurred: TimeRange,
+        learned_at: u64,
+        data: &[u8],
+    ) -> Self {
+        self.ops.push(BatchOp::Put {
+            id: *id,
+            entity_type,
+            occurred,
+            learned_at,
+            data: data.to_vec(),
+            allow_maintenance: true,
         });
         self
     }
@@ -499,7 +569,18 @@ pub(crate) fn apply_ops(
                 occurred,
                 learned_at,
                 data,
+                allow_maintenance,
             } => {
+                // Public writes reject the engine-authored maintenance band via
+                // `validate_public_entity_type`; the sync rematerialization path
+                // sets `allow_maintenance` so REDACTION_AUDIT (120) receipts
+                // survive CRDT→LMDB replay (registry-only `validate_entity_type`
+                // still rejects genuinely unknown type bytes).
+                if allow_maintenance {
+                    validate_entity_type(entity_type)?;
+                } else {
+                    validate_public_entity_type(entity_type)?;
+                }
                 apply_put(store, wtxn, id, entity_type, occurred, learned_at, &data)?;
             }
             BatchOp::Vector { id, vector } => {
@@ -740,14 +821,26 @@ fn apply_put(
     learned_at: u64,
     data: &[u8],
 ) -> Result<()> {
-    validate_entity_type(entity_type)?;
+    // Type-byte validation runs in `apply_ops` (the public-vs-maintenance gate:
+    // public writes reject the engine-authored maintenance band, the sync
+    // rematerialization path admits it via `allow_maintenance`). apply_put is
+    // reached only after that gate, so it does not re-validate the type byte.
     if occurred.start > occurred.end {
         return Err(Error::InvalidTimeRange {
             start: occurred.start,
             end: occurred.end,
         });
     }
-    let short_id_plan = plan_short_id_update(store, &*wtxn, &id, entity_type, data)?;
+    // Maintenance-band kinds (REDACTION_AUDIT = 120) carry no short ID (registry
+    // `short_id_prefix: None`), matching the engine's direct receipt writer.
+    // Only the internal sync path reaches here with such a kind (public puts are
+    // rejected in `apply_ops`); skip short-id planning, which would otherwise
+    // fail with `InvalidEntityType` on the missing prefix.
+    let short_id_plan = if short_id_prefix(entity_type).is_ok() {
+        Some(plan_short_id_update(store, &*wtxn, &id, entity_type, data)?)
+    } else {
+        None
+    };
 
     if let Some(old_record) = store.entities.get(wtxn, id.as_bytes())? {
         let (old_type, old_occurred, old_learned) = parse_entity_metadata(old_record)?;
@@ -819,7 +912,9 @@ fn apply_put(
             .put(wtxn, &long_interval_key, &occurred_start_value)?;
     }
 
-    apply_short_id_plan(store, wtxn, &id, short_id_plan)?;
+    if let Some(plan) = short_id_plan {
+        apply_short_id_plan(store, wtxn, &id, plan)?;
+    }
     Ok(())
 }
 
