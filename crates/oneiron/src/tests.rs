@@ -3870,40 +3870,188 @@ fn encode_edge_value_rejects_structural_non_neutral_vad() {
 
 #[test]
 fn all_entity_type_prefixes() {
-    use crate::types::{ENTITY_TYPE_REGISTRY, short_id_prefix};
+    use crate::types::{
+        ENTITY_TYPE_REGISTRY, EntityClassification, TypeByteBand, band_of, is_structural_kind,
+        short_id_prefix,
+    };
 
-    // ARCH-0002 / oneiron-contracts.ts pinned storage ABI.
-    let expected: &[(&str, u8, Option<&str>)] = &[
-        ("CLAIM", 0, Some("cl")),
-        ("TURN", 1, Some("tn")),
-        ("SESSION", 2, Some("ss")),
-        ("MESSAGE", 3, Some("ms")),
-        ("PERSON", 4, Some("pr")),
-        ("RELATIONSHIP", 5, Some("rl")),
-        ("EVENT", 6, Some("ev")),
-        ("SKILL", 7, Some("sk")),
-        ("SUMMARY", 8, Some("sm")),
-        ("PLACE", 9, Some("pl")),
-        ("ASSET_TEXT", 10, Some("tx")),
-        ("CONVERSATION", 11, Some("cv")),
-        ("ORG", 12, Some("og")),
-        ("FACET", 13, Some("fc")),
-        ("WORLD", 14, Some("wd")),
-        ("ASSET", 15, Some("as")),
-        ("NOTIFICATION", 16, Some("nt")),
-        ("TASK_LIST", 80, Some("tl")),
-        ("TASK", 81, Some("tk")),
-        ("MACHINE", 82, Some("mc")),
-        ("REDACTION_AUDIT", 120, None),
+    // ARCH-0002 / oneiron-contracts.ts §1 pinned storage ABI: per registry
+    // row (kind id, type byte, short-id prefix, classification, band).
+    // CLAIM=semantic ("deliberately NOT a StructuralKind"); TURN..NOTIFICATION
+    // = core (band 1–63); TASK_LIST/TASK/MACHINE = pack (productivity band
+    // 80–99); REDACTION_AUDIT = maintenance (band 120+).
+    type RegistryRow = (
+        &'static str,
+        u8,
+        Option<&'static str>,
+        EntityClassification,
+        TypeByteBand,
+    );
+    let expected: &[RegistryRow] = &[
+        (
+            "CLAIM",
+            0,
+            Some("cl"),
+            EntityClassification::Semantic,
+            TypeByteBand::Semantic,
+        ),
+        (
+            "TURN",
+            1,
+            Some("tn"),
+            EntityClassification::Core,
+            TypeByteBand::Core,
+        ),
+        (
+            "SESSION",
+            2,
+            Some("ss"),
+            EntityClassification::Core,
+            TypeByteBand::Core,
+        ),
+        (
+            "MESSAGE",
+            3,
+            Some("ms"),
+            EntityClassification::Core,
+            TypeByteBand::Core,
+        ),
+        (
+            "PERSON",
+            4,
+            Some("pr"),
+            EntityClassification::Core,
+            TypeByteBand::Core,
+        ),
+        (
+            "RELATIONSHIP",
+            5,
+            Some("rl"),
+            EntityClassification::Core,
+            TypeByteBand::Core,
+        ),
+        (
+            "EVENT",
+            6,
+            Some("ev"),
+            EntityClassification::Core,
+            TypeByteBand::Core,
+        ),
+        (
+            "SKILL",
+            7,
+            Some("sk"),
+            EntityClassification::Core,
+            TypeByteBand::Core,
+        ),
+        (
+            "SUMMARY",
+            8,
+            Some("sm"),
+            EntityClassification::Core,
+            TypeByteBand::Core,
+        ),
+        (
+            "PLACE",
+            9,
+            Some("pl"),
+            EntityClassification::Core,
+            TypeByteBand::Core,
+        ),
+        (
+            "ASSET_TEXT",
+            10,
+            Some("tx"),
+            EntityClassification::Core,
+            TypeByteBand::Core,
+        ),
+        (
+            "CONVERSATION",
+            11,
+            Some("cv"),
+            EntityClassification::Core,
+            TypeByteBand::Core,
+        ),
+        (
+            "ORG",
+            12,
+            Some("og"),
+            EntityClassification::Core,
+            TypeByteBand::Core,
+        ),
+        (
+            "FACET",
+            13,
+            Some("fc"),
+            EntityClassification::Core,
+            TypeByteBand::Core,
+        ),
+        (
+            "WORLD",
+            14,
+            Some("wd"),
+            EntityClassification::Core,
+            TypeByteBand::Core,
+        ),
+        (
+            "ASSET",
+            15,
+            Some("as"),
+            EntityClassification::Core,
+            TypeByteBand::Core,
+        ),
+        (
+            "NOTIFICATION",
+            16,
+            Some("nt"),
+            EntityClassification::Core,
+            TypeByteBand::Core,
+        ),
+        (
+            "TASK_LIST",
+            80,
+            Some("tl"),
+            EntityClassification::Pack,
+            TypeByteBand::Productivity,
+        ),
+        (
+            "TASK",
+            81,
+            Some("tk"),
+            EntityClassification::Pack,
+            TypeByteBand::Productivity,
+        ),
+        (
+            "MACHINE",
+            82,
+            Some("mc"),
+            EntityClassification::Pack,
+            TypeByteBand::Productivity,
+        ),
+        (
+            "REDACTION_AUDIT",
+            120,
+            None,
+            EntityClassification::Maintenance,
+            TypeByteBand::InducedDynamicMaintenance,
+        ),
     ];
 
-    let actual: Vec<_> = ENTITY_TYPE_REGISTRY
+    let actual: Vec<RegistryRow> = ENTITY_TYPE_REGISTRY
         .iter()
-        .map(|entry| (entry.kind, entry.type_byte, entry.short_id_prefix))
+        .map(|entry| {
+            (
+                entry.kind,
+                entry.type_byte,
+                entry.short_id_prefix,
+                entry.classification,
+                entry.band,
+            )
+        })
         .collect();
     assert_eq!(actual.as_slice(), expected);
 
-    for (name, byte, prefix) in expected {
+    for (name, byte, prefix, classification, band) in expected {
         match prefix {
             Some(prefix) => {
                 let got = short_id_prefix(*byte).unwrap_or_else(|err| {
@@ -3919,10 +4067,102 @@ fn all_entity_type_prefixes() {
                 "case {name}: expected no short-id prefix"
             ),
         }
+
+        // Registry band metadata must agree with the total band function.
+        assert_eq!(
+            band_of(*byte),
+            *band,
+            "case {name}: band_of({byte}) disagrees with registry band"
+        );
+
+        // StructuralKind = registered core|pack rows ONLY. CLAIM (semantic)
+        // and REDACTION_AUDIT (maintenance) are NOT StructuralKinds.
+        let expect_structural = matches!(
+            classification,
+            EntityClassification::Core | EntityClassification::Pack
+        );
+        assert_eq!(
+            is_structural_kind(*byte),
+            expect_structural,
+            "case {name}: is_structural_kind({byte})"
+        );
     }
 
     assert!(short_id_prefix(99).is_err());
     assert!(short_id_prefix(255).is_err());
+}
+
+#[test]
+fn type_byte_band_allocation_matches_contract() {
+    use crate::types::{
+        TYPE_BYTE_BAND_COMPANION_END, TYPE_BYTE_BAND_COMPANION_START, TYPE_BYTE_BAND_CORE_END,
+        TYPE_BYTE_BAND_CORE_START, TYPE_BYTE_BAND_CRM_END, TYPE_BYTE_BAND_CRM_START,
+        TYPE_BYTE_BAND_MAINTENANCE_START, TYPE_BYTE_BAND_PRODUCTIVITY_END,
+        TYPE_BYTE_BAND_PRODUCTIVITY_START, TYPE_BYTE_SEMANTIC, TypeByteBand, band_of,
+        is_structural_kind, validate_entity_type,
+    };
+
+    // contracts.ts §1 typeByteBands — the LOCKED 6-band allocation:
+    // 0 semantic / 1–63 CORE / 64–79 companion / 80–99 productivity /
+    // 100–119 CRM / 120+ induced-dynamic-maintenance. Boundary constants
+    // pinned as literals so an off-by-one allocation FAILS here.
+    assert_eq!(TYPE_BYTE_SEMANTIC, 0);
+    assert_eq!(TYPE_BYTE_BAND_CORE_START, 1);
+    assert_eq!(TYPE_BYTE_BAND_CORE_END, 63);
+    assert_eq!(TYPE_BYTE_BAND_COMPANION_START, 64);
+    assert_eq!(TYPE_BYTE_BAND_COMPANION_END, 79);
+    assert_eq!(TYPE_BYTE_BAND_PRODUCTIVITY_START, 80);
+    assert_eq!(TYPE_BYTE_BAND_PRODUCTIVITY_END, 99);
+    assert_eq!(TYPE_BYTE_BAND_CRM_START, 100);
+    assert_eq!(TYPE_BYTE_BAND_CRM_END, 119);
+    assert_eq!(TYPE_BYTE_BAND_MAINTENANCE_START, 120);
+
+    // band_of is total over all 256 bytes. Expected values are written from
+    // the contract's literal band edges, independent of the implementation.
+    for byte in u8::MIN..=u8::MAX {
+        let expected = if byte == 0 {
+            TypeByteBand::Semantic
+        } else if byte <= 63 {
+            TypeByteBand::Core
+        } else if byte <= 79 {
+            TypeByteBand::Companion
+        } else if byte <= 99 {
+            TypeByteBand::Productivity
+        } else if byte <= 119 {
+            TypeByteBand::Crm
+        } else {
+            TypeByteBand::InducedDynamicMaintenance
+        };
+        assert_eq!(band_of(byte), expected, "band_of({byte})");
+    }
+
+    // is_structural_kind: false for the semantic byte 0 and maintenance 120;
+    // true for every REGISTERED core (1..=16) and pack (80/81/82) kind.
+    assert!(!is_structural_kind(0), "CLAIM is NOT a StructuralKind");
+    assert!(
+        !is_structural_kind(120),
+        "REDACTION_AUDIT is NOT a StructuralKind"
+    );
+    for byte in 1..=16_u8 {
+        assert!(is_structural_kind(byte), "core byte {byte}");
+    }
+    for byte in [80_u8, 81, 82] {
+        assert!(is_structural_kind(byte), "pack byte {byte}");
+    }
+
+    // Unregistered bytes — including bytes INSIDE structural bands — are not
+    // StructuralKinds, and the existing write-path gate still rejects them
+    // with the same typed error (no behavior change in this unit).
+    for byte in [17_u8, 63, 64, 79, 83, 99, 100, 119, 121, 255] {
+        assert!(!is_structural_kind(byte), "unregistered byte {byte}");
+        assert!(
+            matches!(
+                validate_entity_type(byte),
+                Err(Error::InvalidEntityType(rejected)) if rejected == byte
+            ),
+            "unregistered byte {byte} must stay rejected by validate_entity_type"
+        );
+    }
 }
 
 #[test]
