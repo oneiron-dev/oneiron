@@ -90,6 +90,19 @@
 //!   the derived envelope start), the operation fails typed
 //!   ([`Error::InvalidProvenanceBody`]) — never silently reordered.
 //!
+//! * **DELETE (ARCH-0038, D16)** — hard-deleting (any receipt-writing
+//!   reason) or SoftErasing a provenance Claim removes/scrubs the TRUTH the
+//!   edge flags cache. "The derived edge flag follows the Claim": the delete
+//!   path captures the EdgeRef + sweep refs pre-purge, and post-purge
+//!   refreshes the subject edge in the same transaction — restamped from the
+//!   D14 winner among the REMAINING live Claims, or, when none remain,
+//!   downgraded 26 B → 24 B bare via [`downgrade_edge_to_bare`] (a cached
+//!   flag without its truth-Claim is unauditable). `retracted` stamping is
+//!   ONLY for RETRACT, where the Claim stays readable. The captured
+//!   `body_snapshot_ref` / `source_revision_ref` ride the queued
+//!   historical-carrier sweep row's scope (executor = ONE-1091, deferred;
+//!   cross-device propagation = ONE-1090, deferred).
+//!
 //! # Persisted `actor_class` (refresh seam)
 //!
 //! The edge's `actor_class` flag derives from `actor_entity_ref` (contracts
@@ -696,6 +709,50 @@ pub(crate) fn restamp_edge_flags(
     store.edges_out.put(wtxn, &key_out, &value)?;
     store.edges_in.put(wtxn, &key_in, &value)?;
     Ok(())
+}
+
+/// The D16 downgrade primitive: when the LAST live `edge.provenance` Claim
+/// for an edge is deleted or SoftErased, the 26-byte provenanced value drops
+/// to the 24-byte bare semantic layout — the first 24 bytes (weight +
+/// created_at + VAD) are preserved verbatim and IDENTICAL bytes are written
+/// to both `edges_out` and `edges_in`. A cached flag without its truth-Claim
+/// would be unauditable; `retracted` stamping is reserved for RETRACT, where
+/// the Claim stays live-readable.
+///
+/// Returns whether the edge bytes changed: an already-bare 24-byte value is
+/// the desired end state (idempotent no-op). A structural subject kind or a
+/// non-contract value length fails typed — never a silent skip.
+pub(crate) fn downgrade_edge_to_bare(
+    store: &Store,
+    wtxn: &mut RwTxn<'_>,
+    subject: &EdgeRef,
+) -> Result<bool> {
+    let key_out = Store::encode_edge_key(&subject.source, subject.kind, &subject.target);
+    let key_in = Store::encode_edge_key(&subject.target, subject.kind, &subject.source);
+
+    let existing = store
+        .edges_out
+        .get(wtxn, &key_out)?
+        .map(<[u8]>::to_vec)
+        .ok_or(Error::EdgeNotFound)?;
+    let value = match existing.len() {
+        EDGE_VALUE_SEMANTIC_PROVENANCED_LEN => {
+            let mut value = existing;
+            value.truncate(EDGE_VALUE_SEMANTIC_LEN);
+            value
+        }
+        EDGE_VALUE_SEMANTIC_LEN => return Ok(false),
+        EDGE_VALUE_STRUCTURAL_LEN => {
+            return Err(Error::ProvenanceOnStructuralEdge {
+                kind: subject.kind as u8,
+            });
+        }
+        _ => return Err(Error::CorruptedIndex("edge value")),
+    };
+
+    store.edges_out.put(wtxn, &key_out, &value)?;
+    store.edges_in.put(wtxn, &key_in, &value)?;
+    Ok(true)
 }
 
 #[cfg(test)]
