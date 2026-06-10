@@ -559,6 +559,100 @@ fn user_hard_delete_writes_opaque_redaction_audit_receipt() -> Result<()> {
 }
 
 #[test]
+fn redaction_receipt_indexes_temporal_occurred_start_as_point_event() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let id = EntityId::now();
+    // Seed the to-be-deleted subject as TURN (type 1), a non-claim type whose
+    // body stays opaque: type 0 is CLAIM and gains a validated body ABI
+    // (ONE-1104), which would reject this seed before the hard delete runs.
+    vault.put_entity(&id, 1, test_time_range(300, 300), 301, b"index-me")?;
+
+    let outcome = vault.delete_entity_with_reason(&id, DeleteReason::UserHardDelete)?;
+    let receipt_id = outcome.receipt_id.expect("receipt id");
+
+    // The `hard_purge_complete_at` timestamp inside the receipt BODY is the
+    // independent oracle: the receipt writer sets occurred_start ==
+    // occurred_end == learned_at == hard_purge_complete_at (point event).
+    let raw = vault.get_raw(&receipt_id)?.expect("receipt record");
+    let receipt = receipt_body(&raw);
+    let purge_at = receipt["hard_purge_complete_at"]
+        .as_u64()
+        .expect("hard_purge_complete_at");
+
+    // contracts.ts dbManifest n:18 — temporal_occurred_start key is
+    // (timestamp, entity_id) with value (): timestamp u64 BE (8 B) followed
+    // by the entity id (16 B), exactly the shape apply_put writes.
+    let mut expected_key = [0_u8; 24];
+    expected_key[..8].copy_from_slice(&purge_at.to_be_bytes());
+    expected_key[8..].copy_from_slice(receipt_id.as_bytes());
+
+    let rtxn = vault.store.env.read_txn()?;
+    let lower = purge_at.to_be_bytes();
+    let upper = purge_at.checked_add(1).expect("range upper").to_be_bytes();
+    let mut matches = 0_usize;
+    for entry in vault.store.temporal_occurred_start.range(
+        &rtxn,
+        &(
+            std::ops::Bound::Included(&lower[..]),
+            std::ops::Bound::Excluded(&upper[..]),
+        ),
+    )? {
+        let (key, value) = entry?;
+        assert_eq!(key.len(), 24, "temporal_occurred_start key must be 24 B");
+        if key[8..] == receipt_id.as_bytes()[..] {
+            assert_eq!(key, expected_key.as_slice());
+            assert!(value.is_empty(), "n:18 value must be ()");
+            matches += 1;
+        }
+    }
+    assert_eq!(
+        matches, 1,
+        "receipt must be discoverable via a temporal_occurred_start range scan"
+    );
+
+    // Point-event semantics IDENTICAL to apply_put (start == end): no
+    // temporal_occurred_end row and no temporal_long_intervals row may exist
+    // for the receipt anywhere in either DB.
+    for entry in vault.store.temporal_occurred_end.iter(&rtxn)? {
+        let (key, _) = entry?;
+        assert_eq!(key.len(), 24, "temporal_occurred_end key must be 24 B");
+        assert!(
+            key[8..] != receipt_id.as_bytes()[..],
+            "point-event receipt must not write a temporal_occurred_end row"
+        );
+    }
+    for entry in vault.store.temporal_long_intervals.iter(&rtxn)? {
+        let (key, _) = entry?;
+        assert_eq!(key.len(), 24, "temporal_long_intervals key must be 24 B");
+        assert!(
+            key[8..] != receipt_id.as_bytes()[..],
+            "zero-span receipt must not write a temporal_long_intervals row"
+        );
+    }
+
+    // Pre-existing receipt index footprint is unchanged.
+    let learned_key = Store::encode_temporal_key(purge_at, &receipt_id);
+    assert!(
+        vault
+            .store
+            .temporal_learned
+            .get(&rtxn, &learned_key)?
+            .is_some()
+    );
+    let type_key = Store::encode_type_key(ENTITY_TYPE_REDACTION_AUDIT, &receipt_id);
+    assert!(vault.store.type_index.get(&rtxn, &type_key)?.is_some());
+    // Maintenance kinds carry no short ID.
+    assert!(
+        vault
+            .store
+            .short_ids
+            .get(&rtxn, receipt_id.as_bytes())?
+            .is_none()
+    );
+    Ok(())
+}
+
+#[test]
 fn hard_delete_enqueues_bounded_historical_carrier_sweep() -> Result<()> {
     let (_dir, vault) = open_test_vault();
     let id = EntityId::now();
@@ -4723,6 +4817,111 @@ fn txn_batch_put_invalid_entity_type_returns_error() -> Result<()> {
         "expected InvalidEntityType(255), got {err:?}"
     );
     assert!(vault.get(&id)?.is_none());
+
+    Ok(())
+}
+
+/// D5: public puts of a REGISTERED maintenance-band kind (REDACTION_AUDIT =
+/// 120) must fail with the distinct `MaintenanceKindNotWritable` error — not
+/// the misleading `InvalidEntityType(120)` — and must write nothing. The
+/// engine-internal receipt writer is unaffected (see
+/// `redaction_receipt_indexes_temporal_occurred_start_as_point_event`).
+#[test]
+fn public_put_of_maintenance_kind_rejected_with_distinct_typed_error() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let id = EntityId::now();
+
+    // put_entity (routes through BatchBuilder; eager gate).
+    let err = vault
+        .put_entity(
+            &id,
+            ENTITY_TYPE_REDACTION_AUDIT,
+            test_time_range(1, 1),
+            2,
+            b"forged-receipt",
+        )
+        .expect_err("public put of type 120 must fail");
+    assert!(
+        matches!(err, Error::MaintenanceKindNotWritable(120)),
+        "expected MaintenanceKindNotWritable(120), got {err:?}"
+    );
+    assert_eq!(err.kind(), ErrorKind::MaintenanceKindNotWritable);
+    assert_ne!(err.kind(), ErrorKind::InvalidEntityType);
+
+    // TxnBatchBuilder (apply-time gate in apply_put).
+    let err = vault
+        .with_write_txn(|wtxn| {
+            vault
+                .batch_in()
+                .put(
+                    &id,
+                    ENTITY_TYPE_REDACTION_AUDIT,
+                    test_time_range(1, 1),
+                    2,
+                    b"forged-receipt",
+                )
+                .apply(wtxn)
+        })
+        .expect_err("txn batch put of type 120 must fail");
+    assert!(
+        matches!(err, Error::MaintenanceKindNotWritable(120)),
+        "expected MaintenanceKindNotWritable(120), got {err:?}"
+    );
+
+    // Nothing was written by either path.
+    assert!(vault.get(&id)?.is_none());
+    assert!(
+        vault
+            .entities_by_type(ENTITY_TYPE_REDACTION_AUDIT)?
+            .is_empty()
+    );
+    let rtxn = vault.store.env.read_txn()?;
+    let type_key = Store::encode_type_key(ENTITY_TYPE_REDACTION_AUDIT, &id);
+    assert!(vault.store.type_index.get(&rtxn, &type_key)?.is_none());
+    let occurred_key = Store::encode_temporal_key(1, &id);
+    assert!(
+        vault
+            .store
+            .temporal_occurred_start
+            .get(&rtxn, &occurred_key)?
+            .is_none()
+    );
+    let learned_key = Store::encode_temporal_key(2, &id);
+    assert!(
+        vault
+            .store
+            .temporal_learned
+            .get(&rtxn, &learned_key)?
+            .is_none()
+    );
+    assert!(vault.store.short_ids.get(&rtxn, id.as_bytes())?.is_none());
+    // No short-id counter sentinel was allocated for the maintenance band.
+    let mut sentinel = [0xFF_u8; ENTITY_ID_LEN];
+    sentinel[0] = ENTITY_TYPE_REDACTION_AUDIT;
+    assert!(vault.store.short_ids.get(&rtxn, &sentinel)?.is_none());
+
+    Ok(())
+}
+
+/// D5 counterpart: `InvalidEntityType` still covers genuinely UNKNOWN bytes,
+/// including unregistered bytes inside the 120+ maintenance band — the
+/// distinct maintenance error is reserved for registered maintenance kinds.
+#[test]
+fn unknown_type_bytes_still_fail_with_invalid_entity_type() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+
+    for unknown in [99_u8, 121, 200] {
+        let id = EntityId::now();
+        let err = vault
+            .put_entity(&id, unknown, test_time_range(1, 1), 2, b"unknown-type")
+            .expect_err("unregistered type byte must fail");
+        assert!(
+            matches!(err, Error::InvalidEntityType(byte) if byte == unknown),
+            "expected InvalidEntityType({unknown}), got {err:?}"
+        );
+        assert_eq!(err.kind(), ErrorKind::InvalidEntityType);
+        assert!(vault.get(&id)?.is_none());
+    }
 
     Ok(())
 }

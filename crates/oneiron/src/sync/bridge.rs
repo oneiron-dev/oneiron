@@ -527,9 +527,14 @@ fn materialize_entity_blob_in_txn(
         &[]
     };
 
+    // Internal put: Observer B mirrors whatever the unfiltered CRDT entities
+    // map holds, including the engine-authored maintenance band
+    // (REDACTION_AUDIT = 120). The public gate would warn-skip those, losing
+    // GDPR receipts on sync; `put_internal` admits the registered maintenance
+    // band while still rejecting genuinely unknown type bytes.
     vault
         .batch_in()
-        .put(
+        .put_internal(
             &id,
             header.entity_type,
             crate::types::TimeRange {
