@@ -579,7 +579,9 @@ pub(crate) fn validate_claim_body_bytes(data: &[u8], allow_reserved_predicate: b
     decode_claim_body(data, allow_reserved_predicate).map(|_| ())
 }
 
-fn unit_interval_f32(value: &Value) -> Option<f32> {
+/// Parses a MessagePack number as a finite `f32` in `[0, 1]`. Shared with
+/// the provenance module so `conf` and `confidence` validate identically.
+pub(crate) fn unit_interval_f32(value: &Value) -> Option<f32> {
     let parsed = match value {
         Value::F32(v) => f64::from(*v),
         Value::F64(v) => *v,
