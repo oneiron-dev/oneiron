@@ -332,14 +332,23 @@ pub enum EdgeKind {
     /// Relationship is set in a world context.
     SetIn = 19,
     /// Task is a child of another task (tree hierarchy).
-    /// No PPR hop limit — unlike PartOf which caps at 2.
+    /// Never traversed by PPR (contract `lambda: null`, "Not traversed.");
+    /// read via the dedicated `subtree` / `ancestors` tree APIs.
     ChildOf = 6,
     /// Task is assigned to a machine for execution.
+    /// Never traversed by PPR (contract `lambda: null`, "Not traversed.").
     AssignedTo = 7,
 }
 
 impl EdgeKind {
-    /// Returns the default propagation weight for this edge kind.
+    /// Returns the default STORED edge weight for this edge kind (the legacy
+    /// `pprWeight` prior of the contract's `edgeKinds` table).
+    ///
+    /// This is NOT the PPR traversal multiplier: per-kind traversal budgets
+    /// are the λ_τ table (`ppr::lambda_for_kind`), which deliberately differs
+    /// from this prior for the five world-model kinds, and `ChildOf` /
+    /// `AssignedTo` are never traversed by PPR regardless of the weight
+    /// stored on their edges.
     pub fn default_weight(self) -> f32 {
         match self {
             Self::BelongsTo => 1.0,
