@@ -5435,6 +5435,65 @@ fn slice_contains(haystack: &[u8], needle: &[u8]) -> bool {
         .any(|window| window == needle)
 }
 
+/// Schema-agnostic short-id lookup: scans BOTH short-id DBs raw and accepts
+/// whichever row links `id` to an ASCII `<prefix><counter>` short id.
+///
+/// WHY (cross-branch schema compat, ONE-1102): the parallel ONE-1102 branch
+/// swaps the short-id table direction per the pinned 25-DB manifest
+/// (`short_ids`: key short_id bytes + content_hash u8 -> entity_id;
+/// `short_ids_reverse`: key entity_id -> short_id + hash), while this branch
+/// still carries the pre-1102 orientation (`short_ids`: entity_id ->
+/// short_id + hash; `short_ids_reverse`: short_id -> entity_id). Reading one
+/// fixed layout here would break this test on whichever side merges second,
+/// so callers' prefix assertions stay green on this branch standalone AND
+/// after ONE-1102 lands.
+fn find_short_id_any_schema(vault: &Vault, id: &EntityId) -> Result<Option<String>> {
+    // A short id is a two-letter lowercase type prefix plus a decimal
+    // counter. The strict format check disambiguates the 1-byte content
+    // hash riding next to the short id in one of the two orientations.
+    fn parse_short_id(bytes: &[u8]) -> Option<String> {
+        if bytes.len() < 3 {
+            return None;
+        }
+        let (prefix, counter) = bytes.split_at(2);
+        let well_formed =
+            prefix.iter().all(u8::is_ascii_lowercase) && counter.iter().all(u8::is_ascii_digit);
+        if !well_formed {
+            return None;
+        }
+        str::from_utf8(bytes).ok().map(str::to_owned)
+    }
+
+    // Candidate bytes are either the bare short id or short id + hash u8.
+    fn parse_with_optional_hash(bytes: &[u8]) -> Option<String> {
+        parse_short_id(bytes).or_else(|| {
+            bytes
+                .split_last()
+                .and_then(|(_hash, head)| parse_short_id(head))
+        })
+    }
+
+    let rtxn = vault.store.env.read_txn()?;
+    for db in [&vault.store.short_ids, &vault.store.short_ids_reverse] {
+        for entry in db.iter(&rtxn)? {
+            let (key, value) = entry?;
+            // Orientation 1: entity_id -> short_id (+ hash).
+            if key == id.as_bytes() {
+                if let Some(short_id) = parse_with_optional_hash(value) {
+                    return Ok(Some(short_id));
+                }
+            }
+            // Orientation 2: short_id (+ hash) -> entity_id.
+            if value == id.as_bytes() {
+                if let Some(short_id) = parse_with_optional_hash(key) {
+                    return Ok(Some(short_id));
+                }
+            }
+        }
+    }
+    Ok(None)
+}
+
 fn rmpv_map_bytes(entries: &[(rmpv::Value, rmpv::Value)]) -> Vec<u8> {
     let mut out = Vec::new();
     rmpv::encode::write_value(&mut out, &rmpv::Value::Map(entries.to_vec()))
@@ -5680,16 +5739,21 @@ fn put_claim_round_trip_and_pinned_on_disk_bytes() -> Result<()> {
         "stale=false must be elided from the stored body"
     );
 
-    // Claims carry the pinned 'cl' short-id prefix.
-    let rtxn = vault.store.env.read_txn()?;
-    let short_id = vault
-        .store
-        .short_ids
-        .get(&rtxn, claim.as_bytes())?
-        .expect("claim short id");
+    // Claims carry the pinned 'cl' short-id prefix. The lookup is
+    // intentionally schema-agnostic (see find_short_id_any_schema): the
+    // parallel ONE-1102 branch flips the short_ids key direction per the
+    // pinned manifest, and this assertion must hold on this branch
+    // standalone AND after ONE-1102 merges.
+    let short_id = find_short_id_any_schema(&vault, &claim)?
+        .expect("claim short id missing from both short-id DBs");
     assert!(
-        short_id.starts_with(b"cl"),
-        "CLAIM short-id prefix must be 'cl'"
+        short_id.starts_with("cl"),
+        "CLAIM short-id prefix must be 'cl', got {short_id}"
+    );
+    let counter = &short_id[2..];
+    assert!(
+        !counter.is_empty() && counter.bytes().all(|b| b.is_ascii_digit()),
+        "CLAIM short id must be 'cl' + decimal counter, got {short_id}"
     );
     Ok(())
 }
