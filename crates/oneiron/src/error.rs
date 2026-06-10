@@ -1,5 +1,5 @@
-use crate::types::{EntityId, VadComponent};
 use crate::claim::ClaimLifecycleStatus;
+use crate::types::{EntityId, VadComponent};
 
 /// Result type used throughout the crate.
 pub type Result<T> = std::result::Result<T, Error>;

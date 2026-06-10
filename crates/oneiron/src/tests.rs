@@ -8020,6 +8020,238 @@ fn retract_claim_marks_retracted_and_preserves_record() -> Result<()> {
     Ok(())
 }
 
+/// Stores a minimal ACTIVE claim about `subject` with an INTERVAL
+/// `occurred` window and returns its id. The interval (start != end)
+/// matters: only interval entities own a `temporal_occurred_end` row, so
+/// these fixtures create the PRE-EXISTING end row that a lifecycle
+/// refresh must MOVE (delete stale, write refreshed) — an
+/// add-without-delete implementation cannot pass against them.
+fn put_active_interval_claim(
+    vault: &Vault,
+    subject: &EntityId,
+    pred: &str,
+    val: &str,
+    occurred: TimeRange,
+    learned_at: u64,
+) -> Result<EntityId> {
+    let id = EntityId::now();
+    let body = ClaimBody::new(
+        pred,
+        ClaimSubject::Entity(*subject),
+        rmpv::Value::from(val),
+        0.9,
+        ClaimApprovalStatus::Auto,
+        ClaimLifecycleStatus::Active,
+    );
+    vault.put_claim(&id, &body, occurred, learned_at)?;
+    Ok(id)
+}
+
+#[test]
+fn supersede_claim_moves_temporal_occurred_end_row() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let subject = EntityId::now();
+    vault.put_entity(&subject, 4, test_time_range(1, 1), 1, b"person")?;
+    let old = put_active_interval_claim(
+        &vault,
+        &subject,
+        "profile.lives_in",
+        "osaka",
+        test_time_range(11, 50),
+        11,
+    )?;
+    let new = put_active_claim(&vault, &subject, "profile.lives_in", "tokyo", 22)?;
+
+    // Fixture sanity: the interval claim pre-indexes occurred_end at
+    // ts = 50, so the absence assertion after the supersede is
+    // non-vacuous.
+    let stale_end_key = Store::encode_temporal_key(50, &old);
+    {
+        let rtxn = vault.store.env.read_txn()?;
+        assert!(
+            vault
+                .store
+                .temporal_occurred_end
+                .get(&rtxn, &stale_end_key)?
+                .is_some(),
+            "fixture must pre-index occurred_end at ts = 50"
+        );
+    }
+
+    const NOW: u64 = 777;
+    vault.supersede_claim(&new, &old, NOW)?;
+
+    // The envelope refresh must MOVE the temporal_occurred_end row: the
+    // stale ts = 50 row is deleted and the refreshed ts = 777 row is
+    // written. An implementation that only hand-adds the new row (never
+    // deleting the prior one) fails the first assertion.
+    let refreshed_end_key = Store::encode_temporal_key(NOW, &old);
+    let rtxn = vault.store.env.read_txn()?;
+    assert!(
+        vault
+            .store
+            .temporal_occurred_end
+            .get(&rtxn, &stale_end_key)?
+            .is_none(),
+        "stale occurred_end row at ts = 50 must be deleted by the refresh"
+    );
+    assert!(
+        vault
+            .store
+            .temporal_occurred_end
+            .get(&rtxn, &refreshed_end_key)?
+            .is_some(),
+        "refreshed occurred_end row at ts = 777 must be indexed"
+    );
+    drop(rtxn);
+
+    // The transition itself completed (close semantics are pinned in
+    // depth by supersede_claim_closes_old_writes_edge_and_keeps_history).
+    let old_read = vault.get_claim(&old)?.expect("superseded claim");
+    assert_eq!(old_read.lifecycle, ClaimLifecycleStatus::Superseded);
+    assert_eq!(old_read.valid_to, Some(NOW));
+    Ok(())
+}
+
+#[test]
+fn retract_claim_moves_temporal_occurred_end_row() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let subject = EntityId::now();
+    vault.put_entity(&subject, 4, test_time_range(1, 1), 1, b"person")?;
+    let claim = put_active_interval_claim(
+        &vault,
+        &subject,
+        "profile.lives_in",
+        "osaka",
+        test_time_range(11, 50),
+        11,
+    )?;
+
+    let stale_end_key = Store::encode_temporal_key(50, &claim);
+    {
+        let rtxn = vault.store.env.read_txn()?;
+        assert!(
+            vault
+                .store
+                .temporal_occurred_end
+                .get(&rtxn, &stale_end_key)?
+                .is_some(),
+            "fixture must pre-index occurred_end at ts = 50"
+        );
+    }
+
+    const NOW: u64 = 555;
+    vault.retract_claim(&claim, NOW)?;
+
+    let refreshed_end_key = Store::encode_temporal_key(NOW, &claim);
+    let rtxn = vault.store.env.read_txn()?;
+    assert!(
+        vault
+            .store
+            .temporal_occurred_end
+            .get(&rtxn, &stale_end_key)?
+            .is_none(),
+        "stale occurred_end row at ts = 50 must be deleted by the refresh"
+    );
+    assert!(
+        vault
+            .store
+            .temporal_occurred_end
+            .get(&rtxn, &refreshed_end_key)?
+            .is_some(),
+        "refreshed occurred_end row at ts = 555 must be indexed"
+    );
+    drop(rtxn);
+
+    let read = vault.get_claim(&claim)?.expect("retracted claim");
+    assert_eq!(read.lifecycle, ClaimLifecycleStatus::Retracted);
+    assert_eq!(read.valid_to, Some(NOW));
+    Ok(())
+}
+
+#[test]
+fn supersede_claim_rehomes_temporal_long_interval_row() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let subject = EntityId::now();
+    vault.put_entity(&subject, 4, test_time_range(1, 1), 1, b"person")?;
+
+    // Span > LONG_INTERVAL_THRESHOLD_SECS: the old claim owns a
+    // temporal_long_intervals row keyed by occurred_end, value =
+    // occurred_start u64 BE.
+    let old_end = 1_000 + crate::batch::LONG_INTERVAL_THRESHOLD_SECS + 10;
+    let old = put_active_interval_claim(
+        &vault,
+        &subject,
+        "profile.lives_in",
+        "osaka",
+        test_time_range(1_000, old_end),
+        1_000,
+    )?;
+    let new = put_active_claim(&vault, &subject, "profile.lives_in", "tokyo", 22)?;
+
+    let stale_key = Store::encode_temporal_key(old_end, &old);
+    {
+        let rtxn = vault.store.env.read_txn()?;
+        let value = vault
+            .store
+            .temporal_long_intervals
+            .get(&rtxn, &stale_key)?
+            .ok_or(Error::EntityNotFound)?;
+        assert_eq!(
+            u64::from_be_bytes(value.try_into().map_err(|_| Error::InvalidKey)?),
+            1_000,
+            "fixture must pre-index the long interval (value = occurred_start BE)"
+        );
+    }
+
+    // `now` keeps the refreshed window long (now − 1 000 > threshold), so
+    // the long-interval row must be RE-HOMED: deleted at the stale end
+    // key, re-written keyed by the refreshed occurred_end with the same
+    // occurred_start value. A refresh that never touches
+    // temporal_long_intervals fails both assertions.
+    let now = 1_000 + 2 * crate::batch::LONG_INTERVAL_THRESHOLD_SECS;
+    vault.supersede_claim(&new, &old, now)?;
+
+    let rehomed_key = Store::encode_temporal_key(now, &old);
+    let rtxn = vault.store.env.read_txn()?;
+    assert!(
+        vault
+            .store
+            .temporal_long_intervals
+            .get(&rtxn, &stale_key)?
+            .is_none(),
+        "stale long-interval row must be deleted by the refresh"
+    );
+    let value = vault
+        .store
+        .temporal_long_intervals
+        .get(&rtxn, &rehomed_key)?
+        .expect("long-interval row must be re-homed to the refreshed occurred_end");
+    assert_eq!(
+        u64::from_be_bytes(value.try_into().map_err(|_| Error::InvalidKey)?),
+        1_000,
+        "re-homed long-interval value must keep occurred_start"
+    );
+    // The occurred_end row moves with it.
+    assert!(
+        vault
+            .store
+            .temporal_occurred_end
+            .get(&rtxn, &stale_key)?
+            .is_none(),
+        "stale occurred_end row must be deleted by the refresh"
+    );
+    assert!(
+        vault
+            .store
+            .temporal_occurred_end
+            .get(&rtxn, &rehomed_key)?
+            .is_some(),
+        "refreshed occurred_end row must be indexed"
+    );
+    Ok(())
+}
+
 #[test]
 fn supersede_claim_rejects_self_supersession() -> Result<()> {
     let (_dir, vault) = open_test_vault();
