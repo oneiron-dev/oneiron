@@ -9442,9 +9442,9 @@ fn deleting_the_retracted_truth_claim_downgrades_the_retracted_stamp() -> Result
         "RETRACT keeps the 26 B retracted stamp — the Claim is still readable truth"
     );
 
-    // DELETE removes the truth-Claim entirely: the retracted stamp would be
-    // unauditable, so it must NOT survive — D16 downgrade, not a kept 26 B
-    // retracted stamp ('retracted' stamping is ONLY for RETRACT).
+    // DELETE removes the truth-Claim entirely: with NO provenance Claim of
+    // any lifecycle left for this EdgeRef the retracted stamp would be
+    // unauditable, so it must NOT survive — D16 downgrade to 24 B bare.
     let outcome = vault.delete_entity_with_reason(&claim_id, DeleteReason::GdprDelete)?;
     assert!(outcome.existed);
     let (out, inn) = raw_edge_values(vault, &subject)?;
@@ -9452,6 +9452,123 @@ fn deleting_the_retracted_truth_claim_downgrades_the_retracted_stamp() -> Result
     assert_eq!(out.len(), EDGE_VALUE_SEMANTIC_LEN, "26 B → 24 B");
     assert_eq!(out.as_slice(), &retracted[..24]);
     assert_eq!(inn.as_deref(), Some(out.as_slice()));
+    Ok(())
+}
+
+#[test]
+fn deleting_a_superseded_claim_keeps_the_surviving_retracted_dampening_stamp() -> Result<()> {
+    // ONE-1107 blocker: deleting a SUPERSEDED/closed `edge.provenance` Claim
+    // while a RETRACTED Claim for the SAME EdgeRef still survives must KEEP
+    // the 26 B retracted dampening stamp — NOT downgrade to 24 B bare, which
+    // would silently drop the contract-mandated retracted flag and re-enable
+    // PPR propagation of withdrawn provenance (retractionRules RETRACT). This
+    // matches `retract_edge_provenance`'s own None-branch. The pre-fix code
+    // scans only ACTIVE survivors, sees none, and downgrades to bare — so it
+    // FAILS the `EDGE_VALUE_SEMANTIC_PROVENANCED_LEN` / byte-24 == 3
+    // assertions below.
+    for reason in [DeleteReason::UserHardDelete, DeleteReason::GdprDelete] {
+        let fx = lifecycle_fixture()?;
+        let vault = &fx.vault;
+        let subject = fx.subject;
+
+        // A: PERSON / human (actor_class = 0) @ t = 1000, confirmed.
+        let claim_a = EntityId::now();
+        vault.put_edge_provenance(
+            &claim_a,
+            &subject,
+            &EdgeProvenanceClaimBody::new(fx.person, 0.9, SupersessionStatus::Confirmed),
+            EdgeActorClass::Human,
+            1_000,
+        )?;
+
+        // B supersedes A: MACHINE / system (actor_class = 2) @ t = 2000.
+        // Distinct class from A so byte 25 proves which truth-Claim the edge
+        // follows after the delete.
+        let claim_b = EntityId::now();
+        vault.supersede_edge_provenance(
+            &claim_a,
+            &claim_b,
+            &subject,
+            &EdgeProvenanceClaimBody::new(fx.machine, 0.8, SupersessionStatus::Confirmed),
+            EdgeActorClass::System,
+            2_000,
+        )?;
+        // A is now closed (superseded); B is the live winner.
+        assert_eq!(
+            vault.get_claim(&claim_a)?.expect("a").lifecycle,
+            ClaimLifecycleStatus::Superseded,
+            "{reason:?}"
+        );
+
+        // Retract B → the edge carries the 26 B RETRACTED dampening stamp
+        // (confirmation_status = retracted = 3, actor_class = system = 2).
+        vault.retract_edge_provenance(&claim_b, 3_000)?;
+        let (retracted, _) = raw_edge_values(vault, &subject)?;
+        let retracted = retracted.expect("retracted edge");
+        assert_eq!(
+            (retracted.len(), retracted[24], retracted[25]),
+            (EDGE_VALUE_SEMANTIC_PROVENANCED_LEN, 3, 2),
+            "{reason:?}: B's retraction stamps 26 B retracted/system before the delete"
+        );
+
+        // DELETE the SUPERSEDED A while the RETRACTED B survives as readable
+        // truth. The derived edge flag follows the surviving (retracted)
+        // Claim: the edge STAYS 26 B with confirmation_status = retracted (3)
+        // and B's persisted actor_class = system (2) — it must NOT downgrade
+        // to 24 B bare, and it must NOT fall back to A's human (0) class.
+        let outcome = vault.delete_entity_with_reason(&claim_a, reason)?;
+        assert!(outcome.existed, "{reason:?}");
+        assert!(
+            vault.get(&claim_a)?.is_none(),
+            "{reason:?}: the superseded claim A must be purged"
+        );
+        assert_eq!(
+            vault.get_claim(&claim_b)?.expect("b").lifecycle,
+            ClaimLifecycleStatus::Retracted,
+            "{reason:?}: the retracted truth-Claim B survives the delete of A"
+        );
+
+        let (out, inn) = raw_edge_values(vault, &subject)?;
+        let out = out.expect("edges_out row");
+        assert_eq!(
+            out.len(),
+            EDGE_VALUE_SEMANTIC_PROVENANCED_LEN,
+            "{reason:?}: a surviving retracted Claim KEEPS the 26 B stamp — must NOT downgrade to 24 B bare"
+        );
+        assert_eq!(
+            out[24], 3,
+            "{reason:?}: confirmation_status stays retracted = 3 (the dampening flag)"
+        );
+        assert_eq!(
+            out[25], 2,
+            "{reason:?}: actor_class follows the surviving retracted B (system = 2), not deleted A's human = 0"
+        );
+        assert_eq!(
+            &out[..24],
+            &retracted[..24],
+            "{reason:?}: weight/created_at/VAD bytes preserved verbatim"
+        );
+        assert_eq!(
+            inn.as_deref(),
+            Some(out.as_slice()),
+            "{reason:?}: edges_in must mirror edges_out byte-for-byte"
+        );
+
+        // Decoded read agrees: the cached dampening flag survives.
+        let info = vault
+            .edges_out(&subject.source)?
+            .into_iter()
+            .find(|info| info.kind == EdgeKind::Mentions && info.target == subject.target)
+            .expect("edge still listed after the superseded-claim delete");
+        assert_eq!(
+            info.provenance,
+            Some(EdgeProvenanceFlags {
+                confirmation_status: EdgeConfirmationStatus::Retracted,
+                actor_class: EdgeActorClass::System,
+            }),
+            "{reason:?}: decoded flags must be retracted/system, never None"
+        );
+    }
     Ok(())
 }
 

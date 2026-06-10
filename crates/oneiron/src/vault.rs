@@ -974,18 +974,47 @@ impl Vault {
     }
 
     /// Enumerates the LIVE (`life` = active) `edge.provenance` Claims for
-    /// `subject`, via the inbound `claim_of` edges of the subject edge's
-    /// SOURCE entity (D12). Non-claim sources, other predicates, claims of
-    /// OTHER EdgeRefs, and closed claims are skipped; corrupt rows fail
-    /// closed. `exclude` drops the claim currently being re-put.
+    /// `subject` — the live cohort the D14 winner stamp is chosen from. Thin
+    /// wrapper over [`Self::edge_provenance_claims_in_txn`].
     fn live_edge_provenance_claims_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
         subject: &EdgeRef,
         exclude: Option<&EntityId>,
     ) -> Result<Vec<StoredProvenanceClaim>> {
+        self.edge_provenance_claims_in_txn(txn, subject, exclude, ClaimLifecycleStatus::Active)
+    }
+
+    /// Enumerates the RETRACTED `edge.provenance` Claims for `subject` — the
+    /// surviving WITHDRAWN truth the edge's retracted dampening flag caches.
+    /// The D16 delete-refresh consults this when NO active Claim survives, to
+    /// decide whether the deleted Claim's EdgeRef still has a retracted
+    /// truth-Claim to KEEP the 26 B retracted stamp for (else 24 B bare). Thin
+    /// wrapper over [`Self::edge_provenance_claims_in_txn`].
+    fn retracted_edge_provenance_claims_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        subject: &EdgeRef,
+        exclude: Option<&EntityId>,
+    ) -> Result<Vec<StoredProvenanceClaim>> {
+        self.edge_provenance_claims_in_txn(txn, subject, exclude, ClaimLifecycleStatus::Retracted)
+    }
+
+    /// Enumerates the `edge.provenance` Claims for `subject` whose wrapping
+    /// Claim `life` equals `lifecycle`, via the inbound `claim_of` edges of
+    /// the subject edge's SOURCE entity (D12). Non-claim sources, other
+    /// predicates, claims of OTHER EdgeRefs, bodiless SoftErase shells, and
+    /// claims of any other lifecycle are skipped; corrupt rows fail closed.
+    /// `exclude` drops the claim currently being re-put or deleted.
+    fn edge_provenance_claims_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        subject: &EdgeRef,
+        exclude: Option<&EntityId>,
+        lifecycle: ClaimLifecycleStatus,
+    ) -> Result<Vec<StoredProvenanceClaim>> {
         let prefix = edge_kind_prefix(&subject.source, EdgeKind::ClaimOf);
-        let mut live = Vec::new();
+        let mut matched = Vec::new();
         for (scanned, entry) in self.store.edges_in.prefix_iter(txn, &prefix)?.enumerate() {
             if scanned >= MAX_EDGE_QUERY_RESULTS {
                 return Err(Error::IndexOverflow("live provenance claims"));
@@ -1029,12 +1058,12 @@ impl Vault {
             if EdgeRef::new(source, kind, target) != *subject {
                 continue;
             }
-            if wrapper.lifecycle != ClaimLifecycleStatus::Active {
+            if wrapper.lifecycle != lifecycle {
                 continue;
             }
             let record = decode_edge_provenance_body(&wrapper.value)?;
             let actor_class = decode_actor_class_evidence(wrapper.evidence.as_ref())?;
-            live.push(StoredProvenanceClaim {
+            matched.push(StoredProvenanceClaim {
                 id: claim_id,
                 occurred_start: header.occurred_start,
                 learned_at: header.learned_at,
@@ -1044,7 +1073,7 @@ impl Vault {
                 actor_class,
             });
         }
-        Ok(live)
+        Ok(matched)
     }
 
     /// Retrieves an entity blob by ID.
@@ -1296,10 +1325,13 @@ impl Vault {
     /// ARCH-0038 DELETE interplay (D16), run in the SAME transaction that
     /// purged / SoftErased the provenance Claim: refresh the subject edge's
     /// cached flags — restamp from the deterministic D14 winner among the
-    /// REMAINING live Claims, or downgrade 26 B → 24 B bare when none remain
-    /// (a cached flag without its truth-Claim is unauditable). Both
-    /// `edges_out` and `edges_in` carry identical bytes; when the edge bytes
-    /// changed, the endpoints' PPR caches are invalidated and the graph
+    /// REMAINING live Claims; else, when a RETRACTED `edge.provenance` Claim
+    /// for the same EdgeRef still survives, KEEP the 26 B retracted dampening
+    /// stamp (the withdrawn provenance must stay dampened — retractionRules
+    /// RETRACT); only when NO provenance Claim of ANY lifecycle survives is
+    /// the cached flag unauditable and the edge downgraded 26 B → 24 B bare.
+    /// Both `edges_out` and `edges_in` carry identical bytes; when the edge
+    /// bytes changed, the endpoints' PPR caches are invalidated and the graph
     /// version bumped. A subject edge that no longer exists (deleted
     /// independently of its Claims) leaves nothing to refresh — no-op.
     fn refresh_subject_edge_after_claim_delete_in_txn(
@@ -1323,13 +1355,58 @@ impl Vault {
                 restamp_edge_flags(&self.store, wtxn, subject, survivors[index].flags())?;
                 true
             }
-            None => downgrade_edge_to_bare(&self.store, wtxn, subject)?,
+            // No ACTIVE survivor. "The derived edge flag follows the Claim"
+            // (ARCH-0038 D16) — but a RETRACTED `edge.provenance` Claim is
+            // still readable truth, so it KEEPS the 26 B retracted dampening
+            // stamp rather than downgrading to a bare 24 B edge that would
+            // re-enable PPR propagation of the WITHDRAWN provenance. Only when
+            // no provenance Claim of ANY lifecycle survives is the flag
+            // unauditable and the edge downgraded to bare.
+            None => self.refresh_to_retracted_survivor_or_bare(wtxn, deleted_claim_id, subject)?,
         };
         if changed {
             ppr::invalidate_ppr_for_edge(&self.store, wtxn, &subject.source, &subject.target)?;
             ppr::increment_graph_version(&self.store, wtxn)?;
         }
         Ok(())
+    }
+
+    /// D16 fallback when the deleted Claim left NO active survivor: if a
+    /// RETRACTED `edge.provenance` Claim for `subject` still exists, restamp
+    /// the edge with `confirmation_status` = retracted (3) and the retracted
+    /// WINNER's persisted `actor_class` — keeping the 26 B retracted dampening
+    /// stamp the contract mandates (retractionRules RETRACT), mirroring
+    /// `retract_edge_provenance`'s own None-branch so the two paths agree.
+    /// Otherwise downgrade 26 B → 24 B bare (no truth-Claim of any lifecycle
+    /// survives ⇒ an unauditable cached flag). Returns whether the bytes
+    /// changed.
+    fn refresh_to_retracted_survivor_or_bare(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        deleted_claim_id: &EntityId,
+        subject: &EdgeRef,
+    ) -> Result<bool> {
+        let retracted =
+            self.retracted_edge_provenance_claims_in_txn(wtxn, subject, Some(deleted_claim_id))?;
+        let precedence: Vec<ProvenancePrecedence> = retracted
+            .iter()
+            .map(StoredProvenanceClaim::precedence)
+            .collect();
+        match winner_index(&precedence) {
+            Some(index) => {
+                restamp_edge_flags(
+                    &self.store,
+                    wtxn,
+                    subject,
+                    EdgeProvenanceFlags {
+                        confirmation_status: EdgeConfirmationStatus::Retracted,
+                        actor_class: retracted[index].actor_class,
+                    },
+                )?;
+                Ok(true)
+            }
+            None => downgrade_edge_to_bare(&self.store, wtxn, subject),
+        }
     }
 
     pub(crate) fn purge_entity_active_store(&self, id: &EntityId) -> Result<bool> {
