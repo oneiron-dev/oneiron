@@ -579,6 +579,13 @@ impl Vault {
         Ok(())
     }
 
+    /// Writes a REDACTION_AUDIT receipt as a normal entity-envelope record
+    /// (contracts.ts `redactionAuditReceipt.storage`), maintaining the same
+    /// index footprint `apply_put` gives every other envelope write. The
+    /// receipt is a point event (`occurred_start == occurred_end ==
+    /// learned_at`), so per the `apply_put` convention it gets a
+    /// `temporal_occurred_start` row but NO `temporal_occurred_end` row and
+    /// no `temporal_long_intervals` row. Maintenance kinds carry no short ID.
     fn put_redaction_audit_receipt_in_txn(
         &self,
         wtxn: &mut heed::RwTxn<'_>,
@@ -598,6 +605,11 @@ impl Vault {
 
         let type_key = Store::encode_type_key(ENTITY_TYPE_REDACTION_AUDIT, receipt_id);
         self.store.type_index.put(wtxn, &type_key, &[])?;
+
+        let occurred_start_key = Store::encode_temporal_key(learned_at, receipt_id);
+        self.store
+            .temporal_occurred_start
+            .put(wtxn, &occurred_start_key, &[])?;
 
         let learned_key = Store::encode_temporal_key(learned_at, receipt_id);
         self.store.temporal_learned.put(wtxn, &learned_key, &[])?;

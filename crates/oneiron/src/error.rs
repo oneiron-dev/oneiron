@@ -29,6 +29,7 @@ pub enum ErrorKind {
     IndexOverflow,
     MissingPostingEntry,
     InvalidEntityType,
+    MaintenanceKindNotWritable,
     CycleDetected,
     IncompatibleAnalyzer,
     Bm25FieldSchemaChanged,
@@ -118,6 +119,12 @@ pub enum Error {
     /// Entity type byte is not in any known range.
     #[error("invalid entity type: {0}")]
     InvalidEntityType(u8),
+    /// Registered maintenance-band entity kind (type bytes 120+, e.g.
+    /// REDACTION_AUDIT) rejected on a public write path. Maintenance records
+    /// are engine-authored only; this is distinct from
+    /// [`Error::InvalidEntityType`], which covers genuinely unknown bytes.
+    #[error("maintenance entity kind {0} is engine-authored and not writable via the public API")]
+    MaintenanceKindNotWritable(u8),
     /// Tree operation would create a cycle.
     #[error("cycle detected in tree hierarchy")]
     CycleDetected,
@@ -232,6 +239,7 @@ impl Error {
             Self::IndexOverflow(_) => ErrorKind::IndexOverflow,
             Self::MissingPostingEntry => ErrorKind::MissingPostingEntry,
             Self::InvalidEntityType(_) => ErrorKind::InvalidEntityType,
+            Self::MaintenanceKindNotWritable(_) => ErrorKind::MaintenanceKindNotWritable,
             Self::CycleDetected => ErrorKind::CycleDetected,
             Self::IncompatibleAnalyzer { .. } => ErrorKind::IncompatibleAnalyzer,
             Self::Bm25FieldSchemaChanged => ErrorKind::Bm25FieldSchemaChanged,

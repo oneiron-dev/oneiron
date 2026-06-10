@@ -284,6 +284,30 @@ pub(crate) fn validate_entity_type(entity_type: u8) -> crate::error::Result<()> 
         .ok_or(crate::error::Error::InvalidEntityType(entity_type))
 }
 
+/// First byte of the induced / dynamic / maintenance type-byte band
+/// (contracts.ts `typeByteBands` row `120+`). Registered kinds in this band
+/// (REDACTION_AUDIT = 120) are engine-authored maintenance records.
+pub(crate) const MAINTENANCE_TYPE_BYTE_BAND_START: u8 = 120;
+
+/// Validates an entity type byte for PUBLIC write paths (D5).
+///
+/// Genuinely unknown bytes fail with [`Error::InvalidEntityType`]; registered
+/// maintenance-band kinds (type byte ≥ 120, currently REDACTION_AUDIT) fail
+/// with the distinct [`Error::MaintenanceKindNotWritable`] so API-boundary
+/// error codes never conflate "unknown byte" with "reserved maintenance
+/// kind". Engine-internal writers (the REDACTION_AUDIT receipt writer in
+/// `vault.rs`) bypass this gate by writing the envelope directly.
+///
+/// [`Error::InvalidEntityType`]: crate::error::Error::InvalidEntityType
+/// [`Error::MaintenanceKindNotWritable`]: crate::error::Error::MaintenanceKindNotWritable
+pub(crate) fn validate_public_entity_type(entity_type: u8) -> crate::error::Result<()> {
+    validate_entity_type(entity_type)?;
+    if entity_type >= MAINTENANCE_TYPE_BYTE_BAND_START {
+        return Err(crate::error::Error::MaintenanceKindNotWritable(entity_type));
+    }
+    Ok(())
+}
+
 /// Relationship kind used by graph edges.
 ///
 /// Storage ABI: these discriminants are pinned to the ARCH-0034 `edgeKinds`

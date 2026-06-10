@@ -12,7 +12,7 @@ use crate::store::Store;
 use crate::types::{
     DecodedEdgeValue, EDGE_KEY_LEN, ENTITY_ID_LEN, EdgeKind, EdgeProvenanceFlags, EntityId,
     TimeRange, Vad, decode_edge_value_for_kind, encode_edge_value, short_id_prefix,
-    validate_entity_type,
+    validate_public_entity_type,
 };
 
 pub(crate) const ENTITY_TYPE_OFFSET: usize = 0;
@@ -160,7 +160,7 @@ impl<'a> BatchBuilder<'a> {
         data: &[u8],
     ) -> Self {
         if self.validation_error.is_none()
-            && let Err(e) = validate_entity_type(entity_type)
+            && let Err(e) = validate_public_entity_type(entity_type)
         {
             self.validation_error = Some(e);
         }
@@ -730,7 +730,7 @@ fn apply_put(
     learned_at: u64,
     data: &[u8],
 ) -> Result<()> {
-    validate_entity_type(entity_type)?;
+    validate_public_entity_type(entity_type)?;
     let short_id_plan = plan_short_id_update(store, &*wtxn, &id, entity_type, data)?;
 
     let mut occurred = occurred;
