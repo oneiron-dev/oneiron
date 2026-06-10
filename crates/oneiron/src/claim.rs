@@ -347,16 +347,22 @@ pub(crate) fn validate_predicate(predicate: &str, allow_reserved: bool) -> Resul
         });
     }
 
-    if !allow_reserved {
-        let first = predicate.split('.').next().unwrap_or_default();
-        if first == RESERVED_PREDICATE_NAMESPACE {
-            return Err(Error::ReservedPredicate {
-                predicate: predicate.to_owned(),
-            });
-        }
+    if !allow_reserved && is_reserved_predicate(predicate) {
+        return Err(Error::ReservedPredicate {
+            predicate: predicate.to_owned(),
+        });
     }
 
     Ok(())
+}
+
+/// Returns `true` when `predicate`'s first dot-separated segment is the
+/// reserved `edge` namespace (D17). Reserved-namespace Claims are engine
+/// provenance records: their lifecycle (supersede / retract / re-stamp) is
+/// owned by the edge-provenance API, so the generic claim lifecycle ops
+/// reject them with [`Error::ProvenanceClaimLifecycle`].
+pub(crate) fn is_reserved_predicate(predicate: &str) -> bool {
+    predicate.split('.').next() == Some(RESERVED_PREDICATE_NAMESPACE)
 }
 
 fn valid_predicate_segment(segment: &str) -> bool {
