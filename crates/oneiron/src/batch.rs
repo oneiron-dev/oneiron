@@ -12,7 +12,7 @@ use crate::store::Store;
 use crate::types::{
     DecodedEdgeValue, EDGE_KEY_LEN, ENTITY_ID_LEN, EdgeKind, EdgeProvenanceFlags, EntityId,
     TimeRange, Vad, decode_edge_value_for_kind, encode_edge_value, short_id_prefix,
-    validate_entity_type,
+    validate_entity_type, validate_public_entity_type,
 };
 
 pub(crate) const ENTITY_TYPE_OFFSET: usize = 0;
@@ -99,6 +99,14 @@ pub(crate) enum BatchOp {
         occurred: TimeRange,
         learned_at: u64,
         data: Vec<u8>,
+        /// When `true`, `apply_put` validates the type byte through the
+        /// registry-only [`validate_entity_type`] gate (which permits the
+        /// engine-authored maintenance band, e.g. REDACTION_AUDIT = 120)
+        /// instead of the public [`validate_public_entity_type`] gate. Only
+        /// the engine-internal sync rematerialization path sets this so GDPR
+        /// receipts survive cross-node sync / replay; every public write keeps
+        /// it `false` and stays subject to the maintenance-kind rejection.
+        allow_maintenance: bool,
         /// D17 reserved-namespace gate for type-0 (CLAIM) bodies. `false` on
         /// every public path; only the `pub(crate)` provenance door
         /// ([`TxnBatchBuilder::put_reserved_claim`]) sets it.
@@ -164,7 +172,7 @@ impl<'a> BatchBuilder<'a> {
         data: &[u8],
     ) -> Self {
         if self.validation_error.is_none()
-            && let Err(e) = validate_entity_type(entity_type)
+            && let Err(e) = validate_public_entity_type(entity_type)
         {
             self.validation_error = Some(e);
         }
@@ -174,6 +182,47 @@ impl<'a> BatchBuilder<'a> {
             occurred,
             learned_at,
             data: data.to_vec(),
+            allow_maintenance: false,
+            allow_reserved_predicate: false,
+        });
+        self
+    }
+
+    /// Engine-internal put that admits the maintenance band (REDACTION_AUDIT =
+    /// 120) by validating via the registry-only [`validate_entity_type`] gate.
+    ///
+    /// Used exclusively by the sync rematerialization path (CRDT→LMDB) so
+    /// engine-authored GDPR REDACTION_AUDIT receipts survive cross-node sync
+    /// and replay. The public [`put`](Self::put) gate still rejects
+    /// user-written maintenance kinds with `MaintenanceKindNotWritable`;
+    /// genuinely unknown bytes still fail here with `InvalidEntityType`.
+    #[cfg(feature = "sync")]
+    pub(crate) fn put_internal(
+        mut self,
+        id: &EntityId,
+        entity_type: u8,
+        occurred: TimeRange,
+        learned_at: u64,
+        data: &[u8],
+    ) -> Self {
+        if self.validation_error.is_none()
+            && let Err(e) = validate_entity_type(entity_type)
+        {
+            self.validation_error = Some(e);
+        }
+        if self.validation_error.is_none() && occurred.start > occurred.end {
+            self.validation_error = Some(Error::InvalidTimeRange {
+                start: occurred.start,
+                end: occurred.end,
+            });
+        }
+        self.ops.push(BatchOp::Put {
+            id: *id,
+            entity_type,
+            occurred,
+            learned_at,
+            data: data.to_vec(),
+            allow_maintenance: true,
             allow_reserved_predicate: false,
         });
         self
@@ -387,6 +436,35 @@ impl<'a> TxnBatchBuilder<'a> {
             occurred,
             learned_at,
             data: data.to_vec(),
+            allow_maintenance: false,
+            allow_reserved_predicate: false,
+        });
+        self
+    }
+
+    /// Engine-internal put that admits the maintenance band (REDACTION_AUDIT =
+    /// 120), validating via the registry-only [`validate_entity_type`] gate in
+    /// `apply_put` instead of the public [`validate_public_entity_type`] gate.
+    ///
+    /// Used by Observer B's CRDT→LMDB rematerialization so engine-authored
+    /// GDPR REDACTION_AUDIT receipts survive sync. The public
+    /// [`put`](Self::put) path stays subject to the maintenance-kind rejection.
+    #[cfg(feature = "sync")]
+    pub(crate) fn put_internal(
+        mut self,
+        id: &EntityId,
+        entity_type: u8,
+        occurred: TimeRange,
+        learned_at: u64,
+        data: &[u8],
+    ) -> Self {
+        self.ops.push(BatchOp::Put {
+            id: *id,
+            entity_type,
+            occurred,
+            learned_at,
+            data: data.to_vec(),
+            allow_maintenance: true,
             allow_reserved_predicate: false,
         });
         self
@@ -419,6 +497,7 @@ impl<'a> TxnBatchBuilder<'a> {
             occurred,
             learned_at,
             data: data.to_vec(),
+            allow_maintenance: false,
             allow_reserved_predicate: true,
         });
         self
@@ -531,8 +610,19 @@ pub(crate) fn apply_ops(
                 occurred,
                 learned_at,
                 data,
+                allow_maintenance,
                 allow_reserved_predicate,
             } => {
+                // Public writes reject the engine-authored maintenance band via
+                // `validate_public_entity_type`; the sync rematerialization path
+                // sets `allow_maintenance` so REDACTION_AUDIT (120) receipts
+                // survive CRDT→LMDB replay (registry-only `validate_entity_type`
+                // still rejects genuinely unknown type bytes).
+                if allow_maintenance {
+                    validate_entity_type(entity_type)?;
+                } else {
+                    validate_public_entity_type(entity_type)?;
+                }
                 apply_put(
                     store,
                     wtxn,
@@ -729,11 +819,15 @@ pub(crate) fn deindex_entity(
     let neighbors = delete_related_edges(store, wtxn, id)?;
     let mut had_graph_mutation = !neighbors.is_empty();
 
-    if let Some(raw) = store.short_ids.get(wtxn, id.as_bytes())? {
-        let (short_id, _) = parse_short_id_value(raw)?;
-        let short_id = short_id.to_owned();
-        store.short_ids_reverse.delete(wtxn, short_id.as_bytes())?;
-        store.short_ids.delete(wtxn, id.as_bytes())?;
+    let forward_key = store
+        .short_ids_reverse
+        .get(wtxn, id.as_bytes())?
+        .map(parse_short_id_value)
+        .transpose()?
+        .map(|(short_id, content_hash)| encode_short_id_forward_key(short_id, content_hash));
+    if let Some(forward_key) = forward_key {
+        store.short_ids.delete(wtxn, &forward_key)?;
+        store.short_ids_reverse.delete(wtxn, id.as_bytes())?;
     }
 
     let Some(entity_record) = store.entities.get(wtxn, id.as_bytes())? else {
@@ -783,32 +877,49 @@ fn apply_put(
     data: &[u8],
     allow_reserved_predicate: bool,
 ) -> Result<()> {
-    validate_entity_type(entity_type)?;
+    // Type-byte validation runs in `apply_ops` (the public-vs-maintenance gate:
+    // public writes reject the engine-authored maintenance band, the sync
+    // rematerialization path admits it via `allow_maintenance`). apply_put is
+    // reached only after that gate, so it does not re-validate the type byte.
+    //
     // D18: every type-0 (CLAIM) write — put_entity, both batch builders, and
     // sync replay — is structurally validated before any byte is staged.
     // Bodies of all other type bytes stay opaque at the storage layer.
     if entity_type == crate::types::ENTITY_TYPE_CLAIM {
         crate::claim::validate_claim_body_bytes(data, allow_reserved_predicate)?;
     }
-    let short_id_plan = plan_short_id_update(store, &*wtxn, &id, entity_type, data)?;
-
-    let mut occurred = occurred;
     if occurred.start > occurred.end {
-        std::mem::swap(&mut occurred.start, &mut occurred.end);
+        return Err(Error::InvalidTimeRange {
+            start: occurred.start,
+            end: occurred.end,
+        });
     }
+    // Maintenance-band kinds (REDACTION_AUDIT = 120) carry no short ID (registry
+    // `short_id_prefix: None`), matching the engine's direct receipt writer.
+    // Only the internal sync path reaches here with such a kind (public puts are
+    // rejected in `apply_ops`); skip short-id planning, which would otherwise
+    // fail with `InvalidEntityType` on the missing prefix.
+    let short_id_plan = if short_id_prefix(entity_type).is_ok() {
+        Some(plan_short_id_update(store, &*wtxn, &id, entity_type, data)?)
+    } else {
+        None
+    };
 
     if let Some(old_record) = store.entities.get(wtxn, id.as_bytes())? {
         let (old_type, old_occurred, old_learned) = parse_entity_metadata(old_record)?;
+        if old_type != entity_type {
+            return Err(Error::EntityTypeImmutable {
+                id,
+                existing: old_type,
+                attempted: entity_type,
+            });
+        }
+
         if old_occurred.end.saturating_sub(old_occurred.start) > LONG_INTERVAL_THRESHOLD_SECS {
             let old_long_interval_key = Store::encode_temporal_key(old_occurred.end, &id);
             store
                 .temporal_long_intervals
                 .delete(wtxn, &old_long_interval_key)?;
-        }
-
-        if old_type != entity_type {
-            let old_type_key = Store::encode_type_key(old_type, &id);
-            store.type_index.delete(wtxn, &old_type_key)?;
         }
 
         if old_occurred.start != occurred.start {
@@ -864,7 +975,9 @@ fn apply_put(
             .put(wtxn, &long_interval_key, &occurred_start_value)?;
     }
 
-    apply_short_id_plan(store, wtxn, &id, short_id_plan)?;
+    if let Some(plan) = short_id_plan {
+        apply_short_id_plan(store, wtxn, &id, plan)?;
+    }
     Ok(())
 }
 
@@ -1086,10 +1199,11 @@ fn apply_phonetic(
 enum ShortIdPlan {
     UpdateExisting {
         short_id: String,
+        old_content_hash: u8,
         content_hash: u8,
     },
     InsertNew {
-        sentinel_key: [u8; ENTITY_ID_LEN],
+        counter_key: [u8; crate::store::SHORT_ID_COUNTER_KEY_LEN],
         next_counter: u64,
         short_id: String,
         content_hash: u8,
@@ -1105,16 +1219,21 @@ fn plan_short_id_update(
 ) -> Result<ShortIdPlan> {
     let content_hash = (xxh32(data, 0) % 256) as u8;
 
-    if let Some(existing) = store.short_ids.get(txn, id.as_bytes())? {
-        let (short_id, _) = parse_short_id_value(existing)?;
+    if let Some(existing) = store.short_ids_reverse.get(txn, id.as_bytes())? {
+        let (short_id, old_content_hash) = parse_short_id_value(existing)?;
         return Ok(ShortIdPlan::UpdateExisting {
             short_id: short_id.to_owned(),
+            old_content_hash,
             content_hash,
         });
     }
 
-    let sentinel_key = short_id_counter_sentinel(entity_type);
-    let current = match store.short_ids.get(txn, &sentinel_key)? {
+    // Per-type counters live in `vault_meta` under the documented
+    // `b"sid_counter:" ‖ type_byte` key scheme (store.rs), NOT as sentinel
+    // rows inside `short_ids` — that table holds only the ARCH-0019 row n3
+    // mapping `(short_id, content_hash)` -> `entity_id`.
+    let counter_key = crate::store::short_id_counter_key(entity_type);
+    let current = match store.vault_meta.get(txn, &counter_key)? {
         Some(raw) => {
             let buf: [u8; SHORT_ID_COUNTER_LEN] = raw
                 .try_into()
@@ -1129,7 +1248,7 @@ fn plan_short_id_update(
         .ok_or(Error::ArithmeticOverflow("short id counter"))?;
     let short_id = format!("{}{}", short_id_prefix(entity_type)?, next);
     Ok(ShortIdPlan::InsertNew {
-        sentinel_key,
+        counter_key,
         next_counter: next,
         short_id,
         content_hash,
@@ -1145,44 +1264,60 @@ fn apply_short_id_plan(
     match plan {
         ShortIdPlan::UpdateExisting {
             short_id,
+            old_content_hash,
             content_hash,
         } => {
-            let mut value = Vec::with_capacity(short_id.len() + 1);
-            value.extend_from_slice(short_id.as_bytes());
-            value.push(content_hash);
-            store.short_ids.put(wtxn, id.as_bytes(), &value)?;
+            if old_content_hash != content_hash {
+                // The content hash is part of the forward KEY, so a content
+                // update must remove the stale forward row before rewriting.
+                let old_forward_key = encode_short_id_forward_key(&short_id, old_content_hash);
+                store.short_ids.delete(wtxn, &old_forward_key)?;
+            }
+            write_short_id_rows(store, wtxn, id, &short_id, content_hash)?;
         }
         ShortIdPlan::InsertNew {
-            sentinel_key,
+            counter_key,
             next_counter,
             short_id,
             content_hash,
         } => {
             store
-                .short_ids
-                .put(wtxn, &sentinel_key, &next_counter.to_le_bytes())?;
-
-            let mut short_id_value = Vec::with_capacity(short_id.len() + 1);
-            short_id_value.extend_from_slice(short_id.as_bytes());
-            short_id_value.push(content_hash);
-
-            store.short_ids.put(wtxn, id.as_bytes(), &short_id_value)?;
-            store
-                .short_ids_reverse
-                .put(wtxn, short_id.as_bytes(), id.as_bytes())?;
+                .vault_meta
+                .put(wtxn, &counter_key, &next_counter.to_le_bytes())?;
+            write_short_id_rows(store, wtxn, id, &short_id, content_hash)?;
         }
     }
 
     Ok(())
 }
 
-fn short_id_counter_sentinel(entity_type: u8) -> [u8; ENTITY_ID_LEN] {
-    debug_assert_ne!(
-        entity_type, 0xFF,
-        "0xFF is reserved for short-id sentinel keys"
-    );
-    let mut key = [0xFF_u8; ENTITY_ID_LEN];
-    key[0] = entity_type;
+/// Writes both pinned ARCH-0019 short-id rows for one entity:
+/// row n3 `short_ids`: key `(short_id bytes ‖ content_hash u8)` -> 16-byte
+/// entity id; row n4 `short_ids_reverse`: key entity id -> value
+/// `(short_id bytes ‖ content_hash u8)` (same bytes as the forward key).
+fn write_short_id_rows(
+    store: &Store,
+    wtxn: &mut RwTxn<'_>,
+    id: &EntityId,
+    short_id: &str,
+    content_hash: u8,
+) -> Result<()> {
+    let forward_key = encode_short_id_forward_key(short_id, content_hash);
+    store.short_ids.put(wtxn, &forward_key, id.as_bytes())?;
+    store
+        .short_ids_reverse
+        .put(wtxn, id.as_bytes(), &forward_key)?;
+    Ok(())
+}
+
+/// Encodes the `short_ids` forward key `(short_id bytes ‖ content_hash u8)`
+/// pinned by ARCH-0019 manifest row n3. The same byte shape is stored as the
+/// `short_ids_reverse` VALUE (row n4) and is parsed back by
+/// [`parse_short_id_value`].
+pub(crate) fn encode_short_id_forward_key(short_id: &str, content_hash: u8) -> Vec<u8> {
+    let mut key = Vec::with_capacity(short_id.len() + 1);
+    key.extend_from_slice(short_id.as_bytes());
+    key.push(content_hash);
     key
 }
 

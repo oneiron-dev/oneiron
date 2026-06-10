@@ -12,9 +12,8 @@ use crate::pipeline::PipelineBuilder;
 use crate::serialize::{SerializeConfig, serialize_pack};
 use crate::store::Store;
 use crate::types::{
-    ContextEntity, ContextPack, EDGE_KEY_LEN, EdgeInfo, EntityId, FieldProfile, PackFormat,
-    PackStats, Signal, TemporalAnchorMode, TemporalGranularity, TimeRange, TokenAllocation,
-    decode_edge_value_for_kind,
+    ContextEntity, ContextPack, EdgeInfo, EntityId, FieldProfile, PackFormat, PackStats, Signal,
+    TemporalAnchorMode, TemporalGranularity, TimeRange, TokenAllocation,
 };
 use crate::{Vault, le_bytes_to_f32_vec};
 
@@ -544,7 +543,9 @@ fn rmpv_to_json(value: &rmpv::Value) -> serde_json::Value {
 }
 
 fn read_short_id(store: &Store, rtxn: &RoTxn<'_>, id: &EntityId) -> Result<Option<(String, u8)>> {
-    let Some(value) = store.short_ids.get(rtxn, id.as_bytes())? else {
+    // ARCH-0019 row n4: `short_ids_reverse` is the entity-id-keyed direction
+    // (entity_id -> short_id ‖ content_hash).
+    let Some(value) = store.short_ids_reverse.get(rtxn, id.as_bytes())? else {
         return Ok(None);
     };
 
@@ -589,6 +590,17 @@ fn load_entity_edges(
     }
 }
 
+/// Scans the outbound edge rows for one entity, failing closed on any
+/// malformed row.
+///
+/// Every row is parsed through [`crate::vault::parse_edge_record`] so the
+/// context-pack read path (result-edge hydration and the `walk_edges`
+/// neighbor expansion) classifies corruption exactly like the canonical
+/// vault readers (`edges_out` / `edges_in` / `targets` / `sources`): a key
+/// that is not 33 bytes, an unknown edge-kind byte, a reserved target id,
+/// or a value whose length is not a valid layout for the kind (12/24/26 B
+/// per ARCH-0034) returns `Error::CorruptedIndex("edge record")` — never a
+/// silent skip (ONE-1101 / pinned decision D9).
 fn scan_edges_for_entity(store: &Store, rtxn: &RoTxn<'_>, id: &EntityId) -> Result<Vec<EdgeInfo>> {
     #[cfg(test)]
     EDGE_SCAN_COUNT.with(|count| count.set(count.get().saturating_add(1)));
@@ -597,34 +609,7 @@ fn scan_edges_for_entity(store: &Store, rtxn: &RoTxn<'_>, id: &EntityId) -> Resu
 
     for entry in store.edges_out.prefix_iter(rtxn, id.as_bytes())? {
         let (key, value) = entry?;
-        if key.len() != EDGE_KEY_LEN {
-            continue;
-        }
-
-        let Some(kind) = crate::types::EdgeKind::try_from_u8(key[16]) else {
-            continue;
-        };
-
-        let Ok(target_bytes) = key[17..33].try_into() else {
-            continue;
-        };
-        let Ok(target) = EntityId::from_bytes(target_bytes) else {
-            continue;
-        };
-
-        let Ok(decoded) = decode_edge_value_for_kind(kind, value) else {
-            continue;
-        };
-
-        edges.push(EdgeInfo {
-            kind,
-            target,
-            target_short_id: None,
-            weight: decoded.weight,
-            created_at: decoded.created_at,
-            vad: decoded.vad,
-            provenance: decoded.provenance,
-        });
+        edges.push(crate::vault::parse_edge_record(key, value)?);
     }
 
     Ok(edges)
@@ -710,6 +695,7 @@ fn walk_edges(
 mod tests {
     use std::collections::HashSet;
 
+    use crate::error::Error;
     use crate::types::{HnswConfig, TimeRange, VaultConfig};
 
     use super::*;
@@ -876,29 +862,212 @@ mod tests {
     }
 
     #[test]
-    fn include_edges_skips_malformed_edge_rows() -> Result<()> {
+    fn include_edges_rejects_malformed_edge_rows() -> Result<()> {
         let (_dir, vault) = open_test_vault();
 
         let src = EntityId::now();
+        let healthy = EntityId::now();
         let tgt = EntityId::now();
-        put_claim_text_entity(&vault, &src, "alpha", "test.x", "y")?;
+        // Non-claim type byte (TURN = 1): this test is about EDGE rows, so the
+        // seeded source must stay clear of the type-0 CLAIM body validation
+        // (D17/D18) — its body is opaque at the storage layer.
+        put_text_entity(
+            &vault,
+            &src,
+            1,
+            "alpha",
+            serde_json::json!({"text": "alpha"}),
+        )?;
+        put_text_entity(
+            &vault,
+            &healthy,
+            4,
+            "beta",
+            serde_json::json!({"name": "Alice"}),
+        )?;
+        vault.put_edge(&src, crate::types::EdgeKind::Supports, &healthy, 0.7)?;
 
-        let key = Store::encode_edge_key(&src, crate::types::EdgeKind::Supports, &tgt);
+        // Plant a 13-byte edge value via a raw write: the contract pins the
+        // edge value as a fixed-width LE buffer of exactly 12/24/26 bytes
+        // (dbManifest n14), so 13 bytes is on-disk corruption.
+        let key = Store::encode_edge_key(&src, crate::types::EdgeKind::Mentions, &tgt);
         let value = [0_u8; 13];
         vault.with_write_txn(|wtxn| {
             vault.store.edges_out.put(wtxn, &key, &value)?;
             Ok(())
         })?;
 
-        let pack = vault
+        // The healthy edge must not rescue the pack: hydration fails closed
+        // on the corrupt row instead of returning partial edges (D9).
+        let err = vault
             .context_pack()
             .search_text("alpha", 10)
             .include_edges(true)
-            .run()?;
+            .run()
+            .expect_err("malformed edge row must fail context-pack hydration closed");
+        assert!(
+            matches!(err, Error::CorruptedIndex("edge record")),
+            "expected CorruptedIndex(\"edge record\"), got {err:?}"
+        );
+        Ok(())
+    }
 
-        assert_eq!(pack.results.len(), 1);
-        assert_eq!(pack.results[0].id, src);
-        assert!(pack.results[0].edges.as_ref().is_some_and(Vec::is_empty));
+    #[test]
+    fn edge_walk_rejects_malformed_edge_rows() -> Result<()> {
+        let (_dir, vault) = open_test_vault();
+
+        let root = EntityId::now();
+        let neighbor = EntityId::now();
+        let tgt = EntityId::now();
+        // Non-claim type byte (TURN = 1): keeps this edge-row fixture clear of
+        // the type-0 CLAIM body validation (D17/D18).
+        put_text_entity(
+            &vault,
+            &root,
+            1,
+            "root",
+            serde_json::json!({"text": "root"}),
+        )?;
+        put_text_entity(
+            &vault,
+            &neighbor,
+            4,
+            "friend",
+            serde_json::json!({"name": "B"}),
+        )?;
+        vault.put_edge(&root, crate::types::EdgeKind::Supports, &neighbor, 1.0)?;
+
+        let key = Store::encode_edge_key(&root, crate::types::EdgeKind::Mentions, &tgt);
+        let value = [0_u8; 13];
+        vault.with_write_txn(|wtxn| {
+            vault.store.edges_out.put(wtxn, &key, &value)?;
+            Ok(())
+        })?;
+
+        // include_edges stays off, so result hydration never scans edges —
+        // the only edge reader on this path is the walk_edges neighbor
+        // expansion, which must fail closed too (ONE-1101 AC 1).
+        let err = vault
+            .context_pack()
+            .search_text("root", 10)
+            .edge_hop(1)
+            .run()
+            .expect_err("malformed edge row must fail the neighbor walk closed");
+        assert!(
+            matches!(err, Error::CorruptedIndex("edge record")),
+            "expected CorruptedIndex(\"edge record\"), got {err:?}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn scan_rejects_each_malformed_edge_row_shape_like_vault_readers() -> Result<()> {
+        let (_dir, vault) = open_test_vault();
+
+        let src = EntityId::now();
+        let tgt = EntityId::now();
+        // Non-claim type byte (TURN = 1): keeps this edge-row fixture clear of
+        // the type-0 CLAIM body validation (D17/D18).
+        put_text_entity(
+            &vault,
+            &src,
+            1,
+            "alpha",
+            serde_json::json!({"text": "alpha"}),
+        )?;
+
+        let supports_key =
+            Store::encode_edge_key(&src, crate::types::EdgeKind::Supports, &tgt).to_vec();
+        let child_of_key =
+            Store::encode_edge_key(&src, crate::types::EdgeKind::ChildOf, &tgt).to_vec();
+
+        // 33-byte key whose kind byte (20) is outside the pinned 0-19 range.
+        let mut unknown_kind_key = src.as_bytes().to_vec();
+        unknown_kind_key.push(20);
+        unknown_kind_key.extend_from_slice(tgt.as_bytes());
+
+        // 17-byte key: source id + kind byte, target id missing entirely.
+        let mut truncated_key = src.as_bytes().to_vec();
+        truncated_key.push(crate::types::EdgeKind::Supports as u8);
+
+        // 33-byte key whose target is the reserved all-0xFF sentinel id.
+        let mut reserved_target_key = src.as_bytes().to_vec();
+        reserved_target_key.push(crate::types::EdgeKind::Supports as u8);
+        reserved_target_key.extend_from_slice(&[0xFF; 16]);
+
+        // 26-byte value with confirmation_status byte 4 (valid enums are 0-3).
+        let mut bad_flag_value = vec![0_u8; 26];
+        bad_flag_value[24] = 4;
+
+        // Value lengths outside {12, 24, 26} and kind/layout-class mismatches
+        // must all classify as CorruptedIndex("edge record") — exactly like
+        // vault::parse_edge_record (ONE-1101 AC 3).
+        let cases: Vec<(&str, &[u8], Vec<u8>)> = vec![
+            ("empty value", &supports_key, vec![0_u8; 0]),
+            ("13-byte value", &supports_key, vec![0_u8; 13]),
+            ("25-byte value", &supports_key, vec![0_u8; 25]),
+            ("27-byte value", &supports_key, vec![0_u8; 27]),
+            (
+                "12B structural value under a semantic kind",
+                &supports_key,
+                vec![0_u8; 12],
+            ),
+            (
+                "24B semantic value under a structural kind",
+                &child_of_key,
+                vec![0_u8; 24],
+            ),
+            (
+                "26B value with confirmation_status byte 4",
+                &supports_key,
+                bad_flag_value,
+            ),
+            ("unknown kind byte 20", &unknown_kind_key, vec![0_u8; 24]),
+            ("truncated 17-byte key", &truncated_key, vec![0_u8; 24]),
+            (
+                "reserved sentinel target id",
+                &reserved_target_key,
+                vec![0_u8; 24],
+            ),
+        ];
+
+        for (name, key, value) in &cases {
+            vault.with_write_txn(|wtxn| {
+                vault.store.edges_out.put(wtxn, key, value)?;
+                Ok(())
+            })?;
+
+            {
+                let rtxn = vault.store.env.read_txn()?;
+                let err = scan_edges_for_entity(&vault.store, &rtxn, &src)
+                    .expect_err("context-pack scan must fail closed");
+                assert!(
+                    matches!(err, Error::CorruptedIndex("edge record")),
+                    "case `{name}`: context-pack scan returned {err:?}"
+                );
+            }
+
+            // Classification parity with the canonical vault reader on the
+            // same planted bytes.
+            let vault_err = vault
+                .edges_out(&src)
+                .expect_err("vault reader must fail closed");
+            assert!(
+                matches!(vault_err, Error::CorruptedIndex("edge record")),
+                "case `{name}`: vault.edges_out returned {vault_err:?}"
+            );
+
+            vault.with_write_txn(|wtxn| {
+                vault.store.edges_out.delete(wtxn, key)?;
+                Ok(())
+            })?;
+            let rtxn = vault.store.env.read_txn()?;
+            assert!(
+                scan_edges_for_entity(&vault.store, &rtxn, &src)?.is_empty(),
+                "case `{name}`: scan should be clean after removing the planted row"
+            );
+        }
+
         Ok(())
     }
 
@@ -1153,7 +1322,10 @@ mod tests {
         let cases: &[(&str, &str, &str, CorruptFn)] = &[
             ("missing", "fallback", "fallback", |vault, id| {
                 let mut wtxn = vault.store.env.write_txn()?;
-                vault.store.short_ids.delete(&mut wtxn, id.as_bytes())?;
+                vault
+                    .store
+                    .short_ids_reverse
+                    .delete(&mut wtxn, id.as_bytes())?;
                 wtxn.commit()?;
                 Ok(())
             }),
@@ -1161,7 +1333,7 @@ mod tests {
                 let mut wtxn = vault.store.env.write_txn()?;
                 vault
                     .store
-                    .short_ids
+                    .short_ids_reverse
                     .put(&mut wtxn, id.as_bytes(), &[0xff, 0xfe, 7])?;
                 wtxn.commit()?;
                 Ok(())

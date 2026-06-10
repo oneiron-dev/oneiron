@@ -334,6 +334,7 @@ impl Vault {
             occurred,
             learned_at,
             data,
+            allow_maintenance: false,
             allow_reserved_predicate: false,
         }];
 
@@ -613,7 +614,11 @@ impl Vault {
                 .phonetic_forward
                 .get(txn, id.as_bytes())?
                 .is_some()
-            || self.store.short_ids.get(txn, id.as_bytes())?.is_some()
+            || self
+                .store
+                .short_ids_reverse
+                .get(txn, id.as_bytes())?
+                .is_some()
         {
             return Ok(true);
         }
@@ -668,6 +673,13 @@ impl Vault {
         Ok(())
     }
 
+    /// Writes a REDACTION_AUDIT receipt as a normal entity-envelope record
+    /// (contracts.ts `redactionAuditReceipt.storage`), maintaining the same
+    /// index footprint `apply_put` gives every other envelope write. The
+    /// receipt is a point event (`occurred_start == occurred_end ==
+    /// learned_at`), so per the `apply_put` convention it gets a
+    /// `temporal_occurred_start` row but NO `temporal_occurred_end` row and
+    /// no `temporal_long_intervals` row. Maintenance kinds carry no short ID.
     fn put_redaction_audit_receipt_in_txn(
         &self,
         wtxn: &mut heed::RwTxn<'_>,
@@ -687,6 +699,11 @@ impl Vault {
 
         let type_key = Store::encode_type_key(ENTITY_TYPE_REDACTION_AUDIT, receipt_id);
         self.store.type_index.put(wtxn, &type_key, &[])?;
+
+        let occurred_start_key = Store::encode_temporal_key(learned_at, receipt_id);
+        self.store
+            .temporal_occurred_start
+            .put(wtxn, &occurred_start_key, &[])?;
 
         let learned_key = Store::encode_temporal_key(learned_at, receipt_id);
         self.store.temporal_learned.put(wtxn, &learned_key, &[])?;
@@ -1922,7 +1939,14 @@ pub(crate) fn write_text_index_manifest(
     Ok(())
 }
 
-fn parse_edge_record(key: &[u8], value: &[u8]) -> Result<EdgeInfo> {
+/// Parses one `edges_out` / `edges_in` row into an [`EdgeInfo`], failing
+/// closed: a key that is not `EDGE_KEY_LEN` bytes, an unknown edge-kind
+/// byte, a reserved/invalid peer id, or a value that does not decode as a
+/// valid layout for the kind (12/24/26 B per ARCH-0034) is
+/// `Error::CorruptedIndex("edge record")`. Shared with the context-pack
+/// read path so every reader classifies the same bytes identically
+/// (ONE-1101 / pinned decision D9).
+pub(crate) fn parse_edge_record(key: &[u8], value: &[u8]) -> Result<EdgeInfo> {
     if key.len() != EDGE_KEY_LEN {
         return Err(Error::CorruptedIndex("edge record"));
     }

@@ -1,16 +1,17 @@
 use xxhash_rust::xxh32::xxh32;
 
-use crate::batch::{ENTITY_METADATA_HEADER_LEN, SHORT_ID_COUNTER_LEN, parse_short_id_value};
+use crate::batch::{ENTITY_METADATA_HEADER_LEN, encode_short_id_forward_key, parse_short_id_value};
 use crate::error::{Error, Result};
 use crate::hnsw::{
     COUNT_KEY, build_hnsw_graph_from_snapshot, read_vector_version, write_rebuilt_hnsw,
 };
-use crate::types::{ENTITY_ID_LEN, EntityId, parse_entity_id, short_id_prefix};
+use crate::types::{EntityId, parse_entity_id};
 use crate::vault::write_text_index_manifest;
 use crate::{Vault, le_bytes_to_f32_vec, ppr};
 
 const ERR_VECTOR_KEY: &str = "vector key";
-const ERR_SHORT_IDS_REVERSE_VALUE: &str = "short_ids_reverse value";
+const ERR_SHORT_IDS_REVERSE_KEY: &str = "short_ids_reverse key";
+const ERR_SHORT_IDS_FORWARD_VALUE: &str = "short_ids value";
 
 struct PreparedHnswRebuild {
     old_count: u64,
@@ -248,32 +249,62 @@ fn compact_postings(vault: &Vault) -> Result<u64> {
     Ok(keys_to_delete.len() as u64)
 }
 
+/// Recomputes short-id content hashes and reaps orphaned/stale mappings under
+/// the pinned ARCH-0019 directions: `short_ids_reverse` (entity id ->
+/// `short_id ‖ content_hash`) is the entity-keyed source of truth; `short_ids`
+/// (`short_id ‖ content_hash` -> entity id) is repaired or pruned from it.
 fn recompute_short_id_hashes(vault: &Vault) -> Result<(u64, u64)> {
     let mut wtxn = vault.store.env.write_txn()?;
-    let mut updates = Vec::new();
-    let mut reverse_repairs = Vec::new();
-    let mut forward_deletes = Vec::new();
-    for entry in vault.store.short_ids.iter(&wtxn)? {
+
+    struct ShortIdHashUpdate {
+        reverse_key: Vec<u8>,
+        updated_value: Vec<u8>,
+        old_forward_key: Vec<u8>,
+        new_forward_key: Vec<u8>,
+    }
+
+    // Pass 1: walk the entity-keyed reverse rows. Refresh drifted content
+    // hashes (rewriting BOTH rows — the hash is part of the forward KEY),
+    // repair missing/stale forward rows, and reap rows whose backing entity
+    // record is gone or whose bytes are corrupt.
+    let mut hash_updates: Vec<ShortIdHashUpdate> = Vec::new();
+    // (forward key, entity id) rows to (re)write.
+    let mut forward_repairs: Vec<(Vec<u8>, Vec<u8>)> = Vec::new();
+    // (reverse key, paired forward key when recoverable) rows to reap.
+    let mut reverse_orphans: Vec<(Vec<u8>, Option<Vec<u8>>)> = Vec::new();
+
+    for entry in vault.store.short_ids_reverse.iter(&wtxn)? {
         let (key, value) = entry?;
 
-        if is_short_id_counter_entry(key, value) {
-            continue;
-        }
-
-        let (short_id, current_hash) = parse_short_id_value(value)?;
-        let Some(blob) = vault.store.entities.get(&wtxn, key)? else {
-            forward_deletes.push((key.to_vec(), short_id.as_bytes().to_vec()));
-            continue;
+        let id = match parse_entity_id(key, ERR_SHORT_IDS_REVERSE_KEY) {
+            Ok(id) => id,
+            // `parse_entity_id` returns `CorruptedIndex` on length mismatch
+            // and `InvalidKey` for reserved sentinel patterns. Both are
+            // corrupt reverse rows that must be pruned, not propagated.
+            Err(Error::CorruptedIndex(_)) | Err(Error::InvalidKey) => {
+                let forward_key = parse_short_id_value(value)
+                    .ok()
+                    .map(|(short_id, hash)| encode_short_id_forward_key(short_id, hash));
+                reverse_orphans.push((key.to_vec(), forward_key));
+                continue;
+            }
+            Err(other) => return Err(other),
         };
 
-        match vault
-            .store
-            .short_ids_reverse
-            .get(&wtxn, short_id.as_bytes())?
-        {
-            Some(reverse_id) if reverse_id == key => {}
-            _ => reverse_repairs.push((short_id.as_bytes().to_vec(), key.to_vec())),
-        }
+        let (short_id, current_hash) = match parse_short_id_value(value) {
+            Ok(parsed) => parsed,
+            Err(Error::CorruptedIndex(_)) => {
+                reverse_orphans.push((key.to_vec(), None));
+                continue;
+            }
+            Err(other) => return Err(other),
+        };
+        let current_forward_key = encode_short_id_forward_key(short_id, current_hash);
+
+        let Some(blob) = vault.store.entities.get(&wtxn, id.as_bytes())? else {
+            reverse_orphans.push((key.to_vec(), Some(current_forward_key)));
+            continue;
+        };
 
         if blob.len() < ENTITY_METADATA_HEADER_LEN {
             return Err(Error::InvalidKey);
@@ -281,60 +312,88 @@ fn recompute_short_id_hashes(vault: &Vault) -> Result<(u64, u64)> {
 
         let payload = &blob[ENTITY_METADATA_HEADER_LEN..];
         let new_hash = (xxh32(payload, 0) % 256) as u8;
-        if new_hash == current_hash {
+        if new_hash != current_hash {
+            let mut updated_value = Vec::with_capacity(short_id.len() + 1);
+            updated_value.extend_from_slice(short_id.as_bytes());
+            updated_value.push(new_hash);
+            let new_forward_key = encode_short_id_forward_key(short_id, new_hash);
+            hash_updates.push(ShortIdHashUpdate {
+                reverse_key: key.to_vec(),
+                updated_value,
+                old_forward_key: current_forward_key,
+                new_forward_key,
+            });
             continue;
         }
 
-        let mut updated_value = Vec::with_capacity(short_id.len() + 1);
-        updated_value.extend_from_slice(short_id.as_bytes());
-        updated_value.push(new_hash);
-        updates.push((key.to_vec(), updated_value));
+        match vault.store.short_ids.get(&wtxn, &current_forward_key)? {
+            Some(forward_id) if forward_id == key => {}
+            _ => forward_repairs.push((current_forward_key, key.to_vec())),
+        }
     }
 
-    for (key, value) in &updates {
-        vault.store.short_ids.put(&mut wtxn, key, value)?;
+    for update in &hash_updates {
+        vault
+            .store
+            .short_ids_reverse
+            .put(&mut wtxn, &update.reverse_key, &update.updated_value)?;
+        vault
+            .store
+            .short_ids
+            .delete(&mut wtxn, &update.old_forward_key)?;
+        vault
+            .store
+            .short_ids
+            .put(&mut wtxn, &update.new_forward_key, &update.reverse_key)?;
     }
-    for (short_id, id) in &reverse_repairs {
-        vault.store.short_ids_reverse.put(&mut wtxn, short_id, id)?;
+    for (forward_key, id) in &forward_repairs {
+        vault.store.short_ids.put(&mut wtxn, forward_key, id)?;
     }
-    for (key, short_id) in &forward_deletes {
-        vault.store.short_ids_reverse.delete(&mut wtxn, short_id)?;
-        vault.store.short_ids.delete(&mut wtxn, key)?;
+    for (reverse_key, forward_key) in &reverse_orphans {
+        if let Some(forward_key) = forward_key {
+            vault.store.short_ids.delete(&mut wtxn, forward_key)?;
+        }
+        vault
+            .store
+            .short_ids_reverse
+            .delete(&mut wtxn, reverse_key)?;
     }
 
-    let mut reverse_only_deletes = Vec::new();
-    for entry in vault.store.short_ids_reverse.iter(&wtxn)? {
-        let (short_id_bytes, id_bytes) = entry?;
-        let id = match parse_entity_id(id_bytes, ERR_SHORT_IDS_REVERSE_VALUE) {
+    // Pass 2: forward rows without a healthy reverse counterpart are orphans.
+    // Runs after pass-1 writes so repaired/refreshed rows are not re-pruned.
+    let mut forward_orphans = Vec::new();
+    for entry in vault.store.short_ids.iter(&wtxn)? {
+        let (key, value) = entry?;
+
+        // The forward KEY shares the `(short_id ‖ content_hash)` shape with
+        // the reverse VALUE; an unparsable key is a corrupt row to prune.
+        if parse_short_id_value(key).is_err() {
+            forward_orphans.push(key.to_vec());
+            continue;
+        }
+
+        let id = match parse_entity_id(value, ERR_SHORT_IDS_FORWARD_VALUE) {
             Ok(id) => id,
-            // `parse_entity_id` returns `CorruptedIndex` on length mismatch
-            // and `InvalidKey` for reserved sentinel patterns (e.g. an
-            // accidental short_id counter row). Both are corrupt reverse
-            // rows that must be pruned, not propagated.
             Err(Error::CorruptedIndex(_)) | Err(Error::InvalidKey) => {
-                reverse_only_deletes.push(short_id_bytes.to_vec());
+                forward_orphans.push(key.to_vec());
                 continue;
             }
             Err(other) => return Err(other),
         };
-        let Some(forward) = vault.store.short_ids.get(&wtxn, id.as_bytes())? else {
-            reverse_only_deletes.push(short_id_bytes.to_vec());
-            continue;
-        };
 
-        let (expected_short_id, _) = parse_short_id_value(forward)?;
-        if expected_short_id.as_bytes() != short_id_bytes {
-            reverse_only_deletes.push(short_id_bytes.to_vec());
+        match vault.store.short_ids_reverse.get(&wtxn, id.as_bytes())? {
+            Some(reverse_value) if reverse_value == key => {}
+            _ => forward_orphans.push(key.to_vec()),
         }
     }
-    for short_id in &reverse_only_deletes {
-        vault.store.short_ids_reverse.delete(&mut wtxn, short_id)?;
+    for forward_key in &forward_orphans {
+        vault.store.short_ids.delete(&mut wtxn, forward_key)?;
     }
 
     wtxn.commit()?;
     Ok((
-        updates.len() as u64,
-        (forward_deletes.len() + reverse_only_deletes.len()) as u64,
+        hash_updates.len() as u64,
+        (reverse_orphans.len() + forward_orphans.len()) as u64,
     ))
 }
 
@@ -422,13 +481,6 @@ fn decode_u64_opt(raw: Option<&[u8]>) -> Result<Option<u64>> {
     Ok(Some(u64::from_le_bytes(bytes)))
 }
 
-fn is_short_id_counter_entry(key: &[u8], value: &[u8]) -> bool {
-    key.len() == ENTITY_ID_LEN
-        && value.len() == SHORT_ID_COUNTER_LEN
-        && short_id_prefix(key[0]).is_ok()
-        && key[1..].iter().all(|&b| b == 0xFF)
-}
-
 #[cfg(test)]
 mod tests {
     use heed::types::Bytes;
@@ -438,7 +490,7 @@ mod tests {
         GRAPH_VERSION_KEY, MODEL_ID_KEY, TEMPORAL_LONG_INTERVALS_SCHEMA_VERSION_KEY,
         VECTOR_VERSION_KEY,
     };
-    use crate::types::{EdgeKind, HnswConfig, TimeRange, VaultConfig};
+    use crate::types::{ENTITY_ID_LEN, EdgeKind, HnswConfig, TimeRange, VaultConfig};
 
     fn test_config() -> VaultConfig {
         VaultConfig {
@@ -906,7 +958,7 @@ mod tests {
             let rtxn = vault.store.env.read_txn()?;
             let value = vault
                 .store
-                .short_ids
+                .short_ids_reverse
                 .get(&rtxn, id.as_bytes())?
                 .ok_or(Error::EntityNotFound)?;
             let (short_id, hash) = parse_short_id_value(value)?;
@@ -938,15 +990,33 @@ mod tests {
         assert_eq!(report.short_id_hashes_updated, 1);
         assert_eq!(report.orphan_short_ids_deleted, 0);
 
+        let new_hash = (xxh32(&new_payload, 0) % 256) as u8;
         let rtxn = vault.store.env.read_txn()?;
         let updated_value = vault
             .store
-            .short_ids
+            .short_ids_reverse
             .get(&rtxn, id.as_bytes())?
             .ok_or(Error::EntityNotFound)?;
         let (short_id_after, hash_after) = parse_short_id_value(updated_value)?;
         assert_eq!(short_id_after, short_id_before);
-        assert_eq!(hash_after, (xxh32(&new_payload, 0) % 256) as u8);
+        assert_eq!(hash_after, new_hash);
+
+        // The hash is part of the forward KEY: the stale forward row must be
+        // gone and the refreshed one must point back at the entity.
+        let stale_forward_key = encode_short_id_forward_key(&short_id_before, hash_before);
+        let fresh_forward_key = encode_short_id_forward_key(&short_id_before, new_hash);
+        assert!(
+            vault
+                .store
+                .short_ids
+                .get(&rtxn, &stale_forward_key)?
+                .is_none(),
+            "stale forward row must be reaped on hash refresh"
+        );
+        assert_eq!(
+            vault.store.short_ids.get(&rtxn, &fresh_forward_key)?,
+            Some(id.as_bytes().as_slice())
+        );
         Ok(())
     }
 
@@ -954,37 +1024,31 @@ mod tests {
     /// Each case mutates the vault, runs the maintenance pass, and verifies the
     /// orphan row(s) are gone.
     ///
-    /// Cases:
-    /// - `entity_row_deleted`: forward `short_ids[id]` row exists but its
-    ///   backing `entities[id]` row is gone — both forward and reverse rows
-    ///   must be reaped (`parse_short_id_value` mismatch path).
-    /// - `forward_row_deleted`: only the `short_ids[id]` forward row is
-    ///   gone, leaving a reverse-only orphan — the reverse row must be
-    ///   reaped (missing forward path).
-    /// - `invalid_key_reverse_value`: a bogus `short_ids_reverse[short_id]`
-    ///   row whose value matches a reserved sentinel pattern (`[0xFF; 16]`).
-    ///   `parse_entity_id` returns `Error::InvalidKey`, which the reverse-scan
-    ///   pass must treat as a corrupt row and prune — *not* propagate as an
-    ///   error. Exercises the `Err(InvalidKey)` arm at maintain.rs:308-320.
+    /// Cases (pinned ARCH-0019 directions — `short_ids_reverse` is keyed by
+    /// entity id, `short_ids` by `(short_id ‖ content_hash)`):
+    /// - `entity_row_deleted`: the entity-keyed `short_ids_reverse[id]` row
+    ///   exists but its backing `entities[id]` row is gone — both the reverse
+    ///   row and the paired forward row must be reaped.
+    /// - `reverse_row_deleted`: only the entity-keyed `short_ids_reverse[id]`
+    ///   row is gone, leaving a forward-only orphan — the forward
+    ///   `short_ids[(short_id ‖ hash)]` row must be reaped.
+    /// - `corrupt_forward_value`: a bogus forward row whose VALUE matches a
+    ///   reserved sentinel pattern (`[0xFF; 16]`). `parse_entity_id` returns
+    ///   `Error::InvalidKey`, which the forward-scan pass must treat as a
+    ///   corrupt row and prune — *not* propagate as an error.
     #[test]
     fn recompute_short_id_hashes_removes_orphans() -> Result<()> {
         /// What the case mutates after the legit entity has been committed.
-        enum Mutation {
-            /// Run a closure that mutates the vault and may return a follow-up
-            /// short_id key whose reverse row should be checked post-recompute.
-            /// `None` means the test asserts on the legit reverse row.
-            Fn(fn(&Vault, &EntityId) -> Result<Option<Vec<u8>>>),
-        }
+        /// May return a follow-up forward key whose row should be checked
+        /// post-recompute instead of the legit forward key.
+        type Mutation = fn(&Vault, &EntityId) -> Result<Option<Vec<u8>>>;
 
         struct Case {
             name: &'static str,
             mutate: Mutation,
-            /// Whether the legit forward `short_ids[id]` row should be reaped.
-            expect_forward_gone: bool,
-            /// Which reverse short_id should be absent after the pass. `None`
-            /// → assert the legit short_id; `Some(_)` → assert the mutator's
-            /// returned short_id.
-            expect_reverse_short_id_gone: Option<Vec<u8>>,
+            /// Whether the legit entity-keyed `short_ids_reverse[id]` row
+            /// should be reaped.
+            expect_reverse_gone: bool,
         }
 
         fn delete_entity_row(vault: &Vault, id: &EntityId) -> Result<Option<Vec<u8>>> {
@@ -993,53 +1057,51 @@ mod tests {
             wtxn.commit()?;
             Ok(None)
         }
-        fn delete_short_ids_row(vault: &Vault, id: &EntityId) -> Result<Option<Vec<u8>>> {
-            let mut wtxn = vault.store.env.write_txn()?;
-            vault.store.short_ids.delete(&mut wtxn, id.as_bytes())?;
-            wtxn.commit()?;
-            Ok(None)
-        }
-        /// Writes a `short_ids_reverse[bogus_short_id] = [0xFF; 16]` row.
-        /// `[0xFF; 16]` is a reserved sentinel pattern (see
-        /// `is_reserved_entity_id_bytes` in `types.rs`), so `parse_entity_id`
-        /// returns `Error::InvalidKey`. The reverse-scan in
-        /// `recompute_short_id_hashes` must treat that row as corrupt and
-        /// prune it, not propagate the error.
-        fn inject_invalid_key_reverse(vault: &Vault, _id: &EntityId) -> Result<Option<Vec<u8>>> {
-            // `cl-bogus99` is a synthetic short_id that won't collide with
-            // the legit row's value (UUIDv7 hex). The prefix `cl` matches
-            // entity_type 0 (Claim), which is what we batched above.
-            let bogus_short_id = b"cl-bogus99".to_vec();
-            let sentinel_value = [0xFF_u8; ENTITY_ID_LEN];
+        fn delete_reverse_row(vault: &Vault, id: &EntityId) -> Result<Option<Vec<u8>>> {
             let mut wtxn = vault.store.env.write_txn()?;
             vault
                 .store
                 .short_ids_reverse
-                .put(&mut wtxn, &bogus_short_id, &sentinel_value)?;
+                .delete(&mut wtxn, id.as_bytes())?;
             wtxn.commit()?;
-            Ok(Some(bogus_short_id))
+            Ok(None)
+        }
+        /// Writes a `short_ids[(bogus short_id ‖ hash)] = [0xFF; 16]` forward
+        /// row. `[0xFF; 16]` is a reserved sentinel pattern (see
+        /// `is_reserved_entity_id_bytes` in `types.rs`), so `parse_entity_id`
+        /// returns `Error::InvalidKey`. The forward-scan in
+        /// `recompute_short_id_hashes` must treat that row as corrupt and
+        /// prune it, not propagate the error.
+        fn inject_corrupt_forward_value(vault: &Vault, _id: &EntityId) -> Result<Option<Vec<u8>>> {
+            // `cl-bogus99` is a synthetic short_id that won't collide with
+            // the legit row (counter-issued `cl1`).
+            let bogus_forward_key = encode_short_id_forward_key("cl-bogus99", 7);
+            let sentinel_value = [0xFF_u8; ENTITY_ID_LEN];
+            let mut wtxn = vault.store.env.write_txn()?;
+            vault
+                .store
+                .short_ids
+                .put(&mut wtxn, &bogus_forward_key, &sentinel_value)?;
+            wtxn.commit()?;
+            Ok(Some(bogus_forward_key))
         }
 
         let cases: Vec<Case> = vec![
             Case {
                 name: "entity_row_deleted",
-                mutate: Mutation::Fn(delete_entity_row),
-                expect_forward_gone: true,
-                expect_reverse_short_id_gone: None,
+                mutate: delete_entity_row,
+                expect_reverse_gone: true,
             },
             Case {
-                name: "forward_row_deleted",
-                mutate: Mutation::Fn(delete_short_ids_row),
-                expect_forward_gone: false,
-                expect_reverse_short_id_gone: None,
+                name: "reverse_row_deleted",
+                mutate: delete_reverse_row,
+                expect_reverse_gone: true,
             },
             Case {
-                name: "invalid_key_reverse_value",
-                mutate: Mutation::Fn(inject_invalid_key_reverse),
-                // Legit forward row stays untouched.
-                expect_forward_gone: false,
-                // The bogus short_id is supplied by the mutator return value.
-                expect_reverse_short_id_gone: None,
+                name: "corrupt_forward_value",
+                mutate: inject_corrupt_forward_value,
+                // Legit reverse row stays untouched.
+                expect_reverse_gone: false,
             },
         ];
 
@@ -1054,19 +1116,17 @@ mod tests {
                 .put(&id, 1, test_time_range(100, 100), 101, b"payload")
                 .commit()?;
 
-            let legit_short_id = {
+            let legit_forward_key = {
                 let rtxn = vault.store.env.read_txn()?;
                 let value = vault
                     .store
-                    .short_ids
+                    .short_ids_reverse
                     .get(&rtxn, id.as_bytes())?
                     .ok_or(Error::EntityNotFound)?;
-                let (short_id, _) = parse_short_id_value(value)?;
-                short_id.to_owned()
+                value.to_vec()
             };
 
-            let Mutation::Fn(mutate) = case.mutate;
-            let mutator_short_id = mutate(&vault, &id)?;
+            let mutator_forward_key = (case.mutate)(&vault, &id)?;
 
             let report = vault.maintain().recompute_short_id_hashes().run()?;
             assert_eq!(
@@ -1079,31 +1139,37 @@ mod tests {
             );
 
             let rtxn = vault.store.env.read_txn()?;
-            if case.expect_forward_gone {
+            if case.expect_reverse_gone {
                 assert!(
-                    vault.store.short_ids.get(&rtxn, id.as_bytes())?.is_none(),
-                    "case {case_name}: forward short_ids row should be reaped"
+                    vault
+                        .store
+                        .short_ids_reverse
+                        .get(&rtxn, id.as_bytes())?
+                        .is_none(),
+                    "case {case_name}: entity-keyed short_ids_reverse row should be reaped"
                 );
             }
-            // Pick the short_id to check: explicit override > mutator return > legit.
-            let reverse_key: Vec<u8> = case
-                .expect_reverse_short_id_gone
-                .or(mutator_short_id)
-                .unwrap_or_else(|| legit_short_id.as_bytes().to_vec());
+            // Pick the forward key to check: mutator return > legit.
+            let forward_key: Vec<u8> = mutator_forward_key
+                .clone()
+                .unwrap_or_else(|| legit_forward_key.clone());
             assert!(
-                vault
-                    .store
-                    .short_ids_reverse
-                    .get(&rtxn, &reverse_key)?
-                    .is_none(),
-                "case {case_name}: reverse short_ids_reverse row should be reaped"
+                vault.store.short_ids.get(&rtxn, &forward_key)?.is_none(),
+                "case {case_name}: orphaned forward short_ids row should be reaped"
             );
+            if !case.expect_reverse_gone {
+                assert_eq!(
+                    vault.store.short_ids.get(&rtxn, &legit_forward_key)?,
+                    Some(id.as_bytes().as_slice()),
+                    "case {case_name}: legit forward row must survive"
+                );
+            }
         }
         Ok(())
     }
 
     #[test]
-    fn recompute_short_id_hashes_repairs_missing_reverse_mapping() -> Result<()> {
+    fn recompute_short_id_hashes_repairs_missing_forward_mapping() -> Result<()> {
         let temp_dir = tempfile::tempdir()?;
         let vault = Vault::open(temp_dir.path(), test_config())?;
         let id = entity(99);
@@ -1113,23 +1179,19 @@ mod tests {
             .put(&id, 1, test_time_range(100, 100), 101, b"payload")
             .commit()?;
 
-        let short_id = {
+        let forward_key = {
             let rtxn = vault.store.env.read_txn()?;
-            let value = vault
+            vault
                 .store
-                .short_ids
+                .short_ids_reverse
                 .get(&rtxn, id.as_bytes())?
-                .ok_or(Error::EntityNotFound)?;
-            let (short_id, _) = parse_short_id_value(value)?;
-            short_id.to_owned()
+                .ok_or(Error::EntityNotFound)?
+                .to_vec()
         };
 
         {
             let mut wtxn = vault.store.env.write_txn()?;
-            vault
-                .store
-                .short_ids_reverse
-                .delete(&mut wtxn, short_id.as_bytes())?;
+            vault.store.short_ids.delete(&mut wtxn, &forward_key)?;
             wtxn.commit()?;
         }
 
@@ -1139,17 +1201,14 @@ mod tests {
 
         let rtxn = vault.store.env.read_txn()?;
         assert_eq!(
-            vault
-                .store
-                .short_ids_reverse
-                .get(&rtxn, short_id.as_bytes())?,
+            vault.store.short_ids.get(&rtxn, &forward_key)?,
             Some(id.as_bytes().as_slice())
         );
         Ok(())
     }
 
     #[test]
-    fn recompute_short_id_hashes_repairs_stale_reverse_mapping() -> Result<()> {
+    fn recompute_short_id_hashes_repairs_stale_forward_mapping() -> Result<()> {
         let temp_dir = tempfile::tempdir()?;
         let vault = Vault::open(temp_dir.path(), test_config())?;
         let id = entity(100);
@@ -1160,24 +1219,22 @@ mod tests {
             .put(&id, 1, test_time_range(100, 100), 101, b"payload")
             .commit()?;
 
-        let short_id = {
+        let forward_key = {
             let rtxn = vault.store.env.read_txn()?;
-            let value = vault
+            vault
                 .store
-                .short_ids
+                .short_ids_reverse
                 .get(&rtxn, id.as_bytes())?
-                .ok_or(Error::EntityNotFound)?;
-            let (short_id, _) = parse_short_id_value(value)?;
-            short_id.to_owned()
+                .ok_or(Error::EntityNotFound)?
+                .to_vec()
         };
 
         {
             let mut wtxn = vault.store.env.write_txn()?;
-            vault.store.short_ids_reverse.put(
-                &mut wtxn,
-                short_id.as_bytes(),
-                wrong_id.as_bytes(),
-            )?;
+            vault
+                .store
+                .short_ids
+                .put(&mut wtxn, &forward_key, wrong_id.as_bytes())?;
             wtxn.commit()?;
         }
 
@@ -1185,10 +1242,7 @@ mod tests {
 
         let rtxn = vault.store.env.read_txn()?;
         assert_eq!(
-            vault
-                .store
-                .short_ids_reverse
-                .get(&rtxn, short_id.as_bytes())?,
+            vault.store.short_ids.get(&rtxn, &forward_key)?,
             Some(id.as_bytes().as_slice())
         );
         Ok(())
@@ -1211,7 +1265,7 @@ mod tests {
             let rtxn = vault.store.env.read_txn()?;
             let value = vault
                 .store
-                .short_ids
+                .short_ids_reverse
                 .get(&rtxn, id.as_bytes())?
                 .ok_or(Error::EntityNotFound)?;
             let (_, hash) = parse_short_id_value(value)?;
@@ -1256,6 +1310,9 @@ mod tests {
             .put(&id, 1, test_time_range(100, 100), 101, b"payload")
             .commit()?;
 
+        // `short_ids_reverse` is keyed by 16-byte entity ids; an 8-byte
+        // `b"deadbeef"` key is a corrupt row the reverse scan must prune
+        // (not propagate as an error).
         {
             let mut wtxn = vault.store.env.write_txn()?;
             vault
@@ -1345,7 +1402,7 @@ mod tests {
             let rtxn = vault.store.env.read_txn()?;
             let value = vault
                 .store
-                .short_ids
+                .short_ids_reverse
                 .get(&rtxn, a.as_bytes())?
                 .ok_or(Error::EntityNotFound)?;
             let (_, hash) = parse_short_id_value(value)?;

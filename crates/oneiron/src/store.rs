@@ -67,12 +67,14 @@
 //!
 //! # Compat-key homes (ONE-1097 owner decision: documented, not consolidated)
 //!
-//! `vault_meta` (#5) owns the storage/schema and text-index identity keys;
-//! `hnsw_meta` (#8) owns the vector-side compatibility keys (`model_id`,
-//! `hnsw_config`) alongside HNSW runtime metadata (`entry_point`, `count`,
-//! graph/vector version counters). Consolidating the vector compat keys into
-//! `vault_meta` would be a storage migration with no behavioral win, so the
-//! split is intentional and documented here instead.
+//! `vault_meta` (#5) owns the storage/schema and text-index identity keys,
+//! plus the per-type short-id counters (`b"sid_counter:" ‖ type_byte` → u64
+//! LE, see [`SHORT_ID_COUNTER_KEY_PREFIX`]); `hnsw_meta` (#8) owns the
+//! vector-side compatibility keys (`model_id`, `hnsw_config`) alongside HNSW
+//! runtime metadata (`entry_point`, `count`, graph/vector version counters).
+//! Consolidating the vector compat keys into `vault_meta` would be a storage
+//! migration with no behavioral win, so the split is intentional and
+//! documented here instead.
 //!
 //! [`StorageAbiVersionChanged`]: crate::error::Error::StorageAbiVersionChanged
 //! [`StorageSchemaVersionChanged`]: crate::error::Error::StorageSchemaVersionChanged
@@ -97,7 +99,7 @@ use crate::types::{EdgeKind, EntityId, VaultConfig};
 
 // Contract-pinned at 32 by ARCH-0019/ARCH-0031: 25 named DBs plus headroom.
 pub const MAX_DBS: u32 = 32;
-pub const STORAGE_ABI_VERSION: u16 = 2;
+pub const STORAGE_ABI_VERSION: u16 = 3;
 pub(crate) const STORAGE_ABI_VERSION_KEY: &[u8] = b"storage_abi_version";
 pub const STORAGE_SCHEMA_VERSION: u16 = 1;
 pub(crate) const STORAGE_SCHEMA_VERSION_KEY: &[u8] = b"schema_version";
@@ -126,6 +128,26 @@ const ERR_VECTOR_WRITE_REQUIRES_EMBEDDING_MODEL: &str =
     "embedding model is required before writing vectors";
 static LMDB_DATABASE_OPEN_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 static OPEN_STORE_PATHS: OnceLock<Mutex<HashSet<PathBuf>>> = OnceLock::new();
+
+/// `vault_meta` key prefix for the per-type short-id counters (M2-5 /
+/// ONE-1102, storage ABI v3). The full key is the 12-byte ASCII prefix
+/// `b"sid_counter:"` followed by the raw entity type byte (13 bytes total);
+/// the value is the last issued counter as u64 LE. These counters previously
+/// lived as `[type_byte, 0xFF x15]` sentinel rows inside `short_ids`; they
+/// were relocated so `short_ids` holds only the contract's manifest rows
+/// (ARCH-0019 row n3: `(short_id, content_hash)` -> `entity_id`).
+pub(crate) const SHORT_ID_COUNTER_KEY_PREFIX: &[u8] = b"sid_counter:";
+pub(crate) const SHORT_ID_COUNTER_KEY_LEN: usize = 13;
+const _: () = assert!(SHORT_ID_COUNTER_KEY_PREFIX.len() + 1 == SHORT_ID_COUNTER_KEY_LEN);
+
+/// Encodes the `vault_meta` key for the short-id counter of `entity_type`.
+/// See [`SHORT_ID_COUNTER_KEY_PREFIX`] for the documented key scheme.
+pub(crate) fn short_id_counter_key(entity_type: u8) -> [u8; SHORT_ID_COUNTER_KEY_LEN] {
+    let mut key = [0u8; SHORT_ID_COUNTER_KEY_LEN];
+    key[..SHORT_ID_COUNTER_KEY_PREFIX.len()].copy_from_slice(SHORT_ID_COUNTER_KEY_PREFIX);
+    key[SHORT_ID_COUNTER_KEY_PREFIX.len()] = entity_type;
+    key
+}
 
 // BM25F / analyzer schema v2 keys. All live in the new `vault_meta` DB.
 pub(crate) const TEXT_INDEX_SCHEMA_VERSION_KEY: &[u8] = b"text_index_schema_version";
