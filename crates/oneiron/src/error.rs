@@ -1,4 +1,5 @@
 use crate::types::{EntityId, VadComponent};
+use crate::claim::ClaimLifecycleStatus;
 
 /// Result type used throughout the crate.
 pub type Result<T> = std::result::Result<T, Error>;
@@ -39,6 +40,9 @@ pub enum ErrorKind {
     ProvenanceOnStructuralEdge,
     ActorClassMismatch,
     InvalidProvenanceBody,
+    ClaimAlreadyClosed,
+    ClaimSelfSupersession,
+    ProvenanceClaimLifecycle,
     CycleDetected,
     IncompatibleAnalyzer,
     Bm25FieldSchemaChanged,
@@ -189,6 +193,28 @@ pub enum Error {
     /// validation (the 7-field snake_case ABI). Nothing was written.
     #[error("invalid edge.provenance body: {0}")]
     InvalidProvenanceBody(&'static str),
+    /// A claim lifecycle transition (`supersede_claim` / `retract_claim`)
+    /// targeted a claim whose `life` status is not `active`. Superseded and
+    /// retracted claims are closed history (ARCH-0003: all non-current
+    /// states are still stored — claims are never silently deleted) and
+    /// cannot transition again. Nothing was written.
+    #[error("claim already closed: lifecycle status is {status:?}")]
+    ClaimAlreadyClosed { status: ClaimLifecycleStatus },
+    /// `supersede_claim` was called with `new_id == old_id` — a claim
+    /// cannot supersede itself. Nothing was written.
+    #[error("claim cannot supersede itself")]
+    ClaimSelfSupersession,
+    /// A generic claim lifecycle op (`supersede_claim` / `retract_claim`)
+    /// targeted a reserved-namespace (`edge.*`) provenance Claim. Provenance
+    /// Claims drive the subject edge's derived hot flags, so their lifecycle
+    /// is owned exclusively by the edge-provenance lifecycle API (the
+    /// `put_edge_provenance` / `retract_edge_provenance` surface), which
+    /// re-stamps the edge whenever the Claim changes. The generic ops reject
+    /// instead of bypassing that re-stamp. Nothing was written.
+    #[error(
+        "claim predicate {predicate:?} is a reserved edge.* provenance claim; use the edge-provenance lifecycle API (put_edge_provenance / retract_edge_provenance), not the generic claim lifecycle ops"
+    )]
+    ProvenanceClaimLifecycle { predicate: String },
     /// Tree operation would create a cycle.
     #[error("cycle detected in tree hierarchy")]
     CycleDetected,
@@ -313,6 +339,9 @@ impl Error {
             Self::ProvenanceOnStructuralEdge { .. } => ErrorKind::ProvenanceOnStructuralEdge,
             Self::ActorClassMismatch { .. } => ErrorKind::ActorClassMismatch,
             Self::InvalidProvenanceBody(_) => ErrorKind::InvalidProvenanceBody,
+            Self::ClaimAlreadyClosed { .. } => ErrorKind::ClaimAlreadyClosed,
+            Self::ClaimSelfSupersession => ErrorKind::ClaimSelfSupersession,
+            Self::ProvenanceClaimLifecycle { .. } => ErrorKind::ProvenanceClaimLifecycle,
             Self::CycleDetected => ErrorKind::CycleDetected,
             Self::IncompatibleAnalyzer { .. } => ErrorKind::IncompatibleAnalyzer,
             Self::Bm25FieldSchemaChanged => ErrorKind::Bm25FieldSchemaChanged,
