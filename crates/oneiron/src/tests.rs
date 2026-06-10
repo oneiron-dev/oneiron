@@ -1604,14 +1604,16 @@ fn short_id_dbs_match_pinned_manifest_rows_raw_layout() -> Result<()> {
     let id = EntityId::now();
     let data = b"short-id-layout-spec";
 
+    // Type 1 (TURN) fixture: keeps this raw-layout spec off the CLAIM type
+    // byte, whose body bytes are validated by the claim-body ABI.
     vault
         .batch()
-        .put(&id, 0, test_time_range(7, 7), 8, data)
+        .put(&id, 1, test_time_range(7, 7), 8, data)
         .commit()?;
 
-    // content_hash = xxh32(data, 0) % 256; first issued CLAIM short id = "cl1".
+    // content_hash = xxh32(data, 0) % 256; first issued TURN short id = "tn1".
     let expected_hash = content_hash(data);
-    let mut expected_pair = b"cl1".to_vec();
+    let mut expected_pair = b"tn1".to_vec();
     expected_pair.push(expected_hash);
 
     let rtxn = vault.store.env.read_txn()?;
@@ -1661,15 +1663,18 @@ fn short_id_dbs_match_pinned_manifest_rows_raw_layout() -> Result<()> {
 #[test]
 fn short_id_counters_live_in_vault_meta_not_short_ids() -> Result<()> {
     let (_dir, vault) = open_test_vault();
-    let claim_a = EntityId::now();
-    let claim_b = EntityId::now();
-    let turn = EntityId::now();
+    let turn_a = EntityId::now();
+    let turn_b = EntityId::now();
+    let session = EntityId::now();
 
+    // Types 1 (TURN) and 2 (SESSION) exercise two distinct per-type counters
+    // while keeping fixtures off the CLAIM type byte, whose body bytes are
+    // validated by the claim-body ABI.
     vault
         .batch()
-        .put(&claim_a, 0, test_time_range(1, 1), 2, b"claim-a")
-        .put(&claim_b, 0, test_time_range(3, 3), 4, b"claim-b")
-        .put(&turn, 1, test_time_range(5, 5), 6, b"turn-a")
+        .put(&turn_a, 1, test_time_range(1, 1), 2, b"turn-a")
+        .put(&turn_b, 1, test_time_range(3, 3), 4, b"turn-b")
+        .put(&session, 2, test_time_range(5, 5), 6, b"session-a")
         .commit()?;
 
     let rtxn = vault.store.env.read_txn()?;
@@ -1689,18 +1694,18 @@ fn short_id_counters_live_in_vault_meta_not_short_ids() -> Result<()> {
 
     // Documented key scheme, pinned as literal bytes: 12-byte ASCII prefix
     // "sid_counter:" + raw type byte; value = last issued counter u64 LE.
-    let claim_counter = vault
-        .store
-        .vault_meta
-        .get(&rtxn, b"sid_counter:\x00")?
-        .expect("CLAIM counter must live in vault_meta");
-    assert_eq!(claim_counter, 2_u64.to_le_bytes());
     let turn_counter = vault
         .store
         .vault_meta
         .get(&rtxn, b"sid_counter:\x01")?
         .expect("TURN counter must live in vault_meta");
-    assert_eq!(turn_counter, 1_u64.to_le_bytes());
+    assert_eq!(turn_counter, 2_u64.to_le_bytes());
+    let session_counter = vault
+        .store
+        .vault_meta
+        .get(&rtxn, b"sid_counter:\x02")?
+        .expect("SESSION counter must live in vault_meta");
+    assert_eq!(session_counter, 1_u64.to_le_bytes());
     Ok(())
 }
 
@@ -1715,16 +1720,19 @@ fn short_id_content_hash_is_xxh32_of_data_mod_256() -> Result<()> {
     let data = b"short-id-hash-pin";
     const EXPECTED_CONTENT_HASH: u8 = 105;
 
+    // Type 1 (TURN) fixture: the hash formula is type-independent, and this
+    // keeps the fixture off the CLAIM type byte, whose body bytes are
+    // validated by the claim-body ABI. First issued TURN short id = "tn1".
     vault
         .batch()
-        .put(&id, 0, test_time_range(1, 1), 2, data)
+        .put(&id, 1, test_time_range(1, 1), 2, data)
         .commit()?;
 
     let (_, hash) = decode_short_id_value(&read_short_id_value(&vault, &id)?)?;
     assert_eq!(hash, EXPECTED_CONTENT_HASH);
 
     // The same byte is embedded in the forward KEY.
-    let mut forward_key = b"cl1".to_vec();
+    let mut forward_key = b"tn1".to_vec();
     forward_key.push(EXPECTED_CONTENT_HASH);
     let rtxn = vault.store.env.read_txn()?;
     assert_eq!(
