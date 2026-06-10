@@ -1833,7 +1833,14 @@ pub(crate) fn write_text_index_manifest(
     Ok(())
 }
 
-fn parse_edge_record(key: &[u8], value: &[u8]) -> Result<EdgeInfo> {
+/// Parses one `edges_out` / `edges_in` row into an [`EdgeInfo`], failing
+/// closed: a key that is not `EDGE_KEY_LEN` bytes, an unknown edge-kind
+/// byte, a reserved/invalid peer id, or a value that does not decode as a
+/// valid layout for the kind (12/24/26 B per ARCH-0034) is
+/// `Error::CorruptedIndex("edge record")`. Shared with the context-pack
+/// read path so every reader classifies the same bytes identically
+/// (ONE-1101 / pinned decision D9).
+pub(crate) fn parse_edge_record(key: &[u8], value: &[u8]) -> Result<EdgeInfo> {
     if key.len() != EDGE_KEY_LEN {
         return Err(Error::CorruptedIndex("edge record"));
     }
