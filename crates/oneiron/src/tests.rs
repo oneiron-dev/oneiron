@@ -1560,15 +1560,19 @@ fn batch_put_short_id_round_trips_both_directions() -> Result<()> {
     let id = EntityId::now();
     let data = b"reverse";
 
+    // TURN (type 1), not CLAIM (type 0): the parallel ONE-1104 branch validates
+    // all type-0 bodies (claim ABI), and merge rehearsal twice caught one of its
+    // bulk 0->1 migration hunks silently mis-anchoring into this test. Seeding
+    // type 1 keeps the round-trip purpose intact and removes the landmine.
     vault
         .batch()
-        .put(&id, 0, test_time_range(100, 100), 101, data)
+        .put(&id, 1, test_time_range(100, 100), 101, data)
         .commit()?;
 
     // Reverse direction (row n4): entity_id -> (short_id, content_hash).
     let short_id_value = read_short_id_value(&vault, &id)?;
     let (short_id, hash) = decode_short_id_value(&short_id_value)?;
-    assert_eq!(short_id, "cl1");
+    assert_eq!(short_id, "tn1");
     assert_eq!(hash, content_hash(data));
 
     // Forward direction (row n3): (short_id, content_hash) -> entity_id.
