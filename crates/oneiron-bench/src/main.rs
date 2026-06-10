@@ -117,7 +117,10 @@ fn run_hot_term_ingest(total_docs: usize) -> ExitCode {
         );
     }
     let elapsed = start.elapsed().as_secs_f64();
-    println!("  total: {elapsed:.3}s ({:.0} docs/s)", total_docs as f64 / elapsed);
+    println!(
+        "  total: {elapsed:.3}s ({:.0} docs/s)",
+        total_docs as f64 / elapsed
+    );
 
     match vault.search_text("hotterm", 1) {
         Ok(hits) if !hits.is_empty() => ExitCode::SUCCESS,

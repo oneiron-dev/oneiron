@@ -9,11 +9,17 @@
 //! entry carries a small per-field TF map so the scorer can combine
 //! channels into a single `x_t,d` per the BM25F formula.
 //!
-//! Storage (plan §4.1):
-//! * `text_postings` value: `[(entity_id(16) | field_count(u8) |
-//!   (field_id_u16_be | tf_u32_le)*)]×N`
+//! Storage (plan §4.1, storage ABI v4 / ONE-299):
+//! * `text_postings` is a `DUP_SORT` database. Key: term bytes. Each
+//!   duplicate data item is ONE posting entry: `entity_id(16) |
+//!   field_count(u8) | (field_id_u16_be | tf_u32_le)*`. LMDB keeps the
+//!   duplicate items bytewise sorted, so entries order by entity-id
+//!   prefix; indexing appends a dup without reading the existing list
+//!   (O(1) per term instead of read-modify-rewrite O(list)), deindexing
+//!   deletes exactly one dup, and `df(term)` = the dup count.
 //! * `text_forward` value: `[(term_len_u16_le | term_bytes |
-//!   field_id_u16_be | tf_u32_le)*]`
+//!   field_id_u16_be)*]` — the dead `tf` u32 was dropped in ABI v4;
+//!   deindex only needs the (term, field) set.
 //! * `text_meta` value: `[doc_len_u32_le | field_count_u32_le]` where
 //!   `doc_len` is the sum of [`Token::length_increment`] across all emitted
 //!   tokens (for debug / status output; scoring uses the per-field lengths)
@@ -53,7 +59,12 @@ const TOTAL_DOCS_KEY: [u8; 16] = [0x00; 16];
 /// `text_bm25_field_stats` (plan §4.1).
 const TOTAL_LENGTH_KEY: [u8; 16] = [0xFF; 16];
 /// Version of the binary value layout used in `text_postings`.
-pub(crate) const POSTINGS_VALUE_FORMAT_VERSION: u16 = 1;
+/// * v1 = concatenated multi-entry blob per term (pre-ONE-299).
+/// * v2 = ONE-299 / storage ABI v4: `DUP_SORT` single-entry duplicate
+///   items per (term, entity); `text_forward` records carry no `tf`.
+pub(crate) const POSTINGS_VALUE_FORMAT_VERSION: u16 = 2;
+/// Byte width of the `field_id_u16_be` trailer of a forward record.
+const FORWARD_FIELD_ID_LEN: usize = 2;
 
 // === Rank profile configuration ===
 
@@ -244,14 +255,18 @@ pub(crate) fn index_text(
         }
     }
 
-    // === Postings: append one (entity_id, field_tfs) entry per term ===
+    // === Postings: append ONE duplicate item per term (DUP_SORT) ===
+    // The append never reads the existing posting list — that is the
+    // ONE-299 contract (O(1) per term on a hot term instead of the v1
+    // read-modify-rewrite of the whole blob).
+    let mut entry_buf: Vec<u8> = Vec::new();
     for (term, fields_tf) in &per_term {
-        let mut posting = read_posting(store, wtxn, term)?;
-        encode_posting_entry(id, fields_tf, &mut posting)?;
-        store.text_postings.put(wtxn, term.as_bytes(), &posting)?;
+        entry_buf.clear();
+        encode_posting_entry(id, fields_tf, &mut entry_buf)?;
+        store.text_postings.put(wtxn, term.as_bytes(), &entry_buf)?;
     }
 
-    // === Forward index: (term_len, term, field_id, tf) records ===
+    // === Forward index: (term_len, term, field_id) records ===
     let forward_bytes = encode_forward(&per_term)?;
     store
         .text_forward
@@ -358,24 +373,32 @@ pub(crate) fn deindex_text(store: &Store, wtxn: &mut RwTxn<'_>, id: &EntityId) -
 
     for term in per_term.keys() {
         // Forward index says this term exists for this doc; an absent
-        // posting row is corruption, not a normal "term gone" condition.
-        // Silently skipping would let `total_docs--` fire below while the
-        // already-missing posting bytes remain unaccounted for.
-        let Some(posting) = store.text_postings.get(wtxn, term.as_bytes())? else {
-            return Err(corrupted(
-                "forward term references missing posting row during deindex",
-            ));
+        // posting row (or a row without this entity's dup) is corruption,
+        // not a normal "term gone" condition. Silently skipping would let
+        // `total_docs--` fire below while the already-missing posting
+        // bytes remain unaccounted for.
+        let entry = match find_posting_dup(store, wtxn, term, id)? {
+            PostingLookup::Found(entry) => entry,
+            PostingLookup::RowMissing => {
+                return Err(corrupted(
+                    "forward term references missing posting row during deindex",
+                ));
+            }
+            PostingLookup::EntityMissing => {
+                return Err(corrupted(
+                    "forward term missing entity in posting during deindex",
+                ));
+            }
         };
-        let (retained, removed) = strip_entity_from_posting(posting, id)?;
-        if !removed {
+        // Exactly one duplicate item is removed; LMDB drops the term key
+        // itself once its last duplicate is deleted.
+        if !store
+            .text_postings
+            .delete_one_duplicate(wtxn, term.as_bytes(), &entry)?
+        {
             return Err(corrupted(
-                "forward term missing entity in posting during deindex",
+                "posting entry vanished mid-transaction during deindex",
             ));
-        }
-        if retained.is_empty() {
-            store.text_postings.delete(wtxn, term.as_bytes())?;
-        } else {
-            store.text_postings.put(wtxn, term.as_bytes(), &retained)?;
         }
     }
 
@@ -454,11 +477,25 @@ pub(crate) fn search_text(
     let mut scores: HashMap<EntityId, f64> = HashMap::new();
 
     for term in unique_terms {
-        let Some(posting) = store.text_postings.get(rtxn, term.as_bytes())? else {
+        let Some(dups) = store.text_postings.get_duplicates(rtxn, term.as_bytes())? else {
             continue;
         };
 
-        let entries = decode_posting(posting)?;
+        // One duplicate item per (term, entity): df = the dup count. LMDB
+        // yields duplicates bytewise sorted, so entity ids must arrive
+        // strictly ascending — an equal or descending neighbour means two
+        // dup items share one entity (df drift) and scoring fails closed.
+        let mut entries: Vec<PostingEntry> = Vec::new();
+        for item in dups {
+            let (_, dup) = item?;
+            let entry = decode_posting_entry(dup)?;
+            if let Some(prev) = entries.last()
+                && prev.id.as_bytes() >= entry.id.as_bytes()
+            {
+                return Err(corrupted("duplicate posting entries for one entity"));
+            }
+            entries.push(entry);
+        }
         if entries.is_empty() {
             continue;
         }
@@ -597,47 +634,94 @@ struct PostingEntry {
     fields: Vec<(u16, u32)>,
 }
 
-fn decode_posting(raw: &[u8]) -> Result<Vec<PostingEntry>> {
-    if raw.is_empty() {
-        return Err(corrupted("empty posting row"));
-    }
-    let mut entries = Vec::new();
-    let mut i = 0;
-    while i < raw.len() {
-        if i + ENTITY_ID_LEN + 1 > raw.len() {
-            return Err(corrupted("posting truncated at entry header"));
+/// Outcome of looking up the posting duplicate item for one (term, entity).
+enum PostingLookup {
+    /// The term key does not exist in `text_postings` at all.
+    RowMissing,
+    /// The term key exists but carries no duplicate for the entity.
+    EntityMissing,
+    /// The single duplicate item, returned as owned bytes so the read
+    /// borrow ends before `delete_one_duplicate` mutates the transaction.
+    Found(Vec<u8>),
+}
+
+/// Finds the posting duplicate item for `id` under `term` with a
+/// prefix-ranged cursor walk: LMDB keeps duplicate items bytewise sorted
+/// and every item starts with the 16-byte entity id, so the scan stops at
+/// the first item whose prefix exceeds `id`. Fails closed when two
+/// duplicate items share one entity prefix — that breaks the
+/// one-dup-per-(term, entity) invariant and would drift `df`.
+fn find_posting_dup(
+    store: &Store,
+    txn: &RoTxn<'_>,
+    term: &str,
+    id: &EntityId,
+) -> Result<PostingLookup> {
+    let Some(dups) = store.text_postings.get_duplicates(txn, term.as_bytes())? else {
+        return Ok(PostingLookup::RowMissing);
+    };
+    let mut found: Option<Vec<u8>> = None;
+    for item in dups {
+        let (_, dup) = item?;
+        if dup.len() < ENTITY_ID_LEN + 1 {
+            return Err(corrupted("posting entry truncated at header"));
         }
-        let id_bytes: [u8; ENTITY_ID_LEN] = raw[i..i + ENTITY_ID_LEN]
-            .try_into()
-            .map_err(|_| corrupted("posting entry id slice"))?;
-        let id = EntityId::from_bytes(id_bytes)
-            .map_err(|_| corrupted("posting entry has invalid id"))?;
-        let field_count = raw[i + ENTITY_ID_LEN] as usize;
-        if field_count == 0 {
-            return Err(corrupted("posting entry has zero field count"));
-        }
-        let body_start = i + ENTITY_ID_LEN + 1;
-        let body_end = body_start + field_count * FIELD_TF_LEN;
-        if body_end > raw.len() {
-            return Err(corrupted("posting truncated at field-tf body"));
-        }
-        let mut fields = Vec::with_capacity(field_count);
-        for chunk in raw[body_start..body_end].chunks_exact(FIELD_TF_LEN) {
-            let fid = u16::from_be_bytes([chunk[0], chunk[1]]);
-            let tf = u32::from_le_bytes(
-                chunk[2..6]
-                    .try_into()
-                    .map_err(|_| corrupted("posting tf slice"))?,
-            );
-            if tf == 0 {
-                return Err(corrupted("posting entry has zero term frequency"));
+        match dup[..ENTITY_ID_LEN].cmp(id.as_bytes()) {
+            std::cmp::Ordering::Less => {}
+            std::cmp::Ordering::Equal => {
+                if found.is_some() {
+                    return Err(corrupted("duplicate posting entries for one entity"));
+                }
+                found = Some(dup.to_vec());
+                // Keep scanning one step: an adjacent item with the same
+                // prefix is the duplicate-entity corruption case above.
             }
-            fields.push((fid, tf));
+            std::cmp::Ordering::Greater => break,
         }
-        entries.push(PostingEntry { id, fields });
-        i = body_end;
     }
-    Ok(entries)
+    Ok(match found {
+        Some(entry) => PostingLookup::Found(entry),
+        None => PostingLookup::EntityMissing,
+    })
+}
+
+/// Decodes ONE posting duplicate item. The length must match the declared
+/// `field_count` exactly — trailing bytes (e.g. a concatenated v1-style
+/// multi-entry blob) are corruption, not extra entries.
+fn decode_posting_entry(raw: &[u8]) -> Result<PostingEntry> {
+    if raw.len() < ENTITY_ID_LEN + 1 {
+        return Err(corrupted("posting entry truncated at header"));
+    }
+    let id_bytes: [u8; ENTITY_ID_LEN] = raw[..ENTITY_ID_LEN]
+        .try_into()
+        .map_err(|_| corrupted("posting entry id slice"))?;
+    let id =
+        EntityId::from_bytes(id_bytes).map_err(|_| corrupted("posting entry has invalid id"))?;
+    let field_count = raw[ENTITY_ID_LEN] as usize;
+    if field_count == 0 {
+        return Err(corrupted("posting entry has zero field count"));
+    }
+    let body_start = ENTITY_ID_LEN + 1;
+    let Some(body_len) = field_count
+        .checked_mul(FIELD_TF_LEN)
+        .filter(|len| body_start + len == raw.len())
+    else {
+        return Err(corrupted("posting entry length mismatches field count"));
+    };
+    let mut fields = Vec::with_capacity(field_count);
+    for chunk in raw[body_start..body_start + body_len].chunks_exact(FIELD_TF_LEN) {
+        let fid = u16::from_be_bytes([chunk[0], chunk[1]]);
+        let tf = u32::from_le_bytes(
+            chunk[2..6]
+                .try_into()
+                .map_err(|_| corrupted("posting tf slice"))?,
+        );
+        if tf == 0 {
+            return Err(corrupted("posting entry has zero term frequency"));
+        }
+        fields.push((fid, tf));
+    }
+    Ok(PostingEntry { id, fields })
 }
 
 fn encode_posting_entry(
@@ -659,23 +743,25 @@ fn encode_posting_entry(
     Ok(())
 }
 
-// TODO(schema-bump): tf byte still written/skipped by encode_forward/decode_forward
-// for on-disk LMDB compat. Drop when bm25 postings format version is next bumped.
+#[derive(Debug)]
 struct ForwardRecord {
     term: String,
     field_id: u16,
 }
 
+/// Encodes the forward row as `[(term_len_u16_le | term_bytes |
+/// field_id_u16_be)*]`. The per-field `tf` u32 that v1 carried was dead on
+/// the read side (deindex only needs the term/field set) and was dropped
+/// in storage ABI v4 (ONE-299).
 fn encode_forward(per_term: &BTreeMap<String, BTreeMap<u16, u32>>) -> Result<Vec<u8>> {
     let mut out = Vec::new();
     for (term, fields) in per_term {
         let len = u16::try_from(term.len())
             .map_err(|_| Error::ArithmeticOverflow("bm25 forward term length"))?;
-        for (fid, tf) in fields {
+        for fid in fields.keys() {
             out.extend_from_slice(&len.to_le_bytes());
             out.extend_from_slice(term.as_bytes());
             out.extend_from_slice(&fid.to_be_bytes());
-            out.extend_from_slice(&tf.to_le_bytes());
         }
     }
     Ok(out)
@@ -697,7 +783,7 @@ fn decode_forward(raw: &[u8]) -> Result<Vec<ForwardRecord>> {
             return Err(corrupted("forward index has zero-length term"));
         }
         let term_end = i + term_len;
-        if term_end + FIELD_TF_LEN > raw.len() {
+        if term_end + FORWARD_FIELD_ID_LEN > raw.len() {
             return Err(corrupted("forward index truncated at term body"));
         }
         let term = str::from_utf8(&raw[i..term_end])
@@ -705,15 +791,7 @@ fn decode_forward(raw: &[u8]) -> Result<Vec<ForwardRecord>> {
             .map_err(|_| corrupted("forward index has non-utf8 term"))?;
         i = term_end;
         let field_id = u16::from_be_bytes([raw[i], raw[i + 1]]);
-        let tf = u32::from_le_bytes(
-            raw[i + 2..i + 6]
-                .try_into()
-                .map_err(|_| corrupted("forward index tf slice"))?,
-        );
-        if tf == 0 {
-            return Err(corrupted("forward index has zero tf"));
-        }
-        i += FIELD_TF_LEN;
+        i += FORWARD_FIELD_ID_LEN;
         records.push(ForwardRecord { term, field_id });
     }
     Ok(records)
@@ -804,29 +882,6 @@ fn write_total_docs(store: &Store, wtxn: &mut RwTxn<'_>, total_docs: u32) -> Res
         .text_meta
         .put(wtxn, &TOTAL_DOCS_KEY, &total_docs.to_le_bytes())?;
     Ok(())
-}
-
-fn read_posting(store: &Store, txn: &RoTxn<'_>, term: &str) -> Result<Vec<u8>> {
-    match store.text_postings.get(txn, term.as_bytes())? {
-        Some([]) => Err(corrupted("empty posting row")),
-        Some(bytes) => Ok(bytes.to_vec()),
-        None => Ok(Vec::new()),
-    }
-}
-
-fn strip_entity_from_posting(posting: &[u8], id: &EntityId) -> Result<(Vec<u8>, bool)> {
-    let entries = decode_posting(posting)?;
-    let mut out = Vec::with_capacity(posting.len());
-    let mut removed = false;
-    for entry in entries {
-        if &entry.id == id {
-            removed = true;
-            continue;
-        }
-        let fields: BTreeMap<u16, u32> = entry.fields.into_iter().collect();
-        encode_posting_entry(&entry.id, &fields, &mut out)?;
-    }
-    Ok((out, removed))
 }
 
 fn corrupted(message: &'static str) -> Error {
@@ -1436,37 +1491,41 @@ mod tests {
         }
         fn setup_unknown_field_id(vault: &Vault, _id: &EntityId) -> Result<()> {
             let mut wtxn = vault.store.env.write_txn()?;
-            let mut posting = vault
+            // DUP_SORT: `get` returns the first duplicate item, which is
+            // the doc's single posting entry here. Swap it for a copy
+            // whose field id no schema covers.
+            let original = vault
                 .store
                 .text_postings
                 .get(&wtxn, b"alpha")?
                 .expect("alpha posting written")
                 .to_vec();
+            let mut patched = original.clone();
             let fid_offset = ENTITY_ID_LEN + 1;
-            posting[fid_offset..fid_offset + 2].copy_from_slice(&9999_u16.to_be_bytes());
+            patched[fid_offset..fid_offset + 2].copy_from_slice(&9999_u16.to_be_bytes());
+            assert!(
+                vault
+                    .store
+                    .text_postings
+                    .delete_one_duplicate(&mut wtxn, b"alpha", &original)?
+            );
             vault
                 .store
                 .text_postings
-                .put(&mut wtxn, b"alpha", &posting)?;
+                .put(&mut wtxn, b"alpha", &patched)?;
             wtxn.commit()?;
             Ok(())
         }
         fn setup_df_exceeds_total_docs(vault: &Vault, _id: &EntityId) -> Result<()> {
             let mut wtxn = vault.store.env.write_txn()?;
-            let mut posting = vault
-                .store
-                .text_postings
-                .get(&wtxn, b"alpha")?
-                .expect("alpha posting written")
-                .to_vec();
+            // Appending a phantom entity as a second duplicate drives the
+            // dup count (df) above total_docs.
             let phantom = EntityId::now();
             let mut fields = std::collections::BTreeMap::new();
             fields.insert(AnalyzerChannel::Surface.field_id(), 1);
-            encode_posting_entry(&phantom, &fields, &mut posting)?;
-            vault
-                .store
-                .text_postings
-                .put(&mut wtxn, b"alpha", &posting)?;
+            let mut entry = Vec::new();
+            encode_posting_entry(&phantom, &fields, &mut entry)?;
+            vault.store.text_postings.put(&mut wtxn, b"alpha", &entry)?;
             wtxn.commit()?;
             Ok(())
         }
@@ -1621,22 +1680,18 @@ mod tests {
             id: &EntityId,
             wtxn: &mut heed::RwTxn<'_>,
         ) -> Result<()> {
-            // Caller pre-inserted a second doc "other" so the posting has >1 entry.
-            let posting = vault
-                .store
-                .text_postings
-                .get(wtxn, b"alpha")?
-                .expect("alpha posting written");
-            let entries = decode_posting(posting)?;
-            let mut patched = Vec::new();
-            for entry in entries {
-                if entry.id == *id {
-                    continue;
-                }
-                let fields = entry.fields.into_iter().collect::<BTreeMap<_, _>>();
-                encode_posting_entry(&entry.id, &fields, &mut patched)?;
-            }
-            vault.store.text_postings.put(wtxn, b"alpha", &patched)?;
+            // Caller pre-inserted a second doc "other" so the posting key
+            // survives after this doc's duplicate item is removed.
+            let entry = match find_posting_dup(&vault.store, wtxn, "alpha", id)? {
+                PostingLookup::Found(entry) => entry,
+                _ => panic!("alpha posting dup for doc must exist"),
+            };
+            assert!(
+                vault
+                    .store
+                    .text_postings
+                    .delete_one_duplicate(wtxn, b"alpha", &entry)?
+            );
             Ok(())
         }
         fn setup_partial_field_lengths(
@@ -1751,7 +1806,7 @@ mod tests {
         posting.push(1);
         posting.extend_from_slice(&AnalyzerChannel::Surface.field_id().to_be_bytes());
         posting.extend_from_slice(&0_u32.to_le_bytes());
-        let err = decode_posting(&posting).unwrap_err();
+        let err = decode_posting_entry(&posting).unwrap_err();
         assert!(matches!(err, Error::CorruptedIndex(_)));
     }
 
@@ -1760,13 +1815,28 @@ mod tests {
         let id = EntityId::now();
         let mut posting = id.as_bytes().to_vec();
         posting.push(1); // claim one field but supply no bytes
-        let err = decode_posting(&posting).unwrap_err();
+        let err = decode_posting_entry(&posting).unwrap_err();
         assert!(matches!(err, Error::CorruptedIndex(_)));
+    }
+
+    /// A v1-style concatenated multi-entry blob must NOT decode as a
+    /// single duplicate item — exactly one entry per dup is the ONE-299
+    /// invariant, so trailing bytes are corruption.
+    #[test]
+    fn posting_decode_rejects_concatenated_entries() -> Result<()> {
+        let mut fields = BTreeMap::new();
+        fields.insert(AnalyzerChannel::Surface.field_id(), 1_u32);
+        let mut blob = Vec::new();
+        encode_posting_entry(&EntityId::now(), &fields, &mut blob)?;
+        encode_posting_entry(&EntityId::now(), &fields, &mut blob)?;
+        let err = decode_posting_entry(&blob).unwrap_err();
+        assert!(matches!(err, Error::CorruptedIndex(_)));
+        Ok(())
     }
 
     #[test]
     fn decode_rejects_empty_rows() {
-        assert!(decode_posting(&[]).is_err());
+        assert!(decode_posting_entry(&[]).is_err());
         assert!(decode_forward(&[]).is_err());
         assert!(decode_field_lengths(&[]).is_err());
     }
@@ -1785,6 +1855,32 @@ mod tests {
         Ok(())
     }
 
+    /// ABI v4 forward record layout, literal bytes: `term_len_u16_le |
+    /// term_bytes | field_id_u16_be` — and nothing else. An
+    /// implementation still writing the dead v1 `tf` u32 FAILS here.
+    #[test]
+    fn forward_record_layout_drops_tf() -> Result<()> {
+        let mut m: BTreeMap<String, BTreeMap<u16, u32>> = BTreeMap::new();
+        m.entry("ab".into()).or_default().insert(3, 7);
+        let bytes = encode_forward(&m)?;
+        assert_eq!(bytes, vec![2, 0, b'a', b'b', 0, 3]);
+
+        let back = decode_forward(&bytes)?;
+        assert_eq!(back.len(), 1);
+        assert_eq!(back[0].term, "ab");
+        assert_eq!(back[0].field_id, 3);
+        Ok(())
+    }
+
+    /// A v1-shaped forward row (with the trailing `tf` u32 per record)
+    /// must fail decoding, not silently misparse.
+    #[test]
+    fn forward_decode_rejects_v1_records_with_tf() {
+        let v1_record = [2, 0, b'a', b'b', 0, 3, 7, 0, 0, 0];
+        let err = decode_forward(&v1_record).unwrap_err();
+        assert!(matches!(err, Error::CorruptedIndex(_)));
+    }
+
     #[test]
     fn field_lengths_roundtrip() -> Result<()> {
         let mut m = HashMap::new();
@@ -1794,6 +1890,149 @@ mod tests {
         let bytes = encode_field_lengths(&m);
         let back = decode_field_lengths(&bytes)?;
         assert_eq!(back, m);
+        Ok(())
+    }
+
+    fn collect_posting_dups(vault: &Vault, term: &[u8]) -> Result<Vec<Vec<u8>>> {
+        let rtxn = vault.store.env.read_txn()?;
+        let Some(dups) = vault.store.text_postings.get_duplicates(&rtxn, term)? else {
+            return Ok(Vec::new());
+        };
+        let mut items = Vec::new();
+        for item in dups {
+            let (_, dup) = item?;
+            items.push(dup.to_vec());
+        }
+        Ok(items)
+    }
+
+    /// ONE-299 AC1: `text_postings` holds one DUP_SORT duplicate item per
+    /// (term, entity), bytewise-sorted so items order by entity-id
+    /// prefix, and each item decodes standalone. A v1-style
+    /// implementation that concatenates all entries under one value
+    /// would yield a single dup here and FAIL the count assertion.
+    #[test]
+    fn postings_store_one_sorted_dup_item_per_entity() -> Result<()> {
+        let temp_dir = tempfile::tempdir()?;
+        let vault = Vault::open(temp_dir.path(), test_config())?;
+        let mut ids = [EntityId::now(), EntityId::now(), EntityId::now()];
+        for id in &ids {
+            put_text_doc(&vault, id, "shared")?;
+        }
+        ids.sort_by(|a, b| a.as_bytes().cmp(b.as_bytes()));
+
+        let items = collect_posting_dups(&vault, b"shared")?;
+        assert_eq!(items.len(), 3, "one dup item per (term, entity)");
+        for (item, id) in items.iter().zip(&ids) {
+            assert_eq!(
+                &item[..ENTITY_ID_LEN],
+                id.as_bytes(),
+                "dup items must sort by entity-id prefix",
+            );
+            let entry = decode_posting_entry(item)?;
+            assert_eq!(entry.id, *id);
+        }
+        Ok(())
+    }
+
+    /// ONE-299 AC1 literal bytes: one dup item is exactly
+    /// `entity_id(16) | field_count(u8) | field_id_u16_be | tf_u32_le`.
+    /// "apple" stems to "appl", so the `apple` posting carries only the
+    /// Surface channel (field id 0) with tf 2.
+    #[test]
+    fn posting_dup_item_literal_layout() -> Result<()> {
+        let temp_dir = tempfile::tempdir()?;
+        let vault = Vault::open(temp_dir.path(), test_config())?;
+        let id = EntityId::now();
+        put_text_doc(&vault, &id, "apple apple")?;
+
+        let items = collect_posting_dups(&vault, b"apple")?;
+        assert_eq!(items.len(), 1);
+        let mut expected = id.as_bytes().to_vec();
+        expected.push(1); // field_count
+        expected.extend_from_slice(&AnalyzerChannel::Surface.field_id().to_be_bytes());
+        expected.extend_from_slice(&2_u32.to_le_bytes()); // tf, little-endian
+        assert_eq!(items[0], expected);
+        Ok(())
+    }
+
+    /// ONE-299 AC2: deindex deletes exactly ONE duplicate item — sibling
+    /// entities' items survive byte-identical — and deleting the last
+    /// duplicate removes the term key itself.
+    #[test]
+    fn deindex_deletes_exactly_one_dup_item() -> Result<()> {
+        let temp_dir = tempfile::tempdir()?;
+        let vault = Vault::open(temp_dir.path(), test_config())?;
+        let mut ids = [EntityId::now(), EntityId::now(), EntityId::now()];
+        for id in &ids {
+            put_text_doc(&vault, id, "shared")?;
+        }
+        ids.sort_by(|a, b| a.as_bytes().cmp(b.as_bytes()));
+
+        let before = collect_posting_dups(&vault, b"shared")?;
+        assert_eq!(before.len(), 3);
+
+        assert!(vault.delete_entity(&ids[1])?);
+        let after = collect_posting_dups(&vault, b"shared")?;
+        assert_eq!(after.len(), 2);
+        assert_eq!(
+            after[0], before[0],
+            "untouched dup must stay byte-identical"
+        );
+        assert_eq!(
+            after[1], before[2],
+            "untouched dup must stay byte-identical"
+        );
+
+        assert!(vault.delete_entity(&ids[0])?);
+        assert!(vault.delete_entity(&ids[2])?);
+        let rtxn = vault.store.env.read_txn()?;
+        assert!(
+            vault.store.text_postings.get(&rtxn, b"shared")?.is_none(),
+            "term key must disappear with its last duplicate",
+        );
+        Ok(())
+    }
+
+    /// Two duplicate items sharing one entity prefix violate the
+    /// one-dup-per-(term, entity) invariant (df would drift). Both the
+    /// search path and the deindex prefix scan must fail closed.
+    #[test]
+    fn duplicate_entity_dup_items_fail_closed() -> Result<()> {
+        let temp_dir = tempfile::tempdir()?;
+        let vault = Vault::open(temp_dir.path(), test_config())?;
+        let id = EntityId::now();
+        put_text_doc(&vault, &id, "alpha")?;
+
+        {
+            let mut wtxn = vault.store.env.write_txn()?;
+            let mut fields = BTreeMap::new();
+            fields.insert(AnalyzerChannel::Surface.field_id(), 9_u32);
+            let mut second = Vec::new();
+            encode_posting_entry(&id, &fields, &mut second)?;
+            vault
+                .store
+                .text_postings
+                .put(&mut wtxn, b"alpha", &second)?;
+            wtxn.commit()?;
+        }
+
+        let rtxn = vault.store.env.read_txn()?;
+        let err = search_text(
+            &vault.store,
+            &rtxn,
+            &MultilingualAnalyzer::portable(),
+            &Bm25Config::default(),
+            "alpha",
+            10,
+        )
+        .unwrap_err();
+        assert!(matches!(err, Error::CorruptedIndex(_)));
+        drop(rtxn);
+
+        let mut wtxn = vault.store.env.write_txn()?;
+        let err = deindex_text(&vault.store, &mut wtxn, &id).unwrap_err();
+        assert!(matches!(err, Error::CorruptedIndex(_)));
         Ok(())
     }
 }
