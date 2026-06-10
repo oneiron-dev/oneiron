@@ -847,12 +847,15 @@ mod tests {
         let src = EntityId::now();
         let healthy = EntityId::now();
         let tgt = EntityId::now();
+        // Non-claim type byte (TURN = 1): this test is about EDGE rows, so the
+        // seeded source must stay clear of the type-0 CLAIM body validation
+        // (D17/D18) — its body is opaque at the storage layer.
         put_text_entity(
             &vault,
             &src,
-            0,
+            1,
             "alpha",
-            serde_json::json!({"pred": "x", "val": "y"}),
+            serde_json::json!({"text": "alpha"}),
         )?;
         put_text_entity(
             &vault,
@@ -895,12 +898,14 @@ mod tests {
         let root = EntityId::now();
         let neighbor = EntityId::now();
         let tgt = EntityId::now();
+        // Non-claim type byte (TURN = 1): keeps this edge-row fixture clear of
+        // the type-0 CLAIM body validation (D17/D18).
         put_text_entity(
             &vault,
             &root,
-            0,
+            1,
             "root",
-            serde_json::json!({"pred": "root", "val": "root"}),
+            serde_json::json!({"text": "root"}),
         )?;
         put_text_entity(
             &vault,
@@ -940,12 +945,14 @@ mod tests {
 
         let src = EntityId::now();
         let tgt = EntityId::now();
+        // Non-claim type byte (TURN = 1): keeps this edge-row fixture clear of
+        // the type-0 CLAIM body validation (D17/D18).
         put_text_entity(
             &vault,
             &src,
-            0,
+            1,
             "alpha",
-            serde_json::json!({"pred": "x", "val": "y"}),
+            serde_json::json!({"text": "alpha"}),
         )?;
 
         let supports_key =
