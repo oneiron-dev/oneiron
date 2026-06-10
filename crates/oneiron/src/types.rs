@@ -306,10 +306,11 @@ impl EntityId {
 
     /// Creates an identifier from raw bytes, rejecting reserved sentinel IDs.
     ///
-    /// The all-zero, all-`0xFF`, and known `[entity_type, 0xFF×15]` short-id
-    /// counter sentinel patterns are reserved at the public `EntityId` layer.
-    /// Other byte patterns remain valid IDs even if other LMDB indexes use
-    /// similar-looking internal sentinel keys.
+    /// The all-zero, all-`0xFF`, and `[entity_type, 0xFF×15]` patterns are
+    /// reserved at the public `EntityId` layer. The latter were the pre-ABI-v3
+    /// short-id counter sentinel rows (counters now live in `vault_meta`, see
+    /// `store::SHORT_ID_COUNTER_KEY_PREFIX`); the reservation is kept so the
+    /// legacy patterns can never be hydrated as live entity IDs.
     pub fn from_bytes(bytes: [u8; 16]) -> crate::error::Result<Self> {
         if is_reserved_entity_id_bytes(&bytes) {
             return Err(crate::error::Error::InvalidKey);
@@ -353,10 +354,11 @@ impl EntityId {
 
 /// Parses a `&[u8]` slice into an `EntityId`, returning
 /// `Error::CorruptedIndex(context)` if the length is wrong, or
-/// `Error::InvalidKey` if the bytes match a reserved sentinel pattern (used
-/// by short_id counters and similar internal rows that must not be hydrated
-/// as live entities). Used by index readers (HNSW neighbor keys, vector keys,
-/// short_id reverse values) where a malformed key is on-disk corruption.
+/// `Error::InvalidKey` if the bytes match a reserved sentinel pattern
+/// (legacy short_id counter rows and similar internal patterns that must not
+/// be hydrated as live entities). Used by index readers (HNSW neighbor keys,
+/// vector keys, `short_ids_reverse` keys, `short_ids` forward values) where a
+/// malformed key is on-disk corruption.
 ///
 /// **Note:** callers needing contextual `CorruptedIndex` for diagnostics
 /// should `.map_err` the `InvalidKey` variant. The HNSW read path does

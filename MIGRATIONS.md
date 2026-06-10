@@ -70,3 +70,28 @@ Pre-fix development vaults created by a non-sync build may have only 24 named
 databases because `sync_state` was not created. Those vaults are rejected by
 the storage ABI gate under v2. Oneiron is pre-launch, so no migration runner is
 provided; recreate affected development vaults.
+
+## M2-5 / ONE-1102: short_ids / short_ids_reverse direction swap + counter relocation
+
+`STORAGE_ABI_VERSION=3`. The two short-id databases now match the pinned
+ARCH-0019 manifest rows byte-for-byte:
+
+* `short_ids` (row n3) is keyed `(short_id bytes ‖ content_hash u8)` with the
+  16-byte entity id as the value.
+* `short_ids_reverse` (row n4) is keyed by the 16-byte entity id with
+  `(short_id bytes ‖ content_hash u8)` as the value.
+
+Both directions were previously swapped, and the old short-id-keyed direction
+carried no content hash. The content hash stays `xxh32(data, 0) % 256` (u8);
+because it is now part of the forward KEY, content updates delete the stale
+forward row and write a refreshed one (the short id itself remains stable).
+
+Per-type short-id counters no longer live as `[type_byte, 0xFF x15]` sentinel
+rows inside `short_ids`. They move to `vault_meta` under the documented key
+scheme `b"sid_counter:" ‖ type_byte` (13 bytes) with the last issued counter
+as a u64 LE value.
+
+Vaults written under ABI v2 are rejected fail-closed at open with
+`StorageAbiVersionChanged` before any short-id bytes are decoded. Oneiron is
+pre-launch; per the M0-4 precedent no migration runner is provided — recreate
+affected development vaults.
