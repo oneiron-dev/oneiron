@@ -3375,6 +3375,11 @@ fn open_gate_matrix_fails_closed() -> Result<()> {
     fn prep_hnsw_metric_structure_flip(path: &Path) -> Result<()> {
         let vault = Vault::open(path, test_config())?;
         let mut raw = read_hnsw_config_record(&vault)?;
+        assert!(
+            raw.len() >= 27,
+            "hnsw config record too short ({}) to flip metric/structure bytes",
+            raw.len()
+        );
         raw[25] = 2;
         raw[26] = 2;
         write_hnsw_config_record(&vault, &raw)
@@ -3608,6 +3613,17 @@ fn open_gate_matrix_fails_closed() -> Result<()> {
             case.expected_kind,
             "case {}: second open hit a different gate (partial state or \
              leaked path registration?): {second:?}",
+            case.name
+        );
+        // For cases whose expected kind is InvalidConfig, a leaked path
+        // registration would ALSO surface as InvalidConfig("vault path is
+        // already open …") and pass the kind check above — defeating the
+        // no-partial-handle guarantee. Assert the re-open re-hit the GATE,
+        // not a leaked registration.
+        assert!(
+            !second.to_string().contains("vault path is already open"),
+            "case {}: second open leaked a path registration instead of \
+             re-hitting the gate: {second:?}",
             case.name
         );
     }
