@@ -19,7 +19,21 @@ const TEMPORAL_KEY_LEN: usize = 24;
 const LONG_INTERVAL_VALUE_LEN: usize = 8;
 const TEMPORAL_FLOOR: f64 = 0.05;
 const SECONDS_PER_DAY_F64: f64 = 86_400.0;
-const RECENCY_DECAY_TAU_SECS: f64 = 28.0 * SECONDS_PER_DAY_F64;
+
+/// Default recency half-life in days (ARCH-0004 `RECENCY_DECAY`,
+/// 28-day default). The recency signal's source timestamp is the
+/// entity's `learned_at` (v1). This named constant is the engine
+/// default: the temporal pipeline's recency decay constant
+/// (`RECENCY_DECAY_TAU_SECS = 28.0 * 86_400`, the ARCH-0004 §4.5 table
+/// value) derives from it, and callers of
+/// [`PipelineBuilder::boost_recency`] can pass it explicitly.
+pub const DEFAULT_RECENCY_HALF_LIFE_DAYS: f32 = 28.0;
+
+/// ARCH-0004 §4.5 table value (`28.0 * 86_400`), derived from
+/// [`DEFAULT_RECENCY_HALF_LIFE_DAYS`]. The temporal scorer applies it as
+/// the decay constant in `exp(-age / tau)` — existing behavior, kept
+/// unchanged.
+const RECENCY_DECAY_TAU_SECS: f64 = DEFAULT_RECENCY_HALF_LIFE_DAYS as f64 * SECONDS_PER_DAY_F64;
 const ALPHA_BASE: f64 = 0.7;
 const ALPHA_RANGE: f64 = 0.3;
 const ALPHA_TAU_SECS: f64 = 90.0 * SECONDS_PER_DAY_F64;
@@ -118,6 +132,7 @@ pub struct PipelineBuilder<'a> {
     vault: &'a Vault,
     vector_search: Option<(Vec<f32>, usize)>,
     text_search: Option<(String, usize)>,
+    rank_profile: Option<crate::types::Bm25RankProfile>,
     phonetic_search: Option<Vec<String>>,
     temporal_search: Option<TemporalSearchConfig>,
     ppr_search: Option<(Vec<EntityId>, u32)>,
@@ -140,6 +155,7 @@ impl<'a> PipelineBuilder<'a> {
             vault,
             vector_search: None,
             text_search: None,
+            rank_profile: None,
             phonetic_search: None,
             temporal_search: None,
             ppr_search: None,
@@ -164,6 +180,17 @@ impl<'a> PipelineBuilder<'a> {
 
     pub fn search_text(mut self, query: &str, limit: usize) -> Self {
         self.text_search = Some((query.to_owned(), limit));
+        self
+    }
+
+    /// Applies a scoring-only BM25F rank profile to the text signal
+    /// (ARCH-0031: Okapi default, `Plus { delta }` and per-channel
+    /// weight / `b` are non-reindexing options). The profile is
+    /// validated fail-closed when the pipeline runs; an invalid
+    /// parameter returns [`crate::Error::InvalidRankProfile`], even when
+    /// no text search is configured.
+    pub fn rank_profile(mut self, profile: crate::types::Bm25RankProfile) -> Self {
+        self.rank_profile = Some(profile);
         self
     }
 
@@ -335,6 +362,14 @@ impl<'a> PipelineBuilder<'a> {
     }
 
     pub fn run(self) -> Result<Vec<ScoredEntity>> {
+        // Resolve the rank profile before anything else: an invalid
+        // profile is a caller bug and fails closed even when no text
+        // search would consume it on this run.
+        let bm25_config = match self.rank_profile.as_ref() {
+            Some(profile) => profile.to_bm25_config()?,
+            None => crate::bm25::Bm25Config::default(),
+        };
+
         if self.text_search.is_some() {
             self.vault.ensure_text_index_trusted()?;
         }
@@ -371,7 +406,7 @@ impl<'a> PipelineBuilder<'a> {
                     &self.vault.store,
                     &rtxn,
                     &self.vault.analyzer,
-                    &crate::bm25::Bm25Config::default(),
+                    &bm25_config,
                     query,
                     *limit,
                 )?;
@@ -1406,6 +1441,17 @@ mod tests {
 
     fn approx_eq(left: f32, right: f32, eps: f32) -> bool {
         (left - right).abs() <= eps
+    }
+
+    /// ARCH-0004 §4.5: the recency default is a named 28-day constant
+    /// (`RECENCY_DECAY`, source timestamp = `learned_at` v1), and the
+    /// temporal scorer's decay constant is the table-pinned
+    /// `28.0 * 86_400 = 2_419_200` seconds derived from it.
+    #[test]
+    fn default_recency_half_life_is_28_days() {
+        assert_eq!(DEFAULT_RECENCY_HALF_LIFE_DAYS, 28.0);
+        assert_eq!(RECENCY_DECAY_TAU_SECS, 2_419_200.0);
+        assert_eq!(RECENCY_DECAY_TAU_SECS, 28.0 * 86_400.0);
     }
 
     #[test]
