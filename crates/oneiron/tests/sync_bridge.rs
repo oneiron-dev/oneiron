@@ -17,7 +17,7 @@ use oneiron::sync::transport::{
 };
 use oneiron::sync::types::WindowKey;
 use oneiron::sync::window::{self, LoadedWindow};
-use oneiron::types::{EdgeKind, ENTITY_TYPE_REDACTION_AUDIT, TimeRange, Vad};
+use oneiron::types::{ENTITY_TYPE_REDACTION_AUDIT, EdgeKind, TimeRange, Vad};
 use oneiron::{DeleteReason, EntityId, HnswConfig, Vault, VaultConfig};
 
 fn test_config() -> VaultConfig {
@@ -756,7 +756,16 @@ fn redaction_audit_receipt_survives_crdt_sync_round_trip() {
     // Seed a non-CLAIM subject (TURN = type 1) with a learned_at well outside
     // the receipt's window, then hard-delete it to author the receipt.
     vault_a
-        .put_entity(&subject, 1, TimeRange { start: 301, end: 301 }, 301, b"forget-me")
+        .put_entity(
+            &subject,
+            1,
+            TimeRange {
+                start: 301,
+                end: 301,
+            },
+            301,
+            b"forget-me",
+        )
         .unwrap();
     let outcome = vault_a
         .delete_entity_with_reason(&subject, DeleteReason::UserHardDelete)
