@@ -19,9 +19,10 @@ use crate::claim::{
     is_reserved_predicate, validate_claim_body_bytes,
 };
 use crate::deletion::{
-    DeleteEntityOutcome, DeleteReason, HARD_ERASE_SWEEP_PREFIX, LAST_HARD_ERASE_SWEEP_SEQ_KEY,
-    RedactionReceiptInput, RedactionScope, decode_hard_erase_sweep_seq,
-    encode_hard_erase_sweep_job, encode_hard_erase_sweep_key, encode_redaction_audit_receipt,
+    DeleteEntityOutcome, DeleteReason, HARD_ERASE_SWEEP_PREFIX, HardEraseSweepExtras,
+    LAST_HARD_ERASE_SWEEP_SEQ_KEY, RedactionReceiptInput, RedactionScope,
+    decode_hard_erase_sweep_seq, encode_hard_erase_sweep_job, encode_hard_erase_sweep_key,
+    encode_redaction_audit_receipt,
 };
 use crate::error::{Error, Result};
 use crate::limits::{
@@ -30,9 +31,9 @@ use crate::limits::{
 use crate::provenance::{
     EdgeProvenanceClaimBody, EdgeRef, PREDICATE_EDGE_PROVENANCE, ProvenancePrecedence,
     close_record_for_supersession, decode_actor_class_evidence, decode_edge_provenance_body,
-    derive_confirmation_status, encode_actor_class_evidence, encode_edge_provenance_value,
-    restamp_edge_flags, retract_record, validate_actor_class, validate_edge_provenance_value,
-    winner_index,
+    derive_confirmation_status, downgrade_edge_to_bare, encode_actor_class_evidence,
+    encode_edge_provenance_value, restamp_edge_flags, retract_record, validate_actor_class,
+    validate_edge_provenance_value, winner_index,
 };
 use crate::store::{
     DB_MANIFEST, HnswCompatibilityState, MODEL_ID_KEY, STORAGE_ABI_VERSION_KEY,
@@ -973,18 +974,47 @@ impl Vault {
     }
 
     /// Enumerates the LIVE (`life` = active) `edge.provenance` Claims for
-    /// `subject`, via the inbound `claim_of` edges of the subject edge's
-    /// SOURCE entity (D12). Non-claim sources, other predicates, claims of
-    /// OTHER EdgeRefs, and closed claims are skipped; corrupt rows fail
-    /// closed. `exclude` drops the claim currently being re-put.
+    /// `subject` — the live cohort the D14 winner stamp is chosen from. Thin
+    /// wrapper over [`Self::edge_provenance_claims_in_txn`].
     fn live_edge_provenance_claims_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
         subject: &EdgeRef,
         exclude: Option<&EntityId>,
     ) -> Result<Vec<StoredProvenanceClaim>> {
+        self.edge_provenance_claims_in_txn(txn, subject, exclude, ClaimLifecycleStatus::Active)
+    }
+
+    /// Enumerates the RETRACTED `edge.provenance` Claims for `subject` — the
+    /// surviving WITHDRAWN truth the edge's retracted dampening flag caches.
+    /// The D16 delete-refresh consults this when NO active Claim survives, to
+    /// decide whether the deleted Claim's EdgeRef still has a retracted
+    /// truth-Claim to KEEP the 26 B retracted stamp for (else 24 B bare). Thin
+    /// wrapper over [`Self::edge_provenance_claims_in_txn`].
+    fn retracted_edge_provenance_claims_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        subject: &EdgeRef,
+        exclude: Option<&EntityId>,
+    ) -> Result<Vec<StoredProvenanceClaim>> {
+        self.edge_provenance_claims_in_txn(txn, subject, exclude, ClaimLifecycleStatus::Retracted)
+    }
+
+    /// Enumerates the `edge.provenance` Claims for `subject` whose wrapping
+    /// Claim `life` equals `lifecycle`, via the inbound `claim_of` edges of
+    /// the subject edge's SOURCE entity (D12). Non-claim sources, other
+    /// predicates, claims of OTHER EdgeRefs, bodiless SoftErase shells, and
+    /// claims of any other lifecycle are skipped; corrupt rows fail closed.
+    /// `exclude` drops the claim currently being re-put or deleted.
+    fn edge_provenance_claims_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        subject: &EdgeRef,
+        exclude: Option<&EntityId>,
+        lifecycle: ClaimLifecycleStatus,
+    ) -> Result<Vec<StoredProvenanceClaim>> {
         let prefix = edge_kind_prefix(&subject.source, EdgeKind::ClaimOf);
-        let mut live = Vec::new();
+        let mut matched = Vec::new();
         for (scanned, entry) in self.store.edges_in.prefix_iter(txn, &prefix)?.enumerate() {
             if scanned >= MAX_EDGE_QUERY_RESULTS {
                 return Err(Error::IndexOverflow("live provenance claims"));
@@ -1000,6 +1030,16 @@ impl Vault {
             let header =
                 EntityMetadataHeader::parse(raw).ok_or(Error::CorruptedIndex("entity header"))?;
             if header.entity_type != ENTITY_TYPE_CLAIM {
+                continue;
+            }
+            if raw.len() == ENTITY_METADATA_HEADER_LEN {
+                // An ARCH-0038 SoftErase scrubbed this Claim's body but kept
+                // its structural edges. A bodiless 25 B Claim shell is a
+                // tombstone, never live — skip it. Safe because EVERY local
+                // SoftErase (the user_delete branch AND the gdpr/policy
+                // pre-purge step) commits the D16 edge refresh in the SAME
+                // transaction that scrubs the body, so a shell can never
+                // coexist with a stale subject-edge stamp.
                 continue;
             }
             let wrapper =
@@ -1018,12 +1058,12 @@ impl Vault {
             if EdgeRef::new(source, kind, target) != *subject {
                 continue;
             }
-            if wrapper.lifecycle != ClaimLifecycleStatus::Active {
+            if wrapper.lifecycle != lifecycle {
                 continue;
             }
             let record = decode_edge_provenance_body(&wrapper.value)?;
             let actor_class = decode_actor_class_evidence(wrapper.evidence.as_ref())?;
-            live.push(StoredProvenanceClaim {
+            matched.push(StoredProvenanceClaim {
                 id: claim_id,
                 occurred_start: header.occurred_start,
                 learned_at: header.learned_at,
@@ -1033,7 +1073,7 @@ impl Vault {
                 actor_class,
             });
         }
-        Ok(live)
+        Ok(matched)
     }
 
     /// Retrieves an entity blob by ID.
@@ -1070,11 +1110,32 @@ impl Vault {
             return self.delete_entity_without_header(id, reason, requested_at);
         };
 
+        // ARCH-0038 DELETE interplay: an `edge.provenance` Claim's subject
+        // EdgeRef and sweep refs are only readable PRE-purge (SoftErase
+        // truncates the payload to the 25 B header) — capture them now.
+        // `None` for every non-Claim / non-provenance entity: zero new
+        // behavior on those paths.
+        let captured = self.capture_provenance_delete(id)?;
+
         if !reason.active_store_hard_purge_v1() {
             // ARCH-0038's CRDT tombstone drives destructive HardErase replay.
             // `user_delete` is a local SoftErase shell in M0-6; cross-device
             // soft-delete propagation is deferred to ONE-1090 (M4).
-            let existed = self.soft_erase_active_store(id)?;
+            let mut wtxn = self.store.env.write_txn()?;
+            let (existed, had_vector) = self.soft_erase_active_store_in_txn(&mut wtxn, id)?;
+            if had_vector {
+                crate::hnsw::increment_vector_version(&self.store, &mut wtxn)?;
+            }
+            // D16: SoftErase tombstones the Claim, and "the derived edge
+            // flag follows the Claim" — refresh in the SAME transaction.
+            if existed && let Some(captured) = &captured {
+                self.refresh_subject_edge_after_claim_delete_in_txn(
+                    &mut wtxn,
+                    id,
+                    &captured.subject,
+                )?;
+            }
+            wtxn.commit()?;
             return Ok(DeleteEntityOutcome {
                 existed,
                 receipt_id: None,
@@ -1089,7 +1150,27 @@ impl Vault {
             reason,
             DeleteReason::GdprDelete | DeleteReason::PolicyDelete
         ) {
-            let _ = self.soft_erase_active_store(id)?;
+            // The SoftErase scrubs the truth-Claim's body — the ONLY carrier
+            // of the subject EdgeRef (D12) — so the D16 edge refresh MUST
+            // commit atomically with it, mirroring the user_delete branch
+            // above. Committing the SoftErase alone first would leave a
+            // crash window in which a stale 26 B flag outlives its
+            // truth-Claim and a RETRY cannot heal it (capture sees the
+            // bodiless shell ⇒ `None`). The purge txn below re-runs the
+            // refresh as an idempotent second pass.
+            let mut wtxn = self.store.env.write_txn()?;
+            let (existed, had_vector) = self.soft_erase_active_store_in_txn(&mut wtxn, id)?;
+            if had_vector {
+                crate::hnsw::increment_vector_version(&self.store, &mut wtxn)?;
+            }
+            if existed && let Some(captured) = &captured {
+                self.refresh_subject_edge_after_claim_delete_in_txn(
+                    &mut wtxn,
+                    id,
+                    &captured.subject,
+                )?;
+            }
+            wtxn.commit()?;
             unix_seconds_now()
         } else {
             tombstone_complete_at
@@ -1103,6 +1184,12 @@ impl Vault {
         if !existed {
             wtxn.commit()?;
             return Ok(DeleteEntityOutcome::missing());
+        }
+
+        // ARCH-0038 DELETE: "The derived edge flag follows the Claim" — the
+        // subject edge is refreshed in the SAME transaction as the purge.
+        if let Some(captured) = &captured {
+            self.refresh_subject_edge_after_claim_delete_in_txn(&mut wtxn, id, &captured.subject)?;
         }
 
         let hard_purge_complete_at = unix_seconds_now();
@@ -1120,6 +1207,7 @@ impl Vault {
                     .queues_historical_sweep()
                     .then_some(hard_purge_complete_at),
             },
+            sweep_extras(captured.as_ref()),
         )?;
 
         wtxn.commit()?;
@@ -1154,6 +1242,9 @@ impl Vault {
 
         let receipt_id = EntityId::now();
         let hard_purge_complete_at = unix_seconds_now();
+        // A headerless residue has no decodable body, so no provenance
+        // capture is possible (ARCH-0038: no body ⇒ no EdgeRef to refresh,
+        // no refs for the sweep scope).
         let sweep_key = self.write_redaction_receipt_and_sweep_in_txn(
             &mut wtxn,
             &receipt_id,
@@ -1168,6 +1259,7 @@ impl Vault {
                     .queues_historical_sweep()
                     .then_some(hard_purge_complete_at),
             },
+            HardEraseSweepExtras::default(),
         )?;
         wtxn.commit()?;
         Ok(DeleteEntityOutcome {
@@ -1175,6 +1267,146 @@ impl Vault {
             receipt_id: Some(receipt_id),
             sweep_key: Some(sweep_key),
         })
+    }
+
+    /// Pre-purge ARCH-0038 capture for the local delete paths: decodes the
+    /// entity ABOUT to be purged or SoftErased and, when it is an
+    /// `edge.provenance` Claim, captures the subject EdgeRef (for the D16
+    /// flag refresh) plus the `body_snapshot_ref` / `source_revision_ref`
+    /// the queued historical-carrier sweep needs to locate residual
+    /// snapshot/update bytes.
+    ///
+    /// Discrimination order — the hook stays inert for everything else:
+    /// type byte FIRST (non-CLAIM ⇒ `None`), then the predicate (non-
+    /// `edge.provenance` Claim ⇒ `None`). A bodiless 25 B Claim shell ⇒
+    /// `None`: every local SoftErase commits the D16 edge refresh in the
+    /// SAME transaction that scrubs the body, so a shell's subject edge is
+    /// already consistent and the refs the sweep would need are gone with
+    /// the body. A type-0 record whose NON-empty body fails
+    /// claim/provenance decoding fails CLOSED with the decoder's typed error
+    /// — the ONE-1104 invariant (every type-0 write is validated) is broken
+    /// and the delete must not guess.
+    fn capture_provenance_delete(&self, id: &EntityId) -> Result<Option<CapturedProvenanceDelete>> {
+        let rtxn = self.store.env.read_txn()?;
+        let Some(raw) = self.store.entities.get(&rtxn, id.as_bytes())? else {
+            return Ok(None);
+        };
+        let header =
+            EntityMetadataHeader::parse(raw).ok_or(Error::CorruptedIndex("entity header"))?;
+        if header.entity_type != ENTITY_TYPE_CLAIM {
+            return Ok(None);
+        }
+        let body = &raw[ENTITY_METADATA_HEADER_LEN..];
+        if body.is_empty() {
+            return Ok(None);
+        }
+        let wrapper = crate::claim::decode_claim_body(body, true)?;
+        if wrapper.predicate != PREDICATE_EDGE_PROVENANCE {
+            return Ok(None);
+        }
+        let ClaimSubject::Edge {
+            source,
+            kind,
+            target,
+        } = wrapper.subject
+        else {
+            return Err(Error::InvalidProvenanceBody(
+                "edge.provenance claim subject is not a 33-byte EdgeRef",
+            ));
+        };
+        let record = decode_edge_provenance_body(&wrapper.value)?;
+        Ok(Some(CapturedProvenanceDelete {
+            subject: EdgeRef::new(source, kind, target),
+            source_revision_ref: record.source_revision_ref,
+            body_snapshot_ref: record.body_snapshot_ref,
+        }))
+    }
+
+    /// ARCH-0038 DELETE interplay (D16), run in the SAME transaction that
+    /// purged / SoftErased the provenance Claim: refresh the subject edge's
+    /// cached flags — restamp from the deterministic D14 winner among the
+    /// REMAINING live Claims; else, when a RETRACTED `edge.provenance` Claim
+    /// for the same EdgeRef still survives, KEEP the 26 B retracted dampening
+    /// stamp (the withdrawn provenance must stay dampened — retractionRules
+    /// RETRACT); only when NO provenance Claim of ANY lifecycle survives is
+    /// the cached flag unauditable and the edge downgraded 26 B → 24 B bare.
+    /// Both `edges_out` and `edges_in` carry identical bytes; when the edge
+    /// bytes changed, the endpoints' PPR caches are invalidated and the graph
+    /// version bumped. A subject edge that no longer exists (deleted
+    /// independently of its Claims) leaves nothing to refresh — no-op.
+    fn refresh_subject_edge_after_claim_delete_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        deleted_claim_id: &EntityId,
+        subject: &EdgeRef,
+    ) -> Result<()> {
+        let edge_key = Store::encode_edge_key(&subject.source, subject.kind, &subject.target);
+        if self.store.edges_out.get(wtxn, &edge_key)?.is_none() {
+            return Ok(());
+        }
+        let survivors =
+            self.live_edge_provenance_claims_in_txn(wtxn, subject, Some(deleted_claim_id))?;
+        let precedence: Vec<ProvenancePrecedence> = survivors
+            .iter()
+            .map(StoredProvenanceClaim::precedence)
+            .collect();
+        let changed = match winner_index(&precedence) {
+            Some(index) => {
+                restamp_edge_flags(&self.store, wtxn, subject, survivors[index].flags())?;
+                true
+            }
+            // No ACTIVE survivor. "The derived edge flag follows the Claim"
+            // (ARCH-0038 D16) — but a RETRACTED `edge.provenance` Claim is
+            // still readable truth, so it KEEPS the 26 B retracted dampening
+            // stamp rather than downgrading to a bare 24 B edge that would
+            // re-enable PPR propagation of the WITHDRAWN provenance. Only when
+            // no provenance Claim of ANY lifecycle survives is the flag
+            // unauditable and the edge downgraded to bare.
+            None => self.refresh_to_retracted_survivor_or_bare(wtxn, deleted_claim_id, subject)?,
+        };
+        if changed {
+            ppr::invalidate_ppr_for_edge(&self.store, wtxn, &subject.source, &subject.target)?;
+            ppr::increment_graph_version(&self.store, wtxn)?;
+        }
+        Ok(())
+    }
+
+    /// D16 fallback when the deleted Claim left NO active survivor: if a
+    /// RETRACTED `edge.provenance` Claim for `subject` still exists, restamp
+    /// the edge with `confirmation_status` = retracted (3) and the retracted
+    /// WINNER's persisted `actor_class` — keeping the 26 B retracted dampening
+    /// stamp the contract mandates (retractionRules RETRACT), mirroring
+    /// `retract_edge_provenance`'s own None-branch so the two paths agree.
+    /// Otherwise downgrade 26 B → 24 B bare (no truth-Claim of any lifecycle
+    /// survives ⇒ an unauditable cached flag). Returns whether the bytes
+    /// changed.
+    fn refresh_to_retracted_survivor_or_bare(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        deleted_claim_id: &EntityId,
+        subject: &EdgeRef,
+    ) -> Result<bool> {
+        let retracted =
+            self.retracted_edge_provenance_claims_in_txn(wtxn, subject, Some(deleted_claim_id))?;
+        let precedence: Vec<ProvenancePrecedence> = retracted
+            .iter()
+            .map(StoredProvenanceClaim::precedence)
+            .collect();
+        match winner_index(&precedence) {
+            Some(index) => {
+                restamp_edge_flags(
+                    &self.store,
+                    wtxn,
+                    subject,
+                    EdgeProvenanceFlags {
+                        confirmation_status: EdgeConfirmationStatus::Retracted,
+                        actor_class: retracted[index].actor_class,
+                    },
+                )?;
+                Ok(true)
+            }
+            None => downgrade_edge_to_bare(&self.store, wtxn, subject),
+        }
     }
 
     pub(crate) fn purge_entity_active_store(&self, id: &EntityId) -> Result<bool> {
@@ -1198,16 +1430,6 @@ impl Vault {
         if had_vector {
             crate::hnsw::increment_vector_version(&self.store, wtxn)?;
         }
-        Ok(existed)
-    }
-
-    fn soft_erase_active_store(&self, id: &EntityId) -> Result<bool> {
-        let mut wtxn = self.store.env.write_txn()?;
-        let (existed, had_vector) = self.soft_erase_active_store_in_txn(&mut wtxn, id)?;
-        if had_vector {
-            crate::hnsw::increment_vector_version(&self.store, &mut wtxn)?;
-        }
-        wtxn.commit()?;
         Ok(existed)
     }
 
@@ -1363,9 +1585,15 @@ impl Vault {
         wtxn: &mut heed::RwTxn<'_>,
         receipt_id: &EntityId,
         input: RedactionReceiptInput,
+        sweep_extras: HardEraseSweepExtras,
     ) -> Result<Vec<u8>> {
         let sweep_key = if let Some(queued_at) = input.sweep_queued_at {
-            self.enqueue_hard_erase_sweep_in_txn(wtxn, input.scope.clone(), queued_at)?
+            self.enqueue_hard_erase_sweep_in_txn(
+                wtxn,
+                input.scope.clone(),
+                sweep_extras,
+                queued_at,
+            )?
         } else {
             Vec::new()
         };
@@ -1380,11 +1608,12 @@ impl Vault {
         &self,
         wtxn: &mut heed::RwTxn<'_>,
         scope: RedactionScope,
+        extras: HardEraseSweepExtras,
         queued_at: u64,
     ) -> Result<Vec<u8>> {
         let seq = self.allocate_next_hard_erase_sweep_seq(wtxn)?;
         let key = encode_hard_erase_sweep_key(seq);
-        let value = encode_hard_erase_sweep_job(scope, queued_at)?;
+        let value = encode_hard_erase_sweep_job(scope, extras, queued_at)?;
         self.store.sync_queue.put(wtxn, &key, &value)?;
         Ok(key.to_vec())
     }
@@ -2585,6 +2814,38 @@ pub(crate) fn write_text_index_manifest(
         .vault_meta
         .put(wtxn, TEXT_BM25_FIELD_SCHEMA_HASH_KEY, &field_schema_hash)?;
     Ok(())
+}
+
+/// ARCH-0038 delete-interplay refs captured from an `edge.provenance` Claim
+/// BEFORE its body is purged or SoftErased: the subject EdgeRef whose cached
+/// flags must be refreshed post-purge (D16), and the opaque refs the queued
+/// historical-carrier sweep rides on (the ONE-1091 executor's seam).
+struct CapturedProvenanceDelete {
+    subject: EdgeRef,
+    source_revision_ref: Option<[u8; 16]>,
+    body_snapshot_ref: Option<[u8; 16]>,
+}
+
+/// Builds the queued sweep row's delete-interplay extras from a pre-purge
+/// provenance capture: opaque lowercase-hex identifiers only — never content
+/// or predicate strings. Empty for non-provenance deletes, so their queued
+/// row shape gains nothing.
+fn sweep_extras(captured: Option<&CapturedProvenanceDelete>) -> HardEraseSweepExtras {
+    let Some(captured) = captured else {
+        return HardEraseSweepExtras::default();
+    };
+    HardEraseSweepExtras {
+        revision_ids: captured
+            .source_revision_ref
+            .iter()
+            .map(|reference| bytes_to_hex_lower(reference))
+            .collect(),
+        body_snapshot_refs: captured
+            .body_snapshot_ref
+            .iter()
+            .map(|reference| bytes_to_hex_lower(reference))
+            .collect(),
+    }
 }
 
 /// One stored `edge.provenance` Claim loaded for a lifecycle operation
