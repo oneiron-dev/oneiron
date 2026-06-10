@@ -4263,17 +4263,17 @@ fn reput_with_different_type_byte_is_rejected_with_no_index_residue() -> Result<
 
     vault
         .batch()
-        .put(&id, 0, test_time_range(100, 200), 300, b"old-data")
+        .put(&id, 1, test_time_range(100, 200), 300, b"old-data")
         .commit()?;
     let record_before = read_raw_entity(&vault, &id)?;
     let short_id_before = read_short_id_value(&vault, &id)?;
 
     // D2: the type byte is immutable once a record exists. The pre-D2 engine
     // silently re-homed the type_index row and kept the old short id, leaving
-    // a TURN entity addressed as "cl1".
+    // a SESSION entity addressed as "tn1".
     let err = vault
         .batch()
-        .put(&id, 1, test_time_range(400, 500), 600, b"new-data")
+        .put(&id, 2, test_time_range(400, 500), 600, b"new-data")
         .commit()
         .expect_err("re-put with a different type byte must be rejected");
     assert!(
@@ -4281,11 +4281,11 @@ fn reput_with_different_type_byte_is_rejected_with_no_index_residue() -> Result<
             err,
             Error::EntityTypeImmutable {
                 id: err_id,
-                existing: 0,
-                attempted: 1,
+                existing: 1,
+                attempted: 2,
             } if err_id == id
         ),
-        "expected EntityTypeImmutable {{ existing: 0, attempted: 1 }}, got {err:?}"
+        "expected EntityTypeImmutable {{ existing: 1, attempted: 2 }}, got {err:?}"
     );
 
     // Stored record and short-id row are byte-for-byte unchanged.
@@ -4298,14 +4298,14 @@ fn reput_with_different_type_byte_is_rejected_with_no_index_residue() -> Result<
         vault
             .store
             .type_index
-            .get(&rtxn, &Store::encode_type_key(0, &id))?
+            .get(&rtxn, &Store::encode_type_key(1, &id))?
             .is_some()
     );
     assert!(
         vault
             .store
             .type_index
-            .get(&rtxn, &Store::encode_type_key(1, &id))?
+            .get(&rtxn, &Store::encode_type_key(2, &id))?
             .is_none()
     );
     assert!(
@@ -4359,7 +4359,7 @@ fn txn_batch_reput_with_different_type_byte_rejects_before_staging_writes() -> R
     let (_dir, vault) = open_test_vault();
     let id = EntityId::now();
 
-    vault.put_entity(&id, 0, test_time_range(100, 200), 300, b"old-data")?;
+    vault.put_entity(&id, 1, test_time_range(100, 200), 300, b"old-data")?;
     let record_before = read_raw_entity(&vault, &id)?;
     let short_id_before = read_short_id_value(&vault, &id)?;
 
@@ -4370,7 +4370,7 @@ fn txn_batch_reput_with_different_type_byte_rejects_before_staging_writes() -> R
     let mut wtxn = vault.store.env.write_txn()?;
     let err = vault
         .batch_in()
-        .put(&id, 1, test_time_range(400, 500), 600, b"new-data")
+        .put(&id, 2, test_time_range(400, 500), 600, b"new-data")
         .apply(&mut wtxn)
         .expect_err("re-put with a different type byte must be rejected");
     assert!(
@@ -4378,11 +4378,11 @@ fn txn_batch_reput_with_different_type_byte_rejects_before_staging_writes() -> R
             err,
             Error::EntityTypeImmutable {
                 id: err_id,
-                existing: 0,
-                attempted: 1,
+                existing: 1,
+                attempted: 2,
             } if err_id == id
         ),
-        "expected EntityTypeImmutable {{ existing: 0, attempted: 1 }}, got {err:?}"
+        "expected EntityTypeImmutable {{ existing: 1, attempted: 2 }}, got {err:?}"
     );
     wtxn.commit()?;
 
@@ -4394,7 +4394,7 @@ fn txn_batch_reput_with_different_type_byte_rejects_before_staging_writes() -> R
         vault
             .store
             .type_index
-            .get(&rtxn, &Store::encode_type_key(1, &id))?
+            .get(&rtxn, &Store::encode_type_key(2, &id))?
             .is_none()
     );
     assert!(
@@ -4416,6 +4416,134 @@ fn txn_batch_reput_with_different_type_byte_rejects_before_staging_writes() -> R
             .store
             .temporal_learned
             .get(&rtxn, &Store::encode_temporal_key(600, &id))?
+            .is_none()
+    );
+
+    Ok(())
+}
+
+#[test]
+fn txn_batch_reput_with_different_type_byte_preserves_long_interval_row() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let id = EntityId::now();
+
+    // Seed an entity whose occurred span exceeds the long-interval threshold,
+    // so a temporal_long_intervals row exists (manifest DB n21: key
+    // encode_temporal_key(occurred_end, id), value occurred_start BE).
+    let old_start = 100_u64;
+    let old_end = old_start + LONG_INTERVAL_THRESHOLD_SECS + 1;
+    vault.put_entity(
+        &id,
+        1,
+        test_time_range(old_start, old_end),
+        300,
+        b"old-data",
+    )?;
+
+    let long_interval_key = Store::encode_temporal_key(old_end, &id);
+    {
+        let rtxn = vault.store.env.read_txn()?;
+        let value = vault
+            .store
+            .temporal_long_intervals
+            .get(&rtxn, &long_interval_key)?
+            .expect("seed entity must have a temporal_long_intervals row");
+        assert_eq!(value, &old_start.to_be_bytes()[..]);
+    }
+
+    // D2 ordering: the immutability gate must fire BEFORE the old-row deletes
+    // in apply_put — a wrong implementation that runs the old-long-interval
+    // delete first would drop the row, then error. Commit the externally-owned
+    // transaction DESPITE the error to expose any such pre-gate delete.
+    let mut wtxn = vault.store.env.write_txn()?;
+    let err = vault
+        .batch_in()
+        .put(&id, 2, test_time_range(400, 500), 600, b"new-data")
+        .apply(&mut wtxn)
+        .expect_err("re-put with a different type byte must be rejected");
+    assert!(
+        matches!(
+            err,
+            Error::EntityTypeImmutable {
+                id: err_id,
+                existing: 1,
+                attempted: 2,
+            } if err_id == id
+        ),
+        "expected EntityTypeImmutable {{ existing: 1, attempted: 2 }}, got {err:?}"
+    );
+    wtxn.commit()?;
+
+    // The long-interval row survives the failed re-type, byte-for-byte.
+    let rtxn = vault.store.env.read_txn()?;
+    let value = vault
+        .store
+        .temporal_long_intervals
+        .get(&rtxn, &long_interval_key)?
+        .expect("temporal_long_intervals row must survive a rejected re-type");
+    assert_eq!(value, &old_start.to_be_bytes()[..]);
+
+    Ok(())
+}
+
+#[test]
+fn batch_double_put_same_id_different_type_rejects_and_writes_nothing() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let id = EntityId::now();
+
+    // Same-batch TOCTOU vector: two puts for the same id with different type
+    // bytes in one batch. The apply-time gate reads the stored envelope inside
+    // the batch's own write transaction (read-your-own-writes), so the second
+    // put must see the first put's staged record and reject.
+    let err = vault
+        .batch()
+        .put(&id, 1, test_time_range(100, 200), 300, b"first")
+        .put(&id, 2, test_time_range(400, 500), 600, b"second")
+        .commit()
+        .expect_err("second put with a different type byte must reject the batch");
+    assert!(
+        matches!(
+            err,
+            Error::EntityTypeImmutable {
+                id: err_id,
+                existing: 1,
+                attempted: 2,
+            } if err_id == id
+        ),
+        "expected EntityTypeImmutable {{ existing: 1, attempted: 2 }}, got {err:?}"
+    );
+
+    // Batch-abort atomicity: the builder owns the transaction and aborts on
+    // error, so NO record survives — not even the first (valid) put.
+    let rtxn = vault.store.env.read_txn()?;
+    assert!(vault.store.entities.get(&rtxn, id.as_bytes())?.is_none());
+    assert!(vault.store.short_ids.get(&rtxn, id.as_bytes())?.is_none());
+    assert!(
+        vault
+            .store
+            .type_index
+            .get(&rtxn, &Store::encode_type_key(1, &id))?
+            .is_none()
+    );
+    assert!(
+        vault
+            .store
+            .type_index
+            .get(&rtxn, &Store::encode_type_key(2, &id))?
+            .is_none()
+    );
+    assert!(
+        vault
+            .store
+            .temporal_occurred_start
+            .get(&rtxn, &Store::encode_temporal_key(100, &id))?
+            .is_none()
+    );
+    assert!(
+        vault
+            .store
+            .temporal_learned
+            .get(&rtxn, &Store::encode_temporal_key(300, &id))?
             .is_none()
     );
 
@@ -4535,7 +4663,7 @@ fn txn_batch_put_with_reversed_occurred_range_rejected_at_apply_time() -> Result
     let mut wtxn = vault.store.env.write_txn()?;
     let err = vault
         .batch_in()
-        .put(&id, 0, test_time_range(300, 100), 400, b"payload")
+        .put(&id, 1, test_time_range(300, 100), 400, b"payload")
         .apply(&mut wtxn)
         .expect_err("occurred_start > occurred_end must be rejected");
     assert!(
@@ -4582,7 +4710,7 @@ fn point_event_start_equals_end_stays_accepted() -> Result<()> {
     // D3 boundary: start == end is a legal point event.
     vault
         .batch()
-        .put(&id, 0, test_time_range(777, 777), 800, b"point")
+        .put(&id, 1, test_time_range(777, 777), 800, b"point")
         .commit()?;
 
     let rtxn = vault.store.env.read_txn()?;

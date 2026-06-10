@@ -2368,7 +2368,7 @@ mod tests {
         let err = vault
             .put_entity(
                 &id,
-                0,
+                1,
                 TimeRange {
                     start: 300,
                     end: 100,
