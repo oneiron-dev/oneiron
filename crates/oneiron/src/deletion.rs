@@ -118,7 +118,26 @@ struct HardEraseSweepJob {
 struct HardEraseSweepScope {
     entity_ids: Vec<String>,
     revision_ids: Vec<String>,
+    /// ARCH-0038 delete-interplay seam: "body_snapshot_ref lets the queued
+    /// historical-carrier sweep locate residual snapshot/update bytes"
+    /// (contracts.ts retractionRules DELETE). Opaque lowercase-hex ids only;
+    /// the consuming executor is ONE-1091 (deferred).
+    body_snapshot_refs: Vec<String>,
     carrier_classes: Vec<String>,
+}
+
+/// Delete-interplay refs captured from an `edge.provenance` Claim BEFORE its
+/// body is purged/SoftErased, riding the QUEUED sweep row's scope (ARCH-0038).
+/// Opaque lowercase-hex identifiers only — never content, names, or predicate
+/// strings. Empty for non-provenance deletes.
+#[derive(Debug, Clone, Default)]
+pub(crate) struct HardEraseSweepExtras {
+    /// Captured `source_revision_ref`s — opaque revision UUIDs joining the
+    /// scope's pinned `revision_ids` slot ("entity UUIDs / revision UUIDs").
+    pub revision_ids: Vec<String>,
+    /// Captured `body_snapshot_ref`s — pointers to the exact body bytes the
+    /// actor saw, the sweep's residual-carrier locator.
+    pub body_snapshot_refs: Vec<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -160,12 +179,16 @@ pub(crate) fn encode_redaction_audit_receipt(input: RedactionReceiptInput) -> Re
 
 pub(crate) fn encode_hard_erase_sweep_job(
     scope: RedactionScope,
+    extras: HardEraseSweepExtras,
     queued_at: u64,
 ) -> Result<Vec<u8>> {
+    let mut revision_ids = scope.revision_ids;
+    revision_ids.extend(extras.revision_ids);
     let job = HardEraseSweepJob {
         scope: HardEraseSweepScope {
             entity_ids: scope.entity_ids,
-            revision_ids: scope.revision_ids,
+            revision_ids,
+            body_snapshot_refs: extras.body_snapshot_refs,
             carrier_classes: HISTORICAL_CARRIER_CLASSES
                 .iter()
                 .map(|class| (*class).to_owned())

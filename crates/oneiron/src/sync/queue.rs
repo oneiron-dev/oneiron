@@ -533,8 +533,8 @@ fn decode_last_update_seq_metadata(raw: &[u8]) -> Result<u64> {
 mod tests {
     use super::*;
     use crate::deletion::{
-        LAST_HARD_ERASE_SWEEP_SEQ_KEY, RedactionScope, encode_hard_erase_sweep_job,
-        encode_hard_erase_sweep_key,
+        HardEraseSweepExtras, LAST_HARD_ERASE_SWEEP_SEQ_KEY, RedactionScope,
+        encode_hard_erase_sweep_job, encode_hard_erase_sweep_key,
     };
     use crate::types::VaultConfig;
 
@@ -641,9 +641,12 @@ mod tests {
 
         let sweep_seq = 7_u64;
         let sweep_key = encode_hard_erase_sweep_key(sweep_seq);
-        let sweep_value =
-            encode_hard_erase_sweep_job(RedactionScope::entity(&EntityId::now()), 1_772_000_000)
-                .unwrap();
+        let sweep_value = encode_hard_erase_sweep_job(
+            RedactionScope::entity(&EntityId::now()),
+            HardEraseSweepExtras::default(),
+            1_772_000_000,
+        )
+        .unwrap();
         let embed_key = encode_embed_key(&embed_id);
 
         let mut wtxn = vault.store.env.write_txn().unwrap();
