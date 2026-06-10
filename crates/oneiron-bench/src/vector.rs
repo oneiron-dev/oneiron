@@ -112,6 +112,13 @@ pub(crate) struct BenchSettings {
     pub(crate) queries: usize,
     pub(crate) churn: ChurnMode,
     pub(crate) churn_pct: u32,
+    /// Absolute cap on churn operations, overriding the `churn_pct`-derived
+    /// count when set. Operational escape hatch: on the pre-ONE-324 engine a
+    /// vector re-put (`hnsw_refresh`) triggers a full O(N) snapshot rebuild,
+    /// so 10% of a 10K vault (1000 re-puts × ~45s each) cannot finish in one
+    /// sitting. The X% mode stays the contract gate; `--churn-ops` makes the
+    /// 10K refresh p50 measurable today.
+    pub(crate) churn_ops: Option<usize>,
     pub(crate) assert_recall: bool,
 }
 
@@ -124,6 +131,7 @@ impl Default for BenchSettings {
             queries: DEFAULT_QUERY_COUNT,
             churn: ChurnMode::Both,
             churn_pct: DEFAULT_CHURN_PCT,
+            churn_ops: None,
             assert_recall: true,
         }
     }
@@ -196,6 +204,13 @@ pub(crate) fn parse_args(args: &[String]) -> Result<BenchSettings, String> {
                     .ok()
                     .filter(|p| (1..=99).contains(p))
                     .ok_or_else(|| format!("--churn-pct must be in 1..=99, got `{value}`"))?;
+            }
+            "--churn-ops" => {
+                let value = value_for("--churn-ops")?;
+                settings.churn_ops =
+                    Some(value.parse().ok().filter(|o| *o > 0).ok_or_else(|| {
+                        format!("--churn-ops must be a positive integer, got `{value}`")
+                    })?);
             }
             "--no-recall-assert" => settings.assert_recall = false,
             other => return Err(format!("unknown vector flag: `{other}`")),
@@ -312,7 +327,8 @@ pub(crate) fn run(args: &[String]) -> ExitCode {
             eprintln!(
                 "usage: oneiron-bench vector [--n 1k|10k] [--dim 1024|4096] [--seed N]\n\
                  \x20                          [--queries N] [--churn none|refresh|delete|both]\n\
-                 \x20                          [--churn-pct 1..99] [--no-recall-assert]"
+                 \x20                          [--churn-pct 1..99] [--churn-ops N]\n\
+                 \x20                          [--no-recall-assert]"
             );
             return ExitCode::FAILURE;
         }
@@ -428,7 +444,8 @@ pub(crate) fn run_bench(settings: &BenchSettings) -> Result<VectorBenchReport, S
 
     // [refresh-churn] re-put X% with fresh vectors (HNSW refresh path).
     let refresh = if settings.churn.runs_refresh() {
-        let ids = select_churn_ids(&mut rng, &live, settings.churn_pct);
+        let count = churn_count(live.len(), settings.churn_pct, settings.churn_ops);
+        let ids = select_churn_ids(&mut rng, &live, count);
         let mut samples = Vec::with_capacity(ids.len());
         for id in &ids {
             let vector = gen_vector(&mut rng, settings.dim);
@@ -452,7 +469,8 @@ pub(crate) fn run_bench(settings: &BenchSettings) -> Result<VectorBenchReport, S
     // [delete-churn] hard-delete X% of the (post-refresh) live set. The
     // post-delete search measure fails closed if any deleted ID resurfaces.
     let delete = if settings.churn.runs_delete() {
-        let ids = select_churn_ids(&mut rng, &live, settings.churn_pct);
+        let count = churn_count(live.len(), settings.churn_pct, settings.churn_ops);
+        let ids = select_churn_ids(&mut rng, &live, count);
         let mut samples = Vec::with_capacity(ids.len());
         for id in &ids {
             let started = Instant::now();
@@ -551,17 +569,22 @@ fn gen_queries(rng: &mut StdRng, corpus: &[(EntityId, Vec<f32>)], count: usize) 
         .collect()
 }
 
-/// Deterministically selects `pct`% (min 1) of the live IDs: live keys are
-/// iterated in BTreeMap (byte) order, shuffled by the seeded stream, then
-/// truncated.
+/// Number of churn operations: `pct`% of the live set (min 1), unless an
+/// absolute `--churn-ops` override is given; always clamped to the live set.
+pub(crate) fn churn_count(live_len: usize, pct: u32, ops: Option<usize>) -> usize {
+    let from_pct = ((live_len as u64 * u64::from(pct)) / 100).max(1) as usize;
+    ops.unwrap_or(from_pct).min(live_len)
+}
+
+/// Deterministically selects `count` of the live IDs: live keys are iterated
+/// in BTreeMap (byte) order, shuffled by the seeded stream, then truncated.
 fn select_churn_ids(
     rng: &mut StdRng,
     live: &BTreeMap<EntityId, Vec<f32>>,
-    pct: u32,
+    count: usize,
 ) -> Vec<EntityId> {
     let mut ids: Vec<EntityId> = live.keys().copied().collect();
     ids.shuffle(rng);
-    let count = ((live.len() as u64 * u64::from(pct)) / 100).max(1) as usize;
     ids.truncate(count);
     ids
 }
@@ -729,14 +752,17 @@ fn print_report(report: &VectorBenchReport) {
          (Flat NSW, ef={CONTRACT_EF_SEARCH}); recall@10 > {TARGET_RECALL_AT_10} vs f32 brute \
          force; insert (entity+vector+edges) < {TARGET_INSERT_P50_MS}ms single txn"
     );
+    let churn_scope = match s.churn_ops {
+        Some(ops) => format!("churn-ops={ops} (absolute cap)"),
+        None => format!("churn-pct={}%", s.churn_pct),
+    };
     println!(
-        "params: n={} dim={} seed={} queries={} churn={} churn-pct={}%",
+        "params: n={} dim={} seed={} queries={} churn={} {churn_scope}",
         s.n,
         s.dim,
         s.seed,
         s.queries,
-        s.churn.as_str(),
-        s.churn_pct
+        s.churn.as_str()
     );
     println!(
         "hnsw: m_max_0={CONTRACT_M_MAX_0} ef_construction={CONTRACT_EF_CONSTRUCTION} \
@@ -756,8 +782,8 @@ fn print_report(report: &VectorBenchReport) {
 
     if let Some(refresh) = &report.refresh {
         println!(
-            "\n[refresh-churn: re-put {} nodes ({}%), live={}]",
-            refresh.churned, s.churn_pct, refresh.live_after
+            "\n[refresh-churn: re-put {} nodes, live={}]",
+            refresh.churned, refresh.live_after
         );
         print_latency(
             "insert refresh ",
@@ -769,8 +795,8 @@ fn print_report(report: &VectorBenchReport) {
 
     if let Some(delete) = &report.delete {
         println!(
-            "\n[delete-churn: delete {} nodes ({}%), live={}]",
-            delete.churned, s.churn_pct, delete.live_after
+            "\n[delete-churn: delete {} nodes, live={}]",
+            delete.churned, delete.live_after
         );
         print_latency("delete         ", &delete.op_latency, None);
         print_search_measure(&delete.search);
@@ -890,6 +916,7 @@ mod tests {
         assert_eq!(settings.queries, 100);
         assert_eq!(settings.churn, ChurnMode::Both);
         assert_eq!(settings.churn_pct, 10);
+        assert_eq!(settings.churn_ops, None);
         assert!(settings.assert_recall);
     }
 
@@ -930,9 +957,30 @@ mod tests {
         assert!(parse_args(&args(&["--churn", "bogus"])).is_err());
         assert!(parse_args(&args(&["--churn-pct", "0"])).is_err());
         assert!(parse_args(&args(&["--churn-pct", "100"])).is_err());
+        assert!(parse_args(&args(&["--churn-ops", "0"])).is_err());
+        assert!(parse_args(&args(&["--churn-ops", "-3"])).is_err());
         assert!(parse_args(&args(&["--queries", "0"])).is_err());
         assert!(parse_args(&args(&["--seed"])).is_err());
         assert!(parse_args(&args(&["--frobnicate"])).is_err());
+    }
+
+    #[test]
+    fn parse_args_accepts_churn_ops_cap() {
+        let settings = parse_args(&args(&["--churn-ops", "8"])).expect("churn-ops parse");
+        assert_eq!(settings.churn_ops, Some(8));
+        // pct stays at its default; the ops cap overrides it at runtime.
+        assert_eq!(settings.churn_pct, 10);
+    }
+
+    /// `churn_count` literals: pct-derived, min-1 floor, absolute override,
+    /// clamped to the live set.
+    #[test]
+    fn churn_count_literals() {
+        assert_eq!(churn_count(10_000, 10, None), 1_000);
+        assert_eq!(churn_count(100, 10, None), 10);
+        assert_eq!(churn_count(10, 1, None), 1); // min-1 floor
+        assert_eq!(churn_count(10_000, 10, Some(8)), 8); // ops cap wins
+        assert_eq!(churn_count(100, 10, Some(1_000)), 100); // clamped to live
     }
 
     #[test]
@@ -1024,6 +1072,7 @@ mod tests {
             queries: 20,
             churn: ChurnMode::Both,
             churn_pct: 10,
+            churn_ops: None,
             assert_recall: true,
         };
         let report = run_bench(&settings).expect("tiny bench run");
@@ -1060,6 +1109,7 @@ mod tests {
             queries: 10,
             churn: ChurnMode::Both,
             churn_pct: 20,
+            churn_ops: None,
             assert_recall: true,
         };
         let a = run_bench(&settings).expect("run a");
@@ -1089,6 +1139,7 @@ mod tests {
             queries: 1,
             churn: ChurnMode::None,
             churn_pct: 10,
+            churn_ops: None,
             assert_recall: true,
         };
         assert!(run_bench(&settings).is_err());

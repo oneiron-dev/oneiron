@@ -61,7 +61,8 @@ fn print_help() {
            vector                ARCH-0019 vector perf/recall harness\n\
                                  [--n 1k|10k] [--dim 1024|4096] [--seed N]\n\
                                  [--queries N] [--churn none|refresh|delete|both]\n\
-                                 [--churn-pct 1..99] [--no-recall-assert]\n\
+                                 [--churn-pct 1..99] [--churn-ops N]\n\
+                                 [--no-recall-assert]\n\
          \n\
          note: MIRACL / Mr.TyDi / internal SEA retrieval quality matrix\n\
          lives in ONE-318 (not yet implemented)."
