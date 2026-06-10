@@ -681,11 +681,15 @@ pub(crate) fn deindex_entity(
     let neighbors = delete_related_edges(store, wtxn, id)?;
     let mut had_graph_mutation = !neighbors.is_empty();
 
-    if let Some(raw) = store.short_ids.get(wtxn, id.as_bytes())? {
-        let (short_id, _) = parse_short_id_value(raw)?;
-        let short_id = short_id.to_owned();
-        store.short_ids_reverse.delete(wtxn, short_id.as_bytes())?;
-        store.short_ids.delete(wtxn, id.as_bytes())?;
+    let forward_key = store
+        .short_ids_reverse
+        .get(wtxn, id.as_bytes())?
+        .map(parse_short_id_value)
+        .transpose()?
+        .map(|(short_id, content_hash)| encode_short_id_forward_key(short_id, content_hash));
+    if let Some(forward_key) = forward_key {
+        store.short_ids.delete(wtxn, &forward_key)?;
+        store.short_ids_reverse.delete(wtxn, id.as_bytes())?;
     }
 
     let Some(entity_record) = store.entities.get(wtxn, id.as_bytes())? else {
@@ -1027,10 +1031,11 @@ fn apply_phonetic(
 enum ShortIdPlan {
     UpdateExisting {
         short_id: String,
+        old_content_hash: u8,
         content_hash: u8,
     },
     InsertNew {
-        sentinel_key: [u8; ENTITY_ID_LEN],
+        counter_key: [u8; crate::store::SHORT_ID_COUNTER_KEY_LEN],
         next_counter: u64,
         short_id: String,
         content_hash: u8,
@@ -1046,16 +1051,21 @@ fn plan_short_id_update(
 ) -> Result<ShortIdPlan> {
     let content_hash = (xxh32(data, 0) % 256) as u8;
 
-    if let Some(existing) = store.short_ids.get(txn, id.as_bytes())? {
-        let (short_id, _) = parse_short_id_value(existing)?;
+    if let Some(existing) = store.short_ids_reverse.get(txn, id.as_bytes())? {
+        let (short_id, old_content_hash) = parse_short_id_value(existing)?;
         return Ok(ShortIdPlan::UpdateExisting {
             short_id: short_id.to_owned(),
+            old_content_hash,
             content_hash,
         });
     }
 
-    let sentinel_key = short_id_counter_sentinel(entity_type);
-    let current = match store.short_ids.get(txn, &sentinel_key)? {
+    // Per-type counters live in `vault_meta` under the documented
+    // `b"sid_counter:" ‖ type_byte` key scheme (store.rs), NOT as sentinel
+    // rows inside `short_ids` — that table holds only the ARCH-0019 row n3
+    // mapping `(short_id, content_hash)` -> `entity_id`.
+    let counter_key = crate::store::short_id_counter_key(entity_type);
+    let current = match store.vault_meta.get(txn, &counter_key)? {
         Some(raw) => {
             let buf: [u8; SHORT_ID_COUNTER_LEN] = raw
                 .try_into()
@@ -1070,7 +1080,7 @@ fn plan_short_id_update(
         .ok_or(Error::ArithmeticOverflow("short id counter"))?;
     let short_id = format!("{}{}", short_id_prefix(entity_type)?, next);
     Ok(ShortIdPlan::InsertNew {
-        sentinel_key,
+        counter_key,
         next_counter: next,
         short_id,
         content_hash,
@@ -1086,44 +1096,60 @@ fn apply_short_id_plan(
     match plan {
         ShortIdPlan::UpdateExisting {
             short_id,
+            old_content_hash,
             content_hash,
         } => {
-            let mut value = Vec::with_capacity(short_id.len() + 1);
-            value.extend_from_slice(short_id.as_bytes());
-            value.push(content_hash);
-            store.short_ids.put(wtxn, id.as_bytes(), &value)?;
+            if old_content_hash != content_hash {
+                // The content hash is part of the forward KEY, so a content
+                // update must remove the stale forward row before rewriting.
+                let old_forward_key = encode_short_id_forward_key(&short_id, old_content_hash);
+                store.short_ids.delete(wtxn, &old_forward_key)?;
+            }
+            write_short_id_rows(store, wtxn, id, &short_id, content_hash)?;
         }
         ShortIdPlan::InsertNew {
-            sentinel_key,
+            counter_key,
             next_counter,
             short_id,
             content_hash,
         } => {
             store
-                .short_ids
-                .put(wtxn, &sentinel_key, &next_counter.to_le_bytes())?;
-
-            let mut short_id_value = Vec::with_capacity(short_id.len() + 1);
-            short_id_value.extend_from_slice(short_id.as_bytes());
-            short_id_value.push(content_hash);
-
-            store.short_ids.put(wtxn, id.as_bytes(), &short_id_value)?;
-            store
-                .short_ids_reverse
-                .put(wtxn, short_id.as_bytes(), id.as_bytes())?;
+                .vault_meta
+                .put(wtxn, &counter_key, &next_counter.to_le_bytes())?;
+            write_short_id_rows(store, wtxn, id, &short_id, content_hash)?;
         }
     }
 
     Ok(())
 }
 
-fn short_id_counter_sentinel(entity_type: u8) -> [u8; ENTITY_ID_LEN] {
-    debug_assert_ne!(
-        entity_type, 0xFF,
-        "0xFF is reserved for short-id sentinel keys"
-    );
-    let mut key = [0xFF_u8; ENTITY_ID_LEN];
-    key[0] = entity_type;
+/// Writes both pinned ARCH-0019 short-id rows for one entity:
+/// row n3 `short_ids`: key `(short_id bytes ‖ content_hash u8)` -> 16-byte
+/// entity id; row n4 `short_ids_reverse`: key entity id -> value
+/// `(short_id bytes ‖ content_hash u8)` (same bytes as the forward key).
+fn write_short_id_rows(
+    store: &Store,
+    wtxn: &mut RwTxn<'_>,
+    id: &EntityId,
+    short_id: &str,
+    content_hash: u8,
+) -> Result<()> {
+    let forward_key = encode_short_id_forward_key(short_id, content_hash);
+    store.short_ids.put(wtxn, &forward_key, id.as_bytes())?;
+    store
+        .short_ids_reverse
+        .put(wtxn, id.as_bytes(), &forward_key)?;
+    Ok(())
+}
+
+/// Encodes the `short_ids` forward key `(short_id bytes ‖ content_hash u8)`
+/// pinned by ARCH-0019 manifest row n3. The same byte shape is stored as the
+/// `short_ids_reverse` VALUE (row n4) and is parsed back by
+/// [`parse_short_id_value`].
+pub(crate) fn encode_short_id_forward_key(short_id: &str, content_hash: u8) -> Vec<u8> {
+    let mut key = Vec::with_capacity(short_id.len() + 1);
+    key.extend_from_slice(short_id.as_bytes());
+    key.push(content_hash);
     key
 }
 

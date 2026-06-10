@@ -395,11 +395,13 @@ fn decode_short_id_value(value: &[u8]) -> Result<(String, u8)> {
     Ok((short_id, hash[0]))
 }
 
+/// Reads the entity-keyed `short_ids_reverse` row (ARCH-0019 manifest row n4:
+/// entity_id -> `short_id bytes ‖ content_hash u8`).
 fn read_short_id_value(vault: &Vault, id: &EntityId) -> Result<Vec<u8>> {
     let rtxn = vault.store.env.read_txn()?;
     vault
         .store
-        .short_ids
+        .short_ids_reverse
         .get(&rtxn, id.as_bytes())?
         .map(|bytes| bytes.to_vec())
         .ok_or(Error::EntityNotFound)
@@ -1553,7 +1555,7 @@ fn batch_put_assigns_short_id() -> Result<()> {
 }
 
 #[test]
-fn batch_put_short_id_reverse_lookup() -> Result<()> {
+fn batch_put_short_id_round_trips_both_directions() -> Result<()> {
     let (_dir, vault) = open_test_vault();
     let id = EntityId::now();
     let data = b"reverse";
@@ -1563,16 +1565,203 @@ fn batch_put_short_id_reverse_lookup() -> Result<()> {
         .put(&id, 0, test_time_range(100, 100), 101, data)
         .commit()?;
 
+    // Reverse direction (row n4): entity_id -> (short_id, content_hash).
     let short_id_value = read_short_id_value(&vault, &id)?;
-    let (short_id, _) = decode_short_id_value(&short_id_value)?;
+    let (short_id, hash) = decode_short_id_value(&short_id_value)?;
+    assert_eq!(short_id, "cl1");
+    assert_eq!(hash, content_hash(data));
+
+    // Forward direction (row n3): (short_id, content_hash) -> entity_id.
+    let mut forward_key = short_id.as_bytes().to_vec();
+    forward_key.push(hash);
+    let rtxn = vault.store.env.read_txn()?;
+    let forward = vault
+        .store
+        .short_ids
+        .get(&rtxn, &forward_key)?
+        .ok_or(Error::EntityNotFound)?;
+    assert_eq!(forward, id.as_bytes());
+
+    // A stale forward probe (wrong content hash) must NOT resolve: the hash
+    // is part of the key, so it acts as a staleness check on resolution.
+    let mut stale_key = short_id.as_bytes().to_vec();
+    stale_key.push(hash.wrapping_add(1));
+    assert!(vault.store.short_ids.get(&rtxn, &stale_key)?.is_none());
+    Ok(())
+}
+
+/// ARCH-0019 dbManifest rows pinned byte-for-byte via a direct raw cursor
+/// (NOT the short-id API):
+///
+/// * row n3 `short_ids`: key `(short_id, content_hash)` → value `entity_id`
+/// * row n4 `short_ids_reverse`: key `entity_id` → value `(short_id, content_hash)`
+///
+/// A still-swapped implementation (short_ids keyed by the 16-byte entity id,
+/// short_ids_reverse keyed by the bare short id) FAILS every assertion here.
+#[test]
+fn short_id_dbs_match_pinned_manifest_rows_raw_layout() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let id = EntityId::now();
+    let data = b"short-id-layout-spec";
+
+    vault
+        .batch()
+        .put(&id, 0, test_time_range(7, 7), 8, data)
+        .commit()?;
+
+    // content_hash = xxh32(data, 0) % 256; first issued CLAIM short id = "cl1".
+    let expected_hash = content_hash(data);
+    let mut expected_pair = b"cl1".to_vec();
+    expected_pair.push(expected_hash);
 
     let rtxn = vault.store.env.read_txn()?;
-    let reverse = vault
+
+    // Row n3: exactly ONE forward row — key = short_id bytes ‖ content_hash
+    // u8, value = the 16-byte entity id. No counter sentinel rows.
+    let forward_rows: Vec<(Vec<u8>, Vec<u8>)> = vault
+        .store
+        .short_ids
+        .iter(&rtxn)?
+        .map(|entry| entry.map(|(k, v)| (k.to_vec(), v.to_vec())))
+        .collect::<std::result::Result<_, _>>()?;
+    assert_eq!(
+        forward_rows.len(),
+        1,
+        "short_ids must hold only the manifest row (no sentinels): {forward_rows:?}"
+    );
+    assert_eq!(forward_rows[0].0, expected_pair, "forward KEY bytes");
+    assert_eq!(
+        forward_rows[0].1,
+        id.as_bytes().to_vec(),
+        "forward VALUE = 16-byte entity id"
+    );
+
+    // Row n4: exactly ONE reverse row — key = 16-byte entity id, value =
+    // short_id bytes ‖ content_hash u8.
+    let reverse_rows: Vec<(Vec<u8>, Vec<u8>)> = vault
         .store
         .short_ids_reverse
-        .get(&rtxn, short_id.as_bytes())?
-        .ok_or(Error::EntityNotFound)?;
-    assert_eq!(reverse, id.as_bytes());
+        .iter(&rtxn)?
+        .map(|entry| entry.map(|(k, v)| (k.to_vec(), v.to_vec())))
+        .collect::<std::result::Result<_, _>>()?;
+    assert_eq!(reverse_rows.len(), 1);
+    assert_eq!(
+        reverse_rows[0].0,
+        id.as_bytes().to_vec(),
+        "reverse KEY = 16-byte entity id"
+    );
+    assert_eq!(reverse_rows[0].1, expected_pair, "reverse VALUE bytes");
+    Ok(())
+}
+
+/// Per-type short-id counters live in `vault_meta` under the documented
+/// `b"sid_counter:" ‖ type_byte` scheme (u64 LE value) — NOT as
+/// `[type_byte, 0xFF×15]` sentinel rows inside `short_ids` (pre-ABI-v3
+/// layout). Scans the whole `short_ids` DB and asserts no sentinel remains.
+#[test]
+fn short_id_counters_live_in_vault_meta_not_short_ids() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let claim_a = EntityId::now();
+    let claim_b = EntityId::now();
+    let turn = EntityId::now();
+
+    vault
+        .batch()
+        .put(&claim_a, 0, test_time_range(1, 1), 2, b"claim-a")
+        .put(&claim_b, 0, test_time_range(3, 3), 4, b"claim-b")
+        .put(&turn, 1, test_time_range(5, 5), 6, b"turn-a")
+        .commit()?;
+
+    let rtxn = vault.store.env.read_txn()?;
+
+    for entry in vault.store.short_ids.iter(&rtxn)? {
+        let (key, value) = entry?;
+        assert!(
+            !(key.len() == 16 && key[1..].iter().all(|&b| b == 0xFF)),
+            "short_ids must not contain [type_byte, 0xFF x15] counter sentinels: {key:?}"
+        );
+        assert_eq!(
+            value.len(),
+            16,
+            "every short_ids value must be a 16-byte entity id (counter rows were 8-byte): {value:?}"
+        );
+    }
+
+    // Documented key scheme, pinned as literal bytes: 12-byte ASCII prefix
+    // "sid_counter:" + raw type byte; value = last issued counter u64 LE.
+    let claim_counter = vault
+        .store
+        .vault_meta
+        .get(&rtxn, b"sid_counter:\x00")?
+        .expect("CLAIM counter must live in vault_meta");
+    assert_eq!(claim_counter, 2_u64.to_le_bytes());
+    let turn_counter = vault
+        .store
+        .vault_meta
+        .get(&rtxn, b"sid_counter:\x01")?
+        .expect("TURN counter must live in vault_meta");
+    assert_eq!(turn_counter, 1_u64.to_le_bytes());
+    Ok(())
+}
+
+/// Pins the short-id content hash formula `xxh32(data, 0) % 256` (u8) with a
+/// precomputed literal so a formula/seed/width drift FAILS without relying on
+/// the engine's own helper.
+#[test]
+fn short_id_content_hash_is_xxh32_of_data_mod_256() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let id = EntityId::now();
+    // xxh32(b"short-id-hash-pin", seed 0) = 0xc8d57569; 0xc8d57569 % 256 = 105.
+    let data = b"short-id-hash-pin";
+    const EXPECTED_CONTENT_HASH: u8 = 105;
+
+    vault
+        .batch()
+        .put(&id, 0, test_time_range(1, 1), 2, data)
+        .commit()?;
+
+    let (_, hash) = decode_short_id_value(&read_short_id_value(&vault, &id)?)?;
+    assert_eq!(hash, EXPECTED_CONTENT_HASH);
+
+    // The same byte is embedded in the forward KEY.
+    let mut forward_key = b"cl1".to_vec();
+    forward_key.push(EXPECTED_CONTENT_HASH);
+    let rtxn = vault.store.env.read_txn()?;
+    assert_eq!(
+        vault.store.short_ids.get(&rtxn, &forward_key)?,
+        Some(id.as_bytes().as_slice())
+    );
+    Ok(())
+}
+
+/// M0-4 fail-closed gate over the M2-5 bump: vaults written under storage ABI
+/// v2 (pre short-id direction swap) are REJECTED at open with the typed gate
+/// error. Pins the literal versions 2 → 3 — an implementation that skipped
+/// the bump would open the old vault and FAIL this test.
+#[test]
+fn open_rejects_abi_v2_vault_after_short_id_swap() -> Result<()> {
+    let temp_dir = tempfile::tempdir()?;
+    let path = temp_dir.path();
+
+    {
+        let _vault = Vault::open(path, test_config())?;
+    }
+    set_raw_storage_abi_version(path, Some(2))?;
+
+    let err = match Vault::open(path, test_config()) {
+        Ok(_) => panic!("expected Vault::open to reject a pre-swap ABI v2 vault"),
+        Err(err) => err,
+    };
+    assert!(
+        matches!(
+            err,
+            Error::StorageAbiVersionChanged {
+                stored: Some(2),
+                current: 3,
+            }
+        ),
+        "expected StorageAbiVersionChanged {{ stored: Some(2), current: 3 }}, got {err:?}"
+    );
     Ok(())
 }
 
@@ -1602,6 +1791,27 @@ fn batch_put_updates_content_hash_on_reput() -> Result<()> {
     assert_eq!(hash1, content_hash(data1));
     assert_eq!(hash2, content_hash(&data2));
     assert_ne!(hash1, hash2);
+
+    // The content hash is part of the forward KEY (manifest row n3), so the
+    // re-put must reap the stale forward row and write the refreshed one — an
+    // implementation that leaves the old `(short_id, old_hash)` row FAILS.
+    let mut stale_forward_key = short_id1.as_bytes().to_vec();
+    stale_forward_key.push(hash1);
+    let mut fresh_forward_key = short_id1.as_bytes().to_vec();
+    fresh_forward_key.push(hash2);
+    let rtxn = vault.store.env.read_txn()?;
+    assert!(
+        vault
+            .store
+            .short_ids
+            .get(&rtxn, &stale_forward_key)?
+            .is_none(),
+        "stale forward short_ids row must be deleted on content update"
+    );
+    assert_eq!(
+        vault.store.short_ids.get(&rtxn, &fresh_forward_key)?,
+        Some(id.as_bytes().as_slice())
+    );
     Ok(())
 }
 
@@ -2058,11 +2268,8 @@ fn full_delete_deindexes_everything() -> Result<()> {
         .phonetic(&id, &["SMTH", "SMT"])
         .commit()?;
 
-    let short_id_before_delete = {
-        let value = read_short_id_value(&vault, &id)?;
-        let (short_id, _) = decode_short_id_value(&value)?;
-        short_id
-    };
+    // The reverse VALUE bytes double as the forward KEY (short_id ‖ hash).
+    let forward_key_before_delete = read_short_id_value(&vault, &id)?;
 
     assert!(vault.delete_entity(&id)?);
     assert!(vault.get(&id)?.is_none());
@@ -2113,12 +2320,18 @@ fn full_delete_deindexes_everything() -> Result<()> {
             .is_none()
     );
 
-    assert!(vault.store.short_ids.get(&rtxn, id.as_bytes())?.is_none());
     assert!(
         vault
             .store
             .short_ids_reverse
-            .get(&rtxn, short_id_before_delete.as_bytes())?
+            .get(&rtxn, id.as_bytes())?
+            .is_none()
+    );
+    assert!(
+        vault
+            .store
+            .short_ids
+            .get(&rtxn, &forward_key_before_delete)?
             .is_none()
     );
     Ok(())
@@ -2330,7 +2543,13 @@ fn put_entity_simple_api_uses_batch() -> Result<()> {
             .get(&rtxn, &learned_key)?
             .is_some()
     );
-    assert!(vault.store.short_ids.get(&rtxn, id.as_bytes())?.is_some());
+    assert!(
+        vault
+            .store
+            .short_ids_reverse
+            .get(&rtxn, id.as_bytes())?
+            .is_some()
+    );
 
     Ok(())
 }
@@ -3049,7 +3268,7 @@ fn doctor_reflects_persisted_open_compatibility_values() -> Result<()> {
     let report = vault.doctor()?;
     serde_json::to_value(&report).expect("doctor report must serialize");
 
-    assert_eq!(report.storage_abi_version, Some(2));
+    assert_eq!(report.storage_abi_version, Some(3));
     assert_eq!(report.storage_schema_version, Some(1));
     assert_eq!(
         report.embedding_model_id,

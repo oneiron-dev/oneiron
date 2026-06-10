@@ -544,7 +544,9 @@ fn rmpv_to_json(value: &rmpv::Value) -> serde_json::Value {
 }
 
 fn read_short_id(store: &Store, rtxn: &RoTxn<'_>, id: &EntityId) -> Result<Option<(String, u8)>> {
-    let Some(value) = store.short_ids.get(rtxn, id.as_bytes())? else {
+    // ARCH-0019 row n4: `short_ids_reverse` is the entity-id-keyed direction
+    // (entity_id -> short_id ‖ content_hash).
+    let Some(value) = store.short_ids_reverse.get(rtxn, id.as_bytes())? else {
         return Ok(None);
     };
 
@@ -1188,7 +1190,10 @@ mod tests {
         let cases: &[(&str, &str, &str, CorruptFn)] = &[
             ("missing", "fallback", "fallback", |vault, id| {
                 let mut wtxn = vault.store.env.write_txn()?;
-                vault.store.short_ids.delete(&mut wtxn, id.as_bytes())?;
+                vault
+                    .store
+                    .short_ids_reverse
+                    .delete(&mut wtxn, id.as_bytes())?;
                 wtxn.commit()?;
                 Ok(())
             }),
@@ -1196,7 +1201,7 @@ mod tests {
                 let mut wtxn = vault.store.env.write_txn()?;
                 vault
                     .store
-                    .short_ids
+                    .short_ids_reverse
                     .put(&mut wtxn, id.as_bytes(), &[0xff, 0xfe, 7])?;
                 wtxn.commit()?;
                 Ok(())

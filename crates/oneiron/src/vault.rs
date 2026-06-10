@@ -524,7 +524,11 @@ impl Vault {
                 .phonetic_forward
                 .get(txn, id.as_bytes())?
                 .is_some()
-            || self.store.short_ids.get(txn, id.as_bytes())?.is_some()
+            || self
+                .store
+                .short_ids_reverse
+                .get(txn, id.as_bytes())?
+                .is_some()
         {
             return Ok(true);
         }
