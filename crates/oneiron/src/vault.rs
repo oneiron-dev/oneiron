@@ -113,6 +113,20 @@ pub struct Vault {
 
 impl Vault {
     /// Opens or creates a vault at `path`.
+    ///
+    /// Open-time compatibility gates run in the canonical order documented at
+    /// the top of [`crate::store`]: `Store::open` runs the storage gates
+    /// (`vault_meta` created first → ABI gate → schema gate → DB-manifest set
+    /// → DB opens → HNSW/dimension preflight → embedding-model preflight),
+    /// then this function runs the final analyzer / BM25F text-index
+    /// handshake against `vault_meta`. The
+    /// [`VaultConfig::skip_text_index_manifest_check`] escape hatch bypasses
+    /// only that final handshake (and marks a populated text index untrusted
+    /// so text reads/writes fail closed until
+    /// [`crate::MaintenanceBuilder::clear_text_index`] commits).
+    ///
+    /// Every gate fails closed: the first failing gate returns its typed
+    /// [`Error`] and no usable `Vault` handle is constructed.
     pub fn open(path: impl AsRef<Path>, config: VaultConfig) -> Result<Self> {
         if config.dimensions == 0 {
             return Err(Error::InvalidConfig(
