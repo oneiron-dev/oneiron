@@ -17,8 +17,8 @@ use oneiron::sync::transport::{
 };
 use oneiron::sync::types::WindowKey;
 use oneiron::sync::window::{self, LoadedWindow};
-use oneiron::types::{EdgeKind, TimeRange, Vad};
-use oneiron::{EntityId, HnswConfig, Vault, VaultConfig};
+use oneiron::types::{EdgeKind, ENTITY_TYPE_REDACTION_AUDIT, TimeRange, Vad};
+use oneiron::{DeleteReason, EntityId, HnswConfig, Vault, VaultConfig};
 
 fn test_config() -> VaultConfig {
     let mut cfg = VaultConfig::device();
@@ -725,4 +725,104 @@ fn sync_client_handle_server_message_handles_bulk_transfer_messages() {
         }
         other => panic!("expected bulk transfer completion event, got {other:?}"),
     }
+}
+
+/// GDPR receipt survival across a full CRDT sync round-trip (ONE-1103).
+///
+/// A REDACTION_AUDIT receipt (type byte 120; ARCH-0038 / contracts.ts
+/// `redactionAuditReceipt`) is engine-authored maintenance state. The public
+/// write gate must reject user-written maintenance kinds, but the
+/// engine-internal CRDT↔LMDB mirror has to carry receipts in BOTH directions
+/// or the Art.5(2) audit trail is silently lost on cross-node sync / replay.
+///
+/// Round-trip: Node A authors a receipt (LMDB) → `reverse_rematerialize`
+/// mirrors it into A's CRDT → the CRDT doc syncs to Node B (snapshot import) →
+/// Node B's `forward_rematerialize` writes it back into B's LMDB. The receipt
+/// must arrive byte-identical and land in the temporal_learned + maintenance
+/// type indices it belongs to.
+///
+/// This FAILS against the pre-fix code: `forward_rematerialize` routed the
+/// type-120 receipt through the public `validate_public_entity_type` gate,
+/// which rejected it with `MaintenanceKindNotWritable(120)`, so the
+/// `if result.is_ok()` guard silently dropped it and the receipt never
+/// reached Node B's LMDB.
+#[test]
+fn redaction_audit_receipt_survives_crdt_sync_round_trip() {
+    // --- Node A: author a real GDPR receipt in LMDB via a hard delete ---
+    let temp_a = tempfile::tempdir().unwrap();
+    let vault_a = Arc::new(Vault::open(temp_a.path(), test_config()).unwrap());
+
+    let subject = EntityId::now();
+    // Seed a non-CLAIM subject (TURN = type 1) with a learned_at well outside
+    // the receipt's window, then hard-delete it to author the receipt.
+    vault_a
+        .put_entity(&subject, 1, TimeRange { start: 301, end: 301 }, 301, b"forget-me")
+        .unwrap();
+    let outcome = vault_a
+        .delete_entity_with_reason(&subject, DeleteReason::UserHardDelete)
+        .unwrap();
+    let receipt_id = outcome
+        .receipt_id
+        .expect("user hard delete must author a REDACTION_AUDIT receipt");
+
+    let receipt_raw = vault_a
+        .get_raw(&receipt_id)
+        .unwrap()
+        .expect("receipt must exist in node A LMDB");
+    assert_eq!(
+        receipt_raw[0], ENTITY_TYPE_REDACTION_AUDIT,
+        "authored receipt must be the maintenance band type byte"
+    );
+    let learned_at = vault_a.get_learned_at(&receipt_id).unwrap();
+
+    // --- Node A: LMDB → CRDT (reverse mirror is unfiltered; already works) ---
+    let window_key = WindowKey::from_timestamp(learned_at);
+    let doc_a = create_window_doc("node-a", &window_key);
+    let mirrored = window::reverse_rematerialize(&vault_a, &doc_a, &window_key).unwrap();
+    assert!(
+        mirrored >= 1,
+        "reverse rematerialize must mirror the receipt into the CRDT"
+    );
+    assert_eq!(
+        map_get_bytes(&doc_a.get_map("entities"), receipt_id.to_hex().as_str()).as_deref(),
+        Some(receipt_raw.as_slice()),
+        "receipt must be byte-identical in the CRDT mirror"
+    );
+
+    // --- wire: doc_a → doc_b (peer sync via snapshot import) ---
+    let snapshot = doc_a.export(ExportMode::Snapshot).unwrap();
+    let doc_b = LoroDoc::from_snapshot(&snapshot).unwrap();
+
+    // --- Node B: CRDT → LMDB (the seam that silently dropped the receipt) ---
+    let temp_b = tempfile::tempdir().unwrap();
+    let vault_b = Vault::open(temp_b.path(), test_config()).unwrap();
+    let materializer = Materializer::new();
+    let restored = window::forward_rematerialize(&vault_b, &doc_b, &materializer).unwrap();
+    assert!(
+        restored >= 1,
+        "forward rematerialize must write the receipt back into LMDB"
+    );
+
+    // Survives byte-identical: the exact pinned on-disk envelope is preserved.
+    assert_eq!(
+        vault_b.get_raw(&receipt_id).unwrap().as_deref(),
+        Some(receipt_raw.as_slice()),
+        "receipt must survive the round-trip byte-identical on node B"
+    );
+    // Discoverable via the maintenance type index (type byte 120).
+    assert!(
+        vault_b
+            .entities_by_type(ENTITY_TYPE_REDACTION_AUDIT)
+            .unwrap()
+            .contains(&receipt_id),
+        "receipt must be discoverable via the maintenance type index on node B"
+    );
+    // Lands in the temporal_learned index it belongs to.
+    assert!(
+        vault_b
+            .entities_in_learned_range(learned_at, learned_at + 1)
+            .unwrap()
+            .contains(&receipt_id),
+        "receipt must land in node B's temporal_learned index"
+    );
 }
