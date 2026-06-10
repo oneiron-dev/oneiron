@@ -1006,8 +1006,11 @@ impl Vault {
             if raw.len() == ENTITY_METADATA_HEADER_LEN {
                 // An ARCH-0038 SoftErase scrubbed this Claim's body but kept
                 // its structural edges. A bodiless 25 B Claim shell is a
-                // tombstone, never live — skip it (its edge refresh already
-                // ran in the SoftErase transaction).
+                // tombstone, never live — skip it. Safe because EVERY local
+                // SoftErase (the user_delete branch AND the gdpr/policy
+                // pre-purge step) commits the D16 edge refresh in the SAME
+                // transaction that scrubs the body, so a shell can never
+                // coexist with a stale subject-edge stamp.
                 continue;
             }
             let wrapper =
@@ -1118,7 +1121,27 @@ impl Vault {
             reason,
             DeleteReason::GdprDelete | DeleteReason::PolicyDelete
         ) {
-            let _ = self.soft_erase_active_store(id)?;
+            // The SoftErase scrubs the truth-Claim's body — the ONLY carrier
+            // of the subject EdgeRef (D12) — so the D16 edge refresh MUST
+            // commit atomically with it, mirroring the user_delete branch
+            // above. Committing the SoftErase alone first would leave a
+            // crash window in which a stale 26 B flag outlives its
+            // truth-Claim and a RETRY cannot heal it (capture sees the
+            // bodiless shell ⇒ `None`). The purge txn below re-runs the
+            // refresh as an idempotent second pass.
+            let mut wtxn = self.store.env.write_txn()?;
+            let (existed, had_vector) = self.soft_erase_active_store_in_txn(&mut wtxn, id)?;
+            if had_vector {
+                crate::hnsw::increment_vector_version(&self.store, &mut wtxn)?;
+            }
+            if existed && let Some(captured) = &captured {
+                self.refresh_subject_edge_after_claim_delete_in_txn(
+                    &mut wtxn,
+                    id,
+                    &captured.subject,
+                )?;
+            }
+            wtxn.commit()?;
             unix_seconds_now()
         } else {
             tombstone_complete_at
@@ -1226,9 +1249,11 @@ impl Vault {
     ///
     /// Discrimination order — the hook stays inert for everything else:
     /// type byte FIRST (non-CLAIM ⇒ `None`), then the predicate (non-
-    /// `edge.provenance` Claim ⇒ `None`). A bodiless 25 B Claim shell (an
-    /// earlier SoftErase already scrubbed the body, and refreshed the edge
-    /// when it did) ⇒ `None`. A type-0 record whose NON-empty body fails
+    /// `edge.provenance` Claim ⇒ `None`). A bodiless 25 B Claim shell ⇒
+    /// `None`: every local SoftErase commits the D16 edge refresh in the
+    /// SAME transaction that scrubs the body, so a shell's subject edge is
+    /// already consistent and the refs the sweep would need are gone with
+    /// the body. A type-0 record whose NON-empty body fails
     /// claim/provenance decoding fails CLOSED with the decoder's typed error
     /// — the ONE-1104 invariant (every type-0 write is validated) is broken
     /// and the delete must not guess.
@@ -1328,16 +1353,6 @@ impl Vault {
         if had_vector {
             crate::hnsw::increment_vector_version(&self.store, wtxn)?;
         }
-        Ok(existed)
-    }
-
-    fn soft_erase_active_store(&self, id: &EntityId) -> Result<bool> {
-        let mut wtxn = self.store.env.write_txn()?;
-        let (existed, had_vector) = self.soft_erase_active_store_in_txn(&mut wtxn, id)?;
-        if had_vector {
-            crate::hnsw::increment_vector_version(&self.store, &mut wtxn)?;
-        }
-        wtxn.commit()?;
         Ok(existed)
     }
 

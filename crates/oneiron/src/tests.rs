@@ -9519,6 +9519,79 @@ fn delete_hook_discriminates_by_type_byte_and_predicate() -> Result<()> {
 }
 
 #[test]
+fn corrupt_type_0_body_fails_the_delete_closed_with_zero_residue() -> Result<()> {
+    let fx = lifecycle_fixture()?;
+    let vault = &fx.vault;
+    let subject = fx.subject;
+
+    // A pre-existing provenanced 26 B edge that the aborted deletes must
+    // never touch.
+    let anchor = EntityId::now();
+    vault.put_edge_provenance(
+        &anchor,
+        &subject,
+        &EdgeProvenanceClaimBody::new(fx.person, 0.9, SupersessionStatus::Confirmed),
+        EdgeActorClass::Human,
+        1_000,
+    )?;
+    let (edge_before_out, edge_before_in) = raw_edge_values(vault, &subject)?;
+    let receipts_before = redaction_audit_receipts(vault)?;
+
+    // Raw-write a type-0 (CLAIM) record with a valid 25 B header and a
+    // NON-empty garbage body (32 × 0xC1 — a reserved MessagePack byte that
+    // can never decode). ONE-1104 pins that every type-0 write is
+    // validated, so this record can only exist through corruption.
+    let corrupt = EntityId::now();
+    let mut raw = Vec::with_capacity(ENTITY_METADATA_HEADER_LEN + 32);
+    raw.push(0); // type byte 0 = CLAIM
+    raw.extend_from_slice(&5_u64.to_be_bytes()); // occurred_start
+    raw.extend_from_slice(&5_u64.to_be_bytes()); // occurred_end
+    raw.extend_from_slice(&5_u64.to_be_bytes()); // learned_at
+    raw.extend_from_slice(&[0xC1; 32]);
+    assert!(raw.len() >= ENTITY_METADATA_HEADER_LEN + 26);
+    vault.with_write_txn(|wtxn| {
+        vault.store.entities.put(wtxn, corrupt.as_bytes(), &raw)?;
+        Ok(())
+    })?;
+
+    // The capture hook runs on EVERY delete reason BEFORE any mutation; an
+    // undecodable non-empty type-0 body must abort the delete CLOSED with
+    // the decoder's typed error on a hard reason AND on the local SoftErase
+    // path. A warn-and-proceed or skip-on-decode-failure capture FAILS the
+    // expect_err (the delete would go through and leave residue below).
+    for reason in [DeleteReason::GdprDelete, DeleteReason::UserDelete] {
+        let err = vault
+            .delete_entity_with_reason(&corrupt, reason)
+            .expect_err("undecodable non-empty type-0 body must fail the delete closed");
+        assert_eq!(err.kind(), ErrorKind::InvalidClaimBody, "{reason:?}");
+
+        // Zero residue: the corrupt record's stored bytes are untouched…
+        let rtxn = vault.store.env.read_txn()?;
+        assert_eq!(
+            vault.store.entities.get(&rtxn, corrupt.as_bytes())?,
+            Some(raw.as_slice()),
+            "{reason:?}: the aborted delete must leave the record byte-identical"
+        );
+        drop(rtxn);
+        // …no receipt was written and no sweep row was queued…
+        assert_eq!(
+            redaction_audit_receipts(vault)?,
+            receipts_before,
+            "{reason:?}: receipts must be unchanged by the aborted delete"
+        );
+        assert!(
+            hard_erase_sweep_rows(vault)?.is_empty(),
+            "{reason:?}: no sweep row may be queued by the aborted delete"
+        );
+        // …and the pre-existing provenanced edge's raw bytes never moved.
+        let (out, inn) = raw_edge_values(vault, &subject)?;
+        assert_eq!(out, edge_before_out, "{reason:?}");
+        assert_eq!(inn, edge_before_in, "{reason:?}");
+    }
+    Ok(())
+}
+
+#[test]
 fn deleting_a_provenance_claim_whose_subject_edge_is_gone_refreshes_nothing() -> Result<()> {
     let fx = lifecycle_fixture()?;
     let vault = &fx.vault;
