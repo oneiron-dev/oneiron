@@ -29,6 +29,9 @@ pub enum ErrorKind {
     IndexOverflow,
     MissingPostingEntry,
     InvalidEntityType,
+    InvalidClaimBody,
+    InvalidPredicate,
+    ReservedPredicate,
     CycleDetected,
     IncompatibleAnalyzer,
     Bm25FieldSchemaChanged,
@@ -118,6 +121,21 @@ pub enum Error {
     /// Entity type byte is not in any known range.
     #[error("invalid entity type: {0}")]
     InvalidEntityType(u8),
+    /// A type-0 (CLAIM) entity body failed the pinned structural validation
+    /// (D11 key set / D18 fail-closed gate). Nothing was written.
+    #[error("invalid claim body: {0}")]
+    InvalidClaimBody(&'static str),
+    /// Claim predicate violates the pinned D17 grammar (≥2 segments of
+    /// `[a-z][a-z0-9_]*` joined by `.`, total ≤128 bytes).
+    #[error("invalid claim predicate {predicate:?}: {reason}")]
+    InvalidPredicate {
+        predicate: String,
+        reason: &'static str,
+    },
+    /// Claim predicate lives in the reserved `edge.*` namespace, which only
+    /// the engine's internal provenance path may write (D17).
+    #[error("reserved claim predicate namespace: {predicate:?}")]
+    ReservedPredicate { predicate: String },
     /// Tree operation would create a cycle.
     #[error("cycle detected in tree hierarchy")]
     CycleDetected,
@@ -232,6 +250,9 @@ impl Error {
             Self::IndexOverflow(_) => ErrorKind::IndexOverflow,
             Self::MissingPostingEntry => ErrorKind::MissingPostingEntry,
             Self::InvalidEntityType(_) => ErrorKind::InvalidEntityType,
+            Self::InvalidClaimBody(_) => ErrorKind::InvalidClaimBody,
+            Self::InvalidPredicate { .. } => ErrorKind::InvalidPredicate,
+            Self::ReservedPredicate { .. } => ErrorKind::ReservedPredicate,
             Self::CycleDetected => ErrorKind::CycleDetected,
             Self::IncompatibleAnalyzer { .. } => ErrorKind::IncompatibleAnalyzer,
             Self::Bm25FieldSchemaChanged => ErrorKind::Bm25FieldSchemaChanged,

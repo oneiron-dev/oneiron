@@ -878,7 +878,7 @@ mod tests {
     fn put_text_doc(vault: &Vault, id: &EntityId, text: &str) -> Result<()> {
         vault
             .batch()
-            .put(id, 0, test_time_range(1, 1), 2, b"text-doc")
+            .put(id, 1, test_time_range(1, 1), 2, b"text-doc")
             .text(id, &[("body", text)])
             .commit()
     }
@@ -949,7 +949,7 @@ mod tests {
             batch = batch
                 .put(
                     &id,
-                    0,
+                    1,
                     test_time_range(idx as u64, idx as u64),
                     idx as u64,
                     b"doc",
@@ -1039,7 +1039,7 @@ mod tests {
 
         vault
             .batch()
-            .put(&id, 0, test_time_range(1, 1), 2, b"empty")
+            .put(&id, 1, test_time_range(1, 1), 2, b"empty")
             .text(&id, &[("title", ""), ("body", "")])
             .commit()?;
 

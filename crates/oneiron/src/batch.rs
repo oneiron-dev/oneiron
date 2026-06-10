@@ -99,6 +99,10 @@ pub(crate) enum BatchOp {
         occurred: TimeRange,
         learned_at: u64,
         data: Vec<u8>,
+        /// D17 reserved-namespace gate for type-0 (CLAIM) bodies. `false` on
+        /// every public path; only the `pub(crate)` provenance door
+        /// ([`TxnBatchBuilder::put_reserved_claim`]) sets it.
+        allow_reserved_predicate: bool,
     },
     Vector {
         id: EntityId,
@@ -170,6 +174,7 @@ impl<'a> BatchBuilder<'a> {
             occurred,
             learned_at,
             data: data.to_vec(),
+            allow_reserved_predicate: false,
         });
         self
     }
@@ -382,6 +387,39 @@ impl<'a> TxnBatchBuilder<'a> {
             occurred,
             learned_at,
             data: data.to_vec(),
+            allow_reserved_predicate: false,
+        });
+        self
+    }
+
+    /// Adds a type-0 (CLAIM) put whose predicate may live in the reserved
+    /// `edge.*` namespace (D17 reserved-namespace door).
+    ///
+    /// This is the ONLY path that may write `edge.*` predicates; it exists
+    /// for the engine's provenance unit (`edge.provenance` Claims). Full
+    /// structural body validation (D18) still applies at apply time — the
+    /// door bypasses nothing except the reserved-namespace rejection.
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "reserved-namespace door consumed by the provenance unit (ONE-1105)"
+        )
+    )]
+    pub(crate) fn put_reserved_claim(
+        mut self,
+        id: &EntityId,
+        occurred: TimeRange,
+        learned_at: u64,
+        data: &[u8],
+    ) -> Self {
+        self.ops.push(BatchOp::Put {
+            id: *id,
+            entity_type: crate::types::ENTITY_TYPE_CLAIM,
+            occurred,
+            learned_at,
+            data: data.to_vec(),
+            allow_reserved_predicate: true,
         });
         self
     }
@@ -493,8 +531,18 @@ pub(crate) fn apply_ops(
                 occurred,
                 learned_at,
                 data,
+                allow_reserved_predicate,
             } => {
-                apply_put(store, wtxn, id, entity_type, occurred, learned_at, &data)?;
+                apply_put(
+                    store,
+                    wtxn,
+                    id,
+                    entity_type,
+                    occurred,
+                    learned_at,
+                    &data,
+                    allow_reserved_predicate,
+                )?;
             }
             BatchOp::Vector { id, vector } => {
                 apply_vector(store, config, wtxn, id, &vector)?;
@@ -721,6 +769,10 @@ pub(crate) fn deindex_entity(
     Ok((true, had_vector, had_graph_mutation, neighbors))
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "decomposing would obscure direct LMDB write logic"
+)]
 fn apply_put(
     store: &Store,
     wtxn: &mut RwTxn<'_>,
@@ -729,8 +781,15 @@ fn apply_put(
     occurred: TimeRange,
     learned_at: u64,
     data: &[u8],
+    allow_reserved_predicate: bool,
 ) -> Result<()> {
     validate_entity_type(entity_type)?;
+    // D18: every type-0 (CLAIM) write — put_entity, both batch builders, and
+    // sync replay — is structurally validated before any byte is staged.
+    // Bodies of all other type bytes stay opaque at the storage layer.
+    if entity_type == crate::types::ENTITY_TYPE_CLAIM {
+        crate::claim::validate_claim_body_bytes(data, allow_reserved_predicate)?;
+    }
     let short_id_plan = plan_short_id_update(store, &*wtxn, &id, entity_type, data)?;
 
     let mut occurred = occurred;

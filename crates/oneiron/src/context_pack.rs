@@ -762,6 +762,31 @@ mod tests {
             .commit()
     }
 
+    /// Writes a structurally valid CLAIM (type 0, D11 pinned body keys) plus
+    /// a text row so it is retrievable through `search_text`.
+    fn put_claim_text_entity(
+        vault: &Vault,
+        id: &EntityId,
+        text: &str,
+        pred: &str,
+        val: &str,
+    ) -> Result<()> {
+        let body = crate::claim::ClaimBody::new(
+            pred,
+            crate::claim::ClaimSubject::Entity(EntityId::from_bytes([0x7C; 16])?),
+            rmpv::Value::from(val),
+            0.9,
+            crate::claim::ClaimApprovalStatus::Auto,
+            crate::claim::ClaimLifecycleStatus::Active,
+        );
+        let payload = crate::claim::encode_claim_body(&body)?;
+        vault
+            .batch()
+            .put(id, 0, TimeRange { start: 1, end: 1 }, 1, &payload)
+            .text(id, &[("body", text)])
+            .commit()
+    }
+
     #[test]
     fn dedupe_signals_preserves_first_occurrence_order() {
         let signals = vec![
@@ -783,16 +808,12 @@ mod tests {
         let (_dir, vault) = open_test_vault();
         let id = EntityId::now();
 
-        put_text_entity(
+        put_claim_text_entity(
             &vault,
             &id,
-            0,
             "learn japanese",
-            serde_json::json!({
-                "pred": "goal.learning",
-                "val": "Learn Japanese by June",
-                "conf": 0.9
-            }),
+            "goal.learning",
+            "Learn Japanese by June",
         )?;
 
         let pack = vault.context_pack().search_text("japanese", 10).run()?;
@@ -807,7 +828,11 @@ mod tests {
             fields.get("pred").and_then(|v| v.as_str()),
             Some("goal.learning")
         );
-        assert_eq!(fields.get("conf").and_then(|v| v.as_f64()), Some(0.9));
+        let conf = fields
+            .get("conf")
+            .and_then(serde_json::Value::as_f64)
+            .expect("conf field missing");
+        assert!((conf - 0.9).abs() < 1e-6, "conf drifted: {conf}");
         Ok(())
     }
 
@@ -826,13 +851,7 @@ mod tests {
 
         let src = EntityId::now();
         let tgt = EntityId::now();
-        put_text_entity(
-            &vault,
-            &src,
-            0,
-            "alpha",
-            serde_json::json!({"pred": "x", "val": "y"}),
-        )?;
+        put_claim_text_entity(&vault, &src, "alpha", "test.x", "y")?;
         put_text_entity(
             &vault,
             &tgt,
@@ -862,13 +881,7 @@ mod tests {
 
         let src = EntityId::now();
         let tgt = EntityId::now();
-        put_text_entity(
-            &vault,
-            &src,
-            0,
-            "alpha",
-            serde_json::json!({"pred": "x", "val": "y"}),
-        )?;
+        put_claim_text_entity(&vault, &src, "alpha", "test.x", "y")?;
 
         let key = Store::encode_edge_key(&src, crate::types::EdgeKind::Supports, &tgt);
         let value = [0_u8; 13];
@@ -895,13 +908,7 @@ mod tests {
 
         let src = EntityId::now();
         let tgt = EntityId::now();
-        put_text_entity(
-            &vault,
-            &src,
-            0,
-            "gamma",
-            serde_json::json!({"pred": "x", "val": "y"}),
-        )?;
+        put_claim_text_entity(&vault, &src, "gamma", "test.x", "y")?;
         put_text_entity(&vault, &tgt, 4, "delta", serde_json::json!({"name": "Bob"}))?;
 
         vault.put_edge_with_vad(
@@ -941,13 +948,7 @@ mod tests {
         let b = EntityId::now();
         let c = EntityId::now();
 
-        put_text_entity(
-            &vault,
-            &a,
-            0,
-            "root",
-            serde_json::json!({"pred": "root", "val": "root"}),
-        )?;
+        put_claim_text_entity(&vault, &a, "root", "test.root", "root")?;
         put_text_entity(&vault, &b, 4, "child", serde_json::json!({"name": "B"}))?;
         put_text_entity(&vault, &c, 4, "leaf", serde_json::json!({"name": "C"}))?;
 
@@ -979,13 +980,7 @@ mod tests {
         let (_dir, vault) = open_test_vault();
 
         let root = EntityId::now();
-        put_text_entity(
-            &vault,
-            &root,
-            0,
-            "root",
-            serde_json::json!({"pred": "root", "val": "root"}),
-        )?;
+        put_claim_text_entity(&vault, &root, "root", "test.root", "root")?;
 
         for i in 0..20_u8 {
             let id = EntityId::from_bytes_unchecked([i + 1; 16]);
@@ -1015,13 +1010,7 @@ mod tests {
         let (_dir, vault) = open_test_vault();
 
         let root = EntityId::from_bytes_unchecked([1; 16]);
-        put_text_entity(
-            &vault,
-            &root,
-            0,
-            "root",
-            serde_json::json!({"pred": "root", "val": "root"}),
-        )?;
+        put_claim_text_entity(&vault, &root, "root", "test.root", "root")?;
 
         let weighted = [
             (EntityId::from_bytes_unchecked([2; 16]), 0.4_f32),
@@ -1065,13 +1054,7 @@ mod tests {
 
         let root = EntityId::from_bytes_unchecked([7; 16]);
         let child = EntityId::from_bytes_unchecked([8; 16]);
-        put_text_entity(
-            &vault,
-            &root,
-            0,
-            "root",
-            serde_json::json!({"pred": "root", "val": "root"}),
-        )?;
+        put_claim_text_entity(&vault, &root, "root", "test.root", "root")?;
         put_text_entity(
             &vault,
             &child,
@@ -1111,13 +1094,7 @@ mod tests {
         let (_dir, vault) = open_test_vault();
         let id = EntityId::now();
 
-        put_text_entity(
-            &vault,
-            &id,
-            0,
-            "vec",
-            serde_json::json!({"pred": "a", "val": "b"}),
-        )?;
+        put_claim_text_entity(&vault, &id, "vec", "test.a", "b")?;
 
         vault.put_vector(&id, &[0.1, 0.2, 0.3, 0.4])?;
 
@@ -1153,20 +1130,8 @@ mod tests {
 
         let a = EntityId::now();
         let b = EntityId::now();
-        put_text_entity(
-            &vault,
-            &a,
-            0,
-            "alpha alpha",
-            serde_json::json!({"pred": "a", "val": "a"}),
-        )?;
-        put_text_entity(
-            &vault,
-            &b,
-            0,
-            "alpha",
-            serde_json::json!({"pred": "b", "val": "b"}),
-        )?;
+        put_claim_text_entity(&vault, &a, "alpha alpha", "test.a", "a")?;
+        put_claim_text_entity(&vault, &b, "alpha", "test.b", "b")?;
 
         let expected = vault.query().search_text("alpha", 10).run()?;
         let pack = vault.context_pack().search_text("alpha", 10).run()?;
@@ -1207,13 +1172,7 @@ mod tests {
             let (_dir, vault) = open_test_vault();
             let id = EntityId::now();
 
-            put_text_entity(
-                &vault,
-                &id,
-                0,
-                ingest_text,
-                serde_json::json!({"pred": "a", "val": "b"}),
-            )?;
+            put_claim_text_entity(&vault, &id, ingest_text, "test.a", "b")?;
 
             corrupt(&vault, &id)?;
 

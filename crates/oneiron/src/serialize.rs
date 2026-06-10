@@ -909,11 +909,15 @@ fn group_title(entity_type: u8) -> &'static str {
 
 fn fields_for_profile(entity_type: u8, profile: FieldProfile) -> &'static [&'static str] {
     match (entity_type, profile) {
-        (ENTITY_TYPE_CLAIM, FieldProfile::Minimal) => &["pred", "val"],
-        (ENTITY_TYPE_CLAIM, FieldProfile::Standard) => &["pred", "val", "conf", "sal", "evid"],
-        (ENTITY_TYPE_CLAIM, FieldProfile::Full) => &[
-            "pred", "val", "conf", "sal", "evid", "from", "to", "src", "world", "subj", "scope",
-        ],
+        // CLAIM profiles are prefixes of the pinned on-disk key set (D11) —
+        // sourced from `claim::CLAIM_BODY_KEYS` so the read projection can
+        // never drift from the storage ABI:
+        //   Minimal  = pred val
+        //   Standard = pred val conf sal evid
+        //   Full     = pred val conf sal evid from to src world subj scope
+        (ENTITY_TYPE_CLAIM, FieldProfile::Minimal) => crate::claim::CLAIM_FIELDS_MINIMAL,
+        (ENTITY_TYPE_CLAIM, FieldProfile::Standard) => crate::claim::CLAIM_FIELDS_STANDARD,
+        (ENTITY_TYPE_CLAIM, FieldProfile::Full) => crate::claim::CLAIM_FIELDS_FULL,
 
         (ENTITY_TYPE_TURN, FieldProfile::Minimal) => &["txt"],
         (ENTITY_TYPE_TURN, FieldProfile::Standard) => &["txt", "spkr", "at"],
