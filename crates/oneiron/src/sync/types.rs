@@ -47,20 +47,35 @@ impl WindowKey {
     }
 
     /// Creates a window key from a Unix timestamp (seconds).
+    ///
+    /// Timestamps at or beyond year 10000 are clamped to the last
+    /// representable window, `"9999-12"`: the ARCH-0023b window-key format is
+    /// `YYYY-MM` (exactly 7 bytes), so a larger year would produce a key that
+    /// `parse_window_key_str` rejects everywhere — `sync_state` rows written
+    /// under such a key become unreachable through validated read paths,
+    /// `SyncQueue::push` refuses it, and the wire encoders assert on it.
+    /// `learned_at` is caller-supplied, so this conversion must stay total
+    /// and bounded.
     pub fn from_timestamp(ts: u64) -> Self {
-        // Convert unix seconds to YYYY-MM
-        let secs = ts as i64;
+        // Convert unix seconds to YYYY-MM. Stay in u64: an `as i64` cast
+        // would wrap negative for ts > i64::MAX and silently yield "1970-01".
         // Simple calculation: days since epoch → year/month
         // Using chrono-free approach: 86400 secs/day, approximate month/year
-        let days = secs / 86_400;
+        let days = ts / 86_400;
         // Approximate: 1970-01-01 is day 0
         let mut year = 1970i32;
         let mut remaining_days = days;
 
         loop {
-            let days_in_year = if is_leap_year(year) { 366 } else { 365 };
+            let days_in_year: u64 = if is_leap_year(year) { 366 } else { 365 };
             if remaining_days < days_in_year {
                 break;
+            }
+            if year == 9999 {
+                // Clamp instead of walking one year per iteration toward an
+                // astronomically large target (and emitting a >4-digit year
+                // that breaks the YYYY-MM key format).
+                return Self("9999-12".to_owned());
             }
             remaining_days -= days_in_year;
             year += 1;
@@ -243,6 +258,34 @@ mod tests {
     fn window_key_from_timestamp_epoch() {
         let key = WindowKey::from_timestamp(0);
         assert_eq!(key.as_str(), "1970-01");
+    }
+
+    /// `from_timestamp` must stay total, bounded, and inside the ARCH-0023b
+    /// `YYYY-MM` key format for ANY u64 input. The pre-fix code (a) cast `ts
+    /// as i64`, so ts > i64::MAX wrapped negative and silently produced
+    /// "1970-01", (b) walked one year per loop iteration toward the target
+    /// (hundreds of billions of iterations for ts near i64::MAX), and (c)
+    /// emitted >4-digit years ("10000-01") that `parse_window_key_str`
+    /// rejects, stranding any sync_state rows written under them.
+    #[test]
+    fn window_key_from_timestamp_clamps_far_future_to_last_representable_window() {
+        // Last second of year 9999 still maps inside the format.
+        let last_valid = date_to_unix(9999, 12, 31).unwrap() + 86_399;
+        assert_eq!(WindowKey::from_timestamp(last_valid).as_str(), "9999-12");
+
+        // First second of year 10000 clamps (would otherwise be "10000-01").
+        let year_10000 = date_to_unix(10_000, 1, 1).unwrap();
+        assert_eq!(WindowKey::from_timestamp(year_10000).as_str(), "9999-12");
+
+        // Extreme values: must terminate promptly and not sign-wrap.
+        for ts in [i64::MAX as u64, i64::MAX as u64 + 1, u64::MAX] {
+            let key = WindowKey::from_timestamp(ts);
+            assert_eq!(key.as_str(), "9999-12", "ts={ts}");
+            assert!(
+                parse_window_key_str(key.as_str()).is_some(),
+                "clamped key must satisfy the pinned YYYY-MM format"
+            );
+        }
     }
 
     #[test]
