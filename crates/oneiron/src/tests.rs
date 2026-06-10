@@ -76,6 +76,21 @@ fn valid_edge_value() -> Vec<u8> {
         .expect("valid structural edge value")
 }
 
+/// Builds a structurally valid CLAIM body (D11 pinned keys) for raw type-0
+/// writes. The subject is an arbitrary valid entity id — the raw write path
+/// validates structure only; subject existence is `put_claim`'s concern.
+fn valid_claim_body_bytes(pred: &str, val: &str) -> Vec<u8> {
+    let body = crate::claim::ClaimBody::new(
+        pred,
+        crate::claim::ClaimSubject::Entity(seeded_entity_id(0xC1A1)),
+        rmpv::Value::from(val),
+        0.9,
+        crate::claim::ClaimApprovalStatus::Auto,
+        crate::claim::ClaimLifecycleStatus::Active,
+    );
+    crate::claim::encode_claim_body(&body).expect("encode valid claim body")
+}
+
 fn read_meta_u16(vault: &Vault, key: &[u8]) -> Result<Option<u16>> {
     let rtxn = vault.store.env.read_txn()?;
     let Some(raw) = vault.store.vault_meta.get(&rtxn, key)? else {
@@ -477,7 +492,7 @@ fn open_put_get_delete_entities() -> Result<()> {
     let id = EntityId::now();
     let data = b"entity-payload";
 
-    vault.put_entity(&id, 0, test_time_range(10, 20), 30, data)?;
+    vault.put_entity(&id, 1, test_time_range(10, 20), 30, data)?;
     let got = vault.get(&id)?.ok_or(Error::EntityNotFound)?;
     assert_eq!(got, data);
 
@@ -496,7 +511,7 @@ fn user_delete_soft_erases_active_payload_without_receipt_or_sweep() -> Result<(
 
     vault
         .batch()
-        .put(&id, 0, test_time_range(10, 10), 20, secret)
+        .put(&id, 1, test_time_range(10, 10), 20, secret)
         .text(&id, &[("body", "soft-erase-active-secret")])
         .commit()?;
 
@@ -510,7 +525,7 @@ fn user_delete_soft_erases_active_payload_without_receipt_or_sweep() -> Result<(
     assert!(outcome.sweep_key.is_none());
     assert_eq!(vault.get(&id)?.as_deref(), Some([].as_slice()));
     assert!(vault.search_text("active-secret", 10)?.is_empty());
-    assert!(vault.entities_by_type(0)?.contains(&id));
+    assert!(vault.entities_by_type(1)?.contains(&id));
     assert!(redaction_audit_receipts(&vault)?.is_empty());
     assert!(hard_erase_sweep_rows(&vault)?.is_empty());
     Ok(())
@@ -522,7 +537,7 @@ fn user_hard_delete_writes_opaque_redaction_audit_receipt() -> Result<()> {
     let id = EntityId::now();
     let payload = b"Alice secret body predicate should never enter receipt";
 
-    vault.put_entity(&id, 0, test_time_range(100, 100), 101, payload)?;
+    vault.put_entity(&id, 1, test_time_range(100, 100), 101, payload)?;
 
     let outcome = vault.delete_entity_with_reason(&id, DeleteReason::UserHardDelete)?;
     let receipt_id = outcome
@@ -657,7 +672,7 @@ fn hard_delete_enqueues_bounded_historical_carrier_sweep() -> Result<()> {
     let (_dir, vault) = open_test_vault();
     let id = EntityId::now();
 
-    vault.put_entity(&id, 0, test_time_range(200, 200), 201, b"sweep-me")?;
+    vault.put_entity(&id, 1, test_time_range(200, 200), 201, b"sweep-me")?;
 
     let outcome = vault.delete_entity_with_reason(&id, DeleteReason::UserHardDelete)?;
     let sweep_key = outcome
@@ -708,7 +723,7 @@ fn hard_delete_sweep_sequence_self_heals_stale_cursor_on_collision() -> Result<(
     let id = EntityId::now();
     vault.put_entity(
         &id,
-        0,
+        1,
         test_time_range(250, 250),
         251,
         b"repair-sweep-cursor",
@@ -766,7 +781,7 @@ fn gdpr_and_policy_deletes_soft_erase_then_active_purge_with_receipts() -> Resul
         let id = EntityId::now();
         vault
             .batch()
-            .put(&id, 0, test_time_range(300, 300), 301, b"regulated secret")
+            .put(&id, 1, test_time_range(300, 300), 301, b"regulated secret")
             .text(&id, &[("body", "regulated secret")])
             .commit()?;
 
@@ -846,7 +861,7 @@ fn user_delete_soft_shell_survives_sync_rematerialization() -> Result<()> {
         .batch()
         .put(
             &id,
-            0,
+            1,
             test_time_range(learned_at, learned_at),
             learned_at,
             b"soft-delete-sync-body",
@@ -896,7 +911,7 @@ fn hard_delete_persists_crdt_tombstone_before_active_purge() -> Result<()> {
         .batch()
         .put(
             &id,
-            0,
+            1,
             test_time_range(learned_at, learned_at),
             learned_at,
             b"must-tombstone-before-purge",
@@ -949,7 +964,7 @@ fn hard_delete_with_far_future_learned_at_tombstones_into_valid_window() -> Resu
         .batch()
         .put(
             &id,
-            0,
+            1,
             test_time_range(u64::MAX, u64::MAX),
             u64::MAX,
             b"far-future-learned-at",
@@ -1079,7 +1094,7 @@ fn search_vector_skips_deleted_nodes() -> Result<()> {
     let live = EntityId::now();
 
     for id in [entry, deleted, live] {
-        vault.put_entity(&id, 0, test_time_range(1, 1), 1, b"vector-node")?;
+        vault.put_entity(&id, 1, test_time_range(1, 1), 1, b"vector-node")?;
     }
 
     vault.put_vector(&entry, &[1.0_f32, 0.0, 0.0, 0.0])?;
@@ -1100,8 +1115,8 @@ fn search_vector_ignores_reserved_sentinel_neighbors() -> Result<()> {
     let entry = EntityId::now();
     let live = EntityId::now();
 
-    vault.put_entity(&entry, 0, test_time_range(1, 1), 1, b"entry")?;
-    vault.put_entity(&live, 0, test_time_range(1, 1), 1, b"live")?;
+    vault.put_entity(&entry, 1, test_time_range(1, 1), 1, b"entry")?;
+    vault.put_entity(&live, 1, test_time_range(1, 1), 1, b"live")?;
     vault.put_vector(&entry, &[1.0_f32, 0.0, 0.0, 0.0])?;
     vault.put_vector(&live, &[0.0_f32, 1.0, 0.0, 0.0])?;
 
@@ -1127,8 +1142,8 @@ fn search_after_entry_point_deleted() -> Result<()> {
     let entry = EntityId::now();
     let survivor = EntityId::now();
 
-    vault.put_entity(&entry, 0, test_time_range(1, 1), 1, b"entry")?;
-    vault.put_entity(&survivor, 0, test_time_range(1, 1), 1, b"survivor")?;
+    vault.put_entity(&entry, 1, test_time_range(1, 1), 1, b"entry")?;
+    vault.put_entity(&survivor, 1, test_time_range(1, 1), 1, b"survivor")?;
     vault.put_vector(&entry, &[1.0_f32, 0.0, 0.0, 0.0])?;
     vault.put_vector(&survivor, &[0.0_f32, 1.0, 0.0, 0.0])?;
 
@@ -1220,7 +1235,7 @@ fn hnsw_recall_at_10_vs_bruteforce() -> Result<()> {
             .map(|_| rng.gen_range(-1.0_f32..1.0_f32))
             .collect();
 
-        vault.put_entity(&id, 0, test_time_range(1, 1), 1, b"recall-node")?;
+        vault.put_entity(&id, 1, test_time_range(1, 1), 1, b"recall-node")?;
         vault.put_vector(&id, &vector)?;
         corpus.push((id, vector));
     }
@@ -1328,7 +1343,7 @@ fn batch_put_multiple_entities_atomically() -> Result<()> {
 
     vault
         .batch()
-        .put(&id_a, 0, test_time_range(100, 100), 101, b"a")
+        .put(&id_a, 1, test_time_range(100, 100), 101, b"a")
         .put(&id_b, 1, test_time_range(200, 201), 202, b"b")
         .put(&id_c, 6, test_time_range(300, 400), 401, b"c")
         .commit()?;
@@ -1343,7 +1358,7 @@ fn batch_put_multiple_entities_atomically() -> Result<()> {
 fn batch_put_writes_type_index() -> Result<()> {
     let (_dir, vault) = open_test_vault();
     let id = EntityId::now();
-    let entity_type = 0_u8;
+    let entity_type = 1_u8;
 
     vault
         .batch()
@@ -1645,14 +1660,14 @@ fn batch_put_assigns_short_id() -> Result<()> {
 
     vault
         .batch()
-        .put(&id1, 0, test_time_range(1, 1), 2, data1)
-        .put(&id2, 0, test_time_range(3, 3), 4, data2)
+        .put(&id1, 1, test_time_range(1, 1), 2, data1)
+        .put(&id2, 1, test_time_range(3, 3), 4, data2)
         .commit()?;
 
     let (short_id1, hash1) = decode_short_id_value(&read_short_id_value(&vault, &id1)?)?;
     let (short_id2, hash2) = decode_short_id_value(&read_short_id_value(&vault, &id2)?)?;
-    assert_eq!(short_id1, "cl1");
-    assert_eq!(short_id2, "cl2");
+    assert_eq!(short_id1, "tn1");
+    assert_eq!(short_id2, "tn2");
     assert_eq!(hash1, content_hash(data1));
     assert_eq!(hash2, content_hash(data2));
     Ok(())
@@ -1893,13 +1908,13 @@ fn batch_put_updates_content_hash_on_reput() -> Result<()> {
 
     vault
         .batch()
-        .put(&id, 0, test_time_range(10, 10), 11, data1)
+        .put(&id, 1, test_time_range(10, 10), 11, data1)
         .commit()?;
     let (short_id1, hash1) = decode_short_id_value(&read_short_id_value(&vault, &id)?)?;
 
     vault
         .batch()
-        .put(&id, 0, test_time_range(10, 10), 11, &data2)
+        .put(&id, 1, test_time_range(10, 10), 11, &data2)
         .commit()?;
     let (short_id2, hash2) = decode_short_id_value(&read_short_id_value(&vault, &id)?)?;
 
@@ -1938,8 +1953,10 @@ fn reput_deindexes_stale_secondary_indexes() -> Result<()> {
     // The type byte is immutable on re-put (D2, Error::EntityTypeImmutable);
     // re-typing coverage lives in the EntityTypeImmutable tests. This test
     // pins that a same-type re-put re-homes the temporal indexes while the
-    // short id stays stable and the content hash refreshes.
-    let entity_type = 0_u8;
+    // short id stays stable and the content hash refreshes. Type byte 2
+    // (SESSION) keeps the body opaque — type 0 is reserved for CLAIM, whose
+    // bodies are structurally validated (D18).
+    let entity_type = 2_u8;
     let old_occurred = test_time_range(100, 200);
     let old_learned = 300_u64;
     let old_data = b"old-data";
@@ -2061,7 +2078,7 @@ fn reput_range_to_point_deindexes_stale_end_key() -> Result<()> {
 
     vault
         .batch()
-        .put(&id, 0, test_time_range(100, 200), 300, b"range")
+        .put(&id, 1, test_time_range(100, 200), 300, b"range")
         .commit()?;
 
     let old_end_key = Store::encode_temporal_key(200, &id);
@@ -2078,7 +2095,7 @@ fn reput_range_to_point_deindexes_stale_end_key() -> Result<()> {
 
     vault
         .batch()
-        .put(&id, 0, test_time_range(200, 200), 300, b"point")
+        .put(&id, 1, test_time_range(200, 200), 300, b"point")
         .commit()?;
 
     {
@@ -2106,7 +2123,7 @@ fn reput_rekeys_long_interval_index_and_drops_shortened_range() -> Result<()> {
 
     vault
         .batch()
-        .put(&id, 0, test_time_range(1_000, old_end), 300, b"long-old")
+        .put(&id, 1, test_time_range(1_000, old_end), 300, b"long-old")
         .commit()?;
 
     let old_key = Store::encode_temporal_key(old_end, &id);
@@ -2114,7 +2131,7 @@ fn reput_rekeys_long_interval_index_and_drops_shortened_range() -> Result<()> {
 
     vault
         .batch()
-        .put(&id, 0, test_time_range(5_000, new_end), 300, b"long-new")
+        .put(&id, 1, test_time_range(5_000, new_end), 300, b"long-new")
         .commit()?;
 
     {
@@ -2139,7 +2156,7 @@ fn reput_rekeys_long_interval_index_and_drops_shortened_range() -> Result<()> {
 
     vault
         .batch()
-        .put(&id, 0, test_time_range(10_000, 10_001), 300, b"short")
+        .put(&id, 1, test_time_range(10_000, 10_001), 300, b"short")
         .commit()?;
 
     let rtxn = vault.store.env.read_txn()?;
@@ -2160,7 +2177,7 @@ fn batch_phonetic_index() -> Result<()> {
 
     vault
         .batch()
-        .put(&id, 0, test_time_range(1, 1), 2, b"phonetic")
+        .put(&id, 1, test_time_range(1, 1), 2, b"phonetic")
         .phonetic(&id, &["SMTH", "SMT"])
         .commit()?;
 
@@ -2194,7 +2211,7 @@ fn phonetic_dedup_on_reindex() -> Result<()> {
 
     vault
         .batch()
-        .put(&id, 0, test_time_range(1, 2), 3, b"dedup")
+        .put(&id, 1, test_time_range(1, 2), 3, b"dedup")
         .phonetic(&id, &["ABC"])
         .commit()?;
 
@@ -2229,7 +2246,7 @@ fn phonetic_dedups_duplicate_codes_within_single_batch() -> Result<()> {
 
     vault
         .batch()
-        .put(&id, 0, test_time_range(1, 2), 3, b"dedup-in-batch")
+        .put(&id, 1, test_time_range(1, 2), 3, b"dedup-in-batch")
         .phonetic(&id, &["ABC", "ABC"])
         .commit()?;
 
@@ -2262,7 +2279,7 @@ fn phonetic_reindex_remains_additive() -> Result<()> {
 
     vault
         .batch()
-        .put(&id, 0, test_time_range(1, 2), 3, b"union")
+        .put(&id, 1, test_time_range(1, 2), 3, b"union")
         .phonetic(&id, &["ABC"])
         .commit()?;
 
@@ -2297,7 +2314,7 @@ fn phonetic_reindex_repairs_missing_forward_codes() -> Result<()> {
 
     vault
         .batch()
-        .put(&id, 0, test_time_range(1, 2), 3, b"migrated")
+        .put(&id, 1, test_time_range(1, 2), 3, b"migrated")
         .phonetic(&id, &["ABC"])
         .commit()?;
 
@@ -2347,7 +2364,7 @@ fn phonetic_rejects_invalid_codes_atomically() -> Result<()> {
 
         let result = vault
             .batch()
-            .put(&id, 0, test_time_range(1, 1), 2, payload)
+            .put(&id, 1, test_time_range(1, 1), 2, payload)
             .phonetic(&id, &[*code])
             .commit();
         let err = result
@@ -2376,7 +2393,7 @@ fn full_delete_deindexes_everything() -> Result<()> {
 
     vault
         .batch()
-        .put(&id, 0, occurred, learned_at, b"delete-me")
+        .put(&id, 1, occurred, learned_at, b"delete-me")
         .put(&out_target, 4, test_time_range(1, 1), 2, b"target")
         .put(&in_source, 4, test_time_range(3, 3), 4, b"source")
         .vector(&id, &[0.1, 0.2, 0.3, 0.4])
@@ -2498,7 +2515,7 @@ fn delete_entity_phonetic_fallback_variants() -> Result<()> {
 
         vault
             .batch()
-            .put(&id, 0, test_time_range(1, 1), 2, payload)
+            .put(&id, 1, test_time_range(1, 1), 2, payload)
             .phonetic(&id, &["SMTH", "SMT"])
             .commit()?;
 
@@ -2579,7 +2596,7 @@ fn delete_entity_corrupted_edge_record_returns_error_not_panic() -> Result<()> {
 
     vault
         .batch()
-        .put(&id, 0, test_time_range(1, 2), 3, b"exists")
+        .put(&id, 1, test_time_range(1, 2), 3, b"exists")
         .commit()?;
 
     vault.with_write_txn(|wtxn| {
@@ -2622,7 +2639,7 @@ fn put_entity_simple_api_uses_batch() -> Result<()> {
     let learned_at = 789;
     let data = b"simple-api";
 
-    vault.put_entity(&id, 0, occurred, learned_at, data)?;
+    vault.put_entity(&id, 1, occurred, learned_at, data)?;
     assert_eq!(vault.get(&id)?.ok_or(Error::EntityNotFound)?, data);
 
     let rtxn = vault.store.env.read_txn()?;
@@ -2634,7 +2651,7 @@ fn put_entity_simple_api_uses_batch() -> Result<()> {
     assert_eq!(raw.len(), ENTITY_METADATA_HEADER_LEN + data.len());
     assert_eq!(&raw[ENTITY_METADATA_HEADER_LEN..], data);
 
-    let type_key = Store::encode_type_key(0, &id);
+    let type_key = Store::encode_type_key(1, &id);
     let start_key = Store::encode_temporal_key(occurred.start, &id);
     let end_key = Store::encode_temporal_key(occurred.end, &id);
     let learned_key = Store::encode_temporal_key(learned_at, &id);
@@ -2770,7 +2787,7 @@ fn batch_with_edges_and_entities() -> Result<()> {
 
     vault
         .batch()
-        .put(&src, 0, test_time_range(1, 2), 3, b"src")
+        .put(&src, 1, test_time_range(1, 2), 3, b"src")
         .put(&tgt, 4, test_time_range(4, 5), 6, b"tgt")
         .vector(&src, &vector)
         .edge(&src, EdgeKind::BelongsTo, &tgt, 0.5)
@@ -2850,7 +2867,7 @@ fn opens_populated_vault_with_matching_embedding_model() -> Result<()> {
     cfg.embedding_model = Some("model-a".to_owned());
     let vault = Vault::open(temp_dir.path(), cfg.clone())?;
     let id = EntityId::now();
-    vault.put_entity(&id, 0, test_time_range(1, 1), 1, b"node")?;
+    vault.put_entity(&id, 1, test_time_range(1, 1), 1, b"node")?;
     vault.put_vector(&id, &[0.1, 0.2, 0.3, 0.4])?;
     drop(vault);
 
@@ -2868,7 +2885,7 @@ fn rejects_populated_vault_missing_embedding_model_identity() -> Result<()> {
     cfg.embedding_model = Some("model-a".to_owned());
     let vault = Vault::open(path, cfg.clone())?;
     let id = EntityId::now();
-    vault.put_entity(&id, 0, test_time_range(1, 1), 1, b"node")?;
+    vault.put_entity(&id, 1, test_time_range(1, 1), 1, b"node")?;
     vault.put_vector(&id, &[0.1, 0.2, 0.3, 0.4])?;
 
     {
@@ -2929,7 +2946,7 @@ fn rejects_populated_vault_open_without_requested_embedding_model() -> Result<()
     cfg.embedding_model = Some("model-a".to_owned());
     let vault = Vault::open(path, cfg)?;
     let id = EntityId::now();
-    vault.put_entity(&id, 0, test_time_range(1, 1), 1, b"node")?;
+    vault.put_entity(&id, 1, test_time_range(1, 1), 1, b"node")?;
     vault.put_vector(&id, &[0.1, 0.2, 0.3, 0.4])?;
     drop(vault);
 
@@ -2954,7 +2971,7 @@ fn detects_embedding_model_mismatch_on_populated_open() -> Result<()> {
     cfg.embedding_model = Some("model-a".to_owned());
     let vault = Vault::open(temp_dir.path(), cfg)?;
     let id = EntityId::now();
-    vault.put_entity(&id, 0, test_time_range(1, 1), 1, b"node")?;
+    vault.put_entity(&id, 1, test_time_range(1, 1), 1, b"node")?;
     vault.put_vector(&id, &[0.1, 0.2, 0.3, 0.4])?;
     drop(vault);
 
@@ -2981,7 +2998,7 @@ fn rejects_vector_write_without_embedding_model_identity() -> Result<()> {
     cfg.embedding_model = None;
     let vault = Vault::open(temp_dir.path(), cfg)?;
     let id = EntityId::now();
-    vault.put_entity(&id, 0, test_time_range(1, 1), 1, b"node")?;
+    vault.put_entity(&id, 1, test_time_range(1, 1), 1, b"node")?;
 
     let Err(err) = vault.put_vector(&id, &[0.1, 0.2, 0.3, 0.4]) else {
         panic!("expected missing embedding model rejection");
@@ -3041,7 +3058,7 @@ fn rejects_populated_vault_with_legacy_hnsw_compatibility_record() -> Result<()>
     let cfg = test_config();
     let vault = Vault::open(path, cfg.clone())?;
     let id = EntityId::now();
-    vault.put_entity(&id, 0, test_time_range(1, 1), 1, b"node")?;
+    vault.put_entity(&id, 1, test_time_range(1, 1), 1, b"node")?;
     vault.put_vector(&id, &[0.1, 0.2, 0.3, 0.4])?;
     let legacy = legacy_hnsw_compatibility_record(&cfg);
     write_hnsw_config_record(&vault, &legacy)?;
@@ -3129,7 +3146,7 @@ fn detects_dimension_mismatch_on_open() {
 fn allows_ef_search_retuning_on_open() -> Result<()> {
     let (temp_dir, vault) = open_test_vault();
     let id = EntityId::now();
-    vault.put_entity(&id, 0, test_time_range(1, 1), 1, b"node")?;
+    vault.put_entity(&id, 1, test_time_range(1, 1), 1, b"node")?;
     vault.put_vector(&id, &[0.1, 0.2, 0.3, 0.4])?;
     drop(vault);
 
@@ -3146,7 +3163,7 @@ fn rejects_populated_vault_missing_hnsw_compatibility_metadata() -> Result<()> {
     let path = temp_dir.path();
     let vault = Vault::open(path, test_config())?;
     let id = EntityId::now();
-    vault.put_entity(&id, 0, test_time_range(1, 1), 1, b"node")?;
+    vault.put_entity(&id, 1, test_time_range(1, 1), 1, b"node")?;
     vault.put_vector(&id, &[0.1, 0.2, 0.3, 0.4])?;
 
     {
@@ -3636,7 +3653,7 @@ fn open_gate_matrix_fails_closed() -> Result<()> {
 
     fn populate_vector_data(vault: &Vault) -> Result<()> {
         let id = EntityId::now();
-        vault.put_entity(&id, 0, test_time_range(1, 1), 1, b"gate-node")?;
+        vault.put_entity(&id, 1, test_time_range(1, 1), 1, b"gate-node")?;
         vault.put_vector(&id, &[0.1, 0.2, 0.3, 0.4])?;
         Ok(())
     }
@@ -3651,7 +3668,7 @@ fn open_gate_matrix_fails_closed() -> Result<()> {
         let id = EntityId::now();
         vault
             .batch()
-            .put(&id, 0, test_time_range(1, 1), 1, b"gate-text")
+            .put(&id, 1, test_time_range(1, 1), 1, b"gate-text")
             .text(&id, &[("body", "open gate matrix corpus")])
             .commit()?;
         Ok(())
@@ -3755,7 +3772,7 @@ fn open_gate_matrix_fails_closed() -> Result<()> {
         let id = EntityId::now();
         vault
             .batch()
-            .put(&id, 0, test_time_range(1, 1), 1, b"gate-both")
+            .put(&id, 1, test_time_range(1, 1), 1, b"gate-both")
             .text(&id, &[("body", "ordering corpus")])
             .commit()?;
         populate_vector_data(&vault)?;
@@ -3973,11 +3990,7 @@ fn context_pack_run_serialized_toon_end_to_end() -> Result<()> {
     let a = EntityId::now();
     let b = EntityId::now();
 
-    let payload_a = rmp_serde::to_vec_named(&serde_json::json!({
-        "pred": "goal.learning",
-        "val": "Learn Japanese by June"
-    }))
-    .map_err(|_| Error::InvalidKey)?;
+    let payload_a = valid_claim_body_bytes("goal.learning", "Learn Japanese by June");
     let payload_b = rmp_serde::to_vec_named(&serde_json::json!({ "name": "Alice" }))
         .map_err(|_| Error::InvalidKey)?;
 
@@ -4510,7 +4523,7 @@ fn entity_value_envelope_matches_arch_0002_layout() -> Result<()> {
 
     let (_dir, vault) = open_test_vault();
     let id = EntityId::now();
-    let entity_type = 0_u8;
+    let entity_type = 1_u8;
     let occurred = test_time_range(0x0102_0304_0506_0708, 0x1112_1314_1516_1718);
     let learned_at = 0x2122_2324_2526_2728;
     let body_value = serde_json::json!({
@@ -4565,7 +4578,7 @@ fn put_edge_with_vad_round_trip() -> Result<()> {
 
     vault
         .batch()
-        .put(&src, 0, test_time_range(1, 2), 3, b"src")
+        .put(&src, 1, test_time_range(1, 2), 3, b"src")
         .put(&tgt, 4, test_time_range(4, 5), 6, b"tgt")
         .commit()?;
 
@@ -4701,7 +4714,7 @@ fn batch_edge_with_vad_api() -> Result<()> {
 
     vault
         .batch()
-        .put(&src, 0, test_time_range(1, 2), 3, b"src")
+        .put(&src, 1, test_time_range(1, 2), 3, b"src")
         .put(&tgt, 4, test_time_range(4, 5), 6, b"tgt")
         .edge_with_vad(
             &src,
@@ -5227,9 +5240,11 @@ fn put_with_reversed_occurred_range_is_rejected_and_nothing_is_written() -> Resu
 
     // D3: occurred_start > occurred_end is rejected with a typed error. The
     // pre-D3 engine silently swapped the bounds and stored (100, 300).
+    // Type byte 1 (TURN) keeps the body opaque so this isolates the time-range
+    // gate — type 0 is reserved for CLAIM, whose bodies are validated (D18).
     let err = vault
         .batch()
-        .put(&id, 0, test_time_range(300, 100), 400, b"payload")
+        .put(&id, 1, test_time_range(300, 100), 400, b"payload")
         .commit()
         .expect_err("occurred_start > occurred_end must be rejected");
     assert!(
@@ -5251,7 +5266,7 @@ fn put_with_reversed_occurred_range_is_rejected_and_nothing_is_written() -> Resu
             vault
                 .store
                 .type_index
-                .get(&rtxn, &Store::encode_type_key(0, &id))?
+                .get(&rtxn, &Store::encode_type_key(1, &id))?
                 .is_none()
         );
         // The pre-D3 swap stored (start: 100, end: 300) — assert both
@@ -5291,7 +5306,7 @@ fn put_with_reversed_occurred_range_is_rejected_and_nothing_is_written() -> Resu
         .batch()
         .put(
             &long_id,
-            0,
+            1,
             test_time_range(reversed_start, 100),
             400,
             b"payload",
@@ -6415,7 +6430,7 @@ fn learned_at_accessor() {
     vault
         .put_entity(
             &id,
-            0,
+            1,
             TimeRange {
                 start: learned,
                 end: learned,
@@ -6438,10 +6453,10 @@ fn entity_exists_and_edge_exists() {
     assert!(!vault.entity_exists(&id).unwrap());
 
     vault
-        .put_entity(&id, 0, TimeRange { start: 1, end: 1 }, 1, b"exists")
+        .put_entity(&id, 1, TimeRange { start: 1, end: 1 }, 1, b"exists")
         .unwrap();
     vault
-        .put_entity(&other, 0, TimeRange { start: 1, end: 1 }, 1, b"other")
+        .put_entity(&other, 1, TimeRange { start: 1, end: 1 }, 1, b"other")
         .unwrap();
 
     assert!(vault.entity_exists(&id).unwrap());
@@ -6465,7 +6480,7 @@ fn entities_in_learned_range() {
     vault
         .put_entity(
             &id1,
-            0,
+            1,
             TimeRange {
                 start: 100,
                 end: 100,
@@ -6477,7 +6492,7 @@ fn entities_in_learned_range() {
     vault
         .put_entity(
             &id2,
-            0,
+            1,
             TimeRange {
                 start: 200,
                 end: 200,
@@ -6489,7 +6504,7 @@ fn entities_in_learned_range() {
     vault
         .put_entity(
             &id3,
-            0,
+            1,
             TimeRange {
                 start: 300,
                 end: 300,
@@ -6516,7 +6531,7 @@ fn with_write_txn_and_batch_in() {
         .with_write_txn(|wtxn| {
             vault
                 .batch_in()
-                .put(&id, 0, TimeRange { start: 1, end: 1 }, 1, b"atomic")
+                .put(&id, 1, TimeRange { start: 1, end: 1 }, 1, b"atomic")
                 .apply(wtxn)?;
             Ok(())
         })
@@ -6534,8 +6549,8 @@ fn batch_edge_with_created_at() {
 
     vault
         .batch()
-        .put(&src, 0, TimeRange { start: 1, end: 1 }, 1, b"src")
-        .put(&tgt, 0, TimeRange { start: 1, end: 1 }, 1, b"tgt")
+        .put(&src, 1, TimeRange { start: 1, end: 1 }, 1, b"src")
+        .put(&tgt, 1, TimeRange { start: 1, end: 1 }, 1, b"tgt")
         .edge_with_created_at(&src, EdgeKind::Mentions, &tgt, 0.8, 99999)
         .commit()
         .unwrap();
@@ -6544,4 +6559,855 @@ fn batch_edge_with_created_at() {
     assert_eq!(edges.len(), 1);
     assert_eq!(edges[0].created_at, 99999);
     assert!((edges[0].weight - 0.8).abs() < f32::EPSILON);
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// ONE-1104 — CLAIM body ABI + typed Claim API spec tests
+// (D11 pinned keys · D17 predicate gate · D18 fail-closed type-0 writes)
+// ═══════════════════════════════════════════════════════════════════════
+
+/// Asserts that no entity-record or index row anywhere references `id`.
+/// Used by every negative claim test to prove a rejected write left nothing.
+fn assert_no_entity_state(vault: &Vault, id: &EntityId) -> Result<()> {
+    let rtxn = vault.store.env.read_txn()?;
+    assert!(
+        vault.store.entities.get(&rtxn, id.as_bytes())?.is_none(),
+        "entities row leaked for rejected write"
+    );
+    assert!(
+        vault.store.short_ids.get(&rtxn, id.as_bytes())?.is_none(),
+        "short_ids row leaked for rejected write"
+    );
+    let scans = [
+        ("type_index", &vault.store.type_index),
+        (
+            "temporal_occurred_start",
+            &vault.store.temporal_occurred_start,
+        ),
+        ("temporal_occurred_end", &vault.store.temporal_occurred_end),
+        ("temporal_learned", &vault.store.temporal_learned),
+        (
+            "temporal_long_intervals",
+            &vault.store.temporal_long_intervals,
+        ),
+        ("short_ids_reverse", &vault.store.short_ids_reverse),
+        ("edges_out", &vault.store.edges_out),
+        ("edges_in", &vault.store.edges_in),
+    ];
+    for (name, db) in scans {
+        for entry in db.iter(&rtxn)? {
+            let (key, value) = entry?;
+            assert!(
+                !slice_contains(key, id.as_bytes()) && !slice_contains(value, id.as_bytes()),
+                "{name} row references rejected entity"
+            );
+        }
+    }
+    Ok(())
+}
+
+fn slice_contains(haystack: &[u8], needle: &[u8]) -> bool {
+    haystack
+        .windows(needle.len())
+        .any(|window| window == needle)
+}
+
+/// Schema-agnostic short-id lookup: scans BOTH short-id DBs raw and accepts
+/// whichever row links `id` to an ASCII `<prefix><counter>` short id.
+///
+/// WHY (cross-branch schema compat, ONE-1102): the parallel ONE-1102 branch
+/// swaps the short-id table direction per the pinned 25-DB manifest
+/// (`short_ids`: key short_id bytes + content_hash u8 -> entity_id;
+/// `short_ids_reverse`: key entity_id -> short_id + hash), while this branch
+/// still carries the pre-1102 orientation (`short_ids`: entity_id ->
+/// short_id + hash; `short_ids_reverse`: short_id -> entity_id). Reading one
+/// fixed layout here would break this test on whichever side merges second,
+/// so callers' prefix assertions stay green on this branch standalone AND
+/// after ONE-1102 lands.
+fn find_short_id_any_schema(vault: &Vault, id: &EntityId) -> Result<Option<String>> {
+    // A short id is a two-letter lowercase type prefix plus a decimal
+    // counter. The strict format check disambiguates the 1-byte content
+    // hash riding next to the short id in one of the two orientations.
+    fn parse_short_id(bytes: &[u8]) -> Option<String> {
+        if bytes.len() < 3 {
+            return None;
+        }
+        let (prefix, counter) = bytes.split_at(2);
+        let well_formed =
+            prefix.iter().all(u8::is_ascii_lowercase) && counter.iter().all(u8::is_ascii_digit);
+        if !well_formed {
+            return None;
+        }
+        str::from_utf8(bytes).ok().map(str::to_owned)
+    }
+
+    // Candidate bytes are either the bare short id or short id + hash u8.
+    fn parse_with_optional_hash(bytes: &[u8]) -> Option<String> {
+        parse_short_id(bytes).or_else(|| {
+            bytes
+                .split_last()
+                .and_then(|(_hash, head)| parse_short_id(head))
+        })
+    }
+
+    let rtxn = vault.store.env.read_txn()?;
+    for db in [&vault.store.short_ids, &vault.store.short_ids_reverse] {
+        for entry in db.iter(&rtxn)? {
+            let (key, value) = entry?;
+            // Orientation 1: entity_id -> short_id (+ hash).
+            if key == id.as_bytes() {
+                if let Some(short_id) = parse_with_optional_hash(value) {
+                    return Ok(Some(short_id));
+                }
+            }
+            // Orientation 2: short_id (+ hash) -> entity_id.
+            if value == id.as_bytes() {
+                if let Some(short_id) = parse_with_optional_hash(key) {
+                    return Ok(Some(short_id));
+                }
+            }
+        }
+    }
+    Ok(None)
+}
+
+fn rmpv_map_bytes(entries: &[(rmpv::Value, rmpv::Value)]) -> Vec<u8> {
+    let mut out = Vec::new();
+    rmpv::encode::write_value(&mut out, &rmpv::Value::Map(entries.to_vec()))
+        .expect("encode msgpack map");
+    out
+}
+
+/// Baseline VALID claim-body map entries (the six required fields).
+fn base_claim_entries(pred: &str, subj: Vec<u8>) -> Vec<(rmpv::Value, rmpv::Value)> {
+    vec![
+        ("pred".into(), pred.into()),
+        ("val".into(), "x".into()),
+        ("conf".into(), rmpv::Value::F32(0.5)),
+        ("subj".into(), rmpv::Value::Binary(subj)),
+        ("appr".into(), "auto".into()),
+        ("life".into(), "active".into()),
+    ]
+}
+
+fn entries_without(
+    base: &[(rmpv::Value, rmpv::Value)],
+    key: &str,
+) -> Vec<(rmpv::Value, rmpv::Value)> {
+    base.iter()
+        .filter(|(k, _)| k.as_str() != Some(key))
+        .cloned()
+        .collect()
+}
+
+fn entries_replacing(
+    base: &[(rmpv::Value, rmpv::Value)],
+    key: &str,
+    value: rmpv::Value,
+) -> Vec<(rmpv::Value, rmpv::Value)> {
+    base.iter()
+        .map(|(k, v)| {
+            if k.as_str() == Some(key) {
+                (k.clone(), value.clone())
+            } else {
+                (k.clone(), v.clone())
+            }
+        })
+        .collect()
+}
+
+#[test]
+fn claim_body_keys_pin_d11_vocabulary() {
+    // The pinned ON-DISK key set, literal (D11). A renamed, reordered, or
+    // re-cased vocabulary must fail here.
+    assert_eq!(
+        CLAIM_BODY_KEYS,
+        [
+            "pred", "val", "conf", "sal", "evid", "from", "to", "src", "world", "subj", "scope",
+            "appr", "life", "stale",
+        ]
+    );
+    // fusion.rs consumes the SAME constants — pinned to the short keys.
+    assert_eq!(crate::claim::KEY_SAL, "sal");
+    assert_eq!(crate::claim::KEY_CONF, "conf");
+    // Context-pack profiles are prefixes of the pinned set.
+    assert_eq!(crate::claim::CLAIM_FIELDS_MINIMAL, ["pred", "val"]);
+    assert_eq!(
+        crate::claim::CLAIM_FIELDS_STANDARD,
+        ["pred", "val", "conf", "sal", "evid"]
+    );
+    assert_eq!(
+        crate::claim::CLAIM_FIELDS_FULL,
+        [
+            "pred", "val", "conf", "sal", "evid", "from", "to", "src", "world", "subj", "scope"
+        ]
+    );
+}
+
+#[test]
+fn stored_claim_body_serves_fusion_boosts_and_context_pack_profiles() -> Result<()> {
+    // ONE body written through put_claim must BOTH fire the fusion boosts
+    // (sal/conf short keys) AND project through the context-pack CLAIM
+    // field profiles — the pre-fix engine read "salience"/"confidence" in
+    // fusion and "sal"/"conf" in profiles, so no single body could do both.
+    let (_dir, vault) = open_test_vault();
+    let subject = EntityId::now();
+    vault.put_entity(&subject, 4, test_time_range(1, 1), 1, b"person")?;
+
+    let claim = EntityId::now();
+    let mut body = ClaimBody::new(
+        "preference.food",
+        ClaimSubject::Entity(subject),
+        rmpv::Value::from("matcha"),
+        0.8,
+        ClaimApprovalStatus::Auto,
+        ClaimLifecycleStatus::Active,
+    );
+    body.salience = Some(0.5);
+    vault.put_claim(&claim, &body, test_time_range(10, 10), 11)?;
+    vault
+        .batch()
+        .text(&claim, &[("body", "matcha preference")])
+        .commit()?;
+
+    let baseline = vault.query().search_text("matcha", 10).run()?;
+    assert_eq!(baseline.len(), 1);
+    let base_score = baseline[0].score;
+
+    // boost_salience alone: score × (1 + sal) = × 1.5. A key-swapped
+    // implementation (reading conf) would yield × 1.8 and fail.
+    let sal_boosted = vault
+        .query()
+        .search_text("matcha", 10)
+        .boost_salience()
+        .run()?;
+    assert_eq!(sal_boosted.len(), 1);
+    let expected_sal = base_score * 1.5;
+    assert!(
+        (sal_boosted[0].score - expected_sal).abs() < 1e-5,
+        "salience boost drifted: got {}, expected {expected_sal}",
+        sal_boosted[0].score
+    );
+
+    // boost_confidence alone: score × (0.5 + 0.5 × conf) = × 0.9. A
+    // key-swapped implementation (reading sal) would yield × 0.75 and fail.
+    let conf_boosted = vault
+        .query()
+        .search_text("matcha", 10)
+        .boost_confidence()
+        .run()?;
+    assert_eq!(conf_boosted.len(), 1);
+    let expected_conf = base_score * 0.9;
+    assert!(
+        (conf_boosted[0].score - expected_conf).abs() < 1e-5,
+        "confidence boost drifted: got {}, expected {expected_conf}",
+        conf_boosted[0].score
+    );
+
+    // The SAME stored body projects through the CLAIM Full profile.
+    let full = vault
+        .context_pack()
+        .search_text("matcha", 10)
+        .field_profile(FieldProfile::Full)
+        .format(PackFormat::Json)
+        .run_serialized()?;
+    let full = String::from_utf8(full).map_err(|_| Error::InvalidKey)?;
+    assert!(full.contains("\"pred\""), "Full profile must surface pred");
+    assert!(full.contains("preference.food"));
+    assert!(full.contains("\"conf\""), "Full profile must surface conf");
+    assert!(full.contains("\"sal\""), "Full profile must surface sal");
+
+    // Minimal profile allowlists pred/val only.
+    let minimal = vault
+        .context_pack()
+        .search_text("matcha", 10)
+        .field_profile(FieldProfile::Minimal)
+        .format(PackFormat::Json)
+        .run_serialized()?;
+    let minimal = String::from_utf8(minimal).map_err(|_| Error::InvalidKey)?;
+    assert!(minimal.contains("\"pred\""));
+    assert!(!minimal.contains("\"sal\""), "Minimal must not surface sal");
+    assert!(
+        !minimal.contains("\"conf\""),
+        "Minimal must not surface conf"
+    );
+    Ok(())
+}
+
+#[test]
+fn put_claim_round_trip_and_pinned_on_disk_bytes() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let subject = EntityId::now();
+    vault.put_entity(&subject, 4, test_time_range(1, 1), 1, b"person")?;
+
+    let claim = EntityId::now();
+    let mut body = ClaimBody::new(
+        "profile.lives_in",
+        ClaimSubject::Entity(subject),
+        rmpv::Value::from("tokyo"),
+        0.75,
+        ClaimApprovalStatus::Proposed,
+        ClaimLifecycleStatus::Active,
+    );
+    body.salience = Some(0.25);
+    body.evidence = Some(rmpv::Value::Array(vec!["tn1".into()]));
+    body.valid_from = Some(100);
+    body.valid_to = Some(200);
+    body.source = Some(ClaimSource::UserStated);
+    body.world = Some("w0".into());
+    body.scope = Some("rel1".into());
+    body.stale = true;
+    vault.put_claim(&claim, &body, test_time_range(100, 200), 300)?;
+
+    // Pin the EXACT on-disk bytes: pinned short keys, canonical order. The
+    // expected map is built with LITERAL key strings so an encoder writing
+    // camelCase keys, long names, or a different order fails byte equality.
+    let raw = vault.get_raw(&claim)?.ok_or(Error::EntityNotFound)?;
+    let expected = rmpv_map_bytes(&[
+        ("pred".into(), "profile.lives_in".into()),
+        ("val".into(), "tokyo".into()),
+        ("conf".into(), rmpv::Value::F32(0.75)),
+        ("sal".into(), rmpv::Value::F32(0.25)),
+        ("evid".into(), rmpv::Value::Array(vec!["tn1".into()])),
+        ("from".into(), rmpv::Value::from(100_u64)),
+        ("to".into(), rmpv::Value::from(200_u64)),
+        ("src".into(), "user_stated".into()),
+        ("world".into(), "w0".into()),
+        (
+            "subj".into(),
+            rmpv::Value::Binary(subject.as_bytes().to_vec()),
+        ),
+        ("scope".into(), "rel1".into()),
+        ("appr".into(), "proposed".into()),
+        ("life".into(), "active".into()),
+        ("stale".into(), rmpv::Value::Boolean(true)),
+    ]);
+    assert_eq!(
+        &raw[ENTITY_METADATA_HEADER_LEN..],
+        expected.as_slice(),
+        "on-disk claim body bytes drifted from the pinned D11 ABI"
+    );
+
+    let read = vault.get_claim(&claim)?.expect("claim must decode");
+    assert_eq!(read, body);
+
+    // Minimal claim: optionals absent, stale defaults to false on decode.
+    let minimal_id = EntityId::now();
+    let minimal = ClaimBody::new(
+        "profile.name",
+        ClaimSubject::Entity(subject),
+        rmpv::Value::from("Alice"),
+        1.0,
+        ClaimApprovalStatus::Auto,
+        ClaimLifecycleStatus::Active,
+    );
+    vault.put_claim(&minimal_id, &minimal, test_time_range(1, 1), 2)?;
+    let read = vault.get_claim(&minimal_id)?.expect("minimal claim");
+    assert!(!read.stale, "absent stale must decode to false");
+    assert_eq!(read.salience, None);
+    assert_eq!(read.source, None);
+    assert_eq!(read.valid_from, None);
+    assert_eq!(read.valid_to, None);
+
+    // The minimal body must NOT contain a stale key on disk (default elided).
+    let raw = vault.get_raw(&minimal_id)?.ok_or(Error::EntityNotFound)?;
+    assert!(
+        !slice_contains(&raw[ENTITY_METADATA_HEADER_LEN..], b"stale"),
+        "stale=false must be elided from the stored body"
+    );
+
+    // Claims carry the pinned 'cl' short-id prefix. The lookup is
+    // intentionally schema-agnostic (see find_short_id_any_schema): the
+    // parallel ONE-1102 branch flips the short_ids key direction per the
+    // pinned manifest, and this assertion must hold on this branch
+    // standalone AND after ONE-1102 merges.
+    let short_id = find_short_id_any_schema(&vault, &claim)?
+        .expect("claim short id missing from both short-id DBs");
+    assert!(
+        short_id.starts_with("cl"),
+        "CLAIM short-id prefix must be 'cl', got {short_id}"
+    );
+    let counter = &short_id[2..];
+    assert!(
+        !counter.is_empty() && counter.bytes().all(|b| b.is_ascii_digit()),
+        "CLAIM short id must be 'cl' + decimal counter, got {short_id}"
+    );
+    Ok(())
+}
+
+#[test]
+fn put_claim_writes_claim_of_edge_atomically() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let subject = EntityId::now();
+    vault.put_entity(&subject, 4, test_time_range(1, 1), 1, b"person")?;
+
+    let claim = EntityId::now();
+    let body = ClaimBody::new(
+        "profile.name",
+        ClaimSubject::Entity(subject),
+        rmpv::Value::from("Alice"),
+        0.9,
+        ClaimApprovalStatus::Auto,
+        ClaimLifecycleStatus::Active,
+    );
+    vault.put_claim(&claim, &body, test_time_range(1, 1), 2)?;
+
+    // claim_of (u8 = 5) Claim → subject, structural 12-byte value, present
+    // in BOTH edge directions with identical bytes.
+    let key_out = Store::encode_edge_key(&claim, EdgeKind::ClaimOf, &subject);
+    let key_in = Store::encode_edge_key(&subject, EdgeKind::ClaimOf, &claim);
+    assert_eq!(key_out[16], 5, "claim_of discriminant must be 5");
+    let rtxn = vault.store.env.read_txn()?;
+    let out_value = vault
+        .store
+        .edges_out
+        .get(&rtxn, &key_out)?
+        .expect("claim_of edge missing from edges_out");
+    let in_value = vault
+        .store
+        .edges_in
+        .get(&rtxn, &key_in)?
+        .expect("claim_of edge missing from edges_in");
+    assert_eq!(out_value.len(), 12, "claim_of must be structural 12 B");
+    assert_eq!(out_value, in_value);
+    drop(rtxn);
+
+    // claims_for_subject = sources(ClaimOf, Some(0)).
+    assert_eq!(vault.claims_for_subject(&subject)?, vec![claim]);
+
+    // Nonexistent subject → typed reject, NOTHING written (no entity, no
+    // claim_of rows, no index rows).
+    let ghost = seeded_entity_id(0xDEAD);
+    let orphan = EntityId::now();
+    let body = ClaimBody::new(
+        "profile.name",
+        ClaimSubject::Entity(ghost),
+        rmpv::Value::from("Bob"),
+        0.9,
+        ClaimApprovalStatus::Auto,
+        ClaimLifecycleStatus::Active,
+    );
+    let err = vault
+        .put_claim(&orphan, &body, test_time_range(1, 1), 2)
+        .expect_err("nonexistent subject must be rejected");
+    assert_eq!(err.kind(), ErrorKind::EntityNotFound);
+    assert_no_entity_state(&vault, &orphan)?;
+    assert!(vault.claims_for_subject(&ghost)?.is_empty());
+    Ok(())
+}
+
+#[test]
+fn put_claim_edge_ref_subject_validates_shape_without_claim_of() -> Result<()> {
+    // An EdgeRef subject is shape-validated and stored, but claim_of wiring
+    // for edge subjects belongs to the provenance path — no edge is written.
+    let (_dir, vault) = open_test_vault();
+    let a = EntityId::now();
+    let b = EntityId::now();
+    vault.put_entity(&a, 4, test_time_range(1, 1), 1, b"a")?;
+    vault.put_entity(&b, 4, test_time_range(1, 1), 1, b"b")?;
+
+    let claim = EntityId::now();
+    let body = ClaimBody::new(
+        "graph.observation",
+        ClaimSubject::Edge {
+            source: a,
+            kind: EdgeKind::Supports,
+            target: b,
+        },
+        rmpv::Value::from("noted"),
+        0.5,
+        ClaimApprovalStatus::Auto,
+        ClaimLifecycleStatus::Active,
+    );
+    vault.put_claim(&claim, &body, test_time_range(1, 1), 2)?;
+
+    let read = vault.get_claim(&claim)?.expect("edge-subject claim");
+    assert_eq!(
+        read.subject,
+        ClaimSubject::Edge {
+            source: a,
+            kind: EdgeKind::Supports,
+            target: b,
+        }
+    );
+    assert!(
+        vault.edges_out(&claim)?.is_empty(),
+        "EdgeRef-subject put_claim must not write claim_of edges"
+    );
+    Ok(())
+}
+
+#[test]
+fn type0_validation_guards_every_write_path() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let garbage: &[u8] = b"definitely not msgpack";
+
+    // Path 1: Vault::put_entity.
+    let id = EntityId::now();
+    let err = vault
+        .put_entity(&id, 0, test_time_range(1, 1), 1, garbage)
+        .expect_err("raw put_entity must validate type-0 bodies");
+    assert_eq!(err.kind(), ErrorKind::InvalidClaimBody);
+    assert_no_entity_state(&vault, &id)?;
+
+    // Path 2: BatchBuilder::put → commit.
+    let id = EntityId::now();
+    let err = vault
+        .batch()
+        .put(&id, 0, test_time_range(1, 1), 1, garbage)
+        .commit()
+        .expect_err("BatchBuilder must validate type-0 bodies");
+    assert_eq!(err.kind(), ErrorKind::InvalidClaimBody);
+    assert_no_entity_state(&vault, &id)?;
+
+    // Path 3: TxnBatchBuilder::apply (the sync-replay path) — the failed
+    // transaction is dropped without commit, so nothing lands.
+    let id = EntityId::now();
+    let err = vault
+        .with_write_txn(|wtxn| {
+            vault
+                .batch_in()
+                .put(&id, 0, test_time_range(1, 1), 1, garbage)
+                .apply(wtxn)
+        })
+        .expect_err("TxnBatchBuilder must validate type-0 bodies");
+    assert_eq!(err.kind(), ErrorKind::InvalidClaimBody);
+    assert_no_entity_state(&vault, &id)?;
+
+    // A structurally VALID claim body passes the same raw paths.
+    let id = EntityId::now();
+    vault.put_entity(
+        &id,
+        0,
+        test_time_range(1, 1),
+        1,
+        &valid_claim_body_bytes("profile.name", "Alice"),
+    )?;
+    assert!(vault.get_claim(&id)?.is_some());
+
+    // Bodies of non-zero types stay OPAQUE: the same garbage commits fine
+    // and round-trips byte-for-byte.
+    let id = EntityId::now();
+    vault.put_entity(&id, 1, test_time_range(1, 1), 1, garbage)?;
+    assert_eq!(vault.get(&id)?.as_deref(), Some(garbage));
+    Ok(())
+}
+
+#[test]
+fn claim_negative_matrix_rejects_typed_and_writes_nothing() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let subj_bytes = seeded_entity_id(0xAA01).as_bytes().to_vec();
+    let base = base_claim_entries("profile.name", subj_bytes.clone());
+
+    let valid_map_plus_trailing = {
+        let mut bytes = rmpv_map_bytes(&base);
+        bytes.push(0xC0);
+        bytes
+    };
+
+    let cases: Vec<(&str, Vec<u8>, ErrorKind)> = vec![
+        (
+            "garbage bytes",
+            b"\xFF\xFF\xFF garbage".to_vec(),
+            ErrorKind::InvalidClaimBody,
+        ),
+        ("empty body", Vec::new(), ErrorKind::InvalidClaimBody),
+        (
+            "non-map body",
+            {
+                let mut out = Vec::new();
+                rmpv::encode::write_value(&mut out, &rmpv::Value::from("just a string"))
+                    .expect("encode");
+                out
+            },
+            ErrorKind::InvalidClaimBody,
+        ),
+        (
+            "trailing bytes",
+            valid_map_plus_trailing,
+            ErrorKind::InvalidClaimBody,
+        ),
+        (
+            "missing pred",
+            rmpv_map_bytes(&entries_without(&base, "pred")),
+            ErrorKind::InvalidClaimBody,
+        ),
+        (
+            "missing subj",
+            rmpv_map_bytes(&entries_without(&base, "subj")),
+            ErrorKind::InvalidClaimBody,
+        ),
+        (
+            "missing val",
+            rmpv_map_bytes(&entries_without(&base, "val")),
+            ErrorKind::InvalidClaimBody,
+        ),
+        (
+            "missing conf",
+            rmpv_map_bytes(&entries_without(&base, "conf")),
+            ErrorKind::InvalidClaimBody,
+        ),
+        (
+            "missing appr",
+            rmpv_map_bytes(&entries_without(&base, "appr")),
+            ErrorKind::InvalidClaimBody,
+        ),
+        (
+            "missing life",
+            rmpv_map_bytes(&entries_without(&base, "life")),
+            ErrorKind::InvalidClaimBody,
+        ),
+        (
+            "conf NaN",
+            rmpv_map_bytes(&entries_replacing(
+                &base,
+                "conf",
+                rmpv::Value::F32(f32::NAN),
+            )),
+            ErrorKind::InvalidClaimBody,
+        ),
+        (
+            "conf -0.1",
+            rmpv_map_bytes(&entries_replacing(&base, "conf", rmpv::Value::F64(-0.1))),
+            ErrorKind::InvalidClaimBody,
+        ),
+        (
+            "conf 1.1",
+            rmpv_map_bytes(&entries_replacing(&base, "conf", rmpv::Value::F64(1.1))),
+            ErrorKind::InvalidClaimBody,
+        ),
+        (
+            "appr unknown enum",
+            rmpv_map_bytes(&entries_replacing(&base, "appr", "maybe".into())),
+            ErrorKind::InvalidClaimBody,
+        ),
+        (
+            "life unknown enum",
+            rmpv_map_bytes(&entries_replacing(&base, "life", "zombie".into())),
+            ErrorKind::InvalidClaimBody,
+        ),
+        (
+            "src unknown enum",
+            {
+                let mut entries = base.clone();
+                entries.push(("src".into(), "psychic".into()));
+                rmpv_map_bytes(&entries)
+            },
+            ErrorKind::InvalidClaimBody,
+        ),
+        (
+            "sal out of range",
+            {
+                let mut entries = base.clone();
+                entries.push(("sal".into(), rmpv::Value::F64(1.5)));
+                rmpv_map_bytes(&entries)
+            },
+            ErrorKind::InvalidClaimBody,
+        ),
+        (
+            "subj 17 bytes",
+            rmpv_map_bytes(&entries_replacing(
+                &base,
+                "subj",
+                rmpv::Value::Binary(vec![0x44; 17]),
+            )),
+            ErrorKind::InvalidClaimBody,
+        ),
+        (
+            "subj not binary",
+            rmpv_map_bytes(&entries_replacing(&base, "subj", "stringy".into())),
+            ErrorKind::InvalidClaimBody,
+        ),
+        (
+            "stale not boolean",
+            {
+                let mut entries = base.clone();
+                entries.push(("stale".into(), rmpv::Value::from(1_u64)));
+                rmpv_map_bytes(&entries)
+            },
+            ErrorKind::InvalidClaimBody,
+        ),
+        (
+            "unknown camelCase key",
+            {
+                let mut entries = base.clone();
+                entries.push(("valueKey".into(), "s:x".into()));
+                rmpv_map_bytes(&entries)
+            },
+            ErrorKind::InvalidClaimBody,
+        ),
+        (
+            "duplicate key",
+            {
+                let mut entries = base.clone();
+                entries.push(("pred".into(), "profile.other".into()));
+                rmpv_map_bytes(&entries)
+            },
+            ErrorKind::InvalidClaimBody,
+        ),
+        (
+            "uppercase predicate Edge.Provenance",
+            rmpv_map_bytes(&base_claim_entries("Edge.Provenance", subj_bytes.clone())),
+            ErrorKind::InvalidPredicate,
+        ),
+        (
+            "single-segment predicate profile",
+            rmpv_map_bytes(&base_claim_entries("profile", subj_bytes.clone())),
+            ErrorKind::InvalidPredicate,
+        ),
+        (
+            "reserved edge.provenance via public path",
+            rmpv_map_bytes(&base_claim_entries("edge.provenance", subj_bytes)),
+            ErrorKind::ReservedPredicate,
+        ),
+    ];
+
+    for (name, bytes, expected_kind) in cases {
+        let id = EntityId::now();
+        let err = match vault.put_entity(&id, 0, test_time_range(1, 1), 1, &bytes) {
+            Ok(()) => panic!("case {name}: write must be rejected"),
+            Err(err) => err,
+        };
+        assert_eq!(err.kind(), expected_kind, "case {name}: got {err:?}");
+        assert_no_entity_state(&vault, &id)?;
+    }
+    Ok(())
+}
+
+#[test]
+fn put_claim_typed_api_rejects_invalid_confidence() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let subject = EntityId::now();
+    vault.put_entity(&subject, 4, test_time_range(1, 1), 1, b"person")?;
+
+    for bad_conf in [f32::NAN, -0.1, 1.1, f32::INFINITY] {
+        let id = EntityId::now();
+        let body = ClaimBody::new(
+            "profile.name",
+            ClaimSubject::Entity(subject),
+            rmpv::Value::from("Alice"),
+            bad_conf,
+            ClaimApprovalStatus::Auto,
+            ClaimLifecycleStatus::Active,
+        );
+        let err = vault
+            .put_claim(&id, &body, test_time_range(1, 1), 2)
+            .expect_err("invalid conf must be rejected");
+        assert_eq!(err.kind(), ErrorKind::InvalidClaimBody, "conf {bad_conf}");
+        assert_no_entity_state(&vault, &id)?;
+    }
+    Ok(())
+}
+
+#[test]
+fn unknown_well_formed_predicate_accepted_without_registry() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let subject = EntityId::now();
+    vault.put_entity(&subject, 4, test_time_range(1, 1), 1, b"person")?;
+
+    let claim = EntityId::now();
+    let body = ClaimBody::new(
+        "hobby.collects",
+        ClaimSubject::Entity(subject),
+        rmpv::Value::from("fountain pens"),
+        0.7,
+        ClaimApprovalStatus::Auto,
+        ClaimLifecycleStatus::Active,
+    );
+    vault.put_claim(&claim, &body, test_time_range(1, 1), 2)?;
+    let read = vault.get_claim(&claim)?.expect("unknown predicate stored");
+    assert_eq!(read.predicate, "hobby.collects");
+    Ok(())
+}
+
+#[test]
+fn reserved_predicate_rejected_publicly_but_door_writes_and_reads_back() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let a = EntityId::now();
+    let b = EntityId::now();
+    vault.put_entity(&a, 4, test_time_range(1, 1), 1, b"a")?;
+    vault.put_entity(&b, 4, test_time_range(1, 1), 1, b"b")?;
+
+    let body = ClaimBody::new(
+        "edge.provenance",
+        ClaimSubject::Edge {
+            source: a,
+            kind: EdgeKind::Mentions,
+            target: b,
+        },
+        rmpv::Value::from("provenance payload"),
+        0.9,
+        ClaimApprovalStatus::Auto,
+        ClaimLifecycleStatus::Active,
+    );
+    let bytes = crate::claim::encode_claim_body(&body)?;
+
+    // Public typed API → ReservedPredicate, nothing written.
+    let id = EntityId::now();
+    let err = vault
+        .put_claim(&id, &body, test_time_range(1, 1), 2)
+        .expect_err("public put_claim must reject edge.*");
+    assert_eq!(err.kind(), ErrorKind::ReservedPredicate);
+    assert_no_entity_state(&vault, &id)?;
+
+    // Public raw path → ReservedPredicate, nothing written.
+    let err = vault
+        .put_entity(&id, 0, test_time_range(1, 1), 2, &bytes)
+        .expect_err("public put_entity must reject edge.*");
+    assert_eq!(err.kind(), ErrorKind::ReservedPredicate);
+    assert_no_entity_state(&vault, &id)?;
+
+    // The pub(crate) reserved-namespace door (provenance unit) succeeds and
+    // the stored claim reads back through get_claim.
+    vault.with_write_txn(|wtxn| {
+        vault
+            .batch_in()
+            .put_reserved_claim(&id, test_time_range(1, 1), 2, &bytes)
+            .apply(wtxn)
+    })?;
+    let read = vault.get_claim(&id)?.expect("door-written claim");
+    assert_eq!(read.predicate, "edge.provenance");
+    assert_eq!(
+        read.subject,
+        ClaimSubject::Edge {
+            source: a,
+            kind: EdgeKind::Mentions,
+            target: b,
+        }
+    );
+
+    // The door still enforces grammar + structural validation.
+    let ungrammatical = rmpv_map_bytes(&base_claim_entries(
+        "Edge.Provenance",
+        a.as_bytes().to_vec(),
+    ));
+    let bad_id = EntityId::now();
+    let err = vault
+        .with_write_txn(|wtxn| {
+            vault
+                .batch_in()
+                .put_reserved_claim(&bad_id, test_time_range(1, 1), 2, &ungrammatical)
+                .apply(wtxn)
+        })
+        .expect_err("door must still enforce the predicate grammar");
+    assert_eq!(err.kind(), ErrorKind::InvalidPredicate);
+    assert_no_entity_state(&vault, &bad_id)?;
+    Ok(())
+}
+
+#[test]
+fn get_claim_rejects_non_claim_types_and_handles_missing() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+
+    // Missing entity → Ok(None).
+    assert!(vault.get_claim(&seeded_entity_id(0xBEEF))?.is_none());
+
+    // Non-claim type byte → typed InvalidClaimBody, not a silent decode.
+    let person = EntityId::now();
+    vault.put_entity(&person, 4, test_time_range(1, 1), 1, b"person")?;
+    let err = vault
+        .get_claim(&person)
+        .expect_err("get_claim on a PERSON must fail typed");
+    assert_eq!(err.kind(), ErrorKind::InvalidClaimBody);
+    Ok(())
 }

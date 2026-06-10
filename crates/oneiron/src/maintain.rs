@@ -557,7 +557,7 @@ mod tests {
         for i in 0..50_u8 {
             let id = entity(i.saturating_add(1));
             ids.push(id);
-            vault.put_entity(&id, 0, test_time_range(1, 1), 1, b"node")?;
+            vault.put_entity(&id, 1, test_time_range(1, 1), 1, b"node")?;
             vault.put_vector(&id, &[1.0, 0.0, 0.0, i as f32])?;
         }
 
@@ -654,7 +654,7 @@ mod tests {
             let vault = Vault::open(temp_dir.path(), test_config())?;
 
             let id = entity(84);
-            vault.put_entity(&id, 0, test_time_range(1, 1), 1, b"node")?;
+            vault.put_entity(&id, 1, test_time_range(1, 1), 1, b"node")?;
             vault.put_vector(&id, &[1.0, 0.0, 0.0, 0.0])?;
             drop(vault);
 
@@ -677,7 +677,7 @@ mod tests {
             let vault = Vault::open(temp_dir.path(), test_config())?;
             let id = entity(85);
 
-            vault.put_entity(&id, 0, test_time_range(1, 1), 1, b"node")?;
+            vault.put_entity(&id, 1, test_time_range(1, 1), 1, b"node")?;
             vault.put_vector(&id, &[1.0, 0.0, 0.0, 0.0])?;
 
             {
@@ -711,7 +711,7 @@ mod tests {
         let b = entity(87);
 
         for (id, vector) in [(a, [1.0, 0.0, 0.0, 0.0]), (b, [0.0, 1.0, 0.0, 0.0])] {
-            vault.put_entity(&id, 0, test_time_range(1, 1), 1, b"node")?;
+            vault.put_entity(&id, 1, test_time_range(1, 1), 1, b"node")?;
             vault.put_vector(&id, &vector)?;
         }
 
@@ -754,7 +754,7 @@ mod tests {
         let b = entity(95);
 
         for (id, vector) in [(a, [1.0, 0.0, 0.0, 0.0]), (b, [0.0, 1.0, 0.0, 0.0])] {
-            vault.put_entity(&id, 0, test_time_range(1, 1), 1, b"node")?;
+            vault.put_entity(&id, 1, test_time_range(1, 1), 1, b"node")?;
             vault.put_vector(&id, &vector)?;
         }
 
@@ -793,7 +793,7 @@ mod tests {
         let b = entity(89);
 
         for (id, vector) in [(a, [1.0, 0.0, 0.0, 0.0]), (b, [0.0, 1.0, 0.0, 0.0])] {
-            vault.put_entity(&id, 0, test_time_range(1, 1), 1, b"node")?;
+            vault.put_entity(&id, 1, test_time_range(1, 1), 1, b"node")?;
             vault.put_vector(&id, &vector)?;
         }
 
@@ -836,7 +836,7 @@ mod tests {
         let b = entity(97);
 
         for (id, vector) in [(a, [1.0, 0.0, 0.0, 0.0]), (b, [0.0, 1.0, 0.0, 0.0])] {
-            vault.put_entity(&id, 0, test_time_range(1, 1), 1, b"node")?;
+            vault.put_entity(&id, 1, test_time_range(1, 1), 1, b"node")?;
             vault.put_vector(&id, &vector)?;
         }
 
@@ -875,7 +875,7 @@ mod tests {
         let b = entity(99);
 
         for (id, vector) in [(a, [1.0, 0.0, 0.0, 0.0]), (b, [0.0, 1.0, 0.0, 0.0])] {
-            vault.put_entity(&id, 0, test_time_range(1, 1), 1, b"node")?;
+            vault.put_entity(&id, 1, test_time_range(1, 1), 1, b"node")?;
             vault.put_vector(&id, &vector)?;
         }
 
@@ -951,7 +951,7 @@ mod tests {
 
         vault
             .batch()
-            .put(&id, 0, test_time_range(100, 100), 101, b"initial-payload")
+            .put(&id, 1, test_time_range(100, 100), 101, b"initial-payload")
             .commit()?;
 
         let (short_id_before, hash_before) = {
@@ -1113,7 +1113,7 @@ mod tests {
 
             vault
                 .batch()
-                .put(&id, 0, test_time_range(100, 100), 101, b"payload")
+                .put(&id, 1, test_time_range(100, 100), 101, b"payload")
                 .commit()?;
 
             let legit_forward_key = {
@@ -1176,7 +1176,7 @@ mod tests {
 
         vault
             .batch()
-            .put(&id, 0, test_time_range(100, 100), 101, b"payload")
+            .put(&id, 1, test_time_range(100, 100), 101, b"payload")
             .commit()?;
 
         let forward_key = {
@@ -1216,7 +1216,7 @@ mod tests {
 
         vault
             .batch()
-            .put(&id, 0, test_time_range(100, 100), 101, b"payload")
+            .put(&id, 1, test_time_range(100, 100), 101, b"payload")
             .commit()?;
 
         let forward_key = {
@@ -1258,7 +1258,7 @@ mod tests {
 
         vault
             .batch()
-            .put(&id, 0, test_time_range(100, 100), 101, b"initial-payload")
+            .put(&id, 1, test_time_range(100, 100), 101, b"initial-payload")
             .commit()?;
 
         let hash_before = {
@@ -1307,7 +1307,7 @@ mod tests {
 
         vault
             .batch()
-            .put(&id, 0, test_time_range(100, 100), 101, b"payload")
+            .put(&id, 1, test_time_range(100, 100), 101, b"payload")
             .commit()?;
 
         // `short_ids_reverse` is keyed by 16-byte entity ids; an 8-byte
@@ -1342,7 +1342,7 @@ mod tests {
         let vault = Vault::open(temp_dir.path(), test_config())?;
         let live = entity(103);
 
-        vault.put_entity(&live, 0, test_time_range(1, 1), 1, b"node")?;
+        vault.put_entity(&live, 1, test_time_range(1, 1), 1, b"node")?;
         vault.put_vector(&live, &[1.0, 0.0, 0.0, 0.0])?;
 
         {
@@ -1376,7 +1376,7 @@ mod tests {
         let c = entity(92);
 
         for id in [a, b, c] {
-            vault.put_entity(&id, 0, test_time_range(1, 1), 1, b"node")?;
+            vault.put_entity(&id, 1, test_time_range(1, 1), 1, b"node")?;
         }
 
         vault.put_vector(&a, &[1.0, 0.0, 0.0, 0.0])?;
@@ -1471,8 +1471,8 @@ mod tests {
 
         vault
             .batch()
-            .put(&a, 0, test_time_range(1, 1), 1, b"a")
-            .put(&b, 0, test_time_range(1, 1), 1, b"b")
+            .put(&a, 1, test_time_range(1, 1), 1, b"a")
+            .put(&b, 1, test_time_range(1, 1), 1, b"b")
             .text(&a, &[("body", "hello world")])
             .text(&b, &[("body", "world of rust")])
             .commit()?;

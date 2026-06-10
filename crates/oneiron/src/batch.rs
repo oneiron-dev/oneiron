@@ -107,6 +107,10 @@ pub(crate) enum BatchOp {
         /// receipts survive cross-node sync / replay; every public write keeps
         /// it `false` and stays subject to the maintenance-kind rejection.
         allow_maintenance: bool,
+        /// D17 reserved-namespace gate for type-0 (CLAIM) bodies. `false` on
+        /// every public path; only the `pub(crate)` provenance door
+        /// ([`TxnBatchBuilder::put_reserved_claim`]) sets it.
+        allow_reserved_predicate: bool,
     },
     Vector {
         id: EntityId,
@@ -179,6 +183,7 @@ impl<'a> BatchBuilder<'a> {
             learned_at,
             data: data.to_vec(),
             allow_maintenance: false,
+            allow_reserved_predicate: false,
         });
         self
     }
@@ -218,6 +223,7 @@ impl<'a> BatchBuilder<'a> {
             learned_at,
             data: data.to_vec(),
             allow_maintenance: true,
+            allow_reserved_predicate: false,
         });
         self
     }
@@ -431,6 +437,7 @@ impl<'a> TxnBatchBuilder<'a> {
             learned_at,
             data: data.to_vec(),
             allow_maintenance: false,
+            allow_reserved_predicate: false,
         });
         self
     }
@@ -458,6 +465,40 @@ impl<'a> TxnBatchBuilder<'a> {
             learned_at,
             data: data.to_vec(),
             allow_maintenance: true,
+            allow_reserved_predicate: false,
+        });
+        self
+    }
+
+    /// Adds a type-0 (CLAIM) put whose predicate may live in the reserved
+    /// `edge.*` namespace (D17 reserved-namespace door).
+    ///
+    /// This is the ONLY path that may write `edge.*` predicates; it exists
+    /// for the engine's provenance unit (`edge.provenance` Claims). Full
+    /// structural body validation (D18) still applies at apply time — the
+    /// door bypasses nothing except the reserved-namespace rejection.
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "reserved-namespace door consumed by the provenance unit (ONE-1105)"
+        )
+    )]
+    pub(crate) fn put_reserved_claim(
+        mut self,
+        id: &EntityId,
+        occurred: TimeRange,
+        learned_at: u64,
+        data: &[u8],
+    ) -> Self {
+        self.ops.push(BatchOp::Put {
+            id: *id,
+            entity_type: crate::types::ENTITY_TYPE_CLAIM,
+            occurred,
+            learned_at,
+            data: data.to_vec(),
+            allow_maintenance: false,
+            allow_reserved_predicate: true,
         });
         self
     }
@@ -570,6 +611,7 @@ pub(crate) fn apply_ops(
                 learned_at,
                 data,
                 allow_maintenance,
+                allow_reserved_predicate,
             } => {
                 // Public writes reject the engine-authored maintenance band via
                 // `validate_public_entity_type`; the sync rematerialization path
@@ -581,7 +623,16 @@ pub(crate) fn apply_ops(
                 } else {
                     validate_public_entity_type(entity_type)?;
                 }
-                apply_put(store, wtxn, id, entity_type, occurred, learned_at, &data)?;
+                apply_put(
+                    store,
+                    wtxn,
+                    id,
+                    entity_type,
+                    occurred,
+                    learned_at,
+                    &data,
+                    allow_reserved_predicate,
+                )?;
             }
             BatchOp::Vector { id, vector } => {
                 apply_vector(store, config, wtxn, id, &vector)?;
@@ -812,6 +863,10 @@ pub(crate) fn deindex_entity(
     Ok((true, had_vector, had_graph_mutation, neighbors))
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "decomposing would obscure direct LMDB write logic"
+)]
 fn apply_put(
     store: &Store,
     wtxn: &mut RwTxn<'_>,
@@ -820,11 +875,19 @@ fn apply_put(
     occurred: TimeRange,
     learned_at: u64,
     data: &[u8],
+    allow_reserved_predicate: bool,
 ) -> Result<()> {
     // Type-byte validation runs in `apply_ops` (the public-vs-maintenance gate:
     // public writes reject the engine-authored maintenance band, the sync
     // rematerialization path admits it via `allow_maintenance`). apply_put is
     // reached only after that gate, so it does not re-validate the type byte.
+    //
+    // D18: every type-0 (CLAIM) write — put_entity, both batch builders, and
+    // sync replay — is structurally validated before any byte is staged.
+    // Bodies of all other type bytes stay opaque at the storage layer.
+    if entity_type == crate::types::ENTITY_TYPE_CLAIM {
+        crate::claim::validate_claim_body_bytes(data, allow_reserved_predicate)?;
+    }
     if occurred.start > occurred.end {
         return Err(Error::InvalidTimeRange {
             start: occurred.start,

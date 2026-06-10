@@ -1049,7 +1049,7 @@ mod tests {
         let c = EntityId::now();
 
         for id in [a, b, c] {
-            vault.put_entity(&id, 0, point(1, 1), 1, b"node")?;
+            vault.put_entity(&id, 1, point(1, 1), 1, b"node")?;
         }
 
         let mut wtxn = vault.store.env.write_txn()?;
@@ -1100,7 +1100,7 @@ mod tests {
         let c = EntityId::now();
 
         for id in [a, b, c] {
-            vault.put_entity(&id, 0, point(1, 1), 1, b"node")?;
+            vault.put_entity(&id, 1, point(1, 1), 1, b"node")?;
         }
 
         let mut wtxn = vault.store.env.write_txn()?;
@@ -1151,7 +1151,7 @@ mod tests {
         let c = EntityId::now();
 
         for id in [a, b, c] {
-            vault.put_entity(&id, 0, point(1, 1), 1, b"node")?;
+            vault.put_entity(&id, 1, point(1, 1), 1, b"node")?;
         }
 
         let mut wtxn = vault.store.env.write_txn()?;
@@ -1217,7 +1217,7 @@ mod tests {
             let temp_dir = tempdir()?;
             let vault = Vault::open(temp_dir.path(), test_config())?;
             let id = EntityId::now();
-            vault.put_entity(&id, 0, point(1, 1), 1, b"node")?;
+            vault.put_entity(&id, 1, point(1, 1), 1, b"node")?;
             vault.put_vector(&id, &[1.0, 0.0, 0.0, 0.0])?;
 
             let mut wtxn = vault.store.env.write_txn()?;
@@ -1237,7 +1237,7 @@ mod tests {
             let temp_dir = tempdir()?;
             let vault = Vault::open(temp_dir.path(), test_config())?;
             let id = EntityId::now();
-            vault.put_entity(&id, 0, point(1, 1), 1, b"node")?;
+            vault.put_entity(&id, 1, point(1, 1), 1, b"node")?;
             vault.put_vector(&id, &[1.0, 0.0, 0.0, 0.0])?;
 
             let mut wtxn = vault.store.env.write_txn()?;
@@ -1257,7 +1257,7 @@ mod tests {
             let temp_dir = tempdir()?;
             let vault = Vault::open(temp_dir.path(), test_config())?;
             let id = EntityId::now();
-            vault.put_entity(&id, 0, point(1, 1), 1, b"node")?;
+            vault.put_entity(&id, 1, point(1, 1), 1, b"node")?;
             vault.put_vector(&id, &[1.0, 0.0, 0.0, 0.0])?;
 
             let mut wtxn = vault.store.env.write_txn()?;
@@ -1277,7 +1277,7 @@ mod tests {
             let temp_dir = tempdir()?;
             let vault = Vault::open(temp_dir.path(), test_config())?;
             let id = EntityId::now();
-            vault.put_entity(&id, 0, point(1, 1), 1, b"node")?;
+            vault.put_entity(&id, 1, point(1, 1), 1, b"node")?;
             vault.put_vector(&id, &[1.0, 0.0, 0.0, 0.0])?;
 
             let mut wtxn = vault.store.env.write_txn()?;
@@ -1295,7 +1295,7 @@ mod tests {
             let temp_dir = tempdir()?;
             let vault = Vault::open(temp_dir.path(), test_config())?;
             let id = EntityId::now();
-            vault.put_entity(&id, 0, point(1, 1), 1, b"node")?;
+            vault.put_entity(&id, 1, point(1, 1), 1, b"node")?;
             vault.put_vector(&id, &[1.0, 0.0, 0.0, 0.0])?;
 
             let mut wtxn = vault.store.env.write_txn()?;
@@ -1312,7 +1312,7 @@ mod tests {
             let temp_dir = tempdir()?;
             let vault = Vault::open(temp_dir.path(), test_config())?;
             let id = EntityId::now();
-            vault.put_entity(&id, 0, point(1, 1), 1, b"node")?;
+            vault.put_entity(&id, 1, point(1, 1), 1, b"node")?;
             vault.put_vector(&id, &[1.0, 0.0, 0.0, 0.0])?;
 
             let mut wtxn = vault.store.env.write_txn()?;
@@ -1475,8 +1475,8 @@ mod tests {
         let a = EntityId::now();
         let b = EntityId::now();
 
-        vault.put_entity(&a, 0, point(1, 1), 1, b"a")?;
-        vault.put_entity(&b, 0, point(1, 1), 1, b"b")?;
+        vault.put_entity(&a, 1, point(1, 1), 1, b"a")?;
+        vault.put_entity(&b, 1, point(1, 1), 1, b"b")?;
         vault.put_vector(&a, &[1.0, 0.0, 0.0, 0.0])?;
 
         let mut wtxn = vault.store.env.write_txn()?;

@@ -45,7 +45,9 @@ pub(crate) fn boost_salience(
             continue;
         };
 
-        let Some(salience) = decode_msgpack_float(raw, "salience") else {
+        // D11: the on-disk claim body key is the pinned short key `sal`
+        // (shared `claim::CLAIM_BODY_KEYS` vocabulary), not "salience".
+        let Some(salience) = decode_msgpack_float(raw, crate::claim::KEY_SAL) else {
             continue;
         };
 
@@ -65,7 +67,9 @@ pub(crate) fn boost_confidence(
             continue;
         };
 
-        let Some(confidence) = decode_msgpack_float(raw, "confidence") else {
+        // D11: the on-disk claim body key is the pinned short key `conf`
+        // (shared `claim::CLAIM_BODY_KEYS` vocabulary), not "confidence".
+        let Some(confidence) = decode_msgpack_float(raw, crate::claim::KEY_CONF) else {
             continue;
         };
 

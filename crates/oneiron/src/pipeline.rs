@@ -1377,7 +1377,7 @@ mod tests {
     fn put_text(vault: &Vault, id: EntityId, text: &str) -> Result<()> {
         vault
             .batch()
-            .put(&id, 0, TimeRange { start: 1, end: 1 }, 1, b"payload")
+            .put(&id, 1, TimeRange { start: 1, end: 1 }, 1, b"payload")
             .text(&id, &[("body", text)])
             .commit()
     }
@@ -1385,7 +1385,7 @@ mod tests {
     fn put_vector(vault: &Vault, id: EntityId, vector: [f32; 4]) -> Result<()> {
         vault
             .batch()
-            .put(&id, 0, TimeRange { start: 1, end: 1 }, 1, b"payload")
+            .put(&id, 1, TimeRange { start: 1, end: 1 }, 1, b"payload")
             .vector(&id, &vector)
             .commit()
     }
@@ -1475,9 +1475,9 @@ mod tests {
 
         vault
             .batch()
-            .put(&a, 0, TimeRange { start: 10, end: 10 }, 10, b"payload")
+            .put(&a, 1, TimeRange { start: 10, end: 10 }, 10, b"payload")
             .text(&a, &[("body", "alpha")])
-            .put(&b, 0, TimeRange { start: 11, end: 11 }, 11, b"payload")
+            .put(&b, 1, TimeRange { start: 11, end: 11 }, 11, b"payload")
             .edge(&a, crate::types::EdgeKind::Supports, &b, 1.0)
             .commit()?;
 
@@ -1503,7 +1503,7 @@ mod tests {
                 .batch()
                 .put(
                     &id,
-                    0,
+                    1,
                     TimeRange {
                         start: 10 + i as u64,
                         end: 10 + i as u64,
@@ -1534,8 +1534,8 @@ mod tests {
 
         vault
             .batch()
-            .put(&a, 0, TimeRange { start: 10, end: 10 }, 10, b"payload")
-            .put(&b, 0, TimeRange { start: 11, end: 11 }, 11, b"payload")
+            .put(&a, 1, TimeRange { start: 10, end: 10 }, 10, b"payload")
+            .put(&b, 1, TimeRange { start: 11, end: 11 }, 11, b"payload")
             .edge(&a, crate::types::EdgeKind::Supports, &b, 1.0)
             .commit()?;
 
@@ -1553,8 +1553,8 @@ mod tests {
 
         vault
             .batch()
-            .put(&a, 0, TimeRange { start: 10, end: 10 }, 10, b"payload")
-            .put(&b, 0, TimeRange { start: 11, end: 11 }, 11, b"payload")
+            .put(&a, 1, TimeRange { start: 10, end: 10 }, 10, b"payload")
+            .put(&b, 1, TimeRange { start: 11, end: 11 }, 11, b"payload")
             .edge(&a, crate::types::EdgeKind::Supports, &b, 1.0)
             .commit()?;
 
@@ -1588,8 +1588,8 @@ mod tests {
         let a = entity_id(30);
         let b = entity_id(31);
 
-        put_entity(&vault, a, 0, anchor, anchor, anchor)?;
-        put_entity(&vault, b, 0, anchor + 3_600, anchor + 3_600, anchor + 3_600)?;
+        put_entity(&vault, a, 1, anchor, anchor, anchor)?;
+        put_entity(&vault, b, 1, anchor + 3_600, anchor + 3_600, anchor + 3_600)?;
 
         let without_boost = vault
             .query()
@@ -1617,7 +1617,7 @@ mod tests {
         let anchor = 2_000_000;
         let candidate = entity_id(40);
 
-        put_entity(&vault, candidate, 0, 1_000_000, 1_500_000, 10_000_000)?;
+        put_entity(&vault, candidate, 1, 1_000_000, 1_500_000, 10_000_000)?;
 
         let results = vault
             .query()
@@ -1639,7 +1639,7 @@ mod tests {
         put_entity(
             &vault,
             candidate,
-            0,
+            1,
             anchor.saturating_sub(span),
             anchor.saturating_add(span),
             anchor,
@@ -1667,7 +1667,7 @@ mod tests {
             put_entity(
                 &vault,
                 id,
-                0,
+                1,
                 anchor + i as u64,
                 anchor + long_span + i as u64,
                 anchor,
@@ -1678,7 +1678,7 @@ mod tests {
         put_entity(
             &vault,
             spanner,
-            0,
+            1,
             anchor.saturating_sub(long_span),
             anchor + long_span + PER_SCAN_CAP_FACTOR as u64,
             anchor,
@@ -1739,7 +1739,7 @@ mod tests {
             put_entity(
                 &vault,
                 id,
-                0,
+                1,
                 anchor.saturating_sub(span + 10),
                 anchor.saturating_add(span + u64::from(i)),
                 learned_at,
@@ -1774,7 +1774,7 @@ mod tests {
             put_entity(
                 &vault,
                 id,
-                0,
+                1,
                 anchor.saturating_sub(span + 10),
                 anchor.saturating_add(span + u64::from(i)),
                 learned_at,
@@ -1828,7 +1828,7 @@ mod tests {
 
         for byte in [40_u8, 41, 42, 43, 44] {
             let id = entity_id(byte);
-            put_entity(&vault, id, 0, timestamp, timestamp, timestamp)?;
+            put_entity(&vault, id, 1, timestamp, timestamp, timestamp)?;
         }
 
         let rtxn = vault.store.env.read_txn()?;
@@ -1860,7 +1860,7 @@ mod tests {
         let end = now + 8 * 86_400;
         let id = entity_id(50);
 
-        put_entity(&vault, id, 0, start + 3_600, start + 3_600, now)?;
+        put_entity(&vault, id, 1, start + 3_600, start + 3_600, now)?;
 
         let config = TemporalSearchConfig {
             anchor_start: start,
@@ -1894,8 +1894,8 @@ mod tests {
         let end = 1_200_000;
         let sigma = end - start;
 
-        put_entity(&vault, a, 0, start + 10_000, start + 10_000, start + 10_000)?;
-        put_entity(&vault, b, 0, end + 500_000, end + 500_000, end + 500_000)?;
+        put_entity(&vault, a, 1, start + 10_000, start + 10_000, start + 10_000)?;
+        put_entity(&vault, b, 1, end + 500_000, end + 500_000, end + 500_000)?;
 
         let tier1 = vault.query().search_temporal(start, end, 10).run()?;
         let tier2 = vault
@@ -1922,7 +1922,7 @@ mod tests {
             put_entity(
                 &vault,
                 id,
-                0,
+                1,
                 anchor + u64::from(i),
                 anchor + u64::from(i),
                 9_000_000,
@@ -1933,7 +1933,7 @@ mod tests {
         put_entity(
             &vault,
             learned_only,
-            0,
+            1,
             anchor + 10_000_000,
             anchor + 10_000_000,
             anchor,
@@ -1990,7 +1990,7 @@ mod tests {
             let anchor: u64 = 1_000_000;
             let id = entity_id(90_u8.saturating_add(i as u8));
             let ts = anchor + *distance;
-            put_entity(&vault, id, 0, ts, ts, ts)?;
+            put_entity(&vault, id, 1, ts, ts, ts)?;
 
             let base_config = TemporalSearchConfig {
                 anchor_start: anchor,
@@ -2047,7 +2047,7 @@ mod tests {
         put_entity(
             &vault,
             far,
-            0,
+            1,
             anchor + hundred_days,
             anchor + hundred_days,
             anchor + hundred_days,
@@ -2092,7 +2092,7 @@ mod tests {
         put_entity(
             &vault,
             near,
-            0,
+            1,
             anchor + 1_000,
             anchor + 1_000,
             anchor + 1_000,
@@ -2100,7 +2100,7 @@ mod tests {
         put_entity(
             &vault,
             far_a,
-            0,
+            1,
             anchor - 500_000,
             anchor - 500_000,
             anchor - 500_000,
@@ -2108,7 +2108,7 @@ mod tests {
         put_entity(
             &vault,
             far_b,
-            0,
+            1,
             anchor + 500_000,
             anchor + 500_000,
             anchor + 500_000,
@@ -2133,7 +2133,7 @@ mod tests {
         put_entity(
             &vault,
             target,
-            0,
+            1,
             anchor + 30 * 86_400,
             anchor + 30 * 86_400,
             anchor + 30 * 86_400,
@@ -2176,11 +2176,11 @@ mod tests {
         let cluster_b = entity_id(131);
         let isolated = entity_id(132);
 
-        put_entity(&vault, cluster_a, 0, anchor, anchor, anchor)?;
+        put_entity(&vault, cluster_a, 1, anchor, anchor, anchor)?;
         put_entity(
             &vault,
             cluster_b,
-            0,
+            1,
             anchor + 3_600,
             anchor + 3_600,
             anchor + 3_600,
@@ -2188,7 +2188,7 @@ mod tests {
         put_entity(
             &vault,
             isolated,
-            0,
+            1,
             anchor + 40 * 86_400,
             anchor + 40 * 86_400,
             anchor + 40 * 86_400,
@@ -2243,8 +2243,8 @@ mod tests {
         let closer = entity_id(140);
         let farther = entity_id(141);
 
-        put_entity(&vault, closer, 0, 120, 130, 150)?;
-        put_entity(&vault, farther, 0, 180, 190, 150)?;
+        put_entity(&vault, closer, 1, 120, 130, 150)?;
+        put_entity(&vault, farther, 1, 180, 190, 150)?;
 
         let results = vault
             .query()
@@ -2273,7 +2273,7 @@ mod tests {
         put_entity(
             &vault,
             closer,
-            0,
+            1,
             anchor_start,
             anchor_start + 10,
             anchor_start + 49,
@@ -2281,7 +2281,7 @@ mod tests {
         put_entity(
             &vault,
             farther,
-            0,
+            1,
             anchor_start + 49,
             anchor_start + 50,
             anchor_start + 80,
@@ -2310,7 +2310,7 @@ mod tests {
         let drop = entity_id(151);
 
         put_entity(&vault, keep, 1, 100, 110, 200)?;
-        put_entity(&vault, drop, 0, 300, 310, 150)?;
+        put_entity(&vault, drop, 1, 300, 310, 150)?;
 
         let results = vault
             .query()
@@ -2332,7 +2332,7 @@ mod tests {
 
         let anchor = 5_000_000;
         for index in 0..5_u8 {
-            put_entity(&vault, entity_id(170 + index), 0, anchor, anchor, anchor)?;
+            put_entity(&vault, entity_id(170 + index), 2, anchor, anchor, anchor)?;
         }
         let keep = entity_id(180);
         put_entity(

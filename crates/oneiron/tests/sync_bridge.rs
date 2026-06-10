@@ -54,7 +54,7 @@ fn map_insert_bytes(map: &LoroMap, key: &str, value: &[u8]) {
 }
 
 fn put_entity_in_window(window: &LoadedWindow, id: &EntityId, learned_at: u64, data: &[u8]) {
-    let blob = make_entity_blob(0, learned_at, data);
+    let blob = make_entity_blob(1, learned_at, data);
     let entities = window.doc.get_map("entities");
     map_insert_bytes(&entities, id.to_hex().as_str(), &blob);
     window.doc.commit();
@@ -88,7 +88,7 @@ fn entity_written_to_crdt_materializes_in_lmdb() {
     let id = EntityId::now();
     let hex_id = id.to_hex();
     let learned_at = 1_772_000_000u64;
-    let blob = make_entity_blob(0, learned_at, b"test-entity-data");
+    let blob = make_entity_blob(1, learned_at, b"test-entity-data");
 
     let entities = window.doc.get_map("entities");
     map_insert_bytes(&entities, hex_id.as_str(), &blob);
@@ -111,7 +111,7 @@ fn tombstone_deletes_entity_from_lmdb() {
     let id = EntityId::now();
     let hex_id = id.to_hex();
     let learned_at = 1_772_000_000u64;
-    let blob = make_entity_blob(0, learned_at, b"to-be-deleted");
+    let blob = make_entity_blob(1, learned_at, b"to-be-deleted");
 
     let entities = window.doc.get_map("entities");
     map_insert_bytes(&entities, hex_id.as_str(), &blob);
@@ -145,8 +145,8 @@ fn edge_materializes_when_both_endpoints_exist() {
     let tgt = EntityId::now();
     let learned_at = 1_772_000_000u64;
 
-    let src_blob = make_entity_blob(0, learned_at, b"source");
-    let tgt_blob = make_entity_blob(0, learned_at, b"target");
+    let src_blob = make_entity_blob(1, learned_at, b"source");
+    let tgt_blob = make_entity_blob(1, learned_at, b"target");
 
     let entities = window.doc.get_map("entities");
     map_insert_bytes(&entities, src.to_hex().as_str(), &src_blob);
@@ -181,7 +181,7 @@ fn edge_skipped_when_endpoint_missing() {
     let tgt = EntityId::now();
     let learned_at = 1_772_000_000u64;
 
-    let src_blob = make_entity_blob(0, learned_at, b"source-only");
+    let src_blob = make_entity_blob(1, learned_at, b"source-only");
     let entities = window.doc.get_map("entities");
     map_insert_bytes(&entities, src.to_hex().as_str(), &src_blob);
     window.doc.commit();
@@ -215,7 +215,7 @@ fn bridge_origin_writes_dont_trigger_observer_b() {
     let id = EntityId::now();
     let hex_id = id.to_hex();
     let learned_at = 1_772_000_000u64;
-    let blob = make_entity_blob(0, learned_at, b"bridge-written");
+    let blob = make_entity_blob(1, learned_at, b"bridge-written");
 
     // Write under bridge origin — Observer B should skip this
     let entities = window.doc.get_map("entities");
@@ -260,7 +260,7 @@ fn observer_a_sequence_overflow_preserves_zero_update_slot() {
         .load(Ordering::Relaxed);
 
     let id = EntityId::now();
-    let blob = make_entity_blob(0, 1_772_000_000, b"overflow-test");
+    let blob = make_entity_blob(1, 1_772_000_000, b"overflow-test");
     let entities = window.doc.get_map("entities");
     map_insert_bytes(&entities, id.to_hex().as_str(), &blob);
     window.doc.commit();
@@ -291,7 +291,7 @@ fn window_persist_and_load_roundtrip() {
     let id = EntityId::now();
     let hex_id = id.to_hex();
     let learned_at = 1_772_000_000u64;
-    let blob = make_entity_blob(0, learned_at, b"persist-test");
+    let blob = make_entity_blob(1, learned_at, b"persist-test");
 
     let entities = window.doc.get_map("entities");
     map_insert_bytes(&entities, hex_id.as_str(), &blob);
@@ -324,7 +324,7 @@ fn crash_recovery_pm_markers() {
     vault
         .put_entity(
             &id,
-            0,
+            1,
             TimeRange {
                 start: learned_at,
                 end: learned_at,
@@ -364,7 +364,7 @@ fn forward_rematerialize_materializes_entities_with_single_read_snapshot() {
     let doc = create_window_doc("test-user", &key);
     let id = EntityId::now();
     let hex_id = id.to_hex();
-    let blob = make_entity_blob(0, 1_772_000_000, b"forward-remat");
+    let blob = make_entity_blob(1, 1_772_000_000, b"forward-remat");
 
     let entities = doc.get_map("entities");
     map_insert_bytes(&entities, hex_id.as_str(), &blob);
@@ -386,7 +386,7 @@ fn forward_rematerialize_deduplicates_same_entity_aliases() {
     let key = WindowKey::new("2026-03");
     let doc = create_window_doc("test-user", &key);
     let id = EntityId::from_hex("11111111111111111111111111111111").unwrap();
-    let blob = make_entity_blob(0, 1_772_000_000, b"alias");
+    let blob = make_entity_blob(1, 1_772_000_000, b"alias");
 
     let entities = doc.get_map("entities");
     map_insert_bytes(&entities, id.to_hex().as_str(), &blob);
@@ -411,7 +411,7 @@ fn pm_replay_skips_tombstoned_entities() {
     vault
         .put_entity(
             &id,
-            0,
+            1,
             TimeRange {
                 start: learned_at,
                 end: learned_at,
@@ -556,7 +556,7 @@ fn reverse_rematerialize_mirrors_lmdb_entities_edges_and_skips_tombstones() {
     vault
         .put_entity(
             &tombstoned,
-            0,
+            1,
             TimeRange {
                 start: learned_at,
                 end: learned_at,
