@@ -35,6 +35,14 @@ fn main() -> ExitCode {
                 ExitCode::FAILURE
             }
         },
+        [cmd, sub] if cmd == "bm25" && sub == "hot-term-ingest" => run_hot_term_ingest(10_000),
+        [cmd, sub, n] if cmd == "bm25" && sub == "hot-term-ingest" => match n.parse::<usize>() {
+            Ok(n) if n > 0 => run_hot_term_ingest(n),
+            _ => {
+                eprintln!("hot-term-ingest expects a positive doc count, got: {n}");
+                ExitCode::FAILURE
+            }
+        },
         _ => {
             eprintln!("unknown invocation: {args:?}");
             print_help();
@@ -48,13 +56,80 @@ fn print_help() {
         "usage: oneiron-bench <command> [<subcommand>]\n\
          \n\
          commands:\n\
-           analyzer              run all analyzer benches (throughput + smoke)\n\
-           analyzer throughput   tokenization MiB/s microbench\n\
-           analyzer smoke        hand-crafted BM25F retrieval smoke test\n\
+           analyzer                    run all analyzer benches (throughput + smoke)\n\
+           analyzer throughput         tokenization MiB/s microbench\n\
+           analyzer smoke              hand-crafted BM25F retrieval smoke test\n\
+           bm25 hot-term-ingest [N]    ingest N docs (default 10000) sharing one\n\
+                                       hot term; reports per-chunk + total cost\n\
+                                       (ONE-299 posting-append microbench)\n\
          \n\
          note: MIRACL / Mr.TyDi / internal SEA retrieval quality matrix\n\
          lives in ONE-318 (not yet implemented)."
     );
+}
+
+/// ONE-299 microbench: every doc carries the same hot term, so the cost of
+/// one `text_postings` append under a hot term dominates. Per-chunk timings
+/// expose the asymptotics: a read-modify-rewrite posting list grows each
+/// chunk (O(N²) total bytes copied), while a DUP_SORT append stays flat.
+fn run_hot_term_ingest(total_docs: usize) -> ExitCode {
+    println!("== bm25 hot-term ingest ({total_docs} docs) ==");
+    let tmp = match tempfile::tempdir() {
+        Ok(d) => d,
+        Err(e) => {
+            eprintln!("tempdir failed: {e}");
+            return ExitCode::FAILURE;
+        }
+    };
+    let mut cfg = smoke_config();
+    cfg.map_size = 2 * 1024 * 1024 * 1024;
+    let vault = match Vault::open(tmp.path(), cfg) {
+        Ok(v) => v,
+        Err(e) => {
+            eprintln!("vault open failed: {e}");
+            return ExitCode::FAILURE;
+        }
+    };
+
+    let chunk_size = 1000;
+    let start = Instant::now();
+    let mut indexed = 0_usize;
+    while indexed < total_docs {
+        let chunk = chunk_size.min(total_docs - indexed);
+        let chunk_start = Instant::now();
+        let mut batch = vault.batch();
+        for _ in 0..chunk {
+            let id = EntityId::now();
+            batch = batch
+                .put(&id, 1, TimeRange { start: 1, end: 1 }, 1, b"doc")
+                .text(&id, &[("body", "hotterm")]);
+        }
+        if let Err(e) = batch.commit() {
+            eprintln!("batch commit failed after {indexed} docs: {e}");
+            return ExitCode::FAILURE;
+        }
+        indexed += chunk;
+        println!(
+            "  docs {:>6}..{:>6}: {:>9.3}ms",
+            indexed - chunk,
+            indexed,
+            chunk_start.elapsed().as_secs_f64() * 1e3
+        );
+    }
+    let elapsed = start.elapsed().as_secs_f64();
+    println!("  total: {elapsed:.3}s ({:.0} docs/s)", total_docs as f64 / elapsed);
+
+    match vault.search_text("hotterm", 1) {
+        Ok(hits) if !hits.is_empty() => ExitCode::SUCCESS,
+        Ok(_) => {
+            eprintln!("hot term not retrievable after ingest");
+            ExitCode::FAILURE
+        }
+        Err(e) => {
+            eprintln!("post-ingest search failed: {e}");
+            ExitCode::FAILURE
+        }
+    }
 }
 
 fn run_analyzer_default() -> ExitCode {
