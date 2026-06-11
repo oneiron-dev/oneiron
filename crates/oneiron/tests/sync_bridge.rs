@@ -442,6 +442,15 @@ fn pm_replay_skips_tombstoned_entities() {
     );
 }
 
+/// CONTRACT CORRECTION (ONE-1131): the previous version of this test
+/// hard-deleted `src`/`tgt`/`lonely` via `delete_entity` and asserted that
+/// forward re-materialization from a stale pre-delete snapshot RESTORED
+/// them — blessing resurrection of hard-deleted entities. ARCH-0023b's
+/// crash-recovery rule is the opposite ("if tombstoned in CRDT → never
+/// resurrect"); restore is only legitimate for entities that were never
+/// deleted, e.g. after LMDB loss or onto a fresh node. Restore is now
+/// asserted on a fresh vault, and the tombstoned entity must never
+/// materialize at all.
 #[test]
 fn forward_rematerialize_restores_lmdb_entities_edges_and_tombstones() {
     let temp = tempfile::tempdir().unwrap();
@@ -482,39 +491,44 @@ fn forward_rematerialize_restores_lmdb_entities_edges_and_tombstones() {
     drop(window);
     let recovered_doc = LoroDoc::from_snapshot(&snapshot).unwrap();
 
-    assert!(vault.delete_entity(&src).unwrap());
-    assert!(vault.delete_entity(&tgt).unwrap());
-    assert!(vault.delete_entity(&lonely).unwrap());
-    assert!(vault.get(&src).unwrap().is_none());
-    assert!(!vault.edge_exists(&src, EdgeKind::Mentions, &tgt).unwrap());
+    // Recover into a FRESH vault (crash-lost LMDB / new node): only the
+    // never-deleted entities and their edge may materialize.
+    let temp_b = tempfile::tempdir().unwrap();
+    let vault_b = Vault::open(temp_b.path(), test_config()).unwrap();
+    let materializer_b = Materializer::new();
 
     let rematerialized =
-        window::forward_rematerialize(&vault, &recovered_doc, &materializer).unwrap();
+        window::forward_rematerialize(&vault_b, &recovered_doc, &materializer_b).unwrap();
     assert_eq!(
-        rematerialized, 6,
-        "should rebuild four entity rows, one edge, then apply one tombstone delete"
+        rematerialized, 4,
+        "three live entity rows + one edge; the tombstoned entity must never be written (not even transiently), so no purge runs either"
     );
 
     assert_eq!(
-        vault.get(&src).unwrap().as_deref(),
+        vault_b.get(&src).unwrap().as_deref(),
         Some(b"remat-source".as_slice())
     );
     assert_eq!(
-        vault.get(&tgt).unwrap().as_deref(),
+        vault_b.get(&tgt).unwrap().as_deref(),
         Some(b"remat-target".as_slice())
     );
     assert_eq!(
-        vault.get(&lonely).unwrap().as_deref(),
+        vault_b.get(&lonely).unwrap().as_deref(),
         Some(b"remat-lonely".as_slice())
     );
     assert!(
-        vault.edge_exists(&src, EdgeKind::Mentions, &tgt).unwrap(),
+        vault_b.edge_exists(&src, EdgeKind::Mentions, &tgt).unwrap(),
         "edge should be rebuilt after endpoints are restored"
     );
     assert!(
-        vault.get(&tombstoned).unwrap().is_none(),
-        "tombstone should win over stale entity payload"
+        vault_b.get_raw(&tombstoned).unwrap().is_none(),
+        "tombstoned entity must never resurrect — no row at all, not even a header"
     );
+
+    // ARCH-0023b recovery is idempotent: a second pass over the same doc
+    // performs zero LMDB writes.
+    let second = window::forward_rematerialize(&vault_b, &recovered_doc, &materializer_b).unwrap();
+    assert_eq!(second, 0, "second forward pass must perform zero writes");
 }
 
 #[test]
