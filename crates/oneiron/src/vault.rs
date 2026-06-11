@@ -380,6 +380,13 @@ impl Vault {
     /// CLAIM or its body fails the pinned structural validation. The read
     /// path allows reserved `edge.*` predicates so stored provenance Claims
     /// stay decodable.
+    ///
+    /// DELIBERATELY UNGATED (D19): unlike the retrieval read paths
+    /// (pipeline / context pack), this targeted read returns claims of
+    /// EVERY `appr`/`life`/`stale` status — it is the history and
+    /// consent-review door ("all non-current states are still stored",
+    /// ARCH-0003), and the edge-provenance lifecycle readers likewise must
+    /// see closed Claims to compute winner stamps.
     pub fn get_claim(&self, id: &EntityId) -> Result<Option<ClaimBody>> {
         let rtxn = self.store.env.read_txn()?;
         let Some(raw) = self.store.entities.get(&rtxn, id.as_bytes())? else {
