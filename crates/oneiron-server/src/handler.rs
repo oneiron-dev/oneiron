@@ -17,7 +17,7 @@ use axum::response::IntoResponse;
 use axum::routing::get;
 use futures_util::stream::SplitStream;
 use futures_util::{SinkExt, StreamExt};
-use loro::{ExportMode, VersionVector};
+use loro::VersionVector;
 use oneiron::sync::WindowKey;
 use oneiron::sync::export_updates_since;
 

@@ -65,7 +65,10 @@ impl SyncServer {
                 let doc = LoroDoc::new();
                 // Initialize root doc meta map
                 let meta = doc.get_map("meta");
-                meta.insert("schema_version", 1i64)
+                // i64-LE BYTES (Loro Binary), conforming to the shared schema
+                // (`schema::create_root_doc`) — NOT a Loro i64, which the
+                // byte-only schema readers would not decode.
+                meta.insert("schema_version", 1i64.to_le_bytes().as_slice())
                     .map_err(|e| oneiron::Error::SyncProtocolError(e.to_string()))?;
                 // `meta.windows` must be byte-encoded to match the schema
                 // helpers (`schema::create_root_doc` / `add_window_to_root`)
@@ -261,18 +264,14 @@ mod tests {
         let (_dir, vault) = test_vault();
         let server = SyncServer::new(vault, SyncServerConfig::default()).unwrap();
 
-        let deep = server.root_doc.get_deep_value();
-        let meta = deep.as_map().unwrap().get("meta").unwrap();
-        let meta_map = meta.as_map().unwrap();
+        // schema_version must be i64-LE bytes (Loro Binary), matching the
+        // shared schema writer (`schema::create_root_doc`).
         assert_eq!(
-            *meta_map.get("schema_version").unwrap().as_i64().unwrap(),
-            1i64
+            deep_map_bytes(&server.root_doc, "meta", "schema_version").unwrap(),
+            1i64.to_le_bytes()
         );
         assert!(
-            meta_map
-                .get("windows")
-                .unwrap()
-                .as_binary()
+            deep_map_bytes(&server.root_doc, "meta", "windows")
                 .unwrap()
                 .is_empty()
         );
