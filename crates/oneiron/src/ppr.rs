@@ -3,6 +3,7 @@ use std::collections::{HashMap, HashSet};
 use heed::{RoTxn, RwTxn};
 use xxhash_rust::xxh3::xxh3_128;
 
+use crate::batch::EntityMetadataHeader;
 use crate::error::{Error, Result};
 use crate::store::Store;
 #[cfg(test)]
@@ -23,7 +24,24 @@ const CACHE_ENTRY_LEN: usize = 20;
 const CACHE_DEP_KEY_LEN: usize = ENTITY_ID_LEN + SEED_HASH_LEN;
 #[cfg(test)]
 const LEGACY_CACHE_DEP_KEY_LEN: usize = ENTITY_ID_LEN + LEGACY_SEED_HASH_LEN;
-const CACHE_TTL_SECS: u64 = 86_400;
+
+// ARCH-0019 "PPR cache TTL" table / ARCH-0014 "TTL strategy" (recency-tiered,
+// ONE-1116). The serve-TTL of a `ppr_cache` row is a step function of the
+// SEED-SET recency — `max(learned_at)` over the query's seed entities,
+// evaluated against `now` at READ time (see
+// [`recency_tiered_cache_ttl_secs`]):
+//
+//   Active  · seed recency <  7 days → 24 h  (86_400 s)   "keep fresh"
+//   Recent  · 7 – 30 days            → 72 h  (259_200 s)  "less volatile"
+//   Dormant · ≥ 30 days              → 168 h (604_800 s)  "stable, long TTL"
+const CACHE_TTL_ACTIVE_SECS: u64 = 86_400;
+const CACHE_TTL_RECENT_SECS: u64 = 259_200;
+pub(crate) const CACHE_TTL_DORMANT_SECS: u64 = 604_800;
+/// Seed recency strictly below this bound is the Active tier (`< 7d`).
+const SEED_RECENCY_ACTIVE_LIMIT_SECS: u64 = 7 * 86_400;
+/// Seed recency strictly below this bound (and ≥ the Active limit) is the
+/// Recent tier (`7–30d`); at or above it is Dormant (`≥ 30d`).
+const SEED_RECENCY_RECENT_LIMIT_SECS: u64 = 30 * 86_400;
 use crate::store::GRAPH_VERSION_KEY;
 const SCORE_EPSILON: f32 = 1e-10;
 pub(crate) const MAX_PPR_SEEDS: usize = 256;
@@ -34,8 +52,41 @@ const MAX_PPR_DEPTH: u32 = 10;
 /// an upgrade (the rows are otherwise gated only by graph version + TTL, and a
 /// formula change bumps neither). Stale rows are reaped by the regular cache
 /// cleanup. v2 = ARCH-0039 Layer-1 normalization + λ_τ table + not-traversed
-/// gates + retracted skip (ONE-1100).
-const PPR_FORMULA_VERSION: u32 = 2;
+/// gates + retracted skip (ONE-1100). v3 = ARCH-0039 Layer-2 seed specificity
+/// (ONE-1116): `search_ppr` seeds are weighted `1/ln(1 + passage_count)`
+/// instead of uniform `1/n`, and the cache key gained a [`SeedWeighting`]
+/// byte — pre-bump uniform-seeded rows are unreachable under v3 keys.
+const PPR_FORMULA_VERSION: u32 = 3;
+
+/// Seed-mass distribution mode (ARCH-0039 Layer 2, "Seed specificity
+/// (search_ppr only)").
+///
+/// The mode is mixed into the `ppr_cache` key (see [`hash_seeds`]) because
+/// the two modes produce DIFFERENT scores for the same seed set: a cached
+/// `search_ppr` row must never be served to an `expand_ppr` query or vice
+/// versa (fail closed on cache identity, not on score similarity).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SeedWeighting {
+    /// Uniform `1/n` seed mass — `expand_ppr` and the pre-Layer-2 behavior.
+    Uniform,
+    /// ARCH-0039 Layer 2: weight each seed by
+    /// `1/ln(1 + max(passage_count, 1))`, normalized so the total seed mass
+    /// is 1.0. `passage_count(seed)` is the number of inbound `mentions`
+    /// edges (an `edges_in` prefix scan filtered to kind = `Mentions`),
+    /// counted at query time in the same read transaction. Applies ONLY to
+    /// `search_ppr`.
+    Specificity,
+}
+
+impl SeedWeighting {
+    /// Cache-key discriminant byte. Pinned: `Uniform` = 0, `Specificity` = 1.
+    const fn cache_key_byte(self) -> u8 {
+        match self {
+            Self::Uniform => 0,
+            Self::Specificity => 1,
+        }
+    }
+}
 
 /// Per-kind λ_τ traversal budget (ARCH-0039 Layer 1). The values are the
 /// LITERAL `edgeKinds.lambda` column of the pinned contract module
@@ -114,10 +165,17 @@ pub(crate) struct DeferredPprCacheWrite {
 ///   skipped entirely, including their `s_out`/`s_in` contribution (D8);
 ///   proposed / confirmed / disputed propagate at full weight in v1.
 /// - `part_of` hops are capped at 2.
-pub(crate) fn ppr_compute(
+///
+/// Seed mass follows the [`SeedWeighting`] mode: UNIFORM `1/n` for
+/// `expand_ppr` (and the pre-Layer-2 behavior), or ARCH-0039 Layer-2
+/// specificity weights for `search_ppr`. Seed weights scale BOTH the initial
+/// seed mass and the per-round teleport mass, so the personalization vector
+/// is the normalized weight vector (Σ seed mass = 1.0).
+pub(crate) fn ppr_compute_weighted(
     store: &Store,
     txn: &RoTxn<'_>,
     seeds: &[EntityId],
+    weighting: SeedWeighting,
     depth: u32,
     alpha: f32,
 ) -> Result<Vec<ScoredEntity>> {
@@ -125,13 +183,13 @@ pub(crate) fn ppr_compute(
         return Ok(Vec::new());
     }
 
-    let init = 1.0 / seeds.len() as f32;
+    let seed_weights = seed_weights(store, txn, seeds, weighting)?;
     let mut scores = HashMap::<EntityId, f32>::new();
     let mut frontier = HashMap::<(EntityId, u32), f32>::new();
 
-    for seed in seeds {
-        *scores.entry(*seed).or_default() += init;
-        *frontier.entry((*seed, 0)).or_default() += init;
+    for (seed, weight) in seeds.iter().zip(&seed_weights) {
+        *scores.entry(*seed).or_default() += *weight;
+        *frontier.entry((*seed, 0)).or_default() += *weight;
     }
 
     let edge_dbs = [&store.edges_out, &store.edges_in];
@@ -181,9 +239,9 @@ pub(crate) fn ppr_compute(
             }
         }
 
-        let teleport = total * alpha / seeds.len() as f32;
-        for seed in seeds {
-            *next.entry((*seed, 0)).or_default() += teleport;
+        let teleport_mass = total * alpha;
+        for (seed, weight) in seeds.iter().zip(&seed_weights) {
+            *next.entry((*seed, 0)).or_default() += teleport_mass * *weight;
         }
 
         for (&(node, _), &score) in &next {
@@ -201,6 +259,145 @@ pub(crate) fn ppr_compute(
     Ok(ranked)
 }
 
+/// Test-only uniform-seeded entry point ([`ppr_compute_weighted`] with
+/// [`SeedWeighting::Uniform`]); production callers route through
+/// `ppr_query_in_txn_with_deferred_cache`, which carries the mode.
+#[cfg(test)]
+pub(crate) fn ppr_compute(
+    store: &Store,
+    txn: &RoTxn<'_>,
+    seeds: &[EntityId],
+    depth: u32,
+    alpha: f32,
+) -> Result<Vec<ScoredEntity>> {
+    ppr_compute_weighted(store, txn, seeds, SeedWeighting::Uniform, depth, alpha)
+}
+
+/// Resolves the normalized per-seed mass vector for `weighting`. Always sums
+/// to 1.0 (up to f32 rounding) and every entry is strictly positive.
+fn seed_weights(
+    store: &Store,
+    txn: &RoTxn<'_>,
+    seeds: &[EntityId],
+    weighting: SeedWeighting,
+) -> Result<Vec<f32>> {
+    match weighting {
+        SeedWeighting::Uniform => Ok(vec![1.0 / seeds.len() as f32; seeds.len()]),
+        SeedWeighting::Specificity => specificity_seed_weights(store, txn, seeds),
+    }
+}
+
+/// ARCH-0039 Layer 2 — "Seed specificity (search_ppr only) · Weight seeds by
+/// 1/log(1 + passage_count)":
+///
+/// ```text
+/// weight_i = 1 / ln(1 + max(passage_count_i, 1))    (normalized to Σ = 1.0)
+/// ```
+///
+/// The `max(_, 1)` clamp pins the degenerate counts: 0 and 1 both weigh
+/// `1/ln(2)` (and `ln(1 + 0·max-clamped)` can never be `ln(1) = 0`, so no
+/// division by zero exists). Every raw weight lies in
+/// `(0, 1/ln(2)]` and seed counts are capped at [`MAX_PPR_SEEDS`], so the
+/// normalizer is finite and strictly positive — the division below cannot
+/// produce NaN or infinity.
+fn specificity_seed_weights(
+    store: &Store,
+    txn: &RoTxn<'_>,
+    seeds: &[EntityId],
+) -> Result<Vec<f32>> {
+    let mut raw = Vec::with_capacity(seeds.len());
+    for seed in seeds {
+        let passage_count = inbound_mentions_count(store, txn, seed)?;
+        raw.push(1.0_f64 / (1.0 + passage_count.max(1) as f64).ln());
+    }
+
+    let total: f64 = raw.iter().sum();
+    Ok(raw
+        .into_iter()
+        .map(|weight| (weight / total) as f32)
+        .collect())
+}
+
+/// `passage_count(seed)` for ARCH-0039 Layer 2: the number of inbound
+/// `mentions` edges, counted by an `edges_in` prefix scan filtered to
+/// kind = [`EdgeKind::Mentions`] at query time in the same read transaction
+/// (pinned decision — the count is a literal row count over the index; no
+/// persisted counter exists in the 25-DB manifest). Corrupt rows are a typed
+/// error, never silently skipped.
+fn inbound_mentions_count(store: &Store, txn: &RoTxn<'_>, seed: &EntityId) -> Result<u64> {
+    let mut count = 0_u64;
+    for entry in store.edges_in.prefix_iter(txn, seed.as_bytes())? {
+        let (key, _) = entry?;
+        if key.len() != EDGE_KEY_LEN {
+            return Err(Error::CorruptedIndex("edge record"));
+        }
+        let kind = EdgeKind::try_from_u8(key[16]).ok_or(Error::CorruptedIndex("edge record"))?;
+        if kind == EdgeKind::Mentions {
+            count = count
+                .checked_add(1)
+                .ok_or(Error::ArithmeticOverflow("ppr passage count"))?;
+        }
+    }
+    Ok(count)
+}
+
+/// Recency-tiered `ppr_cache` serve TTL (ARCH-0019 "PPR cache TTL" table /
+/// ARCH-0014 "TTL strategy"; ONE-1116 pinned decision).
+///
+/// Recency source: `max(learned_at)` over the SEED SET — the most recently
+/// learned seed entity decides the tier, evaluated against `now` at read
+/// time. Tiers (boundaries inclusive on the slower side):
+///
+/// - `< 7d`  → Active  → [`CACHE_TTL_ACTIVE_SECS`] (24 h)
+/// - `7–30d` → Recent  → [`CACHE_TTL_RECENT_SECS`] (72 h)
+/// - `≥ 30d` → Dormant → [`CACHE_TTL_DORMANT_SECS`] (168 h)
+///
+/// Fail-closed defaults: seeds WITHOUT an entity record (graph-only ids,
+/// which `seed_is_live_for_ppr` recognizes as legitimate) contribute no
+/// `learned_at`; if NO seed has one, the SHORTEST tier (Active, 24 h)
+/// applies. A present-but-unparsable entity record short-circuits to the
+/// shortest tier as well. A `learned_at` in the future saturates to age 0
+/// (Active).
+///
+/// Because the tier is re-evaluated per read while `computed_at` is fixed in
+/// the row header, a row's serve window can lengthen as its seeds age across
+/// the 7 d / 30 d boundaries — TTL is a freshness heuristic; correctness is
+/// owned by the graph-version + stale gates.
+fn recency_tiered_cache_ttl_secs(
+    store: &Store,
+    txn: &RoTxn<'_>,
+    seeds: &[EntityId],
+    now: u64,
+) -> Result<u64> {
+    let mut max_learned_at: Option<u64> = None;
+    for seed in seeds {
+        let Some(raw) = store.entities.get(txn, seed.as_bytes())? else {
+            continue;
+        };
+        let Some(header) = EntityMetadataHeader::parse(raw) else {
+            return Ok(CACHE_TTL_ACTIVE_SECS);
+        };
+        max_learned_at =
+            Some(max_learned_at.map_or(header.learned_at, |seen| seen.max(header.learned_at)));
+    }
+
+    let Some(latest_learned_at) = max_learned_at else {
+        return Ok(CACHE_TTL_ACTIVE_SECS);
+    };
+
+    let seed_recency_secs = now.saturating_sub(latest_learned_at);
+    Ok(if seed_recency_secs < SEED_RECENCY_ACTIVE_LIMIT_SECS {
+        CACHE_TTL_ACTIVE_SECS
+    } else if seed_recency_secs < SEED_RECENCY_RECENT_LIMIT_SECS {
+        CACHE_TTL_RECENT_SECS
+    } else {
+        CACHE_TTL_DORMANT_SECS
+    })
+}
+
+/// Test-only convenience wrapper. Seeds UNIFORM mass (the `expand_ppr` /
+/// pre-Layer-2 path); Layer-2 tests go through
+/// [`ppr_query_in_txn_with_deferred_cache`] or the pipeline.
 #[cfg(test)]
 pub(crate) fn ppr_query(
     store: &Store,
@@ -211,7 +408,15 @@ pub(crate) fn ppr_query(
 ) -> Result<Vec<ScoredEntity>> {
     let (scores, deferred_write) = {
         let rtxn = store.env.read_txn()?;
-        ppr_query_in_txn_impl(store, &rtxn, seeds, depth, alpha, true)?
+        ppr_query_in_txn_impl(
+            store,
+            &rtxn,
+            seeds,
+            depth,
+            alpha,
+            SeedWeighting::Uniform,
+            true,
+        )?
     };
 
     if let Some(deferred_write) = deferred_write {
@@ -236,7 +441,16 @@ pub(crate) fn ppr_query_in_txn(
     depth: u32,
     alpha: f32,
 ) -> Result<Vec<ScoredEntity>> {
-    ppr_query_in_txn_impl(store, txn, seeds, depth, alpha, false).map(|(scores, _)| scores)
+    ppr_query_in_txn_impl(
+        store,
+        txn,
+        seeds,
+        depth,
+        alpha,
+        SeedWeighting::Uniform,
+        false,
+    )
+    .map(|(scores, _)| scores)
 }
 
 pub(crate) fn ppr_query_in_txn_with_deferred_cache(
@@ -245,8 +459,9 @@ pub(crate) fn ppr_query_in_txn_with_deferred_cache(
     seeds: &[EntityId],
     depth: u32,
     alpha: f32,
+    weighting: SeedWeighting,
 ) -> Result<(Vec<ScoredEntity>, Option<DeferredPprCacheWrite>)> {
-    ppr_query_in_txn_impl(store, txn, seeds, depth, alpha, true)
+    ppr_query_in_txn_impl(store, txn, seeds, depth, alpha, weighting, true)
 }
 
 pub(crate) fn flush_deferred_ppr_cache_writes(
@@ -272,6 +487,7 @@ fn ppr_query_in_txn_impl(
     seeds: &[EntityId],
     depth: u32,
     alpha: f32,
+    weighting: SeedWeighting,
     defer_cache_writes: bool,
 ) -> Result<(Vec<ScoredEntity>, Option<DeferredPprCacheWrite>)> {
     validate_ppr_request(seeds, depth)?;
@@ -280,23 +496,28 @@ fn ppr_query_in_txn_impl(
         return Ok((Vec::new(), None));
     }
 
-    let seed_hash = hash_seeds(seeds, depth, alpha);
+    let seed_hash = hash_seeds(seeds, depth, alpha, weighting);
     let now = crate::unix_seconds_now();
     let current_graph_version = read_graph_version(store, txn)?;
 
     if let Some(raw) = store.ppr_cache.get(txn, &seed_hash)? {
         let (computed_at, cached_graph_version, stale) = parse_cache_header(raw)?;
-        if stale == 0
-            && cached_graph_version == current_graph_version
-            && now.saturating_sub(computed_at) <= CACHE_TTL_SECS
-        {
-            let mut scores = decode_cache_scores(&raw[CACHE_HEADER_LEN..])?;
-            sort_scores(&mut scores);
-            return Ok((scores, None));
+        if stale == 0 && cached_graph_version == current_graph_version {
+            // ARCH-0019 / ARCH-0014 recency-tiered serve TTL: the seed set's
+            // max(learned_at) decides the tier at read time (24h / 72h /
+            // 168h); see `recency_tiered_cache_ttl_secs` for the contract
+            // cite and the fail-closed defaults. Only consulted for rows
+            // that already passed the stale + graph-version gates.
+            let ttl_secs = recency_tiered_cache_ttl_secs(store, txn, seeds, now)?;
+            if now.saturating_sub(computed_at) <= ttl_secs {
+                let mut scores = decode_cache_scores(&raw[CACHE_HEADER_LEN..])?;
+                sort_scores(&mut scores);
+                return Ok((scores, None));
+            }
         }
     }
 
-    let scores = ppr_compute(store, txn, seeds, depth, alpha)?;
+    let scores = ppr_compute_weighted(store, txn, seeds, weighting, depth, alpha)?;
     if !defer_cache_writes {
         return Ok((scores, None));
     }
@@ -355,6 +576,17 @@ fn write_ppr_cache(
     Ok(())
 }
 
+/// Evicts `ppr_cache` rows that are stale-flagged, malformed, older than
+/// `max_age_secs`, or whose seed dependencies are dead.
+///
+/// `max_age_secs` is a HARD eviction bound and is deliberately independent
+/// of the recency-tiered serve TTL (ARCH-0019 / ARCH-0014; see
+/// [`recency_tiered_cache_ttl_secs`]): servability is decided exclusively by
+/// the read gate in `ppr_query_in_txn_impl`. Callers that do not want to
+/// evict rows the tiered read gate could still serve must pass at least
+/// [`CACHE_TTL_DORMANT_SECS`] (168 h, the longest tier). Rows in a shorter
+/// tier that have outlived their serve TTL are unreachable through the read
+/// gate either way and are reaped here once they exceed `max_age_secs`.
 pub(crate) fn cleanup_ppr_cache(
     store: &Store,
     wtxn: &mut RwTxn<'_>,
@@ -675,12 +907,24 @@ fn sort_scores(scores: &mut [ScoredEntity]) {
     });
 }
 
-fn hash_seeds(seeds: &[EntityId], depth: u32, alpha: f32) -> [u8; SEED_HASH_LEN] {
+/// Cache key: `xxh3_128(sorted seeds ‖ depth ‖ alpha ‖ PPR_FORMULA_VERSION ‖
+/// seed-weighting byte)`. The weighting byte keeps `search_ppr`
+/// (specificity-seeded) and `expand_ppr` (uniform-seeded) rows from ever
+/// serving each other (ARCH-0039 Layer 2 is `search_ppr`-only).
+fn hash_seeds(
+    seeds: &[EntityId],
+    depth: u32,
+    alpha: f32,
+    weighting: SeedWeighting,
+) -> [u8; SEED_HASH_LEN] {
     let mut sorted = seeds.to_vec();
     sorted.sort_unstable_by(|a, b| a.as_bytes().cmp(b.as_bytes()));
 
     let mut bytes = Vec::with_capacity(
-        sorted.len() * ENTITY_ID_LEN + 2 * std::mem::size_of::<u32>() + std::mem::size_of::<f32>(),
+        sorted.len() * ENTITY_ID_LEN
+            + 2 * std::mem::size_of::<u32>()
+            + std::mem::size_of::<f32>()
+            + 1,
     );
     for seed in &sorted {
         bytes.extend_from_slice(seed.as_bytes());
@@ -688,6 +932,7 @@ fn hash_seeds(seeds: &[EntityId], depth: u32, alpha: f32) -> [u8; SEED_HASH_LEN]
     bytes.extend_from_slice(&depth.to_le_bytes());
     bytes.extend_from_slice(&alpha.to_le_bytes());
     bytes.extend_from_slice(&PPR_FORMULA_VERSION.to_le_bytes());
+    bytes.push(weighting.cache_key_byte());
 
     xxh3_128(&bytes).to_le_bytes()
 }
@@ -835,7 +1080,7 @@ mod tests {
     }
 
     fn cache_row(vault: &Vault, seeds: &[EntityId], depth: u32, alpha: f32) -> Result<Vec<u8>> {
-        let hash = hash_seeds(seeds, depth, alpha);
+        let hash = hash_seeds(seeds, depth, alpha, SeedWeighting::Uniform);
         let rtxn = vault.store.env.read_txn()?;
         let row = vault
             .store
@@ -843,6 +1088,44 @@ mod tests {
             .get(&rtxn, &hash)?
             .ok_or(Error::EntityNotFound)?;
         Ok(row.to_vec())
+    }
+
+    /// Plants a `ppr_cache` row directly (header `computed_at` chosen by the
+    /// test, current graph version, stale = 0) carrying a sentinel score so
+    /// a later query observably distinguishes "served from cache" (sentinel
+    /// comes back) from "recomputed" (it does not). Also writes the seed dep
+    /// rows so cleanup's liveness pass treats the row like a real one.
+    fn plant_cache_row(
+        vault: &Vault,
+        seeds: &[EntityId],
+        depth: u32,
+        alpha: f32,
+        weighting: SeedWeighting,
+        computed_at: u64,
+        scores: &[ScoredEntity],
+    ) -> Result<[u8; SEED_HASH_LEN]> {
+        let hash = hash_seeds(seeds, depth, alpha, weighting);
+        let version = graph_version(vault)?;
+        let value = encode_cache_value(computed_at, version, 0, scores);
+        let mut wtxn = vault.store.env.write_txn()?;
+        vault.store.ppr_cache.put(&mut wtxn, &hash, &value)?;
+        for seed in seeds {
+            let dep_key = encode_dep_key(seed, &hash);
+            vault.store.ppr_cache_deps.put(&mut wtxn, &dep_key, &[])?;
+        }
+        wtxn.commit()?;
+        Ok(hash)
+    }
+
+    fn sentinel_entity() -> EntityId {
+        entity(0xEE)
+    }
+
+    fn sentinel_scores() -> Vec<ScoredEntity> {
+        vec![ScoredEntity {
+            id: sentinel_entity(),
+            score: 0.25,
+        }]
     }
 
     fn graph_version(vault: &Vault) -> Result<u64> {
@@ -874,6 +1157,12 @@ mod tests {
         key
     }
 
+    /// ONE-1116 AC4 — the cache key hashes `sorted seeds ‖ depth ‖ alpha ‖
+    /// FORMULA_VERSION ‖ weighting byte` with the LITERAL pinned values:
+    /// version 3 and mode bytes Uniform = 0 / Specificity = 1 (hand-built
+    /// here, NOT read from the constants, so a wrong bump fails). The two
+    /// weighting modes must never collide — `search_ppr` rows are not
+    /// servable to `expand_ppr` and vice versa.
     #[test]
     fn hash_seeds_uses_full_xxh3_digest_and_is_order_insensitive() {
         let a = entity(1);
@@ -882,20 +1171,38 @@ mod tests {
         let alpha: f32 = 0.15;
 
         let mut bytes = Vec::with_capacity(
-            ENTITY_ID_LEN * 2 + 2 * std::mem::size_of::<u32>() + std::mem::size_of::<f32>(),
+            ENTITY_ID_LEN * 2 + 2 * std::mem::size_of::<u32>() + std::mem::size_of::<f32>() + 1,
         );
         bytes.extend_from_slice(a.as_bytes());
         bytes.extend_from_slice(b.as_bytes());
         bytes.extend_from_slice(&depth.to_le_bytes());
         bytes.extend_from_slice(&alpha.to_le_bytes());
-        bytes.extend_from_slice(&PPR_FORMULA_VERSION.to_le_bytes());
+        bytes.extend_from_slice(&3_u32.to_le_bytes());
 
-        let expected = xxh3_128(&bytes).to_le_bytes();
+        let mut uniform_bytes = bytes.clone();
+        uniform_bytes.push(0_u8);
+        let expected_uniform = xxh3_128(&uniform_bytes).to_le_bytes();
 
-        assert_eq!(hash_seeds(&[a, b], depth, alpha), expected);
+        let mut specificity_bytes = bytes;
+        specificity_bytes.push(1_u8);
+        let expected_specificity = xxh3_128(&specificity_bytes).to_le_bytes();
+
+        assert_eq!(PPR_FORMULA_VERSION, 3, "Layer-2 bump must pin version 3");
         assert_eq!(
-            hash_seeds(&[a, b], depth, alpha),
-            hash_seeds(&[b, a], depth, alpha)
+            hash_seeds(&[a, b], depth, alpha, SeedWeighting::Uniform),
+            expected_uniform
+        );
+        assert_eq!(
+            hash_seeds(&[a, b], depth, alpha, SeedWeighting::Specificity),
+            expected_specificity
+        );
+        assert_ne!(
+            expected_uniform, expected_specificity,
+            "uniform and specificity rows must never share a cache key"
+        );
+        assert_eq!(
+            hash_seeds(&[a, b], depth, alpha, SeedWeighting::Uniform),
+            hash_seeds(&[b, a], depth, alpha, SeedWeighting::Uniform)
         );
     }
 
@@ -1485,9 +1792,9 @@ mod tests {
         let _ = ppr_query(&vault.store, &vault.config, &[a], 4, 0.15)?;
         let _ = ppr_query(&vault.store, &vault.config, &[a], 3, 0.25)?;
 
-        let hash_depth_3 = hash_seeds(&[a], 3, 0.15);
-        let hash_depth_4 = hash_seeds(&[a], 4, 0.15);
-        let hash_alpha_25 = hash_seeds(&[a], 3, 0.25);
+        let hash_depth_3 = hash_seeds(&[a], 3, 0.15, SeedWeighting::Uniform);
+        let hash_depth_4 = hash_seeds(&[a], 4, 0.15, SeedWeighting::Uniform);
+        let hash_alpha_25 = hash_seeds(&[a], 3, 0.25, SeedWeighting::Uniform);
 
         assert_ne!(hash_depth_3, hash_depth_4);
         assert_ne!(hash_depth_3, hash_alpha_25);
@@ -1525,7 +1832,7 @@ mod tests {
 
         vault.put_edge(&a, EdgeKind::BelongsTo, &b, 1.0)?;
         let _ = ppr_query(&vault.store, &vault.config, &[a], 3, 0.15)?;
-        let seed_hash = hash_seeds(&[a], 3, 0.15);
+        let seed_hash = hash_seeds(&[a], 3, 0.15, SeedWeighting::Uniform);
         let before = graph_version(&vault)?;
 
         vault
@@ -1582,7 +1889,7 @@ mod tests {
         vault.put_entity(&b, 1, tr, 1, b"b-data")?;
         vault.put_edge(&a, EdgeKind::BelongsTo, &b, 1.0)?;
         let _ = ppr_query(&vault.store, &vault.config, &[a], 3, 0.15)?;
-        let seed_hash = hash_seeds(&[a], 3, 0.15);
+        let seed_hash = hash_seeds(&[a], 3, 0.15, SeedWeighting::Uniform);
 
         let before = graph_version(&vault)?;
         assert!(vault.delete_edge(&a, EdgeKind::BelongsTo, &b)?);
@@ -1612,7 +1919,7 @@ mod tests {
         vault.put_entity(&b, 1, tr, 1, b"b-data")?;
         vault.put_edge(&a, EdgeKind::BelongsTo, &b, 1.0)?;
         let _ = ppr_query(&vault.store, &vault.config, &[a], 3, 0.15)?;
-        let seed_hash = hash_seeds(&[a], 3, 0.15);
+        let seed_hash = hash_seeds(&[a], 3, 0.15, SeedWeighting::Uniform);
 
         let key_out = Store::encode_edge_key(&a, EdgeKind::BelongsTo, &b);
         let key_in = Store::encode_edge_key(&b, EdgeKind::BelongsTo, &a);
@@ -1719,7 +2026,7 @@ mod tests {
         vault.put_entity(&b, 1, tr, 1, b"b-data")?;
         vault.put_edge(&a, EdgeKind::BelongsTo, &b, 1.0)?;
         let _ = ppr_query(&vault.store, &vault.config, &[a], 3, 0.15)?;
-        let seed_hash = hash_seeds(&[a], 3, 0.15);
+        let seed_hash = hash_seeds(&[a], 3, 0.15, SeedWeighting::Uniform);
 
         let mut wtxn = vault.store.env.write_txn()?;
         let orphan_dep = encode_dep_key(&missing, &seed_hash);
@@ -1732,7 +2039,10 @@ mod tests {
         assert_eq!(count_entries(&vault.store.ppr_cache, &vault)?, 1);
         assert_eq!(count_entries(&vault.store.ppr_cache_deps, &vault)?, 2);
 
-        let report = vault.maintain().cleanup_ppr_cache(CACHE_TTL_SECS).run()?;
+        let report = vault
+            .maintain()
+            .cleanup_ppr_cache(CACHE_TTL_DORMANT_SECS)
+            .run()?;
         assert_eq!(report.ppr_caches_evicted, 1);
         assert_eq!(count_entries(&vault.store.ppr_cache, &vault)?, 0);
         assert_eq!(count_entries(&vault.store.ppr_cache_deps, &vault)?, 0);
@@ -1771,7 +2081,10 @@ mod tests {
         assert_eq!(count_entries(&vault.store.ppr_cache, &vault)?, 2);
         assert_eq!(count_entries(&vault.store.ppr_cache_deps, &vault)?, 2);
 
-        let report = vault.maintain().cleanup_ppr_cache(CACHE_TTL_SECS).run()?;
+        let report = vault
+            .maintain()
+            .cleanup_ppr_cache(CACHE_TTL_DORMANT_SECS)
+            .run()?;
         assert!(report.ppr_caches_evicted >= 1);
         assert!(report.ppr_deps_cleaned >= 1);
         assert_eq!(count_entries(&vault.store.ppr_cache, &vault)?, 1);
@@ -1791,7 +2104,7 @@ mod tests {
         vault.put_entity(&b, 1, tr, 1, b"b-data")?;
         vault.put_edge(&a, EdgeKind::BelongsTo, &b, 1.0)?;
         let _ = ppr_query(&vault.store, &vault.config, &[a], 3, 0.15)?;
-        let seed_hash = hash_seeds(&[a], 3, 0.15);
+        let seed_hash = hash_seeds(&[a], 3, 0.15, SeedWeighting::Uniform);
 
         let mut malformed_dep = [0_u8; CACHE_DEP_KEY_LEN];
         malformed_dep[ENTITY_ID_LEN..].copy_from_slice(&seed_hash);
@@ -1803,7 +2116,10 @@ mod tests {
             .put(&mut wtxn, &malformed_dep, &[])?;
         wtxn.commit()?;
 
-        let report = vault.maintain().cleanup_ppr_cache(CACHE_TTL_SECS).run()?;
+        let report = vault
+            .maintain()
+            .cleanup_ppr_cache(CACHE_TTL_DORMANT_SECS)
+            .run()?;
         assert_eq!(report.ppr_caches_evicted, 0);
         assert!(report.ppr_deps_cleaned >= 1);
 
@@ -1831,7 +2147,7 @@ mod tests {
         vault.put_entity(&b, 1, tr, 1, b"b-data")?;
         vault.put_edge(&a, EdgeKind::BelongsTo, &b, 1.0)?;
         let _ = ppr_query(&vault.store, &vault.config, &[a], 3, 0.15)?;
-        let seed_hash = hash_seeds(&[a], 3, 0.15);
+        let seed_hash = hash_seeds(&[a], 3, 0.15, SeedWeighting::Uniform);
         let dep_key = encode_dep_key(&a, &seed_hash);
 
         let mut malformed_dep = [0_u8; CACHE_DEP_KEY_LEN];
@@ -1845,7 +2161,10 @@ mod tests {
             .put(&mut wtxn, &malformed_dep, &[])?;
         wtxn.commit()?;
 
-        let report = vault.maintain().cleanup_ppr_cache(CACHE_TTL_SECS).run()?;
+        let report = vault
+            .maintain()
+            .cleanup_ppr_cache(CACHE_TTL_DORMANT_SECS)
+            .run()?;
         assert_eq!(report.ppr_caches_evicted, 1);
         assert!(report.ppr_deps_cleaned >= 1);
 
@@ -1867,7 +2186,7 @@ mod tests {
         let vault = Vault::open(temp_dir.path(), test_config())?;
         let a = entity(60);
         let b = entity(61);
-        let seed_hash = hash_seeds(&[a], 3, 0.15);
+        let seed_hash = hash_seeds(&[a], 3, 0.15, SeedWeighting::Uniform);
         let dep_key = encode_dep_key(&a, &seed_hash);
 
         vault.put_entity(&a, 1, TimeRange { start: 1, end: 1 }, 1, b"a-data")?;
@@ -1931,7 +2250,10 @@ mod tests {
         assert!(score_for(&first, b) > 0.0);
         assert!(score_for(&first, c) <= SCORE_EPSILON);
 
-        let report = vault.maintain().cleanup_ppr_cache(CACHE_TTL_SECS).run()?;
+        let report = vault
+            .maintain()
+            .cleanup_ppr_cache(CACHE_TTL_DORMANT_SECS)
+            .run()?;
         assert_eq!(report.ppr_caches_evicted, 0);
         assert_eq!(count_entries(&vault.store.ppr_cache_deps, &vault)?, 1);
 
@@ -1954,7 +2276,10 @@ mod tests {
         assert_eq!(count_entries(&vault.store.ppr_cache, &vault)?, 1);
         assert_eq!(count_entries(&vault.store.ppr_cache_deps, &vault)?, 1);
 
-        let report = vault.maintain().cleanup_ppr_cache(CACHE_TTL_SECS).run()?;
+        let report = vault
+            .maintain()
+            .cleanup_ppr_cache(CACHE_TTL_DORMANT_SECS)
+            .run()?;
         assert_eq!(report.ppr_caches_evicted, 1);
         assert_eq!(count_entries(&vault.store.ppr_cache, &vault)?, 0);
         assert_eq!(count_entries(&vault.store.ppr_cache_deps, &vault)?, 0);
@@ -2022,7 +2347,7 @@ mod tests {
         let vault = Vault::open(temp_dir.path(), test_config())?;
         let a = entity(48);
         let b = entity(49);
-        let seed_hash = hash_seeds(&[a], 3, 0.15);
+        let seed_hash = hash_seeds(&[a], 3, 0.15, SeedWeighting::Uniform);
 
         vault.put_edge(&a, EdgeKind::BelongsTo, &b, 1.0)?;
 
@@ -2122,7 +2447,7 @@ mod tests {
                     vault.store.edges_out.put(&mut wtxn, &key, &value)?;
                 }
                 Site::CachedScores => {
-                    let seed_hash = hash_seeds(&[a], 3, 0.15);
+                    let seed_hash = hash_seeds(&[a], 3, 0.15, SeedWeighting::Uniform);
                     let cache = encode_cache_value(
                         crate::unix_seconds_now(),
                         0,
@@ -2146,6 +2471,576 @@ mod tests {
                 ),
             }
         }
+        Ok(())
+    }
+
+    /// ONE-1116 AC1 (ARCH-0039 Layer 2) — `search_ppr` seed mass is
+    /// `1/ln(1 + max(passage_count, 1))`, normalized to Σ = 1.0, with
+    /// `passage_count` = inbound `mentions` edge count. Graph (every
+    /// mentions edge stores weight 0.6):
+    ///   p1, p2, p3 −mentions→ a   (passage_count(a) = 3)
+    ///   (nothing)  −mentions→ b   (passage_count(b) = 0 → clamped to 1)
+    ///   q1         −mentions→ c   (passage_count(c) = 1)
+    /// Raw weights 1/ln(4) : 1/ln(2) : 1/ln(2) normalize EXACTLY to
+    /// 0.2 / 0.4 / 0.4 (ln(4) = 2·ln(2), so the log base cancels).
+    ///
+    /// Seeds [a, b, c], depth 1, α = 0.15 — hand derivation mirroring the
+    /// Layer-1 exact-value test (reverse scan over `edges_in`,
+    /// s_in(a, mentions) = 1.8, s_in(c, mentions) = 0.6, λ_mentions = 0.6):
+    ///   p_i = 0.2 · (0.6 · 0.6 / 1.8) · 0.85 = 0.034
+    ///   q1  = 0.4 · (0.6 · 0.6 / 0.6) · 0.85 = 0.204
+    ///   teleport: a += 1.0 · 0.15 · 0.2 ; b, c += 1.0 · 0.15 · 0.4
+    ///   a = 0.2 + 0.03 = 0.23 ; b = c = 0.4 + 0.06 = 0.46
+    /// UNIFORM seeding instead yields a = b = c = 0.38333, p_i = 0.0566667,
+    /// q1 = 0.17 — every value moves, so a uniform implementation fails.
+    /// A missing clamp (1/ln(1 + 0) = ∞) sends b's normalized weight to 1.0
+    /// and the rest to 0.0 — it fails as well.
+    #[test]
+    fn seed_specificity_weights_match_derived_values() -> Result<()> {
+        let temp_dir = tempdir()?;
+        let vault = Vault::open(temp_dir.path(), test_config())?;
+        let a = entity(1);
+        let b = entity(2);
+        let c = entity(3);
+        let passages = [entity(10), entity(11), entity(12)];
+        let q1 = entity(13);
+
+        for passage in &passages {
+            vault.put_edge(passage, EdgeKind::Mentions, &a, 0.6)?;
+        }
+        vault.put_edge(&q1, EdgeKind::Mentions, &c, 0.6)?;
+
+        let rtxn = vault.store.env.read_txn()?;
+
+        let weights = specificity_seed_weights(&vault.store, &rtxn, &[a, b, c])?;
+        let expected_weights = [0.2_f32, 0.4, 0.4];
+        for (got, expected) in weights.iter().zip(expected_weights) {
+            assert!(
+                (got - expected).abs() <= 1e-6,
+                "seed weight: got {got}, want {expected}"
+            );
+        }
+
+        let scores = ppr_compute_weighted(
+            &vault.store,
+            &rtxn,
+            &[a, b, c],
+            SeedWeighting::Specificity,
+            1,
+            0.15,
+        )?;
+        let cases = [
+            (a, 0.23_f32),
+            (b, 0.46),
+            (c, 0.46),
+            (passages[0], 0.034),
+            (passages[1], 0.034),
+            (passages[2], 0.034),
+            (q1, 0.204),
+        ];
+        for (id, expected) in cases {
+            let got = score_for(&scores, id);
+            assert!(
+                (got - expected).abs() <= 1e-6,
+                "score for {id:?}: got {got}, want {expected}"
+            );
+        }
+        Ok(())
+    }
+
+    /// ONE-1116 AC2 — single-seed normalization cancels: whatever the
+    /// passage count, the lone seed's normalized weight is exactly 1.0, so
+    /// specificity seeding equals uniform seeding. Exact values (graph as in
+    /// AC1's `a` cluster): a = 1.0 init + 0.15 teleport = 1.15; each
+    /// p_i = 1.0 · (0.6 · 0.6 / 1.8) · 0.85 = 0.17.
+    #[test]
+    fn single_seed_specificity_matches_uniform() -> Result<()> {
+        let temp_dir = tempdir()?;
+        let vault = Vault::open(temp_dir.path(), test_config())?;
+        let a = entity(1);
+        let passages = [entity(10), entity(11), entity(12)];
+
+        for passage in &passages {
+            vault.put_edge(passage, EdgeKind::Mentions, &a, 0.6)?;
+        }
+
+        let rtxn = vault.store.env.read_txn()?;
+        let weighted = ppr_compute_weighted(
+            &vault.store,
+            &rtxn,
+            &[a],
+            SeedWeighting::Specificity,
+            1,
+            0.15,
+        )?;
+        let uniform = ppr_compute(&vault.store, &rtxn, &[a], 1, 0.15)?;
+
+        assert_scores_equal(&weighted, &uniform);
+        let cases = [
+            (a, 1.15_f32),
+            (passages[0], 0.17),
+            (passages[1], 0.17),
+            (passages[2], 0.17),
+        ];
+        for (id, expected) in cases {
+            let got = score_for(&weighted, id);
+            assert!(
+                (got - expected).abs() <= 1e-6,
+                "score for {id:?}: got {got}, want {expected}"
+            );
+        }
+        Ok(())
+    }
+
+    /// ONE-1116 AC3 — `expand_ppr` seeds stay UNIFORM (ARCH-0039 Layer 2 is
+    /// `search_ppr`-only). The pipeline's expand pass must write its cache
+    /// row under the Uniform key, never the Specificity key, and the cached
+    /// scores must equal the hand-derived UNIFORM values for seeds [a, b]
+    /// (depth 1, α = 0.15, the AC1 graph where a has 3 inbound mentions and
+    /// b has 0):
+    ///   weights 0.5 / 0.5 → p_i = 0.5 · (0.6 · 0.6 / 1.8) · 0.85 = 0.085
+    ///   a = b = 0.5 + 0.15 · 0.5 = 0.575
+    /// Specificity seeding would yield a = 0.3833333, b = 0.7666667,
+    /// p_i = 0.0566667 instead — those values must NOT appear.
+    #[test]
+    fn expand_ppr_pipeline_seeds_stay_uniform() -> Result<()> {
+        let temp_dir = tempdir()?;
+        let vault = Vault::open(temp_dir.path(), test_config())?;
+        let a = entity(1);
+        let b = entity(2);
+        let passages = [entity(10), entity(11), entity(12)];
+
+        vault
+            .batch()
+            .put(&a, 1, TimeRange { start: 1, end: 1 }, 1, b"a-data")
+            .text(&a, &[("body", "alpha")])
+            .commit()?;
+        for passage in &passages {
+            vault.put_edge(passage, EdgeKind::Mentions, &a, 0.6)?;
+        }
+
+        // The text channel ranks [a]; the expand pass dedups it against the
+        // explicit seeds, so the PPR seed set is exactly [a, b].
+        let _ = vault
+            .query()
+            .search_text("alpha", 10)
+            .expand_ppr(&[a, b], 1)
+            .run()?;
+
+        let uniform_hash = hash_seeds(&[a, b], 1, 0.15, SeedWeighting::Uniform);
+        let specificity_hash = hash_seeds(&[a, b], 1, 0.15, SeedWeighting::Specificity);
+        let rtxn = vault.store.env.read_txn()?;
+        assert!(
+            vault
+                .store
+                .ppr_cache
+                .get(&rtxn, &specificity_hash)?
+                .is_none(),
+            "expand_ppr must not write a specificity-keyed cache row"
+        );
+        let raw = vault
+            .store
+            .ppr_cache
+            .get(&rtxn, &uniform_hash)?
+            .ok_or(Error::EntityNotFound)?;
+        let scores = decode_cache_scores(&raw[CACHE_HEADER_LEN..])?;
+
+        let cases = [
+            (a, 0.575_f32),
+            (b, 0.575),
+            (passages[0], 0.085),
+            (passages[1], 0.085),
+            (passages[2], 0.085),
+        ];
+        for (id, expected) in cases {
+            let got = score_for(&scores, id);
+            assert!(
+                (got - expected).abs() <= 1e-6,
+                "expand_ppr cached score for {id:?}: got {got}, want uniform {expected}"
+            );
+        }
+        Ok(())
+    }
+
+    /// ONE-1116 AC1/AC4 — the `search_ppr` pipeline pass seeds by
+    /// specificity AND keys its cache row with the Specificity byte (never
+    /// the Uniform key). Cached scores must equal the weighted derivation
+    /// for seeds [a (3 mentions), b (0 mentions)], depth 1, α = 0.15:
+    ///   weights 1/3, 2/3 → a = 1/3 + 0.15/3 = 0.3833333,
+    ///   b = 2/3 + 0.1 = 0.7666667, p_i = (1/3) · 0.2 · 0.85 = 0.0566667.
+    /// A second identical query must be served from that row (round-trip:
+    /// identical results, byte-identical cache row).
+    #[test]
+    fn search_ppr_pipeline_applies_specificity_seeding() -> Result<()> {
+        let temp_dir = tempdir()?;
+        let vault = Vault::open(temp_dir.path(), test_config())?;
+        let a = entity(1);
+        let b = entity(2);
+        let passages = [entity(10), entity(11), entity(12)];
+
+        for passage in &passages {
+            vault.put_edge(passage, EdgeKind::Mentions, &a, 0.6)?;
+        }
+
+        let first = vault.query().search_ppr(&[a, b], 1).run()?;
+
+        let uniform_hash = hash_seeds(&[a, b], 1, 0.15, SeedWeighting::Uniform);
+        let specificity_hash = hash_seeds(&[a, b], 1, 0.15, SeedWeighting::Specificity);
+        let raw = {
+            let rtxn = vault.store.env.read_txn()?;
+            assert!(
+                vault.store.ppr_cache.get(&rtxn, &uniform_hash)?.is_none(),
+                "search_ppr must not write a uniform-keyed cache row"
+            );
+            vault
+                .store
+                .ppr_cache
+                .get(&rtxn, &specificity_hash)?
+                .ok_or(Error::EntityNotFound)?
+                .to_vec()
+        };
+        let scores = decode_cache_scores(&raw[CACHE_HEADER_LEN..])?;
+
+        let third = 1.0_f32 / 3.0;
+        let cases = [
+            (a, third + 0.15 * third),
+            (b, 2.0 * third + 0.15 * 2.0 * third),
+            (passages[0], third * 0.2 * 0.85),
+            (passages[1], third * 0.2 * 0.85),
+            (passages[2], third * 0.2 * 0.85),
+        ];
+        for (id, expected) in cases {
+            let got = score_for(&scores, id);
+            assert!(
+                (got - expected).abs() <= 1e-6,
+                "search_ppr cached score for {id:?}: got {got}, want weighted {expected}"
+            );
+        }
+
+        // Round-trip: the second identical query is served from the row.
+        let second = vault.query().search_ppr(&[a, b], 1).run()?;
+        assert_scores_equal(&first, &second);
+        let rtxn = vault.store.env.read_txn()?;
+        let raw_after = vault
+            .store
+            .ppr_cache
+            .get(&rtxn, &specificity_hash)?
+            .ok_or(Error::EntityNotFound)?;
+        assert_eq!(raw, raw_after, "cache row must be reused, not rewritten");
+        Ok(())
+    }
+
+    /// ONE-1116 AC4 — PPR_FORMULA_VERSION 2 → 3: a row persisted under the
+    /// pre-bump v2 key (seeds ‖ depth ‖ alpha ‖ version 2, NO weighting
+    /// byte — the literal pre-ONE-1116 layout) is unreachable even with a
+    /// fresh `computed_at`, matching graph version, and stale = 0. The
+    /// query recomputes, lands its row under the v3 key, and the orphaned
+    /// v2 row is reaped by the existing cleanup (it has no dep rows).
+    #[test]
+    fn pre_bump_formula_v2_rows_are_never_served() -> Result<()> {
+        let temp_dir = tempdir()?;
+        let vault = Vault::open(temp_dir.path(), test_config())?;
+        let a = entity(1);
+        let b = entity(2);
+
+        vault.put_edge(&a, EdgeKind::BelongsTo, &b, 1.0)?;
+
+        let mut legacy_bytes = Vec::new();
+        legacy_bytes.extend_from_slice(a.as_bytes());
+        legacy_bytes.extend_from_slice(&3_u32.to_le_bytes());
+        legacy_bytes.extend_from_slice(&0.15_f32.to_le_bytes());
+        legacy_bytes.extend_from_slice(&2_u32.to_le_bytes());
+        let legacy_hash = xxh3_128(&legacy_bytes).to_le_bytes();
+
+        let value = encode_cache_value(
+            crate::unix_seconds_now(),
+            graph_version(&vault)?,
+            0,
+            &sentinel_scores(),
+        );
+        let mut wtxn = vault.store.env.write_txn()?;
+        vault.store.ppr_cache.put(&mut wtxn, &legacy_hash, &value)?;
+        wtxn.commit()?;
+
+        let scores = ppr_query(&vault.store, &vault.config, &[a], 3, 0.15)?;
+        assert!(
+            !scores.iter().any(|scored| scored.id == sentinel_entity()),
+            "pre-bump v2 cache row must never be served"
+        );
+        assert!(score_for(&scores, b) > 0.0);
+
+        let v3_hash = hash_seeds(&[a], 3, 0.15, SeedWeighting::Uniform);
+        {
+            let rtxn = vault.store.env.read_txn()?;
+            assert!(vault.store.ppr_cache.get(&rtxn, &v3_hash)?.is_some());
+        }
+
+        let report = vault
+            .maintain()
+            .cleanup_ppr_cache(CACHE_TTL_DORMANT_SECS)
+            .run()?;
+        assert!(report.ppr_caches_evicted >= 1);
+        let rtxn = vault.store.env.read_txn()?;
+        assert!(
+            vault.store.ppr_cache.get(&rtxn, &legacy_hash)?.is_none(),
+            "orphaned v2 row must be reaped by cleanup"
+        );
+        assert!(
+            vault.store.ppr_cache.get(&rtxn, &v3_hash)?.is_some(),
+            "live v3 row must survive cleanup"
+        );
+        Ok(())
+    }
+
+    /// ONE-1116 AC5 — recency-tier boundaries, pinned against a FIXED clock
+    /// (no real-time dependence) with the contract's LITERAL TTL values
+    /// (ARCH-0019 / ARCH-0014): seed recency < 7d → 86 400 s; 7–30 d →
+    /// 259 200 s (7 d EXACTLY is Recent); ≥ 30 d → 604 800 s (30 d EXACTLY
+    /// is Dormant). Recency = max(learned_at) over the seed set, so the most
+    /// recently learned seed wins; future `learned_at` saturates to Active;
+    /// record-less seed sets and unparsable records fail closed to Active.
+    #[test]
+    fn recency_tier_boundaries_match_contract() -> Result<()> {
+        let temp_dir = tempdir()?;
+        let vault = Vault::open(temp_dir.path(), test_config())?;
+        let now: u64 = 20_000 * 86_400;
+        let day: u64 = 86_400;
+        let tr = TimeRange { start: 1, end: 1 };
+
+        // (entity byte, learned_at, expected ttl — LITERAL seconds)
+        let cases: [(u8, u64, u64); 8] = [
+            (1, now, 86_400),                   // learned this instant
+            (2, now - day, 86_400),             // 1 day old
+            (3, now - (7 * day - 1), 86_400),   // just inside Active
+            (4, now - 7 * day, 259_200),        // exactly 7 d → Recent
+            (5, now - (30 * day - 1), 259_200), // just inside Recent
+            (6, now - 30 * day, 604_800),       // exactly 30 d → Dormant
+            (7, now - 365 * day, 604_800),      // deep dormant
+            (8, now + day, 86_400),             // future learned_at saturates
+        ];
+
+        for (byte, learned_at, _) in cases {
+            vault.put_entity(&entity(byte), 1, tr, learned_at, b"seed")?;
+        }
+
+        let rtxn = vault.store.env.read_txn()?;
+        for (byte, _, expected_ttl) in cases {
+            let ttl = recency_tiered_cache_ttl_secs(&vault.store, &rtxn, &[entity(byte)], now)?;
+            assert_eq!(ttl, expected_ttl, "ttl for seed byte {byte}");
+        }
+
+        // max(learned_at) over the seed set: dormant + active → ACTIVE wins.
+        let mixed =
+            recency_tiered_cache_ttl_secs(&vault.store, &rtxn, &[entity(7), entity(2)], now)?;
+        assert_eq!(mixed, 86_400, "most recent seed must decide the tier");
+
+        // Record-less seeds contribute nothing; alongside a dormant seed the
+        // dormant learned_at still decides.
+        let with_unknown =
+            recency_tiered_cache_ttl_secs(&vault.store, &rtxn, &[entity(7), entity(200)], now)?;
+        assert_eq!(with_unknown, 604_800);
+
+        // An all-record-less seed set fails closed to the shortest tier.
+        let unknown_only = recency_tiered_cache_ttl_secs(&vault.store, &rtxn, &[entity(200)], now)?;
+        assert_eq!(unknown_only, 86_400);
+        drop(rtxn);
+
+        // A present-but-unparsable entity record fails closed to Active,
+        // even when a dormant seed is also present.
+        let mut wtxn = vault.store.env.write_txn()?;
+        vault
+            .store
+            .entities
+            .put(&mut wtxn, entity(9).as_bytes(), &[1, 2, 3])?;
+        wtxn.commit()?;
+        let rtxn = vault.store.env.read_txn()?;
+        let corrupt =
+            recency_tiered_cache_ttl_secs(&vault.store, &rtxn, &[entity(7), entity(9)], now)?;
+        assert_eq!(corrupt, 86_400);
+        Ok(())
+    }
+
+    /// ONE-1116 AC5 — the read gate enforces the recency-tiered TTL: a
+    /// planted sentinel row is served while inside its seed-tier TTL and
+    /// recomputed past it. One-hour margins keep the cases immune to wall
+    /// clock drift during the run. Covers: active rows expiring at 24 h;
+    /// recent/dormant rows SURVIVING past 24 h; dormant rows serving up to
+    /// (but not beyond) 168 h; record-less seeds failing closed to 24 h;
+    /// and max(learned_at) pulling a mixed dormant+active seed set down to
+    /// the 24 h tier.
+    #[test]
+    fn cache_read_gate_applies_recency_tiered_ttl() -> Result<()> {
+        let temp_dir = tempdir()?;
+        let vault = Vault::open(temp_dir.path(), test_config())?;
+        let now = crate::unix_seconds_now();
+        let day: u64 = 86_400;
+        let hour: u64 = 3_600;
+        let tr = TimeRange { start: 1, end: 1 };
+
+        // (name, seed learned-ages in days (None = no entity record),
+        //  row age, expect served)
+        let cases: [(&str, &[Option<u64>], u64, bool); 8] = [
+            (
+                "active_served_within_24h",
+                &[Some(1)],
+                CACHE_TTL_ACTIVE_SECS - hour,
+                true,
+            ),
+            (
+                "active_expires_past_24h",
+                &[Some(1)],
+                CACHE_TTL_ACTIVE_SECS + hour,
+                false,
+            ),
+            (
+                "recent_survives_past_24h",
+                &[Some(10)],
+                CACHE_TTL_ACTIVE_SECS + hour,
+                true,
+            ),
+            (
+                "recent_expires_past_72h",
+                &[Some(10)],
+                CACHE_TTL_RECENT_SECS + hour,
+                false,
+            ),
+            (
+                "dormant_survives_to_168h",
+                &[Some(40)],
+                CACHE_TTL_DORMANT_SECS - hour,
+                true,
+            ),
+            (
+                "dormant_expires_past_168h",
+                &[Some(40)],
+                CACHE_TTL_DORMANT_SECS + hour,
+                false,
+            ),
+            (
+                "recordless_seed_fails_closed_to_24h",
+                &[None],
+                CACHE_TTL_ACTIVE_SECS + hour,
+                false,
+            ),
+            (
+                "max_learned_at_wins",
+                &[Some(40), Some(1)],
+                CACHE_TTL_ACTIVE_SECS + hour,
+                false,
+            ),
+        ];
+
+        let mut byte = 1_u8;
+        for (name, seed_ages, row_age, expect_served) in cases {
+            let mut seeds = Vec::new();
+            for seed_age_days in seed_ages {
+                let seed = entity(byte);
+                byte += 1;
+                if let Some(days) = seed_age_days {
+                    vault.put_entity(&seed, 1, tr, now - days * day, b"seed")?;
+                }
+                seeds.push(seed);
+            }
+
+            plant_cache_row(
+                &vault,
+                &seeds,
+                3,
+                0.15,
+                SeedWeighting::Uniform,
+                now - row_age,
+                &sentinel_scores(),
+            )?;
+
+            let scores = ppr_query(&vault.store, &vault.config, &seeds, 3, 0.15)?;
+            let served = scores.iter().any(|scored| scored.id == sentinel_entity());
+            assert_eq!(served, expect_served, "case {name}");
+        }
+        Ok(())
+    }
+
+    /// ONE-1116 AC6 — cleanup `max_age_secs` is a HARD bound independent of
+    /// the tiered serve TTL; with the documented bound (the longest tier,
+    /// 168 h) cleanup never evicts a row the read gate could still serve.
+    /// Three planted rows: a dormant-seeded and an active-seeded row both
+    /// aged 100 h survive cleanup (only the read gate distinguishes them:
+    /// the dormant row is still served, the active one is not), while a
+    /// dormant-seeded row aged 169 h (> 168 h) is evicted.
+    #[test]
+    fn cleanup_max_age_bound_is_consistent_with_tiered_ttl() -> Result<()> {
+        let temp_dir = tempdir()?;
+        let vault = Vault::open(temp_dir.path(), test_config())?;
+        let now = crate::unix_seconds_now();
+        let day: u64 = 86_400;
+        let hour: u64 = 3_600;
+        let tr = TimeRange { start: 1, end: 1 };
+
+        let dormant_served = entity(1);
+        let active_unserved = entity(2);
+        let dormant_expired = entity(3);
+        vault.put_entity(&dormant_served, 1, tr, now - 40 * day, b"seed")?;
+        vault.put_entity(&active_unserved, 1, tr, now - day, b"seed")?;
+        vault.put_entity(&dormant_expired, 1, tr, now - 40 * day, b"seed")?;
+
+        let dormant_hash = plant_cache_row(
+            &vault,
+            &[dormant_served],
+            3,
+            0.15,
+            SeedWeighting::Uniform,
+            now - 100 * hour,
+            &sentinel_scores(),
+        )?;
+        let active_hash = plant_cache_row(
+            &vault,
+            &[active_unserved],
+            3,
+            0.15,
+            SeedWeighting::Uniform,
+            now - 100 * hour,
+            &sentinel_scores(),
+        )?;
+        let expired_hash = plant_cache_row(
+            &vault,
+            &[dormant_expired],
+            3,
+            0.15,
+            SeedWeighting::Uniform,
+            now - 169 * hour,
+            &sentinel_scores(),
+        )?;
+
+        let report = vault
+            .maintain()
+            .cleanup_ppr_cache(CACHE_TTL_DORMANT_SECS)
+            .run()?;
+        assert_eq!(report.ppr_caches_evicted, 1, "only the 169h row may go");
+
+        {
+            let rtxn = vault.store.env.read_txn()?;
+            assert!(vault.store.ppr_cache.get(&rtxn, &dormant_hash)?.is_some());
+            assert!(vault.store.ppr_cache.get(&rtxn, &active_hash)?.is_some());
+            assert!(vault.store.ppr_cache.get(&rtxn, &expired_hash)?.is_none());
+        }
+
+        // Servability is the read gate's call, not cleanup's: the surviving
+        // dormant row is still served at 100 h; the surviving active row is
+        // past its 24 h tier and recomputes.
+        let dormant_scores = ppr_query(&vault.store, &vault.config, &[dormant_served], 3, 0.15)?;
+        assert!(
+            dormant_scores
+                .iter()
+                .any(|scored| scored.id == sentinel_entity()),
+            "dormant-seeded row aged 100h must still be served"
+        );
+
+        let active_scores = ppr_query(&vault.store, &vault.config, &[active_unserved], 3, 0.15)?;
+        assert!(
+            !active_scores
+                .iter()
+                .any(|scored| scored.id == sentinel_entity()),
+            "active-seeded row aged 100h must NOT be served"
+        );
         Ok(())
     }
 }
