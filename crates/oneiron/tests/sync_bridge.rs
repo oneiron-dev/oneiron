@@ -125,6 +125,102 @@ fn tombstone_deletes_entity_from_lmdb() {
     );
 }
 
+/// ONE-1130: all tombstones arriving in ONE commit (one Observer B
+/// MapDelta) are applied — each id routes through the reason-aware replay
+/// primitive (ONE-1133). Every tombstoned entity must be gone and
+/// untombstoned entities must survive.
+#[test]
+fn multiple_tombstones_in_one_commit_purge_all_entities() {
+    let temp = tempfile::tempdir().unwrap();
+    let vault = Arc::new(Vault::open(temp.path(), test_config()).unwrap());
+    let materializer = Arc::new(Materializer::new());
+
+    let key = WindowKey::new("2026-03");
+    let window = LoadedWindow::new("test-user", key, &vault, &materializer);
+
+    let learned_at = 1_772_000_000u64;
+    let doomed: Vec<EntityId> = (0..3).map(|_| EntityId::now()).collect();
+    let survivor = EntityId::now();
+
+    let entities = window.doc.get_map("entities");
+    for id in &doomed {
+        map_insert_bytes(
+            &entities,
+            id.to_hex().as_str(),
+            &make_entity_blob(1, learned_at, b"doomed"),
+        );
+    }
+    map_insert_bytes(
+        &entities,
+        survivor.to_hex().as_str(),
+        &make_entity_blob(1, learned_at, b"survivor"),
+    );
+    window.doc.commit();
+
+    for id in &doomed {
+        assert!(vault.get(id).unwrap().is_some());
+    }
+
+    // All three tombstones land in a single commit → a single MapDelta.
+    let tombstones = window.doc.get_map("tombstones");
+    for id in &doomed {
+        tombstones
+            .insert(id.to_hex().as_str(), &1_772_000_100u64.to_le_bytes())
+            .unwrap();
+    }
+    window.doc.commit();
+
+    for id in &doomed {
+        assert!(
+            vault.get(id).unwrap().is_none(),
+            "every tombstoned entity in the batch must be purged"
+        );
+    }
+    assert_eq!(
+        vault.get(&survivor).unwrap().as_deref(),
+        Some(b"survivor".as_slice()),
+        "untombstoned entity must survive the multi-tombstone delta"
+    );
+}
+
+/// ONE-1130: a malformed tombstone key in the delta is quarantined
+/// (`x:` row, ONE-1124) and must not block the valid purges sharing the
+/// same Observer B event.
+#[test]
+fn invalid_tombstone_id_does_not_block_other_purges_in_same_commit() {
+    let temp = tempfile::tempdir().unwrap();
+    let vault = Arc::new(Vault::open(temp.path(), test_config()).unwrap());
+    let materializer = Arc::new(Materializer::new());
+
+    let key = WindowKey::new("2026-03");
+    let window = LoadedWindow::new("test-user", key, &vault, &materializer);
+
+    let learned_at = 1_772_000_000u64;
+    let id = EntityId::now();
+    let entities = window.doc.get_map("entities");
+    map_insert_bytes(
+        &entities,
+        id.to_hex().as_str(),
+        &make_entity_blob(1, learned_at, b"valid"),
+    );
+    window.doc.commit();
+    assert!(vault.get(&id).unwrap().is_some());
+
+    let tombstones = window.doc.get_map("tombstones");
+    tombstones
+        .insert("not-a-hex-entity-id", &1_772_000_100u64.to_le_bytes())
+        .unwrap();
+    tombstones
+        .insert(id.to_hex().as_str(), &1_772_000_100u64.to_le_bytes())
+        .unwrap();
+    window.doc.commit();
+
+    assert!(
+        vault.get(&id).unwrap().is_none(),
+        "valid tombstone must purge even when a malformed key shares the delta"
+    );
+}
+
 #[test]
 fn edge_materializes_when_both_endpoints_exist() {
     let temp = tempfile::tempdir().unwrap();
