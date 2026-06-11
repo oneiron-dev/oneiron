@@ -3,7 +3,8 @@ use xxhash_rust::xxh32::xxh32;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, encode_short_id_forward_key, parse_short_id_value};
 use crate::error::{Error, Result};
 use crate::hnsw::{
-    COUNT_KEY, build_hnsw_graph_from_snapshot, read_vector_version, write_rebuilt_hnsw,
+    COUNT_KEY, LinkDiscipline, build_hnsw_graph_from_snapshot, mark_symmetric_links,
+    read_vector_version, write_rebuilt_hnsw,
 };
 use crate::types::{EntityId, parse_entity_id};
 use crate::vault::write_text_index_manifest;
@@ -416,7 +417,17 @@ fn prepare_rebuild_hnsw(vault: &Vault, heal_invalid_vectors: bool) -> Result<Pre
         }
     }
 
-    let rebuilt = build_hnsw_graph_from_snapshot(&vault.store, &vault.config, &rtxn, &vector_ids)?;
+    // Maintenance rebuilds always produce a symmetric-link graph: this is
+    // the one-time ONE-325 migration path for legacy vaults (and a no-op
+    // re-assertion for already-migrated ones). Unmigratable vaults fail
+    // closed: invalid vectors error out above unless heal mode skips them.
+    let rebuilt = build_hnsw_graph_from_snapshot(
+        &vault.store,
+        &vault.config,
+        &rtxn,
+        &vector_ids,
+        LinkDiscipline::Symmetric,
+    )?;
     drop(rtxn);
 
     Ok(PreparedHnswRebuild {
@@ -468,7 +479,11 @@ fn commit_rebuilt_hnsw(
             "vectors changed during hnsw rebuild; retry maintenance",
         ));
     }
-    write_rebuilt_hnsw(&vault.store, &mut wtxn, rebuilt)?;
+    write_rebuilt_hnsw(&vault.store, &mut wtxn, rebuilt, LinkDiscipline::Symmetric)?;
+    // The freshly written graph upholds the symmetric-link invariant; stamp
+    // the marker so deletes and refreshes take the localized paths from now
+    // on (one-time migration for pre-ONE-325 vaults).
+    mark_symmetric_links(&vault.store, &mut wtxn)?;
     wtxn.commit()?;
     Ok(())
 }
@@ -886,8 +901,14 @@ mod tests {
         }
 
         let rtxn = vault.store.env.read_txn()?;
-        let err = build_hnsw_graph_from_snapshot(&vault.store, &vault.config, &rtxn, &[a, b])
-            .unwrap_err();
+        let err = build_hnsw_graph_from_snapshot(
+            &vault.store,
+            &vault.config,
+            &rtxn,
+            &[a, b],
+            LinkDiscipline::Symmetric,
+        )
+        .unwrap_err();
         assert!(matches!(
             err,
             Error::InvariantViolation(

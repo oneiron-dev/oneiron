@@ -31,13 +31,33 @@ use rmpv::Value;
 use crate::error::{Error, Result};
 use crate::types::{ENTITY_ID_LEN, EdgeKind, EntityId};
 
+// Test-only MessagePack decode counter: AC 9 of the D19 unit pins "body
+// decoded ONCE per result for gate + projection" — tests assert exact
+// decode counts through this counter instead of round-tripping output.
+#[cfg(test)]
+thread_local! {
+    static CLAIM_BODY_DECODE_COUNT: std::cell::Cell<usize> =
+        const { std::cell::Cell::new(0) };
+}
+
+#[cfg(test)]
+pub(crate) fn reset_claim_body_decode_count() {
+    CLAIM_BODY_DECODE_COUNT.with(|count| count.set(0));
+}
+
+#[cfg(test)]
+pub(crate) fn claim_body_decode_count() -> usize {
+    CLAIM_BODY_DECODE_COUNT.with(std::cell::Cell::get)
+}
+
 /// Pinned ON-DISK MessagePack key set for type-0 (CLAIM) bodies (D11).
 ///
 /// Order is canonical: the engine's encoder emits present fields in this
 /// order, and the context-pack field profiles are prefixes of this list
 /// (Minimal = first 2, Standard = first 5, Full = first 11; the lifecycle
-/// keys `appr`/`life`/`stale` are stored but not projected — retrieval
-/// status-gating is deferred per D19).
+/// keys `appr`/`life`/`stale` drive the D19 read-path status gate
+/// ([`claim_surfaceable`]) and are excluded from every serialization
+/// profile).
 pub const CLAIM_BODY_KEYS: [&str; 14] = [
     "pred", "val", "conf", "sal", "evid", "from", "to", "src", "world", "subj", "scope", "appr",
     "life", "stale",
@@ -450,6 +470,9 @@ pub(crate) fn encode_claim_body(body: &ClaimBody) -> Result<Vec<u8>> {
 ///   rejected unless `allow_reserved_predicate` is set (provenance door /
 ///   read path).
 pub(crate) fn decode_claim_body(data: &[u8], allow_reserved_predicate: bool) -> Result<ClaimBody> {
+    #[cfg(test)]
+    CLAIM_BODY_DECODE_COUNT.with(|count| count.set(count.get().saturating_add(1)));
+
     let mut cursor = Cursor::new(data);
     let value = rmpv::decode::read_value(&mut cursor)
         .map_err(|_| Error::InvalidClaimBody("body is not valid MessagePack"))?;
@@ -610,6 +633,31 @@ pub(crate) fn decode_claim_body(data: &[u8], allow_reserved_predicate: bool) -> 
 /// See [`decode_claim_body`] for the rules.
 pub(crate) fn validate_claim_body_bytes(data: &[u8], allow_reserved_predicate: bool) -> Result<()> {
     decode_claim_body(data, allow_reserved_predicate).map(|_| ())
+}
+
+/// D19 read-path status gate predicate (ARCH-0003 retrieval rule; ARCH-0004
+/// §H "Claim filtering — enumerated requirements" items 1, 2, 4): a Claim
+/// may surface on the retrieval read paths (pipeline results across all five
+/// channels, context-pack results, and context-pack neighbors) only when
+///
+/// * `appr ∈ {auto, approved}` — respect consent;
+/// * `life = active` — only current beliefs;
+/// * `stale = false` — only regenerated content (absent on disk means
+///   `false`, [`decode_claim_body`]; absence alone never excludes).
+///
+/// The gate is an EXCLUSION, not an error: failing claims are silently
+/// dropped and counted (`PackStats::claims_suppressed`). Targeted reads stay
+/// deliberately UNGATED: [`crate::Vault::get_claim`] is the history /
+/// consent-review door and the edge-provenance lifecycle readers must see
+/// closed (`superseded` / `retracted`) Claims to compute winner stamps.
+/// World/facet filtering (§H item 3) is a separate unit, and
+/// deleted-revision contamination (§H item 5) is the M4/M5 sweep scope.
+pub(crate) fn claim_surfaceable(body: &ClaimBody) -> bool {
+    matches!(
+        body.approval,
+        ClaimApprovalStatus::Auto | ClaimApprovalStatus::Approved
+    ) && body.lifecycle == ClaimLifecycleStatus::Active
+        && !body.stale
 }
 
 /// Parses a MessagePack number as a finite `f32` in `[0, 1]`. Shared with
@@ -823,5 +871,50 @@ mod tests {
         assert_eq!(CLAIM_FIELDS_MINIMAL, &CLAIM_BODY_KEYS[..2]);
         assert_eq!(CLAIM_FIELDS_STANDARD, &CLAIM_BODY_KEYS[..5]);
         assert_eq!(CLAIM_FIELDS_FULL, &CLAIM_BODY_KEYS[..11]);
+    }
+
+    /// D19 literal truth table: `appr ∈ {auto, approved}` ∧ `life = active`
+    /// ∧ `stale = false` — every other combination is excluded (ARCH-0003;
+    /// ARCH-0004 §H items 1/2/4).
+    #[test]
+    fn claim_surfaceable_pins_the_full_status_truth_table() {
+        let subject = ClaimSubject::Entity(EntityId::from_bytes([0x11; 16]).expect("valid id"));
+        let body = |appr: ClaimApprovalStatus, life: ClaimLifecycleStatus, stale: bool| {
+            let mut body = ClaimBody::new("test.pred", subject, Value::from("v"), 0.5, appr, life);
+            body.stale = stale;
+            body
+        };
+
+        use ClaimApprovalStatus as A;
+        use ClaimLifecycleStatus as L;
+
+        // The ONLY surfaceable combinations.
+        assert!(claim_surfaceable(&body(A::Auto, L::Active, false)));
+        assert!(claim_surfaceable(&body(A::Approved, L::Active, false)));
+
+        // Approval axis excludes independently of lifecycle (AC 3).
+        assert!(!claim_surfaceable(&body(A::Proposed, L::Active, false)));
+        assert!(!claim_surfaceable(&body(A::Rejected, L::Active, false)));
+
+        // Lifecycle axis excludes independently of approval.
+        assert!(!claim_surfaceable(&body(A::Auto, L::Superseded, false)));
+        assert!(!claim_surfaceable(&body(A::Auto, L::Retracted, false)));
+        assert!(!claim_surfaceable(&body(A::Approved, L::Superseded, false)));
+        assert!(!claim_surfaceable(&body(A::Approved, L::Retracted, false)));
+
+        // Staleness excludes even when both status axes pass (AC 1).
+        assert!(!claim_surfaceable(&body(A::Auto, L::Active, true)));
+        assert!(!claim_surfaceable(&body(A::Approved, L::Active, true)));
+
+        // `ClaimBody::new` leaves `stale` at the decode default (absent =
+        // false) — absence alone must not exclude (AC 4).
+        assert!(claim_surfaceable(&ClaimBody::new(
+            "test.pred",
+            subject,
+            Value::from("v"),
+            0.5,
+            A::Auto,
+            L::Active,
+        )));
     }
 }

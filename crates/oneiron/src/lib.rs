@@ -27,6 +27,7 @@ pub use crate::analyzer::{
     AnalyzerMode, LangPolicy, LanguageHint, NormalizationPolicy, Token, TokenKind,
 };
 pub use crate::batch::{BatchBuilder, TxnBatchBuilder};
+pub use crate::bm25::Bm25Formula;
 pub use crate::claim::{
     CLAIM_BODY_KEYS, ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource,
     ClaimSubject, MAX_PREDICATE_BYTES, RESERVED_PREDICATE_NAMESPACE,
@@ -35,17 +36,18 @@ pub use crate::context_pack::ContextPackBuilder;
 pub use crate::deletion::{DeleteEntityOutcome, DeleteReason};
 pub use crate::error::{Error, ErrorKind, Result};
 pub use crate::maintain::{MaintenanceBuilder, MaintenanceReport};
-pub use crate::pipeline::{FacetMode, PipelineBuilder, WorldScope};
+pub use crate::pipeline::{DEFAULT_RECENCY_HALF_LIFE_DAYS, FacetMode, PipelineBuilder, WorldScope};
 pub use crate::provenance::{
     EDGE_PROVENANCE_BODY_KEYS, EDGE_REF_LEN, EdgeProvenanceClaimBody, EdgeRef,
     PREDICATE_EDGE_PROVENANCE, SupersessionStatus, decode_edge_provenance_body,
     derive_confirmation_status, validate_actor_class,
 };
 pub use crate::types::{
-    ContextEntity, ContextPack, DecodedEdgeValue, EdgeActorClass, EdgeConfirmationStatus, EdgeInfo,
-    EdgeKind, EdgeProvenanceFlags, EdgeValueLayout, EntityId, FieldProfile, HnswConfig, PackFormat,
-    PackStats, ScoredEntity, Signal, TemporalAnchorMode, TemporalGranularity, TextAnalyzerConfig,
-    TextIndexOptions, TimeRange, TokenAllocation, Vad, VadComponent, VaultConfig,
+    Bm25RankProfile, ContextEntity, ContextPack, DecodedEdgeValue, EdgeActorClass,
+    EdgeConfirmationStatus, EdgeInfo, EdgeKind, EdgeProvenanceFlags, EdgeValueLayout, EntityId,
+    FieldProfile, HnswConfig, PackFormat, PackStats, ScoredEntity, Signal, TemporalAnchorMode,
+    TemporalGranularity, TextAnalyzerConfig, TextIndexOptions, TimeRange, TokenAllocation, Vad,
+    VadComponent, VaultConfig,
 };
 pub use crate::vault::{
     TextIndexStatus, Vault, VaultDoctorDbManifestReport, VaultDoctorHnswRecordState,

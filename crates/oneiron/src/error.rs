@@ -53,6 +53,7 @@ pub enum ErrorKind {
     CycleDetected,
     IncompatibleAnalyzer,
     Bm25FieldSchemaChanged,
+    InvalidRankProfile,
     AnalyzerAssetMissing,
     AnalyzerError,
     #[cfg(feature = "sync")]
@@ -79,8 +80,9 @@ pub enum Error {
     /// Vector contains NaN or infinity values.
     #[error("invalid vector component at index {index}: {value}")]
     InvalidVector { index: usize, value: f32 },
-    /// Edge weight contains NaN or infinity values.
-    #[error("invalid edge weight: {value}")]
+    /// Edge weight is NaN, infinite, or outside the contract range \[0, 1\]
+    /// (contracts.ts `edgeKinds` weight pin; enforced on every write path).
+    #[error("invalid edge weight: {value} (contract range [0, 1])")]
     InvalidEdgeWeight { value: f32 },
     /// VAD tuple contains non-finite or out-of-range values.
     #[error("invalid VAD component {component:?}: {value}")]
@@ -317,6 +319,15 @@ pub enum Error {
         "bm25f field schema changed since index was built; reopen with VaultConfig::skip_text_index_manifest_check=true, run clear_text_index, reopen normally, and reindex documents to restore search"
     )]
     Bm25FieldSchemaChanged,
+    /// A caller-supplied BM25F rank profile carries an invalid scoring
+    /// parameter: a non-finite or negative channel weight, a `b` outside
+    /// `[0.0, 1.0]`, a non-finite or non-positive BM25+ `delta`, or an
+    /// override on a reserved channel that v1 analyzers never emit
+    /// (`Shingle` / `Synonym` / `Phonetic`). Rank profiles are
+    /// scoring-only (ARCH-0031), so nothing on disk was touched; fix the
+    /// profile and retry the query.
+    #[error("invalid bm25 rank profile: {parameter} = {value}")]
+    InvalidRankProfile { parameter: &'static str, value: f64 },
     /// A dict asset declared in the stored manifest is missing from disk
     /// (e.g., `system.dic` was deleted after indexing). Restore the file or
     /// use the same recovery path as [`Error::IncompatibleAnalyzer`]:
@@ -411,6 +422,7 @@ impl Error {
             Self::CycleDetected => ErrorKind::CycleDetected,
             Self::IncompatibleAnalyzer { .. } => ErrorKind::IncompatibleAnalyzer,
             Self::Bm25FieldSchemaChanged => ErrorKind::Bm25FieldSchemaChanged,
+            Self::InvalidRankProfile { .. } => ErrorKind::InvalidRankProfile,
             Self::AnalyzerAssetMissing(_) => ErrorKind::AnalyzerAssetMissing,
             Self::AnalyzerError(_) => ErrorKind::AnalyzerError,
             #[cfg(feature = "sync")]

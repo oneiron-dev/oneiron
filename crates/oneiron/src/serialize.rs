@@ -1406,6 +1406,7 @@ mod tests {
                 query_time_us: 2_100,
                 entities_hydrated: 2,
                 neighbors_hydrated: 1,
+                claims_suppressed: 0,
             },
         }
     }
@@ -1453,6 +1454,7 @@ mod tests {
                 query_time_us: 3_800,
                 entities_hydrated: 28,
                 neighbors_hydrated: 0,
+                claims_suppressed: 0,
             },
         };
 
@@ -2383,6 +2385,7 @@ mod tests {
             query_time_us: 0,
             entities_hydrated: 0,
             neighbors_hydrated: 0,
+            claims_suppressed: 0,
         }
     }
 

@@ -19,6 +19,7 @@ sha2 = "0.10"
 icu_normalizer = { version = "2.2", default-features = false, features = ["compiled_data"] }
 icu_casemap = { version = "2.2", default-features = false, features = ["compiled_data"] }
 icu_segmenter = { version = "2.2", default-features = false, features = ["compiled_data", "auto"] }
+icu_properties = { version = "2.2", default-features = false, features = ["compiled_data"] }
 unicode-script = "0.5"
 unicode-segmentation = "1"
 loro = { version = "1.10", optional = true }
