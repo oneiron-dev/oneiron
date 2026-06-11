@@ -479,7 +479,7 @@ fn commit_rebuilt_hnsw(
             "vectors changed during hnsw rebuild; retry maintenance",
         ));
     }
-    write_rebuilt_hnsw(&vault.store, &mut wtxn, rebuilt)?;
+    write_rebuilt_hnsw(&vault.store, &mut wtxn, rebuilt, LinkDiscipline::Symmetric)?;
     // The freshly written graph upholds the symmetric-link invariant; stamp
     // the marker so deletes and refreshes take the localized paths from now
     // on (one-time migration for pre-ONE-325 vaults).

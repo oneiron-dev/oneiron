@@ -51,6 +51,22 @@ const ERR_ZERO_COUNT_GRAPH_NOT_EMPTY: &str =
 const ERR_SYMMETRIC_MARKER_BYTES: &str = "hnsw symmetric-links marker bytes are malformed";
 const ERR_FALLBACK_COUNTER_BYTES: &str = "hnsw refresh fallback counter bytes are malformed";
 const ERR_LEGACY_REBUILDS_BYTES: &str = "hnsw legacy rebuild counter bytes are malformed";
+const ERR_ONE_WAY_EXCEPTION_BYTES: &str = "hnsw one-way exception record bytes are malformed";
+
+/// `hnsw_meta` key prefix for one-way-link exception records (ONE-325). When
+/// orphan protection keeps a node's last remaining link `holder -> target`
+/// one-way (so `holder`'s neighbor list never empties), `holder` is recorded
+/// under `ONE_WAY_EXCEPTION_PREFIX ++ target` (a 20-byte key: 4-byte prefix +
+/// 16-byte id). Without it the symmetric delete path — which derives backlinks
+/// from the deleted node's OWN forward list — would miss `holder` when
+/// deleting `target` and leave the deleted id lingering in `holder`'s row
+/// forever, breaking the active-index purge contract. Recording the exception
+/// lets delete scrub those holders too; the extra work is bounded by the
+/// holder count, never the full neighbors DB, so deletes stay
+/// neighborhood-local. The prefix is distinct from every other (short, ASCII)
+/// `hnsw_meta` key, so rebuilds can clear exactly these rows without touching
+/// unrelated metadata.
+const ONE_WAY_EXCEPTION_PREFIX: &[u8] = b"ow1:";
 
 /// Link discipline of the persisted graph, derived from
 /// [`SYMMETRIC_LINKS_KEY`]. Decoding is fail-closed: a present-but-malformed
@@ -119,6 +135,148 @@ fn increment_legacy_snapshot_rebuilds(store: &Store, wtxn: &mut RwTxn<'_>) -> Re
     store
         .hnsw_meta
         .put(wtxn, LEGACY_REBUILDS_KEY, &next.to_le_bytes())?;
+    Ok(())
+}
+
+/// `hnsw_meta` key for the one-way-link exception record of `target`: the set
+/// of holders whose single surviving link points at `target` one-way.
+fn one_way_exception_key(target: &EntityId) -> Vec<u8> {
+    let mut key = Vec::with_capacity(ONE_WAY_EXCEPTION_PREFIX.len() + ENTITY_ID_LEN);
+    key.extend_from_slice(ONE_WAY_EXCEPTION_PREFIX);
+    key.extend_from_slice(target.as_bytes());
+    key
+}
+
+fn decode_exception_holders(raw: &[u8]) -> Result<Vec<EntityId>> {
+    if !raw.len().is_multiple_of(ENTITY_ID_LEN) {
+        return Err(Error::CorruptedIndex(ERR_ONE_WAY_EXCEPTION_BYTES));
+    }
+    let mut holders = Vec::with_capacity(raw.len() / ENTITY_ID_LEN);
+    for chunk in raw.chunks_exact(ENTITY_ID_LEN) {
+        let bytes: [u8; ENTITY_ID_LEN] = chunk.try_into().expect("chunk length is exact");
+        match EntityId::from_bytes(bytes) {
+            Ok(holder) => holders.push(holder),
+            Err(_) => return Err(Error::CorruptedIndex(ERR_ONE_WAY_EXCEPTION_BYTES)),
+        }
+    }
+    Ok(holders)
+}
+
+/// Holders whose single one-way link points at `target` (`holder -> target`
+/// without the reverse). Empty when no exception record exists.
+fn read_one_way_exception_holders(
+    store: &Store,
+    txn: &RoTxn<'_>,
+    target: &EntityId,
+) -> Result<Vec<EntityId>> {
+    match store.hnsw_meta.get(txn, &one_way_exception_key(target))? {
+        Some(raw) => decode_exception_holders(raw),
+        None => Ok(Vec::new()),
+    }
+}
+
+/// Records that `holder` keeps a one-way link to `target` (orphan protection).
+/// Idempotent: a holder already present is not duplicated.
+fn record_one_way_exception(
+    store: &Store,
+    wtxn: &mut RwTxn<'_>,
+    target: &EntityId,
+    holder: &EntityId,
+    ops: &mut u64,
+) -> Result<()> {
+    *ops += 1;
+    let mut holders = read_one_way_exception_holders(store, &*wtxn, target)?;
+    if holders.contains(holder) {
+        return Ok(());
+    }
+    holders.push(*holder);
+    let mut bytes = Vec::with_capacity(holders.len() * ENTITY_ID_LEN);
+    for holder in &holders {
+        bytes.extend_from_slice(holder.as_bytes());
+    }
+    store
+        .hnsw_meta
+        .put(wtxn, &one_way_exception_key(target), &bytes)?;
+    *ops += 1;
+    Ok(())
+}
+
+/// Scrubs a node being deleted out of every holder that kept a one-way link to
+/// it (orphan protection), then drops the exception record. This is the half
+/// of a symmetric delete that the deleted node's own forward list cannot reach
+/// (the holders are, by definition, NOT in it). Bounded by the holder count.
+fn purge_one_way_exceptions_for_target(
+    store: &Store,
+    wtxn: &mut RwTxn<'_>,
+    id: &EntityId,
+    ops: &mut u64,
+) -> Result<()> {
+    *ops += 1;
+    let holders = read_one_way_exception_holders(store, &*wtxn, id)?;
+    if holders.is_empty() {
+        return Ok(());
+    }
+    // `scrub_neighbor_bytes` no-ops on a holder whose link was already removed
+    // (e.g. it later became bidirectional and was pruned), so a stale holder is
+    // harmless.
+    scrub_backlinks_in_place(store, wtxn, id, &holders, ops)?;
+    store.hnsw_meta.delete(wtxn, &one_way_exception_key(id))?;
+    *ops += 1;
+    Ok(())
+}
+
+/// Drops every persisted one-way exception record. Used before a full rebuild,
+/// which replaces the whole graph shape and so invalidates the old records;
+/// the symmetric paths re-derive them from the rebuilt rows. Only the
+/// `ONE_WAY_EXCEPTION_PREFIX` keyspace is touched — unrelated `hnsw_meta` rows
+/// (graph/model/schema markers) are preserved.
+fn clear_one_way_exceptions(store: &Store, wtxn: &mut RwTxn<'_>) -> Result<()> {
+    let mut stale_keys: Vec<Vec<u8>> = Vec::new();
+    for entry in store.hnsw_meta.iter(wtxn)? {
+        let (key, _) = entry?;
+        if key.starts_with(ONE_WAY_EXCEPTION_PREFIX) {
+            stale_keys.push(key.to_vec());
+        }
+    }
+    for key in stale_keys {
+        store.hnsw_meta.delete(wtxn, &key)?;
+    }
+    Ok(())
+}
+
+/// Re-derives the one-way exception records from a freshly rebuilt symmetric
+/// graph: every link `node -> neighbor` whose neighbor row does not point back
+/// is a tracked orphan-protection exception keyed by `neighbor`.
+fn rebuild_one_way_exception_index(
+    store: &Store,
+    wtxn: &mut RwTxn<'_>,
+    neighbors: &[(EntityId, Vec<EntityId>)],
+) -> Result<()> {
+    let forward: HashMap<EntityId, &Vec<EntityId>> =
+        neighbors.iter().map(|(id, list)| (*id, list)).collect();
+    let mut holders_by_target: HashMap<EntityId, Vec<EntityId>> = HashMap::new();
+    for (node, list) in neighbors {
+        for neighbor in list {
+            // A one-way exception requires the neighbor row to exist but lack
+            // the reverse link; a missing row is dangling corruption, which the
+            // graph never emits and the symmetry assertion would catch.
+            let is_one_way = forward
+                .get(neighbor)
+                .is_some_and(|back| !back.contains(node));
+            if is_one_way {
+                holders_by_target.entry(*neighbor).or_default().push(*node);
+            }
+        }
+    }
+    for (target, holders) in holders_by_target {
+        let mut bytes = Vec::with_capacity(holders.len() * ENTITY_ID_LEN);
+        for holder in &holders {
+            bytes.extend_from_slice(holder.as_bytes());
+        }
+        store
+            .hnsw_meta
+            .put(wtxn, &one_way_exception_key(&target), &bytes)?;
+    }
     Ok(())
 }
 
@@ -424,8 +582,11 @@ fn detach_reverse_link(
     }
     if list.len() == 1 {
         // Orphan protection: never empty a node's outgoing links via a
-        // cascade removal. The one-way remainder is the documented exception
-        // to the symmetric invariant.
+        // cascade removal. The one-way remainder (`victim -> from`) is the
+        // documented exception to the symmetric invariant — track it so a
+        // later delete of `from` can purge this otherwise-unreachable backlink
+        // instead of leaving the deleted id stranded in `victim`'s row.
+        record_one_way_exception(store, wtxn, from, victim, ops)?;
         return Ok(());
     }
     let filtered: Vec<EntityId> = list.into_iter().filter(|entry| entry != from).collect();
@@ -584,7 +745,7 @@ fn hnsw_symmetric_fallback_rebuild(
         &vector_ids,
         LinkDiscipline::Symmetric,
     )?;
-    write_rebuilt_hnsw(store, wtxn, &rebuilt)
+    write_rebuilt_hnsw(store, wtxn, &rebuilt, LinkDiscipline::Symmetric)
 }
 
 pub(crate) fn build_hnsw_graph_from_snapshot(
@@ -676,12 +837,17 @@ pub(crate) fn write_rebuilt_hnsw(
     store: &Store,
     wtxn: &mut RwTxn<'_>,
     rebuilt: &RebuiltHnswGraph,
+    discipline: LinkDiscipline,
 ) -> Result<()> {
     store.hnsw_neighbors.clear(wtxn)?;
     // Rebuild owns only the live graph shape. Preserve unrelated metadata such as
     // graph/version markers, persisted model ids, and schema/config keys.
     store.hnsw_meta.delete(wtxn, COUNT_KEY)?;
     store.hnsw_meta.delete(wtxn, ENTRY_POINT_KEY)?;
+    // The old one-way exception records describe the replaced graph; drop them
+    // (only the `ow1:` keyspace, never unrelated metadata) and re-derive them
+    // from the rebuilt rows for symmetric graphs below.
+    clear_one_way_exceptions(store, wtxn)?;
 
     if let Some(entry_point) = rebuilt.entry_point {
         store
@@ -694,6 +860,10 @@ pub(crate) fn write_rebuilt_hnsw(
 
     for (id, neighbors) in &rebuilt.neighbors {
         write_neighbors(store, wtxn, id, neighbors)?;
+    }
+
+    if discipline == LinkDiscipline::Symmetric {
+        rebuild_one_way_exception_index(store, wtxn, &rebuilt.neighbors)?;
     }
 
     Ok(())
@@ -798,18 +968,18 @@ pub(crate) fn hnsw_deindex_probed(
     ops: &mut u64,
 ) -> Result<()> {
     *ops += 1;
-    let backlink_targets = {
-        let Some(own_raw) = store.hnsw_neighbors.get(&*wtxn, id.as_bytes())? else {
-            return Ok(());
-        };
-        match read_link_discipline(store, &*wtxn)? {
-            // Symmetric invariant: the nodes holding links back to `id` are
-            // exactly `id`'s own forward neighbors — no full scan.
-            LinkDiscipline::Symmetric => decode_neighbors(own_raw, false)?,
-            // Pre-migration graphs may hold one-way links into `id` from
-            // anywhere; only a full scan finds them all.
-            LinkDiscipline::Legacy => collect_backlink_targets(store, &*wtxn, id, ops)?,
-        }
+    let own_neighbors = match store.hnsw_neighbors.get(&*wtxn, id.as_bytes())? {
+        Some(raw) => decode_neighbors(raw, false)?,
+        None => return Ok(()),
+    };
+    let discipline = read_link_discipline(store, &*wtxn)?;
+    let backlink_targets = match discipline {
+        // Symmetric invariant: the nodes holding links back to `id` are
+        // exactly `id`'s own forward neighbors — no full scan.
+        LinkDiscipline::Symmetric => own_neighbors,
+        // Pre-migration graphs may hold one-way links into `id` from
+        // anywhere; only a full scan finds them all.
+        LinkDiscipline::Legacy => collect_backlink_targets(store, &*wtxn, id, ops)?,
     };
     *ops += 1;
 
@@ -821,6 +991,14 @@ pub(crate) fn hnsw_deindex_probed(
     store.hnsw_neighbors.delete(wtxn, id.as_bytes())?;
     *ops += 1;
     scrub_backlinks_in_place(store, wtxn, id, &backlink_targets, ops)?;
+    if discipline == LinkDiscipline::Symmetric {
+        // Orphan-protected holders kept a one-way link INTO `id` and are, by
+        // definition, absent from `id`'s own forward list — the symmetric
+        // backlink set above cannot reach them. Purge them from the tracked
+        // exception record so deleting `id` leaves no row pointing at the
+        // now-removed node (ONE-325 active-index purge contract).
+        purge_one_way_exceptions_for_target(store, wtxn, id, ops)?;
+    }
 
     store
         .hnsw_meta
@@ -1058,7 +1236,7 @@ fn rebuild_hnsw_from_current_snapshot(
     let vector_ids = collect_vector_ids(store, &*wtxn)?;
     let rebuilt =
         build_hnsw_graph_from_snapshot(store, config, &*wtxn, &vector_ids, LinkDiscipline::Legacy)?;
-    write_rebuilt_hnsw(store, wtxn, &rebuilt)
+    write_rebuilt_hnsw(store, wtxn, &rebuilt, LinkDiscipline::Legacy)
 }
 
 fn collect_vector_ids(store: &Store, txn: &RoTxn<'_>) -> Result<Vec<EntityId>> {
@@ -2179,10 +2357,23 @@ mod tests {
                     panic!("dangling link {node:?} -> {neighbor:?}: neighbor row missing")
                 });
                 let back = decode_neighbors(back_raw, false)?;
+                if back.contains(&node) {
+                    continue;
+                }
+                // A one-way link is legitimate ONLY when the orphan-protection
+                // exception is tracked: `node` must be recorded as a holder
+                // under target `neighbor`. An UNTRACKED one-way link is exactly
+                // the stale-delete hazard ONE-325 forbids — deleting `neighbor`
+                // derives its backlinks from its own forward list, never sees
+                // `node`, and would strand the deleted id in `node`'s row. The
+                // pre-fix `|| list.len() == 1` clause blessed precisely that
+                // hole; require the exception record instead.
+                let holders = read_one_way_exception_holders(store, txn, neighbor)?;
                 assert!(
-                    back.contains(&node) || list.len() == 1,
-                    "asymmetric link {node:?} -> {neighbor:?} without orphan-protection \
-                     justification (own degree {})",
+                    holders.contains(&node),
+                    "untracked one-way link {node:?} -> {neighbor:?} (own degree {}): \
+                     no exception record under {neighbor:?}; a delete of {neighbor:?} \
+                     would orphan this backlink",
                     list.len()
                 );
             }
@@ -2204,6 +2395,90 @@ mod tests {
         );
         assert_symmetric_links(&vault.store, &rtxn)?;
         assert_eq!(read_count(&vault.store, &rtxn)?, 24);
+        Ok(())
+    }
+
+    /// ONE-325 regression: orphan protection keeps a victim's last link
+    /// (`victim -> from`) one-way, but the symmetric delete of `from` derives
+    /// its backlinks from `from`'s OWN forward list — which never contains the
+    /// victim. The tracked exception record is what lets the delete still
+    /// scrub `from` out of the victim's row; without it the deleted id lingers
+    /// there forever, violating the active-index purge contract while queries
+    /// silently tolerate the dangling id.
+    #[test]
+    fn delete_purges_orphan_protected_one_way_backlink() -> Result<()> {
+        // m_max_0 = 1 forces every prune cascade down to the single-link case
+        // that trips orphan protection.
+        let temp_dir = tempdir()?;
+        let vault = Vault::open(temp_dir.path(), small_graph_config(4, 1, 8))?;
+        let from = seq_id(1); // deletion target
+        let victim = seq_id(2); // keeps a one-way link `victim -> from`
+        let near = seq_id(3); // closer to `from`, claims its single slot
+
+        // Entity records back the vectors so the search existence check resolves
+        // live nodes (graph shape is driven entirely by the vector inserts).
+        for id in [from, victim, near] {
+            vault.put_entity(&id, 1, TimeRange { start: 1, end: 1 }, 1, b"node")?;
+        }
+
+        vault.put_vector(&from, &[1.0, 0.0, 0.0, 0.0])?;
+        vault.put_vector(&victim, &[0.8, 0.6, 0.0, 0.0])?;
+        // `near` is closer to `from` than `victim` is, so inserting it prunes
+        // `victim` out of `from`'s one neighbor slot; orphan protection then
+        // keeps the reverse `victim -> from` one-way.
+        vault.put_vector(&near, &[0.99, 0.14, 0.0, 0.0])?;
+
+        // Pre-delete: the one-way link exists and is TRACKED.
+        {
+            let rtxn = vault.store.env.read_txn()?;
+            assert_eq!(load_neighbors(&vault.store, &rtxn, &victim)?, vec![from]);
+            assert!(
+                !load_neighbors(&vault.store, &rtxn, &from)?.contains(&victim),
+                "scenario invalid: `from` still points back at `victim`"
+            );
+            assert_eq!(
+                read_one_way_exception_holders(&vault.store, &rtxn, &from)?,
+                vec![victim],
+                "orphan-protected one-way link must be recorded as an exception"
+            );
+            // The strengthened invariant accepts the link *because* it is tracked.
+            assert_symmetric_links(&vault.store, &rtxn)?;
+        }
+
+        let mut wtxn = vault.store.env.write_txn()?;
+        hnsw_deindex(&vault.store, &mut wtxn, &from)?;
+        wtxn.commit()?;
+
+        let rtxn = vault.store.env.read_txn()?;
+        // 1. The victim's row no longer carries the deleted id.
+        assert!(
+            !load_neighbors(&vault.store, &rtxn, &victim)?.contains(&from),
+            "deleted id left stranded in the orphan-protected victim's row"
+        );
+        // 2. No surviving row references the deleted node anywhere.
+        for entry in vault.store.hnsw_neighbors.iter(&rtxn)? {
+            let (k, raw) = entry?;
+            assert!(
+                !neighbor_bytes_contain(raw, &from)?,
+                "stale backlink to deleted node left in row {k:?}"
+            );
+        }
+        // 3. The exception record is cleared.
+        assert!(
+            read_one_way_exception_holders(&vault.store, &rtxn, &from)?.is_empty(),
+            "exception record must be cleared once its target is deleted"
+        );
+        // 4. The graph still upholds the exception-checked invariant; count drops.
+        assert_symmetric_links(&vault.store, &rtxn)?;
+        assert_eq!(read_count(&vault.store, &rtxn)?, 2);
+        // 5. A query at the deleted node's position never returns it and the
+        //    search over the victim's region still resolves to a live node.
+        let hits = hnsw_search(&vault.store, &vault.config, &rtxn, &[1.0, 0.0, 0.0, 0.0], 5)?;
+        assert!(
+            hits.iter().all(|hit| hit.id != from),
+            "search must not return the deleted node"
+        );
+        assert!(!hits.is_empty(), "search must still reach a live node");
         Ok(())
     }
 
