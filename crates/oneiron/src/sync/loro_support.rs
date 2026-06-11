@@ -41,11 +41,36 @@ pub(crate) fn map_contains_key(map: &LoroMap, key: &str) -> bool {
     map.get(key).is_some()
 }
 
+/// Reads a tombstones-map value for decode: a Binary value yields its
+/// bytes; a PRESENT non-Binary value (string/int/container/…) yields the
+/// EMPTY vec — which `decode_tombstone_value` decodes as HARD (fail
+/// closed); an absent key yields `None`. Entities/edges maps must keep
+/// using [`map_get_bytes`].
+pub(crate) fn map_get_tombstone_value(map: &LoroMap, key: &str) -> Option<Vec<u8>> {
+    match map.get(key)? {
+        ValueOrContainer::Value(LoroValue::Binary(bytes)) => Some(bytes.to_vec()),
+        _ => Some(Vec::new()),
+    }
+}
+
 pub(crate) fn map_for_each_bytes(map: &LoroMap, mut f: impl FnMut(&str, &[u8])) {
     map.for_each(|key, value| {
         if let ValueOrContainer::Value(LoroValue::Binary(bytes)) = value {
             f(key, &bytes);
         }
+    });
+}
+
+/// Tombstone-map iterator: visits EVERY key. Binary values pass their bytes
+/// through; any non-Binary value (string/int/container/…) yields the EMPTY
+/// slice, which `decode_tombstone_value` decodes as HARD — fail closed,
+/// mirroring Observer B's non-binary tombstone arm in `bridge.rs`. A
+/// malformed remote tombstone must never be invisible to replay.
+/// Entities/edges maps must keep using [`map_for_each_bytes`].
+pub(crate) fn map_for_each_tombstone_value(map: &LoroMap, mut f: impl FnMut(&str, &[u8])) {
+    map.for_each(|key, value| match value {
+        ValueOrContainer::Value(LoroValue::Binary(bytes)) => f(key, &bytes),
+        _ => f(key, &[]),
     });
 }
 
@@ -140,6 +165,56 @@ mod tests {
         assert_eq!(entries.len(), 2);
         assert_eq!(entries[0], ("a".to_string(), b"1".to_vec()));
         assert_eq!(entries[1], ("b".to_string(), b"2".to_vec()));
+    }
+
+    /// The tombstone helpers must see EVERY value shape (fail closed):
+    /// presence is value-agnostic, and non-Binary values read/iterate as the
+    /// EMPTY slice so the downstream decode resolves HARD. The Binary-only
+    /// helpers stay blind to non-binary values (entities/edges semantics).
+    #[test]
+    fn tombstone_helpers_see_non_binary_values() {
+        let doc = LoroDoc::new();
+        let map = doc.get_map("tombstones");
+
+        map_insert_bytes(&map, "bin", b"payload").unwrap();
+        map.insert("text", "deleted").unwrap();
+        map.insert("num", 7).unwrap();
+        map.insert_container("child", loro::LoroMap::new()).unwrap();
+        doc.commit();
+
+        // Presence: ANY value or container counts; absent stays absent.
+        for key in ["bin", "text", "num", "child"] {
+            assert!(map_contains_key(&map, key), "{key} must count as present");
+        }
+        assert!(!map_contains_key(&map, "missing"));
+
+        // Binary-only helpers keep ignoring non-binary values.
+        assert!(map_contains_binary(&map, "bin"));
+        assert!(!map_contains_binary(&map, "text"));
+        assert!(!map_contains_binary(&map, "child"));
+
+        // Value reads: Binary bytes pass through; present non-Binary reads
+        // as EMPTY (decodes HARD); absent is None.
+        assert_eq!(map_get_tombstone_value(&map, "bin").unwrap(), b"payload");
+        assert_eq!(map_get_tombstone_value(&map, "text").unwrap(), Vec::<u8>::new());
+        assert_eq!(map_get_tombstone_value(&map, "child").unwrap(), Vec::<u8>::new());
+        assert!(map_get_tombstone_value(&map, "missing").is_none());
+
+        // Iterator: every key visited, non-Binary as the empty slice.
+        let mut entries = Vec::new();
+        map_for_each_tombstone_value(&map, |k, v| {
+            entries.push((k.to_string(), v.to_vec()));
+        });
+        entries.sort_by(|a, b| a.0.cmp(&b.0));
+        assert_eq!(
+            entries,
+            vec![
+                ("bin".to_string(), b"payload".to_vec()),
+                ("child".to_string(), Vec::new()),
+                ("num".to_string(), Vec::new()),
+                ("text".to_string(), Vec::new()),
+            ]
+        );
     }
 
     #[test]

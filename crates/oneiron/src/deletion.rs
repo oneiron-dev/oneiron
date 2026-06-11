@@ -214,6 +214,25 @@ impl DecodedTombstoneValue {
             }
         }
     }
+
+    /// Encodes the pinned 25 B `dt:` local hard-delete marker value
+    /// `[reason:1][deleted_at:8 LE][request_id:16]` for a replayed HARD
+    /// apply. The byte layout is written directly (no shared codec — the
+    /// format is the pin). PRESENCE-ONLY semantics: gates never decode
+    /// this; the bytes are informational. Fallbacks mirror the receipt
+    /// pins: legacy/reserved-0/unknown/malformed shapes record the
+    /// destructive default reason (`user_hard_delete`) and the NIL
+    /// request id — never a fabricated identifier.
+    pub(crate) fn local_hard_delete_marker_value(&self) -> [u8; TOMBSTONE_VALUE_V2_LEN] {
+        let mut out = [0_u8; TOMBSTONE_VALUE_V2_LEN];
+        out[0] = match self.reason {
+            Some(reason) => reason.wire_byte(),
+            None => TombstoneReason::UserHardDelete.wire_byte(),
+        };
+        out[1..9].copy_from_slice(&self.deleted_at.to_le_bytes());
+        out[9..25].copy_from_slice(&self.request_id.unwrap_or([0_u8; 16]));
+        out
+    }
 }
 
 /// What [`crate::Vault::apply_replayed_tombstone`] — the reason-aware
@@ -297,6 +316,26 @@ pub(crate) const PENDING_TOMBSTONE_PREFIX: &str = "pt:";
 /// Builds the `pt:{window}:{entity_hex}` marker key.
 pub(crate) fn pending_tombstone_key(window_label: &str, id: &EntityId) -> String {
     format!("{PENDING_TOMBSTONE_PREFIX}{window_label}:{}", id.to_hex())
+}
+
+// ─── Local hard-delete marker (`dt:`) — durable local delete truth ──────────
+//
+// PINNED FORMAT (M4 fix wave, shared with the origin-side write): key =
+// `dt:{entity_id_hex}` (32-char lowercase hex, GLOBAL — deliberately NO
+// window segment, so a window-shuffled re-put cannot dodge it); value =
+// 25 bytes `[reason:1][deleted_at:8 LE][request_id:16]`. Semantics are
+// PRESENCE-ONLY: gates never decode the value (it is informational).
+// Written ONLY on HARD outcomes, in the SAME LMDB txn as the active-store
+// purge. PERMANENT — no GC: hard-once-seen must survive locally so a
+// hostile peer that removes the CRDT tombstone (and re-puts the entity)
+// cannot resurrect the body through the materialization gates.
+
+/// `sync_state` key prefix for local hard-delete markers.
+pub(crate) const LOCAL_HARD_DELETE_PREFIX: &str = "dt:";
+
+/// Builds the GLOBAL `dt:{entity_hex}` local hard-delete marker key.
+pub(crate) fn local_hard_delete_key(id: &EntityId) -> String {
+    format!("{LOCAL_HARD_DELETE_PREFIX}{}", id.to_hex())
 }
 
 /// Formats the ARCH-0023b `YYYY-MM` window label for a unix-seconds
@@ -777,5 +816,40 @@ mod tests {
             pending_tombstone_key("2026-02", &id),
             format!("pt:2026-02:{}", id.to_hex())
         );
+    }
+
+    /// Pinned `dt:` marker: GLOBAL key (no window segment) and the exact
+    /// 25 B `[reason:1][deleted_at:8 LE][request_id:16]` value, asserted as
+    /// literals — including the destructive-default/NIL fallbacks for
+    /// legacy/malformed wire shapes.
+    #[test]
+    fn local_hard_delete_marker_layout() {
+        let id = EntityId::from_bytes([0x7E; 16]).expect("valid id");
+        assert_eq!(
+            local_hard_delete_key(&id),
+            format!("dt:{}", id.to_hex()),
+            "key must be global — deliberately NO window segment"
+        );
+        assert_eq!(local_hard_delete_key(&id).len(), 3 + 32);
+
+        // Known hard reason: wire fields verbatim.
+        let mut wire = vec![3_u8]; // gdpr_delete
+        wire.extend_from_slice(&0x0102_0304_0506_0708_u64.to_le_bytes());
+        wire.extend_from_slice(&[0xA5; 16]);
+        let value = decode_tombstone_value(&wire).local_hard_delete_marker_value();
+        assert_eq!(value.len(), TOMBSTONE_VALUE_V2_LEN);
+        assert_eq!(value[0], 3, "offset 0 = reason wire byte");
+        assert_eq!(
+            &value[1..9],
+            &[0x08, 0x07, 0x06, 0x05, 0x04, 0x03, 0x02, 0x01],
+            "offsets 1..9 = deleted_at u64 LITTLE-endian"
+        );
+        assert_eq!(&value[9..25], &[0xA5; 16], "offsets 9..25 = request id");
+
+        // Malformed shape: destructive default reason + zeroed fields.
+        let value = decode_tombstone_value(&[]).local_hard_delete_marker_value();
+        assert_eq!(value[0], 2, "fallback reason = user_hard_delete");
+        assert_eq!(&value[1..9], &[0_u8; 8]);
+        assert_eq!(&value[9..25], &[0_u8; 16], "fallback request id = NIL");
     }
 }

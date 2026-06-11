@@ -238,8 +238,25 @@ fn materialize_entities_from_delta(
                     // the delete must never (re)materialize the body — no
                     // further tombstone event would fire to scrub it. The
                     // check uses the normalized lowercase id so an
-                    // uppercase-alias key cannot dodge it.
-                    if map_contains_binary(&tombstones_map, &id.to_hex()) {
+                    // uppercase-alias key cannot dodge it. Presence is
+                    // value-agnostic (a non-binary tombstone decodes HARD
+                    // downstream), OR'd with the permanent local `dt:`
+                    // marker so a hostile peer that REMOVES the tombstone
+                    // from the map cannot resurrect the body either. A
+                    // failed marker read fails CLOSED (suppress).
+                    let locally_hard_deleted =
+                        match vault.local_hard_delete_marker_exists_in_txn(wtxn, &id) {
+                            Ok(present) => present,
+                            Err(e) => {
+                                tracing::warn!(
+                                    entity = %key,
+                                    error = %e,
+                                    "observer-b: dt: marker read failed — failing closed"
+                                );
+                                true
+                            }
+                        };
+                    if map_contains_key(&tombstones_map, &id.to_hex()) || locally_hard_deleted {
                         tracing::debug!(
                             entity = %key,
                             "observer-b: entity update suppressed by tombstone (delete wins)"
@@ -648,11 +665,7 @@ fn ensure_entity_materialized_from_crdt(
     // fail-closed gate before its put.
     let hex_id = id.to_hex();
     if map_contains_key(tombstones_map, &hex_id)
-        || vault
-            .store
-            .sync_state
-            .get(wtxn, &crate::deletion::local_hard_delete_marker_key(id))?
-            .is_some()
+        || vault.local_hard_delete_marker_exists_in_txn(wtxn, id)?
     {
         return Ok(false);
     }

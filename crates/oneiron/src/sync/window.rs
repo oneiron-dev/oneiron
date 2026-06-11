@@ -12,7 +12,8 @@ use super::bridge::{
 };
 use super::loro_support::{
     doc_from_snapshot, doc_version_vector, export_snapshot, import_doc, map_contains_binary,
-    map_contains_key, map_delete, map_for_each_bytes, map_get_bytes, map_insert_bytes,
+    map_contains_key, map_delete, map_for_each_bytes, map_for_each_tombstone_value, map_get_bytes,
+    map_get_tombstone_value, map_insert_bytes,
 };
 use super::schema::create_window_doc;
 use super::types::WindowKey;
@@ -142,8 +143,12 @@ pub fn apply_tombstone_to_window_doc(doc: &LoroDoc, id: &EntityId, raw_value: &[
     let hex_id = id.to_hex();
 
     let tombstones = doc.get_map("tombstones");
-    let downgrade_blocked = map_get_bytes(&tombstones, &hex_id)
-        .is_some_and(|existing| decode_tombstone_value(&existing).is_hard() && !incoming.is_hard());
+    // Tombstone-aware read: a PRESENT non-Binary value reads as the empty
+    // slice, which decodes HARD (fail closed) — a garbage tombstone must
+    // block a soft downgrade exactly like a hard binary one.
+    let existing_hard = map_get_tombstone_value(&tombstones, &hex_id)
+        .is_some_and(|existing| decode_tombstone_value(&existing).is_hard());
+    let downgrade_blocked = existing_hard && !incoming.is_hard();
     if !downgrade_blocked {
         map_insert_bytes(&tombstones, &hex_id, raw_value)?;
     }
@@ -153,7 +158,12 @@ pub fn apply_tombstone_to_window_doc(doc: &LoroDoc, id: &EntityId, raw_value: &[
         map_delete(&entities, &hex_id)?;
     }
 
-    if incoming.is_hard() {
+    // Edge keys are swept on the EFFECTIVE hardness, not just the incoming
+    // value's: a REJECTED soft arriving over an effective hard tombstone
+    // must still sweep carrier edges a peer re-added since the original
+    // hard sweep (delete semantics never weaken; over-sweep is the
+    // fail-closed direction).
+    if incoming.is_hard() || existing_hard {
         let edges = doc.get_map("edges");
         let mut doomed = Vec::new();
         map_for_each_bytes(&edges, |key, _| {
@@ -281,9 +291,9 @@ pub fn replay_pending_mirrors(vault: &Vault, doc: &LoroDoc, window_key: &WindowK
             }
         };
 
-        // Check if tombstoned in CRDT. Presence check is fail closed: ANY
-        // tombstone value gates, not just Binary (a non-binary tombstone
-        // must never let the marker entity remirror).
+        // Check if tombstoned in CRDT — value-agnostic presence: a
+        // non-binary tombstone still decodes HARD downstream, so it must
+        // suppress the mirror exactly like a binary one (fail closed).
         if map_contains_key(&tombstones_map, &hex_id) {
             vault.with_write_txn(|wtxn| {
                 vault.store.sync_state.delete(wtxn, marker_key)?;
@@ -413,17 +423,35 @@ pub fn forward_rematerialize(
                 Err(_) => return,
             };
 
-            // ARCH-0023b: "if tombstoned in CRDT → never resurrect". Checked
-            // BEFORE any put so a hard-deleted entity's bytes never reach
-            // LMDB, not even transiently (a durable put-then-re-purge would
-            // briefly resurrect deleted content). The raw map key is checked
-            // alongside the canonical hex so a non-canonical entity alias
-            // cannot dodge a canonical tombstone — fail closed. Presence is
-            // ANY-value (`map_contains_key`): a non-binary tombstone must
-            // gate too, never fail open.
+            // Tombstone gate (delete wins): a tombstoned id must never
+            // re-materialize from a lingering entities-map body — without
+            // this gate every boot would re-put the purged body and the
+            // tombstone pass below would purge it again, multiplying
+            // receipts forever. Presence is value-agnostic (a non-binary
+            // tombstone decodes HARD downstream), checked on the raw map
+            // key AND the normalized lowercase id so a non-canonical alias
+            // cannot dodge it, and OR'd with the permanent local `dt:`
+            // marker so a hostile peer that REMOVES the tombstone from the
+            // map cannot resurrect the body either. A failed marker read
+            // fails CLOSED (skip).
             if map_contains_key(&tombstones_map, key)
                 || map_contains_key(&tombstones_map, &id.to_hex())
             {
+                return;
+            }
+            let locally_hard_deleted =
+                match vault.local_hard_delete_marker_exists_in_txn(&rtxn, &id) {
+                    Ok(present) => present,
+                    Err(e) => {
+                        tracing::warn!(
+                            entity = %key,
+                            error = %e,
+                            "forward remat: dt: marker read failed — failing closed"
+                        );
+                        true
+                    }
+                };
+            if locally_hard_deleted {
                 return;
             }
 
@@ -598,9 +626,13 @@ pub fn forward_rematerialize(
     // bare purge. Known-soft `user_delete` keeps the 25 B shell (SoftErase
     // + D16 refresh); every other shape hard-purges and — when local state
     // was erased — writes the LOCAL REDACTION_AUDIT receipt and `h:` sweep
-    // row. The primitive is idempotent (no receipt when nothing local
-    // remains), so this every-boot pass cannot multiply receipts.
-    map_for_each_bytes(&tombstones_map, |key, value| {
+    // row. The tombstone-aware iterator visits EVERY value: a non-Binary
+    // tombstone replays as the empty slice, which decodes HARD — a
+    // malformed remote tombstone must never be skipped (it would leave the
+    // entity pass's re-materialized body live forever = durable
+    // resurrection). The primitive is idempotent (no receipt when nothing
+    // local remains), so this every-boot pass cannot multiply receipts.
+    map_for_each_tombstone_value(&tombstones_map, |key, value| {
         let id = match EntityId::from_hex(key) {
             Ok(id) => id,
             Err(_) => return,
@@ -655,9 +687,11 @@ pub fn reverse_rematerialize(vault: &Vault, doc: &LoroDoc, window_key: &WindowKe
     for id in &entities_in_range {
         let hex_id = id.to_hex();
 
-        // ANY-value tombstone presence gates the SOURCE (fail closed): a
-        // non-binary tombstone must never let a surviving local row
-        // re-insert the deleted body into the replicated entities map.
+        // Value-agnostic tombstone presence (fail closed): a non-binary
+        // tombstone decodes HARD on replay, so reverse remat must never
+        // re-insert the still-live local body over it — that would ship a
+        // hard-deleted payload fleet-wide. Entities-map check below stays
+        // Binary-only by design.
         if map_contains_key(&tombstones_map, &hex_id) {
             continue;
         }

@@ -23,7 +23,7 @@ use crate::deletion::{
     LAST_HARD_ERASE_SWEEP_SEQ_KEY, RedactionReceiptInput, RedactionScope, ReplayedTombstoneOutcome,
     TombstoneValueV2, decode_hard_erase_sweep_seq, decode_tombstone_value,
     encode_hard_erase_sweep_job, encode_hard_erase_sweep_key, encode_redaction_audit_receipt,
-    pending_tombstone_key, window_label_from_timestamp,
+    local_hard_delete_key, pending_tombstone_key, window_label_from_timestamp,
 };
 #[cfg(feature = "sync")]
 use crate::deletion::{encode_local_hard_delete_marker, local_hard_delete_marker_key};
@@ -1640,11 +1640,22 @@ impl Vault {
         }
 
         let mut wtxn = self.store.env.write_txn()?;
+        let marker_key = local_hard_delete_key(id);
+        let marker_value = decoded.local_hard_delete_marker_value();
         // Probe the FULL delete scope (entity row, vectors, text, phonetic,
         // short-ids, edges): orphan residue without an entities row still
         // counts as local state to erase, mirroring the local
         // `delete_entity_without_header` semantics.
         if !self.active_delete_scope_exists_in_txn(&wtxn, id)? {
+            // Hard-once-seen is durable LOCAL truth even when nothing local
+            // was erased (never-materialized id): the permanent `dt:` marker
+            // still gates a future re-put after hostile tombstone-map
+            // manipulation. The guarded write keeps every-boot replay a
+            // read-only no-op once the marker exists.
+            if self.store.sync_state.get(&wtxn, &marker_key)?.is_none() {
+                self.store.sync_state.put(&mut wtxn, &marker_key, &marker_value)?;
+                wtxn.commit()?;
+            }
             return Ok(ReplayedTombstoneOutcome::HardPurged {
                 erased: false,
                 receipt_id: None,
@@ -1652,6 +1663,10 @@ impl Vault {
             });
         }
         self.purge_entity_active_store_in_txn(&mut wtxn, id)?;
+        // Receiver-side `dt:` local hard-delete marker (pinned: presence-only
+        // value, GLOBAL key, permanent, no GC) — written in the SAME txn as
+        // the purge so local delete truth survives CRDT-map manipulation.
+        self.store.sync_state.put(&mut wtxn, &marker_key, &marker_value)?;
         // ARCH-0038 DELETE: "The derived edge flag follows the Claim" — the
         // subject edge is refreshed in the SAME transaction as the purge.
         if let Some(captured) = &captured {
@@ -1692,6 +1707,24 @@ impl Vault {
         EntityMetadataHeader::parse(raw)
             .ok_or(Error::CorruptedIndex("entity metadata"))
             .map(Some)
+    }
+
+    /// Presence-only check for the permanent `dt:{entity_hex}` local
+    /// hard-delete marker. Materialization gates OR this with the CRDT
+    /// tombstones-map presence so LOCAL delete truth survives hostile
+    /// tombstone-map manipulation (a removed tombstone + re-put entity must
+    /// not resurrect). The value is NEVER decoded (pinned presence-only
+    /// semantics).
+    pub(crate) fn local_hard_delete_marker_exists_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        id: &EntityId,
+    ) -> Result<bool> {
+        Ok(self
+            .store
+            .sync_state
+            .get(txn, &local_hard_delete_key(id))?
+            .is_some())
     }
 
     fn active_delete_scope_exists_in_txn(

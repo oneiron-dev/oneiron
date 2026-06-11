@@ -506,3 +506,292 @@ fn concurrent_entity_reput_after_tombstone_does_not_resurrect() {
         "no index entry may come back either"
     );
 }
+
+/// Builds the 25 B header + payload blob the CRDT entities map carries:
+/// `[type:1][occurred_start:8 BE][occurred_end:8 BE][learned_at:8 BE]`.
+fn make_entity_blob(entity_type: u8, learned_at: u64, data: &[u8]) -> Vec<u8> {
+    let mut blob = Vec::with_capacity(25 + data.len());
+    blob.push(entity_type);
+    blob.extend_from_slice(&learned_at.to_be_bytes());
+    blob.extend_from_slice(&learned_at.to_be_bytes());
+    blob.extend_from_slice(&learned_at.to_be_bytes());
+    blob.extend_from_slice(data);
+    blob
+}
+
+fn dt_marker(vault: &Vault, id: &EntityId) -> Option<Vec<u8>> {
+    vault.sync_state_get(&format!("dt:{}", id.to_hex())).unwrap()
+}
+
+/// Fail-closed remat (boot shape): a peer ships a STRING tombstone and
+/// LEAVES the body in the entities map (buggy/hostile writer that skipped
+/// the same-commit entities-map removal). Boot recovery must treat the
+/// non-binary tombstone as HARD: the lingering body never re-materializes
+/// (entity-pass gate), the local body is purged with a receipt + `h:` sweep
+/// row + permanent `dt:` marker, and a SECOND boot over the same doc is a
+/// strict no-op (no receipt multiplication, no resurrection).
+///
+/// The pre-fix code FAILS here twice over: `map_for_each_bytes` skipped the
+/// string tombstone entirely (no purge at all), and the ungated entity pass
+/// re-puts the lingering body on every boot.
+#[test]
+fn string_tombstone_with_lingering_body_purges_on_boot_and_stays_dead() {
+    let (_dir_b, vault_b) = open_vault();
+    let id = EntityId::now();
+    vault_b
+        .batch()
+        .put(
+            &id,
+            1,
+            time_range(LEARNED_AT),
+            LEARNED_AT,
+            b"string-doom-body",
+        )
+        .text(&id, &[("body", "string-doom-body")])
+        .commit()
+        .unwrap();
+
+    // Peer doc: STRING tombstone + body still in the entities map.
+    let blob = make_entity_blob(1, LEARNED_AT, b"string-doom-body");
+    let doc_peer = LoroDoc::new();
+    doc_peer
+        .get_map("entities")
+        .insert(id.to_hex().as_str(), blob.as_slice())
+        .unwrap();
+    doc_peer
+        .get_map("tombstones")
+        .insert(id.to_hex().as_str(), "deleted-by-peer")
+        .unwrap();
+    doc_peer.commit();
+
+    // Boot shape: plain doc (no observers), then the recovery passes.
+    let doc = LoroDoc::new();
+    doc.import(&doc_peer.export(ExportMode::Snapshot).unwrap())
+        .unwrap();
+    let materializer = Arc::new(Materializer::new());
+    window::forward_rematerialize(&vault_b, &doc, &materializer).unwrap();
+
+    assert!(
+        vault_b.get_raw(&id).unwrap().is_none(),
+        "a string tombstone must replay as HARD and purge the body"
+    );
+    assert!(
+        vault_b
+            .search_text("string-doom-body", 10)
+            .unwrap()
+            .is_empty()
+    );
+    assert_eq!(
+        redaction_audit_receipts(&vault_b).len(),
+        1,
+        "the fail-closed hard apply must write the local receipt"
+    );
+    assert_eq!(hard_erase_sweep_rows(&vault_b).len(), 1);
+    assert!(
+        dt_marker(&vault_b, &id).is_some(),
+        "the hard apply must leave the permanent dt: marker"
+    );
+
+    // Reverse remat must not ship anything back (body purged, id
+    // tombstoned), and a SECOND boot over the same doc — entities map still
+    // carrying the peer's lingering body — must not resurrect it or write a
+    // second receipt.
+    window::reverse_rematerialize(&vault_b, &doc, &WindowKey::new(WINDOW)).unwrap();
+    window::forward_rematerialize(&vault_b, &doc, &materializer).unwrap();
+    assert!(
+        vault_b.get_raw(&id).unwrap().is_none(),
+        "the lingering entities-map body must never re-materialize"
+    );
+    assert!(
+        vault_b
+            .search_text("string-doom-body", 10)
+            .unwrap()
+            .is_empty()
+    );
+    assert_eq!(
+        redaction_audit_receipts(&vault_b).len(),
+        1,
+        "every-boot replay must not multiply receipts"
+    );
+    assert_eq!(hard_erase_sweep_rows(&vault_b).len(), 1);
+}
+
+/// Reverse remat fail-closed gate: a peer's STRING tombstone (entities map
+/// clean) arrives while the local body is still live — worst-case boot
+/// ordering runs reverse remat BEFORE the forward tombstone pass. The
+/// still-live body must NOT be re-inserted into the CRDT entities map (that
+/// would ship a hard-deleted payload fleet-wide); the forward pass then
+/// applies the fail-closed HARD purge. The pre-fix `map_contains_binary`
+/// gate FAILS here (string tombstone reads as absent).
+#[test]
+fn reverse_remat_does_not_reinsert_live_body_over_string_tombstone() {
+    let (_dir_b, vault_b) = open_vault();
+    let id = EntityId::now();
+    vault_b
+        .put_entity(&id, 1, time_range(LEARNED_AT), LEARNED_AT, b"live-local")
+        .unwrap();
+
+    let doc_peer = LoroDoc::new();
+    doc_peer
+        .get_map("tombstones")
+        .insert(id.to_hex().as_str(), "deleted-by-peer")
+        .unwrap();
+    doc_peer.commit();
+
+    let doc = LoroDoc::new();
+    doc.import(&doc_peer.export(ExportMode::Snapshot).unwrap())
+        .unwrap();
+
+    window::reverse_rematerialize(&vault_b, &doc, &WindowKey::new(WINDOW)).unwrap();
+    assert!(
+        doc.get_map("entities").get(&id.to_hex()).is_none(),
+        "reverse remat must not re-insert a live body over a string tombstone"
+    );
+
+    let materializer = Arc::new(Materializer::new());
+    window::forward_rematerialize(&vault_b, &doc, &materializer).unwrap();
+    assert!(
+        vault_b.get_raw(&id).unwrap().is_none(),
+        "the forward pass must hard-apply the string tombstone"
+    );
+    assert_eq!(redaction_audit_receipts(&vault_b).len(), 1);
+    assert!(dt_marker(&vault_b, &id).is_some());
+}
+
+/// Receiver-side `dt:` marker (pinned format): a replayed HARD tombstone
+/// leaves the permanent `dt:{entity_hex}` row (GLOBAL key, 25 B
+/// informational value, written in the purge txn); a replayed SOFT
+/// tombstone does not.
+#[test]
+fn replayed_hard_tombstone_writes_dt_marker_soft_does_not() {
+    let (_dir_b, vault_b) = open_vault();
+    let hard_id = EntityId::now();
+    let soft_id = EntityId::now();
+    for (id, body) in [(&hard_id, b"hard-target".as_slice()), (&soft_id, b"soft-target")] {
+        vault_b
+            .put_entity(id, 1, time_range(LEARNED_AT), LEARNED_AT, body)
+            .unwrap();
+    }
+
+    let materializer = Arc::new(Materializer::new());
+    let window_b = LoadedWindow::new("node-b", WindowKey::new(WINDOW), &vault_b, &materializer);
+    let doc_r = LoroDoc::new();
+    doc_r
+        .get_map("tombstones")
+        .insert(
+            hard_id.to_hex().as_str(),
+            wire_tombstone(2, 1_771_100_000, 0xAB).as_slice(),
+        )
+        .unwrap();
+    doc_r
+        .get_map("tombstones")
+        .insert(
+            soft_id.to_hex().as_str(),
+            wire_tombstone(1, 1_771_100_000, 0xAC).as_slice(),
+        )
+        .unwrap();
+    doc_r.commit();
+    window_b
+        .doc
+        .import(&doc_r.export(ExportMode::Snapshot).unwrap())
+        .unwrap();
+
+    let marker = dt_marker(&vault_b, &hard_id).expect("hard replay must write the dt: marker");
+    assert_eq!(
+        marker.len(),
+        TOMBSTONE_VALUE_V2_LEN,
+        "dt: value is the pinned 25 B [reason:1][deleted_at:8 LE][request_id:16]"
+    );
+    assert_eq!(marker[0], 2, "informational reason byte from the wire");
+    assert_eq!(&marker[1..9], &1_771_100_000_u64.to_le_bytes());
+    assert_eq!(&marker[9..25], &[0xAB; 16]);
+
+    assert!(
+        vault_b.get_raw(&soft_id).unwrap().is_some(),
+        "soft replay keeps the shell"
+    );
+    assert!(
+        dt_marker(&vault_b, &soft_id).is_none(),
+        "a soft replay must NOT write a dt: marker"
+    );
+}
+
+/// Local delete truth survives CRDT-map manipulation: after a hard apply, a
+/// hostile peer REMOVES the tombstone from the map and re-puts the body,
+/// causally later — so the merged map really has no tombstone and a live
+/// entities value. The permanent `dt:` marker must still suppress the
+/// resurrection on BOTH surfaces: Observer B (live path) and forward remat
+/// (boot path). A tombstone-presence-only gate FAILS here.
+#[test]
+fn dt_marker_blocks_resurrection_after_hostile_tombstone_removal() {
+    let (_dir_b, vault_b) = open_vault();
+    let id = EntityId::now();
+    vault_b
+        .put_entity(&id, 1, time_range(LEARNED_AT), LEARNED_AT, b"never-again")
+        .unwrap();
+
+    let materializer = Arc::new(Materializer::new());
+    let window_b = LoadedWindow::new("node-b", WindowKey::new(WINDOW), &vault_b, &materializer);
+
+    // Hard tombstone arrives → purge + receipt + dt: marker.
+    let doc_r1 = LoroDoc::new();
+    doc_r1
+        .get_map("tombstones")
+        .insert(
+            id.to_hex().as_str(),
+            wire_tombstone(2, 1_771_100_000, 0xAD).as_slice(),
+        )
+        .unwrap();
+    doc_r1.commit();
+    window_b
+        .doc
+        .import(&doc_r1.export(ExportMode::Snapshot).unwrap())
+        .unwrap();
+    assert!(vault_b.get_raw(&id).unwrap().is_none());
+    assert!(dt_marker(&vault_b, &id).is_some());
+
+    // Hostile peer forks B's state, deletes the tombstone key, re-puts the
+    // body — causally later, so the manipulation wins the merge.
+    let doc_r2 = LoroDoc::new();
+    doc_r2
+        .import(&window_b.doc.export(ExportMode::Snapshot).unwrap())
+        .unwrap();
+    doc_r2.get_map("tombstones").delete(&id.to_hex()).unwrap();
+    doc_r2
+        .get_map("entities")
+        .insert(
+            id.to_hex().as_str(),
+            make_entity_blob(1, LEARNED_AT, b"never-again").as_slice(),
+        )
+        .unwrap();
+    doc_r2.commit();
+    window_b
+        .doc
+        .import(&doc_r2.export(ExportMode::Snapshot).unwrap())
+        .unwrap();
+
+    // The manipulation really merged…
+    assert!(
+        window_b.doc.get_map("tombstones").get(&id.to_hex()).is_none(),
+        "the hostile tombstone removal must win the map merge for this test"
+    );
+    // …but Observer B refused to re-materialize (dt: gate).
+    assert!(
+        vault_b.get_raw(&id).unwrap().is_none(),
+        "observer B must suppress the re-put via the dt: marker"
+    );
+
+    // Boot path over the manipulated doc: forward remat must hold the line
+    // too — no resurrection, no extra receipt.
+    let receipts_before = redaction_audit_receipts(&vault_b).len();
+    let boot_doc = LoroDoc::new();
+    boot_doc
+        .import(&window_b.doc.export(ExportMode::Snapshot).unwrap())
+        .unwrap();
+    window::forward_rematerialize(&vault_b, &boot_doc, &materializer).unwrap();
+    assert!(
+        vault_b.get_raw(&id).unwrap().is_none(),
+        "forward remat must suppress the re-put via the dt: marker"
+    );
+    assert_eq!(redaction_audit_receipts(&vault_b).len(), receipts_before);
+}
