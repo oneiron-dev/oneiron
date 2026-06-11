@@ -3,6 +3,7 @@
 use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
+use uuid::Uuid;
 
 use crate::error::{Error, Result};
 use crate::types::EntityId;
@@ -182,6 +183,68 @@ impl DecodedTombstoneValue {
     #[must_use]
     pub fn is_hard(&self) -> bool {
         self.reason.is_none_or(TombstoneReason::is_hard)
+    }
+
+    /// `request_id` recorded on the LOCAL receipt for a replayed HARD apply
+    /// (ONE-1133 OWNER-DECISION): the wire value's request UUID when the
+    /// value carried one; the NIL UUID for legacy / malformed values — an
+    /// honest "no request id was on the wire", never a fabricated
+    /// identifier pretending a request that never existed.
+    pub(crate) fn receipt_request_id(&self) -> String {
+        match self.request_id {
+            Some(bytes) => Uuid::from_bytes(bytes).to_string(),
+            None => Uuid::nil().to_string(),
+        }
+    }
+
+    /// `reason` recorded on the LOCAL receipt for a replayed HARD apply
+    /// (ONE-1133 OWNER-DECISION): the decoded hard reason verbatim;
+    /// legacy / reserved-0 / unknown values map to `user_hard_delete` —
+    /// the engine's destructive default (`Vault::delete_entity`), matching
+    /// the fail-closed purge those values already received. Total so the
+    /// replay path can never panic on wire bytes; the soft arm is
+    /// unreachable behind the `is_hard()` guard and maps to the
+    /// destructive default defensively.
+    pub(crate) fn receipt_hard_reason(&self) -> DeleteReason {
+        match self.reason {
+            Some(TombstoneReason::GdprDelete) => DeleteReason::GdprDelete,
+            Some(TombstoneReason::PolicyDelete) => DeleteReason::PolicyDelete,
+            Some(TombstoneReason::UserHardDelete | TombstoneReason::UserDelete) | None => {
+                DeleteReason::UserHardDelete
+            }
+        }
+    }
+}
+
+/// What [`crate::Vault::apply_replayed_tombstone`] — the reason-aware
+/// replay-delete primitive (M4-06 / ONE-1133) — applied to the LOCAL
+/// active store.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum ReplayedTombstoneOutcome {
+    /// Known-soft (`user_delete`) value: shell-preserving SoftErase.
+    /// `changed` is `false` when there was nothing local to scrub (already
+    /// a shell, already hard-purged, or never materialized) — a soft value
+    /// NEVER recreates state, so soft-after-hard stays a no-op.
+    SoftErased { changed: bool },
+    /// Hard value (known hard reason, legacy 8-byte, reserved 0, unknown
+    /// byte, malformed): destructive purge. `erased` is `false` when no
+    /// local trace existed — then NO receipt and NO sweep row are written,
+    /// keeping every-boot re-application receipt-free.
+    HardPurged {
+        erased: bool,
+        receipt_id: Option<EntityId>,
+        sweep_key: Option<Vec<u8>>,
+    },
+}
+
+impl ReplayedTombstoneOutcome {
+    /// Whether the apply changed any local active-store state.
+    #[must_use]
+    pub(crate) fn changed_local_state(&self) -> bool {
+        match self {
+            Self::SoftErased { changed } => *changed,
+            Self::HardPurged { erased, .. } => *erased,
+        }
     }
 }
 

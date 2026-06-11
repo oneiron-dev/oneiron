@@ -229,6 +229,23 @@ fn materialize_entities_from_delta(
         for (key, new_val) in &delta.updated {
             match new_val {
                 Some(loro::ValueOrContainer::Value(loro::LoroValue::Binary(blob))) => {
+                    let Ok(id) = EntityId::from_hex(key.as_ref()) else {
+                        tracing::warn!(entity = %key, "observer-b: entity invalid hex id");
+                        continue;
+                    };
+                    // ONE-1133 (ARCH-0038): a tombstone always wins over
+                    // concurrent entities-map state. A re-put merged after
+                    // the delete must never (re)materialize the body — no
+                    // further tombstone event would fire to scrub it. The
+                    // check uses the normalized lowercase id so an
+                    // uppercase-alias key cannot dodge it.
+                    if map_contains_binary(&tombstones_map, &id.to_hex()) {
+                        tracing::debug!(
+                            entity = %key,
+                            "observer-b: entity update suppressed by tombstone (delete wins)"
+                        );
+                        continue;
+                    }
                     let materialize_result = materialize_entity_blob_in_txn(
                         vault,
                         wtxn,
@@ -478,11 +495,15 @@ fn child_of_component_sort_key(component: &[PendingChildOfOp]) -> [u8; 33] {
         .expect("child-of component must be non-empty")
 }
 
-/// Materialize tombstone changes — delete entities from LMDB.
+/// Materialize tombstone changes — apply deletes to LMDB.
 ///
-/// Each tombstone triggers a delete_entity which involves multiple LMDB
-/// writes (entity + edges + indexes). These are already internally
-/// transactional via delete_entity, so we just replace the logging.
+/// ONE-1133 (ARCH-0038): each tombstone routes through the reason-aware
+/// replay primitive [`Vault::apply_replayed_tombstone`], never a bare
+/// purge. The VALUE decides the effect: a known-soft `user_delete` value
+/// keeps the 25 B shell (SoftErase + D16 refresh); every other shape —
+/// hard reasons, legacy 8-byte, reserved 0, unknown bytes, malformed,
+/// and non-binary values — hard-purges and, when local state was erased,
+/// writes the LOCAL REDACTION_AUDIT receipt and `h:` sweep row.
 fn materialize_tombstones_from_delta(
     _doc: &LoroDoc,
     delta: &loro::event::MapDelta<'_>,
@@ -490,7 +511,7 @@ fn materialize_tombstones_from_delta(
 ) {
     for (key, new_val) in &delta.updated {
         match new_val {
-            Some(_) => {
+            Some(value) => {
                 // New tombstone added
                 let id = match EntityId::from_hex(key.as_ref()) {
                     Ok(id) => id,
@@ -500,12 +521,20 @@ fn materialize_tombstones_from_delta(
                     }
                 };
 
-                let delete_result = vault.purge_entity_active_store(&id);
+                // A non-binary tombstone value has no decodable reason —
+                // it replays as the empty value, which decodes HARD
+                // (fail-closed: over-purge, never under-delete).
+                let raw_value: &[u8] = match value {
+                    loro::ValueOrContainer::Value(loro::LoroValue::Binary(blob)) => blob,
+                    _ => &[],
+                };
+
+                let delete_result = vault.apply_replayed_tombstone(&id, raw_value);
                 if let Err(e) = delete_result {
                     tracing::warn!(
                         tombstone = %key,
                         error = %e,
-                        "observer-b: tombstone delete failed"
+                        "observer-b: tombstone replay failed"
                     );
                 }
             }

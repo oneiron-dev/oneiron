@@ -593,46 +593,34 @@ pub fn forward_rematerialize(
         }
     }
 
-    // Tombstones — purge any stale local row a tombstoned id still has.
-    {
-        let rtxn = vault.store.env.read_txn()?;
-        let mut tombstone_error = None;
-        let mut to_purge = Vec::new();
-        map_for_each_bytes(&tombstones_map, |key, _| {
-            if tombstone_error.is_some() {
-                return;
-            }
-            let id = match EntityId::from_hex(key) {
-                Ok(id) => id,
-                Err(_) => return,
-            };
-            // A local read error must not be conflated with "absent" — that
-            // would silently leave a tombstoned row behind.
-            match vault.store.entities.get(&rtxn, id.as_bytes()) {
-                Ok(Some(_)) => to_purge.push(id),
-                Ok(None) => {}
-                Err(err) => tombstone_error = Some(Error::from(err)),
-            }
-        });
-        drop(rtxn);
-        if let Some(err) = tombstone_error {
-            return Err(err);
-        }
-        for id in to_purge {
-            match vault.purge_entity_active_store(&id) {
-                Ok(_) => count += 1,
-                Err(err) => {
-                    // Surfaced loudly; durable retry via rm: markers lands in
-                    // M4-04 — this path must never fail silent in the interim.
-                    tracing::error!(
-                        entity = %id.to_hex(),
-                        error = %err,
-                        "forward remat: tombstone purge failed"
-                    );
+    // Tombstones — reason-aware replay (ONE-1133 / ARCH-0038): the VALUE
+    // decides the effect, routed through the shared primitive, never a
+    // bare purge. Known-soft `user_delete` keeps the 25 B shell (SoftErase
+    // + D16 refresh); every other shape hard-purges and — when local state
+    // was erased — writes the LOCAL REDACTION_AUDIT receipt and `h:` sweep
+    // row. The primitive is idempotent (no receipt when nothing local
+    // remains), so this every-boot pass cannot multiply receipts.
+    map_for_each_bytes(&tombstones_map, |key, value| {
+        let id = match EntityId::from_hex(key) {
+            Ok(id) => id,
+            Err(_) => return,
+        };
+
+        match vault.apply_replayed_tombstone(&id, value) {
+            Ok(outcome) => {
+                if outcome.changed_local_state() {
+                    count += 1;
                 }
             }
+            Err(err) => {
+                tracing::warn!(
+                    tombstone = %key,
+                    error = %err,
+                    "forward remat: tombstone replay failed"
+                );
+            }
         }
-    }
+    });
 
     Ok(count)
 }

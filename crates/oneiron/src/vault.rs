@@ -20,9 +20,10 @@ use crate::claim::{
 };
 use crate::deletion::{
     DeleteEntityOutcome, DeleteReason, HARD_ERASE_SWEEP_PREFIX, HardEraseSweepExtras,
-    LAST_HARD_ERASE_SWEEP_SEQ_KEY, RedactionReceiptInput, RedactionScope, TombstoneValueV2,
-    decode_hard_erase_sweep_seq, encode_hard_erase_sweep_job, encode_hard_erase_sweep_key,
-    encode_redaction_audit_receipt, pending_tombstone_key, window_label_from_timestamp,
+    LAST_HARD_ERASE_SWEEP_SEQ_KEY, RedactionReceiptInput, RedactionScope, ReplayedTombstoneOutcome,
+    TombstoneValueV2, decode_hard_erase_sweep_seq, decode_tombstone_value,
+    encode_hard_erase_sweep_job, encode_hard_erase_sweep_key, encode_redaction_audit_receipt,
+    pending_tombstone_key, window_label_from_timestamp,
 };
 #[cfg(feature = "sync")]
 use crate::deletion::{encode_local_hard_delete_marker, local_hard_delete_marker_key};
@@ -1527,12 +1528,10 @@ impl Vault {
         }
     }
 
-    pub(crate) fn purge_entity_active_store(&self, id: &EntityId) -> Result<bool> {
-        let mut wtxn = self.store.env.write_txn()?;
-        let existed = self.purge_entity_active_store_in_txn(&mut wtxn, id)?;
-        wtxn.commit()?;
-        Ok(existed)
-    }
+    // NOTE (ONE-1133): the bare non-txn `purge_entity_active_store` wrapper
+    // was removed — both sync replay surfaces now route through the
+    // reason-aware `apply_replayed_tombstone`, and a bare purge entry point
+    // would be an invitation to bypass the ARCH-0038 reason semantics.
 
     fn purge_entity_active_store_in_txn(
         &self,
@@ -1571,6 +1570,118 @@ impl Vault {
         let payload = entity_record[..ENTITY_METADATA_HEADER_LEN].to_vec();
         self.store.entities.put(wtxn, id.as_bytes(), &payload)?;
         Ok((true, had_vector))
+    }
+
+    /// Reason-aware replay of a CRDT tombstone into the LOCAL active store —
+    /// the ONE primitive every sync replay surface routes through (Observer
+    /// B's tombstone phase and `forward_rematerialize`'s tombstone pass), so
+    /// a remote delete can never diverge from the pinned ARCH-0038 reason
+    /// semantics. OWNER-DECISION (M4-06 / ONE-1133, fail-closed): replay
+    /// routes through this reason-aware delete primitive, never bare purge.
+    ///
+    /// * KNOWN-soft value (`reason = user_delete`) → shell-preserving
+    ///   SoftErase: payload truncated to the 25 B entity header,
+    ///   text/phonetic/vector/hnsw deindexed, and — when the entity was a
+    ///   live `edge.provenance` Claim — the D16 subject-edge refresh
+    ///   committed in the SAME transaction. No receipt, no sweep row
+    ///   (contracts.ts `user_delete`: activeStoreHardPurgeV1 = false,
+    ///   receipt = false).
+    /// * Hard value (known hard reason, legacy 8-byte, reserved 0, unknown
+    ///   byte, malformed) → destructive purge of the payload plus every
+    ///   active index entry, the D16 refresh in the SAME transaction, and —
+    ///   when local state was actually erased — a LOCAL `h:{seq:8BE}`
+    ///   historical-carrier sweep row (`deadline_at` ≤ queued_at + 30 d,
+    ///   GDPR Art. 12(3)) and a LOCAL REDACTION_AUDIT receipt whose
+    ///   `request_id` comes from the wire value (OWNER-DECISION: Art. 5(2)
+    ///   accountability attaches to each replica actually erasing, so N
+    ///   devices yield N receipts for one request). Ambiguity resolves to
+    ///   MORE deletion, never less.
+    /// * Never-downgrade on receive: a soft value for an id this replica
+    ///   already hard-purged finds no row to scrub and is a no-op — it
+    ///   never recreates a shell.
+    /// * Idempotent: after a completed hard apply the delete-scope probe
+    ///   finds nothing, so re-application (every-boot forward
+    ///   re-materialization, repeated delta delivery) is a receipt-free
+    ///   no-op.
+    pub(crate) fn apply_replayed_tombstone(
+        &self,
+        id: &EntityId,
+        raw_value: &[u8],
+    ) -> Result<ReplayedTombstoneOutcome> {
+        let decoded = decode_tombstone_value(raw_value);
+        // ARCH-0038 DELETE interplay: an `edge.provenance` Claim's subject
+        // EdgeRef and sweep refs are only readable PRE-scrub.
+        let captured = self.capture_provenance_delete(id)?;
+
+        if !decoded.is_hard() {
+            let mut wtxn = self.store.env.write_txn()?;
+            let had_body = self
+                .store
+                .entities
+                .get(&wtxn, id.as_bytes())?
+                .is_some_and(|raw| raw.len() > ENTITY_METADATA_HEADER_LEN);
+            let (existed, had_vector) = self.soft_erase_active_store_in_txn(&mut wtxn, id)?;
+            if had_vector {
+                crate::hnsw::increment_vector_version(&self.store, &mut wtxn)?;
+            }
+            // D16: SoftErase tombstones the Claim, and "the derived edge
+            // flag follows the Claim" — refresh in the SAME transaction.
+            if existed && let Some(captured) = &captured {
+                self.refresh_subject_edge_after_claim_delete_in_txn(
+                    &mut wtxn,
+                    id,
+                    &captured.subject,
+                )?;
+            }
+            wtxn.commit()?;
+            return Ok(ReplayedTombstoneOutcome::SoftErased {
+                changed: had_body || had_vector,
+            });
+        }
+
+        let mut wtxn = self.store.env.write_txn()?;
+        // Probe the FULL delete scope (entity row, vectors, text, phonetic,
+        // short-ids, edges): orphan residue without an entities row still
+        // counts as local state to erase, mirroring the local
+        // `delete_entity_without_header` semantics.
+        if !self.active_delete_scope_exists_in_txn(&wtxn, id)? {
+            return Ok(ReplayedTombstoneOutcome::HardPurged {
+                erased: false,
+                receipt_id: None,
+                sweep_key: None,
+            });
+        }
+        self.purge_entity_active_store_in_txn(&mut wtxn, id)?;
+        // ARCH-0038 DELETE: "The derived edge flag follows the Claim" — the
+        // subject edge is refreshed in the SAME transaction as the purge.
+        if let Some(captured) = &captured {
+            self.refresh_subject_edge_after_claim_delete_in_txn(&mut wtxn, id, &captured.subject)?;
+        }
+        let applied_at = unix_seconds_now();
+        let receipt_id = EntityId::now();
+        let sweep_key = self.write_redaction_receipt_and_sweep_in_txn(
+            &mut wtxn,
+            &receipt_id,
+            RedactionReceiptInput {
+                request_id: decoded.receipt_request_id(),
+                scope: RedactionScope::entity(id),
+                reason: decoded.receipt_hard_reason(),
+                // The origin's request time, straight off the wire (0 for
+                // malformed shapes); completion stamps are device-local
+                // facts on the replica that erased.
+                requested_at: decoded.deleted_at,
+                soft_complete_at: applied_at,
+                hard_purge_complete_at: applied_at,
+                sweep_queued_at: Some(applied_at),
+            },
+            sweep_extras(captured.as_ref()),
+        )?;
+        wtxn.commit()?;
+        Ok(ReplayedTombstoneOutcome::HardPurged {
+            erased: true,
+            receipt_id: Some(receipt_id),
+            sweep_key: Some(sweep_key),
+        })
     }
 
     fn read_entity_header(&self, id: &EntityId) -> Result<Option<EntityMetadataHeader>> {
@@ -2175,6 +2286,28 @@ impl Vault {
             keys.push(k.to_string());
         }
         Ok(keys)
+    }
+
+    /// Lists `sync_queue` rows with the given key prefix for sync
+    /// integration tests and diagnostics (e.g. the `h:{seq:8BE}` hard-erase
+    /// sweep family a replayed remote hard tombstone must enqueue).
+    ///
+    /// Production code uses direct transactional access so multi-key
+    /// updates stay atomic.
+    #[doc(hidden)]
+    #[cfg(feature = "sync")]
+    pub fn sync_queue_rows_with_prefix(&self, prefix: &[u8]) -> Result<Vec<(Vec<u8>, Vec<u8>)>> {
+        let rtxn = self.store.env.read_txn()?;
+        let mut rows = Vec::new();
+        for entry in self.store.sync_queue.prefix_iter(&rtxn, prefix)? {
+            // Cap check BEFORE push — matches scan_edges semantics.
+            if rows.len() >= MAX_SYNC_STATE_KEYS {
+                return Err(Error::IndexOverflow("sync_queue_rows_with_prefix"));
+            }
+            let (k, v) = entry?;
+            rows.push((k.to_vec(), v.to_vec()));
+        }
+        Ok(rows)
     }
 
     /// Returns the raw entity blob (header + data) for an entity.
