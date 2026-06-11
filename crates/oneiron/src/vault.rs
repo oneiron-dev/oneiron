@@ -1273,6 +1273,23 @@ impl Vault {
             wtxn.commit()?;
             return Ok(DeleteEntityOutcome::missing());
         }
+        let request_uuid = Uuid::now_v7();
+        if reason.active_store_hard_purge_v1() {
+            // ONE-1122 `dt:` marker, headerless leg: this hard purge writes
+            // no CRDT tombstone (no parseable header ⇒ no learned_at
+            // window), so the permanent local marker is the ONLY delete
+            // truth the Observer-B gate can consult for this id — without
+            // it a crafted re-put would rematerialize remote bytes over a
+            // hard delete. Same txn as the purge, mirroring the headerful
+            // path above.
+            self.write_local_hard_delete_marker_in_txn(
+                &mut wtxn,
+                id,
+                reason,
+                requested_at,
+                request_uuid.as_bytes(),
+            )?;
+        }
         if !reason.writes_receipt() {
             wtxn.commit()?;
             return Ok(DeleteEntityOutcome {
@@ -1291,7 +1308,7 @@ impl Vault {
             &mut wtxn,
             &receipt_id,
             RedactionReceiptInput {
-                request_id: Uuid::now_v7().to_string(),
+                request_id: request_uuid.to_string(),
                 scope: RedactionScope::entity(id),
                 reason,
                 requested_at,

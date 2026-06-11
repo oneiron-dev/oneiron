@@ -1539,6 +1539,80 @@ mod tests {
         );
     }
 
+    /// ONE-1122 `dt:` marker, headerless leg: a hard delete that routes
+    /// through `delete_entity_without_header` (active residue, entity row /
+    /// 25 B header missing) writes NO CRDT tombstone — the `dt:` marker
+    /// written in the purge txn is the only local delete truth for that id.
+    /// It must exist after the delete, and the Observer-B gate must refuse
+    /// a crafted re-put on its strength alone.
+    #[test]
+    fn headerless_hard_delete_writes_dt_marker_and_gate_refuses_reput() {
+        let vault = test_vault();
+        let occurred = TimeRange { start: 1, end: 1 };
+        let learned_at = 1_772_400_000u64;
+
+        let id = EntityId::now();
+        vault
+            .put_entity(&id, ENTITY_TYPE_TASK, occurred, learned_at, b"residue")
+            .unwrap();
+        // Strip ONLY the entity row, leaving index residue (short-id
+        // reverse row) — the exact shape `delete_entity_without_header`
+        // exists for: active data present, no parseable header.
+        {
+            let mut wtxn = vault.store.env.write_txn().unwrap();
+            assert!(
+                vault
+                    .store
+                    .entities
+                    .delete(&mut wtxn, id.as_bytes())
+                    .unwrap()
+            );
+            wtxn.commit().unwrap();
+        }
+
+        let outcome = vault
+            .delete_entity_with_reason(&id, crate::DeleteReason::UserHardDelete)
+            .unwrap();
+        assert!(
+            outcome.receipt_id.is_some(),
+            "headerless residue purge must write a receipt (not the missing no-op)"
+        );
+        let marker = read_dt_marker(&vault, &id)
+            .expect("headerless hard delete must write the dt: marker in the purge txn");
+        assert_eq!(
+            marker.len(),
+            25,
+            "pinned [reason:1][deleted_at:8 LE][request_id:16] layout"
+        );
+        assert_eq!(marker[0], 2, "user_hard_delete reason byte");
+
+        // Crafted re-put through Observer B: no CRDT tombstone exists for a
+        // headerless delete, so ONLY the dt: leg of the OR-gate can refuse.
+        let doc = LoroDoc::new();
+        let materializer = Arc::new(Materializer::new());
+        let _subs = register_observer_b(&doc, &vault, &materializer);
+        let warns = WarnCapture::default();
+        tracing::subscriber::with_default(warns.clone(), || {
+            map_insert_bytes(
+                &doc.get_map("entities"),
+                &id.to_hex(),
+                &entity_blob(ENTITY_TYPE_TASK, occurred, learned_at, b"reput-attempt"),
+            )
+            .unwrap();
+            doc.commit();
+        });
+
+        assert!(
+            vault.get(&id).unwrap().is_none(),
+            "dt: gate must refuse rematerialization of a headerless hard delete"
+        );
+        let messages = warns.messages.lock().unwrap();
+        assert!(
+            messages.iter().any(|m| m.contains("dt: marker")),
+            "dt: gate refusal warn must fire, got: {messages:?}"
+        );
+    }
+
     /// Negative: an entity that was never deleted materializes through the
     /// unchanged honest path — the dt: OR-gate adds no false refusals.
     #[test]
