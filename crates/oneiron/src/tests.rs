@@ -7154,7 +7154,8 @@ fn put_claim_round_trip_and_pinned_on_disk_bytes() -> Result<()> {
     body.valid_from = Some(100);
     body.valid_to = Some(200);
     body.source = Some(ClaimSource::UserStated);
-    body.world = Some("w0".into());
+    let world_id = EntityId::from_bytes([0x5A; 16])?;
+    body.world = Some(world_id);
     body.scope = Some("rel1".into());
     body.stale = true;
     vault.put_claim(&claim, &body, test_time_range(100, 200), 300)?;
@@ -7172,7 +7173,10 @@ fn put_claim_round_trip_and_pinned_on_disk_bytes() -> Result<()> {
         ("from".into(), rmpv::Value::from(100_u64)),
         ("to".into(), rmpv::Value::from(200_u64)),
         ("src".into(), "user_stated".into()),
-        ("world".into(), "w0".into()),
+        (
+            "world".into(),
+            rmpv::Value::Binary(world_id.as_bytes().to_vec()),
+        ),
         (
             "subj".into(),
             rmpv::Value::Binary(subject.as_bytes().to_vec()),
