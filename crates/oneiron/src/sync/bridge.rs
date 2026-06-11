@@ -220,16 +220,22 @@ fn subscribe_map_observer(
 /// Accumulates all entity ops from the delta into a single LMDB write
 /// transaction instead of committing per-entity.
 fn materialize_entities_from_delta(
-    _doc: &LoroDoc,
+    doc: &LoroDoc,
     delta: &loro::event::MapDelta<'_>,
     vault: &Vault,
 ) {
+    let tombstones_map = doc.get_map("tombstones");
     let result = vault.with_write_txn(|wtxn| {
         for (key, new_val) in &delta.updated {
             match new_val {
                 Some(loro::ValueOrContainer::Value(loro::LoroValue::Binary(blob))) => {
-                    let materialize_result =
-                        materialize_entity_blob_in_txn(vault, wtxn, key.as_ref(), blob);
+                    let materialize_result = materialize_entity_blob_in_txn(
+                        vault,
+                        wtxn,
+                        &tombstones_map,
+                        key.as_ref(),
+                        blob,
+                    );
                     if let Err(e) = materialize_result {
                         tracing::warn!(
                             entity = %key,
@@ -513,9 +519,23 @@ fn materialize_tombstones_from_delta(
 fn materialize_entity_blob_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
+    tombstones_map: &LoroMap,
     key: &str,
     blob: &[u8],
 ) -> Result<()> {
+    // Tombstone gate — fires BEFORE the put, never heals after (ARCH-0023b:
+    // "If tombstoned in CRDT → never resurrect"; contracts.ts
+    // `user_hard_delete`: "Tombstone-first prevents sync resurrection").
+    // Hard delete purges LMDB but leaves the stale blob in the live CRDT
+    // entities map (`write_crdt_tombstone` only inserts into `tombstones`),
+    // so ANY later commit touching this entity key would otherwise
+    // rematerialize the purged body into LMDB with no compensating purge —
+    // tombstone deltas only fire when the tombstones map CHANGES.
+    if map_contains_binary(tombstones_map, key) {
+        tracing::debug!(entity = %key, "observer-b: entity tombstoned in CRDT, skipping put");
+        return Ok(());
+    }
+
     let Some(header) = EntityMetadataHeader::parse(blob) else {
         return Err(crate::Error::CorruptedIndex("entity metadata"));
     };
@@ -572,7 +592,7 @@ fn ensure_entity_materialized_from_crdt(
     let Some(blob) = map_get_bytes(entities_map, &hex_id) else {
         return Ok(false);
     };
-    materialize_entity_blob_in_txn(vault, wtxn, &hex_id, &blob)?;
+    materialize_entity_blob_in_txn(vault, wtxn, tombstones_map, &hex_id, &blob)?;
     Ok(true)
 }
 
@@ -1049,6 +1069,144 @@ mod tests {
                 .edge_exists(&del_bin, EdgeKind::Mentions, &live)
                 .unwrap(),
             "edge FROM a tombstoned source with stale row must not materialize"
+        );
+    }
+
+    /// ONE-1122 AC2 — ARCH-0023b: "If tombstoned in CRDT → never resurrect";
+    /// contracts.ts `user_hard_delete`: "Tombstone-first prevents sync
+    /// resurrection". Hard delete writes the CRDT tombstone but leaves the
+    /// stale blob in the live entities map (`write_crdt_tombstone` only
+    /// inserts into `tombstones`), so a later remote commit re-touching the
+    /// entity key must NOT rematerialize the purged body into LMDB.
+    #[test]
+    fn observer_b_never_resurrects_hard_deleted_entity_on_entity_key_retouch() {
+        let vault = test_vault();
+        let materializer = Arc::new(Materializer::new());
+
+        let id = EntityId::now();
+        let learned_at = 1_772_400_000u64; // 2026-03 window
+        let occurred = TimeRange { start: 1, end: 1 };
+        vault
+            .put_entity(
+                &id,
+                ENTITY_TYPE_TASK,
+                occurred,
+                learned_at,
+                b"hard-delete-me",
+            )
+            .unwrap();
+
+        // Mirror LMDB → CRDT, then persist, so `write_crdt_tombstone` (which
+        // loads the persisted window doc) operates on a doc holding the blob.
+        let window_key = crate::sync::types::WindowKey::from_timestamp(learned_at);
+        let window = crate::sync::window::LoadedWindow::new(
+            "local",
+            window_key.clone(),
+            &vault,
+            &materializer,
+        );
+        let mirrored =
+            crate::sync::window::reverse_rematerialize(&vault, &window.doc, &window_key).unwrap();
+        assert_eq!(mirrored, 1);
+        window.persist_state(&vault).unwrap();
+        drop(window);
+
+        // Hard delete: CRDT tombstone FIRST, then active-store purge.
+        let outcome = vault
+            .delete_entity_with_reason(&id, crate::DeleteReason::UserHardDelete)
+            .unwrap();
+        assert!(outcome.existed);
+        assert!(vault.get(&id).unwrap().is_none());
+
+        let doc =
+            crate::sync::window::load_window_from_state(&vault, "local", &window_key).unwrap();
+        let hex_id = id.to_hex();
+        assert!(
+            map_get_bytes(&doc.get_map("entities"), &hex_id).is_some(),
+            "precondition: hard delete leaves the stale blob in the live entities map"
+        );
+        assert!(
+            map_contains_binary(&doc.get_map("tombstones"), &hex_id),
+            "precondition: hard delete writes the CRDT tombstone"
+        );
+
+        // Remote commit re-touches the entity key after Observer B attaches.
+        let window =
+            crate::sync::window::LoadedWindow::from_doc(doc, window_key, &vault, &materializer);
+        let entities = window.doc.get_map("entities");
+        map_insert_bytes(
+            &entities,
+            &hex_id,
+            &entity_blob(
+                ENTITY_TYPE_TASK,
+                occurred,
+                learned_at,
+                b"resurrection-attempt",
+            ),
+        )
+        .unwrap();
+        window.doc.commit();
+
+        assert!(
+            vault.get(&id).unwrap().is_none(),
+            "tombstoned entity must never resurrect into LMDB"
+        );
+    }
+
+    /// ONE-1122 AC3 — SoftErased-shell variant: a 25 B envelope shell in
+    /// LMDB + the full blob arriving via an entities-map delta + the
+    /// tombstone present in the doc → the body is NOT restored. The gate
+    /// fires BEFORE the put; nothing heals after.
+    #[test]
+    fn observer_b_does_not_restore_soft_erased_body_when_tombstoned() {
+        let vault = test_vault();
+        let id = EntityId::now();
+        let learned_at = 1_772_400_000u64;
+        let occurred = TimeRange { start: 1, end: 1 };
+        vault
+            .put_entity(&id, ENTITY_TYPE_TASK, occurred, learned_at, b"private-body")
+            .unwrap();
+
+        // SoftErase (`user_delete`): scrubs the body, keeps the 25 B shell.
+        let outcome = vault
+            .delete_entity_with_reason(&id, crate::DeleteReason::UserDelete)
+            .unwrap();
+        assert!(outcome.existed);
+        assert_eq!(
+            vault.get_raw(&id).unwrap().expect("shell row").len(),
+            ENTITY_METADATA_HEADER_LEN,
+            "SoftErase must leave the bare 25 B envelope shell"
+        );
+
+        // Doc already tombstoned BEFORE observers attach; then the full blob
+        // arrives via a delta re-touching the entity key.
+        let doc = LoroDoc::new();
+        let tombstones = doc.get_map("tombstones");
+        tombstones.insert(&id.to_hex(), b"1").unwrap();
+        doc.commit();
+
+        let materializer = Arc::new(Materializer::new());
+        let _subs = register_observer_b(&doc, &vault, &materializer);
+
+        let entities = doc.get_map("entities");
+        map_insert_bytes(
+            &entities,
+            &id.to_hex(),
+            &entity_blob(ENTITY_TYPE_TASK, occurred, learned_at, b"private-body"),
+        )
+        .unwrap();
+        doc.commit();
+
+        let raw = vault.get_raw(&id).unwrap().expect("shell must remain");
+        assert_eq!(
+            raw.len(),
+            ENTITY_METADATA_HEADER_LEN,
+            "tombstoned entity body must NOT be restored over the SoftErase shell"
+        );
+        assert_eq!(
+            vault.get(&id).unwrap().as_deref(),
+            Some(&[][..]),
+            "entity body must stay empty after the gated delta"
         );
     }
 
