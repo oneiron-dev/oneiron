@@ -759,39 +759,98 @@ fn condense_sccs(
 /// Picks the entry point from the condensation: the lowest member entity id
 /// among the source SCCs whose forward closure covers the most nodes.
 ///
-/// Closure traversals run over the condensation only (never the original
-/// graph) and visit each source's reachable SCCs once, marked per-source via
-/// an epoch array — no per-candidate full BFS. On disconnected rebuild
-/// graphs the traversals cover disjoint SCC sets, keeping the total
-/// `O(V+E)`-class.
+/// Forward-closure node counts are computed once per SCC by a single
+/// reverse-topological DP rather than a fresh per-source walk. Iterative
+/// Tarjan finalizes SCCs sinks-first, so every condensation edge points to a
+/// strictly smaller SCC index (see the `debug_assert` below); iterating
+/// indices in increasing order therefore visits every child before its
+/// parents — reverse topological order — without a separate sort.
+///
+/// An SCC's children have *disjoint* forward closures unless the SCC tops a
+/// diamond (two child paths reconverge), so a single-child (or childless) SCC
+/// reuses its child's already-computed count in `O(1)`. Only a genuine
+/// diamond needs its exact closure recomputed via one bounded BFS — the
+/// shared-suffix / chain shapes that broke the old per-source walk
+/// (`Θ(sources · suffix)`) are diamond-free, so each condensation edge is
+/// relaxed once and the whole pass stays `O(V+E)`.
 fn best_source_scc_member(condensation: &SccCondensation, ops: &mut u64) -> Option<EntityId> {
     let scc_count = condensation.sizes.len();
-    let mut visited_mark = vec![usize::MAX; scc_count];
+    if scc_count == 0 {
+        return None;
+    }
+
+    // Reachable-node count of each SCC's forward closure (the SCC included).
+    let mut reach = vec![0_usize; scc_count];
+    // Per-parent dedup stamp: the stored adjacency may repeat a target.
+    let mut child_seen = vec![usize::MAX; scc_count];
+    // Per-BFS visited stamp for the diamond fallback.
+    let mut bfs_seen = vec![usize::MAX; scc_count];
     let mut frontier: Vec<usize> = Vec::new();
-    let mut best: Option<(usize, EntityId)> = None;
 
-    for source in 0..scc_count {
+    for scc in 0..scc_count {
         *ops += 1;
-        if condensation.has_incoming[source] {
-            continue;
-        }
-
-        let mut closure_nodes = 0_usize;
-        visited_mark[source] = source;
-        frontier.push(source);
-        while let Some(scc) = frontier.pop() {
+        let mut unique_children = 0_usize;
+        let mut single_child = usize::MAX;
+        for &child in &condensation.adjacency[scc] {
             *ops += 1;
-            closure_nodes += condensation.sizes[scc];
-            for &next in &condensation.adjacency[scc] {
-                *ops += 1;
-                if visited_mark[next] != source {
-                    visited_mark[next] = source;
-                    frontier.push(next);
-                }
+            debug_assert!(
+                child < scc,
+                "Tarjan finalizes sinks first, so condensation edges point to \
+                 strictly smaller SCC indices already carrying a final reach count"
+            );
+            if child_seen[child] != scc {
+                child_seen[child] = scc;
+                unique_children += 1;
+                single_child = child;
             }
         }
 
-        let candidate_id = condensation.min_ids[source];
+        reach[scc] = if unique_children <= 1 {
+            // No siblings to overlap with: the child's closure is disjoint from
+            // this SCC, so summing is exact and `O(1)`.
+            condensation.sizes[scc]
+                + if unique_children == 1 {
+                    reach[single_child]
+                } else {
+                    0
+                }
+        } else {
+            // Diamond: child closures may share descendants, so summing would
+            // double count. Recompute the exact closure with one BFS that visits
+            // every reachable SCC a single time.
+            let mut closure_nodes = 0_usize;
+            bfs_seen[scc] = scc;
+            frontier.clear();
+            frontier.push(scc);
+            while let Some(node) = frontier.pop() {
+                *ops += 1;
+                closure_nodes += condensation.sizes[node];
+                for &next in &condensation.adjacency[node] {
+                    *ops += 1;
+                    if bfs_seen[next] != scc {
+                        bfs_seen[next] = scc;
+                        frontier.push(next);
+                    }
+                }
+            }
+            closure_nodes
+        };
+    }
+
+    // Winner: the source SCC (no incoming condensation edge) with the largest
+    // forward closure; ties break to the lowest member entity id — the exact
+    // selection the per-candidate reference scan makes.
+    let mut best: Option<(usize, EntityId)> = None;
+    for ((&closure_nodes, &has_incoming), &candidate_id) in reach
+        .iter()
+        .zip(&condensation.has_incoming)
+        .zip(&condensation.min_ids)
+    {
+        *ops += 1;
+        if has_incoming {
+            continue;
+        }
+
         let replace = match &best {
             None => true,
             Some((best_closure, best_id)) => {
@@ -1991,6 +2050,54 @@ mod tests {
             .expect("non-empty fixture");
 
         assert_eq!(entry, heads[0]);
+        let budget = 8 * (v + e) as u64;
+        assert!(
+            ops <= budget,
+            "ops {ops} exceeded linear budget {budget} (V={v}, E={e})"
+        );
+    }
+
+    /// AC: complexity stays `O(V+E)`-class even when many source SCCs feed a
+    /// SHARED reachable suffix — the shape a per-source closure walk degrades
+    /// to `Θ(sources · suffix)` on. K single-node sources all point at the head
+    /// of one shared K-node chain: V = 2K, E = 2K-1, and every source's forward
+    /// closure is the same K+1 nodes. The reverse-topological DP computes the
+    /// chain's reach once and reuses it for every source, relaxing each
+    /// condensation edge a single time, so ops stay linear. The previous
+    /// per-source closure walk re-traversed the whole shared chain once per
+    /// source: with K=100 it spends ~2·K² ≈ 20k closure ops and blows this
+    /// budget (8·(V+E) = 3192) — pre-fix the assert below fails; post-fix it
+    /// passes well under budget.
+    #[test]
+    fn select_best_entry_point_op_count_is_linear_on_shared_suffix_fixture() {
+        const K: usize = 100;
+        let sources: Vec<EntityId> = (1..=K as u64).map(id_from_u64).collect();
+        let chain: Vec<EntityId> = ((K as u64 + 1)..=(2 * K as u64)).map(id_from_u64).collect();
+
+        let mut neighbors = HashMap::new();
+        for source in &sources {
+            neighbors.insert(*source, vec![chain[0]]);
+        }
+        for (i, node) in chain.iter().enumerate() {
+            let outs = if i + 1 < K {
+                vec![chain[i + 1]]
+            } else {
+                Vec::new()
+            };
+            neighbors.insert(*node, outs);
+        }
+
+        let v = 2 * K; // K sources + K chain nodes
+        let e = K + (K - 1); // source->head edges + chain edges
+        let mut ops = 0_u64;
+        // Suggested is NOT the winner: every source reaches K+1 nodes (itself
+        // plus the shared chain), so they tie and the lowest id (sources[0])
+        // wins. The suggested source reaches only K+1 < 2K nodes, so the cheap
+        // fully-reachable early-exit does not fire and the SCC path runs.
+        let entry = select_best_entry_point_probed(&neighbors, Some(sources[3]), &mut ops)
+            .expect("non-empty fixture");
+
+        assert_eq!(entry, sources[0]);
         let budget = 8 * (v + e) as u64;
         assert!(
             ops <= budget,
