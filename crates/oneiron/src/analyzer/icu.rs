@@ -9,12 +9,16 @@
 //!
 //! The wrapper returns `Surface` tokens with byte offsets into the caller's
 //! original UTF-8 (`offset_base + local`), one position per word-like
-//! segment. Non-word-like segments (whitespace, punctuation) are skipped.
+//! segment. Non-word-like segments are scanned for emoji grapheme clusters
+//! via [`emoji::emit_emoji_graphemes`] (ARCH-0031 dispatch row
+//! "Emoji / unknown → Grapheme per token"); whatever remains (whitespace,
+//! punctuation) is skipped.
 
 use icu_segmenter::WordSegmenter;
 use icu_segmenter::WordSegmenterBorrowed;
 use icu_segmenter::options::WordBreakInvariantOptions;
 
+use super::emoji;
 use super::normalize;
 use super::token::{AnalyzerChannel, Token, TokenKind};
 
@@ -50,9 +54,9 @@ pub fn analyze(text: &str, offset_base: u32, position_base: u32, out: &mut Vec<T
     let mut position = position_base;
 
     for (end, segment_type) in iter {
+        let slice = &text[prev_offset..end];
+        let start = offset_base + prev_offset as u32;
         if segment_type.is_word_like() {
-            let slice = &text[prev_offset..end];
-            let start = offset_base + prev_offset as u32;
             let end_abs = offset_base + end as u32;
             let folded = normalize::casefold(slice);
             out.push(Token::new(
@@ -64,6 +68,14 @@ pub fn analyze(text: &str, offset_base: u32, position_base: u32, out: &mut Vec<T
                 TokenKind::Word,
             ));
             position += 1;
+        } else {
+            // ARCH-0031 "Emoji / unknown → Grapheme per token": non-word
+            // segments may carry emoji grapheme clusters — pictographics,
+            // flags, keycaps (the word segmenter classifies emoji as
+            // non-word, which used to drop them entirely). UAX #29 word
+            // boundaries never split a grapheme cluster, so a ZWJ sequence
+            // or flag pair is always wholly inside one segment here.
+            position = emoji::emit_emoji_graphemes(slice, start, position, out);
         }
         prev_offset = end;
     }
@@ -185,5 +197,47 @@ mod tests {
         let mut out = Vec::new();
         analyze("   ...!!!", 0, 0, &mut out);
         assert!(surface_terms(&out).is_empty());
+    }
+
+    #[test]
+    fn emoji_only_input_emits_grapheme_per_token() {
+        let mut out = Vec::new();
+        let next = analyze("🦀🔥", 0, 0, &mut out);
+        assert_eq!(surface_terms(&out), vec!["🦀", "🔥"]);
+        assert_eq!(next, 2);
+        for tok in &out {
+            assert_eq!(tok.kind, TokenKind::Emoji);
+            assert_eq!(tok.length_increment, 1);
+        }
+    }
+
+    #[test]
+    fn emoji_interleaves_with_numerics_in_segment_order() {
+        // AC2: numerics unchanged. The emoji token must land BETWEEN the
+        // two numeric tokens, in input order, with contiguous positions.
+        let text = "1🦀2";
+        let mut out = Vec::new();
+        let next = analyze(text, 0, 0, &mut out);
+        assert_eq!(surface_terms(&out), vec!["1", "🦀", "2"]);
+        let positions: Vec<u32> = out.iter().map(|t| t.position).collect();
+        assert_eq!(positions, vec![0, 1, 2]);
+        assert_eq!(next, 3);
+    }
+
+    #[test]
+    fn zwj_sequence_survives_word_segmentation_as_one_token() {
+        // 👨‍👩‍👧‍👦 — UAX #29 word boundaries must not split the ZWJ cluster.
+        let family = "\u{1F468}\u{200D}\u{1F469}\u{200D}\u{1F467}\u{200D}\u{1F466}";
+        let mut out = Vec::new();
+        analyze(family, 0, 0, &mut out);
+        assert_eq!(out.len(), 1, "ZWJ sequence must stay one token");
+        assert_eq!(out[0].term.as_ref(), family);
+    }
+
+    #[test]
+    fn emoji_amid_punctuation_keeps_punctuation_dropped() {
+        let mut out = Vec::new();
+        analyze("... 🦀 !!!", 0, 0, &mut out);
+        assert_eq!(surface_terms(&out), vec!["🦀"]);
     }
 }

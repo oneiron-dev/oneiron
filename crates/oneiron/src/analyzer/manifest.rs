@@ -16,7 +16,15 @@ use sha2::{Digest, Sha256};
 
 use crate::types::bytes_to_hex_lower;
 
-pub const ANALYZER_VERSION: &str = "v2";
+/// v3 (ONE-1118): portable emoji lane — one Surface token per emoji grapheme
+/// cluster (ARCH-0031 dispatch row "Emoji / unknown → Grapheme per token").
+/// The lane covers the whole emoji/unknown bucket: pictographic clusters,
+/// regional-indicator flag pairs (🇺🇦), and keycap sequences (1️⃣).
+/// Tokenization output changed for any input containing those graphemes, so
+/// the version bump flows into the manifest hash and a populated v2-built
+/// index fails closed at the open-time handshake (`IncompatibleAnalyzer`)
+/// instead of silently scoring against divergent postings.
+pub const ANALYZER_VERSION: &str = "v3";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AnalyzerManifest {
