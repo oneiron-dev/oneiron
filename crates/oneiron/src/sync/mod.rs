@@ -16,11 +16,14 @@
 //! - `schema` — CRDT Doc schema creation (root + window)
 //! - `bridge` — Observer-based CRDT ↔ LMDB materialization
 //! - `window` — Window lifecycle (load/unload/persist)
+//! - `manager` — Production window registry + ARCH-0023b startup recovery
+//!   orchestration (pm replay → reverse remat → forward remat → observers)
 
 pub mod bridge;
 pub mod client;
 pub mod connection;
 pub(crate) mod loro_support;
+pub mod manager;
 pub mod queue;
 pub mod schema;
 pub mod transport;
@@ -30,6 +33,7 @@ pub mod window;
 pub use client::{SyncClient, SyncClientConfig, SyncEvent, SyncStatus};
 pub use connection::{ConnectionConfig, LocalUpdate, SyncConnection};
 pub use loro::Subscription;
+pub use manager::WindowManager;
 pub use queue::{QueuedEmbedJob, QueuedUpdate, SyncQueue};
 pub use transport::{
     TAG_BULK_TRANSFER, TAG_BULK_TRANSFER_DONE, TAG_WINDOW_SYNC, TransportError,
