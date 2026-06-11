@@ -92,14 +92,18 @@ use std::str;
 use std::sync::{Mutex, MutexGuard, OnceLock};
 
 use heed::types::{Bytes, Str};
-use heed::{Database, Env, EnvOpenOptions, RwTxn};
+use heed::{Database, DatabaseFlags, Env, EnvOpenOptions, RwTxn};
 
 use crate::error::{Error, Result};
 use crate::types::{EdgeKind, EntityId, VaultConfig};
 
 // Contract-pinned at 32 by ARCH-0019/ARCH-0031: 25 named DBs plus headroom.
 pub const MAX_DBS: u32 = 32;
-pub const STORAGE_ABI_VERSION: u16 = 3;
+/// v4 (ONE-299): `text_postings` became a DUP_SORT database holding one
+/// posting entry per (term, entity) duplicate item, and `text_forward`
+/// records dropped the dead `tf` u32. v3 vaults fail closed at the ABI
+/// gate — there is no silent migration; rebuild the vault.
+pub const STORAGE_ABI_VERSION: u16 = 4;
 pub(crate) const STORAGE_ABI_VERSION_KEY: &[u8] = b"storage_abi_version";
 pub const STORAGE_SCHEMA_VERSION: u16 = 1;
 pub(crate) const STORAGE_SCHEMA_VERSION_KEY: &[u8] = b"schema_version";
@@ -365,6 +369,11 @@ pub struct Store {
     pub(crate) vectors: Database<Bytes, Bytes>,
     pub(crate) hnsw_neighbors: Database<Bytes, Bytes>,
     pub(crate) hnsw_meta: Database<Bytes, Bytes>,
+    /// Fielded inverted index, opened with `DUP_SORT` (storage ABI v4 /
+    /// ONE-299). Key: term bytes. Each duplicate data item is ONE posting
+    /// entry `entity_id(16) | field_count(u8) | (field_id_u16_be |
+    /// tf_u32_le)*`; LMDB keeps duplicates bytewise sorted, so items order
+    /// by entity-id prefix and an index append never reads the list.
     pub(crate) text_postings: Database<Bytes, Bytes>,
     pub(crate) text_meta: Database<Bytes, Bytes>,
     pub(crate) text_forward: Database<Bytes, Bytes>,
@@ -440,7 +449,7 @@ impl Store {
         let vectors = create_manifest_db(&env, &mut wtxn, 5)?;
         let hnsw_neighbors = create_manifest_db(&env, &mut wtxn, 6)?;
         let hnsw_meta = create_manifest_db(&env, &mut wtxn, 7)?;
-        let text_postings = create_manifest_db(&env, &mut wtxn, 8)?;
+        let text_postings = create_manifest_dupsort_db(&env, &mut wtxn, 8)?;
         let text_meta = create_manifest_db(&env, &mut wtxn, 9)?;
         let text_forward = create_manifest_db(&env, &mut wtxn, 10)?;
         let text_bm25_field_stats = create_manifest_db(&env, &mut wtxn, 11)?;
@@ -608,6 +617,24 @@ fn create_manifest_str_db(
     manifest_index: usize,
 ) -> Result<Database<Str, Bytes>> {
     Ok(env.create_database::<Str, Bytes>(wtxn, Some(DB_MANIFEST[manifest_index].name))?)
+}
+
+/// Creates/opens a manifest database with `MDB_DUPSORT` (storage ABI v4:
+/// only `text_postings`). LMDB persists database flags, so reopening an
+/// existing database created without `DUP_SORT` fails closed with
+/// `MDB_INCOMPATIBLE` — but a pre-v4 vault is already rejected earlier by
+/// the storage-ABI gate.
+fn create_manifest_dupsort_db(
+    env: &Env,
+    wtxn: &mut RwTxn<'_>,
+    manifest_index: usize,
+) -> Result<Database<Bytes, Bytes>> {
+    Ok(env
+        .database_options()
+        .types::<Bytes, Bytes>()
+        .name(DB_MANIFEST[manifest_index].name)
+        .flags(DatabaseFlags::DUP_SORT)
+        .create(wtxn)?)
 }
 
 fn validate_db_manifest_set(env: &Env, wtxn: &RwTxn<'_>) -> Result<()> {
