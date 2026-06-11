@@ -1285,6 +1285,105 @@ fn hnsw_recall_at_10_vs_bruteforce() -> Result<()> {
     Ok(())
 }
 
+/// ONE-324 AC9: recall under refresh churn. Re-puts ≥ 10% of the vault's
+/// vectors with new values through the localized symmetric refresh path,
+/// then requires recall@10 vs brute force on the UPDATED corpus to stay
+/// above the same 0.95 gate as the build-time recall test.
+#[test]
+fn hnsw_recall_at_10_after_refresh_churn() -> Result<()> {
+    const DIMENSIONS: usize = 128;
+    const NODE_COUNT: usize = 1_000;
+    const CHURN_COUNT: usize = 100; // 10% of the vault
+    const LIMIT: usize = 10;
+    const QUERY_COUNT: usize = 25;
+
+    let temp_dir = tempfile::tempdir()?;
+    let mut config = test_config();
+    config.dimensions = DIMENSIONS;
+    config.map_size = 128 * 1024 * 1024;
+    config.hnsw.m_max_0 = 64;
+    config.hnsw.ef_construction = 256;
+    config.hnsw.ef_search = 256;
+
+    let vault = Vault::open(temp_dir.path(), config)?;
+    let mut rng = StdRng::seed_from_u64(43);
+    let mut corpus = Vec::with_capacity(NODE_COUNT);
+
+    for _ in 0..NODE_COUNT {
+        let id = EntityId::now();
+        let vector: Vec<f32> = (0..DIMENSIONS)
+            .map(|_| rng.gen_range(-1.0_f32..1.0_f32))
+            .collect();
+
+        vault.put_entity(&id, 1, test_time_range(1, 1), 1, b"churn-node")?;
+        vault.put_vector(&id, &vector)?;
+        corpus.push((id, vector));
+    }
+
+    let refresh_started = Instant::now();
+    let stride = NODE_COUNT / CHURN_COUNT;
+    for churn_idx in 0..CHURN_COUNT {
+        let corpus_idx = churn_idx * stride;
+        let new_vector: Vec<f32> = (0..DIMENSIONS)
+            .map(|_| rng.gen_range(-1.0_f32..1.0_f32))
+            .collect();
+        let id = corpus[corpus_idx].0;
+        vault.put_vector(&id, &new_vector)?;
+        corpus[corpus_idx].1 = new_vector;
+    }
+    let refresh_elapsed = refresh_started.elapsed();
+
+    // The vault is API-built, so every re-put must take the localized
+    // refresh path — count stays exact and no node may be lost.
+    {
+        let rtxn = vault.store.env.read_txn()?;
+        let count_raw = vault
+            .store
+            .hnsw_meta
+            .get(&rtxn, b"count")?
+            .ok_or(Error::EntityNotFound)?;
+        let count = u64::from_le_bytes(count_raw.try_into().map_err(|_| Error::InvalidKey)?);
+        assert_eq!(count, NODE_COUNT as u64);
+    }
+
+    let mut recall_sum = 0.0_f32;
+    for query_idx in 0..QUERY_COUNT {
+        let stride = NODE_COUNT / QUERY_COUNT;
+        let query_vector = &corpus[query_idx * stride].1;
+
+        let ann = vault.search_vector(query_vector, LIMIT)?;
+        let ann_ids: HashSet<EntityId> = ann.iter().map(|item| item.id).collect();
+
+        let mut brute_force: Vec<(EntityId, f32)> = corpus
+            .iter()
+            .map(|(id, vector)| (*id, crate::distance::cosine_distance(query_vector, vector)))
+            .collect();
+        brute_force.sort_by(|left, right| {
+            left.1
+                .total_cmp(&right.1)
+                .then_with(|| left.0.as_bytes().cmp(right.0.as_bytes()))
+        });
+
+        let brute_ids: HashSet<EntityId> =
+            brute_force.iter().take(LIMIT).map(|(id, _)| *id).collect();
+        let hits = brute_ids.intersection(&ann_ids).count();
+        recall_sum += hits as f32 / LIMIT as f32;
+    }
+
+    let recall_at_10 = recall_sum / QUERY_COUNT as f32;
+    eprintln!(
+        "refresh-churn recall@10={recall_at_10:.4}, churn={CHURN_COUNT}/{NODE_COUNT}, refresh_ms={}",
+        refresh_elapsed.as_millis()
+    );
+
+    assert!(
+        recall_at_10 > 0.95,
+        "expected refresh-churn recall@10 > 0.95, got {recall_at_10:.4}"
+    );
+
+    Ok(())
+}
+
 #[test]
 fn put_query_and_delete_edges() -> Result<()> {
     let (_dir, vault) = open_test_vault();
