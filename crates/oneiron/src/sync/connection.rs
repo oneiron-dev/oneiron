@@ -918,7 +918,7 @@ mod tests {
     /// Server test double for socket-free convergence tests: one Loro doc
     /// per window, answering SyncStep1/SyncStep2 the same way the production
     /// peer does. `forget_window` simulates the lost-confirmation failure
-    /// mode the stub had no defense against: inbound UPDATEs for that window
+    /// mode the stub had no defense against: inbound UPDATE frames for that window
     /// are silently dropped, never imported.
     struct FakeServer {
         docs: HashMap<String, LoroDoc>,
@@ -1082,7 +1082,9 @@ mod tests {
 
         // ONLY now: the driver's clear_through_confirmed call (every window
         // is VV-confirmed, so delete-bearing rows are cleared too).
-        conn.queue().clear_through_confirmed(session.max_seq).unwrap();
+        conn.queue()
+            .clear_through_confirmed(session.max_seq)
+            .unwrap();
         assert_eq!(conn.queue().len().unwrap(), 0);
 
         // Deep convergence on both windows, including the tombstone.

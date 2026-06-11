@@ -1180,7 +1180,7 @@ mod tests {
             "re-bootstrap root VV must be empty — the old root doc must not survive"
         );
 
-        // Frames 1..: VV_REQUESTs for the default windows (current + prev),
+        // Frames 1..: VV_REQUEST frames for the default windows (current + prev),
         // NOT for the dropped dirty window.
         assert_eq!(frames.len(), 3, "root VV + 2 default-window VV requests");
         for frame in &frames[1..] {
