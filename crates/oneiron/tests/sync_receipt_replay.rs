@@ -227,6 +227,28 @@ fn malformed_type_120_blob_via_delta_is_quarantined_not_written() {
                 .collect();
             encode_map(entries)
         }),
+        ("free_text_in_verification", {
+            // verification is pinned EMPTY until the audit-chain proof
+            // schema exists: a populated map is an unvalidated content
+            // channel into the immutable record — the same deleted text the
+            // top-level rejection above catches must not pass when nested
+            // here (the divergence gate would then PROTECT the forged
+            // bytes).
+            let entries = receipt_body_entries(&scope_hex)
+                .into_iter()
+                .map(|(key, value)| {
+                    if key.as_str() == Some("verification") {
+                        (
+                            key,
+                            Value::Map(vec![("proof".into(), "the deleted text".into())]),
+                        )
+                    } else {
+                        (key, value)
+                    }
+                })
+                .collect();
+            encode_map(entries)
+        }),
         ("scope_missing_revision_ids", {
             let entries = receipt_body_entries(&scope_hex)
                 .into_iter()

@@ -573,9 +573,12 @@ const RECEIPT_BODY_KEYS: [&str; 10] = [
 ///   literals `user_hard_delete | gdpr_delete | policy_delete`
 ///   (`user_delete` writes no receipt, so it can never legitimately appear);
 /// * the three completion timestamps must be non-negative integers;
-/// * `verification` must be a string-keyed map (contract: "placeholder
-///   object" — its values are intentionally unconstrained, the field shape
-///   is not).
+/// * `verification` must be an EMPTY map: the contract "placeholder
+///   object" has no defined value shapes yet, the only legitimate writer
+///   produces an empty map, and any populated value would be an
+///   unvalidated content channel into the immutable record ("never
+///   retains what it erased"). Re-version this rule when the audit-chain
+///   proof feature pins real value shapes.
 #[cfg(feature = "sync")]
 pub(crate) fn validate_redaction_receipt_body(body: &[u8]) -> Result<()> {
     use rmpv::Value;
@@ -650,12 +653,19 @@ pub(crate) fn validate_redaction_receipt_body(body: &[u8]) -> Result<()> {
                         "verification must be a map",
                     ));
                 };
-                for (key, _) in fields {
-                    if key.as_str().is_none() {
-                        return Err(Error::InvalidRedactionReceiptBody(
-                            "verification keys must be strings",
-                        ));
-                    }
+                // Pinned EMPTY: the only legitimate writer produces an empty
+                // map, and any populated value would be an unvalidated
+                // content channel into the immutable, replicated,
+                // purge-exempt REDACTION_AUDIT record — the divergence gate
+                // would then PROTECT smuggled erased content (minimization:
+                // "never retains what it erased"). This arm gets VERSIONED
+                // when the audit-chain proof feature defines real value
+                // shapes (then: UUID/hash strings, ints, bools, byte caps —
+                // never free text).
+                if !fields.is_empty() {
+                    return Err(Error::InvalidRedactionReceiptBody(
+                        "verification must be empty until the audit-chain proof schema is pinned",
+                    ));
                 }
             }
             _ => unreachable!("index is drawn from RECEIPT_BODY_KEYS"),
