@@ -1,12 +1,16 @@
 //! oneiron-bench — benchmark harness skeleton.
 //!
-//! Subcommands (plan ONE-317 §9, ONE-318):
+//! Subcommands (plan ONE-317 §9, ONE-318, ONE-1120):
 //!
 //! * `analyzer throughput` — tokenization MiB/s microbench over a
 //!   built-in mixed-script corpus.
 //! * `analyzer smoke` — hand-crafted query sanity check that the
 //!   analyzer + BM25F pipe isn't inverted (exact surface matches beat
 //!   n-gram-only matches; mixed-script queries return their docs).
+//! * `vector` — ARCH-0019 §perf vector harness: seeded deterministic
+//!   corpus, insert p50 (new-node vs refresh), top-10 search p50 at
+//!   ef_search=128, recall@10 vs float32 brute force, refresh/delete
+//!   churn modes, RAM-at-index.
 //!
 //! The full MIRACL / Mr.TyDi / internal SEA judgment-set retrieval
 //! matrix lives in ONE-318; this binary only ships the skeleton and
@@ -17,6 +21,8 @@ use std::time::Instant;
 
 use oneiron::analyzer::{AnalyzerContext, MultilingualAnalyzer, Token};
 use oneiron::{EntityId, TimeRange, Vault, VaultConfig};
+
+mod vector;
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -35,6 +41,7 @@ fn main() -> ExitCode {
                 ExitCode::FAILURE
             }
         },
+        [cmd, rest @ ..] if cmd == "vector" => vector::run(rest),
         _ => {
             eprintln!("unknown invocation: {args:?}");
             print_help();
@@ -45,12 +52,17 @@ fn main() -> ExitCode {
 
 fn print_help() {
     println!(
-        "usage: oneiron-bench <command> [<subcommand>]\n\
+        "usage: oneiron-bench <command> [<subcommand>] [flags]\n\
          \n\
          commands:\n\
            analyzer              run all analyzer benches (throughput + smoke)\n\
            analyzer throughput   tokenization MiB/s microbench\n\
            analyzer smoke        hand-crafted BM25F retrieval smoke test\n\
+           vector                ARCH-0019 vector perf/recall harness\n\
+                                 [--n 1k|10k] [--dim 1024|4096] [--seed N]\n\
+                                 [--queries N] [--churn none|refresh|delete|both]\n\
+                                 [--churn-pct 1..99] [--churn-ops N]\n\
+                                 [--no-recall-assert]\n\
          \n\
          note: MIRACL / Mr.TyDi / internal SEA retrieval quality matrix\n\
          lives in ONE-318 (not yet implemented)."

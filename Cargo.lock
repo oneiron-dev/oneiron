@@ -2136,6 +2136,7 @@ name = "oneiron-bench"
 version = "0.1.0"
 dependencies = [
  "oneiron",
+ "rand 0.8.5",
  "tempfile",
 ]
 

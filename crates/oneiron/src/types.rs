@@ -513,36 +513,40 @@ pub enum EdgeKind {
 }
 
 impl EdgeKind {
-    /// Returns the default STORED edge weight for this edge kind (the legacy
-    /// `pprWeight` prior of the contract's `edgeKinds` table).
+    /// Returns the default STORED edge weight for this edge kind — the
+    /// LITERAL `pprWeight` column of the contract's `edgeKinds` table
+    /// (oneiron-docs `site/src/data/oneiron-contracts.ts`, ARCH-0019 PPR
+    /// edge-kinds priors). `None` mirrors the contract's `pprWeight: null`
+    /// rows exactly: `child_of` and `assigned_to` carry no stored-weight
+    /// prior, so callers writing such edges must choose a weight explicitly.
     ///
     /// This is NOT the PPR traversal multiplier: per-kind traversal budgets
     /// are the λ_τ table (`ppr::lambda_for_kind`), which deliberately differs
     /// from this prior for the five world-model kinds, and `ChildOf` /
     /// `AssignedTo` are never traversed by PPR regardless of the weight
     /// stored on their edges.
-    pub fn default_weight(self) -> f32 {
+    pub const fn default_weight(self) -> Option<f32> {
         match self {
-            Self::BelongsTo => 1.0,
-            Self::ParticipatesIn => 1.0,
-            Self::Attached => 0.8,
-            Self::AuthoredBy => 0.9,
-            Self::Mentions => 0.6,
-            Self::About => 0.5,
-            Self::Supports => 1.0,
-            Self::Opposes => 0.0,
-            Self::ClaimOf => 1.0,
-            Self::ScopedTo => 0.7,
-            Self::Supersedes => 0.3,
-            Self::DerivedFrom => 0.2,
-            Self::PartOf => 0.8,
-            Self::EmployedBy => 0.8,
-            Self::HasFacet => 0.7,
-            Self::InWorld => 0.7,
-            Self::FacetOf => 0.7,
-            Self::SetIn => 0.7,
-            Self::ChildOf => 1.0,
-            Self::AssignedTo => 0.8,
+            Self::BelongsTo => Some(1.0),
+            Self::ParticipatesIn => Some(1.0),
+            Self::Attached => Some(0.8),
+            Self::AuthoredBy => Some(0.9),
+            Self::Mentions => Some(0.6),
+            Self::About => Some(0.5),
+            Self::Supports => Some(1.0),
+            Self::Opposes => Some(0.0),
+            Self::ClaimOf => Some(1.0),
+            Self::ScopedTo => Some(0.7),
+            Self::Supersedes => Some(0.3),
+            Self::DerivedFrom => Some(0.2),
+            Self::PartOf => Some(0.8),
+            Self::EmployedBy => Some(0.8),
+            Self::HasFacet => Some(0.7),
+            Self::InWorld => Some(0.7),
+            Self::FacetOf => Some(0.7),
+            Self::SetIn => Some(0.7),
+            Self::ChildOf => None,
+            Self::AssignedTo => None,
         }
     }
 
@@ -1250,6 +1254,24 @@ pub(crate) fn decode_edge_value_for_kind(
     Ok(decoded)
 }
 
+/// Validates a stored edge weight against the contract-pinned range.
+///
+/// Contract: edge `weight` ∈ \[0, 1\] (oneiron-docs
+/// `site/src/data/oneiron-contracts.ts` `edgeKinds` — every non-null
+/// `pprWeight` prior lives in this closed interval, and the weight gloss pins
+/// the stored range). NaN, ±infinity, and finite values outside \[0, 1\] are
+/// rejected with the typed [`Error::InvalidEdgeWeight`] on EVERY write path
+/// (public batch ops and sync replay materialization alike); the read path is
+/// unchanged.
+///
+/// [`Error::InvalidEdgeWeight`]: crate::error::Error::InvalidEdgeWeight
+pub(crate) fn validate_edge_weight(weight: f32) -> crate::error::Result<()> {
+    if !(0.0..=1.0).contains(&weight) {
+        return Err(crate::error::Error::InvalidEdgeWeight { value: weight });
+    }
+    Ok(())
+}
+
 pub(crate) fn encode_edge_value(
     kind: EdgeKind,
     weight: f32,
@@ -1257,9 +1279,7 @@ pub(crate) fn encode_edge_value(
     vad: Vad,
     provenance: Option<EdgeProvenanceFlags>,
 ) -> crate::error::Result<Vec<u8>> {
-    if !weight.is_finite() {
-        return Err(crate::error::Error::InvalidEdgeWeight { value: weight });
-    }
+    validate_edge_weight(weight)?;
     if let Some((component, value)) = vad.invalid_component() {
         return Err(crate::error::Error::InvalidVad { component, value });
     }
@@ -1307,6 +1327,12 @@ pub struct PackStats {
     pub query_time_us: u64,
     pub entities_hydrated: usize,
     pub neighbors_hydrated: usize,
+    /// CLAIM records silently excluded by the D19 read-path status gate
+    /// (ARCH-0003: surface only `appr ∈ {auto, approved}` ∧ `life = active`
+    /// ∧ `stale = false`) or by the fail-closed type-0 body decode, across
+    /// the pipeline stage and pack hydration (results + neighbors). A claim
+    /// suppressed in both stages counts once per stage.
+    pub claims_suppressed: usize,
 }
 
 /// A fully hydrated context pack ready for serialization or programmatic use.

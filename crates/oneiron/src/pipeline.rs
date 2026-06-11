@@ -4,12 +4,16 @@ use heed::types::Bytes;
 use heed::{Database, RoTxn};
 
 use crate::Vault;
-use crate::batch::{EntityMetadataHeader, LONG_INTERVAL_THRESHOLD_SECS};
+use crate::batch::{
+    ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader, LONG_INTERVAL_THRESHOLD_SECS,
+};
+use crate::claim::{ClaimBody, claim_surfaceable};
 use crate::error::{Error, Result};
 use crate::fusion;
 use crate::store::Store;
 use crate::types::{
-    ENTITY_ID_LEN, EntityId, ScoredEntity, TemporalAnchorMode, TemporalGranularity, TimeRange,
+    ENTITY_ID_LEN, ENTITY_TYPE_CLAIM, EntityId, ScoredEntity, TemporalAnchorMode,
+    TemporalGranularity, TimeRange,
 };
 
 const DEFAULT_RESULT_LIMIT: usize = 20;
@@ -108,6 +112,33 @@ struct PipelineFilterConfig<'a> {
 #[derive(Default)]
 struct EntityMetadataCache {
     entries: HashMap<EntityId, Option<EntityMetadata>>,
+}
+
+/// Per-run memo for the D19 claim status gate.
+///
+/// `None` = the type-0 record is suppressed (failed the
+/// [`claim_surfaceable`] predicate, or its body bytes failed the pinned
+/// structural decode — fail-closed exclusion, AC 7). `Some(body)` = the
+/// claim passed the gate; the decoded body is retained so the context-pack
+/// hydrator can project fields WITHOUT a second MessagePack decode (AC 9).
+/// Non-type-0 entities never enter this map (their bodies are opaque, AC 5).
+#[derive(Default)]
+struct ClaimStatusGateCache {
+    decisions: HashMap<EntityId, Option<ClaimBody>>,
+}
+
+/// Detailed pipeline output for the context-pack path.
+///
+/// `claim_bodies` carries every claim body decoded (once) by the D19 gate
+/// that PASSED it; `claims_suppressed` counts the unique type-0 records the
+/// gate excluded (status-failed or undecodable). Bodies were decoded under
+/// the pipeline's read transaction; the context pack hydrates under a fresh
+/// transaction, so reusing them keeps projection consistent with the gate
+/// decision (the same seam the score/hydration split already has).
+pub(crate) struct PipelineOutput {
+    pub(crate) scores: Vec<ScoredEntity>,
+    pub(crate) claim_bodies: HashMap<EntityId, ClaimBody>,
+    pub(crate) claims_suppressed: usize,
 }
 
 impl EntityMetadataCache {
@@ -362,6 +393,13 @@ impl<'a> PipelineBuilder<'a> {
     }
 
     pub fn run(self) -> Result<Vec<ScoredEntity>> {
+        Ok(self.run_for_pack()?.scores)
+    }
+
+    /// Executes the pipeline and returns the detailed [`PipelineOutput`]
+    /// the context-pack path consumes (gated scores + the claim bodies the
+    /// D19 gate already decoded + the suppression count).
+    pub(crate) fn run_for_pack(self) -> Result<PipelineOutput> {
         // Resolve the rank profile before anything else: an invalid
         // profile is a caller bug and fails closed even when no text
         // search would consume it on this run.
@@ -374,10 +412,11 @@ impl<'a> PipelineBuilder<'a> {
             self.vault.ensure_text_index_trusted()?;
         }
 
-        let (scores, deferred_ppr_cache_writes) = {
+        let (scores, claim_gate, deferred_ppr_cache_writes) = {
             let mut ranked_lists = Vec::new();
             let rtxn = self.vault.store.env.read_txn()?;
             let mut metadata_cache = EntityMetadataCache::default();
+            let mut claim_gate = ClaimStatusGateCache::default();
             let mut deferred_ppr_cache_writes = Vec::new();
 
             if let Some((query_vector, limit)) = &self.vector_search {
@@ -440,10 +479,26 @@ impl<'a> PipelineBuilder<'a> {
             }
 
             if ranked_lists.is_empty() {
-                return Ok(Vec::new());
+                return Ok(PipelineOutput {
+                    scores: Vec::new(),
+                    claim_bodies: HashMap::new(),
+                    claims_suppressed: 0,
+                });
             }
 
             let mut scores = fusion::rrf_fuse(&ranked_lists, RRF_K);
+
+            // D19 claim status gate, first application: covers the fused
+            // candidates of all five channels (text/vector/phonetic/
+            // temporal/PPR) AND runs BEFORE expand_ppr implicit seed
+            // selection, so a dead claim never seeds the expansion.
+            apply_claim_status_gate(
+                &mut scores,
+                &self.vault.store,
+                &rtxn,
+                &mut metadata_cache,
+                &mut claim_gate,
+            )?;
 
             if let Some((explicit_seeds, depth)) = &self.ppr_expand {
                 let mut seen = HashSet::<EntityId>::new();
@@ -467,7 +522,7 @@ impl<'a> PipelineBuilder<'a> {
                 if !seeds.is_empty() {
                     seeds.sort_unstable_by(|a, b| a.as_bytes().cmp(b.as_bytes()));
 
-                    let (ppr_results, deferred_cache_write) =
+                    let (mut ppr_results, deferred_cache_write) =
                         crate::ppr::ppr_query_in_txn_with_deferred_cache(
                             &self.vault.store,
                             &rtxn,
@@ -478,6 +533,20 @@ impl<'a> PipelineBuilder<'a> {
                     if let Some(deferred_cache_write) = deferred_cache_write {
                         deferred_ppr_cache_writes.push(deferred_cache_write);
                     }
+                    // D19 claim status gate, second application: PPR
+                    // expansion walks the graph and can pull dead claims
+                    // back into the candidate set — gate the expansion
+                    // list before fusing it (memoized; claims already
+                    // checked above cost nothing). Traversal THROUGH a
+                    // dead claim node stays untouched in v1: only the
+                    // result surface is gated.
+                    apply_claim_status_gate(
+                        &mut ppr_results,
+                        &self.vault.store,
+                        &rtxn,
+                        &mut metadata_cache,
+                        &mut claim_gate,
+                    )?;
                     scores = fusion::rrf_fuse(&[scores, ppr_results], RRF_K);
                 }
             }
@@ -528,12 +597,89 @@ impl<'a> PipelineBuilder<'a> {
 
             fusion::sort_scored_entities_desc(&mut scores);
             scores.truncate(self.result_limit);
-            (scores, deferred_ppr_cache_writes)
+            (scores, claim_gate, deferred_ppr_cache_writes)
         };
 
         crate::ppr::flush_deferred_ppr_cache_writes(&self.vault.store, &deferred_ppr_cache_writes)?;
-        Ok(scores)
+
+        let mut claim_bodies = HashMap::new();
+        let mut claims_suppressed = 0_usize;
+        for (id, decision) in claim_gate.decisions {
+            match decision {
+                Some(body) => {
+                    claim_bodies.insert(id, body);
+                }
+                None => claims_suppressed += 1,
+            }
+        }
+
+        Ok(PipelineOutput {
+            scores,
+            claim_bodies,
+            claims_suppressed,
+        })
     }
+}
+
+/// D19 read-path status gate (its own pipeline stage; ARCH-0003 retrieval
+/// rule, ARCH-0004 §H items 1/2/4).
+///
+/// Removes from `scores` every type-0 (CLAIM) record that fails
+/// [`claim_surfaceable`] — and, fail-closed, every type-0 record whose body
+/// is missing or does not decode as the pinned CLAIM ABI (a raw-written
+/// non-map body, missing `appr`/`life`, …) — so excluded claims never
+/// consume `result_limit` slots (the gate runs before sort/truncate).
+/// Exclusion is silent: no error, the claim is dropped and memoized as
+/// suppressed in `gate` (surfaced to callers as
+/// `PackStats::claims_suppressed`). Entities of every OTHER type byte pass
+/// through untouched — their bodies are opaque at the storage layer. The
+/// body is decoded at most ONCE per entity per run; passing bodies are kept
+/// in `gate` for context-pack field projection.
+fn apply_claim_status_gate(
+    scores: &mut Vec<ScoredEntity>,
+    store: &Store,
+    rtxn: &RoTxn<'_>,
+    metadata_cache: &mut EntityMetadataCache,
+    gate: &mut ClaimStatusGateCache,
+) -> Result<()> {
+    let mut kept = Vec::with_capacity(scores.len());
+
+    for scored in scores.iter().copied() {
+        // Entities without a parseable envelope are not a claim-status
+        // decision; `apply_filters` drops them downstream exactly as before.
+        let Some(meta) = metadata_cache.get(store, rtxn, &scored.id)? else {
+            kept.push(scored);
+            continue;
+        };
+        if meta.entity_type != ENTITY_TYPE_CLAIM {
+            kept.push(scored);
+            continue;
+        }
+
+        if let Some(decision) = gate.decisions.get(&scored.id) {
+            if decision.is_some() {
+                kept.push(scored);
+            }
+            continue;
+        }
+
+        // Read path allows reserved `edge.*` predicates so stored
+        // provenance Claims gate on their own appr/life/stale like any
+        // other claim instead of failing the decode.
+        let decision = store
+            .entities
+            .get(rtxn, scored.id.as_bytes())?
+            .and_then(|raw| raw.get(ENTITY_METADATA_HEADER_LEN..))
+            .and_then(|body| crate::claim::decode_claim_body(body, true).ok())
+            .filter(claim_surfaceable);
+        if decision.is_some() {
+            kept.push(scored);
+        }
+        gate.decisions.insert(scored.id, decision);
+    }
+
+    *scores = kept;
+    Ok(())
 }
 
 fn execute_phonetic(
@@ -2440,6 +2586,491 @@ mod tests {
             "rejected put must not write an entity record"
         );
 
+        Ok(())
+    }
+
+    // ── D19 read-path claim status gate (ONE-1111) ─────────────────
+
+    use crate::claim::{ClaimApprovalStatus, ClaimLifecycleStatus, ClaimSubject};
+    use crate::types::EdgeKind;
+
+    fn claim_body_bytes(
+        appr: ClaimApprovalStatus,
+        life: ClaimLifecycleStatus,
+        stale: bool,
+    ) -> Vec<u8> {
+        let mut body = ClaimBody::new(
+            "test.status",
+            ClaimSubject::Entity(EntityId::from_bytes([0x7C; 16]).expect("valid id")),
+            rmpv::Value::from("v"),
+            0.9,
+            appr,
+            life,
+        );
+        body.stale = stale;
+        crate::claim::encode_claim_body(&body).expect("encode claim body")
+    }
+
+    fn put_status_claim(
+        vault: &Vault,
+        id: EntityId,
+        text: &str,
+        appr: ClaimApprovalStatus,
+        life: ClaimLifecycleStatus,
+        stale: bool,
+    ) -> Result<()> {
+        vault
+            .batch()
+            .put(
+                &id,
+                ENTITY_TYPE_CLAIM,
+                TimeRange { start: 1, end: 1 },
+                1,
+                &claim_body_bytes(appr, life, stale),
+            )
+            .text(&id, &[("body", text)])
+            .commit()
+    }
+
+    /// Raw-writes an entity record (25-byte envelope + `body`), bypassing
+    /// every write-path validation — the AC 7 corruption fixture.
+    fn overwrite_entity_record(
+        vault: &Vault,
+        id: &EntityId,
+        entity_type: u8,
+        body: &[u8],
+    ) -> Result<()> {
+        let mut raw = Vec::with_capacity(ENTITY_METADATA_HEADER_LEN + body.len());
+        raw.push(entity_type);
+        raw.extend_from_slice(&1_u64.to_be_bytes());
+        raw.extend_from_slice(&1_u64.to_be_bytes());
+        raw.extend_from_slice(&1_u64.to_be_bytes());
+        raw.extend_from_slice(body);
+        vault.with_write_txn(|wtxn| {
+            vault.store.entities.put(wtxn, id.as_bytes(), &raw)?;
+            Ok(())
+        })
+    }
+
+    /// AC 1 / AC 3 / AC 4 — the literal status table through the text
+    /// channel: ONLY `appr ∈ {auto, approved}` ∧ `life = active` ∧
+    /// `stale ∈ {absent, false}` surfaces. The surfaceable rows are written
+    /// through `ClaimBody::new` (stale ABSENT on disk), so their presence
+    /// also pins "absence alone must NOT exclude".
+    #[test]
+    fn claim_status_gate_pins_the_literal_status_table() -> Result<()> {
+        use ClaimApprovalStatus as A;
+        use ClaimLifecycleStatus as L;
+
+        let (_dir, vault) = open_test_vault();
+
+        let cases: &[(u8, A, L, bool, bool)] = &[
+            // (id byte, appr, life, stale, must_surface)
+            (10, A::Auto, L::Active, false, true),
+            (11, A::Approved, L::Active, false, true),
+            (12, A::Proposed, L::Active, false, false),
+            (13, A::Rejected, L::Active, false, false),
+            (14, A::Auto, L::Superseded, false, false),
+            (15, A::Auto, L::Retracted, false, false),
+            (16, A::Auto, L::Active, true, false),
+        ];
+
+        for (byte, appr, life, stale, _) in cases {
+            put_status_claim(
+                &vault,
+                entity_id(*byte),
+                "statusneedle",
+                *appr,
+                *life,
+                *stale,
+            )?;
+        }
+
+        let results = vault.query().search_text("statusneedle", 20).run()?;
+        let surfaced = to_score_map(&results);
+
+        for (byte, appr, life, stale, must_surface) in cases {
+            assert_eq!(
+                surfaced.contains_key(&entity_id(*byte)),
+                *must_surface,
+                "appr={appr:?} life={life:?} stale={stale} must_surface={must_surface}"
+            );
+        }
+        assert_eq!(results.len(), 2, "exactly the two surfaceable claims");
+        Ok(())
+    }
+
+    /// AC 2 — the gate covers all five channels: one claim is reachable via
+    /// text, vector, phonetic, temporal, and PPR; after `retract_claim`
+    /// (which re-puts the body ONLY — every index row survives) it must be
+    /// absent from every channel.
+    #[test]
+    fn claim_status_gate_covers_all_five_channels() -> Result<()> {
+        let (_dir, vault) = open_test_vault();
+
+        let anchor = 1_000_000_u64;
+        let claim = entity_id(20);
+        let seed = entity_id(21);
+
+        vault
+            .batch()
+            .put(
+                &claim,
+                ENTITY_TYPE_CLAIM,
+                TimeRange {
+                    start: anchor,
+                    end: anchor,
+                },
+                anchor,
+                &claim_body_bytes(
+                    ClaimApprovalStatus::Auto,
+                    ClaimLifecycleStatus::Active,
+                    false,
+                ),
+            )
+            .text(&claim, &[("body", "gateneedle")])
+            .vector(&claim, &[0.9, 0.1, 0.0, 0.0])
+            .phonetic(&claim, &["KTNTL"])
+            .commit()?;
+
+        // PPR channel: a TURN seed with a semantic edge onto the claim.
+        vault.put_entity(
+            &seed,
+            1,
+            TimeRange {
+                start: anchor,
+                end: anchor,
+            },
+            anchor,
+            b"payload",
+        )?;
+        vault.put_edge(&seed, EdgeKind::Supports, &claim, 0.9)?;
+
+        type ChannelQuery = Box<dyn Fn(&Vault) -> Result<Vec<ScoredEntity>>>;
+        let channels: Vec<(&str, ChannelQuery)> = vec![
+            (
+                "text",
+                Box::new(|v: &Vault| v.query().search_text("gateneedle", 10).run()),
+            ),
+            (
+                "vector",
+                Box::new(|v: &Vault| v.query().search_vector(&[0.9, 0.1, 0.0, 0.0], 10).run()),
+            ),
+            (
+                "phonetic",
+                Box::new(|v: &Vault| v.query().search_phonetic(&["KTNTL"]).run()),
+            ),
+            (
+                "temporal",
+                Box::new(move |v: &Vault| {
+                    v.query()
+                        .search_temporal(anchor - 100, anchor + 100, 10)
+                        .run()
+                }),
+            ),
+            (
+                "ppr",
+                Box::new(move |v: &Vault| v.query().search_ppr(&[seed], 2).run()),
+            ),
+        ];
+
+        for (name, query) in &channels {
+            assert!(
+                to_score_map(&query(&vault)?).contains_key(&claim),
+                "channel `{name}` must surface the active claim"
+            );
+        }
+
+        vault.retract_claim(&claim, anchor + 500)?;
+
+        for (name, query) in &channels {
+            assert!(
+                !to_score_map(&query(&vault)?).contains_key(&claim),
+                "channel `{name}` must NOT surface the retracted claim"
+            );
+        }
+        Ok(())
+    }
+
+    /// AC 1 — `supersede_claim` closes the OLD claim only: the new claim
+    /// keeps surfacing, the superseded one disappears (indexes untouched).
+    #[test]
+    fn superseded_claim_stops_surfacing_but_successor_does_not() -> Result<()> {
+        let (_dir, vault) = open_test_vault();
+
+        let old = entity_id(30);
+        let new = entity_id(31);
+        put_status_claim(
+            &vault,
+            old,
+            "supersedeneedle",
+            ClaimApprovalStatus::Auto,
+            ClaimLifecycleStatus::Active,
+            false,
+        )?;
+        put_status_claim(
+            &vault,
+            new,
+            "supersedeneedle",
+            ClaimApprovalStatus::Auto,
+            ClaimLifecycleStatus::Active,
+            false,
+        )?;
+
+        vault.supersede_claim(&new, &old, 2_000)?;
+
+        let surfaced = to_score_map(&vault.query().search_text("supersedeneedle", 10).run()?);
+        assert!(!surfaced.contains_key(&old), "superseded claim must hide");
+        assert!(surfaced.contains_key(&new), "successor must keep surfacing");
+        Ok(())
+    }
+
+    /// AC 5 — non-type-0 entities are NEVER status-gated: their bodies are
+    /// opaque, even when they happen to spell poisonous claim-status keys
+    /// or are not MessagePack at all.
+    #[test]
+    fn non_claim_entities_are_never_status_gated() -> Result<()> {
+        let (_dir, vault) = open_test_vault();
+
+        // TURN (type 1) whose body SAYS rejected/retracted/stale.
+        let poison = entity_id(40);
+        let mut poison_body = Vec::new();
+        rmpv::encode::write_value(
+            &mut poison_body,
+            &rmpv::Value::Map(vec![
+                (rmpv::Value::from("appr"), rmpv::Value::from("rejected")),
+                (rmpv::Value::from("life"), rmpv::Value::from("retracted")),
+                (rmpv::Value::from("stale"), rmpv::Value::Boolean(true)),
+            ]),
+        )
+        .expect("msgpack encode");
+        vault
+            .batch()
+            .put(&poison, 1, TimeRange { start: 1, end: 1 }, 1, &poison_body)
+            .text(&poison, &[("body", "opaqueneedle")])
+            .commit()?;
+
+        // PERSON-band entity (type 4) whose body is not MessagePack at all.
+        let opaque = entity_id(41);
+        vault
+            .batch()
+            .put(&opaque, 4, TimeRange { start: 1, end: 1 }, 1, b"payload")
+            .text(&opaque, &[("body", "opaqueneedle")])
+            .commit()?;
+
+        let surfaced = to_score_map(&vault.query().search_text("opaqueneedle", 10).run()?);
+        assert!(surfaced.contains_key(&poison));
+        assert!(surfaced.contains_key(&opaque));
+        Ok(())
+    }
+
+    /// AC 7 — fail-closed hydration on the pipeline: raw-written type-0
+    /// records whose bodies are not the pinned CLAIM ABI never surface
+    /// (silent exclusion, not an error).
+    #[test]
+    fn claim_status_gate_fails_closed_on_undecodable_bodies() -> Result<()> {
+        let (_dir, vault) = open_test_vault();
+
+        let control = entity_id(50);
+        put_status_claim(
+            &vault,
+            control,
+            "rawneedle",
+            ClaimApprovalStatus::Auto,
+            ClaimLifecycleStatus::Active,
+            false,
+        )?;
+
+        // Three corrupt type-0 records, each text-indexed before the raw
+        // overwrite (retraction-style: indexes survive, body goes bad).
+        let non_map = entity_id(51);
+        let missing_appr = entity_id(52);
+        let empty_body = entity_id(53);
+        for id in [non_map, missing_appr, empty_body] {
+            put_status_claim(
+                &vault,
+                id,
+                "rawneedle",
+                ClaimApprovalStatus::Auto,
+                ClaimLifecycleStatus::Active,
+                false,
+            )?;
+        }
+
+        // (a) body is MessagePack but not a map;
+        let mut junk = Vec::new();
+        rmpv::encode::write_value(&mut junk, &rmpv::Value::from("junk")).expect("msgpack encode");
+        overwrite_entity_record(&vault, &non_map, ENTITY_TYPE_CLAIM, &junk)?;
+
+        // (b) body is a map but missing required `appr`;
+        let mut no_appr = Vec::new();
+        rmpv::encode::write_value(
+            &mut no_appr,
+            &rmpv::Value::Map(vec![
+                (rmpv::Value::from("pred"), rmpv::Value::from("test.bad")),
+                (rmpv::Value::from("val"), rmpv::Value::from("v")),
+                (rmpv::Value::from("conf"), rmpv::Value::F32(0.5)),
+                (
+                    rmpv::Value::from("subj"),
+                    rmpv::Value::Binary(vec![0x7C; 16]),
+                ),
+                (rmpv::Value::from("life"), rmpv::Value::from("active")),
+            ]),
+        )
+        .expect("msgpack encode");
+        overwrite_entity_record(&vault, &missing_appr, ENTITY_TYPE_CLAIM, &no_appr)?;
+
+        // (c) body missing entirely (bare 25-byte envelope).
+        overwrite_entity_record(&vault, &empty_body, ENTITY_TYPE_CLAIM, &[])?;
+
+        let results = vault.query().search_text("rawneedle", 10).run()?;
+        let surfaced = to_score_map(&results);
+        assert!(surfaced.contains_key(&control), "control claim surfaces");
+        assert_eq!(results.len(), 1, "all three corrupt records suppressed");
+        Ok(())
+    }
+
+    /// AC 8 — excluded claims never consume `result_limit` slots: the gate
+    /// runs before sort/truncate, so retracting the TOP-ranked claim frees
+    /// its slot for the next survivor.
+    #[test]
+    fn excluded_claims_do_not_consume_result_limit_slots() -> Result<()> {
+        let (_dir, vault) = open_test_vault();
+
+        let c1 = entity_id(60);
+        let c2 = entity_id(61);
+        let c3 = entity_id(62);
+        for (id, text) in [
+            (c1, "alpha alpha alpha"),
+            (c2, "alpha alpha"),
+            (c3, "alpha"),
+        ] {
+            put_status_claim(
+                &vault,
+                id,
+                text,
+                ClaimApprovalStatus::Auto,
+                ClaimLifecycleStatus::Active,
+                false,
+            )?;
+        }
+
+        // Establish the BM25 rank order this test relies on.
+        let before = vault.query().search_text("alpha", 10).run()?;
+        let before_ids: Vec<EntityId> = before.iter().map(|s| s.id).collect();
+        assert_eq!(before_ids, vec![c1, c2, c3], "expected rank order");
+
+        vault.retract_claim(&c1, 2_000)?;
+
+        let after = vault.query().search_text("alpha", 10).limit(2).run()?;
+        let after_ids: Vec<EntityId> = after.iter().map(|s| s.id).collect();
+        assert_eq!(
+            after_ids,
+            vec![c2, c3],
+            "retracted top claim must not consume a result_limit slot"
+        );
+        Ok(())
+    }
+
+    /// Pinned decision — the gate runs BEFORE expand_ppr implicit seed
+    /// selection: a retracted claim never seeds the expansion, so nothing
+    /// reachable only through its seeding can surface.
+    #[test]
+    fn dead_claim_never_seeds_ppr_expansion() -> Result<()> {
+        let (_dir, vault) = open_test_vault();
+
+        let r = entity_id(70);
+        let x = entity_id(71);
+        put_status_claim(
+            &vault,
+            r,
+            "seedneedle",
+            ClaimApprovalStatus::Auto,
+            ClaimLifecycleStatus::Active,
+            false,
+        )?;
+        vault.put_entity(&x, 4, TimeRange { start: 1, end: 1 }, 1, b"payload")?;
+        vault.put_edge(&r, EdgeKind::Supports, &x, 0.9)?;
+
+        // Control: while active, the claim seeds the expansion and pulls in
+        // its neighborhood.
+        let before = to_score_map(
+            &vault
+                .query()
+                .search_text("seedneedle", 10)
+                .expand_ppr(&[], 2)
+                .run()?,
+        );
+        assert!(before.contains_key(&r));
+        assert!(
+            before.contains_key(&x),
+            "active claim must seed expansion and surface its neighbor"
+        );
+
+        vault.retract_claim(&r, 2_000)?;
+
+        let after = vault
+            .query()
+            .search_text("seedneedle", 10)
+            .expand_ppr(&[], 2)
+            .run()?;
+        assert!(
+            after.is_empty(),
+            "retracted claim must not seed expansion; got {after:?}"
+        );
+        Ok(())
+    }
+
+    /// Pinned decision — claims PULLED IN by expand_ppr are gated too: the
+    /// expansion list is status-gated before fusion, so a dead claim found
+    /// through the graph walk cannot surface.
+    #[test]
+    fn expansion_results_are_status_gated() -> Result<()> {
+        let (_dir, vault) = open_test_vault();
+
+        let a = entity_id(80);
+        let dead = entity_id(81);
+        let live = entity_id(82);
+        vault
+            .batch()
+            .put(&a, 1, TimeRange { start: 1, end: 1 }, 1, b"payload")
+            .text(&a, &[("body", "expneedle")])
+            .commit()?;
+        put_status_claim(
+            &vault,
+            dead,
+            "deadclaim",
+            ClaimApprovalStatus::Auto,
+            ClaimLifecycleStatus::Retracted,
+            false,
+        )?;
+        put_status_claim(
+            &vault,
+            live,
+            "liveclaim",
+            ClaimApprovalStatus::Auto,
+            ClaimLifecycleStatus::Active,
+            false,
+        )?;
+        vault.put_edge(&a, EdgeKind::Supports, &dead, 0.9)?;
+        vault.put_edge(&a, EdgeKind::Supports, &live, 0.9)?;
+
+        let surfaced = to_score_map(
+            &vault
+                .query()
+                .search_text("expneedle", 10)
+                .expand_ppr(&[], 2)
+                .run()?,
+        );
+        assert!(surfaced.contains_key(&a), "seed turn surfaces");
+        assert!(
+            surfaced.contains_key(&live),
+            "expansion must surface the ACTIVE claim (control: expansion can surface claims)"
+        );
+        assert!(
+            !surfaced.contains_key(&dead),
+            "expansion-introduced retracted claim must be gated"
+        );
         Ok(())
     }
 }
