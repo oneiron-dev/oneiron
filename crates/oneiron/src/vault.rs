@@ -1653,7 +1653,9 @@ impl Vault {
             // manipulation. The guarded write keeps every-boot replay a
             // read-only no-op once the marker exists.
             if self.store.sync_state.get(&wtxn, &marker_key)?.is_none() {
-                self.store.sync_state.put(&mut wtxn, &marker_key, &marker_value)?;
+                self.store
+                    .sync_state
+                    .put(&mut wtxn, &marker_key, &marker_value)?;
                 wtxn.commit()?;
             }
             return Ok(ReplayedTombstoneOutcome::HardPurged {
@@ -1666,7 +1668,9 @@ impl Vault {
         // Receiver-side `dt:` local hard-delete marker (pinned: presence-only
         // value, GLOBAL key, permanent, no GC) — written in the SAME txn as
         // the purge so local delete truth survives CRDT-map manipulation.
-        self.store.sync_state.put(&mut wtxn, &marker_key, &marker_value)?;
+        self.store
+            .sync_state
+            .put(&mut wtxn, &marker_key, &marker_value)?;
         // ARCH-0038 DELETE: "The derived edge flag follows the Claim" — the
         // subject edge is refreshed in the SAME transaction as the purge.
         if let Some(captured) = &captured {

@@ -196,8 +196,14 @@ mod tests {
         // Value reads: Binary bytes pass through; present non-Binary reads
         // as EMPTY (decodes HARD); absent is None.
         assert_eq!(map_get_tombstone_value(&map, "bin").unwrap(), b"payload");
-        assert_eq!(map_get_tombstone_value(&map, "text").unwrap(), Vec::<u8>::new());
-        assert_eq!(map_get_tombstone_value(&map, "child").unwrap(), Vec::<u8>::new());
+        assert_eq!(
+            map_get_tombstone_value(&map, "text").unwrap(),
+            Vec::<u8>::new()
+        );
+        assert_eq!(
+            map_get_tombstone_value(&map, "child").unwrap(),
+            Vec::<u8>::new()
+        );
         assert!(map_get_tombstone_value(&map, "missing").is_none());
 
         // Iterator: every key visited, non-Binary as the empty slice.

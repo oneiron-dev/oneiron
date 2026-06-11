@@ -520,7 +520,9 @@ fn make_entity_blob(entity_type: u8, learned_at: u64, data: &[u8]) -> Vec<u8> {
 }
 
 fn dt_marker(vault: &Vault, id: &EntityId) -> Option<Vec<u8>> {
-    vault.sync_state_get(&format!("dt:{}", id.to_hex())).unwrap()
+    vault
+        .sync_state_get(&format!("dt:{}", id.to_hex()))
+        .unwrap()
 }
 
 /// Fail-closed remat (boot shape): a peer ships a STRING tombstone and
@@ -667,7 +669,10 @@ fn replayed_hard_tombstone_writes_dt_marker_soft_does_not() {
     let (_dir_b, vault_b) = open_vault();
     let hard_id = EntityId::now();
     let soft_id = EntityId::now();
-    for (id, body) in [(&hard_id, b"hard-target".as_slice()), (&soft_id, b"soft-target")] {
+    for (id, body) in [
+        (&hard_id, b"hard-target".as_slice()),
+        (&soft_id, b"soft-target"),
+    ] {
         vault_b
             .put_entity(id, 1, time_range(LEARNED_AT), LEARNED_AT, body)
             .unwrap();
@@ -772,7 +777,11 @@ fn dt_marker_blocks_resurrection_after_hostile_tombstone_removal() {
 
     // The manipulation really merged…
     assert!(
-        window_b.doc.get_map("tombstones").get(&id.to_hex()).is_none(),
+        window_b
+            .doc
+            .get_map("tombstones")
+            .get(&id.to_hex())
+            .is_none(),
         "the hostile tombstone removal must win the map merge for this test"
     );
     // …but Observer B refused to re-materialize (dt: gate).

@@ -403,9 +403,14 @@ fn rejected_soft_over_effective_hard_sweeps_readded_carrier_edges() {
 
     // A peer that missed the delete re-adds a carrier edge.
     let edge_key = format_edge_key(&id, EdgeKind::Supports, &nbr);
-    let edge_val =
-        encode_edge_value_for_crdt(EdgeKind::Supports, 0.5, LEARNED_AT, Some(Vad::NEUTRAL), None)
-            .unwrap();
+    let edge_val = encode_edge_value_for_crdt(
+        EdgeKind::Supports,
+        0.5,
+        LEARNED_AT,
+        Some(Vad::NEUTRAL),
+        None,
+    )
+    .unwrap();
     doc.get_map("edges")
         .insert(edge_key.as_str(), edge_val.as_slice())
         .unwrap();
