@@ -2103,6 +2103,7 @@ dependencies = [
  "heed",
  "icu_casemap",
  "icu_normalizer",
+ "icu_properties",
  "icu_segmenter",
  "jieba-rs",
  "libc",
