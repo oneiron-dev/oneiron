@@ -201,12 +201,12 @@ impl MultilingualAnalyzer {
             ScriptClass::Common | ScriptClass::Other => {
                 // Pure-Common runs (punctuation, digits, emoji) go through
                 // ICU4X so numerics become Surface tokens; the ICU lane's
-                // non-word segments are additionally scanned for
-                // extended-pictographic graphemes, emitting one Surface
-                // token per grapheme cluster (ARCH-0031 dispatch row
-                // "Emoji / unknown → Grapheme per token", ONE-1118).
-                // Remaining non-word segments (punctuation, whitespace)
-                // stay dropped.
+                // non-word segments are additionally scanned for emoji
+                // grapheme clusters (pictographics, flags, keycaps),
+                // emitting one Surface token per grapheme cluster (ARCH-0031
+                // dispatch row "Emoji / unknown → Grapheme per token",
+                // ONE-1118). Remaining non-word segments (punctuation,
+                // whitespace) stay dropped.
                 icu::analyze(slice, offset_base, position_base, out)
             }
         }
@@ -576,6 +576,40 @@ mod tests {
         let mut out = Vec::new();
         a.analyze("123 🦀 ...!!!", &AnalyzerContext::for_index(), &mut out);
         assert_eq!(surface_terms(&out), vec!["123", "🦀"]);
+    }
+
+    /// End-to-end through the full router: a regional-indicator flag and a
+    /// keycap reach the emoji lane (Common runs → ICU) and each emits exactly
+    /// one Surface token; two adjacent flags split per UAX #29. Guards the
+    /// "silent under-indexing" risk of the old Extended_Pictographic-only
+    /// gate against the real routing path, not just the lane in isolation.
+    #[test]
+    fn flags_and_keycaps_round_trip_through_router() {
+        let a = MultilingualAnalyzer::portable();
+
+        let flag = "\u{1F1FA}\u{1F1E6}"; // 🇺🇦
+        let mut out = Vec::new();
+        a.analyze(flag, &AnalyzerContext::for_index(), &mut out);
+        assert_eq!(
+            surface_terms(&out),
+            vec![flag],
+            "🇺🇦 must index as one token"
+        );
+
+        let keycap = "\u{0031}\u{FE0F}\u{20E3}"; // 1️⃣
+        let mut out = Vec::new();
+        a.analyze(keycap, &AnalyzerContext::for_index(), &mut out);
+        assert_eq!(
+            surface_terms(&out),
+            vec![keycap],
+            "1️⃣ must index as one token"
+        );
+
+        let japan = "\u{1F1EF}\u{1F1F5}"; // 🇯🇵
+        let two = format!("{flag}{japan}");
+        let mut out = Vec::new();
+        a.analyze(&two, &AnalyzerContext::for_index(), &mut out);
+        assert_eq!(surface_terms(&out), vec![flag, japan], "🇺🇦🇯🇵 → two flags");
     }
 
     #[test]

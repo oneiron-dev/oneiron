@@ -9,10 +9,10 @@
 //!
 //! The wrapper returns `Surface` tokens with byte offsets into the caller's
 //! original UTF-8 (`offset_base + local`), one position per word-like
-//! segment. Non-word-like segments are scanned for extended-pictographic
-//! grapheme clusters via [`emoji::emit_pictographic_graphemes`] (ARCH-0031
-//! dispatch row "Emoji / unknown → Grapheme per token"); whatever remains
-//! (whitespace, punctuation) is skipped.
+//! segment. Non-word-like segments are scanned for emoji grapheme clusters
+//! via [`emoji::emit_emoji_graphemes`] (ARCH-0031 dispatch row
+//! "Emoji / unknown → Grapheme per token"); whatever remains (whitespace,
+//! punctuation) is skipped.
 
 use icu_segmenter::WordSegmenter;
 use icu_segmenter::WordSegmenterBorrowed;
@@ -70,12 +70,12 @@ pub fn analyze(text: &str, offset_base: u32, position_base: u32, out: &mut Vec<T
             position += 1;
         } else {
             // ARCH-0031 "Emoji / unknown → Grapheme per token": non-word
-            // segments may carry extended-pictographic graphemes (the word
-            // segmenter classifies emoji as non-word, which used to drop
-            // them entirely). UAX #29 word boundaries never split a
-            // grapheme cluster, so a ZWJ sequence is always wholly inside
-            // one segment here.
-            position = emoji::emit_pictographic_graphemes(slice, start, position, out);
+            // segments may carry emoji grapheme clusters — pictographics,
+            // flags, keycaps (the word segmenter classifies emoji as
+            // non-word, which used to drop them entirely). UAX #29 word
+            // boundaries never split a grapheme cluster, so a ZWJ sequence
+            // or flag pair is always wholly inside one segment here.
+            position = emoji::emit_emoji_graphemes(slice, start, position, out);
         }
         prev_offset = end;
     }

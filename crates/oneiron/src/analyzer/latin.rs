@@ -79,13 +79,13 @@ pub fn analyze(
     // Emoji have Script=Common, so the script-run splitter attaches them to
     // an adjacent Latin/Cyrillic/Greek run (`"hello 🦀"` is ONE Latin run).
     // `unicode_word_indices` skips them as non-words, so the gaps between
-    // (and around) words are scanned for extended-pictographic graphemes
+    // (and around) words are scanned for emoji grapheme clusters
     // per ARCH-0031 "Emoji / unknown → Grapheme per token" (ONE-1118).
     let mut gap_start = 0usize;
 
     for (idx, word) in text.unicode_word_indices() {
         if gap_start < idx {
-            position = emoji::emit_pictographic_graphemes(
+            position = emoji::emit_emoji_graphemes(
                 &text[gap_start..idx],
                 offset_base + gap_start as u32,
                 position,
@@ -129,7 +129,7 @@ pub fn analyze(
     }
 
     if gap_start < text.len() {
-        position = emoji::emit_pictographic_graphemes(
+        position = emoji::emit_emoji_graphemes(
             &text[gap_start..],
             offset_base + gap_start as u32,
             position,
