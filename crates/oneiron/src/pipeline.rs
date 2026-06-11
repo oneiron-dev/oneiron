@@ -464,6 +464,9 @@ impl<'a> PipelineBuilder<'a> {
             }
 
             if let Some((seeds, depth)) = &self.ppr_search {
+                // ARCH-0039 Layer 2: seed specificity applies ONLY to
+                // search_ppr — seeds are weighted 1/ln(1 + passage_count)
+                // instead of uniform 1/n.
                 let (ppr_results, deferred_cache_write) =
                     crate::ppr::ppr_query_in_txn_with_deferred_cache(
                         &self.vault.store,
@@ -471,6 +474,7 @@ impl<'a> PipelineBuilder<'a> {
                         seeds,
                         *depth,
                         PPR_DAMPING,
+                        crate::ppr::SeedWeighting::Specificity,
                     )?;
                 if let Some(deferred_cache_write) = deferred_cache_write {
                     deferred_ppr_cache_writes.push(deferred_cache_write);
@@ -522,6 +526,8 @@ impl<'a> PipelineBuilder<'a> {
                 if !seeds.is_empty() {
                     seeds.sort_unstable_by(|a, b| a.as_bytes().cmp(b.as_bytes()));
 
+                    // expand_ppr seeds stay UNIFORM — ARCH-0039 Layer-2
+                    // specificity weighting is search_ppr-only.
                     let (mut ppr_results, deferred_cache_write) =
                         crate::ppr::ppr_query_in_txn_with_deferred_cache(
                             &self.vault.store,
@@ -529,6 +535,7 @@ impl<'a> PipelineBuilder<'a> {
                             &seeds,
                             *depth,
                             PPR_DAMPING,
+                            crate::ppr::SeedWeighting::Uniform,
                         )?;
                     if let Some(deferred_cache_write) = deferred_cache_write {
                         deferred_ppr_cache_writes.push(deferred_cache_write);
