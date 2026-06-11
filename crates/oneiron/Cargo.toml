@@ -58,6 +58,11 @@ name = "sync_window_manager"
 path = "tests/sync_window_manager.rs"
 required-features = ["sync"]
 
+[[test]]
+name = "sync_client_wiring"
+path = "tests/sync_client_wiring.rs"
+required-features = ["sync"]
+
 [[bench]]
 name = "sync_memory"
 harness = false

@@ -41,12 +41,12 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, MutexGuard};
 
-use super::bridge::Materializer;
+use super::bridge::{Materializer, OutboundSink};
 use super::schema::create_window_doc;
 use super::types::{SyncConfig, WindowKey};
 use super::window::{
-    LoadedWindow, forward_rematerialize, load_window_from_state, replay_pending_mirrors,
-    reverse_rematerialize,
+    LoadedWindow, apply_pending_window_updates, forward_rematerialize, load_window_from_state,
+    replay_pending_mirrors, reverse_rematerialize,
 };
 use crate::Vault;
 use crate::error::{Error, Result};
@@ -63,6 +63,10 @@ pub struct WindowManager {
     /// mutex; entries are inserted only after a fully successful open, so a
     /// panicked holder cannot leave a half-recovered window registered.
     windows: Mutex<HashMap<WindowKey, Arc<LoadedWindow>>>,
+    /// Shared Observer A outbound sink: every window this manager opens
+    /// routes its persisted local updates here (connection channel when
+    /// attached, durable `SyncQueue` otherwise).
+    outbound: Arc<OutboundSink>,
 }
 
 impl WindowManager {
@@ -89,12 +93,25 @@ impl WindowManager {
             user_id: user_id.into(),
             config,
             windows: Mutex::new(HashMap::new()),
+            outbound: Arc::new(OutboundSink::new()),
         }
     }
 
     /// The materializer shared by every window this manager opens.
     pub fn materializer(&self) -> &Arc<Materializer> {
         &self.materializer
+    }
+
+    /// The vault every window this manager opens shares.
+    pub fn vault(&self) -> &Arc<Vault> {
+        &self.vault
+    }
+
+    /// The Observer A outbound sink shared by every window this manager
+    /// opens. The sync connection attaches its local-update channel here;
+    /// detached, updates fall back to the durable `SyncQueue`.
+    pub fn outbound(&self) -> &Arc<OutboundSink> {
+        &self.outbound
     }
 
     /// Opens (or returns the already-live) window for `key`.
@@ -130,7 +147,17 @@ impl WindowManager {
         // (first open, or sync_state lost), and reverse remat heals that.
         let doc = match load_window_from_state(&self.vault, &self.user_id, key) {
             Ok(doc) => doc,
-            Err(Error::WindowNotFound { .. }) => create_window_doc(&self.user_id, key),
+            Err(Error::WindowNotFound { .. }) => {
+                // No d:w: snapshot — but pending u:w: rows can still exist
+                // (remote updates persisted before this window was ever
+                // unloaded). They MUST replay onto the fresh doc or accepted
+                // sync data is lost on restart: tombstones especially, whose
+                // LMDB purge already ran and which reverse remat can never
+                // reconstruct (ONE-1126).
+                let doc = create_window_doc(&self.user_id, key);
+                apply_pending_window_updates(&self.vault, &doc, key)?;
+                doc
+            }
             Err(err) => return Err(err),
         };
 
@@ -162,11 +189,12 @@ impl WindowManager {
         }
 
         // Step 6 — observers attach LAST, on the recovered doc.
-        let window = Arc::new(LoadedWindow::from_doc(
+        let window = Arc::new(LoadedWindow::from_doc_with_outbound(
             doc,
             key.clone(),
             &self.vault,
             &self.materializer,
+            Some(Arc::clone(&self.outbound)),
         ));
         registry.insert(key.clone(), Arc::clone(&window));
         Ok(window)

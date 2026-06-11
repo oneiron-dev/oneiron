@@ -8,7 +8,8 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use super::bridge::{
-    self, BRIDGE_ORIGIN, Materializer, ObserverAState, encode_edge_value_for_crdt, format_edge_key,
+    self, BRIDGE_ORIGIN, Materializer, ObserverAState, OutboundSink, encode_edge_value_for_crdt,
+    format_edge_key,
 };
 use super::loro_support::{
     doc_from_snapshot, doc_version_vector, export_snapshot, import_doc, map_contains_binary,
@@ -72,9 +73,29 @@ impl LoadedWindow {
         vault: &Arc<Vault>,
         materializer: &Arc<Materializer>,
     ) -> Self {
+        Self::from_doc_with_outbound(doc, key, vault, materializer, None)
+    }
+
+    /// [`Self::from_doc`] with an [`OutboundSink`] for Observer A: persisted
+    /// local updates are routed outbound (connection channel when attached,
+    /// durable `SyncQueue` otherwise). The production
+    /// [`crate::sync::manager::WindowManager`] open path always passes its
+    /// shared sink; the sink-less constructors exist for tests/bootstrap.
+    pub fn from_doc_with_outbound(
+        doc: LoroDoc,
+        key: WindowKey,
+        vault: &Arc<Vault>,
+        materializer: &Arc<Materializer>,
+        outbound: Option<Arc<OutboundSink>>,
+    ) -> Self {
         let observer_a_state = Arc::new(ObserverAState::new());
-        let observer_a =
-            bridge::register_observer_a(&doc, vault, key.as_str(), observer_a_state.clone());
+        let observer_a = bridge::register_observer_a(
+            &doc,
+            vault,
+            key.as_str(),
+            observer_a_state.clone(),
+            outbound,
+        );
         let observer_b = bridge::register_observer_b(&doc, vault, materializer);
 
         Self {
@@ -123,16 +144,39 @@ pub fn load_window_from_state(vault: &Vault, _user_id: &str, key: &WindowKey) ->
 
     // Load from snapshot
     let doc = doc_from_snapshot(state)?;
+    drop(rtxn);
 
-    // Apply pending updates using prefix iterator (B-tree range seek)
+    // Apply pending updates on top of the snapshot (startup step 2).
+    apply_pending_window_updates(vault, &doc, key)?;
+
+    Ok(doc)
+}
+
+/// Applies pending `u:w:{key}:*` update rows to a window doc in sequence
+/// order (ARCH-0023b startup step 2). Returns the number of updates applied.
+///
+/// Also used by the manager's fresh-doc fallback: pending update rows can
+/// exist WITHOUT a `d:w:{key}` snapshot (remote updates persisted before
+/// the window was ever unloaded/compacted), and skipping the replay there
+/// would silently drop accepted sync data — tombstones especially, whose
+/// LMDB purge already ran and which reverse re-materialization can never
+/// reconstruct.
+pub(crate) fn apply_pending_window_updates(
+    vault: &Vault,
+    doc: &LoroDoc,
+    key: &WindowKey,
+) -> Result<u32> {
+    let rtxn = vault.store.env.read_txn()?;
+    // Prefix iterator (B-tree range seek); `{seq:08x}` keys sort in order.
     let prefix = format!("u:w:{key}:");
+    let mut applied = 0u32;
     let iter = vault.store.sync_state.prefix_iter(&rtxn, &prefix)?;
     for entry in iter {
         let (_k, v) = entry?;
-        import_doc(&doc, v)?;
+        import_doc(doc, v)?;
+        applied += 1;
     }
-
-    Ok(doc)
+    Ok(applied)
 }
 
 /// Applies one tombstone (raw v2/legacy wire value) to a window doc IN
