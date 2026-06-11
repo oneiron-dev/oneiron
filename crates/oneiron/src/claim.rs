@@ -275,8 +275,15 @@ pub struct ClaimBody {
     pub valid_to: Option<u64>,
     /// `src` — optional provenance source.
     pub source: Option<ClaimSource>,
-    /// `world` — optional world scope (opaque MessagePack).
-    pub world: Option<Value>,
+    /// `world` — optional world scope: the 16-byte WORLD entity id this claim
+    /// is scoped to (ARCH-0004 claim world filter; ARCH-0022 world model).
+    /// ABSENT means base reality (the elide-the-default pattern, like
+    /// `stale == false`). On disk it is exactly 16 MessagePack-binary bytes;
+    /// any other shape is rejected fail-closed with [`Error::InvalidClaimBody`].
+    /// The referenced WORLD entity is NOT required to exist at write time —
+    /// extraction may create claims before their world; the read side groups
+    /// by id regardless.
+    pub world: Option<EntityId>,
     /// `scope` — optional relationship/facet scope (opaque MessagePack).
     pub scope: Option<Value>,
     /// `stale` — derived-data staleness marker; absent on disk means `false`.
@@ -403,8 +410,11 @@ pub(crate) fn encode_claim_body(body: &ClaimBody) -> Result<Vec<u8>> {
     if let Some(source) = body.source {
         entries.push((Value::from(KEY_SRC), Value::from(source.as_str())));
     }
-    if let Some(world) = &body.world {
-        entries.push((Value::from(KEY_WORLD), world.clone()));
+    if let Some(world) = body.world {
+        entries.push((
+            Value::from(KEY_WORLD),
+            Value::Binary(world.as_bytes().to_vec()),
+        ));
     }
     entries.push((Value::from(KEY_SUBJ), Value::Binary(body.subject.encode())));
     if let Some(scope) = &body.scope {
@@ -461,7 +471,7 @@ pub(crate) fn decode_claim_body(data: &[u8], allow_reserved_predicate: bool) -> 
     let mut valid_from: Option<u64> = None;
     let mut valid_to: Option<u64> = None;
     let mut source: Option<ClaimSource> = None;
-    let mut world: Option<Value> = None;
+    let mut world: Option<EntityId> = None;
     let mut scope: Option<Value> = None;
     let mut stale: Option<bool> = None;
 
@@ -523,7 +533,24 @@ pub(crate) fn decode_claim_body(data: &[u8], allow_reserved_predicate: bool) -> 
                         ))?;
                 source = Some(parsed);
             }
-            "world" => world = Some(value),
+            "world" => {
+                // ARCH-0004 / ARCH-0022: a present `world` key is the
+                // 16-byte WORLD entity id. Anything that is not exactly 16
+                // MessagePack-binary bytes (a string, a 15-byte blob, …) is
+                // rejected fail-closed — the read side groups claims by this
+                // id, so a malformed value can never be silently scoped.
+                let Value::Binary(bytes) = &value else {
+                    return Err(Error::InvalidClaimBody("world must be MessagePack binary"));
+                };
+                let arr: [u8; ENTITY_ID_LEN] = bytes
+                    .as_slice()
+                    .try_into()
+                    .map_err(|_| Error::InvalidClaimBody("world must be a 16-byte world id"))?;
+                world = Some(
+                    EntityId::from_bytes(arr)
+                        .map_err(|_| Error::InvalidClaimBody("world id is reserved"))?,
+                );
+            }
             "subj" => {
                 let Value::Binary(bytes) = &value else {
                     return Err(Error::InvalidClaimBody("subj must be MessagePack binary"));
@@ -730,6 +757,63 @@ mod tests {
         // Reserved entity-id bytes (all zero) rejected.
         assert!(matches!(
             ClaimSubject::decode(&[0x00; 16]),
+            Err(Error::InvalidClaimBody(_))
+        ));
+    }
+
+    /// ARCH-0004 / ARCH-0022 world write-validation, exercised on the claim
+    /// body chokepoint with hand-built MessagePack so a wrong impl that stores
+    /// arbitrary `world` bytes FAILS: a present `world` must be exactly 16
+    /// binary bytes (→ an `EntityId`), an absent key is base reality (`None`),
+    /// and a 15-byte blob or a string is a typed `InvalidClaimBody`.
+    #[test]
+    fn world_value_must_be_16_byte_binary() {
+        let subj = EntityId::from_bytes([0x11; 16]).expect("valid subject id");
+        let body_with_world = |world: Option<Value>| -> Vec<u8> {
+            let mut entries = vec![
+                (Value::from("pred"), Value::from("profile.name")),
+                (Value::from("val"), Value::from("x")),
+                (Value::from("conf"), Value::F32(1.0)),
+            ];
+            if let Some(world) = world {
+                entries.push((Value::from("world"), world));
+            }
+            entries.push((Value::from("subj"), Value::Binary(subj.as_bytes().to_vec())));
+            entries.push((Value::from("appr"), Value::from("auto")));
+            entries.push((Value::from("life"), Value::from("active")));
+            let mut out = Vec::new();
+            rmpv::encode::write_value(&mut out, &Value::Map(entries)).expect("encode body");
+            out
+        };
+
+        // Exactly 16 binary bytes → an EntityId.
+        let world_id = EntityId::from_bytes([0x5A; 16]).expect("valid world id");
+        let good = body_with_world(Some(Value::Binary(world_id.as_bytes().to_vec())));
+        assert_eq!(
+            decode_claim_body(&good, false)
+                .expect("16-byte world passes")
+                .world,
+            Some(world_id)
+        );
+
+        // Absent key = base reality (None), the elide-the-default pattern.
+        let base = body_with_world(None);
+        assert_eq!(
+            decode_claim_body(&base, false)
+                .expect("absent world passes")
+                .world,
+            None
+        );
+
+        // 15-byte blob rejected fail-closed.
+        assert!(matches!(
+            decode_claim_body(&body_with_world(Some(Value::Binary(vec![0x5A; 15]))), false),
+            Err(Error::InvalidClaimBody(_))
+        ));
+
+        // String rejected fail-closed (the pre-fix opaque-bytes behavior).
+        assert!(matches!(
+            decode_claim_body(&body_with_world(Some(Value::from("w0"))), false),
             Err(Error::InvalidClaimBody(_))
         ));
     }

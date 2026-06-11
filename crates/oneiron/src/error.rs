@@ -1,5 +1,5 @@
 use crate::claim::ClaimLifecycleStatus;
-use crate::types::{EntityId, VadComponent};
+use crate::types::{ENTITY_TYPE_FACET, EntityId, VadComponent};
 
 /// Result type used throughout the crate.
 pub type Result<T> = std::result::Result<T, Error>;
@@ -30,6 +30,7 @@ pub enum ErrorKind {
     IndexOverflow,
     MissingPostingEntry,
     InvalidEntityType,
+    InvalidFacet,
     InvalidClaimBody,
     InvalidPredicate,
     ReservedPredicate,
@@ -138,6 +139,18 @@ pub enum Error {
     /// Entity type byte is not in any known range.
     #[error("invalid entity type: {0}")]
     InvalidEntityType(u8),
+    /// The active facet supplied to the retrieval pipeline does not resolve to
+    /// an EXISTING FACET entity (type byte 13, per contracts.ts §1). Rejected
+    /// fail-closed at query setup: a bogus id (`found = None`, no such entity)
+    /// or an id whose type byte is not FACET (`found = Some(other_type)`) is a
+    /// typed error, never a silent treat-everything-as-other-facet. Strict
+    /// mode must never drop every scoped claim because the active facet was
+    /// invalid. Nothing is queried.
+    #[error(
+        "invalid active facet {}: resolved type {found:?}, expected FACET ({ENTITY_TYPE_FACET})",
+        facet.to_hex()
+    )]
+    InvalidFacet { facet: EntityId, found: Option<u8> },
     /// A type-0 (CLAIM) entity body failed the pinned structural validation
     /// (D11 key set / D18 fail-closed gate). Nothing was written.
     #[error("invalid claim body: {0}")]
@@ -375,6 +388,7 @@ impl Error {
             Self::IndexOverflow(_) => ErrorKind::IndexOverflow,
             Self::MissingPostingEntry => ErrorKind::MissingPostingEntry,
             Self::InvalidEntityType(_) => ErrorKind::InvalidEntityType,
+            Self::InvalidFacet { .. } => ErrorKind::InvalidFacet,
             Self::InvalidClaimBody(_) => ErrorKind::InvalidClaimBody,
             Self::InvalidPredicate { .. } => ErrorKind::InvalidPredicate,
             Self::ReservedPredicate { .. } => ErrorKind::ReservedPredicate,

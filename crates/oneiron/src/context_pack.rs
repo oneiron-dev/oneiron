@@ -8,12 +8,12 @@ use heed::RoTxn;
 
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::error::Result;
-use crate::pipeline::PipelineBuilder;
+use crate::pipeline::{PipelineBuilder, WorldScope};
 use crate::serialize::{SerializeConfig, serialize_pack};
 use crate::store::Store;
 use crate::types::{
-    ContextEntity, ContextPack, EdgeInfo, EntityId, FieldProfile, PackFormat, PackStats, Signal,
-    TemporalAnchorMode, TemporalGranularity, TimeRange, TokenAllocation,
+    ContextEntity, ContextPack, ENTITY_TYPE_CLAIM, EdgeInfo, EntityId, FieldProfile, PackFormat,
+    PackStats, Signal, TemporalAnchorMode, TemporalGranularity, TimeRange, TokenAllocation,
 };
 use crate::{Vault, le_bytes_to_f32_vec};
 
@@ -22,6 +22,10 @@ const DEFAULT_TOKEN_BUDGET: usize = 4000;
 const DEFAULT_MAX_FIELD_CHARS: usize = 500;
 const MAX_EDGE_HOP: u32 = 5;
 const MAX_CONTEXT_NEIGHBORS: usize = 1000;
+/// Default share of the claim budget that non-base (fictional / dream) worlds
+/// may occupy in an `All`-scope pack — fiction takes at most half, so it can
+/// never crowd base reality out (ARCH-0004 / ARCH-0022).
+const DEFAULT_NON_BASE_WORLD_CLAIM_FRACTION: f32 = 0.5;
 #[cfg(test)]
 thread_local! {
     static EDGE_SCAN_COUNT: Cell<usize> = const { Cell::new(0) };
@@ -58,6 +62,8 @@ pub struct ContextPackBuilder<'a> {
     token_allocation: TokenAllocation,
     max_field_chars: usize,
     signals_used: Vec<Signal>,
+    world_scope: WorldScope,
+    non_base_world_fraction: f32,
 }
 
 impl<'a> ContextPackBuilder<'a> {
@@ -78,6 +84,8 @@ impl<'a> ContextPackBuilder<'a> {
             token_allocation: TokenAllocation::default(),
             max_field_chars: DEFAULT_MAX_FIELD_CHARS,
             signals_used: Vec::new(),
+            world_scope: WorldScope::All,
+            non_base_world_fraction: DEFAULT_NON_BASE_WORLD_CLAIM_FRACTION,
         }
     }
 
@@ -244,6 +252,26 @@ impl<'a> ContextPackBuilder<'a> {
         self
     }
 
+    /// Sets the ARCH-0004 / ARCH-0022 world scope. Delegates the post-fusion
+    /// filter to the pipeline; under the default [`WorldScope::All`] the pack
+    /// additionally groups surviving claims by world (base section first). For
+    /// [`WorldScope::Base`] / [`WorldScope::World`] the pack stays flat.
+    pub fn world(mut self, scope: WorldScope) -> Self {
+        self.pipeline = self.pipeline.world(scope);
+        self.world_scope = scope;
+        self
+    }
+
+    /// Sets the share of the claim budget non-base worlds may occupy when the
+    /// pack is partitioned under [`WorldScope::All`] (default `0.5`). Base
+    /// claims are always kept; non-base claims beyond `floor(fraction × claim
+    /// budget)` are dropped so fiction cannot crowd base reality out. Only
+    /// consulted for `All` scope with surviving non-base claims.
+    pub fn non_base_world_claim_fraction(mut self, fraction: f32) -> Self {
+        self.non_base_world_fraction = fraction;
+        self
+    }
+
     pub fn hydrate(mut self, yes: bool) -> Self {
         self.hydrate = yes;
         self
@@ -370,6 +398,19 @@ impl<'a> ContextPackBuilder<'a> {
 
         resolve_edge_short_ids(&mut results, &mut neighbors);
 
+        // ARCH-0004 / ARCH-0022 world partitioning (ONE-1117): under the
+        // default `All` scope, group surviving claims by world — base section
+        // first, then one section per non-base world — and cap how much of the
+        // claim budget fiction may take. Flat (unchanged) for Base / World(id).
+        if matches!(self.world_scope, WorldScope::All) {
+            partition_results_by_world(
+                &self.vault.store,
+                &rtxn,
+                &mut results,
+                self.non_base_world_fraction,
+            )?;
+        }
+
         let stats = PackStats {
             candidates_considered: scored.len(),
             signals_used: dedupe_signals(self.signals_used),
@@ -428,6 +469,94 @@ fn resolve_edge_short_ids(results: &mut [ContextEntity], neighbors: &mut [Contex
             }
         }
     }
+}
+
+/// ARCH-0004 / ARCH-0022 world partitioning for an `All`-scope pack: reorders
+/// `results` so claims are grouped by world — the base section (claims with no
+/// `world` key plus every non-claim entity) first, then one section per
+/// non-base world (sections ordered by their highest-scoring claim; score
+/// order preserved within a section). A per-non-base-world cap drops the
+/// lowest-scoring fiction so non-base worlds occupy at most `non_base_fraction`
+/// of the claim budget (every CLAIM in the pack), keeping all base claims.
+///
+/// When no non-base claim survives, `results` are left flat in score order.
+fn partition_results_by_world(
+    store: &Store,
+    rtxn: &RoTxn<'_>,
+    results: &mut Vec<ContextEntity>,
+    non_base_fraction: f32,
+) -> Result<()> {
+    let mut base: Vec<ContextEntity> = Vec::with_capacity(results.len());
+    let mut non_base: Vec<(EntityId, ContextEntity)> = Vec::new();
+
+    for entity in results.drain(..) {
+        match entity_world(store, rtxn, &entity)? {
+            None => base.push(entity),
+            Some(world) => non_base.push((world, entity)),
+        }
+    }
+
+    // No fictional / dream claim survived — leave the pack flat (score order).
+    if non_base.is_empty() {
+        *results = base;
+        return Ok(());
+    }
+
+    // Claim budget = every CLAIM in the pack (base claims + non-base claims);
+    // non-claim base entities do not count. Non-base worlds share at most
+    // `non_base_fraction` of it.
+    let base_claim_count = base
+        .iter()
+        .filter(|entity| entity.entity_type == ENTITY_TYPE_CLAIM)
+        .count();
+    let claim_budget = base_claim_count + non_base.len();
+    let non_base_cap = ((claim_budget as f32) * non_base_fraction).floor().max(0.0) as usize;
+
+    // `non_base` is in score order (results arrive score-sorted). Keep the top
+    // `non_base_cap` by score and drop the rest so fiction cannot crowd base
+    // reality out.
+    non_base.truncate(non_base_cap);
+
+    // Group survivors by world; sections ordered by first (highest-score)
+    // appearance, score order preserved within each section.
+    let mut world_order: Vec<EntityId> = Vec::new();
+    let mut groups: HashMap<EntityId, Vec<ContextEntity>> = HashMap::new();
+    for (world, entity) in non_base {
+        if !groups.contains_key(&world) {
+            world_order.push(world);
+        }
+        groups.entry(world).or_default().push(entity);
+    }
+
+    let mut out = base;
+    for world in world_order {
+        if let Some(section) = groups.remove(&world) {
+            out.extend(section);
+        }
+    }
+    *results = out;
+    Ok(())
+}
+
+/// Reads a hydrated result's world for partitioning: `None` for base reality
+/// (a non-claim entity, or a claim with no `world` key) and `Some(world_id)`
+/// for a world-scoped claim. The `world` key was structurally validated to a
+/// 16-byte id at write time.
+fn entity_world(
+    store: &Store,
+    rtxn: &RoTxn<'_>,
+    entity: &ContextEntity,
+) -> Result<Option<EntityId>> {
+    if entity.entity_type != ENTITY_TYPE_CLAIM {
+        return Ok(None);
+    }
+    let Some(raw) = store.entities.get(rtxn, entity.id.as_bytes())? else {
+        return Ok(None);
+    };
+    if raw.len() <= ENTITY_METADATA_HEADER_LEN {
+        return Ok(None);
+    }
+    crate::claim::decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true).map(|body| body.world)
 }
 
 fn hydrate_entity(
@@ -770,6 +899,38 @@ mod tests {
             .batch()
             .put(id, 0, TimeRange { start: 1, end: 1 }, 1, &payload)
             .text(id, &[("body", text)])
+            .commit()
+    }
+
+    /// A vector-ranked CLAIM whose body carries an optional `world` scope
+    /// (`None` = base reality). Built through the pinned claim encoder so the
+    /// `world` key is the real 16-byte binary the partitioner groups by.
+    fn put_world_claim(
+        vault: &Vault,
+        id: EntityId,
+        vector: [f32; 4],
+        world: Option<EntityId>,
+    ) -> Result<()> {
+        let mut body = crate::claim::ClaimBody::new(
+            "facet.scope_test",
+            crate::claim::ClaimSubject::Entity(EntityId::from_bytes([0x7C; 16])?),
+            rmpv::Value::from("v"),
+            0.9,
+            crate::claim::ClaimApprovalStatus::Auto,
+            crate::claim::ClaimLifecycleStatus::Active,
+        );
+        body.world = world;
+        let payload = crate::claim::encode_claim_body(&body)?;
+        vault
+            .batch()
+            .put(
+                &id,
+                ENTITY_TYPE_CLAIM,
+                TimeRange { start: 1, end: 1 },
+                1,
+                &payload,
+            )
+            .vector(&id, &vector)
             .commit()
     }
 
@@ -1358,6 +1519,89 @@ mod tests {
             );
         }
 
+        Ok(())
+    }
+
+    /// Blocker 2 partitioning: under the default `All` scope the pack is
+    /// ordered base section first, then one section per non-base world —
+    /// EVEN when fictional claims outrank the base claim. Pins base-first
+    /// ordering + adjacency grouping; `fraction(1.0)` disables the cap so
+    /// every claim survives.
+    #[test]
+    fn world_all_scope_partitions_base_first() -> Result<()> {
+        let (_dir, vault) = open_test_vault();
+        let world_w = EntityId::from_bytes([0xE1; 16])?;
+        let world_v = EntityId::from_bytes([0xE2; 16])?;
+
+        let w1 = EntityId::from_bytes([0x71; 16])?; // rank 0 — world W
+        let w2 = EntityId::from_bytes([0x72; 16])?; // rank 1 — world W
+        let claim_base = EntityId::from_bytes([0x61; 16])?; // rank 2 — base
+        let v1 = EntityId::from_bytes([0x81; 16])?; // rank 3 — world V
+        put_world_claim(&vault, w1, [1.0, 0.0, 0.0, 0.0], Some(world_w))?;
+        put_world_claim(&vault, w2, [0.9, 0.1, 0.0, 0.0], Some(world_w))?;
+        put_world_claim(&vault, claim_base, [0.8, 0.2, 0.0, 0.0], None)?;
+        put_world_claim(&vault, v1, [0.7, 0.3, 0.0, 0.0], Some(world_v))?;
+
+        let pack = vault
+            .context_pack()
+            .search_vector(&[1.0, 0.0, 0.0, 0.0], 10)
+            .non_base_world_claim_fraction(1.0) // disable the cap
+            .run()?;
+
+        let order: Vec<EntityId> = pack.results.iter().map(|entity| entity.id).collect();
+        assert_eq!(
+            order,
+            vec![claim_base, w1, w2, v1],
+            "All-scope pack must be base section first, then world W (adjacent), then world V"
+        );
+        Ok(())
+    }
+
+    /// Blocker 2 cap: with the default 0.5 fraction, 2 base + 4 fictional
+    /// claims give a claim budget of 6 and a non-base cap of 3 — the three
+    /// highest-scoring fiction claims survive, the lowest is dropped, and both
+    /// base claims are always kept (fiction can never crowd base out).
+    #[test]
+    fn world_all_scope_cap_drops_excess_fiction() -> Result<()> {
+        let (_dir, vault) = open_test_vault();
+        let world_w = EntityId::from_bytes([0xE1; 16])?;
+
+        let base1 = EntityId::from_bytes([0x61; 16])?; // rank 0 — base
+        let f1 = EntityId::from_bytes([0x71; 16])?; // rank 1 — world W
+        let f2 = EntityId::from_bytes([0x72; 16])?; // rank 2 — world W
+        let base2 = EntityId::from_bytes([0x62; 16])?; // rank 3 — base
+        let f3 = EntityId::from_bytes([0x73; 16])?; // rank 4 — world W
+        let f4 = EntityId::from_bytes([0x74; 16])?; // rank 5 — world W (dropped)
+        put_world_claim(&vault, base1, [1.0, 0.0, 0.0, 0.0], None)?;
+        put_world_claim(&vault, f1, [0.9, 0.1, 0.0, 0.0], Some(world_w))?;
+        put_world_claim(&vault, f2, [0.8, 0.2, 0.0, 0.0], Some(world_w))?;
+        put_world_claim(&vault, base2, [0.7, 0.3, 0.0, 0.0], None)?;
+        put_world_claim(&vault, f3, [0.6, 0.4, 0.0, 0.0], Some(world_w))?;
+        put_world_claim(&vault, f4, [0.0, 1.0, 0.0, 0.0], Some(world_w))?;
+
+        let pack = vault
+            .context_pack()
+            .search_vector(&[1.0, 0.0, 0.0, 0.0], 10)
+            .run()?; // default fraction = 0.5
+
+        let ids: HashSet<EntityId> = pack.results.iter().map(|entity| entity.id).collect();
+        assert!(
+            ids.contains(&base1) && ids.contains(&base2),
+            "both base claims must always be kept, got {ids:?}"
+        );
+        assert!(
+            ids.contains(&f1) && ids.contains(&f2) && ids.contains(&f3),
+            "the top-3 fiction claims must survive the cap, got {ids:?}"
+        );
+        assert!(
+            !ids.contains(&f4),
+            "the lowest-scoring fiction claim must be dropped by the cap"
+        );
+        assert_eq!(
+            pack.results.len(),
+            5,
+            "2 base + capped 3 fiction = 5 surviving claims"
+        );
         Ok(())
     }
 }

@@ -4,13 +4,15 @@ use heed::types::Bytes;
 use heed::{Database, RoTxn};
 
 use crate::Vault;
-use crate::batch::{EntityMetadataHeader, LONG_INTERVAL_THRESHOLD_SECS};
+use crate::batch::{
+    ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader, LONG_INTERVAL_THRESHOLD_SECS,
+};
 use crate::error::{Error, Result};
 use crate::fusion;
 use crate::store::Store;
 use crate::types::{
-    EDGE_KEY_LEN, ENTITY_ID_LEN, ENTITY_TYPE_CLAIM, EdgeKind, EntityId, ScoredEntity,
-    TemporalAnchorMode, TemporalGranularity, TimeRange,
+    EDGE_KEY_LEN, ENTITY_ID_LEN, ENTITY_TYPE_CLAIM, ENTITY_TYPE_FACET, EdgeKind, EntityId,
+    ScoredEntity, TemporalAnchorMode, TemporalGranularity, TimeRange,
 };
 
 const DEFAULT_RESULT_LIMIT: usize = 20;
@@ -142,6 +144,31 @@ pub enum FacetMode {
     },
 }
 
+/// World retrieval scope for the post-fusion claim world filter (ARCH-0004
+/// claim-filtering: `worldId = vault.baseWorld` unless the query targets a
+/// fictional world; ARCH-0022 world model). Selected per query via
+/// [`PipelineBuilder::world`]; the default is [`WorldScope::All`].
+///
+/// A claim's world is the `world` key in its body — an absent key is base
+/// reality (the elide-the-default pattern). Non-claim entities have no world
+/// and are treated as base, so they pass every scope untouched. This is a
+/// pure post-fusion filter in the same stage as the facet filter; scoring and
+/// fusion are never touched.
+#[derive(Debug, Clone, Copy, PartialEq)]
+#[non_exhaustive]
+pub enum WorldScope {
+    /// Span every world — base-reality claims plus every fictional / dream
+    /// world's claims surface. The default; the context pack groups the
+    /// survivors by world (base section first).
+    All,
+    /// Only base-reality claims — claims with NO `world` key (and all
+    /// non-claim entities). Every world-scoped claim is removed.
+    Base,
+    /// Claims scoped to this world id PLUS base-reality claims. Claims scoped
+    /// to any OTHER world are removed.
+    World(EntityId),
+}
+
 /// A claim's facet scope relative to the query's active facet, derived from
 /// its outgoing `FacetOf` (`CLAIM → FACET`, u8 17) adjacency.
 enum ClaimFacetScope {
@@ -171,6 +198,7 @@ pub struct PipelineBuilder<'a> {
     occurred_range: Option<(u64, u64)>,
     learned_range: Option<(u64, u64)>,
     facet_filter: Option<(EntityId, FacetMode)>,
+    world_scope: WorldScope,
     result_limit: usize,
     temporal_adaptive_default: bool,
 }
@@ -194,6 +222,7 @@ impl<'a> PipelineBuilder<'a> {
             occurred_range: None,
             learned_range: None,
             facet_filter: None,
+            world_scope: WorldScope::All,
             result_limit: DEFAULT_RESULT_LIMIT,
             temporal_adaptive_default: true,
         }
@@ -392,6 +421,19 @@ impl<'a> PipelineBuilder<'a> {
         self
     }
 
+    /// Sets the ARCH-0004 / ARCH-0022 world scope for this query. The default
+    /// is [`WorldScope::All`] (span every world). [`WorldScope::Base`] keeps
+    /// only claims with no `world` key; [`WorldScope::World`] keeps that
+    /// world's claims plus base claims. The filter runs post-fusion /
+    /// post-boosts, before the `result_limit` truncation and under the same
+    /// read transaction — in the same stage as the facet filter — so claims
+    /// excluded by scope never consume result slots. Scoring and fusion are
+    /// untouched.
+    pub fn world(mut self, scope: WorldScope) -> Self {
+        self.world_scope = scope;
+        self
+    }
+
     pub fn run(self) -> Result<Vec<ScoredEntity>> {
         if let Some((_, FacetMode::Prefer { boost })) = self.facet_filter
             && (!boost.is_finite() || boost <= 0.0)
@@ -571,6 +613,11 @@ impl<'a> PipelineBuilder<'a> {
                 )?;
             }
 
+            // ARCH-0004 world filter (ONE-1117): same post-fusion stage as the
+            // facet filter, before truncate, same read txn. A no-op under the
+            // default `WorldScope::All`.
+            apply_world_filter(&mut scores, &self.vault.store, &rtxn, self.world_scope)?;
+
             fusion::sort_scored_entities_desc(&mut scores);
             scores.truncate(self.result_limit);
             (scores, deferred_ppr_cache_writes)
@@ -609,6 +656,21 @@ fn apply_facet_filter(
     active_facet: &EntityId,
     mode: FacetMode,
 ) -> Result<()> {
+    // Fail-closed: the active facet MUST resolve to an existing FACET entity
+    // (type byte 13, per contracts.ts §1 / ARCH-0022 `facet_of` is CLAIM →
+    // FACET). A bogus id or a wrong-type id is rejected with a typed error —
+    // otherwise strict mode would silently treat every scoped claim as
+    // belonging to another facet and drop them all.
+    let active_facet_type = metadata_cache
+        .get(store, rtxn, active_facet)?
+        .map(|meta| meta.entity_type);
+    if active_facet_type != Some(ENTITY_TYPE_FACET) {
+        return Err(Error::InvalidFacet {
+            facet: *active_facet,
+            found: active_facet_type,
+        });
+    }
+
     let mut kept = Vec::with_capacity(scores.len());
 
     for mut scored in scores.iter().copied() {
@@ -674,6 +736,69 @@ fn claim_facet_scope(
     } else {
         Ok(ClaimFacetScope::Unfaceted)
     }
+}
+
+/// ARCH-0004 world filter (ONE-1117): the post-fusion claim world filter for
+/// the `Base` / `World(id)` scopes. A pure removal filter — scores are never
+/// rewritten, mirroring the facet filter's `strict` removal.
+///
+/// * [`WorldScope::All`] — a no-op; every candidate passes (the context pack
+///   groups them by world downstream).
+/// * [`WorldScope::Base`] — only base-reality claims (no `world` key) survive;
+///   every world-scoped claim is removed.
+/// * [`WorldScope::World`] — claims scoped to the target world plus base
+///   claims survive; claims scoped to any other world are removed.
+///
+/// Non-claim entities have no world and are treated as base, so they pass
+/// every scope untouched. Removal happens before the `result_limit`
+/// truncation, so excluded claims free their slots.
+fn apply_world_filter(
+    scores: &mut Vec<ScoredEntity>,
+    store: &Store,
+    rtxn: &RoTxn<'_>,
+    scope: WorldScope,
+) -> Result<()> {
+    let target = match scope {
+        WorldScope::All => return Ok(()),
+        WorldScope::Base => None,
+        WorldScope::World(id) => Some(id),
+    };
+
+    let mut kept = Vec::with_capacity(scores.len());
+    for scored in scores.iter().copied() {
+        let keep = match claim_world(store, rtxn, &scored.id)? {
+            // Base reality (no world key, or a non-claim entity) always passes.
+            None => true,
+            // A world-scoped claim passes only for its own world.
+            Some(world) => target == Some(world),
+        };
+        if keep {
+            kept.push(scored);
+        }
+    }
+
+    *scores = kept;
+    Ok(())
+}
+
+/// Reads a candidate's world for the post-fusion world filter (ARCH-0004 /
+/// ARCH-0022). Returns `None` for base reality — a non-claim entity, a claim
+/// with no `world` key, or an entity with no parseable envelope — and
+/// `Some(world_id)` for a world-scoped claim. The claim body is decoded once
+/// through the pinned claim validator (the world key was structurally
+/// validated to 16 bytes at write time).
+fn claim_world(store: &Store, rtxn: &RoTxn<'_>, id: &EntityId) -> Result<Option<EntityId>> {
+    let Some(raw) = store.entities.get(rtxn, id.as_bytes())? else {
+        return Ok(None);
+    };
+    let Some(header) = EntityMetadataHeader::parse(raw) else {
+        return Ok(None);
+    };
+    if header.entity_type != ENTITY_TYPE_CLAIM {
+        return Ok(None);
+    }
+    let body = crate::claim::decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true)?;
+    Ok(body.world)
 }
 
 fn execute_phonetic(
@@ -2575,7 +2700,7 @@ mod tests {
     // ── ARCH-0039 facet filter (ONE-1117) ──────────────────────────
 
     use crate::claim::{ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSubject};
-    use crate::types::{ENTITY_TYPE_EVENT, ENTITY_TYPE_FACET};
+    use crate::types::{ENTITY_TYPE_EVENT, ENTITY_TYPE_FACET, ENTITY_TYPE_TURN};
 
     /// The query vector every facet test searches with.
     const FACET_QUERY: [f32; 4] = [1.0, 0.0, 0.0, 0.0];
@@ -2621,6 +2746,38 @@ mod tests {
                 TimeRange { start: 1, end: 1 },
                 1,
                 &facet_claim_body(),
+            )
+            .vector(&id, &vector)
+            .commit()
+    }
+
+    /// A vector-ranked CLAIM whose body carries an optional `world` scope
+    /// (`None` = base reality). Built through the pinned claim encoder so the
+    /// `world` key is the real 16-byte binary the read side groups by.
+    fn put_claim_with_vector_world(
+        vault: &Vault,
+        id: EntityId,
+        vector: [f32; 4],
+        world: Option<EntityId>,
+    ) -> Result<()> {
+        let mut body = ClaimBody::new(
+            "facet.scope_test",
+            ClaimSubject::Entity(entity_id(0x7C)),
+            rmpv::Value::from("v"),
+            0.9,
+            ClaimApprovalStatus::Auto,
+            ClaimLifecycleStatus::Active,
+        );
+        body.world = world;
+        let encoded = crate::claim::encode_claim_body(&body).expect("encode claim body");
+        vault
+            .batch()
+            .put(
+                &id,
+                ENTITY_TYPE_CLAIM,
+                TimeRange { start: 1, end: 1 },
+                1,
+                &encoded,
             )
             .vector(&id, &vector)
             .commit()
@@ -2984,6 +3141,122 @@ mod tests {
                 "expected InvalidConfig for boost {bad_boost}, got {err:?}"
             );
         }
+        Ok(())
+    }
+
+    /// Blocker 1 fail-closed: the active facet must resolve to an EXISTING
+    /// FACET entity. A bogus id and a wrong-type (TURN) id both reject with
+    /// the typed [`Error::InvalidFacet`] carrying what was actually found; a
+    /// real FACET passes. A wrong impl that stores arbitrary facet bytes and
+    /// strict-drops every scoped claim fails the wrong-type leg.
+    #[test]
+    fn facet_query_rejects_invalid_active_facet_typed() -> Result<()> {
+        let (_dir, vault) = open_test_vault();
+        let fixture = setup_facet_fixture(&vault)?;
+
+        // Bogus id: no such entity → InvalidFacet { found: None }.
+        let bogus = entity_id(0xEE);
+        let err = vault
+            .query()
+            .search_vector(&FACET_QUERY, 10)
+            .facet(&bogus, FacetMode::Strict)
+            .run()
+            .expect_err("a bogus active facet must be rejected");
+        assert!(
+            matches!(err, Error::InvalidFacet { found: None, .. }),
+            "expected InvalidFacet {{ found: None }}, got {err:?}"
+        );
+
+        // Wrong type: an existing TURN is not a FACET → found = Some(TURN).
+        let turn = entity_id(0xDD);
+        put_entity(&vault, turn, ENTITY_TYPE_TURN, 1, 1, 1)?;
+        let err = vault
+            .query()
+            .search_vector(&FACET_QUERY, 10)
+            .facet(&turn, FacetMode::Strict)
+            .run()
+            .expect_err("a non-FACET active facet must be rejected");
+        assert!(
+            matches!(err, Error::InvalidFacet { found: Some(t), .. } if t == ENTITY_TYPE_TURN),
+            "expected InvalidFacet {{ found: Some(TURN) }}, got {err:?}"
+        );
+
+        // A real FACET entity (the fixture's facet_a) passes.
+        let ok = vault
+            .query()
+            .search_vector(&FACET_QUERY, 10)
+            .facet(&fixture.facet_a, FacetMode::Strict)
+            .run()?;
+        assert!(!ok.is_empty(), "a valid FACET must not be rejected");
+        Ok(())
+    }
+
+    /// Blocker 2 world filter visibility matrix: an absent-world (base) claim
+    /// surfaces under ALL three scopes; a world=W claim surfaces under All and
+    /// World(W) but NOT under Base nor World(V). Pins the exact membership a
+    /// wrong (or absent) world filter would violate.
+    #[test]
+    fn world_scope_filter_visibility_matrix() -> Result<()> {
+        let (_dir, vault) = open_test_vault();
+        let world_w = entity_id(0xE1);
+        let world_v = entity_id(0xE2);
+
+        let claim_base = entity_id(0x61); // no `world` key — base reality
+        let claim_w = entity_id(0x62); // `world` = W
+        put_claim_with_vector_world(&vault, claim_base, [1.0, 0.0, 0.0, 0.0], None)?;
+        put_claim_with_vector_world(&vault, claim_w, [0.8, 0.6, 0.0, 0.0], Some(world_w))?;
+
+        let ids = |scores: &[ScoredEntity]| -> HashSet<EntityId> {
+            scores.iter().map(|s| s.id).collect()
+        };
+
+        // All (default): both worlds span.
+        let all = ids(&vault.query().search_vector(&FACET_QUERY, 10).run()?);
+        assert!(
+            all.contains(&claim_base) && all.contains(&claim_w),
+            "All scope must span base + world claims, got {all:?}"
+        );
+
+        // Base: only the absent-world claim; the W-scoped claim is removed.
+        let base = ids(&vault
+            .query()
+            .search_vector(&FACET_QUERY, 10)
+            .world(WorldScope::Base)
+            .run()?);
+        assert!(
+            base.contains(&claim_base),
+            "base claim must surface in Base"
+        );
+        assert!(
+            !base.contains(&claim_w),
+            "W-scoped claim must NOT surface in Base"
+        );
+
+        // World(W): the W-scoped claim plus base claims.
+        let in_w = ids(&vault
+            .query()
+            .search_vector(&FACET_QUERY, 10)
+            .world(WorldScope::World(world_w))
+            .run()?);
+        assert!(
+            in_w.contains(&claim_base) && in_w.contains(&claim_w),
+            "World(W) must surface the W claim + base claim, got {in_w:?}"
+        );
+
+        // World(V): base claim only — the W claim belongs to another world.
+        let in_v = ids(&vault
+            .query()
+            .search_vector(&FACET_QUERY, 10)
+            .world(WorldScope::World(world_v))
+            .run()?);
+        assert!(
+            in_v.contains(&claim_base),
+            "base claim must surface in World(V)"
+        );
+        assert!(
+            !in_v.contains(&claim_w),
+            "W-scoped claim must NOT surface in World(V)"
+        );
         Ok(())
     }
 }
