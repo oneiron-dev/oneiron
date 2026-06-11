@@ -242,20 +242,27 @@ fn cleanup_ppr_cache(vault: &Vault, max_age_secs: u64) -> Result<(u64, u64)> {
 
 fn compact_postings(vault: &Vault) -> Result<u64> {
     let mut wtxn = vault.store.env.write_txn()?;
-    let mut keys_to_delete = Vec::new();
+    // `text_postings` is DUP_SORT (storage ABI v4): `iter` yields one
+    // (term, item) pair per duplicate. Remove only the degenerate empty
+    // items — a term key whose sole duplicate is empty disappears with
+    // it, while valid sibling duplicates are preserved.
+    let mut empty_item_terms = Vec::new();
     for entry in vault.store.text_postings.iter(&wtxn)? {
-        let (term, postings) = entry?;
-        if postings.is_empty() {
-            keys_to_delete.push(term.to_vec());
+        let (term, posting) = entry?;
+        if posting.is_empty() {
+            empty_item_terms.push(term.to_vec());
         }
     }
 
-    for term in &keys_to_delete {
-        vault.store.text_postings.delete(&mut wtxn, term)?;
+    for term in &empty_item_terms {
+        vault
+            .store
+            .text_postings
+            .delete_one_duplicate(&mut wtxn, term, &[])?;
     }
 
     wtxn.commit()?;
-    Ok(keys_to_delete.len() as u64)
+    Ok(empty_item_terms.len() as u64)
 }
 
 /// Recomputes short-id content hashes and reaps orphaned/stale mappings under

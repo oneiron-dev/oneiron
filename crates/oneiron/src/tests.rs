@@ -1969,8 +1969,9 @@ fn short_id_content_hash_is_xxh32_of_data_mod_256() -> Result<()> {
 
 /// M0-4 fail-closed gate over the M2-5 bump: vaults written under storage ABI
 /// v2 (pre short-id direction swap) are REJECTED at open with the typed gate
-/// error. Pins the literal versions 2 → 3 — an implementation that skipped
-/// the bump would open the old vault and FAIL this test.
+/// error. Pins the literal stored version 2 against the current constant —
+/// an implementation that skipped the bump would open the old vault and FAIL
+/// this test.
 #[test]
 fn open_rejects_abi_v2_vault_after_short_id_swap() -> Result<()> {
     let temp_dir = tempfile::tempdir()?;
@@ -1990,10 +1991,48 @@ fn open_rejects_abi_v2_vault_after_short_id_swap() -> Result<()> {
             err,
             Error::StorageAbiVersionChanged {
                 stored: Some(2),
-                current: 3,
+                current: STORAGE_ABI_VERSION,
             }
         ),
-        "expected StorageAbiVersionChanged {{ stored: Some(2), current: 3 }}, got {err:?}"
+        "expected StorageAbiVersionChanged {{ stored: Some(2), current: {STORAGE_ABI_VERSION} }}, got {err:?}"
+    );
+    Ok(())
+}
+
+/// ONE-299 fail-closed gate over the DUP_SORT postings bump: vaults written
+/// under storage ABI v3 (single-blob `text_postings`, `tf`-carrying
+/// `text_forward`) are REJECTED at open with the typed gate error and NO
+/// silent migration. Pins the literal versions 3 → 4 — an implementation
+/// that skipped the bump would open the old vault (and then misread its v3
+/// posting blobs) and FAIL this test.
+#[test]
+fn open_rejects_abi_v3_vault_after_dupsort_postings() -> Result<()> {
+    assert_eq!(
+        STORAGE_ABI_VERSION, 4,
+        "ONE-299 pins the current storage ABI at 4",
+    );
+
+    let temp_dir = tempfile::tempdir()?;
+    let path = temp_dir.path();
+
+    {
+        let _vault = Vault::open(path, test_config())?;
+    }
+    set_raw_storage_abi_version(path, Some(3))?;
+
+    let err = match Vault::open(path, test_config()) {
+        Ok(_) => panic!("expected Vault::open to reject a pre-DUP_SORT ABI v3 vault"),
+        Err(err) => err,
+    };
+    assert!(
+        matches!(
+            err,
+            Error::StorageAbiVersionChanged {
+                stored: Some(3),
+                current: 4,
+            }
+        ),
+        "expected StorageAbiVersionChanged {{ stored: Some(3), current: 4 }}, got {err:?}"
     );
     Ok(())
 }
@@ -3504,7 +3543,7 @@ fn doctor_reflects_persisted_open_compatibility_values() -> Result<()> {
     let report = vault.doctor()?;
     serde_json::to_value(&report).expect("doctor report must serialize");
 
-    assert_eq!(report.storage_abi_version, Some(3));
+    assert_eq!(report.storage_abi_version, Some(4));
     assert_eq!(report.storage_schema_version, Some(1));
     assert_eq!(
         report.embedding_model_id,
@@ -3526,9 +3565,11 @@ fn doctor_reflects_persisted_open_compatibility_values() -> Result<()> {
         report.analyzer_manifest_hash.as_deref(),
         Some("e0da35956883bf26e26881b73c515f2c9c7d11087ef813da026dc51c303e1002")
     );
+    // Sha256 over the field-schema records with
+    // POSTINGS_VALUE_FORMAT_VERSION = 2 (ONE-299 DUP_SORT postings).
     assert_eq!(
         report.bm25_field_schema_hash.as_deref(),
-        Some("2d59ed83e21963518570270aa88dd8dc8aac8c8308e092eb70654767fa3aef7d")
+        Some("b7b78821908fdabc95ac85de7e17f157b0482d105037e8f6ecfa71e1ff158d6f")
     );
     assert_eq!(report.text_index_schema_version, Some(2));
     assert!(report.unreadable_fields.is_empty());
