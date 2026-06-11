@@ -78,8 +78,9 @@ pub enum Error {
     /// Vector contains NaN or infinity values.
     #[error("invalid vector component at index {index}: {value}")]
     InvalidVector { index: usize, value: f32 },
-    /// Edge weight contains NaN or infinity values.
-    #[error("invalid edge weight: {value}")]
+    /// Edge weight is NaN, infinite, or outside the contract range \[0, 1\]
+    /// (contracts.ts `edgeKinds` weight pin; enforced on every write path).
+    #[error("invalid edge weight: {value} (contract range [0, 1])")]
     InvalidEdgeWeight { value: f32 },
     /// VAD tuple contains non-finite or out-of-range values.
     #[error("invalid VAD component {component:?}: {value}")]

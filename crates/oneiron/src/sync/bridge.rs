@@ -974,4 +974,55 @@ mod tests {
                 .unwrap()
         );
     }
+
+    /// ONE-1115 AC7 — sync replay (observer-b edge materialization →
+    /// `apply_edge_with_created_at`) routes through the same contract \[0, 1\]
+    /// weight gate as local batch writes: an in-range replayed edge lands in
+    /// `edges_out` with its weight and `created_at` intact.
+    #[test]
+    fn observer_b_replays_in_range_edge_weight_through_write_gate() {
+        let vault = test_vault();
+        let doc = LoroDoc::new();
+        let entities = doc.get_map("entities");
+        let edges = doc.get_map("edges");
+        let a = EntityId::now();
+        let b = EntityId::now();
+
+        map_insert_bytes(
+            &entities,
+            &a.to_hex(),
+            &entity_blob(ENTITY_TYPE_TASK, TimeRange { start: 1, end: 1 }, 2, b"a"),
+        )
+        .unwrap();
+        map_insert_bytes(
+            &entities,
+            &b.to_hex(),
+            &entity_blob(ENTITY_TYPE_TASK, TimeRange { start: 3, end: 3 }, 4, b"b"),
+        )
+        .unwrap();
+        doc.commit();
+
+        let materializer = Arc::new(Materializer::new());
+        let _subs = register_observer_b(&doc, &vault, &materializer);
+
+        map_insert_bytes(
+            &edges,
+            &format_edge_key(&a, EdgeKind::Mentions, &b),
+            &encode_edge_value_for_crdt(EdgeKind::Mentions, 0.6, 10, Some(Vad::NEUTRAL), None)
+                .unwrap(),
+        )
+        .unwrap();
+        doc.commit();
+
+        let out = vault.edges_out(&a).unwrap();
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].kind, EdgeKind::Mentions);
+        assert_eq!(out[0].target, b);
+        assert_eq!(
+            out[0].weight.to_bits(),
+            0.6_f32.to_bits(),
+            "replayed in-range weight must survive the write gate verbatim"
+        );
+        assert_eq!(out[0].created_at, 10);
+    }
 }
