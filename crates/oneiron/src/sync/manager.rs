@@ -114,6 +114,20 @@ impl WindowManager {
         &self.outbound
     }
 
+    /// Registers this manager as the vault's live-window delete router
+    /// (M4-10 / ONE-1135): `Vault::delete_entity*` then commits CRDT
+    /// tombstones through the registry-owned live doc for OPEN windows —
+    /// Observer A persists the `u:` row and the commit reaches every
+    /// registry holder — instead of writing a parallel transient snapshot
+    /// the live doc never sees (the `d:w:` clobber vector).
+    ///
+    /// The vault side holds a `Weak`, so a dropped manager degrades cleanly
+    /// to the transient (import-merge) delete path. Production setups call
+    /// this right after constructing the `Arc<WindowManager>`.
+    pub fn attach_to_vault(self: &Arc<Self>) {
+        self.vault.attach_live_window_manager(Arc::downgrade(self));
+    }
+
     /// Opens (or returns the already-live) window for `key`.
     ///
     /// If the window is registered, returns the existing instance — exactly

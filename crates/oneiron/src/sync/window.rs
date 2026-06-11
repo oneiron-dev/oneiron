@@ -12,9 +12,9 @@ use super::bridge::{
     format_edge_key,
 };
 use super::loro_support::{
-    doc_from_snapshot, doc_version_vector, export_snapshot, import_doc, map_contains_binary,
-    map_delete, map_for_each_bytes, map_for_each_tombstone_value, map_get_bytes, map_insert_bytes,
-    tombstone_map_contains_id, tombstone_values_for_id,
+    doc_from_snapshot, doc_version_vector, export_snapshot, export_updates_from, import_doc,
+    map_contains_binary, map_delete, map_for_each_bytes, map_for_each_tombstone_value,
+    map_get_bytes, map_insert_bytes, tombstone_map_contains_id, tombstone_values_for_id,
 };
 use super::schema::create_window_doc;
 use super::types::WindowKey;
@@ -108,25 +108,85 @@ impl LoadedWindow {
     }
 
     /// Persists the window Doc state to sync_state and returns the encoded state.
+    ///
+    /// Clobber guard (ONE-1135 AC2): the persisted state (`d:w:` snapshot +
+    /// pending `u:` rows) is import-MERGED into the doc BEFORE the export.
+    /// CRDT import is monotone — it never drops ops — so a live doc that
+    /// never saw a tombstone another writer persisted (e.g. a transient
+    /// delete-path write while this window was constructed outside the
+    /// registry) can no longer overwrite `d:w:` with a snapshot missing it.
     pub fn persist_state(&self, vault: &Vault) -> Result<Vec<u8>> {
+        merge_persisted_state_into_doc(vault, &self.doc, &self.key)?;
+
         // Export full snapshot for persistence
         let state = export_snapshot(&self.doc)?;
         let vv = doc_version_vector(&self.doc);
 
         vault.with_write_txn(|wtxn| {
-            let doc_key = format!("d:w:{}", self.key);
-            vault.store.sync_state.put(wtxn, &doc_key, &state)?;
-
-            let sv_key = format!("sv:w:{}", self.key);
-            vault.store.sync_state.put(wtxn, &sv_key, &vv)?;
-
-            let svf_key = format!("svf:w:{}", self.key);
-            vault.store.sync_state.put(wtxn, &svf_key, &[1u8])?;
-            Ok(())
+            persist_window_doc_in_txn(vault, wtxn, &self.key, &state, &vv)
         })?;
 
         Ok(state)
     }
+}
+
+/// Writes the pinned window-doc persistence triple — `d:w:{key}` snapshot,
+/// `sv:w:{key}` state vector, `svf:w:{key}` = 1 (fresh) — inside the
+/// caller's transaction (ARCH-0023b sync_state key layout).
+pub(crate) fn persist_window_doc_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    key: &WindowKey,
+    state: &[u8],
+    vv: &[u8],
+) -> Result<()> {
+    let doc_key = format!("d:w:{key}");
+    vault.store.sync_state.put(wtxn, &doc_key, state)?;
+
+    let sv_key = format!("sv:w:{key}");
+    vault.store.sync_state.put(wtxn, &sv_key, vv)?;
+
+    let svf_key = format!("svf:w:{key}");
+    vault.store.sync_state.put(wtxn, &svf_key, &[1u8])?;
+    Ok(())
+}
+
+/// Import-merges the persisted sync_state record for `key` — the
+/// `d:w:{key}` snapshot plus every pending `u:w:{key}:*` update — into
+/// `doc`, returning the `u:` row KEYS that were merged.
+///
+/// This is the ONE-1135 anti-clobber primitive: every exporter that writes
+/// a full snapshot over `d:w:` merges the on-disk record first, so a doc
+/// that has not seen ops a parallel writer persisted (a tombstone above
+/// all) converges with them instead of overwriting them. Ops the doc
+/// already has are VV-dominated no-ops on import.
+///
+/// Imports run AFTER the read transaction drops: an import into an
+/// OBSERVED doc fires Observer B, which opens its own write transactions.
+pub(crate) fn merge_persisted_state_into_doc(
+    vault: &Vault,
+    doc: &LoroDoc,
+    key: &WindowKey,
+) -> Result<Vec<String>> {
+    let mut update_keys = Vec::new();
+    let mut blobs: Vec<Vec<u8>> = Vec::new();
+    {
+        let rtxn = vault.store.env.read_txn()?;
+        let doc_key = format!("d:w:{key}");
+        if let Some(state) = vault.store.sync_state.get(&rtxn, &doc_key)? {
+            blobs.push(state.to_vec());
+        }
+        let prefix = format!("u:w:{key}:");
+        for entry in vault.store.sync_state.prefix_iter(&rtxn, &prefix)? {
+            let (k, v) = entry?;
+            update_keys.push(k.to_string());
+            blobs.push(v.to_vec());
+        }
+    }
+    for blob in &blobs {
+        import_doc(doc, blob)?;
+    }
+    Ok(update_keys)
 }
 
 /// Loads a window Doc from persisted state in sync_state.
@@ -256,6 +316,17 @@ pub fn apply_tombstone_to_window_doc(doc: &LoroDoc, id: &EntityId, raw_value: &[
 /// `sync_state` BEFORE the markers are cleared — a marker may only vanish
 /// once the CRDT record is durable. Malformed marker keys are left in
 /// place (a deletion intent is never silently dropped) and logged.
+///
+/// ONE-1135 (delete-propagation transport, crash-recovery leg of the
+/// delete path):
+/// - The persisted state is import-MERGED into the doc first (clobber
+///   guard) — the snapshot exported below can then never lose on-disk ops.
+/// - The replay commit's delta is queued as a DELETE-BEARING `q:` row so
+///   the recovered delete is delivered on next connect and survives the
+///   optimistic clear until VV-confirmed.
+/// - Any HARD marker triggers the carrier-15 scrub for this window
+///   (ARCH-0038 #15): pre-existing `q:` rows dropped, merged `u:` rows
+///   dropped post-snapshot, `fr:w:{key}` full-resync marker set.
 pub fn replay_pending_tombstones(
     vault: &Vault,
     doc: &LoroDoc,
@@ -284,6 +355,15 @@ pub fn replay_pending_tombstones(
         return Ok(0);
     }
 
+    // Clobber guard + scrub inventory: merge the on-disk record into the
+    // doc so the full snapshot below subsumes it, and remember which `u:`
+    // rows it covered (only those may be scrubbed).
+    let merged_update_keys = merge_persisted_state_into_doc(vault, doc, window_key)?;
+    let any_hard = markers
+        .iter()
+        .any(|(_, _, value)| decode_tombstone_value(value).is_hard());
+
+    let vv_before = doc.oplog_vv();
     for (_, id, value) in &markers {
         apply_tombstone_to_window_doc(doc, id, value)?;
     }
@@ -292,17 +372,36 @@ pub fn replay_pending_tombstones(
     // the hard purge against a soft shell.
     doc.commit_with(CommitOptions::new().origin(BRIDGE_ORIGIN));
 
+    // The replay commit's delta — tombstone values + key-delete ops, opaque
+    // ids only — is the delete-bearing update queued for transmission.
+    let delete_update = if doc.oplog_vv() == vv_before {
+        None
+    } else {
+        Some(export_updates_from(doc, &vv_before)?)
+    };
+
     // Persist BEFORE clearing the markers — the marker may only be cleared
     // after CRDT commit + snapshot persistence succeed.
     let snapshot = export_snapshot(doc)?;
     let vv = doc_version_vector(doc);
     vault.with_write_txn(|wtxn| {
-        let doc_key = format!("d:w:{window_key}");
-        vault.store.sync_state.put(wtxn, &doc_key, &snapshot)?;
-        let sv_key = format!("sv:w:{window_key}");
-        vault.store.sync_state.put(wtxn, &sv_key, &vv)?;
-        let svf_key = format!("svf:w:{window_key}");
-        vault.store.sync_state.put(wtxn, &svf_key, &[1_u8])?;
+        persist_window_doc_in_txn(vault, wtxn, window_key, &snapshot, &vv)?;
+        if any_hard {
+            crate::sync::queue::scrub_window_updates_in_txn(vault, wtxn, window_key.as_str())?;
+            for update_key in &merged_update_keys {
+                vault.store.sync_state.delete(wtxn, update_key)?;
+            }
+            let fr_key = format!("fr:w:{window_key}");
+            vault.store.sync_state.put(wtxn, &fr_key, &[1_u8])?;
+        }
+        if let Some(update) = &delete_update {
+            crate::sync::queue::push_delete_bearing_in_txn(
+                vault,
+                wtxn,
+                window_key.as_str(),
+                update,
+            )?;
+        }
         for (marker_key, _, _) in &markers {
             vault.store.sync_state.delete(wtxn, marker_key)?;
         }
