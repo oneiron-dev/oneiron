@@ -136,7 +136,11 @@ fn open_window_runs_pinned_recovery_order_and_converges() {
     persist_setup_doc(&vault, &key, &setup_doc);
 
     let materializer = Arc::new(Materializer::new());
-    let manager = WindowManager::new(Arc::clone(&vault), materializer, "test-user");
+    let manager = Arc::new(WindowManager::new(
+        Arc::clone(&vault),
+        materializer,
+        "test-user",
+    ));
     let win = manager.open_window(&key).unwrap();
     let entities = win.doc.get_map("entities");
 
@@ -241,7 +245,11 @@ fn observers_attach_after_recovery_with_no_replay_side_effects() {
     assert!(vault.sync_state_get(&seq_key).unwrap().is_none());
 
     let materializer = Arc::new(Materializer::new());
-    let manager = WindowManager::new(Arc::clone(&vault), materializer, "test-user");
+    let manager = Arc::new(WindowManager::new(
+        Arc::clone(&vault),
+        materializer,
+        "test-user",
+    ));
     let win = manager.open_window(&key).unwrap();
 
     // CRDT-ahead entity materialized by step 5, exactly once (bytes exact).
@@ -295,7 +303,11 @@ fn open_fresh_window_recovers_lmdb_ahead_entities_before_observers() {
     put_lmdb_entity(&vault, &lmdb_only, t, b"pre-existing");
 
     let materializer = Arc::new(Materializer::new());
-    let manager = WindowManager::new(Arc::clone(&vault), materializer, "test-user");
+    let manager = Arc::new(WindowManager::new(
+        Arc::clone(&vault),
+        materializer,
+        "test-user",
+    ));
     let win = manager.open_window(&key).unwrap();
 
     let entities = win.doc.get_map("entities");
@@ -324,7 +336,11 @@ fn double_open_returns_the_same_live_instance() {
     let t = key.start_timestamp().unwrap() + 60;
 
     let materializer = Arc::new(Materializer::new());
-    let manager = WindowManager::new(Arc::clone(&vault), materializer, "test-user");
+    let manager = Arc::new(WindowManager::new(
+        Arc::clone(&vault),
+        materializer,
+        "test-user",
+    ));
 
     let w1 = manager.open_window(&key).unwrap();
     let w2 = manager.open_window(&key).unwrap();
@@ -369,7 +385,11 @@ fn unload_persists_state_and_drops_observer_subscriptions() {
     let t = key.start_timestamp().unwrap() + 60;
 
     let materializer = Arc::new(Materializer::new());
-    let manager = WindowManager::new(Arc::clone(&vault), materializer, "test-user");
+    let manager = Arc::new(WindowManager::new(
+        Arc::clone(&vault),
+        materializer,
+        "test-user",
+    ));
     let win = manager.open_window(&key).unwrap();
 
     let pre_unload = EntityId::now();
@@ -456,7 +476,11 @@ fn open_consumes_rm_marker_after_forward_remat_succeeds() {
     vault.sync_state_put(&rm_key, &[1u8]).unwrap();
 
     let materializer = Arc::new(Materializer::new());
-    let manager = WindowManager::new(Arc::clone(&vault), materializer, "test-user");
+    let manager = Arc::new(WindowManager::new(
+        Arc::clone(&vault),
+        materializer,
+        "test-user",
+    ));
     let _win = manager.open_window(&key).unwrap();
 
     assert_eq!(
@@ -485,7 +509,11 @@ fn open_fails_closed_on_corrupt_persisted_snapshot() {
     vault.sync_state_put(&rm_key, &[1u8]).unwrap();
 
     let materializer = Arc::new(Materializer::new());
-    let manager = WindowManager::new(Arc::clone(&vault), materializer, "test-user");
+    let manager = Arc::new(WindowManager::new(
+        Arc::clone(&vault),
+        materializer,
+        "test-user",
+    ));
 
     assert!(manager.open_window(&key).is_err());
     assert!(
@@ -505,7 +533,11 @@ fn open_fails_closed_on_corrupt_persisted_snapshot() {
 fn open_default_windows_loads_current_and_previous_month() {
     let (_temp, vault) = test_vault();
     let materializer = Arc::new(Materializer::new());
-    let manager = WindowManager::new(Arc::clone(&vault), materializer, "test-user");
+    let manager = Arc::new(WindowManager::new(
+        Arc::clone(&vault),
+        materializer,
+        "test-user",
+    ));
 
     let now = WindowKey::new("2026-03").start_timestamp().unwrap() + 60;
     let opened = manager.open_default_windows(now).unwrap();
@@ -517,7 +549,11 @@ fn open_default_windows_loads_current_and_previous_month() {
 
     // Epoch boundary: 1970-01 has no previous month.
     let (_temp2, vault2) = test_vault();
-    let manager2 = WindowManager::new(vault2, Arc::new(Materializer::new()), "test-user");
+    let manager2 = Arc::new(WindowManager::new(
+        vault2,
+        Arc::new(Materializer::new()),
+        "test-user",
+    ));
     let opened = manager2.open_default_windows(0).unwrap();
     assert_eq!(opened.len(), 1);
     assert_eq!(opened[0].key.as_str(), "1970-01");

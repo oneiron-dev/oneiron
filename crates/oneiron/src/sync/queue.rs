@@ -338,7 +338,9 @@ impl SyncQueue {
         Ok(())
     }
 
-    /// Returns the number of valid update entries in the queue.
+    /// Returns the number of valid update entries in the queue, INCLUDING
+    /// delete-bearing rows (it matches what [`drain_updates`]
+    /// (Self::drain_updates) replays).
     pub fn len(&self) -> Result<usize> {
         let rtxn = self.vault.store.env.read_txn()?;
         let mut count = 0;
@@ -364,8 +366,43 @@ impl SyncQueue {
     }
 
     /// Returns true if the queue has reached its maximum capacity.
+    ///
+    /// Capacity gates the reconnect-overflow re-bootstrap (`is_full` →
+    /// [`clear_all`](Self::clear_all)), so it counts ONLY rows that clear
+    /// could actually drop: delete-bearing rows are exempt from every
+    /// unconfirmed clear (they are removed solely by the VV-confirmed
+    /// [`clear_through_confirmed`](Self::clear_through_confirmed)) and are
+    /// excluded here. Counting them would let pending unconfirmed deletes
+    /// wedge the queue permanently "full" — every reconnect re-firing a
+    /// re-bootstrap that frees nothing (ONE-1135 review rider).
     pub fn is_full(&self) -> Result<bool> {
-        Ok(self.len()? >= MAX_QUEUE_SIZE)
+        Ok(self.clearable_len()? >= MAX_QUEUE_SIZE)
+    }
+
+    /// Counts the valid update rows the UNCONFIRMED clears may drop — i.e.
+    /// [`len`](Self::len) minus delete-bearing rows.
+    fn clearable_len(&self) -> Result<usize> {
+        let rtxn = self.vault.store.env.read_txn()?;
+        let delete_bearing = delete_bearing_seqs_in_txn(&self.vault, &rtxn)?;
+        let mut count = 0;
+        let iter = self
+            .vault
+            .store
+            .sync_queue
+            .prefix_iter(&rtxn, UPDATE_PREFIX)?;
+        for result in iter {
+            let (key, value) = result?;
+            match validate_update_row(key, value) {
+                Ok(()) => {
+                    if !decode_update_key(key).is_ok_and(|seq| delete_bearing.contains(&seq)) {
+                        count += 1;
+                    }
+                }
+                Err(Error::CorruptedIndex(_)) => continue,
+                Err(err) => return Err(err),
+            }
+        }
+        Ok(count)
     }
 
     fn allocate_next_update_seq(&self, wtxn: &mut heed::RwTxn<'_>) -> Result<u64> {
@@ -1182,6 +1219,82 @@ mod tests {
                 .is_some(),
             "well-formed rows of OTHER windows survive"
         );
+    }
+
+    /// ONE-1135 review rider: delete-bearing rows are exempt from every
+    /// unconfirmed clear, so they must also be exempt from the capacity
+    /// accounting that TRIGGERS the re-bootstrap (`is_full` → `clear_all`).
+    /// Pre-fix, a queue holding `MAX_QUEUE_SIZE` delete-bearing rows
+    /// reported full forever: `clear_all` preserved every row, the overflow
+    /// check re-fired on each reconnect, and nothing was ever freed — a
+    /// permanent re-bootstrap loop.
+    #[test]
+    fn is_full_excludes_delete_bearing_rows_from_capacity() {
+        let vault = test_vault();
+        let queue = SyncQueue::new(vault.clone()).unwrap();
+
+        // Seed MAX_QUEUE_SIZE delete-bearing rows in ONE txn (the public
+        // push would be 10k commits) — exact row + marker bytes the delete
+        // path writes.
+        let value = encode_update_value("2026-03", &[9]).unwrap();
+        let mut wtxn = vault.store.env.write_txn().unwrap();
+        for seq in 1..=(MAX_QUEUE_SIZE as u64) {
+            vault
+                .store
+                .sync_queue
+                .put(&mut wtxn, &encode_update_key(seq), &value)
+                .unwrap();
+            vault
+                .store
+                .sync_queue
+                .put(&mut wtxn, &encode_delete_bearing_key(seq), &[1u8])
+                .unwrap();
+        }
+        vault
+            .store
+            .sync_queue
+            .put(
+                &mut wtxn,
+                LAST_UPDATE_SEQ_KEY,
+                &(MAX_QUEUE_SIZE as u64).to_le_bytes(),
+            )
+            .unwrap();
+        wtxn.commit().unwrap();
+
+        assert_eq!(
+            queue.len().unwrap(),
+            MAX_QUEUE_SIZE,
+            "len still counts every replayable row"
+        );
+        assert!(
+            !queue.is_full().unwrap(),
+            "unconfirmed-clear-exempt rows must not count toward overflow capacity"
+        );
+
+        // The re-bootstrap path frees clearable rows and converges to
+        // not-full instead of looping.
+        let normal_seq = queue.push("2026-03", &[1]).unwrap();
+        queue.clear_all().unwrap();
+        assert!(!queue.is_full().unwrap());
+        assert_eq!(
+            queue.len().unwrap(),
+            MAX_QUEUE_SIZE,
+            "delete-bearing rows preserved, the normal row dropped"
+        );
+        let remaining: Vec<u64> = queue
+            .drain_updates()
+            .unwrap()
+            .iter()
+            .map(|u| u.seq)
+            .collect();
+        assert!(!remaining.contains(&normal_seq));
+
+        // VV-confirmed clear is what actually frees the delete rows.
+        queue
+            .clear_through_confirmed(MAX_QUEUE_SIZE as u64)
+            .unwrap();
+        assert_eq!(queue.len().unwrap(), 0);
+        assert!(!queue.is_full().unwrap());
     }
 
     #[test]

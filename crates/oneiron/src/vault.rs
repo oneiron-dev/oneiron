@@ -236,20 +236,27 @@ impl Vault {
             .unwrap_or_else(|e| e.into_inner()) = manager;
     }
 
-    /// Returns the registry-owned live window for `key`, if a manager is
-    /// attached AND currently has the window open. Lookup only — never
-    /// opens a window (a delete must not fault a month into memory).
+    /// Returns the registry-owned live window for `key` — paired with the
+    /// manager's [`crate::sync::bridge::Materializer`], so the delete path
+    /// can serialize its live-doc tombstone commit against Observer B
+    /// callbacks — if a manager is attached AND currently has the window
+    /// open. Lookup only — never opens a window (a delete must not fault a
+    /// month into memory).
     #[cfg(feature = "sync")]
     fn live_window(
         &self,
         key: &crate::sync::WindowKey,
-    ) -> Option<std::sync::Arc<crate::sync::window::LoadedWindow>> {
+    ) -> Option<(
+        std::sync::Arc<crate::sync::window::LoadedWindow>,
+        std::sync::Arc<crate::sync::bridge::Materializer>,
+    )> {
         let manager = self
             .live_window_manager
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .upgrade()?;
-        manager.window(key)
+        let window = manager.window(key)?;
+        Some((window, std::sync::Arc::clone(manager.materializer())))
     }
 
     /// Internal guard: read paths over the text index must refuse to score
@@ -1861,25 +1868,44 @@ impl Vault {
 
         let window_key = WindowKey::from_timestamp(window_ts);
 
-        if let Some(window) = self.live_window(&window_key) {
+        if let Some((window, materializer)) = self.live_window(&window_key) {
             // Live path: merge the on-disk record first (clobber guard —
             // a tombstone persisted transiently while this window was open
             // must survive the snapshot export below), then commit the
             // delete through the SHARED doc.
+            //
+            // The merge runs OUTSIDE the materializer lock: importing into
+            // an observed doc fires Observer B synchronously on this
+            // thread, and the callback takes the (non-reentrant) lock
+            // itself.
             let merged_update_keys =
                 merge_persisted_state_into_doc(self, &window.doc, &window_key)?;
-            let vv_before = window.doc.oplog_vv();
-            apply_tombstone_to_window_doc(&window.doc, id, &value.encode())?;
-            window
-                .doc
-                .commit_with(CommitOptions::new().origin(BRIDGE_ORIGIN));
-            let delete_update = if window.doc.oplog_vv() == vv_before {
-                None
-            } else {
-                Some(export_updates_from(&window.doc, &vv_before)?)
+            // The tombstone commit + exports run UNDER the materializer
+            // lock: Observer B's tombstone-check + LMDB-materialize is
+            // atomic under that lock, so a concurrent remote re-put can no
+            // longer check the tombstones map BEFORE this commit and write
+            // the deleted body back AFTER the purge txn that follows
+            // (resurrection race). Deadlock-free: the BRIDGE_ORIGIN commit
+            // is rejected by Observer B callbacks BEFORE they lock, and
+            // Observer A never takes this lock. Lock order materializer →
+            // LMDB txn matches every other holder; the registry lock is
+            // NOT held here (manager lock-order pin).
+            let (delete_update, snapshot, vv) = {
+                let _guard = materializer.lock();
+                let vv_before = window.doc.oplog_vv();
+                apply_tombstone_to_window_doc(&window.doc, id, &value.encode())?;
+                window
+                    .doc
+                    .commit_with(CommitOptions::new().origin(BRIDGE_ORIGIN));
+                let delete_update = if window.doc.oplog_vv() == vv_before {
+                    None
+                } else {
+                    Some(export_updates_from(&window.doc, &vv_before)?)
+                };
+                let snapshot = export_snapshot(&window.doc)?;
+                let vv = doc_version_vector(&window.doc);
+                (delete_update, snapshot, vv)
             };
-            let snapshot = export_snapshot(&window.doc)?;
-            let vv = doc_version_vector(&window.doc);
             self.finish_crdt_tombstone_persist(
                 &window_key,
                 &snapshot,

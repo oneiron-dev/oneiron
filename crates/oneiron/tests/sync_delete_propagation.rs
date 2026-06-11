@@ -280,6 +280,229 @@ fn hard_delete_routes_through_live_window_doc_with_carrier_15_scrub() {
     );
 }
 
+/// Review blocker (PR #107): `attach_to_vault` had NO production caller —
+/// every real composition left `vault.live_window_manager` dangling and
+/// the delete path silently took the transient route while the live
+/// observed doc missed the tombstone. The fix self-attaches from
+/// `open_window`, so the PRODUCTION composition (construct manager → open
+/// window; no manual attach anywhere) must route `Vault::delete_entity*`
+/// through the registry-owned live doc. A transient-path delete leaves the
+/// live doc untouched and FAILS the live-doc assertions below.
+#[test]
+fn production_open_window_wires_delete_router_without_manual_attach() {
+    let (_dir, vault) = open_vault();
+    let id = EntityId::now();
+    vault
+        .batch()
+        .put(
+            &id,
+            1,
+            time_range(LEARNED_AT),
+            LEARNED_AT,
+            b"prod-wire-secret",
+        )
+        .text(&id, &[("body", "prod-wire-secret")])
+        .commit()
+        .unwrap();
+
+    // PRODUCTION path: construct + open. Deliberately NO attach_to_vault.
+    let materializer = Arc::new(Materializer::new());
+    let manager = Arc::new(WindowManager::new(
+        Arc::clone(&vault),
+        materializer,
+        "node-a",
+    ));
+    let window = manager.open_window(&WindowKey::new(WINDOW)).unwrap();
+    assert!(
+        map_get_bytes(&window.doc.get_map("entities"), &id.to_hex()).is_some(),
+        "fixture: reverse remat must mirror the entity into the live doc"
+    );
+
+    let outcome = vault
+        .delete_entity_with_reason(&id, DeleteReason::GdprDelete)
+        .unwrap();
+    assert!(outcome.existed);
+
+    // LIVE-path proof: the registry-owned doc saw the tombstone commit and
+    // the entities-key removal in the same commit.
+    let value = map_get_bytes(&window.doc.get_map("tombstones"), &id.to_hex())
+        .expect("a production-opened window must receive the delete through the LIVE doc");
+    assert_eq!(value.len(), TOMBSTONE_VALUE_V2_LEN);
+    assert_eq!(value[0], 3, "gdpr_delete wire byte");
+    assert!(
+        map_get_bytes(&window.doc.get_map("entities"), &id.to_hex()).is_none(),
+        "live entities-map copy removed in the delete commit"
+    );
+
+    // Observer A persisted the live commit (the registry doc is the
+    // observed doc). The transient path persists NO u: row — recovery ran
+    // before observers attached, so this window had zero u: rows until the
+    // live delete commit.
+    let u_keys = vault
+        .sync_state_keys_with_prefix(&format!("u:w:{WINDOW}:"))
+        .unwrap();
+    assert_eq!(
+        u_keys.len(),
+        1,
+        "Observer A must persist the live tombstone commit's u: row"
+    );
+}
+
+/// Review blocker (bots, 4× consensus / OWNER-DECISION 4): `pt:` pending
+/// tombstones had NO production replay call site — a delete made while
+/// sync was off (or that crashed between the purge txn and the CRDT
+/// commit) was never published once sync came back. `open_window` must now
+/// replay `pt:*` BEFORE `pm:*`, so the recovered tombstone gates the
+/// mirror replay of the same entity.
+#[test]
+fn production_open_window_replays_pending_tombstones_before_mirrors() {
+    let (_dir, vault) = open_vault();
+    let id = EntityId::now();
+    let hex_id = id.to_hex();
+    let bystander = EntityId::now();
+
+    // LMDB: the (not-yet-purged) body and a bystander.
+    vault
+        .put_entity(&id, 1, time_range(LEARNED_AT), LEARNED_AT, b"pt-doomed")
+        .unwrap();
+    vault
+        .put_entity(
+            &bystander,
+            1,
+            time_range(LEARNED_AT),
+            LEARNED_AT,
+            b"pt-bystander",
+        )
+        .unwrap();
+
+    // Persisted window doc: holds ONLY the bystander (byte-identical to
+    // its LMDB envelope), never the doomed body.
+    let mut bystander_blob = Vec::with_capacity(25 + 12);
+    bystander_blob.push(1u8);
+    for _ in 0..3 {
+        bystander_blob.extend_from_slice(&LEARNED_AT.to_be_bytes());
+    }
+    bystander_blob.extend_from_slice(b"pt-bystander");
+    let setup = LoroDoc::new();
+    setup
+        .get_map("entities")
+        .insert(bystander.to_hex().as_str(), bystander_blob.as_slice())
+        .unwrap();
+    setup.commit();
+    vault
+        .sync_state_put(
+            &format!("d:w:{WINDOW}"),
+            &setup.export(ExportMode::Snapshot).unwrap(),
+        )
+        .unwrap();
+    vault
+        .sync_state_put(&format!("sv:w:{WINDOW}"), &setup.oplog_vv().encode())
+        .unwrap();
+    vault
+        .sync_state_put(&format!("svf:w:{WINDOW}"), &[1u8])
+        .unwrap();
+
+    // The sync-off / crashed delete left BOTH markers for the same id: the
+    // pending tombstone AND a pending mirror (the adversarial interleaving
+    // the ordering pin exists for).
+    let mut marker_value = vec![2u8]; // user_hard_delete
+    marker_value.extend_from_slice(&1_771_100_000_u64.to_le_bytes());
+    marker_value.extend_from_slice(&[0xAB; 16]);
+    vault
+        .sync_state_put(&format!("pt:{WINDOW}:{hex_id}"), &marker_value)
+        .unwrap();
+    vault
+        .sync_state_put(&format!("pm:{WINDOW}:{hex_id}"), &[1u8])
+        .unwrap();
+
+    // PRODUCTION open — no manual replay calls anywhere.
+    let materializer = Arc::new(Materializer::new());
+    let manager = Arc::new(WindowManager::new(
+        Arc::clone(&vault),
+        materializer,
+        "node-a",
+    ));
+    let window = manager.open_window(&WindowKey::new(WINDOW)).unwrap();
+
+    // Tombstone applied + durable; both markers consumed.
+    assert_eq!(
+        map_get_bytes(&window.doc.get_map("tombstones"), &hex_id).as_deref(),
+        Some(marker_value.as_slice()),
+        "open_window must replay the pending tombstone into the live doc"
+    );
+    assert!(
+        vault
+            .sync_state_get(&format!("pt:{WINDOW}:{hex_id}"))
+            .unwrap()
+            .is_none(),
+        "pt: marker cleared only after the CRDT record is durable"
+    );
+    assert!(
+        vault
+            .sync_state_get(&format!("pm:{WINDOW}:{hex_id}"))
+            .unwrap()
+            .is_none(),
+        "pm: marker consumed (tombstone branch)"
+    );
+    let reloaded =
+        oneiron::sync::window::load_window_from_state(&vault, "node-a", &WindowKey::new(WINDOW))
+            .unwrap();
+    assert_eq!(
+        map_get_bytes(&reloaded.get_map("tombstones"), &hex_id).as_deref(),
+        Some(marker_value.as_slice()),
+        "replayed tombstone durable in sync_state"
+    );
+
+    // No resurrection on either side: the body never (re)entered the CRDT
+    // map, and recovery's tombstone pass purged the LMDB copy.
+    assert!(
+        map_get_bytes(&window.doc.get_map("entities"), &hex_id).is_none(),
+        "pm replay / remat must not mirror the deleted body into the doc"
+    );
+    assert!(
+        vault.get_raw(&id).unwrap().is_none(),
+        "recovery must hard-purge the marker'd entity from the active store"
+    );
+    assert_eq!(
+        vault.get_raw(&bystander).unwrap().as_deref(),
+        Some(bystander_blob.as_slice()),
+        "bystander untouched"
+    );
+
+    // ORDER discriminator (pt: BEFORE pm:): the recovery peer committed
+    // exactly ONE op — the tombstone insert. A pm-first implementation
+    // mirrors the doomed body (entity insert, then tombstone insert + key
+    // delete) onto the same peer first, leaving the deleted payload in the
+    // doc's op history forever (a durable carrier the h: sweep never
+    // scrubs), and fails this count.
+    let local_ops = window
+        .doc
+        .oplog_vv()
+        .get(&window.doc.peer_id())
+        .copied()
+        .unwrap_or(0);
+    assert_eq!(
+        local_ops, 1,
+        "recovery must commit only the tombstone insert on the local peer"
+    );
+
+    // The recovered delete is QUEUED for transmission (delete-bearing row)
+    // and the window is marked for full resync (hard marker).
+    assert_eq!(
+        delete_bearing_seqs(&vault).len(),
+        1,
+        "pt: replay must queue the tombstone delta as a delete-bearing row"
+    );
+    assert_eq!(
+        vault
+            .sync_state_get(&format!("fr:w:{WINDOW}"))
+            .unwrap()
+            .as_deref(),
+        Some([1u8].as_slice()),
+        "hard pt: replay must set the full-resync marker"
+    );
+}
+
 /// AC2 regression — the exact clobber vector from the spec: live doc loaded
 /// (constructed OUTSIDE the registry, so the vault routes the delete
 /// through the transient path) → delete via vault → live doc
