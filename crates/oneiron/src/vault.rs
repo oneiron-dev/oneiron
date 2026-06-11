@@ -1808,18 +1808,28 @@ impl Vault {
         scan_edges(&self.store.edges_in, &rtxn, tgt.as_bytes())
     }
 
-    /// Returns BM25 text matches for a query.
+    /// Returns BM25 text matches for a query under the contract-default
+    /// rank profile.
     pub fn search_text(&self, query: &str, limit: usize) -> Result<Vec<ScoredEntity>> {
+        self.search_text_with_profile(query, limit, &crate::types::Bm25RankProfile::default())
+    }
+
+    /// Returns BM25 text matches for a query under a caller-supplied
+    /// scoring-only rank profile (ARCH-0031: Okapi vs `Plus { delta }`,
+    /// per-channel weight / `b`). The profile never touches the on-disk
+    /// index or the open-time manifest handshake — changing it does not
+    /// require a reindex. Invalid profiles fail closed with
+    /// [`crate::Error::InvalidRankProfile`].
+    pub fn search_text_with_profile(
+        &self,
+        query: &str,
+        limit: usize,
+        profile: &crate::types::Bm25RankProfile,
+    ) -> Result<Vec<ScoredEntity>> {
+        let config = profile.to_bm25_config()?;
         self.ensure_text_index_trusted()?;
         let rtxn = self.store.env.read_txn()?;
-        bm25::search_text(
-            &self.store,
-            &rtxn,
-            &self.analyzer,
-            &bm25::Bm25Config::default(),
-            query,
-            limit,
-        )
+        bm25::search_text(&self.store, &rtxn, &self.analyzer, &config, query, limit)
     }
 
     /// Creates a new write batch builder bound to this vault.
@@ -3233,6 +3243,80 @@ mod tests {
                 bm25::POSTINGS_VALUE_FORMAT_VERSION,
             )),
         );
+    }
+
+    /// AC2 (ONE-1119): the rank profile stays OUT of the on-disk
+    /// manifest handshake. Querying through both public profile paths
+    /// with a thoroughly non-default profile must leave every
+    /// `vault_meta` handshake row byte-identical, and a plain reopen
+    /// must still pass the handshake — a profile change never requires
+    /// a reindex (ARCH-0031).
+    #[test]
+    fn rank_profile_change_does_not_require_reindex() -> Result<()> {
+        use crate::analyzer::AnalyzerChannel;
+        use crate::types::Bm25RankProfile;
+
+        const HANDSHAKE_KEYS: [&[u8]; 4] = [
+            TEXT_INDEX_SCHEMA_VERSION_KEY,
+            TEXT_ANALYZER_MANIFEST_KEY,
+            TEXT_ANALYZER_MANIFEST_HASH_KEY,
+            TEXT_BM25_FIELD_SCHEMA_HASH_KEY,
+        ];
+
+        fn handshake_rows(vault: &Vault) -> Result<Vec<Option<Vec<u8>>>> {
+            let rtxn = vault.store.env.read_txn()?;
+            let mut rows = Vec::with_capacity(HANDSHAKE_KEYS.len());
+            for key in HANDSHAKE_KEYS {
+                rows.push(vault.store.vault_meta.get(&rtxn, key)?.map(<[u8]>::to_vec));
+            }
+            Ok(rows)
+        }
+
+        let tmp = tempfile::tempdir()?;
+        let a = entity(81);
+
+        let vault = Vault::open(tmp.path(), test_config())?;
+        vault
+            .batch()
+            .put(&a, 1, range(1, 1), 1, b"a")
+            .text(&a, &[("body", "hello world")])
+            .commit()?;
+
+        let before = handshake_rows(&vault)?;
+        assert!(
+            before.iter().all(Option::is_some),
+            "handshake rows must exist after first index write",
+        );
+
+        let profile = Bm25RankProfile::default()
+            .with_formula(bm25::Bm25Formula::Plus { delta: 1.0 })
+            .with_channel_weight(AnalyzerChannel::Stem, 0.0)
+            .with_channel_b(AnalyzerChannel::Surface, 0.2);
+
+        let hits = vault.search_text_with_profile("hello", 10, &profile)?;
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].id, a);
+
+        let hits = vault
+            .query()
+            .search_text("hello", 10)
+            .rank_profile(profile)
+            .run()?;
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].id, a);
+
+        let after = handshake_rows(&vault)?;
+        assert_eq!(
+            before, after,
+            "rank profile must never touch the vault_meta handshake rows",
+        );
+        drop(vault);
+
+        // Plain reopen passes the handshake — no clear_text_index, no
+        // reindex, and the default profile still finds the doc.
+        let vault = Vault::open(tmp.path(), test_config())?;
+        assert_eq!(vault.search_text("hello", 10)?.len(), 1);
+        Ok(())
     }
 
     // `analyzer_manifest_hash_mismatch` and `handshake_rejects_truncated_stored_hash`
