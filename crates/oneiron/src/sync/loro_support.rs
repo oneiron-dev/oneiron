@@ -29,6 +29,13 @@ pub(crate) fn map_contains_binary(map: &LoroMap, key: &str) -> bool {
     )
 }
 
+/// Presence check for tombstone maps: ANY value or container under the key
+/// counts as present (fail closed). Entities/edges maps must keep using
+/// the Binary-only helpers.
+pub(crate) fn map_contains_key(map: &LoroMap, key: &str) -> bool {
+    map.get(key).is_some()
+}
+
 pub(crate) fn map_for_each_bytes(map: &LoroMap, mut f: impl FnMut(&str, &[u8])) {
     map.for_each(|key, value| {
         if let ValueOrContainer::Value(LoroValue::Binary(bytes)) = value {
@@ -98,10 +105,16 @@ mod tests {
         assert!(!map_contains_binary(&map, "text"));
         assert!(!map_contains_binary(&map, "missing"));
 
+        // Fail-closed presence: ANY value counts, only absence is absent.
+        assert!(map_contains_key(&map, "key1"));
+        assert!(map_contains_key(&map, "text"));
+        assert!(!map_contains_key(&map, "missing"));
+
         map.delete("key1").unwrap();
         doc.commit();
 
         assert!(!map_contains_binary(&map, "key1"));
+        assert!(!map_contains_key(&map, "key1"));
     }
 
     #[test]

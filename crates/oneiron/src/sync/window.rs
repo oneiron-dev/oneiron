@@ -12,7 +12,7 @@ use super::bridge::{
 };
 use super::loro_support::{
     doc_from_snapshot, doc_version_vector, export_snapshot, import_doc, map_contains_binary,
-    map_for_each_bytes, map_get_bytes, map_insert_bytes,
+    map_contains_key, map_for_each_bytes, map_get_bytes, map_insert_bytes,
 };
 use super::schema::create_window_doc;
 use super::types::WindowKey;
@@ -159,8 +159,10 @@ pub fn replay_pending_mirrors(vault: &Vault, doc: &LoroDoc, window_key: &WindowK
             }
         };
 
-        // Check if tombstoned in CRDT
-        if map_contains_binary(&tombstones_map, &hex_id) {
+        // Check if tombstoned in CRDT. Presence check is fail closed: ANY
+        // tombstone value gates, not just Binary (a non-binary tombstone
+        // must never let the marker entity remirror).
+        if map_contains_key(&tombstones_map, &hex_id) {
             vault.with_write_txn(|wtxn| {
                 vault.store.sync_state.delete(wtxn, marker_key)?;
                 Ok(())
@@ -180,6 +182,17 @@ pub fn replay_pending_mirrors(vault: &Vault, doc: &LoroDoc, window_key: &WindowK
             let mut wrote_edges = false;
             let edges_out = vault.edges_out(id)?;
             for edge in &edges_out {
+                // Never backfill an edge whose TARGET is tombstoned —
+                // matching forward remat's both-endpoint filter. A surviving
+                // local S→E row (crash between the tombstone CRDT commit and
+                // the purge txn, or a failed purge) must not be re-inserted
+                // into the replicated edges map (ARCH-0038 active-carrier
+                // purge). Plain containment = skip on this branch (legacy
+                // values are hard); becomes reason-aware (skip iff the
+                // tombstone decodes HARD) once tombstone v2 lands in M4-06.
+                if map_contains_key(&tombstones_map, &edge.target.to_hex()) {
+                    continue;
+                }
                 let edge_key = format_edge_key(id, edge.kind, &edge.target);
                 if map_contains_binary(&edges_map, &edge_key) {
                     continue;
@@ -213,6 +226,11 @@ pub fn replay_pending_mirrors(vault: &Vault, doc: &LoroDoc, window_key: &WindowK
 
         let edges_out = vault.edges_out(id)?;
         for edge in &edges_out {
+            // Same tombstoned-target gate as the byte-equal path above:
+            // the full mirror must not re-insert edges to deleted targets.
+            if map_contains_key(&tombstones_map, &edge.target.to_hex()) {
+                continue;
+            }
             let edge_key = format_edge_key(id, edge.kind, &edge.target);
             let edge_val = encode_edge_value_for_crdt(
                 edge.kind,
@@ -278,9 +296,11 @@ pub fn forward_rematerialize(
             // LMDB, not even transiently (a durable put-then-re-purge would
             // briefly resurrect deleted content). The raw map key is checked
             // alongside the canonical hex so a non-canonical entity alias
-            // cannot dodge a canonical tombstone — fail closed.
-            if map_contains_binary(&tombstones_map, key)
-                || map_contains_binary(&tombstones_map, &id.to_hex())
+            // cannot dodge a canonical tombstone — fail closed. Presence is
+            // ANY-value (`map_contains_key`): a non-binary tombstone must
+            // gate too, never fail open.
+            if map_contains_key(&tombstones_map, key)
+                || map_contains_key(&tombstones_map, &id.to_hex())
             {
                 return;
             }
@@ -384,8 +404,9 @@ pub fn forward_rematerialize(
             };
 
             // Never re-add an edge whose endpoint is tombstoned in the CRDT.
-            if map_contains_binary(&tombstones_map, &src.to_hex())
-                || map_contains_binary(&tombstones_map, &tgt.to_hex())
+            // ANY-value presence — a non-binary tombstone gates too.
+            if map_contains_key(&tombstones_map, &src.to_hex())
+                || map_contains_key(&tombstones_map, &tgt.to_hex())
             {
                 return;
             }
@@ -521,7 +542,10 @@ pub fn reverse_rematerialize(vault: &Vault, doc: &LoroDoc, window_key: &WindowKe
     for id in &entities_in_range {
         let hex_id = id.to_hex();
 
-        if map_contains_binary(&tombstones_map, &hex_id) {
+        // ANY-value tombstone presence gates the SOURCE (fail closed): a
+        // non-binary tombstone must never let a surviving local row
+        // re-insert the deleted body into the replicated entities map.
+        if map_contains_key(&tombstones_map, &hex_id) {
             continue;
         }
 
@@ -540,6 +564,15 @@ pub fn reverse_rematerialize(vault: &Vault, doc: &LoroDoc, window_key: &WindowKe
 
         let edges_out = vault.edges_out(id)?;
         for edge in &edges_out {
+            // Never backfill an edge whose TARGET is tombstoned — matching
+            // forward remat's both-endpoint filter (the source is gated
+            // above). A surviving local S→E row from the tombstone-commit/
+            // purge-txn crash window must not re-enter the replicated edges
+            // map. Plain containment = skip on this branch; reason-aware
+            // (skip iff HARD) once tombstone v2 lands in M4-06.
+            if map_contains_key(&tombstones_map, &edge.target.to_hex()) {
+                continue;
+            }
             let edge_key = format_edge_key(id, edge.kind, &edge.target);
             if map_contains_binary(&edges_map, &edge_key) {
                 continue;
