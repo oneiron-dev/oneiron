@@ -536,6 +536,213 @@ pub(crate) fn encode_hard_erase_sweep_job(
         .map_err(|_| Error::InvariantViolation("hard erase sweep job encode"))
 }
 
+/// Pinned contracts.ts `redactionAuditReceipt.fields` key set — the wire
+/// shape every type-120 blob crossing a sync replay door must satisfy
+/// (ONE-1134). Mirrors [`RedactionAuditReceipt`]'s `to_vec_named` encoding:
+/// one string-keyed MessagePack map carrying exactly these fields.
+#[cfg(feature = "sync")]
+const RECEIPT_BODY_KEYS: [&str; 10] = [
+    "request_id",
+    "scope",
+    "reason",
+    "requested_at",
+    "soft_complete_at",
+    "hard_purge_complete_at",
+    "sweep_queued_at",
+    "sweep_complete_at",
+    "affected_revision_ids",
+    "verification",
+];
+
+/// Structurally validates a REDACTION_AUDIT (type 120) body arriving through
+/// a sync replay door against the pinned contracts.ts
+/// `redactionAuditReceipt` field set. Fail-closed rules:
+///
+/// * the body must be exactly one string-keyed MessagePack map (no
+///   positional-array encoding, no trailing bytes);
+/// * keys must be drawn from [`RECEIPT_BODY_KEYS`], no duplicates, no
+///   unknown fields (a field outside the pinned set is a divergence from
+///   the minimization contract — "opaque identifiers + timestamps only");
+/// * required: every field except `sweep_queued_at` / `sweep_complete_at`
+///   (the two contract-optional timestamps, which may also be nil);
+/// * `request_id`, `scope.entity_ids[]`, `scope.revision_ids[]`, and
+///   `affected_revision_ids[]` must parse as opaque UUIDs (GDPR Art. 5(2)
+///   minimization: free text here would smuggle names/content into an
+///   immutable, replicated audit record);
+/// * `reason` must be one of the pinned receipt-writing DeleteReason
+///   literals `user_hard_delete | gdpr_delete | policy_delete`
+///   (`user_delete` writes no receipt, so it can never legitimately appear);
+/// * the three completion timestamps must be non-negative integers;
+/// * `verification` must be a string-keyed map (contract: "placeholder
+///   object" — its values are intentionally unconstrained, the field shape
+///   is not).
+#[cfg(feature = "sync")]
+pub(crate) fn validate_redaction_receipt_body(body: &[u8]) -> Result<()> {
+    use rmpv::Value;
+
+    let mut cursor = std::io::Cursor::new(body);
+    let value = rmpv::decode::read_value(&mut cursor)
+        .map_err(|_| Error::InvalidRedactionReceiptBody("body is not valid MessagePack"))?;
+    if cursor.position() != body.len() as u64 {
+        return Err(Error::InvalidRedactionReceiptBody(
+            "trailing bytes after body map",
+        ));
+    }
+    let Value::Map(entries) = value else {
+        return Err(Error::InvalidRedactionReceiptBody(
+            "body must be a string-keyed MessagePack map",
+        ));
+    };
+
+    let mut seen = [false; RECEIPT_BODY_KEYS.len()];
+    for (key, value) in entries {
+        let Some(key) = key.as_str() else {
+            return Err(Error::InvalidRedactionReceiptBody(
+                "body keys must be strings",
+            ));
+        };
+        let Some(index) = RECEIPT_BODY_KEYS.iter().position(|known| *known == key) else {
+            return Err(Error::InvalidRedactionReceiptBody(
+                "body key is not in the pinned redactionAuditReceipt field set",
+            ));
+        };
+        if seen[index] {
+            return Err(Error::InvalidRedactionReceiptBody("duplicate body key"));
+        }
+        seen[index] = true;
+
+        match RECEIPT_BODY_KEYS[index] {
+            "request_id" => {
+                validate_opaque_uuid(&value, "request_id must be an opaque UUID string")?;
+            }
+            "scope" => validate_receipt_scope(value)?,
+            "reason" => match value.as_str() {
+                Some("user_hard_delete" | "gdpr_delete" | "policy_delete") => {}
+                _ => {
+                    return Err(Error::InvalidRedactionReceiptBody(
+                        "reason must be user_hard_delete | gdpr_delete | policy_delete",
+                    ));
+                }
+            },
+            "requested_at" | "soft_complete_at" | "hard_purge_complete_at" => {
+                if value.as_u64().is_none() {
+                    return Err(Error::InvalidRedactionReceiptBody(
+                        "timestamps must be non-negative integers",
+                    ));
+                }
+            }
+            "sweep_queued_at" | "sweep_complete_at" => {
+                if !value.is_nil() && value.as_u64().is_none() {
+                    return Err(Error::InvalidRedactionReceiptBody(
+                        "optional sweep timestamps must be nil or non-negative integers",
+                    ));
+                }
+            }
+            "affected_revision_ids" => {
+                validate_opaque_uuid_array(
+                    &value,
+                    "affected_revision_ids must be an array of opaque UUID strings",
+                )?;
+            }
+            "verification" => {
+                let Value::Map(fields) = value else {
+                    return Err(Error::InvalidRedactionReceiptBody(
+                        "verification must be a map",
+                    ));
+                };
+                for (key, _) in fields {
+                    if key.as_str().is_none() {
+                        return Err(Error::InvalidRedactionReceiptBody(
+                            "verification keys must be strings",
+                        ));
+                    }
+                }
+            }
+            _ => unreachable!("index is drawn from RECEIPT_BODY_KEYS"),
+        }
+    }
+
+    for (index, key) in RECEIPT_BODY_KEYS.iter().enumerate() {
+        let optional = matches!(*key, "sweep_queued_at" | "sweep_complete_at");
+        if !optional && !seen[index] {
+            return Err(Error::InvalidRedactionReceiptBody(
+                "missing required receipt field",
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// Validates the receipt `scope` field: a map carrying exactly
+/// `entity_ids` + `revision_ids`, both arrays of opaque UUID strings
+/// (contracts.ts: "entity UUIDs / revision UUIDs … Opaque IDs only; no
+/// names or content").
+#[cfg(feature = "sync")]
+fn validate_receipt_scope(value: rmpv::Value) -> Result<()> {
+    let rmpv::Value::Map(entries) = value else {
+        return Err(Error::InvalidRedactionReceiptBody("scope must be a map"));
+    };
+    let mut seen_entity_ids = false;
+    let mut seen_revision_ids = false;
+    for (key, value) in entries {
+        match key.as_str() {
+            Some("entity_ids") => {
+                if seen_entity_ids {
+                    return Err(Error::InvalidRedactionReceiptBody("duplicate scope key"));
+                }
+                seen_entity_ids = true;
+                validate_opaque_uuid_array(
+                    &value,
+                    "scope.entity_ids must be an array of opaque UUID strings",
+                )?;
+            }
+            Some("revision_ids") => {
+                if seen_revision_ids {
+                    return Err(Error::InvalidRedactionReceiptBody("duplicate scope key"));
+                }
+                seen_revision_ids = true;
+                validate_opaque_uuid_array(
+                    &value,
+                    "scope.revision_ids must be an array of opaque UUID strings",
+                )?;
+            }
+            _ => {
+                return Err(Error::InvalidRedactionReceiptBody(
+                    "scope key is not entity_ids | revision_ids",
+                ));
+            }
+        }
+    }
+    if !(seen_entity_ids && seen_revision_ids) {
+        return Err(Error::InvalidRedactionReceiptBody(
+            "scope must carry entity_ids and revision_ids",
+        ));
+    }
+    Ok(())
+}
+
+#[cfg(feature = "sync")]
+fn validate_opaque_uuid(value: &rmpv::Value, reason: &'static str) -> Result<()> {
+    let valid = value
+        .as_str()
+        .is_some_and(|s| uuid::Uuid::parse_str(s).is_ok());
+    if !valid {
+        return Err(Error::InvalidRedactionReceiptBody(reason));
+    }
+    Ok(())
+}
+
+#[cfg(feature = "sync")]
+fn validate_opaque_uuid_array(value: &rmpv::Value, reason: &'static str) -> Result<()> {
+    let Some(items) = value.as_array() else {
+        return Err(Error::InvalidRedactionReceiptBody(reason));
+    };
+    for item in items {
+        validate_opaque_uuid(item, reason)?;
+    }
+    Ok(())
+}
+
 pub(crate) fn encode_hard_erase_sweep_key(seq: u64) -> [u8; 10] {
     let mut key = [0_u8; 10];
     key[..2].copy_from_slice(HARD_ERASE_SWEEP_PREFIX);
