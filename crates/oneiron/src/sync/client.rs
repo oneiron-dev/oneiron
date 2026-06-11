@@ -781,7 +781,7 @@ mod tests {
             "the serde_json VV wire encoding is dead (ONE-1127)"
         );
 
-        // Frames 2..: window VV_REQUESTs carrying binary VV payloads.
+        // Frames 2..: window VV_REQUEST frames carrying binary VV payloads.
         for msg in &messages[2..] {
             assert_eq!(msg[0], TAG_WINDOW_SYNC);
             let (key, sub_tag, payload) = transport::decode_window_sync(&msg[1..]).unwrap();
