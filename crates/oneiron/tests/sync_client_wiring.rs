@@ -212,6 +212,93 @@ fn remote_tombstone_purges_entity_and_survives_restart() {
     );
 }
 
+/// Review rider (PR #104 bot finding #17): the UPDATE arm imports into the
+/// live doc BEFORE persisting the `u:w:` row (deliberate — persist-first
+/// would brick window load on a malformed frame). On a FAILED persist,
+/// though, the import has already advanced the live doc's version vector;
+/// pre-fix the window stayed registered with RAM ahead of durable state,
+/// so the next VV exchange told the server we already held the update — it
+/// was never re-sent and vanished on restart (tombstones included): the
+/// client analog of the ONE-1129 server import-before-persist bug. The fix
+/// DISCARDS the live window (no persist — that would durably commit the
+/// unconfirmed import) and surfaces a typed Storage error.
+#[test]
+fn failed_update_persist_discards_live_window_instead_of_running_ahead() {
+    let (_temp, vault) = test_vault();
+    let manager = make_manager(&vault);
+    let (mut client, _rx) = make_client(&manager);
+
+    let id = EntityId::now();
+    let blob = make_entity_blob(1, LEARNED_JAN_2026, b"never-durable");
+
+    let server_doc = create_window_doc("server", &WindowKey::new("2026-03"));
+    server_doc
+        .get_map("entities")
+        .insert(&id.to_hex(), blob.as_slice())
+        .unwrap();
+    server_doc.commit();
+    let server_peer = server_doc.peer_id();
+    let update = server_doc.export(ExportMode::all_updates()).unwrap();
+
+    // Open the window through the client, then corrupt the u_seq row so
+    // persist_window_update fails closed (CorruptedIndex) AFTER the import
+    // succeeded — the exact RAM-ahead-of-durable interleaving.
+    client.ensure_window("2026-03").unwrap();
+    vault
+        .sync_state_put("m:u_seq:w:2026-03", &[0xBA, 0xD0])
+        .unwrap();
+
+    let err = client
+        .handle_server_message(&transport::encode_window_sync(
+            "2026-03",
+            window_sub_tags::UPDATE,
+            &update,
+        ))
+        .expect_err("a failed u:w: persist must surface, not be swallowed");
+    assert!(
+        matches!(err, TransportError::Storage(_)),
+        "typed Storage error, got: {err:?}"
+    );
+
+    // The live window was DISCARDED — not left registered holding the
+    // unpersisted import (the pre-fix implementation fails here).
+    assert!(
+        manager.window(&WindowKey::new("2026-03")).is_none(),
+        "failed persist must evict the live window from the registry"
+    );
+    // The whole persist txn aborted: no u:w: row for the failed update.
+    assert!(
+        vault
+            .sync_state_get("u:w:2026-03:00000001")
+            .unwrap()
+            .is_none()
+    );
+    // Accepted residual (same shape as the server fix): Observer B already
+    // materialized the import into LMDB before the persist failed. LMDB is
+    // local truth; the doc heals via re-delivery, not by un-applying.
+    assert_eq!(
+        vault.get(&id).unwrap().as_deref(),
+        Some(b"never-durable".as_slice())
+    );
+
+    // Heal the corrupt row (doctor-shaped repair), reopen through the
+    // client: the reloaded doc must NOT contain the failed update — the
+    // server's peer is absent from its VV, so the ONE-1127/1128 VV
+    // exchange re-delivers the bytes instead of skipping them.
+    vault
+        .sync_state_put("m:u_seq:w:2026-03", &0u32.to_le_bytes())
+        .unwrap();
+    let reopened = client.ensure_window("2026-03").unwrap();
+    assert!(
+        reopened.doc.oplog_vv().get(&server_peer).is_none(),
+        "reloaded doc must not claim the never-persisted update in its VV"
+    );
+    assert!(
+        map_get_bytes(&reopened.doc.get_map("entities"), &id.to_hex()).is_none(),
+        "the never-durable update must not reappear in the reloaded doc"
+    );
+}
+
 // ─── AC3: Observer A → outbound (channel when attached, queue otherwise) ────
 
 #[test]

@@ -258,6 +258,36 @@ impl WindowManager {
         Ok(true)
     }
 
+    /// Discards the live window for `key` WITHOUT persisting its doc state
+    /// — the fail-closed eviction for import-before-persist recovery
+    /// (client analog of the server's evict-on-persist-failure, ONE-1129):
+    /// when a remote import was applied to the live doc but its `u:w:` row
+    /// could not be persisted, the doc's RAM state is AHEAD of durable
+    /// state, and persisting it (as [`unload_window`](Self::unload_window)
+    /// would) would durably commit the unconfirmed import. Dropping the
+    /// registry entry instead lets the next open reload from durable state
+    /// (`d:w:` + persisted `u:w:` rows); the failed update is absent from
+    /// that doc's version vector, so the server re-sends it on the next VV
+    /// exchange.
+    ///
+    /// Returns `false` if the window is not loaded. Outstanding `Arc`
+    /// holders keep the stale doc (and its observer subscriptions) alive
+    /// until dropped — same caveat as `unload_window`.
+    pub(crate) fn discard_window(&self, key: &WindowKey) -> bool {
+        let mut registry = self.lock_registry();
+        let Some(window) = registry.remove(key) else {
+            return false;
+        };
+        if Arc::strong_count(&window) > 1 {
+            tracing::warn!(
+                window = %key,
+                "window-manager: discard with outstanding handles — the stale doc stays live until the last handle drops"
+            );
+        }
+        drop(window);
+        true
+    }
+
     /// Acquires the registry lock, recovering from poisoning (mirrors
     /// [`Materializer::lock`]): registry entries are only mutated after a
     /// fully successful open/unload, so a panicked holder cannot leave a

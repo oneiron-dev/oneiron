@@ -315,6 +315,12 @@ impl SyncClient {
                 // Server sending Loro update bytes — import into the
                 // manager-owned live doc. Observer B materializes the
                 // change to LMDB synchronously (entities/edges/tombstones).
+                //
+                // Import-then-persist is deliberate: persisting BEFORE the
+                // import would durably append an unvalidated frame as a
+                // `u:w:` row, and window load is fail-closed on pending
+                // updates — one malformed frame would brick every future
+                // open of this window.
                 window
                     .doc
                     .import(payload)
@@ -323,8 +329,25 @@ impl SyncClient {
                 // persist the accepted update bytes ourselves: without a
                 // u:w: row, remote state — including tombstones, whose LMDB
                 // purge already ran — would vanish from the doc on restart.
-                persist_window_update(&self.vault, window_key, payload)
-                    .map_err(|e| TransportError::Storage(format!("persist remote update: {e}")))?;
+                if let Err(e) = persist_window_update(&self.vault, window_key, payload) {
+                    // Never leave RAM ahead of durable state on a FAILED
+                    // persist (client analog of the ONE-1129 server
+                    // evict-on-persist-failure): the import advanced this
+                    // doc's version vector, so keeping the doc registered
+                    // would tell the server — on the next VV exchange —
+                    // that we already hold bytes that never became
+                    // durable; they would never be re-sent and would
+                    // vanish from the doc on restart (tombstones
+                    // included). Discard the live window WITHOUT
+                    // persisting (a persist would durably commit the
+                    // unconfirmed import); the next open reloads from
+                    // durable state and the ONE-1127/1128 VV exchange
+                    // re-delivers the update.
+                    self.manager.discard_window(&WindowKey::new(window_key));
+                    return Err(TransportError::Storage(format!(
+                        "persist remote update: {e}"
+                    )));
+                }
                 let _ = self.event_tx.send(SyncEvent::WindowUpdated {
                     window_key: window_key.to_string(),
                 });
