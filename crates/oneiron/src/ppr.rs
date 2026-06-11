@@ -869,9 +869,11 @@ fn gate_edge(key: &[u8], value: &[u8], hops: u32) -> Result<Option<GatedEdge>> {
         return Ok(None);
     }
 
-    // Gate 4 — non-positive weights carry no propagation mass. Contract
-    // weights live in [0, 1]; gating `<= 0.0` keeps the strength normalizer
-    // strictly positive for every edge that reaches the formula.
+    // Gate 4 — non-positive weights carry no propagation mass. Stored
+    // weights are pinned to [0, 1] at write time (contracts.ts `edgeKinds`
+    // pprWeight column / weight pin; `types::validate_edge_weight` on every
+    // write path); gating `<= 0.0` keeps the strength normalizer strictly
+    // positive for every edge that reaches the formula.
     if decoded.weight <= 0.0 {
         return Ok(None);
     }
@@ -1348,7 +1350,8 @@ mod tests {
             let lambda = lambda_for_kind(kind).expect("world-model kinds are traversed");
             assert_ne!(
                 lambda,
-                kind.default_weight(),
+                kind.default_weight()
+                    .expect("world-model kinds carry a stored-weight prior"),
                 "λ for {kind:?} must NOT be copied from the stored-weight prior"
             );
         }

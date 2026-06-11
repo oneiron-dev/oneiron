@@ -12,7 +12,7 @@ use crate::store::Store;
 use crate::types::{
     DecodedEdgeValue, EDGE_KEY_LEN, ENTITY_ID_LEN, EdgeKind, EdgeProvenanceFlags, EntityId,
     TimeRange, Vad, decode_edge_value_for_kind, encode_edge_value, short_id_prefix,
-    validate_entity_type, validate_public_entity_type,
+    validate_edge_weight, validate_entity_type, validate_public_entity_type,
 };
 
 pub(crate) const ENTITY_TYPE_OFFSET: usize = 0;
@@ -594,6 +594,12 @@ pub(crate) fn apply_ops(
     let mut had_graph_mutation = false;
     let mut had_vector_mutation = false;
     let mut text_manifest_checked = false;
+    // Legacy (pre-symmetric-migration) graphs answer a vector refresh with a
+    // full snapshot rebuild. Batched vector updates coalesce that into at
+    // most ONE rebuild per transaction: once pending, per-op graph mutations
+    // are skipped (the end-of-batch rebuild re-derives the graph from the
+    // `vectors` DB) and the rebuild runs after the op loop (ONE-324 AC11).
+    let mut pending_hnsw_rebuild = false;
 
     for op in ops {
         match op {
@@ -629,7 +635,14 @@ pub(crate) fn apply_ops(
             }
             BatchOp::Vector { id, vector } => {
                 apply_vector(store, config, wtxn, id, &vector)?;
-                crate::hnsw::hnsw_insert(store, config, wtxn, &id, &vector)?;
+                crate::hnsw::hnsw_insert_batched(
+                    store,
+                    config,
+                    wtxn,
+                    &id,
+                    &vector,
+                    &mut pending_hnsw_rebuild,
+                )?;
                 had_vector_mutation = true;
             }
             BatchOp::Edge {
@@ -683,6 +696,8 @@ pub(crate) fn apply_ops(
             }
         }
     }
+
+    crate::hnsw::run_pending_legacy_rebuild(store, config, wtxn, pending_hnsw_rebuild)?;
 
     if had_graph_mutation {
         ppr::increment_graph_version(store, wtxn)?;
@@ -1037,9 +1052,7 @@ fn apply_edge_with_created_at(
     vad: Vad,
     provenance: Option<EdgeProvenanceFlags>,
 ) -> Result<()> {
-    if !weight.is_finite() {
-        return Err(Error::InvalidEdgeWeight { value: weight });
-    }
+    validate_edge_weight(weight)?;
     if let Some((component, value)) = vad.invalid_component() {
         return Err(Error::InvalidVad { component, value });
     }
