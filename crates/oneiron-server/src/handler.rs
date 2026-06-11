@@ -416,9 +416,23 @@ async fn handle_window_sync(
             // connection without broadcasting: the server must never relay an
             // update — tombstones included — that it cannot replay after a
             // restart.
-            server
-                .persist_imported_update(&key, payload)
-                .map_err(|e| ProtocolError::Persistence(format!("update persist failed: {e}")))?;
+            if let Err(e) = server.persist_imported_update(&key, payload) {
+                // The cached doc already imported this update (import runs
+                // before the durable append), so it now holds state a restart
+                // would lose. Left cached, a later VV_REQUEST would serve the
+                // unpersisted update, the origin client would VV-confirm and
+                // clear its local queue, and the next server restart would
+                // drop the update — tombstones included — fleet-wide. Evict
+                // the window so the next access reloads from durable
+                // d:w:/u:w: state. Known residual: connections already
+                // holding a reference-clone of the evicted doc can still
+                // export it until their next fetch (generation/poison flag =
+                // follow-up).
+                server.evict_window(&key).await;
+                return Err(ProtocolError::Persistence(format!(
+                    "update persist failed: {e}"
+                )));
+            }
 
             let broadcast_msg =
                 protocol::encode_window_sync(window_key, window_sub_tags::UPDATE, payload);

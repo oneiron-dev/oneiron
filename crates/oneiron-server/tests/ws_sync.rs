@@ -5,6 +5,9 @@
 //! - update relay between two live clients + sync_state durability literals
 //! - restart durability: a relayed update AND a relayed tombstone survive a
 //!   server restart (the cross-device delete-propagation case)
+//! - persist-failure eviction: when the durable append of an imported update
+//!   fails, the mutated RAM doc is evicted so a later VV_REQUEST cannot serve
+//!   state a restart would lose
 //! - oversized updates are rejected before any state mutates
 //! - the client (`SyncConnection`) sends `SyncClientConfig.auth_token` on the
 //!   upgrade request
@@ -325,6 +328,95 @@ async fn relayed_update_and_tombstone_survive_server_restart() {
     );
 
     handle2.abort();
+}
+
+#[tokio::test]
+async fn persist_failure_evicts_window_so_vv_request_omits_unpersisted_update() {
+    let dir = tempfile::tempdir().unwrap();
+    let vault = open_vault(dir.path());
+    let (addr, _server, handle) =
+        spawn_server(vault.clone(), config_with_secret(Some("evict-secret"))).await;
+
+    let mut client_a = connect(addr, Some("evict-secret")).await.unwrap();
+    let _ = next_binary(&mut client_a).await; // root snapshot
+
+    // First update persists fine (window created, appended at seq 1).
+    let author = LoroDoc::new();
+    author
+        .get_map("entities")
+        .insert("e-ok", b"persisted".as_slice())
+        .unwrap();
+    author.commit();
+    let ok_update = author.export(ExportMode::all_updates()).unwrap();
+    let msg = transport::encode_window_sync("2026-02", window_sub_tags::UPDATE, &ok_update);
+    client_a.send(Message::Binary(msg.into())).await.unwrap();
+    wait_for_sync_state_key(&vault, "u:w:2026-02:00000001").await;
+
+    // Corrupt the monotonic seq row: the NEXT persist_imported_update trips
+    // CorruptedIndex (fail-closed, server_state policy) AFTER the handler
+    // has already imported the update into the cached RAM doc.
+    vault
+        .sync_state_put("m:u_seq:w:2026-02", &[1, 2, 3])
+        .unwrap();
+
+    // The failing update is a TOMBSTONE — the exact fleet-wide-loss shape:
+    // if the unpersisted import stayed servable, the origin would VV-confirm
+    // and clear its local queue, and a server restart would then drop the
+    // delete everywhere.
+    let vv_before = author.oplog_vv();
+    author
+        .get_map("tombstones")
+        .insert("e-victim", b"1".as_slice())
+        .unwrap();
+    author.commit();
+    let tombstone_update = author.export(ExportMode::updates(&vv_before)).unwrap();
+    let msg = transport::encode_window_sync("2026-02", window_sub_tags::UPDATE, &tombstone_update);
+    client_a.send(Message::Binary(msg.into())).await.unwrap();
+
+    // (a) The connection closes (Persistence error → fail-closed break).
+    // Eviction happens before the error propagates, so once the close is
+    // observed the window cache no longer holds the poisoned doc.
+    let closed = tokio::time::timeout(Duration::from_secs(10), async {
+        loop {
+            match client_a.next().await {
+                None | Some(Ok(Message::Close(_))) | Some(Err(_)) => break,
+                Some(Ok(_)) => continue,
+            }
+        }
+    })
+    .await;
+    assert!(closed.is_ok(), "server must close on persist failure");
+
+    // (b) A second client's VV_REQUEST against the SAME live server (no
+    // restart) must NOT contain the failed update: the mutated RAM doc was
+    // evicted and the window reloaded from durable d:w:/u:w: state.
+    let mut client_b = connect(addr, Some("evict-secret")).await.unwrap();
+    let _ = next_binary(&mut client_b).await; // root snapshot
+
+    let empty_vv = LoroDoc::new().oplog_vv().encode();
+    let vv_req = transport::encode_window_sync("2026-02", window_sub_tags::VV_REQUEST, &empty_vv);
+    client_b.send(Message::Binary(vv_req.into())).await.unwrap();
+
+    let reply = next_binary(&mut client_b).await;
+    assert_eq!(reply[0], TAG_WINDOW_SYNC);
+    let (key, sub_tag, payload) = transport::decode_window_sync(&reply[1..]).unwrap();
+    assert_eq!(key, "2026-02");
+    assert_eq!(sub_tag, window_sub_tags::UPDATE);
+
+    let receiver = LoroDoc::new();
+    receiver.import(payload).unwrap();
+    assert_eq!(
+        deep_map_bytes(&receiver, "entities", "e-ok").unwrap(),
+        b"persisted",
+        "the durably persisted update must still be served after eviction"
+    );
+    assert!(
+        deep_map_bytes(&receiver, "tombstones", "e-victim").is_none(),
+        "an update whose durable append failed must NOT be servable from RAM \
+         (evict-on-persist-failure: RAM must never serve state a restart loses)"
+    );
+
+    handle.abort();
 }
 
 #[tokio::test]

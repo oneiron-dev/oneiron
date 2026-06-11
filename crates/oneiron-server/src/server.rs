@@ -212,6 +212,21 @@ impl SyncServer {
     ) -> Result<u32, oneiron::Error> {
         server_state::persist_imported_window_update(&self.vault, key, update_bytes)
     }
+
+    /// Evicts a window doc from the RAM cache.
+    ///
+    /// Used when the durable append of an imported update fails: the UPDATE
+    /// arm imports into the cached doc BEFORE persisting (that order is
+    /// deliberate — persisting raw bytes that then fail `import_with` would
+    /// durably append an undecodable `u:w:` row, and window load is
+    /// fail-closed on pending updates, bricking the window at boot). On
+    /// persist failure the cached doc therefore holds state a restart would
+    /// lose; evicting it forces the next access to reload from durable
+    /// `d:w:` + `u:w:` state, so the RAM cache can never serve state a
+    /// restart loses.
+    pub(crate) async fn evict_window(&self, key: &WindowKey) {
+        self.windows.write().await.remove(key.as_str());
+    }
 }
 
 #[cfg(test)]
