@@ -7810,6 +7810,161 @@ fn reserved_predicate_rejected_publicly_but_door_writes_and_reads_back() -> Resu
     Ok(())
 }
 
+/// ONE-1123: the sync-replay door (`put_replicated`) admits a reserved
+/// `edge.provenance` Claim on BOTH builder flavors — the truth-Claim behind
+/// the 26 B edge flag cache (contracts.ts edgeProvenanceClaim: "the edge
+/// flags are a DERIVED CACHE of that Claim, and the Claim is truth";
+/// storedAs "Normal CLAIM entity") — while every public path keeps
+/// rejecting the reserved namespace (covered by the neighboring tests and
+/// the claim.rs grammar tests).
+#[cfg(feature = "sync")]
+#[test]
+fn replicated_door_admits_reserved_claim_on_both_builders() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let a = EntityId::now();
+    let b = EntityId::now();
+    vault.put_entity(&a, 4, test_time_range(1, 1), 1, b"a")?;
+    vault.put_entity(&b, 4, test_time_range(1, 1), 1, b"b")?;
+
+    let body = ClaimBody::new(
+        "edge.provenance",
+        ClaimSubject::Edge {
+            source: a,
+            kind: EdgeKind::Mentions,
+            target: b,
+        },
+        rmpv::Value::from("replicated provenance payload"),
+        0.9,
+        ClaimApprovalStatus::Auto,
+        ClaimLifecycleStatus::Active,
+    );
+    let bytes = crate::claim::encode_claim_body(&body)?;
+
+    // TxnBatchBuilder flavor (Observer B's replay door).
+    let txn_id = EntityId::now();
+    vault.with_write_txn(|wtxn| {
+        vault
+            .batch_in()
+            .put_replicated(
+                &txn_id,
+                crate::types::ENTITY_TYPE_CLAIM,
+                test_time_range(1, 1),
+                2,
+                &bytes,
+            )
+            .apply(wtxn)
+    })?;
+    let read = vault.get_claim(&txn_id)?.expect("txn-door claim stored");
+    assert_eq!(read.predicate, "edge.provenance");
+
+    // BatchBuilder flavor (forward_rematerialize's replay door).
+    let batch_id = EntityId::now();
+    vault
+        .batch()
+        .put_replicated(
+            &batch_id,
+            crate::types::ENTITY_TYPE_CLAIM,
+            test_time_range(1, 1),
+            2,
+            &bytes,
+        )
+        .commit()?;
+    let read = vault
+        .get_claim(&batch_id)?
+        .expect("batch-door claim stored");
+    assert_eq!(read.predicate, "edge.provenance");
+    assert_eq!(
+        read.subject,
+        ClaimSubject::Edge {
+            source: a,
+            kind: EdgeKind::Mentions,
+            target: b,
+        }
+    );
+    Ok(())
+}
+
+/// ONE-1123: a trusted door still validates structure. `put_replicated`
+/// opens ONLY the two engine-authored band rejections; the D17 grammar, the
+/// D18 body validation, and the type registry all still fail typed, and
+/// nothing is written on failure.
+#[cfg(feature = "sync")]
+#[test]
+fn replicated_door_still_fails_typed_on_structural_violations() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let a = EntityId::now();
+    vault.put_entity(&a, 4, test_time_range(1, 1), 1, b"a")?;
+
+    // Ungrammatical reserved predicate: "Edge.Provenance" violates the D17
+    // segment grammar `[a-z][a-z0-9_]*`, so it fails InvalidPredicate even
+    // through the door — `allow_reserved` skips ONLY the ReservedPredicate
+    // arm, never the grammar.
+    let ungrammatical = rmpv_map_bytes(&base_claim_entries(
+        "Edge.Provenance",
+        a.as_bytes().to_vec(),
+    ));
+    let bad_txn = EntityId::now();
+    let err = vault
+        .with_write_txn(|wtxn| {
+            vault
+                .batch_in()
+                .put_replicated(
+                    &bad_txn,
+                    crate::types::ENTITY_TYPE_CLAIM,
+                    test_time_range(1, 1),
+                    2,
+                    &ungrammatical,
+                )
+                .apply(wtxn)
+        })
+        .expect_err("txn replay door must still enforce the D17 grammar");
+    assert_eq!(err.kind(), ErrorKind::InvalidPredicate);
+    assert_no_entity_state(&vault, &bad_txn)?;
+
+    let bad_batch = EntityId::now();
+    let err = vault
+        .batch()
+        .put_replicated(
+            &bad_batch,
+            crate::types::ENTITY_TYPE_CLAIM,
+            test_time_range(1, 1),
+            2,
+            &ungrammatical,
+        )
+        .commit()
+        .expect_err("batch replay door must still enforce the D17 grammar");
+    assert_eq!(err.kind(), ErrorKind::InvalidPredicate);
+    assert_no_entity_state(&vault, &bad_batch)?;
+
+    // Malformed type-0 body (not a MessagePack map) → InvalidClaimBody.
+    let bad_body = EntityId::now();
+    let err = vault
+        .batch()
+        .put_replicated(
+            &bad_body,
+            crate::types::ENTITY_TYPE_CLAIM,
+            test_time_range(1, 1),
+            2,
+            b"not a msgpack map",
+        )
+        .commit()
+        .expect_err("replay door must still enforce D18 body validation");
+    assert_eq!(err.kind(), ErrorKind::InvalidClaimBody);
+    assert_no_entity_state(&vault, &bad_body)?;
+
+    // Genuinely unknown type byte → InvalidEntityType (registry gate; the
+    // door admits the REGISTERED maintenance band, not arbitrary bytes).
+    let bad_type = EntityId::now();
+    let err = vault
+        .batch()
+        .put_replicated(&bad_type, 200, test_time_range(1, 1), 2, b"")
+        .commit()
+        .expect_err("replay door must still reject unregistered type bytes");
+    assert_eq!(err.kind(), ErrorKind::InvalidEntityType);
+    assert_no_entity_state(&vault, &bad_type)?;
+    Ok(())
+}
+
 #[test]
 fn get_claim_rejects_non_claim_types_and_handles_missing() -> Result<()> {
     let (_dir, vault) = open_test_vault();

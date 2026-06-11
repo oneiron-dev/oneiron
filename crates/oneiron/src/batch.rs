@@ -109,7 +109,9 @@ pub(crate) enum BatchOp {
         allow_maintenance: bool,
         /// D17 reserved-namespace gate for type-0 (CLAIM) bodies. `false` on
         /// every public path; only the `pub(crate)` provenance door
-        /// ([`TxnBatchBuilder::put_reserved_claim`]) sets it.
+        /// ([`TxnBatchBuilder::put_reserved_claim`]) and the sync-replay door
+        /// (`put_replicated` on both builders, via `replicated_put_op`) set
+        /// it.
         allow_reserved_predicate: bool,
     },
     Vector {
@@ -150,6 +152,35 @@ pub(crate) enum BatchOp {
     },
 }
 
+/// Builds the sync-replay put op — the SINGLE place where the replicated
+/// door's two admit flags are set (`allow_maintenance` AND
+/// `allow_reserved_predicate`). Both `put_replicated` flavors
+/// ([`BatchBuilder::put_replicated`] / [`TxnBatchBuilder::put_replicated`])
+/// delegate here; no other constructor may open both bands at once.
+///
+/// A trusted door still validates structure: the flags only skip the
+/// public-band rejections (`MaintenanceKindNotWritable` /
+/// `ReservedPredicate`). `apply_put` still runs the registry type-byte gate
+/// and the full D17/D18 CLAIM body validation on every op built here.
+#[cfg(feature = "sync")]
+fn replicated_put_op(
+    id: &EntityId,
+    entity_type: u8,
+    occurred: TimeRange,
+    learned_at: u64,
+    data: &[u8],
+) -> BatchOp {
+    BatchOp::Put {
+        id: *id,
+        entity_type,
+        occurred,
+        learned_at,
+        data: data.to_vec(),
+        allow_maintenance: true,
+        allow_reserved_predicate: true,
+    }
+}
+
 impl<'a> BatchBuilder<'a> {
     pub(crate) fn new(vault: &'a Vault) -> Self {
         Self {
@@ -188,16 +219,25 @@ impl<'a> BatchBuilder<'a> {
         self
     }
 
-    /// Engine-internal put that admits the maintenance band (REDACTION_AUDIT =
-    /// 120) by validating via the registry-only [`validate_entity_type`] gate.
+    /// Sync-replay door (replicated flavor of the old `put_internal`):
+    /// engine-internal put for CRDT→LMDB rematerialization. It admits BOTH
+    /// engine-authored bands that the public [`put`](Self::put) gate rejects:
     ///
-    /// Used exclusively by the sync rematerialization path (CRDT→LMDB) so
-    /// engine-authored GDPR REDACTION_AUDIT receipts survive cross-node sync
-    /// and replay. The public [`put`](Self::put) gate still rejects
-    /// user-written maintenance kinds with `MaintenanceKindNotWritable`;
-    /// genuinely unknown bytes still fail here with `InvalidEntityType`.
+    /// * the maintenance type-byte band (REDACTION_AUDIT = 120), validated
+    ///   via the registry-only [`validate_entity_type`] gate so GDPR receipts
+    ///   survive cross-node sync / replay — public writes still fail with
+    ///   `MaintenanceKindNotWritable`, and genuinely unknown bytes still
+    ///   fail here with `InvalidEntityType`;
+    /// * the reserved `edge.*` predicate namespace (D17) on type-0 CLAIM
+    ///   bodies, so `edge.provenance` truth-Claims authored on a remote node
+    ///   rematerialize — public writes still fail with `ReservedPredicate`.
+    ///
+    /// The door bypasses nothing except those two band rejections: `apply_put`
+    /// still runs the full D18 structural validation on every type-0 body, so
+    /// ungrammatical predicates and malformed bodies fail typed even here.
+    /// Used ONLY by `window::forward_rematerialize`.
     #[cfg(feature = "sync")]
-    pub(crate) fn put_internal(
+    pub(crate) fn put_replicated(
         mut self,
         id: &EntityId,
         entity_type: u8,
@@ -216,15 +256,13 @@ impl<'a> BatchBuilder<'a> {
                 end: occurred.end,
             });
         }
-        self.ops.push(BatchOp::Put {
-            id: *id,
+        self.ops.push(replicated_put_op(
+            id,
             entity_type,
             occurred,
             learned_at,
-            data: data.to_vec(),
-            allow_maintenance: true,
-            allow_reserved_predicate: false,
-        });
+            data,
+        ));
         self
     }
 
@@ -442,15 +480,26 @@ impl<'a> TxnBatchBuilder<'a> {
         self
     }
 
-    /// Engine-internal put that admits the maintenance band (REDACTION_AUDIT =
-    /// 120), validating via the registry-only [`validate_entity_type`] gate in
-    /// `apply_put` instead of the public [`validate_public_entity_type`] gate.
+    /// Sync-replay door (replicated flavor of the old `put_internal`):
+    /// engine-internal put for Observer B's CRDT→LMDB rematerialization. It
+    /// admits BOTH engine-authored bands that the public [`put`](Self::put)
+    /// gate rejects:
     ///
-    /// Used by Observer B's CRDT→LMDB rematerialization so engine-authored
-    /// GDPR REDACTION_AUDIT receipts survive sync. The public
-    /// [`put`](Self::put) path stays subject to the maintenance-kind rejection.
+    /// * the maintenance type-byte band (REDACTION_AUDIT = 120), validated
+    ///   via the registry-only [`validate_entity_type`] gate in `apply_ops`
+    ///   so GDPR receipts survive sync — public writes still fail with
+    ///   `MaintenanceKindNotWritable`, genuinely unknown bytes still fail
+    ///   with `InvalidEntityType`;
+    /// * the reserved `edge.*` predicate namespace (D17) on type-0 CLAIM
+    ///   bodies, so `edge.provenance` truth-Claims authored on a remote node
+    ///   rematerialize — public writes still fail with `ReservedPredicate`.
+    ///
+    /// The door bypasses nothing except those two band rejections: `apply_put`
+    /// still runs the full D18 structural validation on every type-0 body, so
+    /// ungrammatical predicates and malformed bodies fail typed even here.
+    /// Used ONLY by `bridge::materialize_entity_blob_in_txn`.
     #[cfg(feature = "sync")]
-    pub(crate) fn put_internal(
+    pub(crate) fn put_replicated(
         mut self,
         id: &EntityId,
         entity_type: u8,
@@ -458,15 +507,13 @@ impl<'a> TxnBatchBuilder<'a> {
         learned_at: u64,
         data: &[u8],
     ) -> Self {
-        self.ops.push(BatchOp::Put {
-            id: *id,
+        self.ops.push(replicated_put_op(
+            id,
             entity_type,
             occurred,
             learned_at,
-            data: data.to_vec(),
-            allow_maintenance: true,
-            allow_reserved_predicate: false,
-        });
+            data,
+        ));
         self
     }
 
