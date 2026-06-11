@@ -510,7 +510,18 @@ fn materialize_tombstones_from_delta(
                 }
             }
             None => {
-                // Tombstone removed — unusual, ignore
+                // Tombstone REMOVAL — protocol violation: tombstones are
+                // permanent and no engine version emits removals (crafted /
+                // malicious update only). The `dt:` marker gate keeps the
+                // local hard delete closed regardless; quarantine of the
+                // offending update is ONE-1124's `x:` machinery (folded in
+                // at merge-train integration). Deliberately NOT re-asserting
+                // the tombstone here — doc writes inside an Observer-B
+                // callback re-enter Loro.
+                tracing::warn!(
+                    tombstone = %key,
+                    "observer-b: tombstone removal delta — protocol violation, ignoring"
+                );
             }
         }
     }
@@ -536,11 +547,28 @@ fn materialize_entity_blob_in_txn(
         return Ok(());
     }
 
+    let id = EntityId::from_hex(key).map_err(|_| crate::Error::InvalidKey)?;
+
+    // `dt:` local hard-delete marker gate (ONE-1122): the CRDT tombstones
+    // map is MUTABLE remote input — a crafted update can REMOVE a tombstone
+    // and re-put the entity key, passing the map check above and resurrecting
+    // a hard-deleted body permanently (no tombstone left to re-fire). The
+    // dt: row is local-only truth written in the origin purge txn; checked
+    // SECOND (LMDB point read) only when the in-memory map says absent.
+    // PRESENCE-ONLY — never decode the value. Canonical lowercase hex via
+    // the parsed id, so a case-shifted map key cannot dodge the point read.
+    let marker_key = crate::deletion::local_hard_delete_marker_key(&id);
+    if vault.store.sync_state.get(wtxn, &marker_key)?.is_some() {
+        tracing::warn!(
+            entity = %key,
+            "observer-b: entity locally hard-deleted (dt: marker), refusing materialization"
+        );
+        return Ok(());
+    }
+
     let Some(header) = EntityMetadataHeader::parse(blob) else {
         return Err(crate::Error::CorruptedIndex("entity metadata"));
     };
-
-    let id = EntityId::from_hex(key).map_err(|_| crate::Error::InvalidKey)?;
     let data = if blob.len() > ENTITY_METADATA_HEADER_LEN {
         &blob[ENTITY_METADATA_HEADER_LEN..]
     } else {
@@ -574,14 +602,25 @@ fn ensure_entity_materialized_from_crdt(
     tombstones_map: &LoroMap,
     id: &EntityId,
 ) -> Result<bool> {
-    // Tombstone gate FIRST: a tombstoned endpoint must never count as
-    // "ready", even while a stale LMDB row survives (crash window between
-    // the tombstone CRDT commit and the purge txn, or a failed purge).
-    // Checking row existence first would materialize an edge onto the stale
-    // row — re-adding an active carrier ARCH-0038 requires purged. Presence
-    // is ANY-value (fail closed): non-binary tombstones gate too.
+    // Tombstone gate FIRST: a tombstoned OR locally hard-deleted (`dt:`
+    // marker) endpoint must never count as "ready", even while a stale LMDB
+    // row survives (crash window between the tombstone CRDT commit and the
+    // purge txn, or a failed purge). Checking row existence first would
+    // materialize an edge onto the stale row — re-adding an active carrier
+    // ARCH-0038 requires purged. Presence is ANY-value (fail closed):
+    // non-binary tombstones gate too. Without the dt: leg, a crafted
+    // tombstone removal would make the silent gate-skip read as "ready" and
+    // push an edge op against a missing endpoint;
+    // `materialize_entity_blob_in_txn` re-checks both as the structural
+    // fail-closed gate before its put.
     let hex_id = id.to_hex();
-    if map_contains_key(tombstones_map, &hex_id) {
+    if map_contains_key(tombstones_map, &hex_id)
+        || vault
+            .store
+            .sync_state
+            .get(wtxn, &crate::deletion::local_hard_delete_marker_key(id))?
+            .is_some()
+    {
         return Ok(false);
     }
 
@@ -648,13 +687,68 @@ pub fn format_edge_key(src: &EntityId, kind: EdgeKind, tgt: &EntityId) -> String
 mod tests {
     use super::*;
     use crate::Vault;
-    use crate::sync::loro_support::map_insert_bytes;
+    use crate::sync::loro_support::{
+        doc_from_snapshot, doc_version_vector, export_snapshot, export_updates_since, import_doc,
+        map_insert_bytes,
+    };
     use crate::types::{ENTITY_TYPE_TASK, TimeRange, VaultConfig};
     use std::sync::Arc;
 
     fn test_vault() -> Arc<Vault> {
         let dir = tempfile::tempdir().unwrap();
         Arc::new(Vault::open(dir.path(), VaultConfig::device()).unwrap())
+    }
+
+    /// Minimal WARN-level event capture: collects `message` fields so tests
+    /// can assert a specific warn fired without a subscriber dependency.
+    #[derive(Clone, Default)]
+    struct WarnCapture {
+        messages: Arc<Mutex<Vec<String>>>,
+    }
+
+    impl tracing::Subscriber for WarnCapture {
+        fn enabled(&self, _metadata: &tracing::Metadata<'_>) -> bool {
+            true
+        }
+        fn new_span(&self, _attrs: &tracing::span::Attributes<'_>) -> tracing::span::Id {
+            tracing::span::Id::from_u64(1)
+        }
+        fn record(&self, _span: &tracing::span::Id, _values: &tracing::span::Record<'_>) {}
+        fn record_follows_from(&self, _span: &tracing::span::Id, _follows: &tracing::span::Id) {}
+        fn event(&self, event: &tracing::Event<'_>) {
+            if *event.metadata().level() != tracing::Level::WARN {
+                return;
+            }
+            struct MessageVisitor(Option<String>);
+            impl tracing::field::Visit for MessageVisitor {
+                fn record_debug(
+                    &mut self,
+                    field: &tracing::field::Field,
+                    value: &dyn std::fmt::Debug,
+                ) {
+                    if field.name() == "message" {
+                        self.0 = Some(format!("{value:?}"));
+                    }
+                }
+            }
+            let mut visitor = MessageVisitor(None);
+            event.record(&mut visitor);
+            if let Some(message) = visitor.0 {
+                self.messages.lock().unwrap().push(message);
+            }
+        }
+        fn enter(&self, _span: &tracing::span::Id) {}
+        fn exit(&self, _span: &tracing::span::Id) {}
+    }
+
+    fn read_dt_marker(vault: &Vault, id: &EntityId) -> Option<Vec<u8>> {
+        let rtxn = vault.store.env.read_txn().unwrap();
+        vault
+            .store
+            .sync_state
+            .get(&rtxn, &crate::deletion::local_hard_delete_marker_key(id))
+            .unwrap()
+            .map(<[u8]>::to_vec)
     }
 
     fn entity_blob(entity_type: u8, occurred: TimeRange, learned_at: u64, data: &[u8]) -> Vec<u8> {
@@ -1259,5 +1353,219 @@ mod tests {
             "replayed in-range weight must survive the write gate verbatim"
         );
         assert_eq!(out[0].created_at, 10);
+    }
+
+    /// ONE-1122 resurrection regression (handoff §8c.5): a crafted update
+    /// that REMOVES the CRDT tombstone and re-puts the entity key must NOT
+    /// rematerialize the hard-deleted body. The CRDT map is mutable remote
+    /// input; the `dt:` marker written in the origin purge txn is the local
+    /// truth the gate falls back to, and the removal is warn-logged as a
+    /// protocol violation.
+    #[test]
+    fn observer_b_refuses_resurrection_after_crafted_tombstone_removal() {
+        let vault = test_vault();
+        let materializer = Arc::new(Materializer::new());
+
+        let id = EntityId::now();
+        let learned_at = 1_772_400_000u64; // 2026-03 window
+        let occurred = TimeRange { start: 1, end: 1 };
+        vault
+            .put_entity(
+                &id,
+                ENTITY_TYPE_TASK,
+                occurred,
+                learned_at,
+                b"hard-delete-me",
+            )
+            .unwrap();
+
+        // Mirror LMDB → CRDT and persist so the hard delete operates on a
+        // window doc holding the blob.
+        let window_key = crate::sync::types::WindowKey::from_timestamp(learned_at);
+        let window = crate::sync::window::LoadedWindow::new(
+            "local",
+            window_key.clone(),
+            &vault,
+            &materializer,
+        );
+        let mirrored =
+            crate::sync::window::reverse_rematerialize(&vault, &window.doc, &window_key).unwrap();
+        assert_eq!(mirrored, 1);
+        window.persist_state(&vault).unwrap();
+        drop(window);
+
+        // Hard delete: CRDT tombstone + dt: marker + active-store purge.
+        let outcome = vault
+            .delete_entity_with_reason(&id, crate::DeleteReason::UserHardDelete)
+            .unwrap();
+        assert!(outcome.existed);
+        assert!(vault.get(&id).unwrap().is_none());
+        assert!(
+            read_dt_marker(&vault, &id).is_some(),
+            "precondition: hard delete writes the dt: marker"
+        );
+
+        let hex_id = id.to_hex();
+        let local_doc =
+            crate::sync::window::load_window_from_state(&vault, "local", &window_key).unwrap();
+        assert!(
+            map_contains_binary(&local_doc.get_map("tombstones"), &hex_id),
+            "precondition: hard delete writes the CRDT tombstone"
+        );
+
+        // Crafted attacker update: fork the local doc state, REMOVE the
+        // tombstone, re-put the entity key, export the delta.
+        let fork = doc_from_snapshot(&export_snapshot(&local_doc).unwrap()).unwrap();
+        fork.get_map("tombstones").delete(&hex_id).unwrap();
+        map_insert_bytes(
+            &fork.get_map("entities"),
+            &hex_id,
+            &entity_blob(
+                ENTITY_TYPE_TASK,
+                occurred,
+                learned_at,
+                b"resurrection-attempt",
+            ),
+        )
+        .unwrap();
+        fork.commit();
+        let crafted = export_updates_since(&fork, &doc_version_vector(&local_doc)).unwrap();
+
+        // Apply the crafted update with observers attached, capturing warns.
+        let window = crate::sync::window::LoadedWindow::from_doc(
+            local_doc,
+            window_key,
+            &vault,
+            &materializer,
+        );
+        let warns = WarnCapture::default();
+        tracing::subscriber::with_default(warns.clone(), || {
+            import_doc(&window.doc, &crafted).unwrap();
+        });
+
+        // The removal landed in the CRDT map (no tombstone left to re-fire)…
+        assert!(
+            !map_contains_binary(&window.doc.get_map("tombstones"), &hex_id),
+            "crafted removal must actually clear the CRDT tombstone"
+        );
+        // …but the dt: marker gate refused the re-put.
+        assert!(
+            vault.get(&id).unwrap().is_none(),
+            "hard-deleted entity must not rematerialize after crafted tombstone removal"
+        );
+        let messages = warns.messages.lock().unwrap();
+        assert!(
+            messages
+                .iter()
+                .any(|m| m.contains("tombstone removal delta")),
+            "protocol-violation warn must fire, got: {messages:?}"
+        );
+        assert!(
+            messages.iter().any(|m| m.contains("dt: marker")),
+            "dt: gate refusal warn must fire, got: {messages:?}"
+        );
+    }
+
+    /// ONE-1122 `dt:` marker shape: written in the purge txn on HARD
+    /// outcomes (pinned `[reason:1][deleted_at:8 LE][request_id:16]`
+    /// layout), absent on SoftErase, and pure LMDB truth — independent of
+    /// any CRDT map state.
+    #[test]
+    fn hard_delete_writes_dt_marker_soft_delete_does_not() {
+        let vault = test_vault();
+        let occurred = TimeRange { start: 1, end: 1 };
+        let learned_at = 1_772_400_000u64;
+        let before = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+
+        let hard = EntityId::now();
+        vault
+            .put_entity(&hard, ENTITY_TYPE_TASK, occurred, learned_at, b"hard")
+            .unwrap();
+        vault
+            .delete_entity_with_reason(&hard, crate::DeleteReason::UserHardDelete)
+            .unwrap();
+
+        let marker = read_dt_marker(&vault, &hard).expect("dt: row written on hard delete");
+        assert_eq!(
+            marker.len(),
+            25,
+            "pinned [reason:1][deleted_at:8 LE][request_id:16] layout"
+        );
+        assert_eq!(marker[0], 2, "user_hard_delete reason byte");
+        let deleted_at = u64::from_le_bytes(marker[1..9].try_into().unwrap());
+        assert!(
+            deleted_at >= before && deleted_at <= before + 60,
+            "deleted_at must be the request time"
+        );
+        assert_ne!(&marker[9..25], &[0u8; 16][..], "request id present");
+
+        // GDPR delete is also HARD — marker with reason byte 3.
+        let gdpr = EntityId::now();
+        vault
+            .put_entity(&gdpr, ENTITY_TYPE_TASK, occurred, learned_at, b"gdpr")
+            .unwrap();
+        vault
+            .delete_entity_with_reason(&gdpr, crate::DeleteReason::GdprDelete)
+            .unwrap();
+        let marker = read_dt_marker(&vault, &gdpr).expect("dt: row written on gdpr delete");
+        assert_eq!(marker[0], 3, "gdpr_delete reason byte");
+
+        // SoftErase writes NO marker.
+        let soft = EntityId::now();
+        vault
+            .put_entity(&soft, ENTITY_TYPE_TASK, occurred, learned_at, b"soft")
+            .unwrap();
+        vault
+            .delete_entity_with_reason(&soft, crate::DeleteReason::UserDelete)
+            .unwrap();
+        assert!(
+            read_dt_marker(&vault, &soft).is_none(),
+            "soft delete must not write a dt: marker"
+        );
+
+        // The marker is LMDB truth: dropping the tombstone from the loaded
+        // window doc leaves the dt: row untouched.
+        let window_key = crate::sync::types::WindowKey::from_timestamp(learned_at);
+        let doc =
+            crate::sync::window::load_window_from_state(&vault, "local", &window_key).unwrap();
+        doc.get_map("tombstones").delete(&hard.to_hex()).unwrap();
+        doc.commit();
+        assert!(
+            read_dt_marker(&vault, &hard).is_some(),
+            "dt: marker survives independently of the CRDT tombstone map"
+        );
+    }
+
+    /// Negative: an entity that was never deleted materializes through the
+    /// unchanged honest path — the dt: OR-gate adds no false refusals.
+    #[test]
+    fn observer_b_materializes_never_deleted_entity_normally() {
+        let vault = test_vault();
+        let doc = LoroDoc::new();
+        let materializer = Arc::new(Materializer::new());
+        let _subs = register_observer_b(&doc, &vault, &materializer);
+
+        let id = EntityId::now();
+        map_insert_bytes(
+            &doc.get_map("entities"),
+            &id.to_hex(),
+            &entity_blob(
+                ENTITY_TYPE_TASK,
+                TimeRange { start: 1, end: 1 },
+                2,
+                b"honest-path",
+            ),
+        )
+        .unwrap();
+        doc.commit();
+
+        assert_eq!(
+            vault.get(&id).unwrap().as_deref(),
+            Some(&b"honest-path"[..]),
+            "never-deleted entity must materialize normally"
+        );
     }
 }

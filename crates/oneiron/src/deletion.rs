@@ -11,6 +11,47 @@ pub(crate) const HARD_ERASE_SWEEP_PREFIX: &[u8] = b"h:";
 pub(crate) const LAST_HARD_ERASE_SWEEP_SEQ_KEY: &[u8] = b"m:last_hard_erase_sweep_seq";
 pub(crate) const HARD_ERASE_SWEEP_SLA_SECS: u64 = 30 * 86_400;
 
+/// Length of the `dt:` local hard-delete marker value:
+/// `[reason:1][deleted_at:8 LE][request_id:16]`.
+#[cfg(feature = "sync")]
+pub(crate) const LOCAL_HARD_DELETE_MARKER_LEN: usize = 25;
+
+/// `dt:` local hard-delete marker key (ONE-1122), stored in `sync_state`.
+///
+/// Key = `dt:{entity_id_hex}` (32-char lowercase hex, GLOBAL — deliberately
+/// NO window segment, so a window-shuffled re-put cannot dodge the gate).
+/// Written ONLY on HARD delete outcomes, in the SAME LMDB txn as the
+/// active-store purge. Permanent, no GC. Semantics are PRESENCE-ONLY: gates
+/// never decode the value; the 25-byte body is informational.
+#[cfg(feature = "sync")]
+pub(crate) fn local_hard_delete_marker_key(id: &EntityId) -> String {
+    format!("dt:{}", id.to_hex())
+}
+
+/// Encodes the pinned `[reason:1][deleted_at:8 LE][request_id:16]` marker
+/// value. Reason bytes follow the ONE-1132 pinned tombstone wire table
+/// (`user_delete`=1 — soft, never written here; `user_hard_delete`=2;
+/// `gdpr_delete`=3; `policy_delete`=4). Presence-only consumers must never
+/// decode this.
+#[cfg(feature = "sync")]
+pub(crate) fn encode_local_hard_delete_marker(
+    reason: DeleteReason,
+    deleted_at: u64,
+    request_id: &[u8; 16],
+) -> [u8; LOCAL_HARD_DELETE_MARKER_LEN] {
+    let reason_byte: u8 = match reason {
+        DeleteReason::UserDelete => 1,
+        DeleteReason::UserHardDelete => 2,
+        DeleteReason::GdprDelete => 3,
+        DeleteReason::PolicyDelete => 4,
+    };
+    let mut out = [0_u8; LOCAL_HARD_DELETE_MARKER_LEN];
+    out[0] = reason_byte;
+    out[1..9].copy_from_slice(&deleted_at.to_le_bytes());
+    out[9..25].copy_from_slice(request_id);
+    out
+}
+
 const HISTORICAL_CARRIER_CLASSES: &[&str] = &[
     "historical_loro_updates",
     "historical_loro_snapshots",
