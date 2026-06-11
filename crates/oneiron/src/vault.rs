@@ -1858,11 +1858,12 @@ impl Vault {
         value: &TombstoneValueV2,
     ) -> Result<bool> {
         use crate::sync::bridge::BRIDGE_ORIGIN;
-        use crate::sync::loro_support::{doc_version_vector, export_snapshot, export_updates_from};
+        use crate::sync::loro_support::{doc_version_vector, export_snapshot};
         use crate::sync::schema::create_window_doc;
         use crate::sync::types::WindowKey;
         use crate::sync::window::{
-            apply_tombstone_to_window_doc, load_window_from_state, merge_persisted_state_into_doc,
+            apply_tombstone_to_window_doc, export_tombstone_commit_delta, load_window_from_state,
+            merge_persisted_state_into_doc,
         };
         use loro::CommitOptions;
 
@@ -1897,11 +1898,7 @@ impl Vault {
                 window
                     .doc
                     .commit_with(CommitOptions::new().origin(BRIDGE_ORIGIN));
-                let delete_update = if window.doc.oplog_vv() == vv_before {
-                    None
-                } else {
-                    Some(export_updates_from(&window.doc, &vv_before)?)
-                };
+                let delete_update = export_tombstone_commit_delta(&window.doc, &vv_before)?;
                 let snapshot = export_snapshot(&window.doc)?;
                 let vv = doc_version_vector(&window.doc);
                 (delete_update, snapshot, vv)
@@ -1911,7 +1908,7 @@ impl Vault {
                 &snapshot,
                 &vv,
                 value,
-                delete_update.as_deref(),
+                delete_update.as_ref(),
                 &merged_update_keys,
             )?;
             return Ok(true);
@@ -1928,11 +1925,7 @@ impl Vault {
         let vv_before = doc.oplog_vv();
         apply_tombstone_to_window_doc(&doc, id, &value.encode())?;
         doc.commit();
-        let delete_update = if doc.oplog_vv() == vv_before {
-            None
-        } else {
-            Some(export_updates_from(&doc, &vv_before)?)
-        };
+        let delete_update = export_tombstone_commit_delta(&doc, &vv_before)?;
 
         let snapshot = export_snapshot(&doc)?;
         let vv = doc_version_vector(&doc);
@@ -1941,7 +1934,7 @@ impl Vault {
             &snapshot,
             &vv,
             value,
-            delete_update.as_deref(),
+            delete_update.as_ref(),
             &merged_update_keys,
         )?;
         Ok(true)
@@ -1959,7 +1952,7 @@ impl Vault {
         snapshot: &[u8],
         vv: &[u8],
         value: &TombstoneValueV2,
-        delete_update: Option<&[u8]>,
+        delete_update: Option<&crate::sync::window::DeleteBearingUpdate>,
         scrubbed_update_keys: &[String],
     ) -> Result<()> {
         let is_hard = value.reason.is_hard();

@@ -302,6 +302,52 @@ pub fn apply_tombstone_to_window_doc(doc: &LoroDoc, id: &EntityId, raw_value: &[
     Ok(())
 }
 
+/// A tombstone-commit delta authorized to be queued as DELETE-BEARING.
+///
+/// The `d:{seq:8BE}` sidecar marker exempts its `q:` row from every
+/// unconfirmed clear and from the carrier-15 scrub — protections built for
+/// tombstone deltas, not arbitrary payloads. The private field plus the
+/// single constructor ([`export_tombstone_commit_delta`]) are the
+/// type-system pin that delete-bearing = a real tombstone-commit delta:
+/// nothing outside the tombstone-commit path can mark bytes delete-bearing
+/// (ONE-1135 review item 14).
+pub(crate) struct DeleteBearingUpdate(Vec<u8>);
+
+impl DeleteBearingUpdate {
+    /// The delta bytes stored in the `q:` row.
+    pub(crate) fn as_bytes(&self) -> &[u8] {
+        &self.0
+    }
+
+    /// Test-only escape hatch so queue unit tests can exercise the `d:`
+    /// row machinery with synthetic bytes. NOT part of the public API and
+    /// compiled out of every non-test build.
+    #[cfg(test)]
+    pub(crate) fn for_test(bytes: Vec<u8>) -> Self {
+        Self(bytes)
+    }
+}
+
+/// Exports the tombstone commit's delta as the [`DeleteBearingUpdate`]
+/// queued for transmission — the ONLY constructor of that type.
+///
+/// Call IMMEDIATELY after [`apply_tombstone_to_window_doc`] + commit;
+/// `vv_before` must be the doc's oplog version vector captured before the
+/// tombstone was applied. Returns `None` when the commit was a no-op
+/// (e.g. a blocked downgrade of an existing hard tombstone) — there is
+/// nothing to queue.
+pub(crate) fn export_tombstone_commit_delta(
+    doc: &LoroDoc,
+    vv_before: &loro::VersionVector,
+) -> Result<Option<DeleteBearingUpdate>> {
+    if doc.oplog_vv() == *vv_before {
+        return Ok(None);
+    }
+    Ok(Some(DeleteBearingUpdate(export_updates_from(
+        doc, vv_before,
+    )?)))
+}
+
 /// Replays pending-tombstone markers (`pt:{window}:{entity_hex}`) into the
 /// window doc. OWNER-DECISION (ONE-1132 cfg-off durability): the marker is
 /// written UNCONDITIONALLY in the purge / shell-scrub txn — a build without
@@ -374,11 +420,7 @@ pub fn replay_pending_tombstones(
 
     // The replay commit's delta — tombstone values + key-delete ops, opaque
     // ids only — is the delete-bearing update queued for transmission.
-    let delete_update = if doc.oplog_vv() == vv_before {
-        None
-    } else {
-        Some(export_updates_from(doc, &vv_before)?)
-    };
+    let delete_update = export_tombstone_commit_delta(doc, &vv_before)?;
 
     // Persist BEFORE clearing the markers — the marker may only be cleared
     // after CRDT commit + snapshot persistence succeed.
@@ -904,4 +946,32 @@ pub fn reverse_rematerialize(vault: &Vault, doc: &LoroDoc, window_key: &WindowKe
     }
 
     Ok(count)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The single constructor of [`DeleteBearingUpdate`] (ONE-1135 review
+    /// item 14): a no-op tombstone commit exports nothing (no q:/d: rows
+    /// queued); a real tombstone commit exports a non-empty delta.
+    #[test]
+    fn export_tombstone_commit_delta_none_on_noop_some_on_commit() {
+        let doc = create_window_doc("local", &WindowKey::from_timestamp(1_750_000_000_000));
+        let vv_before = doc.oplog_vv();
+        assert!(
+            export_tombstone_commit_delta(&doc, &vv_before)
+                .unwrap()
+                .is_none(),
+            "unchanged doc must export no delete-bearing update"
+        );
+
+        let id = EntityId::now();
+        apply_tombstone_to_window_doc(&doc, &id, &[1, 2, 3]).unwrap();
+        doc.commit();
+        let delta = export_tombstone_commit_delta(&doc, &vv_before)
+            .unwrap()
+            .expect("tombstone commit must export a delete-bearing update");
+        assert!(!delta.as_bytes().is_empty());
+    }
 }
