@@ -1285,6 +1285,105 @@ fn hnsw_recall_at_10_vs_bruteforce() -> Result<()> {
     Ok(())
 }
 
+/// ONE-324 AC9: recall under refresh churn. Re-puts ≥ 10% of the vault's
+/// vectors with new values through the localized symmetric refresh path,
+/// then requires recall@10 vs brute force on the UPDATED corpus to stay
+/// above the same 0.95 gate as the build-time recall test.
+#[test]
+fn hnsw_recall_at_10_after_refresh_churn() -> Result<()> {
+    const DIMENSIONS: usize = 128;
+    const NODE_COUNT: usize = 1_000;
+    const CHURN_COUNT: usize = 100; // 10% of the vault
+    const LIMIT: usize = 10;
+    const QUERY_COUNT: usize = 25;
+
+    let temp_dir = tempfile::tempdir()?;
+    let mut config = test_config();
+    config.dimensions = DIMENSIONS;
+    config.map_size = 128 * 1024 * 1024;
+    config.hnsw.m_max_0 = 64;
+    config.hnsw.ef_construction = 256;
+    config.hnsw.ef_search = 256;
+
+    let vault = Vault::open(temp_dir.path(), config)?;
+    let mut rng = StdRng::seed_from_u64(43);
+    let mut corpus = Vec::with_capacity(NODE_COUNT);
+
+    for _ in 0..NODE_COUNT {
+        let id = EntityId::now();
+        let vector: Vec<f32> = (0..DIMENSIONS)
+            .map(|_| rng.gen_range(-1.0_f32..1.0_f32))
+            .collect();
+
+        vault.put_entity(&id, 1, test_time_range(1, 1), 1, b"churn-node")?;
+        vault.put_vector(&id, &vector)?;
+        corpus.push((id, vector));
+    }
+
+    let refresh_started = Instant::now();
+    let stride = NODE_COUNT / CHURN_COUNT;
+    for churn_idx in 0..CHURN_COUNT {
+        let corpus_idx = churn_idx * stride;
+        let new_vector: Vec<f32> = (0..DIMENSIONS)
+            .map(|_| rng.gen_range(-1.0_f32..1.0_f32))
+            .collect();
+        let id = corpus[corpus_idx].0;
+        vault.put_vector(&id, &new_vector)?;
+        corpus[corpus_idx].1 = new_vector;
+    }
+    let refresh_elapsed = refresh_started.elapsed();
+
+    // The vault is API-built, so every re-put must take the localized
+    // refresh path — count stays exact and no node may be lost.
+    {
+        let rtxn = vault.store.env.read_txn()?;
+        let count_raw = vault
+            .store
+            .hnsw_meta
+            .get(&rtxn, b"count")?
+            .ok_or(Error::EntityNotFound)?;
+        let count = u64::from_le_bytes(count_raw.try_into().map_err(|_| Error::InvalidKey)?);
+        assert_eq!(count, NODE_COUNT as u64);
+    }
+
+    let mut recall_sum = 0.0_f32;
+    for query_idx in 0..QUERY_COUNT {
+        let stride = NODE_COUNT / QUERY_COUNT;
+        let query_vector = &corpus[query_idx * stride].1;
+
+        let ann = vault.search_vector(query_vector, LIMIT)?;
+        let ann_ids: HashSet<EntityId> = ann.iter().map(|item| item.id).collect();
+
+        let mut brute_force: Vec<(EntityId, f32)> = corpus
+            .iter()
+            .map(|(id, vector)| (*id, crate::distance::cosine_distance(query_vector, vector)))
+            .collect();
+        brute_force.sort_by(|left, right| {
+            left.1
+                .total_cmp(&right.1)
+                .then_with(|| left.0.as_bytes().cmp(right.0.as_bytes()))
+        });
+
+        let brute_ids: HashSet<EntityId> =
+            brute_force.iter().take(LIMIT).map(|(id, _)| *id).collect();
+        let hits = brute_ids.intersection(&ann_ids).count();
+        recall_sum += hits as f32 / LIMIT as f32;
+    }
+
+    let recall_at_10 = recall_sum / QUERY_COUNT as f32;
+    eprintln!(
+        "refresh-churn recall@10={recall_at_10:.4}, churn={CHURN_COUNT}/{NODE_COUNT}, refresh_ms={}",
+        refresh_elapsed.as_millis()
+    );
+
+    assert!(
+        recall_at_10 > 0.95,
+        "expected refresh-churn recall@10 > 0.95, got {recall_at_10:.4}"
+    );
+
+    Ok(())
+}
+
 #[test]
 fn put_query_and_delete_edges() -> Result<()> {
     let (_dir, vault) = open_test_vault();
@@ -3459,9 +3558,12 @@ fn doctor_reflects_persisted_open_compatibility_values() -> Result<()> {
     assert_eq!(report.hnsw.ef_construction, Some(200));
     assert_eq!(report.hnsw.distance_metric.as_deref(), Some("cosine"));
     assert_eq!(report.hnsw.index_structure.as_deref(), Some("flat_nsw"));
+    // Pinned hash of the portable analyzer manifest at ANALYZER_VERSION
+    // "v3" (ONE-1118 emoji grapheme lane). Any manifest-affecting change
+    // (version bump, channel set, normalization policy) must re-pin this.
     assert_eq!(
         report.analyzer_manifest_hash.as_deref(),
-        Some("acc359f173a6fcf5a7c4dc1ffcbbfe63d0c41878733fb4d20d033dea03640ce1")
+        Some("e0da35956883bf26e26881b73c515f2c9c7d11087ef813da026dc51c303e1002")
     );
     // Sha256 over the field-schema records with
     // POSTINGS_VALUE_FORMAT_VERSION = 2 (ONE-299 DUP_SORT postings).
@@ -4056,6 +4158,105 @@ fn context_pack_run_serialized_toon_end_to_end() -> Result<()> {
 
     let text = String::from_utf8(output).map_err(|_| Error::InvalidKey)?;
     assert!(text.contains("claims"));
+    Ok(())
+}
+
+/// ONE-1118 AC3 round-trip at the vault level (ARCH-0031 dispatch row
+/// "Emoji / unknown → Grapheme per token"): an emoji-only doc is
+/// retrievable by an emoji-only query, and a multi-codepoint ZWJ cluster
+/// indexes as exactly ONE token — a member-emoji query must not match it.
+#[test]
+fn emoji_doc_round_trips_through_text_search() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let crab_doc = EntityId::now();
+    let family_doc = EntityId::now();
+    let family = "\u{1F468}\u{200D}\u{1F469}\u{200D}\u{1F467}\u{200D}\u{1F466}"; // 👨‍👩‍👧‍👦
+
+    vault
+        .batch()
+        .put(&crab_doc, 1, test_time_range(1, 1), 1, b"emoji-crab")
+        .text(&crab_doc, &[("body", "🦀🔥")])
+        .put(&family_doc, 1, test_time_range(2, 2), 2, b"emoji-family")
+        .text(&family_doc, &[("body", family)])
+        .commit()?;
+
+    // AC3: doc "🦀🔥" retrievable by query "🦀".
+    let hits = vault.search_text("🦀", 10)?;
+    assert!(
+        hits.iter().any(|h| h.id == crab_doc),
+        "emoji-only query must retrieve the emoji doc"
+    );
+
+    // A member emoji of the ZWJ cluster must NOT match: the cluster is one
+    // token. A codepoint-per-token implementation would match here.
+    let hits = vault.search_text("\u{1F468}", 10)?;
+    assert!(
+        !hits.iter().any(|h| h.id == family_doc),
+        "ZWJ member emoji must not match the whole-cluster token"
+    );
+
+    // The whole-cluster query does match.
+    let hits = vault.search_text(family, 10)?;
+    assert!(
+        hits.iter().any(|h| h.id == family_doc),
+        "whole-cluster query must retrieve the ZWJ doc"
+    );
+    Ok(())
+}
+
+/// ONE-1118 AC4: a populated text index stamped by the previous analyzer
+/// version must fail closed at `Vault::open` with `IncompatibleAnalyzer` —
+/// never silently reopen and score v3 queries against postings written by
+/// the emoji-dropping v2 tokenizer. The stored manifest is rewritten to be
+/// byte-identical to the current one except `analyzer_version: "v2"`, with
+/// a matching (self-consistent) hash, so ONLY the version bump trips the
+/// handshake.
+#[test]
+fn populated_v2_analyzer_manifest_fails_closed_on_open() -> Result<()> {
+    let temp = tempfile::tempdir()?;
+    let path = temp.path();
+
+    {
+        let vault = Vault::open(path, test_config())?;
+        let id = EntityId::now();
+        vault
+            .batch()
+            .put(&id, 1, test_time_range(1, 1), 1, b"emoji-handshake")
+            .text(&id, &[("body", "emoji handshake corpus 🦀")])
+            .commit()?;
+
+        let mut wtxn = vault.store.env.write_txn()?;
+        let stored = vault
+            .store
+            .vault_meta
+            .get(&wtxn, crate::store::TEXT_ANALYZER_MANIFEST_KEY)?
+            .expect("populated vault must have a stored analyzer manifest")
+            .to_vec();
+        let mut manifest: AnalyzerManifest =
+            serde_json::from_slice(&stored).expect("stored manifest must parse");
+        assert_eq!(manifest.analyzer_version, ANALYZER_VERSION);
+        assert_eq!(manifest.analyzer_version, "v3");
+        manifest.analyzer_version = "v2".to_owned();
+        let json = manifest.canonical_json().expect("canonical json");
+        let hash = manifest.canonical_hash().expect("canonical hash");
+        vault.store.vault_meta.put(
+            &mut wtxn,
+            crate::store::TEXT_ANALYZER_MANIFEST_KEY,
+            json.as_bytes(),
+        )?;
+        vault.store.vault_meta.put(
+            &mut wtxn,
+            crate::store::TEXT_ANALYZER_MANIFEST_HASH_KEY,
+            &hash,
+        )?;
+        wtxn.commit()?;
+    }
+
+    let err = match Vault::open(path, test_config()) {
+        Ok(_) => panic!("v2-stamped populated index must fail closed on open"),
+        Err(err) => err,
+    };
+    assert_eq!(err.kind(), ErrorKind::IncompatibleAnalyzer);
     Ok(())
 }
 
@@ -5493,8 +5694,104 @@ fn edge_kinds_child_of_and_assigned_to() -> Result<()> {
             .any(|e| e.kind == EdgeKind::AssignedTo && e.target == machine)
     );
 
-    assert_eq!(EdgeKind::ChildOf.default_weight(), 1.0);
-    assert_eq!(EdgeKind::AssignedTo.default_weight(), 0.8);
+    // Contract pprWeight is null for both kinds (contracts.ts edgeKinds u8=6/7):
+    // no stored-weight prior exists, so callers pick the weight explicitly.
+    assert_eq!(EdgeKind::ChildOf.default_weight(), None);
+    assert_eq!(EdgeKind::AssignedTo.default_weight(), None);
+    Ok(())
+}
+
+/// ONE-1115 AC2 — `EdgeKind::default_weight` must equal the contract's
+/// LITERAL `edgeKinds.pprWeight` column (oneiron-docs
+/// `site/src/data/oneiron-contracts.ts`). `child_of` and `assigned_to` are
+/// the only `pprWeight: null` rows; any single-row drift fails this test.
+#[test]
+fn default_weight_matches_contract_ppr_weight_literals() {
+    let expected: [(EdgeKind, Option<f32>); 20] = [
+        (EdgeKind::AuthoredBy, Some(0.9)),
+        (EdgeKind::ScopedTo, Some(0.7)),
+        (EdgeKind::PartOf, Some(0.8)),
+        (EdgeKind::Supersedes, Some(0.3)),
+        (EdgeKind::BelongsTo, Some(1.0)),
+        (EdgeKind::ClaimOf, Some(1.0)),
+        (EdgeKind::ChildOf, None),
+        (EdgeKind::AssignedTo, None),
+        (EdgeKind::DerivedFrom, Some(0.2)),
+        (EdgeKind::Mentions, Some(0.6)),
+        (EdgeKind::About, Some(0.5)),
+        (EdgeKind::Supports, Some(1.0)),
+        (EdgeKind::Opposes, Some(0.0)),
+        (EdgeKind::ParticipatesIn, Some(1.0)),
+        (EdgeKind::Attached, Some(0.8)),
+        (EdgeKind::EmployedBy, Some(0.8)),
+        (EdgeKind::HasFacet, Some(0.7)),
+        (EdgeKind::FacetOf, Some(0.7)),
+        (EdgeKind::InWorld, Some(0.7)),
+        (EdgeKind::SetIn, Some(0.7)),
+    ];
+    for (kind, weight) in expected {
+        assert_eq!(
+            kind.default_weight(),
+            weight,
+            "stored-weight prior mismatch for {kind:?}"
+        );
+    }
+}
+
+/// ONE-1115 AC4 — edge weights are pinned to the contract range \[0, 1\]
+/// (contracts.ts `edgeKinds`) at write time: the value encoder and the batch
+/// apply path both reject out-of-range and non-finite weights with the typed
+/// `InvalidEdgeWeight`, and the boundary values 0.0 / 1.0 are accepted.
+#[test]
+fn edge_weight_outside_unit_range_rejected_at_write() -> Result<()> {
+    fn assert_invalid_weight(err: Error, rejected: f32) {
+        match err {
+            Error::InvalidEdgeWeight { value } => {
+                if rejected.is_nan() {
+                    assert!(value.is_nan(), "error payload must echo NaN, got {value}");
+                } else {
+                    assert_eq!(
+                        value.to_bits(),
+                        rejected.to_bits(),
+                        "error payload must echo the rejected weight"
+                    );
+                }
+            }
+            other => panic!("expected InvalidEdgeWeight for {rejected}, got {other:?}"),
+        }
+    }
+
+    let (_dir, vault) = open_test_vault();
+
+    for bad in [-0.1_f32, 1.1, f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
+        // Value encoder (types::encode_edge_value).
+        let encode_err = encode_edge_value(EdgeKind::Mentions, bad, 0, Vad::NEUTRAL, None)
+            .expect_err("encoder must reject out-of-range weight");
+        assert_invalid_weight(encode_err, bad);
+
+        // Batch apply path (put_edge → apply_edge_with_created_at).
+        let apply_err = vault
+            .put_edge(&EntityId::now(), EdgeKind::Mentions, &EntityId::now(), bad)
+            .expect_err("apply path must reject out-of-range weight");
+        assert_invalid_weight(apply_err, bad);
+    }
+
+    // Closed-interval boundaries are valid weights on both paths.
+    for good in [0.0_f32, 1.0] {
+        encode_edge_value(EdgeKind::Mentions, good, 0, Vad::NEUTRAL, None)
+            .expect("boundary weight must encode");
+
+        let src = EntityId::now();
+        let tgt = EntityId::now();
+        vault.put_edge(&src, EdgeKind::Mentions, &tgt, good)?;
+        let out = vault.edges_out(&src)?;
+        assert_eq!(out.len(), 1);
+        assert_eq!(
+            out[0].weight.to_bits(),
+            good.to_bits(),
+            "boundary weight must round-trip the write gate"
+        );
+    }
     Ok(())
 }
 
@@ -6898,7 +7195,8 @@ fn put_claim_round_trip_and_pinned_on_disk_bytes() -> Result<()> {
     body.valid_from = Some(100);
     body.valid_to = Some(200);
     body.source = Some(ClaimSource::UserStated);
-    body.world = Some("w0".into());
+    let world_id = EntityId::from_bytes([0x5A; 16])?;
+    body.world = Some(world_id);
     body.scope = Some("rel1".into());
     body.stale = true;
     vault.put_claim(&claim, &body, test_time_range(100, 200), 300)?;
@@ -6916,7 +7214,10 @@ fn put_claim_round_trip_and_pinned_on_disk_bytes() -> Result<()> {
         ("from".into(), rmpv::Value::from(100_u64)),
         ("to".into(), rmpv::Value::from(200_u64)),
         ("src".into(), "user_stated".into()),
-        ("world".into(), "w0".into()),
+        (
+            "world".into(),
+            rmpv::Value::Binary(world_id.as_bytes().to_vec()),
+        ),
         (
             "subj".into(),
             rmpv::Value::Binary(subject.as_bytes().to_vec()),
@@ -7014,6 +7315,9 @@ fn put_claim_writes_claim_of_edge_atomically() -> Result<()> {
         .expect("claim_of edge missing from edges_in");
     assert_eq!(out_value.len(), 12, "claim_of must be structural 12 B");
     assert_eq!(out_value, in_value);
+    // Weight f32 LE @0 = the contract's pinned claim_of pprWeight 1.0
+    // (contracts.ts edgeKinds u8 = 5).
+    assert_eq!(&out_value[0..4], &1.0_f32.to_le_bytes());
     drop(rtxn);
 
     // claims_for_subject = sources(ClaimOf, Some(0)).
@@ -7605,6 +7909,9 @@ fn put_edge_provenance_atomic_write_restamps_and_indexes() -> Result<()> {
         .get(&rtxn, &claim_of_src)?
         .expect("claim_of edge to the subject edge's source");
     assert_eq!(link.len(), EDGE_VALUE_STRUCTURAL_LEN);
+    // Weight f32 LE @0 = the contract's pinned claim_of pprWeight 1.0
+    // (contracts.ts edgeKinds u8 = 5).
+    assert_eq!(&link[0..4], &1.0_f32.to_le_bytes());
     assert!(
         vault.store.edges_out.get(&rtxn, &claim_of_tgt)?.is_none(),
         "claim_of must target the SOURCE entity only (D12)"

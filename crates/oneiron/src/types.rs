@@ -513,36 +513,40 @@ pub enum EdgeKind {
 }
 
 impl EdgeKind {
-    /// Returns the default STORED edge weight for this edge kind (the legacy
-    /// `pprWeight` prior of the contract's `edgeKinds` table).
+    /// Returns the default STORED edge weight for this edge kind — the
+    /// LITERAL `pprWeight` column of the contract's `edgeKinds` table
+    /// (oneiron-docs `site/src/data/oneiron-contracts.ts`, ARCH-0019 PPR
+    /// edge-kinds priors). `None` mirrors the contract's `pprWeight: null`
+    /// rows exactly: `child_of` and `assigned_to` carry no stored-weight
+    /// prior, so callers writing such edges must choose a weight explicitly.
     ///
     /// This is NOT the PPR traversal multiplier: per-kind traversal budgets
     /// are the λ_τ table (`ppr::lambda_for_kind`), which deliberately differs
     /// from this prior for the five world-model kinds, and `ChildOf` /
     /// `AssignedTo` are never traversed by PPR regardless of the weight
     /// stored on their edges.
-    pub fn default_weight(self) -> f32 {
+    pub const fn default_weight(self) -> Option<f32> {
         match self {
-            Self::BelongsTo => 1.0,
-            Self::ParticipatesIn => 1.0,
-            Self::Attached => 0.8,
-            Self::AuthoredBy => 0.9,
-            Self::Mentions => 0.6,
-            Self::About => 0.5,
-            Self::Supports => 1.0,
-            Self::Opposes => 0.0,
-            Self::ClaimOf => 1.0,
-            Self::ScopedTo => 0.7,
-            Self::Supersedes => 0.3,
-            Self::DerivedFrom => 0.2,
-            Self::PartOf => 0.8,
-            Self::EmployedBy => 0.8,
-            Self::HasFacet => 0.7,
-            Self::InWorld => 0.7,
-            Self::FacetOf => 0.7,
-            Self::SetIn => 0.7,
-            Self::ChildOf => 1.0,
-            Self::AssignedTo => 0.8,
+            Self::BelongsTo => Some(1.0),
+            Self::ParticipatesIn => Some(1.0),
+            Self::Attached => Some(0.8),
+            Self::AuthoredBy => Some(0.9),
+            Self::Mentions => Some(0.6),
+            Self::About => Some(0.5),
+            Self::Supports => Some(1.0),
+            Self::Opposes => Some(0.0),
+            Self::ClaimOf => Some(1.0),
+            Self::ScopedTo => Some(0.7),
+            Self::Supersedes => Some(0.3),
+            Self::DerivedFrom => Some(0.2),
+            Self::PartOf => Some(0.8),
+            Self::EmployedBy => Some(0.8),
+            Self::HasFacet => Some(0.7),
+            Self::InWorld => Some(0.7),
+            Self::FacetOf => Some(0.7),
+            Self::SetIn => Some(0.7),
+            Self::ChildOf => None,
+            Self::AssignedTo => None,
         }
     }
 
@@ -813,6 +817,145 @@ pub struct TextIndexOptions {
     /// route by their own script class regardless of this hint — the
     /// script is the stronger signal.
     pub language_hint: Option<crate::analyzer::LanguageHint>,
+}
+
+/// Scoring-only BM25F rank profile (ARCH-0031 §bm25f, ARCH-0019 D3).
+///
+/// Selects the BM25 scoring formula — [`Bm25Formula::Okapi`] (default) vs
+/// [`Bm25Formula::Plus`]`{ delta }` — and overrides per-channel `weight`
+/// / `b` for the four v1 analyzer channels (`Surface`, `Stem`,
+/// `NormalizedOverlay`, `CjkNgram`). `k1` stays pinned at the contract's
+/// global `1.2` and is not configurable.
+///
+/// The profile is applied at query time only. It never participates in
+/// the on-disk analyzer manifest or the BM25F field-schema hash, so
+/// changing it never requires a reindex (ARCH-0031: "Weights are
+/// scoring-only — changing them doesn't require reindex").
+///
+/// A channel override with `weight == 0.0` excludes that channel from
+/// scoring entirely. Overrides accumulate; the last override per channel
+/// wins. Validation is fail-closed at the point of use
+/// ([`crate::Vault::search_text_with_profile`] /
+/// [`crate::PipelineBuilder::rank_profile`]): non-finite or negative
+/// weights, `b` outside `[0.0, 1.0]`, a non-finite or non-positive
+/// BM25+ `delta`, and overrides on reserved channels (`Shingle`,
+/// `Synonym`, `Phonetic` — never emitted in v1) are rejected with
+/// [`crate::Error::InvalidRankProfile`].
+///
+/// [`Bm25Formula::Okapi`]: crate::Bm25Formula::Okapi
+/// [`Bm25Formula::Plus`]: crate::Bm25Formula::Plus
+#[derive(Debug, Clone, PartialEq)]
+#[must_use = "a rank profile only affects scoring when passed to a query"]
+pub struct Bm25RankProfile {
+    formula: crate::bm25::Bm25Formula,
+    weight_overrides: Vec<(crate::analyzer::AnalyzerChannel, f64)>,
+    b_overrides: Vec<(crate::analyzer::AnalyzerChannel, f64)>,
+}
+
+impl Default for Bm25RankProfile {
+    /// The contract default profile: Okapi formula, no channel overrides
+    /// (Surface 1.00/0.75, Stem 0.35/0.65, NormalizedOverlay 0.55/0.00,
+    /// CjkNgram 0.45/0.30 per the ARCH-0031 channel table).
+    fn default() -> Self {
+        Self {
+            formula: crate::bm25::Bm25Formula::Okapi,
+            weight_overrides: Vec::new(),
+            b_overrides: Vec::new(),
+        }
+    }
+}
+
+impl Bm25RankProfile {
+    /// Selects the BM25 scoring formula. `Okapi` is the contract default;
+    /// `Plus { delta }` is the BM25+ option (`delta` must be finite and
+    /// `> 0.0`; the contract opt-in value is `delta: 1.0`).
+    pub fn with_formula(mut self, formula: crate::bm25::Bm25Formula) -> Self {
+        self.formula = formula;
+        self
+    }
+
+    /// Overrides the scoring weight of one of the four v1 channels.
+    /// `0.0` excludes the channel from scoring. Must be finite and
+    /// `>= 0.0`; validated fail-closed at query time.
+    pub fn with_channel_weight(
+        mut self,
+        channel: crate::analyzer::AnalyzerChannel,
+        weight: f64,
+    ) -> Self {
+        self.weight_overrides.push((channel, weight));
+        self
+    }
+
+    /// Overrides the BM25 length-norm `b` of one of the four v1 channels.
+    /// Must be finite and within `[0.0, 1.0]`; validated fail-closed at
+    /// query time. Note `NormalizedOverlay` scores under the `NoNorm`
+    /// length policy, so its `b` is inert by contract.
+    pub fn with_channel_b(mut self, channel: crate::analyzer::AnalyzerChannel, b: f64) -> Self {
+        self.b_overrides.push((channel, b));
+        self
+    }
+
+    /// Validates the profile and lowers it onto the internal scoring
+    /// config. Fail-closed: any invalid parameter is a typed
+    /// [`Error::InvalidRankProfile`], never a clamp or a silent skip.
+    pub(crate) fn to_bm25_config(&self) -> Result<crate::bm25::Bm25Config, crate::error::Error> {
+        use crate::analyzer::AnalyzerChannel;
+        use crate::bm25::{Bm25Config, Bm25Formula};
+        use crate::error::Error;
+
+        fn scored_slot(
+            channel: AnalyzerChannel,
+            parameter: &'static str,
+        ) -> Result<usize, crate::error::Error> {
+            // Only the four v1 channels are scoreable; reserved channels
+            // are never emitted, so an override there is a caller bug.
+            if !AnalyzerChannel::ALL_V1.contains(&channel) {
+                return Err(Error::InvalidRankProfile {
+                    parameter,
+                    value: f64::from(channel.field_id()),
+                });
+            }
+            Ok(channel.field_id() as usize)
+        }
+
+        if let Bm25Formula::Plus { delta } = self.formula
+            && (!delta.is_finite() || delta <= 0.0)
+        {
+            return Err(Error::InvalidRankProfile {
+                parameter: "formula.delta",
+                value: delta,
+            });
+        }
+
+        let mut config = Bm25Config {
+            formula: self.formula,
+            ..Bm25Config::default()
+        };
+
+        for &(channel, weight) in &self.weight_overrides {
+            let slot = scored_slot(channel, "weight.reserved_channel")?;
+            if !weight.is_finite() || weight < 0.0 {
+                return Err(Error::InvalidRankProfile {
+                    parameter: "channel.weight",
+                    value: weight,
+                });
+            }
+            config.fields[slot].weight = weight;
+        }
+
+        for &(channel, b) in &self.b_overrides {
+            let slot = scored_slot(channel, "b.reserved_channel")?;
+            if !b.is_finite() || !(0.0..=1.0).contains(&b) {
+                return Err(Error::InvalidRankProfile {
+                    parameter: "channel.b",
+                    value: b,
+                });
+            }
+            config.fields[slot].b = b;
+        }
+
+        Ok(config)
+    }
 }
 
 impl Default for VaultConfig {
@@ -1111,6 +1254,24 @@ pub(crate) fn decode_edge_value_for_kind(
     Ok(decoded)
 }
 
+/// Validates a stored edge weight against the contract-pinned range.
+///
+/// Contract: edge `weight` ∈ \[0, 1\] (oneiron-docs
+/// `site/src/data/oneiron-contracts.ts` `edgeKinds` — every non-null
+/// `pprWeight` prior lives in this closed interval, and the weight gloss pins
+/// the stored range). NaN, ±infinity, and finite values outside \[0, 1\] are
+/// rejected with the typed [`Error::InvalidEdgeWeight`] on EVERY write path
+/// (public batch ops and sync replay materialization alike); the read path is
+/// unchanged.
+///
+/// [`Error::InvalidEdgeWeight`]: crate::error::Error::InvalidEdgeWeight
+pub(crate) fn validate_edge_weight(weight: f32) -> crate::error::Result<()> {
+    if !(0.0..=1.0).contains(&weight) {
+        return Err(crate::error::Error::InvalidEdgeWeight { value: weight });
+    }
+    Ok(())
+}
+
 pub(crate) fn encode_edge_value(
     kind: EdgeKind,
     weight: f32,
@@ -1118,9 +1279,7 @@ pub(crate) fn encode_edge_value(
     vad: Vad,
     provenance: Option<EdgeProvenanceFlags>,
 ) -> crate::error::Result<Vec<u8>> {
-    if !weight.is_finite() {
-        return Err(crate::error::Error::InvalidEdgeWeight { value: weight });
-    }
+    validate_edge_weight(weight)?;
     if let Some((component, value)) = vad.invalid_component() {
         return Err(crate::error::Error::InvalidVad { component, value });
     }
@@ -1168,6 +1327,12 @@ pub struct PackStats {
     pub query_time_us: u64,
     pub entities_hydrated: usize,
     pub neighbors_hydrated: usize,
+    /// CLAIM records silently excluded by the D19 read-path status gate
+    /// (ARCH-0003: surface only `appr ∈ {auto, approved}` ∧ `life = active`
+    /// ∧ `stale = false`) or by the fail-closed type-0 body decode, across
+    /// the pipeline stage and pack hydration (results + neighbors). A claim
+    /// suppressed in both stages counts once per stage.
+    pub claims_suppressed: usize,
 }
 
 /// A fully hydrated context pack ready for serialization or programmatic use.

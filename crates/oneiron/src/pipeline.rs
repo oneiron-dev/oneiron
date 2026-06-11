@@ -4,12 +4,16 @@ use heed::types::Bytes;
 use heed::{Database, RoTxn};
 
 use crate::Vault;
-use crate::batch::{EntityMetadataHeader, LONG_INTERVAL_THRESHOLD_SECS};
+use crate::batch::{
+    ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader, LONG_INTERVAL_THRESHOLD_SECS,
+};
+use crate::claim::{ClaimBody, claim_surfaceable};
 use crate::error::{Error, Result};
 use crate::fusion;
 use crate::store::Store;
 use crate::types::{
-    ENTITY_ID_LEN, EntityId, ScoredEntity, TemporalAnchorMode, TemporalGranularity, TimeRange,
+    EDGE_KEY_LEN, ENTITY_ID_LEN, ENTITY_TYPE_CLAIM, ENTITY_TYPE_FACET, EdgeKind, EntityId,
+    ScoredEntity, TemporalAnchorMode, TemporalGranularity, TimeRange,
 };
 
 const DEFAULT_RESULT_LIMIT: usize = 20;
@@ -19,7 +23,21 @@ const TEMPORAL_KEY_LEN: usize = 24;
 const LONG_INTERVAL_VALUE_LEN: usize = 8;
 const TEMPORAL_FLOOR: f64 = 0.05;
 const SECONDS_PER_DAY_F64: f64 = 86_400.0;
-const RECENCY_DECAY_TAU_SECS: f64 = 28.0 * SECONDS_PER_DAY_F64;
+
+/// Default recency half-life in days (ARCH-0004 `RECENCY_DECAY`,
+/// 28-day default). The recency signal's source timestamp is the
+/// entity's `learned_at` (v1). This named constant is the engine
+/// default: the temporal pipeline's recency decay constant
+/// (`RECENCY_DECAY_TAU_SECS = 28.0 * 86_400`, the ARCH-0004 §4.5 table
+/// value) derives from it, and callers of
+/// [`PipelineBuilder::boost_recency`] can pass it explicitly.
+pub const DEFAULT_RECENCY_HALF_LIFE_DAYS: f32 = 28.0;
+
+/// ARCH-0004 §4.5 table value (`28.0 * 86_400`), derived from
+/// [`DEFAULT_RECENCY_HALF_LIFE_DAYS`]. The temporal scorer applies it as
+/// the decay constant in `exp(-age / tau)` — existing behavior, kept
+/// unchanged.
+const RECENCY_DECAY_TAU_SECS: f64 = DEFAULT_RECENCY_HALF_LIFE_DAYS as f64 * SECONDS_PER_DAY_F64;
 const ALPHA_BASE: f64 = 0.7;
 const ALPHA_RANGE: f64 = 0.3;
 const ALPHA_TAU_SECS: f64 = 90.0 * SECONDS_PER_DAY_F64;
@@ -96,6 +114,33 @@ struct EntityMetadataCache {
     entries: HashMap<EntityId, Option<EntityMetadata>>,
 }
 
+/// Per-run memo for the D19 claim status gate.
+///
+/// `None` = the type-0 record is suppressed (failed the
+/// [`claim_surfaceable`] predicate, or its body bytes failed the pinned
+/// structural decode — fail-closed exclusion, AC 7). `Some(body)` = the
+/// claim passed the gate; the decoded body is retained so the context-pack
+/// hydrator can project fields WITHOUT a second MessagePack decode (AC 9).
+/// Non-type-0 entities never enter this map (their bodies are opaque, AC 5).
+#[derive(Default)]
+struct ClaimStatusGateCache {
+    decisions: HashMap<EntityId, Option<ClaimBody>>,
+}
+
+/// Detailed pipeline output for the context-pack path.
+///
+/// `claim_bodies` carries every claim body decoded (once) by the D19 gate
+/// that PASSED it; `claims_suppressed` counts the unique type-0 records the
+/// gate excluded (status-failed or undecodable). Bodies were decoded under
+/// the pipeline's read transaction; the context pack hydrates under a fresh
+/// transaction, so reusing them keeps projection consistent with the gate
+/// decision (the same seam the score/hydration split already has).
+pub(crate) struct PipelineOutput {
+    pub(crate) scores: Vec<ScoredEntity>,
+    pub(crate) claim_bodies: HashMap<EntityId, ClaimBody>,
+    pub(crate) claims_suppressed: usize,
+}
+
 impl EntityMetadataCache {
     fn get(
         &mut self,
@@ -113,11 +158,76 @@ impl EntityMetadataCache {
     }
 }
 
+/// Facet filter mode for the post-fusion claim facet filter (ARCH-0039
+/// facet modes table; ARCH-0022 retrieval-filter rule).
+///
+/// Selected per query via [`PipelineBuilder::facet`]. Not setting a facet on
+/// the builder is the contract's third mode — *(no facet)* — and performs no
+/// filtering at all (backward compatible).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum FacetMode {
+    /// Only core + active-facet claims surface — a claim whose `FacetOf`
+    /// edges all target other facets is removed from the results (never
+    /// leak RP claims into IRL). Claims with no `FacetOf` edge (core /
+    /// unfaceted) and entities of every non-CLAIM type pass untouched.
+    /// Strict never rescores.
+    Strict,
+    /// Return all, boost the active facet: nothing is removed; claims with
+    /// a `FacetOf` edge to the active facet have their fused score
+    /// multiplied by `boost` (cross-facet analysis, psych mirror
+    /// generation). The multiplier is CALLER-SUPPLIED — the contract pins
+    /// no constant — and must be finite and positive; it is applied at
+    /// most once per claim regardless of how many `FacetOf` edges match.
+    Prefer {
+        /// Score multiplier for active-facet claims. Must be finite and
+        /// `> 0`, enforced fail-closed at [`PipelineBuilder::run`] time
+        /// with [`Error::InvalidConfig`].
+        boost: f32,
+    },
+}
+
+/// World retrieval scope for the post-fusion claim world filter (ARCH-0004
+/// claim-filtering: `worldId = vault.baseWorld` unless the query targets a
+/// fictional world; ARCH-0022 world model). Selected per query via
+/// [`PipelineBuilder::world`]; the default is [`WorldScope::All`].
+///
+/// A claim's world is the `world` key in its body — an absent key is base
+/// reality (the elide-the-default pattern). Non-claim entities have no world
+/// and are treated as base, so they pass every scope untouched. This is a
+/// pure post-fusion filter in the same stage as the facet filter; scoring and
+/// fusion are never touched.
+#[derive(Debug, Clone, Copy, PartialEq)]
+#[non_exhaustive]
+pub enum WorldScope {
+    /// Span every world — base-reality claims plus every fictional / dream
+    /// world's claims surface. The default; the context pack groups the
+    /// survivors by world (base section first).
+    All,
+    /// Only base-reality claims — claims with NO `world` key (and all
+    /// non-claim entities). Every world-scoped claim is removed.
+    Base,
+    /// Claims scoped to this world id PLUS base-reality claims. Claims scoped
+    /// to any OTHER world are removed.
+    World(EntityId),
+}
+
+/// A claim's facet scope relative to the query's active facet, derived from
+/// its outgoing `FacetOf` (`CLAIM → FACET`, u8 17) adjacency.
+enum ClaimFacetScope {
+    /// No `FacetOf` edge: a core / unfaceted claim. Passes every mode.
+    Unfaceted,
+    /// At least one `FacetOf` edge targets the active facet.
+    ActiveFacet,
+    /// Has `FacetOf` edges, none targeting the active facet.
+    OtherFacetsOnly,
+}
+
 #[must_use = "PipelineBuilder executes no query until a terminal `.run*()` method is called"]
 pub struct PipelineBuilder<'a> {
     vault: &'a Vault,
     vector_search: Option<(Vec<f32>, usize)>,
     text_search: Option<(String, usize)>,
+    rank_profile: Option<crate::types::Bm25RankProfile>,
     phonetic_search: Option<Vec<String>>,
     temporal_search: Option<TemporalSearchConfig>,
     ppr_search: Option<(Vec<EntityId>, u32)>,
@@ -130,6 +240,8 @@ pub struct PipelineBuilder<'a> {
     since_filter: Option<u64>,
     occurred_range: Option<(u64, u64)>,
     learned_range: Option<(u64, u64)>,
+    facet_filter: Option<(EntityId, FacetMode)>,
+    world_scope: WorldScope,
     result_limit: usize,
     temporal_adaptive_default: bool,
 }
@@ -140,6 +252,7 @@ impl<'a> PipelineBuilder<'a> {
             vault,
             vector_search: None,
             text_search: None,
+            rank_profile: None,
             phonetic_search: None,
             temporal_search: None,
             ppr_search: None,
@@ -152,6 +265,8 @@ impl<'a> PipelineBuilder<'a> {
             since_filter: None,
             occurred_range: None,
             learned_range: None,
+            facet_filter: None,
+            world_scope: WorldScope::All,
             result_limit: DEFAULT_RESULT_LIMIT,
             temporal_adaptive_default: true,
         }
@@ -164,6 +279,17 @@ impl<'a> PipelineBuilder<'a> {
 
     pub fn search_text(mut self, query: &str, limit: usize) -> Self {
         self.text_search = Some((query.to_owned(), limit));
+        self
+    }
+
+    /// Applies a scoring-only BM25F rank profile to the text signal
+    /// (ARCH-0031: Okapi default, `Plus { delta }` and per-channel
+    /// weight / `b` are non-reindexing options). The profile is
+    /// validated fail-closed when the pipeline runs; an invalid
+    /// parameter returns [`crate::Error::InvalidRankProfile`], even when
+    /// no text search is configured.
+    pub fn rank_profile(mut self, profile: crate::types::Bm25RankProfile) -> Self {
+        self.rank_profile = Some(profile);
         self
     }
 
@@ -334,15 +460,71 @@ impl<'a> PipelineBuilder<'a> {
         self
     }
 
+    /// Activates the ARCH-0039 facet filter for this query: `facet_id` is
+    /// the active FACET entity and `mode` selects `strict` (only core +
+    /// active-facet claims) or `prefer` (return all, boost active facet).
+    /// Not calling this method is the contract's *(no facet)* mode — no
+    /// facet filtering at all.
+    ///
+    /// The filter runs post-fusion/post-boosts, before the
+    /// `result_limit` truncation and under the same read transaction, so
+    /// claims excluded by `strict` never consume result slots. It reads
+    /// each candidate CLAIM's outgoing `FacetOf` (`CLAIM → FACET`) edges;
+    /// claim bodies are never decoded by this stage.
+    pub fn facet(mut self, facet_id: &EntityId, mode: FacetMode) -> Self {
+        self.facet_filter = Some((*facet_id, mode));
+        self
+    }
+
+    /// Sets the ARCH-0004 / ARCH-0022 world scope for this query. The default
+    /// is [`WorldScope::All`] (span every world). [`WorldScope::Base`] keeps
+    /// only claims with no `world` key; [`WorldScope::World`] keeps that
+    /// world's claims plus base claims. The filter runs post-fusion /
+    /// post-boosts, before the `result_limit` truncation and under the same
+    /// read transaction — in the same stage as the facet filter — so claims
+    /// excluded by scope never consume result slots. Scoring and fusion are
+    /// untouched.
+    pub fn world(mut self, scope: WorldScope) -> Self {
+        self.world_scope = scope;
+        self
+    }
+
     pub fn run(self) -> Result<Vec<ScoredEntity>> {
+        Ok(self.run_for_pack()?.scores)
+    }
+
+    /// Executes the pipeline and returns the detailed [`PipelineOutput`]
+    /// the context-pack path consumes (gated scores + the claim bodies the
+    /// D19 gate already decoded + the suppression count).
+    pub(crate) fn run_for_pack(self) -> Result<PipelineOutput> {
+        // Resolve the rank profile before anything else: an invalid
+        // profile is a caller bug and fails closed even when no text
+        // search would consume it on this run.
+        let bm25_config = match self.rank_profile.as_ref() {
+            Some(profile) => profile.to_bm25_config()?,
+            None => crate::bm25::Bm25Config::default(),
+        };
+
+        // ARCH-0039 facet `prefer` boost is a caller-supplied multiplier
+        // (ONE-1117): reject a non-finite or non-positive boost fail-closed
+        // here, before any work, in the same spirit as the rank profile above.
+        if let Some((_, FacetMode::Prefer { boost })) = self.facet_filter
+            && (!boost.is_finite() || boost <= 0.0)
+        {
+            return Err(Error::InvalidConfig(format!(
+                "facet prefer boost must be finite and positive, got {boost}"
+            )));
+        }
+
         if self.text_search.is_some() {
             self.vault.ensure_text_index_trusted()?;
         }
 
-        let (scores, deferred_ppr_cache_writes) = {
+        let (scores, claim_gate, deferred_ppr_cache_writes) = {
             let mut ranked_lists = Vec::new();
             let rtxn = self.vault.store.env.read_txn()?;
             let mut metadata_cache = EntityMetadataCache::default();
+            let mut claim_gate = ClaimStatusGateCache::default();
             let mut deferred_ppr_cache_writes = Vec::new();
 
             if let Some((query_vector, limit)) = &self.vector_search {
@@ -371,7 +553,7 @@ impl<'a> PipelineBuilder<'a> {
                     &self.vault.store,
                     &rtxn,
                     &self.vault.analyzer,
-                    &crate::bm25::Bm25Config::default(),
+                    &bm25_config,
                     query,
                     *limit,
                 )?;
@@ -390,6 +572,9 @@ impl<'a> PipelineBuilder<'a> {
             }
 
             if let Some((seeds, depth)) = &self.ppr_search {
+                // ARCH-0039 Layer 2: seed specificity applies ONLY to
+                // search_ppr — seeds are weighted 1/ln(1 + passage_count)
+                // instead of uniform 1/n.
                 let (ppr_results, deferred_cache_write) =
                     crate::ppr::ppr_query_in_txn_with_deferred_cache(
                         &self.vault.store,
@@ -397,6 +582,7 @@ impl<'a> PipelineBuilder<'a> {
                         seeds,
                         *depth,
                         PPR_DAMPING,
+                        crate::ppr::SeedWeighting::Specificity,
                     )?;
                 if let Some(deferred_cache_write) = deferred_cache_write {
                     deferred_ppr_cache_writes.push(deferred_cache_write);
@@ -405,10 +591,26 @@ impl<'a> PipelineBuilder<'a> {
             }
 
             if ranked_lists.is_empty() {
-                return Ok(Vec::new());
+                return Ok(PipelineOutput {
+                    scores: Vec::new(),
+                    claim_bodies: HashMap::new(),
+                    claims_suppressed: 0,
+                });
             }
 
             let mut scores = fusion::rrf_fuse(&ranked_lists, RRF_K);
+
+            // D19 claim status gate, first application: covers the fused
+            // candidates of all five channels (text/vector/phonetic/
+            // temporal/PPR) AND runs BEFORE expand_ppr implicit seed
+            // selection, so a dead claim never seeds the expansion.
+            apply_claim_status_gate(
+                &mut scores,
+                &self.vault.store,
+                &rtxn,
+                &mut metadata_cache,
+                &mut claim_gate,
+            )?;
 
             if let Some((explicit_seeds, depth)) = &self.ppr_expand {
                 let mut seen = HashSet::<EntityId>::new();
@@ -432,17 +634,34 @@ impl<'a> PipelineBuilder<'a> {
                 if !seeds.is_empty() {
                     seeds.sort_unstable_by(|a, b| a.as_bytes().cmp(b.as_bytes()));
 
-                    let (ppr_results, deferred_cache_write) =
+                    // expand_ppr seeds stay UNIFORM — ARCH-0039 Layer-2
+                    // specificity weighting is search_ppr-only.
+                    let (mut ppr_results, deferred_cache_write) =
                         crate::ppr::ppr_query_in_txn_with_deferred_cache(
                             &self.vault.store,
                             &rtxn,
                             &seeds,
                             *depth,
                             PPR_DAMPING,
+                            crate::ppr::SeedWeighting::Uniform,
                         )?;
                     if let Some(deferred_cache_write) = deferred_cache_write {
                         deferred_ppr_cache_writes.push(deferred_cache_write);
                     }
+                    // D19 claim status gate, second application: PPR
+                    // expansion walks the graph and can pull dead claims
+                    // back into the candidate set — gate the expansion
+                    // list before fusing it (memoized; claims already
+                    // checked above cost nothing). Traversal THROUGH a
+                    // dead claim node stays untouched in v1: only the
+                    // result surface is gated.
+                    apply_claim_status_gate(
+                        &mut ppr_results,
+                        &self.vault.store,
+                        &rtxn,
+                        &mut metadata_cache,
+                        &mut claim_gate,
+                    )?;
                     scores = fusion::rrf_fuse(&[scores, ppr_results], RRF_K);
                 }
             }
@@ -491,14 +710,283 @@ impl<'a> PipelineBuilder<'a> {
                 )?;
             }
 
+            // ARCH-0039 facet filter (ONE-1117): post-fusion / post-boosts,
+            // before truncate, same read txn — strict-excluded claims never
+            // consume `result_limit` slots.
+            if let Some((facet_id, mode)) = self.facet_filter {
+                apply_facet_filter(
+                    &mut scores,
+                    &self.vault.store,
+                    &rtxn,
+                    &mut metadata_cache,
+                    &facet_id,
+                    mode,
+                )?;
+            }
+
+            // ARCH-0004 world filter (ONE-1117): same post-fusion stage as the
+            // facet filter, before truncate, same read txn. A no-op under the
+            // default `WorldScope::All`.
+            apply_world_filter(&mut scores, &self.vault.store, &rtxn, self.world_scope)?;
+
             fusion::sort_scored_entities_desc(&mut scores);
             scores.truncate(self.result_limit);
-            (scores, deferred_ppr_cache_writes)
+            (scores, claim_gate, deferred_ppr_cache_writes)
         };
 
         crate::ppr::flush_deferred_ppr_cache_writes(&self.vault.store, &deferred_ppr_cache_writes)?;
-        Ok(scores)
+
+        let mut claim_bodies = HashMap::new();
+        let mut claims_suppressed = 0_usize;
+        for (id, decision) in claim_gate.decisions {
+            match decision {
+                Some(body) => {
+                    claim_bodies.insert(id, body);
+                }
+                None => claims_suppressed += 1,
+            }
+        }
+
+        Ok(PipelineOutput {
+            scores,
+            claim_bodies,
+            claims_suppressed,
+        })
     }
+}
+
+/// D19 read-path status gate (its own pipeline stage; ARCH-0003 retrieval
+/// rule, ARCH-0004 §H items 1/2/4).
+///
+/// Removes from `scores` every type-0 (CLAIM) record that fails
+/// [`claim_surfaceable`] — and, fail-closed, every type-0 record whose body
+/// is missing or does not decode as the pinned CLAIM ABI (a raw-written
+/// non-map body, missing `appr`/`life`, …) — so excluded claims never
+/// consume `result_limit` slots (the gate runs before sort/truncate).
+/// Exclusion is silent: no error, the claim is dropped and memoized as
+/// suppressed in `gate` (surfaced to callers as
+/// `PackStats::claims_suppressed`). Entities of every OTHER type byte pass
+/// through untouched — their bodies are opaque at the storage layer. The
+/// body is decoded at most ONCE per entity per run; passing bodies are kept
+/// in `gate` for context-pack field projection.
+fn apply_claim_status_gate(
+    scores: &mut Vec<ScoredEntity>,
+    store: &Store,
+    rtxn: &RoTxn<'_>,
+    metadata_cache: &mut EntityMetadataCache,
+    gate: &mut ClaimStatusGateCache,
+) -> Result<()> {
+    let mut kept = Vec::with_capacity(scores.len());
+
+    for scored in scores.iter().copied() {
+        // Entities without a parseable envelope are not a claim-status
+        // decision; `apply_filters` drops them downstream exactly as before.
+        let Some(meta) = metadata_cache.get(store, rtxn, &scored.id)? else {
+            kept.push(scored);
+            continue;
+        };
+        if meta.entity_type != ENTITY_TYPE_CLAIM {
+            kept.push(scored);
+            continue;
+        }
+
+        if let Some(decision) = gate.decisions.get(&scored.id) {
+            if decision.is_some() {
+                kept.push(scored);
+            }
+            continue;
+        }
+
+        // Read path allows reserved `edge.*` predicates so stored
+        // provenance Claims gate on their own appr/life/stale like any
+        // other claim instead of failing the decode.
+        let decision = store
+            .entities
+            .get(rtxn, scored.id.as_bytes())?
+            .and_then(|raw| raw.get(ENTITY_METADATA_HEADER_LEN..))
+            .and_then(|body| crate::claim::decode_claim_body(body, true).ok())
+            .filter(claim_surfaceable);
+        if decision.is_some() {
+            kept.push(scored);
+        }
+        gate.decisions.insert(scored.id, decision);
+    }
+
+    *scores = kept;
+    Ok(())
+}
+
+/// ARCH-0039 facet filter (its own pipeline stage, ONE-1117): the
+/// post-fusion claim filter for the `strict` / `prefer` facet modes.
+///
+/// Operates on type-0 (CLAIM) records only — entities of every other type
+/// byte pass through untouched, even when they carry `FacetOf` edges. A
+/// claim's facet scope is its outgoing `FacetOf` (`CLAIM → FACET`, u8 17)
+/// adjacency; no other edge kind participates and claim bodies are never
+/// decoded (so this stage shares nothing with the claim-status decode path
+/// beyond the entity-metadata cache).
+///
+/// * [`FacetMode::Strict`] — claims scoped exclusively to other facets are
+///   removed; core/unfaceted and active-facet claims pass with their score
+///   untouched. Removal is silent (no error) and happens before the
+///   `result_limit` truncation, so excluded claims free their slots.
+/// * [`FacetMode::Prefer`] — nothing is removed; active-facet claims have
+///   their score multiplied by the caller-supplied boost exactly once.
+///
+/// Fail-closed: a malformed `edges_out` key under the scanned
+/// `(claim, FacetOf)` prefix is a typed [`Error::CorruptedIndex`], never a
+/// skip.
+fn apply_facet_filter(
+    scores: &mut Vec<ScoredEntity>,
+    store: &Store,
+    rtxn: &RoTxn<'_>,
+    metadata_cache: &mut EntityMetadataCache,
+    active_facet: &EntityId,
+    mode: FacetMode,
+) -> Result<()> {
+    // Fail-closed: the active facet MUST resolve to an existing FACET entity
+    // (type byte 13, per contracts.ts §1 / ARCH-0022 `facet_of` is CLAIM →
+    // FACET). A bogus id or a wrong-type id is rejected with a typed error —
+    // otherwise strict mode would silently treat every scoped claim as
+    // belonging to another facet and drop them all.
+    let active_facet_type = metadata_cache
+        .get(store, rtxn, active_facet)?
+        .map(|meta| meta.entity_type);
+    if active_facet_type != Some(ENTITY_TYPE_FACET) {
+        return Err(Error::InvalidFacet {
+            facet: *active_facet,
+            found: active_facet_type,
+        });
+    }
+
+    let mut kept = Vec::with_capacity(scores.len());
+
+    for mut scored in scores.iter().copied() {
+        // Entities without a parseable envelope are not a facet decision;
+        // `apply_filters` handles them downstream exactly as before.
+        let Some(meta) = metadata_cache.get(store, rtxn, &scored.id)? else {
+            kept.push(scored);
+            continue;
+        };
+        if meta.entity_type != ENTITY_TYPE_CLAIM {
+            kept.push(scored);
+            continue;
+        }
+
+        match claim_facet_scope(store, rtxn, &scored.id, active_facet)? {
+            ClaimFacetScope::Unfaceted => kept.push(scored),
+            ClaimFacetScope::ActiveFacet => {
+                if let FacetMode::Prefer { boost } = mode {
+                    scored.score *= boost;
+                }
+                kept.push(scored);
+            }
+            ClaimFacetScope::OtherFacetsOnly => {
+                if let FacetMode::Prefer { .. } = mode {
+                    kept.push(scored);
+                }
+                // Strict: removed — never leak another facet's claims.
+            }
+        }
+    }
+
+    *scores = kept;
+    Ok(())
+}
+
+/// Resolves a claim's [`ClaimFacetScope`] by prefix-scanning `edges_out`
+/// over the 17-byte `(claim_id ‖ FacetOf)` prefix. Only the edge KEY is
+/// read — `(source, kind, target)` carries the whole facet-scope signal.
+fn claim_facet_scope(
+    store: &Store,
+    rtxn: &RoTxn<'_>,
+    claim_id: &EntityId,
+    active_facet: &EntityId,
+) -> Result<ClaimFacetScope> {
+    let mut prefix = [0_u8; ENTITY_ID_LEN + 1];
+    prefix[..ENTITY_ID_LEN].copy_from_slice(claim_id.as_bytes());
+    prefix[ENTITY_ID_LEN] = EdgeKind::FacetOf as u8;
+
+    let mut any_facet_edge = false;
+    for row in store.edges_out.prefix_iter(rtxn, prefix.as_slice())? {
+        let (key, _value) = row?;
+        if key.len() != EDGE_KEY_LEN {
+            return Err(Error::CorruptedIndex("edge record"));
+        }
+        any_facet_edge = true;
+        if &key[ENTITY_ID_LEN + 1..] == active_facet.as_bytes() {
+            return Ok(ClaimFacetScope::ActiveFacet);
+        }
+    }
+
+    if any_facet_edge {
+        Ok(ClaimFacetScope::OtherFacetsOnly)
+    } else {
+        Ok(ClaimFacetScope::Unfaceted)
+    }
+}
+
+/// ARCH-0004 world filter (ONE-1117): the post-fusion claim world filter for
+/// the `Base` / `World(id)` scopes. A pure removal filter — scores are never
+/// rewritten, mirroring the facet filter's `strict` removal.
+///
+/// * [`WorldScope::All`] — a no-op; every candidate passes (the context pack
+///   groups them by world downstream).
+/// * [`WorldScope::Base`] — only base-reality claims (no `world` key) survive;
+///   every world-scoped claim is removed.
+/// * [`WorldScope::World`] — claims scoped to the target world plus base
+///   claims survive; claims scoped to any other world are removed.
+///
+/// Non-claim entities have no world and are treated as base, so they pass
+/// every scope untouched. Removal happens before the `result_limit`
+/// truncation, so excluded claims free their slots.
+fn apply_world_filter(
+    scores: &mut Vec<ScoredEntity>,
+    store: &Store,
+    rtxn: &RoTxn<'_>,
+    scope: WorldScope,
+) -> Result<()> {
+    let target = match scope {
+        WorldScope::All => return Ok(()),
+        WorldScope::Base => None,
+        WorldScope::World(id) => Some(id),
+    };
+
+    let mut kept = Vec::with_capacity(scores.len());
+    for scored in scores.iter().copied() {
+        let keep = match claim_world(store, rtxn, &scored.id)? {
+            // Base reality (no world key, or a non-claim entity) always passes.
+            None => true,
+            // A world-scoped claim passes only for its own world.
+            Some(world) => target == Some(world),
+        };
+        if keep {
+            kept.push(scored);
+        }
+    }
+
+    *scores = kept;
+    Ok(())
+}
+
+/// Reads a candidate's world for the post-fusion world filter (ARCH-0004 /
+/// ARCH-0022). Returns `None` for base reality — a non-claim entity, a claim
+/// with no `world` key, or an entity with no parseable envelope — and
+/// `Some(world_id)` for a world-scoped claim. The claim body is decoded once
+/// through the pinned claim validator (the world key was structurally
+/// validated to 16 bytes at write time).
+fn claim_world(store: &Store, rtxn: &RoTxn<'_>, id: &EntityId) -> Result<Option<EntityId>> {
+    let Some(raw) = store.entities.get(rtxn, id.as_bytes())? else {
+        return Ok(None);
+    };
+    let Some(header) = EntityMetadataHeader::parse(raw) else {
+        return Ok(None);
+    };
+    if header.entity_type != ENTITY_TYPE_CLAIM {
+        return Ok(None);
+    }
+    let body = crate::claim::decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true)?;
+    Ok(body.world)
 }
 
 fn execute_phonetic(
@@ -1406,6 +1894,17 @@ mod tests {
 
     fn approx_eq(left: f32, right: f32, eps: f32) -> bool {
         (left - right).abs() <= eps
+    }
+
+    /// ARCH-0004 §4.5: the recency default is a named 28-day constant
+    /// (`RECENCY_DECAY`, source timestamp = `learned_at` v1), and the
+    /// temporal scorer's decay constant is the table-pinned
+    /// `28.0 * 86_400 = 2_419_200` seconds derived from it.
+    #[test]
+    fn default_recency_half_life_is_28_days() {
+        assert_eq!(DEFAULT_RECENCY_HALF_LIFE_DAYS, 28.0);
+        assert_eq!(RECENCY_DECAY_TAU_SECS, 2_419_200.0);
+        assert_eq!(RECENCY_DECAY_TAU_SECS, 28.0 * 86_400.0);
     }
 
     #[test]
@@ -2394,6 +2893,1051 @@ mod tests {
             "rejected put must not write an entity record"
         );
 
+        Ok(())
+    }
+
+    // ── ARCH-0039 facet filter (ONE-1117) ──────────────────────────
+
+    use crate::claim::{ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSubject};
+    use crate::types::{ENTITY_TYPE_EVENT, ENTITY_TYPE_FACET, ENTITY_TYPE_TURN};
+
+    /// The query vector every facet test searches with.
+    const FACET_QUERY: [f32; 4] = [1.0, 0.0, 0.0, 0.0];
+
+    /// LITERAL single-channel RRF fused scores for ranks 0–3 with the
+    /// engine's pinned `RRF_K = 60`: `1 / (60 + rank + 1)`. Derived by hand,
+    /// NOT read back from the code under test.
+    const FACET_R0: f32 = 1.0 / 61.0;
+    const FACET_R1: f32 = 1.0 / 62.0;
+    const FACET_R2: f32 = 1.0 / 63.0;
+    const FACET_R3: f32 = 1.0 / 64.0;
+
+    struct FacetFixture {
+        facet_a: EntityId,
+        /// CLAIM, `FacetOf → facet_b`, vector rank 0.
+        claim_other: EntityId,
+        /// CLAIM, `FacetOf → facet_a`, vector rank 1.
+        claim_active: EntityId,
+        /// CLAIM, no `FacetOf` edge (core / unfaceted), vector rank 2.
+        claim_core: EntityId,
+        /// Non-claim (EVENT) carrying a `FacetOf → facet_b` edge, rank 3.
+        event_faceted: EntityId,
+    }
+
+    fn facet_claim_body() -> Vec<u8> {
+        let body = ClaimBody::new(
+            "facet.scope_test",
+            ClaimSubject::Entity(entity_id(0x7C)),
+            rmpv::Value::from("v"),
+            0.9,
+            ClaimApprovalStatus::Auto,
+            ClaimLifecycleStatus::Active,
+        );
+        crate::claim::encode_claim_body(&body).expect("encode claim body")
+    }
+
+    fn put_claim_with_vector(vault: &Vault, id: EntityId, vector: [f32; 4]) -> Result<()> {
+        vault
+            .batch()
+            .put(
+                &id,
+                ENTITY_TYPE_CLAIM,
+                TimeRange { start: 1, end: 1 },
+                1,
+                &facet_claim_body(),
+            )
+            .vector(&id, &vector)
+            .commit()
+    }
+
+    /// A vector-ranked CLAIM whose body carries an optional `world` scope
+    /// (`None` = base reality). Built through the pinned claim encoder so the
+    /// `world` key is the real 16-byte binary the read side groups by.
+    fn put_claim_with_vector_world(
+        vault: &Vault,
+        id: EntityId,
+        vector: [f32; 4],
+        world: Option<EntityId>,
+    ) -> Result<()> {
+        let mut body = ClaimBody::new(
+            "facet.scope_test",
+            ClaimSubject::Entity(entity_id(0x7C)),
+            rmpv::Value::from("v"),
+            0.9,
+            ClaimApprovalStatus::Auto,
+            ClaimLifecycleStatus::Active,
+        );
+        body.world = world;
+        let encoded = crate::claim::encode_claim_body(&body).expect("encode claim body");
+        vault
+            .batch()
+            .put(
+                &id,
+                ENTITY_TYPE_CLAIM,
+                TimeRange { start: 1, end: 1 },
+                1,
+                &encoded,
+            )
+            .vector(&id, &vector)
+            .commit()
+    }
+
+    /// Two FACET entities + four vector-ranked candidates. Vector channel
+    /// distances to [`FACET_QUERY`] are strictly increasing, so the fused
+    /// baseline is exactly `[claim_other R0, claim_active R1, claim_core R2,
+    /// event_faceted R3]`.
+    fn setup_facet_fixture(vault: &Vault) -> Result<FacetFixture> {
+        let facet_a = entity_id(0xA1);
+        let facet_b = entity_id(0xB1);
+        put_entity(vault, facet_a, ENTITY_TYPE_FACET, 1, 1, 1)?;
+        put_entity(vault, facet_b, ENTITY_TYPE_FACET, 1, 1, 1)?;
+
+        let fixture = FacetFixture {
+            facet_a,
+            claim_other: entity_id(0x21),
+            claim_active: entity_id(0x22),
+            claim_core: entity_id(0x23),
+            event_faceted: entity_id(0x24),
+        };
+
+        put_claim_with_vector(vault, fixture.claim_other, [1.0, 0.0, 0.0, 0.0])?;
+        put_claim_with_vector(vault, fixture.claim_active, [0.8, 0.6, 0.0, 0.0])?;
+        put_claim_with_vector(vault, fixture.claim_core, [0.6, 0.8, 0.0, 0.0])?;
+        vault
+            .batch()
+            .put(
+                &fixture.event_faceted,
+                ENTITY_TYPE_EVENT,
+                TimeRange { start: 1, end: 1 },
+                1,
+                b"payload",
+            )
+            .vector(&fixture.event_faceted, &[0.0, 1.0, 0.0, 0.0])
+            .commit()?;
+
+        vault
+            .batch()
+            .edge(&fixture.claim_other, EdgeKind::FacetOf, &facet_b, 0.7)
+            .edge(&fixture.claim_active, EdgeKind::FacetOf, &facet_a, 0.7)
+            .edge(&fixture.event_faceted, EdgeKind::FacetOf, &facet_b, 0.7)
+            .commit()?;
+
+        Ok(fixture)
+    }
+
+    fn ordered_results(scores: &[ScoredEntity]) -> Vec<(EntityId, f32)> {
+        scores.iter().map(|entry| (entry.id, entry.score)).collect()
+    }
+
+    /// AC 3 — *(no facet)* mode regression pin: a query that never calls
+    /// `.facet()` returns every candidate, other-facet claims included,
+    /// with the exact unfiltered/unboosted RRF scores in the exact
+    /// pre-feature order. Any accidental default-on filtering or rescoring
+    /// fails this literal pin.
+    #[test]
+    fn facet_absent_is_a_no_op_regression_pin() -> Result<()> {
+        let (_dir, vault) = open_test_vault();
+        let fixture = setup_facet_fixture(&vault)?;
+
+        let results = vault.query().search_vector(&FACET_QUERY, 10).run()?;
+        assert_eq!(
+            ordered_results(&results),
+            vec![
+                (fixture.claim_other, FACET_R0),
+                (fixture.claim_active, FACET_R1),
+                (fixture.claim_core, FACET_R2),
+                (fixture.event_faceted, FACET_R3),
+            ],
+            "no-facet mode must be identical to the pre-feature pipeline"
+        );
+        Ok(())
+    }
+
+    /// AC 1 — strict mode: the claim whose `FacetOf` edge targets a
+    /// different facet is removed; the active-facet claim and the
+    /// core/unfaceted claim pass with their scores UNTOUCHED (strict never
+    /// boosts); the non-claim entity passes even though it carries a
+    /// `FacetOf` edge to the other facet.
+    #[test]
+    fn facet_strict_removes_other_facet_claims_only() -> Result<()> {
+        let (_dir, vault) = open_test_vault();
+        let fixture = setup_facet_fixture(&vault)?;
+
+        let results = vault
+            .query()
+            .search_vector(&FACET_QUERY, 10)
+            .facet(&fixture.facet_a, FacetMode::Strict)
+            .run()?;
+        assert_eq!(
+            ordered_results(&results),
+            vec![
+                (fixture.claim_active, FACET_R1),
+                (fixture.claim_core, FACET_R2),
+                (fixture.event_faceted, FACET_R3),
+            ],
+            "strict must drop claim_other, keep core + active claims and \
+             non-claim entities at unchanged scores"
+        );
+        Ok(())
+    }
+
+    /// AC 2 — prefer mode: nothing is removed; the active-facet claim's
+    /// score is multiplied by the caller-supplied boost EXACTLY
+    /// (`R1 * 3.0`), which reorders it above the baseline rank-0 entity;
+    /// every other score is byte-identical to the baseline.
+    #[test]
+    fn facet_prefer_boosts_active_facet_with_exact_derived_values() -> Result<()> {
+        let (_dir, vault) = open_test_vault();
+        let fixture = setup_facet_fixture(&vault)?;
+
+        let results = vault
+            .query()
+            .search_vector(&FACET_QUERY, 10)
+            .facet(&fixture.facet_a, FacetMode::Prefer { boost: 3.0 })
+            .run()?;
+        assert_eq!(
+            ordered_results(&results),
+            vec![
+                (fixture.claim_active, FACET_R1 * 3.0),
+                (fixture.claim_other, FACET_R0),
+                (fixture.claim_core, FACET_R2),
+                (fixture.event_faceted, FACET_R3),
+            ],
+            "prefer must keep all candidates, boost only the active-facet \
+             claim, and reorder it by the exact derived score"
+        );
+        Ok(())
+    }
+
+    /// AC 4 — strict-excluded claims do not consume `result_limit` slots:
+    /// with `limit(2)` and the top-ranked candidate excluded, BOTH
+    /// remaining passing candidates fill the page. A filter applied after
+    /// truncation would return a single result here.
+    #[test]
+    fn facet_strict_excluded_claims_free_result_limit_slots() -> Result<()> {
+        let (_dir, vault) = open_test_vault();
+        let fixture = setup_facet_fixture(&vault)?;
+
+        let results = vault
+            .query()
+            .search_vector(&FACET_QUERY, 10)
+            .limit(2)
+            .facet(&fixture.facet_a, FacetMode::Strict)
+            .run()?;
+        assert_eq!(
+            ordered_results(&results),
+            vec![
+                (fixture.claim_active, FACET_R1),
+                (fixture.claim_core, FACET_R2),
+            ],
+            "the excluded rank-0 claim must free its slot for claim_core"
+        );
+        Ok(())
+    }
+
+    /// AC 5 — a claim with no `FacetOf` edge surfaces under all three
+    /// modes with the exact same (never boosted) score.
+    #[test]
+    fn facet_unfaceted_claim_passes_all_three_modes_unchanged() -> Result<()> {
+        let (_dir, vault) = open_test_vault();
+        let fixture = setup_facet_fixture(&vault)?;
+
+        let no_facet = vault.query().search_vector(&FACET_QUERY, 10).run()?;
+        let strict = vault
+            .query()
+            .search_vector(&FACET_QUERY, 10)
+            .facet(&fixture.facet_a, FacetMode::Strict)
+            .run()?;
+        let prefer = vault
+            .query()
+            .search_vector(&FACET_QUERY, 10)
+            .facet(&fixture.facet_a, FacetMode::Prefer { boost: 2.5 })
+            .run()?;
+
+        for (label, results) in [
+            ("no facet", &no_facet),
+            ("strict", &strict),
+            ("prefer", &prefer),
+        ] {
+            let score = to_score_map(results)
+                .get(&fixture.claim_core)
+                .copied()
+                .unwrap_or_else(|| panic!("unfaceted claim missing under {label} mode"));
+            assert_eq!(
+                score, FACET_R2,
+                "unfaceted claim score must be exactly R2 under {label} mode"
+            );
+        }
+        Ok(())
+    }
+
+    /// Multi-facet claims: a claim with `FacetOf` edges to BOTH facets is
+    /// scoped to each of them — strict keeps it for either active facet,
+    /// removes it for a third facet, and prefer boosts it exactly ONCE.
+    #[test]
+    fn facet_multi_scoped_claim_matches_any_of_its_facets() -> Result<()> {
+        let (_dir, vault) = open_test_vault();
+        let facet_a = entity_id(0xA1);
+        let facet_b = entity_id(0xB1);
+        let facet_c = entity_id(0xC1);
+        put_entity(&vault, facet_a, ENTITY_TYPE_FACET, 1, 1, 1)?;
+        put_entity(&vault, facet_b, ENTITY_TYPE_FACET, 1, 1, 1)?;
+        put_entity(&vault, facet_c, ENTITY_TYPE_FACET, 1, 1, 1)?;
+
+        let claim_multi = entity_id(0x31);
+        put_claim_with_vector(&vault, claim_multi, [1.0, 0.0, 0.0, 0.0])?;
+        vault
+            .batch()
+            .edge(&claim_multi, EdgeKind::FacetOf, &facet_a, 0.7)
+            .edge(&claim_multi, EdgeKind::FacetOf, &facet_b, 0.7)
+            .commit()?;
+
+        for facet in [facet_a, facet_b] {
+            let results = vault
+                .query()
+                .search_vector(&FACET_QUERY, 10)
+                .facet(&facet, FacetMode::Strict)
+                .run()?;
+            assert_eq!(
+                ordered_results(&results),
+                vec![(claim_multi, FACET_R0)],
+                "strict must keep a claim scoped to the active facet"
+            );
+        }
+
+        let strict_c = vault
+            .query()
+            .search_vector(&FACET_QUERY, 10)
+            .facet(&facet_c, FacetMode::Strict)
+            .run()?;
+        assert!(
+            strict_c.is_empty(),
+            "strict must remove a claim scoped only to other facets, got {strict_c:?}"
+        );
+
+        // Two FacetOf edges, one matching: the boost applies exactly once.
+        let prefer = vault
+            .query()
+            .search_vector(&FACET_QUERY, 10)
+            .facet(&facet_a, FacetMode::Prefer { boost: 2.0 })
+            .run()?;
+        assert_eq!(
+            ordered_results(&prefer),
+            vec![(claim_multi, FACET_R0 * 2.0)],
+            "prefer must apply the boost exactly once per claim"
+        );
+        Ok(())
+    }
+
+    /// Only the `FacetOf` kind (u8 17) carries claim facet scope: a
+    /// `HasFacet` (u8 16) edge neither scopes a claim (strict treats it as
+    /// unfaceted) nor rescues one scoped elsewhere via `FacetOf`.
+    #[test]
+    fn facet_filter_reads_only_facet_of_edges() -> Result<()> {
+        let (_dir, vault) = open_test_vault();
+        let facet_a = entity_id(0xA1);
+        let facet_b = entity_id(0xB1);
+        put_entity(&vault, facet_a, ENTITY_TYPE_FACET, 1, 1, 1)?;
+        put_entity(&vault, facet_b, ENTITY_TYPE_FACET, 1, 1, 1)?;
+
+        // `HasFacet → facet_b` only: NOT facet scope — unfaceted.
+        let claim_has_facet = entity_id(0x41);
+        // `FacetOf → facet_b` + `HasFacet → facet_a`: scoped to facet_b;
+        // the HasFacet edge to the active facet must not rescue it.
+        let claim_scoped_b = entity_id(0x42);
+        put_claim_with_vector(&vault, claim_has_facet, [1.0, 0.0, 0.0, 0.0])?;
+        put_claim_with_vector(&vault, claim_scoped_b, [0.8, 0.6, 0.0, 0.0])?;
+        vault
+            .batch()
+            .edge(&claim_has_facet, EdgeKind::HasFacet, &facet_b, 0.7)
+            .edge(&claim_scoped_b, EdgeKind::FacetOf, &facet_b, 0.7)
+            .edge(&claim_scoped_b, EdgeKind::HasFacet, &facet_a, 0.7)
+            .commit()?;
+
+        let strict = vault
+            .query()
+            .search_vector(&FACET_QUERY, 10)
+            .facet(&facet_a, FacetMode::Strict)
+            .run()?;
+        assert_eq!(
+            ordered_results(&strict),
+            vec![(claim_has_facet, FACET_R0)],
+            "HasFacet must not scope a claim, and must not rescue a \
+             FacetOf-scoped one"
+        );
+
+        let prefer = vault
+            .query()
+            .search_vector(&FACET_QUERY, 10)
+            .facet(&facet_b, FacetMode::Prefer { boost: 4.0 })
+            .run()?;
+        assert_eq!(
+            ordered_results(&prefer),
+            vec![
+                (claim_scoped_b, FACET_R1 * 4.0),
+                (claim_has_facet, FACET_R0),
+            ],
+            "prefer must boost via FacetOf only — a HasFacet edge to the \
+             active facet earns no boost"
+        );
+        Ok(())
+    }
+
+    /// Non-claim entities are never boosted nor removed, whatever edges
+    /// they carry — the filter discriminates on the type byte first.
+    #[test]
+    fn facet_filter_never_rescores_non_claim_entities() -> Result<()> {
+        let (_dir, vault) = open_test_vault();
+        let facet_a = entity_id(0xA1);
+        put_entity(&vault, facet_a, ENTITY_TYPE_FACET, 1, 1, 1)?;
+
+        let event_active = entity_id(0x51);
+        vault
+            .batch()
+            .put(
+                &event_active,
+                ENTITY_TYPE_EVENT,
+                TimeRange { start: 1, end: 1 },
+                1,
+                b"payload",
+            )
+            .vector(&event_active, &[1.0, 0.0, 0.0, 0.0])
+            .edge(&event_active, EdgeKind::FacetOf, &facet_a, 0.7)
+            .commit()?;
+
+        for mode in [FacetMode::Strict, FacetMode::Prefer { boost: 5.0 }] {
+            let results = vault
+                .query()
+                .search_vector(&FACET_QUERY, 10)
+                .facet(&facet_a, mode)
+                .run()?;
+            assert_eq!(
+                ordered_results(&results),
+                vec![(event_active, FACET_R0)],
+                "non-claim entity must pass unchanged under {mode:?}"
+            );
+        }
+        Ok(())
+    }
+
+    /// Fail-closed: a non-finite or non-positive prefer boost is a typed
+    /// [`Error::InvalidConfig`] from `run()`, never a silent skip or a
+    /// poisoned score.
+    #[test]
+    fn facet_prefer_rejects_invalid_boost_typed() -> Result<()> {
+        let (_dir, vault) = open_test_vault();
+        let fixture = setup_facet_fixture(&vault)?;
+
+        for bad_boost in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY, 0.0, -1.0] {
+            let err = vault
+                .query()
+                .search_vector(&FACET_QUERY, 10)
+                .facet(&fixture.facet_a, FacetMode::Prefer { boost: bad_boost })
+                .run()
+                .expect_err("invalid prefer boost must be rejected");
+            assert!(
+                matches!(err, Error::InvalidConfig(_)),
+                "expected InvalidConfig for boost {bad_boost}, got {err:?}"
+            );
+        }
+        Ok(())
+    }
+
+    // ── D19 read-path claim status gate (ONE-1111) ─────────────────
+
+    fn claim_body_bytes(
+        appr: ClaimApprovalStatus,
+        life: ClaimLifecycleStatus,
+        stale: bool,
+    ) -> Vec<u8> {
+        let mut body = ClaimBody::new(
+            "test.status",
+            ClaimSubject::Entity(EntityId::from_bytes([0x7C; 16]).expect("valid id")),
+            rmpv::Value::from("v"),
+            0.9,
+            appr,
+            life,
+        );
+        body.stale = stale;
+        crate::claim::encode_claim_body(&body).expect("encode claim body")
+    }
+
+    fn put_status_claim(
+        vault: &Vault,
+        id: EntityId,
+        text: &str,
+        appr: ClaimApprovalStatus,
+        life: ClaimLifecycleStatus,
+        stale: bool,
+    ) -> Result<()> {
+        vault
+            .batch()
+            .put(
+                &id,
+                ENTITY_TYPE_CLAIM,
+                TimeRange { start: 1, end: 1 },
+                1,
+                &claim_body_bytes(appr, life, stale),
+            )
+            .text(&id, &[("body", text)])
+            .commit()
+    }
+
+    /// Raw-writes an entity record (25-byte envelope + `body`), bypassing
+    /// every write-path validation — the AC 7 corruption fixture.
+    fn overwrite_entity_record(
+        vault: &Vault,
+        id: &EntityId,
+        entity_type: u8,
+        body: &[u8],
+    ) -> Result<()> {
+        let mut raw = Vec::with_capacity(ENTITY_METADATA_HEADER_LEN + body.len());
+        raw.push(entity_type);
+        raw.extend_from_slice(&1_u64.to_be_bytes());
+        raw.extend_from_slice(&1_u64.to_be_bytes());
+        raw.extend_from_slice(&1_u64.to_be_bytes());
+        raw.extend_from_slice(body);
+        vault.with_write_txn(|wtxn| {
+            vault.store.entities.put(wtxn, id.as_bytes(), &raw)?;
+            Ok(())
+        })
+    }
+
+    /// AC 1 / AC 3 / AC 4 — the literal status table through the text
+    /// channel: ONLY `appr ∈ {auto, approved}` ∧ `life = active` ∧
+    /// `stale ∈ {absent, false}` surfaces. The surfaceable rows are written
+    /// through `ClaimBody::new` (stale ABSENT on disk), so their presence
+    /// also pins "absence alone must NOT exclude".
+    #[test]
+    fn claim_status_gate_pins_the_literal_status_table() -> Result<()> {
+        use ClaimApprovalStatus as A;
+        use ClaimLifecycleStatus as L;
+
+        let (_dir, vault) = open_test_vault();
+
+        let cases: &[(u8, A, L, bool, bool)] = &[
+            // (id byte, appr, life, stale, must_surface)
+            (10, A::Auto, L::Active, false, true),
+            (11, A::Approved, L::Active, false, true),
+            (12, A::Proposed, L::Active, false, false),
+            (13, A::Rejected, L::Active, false, false),
+            (14, A::Auto, L::Superseded, false, false),
+            (15, A::Auto, L::Retracted, false, false),
+            (16, A::Auto, L::Active, true, false),
+        ];
+
+        for (byte, appr, life, stale, _) in cases {
+            put_status_claim(
+                &vault,
+                entity_id(*byte),
+                "statusneedle",
+                *appr,
+                *life,
+                *stale,
+            )?;
+        }
+
+        let results = vault.query().search_text("statusneedle", 20).run()?;
+        let surfaced = to_score_map(&results);
+
+        for (byte, appr, life, stale, must_surface) in cases {
+            assert_eq!(
+                surfaced.contains_key(&entity_id(*byte)),
+                *must_surface,
+                "appr={appr:?} life={life:?} stale={stale} must_surface={must_surface}"
+            );
+        }
+        assert_eq!(results.len(), 2, "exactly the two surfaceable claims");
+        Ok(())
+    }
+
+    /// AC 2 — the gate covers all five channels: one claim is reachable via
+    /// text, vector, phonetic, temporal, and PPR; after `retract_claim`
+    /// (which re-puts the body ONLY — every index row survives) it must be
+    /// absent from every channel.
+    #[test]
+    fn claim_status_gate_covers_all_five_channels() -> Result<()> {
+        let (_dir, vault) = open_test_vault();
+
+        let anchor = 1_000_000_u64;
+        let claim = entity_id(20);
+        let seed = entity_id(21);
+
+        vault
+            .batch()
+            .put(
+                &claim,
+                ENTITY_TYPE_CLAIM,
+                TimeRange {
+                    start: anchor,
+                    end: anchor,
+                },
+                anchor,
+                &claim_body_bytes(
+                    ClaimApprovalStatus::Auto,
+                    ClaimLifecycleStatus::Active,
+                    false,
+                ),
+            )
+            .text(&claim, &[("body", "gateneedle")])
+            .vector(&claim, &[0.9, 0.1, 0.0, 0.0])
+            .phonetic(&claim, &["KTNTL"])
+            .commit()?;
+
+        // PPR channel: a TURN seed with a semantic edge onto the claim.
+        vault.put_entity(
+            &seed,
+            1,
+            TimeRange {
+                start: anchor,
+                end: anchor,
+            },
+            anchor,
+            b"payload",
+        )?;
+        vault.put_edge(&seed, EdgeKind::Supports, &claim, 0.9)?;
+
+        type ChannelQuery = Box<dyn Fn(&Vault) -> Result<Vec<ScoredEntity>>>;
+        let channels: Vec<(&str, ChannelQuery)> = vec![
+            (
+                "text",
+                Box::new(|v: &Vault| v.query().search_text("gateneedle", 10).run()),
+            ),
+            (
+                "vector",
+                Box::new(|v: &Vault| v.query().search_vector(&[0.9, 0.1, 0.0, 0.0], 10).run()),
+            ),
+            (
+                "phonetic",
+                Box::new(|v: &Vault| v.query().search_phonetic(&["KTNTL"]).run()),
+            ),
+            (
+                "temporal",
+                Box::new(move |v: &Vault| {
+                    v.query()
+                        .search_temporal(anchor - 100, anchor + 100, 10)
+                        .run()
+                }),
+            ),
+            (
+                "ppr",
+                Box::new(move |v: &Vault| v.query().search_ppr(&[seed], 2).run()),
+            ),
+        ];
+
+        for (name, query) in &channels {
+            assert!(
+                to_score_map(&query(&vault)?).contains_key(&claim),
+                "channel `{name}` must surface the active claim"
+            );
+        }
+
+        vault.retract_claim(&claim, anchor + 500)?;
+
+        for (name, query) in &channels {
+            assert!(
+                !to_score_map(&query(&vault)?).contains_key(&claim),
+                "channel `{name}` must NOT surface the retracted claim"
+            );
+        }
+        Ok(())
+    }
+
+    /// Blocker 1 fail-closed: the active facet must resolve to an EXISTING
+    /// FACET entity. A bogus id and a wrong-type (TURN) id both reject with
+    /// the typed [`Error::InvalidFacet`] carrying what was actually found; a
+    /// real FACET passes. A wrong impl that stores arbitrary facet bytes and
+    /// strict-drops every scoped claim fails the wrong-type leg.
+    #[test]
+    fn facet_query_rejects_invalid_active_facet_typed() -> Result<()> {
+        let (_dir, vault) = open_test_vault();
+        let fixture = setup_facet_fixture(&vault)?;
+
+        // Bogus id: no such entity → InvalidFacet { found: None }.
+        let bogus = entity_id(0xEE);
+        let err = vault
+            .query()
+            .search_vector(&FACET_QUERY, 10)
+            .facet(&bogus, FacetMode::Strict)
+            .run()
+            .expect_err("a bogus active facet must be rejected");
+        assert!(
+            matches!(err, Error::InvalidFacet { found: None, .. }),
+            "expected InvalidFacet {{ found: None }}, got {err:?}"
+        );
+
+        // Wrong type: an existing TURN is not a FACET → found = Some(TURN).
+        let turn = entity_id(0xDD);
+        put_entity(&vault, turn, ENTITY_TYPE_TURN, 1, 1, 1)?;
+        let err = vault
+            .query()
+            .search_vector(&FACET_QUERY, 10)
+            .facet(&turn, FacetMode::Strict)
+            .run()
+            .expect_err("a non-FACET active facet must be rejected");
+        assert!(
+            matches!(err, Error::InvalidFacet { found: Some(t), .. } if t == ENTITY_TYPE_TURN),
+            "expected InvalidFacet {{ found: Some(TURN) }}, got {err:?}"
+        );
+
+        // A real FACET entity (the fixture's facet_a) passes.
+        let ok = vault
+            .query()
+            .search_vector(&FACET_QUERY, 10)
+            .facet(&fixture.facet_a, FacetMode::Strict)
+            .run()?;
+        assert!(!ok.is_empty(), "a valid FACET must not be rejected");
+        Ok(())
+    }
+
+    /// Blocker 2 world filter visibility matrix: an absent-world (base) claim
+    /// surfaces under ALL three scopes; a world=W claim surfaces under All and
+    /// World(W) but NOT under Base nor World(V). Pins the exact membership a
+    /// wrong (or absent) world filter would violate.
+    #[test]
+    fn world_scope_filter_visibility_matrix() -> Result<()> {
+        let (_dir, vault) = open_test_vault();
+        let world_w = entity_id(0xE1);
+        let world_v = entity_id(0xE2);
+
+        let claim_base = entity_id(0x61); // no `world` key — base reality
+        let claim_w = entity_id(0x62); // `world` = W
+        put_claim_with_vector_world(&vault, claim_base, [1.0, 0.0, 0.0, 0.0], None)?;
+        put_claim_with_vector_world(&vault, claim_w, [0.8, 0.6, 0.0, 0.0], Some(world_w))?;
+
+        let ids = |scores: &[ScoredEntity]| -> HashSet<EntityId> {
+            scores.iter().map(|s| s.id).collect()
+        };
+
+        // All (default): both worlds span.
+        let all = ids(&vault.query().search_vector(&FACET_QUERY, 10).run()?);
+        assert!(
+            all.contains(&claim_base) && all.contains(&claim_w),
+            "All scope must span base + world claims, got {all:?}"
+        );
+
+        // Base: only the absent-world claim; the W-scoped claim is removed.
+        let base = ids(&vault
+            .query()
+            .search_vector(&FACET_QUERY, 10)
+            .world(WorldScope::Base)
+            .run()?);
+        assert!(
+            base.contains(&claim_base),
+            "base claim must surface in Base"
+        );
+        assert!(
+            !base.contains(&claim_w),
+            "W-scoped claim must NOT surface in Base"
+        );
+
+        // World(W): the W-scoped claim plus base claims.
+        let in_w = ids(&vault
+            .query()
+            .search_vector(&FACET_QUERY, 10)
+            .world(WorldScope::World(world_w))
+            .run()?);
+        assert!(
+            in_w.contains(&claim_base) && in_w.contains(&claim_w),
+            "World(W) must surface the W claim + base claim, got {in_w:?}"
+        );
+
+        // World(V): base claim only — the W claim belongs to another world.
+        let in_v = ids(&vault
+            .query()
+            .search_vector(&FACET_QUERY, 10)
+            .world(WorldScope::World(world_v))
+            .run()?);
+        assert!(
+            in_v.contains(&claim_base),
+            "base claim must surface in World(V)"
+        );
+        assert!(
+            !in_v.contains(&claim_w),
+            "W-scoped claim must NOT surface in World(V)"
+        );
+        Ok(())
+    }
+
+    /// AC 1 — `supersede_claim` closes the OLD claim only: the new claim
+    /// keeps surfacing, the superseded one disappears (indexes untouched).
+    #[test]
+    fn superseded_claim_stops_surfacing_but_successor_does_not() -> Result<()> {
+        let (_dir, vault) = open_test_vault();
+
+        let old = entity_id(30);
+        let new = entity_id(31);
+        put_status_claim(
+            &vault,
+            old,
+            "supersedeneedle",
+            ClaimApprovalStatus::Auto,
+            ClaimLifecycleStatus::Active,
+            false,
+        )?;
+        put_status_claim(
+            &vault,
+            new,
+            "supersedeneedle",
+            ClaimApprovalStatus::Auto,
+            ClaimLifecycleStatus::Active,
+            false,
+        )?;
+
+        vault.supersede_claim(&new, &old, 2_000)?;
+
+        let surfaced = to_score_map(&vault.query().search_text("supersedeneedle", 10).run()?);
+        assert!(!surfaced.contains_key(&old), "superseded claim must hide");
+        assert!(surfaced.contains_key(&new), "successor must keep surfacing");
+        Ok(())
+    }
+
+    /// AC 5 — non-type-0 entities are NEVER status-gated: their bodies are
+    /// opaque, even when they happen to spell poisonous claim-status keys
+    /// or are not MessagePack at all.
+    #[test]
+    fn non_claim_entities_are_never_status_gated() -> Result<()> {
+        let (_dir, vault) = open_test_vault();
+
+        // TURN (type 1) whose body SAYS rejected/retracted/stale.
+        let poison = entity_id(40);
+        let mut poison_body = Vec::new();
+        rmpv::encode::write_value(
+            &mut poison_body,
+            &rmpv::Value::Map(vec![
+                (rmpv::Value::from("appr"), rmpv::Value::from("rejected")),
+                (rmpv::Value::from("life"), rmpv::Value::from("retracted")),
+                (rmpv::Value::from("stale"), rmpv::Value::Boolean(true)),
+            ]),
+        )
+        .expect("msgpack encode");
+        vault
+            .batch()
+            .put(&poison, 1, TimeRange { start: 1, end: 1 }, 1, &poison_body)
+            .text(&poison, &[("body", "opaqueneedle")])
+            .commit()?;
+
+        // PERSON-band entity (type 4) whose body is not MessagePack at all.
+        let opaque = entity_id(41);
+        vault
+            .batch()
+            .put(&opaque, 4, TimeRange { start: 1, end: 1 }, 1, b"payload")
+            .text(&opaque, &[("body", "opaqueneedle")])
+            .commit()?;
+
+        let surfaced = to_score_map(&vault.query().search_text("opaqueneedle", 10).run()?);
+        assert!(surfaced.contains_key(&poison));
+        assert!(surfaced.contains_key(&opaque));
+        Ok(())
+    }
+
+    /// AC 7 — fail-closed hydration on the pipeline: raw-written type-0
+    /// records whose bodies are not the pinned CLAIM ABI never surface
+    /// (silent exclusion, not an error).
+    #[test]
+    fn claim_status_gate_fails_closed_on_undecodable_bodies() -> Result<()> {
+        let (_dir, vault) = open_test_vault();
+
+        let control = entity_id(50);
+        put_status_claim(
+            &vault,
+            control,
+            "rawneedle",
+            ClaimApprovalStatus::Auto,
+            ClaimLifecycleStatus::Active,
+            false,
+        )?;
+
+        // Three corrupt type-0 records, each text-indexed before the raw
+        // overwrite (retraction-style: indexes survive, body goes bad).
+        let non_map = entity_id(51);
+        let missing_appr = entity_id(52);
+        let empty_body = entity_id(53);
+        for id in [non_map, missing_appr, empty_body] {
+            put_status_claim(
+                &vault,
+                id,
+                "rawneedle",
+                ClaimApprovalStatus::Auto,
+                ClaimLifecycleStatus::Active,
+                false,
+            )?;
+        }
+
+        // (a) body is MessagePack but not a map;
+        let mut junk = Vec::new();
+        rmpv::encode::write_value(&mut junk, &rmpv::Value::from("junk")).expect("msgpack encode");
+        overwrite_entity_record(&vault, &non_map, ENTITY_TYPE_CLAIM, &junk)?;
+
+        // (b) body is a map but missing required `appr`;
+        let mut no_appr = Vec::new();
+        rmpv::encode::write_value(
+            &mut no_appr,
+            &rmpv::Value::Map(vec![
+                (rmpv::Value::from("pred"), rmpv::Value::from("test.bad")),
+                (rmpv::Value::from("val"), rmpv::Value::from("v")),
+                (rmpv::Value::from("conf"), rmpv::Value::F32(0.5)),
+                (
+                    rmpv::Value::from("subj"),
+                    rmpv::Value::Binary(vec![0x7C; 16]),
+                ),
+                (rmpv::Value::from("life"), rmpv::Value::from("active")),
+            ]),
+        )
+        .expect("msgpack encode");
+        overwrite_entity_record(&vault, &missing_appr, ENTITY_TYPE_CLAIM, &no_appr)?;
+
+        // (c) body missing entirely (bare 25-byte envelope).
+        overwrite_entity_record(&vault, &empty_body, ENTITY_TYPE_CLAIM, &[])?;
+
+        let results = vault.query().search_text("rawneedle", 10).run()?;
+        let surfaced = to_score_map(&results);
+        assert!(surfaced.contains_key(&control), "control claim surfaces");
+        assert_eq!(results.len(), 1, "all three corrupt records suppressed");
+        Ok(())
+    }
+
+    /// AC 8 — excluded claims never consume `result_limit` slots: the gate
+    /// runs before sort/truncate, so retracting the TOP-ranked claim frees
+    /// its slot for the next survivor.
+    #[test]
+    fn excluded_claims_do_not_consume_result_limit_slots() -> Result<()> {
+        let (_dir, vault) = open_test_vault();
+
+        let c1 = entity_id(60);
+        let c2 = entity_id(61);
+        let c3 = entity_id(62);
+        for (id, text) in [
+            (c1, "alpha alpha alpha"),
+            (c2, "alpha alpha"),
+            (c3, "alpha"),
+        ] {
+            put_status_claim(
+                &vault,
+                id,
+                text,
+                ClaimApprovalStatus::Auto,
+                ClaimLifecycleStatus::Active,
+                false,
+            )?;
+        }
+
+        // Establish the BM25 rank order this test relies on.
+        let before = vault.query().search_text("alpha", 10).run()?;
+        let before_ids: Vec<EntityId> = before.iter().map(|s| s.id).collect();
+        assert_eq!(before_ids, vec![c1, c2, c3], "expected rank order");
+
+        vault.retract_claim(&c1, 2_000)?;
+
+        let after = vault.query().search_text("alpha", 10).limit(2).run()?;
+        let after_ids: Vec<EntityId> = after.iter().map(|s| s.id).collect();
+        assert_eq!(
+            after_ids,
+            vec![c2, c3],
+            "retracted top claim must not consume a result_limit slot"
+        );
+        Ok(())
+    }
+
+    /// Pinned decision — the gate runs BEFORE expand_ppr implicit seed
+    /// selection: a retracted claim never seeds the expansion, so nothing
+    /// reachable only through its seeding can surface.
+    #[test]
+    fn dead_claim_never_seeds_ppr_expansion() -> Result<()> {
+        let (_dir, vault) = open_test_vault();
+
+        let r = entity_id(70);
+        let x = entity_id(71);
+        put_status_claim(
+            &vault,
+            r,
+            "seedneedle",
+            ClaimApprovalStatus::Auto,
+            ClaimLifecycleStatus::Active,
+            false,
+        )?;
+        vault.put_entity(&x, 4, TimeRange { start: 1, end: 1 }, 1, b"payload")?;
+        vault.put_edge(&r, EdgeKind::Supports, &x, 0.9)?;
+
+        // Control: while active, the claim seeds the expansion and pulls in
+        // its neighborhood.
+        let before = to_score_map(
+            &vault
+                .query()
+                .search_text("seedneedle", 10)
+                .expand_ppr(&[], 2)
+                .run()?,
+        );
+        assert!(before.contains_key(&r));
+        assert!(
+            before.contains_key(&x),
+            "active claim must seed expansion and surface its neighbor"
+        );
+
+        vault.retract_claim(&r, 2_000)?;
+
+        let after = vault
+            .query()
+            .search_text("seedneedle", 10)
+            .expand_ppr(&[], 2)
+            .run()?;
+        assert!(
+            after.is_empty(),
+            "retracted claim must not seed expansion; got {after:?}"
+        );
+        Ok(())
+    }
+
+    /// Pinned decision — claims PULLED IN by expand_ppr are gated too: the
+    /// expansion list is status-gated before fusion, so a dead claim found
+    /// through the graph walk cannot surface.
+    #[test]
+    fn expansion_results_are_status_gated() -> Result<()> {
+        let (_dir, vault) = open_test_vault();
+
+        let a = entity_id(80);
+        let dead = entity_id(81);
+        let live = entity_id(82);
+        vault
+            .batch()
+            .put(&a, 1, TimeRange { start: 1, end: 1 }, 1, b"payload")
+            .text(&a, &[("body", "expneedle")])
+            .commit()?;
+        put_status_claim(
+            &vault,
+            dead,
+            "deadclaim",
+            ClaimApprovalStatus::Auto,
+            ClaimLifecycleStatus::Retracted,
+            false,
+        )?;
+        put_status_claim(
+            &vault,
+            live,
+            "liveclaim",
+            ClaimApprovalStatus::Auto,
+            ClaimLifecycleStatus::Active,
+            false,
+        )?;
+        vault.put_edge(&a, EdgeKind::Supports, &dead, 0.9)?;
+        vault.put_edge(&a, EdgeKind::Supports, &live, 0.9)?;
+
+        let surfaced = to_score_map(
+            &vault
+                .query()
+                .search_text("expneedle", 10)
+                .expand_ppr(&[], 2)
+                .run()?,
+        );
+        assert!(surfaced.contains_key(&a), "seed turn surfaces");
+        assert!(
+            surfaced.contains_key(&live),
+            "expansion must surface the ACTIVE claim (control: expansion can surface claims)"
+        );
+        assert!(
+            !surfaced.contains_key(&dead),
+            "expansion-introduced retracted claim must be gated"
+        );
         Ok(())
     }
 }

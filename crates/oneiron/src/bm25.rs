@@ -107,13 +107,24 @@ impl FieldConfig {
     }
 }
 
-/// BM25 scoring variant. `Okapi` is the default; `Plus` adds a constant
-/// offset to the TF term per Lv & Zhai 2011.
+/// BM25 scoring variant (ARCH-0031 / ARCH-0019 D3).
+///
+/// `Okapi` is the contract default. `Plus` is the BM25+ lower-bound
+/// variant per Lv & Zhai 2011: it adds `idf · delta` to every matching
+/// term's contribution (the contract opt-in value is `delta: 1.0`).
+/// The formula is scoring-only — switching it never requires a reindex.
+/// `delta` must be finite and strictly positive; it is validated
+/// fail-closed when a [`crate::Bm25RankProfile`] is used and rejected
+/// with [`crate::Error::InvalidRankProfile`] otherwise.
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub(crate) enum Bm25Formula {
+#[non_exhaustive]
+pub enum Bm25Formula {
+    /// Classical Okapi BM25 saturation (contract default).
     Okapi,
-    #[allow(dead_code)] // exposed through Bm25Config once types.rs plumbs user config
+    /// BM25+ with a constant per-term lower bound (Lv & Zhai 2011).
     Plus {
+        /// Constant added to the saturated TF term, scaled by `idf`.
+        /// Must be finite and `> 0.0`; the contract opt-in is `1.0`.
         delta: f64,
     },
 }
@@ -1312,6 +1323,226 @@ mod tests {
         let okapi_score = okapi.iter().find(|r| r.id == id).unwrap().score;
         let plus_score = plus.iter().find(|r| r.id == id).unwrap().score;
         assert!(plus_score > okapi_score);
+
+        // Release the read txn — LMDB allows one read txn per thread and
+        // the public path below opens its own.
+        drop(rtxn);
+
+        // Public path: the same formula switch through the
+        // `Bm25RankProfile` knob must produce the identical BM25+ score
+        // against the same index — no reindex happened in between.
+        let plus_profile =
+            crate::types::Bm25RankProfile::default().with_formula(Bm25Formula::Plus { delta: 1.0 });
+        let public_plus = vault.search_text_with_profile("hello", 10, &plus_profile)?;
+        let public_plus_score = public_plus.iter().find(|r| r.id == id).unwrap().score;
+        assert_eq!(public_plus_score, plus_score);
+        assert!(public_plus_score > okapi_score);
+        Ok(())
+    }
+
+    /// The public default profile must lower to the literal ARCH-0031
+    /// channel table (weights / `b` / length policy), the pinned global
+    /// `k1 = 1.2`, and the Okapi default formula. Reserved channels stay
+    /// disabled. The profile deliberately exposes no `k1` knob.
+    #[test]
+    fn rank_profile_default_lowers_to_contract_literals() -> Result<()> {
+        let c = crate::types::Bm25RankProfile::default().to_bm25_config()?;
+        assert_eq!(c.k1, 1.2);
+        assert_eq!(c.formula, Bm25Formula::Okapi);
+
+        let surface = c.field(AnalyzerChannel::Surface);
+        assert_eq!(surface.weight, 1.00);
+        assert_eq!(surface.b, 0.75);
+        assert_eq!(
+            surface.length_policy,
+            FieldLengthPolicy::CountLengthIncrement
+        );
+        let stem = c.field(AnalyzerChannel::Stem);
+        assert_eq!(stem.weight, 0.35);
+        assert_eq!(stem.b, 0.65);
+        assert_eq!(stem.length_policy, FieldLengthPolicy::CountLengthIncrement);
+        let overlay = c.field(AnalyzerChannel::NormalizedOverlay);
+        assert_eq!(overlay.weight, 0.55);
+        assert_eq!(overlay.b, 0.00);
+        assert_eq!(overlay.length_policy, FieldLengthPolicy::NoNorm);
+        let ngram = c.field(AnalyzerChannel::CjkNgram);
+        assert_eq!(ngram.weight, 0.45);
+        assert_eq!(ngram.b, 0.30);
+        assert_eq!(ngram.length_policy, FieldLengthPolicy::CountLengthIncrement);
+
+        for reserved in [
+            AnalyzerChannel::Shingle,
+            AnalyzerChannel::Synonym,
+            AnalyzerChannel::Phonetic,
+        ] {
+            assert_eq!(c.field(reserved).weight, 0.0);
+        }
+        Ok(())
+    }
+
+    /// AC3: a `weight == 0.0` channel override excludes that channel from
+    /// scoring through both public paths (`search_text_with_profile` and
+    /// the pipeline's `rank_profile`). The query `running` reaches the
+    /// doc only via the Stem channel (`runs` and `running` both stem to
+    /// `run`), so zeroing Stem must drop the doc entirely.
+    #[test]
+    fn zero_weight_channel_excluded_through_public_path() -> Result<()> {
+        let temp_dir = tempfile::tempdir()?;
+        let vault = Vault::open(temp_dir.path(), test_config())?;
+        let id = EntityId::now();
+        put_text_doc(&vault, &id, "she runs every morning before work")?;
+
+        // Default profile: stem channel carries the match.
+        let default_profile = crate::types::Bm25RankProfile::default();
+        let hits = vault.search_text_with_profile("running", 10, &default_profile)?;
+        assert!(contains_id(&hits, &id));
+
+        // Stem weight zeroed: the only matching channel is excluded.
+        let stem_zero = crate::types::Bm25RankProfile::default()
+            .with_channel_weight(AnalyzerChannel::Stem, 0.0);
+        let hits = vault.search_text_with_profile("running", 10, &stem_zero)?;
+        assert!(
+            !contains_id(&hits, &id),
+            "zero-weight Stem channel must be excluded from scoring",
+        );
+
+        // Same exclusion through the pipeline path.
+        let hits = vault
+            .query()
+            .search_text("running", 10)
+            .rank_profile(stem_zero)
+            .run()?;
+        assert!(!contains_id(&hits, &id));
+        let hits = vault.query().search_text("running", 10).run()?;
+        assert!(contains_id(&hits, &id), "default pipeline still matches");
+
+        // All four v1 channels zeroed: even a direct surface match is
+        // excluded and the result set is empty.
+        let all_zero = crate::types::Bm25RankProfile::default()
+            .with_channel_weight(AnalyzerChannel::Surface, 0.0)
+            .with_channel_weight(AnalyzerChannel::Stem, 0.0)
+            .with_channel_weight(AnalyzerChannel::NormalizedOverlay, 0.0)
+            .with_channel_weight(AnalyzerChannel::CjkNgram, 0.0);
+        let hits = vault.search_text_with_profile("runs", 10, &all_zero)?;
+        assert!(hits.is_empty());
+        Ok(())
+    }
+
+    /// AC6: invalid rank-profile inputs are rejected fail-closed with the
+    /// typed `Error::InvalidRankProfile` through both public paths —
+    /// never clamped, skipped, or silently defaulted. Boundary-legal
+    /// values stay accepted.
+    #[test]
+    fn rank_profile_validation_fails_closed() -> Result<()> {
+        use crate::types::Bm25RankProfile;
+
+        let temp_dir = tempfile::tempdir()?;
+        let vault = Vault::open(temp_dir.path(), test_config())?;
+        let id = EntityId::now();
+        put_text_doc(&vault, &id, "hello world")?;
+
+        let cases: Vec<(&str, Bm25RankProfile, &'static str)> = vec![
+            (
+                "weight_nan",
+                Bm25RankProfile::default().with_channel_weight(AnalyzerChannel::Surface, f64::NAN),
+                "channel.weight",
+            ),
+            (
+                "weight_negative",
+                Bm25RankProfile::default().with_channel_weight(AnalyzerChannel::Surface, -0.1),
+                "channel.weight",
+            ),
+            (
+                "weight_infinite",
+                Bm25RankProfile::default()
+                    .with_channel_weight(AnalyzerChannel::Surface, f64::INFINITY),
+                "channel.weight",
+            ),
+            (
+                "b_nan",
+                Bm25RankProfile::default().with_channel_b(AnalyzerChannel::Surface, f64::NAN),
+                "channel.b",
+            ),
+            (
+                "b_negative",
+                Bm25RankProfile::default().with_channel_b(AnalyzerChannel::Surface, -0.01),
+                "channel.b",
+            ),
+            (
+                "b_above_one",
+                Bm25RankProfile::default().with_channel_b(AnalyzerChannel::Surface, 1.01),
+                "channel.b",
+            ),
+            (
+                "delta_nan",
+                Bm25RankProfile::default().with_formula(Bm25Formula::Plus { delta: f64::NAN }),
+                "formula.delta",
+            ),
+            (
+                "delta_zero",
+                Bm25RankProfile::default().with_formula(Bm25Formula::Plus { delta: 0.0 }),
+                "formula.delta",
+            ),
+            (
+                "delta_negative",
+                Bm25RankProfile::default().with_formula(Bm25Formula::Plus { delta: -1.0 }),
+                "formula.delta",
+            ),
+            (
+                "delta_infinite",
+                Bm25RankProfile::default().with_formula(Bm25Formula::Plus {
+                    delta: f64::INFINITY,
+                }),
+                "formula.delta",
+            ),
+            (
+                "weight_on_reserved_channel",
+                Bm25RankProfile::default().with_channel_weight(AnalyzerChannel::Shingle, 0.5),
+                "weight.reserved_channel",
+            ),
+            (
+                "b_on_reserved_channel",
+                Bm25RankProfile::default().with_channel_b(AnalyzerChannel::Phonetic, 0.5),
+                "b.reserved_channel",
+            ),
+        ];
+
+        for (case_name, profile, expected_parameter) in cases {
+            let err = vault
+                .search_text_with_profile("hello", 10, &profile)
+                .unwrap_err();
+            assert!(
+                matches!(
+                    err,
+                    Error::InvalidRankProfile { parameter, .. } if parameter == expected_parameter
+                ),
+                "case {case_name}: expected InvalidRankProfile({expected_parameter}), got {err:?}",
+            );
+
+            // The pipeline fails closed too — even with no text search
+            // attached, an invalid profile is a caller bug.
+            let err = vault.query().rank_profile(profile).run().unwrap_err();
+            assert!(
+                matches!(err, Error::InvalidRankProfile { .. }),
+                "case {case_name} (pipeline): expected InvalidRankProfile, got {err:?}",
+            );
+            assert_eq!(err.kind(), crate::error::ErrorKind::InvalidRankProfile);
+        }
+
+        // Boundary-legal values stay accepted: weight 0.0, b 0.0 / 1.0,
+        // small positive delta; the last override per channel wins.
+        let legal = crate::types::Bm25RankProfile::default()
+            .with_formula(Bm25Formula::Plus { delta: 1e-6 })
+            .with_channel_weight(AnalyzerChannel::Surface, 0.0)
+            .with_channel_weight(AnalyzerChannel::Surface, 2.5)
+            .with_channel_b(AnalyzerChannel::Stem, 0.0)
+            .with_channel_b(AnalyzerChannel::CjkNgram, 1.0);
+        let config = legal.to_bm25_config()?;
+        assert_eq!(config.field(AnalyzerChannel::Surface).weight, 2.5);
+        assert_eq!(config.field(AnalyzerChannel::Stem).b, 0.0);
+        assert_eq!(config.field(AnalyzerChannel::CjkNgram).b, 1.0);
+        assert_eq!(config.formula, Bm25Formula::Plus { delta: 1e-6 });
+        assert!(vault.search_text_with_profile("hello", 10, &legal).is_ok());
         Ok(())
     }
 

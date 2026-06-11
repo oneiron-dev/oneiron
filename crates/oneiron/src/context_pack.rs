@@ -7,13 +7,15 @@ use std::time::Instant;
 use heed::RoTxn;
 
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
+use crate::claim::{ClaimBody, claim_surfaceable};
 use crate::error::Result;
-use crate::pipeline::PipelineBuilder;
+use crate::pipeline::{PipelineBuilder, WorldScope};
 use crate::serialize::{SerializeConfig, serialize_pack};
 use crate::store::Store;
 use crate::types::{
-    ContextEntity, ContextPack, EdgeInfo, EntityId, FieldProfile, PackFormat, PackStats, Signal,
-    TemporalAnchorMode, TemporalGranularity, TimeRange, TokenAllocation,
+    ContextEntity, ContextPack, ENTITY_TYPE_CLAIM, EdgeConfirmationStatus, EdgeInfo, EdgeKind,
+    EntityId, FieldProfile, PackFormat, PackStats, Signal, TemporalAnchorMode, TemporalGranularity,
+    TimeRange, TokenAllocation,
 };
 use crate::{Vault, le_bytes_to_f32_vec};
 
@@ -22,6 +24,10 @@ const DEFAULT_TOKEN_BUDGET: usize = 4000;
 const DEFAULT_MAX_FIELD_CHARS: usize = 500;
 const MAX_EDGE_HOP: u32 = 5;
 const MAX_CONTEXT_NEIGHBORS: usize = 1000;
+/// Default share of the claim budget that non-base (fictional / dream) worlds
+/// may occupy in an `All`-scope pack — fiction takes at most half, so it can
+/// never crowd base reality out (ARCH-0004 / ARCH-0022).
+const DEFAULT_NON_BASE_WORLD_CLAIM_FRACTION: f32 = 0.5;
 #[cfg(test)]
 thread_local! {
     static EDGE_SCAN_COUNT: Cell<usize> = const { Cell::new(0) };
@@ -39,6 +45,12 @@ struct HydrateOptions<'a> {
     include_edges: bool,
     include_vectors: bool,
     edge_cache: Option<&'a HashMap<EntityId, Vec<EdgeInfo>>>,
+    /// Claim bodies the pipeline's D19 gate already decoded (and passed):
+    /// the hydrator projects fields from these instead of re-decoding, so a
+    /// claim's body is MessagePack-decoded once per result across gate +
+    /// projection (AC 9). Misses (neighbors, post-gate writes) decode once
+    /// here, under the same gate.
+    claim_bodies: Option<&'a HashMap<EntityId, ClaimBody>>,
 }
 
 #[must_use = "ContextPackBuilder executes no query until a terminal `.run*()` method is called"]
@@ -58,6 +70,8 @@ pub struct ContextPackBuilder<'a> {
     token_allocation: TokenAllocation,
     max_field_chars: usize,
     signals_used: Vec<Signal>,
+    world_scope: WorldScope,
+    non_base_world_fraction: f32,
 }
 
 impl<'a> ContextPackBuilder<'a> {
@@ -78,6 +92,8 @@ impl<'a> ContextPackBuilder<'a> {
             token_allocation: TokenAllocation::default(),
             max_field_chars: DEFAULT_MAX_FIELD_CHARS,
             signals_used: Vec::new(),
+            world_scope: WorldScope::All,
+            non_base_world_fraction: DEFAULT_NON_BASE_WORLD_CLAIM_FRACTION,
         }
     }
 
@@ -244,6 +260,26 @@ impl<'a> ContextPackBuilder<'a> {
         self
     }
 
+    /// Sets the ARCH-0004 / ARCH-0022 world scope. Delegates the post-fusion
+    /// filter to the pipeline; under the default [`WorldScope::All`] the pack
+    /// additionally groups surviving claims by world (base section first). For
+    /// [`WorldScope::Base`] / [`WorldScope::World`] the pack stays flat.
+    pub fn world(mut self, scope: WorldScope) -> Self {
+        self.pipeline = self.pipeline.world(scope);
+        self.world_scope = scope;
+        self
+    }
+
+    /// Sets the share of the claim budget non-base worlds may occupy when the
+    /// pack is partitioned under [`WorldScope::All`] (default `0.5`). Base
+    /// claims are always kept; non-base claims beyond `floor(fraction × claim
+    /// budget)` are dropped so fiction cannot crowd base reality out. Only
+    /// consulted for `All` scope with surviving non-base claims.
+    pub fn non_base_world_claim_fraction(mut self, fraction: f32) -> Self {
+        self.non_base_world_fraction = fraction;
+        self
+    }
+
     pub fn hydrate(mut self, yes: bool) -> Self {
         self.hydrate = yes;
         self
@@ -306,7 +342,10 @@ impl<'a> ContextPackBuilder<'a> {
 
     pub fn run(self) -> Result<ContextPack> {
         let started = Instant::now();
-        let scored = self.pipeline.run()?;
+        let pipeline_output = self.pipeline.run_for_pack()?;
+        let scored = pipeline_output.scores;
+        let claim_bodies = pipeline_output.claim_bodies;
+        let mut claims_suppressed = pipeline_output.claims_suppressed;
 
         let rtxn = self.vault.store.env.read_txn()?;
         let hydrate_result_edges = self.include_edges && self.edge_hop == 0;
@@ -315,12 +354,19 @@ impl<'a> ContextPackBuilder<'a> {
             include_edges: hydrate_result_edges,
             include_vectors: self.include_vectors,
             edge_cache: None,
+            claim_bodies: Some(&claim_bodies),
         };
 
         let mut results = Vec::with_capacity(scored.len());
         for entry in scored.iter().copied() {
-            let Some(entity) =
-                hydrate_entity(self.vault, &rtxn, entry.id, entry.score, result_options)?
+            let Some(entity) = hydrate_entity(
+                self.vault,
+                &rtxn,
+                entry.id,
+                entry.score,
+                result_options,
+                &mut claims_suppressed,
+            )?
             else {
                 continue;
             };
@@ -347,6 +393,7 @@ impl<'a> ContextPackBuilder<'a> {
             include_edges: self.include_edges,
             include_vectors: self.include_vectors,
             edge_cache,
+            claim_bodies: Some(&claim_bodies),
         };
 
         if self.include_edges && self.edge_hop > 0 {
@@ -362,7 +409,15 @@ impl<'a> ContextPackBuilder<'a> {
 
         let mut neighbors = Vec::with_capacity(edge_walk.neighbor_ids.len());
         for id in edge_walk.neighbor_ids {
-            let Some(entity) = hydrate_entity(self.vault, &rtxn, id, 0.0, neighbor_options)? else {
+            let Some(entity) = hydrate_entity(
+                self.vault,
+                &rtxn,
+                id,
+                0.0,
+                neighbor_options,
+                &mut claims_suppressed,
+            )?
+            else {
                 continue;
             };
             neighbors.push(entity);
@@ -370,12 +425,27 @@ impl<'a> ContextPackBuilder<'a> {
 
         resolve_edge_short_ids(&mut results, &mut neighbors);
 
+        // ARCH-0004 / ARCH-0022 world partitioning (ONE-1117): under the
+        // default `All` scope, group surviving claims by world — base section
+        // first, then one section per non-base world — and cap how much of the
+        // claim budget fiction may take. Flat (unchanged) for Base / World(id).
+        if matches!(self.world_scope, WorldScope::All) {
+            partition_results_by_world(
+                &self.vault.store,
+                &rtxn,
+                &mut results,
+                self.non_base_world_fraction,
+                &claim_bodies,
+            )?;
+        }
+
         let stats = PackStats {
             candidates_considered: scored.len(),
             signals_used: dedupe_signals(self.signals_used),
             query_time_us: started.elapsed().as_micros().min(u64::MAX as u128) as u64,
             entities_hydrated: results.len(),
             neighbors_hydrated: neighbors.len(),
+            claims_suppressed,
         };
 
         Ok(ContextPack {
@@ -430,12 +500,123 @@ fn resolve_edge_short_ids(results: &mut [ContextEntity], neighbors: &mut [Contex
     }
 }
 
+/// ARCH-0004 / ARCH-0022 world partitioning for an `All`-scope pack: reorders
+/// `results` so claims are grouped by world — the base section (claims with no
+/// `world` key plus every non-claim entity) first, then one section per
+/// non-base world (sections ordered by their highest-scoring claim; score
+/// order preserved within a section). A per-non-base-world cap drops the
+/// lowest-scoring fiction so non-base worlds occupy at most `non_base_fraction`
+/// of the claim budget (every CLAIM in the pack), keeping all base claims.
+///
+/// When no non-base claim survives, `results` are left flat in score order.
+fn partition_results_by_world(
+    store: &Store,
+    rtxn: &RoTxn<'_>,
+    results: &mut Vec<ContextEntity>,
+    non_base_fraction: f32,
+    claim_bodies: &HashMap<EntityId, ClaimBody>,
+) -> Result<()> {
+    let mut base: Vec<ContextEntity> = Vec::with_capacity(results.len());
+    let mut non_base: Vec<(EntityId, ContextEntity)> = Vec::new();
+
+    for entity in results.drain(..) {
+        match entity_world(store, rtxn, &entity, claim_bodies)? {
+            None => base.push(entity),
+            Some(world) => non_base.push((world, entity)),
+        }
+    }
+
+    // No fictional / dream claim survived — leave the pack flat (score order).
+    if non_base.is_empty() {
+        *results = base;
+        return Ok(());
+    }
+
+    // Claim budget = every CLAIM in the pack (base claims + non-base claims);
+    // non-claim base entities do not count. Non-base worlds share at most
+    // `non_base_fraction` of it.
+    let base_claim_count = base
+        .iter()
+        .filter(|entity| entity.entity_type == ENTITY_TYPE_CLAIM)
+        .count();
+    let claim_budget = base_claim_count + non_base.len();
+    let non_base_cap = ((claim_budget as f32) * non_base_fraction).floor().max(0.0) as usize;
+
+    // `non_base` is in score order (results arrive score-sorted). Keep the top
+    // `non_base_cap` by score and drop the rest so fiction cannot crowd base
+    // reality out.
+    non_base.truncate(non_base_cap);
+
+    // Group survivors by world; sections ordered by first (highest-score)
+    // appearance, score order preserved within each section.
+    let mut world_order: Vec<EntityId> = Vec::new();
+    let mut groups: HashMap<EntityId, Vec<ContextEntity>> = HashMap::new();
+    for (world, entity) in non_base {
+        if !groups.contains_key(&world) {
+            world_order.push(world);
+        }
+        groups.entry(world).or_default().push(entity);
+    }
+
+    let mut out = base;
+    for world in world_order {
+        if let Some(section) = groups.remove(&world) {
+            out.extend(section);
+        }
+    }
+    *results = out;
+    Ok(())
+}
+
+/// Reads a hydrated result's world for partitioning: `None` for base reality
+/// (a non-claim entity, or a claim with no `world` key) and `Some(world_id)`
+/// for a world-scoped claim. The `world` key was structurally validated to a
+/// 16-byte id at write time.
+///
+/// Every result CLAIM passed the pipeline D19 gate, so its body is already in
+/// `claim_bodies`: reuse that decode instead of a second MessagePack pass,
+/// keeping the claim body decoded ONCE per result for gate + projection +
+/// world grouping (D19 AC 9). The raw-read fallback only covers a defensive
+/// cache miss.
+fn entity_world(
+    store: &Store,
+    rtxn: &RoTxn<'_>,
+    entity: &ContextEntity,
+    claim_bodies: &HashMap<EntityId, ClaimBody>,
+) -> Result<Option<EntityId>> {
+    if entity.entity_type != ENTITY_TYPE_CLAIM {
+        return Ok(None);
+    }
+    if let Some(body) = claim_bodies.get(&entity.id) {
+        return Ok(body.world);
+    }
+    let Some(raw) = store.entities.get(rtxn, entity.id.as_bytes())? else {
+        return Ok(None);
+    };
+    if raw.len() <= ENTITY_METADATA_HEADER_LEN {
+        return Ok(None);
+    }
+    crate::claim::decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true).map(|body| body.world)
+}
+
+/// Hydrates one entity for the context pack.
+///
+/// Type-0 (CLAIM) records pass through the D19 status gate here too — pack
+/// NEIGHBORS never run through the pipeline, so this is their only gate
+/// (results were gated in the pipeline already; their decoded bodies arrive
+/// via `options.claim_bodies` and are NOT re-decoded). Fail-closed: a type-0
+/// record whose body is missing or fails the pinned CLAIM ABI decode is
+/// excluded — it never surfaces with empty fields — and counted in
+/// `claims_suppressed`, exactly like a status-gated claim. Bodies of every
+/// other type byte stay opaque and are projected through the generic
+/// best-effort field decode, unchanged.
 fn hydrate_entity(
     vault: &Vault,
     rtxn: &RoTxn<'_>,
     id: EntityId,
     score: f32,
     options: HydrateOptions<'_>,
+    claims_suppressed: &mut usize,
 ) -> Result<Option<ContextEntity>> {
     let Some(raw) = vault.store.entities.get(rtxn, id.as_bytes())? else {
         return Ok(None);
@@ -445,8 +626,34 @@ fn hydrate_entity(
         return Ok(None);
     };
 
+    let mut gated_claim_body: Option<&ClaimBody> = None;
+    let decoded_here: Option<ClaimBody>;
+    if header.entity_type == ENTITY_TYPE_CLAIM {
+        match options.claim_bodies.and_then(|cache| cache.get(&id)) {
+            // Pipeline-gated result: already decoded once and surfaceable.
+            Some(body) => gated_claim_body = Some(body),
+            None => {
+                // Neighbor (or cache miss): decode once for gate +
+                // projection; reads allow reserved `edge.*` predicates.
+                decoded_here = raw
+                    .get(ENTITY_METADATA_HEADER_LEN..)
+                    .and_then(|body| crate::claim::decode_claim_body(body, true).ok());
+                match &decoded_here {
+                    Some(body) if claim_surfaceable(body) => gated_claim_body = Some(body),
+                    _ => {
+                        *claims_suppressed += 1;
+                        return Ok(None);
+                    }
+                }
+            }
+        }
+    }
+
     let fields = if options.hydrate_fields {
-        Some(decode_entity_fields(raw).unwrap_or_default())
+        Some(match gated_claim_body {
+            Some(body) => claim_fields_to_json(body),
+            None => decode_entity_fields(raw).unwrap_or_default(),
+        })
     } else {
         None
     };
@@ -481,6 +688,64 @@ fn hydrate_entity(
         edges,
         vector,
     }))
+}
+
+/// Projects an already-decoded CLAIM body into the hydrated-fields map —
+/// the same shape `decode_entity_fields` produces from the raw MessagePack
+/// map (pinned D11 short keys; `subj` is binary on disk so it projects as
+/// JSON null; `stale` appears only when `true`, mirroring the encoder which
+/// omits `false`). Reusing the gate's decode means the body is MessagePack-
+/// decoded once per result for gate + projection (AC 9).
+fn claim_fields_to_json(body: &ClaimBody) -> HashMap<String, serde_json::Value> {
+    let mut out = HashMap::new();
+    out.insert(
+        "pred".to_owned(),
+        serde_json::Value::String(body.predicate.clone()),
+    );
+    out.insert("val".to_owned(), rmpv_to_json(&body.value));
+    out.insert("conf".to_owned(), serde_json::json!(body.confidence));
+    if let Some(salience) = body.salience {
+        out.insert("sal".to_owned(), serde_json::json!(salience));
+    }
+    if let Some(evidence) = &body.evidence {
+        out.insert("evid".to_owned(), rmpv_to_json(evidence));
+    }
+    if let Some(valid_from) = body.valid_from {
+        out.insert("from".to_owned(), serde_json::json!(valid_from));
+    }
+    if let Some(valid_to) = body.valid_to {
+        out.insert("to".to_owned(), serde_json::json!(valid_to));
+    }
+    if let Some(source) = body.source {
+        out.insert(
+            "src".to_owned(),
+            serde_json::Value::String(source.as_str().to_owned()),
+        );
+    }
+    if body.world.is_some() {
+        // On-disk `world` is a 16-byte binary id (ONE-1117); the generic
+        // projection renders binary as null, and so does this one — same as
+        // `subj` below. Only present when the claim carries a world scope.
+        out.insert("world".to_owned(), serde_json::Value::Null);
+    }
+    // On-disk `subj` is MessagePack binary; the generic projection renders
+    // binary as null, and so does this one.
+    out.insert("subj".to_owned(), serde_json::Value::Null);
+    if let Some(scope) = &body.scope {
+        out.insert("scope".to_owned(), rmpv_to_json(scope));
+    }
+    out.insert(
+        "appr".to_owned(),
+        serde_json::Value::String(body.approval.as_str().to_owned()),
+    );
+    out.insert(
+        "life".to_owned(),
+        serde_json::Value::String(body.lifecycle.as_str().to_owned()),
+    );
+    if body.stale {
+        out.insert("stale".to_owned(), serde_json::Value::Bool(true));
+    }
+    out
 }
 
 fn decode_entity_fields(raw: &[u8]) -> Option<HashMap<String, serde_json::Value>> {
@@ -649,6 +914,23 @@ fn walk_edges(
                 continue;
             };
             for edge in edges {
+                // `child_of` / `assigned_to` are STRUCTURAL plumbing with no
+                // retrieval scoring (ARCH-0004 edgeKinds: lambda null, "Not
+                // traversed.") — never neighbor-expanded regardless of the
+                // stored weight bytes. They still hydrate on the seed's own
+                // edge list; only the walk skips them.
+                if matches!(edge.kind, EdgeKind::ChildOf | EdgeKind::AssignedTo) {
+                    continue;
+                }
+                // D8-consistent: a provenanced edge whose hot flag says
+                // retracted contributes nothing to expansion. Unlike PPR
+                // (λ_opposes = 0), `opposes` IS followed here — a surfaced
+                // contradiction is useful context-pack signal.
+                if edge.provenance.is_some_and(|flags| {
+                    flags.confirmation_status == EdgeConfirmationStatus::Retracted
+                }) {
+                    continue;
+                }
                 if exclude.contains(&edge.target) || visited.contains(&edge.target) {
                     continue;
                 }
@@ -770,6 +1052,38 @@ mod tests {
             .batch()
             .put(id, 0, TimeRange { start: 1, end: 1 }, 1, &payload)
             .text(id, &[("body", text)])
+            .commit()
+    }
+
+    /// A vector-ranked CLAIM whose body carries an optional `world` scope
+    /// (`None` = base reality). Built through the pinned claim encoder so the
+    /// `world` key is the real 16-byte binary the partitioner groups by.
+    fn put_world_claim(
+        vault: &Vault,
+        id: EntityId,
+        vector: [f32; 4],
+        world: Option<EntityId>,
+    ) -> Result<()> {
+        let mut body = crate::claim::ClaimBody::new(
+            "facet.scope_test",
+            crate::claim::ClaimSubject::Entity(EntityId::from_bytes([0x7C; 16])?),
+            rmpv::Value::from("v"),
+            0.9,
+            crate::claim::ClaimApprovalStatus::Auto,
+            crate::claim::ClaimLifecycleStatus::Active,
+        );
+        body.world = world;
+        let payload = crate::claim::encode_claim_body(&body)?;
+        vault
+            .batch()
+            .put(
+                &id,
+                ENTITY_TYPE_CLAIM,
+                TimeRange { start: 1, end: 1 },
+                1,
+                &payload,
+            )
+            .vector(&id, &vector)
             .commit()
     }
 
@@ -1358,6 +1672,419 @@ mod tests {
             );
         }
 
+        Ok(())
+    }
+
+    /// Blocker 2 partitioning: under the default `All` scope the pack is
+    /// ordered base section first, then one section per non-base world —
+    /// EVEN when fictional claims outrank the base claim. Pins base-first
+    /// ordering + adjacency grouping; `fraction(1.0)` disables the cap so
+    /// every claim survives.
+    #[test]
+    fn world_all_scope_partitions_base_first() -> Result<()> {
+        let (_dir, vault) = open_test_vault();
+        let world_w = EntityId::from_bytes([0xE1; 16])?;
+        let world_v = EntityId::from_bytes([0xE2; 16])?;
+
+        let w1 = EntityId::from_bytes([0x71; 16])?; // rank 0 — world W
+        let w2 = EntityId::from_bytes([0x72; 16])?; // rank 1 — world W
+        let claim_base = EntityId::from_bytes([0x61; 16])?; // rank 2 — base
+        let v1 = EntityId::from_bytes([0x81; 16])?; // rank 3 — world V
+        put_world_claim(&vault, w1, [1.0, 0.0, 0.0, 0.0], Some(world_w))?;
+        put_world_claim(&vault, w2, [0.9, 0.1, 0.0, 0.0], Some(world_w))?;
+        put_world_claim(&vault, claim_base, [0.8, 0.2, 0.0, 0.0], None)?;
+        put_world_claim(&vault, v1, [0.7, 0.3, 0.0, 0.0], Some(world_v))?;
+
+        let pack = vault
+            .context_pack()
+            .search_vector(&[1.0, 0.0, 0.0, 0.0], 10)
+            .non_base_world_claim_fraction(1.0) // disable the cap
+            .run()?;
+
+        let order: Vec<EntityId> = pack.results.iter().map(|entity| entity.id).collect();
+        assert_eq!(
+            order,
+            vec![claim_base, w1, w2, v1],
+            "All-scope pack must be base section first, then world W (adjacent), then world V"
+        );
+        Ok(())
+    }
+
+    // ── D19 read-path claim status gate (ONE-1111) ─────────────────
+
+    /// Writes a CLAIM with an explicit status triple and no text row —
+    /// reachable only through the edge walk.
+    fn put_claim_with_status(
+        vault: &Vault,
+        id: &EntityId,
+        appr: crate::claim::ClaimApprovalStatus,
+        life: crate::claim::ClaimLifecycleStatus,
+        stale: bool,
+    ) -> Result<()> {
+        let mut body = crate::claim::ClaimBody::new(
+            "test.status",
+            crate::claim::ClaimSubject::Entity(EntityId::from_bytes([0x7C; 16])?),
+            rmpv::Value::from("v"),
+            0.9,
+            appr,
+            life,
+        );
+        body.stale = stale;
+        let payload = crate::claim::encode_claim_body(&body)?;
+        vault
+            .batch()
+            .put(id, 0, TimeRange { start: 1, end: 1 }, 1, &payload)
+            .commit()
+    }
+
+    /// AC 6 — results AND neighbors apply the same gate: dead claims
+    /// reached through `supports` / `claim_of` edges never enter
+    /// `pack.neighbors`, while a non-claim neighbor on the same seed does.
+    #[test]
+    fn pack_neighbors_apply_the_status_gate() -> Result<()> {
+        let (_dir, vault) = open_test_vault();
+
+        let a = EntityId::from_bytes_unchecked([0x31; 16]);
+        let retracted = EntityId::from_bytes_unchecked([0x32; 16]);
+        let proposed = EntityId::from_bytes_unchecked([0x33; 16]);
+        let person = EntityId::from_bytes_unchecked([0x34; 16]);
+
+        put_claim_text_entity(&vault, &a, "rootclaim", "test.root", "root")?;
+        put_claim_with_status(
+            &vault,
+            &retracted,
+            crate::claim::ClaimApprovalStatus::Auto,
+            crate::claim::ClaimLifecycleStatus::Retracted,
+            false,
+        )?;
+        put_claim_with_status(
+            &vault,
+            &proposed,
+            crate::claim::ClaimApprovalStatus::Proposed,
+            crate::claim::ClaimLifecycleStatus::Active,
+            false,
+        )?;
+        put_text_entity(
+            &vault,
+            &person,
+            4,
+            "friendly",
+            serde_json::json!({"name": "N"}),
+        )?;
+
+        vault.put_edge(&a, crate::types::EdgeKind::Supports, &retracted, 0.9)?;
+        vault.put_edge(&a, crate::types::EdgeKind::ClaimOf, &proposed, 1.0)?;
+        vault.put_edge(&a, crate::types::EdgeKind::Supports, &person, 0.8)?;
+
+        let pack = vault
+            .context_pack()
+            .search_text("rootclaim", 10)
+            .edge_hop(1)
+            .max_neighbors(10)
+            .run()?;
+
+        assert_eq!(pack.results.len(), 1);
+        assert_eq!(pack.results[0].id, a);
+
+        let neighbor_ids: HashSet<EntityId> = pack.neighbors.iter().map(|e| e.id).collect();
+        assert!(
+            !neighbor_ids.contains(&retracted),
+            "retracted claim via supports edge must not enter pack.neighbors"
+        );
+        assert!(
+            !neighbor_ids.contains(&proposed),
+            "proposed claim via claim_of edge must not enter pack.neighbors"
+        );
+        assert!(
+            neighbor_ids.contains(&person),
+            "non-claim neighbor must still hydrate"
+        );
+        assert_eq!(
+            pack.stats.claims_suppressed, 2,
+            "both dead claim neighbors counted"
+        );
+        Ok(())
+    }
+
+    /// Blocker 2 cap: with the default 0.5 fraction, 2 base + 4 fictional
+    /// claims give a claim budget of 6 and a non-base cap of 3 — the three
+    /// highest-scoring fiction claims survive, the lowest is dropped, and both
+    /// base claims are always kept (fiction can never crowd base out).
+    #[test]
+    fn world_all_scope_cap_drops_excess_fiction() -> Result<()> {
+        let (_dir, vault) = open_test_vault();
+        let world_w = EntityId::from_bytes([0xE1; 16])?;
+
+        let base1 = EntityId::from_bytes([0x61; 16])?; // rank 0 — base
+        let f1 = EntityId::from_bytes([0x71; 16])?; // rank 1 — world W
+        let f2 = EntityId::from_bytes([0x72; 16])?; // rank 2 — world W
+        let base2 = EntityId::from_bytes([0x62; 16])?; // rank 3 — base
+        let f3 = EntityId::from_bytes([0x73; 16])?; // rank 4 — world W
+        let f4 = EntityId::from_bytes([0x74; 16])?; // rank 5 — world W (dropped)
+        put_world_claim(&vault, base1, [1.0, 0.0, 0.0, 0.0], None)?;
+        put_world_claim(&vault, f1, [0.9, 0.1, 0.0, 0.0], Some(world_w))?;
+        put_world_claim(&vault, f2, [0.8, 0.2, 0.0, 0.0], Some(world_w))?;
+        put_world_claim(&vault, base2, [0.7, 0.3, 0.0, 0.0], None)?;
+        put_world_claim(&vault, f3, [0.6, 0.4, 0.0, 0.0], Some(world_w))?;
+        put_world_claim(&vault, f4, [0.0, 1.0, 0.0, 0.0], Some(world_w))?;
+
+        let pack = vault
+            .context_pack()
+            .search_vector(&[1.0, 0.0, 0.0, 0.0], 10)
+            .run()?; // default fraction = 0.5
+
+        let ids: HashSet<EntityId> = pack.results.iter().map(|entity| entity.id).collect();
+        assert!(
+            ids.contains(&base1) && ids.contains(&base2),
+            "both base claims must always be kept, got {ids:?}"
+        );
+        assert!(
+            ids.contains(&f1) && ids.contains(&f2) && ids.contains(&f3),
+            "the top-3 fiction claims must survive the cap, got {ids:?}"
+        );
+        assert!(
+            !ids.contains(&f4),
+            "the lowest-scoring fiction claim must be dropped by the cap"
+        );
+        assert_eq!(
+            pack.results.len(),
+            5,
+            "2 base + capped 3 fiction = 5 surviving claims"
+        );
+        Ok(())
+    }
+
+    /// AC 7 — fail-closed hydration: a raw-written type-0 neighbor whose
+    /// body is not the pinned CLAIM ABI is EXCLUDED (and counted), never
+    /// surfaced with empty fields. Exclusion, not error.
+    #[test]
+    fn pack_hydration_fails_closed_on_undecodable_claim_neighbor() -> Result<()> {
+        let (_dir, vault) = open_test_vault();
+
+        let a = EntityId::from_bytes_unchecked([0x41; 16]);
+        let bad = EntityId::from_bytes_unchecked([0x42; 16]);
+        put_claim_text_entity(&vault, &a, "badneighbor", "test.root", "root")?;
+
+        // Raw 25-byte envelope (type 0) + a non-map MessagePack body.
+        let mut junk_body = Vec::new();
+        rmpv::encode::write_value(&mut junk_body, &rmpv::Value::from("junk"))
+            .expect("msgpack encode");
+        let mut raw = Vec::with_capacity(ENTITY_METADATA_HEADER_LEN + junk_body.len());
+        raw.push(0);
+        raw.extend_from_slice(&1_u64.to_be_bytes());
+        raw.extend_from_slice(&1_u64.to_be_bytes());
+        raw.extend_from_slice(&1_u64.to_be_bytes());
+        raw.extend_from_slice(&junk_body);
+        vault.with_write_txn(|wtxn| {
+            vault.store.entities.put(wtxn, bad.as_bytes(), &raw)?;
+            Ok(())
+        })?;
+        vault.put_edge(&a, crate::types::EdgeKind::Supports, &bad, 0.9)?;
+
+        let pack = vault
+            .context_pack()
+            .search_text("badneighbor", 10)
+            .edge_hop(1)
+            .run()?;
+
+        assert_eq!(pack.results.len(), 1);
+        assert!(
+            pack.neighbors.iter().all(|e| e.id != bad),
+            "undecodable type-0 neighbor must be excluded, not surfaced with empty fields"
+        );
+        assert_eq!(pack.stats.claims_suppressed, 1);
+        Ok(())
+    }
+
+    /// AC 9 — a claim body is MessagePack-decoded exactly ONCE per entity
+    /// for gate + projection: results reuse the pipeline gate's decode,
+    /// neighbors decode once in hydration. Counted via the claim-module
+    /// decode counter, not by round-tripping output.
+    #[test]
+    fn claim_body_is_decoded_once_per_result_for_gate_and_projection() -> Result<()> {
+        let (_dir, vault) = open_test_vault();
+
+        let a = EntityId::from_bytes_unchecked([0x51; 16]);
+        let b = EntityId::from_bytes_unchecked([0x52; 16]);
+        put_claim_text_entity(&vault, &a, "decodeonce", "test.root", "root")?;
+        put_claim_with_status(
+            &vault,
+            &b,
+            crate::claim::ClaimApprovalStatus::Auto,
+            crate::claim::ClaimLifecycleStatus::Active,
+            false,
+        )?;
+        vault.put_edge(&a, crate::types::EdgeKind::Supports, &b, 0.9)?;
+
+        crate::claim::reset_claim_body_decode_count();
+        let pack = vault
+            .context_pack()
+            .search_text("decodeonce", 10)
+            .edge_hop(1)
+            .run()?;
+        assert_eq!(
+            crate::claim::claim_body_decode_count(),
+            2,
+            "one decode for the result claim (pipeline gate, reused by projection) \
+             + one for the neighbor claim (hydration gate + projection)"
+        );
+
+        // The single decode still projects full fields on both.
+        assert_eq!(pack.results.len(), 1);
+        let result_fields = pack.results[0].fields.as_ref().expect("result fields");
+        assert_eq!(
+            result_fields.get("pred").and_then(|v| v.as_str()),
+            Some("test.root")
+        );
+        assert_eq!(
+            result_fields.get("appr").and_then(|v| v.as_str()),
+            Some("auto")
+        );
+        assert_eq!(
+            result_fields.get("life").and_then(|v| v.as_str()),
+            Some("active")
+        );
+        assert!(
+            result_fields.contains_key("subj"),
+            "subj key projects (as null) like the generic decoder"
+        );
+
+        let neighbor = pack
+            .neighbors
+            .iter()
+            .find(|e| e.id == b)
+            .expect("active claim neighbor hydrates");
+        let neighbor_fields = neighbor.fields.as_ref().expect("neighbor fields");
+        assert_eq!(
+            neighbor_fields.get("pred").and_then(|v| v.as_str()),
+            Some("test.status")
+        );
+        Ok(())
+    }
+
+    /// AC 10 — walk_edges kind/provenance gating: `child_of` and
+    /// `assigned_to` (structural, not retrieval-scored) contribute no
+    /// neighbor even at weight 1.0; retracted-provenanced edges are skipped
+    /// (D8-consistent); `opposes` and non-retracted provenanced edges ARE
+    /// followed.
+    #[test]
+    fn walk_edges_gates_structural_kinds_and_retracted_provenance() -> Result<()> {
+        let (_dir, vault) = open_test_vault();
+
+        let root = EntityId::from_bytes_unchecked([0x61; 16]);
+        put_claim_text_entity(&vault, &root, "walkroot", "test.root", "root")?;
+
+        let child_of_tgt = EntityId::from_bytes_unchecked([0x62; 16]);
+        let assigned_tgt = EntityId::from_bytes_unchecked([0x63; 16]);
+        let opposes_tgt = EntityId::from_bytes_unchecked([0x64; 16]);
+        let retracted_tgt = EntityId::from_bytes_unchecked([0x65; 16]);
+        let confirmed_tgt = EntityId::from_bytes_unchecked([0x66; 16]);
+        for (i, id) in [
+            child_of_tgt,
+            assigned_tgt,
+            opposes_tgt,
+            retracted_tgt,
+            confirmed_tgt,
+        ]
+        .iter()
+        .enumerate()
+        {
+            put_text_entity(
+                &vault,
+                id,
+                4,
+                "target",
+                serde_json::json!({"name": format!("T{i}")}),
+            )?;
+        }
+
+        // Structural plumbing at FULL weight — must contribute no neighbor.
+        vault.put_edge(&root, crate::types::EdgeKind::ChildOf, &child_of_tgt, 1.0)?;
+        vault.put_edge(
+            &root,
+            crate::types::EdgeKind::AssignedTo,
+            &assigned_tgt,
+            1.0,
+        )?;
+        // Contradiction IS context — opposes is followed (unlike PPR λ=0).
+        vault.put_edge(&root, crate::types::EdgeKind::Opposes, &opposes_tgt, 0.5)?;
+
+        // Two provenanced (26 B) edges planted raw: confirmation_status
+        // byte 24 = retracted (3) must be skipped, confirmed (1) followed.
+        let plant = |tgt: &EntityId, status: crate::types::EdgeConfirmationStatus| -> Result<()> {
+            let key = Store::encode_edge_key(&root, crate::types::EdgeKind::Supports, tgt);
+            let value = crate::types::encode_edge_value(
+                crate::types::EdgeKind::Supports,
+                0.9,
+                1,
+                crate::types::Vad::NEUTRAL,
+                Some(crate::types::EdgeProvenanceFlags {
+                    confirmation_status: status,
+                    actor_class: crate::types::EdgeActorClass::Human,
+                }),
+            )?;
+            vault.with_write_txn(|wtxn| {
+                vault.store.edges_out.put(wtxn, &key, &value)?;
+                Ok(())
+            })
+        };
+        plant(
+            &retracted_tgt,
+            crate::types::EdgeConfirmationStatus::Retracted,
+        )?;
+        plant(
+            &confirmed_tgt,
+            crate::types::EdgeConfirmationStatus::Confirmed,
+        )?;
+
+        let pack = vault
+            .context_pack()
+            .search_text("walkroot", 10)
+            .edge_hop(1)
+            .max_neighbors(10)
+            .run()?;
+
+        let neighbor_ids: HashSet<EntityId> = pack.neighbors.iter().map(|e| e.id).collect();
+        assert!(
+            !neighbor_ids.contains(&child_of_tgt),
+            "child_of (weight 1.0) must contribute no neighbor"
+        );
+        assert!(
+            !neighbor_ids.contains(&assigned_tgt),
+            "assigned_to must contribute no neighbor"
+        );
+        assert!(
+            !neighbor_ids.contains(&retracted_tgt),
+            "retracted-provenanced edge must be skipped"
+        );
+        assert!(
+            neighbor_ids.contains(&opposes_tgt),
+            "opposes must still be followed"
+        );
+        assert!(
+            neighbor_ids.contains(&confirmed_tgt),
+            "confirmed-provenanced edge must still be followed"
+        );
+        Ok(())
+    }
+
+    /// Pipeline-suppressed claims are reported through
+    /// `PackStats::claims_suppressed` (exclusion is silent — the count is
+    /// the only signal).
+    #[test]
+    fn pack_stats_count_pipeline_suppressed_claims() -> Result<()> {
+        let (_dir, vault) = open_test_vault();
+
+        let live = EntityId::from_bytes_unchecked([0x71; 16]);
+        let dead = EntityId::from_bytes_unchecked([0x72; 16]);
+        put_claim_text_entity(&vault, &live, "statneedle", "test.live", "v")?;
+        put_claim_text_entity(&vault, &dead, "statneedle", "test.dead", "v")?;
+        vault.retract_claim(&dead, 2_000)?;
+
+        let pack = vault.context_pack().search_text("statneedle", 10).run()?;
+        assert_eq!(pack.results.len(), 1);
+        assert_eq!(pack.results[0].id, live);
+        assert_eq!(pack.stats.claims_suppressed, 1);
         Ok(())
     }
 }

@@ -1,5 +1,5 @@
 use crate::claim::ClaimLifecycleStatus;
-use crate::types::{EntityId, VadComponent};
+use crate::types::{ENTITY_TYPE_FACET, EntityId, VadComponent};
 
 /// Result type used throughout the crate.
 pub type Result<T> = std::result::Result<T, Error>;
@@ -30,6 +30,7 @@ pub enum ErrorKind {
     IndexOverflow,
     MissingPostingEntry,
     InvalidEntityType,
+    InvalidFacet,
     InvalidClaimBody,
     InvalidPredicate,
     ReservedPredicate,
@@ -52,6 +53,7 @@ pub enum ErrorKind {
     CycleDetected,
     IncompatibleAnalyzer,
     Bm25FieldSchemaChanged,
+    InvalidRankProfile,
     AnalyzerAssetMissing,
     AnalyzerError,
     #[cfg(feature = "sync")]
@@ -78,8 +80,9 @@ pub enum Error {
     /// Vector contains NaN or infinity values.
     #[error("invalid vector component at index {index}: {value}")]
     InvalidVector { index: usize, value: f32 },
-    /// Edge weight contains NaN or infinity values.
-    #[error("invalid edge weight: {value}")]
+    /// Edge weight is NaN, infinite, or outside the contract range \[0, 1\]
+    /// (contracts.ts `edgeKinds` weight pin; enforced on every write path).
+    #[error("invalid edge weight: {value} (contract range [0, 1])")]
     InvalidEdgeWeight { value: f32 },
     /// VAD tuple contains non-finite or out-of-range values.
     #[error("invalid VAD component {component:?}: {value}")]
@@ -138,6 +141,18 @@ pub enum Error {
     /// Entity type byte is not in any known range.
     #[error("invalid entity type: {0}")]
     InvalidEntityType(u8),
+    /// The active facet supplied to the retrieval pipeline does not resolve to
+    /// an EXISTING FACET entity (type byte 13, per contracts.ts §1). Rejected
+    /// fail-closed at query setup: a bogus id (`found = None`, no such entity)
+    /// or an id whose type byte is not FACET (`found = Some(other_type)`) is a
+    /// typed error, never a silent treat-everything-as-other-facet. Strict
+    /// mode must never drop every scoped claim because the active facet was
+    /// invalid. Nothing is queried.
+    #[error(
+        "invalid active facet {}: resolved type {found:?}, expected FACET ({ENTITY_TYPE_FACET})",
+        facet.to_hex()
+    )]
+    InvalidFacet { facet: EntityId, found: Option<u8> },
     /// A type-0 (CLAIM) entity body failed the pinned structural validation
     /// (D11 key set / D18 fail-closed gate). Nothing was written.
     #[error("invalid claim body: {0}")]
@@ -304,6 +319,15 @@ pub enum Error {
         "bm25f field schema changed since index was built; reopen with VaultConfig::skip_text_index_manifest_check=true, run clear_text_index, reopen normally, and reindex documents to restore search"
     )]
     Bm25FieldSchemaChanged,
+    /// A caller-supplied BM25F rank profile carries an invalid scoring
+    /// parameter: a non-finite or negative channel weight, a `b` outside
+    /// `[0.0, 1.0]`, a non-finite or non-positive BM25+ `delta`, or an
+    /// override on a reserved channel that v1 analyzers never emit
+    /// (`Shingle` / `Synonym` / `Phonetic`). Rank profiles are
+    /// scoring-only (ARCH-0031), so nothing on disk was touched; fix the
+    /// profile and retry the query.
+    #[error("invalid bm25 rank profile: {parameter} = {value}")]
+    InvalidRankProfile { parameter: &'static str, value: f64 },
     /// A dict asset declared in the stored manifest is missing from disk
     /// (e.g., `system.dic` was deleted after indexing). Restore the file or
     /// use the same recovery path as [`Error::IncompatibleAnalyzer`]:
@@ -375,6 +399,7 @@ impl Error {
             Self::IndexOverflow(_) => ErrorKind::IndexOverflow,
             Self::MissingPostingEntry => ErrorKind::MissingPostingEntry,
             Self::InvalidEntityType(_) => ErrorKind::InvalidEntityType,
+            Self::InvalidFacet { .. } => ErrorKind::InvalidFacet,
             Self::InvalidClaimBody(_) => ErrorKind::InvalidClaimBody,
             Self::InvalidPredicate { .. } => ErrorKind::InvalidPredicate,
             Self::ReservedPredicate { .. } => ErrorKind::ReservedPredicate,
@@ -397,6 +422,7 @@ impl Error {
             Self::CycleDetected => ErrorKind::CycleDetected,
             Self::IncompatibleAnalyzer { .. } => ErrorKind::IncompatibleAnalyzer,
             Self::Bm25FieldSchemaChanged => ErrorKind::Bm25FieldSchemaChanged,
+            Self::InvalidRankProfile { .. } => ErrorKind::InvalidRankProfile,
             Self::AnalyzerAssetMissing(_) => ErrorKind::AnalyzerAssetMissing,
             Self::AnalyzerError(_) => ErrorKind::AnalyzerError,
             #[cfg(feature = "sync")]

@@ -31,13 +31,33 @@ use rmpv::Value;
 use crate::error::{Error, Result};
 use crate::types::{ENTITY_ID_LEN, EdgeKind, EntityId};
 
+// Test-only MessagePack decode counter: AC 9 of the D19 unit pins "body
+// decoded ONCE per result for gate + projection" — tests assert exact
+// decode counts through this counter instead of round-tripping output.
+#[cfg(test)]
+thread_local! {
+    static CLAIM_BODY_DECODE_COUNT: std::cell::Cell<usize> =
+        const { std::cell::Cell::new(0) };
+}
+
+#[cfg(test)]
+pub(crate) fn reset_claim_body_decode_count() {
+    CLAIM_BODY_DECODE_COUNT.with(|count| count.set(0));
+}
+
+#[cfg(test)]
+pub(crate) fn claim_body_decode_count() -> usize {
+    CLAIM_BODY_DECODE_COUNT.with(std::cell::Cell::get)
+}
+
 /// Pinned ON-DISK MessagePack key set for type-0 (CLAIM) bodies (D11).
 ///
 /// Order is canonical: the engine's encoder emits present fields in this
 /// order, and the context-pack field profiles are prefixes of this list
 /// (Minimal = first 2, Standard = first 5, Full = first 11; the lifecycle
-/// keys `appr`/`life`/`stale` are stored but not projected — retrieval
-/// status-gating is deferred per D19).
+/// keys `appr`/`life`/`stale` drive the D19 read-path status gate
+/// ([`claim_surfaceable`]) and are excluded from every serialization
+/// profile).
 pub const CLAIM_BODY_KEYS: [&str; 14] = [
     "pred", "val", "conf", "sal", "evid", "from", "to", "src", "world", "subj", "scope", "appr",
     "life", "stale",
@@ -275,8 +295,15 @@ pub struct ClaimBody {
     pub valid_to: Option<u64>,
     /// `src` — optional provenance source.
     pub source: Option<ClaimSource>,
-    /// `world` — optional world scope (opaque MessagePack).
-    pub world: Option<Value>,
+    /// `world` — optional world scope: the 16-byte WORLD entity id this claim
+    /// is scoped to (ARCH-0004 claim world filter; ARCH-0022 world model).
+    /// ABSENT means base reality (the elide-the-default pattern, like
+    /// `stale == false`). On disk it is exactly 16 MessagePack-binary bytes;
+    /// any other shape is rejected fail-closed with [`Error::InvalidClaimBody`].
+    /// The referenced WORLD entity is NOT required to exist at write time —
+    /// extraction may create claims before their world; the read side groups
+    /// by id regardless.
+    pub world: Option<EntityId>,
     /// `scope` — optional relationship/facet scope (opaque MessagePack).
     pub scope: Option<Value>,
     /// `stale` — derived-data staleness marker; absent on disk means `false`.
@@ -403,8 +430,11 @@ pub(crate) fn encode_claim_body(body: &ClaimBody) -> Result<Vec<u8>> {
     if let Some(source) = body.source {
         entries.push((Value::from(KEY_SRC), Value::from(source.as_str())));
     }
-    if let Some(world) = &body.world {
-        entries.push((Value::from(KEY_WORLD), world.clone()));
+    if let Some(world) = body.world {
+        entries.push((
+            Value::from(KEY_WORLD),
+            Value::Binary(world.as_bytes().to_vec()),
+        ));
     }
     entries.push((Value::from(KEY_SUBJ), Value::Binary(body.subject.encode())));
     if let Some(scope) = &body.scope {
@@ -440,6 +470,9 @@ pub(crate) fn encode_claim_body(body: &ClaimBody) -> Result<Vec<u8>> {
 ///   rejected unless `allow_reserved_predicate` is set (provenance door /
 ///   read path).
 pub(crate) fn decode_claim_body(data: &[u8], allow_reserved_predicate: bool) -> Result<ClaimBody> {
+    #[cfg(test)]
+    CLAIM_BODY_DECODE_COUNT.with(|count| count.set(count.get().saturating_add(1)));
+
     let mut cursor = Cursor::new(data);
     let value = rmpv::decode::read_value(&mut cursor)
         .map_err(|_| Error::InvalidClaimBody("body is not valid MessagePack"))?;
@@ -461,7 +494,7 @@ pub(crate) fn decode_claim_body(data: &[u8], allow_reserved_predicate: bool) -> 
     let mut valid_from: Option<u64> = None;
     let mut valid_to: Option<u64> = None;
     let mut source: Option<ClaimSource> = None;
-    let mut world: Option<Value> = None;
+    let mut world: Option<EntityId> = None;
     let mut scope: Option<Value> = None;
     let mut stale: Option<bool> = None;
 
@@ -523,7 +556,24 @@ pub(crate) fn decode_claim_body(data: &[u8], allow_reserved_predicate: bool) -> 
                         ))?;
                 source = Some(parsed);
             }
-            "world" => world = Some(value),
+            "world" => {
+                // ARCH-0004 / ARCH-0022: a present `world` key is the
+                // 16-byte WORLD entity id. Anything that is not exactly 16
+                // MessagePack-binary bytes (a string, a 15-byte blob, …) is
+                // rejected fail-closed — the read side groups claims by this
+                // id, so a malformed value can never be silently scoped.
+                let Value::Binary(bytes) = &value else {
+                    return Err(Error::InvalidClaimBody("world must be MessagePack binary"));
+                };
+                let arr: [u8; ENTITY_ID_LEN] = bytes
+                    .as_slice()
+                    .try_into()
+                    .map_err(|_| Error::InvalidClaimBody("world must be a 16-byte world id"))?;
+                world = Some(
+                    EntityId::from_bytes(arr)
+                        .map_err(|_| Error::InvalidClaimBody("world id is reserved"))?,
+                );
+            }
             "subj" => {
                 let Value::Binary(bytes) = &value else {
                     return Err(Error::InvalidClaimBody("subj must be MessagePack binary"));
@@ -583,6 +633,31 @@ pub(crate) fn decode_claim_body(data: &[u8], allow_reserved_predicate: bool) -> 
 /// See [`decode_claim_body`] for the rules.
 pub(crate) fn validate_claim_body_bytes(data: &[u8], allow_reserved_predicate: bool) -> Result<()> {
     decode_claim_body(data, allow_reserved_predicate).map(|_| ())
+}
+
+/// D19 read-path status gate predicate (ARCH-0003 retrieval rule; ARCH-0004
+/// §H "Claim filtering — enumerated requirements" items 1, 2, 4): a Claim
+/// may surface on the retrieval read paths (pipeline results across all five
+/// channels, context-pack results, and context-pack neighbors) only when
+///
+/// * `appr ∈ {auto, approved}` — respect consent;
+/// * `life = active` — only current beliefs;
+/// * `stale = false` — only regenerated content (absent on disk means
+///   `false`, [`decode_claim_body`]; absence alone never excludes).
+///
+/// The gate is an EXCLUSION, not an error: failing claims are silently
+/// dropped and counted (`PackStats::claims_suppressed`). Targeted reads stay
+/// deliberately UNGATED: [`crate::Vault::get_claim`] is the history /
+/// consent-review door and the edge-provenance lifecycle readers must see
+/// closed (`superseded` / `retracted`) Claims to compute winner stamps.
+/// World/facet filtering (§H item 3) is a separate unit, and
+/// deleted-revision contamination (§H item 5) is the M4/M5 sweep scope.
+pub(crate) fn claim_surfaceable(body: &ClaimBody) -> bool {
+    matches!(
+        body.approval,
+        ClaimApprovalStatus::Auto | ClaimApprovalStatus::Approved
+    ) && body.lifecycle == ClaimLifecycleStatus::Active
+        && !body.stale
 }
 
 /// Parses a MessagePack number as a finite `f32` in `[0, 1]`. Shared with
@@ -734,10 +809,112 @@ mod tests {
         ));
     }
 
+    /// ARCH-0004 / ARCH-0022 world write-validation, exercised on the claim
+    /// body chokepoint with hand-built MessagePack so a wrong impl that stores
+    /// arbitrary `world` bytes FAILS: a present `world` must be exactly 16
+    /// binary bytes (→ an `EntityId`), an absent key is base reality (`None`),
+    /// and a 15-byte blob or a string is a typed `InvalidClaimBody`.
+    #[test]
+    fn world_value_must_be_16_byte_binary() {
+        let subj = EntityId::from_bytes([0x11; 16]).expect("valid subject id");
+        let body_with_world = |world: Option<Value>| -> Vec<u8> {
+            let mut entries = vec![
+                (Value::from("pred"), Value::from("profile.name")),
+                (Value::from("val"), Value::from("x")),
+                (Value::from("conf"), Value::F32(1.0)),
+            ];
+            if let Some(world) = world {
+                entries.push((Value::from("world"), world));
+            }
+            entries.push((Value::from("subj"), Value::Binary(subj.as_bytes().to_vec())));
+            entries.push((Value::from("appr"), Value::from("auto")));
+            entries.push((Value::from("life"), Value::from("active")));
+            let mut out = Vec::new();
+            rmpv::encode::write_value(&mut out, &Value::Map(entries)).expect("encode body");
+            out
+        };
+
+        // Exactly 16 binary bytes → an EntityId.
+        let world_id = EntityId::from_bytes([0x5A; 16]).expect("valid world id");
+        let good = body_with_world(Some(Value::Binary(world_id.as_bytes().to_vec())));
+        assert_eq!(
+            decode_claim_body(&good, false)
+                .expect("16-byte world passes")
+                .world,
+            Some(world_id)
+        );
+
+        // Absent key = base reality (None), the elide-the-default pattern.
+        let base = body_with_world(None);
+        assert_eq!(
+            decode_claim_body(&base, false)
+                .expect("absent world passes")
+                .world,
+            None
+        );
+
+        // 15-byte blob rejected fail-closed.
+        assert!(matches!(
+            decode_claim_body(&body_with_world(Some(Value::Binary(vec![0x5A; 15]))), false),
+            Err(Error::InvalidClaimBody(_))
+        ));
+
+        // String rejected fail-closed (the pre-fix opaque-bytes behavior).
+        assert!(matches!(
+            decode_claim_body(&body_with_world(Some(Value::from("w0"))), false),
+            Err(Error::InvalidClaimBody(_))
+        ));
+    }
+
     #[test]
     fn claim_field_profile_slices_are_prefixes_of_the_pinned_keys() {
         assert_eq!(CLAIM_FIELDS_MINIMAL, &CLAIM_BODY_KEYS[..2]);
         assert_eq!(CLAIM_FIELDS_STANDARD, &CLAIM_BODY_KEYS[..5]);
         assert_eq!(CLAIM_FIELDS_FULL, &CLAIM_BODY_KEYS[..11]);
+    }
+
+    /// D19 literal truth table: `appr ∈ {auto, approved}` ∧ `life = active`
+    /// ∧ `stale = false` — every other combination is excluded (ARCH-0003;
+    /// ARCH-0004 §H items 1/2/4).
+    #[test]
+    fn claim_surfaceable_pins_the_full_status_truth_table() {
+        let subject = ClaimSubject::Entity(EntityId::from_bytes([0x11; 16]).expect("valid id"));
+        let body = |appr: ClaimApprovalStatus, life: ClaimLifecycleStatus, stale: bool| {
+            let mut body = ClaimBody::new("test.pred", subject, Value::from("v"), 0.5, appr, life);
+            body.stale = stale;
+            body
+        };
+
+        use ClaimApprovalStatus as A;
+        use ClaimLifecycleStatus as L;
+
+        // The ONLY surfaceable combinations.
+        assert!(claim_surfaceable(&body(A::Auto, L::Active, false)));
+        assert!(claim_surfaceable(&body(A::Approved, L::Active, false)));
+
+        // Approval axis excludes independently of lifecycle (AC 3).
+        assert!(!claim_surfaceable(&body(A::Proposed, L::Active, false)));
+        assert!(!claim_surfaceable(&body(A::Rejected, L::Active, false)));
+
+        // Lifecycle axis excludes independently of approval.
+        assert!(!claim_surfaceable(&body(A::Auto, L::Superseded, false)));
+        assert!(!claim_surfaceable(&body(A::Auto, L::Retracted, false)));
+        assert!(!claim_surfaceable(&body(A::Approved, L::Superseded, false)));
+        assert!(!claim_surfaceable(&body(A::Approved, L::Retracted, false)));
+
+        // Staleness excludes even when both status axes pass (AC 1).
+        assert!(!claim_surfaceable(&body(A::Auto, L::Active, true)));
+        assert!(!claim_surfaceable(&body(A::Approved, L::Active, true)));
+
+        // `ClaimBody::new` leaves `stale` at the decode default (absent =
+        // false) — absence alone must not exclude (AC 4).
+        assert!(claim_surfaceable(&ClaimBody::new(
+            "test.pred",
+            subject,
+            Value::from("v"),
+            0.5,
+            A::Auto,
+            L::Active,
+        )));
     }
 }

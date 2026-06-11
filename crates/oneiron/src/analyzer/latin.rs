@@ -13,6 +13,7 @@
 use rust_stemmers::{Algorithm, Stemmer};
 use unicode_segmentation::UnicodeSegmentation;
 
+use super::emoji;
 use super::normalize;
 use super::token::{AnalyzerChannel, LanguageHint, Token, TokenKind};
 
@@ -75,7 +76,24 @@ pub fn analyze(
     let stemmer = hint.and_then(algorithm_for).map(Stemmer::create);
     let mut position = position_base;
 
+    // Emoji have Script=Common, so the script-run splitter attaches them to
+    // an adjacent Latin/Cyrillic/Greek run (`"hello 🦀"` is ONE Latin run).
+    // `unicode_word_indices` skips them as non-words, so the gaps between
+    // (and around) words are scanned for emoji grapheme clusters
+    // per ARCH-0031 "Emoji / unknown → Grapheme per token" (ONE-1118).
+    let mut gap_start = 0usize;
+
     for (idx, word) in text.unicode_word_indices() {
+        if gap_start < idx {
+            position = emoji::emit_emoji_graphemes(
+                &text[gap_start..idx],
+                offset_base + gap_start as u32,
+                position,
+                out,
+            );
+        }
+        gap_start = idx + word.len();
+
         let start = offset_base + idx as u32;
         let end = start + word.len() as u32;
         let folded = normalize::casefold(word);
@@ -108,6 +126,15 @@ pub fn analyze(
         }
 
         position += 1;
+    }
+
+    if gap_start < text.len() {
+        position = emoji::emit_emoji_graphemes(
+            &text[gap_start..],
+            offset_base + gap_start as u32,
+            position,
+            out,
+        );
     }
 
     position
@@ -291,6 +318,63 @@ mod tests {
         for (hint, algo) in expected {
             assert_eq!(algorithm_for(hint), Some(algo));
         }
+    }
+
+    /// Emoji absorbed into a Latin run (Script=Common attaches to the
+    /// adjacent non-CJK run) must surface as grapheme-per-token Surface
+    /// tokens interleaved with the words, not silently drop (ARCH-0031
+    /// "Emoji / unknown → Grapheme per token").
+    #[test]
+    fn emoji_in_latin_run_emits_between_words() {
+        let cases: Vec<(&str, &str, Vec<&str>)> = vec![
+            ("between", "love 🦀 rust", vec!["love", "🦀", "rust"]),
+            ("trailing", "rust 🦀", vec!["rust", "🦀"]),
+            ("leading", "🦀 rust", vec!["🦀", "rust"]),
+            ("multiple", "ship 🦀🔥 it", vec!["ship", "🦀", "🔥", "it"]),
+        ];
+        for (case_name, input, expected) in cases {
+            let mut out = Vec::new();
+            analyze(input, 0, 0, Some(LanguageHint::En), false, &mut out);
+            assert_eq!(
+                surface_terms(&out),
+                expected,
+                "case {case_name}: unexpected surface tokens"
+            );
+            let positions: Vec<u32> = out
+                .iter()
+                .filter(|t| t.channel == AnalyzerChannel::Surface)
+                .map(|t| t.position)
+                .collect();
+            let contiguous: Vec<u32> = (0..positions.len() as u32).collect();
+            assert_eq!(
+                positions, contiguous,
+                "case {case_name}: positions must stay contiguous"
+            );
+        }
+    }
+
+    #[test]
+    fn emoji_tokens_carry_emoji_kind_and_unit_length_increment() {
+        let mut out = Vec::new();
+        analyze("rust 🦀", 0, 0, Some(LanguageHint::En), false, &mut out);
+        let crab = out
+            .iter()
+            .find(|t| t.term.as_ref() == "🦀")
+            .expect("crab token must be emitted");
+        assert_eq!(crab.kind, TokenKind::Emoji);
+        assert_eq!(crab.length_increment, 1);
+        assert_eq!(crab.position_increment, 1);
+        assert_eq!(crab.channel, AnalyzerChannel::Surface);
+        // Offsets slice the original text: "rust " is 5 bytes, 🦀 is 4.
+        assert_eq!((crab.byte_start, crab.byte_end), (5, 9));
+    }
+
+    #[test]
+    fn emoji_does_not_disturb_stemming() {
+        let mut out = Vec::new();
+        analyze("running 🦀", 0, 0, Some(LanguageHint::En), false, &mut out);
+        assert_eq!(surface_terms(&out), vec!["running", "🦀"]);
+        assert_eq!(stem_terms(&out), vec!["run"]);
     }
 
     #[test]
