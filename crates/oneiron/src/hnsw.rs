@@ -1258,32 +1258,308 @@ fn select_best_entry_point(
     neighbors_by_id: &HashMap<EntityId, Vec<EntityId>>,
     suggested: Option<EntityId>,
 ) -> Option<EntityId> {
-    let mut best = suggested.or_else(|| neighbors_by_id.keys().copied().next())?;
-    let mut best_reach = reachable_from_entry(neighbors_by_id, best).len();
-    if best_reach == neighbors_by_id.len() {
-        return Some(best);
+    select_best_entry_point_probed(neighbors_by_id, suggested, &mut 0)
+}
+
+/// Selects the rebuild entry point, counting unit operations into `ops`.
+///
+/// Reachability here is DIRECTED: `m_max_0` pruning makes neighbor lists
+/// asymmetric, so undirected components are not equivalent. The previous
+/// implementation ran one full BFS per candidate node (`O(V·(V+E))`); this
+/// version is linear-class:
+///
+/// 1. Fast path: a single BFS from `suggested`. Fully reachable graphs (the
+///    common case after a healthy rebuild) keep the cheap early-exit and the
+///    suggested entry point.
+/// 2. Otherwise: condense the graph into strongly connected components
+///    (iterative Tarjan, `O(V+E)`) and pick from the source SCCs
+///    (condensation in-degree zero). Every maximal-reach node lives in a
+///    source SCC — a non-source SCC is reached from some predecessor SCC
+///    whose forward closure is strictly larger (the condensation is acyclic,
+///    so the predecessor's own nodes are not in the successor's closure) —
+///    therefore comparing source closures suffices. Winner: the source SCC
+///    whose forward closure covers the most nodes; ties break to the lowest
+///    entity id among the tied sources' member nodes, preserving the
+///    previous per-candidate scan's deterministic tie-break.
+///
+/// `ops` increments once per node visit and once per edge scan in every
+/// phase, so tests can pin the complexity class.
+fn select_best_entry_point_probed(
+    neighbors_by_id: &HashMap<EntityId, Vec<EntityId>>,
+    suggested: Option<EntityId>,
+    ops: &mut u64,
+) -> Option<EntityId> {
+    let initial = suggested.or_else(|| neighbors_by_id.keys().copied().next())?;
+    if reachable_from_entry_probed(neighbors_by_id, initial, ops).len() == neighbors_by_id.len() {
+        return Some(initial);
     }
 
-    for candidate in neighbors_by_id.keys().copied() {
-        if candidate == best {
+    let condensation = condense_sccs(neighbors_by_id, ops);
+    best_source_scc_member(&condensation, ops)
+}
+
+/// Strongly-connected-component condensation of an in-memory rebuild graph.
+struct SccCondensation {
+    /// Member-node count per SCC.
+    sizes: Vec<usize>,
+    /// Lowest member entity id per SCC (deterministic tie-break key).
+    min_ids: Vec<EntityId>,
+    /// Outgoing condensation edges per SCC. May contain duplicates;
+    /// consumers deduplicate via visited marks.
+    adjacency: Vec<Vec<usize>>,
+    /// True when the SCC has at least one incoming condensation edge,
+    /// i.e. it is not a source.
+    has_incoming: Vec<bool>,
+}
+
+const TARJAN_UNVISITED: usize = usize::MAX;
+
+/// Iterative Tarjan SCC condensation, `O(V+E)`. Explicit DFS frames keep the
+/// recursion depth off the thread stack (chain-shaped graphs are `O(V)`
+/// deep). Neighbor ids absent from `neighbors_by_id` are skipped: rebuild
+/// adjacency only references inserted nodes.
+fn condense_sccs(
+    neighbors_by_id: &HashMap<EntityId, Vec<EntityId>>,
+    ops: &mut u64,
+) -> SccCondensation {
+    let node_count = neighbors_by_id.len();
+    let mut ids = Vec::with_capacity(node_count);
+    let mut index_of = HashMap::with_capacity(node_count);
+    for id in neighbors_by_id.keys() {
+        index_of.insert(*id, ids.len());
+        ids.push(*id);
+    }
+
+    let mut discovery = vec![TARJAN_UNVISITED; node_count];
+    let mut lowlink = vec![0_usize; node_count];
+    let mut on_stack = vec![false; node_count];
+    let mut scc_of = vec![TARJAN_UNVISITED; node_count];
+    let mut member_stack: Vec<usize> = Vec::new();
+    let mut next_discovery = 0_usize;
+
+    let mut sizes: Vec<usize> = Vec::new();
+    let mut min_ids: Vec<EntityId> = Vec::new();
+
+    // DFS frames: (node, offset of the next unexamined edge).
+    let mut frames: Vec<(usize, usize)> = Vec::new();
+    for root in 0..node_count {
+        if discovery[root] != TARJAN_UNVISITED {
             continue;
         }
-        let reach = reachable_from_entry(neighbors_by_id, candidate).len();
-        if reach > best_reach || (reach == best_reach && candidate.as_bytes() < best.as_bytes()) {
-            best = candidate;
-            best_reach = reach;
-            if best_reach == neighbors_by_id.len() {
-                break;
+        frames.push((root, 0));
+        while let Some(&mut (node, ref mut edge_pos)) = frames.last_mut() {
+            if *edge_pos == 0 {
+                *ops += 1;
+                discovery[node] = next_discovery;
+                lowlink[node] = next_discovery;
+                next_discovery += 1;
+                on_stack[node] = true;
+                member_stack.push(node);
+            }
+
+            let neighbors = neighbors_by_id[&ids[node]].as_slice();
+            let mut descend_into = None;
+            while *edge_pos < neighbors.len() {
+                let neighbor = &neighbors[*edge_pos];
+                *edge_pos += 1;
+                *ops += 1;
+                let Some(&target) = index_of.get(neighbor) else {
+                    continue;
+                };
+                if discovery[target] == TARJAN_UNVISITED {
+                    descend_into = Some(target);
+                    break;
+                }
+                if on_stack[target] {
+                    lowlink[node] = lowlink[node].min(discovery[target]);
+                }
+            }
+            if let Some(child) = descend_into {
+                frames.push((child, 0));
+                continue;
+            }
+
+            if lowlink[node] == discovery[node] {
+                let scc = sizes.len();
+                let mut size = 0_usize;
+                let mut min_id = ids[node];
+                loop {
+                    let member = member_stack
+                        .pop()
+                        .expect("Tarjan member stack holds every open node until its root pops");
+                    on_stack[member] = false;
+                    scc_of[member] = scc;
+                    size += 1;
+                    if ids[member].as_bytes() < min_id.as_bytes() {
+                        min_id = ids[member];
+                    }
+                    if member == node {
+                        break;
+                    }
+                }
+                sizes.push(size);
+                min_ids.push(min_id);
+            }
+
+            frames.pop();
+            if let Some(&mut (parent, _)) = frames.last_mut() {
+                lowlink[parent] = lowlink[parent].min(lowlink[node]);
             }
         }
     }
 
-    Some(best)
+    let scc_count = sizes.len();
+    let mut adjacency: Vec<Vec<usize>> = vec![Vec::new(); scc_count];
+    let mut has_incoming = vec![false; scc_count];
+    for (node, id) in ids.iter().enumerate() {
+        *ops += 1;
+        let from = scc_of[node];
+        for neighbor in &neighbors_by_id[id] {
+            *ops += 1;
+            let Some(&target) = index_of.get(neighbor) else {
+                continue;
+            };
+            let to = scc_of[target];
+            if from != to {
+                adjacency[from].push(to);
+                has_incoming[to] = true;
+            }
+        }
+    }
+
+    SccCondensation {
+        sizes,
+        min_ids,
+        adjacency,
+        has_incoming,
+    }
 }
 
+/// Picks the entry point from the condensation: the lowest member entity id
+/// among the source SCCs whose forward closure covers the most nodes.
+///
+/// Forward-closure node counts are computed once per SCC by a single
+/// reverse-topological DP rather than a fresh per-source walk. Iterative
+/// Tarjan finalizes SCCs sinks-first, so every condensation edge points to a
+/// strictly smaller SCC index (see the `debug_assert` below); iterating
+/// indices in increasing order therefore visits every child before its
+/// parents — reverse topological order — without a separate sort.
+///
+/// An SCC's children have *disjoint* forward closures unless the SCC tops a
+/// diamond (two child paths reconverge), so a single-child (or childless) SCC
+/// reuses its child's already-computed count in `O(1)`. Only a genuine
+/// diamond needs its exact closure recomputed via one bounded BFS — the
+/// shared-suffix / chain shapes that broke the old per-source walk
+/// (`Θ(sources · suffix)`) are diamond-free, so each condensation edge is
+/// relaxed once and the whole pass stays `O(V+E)`.
+fn best_source_scc_member(condensation: &SccCondensation, ops: &mut u64) -> Option<EntityId> {
+    let scc_count = condensation.sizes.len();
+    if scc_count == 0 {
+        return None;
+    }
+
+    // Reachable-node count of each SCC's forward closure (the SCC included).
+    let mut reach = vec![0_usize; scc_count];
+    // Per-parent dedup stamp: the stored adjacency may repeat a target.
+    let mut child_seen = vec![usize::MAX; scc_count];
+    // Per-BFS visited stamp for the diamond fallback.
+    let mut bfs_seen = vec![usize::MAX; scc_count];
+    let mut frontier: Vec<usize> = Vec::new();
+
+    for scc in 0..scc_count {
+        *ops += 1;
+        let mut unique_children = 0_usize;
+        let mut single_child = usize::MAX;
+        for &child in &condensation.adjacency[scc] {
+            *ops += 1;
+            debug_assert!(
+                child < scc,
+                "Tarjan finalizes sinks first, so condensation edges point to \
+                 strictly smaller SCC indices already carrying a final reach count"
+            );
+            if child_seen[child] != scc {
+                child_seen[child] = scc;
+                unique_children += 1;
+                single_child = child;
+            }
+        }
+
+        reach[scc] = if unique_children <= 1 {
+            // No siblings to overlap with: the child's closure is disjoint from
+            // this SCC, so summing is exact and `O(1)`.
+            condensation.sizes[scc]
+                + if unique_children == 1 {
+                    reach[single_child]
+                } else {
+                    0
+                }
+        } else {
+            // Diamond: child closures may share descendants, so summing would
+            // double count. Recompute the exact closure with one BFS that visits
+            // every reachable SCC a single time.
+            let mut closure_nodes = 0_usize;
+            bfs_seen[scc] = scc;
+            frontier.clear();
+            frontier.push(scc);
+            while let Some(node) = frontier.pop() {
+                *ops += 1;
+                closure_nodes += condensation.sizes[node];
+                for &next in &condensation.adjacency[node] {
+                    *ops += 1;
+                    if bfs_seen[next] != scc {
+                        bfs_seen[next] = scc;
+                        frontier.push(next);
+                    }
+                }
+            }
+            closure_nodes
+        };
+    }
+
+    // Winner: the source SCC (no incoming condensation edge) with the largest
+    // forward closure; ties break to the lowest member entity id — the exact
+    // selection the per-candidate reference scan makes.
+    let mut best: Option<(usize, EntityId)> = None;
+    for ((&closure_nodes, &has_incoming), &candidate_id) in reach
+        .iter()
+        .zip(&condensation.has_incoming)
+        .zip(&condensation.min_ids)
+    {
+        *ops += 1;
+        if has_incoming {
+            continue;
+        }
+
+        let replace = match &best {
+            None => true,
+            Some((best_closure, best_id)) => {
+                closure_nodes > *best_closure
+                    || (closure_nodes == *best_closure
+                        && candidate_id.as_bytes() < best_id.as_bytes())
+            }
+        };
+        if replace {
+            best = Some((closure_nodes, candidate_id));
+        }
+    }
+
+    best.map(|(_, id)| id)
+}
+
+/// Test-facing wrapper: production code paths use
+/// [`reachable_from_entry_probed`] so op counts cover the BFS fast path.
+#[cfg(test)]
 fn reachable_from_entry(
     neighbors_by_id: &HashMap<EntityId, Vec<EntityId>>,
     entry_point: EntityId,
+) -> HashSet<EntityId> {
+    reachable_from_entry_probed(neighbors_by_id, entry_point, &mut 0)
+}
+
+fn reachable_from_entry_probed(
+    neighbors_by_id: &HashMap<EntityId, Vec<EntityId>>,
+    entry_point: EntityId,
+    ops: &mut u64,
 ) -> HashSet<EntityId> {
     let mut visited = HashSet::with_capacity(neighbors_by_id.len().max(1));
     let mut frontier = vec![entry_point];
@@ -1292,8 +1568,12 @@ fn reachable_from_entry(
         if !visited.insert(current) {
             continue;
         }
+        *ops += 1;
         if let Some(neighbors) = neighbors_by_id.get(&current) {
-            frontier.extend(neighbors.iter().copied());
+            for neighbor in neighbors {
+                *ops += 1;
+                frontier.push(*neighbor);
+            }
         }
     }
 
@@ -2286,17 +2566,18 @@ mod tests {
 
     // ─── ONE-325 / ONE-324: symmetric links + localized delete/refresh ───
 
-    /// Distinct, lexicographically ordered test id (`value` ≥ 1 big-endian in
-    /// the first 8 bytes). Creation order equals key order.
-    fn seq_id(value: u64) -> EntityId {
+    /// Builds a distinct, lexicographically ordered test id: `value` (>= 1,
+    /// big-endian) in the first 8 bytes, zero padding after. Ordering by
+    /// `as_bytes()` equals numeric ordering of `value`.
+    fn id_from_u64(value: u64) -> EntityId {
         assert!(value >= 1, "zero would collide with the reserved zero id");
         let mut bytes = [0_u8; ENTITY_ID_LEN];
         bytes[..8].copy_from_slice(&value.to_be_bytes());
-        EntityId::from_bytes(bytes).expect("nonzero sequential ids avoid reserved sentinels")
+        EntityId::from_bytes(bytes).expect("nonzero counter ids avoid reserved sentinels")
     }
 
-    /// SplitMix64 step — deterministic vector generator, no external deps.
-    fn next_rand(state: &mut u64) -> u64 {
+    /// SplitMix64 — deterministic test PRNG, no external dependency.
+    fn splitmix64(state: &mut u64) -> u64 {
         *state = state.wrapping_add(0x9E37_79B9_7F4A_7C15);
         let mut z = *state;
         z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
@@ -2306,7 +2587,7 @@ mod tests {
 
     fn pseudo_vector(state: &mut u64, dim: usize) -> Vec<f32> {
         (0..dim)
-            .map(|_| ((next_rand(state) >> 40) as f32 / (1 << 24) as f32) * 2.0 - 1.0)
+            .map(|_| ((splitmix64(state) >> 40) as f32 / (1 << 24) as f32) * 2.0 - 1.0)
             .collect()
     }
 
@@ -2334,7 +2615,7 @@ mod tests {
         let mut ids = Vec::with_capacity(n as usize);
         let mut batch = vault.batch();
         for value in 1..=n {
-            let id = seq_id(value);
+            let id = id_from_u64(value);
             batch = batch.vector(&id, &pseudo_vector(&mut state, dim));
             ids.push(id);
         }
@@ -2411,9 +2692,9 @@ mod tests {
         // that trips orphan protection.
         let temp_dir = tempdir()?;
         let vault = Vault::open(temp_dir.path(), small_graph_config(4, 1, 8))?;
-        let from = seq_id(1); // deletion target
-        let victim = seq_id(2); // keeps a one-way link `victim -> from`
-        let near = seq_id(3); // closer to `from`, claims its single slot
+        let from = id_from_u64(1); // deletion target
+        let victim = id_from_u64(2); // keeps a one-way link `victim -> from`
+        let near = id_from_u64(3); // closer to `from`, claims its single slot
 
         // Entity records back the vectors so the search existence check resolves
         // live nodes (graph shape is driven entirely by the vector inserts).
@@ -2486,8 +2767,8 @@ mod tests {
     fn symmetric_marker_corruption_fails_closed() -> Result<()> {
         let temp_dir = tempdir()?;
         let vault = Vault::open(temp_dir.path(), small_graph_config(4, 2, 8))?;
-        let a = seq_id(1);
-        let b = seq_id(2);
+        let a = id_from_u64(1);
+        let b = id_from_u64(2);
         vault.put_vector(&a, &[1.0, 0.0, 0.0, 0.0])?;
         vault.put_vector(&b, &[0.0, 1.0, 0.0, 0.0])?;
 
@@ -2499,7 +2780,7 @@ mod tests {
         wtxn.commit()?;
 
         let insert_err = vault
-            .put_vector(&seq_id(3), &[0.5, 0.5, 0.0, 0.0])
+            .put_vector(&id_from_u64(3), &[0.5, 0.5, 0.0, 0.0])
             .expect_err("insert must reject a malformed symmetric marker");
         assert!(matches!(
             insert_err,
@@ -2673,9 +2954,9 @@ mod tests {
     fn symmetric_refresh_repairs_orphaned_old_neighbors() -> Result<()> {
         let temp_dir = tempdir()?;
         let vault = Vault::open(temp_dir.path(), small_graph_config(4, 1, 8))?;
-        let a = seq_id(1);
-        let b = seq_id(2);
-        let c = seq_id(3);
+        let a = id_from_u64(1);
+        let b = id_from_u64(2);
+        let c = id_from_u64(3);
 
         vault.put_vector(&a, &[1.0, 0.0, 0.0, 0.0])?;
         vault.put_vector(&b, &[0.9, 0.1, 0.0, 0.0])?;
@@ -2746,9 +3027,9 @@ mod tests {
         // Legacy vault: hand-built asymmetric graph without the marker.
         let temp_dir = tempdir()?;
         let vault = Vault::open(temp_dir.path(), test_config())?;
-        let a = seq_id(1);
-        let b = seq_id(2);
-        let c = seq_id(3);
+        let a = id_from_u64(1);
+        let b = id_from_u64(2);
+        let c = id_from_u64(3);
 
         let mut wtxn = vault.store.env.write_txn()?;
         put_vector_raw(&vault.store, &mut wtxn, &a, &[1.0, 0.0, 0.0, 0.0])?;
@@ -2772,7 +3053,7 @@ mod tests {
             .vector(&a, &[0.5, 0.5, 0.0, 0.0])
             .vector(&b, &[0.0, 0.5, 0.5, 0.0])
             .vector(&c, &[0.5, 0.0, 0.5, 0.0])
-            .vector(&seq_id(4), &[0.5, 0.0, 0.0, 0.5])
+            .vector(&id_from_u64(4), &[0.5, 0.0, 0.0, 0.5])
             .commit()?;
         {
             let rtxn = vault.store.env.read_txn()?;
@@ -2798,9 +3079,9 @@ mod tests {
         build_symmetric_vault(&vault, 8, 4, 19)?;
         vault
             .batch()
-            .vector(&seq_id(2), &[0.7, 0.1, 0.1, 0.1])
-            .vector(&seq_id(5), &[0.1, 0.7, 0.1, 0.1])
-            .vector(&seq_id(7), &[0.1, 0.1, 0.7, 0.1])
+            .vector(&id_from_u64(2), &[0.7, 0.1, 0.1, 0.1])
+            .vector(&id_from_u64(5), &[0.1, 0.7, 0.1, 0.1])
+            .vector(&id_from_u64(7), &[0.1, 0.1, 0.7, 0.1])
             .commit()?;
         let rtxn = vault.store.env.read_txn()?;
         assert_eq!(
@@ -2818,9 +3099,9 @@ mod tests {
     fn maintain_rebuild_migrates_legacy_vault_to_symmetric() -> Result<()> {
         let temp_dir = tempdir()?;
         let vault = Vault::open(temp_dir.path(), test_config())?;
-        let a = seq_id(1);
-        let b = seq_id(2);
-        let c = seq_id(3);
+        let a = id_from_u64(1);
+        let b = id_from_u64(2);
+        let c = id_from_u64(3);
 
         let mut wtxn = vault.store.env.write_txn()?;
         put_vector_raw(&vault.store, &mut wtxn, &a, &[1.0, 0.0, 0.0, 0.0])?;
@@ -2883,8 +3164,8 @@ mod tests {
     fn legacy_refresh_keeps_marker_unset() -> Result<()> {
         let temp_dir = tempdir()?;
         let vault = Vault::open(temp_dir.path(), test_config())?;
-        let a = seq_id(1);
-        let b = seq_id(2);
+        let a = id_from_u64(1);
+        let b = id_from_u64(2);
 
         let mut wtxn = vault.store.env.write_txn()?;
         put_vector_raw(&vault.store, &mut wtxn, &a, &[1.0, 0.0, 0.0, 0.0])?;
@@ -2918,5 +3199,269 @@ mod tests {
             "legacy rebuild must not stamp the symmetric marker"
         );
         Ok(())
+    }
+
+    /// The pre-SCC selector — one full directed BFS per candidate node,
+    /// `O(V·(V+E))` — kept verbatim as the exhaustive reference that the
+    /// linear implementation must match: maximal directed reach, ties broken
+    /// by lowest entity id.
+    fn reference_select_best_entry_point(
+        neighbors_by_id: &HashMap<EntityId, Vec<EntityId>>,
+        suggested: Option<EntityId>,
+    ) -> Option<EntityId> {
+        let mut best = suggested.or_else(|| neighbors_by_id.keys().copied().next())?;
+        let mut best_reach = reachable_from_entry(neighbors_by_id, best).len();
+        if best_reach == neighbors_by_id.len() {
+            return Some(best);
+        }
+
+        for candidate in neighbors_by_id.keys().copied() {
+            if candidate == best {
+                continue;
+            }
+            let reach = reachable_from_entry(neighbors_by_id, candidate).len();
+            if reach > best_reach || (reach == best_reach && candidate.as_bytes() < best.as_bytes())
+            {
+                best = candidate;
+                best_reach = reach;
+                if best_reach == neighbors_by_id.len() {
+                    break;
+                }
+            }
+        }
+
+        Some(best)
+    }
+
+    /// Directed reach decides the entry point, not SCC size and not weak
+    /// (undirected) components: a 6-node chain's head (forward closure 6)
+    /// beats a 5-node cycle (the largest SCC, closure 5). The chain head is
+    /// deliberately NOT the lowest id of its own component, so a
+    /// "lowest id in the biggest component" implementation also fails here.
+    #[test]
+    fn select_best_entry_point_prefers_long_chain_over_larger_scc() {
+        let cycle: Vec<EntityId> = (1..=5_u64).map(id_from_u64).collect();
+        let chain_head = id_from_u64(60);
+        let chain_rest: Vec<EntityId> = (10..=14_u64).map(id_from_u64).collect();
+
+        let mut neighbors = HashMap::new();
+        for (i, id) in cycle.iter().enumerate() {
+            neighbors.insert(*id, vec![cycle[(i + 1) % cycle.len()]]);
+        }
+        neighbors.insert(chain_head, vec![chain_rest[0]]);
+        for window in chain_rest.windows(2) {
+            neighbors.insert(window[0], vec![window[1]]);
+        }
+        neighbors.insert(chain_rest[4], Vec::new());
+
+        assert_eq!(
+            select_best_entry_point(&neighbors, Some(cycle[0])),
+            Some(chain_head)
+        );
+    }
+
+    /// On closure ties the winner is the lowest entity id over ALL member
+    /// nodes of the tied source SCCs — not the suggested node and not an
+    /// SCC-root artifact. Two disconnected 2-cycles tie at closure 2; the
+    /// 0x10 member of the {0x10, 0x40} cycle must win.
+    #[test]
+    fn select_best_entry_point_tie_breaks_by_lowest_member_id_across_sccs() {
+        let m1 = EntityId::from_bytes([0x10; ENTITY_ID_LEN]).expect("test id should be valid");
+        let m2 = EntityId::from_bytes([0x40; ENTITY_ID_LEN]).expect("test id should be valid");
+        let n1 = EntityId::from_bytes([0x20; ENTITY_ID_LEN]).expect("test id should be valid");
+        let n2 = EntityId::from_bytes([0x30; ENTITY_ID_LEN]).expect("test id should be valid");
+        let neighbors = HashMap::from([
+            (m1, vec![m2]),
+            (m2, vec![m1]),
+            (n1, vec![n2]),
+            (n2, vec![n1]),
+        ]);
+
+        assert_eq!(select_best_entry_point(&neighbors, Some(n1)), Some(m1));
+    }
+
+    /// AC: on randomized disconnected fixtures the SCC-based entry reaches at
+    /// least as many nodes as the per-candidate-BFS reference's choice. The
+    /// fixtures are disconnected (>= 2 disjoint components), so no node is
+    /// fully reaching, the reference is deterministic (max reach, lowest-id
+    /// tie-break), and the result must match it exactly.
+    #[test]
+    fn select_best_entry_point_matches_exhaustive_reference_on_disconnected_fixtures() {
+        for seed in 0..60_u64 {
+            let mut state = seed;
+            let component_count = 2 + (splitmix64(&mut state) % 4) as usize;
+            let mut neighbors = HashMap::new();
+            let mut all_ids = Vec::new();
+            let mut next_id = 1_u64;
+
+            for _ in 0..component_count {
+                let size = 2 + (splitmix64(&mut state) % 9) as usize;
+                let ids: Vec<EntityId> = (0..size)
+                    .map(|_| {
+                        let id = id_from_u64(next_id);
+                        next_id += 1;
+                        id
+                    })
+                    .collect();
+                for (i, id) in ids.iter().enumerate() {
+                    let out_degree = (splitmix64(&mut state) % 4) as usize;
+                    let mut outs: Vec<EntityId> = Vec::new();
+                    for _ in 0..out_degree {
+                        let target = (splitmix64(&mut state) % size as u64) as usize;
+                        if target != i && !outs.contains(&ids[target]) {
+                            outs.push(ids[target]);
+                        }
+                    }
+                    neighbors.insert(*id, outs);
+                }
+                all_ids.extend(ids);
+            }
+
+            let suggested = all_ids[(splitmix64(&mut state) as usize) % all_ids.len()];
+            let expected = reference_select_best_entry_point(&neighbors, Some(suggested))
+                .expect("non-empty fixture");
+            let actual =
+                select_best_entry_point(&neighbors, Some(suggested)).expect("non-empty fixture");
+
+            let expected_reach = reachable_from_entry(&neighbors, expected).len();
+            let actual_reach = reachable_from_entry(&neighbors, actual).len();
+            assert!(
+                actual_reach >= expected_reach,
+                "seed {seed}: SCC entry reaches {actual_reach} < reference {expected_reach}"
+            );
+            assert!(
+                expected_reach < neighbors.len(),
+                "seed {seed}: disconnected fixture must not be fully reachable"
+            );
+            assert_eq!(
+                actual, expected,
+                "seed {seed}: deterministic (max reach, lowest id) winner must match"
+            );
+        }
+    }
+
+    /// AC: complexity stays `O(V+E)`-class on a multi-component fixture —
+    /// verified by op-count probe. 10 disjoint 100-node chains: V = 1000,
+    /// E = 990. The SCC path touches each node and edge a small constant
+    /// number of times (measured ~3.6·(V+E)); budget 8·(V+E). A
+    /// per-candidate full-BFS selector pays Σ reach(v) =
+    /// 10 · (100·101/2) ≈ 50,500 node visits alone and cannot fit the
+    /// budget.
+    #[test]
+    fn select_best_entry_point_op_count_is_linear_on_multi_component_fixture() {
+        const CHAINS: usize = 10;
+        const CHAIN_LEN: usize = 100;
+
+        let mut neighbors = HashMap::new();
+        let mut heads = Vec::new();
+        let mut next_id = 1_u64;
+        for _ in 0..CHAINS {
+            let ids: Vec<EntityId> = (0..CHAIN_LEN)
+                .map(|_| {
+                    let id = id_from_u64(next_id);
+                    next_id += 1;
+                    id
+                })
+                .collect();
+            heads.push(ids[0]);
+            for (i, id) in ids.iter().enumerate() {
+                let outs = if i + 1 < CHAIN_LEN {
+                    vec![ids[i + 1]]
+                } else {
+                    Vec::new()
+                };
+                neighbors.insert(*id, outs);
+            }
+        }
+
+        let v = CHAINS * CHAIN_LEN;
+        let e = CHAINS * (CHAIN_LEN - 1);
+        let mut ops = 0_u64;
+        // Suggested is NOT the winning head: every chain head reaches
+        // CHAIN_LEN nodes, ties break to the lowest id (heads[0]).
+        let entry = select_best_entry_point_probed(&neighbors, Some(heads[3]), &mut ops)
+            .expect("non-empty fixture");
+
+        assert_eq!(entry, heads[0]);
+        let budget = 8 * (v + e) as u64;
+        assert!(
+            ops <= budget,
+            "ops {ops} exceeded linear budget {budget} (V={v}, E={e})"
+        );
+    }
+
+    /// AC: complexity stays `O(V+E)`-class even when many source SCCs feed a
+    /// SHARED reachable suffix — the shape a per-source closure walk degrades
+    /// to `Θ(sources · suffix)` on. K single-node sources all point at the head
+    /// of one shared K-node chain: V = 2K, E = 2K-1, and every source's forward
+    /// closure is the same K+1 nodes. The reverse-topological DP computes the
+    /// chain's reach once and reuses it for every source, relaxing each
+    /// condensation edge a single time, so ops stay linear. The previous
+    /// per-source closure walk re-traversed the whole shared chain once per
+    /// source: with K=100 it spends ~2·K² ≈ 20k closure ops and blows this
+    /// budget (8·(V+E) = 3192) — pre-fix the assert below fails; post-fix it
+    /// passes well under budget.
+    #[test]
+    fn select_best_entry_point_op_count_is_linear_on_shared_suffix_fixture() {
+        const K: usize = 100;
+        let sources: Vec<EntityId> = (1..=K as u64).map(id_from_u64).collect();
+        let chain: Vec<EntityId> = ((K as u64 + 1)..=(2 * K as u64)).map(id_from_u64).collect();
+
+        let mut neighbors = HashMap::new();
+        for source in &sources {
+            neighbors.insert(*source, vec![chain[0]]);
+        }
+        for (i, node) in chain.iter().enumerate() {
+            let outs = if i + 1 < K {
+                vec![chain[i + 1]]
+            } else {
+                Vec::new()
+            };
+            neighbors.insert(*node, outs);
+        }
+
+        let v = 2 * K; // K sources + K chain nodes
+        let e = K + (K - 1); // source->head edges + chain edges
+        let mut ops = 0_u64;
+        // Suggested is NOT the winner: every source reaches K+1 nodes (itself
+        // plus the shared chain), so they tie and the lowest id (sources[0])
+        // wins. The suggested source reaches only K+1 < 2K nodes, so the cheap
+        // fully-reachable early-exit does not fire and the SCC path runs.
+        let entry = select_best_entry_point_probed(&neighbors, Some(sources[3]), &mut ops)
+            .expect("non-empty fixture");
+
+        assert_eq!(entry, sources[0]);
+        let budget = 8 * (v + e) as u64;
+        assert!(
+            ops <= budget,
+            "ops {ops} exceeded linear budget {budget} (V={v}, E={e})"
+        );
+    }
+
+    /// AC: fully reachable graphs keep the cheap early-exit — a single BFS,
+    /// no SCC pass (which alone would at least double the op count), and the
+    /// suggested entry point is kept verbatim even though it is not the
+    /// lowest id.
+    #[test]
+    fn select_best_entry_point_keeps_suggested_on_fully_reachable_graph_with_single_bfs() {
+        const N: usize = 200;
+        let ids: Vec<EntityId> = (1..=N as u64).map(id_from_u64).collect();
+        let mut neighbors = HashMap::new();
+        for (i, id) in ids.iter().enumerate() {
+            neighbors.insert(*id, vec![ids[(i + 1) % N]]);
+        }
+        let suggested = ids[N / 2];
+
+        let mut ops = 0_u64;
+        let entry = select_best_entry_point_probed(&neighbors, Some(suggested), &mut ops)
+            .expect("non-empty fixture");
+
+        assert_eq!(entry, suggested);
+        // Single BFS budget: one op per node + one per edge, nothing else.
+        let single_bfs_budget = (N + N) as u64;
+        assert!(
+            ops <= single_bfs_budget,
+            "expected single-BFS early-exit, got {ops} ops > {single_bfs_budget}"
+        );
     }
 }

@@ -12,7 +12,7 @@ use crate::store::Store;
 use crate::types::{
     DecodedEdgeValue, EDGE_KEY_LEN, ENTITY_ID_LEN, EdgeKind, EdgeProvenanceFlags, EntityId,
     TimeRange, Vad, decode_edge_value_for_kind, encode_edge_value, short_id_prefix,
-    validate_entity_type, validate_public_entity_type,
+    validate_edge_weight, validate_entity_type, validate_public_entity_type,
 };
 
 pub(crate) const ENTITY_TYPE_OFFSET: usize = 0;
@@ -1052,9 +1052,7 @@ fn apply_edge_with_created_at(
     vad: Vad,
     provenance: Option<EdgeProvenanceFlags>,
 ) -> Result<()> {
-    if !weight.is_finite() {
-        return Err(Error::InvalidEdgeWeight { value: weight });
-    }
+    validate_edge_weight(weight)?;
     if let Some((component, value)) = vad.invalid_component() {
         return Err(Error::InvalidVad { component, value });
     }

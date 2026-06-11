@@ -5551,8 +5551,104 @@ fn edge_kinds_child_of_and_assigned_to() -> Result<()> {
             .any(|e| e.kind == EdgeKind::AssignedTo && e.target == machine)
     );
 
-    assert_eq!(EdgeKind::ChildOf.default_weight(), 1.0);
-    assert_eq!(EdgeKind::AssignedTo.default_weight(), 0.8);
+    // Contract pprWeight is null for both kinds (contracts.ts edgeKinds u8=6/7):
+    // no stored-weight prior exists, so callers pick the weight explicitly.
+    assert_eq!(EdgeKind::ChildOf.default_weight(), None);
+    assert_eq!(EdgeKind::AssignedTo.default_weight(), None);
+    Ok(())
+}
+
+/// ONE-1115 AC2 — `EdgeKind::default_weight` must equal the contract's
+/// LITERAL `edgeKinds.pprWeight` column (oneiron-docs
+/// `site/src/data/oneiron-contracts.ts`). `child_of` and `assigned_to` are
+/// the only `pprWeight: null` rows; any single-row drift fails this test.
+#[test]
+fn default_weight_matches_contract_ppr_weight_literals() {
+    let expected: [(EdgeKind, Option<f32>); 20] = [
+        (EdgeKind::AuthoredBy, Some(0.9)),
+        (EdgeKind::ScopedTo, Some(0.7)),
+        (EdgeKind::PartOf, Some(0.8)),
+        (EdgeKind::Supersedes, Some(0.3)),
+        (EdgeKind::BelongsTo, Some(1.0)),
+        (EdgeKind::ClaimOf, Some(1.0)),
+        (EdgeKind::ChildOf, None),
+        (EdgeKind::AssignedTo, None),
+        (EdgeKind::DerivedFrom, Some(0.2)),
+        (EdgeKind::Mentions, Some(0.6)),
+        (EdgeKind::About, Some(0.5)),
+        (EdgeKind::Supports, Some(1.0)),
+        (EdgeKind::Opposes, Some(0.0)),
+        (EdgeKind::ParticipatesIn, Some(1.0)),
+        (EdgeKind::Attached, Some(0.8)),
+        (EdgeKind::EmployedBy, Some(0.8)),
+        (EdgeKind::HasFacet, Some(0.7)),
+        (EdgeKind::FacetOf, Some(0.7)),
+        (EdgeKind::InWorld, Some(0.7)),
+        (EdgeKind::SetIn, Some(0.7)),
+    ];
+    for (kind, weight) in expected {
+        assert_eq!(
+            kind.default_weight(),
+            weight,
+            "stored-weight prior mismatch for {kind:?}"
+        );
+    }
+}
+
+/// ONE-1115 AC4 — edge weights are pinned to the contract range \[0, 1\]
+/// (contracts.ts `edgeKinds`) at write time: the value encoder and the batch
+/// apply path both reject out-of-range and non-finite weights with the typed
+/// `InvalidEdgeWeight`, and the boundary values 0.0 / 1.0 are accepted.
+#[test]
+fn edge_weight_outside_unit_range_rejected_at_write() -> Result<()> {
+    fn assert_invalid_weight(err: Error, rejected: f32) {
+        match err {
+            Error::InvalidEdgeWeight { value } => {
+                if rejected.is_nan() {
+                    assert!(value.is_nan(), "error payload must echo NaN, got {value}");
+                } else {
+                    assert_eq!(
+                        value.to_bits(),
+                        rejected.to_bits(),
+                        "error payload must echo the rejected weight"
+                    );
+                }
+            }
+            other => panic!("expected InvalidEdgeWeight for {rejected}, got {other:?}"),
+        }
+    }
+
+    let (_dir, vault) = open_test_vault();
+
+    for bad in [-0.1_f32, 1.1, f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
+        // Value encoder (types::encode_edge_value).
+        let encode_err = encode_edge_value(EdgeKind::Mentions, bad, 0, Vad::NEUTRAL, None)
+            .expect_err("encoder must reject out-of-range weight");
+        assert_invalid_weight(encode_err, bad);
+
+        // Batch apply path (put_edge → apply_edge_with_created_at).
+        let apply_err = vault
+            .put_edge(&EntityId::now(), EdgeKind::Mentions, &EntityId::now(), bad)
+            .expect_err("apply path must reject out-of-range weight");
+        assert_invalid_weight(apply_err, bad);
+    }
+
+    // Closed-interval boundaries are valid weights on both paths.
+    for good in [0.0_f32, 1.0] {
+        encode_edge_value(EdgeKind::Mentions, good, 0, Vad::NEUTRAL, None)
+            .expect("boundary weight must encode");
+
+        let src = EntityId::now();
+        let tgt = EntityId::now();
+        vault.put_edge(&src, EdgeKind::Mentions, &tgt, good)?;
+        let out = vault.edges_out(&src)?;
+        assert_eq!(out.len(), 1);
+        assert_eq!(
+            out[0].weight.to_bits(),
+            good.to_bits(),
+            "boundary weight must round-trip the write gate"
+        );
+    }
     Ok(())
 }
 
@@ -7072,6 +7168,9 @@ fn put_claim_writes_claim_of_edge_atomically() -> Result<()> {
         .expect("claim_of edge missing from edges_in");
     assert_eq!(out_value.len(), 12, "claim_of must be structural 12 B");
     assert_eq!(out_value, in_value);
+    // Weight f32 LE @0 = the contract's pinned claim_of pprWeight 1.0
+    // (contracts.ts edgeKinds u8 = 5).
+    assert_eq!(&out_value[0..4], &1.0_f32.to_le_bytes());
     drop(rtxn);
 
     // claims_for_subject = sources(ClaimOf, Some(0)).
@@ -7663,6 +7762,9 @@ fn put_edge_provenance_atomic_write_restamps_and_indexes() -> Result<()> {
         .get(&rtxn, &claim_of_src)?
         .expect("claim_of edge to the subject edge's source");
     assert_eq!(link.len(), EDGE_VALUE_STRUCTURAL_LEN);
+    // Weight f32 LE @0 = the contract's pinned claim_of pprWeight 1.0
+    // (contracts.ts edgeKinds u8 = 5).
+    assert_eq!(&link[0..4], &1.0_f32.to_le_bytes());
     assert!(
         vault.store.edges_out.get(&rtxn, &claim_of_tgt)?.is_none(),
         "claim_of must target the SOURCE entity only (D12)"

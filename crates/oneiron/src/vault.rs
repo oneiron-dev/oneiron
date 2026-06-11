@@ -54,6 +54,23 @@ use crate::{
 
 const MIN_MAP_SIZE_BYTES: usize = 1 << 20;
 
+/// Contract stored-weight prior for `claim_of` edges (contracts.ts
+/// `edgeKinds.pprWeight` = 1.0), unwrapped at COMPILE time: the writers below
+/// hardwire kinds whose prior is pinned non-null, so a contract change to
+/// `null` fails the build instead of the write.
+const CLAIM_OF_DEFAULT_WEIGHT: f32 = match EdgeKind::ClaimOf.default_weight() {
+    Some(weight) => weight,
+    None => panic!("contract pins a non-null pprWeight for claim_of"),
+};
+
+/// Contract stored-weight prior for `supersedes` edges (contracts.ts
+/// `edgeKinds.pprWeight` = 0.3); compile-time unwrapped like
+/// [`CLAIM_OF_DEFAULT_WEIGHT`].
+const SUPERSEDES_DEFAULT_WEIGHT: f32 = match EdgeKind::Supersedes.default_weight() {
+    Some(weight) => weight,
+    None => panic!("contract pins a non-null pprWeight for supersedes"),
+};
+
 /// Length of the edge-kind prefix: `entity_id (16) | kind (1)`.
 const EDGE_KIND_PREFIX_LEN: usize = ENTITY_ID_LEN + 1;
 
@@ -364,7 +381,7 @@ impl Vault {
                 src: *id,
                 kind: EdgeKind::ClaimOf,
                 tgt: subject,
-                weight: EdgeKind::ClaimOf.default_weight(),
+                weight: CLAIM_OF_DEFAULT_WEIGHT,
                 vad: Vad::NEUTRAL,
             });
         }
@@ -380,6 +397,13 @@ impl Vault {
     /// CLAIM or its body fails the pinned structural validation. The read
     /// path allows reserved `edge.*` predicates so stored provenance Claims
     /// stay decodable.
+    ///
+    /// DELIBERATELY UNGATED (D19): unlike the retrieval read paths
+    /// (pipeline / context pack), this targeted read returns claims of
+    /// EVERY `appr`/`life`/`stale` status — it is the history and
+    /// consent-review door ("all non-current states are still stored",
+    /// ARCH-0003), and the edge-provenance lifecycle readers likewise must
+    /// see closed Claims to compute winner stamps.
     pub fn get_claim(&self, id: &EntityId) -> Result<Option<ClaimBody>> {
         let rtxn = self.store.env.read_txn()?;
         let Some(raw) = self.store.entities.get(&rtxn, id.as_bytes())? else {
@@ -744,7 +768,7 @@ impl Vault {
                 claim_id,
                 EdgeKind::ClaimOf,
                 &subject.source,
-                EdgeKind::ClaimOf.default_weight(),
+                CLAIM_OF_DEFAULT_WEIGHT,
             );
         for closure in &closures {
             let closed_record = close_record_for_supersession(&closure.record, close_at)?;
@@ -877,7 +901,7 @@ impl Vault {
                 src: *new_id,
                 kind: EdgeKind::Supersedes,
                 tgt: *old_id,
-                weight: EdgeKind::Supersedes.default_weight(),
+                weight: SUPERSEDES_DEFAULT_WEIGHT,
                 created_at: now,
                 vad: Vad::NEUTRAL,
                 provenance: None,
