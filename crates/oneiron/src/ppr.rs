@@ -355,7 +355,7 @@ fn inbound_mentions_count(store: &Store, txn: &RoTxn<'_>, seed: &EntityId) -> Re
 /// Fail-closed defaults: seeds WITHOUT an entity record (graph-only ids,
 /// which `seed_is_live_for_ppr` recognizes as legitimate) contribute no
 /// `learned_at`; if NO seed has one, the SHORTEST tier (Active, 24 h)
-/// applies. A present-but-unparseable entity record short-circuits to the
+/// applies. A present-but-unparsable entity record short-circuits to the
 /// shortest tier as well. A `learned_at` in the future saturates to age 0
 /// (Active).
 ///
@@ -2795,7 +2795,7 @@ mod tests {
     /// 259 200 s (7 d EXACTLY is Recent); ≥ 30 d → 604 800 s (30 d EXACTLY
     /// is Dormant). Recency = max(learned_at) over the seed set, so the most
     /// recently learned seed wins; future `learned_at` saturates to Active;
-    /// record-less seed sets and unparseable records fail closed to Active.
+    /// record-less seed sets and unparsable records fail closed to Active.
     #[test]
     fn recency_tier_boundaries_match_contract() -> Result<()> {
         let temp_dir = tempdir()?;
@@ -2842,7 +2842,7 @@ mod tests {
         assert_eq!(unknown_only, 86_400);
         drop(rtxn);
 
-        // A present-but-unparseable entity record fails closed to Active,
+        // A present-but-unparsable entity record fails closed to Active,
         // even when a dormant seed is also present.
         let mut wtxn = vault.store.env.write_txn()?;
         vault
