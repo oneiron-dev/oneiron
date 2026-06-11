@@ -12,6 +12,27 @@ use crate::types::{ENTITY_ID_LEN, EntityId, ScoredEntity, VaultConfig, parse_ent
 
 const ENTRY_POINT_KEY: &[u8] = b"entry_point";
 pub(crate) const COUNT_KEY: &[u8] = b"count";
+/// `hnsw_meta` marker: present (value `[1]`) when the persisted graph
+/// maintains the symmetric-link invariant — every stored link `a → b` has
+/// its reverse `b → a`, except the documented orphan-protection case where
+/// a node's last remaining link is kept one-way instead of emptying its
+/// neighbor list. Under the invariant a node's backlinks are exactly its
+/// forward neighbor list, so deletes and refreshes never scan the full
+/// `hnsw_neighbors` DB (ONE-325). Vaults without the marker keep the legacy
+/// asymmetric behavior (full-scan delete, full-rebuild refresh) until the
+/// one-time migration runs via `maintain().rebuild_hnsw()`.
+pub(crate) const SYMMETRIC_LINKS_KEY: &[u8] = b"symmetric_links";
+const SYMMETRIC_LINKS_ENABLED: u8 = 1;
+/// `hnsw_meta` counter (u64 LE): number of times the localized refresh path
+/// had to fall back to a full symmetric snapshot rebuild. The fallback is an
+/// explicit, measured, rare path (ONE-324 AC10) — this counter is how it is
+/// measured.
+pub(crate) const REFRESH_FALLBACK_REBUILDS_KEY: &[u8] = b"refresh_fallback_rebuilds";
+/// `hnsw_meta` counter (u64 LE): number of legacy full-snapshot rebuilds
+/// this vault has run (pre-migration refresh contract). Observability for
+/// the batched-rebuild coalescing guarantee (ONE-324 AC11): one transaction
+/// bumps this at most once no matter how many vector refreshes it carries.
+pub(crate) const LEGACY_REBUILDS_KEY: &[u8] = b"legacy_snapshot_rebuilds";
 const ERR_ENTRY_POINT_MISSING: &str = "hnsw count > 0 but entry point is missing";
 const ERR_ENTRY_POINT_VECTOR_MISSING: &str = "hnsw count > 0 but entry point vector is missing";
 const ERR_ENTRY_POINT_BYTES: &str = "hnsw entry point bytes are malformed";
@@ -27,6 +48,79 @@ const ERR_REMAINING_NODES_MISSING: &str = "hnsw count > 0 but no nodes remain";
 const ERR_EXISTING_NODE_ZERO_COUNT: &str = "hnsw node exists but count is zero";
 const ERR_ZERO_COUNT_GRAPH_NOT_EMPTY: &str =
     "hnsw metadata says count is zero but graph rows still exist";
+const ERR_SYMMETRIC_MARKER_BYTES: &str = "hnsw symmetric-links marker bytes are malformed";
+const ERR_FALLBACK_COUNTER_BYTES: &str = "hnsw refresh fallback counter bytes are malformed";
+const ERR_LEGACY_REBUILDS_BYTES: &str = "hnsw legacy rebuild counter bytes are malformed";
+
+/// Link discipline of the persisted graph, derived from
+/// [`SYMMETRIC_LINKS_KEY`]. Decoding is fail-closed: a present-but-malformed
+/// marker is a typed corruption error, never a silent legacy downgrade.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum LinkDiscipline {
+    /// Symmetric-link invariant holds: backlinks ≡ forward neighbors.
+    Symmetric,
+    /// Pre-migration graph: links may be one-way; deletes scan the full
+    /// neighbors DB and refreshes rebuild from snapshot.
+    Legacy,
+}
+
+fn read_link_discipline(store: &Store, txn: &RoTxn<'_>) -> Result<LinkDiscipline> {
+    match store.hnsw_meta.get(txn, SYMMETRIC_LINKS_KEY)? {
+        None => Ok(LinkDiscipline::Legacy),
+        Some([SYMMETRIC_LINKS_ENABLED]) => Ok(LinkDiscipline::Symmetric),
+        Some(_) => Err(Error::CorruptedIndex(ERR_SYMMETRIC_MARKER_BYTES)),
+    }
+}
+
+/// Stamps the vault as maintaining the symmetric-link invariant. Called when
+/// a graph is created from empty (fresh vaults) and when a full rebuild
+/// rewrites every row symmetrically (the one-time migration path).
+pub(crate) fn mark_symmetric_links(store: &Store, wtxn: &mut RwTxn<'_>) -> Result<()> {
+    store
+        .hnsw_meta
+        .put(wtxn, SYMMETRIC_LINKS_KEY, &[SYMMETRIC_LINKS_ENABLED])?;
+    Ok(())
+}
+
+pub(crate) fn read_refresh_fallback_rebuilds(store: &Store, txn: &RoTxn<'_>) -> Result<u64> {
+    let Some(raw) = store.hnsw_meta.get(txn, REFRESH_FALLBACK_REBUILDS_KEY)? else {
+        return Ok(0);
+    };
+    let bytes: [u8; 8] = raw
+        .try_into()
+        .map_err(|_| Error::CorruptedIndex(ERR_FALLBACK_COUNTER_BYTES))?;
+    Ok(u64::from_le_bytes(bytes))
+}
+
+fn increment_refresh_fallback_rebuilds(store: &Store, wtxn: &mut RwTxn<'_>) -> Result<()> {
+    let next = read_refresh_fallback_rebuilds(store, &*wtxn)?
+        .checked_add(1)
+        .ok_or(Error::ArithmeticOverflow("hnsw refresh fallback counter"))?;
+    store
+        .hnsw_meta
+        .put(wtxn, REFRESH_FALLBACK_REBUILDS_KEY, &next.to_le_bytes())?;
+    Ok(())
+}
+
+pub(crate) fn read_legacy_snapshot_rebuilds(store: &Store, txn: &RoTxn<'_>) -> Result<u64> {
+    let Some(raw) = store.hnsw_meta.get(txn, LEGACY_REBUILDS_KEY)? else {
+        return Ok(0);
+    };
+    let bytes: [u8; 8] = raw
+        .try_into()
+        .map_err(|_| Error::CorruptedIndex(ERR_LEGACY_REBUILDS_BYTES))?;
+    Ok(u64::from_le_bytes(bytes))
+}
+
+fn increment_legacy_snapshot_rebuilds(store: &Store, wtxn: &mut RwTxn<'_>) -> Result<()> {
+    let next = read_legacy_snapshot_rebuilds(store, &*wtxn)?
+        .checked_add(1)
+        .ok_or(Error::ArithmeticOverflow("hnsw legacy rebuild counter"))?;
+    store
+        .hnsw_meta
+        .put(wtxn, LEGACY_REBUILDS_KEY, &next.to_le_bytes())?;
+    Ok(())
+}
 
 #[derive(Debug)]
 pub(crate) struct RebuiltHnswGraph {
@@ -63,6 +157,20 @@ impl Ord for HeapEntry {
     }
 }
 
+/// Outcome of [`hnsw_insert_inner`]: either the graph mutation was applied
+/// in place, or the op is a refresh on a legacy (pre-migration) graph whose
+/// contract is a full snapshot rebuild — which the caller schedules so that
+/// batched vector updates coalesce into at most one rebuild per transaction.
+enum InsertOutcome {
+    Applied,
+    NeedsLegacyRebuild,
+}
+
+/// Direct (non-batched) insert/refresh entry point. Production writes go
+/// through [`hnsw_insert_batched`]; this wrapper keeps the historical
+/// one-shot semantics (a legacy-graph refresh rebuilds inline) for direct
+/// callers and tests.
+#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) fn hnsw_insert(
     store: &Store,
     config: &VaultConfig,
@@ -70,11 +178,96 @@ pub(crate) fn hnsw_insert(
     id: &EntityId,
     vector: &[f32],
 ) -> Result<()> {
+    hnsw_insert_probed(store, config, wtxn, id, vector, &mut 0)
+}
+
+/// [`hnsw_insert`] with unit-operation accounting: `ops` increments once per
+/// row read/write/delete and once per beam-search node/vector access, so
+/// tests can pin the localized-update complexity class (ONE-324 AC5).
+pub(crate) fn hnsw_insert_probed(
+    store: &Store,
+    config: &VaultConfig,
+    wtxn: &mut RwTxn<'_>,
+    id: &EntityId,
+    vector: &[f32],
+    ops: &mut u64,
+) -> Result<()> {
+    match hnsw_insert_inner(store, config, wtxn, id, vector, ops)? {
+        InsertOutcome::Applied => Ok(()),
+        InsertOutcome::NeedsLegacyRebuild => {
+            rebuild_hnsw_from_current_snapshot(store, config, wtxn)
+        }
+    }
+}
+
+/// Batched variant: a legacy-graph refresh sets `pending_rebuild` instead of
+/// rebuilding inline, and once a rebuild is pending all further graph
+/// mutations in the same transaction are skipped — the single
+/// end-of-transaction snapshot rebuild re-derives the whole graph from the
+/// `vectors` DB, so per-op mutations would be dead writes (ONE-324 AC11).
+pub(crate) fn hnsw_insert_batched(
+    store: &Store,
+    config: &VaultConfig,
+    wtxn: &mut RwTxn<'_>,
+    id: &EntityId,
+    vector: &[f32],
+    pending_rebuild: &mut bool,
+) -> Result<()> {
+    if *pending_rebuild {
+        return Ok(());
+    }
+    match hnsw_insert_inner(store, config, wtxn, id, vector, &mut 0)? {
+        InsertOutcome::Applied => Ok(()),
+        InsertOutcome::NeedsLegacyRebuild => {
+            *pending_rebuild = true;
+            Ok(())
+        }
+    }
+}
+
+/// Runs a pending legacy snapshot rebuild scheduled by
+/// [`hnsw_insert_batched`]. Call after the batch op loop.
+pub(crate) fn run_pending_legacy_rebuild(
+    store: &Store,
+    config: &VaultConfig,
+    wtxn: &mut RwTxn<'_>,
+    pending_rebuild: bool,
+) -> Result<()> {
+    if pending_rebuild {
+        rebuild_hnsw_from_current_snapshot(store, config, wtxn)?;
+    }
+    Ok(())
+}
+
+fn hnsw_insert_inner(
+    store: &Store,
+    config: &VaultConfig,
+    wtxn: &mut RwTxn<'_>,
+    id: &EntityId,
+    vector: &[f32],
+    ops: &mut u64,
+) -> Result<InsertOutcome> {
+    let discipline = read_link_discipline(store, &*wtxn)?;
+    *ops += 1;
     if store.hnsw_neighbors.get(&*wtxn, id.as_bytes())?.is_some() {
-        return hnsw_refresh(store, config, wtxn, id, vector);
+        *ops += 1;
+        let count = read_count(store, &*wtxn)?;
+        if count == 0 {
+            return Err(Error::CorruptedIndex(ERR_EXISTING_NODE_ZERO_COUNT));
+        }
+        let entry_point = read_entry_point(store, &*wtxn)?
+            .ok_or(Error::CorruptedIndex(ERR_ENTRY_POINT_MISSING))?;
+        return match discipline {
+            LinkDiscipline::Legacy => Ok(InsertOutcome::NeedsLegacyRebuild),
+            LinkDiscipline::Symmetric => {
+                hnsw_refresh_localized(store, config, wtxn, id, vector, count, entry_point, ops)?;
+                Ok(InsertOutcome::Applied)
+            }
+        };
     }
 
     let mut count = read_count(store, &*wtxn)?;
+    *ops += 1;
     if count == 0 {
         if read_entry_point(store, &*wtxn)?.is_some()
             || store.hnsw_neighbors.first(&*wtxn)?.is_some()
@@ -84,7 +277,10 @@ pub(crate) fn hnsw_insert(
         store.hnsw_meta.put(wtxn, ENTRY_POINT_KEY, id.as_bytes())?;
         store.hnsw_meta.put(wtxn, COUNT_KEY, &1_u64.to_le_bytes())?;
         store.hnsw_neighbors.put(wtxn, id.as_bytes(), &[])?;
-        return Ok(());
+        // A graph created from empty is symmetric by construction and every
+        // subsequent write in this module preserves the invariant.
+        mark_symmetric_links(store, wtxn)?;
+        return Ok(InsertOutcome::Applied);
     }
 
     let entry_point =
@@ -94,9 +290,12 @@ pub(crate) fn hnsw_insert(
         &*wtxn,
         vector,
         entry_point,
-        config.hnsw.ef_construction,
-        false,
-        false,
+        BeamOptions {
+            ef: config.hnsw.ef_construction,
+            lenient_neighbors: false,
+            check_existence: false,
+        },
+        ops,
     )?;
 
     nearest.retain(|entry| entry.id != *id);
@@ -104,9 +303,39 @@ pub(crate) fn hnsw_insert(
 
     let selected: Vec<EntityId> = nearest.into_iter().map(|entry| entry.id).collect();
     write_neighbors(store, wtxn, id, &selected)?;
+    *ops += 1;
 
-    for neighbor_id in &selected {
+    match discipline {
+        LinkDiscipline::Symmetric => {
+            attach_backlinks_symmetric(store, config, wtxn, id, &selected, ops)?;
+        }
+        LinkDiscipline::Legacy => {
+            attach_backlinks_legacy(store, config, wtxn, id, &selected, ops)?;
+        }
+    }
+
+    count = count
+        .checked_add(1)
+        .ok_or(Error::IndexOverflow(ERR_COUNT_OVERFLOW))?;
+    store.hnsw_meta.put(wtxn, COUNT_KEY, &count.to_le_bytes())?;
+
+    Ok(InsertOutcome::Applied)
+}
+
+/// Legacy (pre-migration) backlink attachment: prune may drop links without
+/// removing the reverse direction, leaving one-way edges. Preserved verbatim
+/// for vaults that have not run the symmetry migration.
+fn attach_backlinks_legacy(
+    store: &Store,
+    config: &VaultConfig,
+    wtxn: &mut RwTxn<'_>,
+    id: &EntityId,
+    selected: &[EntityId],
+    ops: &mut u64,
+) -> Result<()> {
+    for neighbor_id in selected {
         let mut neighbors = load_neighbors(store, &*wtxn, neighbor_id)?;
+        *ops += 1;
         if !neighbors.contains(id) {
             neighbors.push(*id);
         }
@@ -118,34 +347,244 @@ pub(crate) fn hnsw_insert(
                 neighbor_id,
                 &neighbors,
                 config.hnsw.m_max_0,
+                ops,
             )?;
         }
 
         write_neighbors(store, wtxn, neighbor_id, &neighbors)?;
+        *ops += 1;
+    }
+    Ok(())
+}
+
+/// Symmetric backlink attachment (ONE-325): every link written here exists
+/// in both directions. When adding `id` to a neighbor's list overflows
+/// `m_max_0`, the pruned-out victims also lose their reverse link — except a
+/// victim whose list would become empty keeps its link one-way (orphan
+/// protection), so no prune ever disconnects a node's outgoing side.
+fn attach_backlinks_symmetric(
+    store: &Store,
+    config: &VaultConfig,
+    wtxn: &mut RwTxn<'_>,
+    id: &EntityId,
+    selected: &[EntityId],
+    ops: &mut u64,
+) -> Result<()> {
+    for neighbor_id in selected {
+        let mut neighbors = load_neighbors(store, &*wtxn, neighbor_id)?;
+        *ops += 1;
+        if !neighbors.contains(id) {
+            neighbors.push(*id);
+        }
+
+        if neighbors.len() > config.hnsw.m_max_0 {
+            let pruned = prune_neighbors_for_node(
+                store,
+                &*wtxn,
+                neighbor_id,
+                &neighbors,
+                config.hnsw.m_max_0,
+                ops,
+            )?;
+            let removed: Vec<EntityId> = neighbors
+                .iter()
+                .filter(|candidate| !pruned.contains(candidate))
+                .copied()
+                .collect();
+            write_neighbors(store, wtxn, neighbor_id, &pruned)?;
+            *ops += 1;
+            for victim in &removed {
+                detach_reverse_link(store, wtxn, neighbor_id, victim, ops)?;
+            }
+        } else {
+            write_neighbors(store, wtxn, neighbor_id, &neighbors)?;
+            *ops += 1;
+        }
+    }
+    Ok(())
+}
+
+/// Removes `from` out of `victim`'s neighbor list to mirror a prune of the
+/// `from → victim` direction. Orphan protection: when `victim`'s list is
+/// exactly `[from]`, the link is kept one-way instead of emptying the list.
+fn detach_reverse_link(
+    store: &Store,
+    wtxn: &mut RwTxn<'_>,
+    from: &EntityId,
+    victim: &EntityId,
+    ops: &mut u64,
+) -> Result<()> {
+    *ops += 1;
+    let Some(raw) = store.hnsw_neighbors.get(&*wtxn, victim.as_bytes())? else {
+        return Ok(());
+    };
+    let list = decode_neighbors(raw, false)?;
+    if !list.contains(from) {
+        return Ok(());
+    }
+    if list.len() == 1 {
+        // Orphan protection: never empty a node's outgoing links via a
+        // cascade removal. The one-way remainder is the documented exception
+        // to the symmetric invariant.
+        return Ok(());
+    }
+    let filtered: Vec<EntityId> = list.into_iter().filter(|entry| entry != from).collect();
+    write_neighbors(store, wtxn, victim, &filtered)?;
+    *ops += 1;
+    Ok(())
+}
+
+/// Localized refresh of an existing node on a symmetric graph (ONE-324):
+/// detach via the node's own neighbor list (≡ backlinks under the
+/// invariant), re-insert at the new position with one beam search, then
+/// repair any old neighbor the detach orphaned. No full iteration over
+/// `vectors` or `hnsw_neighbors` happens on this path.
+#[allow(clippy::too_many_arguments)]
+fn hnsw_refresh_localized(
+    store: &Store,
+    config: &VaultConfig,
+    wtxn: &mut RwTxn<'_>,
+    id: &EntityId,
+    vector: &[f32],
+    count: u64,
+    mut entry_point: EntityId,
+    ops: &mut u64,
+) -> Result<()> {
+    // 1. Detach: under the symmetric invariant the node's forward neighbors
+    //    are exactly the nodes holding links back to it.
+    let old_neighbors = load_neighbors(store, &*wtxn, id)?;
+    *ops += 1;
+    let mut orphaned: Vec<EntityId> = Vec::new();
+    for neighbor_id in &old_neighbors {
+        *ops += 1;
+        let Some(raw) = store.hnsw_neighbors.get(&*wtxn, neighbor_id.as_bytes())? else {
+            continue;
+        };
+        let list = decode_neighbors(raw, false)?;
+        if !list.contains(id) {
+            // One-way protected link (id → neighbor without the reverse):
+            // nothing to detach on the neighbor's side.
+            continue;
+        }
+        let filtered: Vec<EntityId> = list.into_iter().filter(|entry| entry != id).collect();
+        if filtered.is_empty() {
+            orphaned.push(*neighbor_id);
+        }
+        write_neighbors(store, wtxn, neighbor_id, &filtered)?;
+        *ops += 1;
+    }
+    store.hnsw_neighbors.delete(wtxn, id.as_bytes())?;
+    *ops += 1;
+
+    if count == 1 {
+        // Sole node: trivially re-anchor at the new position.
+        write_neighbors(store, wtxn, id, &[])?;
+        store.hnsw_meta.put(wtxn, ENTRY_POINT_KEY, id.as_bytes())?;
+        return Ok(());
     }
 
-    count = count
-        .checked_add(1)
-        .ok_or(Error::IndexOverflow(ERR_COUNT_OVERFLOW))?;
-    store.hnsw_meta.put(wtxn, COUNT_KEY, &count.to_le_bytes())?;
+    if entry_point == *id {
+        let (replacement_key, _) = store
+            .hnsw_neighbors
+            .first(&*wtxn)?
+            .ok_or(Error::CorruptedIndex(ERR_REMAINING_NODES_MISSING))?;
+        entry_point =
+            parse_entity_id(replacement_key, ERR_NEIGHBOR_KEY_BYTES).map_err(|e| match e {
+                Error::InvalidKey => Error::CorruptedIndex(ERR_NEIGHBOR_KEY_BYTES),
+                other => other,
+            })?;
+        store
+            .hnsw_meta
+            .put(wtxn, ENTRY_POINT_KEY, entry_point.as_bytes())?;
+        *ops += 2;
+    }
+
+    // 2. Re-insert at the new position.
+    let mut nearest = beam_search(
+        store,
+        &*wtxn,
+        vector,
+        entry_point,
+        BeamOptions {
+            ef: config.hnsw.ef_construction,
+            lenient_neighbors: false,
+            check_existence: false,
+        },
+        ops,
+    )?;
+    nearest.retain(|entry| entry.id != *id);
+    nearest.truncate(config.hnsw.m_max_0);
+    if nearest.is_empty() {
+        // Local repair cannot restore reachability — explicit measured rare
+        // path (ONE-324 AC10). With count > 1 the beam always reaches at
+        // least the (≠ id) entry point, so this is defensive.
+        return hnsw_symmetric_fallback_rebuild(store, config, wtxn);
+    }
+    let selected: Vec<EntityId> = nearest.into_iter().map(|entry| entry.id).collect();
+    write_neighbors(store, wtxn, id, &selected)?;
+    *ops += 1;
+    attach_backlinks_symmetric(store, config, wtxn, id, &selected, ops)?;
+
+    // 3. Repair: re-link old neighbors that the detach phase orphaned and
+    //    that the re-insert did not already reconnect.
+    for orphan in orphaned {
+        *ops += 1;
+        let Some(raw) = store.hnsw_neighbors.get(&*wtxn, orphan.as_bytes())? else {
+            continue;
+        };
+        if !decode_neighbors(raw, false)?.is_empty() {
+            continue;
+        }
+        let Some(orphan_vector) = load_vector(store, &*wtxn, &orphan)? else {
+            // No stored vector to anchor a repair by; leave the empty row
+            // for the next full rebuild to reconcile.
+            continue;
+        };
+        let mut repair_nearest = beam_search(
+            store,
+            &*wtxn,
+            &orphan_vector,
+            entry_point,
+            BeamOptions {
+                ef: config.hnsw.ef_construction,
+                lenient_neighbors: false,
+                check_existence: false,
+            },
+            ops,
+        )?;
+        repair_nearest.retain(|entry| entry.id != orphan);
+        let Some(anchor) = repair_nearest.first().map(|entry| entry.id) else {
+            // Local repair cannot restore entry reachability for this
+            // orphan — explicit measured rare path (ONE-324 AC10).
+            return hnsw_symmetric_fallback_rebuild(store, config, wtxn);
+        };
+        write_neighbors(store, wtxn, &orphan, &[anchor])?;
+        *ops += 1;
+        attach_backlinks_symmetric(store, config, wtxn, &orphan, &[anchor], ops)?;
+    }
 
     Ok(())
 }
 
-fn hnsw_refresh(
+/// Full symmetric snapshot rebuild used when localized refresh repair cannot
+/// restore reachability. Increments the persistent fallback counter so the
+/// rare path stays measured; the symmetric marker is already set and the
+/// rebuilt graph upholds it.
+fn hnsw_symmetric_fallback_rebuild(
     store: &Store,
     config: &VaultConfig,
     wtxn: &mut RwTxn<'_>,
-    _id: &EntityId,
-    _vector: &[f32],
 ) -> Result<()> {
-    let count = read_count(store, &*wtxn)?;
-    if count == 0 {
-        return Err(Error::CorruptedIndex(ERR_EXISTING_NODE_ZERO_COUNT));
-    }
-    let _entry_point =
-        read_entry_point(store, &*wtxn)?.ok_or(Error::CorruptedIndex(ERR_ENTRY_POINT_MISSING))?;
-    rebuild_hnsw_from_current_snapshot(store, config, wtxn)
+    increment_refresh_fallback_rebuilds(store, wtxn)?;
+    let vector_ids = collect_vector_ids(store, &*wtxn)?;
+    let rebuilt = build_hnsw_graph_from_snapshot(
+        store,
+        config,
+        &*wtxn,
+        &vector_ids,
+        LinkDiscipline::Symmetric,
+    )?;
+    write_rebuilt_hnsw(store, wtxn, &rebuilt)
 }
 
 pub(crate) fn build_hnsw_graph_from_snapshot(
@@ -153,6 +592,7 @@ pub(crate) fn build_hnsw_graph_from_snapshot(
     config: &VaultConfig,
     rtxn: &RoTxn<'_>,
     vector_ids: &[EntityId],
+    discipline: LinkDiscipline,
 ) -> Result<RebuiltHnswGraph> {
     let mut neighbors_by_id = HashMap::<EntityId, Vec<EntityId>>::with_capacity(vector_ids.len());
     let mut entry_point = None;
@@ -182,6 +622,7 @@ pub(crate) fn build_hnsw_graph_from_snapshot(
         nearest.truncate(config.hnsw.m_max_0);
 
         let selected: Vec<EntityId> = nearest.into_iter().map(|entry| entry.id).collect();
+        neighbors_by_id.insert(*id, selected.clone());
 
         for neighbor_id in &selected {
             let mut neighbor_neighbors = neighbors_by_id.remove(neighbor_id).unwrap_or_default();
@@ -190,19 +631,28 @@ pub(crate) fn build_hnsw_graph_from_snapshot(
             }
 
             if neighbor_neighbors.len() > config.hnsw.m_max_0 {
-                neighbor_neighbors = prune_neighbors_for_node(
+                let pruned = prune_neighbors_for_node(
                     store,
                     rtxn,
                     neighbor_id,
                     &neighbor_neighbors,
                     config.hnsw.m_max_0,
+                    &mut 0,
                 )?;
+                if discipline == LinkDiscipline::Symmetric {
+                    for victim in neighbor_neighbors
+                        .iter()
+                        .filter(|candidate| !pruned.contains(candidate))
+                    {
+                        detach_reverse_link_in_memory(&mut neighbors_by_id, neighbor_id, victim);
+                    }
+                }
+                neighbor_neighbors = pruned;
             }
 
             neighbors_by_id.insert(*neighbor_id, neighbor_neighbors);
         }
 
-        neighbors_by_id.insert(*id, selected);
         count = count
             .checked_add(1)
             .ok_or(Error::IndexOverflow(ERR_COUNT_OVERFLOW))?;
@@ -310,9 +760,12 @@ pub(crate) fn hnsw_search(
         rtxn,
         query_vector,
         entry_point,
-        config.hnsw.ef_search.max(limit),
-        true,
-        true,
+        BeamOptions {
+            ef: config.hnsw.ef_search.max(limit),
+            lenient_neighbors: true,
+            check_existence: true,
+        },
+        &mut 0,
     )?;
 
     nearest.truncate(limit);
@@ -331,17 +784,43 @@ pub(crate) fn hnsw_search(
 /// Search still keeps defensive existence checks because vectors/entities can
 /// become partially inconsistent for reasons outside HNSW bookkeeping.
 pub(crate) fn hnsw_deindex(store: &Store, wtxn: &mut RwTxn<'_>, id: &EntityId) -> Result<()> {
-    if store.hnsw_neighbors.get(&*wtxn, id.as_bytes())?.is_none() {
-        return Ok(());
-    }
+    hnsw_deindex_probed(store, wtxn, id, &mut 0)
+}
+
+/// [`hnsw_deindex`] with unit-operation accounting (`ops` increments once
+/// per row read/write/delete and once per scanned row on the legacy path),
+/// so tests can pin that symmetric-graph deletes never iterate the full
+/// `hnsw_neighbors` DB (ONE-325 AC1).
+pub(crate) fn hnsw_deindex_probed(
+    store: &Store,
+    wtxn: &mut RwTxn<'_>,
+    id: &EntityId,
+    ops: &mut u64,
+) -> Result<()> {
+    *ops += 1;
+    let backlink_targets = {
+        let Some(own_raw) = store.hnsw_neighbors.get(&*wtxn, id.as_bytes())? else {
+            return Ok(());
+        };
+        match read_link_discipline(store, &*wtxn)? {
+            // Symmetric invariant: the nodes holding links back to `id` are
+            // exactly `id`'s own forward neighbors — no full scan.
+            LinkDiscipline::Symmetric => decode_neighbors(own_raw, false)?,
+            // Pre-migration graphs may hold one-way links into `id` from
+            // anywhere; only a full scan finds them all.
+            LinkDiscipline::Legacy => collect_backlink_targets(store, &*wtxn, id, ops)?,
+        }
+    };
+    *ops += 1;
 
     let count = read_count(store, &*wtxn)?;
+    *ops += 1;
     let new_count = count
         .checked_sub(1)
         .ok_or(Error::CorruptedIndex(ERR_COUNT_UNDERFLOW))?;
-    let backlink_targets = collect_backlink_targets(store, &*wtxn, id)?;
     store.hnsw_neighbors.delete(wtxn, id.as_bytes())?;
-    scrub_backlinks_in_place(store, wtxn, id, &backlink_targets)?;
+    *ops += 1;
+    scrub_backlinks_in_place(store, wtxn, id, &backlink_targets, ops)?;
 
     store
         .hnsw_meta
@@ -372,18 +851,32 @@ pub(crate) fn hnsw_deindex(store: &Store, wtxn: &mut RwTxn<'_>, id: &EntityId) -
     Ok(())
 }
 
+/// Beam-search knobs, bundled so probed call sites stay within argument
+/// limits.
+#[derive(Clone, Copy, Debug)]
+struct BeamOptions {
+    ef: usize,
+    lenient_neighbors: bool,
+    check_existence: bool,
+}
+
 fn beam_search(
     store: &Store,
     txn: &RoTxn<'_>,
     query_vector: &[f32],
     entry_point: EntityId,
-    ef: usize,
-    lenient_neighbors: bool,
-    check_existence: bool,
+    options: BeamOptions,
+    ops: &mut u64,
 ) -> Result<Vec<HeapEntry>> {
+    let BeamOptions {
+        ef,
+        lenient_neighbors,
+        check_existence,
+    } = options;
     let ef = ef.max(1);
     let mut vector_buffer = Vec::with_capacity(query_vector.len());
 
+    *ops += 1;
     let Some(entry_vector) = load_vector_into(store, txn, &entry_point, &mut vector_buffer)? else {
         return Err(Error::CorruptedIndex(ERR_ENTRY_POINT_VECTOR_MISSING));
     };
@@ -418,6 +911,7 @@ fn beam_search(
             break;
         }
 
+        *ops += 1;
         let neighbors = if lenient_neighbors {
             load_neighbors_lenient(store, txn, &current.id)?
         } else {
@@ -428,6 +922,7 @@ fn beam_search(
                 continue;
             }
 
+            *ops += 1;
             if check_existence && store.entities.get(txn, neighbor_id.as_bytes())?.is_none() {
                 continue;
             }
@@ -550,13 +1045,19 @@ fn visited_capacity_hint(ef: usize, graph_nodes: usize) -> usize {
     ef.saturating_mul(2).min(graph_nodes.max(1))
 }
 
+/// Legacy refresh contract: rebuild the whole graph from the current
+/// `vectors` snapshot with the historical asymmetric link discipline. Does
+/// NOT set the symmetric marker — pre-migration vaults keep their legacy
+/// shape until `maintain().rebuild_hnsw()` migrates them.
 fn rebuild_hnsw_from_current_snapshot(
     store: &Store,
     config: &VaultConfig,
     wtxn: &mut RwTxn<'_>,
 ) -> Result<()> {
+    increment_legacy_snapshot_rebuilds(store, wtxn)?;
     let vector_ids = collect_vector_ids(store, &*wtxn)?;
-    let rebuilt = build_hnsw_graph_from_snapshot(store, config, &*wtxn, &vector_ids)?;
+    let rebuilt =
+        build_hnsw_graph_from_snapshot(store, config, &*wtxn, &vector_ids, LinkDiscipline::Legacy)?;
     write_rebuilt_hnsw(store, wtxn, &rebuilt)
 }
 
@@ -733,8 +1234,10 @@ fn prune_neighbors_for_node(
     node_id: &EntityId,
     neighbors: &[EntityId],
     max_neighbors: usize,
+    ops: &mut u64,
 ) -> Result<Vec<EntityId>> {
     let mut node_buffer = Vec::new();
+    *ops += 1;
     let Some(node_vector) = load_vector_into(store, txn, node_id, &mut node_buffer)? else {
         return Ok(neighbors.iter().copied().take(max_neighbors).collect());
     };
@@ -748,6 +1251,7 @@ fn prune_neighbors_for_node(
             continue;
         }
 
+        *ops += 1;
         let Some(neighbor_vector) =
             load_vector_into(store, txn, neighbor_id, &mut neighbor_buffer)?
         else {
@@ -766,15 +1270,17 @@ fn prune_neighbors_for_node(
     Ok(scored.into_iter().map(|entry| entry.id).collect())
 }
 
+/// Legacy-only delete-time full scan. Symmetric-marker vaults never call
+/// this: their backlinks are exactly the node's own forward neighbor list.
 fn collect_backlink_targets(
     store: &Store,
     txn: &RoTxn<'_>,
     id: &EntityId,
+    ops: &mut u64,
 ) -> Result<Vec<EntityId>> {
     let mut targets = Vec::new();
-    // TODO: Replace this delete-time full scan with a reverse-adjacency index
-    // once we need sublinear delete performance at larger graph sizes.
     for entry in store.hnsw_neighbors.iter(txn)? {
+        *ops += 1;
         let (key, raw) = entry?;
         let node_id = parse_entity_id(key, ERR_NEIGHBOR_KEY_BYTES).map_err(|e| match e {
             Error::InvalidKey => Error::CorruptedIndex(ERR_NEIGHBOR_KEY_BYTES),
@@ -797,8 +1303,10 @@ fn scrub_backlinks_in_place(
     wtxn: &mut RwTxn<'_>,
     id: &EntityId,
     targets: &[EntityId],
+    ops: &mut u64,
 ) -> Result<()> {
     for node_id in targets {
+        *ops += 1;
         let Some(raw) = store.hnsw_neighbors.get(&*wtxn, node_id.as_bytes())? else {
             continue;
         };
@@ -808,8 +1316,26 @@ fn scrub_backlinks_in_place(
         store
             .hnsw_neighbors
             .put(wtxn, node_id.as_bytes(), &scrubbed)?;
+        *ops += 1;
     }
     Ok(())
+}
+
+/// In-memory mirror of [`detach_reverse_link`] for the snapshot rebuilder:
+/// removes `from` out of `victim`'s list, keeping the link one-way when the
+/// victim would otherwise be orphaned.
+fn detach_reverse_link_in_memory(
+    neighbors_by_id: &mut HashMap<EntityId, Vec<EntityId>>,
+    from: &EntityId,
+    victim: &EntityId,
+) {
+    let Some(list) = neighbors_by_id.get_mut(victim) else {
+        return;
+    };
+    if !list.contains(from) || list.len() == 1 {
+        return;
+    }
+    list.retain(|entry| entry != from);
 }
 
 fn neighbor_bytes_contain(raw: &[u8], target: &EntityId) -> Result<bool> {
@@ -1529,8 +2055,19 @@ mod tests {
         wtxn.commit()?;
 
         let rtxn = store.env.read_txn()?;
-        let err = beam_search(&store, &rtxn, &[1.0, 0.0, 0.0, 0.0], a, 2, false, false)
-            .expect_err("strict beam search should reject corrupted neighbors");
+        let err = beam_search(
+            &store,
+            &rtxn,
+            &[1.0, 0.0, 0.0, 0.0],
+            a,
+            BeamOptions {
+                ef: 2,
+                lenient_neighbors: false,
+                check_existence: false,
+            },
+            &mut 0,
+        )
+        .expect_err("strict beam search should reject corrupted neighbors");
         assert!(matches!(
             err,
             Error::CorruptedIndex(message) if message == ERR_NEIGHBOR_VALUE_BYTES
@@ -1567,5 +2104,544 @@ mod tests {
         assert_eq!(reachable_from_entry(&neighbors, high).len(), 1);
         assert!(reachable_from_entry(&neighbors, low).len() < neighbors.len());
         assert_eq!(select_best_entry_point(&neighbors, Some(high)), Some(low));
+    }
+
+    // ─── ONE-325 / ONE-324: symmetric links + localized delete/refresh ───
+
+    /// Distinct, lexicographically ordered test id (`value` ≥ 1 big-endian in
+    /// the first 8 bytes). Creation order equals key order.
+    fn seq_id(value: u64) -> EntityId {
+        assert!(value >= 1, "zero would collide with the reserved zero id");
+        let mut bytes = [0_u8; ENTITY_ID_LEN];
+        bytes[..8].copy_from_slice(&value.to_be_bytes());
+        EntityId::from_bytes(bytes).expect("nonzero sequential ids avoid reserved sentinels")
+    }
+
+    /// SplitMix64 step — deterministic vector generator, no external deps.
+    fn next_rand(state: &mut u64) -> u64 {
+        *state = state.wrapping_add(0x9E37_79B9_7F4A_7C15);
+        let mut z = *state;
+        z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+        z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+        z ^ (z >> 31)
+    }
+
+    fn pseudo_vector(state: &mut u64, dim: usize) -> Vec<f32> {
+        (0..dim)
+            .map(|_| ((next_rand(state) >> 40) as f32 / (1 << 24) as f32) * 2.0 - 1.0)
+            .collect()
+    }
+
+    fn small_graph_config(dim: usize, m_max_0: usize, ef: usize) -> VaultConfig {
+        let mut config = VaultConfig::device();
+        config.dimensions = dim;
+        config.embedding_model = Some("test-model-v1".to_owned());
+        config.map_size = 64 * 1024 * 1024;
+        config.hnsw.m_max_0 = m_max_0;
+        config.hnsw.ef_construction = ef;
+        config.hnsw.ef_search = ef;
+        config
+    }
+
+    /// Builds a vault with `n` deterministic vectors through the public API
+    /// (so the symmetric-link path is exercised end to end). Returns the ids
+    /// in insertion order.
+    fn build_symmetric_vault(
+        vault: &crate::Vault,
+        n: u64,
+        dim: usize,
+        seed: u64,
+    ) -> Result<Vec<EntityId>> {
+        let mut state = seed;
+        let mut ids = Vec::with_capacity(n as usize);
+        let mut batch = vault.batch();
+        for value in 1..=n {
+            let id = seq_id(value);
+            batch = batch.vector(&id, &pseudo_vector(&mut state, dim));
+            ids.push(id);
+        }
+        batch.commit()?;
+        Ok(ids)
+    }
+
+    /// Asserts the symmetric-link invariant over the entire neighbors DB:
+    /// every stored link has its reverse, except the orphan-protection case
+    /// where a node's single remaining link may be one-way. Every referenced
+    /// neighbor must have a row (no dangling ids).
+    fn assert_symmetric_links(store: &Store, txn: &RoTxn<'_>) -> Result<()> {
+        for entry in store.hnsw_neighbors.iter(txn)? {
+            let (key, raw) = entry?;
+            let node = parse_entity_id(key, ERR_NEIGHBOR_KEY_BYTES)?;
+            let list = decode_neighbors(raw, false)?;
+            for neighbor in &list {
+                let back_raw = store.hnsw_neighbors.get(txn, neighbor.as_bytes())?;
+                let back_raw = back_raw.unwrap_or_else(|| {
+                    panic!("dangling link {node:?} -> {neighbor:?}: neighbor row missing")
+                });
+                let back = decode_neighbors(back_raw, false)?;
+                assert!(
+                    back.contains(&node) || list.len() == 1,
+                    "asymmetric link {node:?} -> {neighbor:?} without orphan-protection \
+                     justification (own degree {})",
+                    list.len()
+                );
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn fresh_vault_sets_symmetric_marker_and_keeps_links_symmetric() -> Result<()> {
+        let temp_dir = tempdir()?;
+        let vault = Vault::open(temp_dir.path(), small_graph_config(8, 2, 16))?;
+        build_symmetric_vault(&vault, 24, 8, 7)?;
+
+        let rtxn = vault.store.env.read_txn()?;
+        assert_eq!(
+            vault.store.hnsw_meta.get(&rtxn, SYMMETRIC_LINKS_KEY)?,
+            Some([SYMMETRIC_LINKS_ENABLED].as_slice()),
+            "fresh graphs must carry the symmetric-links marker"
+        );
+        assert_symmetric_links(&vault.store, &rtxn)?;
+        assert_eq!(read_count(&vault.store, &rtxn)?, 24);
+        Ok(())
+    }
+
+    #[test]
+    fn symmetric_marker_corruption_fails_closed() -> Result<()> {
+        let temp_dir = tempdir()?;
+        let vault = Vault::open(temp_dir.path(), small_graph_config(4, 2, 8))?;
+        let a = seq_id(1);
+        let b = seq_id(2);
+        vault.put_vector(&a, &[1.0, 0.0, 0.0, 0.0])?;
+        vault.put_vector(&b, &[0.0, 1.0, 0.0, 0.0])?;
+
+        let mut wtxn = vault.store.env.write_txn()?;
+        vault
+            .store
+            .hnsw_meta
+            .put(&mut wtxn, SYMMETRIC_LINKS_KEY, &[9])?;
+        wtxn.commit()?;
+
+        let insert_err = vault
+            .put_vector(&seq_id(3), &[0.5, 0.5, 0.0, 0.0])
+            .expect_err("insert must reject a malformed symmetric marker");
+        assert!(matches!(
+            insert_err,
+            Error::CorruptedIndex(message) if message == ERR_SYMMETRIC_MARKER_BYTES
+        ));
+
+        let mut wtxn = vault.store.env.write_txn()?;
+        let deindex_err = hnsw_deindex(&vault.store, &mut wtxn, &a)
+            .expect_err("deindex must reject a malformed symmetric marker");
+        assert!(matches!(
+            deindex_err,
+            Error::CorruptedIndex(message) if message == ERR_SYMMETRIC_MARKER_BYTES
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn refresh_fallback_counter_corruption_fails_closed() -> Result<()> {
+        let temp_dir = tempdir()?;
+        let store = Store::open(temp_dir.path(), &test_config())?;
+        let mut wtxn = store.env.write_txn()?;
+        store
+            .hnsw_meta
+            .put(&mut wtxn, REFRESH_FALLBACK_REBUILDS_KEY, &[1, 2, 3])?;
+
+        let err = read_refresh_fallback_rebuilds(&store, &wtxn)
+            .expect_err("expected corrupted fallback counter bytes");
+        assert!(matches!(
+            err,
+            Error::CorruptedIndex(message) if message == ERR_FALLBACK_COUNTER_BYTES
+        ));
+
+        store
+            .hnsw_meta
+            .put(&mut wtxn, LEGACY_REBUILDS_KEY, &[4, 5])?;
+        let err = read_legacy_snapshot_rebuilds(&store, &wtxn)
+            .expect_err("expected corrupted legacy rebuild counter bytes");
+        assert!(matches!(
+            err,
+            Error::CorruptedIndex(message) if message == ERR_LEGACY_REBUILDS_BYTES
+        ));
+        Ok(())
+    }
+
+    /// ONE-325 AC1: on a symmetric graph, deletes scrub backlinks through the
+    /// node's own neighbor list and never iterate the full `hnsw_neighbors`
+    /// DB. The fixture (256 nodes) is far larger than any node's
+    /// neighborhood (m_max_0 = 4); a full-scan implementation costs ≥ 256
+    /// probed ops and fails the literal bound. Removing the marker from the
+    /// very same vault demonstrates the bound bites: the legacy scan path
+    /// exceeds the node count.
+    #[test]
+    fn hnsw_deindex_symmetric_op_count_is_local() -> Result<()> {
+        for n in [128_u64, 256] {
+            let temp_dir = tempdir()?;
+            let vault = Vault::open(temp_dir.path(), small_graph_config(8, 4, 16))?;
+            let ids = build_symmetric_vault(&vault, n, 8, 11)?;
+
+            let victim = ids[(n / 2) as usize];
+            let mut wtxn = vault.store.env.write_txn()?;
+            let mut ops = 0_u64;
+            hnsw_deindex_probed(&vault.store, &mut wtxn, &victim, &mut ops)?;
+            wtxn.commit()?;
+
+            // Measured: 10 ops at n=128, 12 ops at n=256 (deterministic
+            // fixture). A full-scan implementation costs ≥ n - 1.
+            eprintln!("symmetric deindex n={n}: {ops} probed ops");
+            assert!(
+                ops <= 32,
+                "symmetric deindex on n={n} should be neighborhood-local, took {ops} ops"
+            );
+
+            let rtxn = vault.store.env.read_txn()?;
+            assert_eq!(read_count(&vault.store, &rtxn)?, n - 1);
+            assert!(
+                vault
+                    .store
+                    .hnsw_neighbors
+                    .get(&rtxn, victim.as_bytes())?
+                    .is_none()
+            );
+            // No surviving row may still reference the deleted node.
+            for entry in vault.store.hnsw_neighbors.iter(&rtxn)? {
+                let (key, raw) = entry?;
+                assert!(
+                    !neighbor_bytes_contain(raw, &victim)?,
+                    "stale backlink to deleted node left in row {key:?}"
+                );
+            }
+            drop(rtxn);
+
+            // Contrast: the same vault downgraded to legacy (marker removed)
+            // pays a full scan — the op count the symmetric path must beat.
+            let mut wtxn = vault.store.env.write_txn()?;
+            vault
+                .store
+                .hnsw_meta
+                .delete(&mut wtxn, SYMMETRIC_LINKS_KEY)?;
+            let mut legacy_ops = 0_u64;
+            let second_victim = ids[(n / 2 + 1) as usize];
+            hnsw_deindex_probed(&vault.store, &mut wtxn, &second_victim, &mut legacy_ops)?;
+            wtxn.commit()?;
+            assert!(
+                legacy_ops >= n - 1,
+                "legacy deindex must visit every row (n={n}), took {legacy_ops} ops"
+            );
+        }
+        Ok(())
+    }
+
+    /// ONE-324 AC5: refreshing an existing node is a localized update — no
+    /// full iteration over `vectors` or `hnsw_neighbors`. A snapshot-rebuild
+    /// implementation costs ≥ n beam searches (thousands of probed ops); the
+    /// literal bound pins the localized class across two fixture sizes.
+    #[test]
+    fn hnsw_refresh_symmetric_op_count_is_local() -> Result<()> {
+        for n in [128_u64, 256] {
+            let temp_dir = tempdir()?;
+            let vault = Vault::open(temp_dir.path(), small_graph_config(8, 4, 16))?;
+            let ids = build_symmetric_vault(&vault, n, 8, 13)?;
+
+            let target = ids[(n / 2) as usize];
+            let mut state = 0xDEAD_BEEF_u64 ^ n;
+            let new_vector = pseudo_vector(&mut state, 8);
+
+            let mut wtxn = vault.store.env.write_txn()?;
+            let mut ops = 0_u64;
+            hnsw_insert_probed(
+                &vault.store,
+                &vault.config,
+                &mut wtxn,
+                &target,
+                &new_vector,
+                &mut ops,
+            )?;
+            wtxn.commit()?;
+
+            // Measured: 78 ops at n=128, 100 ops at n=256 (deterministic
+            // fixture). A snapshot rebuild costs ≥ n row reads before it
+            // even starts searching.
+            eprintln!("symmetric refresh n={n}: {ops} probed ops");
+            assert!(
+                ops <= 300,
+                "symmetric refresh on n={n} should be neighborhood-local, took {ops} ops"
+            );
+
+            let rtxn = vault.store.env.read_txn()?;
+            assert_eq!(read_count(&vault.store, &rtxn)?, n);
+            assert!(
+                !load_neighbors(&vault.store, &rtxn, &target)?.is_empty(),
+                "refreshed node must be re-linked"
+            );
+            assert_symmetric_links(&vault.store, &rtxn)?;
+            assert_eq!(
+                read_refresh_fallback_rebuilds(&vault.store, &rtxn)?,
+                0,
+                "localized refresh must not fall back to a rebuild"
+            );
+            assert_eq!(
+                read_legacy_snapshot_rebuilds(&vault.store, &rtxn)?,
+                0,
+                "symmetric refresh must never run a legacy snapshot rebuild"
+            );
+        }
+        Ok(())
+    }
+
+    /// ONE-324 AC7: a refresh that empties an old neighbor's list re-links
+    /// that neighbor (repair pass) instead of leaving it dangling.
+    #[test]
+    fn symmetric_refresh_repairs_orphaned_old_neighbors() -> Result<()> {
+        let temp_dir = tempdir()?;
+        let vault = Vault::open(temp_dir.path(), small_graph_config(4, 1, 8))?;
+        let a = seq_id(1);
+        let b = seq_id(2);
+        let c = seq_id(3);
+
+        vault.put_vector(&a, &[1.0, 0.0, 0.0, 0.0])?;
+        vault.put_vector(&b, &[0.9, 0.1, 0.0, 0.0])?;
+        vault.put_vector(&c, &[0.89, 0.11, 0.0, 0.0])?;
+
+        {
+            // Sanity: with m_max_0 = 1 the API-built graph concentrates links
+            // around the closest pairs; C holds B's only strong link.
+            let rtxn = vault.store.env.read_txn()?;
+            assert_eq!(load_neighbors(&vault.store, &rtxn, &b)?, vec![c]);
+        }
+
+        // Move B to the far side of the sphere: C's list would empty.
+        vault.put_vector(&b, &[0.0, 0.0, 1.0, 0.0])?;
+
+        let rtxn = vault.store.env.read_txn()?;
+        assert_eq!(read_count(&vault.store, &rtxn)?, 3);
+        for id in [a, b, c] {
+            assert!(
+                !load_neighbors(&vault.store, &rtxn, &id)?.is_empty(),
+                "node {id:?} left orphaned after refresh"
+            );
+        }
+        // Every referenced neighbor still has a row (nothing dangles).
+        for entry in vault.store.hnsw_neighbors.iter(&rtxn)? {
+            let (_, raw) = entry?;
+            for neighbor in decode_neighbors(raw, false)? {
+                assert!(
+                    vault
+                        .store
+                        .hnsw_neighbors
+                        .get(&rtxn, neighbor.as_bytes())?
+                        .is_some()
+                );
+            }
+        }
+        Ok(())
+    }
+
+    /// ONE-324 AC10 machinery: the fallback rebuild is symmetric, keeps the
+    /// marker, and bumps the persistent measurement counter.
+    #[test]
+    fn symmetric_fallback_rebuild_is_measured_and_symmetric() -> Result<()> {
+        let temp_dir = tempdir()?;
+        let vault = Vault::open(temp_dir.path(), small_graph_config(8, 2, 16))?;
+        build_symmetric_vault(&vault, 12, 8, 17)?;
+
+        let mut wtxn = vault.store.env.write_txn()?;
+        hnsw_symmetric_fallback_rebuild(&vault.store, &vault.config, &mut wtxn)?;
+        wtxn.commit()?;
+
+        let rtxn = vault.store.env.read_txn()?;
+        assert_eq!(read_refresh_fallback_rebuilds(&vault.store, &rtxn)?, 1);
+        assert_eq!(
+            vault.store.hnsw_meta.get(&rtxn, SYMMETRIC_LINKS_KEY)?,
+            Some([SYMMETRIC_LINKS_ENABLED].as_slice())
+        );
+        assert_eq!(read_count(&vault.store, &rtxn)?, 12);
+        assert_symmetric_links(&vault.store, &rtxn)?;
+        Ok(())
+    }
+
+    /// ONE-324 AC11: batched vector refreshes on a legacy (unmigrated) graph
+    /// coalesce into exactly one snapshot rebuild per transaction; symmetric
+    /// graphs never rebuild at all.
+    #[test]
+    fn batched_vector_refreshes_coalesce_rebuilds() -> Result<()> {
+        // Legacy vault: hand-built asymmetric graph without the marker.
+        let temp_dir = tempdir()?;
+        let vault = Vault::open(temp_dir.path(), test_config())?;
+        let a = seq_id(1);
+        let b = seq_id(2);
+        let c = seq_id(3);
+
+        let mut wtxn = vault.store.env.write_txn()?;
+        put_vector_raw(&vault.store, &mut wtxn, &a, &[1.0, 0.0, 0.0, 0.0])?;
+        put_vector_raw(&vault.store, &mut wtxn, &b, &[0.0, 1.0, 0.0, 0.0])?;
+        put_vector_raw(&vault.store, &mut wtxn, &c, &[0.0, 0.0, 1.0, 0.0])?;
+        write_neighbors(&vault.store, &mut wtxn, &a, &[b])?;
+        write_neighbors(&vault.store, &mut wtxn, &b, &[a, c])?;
+        write_neighbors(&vault.store, &mut wtxn, &c, &[a])?;
+        vault
+            .store
+            .hnsw_meta
+            .put(&mut wtxn, ENTRY_POINT_KEY, a.as_bytes())?;
+        vault
+            .store
+            .hnsw_meta
+            .put(&mut wtxn, COUNT_KEY, &3_u64.to_le_bytes())?;
+        wtxn.commit()?;
+
+        vault
+            .batch()
+            .vector(&a, &[0.5, 0.5, 0.0, 0.0])
+            .vector(&b, &[0.0, 0.5, 0.5, 0.0])
+            .vector(&c, &[0.5, 0.0, 0.5, 0.0])
+            .vector(&seq_id(4), &[0.5, 0.0, 0.0, 0.5])
+            .commit()?;
+        {
+            let rtxn = vault.store.env.read_txn()?;
+            assert_eq!(
+                read_legacy_snapshot_rebuilds(&vault.store, &rtxn)?,
+                1,
+                "a batch of legacy refreshes must trigger exactly one snapshot rebuild"
+            );
+            assert_eq!(read_count(&vault.store, &rtxn)?, 4);
+            assert!(
+                vault
+                    .store
+                    .hnsw_meta
+                    .get(&rtxn, SYMMETRIC_LINKS_KEY)?
+                    .is_none(),
+                "legacy snapshot rebuild must not stamp the symmetric marker"
+            );
+        }
+
+        // Symmetric vault: batched refreshes stay localized — zero rebuilds.
+        let temp_dir = tempdir()?;
+        let vault = Vault::open(temp_dir.path(), small_graph_config(4, 2, 8))?;
+        build_symmetric_vault(&vault, 8, 4, 19)?;
+        vault
+            .batch()
+            .vector(&seq_id(2), &[0.7, 0.1, 0.1, 0.1])
+            .vector(&seq_id(5), &[0.1, 0.7, 0.1, 0.1])
+            .vector(&seq_id(7), &[0.1, 0.1, 0.7, 0.1])
+            .commit()?;
+        let rtxn = vault.store.env.read_txn()?;
+        assert_eq!(
+            read_legacy_snapshot_rebuilds(&vault.store, &rtxn)?,
+            0,
+            "symmetric refreshes must not trigger snapshot rebuilds"
+        );
+        Ok(())
+    }
+
+    /// ONE-325 AC3: `maintain().rebuild_hnsw()` is the one-time migration —
+    /// it rewrites a legacy asymmetric graph symmetrically and stamps the
+    /// marker, after which refreshes take the localized path.
+    #[test]
+    fn maintain_rebuild_migrates_legacy_vault_to_symmetric() -> Result<()> {
+        let temp_dir = tempdir()?;
+        let vault = Vault::open(temp_dir.path(), test_config())?;
+        let a = seq_id(1);
+        let b = seq_id(2);
+        let c = seq_id(3);
+
+        let mut wtxn = vault.store.env.write_txn()?;
+        put_vector_raw(&vault.store, &mut wtxn, &a, &[1.0, 0.0, 0.0, 0.0])?;
+        put_vector_raw(&vault.store, &mut wtxn, &b, &[0.0, 1.0, 0.0, 0.0])?;
+        put_vector_raw(&vault.store, &mut wtxn, &c, &[0.0, 0.9, 0.1, 0.0])?;
+        // Asymmetric on purpose: b -> a has no reverse link.
+        write_neighbors(&vault.store, &mut wtxn, &a, &[c])?;
+        write_neighbors(&vault.store, &mut wtxn, &b, &[a])?;
+        write_neighbors(&vault.store, &mut wtxn, &c, &[a])?;
+        vault
+            .store
+            .hnsw_meta
+            .put(&mut wtxn, ENTRY_POINT_KEY, a.as_bytes())?;
+        vault
+            .store
+            .hnsw_meta
+            .put(&mut wtxn, COUNT_KEY, &3_u64.to_le_bytes())?;
+        wtxn.commit()?;
+
+        {
+            let rtxn = vault.store.env.read_txn()?;
+            assert!(
+                vault
+                    .store
+                    .hnsw_meta
+                    .get(&rtxn, SYMMETRIC_LINKS_KEY)?
+                    .is_none()
+            );
+        }
+
+        vault.maintain().rebuild_hnsw().run()?;
+
+        let rtxn = vault.store.env.read_txn()?;
+        assert_eq!(
+            vault.store.hnsw_meta.get(&rtxn, SYMMETRIC_LINKS_KEY)?,
+            Some([SYMMETRIC_LINKS_ENABLED].as_slice()),
+            "maintenance rebuild must stamp the symmetric marker"
+        );
+        assert_eq!(read_count(&vault.store, &rtxn)?, 3);
+        assert_symmetric_links(&vault.store, &rtxn)?;
+        drop(rtxn);
+
+        // Post-migration refreshes are localized: no snapshot rebuild runs.
+        vault.put_vector(&b, &[0.0, 0.0, 1.0, 0.0])?;
+
+        let rtxn = vault.store.env.read_txn()?;
+        assert_eq!(
+            read_legacy_snapshot_rebuilds(&vault.store, &rtxn)?,
+            0,
+            "post-migration refresh must stay localized"
+        );
+        assert_symmetric_links(&vault.store, &rtxn)?;
+        Ok(())
+    }
+
+    /// Legacy vaults keep legacy semantics until migrated: a refresh on an
+    /// unmarked graph runs the historical snapshot rebuild and does NOT
+    /// stamp the marker.
+    #[test]
+    fn legacy_refresh_keeps_marker_unset() -> Result<()> {
+        let temp_dir = tempdir()?;
+        let vault = Vault::open(temp_dir.path(), test_config())?;
+        let a = seq_id(1);
+        let b = seq_id(2);
+
+        let mut wtxn = vault.store.env.write_txn()?;
+        put_vector_raw(&vault.store, &mut wtxn, &a, &[1.0, 0.0, 0.0, 0.0])?;
+        put_vector_raw(&vault.store, &mut wtxn, &b, &[0.0, 1.0, 0.0, 0.0])?;
+        write_neighbors(&vault.store, &mut wtxn, &a, &[b])?;
+        write_neighbors(&vault.store, &mut wtxn, &b, &[a])?;
+        vault
+            .store
+            .hnsw_meta
+            .put(&mut wtxn, ENTRY_POINT_KEY, a.as_bytes())?;
+        vault
+            .store
+            .hnsw_meta
+            .put(&mut wtxn, COUNT_KEY, &2_u64.to_le_bytes())?;
+        wtxn.commit()?;
+
+        vault.put_vector(&a, &[0.0, 0.0, 1.0, 0.0])?;
+
+        let rtxn = vault.store.env.read_txn()?;
+        assert_eq!(
+            read_legacy_snapshot_rebuilds(&vault.store, &rtxn)?,
+            1,
+            "legacy refresh must run the snapshot rebuild"
+        );
+        assert!(
+            vault
+                .store
+                .hnsw_meta
+                .get(&rtxn, SYMMETRIC_LINKS_KEY)?
+                .is_none(),
+            "legacy rebuild must not stamp the symmetric marker"
+        );
+        Ok(())
     }
 }
