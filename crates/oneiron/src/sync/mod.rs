@@ -35,6 +35,7 @@ pub mod window;
 pub use client::{SyncClient, SyncClientConfig, SyncEvent, SyncStatus};
 pub use connection::{ConnectionConfig, LocalUpdate, SyncConnection};
 pub use loro::Subscription;
+pub use loro_support::export_updates_since;
 pub use manager::WindowManager;
 pub use quarantine::{
     MAX_QUARANTINE_ROWS, QUARANTINE_MAX_AGE_SECS, QuarantineContainer, QuarantineRecord,
@@ -43,8 +44,9 @@ pub use quarantine::{
 };
 pub use queue::{QueuedEmbedJob, QueuedUpdate, SyncQueue};
 pub use transport::{
-    TAG_BULK_TRANSFER, TAG_BULK_TRANSFER_DONE, TAG_WINDOW_SYNC, TransportError,
-    decode_bulk_transfer, decode_bulk_transfer_done, decode_window_sync, encode_bulk_transfer,
-    encode_bulk_transfer_done, encode_window_sync,
+    MAX_DECODED_PAYLOAD_BYTES, PROTOCOL_VERSION, TAG_BULK_TRANSFER, TAG_BULK_TRANSFER_DONE,
+    TAG_PROTOCOL_HELLO, TAG_WINDOW_SYNC, TransportError, decode_bulk_transfer,
+    decode_bulk_transfer_done, decode_protocol_hello, decode_window_sync, encode_bulk_transfer,
+    encode_bulk_transfer_done, encode_protocol_hello, encode_window_sync,
 };
 pub use types::{SyncConfig, WindowKey};

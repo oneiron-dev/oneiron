@@ -4,8 +4,7 @@
 //! repeated binary-value and encoding error handling in one place while all
 //! call sites still use native `LoroDoc` / `LoroMap` handles.
 
-use loro::VersionVector;
-use loro::{ExportMode, LoroDoc, LoroMap, LoroValue, ValueOrContainer};
+use loro::{ExportMode, LoroDoc, LoroMap, LoroValue, ValueOrContainer, VersionVector};
 
 use crate::error::{Error, Result};
 use crate::types::EntityId;
@@ -124,8 +123,13 @@ pub(crate) fn export_all_updates(doc: &LoroDoc) -> Result<Vec<u8>> {
         .map_err(|e| Error::SyncProtocolError(e.to_string()))
 }
 
-#[cfg(test)]
-pub(crate) fn export_updates_since(doc: &LoroDoc, remote_vv: &[u8]) -> Result<Vec<u8>> {
+/// The single delta-export entry point for the sync wire (ONE-1127).
+///
+/// Decodes the peer's binary `VersionVector::encode()` bytes and exports only
+/// the updates the peer is missing (`ExportMode::updates`). Malformed VV
+/// bytes return `Error::CrdtDecodeError` — fail-closed, NEVER treated as an
+/// empty VV (an empty-VV fallback would silently ship the full history).
+pub fn export_updates_since(doc: &LoroDoc, remote_vv: &[u8]) -> Result<Vec<u8>> {
     let vv = VersionVector::decode(remote_vv).map_err(|source| Error::CrdtDecodeError {
         context: "decode version vector",
         source,

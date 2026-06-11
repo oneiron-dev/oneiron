@@ -37,18 +37,20 @@
 
 use std::sync::Arc;
 
-use loro::{ExportMode, LoroDoc, VersionVector};
+use loro::{LoroDoc, VersionVector};
 use tokio::sync::mpsc;
 
 use crate::Vault;
 use crate::error::{Error, Result};
 use crate::sync::bridge::persist_window_update;
-use crate::sync::loro_support::{doc_from_snapshot, doc_version_vector, export_snapshot};
+use crate::sync::loro_support::{
+    doc_from_snapshot, doc_version_vector, export_snapshot, export_updates_since,
+};
 use crate::sync::manager::WindowManager;
 use crate::sync::schema::read_window_list;
 use crate::sync::transport::{
-    self, TAG_BULK_TRANSFER, TAG_BULK_TRANSFER_DONE, TAG_SYNC_UPDATE, TAG_VERSION_VECTOR,
-    TAG_WINDOW_SYNC, TransportError, window_sub_tags,
+    self, MAX_DECODED_PAYLOAD_BYTES, TAG_AWARENESS, TAG_BULK_TRANSFER, TAG_BULK_TRANSFER_DONE,
+    TAG_SYNC_UPDATE, TAG_VERSION_VECTOR, TAG_WINDOW_SYNC, TransportError, window_sub_tags,
 };
 use crate::sync::types::{WindowKey, parse_window_key_str};
 use crate::sync::window::LoadedWindow;
@@ -259,24 +261,37 @@ impl SyncClient {
 
         match tag {
             TAG_SYNC_UPDATE => {
-                // Root doc update/snapshot from server — import it, then
-                // persist so the imported state survives restart (d:root).
+                // Root doc update/snapshot from server — cap before import so a
+                // hostile/buggy server cannot force an unbounded allocation.
+                // Reuses the bulk-transfer 8 MB cap (ONE-1127).
+                if payload.len() > MAX_DECODED_PAYLOAD_BYTES {
+                    return Err(TransportError::FrameTooLarge {
+                        size: payload.len(),
+                        max: MAX_DECODED_PAYLOAD_BYTES,
+                    });
+                }
+                // Import, then persist so the imported state survives
+                // restart (d:root).
                 self.root_doc
                     .import(payload)
                     .map_err(|_| TransportError::InvalidPayload("root doc import failed"))?;
                 self.persist_root_state()
                     .map_err(|e| TransportError::Storage(format!("persist root doc: {e}")))?;
             }
+            TAG_AWARENESS => {
+                // Server presence broadcast — the client does not track peer
+                // presence yet. Ignore instead of surfacing UnknownTag errors
+                // for every awareness fan-out (ONE-1127).
+            }
             TAG_VERSION_VECTOR => {
-                // Server sent its root VV — we could compute a diff, but root is
-                // server-authoritative so we just wait for the snapshot/update.
+                // Server's root VV. Root is server-authoritative, so there is
+                // nothing to send back — but the payload must still be valid
+                // Loro binary VV bytes. Malformed VV → typed error, fail-closed.
+                VersionVector::decode(payload).map_err(|_| TransportError::VersionVectorDecode)?;
             }
             TAG_WINDOW_SYNC => {
                 let (window_key, sub_tag, inner) = transport::decode_window_sync(payload)?;
-                let reply = self.handle_window_sync(window_key, sub_tag, inner)?;
-                if let Some(r) = reply {
-                    responses.push(r);
-                }
+                responses.extend(self.handle_window_sync(window_key, sub_tag, inner)?);
             }
             TAG_BULK_TRANSFER => {
                 let (window_key, compressed) = transport::decode_bulk_transfer(payload)?;
@@ -297,19 +312,25 @@ impl SyncClient {
         window_key: &str,
         sub_tag: u8,
         payload: &[u8],
-    ) -> std::result::Result<Option<Vec<u8>>, TransportError> {
+    ) -> std::result::Result<Vec<Vec<u8>>, TransportError> {
         let window = self.ensure_window(window_key)?;
+        let doc = &window.doc;
 
         match sub_tag {
             window_sub_tags::VV_REQUEST => {
-                // Server asking for our VV — send our updates
-                let updates = window
-                    .doc
-                    .export(ExportMode::all_updates())
-                    .map_err(|_| TransportError::InvalidPayload("export failed"))?;
-                let response =
-                    transport::encode_window_sync(window_key, window_sub_tags::UPDATE, &updates);
-                Ok(Some(response))
+                // Peer sent its binary VV (SyncStep1) — reply with the delta it
+                // is missing (SyncStep2), then our own VV so it can push its
+                // local diff back (the reverse SyncStep1). Malformed VV →
+                // typed error, fail-closed: NEVER fall back to a full export.
+                let delta = export_updates_since(doc, payload).map_err(map_delta_export_err)?;
+                Ok(vec![
+                    transport::encode_window_sync(window_key, window_sub_tags::UPDATE, &delta),
+                    transport::encode_window_sync(
+                        window_key,
+                        window_sub_tags::VV_RESPONSE,
+                        &doc_version_vector(doc),
+                    ),
+                ])
             }
             window_sub_tags::UPDATE => {
                 // Server sending Loro update bytes — import into the
@@ -351,14 +372,19 @@ impl SyncClient {
                 let _ = self.event_tx.send(SyncEvent::WindowUpdated {
                     window_key: window_key.to_string(),
                 });
-                Ok(None)
+                Ok(Vec::new())
             }
             window_sub_tags::VV_RESPONSE => {
-                // Server's VV — we could use this to compute what to send.
-                // For now, just note it.
-                Ok(None)
+                // Peer's VV answering our VV_REQUEST — export and send only our
+                // local diff. Same fail-closed VV decoding as VV_REQUEST.
+                let delta = export_updates_since(doc, payload).map_err(map_delta_export_err)?;
+                Ok(vec![transport::encode_window_sync(
+                    window_key,
+                    window_sub_tags::UPDATE,
+                    &delta,
+                )])
             }
-            _ => Ok(None),
+            _ => Ok(Vec::new()),
         }
     }
 
@@ -368,12 +394,11 @@ impl SyncClient {
         compressed: &[u8],
     ) -> std::result::Result<(), TransportError> {
         // Streaming decompression with size limit to prevent decompression bombs.
-        const MAX_BULK_DECOMPRESSED: usize = 8 * 1024 * 1024; // 8 MB
         let mut decoder = zstd::Decoder::new(compressed)
             .map_err(|_| TransportError::InvalidPayload("zstd decoder init failed"))?;
         let mut buf = Vec::with_capacity(std::cmp::min(
             compressed.len().saturating_mul(2),
-            MAX_BULK_DECOMPRESSED,
+            MAX_DECODED_PAYLOAD_BYTES,
         ));
         let mut chunk = [0u8; 8192];
         loop {
@@ -382,10 +407,10 @@ impl SyncClient {
             if n == 0 {
                 break;
             }
-            if buf.len() + n > MAX_BULK_DECOMPRESSED {
+            if buf.len() + n > MAX_DECODED_PAYLOAD_BYTES {
                 return Err(TransportError::FrameTooLarge {
                     size: buf.len() + n,
-                    max: MAX_BULK_DECOMPRESSED,
+                    max: MAX_DECODED_PAYLOAD_BYTES,
                 });
             }
             buf.extend_from_slice(&chunk[..n]);
@@ -480,10 +505,14 @@ impl SyncClient {
 
     /// Generates initial sync messages for the connection flow.
     ///
-    /// Returns messages to send to the server:
-    /// 1. Root doc VV (so server knows what we have)
-    /// 2. Default window VV requests (current + previous month), plus any
+    /// Returns messages to send to the server, in wire order:
+    /// 1. Protocol-version hello (MUST be the first frame — server checks it)
+    /// 2. Root doc VV (so server knows what we have)
+    /// 3. Default window VV requests (current + previous month), plus any
     ///    additional already-loaded windows
+    ///
+    /// All version vectors are Loro binary `VersionVector::encode()` bytes —
+    /// the JSON VV encoding is dead (wire break pinned in ONE-1127).
     ///
     /// Fast reconnect (the `sv:`/`svf:` reader): for a window that is not
     /// loaded and whose `svf:w:{key}` flag is fresh, the VV is decoded from
@@ -492,11 +521,13 @@ impl SyncClient {
     pub fn generate_initial_sync(&self) -> Vec<Vec<u8>> {
         let mut messages = Vec::new();
 
+        // Phase 0: protocol-version hello — first frame on every connection so
+        // the server can detect wire breaks before any sync payload flows.
+        messages.push(transport::encode_protocol_hello());
+
         // Phase 1: Send our root VV (empty for new client — server will send snapshot)
-        let root_vv = self.root_doc.oplog_vv();
-        let vv_bytes = serde_json::to_vec(&root_vv).unwrap_or_default();
         let mut vv_msg = vec![TAG_VERSION_VECTOR];
-        vv_msg.extend_from_slice(&vv_bytes);
+        vv_msg.extend_from_slice(&doc_version_vector(&self.root_doc));
         messages.push(vv_msg);
 
         // Phase 2: Default windows for the wall clock now (current +
@@ -524,11 +555,11 @@ impl SyncClient {
 
         for key in keys {
             match self.window_vv_for_initial_sync(&key) {
-                Ok(vv_json) => {
+                Ok(vv) => {
                     messages.push(transport::encode_window_sync(
                         key.as_str(),
                         window_sub_tags::VV_REQUEST,
-                        &vv_json,
+                        &vv,
                     ));
                 }
                 Err(e) => {
@@ -542,12 +573,13 @@ impl SyncClient {
         messages
     }
 
-    /// Resolves the wire VV (JSON-encoded) for one window during initial
-    /// sync: live doc when loaded; persisted `sv:w:` when `svf:w:` is fresh
-    /// (no doc load — the fast-reconnect path); full manager open otherwise.
+    /// Resolves the wire VV (Loro binary `VersionVector::encode()` bytes)
+    /// for one window during initial sync: live doc when loaded; persisted
+    /// `sv:w:` when `svf:w:` is fresh (no doc load — the fast-reconnect
+    /// path); full manager open otherwise.
     fn window_vv_for_initial_sync(&self, key: &WindowKey) -> Result<Vec<u8>> {
         if let Some(window) = self.manager.window(key) {
-            return encode_vv_json(&window.doc.oplog_vv());
+            return Ok(doc_version_vector(&window.doc));
         }
 
         {
@@ -565,7 +597,7 @@ impl SyncClient {
                     // corrupt row falls through to a full doc load instead
                     // of shipping garbage).
                     match VersionVector::decode(sv_raw) {
-                        Ok(vv) => return encode_vv_json(&vv),
+                        Ok(vv) => return Ok(vv.encode()),
                         Err(e) => {
                             tracing::warn!(
                                 window = %key,
@@ -579,7 +611,7 @@ impl SyncClient {
         }
 
         let window = self.manager.open_window(key)?;
-        encode_vv_json(&window.doc.oplog_vv())
+        Ok(doc_version_vector(&window.doc))
     }
 
     /// Persists the root doc to sync_state: `d:root` snapshot + `sv:root`
@@ -600,12 +632,6 @@ impl SyncClient {
             Ok(())
         })
     }
-}
-
-/// JSON-encodes a version vector for the wire (the VV exchange format the
-/// pre-existing protocol uses).
-fn encode_vv_json(vv: &VersionVector) -> Result<Vec<u8>> {
-    serde_json::to_vec(vv).map_err(|e| Error::SyncProtocolError(format!("encode VV: {e}")))
 }
 
 /// Loads the persisted root doc: `d:root` snapshot + pending `u:root:*`
@@ -671,6 +697,17 @@ fn mint_client_id() -> u64 {
     }
 }
 
+/// Maps a delta-export error onto the transport taxonomy.
+///
+/// Malformed inbound VV bytes (`CrdtDecodeError`) get the dedicated
+/// fail-closed variant; anything else is an export-side failure.
+fn map_delta_export_err(e: crate::error::Error) -> TransportError {
+    match e {
+        crate::error::Error::CrdtDecodeError { .. } => TransportError::VersionVectorDecode,
+        _ => TransportError::InvalidPayload("delta export failed"),
+    }
+}
+
 /// Computes the next backoff delay with exponential growth capped at max.
 pub fn next_backoff(current_ms: u32, max_ms: u32) -> u32 {
     std::cmp::min(current_ms.saturating_mul(2), max_ms)
@@ -679,6 +716,8 @@ pub fn next_backoff(current_ms: u32, max_ms: u32) -> u32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use loro::ExportMode;
+
     use crate::sync::bridge::Materializer;
 
     fn test_manager() -> Arc<WindowManager> {
@@ -696,6 +735,16 @@ mod tests {
         manager: &Arc<WindowManager>,
     ) -> (SyncClient, mpsc::UnboundedReceiver<SyncEvent>) {
         SyncClient::new(Arc::clone(manager), SyncClientConfig::default()).unwrap()
+    }
+
+    /// Builds a simulated server-side window doc with the schema containers.
+    fn server_window_doc() -> LoroDoc {
+        let doc = LoroDoc::new();
+        let _ = doc.get_map("entities");
+        let _ = doc.get_map("edges");
+        let _ = doc.get_map("tombstones");
+        doc.commit();
+        doc
     }
 
     #[test]
@@ -717,8 +766,240 @@ mod tests {
         let manager = test_manager();
         let (client, _rx) = test_client(&manager);
         let messages = client.generate_initial_sync();
-        // Should have: 1 root VV + 2 window VV requests (current + prev)
-        assert!(messages.len() >= 2);
+        // hello + root VV + 2 window VV requests (current + prev)
+        assert_eq!(messages.len(), 4);
+
+        // Frame 0: protocol hello — exact wire bytes [tag=3, version=1]
+        // (contract literal, ONE-1127). It MUST be the first frame.
+        assert_eq!(messages[0], vec![3u8, 1u8]);
+
+        // Frame 1: root VV — Loro binary encoding, decodable, NOT JSON.
+        assert_eq!(messages[1][0], TAG_VERSION_VECTOR);
+        VersionVector::decode(&messages[1][1..]).expect("root VV must be Loro binary encoding");
+        assert!(
+            serde_json::from_slice::<serde_json::Value>(&messages[1][1..]).is_err(),
+            "the serde_json VV wire encoding is dead (ONE-1127)"
+        );
+
+        // Frames 2..: window VV_REQUESTs carrying binary VV payloads.
+        for msg in &messages[2..] {
+            assert_eq!(msg[0], TAG_WINDOW_SYNC);
+            let (key, sub_tag, payload) = transport::decode_window_sync(&msg[1..]).unwrap();
+            assert!(parse_window_key_str(key).is_some());
+            assert_eq!(sub_tag, window_sub_tags::VV_REQUEST);
+            VersionVector::decode(payload).expect("window VV must be Loro binary encoding");
+            assert!(
+                serde_json::from_slice::<serde_json::Value>(payload).is_err(),
+                "the serde_json VV wire encoding is dead (ONE-1127)"
+            );
+        }
+    }
+
+    /// AC6 (ONE-1127): two docs diverge → exchange binary VVs → each imports
+    /// ONLY the delta → deep values converge, and each delta payload is
+    /// asserted smaller than the corresponding `all_updates` export.
+    #[test]
+    fn binary_vv_delta_round_trip_converges_with_smaller_payloads() {
+        let manager = test_manager();
+        let (mut client, _rx) = test_client(&manager);
+        let key = "2026-03";
+        client.ensure_window(key).unwrap();
+
+        // Shared chunky base so all_updates is meaningfully larger than a delta.
+        let server_doc = server_window_doc();
+        server_doc
+            .get_map("entities")
+            .insert("base", vec![7u8; 2048].as_slice())
+            .unwrap();
+        server_doc.commit();
+        let base = server_doc.export(ExportMode::all_updates()).unwrap();
+        let base_msg = transport::encode_window_sync(key, window_sub_tags::UPDATE, &base);
+        assert!(client.handle_server_message(&base_msg).unwrap().is_empty());
+
+        // Diverge: client writes one key, server writes another.
+        let client_window = client.window(key).unwrap();
+        client_window
+            .doc
+            .get_map("entities")
+            .insert("client-only", b"c".as_slice())
+            .unwrap();
+        client_window.doc.commit();
+        server_doc
+            .get_map("entities")
+            .insert("server-only", b"s".as_slice())
+            .unwrap();
+        server_doc.commit();
+
+        // Server → client SyncStep1: VV_REQUEST carrying the server's binary VV.
+        let request = transport::encode_window_sync(
+            key,
+            window_sub_tags::VV_REQUEST,
+            &server_doc.oplog_vv().encode(),
+        );
+        let responses = client.handle_server_message(&request).unwrap();
+        assert_eq!(
+            responses.len(),
+            2,
+            "VV_REQUEST → [UPDATE delta, VV_RESPONSE]"
+        );
+
+        // responses[0]: the client→server delta — a true delta, not all_updates.
+        let (k0, sub0, client_delta) = transport::decode_window_sync(&responses[0][1..]).unwrap();
+        assert_eq!(k0, key);
+        assert_eq!(sub0, window_sub_tags::UPDATE);
+        let client_all = client
+            .window(key)
+            .unwrap()
+            .doc
+            .export(ExportMode::all_updates())
+            .unwrap();
+        assert!(
+            client_delta.len() < client_all.len(),
+            "delta ({}) must be smaller than all_updates ({}) for the diverged case",
+            client_delta.len(),
+            client_all.len()
+        );
+        server_doc.import(client_delta).unwrap();
+
+        // responses[1]: client VV for the reverse leg.
+        let (k1, sub1, client_vv) = transport::decode_window_sync(&responses[1][1..]).unwrap();
+        assert_eq!(k1, key);
+        assert_eq!(sub1, window_sub_tags::VV_RESPONSE);
+        VersionVector::decode(client_vv).expect("VV_RESPONSE payload must be binary VV");
+
+        // Server computes ITS delta via the same single delta-export entry point.
+        let server_delta = export_updates_since(&server_doc, client_vv).unwrap();
+        let server_all = server_doc.export(ExportMode::all_updates()).unwrap();
+        assert!(
+            server_delta.len() < server_all.len(),
+            "server delta ({}) must be smaller than all_updates ({})",
+            server_delta.len(),
+            server_all.len()
+        );
+        let update_msg = transport::encode_window_sync(key, window_sub_tags::UPDATE, &server_delta);
+        assert!(
+            client
+                .handle_server_message(&update_msg)
+                .unwrap()
+                .is_empty()
+        );
+
+        // Deep-value convergence on both sides.
+        assert_eq!(
+            client.window(key).unwrap().doc.get_deep_value(),
+            server_doc.get_deep_value()
+        );
+    }
+
+    #[test]
+    fn vv_response_triggers_local_diff_update() {
+        // Client sent VV_REQUEST earlier; the server's VV_RESPONSE must be
+        // consumed (not a no-op) — the client computes and sends its diff.
+        let manager = test_manager();
+        let (mut client, _rx) = test_client(&manager);
+        let key = "2026-04";
+        client.ensure_window(key).unwrap();
+        let client_window = client.window(key).unwrap();
+        client_window
+            .doc
+            .get_map("entities")
+            .insert("local", b"x".as_slice())
+            .unwrap();
+        client_window.doc.commit();
+
+        let server_doc = server_window_doc();
+        let msg = transport::encode_window_sync(
+            key,
+            window_sub_tags::VV_RESPONSE,
+            &server_doc.oplog_vv().encode(),
+        );
+        let responses = client.handle_server_message(&msg).unwrap();
+        assert_eq!(responses.len(), 1, "VV_RESPONSE → [UPDATE local diff]");
+
+        let (k, sub, delta) = transport::decode_window_sync(&responses[0][1..]).unwrap();
+        assert_eq!(k, key);
+        assert_eq!(sub, window_sub_tags::UPDATE);
+        server_doc.import(delta).unwrap();
+        assert_eq!(
+            client.window(key).unwrap().doc.get_deep_value(),
+            server_doc.get_deep_value()
+        );
+    }
+
+    #[test]
+    fn malformed_vv_payloads_fail_closed() {
+        // The dead JSON encoding and arbitrary garbage must both be REJECTED
+        // with the typed error — never silently treated as an empty VV (an
+        // empty-VV fallback would ship the full history to a malformed peer).
+        let manager = test_manager();
+        let (mut client, _rx) = test_client(&manager);
+
+        let json_vv: &[u8] = b"{}";
+        let garbage: &[u8] = &[0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF];
+
+        for payload in [json_vv, garbage] {
+            let req =
+                transport::encode_window_sync("2026-03", window_sub_tags::VV_REQUEST, payload);
+            assert!(
+                matches!(
+                    client.handle_server_message(&req),
+                    Err(TransportError::VersionVectorDecode)
+                ),
+                "VV_REQUEST with malformed VV must fail closed"
+            );
+
+            let resp =
+                transport::encode_window_sync("2026-03", window_sub_tags::VV_RESPONSE, payload);
+            assert!(
+                matches!(
+                    client.handle_server_message(&resp),
+                    Err(TransportError::VersionVectorDecode)
+                ),
+                "VV_RESPONSE with malformed VV must fail closed"
+            );
+
+            let mut root = vec![TAG_VERSION_VECTOR];
+            root.extend_from_slice(payload);
+            assert!(
+                matches!(
+                    client.handle_server_message(&root),
+                    Err(TransportError::VersionVectorDecode)
+                ),
+                "root VV with malformed payload must fail closed"
+            );
+        }
+    }
+
+    #[test]
+    fn awareness_broadcast_is_ignored() {
+        let manager = test_manager();
+        let (mut client, mut rx) = test_client(&manager);
+        let mut msg = vec![TAG_AWARENESS];
+        msg.extend_from_slice(br#"{"online":true,"typing":false,"device_name":"mac"}"#);
+
+        let responses = client.handle_server_message(&msg).unwrap();
+        assert!(
+            responses.is_empty(),
+            "awareness must be ignored, not echoed"
+        );
+        assert!(
+            rx.try_recv().is_err(),
+            "awareness must not emit error events"
+        );
+    }
+
+    #[test]
+    fn oversized_root_update_fails_closed() {
+        let manager = test_manager();
+        let (mut client, _rx) = test_client(&manager);
+        let mut msg = vec![TAG_SYNC_UPDATE];
+        msg.extend_from_slice(&vec![0u8; MAX_DECODED_PAYLOAD_BYTES + 1]);
+
+        assert!(matches!(
+            client.handle_server_message(&msg),
+            Err(TransportError::FrameTooLarge { size, max })
+                if size == MAX_DECODED_PAYLOAD_BYTES + 1 && max == MAX_DECODED_PAYLOAD_BYTES
+        ));
     }
 
     #[test]

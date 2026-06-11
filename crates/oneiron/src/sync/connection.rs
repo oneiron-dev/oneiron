@@ -261,8 +261,12 @@ impl SyncConnection {
                                 }
                                 init_messages_received += 1;
                             }
-                            Ok(Some(Ok(Message::Close(_)))) => {
-                                return Err("Server closed during initial sync".to_string());
+                            Ok(Some(Ok(Message::Close(frame)))) => {
+                                // Surface the close code/reason — a 4xxx code here
+                                // is how a protocol-version mismatch shows up.
+                                return Err(format!(
+                                    "Server closed during initial sync: {frame:?}"
+                                ));
                             }
                             Ok(Some(Ok(
                                 Message::Ping(_)
@@ -284,7 +288,12 @@ impl SyncConnection {
                         };
                     }
                 }
-                Some(Ok(Message::Close(_))) | None => {
+                Some(Ok(Message::Close(frame))) => {
+                    // Surface the close code/reason — a 4xxx code here is how a
+                    // protocol-version mismatch shows up (ONE-1127).
+                    return Err(format!("Server closed during initial sync: {frame:?}"));
+                }
+                None => {
                     return Err("Server closed during initial sync".to_string());
                 }
                 Some(Err(e)) => {
