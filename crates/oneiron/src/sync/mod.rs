@@ -24,6 +24,8 @@
 pub mod bridge;
 pub mod client;
 pub mod connection;
+#[cfg(test)]
+mod convergence_props_internal;
 pub(crate) mod loro_support;
 pub mod manager;
 pub mod quarantine;

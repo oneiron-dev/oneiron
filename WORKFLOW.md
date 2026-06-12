@@ -232,6 +232,46 @@ rtk proxy env RUSTDOCFLAGS='-D warnings' cargo doc --workspace --no-deps
 All must pass. If any fails, fix and repeat. If a failure is unrelated to your
 change (pre-existing), exit with `Blocked` state, comment quoting the failure.
 
+### Sync gate + macOS LMDB flake policy
+
+For changes touching `src/sync/` or `tests/sync_*`, the local gate is the
+full six-command sequence (the workspace `--features sync` flag is a silent
+no-op — always use `-p oneiron`):
+
+```bash
+cargo fmt -p oneiron
+cargo clippy --workspace --all-targets --all-features -- -D warnings
+cargo build
+cargo build -p oneiron --features sync
+cargo test -p oneiron -- --test-threads=1
+cargo test -p oneiron --features sync -- --test-threads=1
+```
+
+LMDB tests on macOS can flake under parallelism or shared state (reader-slot
+exhaustion, map-full, tempdir reuse). The ONLY acceptable fixes are
+isolation-shaped:
+
+- one `tempfile::tempdir()` per test — never a shared vault directory;
+- an adequate per-test `map_size` (the sync suites use 16 MiB) and
+  `max_readers`;
+- serial execution (`--test-threads=1`, as pinned in the gate above) for
+  suites that open many environments.
+
+NEVER fix a flake by weakening an assertion, widening a tolerance, deleting
+a test, or adding `#[ignore]` without a ticket reference. Sync is the
+GDPR/permanence surface: an assertion that flakes is telling you about
+shared state, not about an over-strict expectation. If a genuine
+order-dependence is found, fix the isolation and keep the assertion exact.
+
+Known cliff (ONE-1142, FIXED): the engine used to never close LMDB
+environments, so every `Vault::open` leaked a pthread TLS key for the life
+of the process — at ~509 cumulative vault opens in one test process, macOS
+(`PTHREAD_KEYS_MAX = 512`) started failing further opens with
+`Storage(Io(.. EAGAIN ..))`. The `OwnedEnv` close path (ONE-1142) fixed
+this; late-alphabet tests failing with EAGAIN after suite growth would
+indicate a regression of that close path, not a logic error in the test.
+Verify by running the failing tests in isolation; do not weaken them.
+
 ### Forbidden-surface grep
 
 After commit, run:

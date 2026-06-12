@@ -1,11 +1,16 @@
 //! Integration tests for the sync entity bridge.
+//!
+//! Shared two-vault fixtures (`test_config`, `make_entity_blob`, map
+//! helpers) live in `tests/sync_harness` (ONE-1136).
 
 #![cfg(feature = "sync")]
+
+mod sync_harness;
 
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
 
-use loro::{CommitOptions, ExportMode, LoroDoc, LoroMap, LoroValue, ValueOrContainer};
+use loro::{CommitOptions, ExportMode, LoroDoc};
 use oneiron::sync::bridge::{
     BRIDGE_ORIGIN, Materializer, encode_edge_value_for_crdt, format_edge_key, parse_edge_value,
 };
@@ -23,39 +28,12 @@ use oneiron::types::{
     EdgeProvenanceFlags, TimeRange, Vad,
 };
 use oneiron::{
-    DeleteReason, EdgeProvenanceClaimBody, EdgeRef, EntityId, HnswConfig, SupersessionStatus,
-    Vault, VaultConfig,
+    DeleteReason, EdgeProvenanceClaimBody, EdgeRef, EntityId, SupersessionStatus, Vault,
 };
+use sync_harness::{make_entity_blob, map_get_bytes, map_insert_bytes, test_config};
 use tokio::sync::mpsc::UnboundedReceiver;
 
-fn test_config() -> VaultConfig {
-    let mut cfg = VaultConfig::device();
-    cfg.map_size = 16 * 1024 * 1024;
-    cfg.dimensions = 4;
-    cfg.embedding_model = None;
-    cfg.max_readers = 16;
-    cfg.hnsw = HnswConfig::default();
-    cfg
-}
-
-fn make_entity_blob(entity_type: u8, learned_at: u64, data: &[u8]) -> Vec<u8> {
-    let mut blob = Vec::with_capacity(25 + data.len());
-    blob.push(entity_type);
-    blob.extend_from_slice(&learned_at.to_be_bytes()); // occurred_start
-    blob.extend_from_slice(&learned_at.to_be_bytes()); // occurred_end
-    blob.extend_from_slice(&learned_at.to_be_bytes()); // learned_at
-    blob.extend_from_slice(data);
-    blob
-}
-
 const ROOT_VV_TAG: u8 = 2;
-
-fn map_get_bytes(map: &LoroMap, key: &str) -> Option<Vec<u8>> {
-    match map.get(key)? {
-        ValueOrContainer::Value(LoroValue::Binary(bytes)) => Some(bytes.to_vec()),
-        _ => None,
-    }
-}
 
 /// SyncClient over a manager-owned window registry (ONE-1126).
 fn make_client(vault: &Arc<Vault>) -> (SyncClient, UnboundedReceiver<SyncEvent>) {
@@ -66,10 +44,6 @@ fn make_client(vault: &Arc<Vault>) -> (SyncClient, UnboundedReceiver<SyncEvent>)
         "test-user",
     ));
     SyncClient::new(manager, SyncClientConfig::default()).unwrap()
-}
-
-fn map_insert_bytes(map: &LoroMap, key: &str, value: &[u8]) {
-    map.insert(key, value).unwrap();
 }
 
 fn put_entity_in_window(window: &LoadedWindow, id: &EntityId, learned_at: u64, data: &[u8]) {
