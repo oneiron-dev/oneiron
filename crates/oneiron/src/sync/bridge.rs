@@ -1042,6 +1042,32 @@ fn materialize_entity_blob_in_txn(
         &[]
     };
 
+    // ONE-1134: REDACTION_AUDIT (type 120) replay door. Receipts are
+    // immutable audit records (contracts.ts `redactionAuditReceipt`;
+    // ARCH-0023b audit/guardrail stream class: quarantine divergence, never
+    // silent LWW), so before any byte is staged:
+    //
+    // 1. the body must satisfy the pinned receipt field set — a blob that
+    //    fails receipt decode is a remote rejection (quarantined by the
+    //    callers via `remote_rejection_reason`), and
+    // 2. immutability: id absent locally → accept new; id present with
+    //    byte-identical envelope → idempotent no-op (own-receipt CRDT
+    //    round-trips stay green); id present with DIVERGENT bytes → typed
+    //    rejection, LOCAL bytes are kept and the remote payload is
+    //    quarantined.
+    //
+    // Both checks run before `put_replicated` stages anything, so a rejected
+    // receipt never leaves partial writes in the transaction.
+    if header.entity_type == crate::types::ENTITY_TYPE_REDACTION_AUDIT {
+        crate::deletion::validate_redaction_receipt_body(data)?;
+        if let Some(existing) = vault.store.entities.get(&*wtxn, id.as_bytes())? {
+            if existing == blob {
+                return Ok(());
+            }
+            return Err(crate::Error::RedactionReceiptDivergence { id });
+        }
+    }
+
     // Replicated put: Observer B mirrors whatever the unfiltered CRDT
     // entities map holds, including the engine-authored maintenance band
     // (REDACTION_AUDIT = 120) and reserved-predicate `edge.provenance`

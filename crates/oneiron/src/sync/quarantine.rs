@@ -163,7 +163,14 @@ pub(crate) fn remote_rejection_reason(error: &Error) -> Option<String> {
         // up-front validation rejection (validate_child_of_batch runs before
         // any byte is staged) — quarantine-and-continue, same class as
         // CycleDetected.
-        | ErrorKind::ChildOfCardinality => Some(reason_code_for(error)),
+        | ErrorKind::ChildOfCardinality
+        // ONE-1134: a remote type-120 blob failing the pinned
+        // redactionAuditReceipt structural validation, or carrying divergent
+        // bytes for an EXISTING receipt id (immutable audit record — keep
+        // local, never silent LWW), is a remote rejection: quarantine the op
+        // and continue the batch.
+        | ErrorKind::InvalidRedactionReceiptBody
+        | ErrorKind::RedactionReceiptDivergence => Some(reason_code_for(error)),
         _ => None,
     }
 }
