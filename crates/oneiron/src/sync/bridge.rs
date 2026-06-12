@@ -960,6 +960,29 @@ fn materialize_tombstones_from_delta(
                         );
                     }
                 }
+
+                // ONE-1156(c) / WAVE-C OD-11, §8c.1 doc residue: a SOFT
+                // value arriving over a locally hard-deleted id (`dt:`
+                // present) can WIN the Loro map merge — LMDB stays safe
+                // above (the replay primitive never downgrades), but the
+                // doc now shows soft to every peer. Re-asserting here
+                // would write into the doc INSIDE an observer callback
+                // (the re-entrancy bar), so enqueue the durable
+                // `ra:w:{window}:{entity_hex}` marker (value = the `dt:`
+                // row's exact 25 B — local HARD truth) for the
+                // safe-commit-point drain. No `dt:` row ⇒ no marker (the
+                // helper checks).
+                if !crate::deletion::decode_tombstone_value(raw_value).is_hard()
+                    && let Err(marker_err) =
+                        quarantine::enqueue_tombstone_reassert_marker(vault, window_key, &id)
+                {
+                    tracing::error!(
+                        tombstone = %key,
+                        window = %window_key,
+                        error = %marker_err,
+                        "observer-b: CRITICAL — failed to enqueue ra: re-assertion marker for soft-over-hard doc residue"
+                    );
+                }
             }
             None => {
                 // Tombstone REMOVAL delta: no engine version ever emits one
@@ -967,11 +990,12 @@ fn materialize_tombstones_from_delta(
                 // hard-once-seen), so a removal is a protocol violation by
                 // definition. The `dt:` marker gate keeps the local hard
                 // delete closed regardless. Quarantine it (x: row,
-                // hash+metadata only) and continue. The tombstone is
-                // deliberately NOT re-asserted here: a doc write inside an
-                // observer callback re-enters Loro (handoff §8c.1); the
-                // quarantine row plus the doctor surface carry the signal
-                // instead.
+                // hash+metadata only) and continue. The tombstone is NOT
+                // re-asserted here — a doc write inside an observer
+                // callback re-enters Loro (handoff §8c.1); instead, for a
+                // locally hard-deleted id, the durable `ra:` marker below
+                // queues the re-assertion for the safe-commit-point drain
+                // (ONE-1156(c), WAVE-C OD-11).
                 if let Err(e) = quarantine_rejected_op(
                     vault,
                     window_key,
@@ -986,6 +1010,24 @@ fn materialize_tombstones_from_delta(
                         tombstone = %key,
                         error = %e,
                         "observer-b: failed to persist tombstone-removal quarantine record"
+                    );
+                }
+                // OD-11, HARD-only: a dt:-backed marker carries the
+                // faithful 25 B local truth; a soft removal stays
+                // quarantine-only (residual R4 — a reconstructed soft
+                // value cannot be faithful, and a mis-decoded value would
+                // HARD-purge a user-kept shell at peers). An unparsable
+                // key cannot name a `dt:` row at all — quarantine above
+                // already recorded it.
+                if let Ok(id) = EntityId::from_hex(key.as_ref())
+                    && let Err(marker_err) =
+                        quarantine::enqueue_tombstone_reassert_marker(vault, window_key, &id)
+                {
+                    tracing::error!(
+                        tombstone = %key,
+                        window = %window_key,
+                        error = %marker_err,
+                        "observer-b: CRITICAL — failed to enqueue ra: re-assertion marker after tombstone removal"
                     );
                 }
             }

@@ -624,14 +624,17 @@ fn bulk_transfer_done_rejects_invalid_doc_state_and_keeps_marker() {
         Some([1u8].as_slice())
     );
 
-    // Garbage doc state must be rejected (a trusted door still validates
-    // structure) and the in-progress marker must STAY for retry.
+    // Garbage doc state must be rejected and the in-progress marker must
+    // STAY for retry. ONE-1156 (WAVE-C OD-12): the ON-DISK arm now routes
+    // through the OBSERVED import — the rejection literal is the import
+    // failure (`doc_from_snapshot`'s structure-only pre-check arm was
+    // deleted; Observer B's doors are the validation now).
     let done = transport::encode_bulk_transfer_done("2025-11", b"doc-state");
     let err = client.handle_server_message(&done).unwrap_err();
     assert!(
         matches!(
             err,
-            TransportError::InvalidPayload("bulk doc state invalid")
+            TransportError::InvalidPayload("bulk doc state import failed")
         ),
         "invalid bulk doc state must fail closed, got {err:?}"
     );
@@ -643,6 +646,12 @@ fn bulk_transfer_done_rejects_invalid_doc_state_and_keeps_marker() {
     assert!(
         vault.sync_state_get("d:w:2025-11").unwrap().is_none(),
         "invalid doc state must never reach d:w:"
+    );
+    // OD-12 fail-closed discard: the window opened for the import must not
+    // stay registered holding the failed state.
+    assert!(
+        client.window("2025-11").is_none(),
+        "a failed bulk import must discard the just-opened window"
     );
 }
 
