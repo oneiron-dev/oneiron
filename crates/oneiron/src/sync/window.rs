@@ -702,10 +702,15 @@ pub fn forward_rematerialize(
                 return;
             }
 
-            if let Some(latest) = materialized_blobs.get(&id) {
+            // Track whether a local record exists for this id: byte-identical
+            // → idempotent skip (return); present-but-different falls through
+            // with `locally_present = true` so the REDACTION_AUDIT
+            // immutability gate below can quarantine the divergence.
+            let locally_present = if let Some(latest) = materialized_blobs.get(&id) {
                 if latest.as_slice() == blob {
                     return;
                 }
+                true
             } else {
                 let lmdb_blob = match vault.get_raw_in(&rtxn, &id) {
                     Ok(v) => v,
@@ -736,7 +741,8 @@ pub fn forward_rematerialize(
                     );
                     return;
                 }
-            }
+                lmdb_blob.is_some()
+            };
 
             let header = match EntityMetadataHeader::parse(blob) {
                 Some(h) => h,
@@ -759,6 +765,44 @@ pub fn forward_rematerialize(
             } else {
                 &[]
             };
+            // ONE-1134: REDACTION_AUDIT (type 120) replay door #2. Receipts
+            // are immutable audit records (contracts.ts
+            // `redactionAuditReceipt`; ARCH-0023b audit/guardrail class:
+            // quarantine divergence, never silent LWW):
+            // * a blob failing the pinned receipt-body validation is
+            //   quarantined, never written;
+            // * id present locally with divergent bytes (byte-identical
+            //   already returned above) → quarantine the remote payload and
+            //   KEEP the local bytes;
+            // * id absent → accept-new (falls through to `put_replicated`).
+            if header.entity_type == crate::types::ENTITY_TYPE_REDACTION_AUDIT {
+                if let Err(err) = crate::deletion::validate_redaction_receipt_body(data) {
+                    if let Err(q_err) = quarantine::quarantine_rejected_op(
+                        vault,
+                        window_key.as_str(),
+                        QuarantineContainer::Entities,
+                        key,
+                        &err,
+                        blob,
+                    ) {
+                        entity_error = Some(q_err);
+                    }
+                    return;
+                }
+                if locally_present {
+                    if let Err(q_err) = quarantine::quarantine_rejected_op(
+                        vault,
+                        window_key.as_str(),
+                        QuarantineContainer::Entities,
+                        key,
+                        &Error::RedactionReceiptDivergence { id },
+                        blob,
+                    ) {
+                        entity_error = Some(q_err);
+                    }
+                    return;
+                }
+            }
             // Replicated put: the CRDT mirror is unfiltered, so the
             // maintenance band (REDACTION_AUDIT = 120) and reserved-predicate
             // `edge.provenance` truth-Claims reach here on the way back into

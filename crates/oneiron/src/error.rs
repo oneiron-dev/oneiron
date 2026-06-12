@@ -63,6 +63,10 @@ pub enum ErrorKind {
     WindowNotFound,
     #[cfg(feature = "sync")]
     SyncProtocolError,
+    #[cfg(feature = "sync")]
+    InvalidRedactionReceiptBody,
+    #[cfg(feature = "sync")]
+    RedactionReceiptDivergence,
 }
 
 /// Crate error type.
@@ -365,6 +369,29 @@ pub enum Error {
     #[cfg(feature = "sync")]
     #[error("sync protocol error: {0}")]
     SyncProtocolError(String),
+    /// A REDACTION_AUDIT (type 120) blob arriving through a sync replay door
+    /// failed structural validation against the pinned contracts.ts
+    /// `redactionAuditReceipt` field set (request_id, scope, reason,
+    /// requested_at, soft_complete_at, hard_purge_complete_at,
+    /// sweep_queued_at?, sweep_complete_at?, affected_revision_ids,
+    /// verification — opaque identifiers + timestamps only). Fail-closed:
+    /// nothing was written; the replay doors quarantine the blob (`x:`
+    /// family, ONE-1134).
+    #[cfg(feature = "sync")]
+    #[error("invalid redaction audit receipt body: {0}")]
+    InvalidRedactionReceiptBody(&'static str),
+    /// A sync replay door delivered DIVERGENT bytes for an EXISTING
+    /// REDACTION_AUDIT receipt id. Receipts are immutable audit records
+    /// (contracts.ts `redactionAuditReceipt.immutability`; the ARCH-0023b
+    /// audit/guardrail stream class quarantines divergent same-identity
+    /// payloads, never silent LWW): the local bytes are kept and the remote
+    /// payload is quarantined (ONE-1134).
+    #[cfg(feature = "sync")]
+    #[error(
+        "redaction audit receipt {} is immutable: divergent remote bytes are quarantined, local bytes kept",
+        id.to_hex()
+    )]
+    RedactionReceiptDivergence { id: EntityId },
 }
 
 impl Error {
@@ -437,6 +464,10 @@ impl Error {
             Self::WindowNotFound { .. } => ErrorKind::WindowNotFound,
             #[cfg(feature = "sync")]
             Self::SyncProtocolError(_) => ErrorKind::SyncProtocolError,
+            #[cfg(feature = "sync")]
+            Self::InvalidRedactionReceiptBody(_) => ErrorKind::InvalidRedactionReceiptBody,
+            #[cfg(feature = "sync")]
+            Self::RedactionReceiptDivergence { .. } => ErrorKind::RedactionReceiptDivergence,
         }
     }
 
