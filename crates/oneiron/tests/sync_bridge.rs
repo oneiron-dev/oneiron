@@ -10,6 +10,7 @@ use oneiron::sync::bridge::{
     BRIDGE_ORIGIN, Materializer, encode_edge_value_for_crdt, format_edge_key, parse_edge_value,
 };
 use oneiron::sync::client::{SyncClient, SyncClientConfig, SyncEvent};
+use oneiron::sync::manager::WindowManager;
 use oneiron::sync::schema::create_window_doc;
 use oneiron::sync::transport::{
     self, TAG_BULK_TRANSFER, TAG_BULK_TRANSFER_DONE, TAG_SYNC_UPDATE, TAG_WINDOW_SYNC,
@@ -25,6 +26,7 @@ use oneiron::{
     DeleteReason, EdgeProvenanceClaimBody, EdgeRef, EntityId, HnswConfig, SupersessionStatus,
     Vault, VaultConfig,
 };
+use tokio::sync::mpsc::UnboundedReceiver;
 
 fn test_config() -> VaultConfig {
     let mut cfg = VaultConfig::device();
@@ -53,6 +55,17 @@ fn map_get_bytes(map: &LoroMap, key: &str) -> Option<Vec<u8>> {
         ValueOrContainer::Value(LoroValue::Binary(bytes)) => Some(bytes.to_vec()),
         _ => None,
     }
+}
+
+/// SyncClient over a manager-owned window registry (ONE-1126).
+fn make_client(vault: &Arc<Vault>) -> (SyncClient, UnboundedReceiver<SyncEvent>) {
+    let materializer = Arc::new(Materializer::new());
+    let manager = Arc::new(WindowManager::new(
+        Arc::clone(vault),
+        materializer,
+        "test-user",
+    ));
+    SyncClient::new(manager, SyncClientConfig::default()).unwrap()
 }
 
 fn map_insert_bytes(map: &LoroMap, key: &str, value: &[u8]) {
@@ -630,7 +643,7 @@ fn reverse_rematerialize_mirrors_lmdb_entities_edges_and_skips_tombstones() {
 fn sync_client_handle_server_message_imports_root_sync_update() {
     let temp = tempfile::tempdir().unwrap();
     let vault = Arc::new(Vault::open(temp.path(), test_config()).unwrap());
-    let (mut client, _rx) = SyncClient::new(vault, SyncClientConfig::default());
+    let (mut client, _rx) = make_client(&vault);
 
     let server_doc = LoroDoc::new();
     let meta = server_doc.get_map("meta");
@@ -688,7 +701,7 @@ fn sync_client_handle_server_message_dispatch() {
     for (case_name, build, expect) in cases {
         let temp = tempfile::tempdir().unwrap();
         let vault = Arc::new(Vault::open(temp.path(), test_config()).unwrap());
-        let (mut client, _rx) = SyncClient::new(vault, SyncClientConfig::default());
+        let (mut client, _rx) = make_client(&vault);
 
         let message = build(&mut client);
         let result = client.handle_server_message(&message);
@@ -712,7 +725,7 @@ fn sync_client_handle_server_message_dispatch() {
 fn sync_client_handle_server_message_dispatches_window_sync() {
     let temp = tempfile::tempdir().unwrap();
     let vault = Arc::new(Vault::open(temp.path(), test_config()).unwrap());
-    let (mut client, _rx) = SyncClient::new(vault, SyncClientConfig::default());
+    let (mut client, _rx) = make_client(&vault);
 
     let message = transport::encode_window_sync("2026-03", window_sub_tags::VV_REQUEST, &[]);
     let responses = client.handle_server_message(&message).unwrap();
@@ -728,19 +741,42 @@ fn sync_client_handle_server_message_dispatches_window_sync() {
 
 #[test]
 fn sync_client_handle_server_message_handles_bulk_transfer_messages() {
+    // ONE-1126 (AC7): BulkTransfer routes into sync_state persistence — the
+    // in-progress `bulk:w:{key}` marker on BulkTransfer, the `d:w:{key}`
+    // doc-state write + marker clear on BulkTransferDone. The done-state is
+    // a REAL Loro snapshot now: the handler validates structure fail-closed
+    // (the old opaque b"doc-state" placeholder is rejected — see
+    // bulk_transfer_done_rejects_invalid_doc_state in sync_client_wiring).
     let temp = tempfile::tempdir().unwrap();
     let vault = Arc::new(Vault::open(temp.path(), test_config()).unwrap());
-    let (mut client, mut rx) = SyncClient::new(vault, SyncClientConfig::default());
+    let (mut client, mut rx) = make_client(&vault);
 
     let msgpack = rmp_serde::to_vec(&serde_json::json!({})).unwrap();
     let compressed = zstd::stream::encode_all(msgpack.as_slice(), 0).unwrap();
     let bulk = transport::encode_bulk_transfer("2026-03", &compressed);
     assert_eq!(bulk[0], TAG_BULK_TRANSFER);
     assert!(client.handle_server_message(&bulk).unwrap().is_empty());
+    assert_eq!(
+        vault.sync_state_get("bulk:w:2026-03").unwrap().as_deref(),
+        Some([1u8].as_slice()),
+        "BulkTransfer must persist the in-progress marker"
+    );
 
-    let done = transport::encode_bulk_transfer_done("2026-03", b"doc-state");
+    let state_doc = create_window_doc("test-user", &WindowKey::new("2026-03"));
+    let snapshot = state_doc.export(ExportMode::Snapshot).unwrap();
+    let done = transport::encode_bulk_transfer_done("2026-03", &snapshot);
     assert_eq!(done[0], TAG_BULK_TRANSFER_DONE);
     assert!(client.handle_server_message(&done).unwrap().is_empty());
+
+    assert_eq!(
+        vault.sync_state_get("d:w:2026-03").unwrap().as_deref(),
+        Some(snapshot.as_slice()),
+        "BulkTransferDone must persist the doc state to d:w:{{key}}"
+    );
+    assert!(
+        vault.sync_state_get("bulk:w:2026-03").unwrap().is_none(),
+        "BulkTransferDone must clear the in-progress marker"
+    );
 
     match rx.try_recv() {
         Ok(SyncEvent::BulkTransferComplete { window_key }) => {

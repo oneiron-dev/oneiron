@@ -24,6 +24,19 @@ impl Default for SyncConfig {
     }
 }
 
+/// A local CRDT update routed to the connection's outbound path.
+///
+/// Produced by Observer A ([`crate::sync::bridge::OutboundSink`]) for every
+/// persisted local commit and consumed by the connection's debounce → wire
+/// loop. `update_bytes` are raw Loro update bytes (not wire-encoded yet).
+#[derive(Debug)]
+pub struct LocalUpdate {
+    /// Window key (YYYY-MM).
+    pub window_key: String,
+    /// Raw Loro update bytes (not wire-encoded yet).
+    pub update_bytes: Vec<u8>,
+}
+
 /// A window key identifying a time-partitioned Doc (format: "YYYY-MM").
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct WindowKey(String);
