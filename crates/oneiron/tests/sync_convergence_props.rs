@@ -20,7 +20,7 @@
 //!     persist_state clobber guard, carrier-15 scrub)
 //! (g) `offline_catchup_replays_queued_updates_into_peer`
 //! (h) `hard_delete_round_trip_and_rebootstrap_preserves_h_m_rows`
-//! plus the M4-07-gated audit-divergence quarantine test (`#[ignore]`).
+//! including the audit-divergence quarantine property (live since M4-07 merged).
 
 #![cfg(feature = "sync")]
 
@@ -929,7 +929,6 @@ fn hard_delete_round_trip_and_rebootstrap_preserve_h_and_m_rows_byte_identical()
 /// silent overwrite would let a hostile peer rewrite the Art. 5(2) audit
 /// trail.
 #[test]
-#[ignore = "M4-07 (REDACTION_AUDIT replay validation + audit-divergence quarantine) not merged in this base — requires the M4-04 x: quarantine sink; contract: ARCH-0023b oneiron-arch-0023b-crdt-sync-implementation-v1.md:59-72 (stream-class split, never silent LWW)"]
 fn redaction_audit_same_identity_divergence_is_quarantined_not_lww() {
     let (mut a, mut b) = vault_pair();
 
