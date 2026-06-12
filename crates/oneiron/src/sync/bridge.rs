@@ -20,6 +20,10 @@ use loro::{ContainerTrait, LoroDoc, LoroMap, Subscription};
 use tokio::sync::mpsc;
 
 use super::loro_support::{map_get_bytes, tombstone_map_contains_id};
+use super::quarantine::{
+    self, QuarantineContainer, quarantine_rejected_op, quarantine_rejected_op_in_txn,
+    remote_rejection_reason,
+};
 use super::queue::SyncQueue;
 use super::types::LocalUpdate;
 use crate::batch::{self, BatchOp, ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
@@ -251,11 +255,15 @@ pub fn register_observer_a(
 /// container IDs. We subscribe to each of the three maps (entities, edges,
 /// tombstones) and skip events whose origin matches `BRIDGE_ORIGIN`.
 ///
+/// `window_key` identifies the window for quarantine records (`x:` family)
+/// and needs-rematerialization markers (`rm:w:{window}:{entity_hex}`).
+///
 /// Returns three Subscription handles (entities, edges, tombstones).
 pub fn register_observer_b(
     doc: &LoroDoc,
     vault: &Arc<Vault>,
     materializer: &Arc<Materializer>,
+    window_key: &str,
 ) -> (Subscription, Subscription, Subscription) {
     let entities_map = doc.get_map("entities");
     let edges_map = doc.get_map("edges");
@@ -266,6 +274,7 @@ pub fn register_observer_b(
         &entities_map,
         vault,
         materializer,
+        window_key,
         materialize_entities_from_delta,
     );
     let edge_sub = subscribe_map_observer(
@@ -273,6 +282,7 @@ pub fn register_observer_b(
         &edges_map,
         vault,
         materializer,
+        window_key,
         materialize_edges_from_delta,
     );
     let tombstone_sub = subscribe_map_observer(
@@ -280,6 +290,7 @@ pub fn register_observer_b(
         &tombstones_map,
         vault,
         materializer,
+        window_key,
         materialize_tombstones_from_delta,
     );
 
@@ -293,12 +304,14 @@ fn subscribe_map_observer(
     map: &LoroMap,
     vault: &Arc<Vault>,
     materializer: &Arc<Materializer>,
-    materialize: fn(&LoroDoc, &loro::event::MapDelta<'_>, &Vault),
+    window_key: &str,
+    materialize: fn(&LoroDoc, &loro::event::MapDelta<'_>, &Vault, &str),
 ) -> Subscription {
     let callback_doc = doc.clone();
     let subscription_doc = doc.clone();
     let vault = vault.clone();
     let materializer = materializer.clone();
+    let window_key = window_key.to_string();
     let cid = map.id();
     subscription_doc.subscribe(
         &cid,
@@ -309,7 +322,7 @@ fn subscribe_map_observer(
             let _guard = materializer.lock();
             for cdiff in &event.events {
                 if let Some(map_delta) = cdiff.diff.as_map() {
-                    materialize(&callback_doc, map_delta, &vault);
+                    materialize(&callback_doc, map_delta, &vault, &window_key);
                 }
             }
         }),
@@ -320,19 +333,52 @@ fn subscribe_map_observer(
 ///
 /// Accumulates all entity ops from the delta into a single LMDB write
 /// transaction instead of committing per-entity.
+///
+/// Write-gate rejections of REMOTE ops persist a quarantine record (`x:`
+/// family, ONE-1124) and never abort the batch; LOCAL failures (the
+/// engine's own LMDB errors) propagate fail-closed and abort the txn.
 fn materialize_entities_from_delta(
     doc: &LoroDoc,
     delta: &loro::event::MapDelta<'_>,
     vault: &Vault,
+    window_key: &str,
 ) {
     let tombstones_map = doc.get_map("tombstones");
     let result = vault.with_write_txn(|wtxn| {
         for (key, new_val) in &delta.updated {
             match new_val {
                 Some(loro::ValueOrContainer::Value(loro::LoroValue::Binary(blob))) => {
-                    let Ok(id) = EntityId::from_hex(key.as_ref()) else {
-                        tracing::warn!(entity = %key, "observer-b: entity invalid hex id");
+                    // Pre-validate the REMOTE bytes structurally BEFORE any
+                    // local read, so a later `CorruptedIndex` bubbling out of
+                    // the engine's own rows is never conflated with a bad
+                    // remote blob (LOCAL corruption = typed error, never
+                    // quarantine-and-continue).
+                    if EntityMetadataHeader::parse(blob).is_none() {
+                        quarantine_rejected_op_in_txn(
+                            vault,
+                            wtxn,
+                            window_key,
+                            QuarantineContainer::Entities,
+                            key.as_ref(),
+                            &Error::CorruptedIndex("entity metadata"),
+                            blob,
+                        )?;
                         continue;
+                    }
+                    let id = match EntityId::from_hex(key.as_ref()) {
+                        Ok(id) => id,
+                        Err(_) => {
+                            quarantine_rejected_op_in_txn(
+                                vault,
+                                wtxn,
+                                window_key,
+                                QuarantineContainer::Entities,
+                                key.as_ref(),
+                                &Error::InvalidKey,
+                                blob,
+                            )?;
+                            continue;
+                        }
                     };
                     // ONE-1133 (ARCH-0038): a tombstone always wins over
                     // concurrent entities-map state. A re-put merged after
@@ -383,18 +429,37 @@ fn materialize_entities_from_delta(
                         blob,
                     );
                     if let Err(e) = materialize_result {
-                        tracing::warn!(
-                            entity = %key,
-                            error = %e,
-                            "observer-b: entity materialization failed"
-                        );
+                        if remote_rejection_reason(&e).is_some() {
+                            quarantine_rejected_op_in_txn(
+                                vault,
+                                wtxn,
+                                window_key,
+                                QuarantineContainer::Entities,
+                                key.as_ref(),
+                                &e,
+                                blob,
+                            )?;
+                        } else {
+                            // LOCAL failure — fail closed, abort the batch.
+                            return Err(e);
+                        }
                     }
                 }
                 None => {
                     // Deleted — no action for entities (use tombstones instead)
                 }
                 _ => {
-                    tracing::warn!(entity = %key, "observer-b: entity unexpected value type");
+                    // Non-binary value where an entity blob belongs —
+                    // undecodable remote op, quarantined (never a bare log).
+                    quarantine_rejected_op_in_txn(
+                        vault,
+                        wtxn,
+                        window_key,
+                        QuarantineContainer::Entities,
+                        key.as_ref(),
+                        &Error::InvalidKey,
+                        &[],
+                    )?;
                 }
             }
         }
@@ -410,17 +475,54 @@ fn materialize_entities_from_delta(
 ///
 /// Accumulates all edge ops from the delta into a single LMDB write
 /// transaction instead of committing per-edge.
-fn materialize_edges_from_delta(doc: &LoroDoc, delta: &loro::event::MapDelta<'_>, vault: &Vault) {
+///
+/// Write-gate rejections of REMOTE ops persist a quarantine record (`x:`
+/// family, ONE-1124) and never abort the batch; LOCAL failures (the
+/// engine's own LMDB errors) propagate fail-closed and abort the txn.
+fn materialize_edges_from_delta(
+    doc: &LoroDoc,
+    delta: &loro::event::MapDelta<'_>,
+    vault: &Vault,
+    window_key: &str,
+) {
     let result = vault.with_write_txn(|wtxn| {
         let entities_map = doc.get_map("entities");
         let tombstones_map = doc.get_map("tombstones");
         let mut ops = Vec::<BatchOp>::new();
+        let mut metas = Vec::<EdgeOpMeta>::new();
         for (key, new_val) in &delta.updated {
             match new_val {
                 Some(loro::ValueOrContainer::Value(loro::LoroValue::Binary(buf))) => {
                     let Some((src, kind, tgt)) = parse_edge_key(key.as_ref()) else {
-                        tracing::warn!(edge = %key, "observer-b: edge invalid key format");
+                        quarantine_rejected_op_in_txn(
+                            vault,
+                            wtxn,
+                            window_key,
+                            QuarantineContainer::Edges,
+                            key.as_ref(),
+                            &Error::InvalidKey,
+                            buf,
+                        )?;
                         continue;
+                    };
+
+                    // Decode BEFORE endpoint hydration: a malformed value is
+                    // a remote rejection regardless of endpoint state, and
+                    // decode has no side effects.
+                    let decoded = match decode_edge_value_for_kind(kind, buf) {
+                        Ok(v) => v,
+                        Err(e) => {
+                            quarantine_rejected_op_in_txn(
+                                vault,
+                                wtxn,
+                                window_key,
+                                QuarantineContainer::Edges,
+                                key.as_ref(),
+                                &e,
+                                buf,
+                            )?;
+                            continue;
+                        }
                     };
 
                     let src_ready = ensure_entity_materialized_from_crdt(
@@ -438,25 +540,68 @@ fn materialize_edges_from_delta(doc: &LoroDoc, delta: &loro::event::MapDelta<'_>
                         &tgt,
                     );
                     match (src_ready, tgt_ready) {
-                        (Ok(true), Ok(true)) => {}
-                        (Ok(_), Ok(_)) => continue,
-                        (Err(e), _) | (_, Err(e)) => {
-                            tracing::warn!(
+                        (Ok(EndpointHydration::Ready), Ok(EndpointHydration::Ready)) => {}
+                        (Ok(EndpointHydration::RejectedBlob), Ok(_))
+                        | (Ok(_), Ok(EndpointHydration::RejectedBlob)) => {
+                            // The endpoint's CRDT blob is undecodable REMOTE
+                            // garbage — the edge op is rejected with it:
+                            // quarantine and continue, never abort the batch
+                            // (the blob came from the remote doc, not the
+                            // engine's own rows).
+                            quarantine_rejected_op_in_txn(
+                                vault,
+                                wtxn,
+                                window_key,
+                                QuarantineContainer::Edges,
+                                key.as_ref(),
+                                &Error::CorruptedIndex("entity metadata"),
+                                buf,
+                            )?;
+                            continue;
+                        }
+                        (Ok(_), Ok(_)) => {
+                            // Endpoint absent or tombstoned in the CRDT — a
+                            // deferral (cross-window endpoints arrive later;
+                            // tombstoned endpoints never resurrect), not a
+                            // write-gate rejection. The edge stays in the
+                            // CRDT and re-materializes when its endpoints do.
+                            tracing::debug!(
                                 edge = %key,
-                                error = %e,
-                                "observer-b: edge endpoint materialization failed"
+                                "observer-b: edge deferred — endpoint absent or tombstoned"
                             );
+                            continue;
+                        }
+                        // Fail-closed split (ONE-1124 fix wave 2): a LOCAL
+                        // (non-remote-classifiable) error on EITHER endpoint
+                        // aborts the batch FIRST. Matching
+                        // `(Err(e), _) | (_, Err(e))` unconditionally would
+                        // bind a remote-rejectable src error and silently
+                        // swallow a local tgt failure behind an x: row that
+                        // pretends the edge was handled.
+                        (Err(e), _) if remote_rejection_reason(&e).is_none() => {
+                            return Err(e);
+                        }
+                        (_, Err(e)) if remote_rejection_reason(&e).is_none() => {
+                            return Err(e);
+                        }
+                        (Err(e), _) | (_, Err(e)) => {
+                            // Every endpoint error left here is
+                            // remote-rejectable: the endpoint's CRDT blob
+                            // failed the entity write gate, so this edge op
+                            // is rejected with it — quarantine and continue.
+                            quarantine_rejected_op_in_txn(
+                                vault,
+                                wtxn,
+                                window_key,
+                                QuarantineContainer::Edges,
+                                key.as_ref(),
+                                &e,
+                                buf,
+                            )?;
                             continue;
                         }
                     }
 
-                    let decoded = match decode_edge_value_for_kind(kind, buf) {
-                        Ok(v) => v,
-                        Err(_) => {
-                            tracing::warn!(edge = %key, "observer-b: edge malformed value");
-                            continue;
-                        }
-                    };
                     ops.push(BatchOp::EdgeWithCreatedAt {
                         src,
                         kind,
@@ -466,19 +611,41 @@ fn materialize_edges_from_delta(doc: &LoroDoc, delta: &loro::event::MapDelta<'_>
                         vad: decoded.vad.unwrap_or(Vad::NEUTRAL),
                         provenance: decoded.provenance,
                     });
+                    metas.push(EdgeOpMeta::for_key(key.as_ref(), buf));
                 }
                 None => {
                     // Deleted
                     let Some((src, kind, tgt)) = parse_edge_key(key.as_ref()) else {
+                        quarantine_rejected_op_in_txn(
+                            vault,
+                            wtxn,
+                            window_key,
+                            QuarantineContainer::Edges,
+                            key.as_ref(),
+                            &Error::InvalidKey,
+                            &[],
+                        )?;
                         continue;
                     };
                     ops.push(BatchOp::DeleteEdge { src, kind, tgt });
+                    metas.push(EdgeOpMeta::for_key(key.as_ref(), &[]));
                 }
-                _ => {}
+                _ => {
+                    // Non-binary value where an edge value belongs —
+                    // undecodable remote op, quarantined (never a bare log).
+                    quarantine_rejected_op_in_txn(
+                        vault,
+                        wtxn,
+                        window_key,
+                        QuarantineContainer::Edges,
+                        key.as_ref(),
+                        &Error::InvalidKey,
+                        &[],
+                    )?;
+                }
             }
         }
-        apply_materialized_edge_ops(vault, wtxn, ops);
-        Ok(())
+        apply_materialized_edge_ops(vault, wtxn, ops, &metas, window_key)
     });
 
     if let Err(e) = result {
@@ -494,7 +661,62 @@ struct PendingChildOfOp {
     op: BatchOp,
 }
 
-fn apply_materialized_edge_ops(vault: &Vault, wtxn: &mut heed::RwTxn<'_>, ops: Vec<BatchOp>) {
+/// Quarantine bookkeeping for one edge op, index-aligned with the ops vec.
+/// Carries bounded non-content metadata only: the CRDT map key is
+/// attacker-controlled, so it is hashed up front and never retained
+/// (ONE-1124 — `x:` rows are hash+metadata, never content).
+#[derive(Clone)]
+struct EdgeOpMeta {
+    crdt_key_hash: u64,
+    crdt_key_len: u32,
+    payload_hash: u64,
+}
+
+impl EdgeOpMeta {
+    fn for_key(crdt_key: &str, payload: &[u8]) -> Self {
+        let (crdt_key_hash, crdt_key_len) = quarantine::crdt_key_metadata(crdt_key);
+        Self {
+            crdt_key_hash,
+            crdt_key_len,
+            payload_hash: quarantine::payload_hash(payload),
+        }
+    }
+}
+
+fn quarantine_edge_apply_failure(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    window_key: &str,
+    meta: &EdgeOpMeta,
+    error: &Error,
+) -> Result<()> {
+    quarantine::record_in_txn(
+        vault,
+        wtxn,
+        &quarantine::QuarantineRecord {
+            window_key: window_key.to_string(),
+            container: QuarantineContainer::Edges,
+            crdt_key_hash: meta.crdt_key_hash,
+            crdt_key_len: meta.crdt_key_len,
+            reason_code: quarantine::reason_code_for(error),
+            payload_hash: meta.payload_hash,
+            quarantined_at: crate::unix_seconds_now(),
+        },
+    )?;
+    Ok(())
+}
+
+/// Applies materialized edge ops. A write-gate rejection quarantines the
+/// rejected op (every op of a rejected ChildOf component) and continues;
+/// a LOCAL failure propagates fail-closed.
+fn apply_materialized_edge_ops(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    ops: Vec<BatchOp>,
+    metas: &[EdgeOpMeta],
+    window_key: &str,
+) -> Result<()> {
+    debug_assert_eq!(ops.len(), metas.len());
     let mut child_of_adds = Vec::<PendingChildOfOp>::new();
     let mut child_of_deletes = Vec::<PendingChildOfOp>::new();
 
@@ -523,7 +745,10 @@ fn apply_materialized_edge_ops(vault: &Vault, wtxn: &mut heed::RwTxn<'_>, ops: V
                 let apply_result =
                     batch::apply_ops(&vault.store, &vault.config, &vault.analyzer, wtxn, vec![op]);
                 if let Err(e) = apply_result {
-                    tracing::warn!(error = %e, "observer-b: edge materialization failed");
+                    if remote_rejection_reason(&e).is_none() {
+                        return Err(e);
+                    }
+                    quarantine_edge_apply_failure(vault, wtxn, window_key, &metas[index], &e)?;
                 }
             }
         }
@@ -531,6 +756,7 @@ fn apply_materialized_edge_ops(vault: &Vault, wtxn: &mut heed::RwTxn<'_>, ops: V
 
     child_of_deletes.sort_by(cmp_pending_child_of_ops);
     for pending in child_of_deletes {
+        let index = pending.index;
         let apply_result = batch::apply_ops(
             &vault.store,
             &vault.config,
@@ -539,7 +765,10 @@ fn apply_materialized_edge_ops(vault: &Vault, wtxn: &mut heed::RwTxn<'_>, ops: V
             vec![pending.op],
         );
         if let Err(e) = apply_result {
-            tracing::warn!(error = %e, "observer-b: edge materialization failed");
+            if remote_rejection_reason(&e).is_none() {
+                return Err(e);
+            }
+            quarantine_edge_apply_failure(vault, wtxn, window_key, &metas[index], &e)?;
         }
     }
 
@@ -552,13 +781,43 @@ fn apply_materialized_edge_ops(vault: &Vault, wtxn: &mut heed::RwTxn<'_>, ops: V
     for component in components {
         let mut component_ops = component;
         component_ops.sort_by(cmp_pending_child_of_ops);
-        let ops = component_ops.into_iter().map(|entry| entry.op).collect();
+        let ops: Vec<BatchOp> = component_ops.iter().map(|entry| entry.op.clone()).collect();
         let apply_result =
             batch::apply_ops(&vault.store, &vault.config, &vault.analyzer, wtxn, ops);
         if let Err(e) = apply_result {
-            tracing::warn!(error = %e, "observer-b: edge materialization failed");
+            if remote_rejection_reason(&e).is_none() {
+                return Err(e);
+            }
+            // The component was rejected as a unit (a remote ChildOf cycle
+            // or single-parent violation — both up-front validation gates,
+            // nothing staged). Re-apply per-op in the same deterministic
+            // order so only the ops that individually fail a gate are
+            // quarantined — never falsely recording siblings that are valid
+            // on their own.
+            for pending in component_ops {
+                let apply_result = batch::apply_ops(
+                    &vault.store,
+                    &vault.config,
+                    &vault.analyzer,
+                    wtxn,
+                    vec![pending.op],
+                );
+                if let Err(e) = apply_result {
+                    if remote_rejection_reason(&e).is_none() {
+                        return Err(e);
+                    }
+                    quarantine_edge_apply_failure(
+                        vault,
+                        wtxn,
+                        window_key,
+                        &metas[pending.index],
+                        &e,
+                    )?;
+                }
+            }
         }
     }
+    Ok(())
 }
 
 fn child_of_components(ops: &[PendingChildOfOp]) -> Vec<Vec<PendingChildOfOp>> {
@@ -633,10 +892,17 @@ fn child_of_component_sort_key(component: &[PendingChildOfOp]) -> [u8; 33] {
 /// hard reasons, legacy 8-byte, reserved 0, unknown bytes, malformed,
 /// and non-binary values — hard-purges and, when local state was erased,
 /// writes the LOCAL REDACTION_AUDIT receipt and `h:` sweep row.
+///
+/// A replay failure is the fail-OPEN delete hole: hard-deleted content stays
+/// live locally with no retry. It now writes the ARCH-0023b
+/// needs-rematerialization marker `rm:w:{window}:{entity_hex}` ("set on
+/// Observer B failure", entity-scoped) so maintain/doctor retries it
+/// durably (ONE-1124 AC4) — a GDPR SLA breach signal until drained.
 fn materialize_tombstones_from_delta(
     _doc: &LoroDoc,
     delta: &loro::event::MapDelta<'_>,
     vault: &Vault,
+    window_key: &str,
 ) {
     for (key, new_val) in &delta.updated {
         match new_val {
@@ -645,7 +911,26 @@ fn materialize_tombstones_from_delta(
                 let id = match EntityId::from_hex(key.as_ref()) {
                     Ok(id) => id,
                     Err(_) => {
-                        tracing::warn!(tombstone = %key, "observer-b: tombstone invalid hex id");
+                        let payload = match value {
+                            loro::ValueOrContainer::Value(loro::LoroValue::Binary(bytes)) => {
+                                bytes.to_vec()
+                            }
+                            _ => Vec::new(),
+                        };
+                        if let Err(e) = quarantine_rejected_op(
+                            vault,
+                            window_key,
+                            QuarantineContainer::Tombstones,
+                            key.as_ref(),
+                            &Error::InvalidKey,
+                            &payload,
+                        ) {
+                            tracing::error!(
+                                tombstone = %key,
+                                error = %e,
+                                "observer-b: failed to persist tombstone quarantine record"
+                            );
+                        }
                         continue;
                     }
                 };
@@ -658,28 +943,51 @@ fn materialize_tombstones_from_delta(
                     _ => &[],
                 };
 
-                let delete_result = vault.apply_replayed_tombstone(&id, raw_value);
+                let delete_result =
+                    quarantine::apply_replayed_tombstone_for_sync(vault, &id, raw_value);
                 if let Err(e) = delete_result {
-                    tracing::warn!(
+                    tracing::error!(
                         tombstone = %key,
+                        window = %window_key,
                         error = %e,
-                        "observer-b: tombstone replay failed"
+                        "observer-b: tombstone replay FAILED — hard-deleted content may still be live; flagging entity-scoped rm: marker for durable retry"
                     );
+                    if let Err(marker_err) = quarantine::set_remat_marker(vault, window_key, &id) {
+                        tracing::error!(
+                            tombstone = %key,
+                            error = %marker_err,
+                            "observer-b: CRITICAL — failed to set rm: marker after purge failure"
+                        );
+                    }
                 }
             }
             None => {
-                // Tombstone REMOVAL — protocol violation: tombstones are
-                // permanent and no engine version emits removals (crafted /
-                // malicious update only). The `dt:` marker gate keeps the
-                // local hard delete closed regardless; quarantine of the
-                // offending update is ONE-1124's `x:` machinery (folded in
-                // at merge-train integration). Deliberately NOT re-asserting
-                // the tombstone here — doc writes inside an Observer-B
-                // callback re-enter Loro.
-                tracing::warn!(
-                    tombstone = %key,
-                    "observer-b: tombstone removal delta — protocol violation, ignoring"
-                );
+                // Tombstone REMOVAL delta: no engine version ever emits one
+                // — tombstones are permanent (never-downgrade,
+                // hard-once-seen), so a removal is a protocol violation by
+                // definition. The `dt:` marker gate keeps the local hard
+                // delete closed regardless. Quarantine it (x: row,
+                // hash+metadata only) and continue. The tombstone is
+                // deliberately NOT re-asserted here: a doc write inside an
+                // observer callback re-enters Loro (handoff §8c.1); the
+                // quarantine row plus the doctor surface carry the signal
+                // instead.
+                if let Err(e) = quarantine_rejected_op(
+                    vault,
+                    window_key,
+                    QuarantineContainer::Tombstones,
+                    key.as_ref(),
+                    &Error::SyncProtocolError(
+                        "tombstone removal delta (tombstones are permanent)".to_string(),
+                    ),
+                    &[],
+                ) {
+                    tracing::error!(
+                        tombstone = %key,
+                        error = %e,
+                        "observer-b: failed to persist tombstone-removal quarantine record"
+                    );
+                }
             }
         }
     }
@@ -757,13 +1065,56 @@ fn materialize_entity_blob_in_txn(
         .apply(wtxn)
 }
 
+/// Endpoint hydration outcome for Observer B edge materialization.
+enum EndpointHydration {
+    /// Endpoint exists in LMDB (or was just materialized from the CRDT).
+    Ready,
+    /// Endpoint absent or tombstoned — defer the edge (it stays in the CRDT
+    /// and re-materializes when its endpoint does).
+    Deferred,
+    /// The endpoint's CRDT entities-map blob is structurally undecodable —
+    /// REMOTE garbage by construction (the blob came from the remote doc),
+    /// so the edge op is rejected with it (quarantined by the caller). Never
+    /// conflated with the engine's own LOCAL `CorruptedIndex`, which stays a
+    /// fail-closed typed error.
+    RejectedBlob,
+}
+
+// Test-only LOCAL endpoint-hydration failure injection for the fail-closed
+// split tests: when set to an entity id, the next hydration of that id
+// returns a non-remote-classifiable error (the engine's own read failing).
+// One-shot, thread-local (Loro observer callbacks fire synchronously on the
+// committing thread).
+#[cfg(test)]
+thread_local! {
+    pub(crate) static INJECT_LOCAL_ENDPOINT_FAILURE: std::cell::Cell<Option<EntityId>> =
+        const { std::cell::Cell::new(None) };
+}
+
 fn ensure_entity_materialized_from_crdt(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
     entities_map: &LoroMap,
     tombstones_map: &LoroMap,
     id: &EntityId,
-) -> Result<bool> {
+) -> Result<EndpointHydration> {
+    #[cfg(test)]
+    {
+        let inject = INJECT_LOCAL_ENDPOINT_FAILURE.with(|cell| {
+            if cell.get() == Some(*id) {
+                cell.set(None);
+                true
+            } else {
+                false
+            }
+        });
+        if inject {
+            return Err(Error::Io(std::io::Error::other(
+                "injected local endpoint read failure (test hook)",
+            )));
+        }
+    }
+
     // Tombstone gate FIRST: a tombstoned OR locally hard-deleted (`dt:`
     // marker) endpoint must never count as "ready", even while a stale LMDB
     // row survives (crash window between the tombstone CRDT commit and the
@@ -775,7 +1126,7 @@ fn ensure_entity_materialized_from_crdt(
     // push an edge op against a missing endpoint;
     // `materialize_entity_blob_in_txn` re-checks both as the structural
     // fail-closed gate before its put.
-    let hex_id = id.to_hex();
+    //
     // Value-agnostic, entity-canonical tombstone presence (a non-binary
     // tombstone decodes HARD downstream; a case-shifted hex key still
     // names this id) OR the permanent local `dt:` marker: an edge whose
@@ -784,18 +1135,27 @@ fn ensure_entity_materialized_from_crdt(
     if tombstone_map_contains_id(tombstones_map, id)
         || vault.local_hard_delete_marker_exists_in_txn(wtxn, id)?
     {
-        return Ok(false);
+        return Ok(EndpointHydration::Deferred);
     }
 
     if vault.store.entities.get(&*wtxn, id.as_bytes())?.is_some() {
-        return Ok(true);
+        return Ok(EndpointHydration::Ready);
     }
 
+    let hex_id = id.to_hex();
     let Some(blob) = map_get_bytes(entities_map, &hex_id) else {
-        return Ok(false);
+        return Ok(EndpointHydration::Deferred);
     };
+    // Structural pre-validation of the REMOTE blob (mirrors the entity
+    // delta path's decode-before-local-read ordering): an unparsable
+    // endpoint blob is remote garbage, distinguished from the LOCAL
+    // `CorruptedIndex` that `materialize_entity_blob_in_txn` would conflate
+    // it with at the caller's classification.
+    if EntityMetadataHeader::parse(&blob).is_none() {
+        return Ok(EndpointHydration::RejectedBlob);
+    }
     materialize_entity_blob_in_txn(vault, wtxn, tombstones_map, &hex_id, &blob)?;
-    Ok(true)
+    Ok(EndpointHydration::Ready)
 }
 
 /// Parses an edge key: `{src_hex}:{kind_u8:02}:{tgt_hex}` → (src, kind, tgt).
@@ -924,6 +1284,21 @@ mod tests {
         blob
     }
 
+    /// Index-aligned metas for direct `apply_materialized_edge_ops` calls.
+    fn test_metas_for_ops(ops: &[BatchOp]) -> Vec<EdgeOpMeta> {
+        ops.iter()
+            .map(|op| {
+                let (src, kind, tgt) = match op {
+                    BatchOp::EdgeWithCreatedAt { src, kind, tgt, .. }
+                    | BatchOp::Edge { src, kind, tgt, .. }
+                    | BatchOp::DeleteEdge { src, kind, tgt } => (src, *kind, tgt),
+                    _ => unreachable!("edge ops only"),
+                };
+                EdgeOpMeta::for_key(&format_edge_key(src, kind, tgt), &[])
+            })
+            .collect()
+    }
+
     #[test]
     fn parse_edge_key_valid() {
         let src = EntityId::from_bytes_unchecked([0x11; 16]);
@@ -994,30 +1369,28 @@ mod tests {
 
         vault
             .with_write_txn(|wtxn| {
-                apply_materialized_edge_ops(
-                    &vault,
-                    wtxn,
-                    vec![
-                        BatchOp::EdgeWithCreatedAt {
-                            src: a,
-                            kind: EdgeKind::ChildOf,
-                            tgt: b,
-                            weight: 1.0,
-                            created_at: 10,
-                            vad: Vad::NEUTRAL,
-                            provenance: None,
-                        },
-                        BatchOp::EdgeWithCreatedAt {
-                            src: c,
-                            kind: EdgeKind::Mentions,
-                            tgt: a,
-                            weight: 0.8,
-                            created_at: 11,
-                            vad: Vad::NEUTRAL,
-                            provenance: None,
-                        },
-                    ],
-                );
+                let ops = vec![
+                    BatchOp::EdgeWithCreatedAt {
+                        src: a,
+                        kind: EdgeKind::ChildOf,
+                        tgt: b,
+                        weight: 1.0,
+                        created_at: 10,
+                        vad: Vad::NEUTRAL,
+                        provenance: None,
+                    },
+                    BatchOp::EdgeWithCreatedAt {
+                        src: c,
+                        kind: EdgeKind::Mentions,
+                        tgt: a,
+                        weight: 0.8,
+                        created_at: 11,
+                        vad: Vad::NEUTRAL,
+                        provenance: None,
+                    },
+                ];
+                let metas = test_metas_for_ops(&ops);
+                apply_materialized_edge_ops(&vault, wtxn, ops, &metas, "2026-03")?;
                 Ok(())
             })
             .unwrap();
@@ -1063,26 +1436,24 @@ mod tests {
 
         vault
             .with_write_txn(|wtxn| {
-                apply_materialized_edge_ops(
-                    &vault,
-                    wtxn,
-                    vec![
-                        BatchOp::DeleteEdge {
-                            src: c,
-                            kind: EdgeKind::ChildOf,
-                            tgt: b,
-                        },
-                        BatchOp::EdgeWithCreatedAt {
-                            src: a,
-                            kind: EdgeKind::ChildOf,
-                            tgt: b,
-                            weight: 1.0,
-                            created_at: 10,
-                            vad: Vad::NEUTRAL,
-                            provenance: None,
-                        },
-                    ],
-                );
+                let ops = vec![
+                    BatchOp::DeleteEdge {
+                        src: c,
+                        kind: EdgeKind::ChildOf,
+                        tgt: b,
+                    },
+                    BatchOp::EdgeWithCreatedAt {
+                        src: a,
+                        kind: EdgeKind::ChildOf,
+                        tgt: b,
+                        weight: 1.0,
+                        created_at: 10,
+                        vad: Vad::NEUTRAL,
+                        provenance: None,
+                    },
+                ];
+                let metas = test_metas_for_ops(&ops);
+                apply_materialized_edge_ops(&vault, wtxn, ops, &metas, "2026-03")?;
                 Ok(())
             })
             .unwrap();
@@ -1136,30 +1507,28 @@ mod tests {
 
         vault
             .with_write_txn(|wtxn| {
-                apply_materialized_edge_ops(
-                    &vault,
-                    wtxn,
-                    vec![
-                        BatchOp::EdgeWithCreatedAt {
-                            src: y,
-                            kind: EdgeKind::ChildOf,
-                            tgt: a,
-                            weight: 1.0,
-                            created_at: 10,
-                            vad: Vad::NEUTRAL,
-                            provenance: None,
-                        },
-                        BatchOp::EdgeWithCreatedAt {
-                            src: x,
-                            kind: EdgeKind::ChildOf,
-                            tgt: b,
-                            weight: 1.0,
-                            created_at: 11,
-                            vad: Vad::NEUTRAL,
-                            provenance: None,
-                        },
-                    ],
-                );
+                let ops = vec![
+                    BatchOp::EdgeWithCreatedAt {
+                        src: y,
+                        kind: EdgeKind::ChildOf,
+                        tgt: a,
+                        weight: 1.0,
+                        created_at: 10,
+                        vad: Vad::NEUTRAL,
+                        provenance: None,
+                    },
+                    BatchOp::EdgeWithCreatedAt {
+                        src: x,
+                        kind: EdgeKind::ChildOf,
+                        tgt: b,
+                        weight: 1.0,
+                        created_at: 11,
+                        vad: Vad::NEUTRAL,
+                        provenance: None,
+                    },
+                ];
+                let metas = test_metas_for_ops(&ops);
+                apply_materialized_edge_ops(&vault, wtxn, ops, &metas, "2026-03")?;
                 Ok(())
             })
             .unwrap();
@@ -1192,7 +1561,7 @@ mod tests {
         doc.commit();
 
         let materializer = Arc::new(Materializer::new());
-        let _subs = register_observer_b(&doc, &vault, &materializer);
+        let _subs = register_observer_b(&doc, &vault, &materializer, "2026-03");
 
         map_insert_bytes(
             &edges,
@@ -1239,7 +1608,7 @@ mod tests {
         doc.commit();
 
         let materializer = Arc::new(Materializer::new());
-        let _subs = register_observer_b(&doc, &vault, &materializer);
+        let _subs = register_observer_b(&doc, &vault, &materializer, "2026-03");
 
         map_insert_bytes(
             &edges,
@@ -1296,7 +1665,7 @@ mod tests {
         doc.commit();
 
         let materializer = Arc::new(Materializer::new());
-        let _subs = register_observer_b(&doc, &vault, &materializer);
+        let _subs = register_observer_b(&doc, &vault, &materializer, "2026-03");
 
         for (src, tgt) in [(&live, &del_bin), (&live, &del_str), (&del_bin, &live)] {
             map_insert_bytes(
@@ -1443,7 +1812,7 @@ mod tests {
         doc.commit();
 
         let materializer = Arc::new(Materializer::new());
-        let _subs = register_observer_b(&doc, &vault, &materializer);
+        let _subs = register_observer_b(&doc, &vault, &materializer, "2026-03");
 
         let entities = doc.get_map("entities");
         map_insert_bytes(
@@ -1495,7 +1864,7 @@ mod tests {
         doc.commit();
 
         let materializer = Arc::new(Materializer::new());
-        let _subs = register_observer_b(&doc, &vault, &materializer);
+        let _subs = register_observer_b(&doc, &vault, &materializer, "2026-03");
 
         map_insert_bytes(
             &edges,
@@ -1522,8 +1891,8 @@ mod tests {
     /// that REMOVES the CRDT tombstone and re-puts the entity key must NOT
     /// rematerialize the hard-deleted body. The CRDT map is mutable remote
     /// input; the `dt:` marker written in the origin purge txn is the local
-    /// truth the gate falls back to, and the removal is warn-logged as a
-    /// protocol violation.
+    /// truth the gate falls back to, and the removal is quarantined (x:
+    /// row, ONE-1124) as a protocol violation.
     #[test]
     fn observer_b_refuses_resurrection_after_crafted_tombstone_removal() {
         let vault = test_vault();
@@ -1620,12 +1989,20 @@ mod tests {
         assert!(
             messages
                 .iter()
-                .any(|m| m.contains("tombstone removal delta")),
-            "protocol-violation warn must fire, got: {messages:?}"
+                .any(|m| m.contains("rejected by write gate")),
+            "protocol-violation quarantine warn must fire, got: {messages:?}"
         );
         assert!(
             messages.iter().any(|m| m.contains("dt: marker")),
             "dt: gate refusal warn must fire, got: {messages:?}"
+        );
+        // The removal is quarantined (x: row, ONE-1124) — never a bare log.
+        let records = crate::sync::quarantine::quarantined_records(&vault).unwrap();
+        assert!(
+            records
+                .iter()
+                .any(|(_, r)| r.container == QuarantineContainer::Tombstones),
+            "crafted tombstone removal must persist a Tombstones x: row"
         );
     }
 
@@ -1753,7 +2130,7 @@ mod tests {
         // headerless delete, so ONLY the dt: leg of the OR-gate can refuse.
         let doc = LoroDoc::new();
         let materializer = Arc::new(Materializer::new());
-        let _subs = register_observer_b(&doc, &vault, &materializer);
+        let _subs = register_observer_b(&doc, &vault, &materializer, "2026-03");
         let warns = WarnCapture::default();
         tracing::subscriber::with_default(warns.clone(), || {
             map_insert_bytes(
@@ -1783,7 +2160,7 @@ mod tests {
         let vault = test_vault();
         let doc = LoroDoc::new();
         let materializer = Arc::new(Materializer::new());
-        let _subs = register_observer_b(&doc, &vault, &materializer);
+        let _subs = register_observer_b(&doc, &vault, &materializer, "2026-03");
 
         let id = EntityId::now();
         map_insert_bytes(
@@ -1848,7 +2225,7 @@ mod tests {
         );
 
         let materializer = Arc::new(Materializer::new());
-        let _subs = register_observer_b(&doc, &vault, &materializer);
+        let _subs = register_observer_b(&doc, &vault, &materializer, "2026-03");
 
         map_insert_bytes(&entities, &claim_id.to_hex(), &claim_blob).unwrap();
         doc.commit();
@@ -1863,5 +2240,66 @@ mod tests {
             .unwrap()
             .expect("materialized Claim must read back through get_claim");
         assert_eq!(read.predicate, "edge.provenance");
+    }
+
+    /// ONE-1124 fix wave 2 (fail-closed split) — when the src endpoint
+    /// fails with a REMOTE-rejectable error and the tgt endpoint fails with
+    /// a LOCAL error, the LOCAL error wins: the edge transaction aborts and
+    /// NO x: row is written. Pre-fix, `(Err(e), _) | (_, Err(e))` bound the
+    /// remote src error, quarantined the edge, and silently swallowed the
+    /// local failure.
+    #[test]
+    fn local_endpoint_error_aborts_batch_before_remote_quarantine() {
+        let vault = test_vault();
+        let doc = LoroDoc::new();
+        let entities = doc.get_map("entities");
+        let edges = doc.get_map("edges");
+        let src = EntityId::now();
+        let tgt = EntityId::now();
+
+        // src endpoint blob: parses structurally but fails the entity write
+        // gate with InvalidEntityType (unknown type byte) — a
+        // remote-rejectable endpoint error. Inserted BEFORE the observer is
+        // registered so only the edge delta fires.
+        map_insert_bytes(
+            &entities,
+            &src.to_hex(),
+            &entity_blob(200, TimeRange { start: 1, end: 1 }, 2, b"s"),
+        )
+        .unwrap();
+        doc.commit();
+
+        let materializer = Arc::new(Materializer::new());
+        let _subs = register_observer_b(&doc, &vault, &materializer, "2026-03");
+
+        // tgt endpoint: injected LOCAL read failure (the engine's own read
+        // erroring — not classifiable as a remote rejection).
+        INJECT_LOCAL_ENDPOINT_FAILURE.with(|cell| cell.set(Some(tgt)));
+        map_insert_bytes(
+            &edges,
+            &format_edge_key(&src, EdgeKind::Mentions, &tgt),
+            &encode_edge_value_for_crdt(EdgeKind::Mentions, 0.5, 10, Some(Vad::NEUTRAL), None)
+                .unwrap(),
+        )
+        .unwrap();
+        doc.commit();
+
+        assert!(
+            INJECT_LOCAL_ENDPOINT_FAILURE.with(|cell| cell.get().is_none()),
+            "precondition: the local tgt failure was actually hit"
+        );
+        let records = crate::sync::quarantine::quarantined_records(&vault).unwrap();
+        assert!(
+            records.is_empty(),
+            "local endpoint error must abort the txn — no x: row may pretend the edge was handled"
+        );
+        assert!(
+            !vault.edge_exists(&src, EdgeKind::Mentions, &tgt).unwrap(),
+            "aborted txn must not materialize the edge"
+        );
+        assert!(
+            vault.get(&src).unwrap().is_none(),
+            "aborted txn must not materialize the src endpoint"
+        );
     }
 }

@@ -51,6 +51,7 @@ pub enum ErrorKind {
     ProvenanceSelfSupersession,
     ProvenancePrecedenceViolation,
     CycleDetected,
+    ChildOfCardinality,
     IncompatibleAnalyzer,
     Bm25FieldSchemaChanged,
     InvalidRankProfile,
@@ -279,6 +280,10 @@ pub enum Error {
     /// Tree operation would create a cycle.
     #[error("cycle detected in tree hierarchy")]
     CycleDetected,
+    /// ChildOf write would give a child more than one parent (single-parent
+    /// tree pin; validated atomically over each batch).
+    #[error("childof requires a single parent")]
+    ChildOfCardinality,
     /// Text analyzer manifest on disk does not match the current analyzer
     /// configuration. Per-language mode (Morphological vs Portable) flipped
     /// because a dict appeared or disappeared between index time and open
@@ -420,6 +425,7 @@ impl Error {
             Self::ProvenanceSelfSupersession => ErrorKind::ProvenanceSelfSupersession,
             Self::ProvenancePrecedenceViolation { .. } => ErrorKind::ProvenancePrecedenceViolation,
             Self::CycleDetected => ErrorKind::CycleDetected,
+            Self::ChildOfCardinality => ErrorKind::ChildOfCardinality,
             Self::IncompatibleAnalyzer { .. } => ErrorKind::IncompatibleAnalyzer,
             Self::Bm25FieldSchemaChanged => ErrorKind::Bm25FieldSchemaChanged,
             Self::InvalidRankProfile { .. } => ErrorKind::InvalidRankProfile,

@@ -4,7 +4,7 @@
 //! independent CRDT Doc (Loro). Only 2 windows are loaded by default
 //! (current + previous month); older windows are ON-DISK in sync_state.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use super::bridge::{
@@ -16,6 +16,7 @@ use super::loro_support::{
     map_contains_binary, map_delete, map_for_each_bytes, map_for_each_tombstone_value,
     map_get_bytes, map_insert_bytes, tombstone_map_contains_id, tombstone_values_for_id,
 };
+use super::quarantine::{self, QuarantineContainer};
 use super::schema::create_window_doc;
 use super::types::WindowKey;
 use crate::Vault;
@@ -96,7 +97,7 @@ impl LoadedWindow {
             observer_a_state.clone(),
             outbound,
         );
-        let observer_b = bridge::register_observer_b(&doc, vault, materializer);
+        let observer_b = bridge::register_observer_b(&doc, vault, materializer, key.as_str());
 
         Self {
             doc,
@@ -453,6 +454,31 @@ pub fn replay_pending_tombstones(
     Ok(u32::try_from(markers.len()).unwrap_or(u32::MAX))
 }
 
+/// Rebuilds a window Doc from pending update rows (`u:w:{key}:*`) alone,
+/// for windows with NO persisted snapshot (`d:w:` row absent).
+///
+/// Used by the rm: drain path: a flagged window whose snapshot was never
+/// persisted may still carry its tombstones in Observer A's durable update
+/// rows — without this rebuild a hard-deleted entity would stay live
+/// indefinitely behind the missing `d:w:` row. Fail closed: an empty
+/// rebuild yields a doc with zero tombstones, and `forward_rematerialize`
+/// keeps the rm: marker for such a doc.
+pub fn rebuild_window_from_updates(
+    vault: &Vault,
+    user_id: &str,
+    key: &WindowKey,
+) -> Result<LoroDoc> {
+    let doc = create_window_doc(user_id, key);
+    let rtxn = vault.store.env.read_txn()?;
+    let prefix = format!("u:w:{key}:");
+    let iter = vault.store.sync_state.prefix_iter(&rtxn, &prefix)?;
+    for entry in iter {
+        let (_k, v) = entry?;
+        import_doc(&doc, v)?;
+    }
+    Ok(doc)
+}
+
 /// Replays pending-mirror markers (pm:*) for crash recovery.
 pub fn replay_pending_mirrors(vault: &Vault, doc: &LoroDoc, window_key: &WindowKey) -> Result<u32> {
     let rtxn = vault.store.env.read_txn()?;
@@ -600,10 +626,18 @@ pub fn replay_pending_mirrors(vault: &Vault, doc: &LoroDoc, window_key: &WindowK
 /// Step 3's deletion rule binds here too — "if tombstoned in CRDT → never
 /// resurrect": a tombstoned entity's bytes are never written to LMDB (not
 /// even transiently), and no edge with a tombstoned endpoint is re-added.
+///
+/// ONE-1124 silent-skip hygiene: every REMOTE-origin op rejected by a write
+/// gate persists a quarantine record (`x:` family) — never a bare skip;
+/// the engine's own LMDB read errors propagate as typed errors (fail
+/// closed, never quarantine-and-continue); and a tombstone-purge failure
+/// flags `rm:w:{window}:{entity_hex}` for durable retry (each marker
+/// cleared only when that entity's own purge succeeds).
 pub fn forward_rematerialize(
     vault: &Vault,
     doc: &LoroDoc,
     materializer: &Materializer,
+    window_key: &WindowKey,
 ) -> Result<u32> {
     let _guard = materializer.lock();
     let entities_map = doc.get_map("entities");
@@ -616,15 +650,27 @@ pub fn forward_rematerialize(
     {
         let rtxn = vault.store.env.read_txn()?;
         let mut materialized_blobs = HashMap::<EntityId, Vec<u8>>::new();
-        let mut entity_read_error = None;
+        let mut entity_error = None;
         map_for_each_bytes(&entities_map, |key, blob| {
-            if entity_read_error.is_some() {
+            if entity_error.is_some() {
                 return;
             }
 
             let id = match EntityId::from_hex(key) {
                 Ok(id) => id,
-                Err(_) => return,
+                Err(_) => {
+                    if let Err(err) = quarantine::quarantine_rejected_op(
+                        vault,
+                        window_key.as_str(),
+                        QuarantineContainer::Entities,
+                        key,
+                        &Error::InvalidKey,
+                        blob,
+                    ) {
+                        entity_error = Some(err);
+                    }
+                    return;
+                }
             };
 
             // Tombstone gate (delete wins): a tombstoned id must never
@@ -664,7 +710,7 @@ pub fn forward_rematerialize(
                 let lmdb_blob = match vault.get_raw_in(&rtxn, &id) {
                     Ok(v) => v,
                     Err(err) => {
-                        entity_read_error = Some(err);
+                        entity_error = Some(err);
                         return;
                     }
                 };
@@ -694,7 +740,19 @@ pub fn forward_rematerialize(
 
             let header = match EntityMetadataHeader::parse(blob) {
                 Some(h) => h,
-                None => return,
+                None => {
+                    if let Err(err) = quarantine::quarantine_rejected_op(
+                        vault,
+                        window_key.as_str(),
+                        QuarantineContainer::Entities,
+                        key,
+                        &Error::CorruptedIndex("entity metadata"),
+                        blob,
+                    ) {
+                        entity_error = Some(err);
+                    }
+                    return;
+                }
             };
             let data = if blob.len() > ENTITY_METADATA_HEADER_LEN {
                 &blob[ENTITY_METADATA_HEADER_LEN..]
@@ -728,15 +786,25 @@ pub fn forward_rematerialize(
                     count += 1;
                 }
                 Err(err) => {
-                    tracing::warn!(
-                        entity = %id.to_hex(),
-                        error = %err,
-                        "forward remat: entity put failed"
-                    );
+                    if quarantine::remote_rejection_reason(&err).is_some() {
+                        if let Err(q_err) = quarantine::quarantine_rejected_op(
+                            vault,
+                            window_key.as_str(),
+                            QuarantineContainer::Entities,
+                            key,
+                            &err,
+                            blob,
+                        ) {
+                            entity_error = Some(q_err);
+                        }
+                    } else {
+                        // LOCAL failure — fail closed.
+                        entity_error = Some(err);
+                    }
                 }
             }
         });
-        if let Some(err) = entity_read_error {
+        if let Some(err) = entity_error {
             return Err(err);
         }
     }
@@ -754,7 +822,39 @@ pub fn forward_rematerialize(
                 return;
             }
             let Some((src, kind, tgt)) = bridge::parse_edge_key(key) else {
+                if let Err(err) = quarantine::quarantine_rejected_op(
+                    vault,
+                    window_key.as_str(),
+                    QuarantineContainer::Edges,
+                    key,
+                    &Error::InvalidKey,
+                    buf,
+                ) {
+                    edge_error = Some(err);
+                }
                 return;
+            };
+
+            // Decode BEFORE the tombstone/endpoint gates (mirrors Observer
+            // B's ordering in bridge.rs): a malformed value is a remote
+            // rejection regardless of endpoint state, and decode has no side
+            // effects. Checking endpoints first would silently defer a
+            // valid-key malformed edge whose endpoint is absent — no x: row.
+            let decoded = match decode_edge_value_for_kind(kind, buf) {
+                Ok(decoded) => decoded,
+                Err(err) => {
+                    if let Err(q_err) = quarantine::quarantine_rejected_op(
+                        vault,
+                        window_key.as_str(),
+                        QuarantineContainer::Edges,
+                        key,
+                        &err,
+                        buf,
+                    ) {
+                        edge_error = Some(q_err);
+                    }
+                    return;
+                }
             };
 
             // Never re-add an edge whose endpoint is tombstoned in the CRDT.
@@ -789,13 +889,15 @@ pub fn forward_rematerialize(
                 }
             };
             if !endpoints_exist {
+                // Deferral, not a rejection: cross-window endpoints
+                // arrive later; the edge stays in the CRDT and
+                // re-materializes when its endpoints do.
+                tracing::debug!(
+                    edge = %key,
+                    "forward remat: edge deferred — endpoint absent"
+                );
                 return;
             }
-
-            let Ok(decoded) = decode_edge_value_for_kind(kind, buf) else {
-                tracing::warn!(edge = %key, "forward remat: edge malformed value");
-                return;
-            };
 
             // Byte-equal → nothing to do; missing or differing → write the
             // CRDT bytes with flags VERBATIM (no re-derivation).
@@ -810,11 +912,21 @@ pub fn forward_rematerialize(
             match result {
                 Ok(()) => count += 1,
                 Err(err) => {
-                    tracing::warn!(
-                        edge = %key,
-                        error = %err,
-                        "forward remat: edge write failed"
-                    );
+                    if quarantine::remote_rejection_reason(&err).is_some() {
+                        if let Err(q_err) = quarantine::quarantine_rejected_op(
+                            vault,
+                            window_key.as_str(),
+                            QuarantineContainer::Edges,
+                            key,
+                            &err,
+                            buf,
+                        ) {
+                            edge_error = Some(q_err);
+                        }
+                    } else {
+                        // LOCAL failure — fail closed.
+                        edge_error = Some(err);
+                    }
                 }
             }
         });
@@ -834,27 +946,96 @@ pub fn forward_rematerialize(
     // entity pass's re-materialized body live forever = durable
     // resurrection). The primitive is idempotent (no receipt when nothing
     // local remains), so this every-boot pass cannot multiply receipts.
+    //
+    // Retry state is ENTITY-scoped (ONE-1124): `rm:w:{window}:{entity_hex}`
+    // is written for the specific entity whose replay failed, and cleared
+    // ONLY when that entity's own replay succeeds — an unrelated
+    // tombstone's success must never discharge another entity's retry.
+    let marked: HashSet<String> = quarantine::pending_remat_entities(vault, window_key.as_str())?
+        .into_iter()
+        .collect();
+    let mut purge_failures: Vec<EntityId> = Vec::new();
+    let mut cleared: Vec<EntityId> = Vec::new();
+    let mut tombstone_error: Option<Error> = None;
     map_for_each_tombstone_value(&tombstones_map, |key, value| {
+        if tombstone_error.is_some() {
+            return;
+        }
         let id = match EntityId::from_hex(key) {
             Ok(id) => id,
-            Err(_) => return,
+            Err(_) => {
+                if let Err(err) = quarantine::quarantine_rejected_op(
+                    vault,
+                    window_key.as_str(),
+                    QuarantineContainer::Tombstones,
+                    key,
+                    &Error::InvalidKey,
+                    value,
+                ) {
+                    tombstone_error = Some(err);
+                }
+                return;
+            }
         };
 
-        match vault.apply_replayed_tombstone(&id, value) {
+        match quarantine::apply_replayed_tombstone_for_sync(vault, &id, value) {
             Ok(outcome) => {
                 if outcome.changed_local_state() {
                     count += 1;
                 }
+                // The goal state for THIS tombstone's reason holds (purge
+                // done, already absent, or soft shell kept) — the entity's
+                // own retry marker (if flagged) is discharged.
+                if marked.contains(&id.to_hex()) {
+                    cleared.push(id);
+                }
             }
             Err(err) => {
-                tracing::warn!(
-                    tombstone = %key,
+                // Replay failure — the tombstoned content may still be
+                // live. Flag THIS entity for durable retry; the pass keeps
+                // going so one failure cannot starve other tombstones.
+                purge_failures.push(id);
+                tracing::error!(
+                    entity = %id.to_hex(),
                     error = %err,
-                    "forward remat: tombstone replay failed"
+                    "forward remat: tombstone replay FAILED — hard-deleted content may still be live (GDPR SLA breach signal)"
                 );
             }
         }
     });
+
+    if !purge_failures.is_empty() || !cleared.is_empty() {
+        vault.with_write_txn(|wtxn| {
+            // Clear BEFORE set so set wins: an id that both succeeded and
+            // failed in one pass (case-shifted tombstone aliases with
+            // divergent reasons) must KEEP its marker — losing it would
+            // silently drop a pending hard purge (fail closed).
+            for id in &cleared {
+                quarantine::clear_remat_marker_in_txn(vault, wtxn, window_key.as_str(), id)?;
+            }
+            for id in &purge_failures {
+                quarantine::set_remat_marker_in_txn(vault, wtxn, window_key.as_str(), id)?;
+            }
+            Ok(())
+        })?;
+    }
+    if let Some(err) = tombstone_error {
+        return Err(err);
+    }
+    if quarantine::pending_remat_windows(vault)?
+        .iter()
+        .any(|window| window == window_key.as_str())
+    {
+        // Markers survive the pass when a purge failed above, when a
+        // flagged entity's tombstone is missing from the loaded doc (stale
+        // window state), or when a marker row no longer parses. Clearing
+        // any of them here would vacuously discharge a GDPR retry — keep
+        // them (fail closed) and keep ERROR-grade visibility.
+        tracing::error!(
+            window = %window_key,
+            "forward remat: rm: markers still pending after tombstone pass — hard-deleted content may be live (GDPR SLA breach signal)"
+        );
+    }
 
     Ok(count)
 }

@@ -811,6 +811,7 @@ mod tests {
         HardEraseSweepExtras, LAST_HARD_ERASE_SWEEP_SEQ_KEY, RedactionScope,
         encode_hard_erase_sweep_job, encode_hard_erase_sweep_key,
     };
+    use crate::sync::quarantine;
     use crate::types::VaultConfig;
 
     fn test_vault() -> Arc<Vault> {
@@ -924,9 +925,11 @@ mod tests {
         .unwrap();
         let embed_key = encode_embed_key(&embed_id);
 
-        // An UNKNOWN key family (`x:`) the queue does not own: every clear
-        // and scrub must leave foreign families untouched (ONE-1135).
-        let unknown_key = b"x:future-family";
+        // An UNKNOWN key family (`zz:`) the queue does not own: every clear
+        // and scrub must leave foreign families untouched (ONE-1135). NOTE:
+        // `x:` no longer qualifies — it is the quarantine family (ONE-1124)
+        // whose retention pass evicts rows that do not parse as x:{seq}.
+        let unknown_key = b"zz:future-family";
         let unknown_value = b"opaque";
 
         let mut wtxn = vault.store.env.write_txn().unwrap();
@@ -950,6 +953,19 @@ mod tests {
             .put(&mut wtxn, unknown_key.as_slice(), unknown_value.as_slice())
             .unwrap();
         wtxn.commit().unwrap();
+
+        // ONE-1124 AC6 — quarantine rows (x:) and their m: counters live in
+        // the same DB and must survive every queue clear path.
+        let quarantine_seq = quarantine::quarantine_rejected_op(
+            &vault,
+            "2026-03",
+            quarantine::QuarantineContainer::Entities,
+            "deadbeef",
+            &Error::InvalidKey,
+            b"payload",
+        )
+        .unwrap();
+        let quarantine_key = quarantine::encode_quarantine_key(quarantine_seq);
 
         queue.clear_all().unwrap();
 
@@ -976,6 +992,24 @@ mod tests {
             vault.store.sync_queue.get(&rtxn, &sweep_key).unwrap(),
             Some(sweep_value.as_slice()),
             "clear_all must preserve hard-erase sweep jobs",
+        );
+        assert!(
+            vault
+                .store
+                .sync_queue
+                .get(&rtxn, &quarantine_key)
+                .unwrap()
+                .is_some(),
+            "clear_all must preserve quarantine rows (x:)",
+        );
+        assert_eq!(
+            vault
+                .store
+                .sync_queue
+                .get(&rtxn, quarantine::LAST_QUARANTINE_SEQ_KEY)
+                .unwrap(),
+            Some(quarantine_seq.to_le_bytes().as_slice()),
+            "clear_all must preserve the quarantine sequence cursor",
         );
         assert_eq!(
             vault
@@ -1483,6 +1517,83 @@ mod tests {
             .unwrap();
         assert_eq!(queue.len().unwrap(), 0);
         assert!(!queue.is_full().unwrap());
+    }
+
+    /// ONE-1124 AC6 — `clear_updates` and `clear_through` (including its
+    /// malformed-row pruning) never touch quarantine rows or counters.
+    #[test]
+    fn clear_updates_and_clear_through_preserve_quarantine_rows() {
+        let vault = test_vault();
+        let queue = SyncQueue::new(vault.clone()).unwrap();
+
+        let quarantine_seq = quarantine::quarantine_rejected_op(
+            &vault,
+            "2026-03",
+            quarantine::QuarantineContainer::Edges,
+            "some-edge-key",
+            &Error::InvalidEdgeWeight { value: 1.5 },
+            b"edge-bytes",
+        )
+        .unwrap();
+        let quarantine_key = quarantine::encode_quarantine_key(quarantine_seq);
+        let evictions_value = 3u64.to_le_bytes();
+        let mut wtxn = vault.store.env.write_txn().unwrap();
+        vault
+            .store
+            .sync_queue
+            .put(
+                &mut wtxn,
+                quarantine::QUARANTINE_EVICTIONS_KEY,
+                &evictions_value,
+            )
+            .unwrap();
+        wtxn.commit().unwrap();
+
+        let assert_quarantine_intact = |label: &str| {
+            let rtxn = vault.store.env.read_txn().unwrap();
+            assert!(
+                vault
+                    .store
+                    .sync_queue
+                    .get(&rtxn, &quarantine_key)
+                    .unwrap()
+                    .is_some(),
+                "{label} must preserve quarantine rows (x:)",
+            );
+            assert_eq!(
+                vault
+                    .store
+                    .sync_queue
+                    .get(&rtxn, quarantine::LAST_QUARANTINE_SEQ_KEY)
+                    .unwrap(),
+                Some(quarantine_seq.to_le_bytes().as_slice()),
+                "{label} must preserve the quarantine sequence cursor",
+            );
+            assert_eq!(
+                vault
+                    .store
+                    .sync_queue
+                    .get(&rtxn, quarantine::QUARANTINE_EVICTIONS_KEY)
+                    .unwrap(),
+                Some(evictions_value.as_slice()),
+                "{label} must preserve the quarantine eviction counter",
+            );
+        };
+
+        queue.push("2026-03", &[1]).unwrap();
+        queue.clear_updates().unwrap();
+        assert_eq!(queue.len().unwrap(), 0);
+        assert_quarantine_intact("clear_updates");
+
+        let seq = queue.push("2026-03", &[2]).unwrap();
+        queue.clear_through(seq).unwrap();
+        assert_eq!(queue.len().unwrap(), 0);
+        assert_quarantine_intact("clear_through");
+
+        queue.push("2026-03", &[3]).unwrap();
+        queue.clear_all().unwrap();
+        assert_eq!(queue.len().unwrap(), 0);
+        assert_quarantine_intact("clear_all");
     }
 
     #[test]
