@@ -18,12 +18,14 @@
 //! - `window` — Window lifecycle (load/unload/persist)
 //! - `manager` — Production window registry + ARCH-0023b startup recovery
 //!   orchestration (pm replay → reverse remat → forward remat → observers)
+//! - `quarantine` — `x:` quarantine sink + `rm:` rematerialization markers
 
 pub mod bridge;
 pub mod client;
 pub mod connection;
 pub(crate) mod loro_support;
 pub mod manager;
+pub mod quarantine;
 pub mod queue;
 pub mod schema;
 pub mod transport;
@@ -34,6 +36,11 @@ pub use client::{SyncClient, SyncClientConfig, SyncEvent, SyncStatus};
 pub use connection::{ConnectionConfig, LocalUpdate, SyncConnection};
 pub use loro::Subscription;
 pub use manager::WindowManager;
+pub use quarantine::{
+    MAX_QUARANTINE_ROWS, QUARANTINE_MAX_AGE_SECS, QuarantineContainer, QuarantineRecord,
+    RematDrainReport, SyncQuarantineReport, drain_remat_markers, pending_remat_windows,
+    quarantined_records, sync_doctor,
+};
 pub use queue::{QueuedEmbedJob, QueuedUpdate, SyncQueue};
 pub use transport::{
     TAG_BULK_TRANSFER, TAG_BULK_TRANSFER_DONE, TAG_WINDOW_SYNC, TransportError,

@@ -571,7 +571,7 @@ fn string_tombstone_with_lingering_body_purges_on_boot_and_stays_dead() {
     doc.import(&doc_peer.export(ExportMode::Snapshot).unwrap())
         .unwrap();
     let materializer = Arc::new(Materializer::new());
-    window::forward_rematerialize(&vault_b, &doc, &materializer).unwrap();
+    window::forward_rematerialize(&vault_b, &doc, &materializer, &WindowKey::new(WINDOW)).unwrap();
 
     assert!(
         vault_b.get_raw(&id).unwrap().is_none(),
@@ -599,7 +599,7 @@ fn string_tombstone_with_lingering_body_purges_on_boot_and_stays_dead() {
     // carrying the peer's lingering body — must not resurrect it or write a
     // second receipt.
     window::reverse_rematerialize(&vault_b, &doc, &WindowKey::new(WINDOW)).unwrap();
-    window::forward_rematerialize(&vault_b, &doc, &materializer).unwrap();
+    window::forward_rematerialize(&vault_b, &doc, &materializer, &WindowKey::new(WINDOW)).unwrap();
     assert!(
         vault_b.get_raw(&id).unwrap().is_none(),
         "the lingering entities-map body must never re-materialize"
@@ -651,7 +651,7 @@ fn reverse_remat_does_not_reinsert_live_body_over_string_tombstone() {
     );
 
     let materializer = Arc::new(Materializer::new());
-    window::forward_rematerialize(&vault_b, &doc, &materializer).unwrap();
+    window::forward_rematerialize(&vault_b, &doc, &materializer, &WindowKey::new(WINDOW)).unwrap();
     assert!(
         vault_b.get_raw(&id).unwrap().is_none(),
         "the forward pass must hard-apply the string tombstone"
@@ -797,7 +797,8 @@ fn dt_marker_blocks_resurrection_after_hostile_tombstone_removal() {
     boot_doc
         .import(&window_b.doc.export(ExportMode::Snapshot).unwrap())
         .unwrap();
-    window::forward_rematerialize(&vault_b, &boot_doc, &materializer).unwrap();
+    window::forward_rematerialize(&vault_b, &boot_doc, &materializer, &WindowKey::new(WINDOW))
+        .unwrap();
     assert!(
         vault_b.get_raw(&id).unwrap().is_none(),
         "forward remat must suppress the re-put via the dt: marker"
@@ -843,7 +844,7 @@ fn uppercase_hard_tombstone_gates_forward_remat_without_receipt_churn() {
     doc.import(&doc_peer.export(ExportMode::Snapshot).unwrap())
         .unwrap();
     let materializer = Arc::new(Materializer::new());
-    window::forward_rematerialize(&vault_b, &doc, &materializer).unwrap();
+    window::forward_rematerialize(&vault_b, &doc, &materializer, &WindowKey::new(WINDOW)).unwrap();
 
     assert!(
         vault_b.get_raw(&id).unwrap().is_none(),
@@ -988,7 +989,7 @@ fn uppercase_soft_tombstone_blocks_reverse_remat_reinsert() {
     );
 
     let materializer = Arc::new(Materializer::new());
-    window::forward_rematerialize(&vault_b, &doc, &materializer).unwrap();
+    window::forward_rematerialize(&vault_b, &doc, &materializer, &WindowKey::new(WINDOW)).unwrap();
     let raw = vault_b
         .get_raw(&id)
         .unwrap()

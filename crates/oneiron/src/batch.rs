@@ -1120,9 +1120,11 @@ fn validate_child_of_batch(
     for child in child_of_overlay.affected_children() {
         let parents = child_of_overlay.effective_parents(store, rtxn, &child)?;
         if parents.len() > 1 {
-            return Err(Error::InvariantViolation(
-                "childof requires a single parent",
-            ));
+            // Typed (not InvariantViolation) so the sync replay classifier
+            // can treat a remote ChildOf cardinality violation as a
+            // quarantine-and-continue rejection instead of aborting the
+            // whole materialization batch (ONE-1124).
+            return Err(Error::ChildOfCardinality);
         }
         if let Some(parent) = parents.iter().next() {
             if child == *parent {

@@ -123,7 +123,8 @@ fn forward_remat_never_writes_tombstoned_entity_even_transiently() {
         .unwrap();
     doc.commit();
 
-    let written = window::forward_rematerialize(&vault, &doc, &materializer).unwrap();
+    let written =
+        window::forward_rematerialize(&vault, &doc, &materializer, &window_key()).unwrap();
     assert_eq!(
         written, 1,
         "only the live entity may be written; a tombstoned entity must not be put-then-purged"
@@ -137,7 +138,7 @@ fn forward_remat_never_writes_tombstoned_entity_even_transiently() {
         Some(b"live-body".as_slice())
     );
 
-    let second = window::forward_rematerialize(&vault, &doc, &materializer).unwrap();
+    let second = window::forward_rematerialize(&vault, &doc, &materializer, &window_key()).unwrap();
     assert_eq!(second, 0, "second pass must perform zero LMDB writes");
 }
 
@@ -179,7 +180,8 @@ fn forward_remat_never_readds_edge_with_tombstoned_endpoint() {
     );
     doc.commit();
 
-    let written = window::forward_rematerialize(&vault, &doc, &materializer).unwrap();
+    let written =
+        window::forward_rematerialize(&vault, &doc, &materializer, &window_key()).unwrap();
     assert_eq!(
         written, 1,
         "exactly one write: the tombstone purge — the edge to the tombstoned target must never be added"
@@ -197,7 +199,7 @@ fn forward_remat_never_readds_edge_with_tombstoned_endpoint() {
         Some(b"src-body".as_slice())
     );
 
-    let second = window::forward_rematerialize(&vault, &doc, &materializer).unwrap();
+    let second = window::forward_rematerialize(&vault, &doc, &materializer, &window_key()).unwrap();
     assert_eq!(second, 0, "second pass must perform zero LMDB writes");
 }
 
@@ -304,7 +306,9 @@ fn forward_remat_overwrites_stale_active_stamp_with_retracted_crdt_bytes() {
     recovery_doc.commit();
 
     let materializer_b = Materializer::new();
-    let written = window::forward_rematerialize(&vault, &recovery_doc, &materializer_b).unwrap();
+    let written =
+        window::forward_rematerialize(&vault, &recovery_doc, &materializer_b, &window_key())
+            .unwrap();
     assert_eq!(
         written, 1,
         "exactly one write: the differing retracted edge value"
@@ -351,7 +355,9 @@ fn forward_remat_overwrites_stale_active_stamp_with_retracted_crdt_bytes() {
 
     // The overwrite stored the CRDT bytes verbatim: a second pass byte-
     // compares equal everywhere and performs zero writes.
-    let second = window::forward_rematerialize(&vault, &recovery_doc, &materializer_b).unwrap();
+    let second =
+        window::forward_rematerialize(&vault, &recovery_doc, &materializer_b, &window_key())
+            .unwrap();
     assert_eq!(second, 0, "second pass must perform zero LMDB writes");
 }
 
@@ -524,7 +530,7 @@ fn forward_remat_is_idempotent_across_mixed_state() {
     );
     doc.commit();
 
-    let first = window::forward_rematerialize(&vault, &doc, &materializer).unwrap();
+    let first = window::forward_rematerialize(&vault, &doc, &materializer, &window_key()).unwrap();
     assert_eq!(
         first, 4,
         "two live entities + one edge + one stale-row purge; the ghost is never written"
@@ -537,7 +543,7 @@ fn forward_remat_is_idempotent_across_mixed_state() {
             .unwrap()
     );
 
-    let second = window::forward_rematerialize(&vault, &doc, &materializer).unwrap();
+    let second = window::forward_rematerialize(&vault, &doc, &materializer, &window_key()).unwrap();
     assert_eq!(second, 0, "second pass must perform zero LMDB writes");
 }
 
@@ -642,7 +648,8 @@ fn pm_and_reverse_remat_never_backfill_edges_to_tombstoned_target() {
 
     // 3. forward remat — purges the surviving LMDB rows (entity + edges).
     let materializer = Materializer::new();
-    let written = window::forward_rematerialize(&vault, &doc, &materializer).unwrap();
+    let written =
+        window::forward_rematerialize(&vault, &doc, &materializer, &window_key()).unwrap();
     assert_eq!(written, 1, "exactly one write: the tombstone purge");
     assert!(vault.get_raw(&e).unwrap().is_none(), "stale row purged");
     assert!(!vault.edge_exists(&s1, EdgeKind::Mentions, &e).unwrap());
@@ -651,7 +658,8 @@ fn pm_and_reverse_remat_never_backfill_edges_to_tombstoned_target() {
     assert!(vault.edge_exists(&s1, EdgeKind::Mentions, &l).unwrap());
     assert!(vault.edge_exists(&s2, EdgeKind::Mentions, &l).unwrap());
 
-    let second_pass = window::forward_rematerialize(&vault, &doc, &materializer).unwrap();
+    let second_pass =
+        window::forward_rematerialize(&vault, &doc, &materializer, &window_key()).unwrap();
     assert_eq!(second_pass, 0, "second pass must perform zero LMDB writes");
 }
 
@@ -737,7 +745,8 @@ fn remat_gates_fail_closed_on_non_binary_tombstone() {
     // hard-purged: the only writes are delete propagation, never
     // resurrection.
     let materializer = Materializer::new();
-    let written = window::forward_rematerialize(&vault, &doc, &materializer).unwrap();
+    let written =
+        window::forward_rematerialize(&vault, &doc, &materializer, &window_key()).unwrap();
     assert_eq!(
         written, 2,
         "exactly two writes: the string-tombstoned survivors hard-purged \
@@ -755,7 +764,8 @@ fn remat_gates_fail_closed_on_non_binary_tombstone() {
     );
     assert!(!vault.edge_exists(&s, EdgeKind::Mentions, &e3).unwrap());
 
-    let second_pass = window::forward_rematerialize(&vault, &doc, &materializer).unwrap();
+    let second_pass =
+        window::forward_rematerialize(&vault, &doc, &materializer, &window_key()).unwrap();
     assert_eq!(
         second_pass, 0,
         "replay is idempotent — nothing local remains to erase"

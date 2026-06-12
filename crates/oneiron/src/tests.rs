@@ -7089,10 +7089,7 @@ fn generic_child_of_writes_reject_second_parent() -> Result<()> {
         .edge(&child, EdgeKind::ChildOf, &parent_b, 1.0)
         .commit()
         .expect_err("generic ChildOf write should reject second parent");
-    assert!(matches!(
-        err,
-        Error::InvariantViolation("childof requires a single parent")
-    ));
+    assert!(matches!(err, Error::ChildOfCardinality));
     assert!(!vault.edge_exists(&child, EdgeKind::ChildOf, &parent_b)?);
 
     vault.put_edge(&child, EdgeKind::ChildOf, &parent_a, 0.5)?;
