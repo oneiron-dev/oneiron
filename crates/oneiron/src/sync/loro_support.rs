@@ -22,6 +22,11 @@ pub(crate) fn map_get_bytes(map: &LoroMap, key: &str) -> Option<Vec<u8>> {
     }
 }
 
+pub(crate) fn map_delete(map: &LoroMap, key: &str) -> Result<()> {
+    map.delete(key)
+        .map_err(|e| Error::SyncProtocolError(e.to_string()))
+}
+
 pub(crate) fn map_contains_binary(map: &LoroMap, key: &str) -> bool {
     matches!(
         map.get(key),

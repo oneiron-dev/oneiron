@@ -57,54 +57,10 @@ impl WindowKey {
     /// `learned_at` is caller-supplied, so this conversion must stay total
     /// and bounded.
     pub fn from_timestamp(ts: u64) -> Self {
-        // Convert unix seconds to YYYY-MM. Stay in u64: an `as i64` cast
-        // would wrap negative for ts > i64::MAX and silently yield "1970-01".
-        // Simple calculation: days since epoch → year/month
-        // Using chrono-free approach: 86400 secs/day, approximate month/year
-        let days = ts / 86_400;
-        // Approximate: 1970-01-01 is day 0
-        let mut year = 1970i32;
-        let mut remaining_days = days;
-
-        loop {
-            let days_in_year: u64 = if is_leap_year(year) { 366 } else { 365 };
-            if remaining_days < days_in_year {
-                break;
-            }
-            if year == 9999 {
-                // Clamp instead of walking one year per iteration toward an
-                // astronomically large target (and emitting a >4-digit year
-                // that breaks the YYYY-MM key format).
-                return Self("9999-12".to_owned());
-            }
-            remaining_days -= days_in_year;
-            year += 1;
-        }
-
-        let mut month = 1u32;
-        let month_days = [
-            31,
-            if is_leap_year(year) { 29 } else { 28 },
-            31,
-            30,
-            31,
-            30,
-            31,
-            31,
-            30,
-            31,
-            30,
-            31,
-        ];
-        for &md in &month_days {
-            if remaining_days < md {
-                break;
-            }
-            remaining_days -= md;
-            month += 1;
-        }
-
-        Self(format!("{year:04}-{month:02}"))
+        // Delegates to the always-compiled deletion module so the `pt:`
+        // pending-tombstone marker (written even in non-`sync` builds,
+        // ONE-1132) addresses EXACTLY the window this key would name.
+        Self(crate::deletion::window_label_from_timestamp(ts))
     }
 
     /// Returns the key string.

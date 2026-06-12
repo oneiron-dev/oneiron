@@ -20,9 +20,9 @@ use crate::claim::{
 };
 use crate::deletion::{
     DeleteEntityOutcome, DeleteReason, HARD_ERASE_SWEEP_PREFIX, HardEraseSweepExtras,
-    LAST_HARD_ERASE_SWEEP_SEQ_KEY, RedactionReceiptInput, RedactionScope,
+    LAST_HARD_ERASE_SWEEP_SEQ_KEY, RedactionReceiptInput, RedactionScope, TombstoneValueV2,
     decode_hard_erase_sweep_seq, encode_hard_erase_sweep_job, encode_hard_erase_sweep_key,
-    encode_redaction_audit_receipt,
+    encode_redaction_audit_receipt, pending_tombstone_key, window_label_from_timestamp,
 };
 #[cfg(feature = "sync")]
 use crate::deletion::{encode_local_hard_delete_marker, local_hard_delete_marker_key};
@@ -1132,9 +1132,19 @@ impl Vault {
         reason: DeleteReason,
     ) -> Result<DeleteEntityOutcome> {
         let requested_at = unix_seconds_now();
+        // ONE-1132: ONE deletion request UUID correlates the CRDT tombstone's
+        // `request_id` with the REDACTION_AUDIT receipt's `request_id`.
+        let request_uuid = Uuid::now_v7();
         let Some(header) = self.read_entity_header(id)? else {
-            return self.delete_entity_without_header(id, reason, requested_at);
+            return self.delete_entity_without_header(id, reason, requested_at, request_uuid);
         };
+
+        let tombstone = TombstoneValueV2 {
+            reason: reason.into(),
+            deleted_at: requested_at,
+            request_id: *request_uuid.as_bytes(),
+        };
+        let window_label = window_label_from_timestamp(header.learned_at);
 
         // ARCH-0038 DELETE interplay: an `edge.provenance` Claim's subject
         // EdgeRef and sweep refs are only readable PRE-purge (SoftErase
@@ -1144,9 +1154,11 @@ impl Vault {
         let captured = self.capture_provenance_delete(id)?;
 
         if !reason.active_store_hard_purge_v1() {
-            // ARCH-0038's CRDT tombstone drives destructive HardErase replay.
-            // `user_delete` is a local SoftErase shell in M0-6; cross-device
-            // soft-delete propagation is deferred to ONE-1090 (M4).
+            // `user_delete` keeps the local 25 B shell (ARCH-0038 "Tombstone
+            // revision (empty content); keep the message shell") but now
+            // writes a reason=user_delete CRDT tombstone (ONE-1090 write
+            // side): a soft delete with NO cross-device record would leave
+            // the deleted body live on every other device.
             let mut wtxn = self.store.env.write_txn()?;
             let (existed, had_vector) = self.soft_erase_active_store_in_txn(&mut wtxn, id)?;
             if had_vector {
@@ -1161,7 +1173,19 @@ impl Vault {
                     &captured.subject,
                 )?;
             }
+            if existed {
+                // OWNER-DECISION (cfg-off durability): the pending-tombstone
+                // marker rides the SAME txn as the shell scrub.
+                self.put_pending_tombstone_in_txn(&mut wtxn, &window_label, id, &tombstone)?;
+            }
             wtxn.commit()?;
+            if existed {
+                let crdt_persisted =
+                    self.write_crdt_tombstone(id, header.learned_at, &tombstone)?;
+                if crdt_persisted {
+                    self.clear_pending_tombstone(&window_label, id)?;
+                }
+            }
             return Ok(DeleteEntityOutcome {
                 existed,
                 receipt_id: None,
@@ -1169,7 +1193,9 @@ impl Vault {
             });
         }
 
-        self.write_crdt_tombstone(id, header.learned_at, requested_at)?;
+        // LOCKED ordering (ARCH-0038): CRDT tombstone FIRST — prevents sync
+        // resurrection before the destructive purge touches payloads.
+        let crdt_persisted = self.write_crdt_tombstone(id, header.learned_at, &tombstone)?;
         let tombstone_complete_at = unix_seconds_now();
 
         let soft_complete_at = if matches!(
@@ -1202,8 +1228,6 @@ impl Vault {
             tombstone_complete_at
         };
 
-        let request_uuid = Uuid::now_v7();
-        let request_id = request_uuid.to_string();
         let receipt_id = EntityId::now();
         let scope = RedactionScope::entity(id);
         let mut wtxn = self.store.env.write_txn()?;
@@ -1234,12 +1258,16 @@ impl Vault {
             self.refresh_subject_edge_after_claim_delete_in_txn(&mut wtxn, id, &captured.subject)?;
         }
 
+        // OWNER-DECISION (cfg-off durability): the pending-tombstone marker
+        // rides the SAME txn as the active-store purge — on every build.
+        self.put_pending_tombstone_in_txn(&mut wtxn, &window_label, id, &tombstone)?;
+
         let hard_purge_complete_at = unix_seconds_now();
         let sweep_key = self.write_redaction_receipt_and_sweep_in_txn(
             &mut wtxn,
             &receipt_id,
             RedactionReceiptInput {
-                request_id,
+                request_id: request_uuid.to_string(),
                 scope,
                 reason,
                 requested_at,
@@ -1253,6 +1281,13 @@ impl Vault {
         )?;
 
         wtxn.commit()?;
+        // The CRDT record (tombstone-first, above) is durable — the crash
+        // marker has served its purpose. In non-`sync` builds the marker
+        // STAYS: it is the deletion's only propagation intent until a
+        // sync-enabled boot replays it.
+        if crdt_persisted {
+            self.clear_pending_tombstone(&window_label, id)?;
+        }
         Ok(DeleteEntityOutcome {
             existed,
             receipt_id: Some(receipt_id),
@@ -1265,23 +1300,38 @@ impl Vault {
         id: &EntityId,
         reason: DeleteReason,
         requested_at: u64,
+        request_uuid: Uuid,
     ) -> Result<DeleteEntityOutcome> {
-        let mut wtxn = self.store.env.write_txn()?;
-        let had_active_data = self.active_delete_scope_exists_in_txn(&wtxn, id)?;
-        let existed = self.purge_entity_active_store_in_txn(&mut wtxn, id)?;
-        if !had_active_data && !existed {
-            wtxn.commit()?;
-            return Ok(DeleteEntityOutcome::missing());
+        // Probe first so a fully-missing id stays a strict no-op — deleting
+        // a nonexistent entity must not mint tombstones or receipts.
+        {
+            let rtxn = self.store.env.read_txn()?;
+            if !self.active_delete_scope_exists_in_txn(&rtxn, id)? {
+                return Ok(DeleteEntityOutcome::missing());
+            }
         }
-        let request_uuid = Uuid::now_v7();
+
+        // ONE-1132: headerless residue previously left NO CRDT record, so
+        // the orphan id could re-sync forever. There is no `learned_at` to
+        // address a window with, so the tombstone lands under
+        // `WindowKey::from_timestamp(now)` — a propagation address, not a
+        // truth claim.
+        let tombstone = TombstoneValueV2 {
+            reason: reason.into(),
+            deleted_at: requested_at,
+            request_id: *request_uuid.as_bytes(),
+        };
+        let window_label = window_label_from_timestamp(requested_at);
+        let crdt_persisted = self.write_crdt_tombstone(id, requested_at, &tombstone)?;
+
+        let mut wtxn = self.store.env.write_txn()?;
         if reason.active_store_hard_purge_v1() {
-            // ONE-1122 `dt:` marker, headerless leg: this hard purge writes
-            // no CRDT tombstone (no parseable header ⇒ no learned_at
-            // window), so the permanent local marker is the ONLY delete
-            // truth the Observer-B gate can consult for this id — without
-            // it a crafted re-put would rematerialize remote bytes over a
-            // hard delete. Same txn as the purge, mirroring the headerful
-            // path above.
+            // ONE-1122 `dt:` marker, headerless leg: the permanent local
+            // marker is the delete truth the Observer-B gate consults for
+            // this id when a crafted update REMOVES the CRDT tombstone —
+            // without it a crafted re-put would rematerialize remote bytes
+            // over a hard delete. Same txn as the purge, mirroring the
+            // headerful path above.
             self.write_local_hard_delete_marker_in_txn(
                 &mut wtxn,
                 id,
@@ -1290,8 +1340,14 @@ impl Vault {
                 request_uuid.as_bytes(),
             )?;
         }
+        let existed = self.purge_entity_active_store_in_txn(&mut wtxn, id)?;
+        // OWNER-DECISION (cfg-off durability): marker in the SAME purge txn.
+        self.put_pending_tombstone_in_txn(&mut wtxn, &window_label, id, &tombstone)?;
         if !reason.writes_receipt() {
             wtxn.commit()?;
+            if crdt_persisted {
+                self.clear_pending_tombstone(&window_label, id)?;
+            }
             return Ok(DeleteEntityOutcome {
                 existed,
                 receipt_id: None,
@@ -1321,6 +1377,9 @@ impl Vault {
             HardEraseSweepExtras::default(),
         )?;
         wtxn.commit()?;
+        if crdt_persisted {
+            self.clear_pending_tombstone(&window_label, id)?;
+        }
         Ok(DeleteEntityOutcome {
             existed,
             receipt_id: Some(receipt_id),
@@ -1526,7 +1585,7 @@ impl Vault {
 
     fn active_delete_scope_exists_in_txn(
         &self,
-        txn: &heed::RwTxn<'_>,
+        txn: &heed::RoTxn<'_>,
         id: &EntityId,
     ) -> Result<bool> {
         if self.store.entities.get(txn, id.as_bytes())?.is_some()
@@ -1560,21 +1619,34 @@ impl Vault {
         Ok(edges_in.next().transpose()?.is_some())
     }
 
+    /// Writes the ARCH-0038 CRDT tombstone (v2 wire value, ONE-1132) into
+    /// the window doc addressed by `window_ts`. In the SAME CRDT commit as
+    /// the tombstone insert, the live `entities[id]` copy (an ACTIVE
+    /// carrier, not history) and — for hard reasons — the entity's
+    /// edges-map keys are removed; op-history bytes remain for the bounded
+    /// `h:` sweep (ONE-1091). Returns whether the CRDT record was
+    /// persisted: `false` only in non-`sync` builds, where the `pt:`
+    /// pending-tombstone marker carries the deletion intent until a
+    /// sync-enabled boot replays it.
     #[cfg(feature = "sync")]
-    fn write_crdt_tombstone(&self, id: &EntityId, learned_at: u64, deleted_at: u64) -> Result<()> {
-        use crate::sync::loro_support::{doc_version_vector, export_snapshot, map_insert_bytes};
+    fn write_crdt_tombstone(
+        &self,
+        id: &EntityId,
+        window_ts: u64,
+        value: &TombstoneValueV2,
+    ) -> Result<bool> {
+        use crate::sync::loro_support::{doc_version_vector, export_snapshot};
         use crate::sync::schema::create_window_doc;
         use crate::sync::types::WindowKey;
-        use crate::sync::window::load_window_from_state;
+        use crate::sync::window::{apply_tombstone_to_window_doc, load_window_from_state};
 
-        let window_key = WindowKey::from_timestamp(learned_at);
+        let window_key = WindowKey::from_timestamp(window_ts);
         let doc = match load_window_from_state(self, "local", &window_key) {
             Ok(doc) => doc,
             Err(Error::WindowNotFound { .. }) => create_window_doc("local", &window_key),
             Err(err) => return Err(err),
         };
-        let tombstones = doc.get_map("tombstones");
-        map_insert_bytes(&tombstones, id.to_hex().as_str(), &deleted_at.to_le_bytes())?;
+        apply_tombstone_to_window_doc(&doc, id, &value.encode())?;
         doc.commit();
 
         let snapshot = export_snapshot(&doc)?;
@@ -1589,17 +1661,47 @@ impl Vault {
             let svf_key = format!("svf:w:{window_key}");
             self.store.sync_state.put(wtxn, &svf_key, &[1_u8])?;
             Ok(())
-        })
+        })?;
+        Ok(true)
     }
 
     #[cfg(not(feature = "sync"))]
     fn write_crdt_tombstone(
         &self,
         _id: &EntityId,
-        _learned_at: u64,
-        _deleted_at: u64,
+        _window_ts: u64,
+        _value: &TombstoneValueV2,
+    ) -> Result<bool> {
+        // No CRDT in this build — the `pt:` marker written in the purge /
+        // scrub txn is the deletion's durable propagation intent.
+        Ok(false)
+    }
+
+    /// Writes the CRDT-independent `pt:{window}:{entity_hex}` marker in the
+    /// caller's purge / shell-scrub transaction (ONE-1132 OWNER-DECISION:
+    /// deletion durability must not depend on the `sync` cargo feature).
+    /// Value = the v2 tombstone wire value, so a sync-enabled boot can
+    /// replay it verbatim.
+    fn put_pending_tombstone_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        window_label: &str,
+        id: &EntityId,
+        value: &TombstoneValueV2,
     ) -> Result<()> {
+        let key = pending_tombstone_key(window_label, id);
+        self.store.sync_state.put(wtxn, &key, &value.encode())?;
         Ok(())
+    }
+
+    /// Clears the pending-tombstone marker. Only called once the CRDT
+    /// commit + snapshot persistence have succeeded — never before.
+    fn clear_pending_tombstone(&self, window_label: &str, id: &EntityId) -> Result<()> {
+        self.with_write_txn(|wtxn| {
+            let key = pending_tombstone_key(window_label, id);
+            self.store.sync_state.delete(wtxn, &key)?;
+            Ok(())
+        })
     }
 
     /// Writes the ONE-1122 `dt:` local hard-delete marker
