@@ -1193,3 +1193,28 @@ fn carrier15_outgoing_queue_scrubbed_on_hard_delete() {
         "the tombstone delta must be queued as a delete-bearing row"
     );
 }
+
+// ─── ONE-1148: env-level write failures fail loud at the write site ─────────
+
+/// ONE-1148 loud-fail probe. An env-level Storage error inside Observer
+/// B's single batch write txn — here MDB_MAP_FULL, forced by a value
+/// larger than the harness' entire 16 MiB `map_size` — is swallowed by
+/// the bridge into a `tracing::error` (the ONE-1147 surface), leaving
+/// LMDB silently missing the row. Storage/Io is NEVER remote-rejectable
+/// (`remote_rejection_reason` → None), so this is the abort-the-batch
+/// path, not write-gate quarantine. The harness write helper must convert
+/// that silence into an immediate panic AT THE WRITE SITE instead of a
+/// confusing convergence divergence hundreds of lines later.
+#[test]
+#[should_panic(expected = "env-level write failure (see ONE-1148)")]
+fn env_level_write_failure_fails_loud_at_the_write_site() {
+    let mut a = TestNode::new("node-a", 1);
+    a.open_window(WINDOW);
+
+    let id = EntityId::now();
+    // 20 MiB body > 16 MiB map: LMDB cannot allocate the pages, the whole
+    // Observer B txn aborts, and the entity never reaches LMDB.
+    let big = vec![0xA5u8; 20 * 1024 * 1024];
+    let blob = entity_blob(1, time_range(T0 + 1), T0 + 1, &big);
+    a.put_entity_in_window(WINDOW, &id, &blob);
+}
