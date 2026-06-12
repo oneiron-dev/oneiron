@@ -41,6 +41,12 @@ pub struct LoadedWindow {
 
 impl LoadedWindow {
     /// Creates a new window with fresh Doc and registered observers.
+    ///
+    /// Test/bootstrap convenience only: the fresh doc skips recovery, but
+    /// LMDB may still be ahead of a window that has no persisted CRDT state
+    /// (first open, or `sync_state` lost). Production opens go through
+    /// [`crate::sync::manager::WindowManager::open_window`], which runs the
+    /// pinned recovery order on the bare doc before observers attach.
     pub fn new(
         user_id: &str,
         key: WindowKey,
@@ -51,7 +57,15 @@ impl LoadedWindow {
         Self::from_doc(doc, key, vault, materializer)
     }
 
-    /// Creates a window from an existing Doc (e.g., loaded from sync_state).
+    /// Creates a window from an existing Doc (e.g., loaded from sync_state),
+    /// attaching Observer A + B — ARCH-0023b startup step 6.
+    ///
+    /// Observer registration is deliberately split from recovery: the pinned
+    /// startup order requires pm replay → reverse remat → forward remat
+    /// (steps 3 → 4 → 5) to run on the bare doc BEFORE observers attach, so
+    /// this constructor must only be handed a pre-recovered doc.
+    /// [`crate::sync::manager::WindowManager::open_window`] is the
+    /// production path that enforces that order.
     pub fn from_doc(
         doc: LoroDoc,
         key: WindowKey,
