@@ -35,13 +35,16 @@ use tokio::sync::mpsc::UnboundedReceiver;
 
 const ROOT_VV_TAG: u8 = 2;
 
+/// Window-owner user id shared by every fixture in this file (ONE-1160).
+const TEST_USER: &str = "test-user";
+
 /// SyncClient over a manager-owned window registry (ONE-1126).
 fn make_client(vault: &Arc<Vault>) -> (SyncClient, UnboundedReceiver<SyncEvent>) {
     let materializer = Arc::new(Materializer::new());
     let manager = Arc::new(WindowManager::new(
         Arc::clone(vault),
         materializer,
-        "test-user",
+        TEST_USER,
     ));
     SyncClient::new(manager, SyncClientConfig::default()).unwrap()
 }
@@ -76,7 +79,7 @@ fn entity_written_to_crdt_materializes_in_lmdb() {
     let materializer = Arc::new(Materializer::new());
 
     let key = WindowKey::new("2026-03");
-    let window = LoadedWindow::new("test-user", key, &vault, &materializer);
+    let window = LoadedWindow::new(TEST_USER, key, &vault, &materializer);
 
     let id = EntityId::now();
     let hex_id = id.to_hex();
@@ -99,7 +102,7 @@ fn tombstone_deletes_entity_from_lmdb() {
     let materializer = Arc::new(Materializer::new());
 
     let key = WindowKey::new("2026-03");
-    let window = LoadedWindow::new("test-user", key, &vault, &materializer);
+    let window = LoadedWindow::new(TEST_USER, key, &vault, &materializer);
 
     let id = EntityId::now();
     let hex_id = id.to_hex();
@@ -136,7 +139,7 @@ fn multiple_tombstones_in_one_commit_purge_all_entities() {
     let materializer = Arc::new(Materializer::new());
 
     let key = WindowKey::new("2026-03");
-    let window = LoadedWindow::new("test-user", key, &vault, &materializer);
+    let window = LoadedWindow::new(TEST_USER, key, &vault, &materializer);
 
     let learned_at = 1_772_000_000u64;
     let doomed: Vec<EntityId> = (0..3).map(|_| EntityId::now()).collect();
@@ -193,7 +196,7 @@ fn invalid_tombstone_id_does_not_block_other_purges_in_same_commit() {
     let materializer = Arc::new(Materializer::new());
 
     let key = WindowKey::new("2026-03");
-    let window = LoadedWindow::new("test-user", key, &vault, &materializer);
+    let window = LoadedWindow::new(TEST_USER, key, &vault, &materializer);
 
     let learned_at = 1_772_000_000u64;
     let id = EntityId::now();
@@ -228,7 +231,7 @@ fn edge_materializes_when_both_endpoints_exist() {
     let materializer = Arc::new(Materializer::new());
 
     let key = WindowKey::new("2026-03");
-    let window = LoadedWindow::new("test-user", key, &vault, &materializer);
+    let window = LoadedWindow::new(TEST_USER, key, &vault, &materializer);
 
     let src = EntityId::now();
     let tgt = EntityId::now();
@@ -264,7 +267,7 @@ fn edge_skipped_when_endpoint_missing() {
     let materializer = Arc::new(Materializer::new());
 
     let key = WindowKey::new("2026-03");
-    let window = LoadedWindow::new("test-user", key, &vault, &materializer);
+    let window = LoadedWindow::new(TEST_USER, key, &vault, &materializer);
 
     let src = EntityId::now();
     let tgt = EntityId::now();
@@ -299,7 +302,7 @@ fn bridge_origin_writes_dont_trigger_observer_b() {
     let key = WindowKey::new("2026-03");
     let update_prefix = format!("u:w:{}:", key.as_str());
     let seq_key = format!("m:u_seq:w:{}", key.as_str());
-    let window = LoadedWindow::new("test-user", key, &vault, &materializer);
+    let window = LoadedWindow::new(TEST_USER, key, &vault, &materializer);
 
     let id = EntityId::now();
     let hex_id = id.to_hex();
@@ -335,7 +338,7 @@ fn observer_a_sequence_overflow_preserves_zero_update_slot() {
     let materializer = Arc::new(Materializer::new());
 
     let key = WindowKey::new("2026-03");
-    let window = LoadedWindow::new("test-user", key.clone(), &vault, &materializer);
+    let window = LoadedWindow::new(TEST_USER, key.clone(), &vault, &materializer);
     let seq_key = format!("m:u_seq:w:{key}");
     let zero_key = format!("u:w:{key}:00000000");
     let max_key = format!("u:w:{key}:ffffffff");
@@ -375,7 +378,7 @@ fn window_persist_and_load_roundtrip() {
     let materializer = Arc::new(Materializer::new());
 
     let key = WindowKey::new("2026-03");
-    let window = LoadedWindow::new("test-user", key.clone(), &vault, &materializer);
+    let window = LoadedWindow::new(TEST_USER, key.clone(), &vault, &materializer);
 
     let id = EntityId::now();
     let hex_id = id.to_hex();
@@ -391,7 +394,7 @@ fn window_persist_and_load_roundtrip() {
     window.persist_state(&vault).unwrap();
     drop(window);
 
-    let loaded_doc = window::load_window_from_state(&vault, "test-user", &key).unwrap();
+    let loaded_doc = window::load_window_from_state(&vault, TEST_USER, &key).unwrap();
 
     let entities = loaded_doc.get_map("entities");
     assert!(
@@ -426,7 +429,7 @@ fn crash_recovery_pm_markers() {
     let pm_key = format!("pm:{key}:{hex_id}");
     vault.sync_state_put(&pm_key, &[1u8]).unwrap();
 
-    let doc = create_window_doc("test-user", &key);
+    let doc = create_window_doc(TEST_USER, &key);
 
     assert!(doc.get_map("entities").get(&hex_id).is_none());
 
@@ -450,7 +453,7 @@ fn forward_rematerialize_materializes_entities_with_single_read_snapshot() {
     let vault = Vault::open(temp.path(), test_config()).unwrap();
     let materializer = Materializer::new();
     let key = WindowKey::new("2026-03");
-    let doc = create_window_doc("test-user", &key);
+    let doc = create_window_doc(TEST_USER, &key);
     let id = EntityId::now();
     let hex_id = id.to_hex();
     let blob = make_entity_blob(1, 1_772_000_000, b"forward-remat");
@@ -473,7 +476,7 @@ fn forward_rematerialize_deduplicates_same_entity_aliases() {
     let vault = Vault::open(temp.path(), test_config()).unwrap();
     let materializer = Materializer::new();
     let key = WindowKey::new("2026-03");
-    let doc = create_window_doc("test-user", &key);
+    let doc = create_window_doc(TEST_USER, &key);
     let id = EntityId::from_hex("11111111111111111111111111111111").unwrap();
     let blob = make_entity_blob(1, 1_772_000_000, b"alias");
 
@@ -513,7 +516,7 @@ fn pm_replay_skips_tombstoned_entities() {
     let pm_key = format!("pm:{key}:{hex_id}");
     vault.sync_state_put(&pm_key, &[1u8]).unwrap();
 
-    let doc = create_window_doc("test-user", &key);
+    let doc = create_window_doc(TEST_USER, &key);
 
     // Add tombstone to CRDT
     let tombstones = doc.get_map("tombstones");
@@ -547,7 +550,7 @@ fn forward_rematerialize_restores_lmdb_entities_edges_and_tombstones() {
     let materializer = Arc::new(Materializer::new());
 
     let key = WindowKey::new("2026-03");
-    let window = LoadedWindow::new("test-user", key.clone(), &vault, &materializer);
+    let window = LoadedWindow::new(TEST_USER, key.clone(), &vault, &materializer);
     let learned_at = 1_772_400_000u64;
 
     let src = EntityId::now();
@@ -631,7 +634,7 @@ fn reverse_rematerialize_mirrors_lmdb_entities_edges_and_skips_tombstones() {
     let materializer = Arc::new(Materializer::new());
 
     let key = WindowKey::new("2026-03");
-    let window = LoadedWindow::new("test-user", key.clone(), &vault, &materializer);
+    let window = LoadedWindow::new(TEST_USER, key.clone(), &vault, &materializer);
     let learned_at = 1_772_400_000u64;
 
     let src = EntityId::now();
@@ -673,7 +676,7 @@ fn reverse_rematerialize_mirrors_lmdb_entities_edges_and_skips_tombstones() {
         )
         .unwrap();
 
-    let reverse_doc = create_window_doc("test-user", &key);
+    let reverse_doc = create_window_doc(TEST_USER, &key);
     let reverse_tombstones = reverse_doc.get_map("tombstones");
     reverse_tombstones
         .insert(tombstoned.to_hex().as_str(), &learned_at.to_le_bytes())
@@ -848,7 +851,7 @@ fn sync_client_handle_server_message_handles_bulk_transfer_messages() {
         "BulkTransfer must persist the in-progress marker"
     );
 
-    let state_doc = create_window_doc("test-user", &WindowKey::new("2026-03"));
+    let state_doc = create_window_doc(TEST_USER, &WindowKey::new("2026-03"));
     let snapshot = state_doc.export(ExportMode::Snapshot).unwrap();
     let done = transport::encode_bulk_transfer_done("2026-03", &snapshot);
     assert_eq!(done[0], TAG_BULK_TRANSFER_DONE);
@@ -973,6 +976,8 @@ fn redaction_audit_receipt_survives_crdt_sync_round_trip() {
         "receipt must be discoverable via the maintenance type index on node B"
     );
     // Lands in the temporal_learned index it belongs to.
+    // (+1: `entities_in_learned_range` is half-open `[start, end)` —
+    // this is a point lookup at exactly `learned_at`.)
     assert!(
         vault_b
             .entities_in_learned_range(learned_at, learned_at + 1)
