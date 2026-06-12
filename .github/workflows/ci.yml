@@ -43,7 +43,11 @@ jobs:
         with:
           toolchain: "1.88"
       - uses: Swatinem/rust-cache@v2
-      - run: cargo test --workspace --all-features
+      - uses: taiki-e/install-action@nextest
+      # Canonical runner (ONE-1144): process-per-test isolation, full tier.
+      - run: cargo nextest run --workspace --all-features --profile full
+      # nextest does not run doctests; keep them covered separately.
+      - run: cargo test --doc --workspace --all-features
 
   deny:
     name: cargo-deny
