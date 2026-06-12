@@ -25,8 +25,6 @@ use crate::deletion::{
     encode_hard_erase_sweep_job, encode_hard_erase_sweep_key, encode_redaction_audit_receipt,
     local_hard_delete_key, pending_tombstone_key, window_label_from_timestamp,
 };
-#[cfg(feature = "sync")]
-use crate::deletion::{encode_local_hard_delete_marker, local_hard_delete_marker_key};
 use crate::error::{Error, Result};
 use crate::limits::{
     ERR_CHILD_OF_CYCLE_CHECK, MAX_ANCESTOR_DEPTH, MAX_CHILD_OF_CYCLE_TRAVERSAL_STEPS,
@@ -1239,14 +1237,13 @@ impl Vault {
         // cleared after replay). Written in the SAME txn as the active-store
         // purge, including the purge-raced-to-missing branch below: the CRDT
         // tombstone above is already published, so the id IS hard-deleted.
-        // PRESENCE-ONLY for gates; the value body is informational.
-        self.write_local_hard_delete_marker_in_txn(
-            &mut wtxn,
-            id,
-            reason,
-            requested_at,
-            request_uuid.as_bytes(),
-        )?;
+        // PRESENCE-ONLY for gates; the 25 B value body (the tombstone wire
+        // bytes) is informational. Un-cfg'd on every build: `sync_state` is
+        // unconditional and the marker is local delete truth, not sync-only
+        // state (ONE-1132 cfg-off durability).
+        self.store
+            .sync_state
+            .put(&mut wtxn, &local_hard_delete_key(id), &tombstone.encode())?;
         let existed = self.purge_entity_active_store_in_txn(&mut wtxn, id)?;
         if !existed {
             wtxn.commit()?;
@@ -1326,21 +1323,6 @@ impl Vault {
         let crdt_persisted = self.write_crdt_tombstone(id, requested_at, &tombstone)?;
 
         let mut wtxn = self.store.env.write_txn()?;
-        if reason.active_store_hard_purge_v1() {
-            // ONE-1122 `dt:` marker, headerless leg: the permanent local
-            // marker is the delete truth the Observer-B gate consults for
-            // this id when a crafted update REMOVES the CRDT tombstone —
-            // without it a crafted re-put would rematerialize remote bytes
-            // over a hard delete. Same txn as the purge, mirroring the
-            // headerful path above.
-            self.write_local_hard_delete_marker_in_txn(
-                &mut wtxn,
-                id,
-                reason,
-                requested_at,
-                request_uuid.as_bytes(),
-            )?;
-        }
         let existed = self.purge_entity_active_store_in_txn(&mut wtxn, id)?;
         // OWNER-DECISION (cfg-off durability): marker in the SAME purge txn.
         self.put_pending_tombstone_in_txn(&mut wtxn, &window_label, id, &tombstone)?;
@@ -1865,43 +1847,6 @@ impl Vault {
             self.store.sync_state.delete(wtxn, &key)?;
             Ok(())
         })
-    }
-
-    /// Writes the ONE-1122 `dt:` local hard-delete marker
-    /// (`dt:{entity_id_hex}` in `sync_state`, pinned 25-byte
-    /// `[reason:1][deleted_at:8 LE][request_id:16]` value). Called ONLY from
-    /// the hard-delete purge txn so the marker commits atomically with the
-    /// active-store purge. Presence-only for consumers; permanent, no GC.
-    #[cfg(feature = "sync")]
-    fn write_local_hard_delete_marker_in_txn(
-        &self,
-        wtxn: &mut heed::RwTxn<'_>,
-        id: &EntityId,
-        reason: DeleteReason,
-        deleted_at: u64,
-        request_id: &[u8; 16],
-    ) -> Result<()> {
-        self.store.sync_state.put(
-            wtxn,
-            &local_hard_delete_marker_key(id),
-            &encode_local_hard_delete_marker(reason, deleted_at, request_id),
-        )?;
-        Ok(())
-    }
-
-    /// Without the sync feature there is no CRDT surface to resurrect from
-    /// (and no `sync_state` handle on `Store`); the marker write is a no-op,
-    /// mirroring `write_crdt_tombstone`.
-    #[cfg(not(feature = "sync"))]
-    fn write_local_hard_delete_marker_in_txn(
-        &self,
-        _wtxn: &mut heed::RwTxn<'_>,
-        _id: &EntityId,
-        _reason: DeleteReason,
-        _deleted_at: u64,
-        _request_id: &[u8; 16],
-    ) -> Result<()> {
-        Ok(())
     }
 
     /// Writes a REDACTION_AUDIT receipt as a normal entity-envelope record
