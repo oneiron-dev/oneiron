@@ -9,7 +9,10 @@ use super::types::{WindowKey, parse_window_key_str};
 
 /// Creates a new root Doc with the standard schema.
 ///
-/// The root doc holds a `meta` map with vault metadata and window list.
+/// The root doc holds a `meta` map with vault metadata and window list,
+/// plus the `leases` device-lease registry map (ONE-1140, OD-3 —
+/// server-write-only by the existing client-root-update rejection; each
+/// entry is `client_id_hex` → the pinned 58 B lease record).
 pub fn create_root_doc(_user_id: &str, vault_id: &str, windows: &[WindowKey]) -> LoroDoc {
     let doc = LoroDoc::new();
     let meta = doc.get_map("meta");
@@ -23,6 +26,8 @@ pub fn create_root_doc(_user_id: &str, vault_id: &str, windows: &[WindowKey]) ->
         .collect::<Vec<_>>()
         .join(",");
     map_insert_bytes(&meta, "windows", window_list.as_bytes()).unwrap();
+
+    let _leases = doc.get_map(super::lease::ROOT_LEASES_MAP);
 
     doc.commit();
     doc

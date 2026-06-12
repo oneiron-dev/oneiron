@@ -67,6 +67,12 @@ pub enum ErrorKind {
     InvalidRedactionReceiptBody,
     #[cfg(feature = "sync")]
     RedactionReceiptDivergence,
+    #[cfg(feature = "sync")]
+    ReceiptAttestationInvalid,
+    #[cfg(feature = "sync")]
+    ReceiptLeaseUnknown,
+    #[cfg(feature = "sync")]
+    ReceiptLeaseRevoked,
 }
 
 /// Crate error type.
@@ -392,6 +398,34 @@ pub enum Error {
         id.to_hex()
     )]
     RedactionReceiptDivergence { id: EntityId },
+    /// A NEW REDACTION_AUDIT receipt arriving through a sync replay door
+    /// failed Ed25519 attestation verification (ONE-1140): the embedded
+    /// `att_sig` does not verify over the pinned transcript (domain ||
+    /// entity_id || envelope_header || body-with-empty-verification), or
+    /// the `att_pk` disagrees with the lease registry binding for
+    /// `att_client`. Fail-closed: nothing written; the replay doors
+    /// quarantine the blob (`x:` family).
+    #[cfg(feature = "sync")]
+    #[error(
+        "redaction audit receipt {} attestation invalid: signature/pubkey fails verification",
+        id.to_hex()
+    )]
+    ReceiptAttestationInvalid { id: EntityId },
+    /// A NEW REDACTION_AUDIT receipt claims an `att_client` with NO `ls:`
+    /// lease binding in the local registry mirror (ONE-1140). Fail-closed:
+    /// quarantined, not accepted — the rejected bytes stay in the CRDT map,
+    /// so the next forward rematerialization re-admits the receipt once the
+    /// lease mirror catches up (OD-10 lazy re-admission).
+    #[cfg(feature = "sync")]
+    #[error("redaction audit receipt claims unleased client {client_id:016x}")]
+    ReceiptLeaseUnknown { client_id: u64 },
+    /// A NEW REDACTION_AUDIT receipt claims an `att_client` whose lease
+    /// binding is REVOKED (ONE-1140, OD-7/OD-8: revoked is terminal; the
+    /// only door-enforced status — expired still verifies). Fail-closed:
+    /// quarantined, never accepted.
+    #[cfg(feature = "sync")]
+    #[error("redaction audit receipt claims revoked client {client_id:016x}")]
+    ReceiptLeaseRevoked { client_id: u64 },
 }
 
 impl Error {
@@ -468,6 +502,12 @@ impl Error {
             Self::InvalidRedactionReceiptBody(_) => ErrorKind::InvalidRedactionReceiptBody,
             #[cfg(feature = "sync")]
             Self::RedactionReceiptDivergence { .. } => ErrorKind::RedactionReceiptDivergence,
+            #[cfg(feature = "sync")]
+            Self::ReceiptAttestationInvalid { .. } => ErrorKind::ReceiptAttestationInvalid,
+            #[cfg(feature = "sync")]
+            Self::ReceiptLeaseUnknown { .. } => ErrorKind::ReceiptLeaseUnknown,
+            #[cfg(feature = "sync")]
+            Self::ReceiptLeaseRevoked { .. } => ErrorKind::ReceiptLeaseRevoked,
         }
     }
 

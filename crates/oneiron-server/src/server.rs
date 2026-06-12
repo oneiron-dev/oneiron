@@ -2,12 +2,13 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
 
-use loro::{ExportMode, LoroDoc, VersionVector};
+use loro::{ExportMode, LoroDoc, LoroValue, ValueOrContainer, VersionVector};
 use oneiron::sync::WindowKey;
+use oneiron::sync::lease::{self, LEASE_DURATION_SECS, LeaseRecord, LeaseStatus, ROOT_LEASES_MAP};
 use oneiron::sync::schema::{add_window_to_root, read_window_list};
 use oneiron::sync::server_state;
 use oneiron::sync::window::load_window_from_state;
-use tokio::sync::{RwLock, broadcast};
+use tokio::sync::{Mutex, RwLock, broadcast};
 
 use crate::config::SyncServerConfig;
 use crate::protocol::AwarenessState;
@@ -36,6 +37,10 @@ pub struct SyncServer {
     pub(crate) broadcast_tx: broadcast::Sender<BroadcastPayload>,
     /// Monotonic connection ID counter. 0 = reserved for bridge/local writes.
     pub(crate) next_conn_id: AtomicU32,
+    /// Serializes lease-registry mutations (ONE-1140, OD-3): two concurrent
+    /// connects racing the same client id must observe first-binding-wins,
+    /// never a read-modify-write interleave.
+    pub(crate) lease_registrar: Mutex<()>,
     /// Server configuration.
     pub(crate) config: SyncServerConfig,
 }
@@ -76,6 +81,9 @@ impl SyncServer {
                 // accept `LoroValue::Binary`.
                 meta.insert("windows", "".as_bytes())
                     .map_err(|e| oneiron::Error::SyncProtocolError(e.to_string()))?;
+                // Device-lease registry map (ONE-1140, OD-3) — server-write
+                // only; lazily present on docs persisted before v2.
+                let _leases = doc.get_map(ROOT_LEASES_MAP);
                 doc.commit();
                 server_state::persist_root_snapshot(&vault, &doc)?;
                 doc
@@ -107,6 +115,7 @@ impl SyncServer {
             awareness: RwLock::new(HashMap::new()),
             broadcast_tx,
             next_conn_id: AtomicU32::new(1),
+            lease_registrar: Mutex::new(()),
             config,
         })
     }
@@ -230,7 +239,202 @@ impl SyncServer {
     pub(crate) async fn evict_window(&self, key: &WindowKey) {
         self.windows.write().await.remove(key.as_str());
     }
+
+    // ─── Device-lease registry (ONE-1140, OD-3) ──────────────────────────
+
+    /// Handles a TAG_LEASE_REQUEST: verify proof of possession, then apply
+    /// the pinned binding rules under the registrar lock —
+    ///
+    /// * binding absent → write an ACTIVE record (`granted_at = renewed_at
+    ///   = now`, `expires_at = now + 90 d`), grant;
+    /// * same pubkey, status ≠ revoked → renew (`renewed_at`/`expires_at`
+    ///   refreshed; an expired binding flips back to active), grant;
+    /// * same client id, DIFFERENT pubkey → reject, binding untouched
+    ///   (first-binding-wins);
+    /// * revoked → reject, terminal (OD-8).
+    ///
+    /// Scan-at-connect expiry (OD-7): any ACTIVE binding past its
+    /// `expires_at` flips to EXPIRED first — server-side liveness
+    /// bookkeeping only; replay doors never enforce time.
+    ///
+    /// Registry writes go to the root doc's `leases` map (server-write-only
+    /// by the existing client-root-update rejection), are persisted to
+    /// `d:root`, and are mirrored to this vault's `ls:` rows in the same
+    /// logical op. The returned `root_update` delta must be broadcast to
+    /// ALL connections (conn_id 0 — the requester needs its own record).
+    pub(crate) async fn register_lease(
+        &self,
+        client_id: u64,
+        pubkey: &[u8; 32],
+        pop_sig: &[u8; 64],
+    ) -> Result<LeaseDecision, oneiron::Error> {
+        // Invalid proof of possession: reject without touching state. The
+        // transcript binds client_id AND pubkey, so a forged binding for a
+        // key the requester does not hold can never reach the registry.
+        if !lease::verify_lease_pop(client_id, pubkey, pop_sig) {
+            return Ok(LeaseDecision::rejected());
+        }
+
+        let _guard = self.lease_registrar.lock().await;
+        let now = unix_seconds_now();
+        let leases = self.root_doc.get_map(ROOT_LEASES_MAP);
+        let vv_before = self.root_doc.oplog_vv();
+        let mut changed = false;
+
+        // Scan-at-connect expiry flip (liveness bookkeeping, OD-7).
+        let mut entries: Vec<(String, Vec<u8>)> = Vec::new();
+        leases.for_each(|key, value| {
+            if let ValueOrContainer::Value(LoroValue::Binary(blob)) = value {
+                entries.push((key.to_string(), blob.to_vec()));
+            }
+        });
+        for (key, raw) in &entries {
+            // The server is the SOLE registry writer — a malformed record
+            // is local corruption, fail closed (never best-effort decode).
+            let mut record = lease::decode_lease_record(raw)?;
+            if record.status == LeaseStatus::Active && record.expires_at < now {
+                record.status = LeaseStatus::Expired;
+                leases
+                    .insert(key.as_str(), lease::encode_lease_record(&record).as_slice())
+                    .map_err(|e| oneiron::Error::SyncProtocolError(e.to_string()))?;
+                changed = true;
+            }
+        }
+
+        let key_hex = lease::client_id_hex(client_id);
+        let existing = entries
+            .iter()
+            .find(|(key, _)| *key == key_hex)
+            .map(|(_, raw)| lease::decode_lease_record(raw))
+            .transpose()?;
+
+        let decision = match existing {
+            None => {
+                let record = LeaseRecord {
+                    status: LeaseStatus::Active,
+                    pubkey: *pubkey,
+                    granted_at: now,
+                    renewed_at: now,
+                    expires_at: now + LEASE_DURATION_SECS,
+                };
+                leases
+                    .insert(key_hex.as_str(), lease::encode_lease_record(&record).as_slice())
+                    .map_err(|e| oneiron::Error::SyncProtocolError(e.to_string()))?;
+                changed = true;
+                LeaseDecision::granted(record.expires_at)
+            }
+            Some(record) if record.status == LeaseStatus::Revoked => {
+                // Terminal (OD-8): a revoked binding never re-activates.
+                LeaseDecision::rejected()
+            }
+            Some(record) if record.pubkey == *pubkey => {
+                let renewed = LeaseRecord {
+                    status: LeaseStatus::Active,
+                    pubkey: record.pubkey,
+                    granted_at: record.granted_at,
+                    renewed_at: now,
+                    expires_at: now + LEASE_DURATION_SECS,
+                };
+                leases
+                    .insert(key_hex.as_str(), lease::encode_lease_record(&renewed).as_slice())
+                    .map_err(|e| oneiron::Error::SyncProtocolError(e.to_string()))?;
+                changed = true;
+                LeaseDecision::granted(renewed.expires_at)
+            }
+            // Same client id, different pubkey: first-binding-wins, the
+            // existing binding is untouched.
+            Some(_) => LeaseDecision::rejected(),
+        };
+
+        let root_update = self.commit_lease_changes(changed, &vv_before)?;
+        Ok(LeaseDecision {
+            root_update,
+            ..decision
+        })
+    }
+
+    /// Revokes a binding (owner recovery surface, OD-8). Terminal: the
+    /// record keeps its timestamps, status flips to REVOKED. Returns the
+    /// decision with `granted == false` and a `root_update` delta when the
+    /// binding existed; `Ok(None)`-equivalent (no update) when it did not.
+    pub(crate) async fn revoke_lease(
+        &self,
+        client_id: u64,
+    ) -> Result<Option<Vec<u8>>, oneiron::Error> {
+        let _guard = self.lease_registrar.lock().await;
+        let leases = self.root_doc.get_map(ROOT_LEASES_MAP);
+        let key_hex = lease::client_id_hex(client_id);
+        let Some(ValueOrContainer::Value(LoroValue::Binary(raw))) = leases.get(&key_hex) else {
+            return Ok(None);
+        };
+        let mut record = lease::decode_lease_record(&raw)?;
+        let vv_before = self.root_doc.oplog_vv();
+        record.status = LeaseStatus::Revoked;
+        leases
+            .insert(key_hex.as_str(), lease::encode_lease_record(&record).as_slice())
+            .map_err(|e| oneiron::Error::SyncProtocolError(e.to_string()))?;
+        self.commit_lease_changes(true, &vv_before)
+    }
+
+    /// Commits + persists + mirrors a registry mutation: root doc commit,
+    /// `d:root` snapshot persist, `ls:` row mirror — then exports the
+    /// update delta for broadcast. No-op (None) when nothing changed.
+    fn commit_lease_changes(
+        &self,
+        changed: bool,
+        vv_before: &VersionVector,
+    ) -> Result<Option<Vec<u8>>, oneiron::Error> {
+        if !changed {
+            return Ok(None);
+        }
+        self.root_doc.commit();
+        server_state::persist_root_snapshot(&self.vault, &self.root_doc)?;
+        lease::mirror_leases_from_root(&self.vault, &self.root_doc)?;
+        let delta = self
+            .root_doc
+            .export(ExportMode::updates(vv_before))
+            .map_err(|e| oneiron::Error::SyncProtocolError(format!("root delta export: {e}")))?;
+        Ok(Some(delta))
+    }
 }
+
+/// Outcome of a lease registration attempt (ONE-1140).
+#[derive(Debug)]
+pub(crate) struct LeaseDecision {
+    pub(crate) granted: bool,
+    /// `expires_at` for the GRANTED ack; 0 when rejected (wire literal).
+    pub(crate) expires_at: u64,
+    /// Root-doc update delta to broadcast when the registry changed.
+    pub(crate) root_update: Option<Vec<u8>>,
+}
+
+impl LeaseDecision {
+    fn granted(expires_at: u64) -> Self {
+        Self {
+            granted: true,
+            expires_at,
+            root_update: None,
+        }
+    }
+
+    const fn rejected() -> Self {
+        Self {
+            granted: false,
+            expires_at: 0,
+            root_update: None,
+        }
+    }
+}
+
+/// Wall-clock Unix seconds, saturating to 0 pre-epoch (matches the
+/// client-side SystemTime uses).
+fn unix_seconds_now() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
+}
+
 
 #[cfg(test)]
 mod tests {
@@ -409,6 +613,141 @@ mod tests {
             matches!(err, oneiron::Error::CrdtDecodeError { .. }),
             "corrupt persisted window must error, got {err:?}"
         );
+    }
+
+    /// ONE-1140 lease lifecycle at the registrar (OD-3/OD-4/OD-7/OD-8):
+    /// register writes the pinned 58 B record into the root-doc `leases`
+    /// map AND the vault's `ls:` mirror row (byte-identical, OD-3);
+    /// renewal refreshes `renewed_at`/`expires_at` and flips an expired
+    /// binding back to active; a same-client/different-key request is
+    /// REJECTED with the binding untouched (first-binding-wins); revocation
+    /// is terminal; an invalid proof of possession never touches state.
+    #[tokio::test]
+    async fn lease_lifecycle_register_renew_conflict_revoke() {
+        use ed25519_dalek::{Signer, SigningKey};
+
+        let (_dir, vault) = test_vault();
+        let server = SyncServer::new(vault.clone(), SyncServerConfig::default()).unwrap();
+
+        let key = SigningKey::from_bytes(&[7u8; 32]);
+        let pubkey = key.verifying_key().to_bytes();
+        let client_id = 0x0123_4567_89ab_cdefu64;
+        let pop = |signer: &SigningKey, cid: u64, pk: &[u8; 32]| {
+            signer
+                .sign(&lease::lease_pop_transcript(cid, pk))
+                .to_bytes()
+        };
+
+        // ── Register: granted, record layout literals on BOTH surfaces.
+        let decision = server
+            .register_lease(client_id, &pubkey, &pop(&key, client_id, &pubkey))
+            .await
+            .unwrap();
+        assert!(decision.granted);
+        assert!(decision.root_update.is_some(), "registry change broadcasts");
+        let map_record =
+            deep_map_bytes(&server.root_doc, "leases", "0123456789abcdef").unwrap();
+        let ls_row = vault.sync_state_get("ls:0123456789abcdef").unwrap().unwrap();
+        assert_eq!(map_record, ls_row, "OD-3: map value ≡ ls: row, byte-identical");
+        assert_eq!(ls_row.len(), 58, "OD-4 record length");
+        assert_eq!(ls_row[0], 0x01, "version byte");
+        assert_eq!(ls_row[1], 0x01, "status active");
+        assert_eq!(&ls_row[2..34], &pubkey);
+        let granted_at = u64::from_le_bytes(ls_row[34..42].try_into().unwrap());
+        let renewed_at = u64::from_le_bytes(ls_row[42..50].try_into().unwrap());
+        let expires_at = u64::from_le_bytes(ls_row[50..58].try_into().unwrap());
+        assert_eq!(granted_at, renewed_at);
+        assert_eq!(
+            expires_at,
+            renewed_at + 7_776_000,
+            "90-day lease literal (OD-4)"
+        );
+        assert_eq!(decision.expires_at, expires_at);
+
+        // ── Renew: simulate an old, EXPIRED binding (server is sole
+        // writer, so the test rewrites the registry record directly), then
+        // re-request with the SAME key: flips back to active, renewed_at
+        // and expires_at refresh, granted_at is preserved.
+        let stale = lease::LeaseRecord {
+            status: lease::LeaseStatus::Expired,
+            pubkey,
+            granted_at: 1_000,
+            renewed_at: 2_000,
+            expires_at: 3_000,
+        };
+        server
+            .root_doc
+            .get_map(ROOT_LEASES_MAP)
+            .insert(
+                "0123456789abcdef",
+                lease::encode_lease_record(&stale).as_slice(),
+            )
+            .unwrap();
+        server.root_doc.commit();
+        let decision = server
+            .register_lease(client_id, &pubkey, &pop(&key, client_id, &pubkey))
+            .await
+            .unwrap();
+        assert!(decision.granted, "expired + same key = renewal, not rejection");
+        let renewed_row = vault.sync_state_get("ls:0123456789abcdef").unwrap().unwrap();
+        assert_eq!(renewed_row[1], 0x01, "expired flips back to active");
+        assert_eq!(
+            u64::from_le_bytes(renewed_row[34..42].try_into().unwrap()),
+            1_000,
+            "granted_at preserved across renewal"
+        );
+        let renewed_at2 = u64::from_le_bytes(renewed_row[42..50].try_into().unwrap());
+        assert!(renewed_at2 > 2_000, "renewed_at refreshed");
+        assert_eq!(
+            u64::from_le_bytes(renewed_row[50..58].try_into().unwrap()),
+            renewed_at2 + 7_776_000
+        );
+
+        // ── Conflict: same client id, DIFFERENT key → rejected, binding
+        // bytes untouched (first-binding-wins).
+        let intruder = SigningKey::from_bytes(&[9u8; 32]);
+        let intruder_pk = intruder.verifying_key().to_bytes();
+        let decision = server
+            .register_lease(client_id, &intruder_pk, &pop(&intruder, client_id, &intruder_pk))
+            .await
+            .unwrap();
+        assert!(!decision.granted);
+        assert_eq!(decision.expires_at, 0, "rejected ack carries expires_at = 0");
+        assert_eq!(
+            vault.sync_state_get("ls:0123456789abcdef").unwrap().unwrap(),
+            renewed_row,
+            "a binding conflict must not modify the existing binding"
+        );
+
+        // ── Invalid PoP (valid key, signature over the WRONG client id):
+        // rejected, no state change.
+        let other_client = client_id + 1;
+        let decision = server
+            .register_lease(other_client, &pubkey, &pop(&key, client_id, &pubkey))
+            .await
+            .unwrap();
+        assert!(!decision.granted, "PoP transcript binds the claimed client id");
+        assert!(
+            vault
+                .sync_state_get(&lease::lease_key(other_client))
+                .unwrap()
+                .is_none(),
+            "an invalid PoP never reaches the registry"
+        );
+
+        // ── Revoke: terminal (OD-8). Status flips on both surfaces and a
+        // later re-request with the ORIGINAL key is rejected.
+        let update = server.revoke_lease(client_id).await.unwrap();
+        assert!(update.is_some(), "revocation broadcasts a registry change");
+        let revoked_row = vault.sync_state_get("ls:0123456789abcdef").unwrap().unwrap();
+        assert_eq!(revoked_row[1], 0x03, "status revoked");
+        let decision = server
+            .register_lease(client_id, &pubkey, &pop(&key, client_id, &pubkey))
+            .await
+            .unwrap();
+        assert!(!decision.granted, "revoked is terminal — no re-activation");
+        // Unknown binding: revoke is a no-op (no phantom records).
+        assert!(server.revoke_lease(0xffff).await.unwrap().is_none());
     }
 
     #[test]

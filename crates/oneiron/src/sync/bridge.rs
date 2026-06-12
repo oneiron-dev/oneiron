@@ -1042,22 +1042,32 @@ fn materialize_entity_blob_in_txn(
         &[]
     };
 
-    // ONE-1134: REDACTION_AUDIT (type 120) replay door. Receipts are
-    // immutable audit records (contracts.ts `redactionAuditReceipt`;
+    // ONE-1134 + ONE-1140: REDACTION_AUDIT (type 120) replay door. Receipts
+    // are immutable audit records (contracts.ts `redactionAuditReceipt`;
     // ARCH-0023b audit/guardrail stream class: quarantine divergence, never
-    // silent LWW), so before any byte is staged:
+    // silent LWW), so before any byte is staged, in pinned order:
     //
-    // 1. the body must satisfy the pinned receipt field set — a blob that
-    //    fails receipt decode is a remote rejection (quarantined by the
-    //    callers via `remote_rejection_reason`), and
-    // 2. immutability: id absent locally → accept new; id present with
-    //    byte-identical envelope → idempotent no-op (own-receipt CRDT
-    //    round-trips stay green); id present with DIVERGENT bytes → typed
-    //    rejection, LOCAL bytes are kept and the remote payload is
-    //    quarantined.
+    // 1. the body must satisfy the pinned receipt field set, now including
+    //    the four-entry att_ verification grammar (ONE-1140 v2) — a blob
+    //    that fails receipt decode is a remote rejection (quarantined by
+    //    the callers via `remote_rejection_reason`);
+    // 2. immutability (UNCHANGED, before any crypto — accepted local bytes
+    //    always win): id absent locally → fall through to the origin
+    //    predicate; id present with byte-identical envelope → idempotent
+    //    no-op (own-receipt CRDT round-trips stay green); id present with
+    //    DIVERGENT bytes → typed rejection, LOCAL bytes are kept and the
+    //    remote payload is quarantined;
+    // 3. NEW id: Ed25519 transcript verification against the embedded
+    //    att_pk (ONE-1140 OD-6), and
+    // 4. `ls:` lease-binding point read in the SAME txn (OD-3/OD-7: absent
+    //    → ReceiptLeaseUnknown; pubkey mismatch → ReceiptAttestationInvalid;
+    //    revoked → ReceiptLeaseRevoked; active|expired → accept).
     //
-    // Both checks run before `put_replicated` stages anything, so a rejected
-    // receipt never leaves partial writes in the transaction.
+    // All checks run before `put_replicated` stages anything, so a rejected
+    // receipt never leaves partial writes in the transaction. A quarantined
+    // receipt's bytes remain in the CRDT map, so the next forward
+    // rematerialization re-admits it once the lease mirror catches up
+    // (OD-10 lazy re-admission — no new scheduling machinery).
     if header.entity_type == crate::types::ENTITY_TYPE_REDACTION_AUDIT {
         crate::deletion::validate_redaction_receipt_body(data)?;
         if let Some(existing) = vault.store.entities.get(&*wtxn, id.as_bytes())? {
@@ -1066,6 +1076,7 @@ fn materialize_entity_blob_in_txn(
             }
             return Err(crate::Error::RedactionReceiptDivergence { id });
         }
+        crate::sync::lease::verify_new_receipt_origin_in_txn(vault, wtxn, &id, blob)?;
     }
 
     // Replicated put: Observer B mirrors whatever the unfiltered CRDT

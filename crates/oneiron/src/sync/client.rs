@@ -26,7 +26,12 @@
 //!   persisted on every accepted root import; reloaded on restart with
 //!   pending `u:root:*` replay (startup step 1).
 //! - `m:client_id` — this device's CRDT client id (u64 LE, 8 bytes), minted
-//!   once and stable per install.
+//!   once and stable per install (mint lives in `crate::identity`, OD-2).
+//! - `m:device_sk` / `m:device_pk` — this device's Ed25519 attestation
+//!   keypair (32 B each; ONE-1140, OD-2), minted alongside the client id.
+//! - `ls:{client_id_hex}` — device-lease registry mirror rows (58 B pinned
+//!   record, ONE-1140 OD-3/OD-4): full-mirrored from the root doc's
+//!   `leases` map in the SAME txn as every root persist.
 //! - `m:last_sync` — last successful sync timestamp (u64 LE, 8 bytes).
 //! - `bulk:w:{key}` — BulkTransfer in-progress marker (device only);
 //!   cleared when `BulkTransferDone` persistence succeeds.
@@ -50,8 +55,9 @@ use crate::sync::loro_support::{
 use crate::sync::manager::WindowManager;
 use crate::sync::schema::read_window_list;
 use crate::sync::transport::{
-    self, MAX_DECODED_PAYLOAD_BYTES, TAG_AWARENESS, TAG_BULK_TRANSFER, TAG_BULK_TRANSFER_DONE,
-    TAG_SYNC_UPDATE, TAG_VERSION_VECTOR, TAG_WINDOW_SYNC, TransportError, window_sub_tags,
+    self, LEASE_STATUS_GRANTED, MAX_DECODED_PAYLOAD_BYTES, TAG_AWARENESS, TAG_BULK_TRANSFER,
+    TAG_BULK_TRANSFER_DONE, TAG_LEASE_GRANTED, TAG_SYNC_UPDATE, TAG_VERSION_VECTOR,
+    TAG_WINDOW_SYNC, TransportError, window_sub_tags,
 };
 use crate::sync::types::{WindowKey, parse_window_key_str};
 use crate::sync::window::LoadedWindow;
@@ -66,7 +72,9 @@ const KEY_ROOT_SVF: &str = "svf:root";
 /// Pending root update rows applied on top of `d:root` at startup (step 1).
 const ROOT_UPDATE_PREFIX: &str = "u:root:";
 /// This device's CRDT client id (u64 LE, 8 bytes) — minted once, stable per
-/// install.
+/// install. The mint lives in `crate::identity` (ONE-1140, OD-2); this
+/// test-side literal pins the row key independently of that module.
+#[cfg(test)]
 const KEY_CLIENT_ID: &str = "m:client_id";
 /// Last successful sync timestamp (u64 LE, 8 bytes).
 const KEY_LAST_SYNC: &str = "m:last_sync";
@@ -117,8 +125,19 @@ pub enum SyncStatus {
 #[derive(Debug)]
 pub enum SyncEvent {
     StatusChanged(SyncStatus),
-    WindowUpdated { window_key: String },
-    BulkTransferComplete { window_key: String },
+    WindowUpdated {
+        window_key: String,
+    },
+    BulkTransferComplete {
+        window_key: String,
+    },
+    /// The server rejected this device's lease request (ONE-1140: binding
+    /// conflict or revoked binding). Sync PROCEEDS — fail-closed lives at
+    /// the replay doors (peers quarantine this device's NEW receipts), not
+    /// the pipe.
+    LeaseDenied {
+        client_id: u64,
+    },
     Error(String),
 }
 
@@ -128,6 +147,10 @@ pub struct SyncClient {
     manager: Arc<WindowManager>,
     root_doc: LoroDoc,
     client_id: u64,
+    /// This device's Ed25519 attestation key (ONE-1140, OD-2): signs the
+    /// lease-request proof of possession on every connect. Receipt signing
+    /// happens vault-side at mint, not here.
+    device_signing_key: ed25519_dalek::SigningKey,
     config: SyncClientConfig,
     /// Last server VV observed per window from `VV_REQUEST` / `VV_RESPONSE`
     /// frames. This is the convergence witness (ONE-1128): the offline queue
@@ -141,11 +164,12 @@ pub struct SyncClient {
 impl SyncClient {
     /// Creates a new sync client over manager-owned windows.
     ///
-    /// Loads persisted client state first (ARCH-0023b startup step 1):
-    /// `m:client_id` (minted once if absent), then the root doc from
-    /// `d:root` + pending `u:root:*` replay. A malformed `m:client_id` row
-    /// fails closed — silently re-minting would change this device's CRDT
-    /// identity.
+    /// Loads persisted client state first (ARCH-0023b startup step 1): the
+    /// device identity — `m:client_id` (minted once if absent) plus the
+    /// `m:device_sk`/`m:device_pk` attestation keypair (ONE-1140, OD-2) —
+    /// then the root doc from `d:root` + pending `u:root:*` replay.
+    /// Malformed identity rows fail closed — silently re-minting would
+    /// change this device's CRDT identity mid-install.
     pub fn new(
         manager: Arc<WindowManager>,
         config: SyncClientConfig,
@@ -153,7 +177,8 @@ impl SyncClient {
         let (event_tx, event_rx) = mpsc::unbounded_channel();
         let vault = Arc::clone(manager.vault());
 
-        let client_id = load_or_mint_client_id(&vault)?;
+        let identity = crate::identity::ensure_device_identity(&vault)?;
+        let client_id = identity.client_id;
         let root_doc = load_root_doc(&vault)?;
         // The client never authors root ops in production (meta.windows is
         // server-write-only), so pinning the stable client id as the root
@@ -170,6 +195,7 @@ impl SyncClient {
             manager,
             root_doc,
             client_id,
+            device_signing_key: identity.signing_key,
             config,
             server_vvs: HashMap::new(),
             status: SyncStatus::Disconnected,
@@ -289,6 +315,35 @@ impl SyncClient {
                 // Server presence broadcast — the client does not track peer
                 // presence yet. Ignore instead of surfacing UnknownTag errors
                 // for every awareness fan-out (ONE-1127).
+            }
+            TAG_LEASE_GRANTED => {
+                // ONE-1140 (OD-5): the server's ack for this connect's lease
+                // request. Exhaustive frame validation; a frame echoing a
+                // DIFFERENT client id is a protocol violation (the server
+                // direct-replies to the requester), fail closed.
+                let (status, client_id, expires_at) = transport::decode_lease_granted(payload)?;
+                if client_id != self.client_id {
+                    return Err(TransportError::InvalidPayload(
+                        "LeaseGranted echoes a foreign client id",
+                    ));
+                }
+                if status == LEASE_STATUS_GRANTED {
+                    tracing::debug!(
+                        client_id = format!("{client_id:016x}"),
+                        expires_at,
+                        "sync: lease granted/renewed"
+                    );
+                } else {
+                    // Rejection is surfaced as a typed event and sync
+                    // PROCEEDS: fail-closed lives at the replay doors
+                    // (peers quarantine this device's NEW receipts), not
+                    // the pipe.
+                    tracing::warn!(
+                        client_id = format!("{client_id:016x}"),
+                        "sync: lease request REJECTED (binding conflict or revoked)"
+                    );
+                    let _ = self.event_tx.send(SyncEvent::LeaseDenied { client_id });
+                }
             }
             TAG_VERSION_VECTOR => {
                 // Server's root VV. Root is server-authoritative, so there is
@@ -588,10 +643,13 @@ impl SyncClient {
 
     /// Generates initial sync messages for the connection flow.
     ///
-    /// Returns messages to send to the server, in wire order:
+    /// Returns messages to send to the server, in wire order (the ONE-1140
+    /// OD-5 connect-sequence literal `[hello][lease_request][…existing]`):
     /// 1. Protocol-version hello (MUST be the first frame — server checks it)
-    /// 2. Root doc VV (so server knows what we have)
-    /// 3. Default window VV requests (current + previous month), plus any
+    /// 2. Lease request (proof-of-possession over this device's identity;
+    ///    sent on EVERY connect — registration and renewal are one frame)
+    /// 3. Root doc VV (so server knows what we have)
+    /// 4. Default window VV requests (current + previous month), plus any
     ///    additional already-loaded windows
     ///
     /// All version vectors are Loro binary `VersionVector::encode()` bytes —
@@ -604,9 +662,24 @@ impl SyncClient {
     pub fn generate_initial_sync(&self) -> Vec<Vec<u8>> {
         // Phase 0: protocol-version hello — first frame on every connection so
         // the server can detect wire breaks before any sync payload flows.
-        let mut messages = vec![transport::encode_protocol_hello()];
+        // Frame #2: lease request (ONE-1140, OD-5).
+        let mut messages = vec![
+            transport::encode_protocol_hello(),
+            self.lease_request_frame(),
+        ];
         messages.extend(self.generate_phase_frames());
         messages
+    }
+
+    /// Builds this device's TAG_LEASE_REQUEST frame (ONE-1140, OD-5/OD-6):
+    /// Ed25519 proof of possession over
+    /// `"oneiron/lease-pop/v1" || client_id:8 BE || pubkey:32`.
+    fn lease_request_frame(&self) -> Vec<u8> {
+        use ed25519_dalek::Signer;
+        let pubkey = self.device_signing_key.verifying_key().to_bytes();
+        let transcript = crate::sync::lease::lease_pop_transcript(self.client_id, &pubkey);
+        let pop_sig = self.device_signing_key.sign(&transcript).to_bytes();
+        transport::encode_lease_request(self.client_id, &pubkey, &pop_sig)
     }
 
     /// Phase 1-2 sync frames: root VV + default-window VV requests.
@@ -706,7 +779,11 @@ impl SyncClient {
     }
 
     /// Persists the root doc to sync_state: `d:root` snapshot + `sv:root`
-    /// state vector + `svf:root` freshness, in one txn.
+    /// state vector + `svf:root` freshness, in one txn — plus the ONE-1140
+    /// (OD-3) lease-registry mirror: every `leases` map entry is upserted
+    /// into its `ls:` row in the SAME txn, so the replay doors' lease reads
+    /// can never observe a root state without its registry rows. Malformed
+    /// entries quarantine (x: row) and keep any previous good `ls:` row.
     fn persist_root_state(&self) -> Result<()> {
         let snapshot = export_snapshot(&self.root_doc)?;
         let vv = doc_version_vector(&self.root_doc);
@@ -720,6 +797,7 @@ impl SyncClient {
                 .store
                 .sync_state
                 .put(wtxn, KEY_ROOT_SVF, &[SVF_FRESH])?;
+            crate::sync::lease::mirror_leases_from_root_in_txn(&self.vault, wtxn, &self.root_doc)?;
             Ok(())
         })
     }
@@ -747,46 +825,11 @@ fn load_root_doc(vault: &Vault) -> Result<LoroDoc> {
     Ok(doc)
 }
 
-/// Loads `m:client_id`, minting it once (u64 LE, nonzero) when absent.
-///
-/// A present-but-malformed row fails closed: silently re-minting would
-/// change this device's CRDT identity mid-install.
-fn load_or_mint_client_id(vault: &Vault) -> Result<u64> {
-    let minted = mint_client_id();
-    let mut chosen = minted;
-    vault.with_write_txn(
-        |wtxn| match vault.store.sync_state.get(wtxn, KEY_CLIENT_ID)? {
-            Some(raw) if raw.len() == 8 => {
-                chosen = u64::from_le_bytes(raw.try_into().expect("length checked"));
-                Ok(())
-            }
-            Some(_) => Err(Error::CorruptedIndex("sync client_id row")),
-            None => {
-                vault
-                    .store
-                    .sync_state
-                    .put(wtxn, KEY_CLIENT_ID, &minted.to_le_bytes())?;
-                Ok(())
-            }
-        },
-    )?;
-    Ok(chosen)
-}
-
-/// Mints a random nonzero u64 from the random tail of a UUID (bytes 8..16
-/// of a v7 UUID are the random section — the head is a timestamp).
-fn mint_client_id() -> u64 {
-    loop {
-        let uuid = uuid::Uuid::now_v7();
-        let tail: [u8; 8] = uuid.as_bytes()[8..16]
-            .try_into()
-            .expect("uuid tail is 8 bytes");
-        let candidate = u64::from_le_bytes(tail);
-        if candidate != 0 {
-            return candidate;
-        }
-    }
-}
+// `load_or_mint_client_id` / `mint_client_id` were RELOCATED to the base
+// `crate::identity` module (ONE-1140, OD-2): base receipt-mint paths need
+// the same stable device id, and the Ed25519 attestation keypair mints
+// alongside it. Semantics preserved — u64 LE, minted once, nonzero;
+// malformed/zero rows fail closed (ONE-1155 zero-check composed there).
 
 /// Maps a delta-export error onto the transport taxonomy.
 ///
@@ -857,23 +900,38 @@ mod tests {
         let manager = test_manager();
         let (client, _rx) = test_client(&manager);
         let messages = client.generate_initial_sync();
-        // hello + root VV + 2 window VV requests (current + prev)
-        assert_eq!(messages.len(), 4);
+        // hello + lease request + root VV + 2 window VV requests
+        // (current + prev) — the OD-5 connect-sequence literal
+        // `[hello][lease_request][…existing]` (ONE-1140).
+        assert_eq!(messages.len(), 5);
 
-        // Frame 0: protocol hello — exact wire bytes [tag=3, version=1]
-        // (contract literal, ONE-1127). It MUST be the first frame.
-        assert_eq!(messages[0], vec![3u8, 1u8]);
+        // Frame 0: protocol hello — exact wire bytes [tag=3, version=2]
+        // (contract literal; v2 pinned by the ONE-1140 wire train, OD-5).
+        // It MUST be the first frame.
+        assert_eq!(messages[0], vec![3u8, 2u8]);
 
-        // Frame 1: root VV — Loro binary encoding, decodable, NOT JSON.
-        assert_eq!(messages[1][0], TAG_VERSION_VECTOR);
-        VersionVector::decode(&messages[1][1..]).expect("root VV must be Loro binary encoding");
+        // Frame 1: lease request — 105 B pinned layout, client_id BE at
+        // offset 1, and the embedded PoP signature verifies over the OD-6
+        // transcript (a frame signed for a different client id would not).
+        assert_eq!(messages[1].len(), 105);
+        assert_eq!(messages[1][0], transport::TAG_LEASE_REQUEST);
+        let (cid, pubkey, pop_sig) = transport::decode_lease_request(&messages[1][1..]).unwrap();
+        assert_eq!(cid, client.client_id());
         assert!(
-            serde_json::from_slice::<serde_json::Value>(&messages[1][1..]).is_err(),
+            crate::sync::lease::verify_lease_pop(cid, &pubkey, &pop_sig),
+            "the lease request must carry a valid proof of possession"
+        );
+
+        // Frame 2: root VV — Loro binary encoding, decodable, NOT JSON.
+        assert_eq!(messages[2][0], TAG_VERSION_VECTOR);
+        VersionVector::decode(&messages[2][1..]).expect("root VV must be Loro binary encoding");
+        assert!(
+            serde_json::from_slice::<serde_json::Value>(&messages[2][1..]).is_err(),
             "the serde_json VV wire encoding is dead (ONE-1127)"
         );
 
-        // Frames 2..: window VV_REQUEST frames carrying binary VV payloads.
-        for msg in &messages[2..] {
+        // Frames 3..: window VV_REQUEST frames carrying binary VV payloads.
+        for msg in &messages[3..] {
             assert_eq!(msg[0], TAG_WINDOW_SYNC);
             let (key, sub_tag, payload) = transport::decode_window_sync(&msg[1..]).unwrap();
             assert!(parse_window_key_str(key).is_some());
