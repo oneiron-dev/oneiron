@@ -12,13 +12,14 @@ use super::bridge::{
 };
 use super::loro_support::{
     doc_from_snapshot, doc_version_vector, export_snapshot, import_doc, map_contains_binary,
-    map_for_each_bytes, map_get_bytes, map_insert_bytes,
+    map_contains_key, map_for_each_bytes, map_get_bytes, map_insert_bytes,
 };
 use super::schema::create_window_doc;
 use super::types::WindowKey;
 use crate::Vault;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EdgeValueFields, EntityMetadataHeader};
 use crate::error::{Error, Result};
+use crate::store::Store;
 use crate::types::{EntityId, decode_edge_value_for_kind};
 use loro::{CommitOptions, LoroDoc, Subscription};
 
@@ -158,8 +159,10 @@ pub fn replay_pending_mirrors(vault: &Vault, doc: &LoroDoc, window_key: &WindowK
             }
         };
 
-        // Check if tombstoned in CRDT
-        if map_contains_binary(&tombstones_map, &hex_id) {
+        // Check if tombstoned in CRDT. Presence check is fail closed: ANY
+        // tombstone value gates, not just Binary (a non-binary tombstone
+        // must never let the marker entity remirror).
+        if map_contains_key(&tombstones_map, &hex_id) {
             vault.with_write_txn(|wtxn| {
                 vault.store.sync_state.delete(wtxn, marker_key)?;
                 Ok(())
@@ -171,6 +174,45 @@ pub fn replay_pending_mirrors(vault: &Vault, doc: &LoroDoc, window_key: &WindowK
         if let Some(existing) = map_get_bytes(&entities_map, &hex_id)
             && existing.as_slice() == raw.as_slice()
         {
+            // The entity bytes already reached the CRDT, but the marker may
+            // cover a crash between the entity insert and its edge inserts
+            // (ARCH-0023b step 3 mirrors entity + edges as one unit). Replay
+            // any missing `edges_out` entries BEFORE clearing the marker —
+            // clearing early would silently drop the un-mirrored edges.
+            let mut wrote_edges = false;
+            let edges_out = vault.edges_out(id)?;
+            for edge in &edges_out {
+                // Never backfill an edge whose TARGET is tombstoned —
+                // matching forward remat's both-endpoint filter. A surviving
+                // local S→E row (crash between the tombstone CRDT commit and
+                // the purge txn, or a failed purge) must not be re-inserted
+                // into the replicated edges map (ARCH-0038 active-carrier
+                // purge). Plain containment = skip on this branch (legacy
+                // values are hard); becomes reason-aware (skip iff the
+                // tombstone decodes HARD) once tombstone v2 lands in M4-06.
+                if map_contains_key(&tombstones_map, &edge.target.to_hex()) {
+                    continue;
+                }
+                let edge_key = format_edge_key(id, edge.kind, &edge.target);
+                if map_contains_binary(&edges_map, &edge_key) {
+                    continue;
+                }
+                let edge_val = encode_edge_value_for_crdt(
+                    edge.kind,
+                    edge.weight,
+                    edge.created_at,
+                    edge.vad,
+                    edge.provenance,
+                )?;
+                map_insert_bytes(&edges_map, edge_key.as_str(), &edge_val)
+                    .map_err(|e| Error::SyncProtocolError(format!("pm replay edge insert: {e}")))?;
+                wrote_edges = true;
+            }
+            if wrote_edges {
+                doc.commit_with(CommitOptions::new().origin(BRIDGE_ORIGIN));
+                replayed += 1;
+            }
+
             vault.with_write_txn(|wtxn| {
                 vault.store.sync_state.delete(wtxn, marker_key)?;
                 Ok(())
@@ -184,6 +226,11 @@ pub fn replay_pending_mirrors(vault: &Vault, doc: &LoroDoc, window_key: &WindowK
 
         let edges_out = vault.edges_out(id)?;
         for edge in &edges_out {
+            // Same tombstoned-target gate as the byte-equal path above:
+            // the full mirror must not re-insert edges to deleted targets.
+            if map_contains_key(&tombstones_map, &edge.target.to_hex()) {
+                continue;
+            }
             let edge_key = format_edge_key(id, edge.kind, &edge.target);
             let edge_val = encode_edge_value_for_crdt(
                 edge.kind,
@@ -211,6 +258,12 @@ pub fn replay_pending_mirrors(vault: &Vault, doc: &LoroDoc, window_key: &WindowK
 }
 
 /// Forward re-materialization: CRDT→LMDB.
+///
+/// ARCH-0023b crash-recovery step 5: iterate the `entities`, `edges` and
+/// `tombstones` maps, byte-compare against LMDB and write any that differ.
+/// Step 3's deletion rule binds here too — "if tombstoned in CRDT → never
+/// resurrect": a tombstoned entity's bytes are never written to LMDB (not
+/// even transiently), and no edge with a tombstoned endpoint is re-added.
 pub fn forward_rematerialize(
     vault: &Vault,
     doc: &LoroDoc,
@@ -238,6 +291,20 @@ pub fn forward_rematerialize(
                 Err(_) => return,
             };
 
+            // ARCH-0023b: "if tombstoned in CRDT → never resurrect". Checked
+            // BEFORE any put so a hard-deleted entity's bytes never reach
+            // LMDB, not even transiently (a durable put-then-re-purge would
+            // briefly resurrect deleted content). The raw map key is checked
+            // alongside the canonical hex so a non-canonical entity alias
+            // cannot dodge a canonical tombstone — fail closed. Presence is
+            // ANY-value (`map_contains_key`): a non-binary tombstone must
+            // gate too, never fail open.
+            if map_contains_key(&tombstones_map, key)
+                || map_contains_key(&tombstones_map, &id.to_hex())
+            {
+                return;
+            }
+
             if let Some(latest) = materialized_blobs.get(&id) {
                 if latest.as_slice() == blob {
                     return;
@@ -251,6 +318,25 @@ pub fn forward_rematerialize(
                     }
                 };
                 if lmdb_blob.as_deref() == Some(blob) {
+                    return;
+                }
+                // SoftErase shell guard: `user_delete` truncates the local
+                // record to the 25 B header shell and writes NO CRDT record
+                // (contracts.ts deleteReasons user_delete: "Tombstone
+                // revision (empty content); keep the message shell" —
+                // cross-device propagation is deferred to ONE-1090), so the
+                // CRDT mirror still carries the pre-delete body. Replaying
+                // that body over the shell would resurrect deleted content —
+                // delete wins. Interim guard until reason-aware tombstones
+                // land in M4-06.
+                if let Some(local) = &lmdb_blob
+                    && local.len() == ENTITY_METADATA_HEADER_LEN
+                    && blob.len() > ENTITY_METADATA_HEADER_LEN
+                {
+                    tracing::warn!(
+                        entity = %id.to_hex(),
+                        "forward remat: kept local SoftErase shell over longer CRDT body (reason-aware tombstones land in M4-06)"
+                    );
                     return;
                 }
             }
@@ -282,9 +368,18 @@ pub fn forward_rematerialize(
                     data,
                 )
                 .commit();
-            if result.is_ok() {
-                materialized_blobs.insert(id, blob.to_vec());
-                count += 1;
+            match result {
+                Ok(()) => {
+                    materialized_blobs.insert(id, blob.to_vec());
+                    count += 1;
+                }
+                Err(err) => {
+                    tracing::warn!(
+                        entity = %id.to_hex(),
+                        error = %err,
+                        "forward remat: entity put failed"
+                    );
+                }
             }
         });
         if let Some(err) = entity_read_error {
@@ -292,52 +387,141 @@ pub fn forward_rematerialize(
         }
     }
 
-    // Edges (with endpoint filtering)
-    map_for_each_bytes(&edges_map, |key, buf| {
-        let Some((src, kind, tgt)) = bridge::parse_edge_key(key) else {
-            return;
-        };
+    // Edges (endpoint + tombstone filtering, stored-value byte-compare).
+    // ARCH-0023b step 5 byte-compares edges too ("write any that differ"):
+    // an exists-skip would let a CRDT edge carrying confirmation_status =
+    // retracted (value[24] == 3) lose to a stale local Active stamp, and the
+    // PPR retracted gate would keep propagating withdrawn provenance.
+    {
+        let rtxn = vault.store.env.read_txn()?;
+        let mut edge_error = None;
+        map_for_each_bytes(&edges_map, |key, buf| {
+            if edge_error.is_some() {
+                return;
+            }
+            let Some((src, kind, tgt)) = bridge::parse_edge_key(key) else {
+                return;
+            };
 
-        let src_exists = vault.entity_exists(&src).unwrap_or(false);
-        let tgt_exists = vault.entity_exists(&tgt).unwrap_or(false);
-        if !src_exists || !tgt_exists {
-            return;
+            // Never re-add an edge whose endpoint is tombstoned in the CRDT.
+            // ANY-value presence — a non-binary tombstone gates too.
+            if map_contains_key(&tombstones_map, &src.to_hex())
+                || map_contains_key(&tombstones_map, &tgt.to_hex())
+            {
+                return;
+            }
+
+            // Local LMDB read errors are typed failures, not `false` — a
+            // conflated read error would silently skip (or re-add) edges.
+            let edge_state = (|| -> Result<(bool, Option<Vec<u8>>)> {
+                let src_exists = vault.store.entities.get(&rtxn, src.as_bytes())?.is_some();
+                let tgt_exists = vault.store.entities.get(&rtxn, tgt.as_bytes())?.is_some();
+                if !src_exists || !tgt_exists {
+                    return Ok((false, None));
+                }
+                let stored = vault
+                    .store
+                    .edges_out
+                    .get(&rtxn, &Store::encode_edge_key(&src, kind, &tgt))?
+                    .map(<[u8]>::to_vec);
+                Ok((true, stored))
+            })();
+            let (endpoints_exist, stored) = match edge_state {
+                Ok(state) => state,
+                Err(err) => {
+                    edge_error = Some(err);
+                    return;
+                }
+            };
+            if !endpoints_exist {
+                return;
+            }
+
+            let Ok(decoded) = decode_edge_value_for_kind(kind, buf) else {
+                tracing::warn!(edge = %key, "forward remat: edge malformed value");
+                return;
+            };
+
+            // Byte-equal → nothing to do; missing or differing → write the
+            // CRDT bytes with flags VERBATIM (no re-derivation).
+            if stored.as_deref() == Some(buf) {
+                return;
+            }
+
+            let result = vault
+                .batch()
+                .edge_with_value_fields(&src, kind, &tgt, EdgeValueFields::from_decoded(decoded))
+                .commit();
+            match result {
+                Ok(()) => count += 1,
+                Err(err) => {
+                    tracing::warn!(
+                        edge = %key,
+                        error = %err,
+                        "forward remat: edge write failed"
+                    );
+                }
+            }
+        });
+        if let Some(err) = edge_error {
+            return Err(err);
         }
+    }
 
-        let Ok(decoded) = decode_edge_value_for_kind(kind, buf) else {
-            return;
-        };
-
-        if vault.edge_exists(&src, kind, &tgt).unwrap_or(false) {
-            return;
+    // Tombstones — purge any stale local row a tombstoned id still has.
+    {
+        let rtxn = vault.store.env.read_txn()?;
+        let mut tombstone_error = None;
+        let mut to_purge = Vec::new();
+        map_for_each_bytes(&tombstones_map, |key, _| {
+            if tombstone_error.is_some() {
+                return;
+            }
+            let id = match EntityId::from_hex(key) {
+                Ok(id) => id,
+                Err(_) => return,
+            };
+            // A local read error must not be conflated with "absent" — that
+            // would silently leave a tombstoned row behind.
+            match vault.store.entities.get(&rtxn, id.as_bytes()) {
+                Ok(Some(_)) => to_purge.push(id),
+                Ok(None) => {}
+                Err(err) => tombstone_error = Some(Error::from(err)),
+            }
+        });
+        drop(rtxn);
+        if let Some(err) = tombstone_error {
+            return Err(err);
         }
-
-        let result = vault
-            .batch()
-            .edge_with_value_fields(&src, kind, &tgt, EdgeValueFields::from_decoded(decoded))
-            .commit();
-        if result.is_ok() {
-            count += 1;
+        for id in to_purge {
+            match vault.purge_entity_active_store(&id) {
+                Ok(_) => count += 1,
+                Err(err) => {
+                    // Surfaced loudly; durable retry via rm: markers lands in
+                    // M4-04 — this path must never fail silent in the interim.
+                    tracing::error!(
+                        entity = %id.to_hex(),
+                        error = %err,
+                        "forward remat: tombstone purge failed"
+                    );
+                }
+            }
         }
-    });
-
-    // Tombstones
-    map_for_each_bytes(&tombstones_map, |key, _| {
-        let id = match EntityId::from_hex(key) {
-            Ok(id) => id,
-            Err(_) => return,
-        };
-
-        if vault.entity_exists(&id).unwrap_or(false) && vault.purge_entity_active_store(&id).is_ok()
-        {
-            count += 1;
-        }
-    });
+    }
 
     Ok(count)
 }
 
-/// Reverse re-materialization: LMDB→CRDT (missing only).
+/// Reverse re-materialization: LMDB→CRDT (insert-missing only).
+///
+/// ARCH-0023b crash-recovery step 4: scan LMDB entities + `edges_out` in the
+/// window's `learned_at` range and "mirror ANYTHING present in LMDB but
+/// missing from CRDT" — edge backfill runs for EVERY non-tombstoned in-range
+/// entity, not just entities the CRDT is missing (an already-mirrored entity
+/// can still have locally-written edges the CRDT lacks). Differing edge
+/// values are left alone: this pass inserts missing records only.
+///
+/// Returns the number of entities newly mirrored into the CRDT.
 pub fn reverse_rematerialize(vault: &Vault, doc: &LoroDoc, window_key: &WindowKey) -> Result<u32> {
     let start_ts = window_key
         .start_timestamp()
@@ -353,27 +537,42 @@ pub fn reverse_rematerialize(vault: &Vault, doc: &LoroDoc, window_key: &WindowKe
     let tombstones_map = doc.get_map("tombstones");
 
     let mut count = 0u32;
+    let mut wrote_any = false;
 
     for id in &entities_in_range {
         let hex_id = id.to_hex();
 
-        if map_contains_binary(&tombstones_map, &hex_id) {
-            continue;
-        }
-        if map_contains_binary(&entities_map, &hex_id) {
+        // ANY-value tombstone presence gates the SOURCE (fail closed): a
+        // non-binary tombstone must never let a surviving local row
+        // re-insert the deleted body into the replicated entities map.
+        if map_contains_key(&tombstones_map, &hex_id) {
             continue;
         }
 
-        let raw = match vault.get_raw(id)? {
-            Some(r) => r,
-            None => continue,
-        };
+        if !map_contains_binary(&entities_map, &hex_id) {
+            let raw = match vault.get_raw(id)? {
+                Some(r) => r,
+                None => continue,
+            };
 
-        map_insert_bytes(&entities_map, hex_id.as_str(), raw.as_slice())
-            .map_err(|e| Error::SyncProtocolError(format!("reverse remat entity insert: {e}")))?;
+            map_insert_bytes(&entities_map, hex_id.as_str(), raw.as_slice()).map_err(|e| {
+                Error::SyncProtocolError(format!("reverse remat entity insert: {e}"))
+            })?;
+            wrote_any = true;
+            count += 1;
+        }
 
         let edges_out = vault.edges_out(id)?;
         for edge in &edges_out {
+            // Never backfill an edge whose TARGET is tombstoned — matching
+            // forward remat's both-endpoint filter (the source is gated
+            // above). A surviving local S→E row from the tombstone-commit/
+            // purge-txn crash window must not re-enter the replicated edges
+            // map. Plain containment = skip on this branch; reason-aware
+            // (skip iff HARD) once tombstone v2 lands in M4-06.
+            if map_contains_key(&tombstones_map, &edge.target.to_hex()) {
+                continue;
+            }
             let edge_key = format_edge_key(id, edge.kind, &edge.target);
             if map_contains_binary(&edges_map, &edge_key) {
                 continue;
@@ -387,13 +586,12 @@ pub fn reverse_rematerialize(vault: &Vault, doc: &LoroDoc, window_key: &WindowKe
             )?;
             map_insert_bytes(&edges_map, edge_key.as_str(), &edge_val)
                 .map_err(|e| Error::SyncProtocolError(format!("reverse remat edge insert: {e}")))?;
+            wrote_any = true;
         }
-
-        count += 1;
     }
 
     // Commit all bridge writes with origin tag
-    if count > 0 {
+    if wrote_any {
         doc.commit_with(CommitOptions::new().origin(BRIDGE_ORIGIN));
     }
 
