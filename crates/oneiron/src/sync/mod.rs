@@ -19,6 +19,7 @@
 //! - `manager` — Production window registry + ARCH-0023b startup recovery
 //!   orchestration (pm replay → reverse remat → forward remat → observers)
 //! - `quarantine` — `x:` quarantine sink + `rm:` rematerialization markers
+//!   + `ra:` tombstone re-assertion markers (ONE-1156)
 //! - `server_state` — server-side sync_state persistence (Observer-A-equivalent)
 
 pub mod bridge;
@@ -43,8 +44,9 @@ pub use loro_support::export_updates_since;
 pub use manager::WindowManager;
 pub use quarantine::{
     MAX_QUARANTINE_ROWS, QUARANTINE_MAX_AGE_SECS, QuarantineContainer, QuarantineRecord,
-    RematDrainReport, SyncQuarantineReport, drain_remat_markers, pending_remat_windows,
-    quarantined_records, sync_doctor,
+    ReassertDrainReport, RematDrainReport, SyncQuarantineReport, drain_reassert_markers,
+    drain_remat_markers, pending_reassert_windows, pending_remat_windows, quarantined_records,
+    sync_doctor,
 };
 pub use queue::{QueuedEmbedJob, QueuedUpdate, SyncQueue};
 pub use transport::{
