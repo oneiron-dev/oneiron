@@ -15,9 +15,11 @@
 //! OWNER-DECISION (M4 unit 07, option [a]): validate-and-accept-new +
 //! immutability + quarantine-divergent. The maintenance door stays open for
 //! legitimate own-receipt round-trips (byte-identical re-delivery is an
-//! idempotent accept). Residual accepted: a well-formed FORGED NEW receipt
-//! from a hostile peer remains admissible — see
-//! `forged_well_formed_new_receipt_is_accepted_residual_documented`.
+//! idempotent accept). The M4 residual — a well-formed FORGED NEW receipt
+//! was admissible — is CLOSED by ONE-1140 (option [b]): a NEW receipt must
+//! carry a valid Ed25519 origin attestation (OD-6) bound to a registered
+//! device lease (`ls:` rows, OD-3/OD-4/OD-7) — see
+//! `forged_new_receipt_without_valid_lease_attestation_is_quarantined`.
 //!
 //! Lives in its own integration binary (fresh process): the lib test binary
 //! sits near a per-process LMDB env-open budget on macOS, and these tests
@@ -27,6 +29,7 @@
 
 use std::sync::Arc;
 
+use ed25519_dalek::{Signer, SigningKey};
 use loro::LoroDoc;
 use oneiron::sync::bridge::{Materializer, register_observer_b};
 use oneiron::sync::quarantine::{QuarantineContainer, QuarantineRecord, quarantined_records};
@@ -104,6 +107,84 @@ fn encode_map(entries: Vec<(Value, Value)>) -> Vec<u8> {
     let mut out = Vec::new();
     rmpv::encode::write_value(&mut out, &Value::Map(entries)).unwrap();
     out
+}
+
+// ─── ONE-1140 attestation forging kit (independent of the engine signer) ─────
+
+fn hex_lower(bytes: &[u8]) -> String {
+    bytes.iter().map(|b| format!("{b:02x}")).collect()
+}
+
+/// Replaces the trailing empty `verification` entry with a hand-built
+/// 4-entry att_ map (OD-6 literals, sorted key order).
+fn with_att_entries(
+    mut entries: Vec<(Value, Value)>,
+    client_id: u64,
+    pubkey_hex: &str,
+    sig_hex: &str,
+) -> Vec<(Value, Value)> {
+    let last = entries.last_mut().expect("body entries non-empty");
+    assert_eq!(last.0.as_str(), Some("verification"));
+    last.1 = Value::Map(vec![
+        ("att_client".into(), format!("{client_id:016x}").into()),
+        ("att_pk".into(), pubkey_hex.into()),
+        ("att_sig".into(), sig_hex.into()),
+        ("att_v".into(), "1".into()),
+    ]);
+    entries
+}
+
+/// Forges a fully-signed receipt envelope per the OD-6 transcript, entirely
+/// in the test (the contract, not the engine's signer): sign
+/// `b"oneiron/receipt-att/v1" || receipt_id || header(25) || body-with-
+/// verification-empty`, then splice the four att_ entries in.
+fn signed_receipt_blob(
+    signing_key: &SigningKey,
+    client_id: u64,
+    receipt_id: &EntityId,
+    learned_at: u64,
+    scope_hex: &str,
+) -> Vec<u8> {
+    let body_unsigned = encode_map(receipt_body_entries(scope_hex));
+    let header = {
+        let mut h = Vec::with_capacity(25);
+        h.push(ENTITY_TYPE_REDACTION_AUDIT);
+        h.extend_from_slice(&learned_at.to_be_bytes());
+        h.extend_from_slice(&learned_at.to_be_bytes());
+        h.extend_from_slice(&learned_at.to_be_bytes());
+        h
+    };
+    let mut msg = Vec::new();
+    msg.extend_from_slice(b"oneiron/receipt-att/v1");
+    msg.extend_from_slice(receipt_id.as_bytes());
+    msg.extend_from_slice(&header);
+    msg.extend_from_slice(&body_unsigned);
+    let sig = signing_key.sign(&msg);
+
+    let body = encode_map(with_att_entries(
+        receipt_body_entries(scope_hex),
+        client_id,
+        &hex_lower(&signing_key.verifying_key().to_bytes()),
+        &hex_lower(&sig.to_bytes()),
+    ));
+    receipt_envelope(learned_at, &body)
+}
+
+/// Writes a hand-built `ls:` lease-registry row (the pinned 58 B OD-4
+/// layout, assembled byte-by-byte in the test): `[ver 0x01][status]
+/// [pubkey:32][granted:8 LE][renewed:8 LE][expires:8 LE]`.
+fn register_lease_row(vault: &Vault, client_id: u64, pubkey: &[u8; 32], status: u8) {
+    let mut record = Vec::with_capacity(58);
+    record.push(0x01);
+    record.push(status);
+    record.extend_from_slice(pubkey);
+    record.extend_from_slice(&1_700_000_000u64.to_le_bytes());
+    record.extend_from_slice(&1_700_000_000u64.to_le_bytes());
+    record.extend_from_slice(&(1_700_000_000u64 + 7_776_000).to_le_bytes());
+    assert_eq!(record.len(), 58, "OD-4 record length literal");
+    vault
+        .sync_state_put(&format!("ls:{client_id:016x}"), &record)
+        .unwrap();
 }
 
 fn insert_bytes(map: &loro::LoroMap, key: &str, value: &[u8]) {
@@ -343,12 +424,19 @@ fn divergent_remote_receipt_bytes_quarantined_local_bytes_survive() {
     let learned_at = vault.get_learned_at(&receipt_id).unwrap();
 
     // Door 1 — Observer B entity delta. The remote payload is WELL-FORMED
-    // (passes the pinned receipt-body validation) but byte-divergent, so the
-    // rejection below is the immutability gate, not the validator.
+    // (passes the pinned receipt-body validation, including the ONE-1140 v2
+    // att_ grammar — the att values are grammar-valid garbage, which is
+    // enough: the immutability gate runs BEFORE any crypto, so divergence
+    // is the rejection below, not the validator and not the signature).
     let doc = LoroDoc::new();
     let materializer = Arc::new(Materializer::new());
     let _subs = register_observer_b(&doc, &vault, &materializer, window_key.as_str());
-    let divergent_body = encode_map(receipt_body_entries(&EntityId::now().to_hex()));
+    let divergent_body = encode_map(with_att_entries(
+        receipt_body_entries(&EntityId::now().to_hex()),
+        0xdead_beef_dead_beef,
+        &"ab".repeat(32),
+        &"cd".repeat(64),
+    ));
     let divergent_blob = receipt_envelope(learned_at, &divergent_body);
     assert_ne!(divergent_blob, receipt_raw, "precondition: bytes diverge");
     insert_bytes(&doc.get_map("entities"), &receipt_hex, &divergent_blob);
@@ -486,54 +574,274 @@ fn byte_identical_receipt_redelivery_is_noop_without_quarantine() {
     );
 }
 
-// ─── AC5 (d) — the accepted residual: forged-but-well-formed NEW receipts ────
+// ─── ONE-1140 — the M4 residual is CLOSED: forged NEW receipts quarantine ────
 
-/// AC5(d) — RESIDUAL RISK, ACCEPTED BY OWNER-DECISION (M4 unit 07, option
-/// [a] "validate-and-accept-new"): a FORGED, well-formed NEW receipt from a
-/// hostile peer IS admitted. Entity blobs carry no authorship at the Loro
-/// layer (EntityMetadataHeader has no author field; Observer B filters only
-/// origin == "bridge"), so a node's own-receipt round-trip and a remote
-/// forgery are indistinguishable here — rejecting NEW receipts outright
-/// would break legitimate cross-node receipt sync
-/// (`redaction_audit_receipt_survives_crdt_sync_round_trip`).
+/// ONE-1140 (closes the M4-07 option-[a] residual; delete-safety adjacent,
+/// cap-exempt). A FORGED NEW receipt — well-formed, from a hostile peer —
+/// is REJECTED at the Observer B door and quarantined (x: row, GDPR-inert
+/// hash+len), never accepted, never silently dropped. Matrix per the old
+/// escape hatch's own doc-comment ("update this test to forge a
+/// lease-signed receipt"), reason-code literals per the OD-6/OD-7 door
+/// order:
 ///
-/// Eliminating this residual requires origin attestation / a single-writer
-/// lease on the audit stream (`ls:` keys per ARCH-0023b — "fail-closed ·
-/// single-writer-leased"), which is M5-shaped machinery: ticketed as the M5
-/// lease follow-up (option [b] of the A1-9 fork), deliberately NOT built in
-/// M4. If this test starts failing because NEW receipts are rejected,
-/// either the lease landed (update this test to forge a lease-signed
-/// receipt) or someone closed the maintenance door and broke receipt sync —
-/// check the round-trip test before "fixing" anything.
+/// (i)   empty `verification` (the pre-1140 forgery) →
+///       `InvalidRedactionReceiptBody` (validator v2);
+/// (ii)  self-minted key, VALID signature, but no `ls:` row →
+///       `ReceiptLeaseUnknown`;
+/// (iii) registered client id claimed, garbage signature →
+///       `ReceiptAttestationInvalid`;
+/// (iv)  valid signed receipt TRANSPLANTED under a different entity id →
+///       `ReceiptAttestationInvalid` (the transcript binds the id);
+/// (v)   valid signature under key K2 claiming a client whose registry
+///       binding is K1 → `ReceiptAttestationInvalid` (registry pubkey
+///       wins).
+///
+/// Each case: nothing in LMDB, no type-index row, exactly one x: record
+/// carrying the typed reason literal.
 #[test]
-fn forged_well_formed_new_receipt_is_accepted_residual_documented() {
+fn forged_new_receipt_without_valid_lease_attestation_is_quarantined() {
     let (_dir, vault) = test_vault_with_dir();
     let doc = LoroDoc::new();
     let materializer = Arc::new(Materializer::new());
     let _subs = register_observer_b(&doc, &vault, &materializer, WINDOW);
+    let scope_hex = EntityId::now().to_hex();
 
-    // Forged: this vault never authored any receipt; the body is hand-built.
+    let hostile_key = SigningKey::from_bytes(&[42u8; 32]);
+    let hostile_client = 0x4242_4242_4242_4242u64;
+
+    // (iii)/(v) need a REGISTERED binding to claim: client `bound_client`
+    // is leased to `bound_key` (status active).
+    let bound_key = SigningKey::from_bytes(&[9u8; 32]);
+    let bound_client = 0x0909_0909_0909_0909u64;
+    register_lease_row(
+        &vault,
+        bound_client,
+        &bound_key.verifying_key().to_bytes(),
+        0x01,
+    );
+
+    // (case_name, target_id, blob, expected_reason)
+    let mut cases: Vec<(&'static str, EntityId, Vec<u8>, &'static str)> = Vec::new();
+
+    let id_i = EntityId::now();
+    cases.push((
+        "empty_verification_pre_1140_forgery",
+        id_i,
+        receipt_envelope(LEARNED_AT, &encode_map(receipt_body_entries(&scope_hex))),
+        "InvalidRedactionReceiptBody",
+    ));
+
+    let id_ii = EntityId::now();
+    cases.push((
+        "valid_signature_unleased_client",
+        id_ii,
+        signed_receipt_blob(&hostile_key, hostile_client, &id_ii, LEARNED_AT, &scope_hex),
+        "ReceiptLeaseUnknown",
+    ));
+
+    let id_iii = EntityId::now();
+    cases.push((
+        "registered_client_garbage_signature",
+        id_iii,
+        receipt_envelope(
+            LEARNED_AT,
+            &encode_map(with_att_entries(
+                receipt_body_entries(&scope_hex),
+                bound_client,
+                &hex_lower(&bound_key.verifying_key().to_bytes()),
+                &"cd".repeat(64),
+            )),
+        ),
+        "ReceiptAttestationInvalid",
+    ));
+
+    // (iv): a receipt VALIDLY signed by the leased device for id A,
+    // re-inserted under id B — the transcript binds the entity id.
+    let id_a = EntityId::now();
+    let id_iv = EntityId::now();
+    let transplanted = signed_receipt_blob(&bound_key, bound_client, &id_a, LEARNED_AT, &scope_hex);
+    cases.push((
+        "valid_receipt_transplanted_under_other_id",
+        id_iv,
+        transplanted,
+        "ReceiptAttestationInvalid",
+    ));
+
+    let id_v = EntityId::now();
+    cases.push((
+        "valid_signature_key_disagrees_with_registry_binding",
+        id_v,
+        signed_receipt_blob(&hostile_key, bound_client, &id_v, LEARNED_AT, &scope_hex),
+        "ReceiptAttestationInvalid",
+    ));
+
+    let case_count = cases.len();
+    for (name, id, blob, expected_reason) in cases {
+        insert_bytes(&doc.get_map("entities"), &id.to_hex(), &blob);
+        doc.commit();
+
+        assert!(
+            vault.get_raw(&id).unwrap().is_none(),
+            "{name}: forged receipt must never be written to LMDB"
+        );
+        assert!(
+            !vault
+                .entities_by_type(ENTITY_TYPE_REDACTION_AUDIT)
+                .unwrap()
+                .contains(&id),
+            "{name}: forged receipt must not enter the maintenance type index"
+        );
+        let records = quarantined_records(&vault).unwrap();
+        let rec = record_for_key(&records, &id.to_hex())
+            .unwrap_or_else(|| panic!("{name}: rejection must be quarantined, never silent"));
+        assert_eq!(rec.reason_code, expected_reason, "{name}: typed reason");
+        assert_eq!(rec.container, QuarantineContainer::Entities, "{name}");
+        assert_eq!(rec.window_key, WINDOW, "{name}");
+        assert_eq!(rec.payload_hash, xxh3_64(&blob), "{name}: payload hash");
+    }
+    assert_eq!(
+        quarantined_records(&vault).unwrap().len(),
+        case_count,
+        "exactly one quarantine record per forged receipt"
+    );
+}
+
+/// ONE-1140 (OD-7; delete-safety adjacent, cap-exempt): the door enforces
+/// lease STATUS only — `expired` (0x02) still accepts (devices have no
+/// trustworthy shared clock; backdating defeats time bounds, residual R2),
+/// `revoked` (0x03) rejects with `ReceiptLeaseRevoked` and quarantines.
+#[test]
+fn door_accepts_expired_rejects_revoked() {
+    let (_dir, vault) = test_vault_with_dir();
+    let doc = LoroDoc::new();
+    let materializer = Arc::new(Materializer::new());
+    let _subs = register_observer_b(&doc, &vault, &materializer, WINDOW);
+    let scope_hex = EntityId::now().to_hex();
+
+    // Expired binding (status byte 0x02) → accepted.
+    let expired_key = SigningKey::from_bytes(&[11u8; 32]);
+    let expired_client = 0x1111_1111_1111_1111u64;
+    register_lease_row(
+        &vault,
+        expired_client,
+        &expired_key.verifying_key().to_bytes(),
+        0x02,
+    );
+    let id_expired = EntityId::now();
+    let blob_expired = signed_receipt_blob(
+        &expired_key,
+        expired_client,
+        &id_expired,
+        LEARNED_AT,
+        &scope_hex,
+    );
+    insert_bytes(
+        &doc.get_map("entities"),
+        &id_expired.to_hex(),
+        &blob_expired,
+    );
+    doc.commit();
+    assert_eq!(
+        vault.get_raw(&id_expired).unwrap().as_deref(),
+        Some(blob_expired.as_slice()),
+        "an EXPIRED lease still verifies at the door (OD-7: status only, no clock checks)"
+    );
+    assert!(
+        quarantined_records(&vault).unwrap().is_empty(),
+        "expired-lease acceptance is not a rejection"
+    );
+
+    // Revoked binding (status byte 0x03) → quarantined, terminal.
+    let revoked_key = SigningKey::from_bytes(&[13u8; 32]);
+    let revoked_client = 0x1313_1313_1313_1313u64;
+    register_lease_row(
+        &vault,
+        revoked_client,
+        &revoked_key.verifying_key().to_bytes(),
+        0x03,
+    );
+    let id_revoked = EntityId::now();
+    let blob_revoked = signed_receipt_blob(
+        &revoked_key,
+        revoked_client,
+        &id_revoked,
+        LEARNED_AT,
+        &scope_hex,
+    );
+    insert_bytes(
+        &doc.get_map("entities"),
+        &id_revoked.to_hex(),
+        &blob_revoked,
+    );
+    doc.commit();
+    assert!(
+        vault.get_raw(&id_revoked).unwrap().is_none(),
+        "a REVOKED lease must never admit new receipts"
+    );
+    let records = quarantined_records(&vault).unwrap();
+    let rec = record_for_key(&records, &id_revoked.to_hex()).expect("quarantined, never silent");
+    assert_eq!(rec.reason_code, "ReceiptLeaseRevoked");
+    assert_eq!(rec.payload_hash, xxh3_64(&blob_revoked));
+}
+
+/// ONE-1140 (OD-10; delete-safety adjacent, cap-exempt): lease-quarantined
+/// receipts re-admit LAZILY — the rejected bytes stay in the CRDT map, and
+/// the next `forward_rematerialize` re-runs the door after the `ls:` mirror
+/// catches up. No new scheduling machinery; transient ordering races
+/// (window update beats root update) self-heal.
+#[test]
+fn quarantined_receipt_readmitted_after_lease_lands() {
+    let (_dir, vault) = test_vault_with_dir();
+    let window_key = WindowKey::new(WINDOW);
+    let doc = create_window_doc("node-x", &window_key);
+    let materializer = Arc::new(Materializer::new());
+    let _subs = register_observer_b(&doc, &vault, &materializer, WINDOW);
+
+    let author_key = SigningKey::from_bytes(&[21u8; 32]);
+    let author_client = 0x2121_2121_2121_2121u64;
     let id = EntityId::now();
-    let body = encode_map(receipt_body_entries(&EntityId::now().to_hex()));
-    let blob = receipt_envelope(LEARNED_AT, &body);
+    let blob = signed_receipt_blob(
+        &author_key,
+        author_client,
+        &id,
+        LEARNED_AT,
+        &EntityId::now().to_hex(),
+    );
+
+    // Window update arrives BEFORE the lease registry row (the OD-10 race):
+    // quarantined as ReceiptLeaseUnknown, bytes stay in the doc.
     insert_bytes(&doc.get_map("entities"), &id.to_hex(), &blob);
     doc.commit();
+    assert!(vault.get_raw(&id).unwrap().is_none());
+    let records = quarantined_records(&vault).unwrap();
+    assert_eq!(
+        record_for_key(&records, &id.to_hex()).unwrap().reason_code,
+        "ReceiptLeaseUnknown"
+    );
 
+    // The lease mirror catches up…
+    register_lease_row(
+        &vault,
+        author_client,
+        &author_key.verifying_key().to_bytes(),
+        0x01,
+    );
+
+    // …and the next forward rematerialization re-admits byte-identically.
+    let materializer2 = Materializer::new();
+    let count = forward_rematerialize(&vault, &doc, &materializer2, &window_key).unwrap();
+    assert!(count >= 1, "the re-run door must now admit the receipt");
     assert_eq!(
         vault.get_raw(&id).unwrap().as_deref(),
         Some(blob.as_slice()),
-        "well-formed NEW receipt must be accepted byte-identical (option [a])"
+        "lazy re-admission must materialize the exact quarantined bytes (OD-10)"
     );
     assert!(
         vault
             .entities_by_type(ENTITY_TYPE_REDACTION_AUDIT)
             .unwrap()
             .contains(&id),
-        "accepted receipt lands in the maintenance type index"
-    );
-    assert!(
-        quarantined_records(&vault).unwrap().is_empty(),
-        "acceptance is not a rejection — no quarantine record"
+        "re-admitted receipt lands in the maintenance type index"
     );
 }
 

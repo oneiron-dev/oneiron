@@ -765,16 +765,24 @@ pub fn forward_rematerialize(
             } else {
                 &[]
             };
-            // ONE-1134: REDACTION_AUDIT (type 120) replay door #2. Receipts
-            // are immutable audit records (contracts.ts
+            // ONE-1134 + ONE-1140: REDACTION_AUDIT (type 120) replay door
+            // #2. Receipts are immutable audit records (contracts.ts
             // `redactionAuditReceipt`; ARCH-0023b audit/guardrail class:
-            // quarantine divergence, never silent LWW):
-            // * a blob failing the pinned receipt-body validation is
-            //   quarantined, never written;
+            // quarantine divergence, never silent LWW), pinned door order:
+            // * a blob failing the pinned receipt-body validation (incl.
+            //   the ONE-1140 v2 att_ verification grammar) is quarantined,
+            //   never written;
             // * id present locally with divergent bytes (byte-identical
             //   already returned above) → quarantine the remote payload and
-            //   KEEP the local bytes;
-            // * id absent → accept-new (falls through to `put_replicated`).
+            //   KEEP the local bytes (before any crypto — accepted local
+            //   bytes always win);
+            // * id absent (NEW receipt) → the ONE-1140 origin predicate:
+            //   Ed25519 transcript verification + `ls:` lease-binding read
+            //   (OD-6/OD-7). Remote-classified rejections quarantine; a
+            //   LOCAL failure (storage, corrupt ls: mirror row) fails
+            //   closed. This pass is also the OD-10 lazy re-admission path:
+            //   a previously quarantined receipt re-runs the door here
+            //   after the lease mirror catches up.
             if header.entity_type == crate::types::ENTITY_TYPE_REDACTION_AUDIT {
                 if let Err(err) = crate::deletion::validate_redaction_receipt_body(data) {
                     if let Err(q_err) = quarantine::quarantine_rejected_op(
@@ -799,6 +807,26 @@ pub fn forward_rematerialize(
                         blob,
                     ) {
                         entity_error = Some(q_err);
+                    }
+                    return;
+                }
+                if let Err(err) =
+                    crate::sync::lease::verify_new_receipt_origin_in_txn(vault, &rtxn, &id, blob)
+                {
+                    if quarantine::remote_rejection_reason(&err).is_some() {
+                        if let Err(q_err) = quarantine::quarantine_rejected_op(
+                            vault,
+                            window_key.as_str(),
+                            QuarantineContainer::Entities,
+                            key,
+                            &err,
+                            blob,
+                        ) {
+                            entity_error = Some(q_err);
+                        }
+                    } else {
+                        // LOCAL failure — fail closed.
+                        entity_error = Some(err);
                     }
                     return;
                 }

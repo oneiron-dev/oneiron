@@ -26,6 +26,9 @@ pub(crate) fn api_routes(server: Arc<SyncServer>) -> Router {
         .route("/api/edges/{id}", get(get_edges))
         // context-pack is POST since it takes a complex options body
         .route("/api/context-pack", post(context_pack))
+        // owner recovery surface (ONE-1140, OD-8): revoke a lost/stolen
+        // device's lease binding (terminal)
+        .route("/api/lease/revoke", post(lease_revoke))
         .with_state(server)
 }
 
@@ -216,6 +219,56 @@ struct EdgeResult {
     target: String,
     weight: f32,
     created_at: u64,
+}
+
+// ─── Lease revocation (ONE-1140, OD-8) ────────────────────────────────────────
+
+#[derive(Deserialize)]
+struct LeaseRevokeRequest {
+    /// The binding's registry key: 16 lowercase hex chars (`{:016x}`).
+    client_id: String,
+}
+
+#[derive(Serialize)]
+struct LeaseRevokeResponse {
+    revoked: bool,
+}
+
+/// Revokes a device-lease binding (owner recovery, OD-8 — terminal for the
+/// binding; auth = Phase-1 shared secret, same as every API route). The
+/// registry change is broadcast to all live connections so replica `ls:`
+/// mirrors converge without a reconnect.
+/// POST /api/lease/revoke  body: {"client_id": "<16 hex>"}
+async fn lease_revoke(
+    headers: HeaderMap,
+    State(server): State<Arc<SyncServer>>,
+    Json(req): Json<LeaseRevokeRequest>,
+) -> Result<Json<LeaseRevokeResponse>, StatusCode> {
+    check_auth(&headers, &server.config.auth_secret)?;
+
+    if req.client_id.len() != 16
+        || !req
+            .client_id
+            .bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+    {
+        return Err(StatusCode::BAD_REQUEST);
+    }
+    let client_id =
+        u64::from_str_radix(&req.client_id, 16).map_err(|_| StatusCode::BAD_REQUEST)?;
+
+    match server.revoke_lease(client_id).await {
+        Ok(Some(update)) => {
+            let msg = crate::protocol::encode_root_update(&update);
+            let _ = crate::broadcast::broadcast(&server.broadcast_tx, 0, msg);
+            Ok(Json(LeaseRevokeResponse { revoked: true }))
+        }
+        Ok(None) => Ok(Json(LeaseRevokeResponse { revoked: false })),
+        Err(e) => {
+            tracing::error!(error = %e, "lease revoke failed");
+            Err(StatusCode::INTERNAL_SERVER_ERROR)
+        }
+    }
 }
 
 // ─── Context Pack ─────────────────────────────────────────────────────────────

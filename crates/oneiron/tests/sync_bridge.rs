@@ -721,6 +721,23 @@ fn sync_client_handle_server_message_imports_root_sync_update() {
     // Byte-encode `meta.windows` to match the schema helpers and the server's
     // root-doc init — `read_window_list` only decodes `LoroValue::Binary`.
     meta.insert("windows", "2026-03".as_bytes()).unwrap();
+    // ONE-1140 (OD-3): the root doc also carries the `leases` registry —
+    // one valid pinned 58 B record plus one malformed entry. The import
+    // must full-mirror the valid record into its `ls:` row in the same
+    // persist and QUARANTINE the malformed one (kept out of ls:, never
+    // silently dropped).
+    let leases = server_doc.get_map("leases");
+    let mut lease_record = vec![0x01u8, 0x01];
+    lease_record.extend_from_slice(&[0xAB; 32]);
+    lease_record.extend_from_slice(&1_700_000_000u64.to_le_bytes());
+    lease_record.extend_from_slice(&1_700_000_000u64.to_le_bytes());
+    lease_record.extend_from_slice(&(1_700_000_000u64 + 7_776_000).to_le_bytes());
+    leases
+        .insert("00000000000000aa", lease_record.as_slice())
+        .unwrap();
+    leases
+        .insert("00000000000000bb", b"garbage".as_slice())
+        .unwrap();
     server_doc.commit();
     let update = server_doc.export(ExportMode::all_updates()).unwrap();
 
@@ -730,6 +747,25 @@ fn sync_client_handle_server_message_imports_root_sync_update() {
 
     assert!(responses.is_empty());
     assert_eq!(client.server_windows(), vec!["2026-03".to_string()]);
+    assert_eq!(
+        vault
+            .sync_state_get("ls:00000000000000aa")
+            .unwrap()
+            .as_deref(),
+        Some(lease_record.as_slice()),
+        "root import must mirror valid lease records into ls: rows byte-identical (OD-3)"
+    );
+    assert!(
+        vault
+            .sync_state_get("ls:00000000000000bb")
+            .unwrap()
+            .is_none(),
+        "a malformed lease record must never be upserted into ls:"
+    );
+    let records = oneiron::sync::quarantined_records(&vault).unwrap();
+    assert_eq!(records.len(), 1, "the malformed lease entry quarantines");
+    assert_eq!(records[0].1.reason_code, "CorruptedIndex");
+    assert_eq!(records[0].1.window_key, "root");
 }
 
 #[test]
@@ -748,11 +784,12 @@ fn sync_client_handle_server_message_dispatch() {
 
     let build_root_vv = |client: &mut SyncClient| -> Vec<u8> {
         let initial_sync = client.generate_initial_sync();
-        // ONE-1127: the FIRST frame is now the protocol hello [3, 1]; the
-        // root VV (Loro binary encoding) follows it.
+        // ONE-1127: the FIRST frame is the protocol hello — [3, 2] since
+        // the ONE-1140 wire train bumped the version (OD-5); the lease
+        // request and root VV (Loro binary encoding) follow it.
         assert_eq!(
             initial_sync.first().map(Vec::as_slice),
-            Some(&[3u8, 1u8][..]),
+            Some(&[3u8, 2u8][..]),
             "initial sync must lead with the protocol hello"
         );
         initial_sync
@@ -950,6 +987,39 @@ fn redaction_audit_receipt_survives_crdt_sync_round_trip() {
     // --- Node B: CRDT → LMDB (the seam that silently dropped the receipt) ---
     let temp_b = tempfile::tempdir().unwrap();
     let vault_b = Vault::open(temp_b.path(), test_config()).unwrap();
+
+    // ONE-1140 (OD-3/OD-4): node B's door verifies the receipt's origin
+    // attestation against its `ls:` lease-registry mirror, so B registers
+    // node A's binding first (in production the server's full root-doc
+    // mirror does this). The row is the pinned 58 B layout, hand-built:
+    // `[ver 0x01][status 0x01][pubkey:32][granted:8 LE][renewed:8 LE]
+    // [expires:8 LE]`, key `ls:{client_id:016x}`.
+    let author_client_id = u64::from_le_bytes(
+        vault_a
+            .sync_state_get("m:client_id")
+            .unwrap()
+            .expect("receipt mint provisions the device identity (OD-2)")
+            .try_into()
+            .unwrap(),
+    );
+    let author_pk: [u8; 32] = vault_a
+        .sync_state_get("m:device_pk")
+        .unwrap()
+        .expect("receipt mint provisions the attestation keypair (OD-2)")
+        .try_into()
+        .unwrap();
+    let mut lease_row = Vec::with_capacity(58);
+    lease_row.push(0x01); // version
+    lease_row.push(0x01); // status: active
+    lease_row.extend_from_slice(&author_pk);
+    lease_row.extend_from_slice(&1_700_000_000u64.to_le_bytes());
+    lease_row.extend_from_slice(&1_700_000_000u64.to_le_bytes());
+    lease_row.extend_from_slice(&(1_700_000_000u64 + 7_776_000).to_le_bytes());
+    assert_eq!(lease_row.len(), 58, "OD-4 lease record length literal");
+    vault_b
+        .sync_state_put(&format!("ls:{author_client_id:016x}"), &lease_row)
+        .unwrap();
+
     let materializer = Materializer::new();
     let restored =
         window::forward_rematerialize(&vault_b, &doc_b, &materializer, &window_key).unwrap();

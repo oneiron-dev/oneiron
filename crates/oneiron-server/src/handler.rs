@@ -315,6 +315,49 @@ async fn handle_sync_message(
             let _ = crate::broadcast::broadcast(&server.broadcast_tx, conn_id, encoded);
             Ok(())
         }
+        SyncMessage::LeaseRequest {
+            client_id,
+            pubkey,
+            pop_sig,
+        } => {
+            // ONE-1140 (OD-3): registrar under the server lease lock. A
+            // storage/persist failure is fail-closed (Persistence closes
+            // the connection); a REJECTED binding is a normal ack — sync
+            // proceeds, peers' replay doors quarantine the device's NEW
+            // receipts.
+            let decision = server
+                .register_lease(client_id, &pubkey, &pop_sig)
+                .await
+                .map_err(|e| ProtocolError::Persistence(format!("lease registrar: {e}")))?;
+            let status = if decision.granted {
+                protocol::LEASE_STATUS_GRANTED
+            } else {
+                protocol::LEASE_STATUS_REJECTED
+            };
+            let expires_at = if decision.granted {
+                decision.expires_at
+            } else {
+                0
+            };
+            tracing::info!(
+                conn_id,
+                client_id = format!("{client_id:016x}"),
+                granted = decision.granted,
+                "lease request processed"
+            );
+            // Direct ack to the requester (echo suppression would drop a
+            // broadcast for the sender).
+            let _ = direct_tx.send(protocol::encode_lease_granted(status, client_id, expires_at));
+            // Registry change rides the root-update broadcast to ALL
+            // connections — conn_id 0 (the bridge/local sentinel) skips
+            // echo suppression because the REQUESTER also needs its own
+            // record mirrored into ls: for door-side verification.
+            if let Some(update) = decision.root_update {
+                let msg = protocol::encode_root_update(&update);
+                let _ = crate::broadcast::broadcast(&server.broadcast_tx, 0, msg);
+            }
+            Ok(())
+        }
         SyncMessage::RootVersionVector(vv_bytes) => {
             // Client is requesting root doc updates since their VV (Loro
             // binary encoding). Malformed VV → typed error, fail-closed —
@@ -800,18 +843,22 @@ mod tests {
 
     #[test]
     fn protocol_hello_validation_literals() {
-        // Contract literals (ONE-1127): the valid hello is EXACTLY [3, 1] and
-        // every failure closes with 4006 — assert the raw values so a drifted
-        // tag/version/close-code fails here.
-        assert!(validate_protocol_hello(&[3, 1]).is_ok());
+        // Contract literals: the valid hello is EXACTLY [3, 2] and every
+        // failure closes with 4006 — assert the raw values so a drifted
+        // tag/version/close-code fails here. Version pinned 1→2 by the
+        // ONE-1140 atomic wire train (OD-5): a v1 peer ([3, 1]) is now a
+        // version mismatch, rejected at hello exactly like any other
+        // non-current version.
+        assert!(validate_protocol_hello(&[3, 2]).is_ok());
 
         let cases: &[(&str, &[u8])] = &[
-            ("future_version", &[3, 2]),
+            ("v1_peer", &[3, 1]),
+            ("future_version", &[3, 3]),
             ("zero_version", &[3, 0]),
-            ("wrong_tag", &[2, 1]),
+            ("wrong_tag", &[2, 2]),
             ("empty", &[]),
             ("tag_only", &[3]),
-            ("trailing_bytes", &[3, 1, 0]),
+            ("trailing_bytes", &[3, 2, 0]),
         ];
         for (case_name, frame) in cases {
             assert_eq!(

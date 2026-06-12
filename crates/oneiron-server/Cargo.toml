@@ -27,6 +27,9 @@ thiserror = { workspace = true }
 
 [dev-dependencies]
 tempfile = "3"
+# Lease-registrar tests sign proof-of-possession transcripts themselves
+# (contract-grounded, ONE-1140).
+ed25519-dalek = { workspace = true }
 
 [lints]
 workspace = true
