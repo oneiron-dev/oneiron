@@ -116,15 +116,25 @@ impl LoadedWindow {
     /// never saw a tombstone another writer persisted (e.g. a transient
     /// delete-path write while this window was constructed outside the
     /// registry) can no longer overwrite `d:w:` with a snapshot missing it.
+    ///
+    /// Subsumed-row prune (ONE-1151): the `u:w:{key}:*` rows the merge
+    /// imported are deleted in the SAME transaction as the `d:w:` snapshot
+    /// write — every pruned op is provably inside the snapshot (merged
+    /// before export), and a crash can never observe pruned rows without
+    /// the snapshot that covers them. Rows persisted after the merge keep
+    /// their higher `{seq:08x}` keys and survive; `m:u_seq:w:{key}` is
+    /// never reset, so future sequence numbers cannot collide with rows
+    /// that escaped the prune.
     pub fn persist_state(&self, vault: &Vault) -> Result<Vec<u8>> {
-        merge_persisted_state_into_doc(vault, &self.doc, &self.key)?;
+        let subsumed_update_keys = merge_persisted_state_into_doc(vault, &self.doc, &self.key)?;
 
         // Export full snapshot for persistence
         let state = export_snapshot(&self.doc)?;
         let vv = doc_version_vector(&self.doc);
 
         vault.with_write_txn(|wtxn| {
-            persist_window_doc_in_txn(vault, wtxn, &self.key, &state, &vv)
+            persist_window_doc_in_txn(vault, wtxn, &self.key, &state, &vv)?;
+            prune_subsumed_window_updates_in_txn(vault, wtxn, &self.key, &subsumed_update_keys)
         })?;
 
         Ok(state)
@@ -149,6 +159,46 @@ pub(crate) fn persist_window_doc_in_txn(
 
     let svf_key = format!("svf:w:{key}");
     vault.store.sync_state.put(wtxn, &svf_key, &[1u8])?;
+    Ok(())
+}
+
+/// Deletes `u:w:{key}:*` update rows subsumed by a just-persisted
+/// `d:w:{key}` snapshot, inside the SAME transaction as the snapshot write
+/// (ONE-1151) — subsume-then-prune is atomic, so a crash can never leave
+/// pruned rows without the snapshot that covers them.
+///
+/// `subsumed_update_keys` MUST be the keys returned by
+/// [`merge_persisted_state_into_doc`] for the SAME doc the persisted
+/// snapshot was exported from: those rows were import-merged into the doc
+/// BEFORE the export, so the snapshot provably contains their ops. Rows
+/// persisted after the merge's read transaction carry higher `{seq:08x}`
+/// keys, are absent from the list, and survive — their ops may not be in
+/// the snapshot (e.g. a transient delete-path doc persisting in parallel).
+/// `m:u_seq:w:{key}` is deliberately NOT touched: the high-water mark
+/// stays monotonic so post-prune sequence numbers can never collide with
+/// surviving rows.
+///
+/// Surgically scoped (fail closed): a key outside this window's own
+/// `u:w:{key}:` family is a typed error and nothing is deleted — the
+/// prune must not be able to touch `q:`/`d:`/`h:`/`dt:` rows or another
+/// window's updates.
+pub(crate) fn prune_subsumed_window_updates_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    key: &WindowKey,
+    subsumed_update_keys: &[String],
+) -> Result<()> {
+    let prefix = format!("u:w:{key}:");
+    for update_key in subsumed_update_keys {
+        if !update_key.starts_with(&prefix) {
+            return Err(Error::SyncProtocolError(format!(
+                "u:w: prune scoped to {prefix}* refused foreign key {update_key}"
+            )));
+        }
+    }
+    for update_key in subsumed_update_keys {
+        vault.store.sync_state.delete(wtxn, update_key)?;
+    }
     Ok(())
 }
 
@@ -1176,6 +1226,310 @@ pub fn reverse_rematerialize(vault: &Vault, doc: &LoroDoc, window_key: &WindowKe
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::types::VaultConfig;
+
+    fn test_vault() -> (tempfile::TempDir, Arc<Vault>) {
+        let dir = tempfile::tempdir().unwrap();
+        let vault = Arc::new(Vault::open(dir.path(), VaultConfig::device()).unwrap());
+        (dir, vault)
+    }
+
+    /// Pinned 25-byte entity envelope: type u8 + occurred_start/end u64 BE +
+    /// learned_at u64 BE + body (`occurred == learned` so CRDT-vs-LMDB
+    /// byte-equality is exact).
+    fn make_entity_blob(entity_type: u8, learned_at: u64, data: &[u8]) -> Vec<u8> {
+        let mut blob = Vec::with_capacity(25 + data.len());
+        blob.push(entity_type);
+        blob.extend_from_slice(&learned_at.to_be_bytes());
+        blob.extend_from_slice(&learned_at.to_be_bytes());
+        blob.extend_from_slice(&learned_at.to_be_bytes());
+        blob.extend_from_slice(data);
+        blob
+    }
+
+    fn commit_entity(window: &LoadedWindow, learned_at: u64, data: &[u8]) -> EntityId {
+        let id = EntityId::now();
+        map_insert_bytes(
+            &window.doc.get_map("entities"),
+            &id.to_hex(),
+            &make_entity_blob(1, learned_at, data),
+        )
+        .unwrap();
+        window.doc.commit();
+        id
+    }
+
+    /// ONE-1151 prune: `persist_state` deletes exactly the `u:w:{key}:*`
+    /// rows its snapshot subsumed — in the same transaction as the `d:w:`
+    /// write — while `m:u_seq:w:{key}` keeps its high-water mark
+    /// (ARCH-0023b: monotonic, missing=0) and every other row family
+    /// survives byte-identical: the neighbor window's `u:w:` rows, a
+    /// prefix-adjacent `u:w:` key (exact `u:w:{key}:` scope, not a sloppy
+    /// substring match), the `dt:` local hard-delete marker (sync_state),
+    /// and the `q:`/`d:`/`h:` sync_queue families a delete-bearing path
+    /// owns. The window must then reopen from `d:w:` ALONE.
+    #[test]
+    fn persist_state_prunes_subsumed_rows_and_spares_other_families() {
+        let (_dir, vault) = test_vault();
+        let materializer = Arc::new(Materializer::new());
+        let key = WindowKey::new("2026-03");
+        let t = key.start_timestamp().unwrap() + 60;
+
+        let window = LoadedWindow::new("local", key.clone(), &vault, &materializer);
+        let id_a = commit_entity(&window, t, b"prune-a");
+        let id_b = commit_entity(&window, t, b"prune-b");
+
+        // Observer A persisted the contract rows (ARCH-0023b key table).
+        assert!(
+            vault
+                .sync_state_get("u:w:2026-03:00000001")
+                .unwrap()
+                .is_some()
+        );
+        assert!(
+            vault
+                .sync_state_get("u:w:2026-03:00000002")
+                .unwrap()
+                .is_some()
+        );
+        assert_eq!(
+            vault
+                .sync_state_get("m:u_seq:w:2026-03")
+                .unwrap()
+                .as_deref(),
+            Some(2u32.to_le_bytes().as_slice())
+        );
+
+        // Sentinels the prune must NOT touch. sync_state families:
+        vault
+            .sync_state_put("u:w:2026-02:00000001", b"neighbor-window-update")
+            .unwrap();
+        vault
+            .sync_state_put("u:w:2026-030:00000001", b"prefix-adjacent-update")
+            .unwrap();
+        let dt_key = format!("dt:{}", EntityId::now().to_hex());
+        vault.sync_state_put(&dt_key, &[2u8; 26]).unwrap();
+        // sync_queue families (`q:{seq:8BE}` update row, `d:{seq:8BE}`
+        // delete-bearing sidecar, `h:{seq:8BE}` hard-erase sweep job):
+        let q_key = [b'q', b':', 0, 0, 0, 0, 0, 0, 0, 1];
+        let d_key = [b'd', b':', 0, 0, 0, 0, 0, 0, 0, 1];
+        let h_key = [b'h', b':', 0, 0, 0, 0, 0, 0, 0, 1];
+        {
+            let mut wtxn = vault.store.env.write_txn().unwrap();
+            vault
+                .store
+                .sync_queue
+                .put(&mut wtxn, &q_key, &[1u8])
+                .unwrap();
+            vault
+                .store
+                .sync_queue
+                .put(&mut wtxn, &d_key, &[1u8])
+                .unwrap();
+            vault
+                .store
+                .sync_queue
+                .put(&mut wtxn, &h_key, &[7u8])
+                .unwrap();
+            wtxn.commit().unwrap();
+        }
+
+        window.persist_state(&vault).unwrap();
+
+        // Subsumed rows pruned; the high-water mark is NOT reset.
+        assert!(
+            vault
+                .sync_state_get("u:w:2026-03:00000001")
+                .unwrap()
+                .is_none(),
+            "subsumed u:w: row must be pruned after the snapshot persist"
+        );
+        assert!(
+            vault
+                .sync_state_get("u:w:2026-03:00000002")
+                .unwrap()
+                .is_none()
+        );
+        assert_eq!(
+            vault
+                .sync_state_get("m:u_seq:w:2026-03")
+                .unwrap()
+                .as_deref(),
+            Some(2u32.to_le_bytes().as_slice()),
+            "m:u_seq:w: must stay monotonic — never reset by the prune"
+        );
+        assert!(vault.sync_state_get("d:w:2026-03").unwrap().is_some());
+        assert_eq!(
+            vault.sync_state_get("svf:w:2026-03").unwrap().as_deref(),
+            Some([1u8].as_slice())
+        );
+
+        // Every sentinel survives byte-identical.
+        assert_eq!(
+            vault
+                .sync_state_get("u:w:2026-02:00000001")
+                .unwrap()
+                .as_deref(),
+            Some(b"neighbor-window-update".as_slice()),
+            "the neighbor window's u:w: rows are out of scope"
+        );
+        assert_eq!(
+            vault
+                .sync_state_get("u:w:2026-030:00000001")
+                .unwrap()
+                .as_deref(),
+            Some(b"prefix-adjacent-update".as_slice()),
+            "prune scope is exactly `u:w:{{key}}:` — never a substring match"
+        );
+        assert_eq!(
+            vault.sync_state_get(&dt_key).unwrap().as_deref(),
+            Some([2u8; 26].as_slice()),
+            "dt: local hard-delete markers are out of scope (delete safety)"
+        );
+        {
+            let rtxn = vault.store.env.read_txn().unwrap();
+            assert_eq!(
+                vault.store.sync_queue.get(&rtxn, &q_key).unwrap(),
+                Some([1u8].as_slice()),
+                "q: update rows are out of scope"
+            );
+            assert_eq!(
+                vault.store.sync_queue.get(&rtxn, &d_key).unwrap(),
+                Some([1u8].as_slice()),
+                "d: delete-bearing sidecars are out of scope (delete safety)"
+            );
+            assert_eq!(
+                vault.store.sync_queue.get(&rtxn, &h_key).unwrap(),
+                Some([7u8].as_slice()),
+                "h: hard-erase sweep rows are out of scope (delete safety)"
+            );
+        }
+
+        // The window reopens from d:w: ALONE (no u:w: rows left to replay).
+        drop(window);
+        assert_eq!(
+            vault
+                .sync_state_keys_with_prefix("u:w:2026-03:")
+                .unwrap()
+                .len(),
+            0
+        );
+        let reloaded = load_window_from_state(&vault, "local", &key).unwrap();
+        let entities = reloaded.get_map("entities");
+        assert_eq!(
+            map_get_bytes(&entities, &id_a.to_hex()).as_deref(),
+            Some(make_entity_blob(1, t, b"prune-a").as_slice()),
+            "pruned ops must reload from the d:w: snapshot"
+        );
+        assert!(map_get_bytes(&entities, &id_b.to_hex()).is_some());
+    }
+
+    /// ONE-1151 concurrency seam: a `u:w:` row persisted AFTER the merge
+    /// captured its subsumption inventory (a transient delete-path doc
+    /// persisting in parallel — its ops are in neither the merged set nor
+    /// the exported snapshot) gets a higher seq, is absent from the merged
+    /// key list, and MUST survive the prune; recovery still replays it.
+    #[test]
+    fn prune_spares_updates_persisted_after_the_merge() {
+        let (_dir, vault) = test_vault();
+        let materializer = Arc::new(Materializer::new());
+        let key = WindowKey::new("2026-03");
+        let t = key.start_timestamp().unwrap() + 60;
+
+        let window = LoadedWindow::new("local", key.clone(), &vault, &materializer);
+        commit_entity(&window, t, b"merged-op");
+
+        // Snapshot-persist sequence as persist_state runs it, with a
+        // concurrent writer landing BETWEEN the merge and the write txn.
+        let merged = merge_persisted_state_into_doc(&vault, &window.doc, &key).unwrap();
+        assert_eq!(merged, vec!["u:w:2026-03:00000001".to_string()]);
+
+        let transient = create_window_doc("transient", &key);
+        let late_id = EntityId::now();
+        map_insert_bytes(
+            &transient.get_map("entities"),
+            &late_id.to_hex(),
+            &make_entity_blob(1, t, b"late-op"),
+        )
+        .unwrap();
+        transient.commit();
+        let late_bytes = export_updates_from(&transient, &loro::VersionVector::default()).unwrap();
+        bridge::persist_window_update(&vault, "2026-03", &late_bytes).unwrap();
+
+        let state = export_snapshot(&window.doc).unwrap();
+        let vv = doc_version_vector(&window.doc);
+        vault
+            .with_write_txn(|wtxn| {
+                persist_window_doc_in_txn(&vault, wtxn, &key, &state, &vv)?;
+                prune_subsumed_window_updates_in_txn(&vault, wtxn, &key, &merged)
+            })
+            .unwrap();
+
+        assert!(
+            vault
+                .sync_state_get("u:w:2026-03:00000001")
+                .unwrap()
+                .is_none(),
+            "the merged row is subsumed and pruned"
+        );
+        assert_eq!(
+            vault
+                .sync_state_get("u:w:2026-03:00000002")
+                .unwrap()
+                .as_deref(),
+            Some(late_bytes.as_slice()),
+            "a row persisted after the merge is NOT in the snapshot and must survive"
+        );
+
+        // Recovery = d:w: + surviving u:w: replay — the late op is intact.
+        let recovered = load_window_from_state(&vault, "local", &key).unwrap();
+        assert!(
+            map_get_bytes(&recovered.get_map("entities"), &late_id.to_hex()).is_some(),
+            "recovery must replay the surviving post-merge row"
+        );
+    }
+
+    /// Fail-closed scope guard: a key outside the window's own
+    /// `u:w:{key}:` family is a TYPED error and the transaction deletes
+    /// nothing — not even the in-scope keys validated alongside it.
+    #[test]
+    fn prune_refuses_keys_outside_the_window_family() {
+        let (_dir, vault) = test_vault();
+        let key = WindowKey::new("2026-03");
+        vault
+            .sync_state_put("u:w:2026-03:00000001", b"in-scope")
+            .unwrap();
+        vault
+            .sync_state_put("u:w:2026-02:00000001", b"foreign")
+            .unwrap();
+
+        let keys = vec![
+            "u:w:2026-03:00000001".to_string(),
+            "u:w:2026-02:00000001".to_string(),
+        ];
+        let err = vault
+            .with_write_txn(|wtxn| prune_subsumed_window_updates_in_txn(&vault, wtxn, &key, &keys))
+            .expect_err("a foreign key must fail the prune closed");
+        assert!(
+            matches!(err, Error::SyncProtocolError(_)),
+            "typed error, got: {err:?}"
+        );
+        assert_eq!(
+            vault
+                .sync_state_get("u:w:2026-03:00000001")
+                .unwrap()
+                .as_deref(),
+            Some(b"in-scope".as_slice()),
+            "validate-before-delete: the aborted txn must delete nothing"
+        );
+        assert_eq!(
+            vault
+                .sync_state_get("u:w:2026-02:00000001")
+                .unwrap()
+                .as_deref(),
+            Some(b"foreign".as_slice())
+        );
+    }
 
     /// The single constructor of [`DeleteBearingUpdate`] (ONE-1135 review
     /// item 14): a no-op tombstone commit exports nothing (no q:/d: rows
