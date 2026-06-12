@@ -542,7 +542,8 @@ fn materialize_entity_blob_in_txn(
     // so ANY later commit touching this entity key would otherwise
     // rematerialize the purged body into LMDB with no compensating purge —
     // tombstone deltas only fire when the tombstones map CHANGES.
-    if map_contains_binary(tombstones_map, key) {
+    // Presence is ANY-value (fail closed): non-binary tombstones gate too.
+    if map_contains_key(tombstones_map, key) {
         tracing::debug!(entity = %key, "observer-b: entity tombstoned in CRDT, skipping put");
         return Ok(());
     }
@@ -689,7 +690,7 @@ mod tests {
     use crate::Vault;
     use crate::sync::loro_support::{
         doc_from_snapshot, doc_version_vector, export_snapshot, export_updates_since, import_doc,
-        map_insert_bytes,
+        map_contains_binary, map_insert_bytes,
     };
     use crate::types::{ENTITY_TYPE_TASK, TimeRange, VaultConfig};
     use std::sync::Arc;
