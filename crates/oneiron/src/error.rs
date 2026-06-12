@@ -63,7 +63,6 @@ pub enum ErrorKind {
     WindowNotFound,
     #[cfg(feature = "sync")]
     SyncProtocolError,
-    #[cfg(feature = "sync")]
     InvalidRedactionReceiptBody,
     #[cfg(feature = "sync")]
     RedactionReceiptDivergence,
@@ -377,7 +376,6 @@ pub enum Error {
     /// verification — opaque identifiers + timestamps only). Fail-closed:
     /// nothing was written; the replay doors quarantine the blob (`x:`
     /// family, ONE-1134).
-    #[cfg(feature = "sync")]
     #[error("invalid redaction audit receipt body: {0}")]
     InvalidRedactionReceiptBody(&'static str),
     /// A sync replay door delivered DIVERGENT bytes for an EXISTING
@@ -464,7 +462,6 @@ impl Error {
             Self::WindowNotFound { .. } => ErrorKind::WindowNotFound,
             #[cfg(feature = "sync")]
             Self::SyncProtocolError(_) => ErrorKind::SyncProtocolError,
-            #[cfg(feature = "sync")]
             Self::InvalidRedactionReceiptBody(_) => ErrorKind::InvalidRedactionReceiptBody,
             #[cfg(feature = "sync")]
             Self::RedactionReceiptDivergence { .. } => ErrorKind::RedactionReceiptDivergence,

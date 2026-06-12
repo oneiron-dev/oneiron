@@ -68,6 +68,11 @@ name = "sync_delete_propagation"
 path = "tests/sync_delete_propagation.rs"
 required-features = ["sync"]
 
+[[test]]
+name = "sync_sweep_executor"
+path = "tests/sync_sweep_executor.rs"
+required-features = ["sync"]
+
 [[bench]]
 name = "sync_memory"
 harness = false

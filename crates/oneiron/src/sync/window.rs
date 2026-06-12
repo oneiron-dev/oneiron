@@ -702,15 +702,16 @@ pub fn forward_rematerialize(
                 return;
             }
 
-            // Track whether a local record exists for this id: byte-identical
-            // → idempotent skip (return); present-but-different falls through
-            // with `locally_present = true` so the REDACTION_AUDIT
-            // immutability gate below can quarantine the divergence.
-            let locally_present = if let Some(latest) = materialized_blobs.get(&id) {
+            // Track the local record for this id: byte-identical →
+            // idempotent skip (return); present-but-different falls through
+            // with `local_blob = Some(_)` so the REDACTION_AUDIT
+            // immutability gate below can compare bytes (ONE-1087 stale
+            //-echo exception) and quarantine real divergence.
+            let local_blob: Option<Vec<u8>> = if let Some(latest) = materialized_blobs.get(&id) {
                 if latest.as_slice() == blob {
                     return;
                 }
-                true
+                Some(latest.clone())
             } else {
                 let lmdb_blob = match vault.get_raw_in(&rtxn, &id) {
                     Ok(v) => v,
@@ -741,7 +742,7 @@ pub fn forward_rematerialize(
                     );
                     return;
                 }
-                lmdb_blob.is_some()
+                lmdb_blob
             };
 
             let header = match EntityMetadataHeader::parse(blob) {
@@ -789,7 +790,20 @@ pub fn forward_rematerialize(
                     }
                     return;
                 }
-                if locally_present {
+                if let Some(local) = &local_blob {
+                    // ONE-1087 designed exception: the sweep's receipt
+                    // finalization (`sweep_complete_at` None→Some) is
+                    // LOCAL-LMDB-only, so the CRDT mirror replays the
+                    // PRE-finalization bytes every boot. That one monotone
+                    // shape is the own node's stale echo: idempotent skip,
+                    // never an x: row. All other divergence quarantines.
+                    if crate::deletion::redaction_receipt_is_stale_finalization_echo(local, blob) {
+                        tracing::debug!(
+                            entity = %key,
+                            "forward remat: stale pre-finalization receipt echo — keeping finalized local"
+                        );
+                        return;
+                    }
                     if let Err(q_err) = quarantine::quarantine_rejected_op(
                         vault,
                         window_key.as_str(),
