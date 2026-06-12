@@ -23,12 +23,16 @@
 //! needs-rematerialization flag, ENTITY-scoped) is produced when a
 //! CRDT-tombstone purge of that specific entity against the local active
 //! store fails — a purge failure left hard-deleted content live, which is a
-//! GDPR SLA breach signal until drained. The marker is cleared ONLY when
-//! that entity's own purge succeeds: an unrelated entity's successful
-//! tombstone must never discharge another entity's purge retry.
-//! [`drain_remat_markers`] re-runs `forward_rematerialize` for each flagged
-//! window. A row under `rm:` that does not parse is fail-closed: it is
-//! treated as needs-remat and never dropped.
+//! GDPR SLA breach signal until drained — and (ONE-1147) when an Observer-B
+//! entity/edge materialization batch carrying that entity's op fails as a
+//! whole txn (lost create/update writes = silent LMDB↔CRDT divergence).
+//! The marker is cleared ONLY by that entity's own success — its purge for
+//! tombstoned ids, or the actual healing write (entity body / edge from
+//! that source) in forward remat; never byte-parity alone, and never an
+//! unrelated entity's success. [`drain_remat_markers`] re-runs
+//! `forward_rematerialize` for each flagged window. A row under `rm:` that
+//! does not parse is fail-closed: it is treated as needs-remat and never
+//! dropped.
 
 use std::sync::Arc;
 
@@ -485,7 +489,9 @@ pub(crate) fn remat_marker_key(window_key: &str, id: &crate::types::EntityId) ->
 
 /// Sets `rm:w:{window}:{entity_hex}` (1-byte marker) in `sync_state` inside
 /// an existing write transaction. Written when THAT entity's CRDT-tombstone
-/// purge (or the read backing it) against the local active store fails.
+/// purge (or the read backing it) against the local active store fails, or
+/// (ONE-1147) when an Observer-B entity/edge batch carrying that entity's
+/// op fails as a whole txn.
 pub(crate) fn set_remat_marker_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
@@ -510,7 +516,8 @@ pub(crate) fn set_remat_marker(
 
 /// Clears `rm:w:{window}:{entity_hex}` inside an existing write
 /// transaction. Only called when THAT entity's purge succeeded (or the
-/// entity is verifiably absent — the purge goal state).
+/// entity is verifiably absent — the purge goal state), or when forward
+/// remat performed the actual healing write for that entity (ONE-1147).
 pub(crate) fn clear_remat_marker_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
@@ -580,9 +587,10 @@ pub struct RematDrainReport {
 
 /// Drains `rm:` markers by re-running `forward_rematerialize` for each
 /// flagged window. Each entity-scoped marker is cleared (inside
-/// `forward_rematerialize`) only when that entity's own purge succeeds; a
-/// window with any surviving marker stays flagged and is reported in
-/// `still_pending`.
+/// `forward_rematerialize`) only when that entity's own purge succeeds —
+/// or, for ONE-1147 batch-failure markers, when its actual healing write
+/// lands; a window with any surviving marker stays flagged and is reported
+/// in `still_pending`.
 pub fn drain_remat_markers(
     vault: &Arc<Vault>,
     user_id: &str,
@@ -1110,6 +1118,195 @@ mod tests {
             vault.get(&id).unwrap().is_none(),
             "hard-deleted entity purged via the rebuilt doc"
         );
+        assert!(pending_remat_windows(&vault).unwrap().is_empty());
+    }
+
+    /// ONE-1147 — Observer-B ENTITY batch whole-txn failure parity with the
+    /// hardened tombstone path: a failed batch commit must set the durable
+    /// entity-scoped marker under the LITERAL key `rm:w:{window}:{entity_hex}`
+    /// with the LITERAL 1-byte value `[1u8]` for EVERY entity the dead txn
+    /// had applied (never a bare error log), and a later
+    /// `drain_remat_markers` must heal the divergence (entities present in
+    /// LMDB) and clear the markers via the actual healing writes.
+    #[test]
+    fn rm_marker_round_trip_entity_batch_commit_failure_then_drain() {
+        let (_dir, vault) = test_vault_with_dir();
+        let materializer = Arc::new(Materializer::new());
+        let window_key = WindowKey::new(WINDOW);
+        let window = LoadedWindow::new("test-user", window_key, &vault, &materializer);
+
+        let a = EntityId::now();
+        let b = EntityId::now();
+        let blob_a = entity_blob(
+            ENTITY_TYPE_TASK,
+            valid_time_range(),
+            LEARNED_AT,
+            b"one-1147-a",
+        );
+        let blob_b = entity_blob(
+            ENTITY_TYPE_TASK,
+            valid_time_range(),
+            LEARNED_AT,
+            b"one-1147-b",
+        );
+
+        // One commit → one delta → ONE batch txn carrying BOTH ops; the
+        // injected LOCAL error aborts it post-batch, hitting the Observer-B
+        // swallow site (the whole-txn failure class: no surviving
+        // per-entity failure point).
+        crate::sync::bridge::INJECT_BATCH_COMMIT_FAILURES.with(|cell| cell.set(1));
+        let entities = window.doc.get_map("entities");
+        map_insert_bytes(&entities, &a.to_hex(), &blob_a).unwrap();
+        map_insert_bytes(&entities, &b.to_hex(), &blob_b).unwrap();
+        window.doc.commit();
+
+        // Divergence precondition: ops live in the CRDT doc, absent from LMDB.
+        assert!(vault.get(&a).unwrap().is_none());
+        assert!(vault.get(&b).unwrap().is_none());
+
+        // Pinned literal grammar: `rm:w:{window}:{entity_hex}` → `[1u8]`,
+        // one marker per batched entity.
+        let rtxn = vault.store.env.read_txn().unwrap();
+        for id in [&a, &b] {
+            let marker_key = format!("rm:w:2026-03:{}", id.to_hex());
+            assert_eq!(
+                vault.store.sync_state.get(&rtxn, &marker_key).unwrap(),
+                Some([1u8].as_slice()),
+                "entity batch commit failure must set the entity-scoped rm:w marker"
+            );
+        }
+        drop(rtxn);
+        assert_eq!(
+            pending_remat_windows(&vault).unwrap(),
+            vec![WINDOW.to_string()]
+        );
+
+        // Persist (Observer A kept the ops durably) and drain: forward
+        // remat performs the healing writes, which discharge the markers.
+        window.persist_state(&vault).unwrap();
+        drop(window);
+        let report = drain_remat_markers(&vault, "test-user", &materializer).unwrap();
+        assert_eq!(report.drained, vec![WINDOW.to_string()]);
+        assert!(report.still_pending.is_empty());
+        assert_eq!(
+            vault.get(&a).unwrap().as_deref(),
+            Some(b"one-1147-a".as_slice()),
+            "drain must heal the lost entity write"
+        );
+        assert_eq!(
+            vault.get(&b).unwrap().as_deref(),
+            Some(b"one-1147-b".as_slice()),
+            "drain must heal the lost entity write"
+        );
+        let rtxn = vault.store.env.read_txn().unwrap();
+        for id in [&a, &b] {
+            let marker_key = format!("rm:w:2026-03:{}", id.to_hex());
+            assert_eq!(
+                vault.store.sync_state.get(&rtxn, &marker_key).unwrap(),
+                None,
+                "the healing write must clear the marker"
+            );
+        }
+        drop(rtxn);
+        assert!(pending_remat_windows(&vault).unwrap().is_empty());
+    }
+
+    /// ONE-1147 — Observer-B EDGE batch whole-txn failure parity: the
+    /// marker is scoped to the edge's SOURCE entity (LITERAL
+    /// `rm:w:{window}:{src_hex}` → `[1u8]`, and NO marker for the target),
+    /// and the drain's healing edge write re-materializes the lost edge
+    /// bytes verbatim and discharges the source marker — the byte-identical
+    /// endpoint entities must NOT discharge it (parity never clears).
+    #[test]
+    fn rm_marker_round_trip_edge_batch_commit_failure_then_drain() {
+        let (_dir, vault) = test_vault_with_dir();
+        let materializer = Arc::new(Materializer::new());
+        let window_key = WindowKey::new(WINDOW);
+        let window = LoadedWindow::new("test-user", window_key, &vault, &materializer);
+
+        // Endpoints first, in their own SUCCESSFUL commit: Observer B
+        // materializes them into LMDB so only the EDGE batch sees the
+        // injected failure.
+        let src = EntityId::now();
+        let tgt = EntityId::now();
+        let entities = window.doc.get_map("entities");
+        map_insert_bytes(
+            &entities,
+            &src.to_hex(),
+            &entity_blob(ENTITY_TYPE_TASK, valid_time_range(), LEARNED_AT, b"src"),
+        )
+        .unwrap();
+        map_insert_bytes(
+            &entities,
+            &tgt.to_hex(),
+            &entity_blob(ENTITY_TYPE_TASK, valid_time_range(), LEARNED_AT, b"tgt"),
+        )
+        .unwrap();
+        window.doc.commit();
+        assert!(
+            vault.get(&src).unwrap().is_some() && vault.get(&tgt).unwrap().is_some(),
+            "precondition: endpoints materialized"
+        );
+
+        let kind = crate::types::EdgeKind::Mentions;
+        let edge_key = crate::sync::bridge::format_edge_key(&src, kind, &tgt);
+        let edge_val = crate::sync::bridge::encode_edge_value_for_crdt(
+            kind,
+            0.75,
+            12_345,
+            Some(crate::types::Vad::NEUTRAL),
+            None,
+        )
+        .unwrap();
+        crate::sync::bridge::INJECT_BATCH_COMMIT_FAILURES.with(|cell| cell.set(1));
+        map_insert_bytes(&window.doc.get_map("edges"), &edge_key, &edge_val).unwrap();
+        window.doc.commit();
+
+        // Divergence precondition: the edge op lives in the CRDT doc,
+        // absent from LMDB.
+        let lmdb_edge_key = crate::store::Store::encode_edge_key(&src, kind, &tgt);
+        let rtxn = vault.store.env.read_txn().unwrap();
+        assert_eq!(
+            vault.store.edges_out.get(&rtxn, &lmdb_edge_key).unwrap(),
+            None,
+            "precondition: failed batch left the edge unmaterialized"
+        );
+        // Pinned literal grammar, SOURCE-scoped.
+        let src_marker = format!("rm:w:2026-03:{}", src.to_hex());
+        assert_eq!(
+            vault.store.sync_state.get(&rtxn, &src_marker).unwrap(),
+            Some([1u8].as_slice()),
+            "edge batch commit failure must set the SOURCE-scoped rm:w marker"
+        );
+        let tgt_marker = format!("rm:w:2026-03:{}", tgt.to_hex());
+        assert_eq!(
+            vault.store.sync_state.get(&rtxn, &tgt_marker).unwrap(),
+            None,
+            "edge markers are source-scoped — no marker for the target"
+        );
+        drop(rtxn);
+
+        window.persist_state(&vault).unwrap();
+        drop(window);
+
+        // Drain: the endpoint entities are byte-identical (parity must not
+        // discharge anything); the EDGE healing write does, and it restores
+        // the lost edge bytes verbatim.
+        let report = drain_remat_markers(&vault, "test-user", &materializer).unwrap();
+        assert_eq!(report.drained, vec![WINDOW.to_string()]);
+        assert!(report.still_pending.is_empty());
+        let rtxn = vault.store.env.read_txn().unwrap();
+        assert_eq!(
+            vault.store.edges_out.get(&rtxn, &lmdb_edge_key).unwrap(),
+            Some(edge_val.as_slice()),
+            "drain must re-materialize the lost edge bytes verbatim"
+        );
+        assert_eq!(
+            vault.store.sync_state.get(&rtxn, &src_marker).unwrap(),
+            None,
+            "the healing edge write must clear the source marker"
+        );
+        drop(rtxn);
         assert!(pending_remat_windows(&vault).unwrap().is_empty());
     }
 
