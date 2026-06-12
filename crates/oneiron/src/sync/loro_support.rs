@@ -4,7 +4,6 @@
 //! repeated binary-value and encoding error handling in one place while all
 //! call sites still use native `LoroDoc` / `LoroMap` handles.
 
-#[cfg(test)]
 use loro::VersionVector;
 use loro::{ExportMode, LoroDoc, LoroMap, LoroValue, ValueOrContainer};
 
@@ -132,7 +131,14 @@ pub(crate) fn export_updates_since(doc: &LoroDoc, remote_vv: &[u8]) -> Result<Ve
         source,
     })?;
 
-    doc.export(ExportMode::updates(&vv))
+    export_updates_from(doc, &vv)
+}
+
+/// Exports the update delta since `vv` (the ops `doc` has that `vv` does
+/// not cover). The delete path uses this to capture a tombstone-commit
+/// delta for the delete-bearing offline-queue row (ONE-1135).
+pub(crate) fn export_updates_from(doc: &LoroDoc, vv: &VersionVector) -> Result<Vec<u8>> {
+    doc.export(ExportMode::updates(vv))
         .map_err(|e| Error::SyncProtocolError(e.to_string()))
 }
 

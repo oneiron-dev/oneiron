@@ -5,16 +5,20 @@
 //! invariant on startup"):
 //!
 //! 1. (per window) load `d:w:{key}` → apply pending `u:w:{key}:*`
-//! 2. replay `pm:*` markers (LMDB-ahead torn writes → CRDT)
-//! 3. reverse re-materialization (LMDB → CRDT, missing only)
-//! 4. forward re-materialization (CRDT → LMDB, byte-compare)
-//! 5. register Observer A + B — observers attach LAST
+//! 2. replay `pt:*` pending-tombstone markers (sync-off / crashed deletes)
+//! 3. replay `pm:*` markers (LMDB-ahead torn writes → CRDT)
+//! 4. reverse re-materialization (LMDB → CRDT, missing only)
+//! 5. forward re-materialization (CRDT → LMDB, byte-compare)
+//! 6. register Observer A + B — observers attach LAST
 //!
-//! Steps pm-replay → reverse remat → forward remat MUST run in this order
-//! on the bare doc, BEFORE observers attach. Reversing the order causes
-//! data loss: forward remat run first overwrites LMDB-ahead bytes with the
-//! stale CRDT copy, and the later pm replay then byte-compares equal and
-//! clears the marker without ever mirroring the lost write.
+//! Steps pt-replay → pm-replay → reverse remat → forward remat MUST run in
+//! this order on the bare doc, BEFORE observers attach. Reversing the order
+//! causes data loss: forward remat run first overwrites LMDB-ahead bytes
+//! with the stale CRDT copy, and the later pm replay then byte-compares
+//! equal and clears the marker without ever mirroring the lost write. The
+//! pt replay runs FIRST so a recovered tombstone gates every later step —
+//! a pm replay run before it would mirror the deleted body's bytes into
+//! the doc's op history before the tombstone exists to suppress it.
 //!
 //! # Registry — exactly one live doc per window key per process
 //!
@@ -46,7 +50,7 @@ use super::schema::create_window_doc;
 use super::types::{SyncConfig, WindowKey};
 use super::window::{
     LoadedWindow, apply_pending_window_updates, forward_rematerialize, load_window_from_state,
-    replay_pending_mirrors, reverse_rematerialize,
+    replay_pending_mirrors, replay_pending_tombstones, reverse_rematerialize,
 };
 use crate::Vault;
 use crate::error::{Error, Result};
@@ -114,7 +118,34 @@ impl WindowManager {
         &self.outbound
     }
 
+    /// Registers this manager as the vault's live-window delete router
+    /// (M4-10 / ONE-1135): `Vault::delete_entity*` then commits CRDT
+    /// tombstones through the registry-owned live doc for OPEN windows —
+    /// Observer A persists the `u:` row and the commit reaches every
+    /// registry holder — instead of writing a parallel transient snapshot
+    /// the live doc never sees (the `d:w:` clobber vector).
+    ///
+    /// The vault side holds a `Weak`, so a dropped manager degrades cleanly
+    /// to the transient (import-merge) delete path.
+    ///
+    /// [`open_window`](Self::open_window) calls this itself, so ANY
+    /// composition that opens a window through the manager activates the
+    /// delete router — the wiring cannot be forgotten (ONE-1135 review
+    /// blocker). Calling it explicitly before the first open remains valid
+    /// (and is required only if deletes can race the first open). The
+    /// attach is idempotent: re-attaching the same manager just overwrites
+    /// the vault's `Weak` with an equivalent one. A process composing TWO
+    /// managers over one vault is unsupported — the last attach wins.
+    pub fn attach_to_vault(self: &Arc<Self>) {
+        self.vault.attach_live_window_manager(Arc::downgrade(self));
+    }
+
     /// Opens (or returns the already-live) window for `key`.
+    ///
+    /// First self-attaches as the vault's live-window delete router
+    /// ([`attach_to_vault`](Self::attach_to_vault), idempotent) — the
+    /// production composition activates ONE-1135 delete routing simply by
+    /// opening windows; no separate wiring call exists to forget.
     ///
     /// If the window is registered, returns the existing instance — exactly
     /// one live doc per window key per process. Otherwise runs the pinned
@@ -123,10 +154,16 @@ impl WindowManager {
     /// 1. Load the persisted doc (`d:w:{key}` + pending `u:w:{key}:*`) via
     ///    [`load_window_from_state`], or create a fresh doc when no
     ///    persisted state exists.
-    /// 2. Step 3 — [`replay_pending_mirrors`] (`pm:*` crash markers).
-    /// 3. Step 4 — [`reverse_rematerialize`] (LMDB → CRDT, missing only).
-    /// 4. Step 5 — [`forward_rematerialize`] (CRDT → LMDB).
-    /// 5. Step 6 — construct [`LoadedWindow`], attaching Observer A + B
+    /// 2. Step 2 — [`replay_pending_tombstones`] (`pt:*` markers: deletes
+    ///    from sync-off builds or a crash between the purge txn and the
+    ///    CRDT commit; OWNER-DECISION 4 cfg-off durability). Runs BEFORE
+    ///    the pm replay so a recovered tombstone suppresses any pending
+    ///    mirror of the same entity — the reverse order would mirror the
+    ///    deleted body into the doc's op history first.
+    /// 3. Step 3 — [`replay_pending_mirrors`] (`pm:*` crash markers).
+    /// 4. Step 4 — [`reverse_rematerialize`] (LMDB → CRDT, missing only).
+    /// 5. Step 5 — [`forward_rematerialize`] (CRDT → LMDB).
+    /// 6. Step 6 — construct [`LoadedWindow`], attaching Observer A + B
     ///    LAST, and register it.
     ///
     /// The `rm:w:{key}` needs-rematerialization flag (set on Observer B
@@ -135,7 +172,11 @@ impl WindowManager {
     /// forced re-materialization the flag requests — and the marker is
     /// cleared only after it succeeds. Any recovery error aborts the open
     /// with nothing registered and the marker still set (fail-closed).
-    pub fn open_window(&self, key: &WindowKey) -> Result<Arc<LoadedWindow>> {
+    pub fn open_window(self: &Arc<Self>, key: &WindowKey) -> Result<Arc<LoadedWindow>> {
+        // ONE-1135 production wiring: every open (re-)attaches this manager
+        // as the vault's delete router. Idempotent; takes only the vault's
+        // attach mutex, never the registry lock.
+        self.attach_to_vault();
         let mut registry = self.lock_registry();
         if let Some(existing) = registry.get(key) {
             return Ok(Arc::clone(existing));
@@ -170,16 +211,23 @@ impl WindowManager {
             );
         }
 
-        // Steps 3 → 4 → 5 — pinned order, on the bare doc (no observers yet).
+        // Steps 2 → 3 → 4 → 5 — pinned order, on the bare doc (no observers
+        // yet). pt: replay runs FIRST so its tombstones gate the pm replay,
+        // reverse remat, and forward remat of the same entities; it also
+        // queues the recovered delete as a delete-bearing `q:` row, closing
+        // the "delete while sync off → enable sync → tombstone never
+        // published" hole (ONE-1135 review blocker, OWNER-DECISION 4).
+        let pending_tombstones = replay_pending_tombstones(&self.vault, &doc, key)?;
         let replayed = replay_pending_mirrors(&self.vault, &doc, key)?;
         let mirrored = reverse_rematerialize(&self.vault, &doc, key)?;
         let materialized = forward_rematerialize(&self.vault, &doc, &self.materializer)?;
         tracing::debug!(
             window = %key,
+            pending_tombstones,
             replayed,
             mirrored,
             materialized,
-            "window-manager: recovery complete (pm replay → reverse remat → forward remat)"
+            "window-manager: recovery complete (pt replay → pm replay → reverse remat → forward remat)"
         );
 
         // Step 5 succeeded — consume the rm: flag. Cleared only here so a
@@ -205,7 +253,7 @@ impl WindowManager {
     /// month); older windows stay ON-DISK in `sync_state` until opened on
     /// demand. Walks back `default_window_count` months, stopping at the
     /// epoch boundary.
-    pub fn open_default_windows(&self, now_secs: u64) -> Result<Vec<Arc<LoadedWindow>>> {
+    pub fn open_default_windows(self: &Arc<Self>, now_secs: u64) -> Result<Vec<Arc<LoadedWindow>>> {
         let mut opened = Vec::new();
         let mut next = Some(WindowKey::from_timestamp(now_secs));
         for _ in 0..self.config.default_window_count {

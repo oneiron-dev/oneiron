@@ -63,6 +63,11 @@ name = "sync_client_wiring"
 path = "tests/sync_client_wiring.rs"
 required-features = ["sync"]
 
+[[test]]
+name = "sync_delete_propagation"
+path = "tests/sync_delete_propagation.rs"
+required-features = ["sync"]
+
 [[bench]]
 name = "sync_memory"
 harness = false
