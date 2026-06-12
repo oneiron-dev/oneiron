@@ -11,15 +11,20 @@ use std::sync::Arc;
 
 use axum::Router;
 use axum::extract::State;
-use axum::extract::ws::{Message as WsMessage, WebSocket, WebSocketUpgrade};
+use axum::extract::ws::{CloseFrame, Message as WsMessage, Utf8Bytes, WebSocket, WebSocketUpgrade};
 use axum::response::IntoResponse;
 use axum::routing::get;
+use futures_util::stream::SplitStream;
 use futures_util::{SinkExt, StreamExt};
-use loro::ExportMode;
+use loro::VersionVector;
+use oneiron::sync::export_updates_since;
 
 use crate::broadcast::BroadcastSubscriber;
-use crate::protocol::{self, ProtocolError, SyncMessage, window_sub_tags};
+use crate::protocol::{self, ProtocolError, SyncMessage, close_codes, window_sub_tags};
 use crate::server::SyncServer;
+
+/// How long the server waits for the client's protocol-version hello.
+const HELLO_TIMEOUT_SECS: u64 = 10;
 
 /// Builds the WebSocket routes for the sync server.
 pub(crate) fn ws_routes(server: Arc<SyncServer>) -> Router {
@@ -43,6 +48,28 @@ async fn ws_upgrade_handler(
 /// Main connection lifecycle.
 async fn handle_connection(socket: WebSocket, server: Arc<SyncServer>, conn_id: u32) {
     let (mut ws_sink, mut ws_stream) = socket.split();
+
+    // Phase 0: protocol-version hello (ONE-1127). The client's FIRST frame
+    // must be [TAG_PROTOCOL_HELLO, PROTOCOL_VERSION]. Anything else — wrong
+    // version, malformed frame, text, or timeout — closes with 4006 BEFORE
+    // any sync payload flows, so the next wire break is detectable instead
+    // of surfacing as garbled decode errors mid-sync.
+    match await_protocol_hello(&mut ws_stream).await {
+        HelloOutcome::Valid => {}
+        HelloOutcome::Reject(reason) => {
+            tracing::warn!(conn_id, reason, "protocol hello rejected — closing");
+            let close = WsMessage::Close(Some(CloseFrame {
+                code: close_codes::VERSION_MISMATCH,
+                reason: Utf8Bytes::from_static(reason),
+            }));
+            let _ = ws_sink.send(close).await;
+            return;
+        }
+        HelloOutcome::Disconnected => {
+            tracing::info!(conn_id, "client disconnected before protocol hello");
+            return;
+        }
+    }
 
     // Subscribe to broadcast channel for outbound messages
     let mut subscriber = BroadcastSubscriber::new(conn_id, &server.broadcast_tx);
@@ -145,6 +172,12 @@ async fn handle_connection(socket: WebSocket, server: Arc<SyncServer>, conn_id: 
                             tracing::warn!(conn_id, tag, "unknown tag — closing");
                             break;
                         }
+                        ProtocolError::VvDecode(msg) => {
+                            // Fail-closed: a malformed VV is a protocol
+                            // violation, never answered with a full export.
+                            tracing::warn!(conn_id, error = %msg, "version vector decode failure — closing");
+                            break;
+                        }
                         ProtocolError::FrameTooLarge { size, max } => {
                             tracing::warn!(conn_id, size, max, "frame too large — closing");
                             break;
@@ -183,6 +216,58 @@ async fn handle_connection(socket: WebSocket, server: Arc<SyncServer>, conn_id: 
     tracing::info!(conn_id, "connection closed");
 }
 
+/// Outcome of the protocol-version hello phase.
+enum HelloOutcome {
+    /// First frame was a valid hello with a matching version.
+    Valid,
+    /// Hello missing/malformed/mismatched/timed out — close with
+    /// `close_codes::VERSION_MISMATCH` and this reason.
+    Reject(&'static str),
+    /// Client went away before sending a hello — nothing to close.
+    Disconnected,
+}
+
+/// Waits for the client's protocol-version hello as the FIRST frame.
+///
+/// Skips ping/pong keepalives; any other frame must be the hello.
+async fn await_protocol_hello(ws_stream: &mut SplitStream<WebSocket>) -> HelloOutcome {
+    let deadline = tokio::time::Duration::from_secs(HELLO_TIMEOUT_SECS);
+    let outcome = tokio::time::timeout(deadline, async {
+        loop {
+            match ws_stream.next().await {
+                Some(Ok(WsMessage::Binary(data))) => {
+                    return match validate_protocol_hello(&data) {
+                        Ok(()) => HelloOutcome::Valid,
+                        Err(_) => HelloOutcome::Reject("protocol version mismatch"),
+                    };
+                }
+                Some(Ok(WsMessage::Ping(_) | WsMessage::Pong(_))) => continue,
+                Some(Ok(WsMessage::Text(_))) => {
+                    return HelloOutcome::Reject("expected binary protocol hello");
+                }
+                Some(Ok(WsMessage::Close(_))) | Some(Err(_)) | None => {
+                    return HelloOutcome::Disconnected;
+                }
+            }
+        }
+    })
+    .await;
+
+    outcome.unwrap_or(HelloOutcome::Reject("protocol hello timeout"))
+}
+
+/// Validates a hello frame against the server's wire-protocol version.
+///
+/// Returns the close code to send on mismatch (always
+/// `close_codes::VERSION_MISMATCH`) so callers cannot accidentally
+/// downgrade the failure to a softer close.
+fn validate_protocol_hello(frame: &[u8]) -> Result<(), u16> {
+    match protocol::decode_protocol_hello(frame) {
+        Ok(version) if version == protocol::PROTOCOL_VERSION => Ok(()),
+        _ => Err(close_codes::VERSION_MISMATCH),
+    }
+}
+
 /// Dispatches a parsed SyncMessage to the appropriate handler.
 async fn handle_sync_message(
     server: &SyncServer,
@@ -207,17 +292,20 @@ async fn handle_sync_message(
             let _ = crate::broadcast::broadcast(&server.broadcast_tx, conn_id, encoded);
             Ok(())
         }
-        SyncMessage::RootVersionVector(_vv_bytes) => {
-            // Client is requesting root doc updates since their VV.
-            // Root doc is server-authoritative so we send the full snapshot.
-            tracing::debug!(conn_id, "client sent root VV — sending root snapshot");
-            match server.export_root_snapshot() {
-                Ok(snapshot) => {
-                    let msg = protocol::encode_root_update(&snapshot);
+        SyncMessage::RootVersionVector(vv_bytes) => {
+            // Client is requesting root doc updates since their VV (Loro
+            // binary encoding). Malformed VV → typed error, fail-closed —
+            // NEVER answered with a full export as if the VV were empty.
+            let client_vv = VersionVector::decode(&vv_bytes)
+                .map_err(|e| ProtocolError::VvDecode(e.to_string()))?;
+            tracing::debug!(conn_id, "client sent root VV — sending root delta");
+            match server.export_root_updates(&client_vv) {
+                Ok(delta) => {
+                    let msg = protocol::encode_root_update(&delta);
                     let _ = direct_tx.send(msg);
                 }
                 Err(e) => {
-                    tracing::error!(conn_id, error = %e, "failed to export root snapshot for VV response");
+                    tracing::error!(conn_id, error = %e, "failed to export root delta for VV response");
                 }
             }
             Ok(())
@@ -251,18 +339,25 @@ async fn handle_window_sync(
 
     match sub_tag {
         window_sub_tags::VV_REQUEST => {
-            // Client sent its VersionVector — send back updates it's missing.
-            // For now, send all updates (full export). A proper implementation
-            // would decode the client's VV and use ExportMode::updates(&client_vv).
-            let updates = doc
-                .export(ExportMode::all_updates())
-                .map_err(|e| ProtocolError::LoroImport(format!("{e}")))?;
+            // Client sent its binary VV (SyncStep1) — export ONLY the delta it
+            // is missing (ExportMode::updates via the single delta-export entry
+            // point). Malformed VV → typed error, fail-closed: never fall back
+            // to a full export.
+            let delta = export_updates_since(&doc, payload).map_err(map_delta_export_err)?;
             let response =
-                protocol::encode_window_sync(window_key, window_sub_tags::UPDATE, &updates);
+                protocol::encode_window_sync(window_key, window_sub_tags::UPDATE, &delta);
             // Send directly to the requesting client's WebSocket sink, NOT via
             // broadcast. Broadcasting with the requester's conn_id would cause
             // echo suppression to drop the response for the requester.
             let _ = direct_tx.send(response);
+            // Reverse SyncStep1: send our VV so the client pushes its local
+            // diff back — this is what makes the exchange bidirectional.
+            let vv_response = protocol::encode_window_sync(
+                window_key,
+                window_sub_tags::VV_RESPONSE,
+                &doc.oplog_vv().encode(),
+            );
+            let _ = direct_tx.send(vv_response);
         }
         window_sub_tags::UPDATE => {
             // Client sending Loro update bytes — import with origin for echo suppression
@@ -277,9 +372,12 @@ async fn handle_window_sync(
             let _ = crate::broadcast::broadcast(&server.broadcast_tx, conn_id, broadcast_msg);
         }
         window_sub_tags::VV_RESPONSE => {
-            // Server received a VV response — used during sync negotiation.
-            // The server would use this to compute what updates to send.
-            tracing::debug!(window_key, "received VV response from client");
+            // Client's VV answering our VV_REQUEST — export and send only our
+            // local diff. Same fail-closed VV decoding as VV_REQUEST.
+            let delta = export_updates_since(&doc, payload).map_err(map_delta_export_err)?;
+            let response =
+                protocol::encode_window_sync(window_key, window_sub_tags::UPDATE, &delta);
+            let _ = direct_tx.send(response);
         }
         _ => {
             tracing::warn!(window_key, sub_tag, "unknown WindowSync sub-tag");
@@ -287,6 +385,19 @@ async fn handle_window_sync(
     }
 
     Ok(())
+}
+
+/// Maps a delta-export error onto the protocol taxonomy.
+///
+/// Malformed inbound VV bytes (`CrdtDecodeError`) get the dedicated
+/// fail-closed `VvDecode` variant (the connection loop closes on it);
+/// anything else is an export-side failure.
+fn map_delta_export_err(e: oneiron::Error) -> ProtocolError {
+    if matches!(e, oneiron::Error::CrdtDecodeError { .. }) {
+        ProtocolError::VvDecode(e.to_string())
+    } else {
+        ProtocolError::LoroImport(e.to_string())
+    }
 }
 
 /// Rejects a BulkTransfer message from client.
@@ -395,4 +506,242 @@ pub(crate) struct BulkTombstone {
     /// Deletion request UUID (16 raw bytes) — receipt correlation (M4-06).
     #[serde(with = "serde_bytes")]
     pub request_id: Vec<u8>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::SyncServerConfig;
+    use loro::{ExportMode, LoroDoc};
+    use tokio::sync::mpsc;
+
+    fn test_server() -> (tempfile::TempDir, SyncServer) {
+        let dir = tempfile::tempdir().unwrap();
+        let vault = oneiron::Vault::open(dir.path(), oneiron::VaultConfig::device()).unwrap();
+        let server = SyncServer::new(vault, SyncServerConfig::default());
+        (dir, server)
+    }
+
+    /// Client-side stand-in window doc with the schema containers.
+    fn client_window_doc() -> LoroDoc {
+        let doc = LoroDoc::new();
+        let _ = doc.get_map("entities");
+        let _ = doc.get_map("edges");
+        let _ = doc.get_map("tombstones");
+        doc.commit();
+        doc
+    }
+
+    fn expect_window_sync(data: &[u8]) -> (String, u8, Vec<u8>) {
+        match protocol::parse_message(data).unwrap() {
+            SyncMessage::WindowSync {
+                window_key,
+                sub_tag,
+                payload,
+            } => (window_key, sub_tag, payload),
+            other => panic!("expected WindowSync, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn vv_request_sends_delta_and_vv_response() {
+        let (_dir, server) = test_server();
+        let key = "2026-03";
+
+        // Server window doc: chunky shared base + a server-only divergence.
+        let server_doc = server.get_or_create_window(key).await;
+        server_doc
+            .get_map("entities")
+            .insert("base", vec![7u8; 2048].as_slice())
+            .unwrap();
+        server_doc.commit();
+
+        // Client doc shares the base...
+        let client_doc = client_window_doc();
+        client_doc
+            .import(&server_doc.export(ExportMode::all_updates()).unwrap())
+            .unwrap();
+        // ...then the server moves ahead.
+        server_doc
+            .get_map("entities")
+            .insert("server-only", b"s".as_slice())
+            .unwrap();
+        server_doc.commit();
+
+        let (direct_tx, mut direct_rx) = mpsc::unbounded_channel::<Vec<u8>>();
+        handle_window_sync(
+            &server,
+            1,
+            key,
+            window_sub_tags::VV_REQUEST,
+            &client_doc.oplog_vv().encode(),
+            &direct_tx,
+        )
+        .await
+        .unwrap();
+
+        // Message 1: the delta — a true ExportMode::updates delta, not all_updates.
+        let (k0, sub0, delta) = expect_window_sync(&direct_rx.try_recv().unwrap());
+        assert_eq!(k0, key);
+        assert_eq!(sub0, window_sub_tags::UPDATE);
+        let server_all = server_doc.export(ExportMode::all_updates()).unwrap();
+        assert!(
+            delta.len() < server_all.len(),
+            "delta ({}) must be smaller than all_updates ({}) for the diverged case",
+            delta.len(),
+            server_all.len()
+        );
+        client_doc.import(&delta).unwrap();
+        assert_eq!(client_doc.get_deep_value(), server_doc.get_deep_value());
+
+        // Message 2: the server's VV so the client can push its local diff.
+        let (k1, sub1, vv_payload) = expect_window_sync(&direct_rx.try_recv().unwrap());
+        assert_eq!(k1, key);
+        assert_eq!(sub1, window_sub_tags::VV_RESPONSE);
+        let server_vv =
+            VersionVector::decode(&vv_payload).expect("VV_RESPONSE payload must be Loro binary VV");
+        assert_eq!(server_vv, server_doc.oplog_vv());
+
+        assert!(direct_rx.try_recv().is_err(), "exactly two messages");
+    }
+
+    #[tokio::test]
+    async fn vv_request_malformed_vv_fails_closed_no_fallback() {
+        let (_dir, server) = test_server();
+        let key = "2026-03";
+        let server_doc = server.get_or_create_window(key).await;
+        server_doc
+            .get_map("entities")
+            .insert("secret", b"data".as_slice())
+            .unwrap();
+        server_doc.commit();
+
+        let (direct_tx, mut direct_rx) = mpsc::unbounded_channel::<Vec<u8>>();
+        // The dead JSON encoding and garbage must both be rejected.
+        for payload in [&b"{}"[..], &[0xFFu8, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF][..]] {
+            let result = handle_window_sync(
+                &server,
+                1,
+                key,
+                window_sub_tags::VV_REQUEST,
+                payload,
+                &direct_tx,
+            )
+            .await;
+            assert!(
+                matches!(result, Err(ProtocolError::VvDecode(_))),
+                "malformed VV must return the typed VvDecode error"
+            );
+            assert!(
+                direct_rx.try_recv().is_err(),
+                "fail-closed: no full-export fallback may be sent for a malformed VV"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn vv_response_sends_local_diff_only() {
+        let (_dir, server) = test_server();
+        let key = "2026-04";
+        let server_doc = server.get_or_create_window(key).await;
+        server_doc
+            .get_map("entities")
+            .insert("ahead", b"x".as_slice())
+            .unwrap();
+        server_doc.commit();
+
+        let client_doc = client_window_doc();
+        let (direct_tx, mut direct_rx) = mpsc::unbounded_channel::<Vec<u8>>();
+        handle_window_sync(
+            &server,
+            1,
+            key,
+            window_sub_tags::VV_RESPONSE,
+            &client_doc.oplog_vv().encode(),
+            &direct_tx,
+        )
+        .await
+        .unwrap();
+
+        let (k, sub, delta) = expect_window_sync(&direct_rx.try_recv().unwrap());
+        assert_eq!(k, key);
+        assert_eq!(sub, window_sub_tags::UPDATE);
+        client_doc.import(&delta).unwrap();
+        assert_eq!(client_doc.get_deep_value(), server_doc.get_deep_value());
+
+        assert!(
+            direct_rx.try_recv().is_err(),
+            "VV_RESPONSE must NOT trigger another VV message (no ping-pong loop)"
+        );
+    }
+
+    #[tokio::test]
+    async fn root_vv_replies_with_delta_and_rejects_malformed() {
+        let (_dir, server) = test_server();
+
+        // Client bootstrapped from the snapshot, then the server moves ahead.
+        let client_root = LoroDoc::new();
+        client_root
+            .import(&server.export_root_snapshot().unwrap())
+            .unwrap();
+        server
+            .root_doc
+            .get_map("meta")
+            .insert("windows", "2026-03".as_bytes())
+            .unwrap();
+        server.root_doc.commit();
+
+        let (direct_tx, mut direct_rx) = mpsc::unbounded_channel::<Vec<u8>>();
+        handle_sync_message(
+            &server,
+            1,
+            SyncMessage::RootVersionVector(client_root.oplog_vv().encode()),
+            &direct_tx,
+        )
+        .await
+        .unwrap();
+
+        let msg = direct_rx.try_recv().unwrap();
+        assert_eq!(msg[0], protocol::TAG_SYNC_UPDATE);
+        client_root.import(&msg[1..]).unwrap();
+        assert_eq!(
+            client_root.get_deep_value(),
+            server.root_doc.get_deep_value()
+        );
+
+        // Malformed root VV → typed error, nothing sent.
+        let result = handle_sync_message(
+            &server,
+            1,
+            SyncMessage::RootVersionVector(b"{}".to_vec()),
+            &direct_tx,
+        )
+        .await;
+        assert!(matches!(result, Err(ProtocolError::VvDecode(_))));
+        assert!(direct_rx.try_recv().is_err());
+    }
+
+    #[test]
+    fn protocol_hello_validation_literals() {
+        // Contract literals (ONE-1127): the valid hello is EXACTLY [3, 1] and
+        // every failure closes with 4006 — assert the raw values so a drifted
+        // tag/version/close-code fails here.
+        assert!(validate_protocol_hello(&[3, 1]).is_ok());
+
+        let cases: &[(&str, &[u8])] = &[
+            ("future_version", &[3, 2]),
+            ("zero_version", &[3, 0]),
+            ("wrong_tag", &[2, 1]),
+            ("empty", &[]),
+            ("tag_only", &[3]),
+            ("trailing_bytes", &[3, 1, 0]),
+        ];
+        for (case_name, frame) in cases {
+            assert_eq!(
+                validate_protocol_hello(frame),
+                Err(4006),
+                "case {case_name}: must close with VERSION_MISMATCH (4006)"
+            );
+        }
+    }
 }
