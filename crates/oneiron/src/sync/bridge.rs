@@ -18,7 +18,7 @@ use std::sync::{Arc, Mutex};
 
 use loro::{ContainerTrait, LoroDoc, LoroMap, Subscription};
 
-use super::loro_support::{map_contains_key, map_get_bytes};
+use super::loro_support::{map_get_bytes, tombstone_map_contains_id};
 use crate::batch::{self, BatchOp, ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::store::Store;
 use crate::types::{
@@ -229,6 +229,51 @@ fn materialize_entities_from_delta(
         for (key, new_val) in &delta.updated {
             match new_val {
                 Some(loro::ValueOrContainer::Value(loro::LoroValue::Binary(blob))) => {
+                    let Ok(id) = EntityId::from_hex(key.as_ref()) else {
+                        tracing::warn!(entity = %key, "observer-b: entity invalid hex id");
+                        continue;
+                    };
+                    // ONE-1133 (ARCH-0038): a tombstone always wins over
+                    // concurrent entities-map state. A re-put merged after
+                    // the delete must never (re)materialize the body — no
+                    // further tombstone event would fire to scrub it. The
+                    // check is entity-canonical (a case-shifted hex
+                    // tombstone key still names this id). Presence is
+                    // value-agnostic (a non-binary tombstone decodes HARD
+                    // downstream).
+                    if tombstone_map_contains_id(&tombstones_map, &id) {
+                        tracing::debug!(
+                            entity = %key,
+                            "observer-b: entity update suppressed by tombstone (delete wins)"
+                        );
+                        continue;
+                    }
+                    // `dt:` local hard-delete marker gate (ONE-1122),
+                    // checked SECOND (LMDB point read) only when the map
+                    // says absent: a hostile peer that REMOVES the
+                    // tombstone and re-puts the entity key cannot resurrect
+                    // the body. A failed marker read fails CLOSED
+                    // (suppress); a refusal is the crafted-removal attack
+                    // signal, surfaced at WARN.
+                    let locally_hard_deleted =
+                        match vault.local_hard_delete_marker_exists_in_txn(wtxn, &id) {
+                            Ok(present) => present,
+                            Err(e) => {
+                                tracing::warn!(
+                                    entity = %key,
+                                    error = %e,
+                                    "observer-b: dt: marker read failed — failing closed"
+                                );
+                                true
+                            }
+                        };
+                    if locally_hard_deleted {
+                        tracing::warn!(
+                            entity = %key,
+                            "observer-b: entity locally hard-deleted (dt: marker), refusing materialization"
+                        );
+                        continue;
+                    }
                     let materialize_result = materialize_entity_blob_in_txn(
                         vault,
                         wtxn,
@@ -478,11 +523,15 @@ fn child_of_component_sort_key(component: &[PendingChildOfOp]) -> [u8; 33] {
         .expect("child-of component must be non-empty")
 }
 
-/// Materialize tombstone changes — delete entities from LMDB.
+/// Materialize tombstone changes — apply deletes to LMDB.
 ///
-/// Each tombstone triggers a delete_entity which involves multiple LMDB
-/// writes (entity + edges + indexes). These are already internally
-/// transactional via delete_entity, so we just replace the logging.
+/// ONE-1133 (ARCH-0038): each tombstone routes through the reason-aware
+/// replay primitive [`Vault::apply_replayed_tombstone`], never a bare
+/// purge. The VALUE decides the effect: a known-soft `user_delete` value
+/// keeps the 25 B shell (SoftErase + D16 refresh); every other shape —
+/// hard reasons, legacy 8-byte, reserved 0, unknown bytes, malformed,
+/// and non-binary values — hard-purges and, when local state was erased,
+/// writes the LOCAL REDACTION_AUDIT receipt and `h:` sweep row.
 fn materialize_tombstones_from_delta(
     _doc: &LoroDoc,
     delta: &loro::event::MapDelta<'_>,
@@ -490,7 +539,7 @@ fn materialize_tombstones_from_delta(
 ) {
     for (key, new_val) in &delta.updated {
         match new_val {
-            Some(_) => {
+            Some(value) => {
                 // New tombstone added
                 let id = match EntityId::from_hex(key.as_ref()) {
                     Ok(id) => id,
@@ -500,12 +549,20 @@ fn materialize_tombstones_from_delta(
                     }
                 };
 
-                let delete_result = vault.purge_entity_active_store(&id);
+                // A non-binary tombstone value has no decodable reason —
+                // it replays as the empty value, which decodes HARD
+                // (fail-closed: over-purge, never under-delete).
+                let raw_value: &[u8] = match value {
+                    loro::ValueOrContainer::Value(loro::LoroValue::Binary(blob)) => blob,
+                    _ => &[],
+                };
+
+                let delete_result = vault.apply_replayed_tombstone(&id, raw_value);
                 if let Err(e) = delete_result {
                     tracing::warn!(
                         tombstone = %key,
                         error = %e,
-                        "observer-b: tombstone delete failed"
+                        "observer-b: tombstone replay failed"
                     );
                 }
             }
@@ -534,6 +591,8 @@ fn materialize_entity_blob_in_txn(
     key: &str,
     blob: &[u8],
 ) -> Result<()> {
+    let id = EntityId::from_hex(key).map_err(|_| crate::Error::InvalidKey)?;
+
     // Tombstone gate — fires BEFORE the put, never heals after (ARCH-0023b:
     // "If tombstoned in CRDT → never resurrect"; contracts.ts
     // `user_hard_delete`: "Tombstone-first prevents sync resurrection").
@@ -542,13 +601,12 @@ fn materialize_entity_blob_in_txn(
     // so ANY later commit touching this entity key would otherwise
     // rematerialize the purged body into LMDB with no compensating purge —
     // tombstone deltas only fire when the tombstones map CHANGES.
-    // Presence is ANY-value (fail closed): non-binary tombstones gate too.
-    if map_contains_key(tombstones_map, key) {
+    // Presence is ANY-value (fail closed): non-binary tombstones gate too —
+    // and entity-canonical: a case-shifted hex key still names this id.
+    if tombstone_map_contains_id(tombstones_map, &id) {
         tracing::debug!(entity = %key, "observer-b: entity tombstoned in CRDT, skipping put");
         return Ok(());
     }
-
-    let id = EntityId::from_hex(key).map_err(|_| crate::Error::InvalidKey)?;
 
     // `dt:` local hard-delete marker gate (ONE-1122): the CRDT tombstones
     // map is MUTABLE remote input — a crafted update can REMOVE a tombstone
@@ -558,8 +616,7 @@ fn materialize_entity_blob_in_txn(
     // SECOND (LMDB point read) only when the in-memory map says absent.
     // PRESENCE-ONLY — never decode the value. Canonical lowercase hex via
     // the parsed id, so a case-shifted map key cannot dodge the point read.
-    let marker_key = crate::deletion::local_hard_delete_marker_key(&id);
-    if vault.store.sync_state.get(wtxn, &marker_key)?.is_some() {
+    if vault.local_hard_delete_marker_exists_in_txn(wtxn, &id)? {
         tracing::warn!(
             entity = %key,
             "observer-b: entity locally hard-deleted (dt: marker), refusing materialization"
@@ -618,12 +675,13 @@ fn ensure_entity_materialized_from_crdt(
     // `materialize_entity_blob_in_txn` re-checks both as the structural
     // fail-closed gate before its put.
     let hex_id = id.to_hex();
-    if map_contains_key(tombstones_map, &hex_id)
-        || vault
-            .store
-            .sync_state
-            .get(wtxn, &crate::deletion::local_hard_delete_marker_key(id))?
-            .is_some()
+    // Value-agnostic, entity-canonical tombstone presence (a non-binary
+    // tombstone decodes HARD downstream; a case-shifted hex key still
+    // names this id) OR the permanent local `dt:` marker: an edge whose
+    // endpoint was hard-deleted must not hydrate the endpoint body back
+    // into LMDB even after hostile tombstone-map manipulation.
+    if tombstone_map_contains_id(tombstones_map, id)
+        || vault.local_hard_delete_marker_exists_in_txn(wtxn, id)?
     {
         return Ok(false);
     }
@@ -750,7 +808,7 @@ mod tests {
         vault
             .store
             .sync_state
-            .get(&rtxn, &crate::deletion::local_hard_delete_marker_key(id))
+            .get(&rtxn, &crate::deletion::local_hard_delete_key(id))
             .unwrap()
             .map(<[u8]>::to_vec)
     }

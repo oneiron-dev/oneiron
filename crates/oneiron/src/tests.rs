@@ -21,7 +21,7 @@ use super::*;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, LONG_INTERVAL_THRESHOLD_SECS};
 use crate::deletion::{
     DeleteReason, HardEraseSweepExtras, LAST_HARD_ERASE_SWEEP_SEQ_KEY, RedactionScope,
-    encode_hard_erase_sweep_job, encode_hard_erase_sweep_key,
+    ReplayedTombstoneOutcome, encode_hard_erase_sweep_job, encode_hard_erase_sweep_key,
 };
 use crate::hnsw::COUNT_KEY;
 use crate::store::{
@@ -847,6 +847,348 @@ fn receipt_reason_purges_orphan_vector_with_receipt_and_sweep() -> Result<()> {
     Ok(())
 }
 
+// ═══════════════════════════════════════════════════════════════════════
+// ONE-1133 — reason-aware tombstone replay primitive
+// (`Vault::apply_replayed_tombstone`): soft = shell-preserving SoftErase,
+// hard/legacy/unknown/malformed = destructive purge + LOCAL receipt +
+// LOCAL `h:` sweep row; never-downgrade on receive; D16 in the same txn.
+// ═══════════════════════════════════════════════════════════════════════
+
+/// Builds a v2 tombstone wire value from LITERAL parts (never via the
+/// engine's encoder — these bytes are the test INPUT, and the layout under
+/// test is the pinned `[reason:1][deleted_at:8 LE][request_id:16]`).
+fn wire_tombstone(reason_byte: u8, deleted_at: u64, request_byte: u8) -> Vec<u8> {
+    let mut value = vec![reason_byte];
+    value.extend_from_slice(&deleted_at.to_le_bytes());
+    value.extend_from_slice(&[request_byte; 16]);
+    value
+}
+
+#[test]
+fn replayed_soft_tombstone_keeps_shell_and_deindexes_without_receipt_or_sweep() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let id = EntityId::now();
+    vault
+        .batch()
+        .put(&id, 1, test_time_range(10, 10), 20, b"replay-soft-secret")
+        .text(&id, &[("body", "replay-soft-secret")])
+        .commit()?;
+    vault.put_vector(&id, &[0.1, 0.2, 0.3, 0.4])?;
+    assert_eq!(vault.search_text("replay-soft-secret", 10)?.len(), 1);
+
+    // reason byte 1 = user_delete (the ONLY soft wire reason).
+    let outcome = vault.apply_replayed_tombstone(&id, &wire_tombstone(1, 1_771_027_200, 0x5A))?;
+    assert_eq!(
+        outcome,
+        ReplayedTombstoneOutcome::SoftErased { changed: true }
+    );
+
+    // Shell-preserving SoftErase: the 25 B header row SURVIVES (a hard
+    // purge of the row FAILS here), the payload and every retrieval index
+    // entry are gone.
+    let raw = vault
+        .get_raw(&id)?
+        .expect("user_delete replay must keep the 25 B shell");
+    assert_eq!(raw.len(), ENTITY_METADATA_HEADER_LEN);
+    assert_eq!(vault.get(&id)?.as_deref(), Some([].as_slice()));
+    assert!(vault.search_text("replay-soft-secret", 10)?.is_empty());
+    assert!(vault.get_vector(&id)?.is_none());
+    assert!(vault.entities_by_type(1)?.contains(&id));
+
+    // contracts.ts user_delete: receipt = false, historicalSweepQueued =
+    // false — NO local receipt, NO h: sweep row.
+    assert!(redaction_audit_receipts(&vault)?.is_empty());
+    assert!(hard_erase_sweep_rows(&vault)?.is_empty());
+
+    // Idempotent: re-applying the same soft value over the shell reports
+    // no change (every-boot forward remat must not count it forever).
+    let again = vault.apply_replayed_tombstone(&id, &wire_tombstone(1, 1_771_027_200, 0x5A))?;
+    assert_eq!(
+        again,
+        ReplayedTombstoneOutcome::SoftErased { changed: false }
+    );
+    Ok(())
+}
+
+#[test]
+fn replayed_hard_tombstone_purges_and_writes_local_receipt_and_sweep_row() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let id = EntityId::now();
+    vault
+        .batch()
+        .put(&id, 1, test_time_range(30, 30), 40, b"Alice replay secret")
+        .text(&id, &[("body", "Alice replay secret")])
+        .commit()?;
+
+    // reason byte 3 = gdpr_delete; deleted_at and request_id are literals.
+    let value = wire_tombstone(3, 1_771_027_200, 0xAB);
+    let outcome = vault.apply_replayed_tombstone(&id, &value)?;
+    let ReplayedTombstoneOutcome::HardPurged {
+        erased: true,
+        receipt_id: Some(receipt_id),
+        sweep_key: Some(sweep_key),
+    } = outcome
+    else {
+        panic!("hard replay over local state must erase + receipt + sweep, got {outcome:?}");
+    };
+
+    // Destructive purge: row AND index entries gone (a shell-keeping
+    // implementation FAILS here).
+    assert!(vault.get_raw(&id)?.is_none());
+    assert!(vault.search_text("replay", 10)?.is_empty());
+    assert!(!vault.entities_by_type(1)?.contains(&id));
+
+    // LOCAL receipt: request_id comes from the WIRE value (Art. 5(2)
+    // correlation across replicas), reason from the wire byte, requested_at
+    // from the wire deleted_at; minimization = opaque ids + timestamps only.
+    let receipt_raw = vault.get_raw(&receipt_id)?.expect("local receipt");
+    assert_no_receipt_payload_leak(&receipt_raw, &[b"Alice", b"replay secret"]);
+    let receipt = receipt_body(&receipt_raw);
+    assert_receipt_fields(&receipt);
+    assert_eq!(receipt["reason"], "gdpr_delete");
+    assert_eq!(
+        receipt["request_id"], "abababab-abab-abab-abab-abababababab",
+        "receipt request_id must be the wire value's UUID, hyphenated"
+    );
+    assert_eq!(receipt["requested_at"].as_u64(), Some(1_771_027_200));
+    assert_eq!(receipt["scope"]["entity_ids"][0], id.to_hex());
+
+    // LOCAL h:{seq:8BE} sweep row, deadline_at ≤ queued_at + 30 d
+    // (GDPR Art. 12(3) one-month anchor — the ≤30 d clock must run on THIS
+    // replica, not only on the origin device).
+    assert!(sweep_key.starts_with(b"h:"));
+    let rows = hard_erase_sweep_rows(&vault)?;
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].0, sweep_key);
+    let job: serde_json::Value = rmp_serde::from_slice(&rows[0].1).expect("decode sweep job");
+    assert_eq!(job["scope"]["entity_ids"][0], id.to_hex());
+    let queued_at = job["retry_state"]["queued_at"].as_u64().unwrap();
+    let deadline_at = job["retry_state"]["deadline_at"].as_u64().unwrap();
+    assert!(deadline_at >= queued_at);
+    assert!(deadline_at <= queued_at + 30 * 86_400);
+    assert_eq!(receipt["sweep_queued_at"].as_u64(), Some(queued_at));
+
+    // Idempotent: nothing local remains, so re-applying the same tombstone
+    // is a receipt-free no-op (every-boot replay must not multiply
+    // receipts or sweep rows on one replica).
+    let again = vault.apply_replayed_tombstone(&id, &value)?;
+    assert_eq!(
+        again,
+        ReplayedTombstoneOutcome::HardPurged {
+            erased: false,
+            receipt_id: None,
+            sweep_key: None,
+        }
+    );
+    assert_eq!(redaction_audit_receipts(&vault)?.len(), 1);
+    assert_eq!(hard_erase_sweep_rows(&vault)?.len(), 1);
+    Ok(())
+}
+
+/// Every non-soft wire shape — legacy 8-byte, reserved byte 0, unknown
+/// reason byte, malformed length — replays as a DESTRUCTIVE purge
+/// (fail-closed: ambiguity resolves to MORE deletion, never less), with the
+/// pinned receipt fallbacks: reason = `user_hard_delete` (the engine's
+/// destructive default) and request_id = the wire UUID when the value
+/// carried one, else the NIL UUID (never a fabricated identifier).
+#[test]
+fn replayed_ambiguous_tombstones_hard_purge_with_fail_closed_receipt() -> Result<()> {
+    struct Case {
+        name: &'static str,
+        value: Vec<u8>,
+        want_request_id: &'static str,
+        want_requested_at: u64,
+    }
+    let cases = [
+        Case {
+            name: "legacy 8-byte",
+            value: 1_771_000_000_u64.to_le_bytes().to_vec(),
+            want_request_id: "00000000-0000-0000-0000-000000000000",
+            want_requested_at: 1_771_000_000,
+        },
+        Case {
+            name: "reserved byte 0",
+            value: wire_tombstone(0, 1_771_000_111, 0x11),
+            want_request_id: "11111111-1111-1111-1111-111111111111",
+            want_requested_at: 1_771_000_111,
+        },
+        Case {
+            name: "unknown reason byte 9",
+            value: wire_tombstone(9, 1_771_000_222, 0x22),
+            want_request_id: "22222222-2222-2222-2222-222222222222",
+            want_requested_at: 1_771_000_222,
+        },
+        Case {
+            name: "malformed 26-byte",
+            value: vec![7_u8; 26],
+            want_request_id: "00000000-0000-0000-0000-000000000000",
+            want_requested_at: 0,
+        },
+    ];
+
+    for case in cases {
+        let (_dir, vault) = open_test_vault();
+        let id = EntityId::now();
+        vault.put_entity(&id, 1, test_time_range(50, 50), 60, b"ambiguous-target")?;
+
+        let outcome = vault.apply_replayed_tombstone(&id, &case.value)?;
+        let ReplayedTombstoneOutcome::HardPurged {
+            erased: true,
+            receipt_id: Some(receipt_id),
+            sweep_key: Some(_),
+        } = outcome
+        else {
+            panic!(
+                "{}: must hard-purge with receipt, got {outcome:?}",
+                case.name
+            );
+        };
+        assert!(vault.get_raw(&id)?.is_none(), "{}", case.name);
+
+        let receipt = receipt_body(&vault.get_raw(&receipt_id)?.expect("receipt"));
+        assert_eq!(receipt["reason"], "user_hard_delete", "{}", case.name);
+        assert_eq!(receipt["request_id"], case.want_request_id, "{}", case.name);
+        assert_eq!(
+            receipt["requested_at"].as_u64(),
+            Some(case.want_requested_at),
+            "{}",
+            case.name
+        );
+        assert_eq!(hard_erase_sweep_rows(&vault)?.len(), 1, "{}", case.name);
+    }
+    Ok(())
+}
+
+/// Never-downgrade on receive: a SOFT tombstone replayed for an id this
+/// replica already hard-purged is a strict no-op — it must NOT recreate a
+/// shell, mint a receipt, or queue a sweep row.
+#[test]
+fn replayed_soft_tombstone_after_hard_purge_is_noop() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let id = EntityId::now();
+    vault.put_entity(&id, 1, test_time_range(70, 70), 80, b"downgrade-target")?;
+
+    // Hard apply first (reason byte 2 = user_hard_delete).
+    let hard = vault.apply_replayed_tombstone(&id, &wire_tombstone(2, 1_771_100_000, 0xDD))?;
+    assert!(hard.changed_local_state());
+    assert!(vault.get_raw(&id)?.is_none());
+    assert_eq!(redaction_audit_receipts(&vault)?.len(), 1);
+    assert_eq!(hard_erase_sweep_rows(&vault)?.len(), 1);
+
+    // Stale/concurrent soft value arrives after the hard purge.
+    let soft = vault.apply_replayed_tombstone(&id, &wire_tombstone(1, 1_771_200_000, 0x99))?;
+    assert_eq!(
+        soft,
+        ReplayedTombstoneOutcome::SoftErased { changed: false }
+    );
+    assert!(
+        vault.get_raw(&id)?.is_none(),
+        "a replayed soft tombstone must never resurrect a shell for a hard-purged id"
+    );
+    assert_eq!(redaction_audit_receipts(&vault)?.len(), 1);
+    assert_eq!(hard_erase_sweep_rows(&vault)?.len(), 1);
+    assert!(!vault.entities_by_type(1)?.contains(&id));
+    Ok(())
+}
+
+/// ARCH-0038 D16 on the REPLAY path (the M2-flagged replica staleness bug):
+/// a replayed tombstone on an `edge.provenance` Claim refreshes the subject
+/// edge in the SAME transaction — winner restamp on hard, downgrade-to-bare
+/// when the soft erase scrubs the last live Claim. The sweep row carries the
+/// pre-purge captured opaque refs.
+#[test]
+fn replayed_tombstone_on_provenance_claim_runs_d16_refresh() -> Result<()> {
+    let fx = lifecycle_fixture()?;
+    let vault = &fx.vault;
+    let subject = fx.subject;
+    let person2 = EntityId::now();
+    vault.put_entity(&person2, 4, test_time_range(1, 1), 1, b"person2")?;
+
+    // Live tie cohort @ learned_at 2000: `winner` (conf 0.6,
+    // confirmed/system) outranks `runner_up` (conf 0.4, disputed/agent).
+    let winner = EntityId::now();
+    let mut winner_body =
+        EdgeProvenanceClaimBody::new(fx.machine, 0.6, SupersessionStatus::Confirmed);
+    winner_body.source_revision_ref = Some([0x61; 16]);
+    winner_body.body_snapshot_ref = Some([0x62; 16]);
+    vault.put_edge_provenance(
+        &winner,
+        &subject,
+        &winner_body,
+        EdgeActorClass::System,
+        2_000,
+    )?;
+    let runner_up = EntityId::now();
+    vault.put_edge_provenance(
+        &runner_up,
+        &subject,
+        &EdgeProvenanceClaimBody::new(person2, 0.4, SupersessionStatus::Disputed),
+        EdgeActorClass::Agent,
+        2_000,
+    )?;
+    let (before, _) = raw_edge_values(vault, &subject)?;
+    let before = before.expect("stamped edge");
+    assert_eq!((before[24], before[25]), (1, 2), "winner stamps pre-replay");
+
+    // Remote HARD tombstone for the WINNER claim: purge + D16 restamp from
+    // the surviving runner-up in the same txn. A bare-purge replay (the
+    // pre-ONE-1133 behavior) leaves the stale (1, 2) stamp and FAILS here.
+    let outcome =
+        vault.apply_replayed_tombstone(&winner, &wire_tombstone(2, 1_771_300_000, 0xC1))?;
+    assert!(outcome.changed_local_state());
+    assert!(vault.get(&winner)?.is_none(), "claim entity hard-purged");
+    let (out, inn) = raw_edge_values(vault, &subject)?;
+    let out = out.expect("edges_out row survives the claim replay");
+    assert_eq!(out.len(), EDGE_VALUE_SEMANTIC_PROVENANCED_LEN);
+    assert_eq!(
+        (out[24], out[25]),
+        (2, 1),
+        "restamped from the surviving runner-up (disputed/agent)"
+    );
+    assert_eq!(&out[..24], &before[..24], "first 24 bytes preserved");
+    assert_eq!(inn.as_deref(), Some(out.as_slice()));
+
+    // The queued sweep row rode the PRE-purge captured opaque refs
+    // (ARCH-0038 delete-interplay: refs are only readable before the purge).
+    let rows = hard_erase_sweep_rows(vault)?;
+    assert_eq!(rows.len(), 1);
+    let job: serde_json::Value = rmp_serde::from_slice(&rows[0].1).expect("decode sweep job");
+    assert_eq!(
+        job["scope"]["revision_ids"][0],
+        crate::types::bytes_to_hex_lower(&[0x61; 16])
+    );
+    assert_eq!(
+        job["scope"]["body_snapshot_refs"][0],
+        crate::types::bytes_to_hex_lower(&[0x62; 16])
+    );
+
+    // Remote SOFT tombstone for the RUNNER-UP: shell + D16 downgrade-to-bare
+    // (no live Claim of any lifecycle survives) — still no NEW receipt.
+    let outcome =
+        vault.apply_replayed_tombstone(&runner_up, &wire_tombstone(1, 1_771_300_100, 0xC2))?;
+    assert_eq!(
+        outcome,
+        ReplayedTombstoneOutcome::SoftErased { changed: true }
+    );
+    assert_eq!(
+        vault.get(&runner_up)?.as_deref(),
+        Some([].as_slice()),
+        "soft replay keeps the 25 B Claim shell"
+    );
+    let (out, inn) = raw_edge_values(vault, &subject)?;
+    let out = out.expect("edges_out row survives");
+    assert_eq!(out.len(), EDGE_VALUE_SEMANTIC_LEN, "26 B → 24 B downgrade");
+    assert_eq!(out.as_slice(), &before[..24]);
+    assert_eq!(inn.as_deref(), Some(out.as_slice()));
+    assert_eq!(
+        redaction_audit_receipts(vault)?.len(),
+        1,
+        "the soft replay must not mint a second receipt"
+    );
+    assert_eq!(hard_erase_sweep_rows(vault)?.len(), 1);
+    Ok(())
+}
+
 /// ONE-1090 write side (ONE-1132 AC3) — CONTRACT CORRECTION: replaces
 /// `user_delete_soft_shell_survives_sync_rematerialization`, which pinned
 /// the pre-ONE-1090 gap where a soft delete left NO CRDT record at all (so
@@ -856,9 +1198,9 @@ fn receipt_reason_purges_orphan_vector_with_receipt_and_sweep() -> Result<()> {
 /// window doc and removes the live `entities[id]` map copy (the full body
 /// bytes in that map are an ACTIVE carrier of content the user deleted).
 /// Local shell semantics are unchanged: the body scrub keeps the 25 B
-/// shell. The receiver-side soft/hard branch is ONE-1133; until it lands a
-/// receiver treats every tombstone as hard — fail-closed over-purge, never
-/// resurrection.
+/// shell. The receiver-side soft/hard branch is ONE-1133
+/// (`Vault::apply_replayed_tombstone`): a known-soft value keeps the remote
+/// replica's 25 B shell; everything else stays a fail-closed hard purge.
 #[cfg(feature = "sync")]
 #[test]
 fn user_delete_writes_soft_v2_tombstone_into_crdt() -> Result<()> {

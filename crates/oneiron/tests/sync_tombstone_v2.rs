@@ -383,6 +383,58 @@ fn hard_delete_upgrades_existing_soft_tombstone() {
     assert!(decoded.is_hard());
 }
 
+/// Edge sweep keys off the EFFECTIVE hardness, not the incoming value's:
+/// a soft tombstone arriving over an effective hard one is REJECTED by
+/// never-downgrade, but a carrier edge a peer re-added since the original
+/// hard sweep must still be swept in that apply — a rejected downgrade must
+/// not leave live carrier edges behind (delete semantics never weaken).
+#[test]
+fn rejected_soft_over_effective_hard_sweeps_readded_carrier_edges() {
+    let doc = LoroDoc::new();
+    let id = EntityId::now();
+    let nbr = EntityId::now();
+
+    // Effective HARD tombstone.
+    let mut hard = vec![2_u8]; // user_hard_delete
+    hard.extend_from_slice(&1_771_000_000_u64.to_le_bytes());
+    hard.extend_from_slice(&[0xDD; 16]);
+    apply_tombstone_to_window_doc(&doc, &id, &hard).unwrap();
+    doc.commit();
+
+    // A peer that missed the delete re-adds a carrier edge.
+    let edge_key = format_edge_key(&id, EdgeKind::Supports, &nbr);
+    let edge_val = encode_edge_value_for_crdt(
+        EdgeKind::Supports,
+        0.5,
+        LEARNED_AT,
+        Some(Vad::NEUTRAL),
+        None,
+    )
+    .unwrap();
+    doc.get_map("edges")
+        .insert(edge_key.as_str(), edge_val.as_slice())
+        .unwrap();
+    doc.commit();
+
+    // A SOFT value arrives over the effective hard tombstone…
+    let mut soft = vec![1_u8]; // user_delete
+    soft.extend_from_slice(&1_771_100_000_u64.to_le_bytes());
+    soft.extend_from_slice(&[0xEE; 16]);
+    apply_tombstone_to_window_doc(&doc, &id, &soft).unwrap();
+    doc.commit();
+
+    // …the downgrade is rejected (hard bytes untouched)…
+    let value = map_get_bytes(&doc.get_map("tombstones"), &id.to_hex())
+        .expect("tombstone must still exist");
+    assert_eq!(value.as_slice(), hard.as_slice(), "never-downgrade holds");
+
+    // …but the re-added carrier edge is swept anyway.
+    assert!(
+        doc.get_map("edges").get(&edge_key).is_none(),
+        "a rejected soft over an effective hard must still sweep carrier edges"
+    );
+}
+
 /// AC6: a headerless residue (orphan vector, no entities row) previously
 /// left NO CRDT record — the orphan id could re-sync forever. It now mints
 /// a v2 tombstone under `WindowKey::from_timestamp(now)` — a propagation

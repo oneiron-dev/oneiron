@@ -507,7 +507,10 @@ fn forward_rematerialize_restores_lmdb_entities_edges_and_tombstones() {
         window::forward_rematerialize(&vault_b, &recovered_doc, &materializer_b).unwrap();
     assert_eq!(
         rematerialized, 4,
-        "three live entity rows + one edge; the tombstoned entity must never be written (not even transiently), so no purge runs either"
+        "should rebuild three entity rows and one edge; the tombstoned id is \
+         gated out of the entity pass (never rebuilt-then-purged — that churn \
+         multiplied receipts on every boot) and its tombstone replay is a \
+         receipt-free no-op (already purged on the live path)"
     );
 
     assert_eq!(

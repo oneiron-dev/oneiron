@@ -731,11 +731,33 @@ fn remat_gates_fail_closed_on_non_binary_tombstone() {
     assert!(map_get_bytes(&edges, &format_edge_key(&s, EdgeKind::Mentions, &e2)).is_none());
 
     // forward remat: the entity pass must not write E3's differing CRDT
-    // body and the edge pass must not add S→E3. (The Binary-only tombstone
-    // PURGE iterator is ONE-1133's fix — no purge is asserted here.)
+    // body and the edge pass must not add S→E3. ONE-1133's reason-aware
+    // tombstone replay now SEES non-binary tombstones (empty slice decodes
+    // HARD — fail closed), so the two string-tombstoned survivors are
+    // hard-purged: the only writes are delete propagation, never
+    // resurrection.
     let materializer = Materializer::new();
     let written = window::forward_rematerialize(&vault, &doc, &materializer).unwrap();
-    assert_eq!(written, 0, "no write may pass a non-binary tombstone gate");
-    assert_eq!(vault.get(&e3).unwrap().as_deref(), Some(b"old".as_slice()));
+    assert_eq!(
+        written, 2,
+        "exactly two writes: the string-tombstoned survivors hard-purged \
+         by the reason-aware replay (non-binary decodes HARD); no write may \
+         pass a non-binary tombstone gate"
+    );
+    assert!(
+        vault.get_raw(&e3).unwrap().is_none(),
+        "E3's stale row is purged — and the differing CRDT body must never \
+         have been written back"
+    );
+    assert!(
+        vault.get_raw(&e2).unwrap().is_none(),
+        "E2's surviving row is purged by the fail-closed hard replay"
+    );
     assert!(!vault.edge_exists(&s, EdgeKind::Mentions, &e3).unwrap());
+
+    let second_pass = window::forward_rematerialize(&vault, &doc, &materializer).unwrap();
+    assert_eq!(
+        second_pass, 0,
+        "replay is idempotent — nothing local remains to erase"
+    );
 }
