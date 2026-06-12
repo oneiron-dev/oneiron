@@ -497,7 +497,7 @@ fn fast_reconnect_reuses_persisted_sv_without_doc_load_when_svf_fresh() {
         )
         .unwrap();
     window.doc.commit();
-    let expected_vv: serde_json::Value = serde_json::to_value(window.doc.oplog_vv()).unwrap();
+    let expected_vv = window.doc.oplog_vv();
     drop(window);
     assert!(manager_a.unload_window(&current).unwrap());
     assert_eq!(
@@ -523,7 +523,12 @@ fn fast_reconnect_reuses_persisted_sv_without_doc_load_when_svf_fresh() {
         let (key, sub_tag, payload) = transport::decode_window_sync(&msg[1..]).unwrap();
         if key == current.as_str() {
             assert_eq!(sub_tag, window_sub_tags::VV_REQUEST);
-            found = Some(serde_json::from_slice::<serde_json::Value>(payload).unwrap());
+            // ONE-1127: wire VVs are Loro binary `VersionVector::encode()`
+            // bytes — the JSON VV encoding is dead.
+            found = Some(
+                VersionVector::decode(payload)
+                    .expect("VV_REQUEST payload must be Loro binary VV (ONE-1127)"),
+            );
         }
     }
     assert_eq!(

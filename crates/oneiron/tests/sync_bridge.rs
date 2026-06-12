@@ -678,12 +678,18 @@ fn sync_client_handle_server_message_dispatch() {
 
     let build_root_vv = |client: &mut SyncClient| -> Vec<u8> {
         let initial_sync = client.generate_initial_sync();
-        let vv_message = initial_sync
-            .first()
+        // ONE-1127: the FIRST frame is now the protocol hello [3, 1]; the
+        // root VV (Loro binary encoding) follows it.
+        assert_eq!(
+            initial_sync.first().map(Vec::as_slice),
+            Some(&[3u8, 1u8][..]),
+            "initial sync must lead with the protocol hello"
+        );
+        initial_sync
+            .iter()
+            .find(|m| m.first().copied() == Some(ROOT_VV_TAG))
             .expect("initial sync should include root VV")
-            .clone();
-        assert_eq!(vv_message.first().copied(), Some(ROOT_VV_TAG));
-        vv_message
+            .clone()
     };
     let build_empty = |_client: &mut SyncClient| -> Vec<u8> { Vec::new() };
     let build_unknown = |_client: &mut SyncClient| -> Vec<u8> { vec![222] };
@@ -728,16 +734,25 @@ fn sync_client_handle_server_message_dispatches_window_sync() {
     let vault = Arc::new(Vault::open(temp.path(), test_config()).unwrap());
     let (mut client, _rx) = make_client(&vault);
 
-    let message = transport::encode_window_sync("2026-03", window_sub_tags::VV_REQUEST, &[]);
+    // ONE-1127: VV_REQUEST payloads are Loro binary VV bytes, and the reply
+    // is [UPDATE delta, VV_RESPONSE own-VV] instead of a full export.
+    let server_vv = loro::VersionVector::new().encode();
+    let message = transport::encode_window_sync("2026-03", window_sub_tags::VV_REQUEST, &server_vv);
     let responses = client.handle_server_message(&message).unwrap();
 
     assert!(client.window("2026-03").is_some());
-    assert_eq!(responses.len(), 1);
+    assert_eq!(responses.len(), 2);
     assert_eq!(responses[0][0], TAG_WINDOW_SYNC);
     let (window_key, sub_tag, _payload) =
         transport::decode_window_sync(&responses[0][1..]).unwrap();
     assert_eq!(window_key, "2026-03");
     assert_eq!(sub_tag, window_sub_tags::UPDATE);
+
+    let (window_key, sub_tag, vv_payload) =
+        transport::decode_window_sync(&responses[1][1..]).unwrap();
+    assert_eq!(window_key, "2026-03");
+    assert_eq!(sub_tag, window_sub_tags::VV_RESPONSE);
+    loro::VersionVector::decode(vv_payload).expect("VV_RESPONSE payload must be binary VV");
 }
 
 #[test]

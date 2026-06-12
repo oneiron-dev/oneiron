@@ -11,7 +11,9 @@ pub(crate) use oneiron::sync::{
 };
 
 // Re-export tag constants from shared transport (avoid redefinition).
-pub(crate) use oneiron::sync::transport::{TAG_AWARENESS, TAG_SYNC_UPDATE, TAG_VERSION_VECTOR};
+pub(crate) use oneiron::sync::transport::{
+    PROTOCOL_VERSION, TAG_AWARENESS, TAG_SYNC_UPDATE, TAG_VERSION_VECTOR, decode_protocol_hello,
+};
 
 /// Sub-tags within WindowSync messages.
 pub(crate) mod window_sub_tags {
@@ -136,6 +138,7 @@ fn transport_err_msg(e: oneiron::sync::TransportError) -> &'static str {
         oneiron::sync::TransportError::InvalidPayload(msg) => msg,
         oneiron::sync::TransportError::UnknownTag(_) => "unknown tag",
         oneiron::sync::TransportError::FrameTooLarge { .. } => "frame too large",
+        oneiron::sync::TransportError::VersionVectorDecode => "version vector decode failure",
         oneiron::sync::TransportError::WebSocket(_) => "websocket error",
         oneiron::sync::TransportError::ConnectionClosed => "connection closed",
         oneiron::sync::TransportError::Storage(_) => "storage error",
@@ -168,6 +171,11 @@ pub(crate) enum ProtocolError {
     BulkTransferDecode,
     #[error("loro import error: {0}")]
     LoroImport(String),
+    /// Inbound version-vector bytes failed Loro binary decoding.
+    /// Fail-closed: the connection is dropped, NEVER answered with a
+    /// full export as if the VV were empty (ONE-1127).
+    #[error("version vector decode failure: {0}")]
+    VvDecode(String),
 }
 
 /// WebSocket close codes per ARCH-023 section 3.5.
@@ -183,6 +191,9 @@ pub(crate) mod close_codes {
     pub(crate) const FRAME_TOO_LARGE: u16 = 4004;
     /// BulkTransfer decompression/decode failure.
     pub(crate) const BULK_DECODE_FAILURE: u16 = 4005;
+    /// Protocol-version hello mismatch, missing, malformed, or timed out
+    /// (ONE-1127). Sent BEFORE any sync payload flows.
+    pub(crate) const VERSION_MISMATCH: u16 = 4006;
 }
 
 #[cfg(test)]

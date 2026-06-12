@@ -12,8 +12,26 @@ use crate::sync::types::parse_window_key_str;
 pub const TAG_SYNC_UPDATE: u8 = 0;
 /// Custom awareness state (JSON-encoded).
 pub const TAG_AWARENESS: u8 = 1;
-/// Serialized VersionVector for sync negotiation.
+/// Loro binary `VersionVector::encode()` bytes for sync negotiation.
 pub const TAG_VERSION_VECTOR: u8 = 2;
+/// Protocol-version hello: `[TAG_PROTOCOL_HELLO:1][version:1]`.
+///
+/// The client's FIRST frame on every connection. The server checks the
+/// version byte and closes with a 4xxx code on mismatch, so the NEXT wire
+/// break is detectable instead of surfacing as garbled decode errors
+/// mid-sync (ONE-1127).
+pub const TAG_PROTOCOL_HELLO: u8 = 3;
+
+/// Current sync wire-protocol version.
+///
+/// Bump on any wire break (tag layout, payload encoding, VV encoding).
+/// v1 = binary Loro VVs + delta export + protocol hello (ONE-1127).
+pub const PROTOCOL_VERSION: u8 = 1;
+
+/// Shared 8 MB cap for decoded payloads: bulk-transfer decompression and
+/// root-doc imports both refuse anything larger (decompression-bomb /
+/// memory-exhaustion guard).
+pub const MAX_DECODED_PAYLOAD_BYTES: usize = 8 * 1024 * 1024;
 
 /// WindowSync: `[window_key_len:1][window_key][sub_tag:1][payload]`.
 pub const TAG_WINDOW_SYNC: u8 = 10;
@@ -36,6 +54,30 @@ pub mod window_sub_tags {
 pub const MAX_WINDOW_KEY_LEN: usize = 7;
 
 // ─── Wire Format Encoding ─────────────────────────────────────────────────────
+
+/// Encodes the protocol-version hello frame.
+///
+/// Format: `[TAG_PROTOCOL_HELLO:1][PROTOCOL_VERSION:1]` — exactly 2 bytes.
+pub fn encode_protocol_hello() -> Vec<u8> {
+    vec![TAG_PROTOCOL_HELLO, PROTOCOL_VERSION]
+}
+
+/// Decodes a protocol-version hello frame (the FULL frame, tag included).
+///
+/// Returns the peer's protocol version byte. Rejects anything that is not
+/// exactly `[TAG_PROTOCOL_HELLO, version]` — version comparison is the
+/// caller's job (the decoder must surface a mismatched version, not hide it).
+pub fn decode_protocol_hello(frame: &[u8]) -> Result<u8, TransportError> {
+    if frame.len() != 2 {
+        return Err(TransportError::InvalidPayload(
+            "protocol hello must be exactly 2 bytes",
+        ));
+    }
+    if frame[0] != TAG_PROTOCOL_HELLO {
+        return Err(TransportError::InvalidPayload("not a protocol hello"));
+    }
+    Ok(frame[1])
+}
 
 /// Encodes a WindowSync message for the wire.
 ///
@@ -240,6 +282,9 @@ pub enum TransportError {
         size: usize,
         max: usize,
     },
+    /// Inbound version-vector bytes failed Loro binary decoding.
+    /// Fail-closed: malformed VVs are NEVER treated as an empty VV.
+    VersionVectorDecode,
     WebSocket(String),
     ConnectionClosed,
     /// Engine/storage failure surfaced at the transport boundary (LMDB
@@ -254,6 +299,7 @@ impl std::fmt::Display for TransportError {
             Self::InvalidPayload(msg) => write!(f, "invalid payload: {msg}"),
             Self::UnknownTag(tag) => write!(f, "unknown tag: {tag}"),
             Self::FrameTooLarge { size, max } => write!(f, "frame too large: {size} (max {max})"),
+            Self::VersionVectorDecode => write!(f, "version vector decode failure"),
             Self::WebSocket(msg) => write!(f, "websocket error: {msg}"),
             Self::ConnectionClosed => write!(f, "connection closed"),
             Self::Storage(msg) => write!(f, "storage error: {msg}"),
@@ -266,6 +312,45 @@ impl std::error::Error for TransportError {}
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn protocol_hello_wire_literals() {
+        // Contract literals (ONE-1127): the hello frame is EXACTLY
+        // [TAG_PROTOCOL_HELLO=3, PROTOCOL_VERSION=1]. A drifted tag or
+        // version byte is a silent wire break — assert the raw bytes.
+        assert_eq!(TAG_PROTOCOL_HELLO, 3, "hello tag byte is pinned to 3");
+        assert_eq!(PROTOCOL_VERSION, 1, "wire protocol version is pinned to 1");
+        assert_eq!(encode_protocol_hello(), vec![3u8, 1u8]);
+    }
+
+    #[test]
+    fn protocol_hello_decode_roundtrip() {
+        let frame = encode_protocol_hello();
+        assert_eq!(decode_protocol_hello(&frame).unwrap(), PROTOCOL_VERSION);
+        // A future-version peer's hello must still DECODE (the caller
+        // compares versions and closes) — decode returns the raw byte.
+        assert_eq!(decode_protocol_hello(&[TAG_PROTOCOL_HELLO, 7]).unwrap(), 7);
+    }
+
+    #[test]
+    fn protocol_hello_decode_rejects_malformed_frames() {
+        // (case_name, frame)
+        let cases: &[(&str, &[u8])] = &[
+            ("empty", &[]),
+            ("tag_only", &[TAG_PROTOCOL_HELLO]),
+            ("trailing_bytes", &[TAG_PROTOCOL_HELLO, PROTOCOL_VERSION, 0]),
+            ("wrong_tag", &[TAG_VERSION_VECTOR, PROTOCOL_VERSION]),
+        ];
+        for (case_name, frame) in cases {
+            assert!(
+                matches!(
+                    decode_protocol_hello(frame),
+                    Err(TransportError::InvalidPayload(_))
+                ),
+                "case {case_name}: expected InvalidPayload"
+            );
+        }
+    }
 
     #[test]
     fn window_sync_roundtrip() {
