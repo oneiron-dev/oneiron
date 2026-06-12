@@ -222,7 +222,8 @@ fn sync_ships_all_edge_kinds_and_context_pack_walk_gates_at_read_time() {
 
     let snapshot = doc.export(ExportMode::Snapshot).unwrap();
     let doc_b = LoroDoc::from_snapshot(&snapshot).unwrap();
-    let restored = window::forward_rematerialize(&vault_b, &doc_b, &materializer).unwrap();
+    let restored =
+        window::forward_rematerialize(&vault_b, &doc_b, &materializer, &window_key).unwrap();
     assert_eq!(restored, 9, "five entities + four edges");
 
     assert!(

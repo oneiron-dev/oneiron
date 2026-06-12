@@ -220,7 +220,7 @@ impl WindowManager {
         let pending_tombstones = replay_pending_tombstones(&self.vault, &doc, key)?;
         let replayed = replay_pending_mirrors(&self.vault, &doc, key)?;
         let mirrored = reverse_rematerialize(&self.vault, &doc, key)?;
-        let materialized = forward_rematerialize(&self.vault, &doc, &self.materializer)?;
+        let materialized = forward_rematerialize(&self.vault, &doc, &self.materializer, key)?;
         tracing::debug!(
             window = %key,
             pending_tombstones,

@@ -389,11 +389,11 @@ fn forward_rematerialize_materializes_entities_with_single_read_snapshot() {
     map_insert_bytes(&entities, hex_id.as_str(), &blob);
     doc.commit();
 
-    let materialized = window::forward_rematerialize(&vault, &doc, &materializer).unwrap();
+    let materialized = window::forward_rematerialize(&vault, &doc, &materializer, &key).unwrap();
     assert_eq!(materialized, 1);
     assert_eq!(vault.get(&id).unwrap().unwrap(), b"forward-remat");
 
-    let unchanged = window::forward_rematerialize(&vault, &doc, &materializer).unwrap();
+    let unchanged = window::forward_rematerialize(&vault, &doc, &materializer, &key).unwrap();
     assert_eq!(unchanged, 0);
 }
 
@@ -412,7 +412,7 @@ fn forward_rematerialize_deduplicates_same_entity_aliases() {
     map_insert_bytes(&entities, id.to_hex().to_uppercase().as_str(), &blob);
     doc.commit();
 
-    let materialized = window::forward_rematerialize(&vault, &doc, &materializer).unwrap();
+    let materialized = window::forward_rematerialize(&vault, &doc, &materializer, &key).unwrap();
     assert_eq!(materialized, 1);
     assert_eq!(vault.get(&id).unwrap().unwrap(), b"alias");
 }
@@ -477,7 +477,7 @@ fn forward_rematerialize_restores_lmdb_entities_edges_and_tombstones() {
     let materializer = Arc::new(Materializer::new());
 
     let key = WindowKey::new("2026-03");
-    let window = LoadedWindow::new("test-user", key, &vault, &materializer);
+    let window = LoadedWindow::new("test-user", key.clone(), &vault, &materializer);
     let learned_at = 1_772_400_000u64;
 
     let src = EntityId::now();
@@ -517,7 +517,7 @@ fn forward_rematerialize_restores_lmdb_entities_edges_and_tombstones() {
     let materializer_b = Materializer::new();
 
     let rematerialized =
-        window::forward_rematerialize(&vault_b, &recovered_doc, &materializer_b).unwrap();
+        window::forward_rematerialize(&vault_b, &recovered_doc, &materializer_b, &key).unwrap();
     assert_eq!(
         rematerialized, 4,
         "should rebuild three entity rows and one edge; the tombstoned id is \
@@ -549,7 +549,8 @@ fn forward_rematerialize_restores_lmdb_entities_edges_and_tombstones() {
 
     // ARCH-0023b recovery is idempotent: a second pass over the same doc
     // performs zero LMDB writes.
-    let second = window::forward_rematerialize(&vault_b, &recovered_doc, &materializer_b).unwrap();
+    let second =
+        window::forward_rematerialize(&vault_b, &recovered_doc, &materializer_b, &key).unwrap();
     assert_eq!(second, 0, "second forward pass must perform zero writes");
 }
 
@@ -865,7 +866,8 @@ fn redaction_audit_receipt_survives_crdt_sync_round_trip() {
     let temp_b = tempfile::tempdir().unwrap();
     let vault_b = Vault::open(temp_b.path(), test_config()).unwrap();
     let materializer = Materializer::new();
-    let restored = window::forward_rematerialize(&vault_b, &doc_b, &materializer).unwrap();
+    let restored =
+        window::forward_rematerialize(&vault_b, &doc_b, &materializer, &window_key).unwrap();
     assert!(
         restored >= 1,
         "forward rematerialize must write the receipt back into LMDB"
@@ -1027,7 +1029,8 @@ fn edge_provenance_claim_survives_crdt_sync_round_trip() {
     let temp_b = tempfile::tempdir().unwrap();
     let vault_b = Vault::open(temp_b.path(), test_config()).unwrap();
     let materializer = Materializer::new();
-    let restored = window::forward_rematerialize(&vault_b, &doc_b, &materializer).unwrap();
+    let restored =
+        window::forward_rematerialize(&vault_b, &doc_b, &materializer, &window_key).unwrap();
     assert!(
         restored >= 4,
         "forward rematerialize must restore entities and edges (got {restored})"
