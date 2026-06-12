@@ -17,9 +17,12 @@
 //! the pinned grammar (≥2 segments of `[a-z][a-z0-9_]*` joined by `.`, total
 //! ≤128 bytes) or the write fails with [`Error::InvalidPredicate`]. The
 //! `edge.*` namespace is reserved for the engine's provenance Claims: public
-//! writes are rejected with [`Error::ReservedPredicate`]; the only door is
-//! the `pub(crate)` reserved-namespace path used by the provenance unit
-//! (`TxnBatchBuilder::put_reserved_claim`). Well-formed UNKNOWN predicates
+//! writes are rejected with [`Error::ReservedPredicate`]; the doors are the
+//! `pub(crate)` reserved-namespace path used by the provenance unit
+//! (`TxnBatchBuilder::put_reserved_claim`) and, under the `sync` feature,
+//! the replicated-put door (`put_replicated`) used by CRDT replay so remote
+//! provenance Claims rematerialize — both still run this full structural
+//! validation. Well-formed UNKNOWN predicates
 //! are accepted — the crate is predicate-agnostic for semantics (ARCH-0003
 //! §G.1); no predicate registry, consent matrix, or conflict-set logic lives
 //! here.
@@ -347,8 +350,11 @@ impl ClaimBody {
 /// When `allow_reserved` is `false` (every public write path), well-formed
 /// predicates in the reserved `edge.*` namespace are rejected with
 /// [`Error::ReservedPredicate`]. The provenance unit writes through the
-/// `pub(crate)` door which sets `allow_reserved` to `true`; reads always
-/// allow reserved predicates so stored provenance Claims stay decodable.
+/// `pub(crate)` door which sets `allow_reserved` to `true`, as does the
+/// sync-replay door (`put_replicated`) so replicated provenance Claims
+/// rematerialize; reads always allow reserved predicates so stored
+/// provenance Claims stay decodable. `allow_reserved` skips ONLY this
+/// reserved-namespace arm — the grammar checks above run unconditionally.
 pub(crate) fn validate_predicate(predicate: &str, allow_reserved: bool) -> Result<()> {
     if predicate.len() > MAX_PREDICATE_BYTES {
         return Err(Error::InvalidPredicate {

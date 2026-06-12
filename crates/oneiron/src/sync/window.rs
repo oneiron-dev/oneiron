@@ -350,14 +350,17 @@ pub fn forward_rematerialize(
             } else {
                 &[]
             };
-            // Internal put: the CRDT mirror is unfiltered, so the maintenance
-            // band (REDACTION_AUDIT = 120) reaches here on the way back into
-            // LMDB. Routing through the public gate would silently drop GDPR
-            // receipts on cross-node sync / replay; `put_internal` admits the
-            // registered maintenance band while still rejecting unknown bytes.
+            // Replicated put: the CRDT mirror is unfiltered, so the
+            // maintenance band (REDACTION_AUDIT = 120) and reserved-predicate
+            // `edge.provenance` truth-Claims reach here on the way back into
+            // LMDB. Routing through the public gate would silently drop them
+            // on cross-node sync / replay; `put_replicated` admits both
+            // engine-authored bands while still running full structural
+            // validation (unknown type bytes, ungrammatical predicates, and
+            // malformed CLAIM bodies all still fail typed).
             let result = vault
                 .batch()
-                .put_internal(
+                .put_replicated(
                     &id,
                     header.entity_type,
                     crate::types::TimeRange {

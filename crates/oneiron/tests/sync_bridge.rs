@@ -17,8 +17,14 @@ use oneiron::sync::transport::{
 };
 use oneiron::sync::types::WindowKey;
 use oneiron::sync::window::{self, LoadedWindow};
-use oneiron::types::{ENTITY_TYPE_REDACTION_AUDIT, EdgeKind, TimeRange, Vad};
-use oneiron::{DeleteReason, EntityId, HnswConfig, Vault, VaultConfig};
+use oneiron::types::{
+    ENTITY_TYPE_REDACTION_AUDIT, EdgeActorClass, EdgeConfirmationStatus, EdgeKind,
+    EdgeProvenanceFlags, TimeRange, Vad,
+};
+use oneiron::{
+    DeleteReason, EdgeProvenanceClaimBody, EdgeRef, EntityId, HnswConfig, SupersessionStatus,
+    Vault, VaultConfig,
+};
 
 fn test_config() -> VaultConfig {
     let mut cfg = VaultConfig::device();
@@ -848,4 +854,184 @@ fn redaction_audit_receipt_survives_crdt_sync_round_trip() {
             .contains(&receipt_id),
         "receipt must land in node B's temporal_learned index"
     );
+}
+
+/// `edge.provenance` truth-Claim survival across a full CRDT sync
+/// round-trip (ONE-1123; deferred from M2 #79/#81).
+///
+/// contracts.ts `edgeProvenanceClaim`: the 26 B edge value's two hot flags
+/// are "a DERIVED CACHE of that Claim, and the Claim is truth"; the Claim is
+/// stored as a "Normal CLAIM entity" with predicate `edge.provenance` and a
+/// `claim_of` link edge to the subject edge's SOURCE entity. The flag cache
+/// already crossed sync bit-exact, but both replay doors hard-coded
+/// `allow_reserved_predicate: false`, so the truth-Claim itself was REJECTED
+/// on replica replay (warn-skipped by Observer B, silently dropped by
+/// `forward_rematerialize`) — inverting the contract: the replica kept the
+/// cache and lost the truth. Any later flag refresh on the replica would
+/// find no surviving Claim and downgrade the edge to bare 24 B, re-admitting
+/// withdrawn provenance into PPR (the failure M2 #83 keep-26B prevents).
+///
+/// Round-trip: Node A authors the Claim through the REAL provenance unit
+/// (`put_edge_provenance`) → `reverse_rematerialize` mirrors A's LMDB into
+/// the CRDT → snapshot import to Node B → B's `forward_rematerialize`. The
+/// Claim must arrive byte-identical, its `claim_of` edge must exist, and the
+/// subject edge's 26 B stamp must match A's.
+///
+/// FAILS against pre-fix code: `forward_rematerialize` routed the type-0
+/// reserved-predicate Claim through `put_internal`
+/// (`allow_reserved_predicate: false`), `validate_claim_body_bytes` rejected
+/// it with ReservedPredicate, and the `if result.is_ok()` guard silently
+/// dropped it — the Claim never reached Node B's LMDB, and without it the
+/// `claim_of` edge's source did not exist so that edge was dropped too.
+#[test]
+fn edge_provenance_claim_survives_crdt_sync_round_trip() {
+    // --- Node A: subject edge + provenance through the real unit ---
+    let temp_a = tempfile::tempdir().unwrap();
+    let vault_a = Arc::new(Vault::open(temp_a.path(), test_config()).unwrap());
+
+    let person = EntityId::now();
+    let src = EntityId::now();
+    let tgt = EntityId::now();
+    vault_a
+        .put_entity(
+            &person,
+            4,
+            TimeRange {
+                start: 301,
+                end: 301,
+            },
+            301,
+            b"person",
+        )
+        .unwrap();
+    vault_a
+        .put_entity(
+            &src,
+            4,
+            TimeRange {
+                start: 302,
+                end: 302,
+            },
+            302,
+            b"src",
+        )
+        .unwrap();
+    vault_a
+        .put_entity(
+            &tgt,
+            4,
+            TimeRange {
+                start: 303,
+                end: 303,
+            },
+            303,
+            b"tgt",
+        )
+        .unwrap();
+    vault_a
+        .put_edge(&src, EdgeKind::Mentions, &tgt, 0.875)
+        .unwrap();
+
+    let claim_id = EntityId::now();
+    let subject = EdgeRef::new(src, EdgeKind::Mentions, tgt);
+    let body = EdgeProvenanceClaimBody::new(person, 0.75, SupersessionStatus::Confirmed);
+    vault_a
+        .put_edge_provenance(&claim_id, &subject, &body, EdgeActorClass::Human, 1_000)
+        .unwrap();
+
+    // The Claim is a normal type-0 CLAIM entity (contracts.ts storedAs).
+    let claim_raw = vault_a
+        .get_raw(&claim_id)
+        .unwrap()
+        .expect("claim must exist in node A LMDB");
+    assert_eq!(
+        claim_raw[0], 0,
+        "edge.provenance Claim must carry type byte 0 (CLAIM)"
+    );
+
+    // A's subject edge carries the derived 26 B stamp: confirmed=1, human=0.
+    let expected_stamp = EdgeProvenanceFlags {
+        confirmation_status: EdgeConfirmationStatus::Confirmed,
+        actor_class: EdgeActorClass::Human,
+    };
+    let edge_a = vault_a
+        .edges_out(&src)
+        .unwrap()
+        .into_iter()
+        .find(|e| e.kind == EdgeKind::Mentions && e.target == tgt)
+        .expect("subject edge on node A");
+    assert_eq!(
+        edge_a.provenance,
+        Some(expected_stamp),
+        "node A's subject edge must carry the derived provenance stamp"
+    );
+
+    // --- Node A: LMDB → CRDT (all learned_at values land in one window) ---
+    let window_key = WindowKey::from_timestamp(1_000);
+    let doc_a = create_window_doc("node-a", &window_key);
+    let mirrored = window::reverse_rematerialize(&vault_a, &doc_a, &window_key).unwrap();
+    assert!(
+        mirrored >= 4,
+        "person, src, tgt, and the Claim must mirror into the CRDT (got {mirrored})"
+    );
+    assert_eq!(
+        map_get_bytes(&doc_a.get_map("entities"), claim_id.to_hex().as_str()).as_deref(),
+        Some(claim_raw.as_slice()),
+        "truth-Claim must be byte-identical in the CRDT mirror"
+    );
+
+    // --- wire: doc_a → doc_b (peer sync via snapshot import) ---
+    let snapshot = doc_a.export(ExportMode::Snapshot).unwrap();
+    let doc_b = LoroDoc::from_snapshot(&snapshot).unwrap();
+
+    // --- Node B: CRDT → LMDB (the seam that silently dropped the Claim) ---
+    let temp_b = tempfile::tempdir().unwrap();
+    let vault_b = Vault::open(temp_b.path(), test_config()).unwrap();
+    let materializer = Materializer::new();
+    let restored = window::forward_rematerialize(&vault_b, &doc_b, &materializer).unwrap();
+    assert!(
+        restored >= 4,
+        "forward rematerialize must restore entities and edges (got {restored})"
+    );
+
+    // Truth-Claim byte-identical on B (the pre-fix silent drop).
+    assert_eq!(
+        vault_b.get_raw(&claim_id).unwrap().as_deref(),
+        Some(claim_raw.as_slice()),
+        "edge.provenance truth-Claim must survive replay byte-identical on node B"
+    );
+    // …and readable as a Claim with the contract predicate literal.
+    let read = vault_b
+        .get_claim(&claim_id)
+        .unwrap()
+        .expect("replicated Claim must read back through get_claim");
+    assert_eq!(read.predicate, "edge.provenance");
+
+    // claim_of edge present: Claim → subject edge's SOURCE entity (D12).
+    assert!(
+        vault_b
+            .edge_exists(&claim_id, EdgeKind::ClaimOf, &src)
+            .unwrap(),
+        "claim_of edge must tie the replicated Claim to its subject's source"
+    );
+
+    // Subject edge 26 B stamp matches A: cache AND truth agree on B.
+    let edge_b = vault_b
+        .edges_out(&src)
+        .unwrap()
+        .into_iter()
+        .find(|e| e.kind == EdgeKind::Mentions && e.target == tgt)
+        .expect("subject edge on node B");
+    assert_eq!(
+        edge_b.provenance,
+        Some(expected_stamp),
+        "node B's subject edge stamp must match node A's"
+    );
+    assert_eq!(
+        edge_b.weight.to_bits(),
+        edge_a.weight.to_bits(),
+        "subject edge weight must cross bit-exact"
+    );
+    assert_eq!(edge_b.created_at, edge_a.created_at);
+    assert_eq!(edge_b.vad, edge_a.vad);
 }

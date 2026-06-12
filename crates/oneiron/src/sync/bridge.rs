@@ -576,14 +576,17 @@ fn materialize_entity_blob_in_txn(
         &[]
     };
 
-    // Internal put: Observer B mirrors whatever the unfiltered CRDT entities
-    // map holds, including the engine-authored maintenance band
-    // (REDACTION_AUDIT = 120). The public gate would warn-skip those, losing
-    // GDPR receipts on sync; `put_internal` admits the registered maintenance
-    // band while still rejecting genuinely unknown type bytes.
+    // Replicated put: Observer B mirrors whatever the unfiltered CRDT
+    // entities map holds, including the engine-authored maintenance band
+    // (REDACTION_AUDIT = 120) and reserved-predicate `edge.provenance`
+    // truth-Claims. The public gate would warn-skip those, losing GDPR
+    // receipts / edge-provenance truth on sync; `put_replicated` admits both
+    // engine-authored bands while still running full structural validation
+    // (unknown type bytes, ungrammatical predicates, and malformed CLAIM
+    // bodies all still fail typed).
     vault
         .batch_in()
-        .put_internal(
+        .put_replicated(
             &id,
             header.entity_type,
             crate::types::TimeRange {
@@ -1642,5 +1645,64 @@ mod tests {
             Some(&b"honest-path"[..]),
             "never-deleted entity must materialize normally"
         );
+    }
+
+    /// ONE-1123: Observer B materializes a remote reserved-predicate
+    /// `edge.provenance` Claim — the truth behind the 26 B edge flag cache
+    /// (contracts.ts edgeProvenanceClaim: "the edge flags are a DERIVED
+    /// CACHE of that Claim, and the Claim is truth") — byte-identical,
+    /// instead of warn-skipping it at the public reserved-namespace gate.
+    ///
+    /// FAILS against pre-fix code: `materialize_entity_blob_in_txn` routed
+    /// the type-0 Claim through `put_internal`
+    /// (`allow_reserved_predicate: false`), `validate_claim_body_bytes`
+    /// rejected it with ReservedPredicate, and the observer warn-skipped it
+    /// — the Claim never reached the replica's LMDB.
+    #[test]
+    fn observer_b_materializes_remote_edge_provenance_claim() {
+        let vault = test_vault();
+        let doc = LoroDoc::new();
+        let entities = doc.get_map("entities");
+
+        let src = EntityId::now();
+        let tgt = EntityId::now();
+        let claim_id = EntityId::now();
+
+        let body = crate::claim::ClaimBody::new(
+            "edge.provenance",
+            crate::claim::ClaimSubject::Edge {
+                source: src,
+                kind: EdgeKind::Mentions,
+                target: tgt,
+            },
+            rmpv::Value::from("remote provenance payload"),
+            0.9,
+            crate::claim::ClaimApprovalStatus::Auto,
+            crate::claim::ClaimLifecycleStatus::Active,
+        );
+        let body_bytes = crate::claim::encode_claim_body(&body).unwrap();
+        let claim_blob = entity_blob(
+            crate::types::ENTITY_TYPE_CLAIM,
+            TimeRange { start: 5, end: 5 },
+            6,
+            &body_bytes,
+        );
+
+        let materializer = Arc::new(Materializer::new());
+        let _subs = register_observer_b(&doc, &vault, &materializer);
+
+        map_insert_bytes(&entities, &claim_id.to_hex(), &claim_blob).unwrap();
+        doc.commit();
+
+        assert_eq!(
+            vault.get_raw(&claim_id).unwrap().as_deref(),
+            Some(claim_blob.as_slice()),
+            "remote edge.provenance Claim must materialize byte-identical via Observer B"
+        );
+        let read = vault
+            .get_claim(&claim_id)
+            .unwrap()
+            .expect("materialized Claim must read back through get_claim");
+        assert_eq!(read.predicate, "edge.provenance");
     }
 }
