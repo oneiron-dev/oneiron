@@ -361,8 +361,12 @@ pub(crate) enum HnswCompatibilityState {
 }
 
 /// LMDB environment and database handles for a vault.
+///
+/// Dropping the last handle to a `Store` (normally via the owning
+/// [`crate::Vault`]) CLOSES the LMDB environment — see [`OwnedEnv`] for the
+/// close-path rationale (ONE-1142).
 pub struct Store {
-    pub(crate) env: Env,
+    pub(crate) env: OwnedEnv,
     pub(crate) entities: Database<Bytes, Bytes>,
     pub(crate) edges_out: Database<Bytes, Bytes>,
     pub(crate) edges_in: Database<Bytes, Bytes>,
@@ -405,8 +409,9 @@ pub struct Store {
     /// Offline update queue, embed job queue, and hard-delete sweep queue.
     pub(crate) sync_queue: Database<Bytes, Bytes>,
     // DROP-ORDER: keep this field after `env`. Fields drop in declaration
-    // order, so the registry releases the path only after the LMDB
-    // environment closes.
+    // order, so the path registry releases the path only after [`OwnedEnv`]
+    // has closed the LMDB environment — a reopen racing this drop can never
+    // observe the path as free while the old environment is still live.
     _registered_path: RegisteredPath,
 }
 
@@ -433,6 +438,10 @@ impl Store {
                 .max_dbs(MAX_DBS)
                 .open(&canonical_path)?
         };
+        // Wrap IMMEDIATELY so every `?` early-return below (failed open
+        // gates) also releases the environment instead of leaking it into
+        // heed's process-global registry (ONE-1142).
+        let env = OwnedEnv { env };
 
         let db_open_guard = lmdb_database_open_guard()?;
         let mut wtxn = env.write_txn()?;
@@ -589,6 +598,54 @@ impl Drop for RegisteredPath {
             Err(poisoned) => poisoned.into_inner(),
         };
         open_paths.remove(&self.path);
+    }
+}
+
+/// Sole owner of the vault's LMDB environment; restores close-on-last-drop
+/// semantics (ONE-1142).
+///
+/// heed 0.20 keeps a clone of every opened [`Env`] in a process-global
+/// registry, so dropping all user-held clones never runs `mdb_env_close`:
+/// the mmap, the `data.mdb`/`lock.mdb` descriptors, and — the binding
+/// constraint — the per-environment pthread TLS key LMDB allocates in
+/// `mdb_env_setup_locks` all leak for the life of the process. macOS caps
+/// pthread keys at `PTHREAD_KEYS_MAX = 512`, so a process that opens vaults
+/// dynamically (a long-lived sync server, the test suite) hits a
+/// deterministic `Vault::open` EAGAIN cliff around the ~509th cumulative
+/// open. Closing requires an explicit [`Env::prepare_for_closing`], which
+/// this crate previously never called.
+///
+/// Dropping this wrapper calls `prepare_for_closing`, which removes the
+/// registry's clone; the environment then actually closes (`mdb_env_close`)
+/// when the last remaining `Env` clone drops — normally the wrapped `env`
+/// itself, immediately after the `Drop` body returns: transactions only
+/// borrow the env, and this crate never stores `Env` clones outside
+/// [`Store`].
+///
+/// The close path is deliberately RAII rather than an explicit
+/// `Vault::close()`: a forgotten explicit close would silently reintroduce
+/// the leak, while drop-based closing cannot be skipped and composes with
+/// the existing `Arc<Vault>` holders (sync manager, observers, the server's
+/// `SyncServer.vault`) — the last clone to drop closes the environment.
+pub(crate) struct OwnedEnv {
+    env: Env,
+}
+
+impl std::ops::Deref for OwnedEnv {
+    type Target = Env;
+
+    fn deref(&self) -> &Env {
+        &self.env
+    }
+}
+
+impl Drop for OwnedEnv {
+    fn drop(&mut self) {
+        // Deliberately NOT waiting on the returned `EnvClosingEvent`: this
+        // thread still holds an `Env` clone (`self.env`), so waiting here
+        // would deadlock. `mdb_env_close` runs when `self.env` drops, right
+        // after this body returns.
+        let _closing_event = self.env.clone().prepare_for_closing();
     }
 }
 
