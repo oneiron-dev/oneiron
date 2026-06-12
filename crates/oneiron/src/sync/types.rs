@@ -1,25 +1,23 @@
 //! Sync-specific types for the CRDT sync layer.
+//!
+//! NOTE (ONE-1130): `SyncConfig` stays — the window manager (ONE-1125)
+//! reads `default_window_count` — but its former compaction fields (512 KB
+//! threshold + 30 s throttle) and the vector-sync flag were removed: the
+//! compaction feature they configured is not implemented and nothing read
+//! them. The contract values live in ARCH-0023b; re-introduce that config
+//! together with the compaction implementation, not before it.
 
 /// Configuration for the sync layer.
 #[derive(Debug, Clone)]
 pub struct SyncConfig {
     /// Number of windows loaded by default (current + previous month). Default: 2.
     pub default_window_count: u8,
-    /// Byte threshold for triggering compaction. Default: 512 KB.
-    pub compaction_threshold_bytes: u32,
-    /// Minimum seconds between compaction runs. Default: 30.
-    pub compaction_throttle_secs: u32,
-    /// Whether to sync vectors (for devices without local embedding model).
-    pub sync_vectors: bool,
 }
 
 impl Default for SyncConfig {
     fn default() -> Self {
         Self {
             default_window_count: 2,
-            compaction_threshold_bytes: 524_288,
-            compaction_throttle_secs: 30,
-            sync_vectors: false,
         }
     }
 }
