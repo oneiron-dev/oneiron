@@ -10909,3 +10909,169 @@ fn hard_delete_of_provenance_claim_carries_snapshot_ref_in_sweep_scope() -> Resu
     );
     Ok(())
 }
+
+/// ONE-1141 (ARCH-0031 amendment, ratified 2026-06-13): "When an LWW
+/// replicated overwrite replaces a document, the loser document's postings
+/// must be removed in the same transaction as the overwrite — no replicated
+/// overwrite ever leaves loser postings live."
+///
+/// Directed batch-level unit for the sync replay doors (`put_replicated` →
+/// `apply_put`, replicated arm): text-index term A, replicated-overwrite the
+/// entity with body B inside ONE write txn, then assert the loser's text
+/// rows are gone at the DB level — mirroring exactly what SoftErase's
+/// `deindex_text` leaves behind (`text_forward` / `text_meta` /
+/// `text_doc_field_lengths` rows deleted under the literal id-bytes key, the
+/// posting row dropped with its last duplicate, the per-field stats row
+/// deleted at zero, and the TOTAL_DOCS sentinel row decremented back to 0).
+#[cfg(feature = "sync")]
+#[test]
+fn replicated_overwrite_changed_body_drops_loser_text_postings_same_txn() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let id = EntityId::now();
+    vault.put_entity(&id, 1, test_time_range(1, 1), 1, b"payload-from-loser")?;
+    vault
+        .batch()
+        .text(&id, &[("body", "loseronlyterm")])
+        .commit()?;
+    assert_eq!(
+        vault.search_text("loseronlyterm", 10)?.len(),
+        1,
+        "precondition: the loser term must be indexed and searchable"
+    );
+
+    // Replicated overwrite with a CHANGED body through the Observer-B replay
+    // door (`TxnBatchBuilder::put_replicated`) — overwrite + deindex must
+    // land in the SAME externally-owned wtxn.
+    vault.with_write_txn(|wtxn| {
+        vault
+            .batch_in()
+            .put_replicated(&id, 1, test_time_range(2, 2), 2, b"payload-from-winner")
+            .apply(wtxn)
+    })?;
+
+    // The winner body is stored (header + body layout, body at offset 25)…
+    let raw = vault.get_raw(&id)?.expect("entity stored");
+    assert_eq!(&raw[ENTITY_METADATA_HEADER_LEN..], b"payload-from-winner");
+    // …and the loser term no longer serves.
+    assert!(
+        vault.search_text("loseronlyterm", 10)?.is_empty(),
+        "loser postings must not match searches after a replicated overwrite"
+    );
+
+    // DB-level: identical end-state to SoftErase's deindex.
+    let rtxn = vault.store.env.read_txn()?;
+    assert!(
+        vault
+            .store
+            .text_forward
+            .get(&rtxn, id.as_bytes())?
+            .is_none(),
+        "text_forward row (key = literal id bytes) must be deleted"
+    );
+    assert!(
+        vault.store.text_meta.get(&rtxn, id.as_bytes())?.is_none(),
+        "text_meta doc row (key = literal id bytes) must be deleted"
+    );
+    assert!(
+        vault
+            .store
+            .text_doc_field_lengths
+            .get(&rtxn, id.as_bytes())?
+            .is_none(),
+        "text_doc_field_lengths row (key = literal id bytes) must be deleted"
+    );
+    // This doc was the only indexed document: dropping its last duplicate
+    // removes the posting term key entirely, and the zeroed per-field stats
+    // row is deleted rather than kept at 0/0.
+    assert!(
+        vault.store.text_postings.iter(&rtxn)?.next().is_none(),
+        "no posting row may survive the loser's deindex"
+    );
+    assert!(
+        vault
+            .store
+            .text_bm25_field_stats
+            .iter(&rtxn)?
+            .next()
+            .is_none(),
+        "the zeroed per-field stats row must be deleted, not kept at 0/0"
+    );
+    // TOTAL_DOCS sentinel ([0x00; 16] key in text_meta, u32 LE value): the
+    // corpus count is decremented back to 0, never left dangling at 1.
+    assert_eq!(
+        vault.store.text_meta.get(&rtxn, &[0u8; 16])?,
+        Some(&0u32.to_le_bytes()[..]),
+        "TOTAL_DOCS must be decremented in the same txn as the overwrite"
+    );
+    Ok(())
+}
+
+/// ONE-1141 byte-compare guard + scope pin. Two non-deindexing overwrites:
+///
+/// * SAME-BYTES replicated overwrite (idempotent re-import / reconnect echo,
+///   or the winner node re-receiving its own winning value during a
+///   convergence exchange) must NOT touch the text index — postings keep
+///   serving and the `text_forward` row stays byte-identical. Metadata-only
+///   changes (occurred/learned) are NOT body changes.
+/// * LOCAL body-changing overwrite stays out of scope (the ticket pins the
+///   replicated arm only): the local writer owns both the put and its
+///   `BatchOp::Text` re-index, and `index_text` self-deindexes stale rows.
+///   Known follow-up: a local re-put WITHOUT a text op leaves stale postings
+///   (caller-sequenced, not a sync-convergence hole) — widening that is a
+///   separate ruling, not silent drift; this assertion pins the boundary.
+#[cfg(feature = "sync")]
+#[test]
+fn replicated_overwrite_same_body_bytes_keeps_text_postings() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let id = EntityId::now();
+    vault.put_entity(&id, 1, test_time_range(1, 1), 1, b"stable-payload")?;
+    vault
+        .batch()
+        .text(&id, &[("body", "winneronlyterm")])
+        .commit()?;
+
+    let forward_before = {
+        let rtxn = vault.store.env.read_txn()?;
+        vault
+            .store
+            .text_forward
+            .get(&rtxn, id.as_bytes())?
+            .map(<[u8]>::to_vec)
+            .expect("precondition: forward row exists for the indexed doc")
+    };
+
+    // Same body bytes, different temporal metadata, through the
+    // forward_rematerialize replay door (`BatchBuilder::put_replicated`).
+    vault
+        .batch()
+        .put_replicated(&id, 1, test_time_range(5, 7), 9, b"stable-payload")
+        .commit()?;
+
+    assert_eq!(
+        vault.search_text("winneronlyterm", 10)?.len(),
+        1,
+        "a same-bytes replicated replay must leave postings serving"
+    );
+    {
+        let rtxn = vault.store.env.read_txn()?;
+        assert_eq!(
+            vault
+                .store
+                .text_forward
+                .get(&rtxn, id.as_bytes())?
+                .map(<[u8]>::to_vec),
+            Some(forward_before),
+            "the forward row must be byte-identical after a same-bytes replay"
+        );
+    }
+
+    // Scope pin: a LOCAL body-changing overwrite does NOT deindex — the
+    // replicated arm alone carries the ARCH-0031 deindex-on-overwrite duty.
+    vault.put_entity(&id, 1, test_time_range(8, 8), 11, b"locally-edited-payload")?;
+    assert_eq!(
+        vault.search_text("winneronlyterm", 10)?.len(),
+        1,
+        "local overwrites stay out of ONE-1141 scope: no deindex on the local arm"
+    );
+    Ok(())
+}
