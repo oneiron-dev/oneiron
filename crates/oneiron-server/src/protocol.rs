@@ -176,6 +176,11 @@ pub(crate) enum ProtocolError {
     /// full export as if the VV were empty (ONE-1127).
     #[error("version vector decode failure: {0}")]
     VvDecode(String),
+    /// Durable sync_state persistence failed (load or append). Fail-closed:
+    /// the connection is closed instead of relaying state the server cannot
+    /// replay after a restart.
+    #[error("sync persistence error: {0}")]
+    Persistence(String),
 }
 
 /// WebSocket close codes per ARCH-023 section 3.5.

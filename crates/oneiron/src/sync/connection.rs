@@ -38,6 +38,7 @@ use futures_util::{SinkExt, StreamExt};
 use tokio::sync::mpsc;
 use tokio::time::{Duration, Instant};
 use tokio_tungstenite::tungstenite::Message;
+use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 
 use crate::sync::client::{SyncClient, SyncClientConfig, SyncEvent, SyncStatus, next_backoff};
 use crate::sync::loro_support::doc_version_vector;
@@ -320,9 +321,25 @@ impl SyncConnection {
         >,
         String,
     > {
-        // Connect WebSocket
+        // Connect WebSocket. Phase-1 auth: the shared secret
+        // (SyncClientConfig.auth_token) rides as the `x-oneiron-secret`
+        // header on the upgrade request — the same scheme the server HTTP
+        // API uses — and the server rejects the upgrade when a secret is
+        // configured and the header is missing or wrong (fail-closed).
         let url = &self.config.client_config.server_url;
-        let (ws_stream, _response) = tokio_tungstenite::connect_async(url)
+        let mut request = url
+            .into_client_request()
+            .map_err(|e| format!("WS connect failed: {e}"))?;
+        let auth_token = &self.config.client_config.auth_token;
+        if !auth_token.is_empty() {
+            let header_value = auth_token
+                .parse()
+                .map_err(|_| "Auth token is not a valid header value".to_string())?;
+            request
+                .headers_mut()
+                .insert("x-oneiron-secret", header_value);
+        }
+        let (ws_stream, _response) = tokio_tungstenite::connect_async(request)
             .await
             .map_err(|e| format!("WS connect failed: {e}"))?;
 
@@ -343,7 +360,7 @@ impl SyncConnection {
         let mut init_messages_received = 0;
         let max_init_messages = 100;
 
-        while init_messages_received < max_init_messages {
+        'initial_sync: while init_messages_received < max_init_messages {
             let msg = tokio::time::timeout(Duration::from_secs(30), read.next())
                 .await
                 .map_err(|_| "Initial sync timeout".to_string())?;
@@ -361,9 +378,19 @@ impl SyncConnection {
                     }
                     init_messages_received += 1;
 
-                    // If we've received at least 1 message and there's nothing
-                    // pending within 200ms, consider initial sync done
-                    if init_messages_received >= 1 {
+                    // Drain the rest of the server's initial burst until the
+                    // stream is quiet for 200ms, then consider initial sync
+                    // done. This must LOOP on each received message: the
+                    // burst (root snapshot + VV response + per-window
+                    // updates) has arbitrary length, and bouncing back to
+                    // the 30s outer read after a single quiet-check receive
+                    // hangs the flow whenever the burst has an even number
+                    // of messages (the last one is consumed here and the
+                    // outer read then waits on a quiet stream).
+                    loop {
+                        if init_messages_received >= max_init_messages {
+                            break 'initial_sync;
+                        }
                         let quiet_check =
                             tokio::time::timeout(Duration::from_millis(200), read.next()).await;
                         match quiet_check {
@@ -393,7 +420,6 @@ impl SyncConnection {
                                 | Message::Frame(_),
                             ))) => {
                                 // Ignore keepalive/non-binary messages during quiet check
-                                continue;
                             }
                             Ok(Some(Err(e))) => {
                                 return Err(format!("WS error during initial sync: {e}"));
@@ -402,7 +428,7 @@ impl SyncConnection {
                                 return Err("WS stream ended during initial sync".to_string());
                             }
                             // Timeout means initial sync is done
-                            Err(_) => break,
+                            Err(_) => break 'initial_sync,
                         };
                     }
                 }

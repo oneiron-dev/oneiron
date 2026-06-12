@@ -1,19 +1,12 @@
-mod api;
-mod broadcast;
-mod config;
-mod handler;
-mod protocol;
-mod server;
-
 use std::net::SocketAddr;
 use std::sync::Arc;
 
-use axum::Router;
 use clap::Parser;
 use tracing_subscriber::EnvFilter;
 
-use crate::config::CliArgs;
-use crate::server::SyncServer;
+use oneiron_server::build_app;
+use oneiron_server::config::{CliArgs, SyncServerConfig};
+use oneiron_server::server::SyncServer;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -40,18 +33,20 @@ async fn main() -> anyhow::Result<()> {
     let vault = oneiron::Vault::open(&args.vault_path, vault_config)?;
 
     // Build sync server state
-    let server_config = config::SyncServerConfig {
+    let server_config = SyncServerConfig {
         auth_secret: args.auth_secret,
         ..Default::default()
     };
 
-    let sync_server = Arc::new(SyncServer::new(vault, server_config));
+    // Reloads persisted CRDT state (d:root + d:w:* in sync_state) — a fresh
+    // boot must not silently discard previously relayed updates/tombstones.
+    let sync_server = Arc::new(
+        SyncServer::new(Arc::new(vault), server_config)
+            .map_err(|e| anyhow::anyhow!("sync server init failed: {e}"))?,
+    );
 
     // Build Axum router
-    let app = Router::new()
-        .merge(handler::ws_routes(sync_server.clone()))
-        .merge(api::api_routes(sync_server.clone()))
-        .layer(tower_http::cors::CorsLayer::permissive());
+    let app = build_app(sync_server).layer(tower_http::cors::CorsLayer::permissive());
 
     let addr: SocketAddr = format!("{}:{}", args.host, args.port).parse()?;
     tracing::info!(%addr, "listening");

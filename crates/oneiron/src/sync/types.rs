@@ -54,6 +54,17 @@ impl WindowKey {
         Self(key)
     }
 
+    /// Creates a new window key from a "YYYY-MM" string, returning `None`
+    /// on malformed input.
+    ///
+    /// Non-panicking counterpart to [`WindowKey::new`] for wire-derived keys
+    /// (the server-side chokepoint for client-supplied window keys).
+    pub fn try_new(key: impl Into<String>) -> Option<Self> {
+        let key = key.into();
+        parse_window_key_str(&key)?;
+        Some(Self(key))
+    }
+
     #[cfg(test)]
     pub(crate) fn new_unchecked_for_test(key: impl Into<String>) -> Self {
         Self(key.into())
@@ -296,5 +307,19 @@ mod tests {
     fn previous_month_stops_at_epoch() {
         let key = WindowKey::new("1970-01");
         assert!(key.previous_month().is_none());
+    }
+
+    #[test]
+    fn try_new_accepts_valid_and_rejects_malformed_keys() {
+        assert_eq!(
+            WindowKey::try_new("2026-02").map(|k| k.as_str().to_string()),
+            Some("2026-02".to_string())
+        );
+        for invalid in ["2026-13", "2026-00", "1969-12", "2026-03 ", "garbage", ""] {
+            assert!(
+                WindowKey::try_new(invalid).is_none(),
+                "{invalid:?} should be rejected"
+            );
+        }
     }
 }

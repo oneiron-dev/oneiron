@@ -19,6 +19,7 @@
 //! - `manager` — Production window registry + ARCH-0023b startup recovery
 //!   orchestration (pm replay → reverse remat → forward remat → observers)
 //! - `quarantine` — `x:` quarantine sink + `rm:` rematerialization markers
+//! - `server_state` — server-side sync_state persistence (Observer-A-equivalent)
 
 pub mod bridge;
 pub mod client;
@@ -28,6 +29,7 @@ pub mod manager;
 pub mod quarantine;
 pub mod queue;
 pub mod schema;
+pub mod server_state;
 pub mod transport;
 pub mod types;
 pub mod window;
