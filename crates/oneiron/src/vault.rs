@@ -1344,6 +1344,21 @@ impl Vault {
         let existed = self.purge_entity_active_store_in_txn(&mut wtxn, id)?;
         // OWNER-DECISION (cfg-off durability): marker in the SAME purge txn.
         self.put_pending_tombstone_in_txn(&mut wtxn, &window_label, id, &tombstone)?;
+        if reason.active_store_hard_purge_v1() {
+            // `dt:` local hard-delete marker (pinned: presence-only 25 B
+            // `[reason:1][deleted_at:8 LE][request_id:16]` value, GLOBAL
+            // lowercase key, permanent, no GC), headerless leg — in the
+            // SAME txn as the purge, mirroring the receiver-side hard
+            // apply. The CRDT tombstone above is mutable remote-facing
+            // state; without the local marker a hostile tombstone removal
+            // + re-put would resurrect this id through the
+            // materialization gates.
+            self.store.sync_state.put(
+                &mut wtxn,
+                &local_hard_delete_key(id),
+                &tombstone.encode(),
+            )?;
+        }
         if !reason.writes_receipt() {
             wtxn.commit()?;
             if crdt_persisted {

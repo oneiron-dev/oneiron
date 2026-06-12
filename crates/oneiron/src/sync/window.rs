@@ -12,8 +12,8 @@ use super::bridge::{
 };
 use super::loro_support::{
     doc_from_snapshot, doc_version_vector, export_snapshot, import_doc, map_contains_binary,
-    map_contains_key, map_delete, map_for_each_bytes, map_for_each_tombstone_value, map_get_bytes,
-    map_get_tombstone_value, map_insert_bytes,
+    map_delete, map_for_each_bytes, map_for_each_tombstone_value, map_get_bytes, map_insert_bytes,
+    tombstone_map_contains_id, tombstone_values_for_id,
 };
 use super::schema::create_window_doc;
 use super::types::WindowKey;
@@ -143,11 +143,14 @@ pub fn apply_tombstone_to_window_doc(doc: &LoroDoc, id: &EntityId, raw_value: &[
     let hex_id = id.to_hex();
 
     let tombstones = doc.get_map("tombstones");
-    // Tombstone-aware read: a PRESENT non-Binary value reads as the empty
-    // slice, which decodes HARD (fail closed) — a garbage tombstone must
-    // block a soft downgrade exactly like a hard binary one.
-    let existing_hard = map_get_tombstone_value(&tombstones, &hex_id)
-        .is_some_and(|existing| decode_tombstone_value(&existing).is_hard());
+    // Tombstone-aware read across EVERY hex-casing alias of the id: a
+    // PRESENT non-Binary value reads as the empty slice, which decodes HARD
+    // (fail closed) — a garbage tombstone must block a soft downgrade
+    // exactly like a hard binary one, and a crafted UPPERCASE-key hard
+    // tombstone must block it exactly like the canonical lowercase one.
+    let existing_hard = tombstone_values_for_id(&tombstones, id)
+        .iter()
+        .any(|existing| decode_tombstone_value(existing).is_hard());
     let downgrade_blocked = existing_hard && !incoming.is_hard();
     if !downgrade_blocked {
         map_insert_bytes(&tombstones, &hex_id, raw_value)?;
@@ -291,10 +294,12 @@ pub fn replay_pending_mirrors(vault: &Vault, doc: &LoroDoc, window_key: &WindowK
             }
         };
 
-        // Check if tombstoned in CRDT — value-agnostic presence: a
-        // non-binary tombstone still decodes HARD downstream, so it must
-        // suppress the mirror exactly like a binary one (fail closed).
-        if map_contains_key(&tombstones_map, &hex_id) {
+        // Check if tombstoned in CRDT — value-agnostic, entity-canonical
+        // presence: a non-binary tombstone still decodes HARD downstream
+        // and a case-shifted hex alias still names this id, so both must
+        // suppress the mirror exactly like a canonical binary one (fail
+        // closed).
+        if tombstone_map_contains_id(&tombstones_map, id) {
             vault.with_write_txn(|wtxn| {
                 vault.store.sync_state.delete(wtxn, marker_key)?;
                 Ok(())
@@ -322,7 +327,7 @@ pub fn replay_pending_mirrors(vault: &Vault, doc: &LoroDoc, window_key: &WindowK
                 // purge). Plain containment = skip on this branch (legacy
                 // values are hard); becomes reason-aware (skip iff the
                 // tombstone decodes HARD) once tombstone v2 lands in M4-06.
-                if map_contains_key(&tombstones_map, &edge.target.to_hex()) {
+                if tombstone_map_contains_id(&tombstones_map, &edge.target) {
                     continue;
                 }
                 let edge_key = format_edge_key(id, edge.kind, &edge.target);
@@ -360,7 +365,7 @@ pub fn replay_pending_mirrors(vault: &Vault, doc: &LoroDoc, window_key: &WindowK
         for edge in &edges_out {
             // Same tombstoned-target gate as the byte-equal path above:
             // the full mirror must not re-insert edges to deleted targets.
-            if map_contains_key(&tombstones_map, &edge.target.to_hex()) {
+            if tombstone_map_contains_id(&tombstones_map, &edge.target) {
                 continue;
             }
             let edge_key = format_edge_key(id, edge.kind, &edge.target);
@@ -428,15 +433,12 @@ pub fn forward_rematerialize(
             // this gate every boot would re-put the purged body and the
             // tombstone pass below would purge it again, multiplying
             // receipts forever. Presence is value-agnostic (a non-binary
-            // tombstone decodes HARD downstream), checked on the raw map
-            // key AND the normalized lowercase id so a non-canonical alias
-            // cannot dodge it, and OR'd with the permanent local `dt:`
-            // marker so a hostile peer that REMOVES the tombstone from the
-            // map cannot resurrect the body either. A failed marker read
-            // fails CLOSED (skip).
-            if map_contains_key(&tombstones_map, key)
-                || map_contains_key(&tombstones_map, &id.to_hex())
-            {
+            // tombstone decodes HARD downstream) AND entity-canonical (a
+            // case-shifted hex tombstone key still names this id), and
+            // OR'd with the permanent local `dt:` marker so a hostile peer
+            // that REMOVES the tombstone from the map cannot resurrect the
+            // body either. A failed marker read fails CLOSED (skip).
+            if tombstone_map_contains_id(&tombstones_map, &id) {
                 return;
             }
             let locally_hard_deleted =
@@ -557,9 +559,10 @@ pub fn forward_rematerialize(
             };
 
             // Never re-add an edge whose endpoint is tombstoned in the CRDT.
-            // ANY-value presence — a non-binary tombstone gates too.
-            if map_contains_key(&tombstones_map, &src.to_hex())
-                || map_contains_key(&tombstones_map, &tgt.to_hex())
+            // ANY-value, entity-canonical presence — a non-binary tombstone
+            // gates too, and a case-shifted hex alias still names the id.
+            if tombstone_map_contains_id(&tombstones_map, &src)
+                || tombstone_map_contains_id(&tombstones_map, &tgt)
             {
                 return;
             }
@@ -687,12 +690,13 @@ pub fn reverse_rematerialize(vault: &Vault, doc: &LoroDoc, window_key: &WindowKe
     for id in &entities_in_range {
         let hex_id = id.to_hex();
 
-        // Value-agnostic tombstone presence (fail closed): a non-binary
-        // tombstone decodes HARD on replay, so reverse remat must never
-        // re-insert the still-live local body over it — that would ship a
-        // hard-deleted payload fleet-wide. Entities-map check below stays
-        // Binary-only by design.
-        if map_contains_key(&tombstones_map, &hex_id) {
+        // Value-agnostic, entity-canonical tombstone presence (fail
+        // closed): a non-binary tombstone decodes HARD on replay and a
+        // case-shifted hex alias still names this id, so reverse remat
+        // must never re-insert the still-live local body over either —
+        // that would ship a hard-deleted payload fleet-wide. Entities-map
+        // check below stays Binary-only by design.
+        if tombstone_map_contains_id(&tombstones_map, id) {
             continue;
         }
 
@@ -717,7 +721,7 @@ pub fn reverse_rematerialize(vault: &Vault, doc: &LoroDoc, window_key: &WindowKe
             // purge-txn crash window must not re-enter the replicated edges
             // map. Plain containment = skip on this branch; reason-aware
             // (skip iff HARD) once tombstone v2 lands in M4-06.
-            if map_contains_key(&tombstones_map, &edge.target.to_hex()) {
+            if tombstone_map_contains_id(&tombstones_map, &edge.target) {
                 continue;
             }
             let edge_key = format_edge_key(id, edge.kind, &edge.target);

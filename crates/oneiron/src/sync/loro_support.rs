@@ -9,6 +9,7 @@ use loro::VersionVector;
 use loro::{ExportMode, LoroDoc, LoroMap, LoroValue, ValueOrContainer};
 
 use crate::error::{Error, Result};
+use crate::types::EntityId;
 
 pub(crate) fn map_insert_bytes(map: &LoroMap, key: &str, value: &[u8]) -> Result<()> {
     map.insert(key, value)
@@ -51,6 +52,50 @@ pub(crate) fn map_get_tombstone_value(map: &LoroMap, key: &str) -> Option<Vec<u8
         ValueOrContainer::Value(LoroValue::Binary(bytes)) => Some(bytes.to_vec()),
         _ => Some(Vec::new()),
     }
+}
+
+/// Entity-canonical presence check for tombstone maps. Map keys are raw
+/// remote strings and `EntityId::from_hex` accepts BOTH hex casings while
+/// `to_hex` emits lowercase — so an exact lowercase get is blind to a
+/// crafted UPPERCASE-hex tombstone key and a delete-wins gate would fail
+/// OPEN. Fast path: the canonical lowercase key. On miss: scan the map and
+/// treat ANY key that parses to the same `EntityId` as present (fail
+/// closed). The scan-on-miss is acceptable because tombstone maps are
+/// small — deletes are rare. Entities/edges maps must keep using the
+/// Binary-only helpers.
+pub(crate) fn tombstone_map_contains_id(map: &LoroMap, id: &EntityId) -> bool {
+    if map_contains_key(map, &id.to_hex()) {
+        return true;
+    }
+    let mut present = false;
+    map.for_each(|key, _| {
+        if !present && EntityId::from_hex(key).is_ok_and(|parsed| parsed == *id) {
+            present = true;
+        }
+    });
+    present
+}
+
+/// Collects the tombstones-map values of EVERY key aliasing `id` — the
+/// canonical lowercase key plus any case-shifted hex alias — each read
+/// under the tombstone value rule (Binary passes its bytes; a PRESENT
+/// non-Binary value yields the EMPTY vec, which decodes HARD downstream).
+/// Same small-map scan-on-alias rationale as [`tombstone_map_contains_id`].
+pub(crate) fn tombstone_values_for_id(map: &LoroMap, id: &EntityId) -> Vec<Vec<u8>> {
+    let canonical = id.to_hex();
+    let mut values = Vec::new();
+    if let Some(value) = map_get_tombstone_value(map, &canonical) {
+        values.push(value);
+    }
+    map.for_each(|key, value| {
+        if key != canonical && EntityId::from_hex(key).is_ok_and(|parsed| parsed == *id) {
+            values.push(match value {
+                ValueOrContainer::Value(LoroValue::Binary(bytes)) => bytes.to_vec(),
+                _ => Vec::new(),
+            });
+        }
+    });
+    values
 }
 
 pub(crate) fn map_for_each_bytes(map: &LoroMap, mut f: impl FnMut(&str, &[u8])) {
@@ -221,6 +266,44 @@ mod tests {
                 ("text".to_string(), Vec::new()),
             ]
         );
+    }
+
+    /// M4 fix wave: tombstone probes must be entity-canonical — map keys
+    /// are raw remote strings, `EntityId::from_hex` is case-insensitive,
+    /// and `to_hex` emits lowercase, so an UPPERCASE-hex alias must read
+    /// as present (and yield its value) for the same id.
+    #[test]
+    fn tombstone_helpers_canonicalize_hex_casing() {
+        let id = EntityId::from_bytes_unchecked([0xAB; 16]);
+        let other = EntityId::from_bytes_unchecked([0xCD; 16]);
+        let upper = id.to_hex().to_uppercase();
+        assert_ne!(upper, id.to_hex());
+
+        let doc = LoroDoc::new();
+        let map = doc.get_map("tombstones");
+        map_insert_bytes(&map, &upper, b"hard-bytes").unwrap();
+        doc.commit();
+
+        assert!(
+            tombstone_map_contains_id(&map, &id),
+            "an uppercase alias must count as present for the same id"
+        );
+        assert!(!tombstone_map_contains_id(&map, &other));
+        assert_eq!(
+            tombstone_values_for_id(&map, &id),
+            vec![b"hard-bytes".to_vec()]
+        );
+        assert!(tombstone_values_for_id(&map, &other).is_empty());
+
+        // A non-Binary value under the canonical key joins the alias value;
+        // it reads as the EMPTY vec (decodes HARD downstream).
+        map.insert(id.to_hex().as_str(), "soft-ish").unwrap();
+        doc.commit();
+        assert!(tombstone_map_contains_id(&map, &id));
+        let values = tombstone_values_for_id(&map, &id);
+        assert_eq!(values.len(), 2, "canonical + alias both visited");
+        assert!(values.contains(&Vec::new()));
+        assert!(values.contains(&b"hard-bytes".to_vec()));
     }
 
     #[test]

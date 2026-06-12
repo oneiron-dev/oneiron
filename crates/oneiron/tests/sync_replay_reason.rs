@@ -804,3 +804,293 @@ fn dt_marker_blocks_resurrection_after_hostile_tombstone_removal() {
     );
     assert_eq!(redaction_audit_receipts(&vault_b).len(), receipts_before);
 }
+
+/// Casing canonicalization (M4 fix wave), HARD leg: `EntityId::from_hex`
+/// is case-insensitive while `to_hex` emits lowercase, so a crafted
+/// UPPERCASE-hex tombstone key must gate the entity pass exactly like the
+/// canonical key. Pre-fix, the exact-string gate missed the alias: the
+/// lingering body materialized into LMDB first and the tombstone pass then
+/// purged it again — observable as a receipt + sweep row this replica
+/// (which never held the entity) must not write. Post-fix the body never
+/// lands: no receipt, no sweep row, and the never-materialized hard apply
+/// still pins the permanent canonical-lowercase `dt:` marker.
+#[test]
+fn uppercase_hard_tombstone_gates_forward_remat_without_receipt_churn() {
+    let (_dir_b, vault_b) = open_vault();
+    let id = EntityId::from_hex("abcdefabcdefabcdefabcdefabcdefab").unwrap();
+    let upper = id.to_hex().to_uppercase();
+    assert_ne!(upper, id.to_hex());
+
+    // Peer doc: UPPERCASE hard tombstone + lingering lowercase body.
+    let doc_peer = LoroDoc::new();
+    doc_peer
+        .get_map("entities")
+        .insert(
+            id.to_hex().as_str(),
+            make_entity_blob(1, LEARNED_AT, b"case-doom").as_slice(),
+        )
+        .unwrap();
+    doc_peer
+        .get_map("tombstones")
+        .insert(
+            upper.as_str(),
+            wire_tombstone(2, 1_771_100_000, 0xAE).as_slice(),
+        )
+        .unwrap();
+    doc_peer.commit();
+
+    let doc = LoroDoc::new();
+    doc.import(&doc_peer.export(ExportMode::Snapshot).unwrap())
+        .unwrap();
+    let materializer = Arc::new(Materializer::new());
+    window::forward_rematerialize(&vault_b, &doc, &materializer).unwrap();
+
+    assert!(
+        vault_b.get_raw(&id).unwrap().is_none(),
+        "the lingering body must never materialize past an uppercase tombstone alias"
+    );
+    assert!(
+        redaction_audit_receipts(&vault_b).is_empty(),
+        "nothing was erased locally — the gate must block BEFORE materialization, not purge after"
+    );
+    assert!(hard_erase_sweep_rows(&vault_b).is_empty());
+    assert!(
+        dt_marker(&vault_b, &id).is_some(),
+        "the hard apply still pins the canonical lowercase dt: marker"
+    );
+}
+
+/// Casing canonicalization, SOFT leg: an uppercase-hex soft tombstone has
+/// NO `dt:` marker to fall back on (soft correctly writes none), so the
+/// alias-aware map probe is the ONLY thing between a crafted casing and
+/// indefinite resurrection of a soft-deleted body. The soft apply itself
+/// already canonicalizes (the delta key is PARSED into an id), so the
+/// shell lands correctly — but a later canonical-lowercase re-put must be
+/// suppressed by the alias-aware Observer-B gate.
+#[test]
+fn uppercase_soft_tombstone_suppresses_lowercase_reput() {
+    let (_dir_b, vault_b) = open_vault();
+    let id = EntityId::from_hex("0123456789abcdef0123456789abcdef").unwrap();
+    let upper = id.to_hex().to_uppercase();
+    vault_b
+        .batch()
+        .put(
+            &id,
+            1,
+            time_range(LEARNED_AT),
+            LEARNED_AT,
+            b"soft-case-body",
+        )
+        .text(&id, &[("body", "soft-case-body")])
+        .commit()
+        .unwrap();
+
+    let materializer = Arc::new(Materializer::new());
+    let window_b = LoadedWindow::new("node-b", WindowKey::new(WINDOW), &vault_b, &materializer);
+
+    // Peer ships the soft tombstone under an UPPERCASE alias.
+    let doc_r1 = LoroDoc::new();
+    doc_r1
+        .get_map("tombstones")
+        .insert(
+            upper.as_str(),
+            wire_tombstone(1, 1_771_100_000, 0xAF).as_slice(),
+        )
+        .unwrap();
+    doc_r1.commit();
+    window_b
+        .doc
+        .import(&doc_r1.export(ExportMode::Snapshot).unwrap())
+        .unwrap();
+
+    // Soft path respected: shell kept, indexes dropped, no receipt, no dt:.
+    let shell = vault_b
+        .get_raw(&id)
+        .unwrap()
+        .expect("soft apply keeps the 25 B shell");
+    assert_eq!(shell.len(), 25);
+    assert!(
+        vault_b
+            .search_text("soft-case-body", 10)
+            .unwrap()
+            .is_empty()
+    );
+    assert!(redaction_audit_receipts(&vault_b).is_empty());
+    assert!(
+        dt_marker(&vault_b, &id).is_none(),
+        "a soft replay must NOT write a dt: marker"
+    );
+
+    // Hostile/buggy peer re-puts the body at the canonical lowercase key —
+    // causally later, so the entity delta fires against the live doc.
+    let doc_r2 = LoroDoc::new();
+    doc_r2
+        .import(&window_b.doc.export(ExportMode::Snapshot).unwrap())
+        .unwrap();
+    doc_r2
+        .get_map("entities")
+        .insert(
+            id.to_hex().as_str(),
+            make_entity_blob(1, LEARNED_AT, b"soft-case-body").as_slice(),
+        )
+        .unwrap();
+    doc_r2.commit();
+    window_b
+        .doc
+        .import(&doc_r2.export(ExportMode::Snapshot).unwrap())
+        .unwrap();
+
+    let raw = vault_b.get_raw(&id).unwrap().expect("shell stays");
+    assert_eq!(
+        raw.len(),
+        25,
+        "observer B must suppress the re-put via the uppercase tombstone alias"
+    );
+    assert!(
+        vault_b
+            .search_text("soft-case-body", 10)
+            .unwrap()
+            .is_empty()
+    );
+}
+
+/// Reverse-remat casing leg: a live local body whose ONLY tombstone is an
+/// UPPERCASE-hex soft alias must not be re-inserted into the CRDT entities
+/// map (delete wins on every alias; shipping the body would resurrect it
+/// fleet-wide). The forward pass then soft-applies the shell.
+#[test]
+fn uppercase_soft_tombstone_blocks_reverse_remat_reinsert() {
+    let (_dir_b, vault_b) = open_vault();
+    let id = EntityId::from_hex("00ff00ff00ff00ff00ff00ff00ff00fa").unwrap();
+    let upper = id.to_hex().to_uppercase();
+    vault_b
+        .put_entity(&id, 1, time_range(LEARNED_AT), LEARNED_AT, b"live-local")
+        .unwrap();
+
+    let doc_peer = LoroDoc::new();
+    doc_peer
+        .get_map("tombstones")
+        .insert(
+            upper.as_str(),
+            wire_tombstone(1, 1_771_100_000, 0xB0).as_slice(),
+        )
+        .unwrap();
+    doc_peer.commit();
+
+    let doc = LoroDoc::new();
+    doc.import(&doc_peer.export(ExportMode::Snapshot).unwrap())
+        .unwrap();
+
+    window::reverse_rematerialize(&vault_b, &doc, &WindowKey::new(WINDOW)).unwrap();
+    assert!(
+        doc.get_map("entities").get(&id.to_hex()).is_none(),
+        "reverse remat must not re-insert a live body over an uppercase tombstone alias"
+    );
+
+    let materializer = Arc::new(Materializer::new());
+    window::forward_rematerialize(&vault_b, &doc, &materializer).unwrap();
+    let raw = vault_b
+        .get_raw(&id)
+        .unwrap()
+        .expect("the soft apply keeps the shell");
+    assert_eq!(raw.len(), 25);
+    assert!(dt_marker(&vault_b, &id).is_none());
+}
+
+/// Never-downgrade across casing aliases: an existing UPPERCASE-hex HARD
+/// tombstone must block a soft write for the same id exactly like a
+/// canonical one — otherwise the canonical lowercase key would carry a
+/// soft value and a replica reading only that key would under-delete.
+#[test]
+fn soft_tombstone_does_not_downgrade_uppercase_hard_alias() {
+    let id = EntityId::from_hex("deadbeefdeadbeefdeadbeefdeadbeef").unwrap();
+    let upper = id.to_hex().to_uppercase();
+
+    let doc = LoroDoc::new();
+    doc.get_map("tombstones")
+        .insert(
+            upper.as_str(),
+            wire_tombstone(2, 1_771_100_000, 0xB1).as_slice(),
+        )
+        .unwrap();
+    doc.commit();
+
+    window::apply_tombstone_to_window_doc(&doc, &id, &wire_tombstone(1, 1_771_200_000, 0xB2))
+        .unwrap();
+
+    assert!(
+        doc.get_map("tombstones").get(&id.to_hex()).is_none(),
+        "the soft value must not land under the canonical key while a hard alias exists"
+    );
+    assert!(
+        map_get_bytes(&doc.get_map("tombstones"), &upper).is_some(),
+        "the hard alias stays untouched"
+    );
+}
+
+/// Origin headerless leg of the `dt:` marker (M4 fix wave): a hard delete
+/// routed through `delete_entity_without_header` (active residue — an
+/// orphan vector — with no entities row / 25 B header) must write the
+/// permanent `dt:{id_hex}` marker in the same txn as the purge, exactly
+/// like the headerful and replay paths. Without it, the Observer-B OR-gate
+/// has no local truth for this id: the minted CRDT tombstone lives in the
+/// NOW-window, so a window-shuffled re-put (different window doc, no
+/// tombstone present) would resurrect the id — the GLOBAL, windowless dt:
+/// key exists precisely to refuse that.
+#[test]
+fn headerless_hard_delete_writes_dt_marker_and_blocks_window_shuffled_reput() {
+    let (_dir, vault) = open_vault();
+    let id = EntityId::now();
+    vault.put_vector(&id, &[0.1, 0.2, 0.3, 0.4]).unwrap();
+    assert!(
+        vault.get_raw(&id).unwrap().is_none(),
+        "headerless residue precondition: no entities row"
+    );
+
+    let outcome = vault
+        .delete_entity_with_reason(&id, DeleteReason::GdprDelete)
+        .unwrap();
+    assert!(outcome.receipt_id.is_some());
+    let marker = dt_marker(&vault, &id)
+        .expect("headerless hard delete must write the dt: marker in the purge txn");
+    assert_eq!(
+        marker.len(),
+        TOMBSTONE_VALUE_V2_LEN,
+        "pinned 25 B [reason:1][deleted_at:8 LE][request_id:16] value"
+    );
+    assert_eq!(marker[0], 3, "gdpr_delete reason byte");
+
+    // A soft headerless delete of another orphan writes NO marker.
+    let soft_id = EntityId::now();
+    vault.put_vector(&soft_id, &[0.4, 0.3, 0.2, 0.1]).unwrap();
+    vault
+        .delete_entity_with_reason(&soft_id, DeleteReason::UserDelete)
+        .unwrap();
+    assert!(
+        dt_marker(&vault, &soft_id).is_none(),
+        "a soft headerless delete must not write a dt: marker"
+    );
+
+    // Window-shuffled re-put: the body re-appears in a DIFFERENT window
+    // whose doc holds no tombstone for the id at all — only the GLOBAL dt:
+    // marker can refuse it.
+    let materializer = Arc::new(Materializer::new());
+    let window_b = LoadedWindow::new("node-b", WindowKey::new(WINDOW), &vault, &materializer);
+    let doc_r = LoroDoc::new();
+    doc_r
+        .get_map("entities")
+        .insert(
+            id.to_hex().as_str(),
+            make_entity_blob(1, LEARNED_AT, b"reput-attempt").as_slice(),
+        )
+        .unwrap();
+    doc_r.commit();
+    window_b
+        .doc
+        .import(&doc_r.export(ExportMode::Snapshot).unwrap())
+        .unwrap();
+    assert!(
+        vault.get_raw(&id).unwrap().is_none(),
+        "the dt: gate must refuse the window-shuffled re-put of a headerless hard delete"
+    );
+}
