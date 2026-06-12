@@ -848,6 +848,289 @@ fn receipt_reason_purges_orphan_vector_with_receipt_and_sweep() -> Result<()> {
 }
 
 // ═══════════════════════════════════════════════════════════════════════
+// ONE-1149 — delete TOCTOU: receipt emission is serialized with the txn
+// that actually erases. A delete that erased NOTHING must never claim it
+// did: no REDACTION_AUDIT receipt, no `h:` sweep row, no `pt:` marker.
+// ═══════════════════════════════════════════════════════════════════════
+
+fn sync_state_value(vault: &Vault, key: &str) -> Result<Option<Vec<u8>>> {
+    let rtxn = vault.store.env.read_txn()?;
+    Ok(vault.store.sync_state.get(&rtxn, key)?.map(<[u8]>::to_vec))
+}
+
+fn sync_state_keys_with_prefix_raw(vault: &Vault, prefix: &str) -> Result<Vec<String>> {
+    let rtxn = vault.store.env.read_txn()?;
+    let mut keys = Vec::new();
+    for row in vault.store.sync_state.prefix_iter(&rtxn, prefix)? {
+        let (key, _) = row?;
+        keys.push(key.to_owned());
+    }
+    Ok(keys)
+}
+
+fn sync_queue_row_count_with_prefix(vault: &Vault, prefix: &[u8]) -> Result<usize> {
+    let rtxn = vault.store.env.read_txn()?;
+    let mut count = 0;
+    for row in vault.store.sync_queue.prefix_iter(&rtxn, prefix)? {
+        row?;
+        count += 1;
+    }
+    Ok(count)
+}
+
+/// ONE-1149: ZERO erasure-audit artifacts — no REDACTION_AUDIT receipt
+/// entity, no `h:` historical-carrier sweep row, no `pt:` pending-tombstone
+/// marker. Asserted after every delete that erased nothing.
+fn assert_no_erasure_audit_artifacts(vault: &Vault) -> Result<()> {
+    assert!(
+        redaction_audit_receipts(vault)?.is_empty(),
+        "a delete that erased nothing must not write a REDACTION_AUDIT receipt"
+    );
+    assert!(
+        hard_erase_sweep_rows(vault)?.is_empty(),
+        "a delete that erased nothing must not queue an h: sweep row"
+    );
+    assert!(
+        sync_state_keys_with_prefix_raw(vault, "pt:")?.is_empty(),
+        "a delete that erased nothing must not leave a pt: pending-tombstone marker"
+    );
+    Ok(())
+}
+
+/// ONE-1149: deleting a fully-missing id is a STRICT no-op for every
+/// reason — `missing()` outcome and zero side effects: no CRDT tombstone
+/// publish (`d:w:` snapshot), no `q:`/`d:` queue rows, no `dt:` marker, no
+/// `pt:` marker, no receipt, no sweep row. A wrong implementation that
+/// mints/publishes the tombstone before claiming write ownership leaves a
+/// `d:w:` row or queue rows behind and fails this test.
+#[test]
+fn delete_missing_id_is_strict_noop_for_every_reason() -> Result<()> {
+    for reason in [
+        DeleteReason::UserDelete,
+        DeleteReason::UserHardDelete,
+        DeleteReason::GdprDelete,
+        DeleteReason::PolicyDelete,
+    ] {
+        let (_dir, vault) = open_test_vault();
+        let id = EntityId::now();
+
+        let outcome = vault.delete_entity_with_reason(&id, reason)?;
+
+        assert_eq!(
+            outcome,
+            DeleteEntityOutcome {
+                existed: false,
+                receipt_id: None,
+                sweep_key: None,
+            },
+            "{reason:?}: a fully-missing id must report missing()"
+        );
+        assert_no_erasure_audit_artifacts(&vault)?;
+        assert!(
+            sync_state_value(&vault, &format!("dt:{}", id.to_hex()))?.is_none(),
+            "{reason:?}: a fully-missing id must not gain a dt: hard-delete marker"
+        );
+        assert!(
+            sync_state_keys_with_prefix_raw(&vault, "d:w:")?.is_empty(),
+            "{reason:?}: no CRDT tombstone may be published for a fully-missing id"
+        );
+        assert_eq!(
+            sync_queue_row_count_with_prefix(&vault, b"q:")?,
+            0,
+            "{reason:?}: no update queue row may exist for a fully-missing id"
+        );
+        assert_eq!(
+            sync_queue_row_count_with_prefix(&vault, b"d:")?,
+            0,
+            "{reason:?}: no delete-bearing queue row may exist for a fully-missing id"
+        );
+    }
+    Ok(())
+}
+
+/// ONE-1149 raced-delete construction (delete-safety): holds the LMDB
+/// write lock BEFORE spawning the deleting thread, so the deleter passes
+/// its read-time probe (MVCC — the uncommitted erasure is invisible) and
+/// then blocks at its first write txn. The test erases the delete scope
+/// through its held txn and commits; the deleter's purge txn then finds
+/// nothing to erase. A scheduling miss (the deleter probed only after the
+/// commit) takes the strict-noop path instead; callers detect that via the
+/// absent `dt:` marker and retry.
+fn run_raced_delete<F>(
+    vault: &Vault,
+    id: &EntityId,
+    reason: DeleteReason,
+    erase_scope: F,
+) -> Result<DeleteEntityOutcome>
+where
+    F: FnOnce(&mut heed::RwTxn<'_>) -> Result<()>,
+{
+    std::thread::scope(|scope| -> Result<DeleteEntityOutcome> {
+        let mut wtxn = vault.store.env.write_txn()?;
+        let deleter = scope.spawn(move || vault.delete_entity_with_reason(id, reason));
+        // Let the deleter pass its read probe and block on the write lock.
+        std::thread::sleep(std::time::Duration::from_millis(600));
+        erase_scope(&mut wtxn)?;
+        wtxn.commit()?;
+        deleter.join().expect("deleter thread must not panic")
+    })
+}
+
+/// Shared assertions for both raced-to-nothing legs. `reason_byte` is the
+/// pinned v2 wire byte for the reason under test.
+fn assert_raced_delete_artifacts(
+    vault: &Vault,
+    outcome: &DeleteEntityOutcome,
+    dt_marker: &[u8],
+    reason_byte: u8,
+) -> Result<()> {
+    assert_eq!(
+        *outcome,
+        DeleteEntityOutcome {
+            existed: false,
+            receipt_id: None,
+            sweep_key: None,
+        },
+        "a raced-to-nothing delete must report missing() with no receipt/sweep"
+    );
+    assert_no_erasure_audit_artifacts(vault)?;
+    // The dt: marker IS allowed (hard-once-seen, mirrors the receiver-side
+    // nothing-local branch) and carries the pinned 25 B v2 value
+    // [reason:1][deleted_at:8 LE][request_id:16].
+    assert_eq!(
+        dt_marker.len(),
+        25,
+        "dt: marker value must be the pinned 25 B v2 tombstone layout"
+    );
+    assert_eq!(
+        dt_marker[0], reason_byte,
+        "dt: marker reason byte must be the pinned wire byte for the reason"
+    );
+    // The CRDT tombstone publish happened BEFORE the ownership claim and is
+    // ALLOWED to survive: it is idempotent propagation intent, not an
+    // erasure claim. In sync builds that means the d:w: snapshot plus
+    // exactly one q:/d: delete-bearing queue pair; in non-sync builds
+    // write_crdt_tombstone is a no-op, so nothing may exist.
+    #[cfg(feature = "sync")]
+    {
+        assert!(
+            !sync_state_keys_with_prefix_raw(vault, "d:w:")?.is_empty(),
+            "sync build: the published CRDT tombstone snapshot legitimately survives"
+        );
+        assert_eq!(
+            sync_queue_row_count_with_prefix(vault, b"q:")?,
+            1,
+            "sync build: exactly the delete's own queued update row"
+        );
+        assert_eq!(
+            sync_queue_row_count_with_prefix(vault, b"d:")?,
+            1,
+            "sync build: exactly the delete's own delete-bearing sidecar row"
+        );
+    }
+    #[cfg(not(feature = "sync"))]
+    {
+        assert!(
+            sync_state_keys_with_prefix_raw(vault, "d:w:")?.is_empty(),
+            "non-sync build: no CRDT snapshot rows exist"
+        );
+        assert_eq!(
+            sync_queue_row_count_with_prefix(vault, b"q:")?,
+            0,
+            "non-sync build: no queue rows exist"
+        );
+        assert_eq!(
+            sync_queue_row_count_with_prefix(vault, b"d:")?,
+            0,
+            "non-sync build: no delete-bearing rows exist"
+        );
+    }
+    Ok(())
+}
+
+/// ONE-1149 headerless leg: a hard delete of orphan residue whose scope is
+/// raced away between the read probe and the purge txn must NOT emit a
+/// receipt, sweep row, or pt: marker (the pre-fix code emitted all three —
+/// a false GDPR audit). Only the dt: marker (and the already-published
+/// idempotent tombstone) may remain.
+#[test]
+fn headerless_delete_raced_to_nothing_emits_no_receipt_sweep_or_pt() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+
+    for attempt in 0..3 {
+        let id = EntityId::now();
+        vault.put_vector(&id, &[0.1, 0.2, 0.3, 0.4])?;
+
+        let outcome = run_raced_delete(&vault, &id, DeleteReason::GdprDelete, |wtxn| {
+            vault.store.vectors.delete(wtxn, id.as_bytes())?;
+            Ok(())
+        })?;
+
+        let Some(dt_marker) = sync_state_value(&vault, &format!("dt:{}", id.to_hex()))? else {
+            // Scheduling miss: the deleter probed after the commit and took
+            // the strict-noop path. Verify it wrote nothing, then retry.
+            assert_eq!(outcome, DeleteEntityOutcome::missing());
+            assert_no_erasure_audit_artifacts(&vault)?;
+            assert!(
+                attempt < 2,
+                "raced branch was never constructed in 3 attempts"
+            );
+            continue;
+        };
+
+        // gdpr_delete pinned wire byte = 3.
+        assert_raced_delete_artifacts(&vault, &outcome, &dt_marker, 3)?;
+        return Ok(());
+    }
+    unreachable!("the attempt loop either returns or panics");
+}
+
+/// ONE-1149 headerful leg: a hard delete whose entity (and full delete
+/// scope) is raced away between the header read and the purge txn must NOT
+/// emit a receipt, sweep row, or pt: marker. Only the dt: marker (and the
+/// already-published idempotent tombstone) may remain.
+#[test]
+fn headerful_delete_raced_to_nothing_emits_no_receipt_sweep_or_pt() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let learned_at = 1_772_000_000;
+
+    for attempt in 0..3 {
+        let id = EntityId::now();
+        vault
+            .batch()
+            .put(
+                &id,
+                1,
+                test_time_range(learned_at, learned_at),
+                learned_at,
+                b"raced-away-before-purge",
+            )
+            .commit()?;
+
+        let outcome = run_raced_delete(&vault, &id, DeleteReason::UserHardDelete, |wtxn| {
+            // Erase the FULL delete scope the way a racing hard delete would.
+            crate::batch::deindex_entity(&vault.store, wtxn, &id)?;
+            Ok(())
+        })?;
+
+        let Some(dt_marker) = sync_state_value(&vault, &format!("dt:{}", id.to_hex()))? else {
+            assert_eq!(outcome, DeleteEntityOutcome::missing());
+            assert_no_erasure_audit_artifacts(&vault)?;
+            assert!(
+                attempt < 2,
+                "raced branch was never constructed in 3 attempts"
+            );
+            continue;
+        };
+
+        // user_hard_delete pinned wire byte = 2.
+        assert_raced_delete_artifacts(&vault, &outcome, &dt_marker, 2)?;
+        return Ok(());
+    }
+    unreachable!("the attempt loop either returns or panics");
+}
+
+// ═══════════════════════════════════════════════════════════════════════
 // ONE-1133 — reason-aware tombstone replay primitive
 // (`Vault::apply_replayed_tombstone`): soft = shell-preserving SoftErase,
 // hard/legacy/unknown/malformed = destructive purge + LOCAL receipt +

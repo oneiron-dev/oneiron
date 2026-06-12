@@ -1179,12 +1179,15 @@ impl Vault {
         reason: DeleteReason,
     ) -> Result<DeleteEntityOutcome> {
         let requested_at = unix_seconds_now();
+        let Some(header) = self.read_entity_header(id)? else {
+            return self.delete_entity_without_header(id, reason, requested_at);
+        };
         // ONE-1132: ONE deletion request UUID correlates the CRDT tombstone's
         // `request_id` with the REDACTION_AUDIT receipt's `request_id`.
+        // ONE-1149: minted only AFTER the header read proves there is
+        // something to erase — a delete that finds nothing must never mint a
+        // request id (the headerless leg mints after its own scope probe).
         let request_uuid = Uuid::now_v7();
-        let Some(header) = self.read_entity_header(id)? else {
-            return self.delete_entity_without_header(id, reason, requested_at, request_uuid);
-        };
 
         let tombstone = TombstoneValueV2 {
             reason: reason.into(),
@@ -1278,29 +1281,45 @@ impl Vault {
         let receipt_id = EntityId::now();
         let scope = RedactionScope::entity(id);
         let mut wtxn = self.store.env.write_txn()?;
+        let marker_key = local_hard_delete_key(id);
+        // ONE-1149 ownership claim: probe the FULL delete scope INSIDE the
+        // erasing txn. LMDB's single writer makes this race-free — if the
+        // probe sees state, this txn's purge erases it; if a concurrent
+        // delete raced everything away first, this delete must not claim it
+        // erased anything (no receipt, no sweep row). Mirrors the
+        // receiver-side `apply_replayed_tombstone` nothing-local branch:
+        // ONLY the durable `dt:` marker is written (hard-once-seen — the
+        // CRDT tombstone above is already published, so the id IS
+        // hard-deleted), guarded so an existing marker is never overwritten.
+        if !self.active_delete_scope_exists_in_txn(&wtxn, id)? {
+            if self.store.sync_state.get(&wtxn, &marker_key)?.is_none() {
+                self.store
+                    .sync_state
+                    .put(&mut wtxn, &marker_key, &tombstone.encode())?;
+                wtxn.commit()?;
+            }
+            return Ok(DeleteEntityOutcome::missing());
+        }
         // ONE-1122 `dt:` local hard-delete marker: the permanent local truth
         // the Observer-B materialization gate consults when a crafted update
         // REMOVES the CRDT tombstone (nothing else id-keyed survives a hard
         // delete locally — the receipt id is fresh, h: is seq-keyed, pt: is
         // cleared after replay). Written in the SAME txn as the active-store
-        // purge, including the purge-raced-to-missing branch below: the CRDT
-        // tombstone above is already published, so the id IS hard-deleted.
-        // PRESENCE-ONLY for gates; the 25 B value body (the tombstone wire
-        // bytes) is informational. Un-cfg'd on every build: `sync_state` is
-        // unconditional and the marker is local delete truth, not sync-only
-        // state (ONE-1132 cfg-off durability).
+        // purge. PRESENCE-ONLY for gates; the 25 B value body (the tombstone
+        // wire bytes) is informational. Un-cfg'd on every build: `sync_state`
+        // is unconditional and the marker is local delete truth, not
+        // sync-only state (ONE-1132 cfg-off durability).
         self.store
             .sync_state
-            .put(&mut wtxn, &local_hard_delete_key(id), &tombstone.encode())?;
+            .put(&mut wtxn, &marker_key, &tombstone.encode())?;
         let existed = self.purge_entity_active_store_in_txn(&mut wtxn, id)?;
-        if !existed {
-            wtxn.commit()?;
-            return Ok(DeleteEntityOutcome::missing());
-        }
 
         // ARCH-0038 DELETE: "The derived edge flag follows the Claim" — the
         // subject edge is refreshed in the SAME transaction as the purge.
-        if let Some(captured) = &captured {
+        // Gated on `existed` (the entity record was erased by THIS txn): a
+        // captured Claim whose record was raced away was already refreshed
+        // by the racer's own delete txn.
+        if existed && let Some(captured) = &captured {
             self.refresh_subject_edge_after_claim_delete_in_txn(&mut wtxn, id, &captured.subject)?;
         }
 
@@ -1346,7 +1365,6 @@ impl Vault {
         id: &EntityId,
         reason: DeleteReason,
         requested_at: u64,
-        request_uuid: Uuid,
     ) -> Result<DeleteEntityOutcome> {
         // Probe first so a fully-missing id stays a strict no-op — deleting
         // a nonexistent entity must not mint tombstones or receipts.
@@ -1356,6 +1374,9 @@ impl Vault {
                 return Ok(DeleteEntityOutcome::missing());
             }
         }
+        // ONE-1149: the deletion request UUID is minted only AFTER the probe
+        // above says there is something to erase.
+        let request_uuid = Uuid::now_v7();
 
         // ONE-1132: headerless residue previously left NO CRDT record, so
         // the orphan id could re-sync forever. There is no `learned_at` to
@@ -1371,6 +1392,27 @@ impl Vault {
         let crdt_persisted = self.write_crdt_tombstone(id, requested_at, &tombstone)?;
 
         let mut wtxn = self.store.env.write_txn()?;
+        let marker_key = local_hard_delete_key(id);
+        // ONE-1149 ownership claim: re-probe the FULL delete scope INSIDE
+        // the erasing txn (race-free under LMDB's single writer). The read
+        // probe above gated the tombstone publish; THIS probe gates the
+        // erasure audit. A concurrent delete that raced the residue away
+        // between the two means this delete erased nothing: no receipt, no
+        // sweep row, no `pt:` marker — only the durable `dt:` marker for
+        // hard reasons (hard-once-seen; the CRDT tombstone above is already
+        // published), guarded exactly like the receiver-side
+        // `apply_replayed_tombstone` nothing-local branch.
+        if !self.active_delete_scope_exists_in_txn(&wtxn, id)? {
+            if reason.active_store_hard_purge_v1()
+                && self.store.sync_state.get(&wtxn, &marker_key)?.is_none()
+            {
+                self.store
+                    .sync_state
+                    .put(&mut wtxn, &marker_key, &tombstone.encode())?;
+                wtxn.commit()?;
+            }
+            return Ok(DeleteEntityOutcome::missing());
+        }
         let existed = self.purge_entity_active_store_in_txn(&mut wtxn, id)?;
         // OWNER-DECISION (cfg-off durability): marker in the SAME purge txn.
         self.put_pending_tombstone_in_txn(&mut wtxn, &window_label, id, &tombstone)?;
@@ -1383,11 +1425,9 @@ impl Vault {
             // state; without the local marker a hostile tombstone removal
             // + re-put would resurrect this id through the
             // materialization gates.
-            self.store.sync_state.put(
-                &mut wtxn,
-                &local_hard_delete_key(id),
-                &tombstone.encode(),
-            )?;
+            self.store
+                .sync_state
+                .put(&mut wtxn, &marker_key, &tombstone.encode())?;
         }
         if !reason.writes_receipt() {
             wtxn.commit()?;
