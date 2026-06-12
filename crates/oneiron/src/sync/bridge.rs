@@ -240,10 +240,21 @@ fn materialize_entities_from_delta(
                     // check is entity-canonical (a case-shifted hex
                     // tombstone key still names this id). Presence is
                     // value-agnostic (a non-binary tombstone decodes HARD
-                    // downstream), OR'd with the permanent local `dt:`
-                    // marker so a hostile peer that REMOVES the tombstone
-                    // from the map cannot resurrect the body either. A
-                    // failed marker read fails CLOSED (suppress).
+                    // downstream).
+                    if tombstone_map_contains_id(&tombstones_map, &id) {
+                        tracing::debug!(
+                            entity = %key,
+                            "observer-b: entity update suppressed by tombstone (delete wins)"
+                        );
+                        continue;
+                    }
+                    // `dt:` local hard-delete marker gate (ONE-1122),
+                    // checked SECOND (LMDB point read) only when the map
+                    // says absent: a hostile peer that REMOVES the
+                    // tombstone and re-puts the entity key cannot resurrect
+                    // the body. A failed marker read fails CLOSED
+                    // (suppress); a refusal is the crafted-removal attack
+                    // signal, surfaced at WARN.
                     let locally_hard_deleted =
                         match vault.local_hard_delete_marker_exists_in_txn(wtxn, &id) {
                             Ok(present) => present,
@@ -256,10 +267,10 @@ fn materialize_entities_from_delta(
                                 true
                             }
                         };
-                    if tombstone_map_contains_id(&tombstones_map, &id) || locally_hard_deleted {
-                        tracing::debug!(
+                    if locally_hard_deleted {
+                        tracing::warn!(
                             entity = %key,
-                            "observer-b: entity update suppressed by tombstone (delete wins)"
+                            "observer-b: entity locally hard-deleted (dt: marker), refusing materialization"
                         );
                         continue;
                     }
