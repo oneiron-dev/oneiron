@@ -2920,6 +2920,59 @@ fn vault_open_rejects_second_live_env_for_symlinked_path() -> Result<()> {
 }
 
 #[test]
+fn dropping_last_vault_handle_closes_lmdb_env() -> Result<()> {
+    let temp_dir = tempfile::tempdir()?;
+    let path = temp_dir.path();
+
+    let vault = Vault::open(path, test_config())?;
+    // heed registers opened environments by canonicalized path; a live
+    // registration is observable as `Some(closing_event)`.
+    let canonical = path.canonicalize()?;
+    let closing_event = heed::env_closing_event(&canonical)
+        .expect("open vault must have a live env registration");
+
+    drop(vault);
+    // `Store`'s drop runs `prepare_for_closing` and the wrapped env is the
+    // last clone, so the close is synchronous by the time `drop` returns;
+    // the timeout only bounds the failure mode.
+    assert!(
+        closing_event.wait_timeout(std::time::Duration::from_secs(5)),
+        "LMDB env did not close after dropping the last vault handle"
+    );
+    assert!(
+        heed::env_closing_event(&canonical).is_none(),
+        "closed env still present in heed's process-global registry"
+    );
+
+    // Single-writer reopen of the same path works after the close.
+    let reopened = Vault::open(path, test_config())?;
+    drop(reopened);
+    assert!(heed::env_closing_event(&canonical).is_none());
+    Ok(())
+}
+
+/// ONE-1142 regression: without the `OwnedEnv` close path every
+/// `Vault::open` leaks one pthread TLS key (LMDB allocates it in
+/// `mdb_env_setup_locks`; only `mdb_env_close` frees it), and macOS caps a
+/// process at `PTHREAD_KEYS_MAX = 512` keys — open #~509 fails with
+/// `Io(EAGAIN)`. 600 sequential open→drop cycles in ONE process must all
+/// succeed; only one env is alive at a time, so the loop is cheap.
+#[test]
+fn vault_open_drop_cycles_survive_pthread_key_limit() -> Result<()> {
+    let mut config = test_config();
+    config.map_size = 4 << 20;
+
+    for i in 0..600_usize {
+        let dir = tempfile::tempdir()?;
+        let vault = Vault::open(dir.path(), config.clone()).unwrap_or_else(|err| {
+            panic!("vault open #{i} failed (pthread-key leak regression): {err:?}")
+        });
+        drop(vault);
+    }
+    Ok(())
+}
+
+#[test]
 fn batch_with_edges_and_entities() -> Result<()> {
     let (_dir, vault) = open_test_vault();
     let src = EntityId::now();
