@@ -749,15 +749,21 @@ fn load_root_doc(vault: &Vault) -> Result<LoroDoc> {
 
 /// Loads `m:client_id`, minting it once (u64 LE, nonzero) when absent.
 ///
-/// A present-but-malformed row fails closed: silently re-minting would
-/// change this device's CRDT identity mid-install.
+/// A present-but-malformed row — wrong length, or an 8-byte row decoding
+/// to 0 (the mint loop never produces 0, and 0 collides with Loro's unset
+/// peer id) — fails closed: silently re-minting would change this device's
+/// CRDT identity mid-install.
 fn load_or_mint_client_id(vault: &Vault) -> Result<u64> {
     let minted = mint_client_id();
     let mut chosen = minted;
     vault.with_write_txn(
         |wtxn| match vault.store.sync_state.get(wtxn, KEY_CLIENT_ID)? {
             Some(raw) if raw.len() == 8 => {
-                chosen = u64::from_le_bytes(raw.try_into().expect("length checked"));
+                let decoded = u64::from_le_bytes(raw.try_into().expect("length checked"));
+                if decoded == 0 {
+                    return Err(Error::CorruptedIndex("sync client_id zero"));
+                }
+                chosen = decoded;
                 Ok(())
             }
             Some(_) => Err(Error::CorruptedIndex("sync client_id row")),
@@ -1322,6 +1328,30 @@ mod tests {
                 .unwrap()
                 .unwrap(),
             vec![1, 2, 3]
+        );
+    }
+
+    #[test]
+    fn sync_client_fails_closed_on_zero_client_id_row() {
+        let manager = test_manager();
+        manager
+            .vault()
+            .sync_state_put(KEY_CLIENT_ID, &0u64.to_le_bytes())
+            .unwrap();
+
+        let result = SyncClient::new(Arc::clone(&manager), SyncClientConfig::default());
+        assert!(
+            matches!(result, Err(Error::CorruptedIndex("sync client_id zero"))),
+            "stored zero m:client_id must fail closed, not be silently re-minted"
+        );
+        // The corrupt row is left for diagnosis, not overwritten.
+        assert_eq!(
+            manager
+                .vault()
+                .sync_state_get(KEY_CLIENT_ID)
+                .unwrap()
+                .unwrap(),
+            0u64.to_le_bytes()
         );
     }
 
