@@ -32,6 +32,7 @@ pub struct MaintenanceBuilder<'a> {
     do_compact_postings: bool,
     do_recompute_hashes: bool,
     do_clear_text_index: bool,
+    do_hard_erase_sweep: bool,
 }
 
 /// Aggregate counters for maintenance operations.
@@ -67,6 +68,34 @@ pub struct MaintenanceReport {
     pub text_doc_field_lengths_removed: u64,
     /// Per-field stats rows removed by `clear_text_index`.
     pub text_bm25_field_stats_removed: u64,
+    /// `h:` hard-erase sweep jobs completed (receipts finalized + row
+    /// deleted) by `run_hard_erase_sweep` (ONE-1087).
+    pub sweep_jobs_processed: u64,
+    /// Jobs deferred without an attempt: not yet due (retry backoff), a
+    /// live window blocked compaction, an undecodable/malformed `h:` row,
+    /// or a non-`sync` build facing CRDT carrier rows (fail closed).
+    pub sweep_jobs_deferred: u64,
+    /// Jobs whose attempt FAILED this run — `retry_state` rewritten in
+    /// place (attempt_count, next_attempt_at backoff, last_error_code);
+    /// the row is never deleted on failure.
+    pub sweep_jobs_failed: u64,
+    /// Persisted window docs rebuilt through a shallow snapshot (history
+    /// carriers dropped).
+    pub sweep_windows_compacted: u64,
+    /// Windows skipped because they are OPEN in a window registry — a live
+    /// doc's next full-snapshot persist would resurrect the carrier.
+    pub sweep_windows_deferred_live: u64,
+    /// REDACTION_AUDIT receipts whose `sweep_complete_at` was finalized.
+    pub sweep_receipts_finalized: u64,
+    /// Pending jobs observed past their `deadline_at` (queued_at + 30 d,
+    /// GDPR Art. 12(3)) — each is also a `tracing::error`.
+    pub sweep_deadline_breaches: u64,
+    /// Stale `x:` quarantine rows evicted by the on-demand retention pass.
+    pub sweep_quarantine_rows_expired: u64,
+    /// ONE-1091 audit: receipts with `sweep_queued_at` set, no
+    /// `sweep_complete_at`, and NO covering pending `h:` row — a dropped
+    /// erasure obligation (each is also a `tracing::error`).
+    pub sweep_obligations_missing: u64,
 }
 
 impl<'a> MaintenanceBuilder<'a> {
@@ -80,6 +109,7 @@ impl<'a> MaintenanceBuilder<'a> {
             do_compact_postings: false,
             do_recompute_hashes: false,
             do_clear_text_index: false,
+            do_hard_erase_sweep: false,
         }
     }
 
@@ -135,6 +165,22 @@ impl<'a> MaintenanceBuilder<'a> {
         self
     }
 
+    /// Manual ARCH-0038 historical-carrier sweep (ONE-1087/ONE-1091 phase
+    /// 1; scheduling is M6): drains pending `h:{seq:8BE}` hard-erase
+    /// obligations, shallow-compacts every CLOSED persisted window doc
+    /// (dropping the pre-delete Loro op history — the dominant residual
+    /// byte carrier — while preserving live state, doc identity and VV),
+    /// scrubs live-map residue for `dt:`-marked ids, finalizes matching
+    /// receipts' `sweep_complete_at`, expires stale `x:` quarantine rows,
+    /// and audits for dropped obligations. Fail closed throughout: open
+    /// windows defer, failed windows keep the obligation rows with
+    /// `retry_state` rewritten in place, and delete semantics are never
+    /// weakened (receipts, `dt:` markers and tombstones are permanent).
+    pub fn run_hard_erase_sweep(mut self) -> Self {
+        self.do_hard_erase_sweep = true;
+        self
+    }
+
     pub fn run(self) -> Result<MaintenanceReport> {
         let mut report = MaintenanceReport::default();
 
@@ -169,6 +215,19 @@ impl<'a> MaintenanceBuilder<'a> {
             report.text_forward_removed = counts.forward;
             report.text_doc_field_lengths_removed = counts.doc_field_lengths;
             report.text_bm25_field_stats_removed = counts.field_stats;
+        }
+
+        if self.do_hard_erase_sweep {
+            let run = crate::sweep::run_hard_erase_sweep(self.vault)?;
+            report.sweep_jobs_processed = run.jobs_processed;
+            report.sweep_jobs_deferred = run.jobs_deferred;
+            report.sweep_jobs_failed = run.jobs_failed;
+            report.sweep_windows_compacted = run.windows_compacted;
+            report.sweep_windows_deferred_live = run.windows_deferred_live;
+            report.sweep_receipts_finalized = run.receipts_finalized;
+            report.sweep_deadline_breaches = run.deadline_breaches;
+            report.sweep_quarantine_rows_expired = run.quarantine_rows_expired;
+            report.sweep_obligations_missing = run.obligations_missing;
         }
 
         Ok(report)
