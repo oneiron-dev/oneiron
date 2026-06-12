@@ -584,8 +584,9 @@ mod tests {
 
     fn test_server() -> (tempfile::TempDir, SyncServer) {
         let dir = tempfile::tempdir().unwrap();
-        let vault = oneiron::Vault::open(dir.path(), oneiron::VaultConfig::device()).unwrap();
-        let server = SyncServer::new(vault, SyncServerConfig::default());
+        let vault =
+            Arc::new(oneiron::Vault::open(dir.path(), oneiron::VaultConfig::device()).unwrap());
+        let server = SyncServer::new(vault, SyncServerConfig::default()).unwrap();
         (dir, server)
     }
 
@@ -616,7 +617,10 @@ mod tests {
         let key = "2026-03";
 
         // Server window doc: chunky shared base + a server-only divergence.
-        let server_doc = server.get_or_create_window(key).await;
+        let server_doc = server
+            .get_or_create_window(&WindowKey::new(key))
+            .await
+            .unwrap();
         server_doc
             .get_map("entities")
             .insert("base", vec![7u8; 2048].as_slice())
@@ -676,7 +680,10 @@ mod tests {
     async fn vv_request_malformed_vv_fails_closed_no_fallback() {
         let (_dir, server) = test_server();
         let key = "2026-03";
-        let server_doc = server.get_or_create_window(key).await;
+        let server_doc = server
+            .get_or_create_window(&WindowKey::new(key))
+            .await
+            .unwrap();
         server_doc
             .get_map("entities")
             .insert("secret", b"data".as_slice())
@@ -710,7 +717,10 @@ mod tests {
     async fn vv_response_sends_local_diff_only() {
         let (_dir, server) = test_server();
         let key = "2026-04";
-        let server_doc = server.get_or_create_window(key).await;
+        let server_doc = server
+            .get_or_create_window(&WindowKey::new(key))
+            .await
+            .unwrap();
         server_doc
             .get_map("entities")
             .insert("ahead", b"x".as_slice())

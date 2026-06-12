@@ -23,9 +23,11 @@ use std::time::Duration;
 
 use futures_util::{SinkExt, StreamExt};
 use loro::{ExportMode, LoroDoc};
+use oneiron::sync::bridge::Materializer;
 use oneiron::sync::transport::{self, TAG_SYNC_UPDATE, TAG_WINDOW_SYNC, window_sub_tags};
 use oneiron::sync::{
     ConnectionConfig, SyncClient, SyncClientConfig, SyncConnection, SyncEvent, SyncStatus,
+    WindowManager,
 };
 use oneiron_server::build_app;
 use oneiron_server::config::SyncServerConfig;
@@ -38,6 +40,16 @@ type WsStream =
 
 fn open_vault(dir: &std::path::Path) -> Arc<oneiron::Vault> {
     Arc::new(oneiron::Vault::open(dir, oneiron::VaultConfig::device()).unwrap())
+}
+
+/// Client-side window manager over a fresh vault (the client API is
+/// manager-owned post-ONE-1125).
+fn open_manager(vault: Arc<oneiron::Vault>) -> Arc<WindowManager> {
+    Arc::new(WindowManager::new(
+        vault,
+        Arc::new(Materializer::new()),
+        "ws-sync-test",
+    ))
 }
 
 fn config_with_secret(secret: Option<&str>) -> SyncServerConfig {
@@ -72,9 +84,14 @@ async fn connect(
             .headers_mut()
             .insert("x-oneiron-secret", secret.parse().unwrap());
     }
-    tokio_tungstenite::connect_async(request)
+    let mut ws = tokio_tungstenite::connect_async(request)
         .await
-        .map(|(ws, _resp)| ws)
+        .map(|(ws, _resp)| ws)?;
+    // Phase 0 (ONE-1127): the FIRST frame must be the protocol-version
+    // hello, or the server closes with 4006 before any sync payload flows.
+    ws.send(Message::Binary(transport::encode_protocol_hello().into()))
+        .await?;
+    Ok(ws)
 }
 
 async fn next_binary(ws: &mut WsStream) -> Vec<u8> {
@@ -294,7 +311,8 @@ async fn relayed_update_and_tombstone_survive_server_restart() {
     assert_eq!(root_msg[0], TAG_SYNC_UPDATE);
     let client_dir = tempfile::tempdir().unwrap();
     let client_vault = open_vault(client_dir.path());
-    let (mut sync_client, _events) = SyncClient::new(client_vault, SyncClientConfig::default());
+    let (mut sync_client, _events) =
+        SyncClient::new(open_manager(client_vault), SyncClientConfig::default()).unwrap();
     sync_client.handle_server_message(&root_msg).unwrap();
     assert_eq!(
         sync_client.server_windows(),
@@ -477,12 +495,11 @@ async fn run_sync_connection_once(server_url: String, auth_token: &str) -> Vec<S
         },
         auto_reconnect: false,
     };
-    let connection = SyncConnection::new(client_vault, config).unwrap();
+    let connection = SyncConnection::new(open_manager(client_vault), config).unwrap();
 
-    let (_local_tx, local_rx) = tokio::sync::mpsc::unbounded_channel();
     let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel();
 
-    let run_handle = tokio::spawn(async move { connection.run(local_rx, shutdown_rx).await });
+    let run_handle = tokio::spawn(async move { connection.run(shutdown_rx).await });
     // Give the connection time to handshake + finish initial sync, then
     // request a clean shutdown (ignored if the run loop already exited).
     tokio::time::sleep(Duration::from_secs(2)).await;
@@ -491,7 +508,8 @@ async fn run_sync_connection_once(server_url: String, auth_token: &str) -> Vec<S
     let mut event_rx = tokio::time::timeout(Duration::from_secs(30), run_handle)
         .await
         .expect("SyncConnection::run did not exit")
-        .expect("SyncConnection::run task panicked");
+        .expect("SyncConnection::run task panicked")
+        .expect("SyncConnection::run returned an error");
 
     let mut events = Vec::new();
     while let Ok(event) = event_rx.try_recv() {
