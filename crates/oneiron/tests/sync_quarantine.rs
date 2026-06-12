@@ -88,6 +88,62 @@ fn claim_body_with_bad_predicate() -> Vec<u8> {
     out
 }
 
+/// Hand-crafted `edge.provenance` value record carrying exactly the three
+/// REQUIRED pinned snake_case keys (contracts.ts `edgeProvenanceClaim.fields`:
+/// `actor_entity_ref` 16-byte binary, `confidence` in [0, 1],
+/// `supersession_status` u8) — encoded independently of the engine's own
+/// encoder so the ONE-1159 door tests pin the wire literals.
+fn edge_provenance_value_record() -> rmpv::Value {
+    rmpv::Value::Map(vec![
+        (
+            rmpv::Value::from("actor_entity_ref"),
+            rmpv::Value::Binary(vec![0x42; 16]),
+        ),
+        (rmpv::Value::from("confidence"), rmpv::Value::F32(0.75)),
+        (
+            rmpv::Value::from("supersession_status"),
+            rmpv::Value::from(1u8),
+        ),
+    ])
+}
+
+/// The engine-owned persisted actor-class evidence map `{"actor_class": u8}`
+/// carried on the wrapping Claim's `evid` field (0 = human).
+fn actor_class_evidence() -> rmpv::Value {
+    rmpv::Value::Map(vec![(
+        rmpv::Value::from("actor_class"),
+        rmpv::Value::from(0u8),
+    )])
+}
+
+/// Hand-crafted D18-VALID type-0 CLAIM body with `pred = "edge.provenance"`
+/// and a 33-byte EdgeRef `subj` — the wrapper passes every D18 rule, so the
+/// ONLY thing standing between a junk `val`/`evid` and the entities table is
+/// the ONE-1159 structural branch at the replay door.
+fn edge_provenance_claim_body(val: rmpv::Value, evid: Option<rmpv::Value>) -> Vec<u8> {
+    let mut edge_ref = Vec::with_capacity(33);
+    edge_ref.extend_from_slice(&[0x11; 16]);
+    edge_ref.push(EdgeKind::Mentions as u8);
+    edge_ref.extend_from_slice(&[0x22; 16]);
+    let mut entries = vec![
+        (
+            rmpv::Value::from("pred"),
+            rmpv::Value::from("edge.provenance"),
+        ),
+        (rmpv::Value::from("val"), val),
+        (rmpv::Value::from("conf"), rmpv::Value::F32(0.9)),
+    ];
+    if let Some(evid) = evid {
+        entries.push((rmpv::Value::from("evid"), evid));
+    }
+    entries.push((rmpv::Value::from("subj"), rmpv::Value::Binary(edge_ref)));
+    entries.push((rmpv::Value::from("appr"), rmpv::Value::from("auto")));
+    entries.push((rmpv::Value::from("life"), rmpv::Value::from("active")));
+    let mut out = Vec::new();
+    rmpv::encode::write_value(&mut out, &rmpv::Value::Map(entries)).unwrap();
+    out
+}
+
 fn valid_time_range() -> TimeRange {
     TimeRange { start: 1, end: 2 }
 }
@@ -200,6 +256,91 @@ fn each_gate_rejection_class_produces_exactly_one_quarantine_record() {
                     valid_time_range(),
                     LEARNED_AT,
                     &claim_body_with_bad_predicate(),
+                );
+                insert_bytes(&doc.get_map("entities"), &id.to_hex(), &blob);
+                (id.to_hex(), blob)
+            },
+        },
+        // ── ONE-1159: edge.provenance structural validation at the door.
+        // Each forged wrapper is D18-VALID; the wrongness is a junk SHAPE
+        // (never a key-count assumption), so every case stays invalid under
+        // any grown value-record vocabulary.
+        GateCase {
+            name: "provenance_claim_non_map_value_record",
+            container: QuarantineContainer::Entities,
+            expected_reason: "InvalidProvenanceBody",
+            setup: |_vault, doc| {
+                let id = EntityId::now();
+                let blob = entity_blob(
+                    ENTITY_TYPE_CLAIM,
+                    valid_time_range(),
+                    LEARNED_AT,
+                    &edge_provenance_claim_body(
+                        rmpv::Value::from("junk-not-a-record"),
+                        Some(actor_class_evidence()),
+                    ),
+                );
+                insert_bytes(&doc.get_map("entities"), &id.to_hex(), &blob);
+                (id.to_hex(), blob)
+            },
+        },
+        GateCase {
+            name: "provenance_claim_missing_required_actor_entity_ref",
+            container: QuarantineContainer::Entities,
+            expected_reason: "InvalidProvenanceBody",
+            setup: |_vault, doc| {
+                let rmpv::Value::Map(mut entries) = edge_provenance_value_record() else {
+                    unreachable!("helper emits a map");
+                };
+                entries.retain(|(key, _)| key.as_str() != Some("actor_entity_ref"));
+                let id = EntityId::now();
+                let blob = entity_blob(
+                    ENTITY_TYPE_CLAIM,
+                    valid_time_range(),
+                    LEARNED_AT,
+                    &edge_provenance_claim_body(
+                        rmpv::Value::Map(entries),
+                        Some(actor_class_evidence()),
+                    ),
+                );
+                insert_bytes(&doc.get_map("entities"), &id.to_hex(), &blob);
+                (id.to_hex(), blob)
+            },
+        },
+        GateCase {
+            name: "provenance_claim_unknown_value_record_key",
+            container: QuarantineContainer::Entities,
+            expected_reason: "InvalidProvenanceBody",
+            setup: |_vault, doc| {
+                let rmpv::Value::Map(mut entries) = edge_provenance_value_record() else {
+                    unreachable!("helper emits a map");
+                };
+                entries.push((rmpv::Value::from("zzz"), rmpv::Value::from(1u8)));
+                let id = EntityId::now();
+                let blob = entity_blob(
+                    ENTITY_TYPE_CLAIM,
+                    valid_time_range(),
+                    LEARNED_AT,
+                    &edge_provenance_claim_body(
+                        rmpv::Value::Map(entries),
+                        Some(actor_class_evidence()),
+                    ),
+                );
+                insert_bytes(&doc.get_map("entities"), &id.to_hex(), &blob);
+                (id.to_hex(), blob)
+            },
+        },
+        GateCase {
+            name: "provenance_claim_missing_actor_class_evidence",
+            container: QuarantineContainer::Entities,
+            expected_reason: "InvalidProvenanceBody",
+            setup: |_vault, doc| {
+                let id = EntityId::now();
+                let blob = entity_blob(
+                    ENTITY_TYPE_CLAIM,
+                    valid_time_range(),
+                    LEARNED_AT,
+                    &edge_provenance_claim_body(edge_provenance_value_record(), None),
                 );
                 insert_bytes(&doc.get_map("entities"), &id.to_hex(), &blob);
                 (id.to_hex(), blob)
@@ -323,6 +464,116 @@ fn each_gate_rejection_class_produces_exactly_one_quarantine_record() {
         );
         assert!(rec.quarantined_at > 0, "case {}", case.name);
     }
+}
+
+/// ONE-1159 — the replay door validates `edge.provenance` Claims
+/// STRUCTURALLY (pinned value record + persisted actor-class evidence), not
+/// just D18-grammatically: forged D18-valid wrappers around broken
+/// provenance records are typed-rejected at the door and never reach the
+/// entities table, while a fully-valid Claim (legacy evid shape) in the SAME
+/// batch replicates byte-identical — per-op isolation, hash-only x: rows.
+///
+/// FAILS against pre-fix code: every forged Claim materialized into LMDB
+/// (D18 treats `val`/`evid` as opaque) and only failed closed later, at the
+/// provenance ops that interpret it.
+#[test]
+fn replay_door_keeps_structurally_invalid_provenance_claims_out_of_entities() {
+    let (_dir, vault) = test_vault_with_dir();
+    let doc = LoroDoc::new();
+    let materializer = Arc::new(Materializer::new());
+    let _subs = register_observer_b(&doc, &vault, &materializer, WINDOW);
+    let entities = doc.get_map("entities");
+
+    let missing_actor = rmpv::Value::Map(vec![
+        (rmpv::Value::from("confidence"), rmpv::Value::F32(0.75)),
+        (
+            rmpv::Value::from("supersession_status"),
+            rmpv::Value::from(1u8),
+        ),
+    ]);
+    let unknown_key = {
+        let rmpv::Value::Map(mut entries) = edge_provenance_value_record() else {
+            unreachable!("helper emits a map");
+        };
+        entries.push((rmpv::Value::from("zzz"), rmpv::Value::from(1u8)));
+        rmpv::Value::Map(entries)
+    };
+    let forged_bodies: [(&str, Vec<u8>); 4] = [
+        (
+            "non-map value record",
+            edge_provenance_claim_body(
+                rmpv::Value::from("junk-not-a-record"),
+                Some(actor_class_evidence()),
+            ),
+        ),
+        (
+            "missing required actor_entity_ref",
+            edge_provenance_claim_body(missing_actor, Some(actor_class_evidence())),
+        ),
+        (
+            "unknown value-record key zzz",
+            edge_provenance_claim_body(unknown_key, Some(actor_class_evidence())),
+        ),
+        (
+            "missing actor_class evidence",
+            edge_provenance_claim_body(edge_provenance_value_record(), None),
+        ),
+    ];
+
+    let mut forged = Vec::new();
+    for (name, body) in forged_bodies {
+        let id = EntityId::now();
+        let blob = entity_blob(ENTITY_TYPE_CLAIM, valid_time_range(), LEARNED_AT, &body);
+        insert_bytes(&entities, &id.to_hex(), &blob);
+        forged.push((name, id, blob));
+    }
+    let valid_id = EntityId::now();
+    let valid_blob = entity_blob(
+        ENTITY_TYPE_CLAIM,
+        valid_time_range(),
+        LEARNED_AT,
+        &edge_provenance_claim_body(edge_provenance_value_record(), Some(actor_class_evidence())),
+    );
+    insert_bytes(&entities, &valid_id.to_hex(), &valid_blob);
+    doc.commit();
+
+    // Positive control: the fully-valid Claim replicated byte-identical
+    // despite the four poisoned siblings (per-op isolation).
+    assert_eq!(
+        vault.get_raw(&valid_id).unwrap().as_deref(),
+        Some(valid_blob.as_slice()),
+        "fully-valid edge.provenance claim must still replicate byte-identical"
+    );
+    // Every forged Claim was rejected AT THE DOOR: absent from entities…
+    for (name, id, _) in &forged {
+        assert!(
+            vault.get_raw(id).unwrap().is_none(),
+            "{name}: structurally invalid provenance claim must never reach entities"
+        );
+    }
+    // …and quarantined typed + hash-only (`x:` rows, ONE-1124 discipline).
+    let records = quarantined_records(&vault).unwrap();
+    assert_eq!(
+        records.len(),
+        forged.len(),
+        "exactly one x: row per forged claim"
+    );
+    for (_, rec) in &records {
+        assert_eq!(
+            rec.reason_code, "InvalidProvenanceBody",
+            "typed rejection reason literal"
+        );
+        assert_eq!(rec.container, QuarantineContainer::Entities);
+    }
+    let mut quarantined_hashes: Vec<u64> =
+        records.iter().map(|(_, rec)| rec.payload_hash).collect();
+    quarantined_hashes.sort_unstable();
+    let mut expected_hashes: Vec<u64> = forged.iter().map(|(_, _, blob)| xxh3_64(blob)).collect();
+    expected_hashes.sort_unstable();
+    assert_eq!(
+        quarantined_hashes, expected_hashes,
+        "x: rows carry the xxh3_64 of each rejected blob (hash-only, GDPR-inert)"
+    );
 }
 
 /// ONE-1124 AC2 — one quarantined op never aborts the batch: the good

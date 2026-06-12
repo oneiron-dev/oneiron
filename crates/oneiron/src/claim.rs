@@ -637,8 +637,72 @@ pub(crate) fn decode_claim_body(data: &[u8], allow_reserved_predicate: bool) -> 
 
 /// Structural validation entry point for raw type-0 body bytes (D18).
 /// See [`decode_claim_body`] for the rules.
+///
+/// This is the WRITE-ONLY chokepoint (the read path — `Vault::get_claim` —
+/// decodes via [`decode_claim_body`] directly): every type-0 write on every
+/// door (`Vault::put_claim`, both batch builders' public puts, the
+/// reserved-namespace `put_reserved_claim` door, the `put_replicated`
+/// sync-replay doors, and the provenance lifecycle rewrites) validates
+/// through it, either up front or via `apply_put`. On top of the D18 rules
+/// it runs the predicate-aware structural branch for reserved
+/// `edge.provenance` Claims (ONE-1159) — see
+/// [`validate_edge_provenance_claim_structure`]. Reads stay untouched:
+/// pre-existing stored junk keeps its current read behavior (typed failure
+/// at the provenance ops that interpret it), it just can no longer be
+/// (re)written.
 pub(crate) fn validate_claim_body_bytes(data: &[u8], allow_reserved_predicate: bool) -> Result<()> {
-    decode_claim_body(data, allow_reserved_predicate).map(|_| ())
+    let body = decode_claim_body(data, allow_reserved_predicate)?;
+    if body.predicate == crate::provenance::PREDICATE_EDGE_PROVENANCE {
+        validate_edge_provenance_claim_structure(&body)?;
+    }
+    Ok(())
+}
+
+/// ONE-1159 — full structural validation of an `edge.provenance` Claim at
+/// the WRITE door.
+///
+/// D18 treats `val` as opaque MessagePack and `evid` as an opaque payload,
+/// so the replicated door admitted D18-valid but STRUCTURALLY invalid
+/// provenance Claims (junk `val`, non-record `val` maps, missing
+/// actor-class evidence); later provenance ops then failed closed only at
+/// read/supersede time. Sync replay is a WRITE PATH — the same fail-closed
+/// checks run behind the trusted door:
+///
+/// * `val` must decode as the pinned `edge.provenance` value record via the
+///   SHARED validator [`crate::provenance::validate_edge_provenance_value`]
+///   — the pinned key vocabulary lives in exactly one place, so vocabulary
+///   growth flows through here with zero edits;
+/// * the write-time validated `actor_class` must be persisted in EXACTLY
+///   one place: as an `actor_class` key in the value record (accepted only
+///   once the shared vocabulary carries that key) or as the engine-owned
+///   `{"actor_class": u8}` map on the wrapper's `evid`
+///   ([`crate::provenance::decode_actor_class_evidence`]). Present in both
+///   → ambiguous, rejected; present in neither → rejected. A provenance
+///   Claim without a persisted class can never participate in flag refresh,
+///   and the class is never defaulted (D13).
+///
+/// Typed rejections only (the [`Error::InvalidProvenanceBody`] family) — at
+/// the sync replay door the caller quarantines them (`x:` row, hash-only
+/// per ONE-1124), never drops.
+fn validate_edge_provenance_claim_structure(body: &ClaimBody) -> Result<()> {
+    crate::provenance::validate_edge_provenance_value(&body.value)?;
+    // Presence-only probe for the value-record `actor_class` key: VALIDITY
+    // of the key's value is the shared validator's job above (and a body
+    // key outside the pinned vocabulary was already rejected there), so
+    // this never duplicates shape logic.
+    let value_has_actor_class = matches!(
+        &body.value,
+        Value::Map(entries) if entries.iter().any(|(key, _)| {
+            key.as_str() == Some(crate::provenance::EVIDENCE_KEY_ACTOR_CLASS)
+        })
+    );
+    match (value_has_actor_class, body.evidence.as_ref()) {
+        (true, Some(_)) => Err(Error::InvalidProvenanceBody(
+            "actor_class present in both the value record and the wrapper evid (ambiguous)",
+        )),
+        (true, None) => Ok(()),
+        (false, evidence) => crate::provenance::decode_actor_class_evidence(evidence).map(|_| ()),
+    }
 }
 
 /// D19 read-path status gate predicate (ARCH-0003 retrieval rule; ARCH-0004
@@ -771,6 +835,133 @@ mod tests {
         ));
         // "edgework.x" is NOT in the reserved namespace (prefix is segment-exact).
         validate_predicate("edgework.tools", false).expect("edgework.* is not reserved");
+    }
+
+    /// ONE-1159 — the write-door chokepoint ([`validate_claim_body_bytes`],
+    /// shared by `put_reserved_claim` AND both `put_replicated` builders via
+    /// `apply_put`) runs FULL structural validation on `edge.provenance`
+    /// Claims: pinned value-record shape + persisted actor-class evidence,
+    /// typed `InvalidProvenanceBody` rejections. Forged cases are junk
+    /// SHAPES (never key-count assumptions), so each stays invalid under any
+    /// grown value-record vocabulary.
+    #[test]
+    fn write_door_validates_edge_provenance_claim_structure() {
+        use crate::provenance::{
+            EVIDENCE_KEY_ACTOR_CLASS, EdgeProvenanceClaimBody, SupersessionStatus,
+            encode_actor_class_evidence, encode_edge_provenance_value,
+        };
+        use crate::types::EdgeActorClass;
+
+        let actor = EntityId::from_bytes([0x42; 16]).expect("valid id");
+        let valid_value = || {
+            encode_edge_provenance_value(&EdgeProvenanceClaimBody::new(
+                actor,
+                0.75,
+                SupersessionStatus::Confirmed,
+            ))
+        };
+        let evid = encode_actor_class_evidence(EdgeActorClass::Human);
+        let subject = ClaimSubject::Edge {
+            source: EntityId::from_bytes([0x11; 16]).expect("valid id"),
+            kind: EdgeKind::Mentions,
+            target: EntityId::from_bytes([0x22; 16]).expect("valid id"),
+        };
+        let encode = |predicate: &str, value: Value, evidence: Option<Value>| {
+            let mut body = ClaimBody::new(
+                predicate,
+                subject,
+                value,
+                0.9,
+                ClaimApprovalStatus::Auto,
+                ClaimLifecycleStatus::Active,
+            );
+            body.evidence = evidence;
+            encode_claim_body(&body).expect("encode")
+        };
+
+        // Fully-valid legacy shape (value record + engine-owned evid map):
+        // accepted through the reserved door.
+        validate_claim_body_bytes(
+            &encode("edge.provenance", valid_value(), Some(evid.clone())),
+            true,
+        )
+        .expect("valid edge.provenance claim must pass the write door");
+
+        let missing_actor = {
+            let Value::Map(mut entries) = valid_value() else {
+                unreachable!("encoder emits a map");
+            };
+            entries.retain(|(key, _)| key.as_str() != Some("actor_entity_ref"));
+            Value::Map(entries)
+        };
+        let garbage_key = {
+            let Value::Map(mut entries) = valid_value() else {
+                unreachable!("encoder emits a map");
+            };
+            entries.push((Value::from("zzz"), Value::from(1_u8)));
+            Value::Map(entries)
+        };
+        let class_in_value_record = {
+            let Value::Map(mut entries) = valid_value() else {
+                unreachable!("encoder emits a map");
+            };
+            entries.push((Value::from(EVIDENCE_KEY_ACTOR_CLASS), Value::from(0_u8)));
+            Value::Map(entries)
+        };
+
+        let rejected: [(&str, Vec<u8>); 6] = [
+            (
+                "non-map value record",
+                encode("edge.provenance", Value::from("junk"), Some(evid.clone())),
+            ),
+            (
+                "value record missing required actor_entity_ref",
+                encode("edge.provenance", missing_actor, Some(evid.clone())),
+            ),
+            (
+                "unknown key zzz in value record",
+                encode("edge.provenance", garbage_key, Some(evid.clone())),
+            ),
+            (
+                "missing actor_class evidence entirely",
+                encode("edge.provenance", valid_value(), None),
+            ),
+            (
+                "malformed actor_class evidence (non-map evid)",
+                encode("edge.provenance", valid_value(), Some(Value::from(7_u8))),
+            ),
+            // Rejected under BOTH vocabularies: today `actor_class` is not a
+            // value-record key (unknown-key reject); once the vocabulary
+            // carries it, body-key + evid together are the ambiguous
+            // two-sources-of-truth shape (both-present reject).
+            (
+                "actor_class in both the value record and evid",
+                encode("edge.provenance", class_in_value_record, Some(evid)),
+            ),
+        ];
+        for (name, data) in rejected {
+            assert!(
+                matches!(
+                    validate_claim_body_bytes(&data, true),
+                    Err(Error::InvalidProvenanceBody(_))
+                ),
+                "{name}: must reject typed (InvalidProvenanceBody) at the write door"
+            );
+        }
+
+        // Predicate-scoped: the structural branch fires on the pinned
+        // edge.provenance literal only. Other reserved-namespace claims and
+        // public claims keep their opaque D18 `val`.
+        validate_claim_body_bytes(
+            &encode("edge.other_records", Value::from("opaque"), None),
+            true,
+        )
+        .expect("non-provenance reserved claim keeps opaque val");
+        validate_claim_body_bytes(
+            &encode("hobby.collects", Value::from("opaque"), None),
+            false,
+        )
+        .expect("public claim keeps opaque val");
     }
 
     #[test]
