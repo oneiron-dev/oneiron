@@ -35,6 +35,7 @@
 //!   answer the VV exchange from the persisted state vector without
 //!   loading the window doc.
 
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use loro::{LoroDoc, VersionVector};
@@ -128,6 +129,11 @@ pub struct SyncClient {
     root_doc: LoroDoc,
     client_id: u64,
     config: SyncClientConfig,
+    /// Last server VV observed per window from `VV_REQUEST` / `VV_RESPONSE`
+    /// frames. This is the convergence witness (ONE-1128): the offline queue
+    /// may only be cleared once the server's OWN vv proves it holds every op
+    /// the local doc holds.
+    server_vvs: HashMap<String, VersionVector>,
     status: SyncStatus,
     pub(crate) event_tx: mpsc::UnboundedSender<SyncEvent>,
 }
@@ -165,6 +171,7 @@ impl SyncClient {
             root_doc,
             client_id,
             config,
+            server_vvs: HashMap::new(),
             status: SyncStatus::Disconnected,
             event_tx,
         };
@@ -322,15 +329,21 @@ impl SyncClient {
                 // is missing (SyncStep2), then our own VV so it can push its
                 // local diff back (the reverse SyncStep1). Malformed VV →
                 // typed error, fail-closed: NEVER fall back to a full export.
+                let server_vv = VersionVector::decode(payload)
+                    .map_err(|_| TransportError::VersionVectorDecode)?;
                 let delta = export_updates_since(doc, payload).map_err(map_delta_export_err)?;
-                Ok(vec![
+                let responses = vec![
                     transport::encode_window_sync(window_key, window_sub_tags::UPDATE, &delta),
                     transport::encode_window_sync(
                         window_key,
                         window_sub_tags::VV_RESPONSE,
                         &doc_version_vector(doc),
                     ),
-                ])
+                ];
+                // Record the server VV only after a fully valid exchange — it
+                // becomes the convergence witness for this window (ONE-1128).
+                self.server_vvs.insert(window_key.to_string(), server_vv);
+                Ok(responses)
             }
             window_sub_tags::UPDATE => {
                 // Server sending Loro update bytes — import into the
@@ -377,12 +390,16 @@ impl SyncClient {
             window_sub_tags::VV_RESPONSE => {
                 // Peer's VV answering our VV_REQUEST — export and send only our
                 // local diff. Same fail-closed VV decoding as VV_REQUEST.
+                let server_vv = VersionVector::decode(payload)
+                    .map_err(|_| TransportError::VersionVectorDecode)?;
                 let delta = export_updates_since(doc, payload).map_err(map_delta_export_err)?;
-                Ok(vec![transport::encode_window_sync(
+                let responses = vec![transport::encode_window_sync(
                     window_key,
                     window_sub_tags::UPDATE,
                     &delta,
-                )])
+                )];
+                self.server_vvs.insert(window_key.to_string(), server_vv);
+                Ok(responses)
             }
             _ => Ok(Vec::new()),
         }
@@ -503,6 +520,72 @@ impl SyncClient {
         Ok(())
     }
 
+    /// Whether `window_key`'s local doc is VV-identical to the most recent
+    /// server VV observed for that window (ONE-1128).
+    ///
+    /// `None` means there is no local doc or no server VV witness yet —
+    /// callers MUST treat `None` as NOT converged (fail-closed). A window
+    /// without a server witness can never vouch for queued updates.
+    pub fn window_converged(&self, window_key: &str) -> Option<bool> {
+        let window = self.window(window_key)?;
+        let server_vv = self.server_vvs.get(window_key)?;
+        Some(window.doc.oplog_vv() == *server_vv)
+    }
+
+    /// Imports a queued offline update into the LOCAL window doc before it is
+    /// replayed to the server (ONE-1128).
+    ///
+    /// Convergence is confirmed by VV equality with the server, and equality
+    /// only vouches for ops the local doc contains. Skipping this import
+    /// would let a server that never received the queued ops compare
+    /// VV-equal against a fresh local doc — and the queue would be cleared
+    /// with the ops lost in flight (for a delete-bearing update, a vanished
+    /// GDPR tombstone).
+    pub fn import_queued_update(
+        &mut self,
+        window_key: &str,
+        update: &[u8],
+    ) -> std::result::Result<(), TransportError> {
+        let window = self.ensure_window(window_key)?;
+        window
+            .doc
+            .import(update)
+            .map_err(|_| TransportError::InvalidPayload("queued update import failed"))?;
+        Ok(())
+    }
+
+    /// Drops all in-memory CRDT state for a forced re-bootstrap (ARCH-0023b
+    /// Fig. 2: "drop Docs + queue").
+    ///
+    /// Manager-owned window docs are discarded WITHOUT persisting (the next
+    /// open reloads from durable state), recorded server VVs are cleared,
+    /// and the root doc is replaced with a fresh one so Phase 1 re-runs from
+    /// an empty VV. Clearing the PERSISTENT queue is the connection
+    /// manager's half (`SyncQueue::clear_all`, which preserves the `h:`/`m:`
+    /// metadata, the `x:` quarantine family, and delete-bearing `q:` rows +
+    /// their `d:` markers).
+    pub fn reset_for_re_bootstrap(&mut self) {
+        for key in self.manager.loaded_keys() {
+            self.manager.discard_window(&key);
+        }
+        self.server_vvs.clear();
+        let root_doc = LoroDoc::new();
+        let _meta = root_doc.get_map("meta");
+        // Same peer-id pinning as `new`: the client never authors root ops,
+        // and a fresh doc has no ops, so this cannot fail.
+        let _ = root_doc.set_peer_id(self.client_id);
+        self.root_doc = root_doc;
+    }
+
+    /// Re-bootstrap sync frames: drop all in-memory docs, then produce the
+    /// Phase 1-2 frames (root VV + default-window VV requests) WITHOUT the
+    /// protocol hello — the hello is a once-per-connection preamble
+    /// (ONE-1127) and the re-bootstrap reuses the live connection.
+    pub fn generate_re_bootstrap_sync(&mut self) -> Vec<Vec<u8>> {
+        self.reset_for_re_bootstrap();
+        self.generate_phase_frames()
+    }
+
     /// Generates initial sync messages for the connection flow.
     ///
     /// Returns messages to send to the server, in wire order:
@@ -519,11 +602,19 @@ impl SyncClient {
     /// the persisted `sv:w:{key}` StateVector without loading the doc.
     /// Stale or absent state vectors fall back to a full manager open.
     pub fn generate_initial_sync(&self) -> Vec<Vec<u8>> {
-        let mut messages = Vec::new();
-
         // Phase 0: protocol-version hello — first frame on every connection so
         // the server can detect wire breaks before any sync payload flows.
-        messages.push(transport::encode_protocol_hello());
+        let mut messages = vec![transport::encode_protocol_hello()];
+        messages.extend(self.generate_phase_frames());
+        messages
+    }
+
+    /// Phase 1-2 sync frames: root VV + default-window VV requests.
+    ///
+    /// Shared by the initial connection flow (which prepends the protocol
+    /// hello) and the forced re-bootstrap (which does not).
+    fn generate_phase_frames(&self) -> Vec<Vec<u8>> {
+        let mut messages = Vec::new();
 
         // Phase 1: Send our root VV (empty for new client — server will send snapshot)
         let mut vv_msg = vec![TAG_VERSION_VECTOR];
@@ -924,6 +1015,181 @@ mod tests {
             client.window(key).unwrap().doc.get_deep_value(),
             server_doc.get_deep_value()
         );
+    }
+
+    /// ONE-1128 AC1 machinery: `window_converged` is the queue-clear gate, so
+    /// its truth table is pinned hard. `None` (no server witness) must be
+    /// treated as NOT converged by callers — fail-closed.
+    #[test]
+    fn window_converged_requires_server_witness_and_vv_equality() {
+        let manager = test_manager();
+        let (mut client, _rx) = test_client(&manager);
+        let key = "2026-03";
+        client.ensure_window(key).unwrap();
+
+        // No server VV observed yet → None (caller must treat as NOT converged).
+        assert_eq!(client.window_converged(key), None);
+        // Unknown window → None.
+        assert_eq!(client.window_converged("2026-04"), None);
+
+        // Server is AHEAD: its VV_RESPONSE carries ops we lack → not converged.
+        let server_doc = server_window_doc();
+        server_doc
+            .get_map("entities")
+            .insert("server-op", b"s".as_slice())
+            .unwrap();
+        server_doc.commit();
+        let resp = transport::encode_window_sync(
+            key,
+            window_sub_tags::VV_RESPONSE,
+            &server_doc.oplog_vv().encode(),
+        );
+        client.handle_server_message(&resp).unwrap();
+        assert_eq!(
+            client.window_converged(key),
+            Some(false),
+            "server VV with ops we lack must NOT read as converged"
+        );
+
+        // Import the server's delta → VVs now match the recorded witness.
+        let delta = export_updates_since(
+            &server_doc,
+            &client.window(key).unwrap().doc.oplog_vv().encode(),
+        )
+        .unwrap();
+        let update = transport::encode_window_sync(key, window_sub_tags::UPDATE, &delta);
+        client.handle_server_message(&update).unwrap();
+        assert_eq!(client.window_converged(key), Some(true));
+
+        // A NEW local write makes the witness stale → not converged again.
+        // This is the lost-confirmation case: a server that never received
+        // our ops can never produce a VV that includes them.
+        let window = client.window(key).unwrap();
+        window
+            .doc
+            .get_map("tombstones")
+            .insert("deadbeef", b"t".as_slice())
+            .unwrap();
+        window.doc.commit();
+        assert_eq!(
+            client.window_converged(key),
+            Some(false),
+            "local ops missing from the server witness must block convergence"
+        );
+
+        // A server VV_REQUEST (SyncStep1) carrying a VV that includes our ops
+        // refreshes the witness → converged.
+        let our_delta = export_updates_since(
+            &client.window(key).unwrap().doc,
+            &server_doc.oplog_vv().encode(),
+        )
+        .unwrap();
+        server_doc.import(&our_delta).unwrap();
+        let req = transport::encode_window_sync(
+            key,
+            window_sub_tags::VV_REQUEST,
+            &server_doc.oplog_vv().encode(),
+        );
+        client.handle_server_message(&req).unwrap();
+        assert_eq!(client.window_converged(key), Some(true));
+    }
+
+    /// ONE-1128: queued offline updates must be importable into the local
+    /// doc (the VV-equality gate only vouches for ops the local doc holds);
+    /// garbage bytes fail closed with the typed transport error.
+    #[test]
+    fn import_queued_update_applies_ops_and_rejects_garbage() {
+        let manager = test_manager();
+        let (mut client, _rx) = test_client(&manager);
+        let key = "2026-03";
+
+        let writer = server_window_doc();
+        writer
+            .get_map("tombstones")
+            .insert("victim", b"t".as_slice())
+            .unwrap();
+        writer.commit();
+        let update = writer.export(ExportMode::all_updates()).unwrap();
+
+        client.import_queued_update(key, &update).unwrap();
+        assert_eq!(
+            client.window(key).unwrap().doc.get_deep_value(),
+            writer.get_deep_value(),
+            "queued ops must land in the local doc before replay"
+        );
+
+        assert!(matches!(
+            client.import_queued_update(key, &[0xFF, 0xFE, 0xFD]),
+            Err(TransportError::InvalidPayload(
+                "queued update import failed"
+            ))
+        ));
+        assert!(matches!(
+            client.import_queued_update("2026-13", &update),
+            Err(TransportError::InvalidWindowKey)
+        ));
+    }
+
+    /// ONE-1128 AC2: the re-bootstrap drops ALL in-memory docs and produces
+    /// Phase 1-2 frames WITHOUT the protocol hello (hello is per-connection,
+    /// ONE-1127). Fresh root VV must be EMPTY — that is what "drop Docs"
+    /// means on the wire.
+    #[test]
+    fn generate_re_bootstrap_sync_drops_docs_and_omits_hello() {
+        let manager = test_manager();
+        let (mut client, _rx) = test_client(&manager);
+
+        // Dirty state: a non-default window with local ops and a recorded
+        // server witness. (The unsent debounce buffer lives in the
+        // connection run loop since ONE-1126, not on the client.)
+        let key = "2026-01";
+        client.ensure_window(key).unwrap();
+        let window = client.window(key).unwrap();
+        window
+            .doc
+            .get_map("entities")
+            .insert("local", b"x".as_slice())
+            .unwrap();
+        window.doc.commit();
+        drop(window);
+        let resp = transport::encode_window_sync(
+            key,
+            window_sub_tags::VV_RESPONSE,
+            &loro::VersionVector::new().encode(),
+        );
+        client.handle_server_message(&resp).unwrap();
+
+        let frames = client.generate_re_bootstrap_sync();
+
+        // Docs dropped: the dirty window is gone, witnesses cleared.
+        assert!(client.window(key).is_none(), "window docs must be dropped");
+        assert_eq!(client.window_converged(key), None);
+
+        // No hello frame anywhere — pinned wire literal [3, 1] (ONE-1127).
+        assert!(
+            frames.iter().all(|f| f != &vec![3u8, 1u8]),
+            "re-bootstrap must NOT re-send the per-connection protocol hello"
+        );
+
+        // Frame 0: root VV — and it must decode to the EMPTY VV (fresh doc).
+        assert_eq!(frames[0][0], TAG_VERSION_VECTOR);
+        let root_vv = VersionVector::decode(&frames[0][1..]).unwrap();
+        assert_eq!(
+            root_vv,
+            VersionVector::new(),
+            "re-bootstrap root VV must be empty — the old root doc must not survive"
+        );
+
+        // Frames 1..: VV_REQUEST frames for the default windows (current + prev),
+        // NOT for the dropped dirty window.
+        assert_eq!(frames.len(), 3, "root VV + 2 default-window VV requests");
+        for frame in &frames[1..] {
+            assert_eq!(frame[0], TAG_WINDOW_SYNC);
+            let (k, sub_tag, payload) = transport::decode_window_sync(&frame[1..]).unwrap();
+            assert_ne!(k, key, "dropped window must not be re-requested");
+            assert_eq!(sub_tag, window_sub_tags::VV_REQUEST);
+            VersionVector::decode(payload).expect("window VV must be Loro binary encoding");
+        }
     }
 
     #[test]
