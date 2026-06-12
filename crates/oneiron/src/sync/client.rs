@@ -468,9 +468,25 @@ impl SyncClient {
                     .doc
                     .import(doc_state)
                     .map_err(|_| TransportError::InvalidPayload("bulk doc state import failed"))?;
-                window
-                    .persist_state(&self.vault)
-                    .map_err(|e| TransportError::Storage(format!("persist bulk window: {e}")))?;
+                if let Err(e) = window.persist_state(&self.vault) {
+                    // Never leave RAM ahead of durable state on a FAILED
+                    // persist (same discipline as the WindowSync UPDATE
+                    // arm above): the bulk import advanced this doc's
+                    // version vector, so keeping the doc registered would
+                    // tell the server — on the next VV exchange — that we
+                    // already hold bytes that never became durable; they
+                    // would never be re-sent and would vanish from the doc
+                    // on restart. Discard the live window WITHOUT
+                    // persisting (a persist would durably commit the
+                    // unconfirmed import); the next open reloads from
+                    // durable state and the ONE-1127/1128 VV exchange
+                    // re-delivers the missing ops. The `bulk:w:`
+                    // in-progress marker stays set for retry (fail-closed:
+                    // the clear below only runs after a successful
+                    // persist).
+                    self.manager.discard_window(&WindowKey::new(window_key));
+                    return Err(TransportError::Storage(format!("persist bulk window: {e}")));
+                }
             } else {
                 // Window stays ON-DISK: validate the remote snapshot's
                 // structure before persisting (fail-closed — a trusted door
