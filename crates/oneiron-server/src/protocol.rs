@@ -138,6 +138,7 @@ fn transport_err_msg(e: oneiron::sync::TransportError) -> &'static str {
         oneiron::sync::TransportError::FrameTooLarge { .. } => "frame too large",
         oneiron::sync::TransportError::WebSocket(_) => "websocket error",
         oneiron::sync::TransportError::ConnectionClosed => "connection closed",
+        oneiron::sync::TransportError::Storage(_) => "storage error",
     }
 }
 

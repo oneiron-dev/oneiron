@@ -20,10 +20,11 @@ use tokio::sync::mpsc;
 use tokio::time::{Duration, Instant};
 use tokio_tungstenite::tungstenite::Message;
 
-use crate::Vault;
 use crate::sync::client::{SyncClient, SyncClientConfig, SyncEvent, SyncStatus, next_backoff};
+use crate::sync::manager::WindowManager;
 use crate::sync::queue::SyncQueue;
 use crate::sync::transport::{self, window_sub_tags};
+pub use crate::sync::types::LocalUpdate;
 use crate::sync::types::parse_window_key_str;
 
 /// Maximum convergence rounds before forcing re-bootstrap.
@@ -49,26 +50,20 @@ impl Default for ConnectionConfig {
 
 /// Manages the WebSocket connection lifecycle, offline queue, and sync state.
 pub struct SyncConnection {
-    vault: Arc<Vault>,
+    manager: Arc<WindowManager>,
     queue: SyncQueue,
     config: ConnectionConfig,
 }
 
-/// A local update to be sent to the server.
-#[derive(Debug)]
-pub struct LocalUpdate {
-    /// Window key (YYYY-MM).
-    pub window_key: String,
-    /// Raw Loro update bytes (not wire-encoded yet).
-    pub update_bytes: Vec<u8>,
-}
-
 impl SyncConnection {
-    /// Creates a new connection manager.
-    pub fn new(vault: Arc<Vault>, config: ConnectionConfig) -> crate::error::Result<Self> {
-        let queue = SyncQueue::new(Arc::clone(&vault))?;
+    /// Creates a new connection manager over manager-owned windows.
+    pub fn new(
+        manager: Arc<WindowManager>,
+        config: ConnectionConfig,
+    ) -> crate::error::Result<Self> {
+        let queue = SyncQueue::new(Arc::clone(manager.vault()))?;
         Ok(Self {
-            vault,
+            manager,
             queue,
             config,
         })
@@ -102,9 +97,14 @@ impl SyncConnection {
 
     /// Main event loop. Runs until the shutdown signal is received.
     ///
+    /// Creates the local-update channel itself and attaches it to the
+    /// window manager's [`crate::sync::bridge::OutboundSink`], so every
+    /// Observer A update (persisted local commit) flows into the debounce →
+    /// wire path without host plumbing (ONE-1126). On exit the sink is
+    /// detached and later updates fall back to the durable `SyncQueue`.
+    ///
     /// # Arguments
     ///
-    /// * `local_rx` — Channel receiving local CRDT updates to send to server
     /// * `shutdown_rx` — Oneshot channel to signal clean shutdown
     ///
     /// # Returns
@@ -112,13 +112,17 @@ impl SyncConnection {
     /// Returns the event receiver that emits `SyncEvent`s for the application.
     pub async fn run(
         &self,
-        mut local_rx: mpsc::UnboundedReceiver<LocalUpdate>,
         mut shutdown_rx: tokio::sync::oneshot::Receiver<()>,
-    ) -> mpsc::UnboundedReceiver<SyncEvent> {
+    ) -> crate::error::Result<mpsc::UnboundedReceiver<SyncEvent>> {
         let (client, event_rx) =
-            SyncClient::new(Arc::clone(&self.vault), self.config.client_config.clone());
+            SyncClient::new(Arc::clone(&self.manager), self.config.client_config.clone())?;
         let event_tx = client.event_tx.clone();
         let mut client = client;
+
+        // Observer A → outbound wiring: while attached, persisted local
+        // updates arrive on `local_rx` below.
+        let (local_tx, mut local_rx) = mpsc::unbounded_channel::<LocalUpdate>();
+        self.manager.outbound().attach(local_tx);
 
         let mut backoff_ms = self.config.client_config.reconnect_initial_ms;
 
@@ -183,7 +187,8 @@ impl SyncConnection {
             }
         }
 
-        event_rx
+        self.manager.outbound().detach();
+        Ok(event_rx)
     }
 
     /// Connects to the server and performs initial sync + queue replay.
@@ -327,6 +332,13 @@ impl SyncConnection {
         }
 
         let _ = event_tx.send(SyncEvent::StatusChanged(SyncStatus::Synced));
+
+        // m:last_sync (ARCH-0023b key table) — last successful sync stamp.
+        if let Err(e) = client.mark_synced() {
+            let _ = event_tx.send(SyncEvent::Error(format!(
+                "Failed to record last sync timestamp: {e}"
+            )));
+        }
 
         Ok(ws_stream)
     }
@@ -527,18 +539,24 @@ enum LoopExit {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::Vault;
+    use crate::sync::bridge::Materializer;
     use crate::types::VaultConfig;
 
-    fn test_vault() -> Arc<Vault> {
+    fn test_manager() -> Arc<WindowManager> {
         let dir = tempfile::tempdir().unwrap();
         let config = VaultConfig::device();
-        Arc::new(Vault::open(dir.path(), config).unwrap())
+        let vault = Arc::new(Vault::open(dir.path(), config).unwrap());
+        Arc::new(WindowManager::new(
+            vault,
+            Arc::new(Materializer::new()),
+            "test-user",
+        ))
     }
 
     #[test]
     fn flush_to_queue_skips_invalid_window_keys() {
-        let vault = test_vault();
-        let conn = SyncConnection::new(vault, ConnectionConfig::default()).unwrap();
+        let conn = SyncConnection::new(test_manager(), ConnectionConfig::default()).unwrap();
         let mut buffer = vec![
             LocalUpdate {
                 window_key: "2026-13".to_string(),
@@ -560,9 +578,8 @@ mod tests {
 
     #[tokio::test]
     async fn queue_push_and_drain_roundtrip() {
-        let vault = test_vault();
         let conn = SyncConnection::new(
-            Arc::clone(&vault),
+            test_manager(),
             ConnectionConfig {
                 auto_reconnect: false,
                 ..Default::default()
@@ -582,8 +599,7 @@ mod tests {
 
     #[test]
     fn queue_inspection_error_does_not_clear_queue() {
-        let vault = test_vault();
-        let conn = SyncConnection::new(vault, ConnectionConfig::default()).unwrap();
+        let conn = SyncConnection::new(test_manager(), ConnectionConfig::default()).unwrap();
         conn.queue().push("2026-03", &[1, 2, 3]).unwrap();
 
         let (event_tx, mut event_rx) = mpsc::unbounded_channel();

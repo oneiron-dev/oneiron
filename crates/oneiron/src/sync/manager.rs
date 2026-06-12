@@ -41,12 +41,12 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, MutexGuard};
 
-use super::bridge::Materializer;
+use super::bridge::{Materializer, OutboundSink};
 use super::schema::create_window_doc;
 use super::types::{SyncConfig, WindowKey};
 use super::window::{
-    LoadedWindow, forward_rematerialize, load_window_from_state, replay_pending_mirrors,
-    reverse_rematerialize,
+    LoadedWindow, apply_pending_window_updates, forward_rematerialize, load_window_from_state,
+    replay_pending_mirrors, reverse_rematerialize,
 };
 use crate::Vault;
 use crate::error::{Error, Result};
@@ -63,6 +63,10 @@ pub struct WindowManager {
     /// mutex; entries are inserted only after a fully successful open, so a
     /// panicked holder cannot leave a half-recovered window registered.
     windows: Mutex<HashMap<WindowKey, Arc<LoadedWindow>>>,
+    /// Shared Observer A outbound sink: every window this manager opens
+    /// routes its persisted local updates here (connection channel when
+    /// attached, durable `SyncQueue` otherwise).
+    outbound: Arc<OutboundSink>,
 }
 
 impl WindowManager {
@@ -89,12 +93,25 @@ impl WindowManager {
             user_id: user_id.into(),
             config,
             windows: Mutex::new(HashMap::new()),
+            outbound: Arc::new(OutboundSink::new()),
         }
     }
 
     /// The materializer shared by every window this manager opens.
     pub fn materializer(&self) -> &Arc<Materializer> {
         &self.materializer
+    }
+
+    /// The vault every window this manager opens shares.
+    pub fn vault(&self) -> &Arc<Vault> {
+        &self.vault
+    }
+
+    /// The Observer A outbound sink shared by every window this manager
+    /// opens. The sync connection attaches its local-update channel here;
+    /// detached, updates fall back to the durable `SyncQueue`.
+    pub fn outbound(&self) -> &Arc<OutboundSink> {
+        &self.outbound
     }
 
     /// Opens (or returns the already-live) window for `key`.
@@ -130,7 +147,17 @@ impl WindowManager {
         // (first open, or sync_state lost), and reverse remat heals that.
         let doc = match load_window_from_state(&self.vault, &self.user_id, key) {
             Ok(doc) => doc,
-            Err(Error::WindowNotFound { .. }) => create_window_doc(&self.user_id, key),
+            Err(Error::WindowNotFound { .. }) => {
+                // No d:w: snapshot — but pending u:w: rows can still exist
+                // (remote updates persisted before this window was ever
+                // unloaded). They MUST replay onto the fresh doc or accepted
+                // sync data is lost on restart: tombstones especially, whose
+                // LMDB purge already ran and which reverse remat can never
+                // reconstruct (ONE-1126).
+                let doc = create_window_doc(&self.user_id, key);
+                apply_pending_window_updates(&self.vault, &doc, key)?;
+                doc
+            }
             Err(err) => return Err(err),
         };
 
@@ -162,11 +189,12 @@ impl WindowManager {
         }
 
         // Step 6 — observers attach LAST, on the recovered doc.
-        let window = Arc::new(LoadedWindow::from_doc(
+        let window = Arc::new(LoadedWindow::from_doc_with_outbound(
             doc,
             key.clone(),
             &self.vault,
             &self.materializer,
+            Some(Arc::clone(&self.outbound)),
         ));
         registry.insert(key.clone(), Arc::clone(&window));
         Ok(window)
@@ -228,6 +256,36 @@ impl WindowManager {
         }
         drop(window);
         Ok(true)
+    }
+
+    /// Discards the live window for `key` WITHOUT persisting its doc state
+    /// — the fail-closed eviction for import-before-persist recovery
+    /// (client analog of the server's evict-on-persist-failure, ONE-1129):
+    /// when a remote import was applied to the live doc but its `u:w:` row
+    /// could not be persisted, the doc's RAM state is AHEAD of durable
+    /// state, and persisting it (as [`unload_window`](Self::unload_window)
+    /// would) would durably commit the unconfirmed import. Dropping the
+    /// registry entry instead lets the next open reload from durable state
+    /// (`d:w:` + persisted `u:w:` rows); the failed update is absent from
+    /// that doc's version vector, so the server re-sends it on the next VV
+    /// exchange.
+    ///
+    /// Returns `false` if the window is not loaded. Outstanding `Arc`
+    /// holders keep the stale doc (and its observer subscriptions) alive
+    /// until dropped — same caveat as `unload_window`.
+    pub(crate) fn discard_window(&self, key: &WindowKey) -> bool {
+        let mut registry = self.lock_registry();
+        let Some(window) = registry.remove(key) else {
+            return false;
+        };
+        if Arc::strong_count(&window) > 1 {
+            tracing::warn!(
+                window = %key,
+                "window-manager: discard with outstanding handles — the stale doc stays live until the last handle drops"
+            );
+        }
+        drop(window);
+        true
     }
 
     /// Acquires the registry lock, recovering from poisoning (mirrors

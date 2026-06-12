@@ -236,9 +236,15 @@ pub enum TransportError {
     InvalidWindowKey,
     InvalidPayload(&'static str),
     UnknownTag(u8),
-    FrameTooLarge { size: usize, max: usize },
+    FrameTooLarge {
+        size: usize,
+        max: usize,
+    },
     WebSocket(String),
     ConnectionClosed,
+    /// Engine/storage failure surfaced at the transport boundary (LMDB
+    /// write, window open/recovery). The wire payload itself was valid.
+    Storage(String),
 }
 
 impl std::fmt::Display for TransportError {
@@ -250,6 +256,7 @@ impl std::fmt::Display for TransportError {
             Self::FrameTooLarge { size, max } => write!(f, "frame too large: {size} (max {max})"),
             Self::WebSocket(msg) => write!(f, "websocket error: {msg}"),
             Self::ConnectionClosed => write!(f, "connection closed"),
+            Self::Storage(msg) => write!(f, "storage error: {msg}"),
         }
     }
 }
