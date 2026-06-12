@@ -12,12 +12,13 @@ use super::bridge::{
 };
 use super::loro_support::{
     doc_from_snapshot, doc_version_vector, export_snapshot, import_doc, map_contains_binary,
-    map_contains_key, map_for_each_bytes, map_get_bytes, map_insert_bytes,
+    map_contains_key, map_delete, map_for_each_bytes, map_get_bytes, map_insert_bytes,
 };
 use super::schema::create_window_doc;
 use super::types::WindowKey;
 use crate::Vault;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EdgeValueFields, EntityMetadataHeader};
+use crate::deletion::{PENDING_TOMBSTONE_PREFIX, decode_tombstone_value};
 use crate::error::{Error, Result};
 use crate::store::Store;
 use crate::types::{EntityId, decode_edge_value_for_kind};
@@ -117,6 +118,127 @@ pub fn load_window_from_state(vault: &Vault, _user_id: &str, key: &WindowKey) ->
     }
 
     Ok(doc)
+}
+
+/// Applies one tombstone (raw v2/legacy wire value) to a window doc IN
+/// MEMORY — the caller commits. ONE-1132 write-side semantics, shared by
+/// the local delete path and the `pt:` boot replay so the two can never
+/// diverge:
+///
+/// 1. **Never-downgrade** (read-before-write): a tombstone that decodes
+///    HARD is never replaced by a soft one — hard-once-seen is
+///    irreversible. The raw bytes are inserted verbatim (never re-encoded),
+///    so unknown future layouts survive untouched.
+/// 2. **Entities-map removal**: the live `entities[id]` copy is an ACTIVE
+///    carrier of the deleted payload, not history — it is deleted in the
+///    SAME commit as the tombstone insert (op-history bytes remain for the
+///    bounded `h:` sweep, ONE-1091).
+/// 3. **Edges-map removal (hard only)**: every edge key touching the
+///    entity is removed — those values are active carriers too. Soft
+///    deletes keep edge keys: the local shell keeps its live edges
+///    (ARCH-0038 user_delete keeps the message shell).
+pub fn apply_tombstone_to_window_doc(doc: &LoroDoc, id: &EntityId, raw_value: &[u8]) -> Result<()> {
+    let incoming = decode_tombstone_value(raw_value);
+    let hex_id = id.to_hex();
+
+    let tombstones = doc.get_map("tombstones");
+    let downgrade_blocked = map_get_bytes(&tombstones, &hex_id)
+        .is_some_and(|existing| decode_tombstone_value(&existing).is_hard() && !incoming.is_hard());
+    if !downgrade_blocked {
+        map_insert_bytes(&tombstones, &hex_id, raw_value)?;
+    }
+
+    let entities = doc.get_map("entities");
+    if entities.get(&hex_id).is_some() {
+        map_delete(&entities, &hex_id)?;
+    }
+
+    if incoming.is_hard() {
+        let edges = doc.get_map("edges");
+        let mut doomed = Vec::new();
+        map_for_each_bytes(&edges, |key, _| {
+            if let Some((src, _, tgt)) = bridge::parse_edge_key(key)
+                && (src == *id || tgt == *id)
+            {
+                doomed.push(key.to_owned());
+            }
+        });
+        for key in &doomed {
+            map_delete(&edges, key)?;
+        }
+    }
+
+    Ok(())
+}
+
+/// Replays pending-tombstone markers (`pt:{window}:{entity_hex}`) into the
+/// window doc. OWNER-DECISION (ONE-1132 cfg-off durability): the marker is
+/// written UNCONDITIONALLY in the purge / shell-scrub txn — a build without
+/// the `sync` feature cannot write the CRDT record, so the marker is the
+/// deletion's durable propagation intent, and it doubles as the crash
+/// marker between the purge txn and the CRDT commit on sync-enabled builds.
+///
+/// A sync-enabled boot calls this BEFORE [`replay_pending_mirrors`] (so a
+/// freshly replayed tombstone suppresses any pending mirror of the same
+/// entity). Idempotent: guarded tombstone insert + entities-key removal
+/// (+ edges-key removal for hard values). The doc state is persisted to
+/// `sync_state` BEFORE the markers are cleared — a marker may only vanish
+/// once the CRDT record is durable. Malformed marker keys are left in
+/// place (a deletion intent is never silently dropped) and logged.
+pub fn replay_pending_tombstones(
+    vault: &Vault,
+    doc: &LoroDoc,
+    window_key: &WindowKey,
+) -> Result<u32> {
+    let prefix = format!("{PENDING_TOMBSTONE_PREFIX}{window_key}:");
+    let mut markers: Vec<(String, EntityId, Vec<u8>)> = Vec::new();
+    {
+        let rtxn = vault.store.env.read_txn()?;
+        let iter = vault.store.sync_state.prefix_iter(&rtxn, &prefix)?;
+        for entry in iter {
+            let (k, v) = entry?;
+            let hex = &k[prefix.len()..];
+            match EntityId::from_hex(hex) {
+                Ok(id) => markers.push((k.to_string(), id, v.to_vec())),
+                Err(_) => {
+                    tracing::warn!(
+                        marker = %k,
+                        "pt replay: malformed pending-tombstone marker left in place"
+                    );
+                }
+            }
+        }
+    }
+    if markers.is_empty() {
+        return Ok(0);
+    }
+
+    for (_, id, value) in &markers {
+        apply_tombstone_to_window_doc(doc, id, value)?;
+    }
+    // Bridge origin: local LMDB already reflects the delete (the marker was
+    // written in the purge/scrub txn itself), so Observer B must not re-run
+    // the hard purge against a soft shell.
+    doc.commit_with(CommitOptions::new().origin(BRIDGE_ORIGIN));
+
+    // Persist BEFORE clearing the markers — the marker may only be cleared
+    // after CRDT commit + snapshot persistence succeed.
+    let snapshot = export_snapshot(doc)?;
+    let vv = doc_version_vector(doc);
+    vault.with_write_txn(|wtxn| {
+        let doc_key = format!("d:w:{window_key}");
+        vault.store.sync_state.put(wtxn, &doc_key, &snapshot)?;
+        let sv_key = format!("sv:w:{window_key}");
+        vault.store.sync_state.put(wtxn, &sv_key, &vv)?;
+        let svf_key = format!("svf:w:{window_key}");
+        vault.store.sync_state.put(wtxn, &svf_key, &[1_u8])?;
+        for (marker_key, _, _) in &markers {
+            vault.store.sync_state.delete(wtxn, marker_key)?;
+        }
+        Ok(())
+    })?;
+
+    Ok(u32::try_from(markers.len()).unwrap_or(u32::MAX))
 }
 
 /// Replays pending-mirror markers (pm:*) for crash recovery.

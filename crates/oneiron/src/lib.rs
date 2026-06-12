@@ -33,7 +33,10 @@ pub use crate::claim::{
     ClaimSubject, MAX_PREDICATE_BYTES, RESERVED_PREDICATE_NAMESPACE,
 };
 pub use crate::context_pack::ContextPackBuilder;
-pub use crate::deletion::{DeleteEntityOutcome, DeleteReason};
+pub use crate::deletion::{
+    DecodedTombstoneValue, DeleteEntityOutcome, DeleteReason, TOMBSTONE_VALUE_LEGACY_LEN,
+    TOMBSTONE_VALUE_V2_LEN, TombstoneReason, TombstoneValueV2, decode_tombstone_value,
+};
 pub use crate::error::{Error, ErrorKind, Result};
 pub use crate::maintain::{MaintenanceBuilder, MaintenanceReport};
 pub use crate::pipeline::{DEFAULT_RECENCY_HALF_LIFE_DAYS, FacetMode, PipelineBuilder, WorldScope};

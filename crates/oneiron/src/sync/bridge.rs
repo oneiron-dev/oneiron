@@ -1172,10 +1172,10 @@ mod tests {
 
     /// ONE-1122 AC2 — ARCH-0023b: "If tombstoned in CRDT → never resurrect";
     /// contracts.ts `user_hard_delete`: "Tombstone-first prevents sync
-    /// resurrection". Hard delete writes the CRDT tombstone but leaves the
-    /// stale blob in the live entities map (`write_crdt_tombstone` only
-    /// inserts into `tombstones`), so a later remote commit re-touching the
-    /// entity key must NOT rematerialize the purged body into LMDB.
+    /// resurrection". Hard delete writes the CRDT tombstone and (ONE-1132)
+    /// removes the live `entities[id]` map copy in the SAME CRDT commit, so
+    /// a later remote commit re-touching the entity key must NOT
+    /// rematerialize the purged body into LMDB.
     #[test]
     fn observer_b_never_resurrects_hard_deleted_entity_on_entity_key_retouch() {
         let vault = test_vault();
@@ -1220,8 +1220,8 @@ mod tests {
             crate::sync::window::load_window_from_state(&vault, "local", &window_key).unwrap();
         let hex_id = id.to_hex();
         assert!(
-            map_get_bytes(&doc.get_map("entities"), &hex_id).is_some(),
-            "precondition: hard delete leaves the stale blob in the live entities map"
+            map_get_bytes(&doc.get_map("entities"), &hex_id).is_none(),
+            "precondition: hard delete removes the live entities-map copy in the same CRDT commit (ONE-1132)"
         );
         assert!(
             map_contains_binary(&doc.get_map("tombstones"), &hex_id),

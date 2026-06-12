@@ -847,13 +847,22 @@ fn receipt_reason_purges_orphan_vector_with_receipt_and_sweep() -> Result<()> {
     Ok(())
 }
 
+/// ONE-1090 write side (ONE-1132 AC3) — CONTRACT CORRECTION: replaces
+/// `user_delete_soft_shell_survives_sync_rematerialization`, which pinned
+/// the pre-ONE-1090 gap where a soft delete left NO CRDT record at all (so
+/// the deleted body stayed live on every other device forever).
+///
+/// `user_delete` now writes a reason=user_delete v2 tombstone into the
+/// window doc and removes the live `entities[id]` map copy (the full body
+/// bytes in that map are an ACTIVE carrier of content the user deleted).
+/// Local shell semantics are unchanged: the body scrub keeps the 25 B
+/// shell. The receiver-side soft/hard branch is ONE-1133; until it lands a
+/// receiver treats every tombstone as hard — fail-closed over-purge, never
+/// resurrection.
 #[cfg(feature = "sync")]
 #[test]
-fn user_delete_soft_shell_survives_sync_rematerialization() -> Result<()> {
-    use crate::batch::ENTITY_METADATA_HEADER_LEN;
-    use crate::sync::bridge::Materializer;
-    use crate::sync::loro_support::{map_contains_binary, map_insert_bytes};
-    use crate::sync::schema::create_window_doc;
+fn user_delete_writes_soft_v2_tombstone_into_crdt() -> Result<()> {
+    use crate::sync::loro_support::{map_contains_binary, map_get_bytes};
     use crate::sync::types::WindowKey;
     use crate::sync::window;
 
@@ -872,42 +881,35 @@ fn user_delete_soft_shell_survives_sync_rematerialization() -> Result<()> {
         )
         .commit()?;
 
-    // Mirror the FULL pre-delete blob into the CRDT first (the synced-then-
-    // deleted case). Without this divergent mirror the rematerialization
-    // below is vacuous — an empty doc has nothing that could resurrect the
-    // body (the pre-ONE-1131 version of this test passed against the
-    // resurrection bug for exactly that reason).
-    let window_key = WindowKey::from_timestamp(learned_at);
-    let doc = create_window_doc("local", &window_key);
-    let full_blob = vault.get_raw(&id)?.expect("pre-delete raw blob");
-    assert!(
-        full_blob.len() > ENTITY_METADATA_HEADER_LEN,
-        "mirrored blob must carry the body, not just the 25 B header"
-    );
-    map_insert_bytes(&doc.get_map("entities"), id.to_hex().as_str(), &full_blob)?;
-    doc.commit();
-
     let outcome = vault.delete_entity_with_reason(&id, DeleteReason::UserDelete)?;
     assert!(outcome.existed);
-    assert_eq!(vault.get(&id)?.as_deref(), Some([].as_slice()));
-
-    let materializer = Materializer::new();
-    let _ = window::forward_rematerialize(&vault, &doc, &materializer)?;
-
-    let tombstones = doc.get_map("tombstones");
-    assert!(
-        !map_contains_binary(&tombstones, id.to_hex().as_str()),
-        "user_delete must not write the hard-purge CRDT tombstone; synced soft-delete propagation is deferred to ONE-1090"
-    );
     assert_eq!(
         vault.get(&id)?.as_deref(),
         Some([].as_slice()),
-        "sync rematerialization must preserve the SoftErase shell — the stale CRDT body must not resurrect deleted content"
+        "user_delete keeps the local 25 B shell (D16 scrub semantics unchanged)"
     );
+
+    let window_key = WindowKey::from_timestamp(learned_at);
+    let doc = window::load_window_from_state(&vault, "local", &window_key)?;
+
+    let tombstones = doc.get_map("tombstones");
+    let value = map_get_bytes(&tombstones, id.to_hex().as_str())
+        .expect("user_delete must write a CRDT tombstone (ONE-1090 write side)");
+    assert_eq!(value.len(), 25, "tombstone value must be the v2 layout");
     assert_eq!(
-        vault.get_raw(&id)?.map(|raw| raw.len()),
-        Some(ENTITY_METADATA_HEADER_LEN),
-        "the local record must still be the 25 B header shell"
+        value[0], 1,
+        "reason must be the pinned user_delete wire byte (soft)"
+    );
+    assert!(
+        !map_contains_binary(&doc.get_map("entities"), id.to_hex().as_str()),
+        "the live entities-map copy is an active carrier and must be removed"
+    );
+
+    // The pt: crash marker is cleared once the CRDT record is persisted.
+    let pt_key = format!("pt:{window_key}:{}", id.to_hex());
+    assert!(
+        vault.sync_state_get(&pt_key)?.is_none(),
+        "pending-tombstone marker must be cleared after CRDT persistence"
     );
     Ok(())
 }
@@ -1000,6 +1002,102 @@ fn hard_delete_with_far_future_learned_at_tombstones_into_valid_window() -> Resu
     assert!(
         map_contains_binary(&tombstones, id.to_hex().as_str()),
         "tombstone must land in the clamped format-valid window"
+    );
+    Ok(())
+}
+
+/// Reads the raw `pt:{window}:{hex}` pending-tombstone marker (ONE-1132).
+#[cfg(not(feature = "sync"))]
+fn pending_tombstone_row(vault: &Vault, window: &str, id: &EntityId) -> Result<Option<Vec<u8>>> {
+    let rtxn = vault.store.env.read_txn()?;
+    let key = format!("pt:{window}:{}", id.to_hex());
+    Ok(vault.store.sync_state.get(&rtxn, &key)?.map(<[u8]>::to_vec))
+}
+
+/// ONE-1132 OWNER-DECISION (cfg-off durability): a build WITHOUT the `sync`
+/// feature cannot write the CRDT tombstone, so the purge txn's
+/// CRDT-independent `pt:` marker must SURVIVE the delete — it is the
+/// deletion's only durable propagation intent until a sync-enabled boot
+/// replays it. Asserts the exact pinned v2 value layout and that the
+/// embedded request_id correlates with the REDACTION_AUDIT receipt.
+#[cfg(not(feature = "sync"))]
+#[test]
+fn hard_delete_without_sync_feature_leaves_pending_tombstone_marker() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let id = EntityId::now();
+    // 2026-02-15 ≈ unix 1_771_027_200 ⇒ window label "2026-02".
+    let learned_at = 1_771_027_200;
+    vault.put_entity(
+        &id,
+        1,
+        test_time_range(learned_at, learned_at),
+        learned_at,
+        b"cfg-off-durability",
+    )?;
+
+    let outcome = vault.delete_entity_with_reason(&id, DeleteReason::UserHardDelete)?;
+    assert!(outcome.existed);
+    let receipt_raw = vault
+        .get_raw(&outcome.receipt_id.expect("receipt id"))?
+        .expect("receipt raw");
+    let receipt = receipt_body(&receipt_raw);
+
+    let value = pending_tombstone_row(&vault, "2026-02", &id)?
+        .expect("pt: marker must survive a hard delete in a sync-OFF build");
+    assert_eq!(value.len(), 25, "marker value must be the v2 layout");
+    assert_eq!(
+        value[0], 2,
+        "reason must be the pinned user_hard_delete wire byte"
+    );
+    let deleted_at = u64::from_le_bytes(value[1..9].try_into().expect("8-byte slice"));
+    assert_eq!(
+        deleted_at,
+        receipt["requested_at"].as_u64().expect("requested_at"),
+        "deleted_at must be the deletion request time (u64 LE at offset 1)"
+    );
+    let receipt_request_hex = receipt["request_id"]
+        .as_str()
+        .expect("request_id")
+        .replace('-', "");
+    let marker_request_hex: String = value[9..25].iter().map(|b| format!("{b:02x}")).collect();
+    assert_eq!(
+        marker_request_hex, receipt_request_hex,
+        "tombstone request_id must correlate with the receipt's request_id"
+    );
+    Ok(())
+}
+
+/// ONE-1132: `user_delete` in a sync-OFF build leaves a SOFT (reason byte 1)
+/// pending-tombstone marker in the same txn as the shell scrub, while the
+/// local shell semantics stay unchanged.
+#[cfg(not(feature = "sync"))]
+#[test]
+fn user_delete_without_sync_feature_leaves_soft_pending_tombstone_marker() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let id = EntityId::now();
+    let learned_at = 1_771_027_200;
+    vault.put_entity(
+        &id,
+        1,
+        test_time_range(learned_at, learned_at),
+        learned_at,
+        b"cfg-off-soft-delete",
+    )?;
+
+    let outcome = vault.delete_entity_with_reason(&id, DeleteReason::UserDelete)?;
+    assert!(outcome.existed);
+    assert_eq!(
+        vault.get(&id)?.as_deref(),
+        Some([].as_slice()),
+        "shell semantics unchanged"
+    );
+
+    let value = pending_tombstone_row(&vault, "2026-02", &id)?
+        .expect("pt: marker must survive a user_delete in a sync-OFF build");
+    assert_eq!(value.len(), 25);
+    assert_eq!(
+        value[0], 1,
+        "reason must be the pinned user_delete wire byte"
     );
     Ok(())
 }

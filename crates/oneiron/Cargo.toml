@@ -48,6 +48,11 @@ name = "sync_bridge"
 path = "tests/sync_bridge.rs"
 required-features = ["sync"]
 
+[[test]]
+name = "sync_tombstone_v2"
+path = "tests/sync_tombstone_v2.rs"
+required-features = ["sync"]
+
 [[bench]]
 name = "sync_memory"
 harness = false

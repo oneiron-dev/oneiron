@@ -403,8 +403,10 @@ pub struct Store {
     pub(crate) phonetic_forward: Database<Bytes, Bytes>,
     pub(crate) short_ids: Database<Bytes, Bytes>,
     pub(crate) short_ids_reverse: Database<Bytes, Bytes>,
-    /// CRDT Doc states, state vectors, pending updates, metadata (sync feature only).
-    #[cfg(feature = "sync")]
+    /// CRDT Doc states, state vectors, pending updates, metadata. Present in
+    /// EVERY build (ONE-1132): the delete path writes its CRDT-independent
+    /// `pt:` pending-tombstone marker here unconditionally, so deletion
+    /// durability never depends on the `sync` cargo feature.
     pub(crate) sync_state: Database<Str, Bytes>,
     /// Offline update queue, embed job queue, and hard-delete sweep queue.
     pub(crate) sync_queue: Database<Bytes, Bytes>,
@@ -480,10 +482,6 @@ impl Store {
         }
         wtxn.commit()?;
         drop(db_open_guard);
-        #[cfg(not(feature = "sync"))]
-        {
-            let _ = sync_state;
-        }
 
         let should_persist_hnsw_config =
             preflight_hnsw_config(&env, &hnsw_meta, &vectors, &hnsw_neighbors, config)?;
@@ -533,7 +531,6 @@ impl Store {
             phonetic_forward,
             short_ids,
             short_ids_reverse,
-            #[cfg(feature = "sync")]
             sync_state,
             sync_queue,
             _registered_path: registered_path,

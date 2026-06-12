@@ -388,4 +388,11 @@ pub(crate) struct BulkTombstone {
     #[serde(with = "serde_bytes")]
     pub id: Vec<u8>,
     pub deleted_at: u64,
+    /// Tombstone wire reason byte (ONE-1132 pinned table: 1=user_delete,
+    /// 2=user_hard_delete, 3=gdpr_delete, 4=policy_delete; 0 is reserved
+    /// and, like any unknown byte, decodes as HARD — fail-closed).
+    pub reason: u8,
+    /// Deletion request UUID (16 raw bytes) — receipt correlation (M4-06).
+    #[serde(with = "serde_bytes")]
+    pub request_id: Vec<u8>,
 }
