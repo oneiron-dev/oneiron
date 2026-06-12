@@ -104,12 +104,27 @@ pub(crate) fn map_for_each_bytes(map: &LoroMap, mut f: impl FnMut(&str, &[u8])) 
     });
 }
 
+/// Entities/edges-map iterator with FULL value visibility (ONE-1157): visits
+/// EVERY key. Binary values pass their bytes through as `Some`; any
+/// non-Binary value (string/int/container/…) yields `None` so the caller can
+/// quarantine the op as a protocol violation — parity with Observer B's
+/// non-Binary `_ =>` arms in `bridge.rs`, which persist an `x:` row instead
+/// of skipping. The Binary-only [`map_for_each_bytes`] leaves a non-Binary
+/// op invisible to replay: no x: row, no log — a silent drop.
+pub(crate) fn map_for_each_value_bytes(map: &LoroMap, mut f: impl FnMut(&str, Option<&[u8]>)) {
+    map.for_each(|key, value| match value {
+        ValueOrContainer::Value(LoroValue::Binary(bytes)) => f(key, Some(&bytes)),
+        _ => f(key, None),
+    });
+}
+
 /// Tombstone-map iterator: visits EVERY key. Binary values pass their bytes
 /// through; any non-Binary value (string/int/container/…) yields the EMPTY
 /// slice, which `decode_tombstone_value` decodes as HARD — fail closed,
 /// mirroring Observer B's non-binary tombstone arm in `bridge.rs`. A
 /// malformed remote tombstone must never be invisible to replay.
-/// Entities/edges maps must keep using [`map_for_each_bytes`].
+/// Entities/edges maps use [`map_for_each_value_bytes`], which surfaces
+/// non-Binary values as `None` for quarantine instead (ONE-1157).
 pub(crate) fn map_for_each_tombstone_value(map: &LoroMap, mut f: impl FnMut(&str, &[u8])) {
     map.for_each(|key, value| match value {
         ValueOrContainer::Value(LoroValue::Binary(bytes)) => f(key, &bytes),

@@ -701,3 +701,221 @@ fn string_valued_tombstone_purges_entity_and_invalid_key_still_quarantined() {
             .is_empty()
     );
 }
+
+/// ONE-1157 — the forward-remat ENTITY pass visits EVERY entities-map key:
+/// a non-Binary (string) value where an entity blob belongs persists exactly
+/// one `x:` row (container `entities`, typed reason literal `InvalidKey`,
+/// key hash + length — never the key itself — and the EMPTY slice's payload
+/// hash: a non-Binary value carries no bytes), nothing materializes for that
+/// key, and the pass continues — the good sibling entity still lands.
+/// Pre-fix the Binary-only iterator skipped the op invisibly: no x: row.
+#[test]
+fn forward_remat_quarantines_non_binary_entity_value_and_continues() {
+    let (_dir, vault) = test_vault_with_dir();
+    let materializer = Materializer::new();
+    let window_key = WindowKey::new(WINDOW);
+    let doc = create_window_doc("test-user", &window_key);
+
+    let bad_id = EntityId::from_hex("0123456789abcdef0123456789abcdef").unwrap();
+    let good_id = EntityId::now();
+    let entities = doc.get_map("entities");
+    entities
+        .insert(&bad_id.to_hex(), "not-binary-entity")
+        .unwrap();
+    insert_bytes(
+        &entities,
+        &good_id.to_hex(),
+        &entity_blob(ENTITY_TYPE_TASK, valid_time_range(), LEARNED_AT, b"good"),
+    );
+    doc.commit();
+
+    let count = forward_rematerialize(&vault, &doc, &materializer, &window_key).unwrap();
+    assert_eq!(count, 1, "only the good sibling materializes");
+    assert!(
+        vault.get(&bad_id).unwrap().is_none(),
+        "a non-Binary op must never materialize"
+    );
+    assert_eq!(
+        vault.get(&good_id).unwrap().as_deref(),
+        Some(b"good".as_slice()),
+        "the pass must continue past the quarantined op"
+    );
+
+    let records = quarantined_records(&vault).unwrap();
+    assert_eq!(records.len(), 1, "exactly one x: row for the non-Binary op");
+    let (_, rec) = &records[0];
+    assert_eq!(rec.window_key, WINDOW);
+    assert_eq!(rec.container, QuarantineContainer::Entities);
+    assert_eq!(rec.crdt_key_hash, xxh3_64(bad_id.to_hex().as_bytes()));
+    assert_eq!(rec.crdt_key_len, 32);
+    assert_eq!(rec.reason_code, "InvalidKey");
+    assert_eq!(
+        rec.payload_hash,
+        xxh3_64(&[]),
+        "non-Binary value hashes as the empty slice — no content captured"
+    );
+}
+
+/// ONE-1157 (edge-pass parity — same gap, same trivial fix shape): a
+/// non-Binary value under a well-formed edges-map key persists one `x:` row
+/// (container `edges`, reason literal `InvalidKey`, empty-slice payload
+/// hash), the edge never reaches LMDB, and the good sibling edge still
+/// lands.
+#[test]
+fn forward_remat_quarantines_non_binary_edge_value_and_continues() {
+    let (_dir, vault) = test_vault_with_dir();
+    let materializer = Materializer::new();
+    let window_key = WindowKey::new(WINDOW);
+    let doc = create_window_doc("test-user", &window_key);
+
+    let a = EntityId::now();
+    let b = EntityId::now();
+    let c = EntityId::now();
+    for (id, data) in [(&a, b"a"), (&b, b"b"), (&c, b"c")] {
+        vault
+            .put_entity(
+                id,
+                ENTITY_TYPE_TASK,
+                valid_time_range(),
+                LEARNED_AT,
+                data.as_slice(),
+            )
+            .unwrap();
+    }
+
+    let edges = doc.get_map("edges");
+    let bad_key = format_edge_key(&a, EdgeKind::Mentions, &b);
+    edges.insert(&bad_key, "not-binary-edge").unwrap();
+    insert_bytes(
+        &edges,
+        &format_edge_key(&c, EdgeKind::Mentions, &a),
+        &encode_edge_value_for_crdt(EdgeKind::Mentions, 0.6, 11, None, None).unwrap(),
+    );
+    doc.commit();
+
+    let count = forward_rematerialize(&vault, &doc, &materializer, &window_key).unwrap();
+    assert_eq!(count, 1, "only the good sibling edge materializes");
+    assert!(
+        !vault.edge_exists(&a, EdgeKind::Mentions, &b).unwrap(),
+        "a non-Binary edge op must never materialize"
+    );
+    assert!(
+        vault.edge_exists(&c, EdgeKind::Mentions, &a).unwrap(),
+        "the pass must continue past the quarantined op"
+    );
+
+    let records = quarantined_records(&vault).unwrap();
+    assert_eq!(records.len(), 1, "exactly one x: row for the non-Binary op");
+    let (_, rec) = &records[0];
+    assert_eq!(rec.window_key, WINDOW);
+    assert_eq!(rec.container, QuarantineContainer::Edges);
+    assert_eq!(rec.crdt_key_hash, xxh3_64(bad_key.as_bytes()));
+    assert_eq!(
+        rec.crdt_key_len,
+        u32::try_from(bad_key.len()).unwrap(),
+        "key metadata is hash + length, never the key"
+    );
+    assert_eq!(rec.reason_code, "InvalidKey");
+    assert_eq!(rec.payload_hash, xxh3_64(&[]));
+}
+
+/// ONE-1158 — an UPPERCASE (non-canonical) entities-map alias key delivered
+/// through Observer B is a protocol violation: quarantined (`x:` row,
+/// container `entities`, reason literal `InvalidKey`, hash of the ALIAS key
+/// bytes + the blob's payload hash), and the body must NOT materialize in
+/// LMDB under the parsed canonical id — pre-fix it materialized while the
+/// alias KEY persisted in the live map, invisible to canonical-lowercase
+/// tombstone-commit removal (suppressed byte residue). Canonical lowercase
+/// delivery in the same commit still works (positive control: the batch is
+/// not aborted).
+#[test]
+fn observer_b_quarantines_uppercase_alias_entity_key() {
+    let (_dir, vault) = test_vault_with_dir();
+    let doc = LoroDoc::new();
+    let materializer = Arc::new(Materializer::new());
+    let _subs = register_observer_b(&doc, &vault, &materializer, WINDOW);
+
+    let alias_id = EntityId::from_hex("0123456789abcdef0123456789abcdef").unwrap();
+    let alias_key = alias_id.to_hex().to_uppercase();
+    assert_ne!(alias_key, alias_id.to_hex(), "case-shift must be real");
+    let good_id = EntityId::now();
+    let alias_blob = entity_blob(ENTITY_TYPE_TASK, valid_time_range(), LEARNED_AT, b"alias");
+    let entities = doc.get_map("entities");
+    insert_bytes(&entities, &alias_key, &alias_blob);
+    insert_bytes(
+        &entities,
+        &good_id.to_hex(),
+        &entity_blob(ENTITY_TYPE_TASK, valid_time_range(), LEARNED_AT, b"good"),
+    );
+    doc.commit();
+
+    assert!(
+        vault.get(&alias_id).unwrap().is_none(),
+        "an alias key must never enter LMDB materialization"
+    );
+    assert_eq!(
+        vault.get(&good_id).unwrap().as_deref(),
+        Some(b"good".as_slice()),
+        "canonical lowercase delivery still works — the batch is not aborted"
+    );
+
+    let records = quarantined_records(&vault).unwrap();
+    assert_eq!(records.len(), 1, "exactly one x: row for the alias op");
+    let (_, rec) = &records[0];
+    assert_eq!(rec.window_key, WINDOW);
+    assert_eq!(rec.container, QuarantineContainer::Entities);
+    assert_eq!(
+        rec.crdt_key_hash,
+        xxh3_64(alias_key.as_bytes()),
+        "the x: row hashes the ALIAS key as delivered, never stores it"
+    );
+    assert_eq!(rec.crdt_key_len, 32);
+    assert_eq!(rec.reason_code, "InvalidKey");
+    assert_eq!(rec.payload_hash, xxh3_64(&alias_blob));
+}
+
+/// ONE-1158 (forward-remat parity): the forward-remat ENTITY pass applies
+/// the same alias gate as Observer B — an uppercase-alias-keyed body in the
+/// entities map quarantines (`x:` row with the alias-key hash and the blob's
+/// payload hash) instead of materializing, while the canonical-keyed sibling
+/// still lands.
+#[test]
+fn forward_remat_quarantines_uppercase_alias_entity_key() {
+    let (_dir, vault) = test_vault_with_dir();
+    let materializer = Materializer::new();
+    let window_key = WindowKey::new(WINDOW);
+    let doc = create_window_doc("test-user", &window_key);
+
+    let alias_id = EntityId::from_hex("0123456789abcdef0123456789abcdef").unwrap();
+    let alias_key = alias_id.to_hex().to_uppercase();
+    let good_id = EntityId::now();
+    let alias_blob = entity_blob(ENTITY_TYPE_TASK, valid_time_range(), LEARNED_AT, b"alias");
+    let entities = doc.get_map("entities");
+    insert_bytes(&entities, &alias_key, &alias_blob);
+    insert_bytes(
+        &entities,
+        &good_id.to_hex(),
+        &entity_blob(ENTITY_TYPE_TASK, valid_time_range(), LEARNED_AT, b"good"),
+    );
+    doc.commit();
+
+    let count = forward_rematerialize(&vault, &doc, &materializer, &window_key).unwrap();
+    assert_eq!(count, 1, "only the canonical sibling materializes");
+    assert!(
+        vault.get(&alias_id).unwrap().is_none(),
+        "an alias key must never enter LMDB materialization"
+    );
+    assert_eq!(
+        vault.get(&good_id).unwrap().as_deref(),
+        Some(b"good".as_slice())
+    );
+
+    let records = quarantined_records(&vault).unwrap();
+    assert_eq!(records.len(), 1, "exactly one x: row for the alias op");
+    let (_, rec) = &records[0];
+    assert_eq!(rec.window_key, WINDOW);
+    assert_eq!(rec.container, QuarantineContainer::Entities);
+    assert_eq!(rec.crdt_key_hash, xxh3_64(alias_key.as_bytes()));
+    assert_eq!(rec.reason_code, "InvalidKey");
+    assert_eq!(rec.payload_hash, xxh3_64(&alias_blob));
+}

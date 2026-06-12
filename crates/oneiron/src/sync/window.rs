@@ -14,7 +14,8 @@ use super::bridge::{
 use super::loro_support::{
     doc_from_snapshot, doc_version_vector, export_snapshot, export_updates_from, import_doc,
     map_contains_binary, map_delete, map_for_each_bytes, map_for_each_tombstone_value,
-    map_get_bytes, map_insert_bytes, tombstone_map_contains_id, tombstone_values_for_id,
+    map_for_each_value_bytes, map_get_bytes, map_insert_bytes, tombstone_map_contains_id,
+    tombstone_values_for_id,
 };
 use super::quarantine::{self, QuarantineContainer};
 use super::schema::create_window_doc;
@@ -632,7 +633,11 @@ pub fn replay_pending_mirrors(vault: &Vault, doc: &LoroDoc, window_key: &WindowK
 /// the engine's own LMDB read errors propagate as typed errors (fail
 /// closed, never quarantine-and-continue); and a tombstone-purge failure
 /// flags `rm:w:{window}:{entity_hex}` for durable retry (each marker
-/// cleared only when that entity's own purge succeeds).
+/// cleared only when that entity's own purge succeeds). The entity/edge
+/// passes visit EVERY map key: non-Binary values quarantine as protocol
+/// violations (ONE-1157, Observer-B parity), and a non-canonical
+/// (case-shifted) entities-map alias key quarantines instead of
+/// materializing (ONE-1158).
 pub fn forward_rematerialize(
     vault: &Vault,
     doc: &LoroDoc,
@@ -651,10 +656,28 @@ pub fn forward_rematerialize(
         let rtxn = vault.store.env.read_txn()?;
         let mut materialized_blobs = HashMap::<EntityId, Vec<u8>>::new();
         let mut entity_error = None;
-        map_for_each_bytes(&entities_map, |key, blob| {
+        map_for_each_value_bytes(&entities_map, |key, blob| {
             if entity_error.is_some() {
                 return;
             }
+
+            // ONE-1157: non-Binary value where an entity blob belongs — an
+            // undecodable remote op, quarantined exactly like Observer B's
+            // non-Binary arm (empty payload: a non-Binary value carries no
+            // bytes), never an invisible skip.
+            let Some(blob) = blob else {
+                if let Err(err) = quarantine::quarantine_rejected_op(
+                    vault,
+                    window_key.as_str(),
+                    QuarantineContainer::Entities,
+                    key,
+                    &Error::InvalidKey,
+                    &[],
+                ) {
+                    entity_error = Some(err);
+                }
+                return;
+            };
 
             let id = match EntityId::from_hex(key) {
                 Ok(id) => id,
@@ -672,6 +695,25 @@ pub fn forward_rematerialize(
                     return;
                 }
             };
+
+            // ONE-1158 (Observer-B parity): a non-canonical (case-shifted)
+            // hex alias key is a protocol violation — no engine version
+            // ever emits one (`to_hex()` is lowercase). Quarantine instead
+            // of materializing: an alias key never enters LMDB
+            // materialization (fail closed at the door).
+            if key != id.to_hex() {
+                if let Err(err) = quarantine::quarantine_rejected_op(
+                    vault,
+                    window_key.as_str(),
+                    QuarantineContainer::Entities,
+                    key,
+                    &Error::InvalidKey,
+                    blob,
+                ) {
+                    entity_error = Some(err);
+                }
+                return;
+            }
 
             // Tombstone gate (delete wins): a tombstoned id must never
             // re-materialize from a lingering entities-map body — without
@@ -861,10 +903,27 @@ pub fn forward_rematerialize(
     {
         let rtxn = vault.store.env.read_txn()?;
         let mut edge_error = None;
-        map_for_each_bytes(&edges_map, |key, buf| {
+        map_for_each_value_bytes(&edges_map, |key, buf| {
             if edge_error.is_some() {
                 return;
             }
+            // ONE-1157 (edge-pass parity, same gap as the entity pass):
+            // non-Binary value where an edge value belongs — quarantined
+            // like Observer B's non-Binary edge arm, never an invisible
+            // skip.
+            let Some(buf) = buf else {
+                if let Err(err) = quarantine::quarantine_rejected_op(
+                    vault,
+                    window_key.as_str(),
+                    QuarantineContainer::Edges,
+                    key,
+                    &Error::InvalidKey,
+                    &[],
+                ) {
+                    edge_error = Some(err);
+                }
+                return;
+            };
             let Some((src, kind, tgt)) = bridge::parse_edge_key(key) else {
                 if let Err(err) = quarantine::quarantine_rejected_op(
                     vault,
