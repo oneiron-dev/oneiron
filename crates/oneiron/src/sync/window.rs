@@ -633,6 +633,14 @@ pub fn replay_pending_mirrors(vault: &Vault, doc: &LoroDoc, window_key: &WindowK
 /// closed, never quarantine-and-continue); and a tombstone-purge failure
 /// flags `rm:w:{window}:{entity_hex}` for durable retry (each marker
 /// cleared only when that entity's own purge succeeds).
+///
+/// ONE-1147: Observer B's entity/edge batch swallow sites flag the same
+/// entity-scoped markers on whole-txn failure. This pass discharges such a
+/// marker ONLY when it performs the actual healing write for that entity
+/// (entity body put, or an edge write whose SOURCE is the marked entity).
+/// Byte-parity alone never discharges: a failed GDPR purge also leaves
+/// byte-identical state, and a parity-clear would vacuously drop a pending
+/// hard-delete retry (fail closed).
 pub fn forward_rematerialize(
     vault: &Vault,
     doc: &LoroDoc,
@@ -643,6 +651,16 @@ pub fn forward_rematerialize(
     let entities_map = doc.get_map("entities");
     let edges_map = doc.get_map("edges");
     let tombstones_map = doc.get_map("tombstones");
+
+    // Entity-scoped retry markers pending for this window, loaded up front:
+    // the entity/edge passes discharge a marker only via an actual healing
+    // write (ONE-1147); the tombstone pass only via that entity's own
+    // replay success (ONE-1124). Malformed marker rows never match a
+    // canonical `to_hex()` and so are never discharged here (fail closed).
+    let marked: HashSet<String> = quarantine::pending_remat_entities(vault, window_key.as_str())?
+        .into_iter()
+        .collect();
+    let mut healed: Vec<EntityId> = Vec::new();
 
     let mut count = 0u32;
 
@@ -828,6 +846,13 @@ pub fn forward_rematerialize(
                 Ok(()) => {
                     materialized_blobs.insert(id, blob.to_vec());
                     count += 1;
+                    // ONE-1147: an ACTUAL healing write discharges this
+                    // entity's needs-remat marker (set by a failed
+                    // Observer-B batch). Byte-identical skips above never
+                    // reach here — parity alone must not discharge.
+                    if marked.contains(&id.to_hex()) {
+                        healed.push(id);
+                    }
                 }
                 Err(err) => {
                     if quarantine::remote_rejection_reason(&err).is_some() {
@@ -954,7 +979,15 @@ pub fn forward_rematerialize(
                 .edge_with_value_fields(&src, kind, &tgt, EdgeValueFields::from_decoded(decoded))
                 .commit();
             match result {
-                Ok(()) => count += 1,
+                Ok(()) => {
+                    count += 1;
+                    // ONE-1147: a healing edge write discharges the SOURCE
+                    // entity's needs-remat marker (Observer B's edge batch
+                    // swallow site marks lost upserts by source id).
+                    if marked.contains(&src.to_hex()) {
+                        healed.push(src);
+                    }
+                }
                 Err(err) => {
                     if quarantine::remote_rejection_reason(&err).is_some() {
                         if let Err(q_err) = quarantine::quarantine_rejected_op(
@@ -995,9 +1028,7 @@ pub fn forward_rematerialize(
     // is written for the specific entity whose replay failed, and cleared
     // ONLY when that entity's own replay succeeds — an unrelated
     // tombstone's success must never discharge another entity's retry.
-    let marked: HashSet<String> = quarantine::pending_remat_entities(vault, window_key.as_str())?
-        .into_iter()
-        .collect();
+    // (`marked` is the up-front snapshot loaded before the entity pass.)
     let mut purge_failures: Vec<EntityId> = Vec::new();
     let mut cleared: Vec<EntityId> = Vec::new();
     let mut tombstone_error: Option<Error> = None;
@@ -1048,13 +1079,16 @@ pub fn forward_rematerialize(
         }
     });
 
-    if !purge_failures.is_empty() || !cleared.is_empty() {
+    if !purge_failures.is_empty() || !cleared.is_empty() || !healed.is_empty() {
         vault.with_write_txn(|wtxn| {
             // Clear BEFORE set so set wins: an id that both succeeded and
             // failed in one pass (case-shifted tombstone aliases with
             // divergent reasons) must KEEP its marker — losing it would
-            // silently drop a pending hard purge (fail closed).
-            for id in &cleared {
+            // silently drop a pending hard purge (fail closed). The
+            // ONE-1147 `healed` discharges (entity/edge healing writes,
+            // structurally disjoint from tombstoned ids — both passes are
+            // tombstone-gated) clear under the same ordering.
+            for id in healed.iter().chain(cleared.iter()) {
                 quarantine::clear_remat_marker_in_txn(vault, wtxn, window_key.as_str(), id)?;
             }
             for id in &purge_failures {

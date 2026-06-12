@@ -337,6 +337,12 @@ fn subscribe_map_observer(
 /// Write-gate rejections of REMOTE ops persist a quarantine record (`x:`
 /// family, ONE-1124) and never abort the batch; LOCAL failures (the
 /// engine's own LMDB errors) propagate fail-closed and abort the txn.
+///
+/// A whole-txn failure flags the durable entity-scoped
+/// `rm:w:{window}:{entity_hex}` needs-remat marker for every op the dead
+/// txn had applied (ONE-1147, parity with the hardened tombstone path) —
+/// the ops stay committed in the CRDT doc, so a bare log would leave a
+/// silent LMDB↔CRDT divergence until the next full window recovery.
 fn materialize_entities_from_delta(
     doc: &LoroDoc,
     delta: &loro::event::MapDelta<'_>,
@@ -344,6 +350,11 @@ fn materialize_entities_from_delta(
     window_key: &str,
 ) {
     let tombstones_map = doc.get_map("tombstones");
+    // ONE-1147: ids + op bytes applied into the batch txn, retained outside
+    // it — on whole-txn failure there is no surviving per-entity failure
+    // point (unlike the tombstone path), so the swallow site below needs
+    // the full list to flag retry markers.
+    let mut applied_ops: Vec<(EntityId, Vec<u8>)> = Vec::new();
     let result = vault.with_write_txn(|wtxn| {
         for (key, new_val) in &delta.updated {
             match new_val {
@@ -428,20 +439,23 @@ fn materialize_entities_from_delta(
                         key.as_ref(),
                         blob,
                     );
-                    if let Err(e) = materialize_result {
-                        if remote_rejection_reason(&e).is_some() {
-                            quarantine_rejected_op_in_txn(
-                                vault,
-                                wtxn,
-                                window_key,
-                                QuarantineContainer::Entities,
-                                key.as_ref(),
-                                &e,
-                                blob,
-                            )?;
-                        } else {
-                            // LOCAL failure — fail closed, abort the batch.
-                            return Err(e);
+                    match materialize_result {
+                        Ok(()) => applied_ops.push((id, blob.to_vec())),
+                        Err(e) => {
+                            if remote_rejection_reason(&e).is_some() {
+                                quarantine_rejected_op_in_txn(
+                                    vault,
+                                    wtxn,
+                                    window_key,
+                                    QuarantineContainer::Entities,
+                                    key.as_ref(),
+                                    &e,
+                                    blob,
+                                )?;
+                            } else {
+                                // LOCAL failure — fail closed, abort the batch.
+                                return Err(e);
+                            }
                         }
                     }
                 }
@@ -463,11 +477,49 @@ fn materialize_entities_from_delta(
                 }
             }
         }
+        #[cfg(test)]
+        if take_injected_batch_commit_failure() {
+            return Err(Error::Io(std::io::Error::other(
+                "injected batch commit failure (test hook)",
+            )));
+        }
         Ok(())
     });
 
     if let Err(e) = result {
-        tracing::error!(error = %e, "observer-b: entity batch commit failed");
+        // ONE-1147: the whole batch txn aborted — every applied op's write
+        // (and any quarantine row staged alongside) is lost while the ops
+        // stay committed in the CRDT doc. Flag each affected id with the
+        // durable entity-scoped rm: marker so the drain re-runs forward
+        // remat for this window. Ids whose COMMITTED bytes already equal
+        // the op's bytes are skipped: nothing was lost for them, and an
+        // at-parity marker could never discharge (discharge requires the
+        // actual healing re-write to land — never mere byte-parity, which
+        // a failed GDPR purge also exhibits).
+        //
+        // Layering: markers are BEST-EFFORT durability on an already-failing
+        // env — a marker write that itself fails (env down hard) is logged
+        // at ERROR and dropped; window recovery's forward remat on the
+        // pinned open order remains the backstop.
+        let mut seen = HashSet::new();
+        let mut marked = 0usize;
+        for (id, blob) in &applied_ops {
+            // Parity-check BEFORE dedupe: a src/id whose first op is at
+            // parity must not shadow a later diverged op for the same id.
+            if committed_entity_state_matches(vault, id, blob) || !seen.insert(*id) {
+                continue;
+            }
+            if set_remat_marker_logged(vault, window_key, id) {
+                marked += 1;
+            }
+        }
+        tracing::error!(
+            error = %e,
+            window = %window_key,
+            applied_ops = applied_ops.len(),
+            marked,
+            "observer-b: entity batch commit failed — flagged entity-scoped rm: markers for durable retry"
+        );
     }
 }
 
@@ -479,12 +531,23 @@ fn materialize_entities_from_delta(
 /// Write-gate rejections of REMOTE ops persist a quarantine record (`x:`
 /// family, ONE-1124) and never abort the batch; LOCAL failures (the
 /// engine's own LMDB errors) propagate fail-closed and abort the txn.
+///
+/// A whole-txn failure flags the durable `rm:w:{window}:{entity_hex}`
+/// needs-remat marker for each batched edge upsert's SOURCE entity
+/// (ONE-1147): the drain is window-scoped — any marker makes forward remat
+/// re-walk the whole window's entities/edges maps, so the source id is
+/// sufficient to get the edge re-processed, and the marker discharges when
+/// the healing edge write lands.
 fn materialize_edges_from_delta(
     doc: &LoroDoc,
     delta: &loro::event::MapDelta<'_>,
     vault: &Vault,
     window_key: &str,
 ) {
+    // ONE-1147: source id + LMDB edge key + op bytes for every UPSERT
+    // pushed into the batch, retained outside the txn for the swallow site
+    // below (no surviving per-op failure point on whole-txn failure).
+    let mut applied_edges: Vec<(EntityId, [u8; 33], Vec<u8>)> = Vec::new();
     let result = vault.with_write_txn(|wtxn| {
         let entities_map = doc.get_map("entities");
         let tombstones_map = doc.get_map("tombstones");
@@ -602,6 +665,11 @@ fn materialize_edges_from_delta(
                         }
                     }
 
+                    applied_edges.push((
+                        src,
+                        Store::encode_edge_key(&src, kind, &tgt),
+                        buf.to_vec(),
+                    ));
                     ops.push(BatchOp::EdgeWithCreatedAt {
                         src,
                         kind,
@@ -614,7 +682,19 @@ fn materialize_edges_from_delta(
                     metas.push(EdgeOpMeta::for_key(key.as_ref(), buf));
                 }
                 None => {
-                    // Deleted
+                    // Deleted.
+                    //
+                    // ONE-1147: bare edge-map removals are deliberately NOT
+                    // flagged with rm: markers on batch failure — forward
+                    // remat (the drain's only heal step) iterates the
+                    // CURRENT edges map and has no delete leg, so such a
+                    // marker could never discharge; recovery's reverse pass
+                    // re-mirrors the surviving in-range LMDB edge back into
+                    // the CRDT (LMDB wins for absent-from-CRDT records), so
+                    // a lost removal converges edge-alive rather than
+                    // staying silently divergent. Entity deletions ride the
+                    // tombstone path, which has its own hardened rm:
+                    // producer.
                     let Some((src, kind, tgt)) = parse_edge_key(key.as_ref()) else {
                         quarantine_rejected_op_in_txn(
                             vault,
@@ -645,12 +725,113 @@ fn materialize_edges_from_delta(
                 }
             }
         }
-        apply_materialized_edge_ops(vault, wtxn, ops, &metas, window_key)
+        apply_materialized_edge_ops(vault, wtxn, ops, &metas, window_key)?;
+        #[cfg(test)]
+        if take_injected_batch_commit_failure() {
+            return Err(Error::Io(std::io::Error::other(
+                "injected batch commit failure (test hook)",
+            )));
+        }
+        Ok(())
     });
 
     if let Err(e) = result {
-        tracing::error!(error = %e, "observer-b: edge batch commit failed");
+        // ONE-1147: whole-txn failure — same marker semantics and
+        // best-effort layering as the entity swallow site above, keyed by
+        // each lost upsert's SOURCE entity. Upserts whose COMMITTED edge
+        // bytes already equal the op's bytes are skipped (nothing lost;
+        // an at-parity marker could never discharge).
+        let mut seen = HashSet::new();
+        let mut marked = 0usize;
+        for (src, edge_key, buf) in &applied_edges {
+            if committed_edge_state_matches(vault, edge_key, buf) || !seen.insert(*src) {
+                continue;
+            }
+            if set_remat_marker_logged(vault, window_key, src) {
+                marked += 1;
+            }
+        }
+        tracing::error!(
+            error = %e,
+            window = %window_key,
+            applied_ops = applied_edges.len(),
+            marked,
+            "observer-b: edge batch commit failed — flagged entity-scoped rm: markers for durable retry"
+        );
     }
+}
+
+/// ONE-1147 (best-effort, post-abort): `true` ONLY when the committed
+/// entity bytes provably equal the op's bytes — the failed txn lost nothing
+/// for this id. Any read error reports `false`: over-marking is the
+/// conservative direction (forward remat is idempotent and byte-compares
+/// before writing).
+fn committed_entity_state_matches(vault: &Vault, id: &EntityId, blob: &[u8]) -> bool {
+    let Ok(rtxn) = vault.store.env.read_txn() else {
+        return false;
+    };
+    matches!(
+        vault.store.entities.get(&rtxn, id.as_bytes()),
+        Ok(Some(existing)) if existing == blob
+    )
+}
+
+/// ONE-1147 (best-effort, post-abort): `true` ONLY when the committed
+/// `edges_out` bytes provably equal the op's bytes. Read errors report
+/// `false` (mark — conservative direction).
+fn committed_edge_state_matches(vault: &Vault, edge_key: &[u8; 33], buf: &[u8]) -> bool {
+    let Ok(rtxn) = vault.store.env.read_txn() else {
+        return false;
+    };
+    matches!(
+        vault.store.edges_out.get(&rtxn, edge_key),
+        Ok(Some(existing)) if existing == buf
+    )
+}
+
+/// Writes one `rm:w:{window}:{entity_hex}` marker in its OWN txn (the
+/// failed batch txn is dead). A marker-write failure is logged at ERROR and
+/// swallowed — best-effort durability on an already-failing env; window
+/// recovery's forward remat remains the backstop (see the batch swallow
+/// sites for the layering).
+fn set_remat_marker_logged(vault: &Vault, window_key: &str, id: &EntityId) -> bool {
+    match quarantine::set_remat_marker(vault, window_key, id) {
+        Ok(()) => true,
+        Err(marker_err) => {
+            tracing::error!(
+                entity = %id.to_hex(),
+                window = %window_key,
+                error = %marker_err,
+                "observer-b: CRITICAL — failed to set rm: marker after batch commit failure"
+            );
+            false
+        }
+    }
+}
+
+// Test-only whole-batch commit failure injection for the ONE-1147 rm:
+// marker round-trip tests: when armed, the next entity/edge materialization
+// batch returns a LOCAL (non-remote-classifiable) error from inside the
+// write closure AFTER all ops were applied — the txn aborts exactly like an
+// env-level commit failure. Counts down per batch on the current thread
+// (Loro observer callbacks fire synchronously on the committing thread).
+#[cfg(test)]
+thread_local! {
+    pub(crate) static INJECT_BATCH_COMMIT_FAILURES: std::cell::Cell<u32> =
+        const { std::cell::Cell::new(0) };
+}
+
+#[cfg(test)]
+fn take_injected_batch_commit_failure() -> bool {
+    INJECT_BATCH_COMMIT_FAILURES.with(|cell| {
+        let remaining = cell.get();
+        if remaining > 0 {
+            cell.set(remaining - 1);
+            true
+        } else {
+            false
+        }
+    })
 }
 
 #[derive(Clone)]
