@@ -850,8 +850,9 @@ fn receipt_reason_purges_orphan_vector_with_receipt_and_sweep() -> Result<()> {
 #[cfg(feature = "sync")]
 #[test]
 fn user_delete_soft_shell_survives_sync_rematerialization() -> Result<()> {
+    use crate::batch::ENTITY_METADATA_HEADER_LEN;
     use crate::sync::bridge::Materializer;
-    use crate::sync::loro_support::map_contains_binary;
+    use crate::sync::loro_support::{map_contains_binary, map_insert_bytes};
     use crate::sync::schema::create_window_doc;
     use crate::sync::types::WindowKey;
     use crate::sync::window;
@@ -871,16 +872,24 @@ fn user_delete_soft_shell_survives_sync_rematerialization() -> Result<()> {
         )
         .commit()?;
 
+    // Mirror the FULL pre-delete blob into the CRDT first (the synced-then-
+    // deleted case). Without this divergent mirror the rematerialization
+    // below is vacuous — an empty doc has nothing that could resurrect the
+    // body (the pre-ONE-1131 version of this test passed against the
+    // resurrection bug for exactly that reason).
+    let window_key = WindowKey::from_timestamp(learned_at);
+    let doc = create_window_doc("local", &window_key);
+    let full_blob = vault.get_raw(&id)?.expect("pre-delete raw blob");
+    assert!(
+        full_blob.len() > ENTITY_METADATA_HEADER_LEN,
+        "mirrored blob must carry the body, not just the 25 B header"
+    );
+    map_insert_bytes(&doc.get_map("entities"), id.to_hex().as_str(), &full_blob)?;
+    doc.commit();
+
     let outcome = vault.delete_entity_with_reason(&id, DeleteReason::UserDelete)?;
     assert!(outcome.existed);
     assert_eq!(vault.get(&id)?.as_deref(), Some([].as_slice()));
-
-    let window_key = WindowKey::from_timestamp(learned_at);
-    let doc = match window::load_window_from_state(&vault, "local", &window_key) {
-        Ok(doc) => doc,
-        Err(Error::WindowNotFound { .. }) => create_window_doc("local", &window_key),
-        Err(err) => return Err(err),
-    };
 
     let materializer = Materializer::new();
     let _ = window::forward_rematerialize(&vault, &doc, &materializer)?;
@@ -893,7 +902,12 @@ fn user_delete_soft_shell_survives_sync_rematerialization() -> Result<()> {
     assert_eq!(
         vault.get(&id)?.as_deref(),
         Some([].as_slice()),
-        "sync rematerialization must preserve the SoftErase shell"
+        "sync rematerialization must preserve the SoftErase shell — the stale CRDT body must not resurrect deleted content"
+    );
+    assert_eq!(
+        vault.get_raw(&id)?.map(|raw| raw.len()),
+        Some(ENTITY_METADATA_HEADER_LEN),
+        "the local record must still be the 25 B header shell"
     );
     Ok(())
 }

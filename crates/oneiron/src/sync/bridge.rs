@@ -18,7 +18,7 @@ use std::sync::{Arc, Mutex};
 
 use loro::{ContainerTrait, LoroDoc, LoroMap, Subscription};
 
-use super::loro_support::{map_contains_binary, map_get_bytes};
+use super::loro_support::{map_contains_key, map_get_bytes};
 use crate::batch::{self, BatchOp, ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::store::Store;
 use crate::types::{
@@ -554,13 +554,19 @@ fn ensure_entity_materialized_from_crdt(
     tombstones_map: &LoroMap,
     id: &EntityId,
 ) -> Result<bool> {
-    if vault.store.entities.get(&*wtxn, id.as_bytes())?.is_some() {
-        return Ok(true);
+    // Tombstone gate FIRST: a tombstoned endpoint must never count as
+    // "ready", even while a stale LMDB row survives (crash window between
+    // the tombstone CRDT commit and the purge txn, or a failed purge).
+    // Checking row existence first would materialize an edge onto the stale
+    // row — re-adding an active carrier ARCH-0038 requires purged. Presence
+    // is ANY-value (fail closed): non-binary tombstones gate too.
+    let hex_id = id.to_hex();
+    if map_contains_key(tombstones_map, &hex_id) {
+        return Ok(false);
     }
 
-    let hex_id = id.to_hex();
-    if map_contains_binary(tombstones_map, &hex_id) {
-        return Ok(false);
+    if vault.store.entities.get(&*wtxn, id.as_bytes())?.is_some() {
+        return Ok(true);
     }
 
     let Some(blob) = map_get_bytes(entities_map, &hex_id) else {
@@ -972,6 +978,77 @@ mod tests {
             !vault
                 .edge_exists(&deleted, EdgeKind::Mentions, &live)
                 .unwrap()
+        );
+    }
+
+    /// The endpoint-ready check must run the tombstone gate BEFORE the
+    /// LMDB-row shortcut: a tombstoned endpoint whose stale local row
+    /// survives (crash window between the tombstone CRDT commit and the
+    /// purge txn, or a failed purge) must never count as "ready". Pre-fix
+    /// code returned true on ANY existing row and materialized the edge.
+    /// Covers binary AND non-binary tombstone values (fail closed).
+    #[test]
+    fn observer_b_does_not_materialize_edge_to_tombstoned_endpoint_with_stale_row() {
+        let vault = test_vault();
+        let doc = LoroDoc::new();
+        let edges = doc.get_map("edges");
+        let tombstones = doc.get_map("tombstones");
+        let live = EntityId::now();
+        let del_bin = EntityId::now(); // binary (legacy hard) tombstone
+        let del_str = EntityId::now(); // non-binary tombstone — must gate too
+
+        // All three rows exist locally — the deleted ones are the stale
+        // survivors of an interrupted purge.
+        for (id, body) in [
+            (&live, b"live".as_slice()),
+            (&del_bin, b"stale-bin".as_slice()),
+            (&del_str, b"stale-str".as_slice()),
+        ] {
+            vault
+                .put_entity(
+                    id,
+                    ENTITY_TYPE_TASK,
+                    TimeRange { start: 1, end: 1 },
+                    2,
+                    body,
+                )
+                .unwrap();
+        }
+        tombstones.insert(&del_bin.to_hex(), b"1").unwrap();
+        tombstones.insert(&del_str.to_hex(), "corrupt").unwrap();
+        doc.commit();
+
+        let materializer = Arc::new(Materializer::new());
+        let _subs = register_observer_b(&doc, &vault, &materializer);
+
+        for (src, tgt) in [(&live, &del_bin), (&live, &del_str), (&del_bin, &live)] {
+            map_insert_bytes(
+                &edges,
+                &format_edge_key(src, EdgeKind::Mentions, tgt),
+                &encode_edge_value_for_crdt(EdgeKind::Mentions, 0.8, 10, Some(Vad::NEUTRAL), None)
+                    .unwrap(),
+            )
+            .unwrap();
+        }
+        doc.commit();
+
+        assert!(
+            !vault
+                .edge_exists(&live, EdgeKind::Mentions, &del_bin)
+                .unwrap(),
+            "edge to tombstoned target with stale row must not materialize"
+        );
+        assert!(
+            !vault
+                .edge_exists(&live, EdgeKind::Mentions, &del_str)
+                .unwrap(),
+            "non-binary tombstone must gate the target too (fail closed)"
+        );
+        assert!(
+            !vault
+                .edge_exists(&del_bin, EdgeKind::Mentions, &live)
+                .unwrap(),
+            "edge FROM a tombstoned source with stale row must not materialize"
         );
     }
 
