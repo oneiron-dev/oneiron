@@ -9774,6 +9774,545 @@ fn put_edge_provenance_implicitly_closes_strictly_older_live_claims() -> Result<
     Ok(())
 }
 
+// ═══════════════════════════════════════════════════════════════════════
+// ONE-1113: reject-and-route + operational setters + session-bound actor
+// (ARCH-0034 #write-protection ruling, ratified 2026-06-13)
+// ═══════════════════════════════════════════════════════════════════════
+
+/// Asserts one rejected plain-put attempt pinned the ONE-1113 contract: the
+/// typed [`Error::EdgeIsProvenanced`] variant carrying the subject kind
+/// byte, with a message that ROUTES the caller to the provenance path and
+/// the operational setters ("reject-and-route" — a bare reject without the
+/// route is half the ruling).
+fn assert_edge_is_provenanced_reject(err: &Error, expected_kind: EdgeKind, context: &str) {
+    match err {
+        Error::EdgeIsProvenanced { kind } => {
+            assert_eq!(*kind, expected_kind as u8, "{context}: kind byte");
+        }
+        other => panic!("{context}: expected EdgeIsProvenanced, got {other:?}"),
+    }
+    assert_eq!(err.kind(), ErrorKind::EdgeIsProvenanced, "{context}");
+    let message = err.to_string();
+    for route in [
+        "put_edge_provenance",
+        "as_actor",
+        "set_edge_weight",
+        "set_edge_vad",
+    ] {
+        assert!(
+            message.contains(route),
+            "{context}: rejection message must route the caller via {route:?}, got {message:?}"
+        );
+    }
+}
+
+/// THE regression for the pinned hole (M2 adversarial verify, PR #81):
+/// before ONE-1113, every plain edge put re-encoded an already-provenanced
+/// edge with `provenance: None`, silently dropping the 26-byte value to
+/// 24 bytes in BOTH directions while the truth Claim stayed live. Ruling
+/// pt 2: typed reject, routed; both directions byte-identical; the live
+/// Claim untouched. A fix that strips, preserves-silently, or rejects only
+/// `put_edge` (not the batch builders) FAILS here.
+#[test]
+fn plain_edge_reput_on_provenanced_edge_rejects_and_routes() -> Result<()> {
+    let fx = lifecycle_fixture()?;
+    let vault = &fx.vault;
+    let subject = fx.subject;
+    let (a, b) = (subject.source, subject.target);
+
+    let claim_id = EntityId::now();
+    vault.put_edge_provenance(
+        &claim_id,
+        &subject,
+        &EdgeProvenanceClaimBody::new(fx.person, 0.75, SupersessionStatus::Confirmed),
+        EdgeActorClass::Human,
+        1_000,
+    )?;
+    let (before_out, before_in) = raw_edge_values(vault, &subject)?;
+    let before_out = before_out.expect("provenanced edge");
+    assert_eq!(before_out.len(), EDGE_VALUE_SEMANTIC_PROVENANCED_LEN);
+    assert_eq!(before_in.as_deref(), Some(before_out.as_slice()));
+
+    let vad = Vad {
+        valence: 0.1,
+        arousal: 0.2,
+        dominance: 0.3,
+    };
+    // Every public plain-put surface the ruling names: the typed vault API,
+    // both batch-builder flavors, and the txn-builder flavor.
+    let attempts: Vec<(&str, Error)> = vec![
+        (
+            "put_edge",
+            vault
+                .put_edge(&a, EdgeKind::Mentions, &b, 0.5)
+                .expect_err("put_edge must reject"),
+        ),
+        (
+            "put_edge_with_vad",
+            vault
+                .put_edge_with_vad(&a, EdgeKind::Mentions, &b, 0.5, vad)
+                .expect_err("put_edge_with_vad must reject"),
+        ),
+        (
+            "batch().edge()",
+            vault
+                .batch()
+                .edge(&a, EdgeKind::Mentions, &b, 0.5)
+                .commit()
+                .expect_err("batch edge must reject"),
+        ),
+        (
+            "batch().edge_with_vad()",
+            vault
+                .batch()
+                .edge_with_vad(&a, EdgeKind::Mentions, &b, 0.5, vad)
+                .commit()
+                .expect_err("batch edge_with_vad must reject"),
+        ),
+        (
+            "batch_in().edge()",
+            vault
+                .with_write_txn(|wtxn| {
+                    vault
+                        .batch_in()
+                        .edge(&a, EdgeKind::Mentions, &b, 0.5)
+                        .apply(wtxn)
+                })
+                .expect_err("txn-builder edge must reject"),
+        ),
+    ];
+    for (context, err) in &attempts {
+        assert_edge_is_provenanced_reject(err, EdgeKind::Mentions, context);
+    }
+
+    // Atomicity: a batch mixing a VALID entity put with the offending edge
+    // op aborts wholesale — the put must not survive the rejected commit.
+    let orphan = EntityId::now();
+    let err = vault
+        .batch()
+        .put(&orphan, 4, test_time_range(1, 1), 1, b"rider")
+        .edge(&a, EdgeKind::Mentions, &b, 0.5)
+        .commit()
+        .expect_err("mixed batch must reject");
+    assert_edge_is_provenanced_reject(&err, EdgeKind::Mentions, "mixed batch");
+    assert!(
+        vault.get_raw(&orphan)?.is_none(),
+        "a rejected batch must not leak its rider put"
+    );
+
+    // Both directions byte-identical to the pre-attempt 26-byte value.
+    let (after_out, after_in) = raw_edge_values(vault, &subject)?;
+    assert_eq!(
+        after_out.as_deref(),
+        Some(before_out.as_slice()),
+        "edges_out must stay byte-identical after every rejected put"
+    );
+    assert_eq!(
+        after_in.as_deref(),
+        Some(before_out.as_slice()),
+        "edges_in must stay byte-identical after every rejected put"
+    );
+
+    // The live Claim is untouched truth.
+    let claim = vault.get_claim(&claim_id)?.expect("claim readable");
+    assert_eq!(claim.lifecycle, ClaimLifecycleStatus::Active);
+    assert_eq!(
+        decode_edge_provenance_body(&claim.value)?.supersession_status,
+        SupersessionStatus::Confirmed
+    );
+
+    // Ruling pt 1 (positive control): a plain put on a NON-provenanced edge
+    // is unchanged — absence of provenance is itself the anonymous
+    // representation. Re-put a bare edge and a structural edge freely.
+    let c = EntityId::now();
+    vault.put_entity(&c, 4, test_time_range(1, 1), 1, b"c")?;
+    vault.put_edge(&a, EdgeKind::About, &c, 0.25)?;
+    vault.put_edge(&a, EdgeKind::About, &c, 0.75)?;
+    let bare = EdgeRef::new(a, EdgeKind::About, c);
+    let (out, inn) = raw_edge_values(vault, &bare)?;
+    let out = out.expect("bare edge");
+    assert_eq!(out.len(), EDGE_VALUE_SEMANTIC_LEN, "bare re-put stays 24 B");
+    assert_eq!(&out[0..4], &0.75_f32.to_le_bytes(), "re-put weight applied");
+    assert_eq!(inn.as_deref(), Some(out.as_slice()));
+    vault.put_edge(&a, EdgeKind::BelongsTo, &c, 0.5)?;
+    vault.put_edge(&a, EdgeKind::BelongsTo, &c, 0.9)?;
+    Ok(())
+}
+
+/// ONE-1113 operational weight setter (ruling pt 5, M3 weight pin): the
+/// carve-out rewrites ONLY bytes 0..4, preserves `created_at` + VAD + the
+/// two hot-flag bytes verbatim on a 26-byte value, mirrors both directions,
+/// never touches the Claim, and invalidates the endpoint PPR caches like
+/// any edge write. An implementation that re-encodes the value (dropping
+/// flags) or skips the reverse row FAILS here.
+#[test]
+fn set_edge_weight_rewrites_only_weight_bytes_and_preserves_provenance() -> Result<()> {
+    let fx = lifecycle_fixture()?;
+    let vault = &fx.vault;
+    let subject = fx.subject;
+    let (a, b) = (subject.source, subject.target);
+
+    let claim_id = EntityId::now();
+    vault.put_edge_provenance(
+        &claim_id,
+        &subject,
+        &EdgeProvenanceClaimBody::new(fx.person, 0.75, SupersessionStatus::Confirmed),
+        EdgeActorClass::Human,
+        1_000,
+    )?;
+    let (before, _) = raw_edge_values(vault, &subject)?;
+    let before = before.expect("provenanced edge");
+    assert_eq!(before.len(), EDGE_VALUE_SEMANTIC_PROVENANCED_LEN);
+
+    // Plant malformed PPR cache rows keyed to both endpoints so the
+    // invalidation is observable (the same oracle as the ONE-1105 test).
+    let src_hash = [0xB1_u8; 16];
+    let tgt_hash = [0xB2_u8; 16];
+    {
+        let mut wtxn = vault.store.env.write_txn()?;
+        let mut src_dep = [0_u8; 32];
+        src_dep[..16].copy_from_slice(a.as_bytes());
+        src_dep[16..].copy_from_slice(&src_hash);
+        let mut tgt_dep = [0_u8; 32];
+        tgt_dep[..16].copy_from_slice(b.as_bytes());
+        tgt_dep[16..].copy_from_slice(&tgt_hash);
+        vault
+            .store
+            .ppr_cache
+            .put(&mut wtxn, &src_hash, &[1, 2, 3])?;
+        vault
+            .store
+            .ppr_cache
+            .put(&mut wtxn, &tgt_hash, &[1, 2, 3])?;
+        vault.store.ppr_cache_deps.put(&mut wtxn, &src_dep, &[])?;
+        vault.store.ppr_cache_deps.put(&mut wtxn, &tgt_dep, &[])?;
+        wtxn.commit()?;
+    }
+
+    vault.set_edge_weight(&a, EdgeKind::Mentions, &b, 0.42)?;
+
+    let (out, inn) = raw_edge_values(vault, &subject)?;
+    let out = out.expect("edge survives");
+    assert_eq!(out.len(), EDGE_VALUE_SEMANTIC_PROVENANCED_LEN);
+    assert_eq!(
+        &out[0..4],
+        &0.42_f32.to_le_bytes(),
+        "weight bytes rewritten"
+    );
+    assert_eq!(
+        &out[4..],
+        &before[4..],
+        "created_at + VAD + hot-flag bytes (incl. 24/25) preserved verbatim"
+    );
+    assert_eq!(inn.as_deref(), Some(out.as_slice()), "both directions");
+    {
+        let rtxn = vault.store.env.read_txn()?;
+        assert!(
+            vault.store.ppr_cache.get(&rtxn, &src_hash)?.is_none(),
+            "source-endpoint PPR cache must be invalidated"
+        );
+        assert!(
+            vault.store.ppr_cache.get(&rtxn, &tgt_hash)?.is_none(),
+            "target-endpoint PPR cache must be invalidated"
+        );
+    }
+    // The truth Claim is untouched by the operational setter.
+    let claim = vault.get_claim(&claim_id)?.expect("claim readable");
+    assert_eq!(claim.lifecycle, ClaimLifecycleStatus::Active);
+
+    // Contract [0, 1] + finiteness — typed reject, value unchanged.
+    for bad in [1.5_f32, -0.1, f32::NAN] {
+        let err = vault
+            .set_edge_weight(&a, EdgeKind::Mentions, &b, bad)
+            .expect_err("out-of-contract weight must reject");
+        assert_eq!(err.kind(), ErrorKind::InvalidEdgeWeight, "weight {bad}");
+    }
+    let (unchanged, _) = raw_edge_values(vault, &subject)?;
+    assert_eq!(unchanged.as_deref(), Some(out.as_slice()));
+
+    // Never an upsert: a missing edge is the typed EdgeNotFound.
+    let ghost = EntityId::now();
+    let err = vault
+        .set_edge_weight(&a, EdgeKind::Mentions, &ghost, 0.5)
+        .expect_err("missing edge must reject");
+    assert_eq!(err.kind(), ErrorKind::EdgeNotFound);
+
+    // Weight lives at offset 0 on ALL layouts: a structural 12-byte edge is
+    // settable and KEEPS its 12-byte layout.
+    vault.put_edge(&a, EdgeKind::BelongsTo, &b, 0.5)?;
+    vault.set_edge_weight(&a, EdgeKind::BelongsTo, &b, 0.125)?;
+    let structural = EdgeRef::new(a, EdgeKind::BelongsTo, b);
+    let (out, inn) = raw_edge_values(vault, &structural)?;
+    let out = out.expect("structural edge");
+    assert_eq!(out.len(), EDGE_VALUE_STRUCTURAL_LEN);
+    assert_eq!(&out[0..4], &0.125_f32.to_le_bytes());
+    assert_eq!(inn.as_deref(), Some(out.as_slice()));
+    Ok(())
+}
+
+/// ONE-1113 operational VAD setter: rewrites ONLY bytes 12..24, preserves
+/// weight/`created_at`/length (24 B stays 24 B; a 26-byte value keeps its
+/// hot-flag bytes), mirrors both directions, and rejects structural
+/// 12-byte kinds typed — the contract layout table gives them no VAD.
+#[test]
+fn set_edge_vad_rewrites_only_vad_bytes_and_preserves_layout() -> Result<()> {
+    let fx = lifecycle_fixture()?;
+    let vault = &fx.vault;
+    let subject = fx.subject;
+    let (a, b) = (subject.source, subject.target);
+
+    // Component ranges are the pinned VAD contract: valence ∈ [-1, 1],
+    // arousal/dominance ∈ [0, 1].
+    let new_vad = Vad {
+        valence: -0.5,
+        arousal: 0.25,
+        dominance: 0.875,
+    };
+
+    // 24-byte bare edge: VAD bytes rewritten in place, length preserved.
+    let (before, _) = raw_edge_values(vault, &subject)?;
+    let before = before.expect("bare fixture edge");
+    assert_eq!(before.len(), EDGE_VALUE_SEMANTIC_LEN);
+    vault.set_edge_vad(&a, EdgeKind::Mentions, &b, new_vad)?;
+    let (out, inn) = raw_edge_values(vault, &subject)?;
+    let out = out.expect("edge survives");
+    assert_eq!(out.len(), EDGE_VALUE_SEMANTIC_LEN, "24 B stays 24 B");
+    assert_eq!(&out[0..12], &before[0..12], "weight + created_at preserved");
+    assert_eq!(&out[12..16], &(-0.5_f32).to_le_bytes());
+    assert_eq!(&out[16..20], &0.25_f32.to_le_bytes());
+    assert_eq!(&out[20..24], &0.875_f32.to_le_bytes());
+    assert_eq!(inn.as_deref(), Some(out.as_slice()), "both directions");
+
+    // 26-byte provenanced edge: hot-flag bytes 24/25 preserved verbatim.
+    let claim_id = EntityId::now();
+    vault.put_edge_provenance(
+        &claim_id,
+        &subject,
+        &EdgeProvenanceClaimBody::new(fx.person, 0.75, SupersessionStatus::Disputed),
+        EdgeActorClass::Agent,
+        1_000,
+    )?;
+    let (stamped, _) = raw_edge_values(vault, &subject)?;
+    let stamped = stamped.expect("stamped edge");
+    assert_eq!(stamped.len(), EDGE_VALUE_SEMANTIC_PROVENANCED_LEN);
+    vault.set_edge_vad(&a, EdgeKind::Mentions, &b, Vad::NEUTRAL)?;
+    let (out, inn) = raw_edge_values(vault, &subject)?;
+    let out = out.expect("edge survives");
+    assert_eq!(out.len(), EDGE_VALUE_SEMANTIC_PROVENANCED_LEN);
+    assert_eq!(&out[0..12], &stamped[0..12]);
+    assert_eq!(&out[12..24], &[0_u8; 12][..], "VAD reset to NEUTRAL");
+    assert_eq!(
+        &out[24..26],
+        &stamped[24..26],
+        "hot-flag bytes (disputed=2, agent=1) must survive the VAD rewrite"
+    );
+    assert_eq!(inn.as_deref(), Some(out.as_slice()));
+    assert_eq!(
+        vault.get_claim(&claim_id)?.expect("claim").lifecycle,
+        ClaimLifecycleStatus::Active,
+        "the operational setter never touches the Claim"
+    );
+
+    // Structural kinds carry no VAD — typed reject, nothing written.
+    vault.put_edge(&a, EdgeKind::BelongsTo, &b, 0.5)?;
+    let err = vault
+        .set_edge_vad(&a, EdgeKind::BelongsTo, &b, new_vad)
+        .expect_err("structural VAD set must reject");
+    assert_eq!(err.kind(), ErrorKind::InvariantViolation);
+    assert!(
+        err.to_string()
+            .contains("structural edges do not carry VAD"),
+        "got {err:?}"
+    );
+    let structural = EdgeRef::new(a, EdgeKind::BelongsTo, b);
+    let (out, _) = raw_edge_values(vault, &structural)?;
+    assert_eq!(
+        out.expect("structural edge").len(),
+        EDGE_VALUE_STRUCTURAL_LEN
+    );
+
+    // Component validation + never-upsert. NaN and the asymmetric range
+    // pins (valence [-1, 1] admits -1; arousal [0, 1] rejects it).
+    let err = vault
+        .set_edge_vad(
+            &a,
+            EdgeKind::Mentions,
+            &b,
+            Vad {
+                valence: f32::NAN,
+                arousal: 0.0,
+                dominance: 0.0,
+            },
+        )
+        .expect_err("NaN VAD must reject");
+    assert_eq!(err.kind(), ErrorKind::InvalidVad);
+    let err = vault
+        .set_edge_vad(
+            &a,
+            EdgeKind::Mentions,
+            &b,
+            Vad {
+                valence: -1.0,
+                arousal: -0.25,
+                dominance: 0.0,
+            },
+        )
+        .expect_err("arousal below [0, 1] must reject");
+    assert!(
+        matches!(
+            err,
+            Error::InvalidVad {
+                component: VadComponent::Arousal,
+                ..
+            }
+        ),
+        "got {err:?}"
+    );
+    let ghost = EntityId::now();
+    let err = vault
+        .set_edge_vad(&a, EdgeKind::Mentions, &ghost, new_vad)
+        .expect_err("missing edge must reject");
+    assert_eq!(err.kind(), ErrorKind::EdgeNotFound);
+    Ok(())
+}
+
+/// ONE-1113 batch forms (the decay / retrieval-feedback loop idiom): both
+/// setters compose in one atomic batch, and one failing op aborts the WHOLE
+/// transaction — staged sibling rewrites must not survive a rejected
+/// commit.
+#[test]
+fn batch_set_edge_weight_and_vad_forms_apply_atomically() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let a = EntityId::now();
+    let b = EntityId::now();
+    let c = EntityId::now();
+    vault.put_entity(&a, 4, test_time_range(1, 1), 1, b"a")?;
+    vault.put_entity(&b, 4, test_time_range(1, 1), 1, b"b")?;
+    vault.put_entity(&c, 4, test_time_range(1, 1), 1, b"c")?;
+    vault.put_edge(&a, EdgeKind::Mentions, &b, 0.875)?;
+    vault.put_edge(&a, EdgeKind::About, &c, 0.5)?;
+
+    let vad = Vad {
+        valence: 0.5,
+        arousal: 0.25,
+        dominance: 0.75,
+    };
+    vault
+        .batch()
+        .set_edge_weight(&a, EdgeKind::Mentions, &b, 0.4375)
+        .set_edge_vad(&a, EdgeKind::About, &c, vad)
+        .commit()?;
+    let (mentions, _) = raw_edge_values(&vault, &EdgeRef::new(a, EdgeKind::Mentions, b))?;
+    let mentions = mentions.expect("mentions edge");
+    assert_eq!(&mentions[0..4], &0.4375_f32.to_le_bytes());
+    let (about, _) = raw_edge_values(&vault, &EdgeRef::new(a, EdgeKind::About, c))?;
+    let about = about.expect("about edge");
+    assert_eq!(&about[12..16], &0.5_f32.to_le_bytes());
+    assert_eq!(&about[16..20], &0.25_f32.to_le_bytes());
+
+    // Atomicity: the second op targets a missing edge — the whole batch
+    // aborts and the FIRST op's staged rewrite is discarded.
+    let ghost = EntityId::now();
+    let err = vault
+        .batch()
+        .set_edge_weight(&a, EdgeKind::Mentions, &b, 0.9)
+        .set_edge_weight(&a, EdgeKind::Mentions, &ghost, 0.5)
+        .commit()
+        .expect_err("batch with a missing-edge op must reject");
+    assert_eq!(err.kind(), ErrorKind::EdgeNotFound);
+    let (mentions, _) = raw_edge_values(&vault, &EdgeRef::new(a, EdgeKind::Mentions, b))?;
+    assert_eq!(
+        &mentions.expect("mentions edge")[0..4],
+        &0.4375_f32.to_le_bytes(),
+        "a rejected batch must not leak its sibling weight rewrite"
+    );
+    Ok(())
+}
+
+/// ONE-1113 session-bound actor handle (ruling pt 4): bind the actor once,
+/// write normally — the handle injects `actor_entity_ref` + `actor_class`
+/// into the provenance path; a conflicting body actor is rejected typed
+/// (never silently rewritten); the full gate chain (D13 class validation,
+/// implicit supersession, winner restamp) still runs underneath.
+#[test]
+fn as_actor_bound_write_carries_bound_actor_and_rejects_conflicts() -> Result<()> {
+    let fx = lifecycle_fixture()?;
+    let vault = &fx.vault;
+    let subject = fx.subject;
+
+    let bound = vault.as_actor(fx.person, EdgeActorClass::Human);
+    assert_eq!(bound.actor(), fx.person);
+    assert_eq!(bound.actor_class(), EdgeActorClass::Human);
+
+    // Bound write: the Claim carries the BOUND actor and the edge restamps
+    // (confirmed = 1, human = 0) — composed with main's current actor shape
+    // (the caller-supplied class parameter, persisted by the engine).
+    let claim_id = EntityId::now();
+    let body = bound.provenance_body(0.8, SupersessionStatus::Confirmed);
+    bound.put_edge_provenance(&claim_id, &subject, &body, 1_000)?;
+    let claim = vault.get_claim(&claim_id)?.expect("bound claim");
+    assert_eq!(claim.lifecycle, ClaimLifecycleStatus::Active);
+    assert_eq!(
+        decode_edge_provenance_body(&claim.value)?.actor_entity_ref,
+        fx.person,
+        "the bound write must carry the bound actor_entity_ref"
+    );
+    let (out, inn) = raw_edge_values(vault, &subject)?;
+    let out = out.expect("stamped edge");
+    assert_eq!(out.len(), EDGE_VALUE_SEMANTIC_PROVENANCED_LEN);
+    assert_eq!((out[24], out[25]), (1, 0), "confirmed/human stamp");
+    assert_eq!(inn.as_deref(), Some(out.as_slice()));
+
+    // Ruling pt 3 through the handle: a NEWER bound write modifies via the
+    // supersession chain — the prior closes, history kept, flags restamp.
+    let claim2 = EntityId::now();
+    let body2 = bound.provenance_body(0.6, SupersessionStatus::Disputed);
+    bound.put_edge_provenance(&claim2, &subject, &body2, 2_000)?;
+    assert_eq!(
+        vault.get_claim(&claim_id)?.expect("prior").lifecycle,
+        ClaimLifecycleStatus::Superseded,
+        "modification flows as a supersession chain (retraction is not excision)"
+    );
+    let (out, _) = raw_edge_values(vault, &subject)?;
+    let out = out.expect("edge");
+    assert_eq!(
+        (out[24], out[25]),
+        (2, 0),
+        "flags restamp from the newer bound claim (disputed/human)"
+    );
+
+    // Fail-closed binding: a body naming a DIFFERENT actor is rejected
+    // typed — the handle injects, it never silently rewrites.
+    let conflicting = EdgeProvenanceClaimBody::new(fx.machine, 0.9, SupersessionStatus::Confirmed);
+    let stray = EntityId::now();
+    let err = bound
+        .put_edge_provenance(&stray, &subject, &conflicting, 3_000)
+        .expect_err("conflicting body actor must reject");
+    assert!(
+        matches!(
+            &err,
+            Error::InvalidProvenanceBody(msg)
+                if msg.contains("session-bound actor")
+        ),
+        "got {err:?}"
+    );
+    assert!(
+        vault.get_raw(&stray)?.is_none(),
+        "a rejected bound write must store nothing"
+    );
+
+    // The handle is ergonomics, NOT authorization: D13 still validates the
+    // bound class against the actor entity's kind underneath.
+    let mismatched = vault.as_actor(fx.machine, EdgeActorClass::Human);
+    let stray2 = EntityId::now();
+    let body3 = mismatched.provenance_body(0.9, SupersessionStatus::Confirmed);
+    let err = mismatched
+        .put_edge_provenance(&stray2, &subject, &body3, 3_000)
+        .expect_err("MACHINE+human must fail D13 through the handle");
+    assert_eq!(err.kind(), ErrorKind::ActorClassMismatch);
+    Ok(())
+}
+
 #[test]
 fn multi_claim_winner_and_retract_refresh_to_runner_up() -> Result<()> {
     let fx = lifecycle_fixture()?;

@@ -31,10 +31,10 @@ use crate::limits::{
 };
 use crate::provenance::{
     EdgeProvenanceClaimBody, EdgeRef, PREDICATE_EDGE_PROVENANCE, ProvenancePrecedence,
-    close_record_for_supersession, decode_actor_class_evidence, decode_edge_provenance_body,
-    derive_confirmation_status, downgrade_edge_to_bare, encode_actor_class_evidence,
-    encode_edge_provenance_value, restamp_edge_flags, retract_record, validate_actor_class,
-    validate_edge_provenance_value, winner_index,
+    SupersessionStatus, close_record_for_supersession, decode_actor_class_evidence,
+    decode_edge_provenance_body, derive_confirmation_status, downgrade_edge_to_bare,
+    encode_actor_class_evidence, encode_edge_provenance_value, restamp_edge_flags, retract_record,
+    validate_actor_class, validate_edge_provenance_value, winner_index,
 };
 use crate::store::{
     DB_MANIFEST, HnswCompatibilityState, MODEL_ID_KEY, STORAGE_ABI_VERSION_KEY,
@@ -2232,6 +2232,84 @@ impl Vault {
             .commit()
     }
 
+    /// Operational weight setter (ONE-1113, ARCH-0034 #write-protection
+    /// carve-out): rewrites ONLY the weight bytes (f32 LE at offset 0..4) of
+    /// an EXISTING edge, writing IDENTICAL bytes to both `edges_out` and
+    /// `edges_in`. Weight is a LOCAL operational field (M3 weight pin) — the
+    /// provenance Claim asserts the relation, never the weight — so this
+    /// setter works on bare AND provenanced edges alike, preserves the
+    /// 26-byte hot-flag bytes verbatim, and never touches provenance Claims.
+    /// Exempt from the [`Error::EdgeIsProvenanced`] reject gate by
+    /// construction.
+    ///
+    /// For decay / retrieval-feedback loops use the batch form
+    /// [`BatchBuilder::set_edge_weight`].
+    ///
+    /// Fail-closed: [`Error::EdgeNotFound`] when the edge does not exist
+    /// (the setter never upserts); [`Error::InvalidEdgeWeight`] outside the
+    /// contract \[0, 1\]. PPR caches for the edge endpoints are invalidated
+    /// exactly like a plain edge write.
+    pub fn set_edge_weight(
+        &self,
+        src: &EntityId,
+        kind: EdgeKind,
+        tgt: &EntityId,
+        weight: f32,
+    ) -> Result<()> {
+        self.batch()
+            .set_edge_weight(src, kind, tgt, weight)
+            .commit()
+    }
+
+    /// Operational VAD setter (ONE-1113, ARCH-0034 #write-protection
+    /// carve-out): rewrites ONLY the VAD bytes (three f32 LE at offset
+    /// 12..24) of an EXISTING semantic edge, writing IDENTICAL bytes to both
+    /// directions. Weight, `created_at`, the value LENGTH (a 24-byte bare
+    /// value stays 24 B; a 26-byte provenanced value keeps its hot-flag
+    /// bytes verbatim), and provenance Claims are untouched. Exempt from the
+    /// [`Error::EdgeIsProvenanced`] reject gate by construction.
+    ///
+    /// For batched feedback loops use [`BatchBuilder::set_edge_vad`].
+    ///
+    /// Fail-closed: [`Error::EdgeNotFound`] when the edge does not exist;
+    /// [`Error::InvalidVad`] on non-finite/out-of-range components; a typed
+    /// rejection on structural 12-byte kinds (the contract layout table —
+    /// structural edges carry no VAD).
+    pub fn set_edge_vad(
+        &self,
+        src: &EntityId,
+        kind: EdgeKind,
+        tgt: &EntityId,
+        vad: Vad,
+    ) -> Result<()> {
+        self.batch().set_edge_vad(src, kind, tgt, vad).commit()
+    }
+
+    /// Binds an actor to a session-scoped write handle (ONE-1113 ruling,
+    /// session ergonomics): bind the actor ONCE, then write provenanced
+    /// edges normally — the handle injects `actor_entity_ref` +
+    /// `actor_class` on every provenance-path write, so prod callers (e.g.
+    /// the MCP daemon's named-writes lane, ARCH-0028) never type provenance
+    /// by hand.
+    ///
+    /// The handle is pure ergonomics: NO sessions registry, NO
+    /// authorization — "sessions are correlation-only, never authorization".
+    /// Binding validates nothing by itself; every write through the handle
+    /// runs the full [`Vault::put_edge_provenance`] gate chain (actor
+    /// existence, D13 class validation, D14 precedence, …).
+    ///
+    /// NAMING: `as_actor` / [`ActorBound`] are INDICATIVE, engine-internal
+    /// names (the ruling pins the semantics, not the ABI surface); the
+    /// public ABI name is pinned at the FFI/NAPI milestone.
+    #[must_use]
+    pub fn as_actor(&self, actor: EntityId, actor_class: EdgeActorClass) -> ActorBound<'_> {
+        ActorBound {
+            vault: self,
+            actor,
+            actor_class,
+        }
+    }
+
     /// Deletes a directed edge and its reverse index entry.
     pub fn delete_edge(&self, src: &EntityId, kind: EdgeKind, tgt: &EntityId) -> Result<bool> {
         let key_out = Store::encode_edge_key(src, kind, tgt);
@@ -2761,6 +2839,81 @@ impl Vault {
             current = parent;
         }
         Ok(false)
+    }
+}
+
+/// A session-scoped actor binding created by [`Vault::as_actor`]
+/// (ONE-1113 ruling, session ergonomics): the handle carries
+/// `actor_entity_ref` + the caller-supplied D13 `actor_class` and injects
+/// both on every provenance-path write, so a bound caller "writes normally"
+/// after binding once. The MCP daemon injects the session actor on the
+/// named-writes lane (ARCH-0028) through exactly this surface.
+///
+/// The binding is correlation-only ergonomics — NO sessions registry, NO
+/// authorization, NO stored state. Every write delegates to
+/// [`Vault::put_edge_provenance`] and runs its full fail-closed gate chain.
+///
+/// NAMING: engine-internal until ABI-pinned (the ruling pins semantics, not
+/// names); expect the public surface name to be ratified at the FFI/NAPI
+/// milestone.
+#[derive(Clone, Copy)]
+pub struct ActorBound<'a> {
+    vault: &'a Vault,
+    actor: EntityId,
+    actor_class: EdgeActorClass,
+}
+
+impl ActorBound<'_> {
+    /// The bound actor entity reference.
+    #[must_use]
+    pub fn actor(&self) -> EntityId {
+        self.actor
+    }
+
+    /// The bound caller-supplied D13 actor class.
+    #[must_use]
+    pub fn actor_class(&self) -> EdgeActorClass {
+        self.actor_class
+    }
+
+    /// Builds an `edge.provenance` value record pre-filled with the BOUND
+    /// actor — the "write normally" entry point: fill `confidence` +
+    /// `supersession_status`, set optional fields on the returned record,
+    /// then pass it to [`ActorBound::put_edge_provenance`].
+    #[must_use]
+    pub fn provenance_body(
+        &self,
+        confidence: f32,
+        supersession_status: SupersessionStatus,
+    ) -> EdgeProvenanceClaimBody {
+        EdgeProvenanceClaimBody::new(self.actor, confidence, supersession_status)
+    }
+
+    /// Writes an `edge.provenance` Claim for `subject` carrying the BOUND
+    /// actor + class — delegates to [`Vault::put_edge_provenance`] with the
+    /// bound `actor_class` injected, running the full gate chain (write-once
+    /// id, subject-edge existence, D13 actor validation, D14 precedence,
+    /// implicit supersession, winner restamp, PPR invalidation).
+    ///
+    /// Fail-closed binding check: a `body.actor_entity_ref` that names a
+    /// DIFFERENT entity than the bound actor is rejected typed
+    /// ([`Error::InvalidProvenanceBody`]) — the handle injects the actor, it
+    /// never silently rewrites a conflicting one. Construct the record via
+    /// [`ActorBound::provenance_body`] to avoid the mismatch entirely.
+    pub fn put_edge_provenance(
+        &self,
+        claim_id: &EntityId,
+        subject: &EdgeRef,
+        body: &EdgeProvenanceClaimBody,
+        learned_at: u64,
+    ) -> Result<()> {
+        if body.actor_entity_ref != self.actor {
+            return Err(Error::InvalidProvenanceBody(
+                "body actor_entity_ref conflicts with the session-bound actor",
+            ));
+        }
+        self.vault
+            .put_edge_provenance(claim_id, subject, body, self.actor_class, learned_at)
     }
 }
 

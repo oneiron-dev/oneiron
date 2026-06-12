@@ -50,6 +50,7 @@ pub enum ErrorKind {
     ProvenanceSubjectMismatch,
     ProvenanceSelfSupersession,
     ProvenancePrecedenceViolation,
+    EdgeIsProvenanced,
     CycleDetected,
     ChildOfCardinality,
     IncompatibleAnalyzer,
@@ -281,6 +282,18 @@ pub enum Error {
         incoming_learned_at: u64,
         frontier_learned_at: u64,
     },
+    /// A plain (provenance-free) edge put targeted an edge that carries a
+    /// 26-byte provenanced value — the silent-downgrade hole pinned by
+    /// ONE-1113 (ARCH-0034 #write-protection, ratified 2026-06-13): "an
+    /// unattributed write can never displace attributed truth as current
+    /// state". The write is rejected typed and routed — never a silent strip
+    /// of the two hot-flag bytes, never a silent preserve of them under the
+    /// caller's new value. Both edge directions stay byte-identical and the
+    /// live `edge.provenance` Claim stays live; nothing was written.
+    #[error(
+        "edge (kind {kind}) is provenanced: a plain edge put cannot displace attributed truth; modify the relation via put_edge_provenance / the actor-bound surface (as_actor), set weight via set_edge_weight, set VAD via set_edge_vad"
+    )]
+    EdgeIsProvenanced { kind: u8 },
     /// Tree operation would create a cycle.
     #[error("cycle detected in tree hierarchy")]
     CycleDetected,
@@ -451,6 +464,7 @@ impl Error {
             Self::ProvenanceSubjectMismatch => ErrorKind::ProvenanceSubjectMismatch,
             Self::ProvenanceSelfSupersession => ErrorKind::ProvenanceSelfSupersession,
             Self::ProvenancePrecedenceViolation { .. } => ErrorKind::ProvenancePrecedenceViolation,
+            Self::EdgeIsProvenanced { .. } => ErrorKind::EdgeIsProvenanced,
             Self::CycleDetected => ErrorKind::CycleDetected,
             Self::ChildOfCardinality => ErrorKind::ChildOfCardinality,
             Self::IncompatibleAnalyzer { .. } => ErrorKind::IncompatibleAnalyzer,

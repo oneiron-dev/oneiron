@@ -10,9 +10,10 @@ use crate::limits::{ERR_CHILD_OF_CYCLE_CHECK, MAX_CHILD_OF_CYCLE_TRAVERSAL_STEPS
 use crate::ppr;
 use crate::store::Store;
 use crate::types::{
-    DecodedEdgeValue, EDGE_KEY_LEN, ENTITY_ID_LEN, EdgeKind, EdgeProvenanceFlags, EntityId,
-    TimeRange, Vad, decode_edge_value_for_kind, encode_edge_value, short_id_prefix,
-    validate_edge_weight, validate_entity_type, validate_public_entity_type,
+    DecodedEdgeValue, EDGE_KEY_LEN, EDGE_VALUE_SEMANTIC_LEN, EDGE_VALUE_SEMANTIC_PROVENANCED_LEN,
+    EDGE_VALUE_STRUCTURAL_LEN, ENTITY_ID_LEN, EdgeKind, EdgeProvenanceFlags, EntityId, TimeRange,
+    Vad, decode_edge_value_for_kind, encode_edge_value, short_id_prefix, validate_edge_weight,
+    validate_entity_type, validate_public_entity_type,
 };
 
 pub(crate) const ENTITY_TYPE_OFFSET: usize = 0;
@@ -133,6 +134,28 @@ pub(crate) enum BatchOp {
         created_at: u64,
         vad: Vad,
         provenance: Option<EdgeProvenanceFlags>,
+    },
+    /// ONE-1113 operational setter: rewrite ONLY the weight bytes (offset
+    /// 0..4) of an EXISTING edge value, preserving every other byte —
+    /// `created_at`, VAD, and the two provenance hot-flag bytes when the
+    /// value is the 26-byte provenanced layout. Exempt from the
+    /// reject-and-route gate by construction: "the provenance Claim asserts
+    /// the relation, never the weight" (ARCH-0034 #write-protection).
+    SetEdgeWeight {
+        src: EntityId,
+        kind: EdgeKind,
+        tgt: EntityId,
+        weight: f32,
+    },
+    /// ONE-1113 operational setter: rewrite ONLY the VAD bytes (offset
+    /// 12..24) of an EXISTING semantic edge value, preserving weight,
+    /// `created_at`, and the provenance hot-flag bytes when present.
+    /// Structural 12-byte edges carry no VAD and are rejected typed.
+    SetEdgeVad {
+        src: EntityId,
+        kind: EdgeKind,
+        tgt: EntityId,
+        vad: Vad,
     },
     Text {
         id: EntityId,
@@ -375,6 +398,60 @@ impl<'a> BatchBuilder<'a> {
             created_at: value.created_at,
             vad: value.vad,
             provenance: value.provenance,
+        });
+        self
+    }
+
+    /// Adds an operational weight rewrite for an EXISTING edge (ONE-1113).
+    ///
+    /// The batch form of [`crate::Vault::set_edge_weight`] for decay /
+    /// retrieval-feedback loops: rewrites ONLY the weight bytes (offset
+    /// 0..4) in BOTH directions, preserving `created_at`, VAD, and the
+    /// provenance hot-flag bytes verbatim. Never touches provenance Claims —
+    /// exempt from the provenanced-edge reject gate by construction. Fails
+    /// typed at apply time: [`crate::Error::EdgeNotFound`] when the edge
+    /// does not exist (the setter never upserts),
+    /// [`crate::Error::InvalidEdgeWeight`] outside the contract \[0, 1\].
+    pub fn set_edge_weight(
+        mut self,
+        src: &EntityId,
+        kind: EdgeKind,
+        tgt: &EntityId,
+        weight: f32,
+    ) -> Self {
+        self.ops.push(BatchOp::SetEdgeWeight {
+            src: *src,
+            kind,
+            tgt: *tgt,
+            weight,
+        });
+        self
+    }
+
+    /// Adds an operational VAD rewrite for an EXISTING semantic edge
+    /// (ONE-1113).
+    ///
+    /// The batch form of [`crate::Vault::set_edge_vad`]: rewrites ONLY the
+    /// VAD bytes (offset 12..24) in BOTH directions, preserving weight,
+    /// `created_at`, the value length, and the provenance hot-flag bytes
+    /// verbatim. Never touches provenance Claims — exempt from the
+    /// provenanced-edge reject gate by construction. Fails typed at apply
+    /// time: [`crate::Error::EdgeNotFound`] when the edge does not exist,
+    /// [`crate::Error::InvalidVad`] on non-finite/out-of-range components,
+    /// and a typed rejection on structural 12-byte edges (they carry no
+    /// VAD).
+    pub fn set_edge_vad(
+        mut self,
+        src: &EntityId,
+        kind: EdgeKind,
+        tgt: &EntityId,
+        vad: Vad,
+    ) -> Self {
+        self.ops.push(BatchOp::SetEdgeVad {
+            src: *src,
+            kind,
+            tgt: *tgt,
+            vad,
         });
         self
     }
@@ -715,6 +792,30 @@ pub(crate) fn apply_ops(
                 apply_edge_with_created_at(
                     store, wtxn, src, kind, tgt, weight, created_at, vad, provenance,
                 )?;
+                ppr::invalidate_ppr_for_edge(store, wtxn, &src, &tgt)?;
+                had_graph_mutation = true;
+            }
+            BatchOp::SetEdgeWeight {
+                src,
+                kind,
+                tgt,
+                weight,
+            } => {
+                apply_set_edge_weight(store, wtxn, src, kind, tgt, weight)?;
+                // The weight at offset 0 is the PPR edge weight — invalidate
+                // and bump exactly like the plain edge-write arms.
+                ppr::invalidate_ppr_for_edge(store, wtxn, &src, &tgt)?;
+                had_graph_mutation = true;
+            }
+            BatchOp::SetEdgeVad {
+                src,
+                kind,
+                tgt,
+                vad,
+            } => {
+                apply_set_edge_vad(store, wtxn, src, kind, tgt, vad)?;
+                // Mirror the existing edge-write behavior: every edge value
+                // rewrite invalidates the endpoint PPR caches.
                 ppr::invalidate_ppr_for_edge(store, wtxn, &src, &tgt)?;
                 had_graph_mutation = true;
             }
@@ -1062,6 +1163,23 @@ fn apply_vector(
     Ok(())
 }
 
+/// Applies one PUBLIC plain edge put (`BatchOp::Edge` — the op behind
+/// `Vault::put_edge`, `Vault::put_edge_with_vad`, and the `edge` /
+/// `edge_checked` / `edge_with_vad` batch builders).
+///
+/// ONE-1113 reject-and-route gate (ARCH-0034 #write-protection, ratified
+/// 2026-06-13): a plain put carries no provenance, so re-encoding an edge
+/// whose stored value is the 26-byte provenanced layout would silently drop
+/// the two hot-flag bytes to 24 bytes in BOTH directions while the truth
+/// `edge.provenance` Claim stays live. "An unattributed write can never
+/// displace attributed truth as current state" — the put is rejected with
+/// the typed [`Error::EdgeIsProvenanced`], whose message routes the caller
+/// to the provenance path (`put_edge_provenance` / the `as_actor`-bound
+/// surface) and the operational setters (`set_edge_weight` /
+/// `set_edge_vad`). Layout dispatch is VALUE LENGTH (no tag byte; the
+/// read-back mirrors `restamp_edge_flags`). A plain put on a bare or absent
+/// edge is unchanged: absence of provenance is itself the anonymous
+/// representation.
 fn apply_edge(
     store: &Store,
     wtxn: &mut RwTxn<'_>,
@@ -1071,6 +1189,12 @@ fn apply_edge(
     weight: f32,
     vad: Vad,
 ) -> Result<()> {
+    let key_out = Store::encode_edge_key(&src, kind, &tgt);
+    if let Some(existing) = store.edges_out.get(wtxn, &key_out)?
+        && existing.len() == EDGE_VALUE_SEMANTIC_PROVENANCED_LEN
+    {
+        return Err(Error::EdgeIsProvenanced { kind: kind as u8 });
+    }
     apply_edge_with_created_at(
         store,
         wtxn,
@@ -1082,6 +1206,89 @@ fn apply_edge(
         vad,
         None,
     )
+}
+
+/// Reads the existing edge value for an operational setter (ONE-1113):
+/// the setters rewrite bytes of an EXISTING value and never upsert —
+/// a missing edge is the typed [`Error::EdgeNotFound`]. The value length
+/// must be one of the three contract layouts (12/24/26 B); anything else is
+/// [`Error::CorruptedIndex`], mirroring `restamp_edge_flags`.
+fn read_edge_value_for_setter(
+    store: &Store,
+    wtxn: &RwTxn<'_>,
+    key_out: &[u8; EDGE_KEY_LEN],
+) -> Result<Vec<u8>> {
+    let existing = store
+        .edges_out
+        .get(wtxn, key_out)?
+        .map(<[u8]>::to_vec)
+        .ok_or(Error::EdgeNotFound)?;
+    match existing.len() {
+        EDGE_VALUE_STRUCTURAL_LEN
+        | EDGE_VALUE_SEMANTIC_LEN
+        | EDGE_VALUE_SEMANTIC_PROVENANCED_LEN => Ok(existing),
+        _ => Err(Error::CorruptedIndex("edge value")),
+    }
+}
+
+/// ONE-1113 operational weight setter: rewrites ONLY the weight bytes
+/// (f32 LE at offset 0..4 — present on ALL three layouts) of an existing
+/// edge value and writes IDENTICAL bytes to both `edges_out` and `edges_in`.
+/// Every other byte — `created_at`, VAD, and the provenance hot flags at
+/// offsets 24/25 when the value is 26 B — is preserved verbatim, so the
+/// setter can never displace attributed truth (exempt from the
+/// reject-and-route gate by construction; M3 weight pin: weight is a LOCAL
+/// operational field).
+fn apply_set_edge_weight(
+    store: &Store,
+    wtxn: &mut RwTxn<'_>,
+    src: EntityId,
+    kind: EdgeKind,
+    tgt: EntityId,
+    weight: f32,
+) -> Result<()> {
+    validate_edge_weight(weight)?;
+    let key_out = Store::encode_edge_key(&src, kind, &tgt);
+    let key_in = Store::encode_edge_key(&tgt, kind, &src);
+    let mut value = read_edge_value_for_setter(store, wtxn, &key_out)?;
+    value[0..4].copy_from_slice(&weight.to_le_bytes());
+    store.edges_out.put(wtxn, &key_out, &value)?;
+    store.edges_in.put(wtxn, &key_in, &value)?;
+    Ok(())
+}
+
+/// ONE-1113 operational VAD setter: rewrites ONLY the VAD bytes (three
+/// f32 LE at offset 12..24) of an existing SEMANTIC edge value and writes
+/// IDENTICAL bytes to both `edges_out` and `edges_in`. Weight, `created_at`,
+/// the value LENGTH (24 B stays 24 B, 26 B stays 26 B), and the provenance
+/// hot flags at offsets 24/25 are preserved verbatim. Structural 12-byte
+/// edges carry no VAD (contract layout table) and fail typed — never a
+/// silent widen.
+fn apply_set_edge_vad(
+    store: &Store,
+    wtxn: &mut RwTxn<'_>,
+    src: EntityId,
+    kind: EdgeKind,
+    tgt: EntityId,
+    vad: Vad,
+) -> Result<()> {
+    if let Some((component, value)) = vad.invalid_component() {
+        return Err(Error::InvalidVad { component, value });
+    }
+    let key_out = Store::encode_edge_key(&src, kind, &tgt);
+    let key_in = Store::encode_edge_key(&tgt, kind, &src);
+    let mut value = read_edge_value_for_setter(store, wtxn, &key_out)?;
+    if value.len() == EDGE_VALUE_STRUCTURAL_LEN {
+        return Err(Error::InvariantViolation(
+            "structural edges do not carry VAD",
+        ));
+    }
+    value[12..16].copy_from_slice(&vad.valence.to_le_bytes());
+    value[16..20].copy_from_slice(&vad.arousal.to_le_bytes());
+    value[20..24].copy_from_slice(&vad.dominance.to_le_bytes());
+    store.edges_out.put(wtxn, &key_out, &value)?;
+    store.edges_in.put(wtxn, &key_in, &value)?;
+    Ok(())
 }
 
 #[expect(
