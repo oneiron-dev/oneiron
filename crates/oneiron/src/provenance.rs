@@ -15,8 +15,10 @@
 //!   `(source_id 16 B ‖ edge_kind u8 ‖ target_id 16 B)`, byte-identical to
 //!   the LMDB edge key (`Store::encode_edge_key`);
 //! * predicate — the literal `"edge.provenance"`;
-//! * value — a MessagePack map carrying EXACTLY the seven pinned snake_case
-//!   fields in [`EDGE_PROVENANCE_BODY_KEYS`];
+//! * value — a MessagePack map carrying EXACTLY the ten pinned snake_case
+//!   fields in [`EDGE_PROVENANCE_BODY_KEYS`] (the ONE-1138 vocabulary bump:
+//!   the original seven + `substrate_ref` + `reasoning_effort` +
+//!   `actor_class`, moved together as ONE sync-versioning event);
 //! * stored as — a normal CLAIM entity (type byte 0, 25 B envelope +
 //!   MessagePack body) written through the `pub(crate)` reserved-namespace
 //!   door (D17/D18, ONE-1104);
@@ -107,18 +109,27 @@
 //!   scope (executor = ONE-1091, deferred; cross-device propagation =
 //!   ONE-1090, deferred).
 //!
-//! # Persisted `actor_class` (refresh seam)
+//! # Persisted `actor_class` (refresh seam + ONE-1138 relocation)
 //!
 //! The edge's `actor_class` flag derives from `actor_entity_ref` (contracts
 //! `derivesEdgeFlags[1]`), but D13 makes the {human, agent} split for PERSON
 //! actors CALLER-SUPPLIED at write time — it is not recoverable from storage
 //! alone. So that a later winner-refresh (retract/supersede/D16 delete) can
 //! restamp a HISTORICAL Claim's flags without defaulting, the write path
-//! persists the write-time validated class on the wrapping Claim's `evid`
-//! field as the engine-owned map `{"actor_class": u8}` (the wrapper is only
-//! writable through the reserved-namespace door, so no app payload can
-//! collide). A provenance Claim without this evidence fails lifecycle
-//! operations typed — never a defaulted class.
+//! persists the write-time validated class ON the value record itself as the
+//! `actor_class` body key (ONE-1112 C2 relocation, part of the ONE-1138
+//! vocabulary bump). Validation is unchanged: caller-supplied, validated
+//! against the actor entity's StructuralKind, never derived by default.
+//!
+//! TRANSITION SEMANTICS (ONE-1138, pinned): pre-bump claims persisted the
+//! class on the wrapping Claim's `evid` field as the engine-owned map
+//! `{"actor_class": u8}`. Those claims are NEVER invalidated — the decoder
+//! accepts the legacy evid form when the body key is absent. Going forward,
+//! writers write the BODY key ONLY and leave `evid` to evidence purity. A
+//! claim carrying the class in BOTH places is ambiguous and fails closed
+//! ([`Error::InvalidProvenanceBody`]); a claim carrying it in NEITHER fails
+//! the same way — never a defaulted class. See
+//! [`resolve_persisted_actor_class`].
 
 use heed::RwTxn;
 use rmpv::Value;
@@ -142,12 +153,19 @@ pub const PREDICATE_EDGE_PROVENANCE: &str = "edge.provenance";
 pub const EDGE_REF_LEN: usize = CLAIM_EDGE_REF_LEN;
 
 /// Pinned ON-DISK MessagePack key set for the `edge.provenance` value record
-/// (contracts.ts `edgeProvenanceClaim.fields`). Order is canonical: the
-/// encoder emits present fields in this order. Exactly these seven keys —
-/// required: `actor_entity_ref`, `confidence`, `supersession_status`;
-/// optional: `source_revision_ref`, `body_snapshot_ref`, `valid_from`,
-/// `valid_to`.
-pub const EDGE_PROVENANCE_BODY_KEYS: [&str; 7] = [
+/// (contracts.ts `edgeProvenanceClaim.fields` + the ratified ONE-1138
+/// vocabulary bump). Order is canonical: the encoder emits present fields in
+/// this order. Exactly these ten keys — required: `actor_entity_ref`,
+/// `confidence`, `supersession_status`; optional: `source_revision_ref`,
+/// `body_snapshot_ref`, `valid_from`, `valid_to`, `substrate_ref`,
+/// `reasoning_effort`, `actor_class` (`actor_class` is required on NEW-shape
+/// claims at the wrapper level — see [`resolve_persisted_actor_class`]).
+///
+/// The decoder is FAIL-CLOSED on unknown keys, so growing this set is a
+/// sync-versioning event (old nodes reject new keys). ONE-1138 was pinned as
+/// the LAST cheap bump: validator, negative-test matrix, and the docs pin
+/// moved together, exactly once, before multi-device reality.
+pub const EDGE_PROVENANCE_BODY_KEYS: [&str; 10] = [
     "actor_entity_ref",
     "source_revision_ref",
     "body_snapshot_ref",
@@ -155,6 +173,9 @@ pub const EDGE_PROVENANCE_BODY_KEYS: [&str; 7] = [
     "supersession_status",
     "valid_from",
     "valid_to",
+    "substrate_ref",
+    "reasoning_effort",
+    "actor_class",
 ];
 
 pub(crate) const KEY_ACTOR_ENTITY_REF: &str = EDGE_PROVENANCE_BODY_KEYS[0];
@@ -164,6 +185,17 @@ pub(crate) const KEY_CONFIDENCE: &str = EDGE_PROVENANCE_BODY_KEYS[3];
 pub(crate) const KEY_SUPERSESSION_STATUS: &str = EDGE_PROVENANCE_BODY_KEYS[4];
 pub(crate) const KEY_VALID_FROM: &str = EDGE_PROVENANCE_BODY_KEYS[5];
 pub(crate) const KEY_VALID_TO: &str = EDGE_PROVENANCE_BODY_KEYS[6];
+pub(crate) const KEY_SUBSTRATE_REF: &str = EDGE_PROVENANCE_BODY_KEYS[7];
+pub(crate) const KEY_REASONING_EFFORT: &str = EDGE_PROVENANCE_BODY_KEYS[8];
+pub(crate) const KEY_ACTOR_CLASS: &str = EDGE_PROVENANCE_BODY_KEYS[9];
+
+/// Maximum byte length of an inline `reasoning_effort` scalar. contracts.ts
+/// pins the field as a small inline "scalar"; the engine encodes it as a
+/// short MessagePack string (LLM-API convention values like "low" /
+/// "medium" / "high" / "xhigh"), validated non-empty and at most this many
+/// bytes. The exact scalar encoding is flagged for ratification
+/// (OWNER-DECISION, ONE-1138 PR).
+pub const REASONING_EFFORT_MAX_BYTES: usize = 32;
 
 /// A 33-byte reference addressing one directed edge:
 /// `(source_id 16 B, edge_kind u8, target_id 16 B)`.
@@ -267,13 +299,15 @@ impl SupersessionStatus {
     }
 }
 
-/// Decoded `edge.provenance` value record — EXACTLY the seven pinned fields
-/// (contracts.ts `edgeProvenanceClaim.fields`).
+/// Decoded `edge.provenance` value record — EXACTLY the ten pinned fields
+/// (contracts.ts `edgeProvenanceClaim.fields` + the ratified ONE-1138 bump).
 ///
-/// The derived `actor_class` edge flag is NOT a body field: it is
-/// caller-supplied at write time and validated against the actor entity's
-/// kind (D13).
-#[derive(Debug, Clone, Copy, PartialEq)]
+/// `actor_class` stays caller-supplied at write time and validated against
+/// the actor entity's kind (D13); since ONE-1138 (the ONE-1112 C2
+/// relocation) the validated value is persisted as a body key on NEW claims
+/// (legacy claims keep it on the wrapper's `evid` — see
+/// [`resolve_persisted_actor_class`]).
+#[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
 pub struct EdgeProvenanceClaimBody {
     /// `actor_entity_ref` — required 16-byte EntityRef: the PERSON / agent /
@@ -296,11 +330,31 @@ pub struct EdgeProvenanceClaimBody {
     /// `valid_to` — optional bi-temporal valid-time end (Unix s). Null =
     /// still valid.
     pub valid_to: Option<u64>,
+    /// `substrate_ref` — optional 16-byte EntityRef → the MODEL entity
+    /// (type byte 121, maintenance band) for the model substrate that
+    /// produced THIS write (ONE-1138): actor = WHO, substrate = WITH-WHAT.
+    /// Model name + version live ON the MODEL entity (dedup), never inline.
+    /// Absent = unrecorded-and-valid.
+    pub substrate_ref: Option<EntityId>,
+    /// `reasoning_effort` — optional small inline scalar: the
+    /// reasoning-effort setting the substrate ran at for THIS write
+    /// (ONE-1138). Inlined because it varies per write; everything that does
+    /// not (model name, version) dedups onto the referenced MODEL entity.
+    /// Non-empty string of at most [`REASONING_EFFORT_MAX_BYTES`] bytes.
+    /// Absent = unrecorded-and-valid.
+    pub reasoning_effort: Option<String>,
+    /// `actor_class` — the write-time validated actor class (ONE-1112 C2
+    /// relocation): `{human=0, agent=1, system=2}`. REQUIRED on new-shape
+    /// claims (the writer injects the validated caller-supplied class);
+    /// absent only on legacy pre-bump claims, which carry it on the
+    /// wrapper's `evid` instead. Both-present or neither-present fails
+    /// closed — see [`resolve_persisted_actor_class`].
+    pub actor_class: Option<EdgeActorClass>,
 }
 
 impl EdgeProvenanceClaimBody {
-    /// Creates a value record from the three required fields; the four
-    /// optional fields start absent.
+    /// Creates a value record from the three required fields; the optional
+    /// fields start absent.
     #[must_use]
     pub fn new(
         actor_entity_ref: EntityId,
@@ -315,6 +369,9 @@ impl EdgeProvenanceClaimBody {
             supersession_status,
             valid_from: None,
             valid_to: None,
+            substrate_ref: None,
+            reasoning_effort: None,
+            actor_class: None,
         }
     }
 }
@@ -352,6 +409,21 @@ pub(crate) fn encode_edge_provenance_value(body: &EdgeProvenanceClaimBody) -> Va
     if let Some(valid_to) = body.valid_to {
         entries.push((Value::from(KEY_VALID_TO), Value::from(valid_to)));
     }
+    if let Some(substrate) = body.substrate_ref {
+        entries.push((
+            Value::from(KEY_SUBSTRATE_REF),
+            Value::Binary(substrate.as_bytes().to_vec()),
+        ));
+    }
+    if let Some(effort) = &body.reasoning_effort {
+        entries.push((
+            Value::from(KEY_REASONING_EFFORT),
+            Value::from(effort.as_str()),
+        ));
+    }
+    if let Some(actor_class) = body.actor_class {
+        entries.push((Value::from(KEY_ACTOR_CLASS), Value::from(actor_class as u8)));
+    }
     Value::Map(entries)
 }
 
@@ -367,7 +439,14 @@ pub(crate) fn encode_edge_provenance_value(body: &EdgeProvenanceClaimBody) -> Va
 /// * `confidence` must be a finite number in `[0, 1]`;
 /// * `supersession_status` must be an integer `u8 ≤ 3`;
 /// * `valid_from` / `valid_to` must be non-negative integers fitting `u64`,
-///   with `valid_from ≤ valid_to` when both are present.
+///   with `valid_from ≤ valid_to` when both are present;
+/// * `substrate_ref` must be 16-byte binary holding a valid entity id
+///   (referential MODEL-kind validation happens on the write path);
+/// * `reasoning_effort` must be a non-empty UTF-8 string of at most
+///   [`REASONING_EFFORT_MAX_BYTES`] bytes;
+/// * `actor_class` must be an integer `u8 ≤ 2` (`{human=0, agent=1,
+///   system=2}`); its required-on-new-shape rule is enforced at the wrapper
+///   level by [`resolve_persisted_actor_class`].
 pub fn decode_edge_provenance_body(value: &Value) -> Result<EdgeProvenanceClaimBody> {
     let Value::Map(entries) = value else {
         return Err(Error::InvalidProvenanceBody(
@@ -382,6 +461,9 @@ pub fn decode_edge_provenance_body(value: &Value) -> Result<EdgeProvenanceClaimB
     let mut supersession_status: Option<SupersessionStatus> = None;
     let mut valid_from: Option<u64> = None;
     let mut valid_to: Option<u64> = None;
+    let mut substrate_ref: Option<EntityId> = None;
+    let mut reasoning_effort: Option<String> = None;
+    let mut actor_class: Option<EdgeActorClass> = None;
 
     let mut seen = [false; EDGE_PROVENANCE_BODY_KEYS.len()];
     for (key, value) in entries {
@@ -445,6 +527,33 @@ pub fn decode_edge_provenance_body(value: &Value) -> Result<EdgeProvenanceClaimB
                     "valid_to must be a non-negative integer",
                 ))?);
             }
+            "substrate_ref" => {
+                substrate_ref = Some(entity_ref_from(
+                    value,
+                    "substrate_ref must be a valid 16-byte entity id",
+                )?);
+            }
+            "reasoning_effort" => {
+                let effort = value.as_str().ok_or(Error::InvalidProvenanceBody(
+                    "reasoning_effort must be a UTF-8 string",
+                ))?;
+                if effort.is_empty() || effort.len() > REASONING_EFFORT_MAX_BYTES {
+                    return Err(Error::InvalidProvenanceBody(
+                        "reasoning_effort must be non-empty and at most 32 bytes",
+                    ));
+                }
+                reasoning_effort = Some(effort.to_owned());
+            }
+            "actor_class" => {
+                let class = value
+                    .as_u64()
+                    .and_then(|raw| u8::try_from(raw).ok())
+                    .and_then(actor_class_from_u8)
+                    .ok_or(Error::InvalidProvenanceBody(
+                        "actor_class must be an integer u8 <= 2",
+                    ))?;
+                actor_class = Some(class);
+            }
             _ => unreachable!("index resolved from EDGE_PROVENANCE_BODY_KEYS"),
         }
     }
@@ -472,6 +581,9 @@ pub fn decode_edge_provenance_body(value: &Value) -> Result<EdgeProvenanceClaimB
         supersession_status,
         valid_from,
         valid_to,
+        substrate_ref,
+        reasoning_effort,
+        actor_class,
     })
 }
 
@@ -537,13 +649,24 @@ pub fn validate_actor_class(actor_entity_type: u8, actor_class: EdgeActorClass) 
     }
 }
 
-/// Engine-internal `evid` key persisting the WRITE-TIME validated
-/// `actor_class` on the wrapping Claim (see the module docs' "Persisted
-/// actor_class" section). Not part of the pinned 7-field value record.
+/// LEGACY engine-internal `evid` key that persisted the WRITE-TIME validated
+/// `actor_class` on the wrapping Claim BEFORE the ONE-1138 vocabulary bump
+/// (see the module docs' "Persisted actor_class" section). Pre-bump claims
+/// carrying it still decode; writers now write the `actor_class` BODY key
+/// only and leave `evid` to evidence purity.
 pub(crate) const EVIDENCE_KEY_ACTOR_CLASS: &str = "actor_class";
 
-/// Encodes the persisted actor-class evidence: the engine-owned MessagePack
-/// map `{"actor_class": u8}` stored in the wrapping Claim's `evid` field.
+/// Encodes the LEGACY persisted actor-class evidence: the engine-owned
+/// MessagePack map `{"actor_class": u8}` stored in the wrapping Claim's
+/// `evid` field by pre-ONE-1138 writers. Kept so tests can fabricate
+/// pre-bump claims; production writers no longer call it.
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "legacy pre-ONE-1138 codec kept for fabricating pre-bump claims in tests"
+    )
+)]
 pub(crate) fn encode_actor_class_evidence(actor_class: EdgeActorClass) -> Value {
     Value::Map(vec![(
         Value::from(EVIDENCE_KEY_ACTOR_CLASS),
@@ -596,6 +719,108 @@ fn actor_class_from_u8(value: u8) -> Option<EdgeActorClass> {
     }
 }
 
+/// Resolves the persisted write-time `actor_class` of a stored
+/// `edge.provenance` Claim under the pinned ONE-1138 transition semantics:
+///
+/// * NEW shape — `actor_class` in the value record body, wrapper `evid`
+///   absent → the body value wins;
+/// * LEGACY shape (pre-bump, never invalidated) — body key absent, the
+///   engine-owned `{"actor_class": u8}` map on the wrapper's `evid` →
+///   decoded via the unchanged legacy codec;
+/// * BOTH places → ambiguous, fails closed
+///   ([`Error::InvalidProvenanceBody`]) — two sources of truth for a flag
+///   refresh are never reconciled silently;
+/// * NEITHER place → fails closed the same way — a provenance Claim without
+///   a persisted class cannot participate in flag refresh; the class is
+///   never defaulted (D13).
+pub(crate) fn resolve_persisted_actor_class(
+    record: &EdgeProvenanceClaimBody,
+    evidence: Option<&Value>,
+) -> Result<EdgeActorClass> {
+    match (record.actor_class, evidence) {
+        (Some(_), Some(_)) => Err(Error::InvalidProvenanceBody(
+            "actor_class present in both the value record and the wrapper evid (ambiguous)",
+        )),
+        (Some(class), None) => Ok(class),
+        (None, evidence) => decode_actor_class_evidence(evidence),
+    }
+}
+
+/// MessagePack body key for a MODEL entity's model name (ONE-1138).
+pub(crate) const MODEL_BODY_KEY_NAME: &str = "name";
+/// MessagePack body key for a MODEL entity's model version (ONE-1138).
+pub(crate) const MODEL_BODY_KEY_VERSION: &str = "version";
+/// Maximum byte length of a MODEL entity's `name` / `version` string.
+pub const MODEL_SUBSTRATE_FIELD_MAX_BYTES: usize = 256;
+
+/// Validates one MODEL substrate descriptor string (`name` / `version`):
+/// non-empty UTF-8, at most [`MODEL_SUBSTRATE_FIELD_MAX_BYTES`] bytes.
+pub(crate) fn validate_model_substrate_field(value: &str, context: &'static str) -> Result<()> {
+    if value.is_empty() || value.len() > MODEL_SUBSTRATE_FIELD_MAX_BYTES {
+        return Err(Error::InvalidModelSubstrate(context));
+    }
+    Ok(())
+}
+
+/// Encodes the engine-authored MODEL entity body (type byte 121): the
+/// MessagePack map `{"name": str, "version": str}`. Model name + version
+/// live ON the MODEL entity so provenance records dedup to a 16-byte
+/// `substrate_ref` instead of inlining them per write (ONE-1138).
+pub(crate) fn encode_model_entity_body(name: &str, version: &str) -> Result<Vec<u8>> {
+    validate_model_substrate_field(name, "model name must be non-empty and at most 256 bytes")?;
+    validate_model_substrate_field(
+        version,
+        "model version must be non-empty and at most 256 bytes",
+    )?;
+    let value = Value::Map(vec![
+        (Value::from(MODEL_BODY_KEY_NAME), Value::from(name)),
+        (Value::from(MODEL_BODY_KEY_VERSION), Value::from(version)),
+    ]);
+    let mut out = Vec::new();
+    rmpv::encode::write_value(&mut out, &value)
+        .map_err(|_| Error::InvariantViolation("model entity body MessagePack encode failed"))?;
+    Ok(out)
+}
+
+/// Decodes a stored MODEL entity body fail-closed: exactly one MessagePack
+/// map (no trailing bytes) carrying exactly the `name` + `version` string
+/// keys, both passing [`validate_model_substrate_field`]. MODEL entities are
+/// engine-authored, so a body that fails this decode is on-disk corruption.
+pub(crate) fn decode_model_entity_body(bytes: &[u8]) -> Result<(String, String)> {
+    let mut cursor = bytes;
+    let value = rmpv::decode::read_value(&mut cursor)
+        .map_err(|_| Error::CorruptedIndex("model entity body"))?;
+    if !cursor.is_empty() {
+        return Err(Error::CorruptedIndex("model entity body"));
+    }
+    let Value::Map(entries) = value else {
+        return Err(Error::CorruptedIndex("model entity body"));
+    };
+    let mut name: Option<String> = None;
+    let mut version: Option<String> = None;
+    for (key, value) in &entries {
+        let slot = match key.as_str() {
+            Some(MODEL_BODY_KEY_NAME) => &mut name,
+            Some(MODEL_BODY_KEY_VERSION) => &mut version,
+            _ => return Err(Error::CorruptedIndex("model entity body")),
+        };
+        if slot.is_some() {
+            return Err(Error::CorruptedIndex("model entity body"));
+        }
+        let text = value
+            .as_str()
+            .ok_or(Error::CorruptedIndex("model entity body"))?;
+        if text.is_empty() || text.len() > MODEL_SUBSTRATE_FIELD_MAX_BYTES {
+            return Err(Error::CorruptedIndex("model entity body"));
+        }
+        *slot = Some(text.to_owned());
+    }
+    match (name, version) {
+        (Some(name), Some(version)) => Ok((name, version)),
+        _ => Err(Error::CorruptedIndex("model entity body")),
+    }
+}
+
 /// D14 precedence key of one live provenance Claim, used to pick the
 /// deterministic flag-stamp WINNER.
 #[derive(Debug, Clone, Copy)]
@@ -637,7 +862,7 @@ pub(crate) fn close_record_for_supersession(
     record: &EdgeProvenanceClaimBody,
     close_at: u64,
 ) -> Result<EdgeProvenanceClaimBody> {
-    let mut closed = *record;
+    let mut closed = record.clone();
     if closed.valid_to.is_none() {
         closed.valid_to = Some(close_at);
     }
@@ -654,7 +879,7 @@ pub(crate) fn retract_record(
     record: &EdgeProvenanceClaimBody,
     now: u64,
 ) -> Result<EdgeProvenanceClaimBody> {
-    let mut retracted = *record;
+    let mut retracted = record.clone();
     retracted.supersession_status = SupersessionStatus::Retracted;
     retracted.valid_to = Some(now);
     ensure_record_window(&retracted)?;
@@ -784,7 +1009,10 @@ mod tests {
     }
 
     #[test]
-    fn body_keys_pin_seven_snake_case_literals() {
+    fn body_keys_pin_ten_snake_case_literals() {
+        // ONE-1138 vocabulary bump: the original seven + substrate_ref +
+        // reasoning_effort + actor_class, in canonical order. The decoder is
+        // fail-closed on unknown keys, so this array IS the wire vocabulary.
         assert_eq!(
             EDGE_PROVENANCE_BODY_KEYS,
             [
@@ -795,6 +1023,9 @@ mod tests {
                 "supersession_status",
                 "valid_from",
                 "valid_to",
+                "substrate_ref",
+                "reasoning_effort",
+                "actor_class",
             ]
         );
     }
@@ -851,6 +1082,10 @@ mod tests {
         body.body_snapshot_ref = Some([0x42; 16]);
         body.valid_from = Some(100);
         body.valid_to = Some(200);
+        body.substrate_ref = Some(entity(0x43));
+        // 32 bytes exactly: the REASONING_EFFORT_MAX_BYTES boundary is valid.
+        body.reasoning_effort = Some("x".repeat(32));
+        body.actor_class = Some(EdgeActorClass::Agent);
 
         let value = encode_edge_provenance_value(&body);
         let Value::Map(entries) = &value else {
@@ -860,7 +1095,8 @@ mod tests {
             .iter()
             .map(|(k, _)| k.as_str().expect("string key"))
             .collect();
-        // Full body carries EXACTLY the seven pinned keys in canonical order.
+        // Full body carries EXACTLY the ten pinned keys in canonical order
+        // (ONE-1138 bump: + substrate_ref + reasoning_effort + actor_class).
         assert_eq!(
             keys,
             [
@@ -871,11 +1107,31 @@ mod tests {
                 "supersession_status",
                 "valid_from",
                 "valid_to",
+                "substrate_ref",
+                "reasoning_effort",
+                "actor_class",
             ]
         );
         // supersession_status is stored as the integer u8, not a string.
         assert_eq!(entries[4].1.as_u64(), Some(1));
-        assert_eq!(decode_edge_provenance_body(&value).expect("decode"), body);
+        // substrate_ref is 16-byte Binary (an EntityRef, same wire shape as
+        // actor_entity_ref) — never a hex string, never inline name/version.
+        let Value::Binary(substrate_bytes) = &entries[7].1 else {
+            panic!("substrate_ref must encode as Binary");
+        };
+        assert_eq!(substrate_bytes.as_slice(), entity(0x43).as_bytes());
+        // reasoning_effort is an inline string scalar; actor_class is the
+        // integer u8 (agent = 1), byte-identical to the legacy evid value.
+        assert_eq!(entries[8].1.as_str(), Some("x".repeat(32).as_str()));
+        assert_eq!(entries[9].1.as_u64(), Some(1));
+        let decoded = decode_edge_provenance_body(&value).expect("decode");
+        assert_eq!(decoded, body);
+        assert_eq!(decoded.substrate_ref, Some(entity(0x43)));
+        assert_eq!(
+            decoded.reasoning_effort.as_deref(),
+            Some("x".repeat(32).as_str())
+        );
+        assert_eq!(decoded.actor_class, Some(EdgeActorClass::Agent));
 
         // Minimal body: only the three required keys.
         let minimal = EdgeProvenanceClaimBody::new(entity(0x32), 1.0, SupersessionStatus::Proposed);
@@ -895,6 +1151,11 @@ mod tests {
         assert_eq!(decoded, minimal);
         assert_eq!(decoded.source_revision_ref, None);
         assert_eq!(decoded.valid_to, None);
+        // Elide-the-default: the three ONE-1138 keys are absent, not nulled,
+        // and absent = unrecorded-and-valid.
+        assert_eq!(decoded.substrate_ref, None);
+        assert_eq!(decoded.reasoning_effort, None);
+        assert_eq!(decoded.actor_class, None);
     }
 
     #[test]
@@ -1015,6 +1276,63 @@ mod tests {
                 entries.push((Value::from("valid_to"), Value::from(100_u64)));
                 Value::Map(entries)
             }),
+            // ── ONE-1138 vocabulary bump: substrate_ref ──
+            (
+                "substrate_ref 15 bytes",
+                with_extra("substrate_ref", Value::Binary(vec![0x43; 15])),
+            ),
+            (
+                "substrate_ref 17 bytes",
+                with_extra("substrate_ref", Value::Binary(vec![0x43; 17])),
+            ),
+            (
+                "substrate_ref not binary",
+                with_extra("substrate_ref", Value::from("mo1")),
+            ),
+            (
+                "substrate_ref reserved all-zero id",
+                with_extra("substrate_ref", Value::Binary(vec![0x00; 16])),
+            ),
+            ("substrate_ref duplicate", {
+                let mut entries = base();
+                entries.push((Value::from("substrate_ref"), Value::Binary(vec![0x43; 16])));
+                entries.push((Value::from("substrate_ref"), Value::Binary(vec![0x44; 16])));
+                Value::Map(entries)
+            }),
+            (
+                "unknown camelCase substrateRef still rejected post-bump",
+                with_extra("substrateRef", Value::Binary(vec![0x43; 16])),
+            ),
+            // ── ONE-1138 vocabulary bump: reasoning_effort ──
+            (
+                "reasoning_effort not a string",
+                with_extra("reasoning_effort", Value::from(2_u8)),
+            ),
+            (
+                "reasoning_effort empty string",
+                with_extra("reasoning_effort", Value::from("")),
+            ),
+            (
+                "reasoning_effort 33 bytes (over the 32-byte cap)",
+                with_extra("reasoning_effort", Value::from("x".repeat(33).as_str())),
+            ),
+            // ── ONE-1138 vocabulary bump: actor_class body key ──
+            (
+                "actor_class 3 (above system=2)",
+                with_extra("actor_class", Value::from(3_u8)),
+            ),
+            (
+                "actor_class 255",
+                with_extra("actor_class", Value::from(255_u8)),
+            ),
+            (
+                "actor_class negative",
+                with_extra("actor_class", Value::from(-1_i64)),
+            ),
+            (
+                "actor_class as string",
+                with_extra("actor_class", Value::from("human")),
+            ),
         ];
 
         for (name, value) in cases {
@@ -1144,7 +1462,7 @@ mod tests {
         assert_eq!(closed.supersession_status, SupersessionStatus::Confirmed);
 
         // SUPERSEDE close: an explicit valid_to is PRESERVED, never extended.
-        let mut bounded = open;
+        let mut bounded = open.clone();
         bounded.valid_from = Some(100);
         bounded.valid_to = Some(200);
         let closed = close_record_for_supersession(&bounded, 5000).expect("close bounded record");
@@ -1225,5 +1543,46 @@ mod tests {
                 "case {case:?} must be rejected"
             );
         }
+    }
+
+    #[test]
+    fn resolve_persisted_actor_class_pins_transition_matrix() {
+        // ONE-1138 transition semantics, pinned: body-only (new shape) wins;
+        // evid-only (legacy pre-bump shape) still decodes — old claims are
+        // never invalidated; BOTH → ambiguous, fail closed; NEITHER → fail
+        // closed (the old shape required the class on every claim, so a
+        // new-shape claim without it is invalid — never defaulted, D13).
+        let mut new_shape =
+            EdgeProvenanceClaimBody::new(entity(0x31), 0.5, SupersessionStatus::Proposed);
+        new_shape.actor_class = Some(EdgeActorClass::Agent);
+        let legacy_shape =
+            EdgeProvenanceClaimBody::new(entity(0x31), 0.5, SupersessionStatus::Proposed);
+        let legacy_evidence = encode_actor_class_evidence(EdgeActorClass::System);
+
+        // New shape: the body key is authoritative.
+        assert_eq!(
+            resolve_persisted_actor_class(&new_shape, None).expect("new shape resolves"),
+            EdgeActorClass::Agent
+        );
+        // Legacy shape: the evid map is decoded with unchanged validation.
+        assert_eq!(
+            resolve_persisted_actor_class(&legacy_shape, Some(&legacy_evidence))
+                .expect("legacy shape resolves"),
+            EdgeActorClass::System
+        );
+        // Both places → ambiguity, typed reject — even when the two values
+        // AGREE (two sources of truth are never reconciled silently).
+        let agreeing_evidence = encode_actor_class_evidence(EdgeActorClass::Agent);
+        for evidence in [&legacy_evidence, &agreeing_evidence] {
+            assert!(matches!(
+                resolve_persisted_actor_class(&new_shape, Some(evidence)),
+                Err(Error::InvalidProvenanceBody(_))
+            ));
+        }
+        // Neither place → typed reject, never a defaulted class.
+        assert!(matches!(
+            resolve_persisted_actor_class(&legacy_shape, None),
+            Err(Error::InvalidProvenanceBody(_))
+        ));
     }
 }
