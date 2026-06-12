@@ -355,10 +355,25 @@ impl SyncClient {
                 // `u:w:` row, and window load is fail-closed on pending
                 // updates — one malformed frame would brick every future
                 // open of this window.
+                let vv_before = window.doc.oplog_vv();
                 window
                     .doc
                     .import(payload)
                     .map_err(|_| TransportError::InvalidPayload("window import failed"))?;
+                // Reconnect-echo dedupe (ONE-1151): an import that did not
+                // advance the doc's oplog VV carried no new ops — every op
+                // in the frame is already held by the live doc, whose state
+                // is durable (local commits persist via Observer A,
+                // accepted remote frames persist below, snapshot-subsumed
+                // rows live in `d:w:`). Persisting the frame anyway would
+                // append a duplicate `u:w:` row and flip `svf:` to stale
+                // for nothing — every reconnect echo would re-grow the
+                // update log the snapshot prune just bounded. A frame with
+                // ANY new op (even partially known) still persists in full;
+                // replaying the known part on load is an idempotent import.
+                if window.doc.oplog_vv() == vv_before {
+                    return Ok(Vec::new());
+                }
                 // Remote imports never fire Observer A (local-only), so
                 // persist the accepted update bytes ourselves: without a
                 // u:w: row, remote state — including tombstones, whose LMDB

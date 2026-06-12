@@ -527,6 +527,126 @@ fn open_fails_closed_on_corrupt_persisted_snapshot() {
     );
 }
 
+/// ONE-1151: pruning the subsumed `u:w:` rows changes nothing about what
+/// recovery yields. Full recovery (`d:w:` load + pending `u:w:` replay,
+/// ARCH-0023b startup steps 1-2) must produce a doc equivalent — same
+/// oplog VV, same deep value — before and after the prune; and because
+/// `m:u_seq:w:{key}` is never reset, the row persisted after a prune gets
+/// the NEXT sequence number (`{seq:08x}`, monotonic), never a colliding
+/// reissue of a pruned one.
+#[test]
+fn recovery_after_prune_is_equivalent_and_seq_stays_monotonic() {
+    let (_temp, vault) = test_vault();
+    let key = WindowKey::new("2026-03");
+    let t = key.start_timestamp().unwrap() + 60;
+
+    let materializer = Arc::new(Materializer::new());
+    let manager = Arc::new(WindowManager::new(
+        Arc::clone(&vault),
+        materializer,
+        "test-user",
+    ));
+    let win = manager.open_window(&key).unwrap();
+
+    let id_a = EntityId::now();
+    win.doc
+        .get_map("entities")
+        .insert(
+            id_a.to_hex().as_str(),
+            make_entity_blob(1, t, b"first").as_slice(),
+        )
+        .unwrap();
+    win.doc.commit();
+    assert!(
+        vault
+            .sync_state_get("u:w:2026-03:00000001")
+            .unwrap()
+            .is_some()
+    );
+
+    // First snapshot persist prunes the subsumed row.
+    win.persist_state(&vault).unwrap();
+    assert_eq!(
+        vault
+            .sync_state_keys_with_prefix("u:w:2026-03:")
+            .unwrap()
+            .len(),
+        0,
+        "snapshot persist must prune the subsumed u:w: rows"
+    );
+    assert_eq!(
+        vault
+            .sync_state_get("m:u_seq:w:2026-03")
+            .unwrap()
+            .as_deref(),
+        Some(1u32.to_le_bytes().as_slice()),
+        "the prune must NOT reset the m:u_seq high-water mark"
+    );
+
+    // The next local commit takes seq 2 — an implementation that reset
+    // m:u_seq would reissue `...:00000001` here and collide with the
+    // pruned row's history.
+    let id_b = EntityId::now();
+    win.doc
+        .get_map("entities")
+        .insert(
+            id_b.to_hex().as_str(),
+            make_entity_blob(1, t, b"second").as_slice(),
+        )
+        .unwrap();
+    win.doc.commit();
+    assert!(
+        vault
+            .sync_state_get("u:w:2026-03:00000002")
+            .unwrap()
+            .is_some(),
+        "post-prune updates must continue the monotonic {{seq:08x}} sequence"
+    );
+    assert!(
+        vault
+            .sync_state_get("u:w:2026-03:00000001")
+            .unwrap()
+            .is_none()
+    );
+
+    // Recovery BEFORE the second prune: d:w: snapshot + u:w: replay.
+    let pre = window::load_window_from_state(&vault, "test-user", &key).unwrap();
+    let (pre_vv, pre_value) = (pre.oplog_vv(), pre.get_deep_value());
+
+    // Second snapshot persist subsumes + prunes the seq-2 row.
+    win.persist_state(&vault).unwrap();
+    assert_eq!(
+        vault
+            .sync_state_keys_with_prefix("u:w:2026-03:")
+            .unwrap()
+            .len(),
+        0
+    );
+
+    // Recovery AFTER the prune: d:w: alone. Equivalent doc — nothing the
+    // pruned rows carried may be lost.
+    let post = window::load_window_from_state(&vault, "test-user", &key).unwrap();
+    assert_eq!(
+        post.oplog_vv(),
+        pre_vv,
+        "recovery after the prune must reach the same oplog version vector"
+    );
+    assert_eq!(
+        post.get_deep_value(),
+        pre_value,
+        "recovery after the prune must yield an equivalent doc"
+    );
+    let entities = post.get_map("entities");
+    assert_eq!(
+        map_get_bytes(&entities, &id_a.to_hex()).unwrap(),
+        make_entity_blob(1, t, b"first")
+    );
+    assert_eq!(
+        map_get_bytes(&entities, &id_b.to_hex()).unwrap(),
+        make_entity_blob(1, t, b"second")
+    );
+}
+
 /// ARCH-0023b window policy: 2 default loaded windows (current + previous
 /// month); the walk-back stops at the epoch boundary.
 #[test]

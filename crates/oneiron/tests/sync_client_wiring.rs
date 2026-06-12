@@ -299,6 +299,143 @@ fn failed_update_persist_discards_live_window_instead_of_running_ahead() {
     );
 }
 
+/// ONE-1151 reconnect dedupe: a server UPDATE frame whose ops the live doc
+/// already holds (each reconnect echoes frames the client persisted long
+/// ago) must NOT persist again — no new `u:w:{key}:{seq:08x}` row, no
+/// `m:u_seq:w:{key}` bump, no `svf:w:{key}` stale flip, no WindowUpdated
+/// event. A frame carrying ANY new op still persists in full (the
+/// over-skip direction would silently drop accepted remote data).
+#[test]
+fn reconnect_echo_update_is_not_repersisted_and_svf_stays_fresh() {
+    let (_temp, vault) = test_vault();
+    let manager = make_manager(&vault);
+    let (mut client, mut rx) = make_client(&manager);
+
+    let id_one = EntityId::now();
+    let server_doc = create_window_doc("server", &WindowKey::new("2026-03"));
+    server_doc
+        .get_map("entities")
+        .insert(
+            &id_one.to_hex(),
+            make_entity_blob(1, LEARNED_JAN_2026, b"first-delivery").as_slice(),
+        )
+        .unwrap();
+    server_doc.commit();
+    let frame_one = server_doc.export(ExportMode::all_updates()).unwrap();
+
+    // First delivery: persisted under the contract row + svf flipped stale.
+    client
+        .handle_server_message(&transport::encode_window_sync(
+            "2026-03",
+            window_sub_tags::UPDATE,
+            &frame_one,
+        ))
+        .unwrap();
+    assert!(
+        vault
+            .sync_state_get("u:w:2026-03:00000001")
+            .unwrap()
+            .is_some()
+    );
+    assert_eq!(
+        vault.sync_state_get("svf:w:2026-03").unwrap().as_deref(),
+        Some([0u8].as_slice())
+    );
+
+    // Snapshot persist: prunes the subsumed row, marks sv:w: fresh.
+    let live = client.ensure_window("2026-03").unwrap();
+    live.persist_state(&vault).unwrap();
+    drop(live);
+    assert_eq!(
+        vault.sync_state_get("svf:w:2026-03").unwrap().as_deref(),
+        Some([1u8].as_slice())
+    );
+    assert!(
+        vault
+            .sync_state_get("u:w:2026-03:00000001")
+            .unwrap()
+            .is_none()
+    );
+    while rx.try_recv().is_ok() {} // drain pre-echo events
+
+    // Reconnect echo: the SAME frame again. Nothing may change.
+    let responses = client
+        .handle_server_message(&transport::encode_window_sync(
+            "2026-03",
+            window_sub_tags::UPDATE,
+            &frame_one,
+        ))
+        .unwrap();
+    assert!(responses.is_empty());
+    assert!(
+        vault
+            .sync_state_get("u:w:2026-03:00000002")
+            .unwrap()
+            .is_none(),
+        "an echoed frame must not append a duplicate u:w: row"
+    );
+    assert_eq!(
+        vault
+            .sync_state_get("m:u_seq:w:2026-03")
+            .unwrap()
+            .as_deref(),
+        Some(1u32.to_le_bytes().as_slice()),
+        "an echoed frame must not bump the u_seq high-water mark"
+    );
+    assert_eq!(
+        vault.sync_state_get("svf:w:2026-03").unwrap().as_deref(),
+        Some([1u8].as_slice()),
+        "svf must not flip when nothing new was persisted"
+    );
+    assert!(
+        rx.try_recv().is_err(),
+        "a no-op echo must not announce WindowUpdated"
+    );
+
+    // Over-skip guard: a frame with NEW ops (all_updates export — the
+    // echoed prefix is included, so this is a partially-known frame) must
+    // persist in full and flip svf stale again.
+    let id_two = EntityId::now();
+    server_doc
+        .get_map("entities")
+        .insert(
+            &id_two.to_hex(),
+            make_entity_blob(1, LEARNED_JAN_2026, b"second-delivery").as_slice(),
+        )
+        .unwrap();
+    server_doc.commit();
+    let frame_two = server_doc.export(ExportMode::all_updates()).unwrap();
+    client
+        .handle_server_message(&transport::encode_window_sync(
+            "2026-03",
+            window_sub_tags::UPDATE,
+            &frame_two,
+        ))
+        .unwrap();
+    assert_eq!(
+        vault
+            .sync_state_get("u:w:2026-03:00000002")
+            .unwrap()
+            .as_deref(),
+        Some(frame_two.as_slice()),
+        "a partially-known frame with new ops must persist verbatim"
+    );
+    assert_eq!(
+        vault.sync_state_get("svf:w:2026-03").unwrap().as_deref(),
+        Some([0u8].as_slice()),
+        "new persisted ops must flip svf back to stale"
+    );
+    assert!(matches!(
+        rx.try_recv(),
+        Ok(SyncEvent::WindowUpdated { window_key }) if window_key == "2026-03"
+    ));
+    assert_eq!(
+        vault.get(&id_two).unwrap().as_deref(),
+        Some(b"second-delivery".as_slice()),
+        "the new op must still materialize via Observer B"
+    );
+}
+
 // ─── AC3: Observer A → outbound (channel when attached, queue otherwise) ────
 
 #[test]
