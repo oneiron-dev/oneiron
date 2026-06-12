@@ -24,6 +24,8 @@ use crate::deletion::{
     decode_hard_erase_sweep_seq, encode_hard_erase_sweep_job, encode_hard_erase_sweep_key,
     encode_redaction_audit_receipt,
 };
+#[cfg(feature = "sync")]
+use crate::deletion::{encode_local_hard_delete_marker, local_hard_delete_marker_key};
 use crate::error::{Error, Result};
 use crate::limits::{
     ERR_CHILD_OF_CYCLE_CHECK, MAX_ANCESTOR_DEPTH, MAX_CHILD_OF_CYCLE_TRAVERSAL_STEPS,
@@ -1200,10 +1202,26 @@ impl Vault {
             tombstone_complete_at
         };
 
-        let request_id = Uuid::now_v7().to_string();
+        let request_uuid = Uuid::now_v7();
+        let request_id = request_uuid.to_string();
         let receipt_id = EntityId::now();
         let scope = RedactionScope::entity(id);
         let mut wtxn = self.store.env.write_txn()?;
+        // ONE-1122 `dt:` local hard-delete marker: the permanent local truth
+        // the Observer-B materialization gate consults when a crafted update
+        // REMOVES the CRDT tombstone (nothing else id-keyed survives a hard
+        // delete locally — the receipt id is fresh, h: is seq-keyed, pt: is
+        // cleared after replay). Written in the SAME txn as the active-store
+        // purge, including the purge-raced-to-missing branch below: the CRDT
+        // tombstone above is already published, so the id IS hard-deleted.
+        // PRESENCE-ONLY for gates; the value body is informational.
+        self.write_local_hard_delete_marker_in_txn(
+            &mut wtxn,
+            id,
+            reason,
+            requested_at,
+            request_uuid.as_bytes(),
+        )?;
         let existed = self.purge_entity_active_store_in_txn(&mut wtxn, id)?;
         if !existed {
             wtxn.commit()?;
@@ -1255,6 +1273,23 @@ impl Vault {
             wtxn.commit()?;
             return Ok(DeleteEntityOutcome::missing());
         }
+        let request_uuid = Uuid::now_v7();
+        if reason.active_store_hard_purge_v1() {
+            // ONE-1122 `dt:` marker, headerless leg: this hard purge writes
+            // no CRDT tombstone (no parseable header ⇒ no learned_at
+            // window), so the permanent local marker is the ONLY delete
+            // truth the Observer-B gate can consult for this id — without
+            // it a crafted re-put would rematerialize remote bytes over a
+            // hard delete. Same txn as the purge, mirroring the headerful
+            // path above.
+            self.write_local_hard_delete_marker_in_txn(
+                &mut wtxn,
+                id,
+                reason,
+                requested_at,
+                request_uuid.as_bytes(),
+            )?;
+        }
         if !reason.writes_receipt() {
             wtxn.commit()?;
             return Ok(DeleteEntityOutcome {
@@ -1273,7 +1308,7 @@ impl Vault {
             &mut wtxn,
             &receipt_id,
             RedactionReceiptInput {
-                request_id: Uuid::now_v7().to_string(),
+                request_id: request_uuid.to_string(),
                 scope: RedactionScope::entity(id),
                 reason,
                 requested_at,
@@ -1563,6 +1598,43 @@ impl Vault {
         _id: &EntityId,
         _learned_at: u64,
         _deleted_at: u64,
+    ) -> Result<()> {
+        Ok(())
+    }
+
+    /// Writes the ONE-1122 `dt:` local hard-delete marker
+    /// (`dt:{entity_id_hex}` in `sync_state`, pinned 25-byte
+    /// `[reason:1][deleted_at:8 LE][request_id:16]` value). Called ONLY from
+    /// the hard-delete purge txn so the marker commits atomically with the
+    /// active-store purge. Presence-only for consumers; permanent, no GC.
+    #[cfg(feature = "sync")]
+    fn write_local_hard_delete_marker_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        id: &EntityId,
+        reason: DeleteReason,
+        deleted_at: u64,
+        request_id: &[u8; 16],
+    ) -> Result<()> {
+        self.store.sync_state.put(
+            wtxn,
+            &local_hard_delete_marker_key(id),
+            &encode_local_hard_delete_marker(reason, deleted_at, request_id),
+        )?;
+        Ok(())
+    }
+
+    /// Without the sync feature there is no CRDT surface to resurrect from
+    /// (and no `sync_state` handle on `Store`); the marker write is a no-op,
+    /// mirroring `write_crdt_tombstone`.
+    #[cfg(not(feature = "sync"))]
+    fn write_local_hard_delete_marker_in_txn(
+        &self,
+        _wtxn: &mut heed::RwTxn<'_>,
+        _id: &EntityId,
+        _reason: DeleteReason,
+        _deleted_at: u64,
+        _request_id: &[u8; 16],
     ) -> Result<()> {
         Ok(())
     }
