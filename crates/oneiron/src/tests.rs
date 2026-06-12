@@ -2928,8 +2928,8 @@ fn dropping_last_vault_handle_closes_lmdb_env() -> Result<()> {
     // heed registers opened environments by canonicalized path; a live
     // registration is observable as `Some(closing_event)`.
     let canonical = path.canonicalize()?;
-    let closing_event = heed::env_closing_event(&canonical)
-        .expect("open vault must have a live env registration");
+    let closing_event =
+        heed::env_closing_event(&canonical).expect("open vault must have a live env registration");
 
     drop(vault);
     // `Store`'s drop runs `prepare_for_closing` and the wrapped env is the
