@@ -12,13 +12,16 @@ use std::sync::Arc;
 use axum::Router;
 use axum::extract::State;
 use axum::extract::ws::{CloseFrame, Message as WsMessage, Utf8Bytes, WebSocket, WebSocketUpgrade};
+use axum::http::{HeaderMap, StatusCode};
 use axum::response::IntoResponse;
 use axum::routing::get;
 use futures_util::stream::SplitStream;
 use futures_util::{SinkExt, StreamExt};
 use loro::VersionVector;
+use oneiron::sync::WindowKey;
 use oneiron::sync::export_updates_since;
 
+use crate::api::check_auth;
 use crate::broadcast::BroadcastSubscriber;
 use crate::protocol::{self, ProtocolError, SyncMessage, close_codes, window_sub_tags};
 use crate::server::SyncServer;
@@ -34,15 +37,27 @@ pub(crate) fn ws_routes(server: Arc<SyncServer>) -> Router {
 }
 
 /// Handles WebSocket upgrade requests.
+///
+/// Phase-1 auth: when a shared secret is configured, the upgrade request
+/// must carry it in the `x-oneiron-secret` header (the same constant-time
+/// scheme as the HTTP API). An unauthenticated upgrade is rejected with 401
+/// BEFORE the socket upgrade (fail-closed) — without this gate any network
+/// peer could pull the full root snapshot and window exports. When no secret
+/// is configured the server runs in dev mode (allow all), matching
+/// `api::check_auth`.
 async fn ws_upgrade_handler(
     ws: WebSocketUpgrade,
+    headers: HeaderMap,
     State(server): State<Arc<SyncServer>>,
-) -> impl IntoResponse {
+) -> Result<impl IntoResponse, StatusCode> {
+    check_auth(&headers, &server.config.auth_secret)?;
+
     let conn_id = server.alloc_conn_id();
     tracing::info!(conn_id, "new WebSocket connection");
 
-    ws.max_frame_size(server.config.max_frame_size)
-        .on_upgrade(move |socket| handle_connection(socket, server, conn_id))
+    Ok(ws
+        .max_frame_size(server.config.max_frame_size)
+        .on_upgrade(move |socket| handle_connection(socket, server, conn_id)))
 }
 
 /// Main connection lifecycle.
@@ -190,6 +205,14 @@ async fn handle_connection(socket: WebSocket, server: Arc<SyncServer>, conn_id: 
                             tracing::warn!(conn_id, error = %msg, "loro import error — closing");
                             break;
                         }
+                        ProtocolError::Persistence(msg) => {
+                            // Fail-closed: the server could not durably
+                            // persist sync state — do not keep relaying on a
+                            // connection whose updates would vanish on
+                            // restart.
+                            tracing::error!(conn_id, error = %msg, "sync persistence failure — closing");
+                            break;
+                        }
                         _ => {
                             tracing::warn!(conn_id, error = %e, "message handling failed");
                         }
@@ -335,7 +358,28 @@ async fn handle_window_sync(
     payload: &[u8],
     direct_tx: &tokio::sync::mpsc::UnboundedSender<Vec<u8>>,
 ) -> Result<(), ProtocolError> {
-    let doc = server.get_or_create_window(window_key).await;
+    // Window-key chokepoint. `decode_window_sync` already validated the key
+    // at the parse boundary; re-validate here so this write path stays
+    // fail-closed even if a future caller bypasses the wire decoder.
+    let key = WindowKey::try_new(window_key)
+        .ok_or(ProtocolError::InvalidPayload("invalid window key"))?;
+
+    // Enforce max_update_payload BEFORE the window doc is fetched/created:
+    // an oversized update must not mutate any server state.
+    if sub_tag == window_sub_tags::UPDATE && payload.len() > server.config.max_update_payload {
+        return Err(ProtocolError::FrameTooLarge {
+            size: payload.len(),
+            max: server.config.max_update_payload,
+        });
+    }
+
+    // Loads persisted window state (d:w: + pending u:w:) on first touch.
+    // Corrupt persisted state closes the connection rather than serving a
+    // fresh empty window (fail-closed — see SyncServer::get_or_create_window).
+    let doc = server
+        .get_or_create_window(&key)
+        .await
+        .map_err(|e| ProtocolError::Persistence(format!("window load failed: {e}")))?;
 
     match sub_tag {
         window_sub_tags::VV_REQUEST => {
@@ -365,8 +409,31 @@ async fn handle_window_sync(
             doc.import_with(payload, &origin)
                 .map_err(|e| ProtocolError::LoroImport(format!("{e}")))?;
 
-            // The subscribe_local_update callback (when registered by sync-core)
-            // will handle persistence + broadcast. For now, manually broadcast.
+            // Durability BEFORE fan-out (ARCH-0023b Observer A duty: "MUST
+            // persist synchronously"). `subscribe_local_update` does not fire
+            // for imports, so the imported update bytes are appended to
+            // sync_state (u:w:*) explicitly. A persistence failure closes the
+            // connection without broadcasting: the server must never relay an
+            // update — tombstones included — that it cannot replay after a
+            // restart.
+            if let Err(e) = server.persist_imported_update(&key, payload) {
+                // The cached doc already imported this update (import runs
+                // before the durable append), so it now holds state a restart
+                // would lose. Left cached, a later VV_REQUEST would serve the
+                // unpersisted update, the origin client would VV-confirm and
+                // clear its local queue, and the next server restart would
+                // drop the update — tombstones included — fleet-wide. Evict
+                // the window so the next access reloads from durable
+                // d:w:/u:w: state. Known residual: connections already
+                // holding a reference-clone of the evicted doc can still
+                // export it until their next fetch (generation/poison flag =
+                // follow-up).
+                server.evict_window(&key).await;
+                return Err(ProtocolError::Persistence(format!(
+                    "update persist failed: {e}"
+                )));
+            }
+
             let broadcast_msg =
                 protocol::encode_window_sync(window_key, window_sub_tags::UPDATE, payload);
             let _ = crate::broadcast::broadcast(&server.broadcast_tx, conn_id, broadcast_msg);
@@ -517,8 +584,9 @@ mod tests {
 
     fn test_server() -> (tempfile::TempDir, SyncServer) {
         let dir = tempfile::tempdir().unwrap();
-        let vault = oneiron::Vault::open(dir.path(), oneiron::VaultConfig::device()).unwrap();
-        let server = SyncServer::new(vault, SyncServerConfig::default());
+        let vault =
+            Arc::new(oneiron::Vault::open(dir.path(), oneiron::VaultConfig::device()).unwrap());
+        let server = SyncServer::new(vault, SyncServerConfig::default()).unwrap();
         (dir, server)
     }
 
@@ -549,7 +617,10 @@ mod tests {
         let key = "2026-03";
 
         // Server window doc: chunky shared base + a server-only divergence.
-        let server_doc = server.get_or_create_window(key).await;
+        let server_doc = server
+            .get_or_create_window(&WindowKey::new(key))
+            .await
+            .unwrap();
         server_doc
             .get_map("entities")
             .insert("base", vec![7u8; 2048].as_slice())
@@ -609,7 +680,10 @@ mod tests {
     async fn vv_request_malformed_vv_fails_closed_no_fallback() {
         let (_dir, server) = test_server();
         let key = "2026-03";
-        let server_doc = server.get_or_create_window(key).await;
+        let server_doc = server
+            .get_or_create_window(&WindowKey::new(key))
+            .await
+            .unwrap();
         server_doc
             .get_map("entities")
             .insert("secret", b"data".as_slice())
@@ -643,7 +717,10 @@ mod tests {
     async fn vv_response_sends_local_diff_only() {
         let (_dir, server) = test_server();
         let key = "2026-04";
-        let server_doc = server.get_or_create_window(key).await;
+        let server_doc = server
+            .get_or_create_window(&WindowKey::new(key))
+            .await
+            .unwrap();
         server_doc
             .get_map("entities")
             .insert("ahead", b"x".as_slice())

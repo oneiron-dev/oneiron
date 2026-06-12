@@ -40,7 +40,12 @@ async fn health() -> impl IntoResponse {
 /// Validates the auth secret from request headers.
 ///
 /// Uses constant-time comparison to prevent timing side-channel attacks.
-fn check_auth(headers: &HeaderMap, config_secret: &Option<String>) -> Result<(), StatusCode> {
+/// Shared by the HTTP API routes and the `/ws` upgrade handler (Phase-1
+/// shared-secret scheme).
+pub(crate) fn check_auth(
+    headers: &HeaderMap,
+    config_secret: &Option<String>,
+) -> Result<(), StatusCode> {
     use subtle::ConstantTimeEq;
 
     let Some(expected) = config_secret.as_ref() else {
