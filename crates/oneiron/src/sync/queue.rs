@@ -8,13 +8,33 @@
 //! - `q:{seq:8BE}` → `[window_key_len:1][window_key][encoded_update]`
 //! - `e:{entity_id:16}` → `[priority:1][queued_at:8BE]`
 //! - `h:{seq:8BE}` → ARCH-0038 hard-delete historical-carrier sweep job
+//! - `d:{seq:8BE}` → `[1]` — engine-internal DELETE-BEARING sidecar marker
+//!   (ONE-1135): the matching `q:{seq}` row carries a tombstone-commit
+//!   delta. Delete-bearing rows are EXEMPT from every optimistic clear
+//!   (`clear_through` / `clear_updates` / `clear_all`) and are removed only
+//!   by [`SyncQueue::clear_through_confirmed`] once the server VV confirms
+//!   receipt (protocol lands in M4-12). Losing one would silently lose a
+//!   GDPR delete on an unconfirmed reconnect — fail-closed: keep until
+//!   confirmed.
+//!
+//!   Constructed ONLY by the tombstone-commit path: [`push_delete_bearing_in_txn`]
+//!   takes a [`DeleteBearingUpdate`], whose single constructor is
+//!   [`export_tombstone_commit_delta`](crate::sync::window::export_tombstone_commit_delta)
+//!   — arbitrary payloads can never acquire the marker and its clear/scrub
+//!   exemptions (ONE-1135 review item 14). Invariant: a `d:{seq}` marker
+//!   never outlives its `q:{seq}` row — the malformed-row prune drops both
+//!   in the same txn, and sequence recovery treats any surviving (orphan)
+//!   marker's seq as allocated so it is never reused (ONE-1135 review
+//!   item 15).
 
+use std::collections::HashSet;
 use std::sync::Arc;
 
 use crate::Vault;
 use crate::error::{Error, Result};
 use crate::sync::transport::MAX_WINDOW_KEY_LEN;
 use crate::sync::types::parse_window_key_str;
+use crate::sync::window::DeleteBearingUpdate;
 use crate::types::EntityId;
 
 /// Maximum number of queue entries before triggering re-bootstrap.
@@ -24,6 +44,8 @@ const MAX_QUEUE_SIZE: usize = 10_000;
 const UPDATE_PREFIX: &[u8] = b"q:";
 /// Prefix for embed job entries.
 const EMBED_PREFIX: &[u8] = b"e:";
+/// Prefix for delete-bearing sidecar markers (ONE-1135).
+pub(crate) const DELETE_BEARING_PREFIX: &[u8] = b"d:";
 /// Metadata key storing the last allocated update sequence number.
 const LAST_UPDATE_SEQ_KEY: &[u8] = b"m:last_update_seq";
 const ERR_SYNC_QUEUE_UPDATE_ROW: &str = "sync queue update row";
@@ -81,6 +103,29 @@ impl SyncQueue {
         self.vault.store.sync_queue.put(&mut wtxn, &key, &value)?;
         wtxn.commit()?;
 
+        Ok(seq)
+    }
+
+    /// Test-only variant of the delete path's queue write: pushes a
+    /// DELETE-BEARING `q:` row + `d:{seq:8BE}` sidecar marker with
+    /// synthetic bytes, bypassing the [`DeleteBearingUpdate`] construction
+    /// pin. NOT part of the public API (ONE-1135 review item 14: a public
+    /// raw-byte entry point let any caller mark arbitrary payloads
+    /// delete-bearing, granting them every clear/scrub exemption).
+    /// Production delete-bearing rows are written exclusively by
+    /// [`push_delete_bearing_in_txn`] with a delta exported by
+    /// `export_tombstone_commit_delta`.
+    ///
+    /// Delete-bearing rows replay like any other `q:` row on reconnect but
+    /// are exempt from the optimistic clears; only
+    /// [`clear_through_confirmed`](Self::clear_through_confirmed) (the
+    /// VV-confirmed path, M4-12) removes them.
+    #[cfg(test)]
+    fn push_delete_bearing(&self, window_key: &str, update_bytes: &[u8]) -> Result<u64> {
+        let update = DeleteBearingUpdate::for_test(update_bytes.to_vec());
+        let mut wtxn = self.vault.store.env.write_txn()?;
+        let seq = push_delete_bearing_in_txn(&self.vault, &mut wtxn, window_key, &update)?;
+        wtxn.commit()?;
         Ok(seq)
     }
 
@@ -166,11 +211,33 @@ impl SyncQueue {
         Ok(jobs)
     }
 
-    /// Clears all update entries with sequence number <= `max_seq`.
+    /// Clears all update entries with sequence number <= `max_seq` —
+    /// EXCEPT delete-bearing rows (ONE-1135).
     ///
-    /// Called after convergence confirms the server has received all updates.
+    /// Called after the OPTIMISTIC reconnect replay. The replay is
+    /// unconfirmed: the server may never have applied what was sent, so a
+    /// delete-bearing update (the only durable propagation record of a
+    /// GDPR/hard delete once the carrier-15 scrub ran) must be kept until
+    /// the VV-confirmed clear ([`clear_through_confirmed`]
+    /// (Self::clear_through_confirmed), protocol lands in M4-12).
     pub fn clear_through(&self, max_seq: u64) -> Result<()> {
+        self.clear_through_inner(max_seq, false)
+    }
+
+    /// Clears all update entries with sequence number <= `max_seq`,
+    /// INCLUDING delete-bearing rows and their `d:` sidecar markers.
+    ///
+    /// VV-CONFIRMED path only (M4-12): the caller must have verified —
+    /// via the bidirectional version-vector exchange — that the server's
+    /// VV dominates every cleared update. Calling this on an optimistic
+    /// (unconfirmed) replay silently loses offline deletes.
+    pub fn clear_through_confirmed(&self, max_seq: u64) -> Result<()> {
+        self.clear_through_inner(max_seq, true)
+    }
+
+    fn clear_through_inner(&self, max_seq: u64, include_delete_bearing: bool) -> Result<()> {
         let rtxn = self.vault.store.env.read_txn()?;
+        let delete_bearing = delete_bearing_seqs_in_txn(&self.vault, &rtxn)?;
         let mut keys_to_delete = Vec::new();
         let mut malformed_keys = Vec::new();
         let metadata_seq = self
@@ -195,7 +262,17 @@ impl SyncQueue {
                 Err(err) => return Err(err),
             };
             if seq <= max_seq {
-                keys_to_delete.push(key.to_vec());
+                if delete_bearing.contains(&seq) {
+                    if include_delete_bearing {
+                        keys_to_delete.push(key.to_vec());
+                        keys_to_delete.push(encode_delete_bearing_key(seq).to_vec());
+                    } else {
+                        // Exempt: kept until VV-confirmed.
+                        remaining_max_seq = remaining_max_seq.max(seq);
+                    }
+                } else {
+                    keys_to_delete.push(key.to_vec());
+                }
             } else {
                 remaining_max_seq = remaining_max_seq.max(seq);
             }
@@ -222,18 +299,23 @@ impl SyncQueue {
         Ok(())
     }
 
-    /// Clears only update entries (`q:` prefix), preserving embed jobs (`e:` prefix).
+    /// Clears only update entries (`q:` prefix), preserving embed jobs
+    /// (`e:` prefix) and delete-bearing rows (ONE-1135 — an unconfirmed
+    /// clear must never drop a queued delete).
     ///
     /// Use this after convergence or when clearing stale updates without
     /// disrupting pending embed work.
     pub fn clear_updates(&self) -> Result<()> {
         let mut wtxn = self.vault.store.env.write_txn()?;
         let _ = self.ensure_last_update_seq_metadata(&mut wtxn)?;
+        let delete_bearing = delete_bearing_seqs_in_txn(&self.vault, &wtxn)?;
         let mut keys_to_delete = Vec::new();
         let iter = self.vault.store.sync_queue.iter(&wtxn)?;
         for result in iter {
             let (key, _) = result?;
-            if key.starts_with(UPDATE_PREFIX) {
+            if key.starts_with(UPDATE_PREFIX)
+                && !decode_update_key(key).is_ok_and(|seq| delete_bearing.contains(&seq))
+            {
                 keys_to_delete.push(key.to_vec());
             }
         }
@@ -246,14 +328,22 @@ impl SyncQueue {
 
     /// Clears update and embed-job rows for re-bootstrap.
     ///
-    /// Hard-delete sweep jobs (`h:`) and metadata counters (`m:`) are
+    /// Hard-delete sweep jobs (`h:`), metadata counters (`m:`), and
+    /// delete-bearing update rows + their `d:` markers (ONE-1135) are
     /// intentionally preserved. Reconnect overflow is about the offline
     /// update queue only; wiping sweep jobs after a GDPR delete receipt has
-    /// committed would strand historical carriers past the Art.17 SLA.
+    /// committed would strand historical carriers past the Art.17 SLA, and
+    /// wiping a delete-bearing update before the server confirmed it would
+    /// silently lose the delete itself.
     pub fn clear_all(&self) -> Result<()> {
         let mut wtxn = self.vault.store.env.write_txn()?;
         let preserved_seq = self.recover_last_update_seq_for_clear(&wtxn)?;
-        let mut keys_to_delete = self.keys_with_prefix(&wtxn, UPDATE_PREFIX)?;
+        let delete_bearing = delete_bearing_seqs_in_txn(&self.vault, &wtxn)?;
+        let mut keys_to_delete: Vec<Vec<u8>> = self
+            .keys_with_prefix(&wtxn, UPDATE_PREFIX)?
+            .into_iter()
+            .filter(|key| !decode_update_key(key).is_ok_and(|seq| delete_bearing.contains(&seq)))
+            .collect();
         keys_to_delete.extend(self.keys_with_prefix(&wtxn, EMBED_PREFIX)?);
 
         for key in &keys_to_delete {
@@ -268,7 +358,9 @@ impl SyncQueue {
         Ok(())
     }
 
-    /// Returns the number of valid update entries in the queue.
+    /// Returns the number of valid update entries in the queue, INCLUDING
+    /// delete-bearing rows (it matches what [`drain_updates`]
+    /// (Self::drain_updates) replays).
     pub fn len(&self) -> Result<usize> {
         let rtxn = self.vault.store.env.read_txn()?;
         let mut count = 0;
@@ -294,69 +386,52 @@ impl SyncQueue {
     }
 
     /// Returns true if the queue has reached its maximum capacity.
+    ///
+    /// Capacity gates the reconnect-overflow re-bootstrap (`is_full` →
+    /// [`clear_all`](Self::clear_all)), so it counts ONLY rows that clear
+    /// could actually drop: delete-bearing rows are exempt from every
+    /// unconfirmed clear (they are removed solely by the VV-confirmed
+    /// [`clear_through_confirmed`](Self::clear_through_confirmed)) and are
+    /// excluded here. Counting them would let pending unconfirmed deletes
+    /// wedge the queue permanently "full" — every reconnect re-firing a
+    /// re-bootstrap that frees nothing (ONE-1135 review rider).
     pub fn is_full(&self) -> Result<bool> {
-        Ok(self.len()? >= MAX_QUEUE_SIZE)
+        Ok(self.clearable_len()? >= MAX_QUEUE_SIZE)
     }
 
-    fn allocate_next_update_seq(&self, wtxn: &mut heed::RwTxn<'_>) -> Result<u64> {
-        let current = self.ensure_last_update_seq_metadata(wtxn)?;
-        let next = current
-            .checked_add(1)
-            .ok_or(Error::ArithmeticOverflow("sync queue sequence"))?;
-        if self
-            .vault
-            .store
-            .sync_queue
-            .get(&*wtxn, &encode_update_key(next))?
-            .is_some()
-        {
-            return Err(Error::CorruptedIndex("sync queue metadata"));
-        }
-        self.vault
-            .store
-            .sync_queue
-            .put(wtxn, LAST_UPDATE_SEQ_KEY, &next.to_le_bytes())?;
-        Ok(next)
-    }
-
-    /// Ensures queue sequence metadata exists and matches the persisted queue.
-    fn ensure_last_update_seq_metadata(&self, wtxn: &mut heed::RwTxn<'_>) -> Result<u64> {
-        let metadata = match self
-            .vault
-            .store
-            .sync_queue
-            .get(&*wtxn, LAST_UPDATE_SEQ_KEY)?
-        {
-            Some(raw) => decode_last_update_seq_metadata(raw).ok(),
-            None => None,
-        };
-        let max_valid_seq = self.max_valid_update_seq(wtxn)?;
-        let repaired = match metadata {
-            Some(seq) if seq >= max_valid_seq => seq,
-            _ => max_valid_seq,
-        };
-        self.vault
-            .store
-            .sync_queue
-            .put(wtxn, LAST_UPDATE_SEQ_KEY, &repaired.to_le_bytes())?;
-        Ok(repaired)
-    }
-
-    fn max_valid_update_seq(&self, wtxn: &heed::RwTxn<'_>) -> Result<u64> {
-        let mut max_valid_seq = 0_u64;
+    /// Counts the valid update rows the UNCONFIRMED clears may drop — i.e.
+    /// [`len`](Self::len) minus delete-bearing rows.
+    fn clearable_len(&self) -> Result<usize> {
+        let rtxn = self.vault.store.env.read_txn()?;
+        let delete_bearing = delete_bearing_seqs_in_txn(&self.vault, &rtxn)?;
+        let mut count = 0;
         let iter = self
             .vault
             .store
             .sync_queue
-            .prefix_iter(wtxn, UPDATE_PREFIX)?;
+            .prefix_iter(&rtxn, UPDATE_PREFIX)?;
         for result in iter {
-            let (key, _) = result?;
-            let decoded_seq = decode_update_key(key);
-            if let Ok(seq) = decoded_seq {
-                max_valid_seq = max_valid_seq.max(seq);
+            let (key, value) = result?;
+            match validate_update_row(key, value) {
+                Ok(()) => {
+                    if !decode_update_key(key).is_ok_and(|seq| delete_bearing.contains(&seq)) {
+                        count += 1;
+                    }
+                }
+                Err(Error::CorruptedIndex(_)) => continue,
+                Err(err) => return Err(err),
             }
         }
-        Ok(max_valid_seq)
+        Ok(count)
+    }
+
+    fn allocate_next_update_seq(&self, wtxn: &mut heed::RwTxn<'_>) -> Result<u64> {
+        allocate_next_update_seq_in_txn(&self.vault, wtxn)
+    }
+
+    /// Ensures queue sequence metadata exists and matches the persisted queue.
+    fn ensure_last_update_seq_metadata(&self, wtxn: &mut heed::RwTxn<'_>) -> Result<u64> {
+        ensure_last_update_seq_metadata_in_txn(&self.vault, wtxn)
     }
 
     fn recover_last_update_seq_for_clear(&self, wtxn: &heed::RwTxn<'_>) -> Result<u64> {
@@ -366,7 +441,7 @@ impl SyncQueue {
             .sync_queue
             .get(wtxn, LAST_UPDATE_SEQ_KEY)?
             .and_then(|raw| decode_last_update_seq_metadata(raw).ok());
-        let max_valid_seq = self.max_valid_update_seq(wtxn)?;
+        let max_valid_seq = max_valid_update_seq_in_txn(&self.vault, wtxn)?;
         Ok(metadata_seq.unwrap_or(0).max(max_valid_seq))
     }
 
@@ -399,11 +474,195 @@ impl SyncQueue {
             };
             if decode(key, value).is_err() {
                 self.vault.store.sync_queue.delete(&mut wtxn, key)?;
+                // Sidecar invariant (ONE-1135 review item 15): a `d:{seq}`
+                // marker must never outlive its `q:{seq}` row — a stale
+                // orphan marker would grant the delete-bearing clear/scrub
+                // exemptions to a future unrelated row if the sequence
+                // were ever reused after metadata loss. The marker itself
+                // protects no payload (the `q:` row IS the payload), so
+                // dropping it is safe exactly here: the `q:` row is
+                // provably gone, deleted in THIS txn. Embed keys never
+                // decode as update keys, so this arm is a no-op for the
+                // embed family.
+                if let Ok(seq) = decode_update_key(key) {
+                    self.vault
+                        .store
+                        .sync_queue
+                        .delete(&mut wtxn, &encode_delete_bearing_key(seq))?;
+                }
             }
         }
         wtxn.commit()?;
         Ok(())
     }
+}
+
+// ─── Delete-path transaction helpers (ONE-1135) ─────────────────────────────
+//
+// The carrier-15 scrub and the delete-bearing push run inside the DELETE
+// path's own LMDB transaction (`Vault::write_crdt_tombstone` /
+// `sync::window::replay_pending_tombstones`), atomically with the window-doc
+// snapshot persist — both DBs live in the same LMDB env. They are free
+// functions taking `&Vault` because the delete path holds `&Vault`, not the
+// `Arc<Vault>` a `SyncQueue` handle wants.
+
+fn allocate_next_update_seq_in_txn(vault: &Vault, wtxn: &mut heed::RwTxn<'_>) -> Result<u64> {
+    let current = ensure_last_update_seq_metadata_in_txn(vault, wtxn)?;
+    let next = current
+        .checked_add(1)
+        .ok_or(Error::ArithmeticOverflow("sync queue sequence"))?;
+    if vault
+        .store
+        .sync_queue
+        .get(&*wtxn, &encode_update_key(next))?
+        .is_some()
+    {
+        return Err(Error::CorruptedIndex("sync queue metadata"));
+    }
+    vault
+        .store
+        .sync_queue
+        .put(wtxn, LAST_UPDATE_SEQ_KEY, &next.to_le_bytes())?;
+    Ok(next)
+}
+
+fn ensure_last_update_seq_metadata_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+) -> Result<u64> {
+    let metadata = match vault.store.sync_queue.get(&*wtxn, LAST_UPDATE_SEQ_KEY)? {
+        Some(raw) => decode_last_update_seq_metadata(raw).ok(),
+        None => None,
+    };
+    let max_valid_seq = max_valid_update_seq_in_txn(vault, wtxn)?;
+    let repaired = match metadata {
+        Some(seq) if seq >= max_valid_seq => seq,
+        _ => max_valid_seq,
+    };
+    vault
+        .store
+        .sync_queue
+        .put(wtxn, LAST_UPDATE_SEQ_KEY, &repaired.to_le_bytes())?;
+    Ok(repaired)
+}
+
+/// Highest sequence number that must never be re-allocated: the max over
+/// surviving valid `q:` rows AND `d:{seq}` sidecar markers.
+///
+/// Including the markers is the fail-closed leg of the sidecar invariant
+/// (ONE-1135 review item 15): if the metadata cursor is lost after a
+/// delete-bearing `q:` row vanished (legacy prune, crash window), an
+/// orphan `d:` marker must never see its sequence reused — an unrelated
+/// future `q:` row at that seq would silently inherit every
+/// delete-bearing clear/scrub exemption.
+fn max_valid_update_seq_in_txn(vault: &Vault, wtxn: &heed::RwTxn<'_>) -> Result<u64> {
+    let mut max_valid_seq = 0_u64;
+    let iter = vault.store.sync_queue.prefix_iter(wtxn, UPDATE_PREFIX)?;
+    for result in iter {
+        let (key, _) = result?;
+        if let Ok(seq) = decode_update_key(key) {
+            max_valid_seq = max_valid_seq.max(seq);
+        }
+    }
+    for result in vault
+        .store
+        .sync_queue
+        .prefix_iter(wtxn, DELETE_BEARING_PREFIX)?
+    {
+        let (key, _) = result?;
+        if let Some(seq) = decode_delete_bearing_key(key) {
+            max_valid_seq = max_valid_seq.max(seq);
+        }
+    }
+    Ok(max_valid_seq)
+}
+
+/// Returns the set of sequence numbers carrying a `d:{seq:8BE}` sidecar
+/// marker. Malformed marker keys are ignored (they protect nothing).
+fn delete_bearing_seqs_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<HashSet<u64>> {
+    let mut seqs = HashSet::new();
+    for row in vault
+        .store
+        .sync_queue
+        .prefix_iter(txn, DELETE_BEARING_PREFIX)?
+    {
+        let (key, _) = row?;
+        if let Some(seq) = decode_delete_bearing_key(key) {
+            seqs.insert(seq);
+        }
+    }
+    Ok(seqs)
+}
+
+/// Pushes a delete-bearing update row + its `d:{seq:8BE}` marker inside the
+/// caller's transaction (the delete path commits it atomically with the
+/// window-doc snapshot persist and the carrier-15 scrub).
+///
+/// The [`DeleteBearingUpdate`] parameter is the confinement pin (ONE-1135
+/// review item 14): its single constructor is
+/// [`export_tombstone_commit_delta`](crate::sync::window::export_tombstone_commit_delta),
+/// so a `d:` marker — and the clear/scrub exemptions it grants — can only
+/// ever cover a real tombstone-commit delta, never arbitrary caller bytes.
+pub(crate) fn push_delete_bearing_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    window_key: &str,
+    update: &DeleteBearingUpdate,
+) -> Result<u64> {
+    let value = encode_update_value(window_key, update.as_bytes())?;
+    let seq = allocate_next_update_seq_in_txn(vault, wtxn)?;
+    vault
+        .store
+        .sync_queue
+        .put(wtxn, &encode_update_key(seq), &value)?;
+    vault
+        .store
+        .sync_queue
+        .put(wtxn, &encode_delete_bearing_key(seq), &[1u8])?;
+    Ok(seq)
+}
+
+/// ARCH-0038 carrier 15 ("Pending sync ops in the outgoing queue: drop ops
+/// within the redacted span before transmission"), fail-closed
+/// simplification (ONE-1135 OWNER-DECISION): drop EVERY pending `q:` row
+/// addressed to `window_key` — plus any malformed `q:` row, which cannot be
+/// proven payload-free — rather than inspecting opaque Loro update bytes
+/// for the redacted span. Over-dropping is healed by the window's
+/// full-resync marker (`fr:w:{key}`); leaking is not healable.
+///
+/// Delete-bearing rows are NEVER scrubbed: their payload is a
+/// tombstone-commit delta (tombstone value + key-delete ops — opaque ids
+/// only, no entity payload), and dropping one would lose a prior
+/// unconfirmed delete. `e:` / `h:` / `m:` and unknown key families are
+/// untouched.
+pub(crate) fn scrub_window_updates_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    window_key: &str,
+) -> Result<u32> {
+    let delete_bearing = delete_bearing_seqs_in_txn(vault, wtxn)?;
+    let mut doomed = Vec::new();
+    for row in vault.store.sync_queue.prefix_iter(&*wtxn, UPDATE_PREFIX)? {
+        let (key, value) = row?;
+        let Ok(seq) = decode_update_key(key) else {
+            doomed.push(key.to_vec());
+            continue;
+        };
+        if delete_bearing.contains(&seq) {
+            continue;
+        }
+        match decode_update_value_parts(value) {
+            Ok((row_window, _)) if row_window == window_key => doomed.push(key.to_vec()),
+            Ok(_) => {}
+            // Fail-closed: a row that cannot prove which window it belongs
+            // to cannot prove it is payload-free either.
+            Err(_) => doomed.push(key.to_vec()),
+        }
+    }
+    for key in &doomed {
+        vault.store.sync_queue.delete(wtxn, key)?;
+    }
+    Ok(u32::try_from(doomed.len()).unwrap_or(u32::MAX))
 }
 
 // ─── Key Encoding ────────────────────────────────────────────────────────────
@@ -414,6 +673,22 @@ fn encode_update_key(seq: u64) -> [u8; 10] {
     key[0..2].copy_from_slice(UPDATE_PREFIX);
     key[2..10].copy_from_slice(&seq.to_be_bytes());
     key
+}
+
+/// Encodes a delete-bearing marker key: `d:{seq:8BE}` (10 bytes).
+fn encode_delete_bearing_key(seq: u64) -> [u8; 10] {
+    let mut key = [0u8; 10];
+    key[0..2].copy_from_slice(DELETE_BEARING_PREFIX);
+    key[2..10].copy_from_slice(&seq.to_be_bytes());
+    key
+}
+
+/// Decodes the sequence number from a delete-bearing marker key.
+fn decode_delete_bearing_key(key: &[u8]) -> Option<u64> {
+    if key.len() != 10 || !key.starts_with(DELETE_BEARING_PREFIX) {
+        return None;
+    }
+    Some(u64::from_be_bytes(key[2..10].try_into().ok()?))
 }
 
 /// Decodes the sequence number from an update queue key.
@@ -649,6 +924,11 @@ mod tests {
         .unwrap();
         let embed_key = encode_embed_key(&embed_id);
 
+        // An UNKNOWN key family (`x:`) the queue does not own: every clear
+        // and scrub must leave foreign families untouched (ONE-1135).
+        let unknown_key = b"x:future-family";
+        let unknown_value = b"opaque";
+
         let mut wtxn = vault.store.env.write_txn().unwrap();
         vault
             .store
@@ -663,6 +943,11 @@ mod tests {
                 LAST_HARD_ERASE_SWEEP_SEQ_KEY,
                 &sweep_seq.to_le_bytes(),
             )
+            .unwrap();
+        vault
+            .store
+            .sync_queue
+            .put(&mut wtxn, unknown_key.as_slice(), unknown_value.as_slice())
             .unwrap();
         wtxn.commit().unwrap();
 
@@ -710,6 +995,494 @@ mod tests {
             Some(sweep_seq.to_le_bytes().as_slice()),
             "clear_all must preserve the hard-erase sweep cursor",
         );
+        assert_eq!(
+            vault
+                .store
+                .sync_queue
+                .get(&rtxn, unknown_key.as_slice())
+                .unwrap(),
+            Some(unknown_value.as_slice()),
+            "clear_all must preserve unknown key families",
+        );
+    }
+
+    /// ONE-1135: `push_delete_bearing` writes the `q:` row AND the pinned
+    /// `d:{seq:8BE}` sidecar marker. The marker key bytes are asserted as
+    /// LITERALS (`d`, `:`, 8-byte big-endian sequence), not via the
+    /// encoder.
+    #[test]
+    fn push_delete_bearing_writes_literal_sidecar_marker() {
+        let vault = test_vault();
+        let queue = SyncQueue::new(vault.clone()).unwrap();
+
+        queue.push("2026-03", &[1]).unwrap();
+        let seq = queue.push_delete_bearing("2026-03", &[9, 9]).unwrap();
+        assert_eq!(seq, 2);
+
+        let expected_marker: Vec<u8> = [b'd', b':', 0, 0, 0, 0, 0, 0, 0, 2].to_vec();
+        let rtxn = vault.store.env.read_txn().unwrap();
+        assert_eq!(
+            vault.store.sync_queue.get(&rtxn, &expected_marker).unwrap(),
+            Some([1u8].as_slice()),
+            "delete-bearing sidecar marker must be d: + seq u64 BE",
+        );
+        // The q: row itself replays like any other update.
+        drop(rtxn);
+        let updates = queue.drain_updates().unwrap();
+        assert_eq!(updates.len(), 2);
+        assert_eq!(updates[1].seq, 2);
+        assert_eq!(updates[1].encoded, vec![9, 9]);
+    }
+
+    /// ONE-1135 AC3: delete-bearing rows are EXEMPT from the optimistic
+    /// `clear_through` (kept until VV-confirmed); the VV-confirmed variant
+    /// removes the row AND its sidecar marker. An implementation that
+    /// optimistically clears delete rows FAILS here — that is a silently
+    /// lost offline GDPR delete.
+    #[test]
+    fn clear_through_keeps_delete_bearing_until_confirmed() {
+        let vault = test_vault();
+        let queue = SyncQueue::new(vault.clone()).unwrap();
+
+        queue.push("2026-03", &[1]).unwrap();
+        let delete_seq = queue.push_delete_bearing("2026-03", &[2]).unwrap();
+        queue.push("2026-03", &[3]).unwrap();
+
+        // Optimistic clear after an unconfirmed replay.
+        queue.clear_through(3).unwrap();
+        let updates = queue.drain_updates().unwrap();
+        assert_eq!(
+            updates.len(),
+            1,
+            "non-delete rows cleared, delete-bearing row kept"
+        );
+        assert_eq!(updates[0].seq, delete_seq);
+        assert_eq!(updates[0].encoded, vec![2]);
+
+        let marker = encode_delete_bearing_key(delete_seq);
+        let rtxn = vault.store.env.read_txn().unwrap();
+        assert!(
+            vault
+                .store
+                .sync_queue
+                .get(&rtxn, &marker)
+                .unwrap()
+                .is_some(),
+            "sidecar marker survives the optimistic clear"
+        );
+        drop(rtxn);
+
+        // Sequence allocation continues monotonically past the kept row.
+        let next = queue.push("2026-03", &[4]).unwrap();
+        assert_eq!(next, 4);
+
+        // VV-confirmed clear removes the delete row and its marker.
+        queue.clear_through_confirmed(delete_seq).unwrap();
+        let updates = queue.drain_updates().unwrap();
+        assert_eq!(updates.len(), 1);
+        assert_eq!(updates[0].seq, 4);
+        let rtxn = vault.store.env.read_txn().unwrap();
+        assert!(
+            vault
+                .store
+                .sync_queue
+                .get(&rtxn, &marker)
+                .unwrap()
+                .is_none(),
+            "confirmed clear must remove the sidecar marker too"
+        );
+    }
+
+    /// ONE-1135: the unconfirmed bulk clears (`clear_updates`, `clear_all`)
+    /// preserve delete-bearing rows and their markers too.
+    #[test]
+    fn bulk_clears_preserve_delete_bearing_rows() {
+        for clear in ["clear_updates", "clear_all"] {
+            let vault = test_vault();
+            let queue = SyncQueue::new(vault.clone()).unwrap();
+
+            queue.push("2026-03", &[1]).unwrap();
+            let delete_seq = queue.push_delete_bearing("2026-03", &[2]).unwrap();
+
+            match clear {
+                "clear_updates" => queue.clear_updates().unwrap(),
+                _ => queue.clear_all().unwrap(),
+            }
+
+            let updates = queue.drain_updates().unwrap();
+            assert_eq!(updates.len(), 1, "{clear} must keep the delete row");
+            assert_eq!(updates[0].seq, delete_seq, "{clear}");
+            let rtxn = vault.store.env.read_txn().unwrap();
+            assert!(
+                vault
+                    .store
+                    .sync_queue
+                    .get(&rtxn, &encode_delete_bearing_key(delete_seq))
+                    .unwrap()
+                    .is_some(),
+                "{clear} must keep the sidecar marker"
+            );
+        }
+    }
+
+    /// ONE-1135 review item 14: ordinary pushes can NEVER acquire a
+    /// delete-bearing marker. The `d:` family is written exclusively by
+    /// the tombstone-commit path (`push_delete_bearing_in_txn` taking a
+    /// `DeleteBearingUpdate`, constructible only by
+    /// `export_tombstone_commit_delta`); `SyncQueue::push` writes the `q:`
+    /// row alone, so its rows keep ZERO clear/scrub exemptions.
+    #[test]
+    fn ordinary_push_never_acquires_delete_bearing_marker() {
+        let vault = test_vault();
+        let queue = SyncQueue::new(vault.clone()).unwrap();
+
+        queue.push("2026-03", &[1]).unwrap();
+        queue.push("2026-04", &[2]).unwrap();
+
+        let rtxn = vault.store.env.read_txn().unwrap();
+        let markers = vault
+            .store
+            .sync_queue
+            .prefix_iter(&rtxn, DELETE_BEARING_PREFIX)
+            .unwrap()
+            .count();
+        assert_eq!(markers, 0, "ordinary q: rows must have no d: sidecar");
+        drop(rtxn);
+
+        // Consequently the unconfirmed clear drops them all.
+        queue.clear_updates().unwrap();
+        assert_eq!(queue.len().unwrap(), 0);
+    }
+
+    /// ONE-1135 review item 15: a `d:{seq}` sidecar marker must never
+    /// outlive its `q:{seq}` row. When the malformed-row prune drops a
+    /// delete-bearing `q:` row (key decodes, value no longer does), the
+    /// matching `d:` marker is deleted in the SAME write txn — a stale
+    /// orphan marker would otherwise grant the delete-bearing clear/scrub
+    /// exemptions to a future unrelated row at a reused sequence.
+    #[test]
+    fn prune_removes_sidecar_marker_with_its_malformed_q_row() {
+        let vault = test_vault();
+        let queue = SyncQueue::new(vault.clone()).unwrap();
+
+        queue.push("2026-03", &[1]).unwrap();
+        let delete_seq = queue.push_delete_bearing("2026-03", &[2]).unwrap();
+
+        // Corrupt the delete-bearing row's VALUE in place (torn write /
+        // bitrot shape): the key still decodes, the value does not.
+        let mut wtxn = vault.store.env.write_txn().unwrap();
+        vault
+            .store
+            .sync_queue
+            .put(&mut wtxn, &encode_update_key(delete_seq), &[0])
+            .unwrap();
+        wtxn.commit().unwrap();
+
+        // drain_updates prunes rows whose decode fails.
+        let updates = queue.drain_updates().unwrap();
+        assert_eq!(updates.len(), 1);
+        assert_eq!(updates[0].seq, 1);
+
+        let rtxn = vault.store.env.read_txn().unwrap();
+        assert!(
+            vault
+                .store
+                .sync_queue
+                .get(&rtxn, &encode_update_key(delete_seq))
+                .unwrap()
+                .is_none(),
+            "malformed q: row must be pruned"
+        );
+        assert!(
+            vault
+                .store
+                .sync_queue
+                .get(&rtxn, &encode_delete_bearing_key(delete_seq))
+                .unwrap()
+                .is_none(),
+            "d: sidecar must be deleted in the same txn as its q: row"
+        );
+    }
+
+    /// ONE-1135 review item 15, fail-closed leg: an orphan `d:` marker
+    /// with no matching `q:` row (legacy prune before this fix, crash
+    /// window) must never see its sequence reused. Sequence recovery
+    /// includes marker seqs, so after metadata loss a later unrelated `q:`
+    /// row cannot land on the marked seq and inherit the delete-bearing
+    /// exemptions. The orphan marker itself is KEPT (it protects nothing,
+    /// but its presence keeps the seq out of circulation — fail closed).
+    #[test]
+    fn orphan_sidecar_marker_never_poisons_a_reused_seq() {
+        let vault = test_vault();
+        let queue = SyncQueue::new(vault.clone()).unwrap();
+
+        // Inject an orphan d:1 with NO q: rows and NO metadata cursor —
+        // the post-crash shape where pre-fix recovery rebuilt the cursor
+        // from q: rows alone and handed out seq 1 again.
+        let mut wtxn = vault.store.env.write_txn().unwrap();
+        vault
+            .store
+            .sync_queue
+            .put(&mut wtxn, &encode_delete_bearing_key(1), &[1u8])
+            .unwrap();
+        wtxn.commit().unwrap();
+
+        let seq = queue.push("2026-03", &[7]).unwrap();
+        assert_eq!(seq, 2, "orphan marker seq must never be reused");
+
+        // The new ordinary row is NOT delete-bearing: the optimistic clear
+        // drops it (pre-fix, at the reused seq 1, the orphan marker
+        // exempted it — a silently undeletable garbage row).
+        queue.clear_through(seq).unwrap();
+        assert_eq!(
+            queue.len().unwrap(),
+            0,
+            "ordinary row must not inherit the delete-bearing exemption"
+        );
+
+        let rtxn = vault.store.env.read_txn().unwrap();
+        assert!(
+            vault
+                .store
+                .sync_queue
+                .get(&rtxn, &encode_delete_bearing_key(1))
+                .unwrap()
+                .is_some(),
+            "orphan marker kept — fail closed, seq stays blocked"
+        );
+    }
+
+    /// ONE-1135 AC4 (carrier-15 scrub): only the target window's
+    /// non-delete-bearing `q:` rows are dropped. Delete-bearing rows,
+    /// other windows' rows, and the `e:` / `h:` / `m:` / unknown (`x:`)
+    /// families are untouched.
+    #[test]
+    fn scrub_window_updates_drops_only_target_window_payload_rows() {
+        let vault = test_vault();
+        let queue = SyncQueue::new(vault.clone()).unwrap();
+
+        let target_payload = queue.push("2026-02", &[0xAA]).unwrap();
+        let other_window = queue.push("2026-03", &[0xBB]).unwrap();
+        let target_delete = queue.push_delete_bearing("2026-02", &[0xCC]).unwrap();
+
+        let embed_id = EntityId::now();
+        queue.push_embed_job(&embed_id, 2).unwrap();
+
+        let sweep_key = encode_hard_erase_sweep_key(1);
+        let sweep_value = encode_hard_erase_sweep_job(
+            RedactionScope::entity(&EntityId::now()),
+            HardEraseSweepExtras::default(),
+            1_772_000_000,
+        )
+        .unwrap();
+        let mut wtxn = vault.store.env.write_txn().unwrap();
+        vault
+            .store
+            .sync_queue
+            .put(&mut wtxn, &sweep_key, &sweep_value)
+            .unwrap();
+        vault
+            .store
+            .sync_queue
+            .put(
+                &mut wtxn,
+                b"x:future-family".as_slice(),
+                b"opaque".as_slice(),
+            )
+            .unwrap();
+        wtxn.commit().unwrap();
+
+        let scrubbed = vault
+            .with_write_txn(|wtxn| scrub_window_updates_in_txn(&vault, wtxn, "2026-02"))
+            .unwrap();
+        assert_eq!(scrubbed, 1, "exactly the target payload row is dropped");
+
+        let updates = queue.drain_updates().unwrap();
+        let seqs: Vec<u64> = updates.iter().map(|u| u.seq).collect();
+        assert!(
+            !seqs.contains(&target_payload),
+            "target-window payload row must be scrubbed (carrier 15)"
+        );
+        assert!(
+            seqs.contains(&other_window),
+            "other windows' rows must survive"
+        );
+        assert!(
+            seqs.contains(&target_delete),
+            "delete-bearing rows must NEVER be scrubbed — dropping one loses a prior delete"
+        );
+
+        let rtxn = vault.store.env.read_txn().unwrap();
+        assert!(
+            vault
+                .store
+                .sync_queue
+                .get(&rtxn, &encode_embed_key(&embed_id))
+                .unwrap()
+                .is_some(),
+            "e: family untouched"
+        );
+        assert!(
+            vault
+                .store
+                .sync_queue
+                .get(&rtxn, &sweep_key)
+                .unwrap()
+                .is_some(),
+            "h: family untouched"
+        );
+        assert!(
+            vault
+                .store
+                .sync_queue
+                .get(&rtxn, LAST_UPDATE_SEQ_KEY)
+                .unwrap()
+                .is_some(),
+            "m: family untouched"
+        );
+        assert!(
+            vault
+                .store
+                .sync_queue
+                .get(&rtxn, b"x:future-family".as_slice())
+                .unwrap()
+                .is_some(),
+            "unknown families untouched"
+        );
+    }
+
+    /// Fail-closed: a malformed `q:` row cannot prove which window it
+    /// belongs to, so the carrier-15 scrub drops it (over-dropping is
+    /// healed by the full resync; leaking is not healable).
+    #[test]
+    fn scrub_window_updates_drops_malformed_rows() {
+        let vault = test_vault();
+        let queue = SyncQueue::new(vault.clone()).unwrap();
+        queue.push("2026-03", &[1]).unwrap();
+
+        let bad_key = b"q:\x00".to_vec();
+        let well_formed_key = encode_update_key(7);
+        let mut wtxn = vault.store.env.write_txn().unwrap();
+        vault
+            .store
+            .sync_queue
+            .put(&mut wtxn, &bad_key, &[1, b'x'])
+            .unwrap();
+        vault
+            .store
+            .sync_queue
+            .put(&mut wtxn, &well_formed_key, &[0])
+            .unwrap();
+        wtxn.commit().unwrap();
+
+        vault
+            .with_write_txn(|wtxn| scrub_window_updates_in_txn(&vault, wtxn, "2026-02"))
+            .unwrap();
+
+        let rtxn = vault.store.env.read_txn().unwrap();
+        assert!(
+            vault
+                .store
+                .sync_queue
+                .get(&rtxn, &bad_key)
+                .unwrap()
+                .is_none(),
+            "malformed key must be dropped by the scrub"
+        );
+        assert!(
+            vault
+                .store
+                .sync_queue
+                .get(&rtxn, &well_formed_key)
+                .unwrap()
+                .is_none(),
+            "row with undecodable value must be dropped by the scrub"
+        );
+        assert!(
+            vault
+                .store
+                .sync_queue
+                .get(&rtxn, &encode_update_key(1))
+                .unwrap()
+                .is_some(),
+            "well-formed rows of OTHER windows survive"
+        );
+    }
+
+    /// ONE-1135 review rider: delete-bearing rows are exempt from every
+    /// unconfirmed clear, so they must also be exempt from the capacity
+    /// accounting that TRIGGERS the re-bootstrap (`is_full` → `clear_all`).
+    /// Pre-fix, a queue holding `MAX_QUEUE_SIZE` delete-bearing rows
+    /// reported full forever: `clear_all` preserved every row, the overflow
+    /// check re-fired on each reconnect, and nothing was ever freed — a
+    /// permanent re-bootstrap loop.
+    #[test]
+    fn is_full_excludes_delete_bearing_rows_from_capacity() {
+        let vault = test_vault();
+        let queue = SyncQueue::new(vault.clone()).unwrap();
+
+        // Seed MAX_QUEUE_SIZE delete-bearing rows in ONE txn (the public
+        // push would be 10k commits) — exact row + marker bytes the delete
+        // path writes.
+        let value = encode_update_value("2026-03", &[9]).unwrap();
+        let mut wtxn = vault.store.env.write_txn().unwrap();
+        for seq in 1..=(MAX_QUEUE_SIZE as u64) {
+            vault
+                .store
+                .sync_queue
+                .put(&mut wtxn, &encode_update_key(seq), &value)
+                .unwrap();
+            vault
+                .store
+                .sync_queue
+                .put(&mut wtxn, &encode_delete_bearing_key(seq), &[1u8])
+                .unwrap();
+        }
+        vault
+            .store
+            .sync_queue
+            .put(
+                &mut wtxn,
+                LAST_UPDATE_SEQ_KEY,
+                &(MAX_QUEUE_SIZE as u64).to_le_bytes(),
+            )
+            .unwrap();
+        wtxn.commit().unwrap();
+
+        assert_eq!(
+            queue.len().unwrap(),
+            MAX_QUEUE_SIZE,
+            "len still counts every replayable row"
+        );
+        assert!(
+            !queue.is_full().unwrap(),
+            "unconfirmed-clear-exempt rows must not count toward overflow capacity"
+        );
+
+        // The re-bootstrap path frees clearable rows and converges to
+        // not-full instead of looping.
+        let normal_seq = queue.push("2026-03", &[1]).unwrap();
+        queue.clear_all().unwrap();
+        assert!(!queue.is_full().unwrap());
+        assert_eq!(
+            queue.len().unwrap(),
+            MAX_QUEUE_SIZE,
+            "delete-bearing rows preserved, the normal row dropped"
+        );
+        let remaining: Vec<u64> = queue
+            .drain_updates()
+            .unwrap()
+            .iter()
+            .map(|u| u.seq)
+            .collect();
+        assert!(!remaining.contains(&normal_seq));
+
+        // VV-confirmed clear is what actually frees the delete rows.
+        queue
+            .clear_through_confirmed(MAX_QUEUE_SIZE as u64)
+            .unwrap();
+        assert_eq!(queue.len().unwrap(), 0);
+        assert!(!queue.is_full().unwrap());
     }
 
     #[test]

@@ -142,6 +142,15 @@ pub struct Vault {
     /// rewrites the manifest. Reopening cleanly also restores trust via
     /// the regular handshake path.
     pub(crate) text_index_trusted: std::sync::atomic::AtomicBool,
+    /// Live-window delete-routing seam (M4-10 / ONE-1135): a `Weak` to the
+    /// production [`crate::sync::manager::WindowManager`], set by
+    /// [`crate::sync::manager::WindowManager::attach_to_vault`]. When a
+    /// deleted entity's window is OPEN, `write_crdt_tombstone` commits
+    /// through the registry-owned live doc instead of a transient snapshot
+    /// copy. `Weak` so the vault never keeps a dropped manager (and its
+    /// observer subscriptions) alive.
+    #[cfg(feature = "sync")]
+    pub(crate) live_window_manager: std::sync::Mutex<std::sync::Weak<crate::sync::WindowManager>>,
 }
 
 impl Vault {
@@ -208,7 +217,46 @@ impl Vault {
             config,
             analyzer,
             text_index_trusted: std::sync::atomic::AtomicBool::new(text_index_trusted),
+            #[cfg(feature = "sync")]
+            live_window_manager: std::sync::Mutex::new(std::sync::Weak::new()),
         })
+    }
+
+    /// Registers the production window manager as the live-window delete
+    /// router (M4-10 / ONE-1135). Called by
+    /// [`crate::sync::manager::WindowManager::attach_to_vault`].
+    #[cfg(feature = "sync")]
+    pub(crate) fn attach_live_window_manager(
+        &self,
+        manager: std::sync::Weak<crate::sync::WindowManager>,
+    ) {
+        *self
+            .live_window_manager
+            .lock()
+            .unwrap_or_else(|e| e.into_inner()) = manager;
+    }
+
+    /// Returns the registry-owned live window for `key` — paired with the
+    /// manager's [`crate::sync::bridge::Materializer`], so the delete path
+    /// can serialize its live-doc tombstone commit against Observer B
+    /// callbacks — if a manager is attached AND currently has the window
+    /// open. Lookup only — never opens a window (a delete must not fault a
+    /// month into memory).
+    #[cfg(feature = "sync")]
+    fn live_window(
+        &self,
+        key: &crate::sync::WindowKey,
+    ) -> Option<(
+        std::sync::Arc<crate::sync::window::LoadedWindow>,
+        std::sync::Arc<crate::sync::bridge::Materializer>,
+    )> {
+        let manager = self
+            .live_window_manager
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .upgrade()?;
+        let window = manager.window(key)?;
+        Some((window, std::sync::Arc::clone(manager.materializer())))
     }
 
     /// Internal guard: read paths over the text index must refuse to score
@@ -1773,6 +1821,35 @@ impl Vault {
     /// persisted: `false` only in non-`sync` builds, where the `pt:`
     /// pending-tombstone marker carries the deletion intent until a
     /// sync-enabled boot replays it.
+    ///
+    /// ONE-1135 (delete-propagation transport):
+    /// - **Live routing**: when the window is OPEN (registry lookup via the
+    ///   attached [`crate::sync::WindowManager`]), the tombstone commits
+    ///   through the registry-owned live doc — Observer A persists the `u:`
+    ///   row and every registry holder sees the delete — never through a
+    ///   parallel transient copy whose `d:w:` export a live
+    ///   `persist_state` would clobber.
+    /// - **Transient path** (window NOT open): the doc is import-merged
+    ///   from the persisted snapshot + pending `u:` rows
+    ///   ([`crate::sync::window::load_window_from_state`]) — never a blind
+    ///   overwrite.
+    /// - **Delete-bearing queue row**: the tombstone-commit delta is pushed
+    ///   to the offline queue with the `d:{seq}` sidecar marker, so an
+    ///   OFFLINE delete is delivered on next connect and survives the
+    ///   optimistic clear until VV-confirmed (M4-12).
+    /// - **Carrier-15 scrub** (hard reasons): pre-existing `q:` rows for
+    ///   this window and the persisted `u:w:` rows the snapshot subsumed
+    ///   are dropped, and the `fr:w:{key}` full-resync marker is set
+    ///   (ARCH-0038 carriers 13–15; fail-closed — over-drop + full resync,
+    ///   never leak).
+    ///
+    /// OWNER-DECISION (ONE-1135, live-path commit origin): the live-doc
+    /// commit is tagged `BRIDGE_ORIGIN`. Observer A fires for ALL local
+    /// commits and still persists the `u:` row; Observer B MUST skip it —
+    /// the local delete path owns the LMDB purge under the pinned
+    /// tombstone → purge → receipt ordering, and a B-side replay here would
+    /// purge BEFORE the purge transaction, voiding the local receipt and
+    /// the `DeleteEntityOutcome` (mirrors `replay_pending_tombstones`).
     #[cfg(feature = "sync")]
     fn write_crdt_tombstone(
         &self,
@@ -1780,34 +1857,133 @@ impl Vault {
         window_ts: u64,
         value: &TombstoneValueV2,
     ) -> Result<bool> {
+        use crate::sync::bridge::BRIDGE_ORIGIN;
         use crate::sync::loro_support::{doc_version_vector, export_snapshot};
         use crate::sync::schema::create_window_doc;
         use crate::sync::types::WindowKey;
-        use crate::sync::window::{apply_tombstone_to_window_doc, load_window_from_state};
+        use crate::sync::window::{
+            apply_tombstone_to_window_doc, export_tombstone_commit_delta, load_window_from_state,
+            merge_persisted_state_into_doc,
+        };
+        use loro::CommitOptions;
 
         let window_key = WindowKey::from_timestamp(window_ts);
+
+        if let Some((window, materializer)) = self.live_window(&window_key) {
+            // Live path: merge the on-disk record first (clobber guard —
+            // a tombstone persisted transiently while this window was open
+            // must survive the snapshot export below), then commit the
+            // delete through the SHARED doc.
+            //
+            // The merge runs OUTSIDE the materializer lock: importing into
+            // an observed doc fires Observer B synchronously on this
+            // thread, and the callback takes the (non-reentrant) lock
+            // itself.
+            let merged_update_keys =
+                merge_persisted_state_into_doc(self, &window.doc, &window_key)?;
+            // The tombstone commit + exports run UNDER the materializer
+            // lock: Observer B's tombstone-check + LMDB-materialize is
+            // atomic under that lock, so a concurrent remote re-put can no
+            // longer check the tombstones map BEFORE this commit and write
+            // the deleted body back AFTER the purge txn that follows
+            // (resurrection race). Deadlock-free: the BRIDGE_ORIGIN commit
+            // is rejected by Observer B callbacks BEFORE they lock, and
+            // Observer A never takes this lock. Lock order materializer →
+            // LMDB txn matches every other holder; the registry lock is
+            // NOT held here (manager lock-order pin).
+            let (delete_update, snapshot, vv) = {
+                let _guard = materializer.lock();
+                let vv_before = window.doc.oplog_vv();
+                apply_tombstone_to_window_doc(&window.doc, id, &value.encode())?;
+                window
+                    .doc
+                    .commit_with(CommitOptions::new().origin(BRIDGE_ORIGIN));
+                let delete_update = export_tombstone_commit_delta(&window.doc, &vv_before)?;
+                let snapshot = export_snapshot(&window.doc)?;
+                let vv = doc_version_vector(&window.doc);
+                (delete_update, snapshot, vv)
+            };
+            self.finish_crdt_tombstone_persist(
+                &window_key,
+                &snapshot,
+                &vv,
+                value,
+                delete_update.as_ref(),
+                &merged_update_keys,
+            )?;
+            return Ok(true);
+        }
+
+        // Transient path (window not open): the loaded doc IS the
+        // import-merge of `d:w:` + pending `u:` rows.
+        let merged_update_keys = self.sync_state_keys_with_prefix(&format!("u:w:{window_key}:"))?;
         let doc = match load_window_from_state(self, "local", &window_key) {
             Ok(doc) => doc,
             Err(Error::WindowNotFound { .. }) => create_window_doc("local", &window_key),
             Err(err) => return Err(err),
         };
+        let vv_before = doc.oplog_vv();
         apply_tombstone_to_window_doc(&doc, id, &value.encode())?;
         doc.commit();
+        let delete_update = export_tombstone_commit_delta(&doc, &vv_before)?;
 
         let snapshot = export_snapshot(&doc)?;
         let vv = doc_version_vector(&doc);
-        self.with_write_txn(|wtxn| {
-            let doc_key = format!("d:w:{window_key}");
-            self.store.sync_state.put(wtxn, &doc_key, &snapshot)?;
-
-            let sv_key = format!("sv:w:{window_key}");
-            self.store.sync_state.put(wtxn, &sv_key, &vv)?;
-
-            let svf_key = format!("svf:w:{window_key}");
-            self.store.sync_state.put(wtxn, &svf_key, &[1_u8])?;
-            Ok(())
-        })?;
+        self.finish_crdt_tombstone_persist(
+            &window_key,
+            &snapshot,
+            &vv,
+            value,
+            delete_update.as_ref(),
+            &merged_update_keys,
+        )?;
         Ok(true)
+    }
+
+    /// One transaction for the delete path's sync_state / sync_queue
+    /// bookkeeping (both DBs share the LMDB env): persist the window-doc
+    /// snapshot triple, queue the delete-bearing update, and — for hard
+    /// reasons — run the carrier-15 scrub + set the `fr:w:{key}`
+    /// full-resync marker (consumer lands in M4-12).
+    #[cfg(feature = "sync")]
+    fn finish_crdt_tombstone_persist(
+        &self,
+        window_key: &crate::sync::WindowKey,
+        snapshot: &[u8],
+        vv: &[u8],
+        value: &TombstoneValueV2,
+        delete_update: Option<&crate::sync::window::DeleteBearingUpdate>,
+        scrubbed_update_keys: &[String],
+    ) -> Result<()> {
+        let is_hard = value.reason.is_hard();
+        self.with_write_txn(|wtxn| {
+            crate::sync::window::persist_window_doc_in_txn(self, wtxn, window_key, snapshot, vv)?;
+            if is_hard {
+                // ARCH-0038 carrier 15: pending `q:` rows for this window
+                // may carry the deleted payload — drop them all (fail-closed
+                // over-drop; delete-bearing rows are preserved inside the
+                // scrub). The `u:w:` rows the snapshot just subsumed are
+                // active payload carriers too.
+                crate::sync::queue::scrub_window_updates_in_txn(self, wtxn, window_key.as_str())?;
+                for update_key in scrubbed_update_keys {
+                    self.store.sync_state.delete(wtxn, update_key)?;
+                }
+                // Carriers 13–14: this window's sync state is no longer a
+                // faithful delta source — mark it for a full per-window
+                // resync on the next connect.
+                let fr_key = format!("fr:w:{window_key}");
+                self.store.sync_state.put(wtxn, &fr_key, &[1_u8])?;
+            }
+            if let Some(update) = delete_update {
+                crate::sync::queue::push_delete_bearing_in_txn(
+                    self,
+                    wtxn,
+                    window_key.as_str(),
+                    update,
+                )?;
+            }
+            Ok(())
+        })
     }
 
     #[cfg(not(feature = "sync"))]
