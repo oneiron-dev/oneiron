@@ -31,10 +31,11 @@ use crate::limits::{
 };
 use crate::provenance::{
     EdgeProvenanceClaimBody, EdgeRef, PREDICATE_EDGE_PROVENANCE, ProvenancePrecedence,
-    close_record_for_supersession, decode_actor_class_evidence, decode_edge_provenance_body,
-    derive_confirmation_status, downgrade_edge_to_bare, encode_actor_class_evidence,
-    encode_edge_provenance_value, restamp_edge_flags, retract_record, validate_actor_class,
-    validate_edge_provenance_value, winner_index,
+    close_record_for_supersession, decode_edge_provenance_body, decode_model_entity_body,
+    derive_confirmation_status, downgrade_edge_to_bare, encode_edge_provenance_value,
+    encode_model_entity_body, resolve_persisted_actor_class, restamp_edge_flags, retract_record,
+    validate_actor_class, validate_edge_provenance_value, validate_model_substrate_field,
+    winner_index,
 };
 use crate::store::{
     DB_MANIFEST, HnswCompatibilityState, MODEL_ID_KEY, STORAGE_ABI_VERSION_KEY,
@@ -43,10 +44,10 @@ use crate::store::{
     lmdb_database_open_guard,
 };
 use crate::types::{
-    EDGE_KEY_LEN, ENTITY_ID_LEN, ENTITY_TYPE_CLAIM, ENTITY_TYPE_REDACTION_AUDIT, EdgeActorClass,
-    EdgeConfirmationStatus, EdgeInfo, EdgeKind, EdgeProvenanceFlags, EdgeValueLayout, EntityId,
-    ScoredEntity, TimeRange, Vad, VaultConfig, bytes_to_hex_lower, decode_edge_value_for_kind,
-    edge_value_layout_for_kind,
+    EDGE_KEY_LEN, ENTITY_ID_LEN, ENTITY_TYPE_CLAIM, ENTITY_TYPE_MODEL, ENTITY_TYPE_REDACTION_AUDIT,
+    EdgeActorClass, EdgeConfirmationStatus, EdgeInfo, EdgeKind, EdgeProvenanceFlags,
+    EdgeValueLayout, EntityId, ScoredEntity, TimeRange, Vad, VaultConfig, bytes_to_hex_lower,
+    decode_edge_value_for_kind, edge_value_layout_for_kind,
 };
 use crate::{
     BatchBuilder, ContextPackBuilder, MaintenanceBuilder, PipelineBuilder, TxnBatchBuilder, bm25,
@@ -496,10 +497,17 @@ impl Vault {
     ///    ([`Error::EntityNotFound`]) and the CALLER-SUPPLIED `actor_class`
     ///    must be compatible with the actor entity's kind
     ///    ([`Error::ActorClassMismatch`]; never defaulted). The validated
-    ///    class is persisted on the wrapping Claim's `evid` field so a later
-    ///    winner refresh can restamp a HISTORICAL Claim's flags (see the
-    ///    provenance module docs);
-    /// 4. supersession (retractionRules SUPERSEDE + D14) — an incoming
+    ///    class is persisted as the value record's `actor_class` BODY key
+    ///    (ONE-1138 / ONE-1112 C2 relocation — the wrapper's `evid` stays
+    ///    empty) so a later winner refresh can restamp a HISTORICAL Claim's
+    ///    flags (see the provenance module docs). A caller-set
+    ///    `body.actor_class` that CONFLICTS with the `actor_class` parameter
+    ///    is rejected typed ([`Error::InvalidProvenanceBody`]);
+    /// 4. substrate gate (ONE-1138) — when `body.substrate_ref` is present
+    ///    it must name a stored MODEL (type byte 121) entity
+    ///    ([`Error::InvalidModelSubstrate`] otherwise); absent =
+    ///    unrecorded-and-valid;
+    /// 5. supersession (retractionRules SUPERSEDE + D14) — an incoming
     ///    `learned_at` OLDER than the live frontier for this EdgeRef is
     ///    rejected typed ([`Error::ProvenancePrecedenceViolation`]); every
     ///    live Claim STRICTLY older than the incoming one is closed in the
@@ -507,19 +515,19 @@ impl Vault {
     ///    incoming `learned_at` when absent, envelope `occurred.end`
     ///    refreshed per D15 — closed, not deleted, still readable);
     ///    equal-`learned_at` Claims COEXIST live;
-    /// 5. the Claim entity (type 0, predicate
+    /// 6. the Claim entity (type 0, predicate
     ///    [`crate::provenance::PREDICATE_EDGE_PROVENANCE`], `subj` = the
-    ///    33-byte EdgeRef, `val` = the pinned 7-field record) is written
+    ///    33-byte EdgeRef, `val` = the pinned 10-key record) is written
     ///    through the `pub(crate)` reserved-namespace door with full ONE-1104
     ///    structural validation;
-    /// 6. a `claim_of` edge (u8 = 5, structural 12 B) is written from the
+    /// 7. a `claim_of` edge (u8 = 5, structural 12 B) is written from the
     ///    Claim to the subject edge's SOURCE entity (D12);
-    /// 7. the subject edge value is re-stamped to 26 bytes from the WINNER
+    /// 8. the subject edge value is re-stamped to 26 bytes from the WINNER
     ///    among post-write live Claims under the documented total D14 order
     ///    (greatest `learned_at`, then `confidence`, then claim-id bytes) —
     ///    NOT necessarily this Claim — with IDENTICAL bytes in `edges_out`
     ///    and `edges_in` and the first 24 bytes preserved verbatim;
-    /// 8. PPR caches for the subject edge's endpoints are invalidated.
+    /// 9. PPR caches for the subject edge's endpoints are invalidated.
     ///
     /// The Claim envelope's `occurred` interval derives from the validity
     /// window per D15: absent `valid_from` → `learned_at`; absent `valid_to`
@@ -527,7 +535,7 @@ impl Vault {
     /// [`Error::InvalidProvenanceBody`] — never reordered. The wrapping
     /// Claim stores `conf` = `body.confidence` and `from`/`to` =
     /// `valid_from`/`valid_to` (claim-layer mirrors of the authoritative
-    /// 7-field record) with `appr` = `auto`, `life` = `active`.
+    /// 10-key record) with `appr` = `auto`, `life` = `active`.
     pub fn put_edge_provenance(
         &self,
         claim_id: &EntityId,
@@ -652,6 +660,95 @@ impl Vault {
         Ok(())
     }
 
+    /// Engine-authored get-or-create door for MODEL substrate entities
+    /// (type byte 121, maintenance band — ONE-1138 ratified): a MODEL entity
+    /// is "written when a substrate first appears in a write path", keyed by
+    /// `(name, version)`. Model name + version live ON the MODEL entity so
+    /// provenance records dedup to a 16-byte ref — the returned id is what
+    /// [`EdgeProvenanceClaimBody`]'s `substrate_ref` should carry.
+    ///
+    /// Behavior, all in ONE write transaction:
+    /// * an existing MODEL entity whose body matches `(name, version)` →
+    ///   its id is returned and NOTHING is written (idempotent get);
+    /// * otherwise a new MODEL entity (engine-shaped MessagePack body
+    ///   `{"name", "version"}`) is created through the engine-internal
+    ///   maintenance door with the full `apply_put` index footprint
+    ///   (type_index, temporal point event at `now`, reserved `mo`
+    ///   short-id);
+    /// * `name` / `version` must be non-empty and at most
+    ///   [`crate::provenance::MODEL_SUBSTRATE_FIELD_MAX_BYTES`] bytes —
+    ///   [`Error::InvalidModelSubstrate`] otherwise;
+    /// * a stored type-121 entity whose body fails the engine-shape decode
+    ///   is on-disk corruption → [`Error::CorruptedIndex`], never skipped.
+    ///
+    /// Public puts of type byte 121 stay rejected with
+    /// [`Error::MaintenanceKindNotWritable`]: this method is the ONLY public
+    /// door, and it only ever writes the engine-shaped body.
+    pub fn ensure_model_substrate(&self, name: &str, version: &str, now: u64) -> Result<EntityId> {
+        validate_model_substrate_field(name, "model name must be non-empty and at most 256 bytes")?;
+        validate_model_substrate_field(
+            version,
+            "model version must be non-empty and at most 256 bytes",
+        )?;
+        let body = encode_model_entity_body(name, version)?;
+
+        let mut wtxn = self.store.env.write_txn()?;
+
+        // GET: scan the MODEL partition of type_index — one row per distinct
+        // substrate, so the partition stays tiny — for a (name, version)
+        // match. The scan and the create share the write transaction, so the
+        // get-or-create is race-free under LMDB's single-writer model.
+        let mut existing: Option<EntityId> = None;
+        for entry in self
+            .store
+            .type_index
+            .prefix_iter(&wtxn, &[ENTITY_TYPE_MODEL])?
+        {
+            let (key, _) = entry?;
+            require_key_len(key, 17, "type index key")?;
+            let id = EntityId::from_bytes(
+                key[1..17]
+                    .try_into()
+                    .map_err(|_| Error::CorruptedIndex("type index key"))?,
+            )
+            .map_err(|_| Error::CorruptedIndex("type index key"))?;
+            let raw = self
+                .store
+                .entities
+                .get(&wtxn, id.as_bytes())?
+                .ok_or(Error::CorruptedIndex("type index row without entity"))?;
+            let (stored_name, stored_version) =
+                decode_model_entity_body(&raw[ENTITY_METADATA_HEADER_LEN..])?;
+            if stored_name == name && stored_version == version {
+                existing = Some(id);
+                break;
+            }
+        }
+        if let Some(id) = existing {
+            return Ok(id);
+        }
+
+        // CREATE: engine-internal maintenance door (allow_maintenance), the
+        // same admit flag the sync replay path uses for REDACTION_AUDIT —
+        // public puts of the byte keep failing MaintenanceKindNotWritable.
+        let id = EntityId::now();
+        let ops = vec![BatchOp::Put {
+            id,
+            entity_type: ENTITY_TYPE_MODEL,
+            occurred: TimeRange {
+                start: now,
+                end: now,
+            },
+            learned_at: now,
+            data: body,
+            allow_maintenance: true,
+            allow_reserved_predicate: false,
+        }];
+        apply_ops(&self.store, &self.config, &self.analyzer, &mut wtxn, ops)?;
+        wtxn.commit()?;
+        Ok(id)
+    }
+
     /// Shared implementation of [`Vault::put_edge_provenance`] (implicit
     /// supersession) and [`Vault::supersede_edge_provenance`] (explicit
     /// prior). See those methods for the full documented semantics.
@@ -668,9 +765,23 @@ impl Vault {
             return Err(Error::ProvenanceSelfSupersession);
         }
 
+        // ONE-1138 / ONE-1112 C2: the validated caller-supplied class is
+        // persisted as the record's `actor_class` BODY key. A caller-set
+        // body class that disagrees with the parameter is ambiguous —
+        // rejected, never reconciled silently.
+        if let Some(body_class) = body.actor_class
+            && body_class != actor_class
+        {
+            return Err(Error::InvalidProvenanceBody(
+                "body actor_class conflicts with the caller-supplied actor_class parameter",
+            ));
+        }
+        let mut record = body.clone();
+        record.actor_class = Some(actor_class);
+
         // Pure validation before any transaction is opened. Encoding does
         // not validate; the decode validator is the single gate.
-        let value = encode_edge_provenance_value(body);
+        let value = encode_edge_provenance_value(&record);
         validate_edge_provenance_value(&value)?;
 
         // Provenance only attaches to SEMANTIC kinds — a static property of
@@ -703,9 +814,9 @@ impl Vault {
         );
         claim_body.valid_from = body.valid_from;
         claim_body.valid_to = body.valid_to;
-        // Persist the write-time validated actor_class so winner refreshes
-        // can restamp this Claim's flags later (provenance module docs).
-        claim_body.evidence = Some(encode_actor_class_evidence(actor_class));
+        // The write-time validated actor_class is persisted as the record's
+        // BODY key (set above, ONE-1138); the wrapper's `evid` stays empty —
+        // evidence purity, no legacy `{"actor_class": u8}` map.
         let data = encode_claim_body(&claim_body)?;
         validate_claim_body_bytes(&data, true)?;
 
@@ -744,6 +855,27 @@ impl Vault {
         let actor_header =
             EntityMetadataHeader::parse(actor_raw).ok_or(Error::CorruptedIndex("entity header"))?;
         validate_actor_class(actor_header.entity_type, actor_class)?;
+
+        // Substrate gate (ONE-1138): a present substrate_ref must name a
+        // stored MODEL (type byte 121) entity — actor = WHO, substrate =
+        // WITH-WHAT; any other kind is never a substrate. Absent =
+        // unrecorded-and-valid, no gate.
+        if let Some(substrate_ref) = record.substrate_ref {
+            let substrate_raw = self
+                .store
+                .entities
+                .get(&wtxn, substrate_ref.as_bytes())?
+                .ok_or(Error::InvalidModelSubstrate(
+                    "substrate_ref does not name a stored entity",
+                ))?;
+            let substrate_header = EntityMetadataHeader::parse(substrate_raw)
+                .ok_or(Error::CorruptedIndex("entity header"))?;
+            if substrate_header.entity_type != ENTITY_TYPE_MODEL {
+                return Err(Error::InvalidModelSubstrate(
+                    "substrate_ref must name a MODEL (type byte 121) entity",
+                ));
+            }
+        }
 
         // Explicit-prior gates (supersede path): the named Claim must be a
         // live edge.provenance Claim addressing the SAME EdgeRef.
@@ -1034,7 +1166,7 @@ impl Vault {
             ));
         };
         let record = decode_edge_provenance_body(&wrapper.value)?;
-        let actor_class = decode_actor_class_evidence(wrapper.evidence.as_ref())?;
+        let actor_class = resolve_persisted_actor_class(&record, wrapper.evidence.as_ref())?;
         Ok(StoredProvenanceClaim {
             id: *claim_id,
             occurred_start: header.occurred_start,
@@ -1135,7 +1267,7 @@ impl Vault {
                 continue;
             }
             let record = decode_edge_provenance_body(&wrapper.value)?;
-            let actor_class = decode_actor_class_evidence(wrapper.evidence.as_ref())?;
+            let actor_class = resolve_persisted_actor_class(&record, wrapper.evidence.as_ref())?;
             matched.push(StoredProvenanceClaim {
                 id: claim_id,
                 occurred_start: header.occurred_start,
@@ -3375,10 +3507,11 @@ struct StoredProvenanceClaim {
     subject: EdgeRef,
     /// The wrapping type-0 Claim body.
     wrapper: ClaimBody,
-    /// The decoded 7-field `edge.provenance` value record.
+    /// The decoded 10-key `edge.provenance` value record (ONE-1138).
     record: EdgeProvenanceClaimBody,
-    /// The write-time validated actor class, persisted on the wrapper's
-    /// `evid` field (see the provenance module docs).
+    /// The write-time validated actor class, resolved from the record's
+    /// `actor_class` body key (new shape) or the wrapper's legacy `evid`
+    /// map (pre-ONE-1138 claims) — see the provenance module docs.
     actor_class: EdgeActorClass,
 }
 
