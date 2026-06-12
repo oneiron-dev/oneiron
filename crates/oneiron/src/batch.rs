@@ -219,7 +219,7 @@ impl<'a> BatchBuilder<'a> {
         self
     }
 
-    /// Sync-replay door (replicated flavor of the old `put_internal`):
+    /// Sync-replay door (replicated flavor of the old internal put path):
     /// engine-internal put for CRDT→LMDB rematerialization. It admits BOTH
     /// engine-authored bands that the public [`put`](Self::put) gate rejects:
     ///
@@ -480,7 +480,7 @@ impl<'a> TxnBatchBuilder<'a> {
         self
     }
 
-    /// Sync-replay door (replicated flavor of the old `put_internal`):
+    /// Sync-replay door (replicated flavor of the old internal put path):
     /// engine-internal put for Observer B's CRDT→LMDB rematerialization. It
     /// admits BOTH engine-authored bands that the public [`put`](Self::put)
     /// gate rejects:

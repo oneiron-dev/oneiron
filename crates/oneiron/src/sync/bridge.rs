@@ -2216,7 +2216,7 @@ mod tests {
     /// instead of warn-skipping it at the public reserved-namespace gate.
     ///
     /// FAILS against pre-fix code: `materialize_entity_blob_in_txn` routed
-    /// the type-0 Claim through `put_internal`
+    /// the type-0 Claim through the pre-rename replay door
     /// (`allow_reserved_predicate: false`), `validate_claim_body_bytes`
     /// rejected it with ReservedPredicate, and the observer warn-skipped it
     /// — the Claim never reached the replica's LMDB.
