@@ -41,6 +41,7 @@ pub enum ErrorKind {
     ProvenanceOnStructuralEdge,
     ActorClassMismatch,
     InvalidProvenanceBody,
+    InvalidModelSubstrate,
     ClaimAlreadyClosed,
     ClaimSelfSupersession,
     ProvenanceClaimLifecycle,
@@ -218,9 +219,16 @@ pub enum Error {
         actor_class: u8,
     },
     /// An `edge.provenance` value record failed the pinned structural
-    /// validation (the 7-field snake_case ABI). Nothing was written.
+    /// validation (the 10-key snake_case ABI — ONE-1138 vocabulary).
+    /// Nothing was written.
     #[error("invalid edge.provenance body: {0}")]
     InvalidProvenanceBody(&'static str),
+    /// A MODEL substrate descriptor failed validation (ONE-1138): an
+    /// `ensure_model_substrate` name/version that is empty or oversized, or
+    /// a provenance `substrate_ref` that does not name a stored MODEL
+    /// (type byte 121) entity. Nothing was written.
+    #[error("invalid model substrate: {0}")]
+    InvalidModelSubstrate(&'static str),
     /// A claim lifecycle transition (`supersede_claim` / `retract_claim`)
     /// targeted a claim whose `life` status is not `active`. Superseded and
     /// retracted claims are closed history (ARCH-0003: all non-current
@@ -466,6 +474,7 @@ impl Error {
             Self::ProvenanceOnStructuralEdge { .. } => ErrorKind::ProvenanceOnStructuralEdge,
             Self::ActorClassMismatch { .. } => ErrorKind::ActorClassMismatch,
             Self::InvalidProvenanceBody(_) => ErrorKind::InvalidProvenanceBody,
+            Self::InvalidModelSubstrate(_) => ErrorKind::InvalidModelSubstrate,
             Self::ClaimAlreadyClosed { .. } => ErrorKind::ClaimAlreadyClosed,
             Self::ClaimSelfSupersession => ErrorKind::ClaimSelfSupersession,
             Self::ProvenanceClaimLifecycle { .. } => ErrorKind::ProvenanceClaimLifecycle,
