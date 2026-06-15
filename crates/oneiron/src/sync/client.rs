@@ -35,6 +35,7 @@
 //!   answer the VV exchange from the persisted state vector without
 //!   loading the window doc.
 
+use std::cmp::Ordering::{Equal, Less};
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -48,13 +49,13 @@ use crate::sync::loro_support::{
     doc_from_snapshot, doc_version_vector, export_snapshot, export_updates_since,
 };
 use crate::sync::manager::WindowManager;
-use crate::sync::schema::read_window_list;
+use crate::sync::schema::{create_window_doc, read_window_list};
 use crate::sync::transport::{
     self, MAX_DECODED_PAYLOAD_BYTES, TAG_AWARENESS, TAG_BULK_TRANSFER, TAG_BULK_TRANSFER_DONE,
     TAG_SYNC_UPDATE, TAG_VERSION_VECTOR, TAG_WINDOW_SYNC, TransportError, window_sub_tags,
 };
 use crate::sync::types::{WindowKey, parse_window_key_str};
-use crate::sync::window::LoadedWindow;
+use crate::sync::window::{LoadedWindow, apply_pending_window_updates, load_window_from_state};
 
 /// Root doc snapshot row (ARCH-0023b key table: server-write-only
 /// `meta.windows`; client persists what it imported).
@@ -355,10 +356,75 @@ impl SyncClient {
                 // `u:w:` row, and window load is fail-closed on pending
                 // updates — one malformed frame would brick every future
                 // open of this window.
+                let vv_before = window.doc.oplog_vv();
                 window
                     .doc
                     .import(payload)
                     .map_err(|_| TransportError::InvalidPayload("window import failed"))?;
+                // A no-op import can still reveal a same-process durability
+                // gap: compare the live doc with exactly what restart would
+                // load from `d:w:` + surviving `u:w:` rows, then heal only
+                // the missing live-doc delta.
+                if window.doc.oplog_vv() == vv_before {
+                    let key = WindowKey::new(window_key);
+                    let durable_doc = match load_window_from_state(&self.vault, "local", &key) {
+                        Ok(doc) => doc,
+                        Err(Error::WindowNotFound { .. }) => {
+                            let doc = create_window_doc("local", &key);
+                            if let Err(e) = apply_pending_window_updates(&self.vault, &doc, &key) {
+                                self.manager.discard_window(&key);
+                                return Err(TransportError::Storage(format!(
+                                    "load durable window updates: {e}"
+                                )));
+                            }
+                            doc
+                        }
+                        Err(e) => {
+                            self.manager.discard_window(&key);
+                            return Err(TransportError::Storage(format!(
+                                "load durable window state: {e}"
+                            )));
+                        }
+                    };
+                    let live_vv = window.doc.oplog_vv();
+                    let durable_vv = durable_doc.oplog_vv();
+                    if matches!(live_vv.partial_cmp(&durable_vv), Some(Less | Equal)) {
+                        return Ok(Vec::new());
+                    }
+                    let fr_key = format!("fr:w:{window_key}");
+                    match self.vault.sync_state_get(&fr_key) {
+                        Ok(Some(_)) => {
+                            self.manager.discard_window(&key);
+                            return Err(TransportError::Storage(
+                                "post-scrub echo deferred to full resync".to_string(),
+                            ));
+                        }
+                        Ok(None) => {}
+                        Err(e) => {
+                            self.manager.discard_window(&key);
+                            return Err(TransportError::Storage(format!(
+                                "read full-resync marker: {e}"
+                            )));
+                        }
+                    }
+                    let missing = match export_updates_since(
+                        &window.doc,
+                        &doc_version_vector(&durable_doc),
+                    ) {
+                        Ok(missing) => missing,
+                        Err(e) => {
+                            self.manager.discard_window(&key);
+                            return Err(map_delta_export_err(e));
+                        }
+                    };
+                    if let Err(e) = persist_window_update(&self.vault, window_key, &missing) {
+                        self.manager.discard_window(&key);
+                        return Err(TransportError::Storage(format!(
+                            "persist live durable delta: {e}"
+                        )));
+                    }
+                    return Ok(Vec::new());
+                }
                 // Remote imports never fire Observer A (local-only), so
                 // persist the accepted update bytes ourselves: without a
                 // u:w: row, remote state — including tombstones, whose LMDB
@@ -831,7 +897,9 @@ mod tests {
     use super::*;
     use loro::ExportMode;
 
+    use crate::batch::ENTITY_METADATA_HEADER_LEN;
     use crate::sync::bridge::Materializer;
+    use crate::types::{ENTITY_TYPE_TASK, EntityId, TimeRange};
 
     fn test_manager() -> Arc<WindowManager> {
         let dir = tempfile::tempdir().unwrap();
@@ -858,6 +926,57 @@ mod tests {
         let _ = doc.get_map("tombstones");
         doc.commit();
         doc
+    }
+
+    fn entity_blob(entity_type: u8, occurred: TimeRange, learned_at: u64, data: &[u8]) -> Vec<u8> {
+        let mut blob = Vec::with_capacity(ENTITY_METADATA_HEADER_LEN + data.len());
+        blob.push(entity_type);
+        blob.extend_from_slice(&occurred.start.to_be_bytes());
+        blob.extend_from_slice(&occurred.end.to_be_bytes());
+        blob.extend_from_slice(&learned_at.to_be_bytes());
+        blob.extend_from_slice(data);
+        blob
+    }
+
+    fn sync_state_values_with_prefix(vault: &Vault, prefix: &str) -> Vec<(String, Vec<u8>)> {
+        vault
+            .sync_state_keys_with_prefix(prefix)
+            .unwrap()
+            .into_iter()
+            .map(|key| {
+                let value = vault.sync_state_get(&key).unwrap().unwrap();
+                (key, value)
+            })
+            .collect()
+    }
+
+    fn read_u_seq(vault: &Vault, key: &str) -> Option<u32> {
+        vault
+            .sync_state_get(&format!("m:u_seq:w:{key}"))
+            .unwrap()
+            .map(|raw| u32::from_le_bytes(raw.try_into().unwrap()))
+    }
+
+    fn commit_local_entity(
+        window: &LoadedWindow,
+        id: &EntityId,
+        learned_at: u64,
+        body: &[u8],
+    ) -> Vec<u8> {
+        let vv_before = window.doc.oplog_vv();
+        let blob = entity_blob(
+            ENTITY_TYPE_TASK,
+            TimeRange { start: 1, end: 1 },
+            learned_at,
+            body,
+        );
+        window
+            .doc
+            .get_map("entities")
+            .insert(id.to_hex().as_str(), blob.as_slice())
+            .unwrap();
+        window.doc.commit();
+        export_updates_since(&window.doc, &vv_before.encode()).unwrap()
     }
 
     #[test]
@@ -1001,6 +1120,124 @@ mod tests {
         assert_eq!(
             client.window(key).unwrap().doc.get_deep_value(),
             server_doc.get_deep_value()
+        );
+    }
+
+    #[test]
+    fn noop_echo_after_hard_delete_writes_no_uw_carrier() {
+        let manager = test_manager();
+        let vault = Arc::clone(manager.vault());
+        let (mut client, _rx) = test_client(&manager);
+        let key = "2026-03";
+        let learned_at = 1_772_400_000u64;
+        let seq_key = format!("m:u_seq:w:{key}");
+        vault.sync_state_put(&seq_key, b"bad").unwrap();
+
+        let window = client.ensure_window(key).unwrap();
+        let id = EntityId::now();
+        let payload_update = commit_local_entity(&window, &id, learned_at, b"private-payload");
+        assert!(
+            sync_state_values_with_prefix(&vault, &format!("u:w:{key}:")).is_empty(),
+            "corrupt m:u_seq makes Observer A fail before any u:w row is written"
+        );
+        assert!(
+            vault.get(&id).unwrap().is_some(),
+            "Observer B materialized the live payload before the hard delete"
+        );
+
+        vault.sync_state_put(&seq_key, &0u32.to_le_bytes()).unwrap();
+        let outcome = vault
+            .delete_entity_with_reason(&id, crate::DeleteReason::UserHardDelete)
+            .unwrap();
+        assert!(outcome.existed);
+        assert!(vault.get(&id).unwrap().is_none());
+        assert!(
+            vault
+                .sync_state_get(&format!("fr:w:{key}"))
+                .unwrap()
+                .is_some(),
+            "hard delete marks the window for full resync"
+        );
+
+        let prefix = format!("u:w:{key}:");
+        let rows_before_echo = sync_state_values_with_prefix(&vault, &prefix);
+        let seq_before_echo = read_u_seq(&vault, key);
+        let echo = transport::encode_window_sync(key, window_sub_tags::UPDATE, &payload_update);
+        assert!(client.handle_server_message(&echo).unwrap().is_empty());
+
+        let rows_after_echo = sync_state_values_with_prefix(&vault, &prefix);
+        assert_eq!(
+            rows_after_echo, rows_before_echo,
+            "the no-op echo must not add any u:w row after hard-delete scrub"
+        );
+        assert_eq!(
+            read_u_seq(&vault, key),
+            seq_before_echo,
+            "m:u_seq must not bump for a covered post-scrub no-op echo"
+        );
+        assert!(
+            rows_after_echo
+                .iter()
+                .all(|(_, value)| value != &payload_update),
+            "the pre-delete payload update must not reappear as a u:w carrier"
+        );
+        assert!(
+            vault.get(&id).unwrap().is_none(),
+            "the entity stays tombstoned after the no-op echo"
+        );
+    }
+
+    #[test]
+    fn noop_echo_after_snapshot_subsumes_writes_no_uw_row() {
+        let manager = test_manager();
+        let vault = Arc::clone(manager.vault());
+        let (mut client, _rx) = test_client(&manager);
+        let key = "2026-03";
+        let learned_at = 1_772_400_000u64;
+        let window = client.ensure_window(key).unwrap();
+        let id = EntityId::now();
+        let payload_update = commit_local_entity(&window, &id, learned_at, b"snapshot-payload");
+        let prefix = format!("u:w:{key}:");
+        assert!(
+            sync_state_values_with_prefix(&vault, &prefix)
+                .iter()
+                .any(|(_, value)| value == &payload_update),
+            "precondition: the local op initially has a u:w row"
+        );
+
+        window.persist_state(&vault).unwrap();
+        assert!(
+            sync_state_values_with_prefix(&vault, &prefix).is_empty(),
+            "snapshot persistence prunes the subsumed u:w row"
+        );
+        let seq_before_echo = read_u_seq(&vault, key);
+        assert_eq!(
+            vault
+                .sync_state_get(&format!("svf:w:{key}"))
+                .unwrap()
+                .as_deref(),
+            Some(&[SVF_FRESH][..]),
+            "all rows subsumed leaves svf fresh"
+        );
+
+        let echo = transport::encode_window_sync(key, window_sub_tags::UPDATE, &payload_update);
+        assert!(client.handle_server_message(&echo).unwrap().is_empty());
+        assert!(
+            sync_state_values_with_prefix(&vault, &prefix).is_empty(),
+            "a no-op echo of snapshot-subsumed bytes must not re-grow u:w"
+        );
+        assert_eq!(
+            read_u_seq(&vault, key),
+            seq_before_echo,
+            "m:u_seq must not bump for a covered snapshot no-op echo"
+        );
+        assert_eq!(
+            vault
+                .sync_state_get(&format!("svf:w:{key}"))
+                .unwrap()
+                .as_deref(),
+            Some(&[SVF_FRESH][..]),
+            "the deduped echo must not flip svf stale"
         );
     }
 

@@ -117,24 +117,57 @@ impl LoadedWindow {
     /// never saw a tombstone another writer persisted (e.g. a transient
     /// delete-path write while this window was constructed outside the
     /// registry) can no longer overwrite `d:w:` with a snapshot missing it.
+    ///
+    /// Subsumed-row prune (ONE-1151): the `u:w:{key}:*` rows the merge
+    /// imported are deleted in the SAME transaction as the `d:w:` snapshot
+    /// write — every pruned op is provably inside the snapshot (merged
+    /// before export), and a crash can never observe pruned rows without
+    /// the snapshot that covers them. Rows persisted after the merge keep
+    /// their higher `{seq:08x}` keys and survive; `m:u_seq:w:{key}` is
+    /// never reset, so future sequence numbers cannot collide with rows
+    /// that escaped the prune.
+    ///
+    /// Freshness (ONE-1151): `svf:w:{key}` is written LAST, after the prune,
+    /// from the post-prune `u:w:` set — so when a post-merge row survives,
+    /// the flag reads STALE (`[0]`) and the fast-reconnect reader full-opens
+    /// the doc rather than shipping an `sv:w:` VV that omits the survivor's
+    /// ops. It is never assumed fresh just because a snapshot was persisted.
     pub fn persist_state(&self, vault: &Vault) -> Result<Vec<u8>> {
-        merge_persisted_state_into_doc(vault, &self.doc, &self.key)?;
+        let subsumed_update_keys = merge_persisted_state_into_doc(vault, &self.doc, &self.key)?;
 
         // Export full snapshot for persistence
         let state = export_snapshot(&self.doc)?;
         let vv = doc_version_vector(&self.doc);
 
         vault.with_write_txn(|wtxn| {
-            persist_window_doc_in_txn(vault, wtxn, &self.key, &state, &vv)
+            persist_window_doc_in_txn(vault, wtxn, &self.key, &state, &vv)?;
+            prune_subsumed_window_updates_in_txn(vault, wtxn, &self.key, &subsumed_update_keys)?;
+            // svf LAST: freshness is computed against the POST-PRUNE u:w:
+            // set, so a surviving post-merge row forces stale (ONE-1151).
+            write_window_svf_in_txn(vault, wtxn, &self.key)
         })?;
 
         Ok(state)
     }
 }
 
-/// Writes the pinned window-doc persistence triple — `d:w:{key}` snapshot,
-/// `sv:w:{key}` state vector, `svf:w:{key}` = 1 (fresh) — inside the
-/// caller's transaction (ARCH-0023b sync_state key layout).
+/// `svf:*` byte meaning "the persisted `sv:*` reflects the FULL durable
+/// window state" — so the fast-reconnect reader may ship `sv:w:` without
+/// replaying `u:w:` rows. Mirrors the literal pinned in the ON-DISK bulk
+/// arm (`SyncClient`, `client.rs`).
+const SVF_FRESH: u8 = 1;
+
+/// Writes the pinned window-doc persistence pair — `d:w:{key}` snapshot and
+/// `sv:w:{key}` state vector — inside the caller's transaction (ARCH-0023b
+/// sync_state key layout).
+///
+/// The `svf:w:{key}` freshness byte is deliberately NOT written here: it
+/// must be computed from the FINAL on-disk `u:w:{key}:` set, AFTER every
+/// prune / scrub / delete the caller performs in the same txn. Each caller
+/// therefore writes it LAST via [`write_window_svf_in_txn`] — otherwise a
+/// snapshot persist that leaves a surviving `u:w:` row on top of `sv:w:`
+/// would lie "fresh" and the fast-reconnect reader would omit that row's
+/// ops from the VV (ONE-1151 svf-freshness fix).
 pub(crate) fn persist_window_doc_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
@@ -147,9 +180,74 @@ pub(crate) fn persist_window_doc_in_txn(
 
     let sv_key = format!("sv:w:{key}");
     vault.store.sync_state.put(wtxn, &sv_key, vv)?;
+    Ok(())
+}
 
+/// Writes `svf:w:{key}` from the FINAL on-disk `u:w:{key}:` set in the
+/// caller's transaction: `[SVF_FRESH]` iff zero pending update rows remain,
+/// else `[0u8]` (stale). Mirrors the predicate the ON-DISK bulk arm pins in
+/// `client.rs` (`svf = if has_pending { 0 } else { SVF_FRESH }`), probing
+/// the same `u:w:{key}:` prefix with `prefix_iter`.
+///
+/// MUST be the LAST sync_state write in every persist txn — after every
+/// `u:w:` prune / scrub / delete — so freshness is never computed against a
+/// stale view of the update set. `svf:w:` fresh is a promise that `sv:w:`
+/// reflects the full durable state; a surviving `u:w:` row breaks that
+/// promise, and the flag must read stale so the fast-reconnect reader
+/// full-opens the doc instead of shipping a VV that omits the survivor.
+pub(crate) fn write_window_svf_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    key: &WindowKey,
+) -> Result<()> {
+    let pending_prefix = format!("u:w:{key}:");
+    let has_pending = {
+        let mut iter = vault.store.sync_state.prefix_iter(wtxn, &pending_prefix)?;
+        iter.next().transpose()?.is_some()
+    };
+    let svf = if has_pending { 0u8 } else { SVF_FRESH };
     let svf_key = format!("svf:w:{key}");
-    vault.store.sync_state.put(wtxn, &svf_key, &[1u8])?;
+    vault.store.sync_state.put(wtxn, &svf_key, &[svf])?;
+    Ok(())
+}
+
+/// Deletes `u:w:{key}:*` update rows subsumed by a just-persisted
+/// `d:w:{key}` snapshot, inside the SAME transaction as the snapshot write
+/// (ONE-1151) — subsume-then-prune is atomic, so a crash can never leave
+/// pruned rows without the snapshot that covers them.
+///
+/// `subsumed_update_keys` MUST be the keys returned by
+/// [`merge_persisted_state_into_doc`] for the SAME doc the persisted
+/// snapshot was exported from: those rows were import-merged into the doc
+/// BEFORE the export, so the snapshot provably contains their ops. Rows
+/// persisted after the merge's read transaction carry higher `{seq:08x}`
+/// keys, are absent from the list, and survive — their ops may not be in
+/// the snapshot (e.g. a transient delete-path doc persisting in parallel).
+/// `m:u_seq:w:{key}` is deliberately NOT touched: the high-water mark
+/// stays monotonic so post-prune sequence numbers can never collide with
+/// surviving rows.
+///
+/// Surgically scoped (fail closed): a key outside this window's own
+/// `u:w:{key}:` family is a typed error and nothing is deleted — the
+/// prune must not be able to touch `q:`/`d:`/`h:`/`dt:` rows or another
+/// window's updates.
+pub(crate) fn prune_subsumed_window_updates_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    key: &WindowKey,
+    subsumed_update_keys: &[String],
+) -> Result<()> {
+    let prefix = format!("u:w:{key}:");
+    for update_key in subsumed_update_keys {
+        if !update_key.starts_with(&prefix) {
+            return Err(Error::SyncProtocolError(format!(
+                "u:w: prune scoped to {prefix}* refused foreign key {update_key}"
+            )));
+        }
+    }
+    for update_key in subsumed_update_keys {
+        vault.store.sync_state.delete(wtxn, update_key)?;
+    }
     Ok(())
 }
 
@@ -453,7 +551,11 @@ pub fn replay_pending_tombstones(
         for (marker_key, _, _) in &markers {
             vault.store.sync_state.delete(wtxn, marker_key)?;
         }
-        Ok(())
+        // svf LAST (ONE-1151): the hard branch scrubbed the merged u:w:
+        // rows above; the soft branch kept them. Either way freshness is
+        // computed against the FINAL u:w: set — a surviving row forces
+        // stale so the fast-reconnect reader never trusts a partial sv:w:.
+        write_window_svf_in_txn(vault, wtxn, window_key)
     })?;
 
     Ok(u32::try_from(markers.len()).unwrap_or(u32::MAX))
@@ -1274,6 +1376,471 @@ pub fn reverse_rematerialize(vault: &Vault, doc: &LoroDoc, window_key: &WindowKe
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::types::VaultConfig;
+
+    fn test_vault() -> (tempfile::TempDir, Arc<Vault>) {
+        let dir = tempfile::tempdir().unwrap();
+        let vault = Arc::new(Vault::open(dir.path(), VaultConfig::device()).unwrap());
+        (dir, vault)
+    }
+
+    /// Pinned 25-byte entity envelope: type u8 + occurred_start/end u64 BE +
+    /// learned_at u64 BE + body (`occurred == learned` so CRDT-vs-LMDB
+    /// byte-equality is exact).
+    fn make_entity_blob(entity_type: u8, learned_at: u64, data: &[u8]) -> Vec<u8> {
+        let mut blob = Vec::with_capacity(25 + data.len());
+        blob.push(entity_type);
+        blob.extend_from_slice(&learned_at.to_be_bytes());
+        blob.extend_from_slice(&learned_at.to_be_bytes());
+        blob.extend_from_slice(&learned_at.to_be_bytes());
+        blob.extend_from_slice(data);
+        blob
+    }
+
+    fn commit_entity(window: &LoadedWindow, learned_at: u64, data: &[u8]) -> EntityId {
+        let id = EntityId::now();
+        map_insert_bytes(
+            &window.doc.get_map("entities"),
+            &id.to_hex(),
+            &make_entity_blob(1, learned_at, data),
+        )
+        .unwrap();
+        window.doc.commit();
+        id
+    }
+
+    /// ONE-1151 prune: `persist_state` deletes exactly the `u:w:{key}:*`
+    /// rows its snapshot subsumed — in the same transaction as the `d:w:`
+    /// write — while `m:u_seq:w:{key}` keeps its high-water mark
+    /// (ARCH-0023b: monotonic, missing=0) and every other row family
+    /// survives byte-identical: the neighbor window's `u:w:` rows, a
+    /// prefix-adjacent `u:w:` key (exact `u:w:{key}:` scope, not a sloppy
+    /// substring match), the `dt:` local hard-delete marker (sync_state),
+    /// and the `q:`/`d:`/`h:` sync_queue families a delete-bearing path
+    /// owns. The window must then reopen from `d:w:` ALONE.
+    #[test]
+    fn persist_state_prunes_subsumed_rows_and_spares_other_families() {
+        let (_dir, vault) = test_vault();
+        let materializer = Arc::new(Materializer::new());
+        let key = WindowKey::new("2026-03");
+        let t = key.start_timestamp().unwrap() + 60;
+
+        let window = LoadedWindow::new("local", key.clone(), &vault, &materializer);
+        let id_a = commit_entity(&window, t, b"prune-a");
+        let id_b = commit_entity(&window, t, b"prune-b");
+
+        // Observer A persisted the contract rows (ARCH-0023b key table).
+        assert!(
+            vault
+                .sync_state_get("u:w:2026-03:00000001")
+                .unwrap()
+                .is_some()
+        );
+        assert!(
+            vault
+                .sync_state_get("u:w:2026-03:00000002")
+                .unwrap()
+                .is_some()
+        );
+        assert_eq!(
+            vault
+                .sync_state_get("m:u_seq:w:2026-03")
+                .unwrap()
+                .as_deref(),
+            Some(2u32.to_le_bytes().as_slice())
+        );
+
+        // Sentinels the prune must NOT touch. sync_state families:
+        vault
+            .sync_state_put("u:w:2026-02:00000001", b"neighbor-window-update")
+            .unwrap();
+        vault
+            .sync_state_put("u:w:2026-030:00000001", b"prefix-adjacent-update")
+            .unwrap();
+        let dt_key = format!("dt:{}", EntityId::now().to_hex());
+        vault.sync_state_put(&dt_key, &[2u8; 26]).unwrap();
+        // sync_queue families (`q:{seq:8BE}` update row, `d:{seq:8BE}`
+        // delete-bearing sidecar, `h:{seq:8BE}` hard-erase sweep job):
+        let q_key = [b'q', b':', 0, 0, 0, 0, 0, 0, 0, 1];
+        let d_key = [b'd', b':', 0, 0, 0, 0, 0, 0, 0, 1];
+        let h_key = [b'h', b':', 0, 0, 0, 0, 0, 0, 0, 1];
+        {
+            let mut wtxn = vault.store.env.write_txn().unwrap();
+            vault
+                .store
+                .sync_queue
+                .put(&mut wtxn, &q_key, &[1u8])
+                .unwrap();
+            vault
+                .store
+                .sync_queue
+                .put(&mut wtxn, &d_key, &[1u8])
+                .unwrap();
+            vault
+                .store
+                .sync_queue
+                .put(&mut wtxn, &h_key, &[7u8])
+                .unwrap();
+            wtxn.commit().unwrap();
+        }
+
+        window.persist_state(&vault).unwrap();
+
+        // Subsumed rows pruned; the high-water mark is NOT reset.
+        assert!(
+            vault
+                .sync_state_get("u:w:2026-03:00000001")
+                .unwrap()
+                .is_none(),
+            "subsumed u:w: row must be pruned after the snapshot persist"
+        );
+        assert!(
+            vault
+                .sync_state_get("u:w:2026-03:00000002")
+                .unwrap()
+                .is_none()
+        );
+        assert_eq!(
+            vault
+                .sync_state_get("m:u_seq:w:2026-03")
+                .unwrap()
+                .as_deref(),
+            Some(2u32.to_le_bytes().as_slice()),
+            "m:u_seq:w: must stay monotonic — never reset by the prune"
+        );
+        assert!(vault.sync_state_get("d:w:2026-03").unwrap().is_some());
+        // Positive control for the ONE-1151 svf recompute: with every u:w:
+        // row subsumed and pruned, the post-prune probe finds zero rows, so
+        // freshness is written FRESH ([1]) — proving the fix is not a blanket
+        // svf=0 (see persist_state_marks_svf_stale_when_a_post_merge_uw_row_survives
+        // for the surviving-row counterpart).
+        assert_eq!(
+            vault.sync_state_get("svf:w:2026-03").unwrap().as_deref(),
+            Some([1u8].as_slice()),
+            "all rows subsumed → svf recomputes FRESH"
+        );
+
+        // Every sentinel survives byte-identical.
+        assert_eq!(
+            vault
+                .sync_state_get("u:w:2026-02:00000001")
+                .unwrap()
+                .as_deref(),
+            Some(b"neighbor-window-update".as_slice()),
+            "the neighbor window's u:w: rows are out of scope"
+        );
+        assert_eq!(
+            vault
+                .sync_state_get("u:w:2026-030:00000001")
+                .unwrap()
+                .as_deref(),
+            Some(b"prefix-adjacent-update".as_slice()),
+            "prune scope is exactly `u:w:{{key}}:` — never a substring match"
+        );
+        assert_eq!(
+            vault.sync_state_get(&dt_key).unwrap().as_deref(),
+            Some([2u8; 26].as_slice()),
+            "dt: local hard-delete markers are out of scope (delete safety)"
+        );
+        {
+            let rtxn = vault.store.env.read_txn().unwrap();
+            assert_eq!(
+                vault.store.sync_queue.get(&rtxn, &q_key).unwrap(),
+                Some([1u8].as_slice()),
+                "q: update rows are out of scope"
+            );
+            assert_eq!(
+                vault.store.sync_queue.get(&rtxn, &d_key).unwrap(),
+                Some([1u8].as_slice()),
+                "d: delete-bearing sidecars are out of scope (delete safety)"
+            );
+            assert_eq!(
+                vault.store.sync_queue.get(&rtxn, &h_key).unwrap(),
+                Some([7u8].as_slice()),
+                "h: hard-erase sweep rows are out of scope (delete safety)"
+            );
+        }
+
+        // The window reopens from d:w: ALONE (no u:w: rows left to replay).
+        drop(window);
+        assert_eq!(
+            vault
+                .sync_state_keys_with_prefix("u:w:2026-03:")
+                .unwrap()
+                .len(),
+            0
+        );
+        let reloaded = load_window_from_state(&vault, "local", &key).unwrap();
+        let entities = reloaded.get_map("entities");
+        assert_eq!(
+            map_get_bytes(&entities, &id_a.to_hex()).as_deref(),
+            Some(make_entity_blob(1, t, b"prune-a").as_slice()),
+            "pruned ops must reload from the d:w: snapshot"
+        );
+        assert!(map_get_bytes(&entities, &id_b.to_hex()).is_some());
+    }
+
+    /// ONE-1151 concurrency seam: a `u:w:` row persisted AFTER the merge
+    /// captured its subsumption inventory (a transient delete-path doc
+    /// persisting in parallel — its ops are in neither the merged set nor
+    /// the exported snapshot) gets a higher seq, is absent from the merged
+    /// key list, and MUST survive the prune; recovery still replays it.
+    #[test]
+    fn prune_spares_updates_persisted_after_the_merge() {
+        let (_dir, vault) = test_vault();
+        let materializer = Arc::new(Materializer::new());
+        let key = WindowKey::new("2026-03");
+        let t = key.start_timestamp().unwrap() + 60;
+
+        let window = LoadedWindow::new("local", key.clone(), &vault, &materializer);
+        commit_entity(&window, t, b"merged-op");
+
+        // Snapshot-persist sequence as persist_state runs it, with a
+        // concurrent writer landing BETWEEN the merge and the write txn.
+        let merged = merge_persisted_state_into_doc(&vault, &window.doc, &key).unwrap();
+        assert_eq!(merged, vec!["u:w:2026-03:00000001".to_string()]);
+
+        let transient = create_window_doc("transient", &key);
+        let late_id = EntityId::now();
+        map_insert_bytes(
+            &transient.get_map("entities"),
+            &late_id.to_hex(),
+            &make_entity_blob(1, t, b"late-op"),
+        )
+        .unwrap();
+        transient.commit();
+        let late_bytes = export_updates_from(&transient, &loro::VersionVector::default()).unwrap();
+        bridge::persist_window_update(&vault, "2026-03", &late_bytes).unwrap();
+
+        let state = export_snapshot(&window.doc).unwrap();
+        let vv = doc_version_vector(&window.doc);
+        vault
+            .with_write_txn(|wtxn| {
+                persist_window_doc_in_txn(&vault, wtxn, &key, &state, &vv)?;
+                prune_subsumed_window_updates_in_txn(&vault, wtxn, &key, &merged)
+            })
+            .unwrap();
+
+        assert!(
+            vault
+                .sync_state_get("u:w:2026-03:00000001")
+                .unwrap()
+                .is_none(),
+            "the merged row is subsumed and pruned"
+        );
+        assert_eq!(
+            vault
+                .sync_state_get("u:w:2026-03:00000002")
+                .unwrap()
+                .as_deref(),
+            Some(late_bytes.as_slice()),
+            "a row persisted after the merge is NOT in the snapshot and must survive"
+        );
+
+        // Recovery = d:w: + surviving u:w: replay — the late op is intact.
+        let recovered = load_window_from_state(&vault, "local", &key).unwrap();
+        assert!(
+            map_get_bytes(&recovered.get_map("entities"), &late_id.to_hex()).is_some(),
+            "recovery must replay the surviving post-merge row"
+        );
+    }
+
+    /// ONE-1151 svf-freshness fix: the prune_spares scenario driven through
+    /// the production `persist_state` path. A post-merge `u:w:` row lands
+    /// DURING the merge import (a one-shot subscription standing in for the
+    /// transient delete-path writer that persists in parallel), so it is
+    /// absent from the prune's subsumed-key inventory and survives. Because a
+    /// pending `u:w:` row then sits on top of `sv:w:`, `svf:w:` MUST be
+    /// written STALE (`[0]`) — a plausible-wrong impl that keeps the old
+    /// unconditional `svf=1` fails on the literal `[0]`.
+    #[test]
+    fn persist_state_marks_svf_stale_when_a_post_merge_uw_row_survives() {
+        use loro::ContainerTrait;
+        use std::sync::atomic::{AtomicBool, Ordering};
+
+        let (_dir, vault) = test_vault();
+        let materializer = Arc::new(Materializer::new());
+        let key = WindowKey::new("2026-03");
+        let t = key.start_timestamp().unwrap() + 60;
+
+        let window = LoadedWindow::new("local", key.clone(), &vault, &materializer);
+
+        // Pre-seed `u:w:2026-03:00000001` with an op the LIVE doc does NOT
+        // hold, so `persist_state`'s merge import produces a diff (and fires
+        // the injection below). This row IS in the merge inventory → pruned.
+        let seed = create_window_doc("seed", &key);
+        let seed_id = EntityId::now();
+        map_insert_bytes(
+            &seed.get_map("entities"),
+            &seed_id.to_hex(),
+            &make_entity_blob(1, t, b"seed-op"),
+        )
+        .unwrap();
+        seed.commit();
+        let seed_bytes = export_updates_from(&seed, &loro::VersionVector::default()).unwrap();
+        bridge::persist_window_update(&vault, "2026-03", &seed_bytes).unwrap();
+
+        // The survivor op (transient parallel writer): not in the merge
+        // inventory, not in the exported snapshot.
+        let late = create_window_doc("late", &key);
+        let late_id = EntityId::now();
+        map_insert_bytes(
+            &late.get_map("entities"),
+            &late_id.to_hex(),
+            &make_entity_blob(1, t, b"late-op"),
+        )
+        .unwrap();
+        late.commit();
+        let late_bytes = export_updates_from(&late, &loro::VersionVector::default()).unwrap();
+
+        // Inject the survivor row DURING the merge import (after the prune's
+        // inventory was captured, before the write txn) — exactly the seam
+        // prune_spares models manually, now exercised through persist_state.
+        let injected = Arc::new(AtomicBool::new(false));
+        let cb_vault = Arc::clone(&vault);
+        let cb_bytes = late_bytes;
+        let cb_flag = Arc::clone(&injected);
+        let entities_cid = window.doc.get_map("entities").id();
+        let _inj = window.doc.subscribe(
+            &entities_cid,
+            Arc::new(move |_event| {
+                if cb_flag.swap(true, Ordering::SeqCst) {
+                    return;
+                }
+                bridge::persist_window_update(&cb_vault, "2026-03", &cb_bytes)
+                    .expect("inject post-merge survivor row");
+            }),
+        );
+
+        window.persist_state(&vault).unwrap();
+        assert!(injected.load(Ordering::SeqCst), "injection must have fired");
+
+        // The merged row is pruned …
+        assert!(
+            vault
+                .sync_state_get("u:w:2026-03:00000001")
+                .unwrap()
+                .is_none(),
+            "the merged row is subsumed and pruned"
+        );
+        // … the post-merge row survives …
+        assert!(
+            vault
+                .sync_state_get("u:w:2026-03:00000002")
+                .unwrap()
+                .is_some(),
+            "a row persisted during the merge import escapes the prune"
+        );
+        // … the high-water mark stays monotonic …
+        assert_eq!(
+            vault
+                .sync_state_get("m:u_seq:w:2026-03")
+                .unwrap()
+                .as_deref(),
+            Some(2u32.to_le_bytes().as_slice()),
+            "m:u_seq:w: must stay monotonic"
+        );
+        // … and svf is STALE: the fast-reconnect reader must NOT trust sv:w:.
+        assert_eq!(
+            vault.sync_state_get("svf:w:2026-03").unwrap().as_deref(),
+            Some([0u8].as_slice()),
+            "a surviving post-merge u:w: row forces svf STALE ([0])"
+        );
+    }
+
+    /// ONE-1151 scope extension: the soft-only `pt:` replay branch keeps the
+    /// merged `u:w:` rows (only the hard branch scrubs them), so after a soft
+    /// replay a pending row still sits on top of `sv:w:` — `svf:w:` MUST be
+    /// written STALE. A wrong impl that writes `svf=1` in the soft branch
+    /// fails. (Delete-safety-adjacent.)
+    #[test]
+    fn replay_pending_tombstones_soft_keeps_svf_stale_when_merged_uw_survives() {
+        let (_dir, vault) = test_vault();
+        let materializer = Arc::new(Materializer::new());
+        let key = WindowKey::new("2026-03");
+        let t = key.start_timestamp().unwrap() + 60;
+
+        // A live window with one committed entity → Observer A persists a
+        // `u:w:` row the SOFT branch must NOT scrub.
+        let window = LoadedWindow::new("local", key.clone(), &vault, &materializer);
+        let _id = commit_entity(&window, t, b"keep-me");
+        assert!(
+            vault
+                .sync_state_get("u:w:2026-03:00000001")
+                .unwrap()
+                .is_some()
+        );
+
+        // A SOFT pending-tombstone marker (user_delete, wire byte 1 = soft).
+        let victim = EntityId::now();
+        let mut soft = vec![1_u8]; // user_delete (soft)
+        soft.extend_from_slice(&t.to_le_bytes());
+        soft.extend_from_slice(&[0x11; 16]);
+        let marker_key = format!("pt:2026-03:{}", victim.to_hex());
+        vault.sync_state_put(&marker_key, &soft).unwrap();
+
+        let replayed = replay_pending_tombstones(&vault, &window.doc, &key).unwrap();
+        assert_eq!(replayed, 1);
+
+        // The merged u:w: row survives the soft branch …
+        assert!(
+            vault
+                .sync_state_get("u:w:2026-03:00000001")
+                .unwrap()
+                .is_some(),
+            "soft replay must not scrub surviving u:w: rows"
+        );
+        // … so svf is STALE.
+        assert_eq!(
+            vault.sync_state_get("svf:w:2026-03").unwrap().as_deref(),
+            Some([0u8].as_slice()),
+            "a surviving u:w: row after a soft replay forces svf STALE"
+        );
+        // fr:w: full-resync is a HARD-only concern — untouched by soft replay.
+        assert!(vault.sync_state_get("fr:w:2026-03").unwrap().is_none());
+    }
+
+    /// Fail-closed scope guard: a key outside the window's own
+    /// `u:w:{key}:` family is a TYPED error and the transaction deletes
+    /// nothing — not even the in-scope keys validated alongside it.
+    #[test]
+    fn prune_refuses_keys_outside_the_window_family() {
+        let (_dir, vault) = test_vault();
+        let key = WindowKey::new("2026-03");
+        vault
+            .sync_state_put("u:w:2026-03:00000001", b"in-scope")
+            .unwrap();
+        vault
+            .sync_state_put("u:w:2026-02:00000001", b"foreign")
+            .unwrap();
+
+        let keys = vec![
+            "u:w:2026-03:00000001".to_string(),
+            "u:w:2026-02:00000001".to_string(),
+        ];
+        let err = vault
+            .with_write_txn(|wtxn| prune_subsumed_window_updates_in_txn(&vault, wtxn, &key, &keys))
+            .expect_err("a foreign key must fail the prune closed");
+        assert!(
+            matches!(err, Error::SyncProtocolError(_)),
+            "typed error, got: {err:?}"
+        );
+        assert_eq!(
+            vault
+                .sync_state_get("u:w:2026-03:00000001")
+                .unwrap()
+                .as_deref(),
+            Some(b"in-scope".as_slice()),
+            "validate-before-delete: the aborted txn must delete nothing"
+        );
+        assert_eq!(
+            vault
+                .sync_state_get("u:w:2026-02:00000001")
+                .unwrap()
+                .as_deref(),
+            Some(b"foreign".as_slice())
+        );
+    }
 
     /// The single constructor of [`DeleteBearingUpdate`] (ONE-1135 review
     /// item 14): a no-op tombstone commit exports nothing (no q:/d: rows

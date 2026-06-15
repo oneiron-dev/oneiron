@@ -2077,7 +2077,12 @@ impl Vault {
                     update,
                 )?;
             }
-            Ok(())
+            // svf LAST (ONE-1151): the hard branch scrubbed the merged u:w:
+            // rows above; the soft branch kept them. Recompute freshness from
+            // the FINAL u:w: set so a surviving row reads stale (the
+            // fast-reconnect reader then full-opens instead of trusting an
+            // sv:w: VV that omits the survivor's ops).
+            crate::sync::window::write_window_svf_in_txn(self, wtxn, window_key)
         })
     }
 
