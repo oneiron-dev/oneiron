@@ -62,6 +62,8 @@ pub enum ErrorKind {
     #[cfg(feature = "sync")]
     WindowNotFound,
     #[cfg(feature = "sync")]
+    WindowBusy,
+    #[cfg(feature = "sync")]
     SyncProtocolError,
     #[cfg(feature = "sync")]
     InvalidRedactionReceiptBody,
@@ -365,6 +367,28 @@ pub enum Error {
     #[cfg(feature = "sync")]
     #[error("sync window not found: {window_key}")]
     WindowNotFound { window_key: String },
+    /// `WindowManager::unload_window` refused to deregister a window that
+    /// still has external `Arc<LoadedWindow>` holders (ONE-1150).
+    /// Deregistering anyway would let a subsequent `open_window` construct a
+    /// SECOND live doc for the same window key: the outstanding handle's doc
+    /// would keep accepting writes that bypass Observer A routing, and the
+    /// manager's `window()` lookup — the seam delete routing uses to commit
+    /// tombstones through the live doc — would miss it, sending deletes down
+    /// the transient path while the orphaned doc still holds the deleted
+    /// body. Fail-closed: nothing was persisted or deregistered; the window
+    /// stays registered and discoverable. Retry after the last external
+    /// handle drops, or use the manager's forced-eviction path
+    /// (`discard_window`) when the doc state is known-stale.
+    /// `outstanding_handles` counts external holders only (the registry's
+    /// own reference is excluded).
+    #[cfg(feature = "sync")]
+    #[error(
+        "sync window busy: {window_key} has {outstanding_handles} outstanding external handle(s); unload refused — retry after the last handle drops"
+    )]
+    WindowBusy {
+        window_key: String,
+        outstanding_handles: usize,
+    },
     /// Sync protocol violation.
     #[cfg(feature = "sync")]
     #[error("sync protocol error: {0}")]
@@ -463,6 +487,8 @@ impl Error {
             #[cfg(feature = "sync")]
             Self::WindowNotFound { .. } => ErrorKind::WindowNotFound,
             #[cfg(feature = "sync")]
+            Self::WindowBusy { .. } => ErrorKind::WindowBusy,
+            #[cfg(feature = "sync")]
             Self::SyncProtocolError(_) => ErrorKind::SyncProtocolError,
             #[cfg(feature = "sync")]
             Self::InvalidRedactionReceiptBody(_) => ErrorKind::InvalidRedactionReceiptBody,
@@ -476,6 +502,10 @@ impl Error {
     pub fn is_retryable(&self) -> bool {
         match self {
             Self::ConcurrentWrite(_) => true,
+            // Transient by construction: the refusal clears once the last
+            // external window handle drops (ONE-1150).
+            #[cfg(feature = "sync")]
+            Self::WindowBusy { .. } => true,
             Self::Io(error) => matches!(
                 error.kind(),
                 std::io::ErrorKind::Interrupted
