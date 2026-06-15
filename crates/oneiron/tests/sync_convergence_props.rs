@@ -206,16 +206,15 @@ fn concurrent_edit_same_entity_lww_converges_and_displaces_loser_metadata_rows()
 /// — a stale posting would keep serving content the converged vault no
 /// longer holds.
 ///
-/// IGNORED (ONE-1141) — exposes a real seam in the current engine:
-/// replicated overwrite (`put_replicated` → `apply_put`) displaces
-/// temporal/type/short-id rows but never touches the BM25F text index
-/// (text is a separate LOCAL `BatchOp::Text` family that sync does not
-/// carry), so the losing node keeps serving its pre-merge terms. Prod
-/// fixes are out of scope for this unit; ONE-1141 carries the owner
-/// ruling: either contract-bless lazy staleness (ARCH-0035
-/// derived-artifact refresh) or deindex-on-replicated-overwrite.
+/// ONE-1141 (ARCH-0031 amendment, ratified 2026-06-13): deindex-on-overwrite
+/// — "no replicated overwrite ever leaves loser postings live". A replicated
+/// overwrite that changes the stored body drops the loser's BM25F postings
+/// in the SAME transaction as the overwrite (`put_replicated` → `apply_put`,
+/// replicated arm); lazy-stale + periodic sweep was REJECTED by the ruling
+/// (it leaves a window where dead content matches searches). The byte-compare
+/// guard keeps the WINNER node's own postings intact: its replayed value is
+/// byte-identical to what it already stores, so its index is never touched.
 #[test]
-#[ignore = "ONE-1141: put_replicated overwrite leaves the loser's local BM25F postings in place — text displacement on LWW loss is not implemented; owner ruling pending (lazy-stale per ARCH-0035 vs deindex-on-overwrite)"]
 fn concurrent_edit_same_entity_lww_displaces_loser_text_postings() {
     let (a, b) = vault_pair();
 

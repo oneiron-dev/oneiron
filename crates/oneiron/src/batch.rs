@@ -678,6 +678,13 @@ pub(crate) fn apply_ops(
                     learned_at,
                     &data,
                     allow_reserved_predicate,
+                    // ONE-1141: `replicated_put_op` is the SINGLE constructor
+                    // that opens BOTH admit bands at once (see its doc), so
+                    // both-flags-set identifies the sync replay doors
+                    // (`put_replicated` → here). The replicated arm of
+                    // `apply_put` deindexes the loser's BM25F postings on a
+                    // body-changing overwrite, same-txn (ARCH-0031 amendment).
+                    allow_maintenance && allow_reserved_predicate,
                 )?;
             }
             BatchOp::Vector { id, vector } => {
@@ -931,6 +938,7 @@ fn apply_put(
     learned_at: u64,
     data: &[u8],
     allow_reserved_predicate: bool,
+    replicated: bool,
 ) -> Result<()> {
     // Type-byte validation runs in `apply_ops` (the public-vs-maintenance gate:
     // public writes reject the engine-authored maintenance band, the sync
@@ -962,12 +970,32 @@ fn apply_put(
 
     if let Some(old_record) = store.entities.get(wtxn, id.as_bytes())? {
         let (old_type, old_occurred, old_learned) = parse_entity_metadata(old_record)?;
+        // ONE-1141 (ARCH-0031 amendment): "no replicated overwrite ever
+        // leaves loser postings live" — when an LWW replicated overwrite
+        // changes the stored body, the loser document's BM25F postings are
+        // removed in the SAME transaction as the overwrite, BEFORE the
+        // displacement block below. Text is a LOCAL `BatchOp::Text` family
+        // that sync does not carry, so without this the losing node keeps
+        // serving its pre-merge terms. Token source: the body-independent
+        // `text_forward` row — `deindex_text` reads only it and is a no-op
+        // for never-indexed entities. Byte-compare guard: a same-bytes
+        // replay (idempotent re-import / reconnect echo, or the winner node
+        // re-receiving its own winning value) must NOT touch the index, so
+        // a converged winner's postings survive the merge; metadata-only
+        // (occurred/learned) changes are not body changes. Local overwrites
+        // stay out of scope: the local writer owns both the put and its
+        // `BatchOp::Text` re-index (`index_text` self-deindexes stale rows).
+        let replicated_body_changed =
+            replicated && old_record[ENTITY_METADATA_HEADER_LEN..] != *data;
         if old_type != entity_type {
             return Err(Error::EntityTypeImmutable {
                 id,
                 existing: old_type,
                 attempted: entity_type,
             });
+        }
+        if replicated_body_changed {
+            crate::bm25::deindex_text(store, wtxn, &id)?;
         }
 
         if old_occurred.end.saturating_sub(old_occurred.start) > LONG_INTERVAL_THRESHOLD_SECS {
