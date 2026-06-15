@@ -254,8 +254,7 @@ async fn lease_revoke(
     {
         return Err(StatusCode::BAD_REQUEST);
     }
-    let client_id =
-        u64::from_str_radix(&req.client_id, 16).map_err(|_| StatusCode::BAD_REQUEST)?;
+    let client_id = u64::from_str_radix(&req.client_id, 16).map_err(|_| StatusCode::BAD_REQUEST)?;
 
     match server.revoke_lease(client_id).await {
         Ok(Some(update)) => {

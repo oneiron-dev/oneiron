@@ -347,7 +347,9 @@ async fn handle_sync_message(
             );
             // Direct ack to the requester (echo suppression would drop a
             // broadcast for the sender).
-            let _ = direct_tx.send(protocol::encode_lease_granted(status, client_id, expires_at));
+            let _ = direct_tx.send(protocol::encode_lease_granted(
+                status, client_id, expires_at,
+            ));
             // Registry change rides the root-update broadcast to ALL
             // connections — conn_id 0 (the bridge/local sentinel) skips
             // echo suppression because the REQUESTER also needs its own
