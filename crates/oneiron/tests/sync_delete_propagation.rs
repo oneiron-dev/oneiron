@@ -764,3 +764,101 @@ fn offline_soft_delete_replay_leaves_replica_shell() {
         "a soft replay must not enqueue an h: sweep row"
     );
 }
+
+/// ONE-1153: optimistic-clear / VV-confirmed-clear round trip over a SOFT
+/// (`user_delete`) delete-bearing row. Soft tombstones ride the same
+/// delete-bearing exemption as hard ones: the OPTIMISTIC `clear_through`
+/// removes plain `q:` rows but must keep the soft delete row AND its
+/// literal `d:{seq:8BE}` sidecar untouched; only the VV-CONFIRMED
+/// `clear_through_confirmed` removes both in the same call. An
+/// implementation that exempts only HARD reasons from the optimistic clear
+/// silently loses offline soft deletes and FAILS here.
+#[test]
+fn soft_delete_survives_optimistic_clear_until_confirmed() {
+    let (_dir, vault) = open_vault();
+    let id = EntityId::now();
+    let (_manager, _window) = open_routed_window(&vault, "node-a", &id, b"soft-clear-secret");
+
+    // A plain (non-delete) row in the same window proves the optimistic
+    // clear really clears — only the delete-bearing exemption may survive.
+    let queue = SyncQueue::new(Arc::clone(&vault)).unwrap();
+    let plain_seq = queue.push(WINDOW, &[0x5A]).unwrap();
+
+    let outcome = vault
+        .delete_entity_with_reason(&id, DeleteReason::UserDelete)
+        .unwrap();
+    assert!(outcome.existed);
+    assert!(
+        outcome.receipt_id.is_none(),
+        "soft delete writes no receipt"
+    );
+
+    // The soft tombstone is queued delete-bearing: a replayable q: row plus
+    // the literal `d:` + seq u64 BE sidecar marker.
+    let markers = delete_bearing_seqs(&vault);
+    assert_eq!(markers.len(), 1, "the soft tombstone is delete-bearing");
+    let delete_seq = markers[0];
+    let queued = queue.drain_updates().unwrap();
+    let seqs: Vec<u64> = queued.iter().map(|u| u.seq).collect();
+    assert!(
+        seqs.contains(&plain_seq),
+        "fixture: the plain row is queued (soft deletes never scrub)"
+    );
+    let delete_row = queued
+        .iter()
+        .find(|u| u.seq == delete_seq)
+        .expect("delete-bearing q: row present");
+    assert_eq!(delete_row.window_key, WINDOW);
+    let mut marker_key = vec![b'd', b':'];
+    marker_key.extend_from_slice(&delete_seq.to_be_bytes());
+    let sidecar_keys: Vec<Vec<u8>> = vault
+        .sync_queue_rows_with_prefix(b"d:")
+        .unwrap()
+        .into_iter()
+        .map(|(key, _)| key)
+        .collect();
+    assert_eq!(
+        sidecar_keys,
+        vec![marker_key.clone()],
+        "sidecar marker key must be the literal d: + seq u64 BE"
+    );
+
+    // OPTIMISTIC clear over EVERYTHING queued (connection.rs runs this
+    // after an unconfirmed replay): plain rows go, the soft delete-bearing
+    // row and its sidecar SURVIVE.
+    let max_seq = seqs.iter().copied().max().unwrap();
+    queue.clear_through(max_seq).unwrap();
+    let survivors = queue.drain_updates().unwrap();
+    assert_eq!(
+        survivors.iter().map(|u| u.seq).collect::<Vec<u64>>(),
+        vec![delete_seq],
+        "ONLY the soft delete-bearing row survives the optimistic clear_through"
+    );
+    assert_eq!(
+        survivors[0].encoded, delete_row.encoded,
+        "the surviving row's delta bytes are untouched"
+    );
+    let sidecar_keys_after_optimistic: Vec<Vec<u8>> = vault
+        .sync_queue_rows_with_prefix(b"d:")
+        .unwrap()
+        .into_iter()
+        .map(|(key, _)| key)
+        .collect();
+    assert_eq!(
+        sidecar_keys_after_optimistic,
+        vec![marker_key],
+        "the d: sidecar marker is unchanged by the optimistic clear"
+    );
+
+    // VV-CONFIRMED clear: the q: row is GONE and the d:{seq:8BE} sidecar
+    // is cleared in the same operation.
+    queue.clear_through_confirmed(max_seq).unwrap();
+    assert!(
+        queue.drain_updates().unwrap().is_empty(),
+        "confirmed clear removes the soft delete-bearing q: row"
+    );
+    assert!(
+        vault.sync_queue_rows_with_prefix(b"d:").unwrap().is_empty(),
+        "confirmed clear removes the d: sidecar in the same operation"
+    );
+}

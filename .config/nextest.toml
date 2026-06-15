@@ -1,0 +1,45 @@
+# cargo-nextest configuration (ONE-1144).
+#
+# nextest is the canonical test runner: process-per-test isolation removes
+# the shared-process LMDB flake class (cumulative pthread-key pressure,
+# shared-env state). It does NOT fix the macOS SysV-semaphore EINVAL(22)
+# collision class — the semaphore namespace is system-wide (ONE-1148).
+#
+# Tiers:
+#   * default (fast): `cargo nextest run -p oneiron [--features sync]`
+#     — excludes the `slow` set below; the dev/agent inner loop.
+#   * full: `cargo nextest run -p oneiron --profile full [--features sync]`
+#     — everything; the pre-push gate and CI.
+#
+# `#[ignore]`d tests stay ignored in both tiers (nextest default; never add
+# run-ignored here — the remaining ignored test is parked on ONE-1141).
+
+[profile.default]
+# Fast/dev/agent inner loop: no retries — nextest's built-in `retries = 0`,
+# so the loop fails fast. Do NOT re-add retries here "for symmetry"; retries
+# live on the `full`/CI profile only (ONE-1144 owner decision).
+# Slow tier (exclusion set). Boundary proposed under ONE-1144, pending
+# ratification:
+#   * tests::vault_open_drop_cycles_survive_pthread_key_limit
+#     — 600 sequential Vault open/drop cycles (ONE-1142 regression guard)
+#   * tests::hnsw_recall_at_10_vs_bruteforce
+#   * tests::hnsw_recall_at_10_after_refresh_churn
+#     — 1k-vector recall benchmarks against brute force
+#   * binary(sync_convergence_props)
+#     — the whole ONE-1136 two-vault CRDT convergence property suite
+#       (multi-round Loro exchange per test; sync feature only)
+default-filter = """
+not (
+  test(=tests::vault_open_drop_cycles_survive_pthread_key_limit)
+  | test(=tests::hnsw_recall_at_10_vs_bruteforce)
+  | test(=tests::hnsw_recall_at_10_after_refresh_churn)
+  | binary(=sync_convergence_props)
+)
+"""
+
+[profile.full]
+# Full tier: every test (slow set included). Used by CI and the pre-push
+# gate. Sets retries = 2 explicitly (CI/pre-merge only); the fast/`default`
+# tier uses nextest's built-in retries = 0 and fails fast on the inner loop.
+retries = 2
+default-filter = "all()"

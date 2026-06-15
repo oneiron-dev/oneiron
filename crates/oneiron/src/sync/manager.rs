@@ -282,26 +282,50 @@ impl WindowManager {
     ///
     /// Returns `Ok(false)` if the window is not loaded. If the persist
     /// fails, the window STAYS registered and observed (fail-closed,
-    /// retryable) and the error is returned. If a caller still holds an
-    /// `Arc` clone, the subscriptions stay live until the last handle
-    /// drops; this is logged as a warning because the memory-budget intent
-    /// of unloading is defeated until then.
+    /// retryable) and the error is returned.
+    ///
+    /// # Refusal with outstanding handles (ONE-1150)
+    ///
+    /// If a caller still holds an `Arc<LoadedWindow>` clone, the unload is
+    /// REFUSED with [`Error::WindowBusy`] and has no effect: nothing is
+    /// persisted, the window stays registered and discoverable via
+    /// [`window`](Self::window), and its observers stay attached. The
+    /// alternative — deregister-while-held, the pre-ONE-1150 behavior —
+    /// is the second-live-doc trap: the next `open_window` would build a
+    /// NEW doc for the key while the outstanding handle keeps writing to
+    /// the orphaned one, whose commits bypass the manager's delete routing
+    /// (the `window()` lookup no longer finds it), so deletes take the
+    /// transient path while the orphaned doc still carries the deleted
+    /// body. The refusal is graceful: the caller retries after the last
+    /// external handle drops. Contrast [`discard_window`]
+    /// (Self::discard_window), the FORCED eviction that deregisters even
+    /// with outstanding holders because its doc state is known-stale.
+    ///
+    /// The check runs under the registry lock and counts only EXTERNAL
+    /// holders (the registry's own `Arc` is excluded). When it passes, no
+    /// external handle exists and none can appear before deregistration:
+    /// minting a new handle requires `open_window`/`window`, which both
+    /// need the registry lock this method holds.
     pub fn unload_window(&self, key: &WindowKey) -> Result<bool> {
         let mut registry = self.lock_registry();
         let Some(window) = registry.get(key) else {
             return Ok(false);
         };
+        // ONE-1150 fail-closed guard: refuse BEFORE any side effect (no
+        // persist, no deregister) so a refused unload is a pure no-op the
+        // caller can poll. strong_count includes the registry's own Arc.
+        let outstanding_handles = Arc::strong_count(window) - 1;
+        if outstanding_handles > 0 {
+            return Err(Error::WindowBusy {
+                window_key: key.to_string(),
+                outstanding_handles,
+            });
+        }
         // Persist BEFORE deregistering, while observers still cover the doc.
         window.persist_state(&self.vault)?;
         let window = registry
             .remove(key)
             .expect("window present under registry lock");
-        if Arc::strong_count(&window) > 1 {
-            tracing::warn!(
-                window = %key,
-                "window-manager: unload with outstanding handles — observer subscriptions stay live until the last handle drops"
-            );
-        }
         drop(window);
         Ok(true)
     }
@@ -318,9 +342,19 @@ impl WindowManager {
     /// that doc's version vector, so the server re-sends it on the next VV
     /// exchange.
     ///
-    /// Returns `false` if the window is not loaded. Outstanding `Arc`
-    /// holders keep the stale doc (and its observer subscriptions) alive
-    /// until dropped — same caveat as `unload_window`.
+    /// Returns `false` if the window is not loaded.
+    ///
+    /// # Forced eviction vs graceful unload (ONE-1150)
+    ///
+    /// Unlike [`unload_window`](Self::unload_window) — which REFUSES with
+    /// [`Error::WindowBusy`] while external `Arc` holders exist — discard
+    /// deregisters UNCONDITIONALLY, outstanding holders or not, and that is
+    /// deliberate: this path runs precisely when the doc's RAM state is
+    /// WRONG (ahead of durable state), so keeping the stale doc registered
+    /// until holders drop would keep serving it through `window()` —
+    /// including to delete routing. Outstanding holders keep the stale doc
+    /// (and its observer subscriptions) alive until they drop; this is
+    /// logged because their writes are orphaned by design.
     pub(crate) fn discard_window(&self, key: &WindowKey) -> bool {
         let mut registry = self.lock_registry();
         let Some(window) = registry.remove(key) else {

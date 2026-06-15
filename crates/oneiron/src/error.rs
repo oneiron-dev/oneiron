@@ -41,6 +41,7 @@ pub enum ErrorKind {
     ProvenanceOnStructuralEdge,
     ActorClassMismatch,
     InvalidProvenanceBody,
+    InvalidModelSubstrate,
     ClaimAlreadyClosed,
     ClaimSelfSupersession,
     ProvenanceClaimLifecycle,
@@ -50,6 +51,7 @@ pub enum ErrorKind {
     ProvenanceSubjectMismatch,
     ProvenanceSelfSupersession,
     ProvenancePrecedenceViolation,
+    EdgeIsProvenanced,
     CycleDetected,
     ChildOfCardinality,
     IncompatibleAnalyzer,
@@ -62,11 +64,18 @@ pub enum ErrorKind {
     #[cfg(feature = "sync")]
     WindowNotFound,
     #[cfg(feature = "sync")]
-    SyncProtocolError,
+    WindowBusy,
     #[cfg(feature = "sync")]
+    SyncProtocolError,
     InvalidRedactionReceiptBody,
     #[cfg(feature = "sync")]
     RedactionReceiptDivergence,
+    #[cfg(feature = "sync")]
+    ReceiptAttestationInvalid,
+    #[cfg(feature = "sync")]
+    ReceiptLeaseUnknown,
+    #[cfg(feature = "sync")]
+    ReceiptLeaseRevoked,
 }
 
 /// Crate error type.
@@ -216,9 +225,16 @@ pub enum Error {
         actor_class: u8,
     },
     /// An `edge.provenance` value record failed the pinned structural
-    /// validation (the 7-field snake_case ABI). Nothing was written.
+    /// validation (the 10-key snake_case ABI — ONE-1138 vocabulary).
+    /// Nothing was written.
     #[error("invalid edge.provenance body: {0}")]
     InvalidProvenanceBody(&'static str),
+    /// A MODEL substrate descriptor failed validation (ONE-1138): an
+    /// `ensure_model_substrate` name/version that is empty or oversized, or
+    /// a provenance `substrate_ref` that does not name a stored MODEL
+    /// (type byte 121) entity. Nothing was written.
+    #[error("invalid model substrate: {0}")]
+    InvalidModelSubstrate(&'static str),
     /// A claim lifecycle transition (`supersede_claim` / `retract_claim`)
     /// targeted a claim whose `life` status is not `active`. Superseded and
     /// retracted claims are closed history (ARCH-0003: all non-current
@@ -281,6 +297,18 @@ pub enum Error {
         incoming_learned_at: u64,
         frontier_learned_at: u64,
     },
+    /// A plain (provenance-free) edge put targeted an edge that carries a
+    /// 26-byte provenanced value — the silent-downgrade hole pinned by
+    /// ONE-1113 (ARCH-0034 #write-protection, ratified 2026-06-13): "an
+    /// unattributed write can never displace attributed truth as current
+    /// state". The write is rejected typed and routed — never a silent strip
+    /// of the two hot-flag bytes, never a silent preserve of them under the
+    /// caller's new value. Both edge directions stay byte-identical and the
+    /// live `edge.provenance` Claim stays live; nothing was written.
+    #[error(
+        "edge (kind {kind}) is provenanced: a plain edge put cannot displace attributed truth; modify the relation via put_edge_provenance / the actor-bound surface (as_actor), set weight via set_edge_weight, set VAD via set_edge_vad"
+    )]
+    EdgeIsProvenanced { kind: u8 },
     /// Tree operation would create a cycle.
     #[error("cycle detected in tree hierarchy")]
     CycleDetected,
@@ -365,6 +393,28 @@ pub enum Error {
     #[cfg(feature = "sync")]
     #[error("sync window not found: {window_key}")]
     WindowNotFound { window_key: String },
+    /// `WindowManager::unload_window` refused to deregister a window that
+    /// still has external `Arc<LoadedWindow>` holders (ONE-1150).
+    /// Deregistering anyway would let a subsequent `open_window` construct a
+    /// SECOND live doc for the same window key: the outstanding handle's doc
+    /// would keep accepting writes that bypass Observer A routing, and the
+    /// manager's `window()` lookup — the seam delete routing uses to commit
+    /// tombstones through the live doc — would miss it, sending deletes down
+    /// the transient path while the orphaned doc still holds the deleted
+    /// body. Fail-closed: nothing was persisted or deregistered; the window
+    /// stays registered and discoverable. Retry after the last external
+    /// handle drops, or use the manager's forced-eviction path
+    /// (`discard_window`) when the doc state is known-stale.
+    /// `outstanding_handles` counts external holders only (the registry's
+    /// own reference is excluded).
+    #[cfg(feature = "sync")]
+    #[error(
+        "sync window busy: {window_key} has {outstanding_handles} outstanding external handle(s); unload refused — retry after the last handle drops"
+    )]
+    WindowBusy {
+        window_key: String,
+        outstanding_handles: usize,
+    },
     /// Sync protocol violation.
     #[cfg(feature = "sync")]
     #[error("sync protocol error: {0}")]
@@ -377,7 +427,6 @@ pub enum Error {
     /// verification — opaque identifiers + timestamps only). Fail-closed:
     /// nothing was written; the replay doors quarantine the blob (`x:`
     /// family, ONE-1134).
-    #[cfg(feature = "sync")]
     #[error("invalid redaction audit receipt body: {0}")]
     InvalidRedactionReceiptBody(&'static str),
     /// A sync replay door delivered DIVERGENT bytes for an EXISTING
@@ -392,6 +441,34 @@ pub enum Error {
         id.to_hex()
     )]
     RedactionReceiptDivergence { id: EntityId },
+    /// A NEW REDACTION_AUDIT receipt arriving through a sync replay door
+    /// failed Ed25519 attestation verification (ONE-1140): the embedded
+    /// `att_sig` does not verify over the pinned transcript (domain ||
+    /// entity_id || envelope_header || body-with-empty-verification), or
+    /// the `att_pk` disagrees with the lease registry binding for
+    /// `att_client`. Fail-closed: nothing written; the replay doors
+    /// quarantine the blob (`x:` family).
+    #[cfg(feature = "sync")]
+    #[error(
+        "redaction audit receipt {} attestation invalid: signature/pubkey fails verification",
+        id.to_hex()
+    )]
+    ReceiptAttestationInvalid { id: EntityId },
+    /// A NEW REDACTION_AUDIT receipt claims an `att_client` with NO `ls:`
+    /// lease binding in the local registry mirror (ONE-1140). Fail-closed:
+    /// quarantined, not accepted — the rejected bytes stay in the CRDT map,
+    /// so the next forward rematerialization re-admits the receipt once the
+    /// lease mirror catches up (OD-10 lazy re-admission).
+    #[cfg(feature = "sync")]
+    #[error("redaction audit receipt claims unleased client {client_id:016x}")]
+    ReceiptLeaseUnknown { client_id: u64 },
+    /// A NEW REDACTION_AUDIT receipt claims an `att_client` whose lease
+    /// binding is REVOKED (ONE-1140, OD-7/OD-8: revoked is terminal; the
+    /// only door-enforced status — expired still verifies). Fail-closed:
+    /// quarantined, never accepted.
+    #[cfg(feature = "sync")]
+    #[error("redaction audit receipt claims revoked client {client_id:016x}")]
+    ReceiptLeaseRevoked { client_id: u64 },
 }
 
 impl Error {
@@ -442,6 +519,7 @@ impl Error {
             Self::ProvenanceOnStructuralEdge { .. } => ErrorKind::ProvenanceOnStructuralEdge,
             Self::ActorClassMismatch { .. } => ErrorKind::ActorClassMismatch,
             Self::InvalidProvenanceBody(_) => ErrorKind::InvalidProvenanceBody,
+            Self::InvalidModelSubstrate(_) => ErrorKind::InvalidModelSubstrate,
             Self::ClaimAlreadyClosed { .. } => ErrorKind::ClaimAlreadyClosed,
             Self::ClaimSelfSupersession => ErrorKind::ClaimSelfSupersession,
             Self::ProvenanceClaimLifecycle { .. } => ErrorKind::ProvenanceClaimLifecycle,
@@ -451,6 +529,7 @@ impl Error {
             Self::ProvenanceSubjectMismatch => ErrorKind::ProvenanceSubjectMismatch,
             Self::ProvenanceSelfSupersession => ErrorKind::ProvenanceSelfSupersession,
             Self::ProvenancePrecedenceViolation { .. } => ErrorKind::ProvenancePrecedenceViolation,
+            Self::EdgeIsProvenanced { .. } => ErrorKind::EdgeIsProvenanced,
             Self::CycleDetected => ErrorKind::CycleDetected,
             Self::ChildOfCardinality => ErrorKind::ChildOfCardinality,
             Self::IncompatibleAnalyzer { .. } => ErrorKind::IncompatibleAnalyzer,
@@ -463,11 +542,18 @@ impl Error {
             #[cfg(feature = "sync")]
             Self::WindowNotFound { .. } => ErrorKind::WindowNotFound,
             #[cfg(feature = "sync")]
-            Self::SyncProtocolError(_) => ErrorKind::SyncProtocolError,
+            Self::WindowBusy { .. } => ErrorKind::WindowBusy,
             #[cfg(feature = "sync")]
+            Self::SyncProtocolError(_) => ErrorKind::SyncProtocolError,
             Self::InvalidRedactionReceiptBody(_) => ErrorKind::InvalidRedactionReceiptBody,
             #[cfg(feature = "sync")]
             Self::RedactionReceiptDivergence { .. } => ErrorKind::RedactionReceiptDivergence,
+            #[cfg(feature = "sync")]
+            Self::ReceiptAttestationInvalid { .. } => ErrorKind::ReceiptAttestationInvalid,
+            #[cfg(feature = "sync")]
+            Self::ReceiptLeaseUnknown { .. } => ErrorKind::ReceiptLeaseUnknown,
+            #[cfg(feature = "sync")]
+            Self::ReceiptLeaseRevoked { .. } => ErrorKind::ReceiptLeaseRevoked,
         }
     }
 
@@ -476,6 +562,10 @@ impl Error {
     pub fn is_retryable(&self) -> bool {
         match self {
             Self::ConcurrentWrite(_) => true,
+            // Transient by construction: the refusal clears once the last
+            // external window handle drops (ONE-1150).
+            #[cfg(feature = "sync")]
+            Self::WindowBusy { .. } => true,
             Self::Io(error) => matches!(
                 error.kind(),
                 std::io::ErrorKind::Interrupted

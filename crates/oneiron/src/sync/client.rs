@@ -26,7 +26,12 @@
 //!   persisted on every accepted root import; reloaded on restart with
 //!   pending `u:root:*` replay (startup step 1).
 //! - `m:client_id` — this device's CRDT client id (u64 LE, 8 bytes), minted
-//!   once and stable per install.
+//!   once and stable per install (mint lives in `crate::identity`, OD-2).
+//! - `m:device_sk` / `m:device_pk` — this device's Ed25519 attestation
+//!   keypair (32 B each; ONE-1140, OD-2), minted alongside the client id.
+//! - `ls:{client_id_hex}` — device-lease registry mirror rows (58 B pinned
+//!   record, ONE-1140 OD-3/OD-4): full-mirrored from the root doc's
+//!   `leases` map in the SAME txn as every root persist.
 //! - `m:last_sync` — last successful sync timestamp (u64 LE, 8 bytes).
 //! - `bulk:w:{key}` — BulkTransfer in-progress marker (device only);
 //!   cleared when `BulkTransferDone` persistence succeeds.
@@ -35,6 +40,7 @@
 //!   answer the VV exchange from the persisted state vector without
 //!   loading the window doc.
 
+use std::cmp::Ordering::{Equal, Less};
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -48,13 +54,15 @@ use crate::sync::loro_support::{
     doc_from_snapshot, doc_version_vector, export_snapshot, export_updates_since,
 };
 use crate::sync::manager::WindowManager;
-use crate::sync::schema::read_window_list;
+use crate::sync::quarantine;
+use crate::sync::schema::{create_window_doc, read_window_list};
 use crate::sync::transport::{
-    self, MAX_DECODED_PAYLOAD_BYTES, TAG_AWARENESS, TAG_BULK_TRANSFER, TAG_BULK_TRANSFER_DONE,
-    TAG_SYNC_UPDATE, TAG_VERSION_VECTOR, TAG_WINDOW_SYNC, TransportError, window_sub_tags,
+    self, LEASE_STATUS_GRANTED, MAX_DECODED_PAYLOAD_BYTES, TAG_AWARENESS, TAG_BULK_TRANSFER,
+    TAG_BULK_TRANSFER_DONE, TAG_LEASE_GRANTED, TAG_SYNC_UPDATE, TAG_VERSION_VECTOR,
+    TAG_WINDOW_SYNC, TransportError, window_sub_tags,
 };
 use crate::sync::types::{WindowKey, parse_window_key_str};
-use crate::sync::window::LoadedWindow;
+use crate::sync::window::{LoadedWindow, apply_pending_window_updates, load_window_from_state};
 
 /// Root doc snapshot row (ARCH-0023b key table: server-write-only
 /// `meta.windows`; client persists what it imported).
@@ -66,7 +74,9 @@ const KEY_ROOT_SVF: &str = "svf:root";
 /// Pending root update rows applied on top of `d:root` at startup (step 1).
 const ROOT_UPDATE_PREFIX: &str = "u:root:";
 /// This device's CRDT client id (u64 LE, 8 bytes) — minted once, stable per
-/// install.
+/// install. The mint lives in `crate::identity` (ONE-1140, OD-2); this
+/// test-side literal pins the row key independently of that module.
+#[cfg(test)]
 const KEY_CLIENT_ID: &str = "m:client_id";
 /// Last successful sync timestamp (u64 LE, 8 bytes).
 const KEY_LAST_SYNC: &str = "m:last_sync";
@@ -117,8 +127,19 @@ pub enum SyncStatus {
 #[derive(Debug)]
 pub enum SyncEvent {
     StatusChanged(SyncStatus),
-    WindowUpdated { window_key: String },
-    BulkTransferComplete { window_key: String },
+    WindowUpdated {
+        window_key: String,
+    },
+    BulkTransferComplete {
+        window_key: String,
+    },
+    /// The server rejected this device's lease request (ONE-1140: binding
+    /// conflict or revoked binding). Sync PROCEEDS — fail-closed lives at
+    /// the replay doors (peers quarantine this device's NEW receipts), not
+    /// the pipe.
+    LeaseDenied {
+        client_id: u64,
+    },
     Error(String),
 }
 
@@ -128,6 +149,10 @@ pub struct SyncClient {
     manager: Arc<WindowManager>,
     root_doc: LoroDoc,
     client_id: u64,
+    /// This device's Ed25519 attestation key (ONE-1140, OD-2): signs the
+    /// lease-request proof of possession on every connect. Receipt signing
+    /// happens vault-side at mint, not here.
+    device_signing_key: ed25519_dalek::SigningKey,
     config: SyncClientConfig,
     /// Last server VV observed per window from `VV_REQUEST` / `VV_RESPONSE`
     /// frames. This is the convergence witness (ONE-1128): the offline queue
@@ -141,11 +166,12 @@ pub struct SyncClient {
 impl SyncClient {
     /// Creates a new sync client over manager-owned windows.
     ///
-    /// Loads persisted client state first (ARCH-0023b startup step 1):
-    /// `m:client_id` (minted once if absent), then the root doc from
-    /// `d:root` + pending `u:root:*` replay. A malformed `m:client_id` row
-    /// fails closed — silently re-minting would change this device's CRDT
-    /// identity.
+    /// Loads persisted client state first (ARCH-0023b startup step 1): the
+    /// device identity — `m:client_id` (minted once if absent) plus the
+    /// `m:device_sk`/`m:device_pk` attestation keypair (ONE-1140, OD-2) —
+    /// then the root doc from `d:root` + pending `u:root:*` replay.
+    /// Malformed identity rows fail closed — silently re-minting would
+    /// change this device's CRDT identity mid-install.
     pub fn new(
         manager: Arc<WindowManager>,
         config: SyncClientConfig,
@@ -153,7 +179,8 @@ impl SyncClient {
         let (event_tx, event_rx) = mpsc::unbounded_channel();
         let vault = Arc::clone(manager.vault());
 
-        let client_id = load_or_mint_client_id(&vault)?;
+        let identity = crate::identity::ensure_device_identity(&vault)?;
+        let client_id = identity.client_id;
         let root_doc = load_root_doc(&vault)?;
         // The client never authors root ops in production (meta.windows is
         // server-write-only), so pinning the stable client id as the root
@@ -170,6 +197,7 @@ impl SyncClient {
             manager,
             root_doc,
             client_id,
+            device_signing_key: identity.signing_key,
             config,
             server_vvs: HashMap::new(),
             status: SyncStatus::Disconnected,
@@ -290,6 +318,35 @@ impl SyncClient {
                 // presence yet. Ignore instead of surfacing UnknownTag errors
                 // for every awareness fan-out (ONE-1127).
             }
+            TAG_LEASE_GRANTED => {
+                // ONE-1140 (OD-5): the server's ack for this connect's lease
+                // request. Exhaustive frame validation; a frame echoing a
+                // DIFFERENT client id is a protocol violation (the server
+                // direct-replies to the requester), fail closed.
+                let (status, client_id, expires_at) = transport::decode_lease_granted(payload)?;
+                if client_id != self.client_id {
+                    return Err(TransportError::InvalidPayload(
+                        "LeaseGranted echoes a foreign client id",
+                    ));
+                }
+                if status == LEASE_STATUS_GRANTED {
+                    tracing::debug!(
+                        client_id = format!("{client_id:016x}"),
+                        expires_at,
+                        "sync: lease granted/renewed"
+                    );
+                } else {
+                    // Rejection is surfaced as a typed event and sync
+                    // PROCEEDS: fail-closed lives at the replay doors
+                    // (peers quarantine this device's NEW receipts), not
+                    // the pipe.
+                    tracing::warn!(
+                        client_id = format!("{client_id:016x}"),
+                        "sync: lease request REJECTED (binding conflict or revoked)"
+                    );
+                    let _ = self.event_tx.send(SyncEvent::LeaseDenied { client_id });
+                }
+            }
             TAG_VERSION_VECTOR => {
                 // Server's root VV. Root is server-authoritative, so there is
                 // nothing to send back — but the payload must still be valid
@@ -355,10 +412,75 @@ impl SyncClient {
                 // `u:w:` row, and window load is fail-closed on pending
                 // updates — one malformed frame would brick every future
                 // open of this window.
+                let vv_before = window.doc.oplog_vv();
                 window
                     .doc
                     .import(payload)
                     .map_err(|_| TransportError::InvalidPayload("window import failed"))?;
+                // A no-op import can still reveal a same-process durability
+                // gap: compare the live doc with exactly what restart would
+                // load from `d:w:` + surviving `u:w:` rows, then heal only
+                // the missing live-doc delta.
+                if window.doc.oplog_vv() == vv_before {
+                    let key = WindowKey::new(window_key);
+                    let durable_doc = match load_window_from_state(&self.vault, "local", &key) {
+                        Ok(doc) => doc,
+                        Err(Error::WindowNotFound { .. }) => {
+                            let doc = create_window_doc("local", &key);
+                            if let Err(e) = apply_pending_window_updates(&self.vault, &doc, &key) {
+                                self.manager.discard_window(&key);
+                                return Err(TransportError::Storage(format!(
+                                    "load durable window updates: {e}"
+                                )));
+                            }
+                            doc
+                        }
+                        Err(e) => {
+                            self.manager.discard_window(&key);
+                            return Err(TransportError::Storage(format!(
+                                "load durable window state: {e}"
+                            )));
+                        }
+                    };
+                    let live_vv = window.doc.oplog_vv();
+                    let durable_vv = durable_doc.oplog_vv();
+                    if matches!(live_vv.partial_cmp(&durable_vv), Some(Less | Equal)) {
+                        return Ok(Vec::new());
+                    }
+                    let fr_key = format!("fr:w:{window_key}");
+                    match self.vault.sync_state_get(&fr_key) {
+                        Ok(Some(_)) => {
+                            self.manager.discard_window(&key);
+                            return Err(TransportError::Storage(
+                                "post-scrub echo deferred to full resync".to_string(),
+                            ));
+                        }
+                        Ok(None) => {}
+                        Err(e) => {
+                            self.manager.discard_window(&key);
+                            return Err(TransportError::Storage(format!(
+                                "read full-resync marker: {e}"
+                            )));
+                        }
+                    }
+                    let missing = match export_updates_since(
+                        &window.doc,
+                        &doc_version_vector(&durable_doc),
+                    ) {
+                        Ok(missing) => missing,
+                        Err(e) => {
+                            self.manager.discard_window(&key);
+                            return Err(map_delta_export_err(e));
+                        }
+                    };
+                    if let Err(e) = persist_window_update(&self.vault, window_key, &missing) {
+                        self.manager.discard_window(&key);
+                        return Err(TransportError::Storage(format!(
+                            "persist live durable delta: {e}"
+                        )));
+                    }
+                    return Ok(Vec::new());
+                }
                 // Remote imports never fire Observer A (local-only), so
                 // persist the accepted update bytes ourselves: without a
                 // u:w: row, remote state — including tombstones, whose LMDB
@@ -468,40 +590,92 @@ impl SyncClient {
                     .doc
                     .import(doc_state)
                     .map_err(|_| TransportError::InvalidPayload("bulk doc state import failed"))?;
-                window
-                    .persist_state(&self.vault)
-                    .map_err(|e| TransportError::Storage(format!("persist bulk window: {e}")))?;
+                if let Err(e) = window.persist_state(&self.vault) {
+                    // Never leave RAM ahead of durable state on a FAILED
+                    // persist (same discipline as the WindowSync UPDATE
+                    // arm above): the bulk import advanced this doc's
+                    // version vector, so keeping the doc registered would
+                    // tell the server — on the next VV exchange — that we
+                    // already hold bytes that never became durable; they
+                    // would never be re-sent and would vanish from the doc
+                    // on restart. Discard the live window WITHOUT
+                    // persisting (a persist would durably commit the
+                    // unconfirmed import); the next open reloads from
+                    // durable state and the ONE-1127/1128 VV exchange
+                    // re-delivers the missing ops. The `bulk:w:`
+                    // in-progress marker stays set for retry (fail-closed:
+                    // the clear below only runs after a successful
+                    // persist).
+                    self.manager.discard_window(&WindowKey::new(window_key));
+                    return Err(TransportError::Storage(format!("persist bulk window: {e}")));
+                }
             } else {
-                // Window stays ON-DISK: validate the remote snapshot's
-                // structure before persisting (fail-closed — a trusted door
-                // still validates structure), then write the sync_state
-                // rows the next open will load.
-                let doc = doc_from_snapshot(doc_state)
-                    .map_err(|_| TransportError::InvalidPayload("bulk doc state invalid"))?;
-                let vv = doc_version_vector(&doc);
-                let doc_key = format!("d:w:{window_key}");
-                let sv_key = format!("sv:w:{window_key}");
-                let svf_key = format!("svf:w:{window_key}");
-                let pending_prefix = format!("u:w:{window_key}:");
-                self.vault
-                    .with_write_txn(|wtxn| {
-                        // sv reflects d:w: alone; only mark it fresh when no
-                        // pending local updates sit on top of the snapshot.
-                        let has_pending = {
-                            let mut iter = self
-                                .vault
-                                .store
-                                .sync_state
-                                .prefix_iter(wtxn, &pending_prefix)?;
-                            iter.next().transpose()?.is_some()
-                        };
-                        self.vault.store.sync_state.put(wtxn, &doc_key, doc_state)?;
-                        self.vault.store.sync_state.put(wtxn, &sv_key, &vv)?;
-                        let svf = if has_pending { 0u8 } else { SVF_FRESH };
-                        self.vault.store.sync_state.put(wtxn, &svf_key, &[svf])?;
-                        Ok(())
-                    })
-                    .map_err(|e| TransportError::Storage(format!("persist bulk doc state: {e}")))?;
+                // Window is ON-DISK (cold): route the snapshot through the
+                // SAME gated machinery as every other remote import
+                // (ONE-1156(a), WAVE-C OD-12). The previous arm parsed the
+                // snapshot structure-only (`doc_from_snapshot`) and then
+                // wrote raw `d:w:`/`sv:w:`/`svf:w:` rows — remote bytes
+                // becoming the next open's doc state WITHOUT Observer B
+                // ever seeing them: no tombstone never-downgrade, no `dt:`
+                // gate, no receipt immutability, no quarantine. Fail-closed
+                // replacement:
+                //
+                //   1. full pinned open (pt → pm → reverse → forward remat,
+                //      observers attached LAST) — `ensure_window`;
+                //   2. OBSERVED import — Observer B fires synchronously, so
+                //      EVERY entity/edge/tombstone door runs on the remote
+                //      ops;
+                //   3. inline `ra:` drain scoped to this window — doc-side
+                //      tombstone re-assertion at a safe commit point
+                //      (handler context, OUTSIDE observer callbacks),
+                //      BEFORE the persist so the persisted `d:w:` is
+                //      already re-asserted (ONE-1156(c));
+                //   4. `persist_state` — anti-clobber merge + the pinned
+                //      `d:`/`sv:`/`svf:` triple (which subsumes the old
+                //      arm's bespoke svf freshness logic);
+                //   5. unload — bulk targets cold historical windows; the
+                //      memory budget is restored after the persist.
+                //
+                // Every failure path leaves `bulk:w:{key}` set for retry
+                // (the clear below only runs after success) and DISCARDS
+                // the just-opened window so RAM never runs ahead of
+                // durable state (same discipline as the live arm and the
+                // WindowSync UPDATE arm).
+                let window = self.ensure_window(window_key)?;
+                if window.doc.import(doc_state).is_err() {
+                    self.manager.discard_window(&WindowKey::new(window_key));
+                    return Err(TransportError::InvalidPayload(
+                        "bulk doc state import failed",
+                    ));
+                }
+                // "local" mirrors the vault's own transient window-doc user
+                // id (`Vault::write_crdt_tombstone`); `create_window_doc`
+                // ignores it. A `false` return (malformed `ra:` rows kept,
+                // fail closed) is NOT a bulk failure: the well-formed
+                // markers drained, and the kept rows stay doctor-visible
+                // via `pending_reassert_windows` — failing the transfer
+                // could never clear them.
+                if let Err(e) = quarantine::drain_reassert_markers_for_window(
+                    &self.vault,
+                    "local",
+                    &self.manager,
+                    &WindowKey::new(window_key),
+                ) {
+                    self.manager.discard_window(&WindowKey::new(window_key));
+                    return Err(TransportError::Storage(format!(
+                        "bulk ra: re-assertion drain: {e}"
+                    )));
+                }
+                if let Err(e) = window.persist_state(&self.vault) {
+                    self.manager.discard_window(&WindowKey::new(window_key));
+                    return Err(TransportError::Storage(format!("persist bulk window: {e}")));
+                }
+                // Drop our handle BEFORE the unload: the manager refuses /
+                // warns on outstanding external holders (ONE-1150).
+                drop(window);
+                self.manager
+                    .unload_window(&WindowKey::new(window_key))
+                    .map_err(|e| TransportError::Storage(format!("unload bulk window: {e}")))?;
             }
         }
 
@@ -588,10 +762,13 @@ impl SyncClient {
 
     /// Generates initial sync messages for the connection flow.
     ///
-    /// Returns messages to send to the server, in wire order:
+    /// Returns messages to send to the server, in wire order (the ONE-1140
+    /// OD-5 connect-sequence literal `[hello][lease_request][…existing]`):
     /// 1. Protocol-version hello (MUST be the first frame — server checks it)
-    /// 2. Root doc VV (so server knows what we have)
-    /// 3. Default window VV requests (current + previous month), plus any
+    /// 2. Lease request (proof-of-possession over this device's identity;
+    ///    sent on EVERY connect — registration and renewal are one frame)
+    /// 3. Root doc VV (so server knows what we have)
+    /// 4. Default window VV requests (current + previous month), plus any
     ///    additional already-loaded windows
     ///
     /// All version vectors are Loro binary `VersionVector::encode()` bytes —
@@ -604,9 +781,24 @@ impl SyncClient {
     pub fn generate_initial_sync(&self) -> Vec<Vec<u8>> {
         // Phase 0: protocol-version hello — first frame on every connection so
         // the server can detect wire breaks before any sync payload flows.
-        let mut messages = vec![transport::encode_protocol_hello()];
+        // Frame #2: lease request (ONE-1140, OD-5).
+        let mut messages = vec![
+            transport::encode_protocol_hello(),
+            self.lease_request_frame(),
+        ];
         messages.extend(self.generate_phase_frames());
         messages
+    }
+
+    /// Builds this device's TAG_LEASE_REQUEST frame (ONE-1140, OD-5/OD-6):
+    /// Ed25519 proof of possession over
+    /// `"oneiron/lease-pop/v1" || client_id:8 BE || pubkey:32`.
+    fn lease_request_frame(&self) -> Vec<u8> {
+        use ed25519_dalek::Signer;
+        let pubkey = self.device_signing_key.verifying_key().to_bytes();
+        let transcript = crate::sync::lease::lease_pop_transcript(self.client_id, &pubkey);
+        let pop_sig = self.device_signing_key.sign(&transcript).to_bytes();
+        transport::encode_lease_request(self.client_id, &pubkey, &pop_sig)
     }
 
     /// Phase 1-2 sync frames: root VV + default-window VV requests.
@@ -706,7 +898,11 @@ impl SyncClient {
     }
 
     /// Persists the root doc to sync_state: `d:root` snapshot + `sv:root`
-    /// state vector + `svf:root` freshness, in one txn.
+    /// state vector + `svf:root` freshness, in one txn — plus the ONE-1140
+    /// (OD-3) lease-registry mirror: every `leases` map entry is upserted
+    /// into its `ls:` row in the SAME txn, so the replay doors' lease reads
+    /// can never observe a root state without its registry rows. Malformed
+    /// entries quarantine (x: row) and keep any previous good `ls:` row.
     fn persist_root_state(&self) -> Result<()> {
         let snapshot = export_snapshot(&self.root_doc)?;
         let vv = doc_version_vector(&self.root_doc);
@@ -720,6 +916,7 @@ impl SyncClient {
                 .store
                 .sync_state
                 .put(wtxn, KEY_ROOT_SVF, &[SVF_FRESH])?;
+            crate::sync::lease::mirror_leases_from_root_in_txn(&self.vault, wtxn, &self.root_doc)?;
             Ok(())
         })
     }
@@ -747,46 +944,11 @@ fn load_root_doc(vault: &Vault) -> Result<LoroDoc> {
     Ok(doc)
 }
 
-/// Loads `m:client_id`, minting it once (u64 LE, nonzero) when absent.
-///
-/// A present-but-malformed row fails closed: silently re-minting would
-/// change this device's CRDT identity mid-install.
-fn load_or_mint_client_id(vault: &Vault) -> Result<u64> {
-    let minted = mint_client_id();
-    let mut chosen = minted;
-    vault.with_write_txn(
-        |wtxn| match vault.store.sync_state.get(wtxn, KEY_CLIENT_ID)? {
-            Some(raw) if raw.len() == 8 => {
-                chosen = u64::from_le_bytes(raw.try_into().expect("length checked"));
-                Ok(())
-            }
-            Some(_) => Err(Error::CorruptedIndex("sync client_id row")),
-            None => {
-                vault
-                    .store
-                    .sync_state
-                    .put(wtxn, KEY_CLIENT_ID, &minted.to_le_bytes())?;
-                Ok(())
-            }
-        },
-    )?;
-    Ok(chosen)
-}
-
-/// Mints a random nonzero u64 from the random tail of a UUID (bytes 8..16
-/// of a v7 UUID are the random section — the head is a timestamp).
-fn mint_client_id() -> u64 {
-    loop {
-        let uuid = uuid::Uuid::now_v7();
-        let tail: [u8; 8] = uuid.as_bytes()[8..16]
-            .try_into()
-            .expect("uuid tail is 8 bytes");
-        let candidate = u64::from_le_bytes(tail);
-        if candidate != 0 {
-            return candidate;
-        }
-    }
-}
+// `load_or_mint_client_id` / `mint_client_id` were RELOCATED to the base
+// `crate::identity` module (ONE-1140, OD-2): base receipt-mint paths need
+// the same stable device id, and the Ed25519 attestation keypair mints
+// alongside it. Semantics preserved — u64 LE, minted once, nonzero;
+// malformed/zero rows fail closed (ONE-1155 zero-check composed there).
 
 /// Maps a delta-export error onto the transport taxonomy.
 ///
@@ -809,7 +971,9 @@ mod tests {
     use super::*;
     use loro::ExportMode;
 
+    use crate::batch::ENTITY_METADATA_HEADER_LEN;
     use crate::sync::bridge::Materializer;
+    use crate::types::{ENTITY_TYPE_TASK, EntityId, TimeRange};
 
     fn test_manager() -> Arc<WindowManager> {
         let dir = tempfile::tempdir().unwrap();
@@ -838,6 +1002,57 @@ mod tests {
         doc
     }
 
+    fn entity_blob(entity_type: u8, occurred: TimeRange, learned_at: u64, data: &[u8]) -> Vec<u8> {
+        let mut blob = Vec::with_capacity(ENTITY_METADATA_HEADER_LEN + data.len());
+        blob.push(entity_type);
+        blob.extend_from_slice(&occurred.start.to_be_bytes());
+        blob.extend_from_slice(&occurred.end.to_be_bytes());
+        blob.extend_from_slice(&learned_at.to_be_bytes());
+        blob.extend_from_slice(data);
+        blob
+    }
+
+    fn sync_state_values_with_prefix(vault: &Vault, prefix: &str) -> Vec<(String, Vec<u8>)> {
+        vault
+            .sync_state_keys_with_prefix(prefix)
+            .unwrap()
+            .into_iter()
+            .map(|key| {
+                let value = vault.sync_state_get(&key).unwrap().unwrap();
+                (key, value)
+            })
+            .collect()
+    }
+
+    fn read_u_seq(vault: &Vault, key: &str) -> Option<u32> {
+        vault
+            .sync_state_get(&format!("m:u_seq:w:{key}"))
+            .unwrap()
+            .map(|raw| u32::from_le_bytes(raw.try_into().unwrap()))
+    }
+
+    fn commit_local_entity(
+        window: &LoadedWindow,
+        id: &EntityId,
+        learned_at: u64,
+        body: &[u8],
+    ) -> Vec<u8> {
+        let vv_before = window.doc.oplog_vv();
+        let blob = entity_blob(
+            ENTITY_TYPE_TASK,
+            TimeRange { start: 1, end: 1 },
+            learned_at,
+            body,
+        );
+        window
+            .doc
+            .get_map("entities")
+            .insert(id.to_hex().as_str(), blob.as_slice())
+            .unwrap();
+        window.doc.commit();
+        export_updates_since(&window.doc, &vv_before.encode()).unwrap()
+    }
+
     #[test]
     fn sync_client_rejects_invalid_window_creation() {
         let manager = test_manager();
@@ -857,23 +1072,38 @@ mod tests {
         let manager = test_manager();
         let (client, _rx) = test_client(&manager);
         let messages = client.generate_initial_sync();
-        // hello + root VV + 2 window VV requests (current + prev)
-        assert_eq!(messages.len(), 4);
+        // hello + lease request + root VV + 2 window VV requests
+        // (current + prev) — the OD-5 connect-sequence literal
+        // `[hello][lease_request][…existing]` (ONE-1140).
+        assert_eq!(messages.len(), 5);
 
-        // Frame 0: protocol hello — exact wire bytes [tag=3, version=1]
-        // (contract literal, ONE-1127). It MUST be the first frame.
-        assert_eq!(messages[0], vec![3u8, 1u8]);
+        // Frame 0: protocol hello — exact wire bytes [tag=3, version=2]
+        // (contract literal; v2 pinned by the ONE-1140 wire train, OD-5).
+        // It MUST be the first frame.
+        assert_eq!(messages[0], vec![3u8, 2u8]);
 
-        // Frame 1: root VV — Loro binary encoding, decodable, NOT JSON.
-        assert_eq!(messages[1][0], TAG_VERSION_VECTOR);
-        VersionVector::decode(&messages[1][1..]).expect("root VV must be Loro binary encoding");
+        // Frame 1: lease request — 105 B pinned layout, client_id BE at
+        // offset 1, and the embedded PoP signature verifies over the OD-6
+        // transcript (a frame signed for a different client id would not).
+        assert_eq!(messages[1].len(), 105);
+        assert_eq!(messages[1][0], transport::TAG_LEASE_REQUEST);
+        let (cid, pubkey, pop_sig) = transport::decode_lease_request(&messages[1][1..]).unwrap();
+        assert_eq!(cid, client.client_id());
         assert!(
-            serde_json::from_slice::<serde_json::Value>(&messages[1][1..]).is_err(),
+            crate::sync::lease::verify_lease_pop(cid, &pubkey, &pop_sig),
+            "the lease request must carry a valid proof of possession"
+        );
+
+        // Frame 2: root VV — Loro binary encoding, decodable, NOT JSON.
+        assert_eq!(messages[2][0], TAG_VERSION_VECTOR);
+        VersionVector::decode(&messages[2][1..]).expect("root VV must be Loro binary encoding");
+        assert!(
+            serde_json::from_slice::<serde_json::Value>(&messages[2][1..]).is_err(),
             "the serde_json VV wire encoding is dead (ONE-1127)"
         );
 
-        // Frames 2..: window VV_REQUEST frames carrying binary VV payloads.
-        for msg in &messages[2..] {
+        // Frames 3..: window VV_REQUEST frames carrying binary VV payloads.
+        for msg in &messages[3..] {
             assert_eq!(msg[0], TAG_WINDOW_SYNC);
             let (key, sub_tag, payload) = transport::decode_window_sync(&msg[1..]).unwrap();
             assert!(parse_window_key_str(key).is_some());
@@ -979,6 +1209,124 @@ mod tests {
         assert_eq!(
             client.window(key).unwrap().doc.get_deep_value(),
             server_doc.get_deep_value()
+        );
+    }
+
+    #[test]
+    fn noop_echo_after_hard_delete_writes_no_uw_carrier() {
+        let manager = test_manager();
+        let vault = Arc::clone(manager.vault());
+        let (mut client, _rx) = test_client(&manager);
+        let key = "2026-03";
+        let learned_at = 1_772_400_000u64;
+        let seq_key = format!("m:u_seq:w:{key}");
+        vault.sync_state_put(&seq_key, b"bad").unwrap();
+
+        let window = client.ensure_window(key).unwrap();
+        let id = EntityId::now();
+        let payload_update = commit_local_entity(&window, &id, learned_at, b"private-payload");
+        assert!(
+            sync_state_values_with_prefix(&vault, &format!("u:w:{key}:")).is_empty(),
+            "corrupt m:u_seq makes Observer A fail before any u:w row is written"
+        );
+        assert!(
+            vault.get(&id).unwrap().is_some(),
+            "Observer B materialized the live payload before the hard delete"
+        );
+
+        vault.sync_state_put(&seq_key, &0u32.to_le_bytes()).unwrap();
+        let outcome = vault
+            .delete_entity_with_reason(&id, crate::DeleteReason::UserHardDelete)
+            .unwrap();
+        assert!(outcome.existed);
+        assert!(vault.get(&id).unwrap().is_none());
+        assert!(
+            vault
+                .sync_state_get(&format!("fr:w:{key}"))
+                .unwrap()
+                .is_some(),
+            "hard delete marks the window for full resync"
+        );
+
+        let prefix = format!("u:w:{key}:");
+        let rows_before_echo = sync_state_values_with_prefix(&vault, &prefix);
+        let seq_before_echo = read_u_seq(&vault, key);
+        let echo = transport::encode_window_sync(key, window_sub_tags::UPDATE, &payload_update);
+        assert!(client.handle_server_message(&echo).unwrap().is_empty());
+
+        let rows_after_echo = sync_state_values_with_prefix(&vault, &prefix);
+        assert_eq!(
+            rows_after_echo, rows_before_echo,
+            "the no-op echo must not add any u:w row after hard-delete scrub"
+        );
+        assert_eq!(
+            read_u_seq(&vault, key),
+            seq_before_echo,
+            "m:u_seq must not bump for a covered post-scrub no-op echo"
+        );
+        assert!(
+            rows_after_echo
+                .iter()
+                .all(|(_, value)| value != &payload_update),
+            "the pre-delete payload update must not reappear as a u:w carrier"
+        );
+        assert!(
+            vault.get(&id).unwrap().is_none(),
+            "the entity stays tombstoned after the no-op echo"
+        );
+    }
+
+    #[test]
+    fn noop_echo_after_snapshot_subsumes_writes_no_uw_row() {
+        let manager = test_manager();
+        let vault = Arc::clone(manager.vault());
+        let (mut client, _rx) = test_client(&manager);
+        let key = "2026-03";
+        let learned_at = 1_772_400_000u64;
+        let window = client.ensure_window(key).unwrap();
+        let id = EntityId::now();
+        let payload_update = commit_local_entity(&window, &id, learned_at, b"snapshot-payload");
+        let prefix = format!("u:w:{key}:");
+        assert!(
+            sync_state_values_with_prefix(&vault, &prefix)
+                .iter()
+                .any(|(_, value)| value == &payload_update),
+            "precondition: the local op initially has a u:w row"
+        );
+
+        window.persist_state(&vault).unwrap();
+        assert!(
+            sync_state_values_with_prefix(&vault, &prefix).is_empty(),
+            "snapshot persistence prunes the subsumed u:w row"
+        );
+        let seq_before_echo = read_u_seq(&vault, key);
+        assert_eq!(
+            vault
+                .sync_state_get(&format!("svf:w:{key}"))
+                .unwrap()
+                .as_deref(),
+            Some(&[SVF_FRESH][..]),
+            "all rows subsumed leaves svf fresh"
+        );
+
+        let echo = transport::encode_window_sync(key, window_sub_tags::UPDATE, &payload_update);
+        assert!(client.handle_server_message(&echo).unwrap().is_empty());
+        assert!(
+            sync_state_values_with_prefix(&vault, &prefix).is_empty(),
+            "a no-op echo of snapshot-subsumed bytes must not re-grow u:w"
+        );
+        assert_eq!(
+            read_u_seq(&vault, key),
+            seq_before_echo,
+            "m:u_seq must not bump for a covered snapshot no-op echo"
+        );
+        assert_eq!(
+            vault
+                .sync_state_get(&format!("svf:w:{key}"))
+                .unwrap()
+                .as_deref(),
+            Some(&[SVF_FRESH][..]),
+            "the deduped echo must not flip svf stale"
         );
     }
 
@@ -1322,6 +1670,30 @@ mod tests {
                 .unwrap()
                 .unwrap(),
             vec![1, 2, 3]
+        );
+    }
+
+    #[test]
+    fn sync_client_fails_closed_on_zero_client_id_row() {
+        let manager = test_manager();
+        manager
+            .vault()
+            .sync_state_put(KEY_CLIENT_ID, &0u64.to_le_bytes())
+            .unwrap();
+
+        let result = SyncClient::new(Arc::clone(&manager), SyncClientConfig::default());
+        assert!(
+            matches!(result, Err(Error::CorruptedIndex("sync client_id zero"))),
+            "stored zero m:client_id must fail closed, not be silently re-minted"
+        );
+        // The corrupt row is left for diagnosis, not overwritten.
+        assert_eq!(
+            manager
+                .vault()
+                .sync_state_get(KEY_CLIENT_ID)
+                .unwrap()
+                .unwrap(),
+            0u64.to_le_bytes()
         );
     }
 

@@ -59,8 +59,13 @@ vault.put_vector(&id, &embedding)?;
 
 ```sh
 cargo build --release
-cargo test
+cargo nextest run -p oneiron                                # fast tier
+cargo nextest run -p oneiron --features sync --profile full # full tier (CI parity)
 ```
+
+Tests run via [cargo-nextest](https://nexte.st) (`cargo install cargo-nextest`);
+profiles and the slow-test tier live in `.config/nextest.toml`. Plain
+`cargo test` still works.
 
 ## Upgrade Notes
 

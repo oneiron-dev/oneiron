@@ -11,6 +11,10 @@ license = "Apache-2.0"
 [workspace.dependencies]
 heed = "0.20"
 uuid = { version = "1", features = ["v7"] }
+# ONE-1140 (OD-1): receipt origin attestation, pinned to the 2.2.x line.
+ed25519-dalek = { version = "2.2", features = ["rand_core", "zeroize"] }
+# OsRng for device-key minting (ed25519-dalek's rand_core line is 0.6).
+rand_core = { version = "0.6.4", features = ["getrandom"] }
 thiserror = "2"
 rmp-serde = "1"
 rmpv = "1"

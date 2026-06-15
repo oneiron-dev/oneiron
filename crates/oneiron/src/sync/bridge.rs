@@ -337,6 +337,12 @@ fn subscribe_map_observer(
 /// Write-gate rejections of REMOTE ops persist a quarantine record (`x:`
 /// family, ONE-1124) and never abort the batch; LOCAL failures (the
 /// engine's own LMDB errors) propagate fail-closed and abort the txn.
+///
+/// A whole-txn failure flags the durable entity-scoped
+/// `rm:w:{window}:{entity_hex}` needs-remat marker for every op the dead
+/// txn had applied (ONE-1147, parity with the hardened tombstone path) —
+/// the ops stay committed in the CRDT doc, so a bare log would leave a
+/// silent LMDB↔CRDT divergence until the next full window recovery.
 fn materialize_entities_from_delta(
     doc: &LoroDoc,
     delta: &loro::event::MapDelta<'_>,
@@ -344,6 +350,11 @@ fn materialize_entities_from_delta(
     window_key: &str,
 ) {
     let tombstones_map = doc.get_map("tombstones");
+    // ONE-1147: ids + op bytes applied into the batch txn, retained outside
+    // it — on whole-txn failure there is no surviving per-entity failure
+    // point (unlike the tombstone path), so the swallow site below needs
+    // the full list to flag retry markers.
+    let mut applied_ops: Vec<(EntityId, Vec<u8>)> = Vec::new();
     let result = vault.with_write_txn(|wtxn| {
         for (key, new_val) in &delta.updated {
             match new_val {
@@ -380,6 +391,26 @@ fn materialize_entities_from_delta(
                             continue;
                         }
                     };
+                    // ONE-1158: a non-canonical (case-shifted) hex alias key
+                    // is a protocol violation — no engine version ever emits
+                    // one (`to_hex()` is lowercase). Materializing it would
+                    // leave the alias KEY live in the entities map while
+                    // tombstone-commit removal deletes only the
+                    // canonical-lowercase key: suppressed live-map byte
+                    // residue (handoff §8c.2 family). Fail closed at the
+                    // door: quarantine, never materialize.
+                    if key.as_ref() != id.to_hex() {
+                        quarantine_rejected_op_in_txn(
+                            vault,
+                            wtxn,
+                            window_key,
+                            QuarantineContainer::Entities,
+                            key.as_ref(),
+                            &Error::InvalidKey,
+                            blob,
+                        )?;
+                        continue;
+                    }
                     // ONE-1133 (ARCH-0038): a tombstone always wins over
                     // concurrent entities-map state. A re-put merged after
                     // the delete must never (re)materialize the body — no
@@ -428,20 +459,23 @@ fn materialize_entities_from_delta(
                         key.as_ref(),
                         blob,
                     );
-                    if let Err(e) = materialize_result {
-                        if remote_rejection_reason(&e).is_some() {
-                            quarantine_rejected_op_in_txn(
-                                vault,
-                                wtxn,
-                                window_key,
-                                QuarantineContainer::Entities,
-                                key.as_ref(),
-                                &e,
-                                blob,
-                            )?;
-                        } else {
-                            // LOCAL failure — fail closed, abort the batch.
-                            return Err(e);
+                    match materialize_result {
+                        Ok(()) => applied_ops.push((id, blob.to_vec())),
+                        Err(e) => {
+                            if remote_rejection_reason(&e).is_some() {
+                                quarantine_rejected_op_in_txn(
+                                    vault,
+                                    wtxn,
+                                    window_key,
+                                    QuarantineContainer::Entities,
+                                    key.as_ref(),
+                                    &e,
+                                    blob,
+                                )?;
+                            } else {
+                                // LOCAL failure — fail closed, abort the batch.
+                                return Err(e);
+                            }
                         }
                     }
                 }
@@ -463,11 +497,49 @@ fn materialize_entities_from_delta(
                 }
             }
         }
+        #[cfg(test)]
+        if take_injected_batch_commit_failure() {
+            return Err(Error::Io(std::io::Error::other(
+                "injected batch commit failure (test hook)",
+            )));
+        }
         Ok(())
     });
 
     if let Err(e) = result {
-        tracing::error!(error = %e, "observer-b: entity batch commit failed");
+        // ONE-1147: the whole batch txn aborted — every applied op's write
+        // (and any quarantine row staged alongside) is lost while the ops
+        // stay committed in the CRDT doc. Flag each affected id with the
+        // durable entity-scoped rm: marker so the drain re-runs forward
+        // remat for this window. Ids whose COMMITTED bytes already equal
+        // the op's bytes are skipped: nothing was lost for them, and an
+        // at-parity marker could never discharge (discharge requires the
+        // actual healing re-write to land — never mere byte-parity, which
+        // a failed GDPR purge also exhibits).
+        //
+        // Layering: markers are BEST-EFFORT durability on an already-failing
+        // env — a marker write that itself fails (env down hard) is logged
+        // at ERROR and dropped; window recovery's forward remat on the
+        // pinned open order remains the backstop.
+        let mut seen = HashSet::new();
+        let mut marked = 0usize;
+        for (id, blob) in &applied_ops {
+            // Parity-check BEFORE dedupe: a src/id whose first op is at
+            // parity must not shadow a later diverged op for the same id.
+            if committed_entity_state_matches(vault, id, blob) || !seen.insert(*id) {
+                continue;
+            }
+            if set_remat_marker_logged(vault, window_key, id) {
+                marked += 1;
+            }
+        }
+        tracing::error!(
+            error = %e,
+            window = %window_key,
+            applied_ops = applied_ops.len(),
+            marked,
+            "observer-b: entity batch commit failed — flagged entity-scoped rm: markers for durable retry"
+        );
     }
 }
 
@@ -479,12 +551,32 @@ fn materialize_entities_from_delta(
 /// Write-gate rejections of REMOTE ops persist a quarantine record (`x:`
 /// family, ONE-1124) and never abort the batch; LOCAL failures (the
 /// engine's own LMDB errors) propagate fail-closed and abort the txn.
+///
+/// A whole-txn failure flags the durable `rm:w:{window}:{entity_hex}`
+/// needs-remat marker for each batched edge upsert's SOURCE entity
+/// (ONE-1147): the drain is window-scoped — any marker makes forward remat
+/// re-walk the whole window's entities/edges maps, so the source id is
+/// sufficient to get the edge re-processed, and the marker discharges when
+/// the healing edge write lands.
 fn materialize_edges_from_delta(
     doc: &LoroDoc,
     delta: &loro::event::MapDelta<'_>,
     vault: &Vault,
     window_key: &str,
 ) {
+    // ONE-1147: source id + LMDB edge key + op bytes for every UPSERT
+    // pushed into the batch, retained outside the txn for the swallow site
+    // below (no surviving per-op failure point on whole-txn failure).
+    let mut applied_edges: Vec<(EntityId, [u8; 33], Vec<u8>)> = Vec::new();
+    // ONE-1147 fix-wave: id + written blob for every endpoint whose body this
+    // batch HYDRATED-AND-WROTE into LMDB (the `Hydrated` outcome below),
+    // retained outside the txn alongside `applied_edges`. A whole-txn
+    // rollback erases those hydration writes too; the swallow site flags each
+    // for durable remat. Without this, an endpoint hydrated inside the edge
+    // batch and rolled back is silently lost — no edge need even have been
+    // tracked (e.g. the partner endpoint failed LOCALLY and aborted the batch
+    // BEFORE `applied_edges.push`).
+    let mut hydrated_endpoints: Vec<(EntityId, Vec<u8>)> = Vec::new();
     let result = vault.with_write_txn(|wtxn| {
         let entities_map = doc.get_map("entities");
         let tombstones_map = doc.get_map("tombstones");
@@ -539,8 +631,28 @@ fn materialize_edges_from_delta(
                         &tombstones_map,
                         &tgt,
                     );
+                    // ONE-1147 fix-wave: record every endpoint this batch
+                    // ACTUALLY wrote (Hydrated) BEFORE the match may
+                    // abort/defer/quarantine the edge — the hydration write
+                    // has already landed in the txn and a rollback erases it
+                    // regardless of the edge's fate. Already-present (Ready)
+                    // endpoints wrote nothing and are never recorded. `src`
+                    // and `tgt` are `Copy`, so the moves into the match below
+                    // are unaffected.
+                    if let Ok(EndpointHydration::Hydrated(blob)) = &src_ready {
+                        hydrated_endpoints.push((src, blob.clone()));
+                    }
+                    if let Ok(EndpointHydration::Hydrated(blob)) = &tgt_ready {
+                        hydrated_endpoints.push((tgt, blob.clone()));
+                    }
                     match (src_ready, tgt_ready) {
-                        (Ok(EndpointHydration::Ready), Ok(EndpointHydration::Ready)) => {}
+                        // Both endpoints present — already there (`Ready`) or
+                        // just hydrated this batch (`Hydrated`): the edge may
+                        // proceed in either case.
+                        (
+                            Ok(EndpointHydration::Ready | EndpointHydration::Hydrated(_)),
+                            Ok(EndpointHydration::Ready | EndpointHydration::Hydrated(_)),
+                        ) => {}
                         (Ok(EndpointHydration::RejectedBlob), Ok(_))
                         | (Ok(_), Ok(EndpointHydration::RejectedBlob)) => {
                             // The endpoint's CRDT blob is undecodable REMOTE
@@ -602,6 +714,11 @@ fn materialize_edges_from_delta(
                         }
                     }
 
+                    applied_edges.push((
+                        src,
+                        Store::encode_edge_key(&src, kind, &tgt),
+                        buf.to_vec(),
+                    ));
                     ops.push(BatchOp::EdgeWithCreatedAt {
                         src,
                         kind,
@@ -614,7 +731,19 @@ fn materialize_edges_from_delta(
                     metas.push(EdgeOpMeta::for_key(key.as_ref(), buf));
                 }
                 None => {
-                    // Deleted
+                    // Deleted.
+                    //
+                    // ONE-1147: bare edge-map removals are deliberately NOT
+                    // flagged with rm: markers on batch failure — forward
+                    // remat (the drain's only heal step) iterates the
+                    // CURRENT edges map and has no delete leg, so such a
+                    // marker could never discharge; recovery's reverse pass
+                    // re-mirrors the surviving in-range LMDB edge back into
+                    // the CRDT (LMDB wins for absent-from-CRDT records), so
+                    // a lost removal converges edge-alive rather than
+                    // staying silently divergent. Entity deletions ride the
+                    // tombstone path, which has its own hardened rm:
+                    // producer.
                     let Some((src, kind, tgt)) = parse_edge_key(key.as_ref()) else {
                         quarantine_rejected_op_in_txn(
                             vault,
@@ -645,12 +774,132 @@ fn materialize_edges_from_delta(
                 }
             }
         }
-        apply_materialized_edge_ops(vault, wtxn, ops, &metas, window_key)
+        apply_materialized_edge_ops(vault, wtxn, ops, &metas, window_key)?;
+        #[cfg(test)]
+        if take_injected_batch_commit_failure() {
+            return Err(Error::Io(std::io::Error::other(
+                "injected batch commit failure (test hook)",
+            )));
+        }
+        Ok(())
     });
 
     if let Err(e) = result {
-        tracing::error!(error = %e, "observer-b: edge batch commit failed");
+        // ONE-1147: whole-txn failure — same marker semantics and
+        // best-effort layering as the entity swallow site above. Two classes
+        // of write the dead txn rolled back get a durable entity-scoped rm:
+        // marker, de-duped through ONE shared `seen` set so an id that is
+        // both is marked exactly once:
+        //   (1) ONE-1147 fix-wave — every endpoint this batch HYDRATED-AND-
+        //       WROTE (`hydrated_endpoints`): the rolled-back hydration write
+        //       is otherwise silently lost, even when no edge was tracked
+        //       (a partner endpoint may have aborted the batch before the
+        //       edge reached `applied_edges`); and
+        //   (2) the SOURCE entity of every lost edge upsert (`applied_edges`).
+        // The committed_*_state_matches guards skip any id whose COMMITTED
+        // bytes already equal the op's bytes (nothing lost; an at-parity
+        // marker could never discharge — forward remat heals on the actual
+        // healing write only, never on parity).
+        let mut seen = HashSet::new();
+        let mut marked = 0usize;
+        for (id, blob) in &hydrated_endpoints {
+            if committed_entity_state_matches(vault, id, blob) || !seen.insert(*id) {
+                continue;
+            }
+            if set_remat_marker_logged(vault, window_key, id) {
+                marked += 1;
+            }
+        }
+        for (src, edge_key, buf) in &applied_edges {
+            if committed_edge_state_matches(vault, edge_key, buf) || !seen.insert(*src) {
+                continue;
+            }
+            if set_remat_marker_logged(vault, window_key, src) {
+                marked += 1;
+            }
+        }
+        tracing::error!(
+            error = %e,
+            window = %window_key,
+            applied_ops = applied_edges.len(),
+            hydrated_endpoints = hydrated_endpoints.len(),
+            marked,
+            "observer-b: edge batch commit failed — flagged entity-scoped rm: markers for durable retry"
+        );
     }
+}
+
+/// ONE-1147 (best-effort, post-abort): `true` ONLY when the committed
+/// entity bytes provably equal the op's bytes — the failed txn lost nothing
+/// for this id. Any read error reports `false`: over-marking is the
+/// conservative direction (forward remat is idempotent and byte-compares
+/// before writing).
+fn committed_entity_state_matches(vault: &Vault, id: &EntityId, blob: &[u8]) -> bool {
+    let Ok(rtxn) = vault.store.env.read_txn() else {
+        return false;
+    };
+    matches!(
+        vault.store.entities.get(&rtxn, id.as_bytes()),
+        Ok(Some(existing)) if existing == blob
+    )
+}
+
+/// ONE-1147 (best-effort, post-abort): `true` ONLY when the committed
+/// `edges_out` bytes provably equal the op's bytes. Read errors report
+/// `false` (mark — conservative direction).
+fn committed_edge_state_matches(vault: &Vault, edge_key: &[u8; 33], buf: &[u8]) -> bool {
+    let Ok(rtxn) = vault.store.env.read_txn() else {
+        return false;
+    };
+    matches!(
+        vault.store.edges_out.get(&rtxn, edge_key),
+        Ok(Some(existing)) if existing == buf
+    )
+}
+
+/// Writes one `rm:w:{window}:{entity_hex}` marker in its OWN txn (the
+/// failed batch txn is dead). A marker-write failure is logged at ERROR and
+/// swallowed — best-effort durability on an already-failing env; window
+/// recovery's forward remat remains the backstop (see the batch swallow
+/// sites for the layering).
+fn set_remat_marker_logged(vault: &Vault, window_key: &str, id: &EntityId) -> bool {
+    match quarantine::set_remat_marker(vault, window_key, id) {
+        Ok(()) => true,
+        Err(marker_err) => {
+            tracing::error!(
+                entity = %id.to_hex(),
+                window = %window_key,
+                error = %marker_err,
+                "observer-b: CRITICAL — failed to set rm: marker after batch commit failure"
+            );
+            false
+        }
+    }
+}
+
+// Test-only whole-batch commit failure injection for the ONE-1147 rm:
+// marker round-trip tests: when armed, the next entity/edge materialization
+// batch returns a LOCAL (non-remote-classifiable) error from inside the
+// write closure AFTER all ops were applied — the txn aborts exactly like an
+// env-level commit failure. Counts down per batch on the current thread
+// (Loro observer callbacks fire synchronously on the committing thread).
+#[cfg(test)]
+thread_local! {
+    pub(crate) static INJECT_BATCH_COMMIT_FAILURES: std::cell::Cell<u32> =
+        const { std::cell::Cell::new(0) };
+}
+
+#[cfg(test)]
+fn take_injected_batch_commit_failure() -> bool {
+    INJECT_BATCH_COMMIT_FAILURES.with(|cell| {
+        let remaining = cell.get();
+        if remaining > 0 {
+            cell.set(remaining - 1);
+            true
+        } else {
+            false
+        }
+    })
 }
 
 #[derive(Clone)]
@@ -960,6 +1209,29 @@ fn materialize_tombstones_from_delta(
                         );
                     }
                 }
+
+                // ONE-1156(c) / WAVE-C OD-11, §8c.1 doc residue: a SOFT
+                // value arriving over a locally hard-deleted id (`dt:`
+                // present) can WIN the Loro map merge — LMDB stays safe
+                // above (the replay primitive never downgrades), but the
+                // doc now shows soft to every peer. Re-asserting here
+                // would write into the doc INSIDE an observer callback
+                // (the re-entrancy bar), so enqueue the durable
+                // `ra:w:{window}:{entity_hex}` marker (value = the `dt:`
+                // row's exact 25 B — local HARD truth) for the
+                // safe-commit-point drain. No `dt:` row ⇒ no marker (the
+                // helper checks).
+                if !crate::deletion::decode_tombstone_value(raw_value).is_hard()
+                    && let Err(marker_err) =
+                        quarantine::enqueue_tombstone_reassert_marker(vault, window_key, &id)
+                {
+                    tracing::error!(
+                        tombstone = %key,
+                        window = %window_key,
+                        error = %marker_err,
+                        "observer-b: CRITICAL — failed to enqueue ra: re-assertion marker for soft-over-hard doc residue"
+                    );
+                }
             }
             None => {
                 // Tombstone REMOVAL delta: no engine version ever emits one
@@ -967,11 +1239,12 @@ fn materialize_tombstones_from_delta(
                 // hard-once-seen), so a removal is a protocol violation by
                 // definition. The `dt:` marker gate keeps the local hard
                 // delete closed regardless. Quarantine it (x: row,
-                // hash+metadata only) and continue. The tombstone is
-                // deliberately NOT re-asserted here: a doc write inside an
-                // observer callback re-enters Loro (handoff §8c.1); the
-                // quarantine row plus the doctor surface carry the signal
-                // instead.
+                // hash+metadata only) and continue. The tombstone is NOT
+                // re-asserted here — a doc write inside an observer
+                // callback re-enters Loro (handoff §8c.1); instead, for a
+                // locally hard-deleted id, the durable `ra:` marker below
+                // queues the re-assertion for the safe-commit-point drain
+                // (ONE-1156(c), WAVE-C OD-11).
                 if let Err(e) = quarantine_rejected_op(
                     vault,
                     window_key,
@@ -986,6 +1259,24 @@ fn materialize_tombstones_from_delta(
                         tombstone = %key,
                         error = %e,
                         "observer-b: failed to persist tombstone-removal quarantine record"
+                    );
+                }
+                // OD-11, HARD-only: a dt:-backed marker carries the
+                // faithful 25 B local truth; a soft removal stays
+                // quarantine-only (residual R4 — a reconstructed soft
+                // value cannot be faithful, and an incorrectly decoded value would
+                // HARD-purge a user-kept shell at peers). An unparsable
+                // key cannot name a `dt:` row at all — quarantine above
+                // already recorded it.
+                if let Ok(id) = EntityId::from_hex(key.as_ref())
+                    && let Err(marker_err) =
+                        quarantine::enqueue_tombstone_reassert_marker(vault, window_key, &id)
+                {
+                    tracing::error!(
+                        tombstone = %key,
+                        window = %window_key,
+                        error = %marker_err,
+                        "observer-b: CRITICAL — failed to enqueue ra: re-assertion marker after tombstone removal"
                     );
                 }
             }
@@ -1042,30 +1333,56 @@ fn materialize_entity_blob_in_txn(
         &[]
     };
 
-    // ONE-1134: REDACTION_AUDIT (type 120) replay door. Receipts are
-    // immutable audit records (contracts.ts `redactionAuditReceipt`;
+    // ONE-1134 + ONE-1140: REDACTION_AUDIT (type 120) replay door. Receipts
+    // are immutable audit records (contracts.ts `redactionAuditReceipt`;
     // ARCH-0023b audit/guardrail stream class: quarantine divergence, never
-    // silent LWW), so before any byte is staged:
+    // silent LWW), so before any byte is staged, in pinned order:
     //
-    // 1. the body must satisfy the pinned receipt field set — a blob that
-    //    fails receipt decode is a remote rejection (quarantined by the
-    //    callers via `remote_rejection_reason`), and
-    // 2. immutability: id absent locally → accept new; id present with
-    //    byte-identical envelope → idempotent no-op (own-receipt CRDT
-    //    round-trips stay green); id present with DIVERGENT bytes → typed
-    //    rejection, LOCAL bytes are kept and the remote payload is
-    //    quarantined.
+    // 1. the body must satisfy the pinned receipt field set, now including
+    //    the four-entry att_ verification grammar (ONE-1140 v2) — a blob
+    //    that fails receipt decode is a remote rejection (quarantined by
+    //    the callers via `remote_rejection_reason`);
+    // 2. immutability (UNCHANGED, before any crypto — accepted local bytes
+    //    always win): id absent locally → fall through to the origin
+    //    predicate; id present with byte-identical envelope → idempotent
+    //    no-op (own-receipt CRDT round-trips stay green); id present with
+    //    DIVERGENT bytes → typed rejection, LOCAL bytes are kept and the
+    //    remote payload is quarantined;
+    // 3. NEW id: Ed25519 transcript verification against the embedded
+    //    att_pk (ONE-1140 OD-6), and
+    // 4. `ls:` lease-binding point read in the SAME txn (OD-3/OD-7: absent
+    //    → ReceiptLeaseUnknown; pubkey mismatch → ReceiptAttestationInvalid;
+    //    revoked → ReceiptLeaseRevoked; active|expired → accept).
     //
-    // Both checks run before `put_replicated` stages anything, so a rejected
-    // receipt never leaves partial writes in the transaction.
+    // All checks run before `put_replicated` stages anything, so a rejected
+    // receipt never leaves partial writes in the transaction. A quarantined
+    // receipt's bytes remain in the CRDT map, so the next forward
+    // rematerialization re-admits it once the lease mirror catches up
+    // (OD-10 lazy re-admission — no new scheduling machinery).
     if header.entity_type == crate::types::ENTITY_TYPE_REDACTION_AUDIT {
         crate::deletion::validate_redaction_receipt_body(data)?;
         if let Some(existing) = vault.store.entities.get(&*wtxn, id.as_bytes())? {
             if existing == blob {
                 return Ok(());
             }
+            // ONE-1087 designed exception: the sweep executor's receipt
+            // finalization (`sweep_complete_at` None→Some) is LOCAL-LMDB
+            // -only, so the CRDT mirror keeps replaying the PRE-finalization
+            // bytes forever. That one monotone shape — identical envelope
+            // and fields, local Some vs incoming nil — is the own node's
+            // stale echo: idempotent skip, never quarantine, never
+            // overwrite local. Every other divergence stays on the M4-07
+            // quarantine path.
+            if crate::deletion::redaction_receipt_is_stale_finalization_echo(existing, blob) {
+                tracing::debug!(
+                    entity = %key,
+                    "observer-b: stale pre-finalization receipt echo — keeping finalized local"
+                );
+                return Ok(());
+            }
             return Err(crate::Error::RedactionReceiptDivergence { id });
         }
+        crate::sync::lease::verify_new_receipt_origin_in_txn(vault, wtxn, &id, blob)?;
     }
 
     // Replicated put: Observer B mirrors whatever the unfiltered CRDT
@@ -1073,9 +1390,15 @@ fn materialize_entity_blob_in_txn(
     // (REDACTION_AUDIT = 120) and reserved-predicate `edge.provenance`
     // truth-Claims. The public gate would warn-skip those, losing GDPR
     // receipts / edge-provenance truth on sync; `put_replicated` admits both
-    // engine-authored bands while still running full structural validation
-    // (unknown type bytes, ungrammatical predicates, and malformed CLAIM
-    // bodies all still fail typed).
+    // engine-authored bands while still validating structure: unknown type
+    // bytes, ungrammatical predicates, and malformed CLAIM bodies fail the
+    // D18 gate typed, and `edge.provenance` Claims additionally get full
+    // value-record + actor-class-evidence validation at the same write
+    // chokepoint (ONE-1159) — a D18-valid wrapper around a structurally
+    // invalid provenance record is a typed rejection HERE (quarantined by
+    // the callers via `remote_rejection_reason`, exactly like a rejected
+    // receipt above), no longer a stored Claim that fails closed only at
+    // read/supersede time.
     vault
         .batch_in()
         .put_replicated(
@@ -1093,8 +1416,17 @@ fn materialize_entity_blob_in_txn(
 
 /// Endpoint hydration outcome for Observer B edge materialization.
 enum EndpointHydration {
-    /// Endpoint exists in LMDB (or was just materialized from the CRDT).
+    /// Endpoint already present in LMDB — NO write was performed, so a batch
+    /// rollback loses nothing for this endpoint (never flagged for remat).
     Ready,
+    /// Endpoint body was just hydrated into LMDB from the CRDT entities map —
+    /// an ACTUAL write. Carries the written blob so the edge-batch swallow
+    /// site can flag a durable `rm:` marker for this endpoint if the whole
+    /// txn rolls back (ONE-1147 fix-wave): the rolled-back hydration write
+    /// would otherwise vanish silently — unmarked, and with no edge
+    /// necessarily tracked to carry it. The caller treats it identically to
+    /// `Ready` for the edge's own fate (the edge proceeds).
+    Hydrated(Vec<u8>),
     /// Endpoint absent or tombstoned — defer the edge (it stays in the CRDT
     /// and re-materializes when its endpoint does).
     Deferred,
@@ -1181,7 +1513,13 @@ fn ensure_entity_materialized_from_crdt(
         return Ok(EndpointHydration::RejectedBlob);
     }
     materialize_entity_blob_in_txn(vault, wtxn, tombstones_map, &hex_id, &blob)?;
-    Ok(EndpointHydration::Ready)
+    // ONE-1147 fix-wave: distinguish an ACTUAL hydration write from the
+    // already-present `Ready` above, carrying the written bytes so the
+    // edge-batch swallow site can flag a durable rm: marker (parity guard +
+    // heal-on-write discharge) if this write is later rolled back. `blob` is
+    // moved into the variant after `materialize_entity_blob_in_txn` borrowed
+    // it.
+    Ok(EndpointHydration::Hydrated(blob))
 }
 
 /// Parses an edge key: `{src_hex}:{kind_u8:02}:{tgt_hex}` → (src, kind, tgt).
@@ -2220,6 +2558,12 @@ mod tests {
     /// (`allow_reserved_predicate: false`), `validate_claim_body_bytes`
     /// rejected it with ReservedPredicate, and the observer warn-skipped it
     /// — the Claim never reached the replica's LMDB.
+    ///
+    /// Since ONE-1159 the door also validates provenance STRUCTURE, so the
+    /// forged Claim carries a real value record + actor-class evidence
+    /// (the original junk-string `val` pinned the pre-1159 hole) — this is
+    /// now also the door's positive control: a fully-valid edge.provenance
+    /// Claim replicates with zero quarantine rows.
     #[test]
     fn observer_b_materializes_remote_edge_provenance_claim() {
         let vault = test_vault();
@@ -2228,20 +2572,29 @@ mod tests {
 
         let src = EntityId::now();
         let tgt = EntityId::now();
+        let actor = EntityId::now();
         let claim_id = EntityId::now();
 
-        let body = crate::claim::ClaimBody::new(
+        let record = crate::provenance::EdgeProvenanceClaimBody::new(
+            actor,
+            0.9,
+            crate::provenance::SupersessionStatus::Confirmed,
+        );
+        let mut body = crate::claim::ClaimBody::new(
             "edge.provenance",
             crate::claim::ClaimSubject::Edge {
                 source: src,
                 kind: EdgeKind::Mentions,
                 target: tgt,
             },
-            rmpv::Value::from("remote provenance payload"),
+            crate::provenance::encode_edge_provenance_value(&record),
             0.9,
             crate::claim::ClaimApprovalStatus::Auto,
             crate::claim::ClaimLifecycleStatus::Active,
         );
+        body.evidence = Some(crate::provenance::encode_actor_class_evidence(
+            crate::types::EdgeActorClass::Human,
+        ));
         let body_bytes = crate::claim::encode_claim_body(&body).unwrap();
         let claim_blob = entity_blob(
             crate::types::ENTITY_TYPE_CLAIM,
@@ -2266,6 +2619,12 @@ mod tests {
             .unwrap()
             .expect("materialized Claim must read back through get_claim");
         assert_eq!(read.predicate, "edge.provenance");
+        assert!(
+            crate::sync::quarantine::quarantined_records(&vault)
+                .unwrap()
+                .is_empty(),
+            "a fully-valid edge.provenance Claim must not trip the ONE-1159 door check"
+        );
     }
 
     /// ONE-1124 fix wave 2 (fail-closed split) — when the src endpoint
