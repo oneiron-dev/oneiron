@@ -1322,9 +1322,15 @@ fn materialize_entity_blob_in_txn(
     // (REDACTION_AUDIT = 120) and reserved-predicate `edge.provenance`
     // truth-Claims. The public gate would warn-skip those, losing GDPR
     // receipts / edge-provenance truth on sync; `put_replicated` admits both
-    // engine-authored bands while still running full structural validation
-    // (unknown type bytes, ungrammatical predicates, and malformed CLAIM
-    // bodies all still fail typed).
+    // engine-authored bands while still validating structure: unknown type
+    // bytes, ungrammatical predicates, and malformed CLAIM bodies fail the
+    // D18 gate typed, and `edge.provenance` Claims additionally get full
+    // value-record + actor-class-evidence validation at the same write
+    // chokepoint (ONE-1159) — a D18-valid wrapper around a structurally
+    // invalid provenance record is a typed rejection HERE (quarantined by
+    // the callers via `remote_rejection_reason`, exactly like a rejected
+    // receipt above), no longer a stored Claim that fails closed only at
+    // read/supersede time.
     vault
         .batch_in()
         .put_replicated(
@@ -2484,6 +2490,12 @@ mod tests {
     /// (`allow_reserved_predicate: false`), `validate_claim_body_bytes`
     /// rejected it with ReservedPredicate, and the observer warn-skipped it
     /// — the Claim never reached the replica's LMDB.
+    ///
+    /// Since ONE-1159 the door also validates provenance STRUCTURE, so the
+    /// forged Claim carries a real value record + actor-class evidence
+    /// (the original junk-string `val` pinned the pre-1159 hole) — this is
+    /// now also the door's positive control: a fully-valid edge.provenance
+    /// Claim replicates with zero quarantine rows.
     #[test]
     fn observer_b_materializes_remote_edge_provenance_claim() {
         let vault = test_vault();
@@ -2492,20 +2504,29 @@ mod tests {
 
         let src = EntityId::now();
         let tgt = EntityId::now();
+        let actor = EntityId::now();
         let claim_id = EntityId::now();
 
-        let body = crate::claim::ClaimBody::new(
+        let record = crate::provenance::EdgeProvenanceClaimBody::new(
+            actor,
+            0.9,
+            crate::provenance::SupersessionStatus::Confirmed,
+        );
+        let mut body = crate::claim::ClaimBody::new(
             "edge.provenance",
             crate::claim::ClaimSubject::Edge {
                 source: src,
                 kind: EdgeKind::Mentions,
                 target: tgt,
             },
-            rmpv::Value::from("remote provenance payload"),
+            crate::provenance::encode_edge_provenance_value(&record),
             0.9,
             crate::claim::ClaimApprovalStatus::Auto,
             crate::claim::ClaimLifecycleStatus::Active,
         );
+        body.evidence = Some(crate::provenance::encode_actor_class_evidence(
+            crate::types::EdgeActorClass::Human,
+        ));
         let body_bytes = crate::claim::encode_claim_body(&body).unwrap();
         let claim_blob = entity_blob(
             crate::types::ENTITY_TYPE_CLAIM,
@@ -2530,6 +2551,12 @@ mod tests {
             .unwrap()
             .expect("materialized Claim must read back through get_claim");
         assert_eq!(read.predicate, "edge.provenance");
+        assert!(
+            crate::sync::quarantine::quarantined_records(&vault)
+                .unwrap()
+                .is_empty(),
+            "a fully-valid edge.provenance Claim must not trip the ONE-1159 door check"
+        );
     }
 
     /// ONE-1124 fix wave 2 (fail-closed split) — when the src endpoint
