@@ -15,8 +15,9 @@
 # run-ignored here — the remaining ignored test is parked on ONE-1141).
 
 [profile.default]
-# Passed-on-retry is reported as FLAKY, never silently green.
-retries = 2
+# Fast/dev/agent inner loop: no retries — nextest's built-in `retries = 0`,
+# so the loop fails fast. Do NOT re-add retries here "for symmetry"; retries
+# live on the `full`/CI profile only (ONE-1144 owner decision).
 # Slow tier (exclusion set). Boundary proposed under ONE-1144, pending
 # ratification:
 #   * tests::vault_open_drop_cycles_survive_pthread_key_limit
@@ -38,6 +39,7 @@ not (
 
 [profile.full]
 # Full tier: every test (slow set included). Used by CI and the pre-push
-# gate. Inherits retries = 2 from `default`; restated for explicitness.
+# gate. Sets retries = 2 explicitly (CI/pre-merge only); the fast/`default`
+# tier uses nextest's built-in retries = 0 and fails fast on the inner loop.
 retries = 2
 default-filter = "all()"

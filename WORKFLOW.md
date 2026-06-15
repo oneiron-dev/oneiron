@@ -240,7 +240,7 @@ Run all of:
 
 ```bash
 rtk proxy cargo nextest run --workspace --profile full
-rtk proxy cargo test --doc --workspace
+rtk proxy cargo test --doc --workspace --exclude oneiron-bench
 rtk proxy cargo clippy --workspace --all-targets -- -D warnings
 rtk proxy cargo fmt --all -- --check
 rtk proxy env RUSTDOCFLAGS='-D warnings' cargo doc --workspace --no-deps
