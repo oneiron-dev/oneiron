@@ -290,12 +290,27 @@ impl SyncServer {
         let mut changed = false;
 
         // Scan-at-connect expiry flip (liveness bookkeeping, OD-7).
+        //
+        // The server is the SOLE registry writer and always stores BINARY
+        // lease records, so ANY non-binary entry is local corruption that
+        // could hide a revoked-pubkey row from the registration floor below.
+        // Capture it out-of-band (Loro's `for_each` closure returns `()`) and
+        // fail closed-HARD: refuse the WHOLE registration before any expiry
+        // flip or registration decision — never best-effort skip the entry.
         let mut entries: Vec<(String, Vec<u8>)> = Vec::new();
+        let mut corrupt = false;
         leases.for_each(|key, value| {
             if let ValueOrContainer::Value(LoroValue::Binary(blob)) = value {
                 entries.push((key.to_string(), blob.to_vec()));
+            } else {
+                corrupt = true;
             }
         });
+        if corrupt {
+            return Err(oneiron::Error::CorruptedIndex(
+                "non-binary root lease entry",
+            ));
+        }
         for (key, raw) in &entries {
             // The server is the SOLE registry writer — a malformed record
             // is local corruption, fail closed (never best-effort decode).
@@ -417,6 +432,14 @@ impl SyncServer {
     /// Commits + persists + mirrors a registry mutation: root doc commit,
     /// `d:root` snapshot persist, `ls:` row mirror — then exports the
     /// update delta for broadcast. No-op (None) when nothing changed.
+    ///
+    /// ATOMICITY (ONE-1140): the `d:root` snapshot persist and the `ls:`
+    /// mirror run in ONE `with_write_txn`, so a crash/failure after the
+    /// `d:root` put rolls back the whole txn — never a new `d:root` over a
+    /// stale/missing `ls:` mirror (which would let a revoked lease appear
+    /// active at a replay door reading `ls:`). The `ls:` mirror derives from
+    /// the in-memory (already-committed) `root_doc`, not by re-reading the
+    /// staged `d:root`.
     fn commit_lease_changes(
         &self,
         changed: bool,
@@ -426,8 +449,11 @@ impl SyncServer {
             return Ok(None);
         }
         self.root_doc.commit();
-        server_state::persist_root_snapshot(&self.vault, &self.root_doc)?;
-        lease::mirror_leases_from_root(&self.vault, &self.root_doc)?;
+        self.vault.with_write_txn(|wtxn| {
+            server_state::persist_root_snapshot_in_txn(&self.vault, wtxn, &self.root_doc)?;
+            lease::mirror_leases_from_root_in_txn(&self.vault, wtxn, &self.root_doc)?;
+            Ok(())
+        })?;
         let delta = self
             .root_doc
             .export(ExportMode::updates(vv_before))
@@ -881,6 +907,178 @@ mod tests {
         assert!(
             deep_map_bytes(&server.root_doc, "leases", &lease::client_id_hex(client_b)).is_none(),
             "no leases-map entry exists for the refused fresh client_id"
+        );
+    }
+
+    /// ONE-1140 R3 (delete-safety adjacent, cap-exempt): the `d:root`
+    /// snapshot persist and the `ls:` mirror must commit or roll back
+    /// together in ONE write txn. If the mirror fails mid-txn, the `d:root`
+    /// put rolls back — never a new `d:root` over a stale/missing `ls:`
+    /// mirror, which would let a revoked lease appear active at a replay
+    /// door reading `ls:`. A two-txn impl commits `d:root` BEFORE the mirror
+    /// failure → reopen shows the new `d:root` while `ls:` stays stale →
+    /// revoked-appears-active → fails the "d:root UNCHANGED" assertion.
+    #[tokio::test]
+    async fn lease_root_and_mirror_atomic_on_mirror_failure() {
+        use ed25519_dalek::{Signer, SigningKey};
+
+        let (_dir, vault) = test_vault();
+        let server = SyncServer::new(vault.clone(), SyncServerConfig::default()).unwrap();
+
+        let key = SigningKey::from_bytes(&[42u8; 32]);
+        let pubkey = key.verifying_key().to_bytes();
+        let pop = |signer: &SigningKey, cid: u64, pk: &[u8; 32]| {
+            signer
+                .sign(&lease::lease_pop_transcript(cid, pk))
+                .to_bytes()
+        };
+
+        // ── Bind client A, then revoke it (both surfaces successfully
+        //    committed). ls:A now classifies Revoked.
+        let client_a = 0x00aa_00aa_00aa_00aau64;
+        assert!(
+            server
+                .register_lease(client_a, &pubkey, &pop(&key, client_a, &pubkey))
+                .await
+                .unwrap()
+                .granted
+        );
+        assert!(server.revoke_lease(client_a).await.unwrap().is_some());
+        let ls_a_revoked = vault
+            .sync_state_get(&lease::lease_key(client_a))
+            .unwrap()
+            .unwrap();
+        assert_eq!(ls_a_revoked[1], 0x03, "client A is revoked on ls:");
+
+        // Durable d:root baseline AFTER the revoke (no client B yet).
+        let d_root_before = vault.sync_state_get("d:root").unwrap().unwrap();
+
+        // ── Arm a one-shot mirror failure, then attempt to register a FRESH
+        //    client B with a distinct key (changes d:root AND would re-mirror
+        //    ls:). The combined txn must roll back the d:root put.
+        let key_b = SigningKey::from_bytes(&[43u8; 32]);
+        let pubkey_b = key_b.verifying_key().to_bytes();
+        let client_b = 0x00bb_00bb_00bb_00bbu64;
+        oneiron::sync::lease::test_hooks::arm_mirror_failure();
+        let err = server
+            .register_lease(client_b, &pubkey_b, &pop(&key_b, client_b, &pubkey_b))
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(err, oneiron::Error::CorruptedIndex(_)),
+            "the injected mirror failure must propagate, got {err:?}"
+        );
+
+        // ── Inspect durable sync_state: the combined txn rolled back, so the
+        //    committed `d:root` is the post-revoke baseline (no client B) and
+        //    the door still classifies client A's lease Revoked (ls: intact).
+        //    `sync_state_get` opens a fresh LMDB read txn, so it reflects the
+        //    last COMMITTED state — exactly what a server restart would reload.
+        //    A two-txn impl would have committed the new `d:root` (with B) in
+        //    its own txn BEFORE the mirror failure → `d:root` would differ
+        //    from `d_root_before` → fails the "UNCHANGED" assertion.
+        assert_eq!(
+            vault.sync_state_get("d:root").unwrap().unwrap(),
+            d_root_before,
+            "a mirror failure must roll back the d:root put (single txn)"
+        );
+        assert!(
+            vault
+                .sync_state_get(&lease::lease_key(client_b))
+                .unwrap()
+                .is_none(),
+            "no ls: row for the rolled-back fresh client_id"
+        );
+        let ls_a_after = vault
+            .sync_state_get(&lease::lease_key(client_a))
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            lease::decode_lease_record(&ls_a_after).unwrap().status,
+            LeaseStatus::Revoked,
+            "the door still classifies the prior lease Revoked"
+        );
+
+        // Restart fidelity: a fresh SyncServer over the same Arc<Vault> boots
+        // from the durable `d:root` — meta.windows is intact and no phantom
+        // client B leaked into the reloaded root doc (the rollback held).
+        drop(server);
+        let rebooted = SyncServer::new(vault.clone(), SyncServerConfig::default()).unwrap();
+        assert!(
+            deep_map_bytes(
+                &rebooted.root_doc,
+                "leases",
+                &lease::client_id_hex(client_b)
+            )
+            .is_none(),
+            "the rolled-back client B must not reappear after a server reboot"
+        );
+    }
+
+    /// ONE-1140 R4 (fail-closed-hard): the server is the SOLE registry
+    /// writer and always stores BINARY lease records, so any non-binary
+    /// entry in the `leases` map is local corruption that could hide a
+    /// revoked-pubkey row from the registration floor. `register_lease` must
+    /// refuse the WHOLE registration with `CorruptedIndex("non-binary root
+    /// lease entry")` BEFORE any expiry flip / registration decision — never
+    /// best-effort skip the entry. A filter-and-skip impl would return
+    /// granted and write an `ls:`/active row → fails here.
+    #[tokio::test]
+    async fn register_refuses_on_non_binary_lease_entry() {
+        use ed25519_dalek::{Signer, SigningKey};
+
+        let (_dir, vault) = test_vault();
+        let server = SyncServer::new(vault.clone(), SyncServerConfig::default()).unwrap();
+
+        // Inject a NON-binary value into the root leases map (e.g. an i64),
+        // simulating local registry corruption.
+        let corrupt_key = lease::client_id_hex(0x00cc_00cc_00cc_00ccu64);
+        server
+            .root_doc
+            .get_map(ROOT_LEASES_MAP)
+            .insert(corrupt_key.as_str(), LoroValue::I64(7))
+            .unwrap();
+        server.root_doc.commit();
+
+        // A fully valid registration (valid PoP) must still be refused.
+        let key = SigningKey::from_bytes(&[55u8; 32]);
+        let pubkey = key.verifying_key().to_bytes();
+        let client_id = 0x00dd_00dd_00dd_00ddu64;
+        let pop = key
+            .sign(&lease::lease_pop_transcript(client_id, &pubkey))
+            .to_bytes();
+
+        let err = server
+            .register_lease(client_id, &pubkey, &pop)
+            .await
+            .unwrap_err();
+        match err {
+            oneiron::Error::CorruptedIndex(msg) => {
+                assert_eq!(msg, "non-binary root lease entry");
+            }
+            other => panic!("expected CorruptedIndex, got {other:?}"),
+        }
+
+        // Fail-closed-hard: NO ls:/active row for the attempted registration,
+        // and no existing lease altered (no row was written at all).
+        assert!(
+            vault
+                .sync_state_get(&lease::lease_key(client_id))
+                .unwrap()
+                .is_none(),
+            "a refused registration writes NO ls: row"
+        );
+        assert!(
+            deep_map_bytes(&server.root_doc, "leases", &lease::client_id_hex(client_id)).is_none(),
+            "no leases-map entry for the refused registration"
+        );
+        // The corrupt entry is left exactly as-is (never silently rewritten).
+        assert!(
+            matches!(
+                server.root_doc.get_map(ROOT_LEASES_MAP).get(&corrupt_key),
+                Some(ValueOrContainer::Value(LoroValue::I64(7)))
+            ),
+            "the non-binary entry is not silently mutated"
         );
     }
 

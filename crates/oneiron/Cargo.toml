@@ -40,6 +40,11 @@ lindera = { version = "3.0", default-features = false }
 
 [features]
 sync = ["loro", "dep:tokio", "dep:tokio-tungstenite", "dep:futures-util", "dep:zstd"]
+# Compiles in cross-crate test-only fault-injection seams (e.g. the lease
+# mirror-failure hook for ONE-1140's root-snapshot/`ls:`-mirror atomicity
+# test in `oneiron-server`). No production effect; enabled only by
+# downstream crates' dev-dependencies.
+test-hooks = []
 
 [dev-dependencies]
 tempfile = "3"
