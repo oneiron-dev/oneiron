@@ -164,19 +164,34 @@ pub fn verify_lease_pop(client_id: u64, pubkey: &[u8; 32], pop_sig: &[u8; 64]) -
 }
 
 /// The ONE-1140 origin predicate for a NEW receipt at a replay door
-/// (door steps 3–4; steps 1–2 — structural validation and the
+/// (door steps 3–5; steps 1–2 — structural validation and the
 /// immutability/divergence gate — run in the caller, in that order):
 ///
 /// 3. Ed25519-verify the attestation transcript against the embedded
 ///    `att_pk` → fail = [`Error::ReceiptAttestationInvalid`].
 /// 4. `ls:{att_client}` point-read in the CALLER's txn: row absent →
 ///    [`Error::ReceiptLeaseUnknown`]; registry pubkey ≠ `att_pk` →
-///    [`Error::ReceiptAttestationInvalid`]; status revoked →
-///    [`Error::ReceiptLeaseRevoked`]; active | expired → accept (OD-7).
+///    [`Error::ReceiptAttestationInvalid`]; the CLAIMED row's status revoked
+///    → [`Error::ReceiptLeaseRevoked`] (checked FIRST, preserving its
+///    precedence); active | expired → fall through to step 5 (OD-7).
+/// 5. Pubkey-bound revocation FLOOR (OD-8 amended, RULING C). The kill
+///    switch binds to the Ed25519 PUBKEY, not the mintable `att_client`:
+///    scan EVERY `ls:` row and reject with [`Error::ReceiptLeaseRevoked`] if
+///    this signing pubkey appears in ANY revoked binding — so a revoked
+///    pubkey is terminal across ALL client_ids, and a device that rotates
+///    client_id while reusing its key cannot recover (intended; recovery
+///    requires a fresh KEYPAIR, never key reuse). Runs on BOTH accept arms
+///    (active AND expired) and even on the `att_client`==claimed path,
+///    catching a same-key rebind under a fresh id. The `(vault, pubkey)`
+///    multi-user dimension is out of scope here (deferred to ONE-1161).
 ///
-/// All three rejections classify as REMOTE via `remote_rejection_reason`
-/// (quarantine-and-continue at the callers). A malformed `ls:` row is LOCAL
-/// corruption (our own mirror wrote it) and propagates fail-closed.
+/// The four remote rejections (attestation-invalid, lease-unknown,
+/// lease-revoked — claimed-row OR pubkey floor) classify as REMOTE via
+/// `remote_rejection_reason` (quarantine-and-continue at the callers). A
+/// malformed `ls:` row — the claimed point-read OR any sibling reached by
+/// the floor scan — is LOCAL corruption (our own mirror wrote it) and
+/// propagates fail-closed, failing the door GLOBALLY (wider blast radius
+/// than the single receipt, but correct: never a best-effort skip).
 ///
 /// `blob` is the full stored envelope (25 B header + body): the transcript
 /// binds the entity id and the EXACT header bytes, so a valid receipt
@@ -212,7 +227,7 @@ pub(crate) fn verify_new_receipt_origin_in_txn(
         .verify(&msg, &Signature::from_bytes(&parts.signature))
         .map_err(|_| Error::ReceiptAttestationInvalid { id: *id })?;
 
-    // Step 4 — lease binding (OD-7: status only, never time).
+    // Step 4 — claimed-row lease binding (OD-7: status only, never time).
     let Some(raw) = vault
         .store
         .sync_state
@@ -226,12 +241,37 @@ pub(crate) fn verify_new_receipt_origin_in_txn(
     if record.pubkey != parts.pubkey {
         return Err(Error::ReceiptAttestationInvalid { id: *id });
     }
-    match record.status {
-        LeaseStatus::Revoked => Err(Error::ReceiptLeaseRevoked {
+    // Claimed-row status FIRST — preserves ReceiptLeaseRevoked precedence
+    // when the att_client row is itself the revoked binding.
+    if record.status == LeaseStatus::Revoked {
+        return Err(Error::ReceiptLeaseRevoked {
             client_id: parts.client_id,
-        }),
-        LeaseStatus::Active | LeaseStatus::Expired => Ok(()),
+        });
     }
+
+    // Step 5 — pubkey-bound revocation FLOOR (OD-8 amended, RULING C). The
+    // kill switch binds to the Ed25519 PUBKEY, not the mintable att_client:
+    // a revoked pubkey is terminal across ALL client_ids, so a device that
+    // rotates client_id while reusing its key cannot recover (intended —
+    // recovery requires a fresh KEYPAIR). Scan every ls: mirror row
+    // (one-per-device, cheap) and reject if THIS signing pubkey appears in
+    // ANY revoked binding, including the att_client==claimed path (catches a
+    // self-rebind under a fresh id). Runs on BOTH accept arms reached here
+    // (active AND expired): an attacker's fresh active row can be flipped to
+    // expired by scan-at-connect. A malformed sibling ls: row is OUR mirror
+    // corruption and propagates fail-closed (the `?`), failing the door
+    // GLOBALLY — never a best-effort skip. Multi-user (vault, pubkey) scoping
+    // is out of scope here (ONE-1161).
+    for entry in vault.store.sync_state.prefix_iter(txn, LEASE_KEY_PREFIX)? {
+        let (_key, sibling_raw) = entry?;
+        let sibling = decode_lease_record(sibling_raw)?;
+        if sibling.pubkey == parts.pubkey && sibling.status == LeaseStatus::Revoked {
+            return Err(Error::ReceiptLeaseRevoked {
+                client_id: parts.client_id,
+            });
+        }
+    }
+    Ok(())
 }
 
 /// Full-mirrors the root doc's `leases` map into local `ls:` rows inside

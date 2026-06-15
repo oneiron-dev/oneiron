@@ -245,13 +245,21 @@ impl SyncServer {
     /// Handles a TAG_LEASE_REQUEST: verify proof of possession, then apply
     /// the pinned binding rules under the registrar lock —
     ///
-    /// * binding absent → write an ACTIVE record (`granted_at = renewed_at
-    ///   = now`, `expires_at = now + 90 d`), grant;
+    /// * binding absent → unless this pubkey is revoked under ANY client_id
+    ///   (OD-8 amended, pubkey-bound floor: refuse, write NO row), write an
+    ///   ACTIVE record (`granted_at = renewed_at = now`, `expires_at = now +
+    ///   90 d`), grant;
     /// * same pubkey, status ≠ revoked → renew (`renewed_at`/`expires_at`
     ///   refreshed; an expired binding flips back to active), grant;
     /// * same client id, DIFFERENT pubkey → reject, binding untouched
     ///   (first-binding-wins);
     /// * revoked → reject, terminal (OD-8).
+    ///
+    /// Revocation binds to the Ed25519 PUBKEY, not the mintable client_id
+    /// (OD-8 amended, RULING A): a revoked pubkey can never obtain a fresh
+    /// active lease under ANY client_id, so a device that rotates client_id
+    /// while reusing its key cannot recover — recovery requires a fresh
+    /// KEYPAIR. The per-`(vault, pubkey)` dimension is deferred to ONE-1161.
     ///
     /// Scan-at-connect expiry (OD-7): any ACTIVE binding past its
     /// `expires_at` flips to EXPIRED first — server-side liveness
@@ -310,18 +318,42 @@ impl SyncServer {
 
         let decision = match existing {
             None => {
-                let record = LeaseRecord {
-                    status: LeaseStatus::Active,
-                    pubkey: *pubkey,
-                    granted_at: now,
-                    renewed_at: now,
-                    expires_at: now + LEASE_DURATION_SECS,
-                };
-                leases
-                    .insert(key_hex.as_str(), lease::encode_lease_record(&record).as_slice())
-                    .map_err(|e| oneiron::Error::SyncProtocolError(e.to_string()))?;
-                changed = true;
-                LeaseDecision::granted(record.expires_at)
+                // Pubkey-bound revocation FLOOR (OD-8 amended, RULING A):
+                // refuse a fresh ACTIVE lease for a pubkey that ANY ls: row
+                // has revoked — a revoked pubkey is terminal across all
+                // client_ids, so a fresh client_id reusing a revoked key
+                // cannot recover (recovery requires a fresh KEYPAIR). Reuses
+                // the already-materialized `entries`; the server is the sole
+                // writer, so a malformed record is local corruption and
+                // propagates fail-closed (never best-effort decode).
+                let mut pubkey_revoked = false;
+                for (_, raw) in &entries {
+                    let record = lease::decode_lease_record(raw)?;
+                    if record.pubkey == *pubkey && record.status == LeaseStatus::Revoked {
+                        pubkey_revoked = true;
+                        break;
+                    }
+                }
+                if pubkey_revoked {
+                    // Binding refused — write NO row, grant nothing.
+                    LeaseDecision::rejected()
+                } else {
+                    let record = LeaseRecord {
+                        status: LeaseStatus::Active,
+                        pubkey: *pubkey,
+                        granted_at: now,
+                        renewed_at: now,
+                        expires_at: now + LEASE_DURATION_SECS,
+                    };
+                    leases
+                        .insert(
+                            key_hex.as_str(),
+                            lease::encode_lease_record(&record).as_slice(),
+                        )
+                        .map_err(|e| oneiron::Error::SyncProtocolError(e.to_string()))?;
+                    changed = true;
+                    LeaseDecision::granted(record.expires_at)
+                }
             }
             Some(record) if record.status == LeaseStatus::Revoked => {
                 // Terminal (OD-8): a revoked binding never re-activates.
@@ -336,7 +368,10 @@ impl SyncServer {
                     expires_at: now + LEASE_DURATION_SECS,
                 };
                 leases
-                    .insert(key_hex.as_str(), lease::encode_lease_record(&renewed).as_slice())
+                    .insert(
+                        key_hex.as_str(),
+                        lease::encode_lease_record(&renewed).as_slice(),
+                    )
                     .map_err(|e| oneiron::Error::SyncProtocolError(e.to_string()))?;
                 changed = true;
                 LeaseDecision::granted(renewed.expires_at)
@@ -371,7 +406,10 @@ impl SyncServer {
         let vv_before = self.root_doc.oplog_vv();
         record.status = LeaseStatus::Revoked;
         leases
-            .insert(key_hex.as_str(), lease::encode_lease_record(&record).as_slice())
+            .insert(
+                key_hex.as_str(),
+                lease::encode_lease_record(&record).as_slice(),
+            )
             .map_err(|e| oneiron::Error::SyncProtocolError(e.to_string()))?;
         self.commit_lease_changes(true, &vv_before)
     }
@@ -434,7 +472,6 @@ fn unix_seconds_now() -> u64 {
         .map(|d| d.as_secs())
         .unwrap_or(0)
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -645,10 +682,15 @@ mod tests {
             .unwrap();
         assert!(decision.granted);
         assert!(decision.root_update.is_some(), "registry change broadcasts");
-        let map_record =
-            deep_map_bytes(&server.root_doc, "leases", "0123456789abcdef").unwrap();
-        let ls_row = vault.sync_state_get("ls:0123456789abcdef").unwrap().unwrap();
-        assert_eq!(map_record, ls_row, "OD-3: map value ≡ ls: row, byte-identical");
+        let map_record = deep_map_bytes(&server.root_doc, "leases", "0123456789abcdef").unwrap();
+        let ls_row = vault
+            .sync_state_get("ls:0123456789abcdef")
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            map_record, ls_row,
+            "OD-3: map value ≡ ls: row, byte-identical"
+        );
         assert_eq!(ls_row.len(), 58, "OD-4 record length");
         assert_eq!(ls_row[0], 0x01, "version byte");
         assert_eq!(ls_row[1], 0x01, "status active");
@@ -688,8 +730,14 @@ mod tests {
             .register_lease(client_id, &pubkey, &pop(&key, client_id, &pubkey))
             .await
             .unwrap();
-        assert!(decision.granted, "expired + same key = renewal, not rejection");
-        let renewed_row = vault.sync_state_get("ls:0123456789abcdef").unwrap().unwrap();
+        assert!(
+            decision.granted,
+            "expired + same key = renewal, not rejection"
+        );
+        let renewed_row = vault
+            .sync_state_get("ls:0123456789abcdef")
+            .unwrap()
+            .unwrap();
         assert_eq!(renewed_row[1], 0x01, "expired flips back to active");
         assert_eq!(
             u64::from_le_bytes(renewed_row[34..42].try_into().unwrap()),
@@ -708,13 +756,23 @@ mod tests {
         let intruder = SigningKey::from_bytes(&[9u8; 32]);
         let intruder_pk = intruder.verifying_key().to_bytes();
         let decision = server
-            .register_lease(client_id, &intruder_pk, &pop(&intruder, client_id, &intruder_pk))
+            .register_lease(
+                client_id,
+                &intruder_pk,
+                &pop(&intruder, client_id, &intruder_pk),
+            )
             .await
             .unwrap();
         assert!(!decision.granted);
-        assert_eq!(decision.expires_at, 0, "rejected ack carries expires_at = 0");
         assert_eq!(
-            vault.sync_state_get("ls:0123456789abcdef").unwrap().unwrap(),
+            decision.expires_at, 0,
+            "rejected ack carries expires_at = 0"
+        );
+        assert_eq!(
+            vault
+                .sync_state_get("ls:0123456789abcdef")
+                .unwrap()
+                .unwrap(),
             renewed_row,
             "a binding conflict must not modify the existing binding"
         );
@@ -726,7 +784,10 @@ mod tests {
             .register_lease(other_client, &pubkey, &pop(&key, client_id, &pubkey))
             .await
             .unwrap();
-        assert!(!decision.granted, "PoP transcript binds the claimed client id");
+        assert!(
+            !decision.granted,
+            "PoP transcript binds the claimed client id"
+        );
         assert!(
             vault
                 .sync_state_get(&lease::lease_key(other_client))
@@ -739,7 +800,10 @@ mod tests {
         // later re-request with the ORIGINAL key is rejected.
         let update = server.revoke_lease(client_id).await.unwrap();
         assert!(update.is_some(), "revocation broadcasts a registry change");
-        let revoked_row = vault.sync_state_get("ls:0123456789abcdef").unwrap().unwrap();
+        let revoked_row = vault
+            .sync_state_get("ls:0123456789abcdef")
+            .unwrap()
+            .unwrap();
         assert_eq!(revoked_row[1], 0x03, "status revoked");
         let decision = server
             .register_lease(client_id, &pubkey, &pop(&key, client_id, &pubkey))
@@ -748,6 +812,76 @@ mod tests {
         assert!(!decision.granted, "revoked is terminal — no re-activation");
         // Unknown binding: revoke is a no-op (no phantom records).
         assert!(server.revoke_lease(0xffff).await.unwrap().is_none());
+    }
+
+    /// ONE-1140 RULING A (OD-8 amended, pubkey-bound; delete-safety adjacent,
+    /// cap-exempt): `register_lease` refuses a FRESH active lease for a
+    /// pubkey that ANY `ls:` row has revoked. A revoked pubkey is terminal
+    /// across ALL client_ids, so a device rotating client_id while reusing
+    /// its key cannot recover (recovery requires a fresh KEYPAIR). The
+    /// None-arm guard writes NO row and grants nothing. A wrong impl that
+    /// grants any absent client_id would write `ls:{B}` active and FAIL here.
+    #[tokio::test]
+    async fn register_lease_refuses_active_lease_for_already_revoked_pubkey() {
+        use ed25519_dalek::{Signer, SigningKey};
+
+        let (_dir, vault) = test_vault();
+        let server = SyncServer::new(vault.clone(), SyncServerConfig::default()).unwrap();
+
+        let key = SigningKey::from_bytes(&[23u8; 32]);
+        let pubkey = key.verifying_key().to_bytes();
+        let pop = |signer: &SigningKey, cid: u64, pk: &[u8; 32]| {
+            signer
+                .sign(&lease::lease_pop_transcript(cid, pk))
+                .to_bytes()
+        };
+
+        // Client A binds pubkey P, then the owner revokes it.
+        let client_a = 0x0a0a_0a0a_0a0a_0a0au64;
+        assert!(
+            server
+                .register_lease(client_a, &pubkey, &pop(&key, client_a, &pubkey))
+                .await
+                .unwrap()
+                .granted
+        );
+        assert!(server.revoke_lease(client_a).await.unwrap().is_some());
+        assert_eq!(
+            vault
+                .sync_state_get(&lease::lease_key(client_a))
+                .unwrap()
+                .unwrap()[1],
+            0x03,
+            "client A's binding is revoked"
+        );
+
+        // A FRESH client B presents the SAME (revoked) pubkey with a valid
+        // proof of possession.
+        let client_b = 0x0b0b_0b0b_0b0b_0b0bu64;
+        assert_ne!(client_a, client_b);
+        let decision = server
+            .register_lease(client_b, &pubkey, &pop(&key, client_b, &pubkey))
+            .await
+            .unwrap();
+        assert!(
+            !decision.granted,
+            "a revoked pubkey can never obtain a fresh active lease under any client_id"
+        );
+        assert_eq!(
+            decision.expires_at, 0,
+            "rejected ack carries expires_at = 0"
+        );
+        assert!(
+            vault
+                .sync_state_get(&lease::lease_key(client_b))
+                .unwrap()
+                .is_none(),
+            "no ls: row is written for the refused fresh client_id"
+        );
+        assert!(
+            deep_map_bytes(&server.root_doc, "leases", &lease::client_id_hex(client_b)).is_none(),
+            "no leases-map entry exists for the refused fresh client_id"
+        );
     }
 
     #[test]
