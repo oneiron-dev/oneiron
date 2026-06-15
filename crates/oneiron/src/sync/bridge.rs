@@ -391,6 +391,26 @@ fn materialize_entities_from_delta(
                             continue;
                         }
                     };
+                    // ONE-1158: a non-canonical (case-shifted) hex alias key
+                    // is a protocol violation — no engine version ever emits
+                    // one (`to_hex()` is lowercase). Materializing it would
+                    // leave the alias KEY live in the entities map while
+                    // tombstone-commit removal deletes only the
+                    // canonical-lowercase key: suppressed live-map byte
+                    // residue (handoff §8c.2 family). Fail closed at the
+                    // door: quarantine, never materialize.
+                    if key.as_ref() != id.to_hex() {
+                        quarantine_rejected_op_in_txn(
+                            vault,
+                            wtxn,
+                            window_key,
+                            QuarantineContainer::Entities,
+                            key.as_ref(),
+                            &Error::InvalidKey,
+                            blob,
+                        )?;
+                        continue;
+                    }
                     // ONE-1133 (ARCH-0038): a tombstone always wins over
                     // concurrent entities-map state. A re-put merged after
                     // the delete must never (re)materialize the body — no
