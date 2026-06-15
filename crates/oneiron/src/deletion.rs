@@ -680,7 +680,6 @@ pub(crate) fn decode_redaction_audit_receipt(body: &[u8]) -> Result<RedactionAud
 /// including incoming `Some` over local `None`, which only a crafted
 /// update can produce (replicas never finalize a foreign receipt) — stays
 /// on the M4-07 quarantine path. Fail closed: any decode failure → `false`.
-#[cfg(feature = "sync")]
 pub(crate) fn redaction_receipt_is_stale_finalization_echo(local: &[u8], incoming: &[u8]) -> bool {
     use crate::batch::ENTITY_METADATA_HEADER_LEN as H;
     if local.len() < H || incoming.len() < H || local[..H] != incoming[..H] {
@@ -752,7 +751,6 @@ const RECEIPT_BODY_KEYS: [&str; 10] = [
 ///   transcript is the byte prefix up to the verification VALUE
 ///   (tail-splice, OD-6), so a body that orders it elsewhere can never
 ///   reproduce the signed bytes.
-#[cfg(feature = "sync")]
 pub(crate) fn validate_redaction_receipt_body(body: &[u8]) -> Result<()> {
     use rmpv::Value;
 
@@ -908,7 +906,6 @@ fn validate_receipt_scope(value: rmpv::Value) -> Result<()> {
 /// attestation grammar: EXACTLY four string entries — `att_client` str(16),
 /// `att_pk` str(64), `att_sig` str(128), all lowercase hex, plus
 /// `att_v == "1"`. No duplicates, no unknown keys, no other shapes.
-#[cfg(feature = "sync")]
 fn validate_receipt_verification(value: rmpv::Value) -> Result<()> {
     let rmpv::Value::Map(fields) = value else {
         return Err(Error::InvalidRedactionReceiptBody(
@@ -964,7 +961,6 @@ fn validate_receipt_verification(value: rmpv::Value) -> Result<()> {
     Ok(())
 }
 
-#[cfg(feature = "sync")]
 fn is_lower_hex(s: &str) -> bool {
     !s.is_empty()
         && s.bytes()
@@ -1093,7 +1089,6 @@ pub(crate) fn receipt_attestation_parts(body: &[u8]) -> Result<ReceiptAttestatio
     parts.ok_or(MALFORMED)
 }
 
-#[cfg(feature = "sync")]
 fn validate_opaque_uuid(value: &rmpv::Value, reason: &'static str) -> Result<()> {
     let valid = value
         .as_str()

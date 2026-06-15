@@ -766,6 +766,12 @@ fn fast_reconnect_omits_nothing_when_a_survivor_exists() {
         }),
     );
 
+    // Release the test's window handle before unload: #114 (ONE-1150) arc-guard
+    // refuses to unload a window with an outstanding `Arc<LoadedWindow>`. The
+    // manager keeps the doc alive via its registry ref, so the `_inj`
+    // subscription still fires during persist_state.
+    drop(window);
+
     // Drive persistence through the manager's unload (persist_state inside).
     assert!(manager_a.unload_window(&current).unwrap());
     assert!(
@@ -773,7 +779,6 @@ fn fast_reconnect_omits_nothing_when_a_survivor_exists() {
         "injection must have fired during the merge import"
     );
     drop(_inj);
-    drop(window);
 
     // The survivor remains and svf is STALE.
     assert!(

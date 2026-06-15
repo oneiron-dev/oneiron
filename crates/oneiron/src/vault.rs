@@ -31,12 +31,11 @@ use crate::limits::{
 };
 use crate::provenance::{
     EdgeProvenanceClaimBody, EdgeRef, PREDICATE_EDGE_PROVENANCE, ProvenancePrecedence,
-    SupersessionStatus, close_record_for_supersession, decode_actor_class_evidence,
-    decode_edge_provenance_body, decode_model_entity_body, derive_confirmation_status,
-    downgrade_edge_to_bare, encode_actor_class_evidence, encode_edge_provenance_value,
-    encode_model_entity_body, resolve_persisted_actor_class, restamp_edge_flags, retract_record,
-    validate_actor_class, validate_edge_provenance_value, validate_model_substrate_field,
-    winner_index,
+    SupersessionStatus, close_record_for_supersession, decode_edge_provenance_body,
+    decode_model_entity_body, derive_confirmation_status, downgrade_edge_to_bare,
+    encode_edge_provenance_value, encode_model_entity_body, resolve_persisted_actor_class,
+    restamp_edge_flags, retract_record, validate_actor_class, validate_edge_provenance_value,
+    validate_model_substrate_field, winner_index,
 };
 use crate::store::{
     DB_MANIFEST, HnswCompatibilityState, MODEL_ID_KEY, STORAGE_ABI_VERSION_KEY,

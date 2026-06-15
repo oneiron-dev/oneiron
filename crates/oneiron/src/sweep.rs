@@ -76,7 +76,7 @@
 //!   never ran sync has no historical CRDT carriers, so its jobs finalize.
 //! * Undecodable `h:` rows are KEPT and reported loudly — an erasure
 //!   obligation is never deleted unexecuted, never "quarantined away".
-//! * A job whose `scope.entity_ids` carries an unparseable hex is KEPT
+//! * A job whose `scope.entity_ids` carries an unparsable hex is KEPT
 //!   BYTE-IDENTICAL and reported (never compacted-and-finalized) — wrong
 //!   id→window attribution must never delete an obligation row.
 //! * An undecodable REDACTION_AUDIT receipt body encountered during a job's
@@ -343,7 +343,7 @@ pub(crate) fn run_hard_erase_sweep(vault: &Vault) -> Result<HardEraseSweepRun> {
                     // transient race, NOT a failure: defer like the
                     // Deferred-window arm below — increment jobs_deferred and
                     // DO NOT consume retry backoff. Routing through
-                    // rewrite_job_for_retry would mis-classify it as failed
+                    // rewrite_job_for_retry would misclassify it as failed
                     // and burn an attempt. The carrier self-heals next run.
                     Ok(None) => {
                         run.jobs_deferred += 1;
@@ -1619,8 +1619,15 @@ mod tests {
             sweep_queued_at: Some(requested_at + 1),
         };
 
+        let identity = crate::identity::DeviceIdentity {
+            client_id: 0x0123_4567_89ab_cdef,
+            signing_key: ed25519_dalek::SigningKey::from_bytes(&[7u8; 32]),
+        };
+        let receipt_id = EntityId::from_hex("000102030405060708090a0b0c0d0e0f").unwrap();
         let base = input(1_771_027_200);
-        let pre = envelope(&encode_redaction_audit_receipt(base.clone()).unwrap());
+        let pre = envelope(
+            &encode_redaction_audit_receipt(base.clone(), &receipt_id, &identity).unwrap(),
+        );
         // Finalize exactly the way the sweep does: decode → Some → re-encode.
         let mut rec =
             decode_redaction_audit_receipt(&pre[crate::batch::ENTITY_METADATA_HEADER_LEN..])
@@ -1646,7 +1653,8 @@ mod tests {
         // A sibling-field divergence (different request) must NOT match.
         let mut other = base;
         other.request_id = uuid::Uuid::now_v7().to_string();
-        let other_pre = envelope(&encode_redaction_audit_receipt(other).unwrap());
+        let other_pre =
+            envelope(&encode_redaction_audit_receipt(other, &receipt_id, &identity).unwrap());
         assert!(!redaction_receipt_is_stale_finalization_echo(
             &finalized, &other_pre
         ));
