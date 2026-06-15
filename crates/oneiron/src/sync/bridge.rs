@@ -548,6 +548,15 @@ fn materialize_edges_from_delta(
     // pushed into the batch, retained outside the txn for the swallow site
     // below (no surviving per-op failure point on whole-txn failure).
     let mut applied_edges: Vec<(EntityId, [u8; 33], Vec<u8>)> = Vec::new();
+    // ONE-1147 fix-wave: id + written blob for every endpoint whose body this
+    // batch HYDRATED-AND-WROTE into LMDB (the `Hydrated` outcome below),
+    // retained outside the txn alongside `applied_edges`. A whole-txn
+    // rollback erases those hydration writes too; the swallow site flags each
+    // for durable remat. Without this, an endpoint hydrated inside the edge
+    // batch and rolled back is silently lost — no edge need even have been
+    // tracked (e.g. the partner endpoint failed LOCALLY and aborted the batch
+    // BEFORE `applied_edges.push`).
+    let mut hydrated_endpoints: Vec<(EntityId, Vec<u8>)> = Vec::new();
     let result = vault.with_write_txn(|wtxn| {
         let entities_map = doc.get_map("entities");
         let tombstones_map = doc.get_map("tombstones");
@@ -602,8 +611,28 @@ fn materialize_edges_from_delta(
                         &tombstones_map,
                         &tgt,
                     );
+                    // ONE-1147 fix-wave: record every endpoint this batch
+                    // ACTUALLY wrote (Hydrated) BEFORE the match may
+                    // abort/defer/quarantine the edge — the hydration write
+                    // has already landed in the txn and a rollback erases it
+                    // regardless of the edge's fate. Already-present (Ready)
+                    // endpoints wrote nothing and are never recorded. `src`
+                    // and `tgt` are `Copy`, so the moves into the match below
+                    // are unaffected.
+                    if let Ok(EndpointHydration::Hydrated(blob)) = &src_ready {
+                        hydrated_endpoints.push((src, blob.clone()));
+                    }
+                    if let Ok(EndpointHydration::Hydrated(blob)) = &tgt_ready {
+                        hydrated_endpoints.push((tgt, blob.clone()));
+                    }
                     match (src_ready, tgt_ready) {
-                        (Ok(EndpointHydration::Ready), Ok(EndpointHydration::Ready)) => {}
+                        // Both endpoints present — already there (`Ready`) or
+                        // just hydrated this batch (`Hydrated`): the edge may
+                        // proceed in either case.
+                        (
+                            Ok(EndpointHydration::Ready | EndpointHydration::Hydrated(_)),
+                            Ok(EndpointHydration::Ready | EndpointHydration::Hydrated(_)),
+                        ) => {}
                         (Ok(EndpointHydration::RejectedBlob), Ok(_))
                         | (Ok(_), Ok(EndpointHydration::RejectedBlob)) => {
                             // The endpoint's CRDT blob is undecodable REMOTE
@@ -737,12 +766,30 @@ fn materialize_edges_from_delta(
 
     if let Err(e) = result {
         // ONE-1147: whole-txn failure — same marker semantics and
-        // best-effort layering as the entity swallow site above, keyed by
-        // each lost upsert's SOURCE entity. Upserts whose COMMITTED edge
-        // bytes already equal the op's bytes are skipped (nothing lost;
-        // an at-parity marker could never discharge).
+        // best-effort layering as the entity swallow site above. Two classes
+        // of write the dead txn rolled back get a durable entity-scoped rm:
+        // marker, de-duped through ONE shared `seen` set so an id that is
+        // both is marked exactly once:
+        //   (1) ONE-1147 fix-wave — every endpoint this batch HYDRATED-AND-
+        //       WROTE (`hydrated_endpoints`): the rolled-back hydration write
+        //       is otherwise silently lost, even when no edge was tracked
+        //       (a partner endpoint may have aborted the batch before the
+        //       edge reached `applied_edges`); and
+        //   (2) the SOURCE entity of every lost edge upsert (`applied_edges`).
+        // The committed_*_state_matches guards skip any id whose COMMITTED
+        // bytes already equal the op's bytes (nothing lost; an at-parity
+        // marker could never discharge — forward remat heals on the actual
+        // healing write only, never on parity).
         let mut seen = HashSet::new();
         let mut marked = 0usize;
+        for (id, blob) in &hydrated_endpoints {
+            if committed_entity_state_matches(vault, id, blob) || !seen.insert(*id) {
+                continue;
+            }
+            if set_remat_marker_logged(vault, window_key, id) {
+                marked += 1;
+            }
+        }
         for (src, edge_key, buf) in &applied_edges {
             if committed_edge_state_matches(vault, edge_key, buf) || !seen.insert(*src) {
                 continue;
@@ -755,6 +802,7 @@ fn materialize_edges_from_delta(
             error = %e,
             window = %window_key,
             applied_ops = applied_edges.len(),
+            hydrated_endpoints = hydrated_endpoints.len(),
             marked,
             "observer-b: edge batch commit failed — flagged entity-scoped rm: markers for durable retry"
         );
@@ -1274,8 +1322,17 @@ fn materialize_entity_blob_in_txn(
 
 /// Endpoint hydration outcome for Observer B edge materialization.
 enum EndpointHydration {
-    /// Endpoint exists in LMDB (or was just materialized from the CRDT).
+    /// Endpoint already present in LMDB — NO write was performed, so a batch
+    /// rollback loses nothing for this endpoint (never flagged for remat).
     Ready,
+    /// Endpoint body was just hydrated into LMDB from the CRDT entities map —
+    /// an ACTUAL write. Carries the written blob so the edge-batch swallow
+    /// site can flag a durable `rm:` marker for this endpoint if the whole
+    /// txn rolls back (ONE-1147 fix-wave): the rolled-back hydration write
+    /// would otherwise vanish silently — unmarked, and with no edge
+    /// necessarily tracked to carry it. The caller treats it identically to
+    /// `Ready` for the edge's own fate (the edge proceeds).
+    Hydrated(Vec<u8>),
     /// Endpoint absent or tombstoned — defer the edge (it stays in the CRDT
     /// and re-materializes when its endpoint does).
     Deferred,
@@ -1362,7 +1419,13 @@ fn ensure_entity_materialized_from_crdt(
         return Ok(EndpointHydration::RejectedBlob);
     }
     materialize_entity_blob_in_txn(vault, wtxn, tombstones_map, &hex_id, &blob)?;
-    Ok(EndpointHydration::Ready)
+    // ONE-1147 fix-wave: distinguish an ACTUAL hydration write from the
+    // already-present `Ready` above, carrying the written bytes so the
+    // edge-batch swallow site can flag a durable rm: marker (parity guard +
+    // heal-on-write discharge) if this write is later rolled back. `blob` is
+    // moved into the variant after `materialize_entity_blob_in_txn` borrowed
+    // it.
+    Ok(EndpointHydration::Hydrated(blob))
 }
 
 /// Parses an edge key: `{src_hex}:{kind_u8:02}:{tgt_hex}` → (src, kind, tgt).
