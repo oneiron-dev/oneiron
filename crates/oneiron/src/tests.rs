@@ -8200,6 +8200,36 @@ fn rmpv_map_bytes(entries: &[(rmpv::Value, rmpv::Value)]) -> Vec<u8> {
     out
 }
 
+/// Structurally-VALID `edge.provenance` ClaimBody for door tests: a real
+/// value record + the engine-owned actor-class evidence map. Since ONE-1159
+/// the write chokepoint validates provenance STRUCTURE (value record +
+/// persisted actor_class), so reserved-door tests can no longer carry an
+/// opaque junk `val`.
+fn valid_provenance_claim_body(actor: EntityId, source: EntityId, target: EntityId) -> ClaimBody {
+    let mut body = ClaimBody::new(
+        "edge.provenance",
+        ClaimSubject::Edge {
+            source,
+            kind: EdgeKind::Mentions,
+            target,
+        },
+        crate::provenance::encode_edge_provenance_value(
+            &crate::provenance::EdgeProvenanceClaimBody::new(
+                actor,
+                0.9,
+                crate::provenance::SupersessionStatus::Confirmed,
+            ),
+        ),
+        0.9,
+        ClaimApprovalStatus::Auto,
+        ClaimLifecycleStatus::Active,
+    );
+    body.evidence = Some(crate::provenance::encode_actor_class_evidence(
+        EdgeActorClass::Human,
+    ));
+    body
+}
+
 /// Baseline VALID claim-body map entries (the six required fields).
 fn base_claim_entries(pred: &str, subj: Vec<u8>) -> Vec<(rmpv::Value, rmpv::Value)> {
     vec![
@@ -8857,18 +8887,9 @@ fn reserved_predicate_rejected_publicly_but_door_writes_and_reads_back() -> Resu
     vault.put_entity(&a, 4, test_time_range(1, 1), 1, b"a")?;
     vault.put_entity(&b, 4, test_time_range(1, 1), 1, b"b")?;
 
-    let body = ClaimBody::new(
-        "edge.provenance",
-        ClaimSubject::Edge {
-            source: a,
-            kind: EdgeKind::Mentions,
-            target: b,
-        },
-        rmpv::Value::from("provenance payload"),
-        0.9,
-        ClaimApprovalStatus::Auto,
-        ClaimLifecycleStatus::Active,
-    );
+    // Structurally valid since ONE-1159: the door validates the provenance
+    // value record + actor-class evidence, not just the D18 wrapper.
+    let body = valid_provenance_claim_body(a, a, b);
     let bytes = crate::claim::encode_claim_body(&body)?;
 
     // Public typed API → ReservedPredicate, nothing written.
@@ -8940,18 +8961,9 @@ fn replicated_door_admits_reserved_claim_on_both_builders() -> Result<()> {
     vault.put_entity(&a, 4, test_time_range(1, 1), 1, b"a")?;
     vault.put_entity(&b, 4, test_time_range(1, 1), 1, b"b")?;
 
-    let body = ClaimBody::new(
-        "edge.provenance",
-        ClaimSubject::Edge {
-            source: a,
-            kind: EdgeKind::Mentions,
-            target: b,
-        },
-        rmpv::Value::from("replicated provenance payload"),
-        0.9,
-        ClaimApprovalStatus::Auto,
-        ClaimLifecycleStatus::Active,
-    );
+    // Structurally valid since ONE-1159: the replicated door validates the
+    // provenance value record + actor-class evidence, not just D18.
+    let body = valid_provenance_claim_body(a, a, b);
     let bytes = crate::claim::encode_claim_body(&body)?;
 
     // TxnBatchBuilder flavor (Observer B's replay door).
@@ -10127,18 +10139,9 @@ fn claim_lifecycle_ops_reject_provenance_claims_toward_provenance_api() -> Resul
     // An edge.provenance Claim written through the pub(crate) reserved-
     // namespace door (the provenance unit's path).
     let prov = EntityId::now();
-    let prov_body = ClaimBody::new(
-        "edge.provenance",
-        ClaimSubject::Edge {
-            source: a,
-            kind: EdgeKind::Mentions,
-            target: b,
-        },
-        rmpv::Value::from("payload"),
-        0.9,
-        ClaimApprovalStatus::Auto,
-        ClaimLifecycleStatus::Active,
-    );
+    // Structurally valid since ONE-1159 (the reserved door validates the
+    // provenance value record + actor-class evidence).
+    let prov_body = valid_provenance_claim_body(a, a, b);
     let prov_bytes = crate::claim::encode_claim_body(&prov_body)?;
     vault.with_write_txn(|wtxn| {
         vault
