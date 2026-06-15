@@ -121,6 +121,23 @@ pub(crate) fn map_entries(map: &LoroMap) -> BTreeMap<String, Vec<u8>> {
     entries
 }
 
+/// True when the window's CRDT tombstones map carries ANY entry naming
+/// `id` — ANY-value and case-insensitive on the hex key, mirroring the
+/// bridge's fail-closed, entity-canonical `tombstone_map_contains_id`
+/// gate. A gated id is contract-legitimately absent from LMDB
+/// (delete-wins, never resurrect), so the ONE-1148 loud-fail probes skip
+/// it.
+fn tombstone_gates_materialization(window: &LoadedWindow, id: &EntityId) -> bool {
+    let canon = id.to_hex();
+    let mut gated = false;
+    window.doc.get_map("tombstones").for_each(|key, _value| {
+        if key.eq_ignore_ascii_case(&canon) {
+            gated = true;
+        }
+    });
+    gated
+}
+
 /// One vault + materializer + live windows — half of a two-vault pair.
 pub(crate) struct TestNode {
     /// Loro peer id AND user id — pinned so LWW tie-breaks are
@@ -220,12 +237,111 @@ impl TestNode {
     }
 
     /// Writes an entity blob into the window doc (CRDT-first device write;
-    /// Observer B materializes it into LMDB synchronously).
+    /// Observer B materializes it into LMDB synchronously) and asserts
+    /// post-commit materialization (ONE-1148, see
+    /// [`Self::assert_entity_write_materialized`]).
     pub(crate) fn put_entity_in_window(&self, key: &str, id: &EntityId, blob: &[u8]) {
         let window = self.window(key);
         let entities = window.doc.get_map("entities");
         map_insert_bytes(&entities, id.to_hex().as_str(), blob);
         window.doc.commit();
+        self.assert_entity_write_materialized(key, id);
+    }
+
+    /// Post-commit loud-fail probe (ONE-1148): Observer B materializes
+    /// synchronously on commit but SWALLOWS env-level batch-commit
+    /// failures into a `tracing::error` (the ONE-1147 surface) — an
+    /// env-level Storage/Io error used to surface only much later as a
+    /// confusing `assert_converged` divergence on a `None` row. The
+    /// harness fails AT THE WRITE SITE instead: a helper write Observer B
+    /// has no contract reason to suppress MUST be readable back from LMDB
+    /// immediately after the commit. PRESENCE-only on purpose — byte
+    /// parity stays [`assert_converged`]'s job (LWW displacement and the
+    /// ONE-1134 keep-local receipt rule legitimately leave bytes ≠ the
+    /// just-written blob).
+    ///
+    /// Contract-legitimate suppression skipped here: tombstone-gated ids
+    /// (delete-wins; ARCH-0023b "if tombstoned in CRDT → never
+    /// resurrect"). NOT skipped: the `dt:` local hard-delete marker
+    /// without a live-doc tombstone (crafted tombstone-removal
+    /// resurrection shapes) and write-gate quarantine of the blob itself —
+    /// tests modelling those write through the doc maps directly, never
+    /// via this helper.
+    fn assert_entity_write_materialized(&self, key: &str, id: &EntityId) {
+        let window = self.window(key);
+        if tombstone_gates_materialization(window, id) {
+            return;
+        }
+        let raw = self.vault.get_raw(id).unwrap_or_else(|e| {
+            panic!(
+                "{}: get_raw({}) errored right after CRDT commit — \
+                 env-level write failure (see ONE-1148): {e}",
+                self.name,
+                id.to_hex(),
+            )
+        });
+        assert!(
+            raw.is_some(),
+            "{}: entity {} absent from LMDB right after CRDT commit — \
+             env-level write failure (see ONE-1148): Observer B swallowed a batch-commit error",
+            self.name,
+            id.to_hex(),
+        );
+    }
+
+    /// Edge sibling of [`Self::assert_entity_write_materialized`]
+    /// (ONE-1148). Skips the bridge's contract-legitimate edge deferrals
+    /// FIRST — endpoint absent from the CRDT entities map, endpoint
+    /// tombstone-gated, or endpoint never materialized into LMDB (the
+    /// rejected-endpoint-blob quarantine shape); in all of those the edge
+    /// staying out of LMDB IS the Observer B contract ("the edge stays in
+    /// the CRDT and re-materializes when its endpoints do"). Past those
+    /// gates the edge MUST be readable back via `edges_out`.
+    fn assert_edge_write_materialized(
+        &self,
+        key: &str,
+        src: &EntityId,
+        kind: EdgeKind,
+        tgt: &EntityId,
+    ) {
+        let window = self.window(key);
+        let entities = window.doc.get_map("entities");
+        for endpoint in [src, tgt] {
+            if entities.get(endpoint.to_hex().as_str()).is_none()
+                || tombstone_gates_materialization(window, endpoint)
+            {
+                return; // deferred: re-materializes with its endpoints
+            }
+            match self.vault.get_raw(endpoint) {
+                Ok(Some(_)) => {}
+                // Endpoint never materialized (rejected/quarantined
+                // endpoint blob ⇒ the edge op is quarantined with it);
+                // an env-level failure on the endpoint write itself
+                // already failed loud at ITS write site.
+                Ok(None) => return,
+                Err(e) => panic!(
+                    "{}: get_raw({}) errored right after CRDT commit — \
+                     env-level write failure (see ONE-1148): {e}",
+                    self.name,
+                    endpoint.to_hex(),
+                ),
+            }
+        }
+        let edges = self.vault.edges_out(src).unwrap_or_else(|e| {
+            panic!(
+                "{}: edges_out({}) errored right after CRDT commit — \
+                 env-level write failure (see ONE-1148): {e}",
+                self.name,
+                src.to_hex(),
+            )
+        });
+        assert!(
+            edges.iter().any(|e| e.kind == kind && e.target == *tgt),
+            "{}: edge {} absent from LMDB right after CRDT commit — \
+             env-level write failure (see ONE-1148): Observer B swallowed a batch-commit error",
+            self.name,
+            format_edge_key(src, kind, tgt),
+        );
     }
 
     /// Writes an edge value into the window doc using the ARCH-0034 layout
@@ -248,6 +364,7 @@ impl TestNode {
         let edges = window.doc.get_map("edges");
         map_insert_bytes(&edges, edge_key.as_str(), &edge_val);
         window.doc.commit();
+        self.assert_edge_write_materialized(key, src, kind, tgt);
     }
 
     /// `h:{seq:8BE}` HardErase sweep rows (ARCH-0038; ONE-1091 preserved
