@@ -875,6 +875,16 @@ impl Vault {
                     "substrate_ref must name a MODEL (type byte 121) entity",
                 ));
             }
+            // A present, type-correct (type-121) substrate row whose body
+            // fails the engine MODEL shape ({name, version} ≤256B) is
+            // ambiguous on-disk corruption — e.g. a remote-replay-deposited
+            // malformed type-121 row — and is rejected fail-closed as
+            // CorruptedIndex("model entity body") BEFORE the provenance Claim
+            // is staged, mirroring the get-or-create GET scan's own strict
+            // decode (single decoder, one source of truth). Never downgraded
+            // to a silent skip; InvalidModelSubstrate stays reserved for the
+            // clean referential rejections above (wrong kind, dangling ref).
+            decode_model_entity_body(&substrate_raw[ENTITY_METADATA_HEADER_LEN..])?;
         }
 
         // Explicit-prior gates (supersede path): the named Claim must be a
