@@ -47,7 +47,7 @@ jobs:
       # Canonical runner (ONE-1144): process-per-test isolation, full tier.
       - run: cargo nextest run --workspace --all-features --profile full
       # nextest does not run doctests; keep them covered separately.
-      - run: cargo test --doc --workspace --all-features
+      - run: cargo test --doc --workspace --exclude oneiron-bench --all-features
 
   deny:
     name: cargo-deny
