@@ -128,6 +128,54 @@ fn first_child_of_parent(
     Ok(None)
 }
 
+/// ONE-1149 race-test rendezvous seam. The deterministic raced-delete harness
+/// must order the deleter's lock-free `read_entity_header` read_txn (which does
+/// NOT take the single LMDB write lock) BEFORE the eraser's commit, so the
+/// headerful gate is forced to win the header read and the partial-residue leg
+/// is exercised every run instead of nondeterministically diverting to the
+/// headerless path. The only way to inject that ordering across the spawned
+/// production call is a `#[cfg(test)]` signal emitted from inside
+/// `delete_entity_with_reason` once the header is proven `Some`. It compiles
+/// out of production entirely (the `#[cfg(not(test))]` shim is a no-op),
+/// mirroring the established sweep-side fault-injection seam idiom.
+#[cfg(test)]
+static AFTER_HEADER_READ: std::sync::Mutex<Option<std::sync::mpsc::SyncSender<()>>> =
+    std::sync::Mutex::new(None);
+
+/// Installs the one-shot rendezvous sender consumed by
+/// [`signal_after_header_read`]. Called by the raced-delete harness before it
+/// releases the deleter; the matching receiver `recv()`s on the eraser side
+/// just before its commit.
+#[cfg(test)]
+pub(crate) fn install_after_header_read_signal(tx: std::sync::mpsc::SyncSender<()>) {
+    *AFTER_HEADER_READ
+        .lock()
+        .expect("AFTER_HEADER_READ poisoned") = Some(tx);
+}
+
+/// Fires the rendezvous signal exactly once if a sender is installed, then
+/// clears it so unrelated headerful deletes in the same serial run never block
+/// on a stale rendezvous. A no-op when no harness installed a sender.
+#[cfg(test)]
+fn signal_after_header_read() {
+    let sender = AFTER_HEADER_READ
+        .lock()
+        .expect("AFTER_HEADER_READ poisoned")
+        .take();
+    if let Some(sender) = sender {
+        // The rendezvous (`sync_channel(0)`) blocks here until the eraser
+        // `recv()`s; that recv is positioned immediately before its commit, so
+        // the deleter's header read is provably ordered before the erase.
+        let _ = sender.send(());
+    }
+}
+
+/// Production no-op shim for the race-test rendezvous seam: compiles out the
+/// signal entirely in non-test builds.
+#[cfg(not(test))]
+#[inline(always)]
+fn signal_after_header_read() {}
+
 /// Main vault API wrapping LMDB storage and configuration.
 pub struct Vault {
     pub(crate) store: Store,
@@ -1182,6 +1230,13 @@ impl Vault {
         let Some(header) = self.read_entity_header(id)? else {
             return self.delete_entity_without_header(id, reason, requested_at);
         };
+        // ONE-1149 race-test rendezvous: the header is proven `Some` (the
+        // lock-free `read_entity_header` read_txn has completed and committed
+        // the headerful path) but no write lock is held yet. The deterministic
+        // raced-delete harness recv()s here so the eraser commits AFTER this
+        // header read, forcing the headerful leg every run. No-op in
+        // production.
+        signal_after_header_read();
         // ONE-1132: ONE deletion request UUID correlates the CRDT tombstone's
         // `request_id` with the REDACTION_AUDIT receipt's `request_id`.
         // ONE-1149: minted only AFTER the header read proves there is

@@ -990,7 +990,52 @@ fn run_raced_delete<F>(
 where
     F: FnOnce(&mut heed::RwTxn<'_>) -> Result<()>,
 {
+    run_raced_delete_inner(vault, id, reason, erase_scope, false)
+}
+
+/// ONE-1149 rendezvous variant: forces the deleter's lock-free
+/// `read_entity_header` read to complete BEFORE the eraser commits, via the
+/// `#[cfg(test)]` `AFTER_HEADER_READ` seam in `vault.rs`. The eraser `recv()`s
+/// the deleter's post-header-read signal immediately before `commit()`, so the
+/// HEADERFUL leg is exercised every run (the bare-barrier variant can rarely
+/// lose the read-vs-commit race and divert to the headerless path). Only valid
+/// for HEADERFUL deletes — the deleter MUST reach the signal after the header
+/// gate; a headerless deleter never signals and would hang the recv.
+fn run_raced_delete_rendezvous<F>(
+    vault: &Vault,
+    id: &EntityId,
+    reason: DeleteReason,
+    erase_scope: F,
+) -> Result<DeleteEntityOutcome>
+where
+    F: FnOnce(&mut heed::RwTxn<'_>) -> Result<()>,
+{
+    run_raced_delete_inner(vault, id, reason, erase_scope, true)
+}
+
+fn run_raced_delete_inner<F>(
+    vault: &Vault,
+    id: &EntityId,
+    reason: DeleteReason,
+    erase_scope: F,
+    rendezvous: bool,
+) -> Result<DeleteEntityOutcome>
+where
+    F: FnOnce(&mut heed::RwTxn<'_>) -> Result<()>,
+{
     let gate = std::sync::Arc::new(std::sync::Barrier::new(2));
+    // ONE-1149 rendezvous: a rendezvous (`sync_channel(0)`) sender installed
+    // into the production `#[cfg(test)]` seam. The deleter sends after it
+    // proves the header `Some` (still holding no write lock); the eraser
+    // recv()s just before its commit. Installed BEFORE the deleter is released
+    // so the seam is armed by the time the header read happens.
+    let rendezvous_rx = if rendezvous {
+        let (tx, rx) = std::sync::mpsc::sync_channel::<()>(0);
+        crate::vault::install_after_header_read_signal(tx);
+        Some(rx)
+    } else {
+        None
+    };
     std::thread::scope(|scope| -> Result<DeleteEntityOutcome> {
         let mut wtxn = vault.store.env.write_txn()?;
         // Stage the scope erasure in the held txn but DO NOT commit yet —
@@ -1007,6 +1052,16 @@ where
         // unblocks it into a purge txn that now deterministically finds
         // nothing to erase.
         gate.wait();
+        if let Some(rx) = &rendezvous_rx {
+            // Deadlock-free: the deleter reaches the post-header-read signal
+            // BEFORE it needs any write lock, so this recv() unblocks; we then
+            // commit (releasing the write lock the deleter's purge txn is
+            // waiting on). deleter reads header present -> signals -> we commit
+            // + release lock -> deleter's purge txn proceeds and finds the
+            // scope scrubbed.
+            rx.recv()
+                .expect("deleter must signal after the header read");
+        }
         wtxn.commit()?;
         deleter.join().expect("deleter thread must not panic")
     })
@@ -1182,6 +1237,20 @@ fn headerful_delete_raced_to_nothing_emits_no_receipt_sweep_or_pt() -> Result<()
 /// is used deliberately: unlike `GdprDelete`/`PolicyDelete` it runs no
 /// pre-purge SoftErase, so the vector + BM25 residue survives to the in-txn
 /// probe.
+///
+/// DETERMINISM (ONE-1149 round-2): the deleter now races through the
+/// `run_raced_delete_rendezvous` seam, which orders its lock-free
+/// `read_entity_header` read BEFORE the eraser commit, so the HEADERFUL leg
+/// runs EVERY run (the bare-barrier variant could rarely lose the
+/// read-vs-commit race and divert to the headerless path, leaving this test
+/// nondeterministic). With the headerful leg pinned, a DISCRIMINATOR assertion
+/// proves the published CRDT tombstone landed in the HEADERFUL window
+/// `window_label_from_timestamp(header.learned_at)` (computed from the entity's
+/// stored `learned_at`), NOT the now-derived window the headerless leg
+/// addresses (`window_label_from_timestamp(now)`). A wrong impl that takes the
+/// headerless path lands the tombstone in the now-window and fails; a wrong
+/// impl that early-returns on the missing header emits no receipt and fails the
+/// receipt assertion — non-tautological in both directions.
 #[test]
 fn headerful_delete_partial_residue_survives_emits_receipt_existed_false() -> Result<()> {
     let (_dir, vault) = open_test_vault();
@@ -1201,10 +1270,25 @@ fn headerful_delete_partial_residue_survives_emits_receipt_existed_false() -> Re
     vault.put_vector(&id, &[0.1, 0.2, 0.3, 0.4])?;
     assert_eq!(vault.search_text("partial-residue", 10)?.len(), 1);
 
+    // DISCRIMINATOR setup: the headerful leg addresses the tombstone window by
+    // the entity's stored `learned_at`; the headerless leg would address it by
+    // `now`. Assert the two windows are genuinely different so the
+    // discriminator below is meaningful (a same-window fixture would make the
+    // assertion vacuous).
+    let headerful_window = crate::deletion::window_label_from_timestamp(learned_at);
+    let now_window = crate::deletion::window_label_from_timestamp(crate::unix_seconds_now());
+    assert_ne!(
+        headerful_window, now_window,
+        "fixture invariant: learned_at must fall in a different window than now, \
+         else the headerful-vs-headerless window discriminator is vacuous"
+    );
+
     // The race erases ONLY the entities row (header), the way a concurrent
     // delete that lost the purge race would, leaving the vector + BM25
     // posting as live residue the in-txn full-scope probe must still catch.
-    let outcome = run_raced_delete(&vault, &id, DeleteReason::UserHardDelete, |wtxn| {
+    // The rendezvous seam forces the deleter's header read to win, so the
+    // HEADERFUL leg runs deterministically every run.
+    let outcome = run_raced_delete_rendezvous(&vault, &id, DeleteReason::UserHardDelete, |wtxn| {
         vault.store.entities.delete(wtxn, id.as_bytes())?;
         Ok(())
     })?;
@@ -1242,6 +1326,53 @@ fn headerful_delete_partial_residue_survives_emits_receipt_existed_false() -> Re
         vault.search_text("partial-residue", 10)?.is_empty(),
         "the surviving BM25 posting must be purged"
     );
+
+    // DISCRIMINATOR: the published tombstone is addressed by the HEADERFUL
+    // window (`learned_at`), proving the headerful leg ran. In sync builds the
+    // CRDT tombstone snapshot is a `d:w:{window}` row; in non-sync builds
+    // `write_crdt_tombstone` is a no-op so the surviving `pt:{window}:{id}`
+    // pending-tombstone marker (kept because `crdt_persisted` is false) is the
+    // window witness. Either way the window segment MUST be the headerful
+    // window and never the now-window.
+    #[cfg(feature = "sync")]
+    {
+        // The persisted snapshot key is exactly `d:w:{window}` (no trailing
+        // colon — that's the `u:w:{window}:` update-row grammar).
+        let dw_keys = sync_state_keys_with_prefix_raw(&vault, "d:w:")?;
+        assert_eq!(
+            dw_keys.len(),
+            1,
+            "exactly one CRDT tombstone snapshot row for the headerful delete"
+        );
+        assert_eq!(
+            dw_keys[0],
+            format!("d:w:{headerful_window}"),
+            "the CRDT tombstone must land in the HEADERFUL window \
+             (window_label_from_timestamp(header.learned_at)); a headerless-path \
+             execution would key it to the now-window (d:w:{now_window}) instead"
+        );
+        assert_ne!(
+            dw_keys[0],
+            format!("d:w:{now_window}"),
+            "the CRDT tombstone must NOT land in the now-window (the headerless leg's address)"
+        );
+    }
+    #[cfg(not(feature = "sync"))]
+    {
+        let pt_keys = sync_state_keys_with_prefix_raw(&vault, "pt:")?;
+        assert_eq!(
+            pt_keys.len(),
+            1,
+            "non-sync: the pending-tombstone marker survives (crdt_persisted=false) \
+             and is the headerful-window witness"
+        );
+        assert_eq!(
+            pt_keys[0],
+            format!("pt:{headerful_window}:{}", id.to_hex()),
+            "the pt: marker must be keyed to the HEADERFUL window \
+             (window_label_from_timestamp(header.learned_at)), never the now-window"
+        );
+    }
     Ok(())
 }
 
