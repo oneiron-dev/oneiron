@@ -141,12 +141,21 @@ impl OutboundSink {
 pub struct ObserverAState {
     /// Pending bytes since last compaction (AtomicU32 for Send+Sync).
     pub pending_bytes: AtomicU32,
+    /// Fail-closed durability stash (ONE-1151): local update frames whose
+    /// `u:w:` persist FAILED inside Observer A. The CRDT op is already
+    /// committed in RAM but has no durable `u:w:` row, so a no-op reconnect
+    /// echo (which would otherwise early-return without persisting) drains
+    /// this stash first and re-persists each frame. Holds the EXACT failed
+    /// bytes; drained-once-and-cleared so a re-echo never re-grows the
+    /// `u:w:` log (preserves the ONE-1151 over-persist dedupe).
+    pub unpersisted: Mutex<Vec<Vec<u8>>>,
 }
 
 impl Default for ObserverAState {
     fn default() -> Self {
         Self {
             pending_bytes: AtomicU32::new(0),
+            unpersisted: Mutex::new(Vec::new()),
         }
     }
 }
@@ -232,6 +241,17 @@ pub fn register_observer_a(
                 error = %e,
                 "observer-a: CRITICAL — failed to persist update, CRDT committed but LMDB may diverge"
             );
+            // Fail-closed durability stash (ONE-1151): the op is now in the
+            // live doc with no durable `u:w:` row. Stash the EXACT failed
+            // bytes so the next no-op reconnect echo (which would otherwise
+            // early-return without persisting) drains and re-persists them
+            // before falling through. Recover a poisoned lock rather than
+            // cascade the panic into every future commit.
+            state
+                .unpersisted
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .push(update_bytes.to_vec());
         }
 
         // Outbound routing happens even if the u:w: persist failed: the

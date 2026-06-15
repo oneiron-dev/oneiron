@@ -360,6 +360,48 @@ impl SyncClient {
                     .doc
                     .import(payload)
                     .map_err(|_| TransportError::InvalidPayload("window import failed"))?;
+                // Fail-closed echo durability (ONE-1151): drain any local
+                // update frames Observer A committed to the live doc but
+                // FAILED to persist as `u:w:` rows. The dangerous gap is
+                // same-process (persist-fail → live no-op echo while the op
+                // sits only in RAM): without this, the no-op early-return
+                // below skips the sole remaining persist path and a restart
+                // loses the op. Drain-ONCE-and-CLEAR (`mem::take`) is
+                // load-bearing — a non-clearing flag would re-persist on
+                // every echo and re-grow the `u:w:` log, re-opening exactly
+                // the over-persist bug ONE-1151 closed. On persist failure
+                // we re-stash the failed + remaining frames and mirror the
+                // fail-closed discard below (debt is NEVER cleared on
+                // failure).
+                {
+                    let stash = &window.observer_a_state.unpersisted;
+                    let frames: Vec<Vec<u8>> = std::mem::take(
+                        &mut *stash
+                            .lock()
+                            .unwrap_or_else(|poisoned| poisoned.into_inner()),
+                    );
+                    for (idx, frame) in frames.iter().enumerate() {
+                        if let Err(e) = persist_window_update(&self.vault, window_key, frame) {
+                            // Re-stash the failed frame plus every remaining
+                            // one (preserve order: remaining frames go after
+                            // the failed one) so the debt is never lost, then
+                            // discard the live window WITHOUT persisting and
+                            // fail closed — identical posture to the accepted
+                            // remote-frame persist failure below.
+                            let mut guard = stash
+                                .lock()
+                                .unwrap_or_else(|poisoned| poisoned.into_inner());
+                            let mut requeue = frames[idx..].to_vec();
+                            requeue.append(&mut guard);
+                            *guard = requeue;
+                            drop(guard);
+                            self.manager.discard_window(&WindowKey::new(window_key));
+                            return Err(TransportError::Storage(format!(
+                                "persist stashed local update: {e}"
+                            )));
+                        }
+                    }
+                }
                 // Reconnect-echo dedupe (ONE-1151): an import that did not
                 // advance the doc's oplog VV carried no new ops — every op
                 // in the frame is already held by the live doc, whose state
