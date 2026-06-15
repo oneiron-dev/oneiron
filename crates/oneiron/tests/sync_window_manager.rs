@@ -4,7 +4,8 @@
 //! `WindowManager::open_window` — steps 3 → 4 → 5 (pm replay → reverse
 //! remat → forward remat) on the bare doc, observers attached LAST (step
 //! 6) — plus the one-live-doc-per-key registry, the defensive `rm:w:{key}`
-//! consumer, and the unload path (persist + subscription drop).
+//! consumer, and the unload path (persist + subscription drop; ONE-1150
+//! typed refusal while external `Arc` handles are outstanding).
 
 #![cfg(feature = "sync")]
 
@@ -16,7 +17,7 @@ use oneiron::sync::manager::WindowManager;
 use oneiron::sync::types::WindowKey;
 use oneiron::sync::window;
 use oneiron::types::TimeRange;
-use oneiron::{EntityId, HnswConfig, Vault, VaultConfig};
+use oneiron::{EntityId, Error, ErrorKind, HnswConfig, Vault, VaultConfig};
 
 fn test_config() -> VaultConfig {
     let mut cfg = VaultConfig::device();
@@ -447,6 +448,150 @@ fn unload_persists_state_and_drops_observer_subscriptions() {
 
     // Unloading a window that is not loaded is a no-op.
     assert!(!manager.unload_window(&key).unwrap());
+}
+
+/// ONE-1150 — unload with an outstanding external handle is REFUSED with
+/// the typed [`Error::WindowBusy`], side-effect-free (nothing persisted,
+/// nothing deregistered), and the second-live-doc trap stays closed: the
+/// window remains discoverable via `window()` and `Vault::delete_entity`
+/// still commits its tombstone through the LIVE doc. The pre-ONE-1150
+/// warn-and-deregister implementation FAILS here: unload returns
+/// `Ok(true)`, `window()` goes empty, and the delete takes the transient
+/// path that never touches the held doc.
+#[test]
+fn unload_refuses_with_outstanding_handles_and_keeps_delete_routing_live() {
+    let (_temp, vault) = test_vault();
+    let key = WindowKey::new("2026-03");
+    let t = key.start_timestamp().unwrap() + 60;
+
+    // Entity in LMDB before open: step-4 reverse remat mirrors it into the
+    // live doc, giving the delete below a live-doc copy to tombstone.
+    let id = EntityId::now();
+    put_lmdb_entity(&vault, &id, t, b"held-handle-body");
+
+    let materializer = Arc::new(Materializer::new());
+    let manager = Arc::new(WindowManager::new(
+        Arc::clone(&vault),
+        materializer,
+        "test-user",
+    ));
+    // `win` is the outstanding external handle for the whole test.
+    let win = manager.open_window(&key).unwrap();
+    assert!(
+        map_get_bytes(&win.doc.get_map("entities"), &id.to_hex()).is_some(),
+        "fixture: reverse remat must mirror the entity into the live doc"
+    );
+
+    // Refused: typed variant, exact fields, stable kind, retryable.
+    let err = manager.unload_window(&key).unwrap_err();
+    match &err {
+        Error::WindowBusy {
+            window_key,
+            outstanding_handles,
+        } => {
+            assert_eq!(window_key.as_str(), "2026-03");
+            assert_eq!(
+                *outstanding_handles, 1,
+                "external holders only — the registry's own Arc is excluded"
+            );
+        }
+        other => panic!("expected Error::WindowBusy, got {other:?}"),
+    }
+    assert_eq!(err.kind(), ErrorKind::WindowBusy);
+    assert!(
+        err.is_retryable(),
+        "WindowBusy clears once the last handle drops"
+    );
+
+    // Side-effect-free refusal: no persist ran (this window has never been
+    // persisted, so any `d:w:` row could only come from the refused call)…
+    assert!(
+        vault
+            .sync_state_get(&format!("d:w:{key}"))
+            .unwrap()
+            .is_none(),
+        "a refused unload must not persist doc state"
+    );
+    // …and nothing was deregistered: the SAME instance stays discoverable.
+    let still = manager.window(&key).expect("window must stay discoverable");
+    assert!(
+        Arc::ptr_eq(&still, &win),
+        "registry must still own the same live instance"
+    );
+    drop(still);
+    assert_eq!(manager.loaded_keys(), [key.clone()]);
+
+    // The trap scenario, asserted closed: with the refusal in place a vault
+    // delete still routes through the registry-owned LIVE doc — tombstone
+    // visible through the held handle, entities copy removed in the same
+    // commit — never the transient path.
+    assert!(vault.delete_entity(&id).unwrap());
+    assert!(
+        map_get_bytes(&win.doc.get_map("tombstones"), &id.to_hex()).is_some(),
+        "delete must still route through the registry-owned live doc"
+    );
+    assert!(
+        map_get_bytes(&win.doc.get_map("entities"), &id.to_hex()).is_none(),
+        "live entities-map copy removed in the delete commit"
+    );
+    assert!(
+        vault.get(&id).unwrap().is_none(),
+        "LMDB purge ran (delete semantics untouched by the refusal)"
+    );
+
+    // Still held → still refused: the refusal is a stable, pollable state.
+    assert!(matches!(
+        manager.unload_window(&key),
+        Err(Error::WindowBusy { .. })
+    ));
+}
+
+/// ONE-1150 — once the last external handle drops, the previously refused
+/// unload succeeds: the retry persists the doc state and deregisters.
+#[test]
+fn unload_succeeds_after_last_external_handle_drops() {
+    let (_temp, vault) = test_vault();
+    let key = WindowKey::new("2026-04");
+    let t = key.start_timestamp().unwrap() + 60;
+
+    let materializer = Arc::new(Materializer::new());
+    let manager = Arc::new(WindowManager::new(
+        Arc::clone(&vault),
+        materializer,
+        "test-user",
+    ));
+    let win = manager.open_window(&key).unwrap();
+
+    let id = EntityId::now();
+    win.doc
+        .get_map("entities")
+        .insert(
+            id.to_hex().as_str(),
+            make_entity_blob(1, t, b"survives-retry").as_slice(),
+        )
+        .unwrap();
+    win.doc.commit();
+
+    // Held → refused. Dropped → the retry succeeds and deregisters.
+    assert!(matches!(
+        manager.unload_window(&key),
+        Err(Error::WindowBusy { .. })
+    ));
+    drop(win);
+    assert!(manager.unload_window(&key).unwrap());
+    assert!(
+        manager.window(&key).is_none(),
+        "retry after the last drop must deregister"
+    );
+    assert!(manager.loaded_keys().is_empty());
+
+    // The successful retry persisted the state the refused call did not.
+    let reloaded = window::load_window_from_state(&vault, "test-user", &key).unwrap();
+    assert_eq!(
+        map_get_bytes(&reloaded.get_map("entities"), &id.to_hex()).unwrap(),
+        make_entity_blob(1, t, b"survives-retry"),
+        "unload-after-drop must persist the window Doc state"
+    );
 }
 
 /// AC 3 — `rm:w:{key}` consumer: when the needs-rematerialization flag is
