@@ -222,11 +222,15 @@ pub fn load_window_from_state(vault: &Vault, _user_id: &str, key: &WindowKey) ->
 /// would silently drop accepted sync data — tombstones especially, whose
 /// LMDB purge already ran and which reverse re-materialization can never
 /// reconstruct.
-pub(crate) fn apply_pending_window_updates(
-    vault: &Vault,
-    doc: &LoroDoc,
-    key: &WindowKey,
-) -> Result<u32> {
+///
+/// `pub` like its sibling startup steps ([`load_window_from_state`],
+/// [`replay_pending_tombstones`], [`replay_pending_mirrors`],
+/// [`reverse_rematerialize`], [`forward_rematerialize`]): the integration
+/// harness' fresh-open path replays through this EXACT fn (ONE-1152) —
+/// re-implementing the replay out-of-crate is precisely the
+/// production-divergence class that ticket closes, and `#[cfg(test)]`
+/// helpers are invisible to integration-test crates.
+pub fn apply_pending_window_updates(vault: &Vault, doc: &LoroDoc, key: &WindowKey) -> Result<u32> {
     let rtxn = vault.store.env.read_txn()?;
     // Prefix iterator (B-tree range seek); `{seq:08x}` keys sort in order.
     let prefix = format!("u:w:{key}:");

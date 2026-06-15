@@ -7419,9 +7419,19 @@ fn assert_no_entity_state(vault: &Vault, id: &EntityId) -> Result<()> {
         vault.store.entities.get(&rtxn, id.as_bytes())?.is_none(),
         "entities row leaked for rejected write"
     );
+    // Entity-keyed direct probe (ONE-1152): `short_ids_reverse` is the
+    // entity-keyed table per the pinned 25-DB manifest (key entity_id ->
+    // short_id ‖ content_hash). The pre-fix probe read the FORWARD
+    // `short_ids` table by entity bytes — a guaranteed miss against its
+    // `(short_id bytes ‖ content_hash u8)` key layout, i.e. a vacuous
+    // assertion.
     assert!(
-        vault.store.short_ids.get(&rtxn, id.as_bytes())?.is_none(),
-        "short_ids row leaked for rejected write"
+        vault
+            .store
+            .short_ids_reverse
+            .get(&rtxn, id.as_bytes())?
+            .is_none(),
+        "short_ids_reverse row leaked for rejected write"
     );
     let scans = [
         ("type_index", &vault.store.type_index),
@@ -7435,6 +7445,9 @@ fn assert_no_entity_state(vault: &Vault, id: &EntityId) -> Result<()> {
             "temporal_long_intervals",
             &vault.store.temporal_long_intervals,
         ),
+        // ONE-1152: forward rows carry the entity id in the VALUE — without
+        // this scan a leaked forward row escaped the oracle entirely.
+        ("short_ids", &vault.store.short_ids),
         ("short_ids_reverse", &vault.store.short_ids_reverse),
         ("edges_out", &vault.store.edges_out),
         ("edges_in", &vault.store.edges_in),
@@ -7455,6 +7468,33 @@ fn slice_contains(haystack: &[u8], needle: &[u8]) -> bool {
     haystack
         .windows(needle.len())
         .any(|window| window == needle)
+}
+
+/// ONE-1152 (a) oracle self-test: a leaked FORWARD short-id row — keyed
+/// `(short_id bytes ‖ content_hash u8)` with the entity id in the VALUE
+/// (pinned 25-DB manifest direction, ARCH-0019) — must trip
+/// [`assert_no_entity_state`]. Pre-fix, the oracle probed `short_ids` BY
+/// ENTITY KEY (a guaranteed miss against the forward layout) and never
+/// scanned forward values, so this exact plant escaped silently.
+#[test]
+#[should_panic(expected = "short_ids row references rejected entity")]
+fn assert_no_entity_state_catches_leaked_forward_short_id_row() {
+    let temp = tempfile::tempdir().unwrap();
+    let vault = Vault::open(temp.path(), test_config()).unwrap();
+    let id = EntityId::now();
+
+    // Forward row: key = ASCII short id ‖ content-hash byte, value = id.
+    let mut forward_key = b"cl1".to_vec();
+    forward_key.push(0x42);
+    let mut wtxn = vault.store.env.write_txn().unwrap();
+    vault
+        .store
+        .short_ids
+        .put(&mut wtxn, &forward_key, id.as_bytes())
+        .unwrap();
+    wtxn.commit().unwrap();
+
+    assert_no_entity_state(&vault, &id).unwrap();
 }
 
 /// Schema-agnostic short-id lookup: scans BOTH short-id DBs raw and accepts

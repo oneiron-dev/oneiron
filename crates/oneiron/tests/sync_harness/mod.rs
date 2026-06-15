@@ -109,14 +109,91 @@ pub(crate) fn map_insert_bytes(map: &LoroMap, key: &str, value: &[u8]) {
     map.insert(key, value).unwrap();
 }
 
-/// All binary entries of a CRDT map, ordered — the comparison form
-/// [`assert_converged`] diffs with first-divergent-key output.
+/// Canonical comparison bytes for one CRDT map slot (ONE-1152): a shape
+/// tag byte + length-prefixed payload, recursive, map keys sorted. Two
+/// slots encode equal iff they hold the same shape AND the same deep
+/// content — a String never byte-collides with a Binary of identical
+/// content (distinct tags), so cross-shape divergence is always DETECTED
+/// by the parity oracle instead of silently dropped.
+pub(crate) fn parity_bytes(value: &ValueOrContainer) -> Vec<u8> {
+    let mut out = Vec::new();
+    match value {
+        ValueOrContainer::Value(v) => parity_encode_value(&mut out, v),
+        // Attached container: tagged as such, then its deep value — a
+        // container is never parity-equal to a plain value of the same
+        // content.
+        ValueOrContainer::Container(_) => {
+            out.push(0x09);
+            parity_encode_value(&mut out, &value.get_deep_value());
+        }
+    }
+    out
+}
+
+fn parity_push_len_bytes(out: &mut Vec<u8>, bytes: &[u8]) {
+    out.extend_from_slice(&u32::try_from(bytes.len()).unwrap().to_be_bytes());
+    out.extend_from_slice(bytes);
+}
+
+fn parity_encode_value(out: &mut Vec<u8>, value: &LoroValue) {
+    match value {
+        LoroValue::Null => out.push(0x00),
+        LoroValue::Bool(b) => {
+            out.push(0x01);
+            out.push(u8::from(*b));
+        }
+        LoroValue::Double(d) => {
+            out.push(0x02);
+            out.extend_from_slice(&d.to_bits().to_be_bytes());
+        }
+        LoroValue::I64(i) => {
+            out.push(0x03);
+            out.extend_from_slice(&i.to_be_bytes());
+        }
+        LoroValue::Binary(bytes) => {
+            out.push(0x04);
+            parity_push_len_bytes(out, bytes);
+        }
+        LoroValue::String(s) => {
+            out.push(0x05);
+            parity_push_len_bytes(out, s.as_bytes());
+        }
+        LoroValue::List(items) => {
+            out.push(0x06);
+            out.extend_from_slice(&u32::try_from(items.len()).unwrap().to_be_bytes());
+            for item in items.iter() {
+                parity_encode_value(out, item);
+            }
+        }
+        LoroValue::Map(map) => {
+            out.push(0x07);
+            // FxHashMap iteration order is nondeterministic — sort keys so
+            // the encoding is canonical across nodes.
+            let ordered: BTreeMap<&String, &LoroValue> = map.iter().collect();
+            out.extend_from_slice(&u32::try_from(ordered.len()).unwrap().to_be_bytes());
+            for (k, v) in ordered {
+                parity_push_len_bytes(out, k.as_bytes());
+                parity_encode_value(out, v);
+            }
+        }
+        LoroValue::Container(id) => {
+            out.push(0x08);
+            parity_push_len_bytes(out, id.to_string().as_bytes());
+        }
+    }
+}
+
+/// ALL entries of a CRDT map, ordered — the comparison form
+/// [`assert_converged`] diffs with first-divergent-key output. Values are
+/// the [`parity_bytes`] canonical encoding, NOT raw payloads: the pre-fix
+/// Binary-only filter dropped string/container values from BOTH sides of
+/// the comparison, turning a real divergence into a false green
+/// (ONE-1152). Raw Binary payloads for decoding are [`map_get_bytes`]'s
+/// job.
 pub(crate) fn map_entries(map: &LoroMap) -> BTreeMap<String, Vec<u8>> {
     let mut entries = BTreeMap::new();
     map.for_each(|key, value| {
-        if let ValueOrContainer::Value(LoroValue::Binary(bytes)) = value {
-            entries.insert(key.to_owned(), bytes.to_vec());
-        }
+        entries.insert(key.to_owned(), parity_bytes(&value));
     });
     entries
 }
@@ -170,14 +247,29 @@ impl TestNode {
     }
 
     /// Opens a fresh window doc with observers attached (test/bootstrap
-    /// path — recovery is [`Self::recover`]).
+    /// path — recovery is [`Self::recover`]). Mirrors production's
+    /// fresh-doc fallback (`WindowManager::open_window`): pending
+    /// `u:w:{key}:*` rows replay onto the bare doc BEFORE observers attach
+    /// — they can exist without any `d:w:` snapshot, and skipping the
+    /// replay silently drops accepted sync data on re-open (ONE-1152;
+    /// tombstones especially, whose LMDB purge already ran).
     pub(crate) fn open_window(&mut self, key: &str) -> &LoadedWindow {
-        let doc = oneiron::sync::schema::create_window_doc(self.name, &WindowKey::new(key));
+        let window_key = WindowKey::new(key);
+        let doc = oneiron::sync::schema::create_window_doc(self.name, &window_key);
         doc.set_peer_id(self.peer_id).unwrap();
-        let window =
-            LoadedWindow::from_doc(doc, WindowKey::new(key), &self.vault, &self.materializer);
+        window::apply_pending_window_updates(&self.vault, &doc, &window_key).unwrap();
+        let window = LoadedWindow::from_doc(doc, window_key, &self.vault, &self.materializer);
         self.windows.insert(key.to_owned(), window);
         self.window(key)
+    }
+
+    /// Drops the live window WITHOUT persisting `d:w:{key}` (crash-shaped:
+    /// process exit before unload) — the pending `u:w:` rows Observer A
+    /// already persisted are then the ONLY durable record of the doc's
+    /// ops. Pair with [`Self::open_window`] to exercise the fresh-doc
+    /// pending-update replay (ONE-1152).
+    pub(crate) fn drop_window_without_persist(&mut self, key: &str) {
+        self.windows.remove(key);
     }
 
     pub(crate) fn window(&self, key: &str) -> &LoadedWindow {
@@ -511,9 +603,15 @@ pub(crate) fn assert_converged(a: &TestNode, b: &TestNode, key: &str) {
     }
 
     // Tombstone effect parity (ARCH-0038 / ONE-1133 reason-aware replay).
-    for (hex, value) in &tombstones {
+    for hex in tombstones.keys() {
         let id = EntityId::from_hex(hex).unwrap();
-        let decoded = oneiron::decode_tombstone_value(value);
+        // `tombstones` holds parity-encoded comparison bytes (ONE-1152) —
+        // decode from the RAW Binary wire value instead. A PRESENT
+        // non-Binary tombstone value reads as the empty slice, which
+        // decodes HARD — fail closed, mirroring production's
+        // `apply_tombstone_to_window_doc` read.
+        let raw = map_get_bytes(&doc_a.get_map("tombstones"), hex).unwrap_or_default();
+        let decoded = oneiron::decode_tombstone_value(&raw);
         let raw_a = a.vault.get_raw(&id).unwrap();
         let raw_b = b.vault.get_raw(&id).unwrap();
         if decoded.is_hard() {
@@ -712,4 +810,53 @@ fn harness_window_constants_agree() {
     let start = key.start_timestamp().unwrap();
     let end = key.end_timestamp().unwrap();
     assert!(start <= T0 && T0 <= end, "T0 must sit inside {WINDOW}");
+}
+
+/// ONE-1152 (b) oracle self-test: a non-Binary CRDT map value must be
+/// VISIBLE to convergence parity. Node A carries a String value in its
+/// entities map that node B lacks; the pre-fix Binary-only `map_entries`
+/// dropped the entry from A's side of the comparison, so this exact
+/// divergence sailed through [`assert_converged`] as a false green.
+/// (Direct doc-map write on purpose: Observer B quarantines the
+/// protocol-violating value rather than materializing it, and the
+/// harness write helpers are reserved for contract-clean writes.)
+#[test]
+#[should_panic(expected = "CRDT entities map")]
+fn parity_oracle_detects_non_binary_map_divergence() {
+    let (a, b) = vault_pair();
+    let id = EntityId::now();
+    let entities = a.doc(WINDOW).get_map("entities");
+    entities
+        .insert(id.to_hex().as_str(), "not-a-binary-blob")
+        .unwrap();
+    a.doc(WINDOW).commit();
+    assert_converged(&a, &b, WINDOW);
+}
+
+/// ONE-1152 (c) oracle self-test: pending `u:w:{key}:*` rows (persisted by
+/// Observer A on every local commit) must replay on a harness fresh open,
+/// exactly like production's `WindowManager::open_window` fresh-doc
+/// fallback. Pre-fix, [`TestNode::open_window`] produced a bare doc — the
+/// accepted update was invisible and any test of "what survives a re-open
+/// without a `d:w:` snapshot" silently diverged from production.
+#[test]
+fn fresh_open_replays_pending_window_updates() {
+    let mut a = TestNode::new("node-a", 1);
+    a.open_window(WINDOW);
+
+    let id = EntityId::now();
+    let blob = make_entity_blob(1, T0 + 1, b"pending-update-survivor");
+    a.put_entity_in_window(WINDOW, &id, &blob);
+
+    // Crash-shaped drop: no d:w: snapshot is ever written — Observer A's
+    // u:w: rows are the only durable CRDT record of the op.
+    a.drop_window_without_persist(WINDOW);
+    a.open_window(WINDOW);
+
+    assert_eq!(
+        map_get_bytes(&a.doc(WINDOW).get_map("entities"), &id.to_hex()).as_deref(),
+        Some(blob.as_slice()),
+        "pending u:w: update must be visible in the freshly opened doc \
+         (production fresh-doc fallback parity, ONE-1152)"
+    );
 }
