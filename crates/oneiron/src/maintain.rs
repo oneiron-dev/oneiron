@@ -85,6 +85,11 @@ pub struct MaintenanceReport {
     /// Windows skipped because they are OPEN in a window registry — a live
     /// doc's next full-snapshot persist would resurrect the carrier.
     pub sweep_windows_deferred_live: u64,
+    /// Windows deferred because a `u:w:` row appeared/vanished or the `d:w:`
+    /// snapshot changed between the read phase and the compaction write txn
+    /// (anti-clobber re-read guard). SIBLING of `sweep_windows_deferred_live`
+    /// — a raced window is neither compacted nor a live-registry deferral.
+    pub sweep_windows_deferred_raced: u64,
     /// REDACTION_AUDIT receipts whose `sweep_complete_at` was finalized.
     pub sweep_receipts_finalized: u64,
     /// Pending jobs observed past their `deadline_at` (queued_at + 30 d,
@@ -96,6 +101,11 @@ pub struct MaintenanceReport {
     /// `sweep_complete_at`, and NO covering pending `h:` row — a dropped
     /// erasure obligation (each is also a `tracing::error`).
     pub sweep_obligations_missing: u64,
+    /// Audit: REDACTION_AUDIT receipts whose stored body could not be
+    /// decoded — present-but-corrupt accountability records. SIBLING of
+    /// `sweep_obligations_missing`; an unreadable receipt is a distinct
+    /// signal from a dropped one and is never folded into it.
+    pub sweep_obligations_undecodable: u64,
 }
 
 impl<'a> MaintenanceBuilder<'a> {
@@ -224,10 +234,12 @@ impl<'a> MaintenanceBuilder<'a> {
             report.sweep_jobs_failed = run.jobs_failed;
             report.sweep_windows_compacted = run.windows_compacted;
             report.sweep_windows_deferred_live = run.windows_deferred_live;
+            report.sweep_windows_deferred_raced = run.windows_deferred_raced;
             report.sweep_receipts_finalized = run.receipts_finalized;
             report.sweep_deadline_breaches = run.deadline_breaches;
             report.sweep_quarantine_rows_expired = run.quarantine_rows_expired;
             report.sweep_obligations_missing = run.obligations_missing;
+            report.sweep_obligations_undecodable = run.obligations_undecodable;
         }
 
         Ok(report)
