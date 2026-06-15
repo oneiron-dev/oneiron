@@ -27,6 +27,12 @@ thiserror = { workspace = true }
 
 [dev-dependencies]
 tempfile = "3"
+# Lease-registrar tests sign proof-of-possession transcripts themselves
+# (contract-grounded, ONE-1140). `test-hooks` compiles in the lease
+# mirror-failure injection seam used by the root-snapshot/`ls:`-mirror
+# atomicity test (ONE-1140); no production effect.
+ed25519-dalek = { workspace = true }
+oneiron = { path = "../oneiron", features = ["sync", "test-hooks"] }
 
 [lints]
 workspace = true

@@ -185,11 +185,14 @@ required AND not listed in `AUTOPILOT_OVERRIDE`.
 
 ### Toolchain commands
 
-Use `rtk proxy` for cargo (token-optimized wrapper):
+Use `rtk proxy` for cargo (token-optimized wrapper). cargo-nextest is the
+canonical test runner (ONE-1144) — the default profile is the fast tier
+(slow-tagged tests excluded; see `.config/nextest.toml`):
 
 ```bash
 rtk proxy cargo build -p oneiron
-rtk proxy cargo test -p oneiron --lib
+rtk proxy cargo nextest run -p oneiron
+rtk proxy cargo nextest run -p oneiron --features sync
 rtk proxy cargo clippy --workspace --all-targets -- -D warnings
 rtk proxy cargo fmt --all -- --check
 ```
@@ -203,6 +206,21 @@ Commit message prefix: `<area>:` where area is one of:
 `bm25`, `vault`, `pipeline`, `batch`, `maintain`, `napi`, `tests`, `docs`.
 
 Body: one sentence describing the change, one mentioning `Closes {{ issue.identifier }}`.
+
+### Build cache (sccache)
+
+Agent worktrees cold-build ~340 crates before running a single test —
+compile time, not test time, dominates agent wall-clock. Export the
+per-machine compile cache for every cargo invocation in a fresh worktree:
+
+```bash
+export RUSTC_WRAPPER=sccache   # /opt/homebrew/bin/sccache on the dev Mac
+```
+
+This is opt-in per environment — do NOT hardcode it into
+`.cargo/config.toml` (CI uses its own cache; not every machine has sccache).
+If sccache misbehaves (rare ICE/cache errors), unset it and rebuild —
+correctness over speed.
 
 ## 3. Self-review pass (Codex itself)
 
@@ -221,41 +239,52 @@ Fix any issues. Repeat until self-review pass is clean.
 Run all of:
 
 ```bash
-rtk proxy cargo test -p oneiron --lib
-rtk proxy cargo test -p oneiron --test analyzer_asset_policy
-rtk proxy cargo test --workspace
+rtk proxy cargo nextest run --workspace --profile full
+rtk proxy cargo test --doc --workspace --exclude oneiron-bench
 rtk proxy cargo clippy --workspace --all-targets -- -D warnings
 rtk proxy cargo fmt --all -- --check
 rtk proxy env RUSTDOCFLAGS='-D warnings' cargo doc --workspace --no-deps
 ```
 
+(`--profile full` includes the slow tier; nextest does not run doctests,
+hence the separate `cargo test --doc` line.)
+
 All must pass. If any fails, fix and repeat. If a failure is unrelated to your
 change (pre-existing), exit with `Blocked` state, comment quoting the failure.
 
-### Sync gate + macOS LMDB flake policy
+### Test gate (canonical, ONE-1144) + macOS LMDB note
 
-For changes touching `src/sync/` or `tests/sync_*`, the local gate is the
-full six-command sequence (the workspace `--features sync` flag is a silent
-no-op — always use `-p oneiron`):
+cargo-nextest is the canonical runner everywhere (CI + local + agent
+briefs). It runs each test in its own process, which structurally removes
+the shared-process LMDB flake class (cumulative pthread-key pressure,
+shared-env state) and reports passed-on-retry tests as FLAKY instead of
+silently green. Profiles live in `.config/nextest.toml`.
+
+Dev/agent fast loop (slow tier excluded):
 
 ```bash
-cargo fmt -p oneiron
+cargo nextest run -p oneiron
+cargo nextest run -p oneiron --features sync
+```
+
+FULL tier — required before every push (the workspace `--features sync`
+flag is a silent no-op — always use `-p oneiron`):
+
+```bash
+cargo fmt -p oneiron -- --check
 cargo clippy --workspace --all-targets --all-features -- -D warnings
 cargo build
 cargo build -p oneiron --features sync
-cargo test -p oneiron -- --test-threads=1
-cargo test -p oneiron --features sync -- --test-threads=1
+cargo nextest run -p oneiron --profile full
+cargo nextest run -p oneiron --features sync --profile full
 ```
 
-LMDB tests on macOS can flake under parallelism or shared state (reader-slot
-exhaustion, map-full, tempdir reuse). The ONLY acceptable fixes are
-isolation-shaped:
+LMDB tests can still flake under shared state (reader-slot exhaustion,
+map-full, tempdir reuse). The ONLY acceptable fixes are isolation-shaped:
 
 - one `tempfile::tempdir()` per test — never a shared vault directory;
 - an adequate per-test `map_size` (the sync suites use 16 MiB) and
-  `max_readers`;
-- serial execution (`--test-threads=1`, as pinned in the gate above) for
-  suites that open many environments.
+  `max_readers`.
 
 NEVER fix a flake by weakening an assertion, widening a tolerance, deleting
 a test, or adding `#[ignore]` without a ticket reference. Sync is the
@@ -263,14 +292,23 @@ GDPR/permanence surface: an assertion that flakes is telling you about
 shared state, not about an over-strict expectation. If a genuine
 order-dependence is found, fix the isolation and keep the assertion exact.
 
+macOS note (ONE-1148, open): LMDB on macOS uses SysV semaphores whose key
+keeps ~24 bits of lockfile inode — concurrent test vaults across processes
+can collide system-wide, surfacing as env-level `Storage(Io(.. EINVAL(22)
+..))` on `Vault::open` or write txns. This is orthogonal to nextest's
+process isolation (the semaphore namespace is machine-global). Until
+ONE-1148 lands: if a run shows env-level EINVAL(22) flakes, re-run serially
+(`cargo nextest run -p oneiron --features sync --profile full -j 1`);
+serial local runs are authoritative locally, Linux CI (robust mutexes,
+unaffected) is authoritative overall.
+
 Known cliff (ONE-1142, FIXED): the engine used to never close LMDB
-environments, so every `Vault::open` leaked a pthread TLS key for the life
-of the process — at ~509 cumulative vault opens in one test process, macOS
-(`PTHREAD_KEYS_MAX = 512`) started failing further opens with
-`Storage(Io(.. EAGAIN ..))`. The `OwnedEnv` close path (ONE-1142) fixed
-this; late-alphabet tests failing with EAGAIN after suite growth would
-indicate a regression of that close path, not a logic error in the test.
-Verify by running the failing tests in isolation; do not weaken them.
+environments, so every `Vault::open` leaked a pthread TLS key — at ~509
+cumulative opens in one process, macOS (`PTHREAD_KEYS_MAX = 512`) failed
+further opens with `Storage(Io(.. EAGAIN ..))`. The `OwnedEnv` close path
+fixed this and `vault_open_drop_cycles_survive_pthread_key_limit` (slow
+tier) guards the regression; verify suspected regressions by running the
+failing test in isolation; do not weaken it.
 
 ### Forbidden-surface grep
 

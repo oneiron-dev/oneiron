@@ -23,12 +23,16 @@
 //! needs-rematerialization flag, ENTITY-scoped) is produced when a
 //! CRDT-tombstone purge of that specific entity against the local active
 //! store fails — a purge failure left hard-deleted content live, which is a
-//! GDPR SLA breach signal until drained. The marker is cleared ONLY when
-//! that entity's own purge succeeds: an unrelated entity's successful
-//! tombstone must never discharge another entity's purge retry.
-//! [`drain_remat_markers`] re-runs `forward_rematerialize` for each flagged
-//! window. A row under `rm:` that does not parse is fail-closed: it is
-//! treated as needs-remat and never dropped.
+//! GDPR SLA breach signal until drained — and (ONE-1147) when an Observer-B
+//! entity/edge materialization batch carrying that entity's op fails as a
+//! whole txn (lost create/update writes = silent LMDB↔CRDT divergence).
+//! The marker is cleared ONLY by that entity's own success — its purge for
+//! tombstoned ids, or the actual healing write (entity body / edge from
+//! that source) in forward remat; never byte-parity alone, and never an
+//! unrelated entity's success. [`drain_remat_markers`] re-runs
+//! `forward_rematerialize` for each flagged window. A row under `rm:` that
+//! does not parse is fail-closed: it is treated as needs-remat and never
+//! dropped.
 
 use std::sync::Arc;
 
@@ -75,6 +79,10 @@ pub enum QuarantineContainer {
     Entities,
     Edges,
     Tombstones,
+    /// Root-doc `leases` registry entries (ONE-1140): a malformed lease
+    /// value arriving through the root mirror is quarantined — never
+    /// upserted over a previous good `ls:` row, never silently dropped.
+    Leases,
 }
 
 impl QuarantineContainer {
@@ -84,6 +92,7 @@ impl QuarantineContainer {
             Self::Entities => "entities",
             Self::Edges => "edges",
             Self::Tombstones => "tombstones",
+            Self::Leases => "leases",
         }
     }
 }
@@ -170,7 +179,16 @@ pub(crate) fn remote_rejection_reason(error: &Error) -> Option<String> {
         // local, never silent LWW), is a remote rejection: quarantine the op
         // and continue the batch.
         | ErrorKind::InvalidRedactionReceiptBody
-        | ErrorKind::RedactionReceiptDivergence => Some(reason_code_for(error)),
+        | ErrorKind::RedactionReceiptDivergence
+        // ONE-1140: a NEW type-120 receipt failing the origin predicate —
+        // bad/transplanted attestation signature, unleased att_client, or a
+        // revoked lease binding — is a remote rejection of the op itself:
+        // quarantine (x: row) and continue. The rejected bytes stay in the
+        // CRDT map, so the next forward rematerialization re-admits them
+        // once the lease mirror catches up (OD-10 lazy re-admission).
+        | ErrorKind::ReceiptAttestationInvalid
+        | ErrorKind::ReceiptLeaseUnknown
+        | ErrorKind::ReceiptLeaseRevoked => Some(reason_code_for(error)),
         _ => None,
     }
 }
@@ -388,6 +406,23 @@ fn enforce_retention_in_txn(
     Ok(evicted)
 }
 
+/// On-demand retention pass for the ONE-1087 sweep executor: evicts `x:`
+/// rows past the pinned cap/age (4096 rows / ≤30 d) without requiring a new
+/// quarantine write to trigger it. Hash-only rows are GDPR-inert, so this
+/// is hygiene, not erasure safety. Returns the number of rows evicted.
+pub(crate) fn expire_stale_rows(vault: &Vault, now: u64) -> Result<u64> {
+    let mut wtxn = vault.store.env.write_txn()?;
+    let evicted = enforce_retention_in_txn(
+        vault,
+        &mut wtxn,
+        MAX_QUARANTINE_ROWS,
+        QUARANTINE_MAX_AGE_SECS,
+        now,
+    )?;
+    wtxn.commit()?;
+    Ok(evicted)
+}
+
 // ─── Read surface ────────────────────────────────────────────────────────────
 
 /// Returns all persisted quarantine records ordered by sequence number.
@@ -485,7 +520,9 @@ pub(crate) fn remat_marker_key(window_key: &str, id: &crate::types::EntityId) ->
 
 /// Sets `rm:w:{window}:{entity_hex}` (1-byte marker) in `sync_state` inside
 /// an existing write transaction. Written when THAT entity's CRDT-tombstone
-/// purge (or the read backing it) against the local active store fails.
+/// purge (or the read backing it) against the local active store fails, or
+/// (ONE-1147) when an Observer-B entity/edge batch carrying that entity's
+/// op fails as a whole txn.
 pub(crate) fn set_remat_marker_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
@@ -510,7 +547,8 @@ pub(crate) fn set_remat_marker(
 
 /// Clears `rm:w:{window}:{entity_hex}` inside an existing write
 /// transaction. Only called when THAT entity's purge succeeded (or the
-/// entity is verifiably absent — the purge goal state).
+/// entity is verifiably absent — the purge goal state), or when forward
+/// remat performed the actual healing write for that entity (ONE-1147).
 pub(crate) fn clear_remat_marker_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
@@ -580,9 +618,10 @@ pub struct RematDrainReport {
 
 /// Drains `rm:` markers by re-running `forward_rematerialize` for each
 /// flagged window. Each entity-scoped marker is cleared (inside
-/// `forward_rematerialize`) only when that entity's own purge succeeds; a
-/// window with any surviving marker stays flagged and is reported in
-/// `still_pending`.
+/// `forward_rematerialize`) only when that entity's own purge succeeds —
+/// or, for ONE-1147 batch-failure markers, when its actual healing write
+/// lands; a window with any surviving marker stays flagged and is reported
+/// in `still_pending`.
 pub fn drain_remat_markers(
     vault: &Arc<Vault>,
     user_id: &str,
@@ -630,6 +669,291 @@ pub fn drain_remat_markers(
         }
     }
     Ok(report)
+}
+
+// ─── ra: tombstone re-assertion markers (ONE-1156c) ──────────────────────────
+
+/// Prefix for queued tombstone re-assertion markers in `sync_state`
+/// (ONE-1156(c), WAVE-C design OD-11). Full key grammar, mirroring `rm:w:`:
+/// `ra:w:{window}:{entity_hex}` → exactly the 25 B tombstone value
+/// `[reason:1][deleted_at:8 LE][request_id:16]` to re-assert — byte-identical
+/// to the `dt:` local hard-delete row (LE in the opaque value, per the dt:
+/// convention). `window` is `YYYY-MM`; `entity_hex` is the 32-char lowercase
+/// entity id.
+///
+/// Producers are Observer B tombstone callbacks observing doc-side delete
+/// residue for a locally hard-deleted id: a tombstone REMOVAL delta, or a
+/// soft value merged over the local hard truth (M4 handoff §8c.1). LMDB is
+/// already safe (`dt:` gate + never-downgrade in the replay primitive), but
+/// the window doc would keep propagating the residue. The re-entrancy bar —
+/// no doc writes inside observer callbacks — means the re-assertion cannot
+/// run at the producer; the durable marker defers it to a safe commit point
+/// ([`drain_reassert_markers`]).
+///
+/// HARD-only by design (OD-11): without a `dt:` row there is no faithful
+/// local value to re-assert, and a reconstructed soft value could HARD-purge
+/// a user-kept shell at peers (decode mismatch) — soft-removal residue stays
+/// quarantine-only (pinned residual R4).
+const REASSERT_MARKER_PREFIX: &str = "ra:w:";
+
+/// Formats the `ra:w:{window}:{entity_hex}` re-assertion marker key.
+#[must_use]
+pub(crate) fn reassert_marker_key(window_key: &str, id: &crate::types::EntityId) -> String {
+    format!("{REASSERT_MARKER_PREFIX}{window_key}:{}", id.to_hex())
+}
+
+/// Enqueues the tombstone re-assertion marker for `id` IF the permanent
+/// `dt:{entity_hex}` local hard-delete marker exists: ONE write transaction
+/// reads the `dt:` row and writes `ra:w:{window}:{entity_hex}` with the
+/// row's EXACT bytes — the value the drain re-asserts verbatim. Returns
+/// whether a marker was written (`false` = no `dt:` row, nothing faithful
+/// to re-assert — OD-11 HARD-only). Idempotent: same key, same dt:-derived
+/// value.
+pub(crate) fn enqueue_tombstone_reassert_marker(
+    vault: &Vault,
+    window_key: &str,
+    id: &crate::types::EntityId,
+) -> Result<bool> {
+    vault.with_write_txn(|wtxn| {
+        let dt_key = crate::deletion::local_hard_delete_key(id);
+        let Some(dt_value) = vault.store.sync_state.get(wtxn, &dt_key)? else {
+            return Ok(false);
+        };
+        let dt_value = dt_value.to_vec();
+        vault
+            .store
+            .sync_state
+            .put(wtxn, &reassert_marker_key(window_key, id), &dt_value)?;
+        Ok(true)
+    })
+}
+
+/// Lists DISTINCT windows with pending `ra:` re-assertion markers.
+///
+/// Fail closed like [`pending_remat_windows`]: a row under `ra:w:` missing
+/// the entity segment (or otherwise unparsable) is still surfaced — its
+/// whole remainder is reported as the pending window. A re-assertion intent
+/// is never dropped by a read.
+pub fn pending_reassert_windows(vault: &Vault) -> Result<Vec<String>> {
+    let rtxn = vault.store.env.read_txn()?;
+    let mut windows = std::collections::BTreeSet::new();
+    let iter = vault
+        .store
+        .sync_state
+        .prefix_iter(&rtxn, REASSERT_MARKER_PREFIX)?;
+    for entry in iter {
+        let (key, _) = entry?;
+        let rest = &key[REASSERT_MARKER_PREFIX.len()..];
+        let window = match rest.split_once(':') {
+            Some((window, _entity_hex)) => window,
+            None => rest,
+        };
+        windows.insert(window.to_string());
+    }
+    Ok(windows.into_iter().collect())
+}
+
+/// One parsed `ra:` marker: (full `sync_state` key, entity id, value bytes).
+type ReassertMarker = (String, crate::types::EntityId, Vec<u8>);
+
+/// The `ra:` markers for one window: `(marker_key, parsed_id, value)` for
+/// every row whose entity segment parses, plus the count of malformed rows.
+/// Malformed rows are NEVER returned for application and never deleted —
+/// they keep the window `still_pending` (fail closed) and stay
+/// doctor-visible via [`pending_reassert_windows`].
+fn pending_reassert_markers(
+    vault: &Vault,
+    window_key: &str,
+) -> Result<(Vec<ReassertMarker>, usize)> {
+    let rtxn = vault.store.env.read_txn()?;
+    let prefix = format!("{REASSERT_MARKER_PREFIX}{window_key}:");
+    let mut markers = Vec::new();
+    let mut malformed = 0usize;
+    let iter = vault.store.sync_state.prefix_iter(&rtxn, &prefix)?;
+    for entry in iter {
+        let (key, value) = entry?;
+        let hex = &key[prefix.len()..];
+        match crate::types::EntityId::from_hex(hex) {
+            Ok(id) => markers.push((key.to_string(), id, value.to_vec())),
+            Err(_) => {
+                tracing::error!(
+                    marker = %key,
+                    "ra drain: malformed re-assertion marker entity segment — marker kept (fail closed)"
+                );
+                malformed += 1;
+            }
+        }
+    }
+    Ok((markers, malformed))
+}
+
+/// Outcome of a [`drain_reassert_markers`] pass — same shape as
+/// [`RematDrainReport`].
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct ReassertDrainReport {
+    /// Windows whose `ra:` markers ALL re-asserted + cleared.
+    pub drained: Vec<String>,
+    /// Windows with at least one marker still set after the pass — the
+    /// re-assertion keeps failing or a marker row does not parse (fail
+    /// closed). ERROR-grade: doc-side delete residue keeps propagating.
+    pub still_pending: Vec<String>,
+}
+
+/// Drains `ra:` tombstone re-assertion markers (ONE-1156(c), OD-11): per
+/// flagged window, re-asserts each marker's exact tombstone value into the
+/// window doc at a SAFE COMMIT POINT — handler/maintenance context, never
+/// inside an observer callback (the §8c.1 re-entrancy bar the producers
+/// respect).
+///
+/// Mirrors the `Vault::write_crdt_tombstone` dual path — live registry doc
+/// (commit through the SHARED doc under the materializer lock) vs transient
+/// load (`load_window_from_state`, with the rm:-drain
+/// `rebuild_window_from_updates` fallback) — minus `pt:` bookkeeping and
+/// minus the carrier-15 scrub: the LMDB purge already ran in the origin
+/// txn; this is doc-side repair only (no `fr:` marker, no `q:` scrub).
+///
+/// Call sites: maintenance/doctor surfaces (alongside
+/// [`drain_remat_markers`]) and inline in the bulk-transfer door
+/// (`SyncClient::handle_bulk_transfer_done`), scoped to that window.
+pub fn drain_reassert_markers(
+    vault: &Arc<Vault>,
+    user_id: &str,
+    manager: &Arc<crate::sync::manager::WindowManager>,
+) -> Result<ReassertDrainReport> {
+    let mut report = ReassertDrainReport::default();
+    for window in pending_reassert_windows(vault)? {
+        if parse_window_key_str(&window).is_none() {
+            tracing::error!(
+                window = %window,
+                "ra drain: malformed marker window key — cannot re-assert, marker kept"
+            );
+            report.still_pending.push(window);
+            continue;
+        }
+        let window_key = WindowKey::new(window.clone());
+        if drain_reassert_markers_for_window(vault, user_id, manager, &window_key)? {
+            report.drained.push(window);
+        } else {
+            tracing::error!(
+                window = %window,
+                "ra drain: re-assertion markers still pending — doc-side delete residue keeps propagating"
+            );
+            report.still_pending.push(window);
+        }
+    }
+    Ok(report)
+}
+
+/// Per-window `ra:` drain (see [`drain_reassert_markers`]). Returns `true`
+/// when no marker remains for the window (every parsed marker re-asserted
+/// and cleared; vacuously true when none were pending), `false` when a
+/// malformed marker row was kept (fail closed).
+///
+/// The success transaction is atomic: the re-asserted window-doc snapshot
+/// triple (`d:`/`sv:`/`svf:`), the delete-bearing queue row (`q:` +
+/// `d:{seq:8BE}` sidecar — the re-asserted tombstone must propagate and
+/// survive optimistic clears), and the `ra:` row deletions commit together.
+/// Markers are deleted ONLY in this transaction; a failure anywhere leaves
+/// them set for retry. Idempotent on double-drain: the second pass finds no
+/// markers (and a re-applied hard value is downgrade-blocked/no-op at every
+/// consumer — never-downgrade).
+pub(crate) fn drain_reassert_markers_for_window(
+    vault: &Arc<Vault>,
+    user_id: &str,
+    manager: &Arc<crate::sync::manager::WindowManager>,
+    window_key: &WindowKey,
+) -> Result<bool> {
+    use crate::sync::bridge::BRIDGE_ORIGIN;
+    use crate::sync::loro_support::{doc_version_vector, export_snapshot};
+    use crate::sync::window::{
+        apply_tombstone_to_window_doc, export_tombstone_commit_delta, load_window_from_state,
+        merge_persisted_state_into_doc, persist_window_doc_in_txn, rebuild_window_from_updates,
+    };
+    use loro::CommitOptions;
+
+    let (markers, malformed) = pending_reassert_markers(vault, window_key.as_str())?;
+    if markers.is_empty() {
+        return Ok(malformed == 0);
+    }
+
+    // Live vs transient doc routing — `write_crdt_tombstone`'s dual path.
+    let live = manager.window(window_key);
+    let (delete_update, snapshot, vv) = match &live {
+        Some(window) => {
+            // Clobber guard OUTSIDE the materializer lock: importing into
+            // an observed doc fires Observer B, which takes the
+            // (non-reentrant) lock itself. The commit + exports then run
+            // UNDER the lock so a concurrent remote re-put cannot read the
+            // tombstones map between this commit and the persist below
+            // (mirrors `Vault::write_crdt_tombstone`; lock order
+            // materializer → LMDB txn matches every other holder, and the
+            // registry lock is NOT held here).
+            merge_persisted_state_into_doc(vault, &window.doc, window_key)?;
+            let _guard = manager.materializer().lock();
+            let vv_before = window.doc.oplog_vv();
+            for (_, id, value) in &markers {
+                apply_tombstone_to_window_doc(&window.doc, id, value)?;
+            }
+            // BRIDGE_ORIGIN: Observer B must skip this commit — LMDB
+            // already holds the delete truth (`dt:` + the origin purge
+            // txn); Observer A still persists/broadcasts as usual.
+            window
+                .doc
+                .commit_with(CommitOptions::new().origin(BRIDGE_ORIGIN));
+            let delete_update = export_tombstone_commit_delta(&window.doc, &vv_before)?;
+            (
+                delete_update,
+                export_snapshot(&window.doc)?,
+                doc_version_vector(&window.doc),
+            )
+        }
+        None => {
+            // Transient: the loaded doc IS the merge of `d:w:` + pending
+            // `u:w:` rows; no observers are attached, so no lock is needed.
+            let doc = match load_window_from_state(vault, user_id, window_key) {
+                Ok(doc) => doc,
+                Err(Error::WindowNotFound { .. }) => {
+                    // Same fallback as the rm: drain: a flagged window
+                    // without a persisted snapshot can still carry its
+                    // tombstones in Observer A's durable update rows.
+                    rebuild_window_from_updates(vault, user_id, window_key)?
+                }
+                Err(err) => return Err(err),
+            };
+            let vv_before = doc.oplog_vv();
+            for (_, id, value) in &markers {
+                apply_tombstone_to_window_doc(&doc, id, value)?;
+            }
+            doc.commit_with(CommitOptions::new().origin(BRIDGE_ORIGIN));
+            let delete_update = export_tombstone_commit_delta(&doc, &vv_before)?;
+            (
+                delete_update,
+                export_snapshot(&doc)?,
+                doc_version_vector(&doc),
+            )
+        }
+    };
+
+    // ONE transaction: snapshot triple + delete-bearing queue row + marker
+    // deletions. An empty delta (every apply was downgrade-blocked / no-op)
+    // skips the queue push — nothing new to propagate.
+    vault.with_write_txn(|wtxn| {
+        persist_window_doc_in_txn(vault, wtxn, window_key, &snapshot, &vv)?;
+        if let Some(update) = &delete_update {
+            crate::sync::queue::push_delete_bearing_in_txn(
+                vault,
+                wtxn,
+                window_key.as_str(),
+                update,
+            )?;
+        }
+        for (marker_key, _, _) in &markers {
+            vault.store.sync_state.delete(wtxn, marker_key)?;
+        }
+        Ok(())
+    })?;
+
+    Ok(malformed == 0)
 }
 
 // ─── Test failure injection ──────────────────────────────────────────────────
@@ -1110,6 +1434,502 @@ mod tests {
             vault.get(&id).unwrap().is_none(),
             "hard-deleted entity purged via the rebuilt doc"
         );
+        assert!(pending_remat_windows(&vault).unwrap().is_empty());
+    }
+
+    /// ONE-1147 — Observer-B ENTITY batch whole-txn failure parity with the
+    /// hardened tombstone path: a failed batch commit must set the durable
+    /// entity-scoped marker under the LITERAL key `rm:w:{window}:{entity_hex}`
+    /// with the LITERAL 1-byte value `[1u8]` for EVERY entity the dead txn
+    /// had applied (never a bare error log), and a later
+    /// `drain_remat_markers` must heal the divergence (entities present in
+    /// LMDB) and clear the markers via the actual healing writes.
+    #[test]
+    fn rm_marker_round_trip_entity_batch_commit_failure_then_drain() {
+        let (_dir, vault) = test_vault_with_dir();
+        let materializer = Arc::new(Materializer::new());
+        let window_key = WindowKey::new(WINDOW);
+        let window = LoadedWindow::new("test-user", window_key, &vault, &materializer);
+
+        let a = EntityId::now();
+        let b = EntityId::now();
+        let blob_a = entity_blob(
+            ENTITY_TYPE_TASK,
+            valid_time_range(),
+            LEARNED_AT,
+            b"one-1147-a",
+        );
+        let blob_b = entity_blob(
+            ENTITY_TYPE_TASK,
+            valid_time_range(),
+            LEARNED_AT,
+            b"one-1147-b",
+        );
+
+        // One commit → one delta → ONE batch txn carrying BOTH ops; the
+        // injected LOCAL error aborts it post-batch, hitting the Observer-B
+        // swallow site (the whole-txn failure class: no surviving
+        // per-entity failure point).
+        crate::sync::bridge::INJECT_BATCH_COMMIT_FAILURES.with(|cell| cell.set(1));
+        let entities = window.doc.get_map("entities");
+        map_insert_bytes(&entities, &a.to_hex(), &blob_a).unwrap();
+        map_insert_bytes(&entities, &b.to_hex(), &blob_b).unwrap();
+        window.doc.commit();
+
+        // Divergence precondition: ops live in the CRDT doc, absent from LMDB.
+        assert!(vault.get(&a).unwrap().is_none());
+        assert!(vault.get(&b).unwrap().is_none());
+
+        // Pinned literal grammar: `rm:w:{window}:{entity_hex}` → `[1u8]`,
+        // one marker per batched entity.
+        let rtxn = vault.store.env.read_txn().unwrap();
+        for id in [&a, &b] {
+            let marker_key = format!("rm:w:2026-03:{}", id.to_hex());
+            assert_eq!(
+                vault.store.sync_state.get(&rtxn, &marker_key).unwrap(),
+                Some([1u8].as_slice()),
+                "entity batch commit failure must set the entity-scoped rm:w marker"
+            );
+        }
+        drop(rtxn);
+        assert_eq!(
+            pending_remat_windows(&vault).unwrap(),
+            vec![WINDOW.to_string()]
+        );
+
+        // Persist (Observer A kept the ops durably) and drain: forward
+        // remat performs the healing writes, which discharge the markers.
+        window.persist_state(&vault).unwrap();
+        drop(window);
+        let report = drain_remat_markers(&vault, "test-user", &materializer).unwrap();
+        assert_eq!(report.drained, vec![WINDOW.to_string()]);
+        assert!(report.still_pending.is_empty());
+        assert_eq!(
+            vault.get(&a).unwrap().as_deref(),
+            Some(b"one-1147-a".as_slice()),
+            "drain must heal the lost entity write"
+        );
+        assert_eq!(
+            vault.get(&b).unwrap().as_deref(),
+            Some(b"one-1147-b".as_slice()),
+            "drain must heal the lost entity write"
+        );
+        let rtxn = vault.store.env.read_txn().unwrap();
+        for id in [&a, &b] {
+            let marker_key = format!("rm:w:2026-03:{}", id.to_hex());
+            assert_eq!(
+                vault.store.sync_state.get(&rtxn, &marker_key).unwrap(),
+                None,
+                "the healing write must clear the marker"
+            );
+        }
+        drop(rtxn);
+        assert!(pending_remat_windows(&vault).unwrap().is_empty());
+    }
+
+    /// ONE-1147 — Observer-B EDGE batch whole-txn failure parity: the
+    /// marker is scoped to the edge's SOURCE entity (LITERAL
+    /// `rm:w:{window}:{src_hex}` → `[1u8]`, and NO marker for the target),
+    /// and the drain's healing edge write re-materializes the lost edge
+    /// bytes verbatim and discharges the source marker — the byte-identical
+    /// endpoint entities must NOT discharge it (parity never clears).
+    #[test]
+    fn rm_marker_round_trip_edge_batch_commit_failure_then_drain() {
+        let (_dir, vault) = test_vault_with_dir();
+        let materializer = Arc::new(Materializer::new());
+        let window_key = WindowKey::new(WINDOW);
+        let window = LoadedWindow::new("test-user", window_key, &vault, &materializer);
+
+        // Endpoints first, in their own SUCCESSFUL commit: Observer B
+        // materializes them into LMDB so only the EDGE batch sees the
+        // injected failure.
+        let src = EntityId::now();
+        let tgt = EntityId::now();
+        let entities = window.doc.get_map("entities");
+        map_insert_bytes(
+            &entities,
+            &src.to_hex(),
+            &entity_blob(ENTITY_TYPE_TASK, valid_time_range(), LEARNED_AT, b"src"),
+        )
+        .unwrap();
+        map_insert_bytes(
+            &entities,
+            &tgt.to_hex(),
+            &entity_blob(ENTITY_TYPE_TASK, valid_time_range(), LEARNED_AT, b"tgt"),
+        )
+        .unwrap();
+        window.doc.commit();
+        assert!(
+            vault.get(&src).unwrap().is_some() && vault.get(&tgt).unwrap().is_some(),
+            "precondition: endpoints materialized"
+        );
+
+        let kind = crate::types::EdgeKind::Mentions;
+        let edge_key = crate::sync::bridge::format_edge_key(&src, kind, &tgt);
+        let edge_val = crate::sync::bridge::encode_edge_value_for_crdt(
+            kind,
+            0.75,
+            12_345,
+            Some(crate::types::Vad::NEUTRAL),
+            None,
+        )
+        .unwrap();
+        crate::sync::bridge::INJECT_BATCH_COMMIT_FAILURES.with(|cell| cell.set(1));
+        map_insert_bytes(&window.doc.get_map("edges"), &edge_key, &edge_val).unwrap();
+        window.doc.commit();
+
+        // Divergence precondition: the edge op lives in the CRDT doc,
+        // absent from LMDB.
+        let lmdb_edge_key = crate::store::Store::encode_edge_key(&src, kind, &tgt);
+        let rtxn = vault.store.env.read_txn().unwrap();
+        assert_eq!(
+            vault.store.edges_out.get(&rtxn, &lmdb_edge_key).unwrap(),
+            None,
+            "precondition: failed batch left the edge unmaterialized"
+        );
+        // Pinned literal grammar, SOURCE-scoped.
+        let src_marker = format!("rm:w:2026-03:{}", src.to_hex());
+        assert_eq!(
+            vault.store.sync_state.get(&rtxn, &src_marker).unwrap(),
+            Some([1u8].as_slice()),
+            "edge batch commit failure must set the SOURCE-scoped rm:w marker"
+        );
+        let tgt_marker = format!("rm:w:2026-03:{}", tgt.to_hex());
+        assert_eq!(
+            vault.store.sync_state.get(&rtxn, &tgt_marker).unwrap(),
+            None,
+            "edge markers are source-scoped — no marker for the target"
+        );
+        drop(rtxn);
+
+        window.persist_state(&vault).unwrap();
+        drop(window);
+
+        // Drain: the endpoint entities are byte-identical (parity must not
+        // discharge anything); the EDGE healing write does, and it restores
+        // the lost edge bytes verbatim.
+        let report = drain_remat_markers(&vault, "test-user", &materializer).unwrap();
+        assert_eq!(report.drained, vec![WINDOW.to_string()]);
+        assert!(report.still_pending.is_empty());
+        let rtxn = vault.store.env.read_txn().unwrap();
+        assert_eq!(
+            vault.store.edges_out.get(&rtxn, &lmdb_edge_key).unwrap(),
+            Some(edge_val.as_slice()),
+            "drain must re-materialize the lost edge bytes verbatim"
+        );
+        assert_eq!(
+            vault.store.sync_state.get(&rtxn, &src_marker).unwrap(),
+            None,
+            "the healing edge write must clear the source marker"
+        );
+        drop(rtxn);
+        assert!(pending_remat_windows(&vault).unwrap().is_empty());
+    }
+
+    /// Inserts `src` + `tgt` entity blobs into a bare window doc and commits
+    /// them BEFORE Observer B attaches, so they live in the CRDT entities map
+    /// but never reached LMDB (forward remat is deliberately skipped — the
+    /// `from_doc` doc-comment notes LMDB may lag a freshly-attached doc). This
+    /// is the exact CRDT-present / LMDB-absent divergence the edge-batch
+    /// endpoint-hydration path exists to repair: the FIRST edge referencing
+    /// these endpoints is what hydrates-and-writes them. Mirrors the proven
+    /// pre-registration pattern in `bridge.rs`'s fail-closed split test.
+    fn window_with_unmaterialized_endpoints(
+        vault: &Arc<Vault>,
+        materializer: &Arc<Materializer>,
+        endpoints: &[(EntityId, &[u8])],
+    ) -> LoadedWindow {
+        let window_key = WindowKey::new(WINDOW);
+        let doc = create_window_doc("test-user", &window_key);
+        let entities = doc.get_map("entities");
+        for (id, data) in endpoints {
+            map_insert_bytes(
+                &entities,
+                &id.to_hex(),
+                &entity_blob(ENTITY_TYPE_TASK, valid_time_range(), LEARNED_AT, data),
+            )
+            .unwrap();
+        }
+        doc.commit();
+        // Attach observers only NOW — the endpoints above are already
+        // committed, so the entity observer never sees them; only future
+        // (edge) commits fire.
+        let window = LoadedWindow::from_doc(doc, window_key, vault, materializer);
+        for (id, _) in endpoints {
+            assert!(
+                vault.get(id).unwrap().is_none(),
+                "precondition: endpoint is CRDT-only, absent from LMDB"
+            );
+        }
+        window
+    }
+
+    fn one_1147_edge_value() -> Vec<u8> {
+        crate::sync::bridge::encode_edge_value_for_crdt(
+            crate::types::EdgeKind::Mentions,
+            0.75,
+            12_345,
+            Some(crate::types::Vad::NEUTRAL),
+            None,
+        )
+        .unwrap()
+    }
+
+    /// ONE-1147 fix-wave (BLOCKER) — an Observer-B edge batch whose endpoints
+    /// it HYDRATES-AND-WRITES inside the txn, then rolls back as a whole,
+    /// must flag a durable entity-scoped `rm:` marker for the rolled-back
+    /// hydration write under the LITERAL key `rm:w:{window}:{hex}` → `[1u8]`.
+    /// Pre-fix the swallow site iterated only `applied_edges` (edge SOURCES),
+    /// so a hydrated endpoint's lost write was silently unmarked.
+    #[test]
+    fn edge_batch_in_txn_endpoint_hydration_rollback_marks_endpoint() {
+        let (_dir, vault) = test_vault_with_dir();
+        let materializer = Arc::new(Materializer::new());
+
+        let src = EntityId::now();
+        let tgt = EntityId::now();
+        let window = window_with_unmaterialized_endpoints(
+            &vault,
+            &materializer,
+            &[(src, b"src"), (tgt, b"tgt")],
+        );
+
+        // The edge commit hydrates BOTH endpoints inside the batch txn, then
+        // the injected failure rolls the whole txn back.
+        let kind = crate::types::EdgeKind::Mentions;
+        let edge_key = crate::sync::bridge::format_edge_key(&src, kind, &tgt);
+        crate::sync::bridge::INJECT_BATCH_COMMIT_FAILURES.with(|cell| cell.set(1));
+        map_insert_bytes(
+            &window.doc.get_map("edges"),
+            &edge_key,
+            &one_1147_edge_value(),
+        )
+        .unwrap();
+        window.doc.commit();
+
+        // (a) Precondition: the rolled-back hydration left BOTH endpoints
+        // absent from LMDB.
+        assert!(
+            vault.get(&src).unwrap().is_none(),
+            "rolled-back endpoint hydration: src absent from LMDB"
+        );
+        assert!(
+            vault.get(&tgt).unwrap().is_none(),
+            "rolled-back endpoint hydration: tgt absent from LMDB"
+        );
+
+        // (b) Both hydrated-and-rolled-back endpoints carry the LITERAL
+        // marker. The SOURCE is also an `applied_edges` source, but the
+        // shared `seen` set marks it exactly once.
+        let rtxn = vault.store.env.read_txn().unwrap();
+        for id in [&src, &tgt] {
+            let marker = format!("rm:w:2026-03:{}", id.to_hex());
+            assert_eq!(
+                vault.store.sync_state.get(&rtxn, &marker).unwrap(),
+                Some([1u8].as_slice()),
+                "a hydrated-and-rolled-back edge endpoint must carry the rm:w marker"
+            );
+        }
+        drop(rtxn);
+        assert_eq!(
+            pending_remat_windows(&vault).unwrap(),
+            vec![WINDOW.to_string()]
+        );
+    }
+
+    /// ONE-1147 fix-wave (DISCRIMINATING) — the SOURCE endpoint's hydration
+    /// fails LOCALLY (injected) FIRST (bridge.rs:591), aborting the batch at
+    /// the local-abort arm BEFORE `applied_edges.push`; the TARGET endpoint
+    /// (hydrated second, bridge.rs:598) was already hydrated-and-WRITTEN, and
+    /// that write is rolled back. The target must still be flagged for remat
+    /// even though NO edge was ever tracked. A subset-only (applied_edges-
+    /// only) implementation marks NOTHING here and FAILS this test.
+    ///
+    /// NB hydration order is src(:591) → tgt(:598); arming the LOCAL failure
+    /// on `src` (so the partner `tgt` is the written-then-rolled-back
+    /// endpoint) realizes the brief's role intent — target hydrated-and-
+    /// marked, src carries the injected error — under the verified order.
+    #[test]
+    fn edge_batch_hydrated_target_only_rollback_marks_target() {
+        let (_dir, vault) = test_vault_with_dir();
+        let materializer = Arc::new(Materializer::new());
+
+        let src = EntityId::now();
+        let tgt = EntityId::now();
+        // Only TGT is in the CRDT-but-not-LMDB state; SRC's hydration is
+        // injected to fail LOCALLY before it reads or writes anything.
+        let window = window_with_unmaterialized_endpoints(&vault, &materializer, &[(tgt, b"tgt")]);
+
+        let kind = crate::types::EdgeKind::Mentions;
+        let edge_key = crate::sync::bridge::format_edge_key(&src, kind, &tgt);
+        // Arm SRC (first-hydrated): its LOCAL failure aborts the batch at the
+        // `(Err(e), _) if remote_rejection_reason(&e).is_none()` arm — AFTER
+        // TGT (second-hydrated) was hydrated-and-written, BEFORE any
+        // `applied_edges.push`.
+        crate::sync::bridge::INJECT_LOCAL_ENDPOINT_FAILURE.with(|cell| cell.set(Some(src)));
+        map_insert_bytes(
+            &window.doc.get_map("edges"),
+            &edge_key,
+            &one_1147_edge_value(),
+        )
+        .unwrap();
+        window.doc.commit();
+
+        assert!(
+            crate::sync::bridge::INJECT_LOCAL_ENDPOINT_FAILURE.with(|cell| cell.get().is_none()),
+            "precondition: the local src failure was actually hit"
+        );
+        assert!(
+            vault.get(&tgt).unwrap().is_none(),
+            "rolled-back tgt hydration: absent from LMDB"
+        );
+
+        let rtxn = vault.store.env.read_txn().unwrap();
+        // The TARGET — hydrated-and-written, then rolled back — is marked
+        // even though no edge was tracked (applied_edges was empty).
+        let tgt_marker = format!("rm:w:2026-03:{}", tgt.to_hex());
+        assert_eq!(
+            vault.store.sync_state.get(&rtxn, &tgt_marker).unwrap(),
+            Some([1u8].as_slice()),
+            "hydrated-and-rolled-back TARGET must carry the rm:w marker with NO edge tracked"
+        );
+        // SRC never hydrated (errored first) and never reached applied_edges.
+        let src_marker = format!("rm:w:2026-03:{}", src.to_hex());
+        assert_eq!(
+            vault.store.sync_state.get(&rtxn, &src_marker).unwrap(),
+            None,
+            "src never hydrated nor tracked — no marker"
+        );
+        drop(rtxn);
+    }
+
+    /// ONE-1147 fix-wave (anti-over-mark) — an endpoint already PRESENT in
+    /// LMDB takes the no-write `Ready` path (nothing lost) and must NOT be
+    /// flagged by the hydration loop. Here SRC is hydrated-and-rolled-back
+    /// (marked) while TGT is already present (must stay unmarked): a buggy
+    /// impl that recorded `Ready` endpoints into `hydrated_endpoints` would
+    /// over-mark TGT and FAIL.
+    #[test]
+    fn edge_batch_already_present_endpoint_not_overmarked() {
+        let (_dir, vault) = test_vault_with_dir();
+        let materializer = Arc::new(Materializer::new());
+
+        let src = EntityId::now();
+        let tgt = EntityId::now();
+        // SRC is CRDT-only (will be hydrated by the edge batch).
+        let window = window_with_unmaterialized_endpoints(&vault, &materializer, &[(src, b"src")]);
+        // TGT materializes SUCCESSFULLY through the now-attached observer →
+        // already-present (no-write `Ready`) when the edge batch runs.
+        map_insert_bytes(
+            &window.doc.get_map("entities"),
+            &tgt.to_hex(),
+            &entity_blob(ENTITY_TYPE_TASK, valid_time_range(), LEARNED_AT, b"tgt"),
+        )
+        .unwrap();
+        window.doc.commit();
+        assert!(
+            vault.get(&tgt).unwrap().is_some(),
+            "precondition: tgt already present in LMDB"
+        );
+        assert!(
+            vault.get(&src).unwrap().is_none(),
+            "precondition: src CRDT-only"
+        );
+
+        let kind = crate::types::EdgeKind::Mentions;
+        let edge_key = crate::sync::bridge::format_edge_key(&src, kind, &tgt);
+        crate::sync::bridge::INJECT_BATCH_COMMIT_FAILURES.with(|cell| cell.set(1));
+        map_insert_bytes(
+            &window.doc.get_map("edges"),
+            &edge_key,
+            &one_1147_edge_value(),
+        )
+        .unwrap();
+        window.doc.commit();
+
+        let rtxn = vault.store.env.read_txn().unwrap();
+        // SRC: hydrated-and-rolled-back → marked.
+        let src_marker = format!("rm:w:2026-03:{}", src.to_hex());
+        assert_eq!(
+            vault.store.sync_state.get(&rtxn, &src_marker).unwrap(),
+            Some([1u8].as_slice()),
+            "hydrated-and-rolled-back src is marked"
+        );
+        // TGT: already present, no in-batch write, nothing lost → the
+        // hydration loop must NOT mark it (and it is not an edge source).
+        let tgt_marker = format!("rm:w:2026-03:{}", tgt.to_hex());
+        assert_eq!(
+            vault.store.sync_state.get(&rtxn, &tgt_marker).unwrap(),
+            None,
+            "an already-present endpoint (no write, nothing lost) must NOT be marked by the hydration loop"
+        );
+        drop(rtxn);
+    }
+
+    /// ONE-1147 fix-wave (heal round-trip) — after an endpoint-hydration
+    /// rollback flags the markers, `drain_remat_markers` re-runs forward
+    /// remat: the ENTITY pass performs the actual healing write for each
+    /// endpoint (its body is in the CRDT entities map) and discharges that
+    /// endpoint's marker on the write only (never on parity). Pins that the
+    /// hydrated-endpoint markers route to a real heal.
+    #[test]
+    fn edge_batch_hydration_rollback_drain_heals() {
+        let (_dir, vault) = test_vault_with_dir();
+        let materializer = Arc::new(Materializer::new());
+
+        let src = EntityId::now();
+        let tgt = EntityId::now();
+        let window = window_with_unmaterialized_endpoints(
+            &vault,
+            &materializer,
+            &[(src, b"src"), (tgt, b"tgt")],
+        );
+
+        let kind = crate::types::EdgeKind::Mentions;
+        let edge_key = crate::sync::bridge::format_edge_key(&src, kind, &tgt);
+        crate::sync::bridge::INJECT_BATCH_COMMIT_FAILURES.with(|cell| cell.set(1));
+        map_insert_bytes(
+            &window.doc.get_map("edges"),
+            &edge_key,
+            &one_1147_edge_value(),
+        )
+        .unwrap();
+        window.doc.commit();
+
+        // Precondition: both endpoints flagged, absent from LMDB.
+        assert!(vault.get(&src).unwrap().is_none() && vault.get(&tgt).unwrap().is_none());
+        assert_eq!(
+            pending_remat_windows(&vault).unwrap(),
+            vec![WINDOW.to_string()]
+        );
+
+        // Persist (the CRDT doc carries the endpoint bodies) and drain.
+        window.persist_state(&vault).unwrap();
+        drop(window);
+        let report = drain_remat_markers(&vault, "test-user", &materializer).unwrap();
+        assert_eq!(report.drained, vec![WINDOW.to_string()]);
+        assert!(report.still_pending.is_empty());
+
+        // The entity pass re-materialized BOTH endpoints (the actual healing
+        // writes) and discharged their markers.
+        assert!(
+            vault.get(&src).unwrap().is_some(),
+            "drain heals the lost src hydration"
+        );
+        assert!(
+            vault.get(&tgt).unwrap().is_some(),
+            "drain heals the lost tgt hydration"
+        );
+        let rtxn = vault.store.env.read_txn().unwrap();
+        for id in [&src, &tgt] {
+            let marker = format!("rm:w:2026-03:{}", id.to_hex());
+            assert_eq!(
+                vault.store.sync_state.get(&rtxn, &marker).unwrap(),
+                None,
+                "the healing entity write discharges the endpoint marker"
+            );
+        }
+        drop(rtxn);
         assert!(pending_remat_windows(&vault).unwrap().is_empty());
     }
 

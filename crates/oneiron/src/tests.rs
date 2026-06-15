@@ -6,9 +6,9 @@ use std::time::Instant;
 use crate::limits::{MAX_ANCESTOR_DEPTH, MAX_CHILD_OF_CYCLE_TRAVERSAL_STEPS};
 use crate::types::{
     EDGE_VALUE_SEMANTIC_LEN, EDGE_VALUE_SEMANTIC_PROVENANCED_LEN, EDGE_VALUE_STRUCTURAL_LEN,
-    ENTITY_ID_LEN, ENTITY_TYPE_MACHINE, ENTITY_TYPE_REDACTION_AUDIT, ENTITY_TYPE_TASK,
-    ENTITY_TYPE_TASK_LIST, EdgeActorClass, EdgeConfirmationStatus, EdgeProvenanceFlags,
-    decode_edge_value, decode_edge_value_for_kind, encode_edge_value,
+    ENTITY_ID_LEN, ENTITY_TYPE_MACHINE, ENTITY_TYPE_MODEL, ENTITY_TYPE_REDACTION_AUDIT,
+    ENTITY_TYPE_TASK, ENTITY_TYPE_TASK_LIST, EdgeActorClass, EdgeConfirmationStatus,
+    EdgeProvenanceFlags, decode_edge_value, decode_edge_value_for_kind, encode_edge_value,
 };
 use heed::EnvOpenOptions;
 use heed::types::{Bytes, Str};
@@ -569,7 +569,28 @@ fn user_hard_delete_writes_opaque_redaction_audit_receipt() -> Result<()> {
     );
     assert!(receipt["sweep_queued_at"].as_u64().is_some());
     assert!(receipt["sweep_complete_at"].is_null());
-    assert!(receipt["verification"].as_object().unwrap().is_empty());
+    // ONE-1140 (OD-6) versions the M4 "verification empty" pin: every
+    // minted receipt now carries EXACTLY the four att_ attestation entries
+    // (lowercase hex strings, pinned lengths). Still opaque — hex
+    // identifiers and a signature, never content.
+    let verification = receipt["verification"].as_object().unwrap();
+    let mut keys: Vec<&str> = verification.keys().map(String::as_str).collect();
+    keys.sort_unstable();
+    assert_eq!(keys, vec!["att_client", "att_pk", "att_sig", "att_v"]);
+    let is_lower_hex = |s: &str| {
+        s.bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+    };
+    let att_client = verification["att_client"].as_str().unwrap();
+    assert_eq!(att_client.len(), 16);
+    assert!(is_lower_hex(att_client));
+    let att_pk = verification["att_pk"].as_str().unwrap();
+    assert_eq!(att_pk.len(), 64);
+    assert!(is_lower_hex(att_pk));
+    let att_sig = verification["att_sig"].as_str().unwrap();
+    assert_eq!(att_sig.len(), 128);
+    assert!(is_lower_hex(att_sig));
+    assert_eq!(verification["att_v"], "1");
     Ok(())
 }
 
@@ -845,6 +866,632 @@ fn receipt_reason_purges_orphan_vector_with_receipt_and_sweep() -> Result<()> {
     let rows = hard_erase_sweep_rows(&vault)?;
     assert_eq!(rows.len(), 1);
     Ok(())
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// ONE-1149 — delete TOCTOU: receipt/sweep/`pt:` emission is serialized with
+// the txn that actually erases. Two genuinely different cases must never
+// collapse into one:
+//   • FULLY-MISSING (an id that never had scope) = strict no-op, no publish
+//     at all — not even a propagating tombstone.
+//   • RACED-TO-NOTHING (scope existed at the read-probe, raced away before
+//     the purge txn) = the already-published CRDT tombstone + `d:`/`q:`
+//     propagation rows + a guarded `dt:` marker for hard reasons legitimately
+//     survive as idempotent propagation intent; ONLY the receipt + `h:` sweep
+//     + `pt:` marker are suppressed (the in-txn full-scope ownership probe).
+//     It is NEVER "`dt:`-only": the propagating CRDT tombstone is the
+//     cross-device convergence net (a peer that still holds the id needs it).
+// A delete that erased NOTHING must never claim it did (no receipt, no `h:`
+// sweep row, no `pt:` marker); a delete that erased a PARTIAL residue must
+// still audit it (the false-NEGATIVE mirror).
+// ═══════════════════════════════════════════════════════════════════════
+
+fn sync_state_value(vault: &Vault, key: &str) -> Result<Option<Vec<u8>>> {
+    let rtxn = vault.store.env.read_txn()?;
+    Ok(vault.store.sync_state.get(&rtxn, key)?.map(<[u8]>::to_vec))
+}
+
+fn sync_state_keys_with_prefix_raw(vault: &Vault, prefix: &str) -> Result<Vec<String>> {
+    let rtxn = vault.store.env.read_txn()?;
+    let mut keys = Vec::new();
+    for row in vault.store.sync_state.prefix_iter(&rtxn, prefix)? {
+        let (key, _) = row?;
+        keys.push(key.to_owned());
+    }
+    Ok(keys)
+}
+
+fn sync_queue_row_count_with_prefix(vault: &Vault, prefix: &[u8]) -> Result<usize> {
+    let rtxn = vault.store.env.read_txn()?;
+    let mut count = 0;
+    for row in vault.store.sync_queue.prefix_iter(&rtxn, prefix)? {
+        row?;
+        count += 1;
+    }
+    Ok(count)
+}
+
+/// ONE-1149: ZERO erasure-audit artifacts — no REDACTION_AUDIT receipt
+/// entity, no `h:` historical-carrier sweep row, no `pt:` pending-tombstone
+/// marker. Asserted after every delete that erased nothing.
+fn assert_no_erasure_audit_artifacts(vault: &Vault) -> Result<()> {
+    assert!(
+        redaction_audit_receipts(vault)?.is_empty(),
+        "a delete that erased nothing must not write a REDACTION_AUDIT receipt"
+    );
+    assert!(
+        hard_erase_sweep_rows(vault)?.is_empty(),
+        "a delete that erased nothing must not queue an h: sweep row"
+    );
+    assert!(
+        sync_state_keys_with_prefix_raw(vault, "pt:")?.is_empty(),
+        "a delete that erased nothing must not leave a pt: pending-tombstone marker"
+    );
+    Ok(())
+}
+
+/// ONE-1149 FULLY-MISSING case: an id that NEVER had a delete scope is a
+/// STRICT no-op for every reason — `missing()` outcome and ZERO side
+/// effects, not even a propagating tombstone: no CRDT tombstone publish
+/// (`d:w:` snapshot), no `q:`/`d:` queue rows, no `dt:` marker, no `pt:`
+/// marker, no receipt, no sweep row. This is the deliberate contrast to the
+/// RACED-TO-NOTHING case (`*_raced_to_nothing_*` below), where the scope
+/// existed at the read-probe and only raced away before the purge txn, so
+/// the already-published CRDT tombstone + `d:`/`q:` propagation rows + a
+/// guarded `dt:` marker legitimately survive as idempotent propagation
+/// intent. A wrong implementation that mints/publishes the tombstone before
+/// proving there is something to erase leaves a `d:w:` row or queue rows
+/// behind and fails this test.
+#[test]
+fn delete_missing_id_is_strict_noop_for_every_reason() -> Result<()> {
+    for reason in [
+        DeleteReason::UserDelete,
+        DeleteReason::UserHardDelete,
+        DeleteReason::GdprDelete,
+        DeleteReason::PolicyDelete,
+    ] {
+        let (_dir, vault) = open_test_vault();
+        let id = EntityId::now();
+
+        let outcome = vault.delete_entity_with_reason(&id, reason)?;
+
+        assert_eq!(
+            outcome,
+            DeleteEntityOutcome {
+                existed: false,
+                receipt_id: None,
+                sweep_key: None,
+            },
+            "{reason:?}: a fully-missing id must report missing()"
+        );
+        assert_no_erasure_audit_artifacts(&vault)?;
+        assert!(
+            sync_state_value(&vault, &format!("dt:{}", id.to_hex()))?.is_none(),
+            "{reason:?}: a fully-missing id must not gain a dt: hard-delete marker"
+        );
+        assert!(
+            sync_state_keys_with_prefix_raw(&vault, "d:w:")?.is_empty(),
+            "{reason:?}: no CRDT tombstone may be published for a fully-missing id"
+        );
+        assert_eq!(
+            sync_queue_row_count_with_prefix(&vault, b"q:")?,
+            0,
+            "{reason:?}: no update queue row may exist for a fully-missing id"
+        );
+        assert_eq!(
+            sync_queue_row_count_with_prefix(&vault, b"d:")?,
+            0,
+            "{reason:?}: no delete-bearing queue row may exist for a fully-missing id"
+        );
+    }
+    Ok(())
+}
+
+/// ONE-1149 RACED-TO-NOTHING construction (delete-safety), DETERMINISTIC —
+/// no timing sleep. Builds the RACED-TO-NOTHING case (scope existed at the
+/// deleter's read-probe, then raced away before its purge txn), NOT the
+/// FULLY-MISSING case (an id that never had scope). The eraser thread opens
+/// the single LMDB write txn, STAGES the scope erasure inside it but leaves
+/// it UNCOMMITTED (MVCC keeps it invisible to any read txn), then meets the
+/// deleter at a `Barrier`. After the barrier the deleter takes its read
+/// snapshot — a µs in-memory read that still sees the full scope because the
+/// erasure is uncommitted — and blocks on the held write lock, while the
+/// eraser commits (a ms-scale fsync). The read-vs-commit asymmetry makes the
+/// deleter observe the pre-erase scope every run, so its purge txn
+/// deterministically finds nothing once the eraser's commit lands. The
+/// astronomically-rare scheduling miss (the deleter is descheduled until
+/// after the commit) takes the FULLY-MISSING strict-noop path instead;
+/// callers detect it via the absent `dt:` marker and retry.
+fn run_raced_delete<F>(
+    vault: &Vault,
+    id: &EntityId,
+    reason: DeleteReason,
+    erase_scope: F,
+) -> Result<DeleteEntityOutcome>
+where
+    F: FnOnce(&mut heed::RwTxn<'_>) -> Result<()>,
+{
+    run_raced_delete_inner(vault, id, reason, erase_scope, false)
+}
+
+/// ONE-1149 rendezvous variant: forces the deleter's lock-free
+/// `read_entity_header` read to complete BEFORE the eraser commits, via the
+/// `#[cfg(test)]` `AFTER_HEADER_READ` seam in `vault.rs`. The eraser `recv()`s
+/// the deleter's post-header-read signal immediately before `commit()`, so the
+/// HEADERFUL leg is exercised every run (the bare-barrier variant can rarely
+/// lose the read-vs-commit race and divert to the headerless path). Only valid
+/// for HEADERFUL deletes — the deleter MUST reach the signal after the header
+/// gate; a headerless deleter never signals and would hang the recv.
+fn run_raced_delete_rendezvous<F>(
+    vault: &Vault,
+    id: &EntityId,
+    reason: DeleteReason,
+    erase_scope: F,
+) -> Result<DeleteEntityOutcome>
+where
+    F: FnOnce(&mut heed::RwTxn<'_>) -> Result<()>,
+{
+    run_raced_delete_inner(vault, id, reason, erase_scope, true)
+}
+
+fn run_raced_delete_inner<F>(
+    vault: &Vault,
+    id: &EntityId,
+    reason: DeleteReason,
+    erase_scope: F,
+    rendezvous: bool,
+) -> Result<DeleteEntityOutcome>
+where
+    F: FnOnce(&mut heed::RwTxn<'_>) -> Result<()>,
+{
+    let gate = std::sync::Arc::new(std::sync::Barrier::new(2));
+    // ONE-1149 rendezvous: a rendezvous (`sync_channel(0)`) sender installed
+    // into the production `#[cfg(test)]` seam. The deleter sends after it
+    // proves the header `Some` (still holding no write lock); the eraser
+    // recv()s just before its commit. Installed BEFORE the deleter is released
+    // so the seam is armed by the time the header read happens.
+    let rendezvous_rx = if rendezvous {
+        let (tx, rx) = std::sync::mpsc::sync_channel::<()>(0);
+        crate::vault::install_after_header_read_signal(tx);
+        Some(rx)
+    } else {
+        None
+    };
+    std::thread::scope(|scope| -> Result<DeleteEntityOutcome> {
+        let mut wtxn = vault.store.env.write_txn()?;
+        // Stage the scope erasure in the held txn but DO NOT commit yet —
+        // LMDB MVCC keeps it invisible to the deleter's read probe, so the
+        // deleter is guaranteed to pass that probe with the scope present.
+        erase_scope(&mut wtxn)?;
+        let deleter_gate = std::sync::Arc::clone(&gate);
+        let deleter = scope.spawn(move || {
+            deleter_gate.wait();
+            vault.delete_entity_with_reason(id, reason)
+        });
+        // Release the deleter; it reads its scope (still present) and blocks
+        // on this thread's single write lock. Committing the erasure here
+        // unblocks it into a purge txn that now deterministically finds
+        // nothing to erase.
+        gate.wait();
+        if let Some(rx) = &rendezvous_rx {
+            // Deadlock-free: the deleter reaches the post-header-read signal
+            // BEFORE it needs any write lock, so this recv() unblocks; we then
+            // commit (releasing the write lock the deleter's purge txn is
+            // waiting on). deleter reads header present -> signals -> we commit
+            // + release lock -> deleter's purge txn proceeds and finds the
+            // scope scrubbed.
+            rx.recv()
+                .expect("deleter must signal after the header read");
+        }
+        wtxn.commit()?;
+        deleter.join().expect("deleter thread must not panic")
+    })
+}
+
+/// Shared assertions for both raced-to-nothing legs. `reason_byte` is the
+/// pinned v2 wire byte for the reason under test.
+fn assert_raced_delete_artifacts(
+    vault: &Vault,
+    outcome: &DeleteEntityOutcome,
+    dt_marker: &[u8],
+    reason_byte: u8,
+) -> Result<()> {
+    assert_eq!(
+        *outcome,
+        DeleteEntityOutcome {
+            existed: false,
+            receipt_id: None,
+            sweep_key: None,
+        },
+        "a raced-to-nothing delete must report missing() with no receipt/sweep"
+    );
+    assert_no_erasure_audit_artifacts(vault)?;
+    // The dt: marker IS allowed (hard-once-seen, mirrors the receiver-side
+    // nothing-local branch) and carries the pinned 25 B v2 value
+    // [reason:1][deleted_at:8 LE][request_id:16].
+    assert_eq!(
+        dt_marker.len(),
+        25,
+        "dt: marker value must be the pinned 25 B v2 tombstone layout"
+    );
+    assert_eq!(
+        dt_marker[0], reason_byte,
+        "dt: marker reason byte must be the pinned wire byte for the reason"
+    );
+    // The CRDT tombstone publish happened BEFORE the ownership claim and is
+    // ALLOWED to survive: it is idempotent propagation intent, not an
+    // erasure claim. In sync builds that means the d:w: snapshot plus
+    // exactly one q:/d: delete-bearing queue pair; in non-sync builds
+    // write_crdt_tombstone is a no-op, so nothing may exist.
+    #[cfg(feature = "sync")]
+    {
+        assert!(
+            !sync_state_keys_with_prefix_raw(vault, "d:w:")?.is_empty(),
+            "sync build: the published CRDT tombstone snapshot legitimately survives"
+        );
+        assert_eq!(
+            sync_queue_row_count_with_prefix(vault, b"q:")?,
+            1,
+            "sync build: exactly the delete's own queued update row"
+        );
+        assert_eq!(
+            sync_queue_row_count_with_prefix(vault, b"d:")?,
+            1,
+            "sync build: exactly the delete's own delete-bearing sidecar row"
+        );
+    }
+    #[cfg(not(feature = "sync"))]
+    {
+        assert!(
+            sync_state_keys_with_prefix_raw(vault, "d:w:")?.is_empty(),
+            "non-sync build: no CRDT snapshot rows exist"
+        );
+        assert_eq!(
+            sync_queue_row_count_with_prefix(vault, b"q:")?,
+            0,
+            "non-sync build: no queue rows exist"
+        );
+        assert_eq!(
+            sync_queue_row_count_with_prefix(vault, b"d:")?,
+            0,
+            "non-sync build: no delete-bearing rows exist"
+        );
+    }
+    Ok(())
+}
+
+/// ONE-1149 headerless RACED-TO-NOTHING leg: a hard delete of orphan
+/// residue whose scope existed at the read probe but is raced away before
+/// the purge txn must NOT emit a receipt, sweep row, or `pt:` marker (the
+/// pre-fix code emitted all three — a false GDPR audit). Only the guarded
+/// `dt:` marker and the already-published idempotent CRDT tombstone (with
+/// its `d:`/`q:` propagation rows) legitimately survive.
+#[test]
+fn headerless_delete_raced_to_nothing_emits_no_receipt_sweep_or_pt() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+
+    for attempt in 0..3 {
+        let id = EntityId::now();
+        vault.put_vector(&id, &[0.1, 0.2, 0.3, 0.4])?;
+
+        let outcome = run_raced_delete(&vault, &id, DeleteReason::GdprDelete, |wtxn| {
+            vault.store.vectors.delete(wtxn, id.as_bytes())?;
+            Ok(())
+        })?;
+
+        let Some(dt_marker) = sync_state_value(&vault, &format!("dt:{}", id.to_hex()))? else {
+            // Scheduling miss: the deleter probed after the commit and took
+            // the strict-noop path. Verify it wrote nothing, then retry.
+            assert_eq!(outcome, DeleteEntityOutcome::missing());
+            assert_no_erasure_audit_artifacts(&vault)?;
+            assert!(
+                attempt < 2,
+                "raced branch was never constructed in 3 attempts"
+            );
+            continue;
+        };
+
+        // gdpr_delete pinned wire byte = 3.
+        assert_raced_delete_artifacts(&vault, &outcome, &dt_marker, 3)?;
+        return Ok(());
+    }
+    unreachable!("the attempt loop either returns or panics");
+}
+
+/// ONE-1149 headerful RACED-TO-NOTHING leg: a hard delete whose entity (and
+/// full delete scope) existed at the header read but is raced away before
+/// the purge txn must NOT emit a receipt, sweep row, or `pt:` marker. Only
+/// the guarded `dt:` marker and the already-published idempotent CRDT
+/// tombstone (with its `d:`/`q:` propagation rows) legitimately survive.
+#[test]
+fn headerful_delete_raced_to_nothing_emits_no_receipt_sweep_or_pt() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let learned_at = 1_772_000_000;
+
+    for attempt in 0..3 {
+        let id = EntityId::now();
+        vault
+            .batch()
+            .put(
+                &id,
+                1,
+                test_time_range(learned_at, learned_at),
+                learned_at,
+                b"raced-away-before-purge",
+            )
+            .commit()?;
+
+        let outcome = run_raced_delete(&vault, &id, DeleteReason::UserHardDelete, |wtxn| {
+            // Erase the FULL delete scope the way a racing hard delete would.
+            crate::batch::deindex_entity(&vault.store, wtxn, &id)?;
+            Ok(())
+        })?;
+
+        let Some(dt_marker) = sync_state_value(&vault, &format!("dt:{}", id.to_hex()))? else {
+            assert_eq!(outcome, DeleteEntityOutcome::missing());
+            assert_no_erasure_audit_artifacts(&vault)?;
+            assert!(
+                attempt < 2,
+                "raced branch was never constructed in 3 attempts"
+            );
+            continue;
+        };
+
+        // user_hard_delete pinned wire byte = 2.
+        assert_raced_delete_artifacts(&vault, &outcome, &dt_marker, 2)?;
+        return Ok(());
+    }
+    unreachable!("the attempt loop either returns or panics");
+}
+
+/// ONE-1149 false-NEGATIVE guard (delete-safety): the headerful delete's
+/// IN-TXN ownership probe checks the FULL delete scope, not just the
+/// entities row. A headerful entity whose entities row is raced away while a
+/// vector + a BM25 posting survive keeps `active_delete_scope_exists_in_txn`
+/// TRUE, so the purge runs, the residue IS erased, and a REAL receipt is
+/// emitted even though the outcome reports `existed:false` (the entities row
+/// was already gone — the two meanings of "existed": entities-row erased vs
+/// any-scope erased). A "gate the receipt on the entities-row `existed`" /
+/// "return early on the missing header" implementation would skip the
+/// receipt and silently erase the residue with NO audit — the mirror of the
+/// raced-to-nothing false-POSITIVE this ticket also closes. `UserHardDelete`
+/// is used deliberately: unlike `GdprDelete`/`PolicyDelete` it runs no
+/// pre-purge SoftErase, so the vector + BM25 residue survives to the in-txn
+/// probe.
+///
+/// DETERMINISM (ONE-1149 round-2): the deleter now races through the
+/// `run_raced_delete_rendezvous` seam, which orders its lock-free
+/// `read_entity_header` read BEFORE the eraser commit, so the HEADERFUL leg
+/// runs EVERY run (the bare-barrier variant could rarely lose the
+/// read-vs-commit race and divert to the headerless path, leaving this test
+/// nondeterministic). With the headerful leg pinned, a DISCRIMINATOR assertion
+/// proves the published CRDT tombstone landed in the HEADERFUL window
+/// `window_label_from_timestamp(header.learned_at)` (computed from the entity's
+/// stored `learned_at`), NOT the now-derived window the headerless leg
+/// addresses (`window_label_from_timestamp(now)`). A wrong impl that takes the
+/// headerless path lands the tombstone in the now-window and fails; a wrong
+/// impl that early-returns on the missing header emits no receipt and fails the
+/// receipt assertion — non-tautological in both directions.
+#[test]
+fn headerful_delete_partial_residue_survives_emits_receipt_existed_false() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let learned_at = 1_772_000_000;
+    let id = EntityId::now();
+    vault
+        .batch()
+        .put(
+            &id,
+            1,
+            test_time_range(learned_at, learned_at),
+            learned_at,
+            b"partial-residue",
+        )
+        .text(&id, &[("body", "partial-residue")])
+        .commit()?;
+    vault.put_vector(&id, &[0.1, 0.2, 0.3, 0.4])?;
+    assert_eq!(vault.search_text("partial-residue", 10)?.len(), 1);
+
+    // DISCRIMINATOR setup: the headerful leg addresses the tombstone window by
+    // the entity's stored `learned_at`; the headerless leg would address it by
+    // `now`. Assert the two windows are genuinely different so the
+    // discriminator below is meaningful (a same-window fixture would make the
+    // assertion vacuous).
+    let headerful_window = crate::deletion::window_label_from_timestamp(learned_at);
+    let now_window = crate::deletion::window_label_from_timestamp(crate::unix_seconds_now());
+    assert_ne!(
+        headerful_window, now_window,
+        "fixture invariant: learned_at must fall in a different window than now, \
+         else the headerful-vs-headerless window discriminator is vacuous"
+    );
+
+    // The race erases ONLY the entities row (header), the way a concurrent
+    // delete that lost the purge race would, leaving the vector + BM25
+    // posting as live residue the in-txn full-scope probe must still catch.
+    // The rendezvous seam forces the deleter's header read to win, so the
+    // HEADERFUL leg runs deterministically every run.
+    let outcome = run_raced_delete_rendezvous(&vault, &id, DeleteReason::UserHardDelete, |wtxn| {
+        vault.store.entities.delete(wtxn, id.as_bytes())?;
+        Ok(())
+    })?;
+
+    // existed:false (the entities row was raced away) BUT a real erasure
+    // happened and is audited.
+    assert!(
+        !outcome.existed,
+        "the entities row was raced away ⇒ outcome reports existed:false"
+    );
+    assert!(
+        outcome.receipt_id.is_some(),
+        "surviving residue ⇒ a REAL receipt is emitted (false-NEGATIVE guard)"
+    );
+    assert!(
+        outcome.sweep_key.is_some(),
+        "surviving residue ⇒ an h: sweep row is queued"
+    );
+    assert_eq!(
+        redaction_audit_receipts(&vault)?.len(),
+        1,
+        "exactly one REDACTION_AUDIT receipt for the erased residue"
+    );
+    assert_eq!(
+        hard_erase_sweep_rows(&vault)?.len(),
+        1,
+        "exactly one h: sweep row for the erased residue"
+    );
+    // The residue is actually erased — no leak past the audit.
+    assert!(
+        vault.get_vector(&id)?.is_none(),
+        "the surviving vector residue must be purged"
+    );
+    assert!(
+        vault.search_text("partial-residue", 10)?.is_empty(),
+        "the surviving BM25 posting must be purged"
+    );
+
+    // DISCRIMINATOR: the published tombstone is addressed by the HEADERFUL
+    // window (`learned_at`), proving the headerful leg ran. In sync builds the
+    // CRDT tombstone snapshot is a `d:w:{window}` row; in non-sync builds
+    // `write_crdt_tombstone` is a no-op so the surviving `pt:{window}:{id}`
+    // pending-tombstone marker (kept because `crdt_persisted` is false) is the
+    // window witness. Either way the window segment MUST be the headerful
+    // window and never the now-window.
+    #[cfg(feature = "sync")]
+    {
+        // The persisted snapshot key is exactly `d:w:{window}` (no trailing
+        // colon — that's the `u:w:{window}:` update-row grammar).
+        let dw_keys = sync_state_keys_with_prefix_raw(&vault, "d:w:")?;
+        assert_eq!(
+            dw_keys.len(),
+            1,
+            "exactly one CRDT tombstone snapshot row for the headerful delete"
+        );
+        assert_eq!(
+            dw_keys[0],
+            format!("d:w:{headerful_window}"),
+            "the CRDT tombstone must land in the HEADERFUL window \
+             (window_label_from_timestamp(header.learned_at)); a headerless-path \
+             execution would key it to the now-window (d:w:{now_window}) instead"
+        );
+        assert_ne!(
+            dw_keys[0],
+            format!("d:w:{now_window}"),
+            "the CRDT tombstone must NOT land in the now-window (the headerless leg's address)"
+        );
+    }
+    #[cfg(not(feature = "sync"))]
+    {
+        let pt_keys = sync_state_keys_with_prefix_raw(&vault, "pt:")?;
+        assert_eq!(
+            pt_keys.len(),
+            1,
+            "non-sync: the pending-tombstone marker survives (crdt_persisted=false) \
+             and is the headerful-window witness"
+        );
+        assert_eq!(
+            pt_keys[0],
+            format!("pt:{headerful_window}:{}", id.to_hex()),
+            "the pt: marker must be keyed to the HEADERFUL window \
+             (window_label_from_timestamp(header.learned_at)), never the now-window"
+        );
+    }
+    Ok(())
+}
+
+/// ONE-1149 end-to-end convergence — the anti-(A) invariant (delete-safety).
+/// A `GdprDelete` that LOSES the race to a tombstone-LESS full-scope batch
+/// erase (`vault.batch().delete(E)` ⇒ `BatchOp::Delete` ⇒ `deindex_entity`,
+/// which publishes NO CRDT tombstone) erases nothing locally — so it emits
+/// no receipt / sweep / `pt:` (RACED-TO-NOTHING) — but it STILL publishes
+/// its own CRDT tombstone + `d:`/`q:` propagation rows BEFORE claiming write
+/// ownership. That published tombstone is the ONLY convergence net: the
+/// rejected "reorder to `dt:`-only / suppress the tombstone publish"
+/// implementation would leave NO propagating record, and a peer that still
+/// holds E would keep it forever — a silently dropped GDPR delete. This test
+/// pins that the origin's window, applied to a peer that still holds E,
+/// purges E. (A wrong `dt:`-only impl FAILS the convergence assertion.)
+#[cfg(feature = "sync")]
+#[test]
+fn raced_gdpr_delete_against_batch_delete_still_converges() -> Result<()> {
+    use crate::sync::bridge::Materializer;
+    use crate::sync::loro_support::map_contains_binary;
+    use crate::sync::types::WindowKey;
+    use crate::sync::window;
+
+    let learned_at = 1_772_000_000;
+    let window_key = WindowKey::from_timestamp(learned_at);
+
+    for attempt in 0..3 {
+        let (_dir, vault) = open_test_vault();
+        let id = EntityId::now();
+        vault
+            .batch()
+            .put(
+                &id,
+                1,
+                test_time_range(learned_at, learned_at),
+                learned_at,
+                b"converge-secret",
+            )
+            .commit()?;
+
+        // GdprDelete races the tombstone-LESS full-scope erase that
+        // `BatchOp::Delete` performs (`deindex_entity`): the delete reads
+        // E's header, the racer erases the whole scope, and the delete's
+        // purge txn finds nothing.
+        let outcome = run_raced_delete(&vault, &id, DeleteReason::GdprDelete, |wtxn| {
+            crate::batch::deindex_entity(&vault.store, wtxn, &id)?;
+            Ok(())
+        })?;
+
+        let Some(dt_marker) = sync_state_value(&vault, &format!("dt:{}", id.to_hex()))? else {
+            // Scheduling miss: the deleter probed after the commit and took
+            // the FULLY-MISSING strict-noop path. Verify, then retry.
+            assert_eq!(outcome, DeleteEntityOutcome::missing());
+            assert_no_erasure_audit_artifacts(&vault)?;
+            assert!(
+                attempt < 2,
+                "raced branch was never constructed in 3 attempts"
+            );
+            continue;
+        };
+
+        // Origin RACED-TO-NOTHING: no false audit, but the convergent CRDT
+        // tombstone + exactly one d:/q: propagation pair survive. gdpr_delete
+        // pinned wire byte = 3.
+        assert_raced_delete_artifacts(&vault, &outcome, &dt_marker, 3)?;
+        let origin_doc = window::load_window_from_state(&vault, "origin", &window_key)?;
+        assert!(
+            map_contains_binary(&origin_doc.get_map("tombstones"), id.to_hex().as_str()),
+            "the raced GdprDelete must still publish a convergent CRDT tombstone"
+        );
+
+        // A fresh peer still holds E; applying the origin window must
+        // converge it away (the dropped-GDPR-delete net the anti-(A)
+        // invariant guarantees).
+        let (_peer_dir, peer) = open_test_vault();
+        peer.batch()
+            .put(
+                &id,
+                1,
+                test_time_range(learned_at, learned_at),
+                learned_at,
+                b"converge-secret",
+            )
+            .commit()?;
+        assert!(
+            peer.get_raw(&id)?.is_some(),
+            "peer fixture must hold E before convergence"
+        );
+
+        let materializer = Materializer::new();
+        window::forward_rematerialize(&peer, &origin_doc, &materializer, &window_key)?;
+        assert!(
+            peer.get_raw(&id)?.is_none(),
+            "applying the origin window to the peer must purge E (convergence net)"
+        );
+        return Ok(());
+    }
+    unreachable!("the attempt loop either returns or panics");
 }
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -3750,44 +4397,49 @@ fn detects_hnsw_metric_and_structure_mismatch_on_open() -> Result<()> {
     Ok(())
 }
 
+/// Consolidated from two single-knob clones (ONE-1145): each case flips one
+/// knob of the persisted HNSW config identity and pins the EXACT
+/// stored/requested literal strings of the typed gate error.
 #[test]
-fn detects_hnsw_config_mismatch_on_open() {
-    let (temp_dir, vault) = open_test_vault();
-    drop(vault);
+fn detects_hnsw_config_and_dimension_mismatch_on_open() {
+    type Reconfigure = fn(&mut VaultConfig);
+    let cases: &[(&str, Reconfigure, &str)] = &[
+        (
+            "ef_construction_flip",
+            |cfg: &mut VaultConfig| cfg.hnsw.ef_construction += 1,
+            "dimensions=4,m_max_0=64,ef_construction=201,distance_metric=cosine,index_structure=flat_nsw",
+        ),
+        (
+            "dimensions_flip",
+            |cfg: &mut VaultConfig| cfg.dimensions = 8,
+            "dimensions=8,m_max_0=64,ef_construction=200,distance_metric=cosine,index_structure=flat_nsw",
+        ),
+    ];
 
-    let mut cfg = test_config();
-    cfg.hnsw.ef_construction += 1;
-    let Err(err) = Vault::open(temp_dir.path(), cfg) else {
-        panic!("expected hnsw config mismatch");
-    };
-    assert!(matches!(
-        err,
-        Error::HnswConfigChanged {
-            ref stored,
-            ref requested
-        } if stored == "dimensions=4,m_max_0=64,ef_construction=200,distance_metric=cosine,index_structure=flat_nsw"
-            && requested == "dimensions=4,m_max_0=64,ef_construction=201,distance_metric=cosine,index_structure=flat_nsw"
-    ));
-}
+    for (case_name, reconfigure, requested_literal) in cases {
+        let (temp_dir, vault) = open_test_vault();
+        drop(vault);
 
-#[test]
-fn detects_dimension_mismatch_on_open() {
-    let (temp_dir, vault) = open_test_vault();
-    drop(vault);
-
-    let mut cfg = test_config();
-    cfg.dimensions = 8;
-    let Err(err) = Vault::open(temp_dir.path(), cfg) else {
-        panic!("expected hnsw config mismatch");
-    };
-    assert!(matches!(
-        err,
-        Error::HnswConfigChanged {
-            ref stored,
-            ref requested
-        } if stored == "dimensions=4,m_max_0=64,ef_construction=200,distance_metric=cosine,index_structure=flat_nsw"
-            && requested == "dimensions=8,m_max_0=64,ef_construction=200,distance_metric=cosine,index_structure=flat_nsw"
-    ));
+        let mut cfg = test_config();
+        reconfigure(&mut cfg);
+        let Err(err) = Vault::open(temp_dir.path(), cfg) else {
+            panic!("case {case_name}: expected hnsw config mismatch");
+        };
+        match err {
+            Error::HnswConfigChanged { stored, requested } => {
+                assert_eq!(
+                    stored,
+                    "dimensions=4,m_max_0=64,ef_construction=200,distance_metric=cosine,index_structure=flat_nsw",
+                    "case {case_name}: stored literal"
+                );
+                assert_eq!(
+                    requested, *requested_literal,
+                    "case {case_name}: requested literal"
+                );
+            }
+            other => panic!("case {case_name}: expected HnswConfigChanged, got {other:?}"),
+        }
+    }
 }
 
 #[test]
@@ -3856,6 +4508,10 @@ fn embedding_model_first_write_is_atomic() -> Result<()> {
 
 #[test]
 fn creates_contract_manifest_databases() -> Result<()> {
+    // Also pins ONE-1093 feature-independence (formerly a separate test,
+    // consolidated by ONE-1145): this test compiles and runs under BOTH the
+    // default and `--features sync` configs and asserts the same 25-name
+    // materialized set, including the sync_state/sync_queue rows below.
     let (_dir, vault) = open_test_vault();
 
     let contract_names: Vec<&str> = DB_MANIFEST.iter().map(|entry| entry.name).collect();
@@ -3922,82 +4578,31 @@ fn open_rejects_rogue_manifest_database_name() -> Result<()> {
     Ok(())
 }
 
+/// Consolidated from three name-only clones (ONE-1145): one core DB plus the
+/// two sync-era DBs (manifest rows 24/25). Removing ANY required manifest
+/// name must fail closed with the exact missing-name payload — including the
+/// sync DBs, which are part of the 25-name set regardless of features.
 #[test]
 fn open_rejects_missing_required_manifest_database_name() -> Result<()> {
-    let temp_dir = tempfile::tempdir()?;
-    create_raw_vault_missing_manifest_name(temp_dir.path(), "hnsw_meta")?;
+    for missing_name in ["hnsw_meta", "sync_state", "sync_queue"] {
+        let temp_dir = tempfile::tempdir()?;
+        create_raw_vault_missing_manifest_name(temp_dir.path(), missing_name)?;
 
-    let err = match Vault::open(temp_dir.path(), test_config()) {
-        Ok(_) => panic!("expected Vault::open to fail closed on missing manifest DB"),
-        Err(err) => err,
-    };
-    assert!(
-        matches!(
-            err,
-            Error::DbManifestMismatch {
-                ref missing,
-                ref unexpected
-            } if missing == &vec!["hnsw_meta".to_owned()] && unexpected.is_empty()
-        ),
-        "expected DB manifest mismatch for missing hnsw_meta, got {err:?}"
-    );
-    Ok(())
-}
-
-#[test]
-fn materialized_manifest_set_is_feature_independent_all_25() -> Result<()> {
-    let temp_dir = tempfile::tempdir()?;
-    let vault = Vault::open(temp_dir.path(), test_config())?;
-    let expected: Vec<String> = expected_manifest_names()
-        .iter()
-        .map(|name| (*name).to_owned())
-        .collect();
-
-    assert_eq!(materialized_database_names(&vault)?, expected);
-    Ok(())
-}
-
-#[test]
-fn open_rejects_missing_sync_state_manifest_database_name() -> Result<()> {
-    let temp_dir = tempfile::tempdir()?;
-    create_raw_vault_missing_manifest_name(temp_dir.path(), "sync_state")?;
-
-    let err = match Vault::open(temp_dir.path(), test_config()) {
-        Ok(_) => panic!("expected Vault::open to fail closed on missing sync_state DB"),
-        Err(err) => err,
-    };
-    assert!(
-        matches!(
-            err,
-            Error::DbManifestMismatch {
-                ref missing,
-                ref unexpected
-            } if missing == &vec!["sync_state".to_owned()] && unexpected.is_empty()
-        ),
-        "expected DB manifest mismatch for missing sync_state, got {err:?}"
-    );
-    Ok(())
-}
-
-#[test]
-fn open_rejects_missing_sync_queue_manifest_database_name() -> Result<()> {
-    let temp_dir = tempfile::tempdir()?;
-    create_raw_vault_missing_manifest_name(temp_dir.path(), "sync_queue")?;
-
-    let err = match Vault::open(temp_dir.path(), test_config()) {
-        Ok(_) => panic!("expected Vault::open to fail closed on missing sync_queue DB"),
-        Err(err) => err,
-    };
-    assert!(
-        matches!(
-            err,
-            Error::DbManifestMismatch {
-                ref missing,
-                ref unexpected
-            } if missing == &vec!["sync_queue".to_owned()] && unexpected.is_empty()
-        ),
-        "expected DB manifest mismatch for missing sync_queue, got {err:?}"
-    );
+        let err = match Vault::open(temp_dir.path(), test_config()) {
+            Ok(_) => panic!("expected Vault::open to fail closed on missing {missing_name}"),
+            Err(err) => err,
+        };
+        assert!(
+            matches!(
+                err,
+                Error::DbManifestMismatch {
+                    ref missing,
+                    ref unexpected
+                } if missing == &vec![missing_name.to_owned()] && unexpected.is_empty()
+            ),
+            "expected DB manifest mismatch for missing {missing_name}, got {err:?}"
+        );
+    }
     Ok(())
 }
 
@@ -5136,6 +5741,16 @@ fn all_entity_type_prefixes() {
             EntityClassification::Maintenance,
             TypeByteBand::InducedDynamicMaintenance,
         ),
+        // ONE-1138 ratified: MODEL = engine-authored maintenance kind, type
+        // byte 121, short-ID prefix `mo` RESERVED, band 120+ — MACHINE (82)
+        // reuse rejected (kind = shape, DEC-0005 §7).
+        (
+            "MODEL",
+            121,
+            Some("mo"),
+            EntityClassification::Maintenance,
+            TypeByteBand::InducedDynamicMaintenance,
+        ),
     ];
 
     let actual: Vec<RegistryRow> = ENTITY_TYPE_REGISTRY
@@ -5237,12 +5852,17 @@ fn type_byte_band_allocation_matches_contract() {
         assert_eq!(band_of(byte), expected, "band_of({byte})");
     }
 
-    // is_structural_kind: false for the semantic byte 0 and maintenance 120;
-    // true for every REGISTERED core (1..=16) and pack (80/81/82) kind.
+    // is_structural_kind: false for the semantic byte 0 and the registered
+    // maintenance kinds 120/121; true for every REGISTERED core (1..=16) and
+    // pack (80/81/82) kind.
     assert!(!is_structural_kind(0), "CLAIM is NOT a StructuralKind");
     assert!(
         !is_structural_kind(120),
         "REDACTION_AUDIT is NOT a StructuralKind"
+    );
+    assert!(
+        !is_structural_kind(121),
+        "MODEL is NOT a StructuralKind (ONE-1138: engine-authored maintenance)"
     );
     for byte in 1..=16_u8 {
         assert!(is_structural_kind(byte), "core byte {byte}");
@@ -5253,8 +5873,9 @@ fn type_byte_band_allocation_matches_contract() {
 
     // Unregistered bytes — including bytes INSIDE structural bands — are not
     // StructuralKinds, and the existing write-path gate still rejects them
-    // with the same typed error (no behavior change in this unit).
-    for byte in [17_u8, 63, 64, 79, 83, 99, 100, 119, 121, 255] {
+    // with the same typed error. (121 left this list when ONE-1138 registered
+    // MODEL; 122 is the band's first unregistered byte now.)
+    for byte in [17_u8, 63, 64, 79, 83, 99, 100, 119, 122, 255] {
         assert!(!is_structural_kind(byte), "unregistered byte {byte}");
         assert!(
             matches!(
@@ -5587,83 +6208,75 @@ fn txn_batch_put_invalid_entity_type_returns_error() -> Result<()> {
 }
 
 /// D5: public puts of a REGISTERED maintenance-band kind (REDACTION_AUDIT =
-/// 120) must fail with the distinct `MaintenanceKindNotWritable` error — not
-/// the misleading `InvalidEntityType(120)` — and must write nothing. The
-/// engine-internal receipt writer is unaffected (see
-/// `redaction_receipt_indexes_temporal_occurred_start_as_point_event`).
+/// 120, MODEL = 121 per the ratified ONE-1138 kind registration) must fail
+/// with the distinct `MaintenanceKindNotWritable` error — not the misleading
+/// `InvalidEntityType` — and must write nothing. The engine-internal writers
+/// are unaffected (the receipt writer, see
+/// `redaction_receipt_indexes_temporal_occurred_start_as_point_event`, and
+/// the `ensure_model_substrate` door).
 #[test]
 fn public_put_of_maintenance_kind_rejected_with_distinct_typed_error() -> Result<()> {
     let (_dir, vault) = open_test_vault();
-    let id = EntityId::now();
 
-    // put_entity (routes through BatchBuilder; eager gate).
-    let err = vault
-        .put_entity(
-            &id,
-            ENTITY_TYPE_REDACTION_AUDIT,
-            test_time_range(1, 1),
-            2,
-            b"forged-receipt",
-        )
-        .expect_err("public put of type 120 must fail");
-    assert!(
-        matches!(err, Error::MaintenanceKindNotWritable(120)),
-        "expected MaintenanceKindNotWritable(120), got {err:?}"
-    );
-    assert_eq!(err.kind(), ErrorKind::MaintenanceKindNotWritable);
-    assert_ne!(err.kind(), ErrorKind::InvalidEntityType);
+    for (kind_byte, payload) in [
+        (ENTITY_TYPE_REDACTION_AUDIT, b"forged-receipt".as_slice()),
+        (ENTITY_TYPE_MODEL, b"forged-model".as_slice()),
+    ] {
+        let id = EntityId::now();
 
-    // TxnBatchBuilder (apply-time gate in apply_put).
-    let err = vault
-        .with_write_txn(|wtxn| {
+        // put_entity (routes through BatchBuilder; eager gate).
+        let err = vault
+            .put_entity(&id, kind_byte, test_time_range(1, 1), 2, payload)
+            .expect_err("public put of a maintenance kind must fail");
+        assert!(
+            matches!(err, Error::MaintenanceKindNotWritable(byte) if byte == kind_byte),
+            "expected MaintenanceKindNotWritable({kind_byte}), got {err:?}"
+        );
+        assert_eq!(err.kind(), ErrorKind::MaintenanceKindNotWritable);
+        assert_ne!(err.kind(), ErrorKind::InvalidEntityType);
+
+        // TxnBatchBuilder (apply-time gate in apply_put).
+        let err = vault
+            .with_write_txn(|wtxn| {
+                vault
+                    .batch_in()
+                    .put(&id, kind_byte, test_time_range(1, 1), 2, payload)
+                    .apply(wtxn)
+            })
+            .expect_err("txn batch put of a maintenance kind must fail");
+        assert!(
+            matches!(err, Error::MaintenanceKindNotWritable(byte) if byte == kind_byte),
+            "expected MaintenanceKindNotWritable({kind_byte}), got {err:?}"
+        );
+
+        // Nothing was written by either path.
+        assert!(vault.get(&id)?.is_none());
+        assert!(vault.entities_by_type(kind_byte)?.is_empty());
+        let rtxn = vault.store.env.read_txn()?;
+        let type_key = Store::encode_type_key(kind_byte, &id);
+        assert!(vault.store.type_index.get(&rtxn, &type_key)?.is_none());
+        let occurred_key = Store::encode_temporal_key(1, &id);
+        assert!(
             vault
-                .batch_in()
-                .put(
-                    &id,
-                    ENTITY_TYPE_REDACTION_AUDIT,
-                    test_time_range(1, 1),
-                    2,
-                    b"forged-receipt",
-                )
-                .apply(wtxn)
-        })
-        .expect_err("txn batch put of type 120 must fail");
-    assert!(
-        matches!(err, Error::MaintenanceKindNotWritable(120)),
-        "expected MaintenanceKindNotWritable(120), got {err:?}"
-    );
-
-    // Nothing was written by either path.
-    assert!(vault.get(&id)?.is_none());
-    assert!(
-        vault
-            .entities_by_type(ENTITY_TYPE_REDACTION_AUDIT)?
-            .is_empty()
-    );
-    let rtxn = vault.store.env.read_txn()?;
-    let type_key = Store::encode_type_key(ENTITY_TYPE_REDACTION_AUDIT, &id);
-    assert!(vault.store.type_index.get(&rtxn, &type_key)?.is_none());
-    let occurred_key = Store::encode_temporal_key(1, &id);
-    assert!(
-        vault
-            .store
-            .temporal_occurred_start
-            .get(&rtxn, &occurred_key)?
-            .is_none()
-    );
-    let learned_key = Store::encode_temporal_key(2, &id);
-    assert!(
-        vault
-            .store
-            .temporal_learned
-            .get(&rtxn, &learned_key)?
-            .is_none()
-    );
-    assert!(vault.store.short_ids.get(&rtxn, id.as_bytes())?.is_none());
-    // No short-id counter sentinel was allocated for the maintenance band.
-    let mut sentinel = [0xFF_u8; ENTITY_ID_LEN];
-    sentinel[0] = ENTITY_TYPE_REDACTION_AUDIT;
-    assert!(vault.store.short_ids.get(&rtxn, &sentinel)?.is_none());
+                .store
+                .temporal_occurred_start
+                .get(&rtxn, &occurred_key)?
+                .is_none()
+        );
+        let learned_key = Store::encode_temporal_key(2, &id);
+        assert!(
+            vault
+                .store
+                .temporal_learned
+                .get(&rtxn, &learned_key)?
+                .is_none()
+        );
+        assert!(vault.store.short_ids.get(&rtxn, id.as_bytes())?.is_none());
+        // No short-id counter sentinel was allocated for the maintenance band.
+        let mut sentinel = [0xFF_u8; ENTITY_ID_LEN];
+        sentinel[0] = kind_byte;
+        assert!(vault.store.short_ids.get(&rtxn, &sentinel)?.is_none());
+    }
 
     Ok(())
 }
@@ -5675,7 +6288,10 @@ fn public_put_of_maintenance_kind_rejected_with_distinct_typed_error() -> Result
 fn unknown_type_bytes_still_fail_with_invalid_entity_type() -> Result<()> {
     let (_dir, vault) = open_test_vault();
 
-    for unknown in [99_u8, 121, 200] {
+    // 121 left this list when ONE-1138 registered MODEL (public puts of 121
+    // now fail MaintenanceKindNotWritable — covered by the D5 gate test);
+    // 122 is the maintenance band's first unregistered byte.
+    for unknown in [99_u8, 122, 200] {
         let id = EntityId::now();
         let err = vault
             .put_entity(&id, unknown, test_time_range(1, 1), 2, b"unknown-type")
@@ -7419,9 +8035,19 @@ fn assert_no_entity_state(vault: &Vault, id: &EntityId) -> Result<()> {
         vault.store.entities.get(&rtxn, id.as_bytes())?.is_none(),
         "entities row leaked for rejected write"
     );
+    // Entity-keyed direct probe (ONE-1152): `short_ids_reverse` is the
+    // entity-keyed table per the pinned 25-DB manifest (key entity_id ->
+    // short_id ‖ content_hash). The pre-fix probe read the FORWARD
+    // `short_ids` table by entity bytes — a guaranteed miss against its
+    // `(short_id bytes ‖ content_hash u8)` key layout, i.e. a vacuous
+    // assertion.
     assert!(
-        vault.store.short_ids.get(&rtxn, id.as_bytes())?.is_none(),
-        "short_ids row leaked for rejected write"
+        vault
+            .store
+            .short_ids_reverse
+            .get(&rtxn, id.as_bytes())?
+            .is_none(),
+        "short_ids_reverse row leaked for rejected write"
     );
     let scans = [
         ("type_index", &vault.store.type_index),
@@ -7435,6 +8061,9 @@ fn assert_no_entity_state(vault: &Vault, id: &EntityId) -> Result<()> {
             "temporal_long_intervals",
             &vault.store.temporal_long_intervals,
         ),
+        // ONE-1152: forward rows carry the entity id in the VALUE — without
+        // this scan a leaked forward row escaped the oracle entirely.
+        ("short_ids", &vault.store.short_ids),
         ("short_ids_reverse", &vault.store.short_ids_reverse),
         ("edges_out", &vault.store.edges_out),
         ("edges_in", &vault.store.edges_in),
@@ -7455,6 +8084,33 @@ fn slice_contains(haystack: &[u8], needle: &[u8]) -> bool {
     haystack
         .windows(needle.len())
         .any(|window| window == needle)
+}
+
+/// ONE-1152 (a) oracle self-test: a leaked FORWARD short-id row — keyed
+/// `(short_id bytes ‖ content_hash u8)` with the entity id in the VALUE
+/// (pinned 25-DB manifest direction, ARCH-0019) — must trip
+/// [`assert_no_entity_state`]. Pre-fix, the oracle probed `short_ids` BY
+/// ENTITY KEY (a guaranteed miss against the forward layout) and never
+/// scanned forward values, so this exact plant escaped silently.
+#[test]
+#[should_panic(expected = "short_ids row references rejected entity")]
+fn assert_no_entity_state_catches_leaked_forward_short_id_row() {
+    let temp = tempfile::tempdir().unwrap();
+    let vault = Vault::open(temp.path(), test_config()).unwrap();
+    let id = EntityId::now();
+
+    // Forward row: key = ASCII short id ‖ content-hash byte, value = id.
+    let mut forward_key = b"cl1".to_vec();
+    forward_key.push(0x42);
+    let mut wtxn = vault.store.env.write_txn().unwrap();
+    vault
+        .store
+        .short_ids
+        .put(&mut wtxn, &forward_key, id.as_bytes())
+        .unwrap();
+    wtxn.commit().unwrap();
+
+    assert_no_entity_state(&vault, &id).unwrap();
 }
 
 /// Schema-agnostic short-id lookup: scans BOTH short-id DBs raw and accepts
@@ -7521,6 +8177,36 @@ fn rmpv_map_bytes(entries: &[(rmpv::Value, rmpv::Value)]) -> Vec<u8> {
     rmpv::encode::write_value(&mut out, &rmpv::Value::Map(entries.to_vec()))
         .expect("encode msgpack map");
     out
+}
+
+/// Structurally-VALID `edge.provenance` ClaimBody for door tests: a real
+/// value record + the engine-owned actor-class evidence map. Since ONE-1159
+/// the write chokepoint validates provenance STRUCTURE (value record +
+/// persisted actor_class), so reserved-door tests can no longer carry an
+/// opaque junk `val`.
+fn valid_provenance_claim_body(actor: EntityId, source: EntityId, target: EntityId) -> ClaimBody {
+    let mut body = ClaimBody::new(
+        "edge.provenance",
+        ClaimSubject::Edge {
+            source,
+            kind: EdgeKind::Mentions,
+            target,
+        },
+        crate::provenance::encode_edge_provenance_value(
+            &crate::provenance::EdgeProvenanceClaimBody::new(
+                actor,
+                0.9,
+                crate::provenance::SupersessionStatus::Confirmed,
+            ),
+        ),
+        0.9,
+        ClaimApprovalStatus::Auto,
+        ClaimLifecycleStatus::Active,
+    );
+    body.evidence = Some(crate::provenance::encode_actor_class_evidence(
+        EdgeActorClass::Human,
+    ));
+    body
 }
 
 /// Baseline VALID claim-body map entries (the six required fields).
@@ -8180,18 +8866,9 @@ fn reserved_predicate_rejected_publicly_but_door_writes_and_reads_back() -> Resu
     vault.put_entity(&a, 4, test_time_range(1, 1), 1, b"a")?;
     vault.put_entity(&b, 4, test_time_range(1, 1), 1, b"b")?;
 
-    let body = ClaimBody::new(
-        "edge.provenance",
-        ClaimSubject::Edge {
-            source: a,
-            kind: EdgeKind::Mentions,
-            target: b,
-        },
-        rmpv::Value::from("provenance payload"),
-        0.9,
-        ClaimApprovalStatus::Auto,
-        ClaimLifecycleStatus::Active,
-    );
+    // Structurally valid since ONE-1159: the door validates the provenance
+    // value record + actor-class evidence, not just the D18 wrapper.
+    let body = valid_provenance_claim_body(a, a, b);
     let bytes = crate::claim::encode_claim_body(&body)?;
 
     // Public typed API → ReservedPredicate, nothing written.
@@ -8263,18 +8940,9 @@ fn replicated_door_admits_reserved_claim_on_both_builders() -> Result<()> {
     vault.put_entity(&a, 4, test_time_range(1, 1), 1, b"a")?;
     vault.put_entity(&b, 4, test_time_range(1, 1), 1, b"b")?;
 
-    let body = ClaimBody::new(
-        "edge.provenance",
-        ClaimSubject::Edge {
-            source: a,
-            kind: EdgeKind::Mentions,
-            target: b,
-        },
-        rmpv::Value::from("replicated provenance payload"),
-        0.9,
-        ClaimApprovalStatus::Auto,
-        ClaimLifecycleStatus::Active,
-    );
+    // Structurally valid since ONE-1159: the replicated door validates the
+    // provenance value record + actor-class evidence, not just D18.
+    let body = valid_provenance_claim_body(a, a, b);
     let bytes = crate::claim::encode_claim_body(&body)?;
 
     // TxnBatchBuilder flavor (Observer B's replay door).
@@ -8579,13 +9247,22 @@ fn put_edge_provenance_atomic_write_restamps_and_indexes() -> Result<()> {
     assert_eq!(vault.claims_for_subject(&source)?, vec![claim_id]);
 
     // The wrapping claim decodes: pinned predicate, EdgeRef subject, the
-    // 7-field value record, and the conf mirror.
+    // 10-key value record, and the conf mirror. NEW behavior pinned by the
+    // ONE-1138 ruling (ONE-1112 C2 relocation): the persisted record carries
+    // the validated caller-supplied actor_class as a BODY key, and the
+    // wrapper's `evid` stays empty (evidence purity — no legacy map).
     let claim = vault.get_claim(&claim_id)?.expect("claim body");
     assert_eq!(claim.predicate, PREDICATE_EDGE_PROVENANCE);
     assert_eq!(claim.subject, ClaimSubject::from(subject));
     assert_eq!(claim.confidence.to_bits(), 0.75_f32.to_bits());
+    assert!(
+        claim.evidence.is_none(),
+        "post-ONE-1138 writers must leave the wrapper evid empty"
+    );
     let value = decode_edge_provenance_body(&claim.value)?;
-    assert_eq!(value, body);
+    let mut expected = body;
+    expected.actor_class = Some(EdgeActorClass::Human);
+    assert_eq!(value, expected);
 
     // D15 temporal interplay: the open window indexes occurred_start at
     // learned_at and occurred_end + long_intervals at u64::MAX.
@@ -9441,18 +10118,9 @@ fn claim_lifecycle_ops_reject_provenance_claims_toward_provenance_api() -> Resul
     // An edge.provenance Claim written through the pub(crate) reserved-
     // namespace door (the provenance unit's path).
     let prov = EntityId::now();
-    let prov_body = ClaimBody::new(
-        "edge.provenance",
-        ClaimSubject::Edge {
-            source: a,
-            kind: EdgeKind::Mentions,
-            target: b,
-        },
-        rmpv::Value::from("payload"),
-        0.9,
-        ClaimApprovalStatus::Auto,
-        ClaimLifecycleStatus::Active,
-    );
+    // Structurally valid since ONE-1159 (the reserved door validates the
+    // provenance value record + actor-class evidence).
+    let prov_body = valid_provenance_claim_body(a, a, b);
     let prov_bytes = crate::claim::encode_claim_body(&prov_body)?;
     vault.with_write_txn(|wtxn| {
         vault
@@ -9771,6 +10439,545 @@ fn put_edge_provenance_implicitly_closes_strictly_older_live_claims() -> Result<
         .into_iter()
         .collect();
     assert_eq!(ids, HashSet::from([older, newer]));
+    Ok(())
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// ONE-1113: reject-and-route + operational setters + session-bound actor
+// (ARCH-0034 #write-protection ruling, ratified 2026-06-13)
+// ═══════════════════════════════════════════════════════════════════════
+
+/// Asserts one rejected plain-put attempt pinned the ONE-1113 contract: the
+/// typed [`Error::EdgeIsProvenanced`] variant carrying the subject kind
+/// byte, with a message that ROUTES the caller to the provenance path and
+/// the operational setters ("reject-and-route" — a bare reject without the
+/// route is half the ruling).
+fn assert_edge_is_provenanced_reject(err: &Error, expected_kind: EdgeKind, context: &str) {
+    match err {
+        Error::EdgeIsProvenanced { kind } => {
+            assert_eq!(*kind, expected_kind as u8, "{context}: kind byte");
+        }
+        other => panic!("{context}: expected EdgeIsProvenanced, got {other:?}"),
+    }
+    assert_eq!(err.kind(), ErrorKind::EdgeIsProvenanced, "{context}");
+    let message = err.to_string();
+    for route in [
+        "put_edge_provenance",
+        "as_actor",
+        "set_edge_weight",
+        "set_edge_vad",
+    ] {
+        assert!(
+            message.contains(route),
+            "{context}: rejection message must route the caller via {route:?}, got {message:?}"
+        );
+    }
+}
+
+/// THE regression for the pinned hole (M2 adversarial verify, PR #81):
+/// before ONE-1113, every plain edge put re-encoded an already-provenanced
+/// edge with `provenance: None`, silently dropping the 26-byte value to
+/// 24 bytes in BOTH directions while the truth Claim stayed live. Ruling
+/// pt 2: typed reject, routed; both directions byte-identical; the live
+/// Claim untouched. A fix that strips, preserves-silently, or rejects only
+/// `put_edge` (not the batch builders) FAILS here.
+#[test]
+fn plain_edge_reput_on_provenanced_edge_rejects_and_routes() -> Result<()> {
+    let fx = lifecycle_fixture()?;
+    let vault = &fx.vault;
+    let subject = fx.subject;
+    let (a, b) = (subject.source, subject.target);
+
+    let claim_id = EntityId::now();
+    vault.put_edge_provenance(
+        &claim_id,
+        &subject,
+        &EdgeProvenanceClaimBody::new(fx.person, 0.75, SupersessionStatus::Confirmed),
+        EdgeActorClass::Human,
+        1_000,
+    )?;
+    let (before_out, before_in) = raw_edge_values(vault, &subject)?;
+    let before_out = before_out.expect("provenanced edge");
+    assert_eq!(before_out.len(), EDGE_VALUE_SEMANTIC_PROVENANCED_LEN);
+    assert_eq!(before_in.as_deref(), Some(before_out.as_slice()));
+
+    let vad = Vad {
+        valence: 0.1,
+        arousal: 0.2,
+        dominance: 0.3,
+    };
+    // Every public plain-put surface the ruling names: the typed vault API,
+    // both batch-builder flavors, and the txn-builder flavor.
+    let attempts: Vec<(&str, Error)> = vec![
+        (
+            "put_edge",
+            vault
+                .put_edge(&a, EdgeKind::Mentions, &b, 0.5)
+                .expect_err("put_edge must reject"),
+        ),
+        (
+            "put_edge_with_vad",
+            vault
+                .put_edge_with_vad(&a, EdgeKind::Mentions, &b, 0.5, vad)
+                .expect_err("put_edge_with_vad must reject"),
+        ),
+        (
+            "batch().edge()",
+            vault
+                .batch()
+                .edge(&a, EdgeKind::Mentions, &b, 0.5)
+                .commit()
+                .expect_err("batch edge must reject"),
+        ),
+        (
+            "batch().edge_with_vad()",
+            vault
+                .batch()
+                .edge_with_vad(&a, EdgeKind::Mentions, &b, 0.5, vad)
+                .commit()
+                .expect_err("batch edge_with_vad must reject"),
+        ),
+        (
+            "batch_in().edge()",
+            vault
+                .with_write_txn(|wtxn| {
+                    vault
+                        .batch_in()
+                        .edge(&a, EdgeKind::Mentions, &b, 0.5)
+                        .apply(wtxn)
+                })
+                .expect_err("txn-builder edge must reject"),
+        ),
+    ];
+    for (context, err) in &attempts {
+        assert_edge_is_provenanced_reject(err, EdgeKind::Mentions, context);
+    }
+
+    // Atomicity: a batch mixing a VALID entity put with the offending edge
+    // op aborts wholesale — the put must not survive the rejected commit.
+    let orphan = EntityId::now();
+    let err = vault
+        .batch()
+        .put(&orphan, 4, test_time_range(1, 1), 1, b"rider")
+        .edge(&a, EdgeKind::Mentions, &b, 0.5)
+        .commit()
+        .expect_err("mixed batch must reject");
+    assert_edge_is_provenanced_reject(&err, EdgeKind::Mentions, "mixed batch");
+    assert!(
+        vault.get_raw(&orphan)?.is_none(),
+        "a rejected batch must not leak its rider put"
+    );
+
+    // Both directions byte-identical to the pre-attempt 26-byte value.
+    let (after_out, after_in) = raw_edge_values(vault, &subject)?;
+    assert_eq!(
+        after_out.as_deref(),
+        Some(before_out.as_slice()),
+        "edges_out must stay byte-identical after every rejected put"
+    );
+    assert_eq!(
+        after_in.as_deref(),
+        Some(before_out.as_slice()),
+        "edges_in must stay byte-identical after every rejected put"
+    );
+
+    // The live Claim is untouched truth.
+    let claim = vault.get_claim(&claim_id)?.expect("claim readable");
+    assert_eq!(claim.lifecycle, ClaimLifecycleStatus::Active);
+    assert_eq!(
+        decode_edge_provenance_body(&claim.value)?.supersession_status,
+        SupersessionStatus::Confirmed
+    );
+
+    // Ruling pt 1 (positive control): a plain put on a NON-provenanced edge
+    // is unchanged — absence of provenance is itself the anonymous
+    // representation. Re-put a bare edge and a structural edge freely.
+    let c = EntityId::now();
+    vault.put_entity(&c, 4, test_time_range(1, 1), 1, b"c")?;
+    vault.put_edge(&a, EdgeKind::About, &c, 0.25)?;
+    vault.put_edge(&a, EdgeKind::About, &c, 0.75)?;
+    let bare = EdgeRef::new(a, EdgeKind::About, c);
+    let (out, inn) = raw_edge_values(vault, &bare)?;
+    let out = out.expect("bare edge");
+    assert_eq!(out.len(), EDGE_VALUE_SEMANTIC_LEN, "bare re-put stays 24 B");
+    assert_eq!(&out[0..4], &0.75_f32.to_le_bytes(), "re-put weight applied");
+    assert_eq!(inn.as_deref(), Some(out.as_slice()));
+    vault.put_edge(&a, EdgeKind::BelongsTo, &c, 0.5)?;
+    vault.put_edge(&a, EdgeKind::BelongsTo, &c, 0.9)?;
+    Ok(())
+}
+
+/// ONE-1113 operational weight setter (ruling pt 5, M3 weight pin): the
+/// carve-out rewrites ONLY bytes 0..4, preserves `created_at` + VAD + the
+/// two hot-flag bytes verbatim on a 26-byte value, mirrors both directions,
+/// never touches the Claim, and invalidates the endpoint PPR caches like
+/// any edge write. An implementation that re-encodes the value (dropping
+/// flags) or skips the reverse row FAILS here.
+#[test]
+fn set_edge_weight_rewrites_only_weight_bytes_and_preserves_provenance() -> Result<()> {
+    let fx = lifecycle_fixture()?;
+    let vault = &fx.vault;
+    let subject = fx.subject;
+    let (a, b) = (subject.source, subject.target);
+
+    let claim_id = EntityId::now();
+    vault.put_edge_provenance(
+        &claim_id,
+        &subject,
+        &EdgeProvenanceClaimBody::new(fx.person, 0.75, SupersessionStatus::Confirmed),
+        EdgeActorClass::Human,
+        1_000,
+    )?;
+    let (before, _) = raw_edge_values(vault, &subject)?;
+    let before = before.expect("provenanced edge");
+    assert_eq!(before.len(), EDGE_VALUE_SEMANTIC_PROVENANCED_LEN);
+
+    // Plant malformed PPR cache rows keyed to both endpoints so the
+    // invalidation is observable (the same oracle as the ONE-1105 test).
+    let src_hash = [0xB1_u8; 16];
+    let tgt_hash = [0xB2_u8; 16];
+    {
+        let mut wtxn = vault.store.env.write_txn()?;
+        let mut src_dep = [0_u8; 32];
+        src_dep[..16].copy_from_slice(a.as_bytes());
+        src_dep[16..].copy_from_slice(&src_hash);
+        let mut tgt_dep = [0_u8; 32];
+        tgt_dep[..16].copy_from_slice(b.as_bytes());
+        tgt_dep[16..].copy_from_slice(&tgt_hash);
+        vault
+            .store
+            .ppr_cache
+            .put(&mut wtxn, &src_hash, &[1, 2, 3])?;
+        vault
+            .store
+            .ppr_cache
+            .put(&mut wtxn, &tgt_hash, &[1, 2, 3])?;
+        vault.store.ppr_cache_deps.put(&mut wtxn, &src_dep, &[])?;
+        vault.store.ppr_cache_deps.put(&mut wtxn, &tgt_dep, &[])?;
+        wtxn.commit()?;
+    }
+
+    vault.set_edge_weight(&a, EdgeKind::Mentions, &b, 0.42)?;
+
+    let (out, inn) = raw_edge_values(vault, &subject)?;
+    let out = out.expect("edge survives");
+    assert_eq!(out.len(), EDGE_VALUE_SEMANTIC_PROVENANCED_LEN);
+    assert_eq!(
+        &out[0..4],
+        &0.42_f32.to_le_bytes(),
+        "weight bytes rewritten"
+    );
+    assert_eq!(
+        &out[4..],
+        &before[4..],
+        "created_at + VAD + hot-flag bytes (incl. 24/25) preserved verbatim"
+    );
+    assert_eq!(inn.as_deref(), Some(out.as_slice()), "both directions");
+    {
+        let rtxn = vault.store.env.read_txn()?;
+        assert!(
+            vault.store.ppr_cache.get(&rtxn, &src_hash)?.is_none(),
+            "source-endpoint PPR cache must be invalidated"
+        );
+        assert!(
+            vault.store.ppr_cache.get(&rtxn, &tgt_hash)?.is_none(),
+            "target-endpoint PPR cache must be invalidated"
+        );
+    }
+    // The truth Claim is untouched by the operational setter.
+    let claim = vault.get_claim(&claim_id)?.expect("claim readable");
+    assert_eq!(claim.lifecycle, ClaimLifecycleStatus::Active);
+
+    // Contract [0, 1] + finiteness — typed reject, value unchanged.
+    for bad in [1.5_f32, -0.1, f32::NAN] {
+        let err = vault
+            .set_edge_weight(&a, EdgeKind::Mentions, &b, bad)
+            .expect_err("out-of-contract weight must reject");
+        assert_eq!(err.kind(), ErrorKind::InvalidEdgeWeight, "weight {bad}");
+    }
+    let (unchanged, _) = raw_edge_values(vault, &subject)?;
+    assert_eq!(unchanged.as_deref(), Some(out.as_slice()));
+
+    // Never an upsert: a missing edge is the typed EdgeNotFound.
+    let ghost = EntityId::now();
+    let err = vault
+        .set_edge_weight(&a, EdgeKind::Mentions, &ghost, 0.5)
+        .expect_err("missing edge must reject");
+    assert_eq!(err.kind(), ErrorKind::EdgeNotFound);
+
+    // Weight lives at offset 0 on ALL layouts: a structural 12-byte edge is
+    // settable and KEEPS its 12-byte layout.
+    vault.put_edge(&a, EdgeKind::BelongsTo, &b, 0.5)?;
+    vault.set_edge_weight(&a, EdgeKind::BelongsTo, &b, 0.125)?;
+    let structural = EdgeRef::new(a, EdgeKind::BelongsTo, b);
+    let (out, inn) = raw_edge_values(vault, &structural)?;
+    let out = out.expect("structural edge");
+    assert_eq!(out.len(), EDGE_VALUE_STRUCTURAL_LEN);
+    assert_eq!(&out[0..4], &0.125_f32.to_le_bytes());
+    assert_eq!(inn.as_deref(), Some(out.as_slice()));
+    Ok(())
+}
+
+/// ONE-1113 operational VAD setter: rewrites ONLY bytes 12..24, preserves
+/// weight/`created_at`/length (24 B stays 24 B; a 26-byte value keeps its
+/// hot-flag bytes), mirrors both directions, and rejects structural
+/// 12-byte kinds typed — the contract layout table gives them no VAD.
+#[test]
+fn set_edge_vad_rewrites_only_vad_bytes_and_preserves_layout() -> Result<()> {
+    let fx = lifecycle_fixture()?;
+    let vault = &fx.vault;
+    let subject = fx.subject;
+    let (a, b) = (subject.source, subject.target);
+
+    // Component ranges are the pinned VAD contract: valence ∈ [-1, 1],
+    // arousal/dominance ∈ [0, 1].
+    let new_vad = Vad {
+        valence: -0.5,
+        arousal: 0.25,
+        dominance: 0.875,
+    };
+
+    // 24-byte bare edge: VAD bytes rewritten in place, length preserved.
+    let (before, _) = raw_edge_values(vault, &subject)?;
+    let before = before.expect("bare fixture edge");
+    assert_eq!(before.len(), EDGE_VALUE_SEMANTIC_LEN);
+    vault.set_edge_vad(&a, EdgeKind::Mentions, &b, new_vad)?;
+    let (out, inn) = raw_edge_values(vault, &subject)?;
+    let out = out.expect("edge survives");
+    assert_eq!(out.len(), EDGE_VALUE_SEMANTIC_LEN, "24 B stays 24 B");
+    assert_eq!(&out[0..12], &before[0..12], "weight + created_at preserved");
+    assert_eq!(&out[12..16], &(-0.5_f32).to_le_bytes());
+    assert_eq!(&out[16..20], &0.25_f32.to_le_bytes());
+    assert_eq!(&out[20..24], &0.875_f32.to_le_bytes());
+    assert_eq!(inn.as_deref(), Some(out.as_slice()), "both directions");
+
+    // 26-byte provenanced edge: hot-flag bytes 24/25 preserved verbatim.
+    let claim_id = EntityId::now();
+    vault.put_edge_provenance(
+        &claim_id,
+        &subject,
+        &EdgeProvenanceClaimBody::new(fx.person, 0.75, SupersessionStatus::Disputed),
+        EdgeActorClass::Agent,
+        1_000,
+    )?;
+    let (stamped, _) = raw_edge_values(vault, &subject)?;
+    let stamped = stamped.expect("stamped edge");
+    assert_eq!(stamped.len(), EDGE_VALUE_SEMANTIC_PROVENANCED_LEN);
+    vault.set_edge_vad(&a, EdgeKind::Mentions, &b, Vad::NEUTRAL)?;
+    let (out, inn) = raw_edge_values(vault, &subject)?;
+    let out = out.expect("edge survives");
+    assert_eq!(out.len(), EDGE_VALUE_SEMANTIC_PROVENANCED_LEN);
+    assert_eq!(&out[0..12], &stamped[0..12]);
+    assert_eq!(&out[12..24], &[0_u8; 12][..], "VAD reset to NEUTRAL");
+    assert_eq!(
+        &out[24..26],
+        &stamped[24..26],
+        "hot-flag bytes (disputed=2, agent=1) must survive the VAD rewrite"
+    );
+    assert_eq!(inn.as_deref(), Some(out.as_slice()));
+    assert_eq!(
+        vault.get_claim(&claim_id)?.expect("claim").lifecycle,
+        ClaimLifecycleStatus::Active,
+        "the operational setter never touches the Claim"
+    );
+
+    // Structural kinds carry no VAD — typed reject, nothing written.
+    vault.put_edge(&a, EdgeKind::BelongsTo, &b, 0.5)?;
+    let err = vault
+        .set_edge_vad(&a, EdgeKind::BelongsTo, &b, new_vad)
+        .expect_err("structural VAD set must reject");
+    assert_eq!(err.kind(), ErrorKind::InvariantViolation);
+    assert!(
+        err.to_string()
+            .contains("structural edges do not carry VAD"),
+        "got {err:?}"
+    );
+    let structural = EdgeRef::new(a, EdgeKind::BelongsTo, b);
+    let (out, _) = raw_edge_values(vault, &structural)?;
+    assert_eq!(
+        out.expect("structural edge").len(),
+        EDGE_VALUE_STRUCTURAL_LEN
+    );
+
+    // Component validation + never-upsert. NaN and the asymmetric range
+    // pins (valence [-1, 1] admits -1; arousal [0, 1] rejects it).
+    let err = vault
+        .set_edge_vad(
+            &a,
+            EdgeKind::Mentions,
+            &b,
+            Vad {
+                valence: f32::NAN,
+                arousal: 0.0,
+                dominance: 0.0,
+            },
+        )
+        .expect_err("NaN VAD must reject");
+    assert_eq!(err.kind(), ErrorKind::InvalidVad);
+    let err = vault
+        .set_edge_vad(
+            &a,
+            EdgeKind::Mentions,
+            &b,
+            Vad {
+                valence: -1.0,
+                arousal: -0.25,
+                dominance: 0.0,
+            },
+        )
+        .expect_err("arousal below [0, 1] must reject");
+    assert!(
+        matches!(
+            err,
+            Error::InvalidVad {
+                component: VadComponent::Arousal,
+                ..
+            }
+        ),
+        "got {err:?}"
+    );
+    let ghost = EntityId::now();
+    let err = vault
+        .set_edge_vad(&a, EdgeKind::Mentions, &ghost, new_vad)
+        .expect_err("missing edge must reject");
+    assert_eq!(err.kind(), ErrorKind::EdgeNotFound);
+    Ok(())
+}
+
+/// ONE-1113 batch forms (the decay / retrieval-feedback loop idiom): both
+/// setters compose in one atomic batch, and one failing op aborts the WHOLE
+/// transaction — staged sibling rewrites must not survive a rejected
+/// commit.
+#[test]
+fn batch_set_edge_weight_and_vad_forms_apply_atomically() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let a = EntityId::now();
+    let b = EntityId::now();
+    let c = EntityId::now();
+    vault.put_entity(&a, 4, test_time_range(1, 1), 1, b"a")?;
+    vault.put_entity(&b, 4, test_time_range(1, 1), 1, b"b")?;
+    vault.put_entity(&c, 4, test_time_range(1, 1), 1, b"c")?;
+    vault.put_edge(&a, EdgeKind::Mentions, &b, 0.875)?;
+    vault.put_edge(&a, EdgeKind::About, &c, 0.5)?;
+
+    let vad = Vad {
+        valence: 0.5,
+        arousal: 0.25,
+        dominance: 0.75,
+    };
+    vault
+        .batch()
+        .set_edge_weight(&a, EdgeKind::Mentions, &b, 0.4375)
+        .set_edge_vad(&a, EdgeKind::About, &c, vad)
+        .commit()?;
+    let (mentions, _) = raw_edge_values(&vault, &EdgeRef::new(a, EdgeKind::Mentions, b))?;
+    let mentions = mentions.expect("mentions edge");
+    assert_eq!(&mentions[0..4], &0.4375_f32.to_le_bytes());
+    let (about, _) = raw_edge_values(&vault, &EdgeRef::new(a, EdgeKind::About, c))?;
+    let about = about.expect("about edge");
+    assert_eq!(&about[12..16], &0.5_f32.to_le_bytes());
+    assert_eq!(&about[16..20], &0.25_f32.to_le_bytes());
+
+    // Atomicity: the second op targets a missing edge — the whole batch
+    // aborts and the FIRST op's staged rewrite is discarded.
+    let ghost = EntityId::now();
+    let err = vault
+        .batch()
+        .set_edge_weight(&a, EdgeKind::Mentions, &b, 0.9)
+        .set_edge_weight(&a, EdgeKind::Mentions, &ghost, 0.5)
+        .commit()
+        .expect_err("batch with a missing-edge op must reject");
+    assert_eq!(err.kind(), ErrorKind::EdgeNotFound);
+    let (mentions, _) = raw_edge_values(&vault, &EdgeRef::new(a, EdgeKind::Mentions, b))?;
+    assert_eq!(
+        &mentions.expect("mentions edge")[0..4],
+        &0.4375_f32.to_le_bytes(),
+        "a rejected batch must not leak its sibling weight rewrite"
+    );
+    Ok(())
+}
+
+/// ONE-1113 session-bound actor handle (ruling pt 4): bind the actor once,
+/// write normally — the handle injects `actor_entity_ref` + `actor_class`
+/// into the provenance path; a conflicting body actor is rejected typed
+/// (never silently rewritten); the full gate chain (D13 class validation,
+/// implicit supersession, winner restamp) still runs underneath.
+#[test]
+fn as_actor_bound_write_carries_bound_actor_and_rejects_conflicts() -> Result<()> {
+    let fx = lifecycle_fixture()?;
+    let vault = &fx.vault;
+    let subject = fx.subject;
+
+    let bound = vault.as_actor(fx.person, EdgeActorClass::Human);
+    assert_eq!(bound.actor(), fx.person);
+    assert_eq!(bound.actor_class(), EdgeActorClass::Human);
+
+    // Bound write: the Claim carries the BOUND actor and the edge restamps
+    // (confirmed = 1, human = 0) — composed with main's current actor shape
+    // (the caller-supplied class parameter, persisted by the engine).
+    let claim_id = EntityId::now();
+    let body = bound.provenance_body(0.8, SupersessionStatus::Confirmed);
+    bound.put_edge_provenance(&claim_id, &subject, &body, 1_000)?;
+    let claim = vault.get_claim(&claim_id)?.expect("bound claim");
+    assert_eq!(claim.lifecycle, ClaimLifecycleStatus::Active);
+    assert_eq!(
+        decode_edge_provenance_body(&claim.value)?.actor_entity_ref,
+        fx.person,
+        "the bound write must carry the bound actor_entity_ref"
+    );
+    let (out, inn) = raw_edge_values(vault, &subject)?;
+    let out = out.expect("stamped edge");
+    assert_eq!(out.len(), EDGE_VALUE_SEMANTIC_PROVENANCED_LEN);
+    assert_eq!((out[24], out[25]), (1, 0), "confirmed/human stamp");
+    assert_eq!(inn.as_deref(), Some(out.as_slice()));
+
+    // Ruling pt 3 through the handle: a NEWER bound write modifies via the
+    // supersession chain — the prior closes, history kept, flags restamp.
+    let claim2 = EntityId::now();
+    let body2 = bound.provenance_body(0.6, SupersessionStatus::Disputed);
+    bound.put_edge_provenance(&claim2, &subject, &body2, 2_000)?;
+    assert_eq!(
+        vault.get_claim(&claim_id)?.expect("prior").lifecycle,
+        ClaimLifecycleStatus::Superseded,
+        "modification flows as a supersession chain (retraction is not excision)"
+    );
+    let (out, _) = raw_edge_values(vault, &subject)?;
+    let out = out.expect("edge");
+    assert_eq!(
+        (out[24], out[25]),
+        (2, 0),
+        "flags restamp from the newer bound claim (disputed/human)"
+    );
+
+    // Fail-closed binding: a body naming a DIFFERENT actor is rejected
+    // typed — the handle injects, it never silently rewrites.
+    let conflicting = EdgeProvenanceClaimBody::new(fx.machine, 0.9, SupersessionStatus::Confirmed);
+    let stray = EntityId::now();
+    let err = bound
+        .put_edge_provenance(&stray, &subject, &conflicting, 3_000)
+        .expect_err("conflicting body actor must reject");
+    assert!(
+        matches!(
+            &err,
+            Error::InvalidProvenanceBody(msg)
+                if msg.contains("session-bound actor")
+        ),
+        "got {err:?}"
+    );
+    assert!(
+        vault.get_raw(&stray)?.is_none(),
+        "a rejected bound write must store nothing"
+    );
+
+    // The handle is ergonomics, NOT authorization: D13 still validates the
+    // bound class against the actor entity's kind underneath.
+    let mismatched = vault.as_actor(fx.machine, EdgeActorClass::Human);
+    let stray2 = EntityId::now();
+    let body3 = mismatched.provenance_body(0.9, SupersessionStatus::Confirmed);
+    let err = mismatched
+        .put_edge_provenance(&stray2, &subject, &body3, 3_000)
+        .expect_err("MACHINE+human must fail D13 through the handle");
+    assert_eq!(err.kind(), ErrorKind::ActorClassMismatch);
     Ok(())
 }
 
@@ -10906,6 +12113,504 @@ fn hard_delete_of_provenance_claim_carries_snapshot_ref_in_sweep_scope() -> Resu
     assert_eq!(
         receipt["scope"]["revision_ids"].as_array().unwrap().len(),
         0
+    );
+    Ok(())
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// ONE-1138: provenance substrate vocabulary bump
+// (substrate_ref + reasoning_effort + actor_class relocation · MODEL kind
+//  121 · legacy-evid transition semantics)
+// ═══════════════════════════════════════════════════════════════════════
+
+/// ONE-1138 MODEL kind + get-or-create door: `ensure_model_substrate` is the
+/// ONLY public way to mint a type-121 entity ("written when a substrate
+/// first appears in a write path"), keyed by `(name, version)`, idempotent,
+/// with the reserved `mo` short-id prefix actually allocated; descriptor
+/// validation is typed (`InvalidModelSubstrate`).
+#[test]
+fn ensure_model_substrate_get_or_create_pins_model_kind() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+
+    // CREATE on first appearance: engine-authored MODEL entity, type 121.
+    let kimi = vault.ensure_model_substrate("kimi-k2.6", "2026-05", 1_000)?;
+    assert_eq!(vault.get_entity_type(&kimi)?, Some(ENTITY_TYPE_MODEL));
+    assert_eq!(ENTITY_TYPE_MODEL, 121, "ratified type byte");
+
+    // The body dedups name + version ON the entity (never inline in
+    // provenance records).
+    let raw = vault.get_raw(&kimi)?.expect("model entity stored");
+    let (name, version) =
+        crate::provenance::decode_model_entity_body(&raw[ENTITY_METADATA_HEADER_LEN..])?;
+    assert_eq!(name, "kimi-k2.6");
+    assert_eq!(version, "2026-05");
+
+    // GET: the same (name, version) returns the SAME id — idempotent, no
+    // duplicate substrate row even at a different `now`.
+    assert_eq!(
+        vault.ensure_model_substrate("kimi-k2.6", "2026-05", 2_000)?,
+        kimi
+    );
+    assert_eq!(vault.entities_by_type(ENTITY_TYPE_MODEL)?.len(), 1);
+
+    // A different version IS a different substrate (selective
+    // re-extraction needs per-version identity).
+    let kimi_next = vault.ensure_model_substrate("kimi-k2.6", "2026-06", 3_000)?;
+    assert_ne!(kimi_next, kimi);
+    assert_eq!(vault.entities_by_type(ENTITY_TYPE_MODEL)?.len(), 2);
+
+    // The reserved `mo` short-id prefix is allocated for engine-authored
+    // rows (registry short_id_prefix = Some("mo"), unlike REDACTION_AUDIT).
+    let rtxn = vault.store.env.read_txn()?;
+    let reverse = vault
+        .store
+        .short_ids_reverse
+        .get(&rtxn, kimi.as_bytes())?
+        .expect("model entity must carry a short id");
+    assert!(
+        reverse.starts_with(b"mo"),
+        "short id must use the reserved mo prefix, got {reverse:?}"
+    );
+    drop(rtxn);
+
+    // Descriptor validation: empty or oversized name/version → typed
+    // InvalidModelSubstrate, nothing written.
+    let before = vault.entities_by_type(ENTITY_TYPE_MODEL)?.len();
+    let oversized = "x".repeat(257);
+    for (bad_name, bad_version) in [
+        ("", "v1"),
+        ("m", ""),
+        (oversized.as_str(), "v1"),
+        ("m", oversized.as_str()),
+    ] {
+        let err = vault
+            .ensure_model_substrate(bad_name, bad_version, 1)
+            .expect_err("invalid model descriptor must fail typed");
+        assert_eq!(err.kind(), ErrorKind::InvalidModelSubstrate);
+    }
+    assert_eq!(vault.entities_by_type(ENTITY_TYPE_MODEL)?.len(), before);
+    Ok(())
+}
+
+/// ONE-1138 write path: `substrate_ref` + `reasoning_effort` persist on the
+/// stored 10-key record; the validated caller-supplied `actor_class` rides
+/// the BODY key and the wrapper `evid` stays empty; lifecycle restamps
+/// resolve the class from the body; the substrate gate rejects non-MODEL
+/// refs (MACHINE-82 reuse REJECTED — kind = shape, DEC-0005 §7) and
+/// dangling refs; a conflicting caller-set body class fails closed.
+#[test]
+fn put_edge_provenance_substrate_and_effort_round_trip_with_model_gate() -> Result<()> {
+    let fx = lifecycle_fixture()?;
+    let vault = &fx.vault;
+    let model = vault.ensure_model_substrate("oneironer-tiny", "0.3", 500)?;
+
+    let claim_id = EntityId::now();
+    let mut body = EdgeProvenanceClaimBody::new(fx.person, 0.9, SupersessionStatus::Confirmed);
+    body.substrate_ref = Some(model);
+    body.reasoning_effort = Some("high".to_owned());
+    vault.put_edge_provenance(&claim_id, &fx.subject, &body, EdgeActorClass::Agent, 1_000)?;
+
+    let claim = vault.get_claim(&claim_id)?.expect("claim body");
+    assert!(
+        claim.evidence.is_none(),
+        "post-bump writers leave evid empty (evidence purity)"
+    );
+    let record = decode_edge_provenance_body(&claim.value)?;
+    assert_eq!(record.substrate_ref, Some(model));
+    assert_eq!(record.reasoning_effort.as_deref(), Some("high"));
+    assert_eq!(record.actor_class, Some(EdgeActorClass::Agent));
+
+    // Lifecycle on a NEW-shape claim: retraction resolves the persisted
+    // class from the BODY key and restamps retracted (3) + agent (1).
+    vault.retract_edge_provenance(&claim_id, 2_000)?;
+    let (out, _) = raw_edge_values(vault, &fx.subject)?;
+    let out = out.expect("edge survives retraction");
+    assert_eq!(out[24], 3, "retracted = 3");
+    assert_eq!(out[25], 1, "agent = 1 resolved from the BODY actor_class");
+
+    // Substrate gate: a MACHINE (82) entity is NOT a substrate.
+    let bad_id = EntityId::now();
+    let mut machine_substrate =
+        EdgeProvenanceClaimBody::new(fx.person, 0.5, SupersessionStatus::Proposed);
+    machine_substrate.substrate_ref = Some(fx.machine);
+    let err = vault
+        .put_edge_provenance(
+            &bad_id,
+            &fx.subject,
+            &machine_substrate,
+            EdgeActorClass::Human,
+            3_000,
+        )
+        .expect_err("MACHINE substrate_ref must be rejected");
+    assert_eq!(err.kind(), ErrorKind::InvalidModelSubstrate);
+    assert!(vault.get(&bad_id)?.is_none(), "nothing written on reject");
+
+    // Substrate gate: a ref that names no stored entity.
+    let mut dangling = EdgeProvenanceClaimBody::new(fx.person, 0.5, SupersessionStatus::Proposed);
+    dangling.substrate_ref = Some(EntityId::now());
+    let err = vault
+        .put_edge_provenance(
+            &EntityId::now(),
+            &fx.subject,
+            &dangling,
+            EdgeActorClass::Human,
+            3_000,
+        )
+        .expect_err("dangling substrate_ref must be rejected");
+    assert_eq!(err.kind(), ErrorKind::InvalidModelSubstrate);
+
+    // Substrate gate: a REAL, indexed type-121 MODEL row whose MessagePack
+    // body is MALFORMED (not the engine `{name, version}` shape). The remote
+    // replay door admits the maintenance type byte (allow_maintenance) WITHOUT
+    // body-shape validation, so a forged/corrupt body can physically land in
+    // the entities table. The substrate gate runs the SAME strict decoder as
+    // the get-or-create scan, so a type-byte-only gate would wrongly ACCEPT
+    // this. It must fail closed as `CorruptedIndex` — distinct from the
+    // `InvalidModelSubstrate` referential rejections (wrong kind / dangling) —
+    // and stage NO provenance Claim.
+    let forged_model = EntityId::now();
+    {
+        let mut wtxn = vault.store.env.write_txn()?;
+        crate::batch::apply_ops(
+            &vault.store,
+            &vault.config,
+            &vault.analyzer,
+            &mut wtxn,
+            vec![crate::batch::BatchOp::Put {
+                id: forged_model,
+                entity_type: ENTITY_TYPE_MODEL,
+                occurred: TimeRange {
+                    start: 400,
+                    end: 400,
+                },
+                learned_at: 400,
+                // Not a `{name, version}` MessagePack map → decode_model_entity_body fails.
+                data: b"forged-model".to_vec(),
+                allow_maintenance: true,
+                allow_reserved_predicate: false,
+            }],
+        )?;
+        wtxn.commit()?;
+    }
+    // It really is an indexed type-121 row, so the gate reaches the body
+    // decode rather than tripping on a missing / wrong-type entity.
+    assert_eq!(
+        vault.get_entity_type(&forged_model)?,
+        Some(ENTITY_TYPE_MODEL),
+        "forged substrate must be a real indexed type-121 row"
+    );
+    let corrupt_claim_id = EntityId::now();
+    let mut malformed_substrate =
+        EdgeProvenanceClaimBody::new(fx.person, 0.5, SupersessionStatus::Proposed);
+    malformed_substrate.substrate_ref = Some(forged_model);
+    let err = vault
+        .put_edge_provenance(
+            &corrupt_claim_id,
+            &fx.subject,
+            &malformed_substrate,
+            EdgeActorClass::Human,
+            3_000,
+        )
+        .expect_err("malformed type-121 substrate body must be rejected");
+    assert_eq!(
+        err.kind(),
+        ErrorKind::CorruptedIndex,
+        "body-malformed type-121 substrate row is ambiguous on-disk corruption \
+         (CorruptedIndex), NOT a clean referential rejection (InvalidModelSubstrate)"
+    );
+    assert!(
+        vault.get(&corrupt_claim_id)?.is_none(),
+        "fail-closed: no provenance Claim staged on body-corruption reject"
+    );
+
+    // Conflict gate: a caller-set body actor_class that disagrees with the
+    // actor_class parameter is ambiguous → typed reject; an AGREEING body
+    // class is accepted (idempotent injection).
+    let mut conflicted = EdgeProvenanceClaimBody::new(fx.person, 0.5, SupersessionStatus::Proposed);
+    conflicted.actor_class = Some(EdgeActorClass::Human);
+    let err = vault
+        .put_edge_provenance(
+            &EntityId::now(),
+            &fx.subject,
+            &conflicted,
+            EdgeActorClass::Agent,
+            3_000,
+        )
+        .expect_err("conflicting body actor_class must be rejected");
+    assert_eq!(err.kind(), ErrorKind::InvalidProvenanceBody);
+    let mut agreeing = EdgeProvenanceClaimBody::new(fx.person, 0.5, SupersessionStatus::Proposed);
+    agreeing.actor_class = Some(EdgeActorClass::Human);
+    vault.put_edge_provenance(
+        &EntityId::now(),
+        &fx.subject,
+        &agreeing,
+        EdgeActorClass::Human,
+        3_000,
+    )?;
+    Ok(())
+}
+
+/// ONE-1138 transition semantics, LEGACY side: a pre-bump claim — 7-key
+/// value record (no `actor_class` body key) + the engine-owned
+/// `{"actor_class": u8}` map on the wrapper's `evid` — still decodes and
+/// participates in lifecycle operations; old claims are NEVER invalidated.
+#[test]
+fn legacy_evid_actor_class_claim_decodes_and_lifecycle_restamps() -> Result<()> {
+    let fx = lifecycle_fixture()?;
+    let vault = &fx.vault;
+
+    // Fabricate the pre-bump shape byte-exactly through the reserved door
+    // (the encoder elides the absent actor_class key, so this is the exact
+    // legacy 7-key wire shape).
+    let claim_id = EntityId::now();
+    let record = EdgeProvenanceClaimBody::new(fx.person, 0.75, SupersessionStatus::Confirmed);
+    let mut wrapper = ClaimBody::new(
+        PREDICATE_EDGE_PROVENANCE,
+        ClaimSubject::from(fx.subject),
+        crate::provenance::encode_edge_provenance_value(&record),
+        0.75,
+        ClaimApprovalStatus::Auto,
+        ClaimLifecycleStatus::Active,
+    );
+    wrapper.evidence = Some(crate::provenance::encode_actor_class_evidence(
+        EdgeActorClass::Human,
+    ));
+    let bytes = crate::claim::encode_claim_body(&wrapper)?;
+    vault.with_write_txn(|wtxn| {
+        vault
+            .batch_in()
+            .put_reserved_claim(&claim_id, test_time_range(1_000, u64::MAX), 1_000, &bytes)
+            .edge(&claim_id, EdgeKind::ClaimOf, &fx.subject.source, 1.0)
+            .apply(wtxn)
+    })?;
+
+    // The legacy claim drives the lifecycle: retraction resolves the class
+    // from the LEGACY evid map and restamps retracted (3) + human (0).
+    vault.retract_edge_provenance(&claim_id, 2_000)?;
+    let (out, inn) = raw_edge_values(vault, &fx.subject)?;
+    let out = out.expect("edges_out row survives");
+    assert_eq!(inn.as_deref(), Some(out.as_slice()));
+    assert_eq!(out.len(), EDGE_VALUE_SEMANTIC_PROVENANCED_LEN);
+    assert_eq!(out[24], 3, "retracted = 3");
+    assert_eq!(out[25], 0, "human = 0 resolved from the LEGACY evid map");
+    Ok(())
+}
+
+/// ONE-1138 transition semantics, ambiguity side: a claim carrying
+/// `actor_class` in BOTH the value-record body AND the wrapper's legacy
+/// `evid` map fails closed on every lifecycle read — typed
+/// `InvalidProvenanceBody`, never silently reconciled, and the stored claim
+/// is left untouched.
+#[test]
+fn provenance_actor_class_in_both_body_and_evid_fails_closed() -> Result<()> {
+    let fx = lifecycle_fixture()?;
+    let vault = &fx.vault;
+
+    let claim_id = EntityId::now();
+    let mut record = EdgeProvenanceClaimBody::new(fx.person, 0.75, SupersessionStatus::Confirmed);
+    record.actor_class = Some(EdgeActorClass::Human);
+    let mut wrapper = ClaimBody::new(
+        PREDICATE_EDGE_PROVENANCE,
+        ClaimSubject::from(fx.subject),
+        crate::provenance::encode_edge_provenance_value(&record),
+        0.75,
+        ClaimApprovalStatus::Auto,
+        ClaimLifecycleStatus::Active,
+    );
+    // Even an AGREEING duplicate is ambiguous — fail closed.
+    wrapper.evidence = Some(crate::provenance::encode_actor_class_evidence(
+        EdgeActorClass::Human,
+    ));
+    let bytes = crate::claim::encode_claim_body(&wrapper)?;
+    // The structural write-door (ONE-1159) rejects the ambiguous body at WRITE
+    // time — the claim never reaches the store, so the whole batch is rejected
+    // atomically. The resolve-time check in `resolve_persisted_actor_class` is
+    // the defence-in-depth backstop, pinned separately by
+    // `resolve_persisted_actor_class_pins_transition_matrix`.
+    let err = vault
+        .with_write_txn(|wtxn| {
+            vault
+                .batch_in()
+                .put_reserved_claim(&claim_id, test_time_range(1_000, u64::MAX), 1_000, &bytes)
+                .edge(&claim_id, EdgeKind::ClaimOf, &fx.subject.source, 1.0)
+                .apply(wtxn)
+        })
+        .expect_err("both-places actor_class must fail closed at write");
+    assert_eq!(err.kind(), ErrorKind::InvalidProvenanceBody);
+
+    // Fail-closed wrote nothing: the ambiguous claim was never stored and the
+    // subject edge still carries no provenance stamp (24 B bare).
+    assert!(
+        vault.get_claim(&claim_id)?.is_none(),
+        "rejected ambiguous claim must not be stored"
+    );
+    let (out, _) = raw_edge_values(vault, &fx.subject)?;
+    assert_eq!(out.expect("edge row").len(), EDGE_VALUE_SEMANTIC_LEN);
+    Ok(())
+}
+
+/// ONE-1141 (ARCH-0031 amendment, ratified 2026-06-13): "When an LWW
+/// replicated overwrite replaces a document, the loser document's postings
+/// must be removed in the same transaction as the overwrite — no replicated
+/// overwrite ever leaves loser postings live."
+///
+/// Directed batch-level unit for the sync replay doors (`put_replicated` →
+/// `apply_put`, replicated arm): text-index term A, replicated-overwrite the
+/// entity with body B inside ONE write txn, then assert the loser's text
+/// rows are gone at the DB level — mirroring exactly what SoftErase's
+/// `deindex_text` leaves behind (`text_forward` / `text_meta` /
+/// `text_doc_field_lengths` rows deleted under the literal id-bytes key, the
+/// posting row dropped with its last duplicate, the per-field stats row
+/// deleted at zero, and the TOTAL_DOCS sentinel row decremented back to 0).
+#[cfg(feature = "sync")]
+#[test]
+fn replicated_overwrite_changed_body_drops_loser_text_postings_same_txn() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let id = EntityId::now();
+    vault.put_entity(&id, 1, test_time_range(1, 1), 1, b"payload-from-loser")?;
+    vault
+        .batch()
+        .text(&id, &[("body", "loseronlyterm")])
+        .commit()?;
+    assert_eq!(
+        vault.search_text("loseronlyterm", 10)?.len(),
+        1,
+        "precondition: the loser term must be indexed and searchable"
+    );
+
+    // Replicated overwrite with a CHANGED body through the Observer-B replay
+    // door (`TxnBatchBuilder::put_replicated`) — overwrite + deindex must
+    // land in the SAME externally-owned wtxn.
+    vault.with_write_txn(|wtxn| {
+        vault
+            .batch_in()
+            .put_replicated(&id, 1, test_time_range(2, 2), 2, b"payload-from-winner")
+            .apply(wtxn)
+    })?;
+
+    // The winner body is stored (header + body layout, body at offset 25)…
+    let raw = vault.get_raw(&id)?.expect("entity stored");
+    assert_eq!(&raw[ENTITY_METADATA_HEADER_LEN..], b"payload-from-winner");
+    // …and the loser term no longer serves.
+    assert!(
+        vault.search_text("loseronlyterm", 10)?.is_empty(),
+        "loser postings must not match searches after a replicated overwrite"
+    );
+
+    // DB-level: identical end-state to SoftErase's deindex.
+    let rtxn = vault.store.env.read_txn()?;
+    assert!(
+        vault
+            .store
+            .text_forward
+            .get(&rtxn, id.as_bytes())?
+            .is_none(),
+        "text_forward row (key = literal id bytes) must be deleted"
+    );
+    assert!(
+        vault.store.text_meta.get(&rtxn, id.as_bytes())?.is_none(),
+        "text_meta doc row (key = literal id bytes) must be deleted"
+    );
+    assert!(
+        vault
+            .store
+            .text_doc_field_lengths
+            .get(&rtxn, id.as_bytes())?
+            .is_none(),
+        "text_doc_field_lengths row (key = literal id bytes) must be deleted"
+    );
+    // This doc was the only indexed document: dropping its last duplicate
+    // removes the posting term key entirely, and the zeroed per-field stats
+    // row is deleted rather than kept at 0/0.
+    assert!(
+        vault.store.text_postings.iter(&rtxn)?.next().is_none(),
+        "no posting row may survive the loser's deindex"
+    );
+    assert!(
+        vault
+            .store
+            .text_bm25_field_stats
+            .iter(&rtxn)?
+            .next()
+            .is_none(),
+        "the zeroed per-field stats row must be deleted, not kept at 0/0"
+    );
+    // TOTAL_DOCS sentinel ([0x00; 16] key in text_meta, u32 LE value): the
+    // corpus count is decremented back to 0, never left dangling at 1.
+    assert_eq!(
+        vault.store.text_meta.get(&rtxn, &[0u8; 16])?,
+        Some(&0u32.to_le_bytes()[..]),
+        "TOTAL_DOCS must be decremented in the same txn as the overwrite"
+    );
+    Ok(())
+}
+
+/// ONE-1141 byte-compare guard + scope pin. Two non-deindexing overwrites:
+///
+/// * SAME-BYTES replicated overwrite (idempotent re-import / reconnect echo,
+///   or the winner node re-receiving its own winning value during a
+///   convergence exchange) must NOT touch the text index — postings keep
+///   serving and the `text_forward` row stays byte-identical. Metadata-only
+///   changes (occurred/learned) are NOT body changes.
+/// * LOCAL body-changing overwrite stays out of scope (the ticket pins the
+///   replicated arm only): the local writer owns both the put and its
+///   `BatchOp::Text` re-index, and `index_text` self-deindexes stale rows.
+///   Known follow-up: a local re-put WITHOUT a text op leaves stale postings
+///   (caller-sequenced, not a sync-convergence hole) — widening that is a
+///   separate ruling, not silent drift; this assertion pins the boundary.
+#[cfg(feature = "sync")]
+#[test]
+fn replicated_overwrite_same_body_bytes_keeps_text_postings() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let id = EntityId::now();
+    vault.put_entity(&id, 1, test_time_range(1, 1), 1, b"stable-payload")?;
+    vault
+        .batch()
+        .text(&id, &[("body", "winneronlyterm")])
+        .commit()?;
+
+    let forward_before = {
+        let rtxn = vault.store.env.read_txn()?;
+        vault
+            .store
+            .text_forward
+            .get(&rtxn, id.as_bytes())?
+            .map(<[u8]>::to_vec)
+            .expect("precondition: forward row exists for the indexed doc")
+    };
+
+    // Same body bytes, different temporal metadata, through the
+    // forward_rematerialize replay door (`BatchBuilder::put_replicated`).
+    vault
+        .batch()
+        .put_replicated(&id, 1, test_time_range(5, 7), 9, b"stable-payload")
+        .commit()?;
+
+    assert_eq!(
+        vault.search_text("winneronlyterm", 10)?.len(),
+        1,
+        "a same-bytes replicated replay must leave postings serving"
+    );
+    {
+        let rtxn = vault.store.env.read_txn()?;
+        assert_eq!(
+            vault
+                .store
+                .text_forward
+                .get(&rtxn, id.as_bytes())?
+                .map(<[u8]>::to_vec),
+            Some(forward_before),
+            "the forward row must be byte-identical after a same-bytes replay"
+        );
+    }
+
+    // Scope pin: a LOCAL body-changing overwrite does NOT deindex — the
+    // replicated arm alone carries the ARCH-0031 deindex-on-overwrite duty.
+    vault.put_entity(&id, 1, test_time_range(8, 8), 11, b"locally-edited-payload")?;
+    assert_eq!(
+        vault.search_text("winneronlyterm", 10)?.len(),
+        1,
+        "local overwrites stay out of ONE-1141 scope: no deindex on the local arm"
     );
     Ok(())
 }

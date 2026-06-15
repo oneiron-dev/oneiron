@@ -206,16 +206,15 @@ fn concurrent_edit_same_entity_lww_converges_and_displaces_loser_metadata_rows()
 /// — a stale posting would keep serving content the converged vault no
 /// longer holds.
 ///
-/// IGNORED (ONE-1141) — exposes a real seam in the current engine:
-/// replicated overwrite (`put_replicated` → `apply_put`) displaces
-/// temporal/type/short-id rows but never touches the BM25F text index
-/// (text is a separate LOCAL `BatchOp::Text` family that sync does not
-/// carry), so the losing node keeps serving its pre-merge terms. Prod
-/// fixes are out of scope for this unit; ONE-1141 carries the owner
-/// ruling: either contract-bless lazy staleness (ARCH-0035
-/// derived-artifact refresh) or deindex-on-replicated-overwrite.
+/// ONE-1141 (ARCH-0031 amendment, ratified 2026-06-13): deindex-on-overwrite
+/// — "no replicated overwrite ever leaves loser postings live". A replicated
+/// overwrite that changes the stored body drops the loser's BM25F postings
+/// in the SAME transaction as the overwrite (`put_replicated` → `apply_put`,
+/// replicated arm); lazy-stale + periodic sweep was REJECTED by the ruling
+/// (it leaves a window where dead content matches searches). The byte-compare
+/// guard keeps the WINNER node's own postings intact: its replayed value is
+/// byte-identical to what it already stores, so its index is never touched.
 #[test]
-#[ignore = "ONE-1141: put_replicated overwrite leaves the loser's local BM25F postings in place — text displacement on LWW loss is not implemented; owner ruling pending (lazy-stale per ARCH-0035 vs deindex-on-overwrite)"]
 fn concurrent_edit_same_entity_lww_displaces_loser_text_postings() {
     let (a, b) = vault_pair();
 
@@ -953,6 +952,34 @@ fn redaction_audit_same_identity_divergence_is_quarantined_not_lww() {
         .as_str()
         .to_owned();
     a.recover(&receipt_window); // reverse remat mirrors the receipt into the CRDT
+
+    // ONE-1140: B's replay door verifies NEW-receipt origin attestation
+    // against its `ls:` lease mirror, so B registers A's binding (pinned
+    // 58 B OD-4 row) before the replication leg — the server's root-doc
+    // full mirror does this in production.
+    let author_client_id = u64::from_le_bytes(
+        a.vault
+            .sync_state_get("m:client_id")
+            .unwrap()
+            .expect("receipt mint provisions the device identity")
+            .try_into()
+            .unwrap(),
+    );
+    let author_pk = a
+        .vault
+        .sync_state_get("m:device_pk")
+        .unwrap()
+        .expect("receipt mint provisions the attestation keypair");
+    let mut lease_row = vec![0x01u8, 0x01];
+    lease_row.extend_from_slice(&author_pk);
+    lease_row.extend_from_slice(&1_700_000_000u64.to_le_bytes());
+    lease_row.extend_from_slice(&1_700_000_000u64.to_le_bytes());
+    lease_row.extend_from_slice(&(1_700_000_000u64 + 7_776_000).to_le_bytes());
+    assert_eq!(lease_row.len(), 58);
+    b.vault
+        .sync_state_put(&format!("ls:{author_client_id:016x}"), &lease_row)
+        .unwrap();
+
     b.open_window(&receipt_window);
     exchange(&a, &b, &receipt_window);
     let receipt_raw_b = b
@@ -1192,4 +1219,29 @@ fn carrier15_outgoing_queue_scrubbed_on_hard_delete() {
         !d_markers.is_empty(),
         "the tombstone delta must be queued as a delete-bearing row"
     );
+}
+
+// ─── ONE-1148: env-level write failures fail loud at the write site ─────────
+
+/// ONE-1148 loud-fail probe. An env-level Storage error inside Observer
+/// B's single batch write txn — here MDB_MAP_FULL, forced by a value
+/// larger than the harness' entire 16 MiB `map_size` — is swallowed by
+/// the bridge into a `tracing::error` (the ONE-1147 surface), leaving
+/// LMDB silently missing the row. Storage/Io is NEVER remote-rejectable
+/// (`remote_rejection_reason` → None), so this is the abort-the-batch
+/// path, not write-gate quarantine. The harness write helper must convert
+/// that silence into an immediate panic AT THE WRITE SITE instead of a
+/// confusing convergence divergence hundreds of lines later.
+#[test]
+#[should_panic(expected = "env-level write failure (see ONE-1148)")]
+fn env_level_write_failure_fails_loud_at_the_write_site() {
+    let mut a = TestNode::new("node-a", 1);
+    a.open_window(WINDOW);
+
+    let id = EntityId::now();
+    // 20 MiB body > 16 MiB map: LMDB cannot allocate the pages, the whole
+    // Observer B txn aborts, and the entity never reaches LMDB.
+    let big = vec![0xA5u8; 20 * 1024 * 1024];
+    let blob = entity_blob(1, time_range(T0 + 1), T0 + 1, &big);
+    a.put_entity_in_window(WINDOW, &id, &blob);
 }

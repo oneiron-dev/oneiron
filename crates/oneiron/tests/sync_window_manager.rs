@@ -4,7 +4,8 @@
 //! `WindowManager::open_window` — steps 3 → 4 → 5 (pm replay → reverse
 //! remat → forward remat) on the bare doc, observers attached LAST (step
 //! 6) — plus the one-live-doc-per-key registry, the defensive `rm:w:{key}`
-//! consumer, and the unload path (persist + subscription drop).
+//! consumer, and the unload path (persist + subscription drop; ONE-1150
+//! typed refusal while external `Arc` handles are outstanding).
 
 #![cfg(feature = "sync")]
 
@@ -16,7 +17,7 @@ use oneiron::sync::manager::WindowManager;
 use oneiron::sync::types::WindowKey;
 use oneiron::sync::window;
 use oneiron::types::TimeRange;
-use oneiron::{EntityId, HnswConfig, Vault, VaultConfig};
+use oneiron::{EntityId, Error, ErrorKind, HnswConfig, Vault, VaultConfig};
 
 fn test_config() -> VaultConfig {
     let mut cfg = VaultConfig::device();
@@ -449,6 +450,150 @@ fn unload_persists_state_and_drops_observer_subscriptions() {
     assert!(!manager.unload_window(&key).unwrap());
 }
 
+/// ONE-1150 — unload with an outstanding external handle is REFUSED with
+/// the typed [`Error::WindowBusy`], side-effect-free (nothing persisted,
+/// nothing deregistered), and the second-live-doc trap stays closed: the
+/// window remains discoverable via `window()` and `Vault::delete_entity`
+/// still commits its tombstone through the LIVE doc. The pre-ONE-1150
+/// warn-and-deregister implementation FAILS here: unload returns
+/// `Ok(true)`, `window()` goes empty, and the delete takes the transient
+/// path that never touches the held doc.
+#[test]
+fn unload_refuses_with_outstanding_handles_and_keeps_delete_routing_live() {
+    let (_temp, vault) = test_vault();
+    let key = WindowKey::new("2026-03");
+    let t = key.start_timestamp().unwrap() + 60;
+
+    // Entity in LMDB before open: step-4 reverse remat mirrors it into the
+    // live doc, giving the delete below a live-doc copy to tombstone.
+    let id = EntityId::now();
+    put_lmdb_entity(&vault, &id, t, b"held-handle-body");
+
+    let materializer = Arc::new(Materializer::new());
+    let manager = Arc::new(WindowManager::new(
+        Arc::clone(&vault),
+        materializer,
+        "test-user",
+    ));
+    // `win` is the outstanding external handle for the whole test.
+    let win = manager.open_window(&key).unwrap();
+    assert!(
+        map_get_bytes(&win.doc.get_map("entities"), &id.to_hex()).is_some(),
+        "fixture: reverse remat must mirror the entity into the live doc"
+    );
+
+    // Refused: typed variant, exact fields, stable kind, retryable.
+    let err = manager.unload_window(&key).unwrap_err();
+    match &err {
+        Error::WindowBusy {
+            window_key,
+            outstanding_handles,
+        } => {
+            assert_eq!(window_key.as_str(), "2026-03");
+            assert_eq!(
+                *outstanding_handles, 1,
+                "external holders only — the registry's own Arc is excluded"
+            );
+        }
+        other => panic!("expected Error::WindowBusy, got {other:?}"),
+    }
+    assert_eq!(err.kind(), ErrorKind::WindowBusy);
+    assert!(
+        err.is_retryable(),
+        "WindowBusy clears once the last handle drops"
+    );
+
+    // Side-effect-free refusal: no persist ran (this window has never been
+    // persisted, so any `d:w:` row could only come from the refused call)…
+    assert!(
+        vault
+            .sync_state_get(&format!("d:w:{key}"))
+            .unwrap()
+            .is_none(),
+        "a refused unload must not persist doc state"
+    );
+    // …and nothing was deregistered: the SAME instance stays discoverable.
+    let still = manager.window(&key).expect("window must stay discoverable");
+    assert!(
+        Arc::ptr_eq(&still, &win),
+        "registry must still own the same live instance"
+    );
+    drop(still);
+    assert_eq!(manager.loaded_keys(), [key.clone()]);
+
+    // The trap scenario, asserted closed: with the refusal in place a vault
+    // delete still routes through the registry-owned LIVE doc — tombstone
+    // visible through the held handle, entities copy removed in the same
+    // commit — never the transient path.
+    assert!(vault.delete_entity(&id).unwrap());
+    assert!(
+        map_get_bytes(&win.doc.get_map("tombstones"), &id.to_hex()).is_some(),
+        "delete must still route through the registry-owned live doc"
+    );
+    assert!(
+        map_get_bytes(&win.doc.get_map("entities"), &id.to_hex()).is_none(),
+        "live entities-map copy removed in the delete commit"
+    );
+    assert!(
+        vault.get(&id).unwrap().is_none(),
+        "LMDB purge ran (delete semantics untouched by the refusal)"
+    );
+
+    // Still held → still refused: the refusal is a stable, pollable state.
+    assert!(matches!(
+        manager.unload_window(&key),
+        Err(Error::WindowBusy { .. })
+    ));
+}
+
+/// ONE-1150 — once the last external handle drops, the previously refused
+/// unload succeeds: the retry persists the doc state and deregisters.
+#[test]
+fn unload_succeeds_after_last_external_handle_drops() {
+    let (_temp, vault) = test_vault();
+    let key = WindowKey::new("2026-04");
+    let t = key.start_timestamp().unwrap() + 60;
+
+    let materializer = Arc::new(Materializer::new());
+    let manager = Arc::new(WindowManager::new(
+        Arc::clone(&vault),
+        materializer,
+        "test-user",
+    ));
+    let win = manager.open_window(&key).unwrap();
+
+    let id = EntityId::now();
+    win.doc
+        .get_map("entities")
+        .insert(
+            id.to_hex().as_str(),
+            make_entity_blob(1, t, b"survives-retry").as_slice(),
+        )
+        .unwrap();
+    win.doc.commit();
+
+    // Held → refused. Dropped → the retry succeeds and deregisters.
+    assert!(matches!(
+        manager.unload_window(&key),
+        Err(Error::WindowBusy { .. })
+    ));
+    drop(win);
+    assert!(manager.unload_window(&key).unwrap());
+    assert!(
+        manager.window(&key).is_none(),
+        "retry after the last drop must deregister"
+    );
+    assert!(manager.loaded_keys().is_empty());
+
+    // The successful retry persisted the state the refused call did not.
+    let reloaded = window::load_window_from_state(&vault, "test-user", &key).unwrap();
+    assert_eq!(
+        map_get_bytes(&reloaded.get_map("entities"), &id.to_hex()).unwrap(),
+        make_entity_blob(1, t, b"survives-retry"),
+        "unload-after-drop must persist the window Doc state"
+    );
+}
+
 /// AC 3 — `rm:w:{key}` consumer: when the needs-rematerialization flag is
 /// set (Observer B failure on a previous run; producer is M4-04), open
 /// forces forward remat — subsumed by the pinned order, which always runs
@@ -524,6 +669,126 @@ fn open_fails_closed_on_corrupt_persisted_snapshot() {
         vault.sync_state_get(&rm_key).unwrap().unwrap(),
         vec![1u8],
         "rm: marker must survive a failed open"
+    );
+}
+
+/// ONE-1151: pruning the subsumed `u:w:` rows changes nothing about what
+/// recovery yields. Full recovery (`d:w:` load + pending `u:w:` replay,
+/// ARCH-0023b startup steps 1-2) must produce a doc equivalent — same
+/// oplog VV, same deep value — before and after the prune; and because
+/// `m:u_seq:w:{key}` is never reset, the row persisted after a prune gets
+/// the NEXT sequence number (`{seq:08x}`, monotonic), never a colliding
+/// reissue of a pruned one.
+#[test]
+fn recovery_after_prune_is_equivalent_and_seq_stays_monotonic() {
+    let (_temp, vault) = test_vault();
+    let key = WindowKey::new("2026-03");
+    let t = key.start_timestamp().unwrap() + 60;
+
+    let materializer = Arc::new(Materializer::new());
+    let manager = Arc::new(WindowManager::new(
+        Arc::clone(&vault),
+        materializer,
+        "test-user",
+    ));
+    let win = manager.open_window(&key).unwrap();
+
+    let id_a = EntityId::now();
+    win.doc
+        .get_map("entities")
+        .insert(
+            id_a.to_hex().as_str(),
+            make_entity_blob(1, t, b"first").as_slice(),
+        )
+        .unwrap();
+    win.doc.commit();
+    assert!(
+        vault
+            .sync_state_get("u:w:2026-03:00000001")
+            .unwrap()
+            .is_some()
+    );
+
+    // First snapshot persist prunes the subsumed row.
+    win.persist_state(&vault).unwrap();
+    assert_eq!(
+        vault
+            .sync_state_keys_with_prefix("u:w:2026-03:")
+            .unwrap()
+            .len(),
+        0,
+        "snapshot persist must prune the subsumed u:w: rows"
+    );
+    assert_eq!(
+        vault
+            .sync_state_get("m:u_seq:w:2026-03")
+            .unwrap()
+            .as_deref(),
+        Some(1u32.to_le_bytes().as_slice()),
+        "the prune must NOT reset the m:u_seq high-water mark"
+    );
+
+    // The next local commit takes seq 2 — an implementation that reset
+    // m:u_seq would reissue `...:00000001` here and collide with the
+    // pruned row's history.
+    let id_b = EntityId::now();
+    win.doc
+        .get_map("entities")
+        .insert(
+            id_b.to_hex().as_str(),
+            make_entity_blob(1, t, b"second").as_slice(),
+        )
+        .unwrap();
+    win.doc.commit();
+    assert!(
+        vault
+            .sync_state_get("u:w:2026-03:00000002")
+            .unwrap()
+            .is_some(),
+        "post-prune updates must continue the monotonic {{seq:08x}} sequence"
+    );
+    assert!(
+        vault
+            .sync_state_get("u:w:2026-03:00000001")
+            .unwrap()
+            .is_none()
+    );
+
+    // Recovery BEFORE the second prune: d:w: snapshot + u:w: replay.
+    let pre = window::load_window_from_state(&vault, "test-user", &key).unwrap();
+    let (pre_vv, pre_value) = (pre.oplog_vv(), pre.get_deep_value());
+
+    // Second snapshot persist subsumes + prunes the seq-2 row.
+    win.persist_state(&vault).unwrap();
+    assert_eq!(
+        vault
+            .sync_state_keys_with_prefix("u:w:2026-03:")
+            .unwrap()
+            .len(),
+        0
+    );
+
+    // Recovery AFTER the prune: d:w: alone. Equivalent doc — nothing the
+    // pruned rows carried may be lost.
+    let post = window::load_window_from_state(&vault, "test-user", &key).unwrap();
+    assert_eq!(
+        post.oplog_vv(),
+        pre_vv,
+        "recovery after the prune must reach the same oplog version vector"
+    );
+    assert_eq!(
+        post.get_deep_value(),
+        pre_value,
+        "recovery after the prune must yield an equivalent doc"
+    );
+    let entities = post.get_map("entities");
+    assert_eq!(
+        map_get_bytes(&entities, &id_a.to_hex()).unwrap(),
+        make_entity_blob(1, t, b"first")
+    );
+    assert_eq!(
+        map_get_bytes(&entities, &id_b.to_hex()).unwrap(),
+        make_entity_blob(1, t, b"second")
     );
 }
 
