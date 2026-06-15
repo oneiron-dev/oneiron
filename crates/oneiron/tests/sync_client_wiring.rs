@@ -684,3 +684,106 @@ fn bulk_transfer_done_imports_into_live_window_when_loaded() {
     // ...and the merged state was persisted.
     assert!(vault.sync_state_get("d:w:2025-11").unwrap().is_some());
 }
+
+/// ONE-1154: the live-window BulkTransferDone arm imports BEFORE persisting
+/// (same deliberate ordering as the UPDATE arm). On a FAILED persist the
+/// import has already advanced the live doc's version vector; pre-fix the
+/// window stayed registered with RAM ahead of durable state — the next VV
+/// exchange told the server we already held the bulk ops, so they were
+/// never re-sent and vanished on restart. The fix mirrors the UPDATE arm:
+/// DISCARD the live window (no persist — that would durably commit the
+/// unconfirmed import), surface the typed Storage error, and leave the
+/// `bulk:w:` in-progress marker set for retry.
+#[test]
+fn failed_bulk_persist_discards_live_window_instead_of_running_ahead() {
+    let (_temp, vault) = test_vault();
+    let manager = make_manager(&vault);
+    let (mut client, mut rx) = make_client(&manager);
+
+    // Window live BEFORE the bulk transfer — routes Done into the
+    // live-window arm. learned_at (January 2026) is OUTSIDE window
+    // 2026-03, so the recovery assertions below can only pass via
+    // persisted doc state, never via reverse re-materialization.
+    client.ensure_window("2026-03").unwrap();
+
+    let id = EntityId::now();
+    let blob = make_entity_blob(1, LEARNED_JAN_2026, b"never-durable-bulk");
+    let state_doc = create_window_doc("server", &WindowKey::new("2026-03"));
+    state_doc
+        .get_map("entities")
+        .insert(&id.to_hex(), blob.as_slice())
+        .unwrap();
+    state_doc.commit();
+    let server_peer = state_doc.peer_id();
+    let snapshot = state_doc.export(ExportMode::Snapshot).unwrap();
+
+    // BulkTransfer sets the `bulk:w:` in-progress marker (ARCH-0023b).
+    let msgpack = rmp_serde::to_vec(&serde_json::json!({})).unwrap();
+    let compressed = zstd::stream::encode_all(msgpack.as_slice(), 0).unwrap();
+    client
+        .handle_server_message(&transport::encode_bulk_transfer("2026-03", &compressed))
+        .unwrap();
+
+    // Corrupt d:w: so persist_state's anti-clobber merge (ONE-1135) fails
+    // closed AFTER the live import succeeded — the exact
+    // RAM-ahead-of-durable interleaving.
+    vault
+        .sync_state_put("d:w:2026-03", b"corrupt-snapshot")
+        .unwrap();
+
+    let done = transport::encode_bulk_transfer_done("2026-03", &snapshot);
+    let err = client
+        .handle_server_message(&done)
+        .expect_err("a failed bulk persist must surface, not be swallowed");
+    assert!(
+        matches!(err, TransportError::Storage(_)),
+        "typed Storage error, got: {err:?}"
+    );
+
+    // The live window was DISCARDED — not left registered holding the
+    // unpersisted import (the pre-fix implementation fails here).
+    assert!(
+        manager.window(&WindowKey::new("2026-03")).is_none(),
+        "failed bulk persist must evict the live window from the registry"
+    );
+    // Fail-closed marker ordering: the `bulk:w:` clear only runs after a
+    // successful persist, so the marker must STAY set for retry.
+    assert_eq!(
+        vault.sync_state_get("bulk:w:2026-03").unwrap().as_deref(),
+        Some([1u8].as_slice()),
+        "failed bulk persist must leave the in-progress marker set"
+    );
+    // No completion event for a failed transfer.
+    assert!(
+        rx.try_recv().is_err(),
+        "BulkTransferComplete must not fire on a failed persist"
+    );
+    // Accepted residual (same shape as the UPDATE-arm fix): Observer B
+    // already materialized the import into LMDB before the persist failed.
+    // LMDB is local truth; the doc heals via re-delivery, not un-applying.
+    assert_eq!(
+        vault.get(&id).unwrap().as_deref(),
+        Some(b"never-durable-bulk".as_slice())
+    );
+
+    // Heal the corrupt row (doctor-shaped repair: durable state never held
+    // the bulk ops, so a valid empty-window snapshot IS the durable
+    // truth), reopen through the client: the reloaded doc must NOT contain
+    // the failed bulk import — the server's peer is absent from its VV, so
+    // the ONE-1127/1128 VV exchange re-delivers the bytes instead of
+    // skipping them.
+    let empty_doc = create_window_doc("test-user", &WindowKey::new("2026-03"));
+    let empty_snapshot = empty_doc.export(ExportMode::Snapshot).unwrap();
+    vault
+        .sync_state_put("d:w:2026-03", &empty_snapshot)
+        .unwrap();
+    let reopened = client.ensure_window("2026-03").unwrap();
+    assert!(
+        reopened.doc.oplog_vv().get(&server_peer).is_none(),
+        "reloaded doc must not claim the never-persisted bulk ops in its VV"
+    );
+    assert!(
+        map_get_bytes(&reopened.doc.get_map("entities"), &id.to_hex()).is_none(),
+        "the never-durable bulk import must not reappear in the reloaded doc"
+    );
+}
