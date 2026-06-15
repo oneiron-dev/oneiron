@@ -1038,6 +1038,27 @@ mod tests {
             Some(unknown_value.as_slice()),
             "clear_all must preserve unknown key families",
         );
+        drop(rtxn);
+
+        // ONE-1091 durability closure: surviving the overflow re-bootstrap
+        // byte-identically is not enough — the preserved obligation must
+        // still be ACTIONABLE. The sweep executor consumes it end-to-end
+        // (decode → execute → row deleted) after the clear.
+        let report = vault.maintain().run_hard_erase_sweep().run().unwrap();
+        assert_eq!(
+            report.sweep_jobs_processed, 1,
+            "the h: row preserved across clear_all must still execute"
+        );
+        let rtxn = vault.store.env.read_txn().unwrap();
+        assert!(
+            vault
+                .store
+                .sync_queue
+                .get(&rtxn, &sweep_key)
+                .unwrap()
+                .is_none(),
+            "the executed obligation row is consumed"
+        );
     }
 
     /// ONE-1135: `push_delete_bearing` writes the `q:` row AND the pinned

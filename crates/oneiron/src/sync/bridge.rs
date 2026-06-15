@@ -1313,6 +1313,21 @@ fn materialize_entity_blob_in_txn(
             if existing == blob {
                 return Ok(());
             }
+            // ONE-1087 designed exception: the sweep executor's receipt
+            // finalization (`sweep_complete_at` None→Some) is LOCAL-LMDB
+            // -only, so the CRDT mirror keeps replaying the PRE-finalization
+            // bytes forever. That one monotone shape — identical envelope
+            // and fields, local Some vs incoming nil — is the own node's
+            // stale echo: idempotent skip, never quarantine, never
+            // overwrite local. Every other divergence stays on the M4-07
+            // quarantine path.
+            if crate::deletion::redaction_receipt_is_stale_finalization_echo(existing, blob) {
+                tracing::debug!(
+                    entity = %key,
+                    "observer-b: stale pre-finalization receipt echo — keeping finalized local"
+                );
+                return Ok(());
+            }
             return Err(crate::Error::RedactionReceiptDivergence { id });
         }
     }

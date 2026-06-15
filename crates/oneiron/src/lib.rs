@@ -17,6 +17,7 @@ pub(crate) mod ppr;
 pub mod provenance;
 pub mod serialize;
 pub mod store;
+pub(crate) mod sweep;
 #[cfg(feature = "sync")]
 pub mod sync;
 pub mod types;

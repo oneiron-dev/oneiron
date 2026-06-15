@@ -392,6 +392,23 @@ fn enforce_retention_in_txn(
     Ok(evicted)
 }
 
+/// On-demand retention pass for the ONE-1087 sweep executor: evicts `x:`
+/// rows past the pinned cap/age (4096 rows / ≤30 d) without requiring a new
+/// quarantine write to trigger it. Hash-only rows are GDPR-inert, so this
+/// is hygiene, not erasure safety. Returns the number of rows evicted.
+pub(crate) fn expire_stale_rows(vault: &Vault, now: u64) -> Result<u64> {
+    let mut wtxn = vault.store.env.write_txn()?;
+    let evicted = enforce_retention_in_txn(
+        vault,
+        &mut wtxn,
+        MAX_QUARANTINE_ROWS,
+        QUARANTINE_MAX_AGE_SECS,
+        now,
+    )?;
+    wtxn.commit()?;
+    Ok(evicted)
+}
+
 // ─── Read surface ────────────────────────────────────────────────────────────
 
 /// Returns all persisted quarantine records ordered by sequence number.
