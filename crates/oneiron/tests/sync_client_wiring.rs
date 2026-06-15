@@ -971,3 +971,175 @@ fn bulk_transfer_done_imports_into_live_window_when_loaded() {
     // ...and the merged state was persisted.
     assert!(vault.sync_state_get("d:w:2025-11").unwrap().is_some());
 }
+
+/// ONE-1151 fail-closed echo durability (R2): a LOCAL op that Observer A
+/// committed to the live doc but could NOT persist as a `u:w:` row (e.g. a
+/// corrupt `m:u_seq` row failing the persist closed) is stashed in
+/// `observer_a_state.unpersisted`. A later no-op reconnect echo (a frame
+/// whose ops the doc already holds → `oplog_vv` unchanged) must DRAIN that
+/// stash and persist the frame before the no-op early-return, so the op gets
+/// its durable `u:w:` row instead of vanishing on the next restart. The
+/// buggy plain-early-return impl persists nothing → no `u:w:` row → fails.
+#[test]
+fn persist_failed_local_op_survives_via_echo_no_op() {
+    let (_temp, vault) = test_vault();
+    let manager = make_manager(&vault);
+    let (mut client, _rx) = make_client(&manager);
+
+    let live = client.ensure_window("2026-03").unwrap();
+
+    // Corrupt the u_seq counter (2 bytes ≠ 4) so the NEXT Observer A persist
+    // fails closed (CorruptedIndex) AFTER the CRDT op is already committed —
+    // the exact "op in the live doc, no durable u:w: row" interleaving R2
+    // exists for. The Observer A Err arm stashes the failed bytes.
+    vault
+        .sync_state_put("m:u_seq:w:2026-03", &[0xBA, 0xD0])
+        .unwrap();
+    let id = EntityId::now();
+    live.doc
+        .get_map("entities")
+        .insert(
+            &id.to_hex(),
+            make_entity_blob(1, LEARNED_JAN_2026, b"persist-failed-local").as_slice(),
+        )
+        .unwrap();
+    live.doc.commit(); // fires Observer A → persist fails → stash push
+
+    // Precondition: the op is in the doc, NO durable u:w: row, frame stashed.
+    assert!(
+        vault
+            .sync_state_get("u:w:2026-03:00000001")
+            .unwrap()
+            .is_none(),
+        "the failed local persist must leave no u:w: row"
+    );
+    assert_eq!(
+        live.observer_a_state.unpersisted.lock().unwrap().len(),
+        1,
+        "Observer A must stash the exact failed local update frame"
+    );
+
+    // Heal the corrupt counter so the drain's re-persist can succeed.
+    vault
+        .sync_state_put("m:u_seq:w:2026-03", &0u32.to_le_bytes())
+        .unwrap();
+
+    // No-op echo: feed the live doc its OWN current state back as an UPDATE
+    // frame. The import adds no new ops (oplog_vv unchanged), so the handler
+    // takes the no-op path — but it must drain the stash FIRST.
+    let echo = live.doc.export(ExportMode::all_updates()).unwrap();
+    let vv_before = live.doc.oplog_vv();
+    let responses = client
+        .handle_server_message(&transport::encode_window_sync(
+            "2026-03",
+            window_sub_tags::UPDATE,
+            &echo,
+        ))
+        .unwrap();
+    assert!(responses.is_empty(), "a no-op echo returns no responses");
+    assert_eq!(
+        client.window("2026-03").unwrap().doc.oplog_vv(),
+        vv_before,
+        "precondition: the echo carried no new ops (true no-op path)"
+    );
+
+    // The drained frame now has its durable u:w: row.
+    assert!(
+        vault
+            .sync_state_get("u:w:2026-03:00000001")
+            .unwrap()
+            .is_some(),
+        "the stashed local op must be persisted via the no-op echo drain"
+    );
+    assert!(
+        client
+            .window("2026-03")
+            .unwrap()
+            .observer_a_state
+            .unpersisted
+            .lock()
+            .unwrap()
+            .is_empty(),
+        "the stash must be cleared once drained (drain-once-and-clear)"
+    );
+}
+
+/// ONE-1151 regression guard (R2, load-bearing): once the stash is drained,
+/// a SECOND no-op echo must append NO additional `u:w:` row — pinning that
+/// the drain CLEARS the stash and does not re-persist on every echo. A
+/// non-clearing dirty-flag impl re-grows the `u:w:` log on the second echo
+/// (duplicate row + u_seq bump) = exactly the over-persist bug ONE-1151
+/// closed.
+#[test]
+fn drained_stash_second_echo_appends_no_uw_row() {
+    let (_temp, vault) = test_vault();
+    let manager = make_manager(&vault);
+    let (mut client, _rx) = make_client(&manager);
+
+    let live = client.ensure_window("2026-03").unwrap();
+
+    // Reproduce the stash-on-failure precondition (corrupt counter → failed
+    // Observer A persist → frame stashed).
+    vault
+        .sync_state_put("m:u_seq:w:2026-03", &[0xBA, 0xD0])
+        .unwrap();
+    let id = EntityId::now();
+    live.doc
+        .get_map("entities")
+        .insert(
+            &id.to_hex(),
+            make_entity_blob(1, LEARNED_JAN_2026, b"persist-failed-local").as_slice(),
+        )
+        .unwrap();
+    live.doc.commit();
+    vault
+        .sync_state_put("m:u_seq:w:2026-03", &0u32.to_le_bytes())
+        .unwrap();
+
+    let echo = live.doc.export(ExportMode::all_updates()).unwrap();
+    let echo_msg = transport::encode_window_sync("2026-03", window_sub_tags::UPDATE, &echo);
+
+    // First echo drains the stash → exactly one u:w: row.
+    client.handle_server_message(&echo_msg).unwrap();
+    assert!(
+        vault
+            .sync_state_get("u:w:2026-03:00000001")
+            .unwrap()
+            .is_some(),
+        "first echo drains the stash into a u:w: row"
+    );
+    assert_eq!(
+        vault
+            .sync_state_keys_with_prefix("u:w:2026-03:")
+            .unwrap()
+            .len(),
+        1,
+        "exactly one u:w: row after the drain"
+    );
+
+    // Second echo: stash now empty. NO additional u:w: row, no u_seq bump.
+    client.handle_server_message(&echo_msg).unwrap();
+    assert!(
+        vault
+            .sync_state_get("u:w:2026-03:00000002")
+            .unwrap()
+            .is_none(),
+        "an empty-stash echo must NOT append a second u:w: row (dedupe preserved)"
+    );
+    assert_eq!(
+        vault
+            .sync_state_keys_with_prefix("u:w:2026-03:")
+            .unwrap()
+            .len(),
+        1,
+        "the u:w: log must not re-grow on a re-echo (drain-once-and-clear)"
+    );
+    assert_eq!(
+        vault
+            .sync_state_get("m:u_seq:w:2026-03")
+            .unwrap()
+            .as_deref(),
+        Some(1u32.to_le_bytes().as_slice()),
+        "the u_seq high-water mark must not bump on a re-echo"
+    );
+}
