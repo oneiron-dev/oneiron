@@ -4397,44 +4397,49 @@ fn detects_hnsw_metric_and_structure_mismatch_on_open() -> Result<()> {
     Ok(())
 }
 
+/// Consolidated from two single-knob clones (ONE-1145): each case flips one
+/// knob of the persisted HNSW config identity and pins the EXACT
+/// stored/requested literal strings of the typed gate error.
 #[test]
-fn detects_hnsw_config_mismatch_on_open() {
-    let (temp_dir, vault) = open_test_vault();
-    drop(vault);
+fn detects_hnsw_config_and_dimension_mismatch_on_open() {
+    type Reconfigure = fn(&mut VaultConfig);
+    let cases: &[(&str, Reconfigure, &str)] = &[
+        (
+            "ef_construction_flip",
+            |cfg: &mut VaultConfig| cfg.hnsw.ef_construction += 1,
+            "dimensions=4,m_max_0=64,ef_construction=201,distance_metric=cosine,index_structure=flat_nsw",
+        ),
+        (
+            "dimensions_flip",
+            |cfg: &mut VaultConfig| cfg.dimensions = 8,
+            "dimensions=8,m_max_0=64,ef_construction=200,distance_metric=cosine,index_structure=flat_nsw",
+        ),
+    ];
 
-    let mut cfg = test_config();
-    cfg.hnsw.ef_construction += 1;
-    let Err(err) = Vault::open(temp_dir.path(), cfg) else {
-        panic!("expected hnsw config mismatch");
-    };
-    assert!(matches!(
-        err,
-        Error::HnswConfigChanged {
-            ref stored,
-            ref requested
-        } if stored == "dimensions=4,m_max_0=64,ef_construction=200,distance_metric=cosine,index_structure=flat_nsw"
-            && requested == "dimensions=4,m_max_0=64,ef_construction=201,distance_metric=cosine,index_structure=flat_nsw"
-    ));
-}
+    for (case_name, reconfigure, requested_literal) in cases {
+        let (temp_dir, vault) = open_test_vault();
+        drop(vault);
 
-#[test]
-fn detects_dimension_mismatch_on_open() {
-    let (temp_dir, vault) = open_test_vault();
-    drop(vault);
-
-    let mut cfg = test_config();
-    cfg.dimensions = 8;
-    let Err(err) = Vault::open(temp_dir.path(), cfg) else {
-        panic!("expected hnsw config mismatch");
-    };
-    assert!(matches!(
-        err,
-        Error::HnswConfigChanged {
-            ref stored,
-            ref requested
-        } if stored == "dimensions=4,m_max_0=64,ef_construction=200,distance_metric=cosine,index_structure=flat_nsw"
-            && requested == "dimensions=8,m_max_0=64,ef_construction=200,distance_metric=cosine,index_structure=flat_nsw"
-    ));
+        let mut cfg = test_config();
+        reconfigure(&mut cfg);
+        let Err(err) = Vault::open(temp_dir.path(), cfg) else {
+            panic!("case {case_name}: expected hnsw config mismatch");
+        };
+        match err {
+            Error::HnswConfigChanged { stored, requested } => {
+                assert_eq!(
+                    stored,
+                    "dimensions=4,m_max_0=64,ef_construction=200,distance_metric=cosine,index_structure=flat_nsw",
+                    "case {case_name}: stored literal"
+                );
+                assert_eq!(
+                    requested, *requested_literal,
+                    "case {case_name}: requested literal"
+                );
+            }
+            other => panic!("case {case_name}: expected HnswConfigChanged, got {other:?}"),
+        }
+    }
 }
 
 #[test]
@@ -4503,6 +4508,10 @@ fn embedding_model_first_write_is_atomic() -> Result<()> {
 
 #[test]
 fn creates_contract_manifest_databases() -> Result<()> {
+    // Also pins ONE-1093 feature-independence (formerly a separate test,
+    // consolidated by ONE-1145): this test compiles and runs under BOTH the
+    // default and `--features sync` configs and asserts the same 25-name
+    // materialized set, including the sync_state/sync_queue rows below.
     let (_dir, vault) = open_test_vault();
 
     let contract_names: Vec<&str> = DB_MANIFEST.iter().map(|entry| entry.name).collect();
@@ -4569,82 +4578,31 @@ fn open_rejects_rogue_manifest_database_name() -> Result<()> {
     Ok(())
 }
 
+/// Consolidated from three name-only clones (ONE-1145): one core DB plus the
+/// two sync-era DBs (manifest rows 24/25). Removing ANY required manifest
+/// name must fail closed with the exact missing-name payload — including the
+/// sync DBs, which are part of the 25-name set regardless of features.
 #[test]
 fn open_rejects_missing_required_manifest_database_name() -> Result<()> {
-    let temp_dir = tempfile::tempdir()?;
-    create_raw_vault_missing_manifest_name(temp_dir.path(), "hnsw_meta")?;
+    for missing_name in ["hnsw_meta", "sync_state", "sync_queue"] {
+        let temp_dir = tempfile::tempdir()?;
+        create_raw_vault_missing_manifest_name(temp_dir.path(), missing_name)?;
 
-    let err = match Vault::open(temp_dir.path(), test_config()) {
-        Ok(_) => panic!("expected Vault::open to fail closed on missing manifest DB"),
-        Err(err) => err,
-    };
-    assert!(
-        matches!(
-            err,
-            Error::DbManifestMismatch {
-                ref missing,
-                ref unexpected
-            } if missing == &vec!["hnsw_meta".to_owned()] && unexpected.is_empty()
-        ),
-        "expected DB manifest mismatch for missing hnsw_meta, got {err:?}"
-    );
-    Ok(())
-}
-
-#[test]
-fn materialized_manifest_set_is_feature_independent_all_25() -> Result<()> {
-    let temp_dir = tempfile::tempdir()?;
-    let vault = Vault::open(temp_dir.path(), test_config())?;
-    let expected: Vec<String> = expected_manifest_names()
-        .iter()
-        .map(|name| (*name).to_owned())
-        .collect();
-
-    assert_eq!(materialized_database_names(&vault)?, expected);
-    Ok(())
-}
-
-#[test]
-fn open_rejects_missing_sync_state_manifest_database_name() -> Result<()> {
-    let temp_dir = tempfile::tempdir()?;
-    create_raw_vault_missing_manifest_name(temp_dir.path(), "sync_state")?;
-
-    let err = match Vault::open(temp_dir.path(), test_config()) {
-        Ok(_) => panic!("expected Vault::open to fail closed on missing sync_state DB"),
-        Err(err) => err,
-    };
-    assert!(
-        matches!(
-            err,
-            Error::DbManifestMismatch {
-                ref missing,
-                ref unexpected
-            } if missing == &vec!["sync_state".to_owned()] && unexpected.is_empty()
-        ),
-        "expected DB manifest mismatch for missing sync_state, got {err:?}"
-    );
-    Ok(())
-}
-
-#[test]
-fn open_rejects_missing_sync_queue_manifest_database_name() -> Result<()> {
-    let temp_dir = tempfile::tempdir()?;
-    create_raw_vault_missing_manifest_name(temp_dir.path(), "sync_queue")?;
-
-    let err = match Vault::open(temp_dir.path(), test_config()) {
-        Ok(_) => panic!("expected Vault::open to fail closed on missing sync_queue DB"),
-        Err(err) => err,
-    };
-    assert!(
-        matches!(
-            err,
-            Error::DbManifestMismatch {
-                ref missing,
-                ref unexpected
-            } if missing == &vec!["sync_queue".to_owned()] && unexpected.is_empty()
-        ),
-        "expected DB manifest mismatch for missing sync_queue, got {err:?}"
-    );
+        let err = match Vault::open(temp_dir.path(), test_config()) {
+            Ok(_) => panic!("expected Vault::open to fail closed on missing {missing_name}"),
+            Err(err) => err,
+        };
+        assert!(
+            matches!(
+                err,
+                Error::DbManifestMismatch {
+                    ref missing,
+                    ref unexpected
+                } if missing == &vec![missing_name.to_owned()] && unexpected.is_empty()
+            ),
+            "expected DB manifest mismatch for missing {missing_name}, got {err:?}"
+        );
+    }
     Ok(())
 }
 
