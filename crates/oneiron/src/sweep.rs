@@ -187,6 +187,20 @@ thread_local! {
 #[cfg(all(feature = "sync", test))]
 pub(crate) const RACE_BENIGN_MARKER: &[u8] = b"SWEEP-RACE-BENIGN-MARKER-5b2e0a";
 
+// Test-only carrier-race injection for the SECOND TOCTOU (sibling of
+// INJECT_CRASH_BEFORE_FINALIZE): when armed with a window label, fires ONCE
+// at the very start of `finalize_job` — AFTER `compact_all_windows` returned
+// AllCompacted (zero u:w: rows anywhere) and BEFORE the finalize write txn
+// opens — to append a fresh, VALID `u:w:{window}:*` update row in its own
+// committed txn. This reproduces a post-compaction carrier arrival in the gap
+// that the in-txn u:w: fence must catch and DEFER (NOT delete the h: row).
+// Sync-only: building a valid update needs the Loro helpers.
+#[cfg(all(feature = "sync", test))]
+thread_local! {
+    pub(crate) static INJECT_UW_ROW_BEFORE_FINALIZE: std::cell::RefCell<Option<String>> =
+        const { std::cell::RefCell::new(None) };
+}
+
 /// Executes one manual sweep pass (phase 1; scheduling is M6).
 pub(crate) fn run_hard_erase_sweep(vault: &Vault) -> Result<HardEraseSweepRun> {
     let now = crate::unix_seconds_now();
@@ -318,9 +332,21 @@ pub(crate) fn run_hard_erase_sweep(vault: &Vault) -> Result<HardEraseSweepRun> {
         WindowSweepState::AllCompacted => {
             for (key, job) in &due {
                 match finalize_job(vault, key, job, now) {
-                    Ok(finalized) => {
+                    Ok(Some(finalized)) => {
                         run.receipts_finalized += finalized;
                         run.jobs_processed += 1;
+                    }
+                    // Final carrier fence (ONE-1087/1091, second TOCTOU): a
+                    // `u:w:` row arrived AFTER compaction committed and BEFORE
+                    // this finalize txn. The fence aborted the txn with NO
+                    // mutation (h: row kept, receipt still nil). This is a
+                    // transient race, NOT a failure: defer like the
+                    // Deferred-window arm below — increment jobs_deferred and
+                    // DO NOT consume retry backoff. Routing through
+                    // rewrite_job_for_retry would mis-classify it as failed
+                    // and burn an attempt. The carrier self-heals next run.
+                    Ok(None) => {
+                        run.jobs_deferred += 1;
                     }
                     // Finding 2 (fail closed, per-job): an undecodable
                     // REDACTION_AUDIT receipt body aborted THIS job's
@@ -805,10 +831,53 @@ fn scrub_erased_ids_from_doc(doc: &loro::LoroDoc, erased: &BTreeSet<EntityId>) -
 /// delete again), one completed sweep satisfies all of them — the
 /// obligation ("the ids' historical carriers are scrubbed") is global per
 /// run, and the sibling job then finalizes nothing extra.
-fn finalize_job(vault: &Vault, job_key: &[u8], job: &HardEraseSweepJob, now: u64) -> Result<u64> {
+///
+/// Returns `Ok(Some(n))` when finalized (n receipts updated), or `Ok(None)`
+/// when DEFERRED by the final carrier fence: `compact_all_windows` only
+/// reaches here as `AllCompacted` when ZERO windows were live, so a swept
+/// window then carries ZERO `u:w:` rows. Any `u:w:` row observed inside the
+/// finalize txn is therefore an unambiguous post-compaction arrival — a
+/// SECOND TOCTOU between compaction-commit and finalize. The fence scans
+/// `u:w:` as the FIRST step of the SAME write txn that rewrites receipts and
+/// deletes the h: row (LMDB single-writer makes recheck+delete atomic; a
+/// separate pre-finalize pass would reintroduce the race) and, on any hit,
+/// returns `Ok(None)` with NO mutation. The caller defers the job (no retry
+/// backoff consumed); the raced carrier self-heals on the next run.
+fn finalize_job(
+    vault: &Vault,
+    job_key: &[u8],
+    job: &HardEraseSweepJob,
+    now: u64,
+) -> Result<Option<u64>> {
+    // Test-only carrier-race injection: land a valid `u:w:` row in the gap
+    // between compaction-commit and the finalize txn so the in-txn fence
+    // below observes it. Its own committed txn (the finalize txn has not
+    // opened yet) — same idiom as the compaction-phase race injection.
+    #[cfg(all(feature = "sync", test))]
+    inject_uw_row_before_finalize(vault)?;
+
     let job_ids: BTreeSet<&str> = job.scope.entity_ids.iter().map(String::as_str).collect();
-    let mut finalized = 0u64;
-    vault.with_write_txn(|wtxn| {
+    let finalized = vault.with_write_txn(|wtxn| {
+        // FINAL CARRIER FENCE (in-txn, FIRST step, NO mutation before it):
+        // any `u:w:` row present at AllCompacted-finalize is a post-
+        // compaction arrival → abort with no mutation, signalling defer.
+        if vault
+            .store
+            .sync_state
+            .prefix_iter(&*wtxn, "u:w:")?
+            .next()
+            .transpose()?
+            .is_some()
+        {
+            tracing::warn!(
+                seq = ?decode_hard_erase_sweep_seq(job_key),
+                "sweep: u:w: carrier arrived after compaction, before finalize — \
+                 obligation kept, job deferred (fail closed, no retry consumed)"
+            );
+            return Ok(None);
+        }
+
+        let mut finalized = 0u64;
         let mut rewrites: Vec<(Vec<u8>, Vec<u8>)> = Vec::new();
         for entry in vault
             .store
@@ -837,6 +906,20 @@ fn finalize_job(vault: &Vault, job_key: &[u8], job: &HardEraseSweepJob, now: u64
             // far rolls back too — all-or-nothing). The exact literal
             // `decode_redaction_audit_receipt` already emits is reused, and
             // the AllCompacted loop catches it to route THIS job to retry.
+            //
+            // Structural validation FIRST, on the STORED raw bytes: Serde's
+            // `decode_redaction_audit_receipt` silently drops unknown fields,
+            // so a re-encode-then-validate (below, line ~859) only ever sees
+            // the dropped-field body and lets a divergent stored receipt
+            // finalize. The raw validator rejects unknown/duplicate keys, so
+            // running it on the on-disk body closes that gap. Its native
+            // `InvalidRedactionReceiptBody` is MAPPED to the exact
+            // `CorruptedIndex("redaction audit receipt body")` literal the
+            // AllCompacted loop's per-job retry arm catches — without the map
+            // it would hit `Err(err) => return Err(err)` and hard-abort the
+            // WHOLE sweep run instead of keeping this one h: row for retry.
+            validate_redaction_receipt_body(&raw[header_len..])
+                .map_err(|_| Error::CorruptedIndex("redaction audit receipt body"))?;
             let mut receipt = decode_redaction_audit_receipt(&raw[header_len..])?;
             if receipt.sweep_queued_at.is_none() || receipt.sweep_complete_at.is_some() {
                 continue;
@@ -868,9 +951,9 @@ fn finalize_job(vault: &Vault, job_key: &[u8], job: &HardEraseSweepJob, now: u64
         }
         // Obligation row deletion LAST, same txn (crash-safe ordering).
         vault.store.sync_queue.delete(wtxn, job_key)?;
-        Ok(())
+        Ok(Some(finalized))
     })?;
-    if finalized == 0 {
+    if finalized == Some(0) {
         // Job without a pending receipt: §8c-style carrier-only obligation
         // (or a sibling job's sweep already finalized the shared receipt).
         tracing::debug!(
@@ -879,6 +962,42 @@ fn finalize_job(vault: &Vault, job_key: &[u8], job: &HardEraseSweepJob, now: u64
         );
     }
     Ok(finalized)
+}
+
+/// Test-only seam — see [`INJECT_UW_ROW_BEFORE_FINALIZE`]. When armed with a
+/// window label, appends a fresh, VALID higher-seq `u:w:{window}:*` update
+/// row (built from the window's own lineage so a clean re-run imports it
+/// without missing deps) in its OWN committed txn, then disarms. Mirrors the
+/// compaction-phase race injection.
+#[cfg(all(feature = "sync", test))]
+fn inject_uw_row_before_finalize(vault: &Vault) -> Result<()> {
+    use crate::sync::loro_support::{doc_from_snapshot, export_updates_from};
+    use crate::sync::schema::create_window_doc;
+    use crate::sync::types::WindowKey;
+
+    let Some(label) = INJECT_UW_ROW_BEFORE_FINALIZE.with(|cell| cell.borrow_mut().take()) else {
+        return Ok(());
+    };
+    let key = WindowKey::new(&label);
+    let snapshot = vault.sync_state_get(&format!("d:w:{key}"))?;
+    let racer = match snapshot {
+        Some(bytes) => doc_from_snapshot(&bytes)?,
+        None => create_window_doc("racer", &key),
+    };
+    let base_vv = racer.oplog_vv();
+    racer
+        .get_map("entities")
+        .insert(EntityId::now().to_hex().as_str(), RACE_BENIGN_MARKER)
+        .map_err(|e| Error::SyncProtocolError(format!("uw-row inject insert: {e}")))?;
+    racer.commit();
+    let delta = export_updates_from(&racer, &base_vv)?;
+    let mut wtxn = vault.store.env.write_txn()?;
+    vault
+        .store
+        .sync_state
+        .put(&mut wtxn, &format!("u:w:{key}:ffffffff"), &delta)?;
+    wtxn.commit()?;
+    Ok(())
 }
 
 /// Rewrites a job's `retry_state` IN PLACE after a failed attempt (the row
@@ -1791,6 +1910,180 @@ mod tests {
         assert!(
             !sync_rows_contain(&vault, UNIT_SENTINEL),
             "no erased-payload bytes may survive the idempotent re-run"
+        );
+    }
+
+    /// R5 (ONE-1087/1091 final carrier fence — the SECOND TOCTOU): a `u:w:`
+    /// row that appears AFTER window compaction committed (state =
+    /// AllCompacted ⇒ zero u:w: rows anywhere) but BEFORE the finalize txn
+    /// must DEFER the job. The in-txn fence (the FIRST step of the same write
+    /// txn that would delete the h: row) sees the post-compaction carrier and
+    /// aborts with NO mutation: the h: row is KEPT, the receipt stays nil,
+    /// `jobs_deferred` is incremented, and — crucially — the job is NOT
+    /// routed to retry (a transient race must never burn a retry attempt). A
+    /// no-fence impl deletes the h: row and finalizes the receipt → fails.
+    #[cfg(feature = "sync")]
+    #[test]
+    fn sweep_defers_when_uw_carrier_appears_after_compaction_before_finalize() {
+        use crate::sync::bridge::Materializer;
+        use crate::sync::manager::WindowManager;
+        use crate::sync::types::WindowKey;
+        use std::sync::Arc;
+
+        let dir = tempfile::tempdir().unwrap();
+        let vault = Arc::new(Vault::open(dir.path(), test_config()).unwrap());
+        let id = EntityId::now();
+        put_entity(&vault, &id, 1_771_027_200, b"final-fence-body");
+
+        // Mirror the entity into a real CRDT window, then close it so the
+        // sweep can compact it to AllCompacted (zero u:w: rows). This is the
+        // ONLY state that reaches finalize_job — the fence's precondition.
+        let materializer = Arc::new(Materializer::new());
+        let manager = Arc::new(WindowManager::new(
+            Arc::clone(&vault),
+            materializer,
+            "final-fence",
+        ));
+        let window_key = WindowKey::from_timestamp(1_771_027_200);
+        let window = manager.open_window(&window_key).unwrap();
+        let outcome = vault
+            .delete_entity_with_reason(&id, DeleteReason::GdprDelete)
+            .unwrap();
+        let receipt_id = outcome.receipt_id.expect("receipt id");
+        let sweep_key = outcome.sweep_key.expect("sweep key");
+        let job_value_before = h_rows(&vault)
+            .iter()
+            .find(|(k, _)| *k == sweep_key)
+            .expect("job row")
+            .1
+            .clone();
+        drop(window);
+        assert!(manager.unload_window(&window_key).unwrap());
+
+        // Arm the seam: a valid u:w: row lands in the gap between
+        // compaction-commit and the finalize txn (its own committed txn).
+        let window_label = crate::deletion::window_label_from_timestamp(1_771_027_200);
+        INJECT_UW_ROW_BEFORE_FINALIZE.with(|cell| *cell.borrow_mut() = Some(window_label.clone()));
+
+        let run = run_hard_erase_sweep(&vault).unwrap();
+
+        assert_eq!(
+            run.jobs_processed, 0,
+            "a post-compaction carrier must defer, not finalize"
+        );
+        assert_eq!(run.receipts_finalized, 0);
+        assert!(
+            run.jobs_deferred >= 1,
+            "the raced-in u:w: carrier must defer the job"
+        );
+        assert_eq!(
+            run.jobs_failed, 0,
+            "a transient post-compaction race is NOT a failure (no retry consumed)"
+        );
+
+        // The h: row survives BYTE-IDENTICAL: the defer must not consume
+        // retry_state (no rewrite_job_for_retry).
+        let rows = h_rows(&vault);
+        let kept: Vec<_> = rows.iter().filter(|(k, _)| *k == sweep_key).collect();
+        assert_eq!(kept.len(), 1, "the obligation row must survive the fence");
+        assert_eq!(
+            kept[0].1, job_value_before,
+            "deferral must not consume retry_state (byte-identical row)"
+        );
+        assert!(
+            receipt_sweep_complete_at(&vault, &receipt_id).is_none(),
+            "the receipt must stay nil — the fence aborts before any mutation"
+        );
+    }
+
+    /// R6 (ONE-1087/1091 raw receipt validation before decode): a stored
+    /// type-120 REDACTION_AUDIT body that carries every required field PLUS
+    /// one UNKNOWN key decodes fine via Serde (which drops unknown fields)
+    /// but is rejected by the raw `validate_redaction_receipt_body` — which
+    /// `finalize_job` now runs on the STORED bytes BEFORE decode. The
+    /// validator's `InvalidRedactionReceiptBody` is mapped to the exact
+    /// `CorruptedIndex("redaction audit receipt body")` literal so the
+    /// per-job retry arm catches it: the h: row is KEPT, the receipt stays
+    /// nil, the job routes to retry, and the WHOLE run does NOT hard-error.
+    /// The buggy re-encode-then-validate impl (validating only the
+    /// already-stripped body) finalizes and deletes the h: row → fails.
+    #[test]
+    fn sweep_unknown_field_receipt_keeps_h_row_not_finalized() {
+        use rmpv::Value;
+
+        let (_dir, vault) = open_vault();
+        let id = EntityId::now();
+        put_entity(&vault, &id, 1_771_027_200, b"unknown-field-receipt-body");
+        let outcome = vault
+            .delete_entity_with_reason(&id, DeleteReason::GdprDelete)
+            .unwrap();
+        let receipt_id = outcome.receipt_id.expect("receipt id");
+        let sweep_key = outcome.sweep_key.expect("sweep key");
+
+        // Sanity: the receipt is a pending sweep target (queued, not yet
+        // swept) — exactly what finalize_job would otherwise finalize.
+        assert!(
+            receipt_sweep_complete_at(&vault, &receipt_id).is_none(),
+            "receipt must start unswept"
+        );
+
+        // Rewrite the STORED receipt body to add one UNKNOWN key. Start from
+        // the real, valid body (so all required fields + types are present
+        // and Serde still decodes it), then append a key outside the pinned
+        // RECEIPT_BODY_KEYS set — the discriminator the raw validator rejects.
+        let header_len = crate::batch::ENTITY_METADATA_HEADER_LEN;
+        let raw = vault.get_raw(&receipt_id).unwrap().expect("receipt raw");
+        let mut cursor = std::io::Cursor::new(&raw[header_len..]);
+        let Value::Map(mut entries) = rmpv::decode::read_value(&mut cursor).unwrap() else {
+            panic!("receipt body must be a map");
+        };
+        entries.push((
+            Value::String("smuggled_unknown_field".into()),
+            Value::Boolean(true),
+        ));
+        let mut tampered_body = Vec::new();
+        rmpv::encode::write_value(&mut tampered_body, &Value::Map(entries)).unwrap();
+        // The tampered body still Serde-decodes (unknown field ignored)...
+        assert!(
+            decode_redaction_audit_receipt(&tampered_body).is_ok(),
+            "Serde must still decode (unknown field dropped) — the gap R6 closes"
+        );
+        // ...but the raw validator rejects it (the only safety net).
+        assert!(
+            validate_redaction_receipt_body(&tampered_body).is_err(),
+            "the raw validator must reject the unknown field"
+        );
+        let mut rewritten = Vec::with_capacity(header_len + tampered_body.len());
+        rewritten.extend_from_slice(&raw[..header_len]);
+        rewritten.extend_from_slice(&tampered_body);
+        {
+            let mut wtxn = vault.store.env.write_txn().unwrap();
+            vault
+                .store
+                .entities
+                .put(&mut wtxn, receipt_id.as_bytes(), &rewritten)
+                .unwrap();
+            wtxn.commit().unwrap();
+        }
+
+        // The run must NOT hard-error (the .map_err keeps it a per-job retry).
+        let run = run_hard_erase_sweep(&vault).expect("run must not hard-abort");
+        assert_eq!(
+            run.jobs_processed, 0,
+            "an unknown-field receipt must not finalize"
+        );
+        assert_eq!(run.receipts_finalized, 0);
+        assert!(run.jobs_failed >= 1, "the job must route to retry");
+
+        // The obligation row is KEPT (fail-closed, undecodable-receipt
+        // posture) and the receipt stays nil.
+        assert!(
+            h_rows(&vault).iter().any(|(k, _)| *k == sweep_key),
+            "the h: row must be kept when the stored receipt body is invalid"
+        );
+        assert!(
+            receipt_sweep_complete_at(&vault, &receipt_id).is_none(),
+            "the receipt must stay nil — finalize aborts before mutation"
         );
     }
 }
