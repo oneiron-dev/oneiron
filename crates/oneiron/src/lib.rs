@@ -54,7 +54,7 @@ pub use crate::types::{
     VadComponent, VaultConfig,
 };
 pub use crate::vault::{
-    TextIndexStatus, Vault, VaultDoctorDbManifestReport, VaultDoctorHnswRecordState,
+    ActorBound, TextIndexStatus, Vault, VaultDoctorDbManifestReport, VaultDoctorHnswRecordState,
     VaultDoctorHnswReport, VaultDoctorReport,
 };
 
