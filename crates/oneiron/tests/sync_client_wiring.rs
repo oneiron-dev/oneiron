@@ -691,6 +691,156 @@ fn fast_reconnect_reuses_persisted_sv_without_doc_load_when_svf_fresh() {
     );
 }
 
+/// ONE-1151 svf-freshness fix (consumer side): when `persist_state` leaves a
+/// surviving post-merge `u:w:` row, `svf:w:` is STALE — so the fast-reconnect
+/// reader must NOT take the `sv:w:` shortcut. It full-opens the window and
+/// ships a VV that INCLUDES the survivor's ops; trusting the bare `sv:w:` VV
+/// would silently omit the survivor from the exchange.
+#[test]
+fn fast_reconnect_omits_nothing_when_a_survivor_exists() {
+    use loro::ContainerTrait;
+
+    let (_temp, vault) = test_vault();
+    let now_secs = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let current = WindowKey::from_timestamp(now_secs);
+
+    let manager_a = make_manager(&vault);
+    let window = manager_a.open_window(&current).unwrap();
+
+    // Pre-seed `u:w:{current}:00000001` with an op the freshly-opened doc
+    // does NOT hold, so persist_state's merge import diffs (firing the
+    // injection). This row IS in the merge inventory → pruned.
+    let seed = create_window_doc("seed", &current);
+    let seed_id = EntityId::now();
+    seed.get_map("entities")
+        .insert(
+            &seed_id.to_hex(),
+            make_entity_blob(1, now_secs, b"seed").as_slice(),
+        )
+        .unwrap();
+    seed.commit();
+    let seed_bytes = seed.export(ExportMode::all_updates()).unwrap();
+    vault
+        .sync_state_put(&format!("u:w:{current}:00000001"), &seed_bytes)
+        .unwrap();
+    vault
+        .sync_state_put(&format!("m:u_seq:w:{current}"), &1u32.to_le_bytes())
+        .unwrap();
+
+    // The survivor op (transient parallel writer): absent from the merge
+    // inventory AND from the exported snapshot.
+    let late = create_window_doc("late", &current);
+    let late_id = EntityId::now();
+    late.get_map("entities")
+        .insert(
+            &late_id.to_hex(),
+            make_entity_blob(1, now_secs, b"late").as_slice(),
+        )
+        .unwrap();
+    late.commit();
+    let late_bytes = late.export(ExportMode::all_updates()).unwrap();
+
+    // Inject the survivor row DURING the merge import (after the prune
+    // inventory was captured, before the write txn).
+    let injected = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let cb_vault = Arc::clone(&vault);
+    let cb_key = current.to_string();
+    let cb_bytes = late_bytes;
+    let cb_flag = Arc::clone(&injected);
+    let entities_cid = window.doc.get_map("entities").id();
+    let _inj = window.doc.subscribe(
+        &entities_cid,
+        Arc::new(move |_event| {
+            if cb_flag.swap(true, std::sync::atomic::Ordering::SeqCst) {
+                return;
+            }
+            cb_vault
+                .sync_state_put(&format!("u:w:{cb_key}:00000002"), &cb_bytes)
+                .unwrap();
+            cb_vault
+                .sync_state_put(&format!("m:u_seq:w:{cb_key}"), &2u32.to_le_bytes())
+                .unwrap();
+        }),
+    );
+
+    // Drive persistence through the manager's unload (persist_state inside).
+    assert!(manager_a.unload_window(&current).unwrap());
+    assert!(
+        injected.load(std::sync::atomic::Ordering::SeqCst),
+        "injection must have fired during the merge import"
+    );
+    drop(_inj);
+    drop(window);
+
+    // The survivor remains and svf is STALE.
+    assert!(
+        vault
+            .sync_state_get(&format!("u:w:{current}:00000002"))
+            .unwrap()
+            .is_some(),
+        "the post-merge survivor row must remain after the prune"
+    );
+    assert_eq!(
+        vault
+            .sync_state_get(&format!("svf:w:{current}"))
+            .unwrap()
+            .as_deref(),
+        Some([0u8].as_slice()),
+        "a surviving post-merge u:w: row must leave svf STALE"
+    );
+
+    // The bare sv:w: VV (snapshot only) versus the full recovered VV (snapshot
+    // + survivor replay). The two MUST differ — that's the whole point.
+    let bare_vv = VersionVector::decode(
+        &vault
+            .sync_state_get(&format!("sv:w:{current}"))
+            .unwrap()
+            .expect("sv:w: persisted"),
+    )
+    .unwrap();
+    let full_vv = oneiron::sync::window::load_window_from_state(&vault, "test-user", &current)
+        .unwrap()
+        .oplog_vv();
+    assert_ne!(
+        full_vv, bare_vv,
+        "the survivor's ops must extend the doc VV beyond the bare sv:w:"
+    );
+
+    // Consumer: a fresh client's initial sync must full-open (NOT trust svf)
+    // and ship the FULL VV, not the bare sv:w: VV.
+    let manager_b = make_manager(&vault);
+    let (client, _rx) = make_client(&manager_b);
+    let messages = client.generate_initial_sync();
+
+    let mut found = None;
+    for msg in &messages {
+        if msg[0] != TAG_WINDOW_SYNC {
+            continue;
+        }
+        let (key, sub_tag, payload) = transport::decode_window_sync(&msg[1..]).unwrap();
+        if key == current.as_str() {
+            assert_eq!(sub_tag, window_sub_tags::VV_REQUEST);
+            found = Some(VersionVector::decode(payload).unwrap());
+        }
+    }
+    let shipped = found.expect("initial sync must include the current window VV");
+    assert!(
+        manager_b.window(&current).is_some(),
+        "stale svf must full-open the window instead of trusting sv:w:"
+    );
+    assert_eq!(
+        shipped, full_vv,
+        "the shipped VV must include the survivor's ops (full doc VV)"
+    );
+    assert_ne!(
+        shipped, bare_vv,
+        "the shipped VV must NOT be the bare sv:w: VV that omits the survivor"
+    );
+}
+
 // ─── AC7: BulkTransfer → sync_state persistence, fail-closed ────────────────
 
 #[test]
