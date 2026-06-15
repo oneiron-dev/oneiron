@@ -1920,12 +1920,6 @@ mod tests {
         );
     }
 
-    fn test_vault() -> (tempfile::TempDir, Arc<Vault>) {
-        let dir = tempfile::tempdir().unwrap();
-        let vault = Arc::new(Vault::open(dir.path(), crate::VaultConfig::device()).unwrap());
-        (dir, vault)
-    }
-
     /// The single constructor of [`DeleteBearingUpdate`] (ONE-1135 review
     /// item 14): a no-op tombstone commit exports nothing (no q:/d: rows
     /// queued); a real tombstone commit exports a non-empty delta.

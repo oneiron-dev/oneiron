@@ -12422,24 +12422,27 @@ fn provenance_actor_class_in_both_body_and_evid_fails_closed() -> Result<()> {
         EdgeActorClass::Human,
     ));
     let bytes = crate::claim::encode_claim_body(&wrapper)?;
-    vault.with_write_txn(|wtxn| {
-        vault
-            .batch_in()
-            .put_reserved_claim(&claim_id, test_time_range(1_000, u64::MAX), 1_000, &bytes)
-            .edge(&claim_id, EdgeKind::ClaimOf, &fx.subject.source, 1.0)
-            .apply(wtxn)
-    })?;
-
+    // The structural write-door (ONE-1159) rejects the ambiguous body at WRITE
+    // time — the claim never reaches the store, so the whole batch is rejected
+    // atomically. The resolve-time check in `resolve_persisted_actor_class` is
+    // the defence-in-depth backstop, pinned separately by
+    // `resolve_persisted_actor_class_pins_transition_matrix`.
     let err = vault
-        .retract_edge_provenance(&claim_id, 2_000)
-        .expect_err("both-places actor_class must fail closed");
+        .with_write_txn(|wtxn| {
+            vault
+                .batch_in()
+                .put_reserved_claim(&claim_id, test_time_range(1_000, u64::MAX), 1_000, &bytes)
+                .edge(&claim_id, EdgeKind::ClaimOf, &fx.subject.source, 1.0)
+                .apply(wtxn)
+        })
+        .expect_err("both-places actor_class must fail closed at write");
     assert_eq!(err.kind(), ErrorKind::InvalidProvenanceBody);
 
-    // Fail-closed wrote nothing: the claim is still active and the subject
-    // edge still carries no provenance stamp (24 B bare).
-    assert_eq!(
-        vault.get_claim(&claim_id)?.expect("claim stored").lifecycle,
-        ClaimLifecycleStatus::Active
+    // Fail-closed wrote nothing: the ambiguous claim was never stored and the
+    // subject edge still carries no provenance stamp (24 B bare).
+    assert!(
+        vault.get_claim(&claim_id)?.is_none(),
+        "rejected ambiguous claim must not be stored"
     );
     let (out, _) = raw_edge_values(vault, &fx.subject)?;
     assert_eq!(out.expect("edge row").len(), EDGE_VALUE_SEMANTIC_LEN);
