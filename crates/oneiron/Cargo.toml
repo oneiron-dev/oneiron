@@ -8,6 +8,10 @@ license.workspace = true
 [dependencies]
 heed = { workspace = true }
 uuid = { workspace = true }
+# BASE deps (not sync-gated): receipts mint — and are attested — in base
+# paths, including the non-sync build (ONE-1140, OD-1/OD-2).
+ed25519-dalek = { workspace = true }
+rand_core = { workspace = true }
 thiserror = { workspace = true }
 rmp-serde = { workspace = true }
 rmpv = { workspace = true }
@@ -57,10 +61,18 @@ heed = { workspace = true, features = ["posix-sem"] }
 
 [features]
 sync = ["loro", "dep:tokio", "dep:tokio-tungstenite", "dep:futures-util", "dep:zstd"]
+# Compiles in cross-crate test-only fault-injection seams (e.g. the lease
+# mirror-failure hook for ONE-1140's root-snapshot/`ls:`-mirror atomicity
+# test in `oneiron-server`). No production effect; enabled only by
+# downstream crates' dev-dependencies.
+test-hooks = []
 
 [dev-dependencies]
 tempfile = "3"
 rand = "0.8"
+# Integration tests forge/sign attested receipts independently of the
+# engine's signer (contract-grounded test vectors, ONE-1140).
+ed25519-dalek = { workspace = true }
 yrs = { version = "0.25", features = ["sync"] }
 libc = "0.2"
 

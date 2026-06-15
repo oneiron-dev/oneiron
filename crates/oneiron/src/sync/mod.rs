@@ -20,6 +20,7 @@
 //!   orchestration (pm replay → reverse remat → forward remat → observers)
 //! - `quarantine` — `x:` quarantine sink + `rm:` rematerialization markers
 //!   + `ra:` tombstone re-assertion markers (ONE-1156)
+//! - `lease` — device-lease registry + receipt origin attestation (ONE-1140)
 //! - `server_state` — server-side sync_state persistence (Observer-A-equivalent)
 
 pub mod bridge;
@@ -27,6 +28,7 @@ pub mod client;
 pub mod connection;
 #[cfg(test)]
 mod convergence_props_internal;
+pub mod lease;
 pub(crate) mod loro_support;
 pub mod manager;
 pub mod quarantine;
@@ -39,6 +41,12 @@ pub mod window;
 
 pub use client::{SyncClient, SyncClientConfig, SyncEvent, SyncStatus};
 pub use connection::{ConnectionConfig, LocalUpdate, SyncConnection};
+pub use lease::{
+    LEASE_DURATION_SECS, LEASE_KEY_PREFIX, LEASE_POP_DOMAIN, LEASE_RECORD_LEN,
+    LEASE_RECORD_VERSION, LeaseRecord, LeaseStatus, ROOT_LEASES_MAP, client_id_hex,
+    decode_lease_record, encode_lease_record, lease_key, lease_pop_transcript,
+    mirror_leases_from_root, verify_lease_pop,
+};
 pub use loro::Subscription;
 pub use loro_support::export_updates_since;
 pub use manager::WindowManager;

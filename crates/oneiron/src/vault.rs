@@ -2292,11 +2292,10 @@ impl Vault {
         learned_at: u64,
         body: &[u8],
     ) -> Result<()> {
+        // Shared header helper (ONE-1140): the attestation transcript signs
+        // EXACTLY these stored header bytes — one assembly point, no drift.
         let mut payload = Vec::with_capacity(ENTITY_METADATA_HEADER_LEN + body.len());
-        payload.push(ENTITY_TYPE_REDACTION_AUDIT);
-        payload.extend_from_slice(&learned_at.to_be_bytes());
-        payload.extend_from_slice(&learned_at.to_be_bytes());
-        payload.extend_from_slice(&learned_at.to_be_bytes());
+        payload.extend_from_slice(&crate::deletion::receipt_envelope_header(learned_at));
         payload.extend_from_slice(body);
         self.store
             .entities
@@ -2333,8 +2332,13 @@ impl Vault {
             Vec::new()
         };
 
+        // ONE-1140 (OD-2/OD-6): every receipt is signed at mint. The device
+        // identity (client id + Ed25519 keypair) is lazily self-provisioned
+        // in THIS txn — all receipt-mint paths funnel through here, so this
+        // is the single in-txn hook.
+        let identity = crate::identity::ensure_device_identity_in_txn(self, wtxn)?;
         let hard_purge_complete_at = input.hard_purge_complete_at;
-        let body = encode_redaction_audit_receipt(input)?;
+        let body = encode_redaction_audit_receipt(input, receipt_id, &identity)?;
         self.put_redaction_audit_receipt_in_txn(wtxn, receipt_id, hard_purge_complete_at, &body)?;
         Ok(sweep_key)
     }

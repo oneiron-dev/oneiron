@@ -569,7 +569,28 @@ fn user_hard_delete_writes_opaque_redaction_audit_receipt() -> Result<()> {
     );
     assert!(receipt["sweep_queued_at"].as_u64().is_some());
     assert!(receipt["sweep_complete_at"].is_null());
-    assert!(receipt["verification"].as_object().unwrap().is_empty());
+    // ONE-1140 (OD-6) versions the M4 "verification empty" pin: every
+    // minted receipt now carries EXACTLY the four att_ attestation entries
+    // (lowercase hex strings, pinned lengths). Still opaque — hex
+    // identifiers and a signature, never content.
+    let verification = receipt["verification"].as_object().unwrap();
+    let mut keys: Vec<&str> = verification.keys().map(String::as_str).collect();
+    keys.sort_unstable();
+    assert_eq!(keys, vec!["att_client", "att_pk", "att_sig", "att_v"]);
+    let is_lower_hex = |s: &str| {
+        s.bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+    };
+    let att_client = verification["att_client"].as_str().unwrap();
+    assert_eq!(att_client.len(), 16);
+    assert!(is_lower_hex(att_client));
+    let att_pk = verification["att_pk"].as_str().unwrap();
+    assert_eq!(att_pk.len(), 64);
+    assert!(is_lower_hex(att_pk));
+    let att_sig = verification["att_sig"].as_str().unwrap();
+    assert_eq!(att_sig.len(), 128);
+    assert!(is_lower_hex(att_sig));
+    assert_eq!(verification["att_v"], "1");
     Ok(())
 }
 

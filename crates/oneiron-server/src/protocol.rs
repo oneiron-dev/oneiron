@@ -12,7 +12,9 @@ pub(crate) use oneiron::sync::{
 
 // Re-export tag constants from shared transport (avoid redefinition).
 pub(crate) use oneiron::sync::transport::{
-    PROTOCOL_VERSION, TAG_AWARENESS, TAG_SYNC_UPDATE, TAG_VERSION_VECTOR, decode_protocol_hello,
+    LEASE_STATUS_GRANTED, LEASE_STATUS_REJECTED, PROTOCOL_VERSION, TAG_AWARENESS,
+    TAG_LEASE_REQUEST, TAG_SYNC_UPDATE, TAG_VERSION_VECTOR, decode_lease_request,
+    decode_protocol_hello, encode_lease_granted,
 };
 
 /// Sub-tags within WindowSync messages.
@@ -69,6 +71,14 @@ pub(crate) enum SyncMessage {
     Awareness(AwarenessState),
     /// Root version vector (tag 2). Used for sync negotiation.
     RootVersionVector(Vec<u8>),
+    /// LeaseRequest (tag 4, ONE-1140): the client's frame #2 on every
+    /// connect — device-lease registration/renewal with an Ed25519 proof
+    /// of possession. Routed to the server registrar (OD-3).
+    LeaseRequest {
+        client_id: u64,
+        pubkey: [u8; 32],
+        pop_sig: [u8; 64],
+    },
     /// WindowSync (tag 10). Routed to per-window handler.
     WindowSync {
         window_key: String,
@@ -102,6 +112,15 @@ pub(crate) fn parse_message(data: &[u8]) -> Result<SyncMessage, ProtocolError> {
             Ok(SyncMessage::Awareness(state))
         }
         TAG_VERSION_VECTOR => Ok(SyncMessage::RootVersionVector(payload.to_vec())),
+        TAG_LEASE_REQUEST => {
+            let (client_id, pubkey, pop_sig) = decode_lease_request(payload)
+                .map_err(|e| ProtocolError::InvalidPayload(transport_err_msg(e)))?;
+            Ok(SyncMessage::LeaseRequest {
+                client_id,
+                pubkey,
+                pop_sig,
+            })
+        }
         TAG_WINDOW_SYNC => {
             let (key, sub_tag, inner) = decode_window_sync(payload)
                 .map_err(|e| ProtocolError::InvalidPayload(transport_err_msg(e)))?;
