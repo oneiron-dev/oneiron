@@ -309,6 +309,16 @@ impl Vault {
         Some((window, std::sync::Arc::clone(manager.materializer())))
     }
 
+    /// Whether `key` is currently OPEN in an attached window registry —
+    /// the ONE-1087 sweep executor's deferral probe. A live doc holds the
+    /// full op history in memory, and its next full-snapshot persist would
+    /// rewrite that history over a shallow-compacted `d:w:` row, so the
+    /// sweep must never compact an open window in place.
+    #[cfg(feature = "sync")]
+    pub(crate) fn live_window_for_sweep(&self, key: &crate::sync::WindowKey) -> bool {
+        self.live_window(key).is_some()
+    }
+
     /// Internal guard: read paths over the text index must refuse to score
     /// when the analyzer-manifest handshake was bypassed on a populated
     /// index. See the docstring on `Vault::text_index_trusted`.

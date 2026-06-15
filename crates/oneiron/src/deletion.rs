@@ -409,7 +409,7 @@ impl DeleteEntityOutcome {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub(crate) struct RedactionScope {
     pub entity_ids: Vec<String>,
     pub revision_ids: Vec<String>,
@@ -424,36 +424,42 @@ impl RedactionScope {
     }
 }
 
-#[derive(Debug, Serialize)]
-struct RedactionAuditReceipt {
-    request_id: String,
-    scope: RedactionScope,
-    reason: String,
-    requested_at: u64,
-    soft_complete_at: u64,
-    hard_purge_complete_at: u64,
-    sweep_queued_at: Option<u64>,
-    sweep_complete_at: Option<u64>,
-    affected_revision_ids: Vec<String>,
-    verification: BTreeMap<String, String>,
+/// The pinned REDACTION_AUDIT body shape (`rmp_serde::to_vec_named`, field
+/// order = the pinned [`RECEIPT_BODY_KEYS`] order). `Deserialize` exists for
+/// the ONE-1087 sweep executor, whose receipt finalization is the SINGLE
+/// sanctioned mutation of an otherwise-immutable receipt: the monotone
+/// `sweep_complete_at` None→Some transition on the OWN node's receipt.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub(crate) struct RedactionAuditReceipt {
+    pub(crate) request_id: String,
+    pub(crate) scope: RedactionScope,
+    pub(crate) reason: String,
+    pub(crate) requested_at: u64,
+    pub(crate) soft_complete_at: u64,
+    pub(crate) hard_purge_complete_at: u64,
+    pub(crate) sweep_queued_at: Option<u64>,
+    pub(crate) sweep_complete_at: Option<u64>,
+    pub(crate) affected_revision_ids: Vec<String>,
+    pub(crate) verification: BTreeMap<String, String>,
 }
 
-#[derive(Debug, Serialize)]
-struct HardEraseSweepJob {
-    scope: HardEraseSweepScope,
-    retry_state: HardEraseRetryState,
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(crate) struct HardEraseSweepJob {
+    pub(crate) scope: HardEraseSweepScope,
+    pub(crate) retry_state: HardEraseRetryState,
 }
 
-#[derive(Debug, Serialize)]
-struct HardEraseSweepScope {
-    entity_ids: Vec<String>,
-    revision_ids: Vec<String>,
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(crate) struct HardEraseSweepScope {
+    pub(crate) entity_ids: Vec<String>,
+    pub(crate) revision_ids: Vec<String>,
     /// ARCH-0038 delete-interplay seam: "body_snapshot_ref lets the queued
     /// historical-carrier sweep locate residual snapshot/update bytes"
     /// (contracts.ts retractionRules DELETE). Opaque lowercase-hex ids only;
-    /// the consuming executor is ONE-1091 (deferred).
-    body_snapshot_refs: Vec<String>,
-    carrier_classes: Vec<String>,
+    /// the consuming executor is ONE-1087/ONE-1091 phase 1 (whose window
+    /// compaction is global, so the refs ride the job as audit context).
+    pub(crate) body_snapshot_refs: Vec<String>,
+    pub(crate) carrier_classes: Vec<String>,
 }
 
 /// Delete-interplay refs captured from an `edge.provenance` Claim BEFORE its
@@ -470,13 +476,13 @@ pub(crate) struct HardEraseSweepExtras {
     pub body_snapshot_refs: Vec<String>,
 }
 
-#[derive(Debug, Serialize)]
-struct HardEraseRetryState {
-    attempt_count: u32,
-    next_attempt_at: u64,
-    last_error_code: Option<String>,
-    queued_at: u64,
-    deadline_at: u64,
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(crate) struct HardEraseRetryState {
+    pub(crate) attempt_count: u32,
+    pub(crate) next_attempt_at: u64,
+    pub(crate) last_error_code: Option<String>,
+    pub(crate) queued_at: u64,
+    pub(crate) deadline_at: u64,
 }
 
 #[derive(Debug, Clone)]
@@ -536,11 +542,70 @@ pub(crate) fn encode_hard_erase_sweep_job(
         .map_err(|_| Error::InvariantViolation("hard erase sweep job encode"))
 }
 
+/// Decodes a persisted `h:{seq:8BE}` job value. An undecodable job row is a
+/// deletion obligation the executor can neither execute nor safely discard —
+/// callers must KEEP the row and report loudly, never delete it.
+pub(crate) fn decode_hard_erase_sweep_job(value: &[u8]) -> Result<HardEraseSweepJob> {
+    rmp_serde::from_slice(value).map_err(|_| Error::CorruptedIndex("hard erase sweep job"))
+}
+
+/// Re-encodes a job after an in-place `retry_state` update (ONE-1087: the
+/// row is REWRITTEN on failure, never deleted). Same encoder as the
+/// original write (`rmp_serde::to_vec_named`), so the wire shape is stable.
+pub(crate) fn encode_hard_erase_sweep_job_value(job: &HardEraseSweepJob) -> Result<Vec<u8>> {
+    rmp_serde::to_vec_named(job)
+        .map_err(|_| Error::InvariantViolation("hard erase sweep job encode"))
+}
+
+/// Decodes a REDACTION_AUDIT receipt BODY (post-envelope bytes).
+pub(crate) fn decode_redaction_audit_receipt(body: &[u8]) -> Result<RedactionAuditReceipt> {
+    rmp_serde::from_slice(body).map_err(|_| Error::CorruptedIndex("redaction audit receipt body"))
+}
+
+/// ONE-1087 replay-door exception for the SINGLE sanctioned receipt
+/// mutation: the sweep executor's monotone `sweep_complete_at` None→Some
+/// finalization on the OWN node's receipt (LMDB-only — the CRDT mirror
+/// keeps the pre-finalization bytes by design).
+///
+/// Returns `true` iff `incoming` is the stale PRE-finalization echo of the
+/// FINALIZED `local` receipt: identical 25 B entity envelope, decodable
+/// bodies, `local.sweep_complete_at = Some(_)` vs
+/// `incoming.sweep_complete_at = None`, and every OTHER field equal. The
+/// doors treat that one shape as an idempotent skip (never quarantine,
+/// never overwrite local) — without it every boot would re-quarantine the
+/// own-receipt CRDT round-trip after a sweep. ANY other divergence —
+/// including incoming `Some` over local `None`, which only a crafted
+/// update can produce (replicas never finalize a foreign receipt) — stays
+/// on the M4-07 quarantine path. Fail closed: any decode failure → `false`.
+#[cfg(feature = "sync")]
+pub(crate) fn redaction_receipt_is_stale_finalization_echo(local: &[u8], incoming: &[u8]) -> bool {
+    use crate::batch::ENTITY_METADATA_HEADER_LEN as H;
+    if local.len() < H || incoming.len() < H || local[..H] != incoming[..H] {
+        return false;
+    }
+    let (Ok(local_rec), Ok(incoming_rec)) = (
+        decode_redaction_audit_receipt(&local[H..]),
+        decode_redaction_audit_receipt(&incoming[H..]),
+    ) else {
+        return false;
+    };
+    if local_rec.sweep_complete_at.is_none() || incoming_rec.sweep_complete_at.is_some() {
+        return false;
+    }
+    let definalized = RedactionAuditReceipt {
+        sweep_complete_at: None,
+        ..local_rec
+    };
+    definalized == incoming_rec
+}
+
 /// Pinned contracts.ts `redactionAuditReceipt.fields` key set — the wire
 /// shape every type-120 blob crossing a sync replay door must satisfy
 /// (ONE-1134). Mirrors [`RedactionAuditReceipt`]'s `to_vec_named` encoding:
 /// one string-keyed MessagePack map carrying exactly these fields.
-#[cfg(feature = "sync")]
+///
+/// Un-cfg'd since ONE-1087: the sweep executor's receipt finalization
+/// self-validates its rewritten body on EVERY build, not just sync ones.
 const RECEIPT_BODY_KEYS: [&str; 10] = [
     "request_id",
     "scope",
@@ -579,7 +644,6 @@ const RECEIPT_BODY_KEYS: [&str; 10] = [
 ///   unvalidated content channel into the immutable record ("never
 ///   retains what it erased"). Re-version this rule when the audit-chain
 ///   proof feature pins real value shapes.
-#[cfg(feature = "sync")]
 pub(crate) fn validate_redaction_receipt_body(body: &[u8]) -> Result<()> {
     use rmpv::Value;
 
@@ -687,7 +751,6 @@ pub(crate) fn validate_redaction_receipt_body(body: &[u8]) -> Result<()> {
 /// `entity_ids` + `revision_ids`, both arrays of opaque UUID strings
 /// (contracts.ts: "entity UUIDs / revision UUIDs … Opaque IDs only; no
 /// names or content").
-#[cfg(feature = "sync")]
 fn validate_receipt_scope(value: rmpv::Value) -> Result<()> {
     let rmpv::Value::Map(entries) = value else {
         return Err(Error::InvalidRedactionReceiptBody("scope must be a map"));
@@ -731,7 +794,6 @@ fn validate_receipt_scope(value: rmpv::Value) -> Result<()> {
     Ok(())
 }
 
-#[cfg(feature = "sync")]
 fn validate_opaque_uuid(value: &rmpv::Value, reason: &'static str) -> Result<()> {
     let valid = value
         .as_str()
@@ -742,7 +804,6 @@ fn validate_opaque_uuid(value: &rmpv::Value, reason: &'static str) -> Result<()>
     Ok(())
 }
 
-#[cfg(feature = "sync")]
 fn validate_opaque_uuid_array(value: &rmpv::Value, reason: &'static str) -> Result<()> {
     let Some(items) = value.as_array() else {
         return Err(Error::InvalidRedactionReceiptBody(reason));
