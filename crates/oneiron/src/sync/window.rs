@@ -810,26 +810,6 @@ pub fn forward_rematerialize(
                     }
                     return;
                 }
-                if let Err(err) =
-                    crate::sync::lease::verify_new_receipt_origin_in_txn(vault, &rtxn, &id, blob)
-                {
-                    if quarantine::remote_rejection_reason(&err).is_some() {
-                        if let Err(q_err) = quarantine::quarantine_rejected_op(
-                            vault,
-                            window_key.as_str(),
-                            QuarantineContainer::Entities,
-                            key,
-                            &err,
-                            blob,
-                        ) {
-                            entity_error = Some(q_err);
-                        }
-                    } else {
-                        // LOCAL failure — fail closed.
-                        entity_error = Some(err);
-                    }
-                    return;
-                }
             }
             // Replicated put: the CRDT mirror is unfiltered, so the
             // maintenance band (REDACTION_AUDIT = 120) and reserved-predicate
@@ -839,19 +819,43 @@ pub fn forward_rematerialize(
             // engine-authored bands while still running full structural
             // validation (unknown type bytes, ungrammatical predicates, and
             // malformed CLAIM bodies all still fail typed).
-            let result = vault
-                .batch()
-                .put_replicated(
-                    &id,
-                    header.entity_type,
-                    crate::types::TimeRange {
-                        start: header.occurred_start,
-                        end: header.occurred_end,
-                    },
-                    header.learned_at,
-                    data,
-                )
-                .commit();
+            let result = if header.entity_type == crate::types::ENTITY_TYPE_REDACTION_AUDIT {
+                #[cfg(any(test, feature = "test-hooks"))]
+                if let Err(err) = test_hooks::run_receipt_revocation_race(vault) {
+                    entity_error = Some(err);
+                    return;
+                }
+                vault.with_write_txn(|wtxn| {
+                    crate::sync::lease::verify_new_receipt_origin_in_txn(vault, wtxn, &id, blob)?;
+                    vault
+                        .batch_in()
+                        .put_replicated(
+                            &id,
+                            header.entity_type,
+                            crate::types::TimeRange {
+                                start: header.occurred_start,
+                                end: header.occurred_end,
+                            },
+                            header.learned_at,
+                            data,
+                        )
+                        .apply(wtxn)
+                })
+            } else {
+                vault
+                    .batch()
+                    .put_replicated(
+                        &id,
+                        header.entity_type,
+                        crate::types::TimeRange {
+                            start: header.occurred_start,
+                            end: header.occurred_end,
+                        },
+                        header.learned_at,
+                        data,
+                    )
+                    .commit()
+            };
             match result {
                 Ok(()) => {
                     materialized_blobs.insert(id, blob.to_vec());
@@ -1201,9 +1205,47 @@ pub fn reverse_rematerialize(vault: &Vault, doc: &LoroDoc, window_key: &WindowKe
     Ok(count)
 }
 
+/// Test-only hook for the REDACTION_AUDIT rematerialization race pin. The
+/// armed write lands just before the same-txn verify+put path starts, so the
+/// production code must observe the revoked lease and quarantine the receipt.
+#[cfg(any(test, feature = "test-hooks"))]
+#[doc(hidden)]
+pub mod test_hooks {
+    use std::cell::RefCell;
+
+    use crate::{Error, Result, Vault};
+
+    thread_local! {
+        static RECEIPT_REVOCATION: RefCell<Option<(String, Vec<u8>)>> = const { RefCell::new(None) };
+    }
+
+    pub fn arm_receipt_revocation_race(lease_key: String, revoked_row: Vec<u8>) {
+        RECEIPT_REVOCATION.with(|slot| {
+            *slot.borrow_mut() = Some((lease_key, revoked_row));
+        });
+    }
+
+    pub(crate) fn run_receipt_revocation_race(vault: &Vault) -> Result<()> {
+        let armed = RECEIPT_REVOCATION.with(|slot| slot.borrow_mut().take());
+        if let Some((lease_key, revoked_row)) = armed {
+            if revoked_row.is_empty() {
+                return Err(Error::InvariantViolation("empty revoked lease test row"));
+            }
+            vault.sync_state_put(&lease_key, &revoked_row)?;
+        }
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn test_vault() -> (tempfile::TempDir, Arc<Vault>) {
+        let dir = tempfile::tempdir().unwrap();
+        let vault = Arc::new(Vault::open(dir.path(), crate::VaultConfig::device()).unwrap());
+        (dir, vault)
+    }
 
     /// The single constructor of [`DeleteBearingUpdate`] (ONE-1135 review
     /// item 14): a no-op tombstone commit exports nothing (no q:/d: rows
@@ -1226,5 +1268,79 @@ mod tests {
             .unwrap()
             .expect("tombstone commit must export a delete-bearing update");
         assert!(!delta.as_bytes().is_empty());
+    }
+
+    #[test]
+    fn forward_remat_quarantines_receipt_when_lease_revoked_between_check_and_write() {
+        use ed25519_dalek::SigningKey;
+
+        let (_dir, vault) = test_vault();
+        let materializer = Materializer::new();
+        let learned_at = 1_772_400_000u64;
+        let window_key = WindowKey::from_timestamp(learned_at);
+        let receipt_id = EntityId::from_hex("000102030405060708090a0b0c0d0e0f").unwrap();
+        let subject = EntityId::from_hex("101112131415161718191a1b1c1d1e1f").unwrap();
+        let client_id = 0x0123_4567_89ab_cdefu64;
+        let signing_key = SigningKey::from_bytes(&[44u8; 32]);
+        let pubkey = signing_key.verifying_key().to_bytes();
+        let identity = crate::identity::DeviceIdentity {
+            client_id,
+            signing_key,
+        };
+        let input = crate::deletion::RedactionReceiptInput {
+            request_id: "018f3a2b-7c4d-7e5f-8a9b-0c1d2e3f4a5b".to_owned(),
+            scope: crate::deletion::RedactionScope::entity(&subject),
+            reason: crate::DeleteReason::GdprDelete,
+            requested_at: 100,
+            soft_complete_at: 101,
+            hard_purge_complete_at: learned_at,
+            sweep_queued_at: Some(102),
+        };
+        let body =
+            crate::deletion::encode_redaction_audit_receipt(input, &receipt_id, &identity).unwrap();
+        let mut blob = crate::deletion::receipt_envelope_header(learned_at).to_vec();
+        blob.extend_from_slice(&body);
+
+        let active = crate::sync::lease::LeaseRecord {
+            status: crate::sync::lease::LeaseStatus::Active,
+            pubkey,
+            granted_at: 1,
+            renewed_at: 2,
+            expires_at: 3,
+        };
+        let revoked = crate::sync::lease::LeaseRecord {
+            status: crate::sync::lease::LeaseStatus::Revoked,
+            ..active
+        };
+        let lease_key = crate::sync::lease::lease_key(client_id);
+        vault
+            .sync_state_put(
+                &lease_key,
+                &crate::sync::lease::encode_lease_record(&active),
+            )
+            .unwrap();
+
+        let doc = create_window_doc("local", &window_key);
+        doc.get_map("entities")
+            .insert(receipt_id.to_hex().as_str(), blob.as_slice())
+            .unwrap();
+        doc.commit();
+
+        test_hooks::arm_receipt_revocation_race(
+            lease_key,
+            crate::sync::lease::encode_lease_record(&revoked).to_vec(),
+        );
+        let count = forward_rematerialize(&vault, &doc, &materializer, &window_key).unwrap();
+        assert_eq!(count, 0, "the revoked receipt is quarantined, not written");
+        assert!(
+            vault.get_raw(&receipt_id).unwrap().is_none(),
+            "the stale-read race must not write the receipt entity"
+        );
+        let records = quarantine::quarantined_records(&vault).unwrap();
+        assert_eq!(records.len(), 1);
+        let record = &records[0].1;
+        assert_eq!(record.window_key, window_key.as_str());
+        assert_eq!(record.container, QuarantineContainer::Entities);
+        assert_eq!(record.reason_code, "ReceiptLeaseRevoked");
     }
 }

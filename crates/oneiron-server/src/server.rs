@@ -2,7 +2,7 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
 
-use loro::{ExportMode, LoroDoc, LoroValue, ValueOrContainer, VersionVector};
+use loro::{ExportMode, Frontiers, LoroDoc, LoroValue, ValueOrContainer, VersionVector};
 use oneiron::sync::WindowKey;
 use oneiron::sync::lease::{self, LEASE_DURATION_SECS, LeaseRecord, LeaseStatus, ROOT_LEASES_MAP};
 use oneiron::sync::schema::{add_window_to_root, read_window_list};
@@ -287,6 +287,7 @@ impl SyncServer {
         let now = unix_seconds_now();
         let leases = self.root_doc.get_map(ROOT_LEASES_MAP);
         let vv_before = self.root_doc.oplog_vv();
+        let frontiers_before = self.root_doc.state_frontiers();
         let mut changed = false;
 
         // Scan-at-connect expiry flip (liveness bookkeeping, OD-7).
@@ -330,6 +331,14 @@ impl SyncServer {
             .find(|(key, _)| *key == key_hex)
             .map(|(_, raw)| lease::decode_lease_record(raw))
             .transpose()?;
+        let mut pubkey_revoked = false;
+        for (_, raw) in &entries {
+            let record = lease::decode_lease_record(raw)?;
+            if record.pubkey == *pubkey && record.status == LeaseStatus::Revoked {
+                pubkey_revoked = true;
+                break;
+            }
+        }
 
         let decision = match existing {
             None => {
@@ -341,14 +350,6 @@ impl SyncServer {
                 // the already-materialized `entries`; the server is the sole
                 // writer, so a malformed record is local corruption and
                 // propagates fail-closed (never best-effort decode).
-                let mut pubkey_revoked = false;
-                for (_, raw) in &entries {
-                    let record = lease::decode_lease_record(raw)?;
-                    if record.pubkey == *pubkey && record.status == LeaseStatus::Revoked {
-                        pubkey_revoked = true;
-                        break;
-                    }
-                }
                 if pubkey_revoked {
                     // Binding refused — write NO row, grant nothing.
                     LeaseDecision::rejected()
@@ -374,6 +375,12 @@ impl SyncServer {
                 // Terminal (OD-8): a revoked binding never re-activates.
                 LeaseDecision::rejected()
             }
+            Some(record) if record.pubkey == *pubkey && pubkey_revoked => {
+                // Renewal arm also honors the pubkey-bound revocation floor:
+                // a sibling revoked row for this key is terminal across
+                // client_ids, so an existing active binding cannot refresh.
+                LeaseDecision::rejected()
+            }
             Some(record) if record.pubkey == *pubkey => {
                 let renewed = LeaseRecord {
                     status: LeaseStatus::Active,
@@ -396,7 +403,7 @@ impl SyncServer {
             Some(_) => LeaseDecision::rejected(),
         };
 
-        let root_update = self.commit_lease_changes(changed, &vv_before)?;
+        let root_update = self.commit_lease_changes(changed, &vv_before, &frontiers_before)?;
         Ok(LeaseDecision {
             root_update,
             ..decision
@@ -414,11 +421,18 @@ impl SyncServer {
         let _guard = self.lease_registrar.lock().await;
         let leases = self.root_doc.get_map(ROOT_LEASES_MAP);
         let key_hex = lease::client_id_hex(client_id);
-        let Some(ValueOrContainer::Value(LoroValue::Binary(raw))) = leases.get(&key_hex) else {
-            return Ok(None);
+        let raw = match leases.get(&key_hex) {
+            None => return Ok(None),
+            Some(ValueOrContainer::Value(LoroValue::Binary(raw))) => raw,
+            Some(_) => {
+                return Err(oneiron::Error::CorruptedIndex(
+                    "non-binary root lease entry",
+                ));
+            }
         };
         let mut record = lease::decode_lease_record(&raw)?;
         let vv_before = self.root_doc.oplog_vv();
+        let frontiers_before = self.root_doc.state_frontiers();
         record.status = LeaseStatus::Revoked;
         leases
             .insert(
@@ -426,7 +440,7 @@ impl SyncServer {
                 lease::encode_lease_record(&record).as_slice(),
             )
             .map_err(|e| oneiron::Error::SyncProtocolError(e.to_string()))?;
-        self.commit_lease_changes(true, &vv_before)
+        self.commit_lease_changes(true, &vv_before, &frontiers_before)
     }
 
     /// Commits + persists + mirrors a registry mutation: root doc commit,
@@ -444,16 +458,24 @@ impl SyncServer {
         &self,
         changed: bool,
         vv_before: &VersionVector,
+        frontiers_before: &Frontiers,
     ) -> Result<Option<Vec<u8>>, oneiron::Error> {
         if !changed {
             return Ok(None);
         }
         self.root_doc.commit();
-        self.vault.with_write_txn(|wtxn| {
+        if let Err(err) = self.vault.with_write_txn(|wtxn| {
             server_state::persist_root_snapshot_in_txn(&self.vault, wtxn, &self.root_doc)?;
             lease::mirror_leases_from_root_in_txn(&self.vault, wtxn, &self.root_doc)?;
             Ok(())
-        })?;
+        }) {
+            self.root_doc.revert_to(frontiers_before).map_err(|e| {
+                oneiron::Error::SyncProtocolError(format!(
+                    "root revert after lease txn failure: {e}"
+                ))
+            })?;
+            return Err(err);
+        }
         let delta = self
             .root_doc
             .export(ExportMode::updates(vv_before))
@@ -910,6 +932,86 @@ mod tests {
         );
     }
 
+    /// OD-8 pubkey floor also applies to RENEWAL: if client B is active with
+    /// pubkey P but a sibling client A has already revoked P, B cannot
+    /// refresh the lease. A wrong impl that guards only the None/fresh arm
+    /// grants the renewal and mutates B's `renewed_at`/`expires_at`.
+    #[tokio::test]
+    async fn renew_lease_refuses_when_sibling_revoked_same_pubkey() {
+        use ed25519_dalek::{Signer, SigningKey};
+
+        let (_dir, vault) = test_vault();
+        let server = SyncServer::new(vault.clone(), SyncServerConfig::default()).unwrap();
+
+        let key = SigningKey::from_bytes(&[31u8; 32]);
+        let pubkey = key.verifying_key().to_bytes();
+        let pop = |cid: u64| {
+            key.sign(&lease::lease_pop_transcript(cid, &pubkey))
+                .to_bytes()
+        };
+        let client_a = 0x0c0c_0c0c_0c0c_0c0cu64;
+        let client_b = 0x0d0d_0d0d_0d0d_0d0du64;
+
+        assert!(
+            server
+                .register_lease(client_a, &pubkey, &pop(client_a))
+                .await
+                .unwrap()
+                .granted
+        );
+        assert!(
+            server
+                .register_lease(client_b, &pubkey, &pop(client_b))
+                .await
+                .unwrap()
+                .granted
+        );
+        assert!(server.revoke_lease(client_a).await.unwrap().is_some());
+        let b_row_before = vault
+            .sync_state_get(&lease::lease_key(client_b))
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            lease::decode_lease_record(&b_row_before).unwrap().status,
+            LeaseStatus::Active,
+            "client B starts active before the sibling floor is applied"
+        );
+
+        let decision = server
+            .register_lease(client_b, &pubkey, &pop(client_b))
+            .await
+            .unwrap();
+        assert!(
+            !decision.granted,
+            "renewal must refuse when any sibling revoked the same pubkey"
+        );
+        assert_eq!(decision.expires_at, 0);
+        assert!(
+            decision.root_update.is_none(),
+            "a refused renewal with no expiry flips broadcasts no registry delta"
+        );
+        assert_eq!(
+            vault
+                .sync_state_get(&lease::lease_key(client_b))
+                .unwrap()
+                .unwrap(),
+            b_row_before,
+            "the refused renewal must not refresh B's lease row"
+        );
+        assert_eq!(
+            lease::decode_lease_record(
+                &vault
+                    .sync_state_get(&lease::lease_key(client_a))
+                    .unwrap()
+                    .unwrap()
+            )
+            .unwrap()
+            .status,
+            LeaseStatus::Revoked,
+            "the sibling revocation evidence remains terminal"
+        );
+    }
+
     /// ONE-1140 R3 (delete-safety adjacent, cap-exempt): the `d:root`
     /// snapshot persist and the `ls:` mirror must commit or roll back
     /// together in ONE write txn. If the mirror fails mid-txn, the `d:root`
@@ -988,6 +1090,10 @@ mod tests {
                 .unwrap()
                 .is_none(),
             "no ls: row for the rolled-back fresh client_id"
+        );
+        assert!(
+            deep_map_bytes(&server.root_doc, "leases", &lease::client_id_hex(client_b)).is_none(),
+            "the live in-memory root_doc must roll back client B after mirror failure"
         );
         let ls_a_after = vault
             .sync_state_get(&lease::lease_key(client_a))
@@ -1079,6 +1185,38 @@ mod tests {
                 Some(ValueOrContainer::Value(LoroValue::I64(7)))
             ),
             "the non-binary entry is not silently mutated"
+        );
+    }
+
+    /// B5: revoke distinguishes absent from corrupt. A non-binary root lease
+    /// entry is local registry corruption and must fail closed with the same
+    /// literal as registration, not masquerade as Ok(None).
+    #[tokio::test]
+    async fn revoke_refuses_on_non_binary_lease_entry() {
+        let (_dir, vault) = test_vault();
+        let server = SyncServer::new(vault, SyncServerConfig::default()).unwrap();
+        let client_id = 0x00ee_00ee_00ee_00eeu64;
+        let key_hex = lease::client_id_hex(client_id);
+        server
+            .root_doc
+            .get_map(ROOT_LEASES_MAP)
+            .insert(key_hex.as_str(), LoroValue::I64(7))
+            .unwrap();
+        server.root_doc.commit();
+
+        let err = server.revoke_lease(client_id).await.unwrap_err();
+        match err {
+            oneiron::Error::CorruptedIndex(msg) => {
+                assert_eq!(msg, "non-binary root lease entry");
+            }
+            other => panic!("expected CorruptedIndex, got {other:?}"),
+        }
+        assert!(
+            matches!(
+                server.root_doc.get_map(ROOT_LEASES_MAP).get(&key_hex),
+                Some(ValueOrContainer::Value(LoroValue::I64(7)))
+            ),
+            "the corrupt lease entry must not be mutated by revoke"
         );
     }
 
