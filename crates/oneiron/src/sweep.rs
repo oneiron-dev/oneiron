@@ -65,12 +65,25 @@
 //!   live doc holds the full history in memory, and its next
 //!   `persist_state` full-snapshot export would rewrite the history over
 //!   the shallow `d:w:` row — resurrecting the carrier.
+//! * RACED windows are DEFERRED (anti-clobber): if a `u:w:` row is
+//!   added/removed (full set-equality check) or the `d:w:` snapshot is
+//!   replaced between the read phase and the compaction write txn, the
+//!   write txn is ABORTED uncommitted — never overwriting a newer carrier —
+//!   and the run defers. A quiesced re-run compacts cleanly.
 //! * Builds WITHOUT the `sync` feature fail closed: if any CRDT carrier
 //!   rows exist (`d:w:`/`u:w:`/`q:`), every job is deferred loudly (the
 //!   executor cannot parse Loro docs without the feature). A vault that
 //!   never ran sync has no historical CRDT carriers, so its jobs finalize.
 //! * Undecodable `h:` rows are KEPT and reported loudly — an erasure
 //!   obligation is never deleted unexecuted, never "quarantined away".
+//! * A job whose `scope.entity_ids` carries an unparseable hex is KEPT
+//!   BYTE-IDENTICAL and reported (never compacted-and-finalized) — wrong
+//!   id→window attribution must never delete an obligation row.
+//! * An undecodable REDACTION_AUDIT receipt body encountered during a job's
+//!   finalize txn ABORTS that txn (typed `CorruptedIndex` — the `h:` row is
+//!   kept, all-or-nothing) and routes ONE job to retry; the audit pass
+//!   counts unreadable receipts in `obligations_undecodable` (a SIBLING of
+//!   `obligations_missing`, never folded in).
 //!
 //! # Receipt finalization (pinned)
 //!
@@ -119,10 +132,22 @@ pub(crate) struct HardEraseSweepRun {
     pub jobs_failed: u64,
     pub windows_compacted: u64,
     pub windows_deferred_live: u64,
+    /// Windows deferred because a `u:w:` row appeared/vanished or the
+    /// `d:w:` snapshot changed between the read phase and the compaction
+    /// write txn (anti-clobber re-read guard) — the run defers, no carrier
+    /// is overwritten, the obligation stays. SIBLING of
+    /// `windows_deferred_live`; never folded into it.
+    pub windows_deferred_raced: u64,
     pub receipts_finalized: u64,
     pub deadline_breaches: u64,
     pub quarantine_rows_expired: u64,
     pub obligations_missing: u64,
+    /// REDACTION_AUDIT receipts whose stored body could not be decoded
+    /// during the audit pass — an unreadable accountability record is an
+    /// un-discharged signal, NOT a dropped obligation. SIBLING of
+    /// `obligations_missing`; never folded into it (that would conflate
+    /// "dropped" with "present-but-corrupt").
+    pub obligations_undecodable: u64,
 }
 
 // Test-only crash injection: when armed, the run fails AFTER window
@@ -133,6 +158,34 @@ thread_local! {
     pub(crate) static INJECT_CRASH_BEFORE_FINALIZE: std::cell::Cell<bool> =
         const { std::cell::Cell::new(false) };
 }
+
+/// Test-only race injection (sync builds only): fires once, AFTER
+/// `compact_window`'s read phase and BEFORE its compaction write txn, to
+/// land a concurrent write that the in-txn re-read guards must catch
+/// (Findings 1 + 4). Pre-seeding a `u:w:` row before the run cannot
+/// reproduce the race — the read phase would capture it.
+#[cfg(all(feature = "sync", test))]
+#[derive(Clone, Copy, PartialEq, Eq, Default)]
+pub(crate) enum RaceInjection {
+    #[default]
+    None,
+    /// Append a fresh, VALID higher-seq `u:w:` update row (Finding 1).
+    AppendUpdateRow,
+    /// Replace the `d:w:` snapshot with a DIFFERENT valid snapshot
+    /// (Finding 4).
+    ReplaceSnapshot,
+}
+
+#[cfg(all(feature = "sync", test))]
+thread_local! {
+    pub(crate) static INJECT_RACE_BEFORE_COMPACT_WRITE: std::cell::Cell<RaceInjection> =
+        const { std::cell::Cell::new(RaceInjection::None) };
+}
+
+/// Benign, sentinel-free payload the race injection plants — distinctive so
+/// a test can prove the externally-written snapshot was NOT clobbered.
+#[cfg(all(feature = "sync", test))]
+pub(crate) const RACE_BENIGN_MARKER: &[u8] = b"SWEEP-RACE-BENIGN-MARKER-5b2e0a";
 
 /// Executes one manual sweep pass (phase 1; scheduling is M6).
 pub(crate) fn run_hard_erase_sweep(vault: &Vault) -> Result<HardEraseSweepRun> {
@@ -197,6 +250,30 @@ pub(crate) fn run_hard_erase_sweep(vault: &Vault) -> Result<HardEraseSweepRun> {
         .partition(|(_, job)| job.retry_state.next_attempt_at <= now);
     run.jobs_deferred += not_due.len() as u64;
 
+    // Finding 3 (kept-and-loud): a decodable job whose `scope.entity_ids`
+    // carries a non-parseable hex cannot be compacted-and-finalized —
+    // id→window attribution would be wrong. Such a job is KEPT
+    // BYTE-IDENTICAL (never added to `due`, never deleted, retry_state
+    // untouched) and reported, mirroring the undecodable-h:-row branch.
+    // `scope.revision_ids` is purely AUDIT CONTEXT on the phase-1 sweep
+    // path (only `entity_ids` drives the erased-id authority and the
+    // receipt↔job scope correlation; revision_ids are carried, never
+    // consumed for erasure attribution), so only `entity_ids` is validated.
+    let (due, malformed_scope): (Vec<_>, Vec<_>) = due.into_iter().partition(|(_, job)| {
+        job.scope
+            .entity_ids
+            .iter()
+            .all(|hex| EntityId::from_hex(hex).is_ok())
+    });
+    for (key, _) in &malformed_scope {
+        tracing::error!(
+            seq = ?decode_hard_erase_sweep_seq(key),
+            "sweep: due h: job carries a malformed scope.entity_ids hex — \
+             obligation kept BYTE-IDENTICAL, cannot execute (fail closed)"
+        );
+    }
+    run.jobs_deferred += malformed_scope.len() as u64;
+
     // ── 2. Erased-id authority: dt: markers ∪ due-job scopes ────────────
     // The permanent `dt:` set covers §8c.2/§8c.3 ids with no local h: row.
     let mut erased: BTreeSet<EntityId> = BTreeSet::new();
@@ -240,8 +317,29 @@ pub(crate) fn run_hard_erase_sweep(vault: &Vault) -> Result<HardEraseSweepRun> {
     match window_state {
         WindowSweepState::AllCompacted => {
             for (key, job) in &due {
-                run.receipts_finalized += finalize_job(vault, key, job, now)?;
-                run.jobs_processed += 1;
+                match finalize_job(vault, key, job, now) {
+                    Ok(finalized) => {
+                        run.receipts_finalized += finalized;
+                        run.jobs_processed += 1;
+                    }
+                    // Finding 2 (fail closed, per-job): an undecodable
+                    // REDACTION_AUDIT receipt body aborted THIS job's
+                    // finalize txn (the typed CorruptedIndex rolled it
+                    // back, so the h: row is kept and any co-scoped valid
+                    // receipt stays nil — all-or-nothing). Route this one
+                    // job to retry, loud, and continue so sibling jobs
+                    // still finalize. ONE corrupt receipt defers ONE job.
+                    Err(Error::CorruptedIndex("redaction audit receipt body")) => {
+                        tracing::error!(
+                            seq = ?decode_hard_erase_sweep_seq(key),
+                            "sweep: undecodable REDACTION_AUDIT receipt body during \
+                             finalize — obligation kept, job routed to retry (fail closed)"
+                        );
+                        rewrite_job_for_retry(vault, key, job, now, "CorruptedIndex")?;
+                        run.jobs_failed += 1;
+                    }
+                    Err(err) => return Err(err),
+                }
             }
         }
         WindowSweepState::Deferred => {
@@ -265,7 +363,9 @@ pub(crate) fn run_hard_erase_sweep(vault: &Vault) -> Result<HardEraseSweepRun> {
     }
 
     // ── 6. Audit: detect dropped obligations (ONE-1091) ─────────────────
-    run.obligations_missing = audit_dropped_obligations(vault)?;
+    let (missing, undecodable) = audit_dropped_obligations(vault)?;
+    run.obligations_missing = missing;
+    run.obligations_undecodable = undecodable;
 
     Ok(run)
 }
@@ -281,6 +381,22 @@ enum WindowSweepState {
     /// At least one window compaction FAILED; carries the first error's
     /// `ErrorKind` name for the jobs' `last_error_code`.
     Failed(String),
+}
+
+/// Per-window outcome of [`compact_window`].
+#[cfg(feature = "sync")]
+enum CompactOutcome {
+    /// Persisted state existed and was rebuilt through a shallow snapshot.
+    Compacted,
+    /// No persisted state for this window — nothing to do.
+    Empty,
+    /// The window changed between the read phase and the compaction write
+    /// txn (a `u:w:` row was added/removed, or the `d:w:` snapshot was
+    /// replaced) — the shallow snapshot built from the stale read no longer
+    /// reflects durable state. The write txn is ABORTED (nothing committed,
+    /// no carrier overwritten) and the window deferred; a clean re-run
+    /// re-reads the quiesced window and compacts.
+    RacedDefer,
 }
 
 /// Distinct window labels currently carrying persisted CRDT state —
@@ -353,8 +469,23 @@ fn compact_all_windows(
         }
 
         match compact_window(vault, &key, erased) {
-            Ok(true) => run.windows_compacted += 1,
-            Ok(false) => {}
+            Ok(CompactOutcome::Compacted) => run.windows_compacted += 1,
+            Ok(CompactOutcome::Empty) => {}
+            Ok(CompactOutcome::RacedDefer) => {
+                tracing::warn!(
+                    window = %label,
+                    "sweep: window raced between read and compaction write — deferred"
+                );
+                run.windows_deferred_raced += 1;
+                // Outcome precedence (pinned): Failed > Deferred(raced) >
+                // Deferred(live) > AllCompacted. A raced window downgrades
+                // ONLY from AllCompacted — it must never overwrite a Failed
+                // (which routes to retry and consumes retry_state) nor an
+                // existing Deferred.
+                if matches!(state, WindowSweepState::AllCompacted) {
+                    state = WindowSweepState::Deferred;
+                }
+            }
             Err(err) => {
                 tracing::error!(
                     window = %label,
@@ -413,7 +544,7 @@ fn compact_window(
     vault: &Vault,
     key: &crate::sync::types::WindowKey,
     erased: &BTreeSet<EntityId>,
-) -> Result<bool> {
+) -> Result<CompactOutcome> {
     use crate::sync::loro_support::{doc_from_snapshot, doc_version_vector, import_doc};
     use crate::sync::schema::create_window_doc;
     use loro::ExportMode;
@@ -435,7 +566,7 @@ fn compact_window(
         (snapshot, rows)
     };
     if snapshot_bytes.is_none() && update_rows.is_empty() {
-        return Ok(false);
+        return Ok(CompactOutcome::Empty);
     }
 
     // Rebuild the doc UNOBSERVED — the sweep never touches LMDB through
@@ -464,7 +595,7 @@ fn compact_window(
         .map_err(|e| Error::SyncProtocolError(format!("sweep shallow snapshot export: {e}")))?;
     let vv = doc_version_vector(&doc);
 
-    let merged_keys: BTreeSet<&str> = update_rows.iter().map(|(k, _)| k.as_str()).collect();
+    let merged_keys: BTreeSet<String> = update_rows.iter().map(|(k, _)| k.clone()).collect();
     let prefix = format!("u:w:{key}:");
     for k in &merged_keys {
         if !k.starts_with(&prefix) {
@@ -475,41 +606,74 @@ fn compact_window(
         }
     }
 
-    vault.with_write_txn(|wtxn| {
-        vault
+    // Test-only race injection point: lands a concurrent write AFTER the
+    // read phase, BEFORE the compaction write txn, so the in-txn re-read
+    // guards below have something to catch (one-shot).
+    #[cfg(test)]
+    inject_race_before_compact_write(vault, key, &snapshot_bytes)?;
+
+    let dw_key = format!("d:w:{key}");
+    // ABORT-ONLY raced-defer signal: the write closure returns `Err` (so
+    // `with_write_txn` rolls the txn back, committing NOTHING) and sets this
+    // flag, which the caller maps to `RacedDefer`. There is deliberately NO
+    // `Ok` arm that commits nothing — the `d:w:`/`sv:` puts live AFTER the
+    // re-read+compare, so an early return can never clobber a newer carrier.
+    let raced = std::cell::Cell::new(false);
+    let result = vault.with_write_txn(|wtxn| {
+        // Finding 4 (anti-clobber): re-read `d:w:` and compare byte-for-byte
+        // against the snapshot captured in the read phase — `Option<Vec<u8>>`
+        // equality, so absent-vs-present (None↔Some) AND any byte difference
+        // both count as a race. A concurrent persist replaced the snapshot;
+        // overwriting it with our stale-based shallow would clobber newer
+        // state, so defer.
+        let current_snapshot = vault
             .store
             .sync_state
-            .put(wtxn, &format!("d:w:{key}"), &shallow)?;
+            .get(&*wtxn, &dw_key)?
+            .map(<[u8]>::to_vec);
+        if current_snapshot != snapshot_bytes {
+            raced.set(true);
+            return Err(Error::SyncProtocolError(
+                "sweep raced: d:w: snapshot changed between read and write".to_owned(),
+            ));
+        }
+
+        // Finding 1 (carrier completeness): re-read the `u:w:` row set and
+        // require FULL SET-EQUALITY with what the read phase merged. A key
+        // ADDED or REMOVED means a concurrent persist/prune raced in, so the
+        // shallow snapshot no longer covers the window's durable ops — defer
+        // rather than drop a carrier or finalize a window we cannot prove
+        // payload-free. (Carrier completeness stays local here, not reliant
+        // on any sibling d:w: co-write.)
+        let mut current_keys: BTreeSet<String> = BTreeSet::new();
+        for entry in vault.store.sync_state.prefix_iter(&*wtxn, &prefix)? {
+            let (k, _) = entry?;
+            current_keys.insert(k.to_owned());
+        }
+        if current_keys != merged_keys {
+            raced.set(true);
+            return Err(Error::SyncProtocolError(
+                "sweep raced: u:w: row set changed between read and write".to_owned(),
+            ));
+        }
+
+        // Race-free: the shallow snapshot reflects the durable window.
+        // Replace the persistence triple, prune the now-subsumed `u:w:`
+        // rows, and re-assert `fr:w:`. Every merged key is deleted and the
+        // set matched exactly, so zero `u:w:` rows remain on top of the
+        // snapshot — the freshness flag is honestly fresh.
+        vault.store.sync_state.put(wtxn, &dw_key, &shallow)?;
         vault
             .store
             .sync_state
             .put(wtxn, &format!("sv:w:{key}"), &vv)?;
-
-        // Rows persisted between the read phase and this txn carry ops the
-        // shallow snapshot does not cover: they survive (higher `{seq:08x}`
-        // keys) and the freshness flag stays honest.
-        let mut unmerged_rows_appeared = false;
-        {
-            let mut current = Vec::new();
-            for entry in vault.store.sync_state.prefix_iter(&*wtxn, &prefix)? {
-                let (k, _) = entry?;
-                current.push(k.to_owned());
-            }
-            for k in &current {
-                if !merged_keys.contains(k.as_str()) {
-                    unmerged_rows_appeared = true;
-                    break;
-                }
-            }
-        }
         for k in &merged_keys {
             vault.store.sync_state.delete(wtxn, k)?;
         }
-        let svf = if unmerged_rows_appeared { 0u8 } else { 1u8 };
         vault
             .store
             .sync_state
-            .put(wtxn, &format!("svf:w:{key}"), &[svf])?;
+            .put(wtxn, &format!("svf:w:{key}"), &[1u8])?;
 
         // Wire/SLA pin: the swept window cannot serve pre-shallow deltas —
         // peers behind the shallow start must take a full window resync.
@@ -518,8 +682,72 @@ fn compact_window(
             .sync_state
             .put(wtxn, &format!("fr:w:{key}"), &[1u8])?;
         Ok(())
-    })?;
-    Ok(true)
+    });
+    match result {
+        Ok(()) => Ok(CompactOutcome::Compacted),
+        // The race guards aborted the txn — nothing committed, no carrier
+        // clobbered. Surface a deferral, not a failure (no retry_state
+        // consumed); the obligation stays for the quiesced re-run.
+        Err(_) if raced.get() => Ok(CompactOutcome::RacedDefer),
+        Err(err) => Err(err),
+    }
+}
+
+/// Test-only race injection — see [`INJECT_RACE_BEFORE_COMPACT_WRITE`].
+/// Performs a concurrent write in its OWN committed txn so the subsequent
+/// compaction write txn's re-read guards observe it.
+#[cfg(all(feature = "sync", test))]
+fn inject_race_before_compact_write(
+    vault: &Vault,
+    key: &crate::sync::types::WindowKey,
+    snapshot_bytes: &Option<Vec<u8>>,
+) -> Result<()> {
+    use crate::sync::loro_support::{doc_from_snapshot, export_snapshot, export_updates_from};
+    use crate::sync::schema::create_window_doc;
+
+    match INJECT_RACE_BEFORE_COMPACT_WRITE.with(std::cell::Cell::take) {
+        RaceInjection::None => {}
+        RaceInjection::AppendUpdateRow => {
+            // Build a VALID concurrent update from the SAME window lineage
+            // (deps = the window's frontiers) so a clean re-run imports it
+            // without missing dependencies. Benign, sentinel-free payload.
+            let racer = match snapshot_bytes {
+                Some(bytes) => doc_from_snapshot(bytes)?,
+                None => create_window_doc("racer", key),
+            };
+            let base_vv = racer.oplog_vv();
+            racer
+                .get_map("entities")
+                .insert(EntityId::now().to_hex().as_str(), RACE_BENIGN_MARKER)
+                .map_err(|e| Error::SyncProtocolError(format!("race inject insert: {e}")))?;
+            racer.commit();
+            let delta = export_updates_from(&racer, &base_vv)?;
+            let mut wtxn = vault.store.env.write_txn()?;
+            vault
+                .store
+                .sync_state
+                .put(&mut wtxn, &format!("u:w:{key}:ffffffff"), &delta)?;
+            wtxn.commit()?;
+        }
+        RaceInjection::ReplaceSnapshot => {
+            // Overwrite d:w: with a DIFFERENT valid snapshot carrying only
+            // the benign marker — the re-read guard must refuse to clobber.
+            let benign = create_window_doc("racer", key);
+            benign
+                .get_map("entities")
+                .insert(EntityId::now().to_hex().as_str(), RACE_BENIGN_MARKER)
+                .map_err(|e| Error::SyncProtocolError(format!("race inject insert: {e}")))?;
+            benign.commit();
+            let snap = export_snapshot(&benign)?;
+            let mut wtxn = vault.store.env.write_txn()?;
+            vault
+                .store
+                .sync_state
+                .put(&mut wtxn, &format!("d:w:{key}"), &snap)?;
+            wtxn.commit()?;
+        }
+    }
+    Ok(())
 }
 
 /// Removes every entities/edges map key referencing an erased id (any
@@ -601,11 +829,15 @@ fn finalize_job(vault: &Vault, job_key: &[u8], job: &HardEraseSweepJob, now: u64
             if raw.len() < header_len {
                 return Err(Error::CorruptedIndex("entity metadata"));
             }
-            let Ok(mut receipt) = decode_redaction_audit_receipt(&raw[header_len..]) else {
-                // Not this unit's receipt shape — leave it alone (the replay
-                // doors own structural enforcement).
-                continue;
-            };
+            // Finding 2 (fail closed): a type-120 REDACTION_AUDIT entity
+            // whose body cannot be decoded is on-disk accountability
+            // corruption, NOT a foreign shape — we cannot prove it is
+            // unrelated to this job's scope, so we abort the WHOLE finalize
+            // txn (the h: row is kept; any co-scoped valid receipt staged so
+            // far rolls back too — all-or-nothing). The exact literal
+            // `decode_redaction_audit_receipt` already emits is reused, and
+            // the AllCompacted loop catches it to route THIS job to retry.
+            let mut receipt = decode_redaction_audit_receipt(&raw[header_len..])?;
             if receipt.sweep_queued_at.is_none() || receipt.sweep_complete_at.is_some() {
                 continue;
             }
@@ -680,7 +912,7 @@ fn rewrite_job_for_retry(
 /// must be covered by a pending `h:` row — a dropped obligation is
 /// DETECTABLE, loud, and counted. Runs after job processing so receipts
 /// finalized this run are no longer pending.
-fn audit_dropped_obligations(vault: &Vault) -> Result<u64> {
+fn audit_dropped_obligations(vault: &Vault) -> Result<(u64, u64)> {
     let rtxn = vault.store.env.read_txn()?;
 
     let mut job_scopes: Vec<BTreeSet<String>> = Vec::new();
@@ -701,6 +933,7 @@ fn audit_dropped_obligations(vault: &Vault) -> Result<u64> {
     }
 
     let mut missing = 0u64;
+    let mut undecodable = 0u64;
     for entry in vault
         .store
         .type_index
@@ -717,8 +950,23 @@ fn audit_dropped_obligations(vault: &Vault) -> Result<u64> {
         if raw.len() < header_len {
             return Err(Error::CorruptedIndex("entity metadata"));
         }
-        let Ok(receipt) = decode_redaction_audit_receipt(&raw[header_len..]) else {
-            continue;
+        // Undecodable count is SCOPED to the audit's own iteration over
+        // LOCAL type-120 obligations (the same predicate scope the covering
+        // check already runs) — never a blanket scan over every type-120
+        // body. An unreadable receipt is itself an un-discharged
+        // accountability signal: counted SEPARATELY from `missing`
+        // ("present-but-corrupt" ≠ "dropped"), never a quiet skip.
+        let receipt = match decode_redaction_audit_receipt(&raw[header_len..]) {
+            Ok(receipt) => receipt,
+            Err(_) => {
+                undecodable += 1;
+                tracing::error!(
+                    "sweep audit: REDACTION_AUDIT receipt body is undecodable — an \
+                     unreadable accountability record (GDPR Art. 5(2) signal), never \
+                     a silent skip"
+                );
+                continue;
+            }
         };
         if receipt.sweep_queued_at.is_none() || receipt.sweep_complete_at.is_some() {
             continue;
@@ -734,7 +982,7 @@ fn audit_dropped_obligations(vault: &Vault) -> Result<u64> {
             );
         }
     }
-    Ok(missing)
+    Ok((missing, undecodable))
 }
 
 #[cfg(test)]
@@ -806,6 +1054,60 @@ mod tests {
         vault.store.sync_queue.put(&mut wtxn, &key, value).unwrap();
         wtxn.commit().unwrap();
         key.to_vec()
+    }
+
+    /// Writes a type-120 REDACTION_AUDIT entity (entities row + type-index
+    /// row) whose body is deliberately UNDECODABLE — the on-disk
+    /// accountability-corruption shape Finding 2 / the audit must surface.
+    fn write_corrupt_redaction_receipt(vault: &Vault) -> EntityId {
+        let id = EntityId::now();
+        let mut blob = Vec::new();
+        blob.push(ENTITY_TYPE_REDACTION_AUDIT);
+        for _ in 0..3 {
+            blob.extend_from_slice(&1_771_027_200u64.to_be_bytes());
+        }
+        // 0xc1 is the msgpack "never used" byte — guarantees a decode error.
+        blob.extend_from_slice(&[0xc1, 0x00, 0x01]);
+        let mut type_key = Vec::with_capacity(17);
+        type_key.push(ENTITY_TYPE_REDACTION_AUDIT);
+        type_key.extend_from_slice(id.as_bytes());
+        let mut wtxn = vault.store.env.write_txn().unwrap();
+        vault
+            .store
+            .entities
+            .put(&mut wtxn, id.as_bytes(), &blob)
+            .unwrap();
+        vault
+            .store
+            .type_index
+            .put(&mut wtxn, &type_key, &[])
+            .unwrap();
+        wtxn.commit().unwrap();
+        id
+    }
+
+    fn contains(haystack: &[u8], needle: &[u8]) -> bool {
+        haystack.windows(needle.len()).any(|w| w == needle)
+    }
+
+    /// Byte-scans every persisted `sync_state` value and every `sync_queue`
+    /// key+value for `needle` — the delete-safety carrier scan.
+    #[cfg(feature = "sync")]
+    fn sync_rows_contain(vault: &Vault, needle: &[u8]) -> bool {
+        let rtxn = vault.store.env.read_txn().unwrap();
+        for entry in vault.store.sync_state.iter(&rtxn).unwrap() {
+            let (_, value) = entry.unwrap();
+            if contains(value, needle) {
+                return true;
+            }
+        }
+        for entry in vault.store.sync_queue.iter(&rtxn).unwrap() {
+            let (key, value) = entry.unwrap();
+            if contains(key, needle) || contains(value, needle) {
+                return true;
+            }
+        }
+        false
     }
 
     /// Per-job independence (ONE-1087 retry semantics): a job whose
@@ -1236,5 +1538,259 @@ mod tests {
         assert!(!redaction_receipt_is_stale_finalization_echo(
             &finalized, &shifted
         ));
+    }
+
+    /// Finding 1 (anti-clobber, carrier completeness): a `u:w:` row that
+    /// appears AFTER the read phase — caught by the in-txn full set-equality
+    /// re-read — DEFERS the window. The compaction write txn aborts
+    /// uncommitted: the obligation is kept, the receipt stays nil, and the
+    /// `d:w:` snapshot is NOT replaced by a shallow blob. A wrong impl that
+    /// only flips `svf=0` and finalizes would delete the h: row.
+    #[cfg(feature = "sync")]
+    #[test]
+    fn sweep_defers_when_uw_row_appears_after_read_phase() {
+        let (_dir, vault) = open_vault();
+        let id = EntityId::now();
+        put_entity(&vault, &id, 1_771_027_200, b"raced-uw-body");
+        let outcome = vault
+            .delete_entity_with_reason(&id, DeleteReason::GdprDelete)
+            .unwrap();
+        let receipt_id = outcome.receipt_id.expect("receipt id");
+        let sweep_key = outcome.sweep_key.expect("sweep key");
+        let window = crate::deletion::window_label_from_timestamp(1_771_027_200);
+        let dw_before = vault.sync_state_get(&format!("d:w:{window}")).unwrap();
+
+        INJECT_RACE_BEFORE_COMPACT_WRITE.with(|c| c.set(RaceInjection::AppendUpdateRow));
+        let run = run_hard_erase_sweep(&vault).unwrap();
+
+        assert_eq!(run.jobs_processed, 0, "a raced window must not finalize");
+        assert!(
+            run.windows_deferred_raced >= 1,
+            "the raced-in u:w: row must defer the window"
+        );
+        assert!(run.jobs_deferred >= 1, "the obligation defers, not fails");
+        assert_eq!(run.jobs_failed, 0);
+        assert!(
+            h_rows(&vault).iter().any(|(k, _)| *k == sweep_key),
+            "h: row must survive a raced defer"
+        );
+        assert!(receipt_sweep_complete_at(&vault, &receipt_id).is_none());
+        let dw_after = vault.sync_state_get(&format!("d:w:{window}")).unwrap();
+        assert_eq!(
+            dw_after, dw_before,
+            "the raced window's d:w: snapshot must be untouched (no shallow clobber)"
+        );
+    }
+
+    /// Finding 4 (anti-clobber re-read): a DIFFERENT `d:w:` snapshot written
+    /// between the read phase and the write txn must NOT be overwritten by
+    /// the sweep's stale-based shallow. The run defers; the externally
+    /// written snapshot (carrying a distinctive benign marker the shallow
+    /// would not) survives byte-present. A wrong impl with the unconditional
+    /// put clobbers it.
+    #[cfg(feature = "sync")]
+    #[test]
+    fn sweep_defers_when_dw_snapshot_changes_between_read_and_write() {
+        let (_dir, vault) = open_vault();
+        let id = EntityId::now();
+        put_entity(&vault, &id, 1_771_027_200, b"raced-dw-body");
+        let outcome = vault
+            .delete_entity_with_reason(&id, DeleteReason::GdprDelete)
+            .unwrap();
+        let receipt_id = outcome.receipt_id.expect("receipt id");
+        let sweep_key = outcome.sweep_key.expect("sweep key");
+        let window = crate::deletion::window_label_from_timestamp(1_771_027_200);
+
+        INJECT_RACE_BEFORE_COMPACT_WRITE.with(|c| c.set(RaceInjection::ReplaceSnapshot));
+        let run = run_hard_erase_sweep(&vault).unwrap();
+
+        assert_eq!(run.jobs_processed, 0);
+        assert!(
+            run.windows_deferred_raced >= 1,
+            "the changed d:w: snapshot must defer the window"
+        );
+        assert!(
+            h_rows(&vault).iter().any(|(k, _)| *k == sweep_key),
+            "h: row must survive"
+        );
+        assert!(receipt_sweep_complete_at(&vault, &receipt_id).is_none());
+        let dw_after = vault
+            .sync_state_get(&format!("d:w:{window}"))
+            .unwrap()
+            .expect("d:w: present");
+        assert!(
+            contains(&dw_after, RACE_BENIGN_MARKER),
+            "the externally-written snapshot must survive (no shallow clobber)"
+        );
+    }
+
+    /// Finding 2 (fail closed): an UNDECODABLE REDACTION_AUDIT receipt body
+    /// encountered during a job's finalize txn aborts the WHOLE txn — the
+    /// h: row is KEPT, the job is routed to retry (jobs_failed), and a
+    /// CO-SCOPED valid receipt's `sweep_complete_at` ALSO stays nil
+    /// (all-or-nothing). The audit counts the unreadable receipt.
+    #[cfg(feature = "sync")]
+    #[test]
+    fn sweep_undecodable_receipt_keeps_h_row_and_does_not_finalize() {
+        let (_dir, vault) = open_vault();
+        let id = EntityId::now();
+        put_entity(&vault, &id, 1_771_027_200, b"undecodable-finalize-body");
+        let outcome = vault
+            .delete_entity_with_reason(&id, DeleteReason::GdprDelete)
+            .unwrap();
+        // The real receipt is the CO-SCOPED valid receipt (scope == the due
+        // job's scope) that would be finalized but for the abort.
+        let valid_receipt_id = outcome.receipt_id.expect("receipt id");
+        let sweep_key = outcome.sweep_key.expect("sweep key");
+
+        // A separate, undecodable type-120 receipt finalize_job will hit.
+        write_corrupt_redaction_receipt(&vault);
+
+        let run = run_hard_erase_sweep(&vault).unwrap();
+        assert_eq!(
+            run.jobs_processed, 0,
+            "no job finalizes past a corrupt receipt"
+        );
+        assert!(run.jobs_failed >= 1, "the job routes to retry");
+        assert!(
+            run.obligations_undecodable >= 1,
+            "the unreadable receipt is a counted accountability signal"
+        );
+        assert!(
+            h_rows(&vault).iter().any(|(k, _)| *k == sweep_key),
+            "the obligation row must be kept on an undecodable-receipt abort"
+        );
+        assert!(
+            receipt_sweep_complete_at(&vault, &valid_receipt_id).is_none(),
+            "the co-scoped valid receipt must stay nil — all-or-nothing finalize"
+        );
+    }
+
+    /// Finding 2 (audit half): an undecodable receipt body — even with a
+    /// (not-due) covering h: row present — is NEVER silently "covered". The
+    /// audit counts it in the SIBLING `obligations_undecodable`, distinct
+    /// from `obligations_missing`.
+    #[test]
+    fn sweep_audit_counts_undecodable_receipt_as_missing() {
+        let (_dir, vault) = open_vault();
+        write_corrupt_redaction_receipt(&vault);
+        // A not-due h: row: present (covering) but never reaches finalize.
+        let future = crate::unix_seconds_now() + 86_400;
+        let value = encode_hard_erase_sweep_job(
+            RedactionScope::entity(&EntityId::now()),
+            HardEraseSweepExtras::default(),
+            future,
+        )
+        .unwrap();
+        write_h_row(&vault, 4_242, &value);
+
+        let run = run_hard_erase_sweep(&vault).unwrap();
+        assert_eq!(run.jobs_processed, 0);
+        assert!(
+            run.obligations_undecodable >= 1,
+            "an unreadable receipt must be counted by the audit, never silently covered"
+        );
+        assert_eq!(
+            run.obligations_missing, 0,
+            "present-but-corrupt is NOT a dropped obligation"
+        );
+    }
+
+    /// Finding 3 (kept-and-loud): a decodable job whose `scope.entity_ids`
+    /// fails `EntityId::from_hex` is NEVER compacted-and-finalized. Its h:
+    /// row survives BYTE-IDENTICAL (no retry_state consumption), it defers,
+    /// and nothing is finalized. The inverse of the undecodable-h:-row case.
+    #[test]
+    fn sweep_malformed_scope_job_kept_loud_not_finalized() {
+        let (_dir, vault) = open_vault();
+        let bad_scope = RedactionScope {
+            entity_ids: vec!["zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz".to_owned()],
+            revision_ids: Vec::new(),
+        };
+        let now = crate::unix_seconds_now();
+        let value =
+            encode_hard_erase_sweep_job(bad_scope, HardEraseSweepExtras::default(), now).unwrap();
+        let key = write_h_row(&vault, 55, &value);
+
+        let run = run_hard_erase_sweep(&vault).unwrap();
+        assert_eq!(
+            run.jobs_processed, 0,
+            "a malformed-scope job must not finalize"
+        );
+        assert_eq!(run.receipts_finalized, 0);
+        assert!(
+            run.jobs_deferred >= 1,
+            "the malformed job is kept and counted"
+        );
+        let rows = h_rows(&vault);
+        let kept: Vec<_> = rows.iter().filter(|(k, _)| *k == key).collect();
+        assert_eq!(kept.len(), 1, "the obligation row must survive");
+        assert_eq!(
+            kept[0].1, value,
+            "the kept row must be BYTE-IDENTICAL (no retry_state consumption)"
+        );
+    }
+
+    /// Finding 1/4 idempotency: once the race resolves (no further
+    /// concurrent writes), a clean re-run compacts the previously-raced
+    /// window, finalizes the receipt, deletes the h: row, and leaves ZERO
+    /// erased-payload bytes — defer-and-retry never strands the obligation.
+    #[cfg(feature = "sync")]
+    #[test]
+    fn sweep_raced_window_completes_on_clean_rerun() {
+        use crate::sync::bridge::Materializer;
+        use crate::sync::manager::WindowManager;
+        use crate::sync::types::WindowKey;
+        use std::sync::Arc;
+
+        const UNIT_SENTINEL: &[u8] = b"UNIT-SWEEP-SENTINEL-3a9f17e2";
+
+        let dir = tempfile::tempdir().unwrap();
+        let vault = Arc::new(Vault::open(dir.path(), test_config()).unwrap());
+        let id = EntityId::now();
+        put_entity(&vault, &id, 1_771_027_200, UNIT_SENTINEL);
+
+        // Mirror the entity into the CRDT so the persisted history is a REAL
+        // sentinel carrier, then close the window so it is compactable.
+        let materializer = Arc::new(Materializer::new());
+        let manager = Arc::new(WindowManager::new(
+            Arc::clone(&vault),
+            materializer,
+            "sweep-rerun",
+        ));
+        let window_key = WindowKey::from_timestamp(1_771_027_200);
+        let window = manager.open_window(&window_key).unwrap();
+        let outcome = vault
+            .delete_entity_with_reason(&id, DeleteReason::GdprDelete)
+            .unwrap();
+        let receipt_id = outcome.receipt_id.expect("receipt id");
+        let sweep_key = outcome.sweep_key.expect("sweep key");
+        drop(window);
+        assert!(manager.unload_window(&window_key).unwrap());
+
+        // First run: the injected concurrent u:w: row defers the window.
+        INJECT_RACE_BEFORE_COMPACT_WRITE.with(|c| c.set(RaceInjection::AppendUpdateRow));
+        let run1 = run_hard_erase_sweep(&vault).unwrap();
+        assert!(run1.windows_deferred_raced >= 1, "the race must defer");
+        assert_eq!(run1.jobs_processed, 0);
+        assert!(h_rows(&vault).iter().any(|(k, _)| *k == sweep_key));
+        assert!(receipt_sweep_complete_at(&vault, &receipt_id).is_none());
+
+        // Clean re-run (injection is one-shot): the quiesced window compacts.
+        let run2 = run_hard_erase_sweep(&vault).unwrap();
+        assert_eq!(
+            run2.jobs_processed, 1,
+            "the re-run completes the obligation"
+        );
+        assert_eq!(run2.receipts_finalized, 1);
+        assert!(
+            !h_rows(&vault).iter().any(|(k, _)| *k == sweep_key),
+            "the h: row is deleted on the clean re-run"
+        );
+        assert!(receipt_sweep_complete_at(&vault, &receipt_id).is_some());
+        assert!(
+            !sync_rows_contain(&vault, UNIT_SENTINEL),
+            "no erased-payload bytes may survive the idempotent re-run"
+        );
     }
 }
