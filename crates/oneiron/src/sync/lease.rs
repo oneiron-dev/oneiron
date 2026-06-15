@@ -281,7 +281,14 @@ pub(crate) fn verify_new_receipt_origin_in_txn(
 /// server is the sole writer) quarantines an `x:` row (GDPR-inert
 /// hash+len) and KEEPS any previous good `ls:` row — garbage is never
 /// upserted, never silently dropped. N = device count (tiny).
-pub(crate) fn mirror_leases_from_root_in_txn(
+///
+/// MISUSE SURFACE (ONE-1140): callers MUST wrap this in the SAME write txn as
+/// the `d:root` persist (`server_state::persist_root_snapshot_in_txn`) so the
+/// root snapshot and its `ls:` mirror commit or roll back together. Using it
+/// outside that atomic boundary re-opens the split-write bug. The cross-crate
+/// caller is `oneiron-server`'s lease registrar.
+#[doc(hidden)]
+pub fn mirror_leases_from_root_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
     root_doc: &LoroDoc,
@@ -300,6 +307,16 @@ pub fn mirror_leases_from_root(vault: &Vault, root_doc: &LoroDoc) -> Result<()> 
 }
 
 fn mirror_leases_impl(vault: &Vault, wtxn: &mut heed::RwTxn<'_>, root_doc: &LoroDoc) -> Result<()> {
+    // Test-only fault injection (ONE-1140): force a mid-txn mirror failure so
+    // the root-snapshot/`ls:`-mirror atomicity test can prove the `d:root`
+    // put committed in the SAME write txn rolls back. No production effect.
+    #[cfg(any(test, feature = "test-hooks"))]
+    if test_hooks::take_mirror_failure() {
+        return Err(Error::CorruptedIndex(
+            "injected lease mirror failure (test hook)",
+        ));
+    }
+
     let leases = root_doc.get_map(ROOT_LEASES_MAP);
     let mut entries: Vec<(String, Option<Vec<u8>>)> = Vec::new();
     leases.for_each(|key, value| {
@@ -338,6 +355,34 @@ fn mirror_leases_impl(vault: &Vault, wtxn: &mut heed::RwTxn<'_>, root_doc: &Loro
             .put(wtxn, &row_key, &bytes.expect("validated above"))?;
     }
     Ok(())
+}
+
+/// Cross-crate test-only fault-injection seam (ONE-1140). Lets the
+/// `oneiron-server` lease-atomicity test force [`mirror_leases_from_root_in_txn`]
+/// to fail mid-txn. Gated on `cfg(test)` (this crate's own tests) OR the
+/// `test-hooks` feature (downstream dev-dependency builds); compiled out of
+/// production entirely.
+#[cfg(any(test, feature = "test-hooks"))]
+#[doc(hidden)]
+pub mod test_hooks {
+    use std::cell::Cell;
+
+    thread_local! {
+        // One-shot: armed by `arm_mirror_failure`, consumed by the next
+        // `mirror_leases_impl` on this thread (Loro observer-free; the
+        // registrar runs the mirror synchronously on the caller's thread).
+        static MIRROR_FAILURE: Cell<bool> = const { Cell::new(false) };
+    }
+
+    /// Arms a one-shot mirror failure on the current thread.
+    pub fn arm_mirror_failure() {
+        MIRROR_FAILURE.with(|c| c.set(true));
+    }
+
+    /// Returns and clears the armed flag (one-shot).
+    pub(crate) fn take_mirror_failure() -> bool {
+        MIRROR_FAILURE.with(|c| c.replace(false))
+    }
 }
 
 #[cfg(test)]
