@@ -116,11 +116,29 @@ fn actor_class_evidence() -> rmpv::Value {
     )])
 }
 
+/// Confidence carried by [`edge_provenance_value_record`]. The ONE-1159 door
+/// now enforces wrapper↔value-record mirror equality, so a SURFACEABLE
+/// wrapper's `conf` MUST equal this; the prior helper hardcoded `conf = 0.9`
+/// (≠ the record's `0.75`), which the new mirror check correctly rejects —
+/// the helper, not the assertions, was self-inconsistent.
+const PROVENANCE_VALUE_CONFIDENCE: f32 = 0.75;
+
 /// Hand-crafted D18-VALID type-0 CLAIM body with `pred = "edge.provenance"`
-/// and a 33-byte EdgeRef `subj` — the wrapper passes every D18 rule, so the
-/// ONLY thing standing between a junk `val`/`evid` and the entities table is
-/// the ONE-1159 structural branch at the replay door.
-fn edge_provenance_claim_body(val: rmpv::Value, evid: Option<rmpv::Value>) -> Vec<u8> {
+/// and a 33-byte EdgeRef `subj`, with full control over the WRAPPER axes the
+/// ONE-1159 door gates — surfaceability (`appr`, `stale`) and the
+/// value-record mirror fields (`conf`, `from`, `to`). Every D18 rule passes,
+/// so the ONLY thing standing between a broken wrapper/value-record and the
+/// entities table is the ONE-1159 structural branch at the replay door.
+#[allow(clippy::too_many_arguments)]
+fn edge_provenance_claim_body_with(
+    val: rmpv::Value,
+    evid: Option<rmpv::Value>,
+    conf: f32,
+    appr: &str,
+    stale: Option<bool>,
+    valid_from: Option<u64>,
+    valid_to: Option<u64>,
+) -> Vec<u8> {
     let mut edge_ref = Vec::with_capacity(33);
     edge_ref.extend_from_slice(&[0x11; 16]);
     edge_ref.push(EdgeKind::Mentions as u8);
@@ -131,17 +149,43 @@ fn edge_provenance_claim_body(val: rmpv::Value, evid: Option<rmpv::Value>) -> Ve
             rmpv::Value::from("edge.provenance"),
         ),
         (rmpv::Value::from("val"), val),
-        (rmpv::Value::from("conf"), rmpv::Value::F32(0.9)),
+        (rmpv::Value::from("conf"), rmpv::Value::F32(conf)),
     ];
     if let Some(evid) = evid {
         entries.push((rmpv::Value::from("evid"), evid));
     }
+    if let Some(from) = valid_from {
+        entries.push((rmpv::Value::from("from"), rmpv::Value::from(from)));
+    }
+    if let Some(to) = valid_to {
+        entries.push((rmpv::Value::from("to"), rmpv::Value::from(to)));
+    }
     entries.push((rmpv::Value::from("subj"), rmpv::Value::Binary(edge_ref)));
-    entries.push((rmpv::Value::from("appr"), rmpv::Value::from("auto")));
+    entries.push((rmpv::Value::from("appr"), rmpv::Value::from(appr)));
     entries.push((rmpv::Value::from("life"), rmpv::Value::from("active")));
+    if let Some(stale) = stale {
+        entries.push((rmpv::Value::from("stale"), rmpv::Value::Boolean(stale)));
+    }
     let mut out = Vec::new();
     rmpv::encode::write_value(&mut out, &rmpv::Value::Map(entries)).unwrap();
     out
+}
+
+/// Surfaceable wrapper (`appr = auto`, no `stale`, no valid-time) whose `conf`
+/// mirrors the default value record's `confidence` ([`PROVENANCE_VALUE_CONFIDENCE`])
+/// — the shape the existing positive controls and the broken-value-record
+/// cases share. A broken `val`/`evid` is rejected on the value-record /
+/// actor-class axis before the mirror check is reached.
+fn edge_provenance_claim_body(val: rmpv::Value, evid: Option<rmpv::Value>) -> Vec<u8> {
+    edge_provenance_claim_body_with(
+        val,
+        evid,
+        PROVENANCE_VALUE_CONFIDENCE,
+        "auto",
+        None,
+        None,
+        None,
+    )
 }
 
 fn valid_time_range() -> TimeRange {
@@ -557,6 +601,149 @@ fn replay_door_keeps_structurally_invalid_provenance_claims_out_of_entities() {
         records.len(),
         forged.len(),
         "exactly one x: row per forged claim"
+    );
+    for (_, rec) in &records {
+        assert_eq!(
+            rec.reason_code, "InvalidProvenanceBody",
+            "typed rejection reason literal"
+        );
+        assert_eq!(rec.container, QuarantineContainer::Entities);
+    }
+    let mut quarantined_hashes: Vec<u64> =
+        records.iter().map(|(_, rec)| rec.payload_hash).collect();
+    quarantined_hashes.sort_unstable();
+    let mut expected_hashes: Vec<u64> = forged.iter().map(|(_, _, blob)| xxh3_64(blob)).collect();
+    expected_hashes.sort_unstable();
+    assert_eq!(
+        quarantined_hashes, expected_hashes,
+        "x: rows carry the xxh3_64 of each rejected blob (hash-only, GDPR-inert)"
+    );
+}
+
+/// ONE-1159 fix-wave — the replay door also gates the WRAPPER axes D18 leaves
+/// opaque. A Claim that is structurally well-formed (valid value record +
+/// actor-class evidence) but NON-SURFACEABLE (`appr = rejected`, `stale =
+/// true`), or whose wrapper `conf`/`from`/`to` does NOT mirror the value
+/// record, is typed-rejected at the door and never reaches the entities
+/// table; a surfaceable, mirror-consistent Claim in the SAME batch replicates
+/// byte-identical (per-op isolation, hash-only x: rows).
+///
+/// FAILS against pre-fix code: the door validated only the value record +
+/// actor-class evidence, so a `rejected`/`stale` wrapper or a `conf`-lying
+/// wrapper materialized and could later steer edge-flag refresh.
+#[test]
+fn replay_door_rejects_non_surfaceable_and_mirror_mismatched_provenance_wrappers() {
+    let (_dir, vault) = test_vault_with_dir();
+    let doc = LoroDoc::new();
+    let materializer = Arc::new(Materializer::new());
+    let _subs = register_observer_b(&doc, &vault, &materializer, WINDOW);
+    let entities = doc.get_map("entities");
+
+    // Value record carrying optional valid-time: the record asserts a window
+    // the wrapper then fails to mirror (wrapper from/to absent).
+    let value_record_with_times = {
+        let rmpv::Value::Map(mut entries) = edge_provenance_value_record() else {
+            unreachable!("helper emits a map");
+        };
+        entries.push((rmpv::Value::from("valid_from"), rmpv::Value::from(10u64)));
+        entries.push((rmpv::Value::from("valid_to"), rmpv::Value::from(20u64)));
+        rmpv::Value::Map(entries)
+    };
+
+    let forged_bodies: [(&str, Vec<u8>); 4] = [
+        // appr=rejected: value record + actor-class + mirrored conf all valid;
+        // ONLY the surfaceability approval axis is wrong.
+        (
+            "non-surfaceable appr=rejected",
+            edge_provenance_claim_body_with(
+                edge_provenance_value_record(),
+                Some(actor_class_evidence()),
+                PROVENANCE_VALUE_CONFIDENCE,
+                "rejected",
+                None,
+                None,
+                None,
+            ),
+        ),
+        // stale=true: everything else valid + mirrored.
+        (
+            "non-surfaceable stale=true",
+            edge_provenance_claim_body_with(
+                edge_provenance_value_record(),
+                Some(actor_class_evidence()),
+                PROVENANCE_VALUE_CONFIDENCE,
+                "auto",
+                Some(true),
+                None,
+                None,
+            ),
+        ),
+        // conf mismatch: value-record confidence=0.75, wrapper conf=0.40.
+        (
+            "wrapper conf does not mirror value-record confidence",
+            edge_provenance_claim_body_with(
+                edge_provenance_value_record(),
+                Some(actor_class_evidence()),
+                0.40,
+                "auto",
+                None,
+                None,
+                None,
+            ),
+        ),
+        // from/to mismatch: record carries valid_from=10/valid_to=20 but the
+        // wrapper omits from/to entirely (Option inequality, not just conf).
+        (
+            "wrapper from/to do not mirror valid_from/valid_to",
+            edge_provenance_claim_body_with(
+                value_record_with_times,
+                Some(actor_class_evidence()),
+                PROVENANCE_VALUE_CONFIDENCE,
+                "auto",
+                None,
+                None,
+                None,
+            ),
+        ),
+    ];
+
+    let mut forged = Vec::new();
+    for (name, body) in forged_bodies {
+        let id = EntityId::now();
+        let blob = entity_blob(ENTITY_TYPE_CLAIM, valid_time_range(), LEARNED_AT, &body);
+        insert_bytes(&entities, &id.to_hex(), &blob);
+        forged.push((name, id, blob));
+    }
+
+    // Positive control: SURFACEABLE (appr=auto, not stale), `conf` EXACTLY
+    // mirrors the value-record confidence (0.75), from/to absent on both
+    // sides — the door must NOT over-reject a genuinely-valid mirrored Claim.
+    let valid_id = EntityId::now();
+    let valid_blob = entity_blob(
+        ENTITY_TYPE_CLAIM,
+        valid_time_range(),
+        LEARNED_AT,
+        &edge_provenance_claim_body(edge_provenance_value_record(), Some(actor_class_evidence())),
+    );
+    insert_bytes(&entities, &valid_id.to_hex(), &valid_blob);
+    doc.commit();
+
+    assert_eq!(
+        vault.get_raw(&valid_id).unwrap().as_deref(),
+        Some(valid_blob.as_slice()),
+        "surfaceable mirror-consistent edge.provenance claim must replicate byte-identical"
+    );
+    for (name, id, _) in &forged {
+        assert!(
+            vault.get_raw(id).unwrap().is_none(),
+            "{name}: non-surfaceable / mirror-mismatched wrapper must never reach entities"
+        );
+    }
+    let records = quarantined_records(&vault).unwrap();
+    assert_eq!(
+        records.len(),
+        forged.len(),
+        "exactly one x: row per forged wrapper"
     );
     for (_, rec) in &records {
         assert_eq!(
