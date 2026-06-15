@@ -49,6 +49,7 @@ use crate::sync::loro_support::{
     doc_from_snapshot, doc_version_vector, export_snapshot, export_updates_since,
 };
 use crate::sync::manager::WindowManager;
+use crate::sync::quarantine;
 use crate::sync::schema::{create_window_doc, read_window_list};
 use crate::sync::transport::{
     self, MAX_DECODED_PAYLOAD_BYTES, TAG_AWARENESS, TAG_BULK_TRANSFER, TAG_BULK_TRANSFER_DONE,
@@ -554,36 +555,72 @@ impl SyncClient {
                     return Err(TransportError::Storage(format!("persist bulk window: {e}")));
                 }
             } else {
-                // Window stays ON-DISK: validate the remote snapshot's
-                // structure before persisting (fail-closed — a trusted door
-                // still validates structure), then write the sync_state
-                // rows the next open will load.
-                let doc = doc_from_snapshot(doc_state)
-                    .map_err(|_| TransportError::InvalidPayload("bulk doc state invalid"))?;
-                let vv = doc_version_vector(&doc);
-                let doc_key = format!("d:w:{window_key}");
-                let sv_key = format!("sv:w:{window_key}");
-                let svf_key = format!("svf:w:{window_key}");
-                let pending_prefix = format!("u:w:{window_key}:");
-                self.vault
-                    .with_write_txn(|wtxn| {
-                        // sv reflects d:w: alone; only mark it fresh when no
-                        // pending local updates sit on top of the snapshot.
-                        let has_pending = {
-                            let mut iter = self
-                                .vault
-                                .store
-                                .sync_state
-                                .prefix_iter(wtxn, &pending_prefix)?;
-                            iter.next().transpose()?.is_some()
-                        };
-                        self.vault.store.sync_state.put(wtxn, &doc_key, doc_state)?;
-                        self.vault.store.sync_state.put(wtxn, &sv_key, &vv)?;
-                        let svf = if has_pending { 0u8 } else { SVF_FRESH };
-                        self.vault.store.sync_state.put(wtxn, &svf_key, &[svf])?;
-                        Ok(())
-                    })
-                    .map_err(|e| TransportError::Storage(format!("persist bulk doc state: {e}")))?;
+                // Window is ON-DISK (cold): route the snapshot through the
+                // SAME gated machinery as every other remote import
+                // (ONE-1156(a), WAVE-C OD-12). The previous arm parsed the
+                // snapshot structure-only (`doc_from_snapshot`) and then
+                // wrote raw `d:w:`/`sv:w:`/`svf:w:` rows — remote bytes
+                // becoming the next open's doc state WITHOUT Observer B
+                // ever seeing them: no tombstone never-downgrade, no `dt:`
+                // gate, no receipt immutability, no quarantine. Fail-closed
+                // replacement:
+                //
+                //   1. full pinned open (pt → pm → reverse → forward remat,
+                //      observers attached LAST) — `ensure_window`;
+                //   2. OBSERVED import — Observer B fires synchronously, so
+                //      EVERY entity/edge/tombstone door runs on the remote
+                //      ops;
+                //   3. inline `ra:` drain scoped to this window — doc-side
+                //      tombstone re-assertion at a safe commit point
+                //      (handler context, OUTSIDE observer callbacks),
+                //      BEFORE the persist so the persisted `d:w:` is
+                //      already re-asserted (ONE-1156(c));
+                //   4. `persist_state` — anti-clobber merge + the pinned
+                //      `d:`/`sv:`/`svf:` triple (which subsumes the old
+                //      arm's bespoke svf freshness logic);
+                //   5. unload — bulk targets cold historical windows; the
+                //      memory budget is restored after the persist.
+                //
+                // Every failure path leaves `bulk:w:{key}` set for retry
+                // (the clear below only runs after success) and DISCARDS
+                // the just-opened window so RAM never runs ahead of
+                // durable state (same discipline as the live arm and the
+                // WindowSync UPDATE arm).
+                let window = self.ensure_window(window_key)?;
+                if window.doc.import(doc_state).is_err() {
+                    self.manager.discard_window(&WindowKey::new(window_key));
+                    return Err(TransportError::InvalidPayload(
+                        "bulk doc state import failed",
+                    ));
+                }
+                // "local" mirrors the vault's own transient window-doc user
+                // id (`Vault::write_crdt_tombstone`); `create_window_doc`
+                // ignores it. A `false` return (malformed `ra:` rows kept,
+                // fail closed) is NOT a bulk failure: the well-formed
+                // markers drained, and the kept rows stay doctor-visible
+                // via `pending_reassert_windows` — failing the transfer
+                // could never clear them.
+                if let Err(e) = quarantine::drain_reassert_markers_for_window(
+                    &self.vault,
+                    "local",
+                    &self.manager,
+                    &WindowKey::new(window_key),
+                ) {
+                    self.manager.discard_window(&WindowKey::new(window_key));
+                    return Err(TransportError::Storage(format!(
+                        "bulk ra: re-assertion drain: {e}"
+                    )));
+                }
+                if let Err(e) = window.persist_state(&self.vault) {
+                    self.manager.discard_window(&WindowKey::new(window_key));
+                    return Err(TransportError::Storage(format!("persist bulk window: {e}")));
+                }
+                // Drop our handle BEFORE the unload: the manager refuses /
+                // warns on outstanding external holders (ONE-1150).
+                drop(window);
+                self.manager
+                    .unload_window(&WindowKey::new(window_key))
+                    .map_err(|e| TransportError::Storage(format!("unload bulk window: {e}")))?;
             }
         }
 
