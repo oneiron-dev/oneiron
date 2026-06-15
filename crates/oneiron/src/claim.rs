@@ -681,13 +681,32 @@ pub(crate) fn validate_claim_body_bytes(data: &[u8], allow_reserved_predicate: b
 ///   Claim without a persisted class can never participate in flag refresh,
 ///   and the class is never defaulted (D13).
 ///
+/// ONE-1159 fix-wave adds two WRAPPER-axis checks the door previously
+/// skipped (D18 treats the wrapper's lifecycle fields as opaque):
+///
+/// * surfaceability — `appr ∈ {auto, approved}` (the exact set from
+///   [`claim_surfaceable`]) and `stale = false`, so a non-surfaceable Claim
+///   cannot enter at the write door and silently steer edge flags. Lifecycle
+///   is NOT gated (`superseded` / `retracted` are legitimate provenance
+///   states the live_/retracted_ scans read);
+/// * wrapper↔value-record mirror — `conf == confidence`, `from == valid_from`,
+///   `to == valid_to`, so the precedence/display wrapper can never lie about
+///   the value record the writer mirrored it from.
+///
 /// Typed rejections only (the [`Error::InvalidProvenanceBody`] family) — at
 /// the sync replay door the caller quarantines them (`x:` row, hash-only
 /// per ONE-1124), never drops.
 fn validate_edge_provenance_claim_structure(body: &ClaimBody) -> Result<()> {
-    crate::provenance::validate_edge_provenance_value(&body.value)?;
+    // ONE-1159 fix-wave (BLOCKER #2) — decode the value record ONCE via the
+    // SHARED decoder so the typed record is held for the wrapper↔value-record
+    // mirror checks below. This is exactly what
+    // [`crate::provenance::validate_edge_provenance_value`] runs (it is the
+    // same call with the record discarded), so the value-record structural
+    // rules are unchanged and vocabulary growth (ONE-1138's 10-key shape)
+    // flows through this one call with zero edits.
+    let record = crate::provenance::decode_edge_provenance_body(&body.value)?;
     // Presence-only probe for the value-record `actor_class` key: VALIDITY
-    // of the key's value is the shared validator's job above (and a body
+    // of the key's value is the shared decoder's job above (and a body
     // key outside the pinned vocabulary was already rejected there), so
     // this never duplicates shape logic.
     let value_has_actor_class = matches!(
@@ -697,12 +716,64 @@ fn validate_edge_provenance_claim_structure(body: &ClaimBody) -> Result<()> {
         })
     );
     match (value_has_actor_class, body.evidence.as_ref()) {
-        (true, Some(_)) => Err(Error::InvalidProvenanceBody(
-            "actor_class present in both the value record and the wrapper evid (ambiguous)",
-        )),
-        (true, None) => Ok(()),
-        (false, evidence) => crate::provenance::decode_actor_class_evidence(evidence).map(|_| ()),
+        (true, Some(_)) => {
+            return Err(Error::InvalidProvenanceBody(
+                "actor_class present in both the value record and the wrapper evid (ambiguous)",
+            ));
+        }
+        (true, None) => {}
+        (false, evidence) => {
+            crate::provenance::decode_actor_class_evidence(evidence)?;
+        }
     }
+
+    // ONE-1159 fix-wave (BLOCKER #1) — surfaceability-axis guard on the
+    // WRAPPER. A provenance Claim only drives edge-flag refresh while it is
+    // surfaceable on the read gate; admitting a non-surfaceable wrapper at the
+    // replay door would let an `appr=rejected` / `stale=true` Claim silently
+    // steer flags. Reuse the EXACT approval set from [`claim_surfaceable`] so
+    // the door and the read gate cite one approval rule. Lifecycle is
+    // DELIBERATELY not gated here — `superseded` / `retracted` are legitimate
+    // provenance lifecycle states the live_/retracted_ scans must read.
+    if !matches!(
+        body.approval,
+        ClaimApprovalStatus::Auto | ClaimApprovalStatus::Approved
+    ) {
+        return Err(Error::InvalidProvenanceBody(
+            "edge.provenance wrapper appr must be auto|approved",
+        ));
+    }
+    if body.stale {
+        return Err(Error::InvalidProvenanceBody(
+            "edge.provenance wrapper must not be stale",
+        ));
+    }
+
+    // ONE-1159 fix-wave (BLOCKER #2) — the wrapper's `conf`/`from`/`to` MUST
+    // mirror the value record's `confidence`/`valid_from`/`valid_to`. The
+    // local writer guarantees this by construction, and precedence/display
+    // read the wrapper, so a mismatched wrapper is a structural lie. `conf`
+    // and `confidence` are both required and parsed through the same
+    // `unit_interval_f32`/`Value::F32` path, so `==` is the exact VALUE
+    // equality the contract pins; `from`/`to` are optional on both sides and
+    // compared as `Option` equality (both-present-equal or both-absent).
+    if record.confidence != body.confidence {
+        return Err(Error::InvalidProvenanceBody(
+            "edge.provenance wrapper conf does not mirror value-record confidence",
+        ));
+    }
+    if record.valid_from != body.valid_from {
+        return Err(Error::InvalidProvenanceBody(
+            "edge.provenance wrapper from does not mirror value-record valid_from",
+        ));
+    }
+    if record.valid_to != body.valid_to {
+        return Err(Error::InvalidProvenanceBody(
+            "edge.provenance wrapper to does not mirror value-record valid_to",
+        ));
+    }
+
+    Ok(())
 }
 
 /// D19 read-path status gate predicate (ARCH-0003 retrieval rule; ARCH-0004
@@ -853,10 +924,18 @@ mod tests {
         use crate::types::EdgeActorClass;
 
         let actor = EntityId::from_bytes([0x42; 16]).expect("valid id");
+        // ONE-1159 fix-wave: a surfaceable wrapper's `conf` MUST mirror the
+        // value-record `confidence`. The prior control hardcoded `0.9` ≠ the
+        // record's `0.75` — a self-inconsistent "valid" wrapper the new mirror
+        // check correctly rejects. Mirror both to one literal (fix the
+        // control, not the assertion). The negative cases below all reject on
+        // an EARLIER axis (value-record decode / actor-class), so the shared
+        // `conf` value never weakens them.
+        let confidence = 0.75_f32;
         let valid_value = || {
             encode_edge_provenance_value(&EdgeProvenanceClaimBody::new(
                 actor,
-                0.75,
+                confidence,
                 SupersessionStatus::Confirmed,
             ))
         };
@@ -871,7 +950,7 @@ mod tests {
                 predicate,
                 subject,
                 value,
-                0.9,
+                confidence,
                 ClaimApprovalStatus::Auto,
                 ClaimLifecycleStatus::Active,
             );
@@ -1113,5 +1192,46 @@ mod tests {
             A::Auto,
             L::Active,
         )));
+    }
+
+    /// ONE-1159 fix-wave — the WRITE door's surfaceability guard reuses the
+    /// `claim_surfaceable` approval set: `Approved` is accepted (not only
+    /// `Auto`), and `Proposed` is a typed reject. Pins the {auto, approved}
+    /// boundary directly on the door function, independent of the read gate.
+    #[test]
+    fn provenance_door_accepts_approved_and_rejects_proposed_wrappers() {
+        let subject = ClaimSubject::Entity(EntityId::from_bytes([0x11; 16]).expect("valid id"));
+        // Valid value record (3 required keys), conf mirrors the wrapper, no
+        // valid-time on either side, actor-class on the wrapper `evid`.
+        let value_record = Value::Map(vec![
+            (
+                Value::from("actor_entity_ref"),
+                Value::Binary(vec![0x42; 16]),
+            ),
+            (Value::from("confidence"), Value::F32(0.75)),
+            (Value::from("supersession_status"), Value::from(1u8)),
+        ]);
+        let actor_class_evid = Value::Map(vec![(Value::from("actor_class"), Value::from(0u8))]);
+        let wrapper = |appr: ClaimApprovalStatus| {
+            let mut body = ClaimBody::new(
+                crate::provenance::PREDICATE_EDGE_PROVENANCE,
+                subject,
+                value_record.clone(),
+                0.75,
+                appr,
+                ClaimLifecycleStatus::Active,
+            );
+            body.evidence = Some(actor_class_evid.clone());
+            body
+        };
+
+        // `Approved` is in the surfaceable set → the door passes it.
+        validate_edge_provenance_claim_structure(&wrapper(ClaimApprovalStatus::Approved))
+            .expect("approved provenance wrapper must pass the door");
+        // `Proposed` is outside {auto, approved} → typed reject.
+        assert!(matches!(
+            validate_edge_provenance_claim_structure(&wrapper(ClaimApprovalStatus::Proposed)),
+            Err(Error::InvalidProvenanceBody(_))
+        ));
     }
 }
