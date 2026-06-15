@@ -11072,6 +11072,70 @@ fn put_edge_provenance_substrate_and_effort_round_trip_with_model_gate() -> Resu
         .expect_err("dangling substrate_ref must be rejected");
     assert_eq!(err.kind(), ErrorKind::InvalidModelSubstrate);
 
+    // Substrate gate: a REAL, indexed type-121 MODEL row whose MessagePack
+    // body is MALFORMED (not the engine `{name, version}` shape). The remote
+    // replay door admits the maintenance type byte (allow_maintenance) WITHOUT
+    // body-shape validation, so a forged/corrupt body can physically land in
+    // the entities table. The substrate gate runs the SAME strict decoder as
+    // the get-or-create scan, so a type-byte-only gate would wrongly ACCEPT
+    // this. It must fail closed as `CorruptedIndex` — distinct from the
+    // `InvalidModelSubstrate` referential rejections (wrong kind / dangling) —
+    // and stage NO provenance Claim.
+    let forged_model = EntityId::now();
+    {
+        let mut wtxn = vault.store.env.write_txn()?;
+        crate::batch::apply_ops(
+            &vault.store,
+            &vault.config,
+            &vault.analyzer,
+            &mut wtxn,
+            vec![crate::batch::BatchOp::Put {
+                id: forged_model,
+                entity_type: ENTITY_TYPE_MODEL,
+                occurred: TimeRange {
+                    start: 400,
+                    end: 400,
+                },
+                learned_at: 400,
+                // Not a `{name, version}` MessagePack map → decode_model_entity_body fails.
+                data: b"forged-model".to_vec(),
+                allow_maintenance: true,
+                allow_reserved_predicate: false,
+            }],
+        )?;
+        wtxn.commit()?;
+    }
+    // It really is an indexed type-121 row, so the gate reaches the body
+    // decode rather than tripping on a missing / wrong-type entity.
+    assert_eq!(
+        vault.get_entity_type(&forged_model)?,
+        Some(ENTITY_TYPE_MODEL),
+        "forged substrate must be a real indexed type-121 row"
+    );
+    let corrupt_claim_id = EntityId::now();
+    let mut malformed_substrate =
+        EdgeProvenanceClaimBody::new(fx.person, 0.5, SupersessionStatus::Proposed);
+    malformed_substrate.substrate_ref = Some(forged_model);
+    let err = vault
+        .put_edge_provenance(
+            &corrupt_claim_id,
+            &fx.subject,
+            &malformed_substrate,
+            EdgeActorClass::Human,
+            3_000,
+        )
+        .expect_err("malformed type-121 substrate body must be rejected");
+    assert_eq!(
+        err.kind(),
+        ErrorKind::CorruptedIndex,
+        "body-malformed type-121 substrate row is ambiguous on-disk corruption \
+         (CorruptedIndex), NOT a clean referential rejection (InvalidModelSubstrate)"
+    );
+    assert!(
+        vault.get(&corrupt_claim_id)?.is_none(),
+        "fail-closed: no provenance Claim staged on body-corruption reject"
+    );
+
     // Conflict gate: a caller-set body actor_class that disagrees with the
     // actor_class parameter is ambiguous → typed reject; an AGREEING body
     // class is accepted (idempotent injection).
