@@ -42,8 +42,9 @@ pub use crate::maintain::{MaintenanceBuilder, MaintenanceReport};
 pub use crate::pipeline::{DEFAULT_RECENCY_HALF_LIFE_DAYS, FacetMode, PipelineBuilder, WorldScope};
 pub use crate::provenance::{
     EDGE_PROVENANCE_BODY_KEYS, EDGE_REF_LEN, EdgeProvenanceClaimBody, EdgeRef,
-    PREDICATE_EDGE_PROVENANCE, SupersessionStatus, decode_edge_provenance_body,
-    derive_confirmation_status, validate_actor_class,
+    MODEL_SUBSTRATE_FIELD_MAX_BYTES, PREDICATE_EDGE_PROVENANCE, REASONING_EFFORT_MAX_BYTES,
+    SupersessionStatus, decode_edge_provenance_body, derive_confirmation_status,
+    validate_actor_class,
 };
 pub use crate::types::{
     Bm25RankProfile, ContextEntity, ContextPack, DecodedEdgeValue, EdgeActorClass,
