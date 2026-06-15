@@ -22,11 +22,46 @@ pub const TAG_VERSION_VECTOR: u8 = 2;
 /// mid-sync (ONE-1127).
 pub const TAG_PROTOCOL_HELLO: u8 = 3;
 
+/// LeaseRequest (ONE-1140, OD-5): frame #2 on EVERY connect, right after
+/// the protocol hello. Fixed 105 B layout (wire scalars BE):
+///
+/// `[TAG_LEASE_REQUEST:1][client_id:8 BE][pubkey:32][pop_sig:64]`
+///
+/// `pop_sig` = Ed25519 over the proof-of-possession transcript
+/// `"oneiron/lease-pop/v1" || client_id:8 BE || pubkey:32`. Replay of a
+/// captured frame re-registers the same binding (harmless); binding someone
+/// ELSE's pubkey requires their signature over YOUR client id (the
+/// transcript binds both) — no challenge round needed.
+pub const TAG_LEASE_REQUEST: u8 = 4;
+/// LeaseGranted (ONE-1140, OD-5): the server's direct reply to a
+/// LeaseRequest. Fixed 18 B layout (wire scalars BE):
+///
+/// `[TAG_LEASE_GRANTED:1][status:1 0x01 granted/renewed | 0x00 rejected]`
+/// `[client_id:8 BE][expires_at:8 BE]`
+///
+/// `expires_at = 0` when rejected. A rejection surfaces as a typed
+/// `SyncEvent` and sync PROCEEDS — fail-closed lives at the replay doors
+/// (peers quarantine the unleased device's receipts), not the pipe.
+pub const TAG_LEASE_GRANTED: u8 = 5;
+
+/// Total LeaseRequest frame length, tag byte included (OD-5).
+pub const LEASE_REQUEST_FRAME_LEN: usize = 105;
+/// Total LeaseGranted frame length, tag byte included (OD-5).
+pub const LEASE_GRANTED_FRAME_LEN: usize = 18;
+/// LeaseGranted status byte: granted or renewed.
+pub const LEASE_STATUS_GRANTED: u8 = 0x01;
+/// LeaseGranted status byte: rejected (binding conflict or revoked).
+pub const LEASE_STATUS_REJECTED: u8 = 0x00;
+
 /// Current sync wire-protocol version.
 ///
 /// Bump on any wire break (tag layout, payload encoding, VV encoding).
 /// v1 = binary Loro VVs + delta export + protocol hello (ONE-1127).
-pub const PROTOCOL_VERSION: u8 = 1;
+/// v2 = lease frames (TAG_LEASE_REQUEST/TAG_LEASE_GRANTED), the
+/// `[hello][lease_request][…]` connect sequence, the root-doc `leases`
+/// registry, and the attested-receipt `verification` pin (ONE-1140, OD-5 —
+/// one atomic wire train; v1 peers are rejected at hello with close 4006).
+pub const PROTOCOL_VERSION: u8 = 2;
 
 /// Shared 8 MB cap for decoded payloads: bulk-transfer decompression and
 /// root-doc imports both refuse anything larger (decompression-bomb /
@@ -77,6 +112,86 @@ pub fn decode_protocol_hello(frame: &[u8]) -> Result<u8, TransportError> {
         return Err(TransportError::InvalidPayload("not a protocol hello"));
     }
     Ok(frame[1])
+}
+
+/// Encodes a LeaseRequest frame (ONE-1140, OD-5).
+///
+/// Format: `[TAG_LEASE_REQUEST:1][client_id:8 BE][pubkey:32][pop_sig:64]`
+/// — exactly [`LEASE_REQUEST_FRAME_LEN`] (105) bytes.
+pub fn encode_lease_request(client_id: u64, pubkey: &[u8; 32], pop_sig: &[u8; 64]) -> Vec<u8> {
+    let mut buf = Vec::with_capacity(LEASE_REQUEST_FRAME_LEN);
+    buf.push(TAG_LEASE_REQUEST);
+    buf.extend_from_slice(&client_id.to_be_bytes());
+    buf.extend_from_slice(pubkey);
+    buf.extend_from_slice(pop_sig);
+    debug_assert_eq!(buf.len(), LEASE_REQUEST_FRAME_LEN);
+    buf
+}
+
+/// Decodes a LeaseRequest payload (after the tag byte has been consumed).
+///
+/// Exhaustive length validation: exactly 104 bytes (8 + 32 + 64), no
+/// trailing bytes. Returns `(client_id, pubkey, pop_sig)` — signature
+/// verification is the caller's job (the server registrar).
+pub fn decode_lease_request(data: &[u8]) -> Result<(u64, [u8; 32], [u8; 64]), TransportError> {
+    if data.len() != LEASE_REQUEST_FRAME_LEN - 1 {
+        return Err(TransportError::InvalidPayload(
+            "LeaseRequest must be exactly 105 bytes",
+        ));
+    }
+    let client_id = u64::from_be_bytes(data[0..8].try_into().expect("length checked"));
+    let mut pubkey = [0u8; 32];
+    pubkey.copy_from_slice(&data[8..40]);
+    let mut pop_sig = [0u8; 64];
+    pop_sig.copy_from_slice(&data[40..104]);
+    Ok((client_id, pubkey, pop_sig))
+}
+
+/// Encodes a LeaseGranted frame (ONE-1140, OD-5).
+///
+/// Format: `[TAG_LEASE_GRANTED:1][status:1][client_id:8 BE][expires_at:8 BE]`
+/// — exactly [`LEASE_GRANTED_FRAME_LEN`] (18) bytes. `expires_at` must be 0
+/// when rejected.
+pub fn encode_lease_granted(status: u8, client_id: u64, expires_at: u64) -> Vec<u8> {
+    debug_assert!(matches!(
+        status,
+        LEASE_STATUS_GRANTED | LEASE_STATUS_REJECTED
+    ));
+    debug_assert!(status == LEASE_STATUS_GRANTED || expires_at == 0);
+    let mut buf = Vec::with_capacity(LEASE_GRANTED_FRAME_LEN);
+    buf.push(TAG_LEASE_GRANTED);
+    buf.push(status);
+    buf.extend_from_slice(&client_id.to_be_bytes());
+    buf.extend_from_slice(&expires_at.to_be_bytes());
+    debug_assert_eq!(buf.len(), LEASE_GRANTED_FRAME_LEN);
+    buf
+}
+
+/// Decodes a LeaseGranted payload (after the tag byte has been consumed).
+///
+/// Exhaustive validation: exactly 17 bytes, status byte drawn from the
+/// pinned set, `expires_at == 0` when rejected. Returns
+/// `(status, client_id, expires_at)`.
+pub fn decode_lease_granted(data: &[u8]) -> Result<(u8, u64, u64), TransportError> {
+    if data.len() != LEASE_GRANTED_FRAME_LEN - 1 {
+        return Err(TransportError::InvalidPayload(
+            "LeaseGranted must be exactly 18 bytes",
+        ));
+    }
+    let status = data[0];
+    if !matches!(status, LEASE_STATUS_GRANTED | LEASE_STATUS_REJECTED) {
+        return Err(TransportError::InvalidPayload(
+            "LeaseGranted status byte must be 0x00 or 0x01",
+        ));
+    }
+    let client_id = u64::from_be_bytes(data[1..9].try_into().expect("length checked"));
+    let expires_at = u64::from_be_bytes(data[9..17].try_into().expect("length checked"));
+    if status == LEASE_STATUS_REJECTED && expires_at != 0 {
+        return Err(TransportError::InvalidPayload(
+            "rejected LeaseGranted must carry expires_at = 0",
+        ));
+    }
+    Ok((status, client_id, expires_at))
 }
 
 /// Encodes a WindowSync message for the wire.
@@ -315,12 +430,86 @@ mod tests {
 
     #[test]
     fn protocol_hello_wire_literals() {
-        // Contract literals (ONE-1127): the hello frame is EXACTLY
-        // [TAG_PROTOCOL_HELLO=3, PROTOCOL_VERSION=1]. A drifted tag or
+        // Contract literals: the hello frame is EXACTLY
+        // [TAG_PROTOCOL_HELLO=3, PROTOCOL_VERSION=2]. A drifted tag or
         // version byte is a silent wire break — assert the raw bytes.
+        // Version pinned 1→2 by the ONE-1140 atomic wire train (OD-5):
+        // lease frames + connect sequence + leases registry + attested
+        // receipts land behind this single bump; v1 peers close 4006.
         assert_eq!(TAG_PROTOCOL_HELLO, 3, "hello tag byte is pinned to 3");
-        assert_eq!(PROTOCOL_VERSION, 1, "wire protocol version is pinned to 1");
-        assert_eq!(encode_protocol_hello(), vec![3u8, 1u8]);
+        assert_eq!(PROTOCOL_VERSION, 2, "wire protocol version is pinned to 2");
+        assert_eq!(encode_protocol_hello(), vec![3u8, 2u8]);
+    }
+
+    /// ONE-1140 (OD-5) wire literals: TAG_LEASE_REQUEST=4 (105 B) and
+    /// TAG_LEASE_GRANTED=5 (18 B), BE scalars at pinned offsets. Byte-exact
+    /// round-trips plus exhaustive malformed-frame rejection — a transposed
+    /// field, LE flip, or length drift fails here, not at a peer.
+    #[test]
+    fn lease_frame_layout_literals() {
+        assert_eq!(TAG_LEASE_REQUEST, 4, "lease request tag pinned to 4");
+        assert_eq!(TAG_LEASE_GRANTED, 5, "lease granted tag pinned to 5");
+
+        // LeaseRequest: [0x04][client_id:8 BE][pubkey:32][pop_sig:64].
+        let pubkey = [0xAAu8; 32];
+        let pop_sig = [0xBBu8; 64];
+        let request = encode_lease_request(0x0102030405060708, &pubkey, &pop_sig);
+        assert_eq!(request.len(), 105, "LeaseRequest frame is exactly 105 B");
+        assert_eq!(request[0], 4);
+        assert_eq!(
+            &request[1..9],
+            &[0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08],
+            "client_id is u64 BE at offset 1"
+        );
+        assert_eq!(&request[9..41], &[0xAA; 32]);
+        assert_eq!(&request[41..105], &[0xBB; 64][..]);
+        let (cid, pk, sig) = decode_lease_request(&request[1..]).unwrap();
+        assert_eq!(cid, 0x0102030405060708);
+        assert_eq!(pk, pubkey);
+        assert_eq!(sig, pop_sig);
+        // Exhaustive length validation: truncated and trailing both reject.
+        assert!(decode_lease_request(&request[1..104]).is_err());
+        let mut long = request[1..].to_vec();
+        long.push(0);
+        assert!(decode_lease_request(&long).is_err());
+
+        // LeaseGranted: [0x05][status:1][client_id:8 BE][expires_at:8 BE].
+        let granted = encode_lease_granted(LEASE_STATUS_GRANTED, 0x0102030405060708, 0x11223344);
+        assert_eq!(granted.len(), 18, "LeaseGranted frame is exactly 18 B");
+        assert_eq!(granted[0], 5);
+        assert_eq!(granted[1], 0x01, "granted status byte");
+        assert_eq!(
+            &granted[2..10],
+            &[0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08]
+        );
+        assert_eq!(
+            &granted[10..18],
+            &0x11223344u64.to_be_bytes(),
+            "expires_at is u64 BE at offset 10"
+        );
+        assert_eq!(
+            decode_lease_granted(&granted[1..]).unwrap(),
+            (LEASE_STATUS_GRANTED, 0x0102030405060708, 0x11223344)
+        );
+        // Rejection frame: status 0x00, expires_at MUST be 0.
+        let rejected = encode_lease_granted(LEASE_STATUS_REJECTED, 7, 0);
+        assert_eq!(rejected[1], 0x00);
+        assert_eq!(
+            decode_lease_granted(&rejected[1..]).unwrap(),
+            (LEASE_STATUS_REJECTED, 7, 0)
+        );
+        // Malformed: unknown status byte, nonzero expires_at on rejection,
+        // wrong lengths — all typed rejections (fail closed).
+        let mut bad_status = granted[1..].to_vec();
+        bad_status[0] = 0x02;
+        assert!(decode_lease_granted(&bad_status).is_err());
+        let mut rejected_nonzero = rejected[1..].to_vec();
+        rejected_nonzero[16] = 1;
+        assert!(decode_lease_granted(&rejected_nonzero).is_err());
+        assert!(decode_lease_granted(&granted[1..17]).is_err());
+        let mut granted_long = granted[1..].to_vec();
+        granted_long.push(0);
+        assert!(decode_lease_granted(&granted_long).is_err());
     }
 
     #[test]

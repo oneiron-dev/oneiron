@@ -91,20 +91,49 @@ pub fn persist_window_snapshot(vault: &Vault, key: &WindowKey, doc: &LoroDoc) ->
     Ok(state)
 }
 
-/// Persists the root Doc snapshot.
+/// Persists the root Doc snapshot inside the CALLER's write txn (ONE-1140).
 ///
 /// Atomically writes `d:root` (Loro snapshot, server-write-only
-/// `meta.windows`), `sv:root`, and `svf:root` = `[1]` (fresh).
-pub fn persist_root_snapshot(vault: &Vault, doc: &LoroDoc) -> Result<()> {
+/// `meta.windows`), `sv:root`, and `svf:root` = `[1]` (fresh) into `wtxn`.
+/// The snapshot and state vector are computed FIRST as pure in-memory reads
+/// (no nested txn), then the three puts go into the passed `wtxn`, so this
+/// can be combined with the lease mirror (`mirror_leases_from_root_in_txn`)
+/// in ONE write txn — a crash/failure after the `d:root` put rolls back
+/// every key, never leaving a stale/missing `ls:` mirror over a new `d:root`
+/// (a revoked lease must not appear active at a replay door).
+///
+/// NESTED-TXN HAZARD: do NOT call [`persist_root_snapshot`] from inside a
+/// write txn — two write txns on one LMDB env deadlock. This in-txn body is
+/// the composition point; keep [`persist_root_snapshot`] as the default
+/// stand-alone entry.
+///
+/// MISUSE SURFACE: callers MUST wrap this in a single write txn together
+/// with any companion mirror write (e.g. `lease::mirror_leases_from_root_in_txn`).
+/// Using it outside that atomic boundary re-opens the split-write bug
+/// (a committed `d:root` over a stale/missing `ls:` mirror). The cross-crate
+/// caller is `oneiron-server`'s lease registrar (ONE-1140).
+#[doc(hidden)]
+pub fn persist_root_snapshot_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    doc: &LoroDoc,
+) -> Result<()> {
     let state = export_snapshot(doc)?;
     let vv = doc_version_vector(doc);
 
-    vault.with_write_txn(|wtxn| {
-        vault.store.sync_state.put(wtxn, "d:root", &state)?;
-        vault.store.sync_state.put(wtxn, "sv:root", &vv)?;
-        vault.store.sync_state.put(wtxn, "svf:root", &[1u8])?;
-        Ok(())
-    })
+    vault.store.sync_state.put(wtxn, "d:root", &state)?;
+    vault.store.sync_state.put(wtxn, "sv:root", &vv)?;
+    vault.store.sync_state.put(wtxn, "svf:root", &[1u8])?;
+    Ok(())
+}
+
+/// Persists the root Doc snapshot.
+///
+/// Atomically writes `d:root` (Loro snapshot, server-write-only
+/// `meta.windows`), `sv:root`, and `svf:root` = `[1]` (fresh). Thin own-txn
+/// wrapper over [`persist_root_snapshot_in_txn`].
+pub fn persist_root_snapshot(vault: &Vault, doc: &LoroDoc) -> Result<()> {
+    vault.with_write_txn(|wtxn| persist_root_snapshot_in_txn(vault, wtxn, doc))
 }
 
 /// Loads the root Doc from persisted state (ARCH-0023b startup step 1:

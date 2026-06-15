@@ -79,6 +79,10 @@ pub enum QuarantineContainer {
     Entities,
     Edges,
     Tombstones,
+    /// Root-doc `leases` registry entries (ONE-1140): a malformed lease
+    /// value arriving through the root mirror is quarantined — never
+    /// upserted over a previous good `ls:` row, never silently dropped.
+    Leases,
 }
 
 impl QuarantineContainer {
@@ -88,6 +92,7 @@ impl QuarantineContainer {
             Self::Entities => "entities",
             Self::Edges => "edges",
             Self::Tombstones => "tombstones",
+            Self::Leases => "leases",
         }
     }
 }
@@ -174,7 +179,16 @@ pub(crate) fn remote_rejection_reason(error: &Error) -> Option<String> {
         // local, never silent LWW), is a remote rejection: quarantine the op
         // and continue the batch.
         | ErrorKind::InvalidRedactionReceiptBody
-        | ErrorKind::RedactionReceiptDivergence => Some(reason_code_for(error)),
+        | ErrorKind::RedactionReceiptDivergence
+        // ONE-1140: a NEW type-120 receipt failing the origin predicate —
+        // bad/transplanted attestation signature, unleased att_client, or a
+        // revoked lease binding — is a remote rejection of the op itself:
+        // quarantine (x: row) and continue. The rejected bytes stay in the
+        // CRDT map, so the next forward rematerialization re-admits them
+        // once the lease mirror catches up (OD-10 lazy re-admission).
+        | ErrorKind::ReceiptAttestationInvalid
+        | ErrorKind::ReceiptLeaseUnknown
+        | ErrorKind::ReceiptLeaseRevoked => Some(reason_code_for(error)),
         _ => None,
     }
 }
