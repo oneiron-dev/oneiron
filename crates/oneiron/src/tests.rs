@@ -848,9 +848,21 @@ fn receipt_reason_purges_orphan_vector_with_receipt_and_sweep() -> Result<()> {
 }
 
 // ═══════════════════════════════════════════════════════════════════════
-// ONE-1149 — delete TOCTOU: receipt emission is serialized with the txn
-// that actually erases. A delete that erased NOTHING must never claim it
-// did: no REDACTION_AUDIT receipt, no `h:` sweep row, no `pt:` marker.
+// ONE-1149 — delete TOCTOU: receipt/sweep/`pt:` emission is serialized with
+// the txn that actually erases. Two genuinely different cases must never
+// collapse into one:
+//   • FULLY-MISSING (an id that never had scope) = strict no-op, no publish
+//     at all — not even a propagating tombstone.
+//   • RACED-TO-NOTHING (scope existed at the read-probe, raced away before
+//     the purge txn) = the already-published CRDT tombstone + `d:`/`q:`
+//     propagation rows + a guarded `dt:` marker for hard reasons legitimately
+//     survive as idempotent propagation intent; ONLY the receipt + `h:` sweep
+//     + `pt:` marker are suppressed (the in-txn full-scope ownership probe).
+//     It is NEVER "`dt:`-only": the propagating CRDT tombstone is the
+//     cross-device convergence net (a peer that still holds the id needs it).
+// A delete that erased NOTHING must never claim it did (no receipt, no `h:`
+// sweep row, no `pt:` marker); a delete that erased a PARTIAL residue must
+// still audit it (the false-NEGATIVE mirror).
 // ═══════════════════════════════════════════════════════════════════════
 
 fn sync_state_value(vault: &Vault, key: &str) -> Result<Option<Vec<u8>>> {
@@ -897,12 +909,18 @@ fn assert_no_erasure_audit_artifacts(vault: &Vault) -> Result<()> {
     Ok(())
 }
 
-/// ONE-1149: deleting a fully-missing id is a STRICT no-op for every
-/// reason — `missing()` outcome and zero side effects: no CRDT tombstone
-/// publish (`d:w:` snapshot), no `q:`/`d:` queue rows, no `dt:` marker, no
-/// `pt:` marker, no receipt, no sweep row. A wrong implementation that
-/// mints/publishes the tombstone before claiming write ownership leaves a
-/// `d:w:` row or queue rows behind and fails this test.
+/// ONE-1149 FULLY-MISSING case: an id that NEVER had a delete scope is a
+/// STRICT no-op for every reason — `missing()` outcome and ZERO side
+/// effects, not even a propagating tombstone: no CRDT tombstone publish
+/// (`d:w:` snapshot), no `q:`/`d:` queue rows, no `dt:` marker, no `pt:`
+/// marker, no receipt, no sweep row. This is the deliberate contrast to the
+/// RACED-TO-NOTHING case (`*_raced_to_nothing_*` below), where the scope
+/// existed at the read-probe and only raced away before the purge txn, so
+/// the already-published CRDT tombstone + `d:`/`q:` propagation rows + a
+/// guarded `dt:` marker legitimately survive as idempotent propagation
+/// intent. A wrong implementation that mints/publishes the tombstone before
+/// proving there is something to erase leaves a `d:w:` row or queue rows
+/// behind and fails this test.
 #[test]
 fn delete_missing_id_is_strict_noop_for_every_reason() -> Result<()> {
     for reason in [
@@ -948,14 +966,21 @@ fn delete_missing_id_is_strict_noop_for_every_reason() -> Result<()> {
     Ok(())
 }
 
-/// ONE-1149 raced-delete construction (delete-safety): holds the LMDB
-/// write lock BEFORE spawning the deleting thread, so the deleter passes
-/// its read-time probe (MVCC — the uncommitted erasure is invisible) and
-/// then blocks at its first write txn. The test erases the delete scope
-/// through its held txn and commits; the deleter's purge txn then finds
-/// nothing to erase. A scheduling miss (the deleter probed only after the
-/// commit) takes the strict-noop path instead; callers detect that via the
-/// absent `dt:` marker and retry.
+/// ONE-1149 RACED-TO-NOTHING construction (delete-safety), DETERMINISTIC —
+/// no timing sleep. Builds the RACED-TO-NOTHING case (scope existed at the
+/// deleter's read-probe, then raced away before its purge txn), NOT the
+/// FULLY-MISSING case (an id that never had scope). The eraser thread opens
+/// the single LMDB write txn, STAGES the scope erasure inside it but leaves
+/// it UNCOMMITTED (MVCC keeps it invisible to any read txn), then meets the
+/// deleter at a `Barrier`. After the barrier the deleter takes its read
+/// snapshot — a µs in-memory read that still sees the full scope because the
+/// erasure is uncommitted — and blocks on the held write lock, while the
+/// eraser commits (a ms-scale fsync). The read-vs-commit asymmetry makes the
+/// deleter observe the pre-erase scope every run, so its purge txn
+/// deterministically finds nothing once the eraser's commit lands. The
+/// astronomically-rare scheduling miss (the deleter is descheduled until
+/// after the commit) takes the FULLY-MISSING strict-noop path instead;
+/// callers detect it via the absent `dt:` marker and retry.
 fn run_raced_delete<F>(
     vault: &Vault,
     id: &EntityId,
@@ -965,12 +990,23 @@ fn run_raced_delete<F>(
 where
     F: FnOnce(&mut heed::RwTxn<'_>) -> Result<()>,
 {
+    let gate = std::sync::Arc::new(std::sync::Barrier::new(2));
     std::thread::scope(|scope| -> Result<DeleteEntityOutcome> {
         let mut wtxn = vault.store.env.write_txn()?;
-        let deleter = scope.spawn(move || vault.delete_entity_with_reason(id, reason));
-        // Let the deleter pass its read probe and block on the write lock.
-        std::thread::sleep(std::time::Duration::from_millis(600));
+        // Stage the scope erasure in the held txn but DO NOT commit yet —
+        // LMDB MVCC keeps it invisible to the deleter's read probe, so the
+        // deleter is guaranteed to pass that probe with the scope present.
         erase_scope(&mut wtxn)?;
+        let deleter_gate = std::sync::Arc::clone(&gate);
+        let deleter = scope.spawn(move || {
+            deleter_gate.wait();
+            vault.delete_entity_with_reason(id, reason)
+        });
+        // Release the deleter; it reads its scope (still present) and blocks
+        // on this thread's single write lock. Committing the erasure here
+        // unblocks it into a purge txn that now deterministically finds
+        // nothing to erase.
+        gate.wait();
         wtxn.commit()?;
         deleter.join().expect("deleter thread must not panic")
     })
@@ -1048,11 +1084,12 @@ fn assert_raced_delete_artifacts(
     Ok(())
 }
 
-/// ONE-1149 headerless leg: a hard delete of orphan residue whose scope is
-/// raced away between the read probe and the purge txn must NOT emit a
-/// receipt, sweep row, or pt: marker (the pre-fix code emitted all three —
-/// a false GDPR audit). Only the dt: marker (and the already-published
-/// idempotent tombstone) may remain.
+/// ONE-1149 headerless RACED-TO-NOTHING leg: a hard delete of orphan
+/// residue whose scope existed at the read probe but is raced away before
+/// the purge txn must NOT emit a receipt, sweep row, or `pt:` marker (the
+/// pre-fix code emitted all three — a false GDPR audit). Only the guarded
+/// `dt:` marker and the already-published idempotent CRDT tombstone (with
+/// its `d:`/`q:` propagation rows) legitimately survive.
 #[test]
 fn headerless_delete_raced_to_nothing_emits_no_receipt_sweep_or_pt() -> Result<()> {
     let (_dir, vault) = open_test_vault();
@@ -1085,10 +1122,11 @@ fn headerless_delete_raced_to_nothing_emits_no_receipt_sweep_or_pt() -> Result<(
     unreachable!("the attempt loop either returns or panics");
 }
 
-/// ONE-1149 headerful leg: a hard delete whose entity (and full delete
-/// scope) is raced away between the header read and the purge txn must NOT
-/// emit a receipt, sweep row, or pt: marker. Only the dt: marker (and the
-/// already-published idempotent tombstone) may remain.
+/// ONE-1149 headerful RACED-TO-NOTHING leg: a hard delete whose entity (and
+/// full delete scope) existed at the header read but is raced away before
+/// the purge txn must NOT emit a receipt, sweep row, or `pt:` marker. Only
+/// the guarded `dt:` marker and the already-published idempotent CRDT
+/// tombstone (with its `d:`/`q:` propagation rows) legitimately survive.
 #[test]
 fn headerful_delete_raced_to_nothing_emits_no_receipt_sweep_or_pt() -> Result<()> {
     let (_dir, vault) = open_test_vault();
@@ -1125,6 +1163,180 @@ fn headerful_delete_raced_to_nothing_emits_no_receipt_sweep_or_pt() -> Result<()
 
         // user_hard_delete pinned wire byte = 2.
         assert_raced_delete_artifacts(&vault, &outcome, &dt_marker, 2)?;
+        return Ok(());
+    }
+    unreachable!("the attempt loop either returns or panics");
+}
+
+/// ONE-1149 false-NEGATIVE guard (delete-safety): the headerful delete's
+/// IN-TXN ownership probe checks the FULL delete scope, not just the
+/// entities row. A headerful entity whose entities row is raced away while a
+/// vector + a BM25 posting survive keeps `active_delete_scope_exists_in_txn`
+/// TRUE, so the purge runs, the residue IS erased, and a REAL receipt is
+/// emitted even though the outcome reports `existed:false` (the entities row
+/// was already gone — the two meanings of "existed": entities-row erased vs
+/// any-scope erased). A "gate the receipt on the entities-row `existed`" /
+/// "return early on the missing header" implementation would skip the
+/// receipt and silently erase the residue with NO audit — the mirror of the
+/// raced-to-nothing false-POSITIVE this ticket also closes. `UserHardDelete`
+/// is used deliberately: unlike `GdprDelete`/`PolicyDelete` it runs no
+/// pre-purge SoftErase, so the vector + BM25 residue survives to the in-txn
+/// probe.
+#[test]
+fn headerful_delete_partial_residue_survives_emits_receipt_existed_false() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let learned_at = 1_772_000_000;
+    let id = EntityId::now();
+    vault
+        .batch()
+        .put(
+            &id,
+            1,
+            test_time_range(learned_at, learned_at),
+            learned_at,
+            b"partial-residue",
+        )
+        .text(&id, &[("body", "partial-residue")])
+        .commit()?;
+    vault.put_vector(&id, &[0.1, 0.2, 0.3, 0.4])?;
+    assert_eq!(vault.search_text("partial-residue", 10)?.len(), 1);
+
+    // The race erases ONLY the entities row (header), the way a concurrent
+    // delete that lost the purge race would, leaving the vector + BM25
+    // posting as live residue the in-txn full-scope probe must still catch.
+    let outcome = run_raced_delete(&vault, &id, DeleteReason::UserHardDelete, |wtxn| {
+        vault.store.entities.delete(wtxn, id.as_bytes())?;
+        Ok(())
+    })?;
+
+    // existed:false (the entities row was raced away) BUT a real erasure
+    // happened and is audited.
+    assert!(
+        !outcome.existed,
+        "the entities row was raced away ⇒ outcome reports existed:false"
+    );
+    assert!(
+        outcome.receipt_id.is_some(),
+        "surviving residue ⇒ a REAL receipt is emitted (false-NEGATIVE guard)"
+    );
+    assert!(
+        outcome.sweep_key.is_some(),
+        "surviving residue ⇒ an h: sweep row is queued"
+    );
+    assert_eq!(
+        redaction_audit_receipts(&vault)?.len(),
+        1,
+        "exactly one REDACTION_AUDIT receipt for the erased residue"
+    );
+    assert_eq!(
+        hard_erase_sweep_rows(&vault)?.len(),
+        1,
+        "exactly one h: sweep row for the erased residue"
+    );
+    // The residue is actually erased — no leak past the audit.
+    assert!(
+        vault.get_vector(&id)?.is_none(),
+        "the surviving vector residue must be purged"
+    );
+    assert!(
+        vault.search_text("partial-residue", 10)?.is_empty(),
+        "the surviving BM25 posting must be purged"
+    );
+    Ok(())
+}
+
+/// ONE-1149 end-to-end convergence — the anti-(A) invariant (delete-safety).
+/// A `GdprDelete` that LOSES the race to a tombstone-LESS full-scope batch
+/// erase (`vault.batch().delete(E)` ⇒ `BatchOp::Delete` ⇒ `deindex_entity`,
+/// which publishes NO CRDT tombstone) erases nothing locally — so it emits
+/// no receipt / sweep / `pt:` (RACED-TO-NOTHING) — but it STILL publishes
+/// its own CRDT tombstone + `d:`/`q:` propagation rows BEFORE claiming write
+/// ownership. That published tombstone is the ONLY convergence net: the
+/// rejected "reorder to `dt:`-only / suppress the tombstone publish"
+/// implementation would leave NO propagating record, and a peer that still
+/// holds E would keep it forever — a silently dropped GDPR delete. This test
+/// pins that the origin's window, applied to a peer that still holds E,
+/// purges E. (A wrong `dt:`-only impl FAILS the convergence assertion.)
+#[cfg(feature = "sync")]
+#[test]
+fn raced_gdpr_delete_against_batch_delete_still_converges() -> Result<()> {
+    use crate::sync::bridge::Materializer;
+    use crate::sync::loro_support::map_contains_binary;
+    use crate::sync::types::WindowKey;
+    use crate::sync::window;
+
+    let learned_at = 1_772_000_000;
+    let window_key = WindowKey::from_timestamp(learned_at);
+
+    for attempt in 0..3 {
+        let (_dir, vault) = open_test_vault();
+        let id = EntityId::now();
+        vault
+            .batch()
+            .put(
+                &id,
+                1,
+                test_time_range(learned_at, learned_at),
+                learned_at,
+                b"converge-secret",
+            )
+            .commit()?;
+
+        // GdprDelete races the tombstone-LESS full-scope erase that
+        // `BatchOp::Delete` performs (`deindex_entity`): the delete reads
+        // E's header, the racer erases the whole scope, and the delete's
+        // purge txn finds nothing.
+        let outcome = run_raced_delete(&vault, &id, DeleteReason::GdprDelete, |wtxn| {
+            crate::batch::deindex_entity(&vault.store, wtxn, &id)?;
+            Ok(())
+        })?;
+
+        let Some(dt_marker) = sync_state_value(&vault, &format!("dt:{}", id.to_hex()))? else {
+            // Scheduling miss: the deleter probed after the commit and took
+            // the FULLY-MISSING strict-noop path. Verify, then retry.
+            assert_eq!(outcome, DeleteEntityOutcome::missing());
+            assert_no_erasure_audit_artifacts(&vault)?;
+            assert!(
+                attempt < 2,
+                "raced branch was never constructed in 3 attempts"
+            );
+            continue;
+        };
+
+        // Origin RACED-TO-NOTHING: no false audit, but the convergent CRDT
+        // tombstone + exactly one d:/q: propagation pair survive. gdpr_delete
+        // pinned wire byte = 3.
+        assert_raced_delete_artifacts(&vault, &outcome, &dt_marker, 3)?;
+        let origin_doc = window::load_window_from_state(&vault, "origin", &window_key)?;
+        assert!(
+            map_contains_binary(&origin_doc.get_map("tombstones"), id.to_hex().as_str()),
+            "the raced GdprDelete must still publish a convergent CRDT tombstone"
+        );
+
+        // A fresh peer still holds E; applying the origin window must
+        // converge it away (the dropped-GDPR-delete net the anti-(A)
+        // invariant guarantees).
+        let (_peer_dir, peer) = open_test_vault();
+        peer.batch()
+            .put(
+                &id,
+                1,
+                test_time_range(learned_at, learned_at),
+                learned_at,
+                b"converge-secret",
+            )
+            .commit()?;
+        assert!(
+            peer.get_raw(&id)?.is_some(),
+            "peer fixture must hold E before convergence"
+        );
+
+        let materializer = Materializer::new();
+        window::forward_rematerialize(&peer, &origin_doc, &materializer, &window_key)?;
+        assert!(
+            peer.get_raw(&id)?.is_none(),
+            "applying the origin window to the peer must purge E (convergence net)"
+        );
         return Ok(());
     }
     unreachable!("the attempt loop either returns or panics");
