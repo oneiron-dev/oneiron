@@ -1342,6 +1342,18 @@ mod tests {
     }
 
     #[test]
+    fn leap_year_boundaries_keep_feb_29_in_february_window() {
+        assert!(!is_leap_year(2023), "ordinary year");
+        assert!(is_leap_year(2024), "divisible-by-4 leap year");
+        assert!(!is_leap_year(2100), "century year not divisible by 400");
+        assert!(is_leap_year(2000), "century year divisible by 400");
+
+        // 2024-02-29 00:00:00 UTC and 2024-03-01 00:00:00 UTC.
+        assert_eq!(window_label_from_timestamp(1_709_164_800), "2024-02");
+        assert_eq!(window_label_from_timestamp(1_709_251_200), "2024-03");
+    }
+
+    #[test]
     fn pending_tombstone_key_layout() {
         let id = EntityId::from_bytes([0x7E; 16]).expect("valid id");
         assert_eq!(
