@@ -7,12 +7,15 @@ use clap::Parser;
 /// - `max_update_payload` — ENFORCED at the WindowSync UPDATE chokepoint
 ///   (oversized updates close the connection before any state mutates).
 /// - `max_frame_size` — ENFORCED on the WebSocket frame size.
-/// - `max_updates_per_sec`, `max_connections_per_user`,
-///   `max_windows_per_client` — DELETED, deferred to M6 (rate-limit tuning).
-///   Per-user limits need per-user identity (Phase-1 auth is a single shared
-///   secret), and a hard per-connection window cap can block legitimate
-///   tombstone sync into historical windows — weakening delete propagation
-///   is not acceptable to enforce a quota.
+/// - `max_messages_per_sec` — ENFORCED as a per-connection inbound message
+///   rate limit. Per-user limits still need per-user identity (Phase-1 auth is
+///   a single shared secret).
+/// - `max_windows_per_connection` — ENFORCED as a generous per-connection
+///   distinct-window touch cap. The default is intentionally high enough for
+///   legitimate historical-window tombstone sync; it stops fabricated-key
+///   floods, not real history.
+/// - `max_connections_per_user` — not enforced until auth has per-user
+///   identity.
 #[derive(Debug, Clone)]
 pub struct SyncServerConfig {
     /// Number of default windows to load (current + previous months).
@@ -28,10 +31,16 @@ pub struct SyncServerConfig {
     /// Shared secret for Phase 1 auth (`x-oneiron-secret` header) — checked
     /// on both the HTTP API and the `/ws` upgrade.
     pub auth_secret: Option<String>,
+    /// Explicit local/dev escape hatch for running without `auth_secret`.
+    pub allow_unauthenticated: bool,
     /// Maximum WebSocket frame size in bytes.
     pub max_frame_size: usize,
     /// Maximum CRDT update payload in bytes (enforced on WindowSync UPDATE).
     pub max_update_payload: usize,
+    /// Maximum distinct valid windows one connection may touch.
+    pub max_windows_per_connection: usize,
+    /// Maximum inbound protocol messages per connection per second.
+    pub max_messages_per_sec: u32,
     /// Maximum entity blob size in bytes (M5/M6 bulk + materialization paths).
     pub max_entity_blob: usize,
     /// Maximum decompressed BulkTransfer chunk in bytes (M5 Phase-3).
@@ -46,8 +55,11 @@ impl Default for SyncServerConfig {
             compaction_throttle_secs: 30,
             bulk_chunk_size: 1_048_576, // 1 MB uncompressed
             auth_secret: None,
-            max_frame_size: 4 * 1024 * 1024,        // 4 MB
-            max_update_payload: 2 * 1024 * 1024,    // 2 MB
+            allow_unauthenticated: false,
+            max_frame_size: 4 * 1024 * 1024,     // 4 MB
+            max_update_payload: 2 * 1024 * 1024, // 2 MB
+            max_windows_per_connection: 4096,
+            max_messages_per_sec: 200,
             max_entity_blob: 64 * 1024,             // 64 KB
             max_bulk_decompressed: 8 * 1024 * 1024, // 8 MB
         }
@@ -73,6 +85,10 @@ pub struct CliArgs {
     /// Shared secret for API authentication (Phase 1).
     #[arg(long, env = "ONEIRON_AUTH_SECRET")]
     pub auth_secret: Option<String>,
+
+    /// Insecure local/dev escape hatch: allow requests without auth_secret.
+    #[arg(long, default_value_t = false)]
+    pub insecure_allow_unauthenticated: bool,
 
     /// Embedding vector dimension for the vault.
     #[arg(long, default_value_t = 4096)]
