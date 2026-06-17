@@ -665,6 +665,27 @@ pub(crate) fn scrub_window_updates_in_txn(
     Ok(u32::try_from(doomed.len()).unwrap_or(u32::MAX))
 }
 
+/// Receiver-side carrier-15 scrub (ONE-1165): on a remote HARD delete applied
+/// via live replay (Observer B) or recovery (forward_rematerialize), the
+/// receiver's own `q:` outbox may carry the now-deleted payload. Mirror the
+/// origin scrub: drop the window's pending `q:` rows (delete-bearing rows
+/// preserved by the inner scrub) and set `fr:w:{key}` so any over-dropped
+/// non-deleted op is re-sent on next connect.
+///
+/// Window-granular by design: Loro update bytes are opaque, so per-entity
+/// filtering is impossible; over-drop is healed by full-resync, leak is not
+/// healable.
+pub(crate) fn scrub_receiver_outbox_on_remote_hard_delete_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    window_key: &str,
+) -> Result<u32> {
+    let dropped = scrub_window_updates_in_txn(vault, wtxn, window_key)?;
+    let fr_key = format!("fr:w:{window_key}");
+    vault.store.sync_state.put(wtxn, &fr_key, &[1_u8])?;
+    Ok(dropped)
+}
+
 // ─── Key Encoding ────────────────────────────────────────────────────────────
 
 /// Encodes an update queue key: `q:{seq:8BE}` (10 bytes).
@@ -808,16 +829,151 @@ fn decode_last_update_seq_metadata(raw: &[u8]) -> Result<u64> {
 mod tests {
     use super::*;
     use crate::deletion::{
-        HardEraseSweepExtras, LAST_HARD_ERASE_SWEEP_SEQ_KEY, RedactionScope,
-        encode_hard_erase_sweep_job, encode_hard_erase_sweep_key,
+        HardEraseSweepExtras, LAST_HARD_ERASE_SWEEP_SEQ_KEY, RedactionScope, TombstoneReason,
+        TombstoneValueV2, encode_hard_erase_sweep_job, encode_hard_erase_sweep_key,
     };
+    use crate::sync::WindowKey;
+    use crate::sync::bridge::{self, Materializer};
     use crate::sync::quarantine;
-    use crate::types::VaultConfig;
+    use crate::sync::schema::create_window_doc;
+    use crate::sync::window::forward_rematerialize;
+    use crate::types::{ENTITY_TYPE_TASK, TimeRange, VaultConfig};
+
+    const RECEIVER_SCRUB_WINDOW: &str = "2026-03";
+    const RECEIVER_SCRUB_LEARNED_AT: u64 = 1_772_400_000;
+
+    struct ReceiverOutboxFixture {
+        queue: SyncQueue,
+        victim_payload_seq: u64,
+        other_payload_seq: u64,
+        delete_bearing_seq: u64,
+    }
+
+    struct PurgeFailureReset;
+
+    impl Drop for PurgeFailureReset {
+        fn drop(&mut self) {
+            quarantine::INJECT_PURGE_FAILURES.with(|cell| cell.set(0));
+        }
+    }
 
     fn test_vault() -> Arc<Vault> {
         let dir = tempfile::tempdir().unwrap();
         let config = VaultConfig::device();
         Arc::new(Vault::open(dir.path(), config).unwrap())
+    }
+
+    fn arm_purge_failures(count: u32) -> PurgeFailureReset {
+        quarantine::INJECT_PURGE_FAILURES.with(|cell| cell.set(count));
+        PurgeFailureReset
+    }
+
+    fn receiver_hard_tombstone_value() -> [u8; crate::deletion::TOMBSTONE_VALUE_V2_LEN] {
+        TombstoneValueV2 {
+            reason: TombstoneReason::GdprDelete,
+            deleted_at: RECEIVER_SCRUB_LEARNED_AT,
+            request_id: [0xA5; 16],
+        }
+        .encode()
+    }
+
+    fn receiver_soft_tombstone_value() -> [u8; crate::deletion::TOMBSTONE_VALUE_V2_LEN] {
+        TombstoneValueV2 {
+            reason: TombstoneReason::UserDelete,
+            deleted_at: RECEIVER_SCRUB_LEARNED_AT,
+            request_id: [0x5A; 16],
+        }
+        .encode()
+    }
+
+    fn put_receiver_entity(vault: &Vault, id: &EntityId, body: &[u8]) {
+        vault
+            .put_entity(
+                id,
+                ENTITY_TYPE_TASK,
+                TimeRange {
+                    start: RECEIVER_SCRUB_LEARNED_AT,
+                    end: RECEIVER_SCRUB_LEARNED_AT,
+                },
+                RECEIVER_SCRUB_LEARNED_AT,
+                body,
+            )
+            .unwrap();
+    }
+
+    fn seed_receiver_outbox(vault: &Arc<Vault>) -> ReceiverOutboxFixture {
+        let queue = SyncQueue::new(Arc::clone(vault)).unwrap();
+        let victim_payload_seq = queue
+            .push(RECEIVER_SCRUB_WINDOW, b"queued victim payload")
+            .unwrap();
+        let other_payload_seq = queue
+            .push(RECEIVER_SCRUB_WINDOW, b"queued unrelated payload")
+            .unwrap();
+        let delete_bearing_seq = queue
+            .push_delete_bearing(RECEIVER_SCRUB_WINDOW, b"queued delete delta")
+            .unwrap();
+        ReceiverOutboxFixture {
+            queue,
+            victim_payload_seq,
+            other_payload_seq,
+            delete_bearing_seq,
+        }
+    }
+
+    fn queued_update_seqs(queue: &SyncQueue) -> Vec<u64> {
+        queue
+            .drain_updates()
+            .unwrap()
+            .iter()
+            .map(|update| update.seq)
+            .collect()
+    }
+
+    fn assert_receiver_outbox_scrubbed(vault: &Vault, outbox: &ReceiverOutboxFixture) {
+        let seqs = queued_update_seqs(&outbox.queue);
+        assert!(
+            !seqs.contains(&outbox.victim_payload_seq),
+            "victim payload q: row must be scrubbed"
+        );
+        assert!(
+            !seqs.contains(&outbox.other_payload_seq),
+            "receiver scrub is window-granular: unrelated same-window q: row is over-dropped"
+        );
+        assert!(
+            seqs.contains(&outbox.delete_bearing_seq),
+            "delete-bearing q: row must survive the receiver scrub"
+        );
+        assert_eq!(
+            vault
+                .sync_state_get(&format!("fr:w:{RECEIVER_SCRUB_WINDOW}"))
+                .unwrap()
+                .as_deref(),
+            Some([1_u8].as_slice()),
+            "fr:w marker must heal over-dropped non-deleted ops"
+        );
+    }
+
+    fn assert_receiver_outbox_intact(vault: &Vault, outbox: &ReceiverOutboxFixture) {
+        let seqs = queued_update_seqs(&outbox.queue);
+        assert!(
+            seqs.contains(&outbox.victim_payload_seq),
+            "victim payload q: row must remain"
+        );
+        assert!(
+            seqs.contains(&outbox.other_payload_seq),
+            "unrelated same-window q: row must remain"
+        );
+        assert!(
+            seqs.contains(&outbox.delete_bearing_seq),
+            "delete-bearing q: row must remain"
+        );
+        assert!(
+            vault
+                .sync_state_get(&format!("fr:w:{RECEIVER_SCRUB_WINDOW}"))
+                .unwrap()
+                .is_none(),
+            "fr:w is HARD-success-only"
+        );
     }
 
     #[test]
@@ -1403,6 +1559,115 @@ mod tests {
                 .unwrap()
                 .is_some(),
             "unknown families untouched"
+        );
+    }
+
+    #[test]
+    fn receiver_live_hard_tombstone_scrubs_window_outbox_and_sets_fr() {
+        let vault = test_vault();
+        let outbox = seed_receiver_outbox(&vault);
+        let victim = EntityId::now();
+        put_receiver_entity(&vault, &victim, b"payload to erase");
+
+        let window_key = WindowKey::new(RECEIVER_SCRUB_WINDOW);
+        let doc = create_window_doc("remote", &window_key);
+        let materializer = Arc::new(Materializer::new());
+        let _subs = bridge::register_observer_b(&doc, &vault, &materializer, RECEIVER_SCRUB_WINDOW);
+
+        let hard = receiver_hard_tombstone_value();
+        doc.get_map("tombstones")
+            .insert(&victim.to_hex(), hard.as_slice())
+            .unwrap();
+        doc.commit();
+
+        assert!(
+            vault.get(&victim).unwrap().is_none(),
+            "live hard tombstone must purge the active store first"
+        );
+        assert_receiver_outbox_scrubbed(&vault, &outbox);
+    }
+
+    #[test]
+    fn receiver_forward_remat_hard_tombstone_scrubs_window_outbox_and_sets_fr() {
+        let vault = test_vault();
+        let outbox = seed_receiver_outbox(&vault);
+        let victim = EntityId::now();
+        put_receiver_entity(&vault, &victim, b"payload to erase");
+
+        let window_key = WindowKey::new(RECEIVER_SCRUB_WINDOW);
+        let doc = create_window_doc("remote", &window_key);
+        let hard = receiver_hard_tombstone_value();
+        doc.get_map("tombstones")
+            .insert(&victim.to_hex(), hard.as_slice())
+            .unwrap();
+        doc.commit();
+
+        let materializer = Materializer::new();
+        forward_rematerialize(&vault, &doc, &materializer, &window_key).unwrap();
+
+        assert!(
+            vault.get(&victim).unwrap().is_none(),
+            "recovery hard tombstone must purge the active store first"
+        );
+        assert_receiver_outbox_scrubbed(&vault, &outbox);
+    }
+
+    #[test]
+    fn receiver_live_soft_tombstone_keeps_outbox_and_does_not_set_fr() {
+        let vault = test_vault();
+        let outbox = seed_receiver_outbox(&vault);
+        let victim = EntityId::now();
+        put_receiver_entity(&vault, &victim, b"payload kept as soft shell");
+
+        let window_key = WindowKey::new(RECEIVER_SCRUB_WINDOW);
+        let doc = create_window_doc("remote", &window_key);
+        let materializer = Arc::new(Materializer::new());
+        let _subs = bridge::register_observer_b(&doc, &vault, &materializer, RECEIVER_SCRUB_WINDOW);
+
+        let soft = receiver_soft_tombstone_value();
+        doc.get_map("tombstones")
+            .insert(&victim.to_hex(), soft.as_slice())
+            .unwrap();
+        doc.commit();
+
+        assert!(
+            vault.get(&victim).unwrap().is_some(),
+            "soft tombstone keeps the local shell"
+        );
+        assert_receiver_outbox_intact(&vault, &outbox);
+    }
+
+    #[test]
+    fn receiver_live_failed_hard_apply_keeps_outbox_and_sets_rm_retry() {
+        let vault = test_vault();
+        let outbox = seed_receiver_outbox(&vault);
+        let victim = EntityId::now();
+        put_receiver_entity(&vault, &victim, b"payload still live on injected failure");
+
+        let window_key = WindowKey::new(RECEIVER_SCRUB_WINDOW);
+        let doc = create_window_doc("remote", &window_key);
+        let materializer = Arc::new(Materializer::new());
+        let _subs = bridge::register_observer_b(&doc, &vault, &materializer, RECEIVER_SCRUB_WINDOW);
+
+        let _reset = arm_purge_failures(1);
+        let hard = receiver_hard_tombstone_value();
+        doc.get_map("tombstones")
+            .insert(&victim.to_hex(), hard.as_slice())
+            .unwrap();
+        doc.commit();
+
+        assert!(
+            vault.get(&victim).unwrap().is_some(),
+            "failed hard replay must not purge active state"
+        );
+        assert_receiver_outbox_intact(&vault, &outbox);
+        assert_eq!(
+            vault
+                .sync_state_get(&format!("rm:w:{RECEIVER_SCRUB_WINDOW}:{}", victim.to_hex()))
+                .unwrap()
+                .as_deref(),
+            Some([1_u8].as_slice()),
+            "failed hard replay must durably flag rm: retry"
         );
     }
 
