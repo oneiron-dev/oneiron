@@ -51,6 +51,7 @@ use crate::sync::types::parse_window_key_str;
 /// Maximum convergence rounds before forcing re-bootstrap
 /// (ARCH-0023b Fig. 2: "Max 5 rounds before force re-bootstrap").
 const MAX_CONVERGENCE_ROUNDS: u32 = 5;
+const FULL_RESYNC_MARKER_PREFIX: &str = "fr:w:";
 
 type WsStream =
     tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
@@ -82,6 +83,10 @@ impl PumpBudget {
 struct ConvergenceSession {
     /// Replayed windows not yet VV-confirmed by the server.
     pending: BTreeSet<String>,
+    /// Windows with `fr:w:` markers. VV equality cannot prove these safe, so
+    /// they intentionally remain pending until the round budget forces
+    /// re-bootstrap.
+    force_resync: BTreeSet<String>,
     /// Highest queue sequence covered by this replay — the
     /// `clear_through_confirmed` bound once ALL windows are confirmed.
     max_seq: u64,
@@ -91,10 +96,16 @@ struct ConvergenceSession {
 
 impl ConvergenceSession {
     fn from_queued(queued: &[QueuedUpdate]) -> Self {
-        let pending = queued.iter().map(|u| u.window_key.clone()).collect();
+        Self::from_queued_with_force(queued, &BTreeSet::new())
+    }
+
+    fn from_queued_with_force(queued: &[QueuedUpdate], force_resync: &BTreeSet<String>) -> Self {
+        let mut pending: BTreeSet<String> = queued.iter().map(|u| u.window_key.clone()).collect();
+        pending.extend(force_resync.iter().cloned());
         let max_seq = queued.iter().map(|u| u.seq).max().unwrap_or(0);
         Self {
             pending,
+            force_resync: force_resync.clone(),
             max_seq,
             rounds_started: 0,
         }
@@ -127,13 +138,20 @@ impl ConvergenceSession {
     /// server-witnessed VV. `None` (no witness yet) is fail-closed: NOT
     /// converged.
     fn note_progress(&mut self, client: &SyncClient) {
+        let force_resync = &self.force_resync;
         self.pending
-            .retain(|key| client.window_converged(key) != Some(true));
+            .retain(|key| force_resync.contains(key) || client.window_converged(key) != Some(true));
     }
 
     fn all_converged(&self) -> bool {
         self.pending.is_empty()
     }
+}
+
+#[derive(Debug, Clone)]
+struct FullResyncMarker {
+    key: String,
+    window_key: String,
 }
 
 /// Configuration for the connection manager.
@@ -449,6 +467,17 @@ impl SyncConnection {
 
         // Phase 3: Drain offline queue
         let queued = self.queue.drain_updates().map_err(|e| format!("{e}"))?;
+        let full_resync_markers = self.full_resync_markers()?;
+        let force_resync: BTreeSet<String> = full_resync_markers
+            .iter()
+            .map(|marker| marker.window_key.clone())
+            .collect();
+        if !full_resync_markers.is_empty() {
+            tracing::info!(
+                marker_count = full_resync_markers.len(),
+                "forcing full-resync marker windows through re-bootstrap"
+            );
+        }
         if !queued.is_empty() {
             tracing::info!(
                 queued_updates = queued.len(),
@@ -481,8 +510,20 @@ impl SyncConnection {
 
             // ARCH-0023b Fig. 2 convergence dance. Any error here leaves the
             // queue intact (fail-closed) and surfaces as a connection failure.
-            self.run_convergence(&mut write, &mut read, client, event_tx, &queued)
+            self.run_convergence(
+                &mut write,
+                &mut read,
+                client,
+                event_tx,
+                &queued,
+                &force_resync,
+            )
+            .await?;
+            self.clear_full_resync_markers(&full_resync_markers)?;
+        } else if !full_resync_markers.is_empty() {
+            self.re_bootstrap(&mut write, &mut read, client, event_tx, &force_resync)
                 .await?;
+            self.clear_full_resync_markers(&full_resync_markers)?;
         } else {
             // No queue — clear stale updates but preserve embed jobs
             if let Err(e) = self.queue.clear_updates() {
@@ -507,6 +548,41 @@ impl SyncConnection {
         Ok(ws_stream)
     }
 
+    fn full_resync_markers(&self) -> Result<Vec<FullResyncMarker>, String> {
+        let keys = self
+            .manager
+            .vault()
+            .sync_state_keys_with_prefix(FULL_RESYNC_MARKER_PREFIX)
+            .map_err(|e| format!("Read full-resync markers failed: {e}"))?;
+        let mut markers = Vec::with_capacity(keys.len());
+        for key in keys {
+            let Some(window_key) = key.strip_prefix(FULL_RESYNC_MARKER_PREFIX) else {
+                continue;
+            };
+            if parse_window_key_str(window_key).is_none() {
+                return Err(format!("Invalid full-resync marker key: {key}"));
+            }
+            let window_key = window_key.to_string();
+            markers.push(FullResyncMarker { key, window_key });
+        }
+        Ok(markers)
+    }
+
+    fn clear_full_resync_markers(&self, markers: &[FullResyncMarker]) -> Result<(), String> {
+        if markers.is_empty() {
+            return Ok(());
+        }
+        let vault = self.manager.vault();
+        vault
+            .with_write_txn(|wtxn| {
+                for marker in markers {
+                    vault.store.sync_state.delete(wtxn, &marker.key)?;
+                }
+                Ok(())
+            })
+            .map_err(|e| format!("Clear full-resync markers failed: {e}"))
+    }
+
     /// Runs the convergence protocol after queue replay (ARCH-0023b Fig. 2,
     /// ONE-1128).
     ///
@@ -524,8 +600,13 @@ impl SyncConnection {
         client: &mut SyncClient,
         event_tx: &mpsc::UnboundedSender<SyncEvent>,
         queued: &[QueuedUpdate],
+        force_resync: &BTreeSet<String>,
     ) -> Result<(), String> {
-        let mut session = ConvergenceSession::from_queued(queued);
+        let mut session = if force_resync.is_empty() {
+            ConvergenceSession::from_queued(queued)
+        } else {
+            ConvergenceSession::from_queued_with_force(queued, force_resync)
+        };
         loop {
             let frames = session
                 .begin_round(client)
@@ -535,7 +616,9 @@ impl SyncConnection {
                     "Convergence not confirmed after {MAX_CONVERGENCE_ROUNDS} rounds — \
                      forcing re-bootstrap"
                 )));
-                return self.re_bootstrap(write, read, client, event_tx).await;
+                return self
+                    .re_bootstrap(write, read, client, event_tx, force_resync)
+                    .await;
             };
             for frame in frames {
                 write
@@ -572,9 +655,10 @@ impl SyncConnection {
         read: &mut WsSource,
         client: &mut SyncClient,
         event_tx: &mpsc::UnboundedSender<SyncEvent>,
+        force_resync: &BTreeSet<String>,
     ) -> Result<(), String> {
         let frames = self
-            .re_bootstrap_local_state(client)
+            .re_bootstrap_local_state(client, force_resync)
             .map_err(|e| format!("Re-bootstrap queue clear failed: {e}"))?;
         for frame in frames {
             write
@@ -601,9 +685,10 @@ impl SyncConnection {
     fn re_bootstrap_local_state(
         &self,
         client: &mut SyncClient,
+        force_resync: &BTreeSet<String>,
     ) -> crate::error::Result<Vec<Vec<u8>>> {
         self.queue.clear_all()?;
-        Ok(client.generate_re_bootstrap_sync())
+        Ok(client.generate_re_bootstrap_sync_for_windows(force_resync.iter().cloned()))
     }
 
     /// Reads server frames until the stream goes quiet (or the frame cap is
@@ -923,6 +1008,10 @@ mod tests {
     use crate::sync::transport::{TAG_PROTOCOL_HELLO, TAG_VERSION_VECTOR, TAG_WINDOW_SYNC};
     use loro::{ExportMode, LoroDoc, VersionVector};
     use std::collections::HashMap;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    const FULL_RESYNC_TEST_WINDOW: &str = "1970-01";
+    const DEFERRED_TOMBSTONE_KEY: &str = "0123456789abcdef0123456789abcdef";
 
     /// Contract literal (ARCH-0023b Fig. 2): "Max 5 rounds before force
     /// re-bootstrap". A drifted budget silently changes how long a GDPR
@@ -1002,6 +1091,61 @@ mod tests {
                 other => panic!("unexpected tag {other}"),
             }
         }
+    }
+
+    async fn spawn_fake_sync_server(
+        mut server: FakeServer,
+        close_on_forced_window: Option<&'static str>,
+        forced_window_requests: Arc<AtomicUsize>,
+    ) -> (String, tokio::task::JoinHandle<()>) {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let handle = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            let mut ws = tokio_tungstenite::accept_async(stream).await.unwrap();
+            while let Some(msg) = ws.next().await {
+                let Message::Binary(data) = msg.unwrap() else {
+                    continue;
+                };
+                let responses = match data[0] {
+                    TAG_PROTOCOL_HELLO => Vec::new(),
+                    transport::TAG_LEASE_REQUEST => {
+                        let (client_id, _, _) =
+                            transport::decode_lease_request(&data[1..]).unwrap();
+                        vec![transport::encode_lease_granted(
+                            transport::LEASE_STATUS_GRANTED,
+                            client_id,
+                            1,
+                        )]
+                    }
+                    TAG_VERSION_VECTOR => {
+                        VersionVector::decode(&data[1..]).unwrap();
+                        let mut response = vec![TAG_VERSION_VECTOR];
+                        response.extend_from_slice(&VersionVector::new().encode());
+                        vec![response]
+                    }
+                    TAG_WINDOW_SYNC => {
+                        let (window_key, sub_tag, _) =
+                            transport::decode_window_sync(&data[1..]).unwrap();
+                        if window_key == FULL_RESYNC_TEST_WINDOW
+                            && sub_tag == window_sub_tags::VV_REQUEST
+                        {
+                            forced_window_requests.fetch_add(1, Ordering::SeqCst);
+                            if close_on_forced_window == Some(window_key) {
+                                let _ = ws.close(None).await;
+                                break;
+                            }
+                        }
+                        server.handle(&data)
+                    }
+                    other => panic!("unexpected client tag {other}"),
+                };
+                for response in responses {
+                    ws.send(Message::Binary(response.into())).await.unwrap();
+                }
+            }
+        });
+        (format!("ws://{addr}"), handle)
     }
 
     /// Drives client→server frames and all transitive replies to quiescence
@@ -1128,6 +1272,145 @@ mod tests {
         );
     }
 
+    #[test]
+    fn full_resync_marker_is_never_dropped_by_vv_equality() {
+        let manager = test_manager();
+        let (mut client, _rx) =
+            SyncClient::new(Arc::clone(&manager), SyncClientConfig::default()).unwrap();
+        let mut server = FakeServer::new();
+        let mut force_resync = BTreeSet::new();
+        force_resync.insert(FULL_RESYNC_TEST_WINDOW.to_string());
+
+        let mut session = ConvergenceSession::from_queued_with_force(&[], &force_resync);
+        for round in 1..=MAX_CONVERGENCE_ROUNDS {
+            let frames = session
+                .begin_round(&mut client)
+                .unwrap()
+                .expect("forced rounds stay within budget");
+            exchange(&mut server, &mut client, frames);
+            assert_eq!(
+                client.window_converged(FULL_RESYNC_TEST_WINDOW),
+                Some(true),
+                "fixture should prove VV equality would otherwise drop the window"
+            );
+            session.note_progress(&client);
+            assert!(
+                !session.all_converged(),
+                "round {round}: fr:w window must stay pending despite VV equality"
+            );
+        }
+        assert!(
+            session.begin_round(&mut client).unwrap().is_none(),
+            "forced fr:w window must exhaust into re-bootstrap"
+        );
+    }
+
+    #[tokio::test]
+    async fn full_resync_marker_recovers_deferred_post_delete_op() {
+        let manager = test_manager();
+        let vault = Arc::clone(manager.vault());
+        let marker_key = format!("fr:w:{FULL_RESYNC_TEST_WINDOW}");
+        vault.sync_state_put(&marker_key, &[1u8]).unwrap();
+
+        let mut server = FakeServer::new();
+        server
+            .doc(FULL_RESYNC_TEST_WINDOW)
+            .get_map("tombstones")
+            .insert(DEFERRED_TOMBSTONE_KEY, b"t".as_slice())
+            .unwrap();
+        server.doc(FULL_RESYNC_TEST_WINDOW).commit();
+
+        let forced_window_requests = Arc::new(AtomicUsize::new(0));
+        let (server_url, server_task) =
+            spawn_fake_sync_server(server, None, Arc::clone(&forced_window_requests)).await;
+        let conn = SyncConnection::new(
+            Arc::clone(&manager),
+            ConnectionConfig {
+                client_config: SyncClientConfig {
+                    server_url,
+                    ..Default::default()
+                },
+                auto_reconnect: false,
+            },
+        )
+        .unwrap();
+        let (mut client, _rx) =
+            SyncClient::new(Arc::clone(&manager), SyncClientConfig::default()).unwrap();
+        let (event_tx, _event_rx) = mpsc::unbounded_channel();
+
+        let ws_stream = conn.connect_and_sync(&mut client, &event_tx).await.unwrap();
+        drop(ws_stream);
+        server_task.abort();
+
+        assert!(
+            forced_window_requests.load(Ordering::SeqCst) >= 1,
+            "connect-time fr:w consumer must request the marked historical window"
+        );
+        let recovered = client
+            .window(FULL_RESYNC_TEST_WINDOW)
+            .expect("forced re-bootstrap must load the marked window");
+        assert!(
+            recovered
+                .doc
+                .get_map("tombstones")
+                .get(DEFERRED_TOMBSTONE_KEY)
+                .is_some(),
+            "deferred post-delete op must be present locally after this connect"
+        );
+        assert!(
+            vault.sync_state_get(&marker_key).unwrap().is_none(),
+            "fr:w marker clears only after successful re-bootstrap"
+        );
+    }
+
+    #[tokio::test]
+    async fn full_resync_marker_retained_when_rebootstrap_errors() {
+        let manager = test_manager();
+        let vault = Arc::clone(manager.vault());
+        let marker_key = format!("fr:w:{FULL_RESYNC_TEST_WINDOW}");
+        vault.sync_state_put(&marker_key, &[1u8]).unwrap();
+
+        let forced_window_requests = Arc::new(AtomicUsize::new(0));
+        let (server_url, server_task) = spawn_fake_sync_server(
+            FakeServer::new(),
+            Some(FULL_RESYNC_TEST_WINDOW),
+            Arc::clone(&forced_window_requests),
+        )
+        .await;
+        let conn = SyncConnection::new(
+            Arc::clone(&manager),
+            ConnectionConfig {
+                client_config: SyncClientConfig {
+                    server_url,
+                    ..Default::default()
+                },
+                auto_reconnect: false,
+            },
+        )
+        .unwrap();
+        let (mut client, _rx) =
+            SyncClient::new(Arc::clone(&manager), SyncClientConfig::default()).unwrap();
+        let (event_tx, _event_rx) = mpsc::unbounded_channel();
+
+        let result = conn.connect_and_sync(&mut client, &event_tx).await;
+        server_task.abort();
+
+        assert!(
+            result.is_err(),
+            "server close during forced re-bootstrap must fail the connect"
+        );
+        assert_eq!(
+            forced_window_requests.load(Ordering::SeqCst),
+            1,
+            "failure must happen during the forced fr:w request"
+        );
+        assert_eq!(
+            vault.sync_state_get(&marker_key).unwrap().as_deref(),
+            Some([1u8].as_slice()),
+            "fr:w marker must remain set so the next connect retries"
+        );
+    }
+
     /// AC2 + AC4 + AC5 variant (ONE-1128): the server 'forgets' the
     /// delete-bearing update (lost confirmation). The tombstone window must
     /// NEVER confirm, the queue must NOT be cleared, the round counter must
@@ -1202,7 +1485,9 @@ mod tests {
         }
 
         // The REAL re-bootstrap local half (same path the socket driver takes).
-        let frames = conn.re_bootstrap_local_state(&mut client).unwrap();
+        let frames = conn
+            .re_bootstrap_local_state(&mut client, &BTreeSet::new())
+            .unwrap();
 
         // Docs dropped.
         assert!(
