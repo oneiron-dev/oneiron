@@ -125,11 +125,14 @@ impl ConvergenceSession {
         let mut frames = Vec::with_capacity(self.pending.len());
         for key in &self.pending {
             let window = client.ensure_window(key)?;
-            frames.push(transport::encode_window_sync(
-                key,
-                window_sub_tags::VV_REQUEST,
-                &doc_version_vector(&window.doc),
-            ));
+            frames.push(
+                transport::encode_window_sync(
+                    key,
+                    window_sub_tags::VV_REQUEST,
+                    &doc_version_vector(&window.doc),
+                )
+                .into_result()?,
+            );
         }
         Ok(Some(frames))
     }
@@ -501,7 +504,9 @@ impl SyncConnection {
                     &update.window_key,
                     window_sub_tags::UPDATE,
                     &update.encoded,
-                );
+                )
+                .into_result()
+                .map_err(|e| format!("Queue replay encode failed: {e}"))?;
                 write
                     .send(Message::Binary(msg.into()))
                     .await
@@ -842,11 +847,19 @@ impl SyncConnection {
                     let pending: Vec<LocalUpdate> = std::mem::take(&mut debounce_buffer);
 
                     for (i, local_update) in pending.iter().enumerate() {
-                        let wire_msg = transport::encode_window_sync(
+                        let wire_msg = match transport::encode_window_sync(
                             &local_update.window_key,
                             window_sub_tags::UPDATE,
                             &local_update.update_bytes,
-                        );
+                        )
+                        .into_result()
+                        {
+                            Ok(frame) => frame,
+                            Err(e) => {
+                                failed_at = Some((i, format!("Encode failed: {e}")));
+                                break;
+                            }
+                        };
 
                         let send_result = write.send(Message::Binary(wire_msg.into())).await;
                         if let Err(e) = send_result {
@@ -1000,6 +1013,26 @@ mod tests {
         ));
     }
 
+    #[test]
+    fn convergence_round_propagates_invalid_window_key_without_frame() {
+        let manager = test_manager();
+        let (mut client, _client_rx) =
+            SyncClient::new(manager, SyncClientConfig::default()).unwrap();
+        let mut pending = BTreeSet::new();
+        pending.insert("2026-003".to_string());
+        let mut session = ConvergenceSession {
+            pending,
+            force_resync: BTreeSet::new(),
+            max_seq: 0,
+            rounds_started: 0,
+        };
+
+        assert!(matches!(
+            session.begin_round(&mut client),
+            Err(TransportError::InvalidWindowKey)
+        ));
+    }
+
     // ───────────────────────────────────────────────────────────────────────
     // ONE-1128 — convergence protocol + real re-bootstrap (socket-free)
     // ───────────────────────────────────────────────────────────────────────
@@ -1073,18 +1106,26 @@ mod tests {
                                 &key,
                                 window_sub_tags::UPDATE,
                                 &export_updates_since(doc, payload).unwrap(),
-                            ),
+                            )
+                            .into_result()
+                            .unwrap(),
                             transport::encode_window_sync(
                                 &key,
                                 window_sub_tags::VV_RESPONSE,
                                 &doc.oplog_vv().encode(),
-                            ),
+                            )
+                            .into_result()
+                            .unwrap(),
                         ],
-                        window_sub_tags::VV_RESPONSE => vec![transport::encode_window_sync(
-                            &key,
-                            window_sub_tags::UPDATE,
-                            &export_updates_since(doc, payload).unwrap(),
-                        )],
+                        window_sub_tags::VV_RESPONSE => vec![
+                            transport::encode_window_sync(
+                                &key,
+                                window_sub_tags::UPDATE,
+                                &export_updates_since(doc, payload).unwrap(),
+                            )
+                            .into_result()
+                            .unwrap(),
+                        ],
                         other => panic!("unexpected sub tag {other}"),
                     }
                 }
