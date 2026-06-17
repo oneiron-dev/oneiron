@@ -34,6 +34,7 @@ pub enum ErrorKind {
     InvalidClaimBody,
     InvalidPredicate,
     ReservedPredicate,
+    SourceNotTrustedForAuto,
     MaintenanceKindNotWritable,
     EntityTypeImmutable,
     InvalidTimeRange,
@@ -182,6 +183,13 @@ pub enum Error {
     /// the engine's internal provenance path may write (D17).
     #[error("reserved claim predicate namespace: {predicate:?}")]
     ReservedPredicate { predicate: String },
+    /// The source-trust ceiling does not explicitly permit this provenance
+    /// source to write an auto-approved Claim. Route the write through the
+    /// proposed/inbox review path instead of silently auto-approving it.
+    #[error(
+        "claim source {claim_source} is not trusted for auto approval; route as proposed/inbox review"
+    )]
+    SourceNotTrustedForAuto { claim_source: &'static str },
     /// Registered maintenance-band entity kind (type bytes 120+, e.g.
     /// REDACTION_AUDIT) rejected on a public write path. Maintenance records
     /// are engine-authored only; this is distinct from
@@ -512,6 +520,7 @@ impl Error {
             Self::InvalidClaimBody(_) => ErrorKind::InvalidClaimBody,
             Self::InvalidPredicate { .. } => ErrorKind::InvalidPredicate,
             Self::ReservedPredicate { .. } => ErrorKind::ReservedPredicate,
+            Self::SourceNotTrustedForAuto { .. } => ErrorKind::SourceNotTrustedForAuto,
             Self::MaintenanceKindNotWritable(_) => ErrorKind::MaintenanceKindNotWritable,
             Self::EntityTypeImmutable { .. } => ErrorKind::EntityTypeImmutable,
             Self::InvalidTimeRange { .. } => ErrorKind::InvalidTimeRange,
