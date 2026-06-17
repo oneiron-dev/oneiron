@@ -307,11 +307,29 @@ impl SyncClient {
                 }
                 // Import, then persist so the imported state survives
                 // restart (d:root).
+                let frontiers_before = self.root_doc.state_frontiers();
                 self.root_doc
                     .import(payload)
                     .map_err(|_| TransportError::InvalidPayload("root doc import failed"))?;
-                self.persist_root_state()
-                    .map_err(|e| TransportError::Storage(format!("persist root doc: {e}")))?;
+                if let Err(err) = self.persist_root_state() {
+                    if let Err(revert_err) = self.root_doc.revert_to(&frontiers_before) {
+                        return Err(TransportError::Storage(format!(
+                            "persist root doc: {err}; root revert after import persist failure: {revert_err}"
+                        )));
+                    }
+                    let restored = load_root_doc(&self.vault).map_err(|reload_err| {
+                        TransportError::Storage(format!(
+                            "persist root doc: {err}; reload root doc after persist failure: {reload_err}"
+                        ))
+                    })?;
+                    restored.set_peer_id(self.client_id).map_err(|peer_err| {
+                        TransportError::Storage(format!(
+                            "persist root doc: {err}; restore root peer id after persist failure: {peer_err}"
+                        ))
+                    })?;
+                    self.root_doc = restored;
+                    return Err(TransportError::Storage(format!("persist root doc: {err}")));
+                }
             }
             TAG_AWARENESS => {
                 // Server presence broadcast — the client does not track peer
@@ -904,9 +922,10 @@ impl SyncClient {
     /// can never observe a root state without its registry rows. Malformed
     /// entries quarantine (x: row) and keep any previous good `ls:` row.
     fn persist_root_state(&self) -> Result<()> {
+        let frontiers_before = self.root_doc.state_frontiers();
         let snapshot = export_snapshot(&self.root_doc)?;
         let vv = doc_version_vector(&self.root_doc);
-        self.vault.with_write_txn(|wtxn| {
+        if let Err(err) = self.vault.with_write_txn(|wtxn| {
             self.vault
                 .store
                 .sync_state
@@ -918,7 +937,15 @@ impl SyncClient {
                 .put(wtxn, KEY_ROOT_SVF, &[SVF_FRESH])?;
             crate::sync::lease::mirror_leases_from_root_in_txn(&self.vault, wtxn, &self.root_doc)?;
             Ok(())
-        })
+        }) {
+            if let Err(revert_err) = self.root_doc.revert_to(&frontiers_before) {
+                return Err(Error::SyncProtocolError(format!(
+                    "root revert after root txn failure: {revert_err}; original txn failure: {err}"
+                )));
+            }
+            return Err(err);
+        }
+        Ok(())
     }
 }
 
@@ -1734,6 +1761,51 @@ mod tests {
 
         let windows = client.server_windows();
         assert_eq!(windows, vec!["2026-03".to_string(), "2026-04".to_string()]);
+    }
+
+    #[test]
+    fn persist_root_state_reverts_in_memory_root_on_txn_failure() {
+        use crate::sync::loro_support::export_snapshot;
+        use crate::sync::schema::create_root_doc;
+
+        let manager = test_manager();
+        let (mut client, _rx) = test_client(&manager);
+        let frontiers_before = client.root_doc.state_frontiers();
+
+        let server_root = create_root_doc("user-1", "vault-1", &[WindowKey::new("2026-03")]);
+        let snapshot = export_snapshot(&server_root).unwrap();
+        let mut msg = vec![TAG_SYNC_UPDATE];
+        msg.extend_from_slice(&snapshot);
+
+        crate::sync::lease::test_hooks::arm_mirror_failure();
+        let err = client
+            .handle_server_message(&msg)
+            .expect_err("injected mirror failure must abort root persistence");
+        match err {
+            TransportError::Storage(message) => assert!(
+                message.contains("injected lease mirror failure"),
+                "original txn error must surface, got {message}"
+            ),
+            other => panic!("expected storage error, got {other:?}"),
+        }
+
+        assert_eq!(
+            client.root_doc.state_frontiers(),
+            frontiers_before,
+            "the in-memory root doc must roll back after root persist failure"
+        );
+        assert!(
+            client.server_windows().is_empty(),
+            "the imported root window list must not survive the failed persist"
+        );
+        assert!(
+            manager
+                .vault()
+                .sync_state_get(KEY_ROOT_DOC)
+                .unwrap()
+                .is_none(),
+            "the failed combined txn must not commit d:root"
+        );
     }
 
     #[test]
