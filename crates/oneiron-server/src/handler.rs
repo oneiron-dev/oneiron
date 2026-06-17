@@ -547,7 +547,9 @@ async fn handle_window_sync(
             // to a full export.
             let delta = export_updates_since(&doc, payload).map_err(map_delta_export_err)?;
             let response =
-                protocol::encode_window_sync(window_key, window_sub_tags::UPDATE, &delta);
+                protocol::encode_window_sync(window_key, window_sub_tags::UPDATE, &delta)
+                    .into_result()
+                    .map_err(|e| ProtocolError::InvalidPayload(protocol::transport_err_msg(e)))?;
             // Send directly to the requesting client's WebSocket sink, NOT via
             // broadcast. Broadcasting with the requester's conn_id would cause
             // echo suppression to drop the response for the requester.
@@ -558,7 +560,9 @@ async fn handle_window_sync(
                 window_key,
                 window_sub_tags::VV_RESPONSE,
                 &doc.oplog_vv().encode(),
-            );
+            )
+            .into_result()
+            .map_err(|e| ProtocolError::InvalidPayload(protocol::transport_err_msg(e)))?;
             let _ = direct_tx.send(vv_response);
         }
         window_sub_tags::UPDATE => {
@@ -593,7 +597,9 @@ async fn handle_window_sync(
             }
 
             let broadcast_msg =
-                protocol::encode_window_sync(window_key, window_sub_tags::UPDATE, payload);
+                protocol::encode_window_sync(window_key, window_sub_tags::UPDATE, payload)
+                    .into_result()
+                    .map_err(|e| ProtocolError::InvalidPayload(protocol::transport_err_msg(e)))?;
             let _ = crate::broadcast::broadcast(&server.broadcast_tx, conn_id, broadcast_msg);
         }
         window_sub_tags::VV_RESPONSE => {
@@ -601,7 +607,9 @@ async fn handle_window_sync(
             // local diff. Same fail-closed VV decoding as VV_REQUEST.
             let delta = export_updates_since(&doc, payload).map_err(map_delta_export_err)?;
             let response =
-                protocol::encode_window_sync(window_key, window_sub_tags::UPDATE, &delta);
+                protocol::encode_window_sync(window_key, window_sub_tags::UPDATE, &delta)
+                    .into_result()
+                    .map_err(|e| ProtocolError::InvalidPayload(protocol::transport_err_msg(e)))?;
             let _ = direct_tx.send(response);
         }
         _ => {
