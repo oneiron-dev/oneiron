@@ -253,10 +253,9 @@ impl SyncClient {
 
     /// Returns the list of window keys from the root doc (set by server).
     pub fn server_windows(&self) -> Vec<String> {
-        // `meta.windows` is byte-encoded by the schema helpers
-        // (`create_root_doc` / `add_window_to_root`). Decode through the shared
-        // `read_window_list` path so the encoding stays consistent — reading it
-        // as a `LoroValue::String` silently yields an empty list (ONE-637).
+        // `meta.windows` is encoded by the schema helpers (`create_root_doc` /
+        // `add_window_to_root`). Decode through the shared `read_window_list`
+        // path so the client stays in lockstep with schema-owned changes.
         read_window_list(&self.root_doc)
             .into_iter()
             .map(|k| k.as_str().to_string())
@@ -969,10 +968,12 @@ pub fn next_backoff(current_ms: u32, max_ms: u32) -> u32 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use loro::ExportMode;
+    use loro::{Container, ExportMode, LoroMap, ValueOrContainer};
 
     use crate::batch::ENTITY_METADATA_HEADER_LEN;
     use crate::sync::bridge::Materializer;
+    use crate::sync::loro_support::export_snapshot;
+    use crate::sync::schema::create_root_doc;
     use crate::types::{ENTITY_TYPE_TASK, EntityId, TimeRange};
 
     fn test_manager() -> Arc<WindowManager> {
@@ -1022,6 +1023,14 @@ mod tests {
                 (key, value)
             })
             .collect()
+    }
+
+    fn root_windows_map(doc: &LoroDoc) -> LoroMap {
+        let meta = doc.get_map("meta");
+        match meta.get("windows").expect("meta.windows must exist") {
+            ValueOrContainer::Container(Container::Map(windows)) => windows,
+            other => panic!("meta.windows must be a LoroMap, got {other:?}"),
+        }
     }
 
     fn read_u_seq(vault: &Vault, key: &str) -> Option<u32> {
@@ -1724,26 +1733,31 @@ mod tests {
     #[test]
     fn sync_client_filters_invalid_server_windows() {
         let manager = test_manager();
-        let (client, _rx) = test_client(&manager);
-        let meta = client.root_doc.get_map("meta");
-        // Schema helpers byte-encode `meta.windows`; mirror that here so the
-        // test exercises the real on-disk encoding (ONE-637).
-        meta.insert("windows", "2026-03,1969-12,2026-13,2026-04".as_bytes())
-            .unwrap();
-        client.root_doc.commit();
+        let (mut client, _rx) = test_client(&manager);
+        let server_root = create_root_doc(
+            "user-1",
+            "vault-1",
+            &[WindowKey::new("2026-03"), WindowKey::new("2026-04")],
+        );
+        let windows = root_windows_map(&server_root);
+        windows.insert("1969-12", b"1".as_slice()).unwrap();
+        windows.insert("2026-13", b"1".as_slice()).unwrap();
+        windows.insert("garbage", b"1".as_slice()).unwrap();
+        server_root.commit();
+
+        let snapshot = export_snapshot(&server_root).unwrap();
+        let mut msg = vec![TAG_SYNC_UPDATE];
+        msg.extend_from_slice(&snapshot);
+        client.handle_server_message(&msg).unwrap();
 
         let windows = client.server_windows();
         assert_eq!(windows, vec!["2026-03".to_string(), "2026-04".to_string()]);
     }
 
     #[test]
-    fn server_windows_reads_schema_written_byte_encoded_root_doc() {
-        // Regression for ONE-637: schema::create_root_doc writes meta.windows
-        // as bytes (LoroValue::Binary). server_windows() must decode it via the
-        // same byte path the schema helpers use.
-        use crate::sync::loro_support::export_snapshot;
-        use crate::sync::schema::create_root_doc;
-
+    fn server_windows_reads_schema_written_root_doc() {
+        // Regression for ONE-637: server_windows() must decode meta.windows
+        // via the same schema-owned path that create_root_doc uses.
         let manager = test_manager();
         let (mut client, _rx) = test_client(&manager);
 
