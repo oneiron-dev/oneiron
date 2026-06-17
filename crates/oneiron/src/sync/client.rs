@@ -756,8 +756,20 @@ impl SyncClient {
     /// protocol hello — the hello is a once-per-connection preamble
     /// (ONE-1127) and the re-bootstrap reuses the live connection.
     pub fn generate_re_bootstrap_sync(&mut self) -> Vec<Vec<u8>> {
+        self.generate_re_bootstrap_sync_for_windows(std::iter::empty::<String>())
+    }
+
+    /// Re-bootstrap sync frames with explicit windows that must be requested
+    /// even if they are outside the default current/previous window set.
+    pub(crate) fn generate_re_bootstrap_sync_for_windows<I>(
+        &mut self,
+        extra_windows: I,
+    ) -> Vec<Vec<u8>>
+    where
+        I: IntoIterator<Item = String>,
+    {
         self.reset_for_re_bootstrap();
-        self.generate_phase_frames()
+        self.generate_phase_frames_with_extra_windows(extra_windows)
     }
 
     /// Generates initial sync messages for the connection flow.
@@ -806,6 +818,13 @@ impl SyncClient {
     /// Shared by the initial connection flow (which prepends the protocol
     /// hello) and the forced re-bootstrap (which does not).
     fn generate_phase_frames(&self) -> Vec<Vec<u8>> {
+        self.generate_phase_frames_with_extra_windows(std::iter::empty::<String>())
+    }
+
+    fn generate_phase_frames_with_extra_windows<I>(&self, extra_windows: I) -> Vec<Vec<u8>>
+    where
+        I: IntoIterator<Item = String>,
+    {
         let mut messages = Vec::new();
 
         // Phase 1: Send our root VV (empty for new client — server will send snapshot)
@@ -833,6 +852,17 @@ impl SyncClient {
         for key in self.manager.loaded_keys() {
             if !keys.contains(&key) {
                 keys.push(key);
+            }
+        }
+        for key in extra_windows {
+            let Some(window_key) = WindowKey::try_new(key.as_str()) else {
+                let _ = self.event_tx.send(SyncEvent::Error(format!(
+                    "Re-bootstrap skipped invalid forced window key: {key}"
+                )));
+                continue;
+            };
+            if !keys.contains(&window_key) {
+                keys.push(window_key);
             }
         }
 
