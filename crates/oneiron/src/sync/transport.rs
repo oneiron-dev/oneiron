@@ -477,6 +477,45 @@ impl std::error::Error for TransportError {}
 mod tests {
     use super::*;
 
+    fn production_source(source: &str) -> &str {
+        source.split("#[cfg(test)]").next().unwrap_or(source)
+    }
+
+    fn assert_typed_encoder_callers_use_into_result(source_name: &str, source: &str) {
+        let mut offset = 0;
+        while let Some(relative) = source[offset..].find("encode_window_sync(") {
+            let start = offset + relative;
+            let end = source.len().min(start + 400);
+            let call_site = &source[start..end];
+            assert!(
+                call_site.contains(".into_result()"),
+                "{source_name}: encode_window_sync call must consume EncodedFrame with into_result(): {call_site:?}"
+            );
+            offset = start + "encode_window_sync(".len();
+        }
+    }
+
+    #[test]
+    fn production_typed_encoder_callers_consume_results() {
+        let sources = [
+            (
+                "sync/client.rs",
+                production_source(include_str!("client.rs")),
+            ),
+            (
+                "sync/connection.rs",
+                production_source(include_str!("connection.rs")),
+            ),
+            (
+                "oneiron-server/src/handler.rs",
+                production_source(include_str!("../../../oneiron-server/src/handler.rs")),
+            ),
+        ];
+        for (source_name, source) in sources {
+            assert_typed_encoder_callers_use_into_result(source_name, source);
+        }
+    }
+
     #[test]
     fn protocol_hello_wire_literals() {
         // Contract literals: the hello frame is EXACTLY
