@@ -435,8 +435,10 @@ fn decode_source_trust_manifest(data: &[u8]) -> Option<SourceTrustCeiling> {
     let Value::Map(entries) = value else {
         return None;
     };
-    if !source_trust_manifest_marked(&entries) {
-        return None;
+    match source_trust_manifest_mark(&entries) {
+        ManifestMark::Absent => return None,
+        ManifestMark::Malformed => return Some(SourceTrustCeiling::malformed()),
+        ManifestMark::Marked => {}
     }
 
     let source_trust = match single_map_value(&entries, SOURCE_TRUST_KEY) {
@@ -461,21 +463,35 @@ fn decode_source_trust_manifest(data: &[u8]) -> Option<SourceTrustCeiling> {
     Some(ceiling)
 }
 
-fn source_trust_manifest_marked(entries: &[(Value, Value)]) -> bool {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ManifestMark {
+    Absent,
+    Marked,
+    Malformed,
+}
+
+fn source_trust_manifest_mark(entries: &[(Value, Value)]) -> ManifestMark {
     match single_map_value(entries, SOURCE_TRUST_MANIFEST_MARKER_KEY) {
         MapValue::Present(Value::String(value))
             if value.as_str() == Some(SOURCE_TRUST_MANIFEST_MARKER) =>
         {
-            return true;
+            return ManifestMark::Marked;
         }
-        MapValue::Duplicate => return true,
-        MapValue::Missing | MapValue::Present(_) => {}
+        MapValue::Duplicate => return ManifestMark::Malformed,
+        MapValue::Present(Value::String(_)) | MapValue::Missing => {}
+        MapValue::Present(_) => return ManifestMark::Malformed,
     }
 
-    matches!(
-        single_map_value(entries, SOURCE_TRUST_MANIFEST_KIND_KEY),
-        MapValue::Present(Value::String(value)) if value.as_str() == Some(SOURCE_TRUST_MANIFEST_KIND)
-    )
+    match single_map_value(entries, SOURCE_TRUST_MANIFEST_KIND_KEY) {
+        MapValue::Present(Value::String(value))
+            if value.as_str() == Some(SOURCE_TRUST_MANIFEST_KIND) =>
+        {
+            ManifestMark::Marked
+        }
+        MapValue::Duplicate => ManifestMark::Malformed,
+        MapValue::Present(Value::String(_)) | MapValue::Missing => ManifestMark::Absent,
+        MapValue::Present(_) => ManifestMark::Malformed,
+    }
 }
 
 enum MapValue<'a> {
@@ -1693,17 +1709,85 @@ mod tests {
         out
     }
 
+    fn encode_source_trust_non_map_manifest() -> Vec<u8> {
+        let body = Value::Map(vec![
+            (
+                Value::from(SOURCE_TRUST_MANIFEST_MARKER_KEY),
+                Value::from(SOURCE_TRUST_MANIFEST_MARKER),
+            ),
+            (
+                Value::from(SOURCE_TRUST_KEY),
+                Value::Array(vec![Value::from("not-a-map")]),
+            ),
+        ]);
+        let mut out = Vec::new();
+        rmpv::encode::write_value(&mut out, &body).expect("manifest encode");
+        out
+    }
+
+    fn encode_source_trust_bad_marker_manifest(source: ClaimSource) -> Vec<u8> {
+        let row = Value::Map(vec![
+            (
+                Value::from(SOURCE_TRUST_MAX_AUTO_SENSITIVITY_KEY),
+                Value::from(u64::from(DEFAULT_CLAIM_SENSITIVITY_BAND)),
+            ),
+            (
+                Value::from(SOURCE_TRUST_RECEIPTED_KEY),
+                Value::Boolean(true),
+            ),
+            (Value::from(SOURCE_TRUST_WARNED_KEY), Value::Boolean(true)),
+        ]);
+        let body = Value::Map(vec![
+            (
+                Value::from(SOURCE_TRUST_MANIFEST_MARKER_KEY),
+                Value::Boolean(true),
+            ),
+            (
+                Value::from(SOURCE_TRUST_KEY),
+                Value::Map(vec![(Value::from(source.as_str()), row)]),
+            ),
+        ]);
+        let mut out = Vec::new();
+        rmpv::encode::write_value(&mut out, &body).expect("manifest encode");
+        out
+    }
+
     fn put_source_trust_manifest(vault: &crate::Vault, source: ClaimSource) {
         let data = encode_source_trust_manifest(source, DEFAULT_CLAIM_SENSITIVITY_BAND);
+        put_source_trust_manifest_bytes(vault, 0x51, &data);
+    }
+
+    fn put_source_trust_manifest_bytes(vault: &crate::Vault, seed: u8, data: &[u8]) {
         vault
             .put_entity(
-                &test_id(0x51),
+                &test_id(seed),
                 crate::types::ENTITY_TYPE_TASK_LIST,
                 test_time(1),
                 1,
-                &data,
+                data,
             )
             .expect("put source trust manifest");
+    }
+
+    fn assert_auto_source_rejected(
+        vault: &crate::Vault,
+        seed: u8,
+        source: ClaimSource,
+    ) -> Result<()> {
+        let id = test_id(seed);
+        let data = source_trust_claim_data(source);
+        let err = vault
+            .batch()
+            .put(&id, crate::types::ENTITY_TYPE_CLAIM, test_time(6), 6, &data)
+            .commit()
+            .expect_err("malformed manifest must reject risky auto source");
+        assert!(
+            matches!(err, Error::SourceNotTrustedForAuto { claim_source: got } if got == source.as_str()),
+            "expected source trust error for {}, got {err:?}",
+            source.as_str()
+        );
+        assert!(vault.get_raw(&id)?.is_none());
+        Ok(())
     }
 
     #[test]
@@ -1769,6 +1853,36 @@ mod tests {
             "source-trust gate must reuse the write-door decode"
         );
         Ok(())
+    }
+
+    #[test]
+    fn non_map_source_trust_manifest_rejects_tool_output_auto() -> Result<()> {
+        let (_tmp, vault) = temp_vault();
+        put_source_trust_manifest(&vault, ClaimSource::ToolOutput);
+        let malformed = encode_source_trust_non_map_manifest();
+        put_source_trust_manifest_bytes(&vault, 0x52, &malformed);
+
+        assert_auto_source_rejected(&vault, 0x64, ClaimSource::ToolOutput)
+    }
+
+    #[test]
+    fn non_map_source_trust_manifest_rejects_imported_auto() -> Result<()> {
+        let (_tmp, vault) = temp_vault();
+        put_source_trust_manifest(&vault, ClaimSource::Imported);
+        let malformed = encode_source_trust_non_map_manifest();
+        put_source_trust_manifest_bytes(&vault, 0x52, &malformed);
+
+        assert_auto_source_rejected(&vault, 0x65, ClaimSource::Imported)
+    }
+
+    #[test]
+    fn malformed_manifest_marker_rejects_tool_output_auto() -> Result<()> {
+        let (_tmp, vault) = temp_vault();
+        put_source_trust_manifest(&vault, ClaimSource::ToolOutput);
+        let malformed = encode_source_trust_bad_marker_manifest(ClaimSource::ToolOutput);
+        put_source_trust_manifest_bytes(&vault, 0x52, &malformed);
+
+        assert_auto_source_rejected(&vault, 0x66, ClaimSource::ToolOutput)
     }
 
     #[test]

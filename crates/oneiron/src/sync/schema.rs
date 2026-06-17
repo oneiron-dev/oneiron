@@ -15,7 +15,7 @@ pub fn schema_version_bytes() -> [u8; 8] {
     SCHEMA_VERSION.to_le_bytes()
 }
 
-const ROOT_WINDOWS_KEY: &str = "windows";
+pub(crate) const ROOT_WINDOWS_KEY: &str = "windows";
 const WINDOW_PRESENT_MARKER: &[u8] = b"1";
 
 /// Creates a new root Doc with the standard schema.
@@ -258,6 +258,42 @@ mod tests {
         assert_eq!(
             windows,
             vec![WindowKey::new("2026-01"), WindowKey::new("2026-02")]
+        );
+    }
+
+    #[test]
+    fn legacy_window_bytes_read_and_migrate_to_window_map() {
+        let doc = LoroDoc::new();
+        let meta = doc.get_map("meta");
+        meta.insert(
+            ROOT_WINDOWS_KEY,
+            b"2026-02, 2026-01,garbage,,2026-01".as_slice(),
+        )
+        .unwrap();
+        doc.commit();
+
+        assert_eq!(
+            read_window_list(&doc),
+            vec![WindowKey::new("2026-01"), WindowKey::new("2026-02")]
+        );
+        assert!(
+            window_list_map(&meta).is_none(),
+            "legacy bytes should stay untouched on read-only access"
+        );
+
+        add_window_to_root(&doc, &WindowKey::new("2026-03"));
+
+        let migrated = window_list_map(&meta).expect("add should migrate legacy bytes to map");
+        assert!(migrated.get("2026-01").is_some());
+        assert!(migrated.get("2026-02").is_some());
+        assert!(migrated.get("2026-03").is_some());
+        assert_eq!(
+            read_window_list(&doc),
+            vec![
+                WindowKey::new("2026-01"),
+                WindowKey::new("2026-02"),
+                WindowKey::new("2026-03")
+            ]
         );
     }
 

@@ -775,6 +775,7 @@ impl SyncClient {
     /// (ONE-1127) and the re-bootstrap reuses the live connection.
     pub fn generate_re_bootstrap_sync(&mut self) -> Vec<Vec<u8>> {
         self.generate_re_bootstrap_sync_for_windows(std::iter::empty::<String>())
+            .expect("re-bootstrap sync frame encode failed")
     }
 
     /// Re-bootstrap sync frames with explicit windows that must be requested
@@ -782,7 +783,7 @@ impl SyncClient {
     pub(crate) fn generate_re_bootstrap_sync_for_windows<I>(
         &mut self,
         extra_windows: I,
-    ) -> Vec<Vec<u8>>
+    ) -> std::result::Result<Vec<Vec<u8>>, TransportError>
     where
         I: IntoIterator<Item = String>,
     {
@@ -809,6 +810,17 @@ impl SyncClient {
     /// the persisted `sv:w:{key}` StateVector without loading the doc.
     /// Stale or absent state vectors fall back to a full manager open.
     pub fn generate_initial_sync(&self) -> Vec<Vec<u8>> {
+        self.try_generate_initial_sync()
+            .expect("initial sync frame encode failed")
+    }
+
+    /// Fallible initial-sync frame builder for the connection flow.
+    ///
+    /// Production connection code uses this path so an encoder failure aborts
+    /// the connect attempt instead of silently skipping a window request.
+    pub(crate) fn try_generate_initial_sync(
+        &self,
+    ) -> std::result::Result<Vec<Vec<u8>>, TransportError> {
         // Phase 0: protocol-version hello — first frame on every connection so
         // the server can detect wire breaks before any sync payload flows.
         // Frame #2: lease request (ONE-1140, OD-5).
@@ -816,8 +828,8 @@ impl SyncClient {
             transport::encode_protocol_hello(),
             self.lease_request_frame(),
         ];
-        messages.extend(self.generate_phase_frames());
-        messages
+        messages.extend(self.generate_phase_frames()?);
+        Ok(messages)
     }
 
     /// Builds this device's TAG_LEASE_REQUEST frame (ONE-1140, OD-5/OD-6):
@@ -835,11 +847,14 @@ impl SyncClient {
     ///
     /// Shared by the initial connection flow (which prepends the protocol
     /// hello) and the forced re-bootstrap (which does not).
-    fn generate_phase_frames(&self) -> Vec<Vec<u8>> {
+    fn generate_phase_frames(&self) -> std::result::Result<Vec<Vec<u8>>, TransportError> {
         self.generate_phase_frames_with_extra_windows(std::iter::empty::<String>())
     }
 
-    fn generate_phase_frames_with_extra_windows<I>(&self, extra_windows: I) -> Vec<Vec<u8>>
+    fn generate_phase_frames_with_extra_windows<I>(
+        &self,
+        extra_windows: I,
+    ) -> std::result::Result<Vec<Vec<u8>>, TransportError>
     where
         I: IntoIterator<Item = String>,
     {
@@ -887,20 +902,18 @@ impl SyncClient {
         for key in keys {
             match self.window_vv_for_initial_sync(&key) {
                 Ok(vv) => {
-                    match transport::encode_window_sync(
+                    let frame = transport::encode_window_sync(
                         key.as_str(),
                         window_sub_tags::VV_REQUEST,
                         &vv,
                     )
                     .into_result()
-                    {
-                        Ok(frame) => messages.push(frame),
-                        Err(e) => {
-                            let _ = self.event_tx.send(SyncEvent::Error(format!(
-                                "Initial sync frame encode for window {key} failed: {e}"
-                            )));
-                        }
-                    }
+                    .inspect_err(|e| {
+                        let _ = self.event_tx.send(SyncEvent::Error(format!(
+                            "Initial sync frame encode for window {key} failed: {e}"
+                        )));
+                    })?;
+                    messages.push(frame);
                 }
                 Err(e) => {
                     let _ = self.event_tx.send(SyncEvent::Error(format!(
@@ -910,7 +923,7 @@ impl SyncClient {
             }
         }
 
-        messages
+        Ok(messages)
     }
 
     /// Resolves the wire VV (Loro binary `VersionVector::encode()` bytes)
@@ -1881,6 +1894,33 @@ mod tests {
             "vault-1",
             &[WindowKey::new("2026-01"), WindowKey::new("2026-02")],
         );
+        let snapshot = export_snapshot(&server_root).unwrap();
+
+        let mut msg = vec![TAG_SYNC_UPDATE];
+        msg.extend_from_slice(&snapshot);
+        client.handle_server_message(&msg).unwrap();
+
+        assert_eq!(
+            client.server_windows(),
+            vec!["2026-01".to_string(), "2026-02".to_string()],
+        );
+    }
+
+    #[test]
+    fn server_windows_reads_legacy_encoded_root_doc() {
+        use crate::sync::loro_support::export_snapshot;
+
+        let manager = test_manager();
+        let (mut client, _rx) = test_client(&manager);
+        let server_root = LoroDoc::new();
+        server_root
+            .get_map("meta")
+            .insert(
+                crate::sync::schema::ROOT_WINDOWS_KEY,
+                b"2026-02,2026-01,bad,2026-01".as_slice(),
+            )
+            .unwrap();
+        server_root.commit();
         let snapshot = export_snapshot(&server_root).unwrap();
 
         let mut msg = vec![TAG_SYNC_UPDATE];

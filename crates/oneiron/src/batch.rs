@@ -1264,6 +1264,11 @@ fn reject_if_existing_edge_is_provenanced(
     kind: EdgeKind,
     tgt: EntityId,
 ) -> Result<()> {
+    debug_assert_eq!(
+        EDGE_VALUE_SEMANTIC_PROVENANCED_LEN,
+        EDGE_VALUE_SEMANTIC_LEN + 2,
+        "provenanced-edge detection is layout-length based; update the reject gate if the hot-flag layout changes"
+    );
     let key_out = Store::encode_edge_key(&src, kind, &tgt);
     if let Some(existing) = store.edges_out.get(wtxn, &key_out)?
         && existing.len() == EDGE_VALUE_SEMANTIC_PROVENANCED_LEN
@@ -1402,6 +1407,9 @@ fn apply_edge_with_created_at(
     let key_out = Store::encode_edge_key(&src, kind, &tgt);
     let key_in = Store::encode_edge_key(&tgt, kind, &src);
     let value = encode_edge_value(kind, weight, created_at, vad, provenance)?;
+    // Paired-write invariant: edge value bytes are identical in `edges_out`
+    // and `edges_in`; callers that alter edge payload layout must keep both
+    // directions in lock-step.
     store.edges_out.put(wtxn, &key_out, &value)?;
     store.edges_in.put(wtxn, &key_in, &value)?;
     Ok(())
@@ -1922,7 +1930,9 @@ mod tests {
     use super::*;
     use crate::claim::ClaimLifecycleStatus;
     use crate::provenance::{EdgeProvenanceClaimBody, EdgeRef, SupersessionStatus};
-    use crate::types::{ENTITY_TYPE_PERSON, EdgeActorClass, HnswConfig, VaultConfig};
+    use crate::types::{
+        ENTITY_TYPE_PERSON, ENTITY_TYPE_TASK, EdgeActorClass, HnswConfig, VaultConfig,
+    };
 
     struct EdgeFixture {
         _dir: tempfile::TempDir,
@@ -2148,6 +2158,54 @@ mod tests {
         let absent_out = absent_out.expect("formerly absent edge");
         assert_eq!(absent_out.len(), EDGE_VALUE_SEMANTIC_LEN);
         assert_eq!(absent_in.as_deref(), Some(absent_out.as_slice()));
+        Ok(())
+    }
+
+    #[test]
+    fn public_timestamped_builder_keeps_structural_edge_layout() -> Result<()> {
+        let (dir, vault) = open_test_vault();
+        let _dir = dir;
+        let child = EntityId::now();
+        let parent = EntityId::now();
+        let occurred = test_time_range(1, 1);
+        vault.put_entity(&child, ENTITY_TYPE_TASK, occurred, 1, b"child")?;
+        vault.put_entity(&parent, ENTITY_TYPE_TASK, occurred, 1, b"parent")?;
+
+        vault
+            .batch()
+            .edge_with_created_at(&child, EdgeKind::ChildOf, &parent, 0.5, 2_000)
+            .commit()?;
+
+        let edge = EdgeRef::new(child, EdgeKind::ChildOf, parent);
+        let (out, inn) = raw_edge_values(&vault, &edge)?;
+        let out = out.expect("structural edge");
+        assert_eq!(out.len(), EDGE_VALUE_STRUCTURAL_LEN);
+        assert_eq!(inn.as_deref(), Some(out.as_slice()));
+
+        let err = vault
+            .batch()
+            .edge_with_created_at_and_vad(
+                &child,
+                EdgeKind::ChildOf,
+                &parent,
+                0.5,
+                2_001,
+                Vad {
+                    valence: 0.1,
+                    arousal: 0.2,
+                    dominance: 0.3,
+                },
+            )
+            .commit()
+            .expect_err("structural edge must reject VAD payload");
+        assert!(
+            matches!(
+                err,
+                Error::InvariantViolation("structural edges do not carry VAD")
+            ),
+            "expected structural VAD rejection, got {err:?}"
+        );
+        assert_raw_edge_unchanged(&vault, &edge, &out, "structural VAD rejection")?;
         Ok(())
     }
 

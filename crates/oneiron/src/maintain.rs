@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+
 use xxhash_rust::xxh32::xxh32;
 
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, encode_short_id_forward_key, parse_short_id_value};
@@ -357,6 +359,10 @@ fn recompute_short_id_hashes(vault: &Vault) -> Result<(u64, u64)> {
     let mut hash_updates: Vec<ShortIdHashUpdate> = Vec::new();
     // (forward key, entity id) rows to (re)write.
     let mut forward_repairs: Vec<(Vec<u8>, Vec<u8>)> = Vec::new();
+    // Forward keys written by this pass. Pass 2 consults this so an
+    // intra-pass refresh/repair can never be collected from a stale view of
+    // the reverse row it just fixed.
+    let mut reserved_forward_keys: HashSet<Vec<u8>> = HashSet::new();
     // (reverse key, paired forward key when recoverable) rows to reap.
     let mut reverse_orphans: Vec<(Vec<u8>, Option<Vec<u8>>)> = Vec::new();
 
@@ -419,9 +425,16 @@ fn recompute_short_id_hashes(vault: &Vault) -> Result<(u64, u64)> {
             if let Some(forward_id) = vault.store.short_ids.get(&wtxn, &new_forward_key)?
                 && forward_id != key
             {
-                tracing::warn!(
-                    "short-id maintenance skipped unowned reverse-derived forward overwrite"
-                );
+                if forward_key_is_claimed_by_reverse(vault, &wtxn, forward_id, &new_forward_key)? {
+                    tracing::warn!(
+                        "short-id maintenance pruned backed reverse row with owned refreshed forward alias"
+                    );
+                    reverse_orphans.push((key.to_vec(), None));
+                } else {
+                    tracing::warn!(
+                        "short-id maintenance skipped stale reverse-derived forward overwrite"
+                    );
+                }
                 continue;
             }
             let owned_old_forward_key =
@@ -435,6 +448,7 @@ fn recompute_short_id_hashes(vault: &Vault) -> Result<(u64, u64)> {
                     }
                     None => None,
                 };
+            reserved_forward_keys.insert(new_forward_key.clone());
             hash_updates.push(ShortIdHashUpdate {
                 reverse_key: key.to_vec(),
                 updated_value,
@@ -446,12 +460,27 @@ fn recompute_short_id_hashes(vault: &Vault) -> Result<(u64, u64)> {
 
         match vault.store.short_ids.get(&wtxn, &current_forward_key)? {
             Some(forward_id) if forward_id == key => {}
-            Some(_) => {
-                tracing::warn!(
-                    "short-id maintenance skipped unowned reverse-derived forward overwrite"
-                );
+            Some(forward_id) => {
+                if forward_key_is_claimed_by_reverse(
+                    vault,
+                    &wtxn,
+                    forward_id,
+                    &current_forward_key,
+                )? {
+                    tracing::warn!(
+                        "short-id maintenance pruned backed reverse row with owned forward alias"
+                    );
+                    reverse_orphans.push((key.to_vec(), None));
+                } else {
+                    tracing::warn!(
+                        "short-id maintenance skipped stale reverse-derived forward overwrite"
+                    );
+                }
             }
-            None => forward_repairs.push((current_forward_key, key.to_vec())),
+            None => {
+                reserved_forward_keys.insert(current_forward_key.clone());
+                forward_repairs.push((current_forward_key, key.to_vec()));
+            }
         }
     }
 
@@ -507,6 +536,11 @@ fn recompute_short_id_hashes(vault: &Vault) -> Result<(u64, u64)> {
 
         match vault.store.short_ids_reverse.get(&wtxn, id.as_bytes())? {
             Some(reverse_value) if reverse_value == key => {}
+            _ if reserved_forward_keys.contains(key) => {
+                tracing::warn!(
+                    "short-id maintenance kept in-pass reserved forward row despite stale reverse view"
+                );
+            }
             _ => forward_orphans.push(key.to_vec()),
         }
     }
@@ -518,6 +552,21 @@ fn recompute_short_id_hashes(vault: &Vault) -> Result<(u64, u64)> {
     Ok((
         hash_updates.len() as u64,
         (reverse_orphans.len() + forward_orphans.len()) as u64,
+    ))
+}
+
+fn forward_key_is_claimed_by_reverse(
+    vault: &Vault,
+    txn: &heed::RwTxn<'_>,
+    forward_id: &[u8],
+    forward_key: &[u8],
+) -> Result<bool> {
+    let Ok(owner) = parse_entity_id(forward_id, ERR_SHORT_IDS_FORWARD_VALUE) else {
+        return Ok(false);
+    };
+    Ok(matches!(
+        vault.store.short_ids_reverse.get(txn, owner.as_bytes())?,
+        Some(reverse_value) if reverse_value == forward_key
     ))
 }
 
@@ -1688,7 +1737,7 @@ mod tests {
 
         let report = vault.maintain().recompute_short_id_hashes().run()?;
         assert_eq!(report.short_id_hashes_updated, 0);
-        assert_eq!(report.orphan_short_ids_deleted, 0);
+        assert_eq!(report.orphan_short_ids_deleted, 1);
 
         let rtxn = vault.store.env.read_txn()?;
         assert_eq!(
@@ -1709,8 +1758,92 @@ mod tests {
                 .store
                 .short_ids_reverse
                 .get(&rtxn, aliased.as_bytes())?,
-            Some(healthy_forward_key.as_slice()),
-            "aliased reverse row should be left fail-closed for a later safe repair"
+            None,
+            "backed aliased reverse row should be pruned without touching the healthy forward row"
+        );
+        assert!(
+            vault
+                .store
+                .short_ids
+                .get(&rtxn, &aliased_original_forward_key)?
+                .is_none(),
+            "the aliased entity's now-unpaired old forward row should be pruned by pass 2"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn recompute_short_id_hashes_keeps_in_pass_reserved_refresh_one_1176() -> Result<()> {
+        let temp_dir = tempfile::tempdir()?;
+        let vault = Vault::open(temp_dir.path(), test_config())?;
+        let id = entity(108);
+
+        vault
+            .batch()
+            .put(&id, 1, test_time_range(100, 100), 101, b"payload-old")
+            .commit()?;
+
+        let (stale_forward_key, stale_hash) = {
+            let rtxn = vault.store.env.read_txn()?;
+            let value = vault
+                .store
+                .short_ids_reverse
+                .get(&rtxn, id.as_bytes())?
+                .ok_or(Error::EntityNotFound)?;
+            let (_, hash) = parse_short_id_value(value)?;
+            (value.to_vec(), hash)
+        };
+
+        let mut payload = b"payload-new".to_vec();
+        while ((xxh32(&payload, 0) % 256) as u8) == stale_hash {
+            payload.push(0);
+        }
+        vault
+            .batch()
+            .put(&id, 1, test_time_range(100, 100), 102, &payload)
+            .commit()?;
+
+        let fresh_forward_key = {
+            let rtxn = vault.store.env.read_txn()?;
+            vault
+                .store
+                .short_ids_reverse
+                .get(&rtxn, id.as_bytes())?
+                .ok_or(Error::EntityNotFound)?
+                .to_vec()
+        };
+        assert_ne!(stale_forward_key, fresh_forward_key);
+
+        // Simulate a crash/replay split where the entity body has the new
+        // hash, but reverse points at the old hash and the fresh forward row
+        // is missing. Pass 1 must refresh/rewrite it; pass 2 must not reap
+        // that just-reserved row as its own orphan.
+        {
+            let mut wtxn = vault.store.env.write_txn()?;
+            vault
+                .store
+                .short_ids_reverse
+                .put(&mut wtxn, id.as_bytes(), &stale_forward_key)?;
+            vault
+                .store
+                .short_ids
+                .delete(&mut wtxn, &fresh_forward_key)?;
+            wtxn.commit()?;
+        }
+
+        let report = vault.maintain().recompute_short_id_hashes().run()?;
+        assert_eq!(report.short_id_hashes_updated, 1);
+
+        let rtxn = vault.store.env.read_txn()?;
+        assert_eq!(
+            vault.store.short_ids_reverse.get(&rtxn, id.as_bytes())?,
+            Some(fresh_forward_key.as_slice()),
+            "reverse row should be refreshed to the current content hash"
+        );
+        assert_eq!(
+            vault.store.short_ids.get(&rtxn, &fresh_forward_key)?,
+            Some(id.as_bytes().as_slice()),
+            "fresh forward row written by this pass must survive pass 2"
         );
         Ok(())
     }

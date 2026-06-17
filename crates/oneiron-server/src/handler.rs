@@ -236,7 +236,17 @@ async fn handle_connection(socket: WebSocket, server: Arc<SyncServer>, conn_id: 
                 tracing::info!(conn_id, "client closed connection");
                 break;
             }
-            Ok(WsMessage::Ping(_)) | Ok(WsMessage::Pong(_)) => continue,
+            Ok(WsMessage::Ping(_)) | Ok(WsMessage::Pong(_)) => {
+                if !conn_state.record_inbound_message() {
+                    tracing::warn!(
+                        conn_id,
+                        max = server.config.max_messages_per_sec,
+                        "message rate limit exceeded by control frame — closing"
+                    );
+                    break;
+                }
+                continue;
+            }
             Ok(WsMessage::Text(_)) => {
                 if !conn_state.record_inbound_message() {
                     tracing::warn!(

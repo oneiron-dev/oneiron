@@ -367,7 +367,9 @@ impl SyncConnection {
         let (mut write, mut read) = ws_stream.split();
 
         // Phase 1-2: Initial sync (send our VVs, receive server state)
-        let initial_messages = client.generate_initial_sync();
+        let initial_messages = client
+            .try_generate_initial_sync()
+            .map_err(|e| format!("Generate initial sync failed: {e}"))?;
         for msg in initial_messages {
             write
                 .send(Message::Binary(msg.into()))
@@ -693,7 +695,11 @@ impl SyncConnection {
         force_resync: &BTreeSet<String>,
     ) -> crate::error::Result<Vec<Vec<u8>>> {
         self.queue.clear_all()?;
-        Ok(client.generate_re_bootstrap_sync_for_windows(force_resync.iter().cloned()))
+        client
+            .generate_re_bootstrap_sync_for_windows(force_resync.iter().cloned())
+            .map_err(|e| {
+                crate::error::Error::SyncProtocolError(format!("re-bootstrap encode failed: {e}"))
+            })
     }
 
     /// Reads server frames until the stream goes quiet (or the frame cap is

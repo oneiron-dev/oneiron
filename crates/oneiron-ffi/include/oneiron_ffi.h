@@ -10,8 +10,7 @@
  * are capped at 8 KiB, search limits at 1000, and dimensions at 16384.
  *
  * Intentionally absent: start_sync and stop_sync are not exported while sync
- * remains disabled pre-launch. batch_put_entities is deferred until its C
- * array-of-structs ownership contract is designed.
+ * remains disabled pre-launch.
  */
 
 
@@ -155,6 +154,22 @@ typedef struct OneironByteSlice {
   size_t len;
 } OneironByteSlice;
 
+/**
+ * Borrowed entity input for `oneiron_vault_batch_put_entities`.
+ *
+ * Each payload is caller-owned and borrowed only for the duration of the
+ * call. Entity IDs are fixed-width 16-byte values; `entity_type` must fit in
+ * one byte and pass the engine's public entity-type gate.
+ */
+typedef struct OneironEntityInput {
+  uint8_t id[16];
+  uint32_t entity_type;
+  int64_t occurred_start;
+  int64_t occurred_end;
+  int64_t learned_at;
+  struct OneironByteSlice data;
+} OneironEntityInput;
+
 #ifdef __cplusplus
 extern "C" {
 #endif // __cplusplus
@@ -215,6 +230,16 @@ enum OneironStatus oneiron_vault_put_entity(struct OneironVault *vault,
                                             int64_t learned_at,
                                             const uint8_t *data_ptr,
                                             size_t data_len);
+
+/**
+ * Store multiple entity blobs in one vault transaction.
+ *
+ * `entities` may be null only when `entities_len == 0`. Each payload pointer
+ * inside the array must be non-null for its byte length.
+ */
+enum OneironStatus oneiron_vault_batch_put_entities(struct OneironVault *vault,
+                                                    const struct OneironEntityInput *entities,
+                                                    size_t entities_len);
 
 /**
  * Retrieve an entity blob by ID.

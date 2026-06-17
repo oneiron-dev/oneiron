@@ -241,6 +241,21 @@ async fn ws_upgrade_rejects_unauthenticated_when_secret_configured() {
 }
 
 #[tokio::test]
+async fn ws_upgrade_rejects_empty_configured_secret_even_with_empty_header() {
+    let dir = tempfile::tempdir().unwrap();
+    let (addr, _server, handle) =
+        spawn_server(open_vault(dir.path()), config_with_secret(Some(""))).await;
+
+    let err = connect(addr, None).await.unwrap_err();
+    assert_unauthorized(&err);
+
+    let err = connect(addr, Some("")).await.unwrap_err();
+    assert_unauthorized(&err);
+
+    handle.abort();
+}
+
+#[tokio::test]
 async fn ws_upgrade_rejects_unauthenticated_when_no_secret_and_not_dev() {
     let dir = tempfile::tempdir().unwrap();
     let (addr, _server, handle) =
@@ -624,6 +639,32 @@ async fn inbound_message_rate_limit_closes_over_limit_connection() {
     assert_ws_closes(
         &mut ws,
         "server must close when one connection exceeds max_messages_per_sec",
+    )
+    .await;
+
+    handle.abort();
+}
+
+#[tokio::test]
+async fn inbound_ping_pong_frames_count_toward_rate_limit() {
+    let dir = tempfile::tempdir().unwrap();
+    let vault = open_vault(dir.path());
+    let config = SyncServerConfig {
+        auth_secret: Some("control-rate-secret".to_string()),
+        max_messages_per_sec: 1,
+        ..Default::default()
+    };
+    let (addr, _server, handle) = spawn_server(vault, config).await;
+
+    let mut ws = connect(addr, Some("control-rate-secret")).await.unwrap();
+    let _ = next_binary(&mut ws).await; // root snapshot
+
+    ws.send(Message::Ping(Vec::new().into())).await.unwrap();
+    ws.send(Message::Pong(Vec::new().into())).await.unwrap();
+
+    assert_ws_closes(
+        &mut ws,
+        "server must count Ping/Pong frames toward max_messages_per_sec",
     )
     .await;
 

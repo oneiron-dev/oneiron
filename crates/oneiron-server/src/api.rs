@@ -56,6 +56,9 @@ pub(crate) fn check_auth(headers: &HeaderMap, config: &SyncServerConfig) -> Resu
             Err(StatusCode::UNAUTHORIZED)
         };
     };
+    if expected.is_empty() {
+        return Err(StatusCode::UNAUTHORIZED);
+    }
 
     let provided = headers
         .get("x-oneiron-secret")
