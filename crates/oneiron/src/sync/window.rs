@@ -878,48 +878,51 @@ pub fn forward_rematerialize(
                 return;
             }
 
-            // Track the local record for this id: byte-identical →
-            // idempotent skip (return); present-but-different falls through
-            // with `local_blob = Some(_)` so the REDACTION_AUDIT
-            // immutability gate below can compare bytes (ONE-1087 stale
-            //-echo exception) and quarantine real divergence.
-            let local_blob: Option<Vec<u8>> = if let Some(latest) = materialized_blobs.get(&id) {
-                if latest.as_slice() == blob {
-                    return;
-                }
-                Some(latest.clone())
-            } else {
-                let lmdb_blob = match vault.get_raw_in(&rtxn, &id) {
-                    Ok(v) => v,
-                    Err(err) => {
-                        entity_error = Some(err);
+            // Track the local record for non-REDACTION_AUDIT ids:
+            // byte-identical → idempotent skip (return). Type-120 receipts
+            // make this decision later inside the same write txn as their
+            // lease verification and replicated put, so a stale long-lived
+            // `rtxn` cannot hide a mid-flight finalized/divergent receipt.
+            let is_redaction_audit_blob =
+                blob.first().copied() == Some(crate::types::ENTITY_TYPE_REDACTION_AUDIT);
+            if !is_redaction_audit_blob {
+                if let Some(latest) = materialized_blobs.get(&id) {
+                    if latest.as_slice() == blob {
                         return;
                     }
-                };
-                if lmdb_blob.as_deref() == Some(blob) {
-                    return;
+                } else {
+                    let lmdb_blob = match vault.get_raw_in(&rtxn, &id) {
+                        Ok(v) => v,
+                        Err(err) => {
+                            entity_error = Some(err);
+                            return;
+                        }
+                    };
+                    if lmdb_blob.as_deref() == Some(blob) {
+                        return;
+                    }
+                    // SoftErase shell guard: `user_delete` truncates the
+                    // local record to the 25 B header shell and writes NO
+                    // CRDT record (contracts.ts deleteReasons user_delete:
+                    // "Tombstone revision (empty content); keep the message
+                    // shell" — cross-device propagation is deferred to
+                    // ONE-1090), so the CRDT mirror still carries the
+                    // pre-delete body. Replaying that body over the shell
+                    // would resurrect deleted content — delete wins.
+                    // Interim guard until reason-aware tombstones land in
+                    // M4-06.
+                    if let Some(local) = &lmdb_blob
+                        && local.len() == ENTITY_METADATA_HEADER_LEN
+                        && blob.len() > ENTITY_METADATA_HEADER_LEN
+                    {
+                        tracing::warn!(
+                            entity = %id.to_hex(),
+                            "forward remat: kept local SoftErase shell over longer CRDT body (reason-aware tombstones land in M4-06)"
+                        );
+                        return;
+                    }
                 }
-                // SoftErase shell guard: `user_delete` truncates the local
-                // record to the 25 B header shell and writes NO CRDT record
-                // (contracts.ts deleteReasons user_delete: "Tombstone
-                // revision (empty content); keep the message shell" —
-                // cross-device propagation is deferred to ONE-1090), so the
-                // CRDT mirror still carries the pre-delete body. Replaying
-                // that body over the shell would resurrect deleted content —
-                // delete wins. Interim guard until reason-aware tombstones
-                // land in M4-06.
-                if let Some(local) = &lmdb_blob
-                    && local.len() == ENTITY_METADATA_HEADER_LEN
-                    && blob.len() > ENTITY_METADATA_HEADER_LEN
-                {
-                    tracing::warn!(
-                        entity = %id.to_hex(),
-                        "forward remat: kept local SoftErase shell over longer CRDT body (reason-aware tombstones land in M4-06)"
-                    );
-                    return;
-                }
-                lmdb_blob
-            };
+            }
 
             let header = match EntityMetadataHeader::parse(blob) {
                 Some(h) => h,
@@ -949,10 +952,10 @@ pub fn forward_rematerialize(
             // * a blob failing the pinned receipt-body validation (incl.
             //   the ONE-1140 v2 att_ verification grammar) is quarantined,
             //   never written;
-            // * id present locally with divergent bytes (byte-identical
-            //   already returned above) → quarantine the remote payload and
-            //   KEEP the local bytes (before any crypto — accepted local
-            //   bytes always win);
+            // * id present locally with byte-identical/stale-echo bytes →
+            //   skip inside the write txn; any other divergence →
+            //   quarantine the remote payload and KEEP the local bytes
+            //   (before any crypto — accepted local bytes always win);
             // * id absent (NEW receipt) → the ONE-1140 origin predicate:
             //   Ed25519 transcript verification + `ls:` lease-binding read
             //   (OD-6/OD-7). Remote-classified rejections quarantine; a
@@ -968,32 +971,6 @@ pub fn forward_rematerialize(
                         QuarantineContainer::Entities,
                         key,
                         &err,
-                        blob,
-                    ) {
-                        entity_error = Some(q_err);
-                    }
-                    return;
-                }
-                if let Some(local) = &local_blob {
-                    // ONE-1087 designed exception: the sweep's receipt
-                    // finalization (`sweep_complete_at` None→Some) is
-                    // LOCAL-LMDB-only, so the CRDT mirror replays the
-                    // PRE-finalization bytes every boot. That one monotone
-                    // shape is the own node's stale echo: idempotent skip,
-                    // never an x: row. All other divergence quarantines.
-                    if crate::deletion::redaction_receipt_is_stale_finalization_echo(local, blob) {
-                        tracing::debug!(
-                            entity = %key,
-                            "forward remat: stale pre-finalization receipt echo — keeping finalized local"
-                        );
-                        return;
-                    }
-                    if let Err(q_err) = quarantine::quarantine_rejected_op(
-                        vault,
-                        window_key.as_str(),
-                        QuarantineContainer::Entities,
-                        key,
-                        &Error::RedactionReceiptDivergence { id },
                         blob,
                     ) {
                         entity_error = Some(q_err);
@@ -1016,6 +993,37 @@ pub fn forward_rematerialize(
                     return;
                 }
                 vault.with_write_txn(|wtxn| {
+                    if let Some(local) = vault.store.entities.get(&*wtxn, id.as_bytes())? {
+                        if local == blob {
+                            return Ok(false);
+                        }
+                        // ONE-1087 designed exception: the sweep's receipt
+                        // finalization (`sweep_complete_at` None→Some) is
+                        // LOCAL-LMDB-only, so the CRDT mirror replays the
+                        // PRE-finalization bytes every boot. That one
+                        // monotone shape is the own node's stale echo:
+                        // idempotent skip, never an x: row. All other
+                        // divergence quarantines.
+                        if crate::deletion::redaction_receipt_is_stale_finalization_echo(
+                            local, blob,
+                        ) {
+                            tracing::debug!(
+                                entity = %key,
+                                "forward remat: stale pre-finalization receipt echo — keeping finalized local"
+                            );
+                            return Ok(false);
+                        }
+                        quarantine::quarantine_rejected_op_in_txn(
+                            vault,
+                            wtxn,
+                            window_key.as_str(),
+                            QuarantineContainer::Entities,
+                            key,
+                            &Error::RedactionReceiptDivergence { id },
+                            blob,
+                        )?;
+                        return Ok(false);
+                    }
                     crate::sync::lease::verify_new_receipt_origin_in_txn(vault, wtxn, &id, blob)?;
                     vault
                         .batch_in()
@@ -1029,7 +1037,8 @@ pub fn forward_rematerialize(
                             header.learned_at,
                             data,
                         )
-                        .apply(wtxn)
+                        .apply(wtxn)?;
+                    Ok(true)
                 })
             } else {
                 vault
@@ -1045,9 +1054,10 @@ pub fn forward_rematerialize(
                         data,
                     )
                     .commit()
+                    .map(|()| true)
             };
             match result {
-                Ok(()) => {
+                Ok(true) => {
                     materialized_blobs.insert(id, blob.to_vec());
                     count += 1;
                     // ONE-1147: an ACTUAL healing write discharges this
@@ -1058,6 +1068,7 @@ pub fn forward_rematerialize(
                         healed.push(id);
                     }
                 }
+                Ok(false) => {}
                 Err(err) => {
                     if quarantine::remote_rejection_reason(&err).is_some() {
                         if let Err(q_err) = quarantine::quarantine_rejected_op(
@@ -1453,22 +1464,31 @@ fn reverse_remat_skip_redaction_receipt_mirror(raw: &[u8]) -> bool {
 }
 
 /// Test-only hook for the REDACTION_AUDIT rematerialization race pin. The
-/// armed write lands just before the same-txn verify+put path starts, so the
-/// production code must observe the revoked lease and quarantine the receipt.
+/// armed writes land just before the same-txn recheck+verify+put path starts,
+/// so production code must observe mid-flight lease revocation or local
+/// divergent receipt bytes before admitting the remote receipt.
 #[cfg(any(test, feature = "test-hooks"))]
 #[doc(hidden)]
 pub mod test_hooks {
     use std::cell::RefCell;
 
+    use crate::types::EntityId;
     use crate::{Error, Result, Vault};
 
     thread_local! {
         static RECEIPT_REVOCATION: RefCell<Option<(String, Vec<u8>)>> = const { RefCell::new(None) };
+        static RECEIPT_LOCAL_WRITE: RefCell<Option<(EntityId, Vec<u8>)>> = const { RefCell::new(None) };
     }
 
     pub fn arm_receipt_revocation_race(lease_key: String, revoked_row: Vec<u8>) {
         RECEIPT_REVOCATION.with(|slot| {
             *slot.borrow_mut() = Some((lease_key, revoked_row));
+        });
+    }
+
+    pub fn arm_receipt_local_write_race(id: EntityId, local_blob: Vec<u8>) {
+        RECEIPT_LOCAL_WRITE.with(|slot| {
+            *slot.borrow_mut() = Some((id, local_blob));
         });
     }
 
@@ -1479,6 +1499,16 @@ pub mod test_hooks {
                 return Err(Error::InvariantViolation("empty revoked lease test row"));
             }
             vault.sync_state_put(&lease_key, &revoked_row)?;
+        }
+        let armed = RECEIPT_LOCAL_WRITE.with(|slot| slot.borrow_mut().take());
+        if let Some((id, local_blob)) = armed {
+            if local_blob.is_empty() {
+                return Err(Error::InvariantViolation("empty local receipt test row"));
+            }
+            vault.with_write_txn(|wtxn| {
+                vault.store.entities.put(wtxn, id.as_bytes(), &local_blob)?;
+                Ok(())
+            })?;
         }
         Ok(())
     }
@@ -2337,5 +2367,93 @@ mod tests {
         assert_eq!(record.window_key, window_key.as_str());
         assert_eq!(record.container, QuarantineContainer::Entities);
         assert_eq!(record.reason_code, "ReceiptLeaseRevoked");
+    }
+
+    #[test]
+    fn forward_remat_quarantines_divergent_receipt_landing_mid_flight() {
+        use ed25519_dalek::SigningKey;
+
+        let (_dir, vault) = test_vault();
+        let materializer = Materializer::new();
+        let learned_at = 1_772_400_000u64;
+        let window_key = WindowKey::from_timestamp(learned_at);
+        let receipt_id = EntityId::from_hex("202122232425262728292a2b2c2d2e2f").unwrap();
+        let subject = EntityId::from_hex("303132333435363738393a3b3c3d3e3f").unwrap();
+        let client_id = 0x0fed_cba9_8765_4321u64;
+        let signing_key = SigningKey::from_bytes(&[45u8; 32]);
+        let pubkey = signing_key.verifying_key().to_bytes();
+        let identity = crate::identity::DeviceIdentity {
+            client_id,
+            signing_key,
+        };
+
+        let remote_input = crate::deletion::RedactionReceiptInput {
+            request_id: "018f3a2b-7c4d-7e5f-8a9b-0c1d2e3f4a5c".to_owned(),
+            scope: crate::deletion::RedactionScope::entity(&subject),
+            reason: crate::DeleteReason::GdprDelete,
+            requested_at: 100,
+            soft_complete_at: 101,
+            hard_purge_complete_at: learned_at,
+            sweep_queued_at: Some(102),
+        };
+        let remote_body =
+            crate::deletion::encode_redaction_audit_receipt(remote_input, &receipt_id, &identity)
+                .unwrap();
+        let mut remote_blob = crate::deletion::receipt_envelope_header(learned_at).to_vec();
+        remote_blob.extend_from_slice(&remote_body);
+
+        let local_input = crate::deletion::RedactionReceiptInput {
+            request_id: "018f3a2b-7c4d-7e5f-8a9b-0c1d2e3f4a5d".to_owned(),
+            scope: crate::deletion::RedactionScope::entity(&subject),
+            reason: crate::DeleteReason::GdprDelete,
+            requested_at: 100,
+            soft_complete_at: 101,
+            hard_purge_complete_at: learned_at,
+            sweep_queued_at: Some(102),
+        };
+        let local_body =
+            crate::deletion::encode_redaction_audit_receipt(local_input, &receipt_id, &identity)
+                .unwrap();
+        let mut local_blob = crate::deletion::receipt_envelope_header(learned_at).to_vec();
+        local_blob.extend_from_slice(&local_body);
+        assert_ne!(local_blob, remote_blob);
+
+        let active = crate::sync::lease::LeaseRecord {
+            status: crate::sync::lease::LeaseStatus::Active,
+            pubkey,
+            granted_at: 1,
+            renewed_at: 2,
+            expires_at: 3,
+        };
+        vault
+            .sync_state_put(
+                &crate::sync::lease::lease_key(client_id),
+                &crate::sync::lease::encode_lease_record(&active),
+            )
+            .unwrap();
+
+        let doc = create_window_doc("local", &window_key);
+        doc.get_map("entities")
+            .insert(receipt_id.to_hex().as_str(), remote_blob.as_slice())
+            .unwrap();
+        doc.commit();
+
+        test_hooks::arm_receipt_local_write_race(receipt_id, local_blob.clone());
+        let count = forward_rematerialize(&vault, &doc, &materializer, &window_key).unwrap();
+        assert_eq!(
+            count, 0,
+            "the divergent remote receipt is quarantined, not written"
+        );
+        assert_eq!(
+            vault.get_raw(&receipt_id).unwrap().as_deref(),
+            Some(local_blob.as_slice()),
+            "the in-txn recheck must keep the mid-flight local receipt bytes"
+        );
+        let records = quarantine::quarantined_records(&vault).unwrap();
+        assert_eq!(records.len(), 1);
+        let record = &records[0].1;
+        assert_eq!(record.window_key, window_key.as_str());
+        assert_eq!(record.container, QuarantineContainer::Entities);
+        assert_eq!(record.reason_code, "RedactionReceiptDivergence");
     }
 }

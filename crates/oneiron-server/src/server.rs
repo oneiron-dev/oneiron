@@ -85,6 +85,8 @@ impl SyncServer {
                 // only; lazily present on docs persisted before v2.
                 let _leases = doc.get_map(ROOT_LEASES_MAP);
                 doc.commit();
+                // Boot is pre-connection/single-threaded; no root-writer
+                // mutex can race this initial persist.
                 server_state::persist_root_snapshot(&vault, &doc)?;
                 doc
             }
@@ -103,6 +105,8 @@ impl SyncServer {
             }
         }
         if reconciled {
+            // Boot reconciliation is pre-connection/single-threaded; no
+            // root-writer mutex can race this persist.
             server_state::persist_root_snapshot(&vault, &root_doc)?;
         }
 
@@ -203,8 +207,15 @@ impl SyncServer {
                 doc.commit();
 
                 server_state::persist_window_snapshot(&self.vault, key, &doc)?;
-                add_window_to_root(&self.root_doc, key);
-                server_state::persist_root_snapshot(&self.vault, &self.root_doc)?;
+                {
+                    // Lock order: this create path already holds
+                    // `windows.write()`, then takes `lease_registrar` only
+                    // for the root_doc write. Registrar paths never take
+                    // `windows.write()` while holding `lease_registrar`.
+                    let _guard = self.lease_registrar.lock().await;
+                    add_window_to_root(&self.root_doc, key);
+                    server_state::persist_root_snapshot(&self.vault, &self.root_doc)?;
+                }
                 doc
             }
             Err(e) => return Err(e),
@@ -603,6 +614,46 @@ mod tests {
 
         let windows = read_window_list(&server.root_doc);
         assert_eq!(windows, vec![WindowKey::new("2026-03")]);
+    }
+
+    #[tokio::test]
+    async fn window_open_root_write_serializes_with_lease_registrar() {
+        use std::time::Duration;
+
+        let (_dir, vault) = test_vault();
+        let server = SyncServer::new(vault.clone(), SyncServerConfig::default()).unwrap();
+        let guard = server.lease_registrar.lock().await;
+        let key = WindowKey::new("2026-07");
+        let open = server.get_or_create_window(&key);
+        tokio::pin!(open);
+
+        let wait_for_window_snapshot = async {
+            loop {
+                if vault.sync_state_get("d:w:2026-07").unwrap().is_some() {
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+        };
+        tokio::select! {
+            _ = &mut open => panic!("window open completed without lease_registrar serialization"),
+            _ = wait_for_window_snapshot => {}
+        }
+
+        assert!(
+            read_window_list(&server.root_doc).is_empty(),
+            "the root_doc write must wait behind lease_registrar"
+        );
+        drop(guard);
+
+        let doc = tokio::time::timeout(Duration::from_secs(1), &mut open)
+            .await
+            .expect("window open must complete once lease_registrar is released")
+            .unwrap();
+        let deep = doc.get_deep_value();
+        let map = deep.as_map().unwrap();
+        assert!(map.contains_key("entities"));
+        assert_eq!(read_window_list(&server.root_doc), vec![key.clone()]);
     }
 
     #[tokio::test]
