@@ -200,6 +200,11 @@ pub struct Vault {
     /// observer subscriptions) alive.
     #[cfg(feature = "sync")]
     pub(crate) live_window_manager: std::sync::Mutex<std::sync::Weak<crate::sync::WindowManager>>,
+    /// Distinguishes "no sync manager has ever been attached" from "a manager
+    /// was attached but can no longer be queried". The latter is ambiguous for
+    /// sweep safety and must defer.
+    #[cfg(feature = "sync")]
+    pub(crate) live_window_manager_attached: std::sync::atomic::AtomicBool,
 }
 
 impl Vault {
@@ -268,6 +273,8 @@ impl Vault {
             text_index_trusted: std::sync::atomic::AtomicBool::new(text_index_trusted),
             #[cfg(feature = "sync")]
             live_window_manager: std::sync::Mutex::new(std::sync::Weak::new()),
+            #[cfg(feature = "sync")]
+            live_window_manager_attached: std::sync::atomic::AtomicBool::new(false),
         })
     }
 
@@ -279,6 +286,8 @@ impl Vault {
         &self,
         manager: std::sync::Weak<crate::sync::WindowManager>,
     ) {
+        self.live_window_manager_attached
+            .store(true, std::sync::atomic::Ordering::Release);
         *self
             .live_window_manager
             .lock()
@@ -308,14 +317,25 @@ impl Vault {
         Some((window, std::sync::Arc::clone(manager.materializer())))
     }
 
-    /// Whether `key` is currently OPEN in an attached window registry —
-    /// the ONE-1087 sweep executor's deferral probe. A live doc holds the
-    /// full op history in memory, and its next full-snapshot persist would
-    /// rewrite that history over a shallow-compacted `d:w:` row, so the
-    /// sweep must never compact an open window in place.
+    /// Whether `key` is currently unsafe for sweep compaction: registered in
+    /// an attached manager OR still retained by an outstanding orphaned
+    /// `Arc<LoadedWindow>` after deregistration. A live doc holds the full op
+    /// history in memory, and its next full-snapshot persist would rewrite
+    /// that history over a shallow-compacted `d:w:` row, so the sweep must
+    /// never compact while such a handle may persist.
     #[cfg(feature = "sync")]
     pub(crate) fn live_window_for_sweep(&self, key: &crate::sync::WindowKey) -> bool {
-        self.live_window(key).is_some()
+        let attached = self
+            .live_window_manager_attached
+            .load(std::sync::atomic::Ordering::Acquire);
+        let manager = match self.live_window_manager.lock() {
+            Ok(manager) => manager,
+            Err(_) => return true,
+        };
+        match manager.upgrade() {
+            Some(manager) => manager.window_live_for_sweep(key),
+            None => attached,
+        }
     }
 
     /// Internal guard: read paths over the text index must refuse to score
