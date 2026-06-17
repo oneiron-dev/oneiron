@@ -6,6 +6,7 @@
 //! 3. Phase 3: Historical windows via BulkTransfer (oldest first) + BulkTransferDone
 //! 4. Ongoing: bidirectional incremental sync via WindowSync + Awareness
 
+use std::collections::HashSet;
 use std::io::Read;
 use std::sync::Arc;
 
@@ -20,6 +21,7 @@ use futures_util::{SinkExt, StreamExt};
 use loro::VersionVector;
 use oneiron::sync::WindowKey;
 use oneiron::sync::export_updates_since;
+use tokio::time::{Duration, Instant};
 
 use crate::api::check_auth;
 use crate::broadcast::BroadcastSubscriber;
@@ -28,6 +30,79 @@ use crate::server::SyncServer;
 
 /// How long the server waits for the client's protocol-version hello.
 const HELLO_TIMEOUT_SECS: u64 = 10;
+
+/// Per-connection mutable state. This is intentionally local to one socket:
+/// Phase-1 auth has only a shared secret, so user-scoped limits are not sound.
+struct ConnState {
+    windows_touched: HashSet<WindowKey>,
+    rate_limiter: MessageRateLimiter,
+}
+
+impl ConnState {
+    fn new(max_messages_per_sec: u32) -> Self {
+        Self {
+            windows_touched: HashSet::new(),
+            rate_limiter: MessageRateLimiter::new(max_messages_per_sec),
+        }
+    }
+
+    fn record_inbound_message(&mut self) -> bool {
+        self.rate_limiter.allow(Instant::now())
+    }
+
+    fn touch_window(
+        &mut self,
+        key: WindowKey,
+        max_windows_per_connection: usize,
+    ) -> Result<WindowKey, ProtocolError> {
+        if self.windows_touched.contains(&key) {
+            return Ok(key);
+        }
+
+        if self.windows_touched.len() >= max_windows_per_connection {
+            return Err(ProtocolError::InvalidPayload(
+                "window creation limit exceeded",
+            ));
+        }
+
+        self.windows_touched.insert(key.clone());
+        Ok(key)
+    }
+}
+
+struct MessageRateLimiter {
+    max_messages_per_sec: u32,
+    window_start: Instant,
+    messages_seen: u32,
+}
+
+impl MessageRateLimiter {
+    fn new(max_messages_per_sec: u32) -> Self {
+        Self {
+            max_messages_per_sec,
+            window_start: Instant::now(),
+            messages_seen: 0,
+        }
+    }
+
+    fn allow(&mut self, now: Instant) -> bool {
+        if self.max_messages_per_sec == 0 {
+            return false;
+        }
+
+        if now.duration_since(self.window_start) >= Duration::from_secs(1) {
+            self.window_start = now;
+            self.messages_seen = 0;
+        }
+
+        if self.messages_seen >= self.max_messages_per_sec {
+            return false;
+        }
+
+        self.messages_seen += 1;
+        true
+    }
+}
 
 /// Builds the WebSocket routes for the sync server.
 pub(crate) fn ws_routes(server: Arc<SyncServer>) -> Router {
@@ -43,14 +118,14 @@ pub(crate) fn ws_routes(server: Arc<SyncServer>) -> Router {
 /// scheme as the HTTP API). An unauthenticated upgrade is rejected with 401
 /// BEFORE the socket upgrade (fail-closed) — without this gate any network
 /// peer could pull the full root snapshot and window exports. When no secret
-/// is configured the server runs in dev mode (allow all), matching
-/// `api::check_auth`.
+/// is configured, upgrades are rejected unless the explicit insecure dev
+/// escape hatch is enabled, matching `api::check_auth`.
 async fn ws_upgrade_handler(
     ws: WebSocketUpgrade,
     headers: HeaderMap,
     State(server): State<Arc<SyncServer>>,
 ) -> Result<impl IntoResponse, StatusCode> {
-    check_auth(&headers, &server.config.auth_secret)?;
+    check_auth(&headers, &server.config)?;
 
     let conn_id = server.alloc_conn_id();
     tracing::info!(conn_id, "new WebSocket connection");
@@ -107,6 +182,7 @@ async fn handle_connection(socket: WebSocket, server: Arc<SyncServer>, conn_id: 
 
     // Channel for direct responses (e.g. VV_REQUEST replies sent only to requester)
     let (direct_tx, mut direct_rx) = tokio::sync::mpsc::unbounded_channel::<Vec<u8>>();
+    let mut conn_state = ConnState::new(server.config.max_messages_per_sec);
 
     // Spawn outbound task: forwards broadcast + direct messages to WebSocket sink
     let outbound_handle = {
@@ -162,6 +238,14 @@ async fn handle_connection(socket: WebSocket, server: Arc<SyncServer>, conn_id: 
             }
             Ok(WsMessage::Ping(_)) | Ok(WsMessage::Pong(_)) => continue,
             Ok(WsMessage::Text(_)) => {
+                if !conn_state.record_inbound_message() {
+                    tracing::warn!(
+                        conn_id,
+                        max = server.config.max_messages_per_sec,
+                        "message rate limit exceeded — closing"
+                    );
+                    break;
+                }
                 tracing::warn!(conn_id, "received unexpected text message");
                 continue;
             }
@@ -170,6 +254,15 @@ async fn handle_connection(socket: WebSocket, server: Arc<SyncServer>, conn_id: 
                 break;
             }
         };
+
+        if !conn_state.record_inbound_message() {
+            tracing::warn!(
+                conn_id,
+                max = server.config.max_messages_per_sec,
+                "message rate limit exceeded — closing"
+            );
+            break;
+        }
 
         // Size check
         if data.len() > server.config.max_frame_size {
@@ -180,9 +273,14 @@ async fn handle_connection(socket: WebSocket, server: Arc<SyncServer>, conn_id: 
         // Parse and dispatch the message
         match protocol::parse_message(&data) {
             Ok(msg) => {
-                let handle_result = handle_sync_message(&server, conn_id, msg, &direct_tx).await;
+                let handle_result =
+                    handle_sync_message(&server, conn_id, msg, &direct_tx, &mut conn_state).await;
                 if let Err(e) = handle_result {
                     match &e {
+                        ProtocolError::InvalidPayload(msg) => {
+                            tracing::warn!(conn_id, error = %msg, "invalid payload — closing");
+                            break;
+                        }
                         ProtocolError::UnknownTag(tag) => {
                             tracing::warn!(conn_id, tag, "unknown tag — closing");
                             break;
@@ -212,9 +310,6 @@ async fn handle_connection(socket: WebSocket, server: Arc<SyncServer>, conn_id: 
                             // restart.
                             tracing::error!(conn_id, error = %msg, "sync persistence failure — closing");
                             break;
-                        }
-                        _ => {
-                            tracing::warn!(conn_id, error = %e, "message handling failed");
                         }
                     }
                 }
@@ -297,6 +392,7 @@ async fn handle_sync_message(
     conn_id: u32,
     msg: SyncMessage,
     direct_tx: &tokio::sync::mpsc::UnboundedSender<Vec<u8>>,
+    conn_state: &mut ConnState,
 ) -> Result<(), ProtocolError> {
     match msg {
         SyncMessage::RootUpdate(_update_bytes) => {
@@ -382,7 +478,18 @@ async fn handle_sync_message(
             window_key,
             sub_tag,
             payload,
-        } => handle_window_sync(server, conn_id, &window_key, sub_tag, &payload, direct_tx).await,
+        } => {
+            handle_window_sync(
+                server,
+                conn_id,
+                &window_key,
+                sub_tag,
+                &payload,
+                direct_tx,
+                conn_state,
+            )
+            .await
+        }
         SyncMessage::BulkTransfer {
             window_key,
             compressed,
@@ -402,6 +509,7 @@ async fn handle_window_sync(
     sub_tag: u8,
     payload: &[u8],
     direct_tx: &tokio::sync::mpsc::UnboundedSender<Vec<u8>>,
+    conn_state: &mut ConnState,
 ) -> Result<(), ProtocolError> {
     // Window-key chokepoint. `decode_window_sync` already validated the key
     // at the parse boundary; re-validate here so this write path stays
@@ -417,6 +525,11 @@ async fn handle_window_sync(
             max: server.config.max_update_payload,
         });
     }
+
+    // Count distinct, valid window keys per connection before any load/create.
+    // The default cap is generous so legitimate historical-window tombstone
+    // sync can touch all real windows; it only stops fabricated-key floods.
+    let key = conn_state.touch_window(key, server.config.max_windows_per_connection)?;
 
     // Loads persisted window state (d:w: + pending u:w:) on first touch.
     // Corrupt persisted state closes the connection rather than serving a
@@ -520,6 +633,8 @@ async fn handle_bulk_transfer(
     window_key: &str,
     _compressed: &[u8],
 ) -> Result<(), ProtocolError> {
+    let _key = WindowKey::try_new(window_key)
+        .ok_or(ProtocolError::InvalidPayload("invalid window key"))?;
     tracing::warn!(
         window_key,
         "rejected client-to-server BulkTransfer — not supported"
@@ -537,6 +652,8 @@ async fn handle_bulk_transfer_done(
     window_key: &str,
     _doc_state: &[u8],
 ) -> Result<(), ProtocolError> {
+    let _key = WindowKey::try_new(window_key)
+        .ok_or(ProtocolError::InvalidPayload("invalid window key"))?;
     tracing::warn!(
         window_key,
         "rejected client-to-server BulkTransferDone — not supported"
@@ -656,6 +773,10 @@ mod tests {
         }
     }
 
+    fn test_conn_state() -> ConnState {
+        ConnState::new(SyncServerConfig::default().max_messages_per_sec)
+    }
+
     #[tokio::test]
     async fn vv_request_sends_delta_and_vv_response() {
         let (_dir, server) = test_server();
@@ -685,6 +806,7 @@ mod tests {
         server_doc.commit();
 
         let (direct_tx, mut direct_rx) = mpsc::unbounded_channel::<Vec<u8>>();
+        let mut conn_state = test_conn_state();
         handle_window_sync(
             &server,
             1,
@@ -692,6 +814,7 @@ mod tests {
             window_sub_tags::VV_REQUEST,
             &client_doc.oplog_vv().encode(),
             &direct_tx,
+            &mut conn_state,
         )
         .await
         .unwrap();
@@ -736,6 +859,7 @@ mod tests {
         server_doc.commit();
 
         let (direct_tx, mut direct_rx) = mpsc::unbounded_channel::<Vec<u8>>();
+        let mut conn_state = test_conn_state();
         // The dead JSON encoding and garbage must both be rejected.
         for payload in [&b"{}"[..], &[0xFFu8, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF][..]] {
             let result = handle_window_sync(
@@ -745,6 +869,7 @@ mod tests {
                 window_sub_tags::VV_REQUEST,
                 payload,
                 &direct_tx,
+                &mut conn_state,
             )
             .await;
             assert!(
@@ -774,6 +899,7 @@ mod tests {
 
         let client_doc = client_window_doc();
         let (direct_tx, mut direct_rx) = mpsc::unbounded_channel::<Vec<u8>>();
+        let mut conn_state = test_conn_state();
         handle_window_sync(
             &server,
             1,
@@ -781,6 +907,7 @@ mod tests {
             window_sub_tags::VV_RESPONSE,
             &client_doc.oplog_vv().encode(),
             &direct_tx,
+            &mut conn_state,
         )
         .await
         .unwrap();
@@ -814,11 +941,13 @@ mod tests {
         server.root_doc.commit();
 
         let (direct_tx, mut direct_rx) = mpsc::unbounded_channel::<Vec<u8>>();
+        let mut conn_state = test_conn_state();
         handle_sync_message(
             &server,
             1,
             SyncMessage::RootVersionVector(client_root.oplog_vv().encode()),
             &direct_tx,
+            &mut conn_state,
         )
         .await
         .unwrap();
@@ -837,6 +966,7 @@ mod tests {
             1,
             SyncMessage::RootVersionVector(b"{}".to_vec()),
             &direct_tx,
+            &mut conn_state,
         )
         .await;
         assert!(matches!(result, Err(ProtocolError::VvDecode(_))));

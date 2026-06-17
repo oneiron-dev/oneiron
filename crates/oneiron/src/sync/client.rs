@@ -253,10 +253,9 @@ impl SyncClient {
 
     /// Returns the list of window keys from the root doc (set by server).
     pub fn server_windows(&self) -> Vec<String> {
-        // `meta.windows` is byte-encoded by the schema helpers
-        // (`create_root_doc` / `add_window_to_root`). Decode through the shared
-        // `read_window_list` path so the encoding stays consistent — reading it
-        // as a `LoroValue::String` silently yields an empty list (ONE-637).
+        // `meta.windows` is encoded by the schema helpers (`create_root_doc` /
+        // `add_window_to_root`). Decode through the shared `read_window_list`
+        // path so the client stays in lockstep with schema-owned changes.
         read_window_list(&self.root_doc)
             .into_iter()
             .map(|k| k.as_str().to_string())
@@ -307,11 +306,29 @@ impl SyncClient {
                 }
                 // Import, then persist so the imported state survives
                 // restart (d:root).
+                let frontiers_before = self.root_doc.state_frontiers();
                 self.root_doc
                     .import(payload)
                     .map_err(|_| TransportError::InvalidPayload("root doc import failed"))?;
-                self.persist_root_state()
-                    .map_err(|e| TransportError::Storage(format!("persist root doc: {e}")))?;
+                if let Err(err) = self.persist_root_state() {
+                    if let Err(revert_err) = self.root_doc.revert_to(&frontiers_before) {
+                        return Err(TransportError::Storage(format!(
+                            "persist root doc: {err}; root revert after import persist failure: {revert_err}"
+                        )));
+                    }
+                    let restored = load_root_doc(&self.vault).map_err(|reload_err| {
+                        TransportError::Storage(format!(
+                            "persist root doc: {err}; reload root doc after persist failure: {reload_err}"
+                        ))
+                    })?;
+                    restored.set_peer_id(self.client_id).map_err(|peer_err| {
+                        TransportError::Storage(format!(
+                            "persist root doc: {err}; restore root peer id after persist failure: {peer_err}"
+                        ))
+                    })?;
+                    self.root_doc = restored;
+                    return Err(TransportError::Storage(format!("persist root doc: {err}")));
+                }
             }
             TAG_AWARENESS => {
                 // Server presence broadcast — the client does not track peer
@@ -756,8 +773,20 @@ impl SyncClient {
     /// protocol hello — the hello is a once-per-connection preamble
     /// (ONE-1127) and the re-bootstrap reuses the live connection.
     pub fn generate_re_bootstrap_sync(&mut self) -> Vec<Vec<u8>> {
+        self.generate_re_bootstrap_sync_for_windows(std::iter::empty::<String>())
+    }
+
+    /// Re-bootstrap sync frames with explicit windows that must be requested
+    /// even if they are outside the default current/previous window set.
+    pub(crate) fn generate_re_bootstrap_sync_for_windows<I>(
+        &mut self,
+        extra_windows: I,
+    ) -> Vec<Vec<u8>>
+    where
+        I: IntoIterator<Item = String>,
+    {
         self.reset_for_re_bootstrap();
-        self.generate_phase_frames()
+        self.generate_phase_frames_with_extra_windows(extra_windows)
     }
 
     /// Generates initial sync messages for the connection flow.
@@ -806,6 +835,13 @@ impl SyncClient {
     /// Shared by the initial connection flow (which prepends the protocol
     /// hello) and the forced re-bootstrap (which does not).
     fn generate_phase_frames(&self) -> Vec<Vec<u8>> {
+        self.generate_phase_frames_with_extra_windows(std::iter::empty::<String>())
+    }
+
+    fn generate_phase_frames_with_extra_windows<I>(&self, extra_windows: I) -> Vec<Vec<u8>>
+    where
+        I: IntoIterator<Item = String>,
+    {
         let mut messages = Vec::new();
 
         // Phase 1: Send our root VV (empty for new client — server will send snapshot)
@@ -833,6 +869,17 @@ impl SyncClient {
         for key in self.manager.loaded_keys() {
             if !keys.contains(&key) {
                 keys.push(key);
+            }
+        }
+        for key in extra_windows {
+            let Some(window_key) = WindowKey::try_new(key.as_str()) else {
+                let _ = self.event_tx.send(SyncEvent::Error(format!(
+                    "Re-bootstrap skipped invalid forced window key: {key}"
+                )));
+                continue;
+            };
+            if !keys.contains(&window_key) {
+                keys.push(window_key);
             }
         }
 
@@ -904,9 +951,10 @@ impl SyncClient {
     /// can never observe a root state without its registry rows. Malformed
     /// entries quarantine (x: row) and keep any previous good `ls:` row.
     fn persist_root_state(&self) -> Result<()> {
+        let frontiers_before = self.root_doc.state_frontiers();
         let snapshot = export_snapshot(&self.root_doc)?;
         let vv = doc_version_vector(&self.root_doc);
-        self.vault.with_write_txn(|wtxn| {
+        if let Err(err) = self.vault.with_write_txn(|wtxn| {
             self.vault
                 .store
                 .sync_state
@@ -918,7 +966,15 @@ impl SyncClient {
                 .put(wtxn, KEY_ROOT_SVF, &[SVF_FRESH])?;
             crate::sync::lease::mirror_leases_from_root_in_txn(&self.vault, wtxn, &self.root_doc)?;
             Ok(())
-        })
+        }) {
+            if let Err(revert_err) = self.root_doc.revert_to(&frontiers_before) {
+                return Err(Error::SyncProtocolError(format!(
+                    "root revert after root txn failure: {revert_err}; original txn failure: {err}"
+                )));
+            }
+            return Err(err);
+        }
+        Ok(())
     }
 }
 
@@ -969,10 +1025,12 @@ pub fn next_backoff(current_ms: u32, max_ms: u32) -> u32 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use loro::ExportMode;
+    use loro::{Container, ExportMode, LoroMap, ValueOrContainer};
 
     use crate::batch::ENTITY_METADATA_HEADER_LEN;
     use crate::sync::bridge::Materializer;
+    use crate::sync::loro_support::export_snapshot;
+    use crate::sync::schema::create_root_doc;
     use crate::types::{ENTITY_TYPE_TASK, EntityId, TimeRange};
 
     fn test_manager() -> Arc<WindowManager> {
@@ -1022,6 +1080,14 @@ mod tests {
                 (key, value)
             })
             .collect()
+    }
+
+    fn root_windows_map(doc: &LoroDoc) -> LoroMap {
+        let meta = doc.get_map("meta");
+        match meta.get("windows").expect("meta.windows must exist") {
+            ValueOrContainer::Container(Container::Map(windows)) => windows,
+            other => panic!("meta.windows must be a LoroMap, got {other:?}"),
+        }
     }
 
     fn read_u_seq(vault: &Vault, key: &str) -> Option<u32> {
@@ -1724,23 +1790,76 @@ mod tests {
     #[test]
     fn sync_client_filters_invalid_server_windows() {
         let manager = test_manager();
-        let (client, _rx) = test_client(&manager);
-        let meta = client.root_doc.get_map("meta");
-        // Schema helpers byte-encode `meta.windows`; mirror that here so the
-        // test exercises the real on-disk encoding (ONE-637).
-        meta.insert("windows", "2026-03,1969-12,2026-13,2026-04".as_bytes())
-            .unwrap();
-        client.root_doc.commit();
+        let (mut client, _rx) = test_client(&manager);
+        let server_root = create_root_doc(
+            "user-1",
+            "vault-1",
+            &[WindowKey::new("2026-03"), WindowKey::new("2026-04")],
+        );
+        let windows = root_windows_map(&server_root);
+        windows.insert("1969-12", b"1".as_slice()).unwrap();
+        windows.insert("2026-13", b"1".as_slice()).unwrap();
+        windows.insert("garbage", b"1".as_slice()).unwrap();
+        server_root.commit();
+
+        let snapshot = export_snapshot(&server_root).unwrap();
+        let mut msg = vec![TAG_SYNC_UPDATE];
+        msg.extend_from_slice(&snapshot);
+        client.handle_server_message(&msg).unwrap();
 
         let windows = client.server_windows();
         assert_eq!(windows, vec!["2026-03".to_string(), "2026-04".to_string()]);
     }
 
     #[test]
-    fn server_windows_reads_schema_written_byte_encoded_root_doc() {
-        // Regression for ONE-637: schema::create_root_doc writes meta.windows
-        // as bytes (LoroValue::Binary). server_windows() must decode it via the
-        // same byte path the schema helpers use.
+    fn persist_root_state_reverts_in_memory_root_on_txn_failure() {
+        use crate::sync::loro_support::export_snapshot;
+        use crate::sync::schema::create_root_doc;
+
+        let manager = test_manager();
+        let (mut client, _rx) = test_client(&manager);
+        let frontiers_before = client.root_doc.state_frontiers();
+
+        let server_root = create_root_doc("user-1", "vault-1", &[WindowKey::new("2026-03")]);
+        let snapshot = export_snapshot(&server_root).unwrap();
+        let mut msg = vec![TAG_SYNC_UPDATE];
+        msg.extend_from_slice(&snapshot);
+
+        crate::sync::lease::test_hooks::arm_mirror_failure();
+        let err = client
+            .handle_server_message(&msg)
+            .expect_err("injected mirror failure must abort root persistence");
+        match err {
+            TransportError::Storage(message) => assert!(
+                message.contains("injected lease mirror failure"),
+                "original txn error must surface, got {message}"
+            ),
+            other => panic!("expected storage error, got {other:?}"),
+        }
+
+        assert_eq!(
+            client.root_doc.state_frontiers(),
+            frontiers_before,
+            "the in-memory root doc must roll back after root persist failure"
+        );
+        assert!(
+            client.server_windows().is_empty(),
+            "the imported root window list must not survive the failed persist"
+        );
+        assert!(
+            manager
+                .vault()
+                .sync_state_get(KEY_ROOT_DOC)
+                .unwrap()
+                .is_none(),
+            "the failed combined txn must not commit d:root"
+        );
+    }
+
+    #[test]
+    fn server_windows_reads_schema_written_root_doc() {
+        // Regression for ONE-637: server_windows() must decode meta.windows
+        // via the same schema-owned path that create_root_doc uses.
         use crate::sync::loro_support::export_snapshot;
         use crate::sync::schema::create_root_doc;
 
