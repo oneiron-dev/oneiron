@@ -18,6 +18,7 @@ use super::loro_support::{
     tombstone_values_for_id,
 };
 use super::quarantine::{self, QuarantineContainer};
+use super::queue::scrub_receiver_outbox_on_remote_hard_delete_in_txn;
 use super::schema::create_window_doc;
 use super::types::WindowKey;
 use crate::Vault;
@@ -1243,6 +1244,7 @@ pub fn forward_rematerialize(
     // (`marked` is the up-front snapshot loaded before the entity pass.)
     let mut purge_failures: Vec<EntityId> = Vec::new();
     let mut cleared: Vec<EntityId> = Vec::new();
+    let mut receiver_scrub_candidates: Vec<EntityId> = Vec::new();
     let mut tombstone_error: Option<Error> = None;
     map_for_each_tombstone_value(&tombstones_map, |key, value| {
         if tombstone_error.is_some() {
@@ -1265,10 +1267,14 @@ pub fn forward_rematerialize(
             }
         };
 
+        let hard_tombstone = decode_tombstone_value(value).is_hard();
         match quarantine::apply_replayed_tombstone_for_sync(vault, &id, value) {
             Ok(outcome) => {
                 if outcome.changed_local_state() {
                     count += 1;
+                }
+                if hard_tombstone {
+                    receiver_scrub_candidates.push(id);
                 }
                 // The goal state for THIS tombstone's reason holds (purge
                 // done, already absent, or soft shell kept) — the entity's
@@ -1291,8 +1297,12 @@ pub fn forward_rematerialize(
         }
     });
 
-    if !purge_failures.is_empty() || !cleared.is_empty() || !healed.is_empty() {
-        vault.with_write_txn(|wtxn| {
+    if !purge_failures.is_empty()
+        || !cleared.is_empty()
+        || !healed.is_empty()
+        || !receiver_scrub_candidates.is_empty()
+    {
+        let marker_result = vault.with_write_txn(|wtxn| {
             // Clear BEFORE set so set wins: an id that both succeeded and
             // failed in one pass (case-shifted tombstone aliases with
             // divergent reasons) must KEEP its marker — losing it would
@@ -1306,8 +1316,34 @@ pub fn forward_rematerialize(
             for id in &purge_failures {
                 quarantine::set_remat_marker_in_txn(vault, wtxn, window_key.as_str(), id)?;
             }
+            if !receiver_scrub_candidates.is_empty() {
+                scrub_receiver_outbox_on_remote_hard_delete_in_txn(
+                    vault,
+                    wtxn,
+                    window_key.as_str(),
+                )?;
+            }
             Ok(())
-        })?;
+        });
+        if let Err(err) = marker_result {
+            if receiver_scrub_candidates.is_empty() {
+                return Err(err);
+            }
+            tracing::error!(
+                window = %window_key,
+                error = %err,
+                "forward remat: receiver outbox scrub/bookkeeping txn FAILED after hard tombstone replay; flagging entity-scoped rm: markers for durable retry"
+            );
+            vault.with_write_txn(|wtxn| {
+                for id in purge_failures
+                    .iter()
+                    .chain(receiver_scrub_candidates.iter())
+                {
+                    quarantine::set_remat_marker_in_txn(vault, wtxn, window_key.as_str(), id)?;
+                }
+                Ok(())
+            })?;
+        }
     }
     if let Some(err) = tombstone_error {
         return Err(err);

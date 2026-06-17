@@ -24,7 +24,7 @@ use super::quarantine::{
     self, QuarantineContainer, quarantine_rejected_op, quarantine_rejected_op_in_txn,
     remote_rejection_reason,
 };
-use super::queue::SyncQueue;
+use super::queue::{SyncQueue, scrub_receiver_outbox_on_remote_hard_delete_in_txn};
 use super::types::LocalUpdate;
 use crate::batch::{self, BatchOp, ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::store::Store;
@@ -1192,21 +1192,49 @@ fn materialize_tombstones_from_delta(
                     _ => &[],
                 };
 
-                let delete_result =
-                    quarantine::apply_replayed_tombstone_for_sync(vault, &id, raw_value);
-                if let Err(e) = delete_result {
-                    tracing::error!(
-                        tombstone = %key,
-                        window = %window_key,
-                        error = %e,
-                        "observer-b: tombstone replay FAILED — hard-deleted content may still be live; flagging entity-scoped rm: marker for durable retry"
-                    );
-                    if let Err(marker_err) = quarantine::set_remat_marker(vault, window_key, &id) {
+                let hard_tombstone = crate::deletion::decode_tombstone_value(raw_value).is_hard();
+                match quarantine::apply_replayed_tombstone_for_sync(vault, &id, raw_value) {
+                    Ok(_) if hard_tombstone => {
+                        let scrub_result = vault.with_write_txn(|wtxn| {
+                            scrub_receiver_outbox_on_remote_hard_delete_in_txn(
+                                vault, wtxn, window_key,
+                            )
+                        });
+                        if let Err(e) = scrub_result {
+                            tracing::error!(
+                                tombstone = %key,
+                                window = %window_key,
+                                error = %e,
+                                "observer-b: receiver outbox scrub FAILED after hard tombstone replay; flagging entity-scoped rm: marker for durable retry"
+                            );
+                            if let Err(marker_err) =
+                                quarantine::set_remat_marker(vault, window_key, &id)
+                            {
+                                tracing::error!(
+                                    tombstone = %key,
+                                    error = %marker_err,
+                                    "observer-b: CRITICAL — failed to set rm: marker after receiver outbox scrub failure"
+                                );
+                            }
+                        }
+                    }
+                    Ok(_) => {}
+                    Err(e) => {
                         tracing::error!(
                             tombstone = %key,
-                            error = %marker_err,
-                            "observer-b: CRITICAL — failed to set rm: marker after purge failure"
+                            window = %window_key,
+                            error = %e,
+                            "observer-b: tombstone replay FAILED — hard-deleted content may still be live; flagging entity-scoped rm: marker for durable retry"
                         );
+                        if let Err(marker_err) =
+                            quarantine::set_remat_marker(vault, window_key, &id)
+                        {
+                            tracing::error!(
+                                tombstone = %key,
+                                error = %marker_err,
+                                "observer-b: CRITICAL — failed to set rm: marker after purge failure"
+                            );
+                        }
                     }
                 }
 
@@ -1221,7 +1249,7 @@ fn materialize_tombstones_from_delta(
                 // row's exact 25 B — local HARD truth) for the
                 // safe-commit-point drain. No `dt:` row ⇒ no marker (the
                 // helper checks).
-                if !crate::deletion::decode_tombstone_value(raw_value).is_hard()
+                if !hard_tombstone
                     && let Err(marker_err) =
                         quarantine::enqueue_tombstone_reassert_marker(vault, window_key, &id)
                 {
