@@ -2189,4 +2189,44 @@ mod tests {
         assert_eq!(after_in.as_deref(), Some(after_out.as_slice()));
         Ok(())
     }
+
+    fn entity(byte: u8) -> EntityId {
+        EntityId::from_bytes([byte; ENTITY_ID_LEN]).expect("test entity id")
+    }
+
+    fn child_of_edge(child: EntityId, parent: EntityId) -> BatchOp {
+        BatchOp::Edge {
+            src: child,
+            kind: EdgeKind::ChildOf,
+            tgt: parent,
+            weight: 1.0,
+            vad: Vad::NEUTRAL,
+        }
+    }
+
+    #[test]
+    fn child_of_overlay_orders_entity_clear_against_same_pair_edge() {
+        let child = entity(0x41);
+        let parent = entity(0x42);
+
+        let edge_after_clear = ChildOfBatchOverlay::from_ops(&[
+            BatchOp::Delete { id: child },
+            child_of_edge(child, parent),
+        ]);
+        assert_eq!(
+            edge_after_clear.final_edge_override(&child, &parent),
+            Some(true),
+            "a ChildOf edge re-added after clearing the child must win"
+        );
+
+        let clear_after_edge = ChildOfBatchOverlay::from_ops(&[
+            child_of_edge(child, parent),
+            BatchOp::Delete { id: child },
+        ]);
+        assert_eq!(
+            clear_after_edge.final_edge_override(&child, &parent),
+            Some(false),
+            "clearing the child after touching the ChildOf pair must win"
+        );
+    }
 }
