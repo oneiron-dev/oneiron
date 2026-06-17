@@ -151,7 +151,7 @@ pub(crate) fn parse_message(data: &[u8]) -> Result<SyncMessage, ProtocolError> {
 }
 
 /// Maps a `TransportError` to a static error message for `ProtocolError`.
-fn transport_err_msg(e: oneiron::sync::TransportError) -> &'static str {
+pub(crate) fn transport_err_msg(e: oneiron::sync::TransportError) -> &'static str {
     match e {
         oneiron::sync::TransportError::InvalidWindowKey => "invalid window key",
         oneiron::sync::TransportError::InvalidPayload(msg) => msg,
@@ -236,7 +236,9 @@ mod tests {
         let mut root_msg = vec![TAG_SYNC_UPDATE];
         root_msg.extend_from_slice(&root_update_payload);
 
-        let window_msg = encode_window_sync("2026-02", window_sub_tags::UPDATE, b"data");
+        let window_msg = encode_window_sync("2026-02", window_sub_tags::UPDATE, b"data")
+            .into_result()
+            .unwrap();
 
         // (case_name, encoded, assertion_fn)
         type Asserter = fn(SyncMessage);

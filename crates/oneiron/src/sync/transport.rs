@@ -5,6 +5,7 @@
 //! Engine-agnostic — no CRDT library types here.
 
 use crate::sync::types::parse_window_key_str;
+use std::ops::{Deref, DerefMut};
 
 // ─── Custom Message Tags ──────────────────────────────────────────────────────
 
@@ -87,6 +88,77 @@ pub mod window_sub_tags {
 
 /// Maximum window key length (YYYY-MM = 7 bytes).
 pub const MAX_WINDOW_KEY_LEN: usize = 7;
+
+/// Encoded sync wire frame, preserving typed encoder failures.
+///
+/// Production callers that handle untrusted input must consume
+/// [`EncodedFrame::into_result`]. The byte/Vec conversions keep existing
+/// valid-frame builders source-compatible, but deliberately fail closed if an
+/// encode error is ignored instead of returning an empty or garbage frame.
+#[must_use]
+#[derive(Debug)]
+pub struct EncodedFrame(Result<Vec<u8>, TransportError>);
+
+impl EncodedFrame {
+    fn ok(frame: Vec<u8>) -> Self {
+        Self(Ok(frame))
+    }
+
+    fn err(err: TransportError) -> Self {
+        Self(Err(err))
+    }
+
+    /// Consumes the frame and returns the typed encode result.
+    pub fn into_result(self) -> Result<Vec<u8>, TransportError> {
+        self.0
+    }
+
+    fn valid_frame(&self) -> &Vec<u8> {
+        self.0
+            .as_ref()
+            .expect("encoded frame error was ignored by caller")
+    }
+
+    fn valid_frame_mut(&mut self) -> &mut Vec<u8> {
+        self.0
+            .as_mut()
+            .expect("encoded frame error was ignored by caller")
+    }
+}
+
+impl Deref for EncodedFrame {
+    type Target = Vec<u8>;
+
+    fn deref(&self) -> &Self::Target {
+        self.valid_frame()
+    }
+}
+
+impl DerefMut for EncodedFrame {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        self.valid_frame_mut()
+    }
+}
+
+impl AsRef<[u8]> for EncodedFrame {
+    fn as_ref(&self) -> &[u8] {
+        self.valid_frame()
+    }
+}
+
+impl From<EncodedFrame> for Vec<u8> {
+    fn from(frame: EncodedFrame) -> Self {
+        frame
+            .into_result()
+            .expect("encoded frame error was ignored by caller")
+    }
+}
+
+impl From<EncodedFrame> for tokio_tungstenite::tungstenite::Bytes {
+    fn from(frame: EncodedFrame) -> Self {
+        Vec::<u8>::from(frame).into()
+    }
+}
 
 // ─── Wire Format Encoding ─────────────────────────────────────────────────────
 
@@ -197,27 +269,18 @@ pub fn decode_lease_granted(data: &[u8]) -> Result<(u8, u64, u64), TransportErro
 /// Encodes a WindowSync message for the wire.
 ///
 /// Format: `[TAG_WINDOW_SYNC:1][window_key_len:1][window_key][sub_tag:1][payload]`
-///
-/// # Panics
-///
-/// Panics if `window_key` is empty or exceeds `MAX_WINDOW_KEY_LEN` bytes.
-pub fn encode_window_sync(window_key: &str, sub_tag: u8, payload: &[u8]) -> Vec<u8> {
-    let key_bytes = window_key.as_bytes();
-    assert!(
-        !key_bytes.is_empty()
-            && key_bytes.len() <= MAX_WINDOW_KEY_LEN
-            && parse_window_key_str(window_key).is_some(),
-        "window key length {} exceeds MAX_WINDOW_KEY_LEN ({})",
-        key_bytes.len(),
-        MAX_WINDOW_KEY_LEN,
-    );
+pub fn encode_window_sync(window_key: &str, sub_tag: u8, payload: &[u8]) -> EncodedFrame {
+    let key_bytes = match validate_window_key(window_key) {
+        Ok(key_bytes) => key_bytes,
+        Err(err) => return EncodedFrame::err(err),
+    };
     let mut buf = Vec::with_capacity(3 + key_bytes.len() + payload.len());
     buf.push(TAG_WINDOW_SYNC);
     buf.push(key_bytes.len() as u8);
     buf.extend_from_slice(key_bytes);
     buf.push(sub_tag);
     buf.extend_from_slice(payload);
-    buf
+    EncodedFrame::ok(buf)
 }
 
 /// Decodes a WindowSync payload (after tag byte has been consumed).
@@ -244,26 +307,17 @@ pub fn decode_window_sync(data: &[u8]) -> Result<(&str, u8, &[u8]), TransportErr
 }
 
 /// Encodes a BulkTransfer message for the wire.
-///
-/// # Panics
-///
-/// Panics if `window_key` is empty or exceeds `MAX_WINDOW_KEY_LEN` bytes.
-pub fn encode_bulk_transfer(window_key: &str, zstd_data: &[u8]) -> Vec<u8> {
-    let key_bytes = window_key.as_bytes();
-    assert!(
-        !key_bytes.is_empty()
-            && key_bytes.len() <= MAX_WINDOW_KEY_LEN
-            && parse_window_key_str(window_key).is_some(),
-        "window key length {} exceeds MAX_WINDOW_KEY_LEN ({})",
-        key_bytes.len(),
-        MAX_WINDOW_KEY_LEN,
-    );
+pub fn encode_bulk_transfer(window_key: &str, zstd_data: &[u8]) -> EncodedFrame {
+    let key_bytes = match validate_window_key(window_key) {
+        Ok(key_bytes) => key_bytes,
+        Err(err) => return EncodedFrame::err(err),
+    };
     let mut buf = Vec::with_capacity(2 + key_bytes.len() + zstd_data.len());
     buf.push(TAG_BULK_TRANSFER);
     buf.push(key_bytes.len() as u8);
     buf.extend_from_slice(key_bytes);
     buf.extend_from_slice(zstd_data);
-    buf
+    EncodedFrame::ok(buf)
 }
 
 /// Decodes a BulkTransfer payload (after tag byte has been consumed).
@@ -287,39 +341,23 @@ pub fn decode_bulk_transfer(data: &[u8]) -> Result<(&str, &[u8]), TransportError
 }
 
 /// Encodes a BulkTransferDone message for the wire.
-///
-/// # Panics
-///
-/// Panics if `window_key` is empty or exceeds `MAX_WINDOW_KEY_LEN` bytes, or if
-/// `doc_state` exceeds the BulkTransferDone u32 state-length field.
-pub fn encode_bulk_transfer_done(window_key: &str, doc_state: &[u8]) -> Vec<u8> {
-    encode_bulk_transfer_done_checked(window_key, doc_state)
-        .expect("BulkTransferDone state length must fit in u32")
+pub fn encode_bulk_transfer_done(window_key: &str, doc_state: &[u8]) -> EncodedFrame {
+    match encode_bulk_transfer_done_checked(window_key, doc_state) {
+        Ok(frame) => EncodedFrame::ok(frame),
+        Err(err) => EncodedFrame::err(err),
+    }
 }
 
 /// Encodes a BulkTransferDone message for the wire with checked state length.
 ///
 /// Returns `Err(TransportError::InvalidPayload(_))` if `doc_state` exceeds the
 /// BulkTransferDone u32 state-length field. Use this variant when callers need
-/// to propagate oversized state errors; `encode_bulk_transfer_done` keeps the
-/// existing panicking API.
-///
-/// # Panics
-///
-/// Panics if `window_key` is empty or exceeds `MAX_WINDOW_KEY_LEN` bytes.
+/// to propagate oversized state errors.
 pub fn encode_bulk_transfer_done_checked(
     window_key: &str,
     doc_state: &[u8],
 ) -> Result<Vec<u8>, TransportError> {
-    let key_bytes = window_key.as_bytes();
-    assert!(
-        !key_bytes.is_empty()
-            && key_bytes.len() <= MAX_WINDOW_KEY_LEN
-            && parse_window_key_str(window_key).is_some(),
-        "window key length {} exceeds MAX_WINDOW_KEY_LEN ({})",
-        key_bytes.len(),
-        MAX_WINDOW_KEY_LEN,
-    );
+    let key_bytes = validate_window_key(window_key)?;
     let state_len = checked_bulk_transfer_done_state_len(doc_state.len())?;
     let capacity = checked_bulk_transfer_done_capacity(key_bytes.len(), doc_state.len())?;
     let mut buf = Vec::with_capacity(capacity);
@@ -329,6 +367,17 @@ pub fn encode_bulk_transfer_done_checked(
     buf.extend_from_slice(&state_len.to_be_bytes());
     buf.extend_from_slice(doc_state);
     Ok(buf)
+}
+
+fn validate_window_key(window_key: &str) -> Result<&[u8], TransportError> {
+    let key_bytes = window_key.as_bytes();
+    if key_bytes.is_empty()
+        || key_bytes.len() > MAX_WINDOW_KEY_LEN
+        || parse_window_key_str(window_key).is_none()
+    {
+        return Err(TransportError::InvalidWindowKey);
+    }
+    Ok(key_bytes)
 }
 
 fn checked_bulk_transfer_done_state_len(state_len: usize) -> Result<u32, TransportError> {
@@ -581,6 +630,52 @@ mod tests {
         let (k, s) = decode_bulk_transfer_done(&encoded[1..]).unwrap();
         assert_eq!(k, "2025-08");
         assert!(s.is_empty());
+    }
+
+    #[test]
+    fn window_sync_encoder_rejects_hostile_keys_without_panicking() {
+        for key in ["", "2026-003", "window", "2026-0x"] {
+            assert!(
+                matches!(
+                    encode_window_sync(key, window_sub_tags::UPDATE, b"payload").into_result(),
+                    Err(TransportError::InvalidWindowKey)
+                ),
+                "key {key:?} should return InvalidWindowKey"
+            );
+        }
+    }
+
+    #[test]
+    fn bulk_transfer_encoder_rejects_hostile_keys_without_panicking() {
+        for key in ["", "2026-003", "window", "2026-0x"] {
+            assert!(
+                matches!(
+                    encode_bulk_transfer(key, b"zstd").into_result(),
+                    Err(TransportError::InvalidWindowKey)
+                ),
+                "key {key:?} should return InvalidWindowKey"
+            );
+        }
+    }
+
+    #[test]
+    fn bulk_transfer_done_encoders_reject_hostile_keys_without_panicking() {
+        for key in ["", "2026-003", "window", "2026-0x"] {
+            assert!(
+                matches!(
+                    encode_bulk_transfer_done(key, b"state").into_result(),
+                    Err(TransportError::InvalidWindowKey)
+                ),
+                "key {key:?} should return InvalidWindowKey"
+            );
+            assert!(
+                matches!(
+                    encode_bulk_transfer_done_checked(key, b"state"),
+                    Err(TransportError::InvalidWindowKey)
+                ),
+                "key {key:?} should return InvalidWindowKey"
+            );
+        }
     }
 
     #[cfg(target_pointer_width = "64")]

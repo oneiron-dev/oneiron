@@ -407,12 +407,14 @@ impl SyncClient {
                     .map_err(|_| TransportError::VersionVectorDecode)?;
                 let delta = export_updates_since(doc, payload).map_err(map_delta_export_err)?;
                 let responses = vec![
-                    transport::encode_window_sync(window_key, window_sub_tags::UPDATE, &delta),
+                    transport::encode_window_sync(window_key, window_sub_tags::UPDATE, &delta)
+                        .into_result()?,
                     transport::encode_window_sync(
                         window_key,
                         window_sub_tags::VV_RESPONSE,
                         &doc_version_vector(doc),
-                    ),
+                    )
+                    .into_result()?,
                 ];
                 // Record the server VV only after a fully valid exchange — it
                 // becomes the convergence witness for this window (ONE-1128).
@@ -532,11 +534,10 @@ impl SyncClient {
                 let server_vv = VersionVector::decode(payload)
                     .map_err(|_| TransportError::VersionVectorDecode)?;
                 let delta = export_updates_since(doc, payload).map_err(map_delta_export_err)?;
-                let responses = vec![transport::encode_window_sync(
-                    window_key,
-                    window_sub_tags::UPDATE,
-                    &delta,
-                )];
+                let responses = vec![
+                    transport::encode_window_sync(window_key, window_sub_tags::UPDATE, &delta)
+                        .into_result()?,
+                ];
                 self.server_vvs.insert(window_key.to_string(), server_vv);
                 Ok(responses)
             }
@@ -886,11 +887,20 @@ impl SyncClient {
         for key in keys {
             match self.window_vv_for_initial_sync(&key) {
                 Ok(vv) => {
-                    messages.push(transport::encode_window_sync(
+                    match transport::encode_window_sync(
                         key.as_str(),
                         window_sub_tags::VV_REQUEST,
                         &vv,
-                    ));
+                    )
+                    .into_result()
+                    {
+                        Ok(frame) => messages.push(frame),
+                        Err(e) => {
+                            let _ = self.event_tx.send(SyncEvent::Error(format!(
+                                "Initial sync frame encode for window {key} failed: {e}"
+                            )));
+                        }
+                    }
                 }
                 Err(e) => {
                     let _ = self.event_tx.send(SyncEvent::Error(format!(
