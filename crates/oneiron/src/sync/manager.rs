@@ -186,8 +186,10 @@ impl WindowManager {
         let mut registry = self.lock_registry();
         if let Some(existing) = registry.get(key) {
             let existing = Arc::clone(existing);
-            drop(registry);
+            #[cfg(test)]
+            test_hooks::maybe_pause_handle_issue();
             self.track_issued_handle(key, &existing);
+            drop(registry);
             return Ok(existing);
         }
 
@@ -254,8 +256,10 @@ impl WindowManager {
             Some(Arc::clone(&self.outbound)),
         ));
         registry.insert(key.clone(), Arc::clone(&window));
-        drop(registry);
+        #[cfg(test)]
+        test_hooks::maybe_pause_handle_issue();
         self.track_issued_handle(key, &window);
+        drop(registry);
         Ok(window)
     }
 
@@ -279,8 +283,12 @@ impl WindowManager {
     /// never opens. This is the lookup seam M4-10 delete routing uses to
     /// commit tombstones through the live doc when the window is loaded.
     pub fn window(&self, key: &WindowKey) -> Option<Arc<LoadedWindow>> {
-        let window = self.lock_registry().get(key).map(Arc::clone)?;
+        let registry = self.lock_registry();
+        let window = registry.get(key).map(Arc::clone)?;
+        #[cfg(test)]
+        test_hooks::maybe_pause_handle_issue();
         self.track_issued_handle(key, &window);
+        drop(registry);
         Some(window)
     }
 
@@ -305,15 +313,7 @@ impl WindowManager {
             Ok(issued) => issued,
             Err(_) => return true,
         };
-        let Some(handles) = issued.get_mut(key) else {
-            return false;
-        };
-        handles.retain(|handle| handle.strong_count() > 0);
-        let retained = !handles.is_empty();
-        if !retained {
-            issued.remove(key);
-        }
-        retained
+        Self::prune_issued_handles_locked(&mut issued, key)
     }
 
     /// Returns the keys of all currently loaded windows.
@@ -372,6 +372,8 @@ impl WindowManager {
             .remove(key)
             .expect("window present under registry lock");
         drop(window);
+        drop(registry);
+        self.prune_issued_handles_for_key(key);
         Ok(true)
     }
 
@@ -412,6 +414,8 @@ impl WindowManager {
             );
         }
         drop(window);
+        drop(registry);
+        self.prune_issued_handles_for_key(key);
         true
     }
 
@@ -436,6 +440,29 @@ impl WindowManager {
         }
     }
 
+    fn prune_issued_handles_for_key(&self, key: &WindowKey) -> bool {
+        let mut issued = self
+            .issued_handles
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        Self::prune_issued_handles_locked(&mut issued, key)
+    }
+
+    fn prune_issued_handles_locked(
+        issued: &mut HashMap<WindowKey, Vec<Weak<LoadedWindow>>>,
+        key: &WindowKey,
+    ) -> bool {
+        let Some(handles) = issued.get_mut(key) else {
+            return false;
+        };
+        handles.retain(|handle| handle.strong_count() > 0);
+        let retained = !handles.is_empty();
+        if !retained {
+            issued.remove(key);
+        }
+        retained
+    }
+
     /// Returns whether a 1-byte marker key is present in `sync_state`.
     fn sync_state_marker_present(&self, key: &str) -> Result<bool> {
         let rtxn = self.vault.store.env.read_txn()?;
@@ -448,5 +475,178 @@ impl WindowManager {
             self.vault.store.sync_state.delete(wtxn, key)?;
             Ok(())
         })
+    }
+}
+
+#[cfg(test)]
+mod test_hooks {
+    use std::sync::{Arc, Condvar, Mutex};
+
+    static HANDLE_ISSUE_PAUSE: Mutex<Option<Arc<HandleIssuePause>>> = Mutex::new(None);
+
+    pub(super) struct HandleIssuePause {
+        state: Mutex<PauseState>,
+        cv: Condvar,
+    }
+
+    struct PauseState {
+        reached: bool,
+        release: bool,
+    }
+
+    impl HandleIssuePause {
+        pub(super) fn new() -> Self {
+            Self {
+                state: Mutex::new(PauseState {
+                    reached: false,
+                    release: false,
+                }),
+                cv: Condvar::new(),
+            }
+        }
+
+        pub(super) fn wait_until_reached(&self) {
+            let mut state = self.state.lock().unwrap();
+            while !state.reached {
+                state = self.cv.wait(state).unwrap();
+            }
+        }
+
+        pub(super) fn release(&self) {
+            let mut state = self.state.lock().unwrap();
+            state.release = true;
+            self.cv.notify_all();
+        }
+
+        fn pause(&self) {
+            let mut state = self.state.lock().unwrap();
+            state.reached = true;
+            self.cv.notify_all();
+            while !state.release {
+                state = self.cv.wait(state).unwrap();
+            }
+        }
+    }
+
+    pub(super) fn arm_handle_issue_pause(pause: Arc<HandleIssuePause>) {
+        *HANDLE_ISSUE_PAUSE.lock().unwrap() = Some(pause);
+    }
+
+    pub(super) fn maybe_pause_handle_issue() {
+        let pause = HANDLE_ISSUE_PAUSE.lock().unwrap().take();
+        if let Some(pause) = pause {
+            pause.pause();
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::types::VaultConfig;
+    use std::sync::mpsc;
+    use std::time::Duration;
+
+    fn test_manager() -> (tempfile::TempDir, Arc<WindowManager>, WindowKey) {
+        let dir = tempfile::tempdir().unwrap();
+        let vault = Arc::new(Vault::open(dir.path(), VaultConfig::device()).unwrap());
+        let manager = Arc::new(WindowManager::new(
+            vault,
+            Arc::new(Materializer::new()),
+            "test-user",
+        ));
+        (dir, manager, WindowKey::new("2026-03"))
+    }
+
+    #[test]
+    fn open_window_tracks_issued_handle_before_discard_can_deregister() {
+        let (_dir, manager, key) = test_manager();
+        let pause = Arc::new(test_hooks::HandleIssuePause::new());
+        test_hooks::arm_handle_issue_pause(Arc::clone(&pause));
+
+        let open_manager = Arc::clone(&manager);
+        let open_key = key.clone();
+        let open_thread = std::thread::spawn(move || open_manager.open_window(&open_key).unwrap());
+        pause.wait_until_reached();
+        assert!(
+            manager.windows.try_lock().is_err(),
+            "window issue must hold the registry lock until the handle is tracked"
+        );
+
+        let (discard_tx, discard_rx) = mpsc::channel();
+        let discard_manager = Arc::clone(&manager);
+        let discard_key = key.clone();
+        let discard_thread = std::thread::spawn(move || {
+            discard_tx
+                .send(discard_manager.discard_window(&discard_key))
+                .unwrap();
+        });
+
+        pause.release();
+        let issued = open_thread.join().unwrap();
+        assert!(
+            discard_rx.recv_timeout(Duration::from_secs(1)).unwrap(),
+            "discard should remove the registry entry after handle issue completes"
+        );
+        discard_thread.join().unwrap();
+
+        assert!(manager.loaded_keys().is_empty());
+        assert!(
+            manager.window_live_for_sweep(&key),
+            "discard racing handle issue must still leave the issued handle tracked"
+        );
+        drop(issued);
+        assert!(
+            !manager.window_live_for_sweep(&key),
+            "dead issued handles should prune after the external handle drops"
+        );
+    }
+
+    #[test]
+    fn window_lookup_tracks_issued_handle_before_discard_can_deregister() {
+        let (_dir, manager, key) = test_manager();
+        let initial = manager.open_window(&key).unwrap();
+        drop(initial);
+        manager.issued_handles.lock().unwrap().remove(&key);
+
+        let pause = Arc::new(test_hooks::HandleIssuePause::new());
+        test_hooks::arm_handle_issue_pause(Arc::clone(&pause));
+
+        let lookup_manager = Arc::clone(&manager);
+        let lookup_key = key.clone();
+        let lookup_thread = std::thread::spawn(move || lookup_manager.window(&lookup_key).unwrap());
+        pause.wait_until_reached();
+        assert!(
+            manager.windows.try_lock().is_err(),
+            "registry lookup must hold the registry lock until the handle is tracked"
+        );
+
+        let (discard_tx, discard_rx) = mpsc::channel();
+        let discard_manager = Arc::clone(&manager);
+        let discard_key = key.clone();
+        let discard_thread = std::thread::spawn(move || {
+            discard_tx
+                .send(discard_manager.discard_window(&discard_key))
+                .unwrap();
+        });
+
+        pause.release();
+        let issued = lookup_thread.join().unwrap();
+        assert!(
+            discard_rx.recv_timeout(Duration::from_secs(1)).unwrap(),
+            "discard should remove the registry entry after handle lookup completes"
+        );
+        discard_thread.join().unwrap();
+
+        assert!(manager.loaded_keys().is_empty());
+        assert!(
+            manager.window_live_for_sweep(&key),
+            "discard racing handle lookup must still leave the issued handle tracked"
+        );
+        drop(issued);
+        assert!(
+            !manager.window_live_for_sweep(&key),
+            "dead issued handles should prune after the external handle drops"
+        );
     }
 }
