@@ -18,6 +18,7 @@ use super::loro_support::{
     tombstone_values_for_id,
 };
 use super::quarantine::{self, QuarantineContainer};
+use super::queue::scrub_receiver_outbox_on_remote_hard_delete_in_txn;
 use super::schema::create_window_doc;
 use super::types::WindowKey;
 use crate::Vault;
@@ -689,7 +690,16 @@ pub fn replay_pending_mirrors(vault: &Vault, doc: &LoroDoc, window_key: &WindowK
             continue;
         }
 
-        // Mirror to CRDT under bridge origin
+        // Mirror to CRDT under bridge origin. Finalized type-120 receipts
+        // are LMDB-local accountability rows; undecodable type-120 bytes
+        // fail closed using the same gate as reverse remat.
+        if reverse_remat_skip_redaction_receipt_mirror(&raw) {
+            vault.with_write_txn(|wtxn| {
+                vault.store.sync_state.delete(wtxn, marker_key)?;
+                Ok(())
+            })?;
+            continue;
+        }
         map_insert_bytes(&entities_map, hex_id.as_str(), raw.as_slice())
             .map_err(|e| Error::SyncProtocolError(format!("pm replay entity insert: {e}")))?;
 
@@ -869,48 +879,51 @@ pub fn forward_rematerialize(
                 return;
             }
 
-            // Track the local record for this id: byte-identical →
-            // idempotent skip (return); present-but-different falls through
-            // with `local_blob = Some(_)` so the REDACTION_AUDIT
-            // immutability gate below can compare bytes (ONE-1087 stale
-            //-echo exception) and quarantine real divergence.
-            let local_blob: Option<Vec<u8>> = if let Some(latest) = materialized_blobs.get(&id) {
-                if latest.as_slice() == blob {
-                    return;
-                }
-                Some(latest.clone())
-            } else {
-                let lmdb_blob = match vault.get_raw_in(&rtxn, &id) {
-                    Ok(v) => v,
-                    Err(err) => {
-                        entity_error = Some(err);
+            // Track the local record for non-REDACTION_AUDIT ids:
+            // byte-identical → idempotent skip (return). Type-120 receipts
+            // make this decision later inside the same write txn as their
+            // lease verification and replicated put, so a stale long-lived
+            // `rtxn` cannot hide a mid-flight finalized/divergent receipt.
+            let is_redaction_audit_blob =
+                blob.first().copied() == Some(crate::types::ENTITY_TYPE_REDACTION_AUDIT);
+            if !is_redaction_audit_blob {
+                if let Some(latest) = materialized_blobs.get(&id) {
+                    if latest.as_slice() == blob {
                         return;
                     }
-                };
-                if lmdb_blob.as_deref() == Some(blob) {
-                    return;
+                } else {
+                    let lmdb_blob = match vault.get_raw_in(&rtxn, &id) {
+                        Ok(v) => v,
+                        Err(err) => {
+                            entity_error = Some(err);
+                            return;
+                        }
+                    };
+                    if lmdb_blob.as_deref() == Some(blob) {
+                        return;
+                    }
+                    // SoftErase shell guard: `user_delete` truncates the
+                    // local record to the 25 B header shell and writes NO
+                    // CRDT record (contracts.ts deleteReasons user_delete:
+                    // "Tombstone revision (empty content); keep the message
+                    // shell" — cross-device propagation is deferred to
+                    // ONE-1090), so the CRDT mirror still carries the
+                    // pre-delete body. Replaying that body over the shell
+                    // would resurrect deleted content — delete wins.
+                    // Interim guard until reason-aware tombstones land in
+                    // M4-06.
+                    if let Some(local) = &lmdb_blob
+                        && local.len() == ENTITY_METADATA_HEADER_LEN
+                        && blob.len() > ENTITY_METADATA_HEADER_LEN
+                    {
+                        tracing::warn!(
+                            entity = %id.to_hex(),
+                            "forward remat: kept local SoftErase shell over longer CRDT body (reason-aware tombstones land in M4-06)"
+                        );
+                        return;
+                    }
                 }
-                // SoftErase shell guard: `user_delete` truncates the local
-                // record to the 25 B header shell and writes NO CRDT record
-                // (contracts.ts deleteReasons user_delete: "Tombstone
-                // revision (empty content); keep the message shell" —
-                // cross-device propagation is deferred to ONE-1090), so the
-                // CRDT mirror still carries the pre-delete body. Replaying
-                // that body over the shell would resurrect deleted content —
-                // delete wins. Interim guard until reason-aware tombstones
-                // land in M4-06.
-                if let Some(local) = &lmdb_blob
-                    && local.len() == ENTITY_METADATA_HEADER_LEN
-                    && blob.len() > ENTITY_METADATA_HEADER_LEN
-                {
-                    tracing::warn!(
-                        entity = %id.to_hex(),
-                        "forward remat: kept local SoftErase shell over longer CRDT body (reason-aware tombstones land in M4-06)"
-                    );
-                    return;
-                }
-                lmdb_blob
-            };
+            }
 
             let header = match EntityMetadataHeader::parse(blob) {
                 Some(h) => h,
@@ -940,10 +953,10 @@ pub fn forward_rematerialize(
             // * a blob failing the pinned receipt-body validation (incl.
             //   the ONE-1140 v2 att_ verification grammar) is quarantined,
             //   never written;
-            // * id present locally with divergent bytes (byte-identical
-            //   already returned above) → quarantine the remote payload and
-            //   KEEP the local bytes (before any crypto — accepted local
-            //   bytes always win);
+            // * id present locally with byte-identical/stale-echo bytes →
+            //   skip inside the write txn; any other divergence →
+            //   quarantine the remote payload and KEEP the local bytes
+            //   (before any crypto — accepted local bytes always win);
             // * id absent (NEW receipt) → the ONE-1140 origin predicate:
             //   Ed25519 transcript verification + `ls:` lease-binding read
             //   (OD-6/OD-7). Remote-classified rejections quarantine; a
@@ -959,32 +972,6 @@ pub fn forward_rematerialize(
                         QuarantineContainer::Entities,
                         key,
                         &err,
-                        blob,
-                    ) {
-                        entity_error = Some(q_err);
-                    }
-                    return;
-                }
-                if let Some(local) = &local_blob {
-                    // ONE-1087 designed exception: the sweep's receipt
-                    // finalization (`sweep_complete_at` None→Some) is
-                    // LOCAL-LMDB-only, so the CRDT mirror replays the
-                    // PRE-finalization bytes every boot. That one monotone
-                    // shape is the own node's stale echo: idempotent skip,
-                    // never an x: row. All other divergence quarantines.
-                    if crate::deletion::redaction_receipt_is_stale_finalization_echo(local, blob) {
-                        tracing::debug!(
-                            entity = %key,
-                            "forward remat: stale pre-finalization receipt echo — keeping finalized local"
-                        );
-                        return;
-                    }
-                    if let Err(q_err) = quarantine::quarantine_rejected_op(
-                        vault,
-                        window_key.as_str(),
-                        QuarantineContainer::Entities,
-                        key,
-                        &Error::RedactionReceiptDivergence { id },
                         blob,
                     ) {
                         entity_error = Some(q_err);
@@ -1007,6 +994,37 @@ pub fn forward_rematerialize(
                     return;
                 }
                 vault.with_write_txn(|wtxn| {
+                    if let Some(local) = vault.store.entities.get(&*wtxn, id.as_bytes())? {
+                        if local == blob {
+                            return Ok(false);
+                        }
+                        // ONE-1087 designed exception: the sweep's receipt
+                        // finalization (`sweep_complete_at` None→Some) is
+                        // LOCAL-LMDB-only, so the CRDT mirror replays the
+                        // PRE-finalization bytes every boot. That one
+                        // monotone shape is the own node's stale echo:
+                        // idempotent skip, never an x: row. All other
+                        // divergence quarantines.
+                        if crate::deletion::redaction_receipt_is_stale_finalization_echo(
+                            local, blob,
+                        ) {
+                            tracing::debug!(
+                                entity = %key,
+                                "forward remat: stale pre-finalization receipt echo — keeping finalized local"
+                            );
+                            return Ok(false);
+                        }
+                        quarantine::quarantine_rejected_op_in_txn(
+                            vault,
+                            wtxn,
+                            window_key.as_str(),
+                            QuarantineContainer::Entities,
+                            key,
+                            &Error::RedactionReceiptDivergence { id },
+                            blob,
+                        )?;
+                        return Ok(false);
+                    }
                     crate::sync::lease::verify_new_receipt_origin_in_txn(vault, wtxn, &id, blob)?;
                     vault
                         .batch_in()
@@ -1020,7 +1038,8 @@ pub fn forward_rematerialize(
                             header.learned_at,
                             data,
                         )
-                        .apply(wtxn)
+                        .apply(wtxn)?;
+                    Ok(true)
                 })
             } else {
                 vault
@@ -1036,9 +1055,10 @@ pub fn forward_rematerialize(
                         data,
                     )
                     .commit()
+                    .map(|()| true)
             };
             match result {
-                Ok(()) => {
+                Ok(true) => {
                     materialized_blobs.insert(id, blob.to_vec());
                     count += 1;
                     // ONE-1147: an ACTUAL healing write discharges this
@@ -1049,6 +1069,7 @@ pub fn forward_rematerialize(
                         healed.push(id);
                     }
                 }
+                Ok(false) => {}
                 Err(err) => {
                     if quarantine::remote_rejection_reason(&err).is_some() {
                         if let Err(q_err) = quarantine::quarantine_rejected_op(
@@ -1243,6 +1264,7 @@ pub fn forward_rematerialize(
     // (`marked` is the up-front snapshot loaded before the entity pass.)
     let mut purge_failures: Vec<EntityId> = Vec::new();
     let mut cleared: Vec<EntityId> = Vec::new();
+    let mut receiver_scrub_candidates: Vec<EntityId> = Vec::new();
     let mut tombstone_error: Option<Error> = None;
     map_for_each_tombstone_value(&tombstones_map, |key, value| {
         if tombstone_error.is_some() {
@@ -1265,10 +1287,14 @@ pub fn forward_rematerialize(
             }
         };
 
+        let hard_tombstone = decode_tombstone_value(value).is_hard();
         match quarantine::apply_replayed_tombstone_for_sync(vault, &id, value) {
             Ok(outcome) => {
                 if outcome.changed_local_state() {
                     count += 1;
+                }
+                if hard_tombstone {
+                    receiver_scrub_candidates.push(id);
                 }
                 // The goal state for THIS tombstone's reason holds (purge
                 // done, already absent, or soft shell kept) — the entity's
@@ -1291,8 +1317,12 @@ pub fn forward_rematerialize(
         }
     });
 
-    if !purge_failures.is_empty() || !cleared.is_empty() || !healed.is_empty() {
-        vault.with_write_txn(|wtxn| {
+    if !purge_failures.is_empty()
+        || !cleared.is_empty()
+        || !healed.is_empty()
+        || !receiver_scrub_candidates.is_empty()
+    {
+        let marker_result = vault.with_write_txn(|wtxn| {
             // Clear BEFORE set so set wins: an id that both succeeded and
             // failed in one pass (case-shifted tombstone aliases with
             // divergent reasons) must KEEP its marker — losing it would
@@ -1306,8 +1336,34 @@ pub fn forward_rematerialize(
             for id in &purge_failures {
                 quarantine::set_remat_marker_in_txn(vault, wtxn, window_key.as_str(), id)?;
             }
+            if !receiver_scrub_candidates.is_empty() {
+                scrub_receiver_outbox_on_remote_hard_delete_in_txn(
+                    vault,
+                    wtxn,
+                    window_key.as_str(),
+                )?;
+            }
             Ok(())
-        })?;
+        });
+        if let Err(err) = marker_result {
+            if receiver_scrub_candidates.is_empty() {
+                return Err(err);
+            }
+            tracing::error!(
+                window = %window_key,
+                error = %err,
+                "forward remat: receiver outbox scrub/bookkeeping txn FAILED after hard tombstone replay; flagging entity-scoped rm: markers for durable retry"
+            );
+            vault.with_write_txn(|wtxn| {
+                for id in purge_failures
+                    .iter()
+                    .chain(receiver_scrub_candidates.iter())
+                {
+                    quarantine::set_remat_marker_in_txn(vault, wtxn, window_key.as_str(), id)?;
+                }
+                Ok(())
+            })?;
+        }
     }
     if let Some(err) = tombstone_error {
         return Err(err);
@@ -1376,11 +1432,13 @@ pub fn reverse_rematerialize(vault: &Vault, doc: &LoroDoc, window_key: &WindowKe
                 None => continue,
             };
 
-            map_insert_bytes(&entities_map, hex_id.as_str(), raw.as_slice()).map_err(|e| {
-                Error::SyncProtocolError(format!("reverse remat entity insert: {e}"))
-            })?;
-            wrote_any = true;
-            count += 1;
+            if !reverse_remat_skip_redaction_receipt_mirror(&raw) {
+                map_insert_bytes(&entities_map, hex_id.as_str(), raw.as_slice()).map_err(|e| {
+                    Error::SyncProtocolError(format!("reverse remat entity insert: {e}"))
+                })?;
+                wrote_any = true;
+                count += 1;
+            }
         }
 
         let edges_out = vault.edges_out(id)?;
@@ -1419,23 +1477,54 @@ pub fn reverse_rematerialize(vault: &Vault, doc: &LoroDoc, window_key: &WindowKe
     Ok(count)
 }
 
+/// REDACTION_AUDIT finalization is local-LMDB-only. Reverse remat is the
+/// outgoing replay door, so it must not copy finalized receipt bytes into the
+/// CRDT mirror. Undecodable type-120 bodies also stay local: fail closed
+/// rather than replicate raw accountability bytes whose shape is unknown.
+fn reverse_remat_skip_redaction_receipt_mirror(raw: &[u8]) -> bool {
+    let Some(header) = EntityMetadataHeader::parse(raw) else {
+        return raw.first().copied() == Some(crate::types::ENTITY_TYPE_REDACTION_AUDIT);
+    };
+    if header.entity_type != crate::types::ENTITY_TYPE_REDACTION_AUDIT {
+        return false;
+    }
+    let body = if raw.len() > ENTITY_METADATA_HEADER_LEN {
+        &raw[ENTITY_METADATA_HEADER_LEN..]
+    } else {
+        &[]
+    };
+    match crate::deletion::decode_redaction_audit_receipt(body) {
+        Ok(receipt) => receipt.sweep_complete_at.is_some(),
+        Err(_) => true,
+    }
+}
+
 /// Test-only hook for the REDACTION_AUDIT rematerialization race pin. The
-/// armed write lands just before the same-txn verify+put path starts, so the
-/// production code must observe the revoked lease and quarantine the receipt.
+/// armed writes land just before the same-txn recheck+verify+put path starts,
+/// so production code must observe mid-flight lease revocation or local
+/// divergent receipt bytes before admitting the remote receipt.
 #[cfg(any(test, feature = "test-hooks"))]
 #[doc(hidden)]
 pub mod test_hooks {
     use std::cell::RefCell;
 
+    use crate::types::EntityId;
     use crate::{Error, Result, Vault};
 
     thread_local! {
         static RECEIPT_REVOCATION: RefCell<Option<(String, Vec<u8>)>> = const { RefCell::new(None) };
+        static RECEIPT_LOCAL_WRITE: RefCell<Option<(EntityId, Vec<u8>)>> = const { RefCell::new(None) };
     }
 
     pub fn arm_receipt_revocation_race(lease_key: String, revoked_row: Vec<u8>) {
         RECEIPT_REVOCATION.with(|slot| {
             *slot.borrow_mut() = Some((lease_key, revoked_row));
+        });
+    }
+
+    pub fn arm_receipt_local_write_race(id: EntityId, local_blob: Vec<u8>) {
+        RECEIPT_LOCAL_WRITE.with(|slot| {
+            *slot.borrow_mut() = Some((id, local_blob));
         });
     }
 
@@ -1446,6 +1535,16 @@ pub mod test_hooks {
                 return Err(Error::InvariantViolation("empty revoked lease test row"));
             }
             vault.sync_state_put(&lease_key, &revoked_row)?;
+        }
+        let armed = RECEIPT_LOCAL_WRITE.with(|slot| slot.borrow_mut().take());
+        if let Some((id, local_blob)) = armed {
+            if local_blob.is_empty() {
+                return Err(Error::InvariantViolation("empty local receipt test row"));
+            }
+            vault.with_write_txn(|wtxn| {
+                vault.store.entities.put(wtxn, id.as_bytes(), &local_blob)?;
+                Ok(())
+            })?;
         }
         Ok(())
     }
@@ -1944,6 +2043,295 @@ mod tests {
     }
 
     #[test]
+    fn finalized_receipt_not_mirrored_to_crdt() {
+        use crate::deletion::{
+            RedactionReceiptInput, RedactionScope, decode_redaction_audit_receipt,
+            encode_redaction_audit_receipt,
+        };
+        use crate::types::{ENTITY_TYPE_REDACTION_AUDIT, TimeRange};
+        use ed25519_dalek::SigningKey;
+
+        let (_dir, vault) = test_vault();
+        let learned_at = 1_772_400_000u64;
+        let window_key = WindowKey::from_timestamp(learned_at);
+        let occurred = TimeRange {
+            start: learned_at,
+            end: learned_at,
+        };
+        let identity = crate::identity::DeviceIdentity {
+            client_id: 0x0123_4567_89ab_cdefu64,
+            signing_key: SigningKey::from_bytes(&[44u8; 32]),
+        };
+
+        let make_receipt_body = |receipt_id: &EntityId, subject: &EntityId, request_id: &str| {
+            encode_redaction_audit_receipt(
+                RedactionReceiptInput {
+                    request_id: request_id.to_owned(),
+                    scope: RedactionScope::entity(subject),
+                    reason: crate::DeleteReason::GdprDelete,
+                    requested_at: learned_at - 10,
+                    soft_complete_at: learned_at - 9,
+                    hard_purge_complete_at: learned_at,
+                    sweep_queued_at: Some(learned_at - 8),
+                },
+                receipt_id,
+                &identity,
+            )
+            .unwrap()
+        };
+
+        let finalized_id = EntityId::now();
+        let finalized_subject = EntityId::now();
+        let finalized_pre_body = make_receipt_body(
+            &finalized_id,
+            &finalized_subject,
+            "018f3a2b-7c4d-7e5f-8a9b-0c1d2e3f4a5b",
+        );
+        let mut finalized_receipt = decode_redaction_audit_receipt(&finalized_pre_body).unwrap();
+        finalized_receipt.sweep_complete_at = Some(learned_at + 1);
+        let finalized_body = rmp_serde::to_vec_named(&finalized_receipt).unwrap();
+        vault
+            .batch()
+            .put_replicated(
+                &finalized_id,
+                ENTITY_TYPE_REDACTION_AUDIT,
+                occurred,
+                learned_at,
+                &finalized_body,
+            )
+            .commit()
+            .unwrap();
+
+        let pending_id = EntityId::now();
+        let pending_subject = EntityId::now();
+        let pending_body = make_receipt_body(
+            &pending_id,
+            &pending_subject,
+            "018f3a2b-7c4d-7e5f-8a9b-0c1d2e3f4a5c",
+        );
+        vault
+            .batch()
+            .put_replicated(
+                &pending_id,
+                ENTITY_TYPE_REDACTION_AUDIT,
+                occurred,
+                learned_at,
+                &pending_body,
+            )
+            .commit()
+            .unwrap();
+
+        let corrupt_id = EntityId::now();
+        vault
+            .batch()
+            .put_replicated(
+                &corrupt_id,
+                ENTITY_TYPE_REDACTION_AUDIT,
+                occurred,
+                learned_at,
+                b"invalid-receipt-body",
+            )
+            .commit()
+            .unwrap();
+
+        let ordinary_id = EntityId::now();
+        vault
+            .batch()
+            .put_replicated(&ordinary_id, 1, occurred, learned_at, b"ordinary-body")
+            .commit()
+            .unwrap();
+
+        let doc = create_window_doc("local", &window_key);
+        let mirrored = reverse_rematerialize(&vault, &doc, &window_key).unwrap();
+        assert_eq!(
+            mirrored, 2,
+            "only the pending receipt and ordinary entity should mirror"
+        );
+
+        let entities = doc.get_map("entities");
+        assert!(
+            map_get_bytes(&entities, &finalized_id.to_hex()).is_none(),
+            "finalized type-120 receipt is local-only and must not mirror"
+        );
+        assert!(
+            map_get_bytes(&entities, &corrupt_id.to_hex()).is_none(),
+            "undecodable type-120 receipt must fail closed instead of mirroring raw"
+        );
+
+        let pending_raw =
+            map_get_bytes(&entities, &pending_id.to_hex()).expect("pending receipt should mirror");
+        assert_eq!(
+            pending_raw,
+            vault.get_raw(&pending_id).unwrap().expect("pending raw"),
+            "non-finalized type-120 receipt mirrors byte-exactly"
+        );
+        let pending_receipt =
+            decode_redaction_audit_receipt(&pending_raw[ENTITY_METADATA_HEADER_LEN..]).unwrap();
+        assert!(pending_receipt.sweep_complete_at.is_none());
+
+        let ordinary_raw =
+            map_get_bytes(&entities, &ordinary_id.to_hex()).expect("ordinary entity should mirror");
+        assert_eq!(
+            ordinary_raw,
+            vault.get_raw(&ordinary_id).unwrap().expect("ordinary raw"),
+            "ordinary entities mirror exactly as before"
+        );
+    }
+
+    #[test]
+    fn finalized_receipt_not_mirrored_by_pending_mirror_replay() {
+        use crate::deletion::{
+            RedactionReceiptInput, RedactionScope, decode_redaction_audit_receipt,
+            encode_redaction_audit_receipt,
+        };
+        use crate::types::{ENTITY_TYPE_REDACTION_AUDIT, TimeRange};
+        use ed25519_dalek::SigningKey;
+
+        let (_dir, vault) = test_vault();
+        let learned_at = 1_772_400_000u64;
+        let window_key = WindowKey::from_timestamp(learned_at);
+        let occurred = TimeRange {
+            start: learned_at,
+            end: learned_at,
+        };
+        let identity = crate::identity::DeviceIdentity {
+            client_id: 0x0123_4567_89ab_cdefu64,
+            signing_key: SigningKey::from_bytes(&[44u8; 32]),
+        };
+
+        let make_receipt_body = |receipt_id: &EntityId, subject: &EntityId, request_id: &str| {
+            encode_redaction_audit_receipt(
+                RedactionReceiptInput {
+                    request_id: request_id.to_owned(),
+                    scope: RedactionScope::entity(subject),
+                    reason: crate::DeleteReason::GdprDelete,
+                    requested_at: learned_at - 10,
+                    soft_complete_at: learned_at - 9,
+                    hard_purge_complete_at: learned_at,
+                    sweep_queued_at: Some(learned_at - 8),
+                },
+                receipt_id,
+                &identity,
+            )
+            .unwrap()
+        };
+
+        let finalized_id = EntityId::now();
+        let finalized_subject = EntityId::now();
+        let finalized_pre_body = make_receipt_body(
+            &finalized_id,
+            &finalized_subject,
+            "018f3a2b-7c4d-7e5f-8a9b-0c1d2e3f4a5b",
+        );
+        let mut finalized_receipt = decode_redaction_audit_receipt(&finalized_pre_body).unwrap();
+        finalized_receipt.sweep_complete_at = Some(learned_at + 1);
+        let finalized_body = rmp_serde::to_vec_named(&finalized_receipt).unwrap();
+        vault
+            .batch()
+            .put_replicated(
+                &finalized_id,
+                ENTITY_TYPE_REDACTION_AUDIT,
+                occurred,
+                learned_at,
+                &finalized_body,
+            )
+            .commit()
+            .unwrap();
+
+        let pending_id = EntityId::now();
+        let pending_subject = EntityId::now();
+        let pending_body = make_receipt_body(
+            &pending_id,
+            &pending_subject,
+            "018f3a2b-7c4d-7e5f-8a9b-0c1d2e3f4a5c",
+        );
+        vault
+            .batch()
+            .put_replicated(
+                &pending_id,
+                ENTITY_TYPE_REDACTION_AUDIT,
+                occurred,
+                learned_at,
+                &pending_body,
+            )
+            .commit()
+            .unwrap();
+
+        let corrupt_id = EntityId::now();
+        vault
+            .batch()
+            .put_replicated(
+                &corrupt_id,
+                ENTITY_TYPE_REDACTION_AUDIT,
+                occurred,
+                learned_at,
+                b"invalid-receipt-body",
+            )
+            .commit()
+            .unwrap();
+
+        let ordinary_id = EntityId::now();
+        vault
+            .batch()
+            .put_replicated(&ordinary_id, 1, occurred, learned_at, b"ordinary-body")
+            .commit()
+            .unwrap();
+
+        for id in [&finalized_id, &pending_id, &corrupt_id, &ordinary_id] {
+            vault
+                .sync_state_put(&format!("pm:{window_key}:{}", id.to_hex()), &[1u8])
+                .unwrap();
+        }
+
+        let doc = create_window_doc("local", &window_key);
+        let replayed = replay_pending_mirrors(&vault, &doc, &window_key).unwrap();
+        assert_eq!(
+            replayed, 2,
+            "only the pending receipt and ordinary entity should replay"
+        );
+
+        let entities = doc.get_map("entities");
+        assert!(
+            map_get_bytes(&entities, &finalized_id.to_hex()).is_none(),
+            "finalized type-120 receipt is local-only and must not replay"
+        );
+        assert!(
+            map_get_bytes(&entities, &corrupt_id.to_hex()).is_none(),
+            "undecodable type-120 receipt must fail closed instead of replaying raw"
+        );
+
+        let pending_raw =
+            map_get_bytes(&entities, &pending_id.to_hex()).expect("pending receipt should replay");
+        assert_eq!(
+            pending_raw,
+            vault.get_raw(&pending_id).unwrap().expect("pending raw"),
+            "non-finalized type-120 receipt replays byte-exactly"
+        );
+        let pending_receipt =
+            decode_redaction_audit_receipt(&pending_raw[ENTITY_METADATA_HEADER_LEN..]).unwrap();
+        assert!(pending_receipt.sweep_complete_at.is_none());
+
+        let ordinary_raw =
+            map_get_bytes(&entities, &ordinary_id.to_hex()).expect("ordinary entity should replay");
+        assert_eq!(
+            ordinary_raw,
+            vault.get_raw(&ordinary_id).unwrap().expect("ordinary raw"),
+            "ordinary entities replay exactly as before"
+        );
+
+        for id in [&finalized_id, &pending_id, &corrupt_id, &ordinary_id] {
+            assert!(
+                vault
+                    .sync_state_get(&format!("pm:{window_key}:{}", id.to_hex()))
+                    .unwrap()
+                    .is_none(),
+                "processed pm marker should be cleared for {}",
+                id.to_hex()
+            );
+        }
+    }
+
+    #[test]
     fn forward_remat_quarantines_receipt_when_lease_revoked_between_check_and_write() {
         use ed25519_dalek::SigningKey;
 
@@ -2015,5 +2403,93 @@ mod tests {
         assert_eq!(record.window_key, window_key.as_str());
         assert_eq!(record.container, QuarantineContainer::Entities);
         assert_eq!(record.reason_code, "ReceiptLeaseRevoked");
+    }
+
+    #[test]
+    fn forward_remat_quarantines_divergent_receipt_landing_mid_flight() {
+        use ed25519_dalek::SigningKey;
+
+        let (_dir, vault) = test_vault();
+        let materializer = Materializer::new();
+        let learned_at = 1_772_400_000u64;
+        let window_key = WindowKey::from_timestamp(learned_at);
+        let receipt_id = EntityId::from_hex("202122232425262728292a2b2c2d2e2f").unwrap();
+        let subject = EntityId::from_hex("303132333435363738393a3b3c3d3e3f").unwrap();
+        let client_id = 0x0fed_cba9_8765_4321u64;
+        let signing_key = SigningKey::from_bytes(&[45u8; 32]);
+        let pubkey = signing_key.verifying_key().to_bytes();
+        let identity = crate::identity::DeviceIdentity {
+            client_id,
+            signing_key,
+        };
+
+        let remote_input = crate::deletion::RedactionReceiptInput {
+            request_id: "018f3a2b-7c4d-7e5f-8a9b-0c1d2e3f4a5c".to_owned(),
+            scope: crate::deletion::RedactionScope::entity(&subject),
+            reason: crate::DeleteReason::GdprDelete,
+            requested_at: 100,
+            soft_complete_at: 101,
+            hard_purge_complete_at: learned_at,
+            sweep_queued_at: Some(102),
+        };
+        let remote_body =
+            crate::deletion::encode_redaction_audit_receipt(remote_input, &receipt_id, &identity)
+                .unwrap();
+        let mut remote_blob = crate::deletion::receipt_envelope_header(learned_at).to_vec();
+        remote_blob.extend_from_slice(&remote_body);
+
+        let local_input = crate::deletion::RedactionReceiptInput {
+            request_id: "018f3a2b-7c4d-7e5f-8a9b-0c1d2e3f4a5d".to_owned(),
+            scope: crate::deletion::RedactionScope::entity(&subject),
+            reason: crate::DeleteReason::GdprDelete,
+            requested_at: 100,
+            soft_complete_at: 101,
+            hard_purge_complete_at: learned_at,
+            sweep_queued_at: Some(102),
+        };
+        let local_body =
+            crate::deletion::encode_redaction_audit_receipt(local_input, &receipt_id, &identity)
+                .unwrap();
+        let mut local_blob = crate::deletion::receipt_envelope_header(learned_at).to_vec();
+        local_blob.extend_from_slice(&local_body);
+        assert_ne!(local_blob, remote_blob);
+
+        let active = crate::sync::lease::LeaseRecord {
+            status: crate::sync::lease::LeaseStatus::Active,
+            pubkey,
+            granted_at: 1,
+            renewed_at: 2,
+            expires_at: 3,
+        };
+        vault
+            .sync_state_put(
+                &crate::sync::lease::lease_key(client_id),
+                &crate::sync::lease::encode_lease_record(&active),
+            )
+            .unwrap();
+
+        let doc = create_window_doc("local", &window_key);
+        doc.get_map("entities")
+            .insert(receipt_id.to_hex().as_str(), remote_blob.as_slice())
+            .unwrap();
+        doc.commit();
+
+        test_hooks::arm_receipt_local_write_race(receipt_id, local_blob.clone());
+        let count = forward_rematerialize(&vault, &doc, &materializer, &window_key).unwrap();
+        assert_eq!(
+            count, 0,
+            "the divergent remote receipt is quarantined, not written"
+        );
+        assert_eq!(
+            vault.get_raw(&receipt_id).unwrap().as_deref(),
+            Some(local_blob.as_slice()),
+            "the in-txn recheck must keep the mid-flight local receipt bytes"
+        );
+        let records = quarantine::quarantined_records(&vault).unwrap();
+        assert_eq!(records.len(), 1);
+        let record = &records[0].1;
+        assert_eq!(record.window_key, window_key.as_str());
+        assert_eq!(record.container, QuarantineContainer::Entities);
+        assert_eq!(record.reason_code, "RedactionReceiptDivergence");
     }
 }

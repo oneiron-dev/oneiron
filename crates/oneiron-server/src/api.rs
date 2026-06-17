@@ -14,6 +14,7 @@ use axum::response::{IntoResponse, Json};
 use axum::routing::{get, post};
 use serde::{Deserialize, Serialize};
 
+use crate::config::SyncServerConfig;
 use crate::server::SyncServer;
 
 /// Builds the HTTP API routes.
@@ -45,15 +46,15 @@ async fn health() -> impl IntoResponse {
 /// Uses constant-time comparison to prevent timing side-channel attacks.
 /// Shared by the HTTP API routes and the `/ws` upgrade handler (Phase-1
 /// shared-secret scheme).
-pub(crate) fn check_auth(
-    headers: &HeaderMap,
-    config_secret: &Option<String>,
-) -> Result<(), StatusCode> {
+pub(crate) fn check_auth(headers: &HeaderMap, config: &SyncServerConfig) -> Result<(), StatusCode> {
     use subtle::ConstantTimeEq;
 
-    let Some(expected) = config_secret.as_ref() else {
-        // No secret configured — allow all (dev mode)
-        return Ok(());
+    let Some(expected) = config.auth_secret.as_ref() else {
+        return if config.allow_unauthenticated {
+            Ok(())
+        } else {
+            Err(StatusCode::UNAUTHORIZED)
+        };
     };
 
     let provided = headers
@@ -96,7 +97,7 @@ async fn search_vector(
     State(server): State<Arc<SyncServer>>,
     Query(params): Query<VectorSearchQuery>,
 ) -> Result<Json<Vec<SearchResult>>, StatusCode> {
-    check_auth(&headers, &server.config.auth_secret)?;
+    check_auth(&headers, &server.config)?;
 
     let query: Result<Vec<f32>, _> = params
         .query
@@ -139,7 +140,7 @@ async fn search_text(
     State(server): State<Arc<SyncServer>>,
     Query(params): Query<TextSearchQuery>,
 ) -> Result<Json<Vec<SearchResult>>, StatusCode> {
-    check_auth(&headers, &server.config.auth_secret)?;
+    check_auth(&headers, &server.config)?;
 
     let results = server
         .vault
@@ -169,7 +170,7 @@ async fn get_entity(
     State(server): State<Arc<SyncServer>>,
     Path(id_hex): Path<String>,
 ) -> Result<impl IntoResponse, StatusCode> {
-    check_auth(&headers, &server.config.auth_secret)?;
+    check_auth(&headers, &server.config)?;
 
     let id = oneiron::EntityId::from_hex(&id_hex).map_err(|_| StatusCode::BAD_REQUEST)?;
 
@@ -191,7 +192,7 @@ async fn get_edges(
     State(server): State<Arc<SyncServer>>,
     Path(id_hex): Path<String>,
 ) -> Result<Json<Vec<EdgeResult>>, StatusCode> {
-    check_auth(&headers, &server.config.auth_secret)?;
+    check_auth(&headers, &server.config)?;
 
     let id = oneiron::EntityId::from_hex(&id_hex).map_err(|_| StatusCode::BAD_REQUEST)?;
 
@@ -244,7 +245,7 @@ async fn lease_revoke(
     State(server): State<Arc<SyncServer>>,
     Json(req): Json<LeaseRevokeRequest>,
 ) -> Result<Json<LeaseRevokeResponse>, StatusCode> {
-    check_auth(&headers, &server.config.auth_secret)?;
+    check_auth(&headers, &server.config)?;
 
     if req.client_id.len() != 16
         || !req
@@ -291,7 +292,7 @@ async fn context_pack(
     State(server): State<Arc<SyncServer>>,
     Json(_req): Json<ContextPackRequest>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    check_auth(&headers, &server.config.auth_secret)?;
+    check_auth(&headers, &server.config)?;
 
     // Build context pack using the vault's query API.
     // This is a thin wrapper — full implementation depends on

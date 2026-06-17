@@ -126,6 +126,14 @@ pub(crate) enum BatchOp {
         weight: f32,
         vad: Vad,
     },
+    PublicEdgeWithCreatedAt {
+        src: EntityId,
+        kind: EdgeKind,
+        tgt: EntityId,
+        weight: f32,
+        created_at: u64,
+        vad: Vad,
+    },
     EdgeWithCreatedAt {
         src: EntityId,
         kind: EdgeKind,
@@ -337,10 +345,7 @@ impl<'a> BatchBuilder<'a> {
         self
     }
 
-    /// Adds a graph edge with an explicit `created_at` timestamp.
-    ///
-    /// Used by the sync bridge to preserve CRDT edge timestamps exactly,
-    /// bypassing the default `unix_seconds_now()`.
+    /// Adds a public graph edge write with an explicit `created_at` timestamp.
     pub fn edge_with_created_at(
         mut self,
         src: &EntityId,
@@ -349,19 +354,18 @@ impl<'a> BatchBuilder<'a> {
         weight: f32,
         created_at: u64,
     ) -> Self {
-        self.ops.push(BatchOp::EdgeWithCreatedAt {
+        self.ops.push(BatchOp::PublicEdgeWithCreatedAt {
             src: *src,
             kind,
             tgt: *tgt,
             weight,
             created_at,
             vad: Vad::NEUTRAL,
-            provenance: None,
         });
         self
     }
 
-    /// Adds a graph edge with explicit `created_at` and VAD scores.
+    /// Adds a public graph edge write with explicit `created_at` and VAD scores.
     pub fn edge_with_created_at_and_vad(
         mut self,
         src: &EntityId,
@@ -371,14 +375,13 @@ impl<'a> BatchBuilder<'a> {
         created_at: u64,
         vad: Vad,
     ) -> Self {
-        self.ops.push(BatchOp::EdgeWithCreatedAt {
+        self.ops.push(BatchOp::PublicEdgeWithCreatedAt {
             src: *src,
             kind,
             tgt: *tgt,
             weight,
             created_at,
             vad,
-            provenance: None,
         });
         self
     }
@@ -632,7 +635,7 @@ impl<'a> TxnBatchBuilder<'a> {
         self
     }
 
-    /// Adds a graph edge with explicit `created_at` timestamp.
+    /// Adds a public graph edge write with an explicit `created_at` timestamp.
     pub fn edge_with_created_at(
         mut self,
         src: &EntityId,
@@ -641,19 +644,18 @@ impl<'a> TxnBatchBuilder<'a> {
         weight: f32,
         created_at: u64,
     ) -> Self {
-        self.ops.push(BatchOp::EdgeWithCreatedAt {
+        self.ops.push(BatchOp::PublicEdgeWithCreatedAt {
             src: *src,
             kind,
             tgt: *tgt,
             weight,
             created_at,
             vad: Vad::NEUTRAL,
-            provenance: None,
         });
         self
     }
 
-    /// Adds a graph edge with explicit `created_at` and VAD scores.
+    /// Adds a public graph edge write with explicit `created_at` and VAD scores.
     pub fn edge_with_created_at_and_vad(
         mut self,
         src: &EntityId,
@@ -663,14 +665,13 @@ impl<'a> TxnBatchBuilder<'a> {
         created_at: u64,
         vad: Vad,
     ) -> Self {
-        self.ops.push(BatchOp::EdgeWithCreatedAt {
+        self.ops.push(BatchOp::PublicEdgeWithCreatedAt {
             src: *src,
             kind,
             tgt: *tgt,
             weight,
             created_at,
             vad,
-            provenance: None,
         });
         self
     }
@@ -787,6 +788,26 @@ pub(crate) fn apply_ops(
                 ppr::invalidate_ppr_for_edge(store, wtxn, &src, &tgt)?;
                 had_graph_mutation = true;
             }
+            BatchOp::PublicEdgeWithCreatedAt {
+                src,
+                kind,
+                tgt,
+                weight,
+                created_at,
+                vad,
+            } => {
+                apply_public_edge_with_created_at(
+                    store, wtxn, src, kind, tgt, weight, created_at, vad,
+                )?;
+                ppr::invalidate_ppr_for_edge(store, wtxn, &src, &tgt)?;
+                had_graph_mutation = true;
+            }
+            // UNGATED by design — this is the replicated/replay shape. A
+            // bare-over-provenanced LWW edge is a legitimate remote winner;
+            // gating here would turn a legitimate remote merge into a
+            // permanent local sync-wedging abort (H2). The public timestamped
+            // builders route through the gated `PublicEdgeWithCreatedAt` arm
+            // instead.
             BatchOp::EdgeWithCreatedAt {
                 src,
                 kind,
@@ -882,6 +903,7 @@ impl ChildOfBatchOverlay {
         for (index, op) in ops.iter().enumerate() {
             match op {
                 BatchOp::Edge { src, kind, tgt, .. }
+                | BatchOp::PublicEdgeWithCreatedAt { src, kind, tgt, .. }
                 | BatchOp::EdgeWithCreatedAt { src, kind, tgt, .. }
                     if *kind == EdgeKind::ChildOf =>
                 {
@@ -1050,7 +1072,11 @@ fn apply_put(
     // sync replay — is structurally validated before any byte is staged.
     // Bodies of all other type bytes stay opaque at the storage layer.
     if entity_type == crate::types::ENTITY_TYPE_CLAIM {
-        crate::claim::validate_claim_body_bytes(data, allow_reserved_predicate)?;
+        let body = crate::claim::validate_claim_body_and_decode(data, allow_reserved_predicate)?;
+        if !replicated {
+            let ceiling = crate::claim::read_source_trust_ceiling(store, &*wtxn)?;
+            crate::claim::check_claim_source_trust(&body, &ceiling)?;
+        }
     }
     if occurred.start > occurred.end {
         return Err(Error::InvalidTimeRange {
@@ -1217,12 +1243,7 @@ fn apply_edge(
     weight: f32,
     vad: Vad,
 ) -> Result<()> {
-    let key_out = Store::encode_edge_key(&src, kind, &tgt);
-    if let Some(existing) = store.edges_out.get(wtxn, &key_out)?
-        && existing.len() == EDGE_VALUE_SEMANTIC_PROVENANCED_LEN
-    {
-        return Err(Error::EdgeIsProvenanced { kind: kind as u8 });
-    }
+    reject_if_existing_edge_is_provenanced(store, wtxn, src, kind, tgt)?;
     apply_edge_with_created_at(
         store,
         wtxn,
@@ -1234,6 +1255,40 @@ fn apply_edge(
         vad,
         None,
     )
+}
+
+fn reject_if_existing_edge_is_provenanced(
+    store: &Store,
+    wtxn: &RwTxn<'_>,
+    src: EntityId,
+    kind: EdgeKind,
+    tgt: EntityId,
+) -> Result<()> {
+    let key_out = Store::encode_edge_key(&src, kind, &tgt);
+    if let Some(existing) = store.edges_out.get(wtxn, &key_out)?
+        && existing.len() == EDGE_VALUE_SEMANTIC_PROVENANCED_LEN
+    {
+        return Err(Error::EdgeIsProvenanced { kind: kind as u8 });
+    }
+    Ok(())
+}
+
+#[expect(
+    clippy::too_many_arguments,
+    reason = "decomposing would obscure direct LMDB write logic"
+)]
+fn apply_public_edge_with_created_at(
+    store: &Store,
+    wtxn: &mut RwTxn<'_>,
+    src: EntityId,
+    kind: EdgeKind,
+    tgt: EntityId,
+    weight: f32,
+    created_at: u64,
+    vad: Vad,
+) -> Result<()> {
+    reject_if_existing_edge_is_provenanced(store, wtxn, src, kind, tgt)?;
+    apply_edge_with_created_at(store, wtxn, src, kind, tgt, weight, created_at, vad, None)
 }
 
 /// Reads the existing edge value for an operational setter (ONE-1113):
@@ -1323,6 +1378,11 @@ fn apply_set_edge_vad(
     clippy::too_many_arguments,
     reason = "decomposing would obscure direct LMDB write logic"
 )]
+// UNGATED by design — this is the replicated/replay shape. A
+// bare-over-provenanced LWW edge is a legitimate remote winner; gating here
+// would turn a legitimate remote merge into a permanent local sync-wedging
+// abort (H2). The public timestamped builders route through the gated
+// `PublicEdgeWithCreatedAt` arm instead.
 fn apply_edge_with_created_at(
     store: &Store,
     wtxn: &mut RwTxn<'_>,
@@ -1855,4 +1915,318 @@ fn validate_edge_record(key: &[u8], value: &[u8]) -> Result<()> {
     decode_edge_value_for_kind(kind, value).map_err(|_| Error::CorruptedIndex("edge record"))?;
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::claim::ClaimLifecycleStatus;
+    use crate::provenance::{EdgeProvenanceClaimBody, EdgeRef, SupersessionStatus};
+    use crate::types::{ENTITY_TYPE_PERSON, EdgeActorClass, HnswConfig, VaultConfig};
+
+    struct EdgeFixture {
+        _dir: tempfile::TempDir,
+        vault: Vault,
+        edge: EdgeRef,
+        claim_id: EntityId,
+    }
+
+    type RawEdgeValuePair = (Option<Vec<u8>>, Option<Vec<u8>>);
+
+    fn test_config() -> VaultConfig {
+        let mut config = VaultConfig::device();
+        config.map_size = 16 * 1024 * 1024;
+        config.dimensions = 4;
+        config.embedding_model = Some("test-model-v1".to_owned());
+        config.max_readers = 16;
+        config.hnsw = HnswConfig::default();
+        config
+    }
+
+    fn open_test_vault() -> (tempfile::TempDir, Vault) {
+        crate::test_util::open_test_vault_with(test_config())
+    }
+
+    fn test_time_range(start: u64, end: u64) -> TimeRange {
+        TimeRange { start, end }
+    }
+
+    fn raw_edge_values(vault: &Vault, edge: &EdgeRef) -> Result<RawEdgeValuePair> {
+        let rtxn = vault.store.env.read_txn()?;
+        let key_out = Store::encode_edge_key(&edge.source, edge.kind, &edge.target);
+        let key_in = Store::encode_edge_key(&edge.target, edge.kind, &edge.source);
+        let out = vault
+            .store
+            .edges_out
+            .get(&rtxn, &key_out)?
+            .map(<[u8]>::to_vec);
+        let inn = vault
+            .store
+            .edges_in
+            .get(&rtxn, &key_in)?
+            .map(<[u8]>::to_vec);
+        Ok((out, inn))
+    }
+
+    fn assert_edge_is_provenanced_reject(err: Error, expected_kind: EdgeKind, context: &str) {
+        match err {
+            Error::EdgeIsProvenanced { kind } => {
+                assert_eq!(kind, expected_kind as u8, "{context}: kind byte");
+            }
+            other => panic!("{context}: expected EdgeIsProvenanced, got {other:?}"),
+        }
+    }
+
+    fn assert_raw_edge_unchanged(
+        vault: &Vault,
+        edge: &EdgeRef,
+        before: &[u8],
+        context: &str,
+    ) -> Result<()> {
+        let (after_out, after_in) = raw_edge_values(vault, edge)?;
+        assert_eq!(
+            after_out.as_deref(),
+            Some(before),
+            "{context}: edges_out must stay byte-identical"
+        );
+        assert_eq!(
+            after_in.as_deref(),
+            Some(before),
+            "{context}: edges_in must stay byte-identical"
+        );
+        Ok(())
+    }
+
+    fn provenanced_edge_fixture() -> Result<EdgeFixture> {
+        let (dir, vault) = open_test_vault();
+        let src = EntityId::now();
+        let tgt = EntityId::now();
+        let actor = EntityId::now();
+        let occurred = test_time_range(1, 1);
+        vault.put_entity(&src, ENTITY_TYPE_PERSON, occurred, 1, b"src")?;
+        vault.put_entity(&tgt, ENTITY_TYPE_PERSON, occurred, 1, b"tgt")?;
+        vault.put_entity(&actor, ENTITY_TYPE_PERSON, occurred, 1, b"actor")?;
+        vault.put_edge(&src, EdgeKind::Mentions, &tgt, 0.25)?;
+
+        let edge = EdgeRef::new(src, EdgeKind::Mentions, tgt);
+        let claim_id = EntityId::now();
+        vault.put_edge_provenance(
+            &claim_id,
+            &edge,
+            &EdgeProvenanceClaimBody::new(actor, 0.75, SupersessionStatus::Confirmed),
+            EdgeActorClass::Human,
+            1_000,
+        )?;
+
+        Ok(EdgeFixture {
+            _dir: dir,
+            vault,
+            edge,
+            claim_id,
+        })
+    }
+
+    #[test]
+    fn public_timestamped_builder_rejects_over_provenanced_edge() -> Result<()> {
+        let fixture = provenanced_edge_fixture()?;
+        let vault = &fixture.vault;
+        let src = fixture.edge.source;
+        let kind = fixture.edge.kind;
+        let tgt = fixture.edge.target;
+        let vad = Vad {
+            valence: 0.1,
+            arousal: 0.2,
+            dominance: 0.3,
+        };
+
+        let (before_out, before_in) = raw_edge_values(vault, &fixture.edge)?;
+        let before_out = before_out.expect("provenanced edge");
+        assert_eq!(before_out.len(), EDGE_VALUE_SEMANTIC_PROVENANCED_LEN);
+        assert_eq!(before_in.as_deref(), Some(before_out.as_slice()));
+
+        let err = vault
+            .batch()
+            .edge_with_created_at(&src, kind, &tgt, 0.5, 2_000)
+            .commit()
+            .expect_err("batch edge_with_created_at must reject");
+        assert_edge_is_provenanced_reject(err, kind, "batch edge_with_created_at");
+        assert_raw_edge_unchanged(
+            vault,
+            &fixture.edge,
+            &before_out,
+            "batch edge_with_created_at",
+        )?;
+
+        let err = vault
+            .batch()
+            .edge_with_created_at_and_vad(&src, kind, &tgt, 0.5, 2_001, vad)
+            .commit()
+            .expect_err("batch edge_with_created_at_and_vad must reject");
+        assert_edge_is_provenanced_reject(err, kind, "batch edge_with_created_at_and_vad");
+        assert_raw_edge_unchanged(
+            vault,
+            &fixture.edge,
+            &before_out,
+            "batch edge_with_created_at_and_vad",
+        )?;
+
+        let err = vault
+            .with_write_txn(|wtxn| {
+                vault
+                    .batch_in()
+                    .edge_with_created_at(&src, kind, &tgt, 0.5, 2_002)
+                    .apply(wtxn)
+            })
+            .expect_err("batch_in edge_with_created_at must reject");
+        assert_edge_is_provenanced_reject(err, kind, "batch_in edge_with_created_at");
+        assert_raw_edge_unchanged(
+            vault,
+            &fixture.edge,
+            &before_out,
+            "batch_in edge_with_created_at",
+        )?;
+
+        let err = vault
+            .with_write_txn(|wtxn| {
+                vault
+                    .batch_in()
+                    .edge_with_created_at_and_vad(&src, kind, &tgt, 0.5, 2_003, vad)
+                    .apply(wtxn)
+            })
+            .expect_err("batch_in edge_with_created_at_and_vad must reject");
+        assert_edge_is_provenanced_reject(err, kind, "batch_in edge_with_created_at_and_vad");
+        assert_raw_edge_unchanged(
+            vault,
+            &fixture.edge,
+            &before_out,
+            "batch_in edge_with_created_at_and_vad",
+        )?;
+
+        let claim = vault
+            .get_claim(&fixture.claim_id)?
+            .expect("provenance claim readable");
+        assert_eq!(claim.lifecycle, ClaimLifecycleStatus::Active);
+        Ok(())
+    }
+
+    #[test]
+    fn public_timestamped_builder_accepts_over_bare_edge() -> Result<()> {
+        let (dir, vault) = open_test_vault();
+        let _dir = dir;
+        let src = EntityId::now();
+        let tgt = EntityId::now();
+        let absent_tgt = EntityId::now();
+        let occurred = test_time_range(1, 1);
+        vault.put_entity(&src, ENTITY_TYPE_PERSON, occurred, 1, b"src")?;
+        vault.put_entity(&tgt, ENTITY_TYPE_PERSON, occurred, 1, b"tgt")?;
+        vault.put_entity(&absent_tgt, ENTITY_TYPE_PERSON, occurred, 1, b"absent")?;
+        vault.put_edge(&src, EdgeKind::Mentions, &tgt, 0.25)?;
+
+        let bare_edge = EdgeRef::new(src, EdgeKind::Mentions, tgt);
+        vault
+            .batch()
+            .edge_with_created_at(&src, EdgeKind::Mentions, &tgt, 0.5, 2_000)
+            .commit()?;
+        let (bare_out, bare_in) = raw_edge_values(&vault, &bare_edge)?;
+        let bare_out = bare_out.expect("bare edge");
+        assert_eq!(bare_out.len(), EDGE_VALUE_SEMANTIC_LEN);
+        assert_eq!(bare_in.as_deref(), Some(bare_out.as_slice()));
+
+        let absent_edge = EdgeRef::new(src, EdgeKind::About, absent_tgt);
+        vault
+            .batch()
+            .edge_with_created_at_and_vad(
+                &src,
+                EdgeKind::About,
+                &absent_tgt,
+                0.5,
+                2_001,
+                Vad::NEUTRAL,
+            )
+            .commit()?;
+        let (absent_out, absent_in) = raw_edge_values(&vault, &absent_edge)?;
+        let absent_out = absent_out.expect("formerly absent edge");
+        assert_eq!(absent_out.len(), EDGE_VALUE_SEMANTIC_LEN);
+        assert_eq!(absent_in.as_deref(), Some(absent_out.as_slice()));
+        Ok(())
+    }
+
+    #[cfg(feature = "sync")]
+    #[test]
+    fn replay_edge_with_created_at_accepts_bare_over_provenanced() -> Result<()> {
+        let fixture = provenanced_edge_fixture()?;
+        let vault = &fixture.vault;
+        let src = fixture.edge.source;
+        let kind = fixture.edge.kind;
+        let tgt = fixture.edge.target;
+        let (before_out, _) = raw_edge_values(vault, &fixture.edge)?;
+        assert_eq!(
+            before_out.expect("provenanced edge").len(),
+            EDGE_VALUE_SEMANTIC_PROVENANCED_LEN
+        );
+
+        vault.with_write_txn(|wtxn| {
+            apply_ops(
+                &vault.store,
+                &vault.config,
+                &vault.analyzer,
+                wtxn,
+                vec![BatchOp::EdgeWithCreatedAt {
+                    src,
+                    kind,
+                    tgt,
+                    weight: 0.91,
+                    created_at: 3_000,
+                    vad: Vad::NEUTRAL,
+                    provenance: None,
+                }],
+            )
+        })?;
+
+        let (after_out, after_in) = raw_edge_values(vault, &fixture.edge)?;
+        let after_out = after_out.expect("replayed edge");
+        assert_eq!(after_out.len(), EDGE_VALUE_SEMANTIC_LEN);
+        assert_eq!(after_in.as_deref(), Some(after_out.as_slice()));
+        Ok(())
+    }
+
+    fn entity(byte: u8) -> EntityId {
+        EntityId::from_bytes([byte; ENTITY_ID_LEN]).expect("test entity id")
+    }
+
+    fn child_of_edge(child: EntityId, parent: EntityId) -> BatchOp {
+        BatchOp::Edge {
+            src: child,
+            kind: EdgeKind::ChildOf,
+            tgt: parent,
+            weight: 1.0,
+            vad: Vad::NEUTRAL,
+        }
+    }
+
+    #[test]
+    fn child_of_overlay_orders_entity_clear_against_same_pair_edge() {
+        let child = entity(0x41);
+        let parent = entity(0x42);
+
+        let edge_after_clear = ChildOfBatchOverlay::from_ops(&[
+            BatchOp::Delete { id: child },
+            child_of_edge(child, parent),
+        ]);
+        assert_eq!(
+            edge_after_clear.final_edge_override(&child, &parent),
+            Some(true),
+            "a ChildOf edge re-added after clearing the child must win"
+        );
+
+        let clear_after_edge = ChildOfBatchOverlay::from_ops(&[
+            child_of_edge(child, parent),
+            BatchOp::Delete { id: child },
+        ]);
+        assert_eq!(
+            clear_after_edge.final_edge_override(&child, &parent),
+            Some(false),
+            "clearing the child after touching the ChildOf pair must win"
+        );
+    }
 }

@@ -1351,6 +1351,17 @@ mod tests {
     }
 
     #[test]
+    fn validate_edge_provenance_value_rejects_invalid_records() {
+        let invalid = Value::Map(vec![
+            (Value::from("confidence"), Value::F32(0.5)),
+            (Value::from("supersession_status"), Value::from(0_u8)),
+        ]);
+        let err = validate_edge_provenance_value(&invalid)
+            .expect_err("validator wrapper must reject malformed value records");
+        assert_eq!(err.kind(), ErrorKind::InvalidProvenanceBody);
+    }
+
+    #[test]
     fn derive_confirmation_status_is_identity_mirror() {
         // The pinned {0,1,2,3} identity mirror (contracts.ts
         // derivesEdgeFlags[0]) — both the variant mapping and the numeric

@@ -5,7 +5,9 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use loro::{ExportMode, Frontiers, LoroDoc, LoroValue, ValueOrContainer, VersionVector};
 use oneiron::sync::WindowKey;
 use oneiron::sync::lease::{self, LEASE_DURATION_SECS, LeaseRecord, LeaseStatus, ROOT_LEASES_MAP};
-use oneiron::sync::schema::{add_window_to_root, read_window_list};
+use oneiron::sync::schema::{
+    add_window_to_root, init_window_list, read_window_list, schema_version_bytes,
+};
 use oneiron::sync::server_state;
 use oneiron::sync::window::load_window_from_state;
 use tokio::sync::{Mutex, RwLock, broadcast};
@@ -73,18 +75,18 @@ impl SyncServer {
                 // i64-LE BYTES (Loro Binary), conforming to the shared schema
                 // (`schema::create_root_doc`) — NOT a Loro i64, which the
                 // byte-only schema readers would not decode.
-                meta.insert("schema_version", 1i64.to_le_bytes().as_slice())
+                meta.insert("schema_version", schema_version_bytes().as_slice())
                     .map_err(|e| oneiron::Error::SyncProtocolError(e.to_string()))?;
-                // `meta.windows` must be byte-encoded to match the schema
-                // helpers (`schema::create_root_doc` / `add_window_to_root`)
-                // and the client's `read_window_list` decoder, which only
-                // accept `LoroValue::Binary`.
-                meta.insert("windows", "".as_bytes())
-                    .map_err(|e| oneiron::Error::SyncProtocolError(e.to_string()))?;
+                // `meta.windows` must use the shared schema-owned encoding so
+                // fresh server docs, root-doc creation, and client decoding
+                // cannot drift.
+                init_window_list(&doc, &[]);
                 // Device-lease registry map (ONE-1140, OD-3) — server-write
                 // only; lazily present on docs persisted before v2.
                 let _leases = doc.get_map(ROOT_LEASES_MAP);
                 doc.commit();
+                // Boot is pre-connection/single-threaded; no root-writer
+                // mutex can race this initial persist.
                 server_state::persist_root_snapshot(&vault, &doc)?;
                 doc
             }
@@ -103,6 +105,8 @@ impl SyncServer {
             }
         }
         if reconciled {
+            // Boot reconciliation is pre-connection/single-threaded; no
+            // root-writer mutex can race this persist.
             server_state::persist_root_snapshot(&vault, &root_doc)?;
         }
 
@@ -203,8 +207,15 @@ impl SyncServer {
                 doc.commit();
 
                 server_state::persist_window_snapshot(&self.vault, key, &doc)?;
-                add_window_to_root(&self.root_doc, key);
-                server_state::persist_root_snapshot(&self.vault, &self.root_doc)?;
+                {
+                    // Lock order: this create path already holds
+                    // `windows.write()`, then takes `lease_registrar` only
+                    // for the root_doc write. Registrar paths never take
+                    // `windows.write()` while holding `lease_registrar`.
+                    let _guard = self.lease_registrar.lock().await;
+                    add_window_to_root(&self.root_doc, key);
+                    server_state::persist_root_snapshot(&self.vault, &self.root_doc)?;
+                }
                 doc
             }
             Err(e) => return Err(e),
@@ -541,6 +552,17 @@ mod tests {
         Some(value.to_vec())
     }
 
+    fn deep_map_has_map(doc: &LoroDoc, map: &str, key: &str) -> bool {
+        let deep = doc.get_deep_value();
+        let Some(root) = deep.as_map() else {
+            return false;
+        };
+        let Some(inner) = root.get(map).and_then(LoroValue::as_map) else {
+            return false;
+        };
+        inner.get(key).and_then(LoroValue::as_map).is_some()
+    }
+
     #[test]
     fn window_key_for_known_timestamps() {
         assert_eq!(SyncServer::window_key_for_timestamp(1771027200), "2026-02");
@@ -557,13 +579,10 @@ mod tests {
         // shared schema writer (`schema::create_root_doc`).
         assert_eq!(
             deep_map_bytes(&server.root_doc, "meta", "schema_version").unwrap(),
-            1i64.to_le_bytes()
+            schema_version_bytes()
         );
-        assert!(
-            deep_map_bytes(&server.root_doc, "meta", "windows")
-                .unwrap()
-                .is_empty()
-        );
+        assert!(deep_map_has_map(&server.root_doc, "meta", "windows"));
+        assert!(read_window_list(&server.root_doc).is_empty());
     }
 
     #[tokio::test]
@@ -603,6 +622,46 @@ mod tests {
 
         let windows = read_window_list(&server.root_doc);
         assert_eq!(windows, vec![WindowKey::new("2026-03")]);
+    }
+
+    #[tokio::test]
+    async fn window_open_root_write_serializes_with_lease_registrar() {
+        use std::time::Duration;
+
+        let (_dir, vault) = test_vault();
+        let server = SyncServer::new(vault.clone(), SyncServerConfig::default()).unwrap();
+        let guard = server.lease_registrar.lock().await;
+        let key = WindowKey::new("2026-07");
+        let open = server.get_or_create_window(&key);
+        tokio::pin!(open);
+
+        let wait_for_window_snapshot = async {
+            loop {
+                if vault.sync_state_get("d:w:2026-07").unwrap().is_some() {
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+        };
+        tokio::select! {
+            _ = &mut open => panic!("window open completed without lease_registrar serialization"),
+            _ = wait_for_window_snapshot => {}
+        }
+
+        assert!(
+            read_window_list(&server.root_doc).is_empty(),
+            "the root_doc write must wait behind lease_registrar"
+        );
+        drop(guard);
+
+        let doc = tokio::time::timeout(Duration::from_secs(1), &mut open)
+            .await
+            .expect("window open must complete once lease_registrar is released")
+            .unwrap();
+        let deep = doc.get_deep_value();
+        let map = deep.as_map().unwrap();
+        assert!(map.contains_key("entities"));
+        assert_eq!(read_window_list(&server.root_doc), vec![key.clone()]);
     }
 
     #[tokio::test]

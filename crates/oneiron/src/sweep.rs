@@ -482,11 +482,12 @@ fn compact_all_windows(
         }
         let key = WindowKey::new(label);
 
-        // OPEN windows are deferred (pinned): the live doc keeps the full
-        // history in memory and its next full-snapshot persist would
-        // resurrect the carrier over the shallow row.
+        // OPEN or retained-handle windows are deferred (pinned): the live doc
+        // keeps the full history in memory and its next full-snapshot persist
+        // would resurrect the carrier over the shallow row, even after forced
+        // deregistration removed the manager registry entry.
         if vault_window_is_live(vault, &key) {
-            tracing::warn!(window = %label, "sweep: window open in registry — deferred");
+            tracing::warn!(window = %label, "sweep: window live or retained — deferred");
             run.windows_deferred_live += 1;
             if matches!(state, WindowSweepState::AllCompacted) {
                 state = WindowSweepState::Deferred;
@@ -1538,6 +1539,81 @@ mod tests {
         assert!(manager.unload_window(&window_key).unwrap());
         let run = run_hard_erase_sweep(&vault).unwrap();
         assert_eq!(run.jobs_processed, 1);
+        assert!(receipt_sweep_complete_at(&vault, &receipt_id).is_some());
+    }
+
+    /// ONE-1162: a retained `Arc<LoadedWindow>` can persist a full-history
+    /// snapshot after `discard_window` removes the registry entry. The sweep
+    /// must still defer while that handle exists, so no finalized shallow row
+    /// can be clobbered by a late `persist_state`.
+    #[cfg(feature = "sync")]
+    #[test]
+    fn retained_handle_cannot_resurrect_after_finalize() {
+        use crate::sync::bridge::Materializer;
+        use crate::sync::manager::WindowManager;
+        use crate::sync::types::WindowKey;
+        use std::sync::Arc;
+
+        let dir = tempfile::tempdir().unwrap();
+        let vault = Arc::new(Vault::open(dir.path(), test_config()).unwrap());
+        let id = EntityId::now();
+        let learned_at = 1_771_027_200;
+        put_entity(&vault, &id, learned_at, b"retained-window-body");
+
+        let materializer = Arc::new(Materializer::new());
+        let manager = Arc::new(WindowManager::new(
+            Arc::clone(&vault),
+            materializer,
+            "retained-sweep-test",
+        ));
+        let window_key = WindowKey::from_timestamp(learned_at);
+        let window = manager.open_window(&window_key).unwrap();
+        window.persist_state(&vault).unwrap();
+
+        let retained = Arc::clone(&window);
+        drop(window);
+        assert!(manager.discard_window(&window_key));
+        assert!(
+            manager.loaded_keys().is_empty(),
+            "the registry entry is gone while the external handle remains"
+        );
+
+        let outcome = vault
+            .delete_entity_with_reason(&id, DeleteReason::GdprDelete)
+            .unwrap();
+        let receipt_id = outcome.receipt_id.expect("receipt id");
+        let sweep_key = outcome.sweep_key.expect("sweep key");
+
+        let run = run_hard_erase_sweep(&vault).unwrap();
+        assert_eq!(run.jobs_processed, 0, "retained handle must not finalize");
+        assert!(
+            run.windows_deferred_live >= 1,
+            "orphaned retained handle must defer the window"
+        );
+        assert_eq!(run.windows_compacted, 0);
+        assert!(run.jobs_deferred >= 1);
+        assert_eq!(run.jobs_failed, 0);
+        assert!(
+            h_rows(&vault).iter().any(|(k, _)| *k == sweep_key),
+            "h: obligation must be kept while the handle can persist"
+        );
+        assert!(receipt_sweep_complete_at(&vault, &receipt_id).is_none());
+
+        retained.persist_state(&vault).unwrap();
+        assert!(
+            h_rows(&vault).iter().any(|(k, _)| *k == sweep_key),
+            "late persist cannot clobber a finalized shallow row because no finalization happened"
+        );
+        assert!(receipt_sweep_complete_at(&vault, &receipt_id).is_none());
+
+        drop(retained);
+        let run = run_hard_erase_sweep(&vault).unwrap();
+        assert_eq!(run.jobs_processed, 1);
+        assert!(run.windows_compacted >= 1);
+        assert!(
+            !h_rows(&vault).iter().any(|(k, _)| *k == sweep_key),
+            "h: obligation is removed only after the handle is gone"
+        );
         assert!(receipt_sweep_complete_at(&vault, &receipt_id).is_some());
     }
 
