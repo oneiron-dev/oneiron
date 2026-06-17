@@ -1340,6 +1340,61 @@ mod tests {
         Ok(())
     }
 
+    #[test]
+    fn okapi_surface_score_matches_formula_fixture() -> Result<()> {
+        let temp_dir = tempfile::tempdir()?;
+        let vault = Vault::open(temp_dir.path(), test_config())?;
+        let id = EntityId::now();
+        let other_alpha = EntityId::now();
+        let other_beta = EntityId::now();
+        put_text_doc(&vault, &id, "alpha alpha alpha")?;
+        put_text_doc(&vault, &other_alpha, "alpha")?;
+        put_text_doc(&vault, &other_beta, "beta")?;
+
+        let mut config = Bm25Config {
+            fields: [FieldConfig::disabled(); BM25_FIELD_COUNT],
+            ..Bm25Config::default()
+        };
+        config.fields[AnalyzerChannel::Surface.field_id() as usize] = FieldConfig {
+            weight: 1.0,
+            b: 0.75,
+            length_policy: FieldLengthPolicy::CountLengthIncrement,
+        };
+
+        let rtxn = vault.store.env.read_txn()?;
+        assert_eq!(
+            read_field_stats(&vault.store, &rtxn, AnalyzerChannel::Surface.field_id())?,
+            (3, 5),
+            "fixture must be three Surface documents with five total tokens"
+        );
+        let results = search_text(
+            &vault.store,
+            &rtxn,
+            &MultilingualAnalyzer::portable(),
+            &config,
+            "alpha",
+            10,
+        )?;
+        let score = results
+            .iter()
+            .find(|result| result.id == id)
+            .expect("document must score")
+            .score as f64;
+
+        let n = 3.0_f64;
+        let df = 2.0_f64;
+        let idf = ((n - df + 0.5) / (df + 0.5) + 1.0).ln();
+        let avgdl = 5.0_f64 / 3.0_f64;
+        let norm = 1.0 - 0.75 + 0.75 * (3.0 / avgdl);
+        let x_t_d = 3.0_f64 / norm;
+        let expected = idf * ((config.k1 + 1.0) * x_t_d / (config.k1 + x_t_d));
+        assert!(
+            (score - expected).abs() < 1e-6,
+            "score {score} did not match expected {expected}"
+        );
+        Ok(())
+    }
+
     /// The public default profile must lower to the literal ARCH-0031
     /// channel table (weights / `b` / length policy), the pinned global
     /// `k1 = 1.2`, and the Okapi default formula. Reserved channels stay
