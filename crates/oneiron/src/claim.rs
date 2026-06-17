@@ -32,7 +32,8 @@ use std::io::Cursor;
 use rmpv::Value;
 
 use crate::error::{Error, Result};
-use crate::types::{ENTITY_ID_LEN, EdgeKind, EntityId};
+use crate::store::Store;
+use crate::types::{ENTITY_ID_LEN, ENTITY_TYPE_REGISTRY, EdgeKind, EntityClassification, EntityId};
 
 // Test-only MessagePack decode counter: AC 9 of the D19 unit pins "body
 // decoded ONCE per result for gate + projection" — tests assert exact
@@ -170,6 +171,8 @@ pub enum ClaimSource {
     Observed,
     Inferred,
     Imported,
+    ToolOutput,
+    Generated,
 }
 
 impl ClaimSource {
@@ -181,6 +184,8 @@ impl ClaimSource {
             Self::Observed => "observed",
             Self::Inferred => "inferred",
             Self::Imported => "imported",
+            Self::ToolOutput => "tool_output",
+            Self::Generated => "generated",
         }
     }
 
@@ -190,8 +195,384 @@ impl ClaimSource {
             "observed" => Some(Self::Observed),
             "inferred" => Some(Self::Inferred),
             "imported" => Some(Self::Imported),
+            "tool_output" => Some(Self::ToolOutput),
+            "generated" => Some(Self::Generated),
             _ => None,
         }
+    }
+
+    const fn requires_explicit_auto_permit(self) -> bool {
+        matches!(self, Self::Imported | Self::ToolOutput)
+    }
+}
+
+const SOURCE_TRUST_MANIFEST_MARKER_KEY: &str = "manifest";
+const SOURCE_TRUST_MANIFEST_KIND_KEY: &str = "kind";
+const SOURCE_TRUST_MANIFEST_MARKER: &str = "dec_0005_predicate_pack";
+const SOURCE_TRUST_MANIFEST_KIND: &str = "dec_0005_predicate_pack_manifest";
+const SOURCE_TRUST_KEY: &str = "source_trust";
+const SOURCE_TRUST_MAX_AUTO_SENSITIVITY_KEY: &str = "max_auto_sensitivity";
+const SOURCE_TRUST_AUTO_KEY: &str = "auto";
+const SOURCE_TRUST_RECEIPTED_KEY: &str = "receipted";
+const SOURCE_TRUST_WARNED_KEY: &str = "warned";
+const CLAIM_SCOPE_SENSITIVITY_KEY: &str = "sensitivity";
+const DEFAULT_CLAIM_SENSITIVITY_BAND: u8 = 0;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct SourceTrustRow {
+    max_auto_sensitivity: Option<u8>,
+    receipted: bool,
+    warned: bool,
+}
+
+impl SourceTrustRow {
+    fn merge(self, other: Self) -> Self {
+        let max_auto_sensitivity = match (self.max_auto_sensitivity, other.max_auto_sensitivity) {
+            (Some(left), Some(right)) => Some(left.min(right)),
+            _ => None,
+        };
+
+        Self {
+            max_auto_sensitivity,
+            receipted: self.receipted && other.receipted,
+            warned: self.warned && other.warned,
+        }
+    }
+}
+
+/// Minimal DEC-0005 source-trust ceiling materialized from vault-resident
+/// PACK manifest entities. This is deliberately data-only: no predicate
+/// registry, grant evaluator, or policy engine lives here.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) struct SourceTrustCeiling {
+    user_stated: Option<SourceTrustRow>,
+    observed: Option<SourceTrustRow>,
+    inferred: Option<SourceTrustRow>,
+    imported: Option<SourceTrustRow>,
+    tool_output: Option<SourceTrustRow>,
+    generated: Option<SourceTrustRow>,
+    malformed_manifest_seen: bool,
+}
+
+impl SourceTrustCeiling {
+    fn malformed() -> Self {
+        Self {
+            malformed_manifest_seen: true,
+            ..Self::default()
+        }
+    }
+
+    fn row(&self, source: ClaimSource) -> Option<SourceTrustRow> {
+        match source {
+            ClaimSource::UserStated => self.user_stated,
+            ClaimSource::Observed => self.observed,
+            ClaimSource::Inferred => self.inferred,
+            ClaimSource::Imported => self.imported,
+            ClaimSource::ToolOutput => self.tool_output,
+            ClaimSource::Generated => self.generated,
+        }
+    }
+
+    fn set_row(&mut self, source: ClaimSource, row: SourceTrustRow) {
+        let slot = match source {
+            ClaimSource::UserStated => &mut self.user_stated,
+            ClaimSource::Observed => &mut self.observed,
+            ClaimSource::Inferred => &mut self.inferred,
+            ClaimSource::Imported => &mut self.imported,
+            ClaimSource::ToolOutput => &mut self.tool_output,
+            ClaimSource::Generated => &mut self.generated,
+        };
+        *slot = Some(slot.map_or(row, |existing| existing.merge(row)));
+    }
+
+    fn merge(&mut self, other: Self) {
+        self.malformed_manifest_seen |= other.malformed_manifest_seen;
+        for source in [
+            ClaimSource::UserStated,
+            ClaimSource::Observed,
+            ClaimSource::Inferred,
+            ClaimSource::Imported,
+            ClaimSource::ToolOutput,
+            ClaimSource::Generated,
+        ] {
+            if let Some(row) = other.row(source) {
+                self.set_row(source, row);
+            }
+        }
+    }
+}
+
+/// Reads the vault-resident DEC-0005 source-trust ceiling from PACK entities.
+///
+/// Shape assumption, kept intentionally small until the DEC-0005 reader is
+/// finalized: a PACK entity whose MessagePack body has
+/// `manifest = "dec_0005_predicate_pack"` or
+/// `kind = "dec_0005_predicate_pack_manifest"` may carry a `source_trust`
+/// map keyed by the pinned [`ClaimSource`] strings. Multiple manifest rows
+/// compose with most-restrictive-wins. Absence is not malformed; a malformed
+/// marked manifest fails closed at the claim gate.
+pub(crate) fn read_source_trust_ceiling(
+    store: &Store,
+    txn: &heed::RwTxn<'_>,
+) -> Result<SourceTrustCeiling> {
+    let mut ceiling = SourceTrustCeiling::default();
+
+    for entry in ENTITY_TYPE_REGISTRY
+        .iter()
+        .filter(|entry| entry.classification == EntityClassification::Pack)
+    {
+        for index_entry in store.type_index.prefix_iter(txn, &[entry.type_byte])? {
+            let (key, _) = index_entry?;
+            if key.len() != 17 {
+                ceiling.merge(SourceTrustCeiling::malformed());
+                continue;
+            }
+            let id = match EntityId::from_bytes(
+                key[1..17]
+                    .try_into()
+                    .map_err(|_| Error::CorruptedIndex("source trust type index key"))?,
+            ) {
+                Ok(id) => id,
+                Err(_) => {
+                    ceiling.merge(SourceTrustCeiling::malformed());
+                    continue;
+                }
+            };
+            let Some(raw) = store.entities.get(txn, id.as_bytes())? else {
+                ceiling.merge(SourceTrustCeiling::malformed());
+                continue;
+            };
+            let Some(header) = crate::batch::EntityMetadataHeader::parse(raw) else {
+                ceiling.merge(SourceTrustCeiling::malformed());
+                continue;
+            };
+            if header.entity_type != entry.type_byte {
+                ceiling.merge(SourceTrustCeiling::malformed());
+                continue;
+            }
+
+            if let Some(partial) =
+                decode_source_trust_manifest(&raw[crate::batch::ENTITY_METADATA_HEADER_LEN..])
+            {
+                ceiling.merge(partial);
+            }
+        }
+    }
+
+    Ok(ceiling)
+}
+
+pub(crate) fn check_claim_source_trust(
+    body: &ClaimBody,
+    ceiling: &SourceTrustCeiling,
+) -> Result<()> {
+    let sensitivity = claim_sensitivity_band(body);
+    check_source_trust(body.source, body.approval, sensitivity, ceiling)
+}
+
+pub(crate) fn check_source_trust(
+    source: Option<ClaimSource>,
+    approval: ClaimApprovalStatus,
+    sensitivity: Option<u8>,
+    ceiling: &SourceTrustCeiling,
+) -> Result<()> {
+    if approval != ClaimApprovalStatus::Auto {
+        return Ok(());
+    }
+
+    let Some(source) = source else {
+        return Ok(());
+    };
+
+    if ceiling.malformed_manifest_seen {
+        return Err(Error::SourceNotTrustedForAuto {
+            claim_source: source.as_str(),
+        });
+    }
+
+    let Some(sensitivity) = sensitivity else {
+        return Err(Error::SourceNotTrustedForAuto {
+            claim_source: source.as_str(),
+        });
+    };
+
+    let Some(row) = ceiling.row(source) else {
+        if source.requires_explicit_auto_permit() {
+            return Err(Error::SourceNotTrustedForAuto {
+                claim_source: source.as_str(),
+            });
+        }
+        return Ok(());
+    };
+
+    let Some(max_auto_sensitivity) = row.max_auto_sensitivity else {
+        return Err(Error::SourceNotTrustedForAuto {
+            claim_source: source.as_str(),
+        });
+    };
+
+    if sensitivity > max_auto_sensitivity {
+        return Err(Error::SourceNotTrustedForAuto {
+            claim_source: source.as_str(),
+        });
+    }
+
+    if source.requires_explicit_auto_permit() && (!row.receipted || !row.warned) {
+        return Err(Error::SourceNotTrustedForAuto {
+            claim_source: source.as_str(),
+        });
+    }
+
+    Ok(())
+}
+
+fn decode_source_trust_manifest(data: &[u8]) -> Option<SourceTrustCeiling> {
+    let mut cursor = Cursor::new(data);
+    let value = rmpv::decode::read_value(&mut cursor).ok()?;
+    if cursor.position() != data.len() as u64 {
+        return None;
+    }
+    let Value::Map(entries) = value else {
+        return None;
+    };
+    if !source_trust_manifest_marked(&entries) {
+        return None;
+    }
+
+    let source_trust = match single_map_value(&entries, SOURCE_TRUST_KEY) {
+        MapValue::Missing => return Some(SourceTrustCeiling::default()),
+        MapValue::Duplicate => return Some(SourceTrustCeiling::malformed()),
+        MapValue::Present(value) => value,
+    };
+    let Value::Map(source_rows) = source_trust else {
+        return Some(SourceTrustCeiling::malformed());
+    };
+
+    let mut ceiling = SourceTrustCeiling::default();
+    for (source_key, row_value) in source_rows {
+        let Some(source) = source_key.as_str().and_then(ClaimSource::parse) else {
+            return Some(SourceTrustCeiling::malformed());
+        };
+        let Some(row) = parse_source_trust_row(row_value) else {
+            return Some(SourceTrustCeiling::malformed());
+        };
+        ceiling.set_row(source, row);
+    }
+    Some(ceiling)
+}
+
+fn source_trust_manifest_marked(entries: &[(Value, Value)]) -> bool {
+    match single_map_value(entries, SOURCE_TRUST_MANIFEST_MARKER_KEY) {
+        MapValue::Present(Value::String(value))
+            if value.as_str() == Some(SOURCE_TRUST_MANIFEST_MARKER) =>
+        {
+            return true;
+        }
+        MapValue::Duplicate => return true,
+        MapValue::Missing | MapValue::Present(_) => {}
+    }
+
+    matches!(
+        single_map_value(entries, SOURCE_TRUST_MANIFEST_KIND_KEY),
+        MapValue::Present(Value::String(value)) if value.as_str() == Some(SOURCE_TRUST_MANIFEST_KIND)
+    )
+}
+
+enum MapValue<'a> {
+    Missing,
+    Present(&'a Value),
+    Duplicate,
+}
+
+fn single_map_value<'a>(entries: &'a [(Value, Value)], needle: &str) -> MapValue<'a> {
+    let mut found = None;
+    for (key, value) in entries {
+        if key.as_str() == Some(needle) {
+            if found.is_some() {
+                return MapValue::Duplicate;
+            }
+            found = Some(value);
+        }
+    }
+    found.map_or(MapValue::Missing, MapValue::Present)
+}
+
+fn parse_source_trust_row(value: &Value) -> Option<SourceTrustRow> {
+    match value {
+        Value::Boolean(false) => Some(SourceTrustRow {
+            max_auto_sensitivity: None,
+            receipted: false,
+            warned: false,
+        }),
+        Value::Integer(_) | Value::String(_) => Some(SourceTrustRow {
+            max_auto_sensitivity: sensitivity_band_from_value(value),
+            receipted: false,
+            warned: false,
+        }),
+        Value::Map(entries) => {
+            let mut max_auto_sensitivity = None;
+            let mut auto_disabled = false;
+            let mut receipted = false;
+            let mut warned = false;
+
+            for (key, value) in entries {
+                let key = key.as_str()?;
+                match key {
+                    SOURCE_TRUST_MAX_AUTO_SENSITIVITY_KEY => {
+                        max_auto_sensitivity = Some(sensitivity_band_from_value(value)?);
+                    }
+                    SOURCE_TRUST_AUTO_KEY => match value {
+                        Value::Boolean(false) => auto_disabled = true,
+                        Value::Boolean(true) => {}
+                        _ => return None,
+                    },
+                    SOURCE_TRUST_RECEIPTED_KEY => {
+                        receipted = value.as_bool()?;
+                    }
+                    SOURCE_TRUST_WARNED_KEY => {
+                        warned = value.as_bool()?;
+                    }
+                    _ => {}
+                }
+            }
+
+            Some(SourceTrustRow {
+                max_auto_sensitivity: if auto_disabled {
+                    None
+                } else {
+                    Some(max_auto_sensitivity?)
+                },
+                receipted,
+                warned,
+            })
+        }
+        _ => None,
+    }
+}
+
+fn claim_sensitivity_band(body: &ClaimBody) -> Option<u8> {
+    let Some(Value::Map(entries)) = &body.scope else {
+        return Some(DEFAULT_CLAIM_SENSITIVITY_BAND);
+    };
+
+    match single_map_value(entries, CLAIM_SCOPE_SENSITIVITY_KEY) {
+        MapValue::Missing => Some(DEFAULT_CLAIM_SENSITIVITY_BAND),
+        MapValue::Present(value) => sensitivity_band_from_value(value),
+        MapValue::Duplicate => None,
+    }
+}
+
+fn sensitivity_band_from_value(value: &Value) -> Option<u8> {
+    if let Some(raw) = value.as_u64() {
+        return u8::try_from(raw).ok();
+    }
+
+    match value.as_str()? {
+        "public" => Some(0),
+        "internal" => Some(1),
+        "sensitive" => Some(2),
+        "restricted" => Some(3),
+        _ => None,
     }
 }
 
@@ -558,7 +939,7 @@ pub(crate) fn decode_claim_body(data: &[u8], allow_reserved_predicate: bool) -> 
                         .as_str()
                         .and_then(ClaimSource::parse)
                         .ok_or(Error::InvalidClaimBody(
-                            "src must be one of user_stated|observed|inferred|imported",
+                            "src must be one of user_stated|observed|inferred|imported|tool_output|generated",
                         ))?;
                 source = Some(parsed);
             }
@@ -650,12 +1031,19 @@ pub(crate) fn decode_claim_body(data: &[u8], allow_reserved_predicate: bool) -> 
 /// pre-existing stored junk keeps its current read behavior (typed failure
 /// at the provenance ops that interpret it), it just can no longer be
 /// (re)written.
-pub(crate) fn validate_claim_body_bytes(data: &[u8], allow_reserved_predicate: bool) -> Result<()> {
+pub(crate) fn validate_claim_body_and_decode(
+    data: &[u8],
+    allow_reserved_predicate: bool,
+) -> Result<ClaimBody> {
     let body = decode_claim_body(data, allow_reserved_predicate)?;
     if body.predicate == crate::provenance::PREDICATE_EDGE_PROVENANCE {
         validate_edge_provenance_claim_structure(&body)?;
     }
-    Ok(())
+    Ok(body)
+}
+
+pub(crate) fn validate_claim_body_bytes(data: &[u8], allow_reserved_predicate: bool) -> Result<()> {
+    validate_claim_body_and_decode(data, allow_reserved_predicate).map(|_| ())
 }
 
 /// ONE-1159 — full structural validation of an `edge.provenance` Claim at
@@ -1233,5 +1621,187 @@ mod tests {
             validate_edge_provenance_claim_structure(&wrapper(ClaimApprovalStatus::Proposed)),
             Err(Error::InvalidProvenanceBody(_))
         ));
+    }
+
+    fn test_id(seed: u8) -> EntityId {
+        EntityId::from_bytes([seed; 16]).expect("valid test id")
+    }
+
+    fn test_time(ts: u64) -> crate::types::TimeRange {
+        crate::types::TimeRange { start: ts, end: ts }
+    }
+
+    fn temp_vault() -> (tempfile::TempDir, crate::Vault) {
+        let tmp = tempfile::tempdir().expect("temp dir");
+        let vault = crate::Vault::open(tmp.path(), crate::types::VaultConfig::default())
+            .expect("open vault");
+        (tmp, vault)
+    }
+
+    fn source_trust_claim(source: ClaimSource) -> ClaimBody {
+        let mut body = ClaimBody::new(
+            "profile.name",
+            ClaimSubject::Entity(test_id(0x21)),
+            Value::from("Ada"),
+            1.0,
+            ClaimApprovalStatus::Auto,
+            ClaimLifecycleStatus::Active,
+        );
+        body.source = Some(source);
+        body
+    }
+
+    fn source_trust_claim_data(source: ClaimSource) -> Vec<u8> {
+        encode_claim_body(&source_trust_claim(source)).expect("claim encode")
+    }
+
+    fn encode_source_trust_manifest(source: ClaimSource, max_auto_sensitivity: u8) -> Vec<u8> {
+        let row = Value::Map(vec![
+            (
+                Value::from(SOURCE_TRUST_MAX_AUTO_SENSITIVITY_KEY),
+                Value::from(u64::from(max_auto_sensitivity)),
+            ),
+            (
+                Value::from(SOURCE_TRUST_RECEIPTED_KEY),
+                Value::Boolean(true),
+            ),
+            (Value::from(SOURCE_TRUST_WARNED_KEY), Value::Boolean(true)),
+        ]);
+        let body = Value::Map(vec![
+            (
+                Value::from(SOURCE_TRUST_MANIFEST_MARKER_KEY),
+                Value::from(SOURCE_TRUST_MANIFEST_MARKER),
+            ),
+            (
+                Value::from(SOURCE_TRUST_KEY),
+                Value::Map(vec![(Value::from(source.as_str()), row)]),
+            ),
+        ]);
+        let mut out = Vec::new();
+        rmpv::encode::write_value(&mut out, &body).expect("manifest encode");
+        out
+    }
+
+    fn put_source_trust_manifest(vault: &crate::Vault, source: ClaimSource) {
+        let data = encode_source_trust_manifest(source, DEFAULT_CLAIM_SENSITIVITY_BAND);
+        vault
+            .put_entity(
+                &test_id(0x51),
+                crate::types::ENTITY_TYPE_TASK_LIST,
+                test_time(1),
+                1,
+                &data,
+            )
+            .expect("put source trust manifest");
+    }
+
+    #[test]
+    fn six_value_src_roundtrip() {
+        for source in [
+            ClaimSource::UserStated,
+            ClaimSource::Observed,
+            ClaimSource::Inferred,
+            ClaimSource::Imported,
+            ClaimSource::ToolOutput,
+            ClaimSource::Generated,
+        ] {
+            assert_eq!(ClaimSource::parse(source.as_str()), Some(source));
+        }
+    }
+
+    #[test]
+    fn tool_output_auto_rejects_without_manifest_permit() -> Result<()> {
+        let (_tmp, vault) = temp_vault();
+
+        for (seed, source) in [
+            (0x61, ClaimSource::ToolOutput),
+            (0x62, ClaimSource::Imported),
+        ] {
+            let id = test_id(seed);
+            let data = source_trust_claim_data(source);
+            let err = vault
+                .batch()
+                .put(&id, crate::types::ENTITY_TYPE_CLAIM, test_time(2), 2, &data)
+                .commit()
+                .expect_err("risky auto source must reject without manifest permit");
+            assert!(
+                matches!(err, Error::SourceNotTrustedForAuto { claim_source: got } if got == source.as_str()),
+                "expected source trust error for {}, got {err:?}",
+                source.as_str()
+            );
+            assert!(
+                vault.get_raw(&id)?.is_none(),
+                "rejected claim must not be written"
+            );
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn manifest_ceiling_admits_permitted_source() -> Result<()> {
+        let (_tmp, vault) = temp_vault();
+        put_source_trust_manifest(&vault, ClaimSource::ToolOutput);
+
+        let id = test_id(0x63);
+        let data = source_trust_claim_data(ClaimSource::ToolOutput);
+        reset_claim_body_decode_count();
+        vault
+            .batch()
+            .put(&id, crate::types::ENTITY_TYPE_CLAIM, test_time(3), 3, &data)
+            .commit()?;
+
+        assert!(vault.get_raw(&id)?.is_some());
+        assert_eq!(
+            claim_body_decode_count(),
+            1,
+            "source-trust gate must reuse the write-door decode"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn legacy_human_sources_unaffected() -> Result<()> {
+        let (_tmp, vault) = temp_vault();
+
+        for (seed, source) in [
+            (0x71, ClaimSource::UserStated),
+            (0x72, ClaimSource::Observed),
+            (0x73, ClaimSource::Inferred),
+            (0x74, ClaimSource::Generated),
+        ] {
+            let id = test_id(seed);
+            let data = source_trust_claim_data(source);
+            vault
+                .batch()
+                .put(&id, crate::types::ENTITY_TYPE_CLAIM, test_time(4), 4, &data)
+                .commit()?;
+            assert!(
+                vault.get_raw(&id)?.is_some(),
+                "{} must admit",
+                source.as_str()
+            );
+        }
+
+        Ok(())
+    }
+
+    #[cfg(feature = "sync")]
+    #[test]
+    fn replay_path_skips_source_trust_gate() -> Result<()> {
+        let (_tmp, vault) = temp_vault();
+        let id = test_id(0x81);
+        let data = source_trust_claim_data(ClaimSource::ToolOutput);
+
+        vault
+            .batch()
+            .put_replicated(&id, crate::types::ENTITY_TYPE_CLAIM, test_time(5), 5, &data)
+            .commit()?;
+
+        assert!(
+            vault.get_raw(&id)?.is_some(),
+            "replicated replay must not re-gate remote source trust"
+        );
+        Ok(())
     }
 }

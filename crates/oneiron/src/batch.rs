@@ -1050,7 +1050,11 @@ fn apply_put(
     // sync replay — is structurally validated before any byte is staged.
     // Bodies of all other type bytes stay opaque at the storage layer.
     if entity_type == crate::types::ENTITY_TYPE_CLAIM {
-        crate::claim::validate_claim_body_bytes(data, allow_reserved_predicate)?;
+        let body = crate::claim::validate_claim_body_and_decode(data, allow_reserved_predicate)?;
+        if !replicated {
+            let ceiling = crate::claim::read_source_trust_ceiling(store, &*wtxn)?;
+            crate::claim::check_claim_source_trust(&body, &ceiling)?;
+        }
     }
     if occurred.start > occurred.end {
         return Err(Error::InvalidTimeRange {
