@@ -32,6 +32,7 @@ use oneiron::sync::{
 use oneiron_server::build_app;
 use oneiron_server::config::SyncServerConfig;
 use oneiron_server::server::SyncServer;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 
@@ -55,6 +56,17 @@ fn open_manager(vault: Arc<oneiron::Vault>) -> Arc<WindowManager> {
 fn config_with_secret(secret: Option<&str>) -> SyncServerConfig {
     SyncServerConfig {
         auth_secret: secret.map(str::to_string),
+        ..Default::default()
+    }
+}
+
+fn config_with_secret_and_dev(
+    secret: Option<&str>,
+    allow_unauthenticated: bool,
+) -> SyncServerConfig {
+    SyncServerConfig {
+        auth_secret: secret.map(str::to_string),
+        allow_unauthenticated,
         ..Default::default()
     }
 }
@@ -106,6 +118,61 @@ async fn next_binary(ws: &mut WsStream) -> Vec<u8> {
             Message::Ping(_) | Message::Pong(_) => continue,
             other => panic!("unexpected WebSocket message: {other:?}"),
         }
+    }
+}
+
+async fn assert_ws_closes(ws: &mut WsStream, reason: &str) {
+    let closed = tokio::time::timeout(Duration::from_secs(10), async {
+        loop {
+            match ws.next().await {
+                None | Some(Ok(Message::Close(_))) | Some(Err(_)) => break,
+                Some(Ok(_)) => continue,
+            }
+        }
+    })
+    .await;
+    assert!(closed.is_ok(), "{reason}");
+}
+
+async fn http_get(addr: SocketAddr, path: &str, secret: Option<&str>) -> String {
+    let mut stream = tokio::net::TcpStream::connect(addr).await.unwrap();
+    let secret_header = secret
+        .map(|secret| format!("x-oneiron-secret: {secret}\r\n"))
+        .unwrap_or_default();
+    let request =
+        format!("GET {path} HTTP/1.1\r\nHost: {addr}\r\nConnection: close\r\n{secret_header}\r\n");
+    stream.write_all(request.as_bytes()).await.unwrap();
+
+    let mut response = Vec::new();
+    tokio::time::timeout(Duration::from_secs(10), stream.read_to_end(&mut response))
+        .await
+        .expect("timed out waiting for HTTP response")
+        .expect("failed reading HTTP response");
+    String::from_utf8(response).unwrap()
+}
+
+fn assert_http_status(response: &str, status: u16) {
+    let expected = format!("HTTP/1.1 {status} ");
+    assert!(
+        response.starts_with(&expected),
+        "expected HTTP status {status}, got response head: {:?}",
+        response.lines().next()
+    );
+}
+
+async fn send_window_vv_request(ws: &mut WsStream, key: &str) {
+    let doc = LoroDoc::new();
+    let msg =
+        transport::encode_window_sync(key, window_sub_tags::VV_REQUEST, &doc.oplog_vv().encode());
+    ws.send(Message::Binary(msg.into())).await.unwrap();
+}
+
+async fn drain_vv_request_responses(ws: &mut WsStream, expected_key: &str) {
+    for _ in 0..2 {
+        let frame = next_binary(ws).await;
+        assert_eq!(frame[0], TAG_WINDOW_SYNC);
+        let (window_key, _sub_tag, _payload) = transport::decode_window_sync(&frame[1..]).unwrap();
+        assert_eq!(window_key, expected_key);
     }
 }
 
@@ -174,15 +241,41 @@ async fn ws_upgrade_rejects_unauthenticated_when_secret_configured() {
 }
 
 #[tokio::test]
-async fn ws_upgrade_allows_unauthenticated_only_in_dev_mode() {
-    // No secret configured = dev mode (same semantics as api::check_auth).
+async fn ws_upgrade_rejects_unauthenticated_when_no_secret_and_not_dev() {
     let dir = tempfile::tempdir().unwrap();
     let (addr, _server, handle) =
         spawn_server(open_vault(dir.path()), config_with_secret(None)).await;
 
+    let err = connect(addr, None).await.unwrap_err();
+    assert_unauthorized(&err);
+
+    handle.abort();
+}
+
+#[tokio::test]
+async fn ws_upgrade_allows_unauthenticated_only_in_dev_mode() {
+    let dir = tempfile::tempdir().unwrap();
+    let (addr, _server, handle) = spawn_server(
+        open_vault(dir.path()),
+        config_with_secret_and_dev(None, true),
+    )
+    .await;
+
     let mut ws = connect(addr, None).await.unwrap();
     let first = next_binary(&mut ws).await;
     assert_eq!(first[0], TAG_SYNC_UPDATE);
+
+    handle.abort();
+}
+
+#[tokio::test]
+async fn http_guarded_route_rejects_when_no_secret_and_not_dev() {
+    let dir = tempfile::tempdir().unwrap();
+    let (addr, _server, handle) =
+        spawn_server(open_vault(dir.path()), config_with_secret(None)).await;
+
+    let response = http_get(addr, "/api/search/text?query=hello", None).await;
+    assert_http_status(&response, 401);
 
     handle.abort();
 }
@@ -442,13 +535,13 @@ async fn oversized_update_is_rejected_before_any_state_mutates() {
     let dir = tempfile::tempdir().unwrap();
     let vault = open_vault(dir.path());
     let config = SyncServerConfig {
-        auth_secret: None,
+        auth_secret: Some("payload-secret".to_string()),
         max_update_payload: 64,
         ..Default::default()
     };
     let (addr, server, handle) = spawn_server(vault, config).await;
 
-    let mut ws = connect(addr, None).await.unwrap();
+    let mut ws = connect(addr, Some("payload-secret")).await.unwrap();
     let _ = next_binary(&mut ws).await; // root snapshot
 
     let oversized = vec![0u8; 65];
@@ -456,16 +549,7 @@ async fn oversized_update_is_rejected_before_any_state_mutates() {
     ws.send(Message::Binary(msg.into())).await.unwrap();
 
     // The server closes the connection (FrameTooLarge → break).
-    let closed = tokio::time::timeout(Duration::from_secs(10), async {
-        loop {
-            match ws.next().await {
-                None | Some(Ok(Message::Close(_))) | Some(Err(_)) => break,
-                Some(Ok(_)) => continue,
-            }
-        }
-    })
-    .await;
-    assert!(closed.is_ok(), "server must close on oversized update");
+    assert_ws_closes(&mut ws, "server must close on oversized update").await;
 
     // Fail-closed and side-effect free: nothing was created or persisted —
     // the size check runs before the window doc is fetched or created.
@@ -478,6 +562,70 @@ async fn oversized_update_is_rejected_before_any_state_mutates() {
             .is_none()
     );
     assert!(vault.sync_state_get("m:u_seq:w:2026-02").unwrap().is_none());
+
+    handle.abort();
+}
+
+#[tokio::test]
+async fn window_creation_cap_closes_on_fabricated_distinct_keys_only() {
+    let dir = tempfile::tempdir().unwrap();
+    let vault = open_vault(dir.path());
+    let config = SyncServerConfig {
+        auth_secret: Some("cap-secret".to_string()),
+        max_windows_per_connection: 2,
+        ..Default::default()
+    };
+    let (addr, _server, handle) = spawn_server(vault, config).await;
+
+    let mut ws = connect(addr, Some("cap-secret")).await.unwrap();
+    let _ = next_binary(&mut ws).await; // root snapshot
+
+    send_window_vv_request(&mut ws, "2026-01").await;
+    drain_vv_request_responses(&mut ws, "2026-01").await;
+    send_window_vv_request(&mut ws, "2026-02").await;
+    drain_vv_request_responses(&mut ws, "2026-02").await;
+
+    // Re-touching a previously counted window stays under the cap, preserving
+    // legitimate historical-window tombstone sync that revisits old windows.
+    send_window_vv_request(&mut ws, "2026-01").await;
+    drain_vv_request_responses(&mut ws, "2026-01").await;
+
+    send_window_vv_request(&mut ws, "2026-03").await;
+    assert_ws_closes(
+        &mut ws,
+        "server must close when a connection exceeds the distinct-window cap",
+    )
+    .await;
+
+    handle.abort();
+}
+
+#[tokio::test]
+async fn inbound_message_rate_limit_closes_over_limit_connection() {
+    let dir = tempfile::tempdir().unwrap();
+    let vault = open_vault(dir.path());
+    let config = SyncServerConfig {
+        auth_secret: Some("rate-secret".to_string()),
+        max_messages_per_sec: 1,
+        ..Default::default()
+    };
+    let (addr, _server, handle) = spawn_server(vault, config).await;
+
+    let mut ws = connect(addr, Some("rate-secret")).await.unwrap();
+    let _ = next_binary(&mut ws).await; // root snapshot
+
+    ws.send(Message::Binary(vec![TAG_SYNC_UPDATE].into()))
+        .await
+        .unwrap();
+    ws.send(Message::Binary(vec![TAG_SYNC_UPDATE].into()))
+        .await
+        .unwrap();
+
+    assert_ws_closes(
+        &mut ws,
+        "server must close when one connection exceeds max_messages_per_sec",
+    )
+    .await;
 
     handle.abort();
 }
