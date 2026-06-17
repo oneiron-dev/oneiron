@@ -689,7 +689,16 @@ pub fn replay_pending_mirrors(vault: &Vault, doc: &LoroDoc, window_key: &WindowK
             continue;
         }
 
-        // Mirror to CRDT under bridge origin
+        // Mirror to CRDT under bridge origin. Finalized type-120 receipts
+        // are LMDB-local accountability rows; undecodable type-120 bytes
+        // fail closed using the same gate as reverse remat.
+        if reverse_remat_skip_redaction_receipt_mirror(&raw) {
+            vault.with_write_txn(|wtxn| {
+                vault.store.sync_state.delete(wtxn, marker_key)?;
+                Ok(())
+            })?;
+            continue;
+        }
         map_insert_bytes(&entities_map, hex_id.as_str(), raw.as_slice())
             .map_err(|e| Error::SyncProtocolError(format!("pm replay entity insert: {e}")))?;
 
@@ -2101,6 +2110,159 @@ mod tests {
             vault.get_raw(&ordinary_id).unwrap().expect("ordinary raw"),
             "ordinary entities mirror exactly as before"
         );
+    }
+
+    #[test]
+    fn finalized_receipt_not_mirrored_by_pending_mirror_replay() {
+        use crate::deletion::{
+            RedactionReceiptInput, RedactionScope, decode_redaction_audit_receipt,
+            encode_redaction_audit_receipt,
+        };
+        use crate::types::{ENTITY_TYPE_REDACTION_AUDIT, TimeRange};
+        use ed25519_dalek::SigningKey;
+
+        let (_dir, vault) = test_vault();
+        let learned_at = 1_772_400_000u64;
+        let window_key = WindowKey::from_timestamp(learned_at);
+        let occurred = TimeRange {
+            start: learned_at,
+            end: learned_at,
+        };
+        let identity = crate::identity::DeviceIdentity {
+            client_id: 0x0123_4567_89ab_cdefu64,
+            signing_key: SigningKey::from_bytes(&[44u8; 32]),
+        };
+
+        let make_receipt_body = |receipt_id: &EntityId, subject: &EntityId, request_id: &str| {
+            encode_redaction_audit_receipt(
+                RedactionReceiptInput {
+                    request_id: request_id.to_owned(),
+                    scope: RedactionScope::entity(subject),
+                    reason: crate::DeleteReason::GdprDelete,
+                    requested_at: learned_at - 10,
+                    soft_complete_at: learned_at - 9,
+                    hard_purge_complete_at: learned_at,
+                    sweep_queued_at: Some(learned_at - 8),
+                },
+                receipt_id,
+                &identity,
+            )
+            .unwrap()
+        };
+
+        let finalized_id = EntityId::now();
+        let finalized_subject = EntityId::now();
+        let finalized_pre_body = make_receipt_body(
+            &finalized_id,
+            &finalized_subject,
+            "018f3a2b-7c4d-7e5f-8a9b-0c1d2e3f4a5b",
+        );
+        let mut finalized_receipt = decode_redaction_audit_receipt(&finalized_pre_body).unwrap();
+        finalized_receipt.sweep_complete_at = Some(learned_at + 1);
+        let finalized_body = rmp_serde::to_vec_named(&finalized_receipt).unwrap();
+        vault
+            .batch()
+            .put_replicated(
+                &finalized_id,
+                ENTITY_TYPE_REDACTION_AUDIT,
+                occurred,
+                learned_at,
+                &finalized_body,
+            )
+            .commit()
+            .unwrap();
+
+        let pending_id = EntityId::now();
+        let pending_subject = EntityId::now();
+        let pending_body = make_receipt_body(
+            &pending_id,
+            &pending_subject,
+            "018f3a2b-7c4d-7e5f-8a9b-0c1d2e3f4a5c",
+        );
+        vault
+            .batch()
+            .put_replicated(
+                &pending_id,
+                ENTITY_TYPE_REDACTION_AUDIT,
+                occurred,
+                learned_at,
+                &pending_body,
+            )
+            .commit()
+            .unwrap();
+
+        let corrupt_id = EntityId::now();
+        vault
+            .batch()
+            .put_replicated(
+                &corrupt_id,
+                ENTITY_TYPE_REDACTION_AUDIT,
+                occurred,
+                learned_at,
+                b"invalid-receipt-body",
+            )
+            .commit()
+            .unwrap();
+
+        let ordinary_id = EntityId::now();
+        vault
+            .batch()
+            .put_replicated(&ordinary_id, 1, occurred, learned_at, b"ordinary-body")
+            .commit()
+            .unwrap();
+
+        for id in [&finalized_id, &pending_id, &corrupt_id, &ordinary_id] {
+            vault
+                .sync_state_put(&format!("pm:{window_key}:{}", id.to_hex()), &[1u8])
+                .unwrap();
+        }
+
+        let doc = create_window_doc("local", &window_key);
+        let replayed = replay_pending_mirrors(&vault, &doc, &window_key).unwrap();
+        assert_eq!(
+            replayed, 2,
+            "only the pending receipt and ordinary entity should replay"
+        );
+
+        let entities = doc.get_map("entities");
+        assert!(
+            map_get_bytes(&entities, &finalized_id.to_hex()).is_none(),
+            "finalized type-120 receipt is local-only and must not replay"
+        );
+        assert!(
+            map_get_bytes(&entities, &corrupt_id.to_hex()).is_none(),
+            "undecodable type-120 receipt must fail closed instead of replaying raw"
+        );
+
+        let pending_raw =
+            map_get_bytes(&entities, &pending_id.to_hex()).expect("pending receipt should replay");
+        assert_eq!(
+            pending_raw,
+            vault.get_raw(&pending_id).unwrap().expect("pending raw"),
+            "non-finalized type-120 receipt replays byte-exactly"
+        );
+        let pending_receipt =
+            decode_redaction_audit_receipt(&pending_raw[ENTITY_METADATA_HEADER_LEN..]).unwrap();
+        assert!(pending_receipt.sweep_complete_at.is_none());
+
+        let ordinary_raw =
+            map_get_bytes(&entities, &ordinary_id.to_hex()).expect("ordinary entity should replay");
+        assert_eq!(
+            ordinary_raw,
+            vault.get_raw(&ordinary_id).unwrap().expect("ordinary raw"),
+            "ordinary entities replay exactly as before"
+        );
+
+        for id in [&finalized_id, &pending_id, &corrupt_id, &ordinary_id] {
+            assert!(
+                vault
+                    .sync_state_get(&format!("pm:{window_key}:{}", id.to_hex()))
+                    .unwrap()
+                    .is_none(),
+                "processed pm marker should be cleared for {}",
+                id.to_hex()
+            );
+        }
     }
 
     #[test]
