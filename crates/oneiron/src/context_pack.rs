@@ -8,7 +8,7 @@ use heed::RoTxn;
 
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::claim::{ClaimBody, claim_surfaceable};
-use crate::error::Result;
+use crate::error::{Error, Result};
 use crate::pipeline::{PipelineBuilder, WorldScope};
 use crate::serialize::{SerializeConfig, serialize_pack};
 use crate::store::Store;
@@ -23,6 +23,10 @@ const DEFAULT_MAX_NEIGHBORS: usize = 50;
 const DEFAULT_TOKEN_BUDGET: usize = 4000;
 const DEFAULT_MAX_FIELD_CHARS: usize = 500;
 const MAX_EDGE_HOP: u32 = 5;
+#[cfg(not(test))]
+const MAX_EDGE_SCAN_RESULTS: usize = 100_000;
+#[cfg(test)]
+const MAX_EDGE_SCAN_RESULTS: usize = 64;
 const MAX_CONTEXT_NEIGHBORS: usize = 1000;
 /// Default share of the claim budget that non-base (fictional / dream) worlds
 /// may occupy in an `All`-scope pack — fiction takes at most half, so it can
@@ -623,7 +627,7 @@ fn hydrate_entity(
     };
 
     let Some(header) = EntityMetadataHeader::parse(raw) else {
-        return Ok(None);
+        return Err(Error::CorruptedIndex("entity metadata header"));
     };
 
     let mut gated_claim_body: Option<&ClaimBody> = None;
@@ -831,12 +835,10 @@ fn read_vector(vault: &Vault, rtxn: &RoTxn<'_>, id: &EntityId) -> Result<Option<
         return Ok(None);
     };
 
-    let Ok(vector) = le_bytes_to_f32_vec(raw) else {
-        return Ok(None);
-    };
+    let vector = le_bytes_to_f32_vec(raw).map_err(|_| Error::CorruptedIndex("entity vector"))?;
 
     if vector.len() != vault.config.dimensions {
-        return Ok(None);
+        return Err(Error::CorruptedIndex("entity vector"));
     }
 
     Ok(Some(vector))
@@ -874,6 +876,9 @@ fn scan_edges_for_entity(store: &Store, rtxn: &RoTxn<'_>, id: &EntityId) -> Resu
 
     for entry in store.edges_out.prefix_iter(rtxn, id.as_bytes())? {
         let (key, value) = entry?;
+        if edges.len() >= MAX_EDGE_SCAN_RESULTS {
+            return Err(Error::CorruptedIndex("edge scan exceeded bound"));
+        }
         edges.push(crate::vault::parse_edge_record(key, value)?);
     }
 
@@ -1146,6 +1151,92 @@ mod tests {
     }
 
     #[test]
+    fn hydrate_entity_rejects_present_corrupt_header() -> Result<()> {
+        let (_dir, vault) = open_test_vault();
+        let id = EntityId::now();
+
+        vault.with_write_txn(|wtxn| {
+            vault.store.entities.put(wtxn, id.as_bytes(), b"short")?;
+            Ok(())
+        })?;
+
+        let rtxn = vault.store.env.read_txn()?;
+        let mut claims_suppressed = 0;
+        let err = match hydrate_entity(
+            &vault,
+            &rtxn,
+            id,
+            0.0,
+            HydrateOptions {
+                hydrate_fields: true,
+                include_edges: false,
+                include_vectors: false,
+                edge_cache: None,
+                claim_bodies: None,
+            },
+            &mut claims_suppressed,
+        ) {
+            Ok(_) => panic!("present corrupt entity header must fail closed"),
+            Err(err) => err,
+        };
+
+        assert!(
+            matches!(err, Error::CorruptedIndex("entity metadata header")),
+            "expected CorruptedIndex(\"entity metadata header\"), got {err:?}"
+        );
+        assert_eq!(claims_suppressed, 0);
+        Ok(())
+    }
+
+    #[test]
+    fn read_vector_splits_absent_from_corrupt_rows() -> Result<()> {
+        let (_dir, vault) = open_test_vault();
+        let id = EntityId::now();
+
+        {
+            let rtxn = vault.store.env.read_txn()?;
+            assert!(
+                read_vector(&vault, &rtxn, &id)?.is_none(),
+                "absent vector rows must remain Ok(None)"
+            );
+        }
+
+        vault.with_write_txn(|wtxn| {
+            vault.store.vectors.put(wtxn, id.as_bytes(), &[1, 2, 3])?;
+            Ok(())
+        })?;
+        {
+            let rtxn = vault.store.env.read_txn()?;
+            let err = read_vector(&vault, &rtxn, &id)
+                .expect_err("present undecodable vector row must fail closed");
+            assert!(
+                matches!(err, Error::CorruptedIndex("entity vector")),
+                "expected CorruptedIndex(\"entity vector\"), got {err:?}"
+            );
+        }
+
+        let wrong_dimension = [1.0_f32, 2.0, 3.0]
+            .into_iter()
+            .flat_map(f32::to_le_bytes)
+            .collect::<Vec<_>>();
+        vault.with_write_txn(|wtxn| {
+            vault
+                .store
+                .vectors
+                .put(wtxn, id.as_bytes(), &wrong_dimension)?;
+            Ok(())
+        })?;
+        let rtxn = vault.store.env.read_txn()?;
+        let err = read_vector(&vault, &rtxn, &id)
+            .expect_err("present wrong-dimension vector row must fail closed");
+        assert!(
+            matches!(err, Error::CorruptedIndex("entity vector")),
+            "expected CorruptedIndex(\"entity vector\"), got {err:?}"
+        );
+        Ok(())
+    }
+
+    #[test]
     fn include_edges_returns_edge_info() -> Result<()> {
         let (_dir, vault) = open_test_vault();
 
@@ -1222,6 +1313,72 @@ mod tests {
         assert!(
             matches!(err, Error::CorruptedIndex("edge record")),
             "expected CorruptedIndex(\"edge record\"), got {err:?}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn scan_edges_for_entity_enforces_result_bound() -> Result<()> {
+        let (_dir, vault) = open_test_vault();
+        let small_src = EntityId::from_bytes_unchecked([0x01; 16]);
+        let bounded_src = EntityId::from_bytes_unchecked([0x02; 16]);
+        let value = crate::types::encode_edge_value(
+            crate::types::EdgeKind::Mentions,
+            0.5,
+            0,
+            crate::types::Vad::NEUTRAL,
+            None,
+        )?;
+
+        vault.with_write_txn(|wtxn| {
+            let target = EntityId::from_bytes_unchecked([0x03; 16]);
+            let key = Store::encode_edge_key(&small_src, crate::types::EdgeKind::Mentions, &target);
+            vault.store.edges_out.put(wtxn, &key, &value)?;
+            Ok(())
+        })?;
+        {
+            let rtxn = vault.store.env.read_txn()?;
+            assert_eq!(
+                scan_edges_for_entity(&vault.store, &rtxn, &small_src)?.len(),
+                1
+            );
+        }
+
+        vault.with_write_txn(|wtxn| {
+            for i in 0..MAX_EDGE_SCAN_RESULTS {
+                let target_byte = u8::try_from(i + 4).expect("test cap fits in u8");
+                let target = EntityId::from_bytes_unchecked([target_byte; 16]);
+                let key =
+                    Store::encode_edge_key(&bounded_src, crate::types::EdgeKind::Mentions, &target);
+                vault.store.edges_out.put(wtxn, &key, &value)?;
+            }
+            Ok(())
+        })?;
+        {
+            let rtxn = vault.store.env.read_txn()?;
+            assert_eq!(
+                scan_edges_for_entity(&vault.store, &rtxn, &bounded_src)?.len(),
+                MAX_EDGE_SCAN_RESULTS
+            );
+        }
+
+        vault.with_write_txn(|wtxn| {
+            let overflow_target = EntityId::from_bytes_unchecked([0xFE; 16]);
+            let key = Store::encode_edge_key(
+                &bounded_src,
+                crate::types::EdgeKind::Mentions,
+                &overflow_target,
+            );
+            vault.store.edges_out.put(wtxn, &key, &value)?;
+            Ok(())
+        })?;
+
+        let rtxn = vault.store.env.read_txn()?;
+        let err = scan_edges_for_entity(&vault.store, &rtxn, &bounded_src)
+            .expect_err("edge scan must fail closed once the result bound is exceeded");
+        assert!(
+            matches!(err, Error::CorruptedIndex("edge scan exceeded bound")),
+            "expected CorruptedIndex(\"edge scan exceeded bound\"), got {err:?}"
         );
         Ok(())
     }
