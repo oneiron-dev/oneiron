@@ -1,7 +1,9 @@
 use std::net::SocketAddr;
 use std::sync::Arc;
 
+use axum::http::HeaderValue;
 use clap::Parser;
+use tower_http::cors::{AllowOrigin, CorsLayer};
 use tracing_subscriber::EnvFilter;
 
 use oneiron_server::build_app;
@@ -35,8 +37,10 @@ async fn main() -> anyhow::Result<()> {
     // Build sync server state
     let server_config = SyncServerConfig {
         auth_secret: args.auth_secret,
+        allowed_origins: args.allowed_origins,
         ..Default::default()
     };
+    let cors_layer = build_cors_layer(&server_config)?;
 
     // Reloads persisted CRDT state (d:root + d:w:* in sync_state) — a fresh
     // boot must not silently discard previously relayed updates/tombstones.
@@ -46,7 +50,7 @@ async fn main() -> anyhow::Result<()> {
     );
 
     // Build Axum router
-    let app = build_app(sync_server).layer(tower_http::cors::CorsLayer::permissive());
+    let app = build_app(sync_server).layer(cors_layer);
 
     let addr: SocketAddr = format!("{}:{}", args.host, args.port).parse()?;
     tracing::info!(%addr, "listening");
@@ -55,4 +59,73 @@ async fn main() -> anyhow::Result<()> {
     axum::serve(listener, app).await?;
 
     Ok(())
+}
+
+fn build_cors_layer(config: &SyncServerConfig) -> anyhow::Result<CorsLayer> {
+    let allowed_origins = parse_allowed_origins(&config.allowed_origins)?;
+
+    if allowed_origins.is_empty() {
+        Ok(CorsLayer::new())
+    } else {
+        Ok(CorsLayer::new().allow_origin(AllowOrigin::list(allowed_origins)))
+    }
+}
+
+fn parse_allowed_origins(origins: &[String]) -> anyhow::Result<Vec<HeaderValue>> {
+    origins
+        .iter()
+        .filter_map(|origin| {
+            let trimmed = origin.trim();
+            (!trimmed.is_empty()).then_some(trimmed)
+        })
+        .map(|origin| {
+            if origin == "*" {
+                anyhow::bail!("wildcard CORS origin is not allowed");
+            }
+            origin
+                .parse::<HeaderValue>()
+                .map_err(|e| anyhow::anyhow!("invalid CORS origin {origin:?}: {e}"))
+        })
+        .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn empty_cors_origin_list_stays_restrictive() {
+        let config = SyncServerConfig::default();
+
+        let parsed = parse_allowed_origins(&config.allowed_origins).unwrap();
+
+        assert!(parsed.is_empty());
+        assert!(build_cors_layer(&config).is_ok());
+    }
+
+    #[test]
+    fn configured_cors_origin_is_parsed() {
+        let config = SyncServerConfig {
+            allowed_origins: vec!["https://app.example".to_owned()],
+            ..Default::default()
+        };
+
+        assert_eq!(
+            parse_allowed_origins(&config.allowed_origins).unwrap(),
+            vec![HeaderValue::from_static("https://app.example")]
+        );
+        assert!(build_cors_layer(&config).is_ok());
+    }
+
+    #[test]
+    fn wildcard_cors_origin_is_rejected() {
+        let config = SyncServerConfig {
+            allowed_origins: vec!["*".to_owned()],
+            ..Default::default()
+        };
+
+        let error = build_cors_layer(&config).unwrap_err().to_string();
+
+        assert!(error.contains("wildcard CORS origin is not allowed"));
+    }
 }
