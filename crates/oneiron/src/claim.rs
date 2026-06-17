@@ -888,6 +888,17 @@ mod tests {
     }
 
     #[test]
+    fn claim_source_parse_accepts_inferred_and_imported_wire_values() {
+        for (wire, source) in [
+            ("inferred", ClaimSource::Inferred),
+            ("imported", ClaimSource::Imported),
+        ] {
+            assert_eq!(ClaimSource::parse(wire), Some(source), "{wire}");
+            assert_eq!(source.as_str(), wire, "{wire} round-trip literal");
+        }
+    }
+
+    #[test]
     fn reserved_namespace_rejected_public_allowed_internal() {
         assert!(matches!(
             validate_predicate("edge.provenance", false),

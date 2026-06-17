@@ -2693,6 +2693,147 @@ fn batch_put_writes_long_interval_index_by_end_time() -> Result<()> {
 }
 
 #[test]
+fn batch_put_and_deindex_pin_temporal_boundary_comparisons() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let exact_id = seeded_entity_id(0xB0A0);
+    let over_id = seeded_entity_id(0xB0A1);
+    let start = 1_000_u64;
+    let exact_end = start + LONG_INTERVAL_THRESHOLD_SECS;
+    let over_end = exact_end + 1;
+
+    vault
+        .batch()
+        .put(
+            &exact_id,
+            6,
+            test_time_range(start, exact_end),
+            3_000,
+            b"exact-threshold",
+        )
+        .put(
+            &over_id,
+            6,
+            test_time_range(start, over_end),
+            3_001,
+            b"over-threshold",
+        )
+        .commit()?;
+
+    let exact_long_key = Store::encode_temporal_key(exact_end, &exact_id);
+    let over_long_key = Store::encode_temporal_key(over_end, &over_id);
+    {
+        let rtxn = vault.store.env.read_txn()?;
+        assert!(
+            vault
+                .store
+                .temporal_long_intervals
+                .get(&rtxn, &exact_long_key)?
+                .is_none(),
+            "span == LONG_INTERVAL_THRESHOLD_SECS is not a long interval"
+        );
+        assert_eq!(
+            vault
+                .store
+                .temporal_long_intervals
+                .get(&rtxn, &over_long_key)?,
+            Some(&start.to_be_bytes()[..]),
+            "span > LONG_INTERVAL_THRESHOLD_SECS must be indexed"
+        );
+    }
+
+    let exact_sentinel = [0xA5_u8; 8];
+    {
+        let mut wtxn = vault.store.env.write_txn()?;
+        vault
+            .store
+            .temporal_long_intervals
+            .put(&mut wtxn, &exact_long_key, &exact_sentinel)?;
+        wtxn.commit()?;
+    }
+    vault.put_entity(
+        &exact_id,
+        6,
+        test_time_range(start, exact_end),
+        3_010,
+        b"exact-threshold-updated",
+    )?;
+    {
+        let rtxn = vault.store.env.read_txn()?;
+        assert_eq!(
+            vault
+                .store
+                .temporal_long_intervals
+                .get(&rtxn, &exact_long_key)?,
+            Some(&exact_sentinel[..]),
+            "exact-threshold re-put must not run the old/new long-interval branches"
+        );
+    }
+
+    assert!(vault.delete_entity(&over_id)?);
+    {
+        let rtxn = vault.store.env.read_txn()?;
+        assert!(
+            vault
+                .store
+                .temporal_long_intervals
+                .get(&rtxn, &over_long_key)?
+                .is_none(),
+            "deindex_entity must remove real over-threshold long intervals"
+        );
+    }
+
+    assert!(vault.delete_entity(&exact_id)?);
+    {
+        let rtxn = vault.store.env.read_txn()?;
+        assert_eq!(
+            vault
+                .store
+                .temporal_long_intervals
+                .get(&rtxn, &exact_long_key)?,
+            Some(&exact_sentinel[..]),
+            "deindex_entity must not treat an exact-threshold span as long"
+        );
+    }
+
+    let point_id = seeded_entity_id(0xB0A2);
+    let point_ts = 7_000_u64;
+    vault.put_entity(
+        &point_id,
+        6,
+        test_time_range(point_ts, point_ts),
+        8_000,
+        b"point",
+    )?;
+    let point_end_key = Store::encode_temporal_key(point_ts, &point_id);
+    let point_sentinel = [0xC3_u8; 4];
+    {
+        let mut wtxn = vault.store.env.write_txn()?;
+        vault
+            .store
+            .temporal_occurred_end
+            .put(&mut wtxn, &point_end_key, &point_sentinel)?;
+        wtxn.commit()?;
+    }
+    vault.put_entity(
+        &point_id,
+        6,
+        test_time_range(point_ts, point_ts),
+        8_001,
+        b"point-updated",
+    )?;
+    let rtxn = vault.store.env.read_txn()?;
+    assert_eq!(
+        vault
+            .store
+            .temporal_occurred_end
+            .get(&rtxn, &point_end_key)?,
+        Some(&point_sentinel[..]),
+        "point re-put must not run the old range-end delete branch"
+    );
+    Ok(())
+}
+
+#[test]
 fn open_migrates_legacy_long_interval_rows() -> Result<()> {
     let temp_dir = tempfile::tempdir()?;
     let path = temp_dir.path();
