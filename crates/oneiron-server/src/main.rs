@@ -35,8 +35,14 @@ async fn main() -> anyhow::Result<()> {
     // Build sync server state
     let server_config = SyncServerConfig {
         auth_secret: args.auth_secret,
+        allow_unauthenticated: args.insecure_allow_unauthenticated,
         ..Default::default()
     };
+    if server_config.auth_secret.is_none() && !server_config.allow_unauthenticated {
+        tracing::warn!(
+            "server started with no auth_secret and allow_unauthenticated=false — refusing all requests; set ONEIRON_AUTH_SECRET or pass --insecure-allow-unauthenticated for local dev"
+        );
+    }
 
     // Reloads persisted CRDT state (d:root + d:w:* in sync_state) — a fresh
     // boot must not silently discard previously relayed updates/tombstones.
