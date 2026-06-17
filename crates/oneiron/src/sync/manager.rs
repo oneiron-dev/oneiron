@@ -43,7 +43,7 @@
 //!   lock while holding the materializer lock.
 
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex, MutexGuard};
+use std::sync::{Arc, Mutex, MutexGuard, Weak};
 
 use super::bridge::{Materializer, OutboundSink};
 use super::schema::create_window_doc;
@@ -67,6 +67,11 @@ pub struct WindowManager {
     /// mutex; entries are inserted only after a fully successful open, so a
     /// panicked holder cannot leave a half-recovered window registered.
     windows: Mutex<HashMap<WindowKey, Arc<LoadedWindow>>>,
+    /// Weak handles for every window doc issued by this manager. Unlike the
+    /// live registry, this survives `discard_window` deregistration so the
+    /// sweep can still observe an orphaned external `Arc<LoadedWindow>` that
+    /// could persist a full-history snapshot later.
+    issued_handles: Mutex<HashMap<WindowKey, Vec<Weak<LoadedWindow>>>>,
     /// Shared Observer A outbound sink: every window this manager opens
     /// routes its persisted local updates here (connection channel when
     /// attached, durable `SyncQueue` otherwise).
@@ -97,6 +102,7 @@ impl WindowManager {
             user_id: user_id.into(),
             config,
             windows: Mutex::new(HashMap::new()),
+            issued_handles: Mutex::new(HashMap::new()),
             outbound: Arc::new(OutboundSink::new()),
         }
     }
@@ -179,7 +185,10 @@ impl WindowManager {
         self.attach_to_vault();
         let mut registry = self.lock_registry();
         if let Some(existing) = registry.get(key) {
-            return Ok(Arc::clone(existing));
+            let existing = Arc::clone(existing);
+            drop(registry);
+            self.track_issued_handle(key, &existing);
+            return Ok(existing);
         }
 
         // Startup steps 1-2 (per-window slice): persisted snapshot + pending
@@ -245,6 +254,8 @@ impl WindowManager {
             Some(Arc::clone(&self.outbound)),
         ));
         registry.insert(key.clone(), Arc::clone(&window));
+        drop(registry);
+        self.track_issued_handle(key, &window);
         Ok(window)
     }
 
@@ -268,7 +279,41 @@ impl WindowManager {
     /// never opens. This is the lookup seam M4-10 delete routing uses to
     /// commit tombstones through the live doc when the window is loaded.
     pub fn window(&self, key: &WindowKey) -> Option<Arc<LoadedWindow>> {
-        self.lock_registry().get(key).map(Arc::clone)
+        let window = self.lock_registry().get(key).map(Arc::clone)?;
+        self.track_issued_handle(key, &window);
+        Some(window)
+    }
+
+    /// Sweep live-window probe (ONE-1162): fail closed if this manager cannot
+    /// prove `key` has no registered doc and no orphaned external handle.
+    ///
+    /// `discard_window` can remove the registry entry while caller-held
+    /// `Arc<LoadedWindow>` clones keep the doc and observers alive. Those
+    /// retained handles can still call `persist_state`, so the sweep must
+    /// treat them exactly like a registered live window and defer compaction.
+    pub(crate) fn window_live_for_sweep(&self, key: &WindowKey) -> bool {
+        let registry = match self.windows.lock() {
+            Ok(registry) => registry,
+            Err(_) => return true,
+        };
+        if registry.contains_key(key) {
+            return true;
+        }
+        drop(registry);
+
+        let mut issued = match self.issued_handles.lock() {
+            Ok(issued) => issued,
+            Err(_) => return true,
+        };
+        let Some(handles) = issued.get_mut(key) else {
+            return false;
+        };
+        handles.retain(|handle| handle.strong_count() > 0);
+        let retained = !handles.is_empty();
+        if !retained {
+            issued.remove(key);
+        }
+        retained
     }
 
     /// Returns the keys of all currently loaded windows.
@@ -376,6 +421,19 @@ impl WindowManager {
     /// half-registered window behind.
     fn lock_registry(&self) -> MutexGuard<'_, HashMap<WindowKey, Arc<LoadedWindow>>> {
         self.windows.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    fn track_issued_handle(&self, key: &WindowKey, window: &Arc<LoadedWindow>) {
+        let weak = Arc::downgrade(window);
+        let mut issued = self
+            .issued_handles
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let handles = issued.entry(key.clone()).or_default();
+        handles.retain(|handle| handle.strong_count() > 0);
+        if !handles.iter().any(|handle| handle.ptr_eq(&weak)) {
+            handles.push(weak);
+        }
     }
 
     /// Returns whether a 1-byte marker key is present in `sync_state`.
