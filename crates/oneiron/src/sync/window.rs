@@ -1351,6 +1351,8 @@ pub fn forward_rematerialize(
             }
             tracing::error!(
                 window = %window_key,
+                purge_failures = purge_failures.len(),
+                receiver_scrub_candidates = receiver_scrub_candidates.len(),
                 error = %err,
                 "forward remat: receiver outbox scrub/bookkeeping txn FAILED after hard tombstone replay; flagging entity-scoped rm: markers for durable retry"
             );

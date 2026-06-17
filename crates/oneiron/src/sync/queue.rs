@@ -680,10 +680,38 @@ pub(crate) fn scrub_receiver_outbox_on_remote_hard_delete_in_txn(
     wtxn: &mut heed::RwTxn<'_>,
     window_key: &str,
 ) -> Result<u32> {
+    #[cfg(test)]
+    maybe_inject_receiver_scrub_failure()?;
+
     let dropped = scrub_window_updates_in_txn(vault, wtxn, window_key)?;
     let fr_key = format!("fr:w:{window_key}");
     vault.store.sync_state.put(wtxn, &fr_key, &[1_u8])?;
     Ok(dropped)
+}
+
+#[cfg(test)]
+thread_local! {
+    static INJECT_RECEIVER_SCRUB_FAILURES: std::cell::Cell<u32> =
+        const { std::cell::Cell::new(0) };
+}
+
+#[cfg(test)]
+fn maybe_inject_receiver_scrub_failure() -> Result<()> {
+    let inject = INJECT_RECEIVER_SCRUB_FAILURES.with(|cell| {
+        let remaining = cell.get();
+        if remaining > 0 {
+            cell.set(remaining - 1);
+            true
+        } else {
+            false
+        }
+    });
+    if inject {
+        return Err(Error::Io(std::io::Error::other(
+            "injected receiver outbox scrub failure (test hook)",
+        )));
+    }
+    Ok(())
 }
 
 // ─── Key Encoding ────────────────────────────────────────────────────────────
@@ -857,6 +885,14 @@ mod tests {
         }
     }
 
+    struct ReceiverScrubFailureReset;
+
+    impl Drop for ReceiverScrubFailureReset {
+        fn drop(&mut self) {
+            INJECT_RECEIVER_SCRUB_FAILURES.with(|cell| cell.set(0));
+        }
+    }
+
     fn test_vault() -> Arc<Vault> {
         let dir = tempfile::tempdir().unwrap();
         let config = VaultConfig::device();
@@ -866,6 +902,11 @@ mod tests {
     fn arm_purge_failures(count: u32) -> PurgeFailureReset {
         quarantine::INJECT_PURGE_FAILURES.with(|cell| cell.set(count));
         PurgeFailureReset
+    }
+
+    fn arm_receiver_scrub_failures(count: u32) -> ReceiverScrubFailureReset {
+        INJECT_RECEIVER_SCRUB_FAILURES.with(|cell| cell.set(count));
+        ReceiverScrubFailureReset
     }
 
     fn receiver_hard_tombstone_value() -> [u8; crate::deletion::TOMBSTONE_VALUE_V2_LEN] {
@@ -1610,6 +1651,40 @@ mod tests {
             "recovery hard tombstone must purge the active store first"
         );
         assert_receiver_outbox_scrubbed(&vault, &outbox);
+    }
+
+    #[test]
+    fn receiver_forward_remat_scrub_failure_keeps_outbox_and_sets_rm_retry() {
+        let vault = test_vault();
+        let outbox = seed_receiver_outbox(&vault);
+        let victim = EntityId::now();
+        put_receiver_entity(&vault, &victim, b"payload purged before scrub failure");
+
+        let window_key = WindowKey::new(RECEIVER_SCRUB_WINDOW);
+        let doc = create_window_doc("remote", &window_key);
+        let hard = receiver_hard_tombstone_value();
+        doc.get_map("tombstones")
+            .insert(&victim.to_hex(), hard.as_slice())
+            .unwrap();
+        doc.commit();
+
+        let _reset = arm_receiver_scrub_failures(1);
+        let materializer = Materializer::new();
+        forward_rematerialize(&vault, &doc, &materializer, &window_key).unwrap();
+
+        assert!(
+            vault.get(&victim).unwrap().is_none(),
+            "hard tombstone purge should not roll back when scrub bookkeeping fails"
+        );
+        assert_receiver_outbox_intact(&vault, &outbox);
+        assert_eq!(
+            vault
+                .sync_state_get(&format!("rm:w:{RECEIVER_SCRUB_WINDOW}:{}", victim.to_hex()))
+                .unwrap()
+                .as_deref(),
+            Some([1_u8].as_slice()),
+            "scrub failure must set rm: so recovery retries the receiver outbox scrub"
+        );
     }
 
     #[test]

@@ -17,8 +17,7 @@ header = """
  * are capped at 8 KiB, search limits at 1000, and dimensions at 16384.
  *
  * Intentionally absent: start_sync and stop_sync are not exported while sync
- * remains disabled pre-launch. batch_put_entities is deferred until its C
- * array-of-structs ownership contract is designed.
+ * remains disabled pre-launch.
  */
 """
 
@@ -33,6 +32,7 @@ item_types = ["enums", "structs", "opaque", "functions"]
 include = [
   "OneironStatus",
   "OneironByteSlice",
+  "OneironEntityInput",
   "OneironBuffer",
   "OneironEdgeInfo",
   "OneironEdgeInfoArray",
@@ -48,6 +48,7 @@ include = [
   "oneiron_vault_open",
   "oneiron_vault_free",
   "oneiron_vault_put_entity",
+  "oneiron_vault_batch_put_entities",
   "oneiron_vault_get_entity",
   "oneiron_vault_delete_entity",
   "oneiron_vault_entity_exists",

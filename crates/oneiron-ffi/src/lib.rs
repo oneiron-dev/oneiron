@@ -7,8 +7,7 @@
 //!
 //! Sync stubs from the N-API surface (`start_sync` / `stop_sync`) are
 //! intentionally not exported here while shared multi-vault sync is disabled.
-//! `batch_put_entities` is also intentionally deferred; the rest of the core
-//! read/write N-API vault surface is mirrored by this C ABI.
+//! The core read/write N-API vault surface is mirrored by this C ABI.
 
 use std::{
     mem::size_of,
@@ -57,6 +56,22 @@ pub enum OneironStatus {
 pub struct OneironByteSlice {
     pub ptr: *const u8,
     pub len: usize,
+}
+
+/// Borrowed entity input for `oneiron_vault_batch_put_entities`.
+///
+/// Each payload is caller-owned and borrowed only for the duration of the
+/// call. Entity IDs are fixed-width 16-byte values; `entity_type` must fit in
+/// one byte and pass the engine's public entity-type gate.
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct OneironEntityInput {
+    pub id: [u8; 16],
+    pub entity_type: u32,
+    pub occurred_start: i64,
+    pub occurred_end: i64,
+    pub learned_at: i64,
+    pub data: OneironByteSlice,
 }
 
 /// Rust-owned byte buffer returned by variable-size byte outputs.
@@ -563,6 +578,45 @@ pub extern "C" fn oneiron_vault_put_entity(
                     ts_to_u64(learned_at),
                     data,
                 ))
+            })
+        });
+        result.map_or_else(|status| status, |()| OneironStatus::Ok)
+    })
+}
+
+/// Store multiple entity blobs in one vault transaction.
+///
+/// `entities` may be null only when `entities_len == 0`. Each payload pointer
+/// inside the array must be non-null for its byte length.
+#[unsafe(no_mangle)]
+pub extern "C" fn oneiron_vault_batch_put_entities(
+    vault: *mut OneironVault,
+    entities: *const OneironEntityInput,
+    entities_len: usize,
+) -> OneironStatus {
+    ffi_guard(|| {
+        let result = with_vault(vault, |handle| {
+            with_optional_slice(entities, entities_len, |values| {
+                let mut batch = handle.vault.batch();
+                for entry in values.unwrap_or(&[]) {
+                    let id =
+                        EntityId::from_bytes(entry.id).map_err(|_| OneironStatus::InvalidArg)?;
+                    let entity_type = parse_u8(entry.entity_type)?;
+                    let data = with_required_slice(entry.data.ptr, entry.data.len, |data| {
+                        Ok(data.to_vec())
+                    })?;
+                    batch = batch.put(
+                        &id,
+                        entity_type,
+                        TimeRange {
+                            start: ts_to_u64(entry.occurred_start),
+                            end: ts_to_u64(entry.occurred_end),
+                        },
+                        ts_to_u64(entry.learned_at),
+                        &data,
+                    );
+                }
+                engine(batch.commit())
             })
         });
         result.map_or_else(|status| status, |()| OneironStatus::Ok)
@@ -1257,6 +1311,85 @@ mod tests {
             ),
             OneironStatus::EngineError
         );
+
+        assert_eq!(oneiron_vault_free(vault), OneironStatus::Ok);
+    }
+
+    #[test]
+    fn ffi_batch_put_entities_and_boundary_statuses() {
+        let (_dir, vault) = open_test_vault(4);
+        let first = id(80);
+        let second = id(96);
+        let first_payload = b"batch-first";
+        let second_payload = b"batch-second";
+        let entries = [
+            OneironEntityInput {
+                id: first,
+                entity_type: 1,
+                occurred_start: 10,
+                occurred_end: 10,
+                learned_at: 11,
+                data: OneironByteSlice {
+                    ptr: first_payload.as_ptr(),
+                    len: first_payload.len(),
+                },
+            },
+            OneironEntityInput {
+                id: second,
+                entity_type: 1,
+                occurred_start: 12,
+                occurred_end: 12,
+                learned_at: 13,
+                data: OneironByteSlice {
+                    ptr: second_payload.as_ptr(),
+                    len: second_payload.len(),
+                },
+            },
+        ];
+
+        assert_eq!(
+            oneiron_vault_batch_put_entities(vault, entries.as_ptr(), entries.len()),
+            OneironStatus::Ok
+        );
+
+        let mut bytes = OneironBuffer::empty();
+        assert_eq!(
+            oneiron_vault_get_entity(vault, first.as_ptr(), first.len(), &mut bytes),
+            OneironStatus::Ok
+        );
+        // SAFETY: `bytes` was returned by this crate and is live until freed.
+        let read_back = unsafe { slice::from_raw_parts(bytes.ptr, bytes.len) };
+        assert_eq!(read_back, first_payload);
+        assert_eq!(oneiron_buffer_free(bytes), OneironStatus::Ok);
+
+        let missing = id(112);
+        let mut missing_buffer = OneironBuffer::empty();
+        assert_eq!(
+            oneiron_vault_get_entity(vault, missing.as_ptr(), missing.len(), &mut missing_buffer,),
+            OneironStatus::NotFound
+        );
+        assert!(missing_buffer.ptr.is_null());
+        assert_eq!(missing_buffer.len, 0);
+
+        assert_eq!(
+            oneiron_vault_batch_put_entities(vault, ptr::null(), 1),
+            OneironStatus::NullArg
+        );
+
+        let mut invalid_path_vault = ptr::null_mut();
+        let invalid_path = [0xFF_u8];
+        assert_eq!(
+            oneiron_vault_open(
+                invalid_path.as_ptr(),
+                invalid_path.len(),
+                0,
+                ptr::null(),
+                0,
+                &mut invalid_path_vault,
+            ),
+            OneironStatus::Utf8
+        );
+        assert!(invalid_path_vault.is_null());
 
         assert_eq!(oneiron_vault_free(vault), OneironStatus::Ok);
     }
