@@ -369,10 +369,12 @@ fn recompute_short_id_hashes(vault: &Vault) -> Result<(u64, u64)> {
             // and `InvalidKey` for reserved sentinel patterns. Both are
             // corrupt reverse rows that must be pruned, not propagated.
             Err(Error::CorruptedIndex(_)) | Err(Error::InvalidKey) => {
-                let forward_key = parse_short_id_value(value)
-                    .ok()
-                    .map(|(short_id, hash)| encode_short_id_forward_key(short_id, hash));
-                reverse_orphans.push((key.to_vec(), forward_key));
+                // The reverse key is corrupt, so its value cannot safely name
+                // a forward row. A corrupt/aliased value could point at a
+                // healthy forward row for another entity. Fail closed: prune
+                // only this reverse row; pass 2 owns forward-row reaping from
+                // valid forward keys. (ONE-1114 delete-safety.)
+                reverse_orphans.push((key.to_vec(), None));
                 continue;
             }
             Err(other) => return Err(other),
@@ -437,6 +439,8 @@ fn recompute_short_id_hashes(vault: &Vault) -> Result<(u64, u64)> {
         vault.store.short_ids.put(&mut wtxn, forward_key, id)?;
     }
     for (reverse_key, forward_key) in &reverse_orphans {
+        // `Some(forward_key)` entries are queued only from validly keyed
+        // reverse rows; corrupt-keyed rows prune only themselves.
         if let Some(forward_key) = forward_key {
             vault.store.short_ids.delete(&mut wtxn, forward_key)?;
         }
@@ -1444,10 +1448,114 @@ mod tests {
     }
 
     #[test]
+    fn corrupt_reverse_row_never_reaps_healthy_forward_one_1114() -> Result<()> {
+        let temp_dir = tempfile::tempdir()?;
+        let vault = Vault::open(temp_dir.path(), test_config())?;
+        let healthy = entity(103);
+
+        vault
+            .batch()
+            .put(&healthy, 1, test_time_range(100, 100), 101, b"payload")
+            .commit()?;
+
+        let healthy_forward_key = {
+            let rtxn = vault.store.env.read_txn()?;
+            vault
+                .store
+                .short_ids_reverse
+                .get(&rtxn, healthy.as_bytes())?
+                .ok_or(Error::EntityNotFound)?
+                .to_vec()
+        };
+
+        // Corrupt reverse KEY (not a 16-byte entity id) with a VALUE that
+        // aliases the healthy entity's legitimate forward key. ONE-1114 pins
+        // that this row may prune only itself, never the healthy forward row.
+        let corrupt_reverse_key = b"bad-key";
+        {
+            let mut wtxn = vault.store.env.write_txn()?;
+            vault.store.short_ids_reverse.put(
+                &mut wtxn,
+                corrupt_reverse_key,
+                &healthy_forward_key,
+            )?;
+            wtxn.commit()?;
+        }
+
+        let report = vault.maintain().recompute_short_id_hashes().run()?;
+        assert_eq!(report.orphan_short_ids_deleted, 1);
+
+        let rtxn = vault.store.env.read_txn()?;
+        assert!(
+            vault
+                .store
+                .short_ids_reverse
+                .get(&rtxn, corrupt_reverse_key)?
+                .is_none(),
+            "corrupt reverse row should be pruned"
+        );
+        assert_eq!(
+            vault
+                .store
+                .short_ids_reverse
+                .get(&rtxn, healthy.as_bytes())?,
+            Some(healthy_forward_key.as_slice()),
+            "healthy reverse row must survive"
+        );
+        assert_eq!(
+            vault.store.short_ids.get(&rtxn, &healthy_forward_key)?,
+            Some(healthy.as_bytes().as_slice()),
+            "healthy forward row must not be reaped by a corrupt reverse row"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn recompute_short_id_hashes_prunes_forward_orphan_via_pass_two() -> Result<()> {
+        let temp_dir = tempfile::tempdir()?;
+        let vault = Vault::open(temp_dir.path(), test_config())?;
+        let id = entity(104);
+
+        vault
+            .batch()
+            .put(&id, 1, test_time_range(100, 100), 101, b"payload")
+            .commit()?;
+
+        let forward_key = {
+            let rtxn = vault.store.env.read_txn()?;
+            vault
+                .store
+                .short_ids_reverse
+                .get(&rtxn, id.as_bytes())?
+                .ok_or(Error::EntityNotFound)?
+                .to_vec()
+        };
+
+        {
+            let mut wtxn = vault.store.env.write_txn()?;
+            vault
+                .store
+                .short_ids_reverse
+                .delete(&mut wtxn, id.as_bytes())?;
+            wtxn.commit()?;
+        }
+
+        let report = vault.maintain().recompute_short_id_hashes().run()?;
+        assert_eq!(report.orphan_short_ids_deleted, 1);
+
+        let rtxn = vault.store.env.read_txn()?;
+        assert!(
+            vault.store.short_ids.get(&rtxn, &forward_key)?.is_none(),
+            "forward-only orphan should be reaped by pass 2"
+        );
+        Ok(())
+    }
+
+    #[test]
     fn rebuild_hnsw_heal_invalid_vectors_skips_reserved_id_rows() -> Result<()> {
         let temp_dir = tempfile::tempdir()?;
         let vault = Vault::open(temp_dir.path(), test_config())?;
-        let live = entity(103);
+        let live = entity(105);
 
         vault.put_entity(&live, 1, test_time_range(1, 1), 1, b"node")?;
         vault.put_vector(&live, &[1.0, 0.0, 0.0, 0.0])?;
