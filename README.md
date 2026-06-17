@@ -55,6 +55,50 @@ vault.put_entity(&id, b"msgpack blob")?;
 vault.put_vector(&id, &embedding)?;
 ```
 
+## Install
+
+Install the local daemon from crates.io after publication:
+
+```sh
+cargo install oneiron-server
+```
+
+From a checkout:
+
+```sh
+cargo install --path crates/oneiron-server
+```
+
+One-line install from GitHub:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/oneiron-dev/oneiron/main/deploy/install-oneiron-server.sh | sh
+```
+
+Create and inspect the default local vault:
+
+```sh
+oneiron-server init ~/.local/share/oneiron/default
+oneiron-server doctor ~/.local/share/oneiron/default
+```
+
+Run the daemon:
+
+```sh
+oneiron-server serve --vault-path ~/.local/share/oneiron/default
+```
+
+`serve` also remains the default command for the existing flags:
+
+```sh
+oneiron-server --vault-path ~/.local/share/oneiron/default --port 9090
+```
+
+The default service vault convention is
+`~/.local/share/oneiron/default/`. `oneiron-server serve` reads
+`~/.config/oneiron/oneiron.toml` when present; file values are overridden by
+`ONEIRON_*` environment variables and then by CLI flags.
+
 ## Building
 
 ```sh
@@ -92,7 +136,7 @@ Full details in the design docs:
 
 - [`SCHEMA-DESIGN.md`](./SCHEMA-DESIGN.md) — database layout, key formats, encoding
 - [`BUILD-PROMPT.md`](./BUILD-PROMPT.md) — architecture, algorithms, API surface
-- [`DEPLOYMENT.md`](./DEPLOYMENT.md) — multi-vault deployment, ML infrastructure
+- [`DEPLOYMENT.md`](./DEPLOYMENT.md) — local daemon install, config, and service templates
 
 ## License
 
