@@ -1,0 +1,16 @@
+[Unit]
+Description=Oneiron local sync daemon
+Documentation=https://github.com/oneiron-dev/oneiron
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=%h/.cargo/bin/oneiron-server serve --vault-path %h/.local/share/oneiron/default --config %h/.config/oneiron/oneiron.toml
+Restart=on-failure
+RestartSec=5s
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=default.target
