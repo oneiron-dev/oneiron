@@ -11,6 +11,8 @@
 
 mod api;
 mod broadcast;
+pub mod cli;
+pub mod commands;
 pub mod config;
 mod handler;
 mod protocol;
