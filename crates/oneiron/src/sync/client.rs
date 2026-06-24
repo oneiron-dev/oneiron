@@ -1048,6 +1048,7 @@ pub fn next_backoff(current_ms: u32, max_ms: u32) -> u32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use core::assert_matches;
     use loro::{Container, ExportMode, LoroMap, ValueOrContainer};
 
     use crate::batch::ENTITY_METADATA_HEADER_LEN;
@@ -1146,14 +1147,14 @@ mod tests {
     fn sync_client_rejects_invalid_window_creation() {
         let manager = test_manager();
         let (client, _rx) = test_client(&manager);
-        assert!(matches!(
-            client.ensure_window("2026-13"),
-            Err(TransportError::InvalidWindowKey)
-        ));
-        assert!(matches!(
-            client.ensure_window("1969-12"),
-            Err(TransportError::InvalidWindowKey)
-        ));
+        let Err(err) = client.ensure_window("2026-13") else {
+            panic!("expected invalid window key");
+        };
+        assert_matches!(err, TransportError::InvalidWindowKey);
+        let Err(err) = client.ensure_window("1969-12") else {
+            panic!("expected invalid window key");
+        };
+        assert_matches!(err, TransportError::InvalidWindowKey);
     }
 
     #[test]
@@ -1555,16 +1556,16 @@ mod tests {
             "queued ops must land in the local doc before replay"
         );
 
-        assert!(matches!(
+        assert_matches!(
             client.import_queued_update(key, &[0xFF, 0xFE, 0xFD]),
             Err(TransportError::InvalidPayload(
                 "queued update import failed"
             ))
-        ));
-        assert!(matches!(
+        );
+        assert_matches!(
             client.import_queued_update("2026-13", &update),
             Err(TransportError::InvalidWindowKey)
-        ));
+        );
     }
 
     /// ONE-1128 AC2: the re-bootstrap drops ALL in-memory docs and produces
@@ -1698,11 +1699,8 @@ mod tests {
         let mut msg = vec![TAG_SYNC_UPDATE];
         msg.extend_from_slice(&vec![0u8; MAX_DECODED_PAYLOAD_BYTES + 1]);
 
-        assert!(matches!(
-            client.handle_server_message(&msg),
-            Err(TransportError::FrameTooLarge { size, max })
-                if size == MAX_DECODED_PAYLOAD_BYTES + 1 && max == MAX_DECODED_PAYLOAD_BYTES
-        ));
+        assert_matches!(client.handle_server_message(&msg), Err(TransportError::FrameTooLarge { size, max })
+                if size == MAX_DECODED_PAYLOAD_BYTES + 1 && max == MAX_DECODED_PAYLOAD_BYTES);
     }
 
     #[test]
@@ -1852,13 +1850,13 @@ mod tests {
         let err = client
             .handle_server_message(&msg)
             .expect_err("injected mirror failure must abort root persistence");
-        match err {
-            TransportError::Storage(message) => assert!(
-                message.contains("injected lease mirror failure"),
-                "original txn error must surface, got {message}"
-            ),
-            other => panic!("expected storage error, got {other:?}"),
-        }
+        let TransportError::Storage(message) = err else {
+            panic!("expected storage error, got {err:?}");
+        };
+        assert!(
+            message.contains("injected lease mirror failure"),
+            "original txn error must surface, got {message}"
+        );
 
         assert_eq!(
             client.root_doc.state_frontiers(),

@@ -826,14 +826,14 @@ impl SyncConnection {
                 // Local update from application
                 update = local_rx.recv() => {
                     match update {
+                        Some(local_update) if parse_window_key_str(&local_update.window_key).is_none() => {
+                            let _ = event_tx.send(SyncEvent::Error(format!(
+                                "Rejected invalid local update window key: {}",
+                                local_update.window_key
+                            )));
+                            continue;
+                        }
                         Some(local_update) => {
-                            if parse_window_key_str(&local_update.window_key).is_none() {
-                                let _ = event_tx.send(SyncEvent::Error(format!(
-                                    "Rejected invalid local update window key: {}",
-                                    local_update.window_key
-                                )));
-                                continue;
-                            }
                             debounce_buffer.push(local_update);
                             debounce_deadline = Some(Instant::now() + Duration::from_millis(debounce_ms));
                         }
@@ -936,6 +936,7 @@ mod tests {
     use crate::Vault;
     use crate::sync::bridge::Materializer;
     use crate::types::VaultConfig;
+    use core::assert_matches;
 
     fn test_manager() -> Arc<WindowManager> {
         let dir = tempfile::tempdir().unwrap();
@@ -1013,10 +1014,7 @@ mod tests {
             "inspection error must not drop in-memory docs"
         );
         let event = event_rx.try_recv().unwrap();
-        assert!(matches!(
-            event,
-            SyncEvent::Error(msg) if msg.contains("Queue inspection failed")
-        ));
+        assert_matches!(event, SyncEvent::Error(msg) if msg.contains("Queue inspection failed"));
     }
 
     #[test]
@@ -1033,10 +1031,10 @@ mod tests {
             rounds_started: 0,
         };
 
-        assert!(matches!(
+        assert_matches!(
             session.begin_round(&mut client),
             Err(TransportError::InvalidWindowKey)
-        ));
+        );
     }
 
     // ───────────────────────────────────────────────────────────────────────
@@ -1631,9 +1629,6 @@ mod tests {
         drop(rtxn);
 
         let event = event_rx.try_recv().unwrap();
-        assert!(matches!(
-            event,
-            SyncEvent::Error(msg) if msg.contains("re-bootstrap")
-        ));
+        assert_matches!(event, SyncEvent::Error(msg) if msg.contains("re-bootstrap"));
     }
 }

@@ -1009,13 +1009,11 @@ fn execute_phonetic(
             return Err(Error::CorruptedIndex("phonetic posting"));
         }
 
-        for chunk in posting.chunks_exact(ENTITY_ID_LEN) {
-            let id = EntityId::from_bytes(
-                chunk
-                    .try_into()
-                    .map_err(|_| Error::CorruptedIndex("phonetic posting"))?,
-            )
-            .map_err(|_| Error::CorruptedIndex("phonetic posting"))?;
+        let (chunks, rem) = posting.as_chunks::<ENTITY_ID_LEN>();
+        debug_assert!(rem.is_empty());
+        for bytes in chunks {
+            let id = EntityId::from_bytes(*bytes)
+                .map_err(|_| Error::CorruptedIndex("phonetic posting"))?;
             let entry = accumulators.entry(id).or_default();
             entry.score += 1.0;
             entry.matches += 1;
@@ -1808,6 +1806,7 @@ fn combine_proximity(mode: TemporalAnchorMode, occurred: f64, learned: f64, floo
 
 #[cfg(test)]
 mod tests {
+    use core::assert_matches;
     use std::collections::HashMap;
 
     use heed::types::Bytes;
@@ -2073,10 +2072,10 @@ mod tests {
         let seeds = vec![entity_id(1); crate::ppr::MAX_PPR_SEEDS + 1];
 
         let too_many_seeds = vault.query().search_ppr(&seeds, 3).run();
-        assert!(matches!(too_many_seeds, Err(Error::InvalidConfig(_))));
+        assert_matches!(too_many_seeds, Err(Error::InvalidConfig(_)));
 
         let too_deep = vault.query().search_ppr(&[entity_id(1)], 11).run();
-        assert!(matches!(too_deep, Err(Error::InvalidConfig(_))));
+        assert_matches!(too_deep, Err(Error::InvalidConfig(_)));
     }
 
     #[test]

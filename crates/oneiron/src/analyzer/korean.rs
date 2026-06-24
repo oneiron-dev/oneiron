@@ -152,9 +152,8 @@ impl KoreanAnalyzer {
         position_base: u32,
         out: &mut Vec<Token>,
     ) -> u32 {
-        let tokens = match seg.segment(Cow::Borrowed(text)) {
-            Ok(v) => v,
-            Err(_) => return cjk_ngram::analyze(text, offset_base, position_base, out),
+        let Ok(tokens) = seg.segment(Cow::Borrowed(text)) else {
+            return cjk_ngram::analyze(text, offset_base, position_base, out);
         };
 
         let mut position = position_base;

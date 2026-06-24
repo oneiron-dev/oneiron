@@ -1915,6 +1915,7 @@ impl Vault {
     ///   finds nothing, so re-application (every-boot forward
     ///   re-materialization, repeated delta delivery) is a receipt-free
     ///   no-op.
+    #[cfg_attr(not(feature = "sync"), allow(dead_code))]
     pub(crate) fn apply_replayed_tombstone(
         &self,
         id: &EntityId,
@@ -2031,6 +2032,7 @@ impl Vault {
     /// tombstone-map manipulation (a removed tombstone + re-put entity must
     /// not resurrect). The value is NEVER decoded (pinned presence-only
     /// semantics).
+    #[cfg_attr(not(feature = "sync"), allow(dead_code))]
     pub(crate) fn local_hard_delete_marker_exists_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
@@ -2259,6 +2261,7 @@ impl Vault {
     }
 
     #[cfg(not(feature = "sync"))]
+    #[allow(clippy::unnecessary_wraps)]
     fn write_crdt_tombstone(
         &self,
         _id: &EntityId,
@@ -3901,6 +3904,7 @@ pub(crate) fn parse_edge_record(key: &[u8], value: &[u8]) -> Result<EdgeInfo> {
 
 #[cfg(test)]
 mod tests {
+    use core::assert_matches;
     use std::path::PathBuf;
 
     use super::*;
@@ -4257,10 +4261,10 @@ mod tests {
             wtxn.commit()?;
         }
 
-        assert!(matches!(
-            Vault::open(tmp.path(), test_config()),
-            Err(Error::IncompatibleAnalyzer { .. })
-        ));
+        let Err(err) = Vault::open(tmp.path(), test_config()) else {
+            panic!("expected incompatible analyzer rejection");
+        };
+        assert_matches!(err, Error::IncompatibleAnalyzer { .. });
 
         // Bypass the handshake just long enough to rebuild.
         {

@@ -1,3 +1,4 @@
+use core::assert_matches;
 use std::collections::HashSet;
 use std::path::Path;
 use std::str;
@@ -1934,7 +1935,7 @@ fn hard_delete_persists_crdt_tombstone_before_active_purge() -> Result<()> {
     let err = vault
         .delete_entity_with_reason(&id, DeleteReason::UserHardDelete)
         .expect_err("corrupted edge record should fail active purge");
-    assert!(matches!(err, Error::CorruptedIndex("edge record")));
+    assert_matches!(err, Error::CorruptedIndex("edge record"));
     assert!(
         vault.entity_exists(&id)?,
         "active purge failed, so entity payload should remain for retry"
@@ -2105,13 +2106,13 @@ fn put_get_vectors_and_validate_dimensions() -> Result<()> {
     let err = vault
         .put_vector(&EntityId::now(), &bad)
         .expect_err("expected dimension mismatch");
-    assert!(matches!(
+    assert_matches!(
         err,
         Error::DimensionMismatch {
             expected: 4,
             got: 3
         }
-    ));
+    );
 
     Ok(())
 }
@@ -2180,13 +2181,13 @@ fn search_vector_empty_graph_and_dimension_validation() -> Result<()> {
     let err = vault
         .search_vector(&[1.0_f32, 2.0, 3.0], 5)
         .expect_err("expected dimension mismatch");
-    assert!(matches!(
+    assert_matches!(
         err,
         Error::DimensionMismatch {
             expected: 4,
             got: 3
         }
-    ));
+    );
     Ok(())
 }
 
@@ -2269,13 +2270,11 @@ fn validates_non_finite_vector_and_edge_weights() {
         .put_vector(&EntityId::now(), &[1.0_f32, f32::NAN, 2.0, 3.0])
         .expect_err("expected invalid vector");
     let vector_message = vector_err.to_string();
-    match vector_err {
-        Error::InvalidVector { index, value } => {
-            assert_eq!(index, 1);
-            assert!(value.is_nan());
-        }
-        other => panic!("expected invalid vector, got {other:?}"),
-    }
+    let Error::InvalidVector { index, value } = vector_err else {
+        panic!("expected invalid vector, got {vector_err:?}");
+    };
+    assert_eq!(index, 1);
+    assert!(value.is_nan());
     assert!(vector_message.contains("index 1"));
     assert!(vector_message.contains("NaN"));
 
@@ -2288,10 +2287,10 @@ fn validates_non_finite_vector_and_edge_weights() {
         )
         .expect_err("expected invalid edge weight");
     let edge_message = edge_err.to_string();
-    match edge_err {
-        Error::InvalidEdgeWeight { value } => assert!(value.is_infinite()),
-        other => panic!("expected invalid edge weight, got {other:?}"),
-    }
+    let Error::InvalidEdgeWeight { value } = edge_err else {
+        panic!("expected invalid edge weight, got {edge_err:?}");
+    };
+    assert!(value.is_infinite());
     assert!(edge_message.contains("inf"));
 }
 
@@ -2909,8 +2908,10 @@ fn open_rejects_newer_long_interval_schema_version() -> Result<()> {
     wtxn.commit()?;
     drop(vault);
 
-    let reopened = Vault::open(path, test_config());
-    assert!(matches!(reopened, Err(Error::InvalidKey)));
+    let Err(err) = Vault::open(path, test_config()) else {
+        panic!("expected invalid key");
+    };
+    assert_matches!(err, Error::InvalidKey);
     Ok(())
 }
 
@@ -2958,10 +2959,10 @@ fn open_checks_model_id_before_migrating_long_interval_schema() -> Result<()> {
 
     let mut mismatch_cfg = test_config();
     mismatch_cfg.embedding_model = Some("model-b".to_owned());
-    assert!(matches!(
-        Vault::open(path, mismatch_cfg),
-        Err(Error::EmbeddingModelChanged { .. })
-    ));
+    let Err(err) = Vault::open(path, mismatch_cfg) else {
+        panic!("expected embedding model change rejection");
+    };
+    assert_matches!(err, Error::EmbeddingModelChanged { .. });
 
     let cfg = test_config();
     let _guard = lmdb_database_open_guard()?;
@@ -3992,7 +3993,7 @@ fn delete_entity_corrupted_edge_record_returns_error_not_panic() -> Result<()> {
     let err = vault
         .delete_entity(&id)
         .expect_err("corrupted edge record should fail loud");
-    assert!(matches!(err, Error::CorruptedIndex("edge record")));
+    assert_matches!(err, Error::CorruptedIndex("edge record"));
     Ok(())
 }
 
@@ -4085,7 +4086,7 @@ fn get_learned_at_rejects_truncated_entity_header() -> Result<()> {
     let err = vault
         .get_learned_at(&id)
         .expect_err("truncated entity header should fail loud");
-    assert!(matches!(err, Error::CorruptedIndex("entity header")));
+    assert_matches!(err, Error::CorruptedIndex("entity header"));
 
     Ok(())
 }
@@ -4100,7 +4101,7 @@ fn validates_dimensions_hnsw_and_map_size() -> Result<()> {
         Ok(_) => panic!("expected invalid config"),
         Err(err) => err,
     };
-    assert!(matches!(err, Error::InvalidConfig(_)));
+    assert_matches!(err, Error::InvalidConfig(_));
 
     let mut invalid_hnsw = test_config();
     invalid_hnsw.hnsw.m_max_0 = 0;
@@ -4108,10 +4109,7 @@ fn validates_dimensions_hnsw_and_map_size() -> Result<()> {
         Ok(_) => panic!("expected invalid config"),
         Err(err) => err,
     };
-    assert!(matches!(
-        err,
-        Error::InvalidConfig(ref message) if message == "hnsw m_max_0 must be greater than zero"
-    ));
+    assert_matches!(err, Error::InvalidConfig(ref message) if message == "hnsw m_max_0 must be greater than zero");
 
     let mut invalid_map = test_config();
     invalid_map.map_size = 0;
@@ -4119,7 +4117,7 @@ fn validates_dimensions_hnsw_and_map_size() -> Result<()> {
         Ok(_) => panic!("expected invalid config"),
         Err(err) => err,
     };
-    assert!(matches!(err, Error::InvalidConfig(_)));
+    assert_matches!(err, Error::InvalidConfig(_));
     Ok(())
 }
 
@@ -4132,7 +4130,7 @@ fn vault_open_rejects_second_live_env_for_same_path() -> Result<()> {
     let Err(err) = Vault::open(path, test_config()) else {
         panic!("expected second live vault open to fail");
     };
-    assert!(matches!(err, Error::InvalidConfig(ref message) if message.contains("already open")));
+    assert_matches!(err, Error::InvalidConfig(ref message) if message.contains("already open"));
 
     drop(first_vault);
     let reopened = Vault::open(path, test_config())?;
@@ -4153,7 +4151,7 @@ fn vault_open_rejects_second_live_env_for_symlinked_path() -> Result<()> {
     let Err(err) = Vault::open(&link_path, test_config()) else {
         panic!("expected symlinked second live vault open to fail");
     };
-    assert!(matches!(err, Error::InvalidConfig(ref message) if message.contains("already open")));
+    assert_matches!(err, Error::InvalidConfig(ref message) if message.contains("already open"));
 
     drop(first_vault);
     let reopened = Vault::open(&link_path, test_config())?;
@@ -4334,11 +4332,8 @@ fn rejects_populated_vault_missing_embedding_model_identity() -> Result<()> {
     let Err(err) = Vault::open(path, cfg) else {
         panic!("expected missing embedding model identity rejection");
     };
-    assert!(matches!(
-        err,
-        Error::InvalidConfig(ref message)
-            if message.contains("missing embedding model identity")
-    ));
+    assert_matches!(err, Error::InvalidConfig(ref message)
+            if message.contains("missing embedding model identity"));
 
     Ok(())
 }
@@ -4365,11 +4360,8 @@ fn rejects_vault_missing_model_identity_when_hnsw_meta_marks_population() -> Res
     let Err(err) = Vault::open(path, cfg) else {
         panic!("expected missing embedding model identity rejection");
     };
-    assert!(matches!(
-        err,
-        Error::InvalidConfig(ref message)
-            if message.contains("missing embedding model identity")
-    ));
+    assert_matches!(err, Error::InvalidConfig(ref message)
+            if message.contains("missing embedding model identity"));
 
     Ok(())
 }
@@ -4391,11 +4383,8 @@ fn rejects_populated_vault_open_without_requested_embedding_model() -> Result<()
     let Err(err) = Vault::open(path, cfg) else {
         panic!("expected missing requested embedding model rejection");
     };
-    assert!(matches!(
-        err,
-        Error::InvalidConfig(ref message)
-            if message.contains("embedding model is required to open")
-    ));
+    assert_matches!(err, Error::InvalidConfig(ref message)
+            if message.contains("embedding model is required to open"));
 
     Ok(())
 }
@@ -4416,13 +4405,10 @@ fn detects_embedding_model_mismatch_on_populated_open() -> Result<()> {
     let Err(err) = Vault::open(temp_dir.path(), cfg) else {
         panic!("expected mismatch");
     };
-    assert!(matches!(
-        err,
-        Error::EmbeddingModelChanged {
+    assert_matches!(err, Error::EmbeddingModelChanged {
             ref stored,
             ref requested
-        } if stored == "model-a" && requested == "model-b"
-    ));
+        } if stored == "model-a" && requested == "model-b");
 
     Ok(())
 }
@@ -4439,11 +4425,8 @@ fn rejects_vector_write_without_embedding_model_identity() -> Result<()> {
     let Err(err) = vault.put_vector(&id, &[0.1, 0.2, 0.3, 0.4]) else {
         panic!("expected missing embedding model rejection");
     };
-    assert!(matches!(
-        err,
-        Error::InvalidConfig(ref message)
-            if message.contains("embedding model is required before writing vectors")
-    ));
+    assert_matches!(err, Error::InvalidConfig(ref message)
+            if message.contains("embedding model is required before writing vectors"));
     assert_eq!(vault.get_vector(&id)?, None);
 
     Ok(())
@@ -4503,14 +4486,11 @@ fn rejects_populated_vault_with_legacy_hnsw_compatibility_record() -> Result<()>
     let Err(err) = Vault::open(path, cfg) else {
         panic!("expected legacy hnsw compatibility rejection");
     };
-    assert!(matches!(
-        err,
-        Error::HnswConfigChanged {
+    assert_matches!(err, Error::HnswConfigChanged {
             ref stored,
             ref requested
         } if stored == "dimensions=4,m_max_0=64,ef_construction=200,distance_metric=missing,index_structure=missing"
-            && requested == "dimensions=4,m_max_0=64,ef_construction=200,distance_metric=cosine,index_structure=flat_nsw"
-    ));
+            && requested == "dimensions=4,m_max_0=64,ef_construction=200,distance_metric=cosine,index_structure=flat_nsw");
     Ok(())
 }
 
@@ -4527,14 +4507,11 @@ fn detects_hnsw_metric_and_structure_mismatch_on_open() -> Result<()> {
     let Err(err) = Vault::open(temp_dir.path(), test_config()) else {
         panic!("expected hnsw metric/structure mismatch");
     };
-    assert!(matches!(
-        err,
-        Error::HnswConfigChanged {
+    assert_matches!(err, Error::HnswConfigChanged {
             ref stored,
             ref requested
         } if stored == "dimensions=4,m_max_0=64,ef_construction=200,distance_metric=unknown(2),index_structure=unknown(2)"
-            && requested == "dimensions=4,m_max_0=64,ef_construction=200,distance_metric=cosine,index_structure=flat_nsw"
-    ));
+            && requested == "dimensions=4,m_max_0=64,ef_construction=200,distance_metric=cosine,index_structure=flat_nsw");
     Ok(())
 }
 
@@ -4617,11 +4594,8 @@ fn rejects_populated_vault_missing_hnsw_compatibility_metadata() -> Result<()> {
     let Err(err) = Vault::open(path, test_config()) else {
         panic!("expected missing compatibility metadata rejection");
     };
-    assert!(matches!(
-        err,
-        Error::InvalidConfig(ref message)
-            if message.contains("missing complete vector/hnsw compatibility metadata")
-    ));
+    assert_matches!(err, Error::InvalidConfig(ref message)
+            if message.contains("missing complete vector/hnsw compatibility metadata"));
     Ok(())
 }
 
@@ -4639,10 +4613,10 @@ fn embedding_model_first_write_is_atomic() -> Result<()> {
 
     let mut cfg2 = test_config();
     cfg2.embedding_model = Some("model-y".to_owned());
-    assert!(matches!(
-        Vault::open(temp_dir.path(), cfg2),
-        Err(Error::EmbeddingModelChanged { .. })
-    ));
+    let Err(err) = Vault::open(temp_dir.path(), cfg2) else {
+        panic!("expected embedding model change rejection");
+    };
+    assert_matches!(err, Error::EmbeddingModelChanged { .. });
 
     Ok(())
 }
@@ -6204,16 +6178,14 @@ fn put_edge_with_vad_rejects_non_finite() {
 
 fn assert_invalid_vad(err: Error, expected_component: VadComponent, expected_value: f32) {
     let message = err.to_string();
-    match err {
-        Error::InvalidVad { component, value } => {
-            assert_eq!(component, expected_component);
-            if expected_value.is_nan() {
-                assert!(value.is_nan());
-            } else {
-                assert_eq!(value, expected_value);
-            }
-        }
-        other => panic!("expected invalid vad, got {other:?}"),
+    let Error::InvalidVad { component, value } = err else {
+        panic!("expected invalid vad, got {err:?}");
+    };
+    assert_eq!(component, expected_component);
+    if expected_value.is_nan() {
+        assert!(value.is_nan());
+    } else {
+        assert_eq!(value, expected_value);
     }
 
     assert!(message.contains(&format!("{expected_component:?}")));
@@ -7009,19 +6981,17 @@ fn default_weight_matches_contract_ppr_weight_literals() {
 #[test]
 fn edge_weight_outside_unit_range_rejected_at_write() -> Result<()> {
     fn assert_invalid_weight(err: Error, rejected: f32) {
-        match err {
-            Error::InvalidEdgeWeight { value } => {
-                if rejected.is_nan() {
-                    assert!(value.is_nan(), "error payload must echo NaN, got {value}");
-                } else {
-                    assert_eq!(
-                        value.to_bits(),
-                        rejected.to_bits(),
-                        "error payload must echo the rejected weight"
-                    );
-                }
-            }
-            other => panic!("expected InvalidEdgeWeight for {rejected}, got {other:?}"),
+        let Error::InvalidEdgeWeight { value } = err else {
+            panic!("expected InvalidEdgeWeight for {rejected}, got {err:?}");
+        };
+        if rejected.is_nan() {
+            assert!(value.is_nan(), "error payload must echo NaN, got {value}");
+        } else {
+            assert_eq!(
+                value.to_bits(),
+                rejected.to_bits(),
+                "error payload must echo the rejected weight"
+            );
         }
     }
 
@@ -7117,7 +7087,7 @@ fn entities_by_type_rejects_corrupted_type_index_key() -> Result<()> {
         let err = vault
             .entities_by_type(entity_type)
             .expect_err("short type index key should fail loud");
-        assert!(matches!(err, Error::CorruptedIndex("type index key")));
+        assert_matches!(err, Error::CorruptedIndex("type index key"));
     }
 
     {
@@ -7133,7 +7103,7 @@ fn entities_by_type_rejects_corrupted_type_index_key() -> Result<()> {
         let err = vault
             .entities_by_type(entity_type)
             .expect_err("reserved-id type index key should fail loud");
-        assert!(matches!(err, Error::CorruptedIndex("type index key")));
+        assert_matches!(err, Error::CorruptedIndex("type index key"));
     }
 
     Ok(())
@@ -7168,7 +7138,7 @@ fn entities_by_type_allows_exact_cap_and_overflows_on_next_row() -> Result<()> {
     let err = vault
         .entities_by_type(ENTITY_TYPE_TASK_LIST)
         .expect_err("type scan should fail loud once cap is exceeded");
-    assert!(matches!(err, Error::IndexOverflow("entities_by_type")));
+    assert_matches!(err, Error::IndexOverflow("entities_by_type"));
     Ok(())
 }
 
@@ -7272,12 +7242,12 @@ fn targets_and_sources_overflow_when_peer_cap_exceeded() -> Result<()> {
     let targets_err = vault
         .targets(&src, EdgeKind::BelongsTo, None)
         .expect_err("targets should fail loud once cap is exceeded");
-    assert!(matches!(targets_err, Error::IndexOverflow("targets")));
+    assert_matches!(targets_err, Error::IndexOverflow("targets"));
 
     let sources_err = vault
         .sources(&tgt, EdgeKind::BelongsTo, None)
         .expect_err("sources should fail loud once cap is exceeded");
-    assert!(matches!(sources_err, Error::IndexOverflow("sources")));
+    assert_matches!(sources_err, Error::IndexOverflow("sources"));
     Ok(())
 }
 
@@ -7318,12 +7288,12 @@ fn targets_and_sources_fail_loud_when_type_filter_overscans_peer_cap() -> Result
     let targets_err = vault
         .targets(&src, EdgeKind::BelongsTo, Some(ENTITY_TYPE_TASK_LIST))
         .expect_err("type-filtered targets should fail loud once scan cap is exceeded");
-    assert!(matches!(targets_err, Error::IndexOverflow("targets")));
+    assert_matches!(targets_err, Error::IndexOverflow("targets"));
 
     let sources_err = vault
         .sources(&tgt, EdgeKind::BelongsTo, Some(ENTITY_TYPE_TASK_LIST))
         .expect_err("type-filtered sources should fail loud once scan cap is exceeded");
-    assert!(matches!(sources_err, Error::IndexOverflow("sources")));
+    assert_matches!(sources_err, Error::IndexOverflow("sources"));
     Ok(())
 }
 
@@ -7425,7 +7395,7 @@ fn subtree_allows_exact_cap_and_overflows_on_next_descendant() -> Result<()> {
     let err = vault
         .subtree(&root, 1)
         .expect_err("subtree should fail loud once cap is exceeded");
-    assert!(matches!(err, Error::IndexOverflow("subtree")));
+    assert_matches!(err, Error::IndexOverflow("subtree"));
     Ok(())
 }
 
@@ -7520,8 +7490,8 @@ fn test_deep_ancestor_chain() -> Result<()> {
             );
         }
         // Build ChildOf edges: node[i+1] --ChildOf--> node[i]
-        for i in 0..DEPTH {
-            batch = batch.edge(&nodes[i + 1], EdgeKind::ChildOf, &nodes[i], 1.0);
+        for [parent, child] in nodes.array_windows::<2>() {
+            batch = batch.edge(child, EdgeKind::ChildOf, parent, 1.0);
         }
         batch.commit()?;
     }
@@ -7574,9 +7544,8 @@ fn ancestors_and_cycle_checks_overflow_on_depth_cap() -> Result<()> {
         .collect();
 
     vault.with_write_txn(|wtxn| {
-        for i in 0..ANCESTOR_CAP {
-            let key =
-                Store::encode_edge_key(&exact_nodes[i + 1], EdgeKind::ChildOf, &exact_nodes[i]);
+        for [parent, child] in exact_nodes.array_windows::<2>() {
+            let key = Store::encode_edge_key(child, EdgeKind::ChildOf, parent);
             vault.store.edges_out.put(wtxn, &key, &value)?;
         }
         Ok(())
@@ -7595,26 +7564,20 @@ fn ancestors_and_cycle_checks_overflow_on_depth_cap() -> Result<()> {
     let anc_err = vault
         .ancestors(&exact_nodes[ANCESTOR_CAP])
         .expect_err("ancestors should fail loud once depth cap is exceeded");
-    assert!(matches!(anc_err, Error::IndexOverflow("ancestors")));
+    assert_matches!(anc_err, Error::IndexOverflow("ancestors"));
 
     let unrelated = seeded_entity_id(3_000_000);
     let cycle_err = vault
         .would_create_cycle(&unrelated, &exact_nodes[ANCESTOR_CAP])
         .expect_err("public cycle check should fail loud once depth cap is exceeded");
-    assert!(matches!(
-        cycle_err,
-        Error::IndexOverflow("child_of_cycle_check")
-    ));
+    assert_matches!(cycle_err, Error::IndexOverflow("child_of_cycle_check"));
 
     let batch_err = vault
         .batch()
         .edge_checked(&unrelated, &exact_nodes[ANCESTOR_CAP], 1.0)
         .commit()
         .expect_err("batch cycle check should fail loud once depth cap is exceeded");
-    assert!(matches!(
-        batch_err,
-        Error::IndexOverflow("child_of_cycle_check")
-    ));
+    assert_matches!(batch_err, Error::IndexOverflow("child_of_cycle_check"));
     Ok(())
 }
 
@@ -7631,8 +7594,8 @@ fn cycle_checks_fail_loud_before_positive_match_beyond_traversal_cap() -> Result
         .collect();
 
     vault.with_write_txn(|wtxn| {
-        for i in 0..=TRAVERSAL_CAP {
-            let key = Store::encode_edge_key(&nodes[i + 1], EdgeKind::ChildOf, &nodes[i]);
+        for [parent, child] in nodes.array_windows::<2>() {
+            let key = Store::encode_edge_key(child, EdgeKind::ChildOf, parent);
             vault.store.edges_out.put(wtxn, &key, &value)?;
         }
         Ok(())
@@ -7641,20 +7604,14 @@ fn cycle_checks_fail_loud_before_positive_match_beyond_traversal_cap() -> Result
     let public_err = vault
         .would_create_cycle(&nodes[0], &nodes[TRAVERSAL_CAP + 1])
         .expect_err("public cycle check should overflow before reporting a deep positive match");
-    assert!(matches!(
-        public_err,
-        Error::IndexOverflow("child_of_cycle_check")
-    ));
+    assert_matches!(public_err, Error::IndexOverflow("child_of_cycle_check"));
 
     let batch_err = vault
         .batch()
         .edge_checked(&nodes[0], &nodes[TRAVERSAL_CAP + 1], 1.0)
         .commit()
         .expect_err("batch cycle check should overflow before reporting a deep positive match");
-    assert!(matches!(
-        batch_err,
-        Error::IndexOverflow("child_of_cycle_check")
-    ));
+    assert_matches!(batch_err, Error::IndexOverflow("child_of_cycle_check"));
     Ok(())
 }
 
@@ -7820,7 +7777,7 @@ fn generic_child_of_writes_reject_cycles() -> Result<()> {
     let err = vault
         .put_edge(&a, EdgeKind::ChildOf, &c, 1.0)
         .expect_err("generic ChildOf write should reject cycles");
-    assert!(matches!(err, Error::CycleDetected));
+    assert_matches!(err, Error::CycleDetected);
     assert!(!vault.edge_exists(&a, EdgeKind::ChildOf, &c)?);
     Ok(())
 }
@@ -7846,7 +7803,7 @@ fn generic_child_of_writes_reject_second_parent() -> Result<()> {
         .edge(&child, EdgeKind::ChildOf, &parent_b, 1.0)
         .commit()
         .expect_err("generic ChildOf write should reject second parent");
-    assert!(matches!(err, Error::ChildOfCardinality));
+    assert_matches!(err, Error::ChildOfCardinality);
     assert!(!vault.edge_exists(&child, EdgeKind::ChildOf, &parent_b)?);
 
     vault.put_edge(&child, EdgeKind::ChildOf, &parent_a, 0.5)?;
@@ -8297,16 +8254,16 @@ fn find_short_id_any_schema(vault: &Vault, id: &EntityId) -> Result<Option<Strin
         for entry in db.iter(&rtxn)? {
             let (key, value) = entry?;
             // Orientation 1: entity_id -> short_id (+ hash).
-            if key == id.as_bytes() {
-                if let Some(short_id) = parse_with_optional_hash(value) {
-                    return Ok(Some(short_id));
-                }
+            if key == id.as_bytes()
+                && let Some(short_id) = parse_with_optional_hash(value)
+            {
+                return Ok(Some(short_id));
             }
             // Orientation 2: short_id (+ hash) -> entity_id.
-            if value == id.as_bytes() {
-                if let Some(short_id) = parse_with_optional_hash(key) {
-                    return Ok(Some(short_id));
-                }
+            if value == id.as_bytes()
+                && let Some(short_id) = parse_with_optional_hash(key)
+            {
+                return Ok(Some(short_id));
             }
         }
     }
@@ -10184,12 +10141,12 @@ fn claim_lifecycle_ops_reject_already_closed_claims() -> Result<()> {
         .supersede_claim(&c, &a, T2)
         .expect_err("a is closed history");
     assert_eq!(err.kind(), ErrorKind::ClaimAlreadyClosed);
-    assert!(matches!(
+    assert_matches!(
         err,
         Error::ClaimAlreadyClosed {
             status: ClaimLifecycleStatus::Superseded
         }
-    ));
+    );
     let a_read = vault.get_claim(&a)?.expect("a");
     assert_eq!(
         a_read.valid_to,
@@ -10220,12 +10177,12 @@ fn claim_lifecycle_ops_reject_already_closed_claims() -> Result<()> {
         .retract_claim(&c, T2)
         .expect_err("double retract must fail typed");
     assert_eq!(err.kind(), ErrorKind::ClaimAlreadyClosed);
-    assert!(matches!(
+    assert_matches!(
         err,
         Error::ClaimAlreadyClosed {
             status: ClaimLifecycleStatus::Retracted
         }
-    ));
+    );
     assert_eq!(vault.get_claim(&c)?.expect("c").valid_to, Some(T1));
 
     // Superseding a retracted claim → already-closed.
@@ -11364,16 +11321,15 @@ fn provenance_lifecycle_negative_paths_fail_closed() -> Result<()> {
     let err = vault
         .put_edge_provenance(&new_id, &subject, &fresh_body, EdgeActorClass::Human, 5_000)
         .expect_err("older-than-frontier put must be rejected");
-    match err {
-        Error::ProvenancePrecedenceViolation {
-            incoming_learned_at,
-            frontier_learned_at,
-        } => {
-            assert_eq!(incoming_learned_at, 5_000);
-            assert_eq!(frontier_learned_at, 6_000);
-        }
-        other => panic!("expected ProvenancePrecedenceViolation, got {other:?}"),
-    }
+    let Error::ProvenancePrecedenceViolation {
+        incoming_learned_at,
+        frontier_learned_at,
+    } = err
+    else {
+        panic!("expected ProvenancePrecedenceViolation, got {err:?}");
+    };
+    assert_eq!(incoming_learned_at, 5_000);
+    assert_eq!(frontier_learned_at, 6_000);
     assert_no_entity_state(vault, &new_id)?;
     let err = vault
         .supersede_edge_provenance(

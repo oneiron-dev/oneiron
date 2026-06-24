@@ -822,12 +822,14 @@ fn read_short_id(store: &Store, rtxn: &RoTxn<'_>, id: &EntityId) -> Result<Optio
         return Ok(None);
     }
 
-    let (short_id_bytes, hash) = value.split_at(value.len() - 1);
+    let Some((&hash, short_id_bytes)) = value.split_last() else {
+        return Ok(None);
+    };
     let Ok(short_id) = std::str::from_utf8(short_id_bytes) else {
         return Ok(None);
     };
 
-    Ok(Some((short_id.to_owned(), hash[0])))
+    Ok(Some((short_id.to_owned(), hash)))
 }
 
 fn read_vector(vault: &Vault, rtxn: &RoTxn<'_>, id: &EntityId) -> Result<Option<Vec<f32>>> {

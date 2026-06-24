@@ -205,10 +205,8 @@ pub(crate) fn encode_quarantine_key(seq: u64) -> [u8; 10] {
 
 /// Decodes the sequence number from a quarantine key.
 pub(crate) fn decode_quarantine_seq(key: &[u8]) -> Option<u64> {
-    if key.len() != 10 || !key.starts_with(QUARANTINE_PREFIX) {
-        return None;
-    }
-    Some(u64::from_be_bytes(key[2..10].try_into().ok()?))
+    let seq = key.strip_prefix(QUARANTINE_PREFIX)?;
+    Some(u64::from_be_bytes(seq.try_into().ok()?))
 }
 
 fn encode_record(record: &QuarantineRecord) -> Result<Vec<u8>> {
