@@ -121,6 +121,7 @@ pub(crate) fn ensure_device_identity_in_txn(
 }
 
 /// Own-txn wrapper around [`ensure_device_identity_in_txn`].
+#[cfg_attr(not(feature = "sync"), allow(dead_code))]
 pub(crate) fn ensure_device_identity(vault: &Vault) -> Result<DeviceIdentity> {
     let mut identity = None;
     vault.with_write_txn(|wtxn| {

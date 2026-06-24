@@ -26,6 +26,7 @@ pub(crate) const SHORT_ID_COUNTER_LEN: usize = 8;
 pub(crate) const LONG_INTERVAL_THRESHOLD_SECS: u64 = 14 * 86_400;
 
 #[derive(Debug, Clone, Copy)]
+#[cfg_attr(not(feature = "sync"), allow(dead_code))]
 pub(crate) struct EdgeValueFields {
     pub(crate) weight: f32,
     pub(crate) created_at: u64,
@@ -34,6 +35,7 @@ pub(crate) struct EdgeValueFields {
 }
 
 impl EdgeValueFields {
+    #[cfg_attr(not(feature = "sync"), allow(dead_code))]
     pub(crate) fn from_decoded(decoded: DecodedEdgeValue) -> Self {
         Self {
             weight: decoded.weight,
@@ -386,6 +388,7 @@ impl<'a> BatchBuilder<'a> {
         self
     }
 
+    #[cfg_attr(not(feature = "sync"), allow(dead_code))]
     pub(crate) fn edge_with_value_fields(
         mut self,
         src: &EntityId,

@@ -149,6 +149,7 @@ impl DecodedTombstoneValue {
     /// value carried one; the NIL UUID for legacy / malformed values — an
     /// honest "no request id was on the wire", never a fabricated
     /// identifier pretending a request that never existed.
+    #[cfg_attr(not(feature = "sync"), allow(dead_code))]
     pub(crate) fn receipt_request_id(&self) -> String {
         match self.request_id {
             Some(bytes) => Uuid::from_bytes(bytes).to_string(),
@@ -164,6 +165,7 @@ impl DecodedTombstoneValue {
     /// replay path can never panic on wire bytes; the soft arm is
     /// unreachable behind the `is_hard()` guard and maps to the
     /// destructive default defensively.
+    #[cfg_attr(not(feature = "sync"), allow(dead_code))]
     pub(crate) fn receipt_hard_reason(&self) -> DeleteReason {
         match self.reason {
             Some(TombstoneReason::GdprDelete) => DeleteReason::GdprDelete,
@@ -182,6 +184,7 @@ impl DecodedTombstoneValue {
     /// pins: legacy/reserved-0/unknown/malformed shapes record the
     /// destructive default reason (`user_hard_delete`) and the NIL
     /// request id — never a fabricated identifier.
+    #[cfg_attr(not(feature = "sync"), allow(dead_code))]
     pub(crate) fn local_hard_delete_marker_value(&self) -> [u8; TOMBSTONE_VALUE_V2_LEN] {
         let mut out = [0_u8; TOMBSTONE_VALUE_V2_LEN];
         out[0] = match self.reason {
@@ -198,6 +201,7 @@ impl DecodedTombstoneValue {
 /// replay-delete primitive (M4-06 / ONE-1133) — applied to the LOCAL
 /// active store.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(not(feature = "sync"), allow(dead_code))]
 pub(crate) enum ReplayedTombstoneOutcome {
     /// Known-soft (`user_delete`) value: shell-preserving SoftErase.
     /// `changed` is `false` when there was nothing local to scrub (already
@@ -218,6 +222,7 @@ pub(crate) enum ReplayedTombstoneOutcome {
 impl ReplayedTombstoneOutcome {
     /// Whether the apply changed any local active-store state.
     #[must_use]
+    #[cfg_attr(not(feature = "sync"), allow(dead_code))]
     pub(crate) fn changed_local_state(&self) -> bool {
         match self {
             Self::SoftErased { changed } => *changed,
@@ -680,6 +685,7 @@ pub(crate) fn decode_redaction_audit_receipt(body: &[u8]) -> Result<RedactionAud
 /// including incoming `Some` over local `None`, which only a crafted
 /// update can produce (replicas never finalize a foreign receipt) — stays
 /// on the M4-07 quarantine path. Fail closed: any decode failure → `false`.
+#[cfg_attr(not(feature = "sync"), allow(dead_code))]
 pub(crate) fn redaction_receipt_is_stale_finalization_echo(local: &[u8], incoming: &[u8]) -> bool {
     use crate::batch::ENTITY_METADATA_HEADER_LEN as H;
     if local.len() < H || incoming.len() < H || local[..H] != incoming[..H] {
