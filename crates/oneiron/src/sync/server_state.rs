@@ -192,6 +192,7 @@ mod tests {
     use super::super::loro_support::{export_all_updates, map_get_bytes, map_insert_bytes};
     use super::*;
     use crate::types::VaultConfig;
+    use core::assert_matches;
 
     fn test_vault() -> (tempfile::TempDir, Vault) {
         let dir = tempfile::tempdir().unwrap();
@@ -256,7 +257,7 @@ mod tests {
             .unwrap();
 
         let err = persist_imported_window_update(&vault, &key, b"second").unwrap_err();
-        assert!(matches!(err, Error::CorruptedIndex(_)), "got {err:?}");
+        assert_matches!(err, Error::CorruptedIndex(_), "got {err:?}");
         assert_eq!(
             vault
                 .sync_state_get("u:w:2026-02:00000001")

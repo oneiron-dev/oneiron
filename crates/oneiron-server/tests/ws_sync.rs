@@ -190,17 +190,15 @@ async fn wait_for_sync_state_key(vault: &oneiron::Vault, key: &str) {
 }
 
 fn assert_unauthorized(err: &tokio_tungstenite::tungstenite::Error) {
-    match err {
-        tokio_tungstenite::tungstenite::Error::Http(response) => {
-            assert_eq!(
-                response.status(),
-                401,
-                "expected HTTP 401 Unauthorized, got {}",
-                response.status()
-            );
-        }
-        other => panic!("expected HTTP 401 rejection, got {other:?}"),
-    }
+    let tokio_tungstenite::tungstenite::Error::Http(response) = err else {
+        panic!("expected HTTP 401 rejection, got {err:?}");
+    };
+    assert_eq!(
+        response.status(),
+        401,
+        "expected HTTP 401 Unauthorized, got {}",
+        response.status()
+    );
 }
 
 fn deep_map_bytes(doc: &LoroDoc, map: &str, key: &str) -> Option<Vec<u8>> {

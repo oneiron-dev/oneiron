@@ -17,6 +17,7 @@
 
 #![cfg(feature = "sync")]
 
+use core::assert_matches;
 use std::sync::Arc;
 
 use loro::{ExportMode, LoroDoc, LoroMap, LoroValue, ValueOrContainer, VersionVector};
@@ -425,10 +426,7 @@ fn reconnect_echo_update_is_not_repersisted_and_svf_stays_fresh() {
         Some([0u8].as_slice()),
         "new persisted ops must flip svf back to stale"
     );
-    assert!(matches!(
-        rx.try_recv(),
-        Ok(SyncEvent::WindowUpdated { window_key }) if window_key == "2026-03"
-    ));
+    assert_matches!(rx.try_recv(), Ok(SyncEvent::WindowUpdated { window_key }) if window_key == "2026-03");
     assert_eq!(
         vault.get(&id_two).unwrap().as_deref(),
         Some(b"second-delivery".as_slice()),
@@ -868,10 +866,7 @@ fn bulk_transfer_done_persists_unloaded_window_state_for_next_open() {
 
     let done = transport::encode_bulk_transfer_done("2025-11", &snapshot);
     client.handle_server_message(&done).unwrap();
-    assert!(matches!(
-        rx.try_recv(),
-        Ok(SyncEvent::BulkTransferComplete { window_key }) if window_key == "2025-11"
-    ));
+    assert_matches!(rx.try_recv(), Ok(SyncEvent::BulkTransferComplete { window_key }) if window_key == "2025-11");
 
     // Stays ON-DISK (Phase-3 historical window), with the contract rows set.
     assert!(client.window("2025-11").is_none());
@@ -969,10 +964,7 @@ fn bulk_transfer_done_imports_into_live_window_when_loaded() {
 
     let done = transport::encode_bulk_transfer_done("2025-11", &snapshot);
     client.handle_server_message(&done).unwrap();
-    assert!(matches!(
-        rx.try_recv(),
-        Ok(SyncEvent::BulkTransferComplete { window_key }) if window_key == "2025-11"
-    ));
+    assert_matches!(rx.try_recv(), Ok(SyncEvent::BulkTransferComplete { window_key }) if window_key == "2025-11");
 
     // Observer B materialized the imported state into the vault...
     assert_eq!(

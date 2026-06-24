@@ -964,20 +964,20 @@ pub fn forward_rematerialize(
             //   closed. This pass is also the OD-10 lazy re-admission path:
             //   a previously quarantined receipt re-runs the door here
             //   after the lease mirror catches up.
-            if header.entity_type == crate::types::ENTITY_TYPE_REDACTION_AUDIT {
-                if let Err(err) = crate::deletion::validate_redaction_receipt_body(data) {
-                    if let Err(q_err) = quarantine::quarantine_rejected_op(
-                        vault,
-                        window_key.as_str(),
-                        QuarantineContainer::Entities,
-                        key,
-                        &err,
-                        blob,
-                    ) {
-                        entity_error = Some(q_err);
-                    }
-                    return;
+            if header.entity_type == crate::types::ENTITY_TYPE_REDACTION_AUDIT
+                && let Err(err) = crate::deletion::validate_redaction_receipt_body(data)
+            {
+                if let Err(q_err) = quarantine::quarantine_rejected_op(
+                    vault,
+                    window_key.as_str(),
+                    QuarantineContainer::Entities,
+                    key,
+                    &err,
+                    blob,
+                ) {
+                    entity_error = Some(q_err);
                 }
+                return;
             }
             // Replicated put: the CRDT mirror is unfiltered, so the
             // maintenance band (REDACTION_AUDIT = 120) and reserved-predicate
@@ -1070,22 +1070,21 @@ pub fn forward_rematerialize(
                     }
                 }
                 Ok(false) => {}
-                Err(err) => {
-                    if quarantine::remote_rejection_reason(&err).is_some() {
-                        if let Err(q_err) = quarantine::quarantine_rejected_op(
-                            vault,
-                            window_key.as_str(),
-                            QuarantineContainer::Entities,
-                            key,
-                            &err,
-                            blob,
-                        ) {
-                            entity_error = Some(q_err);
-                        }
-                    } else {
-                        // LOCAL failure — fail closed.
-                        entity_error = Some(err);
+                Err(err) if quarantine::remote_rejection_reason(&err).is_some() => {
+                    if let Err(q_err) = quarantine::quarantine_rejected_op(
+                        vault,
+                        window_key.as_str(),
+                        QuarantineContainer::Entities,
+                        key,
+                        &err,
+                        blob,
+                    ) {
+                        entity_error = Some(q_err);
                     }
+                }
+                Err(err) => {
+                    // LOCAL failure — fail closed.
+                    entity_error = Some(err);
                 }
             }
         });
@@ -1221,22 +1220,21 @@ pub fn forward_rematerialize(
                         healed.push(src);
                     }
                 }
-                Err(err) => {
-                    if quarantine::remote_rejection_reason(&err).is_some() {
-                        if let Err(q_err) = quarantine::quarantine_rejected_op(
-                            vault,
-                            window_key.as_str(),
-                            QuarantineContainer::Edges,
-                            key,
-                            &err,
-                            buf,
-                        ) {
-                            edge_error = Some(q_err);
-                        }
-                    } else {
-                        // LOCAL failure — fail closed.
-                        edge_error = Some(err);
+                Err(err) if quarantine::remote_rejection_reason(&err).is_some() => {
+                    if let Err(q_err) = quarantine::quarantine_rejected_op(
+                        vault,
+                        window_key.as_str(),
+                        QuarantineContainer::Edges,
+                        key,
+                        &err,
+                        buf,
+                    ) {
+                        edge_error = Some(q_err);
                     }
+                }
+                Err(err) => {
+                    // LOCAL failure — fail closed.
+                    edge_error = Some(err);
                 }
             }
         });
@@ -1345,26 +1343,27 @@ pub fn forward_rematerialize(
             }
             Ok(())
         });
-        if let Err(err) = marker_result {
-            if receiver_scrub_candidates.is_empty() {
-                return Err(err);
+        match marker_result {
+            Err(err) if receiver_scrub_candidates.is_empty() => return Err(err),
+            Err(err) => {
+                tracing::error!(
+                    window = %window_key,
+                    purge_failures = purge_failures.len(),
+                    receiver_scrub_candidates = receiver_scrub_candidates.len(),
+                    error = %err,
+                    "forward remat: receiver outbox scrub/bookkeeping txn FAILED after hard tombstone replay; flagging entity-scoped rm: markers for durable retry"
+                );
+                vault.with_write_txn(|wtxn| {
+                    for id in purge_failures
+                        .iter()
+                        .chain(receiver_scrub_candidates.iter())
+                    {
+                        quarantine::set_remat_marker_in_txn(vault, wtxn, window_key.as_str(), id)?;
+                    }
+                    Ok(())
+                })?;
             }
-            tracing::error!(
-                window = %window_key,
-                purge_failures = purge_failures.len(),
-                receiver_scrub_candidates = receiver_scrub_candidates.len(),
-                error = %err,
-                "forward remat: receiver outbox scrub/bookkeeping txn FAILED after hard tombstone replay; flagging entity-scoped rm: markers for durable retry"
-            );
-            vault.with_write_txn(|wtxn| {
-                for id in purge_failures
-                    .iter()
-                    .chain(receiver_scrub_candidates.iter())
-                {
-                    quarantine::set_remat_marker_in_txn(vault, wtxn, window_key.as_str(), id)?;
-                }
-                Ok(())
-            })?;
+            Ok(()) => {}
         }
     }
     if let Some(err) = tombstone_error {
@@ -1429,9 +1428,8 @@ pub fn reverse_rematerialize(vault: &Vault, doc: &LoroDoc, window_key: &WindowKe
         }
 
         if !map_contains_binary(&entities_map, &hex_id) {
-            let raw = match vault.get_raw(id)? {
-                Some(r) => r,
-                None => continue,
+            let Some(raw) = vault.get_raw(id)? else {
+                continue;
             };
 
             if !reverse_remat_skip_redaction_receipt_mirror(&raw) {

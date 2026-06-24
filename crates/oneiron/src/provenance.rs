@@ -991,6 +991,7 @@ mod tests {
     use super::*;
     use crate::claim::validate_predicate;
     use crate::error::ErrorKind;
+    use core::assert_matches;
 
     fn entity(byte: u8) -> EntityId {
         EntityId::from_bytes([byte; 16]).expect("test entity id")
@@ -1000,10 +1001,10 @@ mod tests {
     fn predicate_constant_pins_contract_literal() {
         assert_eq!(PREDICATE_EDGE_PROVENANCE, "edge.provenance");
         // Reserved on every public path; writable only through the door.
-        assert!(matches!(
+        assert_matches!(
             validate_predicate(PREDICATE_EDGE_PROVENANCE, false),
             Err(Error::ReservedPredicate { .. })
-        ));
+        );
         validate_predicate(PREDICATE_EDGE_PROVENANCE, true)
             .expect("the provenance door must admit the pinned predicate");
     }
@@ -1053,25 +1054,25 @@ mod tests {
 
         // Wrong lengths.
         for len in [0_usize, 16, 32, 34] {
-            assert!(matches!(
+            assert_matches!(
                 EdgeRef::decode(&vec![0x11_u8; len]),
                 Err(Error::InvalidProvenanceBody(_))
-            ));
+            );
         }
         // Unregistered kind byte.
         let mut bad_kind = encoded;
         bad_kind[16] = 200;
-        assert!(matches!(
+        assert_matches!(
             EdgeRef::decode(&bad_kind),
             Err(Error::InvalidProvenanceBody(_))
-        ));
+        );
         // Reserved entity-id bytes (all zero source).
         let mut reserved = encoded;
         reserved[..16].copy_from_slice(&[0x00; 16]);
-        assert!(matches!(
+        assert_matches!(
             EdgeRef::decode(&reserved),
             Err(Error::InvalidProvenanceBody(_))
-        ));
+        );
     }
 
     #[test]
@@ -1418,16 +1419,15 @@ mod tests {
         for (actor_type, class, class_byte) in rejected {
             let err = validate_actor_class(actor_type, class)
                 .expect_err("mismatched actor class must be rejected");
-            match err {
-                Error::ActorClassMismatch {
-                    actor_entity_type,
-                    actor_class,
-                } => {
-                    assert_eq!(actor_entity_type, actor_type);
-                    assert_eq!(actor_class, class_byte);
-                }
-                other => panic!("expected ActorClassMismatch, got {other:?}"),
-            }
+            let Error::ActorClassMismatch {
+                actor_entity_type,
+                actor_class,
+            } = err
+            else {
+                panic!("expected ActorClassMismatch, got {err:?}");
+            };
+            assert_eq!(actor_entity_type, actor_type);
+            assert_eq!(actor_class, class_byte);
         }
     }
 
@@ -1482,10 +1482,10 @@ mod tests {
         // SUPERSEDE close: future-dated valid_from inverts the window → typed.
         let mut future = open;
         future.valid_from = Some(9000);
-        assert!(matches!(
+        assert_matches!(
             close_record_for_supersession(&future, 2000),
             Err(Error::InvalidProvenanceBody(_))
-        ));
+        );
 
         // RETRACT: status = retracted AND valid_to = now, OVERWRITING an
         // explicit valid_to (deliberate withdrawal at `now`).
@@ -1495,10 +1495,10 @@ mod tests {
         assert_eq!(retracted.valid_from, Some(100), "valid_from untouched");
 
         // RETRACT before valid_from → typed, never reordered.
-        assert!(matches!(
+        assert_matches!(
             retract_record(&future, 2000),
             Err(Error::InvalidProvenanceBody(_))
-        ));
+        );
     }
 
     #[test]
@@ -1585,15 +1585,15 @@ mod tests {
         // AGREE (two sources of truth are never reconciled silently).
         let agreeing_evidence = encode_actor_class_evidence(EdgeActorClass::Agent);
         for evidence in [&legacy_evidence, &agreeing_evidence] {
-            assert!(matches!(
+            assert_matches!(
                 resolve_persisted_actor_class(&new_shape, Some(evidence)),
                 Err(Error::InvalidProvenanceBody(_))
-            ));
+            );
         }
         // Neither place → typed reject, never a defaulted class.
-        assert!(matches!(
+        assert_matches!(
             resolve_persisted_actor_class(&legacy_shape, None),
             Err(Error::InvalidProvenanceBody(_))
-        ));
+        );
     }
 }

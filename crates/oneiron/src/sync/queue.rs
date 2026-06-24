@@ -413,11 +413,12 @@ impl SyncQueue {
         for result in iter {
             let (key, value) = result?;
             match validate_update_row(key, value) {
-                Ok(()) => {
-                    if !decode_update_key(key).is_ok_and(|seq| delete_bearing.contains(&seq)) {
-                        count += 1;
-                    }
+                Ok(())
+                    if !decode_update_key(key).is_ok_and(|seq| delete_bearing.contains(&seq)) =>
+                {
+                    count += 1;
                 }
+                Ok(()) => {}
                 Err(Error::CorruptedIndex(_)) => continue,
                 Err(err) => return Err(err),
             }
@@ -734,18 +735,16 @@ fn encode_delete_bearing_key(seq: u64) -> [u8; 10] {
 
 /// Decodes the sequence number from a delete-bearing marker key.
 fn decode_delete_bearing_key(key: &[u8]) -> Option<u64> {
-    if key.len() != 10 || !key.starts_with(DELETE_BEARING_PREFIX) {
-        return None;
-    }
-    Some(u64::from_be_bytes(key[2..10].try_into().ok()?))
+    let seq = key.strip_prefix(DELETE_BEARING_PREFIX)?;
+    Some(u64::from_be_bytes(seq.try_into().ok()?))
 }
 
 /// Decodes the sequence number from an update queue key.
 fn decode_update_key(key: &[u8]) -> Result<u64> {
-    if key.len() != 10 || !key.starts_with(UPDATE_PREFIX) {
-        return Err(Error::CorruptedIndex(ERR_SYNC_QUEUE_UPDATE_ROW));
-    }
-    Ok(u64::from_be_bytes(key[2..10].try_into().map_err(|_| {
+    let seq = key
+        .strip_prefix(UPDATE_PREFIX)
+        .ok_or(Error::CorruptedIndex(ERR_SYNC_QUEUE_UPDATE_ROW))?;
+    Ok(u64::from_be_bytes(seq.try_into().map_err(|_| {
         Error::CorruptedIndex(ERR_SYNC_QUEUE_UPDATE_ROW)
     })?))
 }
@@ -773,22 +772,22 @@ fn decode_update_value(value: &[u8]) -> Result<(String, Vec<u8>)> {
 }
 
 fn decode_update_value_parts(value: &[u8]) -> Result<(&str, &[u8])> {
-    if value.is_empty() {
+    let Some((&key_len, rest)) = value.split_first() else {
         return Err(Error::CorruptedIndex(ERR_SYNC_QUEUE_UPDATE_ROW));
-    }
-    let key_len = value[0] as usize;
+    };
+    let key_len = key_len as usize;
     if key_len == 0 || key_len > MAX_WINDOW_KEY_LEN {
         return Err(Error::CorruptedIndex(ERR_SYNC_QUEUE_UPDATE_ROW));
     }
-    if value.len() < 1 + key_len {
+    let Some((window_key_bytes, encoded)) = rest.split_at_checked(key_len) else {
         return Err(Error::CorruptedIndex(ERR_SYNC_QUEUE_UPDATE_ROW));
-    }
-    let window_key = std::str::from_utf8(&value[1..1 + key_len])
+    };
+    let window_key = std::str::from_utf8(window_key_bytes)
         .map_err(|_| Error::CorruptedIndex(ERR_SYNC_QUEUE_UPDATE_ROW))?;
     if parse_window_key_str(window_key).is_none() {
         return Err(Error::CorruptedIndex(ERR_SYNC_QUEUE_UPDATE_ROW));
     }
-    Ok((window_key, &value[1 + key_len..]))
+    Ok((window_key, encoded))
 }
 
 fn decode_update_row(key: &[u8], value: &[u8]) -> Result<QueuedUpdate> {
@@ -817,22 +816,24 @@ fn encode_embed_key(entity_id: &EntityId) -> [u8; 18] {
 
 /// Decodes an entity ID from an embed job key.
 fn decode_embed_key(key: &[u8]) -> Result<EntityId> {
-    if key.len() != 18 || !key.starts_with(EMBED_PREFIX) {
-        return Err(Error::CorruptedIndex(ERR_SYNC_QUEUE_EMBED_ROW));
-    }
-    let mut bytes = [0u8; 16];
-    bytes.copy_from_slice(&key[2..18]);
-    EntityId::from_bytes(bytes).map_err(|_| Error::CorruptedIndex(ERR_SYNC_QUEUE_EMBED_ROW))
+    let bytes = key
+        .strip_prefix(EMBED_PREFIX)
+        .ok_or(Error::CorruptedIndex(ERR_SYNC_QUEUE_EMBED_ROW))?;
+    EntityId::from_bytes(
+        bytes
+            .try_into()
+            .map_err(|_| Error::CorruptedIndex(ERR_SYNC_QUEUE_EMBED_ROW))?,
+    )
+    .map_err(|_| Error::CorruptedIndex(ERR_SYNC_QUEUE_EMBED_ROW))
 }
 
 fn decode_embed_job_row(key: &[u8], value: &[u8]) -> Result<QueuedEmbedJob> {
     let entity_id = decode_embed_key(key)?;
-    if value.len() != 9 {
+    let Some((&priority, queued_at_bytes)) = value.split_first() else {
         return Err(Error::CorruptedIndex(ERR_SYNC_QUEUE_EMBED_ROW));
-    }
-    let priority = value[0];
+    };
     let queued_at = u64::from_be_bytes(
-        value[1..9]
+        queued_at_bytes
             .try_into()
             .map_err(|_| Error::CorruptedIndex(ERR_SYNC_QUEUE_EMBED_ROW))?,
     );
@@ -866,6 +867,7 @@ mod tests {
     use crate::sync::schema::create_window_doc;
     use crate::sync::window::forward_rematerialize;
     use crate::types::{ENTITY_TYPE_TASK, TimeRange, VaultConfig};
+    use core::assert_matches;
 
     const RECEIVER_SCRUB_WINDOW: &str = "2026-03";
     const RECEIVER_SCRUB_LEARNED_AT: u64 = 1_772_400_000;
@@ -1059,13 +1061,13 @@ mod tests {
         let err = queue
             .push("", &[1])
             .expect_err("empty window key must fail");
-        assert!(matches!(err, Error::InvalidKey));
+        assert_matches!(err, Error::InvalidKey);
 
         let overlong = "x".repeat(MAX_WINDOW_KEY_LEN + 1);
         let err = queue
             .push(&overlong, &[2])
             .expect_err("overlong window key must fail");
-        assert!(matches!(err, Error::InvalidKey));
+        assert_matches!(err, Error::InvalidKey);
 
         for invalid in [
             "2026-13", "2026-00", "abcdefg", "2026-3", "1969-12", "0000-01",
@@ -1073,7 +1075,7 @@ mod tests {
             let err = queue
                 .push(invalid, &[9])
                 .expect_err("invalid calendar window key must fail");
-            assert!(matches!(err, Error::InvalidKey));
+            assert_matches!(err, Error::InvalidKey);
         }
 
         let seq = queue.push("2026-03", &[3]).unwrap();
@@ -2081,17 +2083,11 @@ mod tests {
 
         let short = decode_last_update_seq_metadata(&[1, 2, 3])
             .expect_err("short metadata must be rejected");
-        assert!(matches!(
-            short,
-            Error::CorruptedIndex("sync queue metadata")
-        ));
+        assert_matches!(short, Error::CorruptedIndex("sync queue metadata"));
 
         let overlong = decode_last_update_seq_metadata(&[0_u8; 9])
             .expect_err("overlong metadata must be rejected");
-        assert!(matches!(
-            overlong,
-            Error::CorruptedIndex("sync queue metadata")
-        ));
+        assert_matches!(overlong, Error::CorruptedIndex("sync queue metadata"));
     }
 
     #[test]

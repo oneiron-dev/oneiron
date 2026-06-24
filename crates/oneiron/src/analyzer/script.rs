@@ -190,24 +190,22 @@ impl ScriptRunSplitter {
                         script: other,
                     });
                 }
+                (Some(prev), ScriptClass::Common) if prev.is_cjk() => {
+                    // Starting a fresh Common run — otherwise cjk_ngram would
+                    // absorb trailing digits/punctuation into a CJK run and
+                    // emit unigrams like `1`/`、` plus bigrams like `京1`/`京、`,
+                    // breaking the plan §1.1 no-cross-script-bigram invariant.
+                    active = Some(ScriptClass::Common);
+                    runs.push(ScriptRun {
+                        byte_start: start,
+                        byte_end: start + ch.len_utf8() as u32,
+                        script: ScriptClass::Common,
+                    });
+                }
                 (Some(prev), ScriptClass::Common) => {
-                    if prev.is_cjk() {
-                        // Starting a fresh Common run — otherwise cjk_ngram
-                        // would absorb trailing digits/punctuation into a CJK
-                        // run and emit unigrams like `1`/`、` plus bigrams
-                        // like `京1`/`京、`, breaking the plan §1.1
-                        // no-cross-script-bigram invariant.
-                        active = Some(ScriptClass::Common);
-                        runs.push(ScriptRun {
-                            byte_start: start,
-                            byte_end: start + ch.len_utf8() as u32,
-                            script: ScriptClass::Common,
-                        });
-                    } else {
-                        let last = runs.last_mut().expect("active implies last run exists");
-                        debug_assert_eq!(last.script, prev);
-                        last.byte_end = start + ch.len_utf8() as u32;
-                    }
+                    let last = runs.last_mut().expect("active implies last run exists");
+                    debug_assert_eq!(last.script, prev);
+                    last.byte_end = start + ch.len_utf8() as u32;
                 }
                 (Some(prev), other) if prev == other => {
                     let last = runs.last_mut().expect("active implies last run exists");
@@ -360,8 +358,8 @@ mod tests {
         let runs = ScriptRunSplitter::new().runs(text);
         assert_eq!(runs.first().unwrap().byte_start, 0);
         assert_eq!(runs.last().unwrap().byte_end, text.len() as u32);
-        for pair in runs.windows(2) {
-            assert_eq!(pair[0].byte_end, pair[1].byte_start);
+        for [left, right] in runs.array_windows::<2>() {
+            assert_eq!(left.byte_end, right.byte_start);
         }
     }
 

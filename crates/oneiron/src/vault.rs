@@ -3901,6 +3901,7 @@ pub(crate) fn parse_edge_record(key: &[u8], value: &[u8]) -> Result<EdgeInfo> {
 
 #[cfg(test)]
 mod tests {
+    use core::assert_matches;
     use std::path::PathBuf;
 
     use super::*;
@@ -4257,10 +4258,10 @@ mod tests {
             wtxn.commit()?;
         }
 
-        assert!(matches!(
-            Vault::open(tmp.path(), test_config()),
-            Err(Error::IncompatibleAnalyzer { .. })
-        ));
+        let Err(err) = Vault::open(tmp.path(), test_config()) else {
+            panic!("expected incompatible analyzer rejection");
+        };
+        assert_matches!(err, Error::IncompatibleAnalyzer { .. });
 
         // Bypass the handshake just long enough to rebuild.
         {

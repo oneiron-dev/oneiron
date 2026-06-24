@@ -71,9 +71,11 @@ pub(crate) fn le_bytes_to_f32_vec(bytes: &[u8]) -> Result<Vec<f32>> {
         return Err(Error::InvalidKey);
     }
 
-    Ok(bytes
-        .chunks_exact(4)
-        .map(|c| f32::from_le_bytes(c.try_into().unwrap()))
+    let (chunks, rem) = bytes.as_chunks::<4>();
+    debug_assert!(rem.is_empty());
+    Ok(chunks
+        .iter()
+        .map(|bytes| f32::from_le_bytes(*bytes))
         .collect())
 }
 
