@@ -21,6 +21,7 @@
 
 #![cfg(feature = "sync")]
 
+use core::assert_matches;
 use std::sync::Arc;
 
 use loro::{ExportMode, LoroDoc, LoroMap, LoroValue, ValueOrContainer};
@@ -394,10 +395,7 @@ fn bulk_valid_snapshot_positive_control() {
         manager.window(&WindowKey::new(WINDOW)).is_none(),
         "bulk-cold window must be unloaded after the persist"
     );
-    assert!(matches!(
-        rx.try_recv(),
-        Ok(SyncEvent::BulkTransferComplete { .. })
-    ));
+    assert_matches!(rx.try_recv(), Ok(SyncEvent::BulkTransferComplete { .. }));
 }
 
 // ─── (c) Tombstone-removal re-assertion (OD-11) ──────────────────────────────

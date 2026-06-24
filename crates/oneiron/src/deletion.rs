@@ -1117,10 +1117,8 @@ pub(crate) fn encode_hard_erase_sweep_key(seq: u64) -> [u8; 10] {
 }
 
 pub(crate) fn decode_hard_erase_sweep_seq(key: &[u8]) -> Option<u64> {
-    if key.len() != 10 || !key.starts_with(HARD_ERASE_SWEEP_PREFIX) {
-        return None;
-    }
-    Some(u64::from_be_bytes(key[2..10].try_into().ok()?))
+    let seq = key.strip_prefix(HARD_ERASE_SWEEP_PREFIX)?;
+    Some(u64::from_be_bytes(seq.try_into().ok()?))
 }
 
 #[cfg(test)]

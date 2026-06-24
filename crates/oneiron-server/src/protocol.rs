@@ -242,21 +242,24 @@ mod tests {
 
         // (case_name, encoded, assertion_fn)
         type Asserter = fn(SyncMessage);
-        let assert_root: Asserter = |msg| match msg {
-            SyncMessage::RootUpdate(data) => assert_eq!(data, vec![1u8, 2, 3]),
-            other => panic!("expected RootUpdate, got {other:?}"),
+        let assert_root: Asserter = |msg| {
+            let SyncMessage::RootUpdate(data) = msg else {
+                panic!("expected RootUpdate, got {msg:?}");
+            };
+            assert_eq!(data, vec![1u8, 2, 3]);
         };
-        let assert_window: Asserter = |msg| match msg {
-            SyncMessage::WindowSync {
+        let assert_window: Asserter = |msg| {
+            let SyncMessage::WindowSync {
                 window_key,
                 sub_tag,
                 payload,
-            } => {
-                assert_eq!(window_key, "2026-02");
-                assert_eq!(sub_tag, window_sub_tags::UPDATE);
-                assert_eq!(payload, b"data");
-            }
-            other => panic!("expected WindowSync, got {other:?}"),
+            } = msg
+            else {
+                panic!("expected WindowSync, got {msg:?}");
+            };
+            assert_eq!(window_key, "2026-02");
+            assert_eq!(sub_tag, window_sub_tags::UPDATE);
+            assert_eq!(payload, b"data");
         };
 
         let cases: &[(&str, Vec<u8>, Asserter)] = &[
@@ -279,10 +282,10 @@ mod tests {
             device_name: "iPhone".to_string(),
         };
         let encoded = encode_awareness(&state);
-        match parse_message(&encoded).unwrap() {
-            SyncMessage::Awareness(s) => assert_eq!(s, state),
-            other => panic!("expected Awareness, got {other:?}"),
-        }
+        let SyncMessage::Awareness(s) = parse_message(&encoded).unwrap() else {
+            panic!("expected Awareness");
+        };
+        assert_eq!(s, state);
     }
 
     #[test]

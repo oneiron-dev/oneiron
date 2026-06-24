@@ -759,6 +759,7 @@ pub(crate) struct BulkTombstone {
 mod tests {
     use super::*;
     use crate::config::SyncServerConfig;
+    use core::assert_matches;
     use loro::{ExportMode, LoroDoc};
     use tokio::sync::mpsc;
 
@@ -781,14 +782,16 @@ mod tests {
     }
 
     fn expect_window_sync(data: &[u8]) -> (String, u8, Vec<u8>) {
-        match protocol::parse_message(data).unwrap() {
-            SyncMessage::WindowSync {
-                window_key,
-                sub_tag,
-                payload,
-            } => (window_key, sub_tag, payload),
-            other => panic!("expected WindowSync, got {other:?}"),
-        }
+        let parsed = protocol::parse_message(data).unwrap();
+        let SyncMessage::WindowSync {
+            window_key,
+            sub_tag,
+            payload,
+        } = parsed
+        else {
+            panic!("expected WindowSync, got {parsed:?}");
+        };
+        (window_key, sub_tag, payload)
     }
 
     fn test_conn_state() -> ConnState {
@@ -987,7 +990,7 @@ mod tests {
             &mut conn_state,
         )
         .await;
-        assert!(matches!(result, Err(ProtocolError::VvDecode(_))));
+        assert_matches!(result, Err(ProtocolError::VvDecode(_)));
         assert!(direct_rx.try_recv().is_err());
     }
 

@@ -148,13 +148,13 @@ fn one_way_exception_key(target: &EntityId) -> Vec<u8> {
 }
 
 fn decode_exception_holders(raw: &[u8]) -> Result<Vec<EntityId>> {
-    if !raw.len().is_multiple_of(ENTITY_ID_LEN) {
+    let (chunks, rem) = raw.as_chunks::<ENTITY_ID_LEN>();
+    if !rem.is_empty() {
         return Err(Error::CorruptedIndex(ERR_ONE_WAY_EXCEPTION_BYTES));
     }
-    let mut holders = Vec::with_capacity(raw.len() / ENTITY_ID_LEN);
-    for chunk in raw.chunks_exact(ENTITY_ID_LEN) {
-        let bytes: [u8; ENTITY_ID_LEN] = chunk.try_into().expect("chunk length is exact");
-        match EntityId::from_bytes(bytes) {
+    let mut holders = Vec::with_capacity(chunks.len());
+    for bytes in chunks {
+        match EntityId::from_bytes(*bytes) {
             Ok(holder) => holders.push(holder),
             Err(_) => return Err(Error::CorruptedIndex(ERR_ONE_WAY_EXCEPTION_BYTES)),
         }
@@ -1605,14 +1605,14 @@ fn read_entry_point(store: &Store, txn: &RoTxn<'_>) -> Result<Option<EntityId>> 
 }
 
 fn decode_neighbors(raw: &[u8], lenient: bool) -> Result<Vec<EntityId>> {
-    if !raw.len().is_multiple_of(ENTITY_ID_LEN) {
+    let (chunks, rem) = raw.as_chunks::<ENTITY_ID_LEN>();
+    if !rem.is_empty() {
         return Err(Error::CorruptedIndex(ERR_NEIGHBOR_VALUE_BYTES));
     }
 
-    let mut neighbors = Vec::with_capacity(raw.len() / ENTITY_ID_LEN);
-    for chunk in raw.chunks_exact(ENTITY_ID_LEN) {
-        let bytes: [u8; ENTITY_ID_LEN] = chunk.try_into().expect("chunk length is exact");
-        match EntityId::from_bytes(bytes) {
+    let mut neighbors = Vec::with_capacity(chunks.len());
+    for bytes in chunks {
+        match EntityId::from_bytes(*bytes) {
             Ok(neighbor) => neighbors.push(neighbor),
             // Reserved sentinel keys are the only `from_bytes` failure mode possible
             // after `chunks_exact(EID_LEN)` — length is fixed by the iterator. So
@@ -1825,19 +1825,14 @@ fn scrub_neighbor_bytes(raw: &[u8], target: &EntityId) -> Result<Option<Vec<u8>>
 }
 
 fn decode_vector_into<'a>(raw: &[u8], scratch: &'a mut Vec<f32>) -> Result<&'a [f32]> {
-    let mut chunks = raw.chunks_exact(4);
-    if !chunks.remainder().is_empty() {
+    let (chunks, rem) = raw.as_chunks::<4>();
+    if !rem.is_empty() {
         return Err(Error::CorruptedIndex(ERR_VECTOR_BYTES));
     }
 
-    let len = raw.len() / 4;
-    scratch.resize(len, 0.0);
-    for (slot, chunk) in scratch.iter_mut().zip(&mut chunks) {
-        *slot = f32::from_le_bytes(
-            chunk
-                .try_into()
-                .expect("chunks_exact(4) yields only 4-byte chunks"),
-        );
+    scratch.resize(chunks.len(), 0.0);
+    for (slot, bytes) in scratch.iter_mut().zip(chunks) {
+        *slot = f32::from_le_bytes(*bytes);
     }
 
     Ok(scratch.as_slice())
@@ -1845,6 +1840,7 @@ fn decode_vector_into<'a>(raw: &[u8], scratch: &'a mut Vec<f32>) -> Result<&'a [
 
 #[cfg(test)]
 mod tests {
+    use core::assert_matches;
     use tempfile::tempdir;
 
     use super::*;
@@ -2473,10 +2469,7 @@ mod tests {
         let err = vault
             .put_vector(&b, &[0.9, 0.1, 0.0, 0.0])
             .expect_err("expected corrupted write-side neighbors to fail");
-        assert!(matches!(
-            err,
-            Error::CorruptedIndex(message) if message == ERR_NEIGHBOR_VALUE_BYTES
-        ));
+        assert_matches!(err, Error::CorruptedIndex(message) if message == ERR_NEIGHBOR_VALUE_BYTES);
         Ok(())
     }
 
@@ -2526,10 +2519,7 @@ mod tests {
             &mut 0,
         )
         .expect_err("strict beam search should reject corrupted neighbors");
-        assert!(matches!(
-            err,
-            Error::CorruptedIndex(message) if message == ERR_NEIGHBOR_VALUE_BYTES
-        ));
+        assert_matches!(err, Error::CorruptedIndex(message) if message == ERR_NEIGHBOR_VALUE_BYTES);
         Ok(())
     }
 
@@ -2782,18 +2772,12 @@ mod tests {
         let insert_err = vault
             .put_vector(&id_from_u64(3), &[0.5, 0.5, 0.0, 0.0])
             .expect_err("insert must reject a malformed symmetric marker");
-        assert!(matches!(
-            insert_err,
-            Error::CorruptedIndex(message) if message == ERR_SYMMETRIC_MARKER_BYTES
-        ));
+        assert_matches!(insert_err, Error::CorruptedIndex(message) if message == ERR_SYMMETRIC_MARKER_BYTES);
 
         let mut wtxn = vault.store.env.write_txn()?;
         let deindex_err = hnsw_deindex(&vault.store, &mut wtxn, &a)
             .expect_err("deindex must reject a malformed symmetric marker");
-        assert!(matches!(
-            deindex_err,
-            Error::CorruptedIndex(message) if message == ERR_SYMMETRIC_MARKER_BYTES
-        ));
+        assert_matches!(deindex_err, Error::CorruptedIndex(message) if message == ERR_SYMMETRIC_MARKER_BYTES);
         Ok(())
     }
 
@@ -2808,20 +2792,14 @@ mod tests {
 
         let err = read_refresh_fallback_rebuilds(&store, &wtxn)
             .expect_err("expected corrupted fallback counter bytes");
-        assert!(matches!(
-            err,
-            Error::CorruptedIndex(message) if message == ERR_FALLBACK_COUNTER_BYTES
-        ));
+        assert_matches!(err, Error::CorruptedIndex(message) if message == ERR_FALLBACK_COUNTER_BYTES);
 
         store
             .hnsw_meta
             .put(&mut wtxn, LEGACY_REBUILDS_KEY, &[4, 5])?;
         let err = read_legacy_snapshot_rebuilds(&store, &wtxn)
             .expect_err("expected corrupted legacy rebuild counter bytes");
-        assert!(matches!(
-            err,
-            Error::CorruptedIndex(message) if message == ERR_LEGACY_REBUILDS_BYTES
-        ));
+        assert_matches!(err, Error::CorruptedIndex(message) if message == ERR_LEGACY_REBUILDS_BYTES);
         Ok(())
     }
 
@@ -3249,10 +3227,13 @@ mod tests {
             neighbors.insert(*id, vec![cycle[(i + 1) % cycle.len()]]);
         }
         neighbors.insert(chain_head, vec![chain_rest[0]]);
-        for window in chain_rest.windows(2) {
-            neighbors.insert(window[0], vec![window[1]]);
+        for [left, right] in chain_rest.array_windows::<2>() {
+            neighbors.insert(*left, vec![*right]);
         }
-        neighbors.insert(chain_rest[4], Vec::new());
+        neighbors.insert(
+            *chain_rest.last().expect("test chain has a tail"),
+            Vec::new(),
+        );
 
         assert_eq!(
             select_best_entry_point(&neighbors, Some(cycle[0])),
@@ -3364,14 +3345,10 @@ mod tests {
                 })
                 .collect();
             heads.push(ids[0]);
-            for (i, id) in ids.iter().enumerate() {
-                let outs = if i + 1 < CHAIN_LEN {
-                    vec![ids[i + 1]]
-                } else {
-                    Vec::new()
-                };
-                neighbors.insert(*id, outs);
+            for [left, right] in ids.array_windows::<2>() {
+                neighbors.insert(*left, vec![*right]);
             }
+            neighbors.insert(*ids.last().expect("test chain has a tail"), Vec::new());
         }
 
         let v = CHAINS * CHAIN_LEN;
@@ -3411,14 +3388,10 @@ mod tests {
         for source in &sources {
             neighbors.insert(*source, vec![chain[0]]);
         }
-        for (i, node) in chain.iter().enumerate() {
-            let outs = if i + 1 < K {
-                vec![chain[i + 1]]
-            } else {
-                Vec::new()
-            };
-            neighbors.insert(*node, outs);
+        for [left, right] in chain.array_windows::<2>() {
+            neighbors.insert(*left, vec![*right]);
         }
+        neighbors.insert(*chain.last().expect("test chain has a tail"), Vec::new());
 
         let v = 2 * K; // K sources + K chain nodes
         let e = K + (K - 1); // source->head edges + chain edges

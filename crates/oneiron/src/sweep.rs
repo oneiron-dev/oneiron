@@ -1113,6 +1113,7 @@ mod tests {
         encode_hard_erase_sweep_key,
     };
     use crate::types::{HnswConfig, TimeRange, VaultConfig};
+    use core::assert_matches;
 
     fn test_config() -> VaultConfig {
         let mut config = VaultConfig::device();
@@ -1368,7 +1369,7 @@ mod tests {
 
         INJECT_CRASH_BEFORE_FINALIZE.with(|cell| cell.set(true));
         let err = run_hard_erase_sweep(&vault).expect_err("injected crash");
-        assert!(matches!(err, Error::InvariantViolation(_)));
+        assert_matches!(err, Error::InvariantViolation(_));
 
         // Obligation survives the crash window; the compaction already
         // committed (the d:w: row is now a shallow doc).

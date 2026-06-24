@@ -5,6 +5,7 @@
 //! Engine-agnostic — no CRDT library types here.
 
 use crate::sync::types::parse_window_key_str;
+use std::debug_assert_matches;
 use std::ops::{Deref, DerefMut};
 
 // ─── Custom Message Tags ──────────────────────────────────────────────────────
@@ -225,10 +226,7 @@ pub fn decode_lease_request(data: &[u8]) -> Result<(u64, [u8; 32], [u8; 64]), Tr
 /// — exactly [`LEASE_GRANTED_FRAME_LEN`] (18) bytes. `expires_at` must be 0
 /// when rejected.
 pub fn encode_lease_granted(status: u8, client_id: u64, expires_at: u64) -> Vec<u8> {
-    debug_assert!(matches!(
-        status,
-        LEASE_STATUS_GRANTED | LEASE_STATUS_REJECTED
-    ));
+    debug_assert_matches!(status, LEASE_STATUS_GRANTED | LEASE_STATUS_REJECTED);
     debug_assert!(status == LEASE_STATUS_GRANTED || expires_at == 0);
     let mut buf = Vec::with_capacity(LEASE_GRANTED_FRAME_LEN);
     buf.push(TAG_LEASE_GRANTED);
@@ -476,22 +474,20 @@ impl std::error::Error for TransportError {}
 #[cfg(test)]
 mod tests {
     use super::*;
+    use core::assert_matches;
 
     fn production_source(source: &str) -> &str {
         source.split("#[cfg(test)]").next().unwrap_or(source)
     }
 
     fn assert_typed_encoder_callers_use_into_result(source_name: &str, source: &str) {
-        let mut offset = 0;
-        while let Some(relative) = source[offset..].find("encode_window_sync(") {
-            let start = offset + relative;
+        for (start, _) in source.match_indices("encode_window_sync(") {
             let end = source.len().min(start + 400);
             let call_site = &source[start..end];
             assert!(
                 call_site.contains(".into_result()"),
                 "{source_name}: encode_window_sync call must consume EncodedFrame with into_result(): {call_site:?}"
             );
-            offset = start + "encode_window_sync(".len();
         }
     }
 
@@ -619,11 +615,9 @@ mod tests {
             ("wrong_tag", &[TAG_VERSION_VECTOR, PROTOCOL_VERSION]),
         ];
         for (case_name, frame) in cases {
-            assert!(
-                matches!(
-                    decode_protocol_hello(frame),
-                    Err(TransportError::InvalidPayload(_))
-                ),
+            assert_matches!(
+                decode_protocol_hello(frame),
+                Err(TransportError::InvalidPayload(_)),
                 "case {case_name}: expected InvalidPayload"
             );
         }
@@ -674,11 +668,9 @@ mod tests {
     #[test]
     fn window_sync_encoder_rejects_hostile_keys_without_panicking() {
         for key in ["", "2026-003", "window", "2026-0x"] {
-            assert!(
-                matches!(
-                    encode_window_sync(key, window_sub_tags::UPDATE, b"payload").into_result(),
-                    Err(TransportError::InvalidWindowKey)
-                ),
+            assert_matches!(
+                encode_window_sync(key, window_sub_tags::UPDATE, b"payload").into_result(),
+                Err(TransportError::InvalidWindowKey),
                 "key {key:?} should return InvalidWindowKey"
             );
         }
@@ -687,11 +679,9 @@ mod tests {
     #[test]
     fn bulk_transfer_encoder_rejects_hostile_keys_without_panicking() {
         for key in ["", "2026-003", "window", "2026-0x"] {
-            assert!(
-                matches!(
-                    encode_bulk_transfer(key, b"zstd").into_result(),
-                    Err(TransportError::InvalidWindowKey)
-                ),
+            assert_matches!(
+                encode_bulk_transfer(key, b"zstd").into_result(),
+                Err(TransportError::InvalidWindowKey),
                 "key {key:?} should return InvalidWindowKey"
             );
         }
@@ -700,18 +690,14 @@ mod tests {
     #[test]
     fn bulk_transfer_done_encoders_reject_hostile_keys_without_panicking() {
         for key in ["", "2026-003", "window", "2026-0x"] {
-            assert!(
-                matches!(
-                    encode_bulk_transfer_done(key, b"state").into_result(),
-                    Err(TransportError::InvalidWindowKey)
-                ),
+            assert_matches!(
+                encode_bulk_transfer_done(key, b"state").into_result(),
+                Err(TransportError::InvalidWindowKey),
                 "key {key:?} should return InvalidWindowKey"
             );
-            assert!(
-                matches!(
-                    encode_bulk_transfer_done_checked(key, b"state"),
-                    Err(TransportError::InvalidWindowKey)
-                ),
+            assert_matches!(
+                encode_bulk_transfer_done_checked(key, b"state"),
+                Err(TransportError::InvalidWindowKey),
                 "key {key:?} should return InvalidWindowKey"
             );
         }
@@ -722,20 +708,20 @@ mod tests {
     fn bulk_transfer_done_checked_encoder_rejects_u32_overflow_len() {
         let err = checked_bulk_transfer_done_state_len(u32::MAX as usize + 1).unwrap_err();
 
-        assert!(matches!(
+        assert_matches!(
             err,
             TransportError::InvalidPayload("BulkTransferDone state too large")
-        ));
+        );
     }
 
     #[test]
     fn bulk_transfer_done_capacity_rejects_usize_overflow() {
         let err = checked_bulk_transfer_done_capacity(MAX_WINDOW_KEY_LEN, usize::MAX).unwrap_err();
 
-        assert!(matches!(
+        assert_matches!(
             err,
             TransportError::InvalidPayload("BulkTransferDone state too large")
-        ));
+        );
     }
 
     #[test]
@@ -744,10 +730,10 @@ mod tests {
         let mut encoded = encode_bulk_transfer_done("2025-09", &state);
         encoded.push(30);
 
-        assert!(matches!(
+        assert_matches!(
             decode_bulk_transfer_done(&encoded[1..]),
             Err(TransportError::InvalidPayload("state has trailing bytes"))
-        ));
+        );
     }
 
     #[test]
@@ -756,10 +742,10 @@ mod tests {
         let mut encoded = encode_bulk_transfer_done("2025-09", &state);
         encoded.pop();
 
-        assert!(matches!(
+        assert_matches!(
             decode_bulk_transfer_done(&encoded[1..]),
             Err(TransportError::InvalidPayload("state truncated"))
-        ));
+        );
     }
 
     #[test]
@@ -827,8 +813,9 @@ mod tests {
             data.extend_from_slice(invalid_key);
             data.extend_from_slice(tail);
 
-            assert!(
-                matches!(decoder(&data), Err(TransportError::InvalidWindowKey)),
+            assert_matches!(
+                decoder(&data),
+                Err(TransportError::InvalidWindowKey),
                 "case {case_name}: expected InvalidWindowKey for key {:?}",
                 std::str::from_utf8(invalid_key).unwrap_or("<bytes>")
             );

@@ -993,11 +993,12 @@ fn apply_materialized_edge_ops(
             _ => {
                 let apply_result =
                     batch::apply_ops(&vault.store, &vault.config, &vault.analyzer, wtxn, vec![op]);
-                if let Err(e) = apply_result {
-                    if remote_rejection_reason(&e).is_none() {
-                        return Err(e);
+                match apply_result {
+                    Err(e) if remote_rejection_reason(&e).is_none() => return Err(e),
+                    Err(e) => {
+                        quarantine_edge_apply_failure(vault, wtxn, window_key, &metas[index], &e)?;
                     }
-                    quarantine_edge_apply_failure(vault, wtxn, window_key, &metas[index], &e)?;
+                    Ok(()) => {}
                 }
             }
         }
@@ -1013,11 +1014,12 @@ fn apply_materialized_edge_ops(
             wtxn,
             vec![pending.op],
         );
-        if let Err(e) = apply_result {
-            if remote_rejection_reason(&e).is_none() {
-                return Err(e);
+        match apply_result {
+            Err(e) if remote_rejection_reason(&e).is_none() => return Err(e),
+            Err(e) => {
+                quarantine_edge_apply_failure(vault, wtxn, window_key, &metas[index], &e)?;
             }
-            quarantine_edge_apply_failure(vault, wtxn, window_key, &metas[index], &e)?;
+            Ok(()) => {}
         }
     }
 
@@ -1033,37 +1035,39 @@ fn apply_materialized_edge_ops(
         let ops: Vec<BatchOp> = component_ops.iter().map(|entry| entry.op.clone()).collect();
         let apply_result =
             batch::apply_ops(&vault.store, &vault.config, &vault.analyzer, wtxn, ops);
-        if let Err(e) = apply_result {
-            if remote_rejection_reason(&e).is_none() {
-                return Err(e);
-            }
-            // The component was rejected as a unit (a remote ChildOf cycle
-            // or single-parent violation — both up-front validation gates,
-            // nothing staged). Re-apply per-op in the same deterministic
-            // order so only the ops that individually fail a gate are
-            // quarantined — never falsely recording siblings that are valid
-            // on their own.
-            for pending in component_ops {
-                let apply_result = batch::apply_ops(
-                    &vault.store,
-                    &vault.config,
-                    &vault.analyzer,
-                    wtxn,
-                    vec![pending.op],
-                );
-                if let Err(e) = apply_result {
-                    if remote_rejection_reason(&e).is_none() {
-                        return Err(e);
-                    }
-                    quarantine_edge_apply_failure(
-                        vault,
+        match apply_result {
+            Err(e) if remote_rejection_reason(&e).is_none() => return Err(e),
+            Err(_) => {
+                // The component was rejected as a unit (a remote ChildOf cycle
+                // or single-parent violation — both up-front validation gates,
+                // nothing staged). Re-apply per-op in the same deterministic
+                // order so only the ops that individually fail a gate are
+                // quarantined — never falsely recording siblings that are valid
+                // on their own.
+                for pending in component_ops {
+                    let apply_result = batch::apply_ops(
+                        &vault.store,
+                        &vault.config,
+                        &vault.analyzer,
                         wtxn,
-                        window_key,
-                        &metas[pending.index],
-                        &e,
-                    )?;
+                        vec![pending.op],
+                    );
+                    match apply_result {
+                        Err(e) if remote_rejection_reason(&e).is_none() => return Err(e),
+                        Err(e) => {
+                            quarantine_edge_apply_failure(
+                                vault,
+                                wtxn,
+                                window_key,
+                                &metas[pending.index],
+                                &e,
+                            )?;
+                        }
+                        Ok(()) => {}
+                    }
                 }
             }
+            Ok(()) => {}
         }
     }
     Ok(())

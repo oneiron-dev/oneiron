@@ -150,6 +150,7 @@ mod tests {
     use super::*;
     use crate::test_util::open_test_vault_with;
     use crate::types::VaultConfig;
+    use core::assert_matches;
 
     fn test_vault() -> (tempfile::TempDir, Vault) {
         let mut cfg = VaultConfig::device();
@@ -225,10 +226,10 @@ mod tests {
                 Ok(())
             })
             .unwrap();
-        assert!(matches!(
-            ensure_device_identity(&vault),
-            Err(Error::CorruptedIndex("sync client_id zero"))
-        ));
+        let Err(err) = ensure_device_identity(&vault) else {
+            panic!("expected sync client_id zero corruption");
+        };
+        assert_matches!(err, Error::CorruptedIndex("sync client_id zero"));
 
         vault
             .with_write_txn(|wtxn| {
@@ -236,10 +237,10 @@ mod tests {
                 Ok(())
             })
             .unwrap();
-        assert!(matches!(
-            ensure_device_identity(&vault),
-            Err(Error::CorruptedIndex("sync client_id row"))
-        ));
+        let Err(err) = ensure_device_identity(&vault) else {
+            panic!("expected sync client_id row corruption");
+        };
+        assert_matches!(err, Error::CorruptedIndex("sync client_id row"));
 
         vault
             .with_write_txn(|wtxn| {
@@ -254,10 +255,10 @@ mod tests {
                 Ok(())
             })
             .unwrap();
-        assert!(matches!(
-            ensure_device_identity(&vault),
-            Err(Error::CorruptedIndex("device signing key row"))
-        ));
+        let Err(err) = ensure_device_identity(&vault) else {
+            panic!("expected device signing key row corruption");
+        };
+        assert_matches!(err, Error::CorruptedIndex("device signing key row"));
 
         vault
             .with_write_txn(|wtxn| {
@@ -272,9 +273,9 @@ mod tests {
                 Ok(())
             })
             .unwrap();
-        assert!(matches!(
-            ensure_device_identity(&vault),
-            Err(Error::CorruptedIndex("device public key row"))
-        ));
+        let Err(err) = ensure_device_identity(&vault) else {
+            panic!("expected device public key row corruption");
+        };
+        assert_matches!(err, Error::CorruptedIndex("device public key row"));
     }
 }

@@ -9,6 +9,7 @@
 
 #![cfg(feature = "sync")]
 
+use core::assert_matches;
 use std::sync::Arc;
 
 use loro::{ExportMode, LoroDoc, LoroMap, LoroValue, ValueOrContainer};
@@ -484,19 +485,18 @@ fn unload_refuses_with_outstanding_handles_and_keeps_delete_routing_live() {
 
     // Refused: typed variant, exact fields, stable kind, retryable.
     let err = manager.unload_window(&key).unwrap_err();
-    match &err {
-        Error::WindowBusy {
-            window_key,
-            outstanding_handles,
-        } => {
-            assert_eq!(window_key.as_str(), "2026-03");
-            assert_eq!(
-                *outstanding_handles, 1,
-                "external holders only — the registry's own Arc is excluded"
-            );
-        }
-        other => panic!("expected Error::WindowBusy, got {other:?}"),
-    }
+    let Error::WindowBusy {
+        window_key,
+        outstanding_handles,
+    } = &err
+    else {
+        panic!("expected Error::WindowBusy, got {err:?}");
+    };
+    assert_eq!(window_key.as_str(), "2026-03");
+    assert_eq!(
+        *outstanding_handles, 1,
+        "external holders only — the registry's own Arc is excluded"
+    );
     assert_eq!(err.kind(), ErrorKind::WindowBusy);
     assert!(
         err.is_retryable(),
@@ -519,7 +519,7 @@ fn unload_refuses_with_outstanding_handles_and_keeps_delete_routing_live() {
         "registry must still own the same live instance"
     );
     drop(still);
-    assert_eq!(manager.loaded_keys(), [key.clone()]);
+    assert_eq!(manager.loaded_keys().as_slice(), std::slice::from_ref(&key));
 
     // The trap scenario, asserted closed: with the refusal in place a vault
     // delete still routes through the registry-owned LIVE doc — tombstone
@@ -540,10 +540,7 @@ fn unload_refuses_with_outstanding_handles_and_keeps_delete_routing_live() {
     );
 
     // Still held → still refused: the refusal is a stable, pollable state.
-    assert!(matches!(
-        manager.unload_window(&key),
-        Err(Error::WindowBusy { .. })
-    ));
+    assert_matches!(manager.unload_window(&key), Err(Error::WindowBusy { .. }));
 }
 
 /// ONE-1150 — once the last external handle drops, the previously refused
@@ -573,10 +570,7 @@ fn unload_succeeds_after_last_external_handle_drops() {
     win.doc.commit();
 
     // Held → refused. Dropped → the retry succeeds and deregisters.
-    assert!(matches!(
-        manager.unload_window(&key),
-        Err(Error::WindowBusy { .. })
-    ));
+    assert_matches!(manager.unload_window(&key), Err(Error::WindowBusy { .. }));
     drop(win);
     assert!(manager.unload_window(&key).unwrap());
     assert!(

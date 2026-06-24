@@ -338,10 +338,10 @@ pub(crate) fn deindex_text(store: &Store, wtxn: &mut RwTxn<'_>, id: &EntityId) -
     // Without this row, `total_docs--` would fire at the end without the
     // per-field `doc_count` / `total_length` decrements, permanently
     // drifting the corpus.
-    let lengths = match store.text_doc_field_lengths.get(wtxn, id.as_bytes())? {
-        Some(raw) => decode_field_lengths(raw)?,
-        None => return Err(corrupted("missing field lengths for indexed document")),
+    let Some(raw) = store.text_doc_field_lengths.get(wtxn, id.as_bytes())? else {
+        return Err(corrupted("missing field lengths for indexed document"));
     };
+    let lengths = decode_field_lengths(raw)?;
 
     // Group (term, fields) so each posting is rewritten once regardless of
     // how many channels a term appears on.
@@ -524,10 +524,10 @@ pub(crate) fn search_text(
             // NoNorm-only match silently skips the corruption guard.
             if let Entry::Vacant(v) = field_length_cache.entry(id) {
                 let raw = store.text_doc_field_lengths.get(rtxn, id.as_bytes())?;
-                let map = match raw {
-                    Some(bytes) => decode_field_lengths(bytes)?,
-                    None => return Err(corrupted("missing field lengths for scored doc")),
+                let Some(bytes) = raw else {
+                    return Err(corrupted("missing field lengths for scored doc"));
                 };
+                let map = decode_field_lengths(bytes)?;
                 v.insert(map);
             }
 
@@ -719,14 +719,12 @@ fn decode_posting_entry(raw: &[u8]) -> Result<PostingEntry> {
     else {
         return Err(corrupted("posting entry length mismatches field count"));
     };
+    let (chunks, rem) = raw[body_start..body_start + body_len].as_chunks::<FIELD_TF_LEN>();
+    debug_assert!(rem.is_empty());
     let mut fields = Vec::with_capacity(field_count);
-    for chunk in raw[body_start..body_start + body_len].chunks_exact(FIELD_TF_LEN) {
-        let fid = u16::from_be_bytes([chunk[0], chunk[1]]);
-        let tf = u32::from_le_bytes(
-            chunk[2..6]
-                .try_into()
-                .map_err(|_| corrupted("posting tf slice"))?,
-        );
+    for &[b0, b1, b2, b3, b4, b5] in chunks {
+        let fid = u16::from_be_bytes([b0, b1]);
+        let tf = u32::from_le_bytes([b2, b3, b4, b5]);
         if tf == 0 {
             return Err(corrupted("posting entry has zero term frequency"));
         }
@@ -783,26 +781,27 @@ fn decode_forward(raw: &[u8]) -> Result<Vec<ForwardRecord>> {
         return Err(corrupted("empty forward row"));
     }
     let mut records = Vec::new();
-    let mut i = 0;
-    while i < raw.len() {
-        if i + 2 > raw.len() {
+    let mut rest = raw;
+    while !rest.is_empty() {
+        let Some((term_len_bytes, after_len)) = rest.split_at_checked(2) else {
             return Err(corrupted("forward index truncated at term-len"));
-        }
-        let term_len = u16::from_le_bytes([raw[i], raw[i + 1]]) as usize;
-        i += 2;
+        };
+        let term_len = u16::from_le_bytes([term_len_bytes[0], term_len_bytes[1]]) as usize;
         if term_len == 0 {
             return Err(corrupted("forward index has zero-length term"));
         }
-        let term_end = i + term_len;
-        if term_end + FORWARD_FIELD_ID_LEN > raw.len() {
+        let Some((term_bytes, after_term)) = after_len.split_at_checked(term_len) else {
             return Err(corrupted("forward index truncated at term body"));
-        }
-        let term = str::from_utf8(&raw[i..term_end])
+        };
+        let Some((field_id_bytes, after_field)) = after_term.split_at_checked(FORWARD_FIELD_ID_LEN)
+        else {
+            return Err(corrupted("forward index truncated at term body"));
+        };
+        let term = str::from_utf8(term_bytes)
             .map(str::to_owned)
             .map_err(|_| corrupted("forward index has non-utf8 term"))?;
-        i = term_end;
-        let field_id = u16::from_be_bytes([raw[i], raw[i + 1]]);
-        i += FORWARD_FIELD_ID_LEN;
+        let field_id = u16::from_be_bytes([field_id_bytes[0], field_id_bytes[1]]);
+        rest = after_field;
         records.push(ForwardRecord { term, field_id });
     }
     Ok(records)
@@ -826,14 +825,12 @@ fn decode_field_lengths(raw: &[u8]) -> Result<HashMap<u16, u32>> {
     if !raw.len().is_multiple_of(FIELD_LENGTH_LEN) {
         return Err(corrupted("per-doc field lengths has invalid byte length"));
     }
-    let mut map = HashMap::with_capacity(raw.len() / FIELD_LENGTH_LEN);
-    for chunk in raw.chunks_exact(FIELD_LENGTH_LEN) {
-        let fid = u16::from_be_bytes([chunk[0], chunk[1]]);
-        let len = u32::from_le_bytes(
-            chunk[2..6]
-                .try_into()
-                .map_err(|_| corrupted("field length slice"))?,
-        );
+    let (chunks, rem) = raw.as_chunks::<FIELD_LENGTH_LEN>();
+    debug_assert!(rem.is_empty());
+    let mut map = HashMap::with_capacity(chunks.len());
+    for &[b0, b1, b2, b3, b4, b5] in chunks {
+        let fid = u16::from_be_bytes([b0, b1]);
+        let len = u32::from_le_bytes([b2, b3, b4, b5]);
         map.insert(fid, len);
     }
     Ok(map)
@@ -841,25 +838,23 @@ fn decode_field_lengths(raw: &[u8]) -> Result<HashMap<u16, u32>> {
 
 fn read_field_stats(store: &Store, txn: &RoTxn<'_>, field_id: u16) -> Result<(u32, u64)> {
     let key = field_id.to_be_bytes();
-    match store.text_bm25_field_stats.get(txn, &key)? {
-        Some(raw) => {
-            if raw.len() != FIELD_STATS_LEN {
-                return Err(corrupted("field stats has invalid byte length"));
-            }
-            let doc_count = u32::from_le_bytes(
-                raw[..4]
-                    .try_into()
-                    .map_err(|_| corrupted("field stats doc_count slice"))?,
-            );
-            let total_length = u64::from_le_bytes(
-                raw[4..]
-                    .try_into()
-                    .map_err(|_| corrupted("field stats total_length slice"))?,
-            );
-            Ok((doc_count, total_length))
-        }
-        None => Ok((0, 0)),
+    let Some(raw) = store.text_bm25_field_stats.get(txn, &key)? else {
+        return Ok((0, 0));
+    };
+    if raw.len() != FIELD_STATS_LEN {
+        return Err(corrupted("field stats has invalid byte length"));
     }
+    let doc_count = u32::from_le_bytes(
+        raw[..4]
+            .try_into()
+            .map_err(|_| corrupted("field stats doc_count slice"))?,
+    );
+    let total_length = u64::from_le_bytes(
+        raw[4..]
+            .try_into()
+            .map_err(|_| corrupted("field stats total_length slice"))?,
+    );
+    Ok((doc_count, total_length))
 }
 
 fn write_field_stats(
@@ -915,6 +910,7 @@ mod tests {
     use super::*;
     use crate::types::{HnswConfig, TimeRange, VaultConfig};
     use crate::{Error, Vault};
+    use core::assert_matches;
 
     fn test_config() -> VaultConfig {
         VaultConfig {
@@ -1284,7 +1280,7 @@ mod tests {
                 .text(&id, &[("body", "reserved")])
                 .commit()
                 .unwrap_err();
-            assert!(matches!(err, Error::InvalidKey));
+            assert_matches!(err, Error::InvalidKey);
         }
 
         let rtxn = vault.store.env.read_txn()?;
@@ -2093,7 +2089,7 @@ mod tests {
         posting.extend_from_slice(&AnalyzerChannel::Surface.field_id().to_be_bytes());
         posting.extend_from_slice(&0_u32.to_le_bytes());
         let err = decode_posting_entry(&posting).unwrap_err();
-        assert!(matches!(err, Error::CorruptedIndex(_)));
+        assert_matches!(err, Error::CorruptedIndex(_));
     }
 
     #[test]
@@ -2102,7 +2098,7 @@ mod tests {
         let mut posting = id.as_bytes().to_vec();
         posting.push(1); // claim one field but supply no bytes
         let err = decode_posting_entry(&posting).unwrap_err();
-        assert!(matches!(err, Error::CorruptedIndex(_)));
+        assert_matches!(err, Error::CorruptedIndex(_));
     }
 
     /// A v1-style concatenated multi-entry blob must NOT decode as a
@@ -2116,7 +2112,7 @@ mod tests {
         encode_posting_entry(&EntityId::now(), &fields, &mut blob)?;
         encode_posting_entry(&EntityId::now(), &fields, &mut blob)?;
         let err = decode_posting_entry(&blob).unwrap_err();
-        assert!(matches!(err, Error::CorruptedIndex(_)));
+        assert_matches!(err, Error::CorruptedIndex(_));
         Ok(())
     }
 
@@ -2164,7 +2160,7 @@ mod tests {
     fn forward_decode_rejects_v1_records_with_tf() {
         let v1_record = [2, 0, b'a', b'b', 0, 3, 7, 0, 0, 0];
         let err = decode_forward(&v1_record).unwrap_err();
-        assert!(matches!(err, Error::CorruptedIndex(_)));
+        assert_matches!(err, Error::CorruptedIndex(_));
     }
 
     #[test]
@@ -2313,12 +2309,12 @@ mod tests {
             10,
         )
         .unwrap_err();
-        assert!(matches!(err, Error::CorruptedIndex(_)));
+        assert_matches!(err, Error::CorruptedIndex(_));
         drop(rtxn);
 
         let mut wtxn = vault.store.env.write_txn()?;
         let err = deindex_text(&vault.store, &mut wtxn, &id).unwrap_err();
-        assert!(matches!(err, Error::CorruptedIndex(_)));
+        assert_matches!(err, Error::CorruptedIndex(_));
         Ok(())
     }
 }

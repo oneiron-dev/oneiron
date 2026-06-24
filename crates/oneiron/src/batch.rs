@@ -1429,13 +1429,14 @@ fn validate_child_of_batch(
             // whole materialization batch (ONE-1124).
             return Err(Error::ChildOfCardinality);
         }
-        if let Some(parent) = parents.iter().next() {
-            if child == *parent {
-                return Err(Error::CycleDetected);
-            }
-            if would_create_child_of_cycle(store, rtxn, child_of_overlay, &child, parent)? {
-                return Err(Error::CycleDetected);
-            }
+        let Some(parent) = parents.iter().next() else {
+            continue;
+        };
+        if child == *parent {
+            return Err(Error::CycleDetected);
+        }
+        if would_create_child_of_cycle(store, rtxn, child_of_overlay, &child, parent)? {
+            return Err(Error::CycleDetected);
         }
     }
 
@@ -1684,10 +1685,12 @@ pub(crate) fn parse_short_id_value(value: &[u8]) -> Result<(&str, u8)> {
         return Err(Error::CorruptedIndex("short id value"));
     }
 
-    let (short_id_bytes, hash_bytes) = value.split_at(value.len() - 1);
+    let Some((&hash, short_id_bytes)) = value.split_last() else {
+        return Err(Error::CorruptedIndex("short id value"));
+    };
     let short_id =
         str::from_utf8(short_id_bytes).map_err(|_| Error::CorruptedIndex("short id value"))?;
-    Ok((short_id, hash_bytes[0]))
+    Ok((short_id, hash))
 }
 
 fn parse_entity_metadata(record: &[u8]) -> Result<(u8, TimeRange, u64)> {

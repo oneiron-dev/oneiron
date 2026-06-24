@@ -54,7 +54,7 @@ pub fn analyze(text: &str, offset_base: u32, position_base: u32, out: &mut Vec<T
             TokenKind::Cjk,
         ));
 
-        if let Some(&(next_local_start, next_ch)) = chars.get(i + 1) {
+        if let Some([_, (next_local_start, next_ch)]) = chars[i..].array_windows::<2>().next() {
             let bi_end = offset_base + next_local_start + next_ch.len() as u32;
             let mut term = String::with_capacity(ch.len() + next_ch.len());
             term.push_str(ch);
@@ -96,25 +96,25 @@ pub(crate) fn emit_bigram_overlay(
         })
         .collect();
 
-    for (i, &(local_start, ch)) in chars.iter().enumerate() {
-        if let Some(&(next_local_start, next_ch)) = chars.get(i + 1) {
-            let start = offset_base + local_start;
-            let end = offset_base + next_local_start + next_ch.len() as u32;
-            let mut term = String::with_capacity(ch.len() + next_ch.len());
-            term.push_str(ch);
-            term.push_str(next_ch);
-            out.push(
-                Token::new(
-                    term,
-                    start,
-                    end,
-                    position_base + i as u32,
-                    AnalyzerChannel::CjkNgram,
-                    TokenKind::Cjk,
-                )
-                .overlay(),
-            );
-        }
+    for (i, [(local_start, ch), (next_local_start, next_ch)]) in
+        chars.as_slice().array_windows::<2>().enumerate()
+    {
+        let start = offset_base + *local_start;
+        let end = offset_base + *next_local_start + next_ch.len() as u32;
+        let mut term = String::with_capacity(ch.len() + next_ch.len());
+        term.push_str(ch);
+        term.push_str(next_ch);
+        out.push(
+            Token::new(
+                term,
+                start,
+                end,
+                position_base + i as u32,
+                AnalyzerChannel::CjkNgram,
+                TokenKind::Cjk,
+            )
+            .overlay(),
+        );
     }
 }
 

@@ -1230,6 +1230,7 @@ pub(crate) fn unit_interval_f32(value: &Value) -> Option<f32> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use core::assert_matches;
 
     #[test]
     fn predicate_grammar_accepts_well_formed_unknown_predicates() {
@@ -1246,34 +1247,34 @@ mod tests {
     #[test]
     fn predicate_grammar_rejects_violations_typed() {
         // Single segment.
-        assert!(matches!(
+        assert_matches!(
             validate_predicate("profile", false),
             Err(Error::InvalidPredicate { .. })
-        ));
+        );
         // Uppercase.
-        assert!(matches!(
+        assert_matches!(
             validate_predicate("Edge.Provenance", false),
             Err(Error::InvalidPredicate { .. })
-        ));
+        );
         // Empty segment.
-        assert!(matches!(
+        assert_matches!(
             validate_predicate("profile.", false),
             Err(Error::InvalidPredicate { .. })
-        ));
+        );
         // Segment starting with digit / underscore.
-        assert!(matches!(
+        assert_matches!(
             validate_predicate("profile.9lives", false),
             Err(Error::InvalidPredicate { .. })
-        ));
-        assert!(matches!(
+        );
+        assert_matches!(
             validate_predicate("profile._hidden", false),
             Err(Error::InvalidPredicate { .. })
-        ));
+        );
         // Non-ASCII.
-        assert!(matches!(
+        assert_matches!(
             validate_predicate("profilé.name", false),
             Err(Error::InvalidPredicate { .. })
-        ));
+        );
     }
 
     #[test]
@@ -1285,10 +1286,10 @@ mod tests {
 
         let over_limit = format!("a.{}", "b".repeat(127));
         assert_eq!(over_limit.len(), 129);
-        assert!(matches!(
+        assert_matches!(
             validate_predicate(&over_limit, false),
             Err(Error::InvalidPredicate { .. })
-        ));
+        );
     }
 
     #[test]
@@ -1304,21 +1305,21 @@ mod tests {
 
     #[test]
     fn reserved_namespace_rejected_public_allowed_internal() {
-        assert!(matches!(
+        assert_matches!(
             validate_predicate("edge.provenance", false),
             Err(Error::ReservedPredicate { .. })
-        ));
-        assert!(matches!(
+        );
+        assert_matches!(
             validate_predicate("edge.anything_else", false),
             Err(Error::ReservedPredicate { .. })
-        ));
+        );
         // The internal door allows the reserved namespace…
         validate_predicate("edge.provenance", true).expect("door must allow edge.*");
         // …but grammar still applies through the door.
-        assert!(matches!(
+        assert_matches!(
             validate_predicate("Edge.Provenance", true),
             Err(Error::InvalidPredicate { .. })
-        ));
+        );
         // "edgework.x" is NOT in the reserved namespace (prefix is segment-exact).
         validate_predicate("edgework.tools", false).expect("edgework.* is not reserved");
     }
@@ -1482,22 +1483,22 @@ mod tests {
         );
 
         // 17 bytes — neither encoding.
-        assert!(matches!(
+        assert_matches!(
             ClaimSubject::decode(&[0x44; 17]),
             Err(Error::InvalidClaimBody(_))
-        ));
+        );
         // 33 bytes with an unregistered kind byte.
         let mut bad_kind = edge_ref.clone();
         bad_kind[16] = 200;
-        assert!(matches!(
+        assert_matches!(
             ClaimSubject::decode(&bad_kind),
             Err(Error::InvalidClaimBody(_))
-        ));
+        );
         // Reserved entity-id bytes (all zero) rejected.
-        assert!(matches!(
+        assert_matches!(
             ClaimSubject::decode(&[0x00; 16]),
             Err(Error::InvalidClaimBody(_))
-        ));
+        );
     }
 
     /// ARCH-0004 / ARCH-0022 world write-validation, exercised on the claim
@@ -1545,16 +1546,16 @@ mod tests {
         );
 
         // 15-byte blob rejected fail-closed.
-        assert!(matches!(
+        assert_matches!(
             decode_claim_body(&body_with_world(Some(Value::Binary(vec![0x5A; 15]))), false),
             Err(Error::InvalidClaimBody(_))
-        ));
+        );
 
         // String rejected fail-closed (the pre-fix opaque-bytes behavior).
-        assert!(matches!(
+        assert_matches!(
             decode_claim_body(&body_with_world(Some(Value::from("w0"))), false),
             Err(Error::InvalidClaimBody(_))
-        ));
+        );
     }
 
     #[test]
@@ -1644,10 +1645,10 @@ mod tests {
         validate_edge_provenance_claim_structure(&wrapper(ClaimApprovalStatus::Approved))
             .expect("approved provenance wrapper must pass the door");
         // `Proposed` is outside {auto, approved} → typed reject.
-        assert!(matches!(
+        assert_matches!(
             validate_edge_provenance_claim_structure(&wrapper(ClaimApprovalStatus::Proposed)),
             Err(Error::InvalidProvenanceBody(_))
-        ));
+        );
     }
 
     fn test_id(seed: u8) -> EntityId {

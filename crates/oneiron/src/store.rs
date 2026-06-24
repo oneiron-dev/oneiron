@@ -89,7 +89,7 @@
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::str;
-use std::sync::{Mutex, MutexGuard, OnceLock};
+use std::sync::{LazyLock, Mutex, MutexGuard};
 
 use heed::types::{Bytes, Str};
 use heed::{Database, DatabaseFlags, Env, EnvOpenOptions, RwTxn};
@@ -130,8 +130,9 @@ const ERR_POPULATED_REQUIRES_EMBEDDING_MODEL: &str =
     "embedding model is required to open a populated vector vault";
 const ERR_VECTOR_WRITE_REQUIRES_EMBEDDING_MODEL: &str =
     "embedding model is required before writing vectors";
-static LMDB_DATABASE_OPEN_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-static OPEN_STORE_PATHS: OnceLock<Mutex<HashSet<PathBuf>>> = OnceLock::new();
+static LMDB_DATABASE_OPEN_LOCK: Mutex<()> = Mutex::new(());
+static OPEN_STORE_PATHS: LazyLock<Mutex<HashSet<PathBuf>>> =
+    LazyLock::new(|| Mutex::new(HashSet::new()));
 
 /// `vault_meta` key prefix for the per-type short-id counters (M2-5 /
 /// ONE-1102, storage ABI v3). The full key is the 12-byte ASCII prefix
@@ -570,7 +571,6 @@ struct RegisteredPath {
 impl RegisteredPath {
     fn reserve(path: PathBuf) -> Result<Self> {
         let mut open_paths = OPEN_STORE_PATHS
-            .get_or_init(|| Mutex::new(HashSet::new()))
             .lock()
             .map_err(|_| Error::InvariantViolation("store path registry mutex poisoned"))?;
 
@@ -587,10 +587,7 @@ impl RegisteredPath {
 
 impl Drop for RegisteredPath {
     fn drop(&mut self) {
-        let Some(open_paths) = OPEN_STORE_PATHS.get() else {
-            return;
-        };
-        let mut open_paths = match open_paths.lock() {
+        let mut open_paths = match OPEN_STORE_PATHS.lock() {
             Ok(open_paths) => open_paths,
             Err(poisoned) => poisoned.into_inner(),
         };
@@ -652,7 +649,6 @@ fn create_db(env: &Env, wtxn: &mut RwTxn<'_>, name: &str) -> Result<Database<Byt
 
 pub(crate) fn lmdb_database_open_guard() -> Result<MutexGuard<'static, ()>> {
     LMDB_DATABASE_OPEN_LOCK
-        .get_or_init(|| Mutex::new(()))
         .lock()
         .map_err(|_| Error::InvariantViolation("lmdb database-open mutex poisoned"))
 }
@@ -825,34 +821,31 @@ fn preflight_embedding_model(
         Some(raw) => {
             let stored = parse_utf8_bytes(raw)?;
             match requested {
-                Some(requested) => {
-                    if stored != requested {
-                        return Err(Error::EmbeddingModelChanged {
-                            stored,
-                            requested: requested.to_owned(),
-                        });
-                    }
-                    Ok(false)
+                Some(requested) if stored != requested => Err(Error::EmbeddingModelChanged {
+                    stored,
+                    requested: requested.to_owned(),
+                }),
+                Some(_) => Ok(false),
+                None if has_persisted_vector_or_hnsw_data(
+                    hnsw_meta,
+                    vectors,
+                    hnsw_neighbors,
+                    &rtxn,
+                )? =>
+                {
+                    Err(Error::InvalidConfig(
+                        ERR_POPULATED_REQUIRES_EMBEDDING_MODEL.to_owned(),
+                    ))
                 }
-                None => {
-                    if has_persisted_vector_or_hnsw_data(hnsw_meta, vectors, hnsw_neighbors, &rtxn)?
-                    {
-                        return Err(Error::InvalidConfig(
-                            ERR_POPULATED_REQUIRES_EMBEDDING_MODEL.to_owned(),
-                        ));
-                    }
-                    Ok(false)
-                }
+                None => Ok(false),
             }
         }
-        None => {
-            if has_persisted_vector_or_hnsw_data(hnsw_meta, vectors, hnsw_neighbors, &rtxn)? {
-                return Err(Error::InvalidConfig(
-                    ERR_POPULATED_MISSING_MODEL_ID.to_owned(),
-                ));
-            }
-            Ok(requested.is_some())
+        None if has_persisted_vector_or_hnsw_data(hnsw_meta, vectors, hnsw_neighbors, &rtxn)? => {
+            Err(Error::InvalidConfig(
+                ERR_POPULATED_MISSING_MODEL_ID.to_owned(),
+            ))
         }
+        None => Ok(requested.is_some()),
     }
 }
 
