@@ -1,6 +1,7 @@
 use crate::store::Store;
 use crate::types::{EDGE_VALUE_STRUCTURAL_LEN, ENTITY_TYPE_MACHINE, ENTITY_TYPE_TASK};
 use crate::*;
+use core::assert_matches;
 
 fn non_finite_edge_value(weight: f32) -> [u8; EDGE_VALUE_STRUCTURAL_LEN] {
     let mut value = [0_u8; EDGE_VALUE_STRUCTURAL_LEN];
@@ -417,7 +418,7 @@ fn batch_in_put_failure_does_not_commit_partial_entity_update() {
                 .put(&id, ENTITY_TYPE_MACHINE, new_occurred, 21, b"new")
                 .apply(wtxn)
                 .expect_err("expected malformed short id value to fail");
-            assert!(matches!(err, Error::CorruptedIndex("short id value")));
+            assert_matches!(err, Error::CorruptedIndex("short id value"));
             Ok(())
         })
         .unwrap();

@@ -716,15 +716,16 @@ fn invalidate_ppr_caches(store: &Store, wtxn: &mut RwTxn<'_>, entity_id: &Entity
     }
 
     for seed_hash in hashes {
-        if let Some(raw) = store.ppr_cache.get(&*wtxn, &seed_hash)? {
-            if raw.len() < CACHE_HEADER_LEN {
-                store.ppr_cache.delete(wtxn, &seed_hash)?;
-                continue;
-            }
-            let mut patched = raw.to_vec();
-            patched[CACHE_STALE_OFFSET] = 1;
-            store.ppr_cache.put(wtxn, &seed_hash, &patched)?;
+        let Some(raw) = store.ppr_cache.get(&*wtxn, &seed_hash)? else {
+            continue;
+        };
+        if raw.len() < CACHE_HEADER_LEN {
+            store.ppr_cache.delete(wtxn, &seed_hash)?;
+            continue;
         }
+        let mut patched = raw.to_vec();
+        patched[CACHE_STALE_OFFSET] = 1;
+        store.ppr_cache.put(wtxn, &seed_hash, &patched)?;
     }
 
     Ok(())
@@ -963,20 +964,14 @@ fn decode_cache_scores(payload: &[u8]) -> Result<Vec<ScoredEntity>> {
         return Err(Error::CorruptedIndex("ppr cache scores"));
     }
 
-    payload
-        .chunks_exact(CACHE_ENTRY_LEN)
-        .map(|chunk| {
-            let id = EntityId::from_bytes(
-                chunk[..ENTITY_ID_LEN]
-                    .try_into()
-                    .map_err(|_| Error::CorruptedIndex("ppr cache scores"))?,
-            )
-            .map_err(|_| Error::CorruptedIndex("ppr cache scores"))?;
-            let score = f32::from_le_bytes(
-                chunk[ENTITY_ID_LEN..CACHE_ENTRY_LEN]
-                    .try_into()
-                    .map_err(|_| Error::CorruptedIndex("ppr cache scores"))?,
-            );
+    let (chunks, rem) = payload.as_chunks::<CACHE_ENTRY_LEN>();
+    debug_assert!(rem.is_empty());
+    chunks
+        .iter()
+        .map(|&[id_bytes @ .., s0, s1, s2, s3]| {
+            let id = EntityId::from_bytes(id_bytes)
+                .map_err(|_| Error::CorruptedIndex("ppr cache scores"))?;
+            let score = f32::from_le_bytes([s0, s1, s2, s3]);
             if !score.is_finite() {
                 return Err(Error::CorruptedIndex("ppr cache scores"));
             }

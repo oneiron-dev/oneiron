@@ -193,9 +193,15 @@ canonical test runner (ONE-1144) — the default profile is the fast tier
 rtk proxy cargo build -p oneiron
 rtk proxy cargo nextest run -p oneiron
 rtk proxy cargo nextest run -p oneiron --features sync
-rtk proxy cargo clippy --workspace --all-targets -- -D warnings
-rtk proxy cargo fmt --all -- --check
+rtk proxy cargo clippy --workspace --all-targets --all-features -- -D warnings
+rtk proxy cargo fmt --all --check
 ```
+
+Modern Rust idioms for agents: Oneiron tracks the pinned stable toolchain in
+`rust-toolchain.toml`. Prefer newly stable standard-library affordances only
+when they remove local noise; for example, import `assert_matches!` explicitly
+in tests when it gives clearer enum/result failures. Avoid broad mechanical
+rewrites during feature work.
 
 Use the local skills already in this repo:
 - `commit` skill — clean commits during implementation
@@ -239,11 +245,11 @@ Fix any issues. Repeat until self-review pass is clean.
 Run all of:
 
 ```bash
-rtk proxy cargo nextest run --workspace --profile full
-rtk proxy cargo test --doc --workspace --exclude oneiron-bench
-rtk proxy cargo clippy --workspace --all-targets -- -D warnings
-rtk proxy cargo fmt --all -- --check
-rtk proxy env RUSTDOCFLAGS='-D warnings' cargo doc --workspace --no-deps
+rtk proxy cargo nextest run --workspace --all-features --profile full
+rtk proxy cargo test --doc --workspace --exclude oneiron-bench --all-features
+rtk proxy cargo clippy --workspace --all-targets --all-features -- -D warnings
+rtk proxy cargo fmt --all --check
+rtk proxy env RUSTDOCFLAGS='-D warnings' cargo doc --workspace --all-features --no-deps
 ```
 
 (`--profile full` includes the slow tier; nextest does not run doctests,

@@ -113,10 +113,10 @@ async fn search_vector(
     let results = server
         .vault
         .search_vector(&query, params.limit)
-        .map_err(|e| {
+        .inspect_err(|e| {
             tracing::error!(error = %e, "vector search failed");
-            StatusCode::INTERNAL_SERVER_ERROR
-        })?;
+        })
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     let response: Vec<SearchResult> = results
         .into_iter()
@@ -148,10 +148,10 @@ async fn search_text(
     let results = server
         .vault
         .search_text(&params.query, params.limit)
-        .map_err(|e| {
+        .inspect_err(|e| {
             tracing::error!(error = %e, "text search failed");
-            StatusCode::INTERNAL_SERVER_ERROR
-        })?;
+        })
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     let response: Vec<SearchResult> = results
         .into_iter()
@@ -177,10 +177,13 @@ async fn get_entity(
 
     let id = oneiron::EntityId::from_hex(&id_hex).map_err(|_| StatusCode::BAD_REQUEST)?;
 
-    let blob = server.vault.get(&id).map_err(|e| {
-        tracing::error!(error = %e, "get entity failed");
-        StatusCode::INTERNAL_SERVER_ERROR
-    })?;
+    let blob = server
+        .vault
+        .get(&id)
+        .inspect_err(|e| {
+            tracing::error!(error = %e, "get entity failed");
+        })
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     match blob {
         Some(data) => Ok((StatusCode::OK, data)),
@@ -199,10 +202,13 @@ async fn get_edges(
 
     let id = oneiron::EntityId::from_hex(&id_hex).map_err(|_| StatusCode::BAD_REQUEST)?;
 
-    let edges = server.vault.edges_out(&id).map_err(|e| {
-        tracing::error!(error = %e, "get edges failed");
-        StatusCode::INTERNAL_SERVER_ERROR
-    })?;
+    let edges = server
+        .vault
+        .edges_out(&id)
+        .inspect_err(|e| {
+            tracing::error!(error = %e, "get edges failed");
+        })
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     let response: Vec<EdgeResult> = edges
         .into_iter()

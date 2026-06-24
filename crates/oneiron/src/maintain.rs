@@ -670,6 +670,7 @@ fn decode_u64_opt(raw: Option<&[u8]>) -> Result<Option<u64>> {
 
 #[cfg(test)]
 mod tests {
+    use core::assert_matches;
     use heed::types::Bytes;
 
     use super::*;
@@ -917,13 +918,13 @@ mod tests {
         }
 
         let err = vault.maintain().rebuild_hnsw().run().unwrap_err();
-        assert!(matches!(
+        assert_matches!(
             err,
             Error::DimensionMismatch {
                 expected: 4,
                 got: 3,
             }
-        ));
+        );
 
         let count_after = read_u64_meta(&vault, COUNT_KEY)?;
         let neighbors_after = read_neighbor_bytes(&vault, &a)?;
@@ -957,10 +958,10 @@ mod tests {
 
         let err =
             commit_rebuilt_hnsw(&vault, &prepared.rebuilt, prepared.vector_version).unwrap_err();
-        assert!(matches!(
+        assert_matches!(
             err,
             Error::ConcurrentWrite("vectors changed during hnsw rebuild; retry maintenance")
-        ));
+        );
 
         let count_after = read_u64_meta(&vault, COUNT_KEY)?;
         let vector_version_after = read_u64_meta(&vault, VECTOR_VERSION_KEY)?;
@@ -1044,13 +1045,13 @@ mod tests {
             .rebuild_hnsw()
             .run()
             .unwrap_err();
-        assert!(matches!(
+        assert_matches!(
             err,
             Error::DimensionMismatch {
                 expected: 4,
                 got: 3,
             }
-        ));
+        );
         Ok(())
     }
 
@@ -1081,12 +1082,12 @@ mod tests {
             LinkDiscipline::Symmetric,
         )
         .unwrap_err();
-        assert!(matches!(
+        assert_matches!(
             err,
             Error::InvariantViolation(
                 "validated rebuild vector disappeared within the same read snapshot"
             )
-        ));
+        );
         Ok(())
     }
 

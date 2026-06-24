@@ -336,12 +336,10 @@ fn normalize_value(
     let mut value = if !json_mode && is_timestamp_field(key) {
         if let Some(ts) = value.as_u64() {
             Value::String(format_relative_timestamp(ts, now))
-        } else if let Some(ts) = value.as_i64() {
-            if ts >= 0 {
-                Value::String(format_relative_timestamp(ts as u64, now))
-            } else {
-                value.clone()
-            }
+        } else if let Some(ts) = value.as_i64()
+            && ts >= 0
+        {
+            Value::String(format_relative_timestamp(ts as u64, now))
         } else {
             value.clone()
         }

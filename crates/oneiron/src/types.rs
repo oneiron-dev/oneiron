@@ -358,9 +358,11 @@ impl EntityId {
             return Err(crate::error::Error::InvalidKey);
         }
         let mut bytes = [0u8; 16];
-        for (i, chunk) in s.as_bytes().chunks_exact(2).enumerate() {
-            let hi = hex_nibble(chunk[0]).ok_or(crate::error::Error::InvalidKey)?;
-            let lo = hex_nibble(chunk[1]).ok_or(crate::error::Error::InvalidKey)?;
+        let (chunks, rem) = s.as_bytes().as_chunks::<2>();
+        debug_assert!(rem.is_empty());
+        for (i, &[hi_byte, lo_byte]) in chunks.iter().enumerate() {
+            let hi = hex_nibble(hi_byte).ok_or(crate::error::Error::InvalidKey)?;
+            let lo = hex_nibble(lo_byte).ok_or(crate::error::Error::InvalidKey)?;
             bytes[i] = (hi << 4) | lo;
         }
         Self::from_bytes(bytes)

@@ -406,6 +406,7 @@ enum WindowSweepState {
     Deferred,
     /// At least one window compaction FAILED; carries the first error's
     /// `ErrorKind` name for the jobs' `last_error_code`.
+    #[cfg_attr(not(feature = "sync"), allow(dead_code))]
     Failed(String),
 }
 
@@ -1113,6 +1114,8 @@ mod tests {
         encode_hard_erase_sweep_key,
     };
     use crate::types::{HnswConfig, TimeRange, VaultConfig};
+    #[cfg(feature = "sync")]
+    use core::assert_matches;
 
     fn test_config() -> VaultConfig {
         let mut config = VaultConfig::device();
@@ -1206,6 +1209,7 @@ mod tests {
         id
     }
 
+    #[cfg(feature = "sync")]
     fn contains(haystack: &[u8], needle: &[u8]) -> bool {
         haystack.windows(needle.len()).any(|w| w == needle)
     }
@@ -1368,7 +1372,7 @@ mod tests {
 
         INJECT_CRASH_BEFORE_FINALIZE.with(|cell| cell.set(true));
         let err = run_hard_erase_sweep(&vault).expect_err("injected crash");
-        assert!(matches!(err, Error::InvariantViolation(_)));
+        assert_matches!(err, Error::InvariantViolation(_));
 
         // Obligation survives the crash window; the compaction already
         // committed (the d:w: row is now a shallow doc).

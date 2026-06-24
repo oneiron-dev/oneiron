@@ -203,6 +203,7 @@ pub fn normalize_with_offset_map<'a>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use core::assert_matches;
 
     #[test]
     fn nfkc_folds_fullwidth_ascii() {
@@ -234,7 +235,7 @@ mod tests {
     fn kana_fold_leaves_hiragana_unchanged() {
         let input = "とうきょう";
         let out = kana_fold(input);
-        assert!(matches!(out, Cow::Borrowed(_)));
+        assert_matches!(out, Cow::Borrowed(_));
         assert_eq!(&*out, input);
     }
 
@@ -242,7 +243,7 @@ mod tests {
     fn kana_fold_leaves_latin_unchanged() {
         let input = "hello world";
         let out = kana_fold(input);
-        assert!(matches!(out, Cow::Borrowed(_)));
+        assert_matches!(out, Cow::Borrowed(_));
         assert_eq!(&*out, input);
     }
 
