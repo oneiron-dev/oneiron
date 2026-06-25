@@ -12,8 +12,8 @@ use crate::error::{Error, Result};
 use crate::fusion;
 use crate::store::Store;
 use crate::types::{
-    EDGE_KEY_LEN, ENTITY_ID_LEN, ENTITY_TYPE_CLAIM, ENTITY_TYPE_FACET, EdgeKind, EntityId,
-    ScoredEntity, TemporalAnchorMode, TemporalGranularity, TimeRange,
+    EDGE_KEY_LEN, ENTITY_ID_LEN, ENTITY_TYPE_CLAIM, ENTITY_TYPE_FACET, EdgeKind, EmptyReason,
+    EntityId, ScoredEntity, TemporalAnchorMode, TemporalGranularity, TimeRange,
 };
 
 const DEFAULT_RESULT_LIMIT: usize = 20;
@@ -139,6 +139,8 @@ pub(crate) struct PipelineOutput {
     pub(crate) scores: Vec<ScoredEntity>,
     pub(crate) claim_bodies: HashMap<EntityId, ClaimBody>,
     pub(crate) claims_suppressed: usize,
+    pub(crate) total_in_scope: usize,
+    pub(crate) empty_reason: Option<EmptyReason>,
 }
 
 impl EntityMetadataCache {
@@ -520,7 +522,7 @@ impl<'a> PipelineBuilder<'a> {
             self.vault.ensure_text_index_trusted()?;
         }
 
-        let (scores, claim_gate, deferred_ppr_cache_writes) = {
+        let (scores, claim_gate, deferred_ppr_cache_writes, total_in_scope, empty_reason) = {
             let mut ranked_lists = Vec::new();
             let rtxn = self.vault.store.env.read_txn()?;
             let mut metadata_cache = EntityMetadataCache::default();
@@ -595,15 +597,20 @@ impl<'a> PipelineBuilder<'a> {
                     scores: Vec::new(),
                     claim_bodies: HashMap::new(),
                     claims_suppressed: 0,
+                    total_in_scope: 0,
+                    empty_reason: None,
                 });
             }
 
             let mut scores = fusion::rrf_fuse(&ranked_lists, RRF_K);
+            let total_in_scope = scores.len();
+            let mut empty_reason = None;
 
             // D19 claim status gate, first application: covers the fused
             // candidates of all five channels (text/vector/phonetic/
             // temporal/PPR) AND runs BEFORE expand_ppr implicit seed
             // selection, so a dead claim never seeds the expansion.
+            let before_status_gate = scores.len();
             apply_claim_status_gate(
                 &mut scores,
                 &self.vault.store,
@@ -611,6 +618,9 @@ impl<'a> PipelineBuilder<'a> {
                 &mut metadata_cache,
                 &mut claim_gate,
             )?;
+            if before_status_gate > 0 && scores.is_empty() {
+                empty_reason = Some(EmptyReason::AllActivated);
+            }
 
             if let Some((explicit_seeds, depth)) = &self.ppr_expand {
                 let mut seen = HashSet::<EntityId>::new();
@@ -692,6 +702,7 @@ impl<'a> PipelineBuilder<'a> {
                 occurred_range: self.occurred_range,
                 learned_range: self.learned_range,
             };
+            let before_filters = scores.len();
             apply_filters(
                 &mut scores,
                 &self.vault.store,
@@ -699,6 +710,9 @@ impl<'a> PipelineBuilder<'a> {
                 filter_config,
                 &mut metadata_cache,
             )?;
+            if before_filters > 0 && scores.is_empty() {
+                empty_reason = Some(EmptyReason::FilterMatchedNone);
+            }
 
             if self.apply_contiguity {
                 boost_contiguity(
@@ -714,6 +728,7 @@ impl<'a> PipelineBuilder<'a> {
             // before truncate, same read txn — strict-excluded claims never
             // consume `result_limit` slots.
             if let Some((facet_id, mode)) = self.facet_filter {
+                let before_facet = scores.len();
                 apply_facet_filter(
                     &mut scores,
                     &self.vault.store,
@@ -722,16 +737,33 @@ impl<'a> PipelineBuilder<'a> {
                     &facet_id,
                     mode,
                 )?;
+                if before_facet > 0 && scores.is_empty() {
+                    empty_reason = Some(EmptyReason::FilterMatchedNone);
+                }
             }
 
             // ARCH-0004 world filter (ONE-1117): same post-fusion stage as the
             // facet filter, before truncate, same read txn. A no-op under the
             // default `WorldScope::All`.
+            let before_world = scores.len();
             apply_world_filter(&mut scores, &self.vault.store, &rtxn, self.world_scope)?;
+            if before_world > 0 && scores.is_empty() {
+                empty_reason = Some(EmptyReason::FilterMatchedNone);
+            }
 
+            let before_limit = scores.len();
             fusion::sort_scored_entities_desc(&mut scores);
             scores.truncate(self.result_limit);
-            (scores, claim_gate, deferred_ppr_cache_writes)
+            if before_limit > 0 && scores.is_empty() {
+                empty_reason = Some(EmptyReason::BelowThreshold);
+            }
+            (
+                scores,
+                claim_gate,
+                deferred_ppr_cache_writes,
+                total_in_scope,
+                empty_reason,
+            )
         };
 
         crate::ppr::flush_deferred_ppr_cache_writes(&self.vault.store, &deferred_ppr_cache_writes)?;
@@ -751,6 +783,8 @@ impl<'a> PipelineBuilder<'a> {
             scores,
             claim_bodies,
             claims_suppressed,
+            total_in_scope,
+            empty_reason,
         })
     }
 }
