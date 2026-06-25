@@ -369,7 +369,54 @@ async fn companion_resume_requires_all_present_scope_keys_to_match() {
 }
 
 #[tokio::test]
-async fn companion_resume_pages_past_historical_notifications_over_type_cap() {
+async fn companion_resume_bounds_pending_notification_response_to_latest_items() {
+    const PENDING_ROWS: usize = 130;
+    const EXPECTED_LIMIT: usize = 128;
+    const ID_BASE: u128 = 0x2142_0000;
+
+    let dir = tempfile::tempdir().unwrap();
+    let vault = Arc::new(oneiron::Vault::open(dir.path(), test_vault_config()).unwrap());
+    let body = rmp_serde::to_vec(&serde_json::json!({
+        "message": "pending"
+    }))
+    .unwrap();
+
+    let mut batch = vault.batch();
+    for i in 0..PENDING_ROWS {
+        let id = seeded_entity_id(ID_BASE + i as u128);
+        batch = batch.put(
+            &id,
+            ENTITY_TYPE_NOTIFICATION,
+            time_range(i as u64, i as u64),
+            i as u64,
+            &body,
+        );
+    }
+    batch.commit().unwrap();
+
+    let (addr, handle) = spawn_server(vault, config_with_secret("secret")).await;
+    let response = http_post(addr, "/api/companion/resume", Some("secret"), "{}").await;
+    assert_http_status(&response, 200);
+    let bundle: ResumeBundle =
+        serde_json::from_str(http_body(&response)).expect("resume body should deserialize");
+
+    assert_eq!(bundle.notifications.len(), EXPECTED_LIMIT);
+    assert_eq!(
+        bundle.notifications[0].id,
+        seeded_entity_id(ID_BASE + (PENDING_ROWS - 1) as u128).to_hex()
+    );
+    assert!(
+        bundle
+            .notifications
+            .iter()
+            .all(|item| item.id != seeded_entity_id(ID_BASE).to_hex())
+    );
+
+    handle.abort();
+}
+
+#[tokio::test]
+async fn companion_resume_returns_latest_pending_notification_over_type_cap() {
     const TYPE_CAP: usize = 100_000;
     const HISTORICAL_ROWS: usize = TYPE_CAP + 1;
     const ID_BASE: u128 = 0x2140_0000;

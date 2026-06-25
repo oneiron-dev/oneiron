@@ -7,9 +7,10 @@ use std::time::Instant;
 use crate::limits::{MAX_ANCESTOR_DEPTH, MAX_CHILD_OF_CYCLE_TRAVERSAL_STEPS};
 use crate::types::{
     EDGE_VALUE_SEMANTIC_LEN, EDGE_VALUE_SEMANTIC_PROVENANCED_LEN, EDGE_VALUE_STRUCTURAL_LEN,
-    ENTITY_ID_LEN, ENTITY_TYPE_MACHINE, ENTITY_TYPE_MODEL, ENTITY_TYPE_REDACTION_AUDIT,
-    ENTITY_TYPE_TASK, ENTITY_TYPE_TASK_LIST, EdgeActorClass, EdgeConfirmationStatus,
-    EdgeProvenanceFlags, decode_edge_value, decode_edge_value_for_kind, encode_edge_value,
+    ENTITY_ID_LEN, ENTITY_TYPE_MACHINE, ENTITY_TYPE_MODEL, ENTITY_TYPE_NOTIFICATION,
+    ENTITY_TYPE_REDACTION_AUDIT, ENTITY_TYPE_TASK, ENTITY_TYPE_TASK_LIST, EdgeActorClass,
+    EdgeConfirmationStatus, EdgeProvenanceFlags, decode_edge_value, decode_edge_value_for_kind,
+    encode_edge_value,
 };
 use heed::EnvOpenOptions;
 use heed::types::{Bytes, Str};
@@ -7462,6 +7463,54 @@ fn entities_by_type_page_paginates_past_materialization_cap() -> Result<()> {
             .entities_by_type_page(ENTITY_TYPE_TASK_LIST, None, 0)?
             .is_empty()
     );
+    Ok(())
+}
+
+#[test]
+fn latest_entity_bodies_by_type_returns_bounded_latest_snapshot_rows() -> Result<()> {
+    let temp_dir = tempfile::tempdir()?;
+    let vault = Vault::open(temp_dir.path(), test_config())?;
+    let old = seeded_entity_id(0x2140);
+    let newest = seeded_entity_id(0x2141);
+    let other_type = seeded_entity_id(0x2142);
+
+    vault
+        .batch()
+        .put(
+            &old,
+            ENTITY_TYPE_NOTIFICATION,
+            test_time_range(1, 1),
+            10,
+            b"old",
+        )
+        .put(
+            &newest,
+            ENTITY_TYPE_NOTIFICATION,
+            test_time_range(2, 2),
+            30,
+            b"new",
+        )
+        .put(
+            &other_type,
+            ENTITY_TYPE_TASK,
+            test_time_range(3, 3),
+            40,
+            b"task",
+        )
+        .commit()?;
+
+    let latest = vault.latest_entity_bodies_by_type(ENTITY_TYPE_NOTIFICATION, 2, 3)?;
+    assert_eq!(
+        latest,
+        vec![(newest, 30, b"new".to_vec()), (old, 10, b"old".to_vec())]
+    );
+
+    let scan_limited = vault.latest_entity_bodies_by_type(ENTITY_TYPE_NOTIFICATION, 2, 1)?;
+    assert!(scan_limited.is_empty());
+
+    let result_limited = vault.latest_entity_bodies_by_type(ENTITY_TYPE_NOTIFICATION, 1, 3)?;
+    assert_eq!(result_limited, vec![(newest, 30, b"new".to_vec())]);
+
     Ok(())
 }
 

@@ -2985,6 +2985,72 @@ impl Vault {
         Ok(ids)
     }
 
+    /// Returns up to `limit` latest entity bodies of a given type.
+    ///
+    /// Scans at most `scan_limit` rows from the `temporal_learned` index in
+    /// newest-first order and reads matching entity bodies from the same LMDB
+    /// snapshot, returning `(id, learned_at, body)` tuples.
+    pub fn latest_entity_bodies_by_type(
+        &self,
+        entity_type: u8,
+        limit: usize,
+        scan_limit: usize,
+    ) -> Result<Vec<(EntityId, u64, Vec<u8>)>> {
+        if limit == 0 || scan_limit == 0 {
+            return Ok(Vec::new());
+        }
+
+        let rtxn = self.store.env.read_txn()?;
+        let lower: std::ops::Bound<&[u8]> = std::ops::Bound::Unbounded;
+        let upper: std::ops::Bound<&[u8]> = std::ops::Bound::Unbounded;
+        let mut rows = Vec::with_capacity(limit.min(1024));
+        for (scanned, entry) in self
+            .store
+            .temporal_learned
+            .rev_range(&rtxn, &(lower, upper))?
+            .enumerate()
+        {
+            if scanned >= scan_limit {
+                break;
+            }
+
+            let (key, _) = entry?;
+            require_key_len(key, 24, "temporal learned key")?;
+            let learned_at = u64::from_be_bytes(
+                key[..8]
+                    .try_into()
+                    .map_err(|_| Error::CorruptedIndex("temporal learned key"))?,
+            );
+            let id = EntityId::from_bytes(
+                key[8..24]
+                    .try_into()
+                    .map_err(|_| Error::CorruptedIndex("temporal learned key"))?,
+            )
+            .map_err(|_| Error::CorruptedIndex("temporal learned key"))?;
+
+            let Some(raw) = self.store.entities.get(&rtxn, id.as_bytes())? else {
+                continue;
+            };
+            let header =
+                EntityMetadataHeader::parse(raw).ok_or(Error::CorruptedIndex("entity header"))?;
+            if header.entity_type != entity_type {
+                continue;
+            }
+            if header.learned_at != learned_at {
+                return Err(Error::CorruptedIndex("temporal learned key"));
+            }
+            rows.push((
+                id,
+                header.learned_at,
+                raw[ENTITY_METADATA_HEADER_LEN..].to_vec(),
+            ));
+            if rows.len() >= limit {
+                break;
+            }
+        }
+        Ok(rows)
+    }
+
     /// Counts entity IDs of a given type via the `type_index` prefix path.
     ///
     /// This is the exact count primitive for deterministic paginated list

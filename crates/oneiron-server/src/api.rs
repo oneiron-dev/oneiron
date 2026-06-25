@@ -15,8 +15,8 @@ use axum::response::{IntoResponse, Json, Response};
 use axum::routing::{get, post};
 use axum::{Router, middleware};
 use oneiron::{
-    Error as OneironError, NotificationItem, ResumeBudget, ResumeBundle, SessionContext,
-    UnprocessedItem, types::ENTITY_TYPE_NOTIFICATION,
+    NotificationItem, ResumeBudget, ResumeBundle, SessionContext, UnprocessedItem,
+    types::ENTITY_TYPE_NOTIFICATION,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -51,7 +51,10 @@ const CAPABILITIES: &[&str] = &[
     "lease.revoke",
 ];
 const CAPABILITY_MODES: &[&str] = &["flash", "thinking", "pro", "ultra"];
-const RESUME_NOTIFICATION_PAGE_SIZE: usize = 512;
+// ONE-214 is read-only and adds no notification-specific storage. Keep resume
+// hydration bounded by returning pending notifications from a latest window.
+const RESUME_NOTIFICATION_LIMIT: usize = 128;
+const RESUME_NOTIFICATION_SCAN_LIMIT: usize = 4096;
 
 #[derive(OpenApi)]
 #[openapi(
@@ -735,61 +738,34 @@ fn pending_notifications(
     caller: &str,
 ) -> Result<Vec<NotificationItem>, ApiError> {
     let mut notifications = Vec::new();
-    let mut after = None;
-    loop {
-        let ids = server
-            .vault
-            .entities_by_type_page(
-                ENTITY_TYPE_NOTIFICATION,
-                after.as_ref(),
-                RESUME_NOTIFICATION_PAGE_SIZE,
-            )
-            .inspect_err(|e| {
-                tracing::error!(error = %e, "resume notification page scan failed");
-            })
-            .map_err(|_| ApiError::internal_server_error("resume notification scan failed"))?;
-        let Some(last_id) = ids.last().copied() else {
-            break;
+
+    let rows = server
+        .vault
+        .latest_entity_bodies_by_type(
+            ENTITY_TYPE_NOTIFICATION,
+            RESUME_NOTIFICATION_LIMIT,
+            RESUME_NOTIFICATION_SCAN_LIMIT,
+        )
+        .inspect_err(|e| {
+            tracing::error!(error = %e, "resume notification latest scan failed");
+        })
+        .map_err(|_| ApiError::internal_server_error("resume notification scan failed"))?;
+
+    for (id, learned_at, raw_body) in rows {
+        let Some(body) = notification_body_json(&raw_body) else {
+            continue;
         };
-
-        for id in ids {
-            let Some(raw_body) = server
-                .vault
-                .get(&id)
-                .inspect_err(|e| {
-                    tracing::error!(error = %e, id = %id.to_hex(), "resume notification read failed");
-                })
-                .map_err(|_| ApiError::internal_server_error("resume notification read failed"))?
-            else {
-                continue;
-            };
-            let Some(body) = notification_body_json(&raw_body) else {
-                continue;
-            };
-            if !notification_scoped_to_caller(&body, caller) {
-                continue;
-            }
-            if notification_already_surfaced(&body, caller) {
-                continue;
-            }
-            let learned_at = match server.vault.get_learned_at(&id) {
-                Ok(learned_at) => learned_at,
-                Err(OneironError::EntityNotFound) => continue,
-                Err(error) => {
-                    tracing::error!(error = %error, id = %id.to_hex(), "resume notification timestamp failed");
-                    return Err(ApiError::internal_server_error(
-                        "resume notification timestamp failed",
-                    ));
-                }
-            };
-            notifications.push(NotificationItem {
-                id: id.to_hex(),
-                learned_at,
-                body,
-            });
+        if !notification_scoped_to_caller(&body, caller) {
+            continue;
         }
-
-        after = Some(last_id);
+        if notification_already_surfaced(&body, caller) {
+            continue;
+        }
+        notifications.push(NotificationItem {
+            id: id.to_hex(),
+            learned_at,
+            body,
+        });
     }
 
     Ok(notifications)

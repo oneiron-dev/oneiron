@@ -381,7 +381,7 @@ Request body: Empty JSON object.
 Response fields:
 
 - `session`: current API version, entity counts by numeric type, and latest activity timestamp.
-- `notifications`: pending notification items scoped to the caller, excluding already surfaced or acknowledged items.
+- `notifications`: latest pending notification items scoped to the caller, excluding already surfaced or acknowledged items.
 - `unprocessed`: items not processed since the caller's last resume; currently an empty array when none are available.
 - `budget`: `tokens_used`, `tokens_limit`, and saturated `tokens_remaining`.
 
