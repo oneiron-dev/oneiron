@@ -65,6 +65,7 @@ fn test_vault_with_dir() -> (tempfile::TempDir, Arc<Vault>) {
 }
 
 const TEST_LEASE_VAULT_ID: u64 = 0;
+const OTHER_TEST_LEASE_VAULT_ID: u64 = 0x1110_0f0e_0d0c_0b0a;
 
 /// 25-byte pinned envelope: type u8 + occurred_start/end + learned_at u64 BE.
 /// Receipts are point events (`occurred_start == occurred_end == learned_at`,
@@ -176,7 +177,7 @@ fn signed_receipt_blob(
 /// Writes a hand-built `ls:` lease-registry row (the pinned 66 B OD-4
 /// layout, assembled byte-by-byte in the test): `[ver 0x02][status]
 /// [pubkey:32][granted:8 LE][renewed:8 LE][expires:8 LE][vault_id:8 BE]`.
-fn register_lease_row(vault: &Vault, client_id: u64, pubkey: &[u8; 32], status: u8) {
+fn register_lease_row(vault: &Vault, vault_id: u64, client_id: u64, pubkey: &[u8; 32], status: u8) {
     let mut record = Vec::with_capacity(66);
     record.push(0x02);
     record.push(status);
@@ -184,10 +185,10 @@ fn register_lease_row(vault: &Vault, client_id: u64, pubkey: &[u8; 32], status: 
     record.extend_from_slice(&1_700_000_000u64.to_le_bytes());
     record.extend_from_slice(&1_700_000_000u64.to_le_bytes());
     record.extend_from_slice(&(1_700_000_000u64 + 7_776_000).to_le_bytes());
-    record.extend_from_slice(&TEST_LEASE_VAULT_ID.to_be_bytes());
+    record.extend_from_slice(&vault_id.to_be_bytes());
     assert_eq!(record.len(), 66, "OD-4 record length literal");
     vault
-        .sync_state_put(&lease::lease_key(TEST_LEASE_VAULT_ID, client_id), &record)
+        .sync_state_put(&lease::lease_key(vault_id, client_id), &record)
         .unwrap();
 }
 
@@ -619,6 +620,7 @@ fn forged_new_receipt_without_valid_lease_attestation_is_quarantined() {
     let bound_client = 0x0909_0909_0909_0909u64;
     register_lease_row(
         &vault,
+        TEST_LEASE_VAULT_ID,
         bound_client,
         &bound_key.verifying_key().to_bytes(),
         0x01,
@@ -732,6 +734,7 @@ fn door_accepts_expired_rejects_revoked() {
     let expired_client = 0x1111_1111_1111_1111u64;
     register_lease_row(
         &vault,
+        TEST_LEASE_VAULT_ID,
         expired_client,
         &expired_key.verifying_key().to_bytes(),
         0x02,
@@ -765,6 +768,7 @@ fn door_accepts_expired_rejects_revoked() {
     let revoked_client = 0x1313_1313_1313_1313u64;
     register_lease_row(
         &vault,
+        TEST_LEASE_VAULT_ID,
         revoked_client,
         &revoked_key.verifying_key().to_bytes(),
         0x03,
@@ -800,6 +804,7 @@ fn door_accepts_expired_rejects_revoked() {
     let distinct_client = 0x1717_1717_1717_1717u64;
     register_lease_row(
         &vault,
+        TEST_LEASE_VAULT_ID,
         distinct_client,
         &distinct_key.verifying_key().to_bytes(),
         0x01,
@@ -831,14 +836,88 @@ fn door_accepts_expired_rejects_revoked() {
     );
 }
 
+/// ONE-1190: the pubkey revocation floor is scoped to the claimed lease's
+/// vault dimension. A revoked binding for the SAME pubkey in another vault
+/// must not poison an independently leased active/expired row.
+#[test]
+fn revoked_pubkey_in_other_vault_does_not_reject_receipt() {
+    let (_dir, vault) = test_vault_with_dir();
+    let doc = LoroDoc::new();
+    let materializer = Arc::new(Materializer::new());
+    let _subs = register_observer_b(&doc, &vault, &materializer, WINDOW);
+    let scope_hex = EntityId::now().to_hex();
+
+    let key_p = SigningKey::from_bytes(&[29u8; 32]);
+    let pubkey_p = key_p.verifying_key().to_bytes();
+    let claimed_client = 0x2929_2929_2929_2929u64;
+    let other_vault_client = 0x2929_2929_2929_0001u64;
+
+    register_lease_row(&vault, TEST_LEASE_VAULT_ID, claimed_client, &pubkey_p, 0x02);
+    register_lease_row(
+        &vault,
+        OTHER_TEST_LEASE_VAULT_ID,
+        other_vault_client,
+        &pubkey_p,
+        0x03,
+    );
+
+    let id = EntityId::now();
+    let blob = signed_receipt_blob(&key_p, claimed_client, &id, LEARNED_AT, &scope_hex);
+    insert_bytes(&doc.get_map("entities"), &id.to_hex(), &blob);
+    doc.commit();
+
+    assert_eq!(
+        vault.get_raw(&id).unwrap().as_deref(),
+        Some(blob.as_slice()),
+        "a different-vault revoked binding for the same pubkey must not reject this receipt"
+    );
+    assert!(
+        quarantined_records(&vault).unwrap().is_empty(),
+        "accepted cross-vault non-match must not quarantine"
+    );
+}
+
+/// ONE-1190 same-vault terminal regression: a revoked sibling for the same
+/// pubkey still kills a fresh active client_id in that vault.
+#[test]
+fn revoked_pubkey_same_vault_still_terminal() {
+    let (_dir, vault) = test_vault_with_dir();
+    let doc = LoroDoc::new();
+    let materializer = Arc::new(Materializer::new());
+    let _subs = register_observer_b(&doc, &vault, &materializer, WINDOW);
+    let scope_hex = EntityId::now().to_hex();
+
+    let key_p = SigningKey::from_bytes(&[30u8; 32]);
+    let pubkey_p = key_p.verifying_key().to_bytes();
+    let revoked_client = 0x3030_3030_3030_0001u64;
+    let claimed_client = 0x3030_3030_3030_0002u64;
+
+    register_lease_row(&vault, TEST_LEASE_VAULT_ID, revoked_client, &pubkey_p, 0x03);
+    register_lease_row(&vault, TEST_LEASE_VAULT_ID, claimed_client, &pubkey_p, 0x01);
+
+    let id = EntityId::now();
+    let blob = signed_receipt_blob(&key_p, claimed_client, &id, LEARNED_AT, &scope_hex);
+    insert_bytes(&doc.get_map("entities"), &id.to_hex(), &blob);
+    doc.commit();
+
+    assert!(
+        vault.get_raw(&id).unwrap().is_none(),
+        "same-vault revoked pubkey must remain terminal"
+    );
+    let records = quarantined_records(&vault).unwrap();
+    let rec = record_for_key(&records, &id.to_hex()).expect("quarantined, never silent");
+    assert_eq!(rec.reason_code, "ReceiptLeaseRevoked");
+    assert_eq!(rec.payload_hash, xxh3_64(&blob));
+}
+
 /// ONE-1140 RULING C (OD-8 amended, pubkey-bound; delete-safety adjacent,
 /// cap-exempt): revocation binds to the Ed25519 PUBKEY, not the mintable
 /// att_client. A receipt VALIDLY signed by a revoked pubkey is rejected at
 /// the door even when the att_client it claims points at a FRESH, ACTIVE
 /// `ls:` row — the rebind-under-a-new-client_id bypass that the
-/// client_id-keyed kill switch missed. The floor scans every same-vault
-/// `ls:{vault}:` row and rejects on pubkey equality with any same-vault
-/// revoked binding. A plausible-wrong impl that only checks the claimed
+/// client_id-keyed kill switch missed. The floor scans the claimed vault's
+/// `ls:` rows and rejects on pubkey equality with any same-vault revoked
+/// binding. A plausible-wrong impl that only checks the claimed
 /// `ls:{vault}:{B}` row (active) ACCEPTS and FAILS this test.
 #[test]
 fn revoked_pubkey_rebound_under_fresh_client_id_is_rejected_at_door() {
@@ -852,13 +931,13 @@ fn revoked_pubkey_rebound_under_fresh_client_id_is_rejected_at_door() {
     let key_p = SigningKey::from_bytes(&[31u8; 32]);
     let pubkey_p = key_p.verifying_key().to_bytes();
     let client_a = 0x3131_3131_3131_3131u64;
-    register_lease_row(&vault, client_a, &pubkey_p, 0x03);
+    register_lease_row(&vault, TEST_LEASE_VAULT_ID, client_a, &pubkey_p, 0x03);
 
     // … but the attacker re-registers the SAME key under a FRESH, never-seen
     // client B with an ACTIVE row (the bypass the client_id kill switch let
     // through).
     let client_b = 0x6262_6262_6262_6262u64;
-    register_lease_row(&vault, client_b, &pubkey_p, 0x01);
+    register_lease_row(&vault, TEST_LEASE_VAULT_ID, client_b, &pubkey_p, 0x01);
 
     let id = EntityId::now();
     let blob = signed_receipt_blob(&key_p, client_b, &id, LEARNED_AT, &scope_hex);
@@ -884,12 +963,12 @@ fn revoked_pubkey_rebound_under_fresh_client_id_is_rejected_at_door() {
     assert_eq!(rec.payload_hash, xxh3_64(&blob));
 }
 
-/// ONE-1140 RULING C fail-closed rider (delete-safety adjacent, cap-exempt):
-/// the pubkey-revocation floor scans every same-vault `ls:{vault}:` row, so
-/// a malformed sibling `ls:` row inside that prefix (OUR mirror corruption,
-/// not remote bytes) propagates fail-closed for the vault — never a
-/// best-effort skip. The error is the LOCAL `CorruptedIndex`, which is NOT a
-/// remote rejection, so the receipt is neither written nor quarantined.
+/// ONE-1140/ONE-1190 fail-closed rider (delete-safety adjacent, cap-exempt):
+/// the pubkey-revocation floor scans the claimed vault's `ls:` rows, so a
+/// malformed same-vault sibling row (OUR mirror corruption, not remote bytes)
+/// propagates fail-closed for the vault — never a best-effort skip. The error
+/// is the LOCAL `CorruptedIndex`, which is NOT a remote rejection, so the
+/// receipt is neither written nor quarantined.
 #[test]
 fn corrupt_sibling_ls_row_fails_door_closed() {
     let (_dir, vault) = test_vault_with_dir();
@@ -902,14 +981,16 @@ fn corrupt_sibling_ls_row_fails_door_closed() {
     let author_client = 0x4141_4141_4141_4141u64;
     register_lease_row(
         &vault,
+        TEST_LEASE_VAULT_ID,
         author_client,
         &author_key.verifying_key().to_bytes(),
         0x01,
     );
-    // … plus a CORRUPT sibling `ls:` row (truncated below the pinned 66 B).
+    // … plus a CORRUPT same-vault sibling `ls:` row (truncated below the
+    // pinned 66 B).
     vault
         .sync_state_put(
-            &lease::lease_key(TEST_LEASE_VAULT_ID, 0xdead_beef_dead_beef),
+            &lease::lease_key(TEST_LEASE_VAULT_ID, 0xdead_beef_dead_beefu64),
             b"too-short",
         )
         .unwrap();
@@ -934,6 +1015,50 @@ fn corrupt_sibling_ls_row_fails_door_closed() {
         record_for_key(&quarantined_records(&vault).unwrap(), &id.to_hex()).is_none(),
         "CorruptedIndex is LOCAL, never a remote quarantine"
     );
+}
+
+/// Claimed-row status has precedence over the pubkey floor: if the claimed
+/// lease is revoked, the door returns the remote `ReceiptLeaseRevoked`
+/// result before decoding any malformed sibling row in the scoped scan.
+#[test]
+fn revoked_claimed_row_precedes_scoped_floor_scan() {
+    let (_dir, vault) = test_vault_with_dir();
+    let window_key = WindowKey::new(WINDOW);
+    let doc = create_window_doc("node-x", &window_key);
+    let scope_hex = EntityId::now().to_hex();
+
+    let author_key = SigningKey::from_bytes(&[45u8; 32]);
+    let author_client = 0x4545_4545_4545_4545u64;
+    register_lease_row(
+        &vault,
+        TEST_LEASE_VAULT_ID,
+        author_client,
+        &author_key.verifying_key().to_bytes(),
+        0x03,
+    );
+    vault
+        .sync_state_put(
+            &lease::lease_key(TEST_LEASE_VAULT_ID, 0x4545_4545_4545_0001u64),
+            b"too-short",
+        )
+        .unwrap();
+
+    let id = EntityId::now();
+    let blob = signed_receipt_blob(&author_key, author_client, &id, LEARNED_AT, &scope_hex);
+    insert_bytes(&doc.get_map("entities"), &id.to_hex(), &blob);
+    doc.commit();
+
+    let materializer = Materializer::new();
+    forward_rematerialize(&vault, &doc, &materializer, &window_key)
+        .expect("claimed-row revoked path must return before the corrupt sibling scan");
+    assert!(
+        vault.get_raw(&id).unwrap().is_none(),
+        "revoked claimed row rejects the receipt"
+    );
+    let records = quarantined_records(&vault).unwrap();
+    let rec = record_for_key(&records, &id.to_hex()).expect("quarantined, never silent");
+    assert_eq!(rec.reason_code, "ReceiptLeaseRevoked");
+    assert_eq!(rec.payload_hash, xxh3_64(&blob));
 }
 
 /// ONE-1140 (OD-10; delete-safety adjacent, cap-exempt): lease-quarantined
@@ -974,6 +1099,7 @@ fn quarantined_receipt_readmitted_after_lease_lands() {
     // The lease mirror catches up…
     register_lease_row(
         &vault,
+        TEST_LEASE_VAULT_ID,
         author_client,
         &author_key.verifying_key().to_bytes(),
         0x01,
