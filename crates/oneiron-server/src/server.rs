@@ -10,7 +10,6 @@ use oneiron::sync::schema::{
     add_window_to_root, init_window_list, read_window_list, schema_version_bytes,
 };
 use oneiron::sync::server_state;
-use oneiron::sync::window::load_window_from_state;
 use oneiron::sync::{self, WindowKey, WindowManager};
 use tokio::sync::{Mutex, RwLock, broadcast};
 
@@ -38,9 +37,6 @@ pub struct SyncServer {
     pub(crate) vault: Arc<oneiron::Vault>,
     /// Root LoroDoc (server-authoritative, contains meta.windows).
     pub(crate) root_doc: LoroDoc,
-    /// Window key -> LoroDoc for each loaded window (RAM cache over
-    /// sync_state `d:w:{key}` + `u:w:{key}:*`).
-    pub(crate) windows: RwLock<HashMap<String, LoroDoc>>,
     /// Per-connection awareness state.
     pub(crate) awareness: RwLock<HashMap<u32, AwarenessState>>,
     /// Broadcast channel for fan-out to all connected clients.
@@ -82,6 +78,7 @@ impl LeaseExpiryReport {
 pub(crate) struct ReassertDrainJobReport {
     pub(crate) report: sync::ReassertDrainReport,
     pub(crate) skipped: bool,
+    pub(crate) window_updates: Vec<(String, Vec<u8>)>,
 }
 
 impl ReassertDrainJobReport {
@@ -89,6 +86,7 @@ impl ReassertDrainJobReport {
         Self {
             report: sync::ReassertDrainReport::default(),
             skipped: true,
+            window_updates: Vec::new(),
         }
     }
 }
@@ -181,7 +179,6 @@ impl SyncServer {
         Ok(Self {
             vault,
             root_doc,
-            windows: RwLock::new(HashMap::new()),
             awareness: RwLock::new(HashMap::new()),
             broadcast_tx,
             next_conn_id: AtomicU32::new(1),
@@ -234,64 +231,40 @@ impl SyncServer {
             .map_err(|e| format!("root doc snapshot failed: {e}"))
     }
 
-    /// Gets or creates a window LoroDoc. Returns a clone (reference-counted).
+    /// Gets or creates the canonical live window LoroDoc.
     ///
-    /// Lookup order: RAM cache → persisted sync_state (`d:w:{key}` snapshot
-    /// plus pending `u:w:{key}:*` updates) → create fresh. Creation persists
-    /// the initial snapshot, registers the key in the root doc's
-    /// `meta.windows` via `add_window_to_root`, and persists the root to
-    /// `d:root`, so the window survives a restart and future clients learn
-    /// the key.
-    ///
-    /// Corrupt persisted state is an error (fail-closed): the server must
-    /// not silently serve a fresh empty window over an undecodable snapshot
-    /// — that would drop relayed updates and tombstones.
+    /// Server websocket sync and lifecycle maintenance both route through
+    /// `WindowManager`, so a server-side reassertion drain commits into the
+    /// same doc that active connections serve. First touch still preserves
+    /// the server root contract: a fresh window is snapshotted to `d:w:*`,
+    /// registered in `meta.windows`, and persisted to `d:root`.
     pub(crate) async fn get_or_create_window(
         &self,
         key: &WindowKey,
     ) -> Result<LoroDoc, oneiron::Error> {
+        let snapshot_key = format!("d:w:{key}");
+        let had_snapshot = self.vault.sync_state_get(&snapshot_key)?.is_some();
+        let window = self.reassert_manager.open_window(key)?;
+
+        if !had_snapshot {
+            server_state::persist_window_snapshot(&self.vault, key, &window.doc)?;
+        }
+
+        if !read_window_list(&self.root_doc)
+            .iter()
+            .any(|existing| existing == key)
         {
-            let windows = self.windows.read().await;
-            if let Some(doc) = windows.get(key.as_str()) {
-                return Ok(doc.clone());
+            let _guard = self.lease_registrar.lock().await;
+            if !read_window_list(&self.root_doc)
+                .iter()
+                .any(|existing| existing == key)
+            {
+                add_window_to_root(&self.root_doc, key);
+                server_state::persist_root_snapshot(&self.vault, &self.root_doc)?;
             }
         }
 
-        // Serialize load/create under the write lock so two connections
-        // cannot race a double-create (each with a distinct Loro peer) or a
-        // double-load.
-        let mut windows = self.windows.write().await;
-        if let Some(doc) = windows.get(key.as_str()) {
-            return Ok(doc.clone());
-        }
-
-        let doc = match load_window_from_state(&self.vault, SERVER_USER_ID, key) {
-            Ok(doc) => doc,
-            Err(oneiron::Error::WindowNotFound { .. }) => {
-                // Initialize window schema maps
-                let doc = LoroDoc::new();
-                let _entities = doc.get_map("entities");
-                let _edges = doc.get_map("edges");
-                let _tombstones = doc.get_map("tombstones");
-                doc.commit();
-
-                server_state::persist_window_snapshot(&self.vault, key, &doc)?;
-                {
-                    // Lock order: this create path already holds
-                    // `windows.write()`, then takes `lease_registrar` only
-                    // for the root_doc write. Registrar paths never take
-                    // `windows.write()` while holding `lease_registrar`.
-                    let _guard = self.lease_registrar.lock().await;
-                    add_window_to_root(&self.root_doc, key);
-                    server_state::persist_root_snapshot(&self.vault, &self.root_doc)?;
-                }
-                doc
-            }
-            Err(e) => return Err(e),
-        };
-
-        windows.insert(key.as_str().to_string(), doc.clone());
-        Ok(doc)
+        Ok(window.doc.clone())
     }
 
     /// Persists an imported client update to sync_state
@@ -305,19 +278,19 @@ impl SyncServer {
         server_state::persist_imported_window_update(&self.vault, key, update_bytes)
     }
 
-    /// Evicts a window doc from the RAM cache.
+    /// Evicts a window doc from the live manager registry.
     ///
     /// Used when the durable append of an imported update fails: the UPDATE
-    /// arm imports into the cached doc BEFORE persisting (that order is
+    /// arm imports into the loaded doc BEFORE persisting (that order is
     /// deliberate — persisting raw bytes that then fail `import_with` would
     /// durably append an undecodable `u:w:` row, and window load is
     /// fail-closed on pending updates, bricking the window at boot). On
-    /// persist failure the cached doc therefore holds state a restart would
+    /// persist failure the loaded doc therefore holds state a restart would
     /// lose; evicting it forces the next access to reload from durable
-    /// `d:w:` + `u:w:` state, so the RAM cache can never serve state a
-    /// restart loses.
+    /// `d:w:` + `u:w:` state, so the manager can never serve state a restart
+    /// loses.
     pub(crate) async fn evict_window(&self, key: &WindowKey) {
-        self.windows.write().await.remove(key.as_str());
+        self.reassert_manager.discard_window(key);
     }
 
     /// Starts the periodic lease-lifecycle maintenance loop.
@@ -364,6 +337,26 @@ impl SyncServer {
                         still_pending = ?report.report.still_pending,
                         "ra drain tick complete"
                     );
+                }
+                for (window_key, update) in report.window_updates {
+                    match crate::protocol::encode_window_sync(
+                        &window_key,
+                        crate::protocol::window_sub_tags::UPDATE,
+                        &update,
+                    )
+                    .into_result()
+                    {
+                        Ok(msg) => {
+                            let _ = crate::broadcast::broadcast(&self.broadcast_tx, 0, msg);
+                        }
+                        Err(err) => {
+                            tracing::error!(
+                                window = %window_key,
+                                error = crate::protocol::transport_err_msg(err),
+                                "ra drain tick failed to encode window update"
+                            );
+                        }
+                    }
                 }
             }
             Err(err) => {
@@ -440,17 +433,58 @@ impl SyncServer {
             return Ok(ReassertDrainJobReport::skipped());
         }
 
+        let live_versions = self.live_window_versions();
         let result =
-            sync::drain_reassert_markers(&self.vault, SERVER_USER_ID, &self.reassert_manager).map(
-                |report| ReassertDrainJobReport {
-                    report,
-                    skipped: false,
-                },
-            );
+            sync::drain_reassert_markers(&self.vault, SERVER_USER_ID, &self.reassert_manager)
+                .and_then(|report| {
+                    let window_updates = self.collect_live_window_updates(live_versions)?;
+                    Ok(ReassertDrainJobReport {
+                        report,
+                        skipped: false,
+                        window_updates,
+                    })
+                });
 
         self.end_lifecycle_job(LifecycleJobKind::ReassertDrain)
             .await;
         result
+    }
+
+    fn live_window_versions(&self) -> HashMap<WindowKey, VersionVector> {
+        self.reassert_manager
+            .loaded_keys()
+            .into_iter()
+            .filter_map(|key| {
+                self.reassert_manager
+                    .window(&key)
+                    .map(|window| (key, window.doc.oplog_vv()))
+            })
+            .collect()
+    }
+
+    fn collect_live_window_updates(
+        &self,
+        before: HashMap<WindowKey, VersionVector>,
+    ) -> Result<Vec<(String, Vec<u8>)>, oneiron::Error> {
+        let mut updates = Vec::new();
+        for (key, vv_before) in before {
+            let Some(window) = self.reassert_manager.window(&key) else {
+                continue;
+            };
+            if window.doc.oplog_vv() == vv_before {
+                continue;
+            }
+            let update = window
+                .doc
+                .export(ExportMode::updates(&vv_before))
+                .map_err(|e| {
+                    oneiron::Error::SyncProtocolError(format!(
+                        "ra drain window delta export failed for {key}: {e}"
+                    ))
+                })?;
+            updates.push((key.as_str().to_string(), update));
+        }
+        Ok(updates)
     }
 
     fn lifecycle_job_key(&self, kind: LifecycleJobKind) -> LifecycleJobKey {
@@ -1318,6 +1352,7 @@ mod tests {
         let partial_window = WindowKey::new("2026-04");
         persist_empty_window(&vault, &complete_window);
         persist_empty_window(&vault, &partial_window);
+        let loaded_complete_doc = server.get_or_create_window(&complete_window).await.unwrap();
 
         let complete_id = oneiron::EntityId::now();
         let partial_id = oneiron::EntityId::now();
@@ -1371,6 +1406,37 @@ mod tests {
                 .is_some(),
             "malformed partial-window marker stays pending"
         );
+        assert_eq!(
+            deep_map_bytes(
+                &loaded_complete_doc,
+                "tombstones",
+                complete_id.to_hex().as_str()
+            )
+            .as_deref(),
+            Some(complete_value.as_slice()),
+            "loaded server window receives the reasserted tombstone"
+        );
+        assert_eq!(
+            report.window_updates.len(),
+            1,
+            "loaded-window drain emits one client-visible update"
+        );
+        let (window_key, update) = &report.window_updates[0];
+        let encoded =
+            crate::protocol::encode_window_sync(window_key, window_sub_tags::UPDATE, update)
+                .into_result()
+                .unwrap();
+        let crate::protocol::SyncMessage::WindowSync {
+            window_key,
+            sub_tag,
+            payload,
+        } = crate::protocol::parse_message(&encoded).unwrap()
+        else {
+            panic!("expected WindowSync update");
+        };
+        assert_eq!(window_key, complete_window.as_str());
+        assert_eq!(sub_tag, window_sub_tags::UPDATE);
+        assert_eq!(payload.as_slice(), update.as_slice());
 
         assert!(
             server

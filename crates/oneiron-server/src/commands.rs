@@ -67,16 +67,15 @@ async fn serve_with_config(config: ServeConfig) -> anyhow::Result<()> {
         SyncServer::new(Arc::new(vault), server_config)
             .map_err(|e| anyhow::anyhow!("sync server init failed: {e}"))?,
     );
-    let lifecycle_handle = sync_server.spawn_lifecycle_scheduler();
-
-    let app = build_app(sync_server).layer(cors_layer);
-
     let addr: SocketAddr = format!("{}:{}", config.host, config.port).parse()?;
     tracing::info!(%addr, "listening");
 
     let listener = tokio::net::TcpListener::bind(addr).await?;
+    let lifecycle_handle = sync_server.spawn_lifecycle_scheduler();
+    let app = build_app(sync_server).layer(cors_layer);
     let result = axum::serve(listener, app).await;
     lifecycle_handle.abort();
+    let _ = lifecycle_handle.await;
     result?;
 
     Ok(())
@@ -93,6 +92,7 @@ pub async fn revoke(args: RevokeArgs) -> anyhow::Result<()> {
     }
     let mut vault_config = config.vault_config();
     vault_config.dict_search_paths = dicts.paths;
+    ensure_existing_vault_for_revoke(&config.vault_path)?;
     let vault = oneiron::Vault::open(&config.vault_path, vault_config)
         .map_err(|e| anyhow::anyhow!("open vault {} failed: {e}", config.vault_path.display()))?;
     let server = SyncServer::new(Arc::new(vault), config.sync_server_config())
@@ -104,6 +104,16 @@ pub async fn revoke(args: RevokeArgs) -> anyhow::Result<()> {
         .map_err(|e| anyhow::anyhow!("lease revoke failed: {e}"))?
         .is_some();
     println!("{}", serde_json::json!({ "revoked": revoked }));
+    Ok(())
+}
+
+fn ensure_existing_vault_for_revoke(path: &Path) -> anyhow::Result<()> {
+    if !path.join("data.mdb").is_file() {
+        anyhow::bail!(
+            "vault {} does not exist; refusing to create a new vault for revoke",
+            path.display()
+        );
+    }
     Ok(())
 }
 
@@ -321,6 +331,34 @@ mod tests {
 
         init(args.clone()).unwrap();
         doctor(args).unwrap();
+    }
+
+    #[tokio::test]
+    async fn revoke_command_refuses_missing_vault_path_without_creating_storage() {
+        let dir = tempfile::tempdir().unwrap();
+        let vault_path = dir.path().join("missing-vault");
+
+        let err = revoke(RevokeArgs {
+            client: "0123456789abcdef".to_string(),
+            serve: ServeArgs {
+                vault_path: Some(vault_path.clone()),
+                dimensions: Some(32),
+                map_size: Some(64 * 1024 * 1024),
+                dict_search_paths: Some(Vec::new()),
+                ..Default::default()
+            },
+        })
+        .await
+        .unwrap_err();
+
+        assert!(
+            err.to_string()
+                .contains("refusing to create a new vault for revoke")
+        );
+        assert!(
+            !vault_path.join("data.mdb").exists(),
+            "bad revoke path must not create LMDB storage"
+        );
     }
 
     #[tokio::test]
