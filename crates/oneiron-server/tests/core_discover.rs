@@ -522,9 +522,55 @@ async fn discover_requires_auth_and_returns_empty_contract() {
             "personas",
             "predicate_namespaces",
             "scopes",
+            "skill_pack",
         ])
     );
 
+    assert_eq!(
+        body["skill_pack"]["name"].as_str(),
+        Some("oneiron-http-memory-api")
+    );
+    assert_eq!(
+        body["skill_pack"]["endpoint"].as_str(),
+        Some("/api/skills/oneiron.skills.md")
+    );
+    let skill_pack = body["skill_pack"]
+        .as_object()
+        .expect("skill_pack should be an object");
+    let bare_pack_filename = ["oneiron", ".skills", ".md"].concat();
+    assert!(
+        !skill_pack
+            .values()
+            .any(|value| value.as_str() == Some(bare_pack_filename.as_str())),
+        "skill_pack must not advertise a bare relative file path"
+    );
+    assert_eq!(
+        body["skill_pack"]["pack_format"].as_str(),
+        Some("agentskills.io")
+    );
+    assert_eq!(
+        body["skill_pack"]["mime_type"].as_str(),
+        Some("text/markdown")
+    );
+    assert!(
+        body["skill_pack"]["when_to_load"]
+            .as_str()
+            .is_some_and(|hint| hint.contains("/api/skills/oneiron.skills.md")
+                && hint.contains("callable layer")),
+        "skill_pack.when_to_load should tell agents when and how to load the pack"
+    );
+    assert!(
+        body["skill_pack"]["how_to_load"]
+            .as_str()
+            .is_some_and(|hint| hint.contains("same origin")
+                && hint.contains("x-oneiron-secret")
+                && hint.contains("local working directory")),
+        "skill_pack.how_to_load should clarify HTTP endpoint resolution semantics"
+    );
+    assert_eq!(
+        body["skill_pack"]["layer_boundary"].as_str(),
+        Some("skills = how to think about memory; MCP tools = what to call")
+    );
     assert!(body["bound"]["vault"].is_null());
     assert!(body["bound"]["persona"].is_null());
     assert!(body["bound"]["conversation"].is_null());
