@@ -15,8 +15,8 @@ use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Json, Response};
 use axum::routing::{get, post};
 use oneiron::{
-    NotificationItem, ResumeBudget, ResumeBundle, SessionContext, UnprocessedItem,
-    types::ENTITY_TYPE_NOTIFICATION,
+    Error as OneironError, NotificationItem, ResumeBudget, ResumeBundle, SessionContext,
+    UnprocessedItem, types::ENTITY_TYPE_NOTIFICATION,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -335,34 +335,30 @@ fn resume_bundle(server: &SyncServer, caller: &str) -> Result<ResumeBundle, ApiE
 
 fn resume_session_context(server: &SyncServer) -> Result<SessionContext, ApiError> {
     let mut counts = BTreeMap::new();
-    let mut last_activity = None;
 
     for entity_type in u8::MIN..=u8::MAX {
-        let ids = server
+        let count = server
             .vault
-            .entities_by_type(entity_type)
+            .count_entities_by_type(entity_type)
             .inspect_err(|e| {
                 tracing::error!(error = %e, entity_type, "resume session count scan failed");
             })
             .map_err(|_| ApiError::internal_server_error("resume session count scan failed"))?;
 
-        if ids.is_empty() {
+        if count == 0 {
             continue;
         }
 
-        counts.insert(entity_type.to_string(), ids.len() as u64);
-        for id in ids {
-            let learned_at = server
-                .vault
-                .get_learned_at(&id)
-                .inspect_err(|e| {
-                    tracing::error!(error = %e, id = %id.to_hex(), "resume activity scan failed");
-                })
-                .map_err(|_| ApiError::internal_server_error("resume activity scan failed"))?;
-            last_activity =
-                Some(last_activity.map_or(learned_at, |current: u64| current.max(learned_at)));
-        }
+        counts.insert(entity_type.to_string(), count);
     }
+
+    let last_activity = server
+        .vault
+        .latest_learned_at()
+        .inspect_err(|e| {
+            tracing::error!(error = %e, "resume activity summary failed");
+        })
+        .map_err(|_| ApiError::internal_server_error("resume activity summary failed"))?;
 
     Ok(SessionContext {
         api_version: API_LEVEL.to_owned(),
@@ -383,12 +379,8 @@ fn pending_notifications(
         })
         .map_err(|_| ApiError::internal_server_error("resume notification scan failed"))?;
 
-    let mut seen = BTreeSet::new();
     let mut notifications = Vec::new();
     for id in ids {
-        if !seen.insert(id) {
-            continue;
-        }
         let Some(raw_body) = server
             .vault
             .get(&id)
@@ -399,20 +391,25 @@ fn pending_notifications(
         else {
             continue;
         };
-        let body = entity_body_json(&raw_body);
+        let Some(body) = notification_body_json(&raw_body) else {
+            continue;
+        };
         if !notification_scoped_to_caller(&body, caller) {
             continue;
         }
         if notification_already_surfaced(&body, caller) {
             continue;
         }
-        let learned_at = server
-            .vault
-            .get_learned_at(&id)
-            .inspect_err(|e| {
-                tracing::error!(error = %e, id = %id.to_hex(), "resume notification timestamp failed");
-            })
-            .map_err(|_| ApiError::internal_server_error("resume notification timestamp failed"))?;
+        let learned_at = match server.vault.get_learned_at(&id) {
+            Ok(learned_at) => learned_at,
+            Err(OneironError::EntityNotFound) => continue,
+            Err(error) => {
+                tracing::error!(error = %error, id = %id.to_hex(), "resume notification timestamp failed");
+                return Err(ApiError::internal_server_error(
+                    "resume notification timestamp failed",
+                ));
+            }
+        };
         notifications.push(NotificationItem {
             id: id.to_hex(),
             learned_at,
@@ -440,14 +437,15 @@ fn resume_caller(headers: &HeaderMap) -> String {
         .to_owned()
 }
 
-fn entity_body_json(raw_body: &[u8]) -> Value {
-    rmp_serde::from_slice(raw_body)
-        .unwrap_or_else(|_| Value::String(String::from_utf8_lossy(raw_body).into_owned()))
+fn notification_body_json(raw_body: &[u8]) -> Option<Value> {
+    let body: Value = rmp_serde::from_slice(raw_body).ok()?;
+    body.as_object()?;
+    Some(body)
 }
 
 fn notification_scoped_to_caller(body: &Value, caller: &str) -> bool {
     let Some(object) = body.as_object() else {
-        return true;
+        return false;
     };
 
     const SCOPE_KEYS: &[&str] = &[
@@ -460,7 +458,9 @@ fn notification_scoped_to_caller(body: &Value, caller: &str) -> bool {
     ];
     for key in SCOPE_KEYS {
         if let Some(value) = object.get(*key) {
-            return caller_marker_contains(Some(value), caller);
+            if !caller_marker_contains(Some(value), caller) {
+                return false;
+            }
         }
     }
     true

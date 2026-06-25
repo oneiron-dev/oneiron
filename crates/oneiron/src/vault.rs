@@ -2747,6 +2747,18 @@ impl Vault {
         Ok(header.learned_at)
     }
 
+    /// Returns the greatest `learned_at` timestamp present in the temporal index.
+    pub fn latest_learned_at(&self) -> Result<Option<u64>> {
+        let rtxn = self.store.env.read_txn()?;
+        let Some((key, _)) = self.store.temporal_learned.last(&rtxn)? else {
+            return Ok(None);
+        };
+        require_key_len(key, 24, "temporal learned key")?;
+        Ok(Some(u64::from_be_bytes(key[..8].try_into().map_err(
+            |_| Error::CorruptedIndex("temporal learned key"),
+        )?)))
+    }
+
     /// Returns entity IDs whose `learned_at` falls within `[start, end)`.
     ///
     /// Range-seeks the `temporal_learned` index by timestamp prefix.
@@ -4051,6 +4063,41 @@ mod tests {
             .count_entities_by_type(ENTITY_TYPE_TASK_LIST)
             .expect_err("short type index key should fail loud");
         assert_matches!(err, Error::CorruptedIndex("type index key"));
+        Ok(())
+    }
+
+    #[test]
+    fn latest_learned_at_uses_temporal_index_tail() -> Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let vault = Vault::open(tmp.path(), test_config())?;
+
+        assert_eq!(vault.latest_learned_at()?, None);
+
+        vault
+            .batch()
+            .put(&entity(0x21), ENTITY_TYPE_TASK, range(1, 1), 10, b"early")
+            .put(&entity(0x22), ENTITY_TYPE_TASK, range(2, 2), 30, b"latest")
+            .put(&entity(0x23), ENTITY_TYPE_TASK, range(3, 3), 20, b"middle")
+            .commit()?;
+
+        assert_eq!(vault.latest_learned_at()?, Some(30));
+        Ok(())
+    }
+
+    #[test]
+    fn latest_learned_at_rejects_corrupted_temporal_key() -> Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let vault = Vault::open(tmp.path(), test_config())?;
+
+        vault.with_write_txn(|wtxn| {
+            vault.store.temporal_learned.put(wtxn, &[0xff], &[])?;
+            Ok(())
+        })?;
+
+        let err = vault
+            .latest_learned_at()
+            .expect_err("short temporal learned key should fail loud");
+        assert_matches!(err, Error::CorruptedIndex("temporal learned key"));
         Ok(())
     }
 

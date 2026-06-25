@@ -151,6 +151,57 @@ async fn companion_resume_requires_auth_and_deserializes() {
 }
 
 #[tokio::test]
+async fn companion_resume_counts_by_type_and_reports_latest_activity() {
+    let dir = tempfile::tempdir().unwrap();
+    let vault = Arc::new(oneiron::Vault::open(dir.path(), test_vault_config()).unwrap());
+
+    vault
+        .put_entity(
+            &EntityId::now(),
+            ENTITY_TYPE_PERSON,
+            time_range(1, 1),
+            40,
+            b"person",
+        )
+        .unwrap();
+    vault
+        .put_entity(
+            &EntityId::now(),
+            ENTITY_TYPE_TURN,
+            time_range(2, 2),
+            90,
+            b"turn",
+        )
+        .unwrap();
+
+    let (addr, handle) = spawn_server(vault, config_with_secret("secret")).await;
+    let response = http_post(addr, "/api/companion/resume", Some("secret"), "{}").await;
+    assert_http_status(&response, 200);
+    let bundle: ResumeBundle =
+        serde_json::from_str(http_body(&response)).expect("resume body should deserialize");
+
+    assert_eq!(
+        bundle
+            .session
+            .counts
+            .get(&ENTITY_TYPE_PERSON.to_string())
+            .copied(),
+        Some(1)
+    );
+    assert_eq!(
+        bundle
+            .session
+            .counts
+            .get(&ENTITY_TYPE_TURN.to_string())
+            .copied(),
+        Some(1)
+    );
+    assert_eq!(bundle.session.last_activity, Some(90));
+
+    handle.abort();
+}
+
+#[tokio::test]
 async fn companion_resume_filters_surfaced_notification_by_exact_id() {
     let dir = tempfile::tempdir().unwrap();
     let vault = Arc::new(oneiron::Vault::open(dir.path(), test_vault_config()).unwrap());
@@ -195,6 +246,112 @@ async fn companion_resume_filters_surfaced_notification_by_exact_id() {
     assert_eq!(bundle.notifications[0].id, pending.to_hex());
     assert_ne!(bundle.notifications[0].id, surfaced.to_hex());
     assert_eq!(bundle.unprocessed, Vec::new());
+
+    handle.abort();
+}
+
+#[tokio::test]
+async fn companion_resume_skips_malformed_and_non_object_notifications() {
+    let dir = tempfile::tempdir().unwrap();
+    let vault = Arc::new(oneiron::Vault::open(dir.path(), test_vault_config()).unwrap());
+
+    let malformed = EntityId::now();
+    let non_object = EntityId::now();
+    let valid = EntityId::now();
+    let non_object_body = rmp_serde::to_vec(&serde_json::json!("hello")).unwrap();
+    let valid_body = rmp_serde::to_vec(&serde_json::json!({
+        "message": "fresh"
+    }))
+    .unwrap();
+
+    vault
+        .put_entity(
+            &malformed,
+            ENTITY_TYPE_NOTIFICATION,
+            time_range(1, 1),
+            10,
+            &[0xc1],
+        )
+        .unwrap();
+    vault
+        .put_entity(
+            &non_object,
+            ENTITY_TYPE_NOTIFICATION,
+            time_range(2, 2),
+            20,
+            &non_object_body,
+        )
+        .unwrap();
+    vault
+        .put_entity(
+            &valid,
+            ENTITY_TYPE_NOTIFICATION,
+            time_range(3, 3),
+            30,
+            &valid_body,
+        )
+        .unwrap();
+
+    let (addr, handle) = spawn_server(vault, config_with_secret("secret")).await;
+    let response = http_post(addr, "/api/companion/resume", Some("secret"), "{}").await;
+    assert_http_status(&response, 200);
+    let bundle: ResumeBundle =
+        serde_json::from_str(http_body(&response)).expect("resume body should deserialize");
+
+    assert_eq!(bundle.notifications.len(), 1);
+    assert_eq!(bundle.notifications[0].id, valid.to_hex());
+
+    handle.abort();
+}
+
+#[tokio::test]
+async fn companion_resume_requires_all_present_scope_keys_to_match() {
+    let dir = tempfile::tempdir().unwrap();
+    let vault = Arc::new(oneiron::Vault::open(dir.path(), test_vault_config()).unwrap());
+
+    let conflicting = EntityId::now();
+    let matched = EntityId::now();
+    let conflicting_body = rmp_serde::to_vec(&serde_json::json!({
+        "message": "conflict",
+        "caller": "default",
+        "recipient": "other"
+    }))
+    .unwrap();
+    let matched_body = rmp_serde::to_vec(&serde_json::json!({
+        "message": "match",
+        "caller": "default",
+        "recipient": "default"
+    }))
+    .unwrap();
+
+    vault
+        .put_entity(
+            &conflicting,
+            ENTITY_TYPE_NOTIFICATION,
+            time_range(1, 1),
+            10,
+            &conflicting_body,
+        )
+        .unwrap();
+    vault
+        .put_entity(
+            &matched,
+            ENTITY_TYPE_NOTIFICATION,
+            time_range(2, 2),
+            20,
+            &matched_body,
+        )
+        .unwrap();
+
+    let (addr, handle) = spawn_server(vault, config_with_secret("secret")).await;
+    let response = http_post(addr, "/api/companion/resume", Some("secret"), "{}").await;
+    assert_http_status(&response, 200);
+    let bundle: ResumeBundle =
+        serde_json::from_str(http_body(&response)).expect("resume body should deserialize");
+
+    assert_eq!(bundle.notifications.len(), 1);
+    assert_eq!(bundle.notifications[0].id, matched.to_hex());
+    assert_ne!(bundle.notifications[0].id, conflicting.to_hex());
 
     handle.abort();
 }

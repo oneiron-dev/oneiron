@@ -63,7 +63,7 @@ pub fn serialize_pack(pack: &ContextPack, config: &SerializeConfig) -> Vec<u8> {
 }
 
 pub fn serialize_resume_bundle(bundle: &ResumeBundle) -> Vec<u8> {
-    serde_json::to_vec(bundle).unwrap_or_else(|_| b"{}".to_vec())
+    serde_json::to_vec(bundle).expect("ResumeBundle JSON serialization should not fail")
 }
 
 fn serialize_json(pack: &ContextPack, config: &SerializeConfig) -> Vec<u8> {
