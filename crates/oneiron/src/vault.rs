@@ -1131,7 +1131,7 @@ impl Vault {
     ///   type 0 → [`Error::InvalidClaimBody`];
     /// * either claim carrying a reserved `edge.*` provenance predicate →
     ///   [`Error::ProvenanceClaimLifecycle`] (the edge-provenance API owns
-    ///   that lifecycle; see [`Vault::claim_for_lifecycle_in`]);
+    ///   that lifecycle; see `Vault::claim_for_lifecycle_in`);
     /// * either claim's `life` ≠ `active` → [`Error::ClaimAlreadyClosed`]
     ///   (closed claims neither supersede nor get superseded again).
     ///

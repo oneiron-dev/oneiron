@@ -17,7 +17,7 @@
 //!
 //! LOCAL corruption (the engine's own LMDB read errors) is the opposite
 //! stream class: a fail-closed typed error, NEVER quarantine-and-continue.
-//! [`remote_rejection_reason`] is the classifier the replay sites use.
+//! `remote_rejection_reason` is the classifier the replay sites use.
 //!
 //! The `rm:w:{window}:{entity_hex}` marker (ARCH-0023b sync_state
 //! needs-rematerialization flag, ENTITY-scoped) is produced when a

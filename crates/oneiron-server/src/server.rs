@@ -52,7 +52,7 @@ impl SyncServer {
     ///
     /// Startup ordering per ARCH-0023b: (1) the root Doc loads from `d:root`
     /// plus pending `u:root:*`; (2) window Docs load on demand from
-    /// `d:w:{key}` plus pending `u:w:{key}:*` in [`Self::get_or_create_window`].
+    /// `d:w:{key}` plus pending `u:w:{key}:*` in `Self::get_or_create_window`.
     /// A fresh vault initializes and persists a new root Doc.
     ///
     /// Boot also reconciles `meta.windows` against the persisted `d:w:*`
