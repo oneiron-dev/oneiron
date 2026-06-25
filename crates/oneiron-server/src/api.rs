@@ -185,8 +185,9 @@ async fn get_entity(
 ) -> Result<impl IntoResponse, ApiError> {
     check_api_auth(&headers, &server.config)?;
 
-    let id = oneiron::EntityId::from_hex(&id_hex)
-        .map_err(|_| ApiError::bad_request("entity id must be lowercase hex", Some("id")))?;
+    let id = oneiron::EntityId::from_hex(&id_hex).map_err(|_| {
+        ApiError::bad_request("entity id must be a 32-character hex entity id", Some("id"))
+    })?;
 
     let blob = server
         .vault
@@ -211,8 +212,9 @@ async fn get_edges(
 ) -> Result<Json<Vec<EdgeResult>>, ApiError> {
     check_api_auth(&headers, &server.config)?;
 
-    let id = oneiron::EntityId::from_hex(&id_hex)
-        .map_err(|_| ApiError::bad_request("entity id must be lowercase hex", Some("id")))?;
+    let id = oneiron::EntityId::from_hex(&id_hex).map_err(|_| {
+        ApiError::bad_request("entity id must be a 32-character hex entity id", Some("id"))
+    })?;
 
     let edges = server
         .vault

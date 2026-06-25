@@ -322,6 +322,23 @@ async fn http_bad_entity_id_returns_structured_api_error_body() {
     assert_http_status(&response, 400);
     let error = api_error_body(&response);
     assert_eq!(error.code(), ErrorCode::BadRequest);
+    assert_eq!(
+        error.message(),
+        "entity id must be a 32-character hex entity id"
+    );
+    assert!(
+        matches!(error.details(), ApiErrorDetails::BadRequest { field } if field.as_deref() == Some("id"))
+    );
+    assert!(!error.suggestions().is_empty());
+
+    let response = http_get(addr, "/api/edges/not-hex", None).await;
+    assert_http_status(&response, 400);
+    let error = api_error_body(&response);
+    assert_eq!(error.code(), ErrorCode::BadRequest);
+    assert_eq!(
+        error.message(),
+        "entity id must be a 32-character hex entity id"
+    );
     assert!(
         matches!(error.details(), ApiErrorDetails::BadRequest { field } if field.as_deref() == Some("id"))
     );

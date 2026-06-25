@@ -222,12 +222,11 @@ pub struct ApiError {
 
 impl ApiError {
     pub fn new(
-        code: ErrorCode,
         message: impl Into<String>,
         details: ApiErrorDetails,
         suggestions: impl IntoIterator<Item = impl Into<String>>,
     ) -> Self {
-        debug_assert_eq!(code, details.code());
+        let code = details.code();
         Self {
             code,
             message: message.into(),
@@ -238,7 +237,6 @@ impl ApiError {
 
     pub fn bad_request(message: impl Into<String>, field: Option<&str>) -> Self {
         Self::new(
-            ErrorCode::BadRequest,
             message,
             ApiErrorDetails::BadRequest {
                 field: field.map(str::to_owned),
@@ -249,7 +247,6 @@ impl ApiError {
 
     pub fn unauthorized() -> Self {
         Self::new(
-            ErrorCode::Unauthorized,
             "request is not authorized",
             ApiErrorDetails::Unauthorized,
             ["Send the configured x-oneiron-secret header and retry."],
@@ -259,7 +256,6 @@ impl ApiError {
     pub fn not_found(resource: impl Into<String>, id: Option<&str>) -> Self {
         let resource = resource.into();
         Self::new(
-            ErrorCode::NotFound,
             format!("{resource} was not found"),
             ApiErrorDetails::NotFound {
                 resource,
@@ -271,7 +267,6 @@ impl ApiError {
 
     pub fn internal_server_error(message: impl Into<String>) -> Self {
         Self::new(
-            ErrorCode::InternalServerError,
             message,
             ApiErrorDetails::InternalServerError,
             ["Retry later. If the failure repeats, inspect the server logs."],
@@ -280,7 +275,6 @@ impl ApiError {
 
     pub fn stale_epoch(current_epoch: u64, requested_epoch: u64) -> Self {
         Self::new(
-            ErrorCode::StaleEpoch,
             "requested epoch is stale",
             ApiErrorDetails::StaleEpoch {
                 current_epoch,
@@ -292,7 +286,6 @@ impl ApiError {
 
     pub fn idempotency_replay_conflict(idempotency_key: Option<&str>) -> Self {
         Self::new(
-            ErrorCode::IdempotencyReplayConflict,
             "idempotency key was replayed with a different request",
             ApiErrorDetails::IdempotencyReplayConflict {
                 idempotency_key: idempotency_key.map(str::to_owned),
@@ -303,7 +296,6 @@ impl ApiError {
 
     pub fn invalid_state(state: Option<&str>) -> Self {
         Self::new(
-            ErrorCode::InvalidState,
             "request conflicts with the current resource state",
             ApiErrorDetails::InvalidState {
                 state: state.map(str::to_owned),
@@ -314,7 +306,6 @@ impl ApiError {
 
     pub fn snapshot_mismatch(expected_epoch: Option<u64>, received_epoch: Option<u64>) -> Self {
         Self::new(
-            ErrorCode::SnapshotMismatch,
             "snapshot does not match the expected epoch",
             ApiErrorDetails::SnapshotMismatch {
                 expected_epoch,
@@ -327,7 +318,6 @@ impl ApiError {
     pub fn invalid_header(header: impl Into<String>) -> Self {
         let header = header.into();
         Self::new(
-            ErrorCode::InvalidHeader,
             format!("invalid {header} header"),
             ApiErrorDetails::InvalidHeader { header },
             ["Fix the header value and retry."],
@@ -538,6 +528,22 @@ mod tests {
                 .is_some_and(|items| !items.is_empty()),
             "suggestions must be actionable and non-empty"
         );
+    }
+
+    #[test]
+    fn api_error_new_derives_code_from_details() {
+        let error = ApiError::new(
+            "header is invalid",
+            ApiErrorDetails::InvalidHeader {
+                header: "Idempotency-Key".to_owned(),
+            },
+            ["Send a syntactically valid header."],
+        );
+
+        assert_eq!(error.code(), ErrorCode::InvalidHeader);
+        let body = serde_json::to_value(error).unwrap();
+        assert_eq!(body["code"], "INVALID_HEADER");
+        assert_eq!(body["details"]["code"], "INVALID_HEADER");
     }
 
     #[test]
