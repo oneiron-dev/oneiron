@@ -108,7 +108,8 @@ async fn search_vector(
 ) -> Result<Json<SearchResponse>, StatusCode> {
     check_auth(&headers, &server.config)?;
 
-    let count_mode = params.count_mode;
+    let count_mode = params.count_mode.for_search_response();
+    let fetch_limit = search_fetch_limit(count_mode, params.limit);
     let query: Result<Vec<f32>, _> = params
         .query
         .split(',')
@@ -119,20 +120,22 @@ async fn search_vector(
 
     let results = server
         .vault
-        .search_vector(&query, params.limit)
+        .search_vector(&query, fetch_limit)
         .inspect_err(|e| {
             tracing::error!(error = %e, "vector search failed");
         })
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
+    let total = results.len();
     let response: Vec<SearchResult> = results
         .into_iter()
+        .take(params.limit)
         .map(|r| SearchResult {
             id: r.id.to_hex(),
             score: r.score,
         })
         .collect();
-    let meta = search_meta(count_mode, response.len());
+    let meta = search_meta(count_mode, total);
 
     Ok(Json(PaginatedResponse::new(response, None, meta)))
 }
@@ -156,31 +159,42 @@ async fn search_text(
 ) -> Result<Json<SearchResponse>, StatusCode> {
     check_auth(&headers, &server.config)?;
 
-    let count_mode = params.count_mode;
+    let count_mode = params.count_mode.for_search_response();
+    let fetch_limit = search_fetch_limit(count_mode, params.limit);
     let results = server
         .vault
-        .search_text(&params.query, params.limit)
+        .search_text(&params.query, fetch_limit)
         .inspect_err(|e| {
             tracing::error!(error = %e, "text search failed");
         })
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
+    let total = results.len();
     let response: Vec<SearchResult> = results
         .into_iter()
+        .take(params.limit)
         .map(|r| SearchResult {
             id: r.id.to_hex(),
             score: r.score,
         })
         .collect();
-    let meta = search_meta(count_mode, response.len());
+    let meta = search_meta(count_mode, total);
 
     Ok(Json(PaginatedResponse::new(response, None, meta)))
 }
 
-fn search_meta(requested: CountMode, visible_items: usize) -> ResponseMeta {
-    match requested.for_search_response() {
+fn search_fetch_limit(count_mode: CountMode, page_limit: usize) -> usize {
+    match count_mode {
+        CountMode::None => page_limit,
+        CountMode::Estimate => page_limit.saturating_add(1),
+        CountMode::Exact => unreachable!("search responses never report exact counts"),
+    }
+}
+
+fn search_meta(count_mode: CountMode, estimated_total: usize) -> ResponseMeta {
+    match count_mode {
         CountMode::None => ResponseMeta::none(),
-        CountMode::Estimate => ResponseMeta::estimate(visible_items as u64),
+        CountMode::Estimate => ResponseMeta::estimate(estimated_total as u64),
         CountMode::Exact => unreachable!("search responses never report exact counts"),
     }
 }
@@ -359,6 +373,7 @@ mod tests {
     #[test]
     fn search_meta_honors_none_without_counting() {
         assert_eq!(search_meta(CountMode::None, 25), ResponseMeta::none());
+        assert_eq!(search_fetch_limit(CountMode::None, 25), 25);
     }
 
     #[test]
@@ -367,6 +382,7 @@ mod tests {
             search_meta(CountMode::Estimate, 7),
             ResponseMeta::estimate(7)
         );
-        assert_eq!(search_meta(CountMode::Exact, 7), ResponseMeta::estimate(7));
+        assert_eq!(search_fetch_limit(CountMode::Estimate, 7), 8);
+        assert_eq!(CountMode::Exact.for_search_response(), CountMode::Estimate);
     }
 }
