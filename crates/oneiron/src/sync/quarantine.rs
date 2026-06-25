@@ -643,6 +643,21 @@ pub(crate) fn clear_remat_marker_in_txn(
     Ok(())
 }
 
+/// True when an `rm:` marker is present without replay/quarantine
+/// provenance. Terminal quarantine must treat this as delete-safety/unknown
+/// provenance and leave it pending until the entity's tombstone goal holds.
+pub(crate) fn unproven_remat_marker_exists_in_txn(
+    vault: &Vault,
+    wtxn: &heed::RwTxn<'_>,
+    window_key: &str,
+    id: &crate::types::EntityId,
+) -> Result<bool> {
+    let marker_key = remat_marker_key(window_key, id);
+    let provenance_key = replay_remat_marker_provenance_key(window_key, id);
+    Ok(vault.store.sync_state.get(wtxn, &marker_key)?.is_some()
+        && vault.store.sync_state.get(wtxn, &provenance_key)?.is_none())
+}
+
 /// Clears a marker only when its sidecar proves replay/quarantine origin.
 /// Unproven markers survive terminal quarantine because they may represent
 /// delete-safety work from a failed tombstone purge.

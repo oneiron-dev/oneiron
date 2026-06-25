@@ -1370,6 +1370,25 @@ pub fn forward_rematerialize(
             // purge-failure markers stay pending until their own tombstone
             // goal state holds.
             let mut success_seen = HashSet::new();
+            // Delete-safety invariant: the `cleared` side has this entity's
+            // own tombstone goal state above, while the `healed` side is
+            // safe only because tombstone-gating keeps entity/edge healing
+            // disjoint from unproven delete-safety `rm:` markers. A
+            // tombstoned id cannot reach `healed`; if a refactor weakens
+            // that gate or reorders this bookkeeping, the debug assert below
+            // catches the healed-clear regression before an unproven purge
+            // retry can be silently discharged.
+            for id in &healed {
+                debug_assert!(
+                    !quarantine::unproven_remat_marker_exists_in_txn(
+                        vault,
+                        wtxn,
+                        window_key.as_str(),
+                        id,
+                    )?,
+                    "delete-safety invariant: healed ids must be disjoint from unproven rm: markers"
+                );
+            }
             for id in healed.iter().chain(cleared.iter()) {
                 if !success_seen.insert(*id) {
                     continue;
@@ -1395,6 +1414,13 @@ pub fn forward_rematerialize(
                     );
                 }
             }
+            // Delete-safety invariant: `purge_failures` MUST be applied LAST,
+            // after healed/cleared clears and terminal-quarantine clears.
+            // Tombstone/delete-safety dominance requires a failed purge to win
+            // over every clear in this txn: a terminal quarantine may remove
+            // replay provenance for non-delete markers, but a simultaneous
+            // purge failure must restore the unproven `rm:` retry so the
+            // delete-safety provenance is not silently removed.
             for id in &purge_failures {
                 quarantine::set_remat_marker_in_txn(vault, wtxn, window_key.as_str(), id)?;
             }
