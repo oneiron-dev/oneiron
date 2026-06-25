@@ -29,12 +29,13 @@ use oneiron::sync::{
     ConnectionConfig, SyncClient, SyncClientConfig, SyncConnection, SyncEvent, SyncStatus,
     WindowManager,
 };
-use oneiron::types::ENTITY_TYPE_TURN;
-use oneiron::{EntityId, TimeRange, VaultConfig};
+use oneiron::types::{ENTITY_TYPE_TASK, ENTITY_TYPE_TURN};
+use oneiron::{EdgeKind, EntityId, TimeRange, VaultConfig};
 use oneiron_server::build_app;
 use oneiron_server::config::SyncServerConfig;
 use oneiron_server::error::{ApiError, ApiErrorDetails, ErrorCode};
 use oneiron_server::server::SyncServer;
+use serde_json::Value;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::tungstenite::client::IntoClientRequest;
@@ -107,7 +108,6 @@ fn seed_vector_search_matches(vault: &oneiron::Vault) {
         vault.put_vector(id, vector).unwrap();
     }
 }
-
 /// Client-side window manager over a fresh vault (the client API is
 /// manager-owned post-ONE-1125).
 fn open_manager(vault: Arc<oneiron::Vault>) -> Arc<WindowManager> {
@@ -200,6 +200,10 @@ async fn assert_ws_closes(ws: &mut WsStream, reason: &str) {
 }
 
 async fn http_get(addr: SocketAddr, path: &str, secret: Option<&str>) -> String {
+    String::from_utf8(http_get_bytes(addr, path, secret).await).unwrap()
+}
+
+async fn http_get_bytes(addr: SocketAddr, path: &str, secret: Option<&str>) -> Vec<u8> {
     let mut stream = tokio::net::TcpStream::connect(addr).await.unwrap();
     let secret_header = secret
         .map(|secret| format!("x-oneiron-secret: {secret}\r\n"))
@@ -213,7 +217,7 @@ async fn http_get(addr: SocketAddr, path: &str, secret: Option<&str>) -> String 
         .await
         .expect("timed out waiting for HTTP response")
         .expect("failed reading HTTP response");
-    String::from_utf8(response).unwrap()
+    response
 }
 
 fn assert_http_status(response: &str, status: u16) {
@@ -223,6 +227,42 @@ fn assert_http_status(response: &str, status: u16) {
         "expected HTTP status {status}, got response head: {:?}",
         response.lines().next()
     );
+}
+
+fn assert_http_status_bytes(response: &[u8], status: u16) {
+    let expected = format!("HTTP/1.1 {status} ");
+    assert!(
+        response.starts_with(expected.as_bytes()),
+        "expected HTTP status {status}, got response head: {:?}",
+        response
+            .split(|byte| *byte == b'\n')
+            .next()
+            .map(String::from_utf8_lossy)
+    );
+}
+
+fn http_body(response: &[u8]) -> &[u8] {
+    let Some(offset) = response.windows(4).position(|window| window == b"\r\n\r\n") else {
+        panic!("HTTP response missing header/body separator");
+    };
+    &response[offset + 4..]
+}
+
+fn http_json(response: &[u8]) -> Value {
+    serde_json::from_slice(http_body(response)).unwrap()
+}
+
+fn json_key_set(value: &Value) -> std::collections::BTreeSet<&str> {
+    value
+        .as_object()
+        .unwrap()
+        .keys()
+        .map(String::as_str)
+        .collect()
+}
+
+fn msgpack_json(value: &Value) -> Vec<u8> {
+    rmp_serde::to_vec_named(value).unwrap()
 }
 
 fn http_json_body(response: &str) -> &str {
@@ -411,6 +451,229 @@ async fn http_bad_entity_id_returns_structured_api_error_body() {
         matches!(error.details(), ApiErrorDetails::BadRequest { field } if field.as_deref() == Some("id"))
     );
     assert!(!error.suggestions().is_empty());
+
+    handle.abort();
+}
+
+#[tokio::test]
+async fn http_entity_summary_projects_exact_keys_and_hides_heavy_fields() {
+    let dir = tempfile::tempdir().unwrap();
+    let vault = open_vault(dir.path());
+    let id = EntityId::now();
+    let body = msgpack_json(&serde_json::json!({
+        "title": "Ship projection",
+        "role": "agent",
+        "status": "open",
+        "priority": 2,
+        "body": "long heavy body",
+        "metadata": {"large": true}
+    }));
+    vault
+        .put_entity(
+            &id,
+            ENTITY_TYPE_TASK,
+            TimeRange { start: 10, end: 10 },
+            42,
+            &body,
+        )
+        .unwrap();
+    let (addr, _server, handle) = spawn_server(vault, config_with_secret_and_dev(None, true)).await;
+
+    let response = http_get_bytes(
+        addr,
+        &format!("/api/entity/{}?view=summary", id.to_hex()),
+        None,
+    )
+    .await;
+    assert_http_status_bytes(&response, 200);
+    let json = http_json(&response);
+    assert_eq!(
+        json_key_set(&json),
+        std::collections::BTreeSet::from(["id", "kind", "label", "updatedAt"])
+    );
+    assert_eq!(json["id"], id.to_hex());
+    assert_eq!(json["kind"], "TASK");
+    assert_eq!(json["label"], "Ship projection");
+    assert_eq!(json["updatedAt"], 42);
+    assert!(json.get("body").is_none());
+    assert!(json.get("metadata").is_none());
+
+    handle.abort();
+}
+
+#[tokio::test]
+async fn http_entity_default_returns_standard_raw_body() {
+    let dir = tempfile::tempdir().unwrap();
+    let vault = open_vault(dir.path());
+    let id = EntityId::now();
+    let body = msgpack_json(&serde_json::json!({
+        "title": "Raw default",
+        "role": "agent",
+        "status": "open"
+    }));
+    vault
+        .put_entity(
+            &id,
+            ENTITY_TYPE_TASK,
+            TimeRange { start: 20, end: 20 },
+            50,
+            &body,
+        )
+        .unwrap();
+    let (addr, _server, handle) = spawn_server(vault, config_with_secret_and_dev(None, true)).await;
+
+    let response = http_get_bytes(addr, &format!("/api/entity/{}", id.to_hex()), None).await;
+    assert_http_status_bytes(&response, 200);
+    assert_eq!(http_body(&response), body.as_slice());
+
+    handle.abort();
+}
+
+#[tokio::test]
+async fn http_vector_search_defaults_to_summary_and_full_supersets_standard() {
+    let dir = tempfile::tempdir().unwrap();
+    let vault = open_search_vault(dir.path());
+    let id = EntityId::now();
+    let body = msgpack_json(&serde_json::json!({
+        "title": "Vector hit",
+        "role": "agent",
+        "status": "open",
+        "priority": 1,
+        "dueDate": 1_777_100_000_u64,
+        "body": "heavy vector payload",
+        "custom": {"nested": true}
+    }));
+    vault
+        .put_entity(
+            &id,
+            ENTITY_TYPE_TASK,
+            TimeRange { start: 30, end: 30 },
+            60,
+            &body,
+        )
+        .unwrap();
+    vault.put_vector(&id, &[1.0_f32, 0.0, 0.0, 0.0]).unwrap();
+    let (addr, _server, handle) = spawn_server(vault, config_with_secret_and_dev(None, true)).await;
+
+    let summary_response =
+        http_get_bytes(addr, "/api/search/vector?query=1,0,0,0&limit=1", None).await;
+    assert_http_status_bytes(&summary_response, 200);
+    let summary = http_json(&summary_response);
+    let summary_hit = summary["items"].as_array().unwrap().first().unwrap();
+    assert_eq!(
+        json_key_set(summary_hit),
+        std::collections::BTreeSet::from(["id", "kind", "label", "updatedAt"])
+    );
+    assert!(summary_hit.get("score").is_none());
+
+    let standard_response = http_get_bytes(
+        addr,
+        "/api/search/vector?query=1,0,0,0&limit=1&view=standard",
+        None,
+    )
+    .await;
+    assert_http_status_bytes(&standard_response, 200);
+    let standard = http_json(&standard_response);
+    let standard_hit = standard["items"].as_array().unwrap().first().unwrap();
+    assert_eq!(
+        json_key_set(standard_hit),
+        std::collections::BTreeSet::from(["id", "score"])
+    );
+
+    let full_response = http_get_bytes(
+        addr,
+        "/api/search/vector?query=1,0,0,0&limit=1&view=full",
+        None,
+    )
+    .await;
+    assert_http_status_bytes(&full_response, 200);
+    let full = http_json(&full_response);
+    let full_hit = full["items"].as_array().unwrap().first().unwrap();
+    let full_keys = json_key_set(full_hit);
+    for key in json_key_set(summary_hit)
+        .into_iter()
+        .chain(json_key_set(standard_hit))
+    {
+        assert!(full_keys.contains(key), "full missing key {key}");
+    }
+    assert_eq!(full_hit["title"], "Vector hit");
+    assert_eq!(full_hit["status"], "open");
+    assert_eq!(full_hit["body"], "heavy vector payload");
+    assert_eq!(full_hit["custom"], serde_json::json!({"nested": true}));
+
+    handle.abort();
+}
+
+#[tokio::test]
+async fn http_edges_default_summary_and_standard_preserves_current_fields() {
+    let dir = tempfile::tempdir().unwrap();
+    let vault = open_vault(dir.path());
+    let source = EntityId::now();
+    let target = EntityId::now();
+    let body = msgpack_json(&serde_json::json!({"title": "node", "role": "agent"}));
+    for id in [source, target] {
+        vault
+            .put_entity(
+                &id,
+                ENTITY_TYPE_TASK,
+                TimeRange { start: 40, end: 40 },
+                70,
+                &body,
+            )
+            .unwrap();
+    }
+    vault
+        .put_edge(&source, EdgeKind::BelongsTo, &target, 0.5)
+        .unwrap();
+    let (addr, _server, handle) = spawn_server(vault, config_with_secret_and_dev(None, true)).await;
+
+    let summary_response =
+        http_get_bytes(addr, &format!("/api/edges/{}", source.to_hex()), None).await;
+    assert_http_status_bytes(&summary_response, 200);
+    let summary = http_json(&summary_response);
+    let summary_edge = summary.as_array().unwrap().first().unwrap();
+    assert_eq!(
+        json_key_set(summary_edge),
+        std::collections::BTreeSet::from(["kind", "target"])
+    );
+
+    let standard_response = http_get_bytes(
+        addr,
+        &format!("/api/edges/{}?view=standard", source.to_hex()),
+        None,
+    )
+    .await;
+    assert_http_status_bytes(&standard_response, 200);
+    let standard = http_json(&standard_response);
+    let standard_edge = standard.as_array().unwrap().first().unwrap();
+    assert_eq!(
+        json_key_set(standard_edge),
+        std::collections::BTreeSet::from(["created_at", "kind", "target", "weight"])
+    );
+
+    handle.abort();
+}
+
+#[tokio::test]
+async fn http_text_search_invalid_view_returns_error_code() {
+    let dir = tempfile::tempdir().unwrap();
+    let (addr, _server, handle) = spawn_server(
+        open_vault(dir.path()),
+        config_with_secret_and_dev(None, true),
+    )
+    .await;
+
+    let response = http_get(addr, "/api/search/text?query=hello&view=tiny", None).await;
+    assert_http_status(&response, 400);
+    let error = api_error_body(&response);
+    assert_eq!(error.code(), ErrorCode::BadRequest);
+    assert_eq!(
+        error.message(),
+        "view must be one of summary, standard, full"
+    );
+    assert!(
+        matches!(error.details(), ApiErrorDetails::BadRequest { field } if field.as_deref() == Some("view"))
+    );
 
     handle.abort();
 }
