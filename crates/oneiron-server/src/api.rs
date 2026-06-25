@@ -50,6 +50,7 @@ const CAPABILITIES: &[&str] = &[
     "lease.revoke",
 ];
 const CAPABILITY_MODES: &[&str] = &["flash", "thinking", "pro", "ultra"];
+const RESUME_NOTIFICATION_PAGE_SIZE: usize = 512;
 
 /// Builds the HTTP API routes.
 pub(crate) fn api_routes(server: Arc<SyncServer>) -> Router {
@@ -380,50 +381,62 @@ fn pending_notifications(
     server: &SyncServer,
     caller: &str,
 ) -> Result<Vec<NotificationItem>, ApiError> {
-    let ids = server
-        .vault
-        .entities_by_type(ENTITY_TYPE_NOTIFICATION)
-        .inspect_err(|e| {
-            tracing::error!(error = %e, "resume notification scan failed");
-        })
-        .map_err(|_| ApiError::internal_server_error("resume notification scan failed"))?;
-
     let mut notifications = Vec::new();
-    for id in ids {
-        let Some(raw_body) = server
+    let mut after = None;
+    loop {
+        let ids = server
             .vault
-            .get(&id)
+            .entities_by_type_page(
+                ENTITY_TYPE_NOTIFICATION,
+                after.as_ref(),
+                RESUME_NOTIFICATION_PAGE_SIZE,
+            )
             .inspect_err(|e| {
-                tracing::error!(error = %e, id = %id.to_hex(), "resume notification read failed");
+                tracing::error!(error = %e, "resume notification page scan failed");
             })
-            .map_err(|_| ApiError::internal_server_error("resume notification read failed"))?
-        else {
-            continue;
+            .map_err(|_| ApiError::internal_server_error("resume notification scan failed"))?;
+        let Some(last_id) = ids.last().copied() else {
+            break;
         };
-        let Some(body) = notification_body_json(&raw_body) else {
-            continue;
-        };
-        if !notification_scoped_to_caller(&body, caller) {
-            continue;
-        }
-        if notification_already_surfaced(&body, caller) {
-            continue;
-        }
-        let learned_at = match server.vault.get_learned_at(&id) {
-            Ok(learned_at) => learned_at,
-            Err(OneironError::EntityNotFound) => continue,
-            Err(error) => {
-                tracing::error!(error = %error, id = %id.to_hex(), "resume notification timestamp failed");
-                return Err(ApiError::internal_server_error(
-                    "resume notification timestamp failed",
-                ));
+
+        for id in ids {
+            let Some(raw_body) = server
+                .vault
+                .get(&id)
+                .inspect_err(|e| {
+                    tracing::error!(error = %e, id = %id.to_hex(), "resume notification read failed");
+                })
+                .map_err(|_| ApiError::internal_server_error("resume notification read failed"))?
+            else {
+                continue;
+            };
+            let Some(body) = notification_body_json(&raw_body) else {
+                continue;
+            };
+            if !notification_scoped_to_caller(&body, caller) {
+                continue;
             }
-        };
-        notifications.push(NotificationItem {
-            id: id.to_hex(),
-            learned_at,
-            body,
-        });
+            if notification_already_surfaced(&body, caller) {
+                continue;
+            }
+            let learned_at = match server.vault.get_learned_at(&id) {
+                Ok(learned_at) => learned_at,
+                Err(OneironError::EntityNotFound) => continue,
+                Err(error) => {
+                    tracing::error!(error = %error, id = %id.to_hex(), "resume notification timestamp failed");
+                    return Err(ApiError::internal_server_error(
+                        "resume notification timestamp failed",
+                    ));
+                }
+            };
+            notifications.push(NotificationItem {
+                id: id.to_hex(),
+                learned_at,
+                body,
+            });
+        }
+
+        after = Some(last_id);
     }
 
     Ok(notifications)

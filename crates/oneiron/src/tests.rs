@@ -7407,6 +7407,65 @@ fn entities_by_type_allows_exact_cap_and_overflows_on_next_row() -> Result<()> {
 }
 
 #[test]
+fn entities_by_type_page_paginates_past_materialization_cap() -> Result<()> {
+    const TYPE_CAP: usize = 100_000;
+    const EXTRA_ROWS: usize = 3;
+    const PAGE_SIZE: usize = 4_096;
+
+    let temp_dir = tempfile::tempdir()?;
+    let vault = Vault::open(temp_dir.path(), large_test_config())?;
+
+    vault.with_write_txn(|wtxn| {
+        for i in 0..(TYPE_CAP + EXTRA_ROWS) {
+            let id = seeded_entity_id(i as u128);
+            let key = Store::encode_type_key(ENTITY_TYPE_TASK_LIST, &id);
+            vault.store.type_index.put(wtxn, &key, &[])?;
+        }
+        Ok(())
+    })?;
+
+    let mut after = None;
+    let mut first = None;
+    let mut last = None;
+    let mut total = 0;
+    loop {
+        let page = vault.entities_by_type_page(ENTITY_TYPE_TASK_LIST, after.as_ref(), PAGE_SIZE)?;
+        let Some(page_last) = page.last().copied() else {
+            break;
+        };
+        if let Some(previous) = after {
+            assert!(previous < page[0]);
+        }
+        first.get_or_insert(page[0]);
+        total += page.len();
+        last = Some(page_last);
+        after = Some(page_last);
+    }
+
+    assert_eq!(total, TYPE_CAP + EXTRA_ROWS);
+    assert_eq!(first, Some(seeded_entity_id(0)));
+    assert_eq!(
+        last,
+        Some(seeded_entity_id((TYPE_CAP + EXTRA_ROWS - 1) as u128))
+    );
+    assert!(
+        vault
+            .entities_by_type_page(
+                ENTITY_TYPE_TASK_LIST,
+                Some(&seeded_entity_id((TYPE_CAP + EXTRA_ROWS - 1) as u128)),
+                PAGE_SIZE
+            )?
+            .is_empty()
+    );
+    assert!(
+        vault
+            .entities_by_type_page(ENTITY_TYPE_TASK_LIST, None, 0)?
+            .is_empty()
+    );
+    Ok(())
+}
+
+#[test]
 fn targets_and_sources_with_kind_filter() -> Result<()> {
     let (_dir, vault) = open_test_vault();
     let child = EntityId::now();

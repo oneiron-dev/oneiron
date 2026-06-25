@@ -23,8 +23,20 @@ fn test_vault_config() -> VaultConfig {
     config
 }
 
+fn large_test_vault_config() -> VaultConfig {
+    let mut config = test_vault_config();
+    config.map_size = 256 * 1024 * 1024;
+    config
+}
+
 fn time_range(start: u64, end: u64) -> TimeRange {
     TimeRange { start, end }
+}
+
+fn seeded_entity_id(counter: u128) -> EntityId {
+    let mut bytes = counter.to_be_bytes();
+    bytes[0] = 0x7e;
+    EntityId::from_bytes(bytes).expect("seeded test id should be valid")
 }
 
 fn config_with_secret(secret: &str) -> SyncServerConfig {
@@ -352,6 +364,74 @@ async fn companion_resume_requires_all_present_scope_keys_to_match() {
     assert_eq!(bundle.notifications.len(), 1);
     assert_eq!(bundle.notifications[0].id, matched.to_hex());
     assert_ne!(bundle.notifications[0].id, conflicting.to_hex());
+
+    handle.abort();
+}
+
+#[tokio::test]
+async fn companion_resume_pages_past_historical_notifications_over_type_cap() {
+    const TYPE_CAP: usize = 100_000;
+    const HISTORICAL_ROWS: usize = TYPE_CAP + 1;
+    const ID_BASE: u128 = 0x2140_0000;
+
+    let dir = tempfile::tempdir().unwrap();
+    let vault = Arc::new(oneiron::Vault::open(dir.path(), large_test_vault_config()).unwrap());
+
+    let acked_body = rmp_serde::to_vec(&serde_json::json!({
+        "message": "old-acked",
+        "acked": true
+    }))
+    .unwrap();
+    let surfaced_body = rmp_serde::to_vec(&serde_json::json!({
+        "message": "old-surfaced",
+        "surfaced_by": ["default"]
+    }))
+    .unwrap();
+    let pending = seeded_entity_id(ID_BASE + HISTORICAL_ROWS as u128);
+    let pending_body = rmp_serde::to_vec(&serde_json::json!({
+        "message": "fresh"
+    }))
+    .unwrap();
+
+    let mut batch = vault.batch();
+    for i in 0..HISTORICAL_ROWS {
+        let id = seeded_entity_id(ID_BASE + i as u128);
+        let body = if i % 2 == 0 {
+            &acked_body
+        } else {
+            &surfaced_body
+        };
+        batch = batch.put(
+            &id,
+            ENTITY_TYPE_NOTIFICATION,
+            time_range(i as u64, i as u64),
+            i as u64,
+            body,
+        );
+    }
+    batch
+        .put(
+            &pending,
+            ENTITY_TYPE_NOTIFICATION,
+            time_range(HISTORICAL_ROWS as u64, HISTORICAL_ROWS as u64),
+            HISTORICAL_ROWS as u64,
+            &pending_body,
+        )
+        .commit()
+        .unwrap();
+
+    let (addr, handle) = spawn_server(vault, config_with_secret("secret")).await;
+    let response = http_post(addr, "/api/companion/resume", Some("secret"), "{}").await;
+    assert_http_status(&response, 200);
+    let bundle: ResumeBundle =
+        serde_json::from_str(http_body(&response)).expect("resume body should deserialize");
+
+    assert_eq!(bundle.notifications.len(), 1);
+    assert_eq!(bundle.notifications[0].id, pending.to_hex());
+    assert_eq!(
+        bundle.notifications[0].body["message"].as_str(),
+        Some("fresh")
+    );
 
     handle.abort();
 }

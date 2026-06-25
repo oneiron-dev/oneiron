@@ -2939,6 +2939,52 @@ impl Vault {
         Ok(ids)
     }
 
+    /// Returns at most `limit` entity IDs of a given type after `after`.
+    ///
+    /// This is the bounded counterpart to [`Self::entities_by_type`] for
+    /// callers that must walk large type indexes incrementally. Results follow
+    /// the same LMDB type-index key order as `entities_by_type`; `after` is an
+    /// exclusive lower bound.
+    pub fn entities_by_type_page(
+        &self,
+        entity_type: u8,
+        after: Option<&EntityId>,
+        limit: usize,
+    ) -> Result<Vec<EntityId>> {
+        if limit == 0 {
+            return Ok(Vec::new());
+        }
+
+        let limit = limit.min(MAX_TYPE_QUERY_RESULTS);
+        let rtxn = self.store.env.read_txn()?;
+        let start_key = match after {
+            Some(id) => Store::encode_type_key(entity_type, id).to_vec(),
+            None => vec![entity_type],
+        };
+        let start_bound: std::ops::Bound<&[u8]> = match after {
+            Some(_) => std::ops::Bound::Excluded(&start_key[..]),
+            None => std::ops::Bound::Included(&start_key[..]),
+        };
+        let end_bound: std::ops::Bound<&[u8]> = std::ops::Bound::Unbounded;
+
+        let mut ids = Vec::with_capacity(limit.min(1024));
+        for entry in self
+            .store
+            .type_index
+            .range(&rtxn, &(start_bound, end_bound))?
+        {
+            let (key, _) = entry?;
+            if key.first() != Some(&entity_type) {
+                break;
+            }
+            ids.push(entity_id_from_type_index_key(key)?);
+            if ids.len() >= limit {
+                break;
+            }
+        }
+        Ok(ids)
+    }
+
     /// Counts entity IDs of a given type via the `type_index` prefix path.
     ///
     /// This is the exact count primitive for deterministic paginated list
