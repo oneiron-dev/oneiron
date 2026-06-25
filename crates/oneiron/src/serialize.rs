@@ -1304,8 +1304,8 @@ fn append_stats_line(out: &mut String, stats: &PackStats, format: PackFormat) {
         .join(",");
 
     let mut stats_line = format!(
-        "query: {ms:.1}ms | {} candidates | signals: {}",
-        stats.candidates_considered, signals
+        "query: {ms:.1}ms | {} candidates | signals: {} | cosine ghosts dampened: {}",
+        stats.candidates_considered, signals, stats.cosine_ghosts_dampened
     );
     if stats.items_truncated.count > 0 {
         stats_line.push_str(&format!(
@@ -1358,6 +1358,10 @@ fn json_stats(pack_stats: &PackStats) -> Value {
     stats.insert(
         "neighbors_hydrated".to_owned(),
         Value::Number(Number::from(pack_stats.neighbors_hydrated as u64)),
+    );
+    stats.insert(
+        "cosine_ghosts_dampened".to_owned(),
+        Value::Number(Number::from(pack_stats.cosine_ghosts_dampened as u64)),
     );
     if pack_stats.items_truncated.count > 0 {
         stats.insert(
@@ -1752,6 +1756,7 @@ mod tests {
                 query_time_us: 2_100,
                 entities_hydrated: 2,
                 neighbors_hydrated: 1,
+                cosine_ghosts_dampened: 0,
                 claims_suppressed: 0,
                 items_truncated: crate::types::PackItemAccounting::item_budget(),
                 items_dropped: crate::types::PackItemAccounting::token_budget(),
@@ -1839,6 +1844,7 @@ mod tests {
                 query_time_us: 3_800,
                 entities_hydrated: 28,
                 neighbors_hydrated: 0,
+                cosine_ghosts_dampened: 0,
                 claims_suppressed: 0,
                 items_truncated: crate::types::PackItemAccounting::item_budget(),
                 items_dropped: crate::types::PackItemAccounting::token_budget(),
@@ -3103,6 +3109,7 @@ mod tests {
             query_time_us: 0,
             entities_hydrated: 0,
             neighbors_hydrated: 0,
+            cosine_ghosts_dampened: 0,
             claims_suppressed: 0,
             items_truncated: crate::types::PackItemAccounting::item_budget(),
             items_dropped: crate::types::PackItemAccounting::token_budget(),
