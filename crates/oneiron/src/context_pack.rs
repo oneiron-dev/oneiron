@@ -1938,6 +1938,44 @@ mod tests {
     }
 
     #[test]
+    fn retract_claim_end_to_end_removes_stale_text_from_context_pack() -> Result<()> {
+        let (_dir, vault) = open_test_vault();
+        let id = EntityId::from_bytes([0x43; 16])?;
+        put_claim_text_entity(
+            &vault,
+            &id,
+            "retractpackneedle",
+            "test.retract_pack",
+            "active",
+        )?;
+
+        let before = vault
+            .context_pack()
+            .search_text("retractpackneedle", 10)
+            .run()?;
+        assert_eq!(before.results.len(), 1);
+        assert_eq!(before.results[0].id, id);
+
+        vault.retract_claim(&id, 2_000)?;
+
+        let after = vault
+            .context_pack()
+            .search_text("retractpackneedle", 10)
+            .run()?;
+        assert!(after.results.is_empty());
+        assert!(after.neighbors.is_empty());
+        assert_eq!(
+            after.stats.candidates_considered, 0,
+            "retraction must deindex stale BM25F rows, not only filter them later"
+        );
+        assert_eq!(after.stats.claims_suppressed, 0);
+        let empty = after.empty.as_ref().expect("empty context");
+        assert_eq!(empty.reason, EmptyReason::NoData);
+        assert_eq!(empty.total_in_scope, 0);
+        Ok(())
+    }
+
+    #[test]
     fn empty_after_result_cap_reports_below_threshold() -> Result<()> {
         let (_dir, vault) = open_test_vault();
         let id = EntityId::now();

@@ -721,7 +721,7 @@ pub(crate) fn apply_ops(
     let mut had_graph_mutation = false;
     let mut had_vector_mutation = false;
     let mut text_manifest_checked = false;
-    let text_covered_entity_ids = text_covered_entity_ids(&ops);
+    let later_text_coverage_by_op = text_coverage_after_op(&ops);
     // Legacy (pre-symmetric-migration) graphs answer a vector refresh with a
     // full snapshot rebuild. Batched vector updates coalesce that into at
     // most ONE rebuild per transaction: once pending, per-op graph mutations
@@ -729,7 +729,7 @@ pub(crate) fn apply_ops(
     // `vectors` DB) and the rebuild runs after the op loop (ONE-324 AC11).
     let mut pending_hnsw_rebuild = false;
 
-    for op in ops {
+    for (op_index, op) in ops.into_iter().enumerate() {
         match op {
             BatchOp::Put {
                 id,
@@ -766,7 +766,7 @@ pub(crate) fn apply_ops(
                     // `apply_put` deindexes the loser's BM25F postings on a
                     // body-changing overwrite, same-txn (ARCH-0031 amendment).
                     allow_maintenance && allow_reserved_predicate,
-                    text_covered_entity_ids.contains(&id),
+                    later_text_coverage_by_op[op_index],
                 )?;
             }
             BatchOp::Vector { id, vector } => {
@@ -893,13 +893,23 @@ fn contains_text_op(ops: &[BatchOp]) -> bool {
     ops.iter().any(|op| matches!(op, BatchOp::Text { .. }))
 }
 
-fn text_covered_entity_ids(ops: &[BatchOp]) -> HashSet<EntityId> {
-    ops.iter()
-        .filter_map(|op| match op {
-            BatchOp::Text { id, .. } => Some(*id),
-            _ => None,
-        })
-        .collect()
+fn text_coverage_after_op(ops: &[BatchOp]) -> Vec<bool> {
+    let mut text_ids_after = HashSet::new();
+    let mut covered = vec![false; ops.len()];
+
+    for (index, op) in ops.iter().enumerate().rev() {
+        match op {
+            BatchOp::Put { id, .. } => {
+                covered[index] = text_ids_after.contains(id);
+            }
+            BatchOp::Text { id, .. } => {
+                text_ids_after.insert(*id);
+            }
+            _ => {}
+        }
+    }
+
+    covered
 }
 
 #[derive(Debug, Default)]
@@ -1075,7 +1085,7 @@ fn apply_put(
     data: &[u8],
     allow_reserved_predicate: bool,
     replicated: bool,
-    has_covering_text_op: bool,
+    has_later_covering_text_op: bool,
 ) -> Result<()> {
     // Type-byte validation runs in `apply_ops` (the public-vs-maintenance gate:
     // public writes reject the engine-authored maintenance band, the sync
@@ -1122,15 +1132,16 @@ fn apply_put(
         // ONE-1141 + ONE-1168 (ARCH-0031 amendment): body-changing overwrites
         // must not leave stale BM25F postings live. Replicated/LWW overwrites
         // always deindex the loser because sync carries no `BatchOp::Text`.
-        // Local overwrites do the same only when this batch has no same-id
-        // Text op; if Text is present, `index_text` remains the self-deindex
-        // authority. Token source: the body-independent `text_forward` row —
-        // `deindex_text` reads only it and is a no-op for never-indexed
-        // entities. Byte-compare guard: same-bytes replay must NOT touch the
-        // index, and metadata-only (occurred/learned) changes are not body
-        // changes.
+        // Local overwrites do the same unless this batch has a later same-id
+        // Text op; a Text that already ran may describe an earlier body and
+        // must not cover this overwrite. If a later Text is present,
+        // `index_text` remains the self-deindex authority. Token source: the
+        // body-independent `text_forward` row — `deindex_text` reads only it
+        // and is a no-op for never-indexed entities. Byte-compare guard:
+        // same-bytes replay must NOT touch the index, and metadata-only
+        // (occurred/learned) changes are not body changes.
         let body_changed = old_record[ENTITY_METADATA_HEADER_LEN..] != *data;
-        let should_deindex_stale_text = body_changed && (replicated || !has_covering_text_op);
+        let should_deindex_stale_text = body_changed && (replicated || !has_later_covering_text_op);
         if old_type != entity_type {
             return Err(Error::EntityTypeImmutable {
                 id,
