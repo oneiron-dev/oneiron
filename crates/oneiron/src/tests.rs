@@ -12632,6 +12632,40 @@ fn local_overwrite_changed_body_without_text_drops_stale_text_postings_same_txn(
 }
 
 #[test]
+fn retract_claim_lifecycle_reput_drops_stale_text_postings() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let subject = EntityId::now();
+    vault.put_entity(&subject, 4, test_time_range(1, 1), 1, b"person")?;
+    let id = put_active_claim(&vault, &subject, "profile.status", "active", 1)?;
+    vault
+        .batch()
+        .text(&id, &[("body", "retract_lifecycle_stale_xyz")])
+        .commit()?;
+    assert_eq!(
+        vault.search_text("retract_lifecycle_stale_xyz", 10)?.len(),
+        1,
+        "precondition: the active claim's term must be indexed and searchable"
+    );
+
+    vault.retract_claim(&id, 2_000)?;
+
+    assert_eq!(
+        vault
+            .get_claim(&id)?
+            .expect("retracted claim must stay readable")
+            .lifecycle,
+        ClaimLifecycleStatus::Retracted
+    );
+    assert!(
+        vault
+            .search_text("retract_lifecycle_stale_xyz", 10)?
+            .is_empty(),
+        "Vault::retract_claim must deindex stale postings from its lifecycle re-put"
+    );
+    assert_text_rows_deindexed(&vault, &id)
+}
+
+#[test]
 fn local_overwrite_same_body_replay_without_text_keeps_text_postings() -> Result<()> {
     let (_dir, vault) = open_test_vault();
     let id = EntityId::now();
