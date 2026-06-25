@@ -23,7 +23,8 @@ const WINDOW_PRESENT_MARKER: &[u8] = b"1";
 /// The root doc holds a `meta` map with vault metadata and window list,
 /// plus the `leases` device-lease registry map (ONE-1140, OD-3 —
 /// server-write-only by the existing client-root-update rejection; each
-/// entry is `client_id_hex` → the pinned 58 B lease record).
+/// entry is `client_id_hex` → the pinned 66 B lease record whose value
+/// carries `vault_id`).
 pub fn create_root_doc(_user_id: &str, vault_id: &str, windows: &[WindowKey]) -> LoroDoc {
     let doc = LoroDoc::new();
     let meta = doc.get_map("meta");
