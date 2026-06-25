@@ -7,6 +7,7 @@ const API_RS: &str = include_str!("../src/api.rs");
 
 const EXPECTED_REGISTERED_ROUTES: &[&str] = &[
     "/api/openapi.json",
+    "/api/skills/oneiron.skills.md",
     "/api/health",
     "/api/core/discover",
     "/api/search/vector",

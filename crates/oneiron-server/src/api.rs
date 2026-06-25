@@ -10,7 +10,7 @@ use std::sync::Arc;
 
 use axum::extract::rejection::QueryRejection;
 use axum::extract::{Path, Query, State};
-use axum::http::{HeaderMap, StatusCode};
+use axum::http::{HeaderMap, StatusCode, header::CONTENT_TYPE};
 use axum::response::{IntoResponse, Json, Response};
 use axum::routing::{get, post};
 use axum::{Router, middleware};
@@ -30,6 +30,8 @@ use crate::protocol::{CountMode, PaginatedResponse, ResponseMeta};
 use crate::server::SyncServer;
 
 const API_LEVEL: &str = "v1";
+const ONEIRON_SKILLS_PACK: &str = include_str!("../../../oneiron.skills.md");
+const ONEIRON_SKILLS_PACK_CONTENT_TYPE: &str = "text/markdown; charset=utf-8";
 const SUPPORTED_FORMATS: &[&str] = &["json", "yaml", "toon", "markdown", "plaintext"];
 const EFFECTIVE_AUTH_SCOPES: &[&str] = &[
     "core:discover",
@@ -42,6 +44,7 @@ const EFFECTIVE_AUTH_SCOPES: &[&str] = &[
 const CAPABILITIES: &[&str] = &[
     "core.discover",
     "health.capabilities",
+    "skills_pack.fetch",
     "search.vector",
     "search.text",
     "entity.get",
@@ -60,6 +63,7 @@ const RESUME_NOTIFICATION_SCAN_LIMIT: usize = 4096;
 #[openapi(
     paths(
         openapi_json,
+        skills_pack,
         health,
         discover,
         search_vector,
@@ -113,6 +117,7 @@ pub(crate) fn api_routes(server: Arc<SyncServer>) -> Router {
 
     Router::new()
         .route("/api/openapi.json", get(openapi_json))
+        .route("/api/skills/oneiron.skills.md", get(skills_pack))
         .route("/api/health", get(health))
         .route("/api/core/discover", get(discover))
         .route("/api/search/vector", get(search_vector))
@@ -157,6 +162,43 @@ async fn openapi_json(
 ) -> Result<Json<Value>, ApiError> {
     check_api_auth(&headers, &server.config)?;
     Ok(Json(openapi_document()))
+}
+
+/// Returns the static agentskills.io-compatible Oneiron skill pack.
+#[utoipa::path(
+    get,
+    path = "/api/skills/oneiron.skills.md",
+    responses(
+        (
+            status = 200,
+            description = "Static agentskills.io-compatible progressive-disclosure skill pack for the live HTTP API.",
+            body = String,
+            content_type = "text/markdown",
+            example = "# Oneiron HTTP Memory API Skill Pack"
+        ),
+        (
+            status = 401,
+            description = "Missing or invalid `x-oneiron-secret` header.",
+            body = ApiError,
+            content_type = "application/json",
+            example = json!({
+                "code": "UNAUTHORIZED",
+                "message": "unauthorized",
+                "details": { "code": "UNAUTHORIZED" },
+                "suggestions": ["set x-oneiron-secret to the configured shared secret"]
+            })
+        )
+    )
+)]
+async fn skills_pack(
+    headers: HeaderMap,
+    State(server): State<Arc<SyncServer>>,
+) -> Result<impl IntoResponse, ApiError> {
+    check_api_auth(&headers, &server.config)?;
+    Ok((
+        [(CONTENT_TYPE, ONEIRON_SKILLS_PACK_CONTENT_TYPE)],
+        ONEIRON_SKILLS_PACK,
+    ))
 }
 
 fn openapi_document() -> Value {
@@ -271,6 +313,7 @@ fn add_security_scheme(spec: &mut Value) {
 
     let protected_operations = [
         ("/api/openapi.json", "get"),
+        ("/api/skills/oneiron.skills.md", "get"),
         ("/api/core/discover", "get"),
         ("/api/search/vector", "get"),
         ("/api/search/text", "get"),
@@ -307,7 +350,7 @@ fn add_security_scheme(spec: &mut Value) {
                 "status": "ok",
                 "service": "oneiron-server",
                 "capabilities": {
-                    "capabilities": ["core.discover", "search.vector", "search.text"],
+                    "capabilities": ["core.discover", "skills_pack.fetch", "search.vector", "search.text"],
                     "modes": ["flash", "thinking", "pro", "ultra"]
                 },
                 "formats": ["json", "yaml", "toon", "markdown", "plaintext"],
@@ -520,7 +563,7 @@ struct RateLimitStatus {
                     "entity_type": 2
                 }],
                 "feature_flags": {
-                    "capabilities": ["core.discover", "search.vector", "search.text"],
+                    "capabilities": ["core.discover", "skills_pack.fetch", "search.vector", "search.text"],
                     "modes": ["flash", "thinking", "pro", "ultra"]
                 },
                 "counts": {
@@ -1637,6 +1680,7 @@ mod tests {
         let paths = spec["paths"].as_object().expect("paths object");
         for path in [
             "/api/openapi.json",
+            "/api/skills/oneiron.skills.md",
             "/api/core/discover",
             "/api/search/vector",
             "/api/search/text",
@@ -1672,6 +1716,15 @@ mod tests {
             discover_success.get("example").is_some() || discover_success.get("examples").is_some(),
             "discover 200 response must include an example: {discover_success:?}"
         );
+
+        let skills_pack_success = &spec["paths"]["/api/skills/oneiron.skills.md"]["get"]["responses"]
+            ["200"]["content"]["text/markdown"];
+        assert!(
+            skills_pack_success.get("example").is_some()
+                || skills_pack_success.get("examples").is_some(),
+            "skills pack 200 response must include a markdown example: {skills_pack_success:?}"
+        );
+
         assert!(
             spec["paths"]["/api/core/discover"]["get"]["responses"]
                 .as_object()
@@ -1686,6 +1739,7 @@ mod tests {
         );
         for (path, method) in [
             ("/api/openapi.json", "get"),
+            ("/api/skills/oneiron.skills.md", "get"),
             ("/api/core/discover", "get"),
             ("/api/search/vector", "get"),
             ("/api/search/text", "get"),
