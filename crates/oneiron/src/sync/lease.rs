@@ -439,7 +439,28 @@ fn mirror_leases_impl(vault: &Vault, wtxn: &mut heed::RwTxn<'_>, root_doc: &Loro
             continue;
         };
         let row_key = lease_key(record.vault_id, client_id);
+        delete_stale_v2_lease_rows_for_client(vault, wtxn, client_id, &row_key)?;
         vault.store.sync_state.put(wtxn, &row_key, raw)?;
+    }
+    Ok(())
+}
+
+fn delete_stale_v2_lease_rows_for_client(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    client_id: u64,
+    keep_key: &str,
+) -> Result<()> {
+    let client_suffix = format!(":{}", client_id_hex(client_id));
+    let mut stale_keys = Vec::new();
+    for entry in vault.store.sync_state.prefix_iter(wtxn, LEASE_KEY_PREFIX)? {
+        let (key, _raw) = entry?;
+        if key != keep_key && key.ends_with(&client_suffix) {
+            stale_keys.push(key.to_owned());
+        }
+    }
+    for key in stale_keys {
+        vault.store.sync_state.delete(wtxn, &key)?;
     }
     Ok(())
 }
@@ -620,6 +641,49 @@ mod tests {
                 "ls:0a0b0c0d0e0f1011:0123456789abcdef".to_owned(),
                 row_a.to_vec()
             )]
+        );
+    }
+
+    #[test]
+    fn root_lease_mirror_replaces_stale_vault_scoped_row_for_same_client() {
+        let (_dir, vault) = test_vault();
+        let doc = LoroDoc::new();
+        let old_vault_id = 0x0101_0101_0101_0101;
+        let new_vault_id = 0x0202_0202_0202_0202;
+        let client_id = 0x0a0b_0c0d_0e0f_1011;
+
+        let old_record = LeaseRecord {
+            vault_id: old_vault_id,
+            status: LeaseStatus::Active,
+            pubkey: [0xA1; 32],
+            granted_at: 10,
+            renewed_at: 20,
+            expires_at: 30,
+        };
+        let new_record = LeaseRecord {
+            vault_id: new_vault_id,
+            pubkey: [0xB2; 32],
+            ..old_record
+        };
+        let old_key = lease_key(old_vault_id, client_id);
+        let new_key = lease_key(new_vault_id, client_id);
+        let old_bytes = encode_lease_record(&old_record);
+        let new_bytes = encode_lease_record(&new_record);
+
+        vault.sync_state_put(&old_key, &old_bytes).unwrap();
+        doc.get_map(ROOT_LEASES_MAP)
+            .insert(client_id_hex(client_id).as_str(), new_bytes.as_slice())
+            .unwrap();
+        doc.commit();
+
+        mirror_leases_from_root(&vault, &doc).unwrap();
+        assert!(
+            vault.sync_state_get(&old_key).unwrap().is_none(),
+            "a vault_id move must not leave a duplicate client mirror row"
+        );
+        assert_eq!(
+            vault.sync_state_get(&new_key).unwrap().as_deref(),
+            Some(new_bytes.as_slice())
         );
     }
 
