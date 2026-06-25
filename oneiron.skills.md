@@ -1,9 +1,9 @@
 ---
 name: oneiron-http-memory-api
-description: "Use this skill when an external agent needs to discover Oneiron's current HTTP memory API, choose the right endpoint, and understand how read, retrieval, context-pack, discovery, and lease-revocation calls relate to Oneiron MCP tools."
+description: "Use this skill when an external agent needs to discover Oneiron's current HTTP memory API, fetch the static skill pack from a running server, choose the right endpoint, and understand how read, retrieval, context-pack, discovery, and lease-revocation calls relate to Oneiron MCP tools."
 when_to_use:
   - "An agent needs route-level awareness of the existing Oneiron HTTP API."
-  - "An agent must decide whether to search memory, read one entity, inspect edges, assemble context, resume companion state, discover vault capabilities, inspect the OpenAPI schema, or revoke a device lease."
+  - "An agent must decide whether to search memory, read one entity, inspect edges, assemble context, resume companion state, discover vault capabilities, fetch the skill pack, inspect the OpenAPI schema, or revoke a device lease."
   - "A connector needs the static skill layer: how to think about memory before it calls MCP or HTTP tools."
 trigger_phrases:
   - "query Oneiron memory"
@@ -12,13 +12,14 @@ trigger_phrases:
   - "get context pack"
   - "resume companion state"
   - "discover Oneiron capabilities"
+  - "fetch Oneiron skill pack"
   - "inspect OpenAPI schema"
   - "revoke a lease"
 ---
 
 # Oneiron HTTP Memory API Skill Pack
 
-This pack is a static, agentskills.io-compatible progressive disclosure artifact for the currently exposed Oneiron HTTP routes. It is documentation only: it does not add routes, MCP tools, handlers, activation logic, or runtime distribution.
+This pack is a static, agentskills.io-compatible progressive disclosure artifact for the currently exposed Oneiron HTTP routes. The pack content is documentation only; the HTTP distribution endpoint serves this committed artifact without adding storage, mutation behavior, MCP tools, or activation logic.
 
 The boundary is dual-layer:
 
@@ -40,6 +41,15 @@ Fetch Tier-1 first. It contains one endpoint block per live route literal and no
   - "show OpenAPI"
   - "generate client from schema"
   - "inspect API schema"
+- safety: Read-only; requires the configured `x-oneiron-secret` header unless the server is explicitly in unauthenticated development mode.
+
+#### skills-pack - `GET /api/skills/oneiron.skills.md`
+
+- when-to-use: Fetch this committed progressive-disclosure pack directly from a running Oneiron server when an external agent needs the same static route catalog over HTTP.
+- trigger phrases:
+  - "fetch Oneiron skill pack"
+  - "download agent skills"
+  - "serve progressive disclosure pack"
 - safety: Read-only; requires the configured `x-oneiron-secret` header unless the server is explicitly in unauthenticated development mode.
 
 #### health - `GET /api/health`
@@ -151,7 +161,7 @@ Example response:
   "status": "ok",
   "service": "oneiron-server",
   "capabilities": {
-    "capabilities": ["search.vector", "search.text", "entity.get"],
+    "capabilities": ["skills_pack.fetch", "search.vector", "search.text", "entity.get"],
     "modes": ["flash", "thinking", "pro", "ultra"]
   },
   "formats": ["json", "yaml", "toon", "markdown", "plaintext"],
@@ -179,6 +189,20 @@ Response:
 - A JSON OpenAPI document for the live HTTP API.
 - Includes generated paths, operation metadata, and shared error components.
 - Use it for client generation or schema introspection; use Tier-1 for human endpoint selection.
+
+### Skills Pack
+
+Method: `GET`
+
+Authentication: `x-oneiron-secret` unless development config explicitly allows unauthenticated access.
+
+Parameters: None.
+
+Response:
+
+- Content type: `text/markdown; profile=agentskills.io`.
+- Body: the committed `oneiron.skills.md` artifact.
+- Use it when an external agent needs the progressive-disclosure route catalog from a running Oneiron server rather than from the repository checkout.
 
 ### Core Discovery
 
@@ -212,7 +236,7 @@ Example response:
   "personas": [{ "id": "0123456789abcdef0123456789abcdef", "entity_type": 4 }],
   "conversations": [{ "id": "abcdef0123456789abcdef0123456789", "entity_type": 11 }],
   "feature_flags": {
-    "capabilities": ["core.discover", "health.capabilities", "search.vector"],
+    "capabilities": ["core.discover", "health.capabilities", "skills_pack.fetch", "search.vector"],
     "modes": ["flash", "thinking", "pro", "ultra"]
   },
   "counts": { "4": 1, "11": 1 },

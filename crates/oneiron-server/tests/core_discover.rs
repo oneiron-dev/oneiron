@@ -16,6 +16,8 @@ use oneiron_server::server::SyncServer;
 use serde_json::Value;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
+const SKILLS_PACK: &str = include_str!("../oneiron.skills.md");
+
 fn test_vault_config() -> VaultConfig {
     let mut config = VaultConfig::device();
     config.map_size = 16 * 1024 * 1024;
@@ -535,6 +537,31 @@ async fn discover_requires_auth_and_returns_empty_contract() {
         str_array_set(&body["feature_flags"]["modes"]),
         BTreeSet::from(["flash", "pro", "thinking", "ultra"])
     );
+
+    handle.abort();
+}
+
+#[tokio::test]
+async fn skills_pack_requires_auth_and_serves_static_markdown() {
+    let dir = tempfile::tempdir().unwrap();
+    let vault = Arc::new(oneiron::Vault::open(dir.path(), test_vault_config()).unwrap());
+    let (addr, handle) = spawn_server(vault, config_with_secret("secret")).await;
+
+    let missing = http_get(addr, "/api/skills/oneiron.skills.md", None).await;
+    assert_http_status(&missing, 401);
+
+    let wrong = http_get(addr, "/api/skills/oneiron.skills.md", Some("wrong")).await;
+    assert_http_status(&wrong, 401);
+
+    let response = http_get(addr, "/api/skills/oneiron.skills.md", Some("secret")).await;
+    assert_http_status(&response, 200);
+    assert!(
+        http_headers(&response)
+            .to_ascii_lowercase()
+            .contains("content-type: text/markdown; profile=agentskills.io"),
+        "skills pack response should be text/markdown"
+    );
+    assert_eq!(http_body(&response), SKILLS_PACK);
 
     handle.abort();
 }
