@@ -466,10 +466,10 @@ fn notification_scoped_to_caller(body: &Value, caller: &str) -> bool {
         "recipientId",
     ];
     for key in SCOPE_KEYS {
-        if let Some(value) = object.get(*key) {
-            if !caller_marker_contains(Some(value), caller) {
-                return false;
-            }
+        if let Some(value) = object.get(*key)
+            && !caller_marker_contains(Some(value), caller)
+        {
+            return false;
         }
     }
     true
