@@ -1046,13 +1046,31 @@ mod tests {
         pred: &str,
         val: &str,
     ) -> Result<()> {
+        put_claim_text_entity_with_lifecycle(
+            vault,
+            id,
+            text,
+            pred,
+            val,
+            crate::claim::ClaimLifecycleStatus::Active,
+        )
+    }
+
+    fn put_claim_text_entity_with_lifecycle(
+        vault: &Vault,
+        id: &EntityId,
+        text: &str,
+        pred: &str,
+        val: &str,
+        life: crate::claim::ClaimLifecycleStatus,
+    ) -> Result<()> {
         let body = crate::claim::ClaimBody::new(
             pred,
             crate::claim::ClaimSubject::Entity(EntityId::from_bytes([0x7C; 16])?),
             rmpv::Value::from(val),
             0.9,
             crate::claim::ClaimApprovalStatus::Auto,
-            crate::claim::ClaimLifecycleStatus::Active,
+            life,
         );
         let payload = crate::claim::encode_claim_body(&body)?;
         vault
@@ -2237,8 +2255,14 @@ mod tests {
         let live = EntityId::from_bytes_unchecked([0x71; 16]);
         let dead = EntityId::from_bytes_unchecked([0x72; 16]);
         put_claim_text_entity(&vault, &live, "statneedle", "test.live", "v")?;
-        put_claim_text_entity(&vault, &dead, "statneedle", "test.dead", "v")?;
-        vault.retract_claim(&dead, 2_000)?;
+        put_claim_text_entity_with_lifecycle(
+            &vault,
+            &dead,
+            "statneedle",
+            "test.dead",
+            "v",
+            crate::claim::ClaimLifecycleStatus::Retracted,
+        )?;
 
         let pack = vault.context_pack().search_text("statneedle", 10).run()?;
         assert_eq!(pack.results.len(), 1);
