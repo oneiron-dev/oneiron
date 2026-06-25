@@ -4,6 +4,7 @@ const PACK: &str = include_str!("../../../oneiron.skills.md");
 const API_RS: &str = include_str!("../src/api.rs");
 
 const EXPECTED_REGISTERED_ROUTES: &[&str] = &[
+    "/api/openapi.json",
     "/api/health",
     "/api/core/discover",
     "/api/search/vector",
@@ -177,7 +178,7 @@ fn documented_api_literal_counts(markdown: &str) -> BTreeMap<&str, usize> {
         let route_len = route_start
             .char_indices()
             .take_while(|(_, ch)| {
-                ch.is_ascii_alphanumeric() || matches!(ch, '/' | '-' | '_' | '{' | '}')
+                ch.is_ascii_alphanumeric() || matches!(ch, '/' | '-' | '_' | '.' | '{' | '}')
             })
             .last()
             .map_or(0, |(index, ch)| index + ch.len_utf8());
