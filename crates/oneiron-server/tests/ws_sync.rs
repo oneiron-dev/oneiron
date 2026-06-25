@@ -160,6 +160,13 @@ fn assert_http_status(response: &str, status: u16) {
     );
 }
 
+fn http_json_body(response: &str) -> serde_json::Value {
+    let (_, body) = response
+        .split_once("\r\n\r\n")
+        .expect("HTTP response must contain header/body separator");
+    serde_json::from_str(body).expect("HTTP body must be valid JSON")
+}
+
 async fn send_window_vv_request(ws: &mut WsStream, key: &str) {
     let doc = LoroDoc::new();
     let msg =
@@ -289,6 +296,89 @@ async fn http_guarded_route_rejects_when_no_secret_and_not_dev() {
 
     let response = http_get(addr, "/api/search/text?query=hello", None).await;
     assert_http_status(&response, 401);
+
+    handle.abort();
+}
+
+#[tokio::test]
+async fn http_search_text_response_defaults_to_estimate_meta() {
+    let dir = tempfile::tempdir().unwrap();
+    let (addr, _server, handle) = spawn_server(
+        open_vault(dir.path()),
+        config_with_secret_and_dev(None, true),
+    )
+    .await;
+
+    let response = http_get(addr, "/api/search/text?query=no-such-term", None).await;
+    assert_http_status(&response, 200);
+    let body = http_json_body(&response);
+
+    assert_eq!(body["items"], serde_json::json!([]));
+    assert!(body.get("nextCursor").is_none());
+    assert_eq!(
+        body["meta"],
+        serde_json::json!({
+            "total": 0,
+            "countMode": "estimate"
+        })
+    );
+
+    handle.abort();
+}
+
+#[tokio::test]
+async fn http_search_text_count_mode_none_returns_zero_none_meta() {
+    let dir = tempfile::tempdir().unwrap();
+    let (addr, _server, handle) = spawn_server(
+        open_vault(dir.path()),
+        config_with_secret_and_dev(None, true),
+    )
+    .await;
+
+    let response = http_get(
+        addr,
+        "/api/search/text?query=no-such-term&countMode=none",
+        None,
+    )
+    .await;
+    assert_http_status(&response, 200);
+    let body = http_json_body(&response);
+
+    assert_eq!(body["items"], serde_json::json!([]));
+    assert_eq!(
+        body["meta"],
+        serde_json::json!({
+            "total": 0,
+            "countMode": "none"
+        })
+    );
+
+    handle.abort();
+}
+
+#[tokio::test]
+async fn http_search_vector_response_defaults_to_estimate_meta() {
+    let dir = tempfile::tempdir().unwrap();
+    let (addr, _server, handle) = spawn_server(
+        open_vault(dir.path()),
+        config_with_secret_and_dev(None, true),
+    )
+    .await;
+    let vector = vec!["0.0"; 1024].join(",");
+    let path = format!("/api/search/vector?query={vector}&limit=2");
+
+    let response = http_get(addr, &path, None).await;
+    assert_http_status(&response, 200);
+    let body = http_json_body(&response);
+
+    assert_eq!(body["items"], serde_json::json!([]));
+    assert_eq!(
+        body["meta"],
+        serde_json::json!({
+            "total": 0,
+            "countMode": "estimate"
+        })
+    );
 
     handle.abort();
 }

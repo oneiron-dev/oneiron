@@ -15,6 +15,7 @@ use axum::routing::{get, post};
 use serde::{Deserialize, Serialize};
 
 use crate::config::SyncServerConfig;
+use crate::protocol::{CountMode, PaginatedResponse, ResponseMeta};
 use crate::server::SyncServer;
 
 /// Builds the HTTP API routes.
@@ -81,6 +82,9 @@ struct VectorSearchQuery {
     /// Maximum results to return.
     #[serde(default = "default_limit")]
     limit: usize,
+    /// Count precision for response metadata. Search defaults to estimate.
+    #[serde(default = "CountMode::default_estimate", rename = "countMode")]
+    count_mode: CountMode,
 }
 
 fn default_limit() -> usize {
@@ -93,15 +97,18 @@ struct SearchResult {
     score: f32,
 }
 
+type SearchResponse = PaginatedResponse<SearchResult>;
+
 /// Vector similarity search.
-/// GET /api/search/vector?query=0.1,0.2,...&limit=10
+/// GET /api/search/vector?query=0.1,0.2,...&limit=10&countMode=estimate
 async fn search_vector(
     headers: HeaderMap,
     State(server): State<Arc<SyncServer>>,
     Query(params): Query<VectorSearchQuery>,
-) -> Result<Json<Vec<SearchResult>>, StatusCode> {
+) -> Result<Json<SearchResponse>, StatusCode> {
     check_auth(&headers, &server.config)?;
 
+    let count_mode = params.count_mode;
     let query: Result<Vec<f32>, _> = params
         .query
         .split(',')
@@ -125,8 +132,9 @@ async fn search_vector(
             score: r.score,
         })
         .collect();
+    let meta = search_meta(count_mode, response.len());
 
-    Ok(Json(response))
+    Ok(Json(PaginatedResponse::new(response, None, meta)))
 }
 
 #[derive(Deserialize)]
@@ -134,17 +142,21 @@ struct TextSearchQuery {
     query: String,
     #[serde(default = "default_limit")]
     limit: usize,
+    /// Count precision for response metadata. Search defaults to estimate.
+    #[serde(default = "CountMode::default_estimate", rename = "countMode")]
+    count_mode: CountMode,
 }
 
 /// BM25 text search.
-/// GET /api/search/text?query=hello+world&limit=10
+/// GET /api/search/text?query=hello+world&limit=10&countMode=estimate
 async fn search_text(
     headers: HeaderMap,
     State(server): State<Arc<SyncServer>>,
     Query(params): Query<TextSearchQuery>,
-) -> Result<Json<Vec<SearchResult>>, StatusCode> {
+) -> Result<Json<SearchResponse>, StatusCode> {
     check_auth(&headers, &server.config)?;
 
+    let count_mode = params.count_mode;
     let results = server
         .vault
         .search_text(&params.query, params.limit)
@@ -160,8 +172,17 @@ async fn search_text(
             score: r.score,
         })
         .collect();
+    let meta = search_meta(count_mode, response.len());
 
-    Ok(Json(response))
+    Ok(Json(PaginatedResponse::new(response, None, meta)))
+}
+
+fn search_meta(requested: CountMode, visible_items: usize) -> ResponseMeta {
+    match requested.for_search_response() {
+        CountMode::None => ResponseMeta::none(),
+        CountMode::Estimate => ResponseMeta::estimate(visible_items as u64),
+        CountMode::Exact => unreachable!("search responses never report exact counts"),
+    }
 }
 
 // ─── Entity Routes ────────────────────────────────────────────────────────────
@@ -312,4 +333,40 @@ async fn context_pack(
         "status": "ok",
         "message": "context-pack endpoint ready — full implementation pending ContextPackBuilder integration"
     })))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn search_queries_default_to_estimate_count_mode() {
+        let text: TextSearchQuery = serde_json::from_value(serde_json::json!({
+            "query": "hello"
+        }))
+        .unwrap();
+        assert_eq!(text.limit, default_limit());
+        assert_eq!(text.count_mode, CountMode::Estimate);
+
+        let vector: VectorSearchQuery = serde_json::from_value(serde_json::json!({
+            "query": "0.0,0.0"
+        }))
+        .unwrap();
+        assert_eq!(vector.limit, default_limit());
+        assert_eq!(vector.count_mode, CountMode::Estimate);
+    }
+
+    #[test]
+    fn search_meta_honors_none_without_counting() {
+        assert_eq!(search_meta(CountMode::None, 25), ResponseMeta::none());
+    }
+
+    #[test]
+    fn search_meta_reports_estimate_not_exact() {
+        assert_eq!(
+            search_meta(CountMode::Estimate, 7),
+            ResponseMeta::estimate(7)
+        );
+        assert_eq!(search_meta(CountMode::Exact, 7), ResponseMeta::estimate(7));
+    }
 }
