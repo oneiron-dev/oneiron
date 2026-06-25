@@ -77,8 +77,8 @@ After committing, inspect the PR diff before publishing:
 
 ```bash
 rtk git diff main...HEAD --name-status
-rtk git diff main...HEAD -- ':!*.md' | grep -E '^\+.*(_VERSION|pub (fn|struct|enum|trait|type|const|static|mod))' | head
-rtk git diff main...HEAD -- 'Cargo.toml' ':(glob)**/Cargo.toml' 'deny.toml' '.gitignore'
+rtk git diff main...HEAD -- ':!*.md' | grep -E '^\+.*(_VERSION|pub (fn|struct|enum|trait|type|const|static|mod|use))' | head
+rtk git diff main...HEAD -- 'Cargo.toml' ':(glob)**/Cargo.toml' 'Cargo.lock' 'rust-toolchain.toml' 'deny.toml' '.gitignore'
 ```
 
 Output from the version/public-surface grep or Cargo/config diff is not
