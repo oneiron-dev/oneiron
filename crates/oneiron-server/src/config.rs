@@ -141,7 +141,12 @@ pub struct ServeArgs {
     pub insecure_allow_unauthenticated: Option<bool>,
 
     /// Comma-separated CORS origins allowed to call the HTTP API.
-    #[arg(long = "allowed-origins", value_delimiter = ',', num_args = 1..)]
+    #[arg(
+        long = "allowed-origins",
+        visible_alias = "cors-origins",
+        value_delimiter = ',',
+        num_args = 1..
+    )]
     pub allowed_origins: Option<Vec<String>>,
 
     /// Embedding vector dimension for the vault.
@@ -776,6 +781,34 @@ mod tests {
     }
 
     #[test]
+    fn serve_args_debug_prints_none_for_missing_auth_secret() {
+        let debug = format!("{:?}", ServeArgs::default());
+
+        assert!(debug.contains("auth_secret: None"));
+    }
+
+    #[test]
+    fn serve_config_debug_redacts_auth_secret() {
+        let config = ServeConfig {
+            auth_secret: Some("serve-config-secret".to_owned()),
+            ..Default::default()
+        };
+
+        let debug = format!("{config:?}");
+
+        assert!(!debug.contains("serve-config-secret"));
+        assert!(debug.contains("auth_secret"));
+        assert!(debug.contains("<redacted>"));
+    }
+
+    #[test]
+    fn serve_config_debug_prints_none_for_missing_auth_secret() {
+        let debug = format!("{:?}", ServeConfig::default());
+
+        assert!(debug.contains("auth_secret: None"));
+    }
+
+    #[test]
     fn legacy_top_level_flags_parse_as_serve_args() {
         let cli = TestCli::try_parse_from([
             "oneiron-server",
@@ -793,6 +826,39 @@ mod tests {
         );
         assert_eq!(cli.serve.port, Some(9191));
         assert_eq!(cli.serve.insecure_allow_unauthenticated, Some(true));
+    }
+
+    #[test]
+    fn cors_origins_alias_parses_as_serve_args() {
+        let cli = TestCli::try_parse_from([
+            "oneiron-server",
+            "--cors-origins",
+            "https://a.example,https://b.example",
+        ])
+        .unwrap();
+
+        assert_eq!(
+            cli.serve.allowed_origins,
+            Some(vec![
+                "https://a.example".to_owned(),
+                "https://b.example".to_owned()
+            ])
+        );
+    }
+
+    #[test]
+    fn env_allowed_origins_are_split_and_trimmed() {
+        let env = EnvConfig::from_pairs([(
+            "ONEIRON_ALLOWED_ORIGINS",
+            "https://a.example, https://b.example",
+        )])
+        .unwrap();
+        let resolved = resolve_serve_config_with_sources(&ServeArgs::default(), env, None).unwrap();
+
+        assert_eq!(
+            resolved.allowed_origins,
+            vec!["https://a.example", "https://b.example"]
+        );
     }
 
     #[test]
