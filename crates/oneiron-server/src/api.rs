@@ -14,9 +14,10 @@ use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Json, Response};
 use axum::routing::{get, post};
 use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
+use serde_json::Value;
 
 use crate::config::SyncServerConfig;
+use crate::error::ApiError;
 use crate::projection::{self, View};
 use crate::server::SyncServer;
 
@@ -75,49 +76,21 @@ pub(crate) fn check_auth(headers: &HeaderMap, config: &SyncServerConfig) -> Resu
     }
 }
 
-#[derive(Debug)]
-enum ApiError {
-    Status(StatusCode),
-    InvalidView,
-}
-
-impl From<StatusCode> for ApiError {
-    fn from(status: StatusCode) -> Self {
-        Self::Status(status)
-    }
-}
-
-impl ApiError {
-    fn from_query_rejection(rejection: QueryRejection) -> Self {
-        if rejection.body_text().contains("invalid_view") {
-            Self::InvalidView
-        } else {
-            Self::Status(StatusCode::BAD_REQUEST)
-        }
-    }
-}
-
-impl IntoResponse for ApiError {
-    fn into_response(self) -> Response {
-        match self {
-            Self::Status(status) => status.into_response(),
-            Self::InvalidView => (
-                StatusCode::BAD_REQUEST,
-                Json(json!({
-                    "error": {
-                        "code": "invalid_view",
-                        "message": "view must be one of summary, standard, full"
-                    }
-                })),
-            )
-                .into_response(),
-        }
-    }
+fn check_api_auth(headers: &HeaderMap, config: &SyncServerConfig) -> Result<(), ApiError> {
+    check_auth(headers, config).map_err(|_| ApiError::unauthorized())
 }
 
 fn query_params<T>(query: Result<Query<T>, QueryRejection>) -> Result<T, ApiError> {
-    let Query(params) = query.map_err(ApiError::from_query_rejection)?;
+    let Query(params) = query.map_err(query_rejection_error)?;
     Ok(params)
+}
+
+fn query_rejection_error(rejection: QueryRejection) -> ApiError {
+    if rejection.body_text().contains("invalid_view") {
+        ApiError::bad_request("view must be one of summary, standard, full", Some("view"))
+    } else {
+        ApiError::bad_request("invalid query parameters", None)
+    }
 }
 
 // ─── Search Routes ────────────────────────────────────────────────────────────
@@ -143,7 +116,7 @@ async fn search_vector(
     State(server): State<Arc<SyncServer>>,
     query: Result<Query<VectorSearchQuery>, QueryRejection>,
 ) -> Result<Json<Vec<Value>>, ApiError> {
-    check_auth(&headers, &server.config)?;
+    check_api_auth(&headers, &server.config)?;
     let params = query_params(query)?;
     let view = params.view.unwrap_or(View::Summary);
 
@@ -153,7 +126,12 @@ async fn search_vector(
         .map(|s| s.trim().parse::<f32>())
         .collect();
 
-    let query = query.map_err(|_| StatusCode::BAD_REQUEST)?;
+    let query = query.map_err(|_| {
+        ApiError::bad_request(
+            "query must be a comma-separated list of f32 values",
+            Some("query"),
+        )
+    })?;
 
     let results = server
         .vault
@@ -161,7 +139,7 @@ async fn search_vector(
         .inspect_err(|e| {
             tracing::error!(error = %e, "vector search failed");
         })
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        .map_err(|_| ApiError::internal_server_error("vector search failed"))?;
 
     let response = search_response(&server.vault, results, view)?;
 
@@ -183,7 +161,7 @@ async fn search_text(
     State(server): State<Arc<SyncServer>>,
     query: Result<Query<TextSearchQuery>, QueryRejection>,
 ) -> Result<Json<Vec<Value>>, ApiError> {
-    check_auth(&headers, &server.config)?;
+    check_api_auth(&headers, &server.config)?;
     let params = query_params(query)?;
     let view = params.view.unwrap_or(View::Summary);
 
@@ -193,7 +171,7 @@ async fn search_text(
         .inspect_err(|e| {
             tracing::error!(error = %e, "text search failed");
         })
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        .map_err(|_| ApiError::internal_server_error("text search failed"))?;
 
     let response = search_response(&server.vault, results, view)?;
 
@@ -205,17 +183,18 @@ fn search_response(
     results: Vec<oneiron::ScoredEntity>,
     view: View,
 ) -> Result<Vec<Value>, ApiError> {
-    results
-        .into_iter()
-        .map(|result| {
-            projection::project_search_result(vault, result, view)
-                .inspect_err(|e| {
-                    tracing::error!(error = %e, "search projection failed");
-                })
-                .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-                .ok_or(StatusCode::INTERNAL_SERVER_ERROR.into())
-        })
-        .collect()
+    let mut response = Vec::with_capacity(results.len());
+    for result in results {
+        match projection::project_search_result(vault, result, view) {
+            Ok(Some(value)) => response.push(value),
+            Ok(None) => continue,
+            Err(e) => {
+                tracing::error!(error = %e, "search projection failed");
+                return Err(ApiError::internal_server_error("search projection failed"));
+            }
+        }
+    }
+    Ok(response)
 }
 
 // ─── Entity Routes ────────────────────────────────────────────────────────────
@@ -233,11 +212,13 @@ async fn get_entity(
     Path(id_hex): Path<String>,
     query: Result<Query<ViewQuery>, QueryRejection>,
 ) -> Result<Response, ApiError> {
-    check_auth(&headers, &server.config)?;
+    check_api_auth(&headers, &server.config)?;
     let params = query_params(query)?;
     let view = params.view.unwrap_or(View::Standard);
 
-    let id = oneiron::EntityId::from_hex(&id_hex).map_err(|_| StatusCode::BAD_REQUEST)?;
+    let id = oneiron::EntityId::from_hex(&id_hex).map_err(|_| {
+        ApiError::bad_request("entity id must be a 32-character hex entity id", Some("id"))
+    })?;
 
     let blob = server
         .vault
@@ -245,10 +226,10 @@ async fn get_entity(
         .inspect_err(|e| {
             tracing::error!(error = %e, "get entity failed");
         })
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        .map_err(|_| ApiError::internal_server_error("get entity failed"))?;
 
     let Some(data) = blob else {
-        return Err(StatusCode::NOT_FOUND.into());
+        return Err(ApiError::not_found("entity", Some(&id_hex)));
     };
 
     if view == View::Standard {
@@ -261,15 +242,15 @@ async fn get_entity(
         .inspect_err(|e| {
             tracing::error!(error = %e, "get entity type failed");
         })
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-        .ok_or(StatusCode::NOT_FOUND)?;
+        .map_err(|_| ApiError::internal_server_error("get entity type failed"))?
+        .ok_or_else(|| ApiError::not_found("entity", Some(&id_hex)))?;
     let updated_at = server
         .vault
         .get_learned_at(&id)
         .inspect_err(|e| {
             tracing::error!(error = %e, "get entity learned_at failed");
         })
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        .map_err(|_| ApiError::internal_server_error("get entity learned_at failed"))?;
     let response = projection::project_entity_parts(&id, entity_type, updated_at, &data, view);
 
     Ok((StatusCode::OK, Json(response)).into_response())
@@ -283,11 +264,13 @@ async fn get_edges(
     Path(id_hex): Path<String>,
     query: Result<Query<ViewQuery>, QueryRejection>,
 ) -> Result<Json<Vec<Value>>, ApiError> {
-    check_auth(&headers, &server.config)?;
+    check_api_auth(&headers, &server.config)?;
     let params = query_params(query)?;
     let view = params.view.unwrap_or(View::Summary);
 
-    let id = oneiron::EntityId::from_hex(&id_hex).map_err(|_| StatusCode::BAD_REQUEST)?;
+    let id = oneiron::EntityId::from_hex(&id_hex).map_err(|_| {
+        ApiError::bad_request("entity id must be a 32-character hex entity id", Some("id"))
+    })?;
 
     let edges = server
         .vault
@@ -295,7 +278,7 @@ async fn get_edges(
         .inspect_err(|e| {
             tracing::error!(error = %e, "get edges failed");
         })
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        .map_err(|_| ApiError::internal_server_error("get edges failed"))?;
 
     let response: Vec<Value> = edges
         .into_iter()
@@ -327,8 +310,8 @@ async fn lease_revoke(
     headers: HeaderMap,
     State(server): State<Arc<SyncServer>>,
     Json(req): Json<LeaseRevokeRequest>,
-) -> Result<Json<LeaseRevokeResponse>, StatusCode> {
-    check_auth(&headers, &server.config)?;
+) -> Result<Json<LeaseRevokeResponse>, ApiError> {
+    check_api_auth(&headers, &server.config)?;
 
     if req.client_id.len() != 16
         || !req
@@ -336,9 +319,17 @@ async fn lease_revoke(
             .bytes()
             .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
     {
-        return Err(StatusCode::BAD_REQUEST);
+        return Err(ApiError::bad_request(
+            "client_id must be exactly 16 lowercase hex characters",
+            Some("client_id"),
+        ));
     }
-    let client_id = u64::from_str_radix(&req.client_id, 16).map_err(|_| StatusCode::BAD_REQUEST)?;
+    let client_id = u64::from_str_radix(&req.client_id, 16).map_err(|_| {
+        ApiError::bad_request(
+            "client_id must be exactly 16 lowercase hex characters",
+            Some("client_id"),
+        )
+    })?;
 
     match server.revoke_lease(client_id).await {
         Ok(Some(update)) => {
@@ -349,7 +340,7 @@ async fn lease_revoke(
         Ok(None) => Ok(Json(LeaseRevokeResponse { revoked: false })),
         Err(e) => {
             tracing::error!(error = %e, "lease revoke failed");
-            Err(StatusCode::INTERNAL_SERVER_ERROR)
+            Err(ApiError::internal_server_error("lease revoke failed"))
         }
     }
 }
@@ -374,8 +365,8 @@ async fn context_pack(
     headers: HeaderMap,
     State(server): State<Arc<SyncServer>>,
     Json(_req): Json<ContextPackRequest>,
-) -> Result<Json<serde_json::Value>, StatusCode> {
-    check_auth(&headers, &server.config)?;
+) -> Result<Json<serde_json::Value>, ApiError> {
+    check_api_auth(&headers, &server.config)?;
 
     // Build context pack using the vault's query API.
     // This is a thin wrapper — full implementation depends on
@@ -386,4 +377,27 @@ async fn context_pack(
         "status": "ok",
         "message": "context-pack endpoint ready — full implementation pending ContextPackBuilder integration"
     })))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn search_response_drops_stale_hydrated_hits() {
+        let dir = tempfile::tempdir().unwrap();
+        let vault = oneiron::Vault::open(dir.path(), oneiron::VaultConfig::device()).unwrap();
+        let stale_hit = oneiron::ScoredEntity {
+            id: oneiron::EntityId::now(),
+            score: 0.75,
+        };
+
+        for view in [View::Summary, View::Full] {
+            let response = search_response(&vault, vec![stale_hit], view).unwrap();
+            assert!(
+                response.is_empty(),
+                "{view:?} should skip missing search hits"
+            );
+        }
+    }
 }

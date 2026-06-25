@@ -27,8 +27,10 @@ use crate::deletion::{
 use crate::hnsw::COUNT_KEY;
 use crate::store::{
     DB_MANIFEST, GRAPH_VERSION_KEY, HNSW_CONFIG_KEY, MAX_DBS, MODEL_ID_KEY, STORAGE_ABI_VERSION,
-    STORAGE_ABI_VERSION_KEY, STORAGE_SCHEMA_VERSION, STORAGE_SCHEMA_VERSION_KEY, Store,
-    TEMPORAL_LONG_INTERVALS_SCHEMA_VERSION_KEY, VECTOR_VERSION_KEY, lmdb_database_open_guard,
+    STORAGE_ABI_VERSION_KEY, STORAGE_SCHEMA_VERSION, STORAGE_SCHEMA_VERSION_KEY,
+    STRUCTURAL_KIND_REGISTRY_KEY_PREFIX, Store, TEMPORAL_LONG_INTERVALS_SCHEMA_VERSION_KEY,
+    VECTOR_VERSION_KEY, lmdb_database_open_guard, short_id_counter_key,
+    structural_kind_registry_key,
 };
 
 fn test_config() -> VaultConfig {
@@ -99,6 +101,16 @@ fn read_meta_u16(vault: &Vault, key: &[u8]) -> Result<Option<u16>> {
     };
     let bytes: [u8; 2] = raw.try_into().map_err(|_| Error::InvalidKey)?;
     Ok(Some(u16::from_le_bytes(bytes)))
+}
+
+fn vault_meta_rows_with_prefix(vault: &Vault, prefix: &[u8]) -> Result<Vec<(Vec<u8>, Vec<u8>)>> {
+    let rtxn = vault.store.env.read_txn()?;
+    let mut rows = Vec::new();
+    for row in vault.store.vault_meta.prefix_iter(&rtxn, prefix)? {
+        let (key, value) = row?;
+        rows.push((key.to_vec(), value.to_vec()));
+    }
+    Ok(rows)
 }
 
 fn legacy_hnsw_compatibility_record(config: &VaultConfig) -> [u8; LEGACY_HNSW_COMPATIBILITY_LEN] {
@@ -6000,6 +6012,185 @@ fn type_byte_band_allocation_matches_contract() {
             "unregistered byte {byte} must stay rejected by validate_entity_type"
         );
     }
+}
+
+#[test]
+fn structural_kind_registration_vets_bands_and_collisions_transactionally() -> Result<()> {
+    use crate::types::{TypeByteBand, entity_type_registry_entry};
+
+    let (_dir, vault) = open_test_vault();
+
+    let err = vault
+        .register_structural_kind(63, "cx", TypeByteBand::Core, "bad-core")
+        .expect_err("CORE bytes must not be dynamically registered");
+    assert_eq!(err.kind(), ErrorKind::StructuralKindBandViolation);
+    let err = vault
+        .register_structural_kind(0, "sx", TypeByteBand::Semantic, "bad-semantic")
+        .expect_err("semantic byte 0 must not be dynamically registered");
+    assert_eq!(err.kind(), ErrorKind::StructuralKindBandViolation);
+    assert!(
+        vault_meta_rows_with_prefix(&vault, STRUCTURAL_KIND_REGISTRY_KEY_PREFIX)?.is_empty(),
+        "rejected band claims must not persist registry rows"
+    );
+
+    let companion =
+        vault.register_structural_kind(64, "np", TypeByteBand::Companion, "oneiron-companion")?;
+    assert_eq!(companion.type_byte, 64);
+    assert_eq!(companion.short_id_prefix, "np");
+    assert!(entity_type_registry_entry(companion.type_byte).is_none());
+
+    let err = vault
+        .register_structural_kind(80, "cx", TypeByteBand::Companion, "wrong-band")
+        .expect_err("byte 80 is productivity, not companion");
+    assert_eq!(err.kind(), ErrorKind::StructuralKindBandViolation);
+    let err = vault
+        .register_structural_kind(100, "cx", TypeByteBand::Companion, "wrong-band")
+        .expect_err("byte 100 is CRM, not companion");
+    assert_eq!(err.kind(), ErrorKind::StructuralKindBandViolation);
+
+    vault.register_structural_kind(83, "pd", TypeByteBand::Productivity, "productivity-pack")?;
+    vault.register_structural_kind(100, "cm", TypeByteBand::Crm, "crm-pack")?;
+
+    let before = vault_meta_rows_with_prefix(&vault, STRUCTURAL_KIND_REGISTRY_KEY_PREFIX)?;
+    let err = vault
+        .register_structural_kind(64, "nx", TypeByteBand::Companion, "duplicate-byte")
+        .expect_err("duplicate type byte must be rejected");
+    assert_eq!(err.kind(), ErrorKind::StructuralKindCollision);
+    assert_matches!(err, Error::StructuralKindTypeByteCollision(64));
+    assert_eq!(
+        vault_meta_rows_with_prefix(&vault, STRUCTURAL_KIND_REGISTRY_KEY_PREFIX)?,
+        before,
+        "duplicate-byte rejection must not mutate vault_meta"
+    );
+
+    let err = vault
+        .register_structural_kind(65, "np", TypeByteBand::Companion, "duplicate-prefix")
+        .expect_err("duplicate dynamic prefix must be rejected");
+    assert_eq!(err.kind(), ErrorKind::StructuralKindCollision);
+    assert_matches!(err, Error::StructuralKindPrefixCollision(ref prefix) if prefix == "np");
+    assert_eq!(
+        vault_meta_rows_with_prefix(&vault, STRUCTURAL_KIND_REGISTRY_KEY_PREFIX)?,
+        before,
+        "duplicate-prefix rejection must not mutate vault_meta"
+    );
+
+    let err = vault
+        .register_structural_kind(65, "tn", TypeByteBand::Companion, "static-prefix")
+        .expect_err("static short-id prefixes must not be reused");
+    assert_eq!(err.kind(), ErrorKind::StructuralKindCollision);
+    assert_matches!(err, Error::StructuralKindPrefixCollision(ref prefix) if prefix == "tn");
+    assert_eq!(
+        vault_meta_rows_with_prefix(&vault, STRUCTURAL_KIND_REGISTRY_KEY_PREFIX)?,
+        before,
+        "static-prefix rejection must not mutate vault_meta"
+    );
+
+    let err = vault
+        .register_structural_kind(80, "px", TypeByteBand::Productivity, "static-byte")
+        .expect_err("static pack bytes must not be shadowed");
+    assert_eq!(err.kind(), ErrorKind::StructuralKindCollision);
+    assert_matches!(err, Error::StructuralKindTypeByteCollision(80));
+    assert_eq!(
+        vault_meta_rows_with_prefix(&vault, STRUCTURAL_KIND_REGISTRY_KEY_PREFIX)?,
+        before,
+        "static-byte rejection must not mutate vault_meta"
+    );
+
+    Ok(())
+}
+
+#[test]
+fn structural_kind_registration_persists_and_loads_on_reopen() -> Result<()> {
+    use crate::types::TypeByteBand;
+
+    let dir = tempfile::tempdir()?;
+    {
+        let vault = Vault::open(dir.path(), test_config())?;
+        vault.register_structural_kind(72, "np", TypeByteBand::Companion, "notes-pack")?;
+
+        let key = structural_kind_registry_key(72);
+        let rows = vault_meta_rows_with_prefix(&vault, STRUCTURAL_KIND_REGISTRY_KEY_PREFIX)?;
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].0, key.to_vec());
+    }
+
+    let reopened = Vault::open(dir.path(), test_config())?;
+    let registration = reopened
+        .structural_kind_registration(72)
+        .expect("registration must load from vault_meta on reopen");
+    assert_eq!(registration.type_byte, 72);
+    assert_eq!(registration.short_id_prefix, "np");
+    assert_eq!(registration.band, TypeByteBand::Companion);
+    assert_eq!(registration.pack, "notes-pack");
+    assert_eq!(
+        reopened.structural_kind_registrations(),
+        vec![registration],
+        "runtime registry must mirror persisted dynamic rows only"
+    );
+    Ok(())
+}
+
+#[test]
+fn registered_structural_kind_unblocks_writes_and_short_ids() -> Result<()> {
+    use crate::types::TypeByteBand;
+
+    let (_dir, vault) = open_test_vault();
+    let before = EntityId::now();
+    let err = vault
+        .put_entity(&before, 72, test_time_range(1, 1), 2, b"before-register")
+        .expect_err("unregistered dynamic byte must fail closed");
+    assert_eq!(err.kind(), ErrorKind::InvalidEntityType);
+    assert_matches!(err, Error::InvalidEntityType(72));
+    assert_no_entity_state(&vault, &before)?;
+
+    vault.register_structural_kind(72, "np", TypeByteBand::Companion, "notes-pack")?;
+
+    let after = EntityId::now();
+    vault.put_entity(&after, 72, test_time_range(3, 3), 4, b"after-register")?;
+    assert_eq!(
+        vault.get(&after)?.ok_or(Error::EntityNotFound)?,
+        b"after-register"
+    );
+
+    let short_id = find_short_id_any_schema(&vault, &after)?
+        .expect("registered dynamic kind must mint a short id");
+    assert_eq!(short_id, "np1");
+
+    let rtxn = vault.store.env.read_txn()?;
+    let counter = vault
+        .store
+        .vault_meta
+        .get(&rtxn, &short_id_counter_key(72))?
+        .expect("dynamic type short-id counter must live in vault_meta");
+    assert_eq!(counter, 1_u64.to_le_bytes());
+    Ok(())
+}
+
+#[test]
+fn persisted_structural_kind_registry_matches_runtime_config() -> Result<()> {
+    use crate::types::{TypeByteBand, band_of, entity_type_registry_entry};
+
+    let (_dir, vault) = open_test_vault();
+    vault.register_structural_kind(72, "np", TypeByteBand::Companion, "notes-pack")?;
+    vault.register_structural_kind(83, "cd", TypeByteBand::Productivity, "code-pack")?;
+    vault.register_structural_kind(101, "cc", TypeByteBand::Crm, "crm-pack")?;
+
+    let rows = vault.structural_kind_registrations();
+    assert_eq!(rows.len(), 3);
+    for registration in rows {
+        assert_eq!(
+            band_of(registration.type_byte),
+            registration.band,
+            "persisted registry band must match band_of({})",
+            registration.type_byte
+        );
+        assert!(
+            entity_type_registry_entry(registration.type_byte).is_none(),
+            "runtime registry must not shadow static registry byte {}",
+            registration.type_byte
+        );
+    }
+    Ok(())
 }
 
 #[test]
@@ -12546,6 +12737,221 @@ fn provenance_actor_class_in_both_body_and_evid_fails_closed() -> Result<()> {
     Ok(())
 }
 
+fn text_forward_row(vault: &Vault, id: &EntityId) -> Result<Vec<u8>> {
+    let rtxn = vault.store.env.read_txn()?;
+    vault
+        .store
+        .text_forward
+        .get(&rtxn, id.as_bytes())?
+        .map(<[u8]>::to_vec)
+        .ok_or(Error::CorruptedIndex("missing text_forward row"))
+}
+
+fn assert_text_rows_deindexed(vault: &Vault, id: &EntityId) -> Result<()> {
+    let rtxn = vault.store.env.read_txn()?;
+    assert!(
+        vault
+            .store
+            .text_forward
+            .get(&rtxn, id.as_bytes())?
+            .is_none(),
+        "text_forward row (key = literal id bytes) must be deleted"
+    );
+    assert!(
+        vault.store.text_meta.get(&rtxn, id.as_bytes())?.is_none(),
+        "text_meta doc row (key = literal id bytes) must be deleted"
+    );
+    assert!(
+        vault
+            .store
+            .text_doc_field_lengths
+            .get(&rtxn, id.as_bytes())?
+            .is_none(),
+        "text_doc_field_lengths row (key = literal id bytes) must be deleted"
+    );
+    assert!(
+        vault.store.text_postings.iter(&rtxn)?.next().is_none(),
+        "no posting row may survive the stale deindex"
+    );
+    assert!(
+        vault
+            .store
+            .text_bm25_field_stats
+            .iter(&rtxn)?
+            .next()
+            .is_none(),
+        "the zeroed per-field stats row must be deleted, not kept at 0/0"
+    );
+    assert_eq!(
+        vault.store.text_meta.get(&rtxn, &[0u8; 16])?,
+        Some(&0u32.to_le_bytes()[..]),
+        "TOTAL_DOCS must be decremented in the same txn as the overwrite"
+    );
+    Ok(())
+}
+
+/// ONE-1168: a local body-changing re-put without a covering `BatchOp::Text`
+/// must drop the old full-text projection in the same transaction as the
+/// entity overwrite.
+#[test]
+fn local_overwrite_changed_body_without_text_drops_stale_text_postings_same_txn() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let id = EntityId::now();
+    vault.put_entity(&id, 1, test_time_range(1, 1), 1, b"payload-from-old-local")?;
+    vault
+        .batch()
+        .text(&id, &[("body", "alpha_stale_xyz")])
+        .commit()?;
+    assert_eq!(
+        vault.search_text("alpha_stale_xyz", 10)?.len(),
+        1,
+        "precondition: the old term must be indexed and searchable"
+    );
+
+    vault.put_entity(&id, 1, test_time_range(2, 2), 2, b"payload-from-new-local")?;
+
+    let raw = vault.get_raw(&id)?.expect("entity stored");
+    assert_eq!(
+        &raw[ENTITY_METADATA_HEADER_LEN..],
+        b"payload-from-new-local"
+    );
+    assert!(
+        vault.search_text("alpha_stale_xyz", 10)?.is_empty(),
+        "old body's postings must not match searches after a local overwrite"
+    );
+    assert_text_rows_deindexed(&vault, &id)
+}
+
+#[test]
+fn retract_claim_lifecycle_reput_drops_stale_text_postings() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let subject = EntityId::now();
+    vault.put_entity(&subject, 4, test_time_range(1, 1), 1, b"person")?;
+    let id = put_active_claim(&vault, &subject, "profile.status", "active", 1)?;
+    vault
+        .batch()
+        .text(&id, &[("body", "retract_lifecycle_stale_xyz")])
+        .commit()?;
+    assert_eq!(
+        vault.search_text("retract_lifecycle_stale_xyz", 10)?.len(),
+        1,
+        "precondition: the active claim's term must be indexed and searchable"
+    );
+
+    vault.retract_claim(&id, 2_000)?;
+
+    assert_eq!(
+        vault
+            .get_claim(&id)?
+            .expect("retracted claim must stay readable")
+            .lifecycle,
+        ClaimLifecycleStatus::Retracted
+    );
+    assert!(
+        vault
+            .search_text("retract_lifecycle_stale_xyz", 10)?
+            .is_empty(),
+        "Vault::retract_claim must deindex stale postings from its lifecycle re-put"
+    );
+    assert_text_rows_deindexed(&vault, &id)
+}
+
+#[test]
+fn local_overwrite_same_body_replay_without_text_keeps_text_postings() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let id = EntityId::now();
+    vault.put_entity(&id, 1, test_time_range(1, 1), 1, b"stable-local-payload")?;
+    vault
+        .batch()
+        .text(&id, &[("body", "stable_replay_xyz")])
+        .commit()?;
+    let forward_before = text_forward_row(&vault, &id)?;
+
+    vault.put_entity(&id, 1, test_time_range(1, 1), 1, b"stable-local-payload")?;
+
+    assert_eq!(
+        vault.search_text("stable_replay_xyz", 10)?.len(),
+        1,
+        "same-bytes local replay must leave postings serving"
+    );
+    assert_eq!(
+        text_forward_row(&vault, &id)?,
+        forward_before,
+        "same-bytes local replay must not rewrite the forward row"
+    );
+    Ok(())
+}
+
+#[test]
+fn local_metadata_only_reput_without_text_keeps_text_postings() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let id = EntityId::now();
+    vault.put_entity(&id, 1, test_time_range(1, 1), 1, b"metadata-stable-payload")?;
+    vault
+        .batch()
+        .text(&id, &[("body", "metadata_only_xyz")])
+        .commit()?;
+    let forward_before = text_forward_row(&vault, &id)?;
+
+    vault.put_entity(&id, 1, test_time_range(5, 7), 9, b"metadata-stable-payload")?;
+
+    assert_eq!(
+        vault.search_text("metadata_only_xyz", 10)?.len(),
+        1,
+        "metadata-only local re-put must leave postings serving"
+    );
+    assert_eq!(
+        text_forward_row(&vault, &id)?,
+        forward_before,
+        "metadata-only local re-put must not rewrite the forward row"
+    );
+
+    let err = vault
+        .put_entity(
+            &id,
+            1,
+            test_time_range(9, 8),
+            10,
+            b"metadata-stable-payload",
+        )
+        .expect_err("reversed time range must still fail before mutation");
+    assert_matches!(err, Error::InvalidTimeRange { start: 9, end: 8 });
+    assert_eq!(
+        vault.search_text("metadata_only_xyz", 10)?.len(),
+        1,
+        "failed metadata write must leave postings serving"
+    );
+    Ok(())
+}
+
+#[test]
+fn local_changed_body_with_text_op_reindexes_new_terms() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let id = EntityId::now();
+    vault.put_entity(&id, 1, test_time_range(1, 1), 1, b"body-before-text")?;
+    vault
+        .batch()
+        .text(&id, &[("body", "old_term_xyz")])
+        .commit()?;
+
+    vault
+        .batch()
+        .put(&id, 1, test_time_range(2, 2), 2, b"body-after-text")
+        .text(&id, &[("body", "new_term_xyz")])
+        .commit()?;
+
+    assert!(
+        vault.search_text("old_term_xyz", 10)?.is_empty(),
+        "Text op self-deindex must remove the old term"
+    );
+    assert_eq!(
+        vault.search_text("new_term_xyz", 10)?.len(),
+        1,
+        "Text op must leave the new term indexed"
+    );
+    Ok(())
+}
+
 /// ONE-1141 (ARCH-0031 amendment, ratified 2026-06-13): "When an LWW
 /// replicated overwrite replaces a document, the loser document's postings
 /// must be removed in the same transaction as the overwrite — no replicated
@@ -12649,12 +13055,9 @@ fn replicated_overwrite_changed_body_drops_loser_text_postings_same_txn() -> Res
 ///   convergence exchange) must NOT touch the text index — postings keep
 ///   serving and the `text_forward` row stays byte-identical. Metadata-only
 ///   changes (occurred/learned) are NOT body changes.
-/// * LOCAL body-changing overwrite stays out of scope (the ticket pins the
-///   replicated arm only): the local writer owns both the put and its
-///   `BatchOp::Text` re-index, and `index_text` self-deindexes stale rows.
-///   Known follow-up: a local re-put WITHOUT a text op leaves stale postings
-///   (caller-sequenced, not a sync-convergence hole) — widening that is a
-///   separate ruling, not silent drift; this assertion pins the boundary.
+/// * ONE-1168 widens stale-posting cleanup to LOCAL body-changing overwrites
+///   that have no covering same-batch `BatchOp::Text`; same-bytes replay and
+///   metadata-only changes remain guarded by the body byte compare.
 #[cfg(feature = "sync")]
 #[test]
 fn replicated_overwrite_same_body_bytes_keeps_text_postings() -> Result<()> {
@@ -12701,13 +13104,13 @@ fn replicated_overwrite_same_body_bytes_keeps_text_postings() -> Result<()> {
         );
     }
 
-    // Scope pin: a LOCAL body-changing overwrite does NOT deindex — the
-    // replicated arm alone carries the ARCH-0031 deindex-on-overwrite duty.
+    // ONE-1168: a LOCAL body-changing overwrite with no Text op now deindexes
+    // stale postings while preserving the same-bytes replicated replay guard
+    // above.
     vault.put_entity(&id, 1, test_time_range(8, 8), 11, b"locally-edited-payload")?;
-    assert_eq!(
-        vault.search_text("winneronlyterm", 10)?.len(),
-        1,
-        "local overwrites stay out of ONE-1141 scope: no deindex on the local arm"
+    assert!(
+        vault.search_text("winneronlyterm", 10)?.is_empty(),
+        "local body-changing overwrite without Text must deindex stale postings"
     );
     Ok(())
 }

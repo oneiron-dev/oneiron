@@ -33,6 +33,7 @@ use oneiron::types::ENTITY_TYPE_TASK;
 use oneiron::{EdgeKind, EntityId, TimeRange};
 use oneiron_server::build_app;
 use oneiron_server::config::SyncServerConfig;
+use oneiron_server::error::{ApiError, ApiErrorDetails, ErrorCode};
 use oneiron_server::server::SyncServer;
 use serde_json::Value;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -210,6 +211,17 @@ fn msgpack_json(value: &Value) -> Vec<u8> {
     rmp_serde::to_vec_named(value).unwrap()
 }
 
+fn http_json_body(response: &str) -> &str {
+    response
+        .split_once("\r\n\r\n")
+        .map(|(_headers, body)| body)
+        .expect("HTTP response should contain header/body delimiter")
+}
+
+fn api_error_body(response: &str) -> ApiError {
+    serde_json::from_str(http_json_body(response)).expect("response body should be ApiError JSON")
+}
+
 async fn send_window_vv_request(ws: &mut WsStream, key: &str) {
     let doc = LoroDoc::new();
     let msg =
@@ -339,6 +351,48 @@ async fn http_guarded_route_rejects_when_no_secret_and_not_dev() {
 
     let response = http_get(addr, "/api/search/text?query=hello", None).await;
     assert_http_status(&response, 401);
+    let error = api_error_body(&response);
+    assert_eq!(error.code(), ErrorCode::Unauthorized);
+    assert!(matches!(error.details(), ApiErrorDetails::Unauthorized));
+    assert!(!error.suggestions().is_empty());
+
+    handle.abort();
+}
+
+#[tokio::test]
+async fn http_bad_entity_id_returns_structured_api_error_body() {
+    let dir = tempfile::tempdir().unwrap();
+    let (addr, _server, handle) = spawn_server(
+        open_vault(dir.path()),
+        config_with_secret_and_dev(None, true),
+    )
+    .await;
+
+    let response = http_get(addr, "/api/entity/not-hex", None).await;
+    assert_http_status(&response, 400);
+    let error = api_error_body(&response);
+    assert_eq!(error.code(), ErrorCode::BadRequest);
+    assert_eq!(
+        error.message(),
+        "entity id must be a 32-character hex entity id"
+    );
+    assert!(
+        matches!(error.details(), ApiErrorDetails::BadRequest { field } if field.as_deref() == Some("id"))
+    );
+    assert!(!error.suggestions().is_empty());
+
+    let response = http_get(addr, "/api/edges/not-hex", None).await;
+    assert_http_status(&response, 400);
+    let error = api_error_body(&response);
+    assert_eq!(error.code(), ErrorCode::BadRequest);
+    assert_eq!(
+        error.message(),
+        "entity id must be a 32-character hex entity id"
+    );
+    assert!(
+        matches!(error.details(), ApiErrorDetails::BadRequest { field } if field.as_deref() == Some("id"))
+    );
+    assert!(!error.suggestions().is_empty());
 
     handle.abort();
 }
@@ -551,10 +605,17 @@ async fn http_text_search_invalid_view_returns_error_code() {
     )
     .await;
 
-    let response = http_get_bytes(addr, "/api/search/text?query=hello&view=tiny", None).await;
-    assert_http_status_bytes(&response, 400);
-    let json = http_json(&response);
-    assert_eq!(json["error"]["code"], "invalid_view");
+    let response = http_get(addr, "/api/search/text?query=hello&view=tiny", None).await;
+    assert_http_status(&response, 400);
+    let error = api_error_body(&response);
+    assert_eq!(error.code(), ErrorCode::BadRequest);
+    assert_eq!(
+        error.message(),
+        "view must be one of summary, standard, full"
+    );
+    assert!(
+        matches!(error.details(), ApiErrorDetails::BadRequest { field } if field.as_deref() == Some("view"))
+    );
 
     handle.abort();
 }
