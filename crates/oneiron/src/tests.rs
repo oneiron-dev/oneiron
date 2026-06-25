@@ -27,8 +27,10 @@ use crate::deletion::{
 use crate::hnsw::COUNT_KEY;
 use crate::store::{
     DB_MANIFEST, GRAPH_VERSION_KEY, HNSW_CONFIG_KEY, MAX_DBS, MODEL_ID_KEY, STORAGE_ABI_VERSION,
-    STORAGE_ABI_VERSION_KEY, STORAGE_SCHEMA_VERSION, STORAGE_SCHEMA_VERSION_KEY, Store,
-    TEMPORAL_LONG_INTERVALS_SCHEMA_VERSION_KEY, VECTOR_VERSION_KEY, lmdb_database_open_guard,
+    STORAGE_ABI_VERSION_KEY, STORAGE_SCHEMA_VERSION, STORAGE_SCHEMA_VERSION_KEY,
+    STRUCTURAL_KIND_REGISTRY_KEY_PREFIX, Store, TEMPORAL_LONG_INTERVALS_SCHEMA_VERSION_KEY,
+    VECTOR_VERSION_KEY, lmdb_database_open_guard, short_id_counter_key,
+    structural_kind_registry_key,
 };
 
 fn test_config() -> VaultConfig {
@@ -99,6 +101,16 @@ fn read_meta_u16(vault: &Vault, key: &[u8]) -> Result<Option<u16>> {
     };
     let bytes: [u8; 2] = raw.try_into().map_err(|_| Error::InvalidKey)?;
     Ok(Some(u16::from_le_bytes(bytes)))
+}
+
+fn vault_meta_rows_with_prefix(vault: &Vault, prefix: &[u8]) -> Result<Vec<(Vec<u8>, Vec<u8>)>> {
+    let rtxn = vault.store.env.read_txn()?;
+    let mut rows = Vec::new();
+    for row in vault.store.vault_meta.prefix_iter(&rtxn, prefix)? {
+        let (key, value) = row?;
+        rows.push((key.to_vec(), value.to_vec()));
+    }
+    Ok(rows)
 }
 
 fn legacy_hnsw_compatibility_record(config: &VaultConfig) -> [u8; LEGACY_HNSW_COMPATIBILITY_LEN] {
@@ -6000,6 +6012,185 @@ fn type_byte_band_allocation_matches_contract() {
             "unregistered byte {byte} must stay rejected by validate_entity_type"
         );
     }
+}
+
+#[test]
+fn structural_kind_registration_vets_bands_and_collisions_transactionally() -> Result<()> {
+    use crate::types::{TypeByteBand, entity_type_registry_entry};
+
+    let (_dir, vault) = open_test_vault();
+
+    let err = vault
+        .register_structural_kind(63, "cx", TypeByteBand::Core, "bad-core")
+        .expect_err("CORE bytes must not be dynamically registered");
+    assert_eq!(err.kind(), ErrorKind::StructuralKindBandViolation);
+    let err = vault
+        .register_structural_kind(0, "sx", TypeByteBand::Semantic, "bad-semantic")
+        .expect_err("semantic byte 0 must not be dynamically registered");
+    assert_eq!(err.kind(), ErrorKind::StructuralKindBandViolation);
+    assert!(
+        vault_meta_rows_with_prefix(&vault, STRUCTURAL_KIND_REGISTRY_KEY_PREFIX)?.is_empty(),
+        "rejected band claims must not persist registry rows"
+    );
+
+    let companion =
+        vault.register_structural_kind(64, "np", TypeByteBand::Companion, "oneiron-companion")?;
+    assert_eq!(companion.type_byte, 64);
+    assert_eq!(companion.short_id_prefix, "np");
+    assert!(entity_type_registry_entry(companion.type_byte).is_none());
+
+    let err = vault
+        .register_structural_kind(80, "cx", TypeByteBand::Companion, "wrong-band")
+        .expect_err("byte 80 is productivity, not companion");
+    assert_eq!(err.kind(), ErrorKind::StructuralKindBandViolation);
+    let err = vault
+        .register_structural_kind(100, "cx", TypeByteBand::Companion, "wrong-band")
+        .expect_err("byte 100 is CRM, not companion");
+    assert_eq!(err.kind(), ErrorKind::StructuralKindBandViolation);
+
+    vault.register_structural_kind(83, "pd", TypeByteBand::Productivity, "productivity-pack")?;
+    vault.register_structural_kind(100, "cm", TypeByteBand::Crm, "crm-pack")?;
+
+    let before = vault_meta_rows_with_prefix(&vault, STRUCTURAL_KIND_REGISTRY_KEY_PREFIX)?;
+    let err = vault
+        .register_structural_kind(64, "nx", TypeByteBand::Companion, "duplicate-byte")
+        .expect_err("duplicate type byte must be rejected");
+    assert_eq!(err.kind(), ErrorKind::StructuralKindCollision);
+    assert_matches!(err, Error::StructuralKindTypeByteCollision(64));
+    assert_eq!(
+        vault_meta_rows_with_prefix(&vault, STRUCTURAL_KIND_REGISTRY_KEY_PREFIX)?,
+        before,
+        "duplicate-byte rejection must not mutate vault_meta"
+    );
+
+    let err = vault
+        .register_structural_kind(65, "np", TypeByteBand::Companion, "duplicate-prefix")
+        .expect_err("duplicate dynamic prefix must be rejected");
+    assert_eq!(err.kind(), ErrorKind::StructuralKindCollision);
+    assert_matches!(err, Error::StructuralKindPrefixCollision(ref prefix) if prefix == "np");
+    assert_eq!(
+        vault_meta_rows_with_prefix(&vault, STRUCTURAL_KIND_REGISTRY_KEY_PREFIX)?,
+        before,
+        "duplicate-prefix rejection must not mutate vault_meta"
+    );
+
+    let err = vault
+        .register_structural_kind(65, "tn", TypeByteBand::Companion, "static-prefix")
+        .expect_err("static short-id prefixes must not be reused");
+    assert_eq!(err.kind(), ErrorKind::StructuralKindCollision);
+    assert_matches!(err, Error::StructuralKindPrefixCollision(ref prefix) if prefix == "tn");
+    assert_eq!(
+        vault_meta_rows_with_prefix(&vault, STRUCTURAL_KIND_REGISTRY_KEY_PREFIX)?,
+        before,
+        "static-prefix rejection must not mutate vault_meta"
+    );
+
+    let err = vault
+        .register_structural_kind(80, "px", TypeByteBand::Productivity, "static-byte")
+        .expect_err("static pack bytes must not be shadowed");
+    assert_eq!(err.kind(), ErrorKind::StructuralKindCollision);
+    assert_matches!(err, Error::StructuralKindTypeByteCollision(80));
+    assert_eq!(
+        vault_meta_rows_with_prefix(&vault, STRUCTURAL_KIND_REGISTRY_KEY_PREFIX)?,
+        before,
+        "static-byte rejection must not mutate vault_meta"
+    );
+
+    Ok(())
+}
+
+#[test]
+fn structural_kind_registration_persists_and_loads_on_reopen() -> Result<()> {
+    use crate::types::TypeByteBand;
+
+    let dir = tempfile::tempdir()?;
+    {
+        let vault = Vault::open(dir.path(), test_config())?;
+        vault.register_structural_kind(72, "np", TypeByteBand::Companion, "notes-pack")?;
+
+        let key = structural_kind_registry_key(72);
+        let rows = vault_meta_rows_with_prefix(&vault, STRUCTURAL_KIND_REGISTRY_KEY_PREFIX)?;
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].0, key.to_vec());
+    }
+
+    let reopened = Vault::open(dir.path(), test_config())?;
+    let registration = reopened
+        .structural_kind_registration(72)
+        .expect("registration must load from vault_meta on reopen");
+    assert_eq!(registration.type_byte, 72);
+    assert_eq!(registration.short_id_prefix, "np");
+    assert_eq!(registration.band, TypeByteBand::Companion);
+    assert_eq!(registration.pack, "notes-pack");
+    assert_eq!(
+        reopened.structural_kind_registrations(),
+        vec![registration],
+        "runtime registry must mirror persisted dynamic rows only"
+    );
+    Ok(())
+}
+
+#[test]
+fn registered_structural_kind_unblocks_writes_and_short_ids() -> Result<()> {
+    use crate::types::TypeByteBand;
+
+    let (_dir, vault) = open_test_vault();
+    let before = EntityId::now();
+    let err = vault
+        .put_entity(&before, 72, test_time_range(1, 1), 2, b"before-register")
+        .expect_err("unregistered dynamic byte must fail closed");
+    assert_eq!(err.kind(), ErrorKind::InvalidEntityType);
+    assert_matches!(err, Error::InvalidEntityType(72));
+    assert_no_entity_state(&vault, &before)?;
+
+    vault.register_structural_kind(72, "np", TypeByteBand::Companion, "notes-pack")?;
+
+    let after = EntityId::now();
+    vault.put_entity(&after, 72, test_time_range(3, 3), 4, b"after-register")?;
+    assert_eq!(
+        vault.get(&after)?.ok_or(Error::EntityNotFound)?,
+        b"after-register"
+    );
+
+    let short_id = find_short_id_any_schema(&vault, &after)?
+        .expect("registered dynamic kind must mint a short id");
+    assert_eq!(short_id, "np1");
+
+    let rtxn = vault.store.env.read_txn()?;
+    let counter = vault
+        .store
+        .vault_meta
+        .get(&rtxn, &short_id_counter_key(72))?
+        .expect("dynamic type short-id counter must live in vault_meta");
+    assert_eq!(counter, 1_u64.to_le_bytes());
+    Ok(())
+}
+
+#[test]
+fn persisted_structural_kind_registry_matches_runtime_config() -> Result<()> {
+    use crate::types::{TypeByteBand, band_of, entity_type_registry_entry};
+
+    let (_dir, vault) = open_test_vault();
+    vault.register_structural_kind(72, "np", TypeByteBand::Companion, "notes-pack")?;
+    vault.register_structural_kind(83, "cd", TypeByteBand::Productivity, "code-pack")?;
+    vault.register_structural_kind(101, "cc", TypeByteBand::Crm, "crm-pack")?;
+
+    let rows = vault.structural_kind_registrations();
+    assert_eq!(rows.len(), 3);
+    for registration in rows {
+        assert_eq!(
+            band_of(registration.type_byte),
+            registration.band,
+            "persisted registry band must match band_of({})",
+            registration.type_byte
+        );
+        assert!(
+            entity_type_registry_entry(registration.type_byte).is_none(),
+            "runtime registry must not shadow static registry byte {}",
+            registration.type_byte
+        );
+    }
+    Ok(())
 }
 
 #[test]

@@ -86,16 +86,21 @@
 //! [`Bm25FieldSchemaChanged`]: crate::error::Error::Bm25FieldSchemaChanged
 //! [`VaultConfig::skip_text_index_manifest_check`]: crate::types::VaultConfig::skip_text_index_manifest_check
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::str;
-use std::sync::{LazyLock, Mutex, MutexGuard};
+use std::sync::{LazyLock, Mutex, MutexGuard, RwLock};
 
 use heed::types::{Bytes, Str};
 use heed::{Database, DatabaseFlags, Env, EnvOpenOptions, RwTxn};
 
 use crate::error::{Error, Result};
-use crate::types::{EdgeKind, EntityId, VaultConfig};
+use crate::types::{
+    EdgeKind, EntityId, StructuralKindRegistration, TypeByteBand, VaultConfig, band_of,
+    entity_type_registry_entry, short_id_prefix, static_short_id_prefix_collision,
+    validate_entity_type as validate_static_entity_type,
+    validate_public_entity_type as validate_static_public_entity_type,
+};
 
 // Contract-pinned at 32 by ARCH-0019/ARCH-0031: 25 named DBs plus headroom.
 pub const MAX_DBS: u32 = 32;
@@ -145,12 +150,33 @@ pub(crate) const SHORT_ID_COUNTER_KEY_PREFIX: &[u8] = b"sid_counter:";
 pub(crate) const SHORT_ID_COUNTER_KEY_LEN: usize = 13;
 const _: () = assert!(SHORT_ID_COUNTER_KEY_PREFIX.len() + 1 == SHORT_ID_COUNTER_KEY_LEN);
 
+/// `vault_meta` key prefix for vault-scoped dynamic StructuralKind
+/// registrations. The full key is `b"kind_reg:"` followed by the raw type
+/// byte; the value is a versioned record carrying `(type_byte,
+/// short_id_prefix, band, pack)`.
+pub(crate) const STRUCTURAL_KIND_REGISTRY_KEY_PREFIX: &[u8] = b"kind_reg:";
+pub(crate) const STRUCTURAL_KIND_REGISTRY_KEY_LEN: usize = 10;
+const _: () =
+    assert!(STRUCTURAL_KIND_REGISTRY_KEY_PREFIX.len() + 1 == STRUCTURAL_KIND_REGISTRY_KEY_LEN);
+const STRUCTURAL_KIND_REGISTRY_RECORD_VERSION: u8 = 1;
+const STRUCTURAL_KIND_REGISTRY_RECORD_HEADER_LEN: usize = 6;
+
 /// Encodes the `vault_meta` key for the short-id counter of `entity_type`.
 /// See [`SHORT_ID_COUNTER_KEY_PREFIX`] for the documented key scheme.
 pub(crate) fn short_id_counter_key(entity_type: u8) -> [u8; SHORT_ID_COUNTER_KEY_LEN] {
     let mut key = [0u8; SHORT_ID_COUNTER_KEY_LEN];
     key[..SHORT_ID_COUNTER_KEY_PREFIX.len()].copy_from_slice(SHORT_ID_COUNTER_KEY_PREFIX);
     key[SHORT_ID_COUNTER_KEY_PREFIX.len()] = entity_type;
+    key
+}
+
+pub(crate) fn structural_kind_registry_key(
+    type_byte: u8,
+) -> [u8; STRUCTURAL_KIND_REGISTRY_KEY_LEN] {
+    let mut key = [0u8; STRUCTURAL_KIND_REGISTRY_KEY_LEN];
+    key[..STRUCTURAL_KIND_REGISTRY_KEY_PREFIX.len()]
+        .copy_from_slice(STRUCTURAL_KIND_REGISTRY_KEY_PREFIX);
+    key[STRUCTURAL_KIND_REGISTRY_KEY_PREFIX.len()] = type_byte;
     key
 }
 
@@ -393,6 +419,8 @@ pub struct Store {
     /// Vault-level metadata (analyzer manifest, schema version, field
     /// schema hash). Read on `Vault::open` to gate index compatibility.
     pub(crate) vault_meta: Database<Bytes, Bytes>,
+    /// Vault-scoped dynamic StructuralKind registry loaded from `vault_meta`.
+    pub(crate) kind_registry: RwLock<HashMap<u8, StructuralKindRegistration>>,
     pub(crate) ppr_cache: Database<Bytes, Bytes>,
     pub(crate) ppr_cache_deps: Database<Bytes, Bytes>,
     pub(crate) type_index: Database<Bytes, Bytes>,
@@ -484,6 +512,8 @@ impl Store {
         wtxn.commit()?;
         drop(db_open_guard);
 
+        let kind_registry = RwLock::new(load_structural_kind_registry(&env, &vault_meta)?);
+
         let should_persist_hnsw_config =
             preflight_hnsw_config(&env, &hnsw_meta, &vectors, &hnsw_neighbors, config)?;
         let should_persist_model_id = preflight_embedding_model(
@@ -521,6 +551,7 @@ impl Store {
             text_bm25_field_stats,
             text_doc_field_lengths,
             vault_meta,
+            kind_registry,
             ppr_cache,
             ppr_cache_deps,
             type_index,
@@ -561,6 +592,287 @@ impl Store {
         key[0] = entity_type;
         key[1..].copy_from_slice(id.as_bytes());
         key
+    }
+
+    pub(crate) fn structural_kind_registration(
+        &self,
+        type_byte: u8,
+    ) -> Option<StructuralKindRegistration> {
+        let registry = self
+            .kind_registry
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        registry.get(&type_byte).cloned()
+    }
+
+    pub(crate) fn structural_kind_registrations(&self) -> Vec<StructuralKindRegistration> {
+        let registry = self
+            .kind_registry
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let mut entries: Vec<StructuralKindRegistration> = registry.values().cloned().collect();
+        entries.sort_by_key(|entry| entry.type_byte);
+        entries
+    }
+
+    pub(crate) fn validate_entity_type(&self, entity_type: u8) -> Result<()> {
+        if validate_static_entity_type(entity_type).is_ok() {
+            return Ok(());
+        }
+        if self.structural_kind_registration(entity_type).is_some() {
+            return Ok(());
+        }
+        Err(Error::InvalidEntityType(entity_type))
+    }
+
+    pub(crate) fn validate_public_entity_type(&self, entity_type: u8) -> Result<()> {
+        if entity_type_registry_entry(entity_type).is_some() {
+            return validate_static_public_entity_type(entity_type);
+        }
+        self.validate_entity_type(entity_type)
+    }
+
+    pub(crate) fn short_id_prefix(&self, entity_type: u8) -> Result<String> {
+        if let Ok(prefix) = short_id_prefix(entity_type) {
+            return Ok(prefix.to_owned());
+        }
+        self.structural_kind_registration(entity_type)
+            .map(|entry| entry.short_id_prefix)
+            .ok_or(Error::InvalidEntityType(entity_type))
+    }
+
+    pub(crate) fn register_structural_kind(
+        &self,
+        type_byte: u8,
+        short_id_prefix: impl Into<String>,
+        band: TypeByteBand,
+        pack: impl Into<String>,
+    ) -> Result<StructuralKindRegistration> {
+        let registration = StructuralKindRegistration {
+            type_byte,
+            short_id_prefix: short_id_prefix.into(),
+            band,
+            pack: pack.into(),
+        };
+        vet_structural_kind_registration_shape(&registration)?;
+        vet_structural_kind_registration_band(&registration)?;
+        if entity_type_registry_entry(type_byte).is_some() {
+            return Err(Error::StructuralKindTypeByteCollision(type_byte));
+        }
+        if static_short_id_prefix_collision(&registration.short_id_prefix) {
+            return Err(Error::StructuralKindPrefixCollision(
+                registration.short_id_prefix,
+            ));
+        }
+
+        let key = structural_kind_registry_key(type_byte);
+        let encoded = encode_structural_kind_registration(&registration)?;
+        let mut wtxn = self.env.write_txn()?;
+        let mut registry = self
+            .kind_registry
+            .write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+
+        if registry.contains_key(&type_byte) || self.vault_meta.get(&wtxn, &key)?.is_some() {
+            return Err(Error::StructuralKindTypeByteCollision(type_byte));
+        }
+        if registry
+            .values()
+            .any(|entry| entry.short_id_prefix == registration.short_id_prefix)
+            || vault_meta_has_structural_kind_prefix(
+                &self.vault_meta,
+                &wtxn,
+                &registration.short_id_prefix,
+            )?
+        {
+            return Err(Error::StructuralKindPrefixCollision(
+                registration.short_id_prefix,
+            ));
+        }
+
+        self.vault_meta.put(&mut wtxn, &key, &encoded)?;
+        wtxn.commit()?;
+        registry.insert(type_byte, registration.clone());
+        Ok(registration)
+    }
+}
+
+fn load_structural_kind_registry(
+    env: &Env,
+    vault_meta: &Database<Bytes, Bytes>,
+) -> Result<HashMap<u8, StructuralKindRegistration>> {
+    let rtxn = env.read_txn()?;
+    let mut registry = HashMap::new();
+    let mut prefixes = HashSet::new();
+    for row in vault_meta.prefix_iter(&rtxn, STRUCTURAL_KIND_REGISTRY_KEY_PREFIX)? {
+        let (key, value) = row?;
+        let registration = decode_structural_kind_registration(key, value)?;
+        vet_structural_kind_registration_shape(&registration)
+            .map_err(|_| Error::CorruptedIndex("structural kind registry"))?;
+        vet_structural_kind_registration_band(&registration)
+            .map_err(|_| Error::CorruptedIndex("structural kind registry"))?;
+        if entity_type_registry_entry(registration.type_byte).is_some() {
+            return Err(Error::CorruptedIndex("structural kind registry"));
+        }
+        if static_short_id_prefix_collision(&registration.short_id_prefix)
+            || !prefixes.insert(registration.short_id_prefix.clone())
+            || registry
+                .insert(registration.type_byte, registration)
+                .is_some()
+        {
+            return Err(Error::CorruptedIndex("structural kind registry"));
+        }
+    }
+    Ok(registry)
+}
+
+fn vault_meta_has_structural_kind_prefix(
+    vault_meta: &Database<Bytes, Bytes>,
+    txn: &RwTxn<'_>,
+    short_id_prefix: &str,
+) -> Result<bool> {
+    for row in vault_meta.prefix_iter(txn, STRUCTURAL_KIND_REGISTRY_KEY_PREFIX)? {
+        let (key, value) = row?;
+        let registration = decode_structural_kind_registration(key, value)?;
+        if registration.short_id_prefix == short_id_prefix {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+fn vet_structural_kind_registration_shape(registration: &StructuralKindRegistration) -> Result<()> {
+    let prefix = registration.short_id_prefix.as_bytes();
+    if prefix.len() != 2 || !prefix.iter().all(u8::is_ascii_lowercase) {
+        return Err(Error::InvalidStructuralKindRegistration(
+            "short_id_prefix must be exactly two lowercase ASCII letters",
+        ));
+    }
+    if registration.pack.is_empty() {
+        return Err(Error::InvalidStructuralKindRegistration(
+            "pack must not be empty",
+        ));
+    }
+    if registration.pack.len() > u16::MAX as usize {
+        return Err(Error::InvalidStructuralKindRegistration(
+            "pack must fit in u16 bytes",
+        ));
+    }
+    Ok(())
+}
+
+fn vet_structural_kind_registration_band(registration: &StructuralKindRegistration) -> Result<()> {
+    let actual_band = band_of(registration.type_byte);
+    if actual_band != registration.band {
+        return Err(Error::StructuralKindBandViolation {
+            type_byte: registration.type_byte,
+            declared_band: registration.band,
+            actual_band,
+            reason: "type byte is outside the declared band",
+        });
+    }
+    match actual_band {
+        TypeByteBand::Companion | TypeByteBand::Productivity | TypeByteBand::Crm => Ok(()),
+        TypeByteBand::Semantic | TypeByteBand::Core => Err(Error::StructuralKindBandViolation {
+            type_byte: registration.type_byte,
+            declared_band: registration.band,
+            actual_band,
+            reason: "semantic and CORE bytes are reserved",
+        }),
+        TypeByteBand::InducedDynamicMaintenance => Err(Error::StructuralKindBandViolation {
+            type_byte: registration.type_byte,
+            declared_band: registration.band,
+            actual_band,
+            reason: "maintenance-band dynamic registration is out of scope",
+        }),
+    }
+}
+
+fn encode_structural_kind_registration(
+    registration: &StructuralKindRegistration,
+) -> Result<Vec<u8>> {
+    let prefix = registration.short_id_prefix.as_bytes();
+    let pack = registration.pack.as_bytes();
+    let pack_len = u16::try_from(pack.len())
+        .map_err(|_| Error::InvalidStructuralKindRegistration("pack must fit in u16 bytes"))?;
+
+    let mut encoded =
+        Vec::with_capacity(STRUCTURAL_KIND_REGISTRY_RECORD_HEADER_LEN + prefix.len() + pack.len());
+    encoded.push(STRUCTURAL_KIND_REGISTRY_RECORD_VERSION);
+    encoded.push(registration.type_byte);
+    encoded.push(type_byte_band_code(registration.band));
+    encoded.push(u8::try_from(prefix.len()).expect("prefix length vetted as two bytes"));
+    encoded.extend_from_slice(&pack_len.to_le_bytes());
+    encoded.extend_from_slice(prefix);
+    encoded.extend_from_slice(pack);
+    Ok(encoded)
+}
+
+fn decode_structural_kind_registration(
+    key: &[u8],
+    raw: &[u8],
+) -> Result<StructuralKindRegistration> {
+    if key.len() != STRUCTURAL_KIND_REGISTRY_KEY_LEN
+        || !key.starts_with(STRUCTURAL_KIND_REGISTRY_KEY_PREFIX)
+        || raw.len() < STRUCTURAL_KIND_REGISTRY_RECORD_HEADER_LEN
+        || raw[0] != STRUCTURAL_KIND_REGISTRY_RECORD_VERSION
+    {
+        return Err(Error::CorruptedIndex("structural kind registry"));
+    }
+
+    let type_byte = raw[1];
+    if key[STRUCTURAL_KIND_REGISTRY_KEY_PREFIX.len()] != type_byte {
+        return Err(Error::CorruptedIndex("structural kind registry"));
+    }
+    let band = type_byte_band_from_code(raw[2])
+        .ok_or(Error::CorruptedIndex("structural kind registry"))?;
+    let prefix_len = raw[3] as usize;
+    let pack_len = u16::from_le_bytes(
+        raw[4..6]
+            .try_into()
+            .map_err(|_| Error::CorruptedIndex("structural kind registry"))?,
+    ) as usize;
+    let expected_len = STRUCTURAL_KIND_REGISTRY_RECORD_HEADER_LEN + prefix_len + pack_len;
+    if raw.len() != expected_len {
+        return Err(Error::CorruptedIndex("structural kind registry"));
+    }
+    let prefix_start = STRUCTURAL_KIND_REGISTRY_RECORD_HEADER_LEN;
+    let pack_start = prefix_start + prefix_len;
+    let short_id_prefix = str::from_utf8(&raw[prefix_start..pack_start])
+        .map_err(|_| Error::CorruptedIndex("structural kind registry"))?
+        .to_owned();
+    let pack = str::from_utf8(&raw[pack_start..])
+        .map_err(|_| Error::CorruptedIndex("structural kind registry"))?
+        .to_owned();
+
+    Ok(StructuralKindRegistration {
+        type_byte,
+        short_id_prefix,
+        band,
+        pack,
+    })
+}
+
+fn type_byte_band_code(band: TypeByteBand) -> u8 {
+    match band {
+        TypeByteBand::Semantic => 0,
+        TypeByteBand::Core => 1,
+        TypeByteBand::Companion => 2,
+        TypeByteBand::Productivity => 3,
+        TypeByteBand::Crm => 4,
+        TypeByteBand::InducedDynamicMaintenance => 5,
+    }
+}
+
+fn type_byte_band_from_code(code: u8) -> Option<TypeByteBand> {
+    match code {
+        0 => Some(TypeByteBand::Semantic),
+        1 => Some(TypeByteBand::Core),
+        2 => Some(TypeByteBand::Companion),
+        3 => Some(TypeByteBand::Productivity),
+        4 => Some(TypeByteBand::Crm),
+        5 => Some(TypeByteBand::InducedDynamicMaintenance),
+        _ => None,
     }
 }
 

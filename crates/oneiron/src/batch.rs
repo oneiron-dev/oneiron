@@ -12,8 +12,7 @@ use crate::store::Store;
 use crate::types::{
     DecodedEdgeValue, EDGE_KEY_LEN, EDGE_VALUE_SEMANTIC_LEN, EDGE_VALUE_SEMANTIC_PROVENANCED_LEN,
     EDGE_VALUE_STRUCTURAL_LEN, ENTITY_ID_LEN, EdgeKind, EdgeProvenanceFlags, EntityId, TimeRange,
-    Vad, decode_edge_value_for_kind, encode_edge_value, short_id_prefix, validate_edge_weight,
-    validate_entity_type, validate_public_entity_type,
+    Vad, decode_edge_value_for_kind, encode_edge_value, validate_edge_weight,
 };
 
 pub(crate) const ENTITY_TYPE_OFFSET: usize = 0;
@@ -103,9 +102,9 @@ pub(crate) enum BatchOp {
         learned_at: u64,
         data: Vec<u8>,
         /// When `true`, `apply_put` validates the type byte through the
-        /// registry-only [`validate_entity_type`] gate (which permits the
+        /// registry-only entity-type gate (which permits the
         /// engine-authored maintenance band, e.g. REDACTION_AUDIT = 120)
-        /// instead of the public [`validate_public_entity_type`] gate. Only
+        /// instead of the public entity-type gate. Only
         /// the engine-internal sync rematerialization path sets this so GDPR
         /// receipts survive cross-node sync / replay; every public write keeps
         /// it `false` and stays subject to the maintenance-kind rejection.
@@ -236,7 +235,7 @@ impl<'a> BatchBuilder<'a> {
         data: &[u8],
     ) -> Self {
         if self.validation_error.is_none()
-            && let Err(e) = validate_public_entity_type(entity_type)
+            && let Err(e) = self.vault.store.validate_public_entity_type(entity_type)
         {
             self.validation_error = Some(e);
         }
@@ -257,7 +256,7 @@ impl<'a> BatchBuilder<'a> {
     /// engine-authored bands that the public [`put`](Self::put) gate rejects:
     ///
     /// * the maintenance type-byte band (REDACTION_AUDIT = 120), validated
-    ///   via the registry-only [`validate_entity_type`] gate so GDPR receipts
+    ///   via the registry-only entity-type gate so GDPR receipts
     ///   survive cross-node sync / replay — public writes still fail with
     ///   `MaintenanceKindNotWritable`, and genuinely unknown bytes still
     ///   fail here with `InvalidEntityType`;
@@ -279,7 +278,7 @@ impl<'a> BatchBuilder<'a> {
         data: &[u8],
     ) -> Self {
         if self.validation_error.is_none()
-            && let Err(e) = validate_entity_type(entity_type)
+            && let Err(e) = self.vault.store.validate_entity_type(entity_type)
         {
             self.validation_error = Some(e);
         }
@@ -569,7 +568,7 @@ impl<'a> TxnBatchBuilder<'a> {
     /// gate rejects:
     ///
     /// * the maintenance type-byte band (REDACTION_AUDIT = 120), validated
-    ///   via the registry-only [`validate_entity_type`] gate in `apply_ops`
+    ///   via the registry-only entity-type gate in `apply_ops`
     ///   so GDPR receipts survive sync — public writes still fail with
     ///   `MaintenanceKindNotWritable`, genuinely unknown bytes still fail
     ///   with `InvalidEntityType`;
@@ -742,14 +741,14 @@ pub(crate) fn apply_ops(
                 allow_reserved_predicate,
             } => {
                 // Public writes reject the engine-authored maintenance band via
-                // `validate_public_entity_type`; the sync rematerialization path
+                // the public entity-type gate; the sync rematerialization path
                 // sets `allow_maintenance` so REDACTION_AUDIT (120) receipts
-                // survive CRDT→LMDB replay (registry-only `validate_entity_type`
+                // survive CRDT→LMDB replay (registry-only entity-type validation
                 // still rejects genuinely unknown type bytes).
                 if allow_maintenance {
-                    validate_entity_type(entity_type)?;
+                    store.validate_entity_type(entity_type)?;
                 } else {
-                    validate_public_entity_type(entity_type)?;
+                    store.validate_public_entity_type(entity_type)?;
                 }
                 apply_put(
                     store,
@@ -1099,13 +1098,21 @@ fn apply_put(
             end: occurred.end,
         });
     }
-    // Maintenance-band kinds (REDACTION_AUDIT = 120) carry no short ID (registry
-    // `short_id_prefix: None`), matching the engine's direct receipt writer.
+    // Maintenance-band kinds (REDACTION_AUDIT = 120) carry no short ID (static
+    // registry `short_id_prefix: None`), matching the engine's direct receipt writer.
     // Only the internal sync path reaches here with such a kind (public puts are
     // rejected in `apply_ops`); skip short-id planning, which would otherwise
     // fail with `InvalidEntityType` on the missing prefix.
-    let short_id_plan = if short_id_prefix(entity_type).is_ok() {
-        Some(plan_short_id_update(store, &*wtxn, &id, entity_type, data)?)
+    let short_id_prefix = store.short_id_prefix(entity_type).ok();
+    let short_id_plan = if let Some(short_id_prefix) = short_id_prefix {
+        Some(plan_short_id_update(
+            store,
+            &*wtxn,
+            &id,
+            entity_type,
+            &short_id_prefix,
+            data,
+        )?)
     } else {
         None
     };
@@ -1584,6 +1591,7 @@ fn plan_short_id_update(
     txn: &heed::RwTxn<'_>,
     id: &EntityId,
     entity_type: u8,
+    short_id_prefix: &str,
     data: &[u8],
 ) -> Result<ShortIdPlan> {
     let content_hash = (xxh32(data, 0) % 256) as u8;
@@ -1615,7 +1623,7 @@ fn plan_short_id_update(
     let next = current
         .checked_add(1)
         .ok_or(Error::ArithmeticOverflow("short id counter"))?;
-    let short_id = format!("{}{}", short_id_prefix(entity_type)?, next);
+    let short_id = format!("{short_id_prefix}{next}");
     Ok(ShortIdPlan::InsertNew {
         counter_key,
         next_counter: next,

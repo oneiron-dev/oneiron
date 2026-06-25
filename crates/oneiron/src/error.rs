@@ -1,5 +1,5 @@
 use crate::claim::ClaimLifecycleStatus;
-use crate::types::{ENTITY_TYPE_FACET, EntityId, VadComponent};
+use crate::types::{ENTITY_TYPE_FACET, EntityId, TypeByteBand, VadComponent};
 
 /// Result type used throughout the crate.
 pub type Result<T> = std::result::Result<T, Error>;
@@ -36,6 +36,9 @@ pub enum ErrorKind {
     ReservedPredicate,
     SourceNotTrustedForAuto,
     MaintenanceKindNotWritable,
+    StructuralKindBandViolation,
+    StructuralKindCollision,
+    InvalidStructuralKindRegistration,
     EntityTypeImmutable,
     InvalidTimeRange,
     EdgeNotFound,
@@ -196,6 +199,26 @@ pub enum Error {
     /// [`Error::InvalidEntityType`], which covers genuinely unknown bytes.
     #[error("maintenance entity kind {0} is engine-authored and not writable via the public API")]
     MaintenanceKindNotWritable(u8),
+    /// Pack StructuralKind registration claimed a byte outside its declared
+    /// band or inside a band the runtime registry must not allocate.
+    #[error(
+        "structural kind band violation for type byte {type_byte}: declared={declared_band:?}, actual={actual_band:?}: {reason}"
+    )]
+    StructuralKindBandViolation {
+        type_byte: u8,
+        declared_band: TypeByteBand,
+        actual_band: TypeByteBand,
+        reason: &'static str,
+    },
+    /// Pack StructuralKind registration collided with an existing type byte.
+    #[error("structural kind type-byte collision: {0}")]
+    StructuralKindTypeByteCollision(u8),
+    /// Pack StructuralKind registration collided with an existing short-id prefix.
+    #[error("structural kind short-id prefix collision: {0:?}")]
+    StructuralKindPrefixCollision(String),
+    /// Pack StructuralKind registration failed boundary vetting.
+    #[error("invalid structural kind registration: {0}")]
+    InvalidStructuralKindRegistration(&'static str),
     /// The type byte of an existing entity record is immutable on re-put
     /// (M2 pinned decision D2). The short-id prefix is derived from the type
     /// byte at first insert, so re-typing would leave the record addressed
@@ -522,6 +545,13 @@ impl Error {
             Self::ReservedPredicate { .. } => ErrorKind::ReservedPredicate,
             Self::SourceNotTrustedForAuto { .. } => ErrorKind::SourceNotTrustedForAuto,
             Self::MaintenanceKindNotWritable(_) => ErrorKind::MaintenanceKindNotWritable,
+            Self::StructuralKindBandViolation { .. } => ErrorKind::StructuralKindBandViolation,
+            Self::StructuralKindTypeByteCollision(_) | Self::StructuralKindPrefixCollision(_) => {
+                ErrorKind::StructuralKindCollision
+            }
+            Self::InvalidStructuralKindRegistration(_) => {
+                ErrorKind::InvalidStructuralKindRegistration
+            }
             Self::EntityTypeImmutable { .. } => ErrorKind::EntityTypeImmutable,
             Self::InvalidTimeRange { .. } => ErrorKind::InvalidTimeRange,
             Self::EdgeNotFound => ErrorKind::EdgeNotFound,
