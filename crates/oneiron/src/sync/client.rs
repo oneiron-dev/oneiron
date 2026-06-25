@@ -29,9 +29,9 @@
 //!   once and stable per install (mint lives in `crate::identity`, OD-2).
 //! - `m:device_sk` / `m:device_pk` — this device's Ed25519 attestation
 //!   keypair (32 B each; ONE-1140, OD-2), minted alongside the client id.
-//! - `ls:{client_id_hex}` — device-lease registry mirror rows (58 B pinned
-//!   record, ONE-1140 OD-3/OD-4): full-mirrored from the root doc's
-//!   `leases` map in the SAME txn as every root persist.
+//! - `ls:{vault_id_hex}:{client_id_hex}` — device-lease registry mirror rows
+//!   (66 B pinned record, ONE-1140 OD-3/OD-4): full-mirrored from the root
+//!   doc's `leases` map in the SAME txn as every root persist.
 //! - `m:last_sync` — last successful sync timestamp (u64 LE, 8 bytes).
 //! - `bulk:w:{key}` — BulkTransfer in-progress marker (device only);
 //!   cleared when `BulkTransferDone` persistence succeeds.

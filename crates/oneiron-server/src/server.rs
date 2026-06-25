@@ -20,6 +20,10 @@ use crate::protocol::AwarenessState;
 /// does not key storage by user, so this is a label only.
 const SERVER_USER_ID: &str = "server";
 
+/// Numeric lease ABI vault id for the current single-vault server path.
+/// Tenant/vault routing is intentionally outside ONE-1188.
+const SERVER_LEASE_VAULT_ID: u64 = 0;
+
 /// Broadcast payload: (conn_id, encoded_message).
 /// conn_id 0 = local/bridge writes (broadcast to all devices).
 /// conn_id >= 1 = specific connection (echo suppression skips sender).
@@ -366,6 +370,7 @@ impl SyncServer {
                     LeaseDecision::rejected()
                 } else {
                     let record = LeaseRecord {
+                        vault_id: SERVER_LEASE_VAULT_ID,
                         status: LeaseStatus::Active,
                         pubkey: *pubkey,
                         granted_at: now,
@@ -394,6 +399,7 @@ impl SyncServer {
             }
             Some(record) if record.pubkey == *pubkey => {
                 let renewed = LeaseRecord {
+                    vault_id: record.vault_id,
                     status: LeaseStatus::Active,
                     pubkey: record.pubkey,
                     granted_at: record.granted_at,
@@ -760,8 +766,8 @@ mod tests {
     }
 
     /// ONE-1140 lease lifecycle at the registrar (OD-3/OD-4/OD-7/OD-8):
-    /// register writes the pinned 58 B record into the root-doc `leases`
-    /// map AND the vault's `ls:` mirror row (byte-identical, OD-3);
+    /// register writes the pinned 66 B record into the root-doc `leases`
+    /// map AND the vault's vault-scoped `ls:` mirror row (byte-identical, OD-3);
     /// renewal refreshes `renewed_at`/`expires_at` and flips an expired
     /// binding back to active; a same-client/different-key request is
     /// REJECTED with the binding untouched (first-binding-wins); revocation
@@ -791,20 +797,22 @@ mod tests {
         assert!(decision.root_update.is_some(), "registry change broadcasts");
         let map_record = deep_map_bytes(&server.root_doc, "leases", "0123456789abcdef").unwrap();
         let ls_row = vault
-            .sync_state_get("ls:0123456789abcdef")
+            .sync_state_get("ls:0000000000000000:0123456789abcdef")
             .unwrap()
             .unwrap();
         assert_eq!(
             map_record, ls_row,
             "OD-3: map value ≡ ls: row, byte-identical"
         );
-        assert_eq!(ls_row.len(), 58, "OD-4 record length");
-        assert_eq!(ls_row[0], 0x01, "version byte");
+        assert_eq!(ls_row.len(), 66, "OD-4 record length");
+        assert_eq!(ls_row[0], 0x02, "version byte");
         assert_eq!(ls_row[1], 0x01, "status active");
         assert_eq!(&ls_row[2..34], &pubkey);
         let granted_at = u64::from_le_bytes(ls_row[34..42].try_into().unwrap());
         let renewed_at = u64::from_le_bytes(ls_row[42..50].try_into().unwrap());
         let expires_at = u64::from_le_bytes(ls_row[50..58].try_into().unwrap());
+        let vault_id = u64::from_be_bytes(ls_row[58..66].try_into().unwrap());
+        assert_eq!(vault_id, SERVER_LEASE_VAULT_ID, "vault_id u64 BE");
         assert_eq!(granted_at, renewed_at);
         assert_eq!(
             expires_at,
@@ -818,6 +826,7 @@ mod tests {
         // re-request with the SAME key: flips back to active, renewed_at
         // and expires_at refresh, granted_at is preserved.
         let stale = lease::LeaseRecord {
+            vault_id: SERVER_LEASE_VAULT_ID,
             status: lease::LeaseStatus::Expired,
             pubkey,
             granted_at: 1_000,
@@ -842,7 +851,7 @@ mod tests {
             "expired + same key = renewal, not rejection"
         );
         let renewed_row = vault
-            .sync_state_get("ls:0123456789abcdef")
+            .sync_state_get("ls:0000000000000000:0123456789abcdef")
             .unwrap()
             .unwrap();
         assert_eq!(renewed_row[1], 0x01, "expired flips back to active");
@@ -877,7 +886,7 @@ mod tests {
         );
         assert_eq!(
             vault
-                .sync_state_get("ls:0123456789abcdef")
+                .sync_state_get("ls:0000000000000000:0123456789abcdef")
                 .unwrap()
                 .unwrap(),
             renewed_row,
@@ -897,7 +906,7 @@ mod tests {
         );
         assert!(
             vault
-                .sync_state_get(&lease::lease_key(other_client))
+                .sync_state_get(&lease::lease_key(SERVER_LEASE_VAULT_ID, other_client))
                 .unwrap()
                 .is_none(),
             "an invalid PoP never reaches the registry"
@@ -908,7 +917,7 @@ mod tests {
         let update = server.revoke_lease(client_id).await.unwrap();
         assert!(update.is_some(), "revocation broadcasts a registry change");
         let revoked_row = vault
-            .sync_state_get("ls:0123456789abcdef")
+            .sync_state_get("ls:0000000000000000:0123456789abcdef")
             .unwrap()
             .unwrap();
         assert_eq!(revoked_row[1], 0x03, "status revoked");
@@ -927,7 +936,7 @@ mod tests {
     /// across ALL client_ids, so a device rotating client_id while reusing
     /// its key cannot recover (recovery requires a fresh KEYPAIR). The
     /// None-arm guard writes NO row and grants nothing. A wrong impl that
-    /// grants any absent client_id would write `ls:{B}` active and FAIL here.
+    /// grants any absent client_id would write `ls:{vault}:{B}` active and FAIL here.
     #[tokio::test]
     async fn register_lease_refuses_active_lease_for_already_revoked_pubkey() {
         use ed25519_dalek::{Signer, SigningKey};
@@ -955,7 +964,7 @@ mod tests {
         assert!(server.revoke_lease(client_a).await.unwrap().is_some());
         assert_eq!(
             vault
-                .sync_state_get(&lease::lease_key(client_a))
+                .sync_state_get(&lease::lease_key(SERVER_LEASE_VAULT_ID, client_a))
                 .unwrap()
                 .unwrap()[1],
             0x03,
@@ -980,7 +989,7 @@ mod tests {
         );
         assert!(
             vault
-                .sync_state_get(&lease::lease_key(client_b))
+                .sync_state_get(&lease::lease_key(SERVER_LEASE_VAULT_ID, client_b))
                 .unwrap()
                 .is_none(),
             "no ls: row is written for the refused fresh client_id"
@@ -1027,7 +1036,7 @@ mod tests {
         );
         assert!(server.revoke_lease(client_a).await.unwrap().is_some());
         let b_row_before = vault
-            .sync_state_get(&lease::lease_key(client_b))
+            .sync_state_get(&lease::lease_key(SERVER_LEASE_VAULT_ID, client_b))
             .unwrap()
             .unwrap();
         assert_eq!(
@@ -1051,7 +1060,7 @@ mod tests {
         );
         assert_eq!(
             vault
-                .sync_state_get(&lease::lease_key(client_b))
+                .sync_state_get(&lease::lease_key(SERVER_LEASE_VAULT_ID, client_b))
                 .unwrap()
                 .unwrap(),
             b_row_before,
@@ -1060,7 +1069,7 @@ mod tests {
         assert_eq!(
             lease::decode_lease_record(
                 &vault
-                    .sync_state_get(&lease::lease_key(client_a))
+                    .sync_state_get(&lease::lease_key(SERVER_LEASE_VAULT_ID, client_a))
                     .unwrap()
                     .unwrap()
             )
@@ -1106,7 +1115,7 @@ mod tests {
         );
         assert!(server.revoke_lease(client_a).await.unwrap().is_some());
         let ls_a_revoked = vault
-            .sync_state_get(&lease::lease_key(client_a))
+            .sync_state_get(&lease::lease_key(SERVER_LEASE_VAULT_ID, client_a))
             .unwrap()
             .unwrap();
         assert_eq!(ls_a_revoked[1], 0x03, "client A is revoked on ls:");
@@ -1145,7 +1154,7 @@ mod tests {
         );
         assert!(
             vault
-                .sync_state_get(&lease::lease_key(client_b))
+                .sync_state_get(&lease::lease_key(SERVER_LEASE_VAULT_ID, client_b))
                 .unwrap()
                 .is_none(),
             "no ls: row for the rolled-back fresh client_id"
@@ -1155,7 +1164,7 @@ mod tests {
             "the live in-memory root_doc must roll back client B after mirror failure"
         );
         let ls_a_after = vault
-            .sync_state_get(&lease::lease_key(client_a))
+            .sync_state_get(&lease::lease_key(SERVER_LEASE_VAULT_ID, client_a))
             .unwrap()
             .unwrap();
         assert_eq!(
@@ -1228,7 +1237,7 @@ mod tests {
         // and no existing lease altered (no row was written at all).
         assert!(
             vault
-                .sync_state_get(&lease::lease_key(client_id))
+                .sync_state_get(&lease::lease_key(SERVER_LEASE_VAULT_ID, client_id))
                 .unwrap()
                 .is_none(),
             "a refused registration writes NO ls: row"

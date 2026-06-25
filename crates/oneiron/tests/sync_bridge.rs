@@ -15,6 +15,7 @@ use oneiron::sync::bridge::{
     BRIDGE_ORIGIN, Materializer, encode_edge_value_for_crdt, format_edge_key, parse_edge_value,
 };
 use oneiron::sync::client::{SyncClient, SyncClientConfig, SyncEvent};
+use oneiron::sync::lease;
 use oneiron::sync::manager::WindowManager;
 use oneiron::sync::schema::create_window_doc;
 use oneiron::sync::transport::{
@@ -37,6 +38,7 @@ const ROOT_VV_TAG: u8 = 2;
 
 /// Window-owner user id shared by every fixture in this file (ONE-1160).
 const TEST_USER: &str = "test-user";
+const TEST_LEASE_VAULT_ID: u64 = 0x0102_0304_0506_0708;
 
 /// SyncClient over a manager-owned window registry (ONE-1126).
 fn make_client(vault: &Arc<Vault>) -> (SyncClient, UnboundedReceiver<SyncEvent>) {
@@ -725,16 +727,18 @@ fn sync_client_handle_server_message_imports_root_sync_update() {
     // root-doc init — `read_window_list` only decodes `LoroValue::Binary`.
     meta.insert("windows", "2026-03".as_bytes()).unwrap();
     // ONE-1140 (OD-3): the root doc also carries the `leases` registry —
-    // one valid pinned 58 B record plus one malformed entry. The import
+    // one valid pinned 66 B record plus one malformed entry. The import
     // must full-mirror the valid record into its `ls:` row in the same
     // persist and QUARANTINE the malformed one (kept out of ls:, never
     // silently dropped).
     let leases = server_doc.get_map("leases");
-    let mut lease_record = vec![0x01u8, 0x01];
+    let mut lease_record = vec![0x02u8, 0x01];
     lease_record.extend_from_slice(&[0xAB; 32]);
     lease_record.extend_from_slice(&1_700_000_000u64.to_le_bytes());
     lease_record.extend_from_slice(&1_700_000_000u64.to_le_bytes());
     lease_record.extend_from_slice(&(1_700_000_000u64 + 7_776_000).to_le_bytes());
+    lease_record.extend_from_slice(&TEST_LEASE_VAULT_ID.to_be_bytes());
+    assert_eq!(lease_record.len(), 66, "OD-4 lease record length literal");
     leases
         .insert("00000000000000aa", lease_record.as_slice())
         .unwrap();
@@ -752,7 +756,7 @@ fn sync_client_handle_server_message_imports_root_sync_update() {
     assert_eq!(client.server_windows(), vec!["2026-03".to_string()]);
     assert_eq!(
         vault
-            .sync_state_get("ls:00000000000000aa")
+            .sync_state_get("ls:0102030405060708:00000000000000aa")
             .unwrap()
             .as_deref(),
         Some(lease_record.as_slice()),
@@ -760,7 +764,7 @@ fn sync_client_handle_server_message_imports_root_sync_update() {
     );
     assert!(
         vault
-            .sync_state_get("ls:00000000000000bb")
+            .sync_state_get("ls:0102030405060708:00000000000000bb")
             .unwrap()
             .is_none(),
         "a malformed lease record must never be upserted into ls:"
@@ -994,9 +998,9 @@ fn redaction_audit_receipt_survives_crdt_sync_round_trip() {
     // ONE-1140 (OD-3/OD-4): node B's door verifies the receipt's origin
     // attestation against its `ls:` lease-registry mirror, so B registers
     // node A's binding first (in production the server's full root-doc
-    // mirror does this). The row is the pinned 58 B layout, hand-built:
-    // `[ver 0x01][status 0x01][pubkey:32][granted:8 LE][renewed:8 LE]
-    // [expires:8 LE]`, key `ls:{client_id:016x}`.
+    // mirror does this). The row is the pinned 66 B layout, hand-built:
+    // `[ver 0x02][status 0x01][pubkey:32][granted:8 LE][renewed:8 LE]
+    // [expires:8 LE][vault_id:8 BE]`, key `ls:{vault_id:016x}:{client_id:016x}`.
     let author_client_id = u64::from_le_bytes(
         vault_a
             .sync_state_get("m:client_id")
@@ -1011,16 +1015,20 @@ fn redaction_audit_receipt_survives_crdt_sync_round_trip() {
         .expect("receipt mint provisions the attestation keypair (OD-2)")
         .try_into()
         .unwrap();
-    let mut lease_row = Vec::with_capacity(58);
-    lease_row.push(0x01); // version
+    let mut lease_row = Vec::with_capacity(66);
+    lease_row.push(0x02); // version
     lease_row.push(0x01); // status: active
     lease_row.extend_from_slice(&author_pk);
     lease_row.extend_from_slice(&1_700_000_000u64.to_le_bytes());
     lease_row.extend_from_slice(&1_700_000_000u64.to_le_bytes());
     lease_row.extend_from_slice(&(1_700_000_000u64 + 7_776_000).to_le_bytes());
-    assert_eq!(lease_row.len(), 58, "OD-4 lease record length literal");
+    lease_row.extend_from_slice(&TEST_LEASE_VAULT_ID.to_be_bytes());
+    assert_eq!(lease_row.len(), 66, "OD-4 lease record length literal");
     vault_b
-        .sync_state_put(&format!("ls:{author_client_id:016x}"), &lease_row)
+        .sync_state_put(
+            &lease::lease_key(TEST_LEASE_VAULT_ID, author_client_id),
+            &lease_row,
+        )
         .unwrap();
 
     let materializer = Materializer::new();

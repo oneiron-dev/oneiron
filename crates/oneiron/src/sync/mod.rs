@@ -44,8 +44,8 @@ pub use connection::{ConnectionConfig, LocalUpdate, SyncConnection};
 pub use lease::{
     LEASE_DURATION_SECS, LEASE_KEY_PREFIX, LEASE_POP_DOMAIN, LEASE_RECORD_LEN,
     LEASE_RECORD_VERSION, LeaseRecord, LeaseStatus, ROOT_LEASES_MAP, client_id_hex,
-    decode_lease_record, encode_lease_record, lease_key, lease_pop_transcript,
-    mirror_leases_from_root, verify_lease_pop,
+    decode_lease_record, encode_lease_record, lease_key, lease_key_prefix, lease_pop_transcript,
+    mirror_leases_from_root, vault_id_hex, verify_lease_pop,
 };
 pub use loro::Subscription;
 pub use loro_support::export_updates_since;

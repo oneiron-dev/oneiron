@@ -32,6 +32,7 @@ use loro::ExportMode;
 use oneiron::sync::bridge::{
     Materializer, OutboundSink, encode_edge_value_for_crdt, format_edge_key,
 };
+use oneiron::sync::lease;
 use oneiron::sync::manager::WindowManager;
 use oneiron::sync::queue::SyncQueue;
 use oneiron::sync::types::WindowKey;
@@ -47,6 +48,8 @@ use sync_harness::{
     hex, make_entity_blob, map_entries, map_get_bytes, provenanced_edge, receipt_request_id,
     redaction_audit_receipts, reencode_edge_value, time_range, vault_pair,
 };
+
+const TEST_LEASE_VAULT_ID: u64 = 0x0102_0304_0506_0708;
 
 // ─── (a) entity convergence, both directions ────────────────────────────────
 
@@ -955,7 +958,7 @@ fn redaction_audit_same_identity_divergence_is_quarantined_not_lww() {
 
     // ONE-1140: B's replay door verifies NEW-receipt origin attestation
     // against its `ls:` lease mirror, so B registers A's binding (pinned
-    // 58 B OD-4 row) before the replication leg — the server's root-doc
+    // 66 B OD-4 row) before the replication leg — the server's root-doc
     // full mirror does this in production.
     let author_client_id = u64::from_le_bytes(
         a.vault
@@ -970,14 +973,18 @@ fn redaction_audit_same_identity_divergence_is_quarantined_not_lww() {
         .sync_state_get("m:device_pk")
         .unwrap()
         .expect("receipt mint provisions the attestation keypair");
-    let mut lease_row = vec![0x01u8, 0x01];
+    let mut lease_row = vec![0x02u8, 0x01];
     lease_row.extend_from_slice(&author_pk);
     lease_row.extend_from_slice(&1_700_000_000u64.to_le_bytes());
     lease_row.extend_from_slice(&1_700_000_000u64.to_le_bytes());
     lease_row.extend_from_slice(&(1_700_000_000u64 + 7_776_000).to_le_bytes());
-    assert_eq!(lease_row.len(), 58);
+    lease_row.extend_from_slice(&TEST_LEASE_VAULT_ID.to_be_bytes());
+    assert_eq!(lease_row.len(), 66);
     b.vault
-        .sync_state_put(&format!("ls:{author_client_id:016x}"), &lease_row)
+        .sync_state_put(
+            &lease::lease_key(TEST_LEASE_VAULT_ID, author_client_id),
+            &lease_row,
+        )
         .unwrap();
 
     b.open_window(&receipt_window);
