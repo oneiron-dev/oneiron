@@ -8,7 +8,7 @@ use crate::types::{
     ENTITY_TYPE_MESSAGE, ENTITY_TYPE_NOTIFICATION, ENTITY_TYPE_ORG, ENTITY_TYPE_PERSON,
     ENTITY_TYPE_PLACE, ENTITY_TYPE_RELATIONSHIP, ENTITY_TYPE_SESSION, ENTITY_TYPE_SKILL,
     ENTITY_TYPE_SUMMARY, ENTITY_TYPE_TASK, ENTITY_TYPE_TASK_LIST, ENTITY_TYPE_TURN,
-    ENTITY_TYPE_WORLD, FieldProfile, PackFormat, PackStats, Signal, TokenAllocation,
+    ENTITY_TYPE_WORLD, FieldProfile, PackFormat, PackStats, ResumeBundle, Signal, TokenAllocation,
 };
 
 const GROUP_ORDER: &[u8] = &[
@@ -62,6 +62,10 @@ pub fn serialize_pack(pack: &ContextPack, config: &SerializeConfig) -> Vec<u8> {
         PackFormat::Markdown => serialize_markdown(pack, config).into_bytes(),
         PackFormat::Plaintext => serialize_plaintext(pack, config).into_bytes(),
     }
+}
+
+pub fn serialize_resume_bundle(bundle: &ResumeBundle) -> Vec<u8> {
+    serde_json::to_vec(bundle).expect("ResumeBundle JSON serialization should not fail")
 }
 
 fn serialize_json(pack: &ContextPack, config: &SerializeConfig) -> Vec<u8> {
