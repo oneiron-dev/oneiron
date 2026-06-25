@@ -2836,8 +2836,10 @@ impl Vault {
         })
     }
 
-    /// Test utility for deleting a key from the sync_state database.
-    #[cfg(all(feature = "sync", test))]
+    /// Deletes a key from the sync_state database for diagnostics and
+    /// server-side sync metadata cleanup.
+    #[doc(hidden)]
+    #[cfg(feature = "sync")]
     pub fn sync_state_delete(&self, key: &str) -> Result<bool> {
         self.with_write_txn(|wtxn| Ok(self.store.sync_state.delete(wtxn, key)?))
     }

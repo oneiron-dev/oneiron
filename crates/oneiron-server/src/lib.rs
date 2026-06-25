@@ -16,6 +16,7 @@ pub mod commands;
 pub mod config;
 pub mod error;
 mod handler;
+mod idempotency;
 pub mod projection;
 mod protocol;
 pub mod server;
