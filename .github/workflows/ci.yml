@@ -52,18 +52,25 @@ jobs:
   package:
     name: Package oneiron-server
     runs-on: blacksmith-4vcpu-ubuntu-2404
+    permissions:
+      contents: read
     env:
       LOCAL_ONEIRON_PATCH: 'patch.crates-io.oneiron.path="crates/oneiron"'
-      PACKAGE_VERSION: "0.1.0"
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8
         with:
           toolchain: "1.96"
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
+      - run: rm -rf target/package/oneiron-server-*
       - run: cargo package -p oneiron-server --list --no-metadata --config "${LOCAL_ONEIRON_PATCH}"
       - run: cargo package -p oneiron-server --no-metadata --config "${LOCAL_ONEIRON_PATCH}"
-      - run: cargo test --manifest-path "target/package/oneiron-server-${PACKAGE_VERSION}/Cargo.toml" --all-features --config "${LOCAL_ONEIRON_PATCH}"
+      - run: |
+          package_manifest="$(find target/package -mindepth 2 -maxdepth 2 -path 'target/package/oneiron-server-*/Cargo.toml' -print -quit)"
+          test -n "${package_manifest}"
+          cargo test --manifest-path "${package_manifest}" --all-features --config "${LOCAL_ONEIRON_PATCH}"
 
   deny:
     name: cargo-deny
