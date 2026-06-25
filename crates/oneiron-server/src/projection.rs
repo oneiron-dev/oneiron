@@ -112,7 +112,7 @@ pub fn project_entity_parts(
         View::Summary => summary_object(id_hex, entity_type, label, updated_at),
         View::Standard => Value::Object(select_profile_fields(entity_type, view, &fields)),
         View::Full => {
-            let mut object = select_profile_fields(entity_type, view, &fields);
+            let mut object = fields;
             insert_entity_metadata(&mut object, id_hex, entity_type, label, updated_at);
             Value::Object(object)
         }
@@ -416,5 +416,39 @@ mod tests {
         assert_eq!(keys, BTreeSet::from(["id", "kind", "label", "updatedAt"]));
         assert!(!value.as_object().unwrap().contains_key("body"));
         assert!(!value.as_object().unwrap().contains_key("metadata"));
+    }
+
+    #[test]
+    fn full_projection_preserves_recognized_entity_body_and_custom_fields() {
+        let id = EntityId::now();
+        let body = rmp_serde::to_vec_named(&json!({
+            "title": "Ship projection",
+            "role": "agent",
+            "status": "open",
+            "priority": 2,
+            "dueDate": 1_777_100_000_u64,
+            "body": "full body text",
+            "custom": {"nested": true}
+        }))
+        .unwrap();
+        let standard =
+            project_entity_parts(&id, ENTITY_TYPE_TASK, 1_777_000_000, &body, View::Standard);
+        let full = project_entity_parts(&id, ENTITY_TYPE_TASK, 1_777_000_000, &body, View::Full);
+        let standard_object = standard.as_object().unwrap();
+        let full_object = full.as_object().unwrap();
+
+        for key in standard_object.keys() {
+            assert_eq!(
+                full_object.get(key),
+                standard_object.get(key),
+                "full must preserve standard field {key}"
+            );
+        }
+        assert_eq!(full["body"], "full body text");
+        assert_eq!(full["custom"], json!({"nested": true}));
+        assert_eq!(full["id"], id.to_hex());
+        assert_eq!(full["kind"], "TASK");
+        assert_eq!(full["label"], "Ship projection");
+        assert_eq!(full["updatedAt"], 1_777_000_000_u64);
     }
 }

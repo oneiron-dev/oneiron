@@ -428,7 +428,8 @@ async fn http_vector_search_defaults_to_summary_and_full_supersets_standard() {
         "status": "open",
         "priority": 1,
         "dueDate": 1_777_100_000_u64,
-        "body": "heavy vector payload"
+        "body": "heavy vector payload",
+        "custom": {"nested": true}
     }));
     vault
         .put_entity(
@@ -485,6 +486,8 @@ async fn http_vector_search_defaults_to_summary_and_full_supersets_standard() {
     }
     assert_eq!(full_hit["title"], "Vector hit");
     assert_eq!(full_hit["status"], "open");
+    assert_eq!(full_hit["body"], "heavy vector payload");
+    assert_eq!(full_hit["custom"], serde_json::json!({"nested": true}));
 
     handle.abort();
 }
