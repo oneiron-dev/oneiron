@@ -1,15 +1,16 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
+use std::time::Duration;
 
 use loro::{ExportMode, Frontiers, LoroDoc, LoroValue, ValueOrContainer, VersionVector};
-use oneiron::sync::WindowKey;
+use oneiron::sync::bridge::Materializer;
 use oneiron::sync::lease::{self, LEASE_DURATION_SECS, LeaseRecord, LeaseStatus, ROOT_LEASES_MAP};
 use oneiron::sync::schema::{
     add_window_to_root, init_window_list, read_window_list, schema_version_bytes,
 };
 use oneiron::sync::server_state;
-use oneiron::sync::window::load_window_from_state;
+use oneiron::sync::{self, WindowKey, WindowManager};
 use tokio::sync::{Mutex, RwLock, broadcast};
 
 use crate::config::SyncServerConfig;
@@ -23,6 +24,8 @@ const SERVER_USER_ID: &str = "server";
 /// Numeric lease ABI vault id for the current single-vault server path.
 /// Tenant/vault routing is intentionally outside ONE-1188.
 const SERVER_LEASE_VAULT_ID: u64 = 0;
+const LEASE_LIFECYCLE_TICK_INTERVAL: Duration = Duration::from_secs(60);
+static NEXT_LIFECYCLE_SESSION_ID: AtomicU64 = AtomicU64::new(1);
 
 /// Broadcast payload: (conn_id, encoded_message).
 /// conn_id 0 = local/bridge writes (broadcast to all devices).
@@ -34,9 +37,6 @@ pub struct SyncServer {
     pub(crate) vault: Arc<oneiron::Vault>,
     /// Root LoroDoc (server-authoritative, contains meta.windows).
     pub(crate) root_doc: LoroDoc,
-    /// Window key -> LoroDoc for each loaded window (RAM cache over
-    /// sync_state `d:w:{key}` + `u:w:{key}:*`).
-    pub(crate) windows: RwLock<HashMap<String, LoroDoc>>,
     /// Per-connection awareness state.
     pub(crate) awareness: RwLock<HashMap<u32, AwarenessState>>,
     /// Broadcast channel for fan-out to all connected clients.
@@ -47,8 +47,61 @@ pub struct SyncServer {
     /// connects racing the same client id must observe first-binding-wins,
     /// never a read-modify-write interleave.
     pub(crate) lease_registrar: Mutex<()>,
+    /// Window manager used by server-side safe-point maintenance jobs.
+    pub(crate) reassert_manager: Arc<WindowManager>,
+    /// Process-local session component for lifecycle job debounce keys.
+    lifecycle_session_id: u64,
+    /// In-flight lifecycle jobs keyed by `(kind, vault_id, session_id)`.
+    lifecycle_in_flight: Mutex<HashSet<LifecycleJobKey>>,
     /// Server configuration.
     pub(crate) config: SyncServerConfig,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct LeaseExpiryReport {
+    pub(crate) expired_rows: usize,
+    pub(crate) skipped: bool,
+    pub(crate) root_update: Option<Vec<u8>>,
+}
+
+impl LeaseExpiryReport {
+    fn skipped() -> Self {
+        Self {
+            expired_rows: 0,
+            skipped: true,
+            root_update: None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ReassertDrainJobReport {
+    pub(crate) report: sync::ReassertDrainReport,
+    pub(crate) skipped: bool,
+    pub(crate) window_updates: Vec<(String, Vec<u8>)>,
+}
+
+impl ReassertDrainJobReport {
+    fn skipped() -> Self {
+        Self {
+            report: sync::ReassertDrainReport::default(),
+            skipped: true,
+            window_updates: Vec::new(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+enum LifecycleJobKind {
+    LeaseExpiry,
+    ReassertDrain,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+struct LifecycleJobKey {
+    kind: LifecycleJobKind,
+    vault_id: u64,
+    session_id: u64,
 }
 
 impl SyncServer {
@@ -116,14 +169,23 @@ impl SyncServer {
 
         let (broadcast_tx, _) = broadcast::channel(256);
 
+        let reassert_manager = Arc::new(WindowManager::new(
+            vault.clone(),
+            Arc::new(Materializer::new()),
+            SERVER_USER_ID,
+        ));
+        reassert_manager.attach_to_vault();
+
         Ok(Self {
             vault,
             root_doc,
-            windows: RwLock::new(HashMap::new()),
             awareness: RwLock::new(HashMap::new()),
             broadcast_tx,
             next_conn_id: AtomicU32::new(1),
             lease_registrar: Mutex::new(()),
+            reassert_manager,
+            lifecycle_session_id: NEXT_LIFECYCLE_SESSION_ID.fetch_add(1, Ordering::Relaxed),
+            lifecycle_in_flight: Mutex::new(HashSet::new()),
             config,
         })
     }
@@ -169,64 +231,40 @@ impl SyncServer {
             .map_err(|e| format!("root doc snapshot failed: {e}"))
     }
 
-    /// Gets or creates a window LoroDoc. Returns a clone (reference-counted).
+    /// Gets or creates the canonical live window LoroDoc.
     ///
-    /// Lookup order: RAM cache → persisted sync_state (`d:w:{key}` snapshot
-    /// plus pending `u:w:{key}:*` updates) → create fresh. Creation persists
-    /// the initial snapshot, registers the key in the root doc's
-    /// `meta.windows` via `add_window_to_root`, and persists the root to
-    /// `d:root`, so the window survives a restart and future clients learn
-    /// the key.
-    ///
-    /// Corrupt persisted state is an error (fail-closed): the server must
-    /// not silently serve a fresh empty window over an undecodable snapshot
-    /// — that would drop relayed updates and tombstones.
+    /// Server websocket sync and lifecycle maintenance both route through
+    /// `WindowManager`, so a server-side reassertion drain commits into the
+    /// same doc that active connections serve. First touch still preserves
+    /// the server root contract: a fresh window is snapshotted to `d:w:*`,
+    /// registered in `meta.windows`, and persisted to `d:root`.
     pub(crate) async fn get_or_create_window(
         &self,
         key: &WindowKey,
     ) -> Result<LoroDoc, oneiron::Error> {
+        let snapshot_key = format!("d:w:{key}");
+        let had_snapshot = self.vault.sync_state_get(&snapshot_key)?.is_some();
+        let window = self.reassert_manager.open_window(key)?;
+
+        if !had_snapshot {
+            server_state::persist_window_snapshot(&self.vault, key, &window.doc)?;
+        }
+
+        if !read_window_list(&self.root_doc)
+            .iter()
+            .any(|existing| existing == key)
         {
-            let windows = self.windows.read().await;
-            if let Some(doc) = windows.get(key.as_str()) {
-                return Ok(doc.clone());
+            let _guard = self.lease_registrar.lock().await;
+            if !read_window_list(&self.root_doc)
+                .iter()
+                .any(|existing| existing == key)
+            {
+                add_window_to_root(&self.root_doc, key);
+                server_state::persist_root_snapshot(&self.vault, &self.root_doc)?;
             }
         }
 
-        // Serialize load/create under the write lock so two connections
-        // cannot race a double-create (each with a distinct Loro peer) or a
-        // double-load.
-        let mut windows = self.windows.write().await;
-        if let Some(doc) = windows.get(key.as_str()) {
-            return Ok(doc.clone());
-        }
-
-        let doc = match load_window_from_state(&self.vault, SERVER_USER_ID, key) {
-            Ok(doc) => doc,
-            Err(oneiron::Error::WindowNotFound { .. }) => {
-                // Initialize window schema maps
-                let doc = LoroDoc::new();
-                let _entities = doc.get_map("entities");
-                let _edges = doc.get_map("edges");
-                let _tombstones = doc.get_map("tombstones");
-                doc.commit();
-
-                server_state::persist_window_snapshot(&self.vault, key, &doc)?;
-                {
-                    // Lock order: this create path already holds
-                    // `windows.write()`, then takes `lease_registrar` only
-                    // for the root_doc write. Registrar paths never take
-                    // `windows.write()` while holding `lease_registrar`.
-                    let _guard = self.lease_registrar.lock().await;
-                    add_window_to_root(&self.root_doc, key);
-                    server_state::persist_root_snapshot(&self.vault, &self.root_doc)?;
-                }
-                doc
-            }
-            Err(e) => return Err(e),
-        };
-
-        windows.insert(key.as_str().to_string(), doc.clone());
-        Ok(doc)
+        Ok(window.doc.clone())
     }
 
     /// Persists an imported client update to sync_state
@@ -240,19 +278,235 @@ impl SyncServer {
         server_state::persist_imported_window_update(&self.vault, key, update_bytes)
     }
 
-    /// Evicts a window doc from the RAM cache.
+    /// Evicts a window doc from the live manager registry.
     ///
     /// Used when the durable append of an imported update fails: the UPDATE
-    /// arm imports into the cached doc BEFORE persisting (that order is
+    /// arm imports into the loaded doc BEFORE persisting (that order is
     /// deliberate — persisting raw bytes that then fail `import_with` would
     /// durably append an undecodable `u:w:` row, and window load is
     /// fail-closed on pending updates, bricking the window at boot). On
-    /// persist failure the cached doc therefore holds state a restart would
+    /// persist failure the loaded doc therefore holds state a restart would
     /// lose; evicting it forces the next access to reload from durable
-    /// `d:w:` + `u:w:` state, so the RAM cache can never serve state a
-    /// restart loses.
+    /// `d:w:` + `u:w:` state, so the manager can never serve state a restart
+    /// loses.
     pub(crate) async fn evict_window(&self, key: &WindowKey) {
-        self.windows.write().await.remove(key.as_str());
+        self.reassert_manager.discard_window(key);
+    }
+
+    /// Starts the periodic lease-lifecycle maintenance loop.
+    pub(crate) fn spawn_lifecycle_scheduler(self: &Arc<Self>) -> tokio::task::JoinHandle<()> {
+        let server = Arc::clone(self);
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(LEASE_LIFECYCLE_TICK_INTERVAL);
+            interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+            loop {
+                interval.tick().await;
+                server.run_scheduled_lifecycle_tick().await;
+            }
+        })
+    }
+
+    async fn run_scheduled_lifecycle_tick(&self) {
+        match self.expire_leases_once().await {
+            Ok(report) => {
+                if report.skipped {
+                    tracing::debug!("lease expiry tick skipped: previous tick still in flight");
+                } else {
+                    tracing::debug!(
+                        expired_rows = report.expired_rows,
+                        "lease expiry tick complete"
+                    );
+                }
+                if let Some(update) = report.root_update {
+                    let msg = crate::protocol::encode_root_update(&update);
+                    let _ = crate::broadcast::broadcast(&self.broadcast_tx, 0, msg);
+                }
+            }
+            Err(err) => {
+                tracing::error!(error = %err, "lease expiry tick failed");
+            }
+        }
+
+        match self.drain_reassert_markers_once().await {
+            Ok(report) => {
+                if report.skipped {
+                    tracing::debug!("ra drain tick skipped: previous tick still in flight");
+                } else {
+                    tracing::debug!(
+                        drained = ?report.report.drained,
+                        still_pending = ?report.report.still_pending,
+                        "ra drain tick complete"
+                    );
+                }
+                for (window_key, update) in report.window_updates {
+                    match crate::protocol::encode_window_sync(
+                        &window_key,
+                        crate::protocol::window_sub_tags::UPDATE,
+                        &update,
+                    )
+                    .into_result()
+                    {
+                        Ok(msg) => {
+                            let _ = crate::broadcast::broadcast(&self.broadcast_tx, 0, msg);
+                        }
+                        Err(err) => {
+                            tracing::error!(
+                                window = %window_key,
+                                error = crate::protocol::transport_err_msg(err),
+                                "ra drain tick failed to encode window update"
+                            );
+                        }
+                    }
+                }
+            }
+            Err(err) => {
+                tracing::error!(error = %err, "ra drain tick failed");
+            }
+        }
+    }
+
+    pub(crate) async fn expire_leases_once(&self) -> Result<LeaseExpiryReport, oneiron::Error> {
+        self.expire_leases_once_at(unix_seconds_now()).await
+    }
+
+    async fn expire_leases_once_at(&self, now: u64) -> Result<LeaseExpiryReport, oneiron::Error> {
+        if !self
+            .begin_lifecycle_job(LifecycleJobKind::LeaseExpiry)
+            .await
+        {
+            return Ok(LeaseExpiryReport::skipped());
+        }
+
+        let result = async {
+            let _guard = self.lease_registrar.lock().await;
+            let leases = self.root_doc.get_map(ROOT_LEASES_MAP);
+            let vv_before = self.root_doc.oplog_vv();
+            let frontiers_before = self.root_doc.state_frontiers();
+            let mut entries: Vec<(String, Vec<u8>)> = Vec::new();
+            let mut corrupt = false;
+            leases.for_each(|key, value| {
+                if let ValueOrContainer::Value(LoroValue::Binary(blob)) = value {
+                    entries.push((key.to_string(), blob.to_vec()));
+                } else {
+                    corrupt = true;
+                }
+            });
+            if corrupt {
+                return Err(oneiron::Error::CorruptedIndex(
+                    "non-binary root lease entry",
+                ));
+            }
+
+            let mut expired_rows = 0usize;
+            for (key, raw) in &entries {
+                let mut record = lease::decode_lease_record(raw)?;
+                if record.status == LeaseStatus::Active && record.expires_at < now {
+                    record.status = LeaseStatus::Expired;
+                    leases
+                        .insert(key.as_str(), lease::encode_lease_record(&record).as_slice())
+                        .map_err(|e| oneiron::Error::SyncProtocolError(e.to_string()))?;
+                    expired_rows += 1;
+                }
+            }
+
+            let root_update =
+                self.commit_lease_changes(expired_rows > 0, &vv_before, &frontiers_before)?;
+            Ok(LeaseExpiryReport {
+                expired_rows,
+                skipped: false,
+                root_update,
+            })
+        }
+        .await;
+
+        self.end_lifecycle_job(LifecycleJobKind::LeaseExpiry).await;
+        result
+    }
+
+    pub(crate) async fn drain_reassert_markers_once(
+        &self,
+    ) -> Result<ReassertDrainJobReport, oneiron::Error> {
+        if !self
+            .begin_lifecycle_job(LifecycleJobKind::ReassertDrain)
+            .await
+        {
+            return Ok(ReassertDrainJobReport::skipped());
+        }
+
+        let live_versions = self.live_window_versions();
+        let result =
+            sync::drain_reassert_markers(&self.vault, SERVER_USER_ID, &self.reassert_manager)
+                .and_then(|report| {
+                    let window_updates = self.collect_live_window_updates(live_versions)?;
+                    Ok(ReassertDrainJobReport {
+                        report,
+                        skipped: false,
+                        window_updates,
+                    })
+                });
+
+        self.end_lifecycle_job(LifecycleJobKind::ReassertDrain)
+            .await;
+        result
+    }
+
+    fn live_window_versions(&self) -> HashMap<WindowKey, VersionVector> {
+        self.reassert_manager
+            .loaded_keys()
+            .into_iter()
+            .filter_map(|key| {
+                self.reassert_manager
+                    .window(&key)
+                    .map(|window| (key, window.doc.oplog_vv()))
+            })
+            .collect()
+    }
+
+    fn collect_live_window_updates(
+        &self,
+        before: HashMap<WindowKey, VersionVector>,
+    ) -> Result<Vec<(String, Vec<u8>)>, oneiron::Error> {
+        let mut updates = Vec::new();
+        for (key, vv_before) in before {
+            let Some(window) = self.reassert_manager.window(&key) else {
+                continue;
+            };
+            if window.doc.oplog_vv() == vv_before {
+                continue;
+            }
+            let update = window
+                .doc
+                .export(ExportMode::updates(&vv_before))
+                .map_err(|e| {
+                    oneiron::Error::SyncProtocolError(format!(
+                        "ra drain window delta export failed for {key}: {e}"
+                    ))
+                })?;
+            updates.push((key.as_str().to_string(), update));
+        }
+        Ok(updates)
+    }
+
+    fn lifecycle_job_key(&self, kind: LifecycleJobKind) -> LifecycleJobKey {
+        LifecycleJobKey {
+            kind,
+            vault_id: SERVER_LEASE_VAULT_ID,
+            session_id: self.lifecycle_session_id,
+        }
+    }
+
+    async fn begin_lifecycle_job(&self, kind: LifecycleJobKind) -> bool {
+        self.lifecycle_in_flight
+            .lock()
+            .await
+            .insert(self.lifecycle_job_key(kind))
+    }
+
+    async fn end_lifecycle_job(&self, kind: LifecycleJobKind) {
+        self.lifecycle_in_flight
+            .lock()
+            .await
+            .remove(&self.lifecycle_job_key(kind));
     }
 
     // ─── Device-lease registry (ONE-1140, OD-3) ──────────────────────────
@@ -550,6 +804,20 @@ mod tests {
         (dir, vault)
     }
 
+    fn persist_empty_window(vault: &Arc<oneiron::Vault>, key: &WindowKey) {
+        let doc = oneiron::sync::schema::create_window_doc(SERVER_USER_ID, key);
+        oneiron::sync::server_state::persist_window_snapshot(vault, key, &doc).unwrap();
+    }
+
+    fn tombstone_value(request_byte: u8) -> [u8; oneiron::TOMBSTONE_VALUE_V2_LEN] {
+        oneiron::TombstoneValueV2 {
+            reason: oneiron::TombstoneReason::GdprDelete,
+            deleted_at: 1_700_000_000,
+            request_id: [request_byte; 16],
+        }
+        .encode()
+    }
+
     fn deep_map_bytes(doc: &LoroDoc, map: &str, key: &str) -> Option<Vec<u8>> {
         let deep = doc.get_deep_value();
         let root = deep.as_map()?;
@@ -815,8 +1083,12 @@ mod tests {
         assert_eq!(vault_id, SERVER_LEASE_VAULT_ID, "vault_id u64 BE");
         assert_eq!(granted_at, renewed_at);
         assert_eq!(
+            LEASE_DURATION_SECS, 7_776_000,
+            "90-day lease literal (OD-4)"
+        );
+        assert_eq!(
             expires_at,
-            renewed_at + 7_776_000,
+            renewed_at + LEASE_DURATION_SECS,
             "90-day lease literal (OD-4)"
         );
         assert_eq!(decision.expires_at, expires_at);
@@ -928,6 +1200,254 @@ mod tests {
         assert!(!decision.granted, "revoked is terminal — no re-activation");
         // Unknown binding: revoke is a no-op (no phantom records).
         assert!(server.revoke_lease(0xffff).await.unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn lease_expiry_tick_flips_only_active_expired_rows_and_is_idempotent() {
+        let (_dir, vault) = test_vault();
+        let server = SyncServer::new(vault.clone(), SyncServerConfig::default()).unwrap();
+        let now = 10_000;
+
+        let active_client = 0x1000_0000_0000_0001u64;
+        let revoked_client = 0x1000_0000_0000_0002u64;
+        let expired_client = 0x1000_0000_0000_0003u64;
+        let active_future_client = 0x1000_0000_0000_0004u64;
+        let lease_row = |status: LeaseStatus, expires_at: u64, pubkey_byte: u8| LeaseRecord {
+            vault_id: SERVER_LEASE_VAULT_ID,
+            status,
+            pubkey: [pubkey_byte; 32],
+            granted_at: 1,
+            renewed_at: 2,
+            expires_at,
+        };
+
+        let active = lease_row(LeaseStatus::Active, now - 1, 1);
+        let revoked = lease_row(LeaseStatus::Revoked, now - 1, 2);
+        let expired = lease_row(LeaseStatus::Expired, now - 1, 3);
+        let active_future = lease_row(LeaseStatus::Active, now + 1, 4);
+        let revoked_before = lease::encode_lease_record(&revoked);
+        let expired_before = lease::encode_lease_record(&expired);
+        let active_future_before = lease::encode_lease_record(&active_future);
+        let leases = server.root_doc.get_map(ROOT_LEASES_MAP);
+        for (client, record) in [
+            (active_client, active),
+            (revoked_client, revoked),
+            (expired_client, expired),
+            (active_future_client, active_future),
+        ] {
+            leases
+                .insert(
+                    lease::client_id_hex(client).as_str(),
+                    lease::encode_lease_record(&record).as_slice(),
+                )
+                .unwrap();
+        }
+        server.root_doc.commit();
+
+        let report = server.expire_leases_once_at(now).await.unwrap();
+        assert!(!report.skipped);
+        assert_eq!(report.expired_rows, 1);
+        assert!(report.root_update.is_some());
+
+        let active_after = vault
+            .sync_state_get(&lease::lease_key(SERVER_LEASE_VAULT_ID, active_client))
+            .unwrap()
+            .unwrap();
+        assert_eq!(active_after[1], 0x02, "status byte 0x01 -> 0x02");
+        assert_eq!(
+            vault
+                .sync_state_get(&lease::lease_key(SERVER_LEASE_VAULT_ID, revoked_client))
+                .unwrap()
+                .unwrap(),
+            revoked_before,
+            "revoked rows stay byte-identical"
+        );
+        assert_eq!(
+            vault
+                .sync_state_get(&lease::lease_key(SERVER_LEASE_VAULT_ID, expired_client))
+                .unwrap()
+                .unwrap(),
+            expired_before,
+            "already-expired rows stay byte-identical"
+        );
+        assert_eq!(
+            vault
+                .sync_state_get(&lease::lease_key(
+                    SERVER_LEASE_VAULT_ID,
+                    active_future_client
+                ))
+                .unwrap()
+                .unwrap(),
+            active_future_before,
+            "unexpired active rows stay byte-identical"
+        );
+
+        let report = server.expire_leases_once_at(now).await.unwrap();
+        assert_eq!(report.expired_rows, 0, "second tick is a no-op");
+        assert!(report.root_update.is_none());
+    }
+
+    #[tokio::test]
+    async fn concurrent_lease_expiry_tick_skips_in_flight_job() {
+        let (_dir, vault) = test_vault();
+        let server = Arc::new(SyncServer::new(vault.clone(), SyncServerConfig::default()).unwrap());
+        let now = 10_000;
+        let client_id = 0x2000_0000_0000_0001u64;
+        let record = LeaseRecord {
+            vault_id: SERVER_LEASE_VAULT_ID,
+            status: LeaseStatus::Active,
+            pubkey: [9; 32],
+            granted_at: 1,
+            renewed_at: 2,
+            expires_at: now - 1,
+        };
+        server
+            .root_doc
+            .get_map(ROOT_LEASES_MAP)
+            .insert(
+                lease::client_id_hex(client_id).as_str(),
+                lease::encode_lease_record(&record).as_slice(),
+            )
+            .unwrap();
+        server.root_doc.commit();
+
+        let registrar_guard = server.lease_registrar.lock().await;
+        let first = {
+            let server = Arc::clone(&server);
+            tokio::spawn(async move { server.expire_leases_once_at(now).await.unwrap() })
+        };
+        let expiry_key = server.lifecycle_job_key(LifecycleJobKind::LeaseExpiry);
+        loop {
+            if server
+                .lifecycle_in_flight
+                .lock()
+                .await
+                .contains(&expiry_key)
+            {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+
+        let second = server.expire_leases_once_at(now).await.unwrap();
+        assert!(second.skipped, "overlapping tick is skipped, not queued");
+        drop(registrar_guard);
+        let first = first.await.unwrap();
+        assert_eq!(first.expired_rows, 1);
+        assert_eq!(
+            vault
+                .sync_state_get(&lease::lease_key(SERVER_LEASE_VAULT_ID, client_id))
+                .unwrap()
+                .unwrap()[1],
+            0x02,
+            "the row is flipped exactly once"
+        );
+    }
+
+    #[tokio::test]
+    async fn ra_drain_tick_clears_only_fully_reasserted_windows() {
+        let (_dir, vault) = test_vault();
+        let server = SyncServer::new(vault.clone(), SyncServerConfig::default()).unwrap();
+        let complete_window = WindowKey::new("2026-03");
+        let partial_window = WindowKey::new("2026-04");
+        persist_empty_window(&vault, &complete_window);
+        persist_empty_window(&vault, &partial_window);
+        let loaded_complete_doc = server.get_or_create_window(&complete_window).await.unwrap();
+
+        let complete_id = oneiron::EntityId::now();
+        let partial_id = oneiron::EntityId::now();
+        let complete_value = tombstone_value(0x11);
+        let partial_value = tombstone_value(0x22);
+        let malformed_value = tombstone_value(0x33);
+        vault
+            .sync_state_put(
+                &format!("ra:w:{}:{}", complete_window.as_str(), complete_id.to_hex()),
+                &complete_value,
+            )
+            .unwrap();
+        vault
+            .sync_state_put(
+                &format!("ra:w:{}:{}", partial_window.as_str(), partial_id.to_hex()),
+                &partial_value,
+            )
+            .unwrap();
+        vault
+            .sync_state_put(
+                &format!("ra:w:{}:not-hex", partial_window.as_str()),
+                &malformed_value,
+            )
+            .unwrap();
+
+        let report = server.drain_reassert_markers_once().await.unwrap();
+        assert!(!report.skipped);
+        assert_eq!(
+            report.report.drained,
+            vec![complete_window.as_str().to_owned()]
+        );
+        assert_eq!(
+            report.report.still_pending,
+            vec![partial_window.as_str().to_owned()]
+        );
+        assert!(
+            vault
+                .sync_state_get(&format!(
+                    "ra:w:{}:{}",
+                    complete_window.as_str(),
+                    complete_id.to_hex()
+                ))
+                .unwrap()
+                .is_none(),
+            "complete window marker is cleared"
+        );
+        assert!(
+            vault
+                .sync_state_get(&format!("ra:w:{}:not-hex", partial_window.as_str()))
+                .unwrap()
+                .is_some(),
+            "malformed partial-window marker stays pending"
+        );
+        assert_eq!(
+            deep_map_bytes(
+                &loaded_complete_doc,
+                "tombstones",
+                complete_id.to_hex().as_str()
+            )
+            .as_deref(),
+            Some(complete_value.as_slice()),
+            "loaded server window receives the reasserted tombstone"
+        );
+        assert_eq!(
+            report.window_updates.len(),
+            1,
+            "loaded-window drain emits one client-visible update"
+        );
+        let (window_key, update) = &report.window_updates[0];
+        let encoded =
+            crate::protocol::encode_window_sync(window_key, window_sub_tags::UPDATE, update)
+                .into_result()
+                .unwrap();
+        let crate::protocol::SyncMessage::WindowSync {
+            window_key,
+            sub_tag,
+            payload,
+        } = crate::protocol::parse_message(&encoded).unwrap()
+        else {
+            panic!("expected WindowSync update");
+        };
+        assert_eq!(window_key, complete_window.as_str());
+        assert_eq!(sub_tag, window_sub_tags::UPDATE);
+        assert_eq!(payload.as_slice(), update.as_slice());
+
+        assert!(
+            server
+                .begin_lifecycle_job(LifecycleJobKind::ReassertDrain)
+                .await
+        );
+        let skipped = server.drain_reassert_markers_once().await.unwrap();
+        assert!(skipped.skipped, "overlapping ra drain is skipped");
+        server
+            .end_lifecycle_job(LifecycleJobKind::ReassertDrain)
+            .await;
     }
 
     /// ONE-1140 RULING A (OD-8 amended, pubkey-bound; delete-safety adjacent,

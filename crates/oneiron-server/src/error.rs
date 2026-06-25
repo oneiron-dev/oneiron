@@ -6,9 +6,10 @@ use axum::response::{IntoResponse, Response};
 use serde::de;
 use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::{Map, Value, json};
+use utoipa::ToSchema;
 
 /// Closed catalog of error codes emitted by agent-facing server APIs.
-#[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, PartialEq, Serialize, ToSchema)]
 pub enum ErrorCode {
     #[serde(rename = "BAD_REQUEST")]
     BadRequest,
@@ -123,7 +124,7 @@ impl ErrorCode {
 }
 
 /// Details payload for each [`ErrorCode`].
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema)]
 #[serde(tag = "code")]
 pub enum ApiErrorDetails {
     #[serde(rename = "BAD_REQUEST", rename_all = "camelCase")]
@@ -212,11 +213,15 @@ impl ApiErrorDetails {
 }
 
 /// Machine-actionable API error body.
-#[derive(Clone, Debug, PartialEq, Serialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, ToSchema)]
 pub struct ApiError {
+    /// Stable machine-readable error code.
     code: ErrorCode,
+    /// Human-readable error summary.
     message: String,
+    /// Code-specific structured error details.
     details: ApiErrorDetails,
+    /// Optional remediation hints for clients.
     suggestions: Vec<String>,
 }
 

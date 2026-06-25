@@ -16,10 +16,14 @@ const ENTITY_SUMMARY_FIELDS: &[&str] = &["id", "kind", "label", "updatedAt"];
 const ENTITY_FULL_META_FIELDS: &[&str] = &["id", "kind", "type", "label", "updatedAt"];
 
 /// Read projection requested by homogeneous CRUD read endpoints.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, utoipa::ToSchema)]
+#[schema(rename_all = "lowercase")]
 pub enum View {
+    /// Compact read projection for list/search results.
     Summary,
+    /// Default entity read projection; raw bytes for `/api/entity/{id}`.
     Standard,
+    /// Full JSON projection with decoded body fields and metadata.
     Full,
 }
 

@@ -19,10 +19,11 @@ use oneiron::{
     UnprocessedItem, types::ENTITY_TYPE_NOTIFICATION,
 };
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde_json::{Value, json};
+use utoipa::{IntoParams, OpenApi, ToSchema};
 
 use crate::config::SyncServerConfig;
-use crate::error::ApiError;
+use crate::error::{ApiError, ApiErrorDetails, ErrorCode};
 use crate::idempotency::{IdempotencyLayerState, idempotency_middleware};
 use crate::projection::{self, View};
 use crate::protocol::{CountMode, PaginatedResponse, ResponseMeta};
@@ -52,6 +53,49 @@ const CAPABILITIES: &[&str] = &[
 const CAPABILITY_MODES: &[&str] = &["flash", "thinking", "pro", "ultra"];
 const RESUME_NOTIFICATION_PAGE_SIZE: usize = 512;
 
+#[derive(OpenApi)]
+#[openapi(
+    paths(
+        openapi_json,
+        health,
+        discover,
+        search_vector,
+        search_text,
+        get_entity,
+        get_edges,
+        context_pack,
+        lease_revoke
+    ),
+    components(schemas(
+        CountMode,
+        PaginatedResponse<SearchResult>,
+        ResponseMeta,
+        View,
+        HealthResponse,
+        DiscoverResponse,
+        BoundContext,
+        DiscoveredEntity,
+        FeatureFlags,
+        RateLimitStatus,
+        ApiError,
+        ApiErrorDetails,
+        ErrorCode,
+        VectorSearchQuery,
+        SearchResult,
+        TextSearchQuery,
+        EdgeResult,
+        LeaseRevokeRequest,
+        LeaseRevokeResponse,
+        ContextPackRequest
+    )),
+    info(
+        title = "Oneiron Server API",
+        version = "0.1.0",
+        description = "Local Oneiron sync daemon HTTP API for search, entity reads, context-pack requests, and lease recovery."
+    )
+)]
+pub(crate) struct ApiDoc;
+
 /// Builds the HTTP API routes.
 pub(crate) fn api_routes(server: Arc<SyncServer>) -> Router {
     let idempotency = IdempotencyLayerState::new(server.clone());
@@ -65,6 +109,7 @@ pub(crate) fn api_routes(server: Arc<SyncServer>) -> Router {
         ));
 
     Router::new()
+        .route("/api/openapi.json", get(openapi_json))
         .route("/api/health", get(health))
         .route("/api/core/discover", get(discover))
         .route("/api/search/vector", get(search_vector))
@@ -78,7 +123,203 @@ pub(crate) fn api_routes(server: Arc<SyncServer>) -> Router {
         .with_state(server)
 }
 
+/// Returns the generated OpenAPI document for the HTTP API.
+#[utoipa::path(
+    get,
+    path = "/api/openapi.json",
+    responses(
+        (
+            status = 200,
+            description = "Generated OpenAPI 3.1 document for the HTTP API.",
+            body = Object,
+            content_type = "application/json"
+        ),
+        (
+            status = 401,
+            description = "Missing or invalid `x-oneiron-secret` header.",
+            body = ApiError,
+            content_type = "application/json",
+            example = json!({
+                "code": "UNAUTHORIZED",
+                "message": "unauthorized",
+                "details": { "code": "UNAUTHORIZED" },
+                "suggestions": ["set x-oneiron-secret to the configured shared secret"]
+            })
+        )
+    )
+)]
+async fn openapi_json(
+    headers: HeaderMap,
+    State(server): State<Arc<SyncServer>>,
+) -> Result<Json<Value>, ApiError> {
+    check_api_auth(&headers, &server.config)?;
+    Ok(Json(openapi_document()))
+}
+
+fn openapi_document() -> Value {
+    let mut spec = serde_json::to_value(ApiDoc::openapi()).expect("serialize generated OpenAPI");
+    merge_error_components(&mut spec);
+    add_security_scheme(&mut spec);
+    mark_entity_response_as_binary(&mut spec);
+    fill_schema_description_gaps(&mut spec);
+    spec
+}
+
+fn merge_error_components(spec: &mut Value) {
+    let Some(components) = spec.get_mut("components").and_then(Value::as_object_mut) else {
+        return;
+    };
+    let schemas = components
+        .entry("schemas")
+        .or_insert_with(|| json!({}))
+        .as_object_mut()
+        .expect("OpenAPI schemas must be an object");
+    let error_components = crate::error::openapi_error_components();
+    let error_components = error_components
+        .as_object()
+        .expect("error components must be an object");
+    for (name, schema) in error_components {
+        schemas.insert(name.clone(), schema.clone());
+    }
+}
+
+fn mark_entity_response_as_binary(spec: &mut Value) {
+    if let Some(content) = spec
+        .get_mut("paths")
+        .and_then(Value::as_object_mut)
+        .and_then(|paths| paths.get_mut("/api/entity/{id}"))
+        .and_then(Value::as_object_mut)
+        .and_then(|path_item| path_item.get_mut("get"))
+        .and_then(Value::as_object_mut)
+        .and_then(|operation| operation.get_mut("responses"))
+        .and_then(Value::as_object_mut)
+        .and_then(|responses| responses.get_mut("200"))
+        .and_then(Value::as_object_mut)
+        .and_then(|response| response.get_mut("content"))
+        .and_then(Value::as_object_mut)
+        .and_then(|content| content.get_mut("application/octet-stream"))
+        .and_then(Value::as_object_mut)
+    {
+        content.insert(
+            "schema".to_owned(),
+            json!({
+                "type": "string",
+                "format": "binary",
+            }),
+        );
+    }
+}
+
+fn fill_schema_description_gaps(spec: &mut Value) {
+    set_schema_property_description(
+        spec,
+        "VectorSearchQuery",
+        "view",
+        "Optional projection view for returned items. Defaults to summary.",
+    );
+    set_schema_property_description(
+        spec,
+        "TextSearchQuery",
+        "view",
+        "Optional projection view for returned items. Defaults to summary.",
+    );
+}
+
+fn set_schema_property_description(
+    spec: &mut Value,
+    schema_name: &str,
+    property_name: &str,
+    description: &str,
+) {
+    if let Some(property) = spec
+        .get_mut("components")
+        .and_then(Value::as_object_mut)
+        .and_then(|components| components.get_mut("schemas"))
+        .and_then(Value::as_object_mut)
+        .and_then(|schemas| schemas.get_mut(schema_name))
+        .and_then(Value::as_object_mut)
+        .and_then(|schema| schema.get_mut("properties"))
+        .and_then(Value::as_object_mut)
+        .and_then(|properties| properties.get_mut(property_name))
+        .and_then(Value::as_object_mut)
+    {
+        property.insert("description".to_owned(), Value::from(description));
+    }
+}
+
+fn add_security_scheme(spec: &mut Value) {
+    let Some(components) = spec.get_mut("components").and_then(Value::as_object_mut) else {
+        return;
+    };
+    components
+        .entry("securitySchemes")
+        .or_insert_with(|| json!({}))
+        .as_object_mut()
+        .expect("OpenAPI securitySchemes must be an object")
+        .insert(
+            "OneironSecret".to_owned(),
+            json!({
+                "type": "apiKey",
+                "in": "header",
+                "name": "x-oneiron-secret",
+                "description": "Phase-1 shared secret required by protected API routes when unauthenticated development access is disabled."
+            }),
+        );
+
+    let protected_operations = [
+        ("/api/openapi.json", "get"),
+        ("/api/core/discover", "get"),
+        ("/api/search/vector", "get"),
+        ("/api/search/text", "get"),
+        ("/api/entity/{id}", "get"),
+        ("/api/edges/{id}", "get"),
+        ("/api/context-pack", "post"),
+        ("/api/lease/revoke", "post"),
+    ];
+    for (path, method) in protected_operations {
+        if let Some(operation) = spec
+            .get_mut("paths")
+            .and_then(Value::as_object_mut)
+            .and_then(|paths| paths.get_mut(path))
+            .and_then(Value::as_object_mut)
+            .and_then(|path_item| path_item.get_mut(method))
+            .and_then(Value::as_object_mut)
+        {
+            operation.insert("security".to_owned(), json!([{ "OneironSecret": [] }]));
+        }
+    }
+}
+
 /// Health check endpoint.
+#[utoipa::path(
+    get,
+    path = "/api/health",
+    responses(
+        (
+            status = 200,
+            description = "Server is reachable and returns supported capabilities, formats, and rate-limit settings.",
+            body = HealthResponse,
+            content_type = "application/json",
+            example = json!({
+                "status": "ok",
+                "service": "oneiron-server",
+                "capabilities": {
+                    "capabilities": ["core.discover", "search.vector", "search.text"],
+                    "modes": ["flash", "thinking", "pro", "ultra"]
+                },
+                "formats": ["json", "yaml", "toon", "markdown", "plaintext"],
+                "rate_limit": {
+                    "api_enforced": false,
+                    "websocket_enforced": true,
+                    "max_messages_per_sec": 64,
+                    "max_windows_per_connection": 8,
+                    "max_frame_size_bytes": 1048576,
+                    "max_update_payload_bytes": 1048576
+                }
+            })
+        )
+    )
+)]
 async fn health(State(server): State<Arc<SyncServer>>) -> impl IntoResponse {
     Json(HealthResponse {
         status: "ok",
@@ -139,62 +380,174 @@ fn query_rejection_error(rejection: QueryRejection) -> ApiError {
 
 // ─── Discovery / capability metadata ─────────────────────────────────────────
 
-#[derive(Serialize)]
+/// Health response returned by `/api/health`.
+#[derive(Serialize, ToSchema)]
 struct HealthResponse {
+    /// Health status for the HTTP service.
+    #[schema(value_type = String, example = "ok")]
     status: &'static str,
+    /// Service identifier for this daemon.
+    #[schema(value_type = String, example = "oneiron-server")]
     service: &'static str,
+    /// Currently advertised API capabilities and execution modes.
     capabilities: FeatureFlags,
+    /// Payload formats this API can produce or consume.
+    #[schema(value_type = Vec<String>, example = json!(["json", "yaml", "toon", "markdown", "plaintext"]))]
     formats: Vec<&'static str>,
+    /// Server-side rate-limit configuration visible to API clients.
     rate_limit: RateLimitStatus,
 }
 
-#[derive(Serialize)]
+/// Read-only discovery metadata for agent bootstrap.
+#[derive(Serialize, ToSchema)]
 struct DiscoverResponse {
+    /// Stable API level string advertised by this server.
+    #[schema(value_type = String, example = "v1")]
     api_version: &'static str,
+    /// Payload formats this API can produce or consume.
+    #[schema(value_type = Vec<String>, example = json!(["json", "yaml", "toon", "markdown", "plaintext"]))]
     formats: Vec<&'static str>,
+    /// Effective authorization scopes available to the authenticated caller.
+    #[schema(value_type = Vec<String>, example = json!(["core:discover", "vault:read", "search:read", "entity:read", "sync:connect"]))]
     scopes: Vec<&'static str>,
+    /// Context ids the server has already bound for the caller.
     bound: BoundContext,
+    /// Known persona entities available for caller selection.
     personas: Vec<DiscoveredEntity>,
+    /// Known conversation entities available for caller selection.
     conversations: Vec<DiscoveredEntity>,
+    /// Capabilities and modes advertised by this API.
     feature_flags: FeatureFlags,
+    /// Entity counts keyed by numeric entity type.
+    #[schema(example = json!({"1": 3, "2": 1}))]
     counts: BTreeMap<String, u64>,
+    /// Predicate namespaces discovered from claim predicates.
     predicate_namespaces: Vec<String>,
+    /// Most recent learned-at timestamp observed during discovery, when available.
+    #[schema(example = 1782357635_u64)]
     last_activity: Option<u64>,
 }
 
-#[derive(Serialize)]
+/// Caller context that has already been bound by the API.
+#[derive(Serialize, ToSchema)]
 struct BoundContext {
+    /// Bound vault id when the server has one for the caller.
+    #[schema(example = "vault-local")]
     vault: Option<String>,
+    /// Bound persona entity id when selected.
+    #[schema(example = "0123456789abcdef0123456789abcdef")]
     persona: Option<String>,
+    /// Bound conversation entity id when selected.
+    #[schema(example = "fedcba9876543210fedcba9876543210")]
     conversation: Option<String>,
 }
 
-#[derive(Serialize)]
+/// Compact entity reference returned by discovery.
+#[derive(Serialize, ToSchema)]
 struct DiscoveredEntity {
+    /// Hex-encoded entity id.
+    #[schema(example = "0123456789abcdef0123456789abcdef")]
     id: String,
+    /// Numeric entity type byte.
+    #[schema(example = 1)]
     entity_type: u8,
 }
 
-#[derive(Serialize)]
+/// Capability flags advertised by the HTTP API.
+#[derive(Serialize, ToSchema)]
 struct FeatureFlags {
+    /// Operation capabilities clients may rely on.
+    #[schema(value_type = Vec<String>, example = json!(["core.discover", "search.vector", "search.text"]))]
     capabilities: Vec<&'static str>,
+    /// Model or runtime effort modes advertised by the API.
+    #[schema(value_type = Vec<String>, example = json!(["flash", "thinking", "pro", "ultra"]))]
     modes: Vec<&'static str>,
 }
 
-#[derive(Serialize)]
+/// Rate-limit settings advertised by health and discovery surfaces.
+#[derive(Serialize, ToSchema)]
 struct RateLimitStatus {
+    /// Whether HTTP API requests are currently rate-limited.
+    #[schema(example = false)]
     api_enforced: bool,
+    /// Whether websocket messages are currently rate-limited.
+    #[schema(example = true)]
     websocket_enforced: bool,
+    /// Maximum inbound websocket messages per second.
+    #[schema(example = 64)]
     max_messages_per_sec: u32,
+    /// Maximum sync windows that may be attached to one connection.
+    #[schema(example = 8)]
     max_windows_per_connection: usize,
+    /// Maximum accepted websocket frame size in bytes.
+    #[schema(example = 1048576)]
     max_frame_size_bytes: usize,
+    /// Maximum accepted sync update payload size in bytes.
+    #[schema(example = 1048576)]
     max_update_payload_bytes: usize,
 }
 
 /// Vault bootstrap discovery for external agents with only the Phase-1 auth
 /// secret. This is read-only aggregation over existing vault indexes and
 /// server config; it does not mint identity, mutate auth, or persist state.
-/// GET /api/core/discover
+#[utoipa::path(
+    get,
+    path = "/api/core/discover",
+    responses(
+        (
+            status = 200,
+            description = "Read-only capability and vault discovery metadata for external agents.",
+            body = DiscoverResponse,
+            content_type = "application/json",
+            example = json!({
+                "api_version": "v1",
+                "formats": ["json", "yaml", "toon", "markdown", "plaintext"],
+                "scopes": ["core:discover", "vault:read", "search:read", "entity:read", "sync:connect"],
+                "bound": {
+                    "vault": null,
+                    "persona": null,
+                    "conversation": null
+                },
+                "personas": [{
+                    "id": "0123456789abcdef0123456789abcdef",
+                    "entity_type": 1
+                }],
+                "conversations": [{
+                    "id": "fedcba9876543210fedcba9876543210",
+                    "entity_type": 2
+                }],
+                "feature_flags": {
+                    "capabilities": ["core.discover", "search.vector", "search.text"],
+                    "modes": ["flash", "thinking", "pro", "ultra"]
+                },
+                "counts": {
+                    "1": 3,
+                    "2": 1
+                },
+                "predicate_namespaces": ["oneiron", "user"],
+                "last_activity": 1782357635_u64
+            })
+        ),
+        (
+            status = 401,
+            description = "Missing or invalid `x-oneiron-secret` header.",
+            body = ApiError,
+            content_type = "application/json",
+            example = json!({
+                "code": "UNAUTHORIZED",
+                "message": "unauthorized",
+                "details": { "code": "UNAUTHORIZED" },
+                "suggestions": ["set x-oneiron-secret to the configured shared secret"]
+            })
+        ),
+        (
+            status = 500,
+            description = "Discovery scan failed.",
+            body = ApiError,
+            content_type = "application/json"
+        )
+    )
+)]
 async fn discover(
     headers: HeaderMap,
     State(server): State<Arc<SyncServer>>,
@@ -527,16 +880,32 @@ fn caller_marker_contains(value: Option<&Value>, caller: &str) -> bool {
 
 // ─── Search Routes ────────────────────────────────────────────────────────────
 
-#[derive(Deserialize)]
+/// Query parameters for vector similarity search.
+#[derive(Deserialize, ToSchema, IntoParams)]
+#[into_params(parameter_in = Query)]
+#[schema(example = json!({
+    "query": "0.12,-0.04,0.98",
+    "limit": 10,
+    "countMode": "estimate"
+}))]
 struct VectorSearchQuery {
-    /// Comma-separated f32 values for the query vector.
+    /// Comma-separated `f32` embedding values used as the vector search probe.
+    #[schema(example = "0.12,-0.04,0.98")]
+    #[param(example = "0.12,-0.04,0.98")]
     query: String,
-    /// Maximum results to return.
+    /// Maximum number of nearest entities to return. Defaults to `10` when omitted.
     #[serde(default = "default_limit")]
+    #[schema(default = default_limit, example = 10)]
+    #[param(default = 10, example = 10)]
     limit: usize,
+    /// Optional projection view for returned items. Defaults to `summary`.
+    #[schema(example = "summary")]
+    #[param(example = "summary")]
     view: Option<View>,
     /// Count precision for response metadata. Search defaults to estimate.
     #[serde(default = "CountMode::default_estimate", rename = "countMode")]
+    #[schema(example = "estimate")]
+    #[param(example = "estimate")]
     count_mode: CountMode,
 }
 
@@ -544,10 +913,67 @@ fn default_limit() -> usize {
     10
 }
 
+/// Search hit returned by vector and text search endpoints.
+#[derive(Serialize, Deserialize, ToSchema)]
+#[schema(example = json!({
+    "id": "0123456789abcdef0123456789abcdef",
+    "score": 0.87
+}))]
+struct SearchResult {
+    /// Hex-encoded entity id for the matched vault record.
+    #[schema(example = "0123456789abcdef0123456789abcdef")]
+    id: String,
+    /// Ranking score from the selected retrieval engine; vector search reports the vector score or distance, while text search reports BM25 relevance. Compare scores only within one response.
+    #[schema(example = 0.87)]
+    score: f32,
+}
+
 type SearchResponse = PaginatedResponse<Value>;
 
 /// Vector similarity search.
-/// GET /api/search/vector?query=0.1,0.2,...&limit=10&countMode=estimate
+#[utoipa::path(
+    get,
+    path = "/api/search/vector",
+    params(VectorSearchQuery),
+    responses(
+        (
+            status = 200,
+            description = "Vector search results ordered by the vault retrieval engine. Items are projection objects selected by `view`; `view=standard` returns `SearchResult` objects.",
+            body = Object,
+            content_type = "application/json",
+            example = json!({
+                "items": [{
+                    "id": "0123456789abcdef0123456789abcdef",
+                    "kind": "task",
+                    "label": "Project kickoff notes",
+                    "updatedAt": 1782357635_u64
+                }],
+                "meta": {
+                    "total": 1,
+                    "countMode": "estimate"
+                }
+            })
+        ),
+        (
+            status = 400,
+            description = "Malformed query vector or invalid query parameters.",
+            body = ApiError,
+            content_type = "application/json"
+        ),
+        (
+            status = 401,
+            description = "Missing or invalid `x-oneiron-secret` header.",
+            body = ApiError,
+            content_type = "application/json"
+        ),
+        (
+            status = 500,
+            description = "Vector search or projection failed.",
+            body = ApiError,
+            content_type = "application/json"
+        )
+    )
+)]
 async fn search_vector(
     headers: HeaderMap,
     State(server): State<Arc<SyncServer>>,
@@ -587,19 +1013,79 @@ async fn search_vector(
     Ok(Json(PaginatedResponse::new(response, None, meta)))
 }
 
-#[derive(Deserialize)]
+/// Query parameters for BM25 text search.
+#[derive(Deserialize, ToSchema, IntoParams)]
+#[into_params(parameter_in = Query)]
+#[schema(example = json!({
+    "query": "project kickoff notes",
+    "limit": 10,
+    "countMode": "estimate"
+}))]
 struct TextSearchQuery {
+    /// Natural-language or keyword query used by the BM25 text index.
+    #[schema(example = "project kickoff notes")]
+    #[param(example = "project kickoff notes")]
     query: String,
+    /// Maximum number of text hits to return. Defaults to `10` when omitted.
     #[serde(default = "default_limit")]
+    #[schema(default = default_limit, example = 10)]
+    #[param(default = 10, example = 10)]
     limit: usize,
+    /// Optional projection view for returned items. Defaults to `summary`.
+    #[schema(example = "summary")]
+    #[param(example = "summary")]
     view: Option<View>,
     /// Count precision for response metadata. Search defaults to estimate.
     #[serde(default = "CountMode::default_estimate", rename = "countMode")]
+    #[schema(example = "estimate")]
+    #[param(example = "estimate")]
     count_mode: CountMode,
 }
 
 /// BM25 text search.
-/// GET /api/search/text?query=hello+world&limit=10&countMode=estimate
+#[utoipa::path(
+    get,
+    path = "/api/search/text",
+    params(TextSearchQuery),
+    responses(
+        (
+            status = 200,
+            description = "BM25 text search results ordered by relevance. Items are projection objects selected by `view`; `view=standard` returns `SearchResult` objects.",
+            body = Object,
+            content_type = "application/json",
+            example = json!({
+                "items": [{
+                    "id": "fedcba9876543210fedcba9876543210",
+                    "kind": "task",
+                    "label": "Project kickoff notes",
+                    "updatedAt": 1782357635_u64
+                }],
+                "meta": {
+                    "total": 1,
+                    "countMode": "estimate"
+                }
+            })
+        ),
+        (
+            status = 400,
+            description = "Invalid query parameters.",
+            body = ApiError,
+            content_type = "application/json"
+        ),
+        (
+            status = 401,
+            description = "Missing or invalid `x-oneiron-secret` header.",
+            body = ApiError,
+            content_type = "application/json"
+        ),
+        (
+            status = 500,
+            description = "Text search or projection failed.",
+            body = ApiError,
+            content_type = "application/json"
+        )
+    )
+)]
 async fn search_text(
     headers: HeaderMap,
     State(server): State<Arc<SyncServer>>,
@@ -665,13 +1151,95 @@ fn search_response(
 
 // ─── Entity Routes ────────────────────────────────────────────────────────────
 
-#[derive(Deserialize)]
+#[derive(Deserialize, ToSchema, IntoParams)]
+#[into_params(parameter_in = Query)]
 struct ViewQuery {
+    /// Optional projection view. Entity reads default to `standard`; edge reads default to `summary`.
+    #[schema(example = "standard")]
+    #[param(example = "standard")]
     view: Option<View>,
 }
 
 /// Get entity by ID.
-/// GET /api/entity/:id
+#[utoipa::path(
+    get,
+    path = "/api/entity/{id}",
+    params(
+        (
+            "id" = String,
+            Path,
+            description = "Hex-encoded entity id to retrieve from the vault. Agents should pass ids exactly as returned by search results.",
+            example = "0123456789abcdef0123456789abcdef"
+        ),
+        ViewQuery
+    ),
+    responses(
+        (
+            status = 200,
+            description = "Raw entity payload bytes for the requested id when `view=standard` or omitted. `view=summary` and `view=full` return JSON projections.",
+            content(
+                (
+                    String = "application/octet-stream",
+                    example = "raw entity bytes"
+                ),
+                (
+                    Object = "application/json",
+                    examples(
+                        (
+                            "summary" = (
+                                summary = "Summary projection",
+                                value = json!({
+                                    "id": "0123456789abcdef0123456789abcdef",
+                                    "kind": "TASK",
+                                    "label": "Ship OpenAPI projections",
+                                    "updatedAt": 1782357635_u64
+                                })
+                            )
+                        ),
+                        (
+                            "full" = (
+                                summary = "Full projection",
+                                value = json!({
+                                    "id": "0123456789abcdef0123456789abcdef",
+                                    "kind": "TASK",
+                                    "type": 1,
+                                    "label": "Ship OpenAPI projections",
+                                    "updatedAt": 1782357635_u64,
+                                    "title": "Ship OpenAPI projections",
+                                    "body": "Document JSON entity projection responses."
+                                })
+                            )
+                        )
+                    )
+                )
+            )
+        ),
+        (
+            status = 400,
+            description = "Malformed entity id or invalid view query parameter.",
+            body = ApiError,
+            content_type = "application/json"
+        ),
+        (
+            status = 401,
+            description = "Missing or invalid `x-oneiron-secret` header.",
+            body = ApiError,
+            content_type = "application/json"
+        ),
+        (
+            status = 404,
+            description = "No entity exists for the supplied id.",
+            body = ApiError,
+            content_type = "application/json"
+        ),
+        (
+            status = 500,
+            description = "Entity lookup or projection failed.",
+            body = ApiError,
+            content_type = "application/json"
+        )
+    )
+)]
 async fn get_entity(
     headers: HeaderMap,
     State(server): State<Arc<SyncServer>>,
@@ -723,7 +1291,49 @@ async fn get_entity(
 }
 
 /// Get outbound edges for an entity.
-/// GET /api/edges/:id
+#[utoipa::path(
+    get,
+    path = "/api/edges/{id}",
+    params(
+        (
+            "id" = String,
+            Path,
+            description = "Hex-encoded source entity id whose outbound edge list should be returned.",
+            example = "0123456789abcdef0123456789abcdef"
+        ),
+        ViewQuery
+    ),
+    responses(
+        (
+            status = 200,
+            description = "Outbound graph edges from the requested entity, projected according to `view`.",
+            body = Vec<Object>,
+            content_type = "application/json",
+            example = json!([{
+                "kind": 1,
+                "target": "fedcba9876543210fedcba9876543210"
+            }])
+        ),
+        (
+            status = 400,
+            description = "Malformed entity id or invalid view query parameter.",
+            body = ApiError,
+            content_type = "application/json"
+        ),
+        (
+            status = 401,
+            description = "Missing or invalid `x-oneiron-secret` header.",
+            body = ApiError,
+            content_type = "application/json"
+        ),
+        (
+            status = 500,
+            description = "Edge lookup failed.",
+            body = ApiError,
+            content_type = "application/json"
+        )
+    )
+)]
 async fn get_edges(
     headers: HeaderMap,
     State(server): State<Arc<SyncServer>>,
@@ -754,16 +1364,50 @@ async fn get_edges(
     Ok(Json(response))
 }
 
+/// Outbound edge from one entity to another.
+#[derive(Serialize, ToSchema)]
+#[schema(example = json!({
+    "kind": 1,
+    "target": "fedcba9876543210fedcba9876543210",
+    "weight": 1.0,
+    "created_at": 1782357635_u64
+}))]
+struct EdgeResult {
+    /// Numeric edge-kind discriminant used by the vault graph index.
+    #[schema(example = 1)]
+    kind: u8,
+    /// Hex-encoded target entity id reached by this outbound edge.
+    #[schema(example = "fedcba9876543210fedcba9876543210")]
+    target: String,
+    /// Edge weight used by graph and context ranking.
+    #[schema(example = 1.0)]
+    weight: f32,
+    /// Creation timestamp recorded for the edge, expressed as Unix seconds.
+    #[schema(example = 1782357635_u64)]
+    created_at: u64,
+}
+
 // ─── Lease revocation (ONE-1140, OD-8) ────────────────────────────────────────
 
-#[derive(Deserialize)]
+/// Request body for revoking one device lease binding.
+#[derive(Deserialize, ToSchema)]
+#[schema(example = json!({
+    "client_id": "0000000000000042"
+}))]
 struct LeaseRevokeRequest {
-    /// The binding's registry key: 16 lowercase hex chars (`{:016x}`).
+    /// Device lease-binding id to revoke for lost-device or stolen-device recovery. The value is the binding's registry key encoded as 16 lowercase hex chars (`{:016x}`).
+    #[schema(example = "0000000000000042")]
     client_id: String,
 }
 
-#[derive(Serialize)]
+/// Result of a lease revocation request.
+#[derive(Serialize, ToSchema)]
+#[schema(example = json!({
+    "revoked": true
+}))]
 struct LeaseRevokeResponse {
+    /// `true` when an active binding was found and marked revoked; `false` when the id was well-formed but no binding existed.
+    #[schema(example = true)]
     revoked: bool,
 }
 
@@ -771,7 +1415,44 @@ struct LeaseRevokeResponse {
 /// binding; auth = Phase-1 shared secret, same as every API route). The
 /// registry change is broadcast to all live connections so replica `ls:`
 /// mirrors converge without a reconnect.
-/// POST /api/lease/revoke  body: {"client_id": "<16 hex>"}
+#[utoipa::path(
+    post,
+    path = "/api/lease/revoke",
+    request_body(
+        content = LeaseRevokeRequest,
+        description = "Lease binding to revoke for owner recovery.",
+        content_type = "application/json"
+    ),
+    responses(
+        (
+            status = 200,
+            description = "Lease revocation completed or found no matching binding.",
+            body = LeaseRevokeResponse,
+            content_type = "application/json",
+            example = json!({
+                "revoked": true
+            })
+        ),
+        (
+            status = 400,
+            description = "`client_id` is not exactly 16 lowercase hex characters.",
+            body = ApiError,
+            content_type = "application/json"
+        ),
+        (
+            status = 401,
+            description = "Missing or invalid `x-oneiron-secret` header.",
+            body = ApiError,
+            content_type = "application/json"
+        ),
+        (
+            status = 500,
+            description = "Lease revocation failed.",
+            body = ApiError,
+            content_type = "application/json"
+        )
+    )
+)]
 async fn lease_revoke(
     headers: HeaderMap,
     State(server): State<Arc<SyncServer>>,
@@ -813,15 +1494,24 @@ async fn lease_revoke(
 
 // ─── Context Pack ─────────────────────────────────────────────────────────────
 
-#[derive(Deserialize)]
+/// Request body for assembling a context pack from text and/or vector seeds.
+#[derive(Deserialize, ToSchema)]
+#[schema(example = json!({
+    "query": "recent decisions about project alpha",
+    "query_vector": [0.12, -0.04, 0.98],
+    "limit": 10
+}))]
 #[allow(dead_code)] // Fields deserialized from JSON, used in Phase 1D context-pack endpoint
 struct ContextPackRequest {
-    /// Query text for retrieval.
+    /// Optional text retrieval seed for context-pack assembly; omit when the caller only has an embedding vector.
+    #[schema(example = "recent decisions about project alpha")]
     query: Option<String>,
-    /// Query vector (as list of f32).
+    /// Optional embedding vector retrieval seed; omit when the caller only has text.
+    #[schema(example = json!([0.12, -0.04, 0.98]))]
     query_vector: Option<Vec<f32>>,
-    /// Maximum entities to retrieve.
+    /// Maximum number of candidate entities to retrieve for the pack. Defaults to `10` when omitted.
     #[serde(default = "default_limit")]
+    #[schema(default = default_limit, example = 10)]
     limit: usize,
     /// Per-item token cap for context-pack serialization; 0 disables it.
     #[serde(default, rename = "maxItemTokens", alias = "max_item_tokens")]
@@ -829,7 +1519,33 @@ struct ContextPackRequest {
 }
 
 /// Context pack assembly.
-/// POST /api/context-pack
+#[utoipa::path(
+    post,
+    path = "/api/context-pack",
+    request_body(
+        content = ContextPackRequest,
+        description = "Text and/or vector seed plus retrieval limits for context-pack assembly.",
+        content_type = "application/json"
+    ),
+    responses(
+        (
+            status = 200,
+            description = "Context-pack endpoint status response.",
+            body = Object,
+            content_type = "application/json",
+            example = json!({
+                "status": "ok",
+                "message": "context-pack endpoint ready — full implementation pending ContextPackBuilder integration"
+            })
+        ),
+        (
+            status = 401,
+            description = "Missing or invalid `x-oneiron-secret` header.",
+            body = ApiError,
+            content_type = "application/json"
+        )
+    )
+)]
 async fn context_pack(
     headers: HeaderMap,
     State(server): State<Arc<SyncServer>>,
@@ -851,6 +1567,10 @@ async fn context_pack(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use axum::body::{Body, to_bytes};
+    use axum::http::{Request, header::CONTENT_TYPE};
+    use serde_json::Value;
+    use tower::ServiceExt;
 
     #[test]
     fn search_response_drops_stale_hydrated_hits() {
@@ -901,5 +1621,286 @@ mod tests {
         );
         assert_eq!(search_fetch_limit(CountMode::Estimate, 7), 8);
         assert_eq!(CountMode::Exact.for_search_response(), CountMode::Estimate);
+    }
+
+    fn generated_spec() -> Value {
+        openapi_document()
+    }
+
+    fn assert_non_empty_string(value: &Value, context: &str) {
+        assert!(
+            value.as_str().is_some_and(|s| !s.trim().is_empty()),
+            "{context} must be a non-empty string, got {value:?}"
+        );
+    }
+
+    fn test_server() -> (tempfile::TempDir, Arc<SyncServer>) {
+        let dir = tempfile::tempdir().expect("temp vault dir");
+        let vault =
+            Arc::new(oneiron::Vault::open(dir.path(), oneiron::VaultConfig::device()).unwrap());
+        let config = SyncServerConfig {
+            allow_unauthenticated: true,
+            ..Default::default()
+        };
+        let server = Arc::new(SyncServer::new(vault, config).expect("sync server"));
+        (dir, server)
+    }
+
+    #[test]
+    fn generated_openapi_has_descriptions_examples_and_defaults() {
+        let spec = generated_spec();
+
+        assert!(
+            spec["openapi"]
+                .as_str()
+                .is_some_and(|v| v.starts_with("3.1")),
+            "OpenAPI version should start with 3.1: {:?}",
+            spec["openapi"]
+        );
+
+        let paths = spec["paths"].as_object().expect("paths object");
+        for path in [
+            "/api/openapi.json",
+            "/api/core/discover",
+            "/api/search/vector",
+            "/api/search/text",
+            "/api/entity/{id}",
+            "/api/edges/{id}",
+            "/api/context-pack",
+            "/api/lease/revoke",
+            "/api/health",
+        ] {
+            assert!(paths.contains_key(path), "missing path {path}");
+        }
+
+        let vector_success = &spec["paths"]["/api/search/vector"]["get"]["responses"]["200"]["content"]
+            ["application/json"];
+        assert!(
+            vector_success.get("example").is_some() || vector_success.get("examples").is_some(),
+            "vector search 200 response must include an example: {vector_success:?}"
+        );
+        let vector_example = &vector_success["example"];
+        assert!(
+            vector_example["items"].is_array(),
+            "vector search example must show paginated items: {vector_example:?}"
+        );
+        assert_eq!(
+            vector_example["meta"]["countMode"],
+            Value::from("estimate"),
+            "vector search example must show estimate count metadata"
+        );
+
+        let discover_success = &spec["paths"]["/api/core/discover"]["get"]["responses"]["200"]["content"]
+            ["application/json"];
+        assert!(
+            discover_success.get("example").is_some() || discover_success.get("examples").is_some(),
+            "discover 200 response must include an example: {discover_success:?}"
+        );
+        assert!(
+            spec["paths"]["/api/core/discover"]["get"]["responses"]
+                .as_object()
+                .is_some_and(|responses| responses.contains_key("401")),
+            "discover must document its 401 ApiError response"
+        );
+
+        assert_eq!(
+            spec["components"]["securitySchemes"]["OneironSecret"]["name"],
+            Value::from("x-oneiron-secret"),
+            "protected operations must document the x-oneiron-secret auth header"
+        );
+        for (path, method) in [
+            ("/api/openapi.json", "get"),
+            ("/api/core/discover", "get"),
+            ("/api/search/vector", "get"),
+            ("/api/search/text", "get"),
+            ("/api/entity/{id}", "get"),
+            ("/api/edges/{id}", "get"),
+            ("/api/context-pack", "post"),
+            ("/api/lease/revoke", "post"),
+        ] {
+            assert_eq!(
+                spec["paths"][path][method]["security"],
+                json!([{ "OneironSecret": [] }]),
+                "{method} {path} must require OneironSecret"
+            );
+        }
+
+        assert!(
+            spec["components"]["schemas"].get("ApiError").is_some(),
+            "structured ApiError schema must be reusable from components"
+        );
+        assert!(
+            spec["components"]["schemas"].get("ErrorCode").is_some(),
+            "ErrorCode schema must be reusable from components"
+        );
+        assert!(
+            spec["components"]["schemas"]["View"].get("enum").is_some(),
+            "View schema must document allowed projection values"
+        );
+
+        let entity_octets = &spec["paths"]["/api/entity/{id}"]["get"]["responses"]["200"]["content"]
+            ["application/octet-stream"];
+        assert_eq!(
+            entity_octets["example"],
+            Value::from("raw entity bytes"),
+            "entity octet-stream example must not be a JSON byte array"
+        );
+        assert_eq!(
+            entity_octets["schema"],
+            json!({ "type": "string", "format": "binary" }),
+            "entity octet-stream schema must model raw binary"
+        );
+
+        let entity_json = &spec["paths"]["/api/entity/{id}"]["get"]["responses"]["200"]["content"]
+            ["application/json"];
+        assert_eq!(
+            entity_json["schema"]["type"],
+            Value::from("object"),
+            "entity projection response must document a JSON object schema"
+        );
+        assert!(
+            entity_json["examples"]["summary"].is_object(),
+            "entity JSON projection response must include a summary example: {entity_json:?}"
+        );
+        assert!(
+            entity_json["examples"]["full"].is_object(),
+            "entity JSON projection response must include a full example: {entity_json:?}"
+        );
+
+        assert_non_empty_string(
+            &spec["components"]["schemas"]["SearchResult"]["properties"]["score"]["description"],
+            "SearchResult.score.description",
+        );
+
+        let lease_client_description = spec["components"]["schemas"]["LeaseRevokeRequest"]
+            ["properties"]["client_id"]["description"]
+            .as_str()
+            .expect("LeaseRevokeRequest.client_id description");
+        assert!(
+            lease_client_description
+                .to_ascii_lowercase()
+                .contains("revoke"),
+            "lease revoke client_id description should mention revoke: {lease_client_description}"
+        );
+
+        assert_eq!(
+            spec["components"]["schemas"]["VectorSearchQuery"]["properties"]["limit"]["default"],
+            Value::from(default_limit())
+        );
+
+        for schema_name in [
+            "HealthResponse",
+            "DiscoverResponse",
+            "BoundContext",
+            "DiscoveredEntity",
+            "FeatureFlags",
+            "RateLimitStatus",
+            "VectorSearchQuery",
+            "SearchResult",
+            "TextSearchQuery",
+            "EdgeResult",
+            "LeaseRevokeRequest",
+            "LeaseRevokeResponse",
+            "ContextPackRequest",
+        ] {
+            let properties = spec["components"]["schemas"][schema_name]["properties"]
+                .as_object()
+                .unwrap_or_else(|| panic!("{schema_name} properties object"));
+            assert!(
+                properties.values().any(|property| property
+                    .get("description")
+                    .and_then(Value::as_str)
+                    .is_some_and(|s| !s.trim().is_empty())),
+                "{schema_name} must have at least one described property"
+            );
+            for (field_name, property) in properties {
+                assert_non_empty_string(
+                    &property["description"],
+                    &format!("{schema_name}.{field_name}.description"),
+                );
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn openapi_route_serves_json_document() {
+        let (_dir, server) = test_server();
+        let response = api_routes(server)
+            .oneshot(
+                Request::builder()
+                    .uri("/api/openapi.json")
+                    .body(Body::empty())
+                    .expect("request"),
+            )
+            .await
+            .expect("route response");
+
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            response
+                .headers()
+                .get(CONTENT_TYPE)
+                .and_then(|v| v.to_str().ok()),
+            Some("application/json")
+        );
+
+        let body = to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("OpenAPI response body");
+        let body: Value = serde_json::from_slice(&body).expect("OpenAPI JSON body");
+        assert!(
+            body["openapi"]
+                .as_str()
+                .is_some_and(|v| v.starts_with("3.1")),
+            "served OpenAPI version should start with 3.1: {:?}",
+            body["openapi"]
+        );
+    }
+
+    #[tokio::test]
+    async fn openapi_route_uses_api_auth() {
+        let dir = tempfile::tempdir().expect("temp vault dir");
+        let vault =
+            Arc::new(oneiron::Vault::open(dir.path(), oneiron::VaultConfig::device()).unwrap());
+        let server = Arc::new(SyncServer::new(vault, SyncServerConfig::default()).unwrap());
+        let response = api_routes(server)
+            .oneshot(
+                Request::builder()
+                    .uri("/api/openapi.json")
+                    .body(Body::empty())
+                    .expect("request"),
+            )
+            .await
+            .expect("route response");
+
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+        let body = to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("ApiError response body");
+        let body: Value = serde_json::from_slice(&body).expect("ApiError JSON body");
+        assert_eq!(body["code"], Value::from("UNAUTHORIZED"));
+    }
+
+    #[tokio::test]
+    async fn text_search_response_shape_still_deserializes() {
+        let (_dir, server) = test_server();
+
+        let response = search_text(
+            HeaderMap::new(),
+            State(server),
+            Ok(Query(TextSearchQuery {
+                query: "shape guard".to_owned(),
+                limit: 1,
+                view: Some(View::Summary),
+                count_mode: CountMode::Estimate,
+            })),
+        )
+        .await
+        .expect("text search response");
+
+        let body = serde_json::to_vec(&response.0).expect("serialize response");
+        let parsed: Value = serde_json::from_slice(&body).expect("deserialize response");
+        assert_eq!(parsed["items"], Value::Array(Vec::new()));
+        assert_eq!(parsed["meta"]["countMode"], Value::from("estimate"));
     }
 }
