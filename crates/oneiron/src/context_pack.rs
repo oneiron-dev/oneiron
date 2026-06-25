@@ -73,6 +73,7 @@ pub struct ContextPackBuilder<'a> {
     token_budget: usize,
     token_allocation: TokenAllocation,
     max_field_chars: usize,
+    max_item_tokens: usize,
     signals_used: Vec<Signal>,
     world_scope: WorldScope,
     non_base_world_fraction: f32,
@@ -95,6 +96,7 @@ impl<'a> ContextPackBuilder<'a> {
             token_budget: DEFAULT_TOKEN_BUDGET,
             token_allocation: TokenAllocation::default(),
             max_field_chars: DEFAULT_MAX_FIELD_CHARS,
+            max_item_tokens: 0,
             signals_used: Vec::new(),
             world_scope: WorldScope::All,
             non_base_world_fraction: DEFAULT_NON_BASE_WORLD_CLAIM_FRACTION,
@@ -344,6 +346,11 @@ impl<'a> ContextPackBuilder<'a> {
         self
     }
 
+    pub fn max_item_tokens(mut self, max: usize) -> Self {
+        self.max_item_tokens = max;
+        self
+    }
+
     pub fn run(self) -> Result<ContextPack> {
         let started = Instant::now();
         let pipeline_output = self.pipeline.run_for_pack()?;
@@ -459,6 +466,8 @@ impl<'a> ContextPackBuilder<'a> {
             entities_hydrated: results.len(),
             neighbors_hydrated: neighbors.len(),
             claims_suppressed,
+            items_truncated: crate::types::PackItemAccounting::item_budget(),
+            items_dropped: crate::types::PackItemAccounting::token_budget(),
         };
         let empty = empty_context(pack_is_empty, &stats, pipeline_empty_reason);
 
@@ -479,6 +488,7 @@ impl<'a> ContextPackBuilder<'a> {
             include_stats: self.include_stats,
             merge_neighbors: self.merge_neighbors,
             max_field_chars: self.max_field_chars,
+            max_item_tokens: self.max_item_tokens,
         };
         let pack = self.run()?;
         Ok(serialize_pack(&pack, &config))

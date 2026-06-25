@@ -1367,6 +1367,48 @@ pub struct PackStats {
     /// the pipeline stage and pack hydration (results + neighbors). A claim
     /// suppressed in both stages counts once per stage.
     pub claims_suppressed: usize,
+    pub items_truncated: PackItemAccounting,
+    pub items_dropped: PackItemAccounting,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PackItemAccountingReason {
+    ItemBudget,
+    TokenBudget,
+}
+
+impl PackItemAccountingReason {
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::ItemBudget => "item_budget",
+            Self::TokenBudget => "token_budget",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PackItemAccounting {
+    pub count: usize,
+    pub reason: PackItemAccountingReason,
+}
+
+impl PackItemAccounting {
+    #[must_use]
+    pub fn item_budget() -> Self {
+        Self {
+            count: 0,
+            reason: PackItemAccountingReason::ItemBudget,
+        }
+    }
+
+    #[must_use]
+    pub fn token_budget() -> Self {
+        Self {
+            count: 0,
+            reason: PackItemAccountingReason::TokenBudget,
+        }
+    }
 }
 
 /// Machine-readable reason an otherwise successful context-pack query surfaced
