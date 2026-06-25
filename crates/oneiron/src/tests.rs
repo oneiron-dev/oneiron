@@ -1,5 +1,5 @@
 use core::assert_matches;
-use std::collections::HashSet;
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::path::Path;
 use std::str;
 use std::time::Instant;
@@ -7,9 +7,10 @@ use std::time::Instant;
 use crate::limits::{MAX_ANCESTOR_DEPTH, MAX_CHILD_OF_CYCLE_TRAVERSAL_STEPS};
 use crate::types::{
     EDGE_VALUE_SEMANTIC_LEN, EDGE_VALUE_SEMANTIC_PROVENANCED_LEN, EDGE_VALUE_STRUCTURAL_LEN,
-    ENTITY_ID_LEN, ENTITY_TYPE_MACHINE, ENTITY_TYPE_MODEL, ENTITY_TYPE_REDACTION_AUDIT,
-    ENTITY_TYPE_TASK, ENTITY_TYPE_TASK_LIST, EdgeActorClass, EdgeConfirmationStatus,
-    EdgeProvenanceFlags, decode_edge_value, decode_edge_value_for_kind, encode_edge_value,
+    ENTITY_ID_LEN, ENTITY_TYPE_MACHINE, ENTITY_TYPE_MODEL, ENTITY_TYPE_NOTIFICATION,
+    ENTITY_TYPE_REDACTION_AUDIT, ENTITY_TYPE_TASK, ENTITY_TYPE_TASK_LIST, EdgeActorClass,
+    EdgeConfirmationStatus, EdgeProvenanceFlags, decode_edge_value, decode_edge_value_for_kind,
+    encode_edge_value,
 };
 use heed::EnvOpenOptions;
 use heed::types::{Bytes, Str};
@@ -66,6 +67,79 @@ fn open_test_vault() -> (tempfile::TempDir, Vault) {
 
 fn test_time_range(start: u64, end: u64) -> TimeRange {
     TimeRange { start, end }
+}
+
+fn sample_resume_bundle(tokens_used: u64, tokens_limit: u64) -> ResumeBundle {
+    ResumeBundle::new(
+        SessionContext {
+            api_version: "v1".to_owned(),
+            counts: BTreeMap::from([("16".to_owned(), 1)]),
+            last_activity: Some(42),
+        },
+        vec![NotificationItem {
+            id: seeded_entity_id(0x2141).to_hex(),
+            learned_at: 42,
+            body: serde_json::json!({"message": "fresh"}),
+        }],
+        Vec::new(),
+        ResumeBudget::from_meter(tokens_used, tokens_limit),
+    )
+}
+
+#[test]
+fn resume_budget_invariant_uses_meter_delta() {
+    let bundle = sample_resume_bundle(400, 1_000);
+    assert_eq!(bundle.budget.tokens_used, 400);
+    assert_eq!(bundle.budget.tokens_limit, 1_000);
+    assert_eq!(bundle.budget.tokens_remaining, 600);
+}
+
+#[test]
+fn resume_budget_saturates_when_used_exceeds_limit() {
+    let budget = ResumeBudget::from_meter(1_200, 1_000);
+    assert_eq!(budget.tokens_used, 1_200);
+    assert_eq!(budget.tokens_limit, 1_000);
+    assert_eq!(budget.tokens_remaining, 0);
+}
+
+#[test]
+fn resume_bundle_serde_top_level_keys_are_exact() {
+    let value = serde_json::to_value(sample_resume_bundle(400, 1_000)).unwrap();
+    let object = value
+        .as_object()
+        .expect("resume bundle should be an object");
+    let keys = object.keys().map(String::as_str).collect::<BTreeSet<_>>();
+    assert_eq!(
+        keys,
+        BTreeSet::from(["budget", "notifications", "session", "unprocessed"])
+    );
+}
+
+#[test]
+fn resume_bundle_empty_surfaces_serialize_as_empty_arrays() {
+    let bundle = ResumeBundle::new(
+        SessionContext {
+            api_version: "v1".to_owned(),
+            counts: BTreeMap::new(),
+            last_activity: None,
+        },
+        Vec::new(),
+        Vec::new(),
+        ResumeBudget::from_meter(0, 0),
+    );
+
+    assert_eq!(bundle.notifications, Vec::<NotificationItem>::new());
+    assert_eq!(bundle.unprocessed, Vec::<UnprocessedItem>::new());
+
+    let json = String::from_utf8(crate::serialize::serialize_resume_bundle(&bundle)).unwrap();
+    assert!(
+        json.contains("\"notifications\":[]"),
+        "notifications must serialize as an empty array: {json}"
+    );
+    assert!(
+        json.contains("\"unprocessed\":[]"),
+        "unprocessed must serialize as an empty array: {json}"
+    );
 }
 
 fn seeded_entity_id(counter: u128) -> EntityId {
@@ -7330,6 +7404,113 @@ fn entities_by_type_allows_exact_cap_and_overflows_on_next_row() -> Result<()> {
         .entities_by_type(ENTITY_TYPE_TASK_LIST)
         .expect_err("type scan should fail loud once cap is exceeded");
     assert_matches!(err, Error::IndexOverflow("entities_by_type"));
+    Ok(())
+}
+
+#[test]
+fn entities_by_type_page_paginates_past_materialization_cap() -> Result<()> {
+    const TYPE_CAP: usize = 100_000;
+    const EXTRA_ROWS: usize = 3;
+    const PAGE_SIZE: usize = 4_096;
+
+    let temp_dir = tempfile::tempdir()?;
+    let vault = Vault::open(temp_dir.path(), large_test_config())?;
+
+    vault.with_write_txn(|wtxn| {
+        for i in 0..(TYPE_CAP + EXTRA_ROWS) {
+            let id = seeded_entity_id(i as u128);
+            let key = Store::encode_type_key(ENTITY_TYPE_TASK_LIST, &id);
+            vault.store.type_index.put(wtxn, &key, &[])?;
+        }
+        Ok(())
+    })?;
+
+    let mut after = None;
+    let mut first = None;
+    let mut last = None;
+    let mut total = 0;
+    loop {
+        let page = vault.entities_by_type_page(ENTITY_TYPE_TASK_LIST, after.as_ref(), PAGE_SIZE)?;
+        let Some(page_last) = page.last().copied() else {
+            break;
+        };
+        if let Some(previous) = after {
+            assert!(previous < page[0]);
+        }
+        first.get_or_insert(page[0]);
+        total += page.len();
+        last = Some(page_last);
+        after = Some(page_last);
+    }
+
+    assert_eq!(total, TYPE_CAP + EXTRA_ROWS);
+    assert_eq!(first, Some(seeded_entity_id(0)));
+    assert_eq!(
+        last,
+        Some(seeded_entity_id((TYPE_CAP + EXTRA_ROWS - 1) as u128))
+    );
+    assert!(
+        vault
+            .entities_by_type_page(
+                ENTITY_TYPE_TASK_LIST,
+                Some(&seeded_entity_id((TYPE_CAP + EXTRA_ROWS - 1) as u128)),
+                PAGE_SIZE
+            )?
+            .is_empty()
+    );
+    assert!(
+        vault
+            .entities_by_type_page(ENTITY_TYPE_TASK_LIST, None, 0)?
+            .is_empty()
+    );
+    Ok(())
+}
+
+#[test]
+fn latest_entity_bodies_by_type_returns_bounded_latest_snapshot_rows() -> Result<()> {
+    let temp_dir = tempfile::tempdir()?;
+    let vault = Vault::open(temp_dir.path(), test_config())?;
+    let old = seeded_entity_id(0x2140);
+    let newest = seeded_entity_id(0x2141);
+    let other_type = seeded_entity_id(0x2142);
+
+    vault
+        .batch()
+        .put(
+            &old,
+            ENTITY_TYPE_NOTIFICATION,
+            test_time_range(1, 1),
+            10,
+            b"old",
+        )
+        .put(
+            &newest,
+            ENTITY_TYPE_NOTIFICATION,
+            test_time_range(2, 2),
+            30,
+            b"new",
+        )
+        .put(
+            &other_type,
+            ENTITY_TYPE_TASK,
+            test_time_range(3, 3),
+            40,
+            b"task",
+        )
+        .commit()?;
+
+    let latest = vault.latest_entity_bodies_by_type(ENTITY_TYPE_NOTIFICATION, 2, 3)?;
+    assert_eq!(
+        latest,
+        vec![(newest, 30, b"new".to_vec()), (old, 10, b"old".to_vec())]
+    );
+
+    let scan_limited = vault.latest_entity_bodies_by_type(ENTITY_TYPE_NOTIFICATION, 2, 1)?;
+    assert!(scan_limited.is_empty());
+
+    let result_limited = vault.latest_entity_bodies_by_type(ENTITY_TYPE_NOTIFICATION, 1, 3)?;
+    assert_eq!(result_limited, vec![(newest, 30, b"new".to_vec())]);
+
     Ok(())
 }
 

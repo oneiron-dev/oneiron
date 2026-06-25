@@ -14,6 +14,10 @@ use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Json, Response};
 use axum::routing::{get, post};
 use axum::{Router, middleware};
+use oneiron::{
+    NotificationItem, ResumeBudget, ResumeBundle, SessionContext, UnprocessedItem,
+    types::ENTITY_TYPE_NOTIFICATION,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use utoipa::{IntoParams, OpenApi, ToSchema};
@@ -32,6 +36,7 @@ const EFFECTIVE_AUTH_SCOPES: &[&str] = &[
     "vault:read",
     "search:read",
     "entity:read",
+    "companion:resume",
     "sync:connect",
 ];
 const CAPABILITIES: &[&str] = &[
@@ -42,9 +47,14 @@ const CAPABILITIES: &[&str] = &[
     "entity.get",
     "edges.get",
     "context_pack",
+    "companion.resume",
     "lease.revoke",
 ];
 const CAPABILITY_MODES: &[&str] = &["flash", "thinking", "pro", "ultra"];
+// ONE-214 is read-only and adds no notification-specific storage. Keep resume
+// hydration bounded by returning pending notifications from a latest window.
+const RESUME_NOTIFICATION_LIMIT: usize = 128;
+const RESUME_NOTIFICATION_SCAN_LIMIT: usize = 4096;
 
 #[derive(OpenApi)]
 #[openapi(
@@ -111,6 +121,7 @@ pub(crate) fn api_routes(server: Arc<SyncServer>) -> Router {
         .route("/api/edges/{id}", get(get_edges))
         // context-pack is POST since it takes a complex options body
         .route("/api/context-pack", post(context_pack))
+        .route("/api/companion/resume", post(resume))
         .merge(mutation_routes)
         .with_state(server)
 }
@@ -663,6 +674,183 @@ fn rate_limit_status(config: &SyncServerConfig) -> RateLimitStatus {
         max_windows_per_connection: config.max_windows_per_connection,
         max_frame_size_bytes: config.max_frame_size,
         max_update_payload_bytes: config.max_update_payload,
+    }
+}
+
+// ─── Companion resume ────────────────────────────────────────────────────────
+
+/// One-shot read-only companion hydration.
+/// POST /api/companion/resume
+async fn resume(
+    headers: HeaderMap,
+    State(server): State<Arc<SyncServer>>,
+) -> Result<Json<ResumeBundle>, ApiError> {
+    check_api_auth(&headers, &server.config)?;
+    let caller = resume_caller(&headers);
+    resume_bundle(&server, &caller).map(Json)
+}
+
+fn resume_bundle(server: &SyncServer, caller: &str) -> Result<ResumeBundle, ApiError> {
+    Ok(ResumeBundle::new(
+        resume_session_context(server)?,
+        pending_notifications(server, caller)?,
+        pending_unprocessed_items(server, caller),
+        current_resume_budget(server),
+    ))
+}
+
+fn resume_session_context(server: &SyncServer) -> Result<SessionContext, ApiError> {
+    let mut counts = BTreeMap::new();
+
+    for entity_type in u8::MIN..=u8::MAX {
+        let count = server
+            .vault
+            .count_entities_by_type(entity_type)
+            .inspect_err(|e| {
+                tracing::error!(error = %e, entity_type, "resume session count scan failed");
+            })
+            .map_err(|_| ApiError::internal_server_error("resume session count scan failed"))?;
+
+        if count == 0 {
+            continue;
+        }
+
+        counts.insert(entity_type.to_string(), count);
+    }
+
+    let last_activity = server
+        .vault
+        .latest_learned_at()
+        .inspect_err(|e| {
+            tracing::error!(error = %e, "resume activity summary failed");
+        })
+        .map_err(|_| ApiError::internal_server_error("resume activity summary failed"))?;
+
+    Ok(SessionContext {
+        api_version: API_LEVEL.to_owned(),
+        counts,
+        last_activity,
+    })
+}
+
+fn pending_notifications(
+    server: &SyncServer,
+    caller: &str,
+) -> Result<Vec<NotificationItem>, ApiError> {
+    let mut notifications = Vec::new();
+
+    let rows = server
+        .vault
+        .latest_entity_bodies_by_type(
+            ENTITY_TYPE_NOTIFICATION,
+            RESUME_NOTIFICATION_LIMIT,
+            RESUME_NOTIFICATION_SCAN_LIMIT,
+        )
+        .inspect_err(|e| {
+            tracing::error!(error = %e, "resume notification latest scan failed");
+        })
+        .map_err(|_| ApiError::internal_server_error("resume notification scan failed"))?;
+
+    for (id, learned_at, raw_body) in rows {
+        let Some(body) = notification_body_json(&raw_body) else {
+            continue;
+        };
+        if !notification_scoped_to_caller(&body, caller) {
+            continue;
+        }
+        if notification_already_surfaced(&body, caller) {
+            continue;
+        }
+        notifications.push(NotificationItem {
+            id: id.to_hex(),
+            learned_at,
+            body,
+        });
+    }
+
+    Ok(notifications)
+}
+
+fn pending_unprocessed_items(_server: &SyncServer, _caller: &str) -> Vec<UnprocessedItem> {
+    Vec::new()
+}
+
+fn current_resume_budget(_server: &SyncServer) -> ResumeBudget {
+    ResumeBudget::from_meter(0, 0)
+}
+
+fn resume_caller(headers: &HeaderMap) -> String {
+    headers
+        .get("x-oneiron-caller")
+        .and_then(|v| v.to_str().ok())
+        .filter(|v| !v.is_empty())
+        .unwrap_or("default")
+        .to_owned()
+}
+
+fn notification_body_json(raw_body: &[u8]) -> Option<Value> {
+    let body: Value = rmp_serde::from_slice(raw_body).ok()?;
+    body.as_object()?;
+    Some(body)
+}
+
+fn notification_scoped_to_caller(body: &Value, caller: &str) -> bool {
+    let Some(object) = body.as_object() else {
+        return false;
+    };
+
+    const SCOPE_KEYS: &[&str] = &[
+        "caller",
+        "caller_id",
+        "callerId",
+        "recipient",
+        "recipient_id",
+        "recipientId",
+    ];
+    for key in SCOPE_KEYS {
+        if let Some(value) = object.get(*key)
+            && !caller_marker_contains(Some(value), caller)
+        {
+            return false;
+        }
+    }
+    true
+}
+
+fn notification_already_surfaced(body: &Value, caller: &str) -> bool {
+    let Some(object) = body.as_object() else {
+        return false;
+    };
+
+    const GLOBAL_KEYS: &[&str] = &["acked", "acknowledged", "surfaced", "seen"];
+    if GLOBAL_KEYS
+        .iter()
+        .any(|key| object.get(*key).and_then(Value::as_bool) == Some(true))
+    {
+        return true;
+    }
+
+    const CALLER_KEYS: &[&str] = &[
+        "acked_by",
+        "ackedBy",
+        "acknowledged_by",
+        "acknowledgedBy",
+        "surfaced_by",
+        "surfacedBy",
+        "seen_by",
+        "seenBy",
+    ];
+    CALLER_KEYS
+        .iter()
+        .any(|key| caller_marker_contains(object.get(*key), caller))
+}
+
+fn caller_marker_contains(value: Option<&Value>, caller: &str) -> bool {
+    match value {
+        Some(Value::Array(items)) => items.iter().any(|item| item.as_str() == Some(caller)),
+        Some(Value::Object(map)) => map.get(caller).and_then(Value::as_bool) == Some(true),
+        Some(Value::String(item)) => item == caller,
+        _ => false,
     }
 }
 

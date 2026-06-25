@@ -12,6 +12,7 @@ const EXPECTED_REGISTERED_ROUTES: &[&str] = &[
     "/api/entity/{id}",
     "/api/edges/{id}",
     "/api/context-pack",
+    "/api/companion/resume",
     "/api/lease/revoke",
 ];
 
