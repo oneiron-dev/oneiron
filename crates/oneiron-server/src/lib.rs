@@ -15,6 +15,7 @@ pub mod cli;
 pub mod commands;
 pub mod config;
 mod handler;
+mod idempotency;
 mod protocol;
 pub mod server;
 

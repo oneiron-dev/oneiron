@@ -151,6 +151,34 @@ async fn http_get(addr: SocketAddr, path: &str, secret: Option<&str>) -> String 
     String::from_utf8(response).unwrap()
 }
 
+async fn http_post(
+    addr: SocketAddr,
+    path: &str,
+    body: &str,
+    secret: Option<&str>,
+    idempotency_key: Option<&str>,
+) -> String {
+    let mut stream = tokio::net::TcpStream::connect(addr).await.unwrap();
+    let secret_header = secret
+        .map(|secret| format!("x-oneiron-secret: {secret}\r\n"))
+        .unwrap_or_default();
+    let idempotency_header = idempotency_key
+        .map(|key| format!("Idempotency-Key: {key}\r\n"))
+        .unwrap_or_default();
+    let request = format!(
+        "POST {path} HTTP/1.1\r\nHost: {addr}\r\nConnection: close\r\nContent-Type: application/json\r\nContent-Length: {}\r\n{secret_header}{idempotency_header}\r\n{body}",
+        body.len()
+    );
+    stream.write_all(request.as_bytes()).await.unwrap();
+
+    let mut response = Vec::new();
+    tokio::time::timeout(Duration::from_secs(10), stream.read_to_end(&mut response))
+        .await
+        .expect("timed out waiting for HTTP response")
+        .expect("failed reading HTTP response");
+    String::from_utf8(response).unwrap()
+}
+
 fn assert_http_status(response: &str, status: u16) {
     let expected = format!("HTTP/1.1 {status} ");
     assert!(
@@ -158,6 +186,13 @@ fn assert_http_status(response: &str, status: u16) {
         "expected HTTP status {status}, got response head: {:?}",
         response.lines().next()
     );
+}
+
+fn http_body(response: &str) -> &str {
+    response
+        .split_once("\r\n\r\n")
+        .map(|(_, body)| body)
+        .expect("HTTP response must contain a body separator")
 }
 
 async fn send_window_vv_request(ws: &mut WsStream, key: &str) {
@@ -289,6 +324,51 @@ async fn http_guarded_route_rejects_when_no_secret_and_not_dev() {
 
     let response = http_get(addr, "/api/search/text?query=hello", None).await;
     assert_http_status(&response, 401);
+
+    handle.abort();
+}
+
+#[tokio::test]
+async fn lease_revoke_route_uses_idempotency_key_replay_cache() {
+    let dir = tempfile::tempdir().unwrap();
+    let (addr, _server, handle) = spawn_server(
+        open_vault(dir.path()),
+        config_with_secret(Some("route-secret")),
+    )
+    .await;
+
+    let body = r#"{"client_id":"0000000000000001"}"#;
+    let first = http_post(
+        addr,
+        "/api/lease/revoke",
+        body,
+        Some("route-secret"),
+        Some("lease-revoke-key"),
+    )
+    .await;
+    assert_http_status(&first, 200);
+
+    let replay = http_post(
+        addr,
+        "/api/lease/revoke",
+        body,
+        Some("route-secret"),
+        Some("lease-revoke-key"),
+    )
+    .await;
+    assert_http_status(&replay, 200);
+    assert_eq!(http_body(&first).as_bytes(), http_body(&replay).as_bytes());
+
+    let conflict = http_post(
+        addr,
+        "/api/lease/revoke",
+        r#"{"client_id":"0000000000000002"}"#,
+        Some("route-secret"),
+        Some("lease-revoke-key"),
+    )
+    .await;
+    assert_http_status(&conflict, 409);
+    assert!(http_body(&conflict).contains(r#""error_code":"idempotency_key_conflict""#));
 
     handle.abort();
 }

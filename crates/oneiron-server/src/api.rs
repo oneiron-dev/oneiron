@@ -7,18 +7,29 @@
 
 use std::sync::Arc;
 
-use axum::Router;
 use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Json};
 use axum::routing::{get, post};
+use axum::{Router, middleware};
 use serde::{Deserialize, Serialize};
 
 use crate::config::SyncServerConfig;
+use crate::idempotency::{IdempotencyLayerState, idempotency_middleware};
 use crate::server::SyncServer;
 
 /// Builds the HTTP API routes.
 pub(crate) fn api_routes(server: Arc<SyncServer>) -> Router {
+    let idempotency = IdempotencyLayerState::new(server.clone());
+    let mutation_routes = Router::new()
+        // owner recovery surface (ONE-1140, OD-8): revoke a lost/stolen
+        // device's lease binding (terminal)
+        .route("/api/lease/revoke", post(lease_revoke))
+        .route_layer(middleware::from_fn_with_state(
+            idempotency,
+            idempotency_middleware,
+        ));
+
     Router::new()
         .route("/api/health", get(health))
         .route("/api/search/vector", get(search_vector))
@@ -27,9 +38,7 @@ pub(crate) fn api_routes(server: Arc<SyncServer>) -> Router {
         .route("/api/edges/{id}", get(get_edges))
         // context-pack is POST since it takes a complex options body
         .route("/api/context-pack", post(context_pack))
-        // owner recovery surface (ONE-1140, OD-8): revoke a lost/stolen
-        // device's lease binding (terminal)
-        .route("/api/lease/revoke", post(lease_revoke))
+        .merge(mutation_routes)
         .with_state(server)
 }
 
