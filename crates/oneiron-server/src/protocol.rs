@@ -26,7 +26,17 @@ pub(crate) mod window_sub_tags {
 
 /// Count precision requested by list/search callers and reported in
 /// paginated response metadata.
-#[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize, PartialEq, Eq, Default)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    serde::Serialize,
+    serde::Deserialize,
+    PartialEq,
+    Eq,
+    Default,
+    utoipa::ToSchema,
+)]
 #[serde(rename_all = "camelCase")]
 pub(crate) enum CountMode {
     /// Skip count work and report `total = 0`.
@@ -52,9 +62,11 @@ impl CountMode {
 }
 
 /// Metadata block shared by paginated list/search responses.
-#[derive(Debug, Clone, serde::Serialize, PartialEq, Eq)]
+#[derive(Debug, Clone, serde::Serialize, PartialEq, Eq, utoipa::ToSchema)]
 pub(crate) struct ResponseMeta {
+    /// Total result count, or an estimate when `countMode` is `estimate`.
     pub total: u64,
+    /// Precision used for the reported `total` value.
     #[serde(rename = "countMode")]
     pub count_mode: CountMode,
 }
@@ -75,11 +87,14 @@ impl ResponseMeta {
 
 /// Standard paginated response envelope: primary data plus metadata, with the
 /// cursor slot omitted for non-cursor search endpoints.
-#[derive(Debug, Clone, serde::Serialize, PartialEq, Eq)]
+#[derive(Debug, Clone, serde::Serialize, PartialEq, Eq, utoipa::ToSchema)]
 pub(crate) struct PaginatedResponse<T> {
+    /// Items returned for the current page or search request.
     pub items: Vec<T>,
+    /// Opaque cursor for the next page when the endpoint supports cursor pagination.
     #[serde(rename = "nextCursor", skip_serializing_if = "Option::is_none")]
     pub next_cursor: Option<String>,
+    /// Pagination and count metadata for the response.
     pub meta: ResponseMeta,
 }
 

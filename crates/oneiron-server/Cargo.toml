@@ -31,9 +31,11 @@ anyhow = "1"
 serde_bytes = "0.11"
 subtle = "2"
 thiserror = { workspace = true }
+utoipa = "5.5.0"
 
 [dev-dependencies]
 tempfile = "3"
+tower = "0.5"
 # Lease-registrar tests sign proof-of-possession transcripts themselves
 # (contract-grounded, ONE-1140). `test-hooks` compiles in the lease
 # mirror-failure injection seam used by the root-snapshot/`ls:`-mirror
