@@ -29,6 +29,8 @@ use oneiron::sync::{
     ConnectionConfig, SyncClient, SyncClientConfig, SyncConnection, SyncEvent, SyncStatus,
     WindowManager,
 };
+use oneiron::types::ENTITY_TYPE_TURN;
+use oneiron::{EntityId, TimeRange, VaultConfig};
 use oneiron_server::build_app;
 use oneiron_server::config::SyncServerConfig;
 use oneiron_server::error::{ApiError, ApiErrorDetails, ErrorCode};
@@ -42,6 +44,68 @@ type WsStream =
 
 fn open_vault(dir: &std::path::Path) -> Arc<oneiron::Vault> {
     Arc::new(oneiron::Vault::open(dir, oneiron::VaultConfig::device()).unwrap())
+}
+
+fn open_search_vault(dir: &std::path::Path) -> Arc<oneiron::Vault> {
+    let mut config = VaultConfig::device();
+    config.dimensions = 4;
+    config.embedding_model = Some("ws-search-test-model".to_owned());
+    Arc::new(oneiron::Vault::open(dir, config).unwrap())
+}
+
+fn seeded_entity(byte: u8) -> EntityId {
+    EntityId::from_bytes([byte; 16]).unwrap()
+}
+
+fn test_range(timestamp: u64) -> TimeRange {
+    TimeRange {
+        start: timestamp,
+        end: timestamp,
+    }
+}
+
+fn seed_text_search_matches(vault: &oneiron::Vault) {
+    let ids = [
+        seeded_entity(0x31),
+        seeded_entity(0x32),
+        seeded_entity(0x33),
+    ];
+    let mut batch = vault.batch();
+    for (index, id) in ids.iter().enumerate() {
+        let learned_at = (index + 1) as u64;
+        batch = batch
+            .put(
+                id,
+                ENTITY_TYPE_TURN,
+                test_range(learned_at),
+                learned_at,
+                b"text-search-match",
+            )
+            .text(id, &[("body", "metaneedle shared term")]);
+    }
+    batch.commit().unwrap();
+}
+
+fn seed_vector_search_matches(vault: &oneiron::Vault) {
+    let fixtures = [
+        (seeded_entity(0x41), [1.0_f32, 0.0, 0.0, 0.0]),
+        (seeded_entity(0x42), [0.9_f32, 0.1, 0.0, 0.0]),
+        (seeded_entity(0x43), [0.8_f32, 0.2, 0.0, 0.0]),
+    ];
+
+    for (index, (id, vector)) in fixtures.iter().enumerate() {
+        let learned_at = (index + 1) as u64;
+        vault
+            .put_entity(
+                id,
+                ENTITY_TYPE_TURN,
+                test_range(learned_at),
+                learned_at,
+                b"vector-search-match",
+            )
+            .unwrap();
+        vault.put_vector(id, vector).unwrap();
+    }
 }
 
 /// Client-side window manager over a fresh vault (the client API is
@@ -166,6 +230,10 @@ fn http_json_body(response: &str) -> &str {
         .split_once("\r\n\r\n")
         .map(|(_headers, body)| body)
         .expect("HTTP response should contain header/body delimiter")
+}
+
+fn http_json_value(response: &str) -> serde_json::Value {
+    serde_json::from_str(http_json_body(response)).expect("HTTP body must be valid JSON")
 }
 
 fn api_error_body(response: &str) -> ApiError {
@@ -343,6 +411,140 @@ async fn http_bad_entity_id_returns_structured_api_error_body() {
         matches!(error.details(), ApiErrorDetails::BadRequest { field } if field.as_deref() == Some("id"))
     );
     assert!(!error.suggestions().is_empty());
+
+    handle.abort();
+}
+
+#[tokio::test]
+async fn http_search_text_response_defaults_to_estimate_meta() {
+    let dir = tempfile::tempdir().unwrap();
+    let (addr, _server, handle) = spawn_server(
+        open_vault(dir.path()),
+        config_with_secret_and_dev(None, true),
+    )
+    .await;
+
+    let response = http_get(addr, "/api/search/text?query=no-such-term", None).await;
+    assert_http_status(&response, 200);
+    let body = http_json_value(&response);
+
+    assert_eq!(body["items"], serde_json::json!([]));
+    assert!(body.get("nextCursor").is_none());
+    assert_eq!(
+        body["meta"],
+        serde_json::json!({
+            "total": 0,
+            "countMode": "estimate"
+        })
+    );
+
+    handle.abort();
+}
+
+#[tokio::test]
+async fn http_search_text_estimate_counts_before_page_truncation() {
+    let dir = tempfile::tempdir().unwrap();
+    let vault = open_search_vault(dir.path());
+    seed_text_search_matches(&vault);
+    let (addr, _server, handle) = spawn_server(vault, config_with_secret_and_dev(None, true)).await;
+
+    let response = http_get(addr, "/api/search/text?query=metaneedle&limit=2", None).await;
+    assert_http_status(&response, 200);
+    let body = http_json_value(&response);
+
+    assert_eq!(body["items"].as_array().unwrap().len(), 2);
+    assert_eq!(
+        body["meta"],
+        serde_json::json!({
+            "total": 3,
+            "countMode": "estimate"
+        })
+    );
+
+    handle.abort();
+}
+
+#[tokio::test]
+async fn http_search_text_count_mode_none_returns_zero_none_meta() {
+    let dir = tempfile::tempdir().unwrap();
+    let (addr, _server, handle) = spawn_server(
+        open_vault(dir.path()),
+        config_with_secret_and_dev(None, true),
+    )
+    .await;
+
+    let response = http_get(
+        addr,
+        "/api/search/text?query=no-such-term&countMode=none",
+        None,
+    )
+    .await;
+    assert_http_status(&response, 200);
+    let body = http_json_value(&response);
+
+    assert_eq!(body["items"], serde_json::json!([]));
+    assert_eq!(
+        body["meta"],
+        serde_json::json!({
+            "total": 0,
+            "countMode": "none"
+        })
+    );
+
+    handle.abort();
+}
+
+#[tokio::test]
+async fn http_search_vector_response_defaults_to_estimate_meta() {
+    let dir = tempfile::tempdir().unwrap();
+    let (addr, _server, handle) = spawn_server(
+        open_vault(dir.path()),
+        config_with_secret_and_dev(None, true),
+    )
+    .await;
+    let vector = vec!["0.0"; 1024].join(",");
+    let path = format!("/api/search/vector?query={vector}&limit=2");
+
+    let response = http_get(addr, &path, None).await;
+    assert_http_status(&response, 200);
+    let body = http_json_value(&response);
+
+    assert_eq!(body["items"], serde_json::json!([]));
+    assert_eq!(
+        body["meta"],
+        serde_json::json!({
+            "total": 0,
+            "countMode": "estimate"
+        })
+    );
+
+    handle.abort();
+}
+
+#[tokio::test]
+async fn http_search_vector_estimate_counts_before_page_truncation() {
+    let dir = tempfile::tempdir().unwrap();
+    let vault = open_search_vault(dir.path());
+    seed_vector_search_matches(&vault);
+    let (addr, _server, handle) = spawn_server(vault, config_with_secret_and_dev(None, true)).await;
+
+    let response = http_get(
+        addr,
+        "/api/search/vector?query=1.0,0.0,0.0,0.0&limit=2",
+        None,
+    )
+    .await;
+    assert_http_status(&response, 200);
+    let body = http_json_value(&response);
+
+    assert_eq!(body["items"].as_array().unwrap().len(), 2);
+    assert_eq!(
+        body["meta"],
+        serde_json::json!({
+            "total": 3,
+            "countMode": "estimate"
+        })
+    );
 
     handle.abort();
 }
