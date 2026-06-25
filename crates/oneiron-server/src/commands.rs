@@ -1,3 +1,4 @@
+use std::io::{self, Write};
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -7,9 +8,10 @@ use tower_http::cors::{AllowOrigin, CorsLayer};
 use tracing_subscriber::EnvFilter;
 
 use crate::build_app;
-use crate::cli::{RevokeArgs, VaultArgs};
+use crate::cli::{RevokeArgs, SkillsPackArgs, VaultArgs};
 use crate::config::{ServeArgs, ServeConfig, SyncServerConfig, resolve_serve_config};
 use crate::server::SyncServer;
+use crate::skills_pack::{self, OutputMode};
 
 pub const NO_CJK_DICT_WARNING: &str = "NO CJK DICTIONARY FOUND: Japanese, Chinese, and Korean text will use portable n-gram tokenization. Install dictionaries under an XDG oneiron dict root or set --dict-search-paths.";
 
@@ -33,6 +35,26 @@ pub fn init(args: VaultArgs) -> anyhow::Result<()> {
 pub fn doctor(args: VaultArgs) -> anyhow::Result<()> {
     let vault = open_vault_for_command(&args)?;
     print_doctor_report(&vault)
+}
+
+pub fn skills_pack(args: SkillsPackArgs) -> anyhow::Result<()> {
+    let mode = if args.json {
+        OutputMode::Json
+    } else if args.path {
+        OutputMode::Path
+    } else {
+        OutputMode::Markdown
+    };
+    let output = skills_pack::render(mode)?;
+    let stdout = io::stdout();
+    let mut stdout = stdout.lock();
+    if let Err(error) = stdout.write_all(output.as_bytes()) {
+        if error.kind() == io::ErrorKind::BrokenPipe {
+            return Ok(());
+        }
+        anyhow::bail!("write skills pack to stdout failed: {error}");
+    }
+    Ok(())
 }
 
 async fn serve_with_config(config: ServeConfig) -> anyhow::Result<()> {

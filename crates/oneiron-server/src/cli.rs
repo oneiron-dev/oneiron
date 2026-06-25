@@ -30,6 +30,8 @@ pub enum Command {
     Serve(Box<ServeArgs>),
     /// Revoke an existing device lease binding.
     Revoke(Box<RevokeArgs>),
+    /// Print or locate the agentskills-compatible skill pack.
+    SkillsPack(SkillsPackArgs),
     /// Create a vault and print its doctor report.
     Init(VaultArgs),
     /// Open a vault and print its doctor report.
@@ -44,6 +46,17 @@ pub struct RevokeArgs {
 
     #[command(flatten)]
     pub serve: ServeArgs,
+}
+
+#[derive(Args, Clone, Debug)]
+pub struct SkillsPackArgs {
+    /// Emit a JSON envelope with artifact path, media type, byte count, and Markdown content.
+    #[arg(long, conflicts_with = "path")]
+    pub json: bool,
+
+    /// Print the repository-relative path to the committed skill pack artifact.
+    #[arg(long)]
+    pub path: bool,
 }
 
 #[derive(Args, Clone, Debug)]
@@ -78,6 +91,7 @@ pub async fn run_cli(cli: Cli) -> anyhow::Result<()> {
     match cli.into_command() {
         Command::Serve(args) => commands::serve(*args).await,
         Command::Revoke(args) => commands::revoke(*args).await,
+        Command::SkillsPack(args) => commands::skills_pack(args),
         Command::Init(args) => commands::init(args),
         Command::Doctor(args) => commands::doctor(args),
     }
@@ -164,5 +178,41 @@ mod tests {
             }
             _ => panic!("expected revoke command"),
         }
+    }
+
+    #[test]
+    fn skills_pack_defaults_to_markdown_output() {
+        let cli = Cli::try_parse_from(["oneiron-server", "skills-pack"]).unwrap();
+
+        match cli.into_command() {
+            Command::SkillsPack(args) => {
+                assert!(!args.json);
+                assert!(!args.path);
+            }
+            _ => panic!("expected skills-pack command"),
+        }
+    }
+
+    #[test]
+    fn skills_pack_accepts_json_output() {
+        let cli = Cli::try_parse_from(["oneiron-server", "skills-pack", "--json"]).unwrap();
+
+        match cli.into_command() {
+            Command::SkillsPack(args) => {
+                assert!(args.json);
+                assert!(!args.path);
+            }
+            _ => panic!("expected skills-pack command"),
+        }
+    }
+
+    #[test]
+    fn skills_pack_path_conflicts_with_json() {
+        let err = match Cli::try_parse_from(["oneiron-server", "skills-pack", "--json", "--path"]) {
+            Ok(_) => panic!("expected --json and --path to conflict"),
+            Err(err) => err,
+        };
+
+        assert_eq!(err.kind(), clap::error::ErrorKind::ArgumentConflict);
     }
 }
