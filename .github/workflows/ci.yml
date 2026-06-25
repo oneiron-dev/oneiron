@@ -49,6 +49,22 @@ jobs:
       # nextest does not run doctests; keep them covered separately.
       - run: cargo test --doc --workspace --exclude oneiron-bench --all-features
 
+  package:
+    name: Package oneiron-server
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    env:
+      LOCAL_ONEIRON_PATCH: 'patch.crates-io.oneiron.path="crates/oneiron"'
+      PACKAGE_VERSION: "0.1.0"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.96"
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo package -p oneiron-server --list --no-metadata --config "${LOCAL_ONEIRON_PATCH}"
+      - run: cargo package -p oneiron-server --no-metadata --config "${LOCAL_ONEIRON_PATCH}"
+      - run: cargo test --manifest-path "target/package/oneiron-server-${PACKAGE_VERSION}/Cargo.toml" --all-features --config "${LOCAL_ONEIRON_PATCH}"
+
   deny:
     name: cargo-deny
     runs-on: blacksmith-2vcpu-ubuntu-2404
