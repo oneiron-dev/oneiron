@@ -14,6 +14,7 @@ mod broadcast;
 pub mod cli;
 pub mod commands;
 pub mod config;
+pub mod error;
 mod handler;
 mod protocol;
 pub mod server;

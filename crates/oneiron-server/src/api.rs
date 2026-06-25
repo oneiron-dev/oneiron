@@ -15,6 +15,7 @@ use axum::routing::{get, post};
 use serde::{Deserialize, Serialize};
 
 use crate::config::SyncServerConfig;
+use crate::error::ApiError;
 use crate::server::SyncServer;
 
 /// Builds the HTTP API routes.
@@ -72,6 +73,10 @@ pub(crate) fn check_auth(headers: &HeaderMap, config: &SyncServerConfig) -> Resu
     }
 }
 
+fn check_api_auth(headers: &HeaderMap, config: &SyncServerConfig) -> Result<(), ApiError> {
+    check_auth(headers, config).map_err(|_| ApiError::unauthorized())
+}
+
 // ─── Search Routes ────────────────────────────────────────────────────────────
 
 #[derive(Deserialize)]
@@ -99,8 +104,8 @@ async fn search_vector(
     headers: HeaderMap,
     State(server): State<Arc<SyncServer>>,
     Query(params): Query<VectorSearchQuery>,
-) -> Result<Json<Vec<SearchResult>>, StatusCode> {
-    check_auth(&headers, &server.config)?;
+) -> Result<Json<Vec<SearchResult>>, ApiError> {
+    check_api_auth(&headers, &server.config)?;
 
     let query: Result<Vec<f32>, _> = params
         .query
@@ -108,7 +113,12 @@ async fn search_vector(
         .map(|s| s.trim().parse::<f32>())
         .collect();
 
-    let query = query.map_err(|_| StatusCode::BAD_REQUEST)?;
+    let query = query.map_err(|_| {
+        ApiError::bad_request(
+            "query must be a comma-separated list of f32 values",
+            Some("query"),
+        )
+    })?;
 
     let results = server
         .vault
@@ -116,7 +126,7 @@ async fn search_vector(
         .inspect_err(|e| {
             tracing::error!(error = %e, "vector search failed");
         })
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        .map_err(|_| ApiError::internal_server_error("vector search failed"))?;
 
     let response: Vec<SearchResult> = results
         .into_iter()
@@ -142,8 +152,8 @@ async fn search_text(
     headers: HeaderMap,
     State(server): State<Arc<SyncServer>>,
     Query(params): Query<TextSearchQuery>,
-) -> Result<Json<Vec<SearchResult>>, StatusCode> {
-    check_auth(&headers, &server.config)?;
+) -> Result<Json<Vec<SearchResult>>, ApiError> {
+    check_api_auth(&headers, &server.config)?;
 
     let results = server
         .vault
@@ -151,7 +161,7 @@ async fn search_text(
         .inspect_err(|e| {
             tracing::error!(error = %e, "text search failed");
         })
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        .map_err(|_| ApiError::internal_server_error("text search failed"))?;
 
     let response: Vec<SearchResult> = results
         .into_iter()
@@ -172,10 +182,12 @@ async fn get_entity(
     headers: HeaderMap,
     State(server): State<Arc<SyncServer>>,
     Path(id_hex): Path<String>,
-) -> Result<impl IntoResponse, StatusCode> {
-    check_auth(&headers, &server.config)?;
+) -> Result<impl IntoResponse, ApiError> {
+    check_api_auth(&headers, &server.config)?;
 
-    let id = oneiron::EntityId::from_hex(&id_hex).map_err(|_| StatusCode::BAD_REQUEST)?;
+    let id = oneiron::EntityId::from_hex(&id_hex).map_err(|_| {
+        ApiError::bad_request("entity id must be a 32-character hex entity id", Some("id"))
+    })?;
 
     let blob = server
         .vault
@@ -183,11 +195,11 @@ async fn get_entity(
         .inspect_err(|e| {
             tracing::error!(error = %e, "get entity failed");
         })
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        .map_err(|_| ApiError::internal_server_error("get entity failed"))?;
 
     match blob {
         Some(data) => Ok((StatusCode::OK, data)),
-        None => Err(StatusCode::NOT_FOUND),
+        None => Err(ApiError::not_found("entity", Some(&id_hex))),
     }
 }
 
@@ -197,10 +209,12 @@ async fn get_edges(
     headers: HeaderMap,
     State(server): State<Arc<SyncServer>>,
     Path(id_hex): Path<String>,
-) -> Result<Json<Vec<EdgeResult>>, StatusCode> {
-    check_auth(&headers, &server.config)?;
+) -> Result<Json<Vec<EdgeResult>>, ApiError> {
+    check_api_auth(&headers, &server.config)?;
 
-    let id = oneiron::EntityId::from_hex(&id_hex).map_err(|_| StatusCode::BAD_REQUEST)?;
+    let id = oneiron::EntityId::from_hex(&id_hex).map_err(|_| {
+        ApiError::bad_request("entity id must be a 32-character hex entity id", Some("id"))
+    })?;
 
     let edges = server
         .vault
@@ -208,7 +222,7 @@ async fn get_edges(
         .inspect_err(|e| {
             tracing::error!(error = %e, "get edges failed");
         })
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        .map_err(|_| ApiError::internal_server_error("get edges failed"))?;
 
     let response: Vec<EdgeResult> = edges
         .into_iter()
@@ -253,8 +267,8 @@ async fn lease_revoke(
     headers: HeaderMap,
     State(server): State<Arc<SyncServer>>,
     Json(req): Json<LeaseRevokeRequest>,
-) -> Result<Json<LeaseRevokeResponse>, StatusCode> {
-    check_auth(&headers, &server.config)?;
+) -> Result<Json<LeaseRevokeResponse>, ApiError> {
+    check_api_auth(&headers, &server.config)?;
 
     if req.client_id.len() != 16
         || !req
@@ -262,9 +276,17 @@ async fn lease_revoke(
             .bytes()
             .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
     {
-        return Err(StatusCode::BAD_REQUEST);
+        return Err(ApiError::bad_request(
+            "client_id must be exactly 16 lowercase hex characters",
+            Some("client_id"),
+        ));
     }
-    let client_id = u64::from_str_radix(&req.client_id, 16).map_err(|_| StatusCode::BAD_REQUEST)?;
+    let client_id = u64::from_str_radix(&req.client_id, 16).map_err(|_| {
+        ApiError::bad_request(
+            "client_id must be exactly 16 lowercase hex characters",
+            Some("client_id"),
+        )
+    })?;
 
     match server.revoke_lease(client_id).await {
         Ok(Some(update)) => {
@@ -275,7 +297,7 @@ async fn lease_revoke(
         Ok(None) => Ok(Json(LeaseRevokeResponse { revoked: false })),
         Err(e) => {
             tracing::error!(error = %e, "lease revoke failed");
-            Err(StatusCode::INTERNAL_SERVER_ERROR)
+            Err(ApiError::internal_server_error("lease revoke failed"))
         }
     }
 }
@@ -300,8 +322,8 @@ async fn context_pack(
     headers: HeaderMap,
     State(server): State<Arc<SyncServer>>,
     Json(_req): Json<ContextPackRequest>,
-) -> Result<Json<serde_json::Value>, StatusCode> {
-    check_auth(&headers, &server.config)?;
+) -> Result<Json<serde_json::Value>, ApiError> {
+    check_api_auth(&headers, &server.config)?;
 
     // Build context pack using the vault's query API.
     // This is a thin wrapper — full implementation depends on
