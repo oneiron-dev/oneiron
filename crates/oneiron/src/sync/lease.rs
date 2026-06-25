@@ -12,20 +12,24 @@
 //! rejection) mirrored into local `ls:` LMDB rows on every root import.
 //!
 //! Record encoding (OD-4) — ONE encoding on both surfaces (root-doc map
-//! value ≡ `ls:` row value, byte-identical, 58 B):
+//! value ≡ `ls:` row value, byte-identical, 66 B):
 //!
 //! ```text
-//! [ver:1 = 0x01][status:1  0x01 active | 0x02 expired | 0x03 revoked]
+//! [ver:1 = 0x02][status:1  0x01 active | 0x02 expired | 0x03 revoked]
 //! [pubkey:32][granted_at:8 LE][renewed_at:8 LE][expires_at:8 LE]
+//! [vault_id:8 BE]
 //! ```
 //!
-//! Key (both surfaces): `client_id_hex` = `{client_id:016x}` — 16 lowercase
-//! hex chars, BE nibble order ⇒ lexically sortable (convention: BE for
-//! sortable key material). LMDB key = `ls:` + client_id_hex (19 B). Value
-//! timestamps LE (opaque-value convention, `dt:` precedent). The docs'
-//! baseline `ls:` = bare "u64 LE last-seen" is superseded: the door needs
-//! pubkey + status, and `renewed_at` carries the last-seen semantic
-//! (ARCH-0023b amendment queued per OD-4).
+//! Key (LMDB surface): `vault_id_hex` = `{vault_id:016x}` and
+//! `client_id_hex` = `{client_id:016x}` — 16 lowercase hex chars each, BE
+//! nibble order ⇒ lexically sortable (convention: BE for sortable key
+//! material). LMDB key = `ls:` + vault_id_hex + `:` + client_id_hex (36 B).
+//! Root-doc `leases` map entries remain keyed by `client_id_hex`; their
+//! value carries `vault_id` and is mirrored byte-identically into the `ls:`
+//! row value. Value timestamps LE (opaque-value convention, `dt:` precedent).
+//! The docs' baseline `ls:` = bare "u64 LE last-seen" is superseded: the
+//! door needs pubkey + status, and `renewed_at` carries the last-seen
+//! semantic (ARCH-0023b amendment queued per OD-4).
 //!
 //! Door enforcement (OD-7): status only — `revoked` rejects, `active` and
 //! `expired` accept. Devices have no trustworthy shared clock and
@@ -44,9 +48,9 @@ use crate::types::EntityId;
 /// LMDB `sync_state` key prefix for lease-registry mirror rows.
 pub const LEASE_KEY_PREFIX: &str = "ls:";
 /// Pinned lease-record length (OD-4).
-pub const LEASE_RECORD_LEN: usize = 58;
+pub const LEASE_RECORD_LEN: usize = 66;
 /// Lease-record version byte (OD-4).
-pub const LEASE_RECORD_VERSION: u8 = 0x01;
+pub const LEASE_RECORD_VERSION: u8 = 0x02;
 /// 90-day lease: `expires_at = renewed_at + LEASE_DURATION_SECS` (OD-4).
 pub const LEASE_DURATION_SECS: u64 = 7_776_000;
 /// Proof-of-possession transcript domain separator (OD-6 literal):
@@ -85,6 +89,7 @@ impl LeaseStatus {
 /// A decoded lease-registry record (OD-4).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct LeaseRecord {
+    pub vault_id: u64,
     pub status: LeaseStatus,
     pub pubkey: [u8; 32],
     pub granted_at: u64,
@@ -98,13 +103,25 @@ pub fn client_id_hex(client_id: u64) -> String {
     format!("{client_id:016x}")
 }
 
-/// `ls:{client_id_hex}` — the LMDB mirror-row key (19 B).
+/// `{vault_id:016x}` — fixed-width BE-sortable vault id key component.
 #[must_use]
-pub fn lease_key(client_id: u64) -> String {
-    format!("{LEASE_KEY_PREFIX}{}", client_id_hex(client_id))
+pub fn vault_id_hex(vault_id: u64) -> String {
+    format!("{vault_id:016x}")
 }
 
-/// Encodes the pinned 58 B lease record (OD-4).
+/// `ls:{vault_id_hex}:` — the LMDB mirror-row prefix for one vault.
+#[must_use]
+pub fn lease_key_prefix(vault_id: u64) -> String {
+    format!("{LEASE_KEY_PREFIX}{}:", vault_id_hex(vault_id))
+}
+
+/// `ls:{vault_id_hex}:{client_id_hex}` — the LMDB mirror-row key (36 B).
+#[must_use]
+pub fn lease_key(vault_id: u64, client_id: u64) -> String {
+    format!("{}{}", lease_key_prefix(vault_id), client_id_hex(client_id))
+}
+
+/// Encodes the pinned 66 B lease record (OD-4).
 #[must_use]
 pub fn encode_lease_record(record: &LeaseRecord) -> [u8; LEASE_RECORD_LEN] {
     let mut out = [0u8; LEASE_RECORD_LEN];
@@ -114,10 +131,11 @@ pub fn encode_lease_record(record: &LeaseRecord) -> [u8; LEASE_RECORD_LEN] {
     out[34..42].copy_from_slice(&record.granted_at.to_le_bytes());
     out[42..50].copy_from_slice(&record.renewed_at.to_le_bytes());
     out[50..58].copy_from_slice(&record.expires_at.to_le_bytes());
+    out[58..66].copy_from_slice(&record.vault_id.to_be_bytes());
     out
 }
 
-/// Decodes a pinned 58 B lease record. Fail-closed: exact length, known
+/// Decodes a pinned 66 B lease record. Fail-closed: exact length, known
 /// version byte, known status byte — anything else is a typed error, never
 /// a best-effort partial decode.
 pub fn decode_lease_record(raw: &[u8]) -> Result<LeaseRecord> {
@@ -131,12 +149,33 @@ pub fn decode_lease_record(raw: &[u8]) -> Result<LeaseRecord> {
         LeaseStatus::from_wire_byte(raw[1]).ok_or(Error::CorruptedIndex("lease record status"))?;
     let mut pubkey = [0u8; 32];
     pubkey.copy_from_slice(&raw[2..34]);
+    let granted_at = u64::from_le_bytes(
+        raw[34..42]
+            .try_into()
+            .map_err(|_| Error::CorruptedIndex("lease record length"))?,
+    );
+    let renewed_at = u64::from_le_bytes(
+        raw[42..50]
+            .try_into()
+            .map_err(|_| Error::CorruptedIndex("lease record length"))?,
+    );
+    let expires_at = u64::from_le_bytes(
+        raw[50..58]
+            .try_into()
+            .map_err(|_| Error::CorruptedIndex("lease record length"))?,
+    );
+    let vault_id = u64::from_be_bytes(
+        raw[58..66]
+            .try_into()
+            .map_err(|_| Error::CorruptedIndex("lease record length"))?,
+    );
     Ok(LeaseRecord {
+        vault_id,
         status,
         pubkey,
-        granted_at: u64::from_le_bytes(raw[34..42].try_into().expect("length checked")),
-        renewed_at: u64::from_le_bytes(raw[42..50].try_into().expect("length checked")),
-        expires_at: u64::from_le_bytes(raw[50..58].try_into().expect("length checked")),
+        granted_at,
+        renewed_at,
+        expires_at,
     })
 }
 
@@ -169,7 +208,8 @@ pub fn verify_lease_pop(client_id: u64, pubkey: &[u8; 32], pop_sig: &[u8; 64]) -
 ///
 /// 3. Ed25519-verify the attestation transcript against the embedded
 ///    `att_pk` → fail = [`Error::ReceiptAttestationInvalid`].
-/// 4. `ls:{att_client}` point-read in the CALLER's txn: row absent →
+/// 4. Claimed-row lookup in the CALLER's txn over the v2
+///    `ls:{vault_id_hex}:{att_client}` keyspace: row absent →
 ///    [`Error::ReceiptLeaseUnknown`]; registry pubkey ≠ `att_pk` →
 ///    [`Error::ReceiptAttestationInvalid`]; the CLAIMED row's status revoked
 ///    → [`Error::ReceiptLeaseRevoked`] (checked FIRST, preserving its
@@ -182,8 +222,10 @@ pub fn verify_lease_pop(client_id: u64, pubkey: &[u8; 32], pop_sig: &[u8; 64]) -
 ///    client_id while reusing its key cannot recover (intended; recovery
 ///    requires a fresh KEYPAIR, never key reuse). Runs on BOTH accept arms
 ///    (active AND expired) and even on the `att_client`==claimed path,
-///    catching a same-key rebind under a fresh id. The `(vault, pubkey)`
-///    multi-user dimension is out of scope here (deferred to ONE-1161).
+///    catching a same-key rebind under a fresh id. ONE-1188 only lands the v2
+///    `(vault, pubkey)` keyspace; until ONE-1190/ONE-1192 add trusted local
+///    vault/tenant routing, the receipt door intentionally keeps the existing
+///    status/global revocation semantics.
 ///
 /// The four remote rejections (attestation-invalid, lease-unknown,
 /// lease-revoked — claimed-row OR pubkey floor) classify as REMOTE via
@@ -228,16 +270,11 @@ pub(crate) fn verify_new_receipt_origin_in_txn(
         .map_err(|_| Error::ReceiptAttestationInvalid { id: *id })?;
 
     // Step 4 — claimed-row lease binding (OD-7: status only, never time).
-    let Some(raw) = vault
-        .store
-        .sync_state
-        .get(txn, &lease_key(parts.client_id))?
-    else {
+    let Some(record) = claimed_lease_record_in_txn(vault, txn, parts.client_id)? else {
         return Err(Error::ReceiptLeaseUnknown {
             client_id: parts.client_id,
         });
     };
-    let record = decode_lease_record(raw)?;
     if record.pubkey != parts.pubkey {
         return Err(Error::ReceiptAttestationInvalid { id: *id });
     }
@@ -260,8 +297,9 @@ pub(crate) fn verify_new_receipt_origin_in_txn(
     // (active AND expired): an attacker's fresh active row can be flipped to
     // expired by scan-at-connect. A malformed sibling ls: row is OUR mirror
     // corruption and propagates fail-closed (the `?`), failing the door
-    // GLOBALLY — never a best-effort skip. Multi-user (vault, pubkey) scoping
-    // is out of scope here (ONE-1161).
+    // GLOBALLY — never a best-effort skip. ONE-1188 exposes the per-vault
+    // prefix target, but does not invent trusted vault routing for the receipt
+    // door; ONE-1190/ONE-1192 own per-vault/tenant revocation scoping.
     for entry in vault.store.sync_state.prefix_iter(txn, LEASE_KEY_PREFIX)? {
         let (_key, sibling_raw) = entry?;
         let sibling = decode_lease_record(sibling_raw)?;
@@ -272,6 +310,26 @@ pub(crate) fn verify_new_receipt_origin_in_txn(
         }
     }
     Ok(())
+}
+
+fn claimed_lease_record_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    client_id: u64,
+) -> Result<Option<LeaseRecord>> {
+    let client_suffix = format!(":{}", client_id_hex(client_id));
+    let mut found = None;
+    for entry in vault.store.sync_state.prefix_iter(txn, LEASE_KEY_PREFIX)? {
+        let (key, raw) = entry?;
+        if !key.ends_with(&client_suffix) {
+            continue;
+        }
+        if found.is_some() {
+            return Err(Error::CorruptedIndex("lease record duplicate client"));
+        }
+        found = Some(decode_lease_record(raw)?);
+    }
+    Ok(found)
 }
 
 /// Full-mirrors the root doc's `leases` map into local `ls:` rows inside
@@ -332,11 +390,7 @@ fn mirror_leases_impl(vault: &Vault, wtxn: &mut heed::RwTxn<'_>, root_doc: &Loro
             && key
                 .bytes()
                 .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b));
-        let valid = valid_key
-            && bytes
-                .as_deref()
-                .is_some_and(|raw| decode_lease_record(raw).is_ok());
-        if !valid {
+        let Some(raw) = bytes.as_deref() else {
             quarantine::quarantine_rejected_op_in_txn(
                 vault,
                 wtxn,
@@ -347,12 +401,45 @@ fn mirror_leases_impl(vault: &Vault, wtxn: &mut heed::RwTxn<'_>, root_doc: &Loro
                 bytes.as_deref().unwrap_or(&[]),
             )?;
             continue;
+        };
+        if !valid_key {
+            quarantine::quarantine_rejected_op_in_txn(
+                vault,
+                wtxn,
+                LEASE_QUARANTINE_WINDOW,
+                QuarantineContainer::Leases,
+                &key,
+                &Error::CorruptedIndex("lease registry entry"),
+                raw,
+            )?;
+            continue;
         }
-        let row_key = format!("{LEASE_KEY_PREFIX}{key}");
-        vault
-            .store
-            .sync_state
-            .put(wtxn, &row_key, &bytes.expect("validated above"))?;
+        let Ok(record) = decode_lease_record(raw) else {
+            quarantine::quarantine_rejected_op_in_txn(
+                vault,
+                wtxn,
+                LEASE_QUARANTINE_WINDOW,
+                QuarantineContainer::Leases,
+                &key,
+                &Error::CorruptedIndex("lease registry entry"),
+                raw,
+            )?;
+            continue;
+        };
+        let Ok(client_id) = u64::from_str_radix(&key, 16) else {
+            quarantine::quarantine_rejected_op_in_txn(
+                vault,
+                wtxn,
+                LEASE_QUARANTINE_WINDOW,
+                QuarantineContainer::Leases,
+                &key,
+                &Error::CorruptedIndex("lease registry entry"),
+                raw,
+            )?;
+            continue;
+        };
+        let row_key = lease_key(record.vault_id, client_id);
+        vault.store.sync_state.put(wtxn, &row_key, raw)?;
     }
     Ok(())
 }
@@ -388,13 +475,24 @@ pub mod test_hooks {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::types::VaultConfig;
 
-    /// OD-4 layout literals: 58 B, version 0x01, status byte at [1],
-    /// pubkey at [2..34], three u64 LE timestamps — a transposed field or
-    /// BE/LE flip fails here, not at a remote door.
+    fn test_vault() -> (tempfile::TempDir, Vault) {
+        let dir = tempfile::tempdir().unwrap();
+        let mut cfg = VaultConfig::device();
+        cfg.map_size = 16 * 1024 * 1024;
+        cfg.embedding_model = None;
+        let vault = Vault::open(dir.path(), cfg).unwrap();
+        (dir, vault)
+    }
+
+    /// OD-4 layout literals: 66 B, version 0x02, status byte at [1],
+    /// pubkey at [2..34], three u64 LE timestamps, vault_id u64 BE — a
+    /// transposed field or BE/LE flip fails here, not at a remote door.
     #[test]
     fn lease_record_layout_literals_round_trip() {
         let record = LeaseRecord {
+            vault_id: 0x0102030405060708,
             status: LeaseStatus::Active,
             pubkey: [0xAB; 32],
             granted_at: 0x0102030405060708,
@@ -402,8 +500,9 @@ mod tests {
             expires_at: 0x2122232425262728,
         };
         let encoded = encode_lease_record(&record);
-        assert_eq!(encoded.len(), 58);
-        assert_eq!(encoded[0], 0x01, "version byte");
+        assert_eq!(encoded.len(), LEASE_RECORD_LEN);
+        assert_eq!(encoded.len(), 66);
+        assert_eq!(encoded[0], 0x02, "version byte");
         assert_eq!(encoded[1], 0x01, "active status byte");
         assert_eq!(&encoded[2..34], &[0xAB; 32]);
         assert_eq!(
@@ -413,6 +512,11 @@ mod tests {
         );
         assert_eq!(&encoded[42..50], &0x1112131415161718u64.to_le_bytes());
         assert_eq!(&encoded[50..58], &0x2122232425262728u64.to_le_bytes());
+        assert_eq!(
+            &encoded[58..66],
+            &0x0102030405060708u64.to_be_bytes(),
+            "vault_id u64 BE"
+        );
         assert_eq!(decode_lease_record(&encoded).unwrap(), record);
 
         // Status wire bytes (OD-4): active=0x01, expired=0x02, revoked=0x03.
@@ -425,24 +529,129 @@ mod tests {
             assert_eq!(LeaseStatus::from_wire_byte(byte), Some(status));
         }
 
-        // Fail-closed decode: wrong length, unknown version, unknown status.
-        assert!(decode_lease_record(&encoded[..57]).is_err());
+        // Compat/fail-closed decode: the 58 B v1 layout and any wrong length
+        // are refused; unknown status keeps its pinned error literal.
+        let mut legacy_v1 = [0u8; 58];
+        legacy_v1[0] = 0x01;
+        legacy_v1[1] = 0x01;
+        assert!(matches!(
+            decode_lease_record(&legacy_v1),
+            Err(Error::CorruptedIndex(_))
+        ));
+        assert!(matches!(
+            decode_lease_record(&encoded[..65]),
+            Err(Error::CorruptedIndex(_))
+        ));
+        let mut overlong = encoded.to_vec();
+        overlong.push(0);
+        assert!(matches!(
+            decode_lease_record(&overlong),
+            Err(Error::CorruptedIndex(_))
+        ));
         let mut bad_version = encoded;
-        bad_version[0] = 0x02;
-        assert!(decode_lease_record(&bad_version).is_err());
+        bad_version[0] = 0x01;
+        assert!(matches!(
+            decode_lease_record(&bad_version),
+            Err(Error::CorruptedIndex(_))
+        ));
         let mut bad_status = encoded;
         bad_status[1] = 0x00;
-        assert!(decode_lease_record(&bad_status).is_err());
+        assert!(matches!(
+            decode_lease_record(&bad_status),
+            Err(Error::CorruptedIndex("lease record status"))
+        ));
     }
 
-    /// OD-4 key grammar: `ls:` + `{client_id:016x}` (BE nibble order ⇒
-    /// lexically sortable, 19 B total).
+    /// OD-4 key grammar: `ls:` + `{vault_id:016x}` + `:` +
+    /// `{client_id:016x}` (BE nibble order ⇒ lexically sortable, 36 B total).
     #[test]
     fn lease_key_grammar_literal() {
         assert_eq!(client_id_hex(0x0123456789abcdef), "0123456789abcdef");
-        assert_eq!(lease_key(0x0123456789abcdef), "ls:0123456789abcdef");
-        assert_eq!(lease_key(7), "ls:0000000000000007");
-        assert_eq!(lease_key(7).len(), 19);
+        assert_eq!(vault_id_hex(0x0102030405060708), "0102030405060708");
+        assert_eq!(lease_key_prefix(0x0102030405060708), "ls:0102030405060708:");
+        let key = lease_key(0x0102030405060708, 0x0123456789abcdef);
+        assert_eq!(key, "ls:0102030405060708:0123456789abcdef");
+        assert_eq!(key.len(), 36);
+        assert_eq!(lease_key(7, 7), "ls:0000000000000007:0000000000000007");
+    }
+
+    #[test]
+    fn lease_prefix_scan_isolates_vault_dimension() {
+        let (_dir, vault) = test_vault();
+        let vault_a = 0x0a0b0c0d0e0f1011;
+        let vault_b = 0x11100f0e0d0c0b0a;
+        let client = 0x0123456789abcdef;
+        let record_a = LeaseRecord {
+            vault_id: vault_a,
+            status: LeaseStatus::Active,
+            pubkey: [0xA1; 32],
+            granted_at: 1,
+            renewed_at: 2,
+            expires_at: 3,
+        };
+        let record_b = LeaseRecord {
+            vault_id: vault_b,
+            pubkey: [0xB2; 32],
+            ..record_a
+        };
+        let row_a = encode_lease_record(&record_a);
+        let row_b = encode_lease_record(&record_b);
+        vault
+            .sync_state_put(&lease_key(vault_a, client), &row_a)
+            .unwrap();
+        vault
+            .sync_state_put(&lease_key(vault_b, client), &row_b)
+            .unwrap();
+
+        let rtxn = vault.store.env.read_txn().unwrap();
+        let rows = vault
+            .store
+            .sync_state
+            .prefix_iter(&rtxn, "ls:0a0b0c0d0e0f1011:")
+            .unwrap()
+            .map(|entry| {
+                let (key, value) = entry.unwrap();
+                (key.to_string(), value.to_vec())
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            rows,
+            vec![(
+                "ls:0a0b0c0d0e0f1011:0123456789abcdef".to_owned(),
+                row_a.to_vec()
+            )]
+        );
+    }
+
+    #[test]
+    fn root_lease_map_value_matches_mirror_row_value() {
+        let (_dir, vault) = test_vault();
+        let doc = LoroDoc::new();
+        let vault_id = 0x0102030405060708;
+        let client_id = 0x0a0b0c0d0e0f1011;
+        let record = LeaseRecord {
+            vault_id,
+            status: LeaseStatus::Expired,
+            pubkey: [0x5A; 32],
+            granted_at: 10,
+            renewed_at: 20,
+            expires_at: 30,
+        };
+        let bytes = encode_lease_record(&record);
+        doc.get_map(ROOT_LEASES_MAP)
+            .insert(client_id_hex(client_id).as_str(), bytes.as_slice())
+            .unwrap();
+        doc.commit();
+
+        mirror_leases_from_root(&vault, &doc).unwrap();
+        assert_eq!(
+            vault
+                .sync_state_get("ls:0102030405060708:0a0b0c0d0e0f1011")
+                .unwrap()
+                .as_deref(),
+            Some(bytes.as_slice()),
+            "root-doc leases value and ls: mirror value stay byte-identical"
+        );
     }
 
     /// OD-6 PoP transcript literal: domain || client_id BE || pubkey. A

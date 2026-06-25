@@ -342,7 +342,7 @@ impl WindowManager {
     /// (the `window()` lookup no longer finds it), so deletes take the
     /// transient path while the orphaned doc still carries the deleted
     /// body. The refusal is graceful: the caller retries after the last
-    /// external handle drops. Contrast [`discard_window`]
+    /// external handle drops. Contrast `discard_window`
     /// (Self::discard_window), the FORCED eviction that deregisters even
     /// with outstanding holders because its doc state is known-stale.
     ///

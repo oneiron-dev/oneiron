@@ -32,6 +32,7 @@ use std::sync::Arc;
 use ed25519_dalek::{Signer, SigningKey};
 use loro::LoroDoc;
 use oneiron::sync::bridge::{Materializer, register_observer_b};
+use oneiron::sync::lease;
 use oneiron::sync::quarantine::{QuarantineContainer, QuarantineRecord, quarantined_records};
 use oneiron::sync::schema::create_window_doc;
 use oneiron::sync::types::WindowKey;
@@ -62,6 +63,8 @@ fn test_vault_with_dir() -> (tempfile::TempDir, Arc<Vault>) {
     let vault = Arc::new(Vault::open(dir.path(), test_config()).unwrap());
     (dir, vault)
 }
+
+const TEST_LEASE_VAULT_ID: u64 = 0x0102_0304_0506_0708;
 
 /// 25-byte pinned envelope: type u8 + occurred_start/end + learned_at u64 BE.
 /// Receipts are point events (`occurred_start == occurred_end == learned_at`,
@@ -170,20 +173,21 @@ fn signed_receipt_blob(
     receipt_envelope(learned_at, &body)
 }
 
-/// Writes a hand-built `ls:` lease-registry row (the pinned 58 B OD-4
-/// layout, assembled byte-by-byte in the test): `[ver 0x01][status]
-/// [pubkey:32][granted:8 LE][renewed:8 LE][expires:8 LE]`.
+/// Writes a hand-built `ls:` lease-registry row (the pinned 66 B OD-4
+/// layout, assembled byte-by-byte in the test): `[ver 0x02][status]
+/// [pubkey:32][granted:8 LE][renewed:8 LE][expires:8 LE][vault_id:8 BE]`.
 fn register_lease_row(vault: &Vault, client_id: u64, pubkey: &[u8; 32], status: u8) {
-    let mut record = Vec::with_capacity(58);
-    record.push(0x01);
+    let mut record = Vec::with_capacity(66);
+    record.push(0x02);
     record.push(status);
     record.extend_from_slice(pubkey);
     record.extend_from_slice(&1_700_000_000u64.to_le_bytes());
     record.extend_from_slice(&1_700_000_000u64.to_le_bytes());
     record.extend_from_slice(&(1_700_000_000u64 + 7_776_000).to_le_bytes());
-    assert_eq!(record.len(), 58, "OD-4 record length literal");
+    record.extend_from_slice(&TEST_LEASE_VAULT_ID.to_be_bytes());
+    assert_eq!(record.len(), 66, "OD-4 record length literal");
     vault
-        .sync_state_put(&format!("ls:{client_id:016x}"), &record)
+        .sync_state_put(&lease::lease_key(TEST_LEASE_VAULT_ID, client_id), &record)
         .unwrap();
 }
 
@@ -834,7 +838,7 @@ fn door_accepts_expired_rejects_revoked() {
 /// `ls:` row — the rebind-under-a-new-client_id bypass that the
 /// client_id-keyed kill switch missed. The floor scans every `ls:` row and
 /// rejects on pubkey equality with ANY revoked binding. A plausible-wrong
-/// impl that only checks the claimed `ls:{B}` row (active) ACCEPTS and FAILS
+/// impl that only checks the claimed `ls:{vault}:{B}` row (active) ACCEPTS and FAILS
 /// this test.
 #[test]
 fn revoked_pubkey_rebound_under_fresh_client_id_is_rejected_at_door() {
@@ -903,9 +907,9 @@ fn corrupt_sibling_ls_row_fails_door_closed() {
         &author_key.verifying_key().to_bytes(),
         0x01,
     );
-    // … plus a CORRUPT sibling `ls:` row (truncated below the pinned 58 B).
+    // … plus a CORRUPT sibling `ls:` row (truncated below the pinned 66 B).
     vault
-        .sync_state_put("ls:deadbeefdeadbeef", b"too-short")
+        .sync_state_put("ls:0102030405060708:deadbeefdeadbeef", b"too-short")
         .unwrap();
 
     let id = EntityId::now();
