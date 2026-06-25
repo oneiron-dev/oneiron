@@ -151,6 +151,14 @@ pub struct EntityTypeRegistryEntry {
     pub band: TypeByteBand,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StructuralKindRegistration {
+    pub type_byte: u8,
+    pub short_id_prefix: String,
+    pub band: TypeByteBand,
+    pub pack: String,
+}
+
 pub const ENTITY_TYPE_REGISTRY: &[EntityTypeRegistryEntry] = &[
     EntityTypeRegistryEntry {
         kind: "CLAIM",
@@ -441,6 +449,14 @@ pub fn entity_type_registry_entry(entity_type: u8) -> Option<&'static EntityType
     ENTITY_TYPE_REGISTRY
         .iter()
         .find(|entry| entry.type_byte == entity_type)
+}
+
+#[must_use]
+pub(crate) fn static_short_id_prefix_collision(short_id_prefix: &str) -> bool {
+    ENTITY_TYPE_REGISTRY
+        .iter()
+        .filter_map(|entry| entry.short_id_prefix)
+        .any(|prefix| prefix == short_id_prefix)
 }
 
 pub(crate) fn validate_entity_type(entity_type: u8) -> crate::error::Result<()> {
