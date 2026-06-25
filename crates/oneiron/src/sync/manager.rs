@@ -402,7 +402,7 @@ impl WindowManager {
     /// including to delete routing. Outstanding holders keep the stale doc
     /// (and its observer subscriptions) alive until they drop; this is
     /// logged because their writes are orphaned by design.
-    pub(crate) fn discard_window(&self, key: &WindowKey) -> bool {
+    pub fn discard_window(&self, key: &WindowKey) -> bool {
         let mut registry = self.lock_registry();
         let Some(window) = registry.remove(key) else {
             return false;
