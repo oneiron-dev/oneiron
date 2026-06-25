@@ -33,12 +33,13 @@ use crate::skills_pack as skills_pack_artifact;
 const API_LEVEL: &str = "v1";
 const SUPPORTED_FORMATS: &[&str] = &["json", "yaml", "toon", "markdown", "plaintext"];
 const SKILL_PACK_NAME: &str = "oneiron-http-memory-api";
-const SKILL_PACK_PATH: &str = "oneiron.skills.md";
+const SKILL_PACK_ENDPOINT: &str = "/api/skills/oneiron.skills.md";
 const SKILL_PACK_FORMAT: &str = "agentskills.io";
 const SKILL_PACK_MIME_TYPE: &str = "text/markdown";
 const SKILL_PACK_LAYER_BOUNDARY: &str =
     "skills = how to think about memory; MCP tools = what to call";
-const SKILL_PACK_LOAD_HINT: &str = "Load the root-relative Markdown pack before choosing memory search, read, context-pack, discovery, or recovery calls; use MCP tools as the callable layer.";
+const SKILL_PACK_LOAD_HINT: &str = "GET /api/skills/oneiron.skills.md from the same Oneiron HTTP origin before choosing memory search, read, context-pack, discovery, or recovery calls; use MCP tools as the callable layer.";
+const SKILL_PACK_RESOLUTION: &str = "Resolve endpoint against the same origin used for /api/core/discover and send the configured x-oneiron-secret; do not resolve the pack against a local working directory.";
 const EFFECTIVE_AUTH_SCOPES: &[&str] = &[
     "core:discover",
     "vault:read",
@@ -489,9 +490,9 @@ struct SkillPackDiscovery {
     /// Skill name from the committed pack frontmatter.
     #[schema(example = "oneiron-http-memory-api")]
     name: &'static str,
-    /// Repository-root-relative path to the committed pack.
-    #[schema(example = "oneiron.skills.md")]
-    path: &'static str,
+    /// Server-relative endpoint that serves the committed pack.
+    #[schema(example = "/api/skills/oneiron.skills.md")]
+    endpoint: &'static str,
     /// Compatibility format for the static skill pack.
     #[schema(example = "agentskills.io")]
     pack_format: &'static str,
@@ -499,8 +500,11 @@ struct SkillPackDiscovery {
     #[schema(example = "text/markdown")]
     mime_type: &'static str,
     /// When to load the static pack during agent bootstrap.
-    #[schema(example = "Load the root-relative Markdown pack before choosing memory calls.")]
+    #[schema(example = "GET /api/skills/oneiron.skills.md before choosing memory calls.")]
     when_to_load: &'static str,
+    /// How agents should resolve the committed pack artifact.
+    #[schema(example = "Resolve endpoint against the same Oneiron HTTP origin.")]
+    how_to_load: &'static str,
     /// Boundary between static guidance and callable MCP tools.
     #[schema(example = "skills = how to think about memory; MCP tools = what to call")]
     layer_boundary: &'static str,
@@ -583,10 +587,11 @@ struct RateLimitStatus {
                 "scopes": ["core:discover", "vault:read", "search:read", "entity:read", "sync:connect"],
                 "skill_pack": {
                     "name": "oneiron-http-memory-api",
-                    "path": "oneiron.skills.md",
+                    "endpoint": "/api/skills/oneiron.skills.md",
                     "pack_format": "agentskills.io",
                     "mime_type": "text/markdown",
-                    "when_to_load": "Load the root-relative Markdown pack before choosing memory search, read, context-pack, discovery, or recovery calls; use MCP tools as the callable layer.",
+                    "when_to_load": "GET /api/skills/oneiron.skills.md from the same Oneiron HTTP origin before choosing memory search, read, context-pack, discovery, or recovery calls; use MCP tools as the callable layer.",
+                    "how_to_load": "Resolve endpoint against the same origin used for /api/core/discover and send the configured x-oneiron-secret; do not resolve the pack against a local working directory.",
                     "layer_boundary": "skills = how to think about memory; MCP tools = what to call"
                 },
                 "bound": {
@@ -710,10 +715,11 @@ fn discover_response(server: &SyncServer) -> Result<DiscoverResponse, ApiError> 
 fn skill_pack_discovery() -> SkillPackDiscovery {
     SkillPackDiscovery {
         name: SKILL_PACK_NAME,
-        path: SKILL_PACK_PATH,
+        endpoint: SKILL_PACK_ENDPOINT,
         pack_format: SKILL_PACK_FORMAT,
         mime_type: SKILL_PACK_MIME_TYPE,
         when_to_load: SKILL_PACK_LOAD_HINT,
+        how_to_load: SKILL_PACK_RESOLUTION,
         layer_boundary: SKILL_PACK_LAYER_BOUNDARY,
     }
 }
@@ -1791,9 +1797,9 @@ mod tests {
             "discover must document its 401 ApiError response"
         );
         assert_eq!(
-            discover_success["example"]["skill_pack"]["path"],
-            Value::from("oneiron.skills.md"),
-            "discover example must advertise the committed skill pack path"
+            discover_success["example"]["skill_pack"]["endpoint"],
+            Value::from("/api/skills/oneiron.skills.md"),
+            "discover example must advertise the committed skill pack endpoint"
         );
         assert_eq!(
             spec["components"]["schemas"]["DiscoverResponse"]["properties"]["skill_pack"]["$ref"],

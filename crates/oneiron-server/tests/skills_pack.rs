@@ -4,7 +4,7 @@ use std::path::Path;
 
 const PACK: &str = include_str!("../oneiron.skills.md");
 const API_RS: &str = include_str!("../src/api.rs");
-const SKILL_PACK_PATH: &str = "oneiron.skills.md";
+const SKILL_PACK_ENDPOINT: &str = "/api/skills/oneiron.skills.md";
 const SKILL_PACK_LAYER_BOUNDARY: &str =
     "skills = how to think about memory; MCP tools = what to call";
 
@@ -66,15 +66,16 @@ fn documented_route_set_matches_api_routes_exactly() {
         "api.rs route table changed; update oneiron.skills.md and this contract test together"
     );
 
-    let documented_counts = documented_api_literal_counts(PACK);
+    let tier1 = section_between(PACK, "## Tier-1", "## Tier-2");
+    let documented_counts = documented_api_literal_counts(tier1);
     let documented = documented_counts.keys().copied().collect::<BTreeSet<_>>();
-    assert_eq!(documented, expected, "documented route literals drifted");
+    assert_eq!(documented, expected, "Tier-1 route literals drifted");
 
     for route in EXPECTED_REGISTERED_ROUTES {
         assert_eq!(
             documented_counts.get(route).copied(),
             Some(1),
-            "route literal {route} must appear exactly once in the skill pack"
+            "route literal {route} must appear exactly once in the Tier-1 catalog"
         );
     }
 }
@@ -141,8 +142,8 @@ fn tier3_error_catalog_uses_structured_recovery_fields() {
 #[test]
 fn mcp_discovery_advertisement_matches_committed_pack() {
     assert_eq!(
-        rust_string_const(API_RS, "SKILL_PACK_PATH"),
-        SKILL_PACK_PATH
+        rust_string_const(API_RS, "SKILL_PACK_ENDPOINT"),
+        SKILL_PACK_ENDPOINT
     );
     assert_eq!(
         rust_string_const(API_RS, "SKILL_PACK_LAYER_BOUNDARY"),
@@ -162,8 +163,17 @@ fn mcp_discovery_advertisement_matches_committed_pack() {
         "pack must document the discovery advertisement field"
     );
     assert!(
-        PACK.contains("`path` (`oneiron.skills.md`)"),
-        "pack must document the committed path advertised by discovery"
+        PACK.contains("`endpoint` (`/api/skills/oneiron.skills.md`)"),
+        "pack must document the HTTP endpoint advertised by discovery"
+    );
+    assert!(
+        PACK.contains("same Oneiron HTTP origin"),
+        "pack must tell agents how to resolve the endpoint without a local checkout"
+    );
+    assert!(
+        !PACK.contains(&["`", "path", "` (`oneiron.skills.md`)"].concat())
+            && !PACK.contains(&["`repo_", "path` (`oneiron.skills.md`)"].concat()),
+        "pack must not document a bare relative skill-pack path"
     );
     assert!(
         PACK.contains(SKILL_PACK_LAYER_BOUNDARY),
