@@ -10,7 +10,7 @@
 //! "vault path is already open" error.
 //!
 //! `Store::open` — steps 1–4 run inside a single write transaction while
-//! holding [`lmdb_database_open_guard`] (`mdb_dbi_open` is transaction-scoped:
+//! holding `lmdb_database_open_guard` (`mdb_dbi_open` is transaction-scoped:
 //! the txn that opens a DBI must finish before another txn opens one):
 //!
 //! 1. **`vault_meta` (manifest DB #5) is created/opened FIRST.** Rationale:
@@ -69,7 +69,7 @@
 //!
 //! `vault_meta` (#5) owns the storage/schema and text-index identity keys,
 //! plus the per-type short-id counters (`b"sid_counter:" ‖ type_byte` → u64
-//! LE, see [`SHORT_ID_COUNTER_KEY_PREFIX`]); `hnsw_meta` (#8) owns the
+//! LE, see `SHORT_ID_COUNTER_KEY_PREFIX`); `hnsw_meta` (#8) owns the
 //! vector-side compatibility keys (`model_id`, `hnsw_config`) alongside HNSW
 //! runtime metadata (`entry_point`, `count`, graph/vector version counters).
 //! Consolidating the vector compat keys into `vault_meta` would be a storage
@@ -364,7 +364,7 @@ pub(crate) enum HnswCompatibilityState {
 /// LMDB environment and database handles for a vault.
 ///
 /// Dropping the last handle to a `Store` (normally via the owning
-/// [`crate::Vault`]) CLOSES the LMDB environment — see [`OwnedEnv`] for the
+/// [`crate::Vault`]) CLOSES the LMDB environment — see `OwnedEnv` for the
 /// close-path rationale (ONE-1142).
 pub struct Store {
     pub(crate) env: OwnedEnv,

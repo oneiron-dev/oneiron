@@ -10,7 +10,7 @@
 //! The wrapper returns `Surface` tokens with byte offsets into the caller's
 //! original UTF-8 (`offset_base + local`), one position per word-like
 //! segment. Non-word-like segments are scanned for emoji grapheme clusters
-//! via [`emoji::emit_emoji_graphemes`] (ARCH-0031 dispatch row
+//! via `emoji::emit_emoji_graphemes` (ARCH-0031 dispatch row
 //! "Emoji / unknown → Grapheme per token"); whatever remains (whitespace,
 //! punctuation) is skipped.
 

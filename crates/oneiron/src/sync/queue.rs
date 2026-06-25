@@ -17,9 +17,9 @@
 //!   GDPR delete on an unconfirmed reconnect — fail-closed: keep until
 //!   confirmed.
 //!
-//!   Constructed ONLY by the tombstone-commit path: [`push_delete_bearing_in_txn`]
-//!   takes a [`DeleteBearingUpdate`], whose single constructor is
-//!   [`export_tombstone_commit_delta`](crate::sync::window::export_tombstone_commit_delta)
+//!   Constructed ONLY by the tombstone-commit path: `push_delete_bearing_in_txn`
+//!   takes a `DeleteBearingUpdate`, whose single constructor is
+//!   `export_tombstone_commit_delta`
 //!   — arbitrary payloads can never acquire the marker and its clear/scrub
 //!   exemptions (ONE-1135 review item 14). Invariant: a `d:{seq}` marker
 //!   never outlives its `q:{seq}` row — the malformed-row prune drops both
@@ -218,7 +218,7 @@ impl SyncQueue {
     /// unconfirmed: the server may never have applied what was sent, so a
     /// delete-bearing update (the only durable propagation record of a
     /// GDPR/hard delete once the carrier-15 scrub ran) must be kept until
-    /// the VV-confirmed clear ([`clear_through_confirmed`]
+    /// the VV-confirmed clear (`clear_through_confirmed`
     /// (Self::clear_through_confirmed), protocol lands in M4-12).
     pub fn clear_through(&self, max_seq: u64) -> Result<()> {
         self.clear_through_inner(max_seq, false)
@@ -359,7 +359,7 @@ impl SyncQueue {
     }
 
     /// Returns the number of valid update entries in the queue, INCLUDING
-    /// delete-bearing rows (it matches what [`drain_updates`]
+    /// delete-bearing rows (it matches what `drain_updates`
     /// (Self::drain_updates) replays).
     pub fn len(&self) -> Result<usize> {
         let rtxn = self.vault.store.env.read_txn()?;
