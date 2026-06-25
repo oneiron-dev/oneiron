@@ -90,6 +90,11 @@ fn serialize_json(pack: &ContextPack, config: &SerializeConfig) -> Vec<u8> {
     if config.include_stats {
         root.insert("stats".to_owned(), json_stats(pack));
     }
+    if let Some(empty) = &pack.empty
+        && let Ok(value) = serde_json::to_value(empty)
+    {
+        root.insert("empty".to_owned(), value);
+    }
 
     serde_json::to_vec(&Value::Object(root)).unwrap_or_else(|_| b"{}".to_vec())
 }
@@ -1328,8 +1333,8 @@ mod tests {
     use std::collections::HashMap;
 
     use crate::types::{
-        ContextEntity, ContextPack, EntityId, FieldProfile, PackFormat, PackStats, Signal,
-        TokenAllocation,
+        ContextEntity, ContextPack, EmptyContext, EmptyReason, EntityId, FieldProfile, PackFormat,
+        PackStats, Signal, TokenAllocation,
     };
 
     use super::*;
@@ -1406,6 +1411,7 @@ mod tests {
                 neighbors_hydrated: 1,
                 claims_suppressed: 0,
             },
+            empty: None,
         }
     }
 
@@ -1454,6 +1460,7 @@ mod tests {
                 neighbors_hydrated: 0,
                 claims_suppressed: 0,
             },
+            empty: None,
         };
 
         let now = crate::unix_seconds_now();
@@ -1653,6 +1660,7 @@ mod tests {
             results: Vec::new(),
             neighbors: Vec::new(),
             stats: empty_stats(),
+            empty: None,
         };
 
         for i in 0..6_u8 {
@@ -1777,6 +1785,7 @@ mod tests {
             }],
             neighbors: vec![],
             stats: empty_stats(),
+            empty: None,
         };
 
         let mut cfg = config(PackFormat::Json);
@@ -1858,6 +1867,7 @@ mod tests {
             }],
             neighbors: vec![],
             stats: empty_stats(),
+            empty: None,
         };
 
         let bytes = serialize_pack(
@@ -1973,6 +1983,7 @@ mod tests {
             }],
             neighbors: vec![],
             stats: empty_stats(),
+            empty: None,
         };
 
         let mut unlimited = config(PackFormat::Json);
@@ -2186,6 +2197,7 @@ mod tests {
             ],
             neighbors: vec![],
             stats: empty_stats(),
+            empty: None,
         };
 
         let parsed: Value =
@@ -2228,6 +2240,7 @@ mod tests {
             }],
             neighbors: vec![],
             stats: empty_stats(),
+            empty: None,
         };
 
         let text =
@@ -2385,6 +2398,51 @@ mod tests {
             neighbors_hydrated: 0,
             claims_suppressed: 0,
         }
+    }
+
+    fn empty_pack_with_reason(reason: EmptyReason) -> ContextPack {
+        ContextPack {
+            results: vec![],
+            neighbors: vec![],
+            stats: empty_stats(),
+            empty: Some(EmptyContext {
+                reason,
+                total_in_scope: 7,
+                hint: "test hint".to_owned(),
+            }),
+        }
+    }
+
+    #[test]
+    fn empty_reason_json_wire_literals_are_stable() {
+        for (reason, expected) in [
+            (EmptyReason::FilterMatchedNone, "filter_matched_none"),
+            (EmptyReason::NoData, "no_data"),
+            (EmptyReason::AllActivated, "all_activated"),
+            (EmptyReason::BelowThreshold, "below_threshold"),
+        ] {
+            let pack = empty_pack_with_reason(reason);
+            let parsed: Value =
+                serde_json::from_slice(&serialize_pack(&pack, &config(PackFormat::Json)))
+                    .expect("json");
+            assert_eq!(parsed["empty"]["reason"], expected);
+            assert_eq!(parsed["empty"]["totalInScope"], 7);
+            assert_eq!(parsed["empty"]["hint"], "test hint");
+            let decoded: EmptyReason =
+                serde_json::from_value(parsed["empty"]["reason"].clone()).expect("empty reason");
+            assert_eq!(decoded, reason);
+        }
+    }
+
+    #[test]
+    fn non_empty_json_omits_empty_key() {
+        let parsed: Value =
+            serde_json::from_slice(&serialize_pack(&sample_pack(), &config(PackFormat::Json)))
+                .expect("json");
+        assert!(
+            parsed.get("empty").is_none(),
+            "non-empty pack must omit the empty key"
+        );
     }
 
     #[test]
@@ -2569,6 +2627,7 @@ mod tests {
                 results: vec![entity],
                 neighbors: vec![],
                 stats: empty_stats(),
+                empty: None,
             };
 
             // JSON / Standard profile inclusion + exclusion.
@@ -2641,6 +2700,7 @@ mod tests {
             results: vec![entity],
             neighbors: vec![],
             stats: empty_stats(),
+            empty: None,
         };
 
         // Plaintext format renders timestamps relatively.
