@@ -77,7 +77,7 @@ After committing, inspect the PR diff before publishing:
 
 ```bash
 rtk git diff main...HEAD --name-status
-rtk git diff main...HEAD -- ':!*.md' | grep -E '^\+.*(_VERSION|fn .* pub )' | head
+rtk git diff main...HEAD -- ':!*.md' | grep -E '^\+.*(_VERSION|pub (fn|struct|enum|trait|type|const|static|mod))' | head
 rtk git diff main...HEAD -- 'Cargo.toml' '*/Cargo.toml' 'deny.toml' '.gitignore'
 ```
 
