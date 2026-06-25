@@ -722,6 +722,7 @@ pub(crate) fn apply_ops(
     let mut had_graph_mutation = false;
     let mut had_vector_mutation = false;
     let mut text_manifest_checked = false;
+    let text_covered_entity_ids = text_covered_entity_ids(&ops);
     // Legacy (pre-symmetric-migration) graphs answer a vector refresh with a
     // full snapshot rebuild. Batched vector updates coalesce that into at
     // most ONE rebuild per transaction: once pending, per-op graph mutations
@@ -766,6 +767,7 @@ pub(crate) fn apply_ops(
                     // `apply_put` deindexes the loser's BM25F postings on a
                     // body-changing overwrite, same-txn (ARCH-0031 amendment).
                     allow_maintenance && allow_reserved_predicate,
+                    text_covered_entity_ids.contains(&id),
                 )?;
             }
             BatchOp::Vector { id, vector } => {
@@ -890,6 +892,15 @@ pub(crate) fn apply_ops(
 
 fn contains_text_op(ops: &[BatchOp]) -> bool {
     ops.iter().any(|op| matches!(op, BatchOp::Text { .. }))
+}
+
+fn text_covered_entity_ids(ops: &[BatchOp]) -> HashSet<EntityId> {
+    ops.iter()
+        .filter_map(|op| match op {
+            BatchOp::Text { id, .. } => Some(*id),
+            _ => None,
+        })
+        .collect()
 }
 
 #[derive(Debug, Default)]
@@ -1065,6 +1076,7 @@ fn apply_put(
     data: &[u8],
     allow_reserved_predicate: bool,
     replicated: bool,
+    has_covering_text_op: bool,
 ) -> Result<()> {
     // Type-byte validation runs in `apply_ops` (the public-vs-maintenance gate:
     // public writes reject the engine-authored maintenance band, the sync
@@ -1100,23 +1112,18 @@ fn apply_put(
 
     if let Some(old_record) = store.entities.get(wtxn, id.as_bytes())? {
         let (old_type, old_occurred, old_learned) = parse_entity_metadata(old_record)?;
-        // ONE-1141 (ARCH-0031 amendment): "no replicated overwrite ever
-        // leaves loser postings live" — when an LWW replicated overwrite
-        // changes the stored body, the loser document's BM25F postings are
-        // removed in the SAME transaction as the overwrite, BEFORE the
-        // displacement block below. Text is a LOCAL `BatchOp::Text` family
-        // that sync does not carry, so without this the losing node keeps
-        // serving its pre-merge terms. Token source: the body-independent
-        // `text_forward` row — `deindex_text` reads only it and is a no-op
-        // for never-indexed entities. Byte-compare guard: a same-bytes
-        // replay (idempotent re-import / reconnect echo, or the winner node
-        // re-receiving its own winning value) must NOT touch the index, so
-        // a converged winner's postings survive the merge; metadata-only
-        // (occurred/learned) changes are not body changes. Local overwrites
-        // stay out of scope: the local writer owns both the put and its
-        // `BatchOp::Text` re-index (`index_text` self-deindexes stale rows).
-        let replicated_body_changed =
-            replicated && old_record[ENTITY_METADATA_HEADER_LEN..] != *data;
+        // ONE-1141 + ONE-1168 (ARCH-0031 amendment): body-changing overwrites
+        // must not leave stale BM25F postings live. Replicated/LWW overwrites
+        // always deindex the loser because sync carries no `BatchOp::Text`.
+        // Local overwrites do the same only when this batch has no same-id
+        // Text op; if Text is present, `index_text` remains the self-deindex
+        // authority. Token source: the body-independent `text_forward` row —
+        // `deindex_text` reads only it and is a no-op for never-indexed
+        // entities. Byte-compare guard: same-bytes replay must NOT touch the
+        // index, and metadata-only (occurred/learned) changes are not body
+        // changes.
+        let body_changed = old_record[ENTITY_METADATA_HEADER_LEN..] != *data;
+        let should_deindex_stale_text = body_changed && (replicated || !has_covering_text_op);
         if old_type != entity_type {
             return Err(Error::EntityTypeImmutable {
                 id,
@@ -1124,7 +1131,7 @@ fn apply_put(
                 attempted: entity_type,
             });
         }
-        if replicated_body_changed {
+        if should_deindex_stale_text {
             crate::bm25::deindex_text(store, wtxn, &id)?;
         }
 
