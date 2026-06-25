@@ -1378,14 +1378,19 @@ pub fn forward_rematerialize(
             // that gate or reorders this bookkeeping, the debug assert below
             // catches the healed-clear regression before an unproven purge
             // retry can be silently discharged.
+            #[cfg(debug_assertions)]
             for id in &healed {
+                let has_unproven_marker = quarantine::unproven_remat_marker_exists_in_txn(
+                    vault,
+                    wtxn,
+                    window_key.as_str(),
+                    id,
+                )
+                .unwrap_or_else(|err| {
+                    panic!("delete-safety invariant: failed to read rm: marker state: {err}")
+                });
                 debug_assert!(
-                    !quarantine::unproven_remat_marker_exists_in_txn(
-                        vault,
-                        wtxn,
-                        window_key.as_str(),
-                        id,
-                    )?,
+                    !has_unproven_marker,
                     "delete-safety invariant: healed ids must be disjoint from unproven rm: markers"
                 );
             }
