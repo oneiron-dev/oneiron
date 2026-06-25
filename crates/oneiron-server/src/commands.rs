@@ -1,3 +1,4 @@
+use std::io::{self, Write};
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -44,7 +45,15 @@ pub fn skills_pack(args: SkillsPackArgs) -> anyhow::Result<()> {
     } else {
         OutputMode::Markdown
     };
-    print!("{}", skills_pack::render(mode)?);
+    let output = skills_pack::render(mode)?;
+    let stdout = io::stdout();
+    let mut stdout = stdout.lock();
+    if let Err(error) = stdout.write_all(output.as_bytes()) {
+        if error.kind() == io::ErrorKind::BrokenPipe {
+            return Ok(());
+        }
+        anyhow::bail!("write skills pack to stdout failed: {error}");
+    }
     Ok(())
 }
 

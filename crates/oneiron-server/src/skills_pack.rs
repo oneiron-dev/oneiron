@@ -2,7 +2,7 @@ use serde::Serialize;
 
 pub(crate) const ARTIFACT_PATH: &str = "oneiron.skills.md";
 const MEDIA_TYPE: &str = "text/markdown; profile=agentskills.io";
-const CONTENT: &str = include_str!("../../../oneiron.skills.md");
+const CONTENT: &str = include_str!("../oneiron.skills.md");
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum OutputMode {
