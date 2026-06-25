@@ -14,6 +14,10 @@ use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Json, Response};
 use axum::routing::{get, post};
+use oneiron::{
+    NotificationItem, ResumeBudget, ResumeBundle, SessionContext, UnprocessedItem,
+    types::ENTITY_TYPE_NOTIFICATION,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -30,6 +34,7 @@ const EFFECTIVE_AUTH_SCOPES: &[&str] = &[
     "vault:read",
     "search:read",
     "entity:read",
+    "companion:resume",
     "sync:connect",
 ];
 const CAPABILITIES: &[&str] = &[
@@ -40,6 +45,7 @@ const CAPABILITIES: &[&str] = &[
     "entity.get",
     "edges.get",
     "context_pack",
+    "companion.resume",
     "lease.revoke",
 ];
 const CAPABILITY_MODES: &[&str] = &["flash", "thinking", "pro", "ultra"];
@@ -55,6 +61,7 @@ pub(crate) fn api_routes(server: Arc<SyncServer>) -> Router {
         .route("/api/edges/{id}", get(get_edges))
         // context-pack is POST since it takes a complex options body
         .route("/api/context-pack", post(context_pack))
+        .route("/api/companion/resume", post(resume))
         // owner recovery surface (ONE-1140, OD-8): revoke a lost/stolen
         // device's lease binding (terminal)
         .route("/api/lease/revoke", post(lease_revoke))
@@ -301,6 +308,198 @@ fn rate_limit_status(config: &SyncServerConfig) -> RateLimitStatus {
         max_windows_per_connection: config.max_windows_per_connection,
         max_frame_size_bytes: config.max_frame_size,
         max_update_payload_bytes: config.max_update_payload,
+    }
+}
+
+// ─── Companion resume ────────────────────────────────────────────────────────
+
+/// One-shot read-only companion hydration.
+/// POST /api/companion/resume
+async fn resume(
+    headers: HeaderMap,
+    State(server): State<Arc<SyncServer>>,
+) -> Result<Json<ResumeBundle>, ApiError> {
+    check_api_auth(&headers, &server.config)?;
+    let caller = resume_caller(&headers);
+    resume_bundle(&server, &caller).map(Json)
+}
+
+fn resume_bundle(server: &SyncServer, caller: &str) -> Result<ResumeBundle, ApiError> {
+    Ok(ResumeBundle::new(
+        resume_session_context(server)?,
+        pending_notifications(server, caller)?,
+        pending_unprocessed_items(server, caller),
+        current_resume_budget(server),
+    ))
+}
+
+fn resume_session_context(server: &SyncServer) -> Result<SessionContext, ApiError> {
+    let mut counts = BTreeMap::new();
+    let mut last_activity = None;
+
+    for entity_type in u8::MIN..=u8::MAX {
+        let ids = server
+            .vault
+            .entities_by_type(entity_type)
+            .inspect_err(|e| {
+                tracing::error!(error = %e, entity_type, "resume session count scan failed");
+            })
+            .map_err(|_| ApiError::internal_server_error("resume session count scan failed"))?;
+
+        if ids.is_empty() {
+            continue;
+        }
+
+        counts.insert(entity_type.to_string(), ids.len() as u64);
+        for id in ids {
+            let learned_at = server
+                .vault
+                .get_learned_at(&id)
+                .inspect_err(|e| {
+                    tracing::error!(error = %e, id = %id.to_hex(), "resume activity scan failed");
+                })
+                .map_err(|_| ApiError::internal_server_error("resume activity scan failed"))?;
+            last_activity =
+                Some(last_activity.map_or(learned_at, |current: u64| current.max(learned_at)));
+        }
+    }
+
+    Ok(SessionContext {
+        api_version: API_LEVEL.to_owned(),
+        counts,
+        last_activity,
+    })
+}
+
+fn pending_notifications(
+    server: &SyncServer,
+    caller: &str,
+) -> Result<Vec<NotificationItem>, ApiError> {
+    let ids = server
+        .vault
+        .entities_by_type(ENTITY_TYPE_NOTIFICATION)
+        .inspect_err(|e| {
+            tracing::error!(error = %e, "resume notification scan failed");
+        })
+        .map_err(|_| ApiError::internal_server_error("resume notification scan failed"))?;
+
+    let mut seen = BTreeSet::new();
+    let mut notifications = Vec::new();
+    for id in ids {
+        if !seen.insert(id) {
+            continue;
+        }
+        let Some(raw_body) = server
+            .vault
+            .get(&id)
+            .inspect_err(|e| {
+                tracing::error!(error = %e, id = %id.to_hex(), "resume notification read failed");
+            })
+            .map_err(|_| ApiError::internal_server_error("resume notification read failed"))?
+        else {
+            continue;
+        };
+        let body = entity_body_json(&raw_body);
+        if !notification_scoped_to_caller(&body, caller) {
+            continue;
+        }
+        if notification_already_surfaced(&body, caller) {
+            continue;
+        }
+        let learned_at = server
+            .vault
+            .get_learned_at(&id)
+            .inspect_err(|e| {
+                tracing::error!(error = %e, id = %id.to_hex(), "resume notification timestamp failed");
+            })
+            .map_err(|_| ApiError::internal_server_error("resume notification timestamp failed"))?;
+        notifications.push(NotificationItem {
+            id: id.to_hex(),
+            learned_at,
+            body,
+        });
+    }
+
+    Ok(notifications)
+}
+
+fn pending_unprocessed_items(_server: &SyncServer, _caller: &str) -> Vec<UnprocessedItem> {
+    Vec::new()
+}
+
+fn current_resume_budget(_server: &SyncServer) -> ResumeBudget {
+    ResumeBudget::from_meter(0, 0)
+}
+
+fn resume_caller(headers: &HeaderMap) -> String {
+    headers
+        .get("x-oneiron-caller")
+        .and_then(|v| v.to_str().ok())
+        .filter(|v| !v.is_empty())
+        .unwrap_or("default")
+        .to_owned()
+}
+
+fn entity_body_json(raw_body: &[u8]) -> Value {
+    rmp_serde::from_slice(raw_body)
+        .unwrap_or_else(|_| Value::String(String::from_utf8_lossy(raw_body).into_owned()))
+}
+
+fn notification_scoped_to_caller(body: &Value, caller: &str) -> bool {
+    let Some(object) = body.as_object() else {
+        return true;
+    };
+
+    const SCOPE_KEYS: &[&str] = &[
+        "caller",
+        "caller_id",
+        "callerId",
+        "recipient",
+        "recipient_id",
+        "recipientId",
+    ];
+    for key in SCOPE_KEYS {
+        if let Some(value) = object.get(*key) {
+            return caller_marker_contains(Some(value), caller);
+        }
+    }
+    true
+}
+
+fn notification_already_surfaced(body: &Value, caller: &str) -> bool {
+    let Some(object) = body.as_object() else {
+        return false;
+    };
+
+    const GLOBAL_KEYS: &[&str] = &["acked", "acknowledged", "surfaced", "seen"];
+    if GLOBAL_KEYS
+        .iter()
+        .any(|key| object.get(*key).and_then(Value::as_bool) == Some(true))
+    {
+        return true;
+    }
+
+    const CALLER_KEYS: &[&str] = &[
+        "acked_by",
+        "ackedBy",
+        "acknowledged_by",
+        "acknowledgedBy",
+        "surfaced_by",
+        "surfacedBy",
+        "seen_by",
+        "seenBy",
+    ];
+    CALLER_KEYS
+        .iter()
+        .any(|key| caller_marker_contains(object.get(*key), caller))
+}
+
+fn caller_marker_contains(value: Option<&Value>, caller: &str) -> bool {
+    match value {
+        Some(Value::Array(items)) => items.iter().any(|item| item.as_str() == Some(caller)),
+        Some(Value::Object(map)) => map.get(caller).and_then(Value::as_bool) == Some(true),
+        Some(Value::String(item)) => item == caller,
+        _ => false,
     }
 }
 

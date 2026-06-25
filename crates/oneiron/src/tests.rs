@@ -1,5 +1,5 @@
 use core::assert_matches;
-use std::collections::HashSet;
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::path::Path;
 use std::str;
 use std::time::Instant;
@@ -66,6 +66,79 @@ fn open_test_vault() -> (tempfile::TempDir, Vault) {
 
 fn test_time_range(start: u64, end: u64) -> TimeRange {
     TimeRange { start, end }
+}
+
+fn sample_resume_bundle(tokens_used: u64, tokens_limit: u64) -> ResumeBundle {
+    ResumeBundle::new(
+        SessionContext {
+            api_version: "v1".to_owned(),
+            counts: BTreeMap::from([("16".to_owned(), 1)]),
+            last_activity: Some(42),
+        },
+        vec![NotificationItem {
+            id: seeded_entity_id(0x2141).to_hex(),
+            learned_at: 42,
+            body: serde_json::json!({"message": "fresh"}),
+        }],
+        Vec::new(),
+        ResumeBudget::from_meter(tokens_used, tokens_limit),
+    )
+}
+
+#[test]
+fn resume_budget_invariant_uses_meter_delta() {
+    let bundle = sample_resume_bundle(400, 1_000);
+    assert_eq!(bundle.budget.tokens_used, 400);
+    assert_eq!(bundle.budget.tokens_limit, 1_000);
+    assert_eq!(bundle.budget.tokens_remaining, 600);
+}
+
+#[test]
+fn resume_budget_saturates_when_used_exceeds_limit() {
+    let budget = ResumeBudget::from_meter(1_200, 1_000);
+    assert_eq!(budget.tokens_used, 1_200);
+    assert_eq!(budget.tokens_limit, 1_000);
+    assert_eq!(budget.tokens_remaining, 0);
+}
+
+#[test]
+fn resume_bundle_serde_top_level_keys_are_exact() {
+    let value = serde_json::to_value(sample_resume_bundle(400, 1_000)).unwrap();
+    let object = value
+        .as_object()
+        .expect("resume bundle should be an object");
+    let keys = object.keys().map(String::as_str).collect::<BTreeSet<_>>();
+    assert_eq!(
+        keys,
+        BTreeSet::from(["budget", "notifications", "session", "unprocessed"])
+    );
+}
+
+#[test]
+fn resume_bundle_empty_surfaces_serialize_as_empty_arrays() {
+    let bundle = ResumeBundle::new(
+        SessionContext {
+            api_version: "v1".to_owned(),
+            counts: BTreeMap::new(),
+            last_activity: None,
+        },
+        Vec::new(),
+        Vec::new(),
+        ResumeBudget::from_meter(0, 0),
+    );
+
+    assert_eq!(bundle.notifications, Vec::<NotificationItem>::new());
+    assert_eq!(bundle.unprocessed, Vec::<UnprocessedItem>::new());
+
+    let json = String::from_utf8(crate::serialize::serialize_resume_bundle(&bundle)).unwrap();
+    assert!(
+        json.contains("\"notifications\":[]"),
+        "notifications must serialize as an empty array: {json}"
+    );
+    assert!(
+        json.contains("\"unprocessed\":[]"),
+        "unprocessed must serialize as an empty array: {json}"
+    );
 }
 
 fn seeded_entity_id(counter: u128) -> EntityId {
