@@ -31,6 +31,7 @@ use oneiron::sync::{
 };
 use oneiron_server::build_app;
 use oneiron_server::config::SyncServerConfig;
+use oneiron_server::error::{ApiError, ApiErrorDetails, ErrorCode};
 use oneiron_server::server::SyncServer;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio_tungstenite::tungstenite::Message;
@@ -158,6 +159,17 @@ fn assert_http_status(response: &str, status: u16) {
         "expected HTTP status {status}, got response head: {:?}",
         response.lines().next()
     );
+}
+
+fn http_json_body(response: &str) -> &str {
+    response
+        .split_once("\r\n\r\n")
+        .map(|(_headers, body)| body)
+        .expect("HTTP response should contain header/body delimiter")
+}
+
+fn api_error_body(response: &str) -> ApiError {
+    serde_json::from_str(http_json_body(response)).expect("response body should be ApiError JSON")
 }
 
 async fn send_window_vv_request(ws: &mut WsStream, key: &str) {
@@ -289,6 +301,31 @@ async fn http_guarded_route_rejects_when_no_secret_and_not_dev() {
 
     let response = http_get(addr, "/api/search/text?query=hello", None).await;
     assert_http_status(&response, 401);
+    let error = api_error_body(&response);
+    assert_eq!(error.code(), ErrorCode::Unauthorized);
+    assert!(matches!(error.details(), ApiErrorDetails::Unauthorized));
+    assert!(!error.suggestions().is_empty());
+
+    handle.abort();
+}
+
+#[tokio::test]
+async fn http_bad_entity_id_returns_structured_api_error_body() {
+    let dir = tempfile::tempdir().unwrap();
+    let (addr, _server, handle) = spawn_server(
+        open_vault(dir.path()),
+        config_with_secret_and_dev(None, true),
+    )
+    .await;
+
+    let response = http_get(addr, "/api/entity/not-hex", None).await;
+    assert_http_status(&response, 400);
+    let error = api_error_body(&response);
+    assert_eq!(error.code(), ErrorCode::BadRequest);
+    assert!(
+        matches!(error.details(), ApiErrorDetails::BadRequest { field } if field.as_deref() == Some("id"))
+    );
+    assert!(!error.suggestions().is_empty());
 
     handle.abort();
 }
