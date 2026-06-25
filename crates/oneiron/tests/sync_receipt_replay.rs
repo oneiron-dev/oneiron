@@ -64,7 +64,7 @@ fn test_vault_with_dir() -> (tempfile::TempDir, Arc<Vault>) {
     (dir, vault)
 }
 
-const TEST_LEASE_VAULT_ID: u64 = 0x0102_0304_0506_0708;
+const TEST_LEASE_VAULT_ID: u64 = 0;
 
 /// 25-byte pinned envelope: type u8 + occurred_start/end + learned_at u64 BE.
 /// Receipts are point events (`occurred_start == occurred_end == learned_at`,
@@ -836,10 +836,10 @@ fn door_accepts_expired_rejects_revoked() {
 /// att_client. A receipt VALIDLY signed by a revoked pubkey is rejected at
 /// the door even when the att_client it claims points at a FRESH, ACTIVE
 /// `ls:` row — the rebind-under-a-new-client_id bypass that the
-/// client_id-keyed kill switch missed. The floor scans every `ls:` row and
-/// rejects on pubkey equality with ANY revoked binding. A plausible-wrong
-/// impl that only checks the claimed `ls:{vault}:{B}` row (active) ACCEPTS and FAILS
-/// this test.
+/// client_id-keyed kill switch missed. The floor scans every same-vault
+/// `ls:{vault}:` row and rejects on pubkey equality with any same-vault
+/// revoked binding. A plausible-wrong impl that only checks the claimed
+/// `ls:{vault}:{B}` row (active) ACCEPTS and FAILS this test.
 #[test]
 fn revoked_pubkey_rebound_under_fresh_client_id_is_rejected_at_door() {
     let (_dir, vault) = test_vault_with_dir();
@@ -885,12 +885,11 @@ fn revoked_pubkey_rebound_under_fresh_client_id_is_rejected_at_door() {
 }
 
 /// ONE-1140 RULING C fail-closed rider (delete-safety adjacent, cap-exempt):
-/// the pubkey-revocation floor scans EVERY `ls:` row, so a malformed sibling
-/// `ls:` row (OUR mirror corruption, not remote bytes) propagates fail-
-/// closed and fails the door GLOBALLY — never a best-effort skip. The error
-/// is the LOCAL `CorruptedIndex`, which is NOT a remote rejection, so the
-/// receipt is neither written nor quarantined. Wider blast radius than the
-/// single receipt, but correct (OWNER note in the PR body).
+/// the pubkey-revocation floor scans every same-vault `ls:{vault}:` row, so
+/// a malformed sibling `ls:` row inside that prefix (OUR mirror corruption,
+/// not remote bytes) propagates fail-closed for the vault — never a
+/// best-effort skip. The error is the LOCAL `CorruptedIndex`, which is NOT a
+/// remote rejection, so the receipt is neither written nor quarantined.
 #[test]
 fn corrupt_sibling_ls_row_fails_door_closed() {
     let (_dir, vault) = test_vault_with_dir();
@@ -909,7 +908,10 @@ fn corrupt_sibling_ls_row_fails_door_closed() {
     );
     // … plus a CORRUPT sibling `ls:` row (truncated below the pinned 66 B).
     vault
-        .sync_state_put("ls:0102030405060708:deadbeefdeadbeef", b"too-short")
+        .sync_state_put(
+            &lease::lease_key(TEST_LEASE_VAULT_ID, 0xdead_beef_dead_beef),
+            b"too-short",
+        )
         .unwrap();
 
     let id = EntityId::now();

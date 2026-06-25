@@ -53,6 +53,8 @@ pub const LEASE_RECORD_LEN: usize = 66;
 pub const LEASE_RECORD_VERSION: u8 = 0x02;
 /// 90-day lease: `expires_at = renewed_at + LEASE_DURATION_SECS` (OD-4).
 pub const LEASE_DURATION_SECS: u64 = 7_776_000;
+/// Current single-vault lease scope used by the existing server path.
+pub(crate) const DEFAULT_LEASE_VAULT_ID: u64 = 0;
 /// Proof-of-possession transcript domain separator (OD-6 literal):
 /// `msg = LEASE_POP_DOMAIN || client_id:8 BE || pubkey:32`.
 pub const LEASE_POP_DOMAIN: &[u8] = b"oneiron/lease-pop/v1";
@@ -216,24 +218,22 @@ pub fn verify_lease_pop(client_id: u64, pubkey: &[u8; 32], pop_sig: &[u8; 64]) -
 ///    precedence); active | expired → fall through to step 5 (OD-7).
 /// 5. Pubkey-bound revocation FLOOR (OD-8 amended, RULING C). The kill
 ///    switch binds to the Ed25519 PUBKEY, not the mintable `att_client`:
-///    scan EVERY `ls:` row and reject with [`Error::ReceiptLeaseRevoked`] if
-///    this signing pubkey appears in ANY revoked binding — so a revoked
-///    pubkey is terminal across ALL client_ids, and a device that rotates
-///    client_id while reusing its key cannot recover (intended; recovery
-///    requires a fresh KEYPAIR, never key reuse). Runs on BOTH accept arms
-///    (active AND expired) and even on the `att_client`==claimed path,
-///    catching a same-key rebind under a fresh id. ONE-1188 only lands the v2
-///    `(vault, pubkey)` keyspace; until ONE-1190/ONE-1192 add trusted local
-///    vault/tenant routing, the receipt door intentionally keeps the existing
-///    status/global revocation semantics.
+///    scan every row under this vault's `ls:{vault_id_hex}:` prefix and
+///    reject with [`Error::ReceiptLeaseRevoked`] if this signing pubkey
+///    appears in any same-vault revoked binding — so a revoked pubkey is
+///    terminal across all client_ids in the same vault, without crossing
+///    tenant prefixes. Runs on BOTH accept arms (active AND expired) and even
+///    on the `att_client`==claimed path, catching a same-key rebind under a
+///    fresh id.
 ///
 /// The four remote rejections (attestation-invalid, lease-unknown,
 /// lease-revoked — claimed-row OR pubkey floor) classify as REMOTE via
 /// `remote_rejection_reason` (quarantine-and-continue at the callers). A
 /// malformed `ls:` row — the claimed point-read OR any sibling reached by
 /// the floor scan — is LOCAL corruption (our own mirror wrote it) and
-/// propagates fail-closed, failing the door GLOBALLY (wider blast radius
-/// than the single receipt, but correct: never a best-effort skip).
+/// propagates fail-closed, failing this vault's door (wider blast radius
+/// than the single receipt, but bounded to the vault and correct: never a
+/// best-effort skip).
 ///
 /// `blob` is the full stored envelope (25 B header + body): the transcript
 /// binds the entity id and the EXACT header bytes, so a valid receipt
@@ -241,6 +241,16 @@ pub fn verify_lease_pop(client_id: u64, pubkey: &[u8; 32], pop_sig: &[u8; 64]) -
 pub(crate) fn verify_new_receipt_origin_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+    blob: &[u8],
+) -> Result<()> {
+    verify_new_receipt_origin_for_vault_in_txn(vault, txn, DEFAULT_LEASE_VAULT_ID, id, blob)
+}
+
+pub(crate) fn verify_new_receipt_origin_for_vault_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    vault_id: u64,
     id: &EntityId,
     blob: &[u8],
 ) -> Result<()> {
@@ -270,7 +280,7 @@ pub(crate) fn verify_new_receipt_origin_in_txn(
         .map_err(|_| Error::ReceiptAttestationInvalid { id: *id })?;
 
     // Step 4 — claimed-row lease binding (OD-7: status only, never time).
-    let Some(record) = claimed_lease_record_in_txn(vault, txn, parts.client_id)? else {
+    let Some(record) = claimed_lease_record_in_txn(vault, txn, vault_id, parts.client_id)? else {
         return Err(Error::ReceiptLeaseUnknown {
             client_id: parts.client_id,
         });
@@ -288,21 +298,22 @@ pub(crate) fn verify_new_receipt_origin_in_txn(
 
     // Step 5 — pubkey-bound revocation FLOOR (OD-8 amended, RULING C). The
     // kill switch binds to the Ed25519 PUBKEY, not the mintable att_client:
-    // a revoked pubkey is terminal across ALL client_ids, so a device that
-    // rotates client_id while reusing its key cannot recover (intended —
-    // recovery requires a fresh KEYPAIR). Scan every ls: mirror row
-    // (one-per-device, cheap) and reject if THIS signing pubkey appears in
-    // ANY revoked binding, including the att_client==claimed path (catches a
+    // a revoked pubkey is terminal across same-vault client_ids, so a device
+    // that rotates client_id while reusing its key cannot recover inside that
+    // vault (intended — recovery requires a fresh KEYPAIR). Scan every
+    // same-vault ls: mirror row (one-per-device, cheap) and reject if THIS
+    // signing pubkey appears in ANY revoked binding under the requesting
+    // vault prefix, including the att_client==claimed path (catches a
     // self-rebind under a fresh id). Runs on BOTH accept arms reached here
     // (active AND expired): an attacker's fresh active row can be flipped to
-    // expired by scan-at-connect. A malformed sibling ls: row is OUR mirror
-    // corruption and propagates fail-closed (the `?`), failing the door
-    // GLOBALLY — never a best-effort skip. ONE-1188 exposes the per-vault
-    // prefix target, but does not invent trusted vault routing for the receipt
-    // door; ONE-1190/ONE-1192 own per-vault/tenant revocation scoping.
-    for entry in vault.store.sync_state.prefix_iter(txn, LEASE_KEY_PREFIX)? {
+    // expired by scan-at-connect. A malformed sibling ls: row inside this
+    // vault prefix is OUR mirror corruption and propagates fail-closed (the
+    // `?`), failing this vault's door — never a best-effort skip — without
+    // reading other vaults.
+    let floor_prefix = lease_key_prefix(vault_id);
+    for entry in vault.store.sync_state.prefix_iter(txn, &floor_prefix)? {
         let (_key, sibling_raw) = entry?;
-        let sibling = decode_lease_record(sibling_raw)?;
+        let sibling = decode_scoped_lease_record(sibling_raw, vault_id)?;
         if sibling.pubkey == parts.pubkey && sibling.status == LeaseStatus::Revoked {
             return Err(Error::ReceiptLeaseRevoked {
                 client_id: parts.client_id,
@@ -315,21 +326,22 @@ pub(crate) fn verify_new_receipt_origin_in_txn(
 fn claimed_lease_record_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
+    vault_id: u64,
     client_id: u64,
 ) -> Result<Option<LeaseRecord>> {
-    let client_suffix = format!(":{}", client_id_hex(client_id));
-    let mut found = None;
-    for entry in vault.store.sync_state.prefix_iter(txn, LEASE_KEY_PREFIX)? {
-        let (key, raw) = entry?;
-        if !key.ends_with(&client_suffix) {
-            continue;
-        }
-        if found.is_some() {
-            return Err(Error::CorruptedIndex("lease record duplicate client"));
-        }
-        found = Some(decode_lease_record(raw)?);
+    let key = lease_key(vault_id, client_id);
+    let Some(raw) = vault.store.sync_state.get(txn, &key)? else {
+        return Ok(None);
+    };
+    Ok(Some(decode_scoped_lease_record(raw, vault_id)?))
+}
+
+fn decode_scoped_lease_record(raw: &[u8], vault_id: u64) -> Result<LeaseRecord> {
+    let record = decode_lease_record(raw)?;
+    if record.vault_id != vault_id {
+        return Err(Error::CorruptedIndex("lease record vault_id"));
     }
-    Ok(found)
+    Ok(record)
 }
 
 /// Full-mirrors the root doc's `leases` map into local `ls:` rows inside
@@ -439,7 +451,7 @@ fn mirror_leases_impl(vault: &Vault, wtxn: &mut heed::RwTxn<'_>, root_doc: &Loro
             continue;
         };
         let row_key = lease_key(record.vault_id, client_id);
-        delete_stale_v2_lease_rows_for_client(vault, wtxn, client_id, &row_key)?;
+        delete_stale_v2_lease_rows_for_client(vault, wtxn, record.vault_id, client_id, &row_key)?;
         vault.store.sync_state.put(wtxn, &row_key, raw)?;
     }
     Ok(())
@@ -448,12 +460,14 @@ fn mirror_leases_impl(vault: &Vault, wtxn: &mut heed::RwTxn<'_>, root_doc: &Loro
 fn delete_stale_v2_lease_rows_for_client(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
+    vault_id: u64,
     client_id: u64,
     keep_key: &str,
 ) -> Result<()> {
+    let prefix = lease_key_prefix(vault_id);
     let client_suffix = format!(":{}", client_id_hex(client_id));
     let mut stale_keys = Vec::new();
-    for entry in vault.store.sync_state.prefix_iter(wtxn, LEASE_KEY_PREFIX)? {
+    for entry in vault.store.sync_state.prefix_iter(wtxn, &prefix)? {
         let (key, _raw) = entry?;
         if key != keep_key && key.ends_with(&client_suffix) {
             stale_keys.push(key.to_owned());
@@ -497,6 +511,9 @@ pub mod test_hooks {
 mod tests {
     use super::*;
     use crate::types::VaultConfig;
+    use ed25519_dalek::SigningKey;
+
+    const TEST_RECEIPT_LEARNED_AT: u64 = 1_772_400_000;
 
     fn test_vault() -> (tempfile::TempDir, Vault) {
         let dir = tempfile::tempdir().unwrap();
@@ -505,6 +522,64 @@ mod tests {
         cfg.embedding_model = None;
         let vault = Vault::open(dir.path(), cfg).unwrap();
         (dir, vault)
+    }
+
+    fn signed_receipt(seed: u8, client_id: u64) -> (EntityId, [u8; 32], Vec<u8>) {
+        let signing_key = SigningKey::from_bytes(&[seed; 32]);
+        let pubkey = signing_key.verifying_key().to_bytes();
+        let receipt_id = EntityId::now();
+        let subject = EntityId::now();
+        let input = crate::deletion::RedactionReceiptInput {
+            request_id: "018f3a2b-7c4d-7e5f-8a9b-0c1d2e3f4a5b".to_owned(),
+            scope: crate::deletion::RedactionScope::entity(&subject),
+            reason: crate::DeleteReason::GdprDelete,
+            requested_at: 100,
+            soft_complete_at: 101,
+            hard_purge_complete_at: TEST_RECEIPT_LEARNED_AT,
+            sweep_queued_at: Some(102),
+        };
+        let identity = crate::identity::DeviceIdentity {
+            client_id,
+            signing_key,
+        };
+        let body =
+            crate::deletion::encode_redaction_audit_receipt(input, &receipt_id, &identity).unwrap();
+        let mut blob = crate::deletion::receipt_envelope_header(TEST_RECEIPT_LEARNED_AT).to_vec();
+        blob.extend_from_slice(&body);
+        (receipt_id, pubkey, blob)
+    }
+
+    fn put_lease_row(
+        vault: &Vault,
+        vault_id: u64,
+        client_id: u64,
+        pubkey: [u8; 32],
+        status: LeaseStatus,
+    ) {
+        let record = LeaseRecord {
+            vault_id,
+            status,
+            pubkey,
+            granted_at: 1,
+            renewed_at: 2,
+            expires_at: 3,
+        };
+        vault
+            .sync_state_put(
+                &lease_key(vault_id, client_id),
+                &encode_lease_record(&record),
+            )
+            .unwrap();
+    }
+
+    fn verify_receipt_for_vault(
+        vault: &Vault,
+        vault_id: u64,
+        id: &EntityId,
+        blob: &[u8],
+    ) -> Result<()> {
+        let rtxn = vault.store.env.read_txn().unwrap();
+        verify_new_receipt_origin_for_vault_in_txn(vault, &rtxn, vault_id, id, blob)
     }
 
     /// OD-4 layout literals: 66 B, version 0x02, status byte at [1],
@@ -625,10 +700,12 @@ mod tests {
             .unwrap();
 
         let rtxn = vault.store.env.read_txn().unwrap();
+        let scoped_prefix = lease_key_prefix(vault_a);
+        assert_eq!(scoped_prefix, "ls:0a0b0c0d0e0f1011:");
         let rows = vault
             .store
             .sync_state
-            .prefix_iter(&rtxn, "ls:0a0b0c0d0e0f1011:")
+            .prefix_iter(&rtxn, &scoped_prefix)
             .unwrap()
             .map(|entry| {
                 let (key, value) = entry.unwrap();
@@ -645,7 +722,136 @@ mod tests {
     }
 
     #[test]
-    fn root_lease_mirror_replaces_stale_vault_scoped_row_for_same_client() {
+    fn receipt_door_uses_vault_scoped_claimed_lookup() {
+        let (_dir, vault) = test_vault();
+        let vault_a = 0x0a0b_0c0d_0e0f_1011;
+        let vault_b = 0x1110_0f0e_0d0c_0b0a;
+        let client = 0x0123_4567_89ab_cdef;
+        let (receipt_id, pubkey, blob) = signed_receipt(0x21, client);
+
+        put_lease_row(&vault, vault_a, client, pubkey, LeaseStatus::Active);
+
+        let err = verify_receipt_for_vault(&vault, vault_b, &receipt_id, &blob).unwrap_err();
+        assert!(
+            matches!(err, Error::ReceiptLeaseUnknown { client_id } if client_id == client),
+            "another vault's binding must not satisfy the claimed lookup: {err:?}"
+        );
+        assert!(
+            verify_receipt_for_vault(&vault, vault_a, &receipt_id, &blob).is_ok(),
+            "the same receipt must pass against the vault that owns the binding"
+        );
+    }
+
+    #[test]
+    fn receipt_door_scopes_pubkey_revocation_floor_to_vault_prefix() {
+        let (_dir, vault) = test_vault();
+        let vault_a = 0x0a0b_0c0d_0e0f_1011;
+        let vault_b = 0x1110_0f0e_0d0c_0b0a;
+        let revoked_client_a = 0xaaaa_aaaa_aaaa_aaaa;
+        let active_client_b = 0xbbbb_bbbb_bbbb_bbbb;
+        let revoked_client_b = 0xcccc_cccc_cccc_cccc;
+        let (receipt_id, pubkey, blob) = signed_receipt(0x31, active_client_b);
+
+        put_lease_row(
+            &vault,
+            vault_a,
+            revoked_client_a,
+            pubkey,
+            LeaseStatus::Revoked,
+        );
+        put_lease_row(
+            &vault,
+            vault_b,
+            active_client_b,
+            pubkey,
+            LeaseStatus::Active,
+        );
+
+        assert!(
+            verify_receipt_for_vault(&vault, vault_b, &receipt_id, &blob).is_ok(),
+            "a revoked pubkey in vault A must not bleed into vault B"
+        );
+
+        put_lease_row(
+            &vault,
+            vault_b,
+            revoked_client_b,
+            pubkey,
+            LeaseStatus::Revoked,
+        );
+        let err = verify_receipt_for_vault(&vault, vault_b, &receipt_id, &blob).unwrap_err();
+        assert!(
+            matches!(err, Error::ReceiptLeaseRevoked { client_id } if client_id == active_client_b),
+            "same-vault revoked pubkey must still reject: {err:?}"
+        );
+    }
+
+    #[test]
+    fn receipt_door_preserves_same_vault_expired_plus_revoked_floor() {
+        let (_dir, vault) = test_vault();
+        let vault_id = 0x0102_0304_0506_0708;
+        let expired_client = 0x1111_1111_1111_1111;
+        let revoked_client = 0x2222_2222_2222_2222;
+        let (receipt_id, pubkey, blob) = signed_receipt(0x41, expired_client);
+
+        put_lease_row(
+            &vault,
+            vault_id,
+            expired_client,
+            pubkey,
+            LeaseStatus::Expired,
+        );
+        put_lease_row(
+            &vault,
+            vault_id,
+            revoked_client,
+            pubkey,
+            LeaseStatus::Revoked,
+        );
+
+        let err = verify_receipt_for_vault(&vault, vault_id, &receipt_id, &blob).unwrap_err();
+        assert!(
+            matches!(err, Error::ReceiptLeaseRevoked { client_id } if client_id == expired_client),
+            "expired claimed rows still accept OD-7, but same-vault revoked pubkey floor rejects"
+        );
+    }
+
+    #[test]
+    fn receipt_door_corrupt_sibling_row_is_vault_scoped() {
+        let (_dir, vault) = test_vault();
+        let vault_a = 0x0a0b_0c0d_0e0f_1011;
+        let vault_b = 0x1110_0f0e_0d0c_0b0a;
+        let client = 0x0123_4567_89ab_cdef;
+        let (receipt_id, pubkey, blob) = signed_receipt(0x51, client);
+
+        put_lease_row(&vault, vault_a, client, pubkey, LeaseStatus::Active);
+        vault
+            .sync_state_put(
+                &lease_key(vault_b, 0xdead_beef_dead_beef),
+                b"corrupt-outside-scope",
+            )
+            .unwrap();
+
+        assert!(
+            verify_receipt_for_vault(&vault, vault_a, &receipt_id, &blob).is_ok(),
+            "a corrupt row under another vault prefix must not affect this vault"
+        );
+
+        vault
+            .sync_state_put(
+                &lease_key(vault_a, 0xfeed_face_feed_face),
+                b"corrupt-inside-scope",
+            )
+            .unwrap();
+        let err = verify_receipt_for_vault(&vault, vault_a, &receipt_id, &blob).unwrap_err();
+        assert!(
+            matches!(err, Error::CorruptedIndex(_)),
+            "a corrupt same-vault sibling row must fail closed: {err:?}"
+        );
+    }
+
+    #[test]
+    fn root_lease_mirror_keeps_foreign_vault_row_for_same_client() {
         let (_dir, vault) = test_vault();
         let doc = LoroDoc::new();
         let old_vault_id = 0x0101_0101_0101_0101;
@@ -677,9 +883,10 @@ mod tests {
         doc.commit();
 
         mirror_leases_from_root(&vault, &doc).unwrap();
-        assert!(
-            vault.sync_state_get(&old_key).unwrap().is_none(),
-            "a vault_id move must not leave a duplicate client mirror row"
+        assert_eq!(
+            vault.sync_state_get(&old_key).unwrap().as_deref(),
+            Some(old_bytes.as_slice()),
+            "mirror cleanup must not delete a same-client row under another vault prefix"
         );
         assert_eq!(
             vault.sync_state_get(&new_key).unwrap().as_deref(),

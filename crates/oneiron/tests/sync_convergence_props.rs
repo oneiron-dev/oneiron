@@ -49,7 +49,7 @@ use sync_harness::{
     redaction_audit_receipts, reencode_edge_value, time_range, vault_pair,
 };
 
-const TEST_LEASE_VAULT_ID: u64 = 0x0102_0304_0506_0708;
+const TEST_LEASE_VAULT_ID: u64 = 0;
 
 // ─── (a) entity convergence, both directions ────────────────────────────────
 

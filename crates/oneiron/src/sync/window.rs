@@ -2413,7 +2413,7 @@ mod tests {
             client_id,
             signing_key,
         };
-        let vault_id = 0x0102_0304_0506_0708;
+        let vault_id = crate::sync::lease::DEFAULT_LEASE_VAULT_ID;
         let input = crate::deletion::RedactionReceiptInput {
             request_id: "018f3a2b-7c4d-7e5f-8a9b-0c1d2e3f4a5b".to_owned(),
             scope: crate::deletion::RedactionScope::entity(&subject),
@@ -2483,7 +2483,7 @@ mod tests {
         let receipt_id = EntityId::from_hex("202122232425262728292a2b2c2d2e2f").unwrap();
         let subject = EntityId::from_hex("303132333435363738393a3b3c3d3e3f").unwrap();
         let client_id = 0x0fed_cba9_8765_4321u64;
-        let vault_id = 0x0102_0304_0506_0708;
+        let vault_id = crate::sync::lease::DEFAULT_LEASE_VAULT_ID;
         let signing_key = SigningKey::from_bytes(&[45u8; 32]);
         let pubkey = signing_key.verifying_key().to_bytes();
         let identity = crate::identity::DeviceIdentity {
