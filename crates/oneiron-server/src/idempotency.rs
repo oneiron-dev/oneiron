@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::fmt;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -18,6 +19,8 @@ pub(crate) const IDEMPOTENCY_KEY_HEADER: &str = "Idempotency-Key";
 pub(crate) const IDEMPOTENCY_TTL: Duration = Duration::from_secs(86_400);
 
 const IDEMPOTENCY_SYNC_STATE_PREFIX: &str = "http:idempotency:";
+const IDEMPOTENCY_MAX_REQUEST_BODY_BYTES: usize = 64 * 1024;
+const IDEMPOTENCY_MAX_RESPONSE_BODY_BYTES: usize = 1024 * 1024;
 const SHARED_SECRET_PRINCIPAL: &str = "shared-secret";
 const ANONYMOUS_PRINCIPAL: &str = "anonymous";
 
@@ -40,7 +43,7 @@ impl IdempotencyLayerState {
 struct IdempotencyStore {
     vault: Arc<oneiron::Vault>,
     clock: Arc<dyn IdempotencyClock>,
-    gate: Arc<tokio::sync::Mutex<()>>,
+    locks: Arc<IdempotencyLockTable>,
 }
 
 impl IdempotencyStore {
@@ -48,7 +51,7 @@ impl IdempotencyStore {
         Self {
             vault,
             clock: Arc::new(SystemClock),
-            gate: Arc::new(tokio::sync::Mutex::new(())),
+            locks: Arc::new(IdempotencyLockTable::default()),
         }
     }
 
@@ -57,7 +60,7 @@ impl IdempotencyStore {
         Self {
             vault,
             clock,
-            gate: Arc::new(tokio::sync::Mutex::new(())),
+            locks: Arc::new(IdempotencyLockTable::default()),
         }
     }
 
@@ -65,20 +68,18 @@ impl IdempotencyStore {
         self.clock.now_secs()
     }
 
-    async fn lock(&self) -> tokio::sync::MutexGuard<'_, ()> {
-        self.gate.lock().await
+    async fn lock_for(&self, store_key: &str) -> IdempotencyKeyGuard {
+        self.locks.lock(store_key).await
     }
 
     fn lookup(
         &self,
-        principal: &str,
-        key: &str,
+        store_key: &str,
         request_body: &[u8],
     ) -> Result<IdempotencyLookup, IdempotencyStoreError> {
-        let store_key = store_key(principal, key);
         let Some(raw) = self
             .vault
-            .sync_state_get(&store_key)
+            .sync_state_get(store_key)
             .map_err(IdempotencyStoreError::storage)?
         else {
             return Ok(IdempotencyLookup::Miss);
@@ -87,6 +88,9 @@ impl IdempotencyStore {
         let stored: StoredIdempotencyEntry =
             rmp_serde::from_slice(&raw).map_err(IdempotencyStoreError::decode)?;
         if self.now_secs().saturating_sub(stored.created_at_secs) >= IDEMPOTENCY_TTL.as_secs() {
+            self.vault
+                .sync_state_delete(store_key)
+                .map_err(IdempotencyStoreError::storage)?;
             return Ok(IdempotencyLookup::Miss);
         }
         if stored.request_body != request_body {
@@ -98,16 +102,64 @@ impl IdempotencyStore {
 
     fn insert(
         &self,
-        principal: &str,
-        key: &str,
+        store_key: &str,
         request_body: Vec<u8>,
         response: CachedHttpResponse,
     ) -> Result<(), IdempotencyStoreError> {
         let stored = StoredIdempotencyEntry::from_cached(self.now_secs(), request_body, response);
         let raw = rmp_serde::to_vec(&stored).map_err(IdempotencyStoreError::encode)?;
         self.vault
-            .sync_state_put(&store_key(principal, key), &raw)
+            .sync_state_put(store_key, &raw)
             .map_err(IdempotencyStoreError::storage)
+    }
+}
+
+#[derive(Default)]
+struct IdempotencyLockTable {
+    slots: tokio::sync::Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>,
+}
+
+impl IdempotencyLockTable {
+    async fn lock(self: &Arc<Self>, store_key: &str) -> IdempotencyKeyGuard {
+        let slot = {
+            let mut slots = self.slots.lock().await;
+            slots
+                .entry(store_key.to_owned())
+                .or_insert_with(|| Arc::new(tokio::sync::Mutex::new(())))
+                .clone()
+        };
+        let guard = slot.clone().lock_owned().await;
+        IdempotencyKeyGuard {
+            store_key: store_key.to_owned(),
+            slot,
+            table: self.clone(),
+            guard: Some(guard),
+        }
+    }
+}
+
+struct IdempotencyKeyGuard {
+    store_key: String,
+    slot: Arc<tokio::sync::Mutex<()>>,
+    table: Arc<IdempotencyLockTable>,
+    guard: Option<tokio::sync::OwnedMutexGuard<()>>,
+}
+
+impl Drop for IdempotencyKeyGuard {
+    fn drop(&mut self) {
+        self.guard.take();
+        if Arc::strong_count(&self.slot) != 2 {
+            return;
+        }
+        let Ok(mut slots) = self.table.slots.try_lock() else {
+            return;
+        };
+        let Some(slot) = slots.get(&self.store_key) else {
+            return;
+        };
+        if Arc::ptr_eq(slot, &self.slot) && Arc::strong_count(&self.slot) == 2 {
+            slots.remove(&self.store_key);
+        }
     }
 }
 
@@ -172,7 +224,7 @@ impl TryFrom<StoredIdempotencyEntry> for CachedHttpResponse {
             let name =
                 HeaderName::from_bytes(name.as_bytes()).map_err(IdempotencyStoreError::header)?;
             let value = HeaderValue::from_bytes(&value).map_err(IdempotencyStoreError::header)?;
-            headers.insert(name, value);
+            headers.append(name, value);
         }
 
         Ok(Self {
@@ -245,19 +297,21 @@ pub(crate) async fn idempotency_middleware(
     request: Request,
     next: Next,
 ) -> Response {
+    let has_idempotency_header = request.headers().contains_key(IDEMPOTENCY_KEY_HEADER);
+    if has_idempotency_header && check_auth(request.headers(), &state.server.config).is_err() {
+        return ApiError::unauthorized().into_response();
+    }
+
     let key = match idempotency_key(request.headers()) {
         IdempotencyKey::Present(key) => key,
         IdempotencyKey::Absent => return next.run(request).await,
         IdempotencyKey::Invalid => return invalid_key_response(),
     };
 
-    if check_auth(request.headers(), &state.server.config).is_err() {
-        return ApiError::unauthorized().into_response();
-    }
-
     let principal = principal_from_headers(request.headers(), &state.server.config);
+    let store_key = store_key(&principal, &key);
     let (parts, body) = request.into_parts();
-    let body = match to_bytes(body, usize::MAX).await {
+    let body = match to_bytes(body, IDEMPOTENCY_MAX_REQUEST_BODY_BYTES).await {
         Ok(body) => body,
         Err(error) => {
             tracing::warn!(error = %error, "failed to read idempotent request body");
@@ -266,8 +320,8 @@ pub(crate) async fn idempotency_middleware(
     };
     let request_body = body.to_vec();
 
-    let _guard = state.store.lock().await;
-    match state.store.lookup(&principal, &key, &request_body) {
+    let _guard = state.store.lock_for(&store_key).await;
+    match state.store.lookup(&store_key, &request_body) {
         Ok(IdempotencyLookup::Replay(response)) => return response.into_response(),
         Ok(IdempotencyLookup::Conflict) => return conflict_response(&key),
         Ok(IdempotencyLookup::Miss) => {}
@@ -281,7 +335,7 @@ pub(crate) async fn idempotency_middleware(
     let request = Request::from_parts(parts, Body::from(request_body.clone()));
     let response = next.run(request).await;
     let (parts, body) = response.into_parts();
-    let body = match to_bytes(body, usize::MAX).await {
+    let body = match to_bytes(body, IDEMPOTENCY_MAX_RESPONSE_BODY_BYTES).await {
         Ok(body) => body,
         Err(error) => {
             tracing::error!(error = %error, "failed to read idempotent response body");
@@ -296,8 +350,10 @@ pub(crate) async fn idempotency_middleware(
         body: response_body.clone(),
     };
 
-    if let Err(error) = state.store.insert(&principal, &key, request_body, cached) {
+    if let Err(error) = state.store.insert(&store_key, request_body, cached) {
         tracing::error!(error = %error, "failed to persist idempotency response");
+        return ApiError::internal_server_error("failed to persist idempotency response")
+            .into_response();
     }
 
     Response::from_parts(parts, Body::from(response_body))
@@ -365,6 +421,7 @@ mod tests {
     use std::sync::{Arc, Mutex};
 
     use axum::extract::Extension;
+    use axum::http::header::SET_COOKIE;
     use axum::middleware;
     use axum::routing::post;
     use axum::{Json, Router};
@@ -409,16 +466,23 @@ mod tests {
         store: IdempotencyStore,
         counter: Arc<AtomicUsize>,
     ) -> (SocketAddr, tokio::task::JoinHandle<()>) {
-        let server = Arc::new(
-            SyncServer::new(
-                store.vault.clone(),
-                SyncServerConfig {
-                    allow_unauthenticated: true,
-                    ..Default::default()
-                },
-            )
-            .unwrap(),
-        );
+        spawn_counted_app_with_config(
+            store,
+            counter,
+            SyncServerConfig {
+                allow_unauthenticated: true,
+                ..Default::default()
+            },
+        )
+        .await
+    }
+
+    async fn spawn_counted_app_with_config(
+        store: IdempotencyStore,
+        counter: Arc<AtomicUsize>,
+        config: SyncServerConfig,
+    ) -> (SocketAddr, tokio::task::JoinHandle<()>) {
+        let server = Arc::new(SyncServer::new(store.vault.clone(), config).unwrap());
         let state = IdempotencyLayerState { server, store };
         let app = Router::new()
             .route("/mutate", post(counted_handler))
@@ -452,7 +516,10 @@ mod tests {
         stream.write_all(request.as_bytes()).await.unwrap();
 
         let mut response = Vec::new();
-        stream.read_to_end(&mut response).await.unwrap();
+        tokio::time::timeout(Duration::from_secs(10), stream.read_to_end(&mut response))
+            .await
+            .unwrap()
+            .unwrap();
         response
     }
 
@@ -561,6 +628,7 @@ mod tests {
 
         let clock = Arc::new(ManualClock::new(1_000));
         let store = test_store(clock.clone());
+        let cache_key = store_key("principal", "ttl-key");
         let response = CachedHttpResponse {
             status: StatusCode::CREATED,
             headers: HeaderMap::new(),
@@ -568,19 +636,103 @@ mod tests {
         };
         store
             .store
-            .insert("principal", "ttl-key", b"body".to_vec(), response)
+            .insert(&cache_key, b"body".to_vec(), response)
             .unwrap();
 
         clock.advance(IDEMPOTENCY_TTL - Duration::from_secs(1));
         assert!(matches!(
-            store.store.lookup("principal", "ttl-key", b"body").unwrap(),
+            store.store.lookup(&cache_key, b"body").unwrap(),
             IdempotencyLookup::Replay(_)
         ));
 
         clock.advance(Duration::from_secs(2));
         assert!(matches!(
-            store.store.lookup("principal", "ttl-key", b"body").unwrap(),
+            store.store.lookup(&cache_key, b"body").unwrap(),
             IdempotencyLookup::Miss
         ));
+        assert!(
+            store
+                .store
+                .vault
+                .sync_state_get(&cache_key)
+                .unwrap()
+                .is_none()
+        );
+    }
+
+    #[tokio::test]
+    async fn keyed_locks_allow_distinct_keys_to_run_concurrently() {
+        let locks = Arc::new(IdempotencyLockTable::default());
+        let _first = locks.lock("first-key").await;
+        let _second = tokio::time::timeout(Duration::from_millis(100), locks.lock("second-key"))
+            .await
+            .unwrap();
+
+        assert!(
+            tokio::time::timeout(Duration::from_millis(50), locks.lock("first-key"))
+                .await
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn cached_replay_preserves_duplicate_response_headers() {
+        let mut headers = HeaderMap::new();
+        headers.append(SET_COOKIE, HeaderValue::from_static("first=1"));
+        headers.append(SET_COOKIE, HeaderValue::from_static("second=2"));
+        let cached = CachedHttpResponse {
+            status: StatusCode::OK,
+            headers,
+            body: b"ok".to_vec(),
+        };
+
+        let stored = StoredIdempotencyEntry::from_cached(1, b"body".to_vec(), cached);
+        let replay = CachedHttpResponse::try_from(stored).unwrap();
+        let values = replay
+            .headers
+            .get_all(SET_COOKIE)
+            .iter()
+            .map(|value| value.to_str().unwrap())
+            .collect::<Vec<_>>();
+
+        assert_eq!(values, vec!["first=1", "second=2"]);
+    }
+
+    #[tokio::test]
+    async fn malformed_idempotency_key_does_not_preempt_auth_failure() {
+        let store = test_store(Arc::new(SystemClock));
+        let counter = Arc::new(AtomicUsize::new(0));
+        let (addr, handle) = spawn_counted_app_with_config(
+            store.store.clone(),
+            counter.clone(),
+            SyncServerConfig {
+                auth_secret: Some("secret".to_owned()),
+                allow_unauthenticated: false,
+                ..Default::default()
+            },
+        )
+        .await;
+
+        let response = http_post(addr, r#"{"value":1}"#, "", None).await;
+
+        assert_eq!(status(&response), 401);
+        assert_eq!(counter.load(Ordering::SeqCst), 0);
+
+        handle.abort();
+    }
+
+    #[tokio::test]
+    async fn oversized_idempotent_request_is_rejected_before_handler() {
+        let store = test_store(Arc::new(SystemClock));
+        let counter = Arc::new(AtomicUsize::new(0));
+        let (addr, handle) = spawn_counted_app(store.store.clone(), counter.clone()).await;
+        let body = "x".repeat(IDEMPOTENCY_MAX_REQUEST_BODY_BYTES + 1);
+
+        let response = http_post(addr, &body, "large-body-key", Some("principal-a")).await;
+
+        assert_eq!(status(&response), 413);
+        assert_eq!(counter.load(Ordering::SeqCst), 0);
+
+        handle.abort();
     }
 }

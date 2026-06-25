@@ -17,6 +17,7 @@ pub mod config;
 pub mod error;
 mod handler;
 mod idempotency;
+pub mod projection;
 mod protocol;
 pub mod server;
 
@@ -25,6 +26,8 @@ use std::sync::Arc;
 use axum::Router;
 
 use crate::server::SyncServer;
+
+pub use crate::projection::View;
 
 /// Builds the complete Axum app (WebSocket + HTTP API routes).
 pub fn build_app(server: Arc<SyncServer>) -> Router {

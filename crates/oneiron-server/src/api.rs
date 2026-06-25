@@ -8,16 +8,19 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
+use axum::extract::rejection::QueryRejection;
 use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, StatusCode};
-use axum::response::{IntoResponse, Json};
+use axum::response::{IntoResponse, Json, Response};
 use axum::routing::{get, post};
 use axum::{Router, middleware};
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 use crate::config::SyncServerConfig;
 use crate::error::ApiError;
 use crate::idempotency::{IdempotencyLayerState, idempotency_middleware};
+use crate::projection::{self, View};
 use crate::protocol::{CountMode, PaginatedResponse, ResponseMeta};
 use crate::server::SyncServer;
 
@@ -111,6 +114,19 @@ pub(crate) fn check_auth(headers: &HeaderMap, config: &SyncServerConfig) -> Resu
 
 fn check_api_auth(headers: &HeaderMap, config: &SyncServerConfig) -> Result<(), ApiError> {
     check_auth(headers, config).map_err(|_| ApiError::unauthorized())
+}
+
+fn query_params<T>(query: Result<Query<T>, QueryRejection>) -> Result<T, ApiError> {
+    let Query(params) = query.map_err(query_rejection_error)?;
+    Ok(params)
+}
+
+fn query_rejection_error(rejection: QueryRejection) -> ApiError {
+    if rejection.body_text().contains("invalid_view") {
+        ApiError::bad_request("view must be one of summary, standard, full", Some("view"))
+    } else {
+        ApiError::bad_request("invalid query parameters", None)
+    }
 }
 
 // ─── Discovery / capability metadata ─────────────────────────────────────────
@@ -306,6 +322,7 @@ struct VectorSearchQuery {
     /// Maximum results to return.
     #[serde(default = "default_limit")]
     limit: usize,
+    view: Option<View>,
     /// Count precision for response metadata. Search defaults to estimate.
     #[serde(default = "CountMode::default_estimate", rename = "countMode")]
     count_mode: CountMode,
@@ -315,22 +332,18 @@ fn default_limit() -> usize {
     10
 }
 
-#[derive(Serialize)]
-struct SearchResult {
-    id: String,
-    score: f32,
-}
-
-type SearchResponse = PaginatedResponse<SearchResult>;
+type SearchResponse = PaginatedResponse<Value>;
 
 /// Vector similarity search.
 /// GET /api/search/vector?query=0.1,0.2,...&limit=10&countMode=estimate
 async fn search_vector(
     headers: HeaderMap,
     State(server): State<Arc<SyncServer>>,
-    Query(params): Query<VectorSearchQuery>,
+    query: Result<Query<VectorSearchQuery>, QueryRejection>,
 ) -> Result<Json<SearchResponse>, ApiError> {
     check_api_auth(&headers, &server.config)?;
+    let params = query_params(query)?;
+    let view = params.view.unwrap_or(View::Summary);
 
     let count_mode = params.count_mode.for_search_response();
     let fetch_limit = search_fetch_limit(count_mode, params.limit);
@@ -356,14 +369,7 @@ async fn search_vector(
         .map_err(|_| ApiError::internal_server_error("vector search failed"))?;
 
     let total = results.len();
-    let response: Vec<SearchResult> = results
-        .into_iter()
-        .take(params.limit)
-        .map(|r| SearchResult {
-            id: r.id.to_hex(),
-            score: r.score,
-        })
-        .collect();
+    let response = search_response(&server.vault, results, view, params.limit)?;
     let meta = search_meta(count_mode, total);
 
     Ok(Json(PaginatedResponse::new(response, None, meta)))
@@ -374,6 +380,7 @@ struct TextSearchQuery {
     query: String,
     #[serde(default = "default_limit")]
     limit: usize,
+    view: Option<View>,
     /// Count precision for response metadata. Search defaults to estimate.
     #[serde(default = "CountMode::default_estimate", rename = "countMode")]
     count_mode: CountMode,
@@ -384,9 +391,11 @@ struct TextSearchQuery {
 async fn search_text(
     headers: HeaderMap,
     State(server): State<Arc<SyncServer>>,
-    Query(params): Query<TextSearchQuery>,
+    query: Result<Query<TextSearchQuery>, QueryRejection>,
 ) -> Result<Json<SearchResponse>, ApiError> {
     check_api_auth(&headers, &server.config)?;
+    let params = query_params(query)?;
+    let view = params.view.unwrap_or(View::Summary);
 
     let count_mode = params.count_mode.for_search_response();
     let fetch_limit = search_fetch_limit(count_mode, params.limit);
@@ -399,14 +408,7 @@ async fn search_text(
         .map_err(|_| ApiError::internal_server_error("text search failed"))?;
 
     let total = results.len();
-    let response: Vec<SearchResult> = results
-        .into_iter()
-        .take(params.limit)
-        .map(|r| SearchResult {
-            id: r.id.to_hex(),
-            score: r.score,
-        })
-        .collect();
+    let response = search_response(&server.vault, results, view, params.limit)?;
     let meta = search_meta(count_mode, total);
 
     Ok(Json(PaginatedResponse::new(response, None, meta)))
@@ -428,7 +430,33 @@ fn search_meta(count_mode: CountMode, estimated_total: usize) -> ResponseMeta {
     }
 }
 
+fn search_response(
+    vault: &oneiron::Vault,
+    results: Vec<oneiron::ScoredEntity>,
+    view: View,
+    page_limit: usize,
+) -> Result<Vec<Value>, ApiError> {
+    let mut response = Vec::with_capacity(results.len().min(page_limit));
+    for result in results {
+        match projection::project_search_result(vault, result, view) {
+            Ok(Some(value)) if response.len() < page_limit => response.push(value),
+            Ok(Some(_)) => continue,
+            Ok(None) => continue,
+            Err(e) => {
+                tracing::error!(error = %e, "search projection failed");
+                return Err(ApiError::internal_server_error("search projection failed"));
+            }
+        }
+    }
+    Ok(response)
+}
+
 // ─── Entity Routes ────────────────────────────────────────────────────────────
+
+#[derive(Deserialize)]
+struct ViewQuery {
+    view: Option<View>,
+}
 
 /// Get entity by ID.
 /// GET /api/entity/:id
@@ -436,8 +464,11 @@ async fn get_entity(
     headers: HeaderMap,
     State(server): State<Arc<SyncServer>>,
     Path(id_hex): Path<String>,
-) -> Result<impl IntoResponse, ApiError> {
+    query: Result<Query<ViewQuery>, QueryRejection>,
+) -> Result<Response, ApiError> {
     check_api_auth(&headers, &server.config)?;
+    let params = query_params(query)?;
+    let view = params.view.unwrap_or(View::Standard);
 
     let id = oneiron::EntityId::from_hex(&id_hex).map_err(|_| {
         ApiError::bad_request("entity id must be a 32-character hex entity id", Some("id"))
@@ -451,10 +482,32 @@ async fn get_entity(
         })
         .map_err(|_| ApiError::internal_server_error("get entity failed"))?;
 
-    match blob {
-        Some(data) => Ok((StatusCode::OK, data)),
-        None => Err(ApiError::not_found("entity", Some(&id_hex))),
+    let Some(data) = blob else {
+        return Err(ApiError::not_found("entity", Some(&id_hex)));
+    };
+
+    if view == View::Standard {
+        return Ok((StatusCode::OK, data).into_response());
     }
+
+    let entity_type = server
+        .vault
+        .get_entity_type(&id)
+        .inspect_err(|e| {
+            tracing::error!(error = %e, "get entity type failed");
+        })
+        .map_err(|_| ApiError::internal_server_error("get entity type failed"))?
+        .ok_or_else(|| ApiError::not_found("entity", Some(&id_hex)))?;
+    let updated_at = server
+        .vault
+        .get_learned_at(&id)
+        .inspect_err(|e| {
+            tracing::error!(error = %e, "get entity learned_at failed");
+        })
+        .map_err(|_| ApiError::internal_server_error("get entity learned_at failed"))?;
+    let response = projection::project_entity_parts(&id, entity_type, updated_at, &data, view);
+
+    Ok((StatusCode::OK, Json(response)).into_response())
 }
 
 /// Get outbound edges for an entity.
@@ -463,8 +516,11 @@ async fn get_edges(
     headers: HeaderMap,
     State(server): State<Arc<SyncServer>>,
     Path(id_hex): Path<String>,
-) -> Result<Json<Vec<EdgeResult>>, ApiError> {
+    query: Result<Query<ViewQuery>, QueryRejection>,
+) -> Result<Json<Vec<Value>>, ApiError> {
     check_api_auth(&headers, &server.config)?;
+    let params = query_params(query)?;
+    let view = params.view.unwrap_or(View::Summary);
 
     let id = oneiron::EntityId::from_hex(&id_hex).map_err(|_| {
         ApiError::bad_request("entity id must be a 32-character hex entity id", Some("id"))
@@ -478,25 +534,12 @@ async fn get_edges(
         })
         .map_err(|_| ApiError::internal_server_error("get edges failed"))?;
 
-    let response: Vec<EdgeResult> = edges
+    let response: Vec<Value> = edges
         .into_iter()
-        .map(|e| EdgeResult {
-            kind: e.kind as u8,
-            target: e.target.to_hex(),
-            weight: e.weight,
-            created_at: e.created_at,
-        })
+        .map(|edge| projection::project_edge(&edge, view))
         .collect();
 
     Ok(Json(response))
-}
-
-#[derive(Serialize)]
-struct EdgeResult {
-    kind: u8,
-    target: String,
-    weight: f32,
-    created_at: u64,
 }
 
 // ─── Lease revocation (ONE-1140, OD-8) ────────────────────────────────────────
@@ -593,6 +636,24 @@ async fn context_pack(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn search_response_drops_stale_hydrated_hits() {
+        let dir = tempfile::tempdir().unwrap();
+        let vault = oneiron::Vault::open(dir.path(), oneiron::VaultConfig::device()).unwrap();
+        let stale_hit = oneiron::ScoredEntity {
+            id: oneiron::EntityId::now(),
+            score: 0.75,
+        };
+
+        for view in [View::Summary, View::Full] {
+            let response = search_response(&vault, vec![stale_hit], view, 10).unwrap();
+            assert!(
+                response.is_empty(),
+                "{view:?} should skip missing search hits"
+            );
+        }
+    }
 
     #[test]
     fn search_queries_default_to_estimate_count_mode() {
