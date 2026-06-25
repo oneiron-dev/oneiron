@@ -8,12 +8,12 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
-use axum::Router;
 use axum::extract::rejection::QueryRejection;
 use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Json, Response};
 use axum::routing::{get, post};
+use axum::{Router, middleware};
 use oneiron::{
     Error as OneironError, NotificationItem, ResumeBudget, ResumeBundle, SessionContext,
     UnprocessedItem, types::ENTITY_TYPE_NOTIFICATION,
@@ -23,6 +23,7 @@ use serde_json::Value;
 
 use crate::config::SyncServerConfig;
 use crate::error::ApiError;
+use crate::idempotency::{IdempotencyLayerState, idempotency_middleware};
 use crate::projection::{self, View};
 use crate::protocol::{CountMode, PaginatedResponse, ResponseMeta};
 use crate::server::SyncServer;
@@ -52,6 +53,16 @@ const CAPABILITY_MODES: &[&str] = &["flash", "thinking", "pro", "ultra"];
 
 /// Builds the HTTP API routes.
 pub(crate) fn api_routes(server: Arc<SyncServer>) -> Router {
+    let idempotency = IdempotencyLayerState::new(server.clone());
+    let mutation_routes = Router::new()
+        // owner recovery surface (ONE-1140, OD-8): revoke a lost/stolen
+        // device's lease binding (terminal)
+        .route("/api/lease/revoke", post(lease_revoke))
+        .route_layer(middleware::from_fn_with_state(
+            idempotency,
+            idempotency_middleware,
+        ));
+
     Router::new()
         .route("/api/health", get(health))
         .route("/api/core/discover", get(discover))
@@ -62,9 +73,7 @@ pub(crate) fn api_routes(server: Arc<SyncServer>) -> Router {
         // context-pack is POST since it takes a complex options body
         .route("/api/context-pack", post(context_pack))
         .route("/api/companion/resume", post(resume))
-        // owner recovery surface (ONE-1140, OD-8): revoke a lost/stolen
-        // device's lease binding (terminal)
-        .route("/api/lease/revoke", post(lease_revoke))
+        .merge(mutation_routes)
         .with_state(server)
 }
 
@@ -801,6 +810,9 @@ struct ContextPackRequest {
     /// Maximum entities to retrieve.
     #[serde(default = "default_limit")]
     limit: usize,
+    /// Per-item token cap for context-pack serialization; 0 disables it.
+    #[serde(default, rename = "maxItemTokens", alias = "max_item_tokens")]
+    max_item_tokens: usize,
 }
 
 /// Context pack assembly.

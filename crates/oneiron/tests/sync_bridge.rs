@@ -38,7 +38,7 @@ const ROOT_VV_TAG: u8 = 2;
 
 /// Window-owner user id shared by every fixture in this file (ONE-1160).
 const TEST_USER: &str = "test-user";
-const TEST_LEASE_VAULT_ID: u64 = 0x0102_0304_0506_0708;
+const TEST_LEASE_VAULT_ID: u64 = 0;
 
 /// SyncClient over a manager-owned window registry (ONE-1126).
 fn make_client(vault: &Arc<Vault>) -> (SyncClient, UnboundedReceiver<SyncEvent>) {
@@ -756,7 +756,7 @@ fn sync_client_handle_server_message_imports_root_sync_update() {
     assert_eq!(client.server_windows(), vec!["2026-03".to_string()]);
     assert_eq!(
         vault
-            .sync_state_get("ls:0102030405060708:00000000000000aa")
+            .sync_state_get(&lease::lease_key(TEST_LEASE_VAULT_ID, 0xaa))
             .unwrap()
             .as_deref(),
         Some(lease_record.as_slice()),
@@ -764,7 +764,7 @@ fn sync_client_handle_server_message_imports_root_sync_update() {
     );
     assert!(
         vault
-            .sync_state_get("ls:0102030405060708:00000000000000bb")
+            .sync_state_get(&lease::lease_key(TEST_LEASE_VAULT_ID, 0xbb))
             .unwrap()
             .is_none(),
         "a malformed lease record must never be upserted into ls:"
