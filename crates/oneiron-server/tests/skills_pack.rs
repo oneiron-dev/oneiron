@@ -4,6 +4,9 @@ use std::path::Path;
 
 const PACK: &str = include_str!("../oneiron.skills.md");
 const API_RS: &str = include_str!("../src/api.rs");
+const SKILL_PACK_ENDPOINT: &str = "/api/skills/oneiron.skills.md";
+const SKILL_PACK_LAYER_BOUNDARY: &str =
+    "skills = how to think about memory; MCP tools = what to call";
 
 const EXPECTED_REGISTERED_ROUTES: &[&str] = &[
     "/api/openapi.json",
@@ -63,15 +66,16 @@ fn documented_route_set_matches_api_routes_exactly() {
         "api.rs route table changed; update oneiron.skills.md and this contract test together"
     );
 
-    let documented_counts = documented_api_literal_counts(PACK);
+    let tier1 = section_between(PACK, "## Tier-1", "## Tier-2");
+    let documented_counts = documented_api_literal_counts(tier1);
     let documented = documented_counts.keys().copied().collect::<BTreeSet<_>>();
-    assert_eq!(documented, expected, "documented route literals drifted");
+    assert_eq!(documented, expected, "Tier-1 route literals drifted");
 
     for route in EXPECTED_REGISTERED_ROUTES {
         assert_eq!(
             documented_counts.get(route).copied(),
             Some(1),
-            "route literal {route} must appear exactly once in the skill pack"
+            "route literal {route} must appear exactly once in the Tier-1 catalog"
         );
     }
 }
@@ -135,6 +139,48 @@ fn tier3_error_catalog_uses_structured_recovery_fields() {
     );
 }
 
+#[test]
+fn mcp_discovery_advertisement_matches_committed_pack() {
+    assert_eq!(
+        rust_string_const(API_RS, "SKILL_PACK_ENDPOINT"),
+        SKILL_PACK_ENDPOINT
+    );
+    assert_eq!(
+        rust_string_const(API_RS, "SKILL_PACK_LAYER_BOUNDARY"),
+        SKILL_PACK_LAYER_BOUNDARY
+    );
+
+    assert!(
+        PACK.contains("- Skills are how to think about memory:"),
+        "pack must keep the static skill-layer statement"
+    );
+    assert!(
+        PACK.contains("- MCP tools are what to call:"),
+        "pack must keep the callable MCP-layer statement"
+    );
+    assert!(
+        PACK.contains("`skill_pack`: static agentskills.io pack advertisement"),
+        "pack must document the discovery advertisement field"
+    );
+    assert!(
+        PACK.contains("`endpoint` (`/api/skills/oneiron.skills.md`)"),
+        "pack must document the HTTP endpoint advertised by discovery"
+    );
+    assert!(
+        PACK.contains("same Oneiron HTTP origin"),
+        "pack must tell agents how to resolve the endpoint without a local checkout"
+    );
+    assert!(
+        !PACK.contains(&["`", "path", "` (`oneiron.skills.md`)"].concat())
+            && !PACK.contains(&["`repo_", "path` (`oneiron.skills.md`)"].concat()),
+        "pack must not document a bare relative skill-pack path"
+    );
+    assert!(
+        PACK.contains(SKILL_PACK_LAYER_BOUNDARY),
+        "pack must preserve the exact dual-layer boundary literal"
+    );
+}
+
 fn frontmatter(markdown: &str) -> &str {
     let rest = markdown
         .strip_prefix("---\n")
@@ -173,6 +219,21 @@ fn frontmatter_list(frontmatter: &str, key: &str) -> Vec<String> {
     }
 
     items
+}
+
+fn rust_string_const<'a>(source: &'a str, name: &str) -> &'a str {
+    let prefix = format!("const {name}: &str =");
+    let start = source
+        .find(&prefix)
+        .unwrap_or_else(|| panic!("missing Rust string const {name}"));
+    let rest = source[start + prefix.len()..].trim_start();
+    let value = rest
+        .strip_prefix('"')
+        .unwrap_or_else(|| panic!("Rust const {name} must be a string literal"));
+    let end = value
+        .find('"')
+        .unwrap_or_else(|| panic!("Rust const {name} string literal must close"));
+    &value[..end]
 }
 
 fn registered_routes_from_api_source(source: &str) -> impl Iterator<Item = &str> {
