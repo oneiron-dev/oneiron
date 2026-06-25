@@ -46,8 +46,8 @@ use crate::store::{
 use crate::types::{
     EDGE_KEY_LEN, ENTITY_ID_LEN, ENTITY_TYPE_CLAIM, ENTITY_TYPE_MODEL, ENTITY_TYPE_REDACTION_AUDIT,
     EdgeActorClass, EdgeConfirmationStatus, EdgeInfo, EdgeKind, EdgeProvenanceFlags,
-    EdgeValueLayout, EntityId, ScoredEntity, TimeRange, Vad, VaultConfig, bytes_to_hex_lower,
-    decode_edge_value_for_kind, edge_value_layout_for_kind,
+    EdgeValueLayout, EntityId, ScoredEntity, StructuralKindRegistration, TimeRange, TypeByteBand,
+    Vad, VaultConfig, bytes_to_hex_lower, decode_edge_value_for_kind, edge_value_layout_for_kind,
 };
 use crate::{
     BatchBuilder, ContextPackBuilder, MaintenanceBuilder, PipelineBuilder, TxnBatchBuilder, bm25,
@@ -109,6 +109,16 @@ fn require_key_len(key: &[u8], expected: usize, context: &'static str) -> Result
         return Err(Error::CorruptedIndex(context));
     }
     Ok(())
+}
+
+fn entity_id_from_type_index_key(key: &[u8]) -> Result<EntityId> {
+    require_key_len(key, 17, "type index key")?;
+    EntityId::from_bytes(
+        key[1..17]
+            .try_into()
+            .map_err(|_| Error::CorruptedIndex("type index key"))?,
+    )
+    .map_err(|_| Error::CorruptedIndex("type index key"))
 }
 
 /// Returns the first outbound ChildOf parent for `node`, or `None` if it has
@@ -442,6 +452,42 @@ impl Vault {
             db_manifest,
             unreadable_fields,
         })
+    }
+
+    /// Registers a vault-scoped pack StructuralKind slot.
+    ///
+    /// The claim is persisted in `vault_meta` under the dynamic kind-registry
+    /// key family and becomes visible to subsequent write validation and
+    /// short-id allocation for this vault. The operation rejects reserved
+    /// Semantic/CORE bytes, bytes outside `band`, maintenance-band bytes, and
+    /// collisions with either static or already-registered runtime entries.
+    pub fn register_structural_kind(
+        &self,
+        type_byte: u8,
+        short_id_prefix: impl Into<String>,
+        band: TypeByteBand,
+        pack: impl Into<String>,
+    ) -> Result<StructuralKindRegistration> {
+        self.store
+            .register_structural_kind(type_byte, short_id_prefix, band, pack)
+    }
+
+    /// Returns the dynamic StructuralKind registration for `type_byte`, if
+    /// this vault has one. Static CORE/semantic/maintenance entries are not
+    /// mirrored here.
+    #[must_use]
+    pub fn structural_kind_registration(
+        &self,
+        type_byte: u8,
+    ) -> Option<StructuralKindRegistration> {
+        self.store.structural_kind_registration(type_byte)
+    }
+
+    /// Returns all vault-scoped dynamic StructuralKind registrations sorted
+    /// by type byte. Static registry entries are intentionally excluded.
+    #[must_use]
+    pub fn structural_kind_registrations(&self) -> Vec<StructuralKindRegistration> {
+        self.store.structural_kind_registrations()
     }
 
     /// Stores an entity blob.
@@ -2874,16 +2920,26 @@ impl Vault {
                 return Err(Error::IndexOverflow("entities_by_type"));
             }
             let (key, _) = entry?;
-            require_key_len(key, 17, "type index key")?;
-            let id = EntityId::from_bytes(
-                key[1..17]
-                    .try_into()
-                    .map_err(|_| Error::CorruptedIndex("type index key"))?,
-            )
-            .map_err(|_| Error::CorruptedIndex("type index key"))?;
-            ids.push(id);
+            ids.push(entity_id_from_type_index_key(key)?);
         }
         Ok(ids)
+    }
+
+    /// Counts entity IDs of a given type via the `type_index` prefix path.
+    ///
+    /// This is the exact count primitive for deterministic paginated list
+    /// metadata. It does not materialize entity IDs or read entity bodies.
+    pub fn count_entities_by_type(&self, entity_type: u8) -> Result<u64> {
+        let rtxn = self.store.env.read_txn()?;
+        let mut total = 0_u64;
+        for entry in self.store.type_index.prefix_iter(&rtxn, &[entity_type])? {
+            let (key, _) = entry?;
+            entity_id_from_type_index_key(key)?;
+            total = total
+                .checked_add(1)
+                .ok_or(Error::IndexOverflow("count_entities_by_type"))?;
+        }
+        Ok(total)
     }
 
     /// Returns the entity type byte for a stored entity, or None if not found.
@@ -3912,7 +3968,10 @@ mod tests {
         TEXT_ANALYZER_MANIFEST_HASH_KEY, TEXT_ANALYZER_MANIFEST_KEY,
         TEXT_BM25_FIELD_SCHEMA_HASH_KEY, TEXT_INDEX_SCHEMA_VERSION_KEY,
     };
-    use crate::types::{HnswConfig, TextAnalyzerConfig, TimeRange, VaultConfig};
+    use crate::types::{
+        ENTITY_TYPE_TASK, ENTITY_TYPE_TASK_LIST, HnswConfig, TextAnalyzerConfig, TimeRange,
+        VaultConfig,
+    };
 
     fn test_config() -> VaultConfig {
         VaultConfig {
@@ -3937,6 +3996,62 @@ mod tests {
 
     fn range(start: u64, end: u64) -> TimeRange {
         TimeRange { start, end }
+    }
+
+    #[test]
+    fn count_entities_by_type_uses_type_index_prefix_counts() -> Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let vault = Vault::open(tmp.path(), test_config())?;
+        let task_list_a = entity(0x11);
+        let task_list_b = entity(0x12);
+        let task = entity(0x13);
+
+        vault
+            .batch()
+            .put(
+                &task_list_a,
+                ENTITY_TYPE_TASK_LIST,
+                range(1, 1),
+                2,
+                b"list-a",
+            )
+            .put(
+                &task_list_b,
+                ENTITY_TYPE_TASK_LIST,
+                range(3, 3),
+                4,
+                b"list-b",
+            )
+            .put(&task, ENTITY_TYPE_TASK, range(5, 5), 6, b"task")
+            .commit()?;
+
+        assert_eq!(vault.count_entities_by_type(ENTITY_TYPE_TASK_LIST)?, 2);
+        assert_eq!(vault.count_entities_by_type(ENTITY_TYPE_TASK)?, 1);
+        assert_eq!(
+            vault.count_entities_by_type(crate::types::ENTITY_TYPE_MACHINE)?,
+            0
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn count_entities_by_type_rejects_corrupted_type_index_key() -> Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let vault = Vault::open(tmp.path(), test_config())?;
+
+        vault.with_write_txn(|wtxn| {
+            vault
+                .store
+                .type_index
+                .put(wtxn, &[ENTITY_TYPE_TASK_LIST, 0xaa], &[])?;
+            Ok(())
+        })?;
+
+        let err = vault
+            .count_entities_by_type(ENTITY_TYPE_TASK_LIST)
+            .expect_err("short type index key should fail loud");
+        assert_matches!(err, Error::CorruptedIndex("type index key"));
+        Ok(())
     }
 
     #[test]

@@ -14,8 +14,8 @@ use crate::serialize::{SerializeConfig, serialize_pack};
 use crate::store::Store;
 use crate::types::{
     ContextEntity, ContextPack, ENTITY_TYPE_CLAIM, EdgeConfirmationStatus, EdgeInfo, EdgeKind,
-    EntityId, FieldProfile, PackFormat, PackStats, Signal, TemporalAnchorMode, TemporalGranularity,
-    TimeRange, TokenAllocation,
+    EmptyContext, EmptyReason, EntityId, FieldProfile, PackFormat, PackStats, Signal,
+    TemporalAnchorMode, TemporalGranularity, TimeRange, TokenAllocation,
 };
 use crate::{Vault, le_bytes_to_f32_vec};
 
@@ -347,7 +347,10 @@ impl<'a> ContextPackBuilder<'a> {
     pub fn run(self) -> Result<ContextPack> {
         let started = Instant::now();
         let pipeline_output = self.pipeline.run_for_pack()?;
+        let total_in_scope = pipeline_output.total_in_scope;
+        let pipeline_empty_reason = pipeline_output.empty_reason;
         let scored = pipeline_output.scores;
+        let surfaced_candidate_count = scored.len();
         let claim_bodies = pipeline_output.claim_bodies;
         let mut claims_suppressed = pipeline_output.claims_suppressed;
 
@@ -443,19 +446,27 @@ impl<'a> ContextPackBuilder<'a> {
             )?;
         }
 
+        let pack_is_empty = results.is_empty() && neighbors.is_empty();
+        let candidates_considered = if pack_is_empty {
+            total_in_scope
+        } else {
+            surfaced_candidate_count
+        };
         let stats = PackStats {
-            candidates_considered: scored.len(),
+            candidates_considered,
             signals_used: dedupe_signals(self.signals_used),
             query_time_us: started.elapsed().as_micros().min(u64::MAX as u128) as u64,
             entities_hydrated: results.len(),
             neighbors_hydrated: neighbors.len(),
             claims_suppressed,
         };
+        let empty = empty_context(pack_is_empty, &stats, pipeline_empty_reason);
 
         Ok(ContextPack {
             results,
             neighbors,
             stats,
+            empty,
         })
     }
 
@@ -483,6 +494,41 @@ fn dedupe_signals(signals: Vec<Signal>) -> Vec<Signal> {
         }
     }
     deduped
+}
+
+fn empty_context(
+    pack_is_empty: bool,
+    stats: &PackStats,
+    pipeline_reason: Option<EmptyReason>,
+) -> Option<EmptyContext> {
+    if !pack_is_empty {
+        return None;
+    }
+
+    let reason = match pipeline_reason {
+        Some(reason) => reason,
+        None if stats.candidates_considered == 0 => EmptyReason::NoData,
+        None => EmptyReason::FilterMatchedNone,
+    };
+
+    Some(EmptyContext {
+        reason,
+        total_in_scope: stats.candidates_considered,
+        hint: empty_hint(reason).to_owned(),
+    })
+}
+
+fn empty_hint(reason: EmptyReason) -> &'static str {
+    match reason {
+        EmptyReason::FilterMatchedNone => {
+            "Try removing filters or widening the world, type, or time scope"
+        }
+        EmptyReason::NoData => "Add data to the vault or broaden the query scope",
+        EmptyReason::AllActivated => {
+            "All matching items are already activated; allow activated results to revisit them"
+        }
+        EmptyReason::BelowThreshold => "Try broadening the query or lowering the result threshold",
+    }
 }
 
 fn resolve_edge_short_ids(results: &mut [ContextEntity], neighbors: &mut [ContextEntity]) {
@@ -1046,13 +1092,51 @@ mod tests {
         pred: &str,
         val: &str,
     ) -> Result<()> {
+        put_claim_text_entity_with_lifecycle(
+            vault,
+            id,
+            text,
+            pred,
+            val,
+            crate::claim::ClaimLifecycleStatus::Active,
+        )
+    }
+
+    fn put_claim_text_entity_with_lifecycle(
+        vault: &Vault,
+        id: &EntityId,
+        text: &str,
+        pred: &str,
+        val: &str,
+        life: crate::claim::ClaimLifecycleStatus,
+    ) -> Result<()> {
+        put_claim_text_entity_with_status(
+            vault,
+            id,
+            text,
+            pred,
+            val,
+            crate::claim::ClaimApprovalStatus::Auto,
+            life,
+        )
+    }
+
+    fn put_claim_text_entity_with_status(
+        vault: &Vault,
+        id: &EntityId,
+        text: &str,
+        pred: &str,
+        val: &str,
+        appr: crate::claim::ClaimApprovalStatus,
+        life: crate::claim::ClaimLifecycleStatus,
+    ) -> Result<()> {
         let body = crate::claim::ClaimBody::new(
             pred,
             crate::claim::ClaimSubject::Entity(EntityId::from_bytes([0x7C; 16])?),
             rmpv::Value::from(val),
             0.9,
-            crate::claim::ClaimApprovalStatus::Auto,
-            crate::claim::ClaimLifecycleStatus::Active,
+            appr,
+            life,
         );
         let payload = crate::claim::encode_claim_body(&body)?;
         vault
@@ -1763,6 +1847,102 @@ mod tests {
         assert!(pack.results.is_empty());
         assert!(pack.neighbors.is_empty());
         assert_eq!(pack.stats.candidates_considered, 0);
+        let empty = pack.empty.as_ref().expect("empty context");
+        assert_eq!(empty.reason, EmptyReason::NoData);
+        assert_eq!(empty.total_in_scope, 0);
+        Ok(())
+    }
+
+    #[test]
+    fn non_empty_results_omit_empty_context() -> Result<()> {
+        let (_dir, vault) = open_test_vault();
+        let id = EntityId::now();
+        put_claim_text_entity(&vault, &id, "alpha", "test.alpha", "a")?;
+
+        let pack = vault.context_pack().search_text("alpha", 10).run()?;
+        assert_eq!(pack.results.len(), 1);
+        assert!(pack.neighbors.is_empty());
+        assert!(pack.empty.is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn filtered_empty_reports_pre_filter_scope_count() -> Result<()> {
+        let (_dir, vault) = open_test_vault();
+        for i in 0..3_u8 {
+            let id = EntityId::from_bytes([0x30 + i; 16])?;
+            put_claim_text_entity(&vault, &id, "sharedneedle", "test.filter", "v")?;
+        }
+
+        let pack = vault
+            .context_pack()
+            .search_text("sharedneedle", 10)
+            .filter_types(&[1])
+            .run()?;
+
+        assert!(pack.results.is_empty());
+        assert!(pack.neighbors.is_empty());
+        assert_eq!(pack.stats.candidates_considered, 3);
+        let empty = pack.empty.as_ref().expect("empty context");
+        assert_eq!(empty.reason, EmptyReason::FilterMatchedNone);
+        assert_eq!(empty.total_in_scope, 3);
+        Ok(())
+    }
+
+    #[test]
+    fn status_suppressed_empty_reports_all_activated() -> Result<()> {
+        let (_dir, vault) = open_test_vault();
+        let superseded = EntityId::from_bytes([0x41; 16])?;
+        let retracted = EntityId::from_bytes([0x42; 16])?;
+        put_claim_text_entity_with_status(
+            &vault,
+            &superseded,
+            "deadneedle",
+            "test.status",
+            "superseded",
+            crate::claim::ClaimApprovalStatus::Auto,
+            crate::claim::ClaimLifecycleStatus::Superseded,
+        )?;
+        put_claim_text_entity_with_status(
+            &vault,
+            &retracted,
+            "deadneedle",
+            "test.status",
+            "retracted",
+            crate::claim::ClaimApprovalStatus::Approved,
+            crate::claim::ClaimLifecycleStatus::Retracted,
+        )?;
+
+        let pack = vault.context_pack().search_text("deadneedle", 10).run()?;
+
+        assert!(pack.results.is_empty());
+        assert!(pack.neighbors.is_empty());
+        assert_eq!(pack.stats.candidates_considered, 2);
+        assert_eq!(pack.stats.claims_suppressed, 2);
+        let empty = pack.empty.as_ref().expect("empty context");
+        assert_eq!(empty.reason, EmptyReason::AllActivated);
+        assert_eq!(empty.total_in_scope, 2);
+        Ok(())
+    }
+
+    #[test]
+    fn empty_after_result_cap_reports_below_threshold() -> Result<()> {
+        let (_dir, vault) = open_test_vault();
+        let id = EntityId::now();
+        put_claim_text_entity(&vault, &id, "capneedle", "test.cap", "v")?;
+
+        let pack = vault
+            .context_pack()
+            .search_text("capneedle", 10)
+            .limit(0)
+            .run()?;
+
+        assert!(pack.results.is_empty());
+        assert!(pack.neighbors.is_empty());
+        assert_eq!(pack.stats.candidates_considered, 1);
+        let empty = pack.empty.as_ref().expect("empty context");
+        assert_eq!(empty.reason, EmptyReason::BelowThreshold);
+        assert_eq!(empty.total_in_scope, pack.stats.candidates_considered);
         Ok(())
     }
 
@@ -2237,8 +2417,14 @@ mod tests {
         let live = EntityId::from_bytes_unchecked([0x71; 16]);
         let dead = EntityId::from_bytes_unchecked([0x72; 16]);
         put_claim_text_entity(&vault, &live, "statneedle", "test.live", "v")?;
-        put_claim_text_entity(&vault, &dead, "statneedle", "test.dead", "v")?;
-        vault.retract_claim(&dead, 2_000)?;
+        put_claim_text_entity_with_lifecycle(
+            &vault,
+            &dead,
+            "statneedle",
+            "test.dead",
+            "v",
+            crate::claim::ClaimLifecycleStatus::Retracted,
+        )?;
 
         let pack = vault.context_pack().search_text("statneedle", 10).run()?;
         assert_eq!(pack.results.len(), 1);

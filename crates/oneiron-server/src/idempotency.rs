@@ -4,7 +4,6 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use axum::body::{Body, to_bytes};
 use axum::extract::{Request, State};
-use axum::http::header::CONTENT_TYPE;
 use axum::http::{HeaderMap, HeaderName, HeaderValue, StatusCode};
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
@@ -12,6 +11,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::api::check_auth;
 use crate::config::SyncServerConfig;
+use crate::error::ApiError;
 use crate::server::SyncServer;
 
 pub(crate) const IDEMPOTENCY_KEY_HEADER: &str = "Idempotency-Key";
@@ -240,13 +240,6 @@ impl fmt::Display for IdempotencyStoreError {
     }
 }
 
-#[derive(Serialize)]
-struct StructuredError {
-    error_code: &'static str,
-    human_message: &'static str,
-    recovery_suggestion: &'static str,
-}
-
 pub(crate) async fn idempotency_middleware(
     State(state): State<IdempotencyLayerState>,
     request: Request,
@@ -258,8 +251,8 @@ pub(crate) async fn idempotency_middleware(
         IdempotencyKey::Invalid => return invalid_key_response(),
     };
 
-    if let Err(status) = check_auth(request.headers(), &state.server.config) {
-        return status.into_response();
+    if check_auth(request.headers(), &state.server.config).is_err() {
+        return ApiError::unauthorized().into_response();
     }
 
     let principal = principal_from_headers(request.headers(), &state.server.config);
@@ -276,11 +269,12 @@ pub(crate) async fn idempotency_middleware(
     let _guard = state.store.lock().await;
     match state.store.lookup(&principal, &key, &request_body) {
         Ok(IdempotencyLookup::Replay(response)) => return response.into_response(),
-        Ok(IdempotencyLookup::Conflict) => return conflict_response(),
+        Ok(IdempotencyLookup::Conflict) => return conflict_response(&key),
         Ok(IdempotencyLookup::Miss) => {}
         Err(error) => {
             tracing::error!(error = %error, "failed to read idempotency cache");
-            return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+            return ApiError::internal_server_error("failed to read idempotency cache")
+                .into_response();
         }
     }
 
@@ -291,7 +285,8 @@ pub(crate) async fn idempotency_middleware(
         Ok(body) => body,
         Err(error) => {
             tracing::error!(error = %error, "failed to read idempotent response body");
-            return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+            return ApiError::internal_server_error("failed to read idempotent response body")
+                .into_response();
         }
     };
     let response_body = body.to_vec();
@@ -337,42 +332,12 @@ fn principal_from_headers(headers: &HeaderMap, config: &SyncServerConfig) -> Str
         .unwrap_or_else(|| ANONYMOUS_PRINCIPAL.to_owned())
 }
 
-fn conflict_response() -> Response {
-    json_error(
-        StatusCode::CONFLICT,
-        "idempotency_key_conflict",
-        "This Idempotency-Key was already used with a different request body.",
-        "Retry with the original request body, or send a new Idempotency-Key for a new mutation.",
-    )
+fn conflict_response(key: &str) -> Response {
+    ApiError::idempotency_replay_conflict(Some(key)).into_response()
 }
 
 fn invalid_key_response() -> Response {
-    json_error(
-        StatusCode::BAD_REQUEST,
-        "invalid_idempotency_key",
-        "Idempotency-Key must be a non-empty visible header value.",
-        "Send a non-empty Idempotency-Key header, or omit it for a non-idempotent request.",
-    )
-}
-
-fn json_error(
-    status: StatusCode,
-    error_code: &'static str,
-    human_message: &'static str,
-    recovery_suggestion: &'static str,
-) -> Response {
-    let body = serde_json::to_vec(&StructuredError {
-        error_code,
-        human_message,
-        recovery_suggestion,
-    })
-    .unwrap_or_else(|_| b"{}".to_vec());
-    let mut response = Response::new(Body::from(body));
-    *response.status_mut() = status;
-    response
-        .headers_mut()
-        .insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
-    response
+    ApiError::invalid_header(IDEMPOTENCY_KEY_HEADER).into_response()
 }
 
 fn store_key(principal: &str, key: &str) -> String {
@@ -408,6 +373,7 @@ mod tests {
 
     use super::*;
     use crate::config::SyncServerConfig;
+    use crate::error::{ApiErrorDetails, ErrorCode};
 
     struct ManualClock {
         now_secs: Mutex<u64>,
@@ -560,10 +526,14 @@ mod tests {
         assert_eq!(status(&first), 200);
         assert_eq!(status(&second), 409);
         assert_eq!(counter.load(Ordering::SeqCst), 1);
-        let body = std::str::from_utf8(body(&second)).unwrap();
-        assert!(body.contains(r#""error_code":"idempotency_key_conflict""#));
-        assert!(body.contains(r#""human_message":"#));
-        assert!(body.contains(r#""recovery_suggestion":"#));
+        let error: ApiError = serde_json::from_slice(body(&second)).unwrap();
+        assert_eq!(error.code(), ErrorCode::IdempotencyReplayConflict);
+        assert!(matches!(
+            error.details(),
+            ApiErrorDetails::IdempotencyReplayConflict { idempotency_key }
+                if idempotency_key.as_deref() == Some("conflict-key")
+        ));
+        assert!(!error.suggestions().is_empty());
 
         handle.abort();
     }

@@ -50,10 +50,10 @@ pub use crate::provenance::{
 };
 pub use crate::types::{
     Bm25RankProfile, ContextEntity, ContextPack, DecodedEdgeValue, EdgeActorClass,
-    EdgeConfirmationStatus, EdgeInfo, EdgeKind, EdgeProvenanceFlags, EdgeValueLayout, EntityId,
-    FieldProfile, HnswConfig, PackFormat, PackStats, ScoredEntity, Signal, TemporalAnchorMode,
-    TemporalGranularity, TextAnalyzerConfig, TextIndexOptions, TimeRange, TokenAllocation, Vad,
-    VadComponent, VaultConfig,
+    EdgeConfirmationStatus, EdgeInfo, EdgeKind, EdgeProvenanceFlags, EdgeValueLayout, EmptyContext,
+    EmptyReason, EntityId, FieldProfile, HnswConfig, PackFormat, PackStats, ScoredEntity, Signal,
+    StructuralKindRegistration, TemporalAnchorMode, TemporalGranularity, TextAnalyzerConfig,
+    TextIndexOptions, TimeRange, TokenAllocation, TypeByteBand, Vad, VadComponent, VaultConfig,
 };
 pub use crate::vault::{
     ActorBound, TextIndexStatus, Vault, VaultDoctorDbManifestReport, VaultDoctorHnswRecordState,
