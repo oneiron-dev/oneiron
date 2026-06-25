@@ -360,6 +360,7 @@ impl<'a> ContextPackBuilder<'a> {
         let surfaced_candidate_count = scored.len();
         let claim_bodies = pipeline_output.claim_bodies;
         let mut claims_suppressed = pipeline_output.claims_suppressed;
+        let cosine_ghosts_dampened = pipeline_output.cosine_ghosts_dampened;
 
         let rtxn = self.vault.store.env.read_txn()?;
         let hydrate_result_edges = self.include_edges && self.edge_hop == 0;
@@ -465,6 +466,7 @@ impl<'a> ContextPackBuilder<'a> {
             query_time_us: started.elapsed().as_micros().min(u64::MAX as u128) as u64,
             entities_hydrated: results.len(),
             neighbors_hydrated: neighbors.len(),
+            cosine_ghosts_dampened,
             claims_suppressed,
             items_truncated: crate::types::PackItemAccounting::item_budget(),
             items_dropped: crate::types::PackItemAccounting::token_budget(),

@@ -46,6 +46,8 @@ const ADAPTIVE_ROUNDS: usize = 3;
 const PER_SCAN_CAP_FACTOR: usize = 4;
 const MAX_TEMPORAL_SEEK_BUFFER: usize = 8_192;
 const RRF_K: f32 = 60.0;
+const COSINE_GHOST_VECTOR_THRESHOLD: f32 = 0.3;
+const GRAVITY_DAMPENING_FACTOR: f32 = 0.5;
 
 #[derive(Debug, Clone)]
 struct TemporalSearchConfig {
@@ -139,6 +141,7 @@ pub(crate) struct PipelineOutput {
     pub(crate) scores: Vec<ScoredEntity>,
     pub(crate) claim_bodies: HashMap<EntityId, ClaimBody>,
     pub(crate) claims_suppressed: usize,
+    pub(crate) cosine_ghosts_dampened: usize,
     pub(crate) total_in_scope: usize,
     pub(crate) empty_reason: Option<EmptyReason>,
 }
@@ -237,6 +240,7 @@ pub struct PipelineBuilder<'a> {
     recency_half_life: Option<f32>,
     apply_salience: bool,
     apply_confidence: bool,
+    apply_gravity: bool,
     apply_contiguity: bool,
     type_filter: Option<Vec<u8>>,
     since_filter: Option<u64>,
@@ -262,6 +266,7 @@ impl<'a> PipelineBuilder<'a> {
             recency_half_life: None,
             apply_salience: false,
             apply_confidence: false,
+            apply_gravity: false,
             apply_contiguity: false,
             type_filter: None,
             since_filter: None,
@@ -432,6 +437,11 @@ impl<'a> PipelineBuilder<'a> {
         self
     }
 
+    pub fn boost_gravity(mut self) -> Self {
+        self.apply_gravity = true;
+        self
+    }
+
     pub fn boost_contiguity(mut self) -> Self {
         self.apply_contiguity = true;
         self
@@ -522,8 +532,17 @@ impl<'a> PipelineBuilder<'a> {
             self.vault.ensure_text_index_trusted()?;
         }
 
-        let (scores, claim_gate, deferred_ppr_cache_writes, total_in_scope, empty_reason) = {
+        let (
+            scores,
+            claim_gate,
+            deferred_ppr_cache_writes,
+            cosine_ghosts_dampened,
+            total_in_scope,
+            empty_reason,
+        ) = {
             let mut ranked_lists = Vec::new();
+            let mut vector_channel_index = None;
+            let mut text_channel_index = None;
             let rtxn = self.vault.store.env.read_txn()?;
             let mut metadata_cache = EntityMetadataCache::default();
             let mut claim_gate = ClaimStatusGateCache::default();
@@ -547,6 +566,7 @@ impl<'a> PipelineBuilder<'a> {
                     query_vector,
                     *limit,
                 )?;
+                vector_channel_index = Some(ranked_lists.len());
                 ranked_lists.push(vector_results);
             }
 
@@ -559,6 +579,7 @@ impl<'a> PipelineBuilder<'a> {
                     query,
                     *limit,
                 )?;
+                text_channel_index = Some(ranked_lists.len());
                 ranked_lists.push(text_results);
             }
 
@@ -597,6 +618,7 @@ impl<'a> PipelineBuilder<'a> {
                     scores: Vec::new(),
                     claim_bodies: HashMap::new(),
                     claims_suppressed: 0,
+                    cosine_ghosts_dampened: 0,
                     total_in_scope: 0,
                     empty_reason: None,
                 });
@@ -696,6 +718,17 @@ impl<'a> PipelineBuilder<'a> {
                 fusion::boost_confidence(&mut scores, &self.vault.store, &rtxn)?;
             }
 
+            let cosine_ghosts_dampened = if self.apply_gravity {
+                apply_gravity(
+                    &mut scores,
+                    &ranked_lists,
+                    vector_channel_index,
+                    text_channel_index,
+                )
+            } else {
+                0
+            };
+
             let filter_config = PipelineFilterConfig {
                 type_filter: self.type_filter.as_deref(),
                 since_filter: self.since_filter,
@@ -761,6 +794,7 @@ impl<'a> PipelineBuilder<'a> {
                 scores,
                 claim_gate,
                 deferred_ppr_cache_writes,
+                cosine_ghosts_dampened,
                 total_in_scope,
                 empty_reason,
             )
@@ -783,10 +817,48 @@ impl<'a> PipelineBuilder<'a> {
             scores,
             claim_bodies,
             claims_suppressed,
+            cosine_ghosts_dampened,
             total_in_scope,
             empty_reason,
         })
     }
+}
+
+fn apply_gravity(
+    scores: &mut [ScoredEntity],
+    ranked_lists: &[Vec<ScoredEntity>],
+    vector_channel_index: Option<usize>,
+    text_channel_index: Option<usize>,
+) -> usize {
+    let (Some(vector_channel_index), Some(text_channel_index)) =
+        (vector_channel_index, text_channel_index)
+    else {
+        return 0;
+    };
+    let (Some(vector_results), Some(text_results)) = (
+        ranked_lists.get(vector_channel_index),
+        ranked_lists.get(text_channel_index),
+    ) else {
+        return 0;
+    };
+
+    let text_ids: HashSet<EntityId> = text_results.iter().map(|scored| scored.id).collect();
+    let cosine_ghosts: HashSet<EntityId> = vector_results
+        .iter()
+        .filter(|scored| {
+            scored.score > COSINE_GHOST_VECTOR_THRESHOLD && !text_ids.contains(&scored.id)
+        })
+        .map(|scored| scored.id)
+        .collect();
+
+    let mut dampened = 0;
+    for scored in scores {
+        if cosine_ghosts.contains(&scored.id) {
+            scored.score *= GRAVITY_DAMPENING_FACTOR;
+            dampened += 1;
+        }
+    }
+    dampened
 }
 
 /// D19 read-path status gate (its own pipeline stage; ARCH-0003 retrieval
@@ -1911,6 +1983,24 @@ mod tests {
             .commit()
     }
 
+    fn put_text_and_vector(
+        vault: &Vault,
+        id: EntityId,
+        text: &str,
+        vector: [f32; 4],
+    ) -> Result<()> {
+        vault
+            .batch()
+            .put(&id, 1, TimeRange { start: 1, end: 1 }, 1, b"payload")
+            .text(&id, &[("body", text)])
+            .vector(&id, &vector)
+            .commit()
+    }
+
+    fn scored(id: EntityId, score: f32) -> ScoredEntity {
+        ScoredEntity { id, score }
+    }
+
     fn count_entries(db: &heed::Database<Bytes, Bytes>, vault: &Vault) -> Result<usize> {
         let rtxn = vault.store.env.read_txn()?;
         let mut count = 0;
@@ -1938,6 +2028,129 @@ mod tests {
         assert_eq!(DEFAULT_RECENCY_HALF_LIFE_DAYS, 28.0);
         assert_eq!(RECENCY_DECAY_TAU_SECS, 2_419_200.0);
         assert_eq!(RECENCY_DECAY_TAU_SECS, 28.0 * 86_400.0);
+    }
+
+    #[test]
+    fn dampens_cosine_ghost() {
+        assert_eq!(COSINE_GHOST_VECTOR_THRESHOLD, 0.3);
+        assert_eq!(GRAVITY_DAMPENING_FACTOR, 0.5);
+
+        let ghost = entity_id(0xA0);
+        let vector = vec![scored(ghost, 0.6)];
+        let text = Vec::new();
+        let mut fused = fusion::rrf_fuse(&[vector.clone(), text.clone()], RRF_K);
+        let pre = to_score_map(&fused);
+
+        let dampened = apply_gravity(&mut fused, &[vector, text], Some(0), Some(1));
+        let post = to_score_map(&fused);
+
+        assert_eq!(dampened, 1);
+        assert!(approx_eq(post[&ghost], pre[&ghost] * 0.5, 1e-7));
+    }
+
+    #[test]
+    fn threshold_boundary() {
+        let boundary = entity_id(0xA1);
+        let above = entity_id(0xA2);
+        let vector = vec![scored(boundary, 0.30), scored(above, 0.31)];
+        let text = Vec::new();
+        let mut fused = fusion::rrf_fuse(&[vector.clone(), text.clone()], RRF_K);
+        let pre = to_score_map(&fused);
+
+        let dampened = apply_gravity(&mut fused, &[vector, text], Some(0), Some(1));
+        let post = to_score_map(&fused);
+
+        assert_eq!(dampened, 1);
+        assert!(approx_eq(post[&boundary], pre[&boundary], 1e-7));
+        assert!(approx_eq(post[&above], pre[&above] * 0.5, 1e-7));
+    }
+
+    #[test]
+    fn lexical_overlap_protects() {
+        let protected = entity_id(0xA3);
+        let vector = vec![scored(protected, 0.6)];
+        let text = vec![scored(protected, 9.0)];
+        let mut fused = fusion::rrf_fuse(&[vector.clone(), text.clone()], RRF_K);
+        let pre = to_score_map(&fused);
+
+        let dampened = apply_gravity(&mut fused, &[vector, text], Some(0), Some(1));
+        let post = to_score_map(&fused);
+
+        assert_eq!(dampened, 0);
+        assert!(approx_eq(post[&protected], pre[&protected], 1e-7));
+    }
+
+    #[test]
+    fn single_channel_noop() {
+        let ghost = entity_id(0xA4);
+        let vector = vec![scored(ghost, 0.6)];
+        let mut fused = fusion::rrf_fuse(std::slice::from_ref(&vector), RRF_K);
+        let pre = to_score_map(&fused);
+
+        let dampened = apply_gravity(&mut fused, &[vector], Some(0), None);
+        let post = to_score_map(&fused);
+
+        assert_eq!(dampened, 0);
+        assert!(approx_eq(post[&ghost], pre[&ghost], 1e-7));
+    }
+
+    #[test]
+    fn metric_counts_dampened() -> Result<()> {
+        let (_dir, vault) = open_test_vault();
+        let ghost_a = entity_id(0xA5);
+        let ghost_b = entity_id(0xA6);
+        let lexical = entity_id(0xA7);
+        let low_similarity = entity_id(0xA8);
+
+        put_vector(&vault, ghost_a, [1.0, 0.0, 0.0, 0.0])?;
+        put_vector(&vault, ghost_b, [0.6, 0.8, 0.0, 0.0])?;
+        put_text_and_vector(&vault, lexical, "gravityneedle", [0.8, 0.6, 0.0, 0.0])?;
+        put_vector(&vault, low_similarity, [0.0, 1.0, 0.0, 0.0])?;
+
+        let output = vault
+            .query()
+            .search_text("gravityneedle", 10)
+            .search_vector(&[1.0, 0.0, 0.0, 0.0], 10)
+            .boost_gravity()
+            .run_for_pack()?;
+
+        assert_eq!(output.cosine_ghosts_dampened, 2);
+        Ok(())
+    }
+
+    #[test]
+    fn disabled_by_default() -> Result<()> {
+        let (_dir, vault) = open_test_vault();
+        let ghost = entity_id(0xA9);
+        let lexical = entity_id(0xAA);
+
+        put_vector(&vault, ghost, [1.0, 0.0, 0.0, 0.0])?;
+        put_text(&vault, lexical, "defaultoffneedle")?;
+
+        let baseline = vault
+            .query()
+            .search_text("defaultoffneedle", 10)
+            .search_vector(&[1.0, 0.0, 0.0, 0.0], 10)
+            .run_for_pack()?;
+        let boosted = vault
+            .query()
+            .search_text("defaultoffneedle", 10)
+            .search_vector(&[1.0, 0.0, 0.0, 0.0], 10)
+            .boost_gravity()
+            .run_for_pack()?;
+
+        let baseline_scores = to_score_map(&baseline.scores);
+        let boosted_scores = to_score_map(&boosted.scores);
+
+        assert_eq!(baseline.cosine_ghosts_dampened, 0);
+        assert!(approx_eq(baseline_scores[&ghost], 1.0 / 61.0, 1e-7));
+        assert_eq!(boosted.cosine_ghosts_dampened, 1);
+        assert!(approx_eq(
+            boosted_scores[&ghost],
+            baseline_scores[&ghost] * 0.5,
+            1e-7
+        ));
+        Ok(())
     }
 
     #[test]
