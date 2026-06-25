@@ -60,7 +60,7 @@ pub(crate) fn claim_body_decode_count() -> usize {
 /// order, and the context-pack field profiles are prefixes of this list
 /// (Minimal = first 2, Standard = first 5, Full = first 11; the lifecycle
 /// keys `appr`/`life`/`stale` drive the D19 read-path status gate
-/// ([`claim_surfaceable`]) and are excluded from every serialization
+/// (`claim_surfaceable`) and are excluded from every serialization
 /// profile).
 pub const CLAIM_BODY_KEYS: [&str; 14] = [
     "pred", "val", "conf", "sal", "evid", "from", "to", "src", "world", "subj", "scope", "appr",

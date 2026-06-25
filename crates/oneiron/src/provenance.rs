@@ -39,7 +39,7 @@
 //! `valid_from`) is rejected fail-closed with
 //! [`Error::InvalidProvenanceBody`] — never silently reordered.
 //!
-//! Flag writes (D10): [`restamp_edge_flags`] is the ONLY 26-byte stamp
+//! Flag writes (D10): `restamp_edge_flags` is the ONLY 26-byte stamp
 //! primitive and it stays `pub(crate)`. The single public door to provenance
 //! flags is the Claim lifecycle ([`crate::Vault::put_edge_provenance`],
 //! [`crate::Vault::supersede_edge_provenance`],
@@ -75,7 +75,7 @@
 //!   the WINNER under the total D14 order: greatest `learned_at`, then
 //!   greatest `confidence` ([`f32::total_cmp`]), then greatest claim-id
 //!   bytes (engine-defined final tiebreak so the winner is deterministic).
-//!   See [`winner_index`].
+//!   See `winner_index`.
 //!
 //! * **RETRACT** — "set supersession_status = retracted (and typically
 //!   valid_to = now). The edge is KEPT with confirmation_status = retracted
@@ -103,7 +103,7 @@
 //!   dampened — the retracted Claim is still readable truth, so the flag
 //!   remains auditable), mirroring RETRACT's own None-branch; only when NO
 //!   provenance Claim of ANY lifecycle survives is the edge downgraded
-//!   26 B → 24 B bare via [`downgrade_edge_to_bare`] (a cached flag without
+//!   26 B → 24 B bare via `downgrade_edge_to_bare` (a cached flag without
 //!   any truth-Claim is unauditable). The captured `body_snapshot_ref` /
 //!   `source_revision_ref` ride the queued historical-carrier sweep row's
 //!   scope (executor = ONE-1091, deferred; cross-device propagation =
@@ -129,7 +129,7 @@
 //! claim carrying the class in BOTH places is ambiguous and fails closed
 //! ([`Error::InvalidProvenanceBody`]); a claim carrying it in NEITHER fails
 //! the same way — never a defaulted class. See
-//! [`resolve_persisted_actor_class`].
+//! `resolve_persisted_actor_class`.
 
 use heed::RwTxn;
 use rmpv::Value;
@@ -159,7 +159,7 @@ pub const EDGE_REF_LEN: usize = CLAIM_EDGE_REF_LEN;
 /// `confidence`, `supersession_status`; optional: `source_revision_ref`,
 /// `body_snapshot_ref`, `valid_from`, `valid_to`, `substrate_ref`,
 /// `reasoning_effort`, `actor_class` (`actor_class` is required on NEW-shape
-/// claims at the wrapper level — see [`resolve_persisted_actor_class`]).
+/// claims at the wrapper level — see `resolve_persisted_actor_class`).
 ///
 /// The decoder is FAIL-CLOSED on unknown keys, so growing this set is a
 /// sync-versioning event (old nodes reject new keys). ONE-1138 was pinned as
@@ -306,7 +306,7 @@ impl SupersessionStatus {
 /// the actor entity's kind (D13); since ONE-1138 (the ONE-1112 C2
 /// relocation) the validated value is persisted as a body key on NEW claims
 /// (legacy claims keep it on the wrapper's `evid` — see
-/// [`resolve_persisted_actor_class`]).
+/// `resolve_persisted_actor_class`).
 #[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
 pub struct EdgeProvenanceClaimBody {
@@ -348,7 +348,7 @@ pub struct EdgeProvenanceClaimBody {
     /// claims (the writer injects the validated caller-supplied class);
     /// absent only on legacy pre-bump claims, which carry it on the
     /// wrapper's `evid` instead. Both-present or neither-present fails
-    /// closed — see [`resolve_persisted_actor_class`].
+    /// closed — see `resolve_persisted_actor_class`.
     pub actor_class: Option<EdgeActorClass>,
 }
 
@@ -446,7 +446,7 @@ pub(crate) fn encode_edge_provenance_value(body: &EdgeProvenanceClaimBody) -> Va
 ///   [`REASONING_EFFORT_MAX_BYTES`] bytes;
 /// * `actor_class` must be an integer `u8 ≤ 2` (`{human=0, agent=1,
 ///   system=2}`); its required-on-new-shape rule is enforced at the wrapper
-///   level by [`resolve_persisted_actor_class`].
+///   level by `resolve_persisted_actor_class`.
 pub fn decode_edge_provenance_body(value: &Value) -> Result<EdgeProvenanceClaimBody> {
     let Value::Map(entries) = value else {
         return Err(Error::InvalidProvenanceBody(

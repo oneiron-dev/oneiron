@@ -107,7 +107,7 @@ pub const TYPE_BYTE_BAND_MAINTENANCE_START: u8 = 120;
 /// Maps a type byte to its LOCKED band. Total over all 256 bytes.
 ///
 /// Band membership is pure namespace allocation: an unregistered byte still
-/// has a band, but is rejected by [`validate_entity_type`] on every write
+/// has a band, but is rejected by `validate_entity_type` on every write
 /// path until a pack registers it (registration mechanism deferred post-M2).
 #[must_use]
 pub const fn band_of(type_byte: u8) -> TypeByteBand {
@@ -130,7 +130,7 @@ pub const fn band_of(type_byte: u8) -> TypeByteBand {
 /// MODEL = 121) are not StructuralKinds either. Only registered `core` and
 /// `pack` kinds qualify.
 /// Unregistered bytes return `false` here AND remain rejected by
-/// [`validate_entity_type`] on every write path (unchanged behavior).
+/// `validate_entity_type` on every write path (unchanged behavior).
 #[must_use]
 pub fn is_structural_kind(type_byte: u8) -> bool {
     matches!(
