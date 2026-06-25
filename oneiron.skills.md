@@ -3,14 +3,16 @@ name: oneiron-http-memory-api
 description: "Use this skill when an external agent needs to discover Oneiron's current HTTP memory API, choose the right endpoint, and understand how read, retrieval, context-pack, discovery, and lease-revocation calls relate to Oneiron MCP tools."
 when_to_use:
   - "An agent needs route-level awareness of the existing Oneiron HTTP API."
-  - "An agent must decide whether to search memory, read one entity, inspect edges, assemble context, discover vault capabilities, or revoke a device lease."
+  - "An agent must decide whether to search memory, read one entity, inspect edges, assemble context, resume companion state, discover vault capabilities, inspect the OpenAPI schema, or revoke a device lease."
   - "A connector needs the static skill layer: how to think about memory before it calls MCP or HTTP tools."
 trigger_phrases:
   - "query Oneiron memory"
   - "search the vault"
   - "read an entity"
   - "get context pack"
+  - "resume companion state"
   - "discover Oneiron capabilities"
+  - "inspect OpenAPI schema"
   - "revoke a lease"
 ---
 
@@ -39,6 +41,15 @@ Fetch Tier-1 first. It contains one endpoint block per live route literal and no
   - "health check"
   - "what formats does the server support?"
 - safety: Read-only, unauthenticated by design.
+
+#### openapi-schema - `GET /api/openapi.json`
+
+- when-to-use: Fetch the machine-readable OpenAPI document for client generation, route introspection, or schema validation.
+- trigger phrases:
+  - "get the OpenAPI schema"
+  - "generate a client"
+  - "inspect route schemas"
+- safety: Read-only; requires the configured `x-oneiron-secret` header unless the server is explicitly in unauthenticated development mode.
 
 #### core-discover - `GET /api/core/discover`
 
@@ -94,6 +105,15 @@ Fetch Tier-1 first. It contains one endpoint block per live route literal and no
   - "get a context pack"
 - safety: Read-only retrieval intent with a POST body; no persisted mutation in the current implementation.
 
+#### companion-resume - `POST /api/companion/resume`
+
+- when-to-use: Hydrate companion resume state in one read-only call, including session context, pending notifications, unprocessed items, and budget counters.
+- trigger phrases:
+  - "resume companion session"
+  - "hydrate resume bundle"
+  - "get pending notifications"
+- safety: Read-only aggregation with a POST body; requires the configured `x-oneiron-secret` header unless the server is explicitly in unauthenticated development mode.
+
 #### lease-revoke - `POST /api/lease/revoke`
 
 - when-to-use: Owner recovery path for revoking a lost or stolen device's lease binding by 16-character lowercase hex client id.
@@ -145,6 +165,20 @@ Example response:
   }
 }
 ```
+
+### OpenAPI Schema
+
+Method: `GET`
+
+Authentication: `x-oneiron-secret` unless development config explicitly allows unauthenticated access.
+
+Parameters: None.
+
+Response:
+
+- A JSON OpenAPI document for the live HTTP API.
+- Includes generated paths, operation metadata, and shared error components.
+- Use it for client generation or schema introspection; use Tier-1 for human endpoint selection.
 
 ### Core Discovery
 
@@ -335,6 +369,46 @@ Current response:
 ```
 
 Agent note: Treat this as a future context-assembly route that already has a stable call shape, not as a complete context-pack implementation.
+
+### Companion Resume
+
+Method: `POST`
+
+Authentication: `x-oneiron-secret` unless development config allows unauthenticated access.
+
+Request body: Empty JSON object.
+
+Response fields:
+
+- `session`: current API version, entity counts by numeric type, and latest activity timestamp.
+- `notifications`: pending notification items scoped to the caller, excluding already surfaced or acknowledged items.
+- `unprocessed`: items not processed since the caller's last resume; currently an empty array when none are available.
+- `budget`: `tokens_used`, `tokens_limit`, and saturated `tokens_remaining`.
+
+Example response:
+
+```json
+{
+  "session": {
+    "api_version": "v1",
+    "counts": { "16": 1 },
+    "last_activity": 1770000000
+  },
+  "notifications": [
+    {
+      "id": "0123456789abcdef0123456789abcdef",
+      "learned_at": 1770000000,
+      "body": { "message": "fresh" }
+    }
+  ],
+  "unprocessed": [],
+  "budget": {
+    "tokens_used": 0,
+    "tokens_limit": 0,
+    "tokens_remaining": 0
+  }
+}
+```
 
 ### Lease Revoke
 
