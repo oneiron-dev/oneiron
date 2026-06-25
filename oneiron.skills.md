@@ -200,7 +200,7 @@ Parameters: None.
 
 Response:
 
-- Content type: `text/markdown; charset=utf-8`.
+- Content type: `text/markdown; profile=agentskills.io`.
 - Body: the committed `oneiron.skills.md` artifact.
 - Use it when an external agent needs the progressive-disclosure route catalog from a running Oneiron server rather than from the repository checkout.
 

@@ -16,7 +16,7 @@ use oneiron_server::server::SyncServer;
 use serde_json::Value;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
-const SKILLS_PACK: &str = include_str!("../../../oneiron.skills.md");
+const SKILLS_PACK: &str = include_str!("../oneiron.skills.md");
 
 fn test_vault_config() -> VaultConfig {
     let mut config = VaultConfig::device();
@@ -558,7 +558,7 @@ async fn skills_pack_requires_auth_and_serves_static_markdown() {
     assert!(
         http_headers(&response)
             .to_ascii_lowercase()
-            .contains("content-type: text/markdown; charset=utf-8"),
+            .contains("content-type: text/markdown; profile=agentskills.io"),
         "skills pack response should be text/markdown"
     );
     assert_eq!(http_body(&response), SKILLS_PACK);

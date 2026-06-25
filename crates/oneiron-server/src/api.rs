@@ -28,10 +28,9 @@ use crate::idempotency::{IdempotencyLayerState, idempotency_middleware};
 use crate::projection::{self, View};
 use crate::protocol::{CountMode, PaginatedResponse, ResponseMeta};
 use crate::server::SyncServer;
+use crate::skills_pack as skills_pack_artifact;
 
 const API_LEVEL: &str = "v1";
-const ONEIRON_SKILLS_PACK: &str = include_str!("../../../oneiron.skills.md");
-const ONEIRON_SKILLS_PACK_CONTENT_TYPE: &str = "text/markdown; charset=utf-8";
 const SUPPORTED_FORMATS: &[&str] = &["json", "yaml", "toon", "markdown", "plaintext"];
 const EFFECTIVE_AUTH_SCOPES: &[&str] = &[
     "core:discover",
@@ -173,7 +172,7 @@ async fn openapi_json(
             status = 200,
             description = "Static agentskills.io-compatible progressive-disclosure skill pack for the live HTTP API.",
             body = String,
-            content_type = "text/markdown",
+            content_type = "text/markdown; profile=agentskills.io",
             example = "# Oneiron HTTP Memory API Skill Pack"
         ),
         (
@@ -183,9 +182,9 @@ async fn openapi_json(
             content_type = "application/json",
             example = json!({
                 "code": "UNAUTHORIZED",
-                "message": "unauthorized",
+                "message": "request is not authorized",
                 "details": { "code": "UNAUTHORIZED" },
-                "suggestions": ["set x-oneiron-secret to the configured shared secret"]
+                "suggestions": ["Send the configured x-oneiron-secret header and retry."]
             })
         )
     )
@@ -196,8 +195,8 @@ async fn skills_pack(
 ) -> Result<impl IntoResponse, ApiError> {
     check_api_auth(&headers, &server.config)?;
     Ok((
-        [(CONTENT_TYPE, ONEIRON_SKILLS_PACK_CONTENT_TYPE)],
-        ONEIRON_SKILLS_PACK,
+        [(CONTENT_TYPE, skills_pack_artifact::MEDIA_TYPE)],
+        skills_pack_artifact::CONTENT,
     ))
 }
 
@@ -1718,11 +1717,18 @@ mod tests {
         );
 
         let skills_pack_success = &spec["paths"]["/api/skills/oneiron.skills.md"]["get"]["responses"]
-            ["200"]["content"]["text/markdown"];
+            ["200"]["content"][skills_pack_artifact::MEDIA_TYPE];
         assert!(
             skills_pack_success.get("example").is_some()
                 || skills_pack_success.get("examples").is_some(),
             "skills pack 200 response must include a markdown example: {skills_pack_success:?}"
+        );
+        let skills_pack_unauthorized = &spec["paths"]["/api/skills/oneiron.skills.md"]["get"]["responses"]
+            ["401"]["content"]["application/json"]["example"];
+        assert_eq!(
+            skills_pack_unauthorized,
+            &serde_json::to_value(ApiError::unauthorized()).expect("serialize ApiError"),
+            "skills pack 401 response example must match ApiError::unauthorized()"
         );
 
         assert!(
