@@ -324,7 +324,7 @@ fn prepare_entities(
     let now = crate::unix_seconds_now();
     entities
         .iter()
-        .map(|entity| {
+        .filter_map(|entity| {
             let mut fields = Vec::new();
 
             if let Some(map) = entity.fields.as_ref() {
@@ -345,67 +345,187 @@ fn prepare_entities(
                 id: format_short_id(entity),
                 fields,
             };
-            apply_item_budget(&mut prepared, config.max_item_tokens, stats);
-            prepared
+            apply_item_budget(&mut prepared, config.max_item_tokens, stats).then_some(prepared)
         })
         .collect()
 }
 
-fn apply_item_budget(entity: &mut PreparedEntity, max_item_tokens: usize, stats: &mut PackStats) {
+fn apply_item_budget(
+    entity: &mut PreparedEntity,
+    max_item_tokens: usize,
+    stats: &mut PackStats,
+) -> bool {
     if max_item_tokens == 0 || is_critical_predicate_claim(entity) {
-        return;
+        return true;
     }
 
     let max_item_chars = max_item_tokens.saturating_mul(4);
     if max_item_chars == 0 || estimate_entity_chars(entity) <= max_item_chars {
-        return;
+        return true;
     }
 
-    if entity.entity_type == ENTITY_TYPE_CLAIM {
-        truncate_claim_value_for_item_budget(entity, max_item_chars, stats);
-        return;
+    let truncated = if entity.entity_type == ENTITY_TYPE_CLAIM {
+        truncate_claim_value_for_item_budget(entity, max_item_chars)
+    } else {
+        truncate_non_claim_for_item_budget(entity, max_item_chars)
+    };
+
+    if estimate_entity_chars(entity) <= max_item_chars {
+        if truncated {
+            stats.items_truncated.count = stats.items_truncated.count.saturating_add(1);
+        }
+        true
+    } else {
+        stats.items_dropped.reason = crate::types::PackItemAccountingReason::ItemBudget;
+        stats.items_dropped.count = stats.items_dropped.count.saturating_add(1);
+        false
+    }
+}
+
+fn truncate_non_claim_for_item_budget(entity: &mut PreparedEntity, max_item_chars: usize) -> bool {
+    let mut truncated = false;
+    let mut tried_fields = Vec::new();
+
+    while estimate_entity_chars(entity) > max_item_chars {
+        let Some(field_index) =
+            largest_truncatable_top_level_string_field(entity, tried_fields.as_slice())
+        else {
+            break;
+        };
+
+        tried_fields.push(field_index);
+        truncated |= truncate_string_field_to_item_budget(entity, field_index, max_item_chars);
     }
 
-    let Some(field_index) = largest_truncatable_top_level_string_field(entity) else {
-        return;
-    };
+    if estimate_entity_chars(entity) <= max_item_chars {
+        return truncated;
+    }
 
-    let current_chars = estimate_entity_chars(entity);
-    let Value::String(text) = &mut entity.fields[field_index].1 else {
-        return;
-    };
-    let original_chars = text.chars().count();
-    let target_text_chars =
-        original_chars.saturating_sub(current_chars.saturating_sub(max_item_chars));
-    *text = truncate_with_item_suffix(text, target_text_chars);
-    stats.items_truncated.count = stats.items_truncated.count.saturating_add(1);
+    truncated | retain_structural_item_budget_fields(entity)
 }
 
 fn truncate_claim_value_for_item_budget(
     entity: &mut PreparedEntity,
     max_item_chars: usize,
-    stats: &mut PackStats,
-) {
-    let Some(field_index) = field_index(entity, "val") else {
-        return;
+) -> bool {
+    let Some(value_index) = field_index(entity, "val") else {
+        return retain_minimal_claim_item_budget_fields(entity, None);
     };
 
-    let current_chars = estimate_entity_chars(entity);
-    let overflow_chars = current_chars.saturating_sub(max_item_chars);
+    let original_value = entity.fields[value_index].1.clone();
+    let mut truncated =
+        truncate_claim_value_field_for_item_budget(entity, value_index, max_item_chars);
+
+    if estimate_entity_chars(entity) <= max_item_chars {
+        return truncated;
+    }
+
+    truncated |= retain_minimal_claim_item_budget_fields(entity, Some(original_value));
+    if estimate_entity_chars(entity) <= max_item_chars {
+        return truncated;
+    }
+
+    let Some(value_index) = field_index(entity, "val") else {
+        return truncated;
+    };
+    truncated | truncate_claim_value_field_for_item_budget(entity, value_index, max_item_chars)
+}
+
+fn truncate_claim_value_field_for_item_budget(
+    entity: &mut PreparedEntity,
+    field_index: usize,
+    max_item_chars: usize,
+) -> bool {
     let original_value_chars = estimate_value_chars(&entity.fields[field_index].1);
 
     match &mut entity.fields[field_index].1 {
-        Value::String(text) => {
-            let original_chars = text.chars().count();
-            let target_text_chars = original_chars.saturating_sub(overflow_chars);
-            *text = truncate_with_item_suffix(text, target_text_chars);
+        Value::String(_) => {
+            truncate_string_field_to_item_budget(entity, field_index, max_item_chars)
         }
         value => {
             *value = Value::String(truncation_suffix(original_value_chars));
+            true
+        }
+    }
+}
+
+fn truncate_string_field_to_item_budget(
+    entity: &mut PreparedEntity,
+    field_index: usize,
+    max_item_chars: usize,
+) -> bool {
+    let Value::String(original) = entity.fields[field_index].1.clone() else {
+        return false;
+    };
+
+    let original_chars = original.chars().count();
+    if original_chars == 0 {
+        return false;
+    }
+
+    let suffix = truncation_suffix(original_chars);
+    let mut low = 0_usize;
+    let mut high = original_chars.saturating_sub(1);
+    let mut best_prefix = None;
+
+    while low <= high {
+        let mid = low + ((high - low) / 2);
+        entity.fields[field_index].1 =
+            Value::String(truncate_with_suffix_prefix(&original, mid, &suffix));
+
+        if estimate_entity_chars(entity) <= max_item_chars {
+            best_prefix = Some(mid);
+            low = mid.saturating_add(1);
+        } else if mid == 0 {
+            break;
+        } else {
+            high = mid - 1;
         }
     }
 
-    stats.items_truncated.count = stats.items_truncated.count.saturating_add(1);
+    let prefix_chars = best_prefix.unwrap_or(0);
+    entity.fields[field_index].1 = Value::String(truncate_with_suffix_prefix(
+        &original,
+        prefix_chars,
+        &suffix,
+    ));
+    true
+}
+
+fn retain_minimal_claim_item_budget_fields(
+    entity: &mut PreparedEntity,
+    original_value: Option<Value>,
+) -> bool {
+    let predicate = entity.fields.iter().find(|(key, _)| key == "pred").cloned();
+    let value = original_value.map(|value| ("val".to_owned(), value));
+
+    let mut minimal = Vec::new();
+    if let Some(predicate) = predicate {
+        minimal.push(predicate);
+    }
+    if let Some(value) = value {
+        minimal.push(value);
+    }
+
+    let changed = entity.fields != minimal;
+    entity.fields = minimal;
+    changed
+}
+
+fn retain_structural_item_budget_fields(entity: &mut PreparedEntity) -> bool {
+    let structural: Vec<(String, Value)> = entity
+        .fields
+        .iter()
+        .filter(|(key, _)| is_structural_item_budget_field(key))
+        .cloned()
+        .collect();
+    let changed = entity.fields != structural;
+    entity.fields = structural;
+    changed
+}
+
+fn is_structural_item_budget_field(key: &str) -> bool {
+    key == "pred"
 }
 
 fn field_index(entity: &PreparedEntity, key: &str) -> Option<usize> {
@@ -415,13 +535,16 @@ fn field_index(entity: &PreparedEntity, key: &str) -> Option<usize> {
         .position(|(field_key, _)| field_key == key)
 }
 
-fn largest_truncatable_top_level_string_field(entity: &PreparedEntity) -> Option<usize> {
+fn largest_truncatable_top_level_string_field(
+    entity: &PreparedEntity,
+    excluded: &[usize],
+) -> Option<usize> {
     entity
         .fields
         .iter()
         .enumerate()
         .filter_map(|(index, (key, value))| {
-            if key == "pred" {
+            if excluded.contains(&index) || is_structural_item_budget_field(key) {
                 return None;
             }
 
@@ -434,12 +557,8 @@ fn largest_truncatable_top_level_string_field(entity: &PreparedEntity) -> Option
         .map(|(index, _)| index)
 }
 
-fn truncate_with_item_suffix(text: &str, target_chars: usize) -> String {
-    let original_chars = text.chars().count();
-    let suffix = truncation_suffix(original_chars);
-    let suffix_chars = suffix.chars().count();
-    let keep = target_chars.saturating_sub(suffix_chars);
-    let prefix: String = text.chars().take(keep).collect();
+fn truncate_with_suffix_prefix(text: &str, prefix_chars: usize, suffix: &str) -> String {
+    let prefix: String = text.chars().take(prefix_chars).collect();
     format!("{prefix}{suffix}")
 }
 
@@ -2219,13 +2338,13 @@ mod tests {
 
     #[test]
     fn max_item_tokens_preserves_claim_predicate_when_value_is_shorter() {
-        let predicate = format!("note.{}", "predicate".repeat(80));
+        let predicate = format!("note.{}", "predicate".repeat(15));
         let value = "v".repeat(120);
         let pack = pack_with_results(vec![claim_entity(1, &predicate, &value, 1.0)]);
 
         let mut cfg = config(PackFormat::Json);
         cfg.max_field_chars = 0;
-        cfg.max_item_tokens = 24;
+        cfg.max_item_tokens = 64;
 
         let parsed: Value =
             serde_json::from_slice(&serialize_pack(&pack, &cfg)).expect("json parse");
@@ -2243,7 +2362,7 @@ mod tests {
 
     #[test]
     fn max_item_tokens_preserves_claim_predicate_for_non_string_value() {
-        let predicate = format!("note.{}", "predicate".repeat(80));
+        let predicate = format!("note.{}", "predicate".repeat(15));
         let mut object = Map::new();
         object.insert("summary".to_owned(), Value::String("s".repeat(300)));
         object.insert("confidence".to_owned(), Value::Number(Number::from(7)));
@@ -2258,7 +2377,7 @@ mod tests {
 
         let mut cfg = config(PackFormat::Json);
         cfg.max_field_chars = 0;
-        cfg.max_item_tokens = 24;
+        cfg.max_item_tokens = 64;
 
         let parsed: Value =
             serde_json::from_slice(&serialize_pack(&pack, &cfg)).expect("json parse");
@@ -2274,6 +2393,143 @@ mod tests {
             rendered_value,
             format!("...(truncated, {original_value_chars} chars total)")
         );
+    }
+
+    #[test]
+    fn max_item_tokens_strips_claim_to_safe_minimal_row_when_value_truncation_is_not_enough() {
+        let predicate = "note.metadata_heavy";
+        let mut entity = PreparedEntity {
+            entity_type: ENTITY_TYPE_CLAIM,
+            score: 1.0,
+            id: "cl01:01".to_owned(),
+            fields: vec![
+                ("pred".to_owned(), Value::String(predicate.to_owned())),
+                ("val".to_owned(), Value::String("v".repeat(120))),
+                ("src".to_owned(), Value::String("s".repeat(300))),
+                ("scope".to_owned(), Value::String("c".repeat(300))),
+            ],
+        };
+        let mut stats = empty_stats();
+
+        assert!(apply_item_budget(&mut entity, 32, &mut stats));
+
+        assert!(estimate_entity_chars(&entity) <= 32 * 4);
+        assert_eq!(
+            entity
+                .fields
+                .iter()
+                .find_map(|(key, value)| (key == "pred").then_some(value.as_str()).flatten()),
+            Some(predicate)
+        );
+        assert!(entity.fields.iter().any(|(key, _)| key == "val"));
+        assert!(!entity.fields.iter().any(|(key, _)| key == "src"));
+        assert!(!entity.fields.iter().any(|(key, _)| key == "scope"));
+        assert_eq!(stats.items_truncated.count, 1);
+        assert_eq!(stats.items_dropped.count, 0);
+    }
+
+    #[test]
+    fn max_item_tokens_strips_claim_metadata_without_truncating_short_value() {
+        let predicate = "note.metadata_heavy";
+        let mut entity = PreparedEntity {
+            entity_type: ENTITY_TYPE_CLAIM,
+            score: 1.0,
+            id: "cl01:01".to_owned(),
+            fields: vec![
+                ("pred".to_owned(), Value::String(predicate.to_owned())),
+                ("val".to_owned(), Value::String("ok".to_owned())),
+                ("src".to_owned(), Value::String("s".repeat(300))),
+                ("scope".to_owned(), Value::String("c".repeat(300))),
+            ],
+        };
+        let mut stats = empty_stats();
+
+        assert!(apply_item_budget(&mut entity, 32, &mut stats));
+
+        assert!(estimate_entity_chars(&entity) <= 32 * 4);
+        assert_eq!(
+            entity
+                .fields
+                .iter()
+                .find_map(|(key, value)| (key == "pred").then_some(value.as_str()).flatten()),
+            Some(predicate)
+        );
+        assert_eq!(
+            entity
+                .fields
+                .iter()
+                .find_map(|(key, value)| (key == "val").then_some(value.as_str()).flatten()),
+            Some("ok")
+        );
+        assert!(!entity.fields.iter().any(|(key, _)| key == "src"));
+        assert!(!entity.fields.iter().any(|(key, _)| key == "scope"));
+        assert_eq!(stats.items_truncated.count, 1);
+        assert_eq!(stats.items_dropped.count, 0);
+    }
+
+    #[test]
+    fn max_item_tokens_trims_multiple_non_claim_strings_until_under_cap() {
+        let mut entity = PreparedEntity {
+            entity_type: ENTITY_TYPE_TURN,
+            score: 1.0,
+            id: "tn01:01".to_owned(),
+            fields: vec![
+                ("txt".to_owned(), Value::String("a".repeat(160))),
+                ("note".to_owned(), Value::String("b".repeat(160))),
+            ],
+        };
+        let mut stats = empty_stats();
+
+        assert!(apply_item_budget(&mut entity, 40, &mut stats));
+
+        assert!(estimate_entity_chars(&entity) <= 40 * 4);
+        assert_eq!(stats.items_truncated.count, 1);
+        assert_eq!(stats.items_dropped.count, 0);
+        for (_, value) in &entity.fields {
+            let rendered = value.as_str().expect("string field");
+            assert!(rendered.ends_with("...(truncated, 160 chars total)"));
+        }
+    }
+
+    #[test]
+    fn max_item_tokens_replaces_non_claim_without_safe_strings_with_minimal_row() {
+        let mut entity = PreparedEntity {
+            entity_type: ENTITY_TYPE_EVENT,
+            score: 1.0,
+            id: "ev01:01".to_owned(),
+            fields: vec![
+                (
+                    "meta".to_owned(),
+                    Value::Array((0..200).map(|i| Value::Number(Number::from(i))).collect()),
+                ),
+                ("weight".to_owned(), Value::Number(Number::from(42))),
+            ],
+        };
+        let mut stats = empty_stats();
+
+        assert!(apply_item_budget(&mut entity, 8, &mut stats));
+
+        assert!(entity.fields.is_empty());
+        assert!(estimate_entity_chars(&entity) <= 8 * 4);
+        assert_eq!(stats.items_truncated.count, 1);
+        assert_eq!(stats.items_dropped.count, 0);
+    }
+
+    #[test]
+    fn max_item_tokens_drops_rows_when_tiny_budget_cannot_fit_suffix_or_minimal_row() {
+        let pack = pack_with_results(vec![claim_entity(1, "note.tiny", &"x".repeat(200), 1.0)]);
+
+        let mut cfg = config(PackFormat::Json);
+        cfg.max_field_chars = 0;
+        cfg.max_item_tokens = 1;
+        cfg.budget = 0;
+
+        let prepared = prepare_pack(&pack, &cfg, true);
+
+        assert!(prepared.results.is_empty());
+        assert_eq!(prepared.stats.items_truncated.count, 0);
+        assert_eq!(prepared.stats.items_dropped.count, 1);
+        assert_eq!(prepared.stats.items_dropped.reason.as_str(), "item_budget");
     }
 
     #[test]
@@ -2369,7 +2625,7 @@ mod tests {
 
         let mut cfg = config(PackFormat::Json);
         cfg.max_field_chars = 0;
-        cfg.max_item_tokens = 16;
+        cfg.max_item_tokens = 24;
 
         let prepared = prepare_pack(&pack, &cfg, true);
 
