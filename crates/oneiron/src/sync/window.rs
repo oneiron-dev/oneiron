@@ -1364,18 +1364,36 @@ pub fn forward_rematerialize(
             // silently drop a pending hard purge (fail closed). The
             // ONE-1147 `healed` discharges (entity/edge healing writes,
             // structurally disjoint from tombstoned ids — both passes are
-            // tombstone-gated) and ONE-1167 terminal quarantine discharges
-            // clear under the same ordering.
-            let mut terminal_seen = HashSet::new();
-            for id in healed
-                .iter()
-                .chain(cleared.iter())
-                .chain(terminal_quarantines.iter())
-            {
-                if !terminal_seen.insert(*id) {
+            // tombstone-gated). ONE-1167 terminal quarantine may discharge
+            // only replay/quarantine-origin markers whose provenance sidecar
+            // already proves they are not delete-safety retries; legacy or
+            // purge-failure markers stay pending until their own tombstone
+            // goal state holds.
+            let mut success_seen = HashSet::new();
+            for id in healed.iter().chain(cleared.iter()) {
+                if !success_seen.insert(*id) {
                     continue;
                 }
                 quarantine::clear_remat_marker_in_txn(vault, wtxn, window_key.as_str(), id)?;
+            }
+            let mut terminal_seen = HashSet::new();
+            for id in &terminal_quarantines {
+                if !terminal_seen.insert(*id) {
+                    continue;
+                }
+                let cleared = quarantine::clear_replay_remat_marker_in_txn(
+                    vault,
+                    wtxn,
+                    window_key.as_str(),
+                    id,
+                )?;
+                if !cleared {
+                    tracing::debug!(
+                        entity = %id.to_hex(),
+                        window = %window_key,
+                        "forward remat: terminal quarantine left unproven rm: marker pending"
+                    );
+                }
             }
             for id in &purge_failures {
                 quarantine::set_remat_marker_in_txn(vault, wtxn, window_key.as_str(), id)?;
@@ -1420,11 +1438,11 @@ pub fn forward_rematerialize(
         .any(|window| window == window_key.as_str())
     {
         // Markers survive the pass when a purge failed above, when a
-        // flagged entity has neither a healing write nor a terminal x: row
-        // in the loaded doc (stale/cross-window state), or when a marker
-        // row no longer parses. Clearing any of them here would vacuously
-        // discharge a GDPR retry — keep them (fail closed) and keep
-        // ERROR-grade visibility.
+        // flagged entity has neither a healing write nor a proven non-delete
+        // terminal x: row in the loaded doc (stale/cross-window state), or
+        // when a marker row no longer parses. Clearing any of them here
+        // would vacuously discharge a GDPR retry — keep them (fail closed)
+        // and keep ERROR-grade visibility.
         tracing::error!(
             window = %window_key,
             "forward remat: rm: markers still pending after tombstone pass — hard-deleted content may be live (GDPR SLA breach signal)"
