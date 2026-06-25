@@ -218,8 +218,8 @@ impl SyncQueue {
     /// unconfirmed: the server may never have applied what was sent, so a
     /// delete-bearing update (the only durable propagation record of a
     /// GDPR/hard delete once the carrier-15 scrub ran) must be kept until
-    /// the VV-confirmed clear (`clear_through_confirmed`
-    /// (Self::clear_through_confirmed), protocol lands in M4-12).
+    /// the VV-confirmed clear (`clear_through_confirmed`,
+    /// protocol lands in M4-12).
     pub fn clear_through(&self, max_seq: u64) -> Result<()> {
         self.clear_through_inner(max_seq, false)
     }
@@ -359,8 +359,7 @@ impl SyncQueue {
     }
 
     /// Returns the number of valid update entries in the queue, INCLUDING
-    /// delete-bearing rows (it matches what `drain_updates`
-    /// (Self::drain_updates) replays).
+    /// delete-bearing rows (it matches what `drain_updates` replays).
     pub fn len(&self) -> Result<usize> {
         let rtxn = self.vault.store.env.read_txn()?;
         let mut count = 0;
