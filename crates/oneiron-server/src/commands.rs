@@ -230,25 +230,22 @@ mod tests {
     #[test]
     fn configured_cors_origin_is_parsed() {
         let config = SyncServerConfig {
-            allowed_origins: vec!["https://app.example".to_owned()],
+            allowed_origins: vec!["https://app.oneiron.dev".to_owned(), "  ".to_owned()],
             ..Default::default()
         };
 
         assert_eq!(
             parse_allowed_origins(&config.allowed_origins).unwrap(),
-            vec![HeaderValue::from_static("https://app.example")]
+            vec![HeaderValue::from_static("https://app.oneiron.dev")]
         );
         assert!(build_cors_layer(&config).is_ok());
     }
 
     #[test]
     fn wildcard_cors_origin_is_rejected() {
-        let config = SyncServerConfig {
-            allowed_origins: vec!["*".to_owned()],
-            ..Default::default()
-        };
+        let origins = vec!["*".to_owned()];
 
-        let error = build_cors_layer(&config).unwrap_err().to_string();
+        let error = parse_allowed_origins(&origins).unwrap_err().to_string();
 
         assert!(error.contains("wildcard CORS origin is not allowed"));
     }

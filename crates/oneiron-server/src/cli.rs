@@ -106,4 +106,26 @@ mod tests {
             _ => panic!("expected serve command"),
         }
     }
+
+    #[test]
+    fn explicit_serve_accepts_cors_origins_alias() {
+        let cli = Cli::try_parse_from([
+            "oneiron-server",
+            "serve",
+            "--cors-origins",
+            "https://a.example,https://b.example",
+        ])
+        .unwrap();
+
+        match cli.into_command() {
+            Command::Serve(args) => assert_eq!(
+                args.allowed_origins,
+                Some(vec![
+                    "https://a.example".to_owned(),
+                    "https://b.example".to_owned()
+                ])
+            ),
+            _ => panic!("expected serve command"),
+        }
+    }
 }

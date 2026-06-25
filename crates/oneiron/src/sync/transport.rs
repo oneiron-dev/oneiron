@@ -70,6 +70,9 @@ pub const PROTOCOL_VERSION: u8 = 2;
 /// memory-exhaustion guard).
 pub const MAX_DECODED_PAYLOAD_BYTES: usize = 8 * 1024 * 1024;
 
+/// Maximum encoded custom sync frame size produced by transport helpers.
+const MAX_ENCODED_FRAME_BYTES: usize = MAX_DECODED_PAYLOAD_BYTES;
+
 /// WindowSync: `[window_key_len:1][window_key][sub_tag:1][payload]`.
 pub const TAG_WINDOW_SYNC: u8 = 10;
 /// BulkTransfer: `[window_key_len:1][window_key][zstd_msgpack]`.
@@ -272,7 +275,11 @@ pub fn encode_window_sync(window_key: &str, sub_tag: u8, payload: &[u8]) -> Enco
         Ok(key_bytes) => key_bytes,
         Err(err) => return EncodedFrame::err(err),
     };
-    let mut buf = Vec::with_capacity(3 + key_bytes.len() + payload.len());
+    let capacity = match checked_encoded_frame_len(3 + key_bytes.len(), payload.len()) {
+        Ok(capacity) => capacity,
+        Err(err) => return EncodedFrame::err(err),
+    };
+    let mut buf = Vec::with_capacity(capacity);
     buf.push(TAG_WINDOW_SYNC);
     buf.push(key_bytes.len() as u8);
     buf.extend_from_slice(key_bytes);
@@ -310,7 +317,11 @@ pub fn encode_bulk_transfer(window_key: &str, zstd_data: &[u8]) -> EncodedFrame 
         Ok(key_bytes) => key_bytes,
         Err(err) => return EncodedFrame::err(err),
     };
-    let mut buf = Vec::with_capacity(2 + key_bytes.len() + zstd_data.len());
+    let capacity = match checked_encoded_frame_len(2 + key_bytes.len(), zstd_data.len()) {
+        Ok(capacity) => capacity,
+        Err(err) => return EncodedFrame::err(err),
+    };
+    let mut buf = Vec::with_capacity(capacity);
     buf.push(TAG_BULK_TRANSFER);
     buf.push(key_bytes.len() as u8);
     buf.extend_from_slice(key_bytes);
@@ -387,13 +398,33 @@ fn checked_bulk_transfer_done_capacity(
     key_len: usize,
     state_len: usize,
 ) -> Result<usize, TransportError> {
-    2usize
+    let prefix_len = 2usize
         .checked_add(key_len)
         .and_then(|len| len.checked_add(4))
-        .and_then(|len| len.checked_add(state_len))
-        .ok_or(TransportError::InvalidPayload(
-            "BulkTransferDone state too large",
-        ))
+        .ok_or(TransportError::FrameTooLarge {
+            size: usize::MAX,
+            max: MAX_ENCODED_FRAME_BYTES,
+        })?;
+    checked_encoded_frame_len(prefix_len, state_len)
+}
+
+fn checked_encoded_frame_len(
+    prefix_len: usize,
+    payload_len: usize,
+) -> Result<usize, TransportError> {
+    let size = prefix_len
+        .checked_add(payload_len)
+        .ok_or(TransportError::FrameTooLarge {
+            size: usize::MAX,
+            max: MAX_ENCODED_FRAME_BYTES,
+        })?;
+    if size > MAX_ENCODED_FRAME_BYTES {
+        return Err(TransportError::FrameTooLarge {
+            size,
+            max: MAX_ENCODED_FRAME_BYTES,
+        });
+    }
+    Ok(size)
 }
 
 /// Decodes a BulkTransferDone payload (after tag byte has been consumed).
@@ -481,13 +512,19 @@ mod tests {
     }
 
     fn assert_typed_encoder_callers_use_into_result(source_name: &str, source: &str) {
-        for (start, _) in source.match_indices("encode_window_sync(") {
-            let end = source.len().min(start + 400);
-            let call_site = &source[start..end];
-            assert!(
-                call_site.contains(".into_result()"),
-                "{source_name}: encode_window_sync call must consume EncodedFrame with into_result(): {call_site:?}"
-            );
+        for function_name in [
+            "encode_window_sync(",
+            "encode_bulk_transfer(",
+            "encode_bulk_transfer_done(",
+        ] {
+            for (start, _) in source.match_indices(function_name) {
+                let end = source.len().min(start + 400);
+                let call_site = &source[start..end];
+                assert!(
+                    call_site.contains(".into_result()"),
+                    "{source_name}: {function_name} call must consume EncodedFrame with into_result(): {call_site:?}"
+                );
+            }
         }
     }
 
@@ -627,7 +664,9 @@ mod tests {
     fn window_sync_roundtrip() {
         let key = "2026-02";
         let msg = b"test payload";
-        let encoded = encode_window_sync(key, window_sub_tags::UPDATE, msg);
+        let encoded = encode_window_sync(key, window_sub_tags::UPDATE, msg)
+            .into_result()
+            .unwrap();
         assert_eq!(encoded[0], TAG_WINDOW_SYNC);
         let (dk, sub, dm) = decode_window_sync(&encoded[1..]).unwrap();
         assert_eq!(dk, key);
@@ -639,7 +678,7 @@ mod tests {
     fn bulk_transfer_roundtrip() {
         let key = "2025-11";
         let data = vec![1, 2, 3];
-        let encoded = encode_bulk_transfer(key, &data);
+        let encoded = encode_bulk_transfer(key, &data).into_result().unwrap();
         assert_eq!(encoded[0], TAG_BULK_TRANSFER);
         let (dk, dd) = decode_bulk_transfer(&encoded[1..]).unwrap();
         assert_eq!(dk, key);
@@ -650,7 +689,9 @@ mod tests {
     fn bulk_transfer_done_roundtrip() {
         let key = "2025-09";
         let state = vec![10, 20];
-        let encoded = encode_bulk_transfer_done(key, &state);
+        let encoded = encode_bulk_transfer_done(key, &state)
+            .into_result()
+            .unwrap();
         assert_eq!(encoded[0], TAG_BULK_TRANSFER_DONE);
         let (dk, ds) = decode_bulk_transfer_done(&encoded[1..]).unwrap();
         assert_eq!(dk, key);
@@ -659,7 +700,9 @@ mod tests {
 
     #[test]
     fn bulk_transfer_done_empty_state() {
-        let encoded = encode_bulk_transfer_done("2025-08", &[]);
+        let encoded = encode_bulk_transfer_done("2025-08", &[])
+            .into_result()
+            .unwrap();
         let (k, s) = decode_bulk_transfer_done(&encoded[1..]).unwrap();
         assert_eq!(k, "2025-08");
         assert!(s.is_empty());
@@ -720,7 +763,50 @@ mod tests {
 
         assert_matches!(
             err,
-            TransportError::InvalidPayload("BulkTransferDone state too large")
+            TransportError::FrameTooLarge { size, max }
+                if size == usize::MAX && max == MAX_ENCODED_FRAME_BYTES
+        );
+    }
+
+    #[test]
+    fn window_sync_encoder_rejects_oversized_payload_without_panicking() {
+        let payload = vec![0u8; MAX_ENCODED_FRAME_BYTES];
+
+        assert_matches!(
+            encode_window_sync("2026-02", window_sub_tags::UPDATE, &payload).into_result(),
+            Err(TransportError::FrameTooLarge { size, max })
+                if size == MAX_ENCODED_FRAME_BYTES + 10 && max == MAX_ENCODED_FRAME_BYTES
+        );
+    }
+
+    #[test]
+    fn bulk_transfer_encoder_rejects_oversized_payload_without_panicking() {
+        let payload = vec![0u8; MAX_ENCODED_FRAME_BYTES];
+
+        assert_matches!(
+            encode_bulk_transfer("2026-02", &payload).into_result(),
+            Err(TransportError::FrameTooLarge { size, max })
+                if size == MAX_ENCODED_FRAME_BYTES + 9 && max == MAX_ENCODED_FRAME_BYTES
+        );
+    }
+
+    #[test]
+    fn bulk_transfer_done_encoder_rejects_oversized_payload_without_panicking() {
+        let state = vec![0u8; MAX_ENCODED_FRAME_BYTES];
+
+        assert_matches!(
+            encode_bulk_transfer_done("2026-02", &state).into_result(),
+            Err(TransportError::FrameTooLarge { size, max })
+                if size == MAX_ENCODED_FRAME_BYTES + 13 && max == MAX_ENCODED_FRAME_BYTES
+        );
+    }
+
+    #[test]
+    fn encoded_frame_len_rejects_usize_overflow() {
+        assert_matches!(
+            checked_encoded_frame_len(MAX_WINDOW_KEY_LEN, usize::MAX),
+            Err(TransportError::FrameTooLarge { size, max })
+                if size == usize::MAX && max == MAX_ENCODED_FRAME_BYTES
         );
     }
 
