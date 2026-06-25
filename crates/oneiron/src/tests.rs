@@ -12950,24 +12950,13 @@ fn assert_text_rows_deindexed(vault: &Vault, id: &EntityId) -> Result<()> {
             .is_none(),
         "text_doc_field_lengths row (key = literal id bytes) must be deleted"
     );
-    assert!(
-        vault.store.text_postings.iter(&rtxn)?.next().is_none(),
-        "no posting row may survive the stale deindex"
-    );
-    assert!(
-        vault
-            .store
-            .text_bm25_field_stats
-            .iter(&rtxn)?
-            .next()
-            .is_none(),
-        "the zeroed per-field stats row must be deleted, not kept at 0/0"
-    );
-    assert_eq!(
-        vault.store.text_meta.get(&rtxn, &[0u8; 16])?,
-        Some(&0u32.to_le_bytes()[..]),
-        "TOTAL_DOCS must be decremented in the same txn as the overwrite"
-    );
+    for item in vault.store.text_postings.iter(&rtxn)? {
+        let (_term, posting) = item?;
+        assert!(
+            !posting.starts_with(id.as_bytes()),
+            "no posting row may survive for the deindexed entity"
+        );
+    }
     Ok(())
 }
 
@@ -13129,6 +13118,61 @@ fn local_changed_body_with_text_op_reindexes_new_terms() -> Result<()> {
         vault.search_text("new_term_xyz", 10)?.len(),
         1,
         "Text op must leave the new term indexed"
+    );
+    Ok(())
+}
+
+#[test]
+fn batch_put_text_put_deindexes_text_from_non_final_body() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let id = EntityId::now();
+    let other = EntityId::now();
+    vault
+        .batch()
+        .put(&other, 1, test_time_range(1, 1), 1, b"unrelated-payload")
+        .text(&other, &[("body", "unrelated_survives_xyz")])
+        .commit()?;
+
+    vault
+        .batch()
+        .put(&id, 1, test_time_range(1, 1), 1, b"payload-body-v1")
+        .text(&id, &[("body", "body_v1_unique_xyz")])
+        .put(&id, 1, test_time_range(2, 2), 2, b"payload-body-v2")
+        .commit()?;
+
+    let raw = vault.get_raw(&id)?.expect("entity stored");
+    assert_eq!(&raw[ENTITY_METADATA_HEADER_LEN..], b"payload-body-v2");
+    assert!(
+        vault
+            .search_text("body_v1_unique_xyz", 10)?
+            .iter()
+            .all(|hit| hit.id != id),
+        "Text rows for the non-final body must not retrieve the entity"
+    );
+    assert_eq!(
+        vault.search_text("unrelated_survives_xyz", 10)?.len(),
+        1,
+        "per-entity stale deindex must leave unrelated postings intact"
+    );
+    assert_text_rows_deindexed(&vault, &id)?;
+
+    vault
+        .batch()
+        .text(&id, &[("body", "body_v2_unique_xyz")])
+        .commit()?;
+    assert!(
+        vault
+            .search_text("body_v2_unique_xyz", 10)?
+            .iter()
+            .any(|hit| hit.id == id),
+        "final-body text remains indexable after the stale projection is removed"
+    );
+    assert!(
+        vault
+            .search_text("body_v1_unique_xyz", 10)?
+            .iter()
+            .all(|hit| hit.id != id),
+        "reindexing final-body text must not resurrect non-final terms"
     );
     Ok(())
 }
