@@ -22,6 +22,77 @@ pub(crate) mod window_sub_tags {
     pub(crate) use oneiron::sync::transport::window_sub_tags::*;
 }
 
+// ─── Paginated HTTP Response Metadata ────────────────────────────────────────
+
+/// Count precision requested by list/search callers and reported in
+/// paginated response metadata.
+#[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "camelCase")]
+pub(crate) enum CountMode {
+    /// Skip count work and report `total = 0`.
+    None,
+    /// Report a non-exact search/list estimate.
+    Estimate,
+    /// Report an exact count derived from deterministic indexes.
+    #[default]
+    Exact,
+}
+
+impl CountMode {
+    pub(crate) fn default_estimate() -> Self {
+        Self::Estimate
+    }
+
+    pub(crate) fn for_search_response(self) -> Self {
+        match self {
+            Self::None => Self::None,
+            Self::Estimate | Self::Exact => Self::Estimate,
+        }
+    }
+}
+
+/// Metadata block shared by paginated list/search responses.
+#[derive(Debug, Clone, serde::Serialize, PartialEq, Eq)]
+pub(crate) struct ResponseMeta {
+    pub total: u64,
+    #[serde(rename = "countMode")]
+    pub count_mode: CountMode,
+}
+
+impl ResponseMeta {
+    pub(crate) fn new(total: u64, count_mode: CountMode) -> Self {
+        Self { total, count_mode }
+    }
+
+    pub(crate) fn none() -> Self {
+        Self::new(0, CountMode::None)
+    }
+
+    pub(crate) fn estimate(total: u64) -> Self {
+        Self::new(total, CountMode::Estimate)
+    }
+}
+
+/// Standard paginated response envelope: primary data plus metadata, with the
+/// cursor slot omitted for non-cursor search endpoints.
+#[derive(Debug, Clone, serde::Serialize, PartialEq, Eq)]
+pub(crate) struct PaginatedResponse<T> {
+    pub items: Vec<T>,
+    #[serde(rename = "nextCursor", skip_serializing_if = "Option::is_none")]
+    pub next_cursor: Option<String>,
+    pub meta: ResponseMeta,
+}
+
+impl<T> PaginatedResponse<T> {
+    pub(crate) fn new(items: Vec<T>, next_cursor: Option<String>, meta: ResponseMeta) -> Self {
+        Self {
+            items,
+            next_cursor,
+            meta,
+        }
+    }
+}
+
 // ─── Awareness ────────────────────────────────────────────────────────────────
 
 /// Custom awareness state (Loro doesn't have built-in awareness).
@@ -303,5 +374,40 @@ mod tests {
         let encoded = encode_awareness(&state);
         let decoded = decode_awareness(&encoded[1..]).unwrap();
         assert_eq!(decoded, state);
+    }
+
+    #[test]
+    fn paginated_response_serializes_contract_meta_literals() {
+        let response = PaginatedResponse::new(
+            vec![1_u8],
+            Some("cursor-1".to_owned()),
+            ResponseMeta::new(42, CountMode::Exact),
+        );
+        let json = serde_json::to_value(response).unwrap();
+
+        assert_eq!(json["items"], serde_json::json!([1]));
+        assert_eq!(json["nextCursor"], "cursor-1");
+
+        let meta = json["meta"].as_object().unwrap();
+        assert_eq!(meta.len(), 2);
+        assert_eq!(meta["total"], 42);
+        assert_eq!(meta["countMode"], "exact");
+    }
+
+    #[test]
+    fn count_mode_literals_are_lowercase_and_stable() {
+        let cases = [
+            (CountMode::None, "none"),
+            (CountMode::Estimate, "estimate"),
+            (CountMode::Exact, "exact"),
+        ];
+
+        for (mode, literal) in cases {
+            assert_eq!(serde_json::to_value(mode).unwrap(), literal);
+            assert_eq!(
+                serde_json::from_value::<CountMode>(serde_json::json!(literal)).unwrap(),
+                mode
+            );
+        }
     }
 }
