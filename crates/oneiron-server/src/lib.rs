@@ -20,6 +20,7 @@ mod idempotency;
 pub mod projection;
 mod protocol;
 pub mod server;
+mod skills_pack;
 
 use std::sync::Arc;
 

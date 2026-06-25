@@ -1,6 +1,8 @@
 use std::collections::{BTreeMap, BTreeSet};
+use std::fs;
+use std::path::Path;
 
-const PACK: &str = include_str!("../../../oneiron.skills.md");
+const PACK: &str = include_str!("../oneiron.skills.md");
 const API_RS: &str = include_str!("../src/api.rs");
 
 const EXPECTED_REGISTERED_ROUTES: &[&str] = &[
@@ -15,6 +17,21 @@ const EXPECTED_REGISTERED_ROUTES: &[&str] = &[
     "/api/companion/resume",
     "/api/lease/revoke",
 ];
+
+#[test]
+fn crate_local_pack_matches_root_artifact() {
+    let root_pack_path = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../..")
+        .join("oneiron.skills.md");
+    if root_pack_path.exists() {
+        let root_pack =
+            fs::read_to_string(root_pack_path).expect("root oneiron.skills.md must be readable");
+        assert_eq!(
+            PACK, root_pack,
+            "crate-local oneiron.skills.md must match the root artifact"
+        );
+    }
+}
 
 #[test]
 fn frontmatter_has_required_skill_keys() {
