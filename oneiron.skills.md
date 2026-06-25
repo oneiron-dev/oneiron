@@ -217,6 +217,7 @@ Response fields:
 - `api_version`: current API level string.
 - `formats`: supported output formats.
 - `scopes`: effective auth scope names such as `core:discover`, `vault:read`, `search:read`, `entity:read`, `sync:connect`.
+- `skill_pack`: static agentskills.io pack advertisement. Load `path` (`oneiron.skills.md`) when an agent needs endpoint-selection or error-recovery guidance; preserve `layer_boundary` exactly: `skills = how to think about memory; MCP tools = what to call`.
 - `bound`: placeholders for vault, persona, and conversation bindings.
 - `personas`: known person entities, each with `id` and numeric `entity_type`.
 - `conversations`: known conversation entities, each with `id` and numeric `entity_type`.
@@ -232,6 +233,14 @@ Example response:
   "api_version": "v1",
   "formats": ["json", "yaml", "toon", "markdown", "plaintext"],
   "scopes": ["core:discover", "vault:read", "search:read", "entity:read", "sync:connect"],
+  "skill_pack": {
+    "name": "oneiron-http-memory-api",
+    "path": "oneiron.skills.md",
+    "pack_format": "agentskills.io",
+    "mime_type": "text/markdown",
+    "when_to_load": "Load the root-relative Markdown pack before choosing memory search, read, context-pack, discovery, or recovery calls; use MCP tools as the callable layer.",
+    "layer_boundary": "skills = how to think about memory; MCP tools = what to call"
+  },
   "bound": { "vault": null, "persona": null, "conversation": null },
   "personas": [{ "id": "0123456789abcdef0123456789abcdef", "entity_type": 4 }],
   "conversations": [{ "id": "abcdef0123456789abcdef0123456789", "entity_type": 11 }],
@@ -515,11 +524,12 @@ Fetch Tier-3 only when writing validation code, generating clients, or recoverin
 ```json
 {
   "type": "object",
-  "required": ["api_version", "formats", "scopes", "bound", "personas", "conversations", "feature_flags", "counts", "predicate_namespaces", "last_activity"],
+  "required": ["api_version", "formats", "scopes", "skill_pack", "bound", "personas", "conversations", "feature_flags", "counts", "predicate_namespaces", "last_activity"],
   "properties": {
     "api_version": { "type": "string" },
     "formats": { "type": "array", "items": { "type": "string" } },
     "scopes": { "type": "array", "items": { "type": "string" } },
+    "skill_pack": { "$ref": "#/schemas/skill_pack_discovery" },
     "bound": {
       "type": "object",
       "required": ["vault", "persona", "conversation"],
@@ -535,6 +545,26 @@ Fetch Tier-3 only when writing validation code, generating clients, or recoverin
     "counts": { "type": "object", "additionalProperties": { "type": "integer", "minimum": 0 } },
     "predicate_namespaces": { "type": "array", "items": { "type": "string" } },
     "last_activity": { "type": ["integer", "null"] }
+  }
+}
+```
+
+#### Skill pack discovery
+
+```json
+{
+  "type": "object",
+  "required": ["name", "path", "pack_format", "mime_type", "when_to_load", "layer_boundary"],
+  "properties": {
+    "name": { "type": "string", "const": "oneiron-http-memory-api" },
+    "path": { "type": "string", "const": "oneiron.skills.md" },
+    "pack_format": { "type": "string", "const": "agentskills.io" },
+    "mime_type": { "type": "string", "const": "text/markdown" },
+    "when_to_load": { "type": "string" },
+    "layer_boundary": {
+      "type": "string",
+      "const": "skills = how to think about memory; MCP tools = what to call"
+    }
   }
 }
 ```

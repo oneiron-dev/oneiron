@@ -522,9 +522,37 @@ async fn discover_requires_auth_and_returns_empty_contract() {
             "personas",
             "predicate_namespaces",
             "scopes",
+            "skill_pack",
         ])
     );
 
+    assert_eq!(
+        body["skill_pack"]["name"].as_str(),
+        Some("oneiron-http-memory-api")
+    );
+    assert_eq!(
+        body["skill_pack"]["path"].as_str(),
+        Some("oneiron.skills.md")
+    );
+    assert_eq!(
+        body["skill_pack"]["pack_format"].as_str(),
+        Some("agentskills.io")
+    );
+    assert_eq!(
+        body["skill_pack"]["mime_type"].as_str(),
+        Some("text/markdown")
+    );
+    assert!(
+        body["skill_pack"]["when_to_load"]
+            .as_str()
+            .is_some_and(|hint| hint.contains("root-relative Markdown pack")
+                && hint.contains("callable layer")),
+        "skill_pack.when_to_load should tell agents when and how to load the pack"
+    );
+    assert_eq!(
+        body["skill_pack"]["layer_boundary"].as_str(),
+        Some("skills = how to think about memory; MCP tools = what to call")
+    );
     assert!(body["bound"]["vault"].is_null());
     assert!(body["bound"]["persona"].is_null());
     assert!(body["bound"]["conversation"].is_null());

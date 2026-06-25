@@ -32,6 +32,13 @@ use crate::skills_pack as skills_pack_artifact;
 
 const API_LEVEL: &str = "v1";
 const SUPPORTED_FORMATS: &[&str] = &["json", "yaml", "toon", "markdown", "plaintext"];
+const SKILL_PACK_NAME: &str = "oneiron-http-memory-api";
+const SKILL_PACK_PATH: &str = "oneiron.skills.md";
+const SKILL_PACK_FORMAT: &str = "agentskills.io";
+const SKILL_PACK_MIME_TYPE: &str = "text/markdown";
+const SKILL_PACK_LAYER_BOUNDARY: &str =
+    "skills = how to think about memory; MCP tools = what to call";
+const SKILL_PACK_LOAD_HINT: &str = "Load the root-relative Markdown pack before choosing memory search, read, context-pack, discovery, or recovery calls; use MCP tools as the callable layer.";
 const EFFECTIVE_AUTH_SCOPES: &[&str] = &[
     "core:discover",
     "vault:read",
@@ -79,6 +86,7 @@ const RESUME_NOTIFICATION_SCAN_LIMIT: usize = 4096;
         View,
         HealthResponse,
         DiscoverResponse,
+        SkillPackDiscovery,
         BoundContext,
         DiscoveredEntity,
         FeatureFlags,
@@ -455,6 +463,8 @@ struct DiscoverResponse {
     /// Effective authorization scopes available to the authenticated caller.
     #[schema(value_type = Vec<String>, example = json!(["core:discover", "vault:read", "search:read", "entity:read", "sync:connect"]))]
     scopes: Vec<&'static str>,
+    /// Static agentskills.io pack for progressive-disclosure memory guidance.
+    skill_pack: SkillPackDiscovery,
     /// Context ids the server has already bound for the caller.
     bound: BoundContext,
     /// Known persona entities available for caller selection.
@@ -471,6 +481,29 @@ struct DiscoverResponse {
     /// Most recent learned-at timestamp observed during discovery, when available.
     #[schema(example = 1782357635_u64)]
     last_activity: Option<u64>,
+}
+
+/// Static progressive-disclosure pack advertised to external agents.
+#[derive(Serialize, ToSchema)]
+struct SkillPackDiscovery {
+    /// Skill name from the committed pack frontmatter.
+    #[schema(example = "oneiron-http-memory-api")]
+    name: &'static str,
+    /// Repository-root-relative path to the committed pack.
+    #[schema(example = "oneiron.skills.md")]
+    path: &'static str,
+    /// Compatibility format for the static skill pack.
+    #[schema(example = "agentskills.io")]
+    pack_format: &'static str,
+    /// MIME type agents should use when loading the pack.
+    #[schema(example = "text/markdown")]
+    mime_type: &'static str,
+    /// When to load the static pack during agent bootstrap.
+    #[schema(example = "Load the root-relative Markdown pack before choosing memory calls.")]
+    when_to_load: &'static str,
+    /// Boundary between static guidance and callable MCP tools.
+    #[schema(example = "skills = how to think about memory; MCP tools = what to call")]
+    layer_boundary: &'static str,
 }
 
 /// Caller context that has already been bound by the API.
@@ -548,6 +581,14 @@ struct RateLimitStatus {
                 "api_version": "v1",
                 "formats": ["json", "yaml", "toon", "markdown", "plaintext"],
                 "scopes": ["core:discover", "vault:read", "search:read", "entity:read", "sync:connect"],
+                "skill_pack": {
+                    "name": "oneiron-http-memory-api",
+                    "path": "oneiron.skills.md",
+                    "pack_format": "agentskills.io",
+                    "mime_type": "text/markdown",
+                    "when_to_load": "Load the root-relative Markdown pack before choosing memory search, read, context-pack, discovery, or recovery calls; use MCP tools as the callable layer.",
+                    "layer_boundary": "skills = how to think about memory; MCP tools = what to call"
+                },
                 "bound": {
                     "vault": null,
                     "persona": null,
@@ -651,6 +692,7 @@ fn discover_response(server: &SyncServer) -> Result<DiscoverResponse, ApiError> 
         api_version: API_LEVEL,
         formats: supported_formats(),
         scopes: EFFECTIVE_AUTH_SCOPES.to_vec(),
+        skill_pack: skill_pack_discovery(),
         bound: BoundContext {
             vault: None,
             persona: None,
@@ -663,6 +705,17 @@ fn discover_response(server: &SyncServer) -> Result<DiscoverResponse, ApiError> 
         predicate_namespaces: predicate_namespaces(&server.vault, &claim_ids)?,
         last_activity,
     })
+}
+
+fn skill_pack_discovery() -> SkillPackDiscovery {
+    SkillPackDiscovery {
+        name: SKILL_PACK_NAME,
+        path: SKILL_PACK_PATH,
+        pack_format: SKILL_PACK_FORMAT,
+        mime_type: SKILL_PACK_MIME_TYPE,
+        when_to_load: SKILL_PACK_LOAD_HINT,
+        layer_boundary: SKILL_PACK_LAYER_BOUNDARY,
+    }
 }
 
 fn discovered_entities(ids: &[oneiron::EntityId], entity_type: u8) -> Vec<DiscoveredEntity> {
@@ -1737,6 +1790,16 @@ mod tests {
                 .is_some_and(|responses| responses.contains_key("401")),
             "discover must document its 401 ApiError response"
         );
+        assert_eq!(
+            discover_success["example"]["skill_pack"]["path"],
+            Value::from("oneiron.skills.md"),
+            "discover example must advertise the committed skill pack path"
+        );
+        assert_eq!(
+            spec["components"]["schemas"]["DiscoverResponse"]["properties"]["skill_pack"]["$ref"],
+            Value::from("#/components/schemas/SkillPackDiscovery"),
+            "DiscoverResponse must reference the skill-pack discovery schema"
+        );
 
         assert_eq!(
             spec["components"]["securitySchemes"]["OneironSecret"]["name"],
@@ -1827,6 +1890,7 @@ mod tests {
         for schema_name in [
             "HealthResponse",
             "DiscoverResponse",
+            "SkillPackDiscovery",
             "BoundContext",
             "DiscoveredEntity",
             "FeatureFlags",

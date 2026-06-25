@@ -4,6 +4,9 @@ use std::path::Path;
 
 const PACK: &str = include_str!("../oneiron.skills.md");
 const API_RS: &str = include_str!("../src/api.rs");
+const SKILL_PACK_PATH: &str = "oneiron.skills.md";
+const SKILL_PACK_LAYER_BOUNDARY: &str =
+    "skills = how to think about memory; MCP tools = what to call";
 
 const EXPECTED_REGISTERED_ROUTES: &[&str] = &[
     "/api/openapi.json",
@@ -135,6 +138,39 @@ fn tier3_error_catalog_uses_structured_recovery_fields() {
     );
 }
 
+#[test]
+fn mcp_discovery_advertisement_matches_committed_pack() {
+    assert_eq!(
+        rust_string_const(API_RS, "SKILL_PACK_PATH"),
+        SKILL_PACK_PATH
+    );
+    assert_eq!(
+        rust_string_const(API_RS, "SKILL_PACK_LAYER_BOUNDARY"),
+        SKILL_PACK_LAYER_BOUNDARY
+    );
+
+    assert!(
+        PACK.contains("- Skills are how to think about memory:"),
+        "pack must keep the static skill-layer statement"
+    );
+    assert!(
+        PACK.contains("- MCP tools are what to call:"),
+        "pack must keep the callable MCP-layer statement"
+    );
+    assert!(
+        PACK.contains("`skill_pack`: static agentskills.io pack advertisement"),
+        "pack must document the discovery advertisement field"
+    );
+    assert!(
+        PACK.contains("`path` (`oneiron.skills.md`)"),
+        "pack must document the committed path advertised by discovery"
+    );
+    assert!(
+        PACK.contains(SKILL_PACK_LAYER_BOUNDARY),
+        "pack must preserve the exact dual-layer boundary literal"
+    );
+}
+
 fn frontmatter(markdown: &str) -> &str {
     let rest = markdown
         .strip_prefix("---\n")
@@ -173,6 +209,21 @@ fn frontmatter_list(frontmatter: &str, key: &str) -> Vec<String> {
     }
 
     items
+}
+
+fn rust_string_const<'a>(source: &'a str, name: &str) -> &'a str {
+    let prefix = format!("const {name}: &str =");
+    let start = source
+        .find(&prefix)
+        .unwrap_or_else(|| panic!("missing Rust string const {name}"));
+    let rest = source[start + prefix.len()..].trim_start();
+    let value = rest
+        .strip_prefix('"')
+        .unwrap_or_else(|| panic!("Rust const {name} must be a string literal"));
+    let end = value
+        .find('"')
+        .unwrap_or_else(|| panic!("Rust const {name} string literal must close"));
+    &value[..end]
 }
 
 fn registered_routes_from_api_source(source: &str) -> impl Iterator<Item = &str> {
