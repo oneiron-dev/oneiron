@@ -763,6 +763,16 @@ pub fn replay_pending_mirrors(vault: &Vault, doc: &LoroDoc, window_key: &WindowK
 /// values quarantine as protocol violations (ONE-1157, Observer-B parity),
 /// and a non-canonical (case-shifted) entities-map alias key quarantines
 /// instead of materializing (ONE-1158).
+fn push_terminal_quarantine_marker(
+    terminal_quarantines: &mut Vec<EntityId>,
+    container: QuarantineContainer,
+    crdt_key: &str,
+) {
+    if let Some(id) = quarantine::remat_marker_entity_for_quarantine(container, crdt_key) {
+        terminal_quarantines.push(id);
+    }
+}
+
 pub fn forward_rematerialize(
     vault: &Vault,
     doc: &LoroDoc,
@@ -783,6 +793,7 @@ pub fn forward_rematerialize(
         .into_iter()
         .collect();
     let mut healed: Vec<EntityId> = Vec::new();
+    let mut terminal_quarantines: Vec<EntityId> = Vec::new();
 
     let mut count = 0u32;
 
@@ -810,6 +821,12 @@ pub fn forward_rematerialize(
                     &[],
                 ) {
                     entity_error = Some(err);
+                } else {
+                    push_terminal_quarantine_marker(
+                        &mut terminal_quarantines,
+                        QuarantineContainer::Entities,
+                        key,
+                    );
                 }
                 return;
             };
@@ -846,6 +863,8 @@ pub fn forward_rematerialize(
                     blob,
                 ) {
                     entity_error = Some(err);
+                } else {
+                    terminal_quarantines.push(id);
                 }
                 return;
             }
@@ -937,6 +956,8 @@ pub fn forward_rematerialize(
                         blob,
                     ) {
                         entity_error = Some(err);
+                    } else {
+                        terminal_quarantines.push(id);
                     }
                     return;
                 }
@@ -976,6 +997,8 @@ pub fn forward_rematerialize(
                     blob,
                 ) {
                     entity_error = Some(q_err);
+                } else {
+                    terminal_quarantines.push(id);
                 }
                 return;
             }
@@ -1023,6 +1046,7 @@ pub fn forward_rematerialize(
                             &Error::RedactionReceiptDivergence { id },
                             blob,
                         )?;
+                        terminal_quarantines.push(id);
                         return Ok(false);
                     }
                     crate::sync::lease::verify_new_receipt_origin_in_txn(vault, wtxn, &id, blob)?;
@@ -1080,6 +1104,8 @@ pub fn forward_rematerialize(
                         blob,
                     ) {
                         entity_error = Some(q_err);
+                    } else {
+                        terminal_quarantines.push(id);
                     }
                 }
                 Err(err) => {
@@ -1119,6 +1145,12 @@ pub fn forward_rematerialize(
                     &[],
                 ) {
                     edge_error = Some(err);
+                } else {
+                    push_terminal_quarantine_marker(
+                        &mut terminal_quarantines,
+                        QuarantineContainer::Edges,
+                        key,
+                    );
                 }
                 return;
             };
@@ -1153,6 +1185,8 @@ pub fn forward_rematerialize(
                         buf,
                     ) {
                         edge_error = Some(q_err);
+                    } else {
+                        terminal_quarantines.push(src);
                     }
                     return;
                 }
@@ -1230,6 +1264,8 @@ pub fn forward_rematerialize(
                         buf,
                     ) {
                         edge_error = Some(q_err);
+                    } else {
+                        terminal_quarantines.push(src);
                     }
                 }
                 Err(err) => {
@@ -1318,6 +1354,7 @@ pub fn forward_rematerialize(
     if !purge_failures.is_empty()
         || !cleared.is_empty()
         || !healed.is_empty()
+        || !terminal_quarantines.is_empty()
         || !receiver_scrub_candidates.is_empty()
     {
         let marker_result = vault.with_write_txn(|wtxn| {
@@ -1327,9 +1364,36 @@ pub fn forward_rematerialize(
             // silently drop a pending hard purge (fail closed). The
             // ONE-1147 `healed` discharges (entity/edge healing writes,
             // structurally disjoint from tombstoned ids — both passes are
-            // tombstone-gated) clear under the same ordering.
+            // tombstone-gated). ONE-1167 terminal quarantine may discharge
+            // only replay/quarantine-origin markers whose provenance sidecar
+            // already proves they are not delete-safety retries; legacy or
+            // purge-failure markers stay pending until their own tombstone
+            // goal state holds.
+            let mut success_seen = HashSet::new();
             for id in healed.iter().chain(cleared.iter()) {
+                if !success_seen.insert(*id) {
+                    continue;
+                }
                 quarantine::clear_remat_marker_in_txn(vault, wtxn, window_key.as_str(), id)?;
+            }
+            let mut terminal_seen = HashSet::new();
+            for id in &terminal_quarantines {
+                if !terminal_seen.insert(*id) {
+                    continue;
+                }
+                let cleared = quarantine::clear_replay_remat_marker_in_txn(
+                    vault,
+                    wtxn,
+                    window_key.as_str(),
+                    id,
+                )?;
+                if !cleared {
+                    tracing::debug!(
+                        entity = %id.to_hex(),
+                        window = %window_key,
+                        "forward remat: terminal quarantine left unproven rm: marker pending"
+                    );
+                }
             }
             for id in &purge_failures {
                 quarantine::set_remat_marker_in_txn(vault, wtxn, window_key.as_str(), id)?;
@@ -1374,10 +1438,11 @@ pub fn forward_rematerialize(
         .any(|window| window == window_key.as_str())
     {
         // Markers survive the pass when a purge failed above, when a
-        // flagged entity's tombstone is missing from the loaded doc (stale
-        // window state), or when a marker row no longer parses. Clearing
-        // any of them here would vacuously discharge a GDPR retry — keep
-        // them (fail closed) and keep ERROR-grade visibility.
+        // flagged entity has neither a healing write nor a proven non-delete
+        // terminal x: row in the loaded doc (stale/cross-window state), or
+        // when a marker row no longer parses. Clearing any of them here
+        // would vacuously discharge a GDPR retry — keep them (fail closed)
+        // and keep ERROR-grade visibility.
         tracing::error!(
             window = %window_key,
             "forward remat: rm: markers still pending after tombstone pass — hard-deleted content may be live (GDPR SLA breach signal)"

@@ -23,16 +23,21 @@
 //! needs-rematerialization flag, ENTITY-scoped) is produced when a
 //! CRDT-tombstone purge of that specific entity against the local active
 //! store fails — a purge failure left hard-deleted content live, which is a
-//! GDPR SLA breach signal until drained — and (ONE-1147) when an Observer-B
-//! entity/edge materialization batch carrying that entity's op fails as a
-//! whole txn (lost create/update writes = silent LMDB↔CRDT divergence).
-//! The marker is cleared ONLY by that entity's own success — its purge for
-//! tombstoned ids, or the actual healing write (entity body / edge from
-//! that source) in forward remat; never byte-parity alone, and never an
-//! unrelated entity's success. [`drain_remat_markers`] re-runs
-//! `forward_rematerialize` for each flagged window. A row under `rm:` that
-//! does not parse is fail-closed: it is treated as needs-remat and never
-//! dropped.
+//! GDPR SLA breach signal until drained — when an Observer-B entity/edge
+//! materialization batch carrying that entity's op fails as a whole txn
+//! (lost create/update writes = silent LMDB↔CRDT divergence), and when an
+//! entity/edge replay op is quarantined with no healing write (ONE-1167).
+//! Replay/quarantine-origin markers also carry a sidecar provenance row so
+//! terminal `x:` quarantine can discharge only non-delete retry work. An
+//! unproven `rm:` row is delete-safety/unknown and must survive terminal
+//! entity/edge quarantine. The marker is cleared ONLY by that entity's own
+//! success — its purge for tombstoned ids, the actual healing write (entity
+//! body / edge from that source) in forward remat, or terminal quarantine
+//! when replay provenance already proves the marker is non-delete; never
+//! byte-parity alone, and never an unrelated entity's success.
+//! [`drain_remat_markers`] re-runs `forward_rematerialize` for each flagged
+//! window. A row under `rm:` that does not parse is fail-closed: it is
+//! treated as needs-remat and never dropped.
 
 use std::sync::Arc;
 
@@ -69,6 +74,10 @@ const RECENT_REASON_CODES: usize = 8;
 /// `rm:w:{window}:{entity_hex}` → `1 byte (marker)`, where `window` is
 /// `YYYY-MM` and `entity_hex` is the 32-char lowercase entity id.
 const REMAT_MARKER_PREFIX: &str = "rm:w:";
+/// Sidecar provenance for `rm:w:` markers created by replay/quarantine
+/// surfaces, not by delete-safety purge failures. Absence means unknown and
+/// therefore fail-closed as delete-safety for terminal quarantine clearing.
+const REPLAY_REMAT_MARKER_PROVENANCE_PREFIX: &str = "rmp:w:";
 
 const ERR_QUARANTINE_ROW: &str = "sync quarantine row";
 
@@ -260,8 +269,42 @@ pub(crate) fn record_in_txn(
     Ok(seq)
 }
 
+/// Entity whose window should be retried after this quarantine row is
+/// written. Only replay surfaces with a stable entity scope participate:
+/// `entities` rows name their entity directly, while `edges` rows retry by
+/// source entity. Tombstone replay already has stricter purge-specific rm:
+/// handling; lease rows are root-scoped and have no entity marker.
+#[must_use]
+pub(crate) fn remat_marker_entity_for_quarantine(
+    container: QuarantineContainer,
+    crdt_key: &str,
+) -> Option<crate::types::EntityId> {
+    match container {
+        QuarantineContainer::Entities => crate::types::EntityId::from_hex(crdt_key).ok(),
+        QuarantineContainer::Edges => {
+            crate::sync::bridge::parse_edge_key(crdt_key).map(|(src, _, _)| src)
+        }
+        QuarantineContainer::Tombstones | QuarantineContainer::Leases => None,
+    }
+}
+
+fn set_remat_marker_for_quarantine_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    window_key: &str,
+    container: QuarantineContainer,
+    crdt_key: &str,
+) -> Result<()> {
+    if let Some(id) = remat_marker_entity_for_quarantine(container, crdt_key) {
+        set_replay_remat_marker_in_txn(vault, wtxn, window_key, &id)?;
+    }
+    Ok(())
+}
+
 /// Builds and persists a quarantine record for a rejected remote op inside
-/// an existing write transaction. `payload` is hashed, never stored.
+/// an existing write transaction. `payload` is hashed, never stored. When
+/// the rejected op has an entity/source scope, the same transaction also
+/// writes the entity-scoped `rm:w:{window}:{entity_hex}` retry marker.
 pub(crate) fn quarantine_rejected_op_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
@@ -272,7 +315,7 @@ pub(crate) fn quarantine_rejected_op_in_txn(
     payload: &[u8],
 ) -> Result<u64> {
     let (crdt_key_hash, crdt_key_len) = crdt_key_metadata(crdt_key);
-    record_in_txn(
+    let seq = record_in_txn(
         vault,
         wtxn,
         &QuarantineRecord {
@@ -284,7 +327,9 @@ pub(crate) fn quarantine_rejected_op_in_txn(
             payload_hash: payload_hash(payload),
             quarantined_at: crate::unix_seconds_now(),
         },
-    )
+    )?;
+    set_remat_marker_for_quarantine_in_txn(vault, wtxn, window_key, container, crdt_key)?;
+    Ok(seq)
 }
 
 /// Builds and persists a quarantine record in its own write transaction.
@@ -516,21 +561,28 @@ pub(crate) fn remat_marker_key(window_key: &str, id: &crate::types::EntityId) ->
     format!("{REMAT_MARKER_PREFIX}{window_key}:{}", id.to_hex())
 }
 
+fn replay_remat_marker_provenance_key(window_key: &str, id: &crate::types::EntityId) -> String {
+    format!(
+        "{REPLAY_REMAT_MARKER_PROVENANCE_PREFIX}{window_key}:{}",
+        id.to_hex()
+    )
+}
+
 /// Sets `rm:w:{window}:{entity_hex}` (1-byte marker) in `sync_state` inside
 /// an existing write transaction. Written when THAT entity's CRDT-tombstone
-/// purge (or the read backing it) against the local active store fails, or
-/// (ONE-1147) when an Observer-B entity/edge batch carrying that entity's
-/// op fails as a whole txn.
+/// purge (or the read backing it) against the local active store fails.
+/// Deletes any replay provenance sidecar so a later terminal `x:` row cannot
+/// discharge delete-safety work without the entity's own tombstone success.
 pub(crate) fn set_remat_marker_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
     window_key: &str,
     id: &crate::types::EntityId,
 ) -> Result<()> {
-    vault
-        .store
-        .sync_state
-        .put(wtxn, &remat_marker_key(window_key, id), &[1u8])?;
+    let marker_key = remat_marker_key(window_key, id);
+    let provenance_key = replay_remat_marker_provenance_key(window_key, id);
+    vault.store.sync_state.put(wtxn, &marker_key, &[1u8])?;
+    vault.store.sync_state.delete(wtxn, &provenance_key)?;
     Ok(())
 }
 
@@ -543,6 +595,37 @@ pub(crate) fn set_remat_marker(
     vault.with_write_txn(|wtxn| set_remat_marker_in_txn(vault, wtxn, window_key, id))
 }
 
+/// Sets a replay/quarantine-origin `rm:w:{window}:{entity_hex}` marker plus
+/// provenance sidecar. If an unproven marker already exists, preserve that
+/// stronger delete-safety/unknown provenance and do not add the sidecar.
+pub(crate) fn set_replay_remat_marker_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    window_key: &str,
+    id: &crate::types::EntityId,
+) -> Result<()> {
+    let marker_key = remat_marker_key(window_key, id);
+    let provenance_key = replay_remat_marker_provenance_key(window_key, id);
+    let marker_present = vault.store.sync_state.get(wtxn, &marker_key)?.is_some();
+    let replay_provenance_present = vault.store.sync_state.get(wtxn, &provenance_key)?.is_some();
+
+    vault.store.sync_state.put(wtxn, &marker_key, &[1u8])?;
+    if !marker_present || replay_provenance_present {
+        vault.store.sync_state.put(wtxn, &provenance_key, &[1u8])?;
+    }
+    Ok(())
+}
+
+/// Sets a replay/quarantine-origin `rm:w:{window}:{entity_hex}` marker in
+/// its own write transaction.
+pub(crate) fn set_replay_remat_marker(
+    vault: &Vault,
+    window_key: &str,
+    id: &crate::types::EntityId,
+) -> Result<()> {
+    vault.with_write_txn(|wtxn| set_replay_remat_marker_in_txn(vault, wtxn, window_key, id))
+}
+
 /// Clears `rm:w:{window}:{entity_hex}` inside an existing write
 /// transaction. Only called when THAT entity's purge succeeded (or the
 /// entity is verifiably absent — the purge goal state), or when forward
@@ -553,11 +636,30 @@ pub(crate) fn clear_remat_marker_in_txn(
     window_key: &str,
     id: &crate::types::EntityId,
 ) -> Result<()> {
-    vault
-        .store
-        .sync_state
-        .delete(wtxn, &remat_marker_key(window_key, id))?;
+    let marker_key = remat_marker_key(window_key, id);
+    let provenance_key = replay_remat_marker_provenance_key(window_key, id);
+    vault.store.sync_state.delete(wtxn, &marker_key)?;
+    vault.store.sync_state.delete(wtxn, &provenance_key)?;
     Ok(())
+}
+
+/// Clears a marker only when its sidecar proves replay/quarantine origin.
+/// Unproven markers survive terminal quarantine because they may represent
+/// delete-safety work from a failed tombstone purge.
+pub(crate) fn clear_replay_remat_marker_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    window_key: &str,
+    id: &crate::types::EntityId,
+) -> Result<bool> {
+    let provenance_key = replay_remat_marker_provenance_key(window_key, id);
+    if vault.store.sync_state.get(wtxn, &provenance_key)?.is_none() {
+        return Ok(false);
+    }
+    let marker_key = remat_marker_key(window_key, id);
+    vault.store.sync_state.delete(wtxn, &marker_key)?;
+    vault.store.sync_state.delete(wtxn, &provenance_key)?;
+    Ok(true)
 }
 
 /// Lists DISTINCT windows currently flagged needs-rematerialization.
@@ -1929,6 +2031,295 @@ mod tests {
         }
         drop(rtxn);
         assert!(pending_remat_windows(&vault).unwrap().is_empty());
+    }
+
+    /// ONE-1167 — an Observer-B replay batch whose only durable outcome is
+    /// `x:` quarantine must still leave entity-scoped `rm:w:` markers, so
+    /// the next drain has a replayable window to retry instead of a silent
+    /// marker gap.
+    #[test]
+    fn x_only_entity_quarantine_batch_sets_replayable_rm_marker() {
+        let (_dir, vault) = test_vault_with_dir();
+        let materializer = Arc::new(Materializer::new());
+        let window_key = WindowKey::new(WINDOW);
+        let window = LoadedWindow::new("test-user", window_key, &vault, &materializer);
+
+        let a = EntityId::now();
+        let b = EntityId::now();
+        let entities = window.doc.get_map("entities");
+        map_insert_bytes(&entities, &a.to_hex(), b"short-a").unwrap();
+        map_insert_bytes(&entities, &b.to_hex(), b"short-b").unwrap();
+        window.doc.commit();
+
+        let records = quarantined_records(&vault).unwrap();
+        assert_eq!(records.len(), 2, "both rejected ops must persist x: rows");
+        assert!(records.iter().all(|(_, rec)| {
+            rec.window_key == WINDOW && rec.container == QuarantineContainer::Entities
+        }));
+        assert!(vault.get(&a).unwrap().is_none());
+        assert!(vault.get(&b).unwrap().is_none());
+
+        let mut pending_entities = pending_remat_entities(&vault, WINDOW).unwrap();
+        pending_entities.sort();
+        let mut expected = vec![a.to_hex(), b.to_hex()];
+        expected.sort();
+        assert_eq!(
+            pending_entities, expected,
+            "x-only entity batch must set entity-scoped rm:w markers"
+        );
+        assert_eq!(
+            pending_remat_windows(&vault).unwrap(),
+            vec![WINDOW.to_string()]
+        );
+
+        let rtxn = vault.store.env.read_txn().unwrap();
+        for id in [&a, &b] {
+            let marker_key = format!("rm:w:{WINDOW}:{}", id.to_hex());
+            let provenance_key = replay_remat_marker_provenance_key(WINDOW, id);
+            assert_eq!(
+                vault.store.sync_state.get(&rtxn, &marker_key).unwrap(),
+                Some([1u8].as_slice()),
+                "marker encoding must remain rm:w:{{window}}:{{entity_hex}}"
+            );
+            assert_eq!(
+                vault.store.sync_state.get(&rtxn, &provenance_key).unwrap(),
+                Some([1u8].as_slice()),
+                "x-only replay quarantine markers must prove non-delete provenance"
+            );
+        }
+        drop(rtxn);
+
+        window.persist_state(&vault).unwrap();
+        drop(window);
+
+        let report = drain_remat_markers(&vault, "test-user", &materializer).unwrap();
+        assert_eq!(
+            report.drained,
+            vec![WINDOW.to_string()],
+            "drain must re-run forward remat for the x-only window"
+        );
+        assert!(report.still_pending.is_empty());
+        assert!(pending_remat_windows(&vault).unwrap().is_empty());
+        let rtxn = vault.store.env.read_txn().unwrap();
+        for id in [&a, &b] {
+            assert_eq!(
+                vault
+                    .store
+                    .sync_state
+                    .get(&rtxn, &replay_remat_marker_provenance_key(WINDOW, id))
+                    .unwrap(),
+                None,
+                "terminal replay quarantine discharge must clear provenance sidecar"
+            );
+        }
+    }
+
+    /// ONE-1167 — a source-scoped edge retry marker must not stay pending
+    /// forever when the source endpoint itself resolves into terminal
+    /// quarantine. The `x:` row is the durable/queryable outcome; after it is
+    /// written, the source `rm:` marker can converge to discharged.
+    #[test]
+    fn edge_source_quarantine_terminally_discharges_source_rm_marker() {
+        let (_dir, vault) = test_vault_with_dir();
+        let materializer = Materializer::new();
+        let window_key = WindowKey::new(WINDOW);
+        let doc = create_window_doc("test-user", &window_key);
+
+        let src = EntityId::now();
+        let tgt = EntityId::now();
+        let src_blob = entity_blob(200, valid_time_range(), LEARNED_AT, b"bad-src");
+        let tgt_blob = entity_blob(ENTITY_TYPE_TASK, valid_time_range(), LEARNED_AT, b"tgt");
+        let entities = doc.get_map("entities");
+        map_insert_bytes(&entities, &src.to_hex(), &src_blob).unwrap();
+        map_insert_bytes(&entities, &tgt.to_hex(), &tgt_blob).unwrap();
+
+        let kind = crate::types::EdgeKind::Mentions;
+        let edge_key = crate::sync::bridge::format_edge_key(&src, kind, &tgt);
+        let edge_value = one_1147_edge_value();
+        map_insert_bytes(&doc.get_map("edges"), &edge_key, &edge_value).unwrap();
+        doc.commit();
+
+        set_replay_remat_marker(&vault, WINDOW, &src).unwrap();
+        assert_eq!(
+            pending_remat_windows(&vault).unwrap(),
+            vec![WINDOW.to_string()],
+            "precondition: source-scoped edge marker is pending"
+        );
+
+        let count = forward_rematerialize(&vault, &doc, &materializer, &window_key).unwrap();
+        assert_eq!(count, 1, "only the valid target endpoint materializes");
+        assert!(
+            vault.get(&src).unwrap().is_none(),
+            "invalid source endpoint stays absent"
+        );
+        assert!(
+            !vault.edge_exists(&src, kind, &tgt).unwrap(),
+            "edge must not materialize while source is quarantined"
+        );
+        assert!(
+            pending_remat_windows(&vault).unwrap().is_empty(),
+            "source marker must discharge once the source has a durable x: row"
+        );
+        let rtxn = vault.store.env.read_txn().unwrap();
+        assert_eq!(
+            vault
+                .store
+                .sync_state
+                .get(&rtxn, &replay_remat_marker_provenance_key(WINDOW, &src))
+                .unwrap(),
+            None,
+            "terminal source quarantine must clear replay provenance"
+        );
+        drop(rtxn);
+
+        let src_hex = src.to_hex();
+        let records = quarantined_records(&vault).unwrap();
+        let (seq, rec) = records
+            .iter()
+            .find(|(_, rec)| {
+                rec.container == QuarantineContainer::Entities
+                    && rec.crdt_key_hash == xxh3_64(src_hex.as_bytes())
+            })
+            .expect("source endpoint quarantine row");
+        assert_eq!(rec.crdt_key_len, 32);
+        assert_eq!(rec.reason_code, "InvalidEntityType");
+        assert_eq!(
+            rec.payload_hash,
+            xxh3_64(&src_blob),
+            "x: row stores the rejected bytes hash only"
+        );
+        let rtxn = vault.store.env.read_txn().unwrap();
+        let raw = vault
+            .store
+            .sync_queue
+            .get(&rtxn, &encode_quarantine_key(*seq))
+            .unwrap()
+            .expect("x: row raw bytes");
+        assert!(
+            !raw.windows(src_hex.len())
+                .any(|window| window == src_hex.as_bytes()),
+            "raw x: row must not persist the source key string"
+        );
+        drop(rtxn);
+
+        forward_rematerialize(&vault, &doc, &materializer, &window_key).unwrap();
+        assert!(
+            pending_remat_windows(&vault).unwrap().is_empty(),
+            "repeated passes with the source still quarantined must stay converged"
+        );
+    }
+
+    /// Reviewer regression for ONE-1167 — terminal `x:` quarantine must not
+    /// clear a stale delete-safety `rm:` marker unless the marker already
+    /// proves replay/quarantine provenance. A live local payload plus no
+    /// loaded tombstone is exactly the unsafe stale-GDPR-purge shape.
+    #[test]
+    fn terminal_quarantine_preserves_unproven_delete_safety_rm_marker() {
+        let (_dir, vault) = test_vault_with_dir();
+        let materializer = Materializer::new();
+        let window_key = WindowKey::new(WINDOW);
+        let doc = create_window_doc("test-user", &window_key);
+
+        let delete_safety = EntityId::now();
+        let replay = EntityId::now();
+        vault
+            .put_entity(
+                &delete_safety,
+                ENTITY_TYPE_TASK,
+                valid_time_range(),
+                LEARNED_AT,
+                b"live-delete",
+            )
+            .unwrap();
+        vault
+            .put_entity(
+                &replay,
+                ENTITY_TYPE_TASK,
+                valid_time_range(),
+                LEARNED_AT,
+                b"live-replay",
+            )
+            .unwrap();
+
+        let entities = doc.get_map("entities");
+        map_insert_bytes(&entities, &delete_safety.to_hex(), b"short-delete").unwrap();
+        map_insert_bytes(&entities, &replay.to_hex(), b"short-replay").unwrap();
+        doc.commit();
+
+        set_remat_marker(&vault, WINDOW, &delete_safety).unwrap();
+        set_replay_remat_marker(&vault, WINDOW, &replay).unwrap();
+        let mut tombstone_count = 0usize;
+        doc.get_map("tombstones").for_each(|_, _| {
+            tombstone_count += 1;
+        });
+        assert_eq!(
+            tombstone_count, 0,
+            "precondition: loaded doc has no tombstone to prove purge success"
+        );
+
+        let count = forward_rematerialize(&vault, &doc, &materializer, &window_key).unwrap();
+        assert_eq!(count, 0, "both CRDT rows terminate in x: quarantine");
+        assert_eq!(
+            vault.get(&delete_safety).unwrap().as_deref(),
+            Some(b"live-delete".as_slice()),
+            "stale delete-safety payload remains live without a tombstone pass"
+        );
+        assert_eq!(
+            vault.get(&replay).unwrap().as_deref(),
+            Some(b"live-replay".as_slice())
+        );
+
+        let delete_marker = remat_marker_key(WINDOW, &delete_safety);
+        let replay_marker = remat_marker_key(WINDOW, &replay);
+        let rtxn = vault.store.env.read_txn().unwrap();
+        assert_eq!(
+            vault.store.sync_state.get(&rtxn, &delete_marker).unwrap(),
+            Some([1u8].as_slice()),
+            "unproven rm: marker must survive terminal quarantine"
+        );
+        assert_eq!(
+            vault.store.sync_state.get(&rtxn, &replay_marker).unwrap(),
+            None,
+            "replay-proven rm: marker can discharge on terminal quarantine"
+        );
+        assert_eq!(
+            vault
+                .store
+                .sync_state
+                .get(
+                    &rtxn,
+                    &replay_remat_marker_provenance_key(WINDOW, &delete_safety),
+                )
+                .unwrap(),
+            None,
+            "current terminal quarantine must not add replay provenance to an existing unproven marker"
+        );
+        assert_eq!(
+            vault
+                .store
+                .sync_state
+                .get(&rtxn, &replay_remat_marker_provenance_key(WINDOW, &replay))
+                .unwrap(),
+            None,
+            "clearing replay-proven marker also clears sidecar"
+        );
+        drop(rtxn);
+
+        assert_eq!(
+            pending_remat_entities(&vault, WINDOW).unwrap(),
+            vec![delete_safety.to_hex()],
+            "only the stale delete-safety marker remains pending"
+        );
+        assert_eq!(
+            pending_remat_windows(&vault).unwrap(),
+            vec![WINDOW.to_string()]
+        );
+        let records = quarantined_records(&vault).unwrap();
+        assert_eq!(
+            records.len(),
+            2,
+            "both terminal rows are queryable x: records"
+        );
     }
 
     /// Forward remat quarantines gate-rejected CRDT rows instead of

@@ -859,11 +859,12 @@ fn committed_edge_state_matches(vault: &Vault, edge_key: &[u8; 33], buf: &[u8]) 
 
 /// Writes one `rm:w:{window}:{entity_hex}` marker in its OWN txn (the
 /// failed batch txn is dead). A marker-write failure is logged at ERROR and
-/// swallowed — best-effort durability on an already-failing env; window
-/// recovery's forward remat remains the backstop (see the batch swallow
-/// sites for the layering).
+/// swallowed. Batch-failure markers carry replay provenance so terminal
+/// quarantine can discharge them without clearing delete-safety markers.
+/// Window recovery's forward remat remains the backstop (see the batch
+/// swallow sites for the layering).
 fn set_remat_marker_logged(vault: &Vault, window_key: &str, id: &EntityId) -> bool {
-    match quarantine::set_remat_marker(vault, window_key, id) {
+    match quarantine::set_replay_remat_marker(vault, window_key, id) {
         Ok(()) => true,
         Err(marker_err) => {
             tracing::error!(
@@ -919,6 +920,7 @@ struct EdgeOpMeta {
     crdt_key_hash: u64,
     crdt_key_len: u32,
     payload_hash: u64,
+    remat_marker_entity: Option<EntityId>,
 }
 
 impl EdgeOpMeta {
@@ -928,6 +930,10 @@ impl EdgeOpMeta {
             crdt_key_hash,
             crdt_key_len,
             payload_hash: quarantine::payload_hash(payload),
+            remat_marker_entity: quarantine::remat_marker_entity_for_quarantine(
+                QuarantineContainer::Edges,
+                crdt_key,
+            ),
         }
     }
 }
@@ -952,6 +958,9 @@ fn quarantine_edge_apply_failure(
             quarantined_at: crate::unix_seconds_now(),
         },
     )?;
+    if let Some(id) = meta.remat_marker_entity {
+        quarantine::set_replay_remat_marker_in_txn(vault, wtxn, window_key, &id)?;
+    }
     Ok(())
 }
 
