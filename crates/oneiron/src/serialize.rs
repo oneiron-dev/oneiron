@@ -8,7 +8,7 @@ use crate::types::{
     ENTITY_TYPE_MESSAGE, ENTITY_TYPE_NOTIFICATION, ENTITY_TYPE_ORG, ENTITY_TYPE_PERSON,
     ENTITY_TYPE_PLACE, ENTITY_TYPE_RELATIONSHIP, ENTITY_TYPE_SESSION, ENTITY_TYPE_SKILL,
     ENTITY_TYPE_SUMMARY, ENTITY_TYPE_TASK, ENTITY_TYPE_TASK_LIST, ENTITY_TYPE_TURN,
-    ENTITY_TYPE_WORLD, FieldProfile, PackFormat, Signal, TokenAllocation,
+    ENTITY_TYPE_WORLD, FieldProfile, PackFormat, PackStats, Signal, TokenAllocation,
 };
 
 const GROUP_ORDER: &[u8] = &[
@@ -33,6 +33,7 @@ pub struct SerializeConfig {
     pub include_stats: bool,
     pub merge_neighbors: bool,
     pub max_field_chars: usize,
+    pub max_item_tokens: usize,
 }
 
 #[derive(Debug, Clone)]
@@ -48,6 +49,7 @@ struct PreparedPack {
     merged: bool,
     results: Vec<(u8, Vec<PreparedEntity>)>,
     neighbors: Vec<(u8, Vec<PreparedEntity>)>,
+    stats: PackStats,
 }
 
 type PreparedGroups = Vec<(u8, Vec<PreparedEntity>)>;
@@ -64,6 +66,7 @@ pub fn serialize_pack(pack: &ContextPack, config: &SerializeConfig) -> Vec<u8> {
 
 fn serialize_json(pack: &ContextPack, config: &SerializeConfig) -> Vec<u8> {
     let prepared = prepare_pack(pack, config, true);
+    let stats = prepared.stats.clone();
     let mut root = Map::new();
 
     if prepared.merged {
@@ -88,7 +91,7 @@ fn serialize_json(pack: &ContextPack, config: &SerializeConfig) -> Vec<u8> {
     }
 
     if config.include_stats {
-        root.insert("stats".to_owned(), json_stats(pack));
+        root.insert("stats".to_owned(), json_stats(&stats));
     }
     if let Some(empty) = &pack.empty
         && let Ok(value) = serde_json::to_value(empty)
@@ -122,7 +125,7 @@ fn serialize_toon(pack: &ContextPack, config: &SerializeConfig) -> String {
     }
 
     if config.include_stats {
-        append_stats_line(&mut out, pack, config.format);
+        append_stats_line(&mut out, &prepared.stats, config.format);
     }
 
     out
@@ -142,7 +145,7 @@ fn serialize_markdown(pack: &ContextPack, config: &SerializeConfig) -> String {
     }
 
     if config.include_stats {
-        append_stats_line(&mut out, pack, config.format);
+        append_stats_line(&mut out, &prepared.stats, config.format);
     }
 
     out
@@ -162,7 +165,7 @@ fn serialize_plaintext(pack: &ContextPack, config: &SerializeConfig) -> String {
     }
 
     if config.include_stats {
-        append_stats_line(&mut out, pack, config.format);
+        append_stats_line(&mut out, &prepared.stats, config.format);
     }
 
     out
@@ -183,7 +186,7 @@ fn serialize_yaml(pack: &ContextPack, config: &SerializeConfig) -> String {
     }
 
     if config.include_stats {
-        append_stats_line(&mut out, pack, config.format);
+        append_stats_line(&mut out, &prepared.stats, config.format);
     }
 
     out
@@ -192,40 +195,78 @@ fn serialize_yaml(pack: &ContextPack, config: &SerializeConfig) -> String {
 fn prepare_pack(pack: &ContextPack, config: &SerializeConfig, json_mode: bool) -> PreparedPack {
     let skip_budget = config.format == PackFormat::Json || config.budget == 0;
     let char_budget = config.budget.saturating_mul(4);
+    let mut stats = pack.stats.clone();
 
     if config.merge_neighbors {
         let mut merged = Vec::with_capacity(pack.results.len() + pack.neighbors.len());
-        merged.extend(prepare_entities(&pack.results, config, json_mode));
-        merged.extend(prepare_entities(&pack.neighbors, config, json_mode));
+        merged.extend(prepare_entities(
+            &pack.results,
+            config,
+            json_mode,
+            &mut stats,
+        ));
+        merged.extend(prepare_entities(
+            &pack.neighbors,
+            config,
+            json_mode,
+            &mut stats,
+        ));
 
         let mut groups = group_entities(merged);
         if !skip_budget {
+            let before = token_budget_droppable_count(&groups);
             enforce_token_budget(&mut groups, &config.allocation, char_budget);
+            let after = token_budget_droppable_count(&groups);
+            stats.items_dropped.count = stats
+                .items_dropped
+                .count
+                .saturating_add(before.saturating_sub(after));
         }
 
         PreparedPack {
             merged: true,
             results: groups,
             neighbors: Vec::new(),
+            stats,
         }
     } else {
-        let results_source = group_entities(prepare_entities(&pack.results, config, json_mode));
-        let neighbors_source = group_entities(prepare_entities(&pack.neighbors, config, json_mode));
+        let results_source = group_entities(prepare_entities(
+            &pack.results,
+            config,
+            json_mode,
+            &mut stats,
+        ));
+        let neighbors_source = group_entities(prepare_entities(
+            &pack.neighbors,
+            config,
+            json_mode,
+            &mut stats,
+        ));
         let (results, neighbors) = if skip_budget {
             (results_source, neighbors_source)
         } else {
-            budget_split_sections(
+            let before = token_budget_droppable_count(&results_source)
+                .saturating_add(token_budget_droppable_count(&neighbors_source));
+            let sections = budget_split_sections(
                 &results_source,
                 &neighbors_source,
                 &config.allocation,
                 char_budget,
-            )
+            );
+            let after = token_budget_droppable_count(&sections.0)
+                .saturating_add(token_budget_droppable_count(&sections.1));
+            stats.items_dropped.count = stats
+                .items_dropped
+                .count
+                .saturating_add(before.saturating_sub(after));
+            sections
         };
 
         PreparedPack {
             merged: false,
             results,
             neighbors,
+            stats,
         }
     }
 }
@@ -278,11 +319,12 @@ fn prepare_entities(
     entities: &[ContextEntity],
     config: &SerializeConfig,
     json_mode: bool,
+    stats: &mut PackStats,
 ) -> Vec<PreparedEntity> {
     let now = crate::unix_seconds_now();
     entities
         .iter()
-        .map(|entity| {
+        .filter_map(|entity| {
             let mut fields = Vec::new();
 
             if let Some(map) = entity.fields.as_ref() {
@@ -297,14 +339,250 @@ fn prepare_entities(
                 }
             }
 
-            PreparedEntity {
+            let mut prepared = PreparedEntity {
                 entity_type: entity.entity_type,
                 score: entity.score,
                 id: format_short_id(entity),
                 fields,
-            }
+            };
+            apply_item_budget(&mut prepared, config.max_item_tokens, stats).then_some(prepared)
         })
         .collect()
+}
+
+fn apply_item_budget(
+    entity: &mut PreparedEntity,
+    max_item_tokens: usize,
+    stats: &mut PackStats,
+) -> bool {
+    if max_item_tokens == 0 || is_critical_predicate_claim(entity) {
+        return true;
+    }
+
+    let max_item_chars = max_item_tokens.saturating_mul(4);
+    if max_item_chars == 0 || estimate_entity_chars(entity) <= max_item_chars {
+        return true;
+    }
+
+    let truncated = if entity.entity_type == ENTITY_TYPE_CLAIM {
+        truncate_claim_value_for_item_budget(entity, max_item_chars)
+    } else {
+        truncate_non_claim_for_item_budget(entity, max_item_chars)
+    };
+
+    if estimate_entity_chars(entity) <= max_item_chars {
+        if truncated {
+            stats.items_truncated.count = stats.items_truncated.count.saturating_add(1);
+        }
+        true
+    } else {
+        stats.items_dropped.reason = crate::types::PackItemAccountingReason::ItemBudget;
+        stats.items_dropped.count = stats.items_dropped.count.saturating_add(1);
+        false
+    }
+}
+
+fn truncate_non_claim_for_item_budget(entity: &mut PreparedEntity, max_item_chars: usize) -> bool {
+    let mut truncated = false;
+    let mut tried_fields = Vec::new();
+
+    while estimate_entity_chars(entity) > max_item_chars {
+        let Some(field_index) =
+            largest_truncatable_top_level_string_field(entity, tried_fields.as_slice())
+        else {
+            break;
+        };
+
+        tried_fields.push(field_index);
+        truncated |= truncate_string_field_to_item_budget(entity, field_index, max_item_chars);
+    }
+
+    if estimate_entity_chars(entity) <= max_item_chars {
+        return truncated;
+    }
+
+    truncated | retain_structural_item_budget_fields(entity)
+}
+
+fn truncate_claim_value_for_item_budget(
+    entity: &mut PreparedEntity,
+    max_item_chars: usize,
+) -> bool {
+    let Some(value_index) = field_index(entity, "val") else {
+        return retain_minimal_claim_item_budget_fields(entity, None);
+    };
+
+    let original_value = entity.fields[value_index].1.clone();
+    let mut truncated =
+        truncate_claim_value_field_for_item_budget(entity, value_index, max_item_chars);
+
+    if estimate_entity_chars(entity) <= max_item_chars {
+        return truncated;
+    }
+
+    truncated |= retain_minimal_claim_item_budget_fields(entity, Some(original_value));
+    if estimate_entity_chars(entity) <= max_item_chars {
+        return truncated;
+    }
+
+    let Some(value_index) = field_index(entity, "val") else {
+        return truncated;
+    };
+    truncated | truncate_claim_value_field_for_item_budget(entity, value_index, max_item_chars)
+}
+
+fn truncate_claim_value_field_for_item_budget(
+    entity: &mut PreparedEntity,
+    field_index: usize,
+    max_item_chars: usize,
+) -> bool {
+    let original_value_chars = estimate_value_chars(&entity.fields[field_index].1);
+
+    match &mut entity.fields[field_index].1 {
+        Value::String(_) => {
+            truncate_string_field_to_item_budget(entity, field_index, max_item_chars)
+        }
+        value => {
+            *value = Value::String(truncation_suffix(original_value_chars));
+            true
+        }
+    }
+}
+
+fn truncate_string_field_to_item_budget(
+    entity: &mut PreparedEntity,
+    field_index: usize,
+    max_item_chars: usize,
+) -> bool {
+    let Value::String(original) = entity.fields[field_index].1.clone() else {
+        return false;
+    };
+
+    let original_chars = original.chars().count();
+    if original_chars == 0 {
+        return false;
+    }
+
+    let suffix = truncation_suffix(original_chars);
+    let mut low = 0_usize;
+    let mut high = original_chars.saturating_sub(1);
+    let mut best_prefix = None;
+
+    while low <= high {
+        let mid = low + ((high - low) / 2);
+        entity.fields[field_index].1 =
+            Value::String(truncate_with_suffix_prefix(&original, mid, &suffix));
+
+        if estimate_entity_chars(entity) <= max_item_chars {
+            best_prefix = Some(mid);
+            low = mid.saturating_add(1);
+        } else if mid == 0 {
+            break;
+        } else {
+            high = mid - 1;
+        }
+    }
+
+    let prefix_chars = best_prefix.unwrap_or(0);
+    entity.fields[field_index].1 = Value::String(truncate_with_suffix_prefix(
+        &original,
+        prefix_chars,
+        &suffix,
+    ));
+    true
+}
+
+fn retain_minimal_claim_item_budget_fields(
+    entity: &mut PreparedEntity,
+    original_value: Option<Value>,
+) -> bool {
+    let predicate = entity.fields.iter().find(|(key, _)| key == "pred").cloned();
+    let value = original_value.map(|value| ("val".to_owned(), value));
+
+    let mut minimal = Vec::new();
+    if let Some(predicate) = predicate {
+        minimal.push(predicate);
+    }
+    if let Some(value) = value {
+        minimal.push(value);
+    }
+
+    let changed = entity.fields != minimal;
+    entity.fields = minimal;
+    changed
+}
+
+fn retain_structural_item_budget_fields(entity: &mut PreparedEntity) -> bool {
+    let structural: Vec<(String, Value)> = entity
+        .fields
+        .iter()
+        .filter(|(key, _)| is_structural_item_budget_field(key))
+        .cloned()
+        .collect();
+    let changed = entity.fields != structural;
+    entity.fields = structural;
+    changed
+}
+
+fn is_structural_item_budget_field(key: &str) -> bool {
+    key == "pred"
+}
+
+fn field_index(entity: &PreparedEntity, key: &str) -> Option<usize> {
+    entity
+        .fields
+        .iter()
+        .position(|(field_key, _)| field_key == key)
+}
+
+fn largest_truncatable_top_level_string_field(
+    entity: &PreparedEntity,
+    excluded: &[usize],
+) -> Option<usize> {
+    entity
+        .fields
+        .iter()
+        .enumerate()
+        .filter_map(|(index, (key, value))| {
+            if excluded.contains(&index) || is_structural_item_budget_field(key) {
+                return None;
+            }
+
+            let Value::String(text) = value else {
+                return None;
+            };
+            Some((index, text.chars().count()))
+        })
+        .max_by_key(|(_, chars)| *chars)
+        .map(|(index, _)| index)
+}
+
+fn truncate_with_suffix_prefix(text: &str, prefix_chars: usize, suffix: &str) -> String {
+    let prefix: String = text.chars().take(prefix_chars).collect();
+    format!("{prefix}{suffix}")
+}
+
+fn truncation_suffix(original_chars: usize) -> String {
+    format!("...(truncated, {original_chars} chars total)")
+}
+
+fn is_critical_predicate_claim(entity: &PreparedEntity) -> bool {
+    if entity.entity_type != ENTITY_TYPE_CLAIM {
+        return false;
+    }
+
+    let Some(predicate) = entity
+        .fields
+        .iter()
+        .find_map(|(key, value)| (key == "pred").then_some(value.as_str()).flatten())
+    else {
+        return false;
+    };
+
+    predicate == "commitment.promise"
+        || predicate.starts_with("profile.")
+        || predicate.starts_with("preference.")
+        || predicate.starts_with("companion.")
 }
 
 fn format_short_id(entity: &ContextEntity) -> String {
@@ -430,6 +708,14 @@ fn group_entities(entities: Vec<PreparedEntity>) -> Vec<(u8, Vec<PreparedEntity>
     out
 }
 
+fn token_budget_droppable_count(groups: &[(u8, Vec<PreparedEntity>)]) -> usize {
+    groups
+        .iter()
+        .flat_map(|(_, rows)| rows.iter())
+        .filter(|row| !is_critical_predicate_claim(row))
+        .count()
+}
+
 fn type_fraction(entity_type: u8, allocation: &TokenAllocation) -> f32 {
     match entity_type {
         0 => allocation.claims,
@@ -445,8 +731,20 @@ fn enforce_token_budget(
     char_budget: usize,
 ) -> usize {
     if char_budget == 0 {
-        groups.clear();
-        return 0;
+        let mut total_used = 0_usize;
+        for (_, rows) in groups.iter_mut() {
+            let mut used = 0_usize;
+            rows.retain(|row| {
+                let keep = is_critical_predicate_claim(row);
+                if keep {
+                    used = used.saturating_add(estimate_entity_chars(row));
+                }
+                keep
+            });
+            total_used = total_used.saturating_add(used);
+        }
+        groups.retain(|(_, rows)| !rows.is_empty());
+        return total_used;
     }
 
     // Normalize fractions so they sum to 1.0 (multiple "other" types each
@@ -491,22 +789,29 @@ fn enforce_token_budget(
             budgets[i]
         };
 
-        if final_budget == 0 {
-            rows.clear();
-            continue;
-        }
-
         let mut used = 0_usize;
-        let mut keep = 0_usize;
-        for row in rows.iter() {
-            let chars = estimate_entity_chars(row);
-            if used + chars > final_budget && keep > 0 {
-                break;
+        let mut kept = Vec::with_capacity(rows.len());
+        let mut kept_noncritical = 0_usize;
+        let mut noncritical_closed = final_budget == 0;
+        for row in rows.drain(..) {
+            let chars = estimate_entity_chars(&row);
+            if is_critical_predicate_claim(&row) {
+                used = used.saturating_add(chars);
+                kept.push(row);
+                continue;
             }
-            keep += 1;
-            used += chars;
+            if noncritical_closed {
+                continue;
+            }
+            if used.saturating_add(chars) > final_budget && kept_noncritical > 0 {
+                noncritical_closed = true;
+                continue;
+            }
+            kept_noncritical += 1;
+            used = used.saturating_add(chars);
+            kept.push(row);
         }
-        rows.truncate(keep);
+        *rows = kept;
         total_used = total_used.saturating_add(used);
     }
 
@@ -985,24 +1290,37 @@ fn fields_for_profile(entity_type: u8, profile: FieldProfile) -> &'static [&'sta
     }
 }
 
-fn append_stats_line(out: &mut String, pack: &ContextPack, format: PackFormat) {
+fn append_stats_line(out: &mut String, stats: &PackStats, format: PackFormat) {
     if !out.is_empty() && !out.ends_with('\n') {
         out.push('\n');
     }
 
-    let ms = pack.stats.query_time_us as f64 / 1000.0;
-    let signals = pack
-        .stats
+    let ms = stats.query_time_us as f64 / 1000.0;
+    let signals = stats
         .signals_used
         .iter()
         .map(|signal| signal_name(*signal))
         .collect::<Vec<_>>()
         .join(",");
 
-    let stats_line = format!(
+    let mut stats_line = format!(
         "query: {ms:.1}ms | {} candidates | signals: {}",
-        pack.stats.candidates_considered, signals
+        stats.candidates_considered, signals
     );
+    if stats.items_truncated.count > 0 {
+        stats_line.push_str(&format!(
+            " | truncated: {} {}",
+            stats.items_truncated.count,
+            stats.items_truncated.reason.as_str()
+        ));
+    }
+    if stats.items_dropped.count > 0 {
+        stats_line.push_str(&format!(
+            " | dropped: {} {}",
+            stats.items_dropped.count,
+            stats.items_dropped.reason.as_str()
+        ));
+    }
     if format == PackFormat::Yaml {
         out.push_str("# ");
         out.push_str(&stats_line);
@@ -1013,16 +1331,16 @@ fn append_stats_line(out: &mut String, pack: &ContextPack, format: PackFormat) {
     }
 }
 
-fn json_stats(pack: &ContextPack) -> Value {
+fn json_stats(pack_stats: &PackStats) -> Value {
     let mut stats = Map::new();
     stats.insert(
         "candidates".to_owned(),
-        Value::Number(Number::from(pack.stats.candidates_considered as u64)),
+        Value::Number(Number::from(pack_stats.candidates_considered as u64)),
     );
     stats.insert(
         "signals".to_owned(),
         Value::Array(
-            pack.stats
+            pack_stats
                 .signals_used
                 .iter()
                 .map(|signal| Value::String(signal_name(*signal).to_owned()))
@@ -1031,17 +1349,42 @@ fn json_stats(pack: &ContextPack) -> Value {
     );
     stats.insert(
         "query_us".to_owned(),
-        Value::Number(Number::from(pack.stats.query_time_us)),
+        Value::Number(Number::from(pack_stats.query_time_us)),
     );
     stats.insert(
         "hydrated".to_owned(),
-        Value::Number(Number::from(pack.stats.entities_hydrated as u64)),
+        Value::Number(Number::from(pack_stats.entities_hydrated as u64)),
     );
     stats.insert(
         "neighbors_hydrated".to_owned(),
-        Value::Number(Number::from(pack.stats.neighbors_hydrated as u64)),
+        Value::Number(Number::from(pack_stats.neighbors_hydrated as u64)),
     );
+    if pack_stats.items_truncated.count > 0 {
+        stats.insert(
+            "truncated".to_owned(),
+            item_accounting_json(pack_stats.items_truncated),
+        );
+    }
+    if pack_stats.items_dropped.count > 0 {
+        stats.insert(
+            "dropped".to_owned(),
+            item_accounting_json(pack_stats.items_dropped),
+        );
+    }
     Value::Object(stats)
+}
+
+fn item_accounting_json(accounting: crate::types::PackItemAccounting) -> Value {
+    let mut out = Map::new();
+    out.insert(
+        "count".to_owned(),
+        Value::Number(Number::from(accounting.count as u64)),
+    );
+    out.insert(
+        "reason".to_owned(),
+        Value::String(accounting.reason.as_str().to_owned()),
+    );
+    Value::Object(out)
 }
 
 fn signal_name(signal: Signal) -> &'static str {
@@ -1410,6 +1753,8 @@ mod tests {
                 entities_hydrated: 2,
                 neighbors_hydrated: 1,
                 claims_suppressed: 0,
+                items_truncated: crate::types::PackItemAccounting::item_budget(),
+                items_dropped: crate::types::PackItemAccounting::token_budget(),
             },
             empty: None,
         }
@@ -1424,6 +1769,7 @@ mod tests {
             include_stats: false,
             merge_neighbors: true,
             max_field_chars: 500,
+            max_item_tokens: 0,
         }
     }
 
@@ -1436,6 +1782,7 @@ mod tests {
             include_stats: false,
             merge_neighbors: true,
             max_field_chars: 500,
+            max_item_tokens: 0,
         }
     }
 
@@ -1445,6 +1792,40 @@ mod tests {
             score: 0.0,
             id: "x".repeat(id_len),
             fields,
+        }
+    }
+
+    fn claim_entity(seed: u8, predicate: &str, value: &str, score: f32) -> ContextEntity {
+        claim_entity_with_value(seed, predicate, Value::String(value.to_owned()), score)
+    }
+
+    fn claim_entity_with_value(
+        seed: u8,
+        predicate: &str,
+        value: Value,
+        score: f32,
+    ) -> ContextEntity {
+        ContextEntity {
+            id: EntityId::from_bytes_unchecked([seed; 16]),
+            short_id: format!("cl{seed:02}"),
+            content_hash: seed,
+            entity_type: ENTITY_TYPE_CLAIM,
+            score,
+            fields: Some(HashMap::from([
+                ("pred".to_owned(), Value::String(predicate.to_owned())),
+                ("val".to_owned(), value),
+            ])),
+            edges: None,
+            vector: None,
+        }
+    }
+
+    fn pack_with_results(results: Vec<ContextEntity>) -> ContextPack {
+        ContextPack {
+            results,
+            neighbors: Vec::new(),
+            stats: empty_stats(),
+            empty: None,
         }
     }
 
@@ -1459,6 +1840,8 @@ mod tests {
                 entities_hydrated: 28,
                 neighbors_hydrated: 0,
                 claims_suppressed: 0,
+                items_truncated: crate::types::PackItemAccounting::item_budget(),
+                items_dropped: crate::types::PackItemAccounting::token_budget(),
             },
             empty: None,
         };
@@ -1931,6 +2314,330 @@ mod tests {
     }
 
     #[test]
+    fn max_item_tokens_truncates_string_with_exact_suffix() {
+        let long_value = "x".repeat(1200);
+        let pack = pack_with_results(vec![claim_entity(1, "note.long", &long_value, 1.0)]);
+
+        let mut cfg = config(PackFormat::Json);
+        cfg.include_stats = true;
+        cfg.max_field_chars = 0;
+        cfg.max_item_tokens = 32;
+
+        let parsed: Value =
+            serde_json::from_slice(&serialize_pack(&pack, &cfg)).expect("json parse");
+        let rendered = parsed["claims"][0]["val"]
+            .as_str()
+            .expect("truncated string value");
+        let suffix = "...(truncated, 1200 chars total)";
+
+        assert!(rendered.ends_with(suffix), "rendered={rendered}");
+        assert_ne!(rendered, long_value);
+        assert_eq!(parsed["stats"]["truncated"]["count"], 1);
+        assert_eq!(parsed["stats"]["truncated"]["reason"], "item_budget");
+    }
+
+    #[test]
+    fn max_item_tokens_preserves_claim_predicate_when_value_is_shorter() {
+        let predicate = format!("note.{}", "predicate".repeat(15));
+        let value = "v".repeat(120);
+        let pack = pack_with_results(vec![claim_entity(1, &predicate, &value, 1.0)]);
+
+        let mut cfg = config(PackFormat::Json);
+        cfg.max_field_chars = 0;
+        cfg.max_item_tokens = 64;
+
+        let parsed: Value =
+            serde_json::from_slice(&serialize_pack(&pack, &cfg)).expect("json parse");
+        let rendered_value = parsed["claims"][0]["val"]
+            .as_str()
+            .expect("truncated string value");
+
+        assert_eq!(
+            parsed["claims"][0]["pred"].as_str(),
+            Some(predicate.as_str())
+        );
+        assert!(rendered_value.ends_with("...(truncated, 120 chars total)"));
+        assert_ne!(rendered_value, value);
+    }
+
+    #[test]
+    fn max_item_tokens_preserves_claim_predicate_for_non_string_value() {
+        let predicate = format!("note.{}", "predicate".repeat(15));
+        let mut object = Map::new();
+        object.insert("summary".to_owned(), Value::String("s".repeat(300)));
+        object.insert("confidence".to_owned(), Value::Number(Number::from(7)));
+        let original_value = Value::Object(object);
+        let original_value_chars = estimate_value_chars(&original_value);
+        let pack = pack_with_results(vec![claim_entity_with_value(
+            1,
+            &predicate,
+            original_value,
+            1.0,
+        )]);
+
+        let mut cfg = config(PackFormat::Json);
+        cfg.max_field_chars = 0;
+        cfg.max_item_tokens = 64;
+
+        let parsed: Value =
+            serde_json::from_slice(&serialize_pack(&pack, &cfg)).expect("json parse");
+        let rendered_value = parsed["claims"][0]["val"]
+            .as_str()
+            .expect("truncated non-string value");
+
+        assert_eq!(
+            parsed["claims"][0]["pred"].as_str(),
+            Some(predicate.as_str())
+        );
+        assert_eq!(
+            rendered_value,
+            format!("...(truncated, {original_value_chars} chars total)")
+        );
+    }
+
+    #[test]
+    fn max_item_tokens_strips_claim_to_safe_minimal_row_when_value_truncation_is_not_enough() {
+        let predicate = "note.metadata_heavy";
+        let mut entity = PreparedEntity {
+            entity_type: ENTITY_TYPE_CLAIM,
+            score: 1.0,
+            id: "cl01:01".to_owned(),
+            fields: vec![
+                ("pred".to_owned(), Value::String(predicate.to_owned())),
+                ("val".to_owned(), Value::String("v".repeat(120))),
+                ("src".to_owned(), Value::String("s".repeat(300))),
+                ("scope".to_owned(), Value::String("c".repeat(300))),
+            ],
+        };
+        let mut stats = empty_stats();
+
+        assert!(apply_item_budget(&mut entity, 32, &mut stats));
+
+        assert!(estimate_entity_chars(&entity) <= 32 * 4);
+        assert_eq!(
+            entity
+                .fields
+                .iter()
+                .find_map(|(key, value)| (key == "pred").then_some(value.as_str()).flatten()),
+            Some(predicate)
+        );
+        assert!(entity.fields.iter().any(|(key, _)| key == "val"));
+        assert!(!entity.fields.iter().any(|(key, _)| key == "src"));
+        assert!(!entity.fields.iter().any(|(key, _)| key == "scope"));
+        assert_eq!(stats.items_truncated.count, 1);
+        assert_eq!(stats.items_dropped.count, 0);
+    }
+
+    #[test]
+    fn max_item_tokens_strips_claim_metadata_without_truncating_short_value() {
+        let predicate = "note.metadata_heavy";
+        let mut entity = PreparedEntity {
+            entity_type: ENTITY_TYPE_CLAIM,
+            score: 1.0,
+            id: "cl01:01".to_owned(),
+            fields: vec![
+                ("pred".to_owned(), Value::String(predicate.to_owned())),
+                ("val".to_owned(), Value::String("ok".to_owned())),
+                ("src".to_owned(), Value::String("s".repeat(300))),
+                ("scope".to_owned(), Value::String("c".repeat(300))),
+            ],
+        };
+        let mut stats = empty_stats();
+
+        assert!(apply_item_budget(&mut entity, 32, &mut stats));
+
+        assert!(estimate_entity_chars(&entity) <= 32 * 4);
+        assert_eq!(
+            entity
+                .fields
+                .iter()
+                .find_map(|(key, value)| (key == "pred").then_some(value.as_str()).flatten()),
+            Some(predicate)
+        );
+        assert_eq!(
+            entity
+                .fields
+                .iter()
+                .find_map(|(key, value)| (key == "val").then_some(value.as_str()).flatten()),
+            Some("ok")
+        );
+        assert!(!entity.fields.iter().any(|(key, _)| key == "src"));
+        assert!(!entity.fields.iter().any(|(key, _)| key == "scope"));
+        assert_eq!(stats.items_truncated.count, 1);
+        assert_eq!(stats.items_dropped.count, 0);
+    }
+
+    #[test]
+    fn max_item_tokens_trims_multiple_non_claim_strings_until_under_cap() {
+        let mut entity = PreparedEntity {
+            entity_type: ENTITY_TYPE_TURN,
+            score: 1.0,
+            id: "tn01:01".to_owned(),
+            fields: vec![
+                ("txt".to_owned(), Value::String("a".repeat(160))),
+                ("note".to_owned(), Value::String("b".repeat(160))),
+            ],
+        };
+        let mut stats = empty_stats();
+
+        assert!(apply_item_budget(&mut entity, 40, &mut stats));
+
+        assert!(estimate_entity_chars(&entity) <= 40 * 4);
+        assert_eq!(stats.items_truncated.count, 1);
+        assert_eq!(stats.items_dropped.count, 0);
+        for (_, value) in &entity.fields {
+            let rendered = value.as_str().expect("string field");
+            assert!(rendered.ends_with("...(truncated, 160 chars total)"));
+        }
+    }
+
+    #[test]
+    fn max_item_tokens_replaces_non_claim_without_safe_strings_with_minimal_row() {
+        let mut entity = PreparedEntity {
+            entity_type: ENTITY_TYPE_EVENT,
+            score: 1.0,
+            id: "ev01:01".to_owned(),
+            fields: vec![
+                (
+                    "meta".to_owned(),
+                    Value::Array((0..200).map(|i| Value::Number(Number::from(i))).collect()),
+                ),
+                ("weight".to_owned(), Value::Number(Number::from(42))),
+            ],
+        };
+        let mut stats = empty_stats();
+
+        assert!(apply_item_budget(&mut entity, 8, &mut stats));
+
+        assert!(entity.fields.is_empty());
+        assert!(estimate_entity_chars(&entity) <= 8 * 4);
+        assert_eq!(stats.items_truncated.count, 1);
+        assert_eq!(stats.items_dropped.count, 0);
+    }
+
+    #[test]
+    fn max_item_tokens_drops_rows_when_tiny_budget_cannot_fit_suffix_or_minimal_row() {
+        let pack = pack_with_results(vec![claim_entity(1, "note.tiny", &"x".repeat(200), 1.0)]);
+
+        let mut cfg = config(PackFormat::Json);
+        cfg.max_field_chars = 0;
+        cfg.max_item_tokens = 1;
+        cfg.budget = 0;
+
+        let prepared = prepare_pack(&pack, &cfg, true);
+
+        assert!(prepared.results.is_empty());
+        assert_eq!(prepared.stats.items_truncated.count, 0);
+        assert_eq!(prepared.stats.items_dropped.count, 1);
+        assert_eq!(prepared.stats.items_dropped.reason.as_str(), "item_budget");
+    }
+
+    #[test]
+    fn item_and_token_budget_reasons_are_discriminated() {
+        let over_item = "a".repeat(400);
+        let budget_drop = "fits item cap but not total budget";
+        let pack = pack_with_results(vec![
+            claim_entity(1, "note.over_item", &over_item, 1.0),
+            claim_entity(2, "note.budget_drop", budget_drop, 0.5),
+        ]);
+
+        let mut cfg = config(PackFormat::Toon);
+        cfg.max_field_chars = 0;
+        cfg.max_item_tokens = 24;
+        cfg.budget = 30;
+
+        let prepared = prepare_pack(&pack, &cfg, false);
+        let kept_rows: usize = prepared.results.iter().map(|(_, rows)| rows.len()).sum();
+
+        assert_eq!(kept_rows, 1);
+        assert_eq!(prepared.stats.items_truncated.count, 1);
+        assert_eq!(
+            prepared.stats.items_truncated.reason.as_str(),
+            "item_budget"
+        );
+        assert_eq!(prepared.stats.items_dropped.count, 1);
+        assert_eq!(prepared.stats.items_dropped.reason.as_str(), "token_budget");
+    }
+
+    #[test]
+    fn critical_predicate_claims_bypass_item_cap_and_drop_path() {
+        let critical_value = "c".repeat(1200);
+        let pack = pack_with_results(vec![claim_entity(
+            1,
+            "preference.food",
+            &critical_value,
+            1.0,
+        )]);
+
+        let mut cfg = config(PackFormat::Toon);
+        cfg.max_field_chars = 0;
+        cfg.max_item_tokens = 8;
+        cfg.budget = 1;
+
+        let prepared = prepare_pack(&pack, &cfg, false);
+        let kept = prepared
+            .results
+            .iter()
+            .find_map(|(entity_type, rows)| (*entity_type == ENTITY_TYPE_CLAIM).then_some(rows))
+            .expect("critical claim group");
+        let rendered_value = kept[0]
+            .fields
+            .iter()
+            .find_map(|(key, value)| (key == "val").then_some(value.as_str()).flatten())
+            .expect("critical value");
+
+        assert_eq!(rendered_value, critical_value);
+        assert_eq!(prepared.stats.items_truncated.count, 0);
+        assert_eq!(prepared.stats.items_dropped.count, 0);
+    }
+
+    #[test]
+    fn max_item_tokens_zero_preserves_oversized_output_and_zero_counts() {
+        let long_value = "z".repeat(1200);
+        let pack = pack_with_results(vec![claim_entity(1, "note.disabled", &long_value, 1.0)]);
+
+        let mut cfg = config(PackFormat::Json);
+        cfg.max_field_chars = 0;
+
+        let bytes = serialize_pack(&pack, &cfg);
+        let parsed: Value = serde_json::from_slice(&bytes).expect("json parse");
+        let prepared = prepare_pack(&pack, &cfg, true);
+
+        assert_eq!(
+            parsed["claims"][0]["val"].as_str(),
+            Some(long_value.as_str())
+        );
+        assert!(
+            !String::from_utf8(bytes)
+                .expect("utf8")
+                .contains("...(truncated,")
+        );
+        assert_eq!(prepared.stats.items_truncated.count, 0);
+        assert_eq!(prepared.stats.items_dropped.count, 0);
+    }
+
+    #[test]
+    fn over_cap_items_increment_truncated_once_each() {
+        let pack = pack_with_results(vec![
+            claim_entity(1, "note.first", &"a".repeat(300), 1.0),
+            claim_entity(2, "note.second", &"b".repeat(300), 0.9),
+        ]);
+
+        let mut cfg = config(PackFormat::Json);
+        cfg.max_field_chars = 0;
+        cfg.max_item_tokens = 24;
+
+        let prepared = prepare_pack(&pack, &cfg, true);
+
+        assert_eq!(prepared.stats.items_truncated.count, 2);
+        assert_eq!(
+            prepared.stats.items_truncated.reason.as_str(),
+            "item_budget"
+        );
+        assert_eq!(prepared.stats.items_dropped.count, 0);
+    }
+
+    #[test]
     fn token_budget_zero_disables_budget_enforcement() {
         let mut pack = sample_pack();
         for i in 0..12_u8 {
@@ -2397,6 +3104,8 @@ mod tests {
             entities_hydrated: 0,
             neighbors_hydrated: 0,
             claims_suppressed: 0,
+            items_truncated: crate::types::PackItemAccounting::item_budget(),
+            items_dropped: crate::types::PackItemAccounting::token_budget(),
         }
     }
 
@@ -2523,6 +3232,7 @@ mod tests {
                 include_stats: false,
                 merge_neighbors: true,
                 max_field_chars: 500,
+                max_item_tokens: 0,
             };
             let parsed: Value =
                 serde_json::from_slice(&serialize_pack(pack, &cfg_json)).expect("json parse");
@@ -2540,6 +3250,7 @@ mod tests {
                 include_stats: false,
                 merge_neighbors: true,
                 max_field_chars: 500,
+                max_item_tokens: 0,
             };
             let text = String::from_utf8(serialize_pack(pack, &cfg_plain)).expect("utf8");
             assert!(
@@ -2562,6 +3273,7 @@ mod tests {
                 include_stats: false,
                 merge_neighbors: true,
                 max_field_chars: 500,
+                max_item_tokens: 0,
             };
             let parsed: Value =
                 serde_json::from_slice(&serialize_pack(pack, &cfg_json)).expect("json parse");
@@ -2639,6 +3351,7 @@ mod tests {
                 include_stats: false,
                 merge_neighbors: true,
                 max_field_chars: 500,
+                max_item_tokens: 0,
             };
             let bytes = serialize_pack(&pack, &cfg_json);
             let parsed: Value = serde_json::from_slice(&bytes).expect("json parse");
@@ -2712,6 +3425,7 @@ mod tests {
             include_stats: false,
             merge_neighbors: true,
             max_field_chars: 500,
+            max_item_tokens: 0,
         };
 
         let text = String::from_utf8(serialize_pack(&pack, &cfg)).expect("utf8");
@@ -2742,6 +3456,7 @@ mod tests {
             include_stats: false,
             merge_neighbors: true,
             max_field_chars: 500,
+            max_item_tokens: 0,
         };
 
         let json_bytes = serialize_pack(&pack, &cfg_json);

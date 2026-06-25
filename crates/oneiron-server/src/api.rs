@@ -611,6 +611,9 @@ struct ContextPackRequest {
     /// Maximum entities to retrieve.
     #[serde(default = "default_limit")]
     limit: usize,
+    /// Per-item token cap for context-pack serialization; 0 disables it.
+    #[serde(default, rename = "maxItemTokens", alias = "max_item_tokens")]
+    max_item_tokens: usize,
 }
 
 /// Context pack assembly.
