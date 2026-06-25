@@ -12960,6 +12960,29 @@ fn assert_text_rows_deindexed(vault: &Vault, id: &EntityId) -> Result<()> {
     Ok(())
 }
 
+fn assert_empty_text_corpus_after_deindex(vault: &Vault) -> Result<()> {
+    let rtxn = vault.store.env.read_txn()?;
+    assert!(
+        vault.store.text_postings.iter(&rtxn)?.next().is_none(),
+        "no posting row may survive the stale deindex"
+    );
+    assert!(
+        vault
+            .store
+            .text_bm25_field_stats
+            .iter(&rtxn)?
+            .next()
+            .is_none(),
+        "the zeroed per-field stats row must be deleted, not kept at 0/0"
+    );
+    assert_eq!(
+        vault.store.text_meta.get(&rtxn, &[0u8; 16])?,
+        Some(&0u32.to_le_bytes()[..]),
+        "TOTAL_DOCS must be decremented in the same txn as the overwrite"
+    );
+    Ok(())
+}
+
 /// ONE-1168: a local body-changing re-put without a covering `BatchOp::Text`
 /// must drop the old full-text projection in the same transaction as the
 /// entity overwrite.
@@ -12989,7 +13012,8 @@ fn local_overwrite_changed_body_without_text_drops_stale_text_postings_same_txn(
         vault.search_text("alpha_stale_xyz", 10)?.is_empty(),
         "old body's postings must not match searches after a local overwrite"
     );
-    assert_text_rows_deindexed(&vault, &id)
+    assert_text_rows_deindexed(&vault, &id)?;
+    assert_empty_text_corpus_after_deindex(&vault)
 }
 
 #[test]
@@ -13023,7 +13047,8 @@ fn retract_claim_lifecycle_reput_drops_stale_text_postings() -> Result<()> {
             .is_empty(),
         "Vault::retract_claim must deindex stale postings from its lifecycle re-put"
     );
-    assert_text_rows_deindexed(&vault, &id)
+    assert_text_rows_deindexed(&vault, &id)?;
+    assert_empty_text_corpus_after_deindex(&vault)
 }
 
 #[test]
@@ -13127,6 +13152,11 @@ fn batch_put_text_put_deindexes_text_from_non_final_body() -> Result<()> {
     let (_dir, vault) = open_test_vault();
     let id = EntityId::now();
     let other = EntityId::now();
+    vault.put_entity(&id, 1, test_time_range(0, 0), 0, b"payload-body-v0")?;
+    vault
+        .batch()
+        .text(&id, &[("body", "body_v0_unique_xyz")])
+        .commit()?;
     vault
         .batch()
         .put(&other, 1, test_time_range(1, 1), 1, b"unrelated-payload")
@@ -13142,6 +13172,13 @@ fn batch_put_text_put_deindexes_text_from_non_final_body() -> Result<()> {
 
     let raw = vault.get_raw(&id)?.expect("entity stored");
     assert_eq!(&raw[ENTITY_METADATA_HEADER_LEN..], b"payload-body-v2");
+    assert!(
+        vault
+            .search_text("body_v0_unique_xyz", 10)?
+            .iter()
+            .all(|hit| hit.id != id),
+        "Text rows from the pre-existing body must not retrieve the entity"
+    );
     assert!(
         vault
             .search_text("body_v1_unique_xyz", 10)?
