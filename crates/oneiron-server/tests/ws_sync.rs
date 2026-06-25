@@ -33,6 +33,7 @@ use oneiron::types::ENTITY_TYPE_TURN;
 use oneiron::{EntityId, TimeRange, VaultConfig};
 use oneiron_server::build_app;
 use oneiron_server::config::SyncServerConfig;
+use oneiron_server::error::{ApiError, ApiErrorDetails, ErrorCode};
 use oneiron_server::server::SyncServer;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio_tungstenite::tungstenite::Message;
@@ -224,11 +225,19 @@ fn assert_http_status(response: &str, status: u16) {
     );
 }
 
-fn http_json_body(response: &str) -> serde_json::Value {
-    let (_, body) = response
+fn http_json_body(response: &str) -> &str {
+    response
         .split_once("\r\n\r\n")
-        .expect("HTTP response must contain header/body separator");
-    serde_json::from_str(body).expect("HTTP body must be valid JSON")
+        .map(|(_headers, body)| body)
+        .expect("HTTP response should contain header/body delimiter")
+}
+
+fn http_json_value(response: &str) -> serde_json::Value {
+    serde_json::from_str(http_json_body(response)).expect("HTTP body must be valid JSON")
+}
+
+fn api_error_body(response: &str) -> ApiError {
+    serde_json::from_str(http_json_body(response)).expect("response body should be ApiError JSON")
 }
 
 async fn send_window_vv_request(ws: &mut WsStream, key: &str) {
@@ -360,6 +369,48 @@ async fn http_guarded_route_rejects_when_no_secret_and_not_dev() {
 
     let response = http_get(addr, "/api/search/text?query=hello", None).await;
     assert_http_status(&response, 401);
+    let error = api_error_body(&response);
+    assert_eq!(error.code(), ErrorCode::Unauthorized);
+    assert!(matches!(error.details(), ApiErrorDetails::Unauthorized));
+    assert!(!error.suggestions().is_empty());
+
+    handle.abort();
+}
+
+#[tokio::test]
+async fn http_bad_entity_id_returns_structured_api_error_body() {
+    let dir = tempfile::tempdir().unwrap();
+    let (addr, _server, handle) = spawn_server(
+        open_vault(dir.path()),
+        config_with_secret_and_dev(None, true),
+    )
+    .await;
+
+    let response = http_get(addr, "/api/entity/not-hex", None).await;
+    assert_http_status(&response, 400);
+    let error = api_error_body(&response);
+    assert_eq!(error.code(), ErrorCode::BadRequest);
+    assert_eq!(
+        error.message(),
+        "entity id must be a 32-character hex entity id"
+    );
+    assert!(
+        matches!(error.details(), ApiErrorDetails::BadRequest { field } if field.as_deref() == Some("id"))
+    );
+    assert!(!error.suggestions().is_empty());
+
+    let response = http_get(addr, "/api/edges/not-hex", None).await;
+    assert_http_status(&response, 400);
+    let error = api_error_body(&response);
+    assert_eq!(error.code(), ErrorCode::BadRequest);
+    assert_eq!(
+        error.message(),
+        "entity id must be a 32-character hex entity id"
+    );
+    assert!(
+        matches!(error.details(), ApiErrorDetails::BadRequest { field } if field.as_deref() == Some("id"))
+    );
+    assert!(!error.suggestions().is_empty());
 
     handle.abort();
 }
@@ -375,7 +426,7 @@ async fn http_search_text_response_defaults_to_estimate_meta() {
 
     let response = http_get(addr, "/api/search/text?query=no-such-term", None).await;
     assert_http_status(&response, 200);
-    let body = http_json_body(&response);
+    let body = http_json_value(&response);
 
     assert_eq!(body["items"], serde_json::json!([]));
     assert!(body.get("nextCursor").is_none());
@@ -399,7 +450,7 @@ async fn http_search_text_estimate_counts_before_page_truncation() {
 
     let response = http_get(addr, "/api/search/text?query=metaneedle&limit=2", None).await;
     assert_http_status(&response, 200);
-    let body = http_json_body(&response);
+    let body = http_json_value(&response);
 
     assert_eq!(body["items"].as_array().unwrap().len(), 2);
     assert_eq!(
@@ -429,7 +480,7 @@ async fn http_search_text_count_mode_none_returns_zero_none_meta() {
     )
     .await;
     assert_http_status(&response, 200);
-    let body = http_json_body(&response);
+    let body = http_json_value(&response);
 
     assert_eq!(body["items"], serde_json::json!([]));
     assert_eq!(
@@ -456,7 +507,7 @@ async fn http_search_vector_response_defaults_to_estimate_meta() {
 
     let response = http_get(addr, &path, None).await;
     assert_http_status(&response, 200);
-    let body = http_json_body(&response);
+    let body = http_json_value(&response);
 
     assert_eq!(body["items"], serde_json::json!([]));
     assert_eq!(
@@ -484,7 +535,7 @@ async fn http_search_vector_estimate_counts_before_page_truncation() {
     )
     .await;
     assert_http_status(&response, 200);
-    let body = http_json_body(&response);
+    let body = http_json_value(&response);
 
     assert_eq!(body["items"].as_array().unwrap().len(), 2);
     assert_eq!(

@@ -46,8 +46,8 @@ use crate::store::{
 use crate::types::{
     EDGE_KEY_LEN, ENTITY_ID_LEN, ENTITY_TYPE_CLAIM, ENTITY_TYPE_MODEL, ENTITY_TYPE_REDACTION_AUDIT,
     EdgeActorClass, EdgeConfirmationStatus, EdgeInfo, EdgeKind, EdgeProvenanceFlags,
-    EdgeValueLayout, EntityId, ScoredEntity, TimeRange, Vad, VaultConfig, bytes_to_hex_lower,
-    decode_edge_value_for_kind, edge_value_layout_for_kind,
+    EdgeValueLayout, EntityId, ScoredEntity, StructuralKindRegistration, TimeRange, TypeByteBand,
+    Vad, VaultConfig, bytes_to_hex_lower, decode_edge_value_for_kind, edge_value_layout_for_kind,
 };
 use crate::{
     BatchBuilder, ContextPackBuilder, MaintenanceBuilder, PipelineBuilder, TxnBatchBuilder, bm25,
@@ -452,6 +452,42 @@ impl Vault {
             db_manifest,
             unreadable_fields,
         })
+    }
+
+    /// Registers a vault-scoped pack StructuralKind slot.
+    ///
+    /// The claim is persisted in `vault_meta` under the dynamic kind-registry
+    /// key family and becomes visible to subsequent write validation and
+    /// short-id allocation for this vault. The operation rejects reserved
+    /// Semantic/CORE bytes, bytes outside `band`, maintenance-band bytes, and
+    /// collisions with either static or already-registered runtime entries.
+    pub fn register_structural_kind(
+        &self,
+        type_byte: u8,
+        short_id_prefix: impl Into<String>,
+        band: TypeByteBand,
+        pack: impl Into<String>,
+    ) -> Result<StructuralKindRegistration> {
+        self.store
+            .register_structural_kind(type_byte, short_id_prefix, band, pack)
+    }
+
+    /// Returns the dynamic StructuralKind registration for `type_byte`, if
+    /// this vault has one. Static CORE/semantic/maintenance entries are not
+    /// mirrored here.
+    #[must_use]
+    pub fn structural_kind_registration(
+        &self,
+        type_byte: u8,
+    ) -> Option<StructuralKindRegistration> {
+        self.store.structural_kind_registration(type_byte)
+    }
+
+    /// Returns all vault-scoped dynamic StructuralKind registrations sorted
+    /// by type byte. Static registry entries are intentionally excluded.
+    #[must_use]
+    pub fn structural_kind_registrations(&self) -> Vec<StructuralKindRegistration> {
+        self.store.structural_kind_registrations()
     }
 
     /// Stores an entity blob.
