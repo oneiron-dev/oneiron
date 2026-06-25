@@ -7,7 +7,7 @@ use tower_http::cors::{AllowOrigin, CorsLayer};
 use tracing_subscriber::EnvFilter;
 
 use crate::build_app;
-use crate::cli::VaultArgs;
+use crate::cli::{RevokeArgs, VaultArgs};
 use crate::config::{ServeArgs, ServeConfig, SyncServerConfig, resolve_serve_config};
 use crate::server::SyncServer;
 
@@ -67,16 +67,65 @@ async fn serve_with_config(config: ServeConfig) -> anyhow::Result<()> {
         SyncServer::new(Arc::new(vault), server_config)
             .map_err(|e| anyhow::anyhow!("sync server init failed: {e}"))?,
     );
-
-    let app = build_app(sync_server).layer(cors_layer);
-
     let addr: SocketAddr = format!("{}:{}", config.host, config.port).parse()?;
     tracing::info!(%addr, "listening");
 
     let listener = tokio::net::TcpListener::bind(addr).await?;
-    axum::serve(listener, app).await?;
+    let lifecycle_handle = sync_server.spawn_lifecycle_scheduler();
+    let app = build_app(sync_server).layer(cors_layer);
+    let result = axum::serve(listener, app).await;
+    lifecycle_handle.abort();
+    let _ = lifecycle_handle.await;
+    result?;
 
     Ok(())
+}
+
+pub async fn revoke(args: RevokeArgs) -> anyhow::Result<()> {
+    let client_id = parse_client_id_hex(&args.client)?;
+    let config = resolve_serve_config(&args.serve)?;
+    init_tracing(&config.log_level);
+
+    let dicts = resolve_dict_search_paths(&config.dict_search_paths);
+    if let Some(warning) = dicts.warning {
+        tracing::warn!(dict_paths = ?dicts.paths, "{warning}");
+    }
+    let mut vault_config = config.vault_config();
+    vault_config.dict_search_paths = dicts.paths;
+    ensure_existing_vault_for_revoke(&config.vault_path)?;
+    let vault = oneiron::Vault::open(&config.vault_path, vault_config)
+        .map_err(|e| anyhow::anyhow!("open vault {} failed: {e}", config.vault_path.display()))?;
+    let server = SyncServer::new(Arc::new(vault), config.sync_server_config())
+        .map_err(|e| anyhow::anyhow!("sync server init failed: {e}"))?;
+
+    let revoked = server
+        .revoke_lease(client_id)
+        .await
+        .map_err(|e| anyhow::anyhow!("lease revoke failed: {e}"))?
+        .is_some();
+    println!("{}", serde_json::json!({ "revoked": revoked }));
+    Ok(())
+}
+
+fn ensure_existing_vault_for_revoke(path: &Path) -> anyhow::Result<()> {
+    if !path.join("data.mdb").is_file() {
+        anyhow::bail!(
+            "vault {} does not exist; refusing to create a new vault for revoke",
+            path.display()
+        );
+    }
+    Ok(())
+}
+
+fn parse_client_id_hex(client: &str) -> anyhow::Result<u64> {
+    if client.len() != 16
+        || !client
+            .bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+    {
+        anyhow::bail!("client id must be exactly 16 lowercase hex characters");
+    }
+    u64::from_str_radix(client, 16).map_err(|e| anyhow::anyhow!("parse client id {client:?}: {e}"))
 }
 
 fn open_vault_for_command(args: &VaultArgs) -> anyhow::Result<oneiron::Vault> {
@@ -282,6 +331,116 @@ mod tests {
 
         init(args.clone()).unwrap();
         doctor(args).unwrap();
+    }
+
+    #[tokio::test]
+    async fn revoke_command_refuses_missing_vault_path_without_creating_storage() {
+        let dir = tempfile::tempdir().unwrap();
+        let vault_path = dir.path().join("missing-vault");
+
+        let err = revoke(RevokeArgs {
+            client: "0123456789abcdef".to_string(),
+            serve: ServeArgs {
+                vault_path: Some(vault_path.clone()),
+                dimensions: Some(32),
+                map_size: Some(64 * 1024 * 1024),
+                dict_search_paths: Some(Vec::new()),
+                ..Default::default()
+            },
+        })
+        .await
+        .unwrap_err();
+
+        assert!(
+            err.to_string()
+                .contains("refusing to create a new vault for revoke")
+        );
+        assert!(
+            !vault_path.join("data.mdb").exists(),
+            "bad revoke path must not create LMDB storage"
+        );
+    }
+
+    #[tokio::test]
+    async fn revoke_command_flips_existing_binding_and_preserves_pubkey_floor() {
+        use ed25519_dalek::{Signer, SigningKey};
+        use oneiron::sync::lease::{
+            self, LEASE_DURATION_SECS, LeaseRecord, LeaseStatus, ROOT_LEASES_MAP,
+        };
+
+        let dir = tempfile::tempdir().unwrap();
+        let vault_path = dir.path().join("vault");
+        let mut vault_config = oneiron::VaultConfig::server();
+        vault_config.dimensions = 32;
+        vault_config.map_size = 64 * 1024 * 1024;
+        let vault = Arc::new(oneiron::Vault::open(&vault_path, vault_config.clone()).unwrap());
+        let server = SyncServer::new(vault.clone(), SyncServerConfig::default()).unwrap();
+
+        let client_id = 0x0123_4567_89ab_cdefu64;
+        let signer = SigningKey::from_bytes(&[77u8; 32]);
+        let pubkey = signer.verifying_key().to_bytes();
+        let record = LeaseRecord {
+            vault_id: 0,
+            status: LeaseStatus::Active,
+            pubkey,
+            granted_at: 1_000,
+            renewed_at: 1_000,
+            expires_at: 1_000 + LEASE_DURATION_SECS,
+        };
+        server
+            .root_doc
+            .get_map(ROOT_LEASES_MAP)
+            .insert(
+                lease::client_id_hex(client_id).as_str(),
+                lease::encode_lease_record(&record).as_slice(),
+            )
+            .unwrap();
+        server.root_doc.commit();
+        oneiron::sync::server_state::persist_root_snapshot(&vault, &server.root_doc).unwrap();
+        lease::mirror_leases_from_root(&vault, &server.root_doc).unwrap();
+        drop(server);
+        drop(vault);
+
+        revoke(RevokeArgs {
+            client: lease::client_id_hex(client_id),
+            serve: ServeArgs {
+                vault_path: Some(vault_path.clone()),
+                dimensions: Some(32),
+                map_size: Some(64 * 1024 * 1024),
+                dict_search_paths: Some(Vec::new()),
+                ..Default::default()
+            },
+        })
+        .await
+        .unwrap();
+
+        let vault = Arc::new(oneiron::Vault::open(&vault_path, vault_config).unwrap());
+        let revoked = vault
+            .sync_state_get(&lease::lease_key(0, client_id))
+            .unwrap()
+            .unwrap();
+        assert_eq!(revoked[1], 0x03, "CLI revoke flips status to revoked");
+
+        let server = SyncServer::new(vault.clone(), SyncServerConfig::default()).unwrap();
+        let other_client = 0x1111_2222_3333_4444u64;
+        let pop = signer
+            .sign(&lease::lease_pop_transcript(other_client, &pubkey))
+            .to_bytes();
+        let decision = server
+            .register_lease(other_client, &pubkey, &pop)
+            .await
+            .unwrap();
+        assert!(
+            !decision.granted,
+            "revoked pubkey remains terminal across fresh client ids"
+        );
+        assert!(
+            vault
+                .sync_state_get(&lease::lease_key(0, other_client))
+                .unwrap()
+                .is_none(),
+            "pubkey floor writes no fresh active row"
+        );
     }
 
     #[test]

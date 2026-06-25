@@ -28,10 +28,22 @@ pub struct Cli {
 pub enum Command {
     /// Run the Oneiron sync daemon.
     Serve(Box<ServeArgs>),
+    /// Revoke an existing device lease binding.
+    Revoke(Box<RevokeArgs>),
     /// Create a vault and print its doctor report.
     Init(VaultArgs),
     /// Open a vault and print its doctor report.
     Doctor(VaultArgs),
+}
+
+#[derive(Args, Clone, Debug)]
+pub struct RevokeArgs {
+    /// Client id to revoke, as 16 lowercase hexadecimal characters.
+    #[arg(long)]
+    pub client: String,
+
+    #[command(flatten)]
+    pub serve: ServeArgs,
 }
 
 #[derive(Args, Clone, Debug)]
@@ -65,6 +77,7 @@ pub async fn run() -> anyhow::Result<()> {
 pub async fn run_cli(cli: Cli) -> anyhow::Result<()> {
     match cli.into_command() {
         Command::Serve(args) => commands::serve(*args).await,
+        Command::Revoke(args) => commands::revoke(*args).await,
         Command::Init(args) => commands::init(args),
         Command::Doctor(args) => commands::doctor(args),
     }
@@ -126,6 +139,30 @@ mod tests {
                 ])
             ),
             _ => panic!("expected serve command"),
+        }
+    }
+
+    #[test]
+    fn revoke_accepts_client_and_serve_config_flags() {
+        let cli = Cli::try_parse_from([
+            "oneiron-server",
+            "revoke",
+            "--client",
+            "0123456789abcdef",
+            "--vault-path",
+            "/tmp/oneiron-vault",
+        ])
+        .unwrap();
+
+        match cli.into_command() {
+            Command::Revoke(args) => {
+                assert_eq!(args.client, "0123456789abcdef");
+                assert_eq!(
+                    args.serve.vault_path,
+                    Some(PathBuf::from("/tmp/oneiron-vault"))
+                );
+            }
+            _ => panic!("expected revoke command"),
         }
     }
 }
