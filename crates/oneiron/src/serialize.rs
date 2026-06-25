@@ -361,7 +361,12 @@ fn apply_item_budget(entity: &mut PreparedEntity, max_item_tokens: usize, stats:
         return;
     }
 
-    let Some(field_index) = largest_top_level_string_field(entity) else {
+    if entity.entity_type == ENTITY_TYPE_CLAIM {
+        truncate_claim_value_for_item_budget(entity, max_item_chars, stats);
+        return;
+    }
+
+    let Some(field_index) = largest_truncatable_top_level_string_field(entity) else {
         return;
     };
 
@@ -376,12 +381,50 @@ fn apply_item_budget(entity: &mut PreparedEntity, max_item_tokens: usize, stats:
     stats.items_truncated.count = stats.items_truncated.count.saturating_add(1);
 }
 
-fn largest_top_level_string_field(entity: &PreparedEntity) -> Option<usize> {
+fn truncate_claim_value_for_item_budget(
+    entity: &mut PreparedEntity,
+    max_item_chars: usize,
+    stats: &mut PackStats,
+) {
+    let Some(field_index) = field_index(entity, "val") else {
+        return;
+    };
+
+    let current_chars = estimate_entity_chars(entity);
+    let overflow_chars = current_chars.saturating_sub(max_item_chars);
+    let original_value_chars = estimate_value_chars(&entity.fields[field_index].1);
+
+    match &mut entity.fields[field_index].1 {
+        Value::String(text) => {
+            let original_chars = text.chars().count();
+            let target_text_chars = original_chars.saturating_sub(overflow_chars);
+            *text = truncate_with_item_suffix(text, target_text_chars);
+        }
+        value => {
+            *value = Value::String(truncation_suffix(original_value_chars));
+        }
+    }
+
+    stats.items_truncated.count = stats.items_truncated.count.saturating_add(1);
+}
+
+fn field_index(entity: &PreparedEntity, key: &str) -> Option<usize> {
+    entity
+        .fields
+        .iter()
+        .position(|(field_key, _)| field_key == key)
+}
+
+fn largest_truncatable_top_level_string_field(entity: &PreparedEntity) -> Option<usize> {
     entity
         .fields
         .iter()
         .enumerate()
-        .filter_map(|(index, (_, value))| {
+        .filter_map(|(index, (key, value))| {
+            if key == "pred" {
+                return None;
+            }
+
             let Value::String(text) = value else {
                 return None;
             };
@@ -393,11 +436,15 @@ fn largest_top_level_string_field(entity: &PreparedEntity) -> Option<usize> {
 
 fn truncate_with_item_suffix(text: &str, target_chars: usize) -> String {
     let original_chars = text.chars().count();
-    let suffix = format!("...(truncated, {original_chars} chars total)");
+    let suffix = truncation_suffix(original_chars);
     let suffix_chars = suffix.chars().count();
     let keep = target_chars.saturating_sub(suffix_chars);
     let prefix: String = text.chars().take(keep).collect();
     format!("{prefix}{suffix}")
+}
+
+fn truncation_suffix(original_chars: usize) -> String {
+    format!("...(truncated, {original_chars} chars total)")
 }
 
 fn is_critical_predicate_claim(entity: &PreparedEntity) -> bool {
@@ -1630,6 +1677,15 @@ mod tests {
     }
 
     fn claim_entity(seed: u8, predicate: &str, value: &str, score: f32) -> ContextEntity {
+        claim_entity_with_value(seed, predicate, Value::String(value.to_owned()), score)
+    }
+
+    fn claim_entity_with_value(
+        seed: u8,
+        predicate: &str,
+        value: Value,
+        score: f32,
+    ) -> ContextEntity {
         ContextEntity {
             id: EntityId::from_bytes_unchecked([seed; 16]),
             short_id: format!("cl{seed:02}"),
@@ -1638,7 +1694,7 @@ mod tests {
             score,
             fields: Some(HashMap::from([
                 ("pred".to_owned(), Value::String(predicate.to_owned())),
-                ("val".to_owned(), Value::String(value.to_owned())),
+                ("val".to_owned(), value),
             ])),
             edges: None,
             vector: None,
@@ -2159,6 +2215,65 @@ mod tests {
         assert_ne!(rendered, long_value);
         assert_eq!(parsed["stats"]["truncated"]["count"], 1);
         assert_eq!(parsed["stats"]["truncated"]["reason"], "item_budget");
+    }
+
+    #[test]
+    fn max_item_tokens_preserves_claim_predicate_when_value_is_shorter() {
+        let predicate = format!("note.{}", "predicate".repeat(80));
+        let value = "v".repeat(120);
+        let pack = pack_with_results(vec![claim_entity(1, &predicate, &value, 1.0)]);
+
+        let mut cfg = config(PackFormat::Json);
+        cfg.max_field_chars = 0;
+        cfg.max_item_tokens = 24;
+
+        let parsed: Value =
+            serde_json::from_slice(&serialize_pack(&pack, &cfg)).expect("json parse");
+        let rendered_value = parsed["claims"][0]["val"]
+            .as_str()
+            .expect("truncated string value");
+
+        assert_eq!(
+            parsed["claims"][0]["pred"].as_str(),
+            Some(predicate.as_str())
+        );
+        assert!(rendered_value.ends_with("...(truncated, 120 chars total)"));
+        assert_ne!(rendered_value, value);
+    }
+
+    #[test]
+    fn max_item_tokens_preserves_claim_predicate_for_non_string_value() {
+        let predicate = format!("note.{}", "predicate".repeat(80));
+        let mut object = Map::new();
+        object.insert("summary".to_owned(), Value::String("s".repeat(300)));
+        object.insert("confidence".to_owned(), Value::Number(Number::from(7)));
+        let original_value = Value::Object(object);
+        let original_value_chars = estimate_value_chars(&original_value);
+        let pack = pack_with_results(vec![claim_entity_with_value(
+            1,
+            &predicate,
+            original_value,
+            1.0,
+        )]);
+
+        let mut cfg = config(PackFormat::Json);
+        cfg.max_field_chars = 0;
+        cfg.max_item_tokens = 24;
+
+        let parsed: Value =
+            serde_json::from_slice(&serialize_pack(&pack, &cfg)).expect("json parse");
+        let rendered_value = parsed["claims"][0]["val"]
+            .as_str()
+            .expect("truncated non-string value");
+
+        assert_eq!(
+            parsed["claims"][0]["pred"].as_str(),
+            Some(predicate.as_str())
+        );
+        assert_eq!(
+            rendered_value,
+            format!("...(truncated, {original_value_chars} chars total)")
+        );
     }
 
     #[test]
