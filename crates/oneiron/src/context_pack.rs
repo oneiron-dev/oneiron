@@ -1092,14 +1092,35 @@ mod tests {
         pred: &str,
         val: &str,
     ) -> Result<()> {
-        let body = crate::claim::ClaimBody::new(
+        put_claim_text_entity_with_status(
+            vault,
+            id,
+            text,
+            pred,
+            val,
+            crate::claim::ClaimApprovalStatus::Auto,
+            crate::claim::ClaimLifecycleStatus::Active,
+        )
+    }
+
+    fn put_claim_text_entity_with_status(
+        vault: &Vault,
+        id: &EntityId,
+        text: &str,
+        pred: &str,
+        val: &str,
+        appr: crate::claim::ClaimApprovalStatus,
+        life: crate::claim::ClaimLifecycleStatus,
+    ) -> Result<()> {
+        let mut body = crate::claim::ClaimBody::new(
             pred,
             crate::claim::ClaimSubject::Entity(EntityId::from_bytes([0x7C; 16])?),
             rmpv::Value::from(val),
             0.9,
-            crate::claim::ClaimApprovalStatus::Auto,
-            crate::claim::ClaimLifecycleStatus::Active,
+            appr,
+            life,
         );
+        body.stale = false;
         let payload = crate::claim::encode_claim_body(&body)?;
         vault
             .batch()
@@ -1848,6 +1869,42 @@ mod tests {
         let empty = pack.empty.as_ref().expect("empty context");
         assert_eq!(empty.reason, EmptyReason::FilterMatchedNone);
         assert_eq!(empty.total_in_scope, 3);
+        Ok(())
+    }
+
+    #[test]
+    fn status_suppressed_empty_reports_all_activated() -> Result<()> {
+        let (_dir, vault) = open_test_vault();
+        let superseded = EntityId::from_bytes([0x41; 16])?;
+        let retracted = EntityId::from_bytes([0x42; 16])?;
+        put_claim_text_entity_with_status(
+            &vault,
+            &superseded,
+            "deadneedle",
+            "test.status",
+            "superseded",
+            crate::claim::ClaimApprovalStatus::Auto,
+            crate::claim::ClaimLifecycleStatus::Superseded,
+        )?;
+        put_claim_text_entity_with_status(
+            &vault,
+            &retracted,
+            "deadneedle",
+            "test.status",
+            "retracted",
+            crate::claim::ClaimApprovalStatus::Approved,
+            crate::claim::ClaimLifecycleStatus::Retracted,
+        )?;
+
+        let pack = vault.context_pack().search_text("deadneedle", 10).run()?;
+
+        assert!(pack.results.is_empty());
+        assert!(pack.neighbors.is_empty());
+        assert_eq!(pack.stats.candidates_considered, 2);
+        assert_eq!(pack.stats.claims_suppressed, 2);
+        let empty = pack.empty.as_ref().expect("empty context");
+        assert_eq!(empty.reason, EmptyReason::AllActivated);
+        assert_eq!(empty.total_in_scope, 2);
         Ok(())
     }
 

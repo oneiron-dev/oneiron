@@ -619,7 +619,7 @@ impl<'a> PipelineBuilder<'a> {
                 &mut claim_gate,
             )?;
             if before_status_gate > 0 && scores.is_empty() {
-                empty_reason = Some(EmptyReason::FilterMatchedNone);
+                empty_reason = Some(EmptyReason::AllActivated);
             }
 
             if let Some((explicit_seeds, depth)) = &self.ppr_expand {
