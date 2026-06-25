@@ -919,6 +919,7 @@ struct EdgeOpMeta {
     crdt_key_hash: u64,
     crdt_key_len: u32,
     payload_hash: u64,
+    remat_marker_entity: Option<EntityId>,
 }
 
 impl EdgeOpMeta {
@@ -928,6 +929,10 @@ impl EdgeOpMeta {
             crdt_key_hash,
             crdt_key_len,
             payload_hash: quarantine::payload_hash(payload),
+            remat_marker_entity: quarantine::remat_marker_entity_for_quarantine(
+                QuarantineContainer::Edges,
+                crdt_key,
+            ),
         }
     }
 }
@@ -952,6 +957,9 @@ fn quarantine_edge_apply_failure(
             quarantined_at: crate::unix_seconds_now(),
         },
     )?;
+    if let Some(id) = meta.remat_marker_entity {
+        quarantine::set_remat_marker_in_txn(vault, wtxn, window_key, &id)?;
+    }
     Ok(())
 }
 
