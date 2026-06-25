@@ -212,19 +212,22 @@ pub fn verify_lease_pop(client_id: u64, pubkey: &[u8; 32], pop_sig: &[u8; 64]) -
 ///    `att_pk` → fail = [`Error::ReceiptAttestationInvalid`].
 /// 4. Claimed-row lookup in the CALLER's txn over the v2
 ///    `ls:{vault_id_hex}:{att_client}` keyspace: row absent →
-///    [`Error::ReceiptLeaseUnknown`]; registry pubkey ≠ `att_pk` →
-///    [`Error::ReceiptAttestationInvalid`]; the CLAIMED row's status revoked
-///    → [`Error::ReceiptLeaseRevoked`] (checked FIRST, preserving its
-///    precedence); active | expired → fall through to step 5 (OD-7).
-/// 5. Pubkey-bound revocation FLOOR (OD-8 amended, RULING C). The kill
-///    switch binds to the Ed25519 PUBKEY, not the mintable `att_client`:
-///    scan every row under this vault's `ls:{vault_id_hex}:` prefix and
-///    reject with [`Error::ReceiptLeaseRevoked`] if this signing pubkey
+///    [`Error::ReceiptLeaseUnknown`]; decoded row `vault_id` ≠ caller's
+///    trusted vault scope → local [`Error::CorruptedIndex`]; registry pubkey ≠
+///    `att_pk` → [`Error::ReceiptAttestationInvalid`]; the CLAIMED row's
+///    status revoked → [`Error::ReceiptLeaseRevoked`] (checked FIRST,
+///    preserving its precedence); active | expired → fall through to step 5
+///    (OD-7).
+/// 5. Pubkey-bound revocation FLOOR (OD-8 amended, RULING C; ONE-1190). The
+///    kill switch binds to the Ed25519 PUBKEY, not the mintable `att_client`:
+///    scan every row under the caller's trusted `ls:{vault_id_hex}:` prefix
+///    and reject with [`Error::ReceiptLeaseRevoked`] if this signing pubkey
 ///    appears in any same-vault revoked binding — so a revoked pubkey is
-///    terminal across all client_ids in the same vault, without crossing
-///    tenant prefixes. Runs on BOTH accept arms (active AND expired) and even
-///    on the `att_client`==claimed path, catching a same-key rebind under a
-///    fresh id.
+///    terminal across all client_ids in that vault, while an independently
+///    leased identical key in another vault is not poisoned. Runs on BOTH
+///    accept arms (active AND expired) and even on the `att_client`==claimed
+///    path, catching a same-vault same-key rebind under a fresh id. Tenant
+///    read/write routing remains out of scope for ONE-1192.
 ///
 /// The four remote rejections (attestation-invalid, lease-unknown,
 /// lease-revoked — claimed-row OR pubkey floor) classify as REMOTE via
@@ -296,7 +299,8 @@ pub(crate) fn verify_new_receipt_origin_for_vault_in_txn(
         });
     }
 
-    // Step 5 — pubkey-bound revocation FLOOR (OD-8 amended, RULING C). The
+    // Step 5 — pubkey-bound revocation FLOOR (OD-8 amended, RULING C;
+    // ONE-1190). The
     // kill switch binds to the Ed25519 PUBKEY, not the mintable att_client:
     // a revoked pubkey is terminal across same-vault client_ids, so a device
     // that rotates client_id while reusing its key cannot recover inside that
@@ -309,7 +313,8 @@ pub(crate) fn verify_new_receipt_origin_for_vault_in_txn(
     // expired by scan-at-connect. A malformed sibling ls: row inside this
     // vault prefix is OUR mirror corruption and propagates fail-closed (the
     // `?`), failing this vault's door — never a best-effort skip — without
-    // reading other vaults.
+    // reading other vaults. Tenant read/write scoping remains out of scope
+    // for ONE-1192.
     let floor_prefix = lease_key_prefix(vault_id);
     for entry in vault.store.sync_state.prefix_iter(txn, &floor_prefix)? {
         let (_key, sibling_raw) = entry?;
@@ -813,6 +818,71 @@ mod tests {
         assert!(
             matches!(err, Error::ReceiptLeaseRevoked { client_id } if client_id == expired_client),
             "expired claimed rows still accept OD-7, but same-vault revoked pubkey floor rejects"
+        );
+    }
+
+    #[test]
+    fn revoked_claimed_row_returns_claimed_client_id_before_scoped_floor_scan() {
+        let (_dir, vault) = test_vault();
+        let vault_id = 0x0102_0304_0506_0708;
+        let claimed_client = 0x4545_4545_4545_4545u64;
+        let corrupt_sibling_client = 0x4545_4545_4545_0001u64;
+        let (receipt_id, pubkey, blob) = signed_receipt(0x45, claimed_client);
+
+        put_lease_row(
+            &vault,
+            vault_id,
+            claimed_client,
+            pubkey,
+            LeaseStatus::Revoked,
+        );
+        vault
+            .sync_state_put(&lease_key(vault_id, corrupt_sibling_client), b"too-short")
+            .unwrap();
+
+        let err = verify_receipt_for_vault(&vault, vault_id, &receipt_id, &blob)
+            .expect_err("revoked claimed row must reject before scanning corrupt siblings");
+        assert!(
+            matches!(err, Error::ReceiptLeaseRevoked { client_id } if client_id == claimed_client),
+            "claimed-row revoked path must return the claimed client_id, got: {err:?}"
+        );
+    }
+
+    #[test]
+    fn mismatched_claimed_lease_key_vault_fails_closed_before_floor_scope() {
+        let (_dir, vault) = test_vault();
+        let trusted_vault_id = 0x0102_0304_0506_0708;
+        let payload_vault_id = 0x0807_0605_0403_0201;
+        let claimed_client = 0x4646_4646_4646_4646u64;
+        let revoked_sibling_client = 0x4646_4646_4646_0001u64;
+        let (receipt_id, pubkey, blob) = signed_receipt(0x46, claimed_client);
+        let claimed_record = LeaseRecord {
+            vault_id: payload_vault_id,
+            status: LeaseStatus::Active,
+            pubkey,
+            granted_at: 10,
+            renewed_at: 20,
+            expires_at: 30,
+        };
+        vault
+            .sync_state_put(
+                &lease_key(trusted_vault_id, claimed_client),
+                &encode_lease_record(&claimed_record),
+            )
+            .unwrap();
+        put_lease_row(
+            &vault,
+            trusted_vault_id,
+            revoked_sibling_client,
+            pubkey,
+            LeaseStatus::Revoked,
+        );
+
+        let err = verify_receipt_for_vault(&vault, trusted_vault_id, &receipt_id, &blob)
+            .expect_err("key/payload vault mismatch must not scope the floor to payload vault");
+        assert!(
+            matches!(err, Error::CorruptedIndex("lease record vault_id")),
+            "local lease key/value mismatch must fail closed, got: {err:?}"
         );
     }
 
