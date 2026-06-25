@@ -1353,12 +1353,33 @@ pub struct PackStats {
     pub claims_suppressed: usize,
 }
 
+/// Machine-readable reason an otherwise successful context-pack query surfaced
+/// no entities.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EmptyReason {
+    FilterMatchedNone,
+    NoData,
+    AllActivated,
+    BelowThreshold,
+}
+
+/// Structured context for an empty context-pack response.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EmptyContext {
+    pub reason: EmptyReason,
+    pub total_in_scope: usize,
+    pub hint: String,
+}
+
 /// A fully hydrated context pack ready for serialization or programmatic use.
 #[derive(Debug, Clone)]
 pub struct ContextPack {
     pub results: Vec<ContextEntity>,
     pub neighbors: Vec<ContextEntity>,
     pub stats: PackStats,
+    pub empty: Option<EmptyContext>,
 }
 
 /// Token budget allocation across entity types.
