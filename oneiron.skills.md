@@ -51,15 +51,6 @@ Fetch Tier-1 first. It contains one endpoint block per live route literal and no
   - "what formats does the server support?"
 - safety: Read-only, unauthenticated by design.
 
-#### openapi-schema - `GET /api/openapi.json`
-
-- when-to-use: Fetch the machine-readable OpenAPI document for client generation, route introspection, or schema validation.
-- trigger phrases:
-  - "get the OpenAPI schema"
-  - "generate a client"
-  - "inspect route schemas"
-- safety: Read-only; requires the configured `x-oneiron-secret` header unless the server is explicitly in unauthenticated development mode.
-
 #### core-discover - `GET /api/core/discover`
 
 - when-to-use: Bootstrap an authenticated external agent with vault capability metadata, entity counts, available personas and conversations, predicate namespaces, and bound-context placeholders.
