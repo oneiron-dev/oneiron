@@ -31,6 +31,15 @@ ARCH-0006a/b conversation endpoints are design documents, not live routes in the
 
 Fetch Tier-1 first. It contains one endpoint block per live route literal and no Tier-2 parameters or Tier-3 schemas.
 
+#### openapi-json - `GET /api/openapi.json`
+
+- when-to-use: Fetch the generated OpenAPI document when an HTTP client, SDK generator, or agent needs machine-readable route schemas.
+- trigger phrases:
+  - "show OpenAPI"
+  - "generate client from schema"
+  - "inspect API schema"
+- safety: Read-only; requires the configured `x-oneiron-secret` header unless the server is explicitly in unauthenticated development mode.
+
 #### health - `GET /api/health`
 
 - when-to-use: Check whether the local server is reachable and learn coarse capability, format, and rate-limit metadata without requiring API authentication.
