@@ -924,8 +924,429 @@ fn encode_toon_section(groups: &[(u8, Vec<PreparedEntity>)]) -> String {
         return String::new();
     }
 
-    let value = Value::Object(section_object(groups, false));
-    toon_format::encode_default(&value).unwrap_or_default()
+    let mut out = String::new();
+    write_toon_object(&mut out, &section_object(groups, false), 0);
+    out
+}
+
+fn write_toon_object(out: &mut String, object: &Map<String, Value>, depth: usize) {
+    for (index, (key, value)) in object.iter().enumerate() {
+        if index > 0 {
+            out.push('\n');
+        }
+
+        match value {
+            Value::Array(values) => write_toon_array(out, Some(key), values, depth),
+            Value::Object(nested) => {
+                write_indent(out, depth * 2);
+                write_toon_key(out, key);
+                out.push(':');
+                if !nested.is_empty() {
+                    out.push('\n');
+                    write_toon_object(out, nested, depth + 1);
+                }
+            }
+            _ => {
+                write_indent(out, depth * 2);
+                write_toon_key(out, key);
+                out.push_str(": ");
+                write_toon_primitive(out, value);
+            }
+        }
+    }
+}
+
+fn write_toon_array(out: &mut String, key: Option<&str>, values: &[Value], depth: usize) {
+    if values.is_empty() {
+        write_toon_array_header(out, key, 0, None, depth);
+        return;
+    }
+
+    if let Some(fields) = toon_tabular_fields(values) {
+        write_toon_tabular_array(out, key, values, &fields, depth);
+    } else if values.iter().all(is_toon_primitive) {
+        write_toon_primitive_array(out, key, values, depth);
+    } else {
+        write_toon_nested_array(out, key, values, depth);
+    }
+}
+
+fn write_toon_array_header(
+    out: &mut String,
+    key: Option<&str>,
+    length: usize,
+    fields: Option<&[String]>,
+    depth: usize,
+) {
+    if let Some(key) = key {
+        write_indent(out, depth * 2);
+        write_toon_key(out, key);
+    }
+
+    out.push('[');
+    out.push_str(&length.to_string());
+    out.push(']');
+
+    if let Some(fields) = fields {
+        out.push('{');
+        for (index, field) in fields.iter().enumerate() {
+            if index > 0 {
+                out.push(',');
+            }
+            write_toon_key(out, field);
+        }
+        out.push('}');
+    }
+
+    out.push(':');
+}
+
+fn write_toon_primitive_array(out: &mut String, key: Option<&str>, values: &[Value], depth: usize) {
+    write_toon_array_header(out, key, values.len(), None, depth);
+    out.push(' ');
+
+    for (index, value) in values.iter().enumerate() {
+        if index > 0 {
+            out.push(',');
+        }
+        write_toon_primitive(out, value);
+    }
+}
+
+fn write_toon_tabular_array(
+    out: &mut String,
+    key: Option<&str>,
+    values: &[Value],
+    fields: &[String],
+    depth: usize,
+) {
+    write_toon_array_header(out, key, values.len(), Some(fields), depth);
+    out.push('\n');
+
+    for (row_index, value) in values.iter().enumerate() {
+        let Some(row) = value.as_object() else {
+            continue;
+        };
+
+        write_indent(out, (depth + 1) * 2);
+        for (field_index, field) in fields.iter().enumerate() {
+            if field_index > 0 {
+                out.push(',');
+            }
+
+            if let Some(value) = row.get(field) {
+                write_toon_primitive(out, value);
+            } else {
+                out.push_str("null");
+            }
+        }
+
+        if row_index + 1 < values.len() {
+            out.push('\n');
+        }
+    }
+}
+
+fn write_toon_nested_array(out: &mut String, key: Option<&str>, values: &[Value], depth: usize) {
+    write_toon_array_header(out, key, values.len(), None, depth);
+    out.push('\n');
+
+    for (index, value) in values.iter().enumerate() {
+        write_indent(out, (depth + 1) * 2);
+        out.push('-');
+
+        match value {
+            Value::Array(values) => {
+                out.push(' ');
+                write_toon_array(out, None, values, depth + 1);
+            }
+            Value::Object(object) => write_toon_list_item_object(out, object, depth + 1),
+            _ => {
+                out.push(' ');
+                write_toon_primitive(out, value);
+            }
+        }
+
+        if index + 1 < values.len() {
+            out.push('\n');
+        }
+    }
+}
+
+fn write_toon_list_item_object(out: &mut String, object: &Map<String, Value>, depth: usize) {
+    let mut fields = object.iter();
+    let Some((first_key, first_value)) = fields.next() else {
+        return;
+    };
+
+    out.push(' ');
+    write_toon_list_item_field(out, first_key, first_value, depth, true);
+
+    for (key, value) in fields {
+        out.push('\n');
+        write_indent(out, (depth + 1) * 2);
+        write_toon_list_item_field(out, key, value, depth, false);
+    }
+}
+
+fn write_toon_list_item_field(
+    out: &mut String,
+    key: &str,
+    value: &Value,
+    depth: usize,
+    first_field: bool,
+) {
+    match value {
+        Value::Array(values) => {
+            write_toon_key(out, key);
+            if first_field && let Some(fields) = toon_tabular_fields(values) {
+                write_toon_list_item_tabular_array(out, values, &fields, depth);
+            } else {
+                write_toon_array(out, None, values, depth + 1);
+            }
+        }
+        Value::Object(object) => {
+            write_toon_key(out, key);
+            out.push(':');
+            if !object.is_empty() {
+                out.push('\n');
+                write_toon_object(out, object, depth + 2);
+            }
+        }
+        _ => {
+            write_toon_key(out, key);
+            out.push_str(": ");
+            write_toon_primitive(out, value);
+        }
+    }
+}
+
+fn write_toon_list_item_tabular_array(
+    out: &mut String,
+    values: &[Value],
+    fields: &[String],
+    depth: usize,
+) {
+    out.push('[');
+    out.push_str(&values.len().to_string());
+    out.push_str("]{");
+    for (index, field) in fields.iter().enumerate() {
+        if index > 0 {
+            out.push(',');
+        }
+        write_toon_key(out, field);
+    }
+    out.push_str("}:\n");
+
+    for (row_index, value) in values.iter().enumerate() {
+        let Some(row) = value.as_object() else {
+            continue;
+        };
+
+        write_indent(out, (depth + 2) * 2);
+        for (field_index, field) in fields.iter().enumerate() {
+            if field_index > 0 {
+                out.push(',');
+            }
+
+            if let Some(value) = row.get(field) {
+                write_toon_primitive(out, value);
+            } else {
+                out.push_str("null");
+            }
+        }
+
+        if row_index + 1 < values.len() {
+            out.push('\n');
+        }
+    }
+}
+
+fn toon_tabular_fields(values: &[Value]) -> Option<Vec<String>> {
+    let first = values.first()?.as_object()?;
+    if first.values().any(|value| !is_toon_primitive(value)) {
+        return None;
+    }
+
+    let fields: Vec<String> = first.keys().cloned().collect();
+    for value in values.iter().skip(1) {
+        let row = value.as_object()?;
+        if row.len() != fields.len()
+            || fields.iter().any(|field| !row.contains_key(field))
+            || row.values().any(|value| !is_toon_primitive(value))
+        {
+            return None;
+        }
+    }
+
+    Some(fields)
+}
+
+fn is_toon_primitive(value: &Value) -> bool {
+    matches!(
+        value,
+        Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_)
+    )
+}
+
+fn write_toon_primitive(out: &mut String, value: &Value) {
+    match value {
+        Value::Null => out.push_str("null"),
+        Value::Bool(value) => out.push_str(if *value { "true" } else { "false" }),
+        Value::Number(value) => out.push_str(&format_toon_number(value)),
+        Value::String(value) => write_toon_string(out, value),
+        Value::Array(_) | Value::Object(_) => {}
+    }
+}
+
+fn format_toon_number(number: &Number) -> String {
+    if let Some(value) = number.as_i64() {
+        return value.to_string();
+    }
+    if let Some(value) = number.as_u64() {
+        return value.to_string();
+    }
+    if let Some(value) = number.as_f64() {
+        return format_toon_float(value);
+    }
+    number.to_string()
+}
+
+fn format_toon_float(value: f64) -> String {
+    if value.is_finite() && value.fract() == 0.0 && value.abs() <= i64::MAX as f64 {
+        return (value as i64).to_string();
+    }
+
+    let formatted = value.to_string();
+    if formatted.contains('e') || formatted.contains('E') {
+        format_toon_float_without_exponent(value)
+    } else {
+        trim_toon_float_zeros(&formatted)
+    }
+}
+
+fn format_toon_float_without_exponent(value: f64) -> String {
+    if !value.is_finite() {
+        return "0".to_owned();
+    }
+
+    if value.abs() >= 1.0 {
+        let abs_value = value.abs();
+        let integer = abs_value.trunc();
+        let fraction = abs_value.fract();
+        if fraction == 0.0 {
+            format!("{}{}", if value < 0.0 { "-" } else { "" }, integer as i64)
+        } else {
+            trim_toon_float_zeros(&format!("{value:.17}"))
+        }
+    } else if value == 0.0 {
+        "0".to_owned()
+    } else {
+        trim_toon_float_zeros(&format!("{value:.17}"))
+    }
+}
+
+fn trim_toon_float_zeros(value: &str) -> String {
+    let Some((integer, fraction)) = value.split_once('.') else {
+        return value.to_owned();
+    };
+
+    let fraction = fraction.trim_end_matches('0');
+    if fraction.is_empty() {
+        integer.to_owned()
+    } else {
+        format!("{integer}.{fraction}")
+    }
+}
+
+fn write_toon_key(out: &mut String, value: &str) {
+    if is_valid_unquoted_toon_key(value) {
+        out.push_str(value);
+    } else {
+        write_quoted_toon_string(out, value);
+    }
+}
+
+fn write_toon_string(out: &mut String, value: &str) {
+    if needs_quoted_toon_string(value) {
+        write_quoted_toon_string(out, value);
+    } else {
+        out.push_str(value);
+    }
+}
+
+fn write_quoted_toon_string(out: &mut String, value: &str) {
+    out.push('"');
+    for ch in value.chars() {
+        match ch {
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            _ => out.push(ch),
+        }
+    }
+    out.push('"');
+}
+
+fn is_valid_unquoted_toon_key(value: &str) -> bool {
+    let Some(first) = value.chars().next() else {
+        return false;
+    };
+
+    (first.is_alphabetic() || first == '_')
+        && value
+            .chars()
+            .skip(1)
+            .all(|ch| ch.is_alphanumeric() || ch == '_' || ch == '.')
+}
+
+fn needs_quoted_toon_string(value: &str) -> bool {
+    if value.is_empty() || matches!(value, "null" | "true" | "false") {
+        return true;
+    }
+
+    if is_numeric_like_toon_string(value)
+        || value.chars().any(is_toon_structural_char)
+        || value
+            .chars()
+            .any(|ch| matches!(ch, ',' | '\\' | '"' | '\n' | '\r' | '\t'))
+        || value.chars().next().is_some_and(char::is_whitespace)
+        || value.chars().last().is_some_and(char::is_whitespace)
+        || value.starts_with('-')
+    {
+        return true;
+    }
+
+    value.starts_with('0')
+        && value.len() > 1
+        && value.chars().nth(1).is_some_and(|ch| ch.is_ascii_digit())
+}
+
+fn is_numeric_like_toon_string(value: &str) -> bool {
+    let mut chars = value.chars();
+    let first = match chars.next() {
+        Some('-') => match chars.next() {
+            Some(ch) => ch,
+            None => return false,
+        },
+        Some(ch) => ch,
+        None => return false,
+    };
+
+    if !first.is_ascii_digit() {
+        return false;
+    }
+    if first == '0' && chars.clone().next().is_some_and(|ch| ch.is_ascii_digit()) {
+        return false;
+    }
+
+    chars.all(|ch| ch.is_ascii_digit() || matches!(ch, '.' | 'e' | 'E' | '+' | '-'))
+}
+
+fn is_toon_structural_char(value: char) -> bool {
+    matches!(value, '[' | ']' | '{' | '}' | ':' | '-')
 }
 
 fn write_markdown_groups(out: &mut String, groups: &[(u8, Vec<PreparedEntity>)], level: &str) {
@@ -2018,6 +2439,61 @@ mod tests {
         let bytes = serialize_pack(&pack, &config(PackFormat::Toon));
         let text = String::from_utf8(bytes).expect("utf8");
         assert!(text.contains("claims"));
+    }
+
+    #[test]
+    fn toon_native_encoder_serializes_nested_and_tabular_sections() {
+        let groups = vec![
+            (
+                ENTITY_TYPE_CLAIM,
+                vec![PreparedEntity {
+                    entity_type: ENTITY_TYPE_CLAIM,
+                    score: 0.0,
+                    id: "cl88:f2".to_owned(),
+                    fields: vec![
+                        ("pred".to_owned(), Value::String("goal.learning".to_owned())),
+                        ("val".to_owned(), Value::String("Learn Japanese".to_owned())),
+                        (
+                            "evid".to_owned(),
+                            Value::Array(vec![
+                                Value::String("tn17:a1".to_owned()),
+                                Value::String("tn23:c4".to_owned()),
+                            ]),
+                        ),
+                    ],
+                }],
+            ),
+            (
+                ENTITY_TYPE_TURN,
+                vec![
+                    PreparedEntity {
+                        entity_type: ENTITY_TYPE_TURN,
+                        score: 0.0,
+                        id: "tn17:a1".to_owned(),
+                        fields: vec![
+                            ("spkr".to_owned(), Value::String("user".to_owned())),
+                            ("txt".to_owned(), Value::String("hello, world".to_owned())),
+                        ],
+                    },
+                    PreparedEntity {
+                        entity_type: ENTITY_TYPE_TURN,
+                        score: 0.0,
+                        id: "tn23:c4".to_owned(),
+                        fields: vec![
+                            ("spkr".to_owned(), Value::String("assistant".to_owned())),
+                            ("txt".to_owned(), Value::String("false".to_owned())),
+                        ],
+                    },
+                ],
+            ),
+        ];
+
+        let text = encode_toon_section(&groups);
+
+        assert_eq!(
+            text,
+            "claims[1]:\n  - id: \"cl88:f2\"\n    pred: goal.learning\n    val: Learn Japanese\n    evid[2]: \"tn17:a1\",\"tn23:c4\"\nturns[2]{id,spkr,txt}:\n  \"tn17:a1\",user,\"hello, world\"\n  \"tn23:c4\",assistant,\"false\""
+        );
     }
 
     #[test]

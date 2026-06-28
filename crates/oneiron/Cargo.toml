@@ -24,7 +24,6 @@ rmpv = { workspace = true }
 xxhash-rust = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
-toon-format = { workspace = true }
 sha2 = "0.10"
 icu_normalizer = { version = "2.2", default-features = false, features = ["compiled_data"] }
 icu_casemap = { version = "2.2", default-features = false, features = ["compiled_data"] }
