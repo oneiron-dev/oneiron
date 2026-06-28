@@ -16,8 +16,8 @@ use axum::response::{IntoResponse, Json, Response};
 use axum::routing::{get, post};
 use axum::{Router, middleware};
 use oneiron::{
-    ErrorKind, NotificationItem, ResumeBudget, ResumeBundle, SessionContext, UnprocessedItem, Vad,
-    VadAnnotation, VadAnnotationSource,
+    EdgeKind, ErrorKind, NotificationItem, ResumeBudget, ResumeBundle, SessionContext,
+    UnprocessedItem, Vad, VadAnnotation, VadAnnotationSource,
     types::{ENTITY_TYPE_MESSAGE, ENTITY_TYPE_NOTIFICATION, ENTITY_TYPE_TURN},
 };
 use serde::{Deserialize, Serialize};
@@ -1661,7 +1661,7 @@ impl TurnVadAnnotateResponse {
         ),
         (
             status = 400,
-            description = "Malformed id, invalid target type, or VAD outside the contract ranges.",
+            description = "Malformed id, invalid target type, message outside turn, or VAD outside the contract ranges.",
             body = ApiError,
             content_type = "application/json"
         ),
@@ -1702,6 +1702,7 @@ async fn annotate_turn_vad(
     let stored = if let Some(message_id_hex) = &req.message_id {
         let message_id = parse_entity_id_param(message_id_hex, "message_id")?;
         require_entity_type(&server, &message_id, ENTITY_TYPE_MESSAGE, "message")?;
+        require_message_in_turn(&server, &turn_id, &message_id)?;
         server
             .vault
             .annotate_message_vad(&message_id, annotation)
@@ -1734,7 +1735,7 @@ async fn annotate_turn_vad(
         ),
         (
             status = 400,
-            description = "Malformed id or invalid target type.",
+            description = "Malformed id, invalid target type, or message outside turn.",
             body = ApiError,
             content_type = "application/json"
         ),
@@ -1771,6 +1772,7 @@ async fn read_turn_vad_annotation(
     let annotation = if let Some(message_id_hex) = &params.message_id {
         let message_id = parse_entity_id_param(message_id_hex, "message_id")?;
         require_entity_type(&server, &message_id, ENTITY_TYPE_MESSAGE, "message")?;
+        require_message_in_turn(&server, &turn_id, &message_id)?;
         server
             .vault
             .get_message_vad_annotation(&message_id)
@@ -1819,6 +1821,29 @@ fn require_entity_type(
         Err(error) => {
             tracing::error!(error = %error, "entity type lookup failed");
             Err(ApiError::internal_server_error("entity type lookup failed"))
+        }
+    }
+}
+
+fn require_message_in_turn(
+    server: &SyncServer,
+    turn_id: &oneiron::EntityId,
+    message_id: &oneiron::EntityId,
+) -> Result<(), ApiError> {
+    match server
+        .vault
+        .edge_exists(message_id, EdgeKind::ChildOf, turn_id)
+    {
+        Ok(true) => Ok(()),
+        Ok(false) => Err(ApiError::bad_request(
+            "message_id does not belong to turn_id",
+            Some("message_id"),
+        )),
+        Err(error) => {
+            tracing::error!(error = %error, "message turn relationship lookup failed");
+            Err(ApiError::internal_server_error(
+                "message turn relationship lookup failed",
+            ))
         }
     }
 }
@@ -2427,6 +2452,10 @@ mod tests {
                 &message_body,
             )
             .expect("put message");
+        server
+            .vault
+            .put_edge(&message, oneiron::EdgeKind::ChildOf, &turn, 1.0)
+            .expect("link message to turn");
 
         let response = api_routes(server.clone())
             .oneshot(
@@ -2525,6 +2554,131 @@ mod tests {
                 .source,
             oneiron::VadAnnotationSource::UserSelfReport
         );
+    }
+
+    #[tokio::test]
+    async fn turn_vad_annotate_route_rejects_message_outside_supplied_turn() {
+        let (_dir, server) = test_server();
+        let requested_turn = oneiron::EntityId::now();
+        let actual_turn = oneiron::EntityId::now();
+        let message = oneiron::EntityId::now();
+        let body = rmp_serde::to_vec_named(&json!({"txt": "affect"})).expect("encode body");
+
+        server
+            .vault
+            .put_entity(
+                &requested_turn,
+                ENTITY_TYPE_TURN,
+                oneiron::TimeRange {
+                    start: 100,
+                    end: 100,
+                },
+                100,
+                &body,
+            )
+            .expect("put requested turn");
+        server
+            .vault
+            .put_entity(
+                &actual_turn,
+                ENTITY_TYPE_TURN,
+                oneiron::TimeRange {
+                    start: 101,
+                    end: 101,
+                },
+                101,
+                &body,
+            )
+            .expect("put actual turn");
+        server
+            .vault
+            .put_entity(
+                &message,
+                ENTITY_TYPE_MESSAGE,
+                oneiron::TimeRange {
+                    start: 102,
+                    end: 102,
+                },
+                102,
+                &body,
+            )
+            .expect("put message");
+        server
+            .vault
+            .put_edge(&message, oneiron::EdgeKind::ChildOf, &actual_turn, 1.0)
+            .expect("link message to different turn");
+
+        let response = api_routes(server.clone())
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/core/turns/annotate")
+                    .header(CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        json!({
+                            "turn_id": requested_turn.to_hex(),
+                            "message_id": message.to_hex(),
+                            "source": "model_inference",
+                            "vad": {
+                                "valence": 0.1,
+                                "arousal": 0.2,
+                                "dominance": 0.3,
+                            },
+                            "annotated_at": 250_u64,
+                        })
+                        .to_string(),
+                    ))
+                    .expect("request"),
+            )
+            .await
+            .expect("route response");
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        let body = to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("mismatch response body");
+        let body: Value = serde_json::from_slice(&body).expect("ApiError JSON body");
+        assert_eq!(body["code"], Value::from("BAD_REQUEST"));
+        assert_eq!(body["details"]["field"], Value::from("message_id"));
+        assert_eq!(
+            server.vault.get_message_vad_annotation(&message).unwrap(),
+            None
+        );
+
+        let seeded = oneiron::VadAnnotation::new(
+            oneiron::Vad {
+                valence: 0.1,
+                arousal: 0.2,
+                dominance: 0.3,
+            },
+            oneiron::VadAnnotationSource::ModelInference,
+            251,
+        )
+        .expect("annotation");
+        server
+            .vault
+            .annotate_message_vad(&message, seeded)
+            .expect("seed message annotation");
+
+        let response = api_routes(server.clone())
+            .oneshot(
+                Request::builder()
+                    .uri(format!(
+                        "/v1/core/turns/annotate?turn_id={}&message_id={}",
+                        requested_turn.to_hex(),
+                        message.to_hex()
+                    ))
+                    .body(Body::empty())
+                    .expect("request"),
+            )
+            .await
+            .expect("route response");
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        let body = to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("mismatch read response body");
+        let body: Value = serde_json::from_slice(&body).expect("ApiError JSON body");
+        assert_eq!(body["code"], Value::from("BAD_REQUEST"));
+        assert_eq!(body["details"]["field"], Value::from("message_id"));
     }
 
     #[tokio::test]

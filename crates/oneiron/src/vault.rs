@@ -7,7 +7,6 @@ use std::path::Path;
 use heed::Database;
 use heed::types::Bytes;
 use serde::Serialize;
-use serde_json::{Map, Value};
 use uuid::Uuid;
 
 use crate::analyzer::{AnalyzerChannel, AnalyzerManifest, AnalyzerMode, MultilingualAnalyzer};
@@ -97,7 +96,8 @@ const MAX_SUBTREE_RESULTS: usize = 50_000;
 #[cfg(feature = "sync")]
 const MAX_SYNC_STATE_KEYS: usize = 10_000;
 
-const VAD_ANNOTATION_BODY_FIELD: &str = "vad_annotation";
+const VAD_ANNOTATION_META_KEY_PREFIX: &[u8] = b"vad_ann:";
+const VAD_ANNOTATION_META_KEY_LEN: usize = VAD_ANNOTATION_META_KEY_PREFIX.len() + 1 + ENTITY_ID_LEN;
 
 /// Build an edge prefix `[entity_id | kind]` for targeted LMDB prefix scans.
 /// Avoids scanning all edge kinds for a given entity.
@@ -123,6 +123,26 @@ fn entity_id_from_type_index_key(key: &[u8]) -> Result<EntityId> {
             .map_err(|_| Error::CorruptedIndex("type index key"))?,
     )
     .map_err(|_| Error::CorruptedIndex("type index key"))
+}
+
+fn vad_annotation_meta_key(entity_type: u8, id: &EntityId) -> [u8; VAD_ANNOTATION_META_KEY_LEN] {
+    let mut key = [0_u8; VAD_ANNOTATION_META_KEY_LEN];
+    key[..VAD_ANNOTATION_META_KEY_PREFIX.len()].copy_from_slice(VAD_ANNOTATION_META_KEY_PREFIX);
+    key[VAD_ANNOTATION_META_KEY_PREFIX.len()] = entity_type;
+    key[VAD_ANNOTATION_META_KEY_PREFIX.len() + 1..].copy_from_slice(id.as_bytes());
+    key
+}
+
+fn delete_vad_annotation_metadata_in_txn(
+    store: &Store,
+    wtxn: &mut heed::RwTxn<'_>,
+    id: &EntityId,
+) -> Result<()> {
+    for entity_type in [ENTITY_TYPE_TURN, ENTITY_TYPE_MESSAGE] {
+        let key = vad_annotation_meta_key(entity_type, id);
+        store.vault_meta.delete(wtxn, &key)?;
+    }
+    Ok(())
 }
 
 /// Returns the first outbound ChildOf parent for `node`, or `None` if it has
@@ -508,7 +528,7 @@ impl Vault {
             .commit()
     }
 
-    /// Writes or replaces the VAD annotation metadata on a TURN entity body.
+    /// Writes or replaces the VAD annotation metadata for a TURN entity.
     pub fn annotate_turn_vad(
         &self,
         turn_id: &EntityId,
@@ -517,12 +537,12 @@ impl Vault {
         self.annotate_entity_vad(turn_id, ENTITY_TYPE_TURN, annotation)
     }
 
-    /// Reads the VAD annotation metadata from a TURN entity body.
+    /// Reads the VAD annotation metadata for a TURN entity.
     pub fn get_turn_vad_annotation(&self, turn_id: &EntityId) -> Result<Option<VadAnnotation>> {
         self.get_entity_vad_annotation(turn_id, ENTITY_TYPE_TURN)
     }
 
-    /// Writes or replaces the VAD annotation metadata on a MESSAGE entity body.
+    /// Writes or replaces the VAD annotation metadata for a MESSAGE entity.
     pub fn annotate_message_vad(
         &self,
         message_id: &EntityId,
@@ -531,7 +551,7 @@ impl Vault {
         self.annotate_entity_vad(message_id, ENTITY_TYPE_MESSAGE, annotation)
     }
 
-    /// Reads the VAD annotation metadata from a MESSAGE entity body.
+    /// Reads the VAD annotation metadata for a MESSAGE entity.
     pub fn get_message_vad_annotation(
         &self,
         message_id: &EntityId,
@@ -559,34 +579,10 @@ impl Vault {
             return Err(Error::InvalidEntityType(header.entity_type));
         }
 
-        let mut body = decode_vad_metadata_body(&raw[ENTITY_METADATA_HEADER_LEN..])?;
-        body.insert(
-            VAD_ANNOTATION_BODY_FIELD.to_owned(),
-            serde_json::to_value(annotation)
-                .map_err(|_| Error::InvariantViolation("VAD annotation JSON encode failed"))?,
-        );
-        let data = rmp_serde::to_vec_named(&body).map_err(|_| {
-            Error::InvariantViolation("VAD annotation entity body MessagePack encode failed")
-        })?;
-
-        apply_ops(
-            &self.store,
-            &self.config,
-            &self.analyzer,
-            &mut wtxn,
-            vec![BatchOp::Put {
-                id: *id,
-                entity_type: expected_type,
-                occurred: TimeRange {
-                    start: header.occurred_start,
-                    end: header.occurred_end,
-                },
-                learned_at: annotation.annotated_at,
-                data,
-                allow_maintenance: false,
-                allow_reserved_predicate: false,
-            }],
-        )?;
+        let data = rmp_serde::to_vec_named(&annotation)
+            .map_err(|_| Error::InvariantViolation("VAD annotation MessagePack encode failed"))?;
+        let key = vad_annotation_meta_key(expected_type, id);
+        self.store.vault_meta.put(&mut wtxn, &key, &data)?;
         wtxn.commit()?;
         Ok(annotation)
     }
@@ -605,7 +601,14 @@ impl Vault {
         if header.entity_type != expected_type {
             return Err(Error::InvalidEntityType(header.entity_type));
         }
-        read_vad_annotation_from_body(&raw[ENTITY_METADATA_HEADER_LEN..])
+        let key = vad_annotation_meta_key(expected_type, id);
+        let Some(raw) = self.store.vault_meta.get(&rtxn, &key)? else {
+            return Ok(None);
+        };
+        let annotation: VadAnnotation =
+            rmp_serde::from_slice(raw).map_err(|_| Error::CorruptedIndex("VAD annotation"))?;
+        annotation.vad.validate()?;
+        Ok(Some(annotation))
     }
 
     /// Writes a typed CLAIM (type 0) entity with full structural validation
@@ -2002,6 +2005,7 @@ impl Vault {
     ) -> Result<bool> {
         let (existed, had_vector, had_graph_mutation, neighbors) =
             deindex_entity(&self.store, wtxn, id)?;
+        delete_vad_annotation_metadata_in_txn(&self.store, wtxn, id)?;
         ppr::invalidate_ppr_for_delete(&self.store, wtxn, id, &neighbors)?;
         if had_graph_mutation {
             ppr::increment_graph_version(&self.store, wtxn)?;
@@ -2019,6 +2023,7 @@ impl Vault {
     ) -> Result<(bool, bool)> {
         bm25::deindex_text(&self.store, wtxn, id)?;
         delete_from_phonetic_postings(&self.store, wtxn, id)?;
+        delete_vad_annotation_metadata_in_txn(&self.store, wtxn, id)?;
         let had_vector = self.store.vectors.delete(wtxn, id.as_bytes())?;
         crate::hnsw::hnsw_deindex(&self.store, wtxn, id)?;
 
@@ -4152,29 +4157,6 @@ fn closed_claim_put_payload(
     let data = encode_claim_body(&wrapper)?;
     validate_claim_body_bytes(&data, true)?;
     Ok((occurred, claim.learned_at, data))
-}
-
-fn decode_vad_metadata_body(body: &[u8]) -> Result<Map<String, Value>> {
-    if body.is_empty() {
-        return Ok(Map::new());
-    }
-
-    match rmp_serde::from_slice::<Value>(body) {
-        Ok(Value::Object(object)) => Ok(object),
-        Ok(_) => Err(Error::CorruptedIndex("VAD annotation entity body")),
-        Err(_) => Err(Error::CorruptedIndex("VAD annotation entity body")),
-    }
-}
-
-fn read_vad_annotation_from_body(body: &[u8]) -> Result<Option<VadAnnotation>> {
-    let object = decode_vad_metadata_body(body)?;
-    let Some(value) = object.get(VAD_ANNOTATION_BODY_FIELD) else {
-        return Ok(None);
-    };
-    let annotation: VadAnnotation = serde_json::from_value(value.clone())
-        .map_err(|_| Error::CorruptedIndex("VAD annotation"))?;
-    annotation.vad.validate()?;
-    Ok(Some(annotation))
 }
 
 /// Parses one `edges_out` / `edges_in` row into an [`EdgeInfo`], failing

@@ -6487,6 +6487,14 @@ fn turn_vad_annotation_persists_supported_sources() -> Result<()> {
         100,
         &body,
     )?;
+    vault
+        .batch()
+        .text(&turn, &[("body", "turnlevel_affect_unique")])
+        .commit()?;
+    let raw_before = vault.get_raw(&turn)?.expect("turn raw body");
+    let text_forward_before = text_forward_row(&vault, &turn)?;
+    assert_eq!(vault.get_learned_at(&turn)?, 100);
+    assert_eq!(vault.search_text("turnlevel_affect_unique", 10)?.len(), 1);
 
     let model_annotation = VadAnnotation::new(
         Vad {
@@ -6505,14 +6513,14 @@ fn turn_vad_annotation_persists_supported_sources() -> Result<()> {
         vault.get_turn_vad_annotation(&turn)?,
         Some(model_annotation)
     );
-
-    let raw = vault.get_raw(&turn)?.expect("turn raw body");
-    let decoded: serde_json::Value =
-        rmp_serde::from_slice(&raw[ENTITY_METADATA_HEADER_LEN..]).expect("decode turn body");
     assert_eq!(
-        decoded["vad_annotation"]["source"],
-        serde_json::Value::from(VadAnnotationSource::ModelInference.as_str())
+        vault.get_raw(&turn)?.as_deref(),
+        Some(raw_before.as_slice()),
+        "annotation must not rewrite the turn entity body/header"
     );
+    assert_eq!(vault.get_learned_at(&turn)?, 100);
+    assert_eq!(text_forward_row(&vault, &turn)?, text_forward_before);
+    assert_eq!(vault.search_text("turnlevel_affect_unique", 10)?.len(), 1);
 
     let report_annotation = VadAnnotation::new(
         Vad {
@@ -6525,13 +6533,14 @@ fn turn_vad_annotation_persists_supported_sources() -> Result<()> {
     )?;
     vault.annotate_turn_vad(&turn, report_annotation)?;
 
-    let raw = vault.get_raw(&turn)?.expect("turn raw body");
-    let decoded: serde_json::Value =
-        rmp_serde::from_slice(&raw[ENTITY_METADATA_HEADER_LEN..]).expect("decode turn body");
     assert_eq!(
-        decoded["vad_annotation"]["source"],
-        serde_json::Value::from(VadAnnotationSource::UserSelfReport.as_str())
+        vault.get_raw(&turn)?.as_deref(),
+        Some(raw_before.as_slice()),
+        "annotation replacement must not rewrite the turn entity body/header"
     );
+    assert_eq!(vault.get_learned_at(&turn)?, 100);
+    assert_eq!(text_forward_row(&vault, &turn)?, text_forward_before);
+    assert_eq!(vault.search_text("turnlevel_affect_unique", 10)?.len(), 1);
     assert_eq!(
         vault.get_turn_vad_annotation(&turn)?,
         Some(report_annotation)
@@ -6556,6 +6565,7 @@ fn message_vad_annotation_round_trip() -> Result<()> {
         110,
         &body,
     )?;
+    let raw_before = vault.get_raw(&message)?.expect("message raw body");
 
     let annotation = VadAnnotation::new(
         Vad {
@@ -6575,6 +6585,12 @@ fn message_vad_annotation_round_trip() -> Result<()> {
         vault.get_message_vad_annotation(&message)?,
         Some(annotation)
     );
+    assert_eq!(
+        vault.get_raw(&message)?.as_deref(),
+        Some(raw_before.as_slice()),
+        "annotation must not rewrite the message entity body/header"
+    );
+    assert_eq!(vault.get_learned_at(&message)?, 110);
     assert_eq!(
         vault
             .get_turn_vad_annotation(&message)

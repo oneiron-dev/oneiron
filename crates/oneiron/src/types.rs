@@ -1240,7 +1240,7 @@ impl VadAnnotationSource {
     }
 }
 
-/// Persisted VAD metadata attached to a TURN or MESSAGE entity body.
+/// Persisted VAD metadata attached to a TURN or MESSAGE entity.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct VadAnnotation {
     pub vad: Vad,
