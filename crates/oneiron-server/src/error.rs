@@ -17,6 +17,8 @@ pub enum ErrorCode {
     Unauthorized,
     #[serde(rename = "NOT_FOUND")]
     NotFound,
+    #[serde(rename = "NOT_IMPLEMENTED")]
+    NotImplemented,
     #[serde(rename = "INTERNAL_SERVER_ERROR")]
     InternalServerError,
     #[serde(rename = "STALE_EPOCH")]
@@ -57,6 +59,7 @@ impl ErrorCode {
         Self::BadRequest,
         Self::Unauthorized,
         Self::NotFound,
+        Self::NotImplemented,
         Self::InternalServerError,
         Self::StaleEpoch,
         Self::IdempotencyReplayConflict,
@@ -80,6 +83,7 @@ impl ErrorCode {
             Self::BadRequest => "BAD_REQUEST",
             Self::Unauthorized => "UNAUTHORIZED",
             Self::NotFound => "NOT_FOUND",
+            Self::NotImplemented => "NOT_IMPLEMENTED",
             Self::InternalServerError => "INTERNAL_SERVER_ERROR",
             Self::StaleEpoch => "STALE_EPOCH",
             Self::IdempotencyReplayConflict => "IDEMPOTENCY_REPLAY_CONFLICT",
@@ -108,6 +112,7 @@ impl ErrorCode {
             | Self::CrdtVersionMismatch => StatusCode::BAD_REQUEST,
             Self::Unauthorized | Self::CrdtAuthExpired => StatusCode::UNAUTHORIZED,
             Self::NotFound => StatusCode::NOT_FOUND,
+            Self::NotImplemented => StatusCode::NOT_IMPLEMENTED,
             Self::InternalServerError => StatusCode::INTERNAL_SERVER_ERROR,
             Self::StaleEpoch
             | Self::IdempotencyReplayConflict
@@ -136,6 +141,8 @@ pub enum ApiErrorDetails {
         resource: String,
         id: Option<String>,
     },
+    #[serde(rename = "NOT_IMPLEMENTED")]
+    NotImplemented,
     #[serde(rename = "INTERNAL_SERVER_ERROR")]
     InternalServerError,
     #[serde(rename = "STALE_EPOCH", rename_all = "camelCase")]
@@ -192,6 +199,7 @@ impl ApiErrorDetails {
             Self::BadRequest { .. } => ErrorCode::BadRequest,
             Self::Unauthorized => ErrorCode::Unauthorized,
             Self::NotFound { .. } => ErrorCode::NotFound,
+            Self::NotImplemented => ErrorCode::NotImplemented,
             Self::InternalServerError => ErrorCode::InternalServerError,
             Self::StaleEpoch { .. } => ErrorCode::StaleEpoch,
             Self::IdempotencyReplayConflict { .. } => ErrorCode::IdempotencyReplayConflict,
@@ -267,6 +275,15 @@ impl ApiError {
                 id: id.map(str::to_owned),
             },
             ["Verify the identifier and retry."],
+        )
+    }
+
+    pub fn not_implemented(feature: impl Into<String>) -> Self {
+        let feature = feature.into();
+        Self::new(
+            format!("{feature} is not implemented"),
+            ApiErrorDetails::NotImplemented,
+            ["Do not treat this response as a successful context pack."],
         )
     }
 
@@ -493,6 +510,7 @@ fn detail_schema_for_code(code: ErrorCode) -> Value {
             optional_integer(&mut properties, "receivedVersion");
         }
         ErrorCode::Unauthorized
+        | ErrorCode::NotImplemented
         | ErrorCode::InternalServerError
         | ErrorCode::CrdtAuthExpired
         | ErrorCode::CrdtDecodeError
