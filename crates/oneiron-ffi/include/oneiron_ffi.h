@@ -219,6 +219,18 @@ enum OneironStatus oneiron_vault_open(const uint8_t *path_ptr,
 enum OneironStatus oneiron_vault_free(struct OneironVault *vault);
 
 /**
+ * Return a UTF-8 JSON doctor report for an opened vault.
+ *
+ * The report is read-only and mirrors `Vault::doctor()`: it observes the
+ * persisted compatibility metadata consumed by open-time storage ABI gates
+ * without repairing, rebuilding, or changing on-disk layout. On success,
+ * `out_buffer` receives Rust-owned bytes that must be released with
+ * `oneiron_buffer_free`.
+ */
+enum OneironStatus oneiron_vault_health_json(struct OneironVault *vault,
+                                             struct OneironBuffer *out_buffer);
+
+/**
  * Store an entity blob.
  */
 enum OneironStatus oneiron_vault_put_entity(struct OneironVault *vault,
