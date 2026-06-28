@@ -33,7 +33,7 @@ use rmpv::Value;
 
 use crate::error::{Error, Result};
 use crate::store::Store;
-use crate::types::{ENTITY_ID_LEN, ENTITY_TYPE_REGISTRY, EdgeKind, EntityClassification, EntityId};
+use crate::types::{ENTITY_ID_LEN, EdgeKind, EntityId};
 
 // Test-only MessagePack decode counter: AC 9 of the D19 unit pins "body
 // decoded ONCE per result for gate + projection" — tests assert exact
@@ -189,7 +189,7 @@ impl ClaimSource {
         }
     }
 
-    fn parse(value: &str) -> Option<Self> {
+    pub(crate) fn parse(value: &str) -> Option<Self> {
         match value {
             "user_stated" => Some(Self::UserStated),
             "observed" => Some(Self::Observed),
@@ -206,23 +206,23 @@ impl ClaimSource {
     }
 }
 
+#[cfg(test)]
 const SOURCE_TRUST_MANIFEST_MARKER_KEY: &str = "manifest";
-const SOURCE_TRUST_MANIFEST_KIND_KEY: &str = "kind";
-const SOURCE_TRUST_MANIFEST_MARKER: &str = "dec_0005_predicate_pack";
-const SOURCE_TRUST_MANIFEST_KIND: &str = "dec_0005_predicate_pack_manifest";
-const SOURCE_TRUST_KEY: &str = "source_trust";
-const SOURCE_TRUST_MAX_AUTO_SENSITIVITY_KEY: &str = "max_auto_sensitivity";
-const SOURCE_TRUST_AUTO_KEY: &str = "auto";
-const SOURCE_TRUST_RECEIPTED_KEY: &str = "receipted";
-const SOURCE_TRUST_WARNED_KEY: &str = "warned";
+pub(crate) const SOURCE_TRUST_MANIFEST_MARKER: &str = "dec_0005_predicate_pack";
+pub(crate) const SOURCE_TRUST_MANIFEST_KIND: &str = "dec_0005_predicate_pack_manifest";
+pub(crate) const SOURCE_TRUST_KEY: &str = "source_trust";
+pub(crate) const SOURCE_TRUST_MAX_AUTO_SENSITIVITY_KEY: &str = "max_auto_sensitivity";
+pub(crate) const SOURCE_TRUST_AUTO_KEY: &str = "auto";
+pub(crate) const SOURCE_TRUST_RECEIPTED_KEY: &str = "receipted";
+pub(crate) const SOURCE_TRUST_WARNED_KEY: &str = "warned";
 const CLAIM_SCOPE_SENSITIVITY_KEY: &str = "sensitivity";
 const DEFAULT_CLAIM_SENSITIVITY_BAND: u8 = 0;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct SourceTrustRow {
-    max_auto_sensitivity: Option<u8>,
-    receipted: bool,
-    warned: bool,
+pub(crate) struct SourceTrustRow {
+    pub(crate) max_auto_sensitivity: Option<u8>,
+    pub(crate) receipted: bool,
+    pub(crate) warned: bool,
 }
 
 impl SourceTrustRow {
@@ -255,14 +255,11 @@ pub(crate) struct SourceTrustCeiling {
 }
 
 impl SourceTrustCeiling {
-    fn malformed() -> Self {
-        Self {
-            malformed_manifest_seen: true,
-            ..Self::default()
-        }
+    pub(crate) fn mark_malformed(&mut self) {
+        self.malformed_manifest_seen = true;
     }
 
-    fn row(&self, source: ClaimSource) -> Option<SourceTrustRow> {
+    pub(crate) fn row(&self, source: ClaimSource) -> Option<SourceTrustRow> {
         match source {
             ClaimSource::UserStated => self.user_stated,
             ClaimSource::Observed => self.observed,
@@ -273,7 +270,7 @@ impl SourceTrustCeiling {
         }
     }
 
-    fn set_row(&mut self, source: ClaimSource, row: SourceTrustRow) {
+    pub(crate) fn set_row(&mut self, source: ClaimSource, row: SourceTrustRow) {
         let slot = match source {
             ClaimSource::UserStated => &mut self.user_stated,
             ClaimSource::Observed => &mut self.observed,
@@ -285,7 +282,7 @@ impl SourceTrustCeiling {
         *slot = Some(slot.map_or(row, |existing| existing.merge(row)));
     }
 
-    fn merge(&mut self, other: Self) {
+    pub(crate) fn merge(&mut self, other: Self) {
         self.malformed_manifest_seen |= other.malformed_manifest_seen;
         for source in [
             ClaimSource::UserStated,
@@ -302,64 +299,15 @@ impl SourceTrustCeiling {
     }
 }
 
-/// Reads the vault-resident DEC-0005 source-trust ceiling from PACK entities.
-///
-/// Shape assumption, kept intentionally small until the DEC-0005 reader is
-/// finalized: a PACK entity whose MessagePack body has
-/// `manifest = "dec_0005_predicate_pack"` or
-/// `kind = "dec_0005_predicate_pack_manifest"` may carry a `source_trust`
-/// map keyed by the pinned [`ClaimSource`] strings. Multiple manifest rows
-/// compose with most-restrictive-wins. Absence is not malformed; a malformed
-/// marked manifest fails closed at the claim gate.
+/// Reads the vault-resident DEC-0005 source-trust ceiling from PACK policy
+/// manifests. Multiple manifest rows compose with most-restrictive-wins.
+/// Absence preserves the legacy source defaults; malformed marked manifests
+/// fail closed at the claim gate.
 pub(crate) fn read_source_trust_ceiling(
     store: &Store,
     txn: &heed::RwTxn<'_>,
 ) -> Result<SourceTrustCeiling> {
-    let mut ceiling = SourceTrustCeiling::default();
-
-    for entry in ENTITY_TYPE_REGISTRY
-        .iter()
-        .filter(|entry| entry.classification == EntityClassification::Pack)
-    {
-        for index_entry in store.type_index.prefix_iter(txn, &[entry.type_byte])? {
-            let (key, _) = index_entry?;
-            if key.len() != 17 {
-                ceiling.merge(SourceTrustCeiling::malformed());
-                continue;
-            }
-            let id = match EntityId::from_bytes(
-                key[1..17]
-                    .try_into()
-                    .map_err(|_| Error::CorruptedIndex("source trust type index key"))?,
-            ) {
-                Ok(id) => id,
-                Err(_) => {
-                    ceiling.merge(SourceTrustCeiling::malformed());
-                    continue;
-                }
-            };
-            let Some(raw) = store.entities.get(txn, id.as_bytes())? else {
-                ceiling.merge(SourceTrustCeiling::malformed());
-                continue;
-            };
-            let Some(header) = crate::batch::EntityMetadataHeader::parse(raw) else {
-                ceiling.merge(SourceTrustCeiling::malformed());
-                continue;
-            };
-            if header.entity_type != entry.type_byte {
-                ceiling.merge(SourceTrustCeiling::malformed());
-                continue;
-            }
-
-            if let Some(partial) =
-                decode_source_trust_manifest(&raw[crate::batch::ENTITY_METADATA_HEADER_LEN..])
-            {
-                ceiling.merge(partial);
-            }
-        }
-    }
-
-    Ok(ceiling)
+    Ok(crate::gate::PolicyManifestResolver::load_from_store(store, txn)?.source_trust_ceiling())
 }
 
 pub(crate) fn check_claim_source_trust(
@@ -426,74 +374,6 @@ pub(crate) fn check_source_trust(
     Ok(())
 }
 
-fn decode_source_trust_manifest(data: &[u8]) -> Option<SourceTrustCeiling> {
-    let mut cursor = Cursor::new(data);
-    let value = rmpv::decode::read_value(&mut cursor).ok()?;
-    if cursor.position() != data.len() as u64 {
-        return None;
-    }
-    let Value::Map(entries) = value else {
-        return None;
-    };
-    match source_trust_manifest_mark(&entries) {
-        ManifestMark::Absent => return None,
-        ManifestMark::Malformed => return Some(SourceTrustCeiling::malformed()),
-        ManifestMark::Marked => {}
-    }
-
-    let source_trust = match single_map_value(&entries, SOURCE_TRUST_KEY) {
-        MapValue::Missing => return Some(SourceTrustCeiling::default()),
-        MapValue::Duplicate => return Some(SourceTrustCeiling::malformed()),
-        MapValue::Present(value) => value,
-    };
-    let Value::Map(source_rows) = source_trust else {
-        return Some(SourceTrustCeiling::malformed());
-    };
-
-    let mut ceiling = SourceTrustCeiling::default();
-    for (source_key, row_value) in source_rows {
-        let Some(source) = source_key.as_str().and_then(ClaimSource::parse) else {
-            return Some(SourceTrustCeiling::malformed());
-        };
-        let Some(row) = parse_source_trust_row(row_value) else {
-            return Some(SourceTrustCeiling::malformed());
-        };
-        ceiling.set_row(source, row);
-    }
-    Some(ceiling)
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum ManifestMark {
-    Absent,
-    Marked,
-    Malformed,
-}
-
-fn source_trust_manifest_mark(entries: &[(Value, Value)]) -> ManifestMark {
-    match single_map_value(entries, SOURCE_TRUST_MANIFEST_MARKER_KEY) {
-        MapValue::Present(Value::String(value))
-            if value.as_str() == Some(SOURCE_TRUST_MANIFEST_MARKER) =>
-        {
-            return ManifestMark::Marked;
-        }
-        MapValue::Duplicate => return ManifestMark::Malformed,
-        MapValue::Present(Value::String(_)) | MapValue::Missing => {}
-        MapValue::Present(_) => return ManifestMark::Malformed,
-    }
-
-    match single_map_value(entries, SOURCE_TRUST_MANIFEST_KIND_KEY) {
-        MapValue::Present(Value::String(value))
-            if value.as_str() == Some(SOURCE_TRUST_MANIFEST_KIND) =>
-        {
-            ManifestMark::Marked
-        }
-        MapValue::Duplicate => ManifestMark::Malformed,
-        MapValue::Present(Value::String(_)) | MapValue::Missing => ManifestMark::Absent,
-        MapValue::Present(_) => ManifestMark::Malformed,
-    }
-}
-
 enum MapValue<'a> {
     Missing,
     Present(&'a Value),
@@ -513,59 +393,6 @@ fn single_map_value<'a>(entries: &'a [(Value, Value)], needle: &str) -> MapValue
     found.map_or(MapValue::Missing, MapValue::Present)
 }
 
-fn parse_source_trust_row(value: &Value) -> Option<SourceTrustRow> {
-    match value {
-        Value::Boolean(false) => Some(SourceTrustRow {
-            max_auto_sensitivity: None,
-            receipted: false,
-            warned: false,
-        }),
-        Value::Integer(_) | Value::String(_) => Some(SourceTrustRow {
-            max_auto_sensitivity: sensitivity_band_from_value(value),
-            receipted: false,
-            warned: false,
-        }),
-        Value::Map(entries) => {
-            let mut max_auto_sensitivity = None;
-            let mut auto_disabled = false;
-            let mut receipted = false;
-            let mut warned = false;
-
-            for (key, value) in entries {
-                let key = key.as_str()?;
-                match key {
-                    SOURCE_TRUST_MAX_AUTO_SENSITIVITY_KEY => {
-                        max_auto_sensitivity = Some(sensitivity_band_from_value(value)?);
-                    }
-                    SOURCE_TRUST_AUTO_KEY => match value {
-                        Value::Boolean(false) => auto_disabled = true,
-                        Value::Boolean(true) => {}
-                        _ => return None,
-                    },
-                    SOURCE_TRUST_RECEIPTED_KEY => {
-                        receipted = value.as_bool()?;
-                    }
-                    SOURCE_TRUST_WARNED_KEY => {
-                        warned = value.as_bool()?;
-                    }
-                    _ => {}
-                }
-            }
-
-            Some(SourceTrustRow {
-                max_auto_sensitivity: if auto_disabled {
-                    None
-                } else {
-                    Some(max_auto_sensitivity?)
-                },
-                receipted,
-                warned,
-            })
-        }
-        _ => None,
-    }
-}
-
 fn claim_sensitivity_band(body: &ClaimBody) -> Option<u8> {
     let Some(Value::Map(entries)) = &body.scope else {
         return Some(DEFAULT_CLAIM_SENSITIVITY_BAND);
@@ -578,7 +405,7 @@ fn claim_sensitivity_band(body: &ClaimBody) -> Option<u8> {
     }
 }
 
-fn sensitivity_band_from_value(value: &Value) -> Option<u8> {
+pub(crate) fn sensitivity_band_from_value(value: &Value) -> Option<u8> {
     if let Some(raw) = value.as_u64() {
         return u8::try_from(raw).ok();
     }

@@ -9,6 +9,7 @@ pub mod deletion;
 pub(crate) mod distance;
 pub mod error;
 pub(crate) mod fusion;
+pub(crate) mod gate;
 pub(crate) mod hnsw;
 pub(crate) mod identity;
 pub(crate) mod limits;
