@@ -25,6 +25,7 @@ const GROUP_ORDER: &[u8] = &[
 const OTHER_ENTITY_TYPE: u8 = u8::MAX;
 // Bound native TOON recursion for user/vault-provided JSON field values.
 const TOON_MAX_DEPTH: usize = 128;
+type ValueDepthLimit = Option<usize>;
 
 #[derive(Debug, Clone)]
 pub struct SerializeConfig {
@@ -201,6 +202,7 @@ fn serialize_yaml(pack: &ContextPack, config: &SerializeConfig) -> String {
 fn prepare_pack(pack: &ContextPack, config: &SerializeConfig, json_mode: bool) -> PreparedPack {
     let skip_budget = config.format == PackFormat::Json || config.budget == 0;
     let char_budget = config.budget.saturating_mul(4);
+    let value_depth_limit = value_depth_limit_for_format(config.format);
     let mut stats = pack.stats.clone();
 
     if config.merge_neighbors {
@@ -209,19 +211,26 @@ fn prepare_pack(pack: &ContextPack, config: &SerializeConfig, json_mode: bool) -
             &pack.results,
             config,
             json_mode,
+            value_depth_limit,
             &mut stats,
         ));
         merged.extend(prepare_entities(
             &pack.neighbors,
             config,
             json_mode,
+            value_depth_limit,
             &mut stats,
         ));
 
         let mut groups = group_entities(merged);
         if !skip_budget {
             let before = token_budget_droppable_count(&groups);
-            enforce_token_budget(&mut groups, &config.allocation, char_budget);
+            enforce_token_budget_with_depth_limit(
+                &mut groups,
+                &config.allocation,
+                char_budget,
+                value_depth_limit,
+            );
             let after = token_budget_droppable_count(&groups);
             stats.items_dropped.count = stats
                 .items_dropped
@@ -240,12 +249,14 @@ fn prepare_pack(pack: &ContextPack, config: &SerializeConfig, json_mode: bool) -
             &pack.results,
             config,
             json_mode,
+            value_depth_limit,
             &mut stats,
         ));
         let neighbors_source = group_entities(prepare_entities(
             &pack.neighbors,
             config,
             json_mode,
+            value_depth_limit,
             &mut stats,
         ));
         let (results, neighbors) = if skip_budget {
@@ -253,11 +264,12 @@ fn prepare_pack(pack: &ContextPack, config: &SerializeConfig, json_mode: bool) -
         } else {
             let before = token_budget_droppable_count(&results_source)
                 .saturating_add(token_budget_droppable_count(&neighbors_source));
-            let sections = budget_split_sections(
+            let sections = budget_split_sections_with_depth_limit(
                 &results_source,
                 &neighbors_source,
                 &config.allocation,
                 char_budget,
+                value_depth_limit,
             );
             let after = token_budget_droppable_count(&sections.0)
                 .saturating_add(token_budget_droppable_count(&sections.1));
@@ -277,19 +289,46 @@ fn prepare_pack(pack: &ContextPack, config: &SerializeConfig, json_mode: bool) -
     }
 }
 
+#[cfg(test)]
 fn budget_split_sections(
     results_source: &PreparedGroups,
     neighbors_source: &PreparedGroups,
     allocation: &TokenAllocation,
     char_budget: usize,
 ) -> (PreparedGroups, PreparedGroups) {
-    let results_need = estimate_groups_chars(results_source);
-    let neighbors_need = estimate_groups_chars(neighbors_source);
+    budget_split_sections_with_depth_limit(
+        results_source,
+        neighbors_source,
+        allocation,
+        char_budget,
+        None,
+    )
+}
+
+fn budget_split_sections_with_depth_limit(
+    results_source: &PreparedGroups,
+    neighbors_source: &PreparedGroups,
+    allocation: &TokenAllocation,
+    char_budget: usize,
+    value_depth_limit: ValueDepthLimit,
+) -> (PreparedGroups, PreparedGroups) {
+    let results_need = estimate_groups_chars_with_depth_limit(results_source, value_depth_limit);
+    let neighbors_need =
+        estimate_groups_chars_with_depth_limit(neighbors_source, value_depth_limit);
 
     let section_budgets = allocate_section_budgets([results_need, neighbors_need], char_budget);
-    let (mut results, results_used) = budget_groups(results_source, allocation, section_budgets[0]);
-    let (mut neighbors, neighbors_used) =
-        budget_groups(neighbors_source, allocation, section_budgets[1]);
+    let (mut results, results_used) = budget_groups_with_depth_limit(
+        results_source,
+        allocation,
+        section_budgets[0],
+        value_depth_limit,
+    );
+    let (mut neighbors, neighbors_used) = budget_groups_with_depth_limit(
+        neighbors_source,
+        allocation,
+        section_budgets[1],
+        value_depth_limit,
+    );
 
     let leftover = char_budget.saturating_sub(results_used.saturating_add(neighbors_used));
     if leftover == 0 {
@@ -312,19 +351,40 @@ fn budget_split_sections(
     debug_assert!(final_budgets[0].saturating_add(final_budgets[1]) <= char_budget);
 
     if final_budgets[0] > section_budgets[0] {
-        results = budget_groups(results_source, allocation, final_budgets[0]).0;
+        results = budget_groups_with_depth_limit(
+            results_source,
+            allocation,
+            final_budgets[0],
+            value_depth_limit,
+        )
+        .0;
     }
     if final_budgets[1] > section_budgets[1] {
-        neighbors = budget_groups(neighbors_source, allocation, final_budgets[1]).0;
+        neighbors = budget_groups_with_depth_limit(
+            neighbors_source,
+            allocation,
+            final_budgets[1],
+            value_depth_limit,
+        )
+        .0;
     }
 
     (results, neighbors)
+}
+
+fn value_depth_limit_for_format(format: PackFormat) -> ValueDepthLimit {
+    if format == PackFormat::Toon {
+        Some(TOON_MAX_DEPTH)
+    } else {
+        None
+    }
 }
 
 fn prepare_entities(
     entities: &[ContextEntity],
     config: &SerializeConfig,
     json_mode: bool,
+    value_depth_limit: ValueDepthLimit,
     stats: &mut PackStats,
 ) -> Vec<PreparedEntity> {
     let now = crate::unix_seconds_now();
@@ -339,8 +399,14 @@ fn prepare_entities(
                     let Some(value) = map.get(&key) else {
                         continue;
                     };
-                    let value =
-                        normalize_value(&key, value, json_mode, now, config.max_field_chars);
+                    let value = normalize_value(
+                        &key,
+                        value,
+                        json_mode,
+                        now,
+                        config.max_field_chars,
+                        value_depth_limit,
+                    );
                     fields.push((key, value));
                 }
             }
@@ -351,32 +417,50 @@ fn prepare_entities(
                 id: format_short_id(entity),
                 fields,
             };
-            apply_item_budget(&mut prepared, config.max_item_tokens, stats).then_some(prepared)
+            apply_item_budget_with_depth_limit(
+                &mut prepared,
+                config.max_item_tokens,
+                stats,
+                value_depth_limit,
+            )
+            .then_some(prepared)
         })
         .collect()
 }
 
+#[cfg(test)]
 fn apply_item_budget(
     entity: &mut PreparedEntity,
     max_item_tokens: usize,
     stats: &mut PackStats,
+) -> bool {
+    apply_item_budget_with_depth_limit(entity, max_item_tokens, stats, None)
+}
+
+fn apply_item_budget_with_depth_limit(
+    entity: &mut PreparedEntity,
+    max_item_tokens: usize,
+    stats: &mut PackStats,
+    value_depth_limit: ValueDepthLimit,
 ) -> bool {
     if max_item_tokens == 0 || is_critical_predicate_claim(entity) {
         return true;
     }
 
     let max_item_chars = max_item_tokens.saturating_mul(4);
-    if max_item_chars == 0 || estimate_entity_chars(entity) <= max_item_chars {
+    if max_item_chars == 0
+        || estimate_entity_chars_with_depth_limit(entity, value_depth_limit) <= max_item_chars
+    {
         return true;
     }
 
     let truncated = if entity.entity_type == ENTITY_TYPE_CLAIM {
-        truncate_claim_value_for_item_budget(entity, max_item_chars)
+        truncate_claim_value_for_item_budget(entity, max_item_chars, value_depth_limit)
     } else {
-        truncate_non_claim_for_item_budget(entity, max_item_chars)
+        truncate_non_claim_for_item_budget(entity, max_item_chars, value_depth_limit)
     };
 
-    if estimate_entity_chars(entity) <= max_item_chars {
+    if estimate_entity_chars_with_depth_limit(entity, value_depth_limit) <= max_item_chars {
         if truncated {
             stats.items_truncated.count = stats.items_truncated.count.saturating_add(1);
         }
@@ -388,11 +472,15 @@ fn apply_item_budget(
     }
 }
 
-fn truncate_non_claim_for_item_budget(entity: &mut PreparedEntity, max_item_chars: usize) -> bool {
+fn truncate_non_claim_for_item_budget(
+    entity: &mut PreparedEntity,
+    max_item_chars: usize,
+    value_depth_limit: ValueDepthLimit,
+) -> bool {
     let mut truncated = false;
     let mut tried_fields = Vec::new();
 
-    while estimate_entity_chars(entity) > max_item_chars {
+    while estimate_entity_chars_with_depth_limit(entity, value_depth_limit) > max_item_chars {
         let Some(field_index) =
             largest_truncatable_top_level_string_field(entity, tried_fields.as_slice())
         else {
@@ -400,10 +488,15 @@ fn truncate_non_claim_for_item_budget(entity: &mut PreparedEntity, max_item_char
         };
 
         tried_fields.push(field_index);
-        truncated |= truncate_string_field_to_item_budget(entity, field_index, max_item_chars);
+        truncated |= truncate_string_field_to_item_budget(
+            entity,
+            field_index,
+            max_item_chars,
+            value_depth_limit,
+        );
     }
 
-    if estimate_entity_chars(entity) <= max_item_chars {
+    if estimate_entity_chars_with_depth_limit(entity, value_depth_limit) <= max_item_chars {
         return truncated;
     }
 
@@ -413,41 +506,57 @@ fn truncate_non_claim_for_item_budget(entity: &mut PreparedEntity, max_item_char
 fn truncate_claim_value_for_item_budget(
     entity: &mut PreparedEntity,
     max_item_chars: usize,
+    value_depth_limit: ValueDepthLimit,
 ) -> bool {
     let Some(value_index) = field_index(entity, "val") else {
         return retain_minimal_claim_item_budget_fields(entity, None);
     };
 
     let original_value = entity.fields[value_index].1.clone();
-    let mut truncated =
-        truncate_claim_value_field_for_item_budget(entity, value_index, max_item_chars);
+    let mut truncated = truncate_claim_value_field_for_item_budget(
+        entity,
+        value_index,
+        max_item_chars,
+        value_depth_limit,
+    );
 
-    if estimate_entity_chars(entity) <= max_item_chars {
+    if estimate_entity_chars_with_depth_limit(entity, value_depth_limit) <= max_item_chars {
         return truncated;
     }
 
     truncated |= retain_minimal_claim_item_budget_fields(entity, Some(original_value));
-    if estimate_entity_chars(entity) <= max_item_chars {
+    if estimate_entity_chars_with_depth_limit(entity, value_depth_limit) <= max_item_chars {
         return truncated;
     }
 
     let Some(value_index) = field_index(entity, "val") else {
         return truncated;
     };
-    truncated | truncate_claim_value_field_for_item_budget(entity, value_index, max_item_chars)
+    truncated
+        | truncate_claim_value_field_for_item_budget(
+            entity,
+            value_index,
+            max_item_chars,
+            value_depth_limit,
+        )
 }
 
 fn truncate_claim_value_field_for_item_budget(
     entity: &mut PreparedEntity,
     field_index: usize,
     max_item_chars: usize,
+    value_depth_limit: ValueDepthLimit,
 ) -> bool {
-    let original_value_chars = estimate_value_chars(&entity.fields[field_index].1);
+    let original_value_chars =
+        estimate_value_chars_with_depth_limit(&entity.fields[field_index].1, value_depth_limit);
 
     match &mut entity.fields[field_index].1 {
-        Value::String(_) => {
-            truncate_string_field_to_item_budget(entity, field_index, max_item_chars)
-        }
+        Value::String(_) => truncate_string_field_to_item_budget(
+            entity,
+            field_index,
+            max_item_chars,
+            value_depth_limit,
+        ),
         value => {
             *value = Value::String(truncation_suffix(original_value_chars));
             true
@@ -459,6 +568,7 @@ fn truncate_string_field_to_item_budget(
     entity: &mut PreparedEntity,
     field_index: usize,
     max_item_chars: usize,
+    value_depth_limit: ValueDepthLimit,
 ) -> bool {
     let Value::String(original) = entity.fields[field_index].1.clone() else {
         return false;
@@ -479,7 +589,7 @@ fn truncate_string_field_to_item_budget(
         entity.fields[field_index].1 =
             Value::String(truncate_with_suffix_prefix(&original, mid, &suffix));
 
-        if estimate_entity_chars(entity) <= max_item_chars {
+        if estimate_entity_chars_with_depth_limit(entity, value_depth_limit) <= max_item_chars {
             best_prefix = Some(mid);
             low = mid.saturating_add(1);
         } else if mid == 0 {
@@ -621,6 +731,7 @@ fn normalize_value(
     json_mode: bool,
     now: u64,
     max_field_chars: usize,
+    value_depth_limit: ValueDepthLimit,
 ) -> Value {
     let mut value = if !json_mode && is_timestamp_field(key) {
         if let Some(ts) = value.as_u64() {
@@ -630,17 +741,47 @@ fn normalize_value(
         {
             Value::String(format_relative_timestamp(ts as u64, now))
         } else {
-            value.clone()
+            clone_value_with_depth_limit(value, value_depth_limit)
         }
     } else {
-        value.clone()
+        clone_value_with_depth_limit(value, value_depth_limit)
     };
 
     if max_field_chars > 0 {
-        truncate_strings(&mut value, max_field_chars);
+        truncate_strings_with_depth_limit(&mut value, max_field_chars, value_depth_limit);
     }
 
     value
+}
+
+fn clone_value_with_depth_limit(value: &Value, value_depth_limit: ValueDepthLimit) -> Value {
+    clone_value_at_depth(value, value_depth_limit, 0)
+}
+
+fn clone_value_at_depth(value: &Value, value_depth_limit: ValueDepthLimit, depth: usize) -> Value {
+    if value_depth_limit_reached(value_depth_limit, depth) {
+        return Value::Null;
+    }
+
+    match value {
+        Value::Array(values) => Value::Array(
+            values
+                .iter()
+                .map(|value| clone_value_at_depth(value, value_depth_limit, depth + 1))
+                .collect(),
+        ),
+        Value::Object(map) => Value::Object(
+            map.iter()
+                .map(|(key, value)| {
+                    (
+                        key.clone(),
+                        clone_value_at_depth(value, value_depth_limit, depth + 1),
+                    )
+                })
+                .collect(),
+        ),
+        _ => value.clone(),
+    }
 }
 
 fn is_timestamp_field(key: &str) -> bool {
@@ -657,7 +798,24 @@ fn is_timestamp_field(key: &str) -> bool {
     )
 }
 
-fn truncate_strings(value: &mut Value, max_field_chars: usize) {
+fn truncate_strings_with_depth_limit(
+    value: &mut Value,
+    max_field_chars: usize,
+    value_depth_limit: ValueDepthLimit,
+) {
+    truncate_strings_at_depth(value, max_field_chars, value_depth_limit, 0);
+}
+
+fn truncate_strings_at_depth(
+    value: &mut Value,
+    max_field_chars: usize,
+    value_depth_limit: ValueDepthLimit,
+    depth: usize,
+) {
+    if value_depth_limit_reached(value_depth_limit, depth) {
+        return;
+    }
+
     match value {
         Value::String(text) if text.chars().count() > max_field_chars => {
             let take = max_field_chars.saturating_sub(1);
@@ -671,16 +829,20 @@ fn truncate_strings(value: &mut Value, max_field_chars: usize) {
         Value::String(_) => {}
         Value::Array(values) => {
             for value in values {
-                truncate_strings(value, max_field_chars);
+                truncate_strings_at_depth(value, max_field_chars, value_depth_limit, depth + 1);
             }
         }
         Value::Object(map) => {
             for value in map.values_mut() {
-                truncate_strings(value, max_field_chars);
+                truncate_strings_at_depth(value, max_field_chars, value_depth_limit, depth + 1);
             }
         }
         _ => {}
     }
+}
+
+fn value_depth_limit_reached(value_depth_limit: ValueDepthLimit, depth: usize) -> bool {
+    matches!(value_depth_limit, Some(limit) if depth >= limit)
 }
 
 fn group_entities(entities: Vec<PreparedEntity>) -> Vec<(u8, Vec<PreparedEntity>)> {
@@ -731,10 +893,11 @@ fn type_fraction(entity_type: u8, allocation: &TokenAllocation) -> f32 {
     }
 }
 
-fn enforce_token_budget(
+fn enforce_token_budget_with_depth_limit(
     groups: &mut Vec<(u8, Vec<PreparedEntity>)>,
     allocation: &TokenAllocation,
     char_budget: usize,
+    value_depth_limit: ValueDepthLimit,
 ) -> usize {
     if char_budget == 0 {
         let mut total_used = 0_usize;
@@ -743,7 +906,10 @@ fn enforce_token_budget(
             rows.retain(|row| {
                 let keep = is_critical_predicate_claim(row);
                 if keep {
-                    used = used.saturating_add(estimate_entity_chars(row));
+                    used = used.saturating_add(estimate_entity_chars_with_depth_limit(
+                        row,
+                        value_depth_limit,
+                    ));
                 }
                 keep
             });
@@ -771,7 +937,10 @@ fn enforce_token_budget(
     for (i, (_, rows)) in groups.iter().enumerate() {
         let frac = raw[i] * norm;
         let budget = (char_budget as f32 * frac) as usize;
-        let needed: usize = rows.iter().map(estimate_entity_chars).sum();
+        let needed: usize = rows
+            .iter()
+            .map(|row| estimate_entity_chars_with_depth_limit(row, value_depth_limit))
+            .sum();
         if needed <= budget {
             surplus += budget - needed;
         } else {
@@ -800,7 +969,7 @@ fn enforce_token_budget(
         let mut kept_noncritical = 0_usize;
         let mut noncritical_closed = final_budget == 0;
         for row in rows.drain(..) {
-            let chars = estimate_entity_chars(&row);
+            let chars = estimate_entity_chars_with_depth_limit(&row, value_depth_limit);
             if is_critical_predicate_claim(&row) {
                 used = used.saturating_add(chars);
                 kept.push(row);
@@ -825,31 +994,62 @@ fn enforce_token_budget(
     total_used
 }
 
+#[cfg(test)]
 fn estimate_entity_chars(entity: &PreparedEntity) -> usize {
+    estimate_entity_chars_with_depth_limit(entity, None)
+}
+
+fn estimate_entity_chars_with_depth_limit(
+    entity: &PreparedEntity,
+    value_depth_limit: ValueDepthLimit,
+) -> usize {
     let mut chars = entity.id.len() + 12;
     for (key, value) in &entity.fields {
         chars += estimate_json_string_chars(key);
-        chars += estimate_value_chars(value);
+        chars += estimate_value_chars_with_depth_limit(value, value_depth_limit);
         chars += 2;
     }
     chars
 }
 
+#[cfg(test)]
 fn estimate_groups_chars(groups: &[(u8, Vec<PreparedEntity>)]) -> usize {
+    estimate_groups_chars_with_depth_limit(groups, None)
+}
+
+fn estimate_groups_chars_with_depth_limit(
+    groups: &[(u8, Vec<PreparedEntity>)],
+    value_depth_limit: ValueDepthLimit,
+) -> usize {
     groups
         .iter()
         .flat_map(|(_, rows)| rows.iter())
-        .map(estimate_entity_chars)
+        .map(|entity| estimate_entity_chars_with_depth_limit(entity, value_depth_limit))
         .sum()
 }
 
+#[cfg(test)]
 fn budget_groups(
     source: &[(u8, Vec<PreparedEntity>)],
     allocation: &TokenAllocation,
     char_budget: usize,
 ) -> (Vec<(u8, Vec<PreparedEntity>)>, usize) {
+    budget_groups_with_depth_limit(source, allocation, char_budget, None)
+}
+
+fn budget_groups_with_depth_limit(
+    source: &[(u8, Vec<PreparedEntity>)],
+    allocation: &TokenAllocation,
+    char_budget: usize,
+    value_depth_limit: ValueDepthLimit,
+) -> (Vec<(u8, Vec<PreparedEntity>)>, usize) {
     let mut groups = source.to_vec();
-    let used = enforce_token_budget(&mut groups, allocation, char_budget);
+    let used = enforce_token_budget_with_depth_limit(
+        &mut groups,
+        allocation,
+        char_budget,
+        value_depth_limit,
+    );
     (groups, used)
 }
 
@@ -1904,7 +2104,27 @@ fn value_to_compact_string(value: &Value) -> String {
     serde_json::to_string(value).unwrap_or_default()
 }
 
+#[cfg(test)]
 fn estimate_value_chars(value: &Value) -> usize {
+    estimate_value_chars_with_depth_limit(value, None)
+}
+
+fn estimate_value_chars_with_depth_limit(
+    value: &Value,
+    value_depth_limit: ValueDepthLimit,
+) -> usize {
+    estimate_value_chars_at_depth(value, value_depth_limit, 0)
+}
+
+fn estimate_value_chars_at_depth(
+    value: &Value,
+    value_depth_limit: ValueDepthLimit,
+    depth: usize,
+) -> usize {
+    if value_depth_limit_reached(value_depth_limit, depth) {
+        return 4;
+    }
+
     match value {
         Value::Null => 4,
         Value::Bool(true) => 4,
@@ -1915,7 +2135,11 @@ fn estimate_value_chars(value: &Value) -> usize {
             if values.is_empty() {
                 2
             } else {
-                2 + values.iter().map(estimate_value_chars).sum::<usize>() + (values.len() - 1)
+                2 + values
+                    .iter()
+                    .map(|value| estimate_value_chars_at_depth(value, value_depth_limit, depth + 1))
+                    .sum::<usize>()
+                    + (values.len() - 1)
             }
         }
         Value::Object(map) => {
@@ -1925,7 +2149,9 @@ fn estimate_value_chars(value: &Value) -> usize {
                 let pairs_len: usize = map
                     .iter()
                     .map(|(key, value)| {
-                        estimate_json_string_chars(key) + 1 + estimate_value_chars(value)
+                        estimate_json_string_chars(key)
+                            + 1
+                            + estimate_value_chars_at_depth(value, value_depth_limit, depth + 1)
                     })
                     .sum();
                 2 + pairs_len + (map.len() - 1)
@@ -2281,14 +2507,26 @@ mod tests {
         }
     }
 
-    fn nested_child_object(depth: usize) -> Value {
-        let mut value = Value::String("leaf".to_owned());
+    fn nested_child_value(depth: usize, leaf: Value) -> Value {
+        let mut value = leaf;
         for _ in 0..depth {
             let mut object = Map::new();
             object.insert("child".to_owned(), value);
             value = Value::Object(object);
         }
         value
+    }
+
+    fn nested_child_object(depth: usize) -> Value {
+        nested_child_value(depth, Value::String("leaf".to_owned()))
+    }
+
+    fn child_value_at_depth(value: &Value, depth: usize) -> Option<&Value> {
+        let mut current = value;
+        for _ in 0..depth {
+            current = current.as_object()?.get("child")?;
+        }
+        Some(current)
     }
 
     fn claim_entity(seed: u8, predicate: &str, value: &str, score: f32) -> ContextEntity {
@@ -2607,6 +2845,75 @@ mod tests {
             !text.contains("leaf"),
             "depth-limited TOON should not serialize the too-deep leaf: {text}"
         );
+    }
+
+    #[test]
+    fn toon_bounded_truncate_strings_stops_at_depth_cap() {
+        let leaf = "deep field value that should remain untouched".repeat(8);
+        let mut value = nested_child_value(TOON_MAX_DEPTH + 8, Value::String(leaf.clone()));
+
+        truncate_strings_with_depth_limit(&mut value, 4, Some(TOON_MAX_DEPTH));
+
+        assert_eq!(
+            child_value_at_depth(&value, TOON_MAX_DEPTH + 8).and_then(Value::as_str),
+            Some(leaf.as_str()),
+            "truncation must not walk past the TOON value-depth cap"
+        );
+    }
+
+    #[test]
+    fn toon_bounded_estimate_value_chars_stops_at_depth_cap() {
+        let value = nested_child_value(
+            TOON_MAX_DEPTH + 8,
+            Value::String("deep field value that should not be counted".repeat(256)),
+        );
+        let expected = (0..TOON_MAX_DEPTH).fold(4, |chars, _| {
+            2 + estimate_json_string_chars("child") + 1 + chars
+        });
+
+        assert_eq!(
+            estimate_value_chars_with_depth_limit(&value, Some(TOON_MAX_DEPTH)),
+            expected,
+            "bounded estimation should price the capped subtree as null"
+        );
+        assert!(
+            estimate_value_chars(&value) > expected,
+            "unbounded estimation should still account for the deep leaf"
+        );
+    }
+
+    #[test]
+    fn toon_preparation_caps_deep_values_before_item_budget_estimation() {
+        let value = nested_child_value(
+            TOON_MAX_DEPTH + 16,
+            Value::String("deep field value that would exceed the item budget".repeat(256)),
+        );
+        let pack = pack_with_results(vec![claim_entity_with_value(1, "note.deep", value, 1.0)]);
+
+        let mut cfg = config(PackFormat::Toon);
+        cfg.max_field_chars = 0;
+        cfg.max_item_tokens = 512;
+        cfg.budget = 0;
+
+        let prepared = prepare_pack(&pack, &cfg, false);
+        let claims = prepared
+            .results
+            .iter()
+            .find_map(|(entity_type, rows)| (*entity_type == ENTITY_TYPE_CLAIM).then_some(rows))
+            .expect("claim group");
+        let prepared_value = claims[0]
+            .fields
+            .iter()
+            .find_map(|(key, value)| (key == "val").then_some(value))
+            .expect("prepared value");
+
+        assert_eq!(
+            child_value_at_depth(prepared_value, TOON_MAX_DEPTH),
+            Some(&Value::Null),
+            "TOON preparation should prune at the writer depth cap before encoding"
+        );
+        assert_eq!(prepared.stats.items_truncated.count, 0);
+        assert_eq!(prepared.stats.items_dropped.count, 0);
     }
 
     #[test]
