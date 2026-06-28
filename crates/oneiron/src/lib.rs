@@ -12,6 +12,7 @@ pub(crate) mod fusion;
 pub(crate) mod gate;
 pub(crate) mod hnsw;
 pub(crate) mod identity;
+pub mod ingest;
 pub(crate) mod limits;
 pub mod maintain;
 pub mod pipeline;
@@ -41,6 +42,12 @@ pub use crate::deletion::{
     TOMBSTONE_VALUE_V2_LEN, TombstoneReason, TombstoneValueV2, decode_tombstone_value,
 };
 pub use crate::error::{Error, ErrorKind, Result};
+pub use crate::ingest::{
+    INGEST_SOURCE_REGISTRY, IngestError, IngestHarnessConfig, IngestResult, IngestSource,
+    IngestSourceConfig, IngestSourceFormat, IngestSourceRegistry, JSONL_TRANSCRIPT_SOURCE_ID,
+    JsonlTranscriptSource, KNOWN_INGEST_HARNESS_CONFIG, NormalizedIngestBatch,
+    NormalizedIngestClaim, NormalizedIngestRecord,
+};
 pub use crate::maintain::{MaintenanceBuilder, MaintenanceReport};
 pub use crate::pipeline::{DEFAULT_RECENCY_HALF_LIFE_DAYS, FacetMode, PipelineBuilder, WorldScope};
 pub use crate::provenance::{
