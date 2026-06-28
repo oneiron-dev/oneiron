@@ -40,6 +40,7 @@ const SKILL_PACK_LAYER_BOUNDARY: &str =
     "skills = how to think about memory; MCP tools = what to call";
 const SKILL_PACK_LOAD_HINT: &str = "GET /api/skills/oneiron.skills.md from the same Oneiron HTTP origin before choosing memory search, read, context-pack, discovery, or recovery calls; use MCP tools as the callable layer.";
 const SKILL_PACK_RESOLUTION: &str = "Resolve endpoint against the same origin used for /api/core/discover and send the configured x-oneiron-secret; do not resolve the pack against a local working directory.";
+const CONTEXT_PACK_FEATURE: &str = "context-pack HTTP endpoint";
 const EFFECTIVE_AUTH_SCOPES: &[&str] = &[
     "core:discover",
     "vault:read",
@@ -1578,7 +1579,7 @@ async fn lease_revoke(
     "query_vector": [0.12, -0.04, 0.98],
     "limit": 10
 }))]
-#[allow(dead_code)] // Fields deserialized from JSON, used in Phase 1D context-pack endpoint
+#[allow(dead_code)] // Request shape is documented while the HTTP endpoint fails closed.
 struct ContextPackRequest {
     /// Optional text retrieval seed for context-pack assembly; omit when the caller only has an embedding vector.
     #[schema(example = "recent decisions about project alpha")]
@@ -1606,13 +1607,15 @@ struct ContextPackRequest {
     ),
     responses(
         (
-            status = 200,
-            description = "Context-pack endpoint status response.",
-            body = Object,
+            status = 501,
+            description = "Context-pack assembly is not implemented; endpoint fails closed instead of returning a placeholder pack.",
+            body = ApiError,
             content_type = "application/json",
             example = json!({
-                "status": "ok",
-                "message": "context-pack endpoint ready — full implementation pending ContextPackBuilder integration"
+                "code": "NOT_IMPLEMENTED",
+                "message": "context-pack HTTP endpoint is not implemented",
+                "details": { "code": "NOT_IMPLEMENTED" },
+                "suggestions": ["Do not treat this response as a successful context pack."]
             })
         ),
         (
@@ -1630,15 +1633,7 @@ async fn context_pack(
 ) -> Result<Json<serde_json::Value>, ApiError> {
     check_api_auth(&headers, &server.config)?;
 
-    // Build context pack using the vault's query API.
-    // This is a thin wrapper — full implementation depends on
-    // what query parameters the ContextPackBuilder supports.
-    // For Phase 1, return a placeholder acknowledging the request.
-
-    Ok(Json(serde_json::json!({
-        "status": "ok",
-        "message": "context-pack endpoint ready — full implementation pending ContextPackBuilder integration"
-    })))
+    Err(ApiError::not_implemented(CONTEXT_PACK_FEATURE))
 }
 
 #[cfg(test)]
@@ -1800,6 +1795,25 @@ mod tests {
             discover_success["example"]["skill_pack"]["endpoint"],
             Value::from("/api/skills/oneiron.skills.md"),
             "discover example must advertise the committed skill pack endpoint"
+        );
+        let context_pack_responses = spec["paths"]["/api/context-pack"]["post"]["responses"]
+            .as_object()
+            .expect("context-pack responses object");
+        assert!(
+            !context_pack_responses.contains_key("200"),
+            "context-pack must not document a placeholder success response"
+        );
+        let context_pack_not_implemented =
+            &context_pack_responses["501"]["content"]["application/json"]["example"];
+        assert_eq!(
+            context_pack_not_implemented["code"],
+            Value::from("NOT_IMPLEMENTED"),
+            "context-pack must document explicit fail-closed status"
+        );
+        assert_eq!(
+            context_pack_not_implemented.get("status"),
+            None,
+            "context-pack must not document legacy status: ok placeholder body"
         );
         assert_eq!(
             spec["components"]["schemas"]["DiscoverResponse"]["properties"]["skill_pack"]["$ref"],
@@ -1985,6 +1999,43 @@ mod tests {
             .expect("ApiError response body");
         let body: Value = serde_json::from_slice(&body).expect("ApiError JSON body");
         assert_eq!(body["code"], Value::from("UNAUTHORIZED"));
+    }
+
+    #[tokio::test]
+    async fn context_pack_route_returns_501_instead_of_placeholder_success() {
+        let (_dir, server) = test_server();
+        let response = api_routes(server)
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/context-pack")
+                    .header(CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        r#"{"query":"recent decisions","limit":1,"maxItemTokens":64}"#,
+                    ))
+                    .expect("request"),
+            )
+            .await
+            .expect("route response");
+
+        assert_eq!(response.status(), StatusCode::NOT_IMPLEMENTED);
+        let body = to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("context-pack response body");
+        let body: Value = serde_json::from_slice(&body).expect("ApiError JSON body");
+        assert_eq!(body["code"], Value::from("NOT_IMPLEMENTED"));
+        assert_eq!(body["details"]["code"], Value::from("NOT_IMPLEMENTED"));
+        assert_eq!(
+            body.get("status"),
+            None,
+            "context-pack must not return the legacy status: ok placeholder body"
+        );
+        assert!(
+            body["message"]
+                .as_str()
+                .is_some_and(|message| message.contains("not implemented")),
+            "context-pack message must clearly state not implemented: {body:?}"
+        );
     }
 
     #[tokio::test]
