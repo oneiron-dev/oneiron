@@ -23,6 +23,8 @@ const GROUP_ORDER: &[u8] = &[
 ];
 // Use an impossible entity type as the shared sink for unknown groups.
 const OTHER_ENTITY_TYPE: u8 = u8::MAX;
+// Bound native TOON recursion for user/vault-provided JSON field values.
+const TOON_MAX_DEPTH: usize = 128;
 
 #[derive(Debug, Clone)]
 pub struct SerializeConfig {
@@ -930,6 +932,11 @@ fn encode_toon_section(groups: &[(u8, Vec<PreparedEntity>)]) -> String {
 }
 
 fn write_toon_object(out: &mut String, object: &Map<String, Value>, depth: usize) {
+    if toon_depth_limit_reached(depth) {
+        write_toon_depth_limit_value(out);
+        return;
+    }
+
     for (index, (key, value)) in object.iter().enumerate() {
         if index > 0 {
             out.push('\n');
@@ -938,10 +945,14 @@ fn write_toon_object(out: &mut String, object: &Map<String, Value>, depth: usize
         match value {
             Value::Array(values) => write_toon_array(out, Some(key), values, depth),
             Value::Object(nested) => {
-                write_indent(out, depth * 2);
-                write_toon_key(out, key);
-                out.push(':');
-                if !nested.is_empty() {
+                if !nested.is_empty() && toon_depth_limit_reached(depth + 1) {
+                    write_toon_keyed_depth_limit_value(out, key, depth);
+                } else {
+                    write_indent(out, depth * 2);
+                    write_toon_key(out, key);
+                    out.push(':');
+                }
+                if !nested.is_empty() && !toon_depth_limit_reached(depth + 1) {
                     out.push('\n');
                     write_toon_object(out, nested, depth + 1);
                 }
@@ -957,6 +968,11 @@ fn write_toon_object(out: &mut String, object: &Map<String, Value>, depth: usize
 }
 
 fn write_toon_array(out: &mut String, key: Option<&str>, values: &[Value], depth: usize) {
+    if toon_depth_limit_reached(depth) {
+        write_toon_array_depth_limit_value(out, key, depth);
+        return;
+    }
+
     if values.is_empty() {
         write_toon_array_header(out, key, 0, None, depth);
         return;
@@ -1074,6 +1090,12 @@ fn write_toon_nested_array(out: &mut String, key: Option<&str>, values: &[Value]
 }
 
 fn write_toon_list_item_object(out: &mut String, object: &Map<String, Value>, depth: usize) {
+    if !object.is_empty() && toon_depth_limit_reached(depth) {
+        out.push(' ');
+        write_toon_depth_limit_value(out);
+        return;
+    }
+
     let mut fields = object.iter();
     let Some((first_key, first_value)) = fields.next() else {
         return;
@@ -1099,7 +1121,10 @@ fn write_toon_list_item_field(
     match value {
         Value::Array(values) => {
             write_toon_key(out, key);
-            if first_field && let Some(fields) = toon_tabular_fields(values) {
+            if toon_depth_limit_reached(depth + 1) {
+                out.push_str(": ");
+                write_toon_depth_limit_value(out);
+            } else if first_field && let Some(fields) = toon_tabular_fields(values) {
                 write_toon_list_item_tabular_array(out, values, &fields, depth);
             } else {
                 write_toon_array(out, None, values, depth + 1);
@@ -1109,8 +1134,13 @@ fn write_toon_list_item_field(
             write_toon_key(out, key);
             out.push(':');
             if !object.is_empty() {
-                out.push('\n');
-                write_toon_object(out, object, depth + 2);
+                if toon_depth_limit_reached(depth + 2) {
+                    out.push(' ');
+                    write_toon_depth_limit_value(out);
+                } else {
+                    out.push('\n');
+                    write_toon_object(out, object, depth + 2);
+                }
             }
         }
         _ => {
@@ -1164,6 +1194,9 @@ fn write_toon_list_item_tabular_array(
 
 fn toon_tabular_fields(values: &[Value]) -> Option<Vec<String>> {
     let first = values.first()?.as_object()?;
+    if first.is_empty() {
+        return None;
+    }
     if first.values().any(|value| !is_toon_primitive(value)) {
         return None;
     }
@@ -1180,6 +1213,29 @@ fn toon_tabular_fields(values: &[Value]) -> Option<Vec<String>> {
     }
 
     Some(fields)
+}
+
+fn toon_depth_limit_reached(depth: usize) -> bool {
+    depth >= TOON_MAX_DEPTH
+}
+
+fn write_toon_depth_limit_value(out: &mut String) {
+    out.push_str("null");
+}
+
+fn write_toon_keyed_depth_limit_value(out: &mut String, key: &str, depth: usize) {
+    write_indent(out, depth * 2);
+    write_toon_key(out, key);
+    out.push_str(": ");
+    write_toon_depth_limit_value(out);
+}
+
+fn write_toon_array_depth_limit_value(out: &mut String, key: Option<&str>, depth: usize) {
+    if let Some(key) = key {
+        write_toon_keyed_depth_limit_value(out, key, depth);
+    } else {
+        write_toon_depth_limit_value(out);
+    }
 }
 
 fn is_toon_primitive(value: &Value) -> bool {
@@ -2225,6 +2281,16 @@ mod tests {
         }
     }
 
+    fn nested_child_object(depth: usize) -> Value {
+        let mut value = Value::String("leaf".to_owned());
+        for _ in 0..depth {
+            let mut object = Map::new();
+            object.insert("child".to_owned(), value);
+            value = Value::Object(object);
+        }
+        value
+    }
+
     fn claim_entity(seed: u8, predicate: &str, value: &str, score: f32) -> ContextEntity {
         claim_entity_with_value(seed, predicate, Value::String(value.to_owned()), score)
     }
@@ -2493,6 +2559,53 @@ mod tests {
         assert_eq!(
             text,
             "claims[1]:\n  - id: \"cl88:f2\"\n    pred: goal.learning\n    val: Learn Japanese\n    evid[2]: \"tn17:a1\",\"tn23:c4\"\nturns[2]{id,spkr,txt}:\n  \"tn17:a1\",user,\"hello, world\"\n  \"tn23:c4\",assistant,\"false\""
+        );
+    }
+
+    #[test]
+    fn toon_native_encoder_uses_list_form_for_arrays_of_empty_objects() {
+        let groups = vec![(
+            ENTITY_TYPE_EVENT,
+            vec![PreparedEntity {
+                entity_type: ENTITY_TYPE_EVENT,
+                score: 0.0,
+                id: "ev01:01".to_owned(),
+                fields: vec![(
+                    "meta".to_owned(),
+                    Value::Array(vec![Value::Object(Map::new()), Value::Object(Map::new())]),
+                )],
+            }],
+        )];
+
+        let text = encode_toon_section(&groups);
+
+        assert_eq!(
+            text,
+            "events[1]:\n  - id: \"ev01:01\"\n    meta[2]:\n      -\n      -"
+        );
+    }
+
+    #[test]
+    fn toon_native_encoder_replaces_values_beyond_max_depth_with_null() {
+        let groups = vec![(
+            ENTITY_TYPE_EVENT,
+            vec![PreparedEntity {
+                entity_type: ENTITY_TYPE_EVENT,
+                score: 0.0,
+                id: "ev01:01".to_owned(),
+                fields: vec![("meta".to_owned(), nested_child_object(TOON_MAX_DEPTH + 8))],
+            }],
+        )];
+
+        let text = encode_toon_section(&groups);
+
+        assert!(
+            text.contains("child: null"),
+            "depth-limited TOON should emit null sentinel: {text}"
+        );
+        assert!(
+            !text.contains("leaf"),
+            "depth-limited TOON should not serialize the too-deep leaf: {text}"
         );
     }
 
