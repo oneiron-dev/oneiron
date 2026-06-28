@@ -550,6 +550,31 @@ pub extern "C" fn oneiron_vault_free(vault: *mut OneironVault) -> OneironStatus 
     })
 }
 
+/// Return a UTF-8 JSON doctor report for an opened vault.
+///
+/// The report is read-only and mirrors `Vault::doctor()`: it observes the
+/// persisted compatibility metadata consumed by open-time storage ABI gates
+/// without repairing, rebuilding, or changing on-disk layout. On success,
+/// `out_buffer` receives Rust-owned bytes that must be released with
+/// `oneiron_buffer_free`.
+#[unsafe(no_mangle)]
+pub extern "C" fn oneiron_vault_health_json(
+    vault: *mut OneironVault,
+    out_buffer: *mut OneironBuffer,
+) -> OneironStatus {
+    ffi_guard(|| {
+        if let Err(status) = write_out(out_buffer, OneironBuffer::empty()) {
+            return status;
+        }
+        let result = with_vault(vault, |handle| {
+            let report = engine(handle.vault.doctor())?;
+            let bytes = serde_json::to_vec(&report).map_err(|_| OneironStatus::EngineError)?;
+            write_out(out_buffer, buffer_from_vec(bytes))
+        });
+        result.map_or_else(|status| status, |()| OneironStatus::Ok)
+    })
+}
+
 /// Store an entity blob.
 #[unsafe(no_mangle)]
 pub extern "C" fn oneiron_vault_put_entity(
@@ -1145,6 +1170,7 @@ pub extern "C" fn oneiron_vault_would_create_cycle(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::mem::{align_of, offset_of, size_of};
 
     fn id(seed: u8) -> [u8; ENTITY_ID_LEN] {
         let mut id = [0_u8; ENTITY_ID_LEN];
@@ -1169,6 +1195,55 @@ mod tests {
         assert_eq!(status, OneironStatus::Ok);
         assert!(!vault.is_null());
         (dir, vault)
+    }
+
+    #[test]
+    fn ffi_struct_layouts_are_c_abi_stable() {
+        assert_eq!(size_of::<OneironByteSlice>(), 16);
+        assert_eq!(align_of::<OneironByteSlice>(), align_of::<usize>());
+        assert_eq!(offset_of!(OneironByteSlice, ptr), 0);
+        assert_eq!(offset_of!(OneironByteSlice, len), 8);
+
+        assert_eq!(size_of::<OneironBuffer>(), 24);
+        assert_eq!(align_of::<OneironBuffer>(), align_of::<usize>());
+        assert_eq!(offset_of!(OneironBuffer, ptr), 0);
+        assert_eq!(offset_of!(OneironBuffer, len), 8);
+        assert_eq!(offset_of!(OneironBuffer, cap), 16);
+
+        assert_eq!(size_of::<OneironEntityInput>(), 64);
+        assert_eq!(align_of::<OneironEntityInput>(), 8);
+        assert_eq!(offset_of!(OneironEntityInput, id), 0);
+        assert_eq!(offset_of!(OneironEntityInput, entity_type), 16);
+        assert_eq!(offset_of!(OneironEntityInput, occurred_start), 24);
+        assert_eq!(offset_of!(OneironEntityInput, occurred_end), 32);
+        assert_eq!(offset_of!(OneironEntityInput, learned_at), 40);
+        assert_eq!(offset_of!(OneironEntityInput, data), 48);
+
+        assert_eq!(size_of::<OneironEdgeInfo>(), 88);
+        assert_eq!(align_of::<OneironEdgeInfo>(), 8);
+        assert_eq!(offset_of!(OneironEdgeInfo, src), 0);
+        assert_eq!(offset_of!(OneironEdgeInfo, kind), 16);
+        assert_eq!(offset_of!(OneironEdgeInfo, tgt), 20);
+        assert_eq!(offset_of!(OneironEdgeInfo, weight), 40);
+        assert_eq!(offset_of!(OneironEdgeInfo, created_at), 48);
+        assert_eq!(offset_of!(OneironEdgeInfo, has_vad), 56);
+        assert_eq!(offset_of!(OneironEdgeInfo, valence), 64);
+        assert_eq!(offset_of!(OneironEdgeInfo, arousal), 72);
+        assert_eq!(offset_of!(OneironEdgeInfo, dominance), 80);
+
+        assert_eq!(size_of::<OneironScoredEntity>(), 24);
+        assert_eq!(align_of::<OneironScoredEntity>(), 8);
+        assert_eq!(offset_of!(OneironScoredEntity, id), 0);
+        assert_eq!(offset_of!(OneironScoredEntity, score), 16);
+
+        assert_eq!(size_of::<OneironSubtreeEntry>(), 20);
+        assert_eq!(align_of::<OneironSubtreeEntry>(), 4);
+        assert_eq!(offset_of!(OneironSubtreeEntry, id), 0);
+        assert_eq!(offset_of!(OneironSubtreeEntry, depth), 16);
+
+        assert_eq!(size_of::<OneironEdgeInfoArray>(), 24);
+        assert_eq!(size_of::<OneironScoredEntityArray>(), 24);
+        assert_eq!(size_of::<OneironSubtreeEntryArray>(), 24);
     }
 
     #[test]
@@ -1214,6 +1289,22 @@ mod tests {
             OneironStatus::Ok
         );
         assert_eq!(exists, 1);
+
+        let mut health = OneironBuffer::empty();
+        assert_eq!(
+            oneiron_vault_health_json(vault, &mut health),
+            OneironStatus::Ok
+        );
+        // SAFETY: `health` was returned by this crate and is live until freed.
+        let health_bytes = unsafe { slice::from_raw_parts(health.ptr, health.len) };
+        let health_json: serde_json::Value =
+            serde_json::from_slice(health_bytes).expect("health JSON");
+        assert_eq!(
+            health_json["storage_abi_version"].as_u64(),
+            Some(u64::from(oneiron::store::STORAGE_ABI_VERSION))
+        );
+        assert!(health_json.get("db_manifest").is_some());
+        assert_eq!(oneiron_buffer_free(health), OneironStatus::Ok);
 
         let mut bytes = OneironBuffer::empty();
         assert_eq!(

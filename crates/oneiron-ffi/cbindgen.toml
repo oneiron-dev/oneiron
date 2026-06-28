@@ -47,6 +47,7 @@ include = [
   "oneiron_subtree_entry_array_free",
   "oneiron_vault_open",
   "oneiron_vault_free",
+  "oneiron_vault_health_json",
   "oneiron_vault_put_entity",
   "oneiron_vault_batch_put_entities",
   "oneiron_vault_get_entity",
