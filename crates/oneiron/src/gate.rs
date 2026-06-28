@@ -381,7 +381,11 @@ impl PolicyManifestResolution {
 
     #[must_use]
     pub(crate) fn scoped_grants(&self) -> &[PolicyScopedGrant] {
-        &self.scoped_grants
+        if self.is_fail_closed() {
+            &[]
+        } else {
+            &self.scoped_grants
+        }
     }
 
     #[must_use]
@@ -548,7 +552,7 @@ fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPolicyManifest> {
     };
 
     let unsupported_schema = match single_map_value(&entries, POLICY_SCHEMA_VERSION_KEY) {
-        MapValue::Missing => false,
+        MapValue::Missing => true,
         MapValue::Duplicate => return None,
         MapValue::Present(value) => value.as_str()? != POLICY_SCHEMA_VERSION,
     };
@@ -997,6 +1001,19 @@ mod tests {
         out
     }
 
+    fn rewrite_policy_manifest_entries(
+        data: &mut Vec<u8>,
+        rewrite: impl FnOnce(&mut Vec<(Value, Value)>),
+    ) {
+        let mut cursor = Cursor::new(data.as_slice());
+        let Value::Map(mut entries) = rmpv::decode::read_value(&mut cursor).expect("decode") else {
+            unreachable!("test manifest is a map");
+        };
+        rewrite(&mut entries);
+        data.clear();
+        rmpv::encode::write_value(data, &Value::Map(entries)).expect("re-encode");
+    }
+
     fn source_trust_entry(source: ClaimSource, max_auto_sensitivity: u8) -> (Value, Value) {
         let row = Value::Map(vec![
             (
@@ -1044,14 +1061,19 @@ mod tests {
         )
     }
 
-    fn put_policy_manifest_bytes(vault: &crate::Vault, seed: u8, data: &[u8]) -> Result<()> {
-        let id = test_id(seed);
+    fn policy_manifest_blob(data: &[u8]) -> Vec<u8> {
         let mut payload = Vec::with_capacity(crate::batch::ENTITY_METADATA_HEADER_LEN + data.len());
         payload.push(ENTITY_TYPE_POLICY_MANIFEST);
         payload.extend_from_slice(&1_u64.to_be_bytes());
         payload.extend_from_slice(&1_u64.to_be_bytes());
         payload.extend_from_slice(&1_u64.to_be_bytes());
         payload.extend_from_slice(data);
+        payload
+    }
+
+    fn put_policy_manifest_bytes(vault: &crate::Vault, seed: u8, data: &[u8]) -> Result<()> {
+        let id = test_id(seed);
+        let payload = policy_manifest_blob(data);
 
         vault.with_write_txn(|wtxn| {
             vault.store.entities.put(wtxn, id.as_bytes(), &payload)?;
@@ -1186,6 +1208,7 @@ mod tests {
         let policy = resolve(&vault)?;
         assert!(policy.is_fail_closed());
         assert!(policy.diagnostics().malformed_manifest_seen);
+        assert!(policy.scoped_grants().is_empty());
         assert_eq!(
             policy.actor_ceiling("first_party", None),
             PolicyApprovalCeiling::Proposed
@@ -1198,25 +1221,48 @@ mod tests {
     }
 
     #[test]
+    fn policy_manifest_missing_schema_fixture_fails_closed() -> Result<()> {
+        let (_tmp, vault) = temp_vault();
+        let mut data = encode_policy_manifest(vec![
+            source_trust_entry(ClaimSource::ToolOutput, 0),
+            scoped_grants_entry(),
+        ]);
+        rewrite_policy_manifest_entries(&mut data, |entries| {
+            entries.retain(|(key, _)| key.as_str() != Some(POLICY_SCHEMA_VERSION_KEY));
+        });
+        put_policy_manifest_bytes(&vault, 0x54, &data)?;
+
+        let policy = resolve(&vault)?;
+        assert!(policy.is_fail_closed());
+        assert!(policy.diagnostics().unsupported_schema_seen);
+        assert!(policy.scoped_grants().is_empty());
+        assert_eq!(
+            policy.actor_ceiling("first_party", None),
+            PolicyApprovalCeiling::Proposed
+        );
+        assert_auto_source_rejected(&vault, 0x69, ClaimSource::ToolOutput)
+    }
+
+    #[test]
     fn policy_manifest_version_fixture_degrades_to_most_restrictive() -> Result<()> {
         let (_tmp, vault) = temp_vault();
-        let mut data = encode_policy_manifest(vec![source_trust_entry(ClaimSource::ToolOutput, 0)]);
-        let mut cursor = Cursor::new(&data);
-        let Value::Map(mut entries) = rmpv::decode::read_value(&mut cursor).expect("decode") else {
-            unreachable!("test manifest is a map");
-        };
-        for (key, value) in &mut entries {
-            if key.as_str() == Some(POLICY_MIN_ENGINE_VERSION_KEY) {
-                *value = Value::from("999.0.0");
+        let mut data = encode_policy_manifest(vec![
+            source_trust_entry(ClaimSource::ToolOutput, 0),
+            scoped_grants_entry(),
+        ]);
+        rewrite_policy_manifest_entries(&mut data, |entries| {
+            for (key, value) in entries {
+                if key.as_str() == Some(POLICY_MIN_ENGINE_VERSION_KEY) {
+                    *value = Value::from("999.0.0");
+                }
             }
-        }
-        data.clear();
-        rmpv::encode::write_value(&mut data, &Value::Map(entries)).expect("re-encode");
+        });
         put_policy_manifest_bytes(&vault, 0x53, &data)?;
 
         let policy = resolve(&vault)?;
         assert!(policy.is_fail_closed());
         assert!(policy.diagnostics().engine_version_floor_seen);
+        assert!(policy.scoped_grants().is_empty());
         assert_eq!(
             policy.actor_ceiling("first_party", None),
             PolicyApprovalCeiling::Proposed
@@ -1226,6 +1272,66 @@ mod tests {
             PolicyCriticality::Critical
         );
         assert_auto_source_rejected(&vault, 0x68, ClaimSource::ToolOutput)
+    }
+
+    #[test]
+    fn policy_manifest_unknown_axis_fails_closed_and_exposes_no_scoped_grants() -> Result<()> {
+        let (_tmp, vault) = temp_vault();
+        let mut data = encode_policy_manifest(vec![
+            source_trust_entry(ClaimSource::ToolOutput, 0),
+            scoped_grants_entry(),
+        ]);
+        rewrite_policy_manifest_entries(&mut data, |entries| {
+            for (key, value) in entries {
+                if key.as_str() == Some(POLICY_DEFAULTS_KEY) {
+                    let Value::Map(defaults) = value else {
+                        unreachable!("defaults are a map");
+                    };
+                    defaults.push((Value::from("future_axis"), Value::from("permit")));
+                }
+            }
+        });
+        put_policy_manifest_bytes(&vault, 0x55, &data)?;
+
+        let policy = resolve(&vault)?;
+        assert!(policy.is_fail_closed());
+        assert!(policy.diagnostics().unknown_axis_seen);
+        assert!(policy.scoped_grants().is_empty());
+        assert_eq!(
+            policy.sensitivity_for_predicate("profile.name"),
+            PolicySensitivity::Sensitive
+        );
+        assert_auto_source_rejected(&vault, 0x6A, ClaimSource::ToolOutput)
+    }
+
+    #[test]
+    fn legacy_source_trust_pack_entity_does_not_relax_policy_inputs() -> Result<()> {
+        let (_tmp, vault) = temp_vault();
+        let mut legacy = Vec::new();
+        rmpv::encode::write_value(
+            &mut legacy,
+            &Value::Map(vec![
+                (
+                    Value::from("manifest"),
+                    Value::from("dec_0005_predicate_pack"),
+                ),
+                source_trust_entry(ClaimSource::ToolOutput, 0),
+            ]),
+        )
+        .expect("legacy source-trust encode");
+
+        vault.put_entity(
+            &test_id(0x56),
+            crate::types::ENTITY_TYPE_TASK_LIST,
+            test_time(1),
+            1,
+            &legacy,
+        )?;
+
+        let policy = resolve(&vault)?;
+        assert!(policy.is_fail_closed());
+        assert_eq!(policy.diagnostics().manifest_count, 0);
+        assert_auto_source_rejected(&vault, 0x6B, ClaimSource::ToolOutput)
     }
 
     #[cfg(feature = "sync")]
@@ -1245,5 +1351,77 @@ mod tests {
             "replicated replay must not re-gate remote source trust"
         );
         Ok(())
+    }
+
+    #[cfg(feature = "sync")]
+    #[test]
+    fn replicated_policy_manifest_is_rejected_and_cannot_relax_source_trust() -> Result<()> {
+        let (_tmp, vault) = temp_vault();
+        let data = encode_policy_manifest(vec![source_trust_entry(ClaimSource::ToolOutput, 0)]);
+        let occurred = test_time(1);
+
+        let batch_id = test_id(0x82);
+        let err = vault
+            .batch()
+            .put_replicated(&batch_id, ENTITY_TYPE_POLICY_MANIFEST, occurred, 1, &data)
+            .commit()
+            .expect_err("replicated policy manifests must be rejected");
+        assert!(
+            matches!(err, Error::MaintenanceKindNotWritable(kind) if kind == ENTITY_TYPE_POLICY_MANIFEST),
+            "expected policy manifest maintenance rejection, got {err:?}"
+        );
+        assert!(vault.get_raw(&batch_id)?.is_none());
+
+        let txn_id = test_id(0x83);
+        let err = vault
+            .with_write_txn(|wtxn| {
+                vault
+                    .batch_in()
+                    .put_replicated(&txn_id, ENTITY_TYPE_POLICY_MANIFEST, occurred, 1, &data)
+                    .apply(wtxn)
+            })
+            .expect_err("txn replicated policy manifests must be rejected");
+        assert!(
+            matches!(err, Error::MaintenanceKindNotWritable(kind) if kind == ENTITY_TYPE_POLICY_MANIFEST),
+            "expected policy manifest maintenance rejection, got {err:?}"
+        );
+        assert!(vault.get_raw(&txn_id)?.is_none());
+
+        assert_auto_source_rejected(&vault, 0x84, ClaimSource::ToolOutput)
+    }
+
+    #[cfg(feature = "sync")]
+    #[test]
+    fn forward_rematerialize_quarantines_replicated_policy_manifest() -> Result<()> {
+        use crate::sync::bridge::Materializer;
+        use crate::sync::loro_support::map_insert_bytes;
+        use crate::sync::quarantine::{QuarantineContainer, quarantined_records};
+        use crate::sync::schema::create_window_doc;
+        use crate::sync::types::WindowKey;
+        use crate::sync::window::forward_rematerialize;
+
+        let (_tmp, vault) = temp_vault();
+        let data = encode_policy_manifest(vec![source_trust_entry(ClaimSource::ToolOutput, 0)]);
+        let id = test_id(0x85);
+        let window_key = WindowKey::new("2026-03");
+        let doc = create_window_doc("local", &window_key);
+        let blob = policy_manifest_blob(&data);
+        map_insert_bytes(&doc.get_map("entities"), &id.to_hex(), &blob)
+            .expect("insert policy manifest into CRDT");
+        doc.commit();
+
+        let materialized = forward_rematerialize(&vault, &doc, &Materializer::new(), &window_key)?;
+        assert_eq!(materialized, 0);
+        assert!(vault.get_raw(&id)?.is_none());
+        let records = quarantined_records(&vault)?;
+        assert!(
+            records.iter().any(|(_, record)| {
+                record.container == QuarantineContainer::Entities
+                    && record.reason_code == "MaintenanceKindNotWritable"
+            }),
+            "rejected policy manifest replay should be quarantined, got {records:?}"
+        );
+
+        assert_auto_source_rejected(&vault, 0x86, ClaimSource::ToolOutput)
     }
 }
