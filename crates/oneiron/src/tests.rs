@@ -7,10 +7,11 @@ use std::time::Instant;
 use crate::limits::{MAX_ANCESTOR_DEPTH, MAX_CHILD_OF_CYCLE_TRAVERSAL_STEPS};
 use crate::types::{
     EDGE_VALUE_SEMANTIC_LEN, EDGE_VALUE_SEMANTIC_PROVENANCED_LEN, EDGE_VALUE_STRUCTURAL_LEN,
-    ENTITY_ID_LEN, ENTITY_TYPE_MACHINE, ENTITY_TYPE_MODEL, ENTITY_TYPE_NOTIFICATION,
-    ENTITY_TYPE_POLICY_MANIFEST, ENTITY_TYPE_REDACTION_AUDIT, ENTITY_TYPE_TASK,
-    ENTITY_TYPE_TASK_LIST, EdgeActorClass, EdgeConfirmationStatus, EdgeProvenanceFlags,
-    decode_edge_value, decode_edge_value_for_kind, encode_edge_value,
+    ENTITY_ID_LEN, ENTITY_TYPE_MACHINE, ENTITY_TYPE_MESSAGE, ENTITY_TYPE_MODEL,
+    ENTITY_TYPE_NOTIFICATION, ENTITY_TYPE_POLICY_MANIFEST, ENTITY_TYPE_REDACTION_AUDIT,
+    ENTITY_TYPE_TASK, ENTITY_TYPE_TASK_LIST, ENTITY_TYPE_TURN, EdgeActorClass,
+    EdgeConfirmationStatus, EdgeProvenanceFlags, decode_edge_value, decode_edge_value_for_kind,
+    encode_edge_value,
 };
 use heed::EnvOpenOptions;
 use heed::types::{Bytes, Str};
@@ -1262,6 +1263,7 @@ fn headerless_delete_raced_to_nothing_emits_no_receipt_sweep_or_pt() -> Result<(
         vault.put_vector(&id, &[0.1, 0.2, 0.3, 0.4])?;
 
         let outcome = run_raced_delete(&vault, &id, DeleteReason::GdprDelete, |wtxn| {
+            crate::hnsw::hnsw_deindex(&vault.store, wtxn, &id)?;
             vault.store.vectors.delete(wtxn, id.as_bytes())?;
             Ok(())
         })?;
@@ -6466,6 +6468,154 @@ fn assert_invalid_vad(err: Error, expected_component: VadComponent, expected_val
 
     assert!(message.contains(&format!("{expected_component:?}")));
     assert!(message.contains(&expected_value.to_string()));
+}
+
+#[test]
+fn turn_vad_annotation_persists_supported_sources() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let turn = EntityId::now();
+    let body = rmp_serde::to_vec_named(&serde_json::json!({
+        "txt": "turn-level affect",
+        "spkr": "user",
+        "at": 100_u64,
+    }))
+    .expect("encode turn body");
+    vault.put_entity(
+        &turn,
+        ENTITY_TYPE_TURN,
+        test_time_range(100, 100),
+        100,
+        &body,
+    )?;
+
+    let model_annotation = VadAnnotation::new(
+        Vad {
+            valence: 0.25,
+            arousal: 0.5,
+            dominance: 0.75,
+        },
+        VadAnnotationSource::ModelInference,
+        200,
+    )?;
+    assert_eq!(
+        vault.annotate_turn_vad(&turn, model_annotation)?,
+        model_annotation
+    );
+    assert_eq!(
+        vault.get_turn_vad_annotation(&turn)?,
+        Some(model_annotation)
+    );
+
+    let raw = vault.get_raw(&turn)?.expect("turn raw body");
+    let decoded: serde_json::Value =
+        rmp_serde::from_slice(&raw[ENTITY_METADATA_HEADER_LEN..]).expect("decode turn body");
+    assert_eq!(
+        decoded["vad_annotation"]["source"],
+        serde_json::Value::from(VadAnnotationSource::ModelInference.as_str())
+    );
+
+    let report_annotation = VadAnnotation::new(
+        Vad {
+            valence: -0.5,
+            arousal: 0.25,
+            dominance: 0.5,
+        },
+        VadAnnotationSource::UserSelfReport,
+        201,
+    )?;
+    vault.annotate_turn_vad(&turn, report_annotation)?;
+
+    let raw = vault.get_raw(&turn)?.expect("turn raw body");
+    let decoded: serde_json::Value =
+        rmp_serde::from_slice(&raw[ENTITY_METADATA_HEADER_LEN..]).expect("decode turn body");
+    assert_eq!(
+        decoded["vad_annotation"]["source"],
+        serde_json::Value::from(VadAnnotationSource::UserSelfReport.as_str())
+    );
+    assert_eq!(
+        vault.get_turn_vad_annotation(&turn)?,
+        Some(report_annotation)
+    );
+    Ok(())
+}
+
+#[test]
+fn message_vad_annotation_round_trip() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let message = EntityId::now();
+    let body = rmp_serde::to_vec_named(&serde_json::json!({
+        "txt": "message-level affect",
+        "spkr": "assistant",
+        "at": 110_u64,
+    }))
+    .expect("encode message body");
+    vault.put_entity(
+        &message,
+        ENTITY_TYPE_MESSAGE,
+        test_time_range(110, 110),
+        110,
+        &body,
+    )?;
+
+    let annotation = VadAnnotation::new(
+        Vad {
+            valence: 0.1,
+            arousal: 0.2,
+            dominance: 0.3,
+        },
+        VadAnnotationSource::ModelInference,
+        210,
+    )?;
+
+    assert_eq!(
+        vault.annotate_message_vad(&message, annotation)?,
+        annotation
+    );
+    assert_eq!(
+        vault.get_message_vad_annotation(&message)?,
+        Some(annotation)
+    );
+    assert_eq!(
+        vault
+            .get_turn_vad_annotation(&message)
+            .expect_err("wrong entity type")
+            .kind(),
+        ErrorKind::InvalidEntityType
+    );
+    Ok(())
+}
+
+#[test]
+fn turn_vad_annotation_rejects_edge_vad_range_violations() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let turn = EntityId::now();
+    let body = rmp_serde::to_vec_named(&serde_json::json!({
+        "txt": "invalid affect",
+    }))
+    .expect("encode turn body");
+    vault.put_entity(
+        &turn,
+        ENTITY_TYPE_TURN,
+        test_time_range(120, 120),
+        120,
+        &body,
+    )?;
+
+    let invalid = VadAnnotation {
+        vad: Vad {
+            valence: 0.0,
+            arousal: -0.01,
+            dominance: 0.5,
+        },
+        source: VadAnnotationSource::UserSelfReport,
+        annotated_at: 220,
+    };
+    let err = vault
+        .annotate_turn_vad(&turn, invalid)
+        .expect_err("invalid turn VAD must reject");
+    assert_invalid_vad(err, VadComponent::Arousal, -0.01);
+    assert_eq!(vault.get_turn_vad_annotation(&turn)?, None);
+    Ok(())
 }
 
 #[test]

@@ -7,6 +7,7 @@ use std::path::Path;
 use heed::Database;
 use heed::types::Bytes;
 use serde::Serialize;
+use serde_json::{Map, Value};
 use uuid::Uuid;
 
 use crate::analyzer::{AnalyzerChannel, AnalyzerManifest, AnalyzerMode, MultilingualAnalyzer};
@@ -44,10 +45,11 @@ use crate::store::{
     lmdb_database_open_guard,
 };
 use crate::types::{
-    EDGE_KEY_LEN, ENTITY_ID_LEN, ENTITY_TYPE_CLAIM, ENTITY_TYPE_MODEL, ENTITY_TYPE_REDACTION_AUDIT,
-    EdgeActorClass, EdgeConfirmationStatus, EdgeInfo, EdgeKind, EdgeProvenanceFlags,
-    EdgeValueLayout, EntityId, ScoredEntity, StructuralKindRegistration, TimeRange, TypeByteBand,
-    Vad, VaultConfig, bytes_to_hex_lower, decode_edge_value_for_kind, edge_value_layout_for_kind,
+    EDGE_KEY_LEN, ENTITY_ID_LEN, ENTITY_TYPE_CLAIM, ENTITY_TYPE_MESSAGE, ENTITY_TYPE_MODEL,
+    ENTITY_TYPE_REDACTION_AUDIT, ENTITY_TYPE_TURN, EdgeActorClass, EdgeConfirmationStatus,
+    EdgeInfo, EdgeKind, EdgeProvenanceFlags, EdgeValueLayout, EntityId, ScoredEntity,
+    StructuralKindRegistration, TimeRange, TypeByteBand, Vad, VadAnnotation, VaultConfig,
+    bytes_to_hex_lower, decode_edge_value_for_kind, edge_value_layout_for_kind,
 };
 use crate::{
     BatchBuilder, ContextPackBuilder, MaintenanceBuilder, PipelineBuilder, TxnBatchBuilder, bm25,
@@ -94,6 +96,8 @@ const MAX_SUBTREE_RESULTS: usize = 50_000;
 /// a pathological prefix scans a very large sync_state database.
 #[cfg(feature = "sync")]
 const MAX_SYNC_STATE_KEYS: usize = 10_000;
+
+const VAD_ANNOTATION_BODY_FIELD: &str = "vad_annotation";
 
 /// Build an edge prefix `[entity_id | kind]` for targeted LMDB prefix scans.
 /// Avoids scanning all edge kinds for a given entity.
@@ -502,6 +506,106 @@ impl Vault {
         self.batch()
             .put(id, entity_type, occurred, learned_at, data)
             .commit()
+    }
+
+    /// Writes or replaces the VAD annotation metadata on a TURN entity body.
+    pub fn annotate_turn_vad(
+        &self,
+        turn_id: &EntityId,
+        annotation: VadAnnotation,
+    ) -> Result<VadAnnotation> {
+        self.annotate_entity_vad(turn_id, ENTITY_TYPE_TURN, annotation)
+    }
+
+    /// Reads the VAD annotation metadata from a TURN entity body.
+    pub fn get_turn_vad_annotation(&self, turn_id: &EntityId) -> Result<Option<VadAnnotation>> {
+        self.get_entity_vad_annotation(turn_id, ENTITY_TYPE_TURN)
+    }
+
+    /// Writes or replaces the VAD annotation metadata on a MESSAGE entity body.
+    pub fn annotate_message_vad(
+        &self,
+        message_id: &EntityId,
+        annotation: VadAnnotation,
+    ) -> Result<VadAnnotation> {
+        self.annotate_entity_vad(message_id, ENTITY_TYPE_MESSAGE, annotation)
+    }
+
+    /// Reads the VAD annotation metadata from a MESSAGE entity body.
+    pub fn get_message_vad_annotation(
+        &self,
+        message_id: &EntityId,
+    ) -> Result<Option<VadAnnotation>> {
+        self.get_entity_vad_annotation(message_id, ENTITY_TYPE_MESSAGE)
+    }
+
+    fn annotate_entity_vad(
+        &self,
+        id: &EntityId,
+        expected_type: u8,
+        annotation: VadAnnotation,
+    ) -> Result<VadAnnotation> {
+        annotation.vad.validate()?;
+
+        let mut wtxn = self.store.env.write_txn()?;
+        let raw = self
+            .store
+            .entities
+            .get(&wtxn, id.as_bytes())?
+            .ok_or(Error::EntityNotFound)?;
+        let header =
+            EntityMetadataHeader::parse(raw).ok_or(Error::CorruptedIndex("entity header"))?;
+        if header.entity_type != expected_type {
+            return Err(Error::InvalidEntityType(header.entity_type));
+        }
+
+        let mut body = decode_vad_metadata_body(&raw[ENTITY_METADATA_HEADER_LEN..])?;
+        body.insert(
+            VAD_ANNOTATION_BODY_FIELD.to_owned(),
+            serde_json::to_value(annotation)
+                .map_err(|_| Error::InvariantViolation("VAD annotation JSON encode failed"))?,
+        );
+        let data = rmp_serde::to_vec_named(&body).map_err(|_| {
+            Error::InvariantViolation("VAD annotation entity body MessagePack encode failed")
+        })?;
+
+        apply_ops(
+            &self.store,
+            &self.config,
+            &self.analyzer,
+            &mut wtxn,
+            vec![BatchOp::Put {
+                id: *id,
+                entity_type: expected_type,
+                occurred: TimeRange {
+                    start: header.occurred_start,
+                    end: header.occurred_end,
+                },
+                learned_at: annotation.annotated_at,
+                data,
+                allow_maintenance: false,
+                allow_reserved_predicate: false,
+            }],
+        )?;
+        wtxn.commit()?;
+        Ok(annotation)
+    }
+
+    fn get_entity_vad_annotation(
+        &self,
+        id: &EntityId,
+        expected_type: u8,
+    ) -> Result<Option<VadAnnotation>> {
+        let rtxn = self.store.env.read_txn()?;
+        let Some(raw) = self.store.entities.get(&rtxn, id.as_bytes())? else {
+            return Ok(None);
+        };
+        let header =
+            EntityMetadataHeader::parse(raw).ok_or(Error::CorruptedIndex("entity header"))?;
+        if header.entity_type != expected_type {
+            return Err(Error::InvalidEntityType(header.entity_type));
+        }
+        read_vad_annotation_from_body(&raw[ENTITY_METADATA_HEADER_LEN..])
     }
 
     /// Writes a typed CLAIM (type 0) entity with full structural validation
@@ -4048,6 +4152,29 @@ fn closed_claim_put_payload(
     let data = encode_claim_body(&wrapper)?;
     validate_claim_body_bytes(&data, true)?;
     Ok((occurred, claim.learned_at, data))
+}
+
+fn decode_vad_metadata_body(body: &[u8]) -> Result<Map<String, Value>> {
+    if body.is_empty() {
+        return Ok(Map::new());
+    }
+
+    match rmp_serde::from_slice::<Value>(body) {
+        Ok(Value::Object(object)) => Ok(object),
+        Ok(_) => Err(Error::CorruptedIndex("VAD annotation entity body")),
+        Err(_) => Err(Error::CorruptedIndex("VAD annotation entity body")),
+    }
+}
+
+fn read_vad_annotation_from_body(body: &[u8]) -> Result<Option<VadAnnotation>> {
+    let object = decode_vad_metadata_body(body)?;
+    let Some(value) = object.get(VAD_ANNOTATION_BODY_FIELD) else {
+        return Ok(None);
+    };
+    let annotation: VadAnnotation = serde_json::from_value(value.clone())
+        .map_err(|_| Error::CorruptedIndex("VAD annotation"))?;
+    annotation.vad.validate()?;
+    Ok(Some(annotation))
 }
 
 /// Parses one `edges_out` / `edges_in` row into an [`EdgeInfo`], failing

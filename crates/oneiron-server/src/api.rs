@@ -7,6 +7,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use axum::extract::rejection::QueryRejection;
 use axum::extract::{Path, Query, State};
@@ -15,8 +16,9 @@ use axum::response::{IntoResponse, Json, Response};
 use axum::routing::{get, post};
 use axum::{Router, middleware};
 use oneiron::{
-    NotificationItem, ResumeBudget, ResumeBundle, SessionContext, UnprocessedItem,
-    types::ENTITY_TYPE_NOTIFICATION,
+    ErrorKind, NotificationItem, ResumeBudget, ResumeBundle, SessionContext, UnprocessedItem, Vad,
+    VadAnnotation, VadAnnotationSource,
+    types::{ENTITY_TYPE_MESSAGE, ENTITY_TYPE_NOTIFICATION, ENTITY_TYPE_TURN},
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -46,6 +48,7 @@ const EFFECTIVE_AUTH_SCOPES: &[&str] = &[
     "vault:read",
     "search:read",
     "entity:read",
+    "turns:annotate",
     "companion:resume",
     "sync:connect",
 ];
@@ -57,6 +60,7 @@ const CAPABILITIES: &[&str] = &[
     "search.text",
     "entity.get",
     "edges.get",
+    "turns.annotate",
     "context_pack",
     "companion.resume",
     "lease.revoke",
@@ -78,6 +82,8 @@ const RESUME_NOTIFICATION_SCAN_LIMIT: usize = 4096;
         search_text,
         get_entity,
         get_edges,
+        annotate_turn_vad,
+        read_turn_vad_annotation,
         context_pack,
         lease_revoke
     ),
@@ -100,6 +106,11 @@ const RESUME_NOTIFICATION_SCAN_LIMIT: usize = 4096;
         SearchResult,
         TextSearchQuery,
         EdgeResult,
+        VadPayload,
+        TurnVadAnnotationSource,
+        TurnVadAnnotateRequest,
+        TurnVadAnnotateQuery,
+        TurnVadAnnotateResponse,
         LeaseRevokeRequest,
         LeaseRevokeResponse,
         ContextPackRequest
@@ -119,6 +130,7 @@ pub(crate) fn api_routes(server: Arc<SyncServer>) -> Router {
         // owner recovery surface (ONE-1140, OD-8): revoke a lost/stolen
         // device's lease binding (terminal)
         .route("/api/lease/revoke", post(lease_revoke))
+        .route("/v1/core/turns/annotate", post(annotate_turn_vad))
         .route_layer(middleware::from_fn_with_state(
             idempotency,
             idempotency_middleware,
@@ -133,6 +145,7 @@ pub(crate) fn api_routes(server: Arc<SyncServer>) -> Router {
         .route("/api/search/text", get(search_text))
         .route("/api/entity/{id}", get(get_entity))
         .route("/api/edges/{id}", get(get_edges))
+        .route("/v1/core/turns/annotate", get(read_turn_vad_annotation))
         // context-pack is POST since it takes a complex options body
         .route("/api/context-pack", post(context_pack))
         .route("/api/companion/resume", post(resume))
@@ -328,6 +341,8 @@ fn add_security_scheme(spec: &mut Value) {
         ("/api/search/text", "get"),
         ("/api/entity/{id}", "get"),
         ("/api/edges/{id}", "get"),
+        ("/v1/core/turns/annotate", "get"),
+        ("/v1/core/turns/annotate", "post"),
         ("/api/context-pack", "post"),
         ("/api/lease/revoke", "post"),
     ];
@@ -1465,6 +1480,367 @@ struct EdgeResult {
     created_at: u64,
 }
 
+// ─── Turn VAD annotation ─────────────────────────────────────────────────────
+
+/// Valence/arousal/dominance annotation payload.
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, ToSchema)]
+#[schema(example = json!({
+    "valence": 0.25,
+    "arousal": 0.5,
+    "dominance": 0.75
+}))]
+struct VadPayload {
+    /// Valence in the same range as edge VAD: `[-1, 1]`.
+    #[schema(example = 0.25)]
+    valence: f32,
+    /// Arousal in the same range as edge VAD: `[0, 1]`.
+    #[schema(example = 0.5)]
+    arousal: f32,
+    /// Dominance in the same range as edge VAD: `[0, 1]`.
+    #[schema(example = 0.75)]
+    dominance: f32,
+}
+
+impl VadPayload {
+    fn into_vad(self) -> Result<Vad, ApiError> {
+        let vad = Vad {
+            valence: self.valence,
+            arousal: self.arousal,
+            dominance: self.dominance,
+        };
+        vad.validate()
+            .map_err(|error| ApiError::bad_request(error.to_string(), Some("vad")))?;
+        Ok(vad)
+    }
+}
+
+impl From<Vad> for VadPayload {
+    fn from(vad: Vad) -> Self {
+        Self {
+            valence: vad.valence,
+            arousal: vad.arousal,
+            dominance: vad.dominance,
+        }
+    }
+}
+
+/// Source that produced a turn/message VAD annotation.
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+enum TurnVadAnnotationSource {
+    /// VAD inferred by a model or upstream inference service.
+    ModelInference,
+    /// VAD reported directly by the user.
+    UserSelfReport,
+}
+
+impl From<TurnVadAnnotationSource> for VadAnnotationSource {
+    fn from(source: TurnVadAnnotationSource) -> Self {
+        match source {
+            TurnVadAnnotationSource::ModelInference => Self::ModelInference,
+            TurnVadAnnotationSource::UserSelfReport => Self::UserSelfReport,
+        }
+    }
+}
+
+impl From<VadAnnotationSource> for TurnVadAnnotationSource {
+    fn from(source: VadAnnotationSource) -> Self {
+        match source {
+            VadAnnotationSource::ModelInference => Self::ModelInference,
+            VadAnnotationSource::UserSelfReport => Self::UserSelfReport,
+        }
+    }
+}
+
+/// Request body for writing VAD metadata to a turn or one message in a turn.
+#[derive(Debug, Deserialize, ToSchema)]
+#[schema(example = json!({
+    "turn_id": "0123456789abcdef0123456789abcdef",
+    "source": "model_inference",
+    "vad": {
+        "valence": 0.25,
+        "arousal": 0.5,
+        "dominance": 0.75
+    },
+    "annotated_at": 1782357635_u64
+}))]
+struct TurnVadAnnotateRequest {
+    /// Hex-encoded TURN entity id anchoring the annotation request.
+    #[serde(rename = "turn_id", alias = "turnId")]
+    #[schema(example = "0123456789abcdef0123456789abcdef")]
+    turn_id: String,
+    /// Optional hex-encoded MESSAGE entity id; omit to annotate the turn itself.
+    #[serde(default, rename = "message_id", alias = "messageId")]
+    #[schema(example = "fedcba9876543210fedcba9876543210")]
+    message_id: Option<String>,
+    /// VAD values to persist.
+    vad: VadPayload,
+    /// Source that produced the VAD values.
+    source: TurnVadAnnotationSource,
+    /// Unix seconds timestamp for the annotation. Defaults to server time.
+    #[serde(default, rename = "annotated_at", alias = "annotatedAt")]
+    #[schema(example = 1782357635_u64)]
+    annotated_at: Option<u64>,
+}
+
+/// Query parameters for reading VAD metadata from a turn or message.
+#[derive(Debug, Deserialize, ToSchema, IntoParams)]
+#[into_params(parameter_in = Query)]
+struct TurnVadAnnotateQuery {
+    /// Hex-encoded TURN entity id anchoring the annotation lookup.
+    #[serde(rename = "turn_id", alias = "turnId")]
+    #[schema(example = "0123456789abcdef0123456789abcdef")]
+    #[param(example = "0123456789abcdef0123456789abcdef")]
+    turn_id: String,
+    /// Optional hex-encoded MESSAGE entity id; omit to read the turn annotation.
+    #[serde(default, rename = "message_id", alias = "messageId")]
+    #[schema(example = "fedcba9876543210fedcba9876543210")]
+    #[param(example = "fedcba9876543210fedcba9876543210")]
+    message_id: Option<String>,
+}
+
+/// Persisted VAD metadata returned by the turn annotation endpoint.
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
+#[schema(example = json!({
+    "turn_id": "0123456789abcdef0123456789abcdef",
+    "message_id": null,
+    "source": "model_inference",
+    "vad": {
+        "valence": 0.25,
+        "arousal": 0.5,
+        "dominance": 0.75
+    },
+    "annotated_at": 1782357635_u64
+}))]
+struct TurnVadAnnotateResponse {
+    /// Hex-encoded TURN entity id anchoring the annotation.
+    #[serde(rename = "turn_id")]
+    #[schema(example = "0123456789abcdef0123456789abcdef")]
+    turn_id: String,
+    /// Hex-encoded MESSAGE entity id when the annotation targets a message.
+    #[serde(rename = "message_id")]
+    #[schema(nullable = true, example = "fedcba9876543210fedcba9876543210")]
+    message_id: Option<String>,
+    /// Persisted VAD values.
+    vad: VadPayload,
+    /// Persisted source for the VAD values.
+    source: TurnVadAnnotationSource,
+    /// Unix seconds timestamp persisted with the annotation.
+    #[serde(rename = "annotated_at")]
+    #[schema(example = 1782357635_u64)]
+    annotated_at: u64,
+}
+
+impl TurnVadAnnotateResponse {
+    fn new(turn_id: &str, message_id: Option<&str>, annotation: VadAnnotation) -> Self {
+        Self {
+            turn_id: turn_id.to_owned(),
+            message_id: message_id.map(str::to_owned),
+            vad: annotation.vad.into(),
+            source: annotation.source.into(),
+            annotated_at: annotation.annotated_at,
+        }
+    }
+}
+
+/// Write VAD metadata for a turn or one message in a turn.
+#[utoipa::path(
+    post,
+    path = "/v1/core/turns/annotate",
+    request_body(
+        content = TurnVadAnnotateRequest,
+        description = "VAD metadata annotation for a turn, or for a message when `message_id` is supplied.",
+        content_type = "application/json"
+    ),
+    responses(
+        (
+            status = 200,
+            description = "VAD annotation persisted and returned.",
+            body = TurnVadAnnotateResponse,
+            content_type = "application/json"
+        ),
+        (
+            status = 400,
+            description = "Malformed id, invalid target type, or VAD outside the contract ranges.",
+            body = ApiError,
+            content_type = "application/json"
+        ),
+        (
+            status = 401,
+            description = "Missing or invalid `x-oneiron-secret` header.",
+            body = ApiError,
+            content_type = "application/json"
+        ),
+        (
+            status = 404,
+            description = "Turn or message entity was not found.",
+            body = ApiError,
+            content_type = "application/json"
+        ),
+        (
+            status = 500,
+            description = "VAD annotation persistence failed.",
+            body = ApiError,
+            content_type = "application/json"
+        )
+    )
+)]
+async fn annotate_turn_vad(
+    headers: HeaderMap,
+    State(server): State<Arc<SyncServer>>,
+    Json(req): Json<TurnVadAnnotateRequest>,
+) -> Result<Json<TurnVadAnnotateResponse>, ApiError> {
+    check_api_auth(&headers, &server.config)?;
+    let turn_id = parse_entity_id_param(&req.turn_id, "turn_id")?;
+    require_entity_type(&server, &turn_id, ENTITY_TYPE_TURN, "turn")?;
+
+    let vad = req.vad.into_vad()?;
+    let annotated_at = req.annotated_at.unwrap_or_else(unix_seconds_now);
+    let annotation = VadAnnotation::new(vad, req.source.into(), annotated_at)
+        .map_err(vad_annotation_core_error)?;
+
+    let stored = if let Some(message_id_hex) = &req.message_id {
+        let message_id = parse_entity_id_param(message_id_hex, "message_id")?;
+        require_entity_type(&server, &message_id, ENTITY_TYPE_MESSAGE, "message")?;
+        server
+            .vault
+            .annotate_message_vad(&message_id, annotation)
+            .map_err(vad_annotation_core_error)?
+    } else {
+        server
+            .vault
+            .annotate_turn_vad(&turn_id, annotation)
+            .map_err(vad_annotation_core_error)?
+    };
+
+    Ok(Json(TurnVadAnnotateResponse::new(
+        &req.turn_id,
+        req.message_id.as_deref(),
+        stored,
+    )))
+}
+
+/// Read VAD metadata for a turn or one message in a turn.
+#[utoipa::path(
+    get,
+    path = "/v1/core/turns/annotate",
+    params(TurnVadAnnotateQuery),
+    responses(
+        (
+            status = 200,
+            description = "Persisted VAD annotation for the requested turn or message.",
+            body = TurnVadAnnotateResponse,
+            content_type = "application/json"
+        ),
+        (
+            status = 400,
+            description = "Malformed id or invalid target type.",
+            body = ApiError,
+            content_type = "application/json"
+        ),
+        (
+            status = 401,
+            description = "Missing or invalid `x-oneiron-secret` header.",
+            body = ApiError,
+            content_type = "application/json"
+        ),
+        (
+            status = 404,
+            description = "Turn/message entity or VAD annotation was not found.",
+            body = ApiError,
+            content_type = "application/json"
+        ),
+        (
+            status = 500,
+            description = "VAD annotation read failed.",
+            body = ApiError,
+            content_type = "application/json"
+        )
+    )
+)]
+async fn read_turn_vad_annotation(
+    headers: HeaderMap,
+    State(server): State<Arc<SyncServer>>,
+    query: Result<Query<TurnVadAnnotateQuery>, QueryRejection>,
+) -> Result<Json<TurnVadAnnotateResponse>, ApiError> {
+    check_api_auth(&headers, &server.config)?;
+    let params = query_params(query)?;
+    let turn_id = parse_entity_id_param(&params.turn_id, "turn_id")?;
+    require_entity_type(&server, &turn_id, ENTITY_TYPE_TURN, "turn")?;
+
+    let annotation = if let Some(message_id_hex) = &params.message_id {
+        let message_id = parse_entity_id_param(message_id_hex, "message_id")?;
+        require_entity_type(&server, &message_id, ENTITY_TYPE_MESSAGE, "message")?;
+        server
+            .vault
+            .get_message_vad_annotation(&message_id)
+            .map_err(vad_annotation_core_error)?
+    } else {
+        server
+            .vault
+            .get_turn_vad_annotation(&turn_id)
+            .map_err(vad_annotation_core_error)?
+    };
+
+    let Some(annotation) = annotation else {
+        let id = params.message_id.as_deref().unwrap_or(&params.turn_id);
+        return Err(ApiError::not_found("vad_annotation", Some(id)));
+    };
+
+    Ok(Json(TurnVadAnnotateResponse::new(
+        &params.turn_id,
+        params.message_id.as_deref(),
+        annotation,
+    )))
+}
+
+fn parse_entity_id_param(value: &str, field: &'static str) -> Result<oneiron::EntityId, ApiError> {
+    oneiron::EntityId::from_hex(value).map_err(|_| {
+        ApiError::bad_request(
+            format!("{field} must be a 32-character hex entity id"),
+            Some(field),
+        )
+    })
+}
+
+fn require_entity_type(
+    server: &SyncServer,
+    id: &oneiron::EntityId,
+    expected_type: u8,
+    resource: &'static str,
+) -> Result<(), ApiError> {
+    match server.vault.get_entity_type(id) {
+        Ok(Some(actual)) if actual == expected_type => Ok(()),
+        Ok(Some(_)) => Err(ApiError::bad_request(
+            format!("{resource} id does not reference a {resource} entity"),
+            Some(resource),
+        )),
+        Ok(None) => Err(ApiError::not_found(resource, Some(&id.to_hex()))),
+        Err(error) => {
+            tracing::error!(error = %error, "entity type lookup failed");
+            Err(ApiError::internal_server_error("entity type lookup failed"))
+        }
+    }
+}
+
+fn vad_annotation_core_error(error: oneiron::Error) -> ApiError {
+    match error.kind() {
+        ErrorKind::InvalidVad => ApiError::bad_request(error.to_string(), Some("vad")),
+        ErrorKind::InvalidEntityType => ApiError::bad_request(error.to_string(), Some("entity")),
+        ErrorKind::EntityNotFound => ApiError::not_found("entity", None),
+        _ => {
+            tracing::error!(error = %error, "VAD annotation operation failed");
+            ApiError::internal_server_error("VAD annotation operation failed")
+        }
+    }
+}
+
+fn unix_seconds_now() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |duration| duration.as_secs())
+}
+
 // ─── Lease revocation (ONE-1140, OD-8) ────────────────────────────────────────
 
 /// Request body for revoking one device lease binding.
@@ -1739,6 +2115,7 @@ mod tests {
             "/api/search/text",
             "/api/entity/{id}",
             "/api/edges/{id}",
+            "/v1/core/turns/annotate",
             "/api/context-pack",
             "/api/lease/revoke",
             "/api/health",
@@ -1834,6 +2211,8 @@ mod tests {
             ("/api/search/text", "get"),
             ("/api/entity/{id}", "get"),
             ("/api/edges/{id}", "get"),
+            ("/v1/core/turns/annotate", "get"),
+            ("/v1/core/turns/annotate", "post"),
             ("/api/context-pack", "post"),
             ("/api/lease/revoke", "post"),
         ] {
@@ -1919,6 +2298,10 @@ mod tests {
             "SearchResult",
             "TextSearchQuery",
             "EdgeResult",
+            "VadPayload",
+            "TurnVadAnnotateRequest",
+            "TurnVadAnnotateQuery",
+            "TurnVadAnnotateResponse",
             "LeaseRevokeRequest",
             "LeaseRevokeResponse",
             "ContextPackRequest",
@@ -1999,6 +2382,204 @@ mod tests {
             .expect("ApiError response body");
         let body: Value = serde_json::from_slice(&body).expect("ApiError JSON body");
         assert_eq!(body["code"], Value::from("UNAUTHORIZED"));
+    }
+
+    #[tokio::test]
+    async fn turn_vad_annotate_route_persists_and_reads_annotations() {
+        let (_dir, server) = test_server();
+        let turn = oneiron::EntityId::now();
+        let message = oneiron::EntityId::now();
+        let turn_body = rmp_serde::to_vec_named(&json!({
+            "txt": "turn affect",
+            "spkr": "user",
+            "at": 100_u64,
+        }))
+        .expect("encode turn body");
+        let message_body = rmp_serde::to_vec_named(&json!({
+            "txt": "message affect",
+            "spkr": "assistant",
+            "at": 101_u64,
+        }))
+        .expect("encode message body");
+        server
+            .vault
+            .put_entity(
+                &turn,
+                ENTITY_TYPE_TURN,
+                oneiron::TimeRange {
+                    start: 100,
+                    end: 100,
+                },
+                100,
+                &turn_body,
+            )
+            .expect("put turn");
+        server
+            .vault
+            .put_entity(
+                &message,
+                ENTITY_TYPE_MESSAGE,
+                oneiron::TimeRange {
+                    start: 101,
+                    end: 101,
+                },
+                101,
+                &message_body,
+            )
+            .expect("put message");
+
+        let response = api_routes(server.clone())
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/core/turns/annotate")
+                    .header(CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        json!({
+                            "turn_id": turn.to_hex(),
+                            "source": "model_inference",
+                            "vad": {
+                                "valence": 0.25,
+                                "arousal": 0.5,
+                                "dominance": 0.75,
+                            },
+                            "annotated_at": 200_u64,
+                        })
+                        .to_string(),
+                    ))
+                    .expect("request"),
+            )
+            .await
+            .expect("route response");
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("turn annotate response body");
+        let body: Value = serde_json::from_slice(&body).expect("annotation JSON body");
+        assert_eq!(body["turn_id"], Value::from(turn.to_hex()));
+        assert_eq!(body["message_id"], Value::Null);
+        assert_eq!(body["source"], Value::from("model_inference"));
+        assert_eq!(
+            server
+                .vault
+                .get_turn_vad_annotation(&turn)
+                .unwrap()
+                .unwrap()
+                .source,
+            oneiron::VadAnnotationSource::ModelInference
+        );
+
+        let response = api_routes(server.clone())
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/v1/core/turns/annotate?turn_id={}", turn.to_hex()))
+                    .body(Body::empty())
+                    .expect("request"),
+            )
+            .await
+            .expect("route response");
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("turn annotation read response body");
+        let body: Value = serde_json::from_slice(&body).expect("annotation JSON body");
+        assert_eq!(body["source"], Value::from("model_inference"));
+
+        let response = api_routes(server.clone())
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/core/turns/annotate")
+                    .header(CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        json!({
+                            "turn_id": turn.to_hex(),
+                            "message_id": message.to_hex(),
+                            "source": "user_self_report",
+                            "vad": {
+                                "valence": -0.25,
+                                "arousal": 0.25,
+                                "dominance": 0.5,
+                            },
+                            "annotated_at": 201_u64,
+                        })
+                        .to_string(),
+                    ))
+                    .expect("request"),
+            )
+            .await
+            .expect("route response");
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("message annotate response body");
+        let body: Value = serde_json::from_slice(&body).expect("annotation JSON body");
+        assert_eq!(body["message_id"], Value::from(message.to_hex()));
+        assert_eq!(body["source"], Value::from("user_self_report"));
+        assert_eq!(
+            server
+                .vault
+                .get_message_vad_annotation(&message)
+                .unwrap()
+                .unwrap()
+                .source,
+            oneiron::VadAnnotationSource::UserSelfReport
+        );
+    }
+
+    #[tokio::test]
+    async fn turn_vad_annotate_route_rejects_invalid_vad() {
+        let (_dir, server) = test_server();
+        let turn = oneiron::EntityId::now();
+        let turn_body = rmp_serde::to_vec_named(&json!({
+            "txt": "invalid turn affect",
+        }))
+        .expect("encode turn body");
+        server
+            .vault
+            .put_entity(
+                &turn,
+                ENTITY_TYPE_TURN,
+                oneiron::TimeRange {
+                    start: 100,
+                    end: 100,
+                },
+                100,
+                &turn_body,
+            )
+            .expect("put turn");
+
+        let response = api_routes(server.clone())
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/core/turns/annotate")
+                    .header(CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        json!({
+                            "turn_id": turn.to_hex(),
+                            "source": "user_self_report",
+                            "vad": {
+                                "valence": 0.0,
+                                "arousal": -0.1,
+                                "dominance": 0.5,
+                            },
+                        })
+                        .to_string(),
+                    ))
+                    .expect("request"),
+            )
+            .await
+            .expect("route response");
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        let body = to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("invalid VAD response body");
+        let body: Value = serde_json::from_slice(&body).expect("ApiError JSON body");
+        assert_eq!(body["code"], Value::from("BAD_REQUEST"));
+        assert_eq!(body["details"]["field"], Value::from("vad"));
+        assert_eq!(server.vault.get_turn_vad_annotation(&turn).unwrap(), None);
     }
 
     #[tokio::test]

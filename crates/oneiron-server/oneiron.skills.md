@@ -115,6 +115,15 @@ Fetch Tier-1 first. It contains one endpoint block per live route literal and no
   - "get a context pack"
 - safety: Read-only retrieval intent with a POST body; no persisted mutation in the current implementation.
 
+#### turns-annotate - `GET/POST /v1/core/turns/annotate`
+
+- when-to-use: Write or read VAD metadata for a stored turn, or for a message within a turn, when the caller already knows the relevant entity id.
+- trigger phrases:
+  - "annotate turn affect"
+  - "record VAD for this message"
+  - "read turn VAD metadata"
+- safety: Mutating on POST and read-only on GET. Requires auth. VAD components outside the accepted range are rejected; use an `Idempotency-Key` header when retrying POST after transport failure.
+
 #### companion-resume - `POST /api/companion/resume`
 
 - when-to-use: Hydrate companion resume state in one read-only call, including session context, pending notifications, unprocessed items, and budget counters.

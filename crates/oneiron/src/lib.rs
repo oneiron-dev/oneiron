@@ -55,7 +55,8 @@ pub use crate::types::{
     EmptyReason, EntityId, FieldProfile, HnswConfig, NotificationItem, PackFormat, PackStats,
     ResumeBudget, ResumeBundle, ScoredEntity, SessionContext, Signal, StructuralKindRegistration,
     TemporalAnchorMode, TemporalGranularity, TextAnalyzerConfig, TextIndexOptions, TimeRange,
-    TokenAllocation, TypeByteBand, UnprocessedItem, Vad, VadComponent, VaultConfig,
+    TokenAllocation, TypeByteBand, UnprocessedItem, Vad, VadAnnotation, VadAnnotationSource,
+    VadComponent, VaultConfig,
 };
 pub use crate::vault::{
     ActorBound, TextIndexStatus, Vault, VaultDoctorDbManifestReport, VaultDoctorHnswRecordState,
