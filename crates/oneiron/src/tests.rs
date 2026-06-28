@@ -34,6 +34,7 @@ use crate::store::{
     VECTOR_VERSION_KEY, lmdb_database_open_guard, short_id_counter_key,
     structural_kind_registry_key,
 };
+use crate::vault::vad_annotation_claim_id;
 
 fn test_config() -> VaultConfig {
     // Build from the public preset so tests exercise the same construction
@@ -6598,6 +6599,141 @@ fn message_vad_annotation_round_trip() -> Result<()> {
             .kind(),
         ErrorKind::InvalidEntityType
     );
+    Ok(())
+}
+
+fn assert_vad_annotation_claim_present(
+    vault: &Vault,
+    claim_id: &EntityId,
+    annotated_id: &EntityId,
+) -> Result<()> {
+    let rtxn = vault.store.env.read_txn()?;
+    assert!(
+        vault
+            .store
+            .entities
+            .get(&rtxn, claim_id.as_bytes())?
+            .is_some(),
+        "derived VAD claim entity must exist before deletion"
+    );
+    let edge_out = Store::encode_edge_key(claim_id, EdgeKind::ClaimOf, annotated_id);
+    let edge_in = Store::encode_edge_key(annotated_id, EdgeKind::ClaimOf, claim_id);
+    assert!(
+        vault.store.edges_out.get(&rtxn, &edge_out)?.is_some(),
+        "derived VAD claim_of edge must exist before deletion"
+    );
+    assert!(
+        vault.store.edges_in.get(&rtxn, &edge_in)?.is_some(),
+        "derived VAD claim_of reverse edge must exist before deletion"
+    );
+    Ok(())
+}
+
+fn assert_vad_annotation_claim_removed(
+    vault: &Vault,
+    claim_id: &EntityId,
+    annotated_id: &EntityId,
+) -> Result<()> {
+    let rtxn = vault.store.env.read_txn()?;
+    assert!(
+        vault
+            .store
+            .entities
+            .get(&rtxn, claim_id.as_bytes())?
+            .is_none(),
+        "derived VAD claim entity must be removed"
+    );
+    let edge_out = Store::encode_edge_key(claim_id, EdgeKind::ClaimOf, annotated_id);
+    let edge_in = Store::encode_edge_key(annotated_id, EdgeKind::ClaimOf, claim_id);
+    assert!(
+        vault.store.edges_out.get(&rtxn, &edge_out)?.is_none(),
+        "derived VAD claim_of edge must be removed"
+    );
+    assert!(
+        vault.store.edges_in.get(&rtxn, &edge_in)?.is_none(),
+        "derived VAD claim_of reverse edge must be removed"
+    );
+    Ok(())
+}
+
+#[test]
+fn batch_delete_removes_turn_vad_annotation_claim_and_edges() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let turn = EntityId::now();
+    let body = rmp_serde::to_vec_named(&serde_json::json!({
+        "txt": "turn delete affect",
+        "spkr": "user",
+        "at": 130_u64,
+    }))
+    .expect("encode turn body");
+    vault.put_entity(
+        &turn,
+        ENTITY_TYPE_TURN,
+        test_time_range(130, 130),
+        130,
+        &body,
+    )?;
+    let annotation = VadAnnotation::new(
+        Vad {
+            valence: 0.6,
+            arousal: 0.4,
+            dominance: 0.8,
+        },
+        VadAnnotationSource::ModelInference,
+        230,
+    )?;
+    vault.annotate_turn_vad(&turn, annotation)?;
+
+    let claim_id = vad_annotation_claim_id(ENTITY_TYPE_TURN, &turn)?;
+    assert_vad_annotation_claim_present(&vault, &claim_id, &turn)?;
+
+    vault.batch().delete(&turn).commit()?;
+
+    assert_eq!(vault.get_turn_vad_annotation(&turn)?, None);
+    assert_vad_annotation_claim_removed(&vault, &claim_id, &turn)?;
+    assert_eq!(vault.get_turn_vad_annotation(&turn)?, None);
+    assert_vad_annotation_claim_removed(&vault, &claim_id, &turn)?;
+    Ok(())
+}
+
+#[test]
+fn soft_delete_removes_message_vad_annotation_claim_and_edges() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let message = EntityId::now();
+    let body = rmp_serde::to_vec_named(&serde_json::json!({
+        "txt": "message soft delete affect",
+        "spkr": "assistant",
+        "at": 131_u64,
+    }))
+    .expect("encode message body");
+    vault.put_entity(
+        &message,
+        ENTITY_TYPE_MESSAGE,
+        test_time_range(131, 131),
+        131,
+        &body,
+    )?;
+    let annotation = VadAnnotation::new(
+        Vad {
+            valence: 0.2,
+            arousal: 0.7,
+            dominance: 0.3,
+        },
+        VadAnnotationSource::UserSelfReport,
+        231,
+    )?;
+    vault.annotate_message_vad(&message, annotation)?;
+
+    let claim_id = vad_annotation_claim_id(ENTITY_TYPE_MESSAGE, &message)?;
+    assert_vad_annotation_claim_present(&vault, &claim_id, &message)?;
+
+    let outcome = vault.delete_entity_with_reason(&message, DeleteReason::UserDelete)?;
+
+    assert!(outcome.existed);
+    assert_eq!(vault.get_message_vad_annotation(&message)?, None);
+    assert_vad_annotation_claim_removed(&vault, &claim_id, &message)?;
+    assert_eq!(vault.get_message_vad_annotation(&message)?, None);
+    assert_vad_annotation_claim_removed(&vault, &claim_id, &message)?;
     Ok(())
 }
 

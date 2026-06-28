@@ -142,7 +142,7 @@ fn vad_annotation_meta_key(entity_type: u8, id: &EntityId) -> [u8; VAD_ANNOTATIO
     key
 }
 
-fn vad_annotation_claim_id(entity_type: u8, id: &EntityId) -> Result<EntityId> {
+pub(crate) fn vad_annotation_claim_id(entity_type: u8, id: &EntityId) -> Result<EntityId> {
     let mut material = Vec::with_capacity(VAD_ANNOTATION_CLAIM_ID_DOMAIN.len() + 1 + ENTITY_ID_LEN);
     material.extend_from_slice(VAD_ANNOTATION_CLAIM_ID_DOMAIN);
     material.push(entity_type);
@@ -270,16 +270,92 @@ fn vad_annotation_from_value(value: &Value) -> Result<VadAnnotation> {
     )
 }
 
-fn delete_vad_annotation_metadata_in_txn(
+#[derive(Debug, Default)]
+pub(crate) struct VadAnnotationCleanup {
+    pub(crate) had_vector: bool,
+    pub(crate) had_graph_mutation: bool,
+    pub(crate) neighbors: Vec<EntityId>,
+}
+
+impl VadAnnotationCleanup {
+    fn absorb(
+        &mut self,
+        deleted_claim_id: EntityId,
+        had_vector: bool,
+        had_graph_mutation: bool,
+        mut neighbors: Vec<EntityId>,
+    ) {
+        self.had_vector |= had_vector;
+        self.had_graph_mutation |= had_graph_mutation;
+        self.neighbors.push(deleted_claim_id);
+        self.neighbors.append(&mut neighbors);
+        self.neighbors.sort_unstable();
+        self.neighbors.dedup();
+    }
+}
+
+pub(crate) fn delete_vad_annotation_metadata_in_txn(
     store: &Store,
     wtxn: &mut heed::RwTxn<'_>,
     id: &EntityId,
+) -> Result<VadAnnotationCleanup> {
+    let mut cleanup = VadAnnotationCleanup::default();
+    delete_vad_annotation_metadata_for_type_in_txn(
+        store,
+        wtxn,
+        id,
+        ENTITY_TYPE_TURN,
+        &mut cleanup,
+    )?;
+    delete_vad_annotation_metadata_for_type_in_txn(
+        store,
+        wtxn,
+        id,
+        ENTITY_TYPE_MESSAGE,
+        &mut cleanup,
+    )?;
+    Ok(cleanup)
+}
+
+pub(crate) fn delete_vad_annotation_metadata_for_type_in_txn(
+    store: &Store,
+    wtxn: &mut heed::RwTxn<'_>,
+    id: &EntityId,
+    entity_type: u8,
+    cleanup: &mut VadAnnotationCleanup,
 ) -> Result<()> {
-    for entity_type in [ENTITY_TYPE_TURN, ENTITY_TYPE_MESSAGE] {
+    if matches!(entity_type, ENTITY_TYPE_TURN | ENTITY_TYPE_MESSAGE) {
         let key = vad_annotation_meta_key(entity_type, id);
         store.vault_meta.delete(wtxn, &key)?;
+
+        let claim_id = vad_annotation_claim_id(entity_type, id)?;
+        if vad_annotation_claim_matches_subject(store, wtxn, &claim_id, id)? {
+            let (existed, had_vector, had_graph_mutation, neighbors) =
+                deindex_entity(store, wtxn, &claim_id)?;
+            if existed {
+                cleanup.absorb(claim_id, had_vector, had_graph_mutation, neighbors);
+            }
+        }
     }
     Ok(())
+}
+
+fn vad_annotation_claim_matches_subject(
+    store: &Store,
+    rtxn: &heed::RwTxn<'_>,
+    claim_id: &EntityId,
+    annotated_id: &EntityId,
+) -> Result<bool> {
+    let Some(raw) = store.entities.get(rtxn, claim_id.as_bytes())? else {
+        return Ok(false);
+    };
+    let header = EntityMetadataHeader::parse(raw).ok_or(Error::CorruptedIndex("entity header"))?;
+    if header.entity_type != ENTITY_TYPE_CLAIM {
+        return Ok(false);
+    }
+    let body = crate::claim::decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true)?;
+    Ok(body.predicate == VAD_ANNOTATION_CLAIM_PREDICATE
+        && body.subject == ClaimSubject::Entity(*annotated_id))
 }
 
 /// Returns the first outbound ChildOf parent for `node`, or `None` if it has
@@ -2218,7 +2294,6 @@ impl Vault {
     ) -> Result<bool> {
         let (existed, had_vector, had_graph_mutation, neighbors) =
             deindex_entity(&self.store, wtxn, id)?;
-        delete_vad_annotation_metadata_in_txn(&self.store, wtxn, id)?;
         ppr::invalidate_ppr_for_delete(&self.store, wtxn, id, &neighbors)?;
         if had_graph_mutation {
             ppr::increment_graph_version(&self.store, wtxn)?;
@@ -2236,18 +2311,35 @@ impl Vault {
     ) -> Result<(bool, bool)> {
         bm25::deindex_text(&self.store, wtxn, id)?;
         delete_from_phonetic_postings(&self.store, wtxn, id)?;
-        delete_vad_annotation_metadata_in_txn(&self.store, wtxn, id)?;
-        let had_vector = self.store.vectors.delete(wtxn, id.as_bytes())?;
+        let mut had_vector = self.store.vectors.delete(wtxn, id.as_bytes())?;
         crate::hnsw::hnsw_deindex(&self.store, wtxn, id)?;
 
         let Some(entity_record) = self.store.entities.get(wtxn, id.as_bytes())? else {
+            let cleanup = delete_vad_annotation_metadata_in_txn(&self.store, wtxn, id)?;
+            had_vector |= cleanup.had_vector;
+            if cleanup.had_graph_mutation {
+                ppr::invalidate_ppr_for_delete(&self.store, wtxn, id, &cleanup.neighbors)?;
+                ppr::increment_graph_version(&self.store, wtxn)?;
+            }
             return Ok((false, had_vector));
         };
-        if EntityMetadataHeader::parse(entity_record).is_none() {
-            return Err(Error::CorruptedIndex("entity metadata"));
+        let header = EntityMetadataHeader::parse(entity_record)
+            .ok_or(Error::CorruptedIndex("entity metadata"))?;
+        let payload = entity_record[..ENTITY_METADATA_HEADER_LEN].to_vec();
+        let mut cleanup = VadAnnotationCleanup::default();
+        delete_vad_annotation_metadata_for_type_in_txn(
+            &self.store,
+            wtxn,
+            id,
+            header.entity_type,
+            &mut cleanup,
+        )?;
+        had_vector |= cleanup.had_vector;
+        if cleanup.had_graph_mutation {
+            ppr::invalidate_ppr_for_delete(&self.store, wtxn, id, &cleanup.neighbors)?;
+            ppr::increment_graph_version(&self.store, wtxn)?;
         }
 
-        let payload = entity_record[..ENTITY_METADATA_HEADER_LEN].to_vec();
         self.store.entities.put(wtxn, id.as_bytes(), &payload)?;
         Ok((true, had_vector))
     }

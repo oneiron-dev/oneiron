@@ -2554,6 +2554,32 @@ mod tests {
                 .source,
             oneiron::VadAnnotationSource::UserSelfReport
         );
+
+        let response = api_routes(server.clone())
+            .oneshot(
+                Request::builder()
+                    .uri(format!(
+                        "/v1/core/turns/annotate?turn_id={}&message_id={}",
+                        turn.to_hex(),
+                        message.to_hex()
+                    ))
+                    .body(Body::empty())
+                    .expect("request"),
+            )
+            .await
+            .expect("route response");
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("message annotation read response body");
+        let body: Value = serde_json::from_slice(&body).expect("annotation JSON body");
+        assert_eq!(body["turn_id"], Value::from(turn.to_hex()));
+        assert_eq!(body["message_id"], Value::from(message.to_hex()));
+        assert_eq!(body["source"], Value::from("user_self_report"));
+        assert_eq!(body["vad"]["valence"], Value::from(-0.25));
+        assert_eq!(body["vad"]["arousal"], Value::from(0.25));
+        assert_eq!(body["vad"]["dominance"], Value::from(0.5));
+        assert_eq!(body["annotated_at"], Value::from(201_u64));
     }
 
     #[tokio::test]
