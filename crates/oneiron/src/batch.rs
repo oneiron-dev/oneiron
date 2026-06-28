@@ -193,7 +193,9 @@ pub(crate) enum BatchOp {
 /// A trusted door still validates structure: the flags only skip the
 /// public-band rejections (`MaintenanceKindNotWritable` /
 /// `ReservedPredicate`). `apply_put` still runs the registry type-byte gate
-/// and the full D17/D18 CLAIM body validation on every op built here.
+/// and the full D17/D18 CLAIM body validation on every op built here. Policy
+/// manifests are owner-policy inputs and are not admitted through this
+/// unverified replicated door.
 #[cfg(feature = "sync")]
 fn replicated_put_op(
     id: &EntityId,
@@ -745,6 +747,12 @@ pub(crate) fn apply_ops(
                 // sets `allow_maintenance` so REDACTION_AUDIT (120) receipts
                 // survive CRDT→LMDB replay (registry-only entity-type validation
                 // still rejects genuinely unknown type bytes).
+                if allow_maintenance
+                    && allow_reserved_predicate
+                    && entity_type == crate::types::ENTITY_TYPE_POLICY_MANIFEST
+                {
+                    return Err(Error::MaintenanceKindNotWritable(entity_type));
+                }
                 if allow_maintenance {
                     store.validate_entity_type(entity_type)?;
                 } else {
@@ -1098,8 +1106,8 @@ fn apply_put(
     if entity_type == crate::types::ENTITY_TYPE_CLAIM {
         let body = crate::claim::validate_claim_body_and_decode(data, allow_reserved_predicate)?;
         if !replicated {
-            let ceiling = crate::claim::read_source_trust_ceiling(store, &*wtxn)?;
-            crate::claim::check_claim_source_trust(&body, &ceiling)?;
+            let policy = crate::gate::resolve_policy_manifest(store, &*wtxn)?;
+            crate::gate::check_claim_policy(&body, &policy)?;
         }
     }
     if occurred.start > occurred.end {

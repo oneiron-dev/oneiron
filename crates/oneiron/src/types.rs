@@ -37,14 +37,18 @@ pub const ENTITY_TYPE_REDACTION_AUDIT: u8 = 120;
 /// `mo` is RESERVED. MACHINE (82) reuse was REJECTED — kind = shape
 /// (DEC-0005 §7): a model substrate is not a device.
 pub const ENTITY_TYPE_MODEL: u8 = 121;
+/// DEC-0005 PolicyManifestV1 entity. Engine-authored maintenance kind used by
+/// the Gate resolver; public puts are rejected with
+/// `MaintenanceKindNotWritable`.
+pub const ENTITY_TYPE_POLICY_MANIFEST: u8 = 122;
 
 /// Registry classification mirroring the contracts.ts §1
 /// `EntityClassification` enum: `"semantic" | "core" | "pack" | "maintenance"`.
 ///
 /// CLAIM (byte 0) is the single SEMANTIC type (ARCH-0003) and deliberately
 /// NOT a StructuralKind; core and pack kinds ARE StructuralKinds; maintenance
-/// records (REDACTION_AUDIT, MODEL) are engine-authored records, also not
-/// StructuralKinds.
+/// records (REDACTION_AUDIT, MODEL, POLICY_MANIFEST) are engine-authored
+/// records, also not StructuralKinds.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum EntityClassification {
     /// `"semantic"` — CLAIM, the single subject·predicate·value type.
@@ -78,8 +82,8 @@ pub enum TypeByteBand {
     /// Bytes `100–119` — "CRM pack".
     Crm,
     /// Bytes `120–255` — "Induced / dynamic / maintenance"
-    /// (REDACTION_AUDIT=120, MODEL=121, runtime-induced and tenant-custom
-    /// kinds).
+    /// (REDACTION_AUDIT=120, MODEL=121, POLICY_MANIFEST=122,
+    /// runtime-induced and tenant-custom kinds).
     InducedDynamicMaintenance,
 }
 
@@ -127,8 +131,8 @@ pub const fn band_of(type_byte: u8) -> TypeByteBand {
 ///
 /// Per contracts.ts §1: byte 0 (CLAIM) is the semantic type and deliberately
 /// NOT a StructuralKind; maintenance records (REDACTION_AUDIT = 120,
-/// MODEL = 121) are not StructuralKinds either. Only registered `core` and
-/// `pack` kinds qualify.
+/// MODEL = 121, POLICY_MANIFEST = 122) are not StructuralKinds either. Only
+/// registered `core` and `pack` kinds qualify.
 /// Unregistered bytes return `false` here AND remain rejected by
 /// `validate_entity_type` on every write path (unchanged behavior).
 #[must_use]
@@ -314,6 +318,13 @@ pub const ENTITY_TYPE_REGISTRY: &[EntityTypeRegistryEntry] = &[
         classification: EntityClassification::Maintenance,
         band: TypeByteBand::InducedDynamicMaintenance,
     },
+    EntityTypeRegistryEntry {
+        kind: "POLICY_MANIFEST",
+        type_byte: ENTITY_TYPE_POLICY_MANIFEST,
+        short_id_prefix: None,
+        classification: EntityClassification::Maintenance,
+        band: TypeByteBand::InducedDynamicMaintenance,
+    },
 ];
 
 /// A time-ordered entity identifier backed by UUIDv7 bytes.
@@ -467,18 +478,19 @@ pub(crate) fn validate_entity_type(entity_type: u8) -> crate::error::Result<()> 
 
 /// First byte of the induced / dynamic / maintenance type-byte band
 /// (contracts.ts `typeByteBands` row `120+`). Registered kinds in this band
-/// (REDACTION_AUDIT = 120, MODEL = 121) are engine-authored maintenance
-/// records.
+/// (REDACTION_AUDIT = 120, MODEL = 121, POLICY_MANIFEST = 122) are
+/// engine-authored maintenance records.
 pub(crate) const MAINTENANCE_TYPE_BYTE_BAND_START: u8 = 120;
 
 /// Validates an entity type byte for PUBLIC write paths (D5).
 ///
 /// Genuinely unknown bytes fail with [`Error::InvalidEntityType`]; registered
-/// maintenance-band kinds (type byte ≥ 120: REDACTION_AUDIT, MODEL) fail
-/// with the distinct [`Error::MaintenanceKindNotWritable`] so API-boundary
-/// error codes never conflate "unknown byte" with "reserved maintenance
-/// kind". Engine-internal writers (the REDACTION_AUDIT receipt writer and
-/// the MODEL get-or-create door in `vault.rs`) bypass this gate.
+/// maintenance-band kinds (type byte ≥ 120: REDACTION_AUDIT, MODEL,
+/// POLICY_MANIFEST) fail with the distinct [`Error::MaintenanceKindNotWritable`]
+/// so API-boundary error codes never conflate "unknown byte" with "reserved
+/// maintenance kind". Engine-internal writers (the REDACTION_AUDIT receipt
+/// writer, the MODEL get-or-create door in `vault.rs`, and policy-manifest
+/// resolver fixtures) bypass this gate.
 ///
 /// [`Error::InvalidEntityType`]: crate::error::Error::InvalidEntityType
 /// [`Error::MaintenanceKindNotWritable`]: crate::error::Error::MaintenanceKindNotWritable
