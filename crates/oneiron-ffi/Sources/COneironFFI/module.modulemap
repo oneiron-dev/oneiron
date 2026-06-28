@@ -1,0 +1,5 @@
+module COneironFFI [system] {
+  header "../../include/oneiron_ffi.h"
+  link "oneiron_ffi"
+  export *
+}

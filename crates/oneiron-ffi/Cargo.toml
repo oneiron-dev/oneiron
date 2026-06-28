@@ -4,6 +4,25 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
+description = "Stable C and Swift package shell for Oneiron mobile storage consumers"
+repository.workspace = true
+homepage.workspace = true
+keywords.workspace = true
+categories.workspace = true
+include = [
+    "Cargo.toml",
+    "Package.swift",
+    "Sources/**",
+    "build.rs",
+    "cbindgen.toml",
+    "include/**",
+    "src/**",
+]
+
+[package.metadata.oneiron.mobile]
+c_header = "include/oneiron_ffi.h"
+swift_package = "Package.swift"
+library_name = "oneiron_ffi"
 
 [lib]
 crate-type = ["cdylib", "staticlib", "rlib"]

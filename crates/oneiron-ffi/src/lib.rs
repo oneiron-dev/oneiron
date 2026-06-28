@@ -1145,6 +1145,7 @@ pub extern "C" fn oneiron_vault_would_create_cycle(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::mem::{align_of, offset_of};
 
     fn id(seed: u8) -> [u8; ENTITY_ID_LEN] {
         let mut id = [0_u8; ENTITY_ID_LEN];
@@ -1169,6 +1170,67 @@ mod tests {
         assert_eq!(status, OneironStatus::Ok);
         assert!(!vault.is_null());
         (dir, vault)
+    }
+
+    #[test]
+    fn ffi_c_abi_layout_contract() {
+        assert_eq!(size_of::<OneironStatus>(), 4);
+        assert_eq!(align_of::<OneironStatus>(), 4);
+        assert_eq!(OneironStatus::Ok as u32, 0);
+        assert_eq!(OneironStatus::NullArg as u32, 1);
+        assert_eq!(OneironStatus::InvalidArg as u32, 2);
+        assert_eq!(OneironStatus::NotFound as u32, 3);
+        assert_eq!(OneironStatus::EngineError as u32, 4);
+        assert_eq!(OneironStatus::Panic as u32, 5);
+        assert_eq!(OneironStatus::BufferTooSmall as u32, 6);
+        assert_eq!(OneironStatus::Utf8 as u32, 7);
+
+        assert_eq!(size_of::<OneironByteSlice>(), 16);
+        assert_eq!(align_of::<OneironByteSlice>(), 8);
+        assert_eq!(offset_of!(OneironByteSlice, ptr), 0);
+        assert_eq!(offset_of!(OneironByteSlice, len), 8);
+
+        assert_eq!(size_of::<OneironEntityInput>(), 64);
+        assert_eq!(align_of::<OneironEntityInput>(), 8);
+        assert_eq!(offset_of!(OneironEntityInput, id), 0);
+        assert_eq!(offset_of!(OneironEntityInput, entity_type), 16);
+        assert_eq!(offset_of!(OneironEntityInput, occurred_start), 24);
+        assert_eq!(offset_of!(OneironEntityInput, occurred_end), 32);
+        assert_eq!(offset_of!(OneironEntityInput, learned_at), 40);
+        assert_eq!(offset_of!(OneironEntityInput, data), 48);
+
+        assert_eq!(size_of::<OneironBuffer>(), 24);
+        assert_eq!(align_of::<OneironBuffer>(), 8);
+        assert_eq!(offset_of!(OneironBuffer, ptr), 0);
+        assert_eq!(offset_of!(OneironBuffer, len), 8);
+        assert_eq!(offset_of!(OneironBuffer, cap), 16);
+
+        assert_eq!(size_of::<OneironEdgeInfo>(), 88);
+        assert_eq!(align_of::<OneironEdgeInfo>(), 8);
+        assert_eq!(offset_of!(OneironEdgeInfo, src), 0);
+        assert_eq!(offset_of!(OneironEdgeInfo, kind), 16);
+        assert_eq!(offset_of!(OneironEdgeInfo, tgt), 20);
+        assert_eq!(offset_of!(OneironEdgeInfo, weight), 40);
+        assert_eq!(offset_of!(OneironEdgeInfo, created_at), 48);
+        assert_eq!(offset_of!(OneironEdgeInfo, has_vad), 56);
+        assert_eq!(offset_of!(OneironEdgeInfo, valence), 64);
+        assert_eq!(offset_of!(OneironEdgeInfo, arousal), 72);
+        assert_eq!(offset_of!(OneironEdgeInfo, dominance), 80);
+
+        assert_eq!(size_of::<OneironEdgeInfoArray>(), 24);
+        assert_eq!(align_of::<OneironEdgeInfoArray>(), 8);
+        assert_eq!(size_of::<OneironScoredEntity>(), 24);
+        assert_eq!(align_of::<OneironScoredEntity>(), 8);
+        assert_eq!(offset_of!(OneironScoredEntity, id), 0);
+        assert_eq!(offset_of!(OneironScoredEntity, score), 16);
+        assert_eq!(size_of::<OneironScoredEntityArray>(), 24);
+        assert_eq!(align_of::<OneironScoredEntityArray>(), 8);
+        assert_eq!(size_of::<OneironSubtreeEntry>(), 20);
+        assert_eq!(align_of::<OneironSubtreeEntry>(), 4);
+        assert_eq!(offset_of!(OneironSubtreeEntry, id), 0);
+        assert_eq!(offset_of!(OneironSubtreeEntry, depth), 16);
+        assert_eq!(size_of::<OneironSubtreeEntryArray>(), 24);
+        assert_eq!(align_of::<OneironSubtreeEntryArray>(), 8);
     }
 
     #[test]
