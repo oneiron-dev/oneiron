@@ -8,9 +8,9 @@ use crate::limits::{MAX_ANCESTOR_DEPTH, MAX_CHILD_OF_CYCLE_TRAVERSAL_STEPS};
 use crate::types::{
     EDGE_VALUE_SEMANTIC_LEN, EDGE_VALUE_SEMANTIC_PROVENANCED_LEN, EDGE_VALUE_STRUCTURAL_LEN,
     ENTITY_ID_LEN, ENTITY_TYPE_MACHINE, ENTITY_TYPE_MODEL, ENTITY_TYPE_NOTIFICATION,
-    ENTITY_TYPE_REDACTION_AUDIT, ENTITY_TYPE_TASK, ENTITY_TYPE_TASK_LIST, EdgeActorClass,
-    EdgeConfirmationStatus, EdgeProvenanceFlags, decode_edge_value, decode_edge_value_for_kind,
-    encode_edge_value,
+    ENTITY_TYPE_POLICY_MANIFEST, ENTITY_TYPE_REDACTION_AUDIT, ENTITY_TYPE_TASK,
+    ENTITY_TYPE_TASK_LIST, EdgeActorClass, EdgeConfirmationStatus, EdgeProvenanceFlags,
+    decode_edge_value, decode_edge_value_for_kind, encode_edge_value,
 };
 use heed::EnvOpenOptions;
 use heed::types::{Bytes, Str};
@@ -5952,6 +5952,13 @@ fn all_entity_type_prefixes() {
             EntityClassification::Maintenance,
             TypeByteBand::InducedDynamicMaintenance,
         ),
+        (
+            "POLICY_MANIFEST",
+            122,
+            None,
+            EntityClassification::Maintenance,
+            TypeByteBand::InducedDynamicMaintenance,
+        ),
     ];
 
     let actual: Vec<RegistryRow> = ENTITY_TYPE_REGISTRY
@@ -6054,8 +6061,8 @@ fn type_byte_band_allocation_matches_contract() {
     }
 
     // is_structural_kind: false for the semantic byte 0 and the registered
-    // maintenance kinds 120/121; true for every REGISTERED core (1..=16) and
-    // pack (80/81/82) kind.
+    // maintenance kinds 120/121/122; true for every REGISTERED core (1..=16)
+    // and pack (80/81/82) kind.
     assert!(!is_structural_kind(0), "CLAIM is NOT a StructuralKind");
     assert!(
         !is_structural_kind(120),
@@ -6064,6 +6071,10 @@ fn type_byte_band_allocation_matches_contract() {
     assert!(
         !is_structural_kind(121),
         "MODEL is NOT a StructuralKind (ONE-1138: engine-authored maintenance)"
+    );
+    assert!(
+        !is_structural_kind(122),
+        "POLICY_MANIFEST is NOT a StructuralKind (GATE-001: vault-resident maintenance)"
     );
     for byte in 1..=16_u8 {
         assert!(is_structural_kind(byte), "core byte {byte}");
@@ -6074,9 +6085,9 @@ fn type_byte_band_allocation_matches_contract() {
 
     // Unregistered bytes — including bytes INSIDE structural bands — are not
     // StructuralKinds, and the existing write-path gate still rejects them
-    // with the same typed error. (121 left this list when ONE-1138 registered
-    // MODEL; 122 is the band's first unregistered byte now.)
-    for byte in [17_u8, 63, 64, 79, 83, 99, 100, 119, 122, 255] {
+    // with the same typed error. (122 left this list when GATE-001 registered
+    // POLICY_MANIFEST; 123 is the band's first unregistered byte now.)
+    for byte in [17_u8, 63, 64, 79, 83, 99, 100, 119, 123, 255] {
         assert!(!is_structural_kind(byte), "unregistered byte {byte}");
         assert!(
             matches!(
@@ -6599,6 +6610,7 @@ fn public_put_of_maintenance_kind_rejected_with_distinct_typed_error() -> Result
     for (kind_byte, payload) in [
         (ENTITY_TYPE_REDACTION_AUDIT, b"forged-receipt".as_slice()),
         (ENTITY_TYPE_MODEL, b"forged-model".as_slice()),
+        (ENTITY_TYPE_POLICY_MANIFEST, b"forged-policy".as_slice()),
     ] {
         let id = EntityId::now();
 
@@ -6666,10 +6678,10 @@ fn public_put_of_maintenance_kind_rejected_with_distinct_typed_error() -> Result
 fn unknown_type_bytes_still_fail_with_invalid_entity_type() -> Result<()> {
     let (_dir, vault) = open_test_vault();
 
-    // 121 left this list when ONE-1138 registered MODEL (public puts of 121
-    // now fail MaintenanceKindNotWritable — covered by the D5 gate test);
-    // 122 is the maintenance band's first unregistered byte.
-    for unknown in [99_u8, 122, 200] {
+    // 121 left this list when ONE-1138 registered MODEL; 122 left it when
+    // GATE-001 registered POLICY_MANIFEST. Public puts of those bytes now fail
+    // MaintenanceKindNotWritable — covered by the D5 gate test.
+    for unknown in [99_u8, 123, 200] {
         let id = EntityId::now();
         let err = vault
             .put_entity(&id, unknown, test_time_range(1, 1), 2, b"unknown-type")

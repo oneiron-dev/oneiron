@@ -1098,8 +1098,8 @@ fn apply_put(
     if entity_type == crate::types::ENTITY_TYPE_CLAIM {
         let body = crate::claim::validate_claim_body_and_decode(data, allow_reserved_predicate)?;
         if !replicated {
-            let ceiling = crate::claim::read_source_trust_ceiling(store, &*wtxn)?;
-            crate::claim::check_claim_source_trust(&body, &ceiling)?;
+            let policy = crate::gate::resolve_policy_manifest(store, &*wtxn)?;
+            crate::gate::check_claim_policy(&body, &policy)?;
         }
     }
     if occurred.start > occurred.end {
