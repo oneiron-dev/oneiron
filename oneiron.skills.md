@@ -390,6 +390,57 @@ Example response:
 ]
 ```
 
+### Turns Annotate
+
+Methods: `GET`, `POST`
+
+Authentication: `x-oneiron-secret` unless development config allows unauthenticated access.
+
+POST request body:
+
+- `turn_id` required: 32-character hex TURN entity id.
+- `message_id` optional: 32-character hex MESSAGE entity id. When present, the message must be a child of `turn_id`.
+- `source` required: `model_inference` or `user_self_report`.
+- `vad` required object:
+  - `valence`: f32 in `[-1.0, 1.0]`.
+  - `arousal`: f32 in `[0.0, 1.0]`.
+  - `dominance`: f32 in `[0.0, 1.0]`.
+- `annotated_at` optional: Unix seconds; defaults to server time.
+
+GET query parameters:
+
+- `turn_id` required: 32-character hex TURN entity id.
+- `message_id` optional: 32-character hex MESSAGE entity id. When present, the message must be a child of `turn_id`.
+
+Response fields:
+
+- `turn_id`: annotated turn id.
+- `message_id`: annotated message id when the annotation is message-scoped.
+- `source`: `model_inference` or `user_self_report`.
+- `vad`: object with `valence`, `arousal`, and `dominance`.
+- `annotated_at`: Unix seconds for the stored annotation.
+
+Error behavior:
+
+- `400` for malformed ids, invalid VAD ranges, unsupported `source`, or a `message_id` outside the supplied turn.
+- `404` when the target exists but no VAD annotation has been recorded.
+
+Example response:
+
+```json
+{
+  "turn_id": "0123456789abcdef0123456789abcdef",
+  "message_id": null,
+  "source": "model_inference",
+  "vad": {
+    "valence": 0.25,
+    "arousal": 0.5,
+    "dominance": 0.75
+  },
+  "annotated_at": 1770000000
+}
+```
+
 ### Context Pack
 
 Method: `POST`
