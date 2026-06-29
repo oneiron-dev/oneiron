@@ -50,7 +50,15 @@
       "query": "BEAM deterministic context pack",
       "limit": 5,
       "tokenBudget": 131072,
-      "expectedMinResults": 1
+      "expectedMinResults": 1,
+      "offlineAmortizedCost": {
+        "tokenSource": "fixture_declared_zero",
+        "inputTokens": 0,
+        "outputTokens": 0,
+        "targetTokens": 0,
+        "elapsedUs": 0,
+        "costUsd": 0.0
+      }
     }
   ]
 }

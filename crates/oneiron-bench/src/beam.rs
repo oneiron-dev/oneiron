@@ -1,12 +1,14 @@
 //! BEAM scaffold and fixed scorer for EVAL-001/EVAL-002.
 
+use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::path::PathBuf;
 use std::process::ExitCode;
+use std::time::Instant;
 
 use oneiron::{
-    ContextPack, ContextPackBuilder, EmptyReason, EntityId, FieldProfile, PackFormat, Signal,
-    TimeRange, Vault, VaultConfig,
+    AnalyzerContext, ContextPack, ContextPackBuilder, EmptyReason, EntityId, FieldProfile,
+    PackFormat, Signal, TimeRange, Token, Vault, VaultConfig,
 };
 use serde::{Deserialize, Serialize};
 
@@ -16,6 +18,8 @@ const SCHEMA_VERSION: u32 = 2;
 const BEAM_CONTEXT_PACK_FORMAT: PackFormat = PackFormat::Yaml;
 const BEAM_SCORER_VERSION: &str = "beam-fixed-scorer-v1";
 const BEAM_COMPARATOR_VERSION: &str = "beam-comparator-card-v1";
+const COST_USD_SCALE: f64 = 1_000_000.0;
+const MAX_NORMALIZABLE_COST_USD: f64 = f64::MAX / COST_USD_SCALE;
 const BUILTIN_FIXTURE_JSON: &str = include_str!("../fixtures/beam_128k_smoke.fixture.json");
 const BUILTIN_MANIFEST_JSON: &str = include_str!("../fixtures/beam_128k_smoke.run.json");
 
@@ -109,6 +113,8 @@ pub(crate) struct FixtureCase {
     limit: usize,
     token_budget: usize,
     expected_min_results: usize,
+    #[serde(default)]
+    offline_amortized_cost: CostComponentInput,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -146,6 +152,7 @@ enum DatasetSource {
 #[serde(rename_all = "snake_case")]
 pub(crate) enum ArmKind {
     Deterministic,
+    BackboneSolo,
     Agentic,
     Chat,
 }
@@ -154,6 +161,7 @@ impl ArmKind {
     const fn as_str(self) -> &'static str {
         match self {
             Self::Deterministic => "deterministic",
+            Self::BackboneSolo => "backbone_solo",
             Self::Agentic => "agentic",
             Self::Chat => "chat",
         }
@@ -181,6 +189,8 @@ struct CompetitorCardConfig {
     public_parity_status: PublicParityStatus,
     judge: JudgeMetadata,
     comparator: ComparatorMetadata,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    token_accounting: Option<TokenAccountingDeclaration>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
@@ -205,6 +215,62 @@ struct ComparatorMetadata {
     comparator_id: String,
     version: String,
     baseline_competitor_id: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+enum TokenAccountingSource {
+    TokenizerCount,
+    ProviderUsage,
+    FixtureDeclaredZero,
+    NotApplicable,
+    CharCountEstimate,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct TokenAccountingDeclaration {
+    source: TokenAccountingSource,
+    notes: String,
+}
+
+impl Default for TokenAccountingDeclaration {
+    fn default() -> Self {
+        Self {
+            source: TokenAccountingSource::NotApplicable,
+            notes: String::new(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct CostComponentInput {
+    #[serde(default = "default_fixture_cost_source")]
+    token_source: TokenAccountingSource,
+    #[serde(default)]
+    input_tokens: u64,
+    #[serde(default)]
+    output_tokens: u64,
+    #[serde(default)]
+    target_tokens: u64,
+    #[serde(default)]
+    elapsed_us: u64,
+    #[serde(default)]
+    cost_usd: f64,
+}
+
+impl Default for CostComponentInput {
+    fn default() -> Self {
+        Self {
+            token_source: default_fixture_cost_source(),
+            input_tokens: 0,
+            output_tokens: 0,
+            target_tokens: 0,
+            elapsed_us: 0,
+            cost_usd: 0.0,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
@@ -257,6 +323,7 @@ struct CaseReport {
     limit: usize,
     token_budget: usize,
     expected_min_results: usize,
+    offline_amortized_cost: CostComponentReport,
     arms: Vec<ArmReport>,
     competitors: Vec<CompetitorReport>,
 }
@@ -290,6 +357,8 @@ struct ContextPackReport {
     limit: usize,
     serialized_format: String,
     serialized_bytes: usize,
+    serialized_tokens: u64,
+    query_cost: CostComponentReport,
     result_count: usize,
     neighbor_count: usize,
     results: Vec<ContextEntityReport>,
@@ -331,7 +400,28 @@ struct CompetitorReport {
     competitor_id: String,
     arm: ArmKind,
     card: CompetitorCardConfig,
+    costs: CostBreakdownReport,
     scoring: ScoreReport,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct CostBreakdownReport {
+    query: CostComponentReport,
+    offline: CostComponentReport,
+    judge: CostComponentReport,
+    total_cost_usd: f64,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct CostComponentReport {
+    token_source: TokenAccountingSource,
+    input_tokens: u64,
+    output_tokens: u64,
+    target_tokens: u64,
+    elapsed_us: u64,
+    cost_usd: f64,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -614,10 +704,12 @@ pub(crate) fn run_fixture_manifest(
             let arm_report = adapter_for(competitor.arm).run(&vault, case)?;
             let scoring = scorer.score(case, competitor, &arm_report);
             arms.push(arm_report);
+            let costs = cost_breakdown(case, arms.last().expect("arm just pushed"));
             competitors.push(CompetitorReport {
                 competitor_id: competitor.competitor_id.clone(),
                 arm: competitor.arm,
                 card: card.clone(),
+                costs,
                 scoring,
             });
         }
@@ -627,6 +719,7 @@ pub(crate) fn run_fixture_manifest(
             limit: case.limit,
             token_budget: case.token_budget,
             expected_min_results: case.expected_min_results,
+            offline_amortized_cost: cost_component_from_input(&case.offline_amortized_cost),
             arms,
             competitors,
         });
@@ -718,6 +811,8 @@ fn validate_fixture(fixture: &BeamFixture) -> BeamResult<()> {
                 "case token budget must be positive",
             ));
         }
+        validate_cost_component("case offlineAmortizedCost", &case.offline_amortized_cost)
+            .map_err(|reason| invalid_fixture(fixture, reason))?;
         if case.expected_min_results > case.limit {
             return Err(invalid_fixture(
                 fixture,
@@ -794,7 +889,7 @@ fn validate_manifest(manifest: &RunManifest) -> BeamResult<()> {
             });
         }
         if let Some(card) = &competitor.card {
-            validate_competitor_card(manifest, card)?;
+            validate_competitor_card(manifest, competitor.arm, card)?;
         }
         competitor_arms.push(competitor.arm);
     }
@@ -840,7 +935,11 @@ fn validate_manifest_fixture_cases(
     Ok(())
 }
 
-fn validate_competitor_card(manifest: &RunManifest, card: &CompetitorCardConfig) -> BeamResult<()> {
+fn validate_competitor_card(
+    manifest: &RunManifest,
+    arm: ArmKind,
+    card: &CompetitorCardConfig,
+) -> BeamResult<()> {
     if matches!(manifest.dataset, DatasetSource::Fixture { .. })
         && card.public_parity_status == PublicParityStatus::PublicParity
     {
@@ -866,6 +965,32 @@ fn validate_competitor_card(manifest: &RunManifest, card: &CompetitorCardConfig)
             manifest,
             "competitor card judge versions must not be empty",
         ));
+    }
+    let token_accounting = card.token_accounting.as_ref();
+    if token_accounting
+        .is_some_and(|accounting| accounting.source == TokenAccountingSource::CharCountEstimate)
+    {
+        return Err(invalid_manifest(
+            manifest,
+            "model-scored competitor rows must not use char_count_estimate token accounting",
+        ));
+    }
+    if arm == ArmKind::Deterministic {
+        match token_accounting {
+            Some(accounting) if accounting.source == TokenAccountingSource::TokenizerCount => {}
+            Some(_) => {
+                return Err(invalid_manifest(
+                    manifest,
+                    "deterministic competitor rows must declare tokenizer_count tokenAccounting",
+                ));
+            }
+            None => {
+                return Err(invalid_manifest(
+                    manifest,
+                    "completed competitor rows must declare tokenAccounting",
+                ));
+            }
+        }
     }
     if card.comparator.comparator_id.trim().is_empty() {
         return Err(invalid_manifest(
@@ -950,7 +1075,7 @@ fn load_fixture_dataset(vault: &Vault, fixture: &BeamFixture) -> BeamResult<Data
 fn adapter_for(kind: ArmKind) -> Box<dyn BeamArmAdapter> {
     match kind {
         ArmKind::Deterministic => Box::new(DeterministicContextPackArm),
-        ArmKind::Agentic | ArmKind::Chat => Box::new(NotReadyArm { kind }),
+        ArmKind::BackboneSolo | ArmKind::Agentic | ArmKind::Chat => Box::new(NotReadyArm { kind }),
     }
 }
 
@@ -971,6 +1096,8 @@ fn configured_context_pack_builder<'a>(
 struct BudgetedContextPack {
     raw: ContextPack,
     serialized: Vec<u8>,
+    serialized_tokens: u64,
+    serialized_elapsed_us: u64,
     serialized_ids: SerializedContextPackIds,
 }
 
@@ -997,13 +1124,18 @@ fn run_deterministic_context_pack(
     case: &FixtureCase,
 ) -> BeamResult<BudgetedContextPack> {
     let pack = configured_context_pack_builder(vault, case).run()?;
+    let serialized_start = Instant::now();
     let serialized = configured_context_pack_builder(vault, case).run_serialized()?;
+    let serialized_elapsed_us = serialized_start.elapsed().as_micros() as u64;
     let serialized_text = std::str::from_utf8(&serialized)?;
+    let serialized_tokens = count_analyzer_tokens(serialized_text);
     let serialized_ids = serialized_context_pack_ids(serialized_text);
 
     Ok(BudgetedContextPack {
         raw: pack,
         serialized,
+        serialized_tokens,
+        serialized_elapsed_us,
         serialized_ids,
     })
 }
@@ -1042,6 +1174,8 @@ fn context_pack_report(pack: &BudgetedContextPack, case: &FixtureCase) -> Contex
         limit: case.limit,
         serialized_format: pack_format_label(BEAM_CONTEXT_PACK_FORMAT).to_owned(),
         serialized_bytes: pack.serialized.len(),
+        serialized_tokens: pack.serialized_tokens,
+        query_cost: query_cost_report(case, pack),
         result_count,
         neighbor_count,
         results,
@@ -1073,6 +1207,131 @@ fn context_pack_report(pack: &BudgetedContextPack, case: &FixtureCase) -> Contex
             hint: empty.hint.clone(),
         }),
     }
+}
+
+fn cost_breakdown(case: &FixtureCase, arm: &ArmReport) -> CostBreakdownReport {
+    let query = match &arm.outcome {
+        ArmOutcome::Completed { context_pack } => context_pack.query_cost.clone(),
+        ArmOutcome::NotReady { .. } => not_applicable_cost(),
+    };
+    let offline = cost_component_from_input(&case.offline_amortized_cost);
+    let judge = fixed_scorer_judge_cost();
+    let total_cost_usd = normalized_cost_usd(query.cost_usd + offline.cost_usd + judge.cost_usd);
+
+    CostBreakdownReport {
+        query,
+        offline,
+        judge,
+        total_cost_usd,
+    }
+}
+
+fn query_cost_report(case: &FixtureCase, pack: &BudgetedContextPack) -> CostComponentReport {
+    CostComponentReport {
+        token_source: TokenAccountingSource::TokenizerCount,
+        input_tokens: count_analyzer_tokens(&case.query),
+        output_tokens: pack.serialized_tokens,
+        target_tokens: case.token_budget as u64,
+        elapsed_us: pack.serialized_elapsed_us,
+        cost_usd: 0.0,
+    }
+}
+
+fn fixed_scorer_judge_cost() -> CostComponentReport {
+    CostComponentReport {
+        token_source: TokenAccountingSource::FixtureDeclaredZero,
+        input_tokens: 0,
+        output_tokens: 0,
+        target_tokens: 0,
+        elapsed_us: 0,
+        cost_usd: 0.0,
+    }
+}
+
+fn cost_component_from_input(input: &CostComponentInput) -> CostComponentReport {
+    CostComponentReport {
+        token_source: input.token_source,
+        input_tokens: input.input_tokens,
+        output_tokens: input.output_tokens,
+        target_tokens: input.target_tokens,
+        elapsed_us: input.elapsed_us,
+        cost_usd: normalized_cost_usd(input.cost_usd),
+    }
+}
+
+fn not_applicable_cost() -> CostComponentReport {
+    CostComponentReport {
+        token_source: TokenAccountingSource::NotApplicable,
+        input_tokens: 0,
+        output_tokens: 0,
+        target_tokens: 0,
+        elapsed_us: 0,
+        cost_usd: 0.0,
+    }
+}
+
+fn validate_cost_component(owner: &str, input: &CostComponentInput) -> Result<(), String> {
+    if input.token_source == TokenAccountingSource::CharCountEstimate {
+        return Err(format!(
+            "{owner} must not use char_count_estimate token accounting"
+        ));
+    }
+    if !input.cost_usd.is_finite() || input.cost_usd < 0.0 {
+        return Err(format!("{owner}.costUsd must be non-negative and finite"));
+    }
+    if input.cost_usd > MAX_NORMALIZABLE_COST_USD {
+        return Err(format!("{owner}.costUsd is too large to normalize safely"));
+    }
+    if matches!(
+        input.token_source,
+        TokenAccountingSource::FixtureDeclaredZero | TokenAccountingSource::NotApplicable
+    ) && !cost_component_metrics_are_zero(input)
+    {
+        return Err(format!(
+            "{owner} with {:?} token accounting must declare zero tokens, elapsed time, and cost",
+            input.token_source
+        ));
+    }
+    Ok(())
+}
+
+fn cost_component_metrics_are_zero(input: &CostComponentInput) -> bool {
+    input.input_tokens == 0
+        && input.output_tokens == 0
+        && input.target_tokens == 0
+        && input.elapsed_us == 0
+        && input.cost_usd == 0.0
+}
+
+fn count_analyzer_tokens(text: &str) -> u64 {
+    thread_local! {
+        static ANALYZER: oneiron::analyzer::MultilingualAnalyzer =
+            oneiron::analyzer::MultilingualAnalyzer::portable();
+        static TOKEN_BUFFER: RefCell<Vec<Token>> = const { RefCell::new(Vec::new()) };
+    }
+
+    ANALYZER.with(|analyzer| {
+        TOKEN_BUFFER.with(|buffer| {
+            let mut tokens = buffer.borrow_mut();
+            tokens.clear();
+            analyzer.analyze(text, &AnalyzerContext::for_query(), &mut tokens);
+            let count = tokens.len() as u64;
+            tokens.clear();
+            count
+        })
+    })
+}
+
+fn normalized_cost_usd(cost: f64) -> f64 {
+    if cost > MAX_NORMALIZABLE_COST_USD {
+        cost
+    } else {
+        (cost * COST_USD_SCALE).round() / COST_USD_SCALE
+    }
+}
+
+fn default_fixture_cost_source() -> TokenAccountingSource {
+    TokenAccountingSource::FixtureDeclaredZero
 }
 
 fn accounting_reasons(count: usize, reason: &str) -> Vec<String> {
@@ -1389,6 +1648,7 @@ fn empty_reason_label(reason: EmptyReason) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use oneiron::types::{PackItemAccounting, PackStats};
 
     #[test]
     fn parse_fixture_and_manifest_accepts_beam_128k_smoke_schema() {
@@ -1403,7 +1663,12 @@ mod tests {
             .expect("manifest selects the 128K smoke case");
         assert_eq!(
             manifest.arms,
-            vec![ArmKind::Deterministic, ArmKind::Agentic, ArmKind::Chat]
+            vec![
+                ArmKind::Deterministic,
+                ArmKind::BackboneSolo,
+                ArmKind::Agentic,
+                ArmKind::Chat
+            ]
         );
     }
 
@@ -1668,12 +1933,22 @@ neighbors:
             limit: 1,
             token_budget: 8,
             expected_min_results: 1,
+            offline_amortized_cost: CostComponentInput::default(),
         };
         let mut context_pack = ContextPackReport {
             token_budget: case.token_budget,
             limit: case.limit,
             serialized_format: "yaml".to_owned(),
             serialized_bytes: 24,
+            serialized_tokens: 6,
+            query_cost: CostComponentReport {
+                token_source: TokenAccountingSource::TokenizerCount,
+                input_tokens: 2,
+                output_tokens: 6,
+                target_tokens: case.token_budget as u64,
+                elapsed_us: 10,
+                cost_usd: 0.0,
+            },
             result_count: 1,
             neighbor_count: 0,
             results: Vec::new(),
@@ -1722,6 +1997,97 @@ neighbors:
                 .iter()
                 .any(|entity| { entity.id == "10101010101010101010101010101010" })
         );
+    }
+
+    #[test]
+    fn report_records_real_query_tokens_target_tokens_and_cost_boundaries() {
+        let report = run_builtin_smoke().expect("BEAM smoke report");
+        let report_json = serde_json::to_value(&report).expect("report serializes");
+        let deterministic = find_arm(&report, ArmKind::Deterministic);
+        let ArmOutcome::Completed { context_pack } = &deterministic.outcome else {
+            panic!("deterministic arm should complete");
+        };
+        let competitors = report_json["cases"][0]["competitors"]
+            .as_array()
+            .expect("competitors array");
+        let deterministic_competitor = competitors
+            .iter()
+            .find(|competitor| competitor["competitorId"] == "deterministic-context-pack")
+            .expect("deterministic competitor");
+
+        assert_eq!(
+            context_pack.query_cost.input_tokens,
+            count_analyzer_tokens("BEAM deterministic context pack")
+        );
+        assert_eq!(
+            context_pack.query_cost.output_tokens,
+            context_pack.serialized_tokens
+        );
+        assert_eq!(
+            context_pack.query_cost.target_tokens,
+            BEAM_128K_TOKEN_BUDGET as u64
+        );
+        assert_eq!(
+            deterministic_competitor["costs"]["query"]["tokenSource"],
+            "tokenizer_count"
+        );
+        assert_eq!(
+            deterministic_competitor["costs"]["query"]["elapsedUs"],
+            context_pack.query_cost.elapsed_us
+        );
+        assert_eq!(
+            deterministic_competitor["costs"]["offline"]["tokenSource"],
+            "fixture_declared_zero"
+        );
+        assert_eq!(
+            deterministic_competitor["costs"]["judge"]["tokenSource"],
+            "fixture_declared_zero"
+        );
+        assert_eq!(deterministic_competitor["costs"]["totalCostUsd"], 0.0);
+        assert!(
+            deterministic_competitor["costs"]["query"]["elapsedUs"]
+                .as_u64()
+                .expect("elapsedUs is u64")
+                > 0
+        );
+    }
+
+    #[test]
+    fn query_cost_elapsed_uses_serialized_pass_only() {
+        let case = FixtureCase {
+            case_id: "elapsed_boundary".to_owned(),
+            query: "BEAM deterministic context pack".to_owned(),
+            limit: 1,
+            token_budget: 128,
+            expected_min_results: 0,
+            offline_amortized_cost: CostComponentInput::default(),
+        };
+        let pack = BudgetedContextPack {
+            raw: ContextPack {
+                results: Vec::new(),
+                neighbors: Vec::new(),
+                stats: PackStats {
+                    candidates_considered: 0,
+                    signals_used: Vec::new(),
+                    query_time_us: 11,
+                    entities_hydrated: 0,
+                    neighbors_hydrated: 0,
+                    cosine_ghosts_dampened: 0,
+                    claims_suppressed: 0,
+                    items_truncated: PackItemAccounting::item_budget(),
+                    items_dropped: PackItemAccounting::token_budget(),
+                },
+                empty: None,
+            },
+            serialized: Vec::new(),
+            serialized_tokens: 7,
+            serialized_elapsed_us: 13,
+            serialized_ids: SerializedContextPackIds::default(),
+        };
+
+        let report = query_cost_report(&case, &pack);
+
+        assert_eq!(report.elapsed_us, 13);
     }
 
     #[test]
@@ -1774,6 +2140,104 @@ neighbors:
     }
 
     #[test]
+    fn manifest_rejects_char_count_token_estimates_for_scored_rows() {
+        let mut manifest_json: serde_json::Value =
+            serde_json::from_str(BUILTIN_MANIFEST_JSON).expect("manifest JSON");
+        manifest_json["competitors"][0]["card"]["tokenAccounting"]["source"] =
+            serde_json::json!("char_count_estimate");
+        let err = parse_manifest_json(&manifest_json.to_string())
+            .expect_err("char-count token estimates must be rejected");
+
+        assert!(
+            err.to_string()
+                .contains("model-scored competitor rows must not use char_count_estimate")
+        );
+    }
+
+    #[test]
+    fn manifest_requires_token_accounting_for_completed_rows() {
+        let mut manifest_json: serde_json::Value =
+            serde_json::from_str(BUILTIN_MANIFEST_JSON).expect("manifest JSON");
+        manifest_json["competitors"][0]["card"]
+            .as_object_mut()
+            .expect("card object")
+            .remove("tokenAccounting");
+        let err = parse_manifest_json(&manifest_json.to_string())
+            .expect_err("completed rows must declare token accounting");
+
+        assert!(
+            err.to_string()
+                .contains("completed competitor rows must declare tokenAccounting")
+        );
+    }
+
+    #[test]
+    fn manifest_rejects_non_tokenizer_accounting_for_deterministic_rows() {
+        for source in ["provider_usage", "fixture_declared_zero", "not_applicable"] {
+            let mut manifest_json: serde_json::Value =
+                serde_json::from_str(BUILTIN_MANIFEST_JSON).expect("manifest JSON");
+            manifest_json["competitors"][0]["card"]["tokenAccounting"]["source"] =
+                serde_json::json!(source);
+            let err = parse_manifest_json(&manifest_json.to_string())
+                .expect_err("deterministic rows must use tokenizer_count accounting");
+
+            assert!(
+                err.to_string()
+                    .contains("deterministic competitor rows must declare tokenizer_count")
+            );
+        }
+    }
+
+    #[test]
+    fn fixture_rejects_char_count_offline_amortized_cost_accounting() {
+        let mut fixture_json: serde_json::Value =
+            serde_json::from_str(BUILTIN_FIXTURE_JSON).expect("fixture JSON");
+        fixture_json["cases"][0]["offlineAmortizedCost"]["tokenSource"] =
+            serde_json::json!("char_count_estimate");
+        let err = parse_fixture_json(&fixture_json.to_string())
+            .expect_err("char-count offline cost token estimates must be rejected");
+
+        assert!(
+            err.to_string()
+                .contains("case offlineAmortizedCost must not use char_count_estimate")
+        );
+    }
+
+    #[test]
+    fn fixture_rejects_nonzero_metrics_for_zero_offline_cost_sources() {
+        for source in ["fixture_declared_zero", "not_applicable"] {
+            let mut fixture_json: serde_json::Value =
+                serde_json::from_str(BUILTIN_FIXTURE_JSON).expect("fixture JSON");
+            fixture_json["cases"][0]["offlineAmortizedCost"]["tokenSource"] =
+                serde_json::json!(source);
+            fixture_json["cases"][0]["offlineAmortizedCost"]["inputTokens"] = serde_json::json!(1);
+            let err = parse_fixture_json(&fixture_json.to_string())
+                .expect_err("zero-source offline costs must have zero metrics");
+
+            assert!(
+                err.to_string()
+                    .contains("must declare zero tokens, elapsed time, and cost")
+            );
+        }
+    }
+
+    #[test]
+    fn fixture_rejects_costs_too_large_to_normalize() {
+        let mut fixture_json: serde_json::Value =
+            serde_json::from_str(BUILTIN_FIXTURE_JSON).expect("fixture JSON");
+        fixture_json["cases"][0]["offlineAmortizedCost"]["tokenSource"] =
+            serde_json::json!("provider_usage");
+        fixture_json["cases"][0]["offlineAmortizedCost"]["costUsd"] = serde_json::json!(f64::MAX);
+        let err = parse_fixture_json(&fixture_json.to_string())
+            .expect_err("overflowing normalization boundary must be rejected");
+
+        assert!(
+            err.to_string()
+                .contains("case offlineAmortizedCost.costUsd is too large to normalize safely")
+        );
+    }
+
+    #[test]
     fn not_ready_scores_are_unmeasured_and_do_not_publish_zero_overall() {
         let report = run_builtin_smoke().expect("BEAM smoke report");
         let report_json = serde_json::to_value(&report).expect("report serializes");
@@ -1787,7 +2251,7 @@ neighbors:
 
         assert!(deterministic["scoring"]["overallScore"].as_f64().is_some());
 
-        for competitor_id in ["agentic-adapter", "chat-adapter"] {
+        for competitor_id in ["backbone-solo", "agentic-adapter", "chat-adapter"] {
             let competitor = competitors
                 .iter()
                 .find(|competitor| competitor["competitorId"] == competitor_id)
@@ -1821,6 +2285,7 @@ neighbors:
             limit: 5,
             token_budget: 4096,
             expected_min_results: 1,
+            offline_amortized_cost: CostComponentInput::default(),
         });
         manifest.case_ids = vec!["beam_small_budget_smoke".to_owned()];
 
@@ -1838,9 +2303,9 @@ neighbors:
     }
 
     #[test]
-    fn agentic_and_chat_arms_return_explicit_not_ready_states() {
+    fn not_ready_arms_return_explicit_not_ready_states() {
         let report = run_builtin_smoke().expect("BEAM smoke report");
-        for kind in [ArmKind::Agentic, ArmKind::Chat] {
+        for kind in [ArmKind::BackboneSolo, ArmKind::Agentic, ArmKind::Chat] {
             let arm = find_arm(&report, kind);
             let ArmOutcome::NotReady { not_ready } = &arm.outcome else {
                 panic!("{} arm should be not-ready", kind.as_str());
