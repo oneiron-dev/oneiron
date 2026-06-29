@@ -1632,18 +1632,15 @@ impl Vault {
         {
             return Ok(());
         }
-        let Some(new_subject) = self.code_revision_claim_subject_in_txn(rtxn, new_body)? else {
+        let Some(_new_subject) = self.code_revision_claim_subject_in_txn(rtxn, new_body)? else {
             return Ok(());
         };
-        let Some(old_subject) = self.code_revision_claim_subject_in_txn(rtxn, old_body)? else {
+        let Some(_old_subject) = self.code_revision_claim_subject_in_txn(rtxn, old_body)? else {
             return Ok(());
         };
-        if new_subject == old_subject {
-            return Err(Error::InvalidCodeArtifactBody(
-                "generated code revision claim cannot supersede user-stated truth",
-            ));
-        }
-        Ok(())
+        Err(Error::InvalidCodeArtifactBody(
+            "generated code revision claim cannot supersede user-stated truth",
+        ))
     }
 
     fn code_revision_claim_subject_in_txn(
