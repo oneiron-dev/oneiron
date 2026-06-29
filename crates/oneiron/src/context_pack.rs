@@ -9,9 +9,9 @@ use heed::RoTxn;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::claim::{ClaimBody, claim_surfaceable};
 use crate::error::{Error, Result};
-use crate::pipeline::{PipelineBuilder, WorldScope};
-use crate::serialize::{SerializeConfig, serialize_pack};
-use crate::store::Store;
+use crate::pipeline::{PipelineBuilder, RetrievalWithTelemetry, WorldScope};
+use crate::serialize::{SerializeConfig, SerializedPackTelemetry, serialize_pack_with_telemetry};
+use crate::store::{RetrievalAction, RetrievalRunId, Store};
 use crate::types::{
     ContextEntity, ContextPack, ENTITY_TYPE_CLAIM, EdgeConfirmationStatus, EdgeInfo, EdgeKind,
     EmptyContext, EmptyReason, EntityId, FieldProfile, PackFormat, PackStats, Signal,
@@ -79,10 +79,16 @@ pub struct ContextPackBuilder<'a> {
     non_base_world_fraction: f32,
 }
 
+struct ContextPackRun<'a> {
+    pack: ContextPack,
+    telemetry_run_id: Option<RetrievalRunId>,
+    store: &'a Store,
+}
+
 impl<'a> ContextPackBuilder<'a> {
     pub(crate) fn new(vault: &'a Vault) -> Self {
         Self {
-            pipeline: vault.query(),
+            pipeline: vault.query().telemetry_action(RetrievalAction::ContextPack),
             vault,
             hydrate: true,
             include_edges: false,
@@ -352,136 +358,179 @@ impl<'a> ContextPackBuilder<'a> {
     }
 
     pub fn run(self) -> Result<ContextPack> {
-        let started = Instant::now();
-        let pipeline_output = self.pipeline.run_for_pack()?;
-        let total_in_scope = pipeline_output.total_in_scope;
-        let pipeline_empty_reason = pipeline_output.empty_reason;
-        let scored = pipeline_output.scores;
-        let surfaced_candidate_count = scored.len();
-        let claim_bodies = pipeline_output.claim_bodies;
-        let mut claims_suppressed = pipeline_output.claims_suppressed;
-        let cosine_ghosts_dampened = pipeline_output.cosine_ghosts_dampened;
+        Ok(self.run_with_telemetry()?.value)
+    }
 
-        let rtxn = self.vault.store.env.read_txn()?;
-        let hydrate_result_edges = self.include_edges && self.edge_hop == 0;
-        let result_options = HydrateOptions {
-            hydrate_fields: self.hydrate,
-            include_edges: hydrate_result_edges,
-            include_vectors: self.include_vectors,
-            edge_cache: None,
-            claim_bodies: Some(&claim_bodies),
-        };
-
-        let mut results = Vec::with_capacity(scored.len());
-        for entry in scored.iter().copied() {
-            let Some(entity) = hydrate_entity(
-                self.vault,
-                &rtxn,
-                entry.id,
-                entry.score,
-                result_options,
-                &mut claims_suppressed,
-            )?
-            else {
-                continue;
-            };
-            results.push(entity);
-        }
-
-        let seed_ids: Vec<EntityId> = results.iter().map(|entity| entity.id).collect();
-        let result_ids: HashSet<EntityId> = seed_ids.iter().copied().collect();
-        let edge_walk = if self.edge_hop > 0 && self.max_neighbors > 0 {
-            walk_edges(
-                &self.vault.store,
-                &rtxn,
-                &seed_ids,
-                self.edge_hop,
-                self.max_neighbors,
-                &result_ids,
-            )?
-        } else {
-            EdgeWalkResult::default()
-        };
-        let edge_cache = self.include_edges.then_some(&edge_walk.scanned_edges);
-        let neighbor_options = HydrateOptions {
-            hydrate_fields: self.hydrate,
-            include_edges: self.include_edges,
-            include_vectors: self.include_vectors,
-            edge_cache,
-            claim_bodies: Some(&claim_bodies),
-        };
-
-        if self.include_edges && self.edge_hop > 0 {
-            for entity in &mut results {
-                entity.edges = Some(load_entity_edges(
-                    &self.vault.store,
-                    &rtxn,
-                    &entity.id,
-                    edge_cache,
-                )?);
-            }
-        }
-
-        let mut neighbors = Vec::with_capacity(edge_walk.neighbor_ids.len());
-        for id in edge_walk.neighbor_ids {
-            let Some(entity) = hydrate_entity(
-                self.vault,
-                &rtxn,
-                id,
-                0.0,
-                neighbor_options,
-                &mut claims_suppressed,
-            )?
-            else {
-                continue;
-            };
-            neighbors.push(entity);
-        }
-
-        resolve_edge_short_ids(&mut results, &mut neighbors);
-
-        // ARCH-0004 / ARCH-0022 world partitioning (ONE-1117): under the
-        // default `All` scope, group surviving claims by world — base section
-        // first, then one section per non-base world — and cap how much of the
-        // claim budget fiction may take. Flat (unchanged) for Base / World(id).
-        if matches!(self.world_scope, WorldScope::All) {
-            partition_results_by_world(
-                &self.vault.store,
-                &rtxn,
-                &mut results,
-                self.non_base_world_fraction,
-                &claim_bodies,
-            )?;
-        }
-
-        let pack_is_empty = results.is_empty() && neighbors.is_empty();
-        let candidates_considered = if pack_is_empty {
-            total_in_scope
-        } else {
-            surfaced_candidate_count
-        };
-        let stats = PackStats {
-            candidates_considered,
-            signals_used: dedupe_signals(self.signals_used),
-            query_time_us: started.elapsed().as_micros().min(u64::MAX as u128) as u64,
-            entities_hydrated: results.len(),
-            neighbors_hydrated: neighbors.len(),
-            cosine_ghosts_dampened,
-            claims_suppressed,
-            items_truncated: crate::types::PackItemAccounting::item_budget(),
-            items_dropped: crate::types::PackItemAccounting::token_budget(),
-        };
-        let empty = empty_context(pack_is_empty, &stats, pipeline_empty_reason);
-
-        Ok(ContextPack {
-            results,
-            neighbors,
-            stats,
-            empty,
+    pub fn run_with_telemetry(self) -> Result<RetrievalWithTelemetry<ContextPack>> {
+        let run = self.run_unfinalized()?;
+        let surfaced_result_ids: Vec<[u8; 16]> = run
+            .pack
+            .results
+            .iter()
+            .map(|entity| *entity.id.as_bytes())
+            .collect();
+        let telemetry_run_id = finalize_context_pack_telemetry(
+            run.store,
+            run.telemetry_run_id,
+            run.pack.stats.query_time_us,
+            run.pack.stats.claims_suppressed,
+            &surfaced_result_ids,
+            context_pack_empty_reason(&run.pack, &surfaced_result_ids),
+        );
+        Ok(RetrievalWithTelemetry {
+            value: run.pack,
+            run_id: telemetry_run_id,
         })
     }
 
+    fn run_unfinalized(self) -> Result<ContextPackRun<'a>> {
+        let started = Instant::now();
+        let pipeline_output = self.pipeline.run_for_pack()?;
+        let telemetry_run_id = pipeline_output.telemetry_run_id;
+        let store = &self.vault.store;
+        let result = (|| {
+            let total_in_scope = pipeline_output.total_in_scope;
+            let pipeline_empty_reason = pipeline_output.empty_reason;
+            let scored = pipeline_output.scores;
+            let surfaced_candidate_count = scored.len();
+            let claim_bodies = pipeline_output.claim_bodies;
+            let mut claims_suppressed = pipeline_output.claims_suppressed;
+            let cosine_ghosts_dampened = pipeline_output.cosine_ghosts_dampened;
+
+            let rtxn = self.vault.store.env.read_txn()?;
+            let hydrate_result_edges = self.include_edges && self.edge_hop == 0;
+            let result_options = HydrateOptions {
+                hydrate_fields: self.hydrate,
+                include_edges: hydrate_result_edges,
+                include_vectors: self.include_vectors,
+                edge_cache: None,
+                claim_bodies: Some(&claim_bodies),
+            };
+
+            let mut results = Vec::with_capacity(scored.len());
+            for entry in scored.iter().copied() {
+                let Some(entity) = hydrate_entity(
+                    self.vault,
+                    &rtxn,
+                    entry.id,
+                    entry.score,
+                    result_options,
+                    &mut claims_suppressed,
+                )?
+                else {
+                    continue;
+                };
+                results.push(entity);
+            }
+
+            let seed_ids: Vec<EntityId> = results.iter().map(|entity| entity.id).collect();
+            let result_ids: HashSet<EntityId> = seed_ids.iter().copied().collect();
+            let edge_walk = if self.edge_hop > 0 && self.max_neighbors > 0 {
+                walk_edges(
+                    &self.vault.store,
+                    &rtxn,
+                    &seed_ids,
+                    self.edge_hop,
+                    self.max_neighbors,
+                    &result_ids,
+                )?
+            } else {
+                EdgeWalkResult::default()
+            };
+            let edge_cache = self.include_edges.then_some(&edge_walk.scanned_edges);
+            let neighbor_options = HydrateOptions {
+                hydrate_fields: self.hydrate,
+                include_edges: self.include_edges,
+                include_vectors: self.include_vectors,
+                edge_cache,
+                claim_bodies: Some(&claim_bodies),
+            };
+
+            if self.include_edges && self.edge_hop > 0 {
+                for entity in &mut results {
+                    entity.edges = Some(load_entity_edges(
+                        &self.vault.store,
+                        &rtxn,
+                        &entity.id,
+                        edge_cache,
+                    )?);
+                }
+            }
+
+            let mut neighbors = Vec::with_capacity(edge_walk.neighbor_ids.len());
+            for id in edge_walk.neighbor_ids {
+                let Some(entity) = hydrate_entity(
+                    self.vault,
+                    &rtxn,
+                    id,
+                    0.0,
+                    neighbor_options,
+                    &mut claims_suppressed,
+                )?
+                else {
+                    continue;
+                };
+                neighbors.push(entity);
+            }
+
+            resolve_edge_short_ids(&mut results, &mut neighbors);
+
+            // ARCH-0004 / ARCH-0022 world partitioning (ONE-1117): under the
+            // default `All` scope, group surviving claims by world — base section
+            // first, then one section per non-base world — and cap how much of the
+            // claim budget fiction may take. Flat (unchanged) for Base / World(id).
+            if matches!(self.world_scope, WorldScope::All) {
+                partition_results_by_world(
+                    &self.vault.store,
+                    &rtxn,
+                    &mut results,
+                    self.non_base_world_fraction,
+                    &claim_bodies,
+                )?;
+            }
+
+            let pack_is_empty = results.is_empty() && neighbors.is_empty();
+            let candidates_considered = if pack_is_empty {
+                total_in_scope
+            } else {
+                surfaced_candidate_count
+            };
+            let stats = PackStats {
+                candidates_considered,
+                signals_used: dedupe_signals(self.signals_used),
+                query_time_us: started.elapsed().as_micros().min(u64::MAX as u128) as u64,
+                entities_hydrated: results.len(),
+                neighbors_hydrated: neighbors.len(),
+                cosine_ghosts_dampened,
+                claims_suppressed,
+                items_truncated: crate::types::PackItemAccounting::item_budget(),
+                items_dropped: crate::types::PackItemAccounting::token_budget(),
+            };
+            let empty = empty_context(pack_is_empty, &stats, pipeline_empty_reason);
+
+            Ok(ContextPackRun {
+                pack: ContextPack {
+                    results,
+                    neighbors,
+                    stats,
+                    empty,
+                },
+                telemetry_run_id,
+                store,
+            })
+        })();
+
+        if result.is_err() {
+            discard_failed_context_pack_telemetry(store, telemetry_run_id);
+        }
+        result
+    }
+
     pub fn run_serialized(self) -> Result<Vec<u8>> {
+        Ok(self.run_serialized_with_telemetry()?.value)
+    }
+
+    pub fn run_serialized_with_telemetry(self) -> Result<RetrievalWithTelemetry<Vec<u8>>> {
         let config = SerializeConfig {
             format: self.format,
             profile: self.field_profile,
@@ -492,9 +541,91 @@ impl<'a> ContextPackBuilder<'a> {
             max_field_chars: self.max_field_chars,
             max_item_tokens: self.max_item_tokens,
         };
-        let pack = self.run()?;
-        Ok(serialize_pack(&pack, &config))
+        let run = self.run_unfinalized()?;
+        let (bytes, telemetry) = serialize_pack_with_telemetry(&run.pack, &config);
+        let telemetry_run_id = finalize_context_pack_telemetry(
+            run.store,
+            run.telemetry_run_id,
+            telemetry.stats.query_time_us,
+            telemetry.stats.claims_suppressed,
+            &telemetry.result_ids,
+            serialized_context_pack_empty_reason(&run.pack, &telemetry),
+        );
+        Ok(RetrievalWithTelemetry {
+            value: bytes,
+            run_id: telemetry_run_id,
+        })
     }
+}
+
+fn finalize_context_pack_telemetry(
+    store: &Store,
+    telemetry_run_id: Option<RetrievalRunId>,
+    elapsed_us: u64,
+    claims_suppressed: usize,
+    surfaced_result_ids: &[[u8; 16]],
+    empty_reason: Option<String>,
+) -> Option<RetrievalRunId> {
+    let run_id = telemetry_run_id?;
+    match store.finalize_context_pack_retrieval_run(
+        run_id,
+        elapsed_us,
+        claims_suppressed,
+        surfaced_result_ids,
+        empty_reason,
+    ) {
+        Ok(()) => Some(run_id),
+        Err(error) => {
+            tracing::warn!(
+                ?error,
+                "context-pack retrieval telemetry finalization failed; discarding provisional run id"
+            );
+            discard_failed_context_pack_telemetry(store, Some(run_id));
+            None
+        }
+    }
+}
+
+fn discard_failed_context_pack_telemetry(store: &Store, telemetry_run_id: Option<RetrievalRunId>) {
+    let Some(run_id) = telemetry_run_id else {
+        return;
+    };
+    if let Err(error) = store.delete_retrieval_run(run_id) {
+        tracing::warn!(
+            ?error,
+            "failed context-pack retrieval telemetry discard failed; continuing error return"
+        );
+    }
+}
+
+fn context_pack_empty_reason(
+    pack: &ContextPack,
+    surfaced_result_ids: &[[u8; 16]],
+) -> Option<String> {
+    if !surfaced_result_ids.is_empty() {
+        return None;
+    }
+    let reason = pack
+        .empty
+        .as_ref()
+        .map(|empty| empty.reason)
+        .unwrap_or(EmptyReason::FilterMatchedNone);
+    Some(format!("{reason:?}"))
+}
+
+fn serialized_context_pack_empty_reason(
+    pack: &ContextPack,
+    telemetry: &SerializedPackTelemetry,
+) -> Option<String> {
+    if !telemetry.result_ids.is_empty() {
+        return None;
+    }
+    if !pack.results.is_empty()
+        && telemetry.stats.items_dropped.count > pack.stats.items_dropped.count
+    {
+        return Some(format!("{:?}", telemetry.stats.items_dropped.reason));
+    }
+    context_pack_empty_reason(pack, &telemetry.result_ids)
 }
 
 fn dedupe_signals(signals: Vec<Signal>) -> Vec<Signal> {
@@ -1040,7 +1171,7 @@ fn walk_edges(
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashSet;
+    use std::collections::{BTreeMap, HashSet};
 
     use crate::error::Error;
     use crate::types::{HnswConfig, TimeRange, VaultConfig};
@@ -2480,6 +2611,423 @@ mod tests {
         assert_eq!(pack.results.len(), 1);
         assert_eq!(pack.results[0].id, live);
         assert_eq!(pack.stats.claims_suppressed, 1);
+        Ok(())
+    }
+
+    #[test]
+    fn context_pack_telemetry_records_final_hydration_suppressions() -> Result<()> {
+        let (_dir, vault) = open_test_vault();
+
+        let live = EntityId::from_bytes_unchecked([0x73; 16]);
+        let dead_neighbor = EntityId::from_bytes_unchecked([0x74; 16]);
+        put_claim_text_entity(&vault, &live, "telemetryhydrate", "test.live", "v")?;
+        put_claim_with_status(
+            &vault,
+            &dead_neighbor,
+            crate::claim::ClaimApprovalStatus::Auto,
+            crate::claim::ClaimLifecycleStatus::Retracted,
+            false,
+        )?;
+        vault.put_edge(&live, crate::types::EdgeKind::Supports, &dead_neighbor, 0.9)?;
+
+        let pack_with_telemetry = vault
+            .context_pack()
+            .search_text("telemetryhydrate", 10)
+            .edge_hop(1)
+            .run_with_telemetry()?;
+        let run_id = pack_with_telemetry
+            .run_id
+            .expect("context-pack telemetry run id");
+        let pack = pack_with_telemetry.value;
+        assert_eq!(pack.results.len(), 1);
+        assert_eq!(pack.results[0].id, live);
+        assert!(pack.neighbors.is_empty());
+        assert_eq!(pack.stats.claims_suppressed, 1);
+
+        let runs = vault.retrieval_runs(1)?;
+        assert_eq!(runs.len(), 1);
+        assert_eq!(runs[0].action, crate::store::RetrievalAction::ContextPack);
+        assert_eq!(runs[0].run_id, run_id);
+        assert_eq!(runs[0].claims_suppressed, pack.stats.claims_suppressed);
+        assert_eq!(runs[0].result_ids, vec![*live.as_bytes()]);
+        assert_eq!(runs[0].score_breakdown.len(), 1);
+        assert_eq!(runs[0].score_breakdown[0].result_id, *live.as_bytes());
+        Ok(())
+    }
+
+    #[test]
+    fn context_pack_provisional_telemetry_hidden_until_finalization() -> Result<()> {
+        let (_dir, vault) = open_test_vault();
+
+        let id = EntityId::from_bytes_unchecked([0x7E; 16]);
+        put_text_entity(
+            &vault,
+            &id,
+            crate::types::ENTITY_TYPE_PERSON,
+            "telemetry unpublished finalization",
+            serde_json::json!({"name": "Unpublished"}),
+        )?;
+
+        let run = vault
+            .context_pack()
+            .search_text("telemetry unpublished finalization", 10)
+            .run_unfinalized()?;
+        let run_id = run
+            .telemetry_run_id
+            .expect("unfinalized context-pack telemetry run id");
+        assert!(
+            vault.retrieval_runs(10)?.is_empty(),
+            "unfinalized context-pack telemetry must not be publicly listed"
+        );
+        let outcome_error = run
+            .store
+            .record_retrieval_outcome(crate::store::RetrievalOutcome {
+                run_id,
+                key: "click".to_owned(),
+                reward: Some(1.0),
+                accepted: Some(true),
+                metadata: BTreeMap::new(),
+            })
+            .expect_err("unfinalized context-pack telemetry must reject outcomes");
+        assert!(matches!(outcome_error, Error::InvalidConfig(_)));
+
+        let surfaced_result_ids: Vec<[u8; 16]> = run
+            .pack
+            .results
+            .iter()
+            .map(|entity| *entity.id.as_bytes())
+            .collect();
+        let finalized_run_id = finalize_context_pack_telemetry(
+            run.store,
+            run.telemetry_run_id,
+            run.pack.stats.query_time_us,
+            run.pack.stats.claims_suppressed,
+            &surfaced_result_ids,
+            context_pack_empty_reason(&run.pack, &surfaced_result_ids),
+        );
+        assert_eq!(finalized_run_id, Some(run_id));
+
+        let runs = vault.retrieval_runs(1)?;
+        assert_eq!(runs.len(), 1);
+        assert_eq!(runs[0].run_id, run_id);
+        assert_eq!(runs[0].result_ids, vec![*id.as_bytes()]);
+        run.store
+            .record_retrieval_outcome(crate::store::RetrievalOutcome {
+                run_id,
+                key: "click".to_owned(),
+                reward: Some(1.0),
+                accepted: Some(true),
+                metadata: BTreeMap::new(),
+            })?;
+        assert_eq!(run.store.retrieval_outcomes(run_id)?.len(), 1);
+        Ok(())
+    }
+
+    #[test]
+    fn context_pack_telemetry_discards_run_on_assembly_error() -> Result<()> {
+        let (_dir, vault) = open_test_vault();
+
+        let id = EntityId::from_bytes_unchecked([0x7B; 16]);
+        vault
+            .batch()
+            .put(
+                &id,
+                crate::types::ENTITY_TYPE_PERSON,
+                TimeRange { start: 1, end: 1 },
+                1,
+                &msgpack_entity(serde_json::json!({"name": "Corrupt"})),
+            )
+            .text(&id, &[("body", "telemetry corrupt vector")])
+            .vector(&id, &[1.0, 0.0, 0.0, 0.0])
+            .commit()?;
+        vault.with_write_txn(|wtxn| {
+            vault.store.vectors.put(wtxn, id.as_bytes(), &[1, 2, 3])?;
+            Ok(())
+        })?;
+
+        let error = vault
+            .context_pack()
+            .search_text("telemetry corrupt vector", 10)
+            .include_vectors(true)
+            .run_with_telemetry()
+            .expect_err("corrupt post-pipeline vector hydration should fail the context pack");
+        assert!(
+            matches!(error, Error::CorruptedIndex("entity vector")),
+            "expected CorruptedIndex(\"entity vector\"), got {error:?}"
+        );
+        assert!(
+            vault.retrieval_runs(10)?.is_empty(),
+            "failed context-pack assembly must not leave a completed telemetry row"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn context_pack_telemetry_discard_removes_provisional_outcomes() -> Result<()> {
+        let (_dir, vault) = open_test_vault();
+
+        let id = EntityId::from_bytes_unchecked([0x7C; 16]);
+        put_text_entity(
+            &vault,
+            &id,
+            crate::types::ENTITY_TYPE_PERSON,
+            "telemetry provisional outcome",
+            serde_json::json!({"name": "Provisional"}),
+        )?;
+
+        let run = vault
+            .context_pack()
+            .search_text("telemetry provisional outcome", 10)
+            .run_unfinalized()?;
+        let run_id = run
+            .telemetry_run_id
+            .expect("unfinalized context-pack telemetry run id");
+        let outcome_error = run
+            .store
+            .record_retrieval_outcome(crate::store::RetrievalOutcome {
+                run_id,
+                key: "click".to_owned(),
+                reward: Some(1.0),
+                accepted: Some(true),
+                metadata: BTreeMap::new(),
+            })
+            .expect_err("unfinalized context-pack telemetry must reject outcomes");
+        assert!(matches!(outcome_error, Error::InvalidConfig(_)));
+        assert!(run.store.retrieval_outcomes(run_id)?.is_empty());
+
+        discard_failed_context_pack_telemetry(run.store, run.telemetry_run_id);
+
+        assert!(
+            !run.store
+                .retrieval_runs(10)?
+                .iter()
+                .any(|record| record.run_id == run_id),
+            "discarded context-pack telemetry run should not remain readable"
+        );
+        assert!(
+            run.store.retrieval_outcomes(run_id)?.is_empty(),
+            "discarded context-pack telemetry run should not leave readable outcomes"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn context_pack_telemetry_finalization_failure_returns_no_run_id() -> Result<()> {
+        let (_dir, vault) = open_test_vault();
+
+        let id = EntityId::from_bytes_unchecked([0x7D; 16]);
+        put_text_entity(
+            &vault,
+            &id,
+            crate::types::ENTITY_TYPE_PERSON,
+            "telemetry corrupt finalization",
+            serde_json::json!({"name": "Corrupt Finalization"}),
+        )?;
+
+        let run = vault
+            .context_pack()
+            .search_text("telemetry corrupt finalization", 10)
+            .run_unfinalized()?;
+        let run_id = run
+            .telemetry_run_id
+            .expect("unfinalized context-pack telemetry run id");
+        let outcome_error = run
+            .store
+            .record_retrieval_outcome(crate::store::RetrievalOutcome {
+                run_id,
+                key: "click".to_owned(),
+                reward: Some(1.0),
+                accepted: Some(true),
+                metadata: BTreeMap::new(),
+            })
+            .expect_err("unfinalized context-pack telemetry must reject outcomes");
+        assert!(matches!(outcome_error, Error::InvalidConfig(_)));
+
+        let mut run_key = Vec::from(&b"retr_run:v0:"[..]);
+        run_key.extend_from_slice(&run_id.as_bytes());
+        vault.with_write_txn(|wtxn| {
+            vault
+                .store
+                .vault_meta
+                .put(wtxn, &run_key, b"not a retrieval run")?;
+            Ok(())
+        })?;
+
+        let surfaced_result_ids: Vec<[u8; 16]> = run
+            .pack
+            .results
+            .iter()
+            .map(|entity| *entity.id.as_bytes())
+            .collect();
+        let returned_run_id = finalize_context_pack_telemetry(
+            run.store,
+            run.telemetry_run_id,
+            run.pack.stats.query_time_us,
+            run.pack.stats.claims_suppressed,
+            &surfaced_result_ids,
+            context_pack_empty_reason(&run.pack, &surfaced_result_ids),
+        );
+
+        assert_eq!(returned_run_id, None);
+        assert!(
+            !run.store
+                .retrieval_runs(10)?
+                .iter()
+                .any(|record| record.run_id == run_id),
+            "failed finalization should discard the provisional telemetry row"
+        );
+        assert!(
+            run.store.retrieval_outcomes(run_id)?.is_empty(),
+            "failed finalization should discard provisional outcomes"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn context_pack_serialized_telemetry_reflects_budget_surviving_results() -> Result<()> {
+        let (_dir, vault) = open_test_vault();
+
+        let survivor = EntityId::from_bytes_unchecked([0x75; 16]);
+        let dropped = EntityId::from_bytes_unchecked([0x76; 16]);
+        let put_turn = |id: EntityId, vector: [f32; 4], text: &str| -> Result<()> {
+            let payload = msgpack_entity(serde_json::json!({
+                "txt": text,
+                "spkr": "user",
+                "at": 1_u64,
+            }));
+            vault
+                .batch()
+                .put(
+                    &id,
+                    crate::types::ENTITY_TYPE_TURN,
+                    TimeRange { start: 1, end: 1 },
+                    1,
+                    &payload,
+                )
+                .vector(&id, &vector)
+                .commit()
+        };
+        put_turn(survivor, [1.0, 0.0, 0.0, 0.0], "budget survivor")?;
+        put_turn(dropped, [0.0, 1.0, 0.0, 0.0], "budget dropped")?;
+
+        let serialized = vault
+            .context_pack()
+            .search_vector(&[1.0, 0.0, 0.0, 0.0], 10)
+            .format(PackFormat::Plaintext)
+            .token_budget(1)
+            .run_serialized_with_telemetry()?;
+        assert!(!serialized.value.is_empty());
+        let run_id = serialized.run_id.expect("serialized telemetry run id");
+
+        let runs = vault.retrieval_runs(1)?;
+        assert_eq!(runs.len(), 1);
+        assert_eq!(runs[0].run_id, run_id);
+        assert_eq!(runs[0].action, crate::store::RetrievalAction::ContextPack);
+        assert!(
+            runs[0].total_in_scope >= 2,
+            "test setup should hydrate at least two pre-budget primary results"
+        );
+        assert_eq!(runs[0].result_ids, vec![*survivor.as_bytes()]);
+        assert!(!runs[0].result_ids.contains(dropped.as_bytes()));
+        assert_eq!(runs[0].score_breakdown.len(), 1);
+        assert_eq!(runs[0].score_breakdown[0].result_id, *survivor.as_bytes());
+        assert_eq!(runs[0].score_breakdown[0].final_rank, 1);
+        assert_eq!(runs[0].empty_reason, None);
+        Ok(())
+    }
+
+    #[test]
+    fn context_pack_serialized_telemetry_reports_item_budget_empty() -> Result<()> {
+        let (_dir, vault) = open_test_vault();
+
+        let first = EntityId::from_bytes_unchecked([0x77; 16]);
+        let second = EntityId::from_bytes_unchecked([0x78; 16]);
+        let put_turn = |id: EntityId, vector: [f32; 4], text: &str| -> Result<()> {
+            let payload = msgpack_entity(serde_json::json!({
+                "txt": text,
+                "spkr": "user",
+                "at": 1_u64,
+            }));
+            vault
+                .batch()
+                .put(
+                    &id,
+                    crate::types::ENTITY_TYPE_TURN,
+                    TimeRange { start: 1, end: 1 },
+                    1,
+                    &payload,
+                )
+                .vector(&id, &vector)
+                .commit()
+        };
+        put_turn(first, [1.0, 0.0, 0.0, 0.0], "budget empty first")?;
+        put_turn(second, [0.0, 1.0, 0.0, 0.0], "budget empty second")?;
+
+        let serialized = vault
+            .context_pack()
+            .search_vector(&[1.0, 0.0, 0.0, 0.0], 10)
+            .format(PackFormat::Plaintext)
+            .max_item_tokens(1)
+            .run_serialized_with_telemetry()?;
+        let run_id = serialized.run_id.expect("serialized telemetry run id");
+
+        let runs = vault.retrieval_runs(1)?;
+        assert_eq!(runs.len(), 1);
+        assert_eq!(runs[0].run_id, run_id);
+        assert!(
+            runs[0].total_in_scope >= 2,
+            "test setup should hydrate at least two pre-budget primary results"
+        );
+        assert!(runs[0].result_ids.is_empty());
+        assert!(runs[0].score_breakdown.is_empty());
+        assert_eq!(runs[0].empty_reason.as_deref(), Some("ItemBudget"));
+        Ok(())
+    }
+
+    #[test]
+    fn context_pack_serialized_telemetry_excludes_merged_neighbors() -> Result<()> {
+        let (_dir, vault) = open_test_vault();
+
+        let result = EntityId::from_bytes_unchecked([0x7A; 16]);
+        let neighbor = EntityId::from_bytes_unchecked([0x7B; 16]);
+        put_claim_text_entity(
+            &vault,
+            &result,
+            "serializedneighborroot",
+            "test.result",
+            "root",
+        )?;
+        put_text_entity(
+            &vault,
+            &neighbor,
+            crate::types::ENTITY_TYPE_PERSON,
+            "serialized neighbor",
+            serde_json::json!({"name": "Neighbor"}),
+        )?;
+        vault.put_edge(&result, crate::types::EdgeKind::Supports, &neighbor, 1.0)?;
+
+        let serialized = vault
+            .context_pack()
+            .search_text("serializedneighborroot", 10)
+            .edge_hop(1)
+            .format(PackFormat::Plaintext)
+            .run_serialized_with_telemetry()?;
+        assert!(!serialized.value.is_empty());
+        let text = std::str::from_utf8(&serialized.value).expect("plaintext context pack");
+        assert!(
+            text.contains("Neighbor"),
+            "test setup should serialize the merged neighbor"
+        );
+        let run_id = serialized.run_id.expect("serialized telemetry run id");
+
+        let runs = vault.retrieval_runs(1)?;
+        assert_eq!(runs.len(), 1);
+        assert_eq!(runs[0].run_id, run_id);
+        assert_eq!(runs[0].action, crate::store::RetrievalAction::ContextPack);
+        assert_eq!(runs[0].result_ids, vec![*result.as_bytes()]);
+        assert!(!runs[0].result_ids.contains(neighbor.as_bytes()));
+        assert_eq!(runs[0].score_breakdown.len(), 1);
+        assert_eq!(runs[0].score_breakdown[0].result_id, *result.as_bytes());
         Ok(())
     }
 }

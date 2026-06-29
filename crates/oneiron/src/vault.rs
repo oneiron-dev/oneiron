@@ -3,6 +3,7 @@
 //! edge-record helpers used exclusively by Vault methods.
 
 use std::path::Path;
+use std::time::Instant;
 
 use heed::Database;
 use heed::types::Bytes;
@@ -40,8 +41,10 @@ use crate::provenance::{
     validate_model_substrate_field, winner_index,
 };
 use crate::store::{
-    DB_MANIFEST, HnswCompatibilityState, MODEL_ID_KEY, STORAGE_ABI_VERSION_KEY,
-    STORAGE_SCHEMA_VERSION_KEY, Store, TEXT_ANALYZER_MANIFEST_HASH_KEY, TEXT_ANALYZER_MANIFEST_KEY,
+    DB_MANIFEST, HnswCompatibilityState, MODEL_ID_KEY, RetrievalAction, RetrievalOutcome,
+    RetrievalOutcomeRecord, RetrievalRunId, RetrievalRunRecord, RetrievalScoreBreakdown,
+    RetrievalScoreComponent, RetrievalSignal, STORAGE_ABI_VERSION_KEY, STORAGE_SCHEMA_VERSION_KEY,
+    Store, TEXT_ANALYZER_MANIFEST_HASH_KEY, TEXT_ANALYZER_MANIFEST_KEY,
     TEXT_BM25_FIELD_SCHEMA_HASH_KEY, TEXT_INDEX_SCHEMA_VERSION, TEXT_INDEX_SCHEMA_VERSION_KEY,
     lmdb_database_open_guard,
 };
@@ -53,8 +56,8 @@ use crate::types::{
     VaultConfig, bytes_to_hex_lower, decode_edge_value_for_kind, edge_value_layout_for_kind,
 };
 use crate::{
-    BatchBuilder, ContextPackBuilder, MaintenanceBuilder, PipelineBuilder, TxnBatchBuilder, bm25,
-    hnsw, le_bytes_to_f32_vec, ppr, unix_seconds_now,
+    BatchBuilder, ContextPackBuilder, MaintenanceBuilder, PipelineBuilder, RetrievalWithTelemetry,
+    TxnBatchBuilder, bm25, hnsw, le_bytes_to_f32_vec, ppr, unix_seconds_now,
 };
 
 const MIN_MAP_SIZE_BYTES: usize = 1 << 20;
@@ -2972,6 +2975,17 @@ impl Vault {
 
     /// Searches nearest neighbors by cosine similarity using the HNSW index.
     pub fn search_vector(&self, query: &[f32], limit: usize) -> Result<Vec<ScoredEntity>> {
+        Ok(self.search_vector_with_telemetry(query, limit)?.value)
+    }
+
+    /// Searches nearest neighbors by cosine similarity and returns the
+    /// retrieval telemetry run id when the best-effort telemetry row was
+    /// persisted.
+    pub fn search_vector_with_telemetry(
+        &self,
+        query: &[f32],
+        limit: usize,
+    ) -> Result<RetrievalWithTelemetry<Vec<ScoredEntity>>> {
         if query.len() != self.config.dimensions {
             return Err(Error::DimensionMismatch {
                 expected: self.config.dimensions,
@@ -2982,8 +2996,23 @@ impl Vault {
             return Err(error);
         }
 
-        let rtxn = self.store.env.read_txn()?;
-        hnsw::hnsw_search(&self.store, &self.config, &rtxn, query, limit)
+        let started_at = unix_seconds_now();
+        let started = Instant::now();
+        let results = {
+            let rtxn = self.store.env.read_txn()?;
+            hnsw::hnsw_search(&self.store, &self.config, &rtxn, query, limit)?
+        };
+        let run_id = self.record_vault_search_retrieval_run(
+            RetrievalSignal::Vector,
+            started_at,
+            started,
+            &results,
+            limit,
+        );
+        Ok(RetrievalWithTelemetry {
+            value: results,
+            run_id,
+        })
     }
 
     /// Stores a directed edge and its reverse index entry.
@@ -3126,7 +3155,21 @@ impl Vault {
     /// Returns BM25 text matches for a query under the contract-default
     /// rank profile.
     pub fn search_text(&self, query: &str, limit: usize) -> Result<Vec<ScoredEntity>> {
-        self.search_text_with_profile(query, limit, &crate::types::Bm25RankProfile::default())
+        Ok(self.search_text_with_telemetry(query, limit)?.value)
+    }
+
+    /// Returns BM25 text matches and the retrieval telemetry run id when the
+    /// best-effort telemetry row was persisted.
+    pub fn search_text_with_telemetry(
+        &self,
+        query: &str,
+        limit: usize,
+    ) -> Result<RetrievalWithTelemetry<Vec<ScoredEntity>>> {
+        self.search_text_with_profile_and_telemetry(
+            query,
+            limit,
+            &crate::types::Bm25RankProfile::default(),
+        )
     }
 
     /// Returns BM25 text matches for a query under a caller-supplied
@@ -3141,10 +3184,71 @@ impl Vault {
         limit: usize,
         profile: &crate::types::Bm25RankProfile,
     ) -> Result<Vec<ScoredEntity>> {
+        Ok(self
+            .search_text_with_profile_and_telemetry(query, limit, profile)?
+            .value)
+    }
+
+    /// Returns BM25 text matches for a caller-supplied profile and the
+    /// retrieval telemetry run id when the best-effort telemetry row was
+    /// persisted.
+    pub fn search_text_with_profile_and_telemetry(
+        &self,
+        query: &str,
+        limit: usize,
+        profile: &crate::types::Bm25RankProfile,
+    ) -> Result<RetrievalWithTelemetry<Vec<ScoredEntity>>> {
         let config = profile.to_bm25_config()?;
         self.ensure_text_index_trusted()?;
-        let rtxn = self.store.env.read_txn()?;
-        bm25::search_text(&self.store, &rtxn, &self.analyzer, &config, query, limit)
+        let started_at = unix_seconds_now();
+        let started = Instant::now();
+        let results = {
+            let rtxn = self.store.env.read_txn()?;
+            bm25::search_text(&self.store, &rtxn, &self.analyzer, &config, query, limit)?
+        };
+        let run_id = self.record_vault_search_retrieval_run(
+            RetrievalSignal::Text,
+            started_at,
+            started,
+            &results,
+            limit,
+        );
+        Ok(RetrievalWithTelemetry {
+            value: results,
+            run_id,
+        })
+    }
+
+    fn record_vault_search_retrieval_run(
+        &self,
+        signal: RetrievalSignal,
+        started_at: u64,
+        started: Instant,
+        results: &[ScoredEntity],
+        limit: usize,
+    ) -> Option<RetrievalRunId> {
+        let score_breakdown = vault_search_score_breakdown(signal, results);
+        let run_id = RetrievalRunId::now();
+        let record = RetrievalRunRecord::new(
+            run_id,
+            RetrievalAction::VaultSearch,
+            started_at,
+            started.elapsed().as_micros().min(u64::MAX as u128) as u64,
+            vec![signal],
+            score_breakdown,
+            results.len(),
+            0,
+            (limit > 0 && results.is_empty()).then(|| "NoData".to_owned()),
+        );
+        if let Err(error) = self.store.record_retrieval_run(&record) {
+            tracing::warn!(
+                ?error,
+                "vault search retrieval telemetry write failed; continuing retrieval"
+            );
+            None
+        } else {
+            Some(run_id)
+        }
     }
 
     /// Creates a new write batch builder bound to this vault.
@@ -3168,6 +3272,24 @@ impl Vault {
     /// Creates a context pack builder for retrieval + hydration + serialization.
     pub fn context_pack(&self) -> ContextPackBuilder<'_> {
         ContextPackBuilder::new(self)
+    }
+
+    /// Returns the newest retrieval telemetry run rows, newest first.
+    pub fn retrieval_runs(&self, limit: usize) -> Result<Vec<RetrievalRunRecord>> {
+        self.store.retrieval_runs(limit)
+    }
+
+    /// Idempotently writes or replaces a retrieval outcome row for one run.
+    pub fn record_retrieval_outcome(&self, outcome: RetrievalOutcome) -> Result<()> {
+        self.store.record_retrieval_outcome(outcome)
+    }
+
+    /// Returns outcome rows recorded for `run_id`, sorted by outcome key.
+    pub fn retrieval_outcomes(
+        &self,
+        run_id: RetrievalRunId,
+    ) -> Result<Vec<RetrievalOutcomeRecord>> {
+        self.store.retrieval_outcomes(run_id)
     }
 
     /// Creates a maintenance builder for index and cache upkeep operations.
@@ -3273,7 +3395,10 @@ impl Vault {
         E: From<Error>,
     {
         let mut wtxn = self.store.env.write_txn().map_err(Error::from)?;
-        let result = f(&mut wtxn)?;
+        let result = {
+            let _active_write_txn = crate::store::active_write_txn_guard();
+            f(&mut wtxn)?
+        };
         wtxn.commit().map_err(Error::from)?;
         Ok(result)
     }
@@ -3889,6 +4014,29 @@ fn scan_edges(
         edges.push(parse_edge_record(key, value)?);
     }
     Ok(edges)
+}
+
+fn vault_search_score_breakdown(
+    signal: RetrievalSignal,
+    results: &[ScoredEntity],
+) -> Vec<RetrievalScoreBreakdown> {
+    results
+        .iter()
+        .enumerate()
+        .map(|(index, result)| {
+            let rank = u32::try_from(index.saturating_add(1)).unwrap_or(u32::MAX);
+            RetrievalScoreBreakdown {
+                result_id: *result.id.as_bytes(),
+                final_rank: rank,
+                final_score: result.score,
+                components: vec![RetrievalScoreComponent {
+                    signal,
+                    rank,
+                    score: result.score,
+                }],
+            }
+        })
+        .collect()
 }
 
 /// Snapshot of a vault's text-index state. Returned from

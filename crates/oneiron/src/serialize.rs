@@ -43,8 +43,16 @@ pub struct SerializeConfig {
 struct PreparedEntity {
     entity_type: u8,
     score: f32,
+    source: PreparedEntitySource,
+    source_id: [u8; 16],
     id: String,
     fields: Vec<(String, Value)>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PreparedEntitySource {
+    Result,
+    Neighbor,
 }
 
 #[derive(Debug, Clone)]
@@ -57,13 +65,52 @@ struct PreparedPack {
 
 type PreparedGroups = Vec<(u8, Vec<PreparedEntity>)>;
 
+#[derive(Debug, Clone)]
+pub(crate) struct SerializedPackTelemetry {
+    pub(crate) result_ids: Vec<[u8; 16]>,
+    pub(crate) stats: PackStats,
+}
+
 pub fn serialize_pack(pack: &ContextPack, config: &SerializeConfig) -> Vec<u8> {
+    let prepared = prepare_pack(pack, config, config.format == PackFormat::Json);
+    serialize_prepared_pack(pack, config, prepared)
+}
+
+pub(crate) fn serialize_pack_with_telemetry(
+    pack: &ContextPack,
+    config: &SerializeConfig,
+) -> (Vec<u8>, SerializedPackTelemetry) {
+    let prepared = prepare_pack(pack, config, config.format == PackFormat::Json);
+    let telemetry = serialize_prepared_pack_telemetry(&prepared);
+    let bytes = serialize_prepared_pack(pack, config, prepared);
+    (bytes, telemetry)
+}
+
+fn serialize_prepared_pack(
+    pack: &ContextPack,
+    config: &SerializeConfig,
+    prepared: PreparedPack,
+) -> Vec<u8> {
     match config.format {
-        PackFormat::Json => serialize_json(pack, config),
-        PackFormat::Yaml => serialize_yaml(pack, config).into_bytes(),
-        PackFormat::Toon => serialize_toon(pack, config).into_bytes(),
-        PackFormat::Markdown => serialize_markdown(pack, config).into_bytes(),
-        PackFormat::Plaintext => serialize_plaintext(pack, config).into_bytes(),
+        PackFormat::Json => serialize_json(pack, config, prepared),
+        PackFormat::Yaml => serialize_yaml(config, prepared).into_bytes(),
+        PackFormat::Toon => serialize_toon(config, prepared).into_bytes(),
+        PackFormat::Markdown => serialize_markdown(config, prepared).into_bytes(),
+        PackFormat::Plaintext => serialize_plaintext(config, prepared).into_bytes(),
+    }
+}
+
+fn serialize_prepared_pack_telemetry(prepared: &PreparedPack) -> SerializedPackTelemetry {
+    let result_ids = prepared
+        .results
+        .iter()
+        .flat_map(|(_, entities)| entities.iter())
+        .filter(|entity| entity.source == PreparedEntitySource::Result)
+        .map(|entity| entity.source_id)
+        .collect();
+    SerializedPackTelemetry {
+        result_ids,
+        stats: prepared.stats.clone(),
     }
 }
 
@@ -71,8 +118,7 @@ pub fn serialize_resume_bundle(bundle: &ResumeBundle) -> Vec<u8> {
     serde_json::to_vec(bundle).expect("ResumeBundle JSON serialization should not fail")
 }
 
-fn serialize_json(pack: &ContextPack, config: &SerializeConfig) -> Vec<u8> {
-    let prepared = prepare_pack(pack, config, true);
+fn serialize_json(pack: &ContextPack, config: &SerializeConfig, prepared: PreparedPack) -> Vec<u8> {
     let stats = prepared.stats.clone();
     let mut root = Map::new();
 
@@ -109,9 +155,7 @@ fn serialize_json(pack: &ContextPack, config: &SerializeConfig) -> Vec<u8> {
     serde_json::to_vec(&Value::Object(root)).unwrap_or_else(|_| b"{}".to_vec())
 }
 
-fn serialize_toon(pack: &ContextPack, config: &SerializeConfig) -> String {
-    let prepared = prepare_pack(pack, config, false);
-
+fn serialize_toon(config: &SerializeConfig, prepared: PreparedPack) -> String {
     let mut out = String::new();
     if prepared.merged {
         out.push_str(&encode_toon_section(&prepared.results));
@@ -138,8 +182,7 @@ fn serialize_toon(pack: &ContextPack, config: &SerializeConfig) -> String {
     out
 }
 
-fn serialize_markdown(pack: &ContextPack, config: &SerializeConfig) -> String {
-    let prepared = prepare_pack(pack, config, false);
+fn serialize_markdown(config: &SerializeConfig, prepared: PreparedPack) -> String {
     let mut out = String::new();
 
     write_markdown_groups(&mut out, &prepared.results, "##");
@@ -158,8 +201,7 @@ fn serialize_markdown(pack: &ContextPack, config: &SerializeConfig) -> String {
     out
 }
 
-fn serialize_plaintext(pack: &ContextPack, config: &SerializeConfig) -> String {
-    let prepared = prepare_pack(pack, config, false);
+fn serialize_plaintext(config: &SerializeConfig, prepared: PreparedPack) -> String {
     let mut out = String::new();
 
     write_plaintext_groups(&mut out, &prepared.results);
@@ -178,8 +220,7 @@ fn serialize_plaintext(pack: &ContextPack, config: &SerializeConfig) -> String {
     out
 }
 
-fn serialize_yaml(pack: &ContextPack, config: &SerializeConfig) -> String {
-    let prepared = prepare_pack(pack, config, false);
+fn serialize_yaml(config: &SerializeConfig, prepared: PreparedPack) -> String {
     let mut out = String::new();
 
     if prepared.merged {
@@ -209,6 +250,7 @@ fn prepare_pack(pack: &ContextPack, config: &SerializeConfig, json_mode: bool) -
         let mut merged = Vec::with_capacity(pack.results.len() + pack.neighbors.len());
         merged.extend(prepare_entities(
             &pack.results,
+            PreparedEntitySource::Result,
             config,
             json_mode,
             value_depth_limit,
@@ -216,6 +258,7 @@ fn prepare_pack(pack: &ContextPack, config: &SerializeConfig, json_mode: bool) -
         ));
         merged.extend(prepare_entities(
             &pack.neighbors,
+            PreparedEntitySource::Neighbor,
             config,
             json_mode,
             value_depth_limit,
@@ -247,6 +290,7 @@ fn prepare_pack(pack: &ContextPack, config: &SerializeConfig, json_mode: bool) -
     } else {
         let results_source = group_entities(prepare_entities(
             &pack.results,
+            PreparedEntitySource::Result,
             config,
             json_mode,
             value_depth_limit,
@@ -254,6 +298,7 @@ fn prepare_pack(pack: &ContextPack, config: &SerializeConfig, json_mode: bool) -
         ));
         let neighbors_source = group_entities(prepare_entities(
             &pack.neighbors,
+            PreparedEntitySource::Neighbor,
             config,
             json_mode,
             value_depth_limit,
@@ -382,6 +427,7 @@ fn value_depth_limit_for_format(format: PackFormat) -> ValueDepthLimit {
 
 fn prepare_entities(
     entities: &[ContextEntity],
+    source: PreparedEntitySource,
     config: &SerializeConfig,
     json_mode: bool,
     value_depth_limit: ValueDepthLimit,
@@ -414,6 +460,8 @@ fn prepare_entities(
             let mut prepared = PreparedEntity {
                 entity_type: entity.entity_type,
                 score: entity.score,
+                source,
+                source_id: *entity.id.as_bytes(),
                 id: format_short_id(entity),
                 fields,
             };
@@ -2502,6 +2550,8 @@ mod tests {
         PreparedEntity {
             entity_type: 0,
             score: 0.0,
+            source: PreparedEntitySource::Result,
+            source_id: [0x01; 16],
             id: "x".repeat(id_len),
             fields,
         }
@@ -2753,6 +2803,8 @@ mod tests {
                 vec![PreparedEntity {
                     entity_type: ENTITY_TYPE_CLAIM,
                     score: 0.0,
+                    source: PreparedEntitySource::Result,
+                    source_id: [0x02; 16],
                     id: "cl88:f2".to_owned(),
                     fields: vec![
                         ("pred".to_owned(), Value::String("goal.learning".to_owned())),
@@ -2773,6 +2825,8 @@ mod tests {
                     PreparedEntity {
                         entity_type: ENTITY_TYPE_TURN,
                         score: 0.0,
+                        source: PreparedEntitySource::Result,
+                        source_id: [0x03; 16],
                         id: "tn17:a1".to_owned(),
                         fields: vec![
                             ("spkr".to_owned(), Value::String("user".to_owned())),
@@ -2782,6 +2836,8 @@ mod tests {
                     PreparedEntity {
                         entity_type: ENTITY_TYPE_TURN,
                         score: 0.0,
+                        source: PreparedEntitySource::Result,
+                        source_id: [0x04; 16],
                         id: "tn23:c4".to_owned(),
                         fields: vec![
                             ("spkr".to_owned(), Value::String("assistant".to_owned())),
@@ -2807,6 +2863,8 @@ mod tests {
             vec![PreparedEntity {
                 entity_type: ENTITY_TYPE_EVENT,
                 score: 0.0,
+                source: PreparedEntitySource::Result,
+                source_id: [0x05; 16],
                 id: "ev01:01".to_owned(),
                 fields: vec![(
                     "meta".to_owned(),
@@ -2830,6 +2888,8 @@ mod tests {
             vec![PreparedEntity {
                 entity_type: ENTITY_TYPE_EVENT,
                 score: 0.0,
+                source: PreparedEntitySource::Result,
+                source_id: [0x06; 16],
                 id: "ev01:01".to_owned(),
                 fields: vec![("meta".to_owned(), nested_child_object(TOON_MAX_DEPTH + 8))],
             }],
@@ -3307,6 +3367,8 @@ mod tests {
         let mut entity = PreparedEntity {
             entity_type: ENTITY_TYPE_CLAIM,
             score: 1.0,
+            source: PreparedEntitySource::Result,
+            source_id: [0x07; 16],
             id: "cl01:01".to_owned(),
             fields: vec![
                 ("pred".to_owned(), Value::String(predicate.to_owned())),
@@ -3340,6 +3402,8 @@ mod tests {
         let mut entity = PreparedEntity {
             entity_type: ENTITY_TYPE_CLAIM,
             score: 1.0,
+            source: PreparedEntitySource::Result,
+            source_id: [0x08; 16],
             id: "cl01:01".to_owned(),
             fields: vec![
                 ("pred".to_owned(), Value::String(predicate.to_owned())),
@@ -3378,6 +3442,8 @@ mod tests {
         let mut entity = PreparedEntity {
             entity_type: ENTITY_TYPE_TURN,
             score: 1.0,
+            source: PreparedEntitySource::Result,
+            source_id: [0x09; 16],
             id: "tn01:01".to_owned(),
             fields: vec![
                 ("txt".to_owned(), Value::String("a".repeat(160))),
@@ -3402,6 +3468,8 @@ mod tests {
         let mut entity = PreparedEntity {
             entity_type: ENTITY_TYPE_EVENT,
             score: 1.0,
+            source: PreparedEntitySource::Result,
+            source_id: [0x0A; 16],
             id: "ev01:01".to_owned(),
             fields: vec![
                 (

@@ -1,4 +1,5 @@
 use std::collections::{HashMap, HashSet};
+use std::time::Instant;
 
 use heed::types::Bytes;
 use heed::{Database, RoTxn};
@@ -10,7 +11,10 @@ use crate::batch::{
 use crate::claim::{ClaimBody, claim_surfaceable};
 use crate::error::{Error, Result};
 use crate::fusion;
-use crate::store::Store;
+use crate::store::{
+    RetrievalAction, RetrievalRunId, RetrievalRunRecord, RetrievalScoreBreakdown,
+    RetrievalScoreComponent, RetrievalSignal, Store,
+};
 use crate::types::{
     EDGE_KEY_LEN, ENTITY_ID_LEN, ENTITY_TYPE_CLAIM, ENTITY_TYPE_FACET, EdgeKind, EmptyReason,
     EntityId, ScoredEntity, TemporalAnchorMode, TemporalGranularity, TimeRange,
@@ -144,6 +148,13 @@ pub(crate) struct PipelineOutput {
     pub(crate) cosine_ghosts_dampened: usize,
     pub(crate) total_in_scope: usize,
     pub(crate) empty_reason: Option<EmptyReason>,
+    pub(crate) telemetry_run_id: Option<RetrievalRunId>,
+}
+
+#[derive(Debug, Clone)]
+pub struct RetrievalWithTelemetry<T> {
+    pub value: T,
+    pub run_id: Option<RetrievalRunId>,
 }
 
 impl EntityMetadataCache {
@@ -250,6 +261,7 @@ pub struct PipelineBuilder<'a> {
     world_scope: WorldScope,
     result_limit: usize,
     temporal_adaptive_default: bool,
+    telemetry_action: RetrievalAction,
 }
 
 impl<'a> PipelineBuilder<'a> {
@@ -276,7 +288,13 @@ impl<'a> PipelineBuilder<'a> {
             world_scope: WorldScope::All,
             result_limit: DEFAULT_RESULT_LIMIT,
             temporal_adaptive_default: true,
+            telemetry_action: RetrievalAction::Pipeline,
         }
+    }
+
+    pub(crate) fn telemetry_action(mut self, action: RetrievalAction) -> Self {
+        self.telemetry_action = action;
+        self
     }
 
     pub fn search_vector(mut self, vector: &[f32], limit: usize) -> Self {
@@ -502,13 +520,28 @@ impl<'a> PipelineBuilder<'a> {
     }
 
     pub fn run(self) -> Result<Vec<ScoredEntity>> {
-        Ok(self.run_for_pack()?.scores)
+        Ok(self.run_with_telemetry()?.value)
+    }
+
+    pub fn run_with_telemetry(self) -> Result<RetrievalWithTelemetry<Vec<ScoredEntity>>> {
+        let output = self.run_for_pack()?;
+        Ok(RetrievalWithTelemetry {
+            value: output.scores,
+            run_id: output.telemetry_run_id,
+        })
     }
 
     /// Executes the pipeline and returns the detailed [`PipelineOutput`]
     /// the context-pack path consumes (gated scores + the claim bodies the
     /// D19 gate already decoded + the suppression count).
     pub(crate) fn run_for_pack(self) -> Result<PipelineOutput> {
+        let started = Instant::now();
+        let started_at = crate::unix_seconds_now();
+        let telemetry_action = self.telemetry_action;
+        let mut telemetry_signals = self.telemetry_signals();
+        let no_data_fallback_eligible = self.no_data_fallback_eligible();
+        let mut ppr_expand_executed = false;
+
         // Resolve the rank profile before anything else: an invalid
         // profile is a caller bug and fails closed even when no text
         // search would consume it on this run.
@@ -539,8 +572,10 @@ impl<'a> PipelineBuilder<'a> {
             cosine_ghosts_dampened,
             total_in_scope,
             empty_reason,
+            signal_components,
         ) = {
             let mut ranked_lists = Vec::new();
+            let mut signal_components = HashMap::<EntityId, Vec<RetrievalScoreComponent>>::new();
             let mut vector_channel_index = None;
             let mut text_channel_index = None;
             let rtxn = self.vault.store.env.read_txn()?;
@@ -566,6 +601,11 @@ impl<'a> PipelineBuilder<'a> {
                     query_vector,
                     *limit,
                 )?;
+                add_signal_score_components(
+                    &mut signal_components,
+                    RetrievalSignal::Vector,
+                    &vector_results,
+                );
                 vector_channel_index = Some(ranked_lists.len());
                 ranked_lists.push(vector_results);
             }
@@ -579,18 +619,33 @@ impl<'a> PipelineBuilder<'a> {
                     query,
                     *limit,
                 )?;
+                add_signal_score_components(
+                    &mut signal_components,
+                    RetrievalSignal::Text,
+                    &text_results,
+                );
                 text_channel_index = Some(ranked_lists.len());
                 ranked_lists.push(text_results);
             }
 
             if let Some(codes) = &self.phonetic_search {
                 let phonetic_results = execute_phonetic(&self.vault.store, &rtxn, codes)?;
+                add_signal_score_components(
+                    &mut signal_components,
+                    RetrievalSignal::Phonetic,
+                    &phonetic_results,
+                );
                 ranked_lists.push(phonetic_results);
             }
 
             if let Some(config) = &self.temporal_search {
                 let temporal_results =
                     execute_temporal(&self.vault.store, &rtxn, config, &mut metadata_cache)?;
+                add_signal_score_components(
+                    &mut signal_components,
+                    RetrievalSignal::Temporal,
+                    &temporal_results,
+                );
                 ranked_lists.push(temporal_results);
             }
 
@@ -607,6 +662,11 @@ impl<'a> PipelineBuilder<'a> {
                         PPR_DAMPING,
                         crate::ppr::SeedWeighting::Specificity,
                     )?;
+                add_signal_score_components(
+                    &mut signal_components,
+                    RetrievalSignal::Ppr,
+                    &ppr_results,
+                );
                 if let Some(deferred_cache_write) = deferred_cache_write {
                     deferred_ppr_cache_writes.push(deferred_cache_write);
                 }
@@ -621,6 +681,7 @@ impl<'a> PipelineBuilder<'a> {
                     cosine_ghosts_dampened: 0,
                     total_in_scope: 0,
                     empty_reason: None,
+                    telemetry_run_id: None,
                 });
             }
 
@@ -664,6 +725,7 @@ impl<'a> PipelineBuilder<'a> {
                 }
 
                 if !seeds.is_empty() {
+                    ppr_expand_executed = true;
                     seeds.sort_unstable_by(|a, b| a.as_bytes().cmp(b.as_bytes()));
 
                     // expand_ppr seeds stay UNIFORM — ARCH-0039 Layer-2
@@ -694,6 +756,11 @@ impl<'a> PipelineBuilder<'a> {
                         &mut metadata_cache,
                         &mut claim_gate,
                     )?;
+                    add_signal_score_components(
+                        &mut signal_components,
+                        RetrievalSignal::Ppr,
+                        &ppr_results,
+                    );
                     scores = fusion::rrf_fuse(&[scores, ppr_results], RRF_K);
                 }
             }
@@ -790,6 +857,13 @@ impl<'a> PipelineBuilder<'a> {
             if before_limit > 0 && scores.is_empty() {
                 empty_reason = Some(EmptyReason::BelowThreshold);
             }
+            if no_data_fallback_eligible
+                && total_in_scope == 0
+                && scores.is_empty()
+                && empty_reason.is_none()
+            {
+                empty_reason = Some(EmptyReason::NoData);
+            }
             (
                 scores,
                 claim_gate,
@@ -797,6 +871,7 @@ impl<'a> PipelineBuilder<'a> {
                 cosine_ghosts_dampened,
                 total_in_scope,
                 empty_reason,
+                signal_components,
             )
         };
 
@@ -813,6 +888,44 @@ impl<'a> PipelineBuilder<'a> {
             }
         }
 
+        let score_breakdown = telemetry_score_breakdown(&scores, &signal_components);
+        let ppr_search_executed = self
+            .ppr_search
+            .as_ref()
+            .is_some_and(|(seeds, _)| !seeds.is_empty());
+        if !ppr_search_executed && self.ppr_expand.is_some() && !ppr_expand_executed {
+            telemetry_signals.retain(|signal| *signal != RetrievalSignal::Ppr);
+        }
+        let run_id = RetrievalRunId::now();
+        let run_record = RetrievalRunRecord::new(
+            run_id,
+            telemetry_action,
+            started_at,
+            started.elapsed().as_micros().min(u64::MAX as u128) as u64,
+            telemetry_signals,
+            score_breakdown,
+            total_in_scope,
+            claims_suppressed,
+            empty_reason.map(|reason| format!("{reason:?}")),
+        );
+        let write_result = if telemetry_action == RetrievalAction::ContextPack {
+            self.vault
+                .store
+                .record_context_pack_provisional_retrieval_run(&run_record)
+        } else {
+            self.vault.store.record_retrieval_run(&run_record)
+        };
+        let telemetry_run_id = match write_result {
+            Ok(()) => Some(run_id),
+            Err(error) => {
+                tracing::warn!(
+                    ?error,
+                    "retrieval telemetry run write failed; continuing retrieval"
+                );
+                None
+            }
+        };
+
         Ok(PipelineOutput {
             scores,
             claim_bodies,
@@ -820,8 +933,97 @@ impl<'a> PipelineBuilder<'a> {
             cosine_ghosts_dampened,
             total_in_scope,
             empty_reason,
+            telemetry_run_id,
         })
     }
+
+    fn telemetry_signals(&self) -> Vec<RetrievalSignal> {
+        let mut signals = Vec::new();
+        if self.vector_search.is_some() {
+            signals.push(RetrievalSignal::Vector);
+        }
+        if self.text_search.is_some() {
+            signals.push(RetrievalSignal::Text);
+        }
+        if self
+            .phonetic_search
+            .as_ref()
+            .is_some_and(|codes| !codes.is_empty())
+        {
+            signals.push(RetrievalSignal::Phonetic);
+        }
+        if self.temporal_search.is_some() {
+            signals.push(RetrievalSignal::Temporal);
+        }
+        if self
+            .ppr_search
+            .as_ref()
+            .is_some_and(|(seeds, _)| !seeds.is_empty())
+            || self.ppr_expand.is_some()
+        {
+            signals.push(RetrievalSignal::Ppr);
+        }
+        signals
+    }
+
+    fn no_data_fallback_eligible(&self) -> bool {
+        self.vector_search
+            .as_ref()
+            .is_some_and(|(_, limit)| *limit > 0)
+            || self
+                .text_search
+                .as_ref()
+                .is_some_and(|(_, limit)| *limit > 0)
+            || self
+                .phonetic_search
+                .as_ref()
+                .is_some_and(|codes| !codes.is_empty())
+            || self
+                .temporal_search
+                .as_ref()
+                .is_some_and(|config| config.limit > 0)
+            || self
+                .ppr_search
+                .as_ref()
+                .is_some_and(|(seeds, _)| !seeds.is_empty())
+            || self
+                .ppr_expand
+                .as_ref()
+                .is_some_and(|(seeds, _)| !seeds.is_empty())
+    }
+}
+
+fn add_signal_score_components(
+    components: &mut HashMap<EntityId, Vec<RetrievalScoreComponent>>,
+    signal: RetrievalSignal,
+    scores: &[ScoredEntity],
+) {
+    for (rank, scored) in scores.iter().enumerate() {
+        components
+            .entry(scored.id)
+            .or_default()
+            .push(RetrievalScoreComponent {
+                signal,
+                rank: (rank + 1).min(u32::MAX as usize) as u32,
+                score: scored.score,
+            });
+    }
+}
+
+fn telemetry_score_breakdown(
+    scores: &[ScoredEntity],
+    components: &HashMap<EntityId, Vec<RetrievalScoreComponent>>,
+) -> Vec<RetrievalScoreBreakdown> {
+    scores
+        .iter()
+        .enumerate()
+        .map(|(rank, scored)| RetrievalScoreBreakdown {
+            result_id: *scored.id.as_bytes(),
+            final_rank: (rank + 1).min(u32::MAX as usize) as u32,
+            final_score: scored.score,
+            components: components.get(&scored.id).cloned().unwrap_or_default(),
+        })
+        .collect()
 }
 
 fn apply_gravity(
@@ -1913,7 +2115,7 @@ fn combine_proximity(mode: TemporalAnchorMode, occurred: f64, learned: f64, floo
 #[cfg(test)]
 mod tests {
     use core::assert_matches;
-    use std::collections::HashMap;
+    use std::collections::{BTreeMap, HashMap};
 
     use heed::types::Bytes;
 
@@ -2165,6 +2367,480 @@ mod tests {
         let results = vault.query().search_text("alpha", 10).run()?;
         assert!(!results.is_empty());
         assert_eq!(results[0].id, a);
+        Ok(())
+    }
+
+    #[test]
+    fn retrieval_telemetry_records_vector_text_and_ppr_runs() -> Result<()> {
+        let (_dir, vault) = open_test_vault();
+        let a = entity_id(0x31);
+        let b = entity_id(0x32);
+
+        vault
+            .batch()
+            .put(&a, 1, TimeRange { start: 1, end: 1 }, 1, b"payload")
+            .text(&a, &[("body", "telemetry alpha")])
+            .vector(&a, &[1.0, 0.0, 0.0, 0.0])
+            .put(&b, 1, TimeRange { start: 2, end: 2 }, 2, b"payload")
+            .vector(&b, &[0.0, 1.0, 0.0, 0.0])
+            .edge(&a, EdgeKind::Supports, &b, 1.0)
+            .commit()?;
+
+        let vector = vault
+            .query()
+            .search_vector(&[1.0, 0.0, 0.0, 0.0], 10)
+            .run()?;
+        let text = vault.query().search_text("alpha", 10).run()?;
+        let ppr = vault.query().search_ppr(&[a], 2).run()?;
+        assert!(!vector.is_empty());
+        assert!(!text.is_empty());
+        assert!(!ppr.is_empty());
+
+        let runs = vault.retrieval_runs(10)?;
+        let vector_run = runs
+            .iter()
+            .find(|run| run.signals == vec![RetrievalSignal::Vector])
+            .expect("vector telemetry run");
+        assert_eq!(vector_run.action, RetrievalAction::Pipeline);
+        assert!(vector_run.result_ids.contains(a.as_bytes()));
+        assert!(vector_run.score_breakdown.iter().any(|entry| {
+            entry
+                .components
+                .iter()
+                .any(|component| component.signal == RetrievalSignal::Vector)
+        }));
+
+        let text_run = runs
+            .iter()
+            .find(|run| run.signals == vec![RetrievalSignal::Text])
+            .expect("text telemetry run");
+        assert!(text_run.result_ids.contains(a.as_bytes()));
+        assert!(text_run.score_breakdown.iter().any(|entry| {
+            entry
+                .components
+                .iter()
+                .any(|component| component.signal == RetrievalSignal::Text)
+        }));
+
+        let ppr_run = runs
+            .iter()
+            .find(|run| run.signals == vec![RetrievalSignal::Ppr])
+            .expect("ppr telemetry run");
+        assert!(ppr_run.score_breakdown.iter().any(|entry| {
+            entry
+                .components
+                .iter()
+                .any(|component| component.signal == RetrievalSignal::Ppr)
+        }));
+        Ok(())
+    }
+
+    #[test]
+    fn retrieval_outcome_writer_is_idempotent() -> Result<()> {
+        let (_dir, vault) = open_test_vault();
+        let id = entity_id(0x33);
+        put_text(&vault, id, "outcome telemetry")?;
+
+        let results = vault
+            .query()
+            .search_text("outcome", 10)
+            .run_with_telemetry()?;
+        assert!(!results.value.is_empty());
+        let run_id = results.run_id.expect("outcome telemetry run id");
+
+        let mut metadata = BTreeMap::new();
+        metadata.insert("source".to_owned(), "unit-test".to_owned());
+        vault.record_retrieval_outcome(crate::store::RetrievalOutcome {
+            run_id,
+            key: "click".to_owned(),
+            reward: Some(1.0),
+            accepted: Some(true),
+            metadata: metadata.clone(),
+        })?;
+        metadata.insert("revision".to_owned(), "2".to_owned());
+        vault.record_retrieval_outcome(crate::store::RetrievalOutcome {
+            run_id,
+            key: "click".to_owned(),
+            reward: Some(0.5),
+            accepted: Some(false),
+            metadata,
+        })?;
+
+        let outcomes = vault.retrieval_outcomes(run_id)?;
+        assert_eq!(outcomes.len(), 1);
+        assert_eq!(outcomes[0].key, "click");
+        assert_eq!(outcomes[0].reward, Some(0.5));
+        assert_eq!(outcomes[0].accepted, Some(false));
+        assert_eq!(
+            outcomes[0].metadata.get("revision").map(String::as_str),
+            Some("2")
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn retrieval_outcome_rejects_unknown_run_id() -> Result<()> {
+        let (_dir, vault) = open_test_vault();
+        let unknown_run_id = RetrievalRunId::now();
+
+        let error = vault
+            .record_retrieval_outcome(crate::store::RetrievalOutcome {
+                run_id: unknown_run_id,
+                key: "click".to_owned(),
+                reward: Some(1.0),
+                accepted: Some(true),
+                metadata: BTreeMap::new(),
+            })
+            .expect_err("unknown run id should be rejected");
+        assert!(matches!(error, Error::InvalidConfig(_)));
+        assert!(vault.retrieval_outcomes(unknown_run_id)?.is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn retrieval_outcome_rejects_active_write_transaction() -> Result<()> {
+        let (_dir, vault) = open_test_vault();
+        let id = entity_id(0x3C);
+        put_text(&vault, id, "outcome active transaction")?;
+
+        let results = vault
+            .query()
+            .search_text("outcome active", 10)
+            .run_with_telemetry()?;
+        assert!(!results.value.is_empty());
+        let run_id = results.run_id.expect("outcome telemetry run id");
+
+        let error = vault
+            .with_write_txn(|_wtxn| {
+                vault.record_retrieval_outcome(crate::store::RetrievalOutcome {
+                    run_id,
+                    key: "click".to_owned(),
+                    reward: Some(1.0),
+                    accepted: Some(true),
+                    metadata: BTreeMap::new(),
+                })
+            })
+            .expect_err("outcome write should fail fast inside active write transaction");
+        assert!(matches!(error, Error::ConcurrentWrite(_)));
+        assert!(vault.retrieval_outcomes(run_id)?.is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn context_pack_records_context_pack_telemetry() -> Result<()> {
+        let (_dir, vault) = open_test_vault();
+        let id = entity_id(0x34);
+        put_text(&vault, id, "context telemetry")?;
+
+        let pack = vault.context_pack().search_text("context", 10).run()?;
+        assert_eq!(pack.results.len(), 1);
+
+        let runs = vault.retrieval_runs(1)?;
+        assert_eq!(runs.len(), 1);
+        assert_eq!(runs[0].action, RetrievalAction::ContextPack);
+        assert_eq!(runs[0].signals, vec![RetrievalSignal::Text]);
+        assert_eq!(runs[0].elapsed_us, pack.stats.query_time_us);
+        assert!(runs[0].result_ids.contains(id.as_bytes()));
+        Ok(())
+    }
+
+    #[test]
+    fn direct_vault_searches_emit_retrieval_telemetry() -> Result<()> {
+        let (_dir, vault) = open_test_vault();
+        let id = entity_id(0x36);
+        put_text_and_vector(&vault, id, "direct telemetry", [1.0, 0.0, 0.0, 0.0])?;
+
+        let vector = vault.search_vector_with_telemetry(&[1.0, 0.0, 0.0, 0.0], 10)?;
+        let text = vault.search_text_with_telemetry("direct", 10)?;
+        assert_eq!(vector.value.len(), 1);
+        assert_eq!(text.value.len(), 1);
+        let vector_run_id = vector.run_id.expect("direct vector telemetry run id");
+        let text_run_id = text.run_id.expect("direct text telemetry run id");
+
+        let runs = vault.retrieval_runs(10)?;
+        let vector_run = runs
+            .iter()
+            .find(|run| {
+                run.action == RetrievalAction::VaultSearch
+                    && run.signals == vec![RetrievalSignal::Vector]
+            })
+            .expect("direct vector telemetry run");
+        assert_eq!(vector_run.run_id, vector_run_id);
+        assert_eq!(vector_run.claims_suppressed, 0);
+        assert_eq!(vector_run.result_ids, vec![*id.as_bytes()]);
+        assert!(vector_run.score_breakdown.iter().any(|entry| {
+            entry
+                .components
+                .iter()
+                .any(|component| component.signal == RetrievalSignal::Vector)
+        }));
+
+        let text_run = runs
+            .iter()
+            .find(|run| {
+                run.action == RetrievalAction::VaultSearch
+                    && run.signals == vec![RetrievalSignal::Text]
+            })
+            .expect("direct text telemetry run");
+        assert_eq!(text_run.run_id, text_run_id);
+        assert_eq!(text_run.claims_suppressed, 0);
+        assert_eq!(text_run.result_ids, vec![*id.as_bytes()]);
+        assert!(text_run.score_breakdown.iter().any(|entry| {
+            entry
+                .components
+                .iter()
+                .any(|component| component.signal == RetrievalSignal::Text)
+        }));
+        Ok(())
+    }
+
+    #[test]
+    fn direct_vault_zero_limit_telemetry_has_no_empty_reason() -> Result<()> {
+        let (_dir, vault) = open_test_vault();
+        let id = entity_id(0x37);
+        put_text_and_vector(&vault, id, "zero limit telemetry", [1.0, 0.0, 0.0, 0.0])?;
+
+        let text = vault.search_text_with_telemetry("zero limit", 0)?;
+        let vector = vault.search_vector_with_telemetry(&[1.0, 0.0, 0.0, 0.0], 0)?;
+        assert!(text.value.is_empty());
+        assert!(vector.value.is_empty());
+        let text_run_id = text.run_id.expect("text zero-limit telemetry run id");
+        let vector_run_id = vector.run_id.expect("vector zero-limit telemetry run id");
+
+        let runs = vault.retrieval_runs(10)?;
+        let text_run = runs
+            .iter()
+            .find(|run| run.run_id == text_run_id)
+            .expect("text zero-limit telemetry row");
+        let vector_run = runs
+            .iter()
+            .find(|run| run.run_id == vector_run_id)
+            .expect("vector zero-limit telemetry row");
+        assert!(text_run.result_ids.is_empty());
+        assert!(vector_run.result_ids.is_empty());
+        assert_eq!(text_run.empty_reason, None);
+        assert_eq!(vector_run.empty_reason, None);
+        Ok(())
+    }
+
+    #[test]
+    fn retrieval_telemetry_records_no_hit_empty_reason() -> Result<()> {
+        let (_dir, vault) = open_test_vault();
+
+        let results = vault
+            .query()
+            .search_text("definitelymissing", 10)
+            .run_with_telemetry()?;
+        assert!(results.value.is_empty());
+        let run_id = results.run_id.expect("no-hit telemetry run id");
+
+        let runs = vault.retrieval_runs(1)?;
+        assert_eq!(runs.len(), 1);
+        assert_eq!(runs[0].run_id, run_id);
+        assert!(runs[0].result_ids.is_empty());
+        assert_eq!(runs[0].empty_reason.as_deref(), Some("NoData"));
+        Ok(())
+    }
+
+    #[test]
+    fn retrieval_telemetry_zero_limit_pipeline_has_no_empty_reason() -> Result<()> {
+        let (_dir, vault) = open_test_vault();
+        let id = entity_id(0x3E);
+        put_text_and_vector(
+            &vault,
+            id,
+            "pipeline zero limit telemetry",
+            [1.0, 0.0, 0.0, 0.0],
+        )?;
+
+        let results = vault
+            .query()
+            .search_text("pipeline zero limit", 0)
+            .search_vector(&[1.0, 0.0, 0.0, 0.0], 0)
+            .run_with_telemetry()?;
+        assert!(results.value.is_empty());
+        let run_id = results.run_id.expect("zero-limit telemetry run id");
+
+        let runs = vault.retrieval_runs(1)?;
+        assert_eq!(runs.len(), 1);
+        assert_eq!(runs[0].run_id, run_id);
+        assert!(runs[0].result_ids.is_empty());
+        assert_eq!(runs[0].empty_reason, None);
+        Ok(())
+    }
+
+    #[test]
+    fn retrieval_telemetry_omits_noop_ppr_and_phonetic_signals() -> Result<()> {
+        let (_dir, vault) = open_test_vault();
+
+        let phonetic = vault.query().search_phonetic(&[]).run_with_telemetry()?;
+        assert!(phonetic.value.is_empty());
+        let phonetic_run_id = phonetic.run_id.expect("phonetic noop telemetry run id");
+
+        let ppr = vault.query().search_ppr(&[], 2).run_with_telemetry()?;
+        assert!(ppr.value.is_empty());
+        let ppr_run_id = ppr.run_id.expect("ppr noop telemetry run id");
+
+        let combined_ppr = vault
+            .query()
+            .search_ppr(&[], 2)
+            .expand_ppr(&[], 2)
+            .run_with_telemetry()?;
+        assert!(combined_ppr.value.is_empty());
+        let combined_ppr_run_id = combined_ppr
+            .run_id
+            .expect("combined ppr noop telemetry run id");
+
+        let runs = vault.retrieval_runs(10)?;
+        let phonetic_run = runs
+            .iter()
+            .find(|run| run.run_id == phonetic_run_id)
+            .expect("phonetic noop telemetry row");
+        let ppr_run = runs
+            .iter()
+            .find(|run| run.run_id == ppr_run_id)
+            .expect("ppr noop telemetry row");
+        let combined_ppr_run = runs
+            .iter()
+            .find(|run| run.run_id == combined_ppr_run_id)
+            .expect("combined ppr noop telemetry row");
+
+        assert!(!phonetic_run.signals.contains(&RetrievalSignal::Phonetic));
+        assert!(phonetic_run.score_breakdown.is_empty());
+        assert!(!ppr_run.signals.contains(&RetrievalSignal::Ppr));
+        assert!(ppr_run.score_breakdown.is_empty());
+        assert!(!combined_ppr_run.signals.contains(&RetrievalSignal::Ppr));
+        assert!(combined_ppr_run.score_breakdown.is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn retrieval_telemetry_omits_ppr_for_noop_expansion() -> Result<()> {
+        let (_dir, vault) = open_test_vault();
+        let dead = entity_id(0x3D);
+        put_status_claim(
+            &vault,
+            dead,
+            "noop ppr telemetry",
+            crate::claim::ClaimApprovalStatus::Auto,
+            crate::claim::ClaimLifecycleStatus::Retracted,
+            false,
+        )?;
+
+        let results = vault
+            .query()
+            .search_text("noop ppr telemetry", 10)
+            .expand_ppr(&[], 2)
+            .run_with_telemetry()?;
+        assert!(results.value.is_empty());
+        let run_id = results.run_id.expect("noop ppr telemetry run id");
+
+        let runs = vault.retrieval_runs(1)?;
+        assert_eq!(runs.len(), 1);
+        assert_eq!(runs[0].run_id, run_id);
+        assert_eq!(runs[0].signals, vec![RetrievalSignal::Text]);
+        assert!(!runs[0].signals.contains(&RetrievalSignal::Ppr));
+        assert_eq!(runs[0].claims_suppressed, 1);
+        assert_eq!(runs[0].empty_reason.as_deref(), Some("AllActivated"));
+        Ok(())
+    }
+
+    #[test]
+    fn retrieval_runs_returns_bounded_newest_first() -> Result<()> {
+        let (_dir, vault) = open_test_vault();
+        let first_id = entity_id(0x38);
+        let second_id = entity_id(0x39);
+        let third_id = entity_id(0x3A);
+
+        put_text(&vault, first_id, "alphaone")?;
+        assert_eq!(vault.search_text("alphaone", 10)?.len(), 1);
+        let first_run = vault.retrieval_runs(1)?[0].run_id;
+        std::thread::sleep(std::time::Duration::from_millis(2));
+
+        put_text(&vault, second_id, "betatwo")?;
+        assert_eq!(vault.search_text("betatwo", 10)?.len(), 1);
+        let second_run = vault.retrieval_runs(1)?[0].run_id;
+        std::thread::sleep(std::time::Duration::from_millis(2));
+
+        put_text(&vault, third_id, "gammathree")?;
+        assert_eq!(vault.search_text("gammathree", 10)?.len(), 1);
+        let third_run = vault.retrieval_runs(1)?[0].run_id;
+
+        let newest_two = vault.retrieval_runs(2)?;
+        assert_eq!(newest_two.len(), 2);
+        assert_eq!(newest_two[0].run_id, third_run);
+        assert_eq!(newest_two[1].run_id, second_run);
+        assert!(!newest_two.iter().any(|run| run.run_id == first_run));
+        assert!(vault.retrieval_runs(0)?.is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn telemetry_write_failure_is_best_effort_for_retrieval() -> Result<()> {
+        let (dir, vault) = open_test_vault();
+        let id = entity_id(0x3A);
+        put_text(&vault, id, "best effort telemetry")?;
+        let vault_path = dir.path().canonicalize()?;
+
+        crate::store::test_hooks::fail_next_retrieval_run_write_for(vault_path.clone());
+        let pipeline = vault.query().search_text("best effort", 10).run()?;
+        assert_eq!(pipeline.len(), 1);
+        assert!(vault.retrieval_runs(1)?.is_empty());
+
+        crate::store::test_hooks::fail_next_retrieval_run_write_for(vault_path);
+        let direct = vault.search_text("best effort", 10)?;
+        assert_eq!(direct.len(), 1);
+        assert!(vault.retrieval_runs(1)?.is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn retrieval_telemetry_skips_active_write_transaction() -> Result<()> {
+        let (_dir, vault) = open_test_vault();
+        let id = entity_id(0x3B);
+        put_text(&vault, id, "active write telemetry")?;
+
+        vault.with_write_txn(|_wtxn| {
+            let direct = vault.search_text("active", 10)?;
+            assert_eq!(direct.len(), 1);
+            let pipeline = vault.query().search_text("active", 10).run()?;
+            assert_eq!(pipeline.len(), 1);
+            Ok(())
+        })?;
+
+        assert!(vault.retrieval_runs(10)?.is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn retrieval_telemetry_does_not_mutate_short_id_counters() -> Result<()> {
+        let (_dir, vault) = open_test_vault();
+        let id = entity_id(0x35);
+        put_text(&vault, id, "counter telemetry")?;
+
+        let counter_key = crate::store::short_id_counter_key(1);
+        let before = {
+            let rtxn = vault.store.env.read_txn()?;
+            vault
+                .store
+                .vault_meta
+                .get(&rtxn, &counter_key)?
+                .map(<[u8]>::to_vec)
+        };
+
+        let results = vault.query().search_text("counter", 10).run()?;
+        assert!(!results.is_empty());
+        assert_eq!(vault.retrieval_runs(1)?.len(), 1);
+
+        let after = {
+            let rtxn = vault.store.env.read_txn()?;
+            vault
+                .store
+                .vault_meta
+                .get(&rtxn, &counter_key)?
+                .map(<[u8]>::to_vec)
+        };
+        assert_eq!(before, after);
         Ok(())
     }
 
