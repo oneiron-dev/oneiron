@@ -44,9 +44,10 @@ pub use crate::deletion::{
 pub use crate::error::{Error, ErrorKind, Result};
 pub use crate::ingest::{
     INGEST_SOURCE_REGISTRY, IngestError, IngestHarnessConfig, IngestResult, IngestSource,
-    IngestSourceConfig, IngestSourceFormat, IngestSourceRegistry, JSONL_TRANSCRIPT_SOURCE_ID,
-    JsonlTranscriptSource, KNOWN_INGEST_HARNESS_CONFIG, NormalizedIngestBatch,
-    NormalizedIngestClaim, NormalizedIngestRecord,
+    IngestSourceConfig, IngestSourceFormat, IngestSourceRegistration, IngestSourceRegistry,
+    IngestTrustCeiling, JSONL_TRANSCRIPT_SOURCE_ID, JsonlTranscriptSource,
+    KNOWN_INGEST_HARNESS_CONFIG, NormalizedIngestBatch, NormalizedIngestClaim,
+    NormalizedIngestRecord,
 };
 pub use crate::maintain::{MaintenanceBuilder, MaintenanceReport};
 pub use crate::pipeline::{DEFAULT_RECENCY_HALF_LIFE_DAYS, FacetMode, PipelineBuilder, WorldScope};
