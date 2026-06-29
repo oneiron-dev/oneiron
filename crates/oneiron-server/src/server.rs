@@ -22,8 +22,8 @@ use crate::usage::UsageLedger;
 /// does not key storage by user, so this is a label only.
 const SERVER_USER_ID: &str = "server";
 
-/// Numeric lease ABI vault id for the current single-vault server path.
-/// Tenant/vault routing is intentionally outside ONE-1188.
+/// Numeric lease ABI vault id for the legacy local single-vault server path.
+/// Hosted paths set `SyncServerConfig::lease_vault_id` per tenant/vault.
 const SERVER_LEASE_VAULT_ID: u64 = 0;
 const LEASE_LIFECYCLE_TICK_INTERVAL: Duration = Duration::from_secs(60);
 static NEXT_LIFECYCLE_SESSION_ID: AtomicU64 = AtomicU64::new(1);
@@ -107,6 +107,14 @@ struct LifecycleJobKey {
     session_id: u64,
 }
 
+#[derive(Debug, Clone)]
+struct RootLeaseEntry {
+    key: String,
+    vault_id: u64,
+    client_id: u64,
+    record: LeaseRecord,
+}
+
 impl SyncServer {
     /// Creates a SyncServer over the vault, reloading persisted CRDT state.
     ///
@@ -174,7 +182,7 @@ impl SyncServer {
 
         let reassert_manager = Arc::new(WindowManager::new(
             vault.clone(),
-            Arc::new(Materializer::new()),
+            Arc::new(Materializer::with_lease_vault_id(config.lease_vault_id)),
             SERVER_USER_ID,
         ));
         reassert_manager.attach_to_vault();
@@ -383,32 +391,30 @@ impl SyncServer {
 
         let result = async {
             let _guard = self.lease_registrar.lock().await;
-            let leases = self.root_doc.get_map(ROOT_LEASES_MAP);
             let vv_before = self.root_doc.oplog_vv();
             let frontiers_before = self.root_doc.state_frontiers();
-            let mut entries: Vec<(String, Vec<u8>)> = Vec::new();
-            let mut corrupt = false;
-            leases.for_each(|key, value| {
-                if let ValueOrContainer::Value(LoroValue::Binary(blob)) = value {
-                    entries.push((key.to_string(), blob.to_vec()));
-                } else {
-                    corrupt = true;
-                }
-            });
-            if corrupt {
-                return Err(oneiron::Error::CorruptedIndex(
-                    "non-binary root lease entry",
-                ));
-            }
+            let leases = self.root_doc.get_map(ROOT_LEASES_MAP);
+            let mut entries = self.root_lease_entries()?;
 
             let mut expired_rows = 0usize;
-            for (key, raw) in &entries {
-                let mut record = lease::decode_lease_record(raw)?;
+            for entry in &mut entries {
+                let mut record = entry.record;
                 if record.status == LeaseStatus::Active && record.expires_at < now {
                     record.status = LeaseStatus::Expired;
+                    let scoped_key = lease::lease_registry_key(entry.vault_id, entry.client_id);
+                    if entry.key != scoped_key {
+                        leases
+                            .delete(entry.key.as_str())
+                            .map_err(|e| oneiron::Error::SyncProtocolError(e.to_string()))?;
+                        entry.key = scoped_key;
+                    }
                     leases
-                        .insert(key.as_str(), lease::encode_lease_record(&record).as_slice())
+                        .insert(
+                            entry.key.as_str(),
+                            lease::encode_lease_record(&record).as_slice(),
+                        )
                         .map_err(|e| oneiron::Error::SyncProtocolError(e.to_string()))?;
+                    entry.record = record;
                     expired_rows += 1;
                 }
             }
@@ -513,6 +519,78 @@ impl SyncServer {
             .remove(&self.lifecycle_job_key(kind));
     }
 
+    fn root_lease_entries(&self) -> Result<Vec<RootLeaseEntry>, oneiron::Error> {
+        let leases = self.root_doc.get_map(ROOT_LEASES_MAP);
+        let mut raw_entries: Vec<(String, Vec<u8>)> = Vec::new();
+        let mut corrupt = false;
+        leases.for_each(|key, value| {
+            if let ValueOrContainer::Value(LoroValue::Binary(blob)) = value {
+                raw_entries.push((key.to_string(), blob.to_vec()));
+            } else {
+                corrupt = true;
+            }
+        });
+        if corrupt {
+            return Err(oneiron::Error::CorruptedIndex(
+                "non-binary root lease entry",
+            ));
+        }
+
+        raw_entries
+            .into_iter()
+            .map(|(key, raw)| Self::decode_root_lease_entry(key, &raw))
+            .collect()
+    }
+
+    fn root_lease_entry_for_vault_client(
+        &self,
+        vault_id: u64,
+        client_id: u64,
+    ) -> Result<Option<RootLeaseEntry>, oneiron::Error> {
+        let leases = self.root_doc.get_map(ROOT_LEASES_MAP);
+        let scoped_key = lease::lease_registry_key(vault_id, client_id);
+        if let Some(value) = leases.get(&scoped_key) {
+            return Self::decode_root_lease_value(scoped_key, value).map(Some);
+        }
+
+        let legacy_key = lease::client_id_hex(client_id);
+        let Some(value) = leases.get(&legacy_key) else {
+            return Ok(None);
+        };
+        let entry = Self::decode_root_lease_value(legacy_key, value)?;
+        if entry.vault_id == vault_id {
+            Ok(Some(entry))
+        } else {
+            Ok(None)
+        }
+    }
+
+    fn decode_root_lease_value(
+        key: String,
+        value: ValueOrContainer,
+    ) -> Result<RootLeaseEntry, oneiron::Error> {
+        match value {
+            ValueOrContainer::Value(LoroValue::Binary(raw)) => {
+                Self::decode_root_lease_entry(key, &raw)
+            }
+            _ => Err(oneiron::Error::CorruptedIndex(
+                "non-binary root lease entry",
+            )),
+        }
+    }
+
+    fn decode_root_lease_entry(key: String, raw: &[u8]) -> Result<RootLeaseEntry, oneiron::Error> {
+        let record = lease::decode_lease_record(raw)?;
+        let registry_key = lease::decode_lease_registry_key(&key)?;
+        let vault_id = registry_key.effective_vault_id(&record)?;
+        Ok(RootLeaseEntry {
+            key,
+            vault_id,
+            client_id: registry_key.client_id,
+            record,
+        })
+    }
+
     // ─── Device-lease registry (ONE-1140, OD-3) ──────────────────────────
 
     /// Handles a TAG_LEASE_REQUEST: verify proof of possession, then apply
@@ -532,7 +610,9 @@ impl SyncServer {
     /// (OD-8 amended, RULING A): a revoked pubkey can never obtain a fresh
     /// active lease under ANY client_id, so a device that rotates client_id
     /// while reusing its key cannot recover — recovery requires a fresh
-    /// KEYPAIR. The per-`(vault, pubkey)` dimension is deferred to ONE-1161.
+    /// KEYPAIR. The public wrapper uses `SyncServerConfig::lease_vault_id`
+    /// so hosted callers scope the floor to `(vault, pubkey)` while the
+    /// default config preserves the existing single-vault server id.
     ///
     /// Scan-at-connect expiry (OD-7): any ACTIVE binding past its
     /// `expires_at` flips to EXPIRED first — server-side liveness
@@ -545,6 +625,17 @@ impl SyncServer {
     /// ALL connections (conn_id 0 — the requester needs its own record).
     pub(crate) async fn register_lease(
         &self,
+        client_id: u64,
+        pubkey: &[u8; 32],
+        pop_sig: &[u8; 64],
+    ) -> Result<LeaseDecision, oneiron::Error> {
+        self.register_lease_for_vault(self.config.lease_vault_id, client_id, pubkey, pop_sig)
+            .await
+    }
+
+    async fn register_lease_for_vault(
+        &self,
+        vault_id: u64,
         client_id: u64,
         pubkey: &[u8; 32],
         pop_sig: &[u8; 64],
@@ -571,47 +662,45 @@ impl SyncServer {
         // Capture it out-of-band (Loro's `for_each` closure returns `()`) and
         // fail closed-HARD: refuse the WHOLE registration before any expiry
         // flip or registration decision — never best-effort skip the entry.
-        let mut entries: Vec<(String, Vec<u8>)> = Vec::new();
-        let mut corrupt = false;
-        leases.for_each(|key, value| {
-            if let ValueOrContainer::Value(LoroValue::Binary(blob)) = value {
-                entries.push((key.to_string(), blob.to_vec()));
-            } else {
-                corrupt = true;
-            }
-        });
-        if corrupt {
-            return Err(oneiron::Error::CorruptedIndex(
-                "non-binary root lease entry",
-            ));
-        }
-        for (key, raw) in &entries {
+        let mut entries = self.root_lease_entries()?;
+        for entry in &mut entries {
             // The server is the SOLE registry writer — a malformed record
             // is local corruption, fail closed (never best-effort decode).
-            let mut record = lease::decode_lease_record(raw)?;
+            let mut record = entry.record;
             if record.status == LeaseStatus::Active && record.expires_at < now {
                 record.status = LeaseStatus::Expired;
+                let scoped_key = lease::lease_registry_key(entry.vault_id, entry.client_id);
+                if entry.key != scoped_key {
+                    leases
+                        .delete(entry.key.as_str())
+                        .map_err(|e| oneiron::Error::SyncProtocolError(e.to_string()))?;
+                    entry.key = scoped_key;
+                }
                 leases
-                    .insert(key.as_str(), lease::encode_lease_record(&record).as_slice())
+                    .insert(
+                        entry.key.as_str(),
+                        lease::encode_lease_record(&record).as_slice(),
+                    )
                     .map_err(|e| oneiron::Error::SyncProtocolError(e.to_string()))?;
+                entry.record = record;
                 changed = true;
             }
         }
 
-        let key_hex = lease::client_id_hex(client_id);
+        let key_hex = lease::lease_registry_key(vault_id, client_id);
         let existing = entries
             .iter()
-            .find(|(key, _)| *key == key_hex)
-            .map(|(_, raw)| lease::decode_lease_record(raw))
-            .transpose()?;
-        let mut pubkey_revoked = false;
-        for (_, raw) in &entries {
-            let record = lease::decode_lease_record(raw)?;
-            if record.pubkey == *pubkey && record.status == LeaseStatus::Revoked {
-                pubkey_revoked = true;
-                break;
-            }
-        }
+            .find(|entry| entry.key == key_hex)
+            .or_else(|| {
+                entries
+                    .iter()
+                    .find(|entry| entry.vault_id == vault_id && entry.client_id == client_id)
+            });
+        let pubkey_revoked = entries.iter().any(|entry| {
+            entry.vault_id == vault_id
+                && entry.record.pubkey == *pubkey
+                && entry.record.status == LeaseStatus::Revoked
+        });
 
         let decision = match existing {
             None => {
@@ -628,7 +717,7 @@ impl SyncServer {
                     LeaseDecision::rejected()
                 } else {
                     let record = LeaseRecord {
-                        vault_id: SERVER_LEASE_VAULT_ID,
+                        vault_id,
                         status: LeaseStatus::Active,
                         pubkey: *pubkey,
                         granted_at: now,
@@ -645,17 +734,18 @@ impl SyncServer {
                     LeaseDecision::granted(record.expires_at)
                 }
             }
-            Some(record) if record.status == LeaseStatus::Revoked => {
+            Some(entry) if entry.record.status == LeaseStatus::Revoked => {
                 // Terminal (OD-8): a revoked binding never re-activates.
                 LeaseDecision::rejected()
             }
-            Some(record) if record.pubkey == *pubkey && pubkey_revoked => {
+            Some(entry) if entry.record.pubkey == *pubkey && pubkey_revoked => {
                 // Renewal arm also honors the pubkey-bound revocation floor:
                 // a sibling revoked row for this key is terminal across
                 // client_ids, so an existing active binding cannot refresh.
                 LeaseDecision::rejected()
             }
-            Some(record) if record.pubkey == *pubkey => {
+            Some(entry) if entry.record.pubkey == *pubkey => {
+                let record = entry.record;
                 let renewed = LeaseRecord {
                     vault_id: record.vault_id,
                     status: LeaseStatus::Active,
@@ -664,6 +754,11 @@ impl SyncServer {
                     renewed_at: now,
                     expires_at: now + LEASE_DURATION_SECS,
                 };
+                if entry.key != key_hex {
+                    leases
+                        .delete(entry.key.as_str())
+                        .map_err(|e| oneiron::Error::SyncProtocolError(e.to_string()))?;
+                }
                 leases
                     .insert(
                         key_hex.as_str(),
@@ -693,22 +788,30 @@ impl SyncServer {
         &self,
         client_id: u64,
     ) -> Result<Option<Vec<u8>>, oneiron::Error> {
+        self.revoke_lease_for_vault(self.config.lease_vault_id, client_id)
+            .await
+    }
+
+    async fn revoke_lease_for_vault(
+        &self,
+        vault_id: u64,
+        client_id: u64,
+    ) -> Result<Option<Vec<u8>>, oneiron::Error> {
         let _guard = self.lease_registrar.lock().await;
         let leases = self.root_doc.get_map(ROOT_LEASES_MAP);
-        let key_hex = lease::client_id_hex(client_id);
-        let raw = match leases.get(&key_hex) {
-            None => return Ok(None),
-            Some(ValueOrContainer::Value(LoroValue::Binary(raw))) => raw,
-            Some(_) => {
-                return Err(oneiron::Error::CorruptedIndex(
-                    "non-binary root lease entry",
-                ));
-            }
+        let Some(entry) = self.root_lease_entry_for_vault_client(vault_id, client_id)? else {
+            return Ok(None);
         };
-        let mut record = lease::decode_lease_record(&raw)?;
+        let mut record = entry.record;
         let vv_before = self.root_doc.oplog_vv();
         let frontiers_before = self.root_doc.state_frontiers();
         record.status = LeaseStatus::Revoked;
+        let key_hex = lease::lease_registry_key(vault_id, client_id);
+        if entry.key != key_hex {
+            leases
+                .delete(entry.key.as_str())
+                .map_err(|e| oneiron::Error::SyncProtocolError(e.to_string()))?;
+        }
         leases
             .insert(
                 key_hex.as_str(),
@@ -861,6 +964,25 @@ mod tests {
         );
         assert!(deep_map_has_map(&server.root_doc, "meta", "windows"));
         assert!(read_window_list(&server.root_doc).is_empty());
+    }
+
+    #[test]
+    fn window_materializer_uses_configured_lease_vault_id() {
+        let (_dir, vault) = test_vault();
+        let lease_vault_id = 0x0a0b_0c0d_0e0f_1011u64;
+        let server = SyncServer::new(
+            vault,
+            SyncServerConfig {
+                lease_vault_id,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+
+        assert_eq!(
+            server.reassert_manager.materializer().lease_vault_id(),
+            lease_vault_id
+        );
     }
 
     #[tokio::test]
@@ -1054,6 +1176,7 @@ mod tests {
         let key = SigningKey::from_bytes(&[7u8; 32]);
         let pubkey = key.verifying_key().to_bytes();
         let client_id = 0x0123_4567_89ab_cdefu64;
+        let registry_key = lease::lease_registry_key(SERVER_LEASE_VAULT_ID, client_id);
         let pop = |signer: &SigningKey, cid: u64, pk: &[u8; 32]| {
             signer
                 .sign(&lease::lease_pop_transcript(cid, pk))
@@ -1067,7 +1190,7 @@ mod tests {
             .unwrap();
         assert!(decision.granted);
         assert!(decision.root_update.is_some(), "registry change broadcasts");
-        let map_record = deep_map_bytes(&server.root_doc, "leases", "0123456789abcdef").unwrap();
+        let map_record = deep_map_bytes(&server.root_doc, "leases", &registry_key).unwrap();
         let ls_row = vault
             .sync_state_get("ls:0000000000000000:0123456789abcdef")
             .unwrap()
@@ -1112,8 +1235,13 @@ mod tests {
         server
             .root_doc
             .get_map(ROOT_LEASES_MAP)
+            .delete(&registry_key)
+            .unwrap();
+        server
+            .root_doc
+            .get_map(ROOT_LEASES_MAP)
             .insert(
-                "0123456789abcdef",
+                lease::client_id_hex(client_id).as_str(),
                 lease::encode_lease_record(&stale).as_slice(),
             )
             .unwrap();
@@ -1130,6 +1258,14 @@ mod tests {
             .sync_state_get("ls:0000000000000000:0123456789abcdef")
             .unwrap()
             .unwrap();
+        assert!(
+            deep_map_bytes(&server.root_doc, "leases", &lease::client_id_hex(client_id)).is_none(),
+            "renewal migrates legacy client-only root keys to scoped registry keys"
+        );
+        assert!(
+            deep_map_bytes(&server.root_doc, "leases", &registry_key).is_some(),
+            "renewal keeps the active binding under the scoped registry key"
+        );
         assert_eq!(renewed_row[1], 0x01, "expired flips back to active");
         assert_eq!(
             u64::from_le_bytes(renewed_row[34..42].try_into().unwrap()),
@@ -1204,6 +1340,104 @@ mod tests {
         assert!(!decision.granted, "revoked is terminal — no re-activation");
         // Unknown binding: revoke is a no-op (no phantom records).
         assert!(server.revoke_lease(0xffff).await.unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn tenant_isolation_replay_cache_fixtures_keep_grants_separate() {
+        use ed25519_dalek::{Signer, SigningKey};
+
+        let (_dir, vault) = test_vault();
+        let server = SyncServer::new(vault.clone(), SyncServerConfig::default()).unwrap();
+        let tenant_a = 0x0a0b_0c0d_0e0f_1011u64;
+        let tenant_b = 0x1110_0f0e_0d0c_0b0au64;
+        let client_id = 0x0123_4567_89ab_cdefu64;
+        let key = SigningKey::from_bytes(&[42u8; 32]);
+        let pubkey = key.verifying_key().to_bytes();
+        let pop = key
+            .sign(&lease::lease_pop_transcript(client_id, &pubkey))
+            .to_bytes();
+
+        let grant_a = server
+            .register_lease_for_vault(tenant_a, client_id, &pubkey, &pop)
+            .await
+            .unwrap();
+        let grant_b = server
+            .register_lease_for_vault(tenant_b, client_id, &pubkey, &pop)
+            .await
+            .unwrap();
+
+        assert!(grant_a.granted);
+        assert!(grant_b.granted);
+        assert!(
+            deep_map_bytes(&server.root_doc, "leases", &lease::client_id_hex(client_id)).is_none(),
+            "new hosted writes must not use the legacy subscriber-only root key"
+        );
+        for tenant in [tenant_a, tenant_b] {
+            let registry_key = lease::lease_registry_key(tenant, client_id);
+            let mirror_key = lease::lease_key(tenant, client_id);
+            let map_record = deep_map_bytes(&server.root_doc, "leases", &registry_key)
+                .expect("scoped root lease entry");
+            let mirror_record = vault
+                .sync_state_get(&mirror_key)
+                .unwrap()
+                .expect("scoped ls mirror row");
+            assert_eq!(
+                map_record, mirror_record,
+                "root grant cache and replay-door mirror stay byte-identical per tenant"
+            );
+            assert_eq!(
+                lease::decode_lease_record(&mirror_record).unwrap().vault_id,
+                tenant
+            );
+        }
+
+        assert!(
+            server
+                .revoke_lease_for_vault(tenant_a, client_id)
+                .await
+                .unwrap()
+                .is_some()
+        );
+        assert_eq!(
+            lease::decode_lease_record(
+                &vault
+                    .sync_state_get(&lease::lease_key(tenant_a, client_id))
+                    .unwrap()
+                    .unwrap()
+            )
+            .unwrap()
+            .status,
+            LeaseStatus::Revoked
+        );
+        assert_eq!(
+            lease::decode_lease_record(
+                &vault
+                    .sync_state_get(&lease::lease_key(tenant_b, client_id))
+                    .unwrap()
+                    .unwrap()
+            )
+            .unwrap()
+            .status,
+            LeaseStatus::Active,
+            "tenant A revoke must not mutate tenant B's grant cache row"
+        );
+
+        let tenant_b_renewal = server
+            .register_lease_for_vault(tenant_b, client_id, &pubkey, &pop)
+            .await
+            .unwrap();
+        assert!(
+            tenant_b_renewal.granted,
+            "same subscriber and pubkey revoked in tenant A must still renew in tenant B"
+        );
+        let tenant_a_retry = server
+            .register_lease_for_vault(tenant_a, client_id, &pubkey, &pop)
+            .await
+            .unwrap();
+        assert!(
+            !tenant_a_retry.granted,
+            "tenant A's own revoked row remains terminal"
+        );
     }
 
     #[tokio::test]
@@ -1519,7 +1753,12 @@ mod tests {
             "no ls: row is written for the refused fresh client_id"
         );
         assert!(
-            deep_map_bytes(&server.root_doc, "leases", &lease::client_id_hex(client_b)).is_none(),
+            deep_map_bytes(
+                &server.root_doc,
+                "leases",
+                &lease::lease_registry_key(SERVER_LEASE_VAULT_ID, client_b)
+            )
+            .is_none(),
             "no leases-map entry exists for the refused fresh client_id"
         );
     }
@@ -1684,7 +1923,12 @@ mod tests {
             "no ls: row for the rolled-back fresh client_id"
         );
         assert!(
-            deep_map_bytes(&server.root_doc, "leases", &lease::client_id_hex(client_b)).is_none(),
+            deep_map_bytes(
+                &server.root_doc,
+                "leases",
+                &lease::lease_registry_key(SERVER_LEASE_VAULT_ID, client_b)
+            )
+            .is_none(),
             "the live in-memory root_doc must roll back client B after mirror failure"
         );
         let ls_a_after = vault
@@ -1706,7 +1950,7 @@ mod tests {
             deep_map_bytes(
                 &rebooted.root_doc,
                 "leases",
-                &lease::client_id_hex(client_b)
+                &lease::lease_registry_key(SERVER_LEASE_VAULT_ID, client_b)
             )
             .is_none(),
             "the rolled-back client B must not reappear after a server reboot"
@@ -1767,7 +2011,12 @@ mod tests {
             "a refused registration writes NO ls: row"
         );
         assert!(
-            deep_map_bytes(&server.root_doc, "leases", &lease::client_id_hex(client_id)).is_none(),
+            deep_map_bytes(
+                &server.root_doc,
+                "leases",
+                &lease::lease_registry_key(SERVER_LEASE_VAULT_ID, client_id)
+            )
+            .is_none(),
             "no leases-map entry for the refused registration"
         );
         // The corrupt entry is left exactly as-is (never silently rewritten).

@@ -1566,10 +1566,10 @@ mod tests {
         drop(rtxn);
 
         // Phase 1-3 frames: root VV (EMPTY — docs really dropped) + default
-        // window VV requests, and NO per-connection hello (the hello is
-        // [3, 3] since the FED-002 selector-sync protocol bump).
+        // window VV requests, and NO per-connection hello.
+        let protocol_hello = transport::encode_protocol_hello();
         assert!(
-            frames.iter().all(|f| f != &vec![3u8, 3u8]),
+            frames.iter().all(|f| f != &protocol_hello),
             "re-bootstrap must not re-send the protocol hello"
         );
         assert_eq!(frames[0][0], TAG_VERSION_VECTOR);

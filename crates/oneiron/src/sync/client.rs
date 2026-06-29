@@ -821,8 +821,8 @@ impl SyncClient {
     pub(crate) fn try_generate_initial_sync(
         &self,
     ) -> std::result::Result<Vec<Vec<u8>>, TransportError> {
-        // Phase 0: legacy full-window hello — this client path is unscoped and
-        // still uses the pre-FED-002 full-window VV_REQUEST flow.
+        // Phase 0: full-window hello — this client path still uses the
+        // pre-FED-002 full-window VV_REQUEST flow.
         // Frame #2: lease request (ONE-1140, OD-5).
         let mut messages = vec![
             transport::encode_legacy_full_window_protocol_hello(),
@@ -1167,9 +1167,9 @@ mod tests {
         // `[hello][lease_request][…existing]` (ONE-1140).
         assert_eq!(messages.len(), 5);
 
-        // Frame 0: protocol hello — exact wire bytes [tag=3, version=2].
-        // The in-tree sync client is unscoped and uses the legacy
-        // full-window VV_REQUEST flow; selector-capable callers use v3.
+        // Frame 0: protocol hello. The in-tree sync client uses the
+        // full-window VV_REQUEST flow; selector-capable callers use the
+        // current selector protocol.
         // It MUST be the first frame.
         assert_eq!(
             messages[0],
