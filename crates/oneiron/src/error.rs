@@ -32,6 +32,7 @@ pub enum ErrorKind {
     InvalidKey,
     InvalidFederationGrantBody,
     CorruptedIndex,
+    ContextPackValidation,
     IndexOverflow,
     MissingPostingEntry,
     InvalidEntityType,
@@ -250,6 +251,9 @@ pub enum Error {
     /// Index metadata or neighbor storage is internally inconsistent.
     #[error("corrupted index: {0}")]
     CorruptedIndex(&'static str),
+    /// Context-pack assembly found a cross-record anomaly before surfacing output.
+    #[error("context pack validation failed for entity {}: {reason}", id.to_hex())]
+    ContextPackValidation { id: EntityId, reason: &'static str },
     /// Index bookkeeping overflowed its supported range.
     #[error("index overflow: {0}")]
     IndexOverflow(&'static str),
@@ -658,6 +662,7 @@ impl Error {
             Self::InvalidKey => ErrorKind::InvalidKey,
             Self::InvalidFederationGrantBody(_) => ErrorKind::InvalidFederationGrantBody,
             Self::CorruptedIndex(_) => ErrorKind::CorruptedIndex,
+            Self::ContextPackValidation { .. } => ErrorKind::ContextPackValidation,
             Self::IndexOverflow(_) => ErrorKind::IndexOverflow,
             Self::MissingPostingEntry => ErrorKind::MissingPostingEntry,
             Self::InvalidEntityType(_) => ErrorKind::InvalidEntityType,
