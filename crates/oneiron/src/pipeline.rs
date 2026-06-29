@@ -941,13 +941,22 @@ impl<'a> PipelineBuilder<'a> {
         if self.text_search.is_some() {
             signals.push(RetrievalSignal::Text);
         }
-        if self.phonetic_search.is_some() {
+        if self
+            .phonetic_search
+            .as_ref()
+            .is_some_and(|codes| !codes.is_empty())
+        {
             signals.push(RetrievalSignal::Phonetic);
         }
         if self.temporal_search.is_some() {
             signals.push(RetrievalSignal::Temporal);
         }
-        if self.ppr_search.is_some() || self.ppr_expand.is_some() {
+        if self
+            .ppr_search
+            .as_ref()
+            .is_some_and(|(seeds, _)| !seeds.is_empty())
+            || self.ppr_expand.is_some()
+        {
             signals.push(RetrievalSignal::Ppr);
         }
         signals
@@ -2653,6 +2662,35 @@ mod tests {
         assert_eq!(runs[0].run_id, run_id);
         assert!(runs[0].result_ids.is_empty());
         assert_eq!(runs[0].empty_reason, None);
+        Ok(())
+    }
+
+    #[test]
+    fn retrieval_telemetry_omits_noop_ppr_and_phonetic_signals() -> Result<()> {
+        let (_dir, vault) = open_test_vault();
+
+        let phonetic = vault.query().search_phonetic(&[]).run_with_telemetry()?;
+        assert!(phonetic.value.is_empty());
+        let phonetic_run_id = phonetic.run_id.expect("phonetic noop telemetry run id");
+
+        let ppr = vault.query().search_ppr(&[], 2).run_with_telemetry()?;
+        assert!(ppr.value.is_empty());
+        let ppr_run_id = ppr.run_id.expect("ppr noop telemetry run id");
+
+        let runs = vault.retrieval_runs(10)?;
+        let phonetic_run = runs
+            .iter()
+            .find(|run| run.run_id == phonetic_run_id)
+            .expect("phonetic noop telemetry row");
+        let ppr_run = runs
+            .iter()
+            .find(|run| run.run_id == ppr_run_id)
+            .expect("ppr noop telemetry row");
+
+        assert!(!phonetic_run.signals.contains(&RetrievalSignal::Phonetic));
+        assert!(phonetic_run.score_breakdown.is_empty());
+        assert!(!ppr_run.signals.contains(&RetrievalSignal::Ppr));
+        assert!(ppr_run.score_breakdown.is_empty());
         Ok(())
     }
 

@@ -1108,8 +1108,16 @@ impl Store {
         }
         let mut records = Vec::new();
         for row in self.vault_meta.prefix_iter(&rtxn, &prefix)? {
-            let (_, value) = row?;
-            records.push(decode_retrieval_outcome(value)?);
+            let (key, value) = row?;
+            let (key_run_id, key_outcome_key) = retrieval_outcome_parts_from_key(key)?;
+            if key_run_id != run_id {
+                return Err(Error::CorruptedIndex("retrieval outcome telemetry"));
+            }
+            let record = decode_retrieval_outcome(value)?;
+            if record.run_id != key_run_id || record.key != key_outcome_key {
+                return Err(Error::CorruptedIndex("retrieval outcome telemetry"));
+            }
+            records.push(record);
         }
         records.sort_by(|left, right| left.key.cmp(&right.key));
         Ok(records)
@@ -1160,6 +1168,35 @@ fn retrieval_outcome_key(run_id: RetrievalRunId, outcome_key: &str) -> Vec<u8> {
     let mut key = retrieval_outcome_run_prefix(run_id);
     key.extend_from_slice(outcome_key.as_bytes());
     key
+}
+
+fn retrieval_outcome_parts_from_key(key: &[u8]) -> Result<(RetrievalRunId, String)> {
+    let suffix = key
+        .strip_prefix(RETRIEVAL_OUTCOME_KEY_PREFIX)
+        .ok_or(Error::CorruptedIndex("retrieval outcome telemetry"))?;
+    if suffix.len() < 17 || suffix[16] != b':' {
+        return Err(Error::CorruptedIndex("retrieval outcome telemetry"));
+    }
+    let run_id_bytes: [u8; 16] = suffix[..16]
+        .try_into()
+        .map_err(|_| Error::CorruptedIndex("retrieval outcome telemetry"))?;
+    let outcome_key_bytes = &suffix[17..];
+    let outcome_key = std::str::from_utf8(outcome_key_bytes)
+        .map_err(|_| Error::CorruptedIndex("retrieval outcome telemetry"))?;
+    if outcome_key.is_empty()
+        || outcome_key.len() > RETRIEVAL_OUTCOME_KEY_MAX_LEN
+        || !outcome_key
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-' | b':'))
+    {
+        return Err(Error::CorruptedIndex("retrieval outcome telemetry"));
+    }
+    Ok((
+        RetrievalRunId {
+            bytes: run_id_bytes,
+        },
+        outcome_key.to_owned(),
+    ))
 }
 
 fn encode_retrieval_run(record: &RetrievalRunRecord) -> Result<Vec<u8>> {
@@ -2303,6 +2340,7 @@ mod tests {
     use super::*;
     use crate::Vault;
     use crate::types::{EntityId, TimeRange};
+    use std::collections::BTreeMap;
 
     fn open_test_vault() -> (tempfile::TempDir, Vault) {
         crate::test_util::open_test_vault_with(VaultConfig::device())
@@ -2328,6 +2366,30 @@ mod tests {
             .get(&rtxn, &retrieval_run_key(run_id))?
             .map(<[u8]>::to_vec)
             .ok_or(Error::CorruptedIndex("retrieval run telemetry"))
+    }
+
+    fn raw_retrieval_outcome_row(
+        vault: &Vault,
+        run_id: RetrievalRunId,
+        outcome_key: &str,
+    ) -> Result<Vec<u8>> {
+        let rtxn = vault.store.env.read_txn()?;
+        vault
+            .store
+            .vault_meta
+            .get(&rtxn, &retrieval_outcome_key(run_id, outcome_key))?
+            .map(<[u8]>::to_vec)
+            .ok_or(Error::CorruptedIndex("retrieval outcome telemetry"))
+    }
+
+    fn record_click_outcome(vault: &Vault, run_id: RetrievalRunId) -> Result<()> {
+        vault.record_retrieval_outcome(RetrievalOutcome {
+            run_id,
+            key: "click".to_owned(),
+            reward: Some(1.0),
+            accepted: Some(true),
+            metadata: BTreeMap::new(),
+        })
     }
 
     #[test]
@@ -2374,6 +2436,66 @@ mod tests {
         assert!(matches!(
             error,
             Error::CorruptedIndex("retrieval run telemetry")
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn retrieval_outcomes_rejects_key_value_mismatches() -> Result<()> {
+        let (_dir, vault) = open_test_vault();
+        let id = entity_id(0x43);
+        put_text(&vault, id, "outcomekeymismatch")?;
+        let first = vault
+            .query()
+            .search_text("outcomekeymismatch", 10)
+            .run_with_telemetry()?;
+        assert_eq!(first.value.len(), 1);
+        let run_id = first.run_id.expect("outcome key mismatch run id");
+        record_click_outcome(&vault, run_id)?;
+        let raw = raw_retrieval_outcome_row(&vault, run_id, "click")?;
+        let wrong_key = retrieval_outcome_key(run_id, "dismiss");
+        vault.with_write_txn(|wtxn| {
+            vault.store.vault_meta.put(wtxn, &wrong_key, &raw)?;
+            Ok(())
+        })?;
+        let error = vault
+            .retrieval_outcomes(run_id)
+            .expect_err("outcome key/value key mismatch should fail closed");
+        assert!(matches!(
+            error,
+            Error::CorruptedIndex("retrieval outcome telemetry")
+        ));
+
+        let (_dir, vault) = open_test_vault();
+        let first_id = entity_id(0x44);
+        let second_id = entity_id(0x45);
+        put_text(&vault, first_id, "outcomerunfirst")?;
+        put_text(&vault, second_id, "outcomerunsecond")?;
+        let first = vault
+            .query()
+            .search_text("outcomerunfirst", 10)
+            .run_with_telemetry()?;
+        assert_eq!(first.value.len(), 1);
+        let first_run_id = first.run_id.expect("first outcome run id");
+        record_click_outcome(&vault, first_run_id)?;
+        let first_raw = raw_retrieval_outcome_row(&vault, first_run_id, "click")?;
+        let second = vault
+            .query()
+            .search_text("outcomerunsecond", 10)
+            .run_with_telemetry()?;
+        assert_eq!(second.value.len(), 1);
+        let second_run_id = second.run_id.expect("second outcome run id");
+        let second_key = retrieval_outcome_key(second_run_id, "click");
+        vault.with_write_txn(|wtxn| {
+            vault.store.vault_meta.put(wtxn, &second_key, &first_raw)?;
+            Ok(())
+        })?;
+        let error = vault
+            .retrieval_outcomes(second_run_id)
+            .expect_err("outcome key/value run id mismatch should fail closed");
+        assert!(matches!(
+            error,
+            Error::CorruptedIndex("retrieval outcome telemetry")
         ));
         Ok(())
     }
