@@ -215,7 +215,7 @@ pub(crate) struct GateProvenanceHandles {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct GateEvaluatorInput {
     pub(crate) actor: GateActor,
-    pub(crate) source: ClaimSource,
+    pub(crate) source: Option<ClaimSource>,
     pub(crate) content_kind: GateContentKind,
     pub(crate) sensitivity_band: Option<u8>,
     pub(crate) criticality: PolicyCriticality,
@@ -587,7 +587,15 @@ impl PolicyManifestResolution {
         }
     }
 
-    fn source_trust_allows_auto(&self, source: ClaimSource, sensitivity: Option<u8>) -> bool {
+    fn source_trust_allows_auto(
+        &self,
+        source: Option<ClaimSource>,
+        sensitivity: Option<u8>,
+    ) -> bool {
+        let Some(source) = source else {
+            return true;
+        };
+
         if self.source_trust.malformed_manifest_seen {
             return false;
         }
@@ -1330,7 +1338,7 @@ mod tests {
                 actor_class: actor_class.to_owned(),
                 actor_ref: actor_ref.map(str::to_owned),
             },
-            source,
+            source: Some(source),
             content_kind: GateContentKind::Claim,
             sensitivity_band: Some(0),
             criticality,
@@ -1544,10 +1552,33 @@ mod tests {
     }
 
     #[test]
+    fn gate_evaluator_missing_source_preserves_write_gate_semantics() -> Result<()> {
+        let (_tmp, vault) = temp_vault();
+        let data = encode_policy_manifest(vec![]);
+        put_policy_manifest_bytes(&vault, 0x74, &data)?;
+        let policy = resolve(&vault)?;
+
+        let mut input = gate_evaluator_input(
+            "first_party",
+            None,
+            ClaimSource::ToolOutput,
+            PolicyCriticality::Normal,
+        );
+        input.source = None;
+        input.sensitivity_band = None;
+
+        let decision = policy.evaluate_gate(&input);
+        assert_eq!(decision.outcome(), GateOutcome::Allow);
+        assert_eq!(gate_reason_strs(&decision), vec!["gate.allow"]);
+
+        Ok(())
+    }
+
+    #[test]
     fn gate_evaluator_source_trust_respects_sensitivity_ceiling() -> Result<()> {
         let (_tmp, vault) = temp_vault();
         let data = encode_policy_manifest(vec![source_trust_entry(ClaimSource::ToolOutput, 0)]);
-        put_policy_manifest_bytes(&vault, 0x74, &data)?;
+        put_policy_manifest_bytes(&vault, 0x75, &data)?;
         let policy = resolve(&vault)?;
 
         let mut input = gate_evaluator_input(
