@@ -915,11 +915,19 @@ fn validate_fixture(fixture: &BeamFixture) -> BeamResult<()> {
                 temporal_search,
                 &case.temporal_evidence_ids,
             )?;
-        } else if !case.temporal_evidence_ids.is_empty() {
-            return Err(invalid_fixture(
-                fixture,
-                "temporalEvidenceIds are only valid for temporal_staleness cases",
-            ));
+        } else {
+            if case.temporal_search.is_some() {
+                return Err(invalid_fixture(
+                    fixture,
+                    "temporalSearch is only valid for temporal_staleness cases",
+                ));
+            }
+            if !case.temporal_evidence_ids.is_empty() {
+                return Err(invalid_fixture(
+                    fixture,
+                    "temporalEvidenceIds are only valid for temporal_staleness cases",
+                ));
+            }
         }
         if case.fixture_class == FixtureClass::AdversarialContradiction {
             let opposing_evidence = case.opposing_evidence.as_ref().ok_or_else(|| {
@@ -1363,6 +1371,9 @@ fn run_deterministic_context_pack(
 }
 
 fn temporal_result_ids(vault: &Vault, case: &FixtureCase) -> BeamResult<BTreeSet<String>> {
+    if case.fixture_class != FixtureClass::TemporalStaleness {
+        return Ok(BTreeSet::new());
+    }
     let Some(range) = &case.temporal_search else {
         return Ok(BTreeSet::new());
     };
@@ -1724,6 +1735,11 @@ fn abstention_gate_status(case: &FixtureCase, context_pack: &ContextPackReport) 
         }
         FixtureClass::TemporalStaleness => {
             let surfaced = context_pack_result_ids(context_pack);
+            let used_temporal_signal = context_pack
+                .stats
+                .signals_used
+                .iter()
+                .any(|signal| signal == "temporal");
             let matched = case
                 .temporal_evidence_ids
                 .iter()
@@ -1733,11 +1749,12 @@ fn abstention_gate_status(case: &FixtureCase, context_pack: &ContextPackReport) 
                 })
                 .count();
             let passed = !case.temporal_evidence_ids.is_empty()
+                && used_temporal_signal
                 && matched == case.temporal_evidence_ids.len();
             (
                 passed,
                 format!(
-                    "staleness fixture surfaced {matched}/{} required temporal records",
+                    "staleness fixture surfaced {matched}/{} required temporal records with temporal signal={used_temporal_signal}",
                     case.temporal_evidence_ids.len()
                 ),
             )
@@ -2800,6 +2817,24 @@ neighbors:
     }
 
     #[test]
+    fn fixture_rejects_temporal_search_on_non_temporal_cases() {
+        let mut fixture_json: serde_json::Value =
+            serde_json::from_str(BUILTIN_FIXTURE_JSON).expect("fixture JSON");
+        fixture_json["cases"][0]["temporalSearch"] = serde_json::json!({
+            "start": 0,
+            "end": 1,
+        });
+
+        let err = parse_fixture_json(&fixture_json.to_string())
+            .expect_err("non-temporal cases must not carry temporalSearch");
+
+        assert!(
+            err.to_string()
+                .contains("temporalSearch is only valid for temporal_staleness cases")
+        );
+    }
+
+    #[test]
     fn empty_memory_gate_requires_explicit_no_data_empty_report() {
         let mut context_pack = minimal_context_pack_report(0, &[], None);
         let case = gate_case(FixtureClass::EmptyMemory);
@@ -2920,8 +2955,22 @@ neighbors:
             &["50505050505050505050505050505050"],
         );
         let (passed, detail) = abstention_gate_status(&case, &context_pack);
+        assert!(!passed);
+        assert!(detail.contains("temporal signal=false"));
+
+        let context_pack = minimal_context_pack_report_with_result_ids(
+            &["50505050505050505050505050505050"],
+            &["temporal"],
+            None,
+        );
+        let context_pack = minimal_context_pack_report_with_temporal_result_ids(
+            context_pack,
+            &["50505050505050505050505050505050"],
+        );
+        let (passed, detail) = abstention_gate_status(&case, &context_pack);
         assert!(passed);
         assert!(detail.contains("1/1 required temporal records"));
+        assert!(detail.contains("temporal signal=true"));
     }
 
     #[test]
