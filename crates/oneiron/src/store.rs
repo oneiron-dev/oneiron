@@ -92,7 +92,7 @@
 //! [`Bm25FieldSchemaChanged`]: crate::error::Error::Bm25FieldSchemaChanged
 //! [`VaultConfig::skip_text_index_manifest_check`]: crate::types::VaultConfig::skip_text_index_manifest_check
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 #[cfg(unix)]
 use std::os::unix::fs::MetadataExt;
 #[cfg(windows)]
@@ -103,12 +103,14 @@ use std::sync::{LazyLock, Mutex, MutexGuard, RwLock};
 
 use heed::types::{Bytes, Str};
 use heed::{Database, DatabaseFlags, Env, EnvOpenOptions, RwTxn};
+use serde::{Deserialize, Serialize};
+use uuid::Uuid;
 
 use crate::error::{Error, Result, VaultRootEntry, VaultRootProblem};
 use crate::types::{
-    EdgeKind, EntityId, StructuralKindRegistration, TypeByteBand, VaultConfig, band_of,
-    entity_type_registry_entry, short_id_prefix, static_short_id_prefix_collision,
-    validate_entity_type as validate_static_entity_type,
+    EdgeKind, EntityId, Signal, StructuralKindRegistration, TypeByteBand, VaultConfig, band_of,
+    bytes_to_hex_lower, entity_type_registry_entry, short_id_prefix,
+    static_short_id_prefix_collision, validate_entity_type as validate_static_entity_type,
     validate_public_entity_type as validate_static_public_entity_type,
 };
 
@@ -175,6 +177,146 @@ const _: () =
     assert!(STRUCTURAL_KIND_REGISTRY_KEY_PREFIX.len() + 1 == STRUCTURAL_KIND_REGISTRY_KEY_LEN);
 const STRUCTURAL_KIND_REGISTRY_RECORD_VERSION: u8 = 1;
 const STRUCTURAL_KIND_REGISTRY_RECORD_HEADER_LEN: usize = 6;
+const RETRIEVAL_TELEMETRY_VERSION: u8 = 0;
+const RETRIEVAL_RUN_KEY_PREFIX: &[u8] = b"retr_run:v0:";
+const RETRIEVAL_OUTCOME_KEY_PREFIX: &[u8] = b"retr_out:v0:";
+const RETRIEVAL_OUTCOME_KEY_MAX_LEN: usize = 128;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct RetrievalRunId {
+    bytes: [u8; 16],
+}
+
+impl RetrievalRunId {
+    #[must_use]
+    pub fn now() -> Self {
+        Self {
+            bytes: Uuid::now_v7().into_bytes(),
+        }
+    }
+
+    #[must_use]
+    pub fn as_bytes(self) -> [u8; 16] {
+        self.bytes
+    }
+
+    #[must_use]
+    pub fn to_hex(self) -> String {
+        bytes_to_hex_lower(&self.bytes)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RetrievalAction {
+    Pipeline,
+    ContextPack,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RetrievalSignal {
+    Vector,
+    Text,
+    Phonetic,
+    Temporal,
+    Ppr,
+}
+
+impl From<Signal> for RetrievalSignal {
+    fn from(signal: Signal) -> Self {
+        match signal {
+            Signal::Vector => Self::Vector,
+            Signal::Text => Self::Text,
+            Signal::Phonetic => Self::Phonetic,
+            Signal::Temporal => Self::Temporal,
+            Signal::Ppr => Self::Ppr,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct RetrievalScoreComponent {
+    pub signal: RetrievalSignal,
+    pub rank: u32,
+    pub score: f32,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct RetrievalScoreBreakdown {
+    pub result_id: [u8; 16],
+    pub final_rank: u32,
+    pub final_score: f32,
+    pub components: Vec<RetrievalScoreComponent>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct RetrievalRunRecord {
+    pub version: u8,
+    pub run_id: RetrievalRunId,
+    pub action: RetrievalAction,
+    pub started_at: u64,
+    pub elapsed_us: u64,
+    pub signals: Vec<RetrievalSignal>,
+    pub result_ids: Vec<[u8; 16]>,
+    pub score_breakdown: Vec<RetrievalScoreBreakdown>,
+    pub total_in_scope: usize,
+    pub claims_suppressed: usize,
+    pub empty_reason: Option<String>,
+}
+
+impl RetrievalRunRecord {
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn new(
+        run_id: RetrievalRunId,
+        action: RetrievalAction,
+        started_at: u64,
+        elapsed_us: u64,
+        signals: Vec<RetrievalSignal>,
+        score_breakdown: Vec<RetrievalScoreBreakdown>,
+        total_in_scope: usize,
+        claims_suppressed: usize,
+        empty_reason: Option<String>,
+    ) -> Self {
+        let result_ids = score_breakdown
+            .iter()
+            .map(|entry| entry.result_id)
+            .collect();
+        Self {
+            version: RETRIEVAL_TELEMETRY_VERSION,
+            run_id,
+            action,
+            started_at,
+            elapsed_us,
+            signals,
+            result_ids,
+            score_breakdown,
+            total_in_scope,
+            claims_suppressed,
+            empty_reason,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct RetrievalOutcome {
+    pub run_id: RetrievalRunId,
+    pub key: String,
+    pub reward: Option<f32>,
+    pub accepted: Option<bool>,
+    pub metadata: BTreeMap<String, String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct RetrievalOutcomeRecord {
+    pub version: u8,
+    pub run_id: RetrievalRunId,
+    pub key: String,
+    pub reward: Option<f32>,
+    pub accepted: Option<bool>,
+    pub metadata: BTreeMap<String, String>,
+    pub updated_at: u64,
+}
 
 /// Encodes the `vault_meta` key for the short-id counter of `entity_type`.
 /// See [`SHORT_ID_COUNTER_KEY_PREFIX`] for the documented key scheme.
@@ -728,6 +870,155 @@ impl Store {
         registry.insert(type_byte, registration.clone());
         Ok(registration)
     }
+
+    pub(crate) fn record_retrieval_run(&self, record: &RetrievalRunRecord) -> Result<()> {
+        let key = retrieval_run_key(record.run_id);
+        let value = encode_retrieval_run(record)?;
+        let mut wtxn = self.env.write_txn()?;
+        self.vault_meta.put(&mut wtxn, &key, &value)?;
+        wtxn.commit()?;
+        Ok(())
+    }
+
+    pub(crate) fn update_retrieval_run_elapsed(
+        &self,
+        run_id: RetrievalRunId,
+        elapsed_us: u64,
+    ) -> Result<()> {
+        let key = retrieval_run_key(run_id);
+        let mut wtxn = self.env.write_txn()?;
+        let Some(raw) = self.vault_meta.get(&wtxn, &key)? else {
+            return Ok(());
+        };
+        let mut record = decode_retrieval_run(raw)?;
+        record.elapsed_us = elapsed_us;
+        let value = encode_retrieval_run(&record)?;
+        self.vault_meta.put(&mut wtxn, &key, &value)?;
+        wtxn.commit()?;
+        Ok(())
+    }
+
+    pub(crate) fn record_retrieval_outcome(&self, outcome: RetrievalOutcome) -> Result<()> {
+        vet_retrieval_outcome(&outcome)?;
+        let record = RetrievalOutcomeRecord {
+            version: RETRIEVAL_TELEMETRY_VERSION,
+            run_id: outcome.run_id,
+            key: outcome.key,
+            reward: outcome.reward,
+            accepted: outcome.accepted,
+            metadata: outcome.metadata,
+            updated_at: crate::unix_seconds_now(),
+        };
+        let key = retrieval_outcome_key(record.run_id, &record.key);
+        let value = encode_retrieval_outcome(&record)?;
+        let mut wtxn = self.env.write_txn()?;
+        self.vault_meta.put(&mut wtxn, &key, &value)?;
+        wtxn.commit()?;
+        Ok(())
+    }
+
+    pub fn retrieval_runs(&self, limit: usize) -> Result<Vec<RetrievalRunRecord>> {
+        let rtxn = self.env.read_txn()?;
+        let mut records = Vec::new();
+        for row in self
+            .vault_meta
+            .prefix_iter(&rtxn, RETRIEVAL_RUN_KEY_PREFIX)?
+        {
+            let (_, value) = row?;
+            records.push(decode_retrieval_run(value)?);
+        }
+        records.sort_by_key(|record| record.run_id.as_bytes());
+        records.reverse();
+        records.truncate(limit);
+        Ok(records)
+    }
+
+    pub fn retrieval_outcomes(
+        &self,
+        run_id: RetrievalRunId,
+    ) -> Result<Vec<RetrievalOutcomeRecord>> {
+        let prefix = retrieval_outcome_run_prefix(run_id);
+        let rtxn = self.env.read_txn()?;
+        let mut records = Vec::new();
+        for row in self.vault_meta.prefix_iter(&rtxn, &prefix)? {
+            let (_, value) = row?;
+            records.push(decode_retrieval_outcome(value)?);
+        }
+        records.sort_by(|left, right| left.key.cmp(&right.key));
+        Ok(records)
+    }
+}
+
+fn retrieval_run_key(run_id: RetrievalRunId) -> Vec<u8> {
+    let mut key = Vec::with_capacity(RETRIEVAL_RUN_KEY_PREFIX.len() + 16);
+    key.extend_from_slice(RETRIEVAL_RUN_KEY_PREFIX);
+    key.extend_from_slice(&run_id.as_bytes());
+    key
+}
+
+fn retrieval_outcome_run_prefix(run_id: RetrievalRunId) -> Vec<u8> {
+    let mut key = Vec::with_capacity(RETRIEVAL_OUTCOME_KEY_PREFIX.len() + 17);
+    key.extend_from_slice(RETRIEVAL_OUTCOME_KEY_PREFIX);
+    key.extend_from_slice(&run_id.as_bytes());
+    key.push(b':');
+    key
+}
+
+fn retrieval_outcome_key(run_id: RetrievalRunId, outcome_key: &str) -> Vec<u8> {
+    let mut key = retrieval_outcome_run_prefix(run_id);
+    key.extend_from_slice(outcome_key.as_bytes());
+    key
+}
+
+fn encode_retrieval_run(record: &RetrievalRunRecord) -> Result<Vec<u8>> {
+    rmp_serde::to_vec_named(record)
+        .map_err(|_| Error::InvariantViolation("retrieval run telemetry encode failed"))
+}
+
+fn decode_retrieval_run(raw: &[u8]) -> Result<RetrievalRunRecord> {
+    let record: RetrievalRunRecord =
+        rmp_serde::from_slice(raw).map_err(|_| Error::CorruptedIndex("retrieval run telemetry"))?;
+    if record.version != RETRIEVAL_TELEMETRY_VERSION {
+        return Err(Error::CorruptedIndex("retrieval run telemetry"));
+    }
+    Ok(record)
+}
+
+fn encode_retrieval_outcome(record: &RetrievalOutcomeRecord) -> Result<Vec<u8>> {
+    rmp_serde::to_vec_named(record)
+        .map_err(|_| Error::InvariantViolation("retrieval outcome telemetry encode failed"))
+}
+
+fn decode_retrieval_outcome(raw: &[u8]) -> Result<RetrievalOutcomeRecord> {
+    let record: RetrievalOutcomeRecord = rmp_serde::from_slice(raw)
+        .map_err(|_| Error::CorruptedIndex("retrieval outcome telemetry"))?;
+    if record.version != RETRIEVAL_TELEMETRY_VERSION {
+        return Err(Error::CorruptedIndex("retrieval outcome telemetry"));
+    }
+    Ok(record)
+}
+
+fn vet_retrieval_outcome(outcome: &RetrievalOutcome) -> Result<()> {
+    if outcome.key.is_empty()
+        || outcome.key.len() > RETRIEVAL_OUTCOME_KEY_MAX_LEN
+        || !outcome
+            .key
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-' | b':'))
+    {
+        return Err(Error::InvalidConfig(
+            "retrieval outcome key must be 1-128 chars of ASCII alnum, '.', '_', '-', or ':'"
+                .to_owned(),
+        ));
+    }
+    if let Some(reward) = outcome.reward
+        && !reward.is_finite()
+    {
+        return Err(Error::InvalidConfig(
+            "retrieval outcome reward must be finite".to_owned(),
+        ));
+    }
+    Ok(())
 }
 
 fn load_structural_kind_registry(

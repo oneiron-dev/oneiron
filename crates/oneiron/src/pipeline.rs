@@ -1,4 +1,5 @@
 use std::collections::{HashMap, HashSet};
+use std::time::Instant;
 
 use heed::types::Bytes;
 use heed::{Database, RoTxn};
@@ -10,7 +11,10 @@ use crate::batch::{
 use crate::claim::{ClaimBody, claim_surfaceable};
 use crate::error::{Error, Result};
 use crate::fusion;
-use crate::store::Store;
+use crate::store::{
+    RetrievalAction, RetrievalRunId, RetrievalRunRecord, RetrievalScoreBreakdown,
+    RetrievalScoreComponent, RetrievalSignal, Store,
+};
 use crate::types::{
     EDGE_KEY_LEN, ENTITY_ID_LEN, ENTITY_TYPE_CLAIM, ENTITY_TYPE_FACET, EdgeKind, EmptyReason,
     EntityId, ScoredEntity, TemporalAnchorMode, TemporalGranularity, TimeRange,
@@ -144,6 +148,7 @@ pub(crate) struct PipelineOutput {
     pub(crate) cosine_ghosts_dampened: usize,
     pub(crate) total_in_scope: usize,
     pub(crate) empty_reason: Option<EmptyReason>,
+    pub(crate) telemetry_run_id: Option<RetrievalRunId>,
 }
 
 impl EntityMetadataCache {
@@ -250,6 +255,7 @@ pub struct PipelineBuilder<'a> {
     world_scope: WorldScope,
     result_limit: usize,
     temporal_adaptive_default: bool,
+    telemetry_action: RetrievalAction,
 }
 
 impl<'a> PipelineBuilder<'a> {
@@ -276,7 +282,13 @@ impl<'a> PipelineBuilder<'a> {
             world_scope: WorldScope::All,
             result_limit: DEFAULT_RESULT_LIMIT,
             temporal_adaptive_default: true,
+            telemetry_action: RetrievalAction::Pipeline,
         }
+    }
+
+    pub(crate) fn telemetry_action(mut self, action: RetrievalAction) -> Self {
+        self.telemetry_action = action;
+        self
     }
 
     pub fn search_vector(mut self, vector: &[f32], limit: usize) -> Self {
@@ -509,6 +521,11 @@ impl<'a> PipelineBuilder<'a> {
     /// the context-pack path consumes (gated scores + the claim bodies the
     /// D19 gate already decoded + the suppression count).
     pub(crate) fn run_for_pack(self) -> Result<PipelineOutput> {
+        let started = Instant::now();
+        let started_at = crate::unix_seconds_now();
+        let telemetry_action = self.telemetry_action;
+        let telemetry_signals = self.telemetry_signals();
+
         // Resolve the rank profile before anything else: an invalid
         // profile is a caller bug and fails closed even when no text
         // search would consume it on this run.
@@ -539,8 +556,10 @@ impl<'a> PipelineBuilder<'a> {
             cosine_ghosts_dampened,
             total_in_scope,
             empty_reason,
+            signal_components,
         ) = {
             let mut ranked_lists = Vec::new();
+            let mut signal_components = HashMap::<EntityId, Vec<RetrievalScoreComponent>>::new();
             let mut vector_channel_index = None;
             let mut text_channel_index = None;
             let rtxn = self.vault.store.env.read_txn()?;
@@ -566,6 +585,11 @@ impl<'a> PipelineBuilder<'a> {
                     query_vector,
                     *limit,
                 )?;
+                add_signal_score_components(
+                    &mut signal_components,
+                    RetrievalSignal::Vector,
+                    &vector_results,
+                );
                 vector_channel_index = Some(ranked_lists.len());
                 ranked_lists.push(vector_results);
             }
@@ -579,18 +603,33 @@ impl<'a> PipelineBuilder<'a> {
                     query,
                     *limit,
                 )?;
+                add_signal_score_components(
+                    &mut signal_components,
+                    RetrievalSignal::Text,
+                    &text_results,
+                );
                 text_channel_index = Some(ranked_lists.len());
                 ranked_lists.push(text_results);
             }
 
             if let Some(codes) = &self.phonetic_search {
                 let phonetic_results = execute_phonetic(&self.vault.store, &rtxn, codes)?;
+                add_signal_score_components(
+                    &mut signal_components,
+                    RetrievalSignal::Phonetic,
+                    &phonetic_results,
+                );
                 ranked_lists.push(phonetic_results);
             }
 
             if let Some(config) = &self.temporal_search {
                 let temporal_results =
                     execute_temporal(&self.vault.store, &rtxn, config, &mut metadata_cache)?;
+                add_signal_score_components(
+                    &mut signal_components,
+                    RetrievalSignal::Temporal,
+                    &temporal_results,
+                );
                 ranked_lists.push(temporal_results);
             }
 
@@ -607,6 +646,11 @@ impl<'a> PipelineBuilder<'a> {
                         PPR_DAMPING,
                         crate::ppr::SeedWeighting::Specificity,
                     )?;
+                add_signal_score_components(
+                    &mut signal_components,
+                    RetrievalSignal::Ppr,
+                    &ppr_results,
+                );
                 if let Some(deferred_cache_write) = deferred_cache_write {
                     deferred_ppr_cache_writes.push(deferred_cache_write);
                 }
@@ -621,6 +665,7 @@ impl<'a> PipelineBuilder<'a> {
                     cosine_ghosts_dampened: 0,
                     total_in_scope: 0,
                     empty_reason: None,
+                    telemetry_run_id: None,
                 });
             }
 
@@ -694,6 +739,11 @@ impl<'a> PipelineBuilder<'a> {
                         &mut metadata_cache,
                         &mut claim_gate,
                     )?;
+                    add_signal_score_components(
+                        &mut signal_components,
+                        RetrievalSignal::Ppr,
+                        &ppr_results,
+                    );
                     scores = fusion::rrf_fuse(&[scores, ppr_results], RRF_K);
                 }
             }
@@ -797,6 +847,7 @@ impl<'a> PipelineBuilder<'a> {
                 cosine_ghosts_dampened,
                 total_in_scope,
                 empty_reason,
+                signal_components,
             )
         };
 
@@ -813,6 +864,21 @@ impl<'a> PipelineBuilder<'a> {
             }
         }
 
+        let score_breakdown = telemetry_score_breakdown(&scores, &signal_components);
+        let run_id = RetrievalRunId::now();
+        let run_record = RetrievalRunRecord::new(
+            run_id,
+            telemetry_action,
+            started_at,
+            started.elapsed().as_micros().min(u64::MAX as u128) as u64,
+            telemetry_signals,
+            score_breakdown,
+            total_in_scope,
+            claims_suppressed,
+            empty_reason.map(|reason| format!("{reason:?}")),
+        );
+        self.vault.store.record_retrieval_run(&run_record)?;
+
         Ok(PipelineOutput {
             scores,
             claim_bodies,
@@ -820,8 +886,62 @@ impl<'a> PipelineBuilder<'a> {
             cosine_ghosts_dampened,
             total_in_scope,
             empty_reason,
+            telemetry_run_id: Some(run_id),
         })
     }
+
+    fn telemetry_signals(&self) -> Vec<RetrievalSignal> {
+        let mut signals = Vec::new();
+        if self.vector_search.is_some() {
+            signals.push(RetrievalSignal::Vector);
+        }
+        if self.text_search.is_some() {
+            signals.push(RetrievalSignal::Text);
+        }
+        if self.phonetic_search.is_some() {
+            signals.push(RetrievalSignal::Phonetic);
+        }
+        if self.temporal_search.is_some() {
+            signals.push(RetrievalSignal::Temporal);
+        }
+        if self.ppr_search.is_some() || self.ppr_expand.is_some() {
+            signals.push(RetrievalSignal::Ppr);
+        }
+        signals
+    }
+}
+
+fn add_signal_score_components(
+    components: &mut HashMap<EntityId, Vec<RetrievalScoreComponent>>,
+    signal: RetrievalSignal,
+    scores: &[ScoredEntity],
+) {
+    for (rank, scored) in scores.iter().enumerate() {
+        components
+            .entry(scored.id)
+            .or_default()
+            .push(RetrievalScoreComponent {
+                signal,
+                rank: (rank + 1).min(u32::MAX as usize) as u32,
+                score: scored.score,
+            });
+    }
+}
+
+fn telemetry_score_breakdown(
+    scores: &[ScoredEntity],
+    components: &HashMap<EntityId, Vec<RetrievalScoreComponent>>,
+) -> Vec<RetrievalScoreBreakdown> {
+    scores
+        .iter()
+        .enumerate()
+        .map(|(rank, scored)| RetrievalScoreBreakdown {
+            result_id: *scored.id.as_bytes(),
+            final_rank: (rank + 1).min(u32::MAX as usize) as u32,
+            final_score: scored.score,
+            components: components.get(&scored.id).cloned().unwrap_or_default(),
+        })
+        .collect()
 }
 
 fn apply_gravity(
@@ -1913,7 +2033,7 @@ fn combine_proximity(mode: TemporalAnchorMode, occurred: f64, learned: f64, floo
 #[cfg(test)]
 mod tests {
     use core::assert_matches;
-    use std::collections::HashMap;
+    use std::collections::{BTreeMap, HashMap};
 
     use heed::types::Bytes;
 
@@ -2165,6 +2285,161 @@ mod tests {
         let results = vault.query().search_text("alpha", 10).run()?;
         assert!(!results.is_empty());
         assert_eq!(results[0].id, a);
+        Ok(())
+    }
+
+    #[test]
+    fn retrieval_telemetry_records_vector_text_and_ppr_runs() -> Result<()> {
+        let (_dir, vault) = open_test_vault();
+        let a = entity_id(0x31);
+        let b = entity_id(0x32);
+
+        vault
+            .batch()
+            .put(&a, 1, TimeRange { start: 1, end: 1 }, 1, b"payload")
+            .text(&a, &[("body", "telemetry alpha")])
+            .vector(&a, &[1.0, 0.0, 0.0, 0.0])
+            .put(&b, 1, TimeRange { start: 2, end: 2 }, 2, b"payload")
+            .vector(&b, &[0.0, 1.0, 0.0, 0.0])
+            .edge(&a, EdgeKind::Supports, &b, 1.0)
+            .commit()?;
+
+        let vector = vault
+            .query()
+            .search_vector(&[1.0, 0.0, 0.0, 0.0], 10)
+            .run()?;
+        let text = vault.query().search_text("alpha", 10).run()?;
+        let ppr = vault.query().search_ppr(&[a], 2).run()?;
+        assert!(!vector.is_empty());
+        assert!(!text.is_empty());
+        assert!(!ppr.is_empty());
+
+        let runs = vault.retrieval_runs(10)?;
+        let vector_run = runs
+            .iter()
+            .find(|run| run.signals == vec![RetrievalSignal::Vector])
+            .expect("vector telemetry run");
+        assert_eq!(vector_run.action, RetrievalAction::Pipeline);
+        assert!(vector_run.result_ids.contains(a.as_bytes()));
+        assert!(vector_run.score_breakdown.iter().any(|entry| {
+            entry
+                .components
+                .iter()
+                .any(|component| component.signal == RetrievalSignal::Vector)
+        }));
+
+        let text_run = runs
+            .iter()
+            .find(|run| run.signals == vec![RetrievalSignal::Text])
+            .expect("text telemetry run");
+        assert!(text_run.result_ids.contains(a.as_bytes()));
+        assert!(text_run.score_breakdown.iter().any(|entry| {
+            entry
+                .components
+                .iter()
+                .any(|component| component.signal == RetrievalSignal::Text)
+        }));
+
+        let ppr_run = runs
+            .iter()
+            .find(|run| run.signals == vec![RetrievalSignal::Ppr])
+            .expect("ppr telemetry run");
+        assert!(ppr_run.score_breakdown.iter().any(|entry| {
+            entry
+                .components
+                .iter()
+                .any(|component| component.signal == RetrievalSignal::Ppr)
+        }));
+        Ok(())
+    }
+
+    #[test]
+    fn retrieval_outcome_writer_is_idempotent() -> Result<()> {
+        let (_dir, vault) = open_test_vault();
+        let id = entity_id(0x33);
+        put_text(&vault, id, "outcome telemetry")?;
+
+        let results = vault.query().search_text("outcome", 10).run()?;
+        assert!(!results.is_empty());
+        let run_id = vault.retrieval_runs(1)?[0].run_id;
+
+        let mut metadata = BTreeMap::new();
+        metadata.insert("source".to_owned(), "unit-test".to_owned());
+        vault.record_retrieval_outcome(crate::store::RetrievalOutcome {
+            run_id,
+            key: "click".to_owned(),
+            reward: Some(1.0),
+            accepted: Some(true),
+            metadata: metadata.clone(),
+        })?;
+        metadata.insert("revision".to_owned(), "2".to_owned());
+        vault.record_retrieval_outcome(crate::store::RetrievalOutcome {
+            run_id,
+            key: "click".to_owned(),
+            reward: Some(0.5),
+            accepted: Some(false),
+            metadata,
+        })?;
+
+        let outcomes = vault.retrieval_outcomes(run_id)?;
+        assert_eq!(outcomes.len(), 1);
+        assert_eq!(outcomes[0].key, "click");
+        assert_eq!(outcomes[0].reward, Some(0.5));
+        assert_eq!(outcomes[0].accepted, Some(false));
+        assert_eq!(
+            outcomes[0].metadata.get("revision").map(String::as_str),
+            Some("2")
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn context_pack_records_context_pack_telemetry() -> Result<()> {
+        let (_dir, vault) = open_test_vault();
+        let id = entity_id(0x34);
+        put_text(&vault, id, "context telemetry")?;
+
+        let pack = vault.context_pack().search_text("context", 10).run()?;
+        assert_eq!(pack.results.len(), 1);
+
+        let runs = vault.retrieval_runs(1)?;
+        assert_eq!(runs.len(), 1);
+        assert_eq!(runs[0].action, RetrievalAction::ContextPack);
+        assert_eq!(runs[0].signals, vec![RetrievalSignal::Text]);
+        assert_eq!(runs[0].elapsed_us, pack.stats.query_time_us);
+        assert!(runs[0].result_ids.contains(id.as_bytes()));
+        Ok(())
+    }
+
+    #[test]
+    fn retrieval_telemetry_does_not_mutate_short_id_counters() -> Result<()> {
+        let (_dir, vault) = open_test_vault();
+        let id = entity_id(0x35);
+        put_text(&vault, id, "counter telemetry")?;
+
+        let counter_key = crate::store::short_id_counter_key(1);
+        let before = {
+            let rtxn = vault.store.env.read_txn()?;
+            vault
+                .store
+                .vault_meta
+                .get(&rtxn, &counter_key)?
+                .map(<[u8]>::to_vec)
+        };
+
+        let results = vault.query().search_text("counter", 10).run()?;
+        assert!(!results.is_empty());
+        assert_eq!(vault.retrieval_runs(1)?.len(), 1);
+
+        let after = {
+            let rtxn = vault.store.env.read_txn()?;
+            vault
+                .store
+                .vault_meta
+                .get(&rtxn, &counter_key)?
+                .map(<[u8]>::to_vec)
+        };
+        assert_eq!(before, after);
         Ok(())
     }
 

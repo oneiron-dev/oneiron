@@ -40,10 +40,10 @@ use crate::provenance::{
     validate_model_substrate_field, winner_index,
 };
 use crate::store::{
-    DB_MANIFEST, HnswCompatibilityState, MODEL_ID_KEY, STORAGE_ABI_VERSION_KEY,
-    STORAGE_SCHEMA_VERSION_KEY, Store, TEXT_ANALYZER_MANIFEST_HASH_KEY, TEXT_ANALYZER_MANIFEST_KEY,
-    TEXT_BM25_FIELD_SCHEMA_HASH_KEY, TEXT_INDEX_SCHEMA_VERSION, TEXT_INDEX_SCHEMA_VERSION_KEY,
-    lmdb_database_open_guard,
+    DB_MANIFEST, HnswCompatibilityState, MODEL_ID_KEY, RetrievalOutcome, RetrievalOutcomeRecord,
+    RetrievalRunId, RetrievalRunRecord, STORAGE_ABI_VERSION_KEY, STORAGE_SCHEMA_VERSION_KEY, Store,
+    TEXT_ANALYZER_MANIFEST_HASH_KEY, TEXT_ANALYZER_MANIFEST_KEY, TEXT_BM25_FIELD_SCHEMA_HASH_KEY,
+    TEXT_INDEX_SCHEMA_VERSION, TEXT_INDEX_SCHEMA_VERSION_KEY, lmdb_database_open_guard,
 };
 use crate::types::{
     EDGE_KEY_LEN, ENTITY_ID_LEN, ENTITY_TYPE_CLAIM, ENTITY_TYPE_MESSAGE, ENTITY_TYPE_MODEL,
@@ -3168,6 +3168,24 @@ impl Vault {
     /// Creates a context pack builder for retrieval + hydration + serialization.
     pub fn context_pack(&self) -> ContextPackBuilder<'_> {
         ContextPackBuilder::new(self)
+    }
+
+    /// Returns the newest retrieval telemetry run rows, newest first.
+    pub fn retrieval_runs(&self, limit: usize) -> Result<Vec<RetrievalRunRecord>> {
+        self.store.retrieval_runs(limit)
+    }
+
+    /// Idempotently writes or replaces a retrieval outcome row for one run.
+    pub fn record_retrieval_outcome(&self, outcome: RetrievalOutcome) -> Result<()> {
+        self.store.record_retrieval_outcome(outcome)
+    }
+
+    /// Returns outcome rows recorded for `run_id`, sorted by outcome key.
+    pub fn retrieval_outcomes(
+        &self,
+        run_id: RetrievalRunId,
+    ) -> Result<Vec<RetrievalOutcomeRecord>> {
+        self.store.retrieval_outcomes(run_id)
     }
 
     /// Creates a maintenance builder for index and cache upkeep operations.
