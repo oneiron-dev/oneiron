@@ -1,0 +1,56 @@
+{
+  "schemaVersion": 1,
+  "fixtureId": "beam-128k-smoke",
+  "description": "Minimal BEAM 128K fixture for EVAL-001 deterministic context-pack smoke coverage.",
+  "records": [
+    {
+      "id": "10101010101010101010101010101010",
+      "entityType": 8,
+      "occurred": {
+        "start": 1,
+        "end": 1
+      },
+      "learnedAt": 1,
+      "fields": {
+        "txt": "BEAM deterministic context pack 128K smoke target for evaluation scaffolding.",
+        "lvl": "benchmark-smoke",
+        "at": "beam-smoke-t1"
+      },
+      "text": [
+        {
+          "field": "txt",
+          "value": "BEAM deterministic context pack 128K smoke target evaluation scaffold"
+        }
+      ]
+    },
+    {
+      "id": "20202020202020202020202020202020",
+      "entityType": 8,
+      "occurred": {
+        "start": 2,
+        "end": 2
+      },
+      "learnedAt": 2,
+      "fields": {
+        "txt": "Analyzer and retrieval control record for unrelated benchmark smoke coverage.",
+        "lvl": "benchmark-smoke",
+        "at": "beam-smoke-t2"
+      },
+      "text": [
+        {
+          "field": "txt",
+          "value": "analyzer retrieval control unrelated benchmark smoke coverage"
+        }
+      ]
+    }
+  ],
+  "cases": [
+    {
+      "caseId": "beam_128k_context_pack_smoke",
+      "query": "BEAM deterministic context pack",
+      "limit": 5,
+      "tokenBudget": 131072,
+      "expectedMinResults": 1
+    }
+  ]
+}
