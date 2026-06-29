@@ -82,6 +82,16 @@ pub enum UsageEventType {
     Service,
 }
 
+impl UsageEventType {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Inference => "inference",
+            Self::Cache => "cache",
+            Self::Service => "service",
+        }
+    }
+}
+
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct UsageTokenCounts {
@@ -215,6 +225,8 @@ pub struct UsageEvent {
     #[serde(default)]
     pub event_type: UsageEventType,
     #[serde(default)]
+    pub role: Option<String>,
+    #[serde(default)]
     pub occurred_at: Option<u64>,
     #[serde(default)]
     pub agent_id: Option<String>,
@@ -254,6 +266,7 @@ impl UsageEvent {
             &self.idempotency_key,
             MAX_IDEMPOTENCY_KEY_LEN,
         )?;
+        validate_optional_dimension("role", self.role.as_deref())?;
         validate_optional_dimension("agentId", self.agent_id.as_deref())?;
         validate_optional_dimension("model", self.model.as_deref())?;
         validate_optional_dimension("service", self.service.as_deref())?;
@@ -381,6 +394,17 @@ pub enum ConsumerAllowanceWarningLevel {
     Notice,
     Critical,
     Exhausted,
+}
+
+impl ConsumerAllowanceWarningLevel {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::None => "none",
+            Self::Notice => "notice",
+            Self::Critical => "critical",
+            Self::Exhausted => "exhausted",
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, ToSchema)]
@@ -577,6 +601,17 @@ impl UsageLedger {
         let source = configured_mode;
         let cost = event.cost_input().calculate()?;
         if !source.debits_usage() {
+            emit_usage_telemetry(
+                &event,
+                source,
+                &cost,
+                &ConsumerAllowanceWarning::none(None),
+                UsageTelemetryOutcome {
+                    recorded: false,
+                    replayed: false,
+                    debited: false,
+                },
+            );
             return Ok(UsageRecordResult {
                 recorded: false,
                 replayed: false,
@@ -647,15 +682,32 @@ impl UsageLedger {
             LedgerWriteResult::Recorded {
                 tenant_rollup,
                 vault_rollup,
-            } => Ok(UsageRecordResult {
-                recorded: true,
-                replayed: false,
-                source,
-                cost,
-                debit: Some(debit),
-                tenant_rollup: Some(tenant_rollup),
-                vault_rollup: Some(vault_rollup),
-            }),
+            } => {
+                let warning = self.allowance_warning_for_tenant(
+                    &event.tenant_id,
+                    tenant_rollup.counters.credit_units,
+                );
+                emit_usage_telemetry(
+                    &event,
+                    source,
+                    &cost,
+                    &warning,
+                    UsageTelemetryOutcome {
+                        recorded: true,
+                        replayed: false,
+                        debited: true,
+                    },
+                );
+                Ok(UsageRecordResult {
+                    recorded: true,
+                    replayed: false,
+                    source,
+                    cost,
+                    debit: Some(debit),
+                    tenant_rollup: Some(tenant_rollup),
+                    vault_rollup: Some(vault_rollup),
+                })
+            }
             LedgerWriteResult::Replayed(entry) => self.replayed_result(entry),
         }
     }
@@ -820,17 +872,36 @@ impl UsageLedger {
     }
 
     fn replayed_result(&self, entry: StoredUsageEvent) -> Result<UsageRecordResult, UsageError> {
+        let tenant_rollup = self.get_rollup(&tenant_rollup_key(&entry.event.tenant_id))?;
+        let vault_rollup = self.get_rollup(&vault_rollup_key(
+            &entry.event.tenant_id,
+            &entry.event.vault_id,
+        ))?;
+        let warning = self.allowance_warning_for_tenant(
+            &entry.event.tenant_id,
+            tenant_rollup
+                .as_ref()
+                .map_or(0.0, |rollup| rollup.counters.credit_units),
+        );
+        emit_usage_telemetry(
+            &entry.event,
+            entry.source,
+            &entry.cost,
+            &warning,
+            UsageTelemetryOutcome {
+                recorded: false,
+                replayed: true,
+                debited: true,
+            },
+        );
         Ok(UsageRecordResult {
             recorded: false,
             replayed: true,
             source: entry.source,
             cost: entry.cost,
             debit: Some(entry.debit),
-            tenant_rollup: self.get_rollup(&tenant_rollup_key(&entry.event.tenant_id))?,
-            vault_rollup: self.get_rollup(&vault_rollup_key(
-                &entry.event.tenant_id,
-                &entry.event.vault_id,
-            ))?,
+            tenant_rollup,
+            vault_rollup,
         })
     }
 
@@ -915,6 +986,33 @@ impl UsageLedger {
         };
         decode_allowance(&raw)
     }
+
+    fn allowance_warning_for_tenant(
+        &self,
+        tenant_id: &str,
+        used_credit_units: f64,
+    ) -> ConsumerAllowanceWarning {
+        match self.consumer_allowance(tenant_id) {
+            Ok(allowance) => {
+                ConsumerAllowanceWarning::for_usage(used_credit_units, allowance.credit_units)
+            }
+            Err(error) => {
+                tracing::warn!(
+                    error = %error,
+                    tenant_id = %tenant_id,
+                    "usage telemetry allowance lookup failed"
+                );
+                ConsumerAllowanceWarning::none(None)
+            }
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+struct UsageTelemetryOutcome {
+    recorded: bool,
+    replayed: bool,
+    debited: bool,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -1039,6 +1137,125 @@ fn add_breakdown(
         .entry(dimension.to_owned())
         .or_default()
         .add(tokens, cost);
+}
+
+fn emit_usage_telemetry(
+    event: &UsageEvent,
+    source: UsageMode,
+    cost: &UsageCost,
+    warning: &ConsumerAllowanceWarning,
+    outcome: UsageTelemetryOutcome,
+) {
+    let role = event.role.as_deref().unwrap_or("unknown");
+    let agent_id = event.agent_id.as_deref().unwrap_or("unknown");
+    let model = event.model.as_deref().unwrap_or("unknown");
+    let service = event.service.as_deref().unwrap_or("unknown");
+    let warning_used_ratio = warning.used_ratio.unwrap_or(0.0);
+
+    tracing::info!(
+        target: "oneiron_server::usage",
+        tenant_id = %event.tenant_id,
+        account_id = %event.tenant_id,
+        vault_id = %event.vault_id,
+        role = %role,
+        agent_id = %agent_id,
+        model = %model,
+        service = %service,
+        provider_mode = %source.as_str(),
+        event_type = %event.event_type.as_str(),
+        prompt_tokens = event.token_counts.input_tokens,
+        completion_tokens = event.token_counts.output_tokens,
+        input_tokens = event.token_counts.input_tokens,
+        output_tokens = event.token_counts.output_tokens,
+        cache_read_tokens = event.token_counts.cache_read_tokens,
+        cache_write_tokens = event.token_counts.cache_write_tokens,
+        token_cost_usd = cost.token_cost_usd,
+        cache_cost_usd = cost.cache_cost_usd,
+        service_cost_usd = cost.service_cost_usd,
+        cost_usd = cost.cost_usd,
+        credit_units = cost.credit_units,
+        allowance_warning_level = %warning.level.as_str(),
+        allowance_warning_triggered = warning.triggered,
+        allowance_warning_threshold_ratio = warning.threshold_ratio,
+        allowance_warning_used_ratio = warning_used_ratio,
+        recorded = outcome.recorded,
+        replayed = outcome.replayed,
+        debited = outcome.debited,
+        "usage telemetry recorded"
+    );
+
+    emit_usage_token_span(
+        event,
+        source,
+        role,
+        "prompt",
+        event.token_counts.input_tokens,
+        per_million_cost(
+            event.token_counts.input_tokens,
+            event.cost_rates.input_token_usd_per_million,
+        ),
+    );
+    emit_usage_token_span(
+        event,
+        source,
+        role,
+        "completion",
+        event.token_counts.output_tokens,
+        per_million_cost(
+            event.token_counts.output_tokens,
+            event.cost_rates.output_token_usd_per_million,
+        ),
+    );
+    emit_usage_token_span(
+        event,
+        source,
+        role,
+        "cache_read",
+        event.token_counts.cache_read_tokens,
+        per_million_cost(
+            event.token_counts.cache_read_tokens,
+            event.cost_rates.cache_read_token_usd_per_million,
+        ),
+    );
+    emit_usage_token_span(
+        event,
+        source,
+        role,
+        "cache_write",
+        event.token_counts.cache_write_tokens,
+        per_million_cost(
+            event.token_counts.cache_write_tokens,
+            event.cost_rates.cache_write_token_usd_per_million,
+        ),
+    );
+}
+
+fn emit_usage_token_span(
+    event: &UsageEvent,
+    source: UsageMode,
+    role: &str,
+    token_type: &'static str,
+    tokens: u64,
+    cost_usd: f64,
+) {
+    let span = tracing::info_span!(
+        target: "oneiron_server::usage",
+        "usage_token_type",
+        tenant_id = %event.tenant_id,
+        account_id = %event.tenant_id,
+        role = %role,
+        provider_mode = %source.as_str(),
+        token_type = %token_type,
+        tokens = tokens,
+        cost_usd = normalize_money(cost_usd),
+    );
+    let _entered = span.enter();
+    tracing::info!(
+        target: "oneiron_server::usage",
+        token_type = token_type,
+        tokens = tokens,
+        "usage token type recorded"
+    );
 }
 
 fn usage_event_key(tenant_id: &str, vault_id: &str, idempotency_key: &str) -> String {
@@ -1198,6 +1415,72 @@ fn now_secs() -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Mutex as StdMutex;
+
+    #[derive(Clone, Debug, PartialEq, Eq)]
+    struct CapturedTelemetry {
+        kind: &'static str,
+        name: String,
+        fields: BTreeMap<String, String>,
+    }
+
+    #[derive(Clone, Default)]
+    struct TelemetryCapture {
+        records: Arc<StdMutex<Vec<CapturedTelemetry>>>,
+    }
+
+    impl TelemetryCapture {
+        fn records(&self) -> Vec<CapturedTelemetry> {
+            self.records.lock().unwrap().clone()
+        }
+
+        fn text_dump(&self) -> String {
+            format!("{:?}", self.records())
+        }
+    }
+
+    impl tracing::Subscriber for TelemetryCapture {
+        fn enabled(&self, _metadata: &tracing::Metadata<'_>) -> bool {
+            true
+        }
+
+        fn new_span(&self, attrs: &tracing::span::Attributes<'_>) -> tracing::span::Id {
+            let mut fields = BTreeMap::new();
+            attrs.record(&mut TelemetryVisitor(&mut fields));
+            self.records.lock().unwrap().push(CapturedTelemetry {
+                kind: "span",
+                name: attrs.metadata().name().to_owned(),
+                fields,
+            });
+            tracing::span::Id::from_u64(1)
+        }
+
+        fn record(&self, _span: &tracing::span::Id, _values: &tracing::span::Record<'_>) {}
+
+        fn record_follows_from(&self, _span: &tracing::span::Id, _follows: &tracing::span::Id) {}
+
+        fn event(&self, event: &tracing::Event<'_>) {
+            let mut fields = BTreeMap::new();
+            event.record(&mut TelemetryVisitor(&mut fields));
+            self.records.lock().unwrap().push(CapturedTelemetry {
+                kind: "event",
+                name: event.metadata().name().to_owned(),
+                fields,
+            });
+        }
+
+        fn enter(&self, _span: &tracing::span::Id) {}
+
+        fn exit(&self, _span: &tracing::span::Id) {}
+    }
+
+    struct TelemetryVisitor<'a>(&'a mut BTreeMap<String, String>);
+
+    impl tracing::field::Visit for TelemetryVisitor<'_> {
+        fn record_debug(&mut self, field: &tracing::field::Field, value: &dyn fmt::Debug) {
+            self.0.insert(field.name().to_owned(), format!("{value:?}"));
+        }
+    }
 
     fn test_ledger() -> (tempfile::TempDir, UsageLedger) {
         let dir = tempfile::tempdir().unwrap();
@@ -1213,6 +1496,7 @@ mod tests {
             idempotency_key: idempotency_key.to_owned(),
             source: Some(UsageMode::OneironCloud),
             event_type: UsageEventType::Inference,
+            role: Some("orchestrator".to_owned()),
             occurred_at: Some(1_782_357_635),
             agent_id: Some("agent-a".to_owned()),
             model: Some("model-a".to_owned()),
@@ -1271,6 +1555,53 @@ mod tests {
         ));
     }
 
+    fn captured_usage_event(records: &[CapturedTelemetry]) -> &CapturedTelemetry {
+        records
+            .iter()
+            .find(|record| {
+                record.kind == "event"
+                    && record
+                        .fields
+                        .get("message")
+                        .is_some_and(|message| message.contains("usage telemetry recorded"))
+            })
+            .expect("usage telemetry event")
+    }
+
+    fn captured_token_span<'a>(
+        records: &'a [CapturedTelemetry],
+        token_type: &str,
+    ) -> &'a CapturedTelemetry {
+        records
+            .iter()
+            .find(|record| {
+                record.kind == "span"
+                    && record.name == "usage_token_type"
+                    && record
+                        .fields
+                        .get("token_type")
+                        .is_some_and(|value| value == token_type)
+            })
+            .unwrap_or_else(|| panic!("usage token span {token_type}: {records:?}"))
+    }
+
+    fn assert_neutral_warning_telemetry(event: &CapturedTelemetry) {
+        assert_eq!(event.fields["allowance_warning_level"], "none");
+        assert_eq!(event.fields["allowance_warning_triggered"], "false");
+        assert_eq!(
+            event.fields["allowance_warning_threshold_ratio"],
+            ALLOWANCE_NOTICE_THRESHOLD_RATIO.to_string()
+        );
+        assert_eq!(event.fields["allowance_warning_used_ratio"], "0.0");
+    }
+
+    fn corrupt_consumer_allowance(ledger: &UsageLedger, tenant_id: &str) {
+        ledger
+            .vault
+            .sync_state_put(&consumer_allowance_key(tenant_id), b"not-msgpack")
+            .expect("corrupt allowance row");
+    }
+
     #[test]
     fn cost_calculator_includes_token_cache_and_service_costs() {
         let cost = cloud_event("cost-key").cost_input().calculate().unwrap();
@@ -1280,6 +1611,136 @@ mod tests {
         assert_eq!(cost.service_cost_usd, 0.044);
         assert_eq!(cost.cost_usd, 0.05);
         assert_eq!(cost.credit_units, cost.cost_usd / CREDIT_UNIT_USD);
+    }
+
+    #[test]
+    fn record_event_emits_usage_telemetry_fields_and_token_spans() {
+        let (_dir, ledger) = test_ledger();
+        ledger
+            .top_up(
+                ConsumerTopUpRequest {
+                    tenant_id: "tenant-a".to_owned(),
+                    idempotency_key: "telemetry-top-up".to_owned(),
+                    credit_units: 5.0,
+                },
+                UsageMode::OneironCloud,
+            )
+            .expect("top-up should create exhausted allowance warning");
+        let capture = TelemetryCapture::default();
+
+        tracing::subscriber::with_default(capture.clone(), || {
+            ledger
+                .record_event(cloud_event("telemetry-fields"), UsageMode::OneironCloud)
+                .expect("usage event should record");
+        });
+        let records = capture.records();
+        let event = captured_usage_event(&records);
+        let prompt_span = captured_token_span(&records, "prompt");
+        let completion_span = captured_token_span(&records, "completion");
+        let cache_read_span = captured_token_span(&records, "cache_read");
+        let cache_write_span = captured_token_span(&records, "cache_write");
+
+        assert_eq!(event.fields["tenant_id"], "tenant-a");
+        assert_eq!(event.fields["account_id"], "tenant-a");
+        assert_eq!(event.fields["vault_id"], "vault-a");
+        assert_eq!(event.fields["role"], "orchestrator");
+        assert_eq!(event.fields["agent_id"], "agent-a");
+        assert_eq!(event.fields["model"], "model-a");
+        assert_eq!(event.fields["service"], "inference");
+        assert_eq!(event.fields["provider_mode"], "oneiron_cloud");
+        assert_eq!(event.fields["event_type"], "inference");
+        assert_eq!(event.fields["prompt_tokens"], "1000");
+        assert_eq!(event.fields["completion_tokens"], "500");
+        assert_eq!(event.fields["cache_read_tokens"], "2000");
+        assert_eq!(event.fields["cache_write_tokens"], "1000");
+        assert_eq!(event.fields["cost_usd"], "0.05");
+        assert_eq!(event.fields["credit_units"], "5.0");
+        assert_eq!(event.fields["allowance_warning_level"], "exhausted");
+        assert_eq!(event.fields["allowance_warning_triggered"], "true");
+        assert_eq!(event.fields["recorded"], "true");
+        assert_eq!(event.fields["replayed"], "false");
+        assert_eq!(event.fields["debited"], "true");
+        assert_eq!(prompt_span.fields["tokens"], "1000");
+        assert_eq!(completion_span.fields["tokens"], "500");
+        assert_eq!(cache_read_span.fields["tokens"], "2000");
+        assert_eq!(cache_write_span.fields["tokens"], "1000");
+    }
+
+    #[test]
+    fn record_event_telemetry_does_not_log_payload_or_idempotency_text() {
+        let (_dir, ledger) = test_ledger();
+        let secret = "secret-prompt-payload-should-not-log";
+        let mut event = cloud_event(secret);
+        event.service_costs = vec![UsageServiceCost {
+            service: secret.to_owned(),
+            cost_usd: 0.001,
+        }];
+        let capture = TelemetryCapture::default();
+
+        tracing::subscriber::with_default(capture.clone(), || {
+            ledger
+                .record_event(event, UsageMode::OneironCloud)
+                .expect("usage event should record");
+        });
+
+        assert!(!capture.text_dump().contains(secret));
+    }
+
+    #[test]
+    fn record_event_uses_neutral_warning_when_allowance_lookup_fails_after_recording() {
+        let (_dir, ledger) = test_ledger();
+        corrupt_consumer_allowance(&ledger, "tenant-a");
+        let capture = TelemetryCapture::default();
+
+        let result = tracing::subscriber::with_default(capture.clone(), || {
+            ledger.record_event(
+                cloud_event("corrupt-allowance-record"),
+                UsageMode::OneironCloud,
+            )
+        })
+        .expect("usage event should record despite warning lookup failure");
+        let records = capture.records();
+        let event = captured_usage_event(&records);
+        let rollup = ledger
+            .tenant_rollup("tenant-a")
+            .expect("tenant rollup read after recorded usage")
+            .expect("tenant rollup persisted");
+
+        assert!(result.recorded);
+        assert!(!result.replayed);
+        assert_eq!(rollup.counters.event_count, 1);
+        assert_eq!(event.fields["recorded"], "true");
+        assert_eq!(event.fields["replayed"], "false");
+        assert_neutral_warning_telemetry(event);
+    }
+
+    #[test]
+    fn record_event_uses_neutral_warning_when_allowance_lookup_fails_after_replay() {
+        let (_dir, ledger) = test_ledger();
+        ledger
+            .record_event(
+                cloud_event("corrupt-allowance-replay"),
+                UsageMode::OneironCloud,
+            )
+            .expect("initial usage event should record");
+        corrupt_consumer_allowance(&ledger, "tenant-a");
+        let capture = TelemetryCapture::default();
+
+        let result = tracing::subscriber::with_default(capture.clone(), || {
+            ledger.record_event(
+                cloud_event("corrupt-allowance-replay"),
+                UsageMode::OneironCloud,
+            )
+        })
+        .expect("usage replay should succeed despite warning lookup failure");
+        let records = capture.records();
+        let event = captured_usage_event(&records);
+
+        assert!(!result.recorded);
+        assert!(result.replayed);
+        assert_eq!(event.fields["recorded"], "false");
+        assert_eq!(event.fields["replayed"], "true");
+        assert_neutral_warning_telemetry(event);
     }
 
     #[test]
