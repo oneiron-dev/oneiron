@@ -67,6 +67,11 @@ pub const LEASE_STATUS_REJECTED: u8 = 0x00;
 /// clients fail at hello against older daemons instead of hanging on an
 /// unknown WindowSync sub-tag (ONE-1271, FED-002).
 pub const PROTOCOL_VERSION: u8 = 3;
+/// Legacy full-window protocol version kept for unscoped v2 clients.
+///
+/// v2 peers cannot use selector sync, but their existing full-window
+/// `VV_REQUEST`/`VV_RESPONSE`/`UPDATE` flow remains byte-compatible.
+pub const LEGACY_FULL_WINDOW_PROTOCOL_VERSION: u8 = 2;
 
 /// Shared 8 MB cap for decoded payloads: bulk-transfer decompression and
 /// root-doc imports both refuse anything larger (decompression-bomb /
@@ -181,6 +186,15 @@ impl From<EncodedFrame> for tokio_tungstenite::tungstenite::Bytes {
 /// Format: `[TAG_PROTOCOL_HELLO:1][PROTOCOL_VERSION:1]` — exactly 2 bytes.
 pub fn encode_protocol_hello() -> Vec<u8> {
     vec![TAG_PROTOCOL_HELLO, PROTOCOL_VERSION]
+}
+
+/// Encodes the legacy full-window protocol hello frame.
+///
+/// Unscoped clients that use the pre-FED-002 full-window WindowSync flow send
+/// v2 so selector-capable v3 connections cannot downgrade themselves to a
+/// full-window export after negotiating the selector protocol.
+pub fn encode_legacy_full_window_protocol_hello() -> Vec<u8> {
+    vec![TAG_PROTOCOL_HELLO, LEGACY_FULL_WINDOW_PROTOCOL_VERSION]
 }
 
 /// Decodes a protocol-version hello frame (the FULL frame, tag included).
@@ -571,7 +585,12 @@ mod tests {
         // negotiate successfully with pre-selector daemons.
         assert_eq!(TAG_PROTOCOL_HELLO, 3, "hello tag byte is pinned to 3");
         assert_eq!(PROTOCOL_VERSION, 3, "wire protocol version is pinned to 3");
+        assert_eq!(
+            LEGACY_FULL_WINDOW_PROTOCOL_VERSION, 2,
+            "legacy full-window version is pinned to 2"
+        );
         assert_eq!(encode_protocol_hello(), vec![3u8, 3u8]);
+        assert_eq!(encode_legacy_full_window_protocol_hello(), vec![3u8, 2u8]);
     }
 
     #[test]
@@ -583,7 +602,7 @@ mod tests {
     }
 
     #[test]
-    fn full_window_sync_wire_frames_remain_backward_compatible_under_v3() {
+    fn full_window_sync_wire_frames_remain_backward_compatible_under_selector_bump() {
         let vv_payload = [0xAA, 0xBB, 0xCC];
         let update_payload = [0x11, 0x22];
         let key = "2026-09";
@@ -697,6 +716,11 @@ mod tests {
     fn protocol_hello_decode_roundtrip() {
         let frame = encode_protocol_hello();
         assert_eq!(decode_protocol_hello(&frame).unwrap(), PROTOCOL_VERSION);
+        let legacy_frame = encode_legacy_full_window_protocol_hello();
+        assert_eq!(
+            decode_protocol_hello(&legacy_frame).unwrap(),
+            LEGACY_FULL_WINDOW_PROTOCOL_VERSION
+        );
         // A future-version peer's hello must still DECODE (the caller
         // compares versions and closes) — decode returns the raw byte.
         assert_eq!(decode_protocol_hello(&[TAG_PROTOCOL_HELLO, 7]).unwrap(), 7);
