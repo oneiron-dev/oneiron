@@ -10276,7 +10276,7 @@ fn replicated_door_fails_closed_on_malformed_federation_grant_body() -> Result<(
                 .apply(wtxn)
         })
         .expect_err("txn replay door must reject malformed federation grants");
-    assert_eq!(err.kind(), ErrorKind::InvalidKey);
+    assert_eq!(err.kind(), ErrorKind::InvalidFederationGrantBody);
     assert_no_entity_state(&vault, &bad_txn)?;
 
     let bad_batch = EntityId::now();
@@ -10291,7 +10291,7 @@ fn replicated_door_fails_closed_on_malformed_federation_grant_body() -> Result<(
         )
         .commit()
         .expect_err("batch replay door must reject malformed federation grants");
-    assert_eq!(err.kind(), ErrorKind::InvalidKey);
+    assert_eq!(err.kind(), ErrorKind::InvalidFederationGrantBody);
     assert_no_entity_state(&vault, &bad_batch)?;
     Ok(())
 }
@@ -10319,7 +10319,7 @@ fn replicated_door_fails_closed_on_invalid_federation_grant_policy() -> Result<(
                 .apply(wtxn)
         })
         .expect_err("txn replay door must reject role/preset mismatches");
-    assert_eq!(err.kind(), ErrorKind::InvalidKey);
+    assert_eq!(err.kind(), ErrorKind::InvalidFederationGrantBody);
     assert_no_entity_state(&vault, &bad_txn)?;
 
     let bad_batch = EntityId::now();
@@ -10334,7 +10334,7 @@ fn replicated_door_fails_closed_on_invalid_federation_grant_policy() -> Result<(
         )
         .commit()
         .expect_err("batch replay door must reject role/preset mismatches");
-    assert_eq!(err.kind(), ErrorKind::InvalidKey);
+    assert_eq!(err.kind(), ErrorKind::InvalidFederationGrantBody);
     assert_no_entity_state(&vault, &bad_batch)?;
     Ok(())
 }
