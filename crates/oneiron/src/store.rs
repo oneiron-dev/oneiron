@@ -92,6 +92,7 @@
 //! [`Bm25FieldSchemaChanged`]: crate::error::Error::Bm25FieldSchemaChanged
 //! [`VaultConfig::skip_text_index_manifest_check`]: crate::types::VaultConfig::skip_text_index_manifest_check
 
+use std::cell::Cell;
 use std::collections::{BTreeMap, HashMap, HashSet};
 #[cfg(unix)]
 use std::os::unix::fs::MetadataExt;
@@ -181,6 +182,31 @@ const RETRIEVAL_TELEMETRY_VERSION: u8 = 0;
 const RETRIEVAL_RUN_KEY_PREFIX: &[u8] = b"retr_run:v0:";
 const RETRIEVAL_OUTCOME_KEY_PREFIX: &[u8] = b"retr_out:v0:";
 const RETRIEVAL_OUTCOME_KEY_MAX_LEN: usize = 128;
+
+thread_local! {
+    static ACTIVE_WRITE_TXN_DEPTH: Cell<usize> = const { Cell::new(0) };
+}
+
+pub(crate) struct ActiveWriteTxnGuard;
+
+impl Drop for ActiveWriteTxnGuard {
+    fn drop(&mut self) {
+        ACTIVE_WRITE_TXN_DEPTH.with(|depth| {
+            depth.set(depth.get().saturating_sub(1));
+        });
+    }
+}
+
+pub(crate) fn active_write_txn_guard() -> ActiveWriteTxnGuard {
+    ACTIVE_WRITE_TXN_DEPTH.with(|depth| {
+        depth.set(depth.get().saturating_add(1));
+    });
+    ActiveWriteTxnGuard
+}
+
+fn active_write_txn_depth() -> usize {
+    ACTIVE_WRITE_TXN_DEPTH.with(Cell::get)
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct RetrievalRunId {
@@ -879,6 +905,11 @@ impl Store {
                 "forced retrieval telemetry write failure",
             ));
         }
+        if active_write_txn_depth() > 0 {
+            return Err(Error::ConcurrentWrite(
+                "retrieval telemetry skipped inside active write transaction",
+            ));
+        }
 
         let key = retrieval_run_key(record.run_id);
         let value = encode_retrieval_run(record)?;
@@ -894,7 +925,14 @@ impl Store {
         elapsed_us: u64,
         claims_suppressed: usize,
         surfaced_result_ids: &[[u8; 16]],
+        empty_reason: Option<String>,
     ) -> Result<()> {
+        if active_write_txn_depth() > 0 {
+            return Err(Error::ConcurrentWrite(
+                "context-pack retrieval telemetry skipped inside active write transaction",
+            ));
+        }
+
         let key = retrieval_run_key(run_id);
         let mut wtxn = self.env.write_txn()?;
         let Some(raw) = self.vault_meta.get(&wtxn, &key)? else {
@@ -905,16 +943,19 @@ impl Store {
         record.claims_suppressed = claims_suppressed;
         record.result_ids = surfaced_result_ids.to_vec();
         let mut surfaced_breakdown = Vec::with_capacity(surfaced_result_ids.len());
-        for result_id in surfaced_result_ids {
+        for (index, result_id) in surfaced_result_ids.iter().enumerate() {
             if let Some(entry) = record
                 .score_breakdown
                 .iter()
                 .find(|entry| entry.result_id == *result_id)
             {
-                surfaced_breakdown.push(entry.clone());
+                let mut entry = entry.clone();
+                entry.final_rank = u32::try_from(index.saturating_add(1)).unwrap_or(u32::MAX);
+                surfaced_breakdown.push(entry);
             }
         }
         record.score_breakdown = surfaced_breakdown;
+        record.empty_reason = empty_reason;
         let value = encode_retrieval_run(&record)?;
         self.vault_meta.put(&mut wtxn, &key, &value)?;
         wtxn.commit()?;
@@ -935,6 +976,12 @@ impl Store {
         let key = retrieval_outcome_key(record.run_id, &record.key);
         let value = encode_retrieval_outcome(&record)?;
         let mut wtxn = self.env.write_txn()?;
+        let run_key = retrieval_run_key(record.run_id);
+        if self.vault_meta.get(&wtxn, &run_key)?.is_none() {
+            return Err(Error::InvalidConfig(
+                "retrieval outcome references unknown run id".to_owned(),
+            ));
+        }
         self.vault_meta.put(&mut wtxn, &key, &value)?;
         wtxn.commit()?;
         Ok(())

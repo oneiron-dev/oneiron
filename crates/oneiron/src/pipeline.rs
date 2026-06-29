@@ -151,6 +151,12 @@ pub(crate) struct PipelineOutput {
     pub(crate) telemetry_run_id: Option<RetrievalRunId>,
 }
 
+#[derive(Debug, Clone)]
+pub struct RetrievalWithTelemetry<T> {
+    pub value: T,
+    pub run_id: Option<RetrievalRunId>,
+}
+
 impl EntityMetadataCache {
     fn get(
         &mut self,
@@ -514,7 +520,15 @@ impl<'a> PipelineBuilder<'a> {
     }
 
     pub fn run(self) -> Result<Vec<ScoredEntity>> {
-        Ok(self.run_for_pack()?.scores)
+        Ok(self.run_with_telemetry()?.value)
+    }
+
+    pub fn run_with_telemetry(self) -> Result<RetrievalWithTelemetry<Vec<ScoredEntity>>> {
+        let output = self.run_for_pack()?;
+        Ok(RetrievalWithTelemetry {
+            value: output.scores,
+            run_id: output.telemetry_run_id,
+        })
     }
 
     /// Executes the pipeline and returns the detailed [`PipelineOutput`]
@@ -839,6 +853,9 @@ impl<'a> PipelineBuilder<'a> {
             scores.truncate(self.result_limit);
             if before_limit > 0 && scores.is_empty() {
                 empty_reason = Some(EmptyReason::BelowThreshold);
+            }
+            if total_in_scope == 0 && scores.is_empty() && empty_reason.is_none() {
+                empty_reason = Some(EmptyReason::NoData);
             }
             (
                 scores,
@@ -2368,9 +2385,12 @@ mod tests {
         let id = entity_id(0x33);
         put_text(&vault, id, "outcome telemetry")?;
 
-        let results = vault.query().search_text("outcome", 10).run()?;
-        assert!(!results.is_empty());
-        let run_id = vault.retrieval_runs(1)?[0].run_id;
+        let results = vault
+            .query()
+            .search_text("outcome", 10)
+            .run_with_telemetry()?;
+        assert!(!results.value.is_empty());
+        let run_id = results.run_id.expect("outcome telemetry run id");
 
         let mut metadata = BTreeMap::new();
         metadata.insert("source".to_owned(), "unit-test".to_owned());
@@ -2403,6 +2423,25 @@ mod tests {
     }
 
     #[test]
+    fn retrieval_outcome_rejects_unknown_run_id() -> Result<()> {
+        let (_dir, vault) = open_test_vault();
+        let unknown_run_id = RetrievalRunId::now();
+
+        let error = vault
+            .record_retrieval_outcome(crate::store::RetrievalOutcome {
+                run_id: unknown_run_id,
+                key: "click".to_owned(),
+                reward: Some(1.0),
+                accepted: Some(true),
+                metadata: BTreeMap::new(),
+            })
+            .expect_err("unknown run id should be rejected");
+        assert!(matches!(error, Error::InvalidConfig(_)));
+        assert!(vault.retrieval_outcomes(unknown_run_id)?.is_empty());
+        Ok(())
+    }
+
+    #[test]
     fn context_pack_records_context_pack_telemetry() -> Result<()> {
         let (_dir, vault) = open_test_vault();
         let id = entity_id(0x34);
@@ -2426,10 +2465,12 @@ mod tests {
         let id = entity_id(0x36);
         put_text_and_vector(&vault, id, "direct telemetry", [1.0, 0.0, 0.0, 0.0])?;
 
-        let vector = vault.search_vector(&[1.0, 0.0, 0.0, 0.0], 10)?;
-        let text = vault.search_text("direct", 10)?;
-        assert_eq!(vector.len(), 1);
-        assert_eq!(text.len(), 1);
+        let vector = vault.search_vector_with_telemetry(&[1.0, 0.0, 0.0, 0.0], 10)?;
+        let text = vault.search_text_with_telemetry("direct", 10)?;
+        assert_eq!(vector.value.len(), 1);
+        assert_eq!(text.value.len(), 1);
+        let vector_run_id = vector.run_id.expect("direct vector telemetry run id");
+        let text_run_id = text.run_id.expect("direct text telemetry run id");
 
         let runs = vault.retrieval_runs(10)?;
         let vector_run = runs
@@ -2439,6 +2480,7 @@ mod tests {
                     && run.signals == vec![RetrievalSignal::Vector]
             })
             .expect("direct vector telemetry run");
+        assert_eq!(vector_run.run_id, vector_run_id);
         assert_eq!(vector_run.claims_suppressed, 0);
         assert_eq!(vector_run.result_ids, vec![*id.as_bytes()]);
         assert!(vector_run.score_breakdown.iter().any(|entry| {
@@ -2455,6 +2497,7 @@ mod tests {
                     && run.signals == vec![RetrievalSignal::Text]
             })
             .expect("direct text telemetry run");
+        assert_eq!(text_run.run_id, text_run_id);
         assert_eq!(text_run.claims_suppressed, 0);
         assert_eq!(text_run.result_ids, vec![*id.as_bytes()]);
         assert!(text_run.score_breakdown.iter().any(|entry| {
@@ -2463,6 +2506,25 @@ mod tests {
                 .iter()
                 .any(|component| component.signal == RetrievalSignal::Text)
         }));
+        Ok(())
+    }
+
+    #[test]
+    fn retrieval_telemetry_records_no_hit_empty_reason() -> Result<()> {
+        let (_dir, vault) = open_test_vault();
+
+        let results = vault
+            .query()
+            .search_text("definitelymissing", 10)
+            .run_with_telemetry()?;
+        assert!(results.value.is_empty());
+        let run_id = results.run_id.expect("no-hit telemetry run id");
+
+        let runs = vault.retrieval_runs(1)?;
+        assert_eq!(runs.len(), 1);
+        assert_eq!(runs[0].run_id, run_id);
+        assert!(runs[0].result_ids.is_empty());
+        assert_eq!(runs[0].empty_reason.as_deref(), Some("NoData"));
         Ok(())
     }
 
@@ -2512,6 +2574,24 @@ mod tests {
         let direct = vault.search_text("best effort", 10)?;
         assert_eq!(direct.len(), 1);
         assert!(vault.retrieval_runs(1)?.is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn retrieval_telemetry_skips_active_write_transaction() -> Result<()> {
+        let (_dir, vault) = open_test_vault();
+        let id = entity_id(0x3B);
+        put_text(&vault, id, "active write telemetry")?;
+
+        vault.with_write_txn(|_wtxn| {
+            let direct = vault.search_text("active", 10)?;
+            assert_eq!(direct.len(), 1);
+            let pipeline = vault.query().search_text("active", 10).run()?;
+            assert_eq!(pipeline.len(), 1);
+            Ok(())
+        })?;
+
+        assert!(vault.retrieval_runs(10)?.is_empty());
         Ok(())
     }
 

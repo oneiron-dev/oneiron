@@ -56,8 +56,8 @@ use crate::types::{
     VaultConfig, bytes_to_hex_lower, decode_edge_value_for_kind, edge_value_layout_for_kind,
 };
 use crate::{
-    BatchBuilder, ContextPackBuilder, MaintenanceBuilder, PipelineBuilder, TxnBatchBuilder, bm25,
-    hnsw, le_bytes_to_f32_vec, ppr, unix_seconds_now,
+    BatchBuilder, ContextPackBuilder, MaintenanceBuilder, PipelineBuilder, RetrievalWithTelemetry,
+    TxnBatchBuilder, bm25, hnsw, le_bytes_to_f32_vec, ppr, unix_seconds_now,
 };
 
 const MIN_MAP_SIZE_BYTES: usize = 1 << 20;
@@ -2975,6 +2975,17 @@ impl Vault {
 
     /// Searches nearest neighbors by cosine similarity using the HNSW index.
     pub fn search_vector(&self, query: &[f32], limit: usize) -> Result<Vec<ScoredEntity>> {
+        Ok(self.search_vector_with_telemetry(query, limit)?.value)
+    }
+
+    /// Searches nearest neighbors by cosine similarity and returns the
+    /// retrieval telemetry run id when the best-effort telemetry row was
+    /// persisted.
+    pub fn search_vector_with_telemetry(
+        &self,
+        query: &[f32],
+        limit: usize,
+    ) -> Result<RetrievalWithTelemetry<Vec<ScoredEntity>>> {
         if query.len() != self.config.dimensions {
             return Err(Error::DimensionMismatch {
                 expected: self.config.dimensions,
@@ -2991,13 +3002,16 @@ impl Vault {
             let rtxn = self.store.env.read_txn()?;
             hnsw::hnsw_search(&self.store, &self.config, &rtxn, query, limit)?
         };
-        self.record_vault_search_retrieval_run(
+        let run_id = self.record_vault_search_retrieval_run(
             RetrievalSignal::Vector,
             started_at,
             started,
             &results,
         );
-        Ok(results)
+        Ok(RetrievalWithTelemetry {
+            value: results,
+            run_id,
+        })
     }
 
     /// Stores a directed edge and its reverse index entry.
@@ -3140,7 +3154,21 @@ impl Vault {
     /// Returns BM25 text matches for a query under the contract-default
     /// rank profile.
     pub fn search_text(&self, query: &str, limit: usize) -> Result<Vec<ScoredEntity>> {
-        self.search_text_with_profile(query, limit, &crate::types::Bm25RankProfile::default())
+        Ok(self.search_text_with_telemetry(query, limit)?.value)
+    }
+
+    /// Returns BM25 text matches and the retrieval telemetry run id when the
+    /// best-effort telemetry row was persisted.
+    pub fn search_text_with_telemetry(
+        &self,
+        query: &str,
+        limit: usize,
+    ) -> Result<RetrievalWithTelemetry<Vec<ScoredEntity>>> {
+        self.search_text_with_profile_and_telemetry(
+            query,
+            limit,
+            &crate::types::Bm25RankProfile::default(),
+        )
     }
 
     /// Returns BM25 text matches for a query under a caller-supplied
@@ -3155,6 +3183,20 @@ impl Vault {
         limit: usize,
         profile: &crate::types::Bm25RankProfile,
     ) -> Result<Vec<ScoredEntity>> {
+        Ok(self
+            .search_text_with_profile_and_telemetry(query, limit, profile)?
+            .value)
+    }
+
+    /// Returns BM25 text matches for a caller-supplied profile and the
+    /// retrieval telemetry run id when the best-effort telemetry row was
+    /// persisted.
+    pub fn search_text_with_profile_and_telemetry(
+        &self,
+        query: &str,
+        limit: usize,
+        profile: &crate::types::Bm25RankProfile,
+    ) -> Result<RetrievalWithTelemetry<Vec<ScoredEntity>>> {
         let config = profile.to_bm25_config()?;
         self.ensure_text_index_trusted()?;
         let started_at = unix_seconds_now();
@@ -3163,13 +3205,16 @@ impl Vault {
             let rtxn = self.store.env.read_txn()?;
             bm25::search_text(&self.store, &rtxn, &self.analyzer, &config, query, limit)?
         };
-        self.record_vault_search_retrieval_run(
+        let run_id = self.record_vault_search_retrieval_run(
             RetrievalSignal::Text,
             started_at,
             started,
             &results,
         );
-        Ok(results)
+        Ok(RetrievalWithTelemetry {
+            value: results,
+            run_id,
+        })
     }
 
     fn record_vault_search_retrieval_run(
@@ -3178,10 +3223,11 @@ impl Vault {
         started_at: u64,
         started: Instant,
         results: &[ScoredEntity],
-    ) {
+    ) -> Option<RetrievalRunId> {
         let score_breakdown = vault_search_score_breakdown(signal, results);
+        let run_id = RetrievalRunId::now();
         let record = RetrievalRunRecord::new(
-            RetrievalRunId::now(),
+            run_id,
             RetrievalAction::VaultSearch,
             started_at,
             started.elapsed().as_micros().min(u64::MAX as u128) as u64,
@@ -3196,6 +3242,9 @@ impl Vault {
                 ?error,
                 "vault search retrieval telemetry write failed; continuing retrieval"
             );
+            None
+        } else {
+            Some(run_id)
         }
     }
 
@@ -3343,7 +3392,10 @@ impl Vault {
         E: From<Error>,
     {
         let mut wtxn = self.store.env.write_txn().map_err(Error::from)?;
-        let result = f(&mut wtxn)?;
+        let result = {
+            let _active_write_txn = crate::store::active_write_txn_guard();
+            f(&mut wtxn)?
+        };
         wtxn.commit().map_err(Error::from)?;
         Ok(result)
     }
