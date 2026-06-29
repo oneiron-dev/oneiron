@@ -13,6 +13,62 @@
     "agentic",
     "chat"
   ],
+  "competitors": [
+    {
+      "competitorId": "deterministic-context-pack",
+      "arm": "deterministic",
+      "card": {
+        "displayName": "Deterministic context-pack",
+        "publicParityStatus": "fixture_only",
+        "judge": {
+          "judgeId": "beam-fixture-judge",
+          "version": "v1",
+          "notes": "Deterministic fixture expectations; no external benchmark claims."
+        },
+        "comparator": {
+          "comparatorId": "beam-fixed-comparator",
+          "version": "beam-comparator-card-v1",
+          "baselineCompetitorId": "deterministic-context-pack"
+        }
+      }
+    },
+    {
+      "competitorId": "agentic-adapter",
+      "arm": "agentic",
+      "card": {
+        "displayName": "Agentic adapter",
+        "publicParityStatus": "not_public_comparable",
+        "judge": {
+          "judgeId": "beam-fixture-judge",
+          "version": "v1",
+          "notes": "Adapter intentionally not ready in the fixture harness."
+        },
+        "comparator": {
+          "comparatorId": "beam-fixed-comparator",
+          "version": "beam-comparator-card-v1",
+          "baselineCompetitorId": "deterministic-context-pack"
+        }
+      }
+    },
+    {
+      "competitorId": "chat-adapter",
+      "arm": "chat",
+      "card": {
+        "displayName": "Chat adapter",
+        "publicParityStatus": "not_public_comparable",
+        "judge": {
+          "judgeId": "beam-fixture-judge",
+          "version": "v1",
+          "notes": "Adapter intentionally not ready in the fixture harness."
+        },
+        "comparator": {
+          "comparatorId": "beam-fixed-comparator",
+          "version": "beam-comparator-card-v1",
+          "baselineCompetitorId": "deterministic-context-pack"
+        }
+      }
+    }
+  ],
   "report": {
     "format": "json"
   }
