@@ -9,6 +9,7 @@ pub mod context_pack;
 pub mod deletion;
 pub(crate) mod distance;
 pub mod error;
+pub mod federation;
 pub(crate) mod fusion;
 pub(crate) mod gate;
 pub(crate) mod hnsw;
@@ -48,6 +49,11 @@ pub use crate::deletion::{
     TOMBSTONE_VALUE_V2_LEN, TombstoneReason, TombstoneValueV2, decode_tombstone_value,
 };
 pub use crate::error::{Error, ErrorKind, Result};
+pub use crate::federation::{
+    FEDERATION_GRANT_BODY_KEYS, FEDERATION_GRANT_SCHEMA_VERSION, FederationGrant,
+    FederationGrantPreset, FederationGrantRole, FederationGrantScope, decode_federation_grant_body,
+    encode_federation_grant_body,
+};
 pub use crate::ingest::{
     INGEST_SOURCE_REGISTRY, IngestError, IngestHarnessConfig, IngestResult, IngestSource,
     IngestSourceConfig, IngestSourceFormat, IngestSourceRegistration, IngestSourceRegistry,
@@ -67,9 +73,9 @@ pub use crate::provenance::{
 };
 pub use crate::types::{
     Bm25RankProfile, ContextEntity, ContextPack, DecodedEdgeValue, ENTITY_TYPE_CODE_ARTIFACT,
-    EdgeActorClass, EdgeConfirmationStatus, EdgeInfo, EdgeKind, EdgeProvenanceFlags,
-    EdgeValueLayout, EmptyContext, EmptyReason, EntityId, FieldProfile, HnswConfig,
-    NotificationItem, PackFormat, PackStats, ResumeBudget, ResumeBundle, ScoredEntity,
+    ENTITY_TYPE_FEDERATION_GRANT, EdgeActorClass, EdgeConfirmationStatus, EdgeInfo, EdgeKind,
+    EdgeProvenanceFlags, EdgeValueLayout, EmptyContext, EmptyReason, EntityId, FieldProfile,
+    HnswConfig, NotificationItem, PackFormat, PackStats, ResumeBudget, ResumeBundle, ScoredEntity,
     SessionContext, Signal, StructuralKindRegistration, TemporalAnchorMode, TemporalGranularity,
     TextAnalyzerConfig, TextIndexOptions, TimeRange, TokenAllocation, TypeByteBand,
     UnprocessedItem, Vad, VadAnnotation, VadAnnotationSource, VadComponent, VaultConfig,

@@ -4,11 +4,12 @@ use serde_json::{Map, Number, Value};
 
 use crate::types::{
     ContextEntity, ContextPack, ENTITY_TYPE_ASSET, ENTITY_TYPE_ASSET_TEXT, ENTITY_TYPE_CLAIM,
-    ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_EVENT, ENTITY_TYPE_FACET, ENTITY_TYPE_MACHINE,
-    ENTITY_TYPE_MESSAGE, ENTITY_TYPE_NOTIFICATION, ENTITY_TYPE_ORG, ENTITY_TYPE_PERSON,
-    ENTITY_TYPE_PLACE, ENTITY_TYPE_RELATIONSHIP, ENTITY_TYPE_SESSION, ENTITY_TYPE_SKILL,
-    ENTITY_TYPE_SUMMARY, ENTITY_TYPE_TASK, ENTITY_TYPE_TASK_LIST, ENTITY_TYPE_TURN,
-    ENTITY_TYPE_WORLD, FieldProfile, PackFormat, PackStats, ResumeBundle, Signal, TokenAllocation,
+    ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_EVENT, ENTITY_TYPE_FACET, ENTITY_TYPE_FEDERATION_GRANT,
+    ENTITY_TYPE_MACHINE, ENTITY_TYPE_MESSAGE, ENTITY_TYPE_NOTIFICATION, ENTITY_TYPE_ORG,
+    ENTITY_TYPE_PERSON, ENTITY_TYPE_PLACE, ENTITY_TYPE_RELATIONSHIP, ENTITY_TYPE_SESSION,
+    ENTITY_TYPE_SKILL, ENTITY_TYPE_SUMMARY, ENTITY_TYPE_TASK, ENTITY_TYPE_TASK_LIST,
+    ENTITY_TYPE_TURN, ENTITY_TYPE_WORLD, FieldProfile, PackFormat, PackStats, ResumeBundle, Signal,
+    TokenAllocation,
 };
 
 const GROUP_ORDER: &[u8] = &[
@@ -445,6 +446,9 @@ fn prepare_entities(
                     let Some(value) = map.get(&key) else {
                         continue;
                     };
+                    if !should_include_projected_field(entity.entity_type, &key, value) {
+                        continue;
+                    }
                     let value = normalize_value(
                         &key,
                         value,
@@ -474,6 +478,10 @@ fn prepare_entities(
             .then_some(prepared)
         })
         .collect()
+}
+
+fn should_include_projected_field(entity_type: u8, key: &str, value: &Value) -> bool {
+    !(entity_type == ENTITY_TYPE_FEDERATION_GRANT && key == "member_ref" && value.is_null())
 }
 
 #[cfg(test)]
@@ -1928,6 +1936,11 @@ fn known_group_labels(entity_type: u8) -> Option<GroupLabels> {
             name: "MACHINES",
             title: "Machines",
         }),
+        ENTITY_TYPE_FEDERATION_GRANT => Some(GroupLabels {
+            key: "federation_grants",
+            name: "FEDERATION_GRANTS",
+            title: "Federation Grants",
+        }),
         _ => None,
     }
 }
@@ -2014,6 +2027,16 @@ fn fields_for_profile(entity_type: u8, profile: FieldProfile) -> &'static [&'sta
         // Machine: schema-reserved, no fields yet. Explicit empty arms so
         // future field additions don't silently fall through to alphabetical order.
         (ENTITY_TYPE_MACHINE, _) => &[],
+
+        (ENTITY_TYPE_FEDERATION_GRANT, FieldProfile::Minimal) => {
+            crate::federation::FEDERATION_GRANT_FIELDS_MINIMAL
+        }
+        (ENTITY_TYPE_FEDERATION_GRANT, FieldProfile::Standard) => {
+            crate::federation::FEDERATION_GRANT_FIELDS_STANDARD
+        }
+        (ENTITY_TYPE_FEDERATION_GRANT, FieldProfile::Full) => {
+            crate::federation::FEDERATION_GRANT_FIELDS_FULL
+        }
 
         _ => &[],
     }
@@ -4362,6 +4385,53 @@ mod tests {
     }
 
     #[test]
+    fn federation_grant_member_ref_hex_projection_is_preserved() {
+        let member_ref = EntityId::from_bytes_unchecked([0x42; 16]).to_hex();
+        let fields = HashMap::from([
+            (
+                "scope".to_owned(),
+                serde_json::json!({"kind": "vault", "vault_id": 7}),
+            ),
+            ("member_ref".to_owned(), Value::String(member_ref.clone())),
+            ("role".to_owned(), Value::String("admin".to_owned())),
+            ("preset".to_owned(), Value::String("admin".to_owned())),
+        ]);
+        let pack = ContextPack {
+            results: vec![ContextEntity {
+                id: EntityId::from_bytes_unchecked([ENTITY_TYPE_FEDERATION_GRANT; 16]),
+                short_id: String::new(),
+                content_hash: 0,
+                entity_type: ENTITY_TYPE_FEDERATION_GRANT,
+                score: 1.0,
+                fields: Some(fields),
+                edges: None,
+                vector: None,
+            }],
+            neighbors: vec![],
+            stats: empty_stats(),
+            empty: None,
+        };
+        for profile in [FieldProfile::Standard, FieldProfile::Full] {
+            let cfg_json = SerializeConfig {
+                format: PackFormat::Json,
+                profile,
+                budget: 4000,
+                allocation: TokenAllocation::default(),
+                include_stats: false,
+                merge_neighbors: true,
+                max_field_chars: 500,
+                max_item_tokens: 0,
+            };
+
+            let parsed: Value =
+                serde_json::from_slice(&serialize_pack(&pack, &cfg_json)).expect("json parse");
+            let first = &parsed["federation_grants"][0];
+
+            assert_eq!(first["member_ref"], member_ref);
+        }
+    }
+
+    #[test]
     fn test_due_date_timestamp_rendering() {
         // dueDate set to 2 days in the future — should render as "+2d" in plaintext.
         let now = crate::unix_seconds_now();
@@ -4470,6 +4540,15 @@ mod tests {
         assert_eq!(mc.key, "machines");
         assert_eq!(mc.name, "MACHINES");
         assert_eq!(mc.title, "Machines");
+
+        let grant = group_labels(ENTITY_TYPE_FEDERATION_GRANT);
+        assert_eq!(grant.key, "federation_grants");
+        assert_eq!(grant.name, "FEDERATION_GRANTS");
+        assert_eq!(grant.title, "Federation Grants");
+        assert_eq!(
+            fields_for_profile(ENTITY_TYPE_FEDERATION_GRANT, FieldProfile::Minimal),
+            crate::federation::FEDERATION_GRANT_FIELDS_MINIMAL
+        );
 
         // Types outside the known set should fall back to OTHER_GROUP_LABELS.
         let unknown = group_labels(255);
