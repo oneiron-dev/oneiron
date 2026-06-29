@@ -1658,7 +1658,7 @@ impl Vault {
             return Ok(None);
         };
         let Some(raw) = self.store.entities.get(rtxn, subject.as_bytes())? else {
-            return Err(Error::EntityNotFound);
+            return Ok(None);
         };
         let header =
             EntityMetadataHeader::parse(raw).ok_or(Error::CorruptedIndex("entity header"))?;
