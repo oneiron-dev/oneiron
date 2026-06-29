@@ -889,7 +889,11 @@ impl<'a> PipelineBuilder<'a> {
         }
 
         let score_breakdown = telemetry_score_breakdown(&scores, &signal_components);
-        if self.ppr_search.is_none() && self.ppr_expand.is_some() && !ppr_expand_executed {
+        let ppr_search_executed = self
+            .ppr_search
+            .as_ref()
+            .is_some_and(|(seeds, _)| !seeds.is_empty());
+        if !ppr_search_executed && self.ppr_expand.is_some() && !ppr_expand_executed {
             telemetry_signals.retain(|signal| *signal != RetrievalSignal::Ppr);
         }
         let run_id = RetrievalRunId::now();
@@ -2677,6 +2681,16 @@ mod tests {
         assert!(ppr.value.is_empty());
         let ppr_run_id = ppr.run_id.expect("ppr noop telemetry run id");
 
+        let combined_ppr = vault
+            .query()
+            .search_ppr(&[], 2)
+            .expand_ppr(&[], 2)
+            .run_with_telemetry()?;
+        assert!(combined_ppr.value.is_empty());
+        let combined_ppr_run_id = combined_ppr
+            .run_id
+            .expect("combined ppr noop telemetry run id");
+
         let runs = vault.retrieval_runs(10)?;
         let phonetic_run = runs
             .iter()
@@ -2686,11 +2700,17 @@ mod tests {
             .iter()
             .find(|run| run.run_id == ppr_run_id)
             .expect("ppr noop telemetry row");
+        let combined_ppr_run = runs
+            .iter()
+            .find(|run| run.run_id == combined_ppr_run_id)
+            .expect("combined ppr noop telemetry row");
 
         assert!(!phonetic_run.signals.contains(&RetrievalSignal::Phonetic));
         assert!(phonetic_run.score_breakdown.is_empty());
         assert!(!ppr_run.signals.contains(&RetrievalSignal::Ppr));
         assert!(ppr_run.score_breakdown.is_empty());
+        assert!(!combined_ppr_run.signals.contains(&RetrievalSignal::Ppr));
+        assert!(combined_ppr_run.score_breakdown.is_empty());
         Ok(())
     }
 
