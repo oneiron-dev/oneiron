@@ -30,6 +30,9 @@ const LEGACY_DEFAULT_VAULT_PATH: &str = "./vault";
 ///   distinct-window touch cap. The default is intentionally high enough for
 ///   legitimate historical-window tombstone sync; it stops fabricated-key
 ///   floods, not real history.
+/// - `max_federation_windows_per_connection` — ENFORCED on grant-backed
+///   selector connections as a tighter distinct-window quota with temporary
+///   pause instead of closing the socket.
 /// - `max_connections_per_user` — not enforced until auth has per-user
 ///   identity.
 #[derive(Clone)]
@@ -58,6 +61,10 @@ pub struct SyncServerConfig {
     pub max_update_payload: usize,
     /// Maximum distinct valid windows one connection may touch.
     pub max_windows_per_connection: usize,
+    /// Maximum distinct valid windows one federated selector connection may touch.
+    pub max_federation_windows_per_connection: usize,
+    /// Seconds to pause a federated selector connection after quota overflow.
+    pub federation_flood_pause_secs: u64,
     /// Maximum inbound protocol messages per connection per second.
     pub max_messages_per_sec: u32,
     /// Maximum entity blob size in bytes (M5/M6 bulk + materialization paths).
@@ -84,6 +91,9 @@ impl Default for SyncServerConfig {
             max_frame_size: 4 * 1024 * 1024,     // 4 MB
             max_update_payload: 2 * 1024 * 1024, // 2 MB
             max_windows_per_connection: 4096,
+            max_federation_windows_per_connection:
+                oneiron::sync::DEFAULT_MAX_FEDERATION_WINDOWS_PER_CONNECTION,
+            federation_flood_pause_secs: oneiron::sync::DEFAULT_FEDERATION_FLOOD_PAUSE_SECS,
             max_messages_per_sec: 200,
             max_entity_blob: 64 * 1024,             // 64 KB
             max_bulk_decompressed: 8 * 1024 * 1024, // 8 MB
@@ -120,6 +130,14 @@ impl fmt::Debug for SyncServerConfig {
             .field(
                 "max_windows_per_connection",
                 &self.max_windows_per_connection,
+            )
+            .field(
+                "max_federation_windows_per_connection",
+                &self.max_federation_windows_per_connection,
+            )
+            .field(
+                "federation_flood_pause_secs",
+                &self.federation_flood_pause_secs,
             )
             .field("max_messages_per_sec", &self.max_messages_per_sec)
             .field("max_entity_blob", &self.max_entity_blob)
@@ -217,6 +235,14 @@ pub struct ServeArgs {
     #[arg(long)]
     pub max_windows_per_connection: Option<usize>,
 
+    /// Maximum distinct valid windows one federated selector connection may touch.
+    #[arg(long)]
+    pub max_federation_windows_per_connection: Option<usize>,
+
+    /// Seconds to pause a federated selector connection after quota overflow.
+    #[arg(long)]
+    pub federation_flood_pause_secs: Option<u64>,
+
     /// Maximum inbound protocol messages per connection per second.
     #[arg(long)]
     pub max_messages_per_sec: Option<u32>,
@@ -308,6 +334,14 @@ impl fmt::Debug for ServeArgs {
                 "max_windows_per_connection",
                 &self.max_windows_per_connection,
             )
+            .field(
+                "max_federation_windows_per_connection",
+                &self.max_federation_windows_per_connection,
+            )
+            .field(
+                "federation_flood_pause_secs",
+                &self.federation_flood_pause_secs,
+            )
             .field("max_messages_per_sec", &self.max_messages_per_sec)
             .field("max_entity_blob", &self.max_entity_blob)
             .field("max_bulk_decompressed", &self.max_bulk_decompressed)
@@ -360,6 +394,8 @@ pub struct ServeConfig {
     pub max_frame_size: usize,
     pub max_update_payload: usize,
     pub max_windows_per_connection: usize,
+    pub max_federation_windows_per_connection: usize,
+    pub federation_flood_pause_secs: u64,
     pub max_messages_per_sec: u32,
     pub max_entity_blob: usize,
     pub max_bulk_decompressed: usize,
@@ -391,6 +427,8 @@ impl Default for ServeConfig {
             max_frame_size: server.max_frame_size,
             max_update_payload: server.max_update_payload,
             max_windows_per_connection: server.max_windows_per_connection,
+            max_federation_windows_per_connection: server.max_federation_windows_per_connection,
+            federation_flood_pause_secs: server.federation_flood_pause_secs,
             max_messages_per_sec: server.max_messages_per_sec,
             max_entity_blob: server.max_entity_blob,
             max_bulk_decompressed: server.max_bulk_decompressed,
@@ -426,6 +464,14 @@ impl fmt::Debug for ServeConfig {
                 "max_windows_per_connection",
                 &self.max_windows_per_connection,
             )
+            .field(
+                "max_federation_windows_per_connection",
+                &self.max_federation_windows_per_connection,
+            )
+            .field(
+                "federation_flood_pause_secs",
+                &self.federation_flood_pause_secs,
+            )
             .field("max_messages_per_sec", &self.max_messages_per_sec)
             .field("max_entity_blob", &self.max_entity_blob)
             .field("max_bulk_decompressed", &self.max_bulk_decompressed)
@@ -448,6 +494,8 @@ impl ServeConfig {
             max_frame_size: self.max_frame_size,
             max_update_payload: self.max_update_payload,
             max_windows_per_connection: self.max_windows_per_connection,
+            max_federation_windows_per_connection: self.max_federation_windows_per_connection,
+            federation_flood_pause_secs: self.federation_flood_pause_secs,
             max_messages_per_sec: self.max_messages_per_sec,
             max_entity_blob: self.max_entity_blob,
             max_bulk_decompressed: self.max_bulk_decompressed,
@@ -519,6 +567,10 @@ impl EnvConfig {
         values.max_update_payload = lookup_parse(&mut lookup, "ONEIRON_MAX_UPDATE_PAYLOAD")?;
         values.max_windows_per_connection =
             lookup_parse(&mut lookup, "ONEIRON_MAX_WINDOWS_PER_CONNECTION")?;
+        values.max_federation_windows_per_connection =
+            lookup_parse(&mut lookup, "ONEIRON_MAX_FEDERATION_WINDOWS_PER_CONNECTION")?;
+        values.federation_flood_pause_secs =
+            lookup_parse(&mut lookup, "ONEIRON_FEDERATION_FLOOD_PAUSE_SECS")?;
         values.max_messages_per_sec = lookup_parse(&mut lookup, "ONEIRON_MAX_MESSAGES_PER_SEC")?;
         values.max_entity_blob = lookup_parse(&mut lookup, "ONEIRON_MAX_ENTITY_BLOB")?;
         values.max_bulk_decompressed = lookup_parse(&mut lookup, "ONEIRON_MAX_BULK_DECOMPRESSED")?;
@@ -608,6 +660,8 @@ struct FileServeConfig {
     max_frame_size: Option<usize>,
     max_update_payload: Option<usize>,
     max_windows_per_connection: Option<usize>,
+    max_federation_windows_per_connection: Option<usize>,
+    federation_flood_pause_secs: Option<u64>,
     max_messages_per_sec: Option<u32>,
     max_entity_blob: Option<usize>,
     max_bulk_decompressed: Option<usize>,
@@ -635,6 +689,8 @@ impl From<FileServeConfig> for PartialServeConfig {
             max_frame_size: value.max_frame_size,
             max_update_payload: value.max_update_payload,
             max_windows_per_connection: value.max_windows_per_connection,
+            max_federation_windows_per_connection: value.max_federation_windows_per_connection,
+            federation_flood_pause_secs: value.federation_flood_pause_secs,
             max_messages_per_sec: value.max_messages_per_sec,
             max_entity_blob: value.max_entity_blob,
             max_bulk_decompressed: value.max_bulk_decompressed,
@@ -663,6 +719,8 @@ struct PartialServeConfig {
     max_frame_size: Option<usize>,
     max_update_payload: Option<usize>,
     max_windows_per_connection: Option<usize>,
+    max_federation_windows_per_connection: Option<usize>,
+    federation_flood_pause_secs: Option<u64>,
     max_messages_per_sec: Option<u32>,
     max_entity_blob: Option<usize>,
     max_bulk_decompressed: Option<usize>,
@@ -723,6 +781,12 @@ impl PartialServeConfig {
         if let Some(value) = self.max_windows_per_connection {
             resolved.max_windows_per_connection = value;
         }
+        if let Some(value) = self.max_federation_windows_per_connection {
+            resolved.max_federation_windows_per_connection = value;
+        }
+        if let Some(value) = self.federation_flood_pause_secs {
+            resolved.federation_flood_pause_secs = value;
+        }
         if let Some(value) = self.max_messages_per_sec {
             resolved.max_messages_per_sec = value;
         }
@@ -765,6 +829,8 @@ impl From<&ServeArgs> for PartialServeConfig {
             max_frame_size: value.max_frame_size,
             max_update_payload: value.max_update_payload,
             max_windows_per_connection: value.max_windows_per_connection,
+            max_federation_windows_per_connection: value.max_federation_windows_per_connection,
+            federation_flood_pause_secs: value.federation_flood_pause_secs,
             max_messages_per_sec: value.max_messages_per_sec,
             max_entity_blob: value.max_entity_blob,
             max_bulk_decompressed: value.max_bulk_decompressed,
@@ -1141,6 +1207,37 @@ mod tests {
             resolved.allowed_origins,
             vec!["https://a.example", "https://b.example"]
         );
+    }
+
+    #[test]
+    fn federation_quota_config_merges_into_sync_server_config() {
+        let dir = tempfile::tempdir().unwrap();
+        let config_path = dir.path().join("oneiron.toml");
+        std::fs::write(
+            &config_path,
+            r#"
+max_federation_windows_per_connection = 5
+federation_flood_pause_secs = 20
+"#,
+        )
+        .unwrap();
+        let env = EnvConfig::from_pairs([
+            ("ONEIRON_CONFIG", config_path.to_str().unwrap()),
+            ("ONEIRON_MAX_FEDERATION_WINDOWS_PER_CONNECTION", "6"),
+        ])
+        .unwrap();
+        let flags = ServeArgs {
+            federation_flood_pause_secs: Some(7),
+            ..Default::default()
+        };
+
+        let resolved = resolve_serve_config_with_sources(&flags, env, None).unwrap();
+        let sync = resolved.sync_server_config();
+
+        assert_eq!(resolved.max_federation_windows_per_connection, 6);
+        assert_eq!(resolved.federation_flood_pause_secs, 7);
+        assert_eq!(sync.max_federation_windows_per_connection, 6);
+        assert_eq!(sync.federation_flood_pause_secs, 7);
     }
 
     #[test]
