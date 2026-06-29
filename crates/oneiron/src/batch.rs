@@ -1052,6 +1052,7 @@ pub(crate) fn deindex_entity(
     // entity record (e.g. text indexed via batch().text() without a preceding put()).
     crate::bm25::deindex_text(store, wtxn, id)?;
     delete_from_phonetic_postings(store, wtxn, id)?;
+    crate::code_revision::delete_code_revision_lifecycle_in_txn(store, wtxn, id)?;
     crate::codebase::delete_codebase_snapshot_in_txn(store, wtxn, id)?;
     let mut had_vector = store.vectors.delete(wtxn, id.as_bytes())?;
     crate::hnsw::hnsw_deindex(store, wtxn, id)?;
@@ -1218,6 +1219,14 @@ fn apply_put(
                 existing: old_type,
                 attempted: entity_type,
             });
+        }
+        if old_type == crate::types::ENTITY_TYPE_CODE_ARTIFACT
+            && body_changed
+            && crate::code_revision::has_finalized_code_revision_in_txn(store, wtxn, &id)?
+        {
+            return Err(Error::InvalidCodeArtifactBody(
+                "finalized code revision artifacts are immutable",
+            ));
         }
         if let Some(old_code_artifact_body) = old_code_artifact_body {
             crate::codebase::reconcile_codebase_snapshot_after_code_artifact_put(
