@@ -22,8 +22,8 @@ use crate::usage::UsageLedger;
 /// does not key storage by user, so this is a label only.
 const SERVER_USER_ID: &str = "server";
 
-/// Numeric lease ABI vault id for the current single-vault server path.
-/// Tenant/vault routing is intentionally outside ONE-1188.
+/// Numeric lease ABI vault id for the legacy local single-vault server path.
+/// Hosted paths set `SyncServerConfig::lease_vault_id` per tenant/vault.
 const SERVER_LEASE_VAULT_ID: u64 = 0;
 const LEASE_LIFECYCLE_TICK_INTERVAL: Duration = Duration::from_secs(60);
 static NEXT_LIFECYCLE_SESSION_ID: AtomicU64 = AtomicU64::new(1);
@@ -610,9 +610,9 @@ impl SyncServer {
     /// (OD-8 amended, RULING A): a revoked pubkey can never obtain a fresh
     /// active lease under ANY client_id, so a device that rotates client_id
     /// while reusing its key cannot recover — recovery requires a fresh
-    /// KEYPAIR. Hosted callers use `register_lease_for_vault` so this floor is
-    /// scoped to `(vault, pubkey)`; the current public wrapper preserves the
-    /// existing single-vault server id.
+    /// KEYPAIR. The public wrapper uses `SyncServerConfig::lease_vault_id`
+    /// so hosted callers scope the floor to `(vault, pubkey)` while the
+    /// default config preserves the existing single-vault server id.
     ///
     /// Scan-at-connect expiry (OD-7): any ACTIVE binding past its
     /// `expires_at` flips to EXPIRED first — server-side liveness
@@ -629,7 +629,7 @@ impl SyncServer {
         pubkey: &[u8; 32],
         pop_sig: &[u8; 64],
     ) -> Result<LeaseDecision, oneiron::Error> {
-        self.register_lease_for_vault(SERVER_LEASE_VAULT_ID, client_id, pubkey, pop_sig)
+        self.register_lease_for_vault(self.config.lease_vault_id, client_id, pubkey, pop_sig)
             .await
     }
 
@@ -788,7 +788,7 @@ impl SyncServer {
         &self,
         client_id: u64,
     ) -> Result<Option<Vec<u8>>, oneiron::Error> {
-        self.revoke_lease_for_vault(SERVER_LEASE_VAULT_ID, client_id)
+        self.revoke_lease_for_vault(self.config.lease_vault_id, client_id)
             .await
     }
 

@@ -55,6 +55,10 @@ pub struct SyncServerConfig {
     /// Explicit CORS origins allowed to call the HTTP API. Empty is
     /// fail-closed: no cross-origin browser access is granted.
     pub allowed_origins: Vec<String>,
+    /// Numeric vault scope for root lease registration/revocation.
+    /// Hosted deployments must set a distinct value per tenant/vault; `0`
+    /// preserves the legacy local single-vault scope.
+    pub lease_vault_id: u64,
     /// Maximum WebSocket frame size in bytes.
     pub max_frame_size: usize,
     /// Maximum CRDT update payload in bytes (enforced on WindowSync UPDATE).
@@ -88,6 +92,7 @@ impl Default for SyncServerConfig {
             auth_secret: None,
             allow_unauthenticated: false,
             allowed_origins: Vec::new(),
+            lease_vault_id: 0,
             max_frame_size: 4 * 1024 * 1024,     // 4 MB
             max_update_payload: 2 * 1024 * 1024, // 2 MB
             max_windows_per_connection: 4096,
@@ -125,6 +130,7 @@ impl fmt::Debug for SyncServerConfig {
             .field("auth_secret", &redacted_secret(&self.auth_secret))
             .field("allow_unauthenticated", &self.allow_unauthenticated)
             .field("allowed_origins", &self.allowed_origins)
+            .field("lease_vault_id", &self.lease_vault_id)
             .field("max_frame_size", &self.max_frame_size)
             .field("max_update_payload", &self.max_update_payload)
             .field(
@@ -190,6 +196,10 @@ pub struct ServeArgs {
         num_args = 1..
     )]
     pub allowed_origins: Option<Vec<String>>,
+
+    /// Numeric vault scope for lease registration and revocation.
+    #[arg(long)]
+    pub lease_vault_id: Option<u64>,
 
     /// Embedding vector dimension for the vault.
     #[arg(long)]
@@ -383,6 +393,7 @@ pub struct ServeConfig {
     pub auth_secret: Option<String>,
     pub allow_unauthenticated: bool,
     pub allowed_origins: Vec<String>,
+    pub lease_vault_id: u64,
     pub dimensions: usize,
     pub map_size: usize,
     pub log_level: String,
@@ -416,6 +427,7 @@ impl Default for ServeConfig {
             auth_secret: server.auth_secret,
             allow_unauthenticated: server.allow_unauthenticated,
             allowed_origins: server.allowed_origins,
+            lease_vault_id: server.lease_vault_id,
             dimensions: vault.dimensions,
             map_size: vault.map_size,
             log_level: "info".to_owned(),
@@ -447,6 +459,7 @@ impl fmt::Debug for ServeConfig {
             .field("auth_secret", &redacted_secret(&self.auth_secret))
             .field("allow_unauthenticated", &self.allow_unauthenticated)
             .field("allowed_origins", &self.allowed_origins)
+            .field("lease_vault_id", &self.lease_vault_id)
             .field("dimensions", &self.dimensions)
             .field("map_size", &self.map_size)
             .field("log_level", &self.log_level)
@@ -491,6 +504,7 @@ impl ServeConfig {
             auth_secret: self.auth_secret.clone(),
             allow_unauthenticated: self.allow_unauthenticated,
             allowed_origins: self.allowed_origins.clone(),
+            lease_vault_id: self.lease_vault_id,
             max_frame_size: self.max_frame_size,
             max_update_payload: self.max_update_payload,
             max_windows_per_connection: self.max_windows_per_connection,
@@ -553,6 +567,7 @@ impl EnvConfig {
         values.allow_unauthenticated =
             lookup_bool(&mut lookup, "ONEIRON_INSECURE_ALLOW_UNAUTHENTICATED")?;
         values.allowed_origins = lookup_list(&mut lookup, "ONEIRON_ALLOWED_ORIGINS");
+        values.lease_vault_id = lookup_parse(&mut lookup, "ONEIRON_LEASE_VAULT_ID")?;
         values.dimensions = lookup_parse(&mut lookup, "ONEIRON_DIMENSIONS")?;
         values.map_size = lookup_parse(&mut lookup, "ONEIRON_MAP_SIZE")?;
         values.log_level = lookup("ONEIRON_LOG_LEVEL");
@@ -649,6 +664,7 @@ struct FileServeConfig {
     auth_secret: Option<String>,
     allow_unauthenticated: Option<bool>,
     allowed_origins: Option<Vec<String>>,
+    lease_vault_id: Option<u64>,
     dimensions: Option<usize>,
     map_size: Option<usize>,
     log_level: Option<String>,
@@ -678,6 +694,7 @@ impl From<FileServeConfig> for PartialServeConfig {
             auth_secret: value.auth_secret,
             allow_unauthenticated: value.allow_unauthenticated,
             allowed_origins: value.allowed_origins,
+            lease_vault_id: value.lease_vault_id,
             dimensions: value.dimensions,
             map_size: value.map_size,
             log_level: value.log_level,
@@ -708,6 +725,7 @@ struct PartialServeConfig {
     auth_secret: Option<String>,
     allow_unauthenticated: Option<bool>,
     allowed_origins: Option<Vec<String>>,
+    lease_vault_id: Option<u64>,
     dimensions: Option<usize>,
     map_size: Option<usize>,
     log_level: Option<String>,
@@ -747,6 +765,9 @@ impl PartialServeConfig {
         }
         if let Some(value) = self.allowed_origins {
             resolved.allowed_origins = normalize_list(value);
+        }
+        if let Some(value) = self.lease_vault_id {
+            resolved.lease_vault_id = value;
         }
         if let Some(value) = self.dimensions {
             resolved.dimensions = value;
@@ -818,6 +839,7 @@ impl From<&ServeArgs> for PartialServeConfig {
             auth_secret: value.auth_secret.clone(),
             allow_unauthenticated: value.insecure_allow_unauthenticated,
             allowed_origins: value.allowed_origins.clone(),
+            lease_vault_id: value.lease_vault_id,
             dimensions: value.dimensions,
             map_size: value.map_size,
             log_level: value.log_level.clone(),
@@ -1112,6 +1134,27 @@ mod tests {
 
         assert_eq!(sync.usage_mode, UsageMode::OneironCloud);
         assert_eq!(sync.runtime_usage_mode(), UsageMode::OneironCloud);
+    }
+
+    #[test]
+    fn lease_vault_id_merges_into_sync_server_config() {
+        let dir = tempfile::tempdir().unwrap();
+        let config_path = dir.path().join("oneiron.toml");
+        std::fs::write(&config_path, "lease_vault_id = 5\n").unwrap();
+        let args = ServeArgs {
+            lease_vault_id: Some(7),
+            ..Default::default()
+        };
+        let env = EnvConfig::from_pairs([
+            ("ONEIRON_CONFIG", config_path.to_str().unwrap()),
+            ("ONEIRON_LEASE_VAULT_ID", "6"),
+        ])
+        .unwrap();
+
+        let resolved = resolve_serve_config_with_sources(&args, env, None).unwrap();
+
+        assert_eq!(resolved.lease_vault_id, 7);
+        assert_eq!(resolved.sync_server_config().lease_vault_id, 7);
     }
 
     #[test]
