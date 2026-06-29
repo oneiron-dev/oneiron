@@ -1181,7 +1181,7 @@ impl Vault {
             });
         }
         let retracted = retract_record(&claim.record, now)?;
-        let (occurred, learned_at, data) =
+        let (occurred, learned_at, retracted_claim_body, data) =
             closed_claim_put_payload(&claim, &retracted, ClaimLifecycleStatus::Retracted)?;
 
         // The subject edge must still exist — the retraction KEEPS it and
@@ -1191,6 +1191,14 @@ impl Vault {
         if self.store.edges_out.get(&wtxn, &edge_key)?.is_none() {
             return Err(Error::EdgeNotFound);
         }
+
+        let policy = crate::gate::resolve_policy_manifest(&self.store, &wtxn)?;
+        crate::gate::check_edge_provenance_claim_policy(
+            &retracted_claim_body,
+            &retracted,
+            claim.actor_class,
+            &policy,
+        )?;
 
         // Flags refresh: the D14 winner among REMAINING live Claims, else
         // the contract's retracted stamp with this Claim's persisted class.
@@ -1530,11 +1538,12 @@ impl Vault {
             );
         for closure in &closures {
             let closed_record = close_record_for_supersession(&closure.record, close_at)?;
-            let (closed_occurred, closed_learned_at, closed_data) = closed_claim_put_payload(
-                closure,
-                &closed_record,
-                ClaimLifecycleStatus::Superseded,
-            )?;
+            let (closed_occurred, closed_learned_at, _closed_claim_body, closed_data) =
+                closed_claim_put_payload(
+                    closure,
+                    &closed_record,
+                    ClaimLifecycleStatus::Superseded,
+                )?;
             builder = builder.put_reserved_claim(
                 &closure.id,
                 closed_occurred,
@@ -4680,7 +4689,7 @@ fn closed_claim_put_payload(
     claim: &StoredProvenanceClaim,
     closed_record: &EdgeProvenanceClaimBody,
     lifecycle: ClaimLifecycleStatus,
-) -> Result<(TimeRange, u64, Vec<u8>)> {
+) -> Result<(TimeRange, u64, ClaimBody, Vec<u8>)> {
     let valid_to = closed_record.valid_to.ok_or(Error::InvariantViolation(
         "closed provenance record must carry valid_to",
     ))?;
@@ -4699,7 +4708,7 @@ fn closed_claim_put_payload(
     wrapper.lifecycle = lifecycle;
     let data = encode_claim_body(&wrapper)?;
     validate_claim_body_bytes(&data, true)?;
-    Ok((occurred, claim.learned_at, data))
+    Ok((occurred, claim.learned_at, wrapper, data))
 }
 
 /// Parses one `edges_out` / `edges_in` row into an [`EdgeInfo`], failing
