@@ -42,12 +42,14 @@ pub struct Materializer {
     /// Mutex serializing all Observer B callbacks + direct bridge-origin deletes.
     /// Uses `std::sync::Mutex` (NOT `tokio::sync::Mutex`) per spec.
     mutex: Mutex<()>,
+    lease_vault_id: u64,
 }
 
 impl Default for Materializer {
     fn default() -> Self {
         Self {
             mutex: Mutex::new(()),
+            lease_vault_id: crate::sync::lease::DEFAULT_LEASE_VAULT_ID,
         }
     }
 }
@@ -55,6 +57,17 @@ impl Default for Materializer {
 impl Materializer {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    pub fn with_lease_vault_id(lease_vault_id: u64) -> Self {
+        Self {
+            mutex: Mutex::new(()),
+            lease_vault_id,
+        }
+    }
+
+    pub fn lease_vault_id(&self) -> u64 {
+        self.lease_vault_id
     }
 
     /// Acquires the materializer lock.
@@ -305,12 +318,13 @@ fn subscribe_map_observer(
     vault: &Arc<Vault>,
     materializer: &Arc<Materializer>,
     window_key: &str,
-    materialize: fn(&LoroDoc, &loro::event::MapDelta<'_>, &Vault, &str),
+    materialize: fn(&LoroDoc, &loro::event::MapDelta<'_>, &Vault, &str, u64),
 ) -> Subscription {
     let callback_doc = doc.clone();
     let subscription_doc = doc.clone();
     let vault = vault.clone();
     let materializer = materializer.clone();
+    let lease_vault_id = materializer.lease_vault_id();
     let window_key = window_key.to_string();
     let cid = map.id();
     subscription_doc.subscribe(
@@ -322,7 +336,13 @@ fn subscribe_map_observer(
             let _guard = materializer.lock();
             for cdiff in &event.events {
                 if let Some(map_delta) = cdiff.diff.as_map() {
-                    materialize(&callback_doc, map_delta, &vault, &window_key);
+                    materialize(
+                        &callback_doc,
+                        map_delta,
+                        &vault,
+                        &window_key,
+                        lease_vault_id,
+                    );
                 }
             }
         }),
@@ -348,6 +368,7 @@ fn materialize_entities_from_delta(
     delta: &loro::event::MapDelta<'_>,
     vault: &Vault,
     window_key: &str,
+    lease_vault_id: u64,
 ) {
     let tombstones_map = doc.get_map("tombstones");
     // ONE-1147: ids + op bytes applied into the batch txn, retained outside
@@ -458,6 +479,7 @@ fn materialize_entities_from_delta(
                         &tombstones_map,
                         key.as_ref(),
                         blob,
+                        lease_vault_id,
                     );
                     match materialize_result {
                         Ok(()) => applied_ops.push((id, blob.to_vec())),
@@ -563,6 +585,7 @@ fn materialize_edges_from_delta(
     delta: &loro::event::MapDelta<'_>,
     vault: &Vault,
     window_key: &str,
+    lease_vault_id: u64,
 ) {
     // ONE-1147: source id + LMDB edge key + op bytes for every UPSERT
     // pushed into the batch, retained outside the txn for the swallow site
@@ -623,6 +646,7 @@ fn materialize_edges_from_delta(
                         &entities_map,
                         &tombstones_map,
                         &src,
+                        lease_vault_id,
                     );
                     let tgt_ready = ensure_entity_materialized_from_crdt(
                         vault,
@@ -630,6 +654,7 @@ fn materialize_edges_from_delta(
                         &entities_map,
                         &tombstones_map,
                         &tgt,
+                        lease_vault_id,
                     );
                     // ONE-1147 fix-wave: record every endpoint this batch
                     // ACTUALLY wrote (Hydrated) BEFORE the match may
@@ -1165,6 +1190,7 @@ fn materialize_tombstones_from_delta(
     delta: &loro::event::MapDelta<'_>,
     vault: &Vault,
     window_key: &str,
+    _lease_vault_id: u64,
 ) {
     for (key, new_val) in &delta.updated {
         match new_val {
@@ -1331,6 +1357,7 @@ fn materialize_entity_blob_in_txn(
     tombstones_map: &LoroMap,
     key: &str,
     blob: &[u8],
+    lease_vault_id: u64,
 ) -> Result<()> {
     let id = EntityId::from_hex(key).map_err(|_| crate::Error::InvalidKey)?;
 
@@ -1423,7 +1450,13 @@ fn materialize_entity_blob_in_txn(
             }
             return Err(crate::Error::RedactionReceiptDivergence { id });
         }
-        crate::sync::lease::verify_new_receipt_origin_in_txn(vault, wtxn, &id, blob)?;
+        crate::sync::lease::verify_new_receipt_origin_for_vault_in_txn(
+            vault,
+            wtxn,
+            lease_vault_id,
+            &id,
+            blob,
+        )?;
     }
 
     // Replicated put: Observer B mirrors whatever the unfiltered CRDT
@@ -1496,6 +1529,7 @@ fn ensure_entity_materialized_from_crdt(
     entities_map: &LoroMap,
     tombstones_map: &LoroMap,
     id: &EntityId,
+    lease_vault_id: u64,
 ) -> Result<EndpointHydration> {
     #[cfg(test)]
     {
@@ -1553,7 +1587,7 @@ fn ensure_entity_materialized_from_crdt(
     if EntityMetadataHeader::parse(&blob).is_none() {
         return Ok(EndpointHydration::RejectedBlob);
     }
-    materialize_entity_blob_in_txn(vault, wtxn, tombstones_map, &hex_id, &blob)?;
+    materialize_entity_blob_in_txn(vault, wtxn, tombstones_map, &hex_id, &blob, lease_vault_id)?;
     // ONE-1147 fix-wave: distinguish an ACTUAL hydration write from the
     // already-present `Ready` above, carrying the written bytes so the
     // edge-batch swallow site can flag a durable rm: marker (parity guard +
