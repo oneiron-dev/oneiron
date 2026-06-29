@@ -539,6 +539,7 @@ impl<'a> PipelineBuilder<'a> {
         let started_at = crate::unix_seconds_now();
         let telemetry_action = self.telemetry_action;
         let mut telemetry_signals = self.telemetry_signals();
+        let no_data_fallback_eligible = self.no_data_fallback_eligible();
         let mut ppr_expand_executed = false;
 
         // Resolve the rank profile before anything else: an invalid
@@ -856,7 +857,11 @@ impl<'a> PipelineBuilder<'a> {
             if before_limit > 0 && scores.is_empty() {
                 empty_reason = Some(EmptyReason::BelowThreshold);
             }
-            if total_in_scope == 0 && scores.is_empty() && empty_reason.is_none() {
+            if no_data_fallback_eligible
+                && total_in_scope == 0
+                && scores.is_empty()
+                && empty_reason.is_none()
+            {
                 empty_reason = Some(EmptyReason::NoData);
             }
             (
@@ -899,7 +904,14 @@ impl<'a> PipelineBuilder<'a> {
             claims_suppressed,
             empty_reason.map(|reason| format!("{reason:?}")),
         );
-        let telemetry_run_id = match self.vault.store.record_retrieval_run(&run_record) {
+        let write_result = if telemetry_action == RetrievalAction::ContextPack {
+            self.vault
+                .store
+                .record_context_pack_provisional_retrieval_run(&run_record)
+        } else {
+            self.vault.store.record_retrieval_run(&run_record)
+        };
+        let telemetry_run_id = match write_result {
             Ok(()) => Some(run_id),
             Err(error) => {
                 tracing::warn!(
@@ -939,6 +951,32 @@ impl<'a> PipelineBuilder<'a> {
             signals.push(RetrievalSignal::Ppr);
         }
         signals
+    }
+
+    fn no_data_fallback_eligible(&self) -> bool {
+        self.vector_search
+            .as_ref()
+            .is_some_and(|(_, limit)| *limit > 0)
+            || self
+                .text_search
+                .as_ref()
+                .is_some_and(|(_, limit)| *limit > 0)
+            || self
+                .phonetic_search
+                .as_ref()
+                .is_some_and(|codes| !codes.is_empty())
+            || self
+                .temporal_search
+                .as_ref()
+                .is_some_and(|config| config.limit > 0)
+            || self
+                .ppr_search
+                .as_ref()
+                .is_some_and(|(seeds, _)| !seeds.is_empty())
+            || self
+                .ppr_expand
+                .as_ref()
+                .is_some_and(|(seeds, _)| !seeds.is_empty())
     }
 }
 
@@ -2588,6 +2626,33 @@ mod tests {
         assert_eq!(runs[0].run_id, run_id);
         assert!(runs[0].result_ids.is_empty());
         assert_eq!(runs[0].empty_reason.as_deref(), Some("NoData"));
+        Ok(())
+    }
+
+    #[test]
+    fn retrieval_telemetry_zero_limit_pipeline_has_no_empty_reason() -> Result<()> {
+        let (_dir, vault) = open_test_vault();
+        let id = entity_id(0x3E);
+        put_text_and_vector(
+            &vault,
+            id,
+            "pipeline zero limit telemetry",
+            [1.0, 0.0, 0.0, 0.0],
+        )?;
+
+        let results = vault
+            .query()
+            .search_text("pipeline zero limit", 0)
+            .search_vector(&[1.0, 0.0, 0.0, 0.0], 0)
+            .run_with_telemetry()?;
+        assert!(results.value.is_empty());
+        let run_id = results.run_id.expect("zero-limit telemetry run id");
+
+        let runs = vault.retrieval_runs(1)?;
+        assert_eq!(runs.len(), 1);
+        assert_eq!(runs[0].run_id, run_id);
+        assert!(runs[0].result_ids.is_empty());
+        assert_eq!(runs[0].empty_reason, None);
         Ok(())
     }
 

@@ -180,6 +180,7 @@ const STRUCTURAL_KIND_REGISTRY_RECORD_VERSION: u8 = 1;
 const STRUCTURAL_KIND_REGISTRY_RECORD_HEADER_LEN: usize = 6;
 const RETRIEVAL_TELEMETRY_VERSION: u8 = 0;
 const RETRIEVAL_RUN_KEY_PREFIX: &[u8] = b"retr_run:v0:";
+const RETRIEVAL_RUN_PROVISIONAL_KEY_PREFIX: &[u8] = b"retr_run_prov:v0:";
 const RETRIEVAL_OUTCOME_KEY_PREFIX: &[u8] = b"retr_out:v0:";
 const RETRIEVAL_RUNS_CAPACITY_HINT_LIMIT: usize = 1024;
 const RETRIEVAL_OUTCOME_KEY_MAX_LEN: usize = 128;
@@ -900,6 +901,21 @@ impl Store {
     }
 
     pub(crate) fn record_retrieval_run(&self, record: &RetrievalRunRecord) -> Result<()> {
+        self.record_retrieval_run_with_visibility(record, true)
+    }
+
+    pub(crate) fn record_context_pack_provisional_retrieval_run(
+        &self,
+        record: &RetrievalRunRecord,
+    ) -> Result<()> {
+        self.record_retrieval_run_with_visibility(record, false)
+    }
+
+    fn record_retrieval_run_with_visibility(
+        &self,
+        record: &RetrievalRunRecord,
+        published: bool,
+    ) -> Result<()> {
         #[cfg(test)]
         if test_hooks::take_fail_next_retrieval_run_write(&self._registered_path.path) {
             return Err(Error::InvariantViolation(
@@ -914,8 +930,14 @@ impl Store {
 
         let key = retrieval_run_key(record.run_id);
         let value = encode_retrieval_run(record)?;
+        let provisional_key = retrieval_run_provisional_key(record.run_id);
         let mut wtxn = self.env.write_txn()?;
         self.vault_meta.put(&mut wtxn, &key, &value)?;
+        if published {
+            self.vault_meta.delete(&mut wtxn, &provisional_key)?;
+        } else {
+            self.vault_meta.put(&mut wtxn, &provisional_key, b"1")?;
+        }
         wtxn.commit()?;
         Ok(())
     }
@@ -928,6 +950,7 @@ impl Store {
         }
 
         let key = retrieval_run_key(run_id);
+        let provisional_key = retrieval_run_provisional_key(run_id);
         let outcome_prefix = retrieval_outcome_run_prefix(run_id);
         let mut wtxn = self.env.write_txn()?;
         let mut outcome_keys = Vec::new();
@@ -938,6 +961,7 @@ impl Store {
         for key in outcome_keys {
             self.vault_meta.delete(&mut wtxn, &key)?;
         }
+        self.vault_meta.delete(&mut wtxn, &provisional_key)?;
         self.vault_meta.delete(&mut wtxn, &key)?;
         wtxn.commit()?;
         Ok(())
@@ -958,8 +982,11 @@ impl Store {
         }
 
         let key = retrieval_run_key(run_id);
+        let provisional_key = retrieval_run_provisional_key(run_id);
         let mut wtxn = self.env.write_txn()?;
         let Some(raw) = self.vault_meta.get(&wtxn, &key)? else {
+            self.vault_meta.delete(&mut wtxn, &provisional_key)?;
+            wtxn.commit()?;
             return Ok(());
         };
         let mut record = decode_retrieval_run(raw)?;
@@ -982,6 +1009,7 @@ impl Store {
         record.empty_reason = empty_reason;
         let value = encode_retrieval_run(&record)?;
         self.vault_meta.put(&mut wtxn, &key, &value)?;
+        self.vault_meta.delete(&mut wtxn, &provisional_key)?;
         wtxn.commit()?;
         Ok(())
     }
@@ -1012,6 +1040,12 @@ impl Store {
                 "retrieval outcome references unknown run id".to_owned(),
             ));
         }
+        let provisional_key = retrieval_run_provisional_key(record.run_id);
+        if self.vault_meta.get(&wtxn, &provisional_key)?.is_some() {
+            return Err(Error::InvalidConfig(
+                "retrieval outcome references unpublished context-pack run id".to_owned(),
+            ));
+        }
         self.vault_meta.put(&mut wtxn, &key, &value)?;
         wtxn.commit()?;
         Ok(())
@@ -1035,7 +1069,16 @@ impl Store {
             if !key.starts_with(RETRIEVAL_RUN_KEY_PREFIX) {
                 break;
             }
-            records.push(decode_retrieval_run(value)?);
+            if let Some(run_id) = retrieval_run_id_from_key(key)
+                && self
+                    .vault_meta
+                    .get(&rtxn, &retrieval_run_provisional_key(run_id))?
+                    .is_some()
+            {
+                continue;
+            }
+            let record = decode_retrieval_run(value)?;
+            records.push(record);
             if records.len() == limit {
                 break;
             }
@@ -1049,6 +1092,17 @@ impl Store {
     ) -> Result<Vec<RetrievalOutcomeRecord>> {
         let prefix = retrieval_outcome_run_prefix(run_id);
         let rtxn = self.env.read_txn()?;
+        if self
+            .vault_meta
+            .get(&rtxn, &retrieval_run_key(run_id))?
+            .is_none()
+            || self
+                .vault_meta
+                .get(&rtxn, &retrieval_run_provisional_key(run_id))?
+                .is_some()
+        {
+            return Ok(Vec::new());
+        }
         let mut records = Vec::new();
         for row in self.vault_meta.prefix_iter(&rtxn, &prefix)? {
             let (_, value) = row?;
@@ -1062,6 +1116,19 @@ impl Store {
 fn retrieval_run_key(run_id: RetrievalRunId) -> Vec<u8> {
     let mut key = Vec::with_capacity(RETRIEVAL_RUN_KEY_PREFIX.len() + 16);
     key.extend_from_slice(RETRIEVAL_RUN_KEY_PREFIX);
+    key.extend_from_slice(&run_id.as_bytes());
+    key
+}
+
+fn retrieval_run_id_from_key(key: &[u8]) -> Option<RetrievalRunId> {
+    let bytes = key.get(RETRIEVAL_RUN_KEY_PREFIX.len()..)?;
+    let bytes: [u8; 16] = bytes.try_into().ok()?;
+    Some(RetrievalRunId { bytes })
+}
+
+fn retrieval_run_provisional_key(run_id: RetrievalRunId) -> Vec<u8> {
+    let mut key = Vec::with_capacity(RETRIEVAL_RUN_PROVISIONAL_KEY_PREFIX.len() + 16);
+    key.extend_from_slice(RETRIEVAL_RUN_PROVISIONAL_KEY_PREFIX);
     key.extend_from_slice(&run_id.as_bytes());
     key
 }
