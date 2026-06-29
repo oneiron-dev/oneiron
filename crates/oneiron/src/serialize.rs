@@ -4317,59 +4317,7 @@ mod tests {
     }
 
     #[test]
-    fn federation_grant_member_ref_null_projection_is_not_serialized() {
-        let member_ref = EntityId::from_bytes_unchecked([0x42; 16]).to_hex();
-        let fields = HashMap::from([
-            (
-                "schema_version".to_owned(),
-                Value::Number(Number::from(1_u64)),
-            ),
-            (
-                "scope".to_owned(),
-                serde_json::json!({"kind": "vault", "vault_id": 7}),
-            ),
-            ("member_ref".to_owned(), Value::Null),
-            ("role".to_owned(), Value::String("admin".to_owned())),
-            ("preset".to_owned(), Value::String("admin".to_owned())),
-        ]);
-        let pack = ContextPack {
-            results: vec![ContextEntity {
-                id: EntityId::from_bytes_unchecked([ENTITY_TYPE_FEDERATION_GRANT; 16]),
-                short_id: String::new(),
-                content_hash: 0,
-                entity_type: ENTITY_TYPE_FEDERATION_GRANT,
-                score: 1.0,
-                fields: Some(fields),
-                edges: None,
-                vector: None,
-            }],
-            neighbors: vec![],
-            stats: empty_stats(),
-            empty: None,
-        };
-        for profile in [FieldProfile::Standard, FieldProfile::Full] {
-            let cfg_json = SerializeConfig {
-                format: PackFormat::Json,
-                profile,
-                budget: 4000,
-                allocation: TokenAllocation::default(),
-                include_stats: false,
-                merge_neighbors: true,
-                max_field_chars: 500,
-                max_item_tokens: 0,
-            };
-
-            let parsed: Value =
-                serde_json::from_slice(&serialize_pack(&pack, &cfg_json)).expect("json parse");
-            let first = &parsed["federation_grants"][0];
-
-            assert!(first.get("member_ref").is_none());
-            assert_ne!(first["member_ref"], member_ref);
-        }
-    }
-
-    #[test]
-    fn federation_grant_member_ref_string_projection_is_preserved() {
+    fn federation_grant_member_ref_hex_projection_is_preserved() {
         let member_ref = EntityId::from_bytes_unchecked([0x42; 16]).to_hex();
         let fields = HashMap::from([
             (

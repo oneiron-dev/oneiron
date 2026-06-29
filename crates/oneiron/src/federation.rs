@@ -26,6 +26,7 @@ pub(crate) const FEDERATION_GRANT_FIELDS_FULL: &[&str] = &FEDERATION_GRANT_BODY_
 
 const KEY_SCHEMA_VERSION: &str = FEDERATION_GRANT_BODY_KEYS[0];
 const KEY_SCOPE: &str = FEDERATION_GRANT_BODY_KEYS[1];
+// Stored as EntityId hex so generic context-pack hydration preserves the principal.
 const KEY_MEMBER_REF: &str = FEDERATION_GRANT_BODY_KEYS[2];
 const KEY_ROLE: &str = FEDERATION_GRANT_BODY_KEYS[3];
 const KEY_PRESET: &str = FEDERATION_GRANT_BODY_KEYS[4];
@@ -226,7 +227,7 @@ pub fn encode_federation_grant_body(grant: &FederationGrant) -> Result<Vec<u8>> 
         (Value::from(KEY_SCOPE), encode_scope(grant.scope)),
         (
             Value::from(KEY_MEMBER_REF),
-            Value::Binary(grant.member_ref.as_bytes().to_vec()),
+            Value::from(grant.member_ref.to_hex()),
         ),
         (Value::from(KEY_ROLE), Value::from(grant.role.as_str())),
         (Value::from(KEY_PRESET), Value::from(grant.preset.as_str())),
@@ -325,11 +326,8 @@ fn decode_scope(value: &Value) -> Result<FederationGrantScope> {
 }
 
 fn decode_entity_ref(value: &Value) -> Result<EntityId> {
-    let Value::Binary(bytes) = value else {
-        return Err(invalid_grant());
-    };
-    let arr: [u8; 16] = bytes.as_slice().try_into().map_err(|_| invalid_grant())?;
-    EntityId::from_bytes(arr).map_err(|_| invalid_grant())
+    let hex = value.as_str().ok_or_else(invalid_grant)?;
+    EntityId::from_hex(hex).map_err(|_| invalid_grant())
 }
 
 fn validate_body_keys(entries: &[(Value, Value)]) -> Result<()> {
@@ -436,7 +434,7 @@ mod tests {
             ),
             (
                 Value::from(KEY_MEMBER_REF),
-                Value::Binary(member_ref().as_bytes().to_vec()),
+                Value::from(member_ref().to_hex()),
             ),
             (Value::from(KEY_ROLE), Value::from("admin")),
             (Value::from(KEY_PRESET), Value::from("admin")),
@@ -457,6 +455,21 @@ mod tests {
 
         assert_eq!(decoded, grant);
         assert!(decoded.is_admin());
+        Ok(())
+    }
+
+    #[test]
+    fn federation_grant_body_encodes_member_ref_as_hex_string() -> Result<()> {
+        let encoded = encode_federation_grant_body(&test_grant())?;
+        let mut cursor = Cursor::new(&encoded);
+        let value = rmpv::decode::read_value(&mut cursor).expect("decode grant body");
+        let Value::Map(entries) = value else {
+            panic!("grant body must encode as a map");
+        };
+
+        let expected = member_ref().to_hex();
+        let member = required_value(&entries, KEY_MEMBER_REF)?;
+        assert_eq!(member.as_str(), Some(expected.as_str()));
         Ok(())
     }
 
@@ -516,7 +529,14 @@ mod tests {
         let mut bad_member = valid_entries();
         for (key, value) in &mut bad_member {
             if key.as_str() == Some(KEY_MEMBER_REF) {
-                *value = Value::Binary(vec![0x42; 15]);
+                *value = Value::from("not-a-32-char-hex-entity-id");
+            }
+        }
+
+        let mut binary_member = valid_entries();
+        for (key, value) in &mut binary_member {
+            if key.as_str() == Some(KEY_MEMBER_REF) {
+                *value = Value::Binary(member_ref().as_bytes().to_vec());
             }
         }
 
@@ -531,6 +551,7 @@ mod tests {
             ("bad scope kind", grant_map(bad_scope_kind)),
             ("zero vault", grant_map(zero_vault)),
             ("bad member", grant_map(bad_member)),
+            ("binary member", grant_map(binary_member)),
         ] {
             let err = match decode_federation_grant_body(&bytes) {
                 Ok(decoded) => panic!("{case}: malformed grant decoded as {decoded:?}"),
