@@ -4,11 +4,12 @@ use serde_json::{Map, Number, Value};
 
 use crate::types::{
     ContextEntity, ContextPack, ENTITY_TYPE_ASSET, ENTITY_TYPE_ASSET_TEXT, ENTITY_TYPE_CLAIM,
-    ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_EVENT, ENTITY_TYPE_FACET, ENTITY_TYPE_MACHINE,
-    ENTITY_TYPE_MESSAGE, ENTITY_TYPE_NOTIFICATION, ENTITY_TYPE_ORG, ENTITY_TYPE_PERSON,
-    ENTITY_TYPE_PLACE, ENTITY_TYPE_RELATIONSHIP, ENTITY_TYPE_SESSION, ENTITY_TYPE_SKILL,
-    ENTITY_TYPE_SUMMARY, ENTITY_TYPE_TASK, ENTITY_TYPE_TASK_LIST, ENTITY_TYPE_TURN,
-    ENTITY_TYPE_WORLD, FieldProfile, PackFormat, PackStats, ResumeBundle, Signal, TokenAllocation,
+    ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_EVENT, ENTITY_TYPE_FACET, ENTITY_TYPE_FEDERATION_GRANT,
+    ENTITY_TYPE_MACHINE, ENTITY_TYPE_MESSAGE, ENTITY_TYPE_NOTIFICATION, ENTITY_TYPE_ORG,
+    ENTITY_TYPE_PERSON, ENTITY_TYPE_PLACE, ENTITY_TYPE_RELATIONSHIP, ENTITY_TYPE_SESSION,
+    ENTITY_TYPE_SKILL, ENTITY_TYPE_SUMMARY, ENTITY_TYPE_TASK, ENTITY_TYPE_TASK_LIST,
+    ENTITY_TYPE_TURN, ENTITY_TYPE_WORLD, FieldProfile, PackFormat, PackStats, ResumeBundle, Signal,
+    TokenAllocation,
 };
 
 const GROUP_ORDER: &[u8] = &[
@@ -1880,6 +1881,11 @@ fn known_group_labels(entity_type: u8) -> Option<GroupLabels> {
             name: "MACHINES",
             title: "Machines",
         }),
+        ENTITY_TYPE_FEDERATION_GRANT => Some(GroupLabels {
+            key: "federation_grants",
+            name: "FEDERATION_GRANTS",
+            title: "Federation Grants",
+        }),
         _ => None,
     }
 }
@@ -1966,6 +1972,16 @@ fn fields_for_profile(entity_type: u8, profile: FieldProfile) -> &'static [&'sta
         // Machine: schema-reserved, no fields yet. Explicit empty arms so
         // future field additions don't silently fall through to alphabetical order.
         (ENTITY_TYPE_MACHINE, _) => &[],
+
+        (ENTITY_TYPE_FEDERATION_GRANT, FieldProfile::Minimal) => {
+            crate::federation::FEDERATION_GRANT_FIELDS_MINIMAL
+        }
+        (ENTITY_TYPE_FEDERATION_GRANT, FieldProfile::Standard) => {
+            crate::federation::FEDERATION_GRANT_FIELDS_STANDARD
+        }
+        (ENTITY_TYPE_FEDERATION_GRANT, FieldProfile::Full) => {
+            crate::federation::FEDERATION_GRANT_FIELDS_FULL
+        }
 
         _ => &[],
     }
@@ -4402,6 +4418,15 @@ mod tests {
         assert_eq!(mc.key, "machines");
         assert_eq!(mc.name, "MACHINES");
         assert_eq!(mc.title, "Machines");
+
+        let grant = group_labels(ENTITY_TYPE_FEDERATION_GRANT);
+        assert_eq!(grant.key, "federation_grants");
+        assert_eq!(grant.name, "FEDERATION_GRANTS");
+        assert_eq!(grant.title, "Federation Grants");
+        assert_eq!(
+            fields_for_profile(ENTITY_TYPE_FEDERATION_GRANT, FieldProfile::Minimal),
+            crate::federation::FEDERATION_GRANT_FIELDS_MINIMAL
+        );
 
         // Types outside the known set should fall back to OTHER_GROUP_LABELS.
         let unknown = group_labels(255);
