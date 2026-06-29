@@ -31,6 +31,7 @@ use crate::projection::{self, View};
 use crate::protocol::{CountMode, PaginatedResponse, ResponseMeta};
 use crate::server::SyncServer;
 use crate::skills_pack as skills_pack_artifact;
+use crate::usage::{UsageError, UsageEvent, UsageRecordResult, UsageRollup};
 
 const API_LEVEL: &str = "v1";
 const SUPPORTED_FORMATS: &[&str] = &["json", "yaml", "toon", "markdown", "plaintext"];
@@ -50,6 +51,8 @@ const EFFECTIVE_AUTH_SCOPES: &[&str] = &[
     "entity:read",
     "turns:annotate",
     "companion:resume",
+    "usage:read",
+    "usage:write",
     "sync:connect",
 ];
 const CAPABILITIES: &[&str] = &[
@@ -64,6 +67,8 @@ const CAPABILITIES: &[&str] = &[
     "context_pack",
     "companion.resume",
     "lease.revoke",
+    "usage.event",
+    "usage.rollup",
 ];
 const CAPABILITY_MODES: &[&str] = &["flash", "thinking", "pro", "ultra"];
 // ONE-214 is read-only and adds no notification-specific storage. Keep resume
@@ -85,6 +90,8 @@ const RESUME_NOTIFICATION_SCAN_LIMIT: usize = 4096;
         annotate_turn_vad,
         read_turn_vad_annotation,
         context_pack,
+        record_usage_event,
+        get_usage_rollup,
         lease_revoke
     ),
     components(schemas(
@@ -113,7 +120,10 @@ const RESUME_NOTIFICATION_SCAN_LIMIT: usize = 4096;
         TurnVadAnnotateResponse,
         LeaseRevokeRequest,
         LeaseRevokeResponse,
-        ContextPackRequest
+        ContextPackRequest,
+        UsageEvent,
+        UsageRecordResult,
+        UsageRollup
     )),
     info(
         title = "Oneiron Server API",
@@ -149,6 +159,11 @@ pub(crate) fn api_routes(server: Arc<SyncServer>) -> Router {
         // context-pack is POST since it takes a complex options body
         .route("/api/context-pack", post(context_pack))
         .route("/api/companion/resume", post(resume))
+        .route("/v1/usage/events", post(record_usage_event))
+        .route(
+            "/v1/usage/tenants/{tenant_id}/rollup",
+            get(get_usage_rollup),
+        )
         .merge(mutation_routes)
         .with_state(server)
 }
@@ -344,6 +359,8 @@ fn add_security_scheme(spec: &mut Value) {
         ("/v1/core/turns/annotate", "get"),
         ("/v1/core/turns/annotate", "post"),
         ("/api/context-pack", "post"),
+        ("/v1/usage/events", "post"),
+        ("/v1/usage/tenants/{tenant_id}/rollup", "get"),
         ("/api/lease/revoke", "post"),
     ];
     for (path, method) in protected_operations {
@@ -969,6 +986,171 @@ fn caller_marker_contains(value: Option<&Value>, caller: &str) -> bool {
         Some(Value::String(item)) => item == caller,
         _ => false,
     }
+}
+
+// ─── Usage Ledger ────────────────────────────────────────────────────────────
+
+/// Optional selector for a tenant usage rollup.
+#[derive(Deserialize, ToSchema, IntoParams)]
+#[into_params(parameter_in = Query)]
+struct UsageRollupQuery {
+    /// Vault id to read a per-vault rollup. Omit for the tenant-wide rollup.
+    #[schema(example = "vault-a")]
+    #[param(example = "vault-a")]
+    vault_id: Option<String>,
+}
+
+/// Records one tenant usage event and returns the resulting debit decision.
+#[utoipa::path(
+    post,
+    path = "/v1/usage/events",
+    request_body(
+        content = UsageEvent,
+        content_type = "application/json",
+        example = json!({
+            "tenantId": "tenant-a",
+            "vaultId": "vault-a",
+            "idempotencyKey": "usage-2026-06-29T00:00:00Z-0001",
+            "source": "oneiron_cloud",
+            "eventType": "inference",
+            "agentId": "agent-a",
+            "model": "model-a",
+            "service": "inference",
+            "tokenCounts": {
+                "inputTokens": 1000,
+                "outputTokens": 500,
+                "cacheReadTokens": 2000,
+                "cacheWriteTokens": 1000
+            },
+            "costRates": {
+                "inputTokenUsdPerMillion": 2.0,
+                "outputTokenUsdPerMillion": 4.0,
+                "cacheReadTokenUsdPerMillion": 0.5,
+                "cacheWriteTokenUsdPerMillion": 1.0
+            },
+            "serviceCostUsd": 0.044
+        })
+    ),
+    responses(
+        (
+            status = 200,
+            description = "Usage event accepted. Local and BYO sources return no debit; Oneiron Cloud mode records each idempotency key once.",
+            body = UsageRecordResult,
+            content_type = "application/json"
+        ),
+        (
+            status = 400,
+            description = "Invalid usage payload.",
+            body = ApiError,
+            content_type = "application/json"
+        ),
+        (
+            status = 401,
+            description = "Missing or invalid `x-oneiron-secret` header.",
+            body = ApiError,
+            content_type = "application/json"
+        ),
+        (
+            status = 500,
+            description = "Usage ledger persistence failed.",
+            body = ApiError,
+            content_type = "application/json"
+        )
+    )
+)]
+async fn record_usage_event(
+    headers: HeaderMap,
+    State(server): State<Arc<SyncServer>>,
+    Json(event): Json<UsageEvent>,
+) -> Result<Json<UsageRecordResult>, ApiError> {
+    check_api_auth(&headers, &server.config)?;
+    let result = server
+        .usage_ledger
+        .record_event(event, server.config.usage_mode)
+        .inspect_err(|error| tracing::error!(error = %error, "usage event record failed"))
+        .map_err(usage_error)?;
+    Ok(Json(result))
+}
+
+/// Reads a tenant-wide or tenant/vault-specific usage rollup.
+#[utoipa::path(
+    get,
+    path = "/v1/usage/tenants/{tenant_id}/rollup",
+    params(
+        (
+            "tenant_id" = String,
+            Path,
+            description = "Tenant id whose usage rollup should be read.",
+            example = "tenant-a"
+        ),
+        UsageRollupQuery
+    ),
+    responses(
+        (
+            status = 200,
+            description = "Tenant or vault usage rollup.",
+            body = UsageRollup,
+            content_type = "application/json"
+        ),
+        (
+            status = 400,
+            description = "Invalid tenant or vault identifier.",
+            body = ApiError,
+            content_type = "application/json"
+        ),
+        (
+            status = 401,
+            description = "Missing or invalid `x-oneiron-secret` header.",
+            body = ApiError,
+            content_type = "application/json"
+        ),
+        (
+            status = 404,
+            description = "No usage rollup exists for the selected tenant or vault.",
+            body = ApiError,
+            content_type = "application/json"
+        ),
+        (
+            status = 500,
+            description = "Usage rollup read failed.",
+            body = ApiError,
+            content_type = "application/json"
+        )
+    )
+)]
+async fn get_usage_rollup(
+    headers: HeaderMap,
+    State(server): State<Arc<SyncServer>>,
+    Path(tenant_id): Path<String>,
+    query: Result<Query<UsageRollupQuery>, QueryRejection>,
+) -> Result<Json<UsageRollup>, ApiError> {
+    check_api_auth(&headers, &server.config)?;
+    let params = query_params(query)?;
+    let rollup = if let Some(vault_id) = params.vault_id {
+        server
+            .usage_ledger
+            .vault_rollup(&tenant_id, &vault_id)
+            .inspect_err(|error| tracing::error!(error = %error, "usage vault rollup read failed"))
+            .map_err(usage_error)?
+    } else {
+        server
+            .usage_ledger
+            .tenant_rollup(&tenant_id)
+            .inspect_err(|error| tracing::error!(error = %error, "usage tenant rollup read failed"))
+            .map_err(usage_error)?
+    };
+
+    rollup
+        .map(Json)
+        .ok_or_else(|| ApiError::not_found("usage rollup", Some(&tenant_id)))
+}
+
+fn usage_error(error: UsageError) -> ApiError {
+    if let Some(field) = error.field() {
+        return ApiError::bad_request(error.to_string(), Some(field));
+    }
+
+    ApiError::internal_server_error("usage ledger persistence failed")
 }
 
 // ─── Search Routes ────────────────────────────────────────────────────────────

@@ -6,6 +6,8 @@ use anyhow::Context;
 use clap::Args;
 use serde::Deserialize;
 
+use crate::usage::UsageMode;
+
 const DEFAULT_CONFIG_FILE: &str = "oneiron.toml";
 const DEFAULT_CONFIG_DIR: &str = "oneiron";
 const LEGACY_DEFAULT_VAULT_PATH: &str = "./vault";
@@ -58,6 +60,8 @@ pub struct SyncServerConfig {
     pub max_entity_blob: usize,
     /// Maximum decompressed BulkTransfer chunk in bytes (M5 Phase-3).
     pub max_bulk_decompressed: usize,
+    /// Usage debit mode. Defaults to local/BYO no-debit telemetry.
+    pub usage_mode: UsageMode,
 }
 
 impl Default for SyncServerConfig {
@@ -76,6 +80,7 @@ impl Default for SyncServerConfig {
             max_messages_per_sec: 200,
             max_entity_blob: 64 * 1024,             // 64 KB
             max_bulk_decompressed: 8 * 1024 * 1024, // 8 MB
+            usage_mode: UsageMode::Local,
         }
     }
 }
@@ -102,6 +107,7 @@ impl fmt::Debug for SyncServerConfig {
             .field("max_messages_per_sec", &self.max_messages_per_sec)
             .field("max_entity_blob", &self.max_entity_blob)
             .field("max_bulk_decompressed", &self.max_bulk_decompressed)
+            .field("usage_mode", &self.usage_mode)
             .finish()
     }
 }
@@ -204,6 +210,10 @@ pub struct ServeArgs {
     /// Maximum decompressed BulkTransfer chunk in bytes.
     #[arg(long)]
     pub max_bulk_decompressed: Option<usize>,
+
+    /// Usage debit mode: local, byo, or oneiron_cloud.
+    #[arg(long, value_parser = parse_usage_mode)]
+    pub usage_mode: Option<UsageMode>,
 }
 
 impl fmt::Debug for ServeArgs {
@@ -239,6 +249,7 @@ impl fmt::Debug for ServeArgs {
             .field("max_messages_per_sec", &self.max_messages_per_sec)
             .field("max_entity_blob", &self.max_entity_blob)
             .field("max_bulk_decompressed", &self.max_bulk_decompressed)
+            .field("usage_mode", &self.usage_mode)
             .finish()
     }
 }
@@ -267,6 +278,7 @@ pub struct ServeConfig {
     pub max_messages_per_sec: u32,
     pub max_entity_blob: usize,
     pub max_bulk_decompressed: usize,
+    pub usage_mode: UsageMode,
 }
 
 impl Default for ServeConfig {
@@ -295,6 +307,7 @@ impl Default for ServeConfig {
             max_messages_per_sec: server.max_messages_per_sec,
             max_entity_blob: server.max_entity_blob,
             max_bulk_decompressed: server.max_bulk_decompressed,
+            usage_mode: server.usage_mode,
         }
     }
 }
@@ -328,6 +341,7 @@ impl fmt::Debug for ServeConfig {
             .field("max_messages_per_sec", &self.max_messages_per_sec)
             .field("max_entity_blob", &self.max_entity_blob)
             .field("max_bulk_decompressed", &self.max_bulk_decompressed)
+            .field("usage_mode", &self.usage_mode)
             .finish()
     }
 }
@@ -348,6 +362,7 @@ impl ServeConfig {
             max_messages_per_sec: self.max_messages_per_sec,
             max_entity_blob: self.max_entity_blob,
             max_bulk_decompressed: self.max_bulk_decompressed,
+            usage_mode: self.usage_mode,
         }
     }
 
@@ -413,6 +428,7 @@ impl EnvConfig {
         values.max_messages_per_sec = lookup_parse(&mut lookup, "ONEIRON_MAX_MESSAGES_PER_SEC")?;
         values.max_entity_blob = lookup_parse(&mut lookup, "ONEIRON_MAX_ENTITY_BLOB")?;
         values.max_bulk_decompressed = lookup_parse(&mut lookup, "ONEIRON_MAX_BULK_DECOMPRESSED")?;
+        values.usage_mode = lookup_parse(&mut lookup, "ONEIRON_USAGE_MODE")?;
 
         Ok(Self {
             config_path,
@@ -500,6 +516,7 @@ struct FileServeConfig {
     max_messages_per_sec: Option<u32>,
     max_entity_blob: Option<usize>,
     max_bulk_decompressed: Option<usize>,
+    usage_mode: Option<UsageMode>,
 }
 
 impl From<FileServeConfig> for PartialServeConfig {
@@ -525,6 +542,7 @@ impl From<FileServeConfig> for PartialServeConfig {
             max_messages_per_sec: value.max_messages_per_sec,
             max_entity_blob: value.max_entity_blob,
             max_bulk_decompressed: value.max_bulk_decompressed,
+            usage_mode: value.usage_mode,
         }
     }
 }
@@ -551,6 +569,7 @@ struct PartialServeConfig {
     max_messages_per_sec: Option<u32>,
     max_entity_blob: Option<usize>,
     max_bulk_decompressed: Option<usize>,
+    usage_mode: Option<UsageMode>,
 }
 
 impl PartialServeConfig {
@@ -615,6 +634,9 @@ impl PartialServeConfig {
         if let Some(value) = self.max_bulk_decompressed {
             resolved.max_bulk_decompressed = value;
         }
+        if let Some(value) = self.usage_mode {
+            resolved.usage_mode = value;
+        }
     }
 }
 
@@ -641,6 +663,7 @@ impl From<&ServeArgs> for PartialServeConfig {
             max_messages_per_sec: value.max_messages_per_sec,
             max_entity_blob: value.max_entity_blob,
             max_bulk_decompressed: value.max_bulk_decompressed,
+            usage_mode: value.usage_mode,
         }
     }
 }
@@ -696,6 +719,10 @@ fn parse_bool(key: &'static str, value: &str) -> anyhow::Result<bool> {
         "0" | "false" | "no" | "off" => Ok(false),
         _ => anyhow::bail!("parse {key}={value:?}: expected true/false, yes/no, on/off, or 1/0"),
     }
+}
+
+fn parse_usage_mode(value: &str) -> Result<UsageMode, String> {
+    value.parse()
 }
 
 fn split_list(value: &str) -> Vec<String> {
@@ -876,6 +903,7 @@ dimensions = 128
 map_size = 67108864
 log_level = "warn"
 max_frame_size = 11
+usage_mode = "byo"
 "#,
         )
         .unwrap();
@@ -884,11 +912,13 @@ max_frame_size = 11
             ("ONEIRON_HOST", "env-host"),
             ("ONEIRON_PORT", "2000"),
             ("ONEIRON_AUTH_SECRET", "env-secret"),
+            ("ONEIRON_USAGE_MODE", "oneiron_cloud"),
         ])
         .unwrap();
         let flags = ServeArgs {
             host: Some("flag-host".to_owned()),
             allowed_origins: Some(vec!["https://flag.example".to_owned()]),
+            usage_mode: Some(UsageMode::Local),
             ..Default::default()
         };
 
@@ -903,5 +933,6 @@ max_frame_size = 11
         assert_eq!(resolved.map_size, 67_108_864);
         assert_eq!(resolved.log_level, "warn");
         assert_eq!(resolved.max_frame_size, 11);
+        assert_eq!(resolved.usage_mode, UsageMode::Local);
     }
 }
