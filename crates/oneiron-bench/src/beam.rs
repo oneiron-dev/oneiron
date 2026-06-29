@@ -677,6 +677,12 @@ enum SerializedContextPackSection {
     Neighbors,
 }
 
+struct ActiveSerializedContextPackSection {
+    section: SerializedContextPackSection,
+    section_indent: usize,
+    group_indent: Option<usize>,
+}
+
 fn run_deterministic_context_pack(
     vault: &Vault,
     case: &FixtureCase,
@@ -769,28 +775,70 @@ fn context_entity_report(entity: &oneiron::ContextEntity) -> ContextEntityReport
 
 fn serialized_context_pack_ids(serialized: &str) -> SerializedContextPackIds {
     let mut ids = SerializedContextPackIds::default();
-    let mut section = None;
+    let mut active_section: Option<ActiveSerializedContextPackSection> = None;
 
     for line in serialized.lines() {
-        let trimmed = line.trim();
-        match trimmed {
-            "results:" => section = Some(SerializedContextPackSection::Results),
-            "neighbors:" => section = Some(SerializedContextPackSection::Neighbors),
-            _ => {
-                let Some(raw_id) = trimmed.strip_prefix("- id: ") else {
-                    continue;
-                };
-                let Some(section) = section else {
-                    continue;
-                };
-                let id = generated_yaml_scalar(raw_id);
-                match section {
-                    SerializedContextPackSection::Results => {
-                        ids.results.insert(id);
-                    }
-                    SerializedContextPackSection::Neighbors => {
-                        ids.neighbors.insert(id);
-                    }
+        let trimmed_start = line.trim_start();
+        let trimmed = trimmed_start.trim_end();
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            continue;
+        }
+        let indent = line.len() - trimmed_start.len();
+
+        if indent == 0 {
+            active_section = match trimmed {
+                "results:" => Some(ActiveSerializedContextPackSection {
+                    section: SerializedContextPackSection::Results,
+                    section_indent: indent,
+                    group_indent: None,
+                }),
+                "neighbors:" => Some(ActiveSerializedContextPackSection {
+                    section: SerializedContextPackSection::Neighbors,
+                    section_indent: indent,
+                    group_indent: None,
+                }),
+                _ => None,
+            };
+            continue;
+        }
+
+        let Some(section) = active_section.as_mut() else {
+            continue;
+        };
+        if indent <= section.section_indent {
+            active_section = None;
+            continue;
+        }
+        if section
+            .group_indent
+            .is_some_and(|group_indent| indent <= group_indent)
+        {
+            section.group_indent = None;
+        }
+
+        if indent == section.section_indent + 2
+            && trimmed.ends_with(':')
+            && !trimmed.starts_with("- ")
+        {
+            section.group_indent = Some(indent);
+            continue;
+        }
+
+        let expected_row_indent = section
+            .group_indent
+            .map_or(section.section_indent + 2, |group_indent| group_indent + 2);
+        if indent != expected_row_indent {
+            continue;
+        }
+
+        if let Some(raw_id) = trimmed.strip_prefix("- id: ") {
+            let id = generated_yaml_scalar(raw_id);
+            match section.section {
+                SerializedContextPackSection::Results => {
+                    ids.results.insert(id);
+                }
+                SerializedContextPackSection::Neighbors => {
+                    ids.neighbors.insert(id);
                 }
             }
         }
@@ -990,6 +1038,28 @@ mod tests {
                 .iter()
                 .any(|id| id.starts_with("sm"))
         );
+    }
+
+    #[test]
+    fn serialized_context_pack_ids_ignore_nested_yaml_id_fields() {
+        let serialized = r#"
+results:
+  memory:
+    - id: result:01
+      title: kept
+      nested:
+        - id: dropped-result:02
+neighbors:
+  memory:
+    - id: neighbor:03
+      nested:
+        - id: dropped-neighbor:04
+"#;
+
+        let ids = serialized_context_pack_ids(serialized);
+
+        assert_eq!(ids.results, HashSet::from(["result:01".to_owned()]));
+        assert_eq!(ids.neighbors, HashSet::from(["neighbor:03".to_owned()]));
     }
 
     #[test]
