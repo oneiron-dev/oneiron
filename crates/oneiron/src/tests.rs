@@ -10231,6 +10231,50 @@ fn replicated_door_still_fails_typed_on_structural_violations() -> Result<()> {
     Ok(())
 }
 
+/// FED-001: `put_replicated` admits the registered maintenance type byte for
+/// FEDERATION_GRANT, but the body still has to fail closed before storage or
+/// indexes are written.
+#[cfg(feature = "sync")]
+#[test]
+fn replicated_door_fails_closed_on_malformed_federation_grant_body() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let malformed = b"not a federation grant body";
+
+    let bad_txn = EntityId::now();
+    let err = vault
+        .with_write_txn(|wtxn| {
+            vault
+                .batch_in()
+                .put_replicated(
+                    &bad_txn,
+                    ENTITY_TYPE_FEDERATION_GRANT,
+                    test_time_range(1, 1),
+                    2,
+                    malformed,
+                )
+                .apply(wtxn)
+        })
+        .expect_err("txn replay door must reject malformed federation grants");
+    assert_eq!(err.kind(), ErrorKind::InvalidKey);
+    assert_no_entity_state(&vault, &bad_txn)?;
+
+    let bad_batch = EntityId::now();
+    let err = vault
+        .batch()
+        .put_replicated(
+            &bad_batch,
+            ENTITY_TYPE_FEDERATION_GRANT,
+            test_time_range(1, 1),
+            2,
+            malformed,
+        )
+        .commit()
+        .expect_err("batch replay door must reject malformed federation grants");
+    assert_eq!(err.kind(), ErrorKind::InvalidKey);
+    assert_no_entity_state(&vault, &bad_batch)?;
+    Ok(())
+}
+
 #[test]
 fn get_claim_rejects_non_claim_types_and_handles_missing() -> Result<()> {
     let (_dir, vault) = open_test_vault();
