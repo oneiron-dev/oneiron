@@ -19,6 +19,7 @@ mod handler;
 mod idempotency;
 pub mod projection;
 mod protocol;
+pub mod runtime;
 pub mod server;
 mod skills_pack;
 pub mod usage;
