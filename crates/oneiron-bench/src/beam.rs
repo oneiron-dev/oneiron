@@ -269,8 +269,12 @@ struct ArmReport {
     rename_all_fields = "camelCase"
 )]
 enum ArmOutcome {
-    Completed { context_pack: ContextPackReport },
-    NotReady { not_ready: NotReadyState },
+    Completed {
+        context_pack: Box<ContextPackReport>,
+    },
+    NotReady {
+        not_ready: NotReadyState,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -361,7 +365,11 @@ struct PackStatsReport {
     cosine_ghosts_dampened: usize,
     claims_suppressed: usize,
     items_truncated: usize,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    items_truncated_reasons: Vec<String>,
     items_dropped: usize,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    items_dropped_reasons: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -445,7 +453,7 @@ impl BeamArmAdapter for DeterministicContextPackArm {
         Ok(ArmReport {
             arm: self.kind(),
             outcome: ArmOutcome::Completed {
-                context_pack: report,
+                context_pack: Box::new(report),
             },
         })
     }
@@ -966,6 +974,22 @@ fn context_pack_report(pack: &BudgetedContextPack, case: &FixtureCase) -> Contex
         .len()
         .saturating_add(pack.raw.neighbors.len())
         .saturating_sub(result_count.saturating_add(neighbor_count));
+    let items_truncated = pack.raw.stats.items_truncated.count;
+    let raw_items_dropped = pack.raw.stats.items_dropped.count;
+    let items_dropped = raw_items_dropped.saturating_add(dropped_by_budget);
+    let items_truncated_reasons = accounting_reasons(
+        items_truncated,
+        pack.raw.stats.items_truncated.reason.as_str(),
+    );
+    let mut items_dropped_reasons = accounting_reasons(
+        raw_items_dropped,
+        pack.raw.stats.items_dropped.reason.as_str(),
+    );
+    push_accounting_reason(
+        &mut items_dropped_reasons,
+        dropped_by_budget,
+        "token_budget",
+    );
 
     ContextPackReport {
         token_budget: case.token_budget,
@@ -992,19 +1016,30 @@ fn context_pack_report(pack: &BudgetedContextPack, case: &FixtureCase) -> Contex
             neighbors_hydrated: neighbor_count,
             cosine_ghosts_dampened: pack.raw.stats.cosine_ghosts_dampened,
             claims_suppressed: pack.raw.stats.claims_suppressed,
-            items_truncated: pack.raw.stats.items_truncated.count,
-            items_dropped: pack
-                .raw
-                .stats
-                .items_dropped
-                .count
-                .saturating_add(dropped_by_budget),
+            items_truncated,
+            items_truncated_reasons,
+            items_dropped,
+            items_dropped_reasons,
         },
         empty: pack.raw.empty.as_ref().map(|empty| EmptyContextReport {
             reason: empty_reason_label(empty.reason).to_owned(),
             total_in_scope: empty.total_in_scope,
             hint: empty.hint.clone(),
         }),
+    }
+}
+
+fn accounting_reasons(count: usize, reason: &str) -> Vec<String> {
+    if count == 0 {
+        Vec::new()
+    } else {
+        vec![reason.to_owned()]
+    }
+}
+
+fn push_accounting_reason(reasons: &mut Vec<String>, count: usize, reason: &str) {
+    if count > 0 && !reasons.iter().any(|existing| existing == reason) {
+        reasons.push(reason.to_owned());
     }
 }
 
@@ -1017,11 +1052,10 @@ fn completed_ability_scores(
     } else {
         (context_pack.result_count as f32 / case.expected_min_results as f32).min(1.0)
     };
-    let budget_score = if context_pack.serialized_bytes <= case.token_budget {
-        1.0
-    } else {
-        0.0
-    };
+    let budget_passed =
+        context_pack.stats.items_dropped == 0 && context_pack.stats.items_truncated == 0;
+    let budget_score = if budget_passed { 1.0 } else { 0.0 };
+    let budget_detail = budget_discipline_detail(case, context_pack);
 
     vec![
         AbilityScoreReport {
@@ -1036,11 +1070,8 @@ fn completed_ability_scores(
         AbilityScoreReport {
             ability: AbilityKind::BudgetDiscipline,
             score: budget_score,
-            passed: budget_score >= 1.0,
-            detail: format!(
-                "{} serialized bytes within {} budget units",
-                context_pack.serialized_bytes, case.token_budget
-            ),
+            passed: budget_passed,
+            detail: budget_detail,
         },
         AbilityScoreReport {
             ability: AbilityKind::Readiness,
@@ -1049,6 +1080,26 @@ fn completed_ability_scores(
             detail: "arm completed".to_owned(),
         },
     ]
+}
+
+fn budget_discipline_detail(case: &FixtureCase, context_pack: &ContextPackReport) -> String {
+    format!(
+        "{} serialized items dropped [{}], {} truncated [{}] under {} token budget ({} bytes emitted)",
+        context_pack.stats.items_dropped,
+        accounting_reason_detail(&context_pack.stats.items_dropped_reasons),
+        context_pack.stats.items_truncated,
+        accounting_reason_detail(&context_pack.stats.items_truncated_reasons),
+        case.token_budget,
+        context_pack.serialized_bytes
+    )
+}
+
+fn accounting_reason_detail(reasons: &[String]) -> String {
+    if reasons.is_empty() {
+        "none".to_owned()
+    } else {
+        reasons.join(", ")
+    }
 }
 
 fn not_ready_ability_scores(
@@ -1478,6 +1529,50 @@ neighbors:
     }
 
     #[test]
+    fn budget_discipline_uses_accounting_not_serialized_byte_count() {
+        let case = FixtureCase {
+            case_id: "budget-accounting-regression".to_owned(),
+            query: "budget accounting".to_owned(),
+            limit: 1,
+            token_budget: 8,
+            expected_min_results: 1,
+        };
+        let mut context_pack = ContextPackReport {
+            token_budget: case.token_budget,
+            limit: case.limit,
+            serialized_format: "yaml".to_owned(),
+            serialized_bytes: 24,
+            result_count: 1,
+            neighbor_count: 0,
+            results: Vec::new(),
+            neighbors: Vec::new(),
+            stats: empty_pack_stats_report(),
+            empty: None,
+        };
+
+        let scores = completed_ability_scores(&case, &context_pack);
+        let budget = budget_score(&scores);
+        assert!(
+            budget.passed,
+            "bytes can exceed token budget units when no serializer accounting loss occurred"
+        );
+        assert_eq!(budget.score, 1.0);
+
+        context_pack.serialized_bytes = 4;
+        context_pack.stats.items_dropped = 1;
+        context_pack.stats.items_dropped_reasons = vec!["token_budget".to_owned()];
+
+        let scores = completed_ability_scores(&case, &context_pack);
+        let budget = budget_score(&scores);
+        assert!(
+            !budget.passed,
+            "small byte output must not pass when serialization accounting dropped content"
+        );
+        assert_eq!(budget.score, 0.0);
+        assert!(budget.detail.contains("token_budget"));
+    }
+
+    #[test]
     fn deterministic_arm_runs_beam_128k_fixture_end_to_end() {
         let report = run_builtin_smoke().expect("BEAM smoke report");
         let deterministic = find_arm(&report, ArmKind::Deterministic);
@@ -1591,5 +1686,28 @@ neighbors:
             .iter()
             .find(|arm| arm.arm == kind)
             .expect("arm report exists")
+    }
+
+    fn budget_score(scores: &[AbilityScoreReport]) -> &AbilityScoreReport {
+        scores
+            .iter()
+            .find(|score| score.ability == AbilityKind::BudgetDiscipline)
+            .expect("budget discipline score exists")
+    }
+
+    fn empty_pack_stats_report() -> PackStatsReport {
+        PackStatsReport {
+            candidates_considered: 0,
+            signals_used: Vec::new(),
+            query_time_us: 0,
+            entities_hydrated: 0,
+            neighbors_hydrated: 0,
+            cosine_ghosts_dampened: 0,
+            claims_suppressed: 0,
+            items_truncated: 0,
+            items_truncated_reasons: Vec::new(),
+            items_dropped: 0,
+            items_dropped_reasons: Vec::new(),
+        }
     }
 }
