@@ -229,10 +229,51 @@ pub(crate) fn delete_codebase_snapshot_in_txn(
     wtxn: &mut RwTxn<'_>,
     id: &EntityId,
 ) -> Result<bool> {
-    let removed = store.vault_meta.delete(wtxn, &codebase_snapshot_key(id))?;
-    delete_index_rows_for_id(store, wtxn, CODEBASE_REPO_INDEX_KEY_PREFIX, id)?;
-    delete_index_rows_for_id(store, wtxn, CODEBASE_PROJECT_INDEX_KEY_PREFIX, id)?;
-    Ok(removed)
+    let key = codebase_snapshot_key(id);
+    let Some(raw) = store.vault_meta.get(wtxn, &key)?.map(<[u8]>::to_vec) else {
+        return Ok(false);
+    };
+
+    match decode_codebase_snapshot(&raw) {
+        Ok(snapshot) => {
+            store.vault_meta.delete(wtxn, &key)?;
+            delete_exact_index_rows_for_snapshot(store, wtxn, id, &snapshot)?;
+        }
+        Err(_) => {
+            store.vault_meta.delete(wtxn, &key)?;
+            delete_index_rows_for_id(store, wtxn, CODEBASE_REPO_INDEX_KEY_PREFIX, id)?;
+            delete_index_rows_for_id(store, wtxn, CODEBASE_PROJECT_INDEX_KEY_PREFIX, id)?;
+        }
+    }
+    Ok(true)
+}
+
+pub(crate) fn reconcile_codebase_snapshot_after_code_artifact_put(
+    store: &Store,
+    wtxn: &mut RwTxn<'_>,
+    id: &EntityId,
+    old_code_artifact_body: &[u8],
+    new_code_artifact_body: &[u8],
+) -> Result<()> {
+    let key = codebase_snapshot_key(id);
+    let Some(raw) = store.vault_meta.get(wtxn, &key)?.map(<[u8]>::to_vec) else {
+        return Ok(());
+    };
+
+    let new_repo_ref = code_artifact_repo_ref_from_body(new_code_artifact_body)?;
+    let old_repo_ref = code_artifact_repo_ref_from_body(old_code_artifact_body).ok();
+    let snapshot = match decode_codebase_snapshot(&raw) {
+        Ok(snapshot) => snapshot,
+        Err(_) => {
+            delete_codebase_snapshot_in_txn(store, wtxn, id)?;
+            return Ok(());
+        }
+    };
+
+    if old_repo_ref.as_ref() != Some(&new_repo_ref) || snapshot.repo_ref != new_repo_ref {
+        delete_codebase_snapshot_in_txn(store, wtxn, id)?;
+    }
+    Ok(())
 }
 
 impl Vault {
@@ -532,7 +573,7 @@ fn validate_manifest_path(path: &str) -> Result<()> {
         CODEBASE_FILE_PATH_MAX_BYTES,
         "file path must be non-empty and at most 4096 bytes",
     )?;
-    if path.starts_with('/') || path.starts_with('\\') {
+    if path.starts_with('/') || path.contains('\\') {
         return Err(Error::InvalidCodebaseSnapshotBody(
             "file path must be repository-relative",
         ));
@@ -668,6 +709,27 @@ fn codebase_project_index_key(project_id: &str, id: &EntityId) -> Vec<u8> {
     scoped_index_key(CODEBASE_PROJECT_INDEX_KEY_PREFIX, project_id.as_bytes(), id)
 }
 
+fn code_artifact_repo_ref_from_body(bytes: &[u8]) -> Result<RepoRef> {
+    let artifact = decode_code_artifact_body(bytes)?;
+    RepoRef::parse(&artifact.repo_ref)
+        .map_err(|_| Error::InvalidCodeArtifactBody("repo_ref must be a valid v1 repo_ref"))
+}
+
+fn delete_exact_index_rows_for_snapshot(
+    store: &Store,
+    wtxn: &mut RwTxn<'_>,
+    id: &EntityId,
+    snapshot: &CodebaseSnapshot,
+) -> Result<()> {
+    store
+        .vault_meta
+        .delete(wtxn, &codebase_repo_index_key(&snapshot.repo_ref, id))?;
+    store
+        .vault_meta
+        .delete(wtxn, &codebase_project_index_key(&snapshot.project_id, id))?;
+    Ok(())
+}
+
 fn scoped_index_prefix(prefix: &[u8], value: &[u8]) -> Vec<u8> {
     let mut key = Vec::with_capacity(prefix.len() + value.len() + 1);
     key.extend_from_slice(prefix);
@@ -759,6 +821,15 @@ mod tests {
             .expect("repo ref")
     }
 
+    fn repo_ref_b() -> RepoRef {
+        RepoRef::parse("github:oneiron-dev/other#aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+            .expect("repo ref")
+    }
+
+    fn entity_id(byte: u8) -> EntityId {
+        EntityId::from_bytes([byte; 16]).expect("entity id")
+    }
+
     fn file(path: &str, hash_byte: u8) -> CodebaseFileEntry {
         CodebaseFileEntry::new(
             path,
@@ -836,6 +907,21 @@ mod tests {
     }
 
     #[test]
+    fn codebase_snapshot_codec_rejects_backslash_manifest_paths() {
+        let raw = CodebaseSnapshot {
+            project_id: "project.alpha".to_owned(),
+            repo_ref: repo_ref(),
+            commit_hash: Some("9d561405a81ffbf29d1369cd848e0ef9fca4f277".to_owned()),
+            files: vec![file("src\\..\\secret", 1)],
+        };
+
+        let err = encode_codebase_snapshot(&raw)
+            .expect_err("backslash paths must fail closed instead of hiding traversal");
+
+        assert_eq!(err.kind(), ErrorKind::InvalidCodebaseSnapshotBody);
+    }
+
+    #[test]
     fn codebase_snapshot_vault_round_trip_and_queries() -> Result<()> {
         let (_dir, vault) = crate::test_util::open_test_vault_with(test_config());
         let id = EntityId::now();
@@ -893,11 +979,72 @@ mod tests {
     }
 
     #[test]
+    fn codebase_snapshot_batch_delete_cleans_sidecar_indexes() -> Result<()> {
+        let (_dir, vault) = crate::test_util::open_test_vault_with(test_config());
+        let id = entity_id(0x31);
+        let repo_ref = repo_ref();
+        let snapshot = snapshot("project.alpha", repo_ref.clone())?;
+
+        vault.put_code_artifact(
+            &id,
+            &code_body(&repo_ref),
+            TimeRange { start: 10, end: 10 },
+            11,
+        )?;
+        vault.put_codebase_snapshot(&id, &snapshot)?;
+
+        vault.batch().delete(&id).commit()?;
+
+        assert!(vault.get_codebase_snapshot(&id)?.is_none());
+        assert!(vault.codebase_snapshots_by_repo_ref(&repo_ref)?.is_empty());
+        assert!(
+            vault
+                .codebase_snapshots_by_project_id("project.alpha")?
+                .is_empty()
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn codebase_snapshot_code_artifact_repo_ref_overwrite_cleans_sidecar_indexes() -> Result<()> {
+        let (_dir, vault) = crate::test_util::open_test_vault_with(test_config());
+        let id = entity_id(0x32);
+        let repo_a = repo_ref();
+        let repo_b = repo_ref_b();
+        let snapshot = snapshot("project.alpha", repo_a.clone())?;
+
+        vault.put_code_artifact(
+            &id,
+            &code_body(&repo_a),
+            TimeRange { start: 10, end: 10 },
+            11,
+        )?;
+        vault.put_codebase_snapshot(&id, &snapshot)?;
+        assert_eq!(vault.codebase_snapshots_by_repo_ref(&repo_a)?, vec![id]);
+
+        vault.put_code_artifact(
+            &id,
+            &code_body(&repo_b),
+            TimeRange { start: 12, end: 12 },
+            13,
+        )?;
+
+        assert!(vault.get_codebase_snapshot(&id)?.is_none());
+        assert!(vault.codebase_snapshots_by_repo_ref(&repo_a)?.is_empty());
+        assert!(vault.codebase_snapshots_by_repo_ref(&repo_b)?.is_empty());
+        assert!(
+            vault
+                .codebase_snapshots_by_project_id("project.alpha")?
+                .is_empty()
+        );
+        Ok(())
+    }
+
+    #[test]
     fn codebase_filters_apply_to_search_and_context_pack() -> Result<()> {
         let (_dir, vault) = crate::test_util::open_test_vault_with(test_config());
         let repo_a = repo_ref();
-        let repo_b =
-            RepoRef::parse("github:oneiron-dev/other#aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")?;
+        let repo_b = repo_ref_b();
         let id_a = EntityId::now();
         let id_b = EntityId::now();
 
@@ -956,6 +1103,82 @@ mod tests {
             .run()?;
         assert_eq!(pack.results.len(), 1);
         assert_eq!(pack.results[0].id, id_a);
+        Ok(())
+    }
+
+    #[test]
+    fn codebase_filters_apply_before_channel_top_k_limits() -> Result<()> {
+        let (_dir, vault) = crate::test_util::open_test_vault_with(test_config());
+        let repo_a = repo_ref();
+        let repo_b = repo_ref_b();
+        let id_a = entity_id(0x41);
+        let id_b = entity_id(0x42);
+
+        vault.put_code_artifact(
+            &id_a,
+            &code_body(&repo_a),
+            TimeRange { start: 10, end: 10 },
+            11,
+        )?;
+        vault.put_codebase_snapshot(&id_a, &snapshot("project.alpha", repo_a)?)?;
+        vault.put_code_artifact(
+            &id_b,
+            &code_body(&repo_b),
+            TimeRange { start: 12, end: 12 },
+            13,
+        )?;
+        vault.put_codebase_snapshot(
+            &id_b,
+            &CodebaseSnapshot::new(
+                "project.beta",
+                repo_b,
+                Some("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_owned()),
+                vec![file("src/main.rs", 3)],
+            )?,
+        )?;
+        vault
+            .batch()
+            .text(&id_a, &[("body", "needle needle needle needle")])
+            .text(&id_b, &[("body", "needle")])
+            .vector(&id_a, &[1.0, 0.0, 0.0, 0.0])
+            .vector(&id_b, &[0.0, 1.0, 0.0, 0.0])
+            .commit()?;
+
+        let unscoped_text_top = vault.query().search_text("needle", 1).run()?;
+        assert_eq!(unscoped_text_top.len(), 1);
+        assert_eq!(unscoped_text_top[0].id, id_a);
+
+        let scoped_text_top = vault
+            .query()
+            .search_text("needle", 1)
+            .filter_project_id("project.beta")
+            .run()?;
+        assert_eq!(scoped_text_top.len(), 1);
+        assert_eq!(scoped_text_top[0].id, id_b);
+
+        let scoped_pack = vault
+            .context_pack()
+            .format(PackFormat::Json)
+            .search_text("needle", 1)
+            .filter_project_id("project.beta")
+            .run()?;
+        assert_eq!(scoped_pack.results.len(), 1);
+        assert_eq!(scoped_pack.results[0].id, id_b);
+
+        let unscoped_vector_top = vault
+            .query()
+            .search_vector(&[1.0, 0.0, 0.0, 0.0], 1)
+            .run()?;
+        assert_eq!(unscoped_vector_top.len(), 1);
+        assert_eq!(unscoped_vector_top[0].id, id_a);
+
+        let scoped_vector_top = vault
+            .query()
+            .search_vector(&[1.0, 0.0, 0.0, 0.0], 1)
+            .filter_project_id("project.beta")
+            .run()?;
+        assert_eq!(scoped_vector_top.len(), 1);
+        assert_eq!(scoped_vector_top[0].id, id_b);
         Ok(())
     }
 }

@@ -1031,6 +1031,7 @@ pub(crate) fn deindex_entity(
     // entity record (e.g. text indexed via batch().text() without a preceding put()).
     crate::bm25::deindex_text(store, wtxn, id)?;
     delete_from_phonetic_postings(store, wtxn, id)?;
+    crate::codebase::delete_codebase_snapshot_in_txn(store, wtxn, id)?;
     let mut had_vector = store.vectors.delete(wtxn, id.as_bytes())?;
     crate::hnsw::hnsw_deindex(store, wtxn, id)?;
     let mut neighbors = delete_related_edges(store, wtxn, id)?;
@@ -1177,12 +1178,27 @@ fn apply_put(
         // (occurred/learned) changes are not body changes.
         let body_changed = old_record[ENTITY_METADATA_HEADER_LEN..] != *data;
         let should_deindex_stale_text = body_changed && (replicated || !has_later_covering_text_op);
+        let old_code_artifact_body =
+            if old_type == crate::types::ENTITY_TYPE_CODE_ARTIFACT && body_changed {
+                Some(old_record[ENTITY_METADATA_HEADER_LEN..].to_vec())
+            } else {
+                None
+            };
         if old_type != entity_type {
             return Err(Error::EntityTypeImmutable {
                 id,
                 existing: old_type,
                 attempted: entity_type,
             });
+        }
+        if let Some(old_code_artifact_body) = old_code_artifact_body {
+            crate::codebase::reconcile_codebase_snapshot_after_code_artifact_put(
+                store,
+                wtxn,
+                &id,
+                &old_code_artifact_body,
+                data,
+            )?;
         }
         if should_deindex_stale_text {
             crate::bm25::deindex_text(store, wtxn, &id)?;

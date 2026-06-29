@@ -599,6 +599,7 @@ impl<'a> PipelineBuilder<'a> {
             let mut metadata_cache = EntityMetadataCache::default();
             let mut claim_gate = ClaimStatusGateCache::default();
             let mut deferred_ppr_cache_writes = Vec::new();
+            let codebase_scope_active = self.has_codebase_scope_filter();
 
             if let Some((query_vector, limit)) = &self.vector_search {
                 if query_vector.len() != self.vault.config.dimensions {
@@ -611,12 +612,18 @@ impl<'a> PipelineBuilder<'a> {
                     return Err(error);
                 }
 
+                let channel_limit = scoped_vector_channel_limit(
+                    &self.vault.store,
+                    &rtxn,
+                    *limit,
+                    codebase_scope_active,
+                )?;
                 let vector_results = crate::hnsw::hnsw_search(
                     &self.vault.store,
                     &self.vault.config,
                     &rtxn,
                     query_vector,
-                    *limit,
+                    channel_limit,
                 )?;
                 add_signal_score_components(
                     &mut signal_components,
@@ -628,13 +635,19 @@ impl<'a> PipelineBuilder<'a> {
             }
 
             if let Some((query, limit)) = &self.text_search {
+                let channel_limit = scoped_text_channel_limit(
+                    &self.vault.store,
+                    &rtxn,
+                    *limit,
+                    codebase_scope_active,
+                )?;
                 let text_results = crate::bm25::search_text(
                     &self.vault.store,
                     &rtxn,
                     &self.vault.analyzer,
                     &bm25_config,
                     query,
-                    *limit,
+                    channel_limit,
                 )?;
                 add_signal_score_components(
                     &mut signal_components,
@@ -656,8 +669,19 @@ impl<'a> PipelineBuilder<'a> {
             }
 
             if let Some(config) = &self.temporal_search {
-                let temporal_results =
-                    execute_temporal(&self.vault.store, &rtxn, config, &mut metadata_cache)?;
+                let mut scoped_config = config.clone();
+                scoped_config.limit = scoped_entity_channel_limit(
+                    &self.vault.store,
+                    &rtxn,
+                    config.limit,
+                    codebase_scope_active,
+                )?;
+                let temporal_results = execute_temporal(
+                    &self.vault.store,
+                    &rtxn,
+                    &scoped_config,
+                    &mut metadata_cache,
+                )?;
                 add_signal_score_components(
                     &mut signal_components,
                     RetrievalSignal::Temporal,
@@ -731,7 +755,12 @@ impl<'a> PipelineBuilder<'a> {
                     }
                 }
                 if seeds.len() < crate::ppr::MAX_PPR_SEEDS {
-                    for scored in scores.iter().take(self.result_limit) {
+                    let implicit_seed_limit = if codebase_scope_active {
+                        scores.len()
+                    } else {
+                        self.result_limit
+                    };
+                    for scored in scores.iter().take(implicit_seed_limit) {
                         if seen.insert(scored.id) {
                             seeds.push(scored.id);
                             if seeds.len() == crate::ppr::MAX_PPR_SEEDS {
@@ -1010,6 +1039,10 @@ impl<'a> PipelineBuilder<'a> {
                 .as_ref()
                 .is_some_and(|(seeds, _)| !seeds.is_empty())
     }
+
+    fn has_codebase_scope_filter(&self) -> bool {
+        self.repo_ref_filter.is_some() || self.project_id_filter.is_some()
+    }
 }
 
 fn add_signal_score_components(
@@ -1043,6 +1076,46 @@ fn telemetry_score_breakdown(
             components: components.get(&scored.id).cloned().unwrap_or_default(),
         })
         .collect()
+}
+
+fn scoped_text_channel_limit(
+    store: &Store,
+    rtxn: &RoTxn<'_>,
+    requested: usize,
+    codebase_scope_active: bool,
+) -> Result<usize> {
+    if !codebase_scope_active || requested == 0 {
+        return Ok(requested);
+    }
+    let indexed_docs = usize::try_from(crate::bm25::read_total_docs(store, rtxn)?)
+        .map_err(|_| Error::IndexOverflow("bm25 total docs"))?;
+    Ok(requested.max(indexed_docs))
+}
+
+fn scoped_vector_channel_limit(
+    store: &Store,
+    rtxn: &RoTxn<'_>,
+    requested: usize,
+    codebase_scope_active: bool,
+) -> Result<usize> {
+    if !codebase_scope_active || requested == 0 {
+        return Ok(requested);
+    }
+    Ok(requested.max(crate::hnsw::hnsw_entity_count(store, rtxn)?))
+}
+
+fn scoped_entity_channel_limit(
+    store: &Store,
+    rtxn: &RoTxn<'_>,
+    requested: usize,
+    codebase_scope_active: bool,
+) -> Result<usize> {
+    if !codebase_scope_active || requested == 0 {
+        return Ok(requested);
+    }
+    let entity_count = usize::try_from(store.entities.len(rtxn)?)
+        .map_err(|_| Error::IndexOverflow("entity count"))?;
+    Ok(requested.max(entity_count))
 }
 
 fn apply_gravity(
