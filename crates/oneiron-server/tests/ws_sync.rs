@@ -166,8 +166,12 @@ async fn connect(
         .map(|(ws, _resp)| ws)?;
     // Phase 0 (ONE-1127): the FIRST frame must be the protocol-version
     // hello, or the server closes with 4006 before any sync payload flows.
-    ws.send(Message::Binary(transport::encode_protocol_hello().into()))
-        .await?;
+    // These integration tests exercise the legacy unscoped full-window lane;
+    // selector sync is gated behind the v3 hello.
+    ws.send(Message::Binary(
+        transport::encode_legacy_full_window_protocol_hello().into(),
+    ))
+    .await?;
     Ok(ws)
 }
 

@@ -21,6 +21,7 @@
 //! - `quarantine` — `x:` quarantine sink + `rm:` rematerialization markers
 //!   + `ra:` tombstone re-assertion markers (ONE-1156)
 //! - `lease` — device-lease registry + receipt origin attestation (ONE-1140)
+//! - `selector` — grant-backed closed-subgraph window export selectors
 //! - `server_state` — server-side sync_state persistence (Observer-A-equivalent)
 
 pub mod bridge;
@@ -34,6 +35,7 @@ pub mod manager;
 pub mod quarantine;
 pub mod queue;
 pub mod schema;
+pub mod selector;
 pub mod server_state;
 pub mod transport;
 pub mod types;
@@ -57,10 +59,18 @@ pub use quarantine::{
     sync_doctor,
 };
 pub use queue::{QueuedEmbedJob, QueuedUpdate, SyncQueue};
+#[cfg(feature = "test-hooks")]
+pub use selector::put_selector_test_federation_grant;
+pub use selector::{
+    SYNC_SELECTOR_SCHEMA_VERSION, SelectorVvRequest, SyncSelector, SyncSelectorWorld,
+    authorize_sync_selector, decode_selector_vv_request, decode_sync_selector,
+    encode_selector_vv_request, encode_sync_selector, filtered_window_doc,
+};
 pub use transport::{
-    MAX_DECODED_PAYLOAD_BYTES, PROTOCOL_VERSION, TAG_BULK_TRANSFER, TAG_BULK_TRANSFER_DONE,
-    TAG_PROTOCOL_HELLO, TAG_WINDOW_SYNC, TransportError, decode_bulk_transfer,
-    decode_bulk_transfer_done, decode_protocol_hello, decode_window_sync, encode_bulk_transfer,
-    encode_bulk_transfer_done, encode_protocol_hello, encode_window_sync,
+    LEGACY_FULL_WINDOW_PROTOCOL_VERSION, MAX_DECODED_PAYLOAD_BYTES, PROTOCOL_VERSION,
+    TAG_BULK_TRANSFER, TAG_BULK_TRANSFER_DONE, TAG_PROTOCOL_HELLO, TAG_WINDOW_SYNC, TransportError,
+    decode_bulk_transfer, decode_bulk_transfer_done, decode_protocol_hello, decode_window_sync,
+    encode_bulk_transfer, encode_bulk_transfer_done, encode_legacy_full_window_protocol_hello,
+    encode_protocol_hello, encode_window_sync,
 };
 pub use types::{SyncConfig, WindowKey};
