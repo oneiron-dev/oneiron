@@ -43,6 +43,7 @@ pub struct SerializeConfig {
 struct PreparedEntity {
     entity_type: u8,
     score: f32,
+    source_id: [u8; 16],
     id: String,
     fields: Vec<(String, Value)>,
 }
@@ -57,6 +58,12 @@ struct PreparedPack {
 
 type PreparedGroups = Vec<(u8, Vec<PreparedEntity>)>;
 
+#[derive(Debug, Clone)]
+pub(crate) struct SerializedPackTelemetry {
+    pub(crate) result_ids: Vec<[u8; 16]>,
+    pub(crate) stats: PackStats,
+}
+
 pub fn serialize_pack(pack: &ContextPack, config: &SerializeConfig) -> Vec<u8> {
     match config.format {
         PackFormat::Json => serialize_json(pack, config),
@@ -64,6 +71,23 @@ pub fn serialize_pack(pack: &ContextPack, config: &SerializeConfig) -> Vec<u8> {
         PackFormat::Toon => serialize_toon(pack, config).into_bytes(),
         PackFormat::Markdown => serialize_markdown(pack, config).into_bytes(),
         PackFormat::Plaintext => serialize_plaintext(pack, config).into_bytes(),
+    }
+}
+
+pub(crate) fn serialize_pack_telemetry(
+    pack: &ContextPack,
+    config: &SerializeConfig,
+) -> SerializedPackTelemetry {
+    let prepared = prepare_pack(pack, config, config.format == PackFormat::Json);
+    let result_ids = prepared
+        .results
+        .iter()
+        .flat_map(|(_, entities)| entities.iter())
+        .map(|entity| entity.source_id)
+        .collect();
+    SerializedPackTelemetry {
+        result_ids,
+        stats: prepared.stats,
     }
 }
 
@@ -414,6 +438,7 @@ fn prepare_entities(
             let mut prepared = PreparedEntity {
                 entity_type: entity.entity_type,
                 score: entity.score,
+                source_id: *entity.id.as_bytes(),
                 id: format_short_id(entity),
                 fields,
             };
@@ -2502,6 +2527,7 @@ mod tests {
         PreparedEntity {
             entity_type: 0,
             score: 0.0,
+            source_id: [0x01; 16],
             id: "x".repeat(id_len),
             fields,
         }
@@ -2753,6 +2779,7 @@ mod tests {
                 vec![PreparedEntity {
                     entity_type: ENTITY_TYPE_CLAIM,
                     score: 0.0,
+                    source_id: [0x02; 16],
                     id: "cl88:f2".to_owned(),
                     fields: vec![
                         ("pred".to_owned(), Value::String("goal.learning".to_owned())),
@@ -2773,6 +2800,7 @@ mod tests {
                     PreparedEntity {
                         entity_type: ENTITY_TYPE_TURN,
                         score: 0.0,
+                        source_id: [0x03; 16],
                         id: "tn17:a1".to_owned(),
                         fields: vec![
                             ("spkr".to_owned(), Value::String("user".to_owned())),
@@ -2782,6 +2810,7 @@ mod tests {
                     PreparedEntity {
                         entity_type: ENTITY_TYPE_TURN,
                         score: 0.0,
+                        source_id: [0x04; 16],
                         id: "tn23:c4".to_owned(),
                         fields: vec![
                             ("spkr".to_owned(), Value::String("assistant".to_owned())),
@@ -2807,6 +2836,7 @@ mod tests {
             vec![PreparedEntity {
                 entity_type: ENTITY_TYPE_EVENT,
                 score: 0.0,
+                source_id: [0x05; 16],
                 id: "ev01:01".to_owned(),
                 fields: vec![(
                     "meta".to_owned(),
@@ -2830,6 +2860,7 @@ mod tests {
             vec![PreparedEntity {
                 entity_type: ENTITY_TYPE_EVENT,
                 score: 0.0,
+                source_id: [0x06; 16],
                 id: "ev01:01".to_owned(),
                 fields: vec![("meta".to_owned(), nested_child_object(TOON_MAX_DEPTH + 8))],
             }],
@@ -3307,6 +3338,7 @@ mod tests {
         let mut entity = PreparedEntity {
             entity_type: ENTITY_TYPE_CLAIM,
             score: 1.0,
+            source_id: [0x07; 16],
             id: "cl01:01".to_owned(),
             fields: vec![
                 ("pred".to_owned(), Value::String(predicate.to_owned())),
@@ -3340,6 +3372,7 @@ mod tests {
         let mut entity = PreparedEntity {
             entity_type: ENTITY_TYPE_CLAIM,
             score: 1.0,
+            source_id: [0x08; 16],
             id: "cl01:01".to_owned(),
             fields: vec![
                 ("pred".to_owned(), Value::String(predicate.to_owned())),
@@ -3378,6 +3411,7 @@ mod tests {
         let mut entity = PreparedEntity {
             entity_type: ENTITY_TYPE_TURN,
             score: 1.0,
+            source_id: [0x09; 16],
             id: "tn01:01".to_owned(),
             fields: vec![
                 ("txt".to_owned(), Value::String("a".repeat(160))),
@@ -3402,6 +3436,7 @@ mod tests {
         let mut entity = PreparedEntity {
             entity_type: ENTITY_TYPE_EVENT,
             score: 1.0,
+            source_id: [0x0A; 16],
             id: "ev01:01".to_owned(),
             fields: vec![
                 (

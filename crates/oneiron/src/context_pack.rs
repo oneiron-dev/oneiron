@@ -9,9 +9,9 @@ use heed::RoTxn;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::claim::{ClaimBody, claim_surfaceable};
 use crate::error::{Error, Result};
-use crate::pipeline::{PipelineBuilder, WorldScope};
-use crate::serialize::{SerializeConfig, serialize_pack};
-use crate::store::{RetrievalAction, Store};
+use crate::pipeline::{PipelineBuilder, RetrievalWithTelemetry, WorldScope};
+use crate::serialize::{SerializeConfig, serialize_pack, serialize_pack_telemetry};
+use crate::store::{RetrievalAction, RetrievalRunId, Store};
 use crate::types::{
     ContextEntity, ContextPack, ENTITY_TYPE_CLAIM, EdgeConfirmationStatus, EdgeInfo, EdgeKind,
     EmptyContext, EmptyReason, EntityId, FieldProfile, PackFormat, PackStats, Signal,
@@ -77,6 +77,12 @@ pub struct ContextPackBuilder<'a> {
     signals_used: Vec<Signal>,
     world_scope: WorldScope,
     non_base_world_fraction: f32,
+}
+
+struct ContextPackRun<'a> {
+    pack: ContextPack,
+    telemetry_run_id: Option<RetrievalRunId>,
+    store: &'a Store,
 }
 
 impl<'a> ContextPackBuilder<'a> {
@@ -352,11 +358,38 @@ impl<'a> ContextPackBuilder<'a> {
     }
 
     pub fn run(self) -> Result<ContextPack> {
+        Ok(self.run_with_telemetry()?.value)
+    }
+
+    pub fn run_with_telemetry(self) -> Result<RetrievalWithTelemetry<ContextPack>> {
+        let run = self.run_unfinalized()?;
+        let surfaced_result_ids: Vec<[u8; 16]> = run
+            .pack
+            .results
+            .iter()
+            .map(|entity| *entity.id.as_bytes())
+            .collect();
+        finalize_context_pack_telemetry(
+            run.store,
+            run.telemetry_run_id,
+            run.pack.stats.query_time_us,
+            run.pack.stats.claims_suppressed,
+            &surfaced_result_ids,
+            context_pack_empty_reason(&run.pack, &surfaced_result_ids),
+        );
+        Ok(RetrievalWithTelemetry {
+            value: run.pack,
+            run_id: run.telemetry_run_id,
+        })
+    }
+
+    fn run_unfinalized(self) -> Result<ContextPackRun<'a>> {
         let started = Instant::now();
         let pipeline_output = self.pipeline.run_for_pack()?;
         let total_in_scope = pipeline_output.total_in_scope;
         let pipeline_empty_reason = pipeline_output.empty_reason;
         let telemetry_run_id = pipeline_output.telemetry_run_id;
+        let store = &self.vault.store;
         let scored = pipeline_output.scores;
         let surfaced_candidate_count = scored.len();
         let claim_bodies = pipeline_output.claim_bodies;
@@ -472,32 +505,25 @@ impl<'a> ContextPackBuilder<'a> {
             items_truncated: crate::types::PackItemAccounting::item_budget(),
             items_dropped: crate::types::PackItemAccounting::token_budget(),
         };
-        if let Some(run_id) = telemetry_run_id {
-            let surfaced_result_ids: Vec<[u8; 16]> =
-                results.iter().map(|entity| *entity.id.as_bytes()).collect();
-            if let Err(error) = self.vault.store.finalize_context_pack_retrieval_run(
-                run_id,
-                stats.query_time_us,
-                stats.claims_suppressed,
-                &surfaced_result_ids,
-            ) {
-                tracing::warn!(
-                    ?error,
-                    "context-pack retrieval telemetry finalization failed; continuing retrieval"
-                );
-            }
-        }
         let empty = empty_context(pack_is_empty, &stats, pipeline_empty_reason);
 
-        Ok(ContextPack {
-            results,
-            neighbors,
-            stats,
-            empty,
+        Ok(ContextPackRun {
+            pack: ContextPack {
+                results,
+                neighbors,
+                stats,
+                empty,
+            },
+            telemetry_run_id,
+            store,
         })
     }
 
     pub fn run_serialized(self) -> Result<Vec<u8>> {
+        Ok(self.run_serialized_with_telemetry()?.value)
+    }
+
+    pub fn run_serialized_with_telemetry(self) -> Result<RetrievalWithTelemetry<Vec<u8>>> {
         let config = SerializeConfig {
             format: self.format,
             profile: self.field_profile,
@@ -508,9 +534,62 @@ impl<'a> ContextPackBuilder<'a> {
             max_field_chars: self.max_field_chars,
             max_item_tokens: self.max_item_tokens,
         };
-        let pack = self.run()?;
-        Ok(serialize_pack(&pack, &config))
+        let run = self.run_unfinalized()?;
+        let bytes = serialize_pack(&run.pack, &config);
+        let telemetry = serialize_pack_telemetry(&run.pack, &config);
+        finalize_context_pack_telemetry(
+            run.store,
+            run.telemetry_run_id,
+            telemetry.stats.query_time_us,
+            telemetry.stats.claims_suppressed,
+            &telemetry.result_ids,
+            context_pack_empty_reason(&run.pack, &telemetry.result_ids),
+        );
+        Ok(RetrievalWithTelemetry {
+            value: bytes,
+            run_id: run.telemetry_run_id,
+        })
     }
+}
+
+fn finalize_context_pack_telemetry(
+    store: &Store,
+    telemetry_run_id: Option<RetrievalRunId>,
+    elapsed_us: u64,
+    claims_suppressed: usize,
+    surfaced_result_ids: &[[u8; 16]],
+    empty_reason: Option<String>,
+) {
+    let Some(run_id) = telemetry_run_id else {
+        return;
+    };
+    if let Err(error) = store.finalize_context_pack_retrieval_run(
+        run_id,
+        elapsed_us,
+        claims_suppressed,
+        surfaced_result_ids,
+        empty_reason,
+    ) {
+        tracing::warn!(
+            ?error,
+            "context-pack retrieval telemetry finalization failed; continuing retrieval"
+        );
+    }
+}
+
+fn context_pack_empty_reason(
+    pack: &ContextPack,
+    surfaced_result_ids: &[[u8; 16]],
+) -> Option<String> {
+    if !surfaced_result_ids.is_empty() {
+        return None;
+    }
+    let reason = pack
+        .empty
+        .as_ref()
+        .map(|empty| empty.reason)
+        .unwrap_or(EmptyReason::FilterMatchedNone);
+    Some(format!("{reason:?}"))
 }
 
 fn dedupe_signals(signals: Vec<Signal>) -> Vec<Signal> {
@@ -2515,11 +2594,15 @@ mod tests {
         )?;
         vault.put_edge(&live, crate::types::EdgeKind::Supports, &dead_neighbor, 0.9)?;
 
-        let pack = vault
+        let pack_with_telemetry = vault
             .context_pack()
             .search_text("telemetryhydrate", 10)
             .edge_hop(1)
-            .run()?;
+            .run_with_telemetry()?;
+        let run_id = pack_with_telemetry
+            .run_id
+            .expect("context-pack telemetry run id");
+        let pack = pack_with_telemetry.value;
         assert_eq!(pack.results.len(), 1);
         assert_eq!(pack.results[0].id, live);
         assert!(pack.neighbors.is_empty());
@@ -2528,10 +2611,64 @@ mod tests {
         let runs = vault.retrieval_runs(1)?;
         assert_eq!(runs.len(), 1);
         assert_eq!(runs[0].action, crate::store::RetrievalAction::ContextPack);
+        assert_eq!(runs[0].run_id, run_id);
         assert_eq!(runs[0].claims_suppressed, pack.stats.claims_suppressed);
         assert_eq!(runs[0].result_ids, vec![*live.as_bytes()]);
         assert_eq!(runs[0].score_breakdown.len(), 1);
         assert_eq!(runs[0].score_breakdown[0].result_id, *live.as_bytes());
+        Ok(())
+    }
+
+    #[test]
+    fn context_pack_serialized_telemetry_reflects_budget_surviving_results() -> Result<()> {
+        let (_dir, vault) = open_test_vault();
+
+        let survivor = EntityId::from_bytes_unchecked([0x75; 16]);
+        let dropped = EntityId::from_bytes_unchecked([0x76; 16]);
+        let put_turn = |id: EntityId, vector: [f32; 4], text: &str| -> Result<()> {
+            let payload = msgpack_entity(serde_json::json!({
+                "txt": text,
+                "spkr": "user",
+                "at": 1_u64,
+            }));
+            vault
+                .batch()
+                .put(
+                    &id,
+                    crate::types::ENTITY_TYPE_TURN,
+                    TimeRange { start: 1, end: 1 },
+                    1,
+                    &payload,
+                )
+                .vector(&id, &vector)
+                .commit()
+        };
+        put_turn(survivor, [1.0, 0.0, 0.0, 0.0], "budget survivor")?;
+        put_turn(dropped, [0.0, 1.0, 0.0, 0.0], "budget dropped")?;
+
+        let serialized = vault
+            .context_pack()
+            .search_vector(&[1.0, 0.0, 0.0, 0.0], 10)
+            .format(PackFormat::Plaintext)
+            .token_budget(1)
+            .run_serialized_with_telemetry()?;
+        assert!(!serialized.value.is_empty());
+        let run_id = serialized.run_id.expect("serialized telemetry run id");
+
+        let runs = vault.retrieval_runs(1)?;
+        assert_eq!(runs.len(), 1);
+        assert_eq!(runs[0].run_id, run_id);
+        assert_eq!(runs[0].action, crate::store::RetrievalAction::ContextPack);
+        assert!(
+            runs[0].total_in_scope >= 2,
+            "test setup should hydrate at least two pre-budget primary results"
+        );
+        assert_eq!(runs[0].result_ids, vec![*survivor.as_bytes()]);
+        assert!(!runs[0].result_ids.contains(dropped.as_bytes()));
+        assert_eq!(runs[0].score_breakdown.len(), 1);
+        assert_eq!(runs[0].score_breakdown[0].result_id, *survivor.as_bytes());
+        assert_eq!(runs[0].score_breakdown[0].final_rank, 1);
+        assert_eq!(runs[0].empty_reason, None);
         Ok(())
     }
 }
