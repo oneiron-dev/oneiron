@@ -1017,6 +1017,80 @@ fn corrupt_sibling_ls_row_fails_door_closed() {
     );
 }
 
+/// FED-005: hosted receipt replay must verify against the same nonzero
+/// lease-vault scope that root grants mirror into `ls:{tenant}:{client}`.
+/// This drives both production replay doors: live Observer B and startup
+/// `forward_rematerialize`.
+#[test]
+fn nonzero_lease_vault_receipt_replay_doors_use_materializer_scope() {
+    let (_dir, vault) = test_vault_with_dir();
+    let tenant_vault = OTHER_TEST_LEASE_VAULT_ID;
+    let author_key = SigningKey::from_bytes(&[61u8; 32]);
+    let author_client = 0x6161_6161_6161_6161u64;
+    register_lease_row(
+        &vault,
+        tenant_vault,
+        author_client,
+        &author_key.verifying_key().to_bytes(),
+        0x01,
+    );
+
+    let observer_id = EntityId::now();
+    let observer_blob = signed_receipt_blob(
+        &author_key,
+        author_client,
+        &observer_id,
+        LEARNED_AT,
+        &EntityId::now().to_hex(),
+    );
+    let doc = LoroDoc::new();
+    let materializer = Arc::new(Materializer::with_lease_vault_id(tenant_vault));
+    let _subs = register_observer_b(&doc, &vault, &materializer, WINDOW);
+    insert_bytes(
+        &doc.get_map("entities"),
+        &observer_id.to_hex(),
+        &observer_blob,
+    );
+    doc.commit();
+
+    assert_eq!(
+        vault.get_raw(&observer_id).unwrap().as_deref(),
+        Some(observer_blob.as_slice()),
+        "Observer B must read the tenant-scoped lease row, not default vault 0"
+    );
+
+    let window_key = WindowKey::new(WINDOW);
+    let remat_id = EntityId::now();
+    let remat_blob = signed_receipt_blob(
+        &author_key,
+        author_client,
+        &remat_id,
+        LEARNED_AT,
+        &EntityId::now().to_hex(),
+    );
+    let remat_doc = create_window_doc("node-x", &window_key);
+    insert_bytes(
+        &remat_doc.get_map("entities"),
+        &remat_id.to_hex(),
+        &remat_blob,
+    );
+    remat_doc.commit();
+
+    let remat_materializer = Materializer::with_lease_vault_id(tenant_vault);
+    let count = forward_rematerialize(&vault, &remat_doc, &remat_materializer, &window_key)
+        .expect("forward remat must verify with the tenant-scoped lease row");
+    assert_eq!(count, 1);
+    assert_eq!(
+        vault.get_raw(&remat_id).unwrap().as_deref(),
+        Some(remat_blob.as_slice()),
+        "forward remat must read the tenant-scoped lease row, not default vault 0"
+    );
+    assert!(
+        quarantined_records(&vault).unwrap().is_empty(),
+        "valid scoped receipts must not be quarantined as ReceiptLeaseUnknown"
+    );
+}
+
 /// Claimed-row status has precedence over the pubkey floor: if the claimed
 /// lease is revoked, the door returns the remote `ReceiptLeaseRevoked`
 /// result before decoding any malformed sibling row in the scoped scan.

@@ -780,6 +780,7 @@ pub fn forward_rematerialize(
     window_key: &WindowKey,
 ) -> Result<u32> {
     let _guard = materializer.lock();
+    let lease_vault_id = materializer.lease_vault_id();
     let entities_map = doc.get_map("entities");
     let edges_map = doc.get_map("edges");
     let tombstones_map = doc.get_map("tombstones");
@@ -1049,7 +1050,13 @@ pub fn forward_rematerialize(
                         terminal_quarantines.push(id);
                         return Ok(false);
                     }
-                    crate::sync::lease::verify_new_receipt_origin_in_txn(vault, wtxn, &id, blob)?;
+                    crate::sync::lease::verify_new_receipt_origin_for_vault_in_txn(
+                        vault,
+                        wtxn,
+                        lease_vault_id,
+                        &id,
+                        blob,
+                    )?;
                     vault
                         .batch_in()
                         .put_replicated(

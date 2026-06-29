@@ -102,14 +102,14 @@ impl ConnState {
         match mode {
             WindowSyncMode::Selector if self.protocol_version != protocol::PROTOCOL_VERSION => {
                 return Err(ProtocolError::InvalidPayload(
-                    "selector sync requires protocol v3",
+                    "selector sync requires the current selector protocol",
                 ));
             }
             WindowSyncMode::FullWindow
                 if self.protocol_version != protocol::LEGACY_FULL_WINDOW_PROTOCOL_VERSION =>
             {
                 return Err(ProtocolError::InvalidPayload(
-                    "full-window sync requires legacy protocol v2",
+                    "full-window sync requires the current full-window protocol",
                 ));
             }
             _ => {}
@@ -959,7 +959,7 @@ mod tests {
     use super::*;
     use crate::config::SyncServerConfig;
     use core::assert_matches;
-    use loro::{ExportMode, LoroDoc};
+    use loro::{ExportMode, LoroDoc, LoroValue, ValueOrContainer};
     use tokio::sync::mpsc;
 
     fn test_server() -> (tempfile::TempDir, SyncServer) {
@@ -968,6 +968,20 @@ mod tests {
             Arc::new(oneiron::Vault::open(dir.path(), oneiron::VaultConfig::device()).unwrap());
         let server = SyncServer::new(vault, SyncServerConfig::default()).unwrap();
         (dir, server)
+    }
+
+    fn test_server_with_lease_vault_id(
+        vault: Arc<oneiron::Vault>,
+        lease_vault_id: u64,
+    ) -> SyncServer {
+        SyncServer::new(
+            vault,
+            SyncServerConfig {
+                lease_vault_id,
+                ..Default::default()
+            },
+        )
+        .unwrap()
     }
 
     /// Client-side stand-in window doc with the schema containers.
@@ -1073,6 +1087,149 @@ mod tests {
 
     fn test_selector_scope() -> oneiron::FederationGrantScope {
         selector_grant_scope()
+    }
+
+    async fn submit_lease_request(
+        server: &SyncServer,
+        client_id: u64,
+        pubkey: [u8; 32],
+        pop_sig: [u8; 64],
+    ) -> bool {
+        let (direct_tx, mut direct_rx) = mpsc::unbounded_channel::<Vec<u8>>();
+        let mut conn_state = test_legacy_conn_state();
+        handle_sync_message(
+            server,
+            1,
+            SyncMessage::LeaseRequest {
+                client_id,
+                pubkey,
+                pop_sig,
+            },
+            &direct_tx,
+            &mut conn_state,
+        )
+        .await
+        .unwrap();
+
+        let ack = direct_rx.try_recv().expect("lease request must ack");
+        assert_eq!(ack[0], oneiron::sync::transport::TAG_LEASE_GRANTED);
+        let (status, ack_client_id, expires_at) =
+            oneiron::sync::transport::decode_lease_granted(&ack[1..]).unwrap();
+        assert_eq!(ack_client_id, client_id);
+        if status == oneiron::sync::transport::LEASE_STATUS_GRANTED {
+            assert_ne!(expires_at, 0, "granted leases carry an expiry");
+            true
+        } else {
+            assert_eq!(expires_at, 0, "rejected leases carry no expiry");
+            false
+        }
+    }
+
+    fn root_lease_record(
+        server: &SyncServer,
+        vault_id: u64,
+        client_id: u64,
+    ) -> oneiron::sync::LeaseRecord {
+        let key = oneiron::sync::lease::lease_registry_key(vault_id, client_id);
+        match server
+            .root_doc
+            .get_map(oneiron::sync::ROOT_LEASES_MAP)
+            .get(&key)
+        {
+            Some(ValueOrContainer::Value(LoroValue::Binary(raw))) => {
+                oneiron::sync::decode_lease_record(&raw).unwrap()
+            }
+            other => panic!("missing scoped root lease record {key}: {other:?}"),
+        }
+    }
+
+    fn mirror_lease_record(
+        vault: &oneiron::Vault,
+        vault_id: u64,
+        client_id: u64,
+    ) -> oneiron::sync::LeaseRecord {
+        let key = oneiron::sync::lease_key(vault_id, client_id);
+        let raw = vault
+            .sync_state_get(&key)
+            .unwrap()
+            .unwrap_or_else(|| panic!("missing mirrored lease row {key}"));
+        oneiron::sync::decode_lease_record(&raw).unwrap()
+    }
+
+    #[tokio::test]
+    async fn hosted_lease_production_path_isolates_same_client_id_by_configured_vault() {
+        use ed25519_dalek::{Signer, SigningKey};
+
+        let dir = tempfile::tempdir().unwrap();
+        let vault =
+            Arc::new(oneiron::Vault::open(dir.path(), oneiron::VaultConfig::device()).unwrap());
+        let tenant_a = 0x0a0b_0c0d_0e0f_1011u64;
+        let tenant_b = 0x1110_0f0e_0d0c_0b0au64;
+        let client_id = 0x0123_4567_89ab_cdefu64;
+        let key = SigningKey::from_bytes(&[42u8; 32]);
+        let pubkey = key.verifying_key().to_bytes();
+        let pop_sig = key
+            .sign(&oneiron::sync::lease_pop_transcript(client_id, &pubkey))
+            .to_bytes();
+
+        let server_a = test_server_with_lease_vault_id(vault.clone(), tenant_a);
+        assert!(submit_lease_request(&server_a, client_id, pubkey, pop_sig).await);
+
+        let server_b = test_server_with_lease_vault_id(vault.clone(), tenant_b);
+        assert!(submit_lease_request(&server_b, client_id, pubkey, pop_sig).await);
+        assert!(
+            server_b
+                .root_doc
+                .get_map(oneiron::sync::ROOT_LEASES_MAP)
+                .get(&oneiron::sync::client_id_hex(client_id))
+                .is_none(),
+            "production registration must not write the legacy subscriber-only root key"
+        );
+        assert_eq!(
+            root_lease_record(&server_b, tenant_a, client_id).status,
+            oneiron::sync::LeaseStatus::Active
+        );
+        assert_eq!(
+            root_lease_record(&server_b, tenant_b, client_id).status,
+            oneiron::sync::LeaseStatus::Active
+        );
+        assert_eq!(
+            mirror_lease_record(&vault, tenant_a, client_id).status,
+            oneiron::sync::LeaseStatus::Active
+        );
+        assert_eq!(
+            mirror_lease_record(&vault, tenant_b, client_id).status,
+            oneiron::sync::LeaseStatus::Active
+        );
+
+        let server_a_revoke = test_server_with_lease_vault_id(vault.clone(), tenant_a);
+        assert!(
+            server_a_revoke
+                .revoke_lease(client_id)
+                .await
+                .unwrap()
+                .is_some()
+        );
+
+        let server_b_renew = test_server_with_lease_vault_id(vault.clone(), tenant_b);
+        assert!(submit_lease_request(&server_b_renew, client_id, pubkey, pop_sig).await);
+        assert_eq!(
+            root_lease_record(&server_b_renew, tenant_a, client_id).status,
+            oneiron::sync::LeaseStatus::Revoked
+        );
+        assert_eq!(
+            root_lease_record(&server_b_renew, tenant_b, client_id).status,
+            oneiron::sync::LeaseStatus::Active,
+            "tenant A's revocation floor must not block tenant B renewal"
+        );
+
+        let server_a_retry = test_server_with_lease_vault_id(vault.clone(), tenant_a);
+        assert!(!submit_lease_request(&server_a_retry, client_id, pubkey, pop_sig).await);
+        assert_eq!(
+            root_lease_record(&server_a_retry, tenant_a, client_id).status,
+            oneiron::sync::LeaseStatus::Revoked,
+            "tenant A's own revoked row remains terminal"
+        );
     }
 
     #[tokio::test]
@@ -1562,7 +1719,7 @@ mod tests {
         assert!(matches!(result, Err(ProtocolError::InvalidPayload(_))));
         assert!(
             direct_rx.try_recv().is_err(),
-            "v3 selector-capable connections must not receive full-window data"
+            "selector-capable connections must not receive full-window data"
         );
     }
 
@@ -1612,7 +1769,7 @@ mod tests {
         assert!(matches!(result, Err(ProtocolError::InvalidPayload(_))));
         assert!(
             direct_rx.try_recv().is_err(),
-            "legacy v2 connections must not receive selector data"
+            "full-window connections must not receive selector data"
         );
     }
 
@@ -1782,17 +1939,17 @@ mod tests {
                 protocol::LEGACY_FULL_WINDOW_PROTOCOL_VERSION,
                 &window_update
             ),
-            "legacy v2 full-window clients keep receiving WindowSync broadcasts"
+            "full-window clients keep receiving WindowSync broadcasts"
         );
         assert!(
             !should_forward_broadcast(protocol::PROTOCOL_VERSION, &window_update),
-            "selector-capable v3 clients must not receive full-window WindowSync broadcasts"
+            "selector-capable clients must not receive full-window WindowSync broadcasts"
         );
 
         let root_update = protocol::encode_root_update(b"root");
         assert!(
             should_forward_broadcast(protocol::PROTOCOL_VERSION, &root_update),
-            "non-window broadcasts remain available to v3 clients"
+            "non-window broadcasts remain available to selector-capable clients"
         );
     }
 
@@ -1847,26 +2004,28 @@ mod tests {
 
     #[test]
     fn protocol_hello_validation_literals() {
-        // Contract literals: v2 remains legacy full-window, while v3 gates
-        // FED-002 selector sync. Unsupported versions close with 4006 before
-        // any sync payload flows.
+        // Contract literals: FED-005 scoped lease keys reject old v2/v3 peers
+        // before root `leases` payloads flow, while the current full-window
+        // and selector-capable versions stay distinct for broadcast filtering.
         assert_eq!(
-            validate_protocol_hello(&[3, 2]),
+            validate_protocol_hello(&[3, 4]),
             Ok(protocol::LEGACY_FULL_WINDOW_PROTOCOL_VERSION)
         );
         assert_eq!(
-            validate_protocol_hello(&[3, 3]),
+            validate_protocol_hello(&[3, 5]),
             Ok(protocol::PROTOCOL_VERSION)
         );
 
         let cases: &[(&str, &[u8])] = &[
             ("v1_peer", &[3, 1]),
-            ("future_version", &[3, 4]),
+            ("old_full_window_v2_peer", &[3, 2]),
+            ("old_selector_v3_peer", &[3, 3]),
+            ("future_version", &[3, 6]),
             ("zero_version", &[3, 0]),
-            ("wrong_tag", &[2, 3]),
+            ("wrong_tag", &[2, 5]),
             ("empty", &[]),
             ("tag_only", &[3]),
-            ("trailing_bytes", &[3, 3, 0]),
+            ("trailing_bytes", &[3, 5, 0]),
         ];
         for (case_name, frame) in cases {
             assert_eq!(
