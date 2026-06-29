@@ -1,12 +1,17 @@
 //! Ingest source registry and source-local normalization.
 //!
-//! This module intentionally stops before semantic extraction: sources
-//! normalize raw fixture/input records into text-bearing records, but do not
-//! mint claim writes.
+//! Source normalization stops before semantic extraction: sources normalize
+//! raw fixture/input records into text-bearing records. Imported evidence can
+//! only mint claim writes through an explicit admission helper that requires
+//! entity resolution and routes through the normal Gate-backed candidate path.
 
+use rmpv::Value as MsgpackValue;
 use serde_json::{Map, Value};
 
-use crate::claim::{ClaimApprovalStatus, ClaimSource};
+use crate::claim::{ClaimApprovalStatus, ClaimSource, ClaimSubject};
+use crate::types::{
+    ClaimCandidate, EntityId, TimeRange, WriteActor, WriteEnvelope, WriteProvenance,
+};
 
 pub const JSONL_TRANSCRIPT_SOURCE_ID: &str = "jsonl-transcript";
 
@@ -103,6 +108,104 @@ pub struct NormalizedIngestClaim {
     pub source_record_id: String,
     pub predicate: String,
     pub value: Value,
+}
+
+/// Explicit entity-resolution result required before imported evidence can
+/// become a candidate claim.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ImportedEvidenceEntityResolution {
+    pub subject: EntityId,
+}
+
+impl ImportedEvidenceEntityResolution {
+    #[must_use]
+    pub const fn subject(subject: EntityId) -> Self {
+        Self { subject }
+    }
+}
+
+/// Write metadata for admitting one normalized imported evidence claim.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ImportedEvidenceAdmission {
+    pub source_id: String,
+    pub claim_id: EntityId,
+    pub entity_resolution: ImportedEvidenceEntityResolution,
+    pub actor: WriteActor,
+    pub occurred: TimeRange,
+    pub learned_at: u64,
+    pub approval: ClaimApprovalStatus,
+}
+
+impl ImportedEvidenceAdmission {
+    /// Creates the default imported-evidence admission state: proposed review,
+    /// not an automatically confirmed claim.
+    #[must_use]
+    pub fn proposed(
+        source_id: impl Into<String>,
+        claim_id: EntityId,
+        entity_resolution: ImportedEvidenceEntityResolution,
+        actor: WriteActor,
+        occurred: TimeRange,
+        learned_at: u64,
+    ) -> Self {
+        Self {
+            source_id: source_id.into(),
+            claim_id,
+            entity_resolution,
+            actor,
+            occurred,
+            learned_at,
+            approval: ClaimApprovalStatus::Proposed,
+        }
+    }
+
+    /// Overrides the admission approval when a caller has an explicit
+    /// higher-trust import policy. The Gate still decides before persistence.
+    #[must_use]
+    pub const fn with_approval(mut self, approval: ClaimApprovalStatus) -> Self {
+        self.approval = approval;
+        self
+    }
+}
+
+/// Admits imported evidence as a claim candidate after explicit entity
+/// resolution and before persistence through the normal Gate write path.
+///
+/// # Errors
+///
+/// Returns the underlying claim-candidate write error. Gate/source-trust
+/// denial and missing actor or subject entities abort the batch, leaving no
+/// persisted candidate claim.
+pub fn admit_imported_evidence_claim(
+    vault: &crate::Vault,
+    claim: &NormalizedIngestClaim,
+    admission: ImportedEvidenceAdmission,
+) -> crate::Result<()> {
+    let imported_evidence = imported_evidence_value(&admission.source_id, &claim.source_record_id);
+    let candidate = ClaimCandidate::new(
+        claim.predicate.clone(),
+        ClaimSubject::Entity(admission.entity_resolution.subject),
+        json_to_msgpack_value(&claim.value),
+        1.0,
+    )
+    .with_evidence(imported_evidence.clone());
+    let envelope = WriteEnvelope::new(
+        admission.actor,
+        ClaimSource::Imported,
+        WriteProvenance::new(imported_evidence)?,
+        admission.approval,
+    );
+
+    vault
+        .batch()
+        .claim_candidate(
+            &admission.claim_id,
+            candidate,
+            &envelope,
+            admission.occurred,
+            admission.learned_at,
+        )
+        .commit()
 }
 
 pub type IngestResult<T> = std::result::Result<T, IngestError>;
@@ -437,9 +540,64 @@ fn normalize_space(input: &str) -> String {
     out
 }
 
+fn imported_evidence_value(source_id: &str, source_record_id: &str) -> MsgpackValue {
+    MsgpackValue::Map(vec![
+        (
+            MsgpackValue::from("kind"),
+            MsgpackValue::from("imported_evidence"),
+        ),
+        (
+            MsgpackValue::from("source_id"),
+            MsgpackValue::from(source_id),
+        ),
+        (
+            MsgpackValue::from("source_record_id"),
+            MsgpackValue::from(source_record_id),
+        ),
+    ])
+}
+
+fn json_to_msgpack_value(value: &Value) -> MsgpackValue {
+    match value {
+        Value::Null => MsgpackValue::Nil,
+        Value::Bool(value) => MsgpackValue::Boolean(*value),
+        Value::Number(value) => {
+            if let Some(value) = value.as_i64() {
+                MsgpackValue::from(value)
+            } else if let Some(value) = value.as_u64() {
+                MsgpackValue::from(value)
+            } else if let Some(value) = value.as_f64() {
+                MsgpackValue::F64(value)
+            } else {
+                MsgpackValue::Nil
+            }
+        }
+        Value::String(value) => MsgpackValue::from(value.as_str()),
+        Value::Array(values) => {
+            MsgpackValue::Array(values.iter().map(json_to_msgpack_value).collect())
+        }
+        Value::Object(entries) => MsgpackValue::Map(
+            entries
+                .iter()
+                .map(|(key, value)| {
+                    (
+                        MsgpackValue::from(key.as_str()),
+                        json_to_msgpack_value(value),
+                    )
+                })
+                .collect(),
+        ),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::error::Error;
+    use crate::store::Store;
+    use crate::types::{
+        ENTITY_TYPE_PERSON, ENTITY_TYPE_POLICY_MANIFEST, EdgeActorClass, VaultConfig,
+    };
 
     const MINIMAL_TRANSCRIPT_FIXTURE: &str =
         include_str!("../tests/fixtures/ingest/minimal_transcript.jsonl");
@@ -460,6 +618,85 @@ mod tests {
             },
             default_admission: ClaimApprovalStatus::Proposed,
         }
+    }
+
+    fn test_id(seed: u8) -> EntityId {
+        EntityId::from_bytes([seed; 16]).expect("valid test id")
+    }
+
+    fn test_time(ts: u64) -> TimeRange {
+        TimeRange { start: ts, end: ts }
+    }
+
+    fn temp_vault() -> (tempfile::TempDir, crate::Vault) {
+        let tmp = tempfile::tempdir().expect("temp dir");
+        let vault = crate::Vault::open(tmp.path(), VaultConfig::default()).expect("open vault");
+        (tmp, vault)
+    }
+
+    fn normalized_imported_claim() -> NormalizedIngestClaim {
+        NormalizedIngestClaim {
+            source_record_id: "turn-001".to_owned(),
+            predicate: "profile.name".to_owned(),
+            value: Value::String("Ada".to_owned()),
+        }
+    }
+
+    fn proposed_admission(
+        claim_id: EntityId,
+        subject: EntityId,
+        actor: EntityId,
+    ) -> ImportedEvidenceAdmission {
+        ImportedEvidenceAdmission::proposed(
+            JSONL_TRANSCRIPT_SOURCE_ID,
+            claim_id,
+            ImportedEvidenceEntityResolution::subject(subject),
+            WriteActor::new(actor, EdgeActorClass::Human),
+            test_time(10),
+            10,
+        )
+    }
+
+    fn put_actor_and_subject(vault: &crate::Vault, actor: &EntityId, subject: &EntityId) {
+        vault
+            .put_entity(actor, ENTITY_TYPE_PERSON, test_time(1), 1, b"import actor")
+            .expect("put actor");
+        vault
+            .put_entity(
+                subject,
+                ENTITY_TYPE_PERSON,
+                test_time(1),
+                1,
+                b"resolved subject",
+            )
+            .expect("put subject");
+    }
+
+    fn put_malformed_policy_manifest(vault: &crate::Vault, id: &EntityId) {
+        let mut payload = Vec::new();
+        payload.push(ENTITY_TYPE_POLICY_MANIFEST);
+        payload.extend_from_slice(&1_u64.to_be_bytes());
+        payload.extend_from_slice(&1_u64.to_be_bytes());
+        payload.extend_from_slice(&1_u64.to_be_bytes());
+        payload.extend_from_slice(b"not a messagepack manifest");
+
+        vault
+            .with_write_txn(|wtxn| {
+                vault.store.entities.put(wtxn, id.as_bytes(), &payload)?;
+                let type_key = Store::encode_type_key(ENTITY_TYPE_POLICY_MANIFEST, id);
+                vault.store.type_index.put(wtxn, &type_key, &[])?;
+                Ok(())
+            })
+            .expect("put malformed policy manifest");
+    }
+
+    fn evidence_field<'a>(value: &'a MsgpackValue, field: &str) -> Option<&'a MsgpackValue> {
+        let MsgpackValue::Map(entries) = value else {
+            return None;
+        };
+        entries
+            .iter()
+            .find_map(|(key, value)| (key.as_str() == Some(field)).then_some(value))
     }
 
     #[test]
@@ -489,6 +726,117 @@ mod tests {
         assert_eq!(config.default_admission, ClaimApprovalStatus::Proposed);
         assert!(!config.trust_ceiling.permits_auto(Some(0)));
         assert!(!config.trust_ceiling.permits_auto(None));
+    }
+
+    #[test]
+    fn imported_evidence_admission_defaults_to_proposed_claim() -> crate::Result<()> {
+        let (_tmp, vault) = temp_vault();
+        let actor = test_id(0x11);
+        let subject = test_id(0x12);
+        let claim_id = test_id(0x13);
+        put_actor_and_subject(&vault, &actor, &subject);
+
+        admit_imported_evidence_claim(
+            &vault,
+            &normalized_imported_claim(),
+            proposed_admission(claim_id, subject, actor),
+        )?;
+
+        let body = vault
+            .get_claim(&claim_id)?
+            .expect("imported evidence claim stored for review");
+        assert_eq!(body.approval, ClaimApprovalStatus::Proposed);
+        assert_eq!(body.source, Some(ClaimSource::Imported));
+        assert_eq!(body.subject, ClaimSubject::Entity(subject));
+        assert_eq!(body.value, MsgpackValue::from("Ada"));
+        let evidence = body.evidence.expect("write envelope evidence");
+        let candidate_evidence = evidence_field(
+            &evidence,
+            crate::types::WRITE_ENVELOPE_EVIDENCE_CANDIDATE_KEY,
+        )
+        .expect("candidate evidence");
+        assert_eq!(
+            evidence_field(candidate_evidence, "source_record_id").and_then(MsgpackValue::as_str),
+            Some("turn-001")
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn imported_evidence_auto_denial_leaves_no_candidate_claim() -> crate::Result<()> {
+        let (_tmp, vault) = temp_vault();
+        let actor = test_id(0x21);
+        let subject = test_id(0x22);
+        let claim_id = test_id(0x23);
+        put_actor_and_subject(&vault, &actor, &subject);
+        let admission =
+            proposed_admission(claim_id, subject, actor).with_approval(ClaimApprovalStatus::Auto);
+
+        let err = admit_imported_evidence_claim(&vault, &normalized_imported_claim(), admission)
+            .expect_err("imported auto claim must be denied by default");
+
+        assert!(
+            matches!(
+                err,
+                Error::SourceNotTrustedForAuto {
+                    claim_source: "imported"
+                }
+            ),
+            "expected imported source-trust denial, got {err:?}"
+        );
+        assert!(vault.get_raw(&claim_id)?.is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn imported_evidence_requires_explicit_resolved_entity_before_persistence() -> crate::Result<()>
+    {
+        let (_tmp, vault) = temp_vault();
+        let actor = test_id(0x31);
+        let missing_subject = test_id(0x32);
+        let claim_id = test_id(0x33);
+        vault.put_entity(&actor, ENTITY_TYPE_PERSON, test_time(1), 1, b"import actor")?;
+
+        let err = admit_imported_evidence_claim(
+            &vault,
+            &normalized_imported_claim(),
+            proposed_admission(claim_id, missing_subject, actor),
+        )
+        .expect_err("missing resolved subject entity must abort admission");
+
+        assert!(matches!(err, Error::EntityNotFound), "got {err:?}");
+        assert!(vault.get_raw(&claim_id)?.is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn imported_evidence_gate_denial_leaves_no_candidate_claim() -> crate::Result<()> {
+        let (_tmp, vault) = temp_vault();
+        let actor = test_id(0x41);
+        let subject = test_id(0x42);
+        let claim_id = test_id(0x43);
+        put_actor_and_subject(&vault, &actor, &subject);
+        put_malformed_policy_manifest(&vault, &test_id(0x44));
+
+        let err = admit_imported_evidence_claim(
+            &vault,
+            &normalized_imported_claim(),
+            proposed_admission(claim_id, subject, actor),
+        )
+        .expect_err("Gate fail-closed denial must abort admission");
+
+        assert!(
+            matches!(
+                err,
+                Error::GateWriteRejected {
+                    outcome: "deny",
+                    ref reason_codes
+                } if reason_codes.as_slice() == ["gate.deny.policy_fail_closed"]
+            ),
+            "expected Gate deny, got {err:?}"
+        );
+        assert!(vault.get_raw(&claim_id)?.is_none());
+        Ok(())
     }
 
     #[test]
