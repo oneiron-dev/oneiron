@@ -382,7 +382,7 @@ fn required_value<'a>(entries: &'a [(Value, Value)], key: &str) -> Result<&'a Va
 }
 
 fn invalid_grant() -> Error {
-    Error::InvalidKey
+    Error::InvalidFederationGrantBody("body failed validation")
 }
 
 #[cfg(test)]
@@ -557,7 +557,11 @@ mod tests {
                 Ok(decoded) => panic!("{case}: malformed grant decoded as {decoded:?}"),
                 Err(err) => err,
             };
-            assert_eq!(err.kind(), ErrorKind::InvalidKey, "{case}: wrong error");
+            assert_eq!(
+                err.kind(),
+                ErrorKind::InvalidFederationGrantBody,
+                "{case}: wrong error"
+            );
         }
     }
 
@@ -574,7 +578,7 @@ mod tests {
             .validate()
             .expect_err("read-only preset must not carry admin role");
 
-        assert_eq!(err.kind(), ErrorKind::InvalidKey);
+        assert_eq!(err.kind(), ErrorKind::InvalidFederationGrantBody);
     }
 
     #[test]
