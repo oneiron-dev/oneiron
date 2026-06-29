@@ -208,17 +208,70 @@ impl RuntimeRoleTarget {
         }
     }
 
-    fn apply_override(&mut self, role: RuntimeRole, value: RuntimeRoleTargetOverride) {
+    fn apply_override(&mut self, role: RuntimeRole, value: RuntimeRoleTargetOverride) -> bool {
+        let mut mode_changed = false;
         if let Some(mode) = value.mode
             && self.mode != mode
         {
             *self = Self::for_role_mode(role, mode);
+            mode_changed = true;
         }
         if let Some(provider_kind) = value.provider_kind {
             self.provider_kind = provider_kind;
         }
         if let Some(model) = value.model {
             self.model = model;
+        }
+        mode_changed
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct RuntimeRoleTargetExplicitFields {
+    mode: bool,
+    provider_kind: bool,
+    model: bool,
+}
+
+impl RuntimeRoleTargetExplicitFields {
+    fn apply_override(&mut self, value: &RuntimeRoleTargetOverride, mode_changed: bool) {
+        if value.mode.is_some() {
+            self.mode = true;
+            if mode_changed {
+                self.provider_kind = false;
+                self.model = false;
+            }
+        }
+        if value.provider_kind.is_some() {
+            self.provider_kind = true;
+        }
+        if value.model.is_some() {
+            self.model = true;
+        }
+    }
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+struct RuntimeRoleDefaultExplicitFields {
+    orchestrator: RuntimeRoleTargetExplicitFields,
+    subagent: RuntimeRoleTargetExplicitFields,
+    summarizer: RuntimeRoleTargetExplicitFields,
+}
+
+impl RuntimeRoleDefaultExplicitFields {
+    fn target(&self, role: RuntimeRole) -> RuntimeRoleTargetExplicitFields {
+        match role {
+            RuntimeRole::Orchestrator => self.orchestrator,
+            RuntimeRole::Subagent => self.subagent,
+            RuntimeRole::Summarizer => self.summarizer,
+        }
+    }
+
+    fn target_mut(&mut self, role: RuntimeRole) -> &mut RuntimeRoleTargetExplicitFields {
+        match role {
+            RuntimeRole::Orchestrator => &mut self.orchestrator,
+            RuntimeRole::Subagent => &mut self.subagent,
+            RuntimeRole::Summarizer => &mut self.summarizer,
         }
     }
 }
@@ -260,29 +313,63 @@ impl RuntimeRoleDefaults {
         }
     }
 
-    fn apply_overrides(&mut self, overrides: RuntimeRoleDefaultOverrides) {
+    fn apply_overrides(
+        &mut self,
+        overrides: RuntimeRoleDefaultOverrides,
+        explicit_fields: &mut RuntimeRoleDefaultExplicitFields,
+    ) {
         if let Some(value) = overrides.orchestrator {
-            self.target_mut(RuntimeRole::Orchestrator)
-                .apply_override(RuntimeRole::Orchestrator, value);
+            let mode_changed = self
+                .target_mut(RuntimeRole::Orchestrator)
+                .apply_override(RuntimeRole::Orchestrator, value.clone());
+            explicit_fields
+                .target_mut(RuntimeRole::Orchestrator)
+                .apply_override(&value, mode_changed);
         }
         if let Some(value) = overrides.subagent {
-            self.target_mut(RuntimeRole::Subagent)
-                .apply_override(RuntimeRole::Subagent, value);
+            let mode_changed = self
+                .target_mut(RuntimeRole::Subagent)
+                .apply_override(RuntimeRole::Subagent, value.clone());
+            explicit_fields
+                .target_mut(RuntimeRole::Subagent)
+                .apply_override(&value, mode_changed);
         }
         if let Some(value) = overrides.summarizer {
-            self.target_mut(RuntimeRole::Summarizer)
-                .apply_override(RuntimeRole::Summarizer, value);
+            let mode_changed = self
+                .target_mut(RuntimeRole::Summarizer)
+                .apply_override(RuntimeRole::Summarizer, value.clone());
+            explicit_fields
+                .target_mut(RuntimeRole::Summarizer)
+                .apply_override(&value, mode_changed);
         }
     }
 
-    fn apply_default_mode_change(&mut self, previous_mode: RuntimeMode, next_mode: RuntimeMode) {
+    fn apply_default_mode_change(
+        &mut self,
+        previous_mode: RuntimeMode,
+        next_mode: RuntimeMode,
+        explicit_fields: &RuntimeRoleDefaultExplicitFields,
+    ) {
         let previous_defaults = Self::for_mode(previous_mode);
         let next_defaults = Self::for_mode(next_mode);
 
         for role in RuntimeRole::ALL {
             let target = self.target_mut(role);
-            if target == previous_defaults.target(role) {
-                *target = next_defaults.target(role).clone();
+            let previous_default = previous_defaults.target(role);
+            let next_default = next_defaults.target(role);
+            let explicit = explicit_fields.target(role);
+
+            if explicit.mode {
+                continue;
+            }
+            if target.mode == previous_default.mode {
+                target.mode = next_default.mode;
+            }
+            if !explicit.provider_kind && target.provider_kind == previous_default.provider_kind {
+                target.provider_kind = next_default.provider_kind;
+            }
+            if !explicit.model && target.model == previous_default.model {
+                target.model.clone_from(&next_default.model);
             }
         }
     }
@@ -295,7 +382,7 @@ impl RuntimeRoleDefaults {
 }
 
 /// Fully resolved runtime routing configuration.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, ToSchema)]
+#[derive(Clone, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct RuntimeConfig {
     /// Explicit runtime mode.
@@ -305,6 +392,29 @@ pub struct RuntimeConfig {
     pub byo_key_env: Option<String>,
     /// Per-role default route targets.
     pub role_defaults: RuntimeRoleDefaults,
+    #[serde(skip)]
+    #[schema(ignore)]
+    role_default_explicit_fields: RuntimeRoleDefaultExplicitFields,
+}
+
+impl PartialEq for RuntimeConfig {
+    fn eq(&self, other: &Self) -> bool {
+        self.mode == other.mode
+            && self.byo_key_env == other.byo_key_env
+            && self.role_defaults == other.role_defaults
+    }
+}
+
+impl Eq for RuntimeConfig {}
+
+impl fmt::Debug for RuntimeConfig {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("RuntimeConfig")
+            .field("mode", &self.mode)
+            .field("byo_key_env", &self.byo_key_env)
+            .field("role_defaults", &self.role_defaults)
+            .finish()
+    }
 }
 
 impl Default for RuntimeConfig {
@@ -323,6 +433,7 @@ impl RuntimeConfig {
             mode,
             byo_key_env,
             role_defaults: RuntimeRoleDefaults::for_mode(mode),
+            role_default_explicit_fields: RuntimeRoleDefaultExplicitFields::default(),
         }
     }
 
@@ -330,8 +441,11 @@ impl RuntimeConfig {
         if let Some(mode) = value.mode {
             let previous_mode = self.mode;
             self.mode = mode;
-            self.role_defaults
-                .apply_default_mode_change(previous_mode, mode);
+            self.role_defaults.apply_default_mode_change(
+                previous_mode,
+                mode,
+                &self.role_default_explicit_fields,
+            );
             if self.byo_key_env.is_none() && mode == RuntimeMode::ByoCloudKey {
                 self.byo_key_env = Some(DEFAULT_BYO_KEY_ENV.to_owned());
             }
@@ -344,7 +458,8 @@ impl RuntimeConfig {
             };
         }
         if let Some(role_defaults) = value.role_defaults {
-            self.role_defaults.apply_overrides(role_defaults);
+            self.role_defaults
+                .apply_overrides(role_defaults, &mut self.role_default_explicit_fields);
         }
         if self.byo_key_env.is_none() && self.role_defaults.contains_mode(RuntimeMode::ByoCloudKey)
         {
@@ -359,21 +474,34 @@ impl RuntimeConfig {
     pub fn usage_mode_for_model(&self, model: Option<&str>) -> Option<UsageMode> {
         let model = model.map(str::trim).filter(|model| !model.is_empty())?;
         let mut matched_usage_mode = None;
+        let mut matched_debits = None;
 
         for role in RuntimeRole::ALL {
-            let target = self.role_defaults.target(role);
-            if target.model != model {
+            let route = self.route_for_role_with_key_lookup(role, |_| Some("key".into()));
+            if route.model != model || route.state != RuntimeRouteState::Available {
                 continue;
             }
 
-            let usage_mode = target.mode.usage_mode();
-            if matched_usage_mode.is_some_and(|matched| matched != usage_mode) {
+            let usage_mode = route.mode.usage_mode();
+            let debits = usage_mode.debits_usage();
+            if matched_debits.is_some_and(|matched| matched != debits) {
                 return None;
             }
-            matched_usage_mode = Some(usage_mode);
+            matched_debits = Some(debits);
+            matched_usage_mode.get_or_insert(usage_mode);
         }
 
         matched_usage_mode
+    }
+
+    pub fn has_model_route_match(&self, model: Option<&str>) -> bool {
+        let Some(model) = model.map(str::trim).filter(|model| !model.is_empty()) else {
+            return false;
+        };
+
+        RuntimeRole::ALL
+            .into_iter()
+            .any(|role| self.role_defaults.target(role).model == model)
     }
 
     pub fn usage_mode_without_model(&self) -> Option<UsageMode> {
@@ -1010,5 +1138,66 @@ mod tests {
         assert_eq!(target.mode, RuntimeMode::ByoCloudKey);
         assert_eq!(target.provider_kind, RuntimeProviderKind::ByoCloud);
         assert_eq!(target.model, "file-orchestrator");
+    }
+
+    #[test]
+    fn default_mode_change_updates_model_only_role_override() {
+        let mut config = RuntimeConfig::for_mode(RuntimeMode::LocalFree);
+        config.apply_override(RuntimeConfigOverride::with_role_override(
+            RuntimeRole::Orchestrator,
+            RuntimeRoleTargetOverride::model("file-orchestrator"),
+        ));
+        config.apply_override(RuntimeConfigOverride::mode(RuntimeMode::OneironCloud));
+
+        let orchestrator = config.role_defaults.target(RuntimeRole::Orchestrator);
+        assert_eq!(orchestrator.mode, RuntimeMode::OneironCloud);
+        assert_eq!(
+            orchestrator.provider_kind,
+            RuntimeProviderKind::OneironCloud
+        );
+        assert_eq!(orchestrator.model, "file-orchestrator");
+
+        let subagent = config.role_defaults.target(RuntimeRole::Subagent);
+        assert_eq!(subagent.mode, RuntimeMode::OneironCloud);
+        assert_eq!(subagent.provider_kind, RuntimeProviderKind::OneironCloud);
+        assert_eq!(subagent.model, "oneiron-cloud-subagent-default");
+    }
+
+    #[test]
+    fn usage_mode_for_model_uses_available_routes_and_debit_boundaries() {
+        let mut unavailable = RuntimeConfig::for_mode(RuntimeMode::OneironCloud);
+        unavailable.apply_override(RuntimeConfigOverride::with_role_override(
+            RuntimeRole::Orchestrator,
+            RuntimeRoleTargetOverride::target(RuntimeProviderKind::Local, "mismatch-model"),
+        ));
+        let route = unavailable
+            .route_for_role_with_key_lookup(RuntimeRole::Orchestrator, |_| Some("key".into()));
+        assert_eq!(route.state, RuntimeRouteState::Unavailable);
+        assert_eq!(route.reason, RuntimeRouteReason::ProviderModeMismatch);
+        assert_eq!(
+            unavailable.usage_mode_for_model(Some("mismatch-model")),
+            None
+        );
+        assert!(unavailable.has_model_route_match(Some("mismatch-model")));
+
+        let mut unmetered_duplicate = RuntimeConfig::for_mode(RuntimeMode::OneironCloud);
+        for (role, mode) in [
+            (RuntimeRole::Orchestrator, RuntimeMode::LocalFree),
+            (RuntimeRole::Subagent, RuntimeMode::ByoCloudKey),
+        ] {
+            unmetered_duplicate.apply_override(RuntimeConfigOverride::with_role_override(
+                role,
+                RuntimeRoleTargetOverride {
+                    mode: Some(mode),
+                    provider_kind: None,
+                    model: Some("shared-unmetered-model".to_owned()),
+                },
+            ));
+        }
+
+        assert_eq!(
+            unmetered_duplicate.usage_mode_for_model(Some("shared-unmetered-model")),
+            Some(UsageMode::Local)
+        );
     }
 }
