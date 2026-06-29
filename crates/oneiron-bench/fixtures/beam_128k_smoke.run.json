@@ -10,6 +10,7 @@
   ],
   "arms": [
     "deterministic",
+    "backbone_solo",
     "agentic",
     "chat"
   ],
@@ -29,6 +30,32 @@
           "comparatorId": "beam-fixed-comparator",
           "version": "beam-comparator-card-v1",
           "baselineCompetitorId": "deterministic-context-pack"
+        },
+        "tokenAccounting": {
+          "source": "tokenizer_count",
+          "notes": "Local deterministic context-pack query and serialized output counted with the Oneiron analyzer tokenizer."
+        }
+      }
+    },
+    {
+      "competitorId": "backbone-solo",
+      "arm": "backbone_solo",
+      "card": {
+        "displayName": "Backbone solo",
+        "publicParityStatus": "not_public_comparable",
+        "judge": {
+          "judgeId": "beam-fixture-judge",
+          "version": "v1",
+          "notes": "Backbone-solo row is represented but intentionally not ready in the fixture harness."
+        },
+        "comparator": {
+          "comparatorId": "beam-fixed-comparator",
+          "version": "beam-comparator-card-v1",
+          "baselineCompetitorId": "deterministic-context-pack"
+        },
+        "tokenAccounting": {
+          "source": "not_applicable",
+          "notes": "Backbone-solo adapter is not implemented in the fixture harness."
         }
       }
     },
@@ -47,6 +74,10 @@
           "comparatorId": "beam-fixed-comparator",
           "version": "beam-comparator-card-v1",
           "baselineCompetitorId": "deterministic-context-pack"
+        },
+        "tokenAccounting": {
+          "source": "not_applicable",
+          "notes": "Agentic adapter is not implemented in the fixture harness."
         }
       }
     },
@@ -65,6 +96,10 @@
           "comparatorId": "beam-fixed-comparator",
           "version": "beam-comparator-card-v1",
           "baselineCompetitorId": "deterministic-context-pack"
+        },
+        "tokenAccounting": {
+          "source": "not_applicable",
+          "notes": "Chat adapter is not implemented in the fixture harness."
         }
       }
     }
