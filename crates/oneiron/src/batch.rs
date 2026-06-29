@@ -24,6 +24,7 @@ pub(crate) const ENTITY_BODY_OFFSET: usize = 25;
 pub(crate) const ENTITY_METADATA_HEADER_LEN: usize = ENTITY_BODY_OFFSET;
 pub(crate) const SHORT_ID_COUNTER_LEN: usize = 8;
 pub(crate) const LONG_INTERVAL_THRESHOLD_SECS: u64 = 14 * 86_400;
+const ERR_RAW_CLAIM_PUT_REQUIRES_ENVELOPE: &str = "raw claim put requires WriteEnvelope";
 
 #[derive(Debug, Clone, Copy)]
 #[cfg_attr(not(feature = "sync"), allow(dead_code))]
@@ -247,6 +248,11 @@ impl<'a> BatchBuilder<'a> {
     ) -> Self {
         if self.validation_error.is_none()
             && let Err(e) = self.vault.store.validate_public_entity_type(entity_type)
+        {
+            self.validation_error = Some(e);
+        }
+        if self.validation_error.is_none()
+            && let Err(e) = validate_public_raw_put(entity_type, data)
         {
             self.validation_error = Some(e);
         }
@@ -561,6 +567,7 @@ impl<'a> BatchBuilder<'a> {
 pub struct TxnBatchBuilder<'a> {
     vault: &'a Vault,
     ops: Vec<BatchOp>,
+    validation_error: Option<Error>,
 }
 
 impl<'a> TxnBatchBuilder<'a> {
@@ -568,6 +575,7 @@ impl<'a> TxnBatchBuilder<'a> {
         Self {
             vault,
             ops: Vec::new(),
+            validation_error: None,
         }
     }
 
@@ -580,6 +588,11 @@ impl<'a> TxnBatchBuilder<'a> {
         learned_at: u64,
         data: &[u8],
     ) -> Self {
+        if self.validation_error.is_none()
+            && let Err(e) = validate_public_raw_put(entity_type, data)
+        {
+            self.validation_error = Some(e);
+        }
         self.ops.push(BatchOp::Put {
             id: *id,
             entity_type,
@@ -744,6 +757,9 @@ impl<'a> TxnBatchBuilder<'a> {
     /// callers must abort the transaction (drop without committing) to discard
     /// it.
     pub fn apply(self, wtxn: &mut RwTxn<'_>) -> Result<()> {
+        if let Some(err) = self.validation_error {
+            return Err(err);
+        }
         if contains_text_op(&self.ops) {
             self.vault.ensure_text_index_trusted()?;
         }
@@ -755,6 +771,18 @@ impl<'a> TxnBatchBuilder<'a> {
             self.ops,
         )
     }
+}
+
+fn validate_public_raw_put(entity_type: u8, data: &[u8]) -> Result<()> {
+    if entity_type != crate::types::ENTITY_TYPE_CLAIM {
+        return Ok(());
+    }
+
+    let body = crate::claim::validate_claim_body_and_decode(data, false)?;
+    if body.source.is_some() {
+        return Err(Error::InvalidClaimBody(ERR_RAW_CLAIM_PUT_REQUIRES_ENVELOPE));
+    }
+    Ok(())
 }
 
 /// Applies a list of batch operations to an LMDB write transaction.
@@ -1242,8 +1270,18 @@ fn apply_claim_candidate(
         Some(envelope),
     )?;
 
-    let crate::claim::ClaimSubject::Entity(subject_id) = subject else {
-        return Ok(false);
+    let subject_id = match subject {
+        crate::claim::ClaimSubject::Entity(subject_id) => Some(subject_id),
+        crate::claim::ClaimSubject::Edge { .. } => None,
+    };
+    let removed_claim_of = reconcile_claim_of_edges(store, wtxn, &id, subject_id)?;
+    let mut had_graph_mutation = !removed_claim_of.is_empty();
+    for removed_subject in &removed_claim_of {
+        ppr::invalidate_ppr_for_edge(store, wtxn, &id, removed_subject)?;
+    }
+
+    let Some(subject_id) = subject_id else {
+        return Ok(had_graph_mutation);
     };
 
     let weight = EdgeKind::ClaimOf
@@ -1261,7 +1299,36 @@ fn apply_claim_candidate(
         Vad::NEUTRAL,
     )?;
     ppr::invalidate_ppr_for_edge(store, wtxn, &id, &subject_id)?;
-    Ok(true)
+    had_graph_mutation = true;
+    Ok(had_graph_mutation)
+}
+
+fn reconcile_claim_of_edges(
+    store: &Store,
+    wtxn: &mut RwTxn<'_>,
+    claim_id: &EntityId,
+    new_subject: Option<EntityId>,
+) -> Result<Vec<EntityId>> {
+    let prefix = edge_kind_prefix(claim_id, EdgeKind::ClaimOf);
+    let mut stale_subjects = Vec::new();
+    for entry in store.edges_out.prefix_iter(wtxn, &prefix)? {
+        let (key, value) = entry?;
+        validate_edge_record(key, value)?;
+        let subject = EntityId::from_bytes(
+            key[17..33]
+                .try_into()
+                .map_err(|_| Error::CorruptedIndex("edge record"))?,
+        )
+        .map_err(|_| Error::CorruptedIndex("edge record"))?;
+        if Some(subject) != new_subject {
+            stale_subjects.push(subject);
+        }
+    }
+
+    for subject in &stale_subjects {
+        apply_delete_edge(store, wtxn, *claim_id, EdgeKind::ClaimOf, *subject)?;
+    }
+    Ok(stale_subjects)
 }
 
 #[expect(
@@ -1734,11 +1801,15 @@ fn would_create_child_of_cycle(
     Ok(false)
 }
 
-fn child_of_prefix(id: &EntityId) -> [u8; 17] {
+fn edge_kind_prefix(id: &EntityId, kind: EdgeKind) -> [u8; 17] {
     let mut prefix = [0u8; 17];
     prefix[..ENTITY_ID_LEN].copy_from_slice(id.as_bytes());
-    prefix[ENTITY_ID_LEN] = EdgeKind::ChildOf as u8;
+    prefix[ENTITY_ID_LEN] = kind as u8;
     prefix
+}
+
+fn child_of_prefix(id: &EntityId) -> [u8; 17] {
+    edge_kind_prefix(id, EdgeKind::ChildOf)
 }
 
 fn apply_delete_edge(
@@ -2192,12 +2263,15 @@ fn validate_edge_record(key: &[u8], value: &[u8]) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::claim::{ClaimApprovalStatus, ClaimLifecycleStatus, ClaimSource, ClaimSubject};
+    use crate::claim::{
+        ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject,
+    };
     use crate::provenance::{EdgeProvenanceClaimBody, EdgeRef, SupersessionStatus};
     use crate::types::{
-        ClaimCandidate, ENTITY_TYPE_PERSON, ENTITY_TYPE_TASK, EdgeActorClass, HnswConfig,
-        VaultConfig, WRITE_ENVELOPE_EVIDENCE_ACTOR_CLASS_KEY, WRITE_ENVELOPE_EVIDENCE_ACTOR_KEY,
-        WRITE_ENVELOPE_EVIDENCE_PROVENANCE_KEY, WriteActor, WriteEnvelope, WriteProvenance,
+        ClaimCandidate, ENTITY_TYPE_CLAIM, ENTITY_TYPE_PERSON, ENTITY_TYPE_TASK, EdgeActorClass,
+        HnswConfig, VaultConfig, WRITE_ENVELOPE_EVIDENCE_ACTOR_CLASS_KEY,
+        WRITE_ENVELOPE_EVIDENCE_ACTOR_KEY, WRITE_ENVELOPE_EVIDENCE_PROVENANCE_KEY, WriteActor,
+        WriteEnvelope, WriteProvenance,
     };
     use rmpv::Value;
 
@@ -2313,6 +2387,15 @@ mod tests {
                 (entry_key.as_str() == Some(key)).then_some(entry_value)
             })
             .unwrap_or_else(|| panic!("missing evidence key {key:?} in {evidence:?}"))
+    }
+
+    fn test_write_envelope(actor: EntityId) -> Result<WriteEnvelope> {
+        Ok(WriteEnvelope::new(
+            WriteActor::new(actor, EdgeActorClass::Human),
+            ClaimSource::UserStated,
+            WriteProvenance::new(Value::from("fixture"))?,
+            ClaimApprovalStatus::Approved,
+        ))
     }
 
     #[test]
@@ -2466,6 +2549,151 @@ mod tests {
             &provenance
         );
         assert_eq!(vault.claims_for_subject(&subject)?, vec![claim]);
+        Ok(())
+    }
+
+    #[test]
+    fn raw_public_batch_put_rejects_claim_without_write_envelope() -> Result<()> {
+        let (_dir, vault) = open_test_vault();
+        let subject = EntityId::now();
+        let mut body = ClaimBody::new(
+            "profile.name",
+            ClaimSubject::Entity(subject),
+            Value::from("Alice"),
+            0.9,
+            ClaimApprovalStatus::Approved,
+            ClaimLifecycleStatus::Active,
+        );
+        body.source = Some(ClaimSource::UserStated);
+        let data = crate::claim::encode_claim_body(&body)?;
+
+        let batch_claim = EntityId::now();
+        let err = vault
+            .batch()
+            .put(
+                &batch_claim,
+                ENTITY_TYPE_CLAIM,
+                test_time_range(1, 1),
+                2,
+                &data,
+            )
+            .commit()
+            .expect_err("raw batch claim put must require WriteEnvelope");
+        assert!(matches!(
+            err,
+            Error::InvalidClaimBody(ERR_RAW_CLAIM_PUT_REQUIRES_ENVELOPE)
+        ));
+        assert!(vault.get_claim(&batch_claim)?.is_none());
+
+        let txn_claim = EntityId::now();
+        let err = vault
+            .with_write_txn(|wtxn| {
+                vault
+                    .batch_in()
+                    .put(
+                        &txn_claim,
+                        ENTITY_TYPE_CLAIM,
+                        test_time_range(1, 1),
+                        2,
+                        &data,
+                    )
+                    .apply(wtxn)
+            })
+            .expect_err("raw transaction-batch claim put must require WriteEnvelope");
+        assert!(matches!(
+            err,
+            Error::InvalidClaimBody(ERR_RAW_CLAIM_PUT_REQUIRES_ENVELOPE)
+        ));
+        assert!(vault.get_claim(&txn_claim)?.is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn claim_candidate_overwrite_reconciles_claim_of_edges() -> Result<()> {
+        let (_dir, vault) = open_test_vault();
+        let actor = EntityId::now();
+        let subject_a = EntityId::now();
+        let subject_b = EntityId::now();
+        let edge_source = EntityId::now();
+        let edge_target = EntityId::now();
+        let occurred = test_time_range(1, 1);
+        for (id, body) in [
+            (actor, b"actor".as_slice()),
+            (subject_a, b"subject-a".as_slice()),
+            (subject_b, b"subject-b".as_slice()),
+            (edge_source, b"edge-source".as_slice()),
+            (edge_target, b"edge-target".as_slice()),
+        ] {
+            vault.put_entity(&id, ENTITY_TYPE_PERSON, occurred, 1, body)?;
+        }
+
+        let claim = EntityId::now();
+        let envelope = test_write_envelope(actor)?;
+        vault
+            .batch()
+            .claim_candidate(
+                &claim,
+                ClaimCandidate::new(
+                    "profile.name",
+                    ClaimSubject::Entity(subject_a),
+                    Value::from("Alice"),
+                    0.9,
+                ),
+                &envelope,
+                test_time_range(10, 10),
+                11,
+            )
+            .commit()?;
+        assert_eq!(vault.claims_for_subject(&subject_a)?, vec![claim]);
+
+        vault
+            .batch()
+            .claim_candidate(
+                &claim,
+                ClaimCandidate::new(
+                    "profile.name",
+                    ClaimSubject::Entity(subject_b),
+                    Value::from("Bob"),
+                    0.8,
+                ),
+                &envelope,
+                test_time_range(12, 12),
+                13,
+            )
+            .commit()?;
+        assert!(vault.claims_for_subject(&subject_a)?.is_empty());
+        assert_eq!(vault.claims_for_subject(&subject_b)?, vec![claim]);
+
+        let edge_subject = ClaimSubject::Edge {
+            source: edge_source,
+            kind: EdgeKind::Supports,
+            target: edge_target,
+        };
+        vault
+            .batch()
+            .claim_candidate(
+                &claim,
+                ClaimCandidate::new(
+                    "graph.observation",
+                    edge_subject,
+                    Value::from("supports"),
+                    0.7,
+                ),
+                &envelope,
+                test_time_range(14, 14),
+                15,
+            )
+            .commit()?;
+        assert!(vault.claims_for_subject(&subject_b)?.is_empty());
+        let stored = vault.get_claim(&claim)?.expect("candidate claim stored");
+        assert_eq!(stored.subject, edge_subject);
+        assert!(
+            vault
+                .edges_out(&claim)?
+                .iter()
+                .all(|edge| edge.kind != EdgeKind::ClaimOf),
+            "edge-subject overwrite must remove stale ClaimOf rows"
+        );
         Ok(())
     }
 

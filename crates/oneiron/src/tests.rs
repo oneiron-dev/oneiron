@@ -9775,7 +9775,8 @@ fn type0_validation_guards_every_write_path() -> Result<()> {
     assert_eq!(err.kind(), ErrorKind::InvalidClaimBody);
     assert_no_entity_state(&vault, &id)?;
 
-    // A structurally VALID claim body passes the same raw paths.
+    // A structurally VALID legacy claim body with no caller-supplied source
+    // remains a raw compatibility case.
     let id = EntityId::now();
     vault.put_entity(
         &id,
