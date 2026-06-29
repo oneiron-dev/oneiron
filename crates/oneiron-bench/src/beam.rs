@@ -5,8 +5,8 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 
 use oneiron::{
-    ContextPack, EmptyReason, EntityId, FieldProfile, PackFormat, Signal, TimeRange, Vault,
-    VaultConfig,
+    ContextPack, ContextPackBuilder, EmptyReason, EntityId, FieldProfile, PackFormat, Signal,
+    TimeRange, Vault, VaultConfig,
 };
 use serde::{Deserialize, Serialize};
 
@@ -210,7 +210,11 @@ struct ArmReport {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
-#[serde(tag = "status", rename_all = "snake_case")]
+#[serde(
+    tag = "status",
+    rename_all = "snake_case",
+    rename_all_fields = "camelCase"
+)]
 enum ArmOutcome {
     Completed { context_pack: ContextPackReport },
     NotReady { not_ready: NotReadyState },
@@ -273,13 +277,7 @@ impl BeamArmAdapter for DeterministicContextPackArm {
     }
 
     fn run(&self, vault: &Vault, case: &FixtureCase) -> BeamResult<ArmReport> {
-        let pack = vault
-            .context_pack()
-            .search_text(&case.query, case.limit)
-            .field_profile(FieldProfile::Standard)
-            .format(PackFormat::Json)
-            .token_budget(case.token_budget)
-            .run()?;
+        let (pack, _) = run_deterministic_context_pack(vault, case)?;
 
         if pack.results.len() < case.expected_min_results {
             return Err(BeamError::DeterministicExpectation {
@@ -349,28 +347,44 @@ pub(crate) fn run(args: &[String]) -> ExitCode {
 }
 
 fn print_help() {
-    println!(
-        "usage: oneiron-bench beam <subcommand>\n\
-         \n\
-         subcommands:\n\
-           smoke    run the built-in BEAM 128K deterministic context-pack smoke fixture"
-    );
+    println!("{BEAM_HELP}");
 }
 
 pub(crate) fn run_builtin_smoke() -> BeamResult<BeamReport> {
     let fixture = parse_fixture_json(BUILTIN_FIXTURE_JSON)?;
     let manifest = parse_manifest_json(BUILTIN_MANIFEST_JSON)?;
-    if !fixture
+    ensure_manifest_selects_128k_case(&manifest, &fixture)?;
+    run_fixture_manifest(&manifest, &fixture)
+}
+
+const BEAM_HELP: &str = "usage: oneiron-bench beam <subcommand>\n\
+                         \n\
+                         subcommands:\n\
+                           smoke    run the built-in BEAM 128K deterministic context-pack smoke fixture\n\
+                                    aligned with ONEIRON-ARCH-0042";
+
+fn ensure_manifest_selects_128k_case(
+    manifest: &RunManifest,
+    fixture: &BeamFixture,
+) -> BeamResult<()> {
+    let cases_by_id: BTreeMap<&str, &FixtureCase> = fixture
         .cases
         .iter()
-        .any(|case| case.token_budget == BEAM_128K_TOKEN_BUDGET)
-    {
-        return Err(invalid_fixture(
-            &fixture,
-            "built-in BEAM smoke fixture must include a 128K token-budget case",
-        ));
+        .map(|case| (case.case_id.as_str(), case))
+        .collect();
+
+    if manifest.case_ids.iter().any(|case_id| {
+        cases_by_id
+            .get(case_id.as_str())
+            .is_some_and(|case| case.token_budget == BEAM_128K_TOKEN_BUDGET)
+    }) {
+        return Ok(());
     }
-    run_fixture_manifest(&manifest, &fixture)
+
+    Err(invalid_manifest(
+        manifest,
+        "built-in BEAM smoke manifest must select a 128K token-budget case",
+    ))
 }
 
 pub(crate) fn parse_fixture_json(json: &str) -> BeamResult<BeamFixture> {
@@ -604,6 +618,27 @@ fn adapter_for(kind: ArmKind) -> Box<dyn BeamArmAdapter> {
     }
 }
 
+fn configured_context_pack_builder<'a>(
+    vault: &'a Vault,
+    case: &FixtureCase,
+) -> ContextPackBuilder<'a> {
+    vault
+        .context_pack()
+        .search_text(&case.query, case.limit)
+        .field_profile(FieldProfile::Standard)
+        .format(PackFormat::Json)
+        .token_budget(case.token_budget)
+}
+
+fn run_deterministic_context_pack(
+    vault: &Vault,
+    case: &FixtureCase,
+) -> BeamResult<(ContextPack, Vec<u8>)> {
+    let pack = configured_context_pack_builder(vault, case).run()?;
+    let serialized = configured_context_pack_builder(vault, case).run_serialized()?;
+    Ok((pack, serialized))
+}
+
 fn context_pack_report(pack: &ContextPack, case: &FixtureCase) -> ContextPackReport {
     ContextPackReport {
         token_budget: case.token_budget,
@@ -738,10 +773,32 @@ mod tests {
 
         assert_eq!(fixture.fixture_id, "beam-128k-smoke");
         assert_eq!(fixture.cases[0].token_budget, BEAM_128K_TOKEN_BUDGET);
+        ensure_manifest_selects_128k_case(&manifest, &fixture)
+            .expect("manifest selects the 128K smoke case");
         assert_eq!(
             manifest.arms,
             vec![ArmKind::Deterministic, ArmKind::Agentic, ArmKind::Chat]
         );
+    }
+
+    #[test]
+    fn deterministic_arm_exercises_serialized_128k_budget_path() {
+        let fixture = parse_fixture_json(BUILTIN_FIXTURE_JSON).expect("fixture parses");
+        let manifest = parse_manifest_json(BUILTIN_MANIFEST_JSON).expect("manifest parses");
+        let tempdir = tempfile::tempdir().expect("tempdir");
+        let vault = Vault::open(tempdir.path(), beam_vault_config()).expect("vault opens");
+        load_dataset(&vault, &manifest, &fixture).expect("fixture loads");
+
+        let (pack, serialized) =
+            run_deterministic_context_pack(&vault, &fixture.cases[0]).expect("deterministic run");
+        let serialized_json: serde_json::Value =
+            serde_json::from_slice(&serialized).expect("serialized context pack is JSON");
+        let serialized_object = serialized_json.as_object().expect("serialized JSON object");
+
+        assert_eq!(fixture.cases[0].token_budget, BEAM_128K_TOKEN_BUDGET);
+        assert!(pack.results.len() >= fixture.cases[0].expected_min_results);
+        assert!(!serialized.is_empty());
+        assert!(!serialized_object.is_empty());
     }
 
     #[test]
@@ -760,6 +817,54 @@ mod tests {
                 .iter()
                 .any(|entity| { entity.id == "10101010101010101010101010101010" })
         );
+    }
+
+    #[test]
+    fn report_arm_outcome_payload_uses_camel_case_fields() {
+        let report = run_builtin_smoke().expect("BEAM smoke report");
+        let report_json = serde_json::to_value(&report).expect("report serializes");
+        let arms = report_json["cases"][0]["arms"]
+            .as_array()
+            .expect("arms array");
+        let deterministic = arms
+            .iter()
+            .find(|arm| arm["arm"] == "deterministic")
+            .expect("deterministic arm");
+        let agentic = arms
+            .iter()
+            .find(|arm| arm["arm"] == "agentic")
+            .expect("agentic arm");
+
+        assert!(deterministic["outcome"].get("contextPack").is_some());
+        assert!(deterministic["outcome"].get("context_pack").is_none());
+        assert!(agentic["outcome"].get("notReady").is_some());
+        assert!(agentic["outcome"].get("not_ready").is_none());
+    }
+
+    #[test]
+    fn built_in_128k_guard_checks_manifest_selected_cases() {
+        let mut fixture = parse_fixture_json(BUILTIN_FIXTURE_JSON).expect("fixture parses");
+        let mut manifest = parse_manifest_json(BUILTIN_MANIFEST_JSON).expect("manifest parses");
+        fixture.cases.push(FixtureCase {
+            case_id: "beam_small_budget_smoke".to_owned(),
+            query: "BEAM deterministic context pack".to_owned(),
+            limit: 5,
+            token_budget: 4096,
+            expected_min_results: 1,
+        });
+        manifest.case_ids = vec!["beam_small_budget_smoke".to_owned()];
+
+        let err = ensure_manifest_selects_128k_case(&manifest, &fixture)
+            .expect_err("manifest must select a 128K case");
+        assert!(
+            err.to_string()
+                .contains("built-in BEAM smoke manifest must select a 128K token-budget case")
+        );
+    }
+
+    #[test]
+    fn beam_help_references_arch_0042() {
+        assert!(BEAM_HELP.contains("ONEIRON-ARCH-0042"));
     }
 
     #[test]

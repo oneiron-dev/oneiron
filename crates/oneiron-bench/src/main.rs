@@ -11,9 +11,9 @@
 //!   corpus, insert p50 (new-node vs refresh), top-10 search p50 at
 //!   ef_search=128, recall@10 vs float32 brute force, refresh/delete
 //!   churn modes, RAM-at-index.
-//! * `beam smoke` — EVAL-001 BEAM 128K fixture scaffold smoke: fixture +
-//!   run-manifest parse, fixture ingest, deterministic context-pack arm,
-//!   and explicit not-ready Agentic/Chat arms.
+//! * `beam smoke` — EVAL-001 BEAM 128K fixture scaffold smoke aligned with
+//!   ONEIRON-ARCH-0042: fixture + run-manifest parse, fixture ingest,
+//!   deterministic context-pack arm, and explicit not-ready Agentic/Chat arms.
 //!
 //! The full MIRACL / Mr.TyDi / internal SEA judgment-set retrieval
 //! matrix lives in ONE-318; this binary only ships the skeleton and
@@ -75,6 +75,7 @@ fn print_help() {
                                        hot term; reports per-chunk + total cost\n\
                                        (ONE-299 posting-append microbench)\n\
            beam smoke                  run the BEAM 128K fixture scaffold smoke\n\
+                                       aligned with ONEIRON-ARCH-0042\n\
                                        (deterministic context-pack arm +\n\
                                        explicit not-ready Agentic/Chat arms)\n\
            vector                      ARCH-0019 vector perf/recall harness\n\
