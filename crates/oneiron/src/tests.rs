@@ -7,10 +7,11 @@ use std::time::Instant;
 use crate::limits::{MAX_ANCESTOR_DEPTH, MAX_CHILD_OF_CYCLE_TRAVERSAL_STEPS};
 use crate::types::{
     EDGE_VALUE_SEMANTIC_LEN, EDGE_VALUE_SEMANTIC_PROVENANCED_LEN, EDGE_VALUE_STRUCTURAL_LEN,
-    ENTITY_ID_LEN, ENTITY_TYPE_MACHINE, ENTITY_TYPE_MODEL, ENTITY_TYPE_NOTIFICATION,
-    ENTITY_TYPE_POLICY_MANIFEST, ENTITY_TYPE_REDACTION_AUDIT, ENTITY_TYPE_TASK,
-    ENTITY_TYPE_TASK_LIST, EdgeActorClass, EdgeConfirmationStatus, EdgeProvenanceFlags,
-    decode_edge_value, decode_edge_value_for_kind, encode_edge_value,
+    ENTITY_ID_LEN, ENTITY_TYPE_MACHINE, ENTITY_TYPE_MESSAGE, ENTITY_TYPE_MODEL,
+    ENTITY_TYPE_NOTIFICATION, ENTITY_TYPE_POLICY_MANIFEST, ENTITY_TYPE_REDACTION_AUDIT,
+    ENTITY_TYPE_TASK, ENTITY_TYPE_TASK_LIST, ENTITY_TYPE_TURN, EdgeActorClass,
+    EdgeConfirmationStatus, EdgeProvenanceFlags, decode_edge_value, decode_edge_value_for_kind,
+    encode_edge_value,
 };
 use heed::EnvOpenOptions;
 use heed::types::{Bytes, Str};
@@ -33,6 +34,7 @@ use crate::store::{
     VECTOR_VERSION_KEY, lmdb_database_open_guard, short_id_counter_key,
     structural_kind_registry_key,
 };
+use crate::vault::{vad_annotation_claim_id, vad_annotation_meta_key};
 
 fn test_config() -> VaultConfig {
     // Build from the public preset so tests exercise the same construction
@@ -1262,6 +1264,7 @@ fn headerless_delete_raced_to_nothing_emits_no_receipt_sweep_or_pt() -> Result<(
         vault.put_vector(&id, &[0.1, 0.2, 0.3, 0.4])?;
 
         let outcome = run_raced_delete(&vault, &id, DeleteReason::GdprDelete, |wtxn| {
+            crate::hnsw::hnsw_deindex(&vault.store, wtxn, &id)?;
             vault.store.vectors.delete(wtxn, id.as_bytes())?;
             Ok(())
         })?;
@@ -6466,6 +6469,514 @@ fn assert_invalid_vad(err: Error, expected_component: VadComponent, expected_val
 
     assert!(message.contains(&format!("{expected_component:?}")));
     assert!(message.contains(&expected_value.to_string()));
+}
+
+#[test]
+fn turn_vad_annotation_persists_supported_sources() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let turn = EntityId::now();
+    let body = rmp_serde::to_vec_named(&serde_json::json!({
+        "txt": "turn-level affect",
+        "spkr": "user",
+        "at": 100_u64,
+    }))
+    .expect("encode turn body");
+    vault.put_entity(
+        &turn,
+        ENTITY_TYPE_TURN,
+        test_time_range(100, 100),
+        100,
+        &body,
+    )?;
+    vault
+        .batch()
+        .text(&turn, &[("body", "turnlevel_affect_unique")])
+        .commit()?;
+    let raw_before = vault.get_raw(&turn)?.expect("turn raw body");
+    let text_forward_before = text_forward_row(&vault, &turn)?;
+    assert_eq!(vault.get_learned_at(&turn)?, 100);
+    assert_eq!(vault.search_text("turnlevel_affect_unique", 10)?.len(), 1);
+
+    let model_annotation = VadAnnotation::new(
+        Vad {
+            valence: 0.25,
+            arousal: 0.5,
+            dominance: 0.75,
+        },
+        VadAnnotationSource::ModelInference,
+        200,
+    )?;
+    assert_eq!(
+        vault.annotate_turn_vad(&turn, model_annotation)?,
+        model_annotation
+    );
+    assert_eq!(
+        vault.get_turn_vad_annotation(&turn)?,
+        Some(model_annotation)
+    );
+    assert_eq!(
+        vault.get_raw(&turn)?.as_deref(),
+        Some(raw_before.as_slice()),
+        "annotation must not rewrite the turn entity body/header"
+    );
+    assert_eq!(vault.get_learned_at(&turn)?, 100);
+    assert_eq!(text_forward_row(&vault, &turn)?, text_forward_before);
+    assert_eq!(vault.search_text("turnlevel_affect_unique", 10)?.len(), 1);
+
+    let report_annotation = VadAnnotation::new(
+        Vad {
+            valence: -0.5,
+            arousal: 0.25,
+            dominance: 0.5,
+        },
+        VadAnnotationSource::UserSelfReport,
+        201,
+    )?;
+    vault.annotate_turn_vad(&turn, report_annotation)?;
+
+    assert_eq!(
+        vault.get_raw(&turn)?.as_deref(),
+        Some(raw_before.as_slice()),
+        "annotation replacement must not rewrite the turn entity body/header"
+    );
+    assert_eq!(vault.get_learned_at(&turn)?, 100);
+    assert_eq!(text_forward_row(&vault, &turn)?, text_forward_before);
+    assert_eq!(vault.search_text("turnlevel_affect_unique", 10)?.len(), 1);
+    assert_eq!(
+        vault.get_turn_vad_annotation(&turn)?,
+        Some(report_annotation)
+    );
+    Ok(())
+}
+
+#[test]
+fn message_vad_annotation_round_trip() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let message = EntityId::now();
+    let body = rmp_serde::to_vec_named(&serde_json::json!({
+        "txt": "message-level affect",
+        "spkr": "assistant",
+        "at": 110_u64,
+    }))
+    .expect("encode message body");
+    vault.put_entity(
+        &message,
+        ENTITY_TYPE_MESSAGE,
+        test_time_range(110, 110),
+        110,
+        &body,
+    )?;
+    let raw_before = vault.get_raw(&message)?.expect("message raw body");
+
+    let annotation = VadAnnotation::new(
+        Vad {
+            valence: 0.1,
+            arousal: 0.2,
+            dominance: 0.3,
+        },
+        VadAnnotationSource::ModelInference,
+        210,
+    )?;
+
+    assert_eq!(
+        vault.annotate_message_vad(&message, annotation)?,
+        annotation
+    );
+    assert_eq!(
+        vault.get_message_vad_annotation(&message)?,
+        Some(annotation)
+    );
+    assert_eq!(
+        vault.get_raw(&message)?.as_deref(),
+        Some(raw_before.as_slice()),
+        "annotation must not rewrite the message entity body/header"
+    );
+    assert_eq!(vault.get_learned_at(&message)?, 110);
+    assert_eq!(
+        vault
+            .get_turn_vad_annotation(&message)
+            .expect_err("wrong entity type")
+            .kind(),
+        ErrorKind::InvalidEntityType
+    );
+    Ok(())
+}
+
+fn assert_vad_annotation_claim_present(
+    vault: &Vault,
+    claim_id: &EntityId,
+    annotated_id: &EntityId,
+) -> Result<()> {
+    let rtxn = vault.store.env.read_txn()?;
+    assert!(
+        vault
+            .store
+            .entities
+            .get(&rtxn, claim_id.as_bytes())?
+            .is_some(),
+        "derived VAD claim entity must exist before deletion"
+    );
+    let edge_out = Store::encode_edge_key(claim_id, EdgeKind::ClaimOf, annotated_id);
+    let edge_in = Store::encode_edge_key(annotated_id, EdgeKind::ClaimOf, claim_id);
+    assert!(
+        vault.store.edges_out.get(&rtxn, &edge_out)?.is_some(),
+        "derived VAD claim_of edge must exist before deletion"
+    );
+    assert!(
+        vault.store.edges_in.get(&rtxn, &edge_in)?.is_some(),
+        "derived VAD claim_of reverse edge must exist before deletion"
+    );
+    Ok(())
+}
+
+fn assert_vad_annotation_claim_removed(
+    vault: &Vault,
+    claim_id: &EntityId,
+    annotated_id: &EntityId,
+) -> Result<()> {
+    let rtxn = vault.store.env.read_txn()?;
+    assert!(
+        vault
+            .store
+            .entities
+            .get(&rtxn, claim_id.as_bytes())?
+            .is_none(),
+        "derived VAD claim entity must be removed"
+    );
+    let edge_out = Store::encode_edge_key(claim_id, EdgeKind::ClaimOf, annotated_id);
+    let edge_in = Store::encode_edge_key(annotated_id, EdgeKind::ClaimOf, claim_id);
+    assert!(
+        vault.store.edges_out.get(&rtxn, &edge_out)?.is_none(),
+        "derived VAD claim_of edge must be removed"
+    );
+    assert!(
+        vault.store.edges_in.get(&rtxn, &edge_in)?.is_none(),
+        "derived VAD claim_of reverse edge must be removed"
+    );
+    Ok(())
+}
+
+#[test]
+fn batch_delete_removes_turn_vad_annotation_claim_and_edges() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let turn = EntityId::now();
+    let body = rmp_serde::to_vec_named(&serde_json::json!({
+        "txt": "turn delete affect",
+        "spkr": "user",
+        "at": 130_u64,
+    }))
+    .expect("encode turn body");
+    vault.put_entity(
+        &turn,
+        ENTITY_TYPE_TURN,
+        test_time_range(130, 130),
+        130,
+        &body,
+    )?;
+    let annotation = VadAnnotation::new(
+        Vad {
+            valence: 0.6,
+            arousal: 0.4,
+            dominance: 0.8,
+        },
+        VadAnnotationSource::ModelInference,
+        230,
+    )?;
+    vault.annotate_turn_vad(&turn, annotation)?;
+
+    let claim_id = vad_annotation_claim_id(ENTITY_TYPE_TURN, &turn)?;
+    assert_vad_annotation_claim_present(&vault, &claim_id, &turn)?;
+
+    vault.batch().delete(&turn).commit()?;
+
+    assert_eq!(vault.get_turn_vad_annotation(&turn)?, None);
+    assert_vad_annotation_claim_removed(&vault, &claim_id, &turn)?;
+    assert_eq!(vault.get_turn_vad_annotation(&turn)?, None);
+    assert_vad_annotation_claim_removed(&vault, &claim_id, &turn)?;
+    Ok(())
+}
+
+#[test]
+fn soft_delete_removes_message_vad_annotation_claim_and_edges() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let message = EntityId::now();
+    let body = rmp_serde::to_vec_named(&serde_json::json!({
+        "txt": "message soft delete affect",
+        "spkr": "assistant",
+        "at": 131_u64,
+    }))
+    .expect("encode message body");
+    vault.put_entity(
+        &message,
+        ENTITY_TYPE_MESSAGE,
+        test_time_range(131, 131),
+        131,
+        &body,
+    )?;
+    let annotation = VadAnnotation::new(
+        Vad {
+            valence: 0.2,
+            arousal: 0.7,
+            dominance: 0.3,
+        },
+        VadAnnotationSource::UserSelfReport,
+        231,
+    )?;
+    vault.annotate_message_vad(&message, annotation)?;
+
+    let claim_id = vad_annotation_claim_id(ENTITY_TYPE_MESSAGE, &message)?;
+    assert_vad_annotation_claim_present(&vault, &claim_id, &message)?;
+
+    let outcome = vault.delete_entity_with_reason(&message, DeleteReason::UserDelete)?;
+
+    assert!(outcome.existed);
+    assert_eq!(vault.get_message_vad_annotation(&message)?, None);
+    assert_vad_annotation_claim_removed(&vault, &claim_id, &message)?;
+    assert_eq!(vault.get_message_vad_annotation(&message)?, None);
+    assert_vad_annotation_claim_removed(&vault, &claim_id, &message)?;
+    Ok(())
+}
+
+#[test]
+fn soft_deleted_vad_claim_shell_is_absent_for_reads_cleanup_and_reannotation() -> Result<()> {
+    let (_delete_dir, delete_vault) = open_test_vault();
+    let turn = EntityId::now();
+    let turn_body = rmp_serde::to_vec_named(&serde_json::json!({
+        "txt": "turn claim shell",
+        "spkr": "user",
+        "at": 133_u64,
+    }))
+    .expect("encode turn body");
+    delete_vault.put_entity(
+        &turn,
+        ENTITY_TYPE_TURN,
+        test_time_range(133, 133),
+        133,
+        &turn_body,
+    )?;
+    let annotation = VadAnnotation::new(
+        Vad {
+            valence: 0.45,
+            arousal: 0.55,
+            dominance: 0.65,
+        },
+        VadAnnotationSource::ModelInference,
+        234,
+    )?;
+    delete_vault.annotate_turn_vad(&turn, annotation)?;
+    let turn_claim = vad_annotation_claim_id(ENTITY_TYPE_TURN, &turn)?;
+
+    let claim_delete =
+        delete_vault.delete_entity_with_reason(&turn_claim, DeleteReason::UserDelete)?;
+
+    assert!(claim_delete.existed);
+    assert_eq!(
+        delete_vault.get_raw(&turn_claim)?.as_ref().map(Vec::len),
+        Some(ENTITY_METADATA_HEADER_LEN),
+        "soft-deleting the derived VAD claim must leave a header-only shell"
+    );
+    assert_eq!(delete_vault.get_turn_vad_annotation(&turn)?, None);
+    let turn_delete =
+        delete_vault.delete_entity_with_reason(&turn, DeleteReason::UserHardDelete)?;
+    assert!(turn_delete.existed);
+    assert_eq!(delete_vault.get_turn_vad_annotation(&turn)?, None);
+
+    let (_annotate_dir, annotate_vault) = open_test_vault();
+    let message = EntityId::now();
+    let message_body = rmp_serde::to_vec_named(&serde_json::json!({
+        "txt": "message claim shell",
+        "spkr": "assistant",
+        "at": 134_u64,
+    }))
+    .expect("encode message body");
+    annotate_vault.put_entity(
+        &message,
+        ENTITY_TYPE_MESSAGE,
+        test_time_range(134, 134),
+        134,
+        &message_body,
+    )?;
+    let first = VadAnnotation::new(
+        Vad {
+            valence: 0.15,
+            arousal: 0.25,
+            dominance: 0.35,
+        },
+        VadAnnotationSource::UserSelfReport,
+        235,
+    )?;
+    annotate_vault.annotate_message_vad(&message, first)?;
+    let message_claim = vad_annotation_claim_id(ENTITY_TYPE_MESSAGE, &message)?;
+    let claim_delete =
+        annotate_vault.delete_entity_with_reason(&message_claim, DeleteReason::UserDelete)?;
+    assert!(claim_delete.existed);
+    assert_eq!(
+        annotate_vault
+            .get_raw(&message_claim)?
+            .as_ref()
+            .map(Vec::len),
+        Some(ENTITY_METADATA_HEADER_LEN),
+        "soft-deleting the derived VAD claim must leave a header-only shell"
+    );
+    assert_eq!(annotate_vault.get_message_vad_annotation(&message)?, None);
+
+    let replacement = VadAnnotation::new(
+        Vad {
+            valence: -0.15,
+            arousal: 0.35,
+            dominance: 0.75,
+        },
+        VadAnnotationSource::ModelInference,
+        236,
+    )?;
+    assert_eq!(
+        annotate_vault.annotate_message_vad(&message, replacement)?,
+        replacement
+    );
+    assert_eq!(
+        annotate_vault.get_message_vad_annotation(&message)?,
+        Some(replacement)
+    );
+    assert_vad_annotation_claim_present(&annotate_vault, &message_claim, &message)?;
+    Ok(())
+}
+
+#[test]
+fn headerless_delete_treats_vad_only_residue_as_active_scope() -> Result<()> {
+    let (_legacy_dir, legacy_vault) = open_test_vault();
+    let legacy_turn = EntityId::now();
+    let legacy_annotation = VadAnnotation::new(
+        Vad {
+            valence: 0.4,
+            arousal: 0.5,
+            dominance: 0.6,
+        },
+        VadAnnotationSource::ModelInference,
+        232,
+    )?;
+    let legacy_key = vad_annotation_meta_key(ENTITY_TYPE_TURN, &legacy_turn);
+    let legacy_bytes = rmp_serde::to_vec_named(&legacy_annotation).expect("encode legacy VAD");
+    {
+        let mut wtxn = legacy_vault.store.env.write_txn()?;
+        legacy_vault
+            .store
+            .vault_meta
+            .put(&mut wtxn, &legacy_key, &legacy_bytes)?;
+        wtxn.commit()?;
+    }
+
+    let legacy_outcome =
+        legacy_vault.delete_entity_with_reason(&legacy_turn, DeleteReason::UserHardDelete)?;
+
+    assert!(
+        legacy_outcome.receipt_id.is_some(),
+        "VAD-only legacy metadata must count as active delete scope"
+    );
+    {
+        let rtxn = legacy_vault.store.env.read_txn()?;
+        assert!(
+            legacy_vault
+                .store
+                .vault_meta
+                .get(&rtxn, &legacy_key)?
+                .is_none(),
+            "headerless delete must remove legacy VAD metadata residue"
+        );
+    }
+
+    let (_claim_dir, claim_vault) = open_test_vault();
+    let message = EntityId::now();
+    let body = rmp_serde::to_vec_named(&serde_json::json!({
+        "txt": "message claim residue",
+        "spkr": "assistant",
+        "at": 132_u64,
+    }))
+    .expect("encode message body");
+    claim_vault.put_entity(
+        &message,
+        ENTITY_TYPE_MESSAGE,
+        test_time_range(132, 132),
+        132,
+        &body,
+    )?;
+    let annotation = VadAnnotation::new(
+        Vad {
+            valence: 0.3,
+            arousal: 0.8,
+            dominance: 0.4,
+        },
+        VadAnnotationSource::UserSelfReport,
+        233,
+    )?;
+    claim_vault.annotate_message_vad(&message, annotation)?;
+    let claim_id = vad_annotation_claim_id(ENTITY_TYPE_MESSAGE, &message)?;
+    let edge_out = Store::encode_edge_key(&claim_id, EdgeKind::ClaimOf, &message);
+    let edge_in = Store::encode_edge_key(&message, EdgeKind::ClaimOf, &claim_id);
+    {
+        let mut wtxn = claim_vault.store.env.write_txn()?;
+        claim_vault
+            .store
+            .entities
+            .delete(&mut wtxn, message.as_bytes())?;
+        claim_vault.store.type_index.delete(
+            &mut wtxn,
+            &Store::encode_type_key(ENTITY_TYPE_MESSAGE, &message),
+        )?;
+        claim_vault
+            .store
+            .temporal_occurred_start
+            .delete(&mut wtxn, &Store::encode_temporal_key(132, &message))?;
+        claim_vault
+            .store
+            .temporal_learned
+            .delete(&mut wtxn, &Store::encode_temporal_key(132, &message))?;
+        claim_vault.store.edges_out.delete(&mut wtxn, &edge_out)?;
+        claim_vault.store.edges_in.delete(&mut wtxn, &edge_in)?;
+        wtxn.commit()?;
+    }
+
+    let claim_outcome =
+        claim_vault.delete_entity_with_reason(&message, DeleteReason::UserHardDelete)?;
+
+    assert!(
+        claim_outcome.receipt_id.is_some(),
+        "derived VAD claim without claim_of edge must count as active delete scope"
+    );
+    assert_vad_annotation_claim_removed(&claim_vault, &claim_id, &message)?;
+    Ok(())
+}
+
+#[test]
+fn turn_vad_annotation_rejects_edge_vad_range_violations() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let turn = EntityId::now();
+    let body = rmp_serde::to_vec_named(&serde_json::json!({
+        "txt": "invalid affect",
+    }))
+    .expect("encode turn body");
+    vault.put_entity(
+        &turn,
+        ENTITY_TYPE_TURN,
+        test_time_range(120, 120),
+        120,
+        &body,
+    )?;
+
+    let invalid = VadAnnotation {
+        vad: Vad {
+            valence: 0.0,
+            arousal: -0.01,
+            dominance: 0.5,
+        },
+        source: VadAnnotationSource::UserSelfReport,
+        annotated_at: 220,
+    };
+    let err = vault
+        .annotate_turn_vad(&turn, invalid)
+        .expect_err("invalid turn VAD must reject");
+    assert_invalid_vad(err, VadComponent::Arousal, -0.01);
+    assert_eq!(vault.get_turn_vad_annotation(&turn)?, None);
+    Ok(())
 }
 
 #[test]

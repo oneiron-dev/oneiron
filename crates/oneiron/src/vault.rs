@@ -6,8 +6,10 @@ use std::path::Path;
 
 use heed::Database;
 use heed::types::Bytes;
+use rmpv::Value;
 use serde::Serialize;
 use uuid::Uuid;
+use xxhash_rust::xxh3::xxh3_128;
 
 use crate::analyzer::{AnalyzerChannel, AnalyzerManifest, AnalyzerMode, MultilingualAnalyzer};
 use crate::batch::{
@@ -15,8 +17,8 @@ use crate::batch::{
     delete_from_phonetic_postings,
 };
 use crate::claim::{
-    ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSubject, encode_claim_body,
-    is_reserved_predicate, validate_claim_body_bytes,
+    ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject,
+    encode_claim_body, is_reserved_predicate, validate_claim_body_bytes,
 };
 use crate::deletion::{
     DeleteEntityOutcome, DeleteReason, HARD_ERASE_SWEEP_PREFIX, HardEraseSweepExtras,
@@ -44,10 +46,11 @@ use crate::store::{
     lmdb_database_open_guard,
 };
 use crate::types::{
-    EDGE_KEY_LEN, ENTITY_ID_LEN, ENTITY_TYPE_CLAIM, ENTITY_TYPE_MODEL, ENTITY_TYPE_REDACTION_AUDIT,
-    EdgeActorClass, EdgeConfirmationStatus, EdgeInfo, EdgeKind, EdgeProvenanceFlags,
-    EdgeValueLayout, EntityId, ScoredEntity, StructuralKindRegistration, TimeRange, TypeByteBand,
-    Vad, VaultConfig, bytes_to_hex_lower, decode_edge_value_for_kind, edge_value_layout_for_kind,
+    EDGE_KEY_LEN, ENTITY_ID_LEN, ENTITY_TYPE_CLAIM, ENTITY_TYPE_MESSAGE, ENTITY_TYPE_MODEL,
+    ENTITY_TYPE_REDACTION_AUDIT, ENTITY_TYPE_TURN, EdgeActorClass, EdgeConfirmationStatus,
+    EdgeInfo, EdgeKind, EdgeProvenanceFlags, EdgeValueLayout, EntityId, ScoredEntity,
+    StructuralKindRegistration, TimeRange, TypeByteBand, Vad, VadAnnotation, VadAnnotationSource,
+    VaultConfig, bytes_to_hex_lower, decode_edge_value_for_kind, edge_value_layout_for_kind,
 };
 use crate::{
     BatchBuilder, ContextPackBuilder, MaintenanceBuilder, PipelineBuilder, TxnBatchBuilder, bm25,
@@ -95,6 +98,16 @@ const MAX_SUBTREE_RESULTS: usize = 50_000;
 #[cfg(feature = "sync")]
 const MAX_SYNC_STATE_KEYS: usize = 10_000;
 
+const VAD_ANNOTATION_META_KEY_PREFIX: &[u8] = b"vad_ann:";
+const VAD_ANNOTATION_META_KEY_LEN: usize = VAD_ANNOTATION_META_KEY_PREFIX.len() + 1 + ENTITY_ID_LEN;
+const VAD_ANNOTATION_CLAIM_PREDICATE: &str = "affect.vad";
+const VAD_ANNOTATION_CLAIM_ID_DOMAIN: &[u8] = b"oneiron:vad-annotation-claim:v1";
+const VAD_KEY_VALENCE: &str = "valence";
+const VAD_KEY_AROUSAL: &str = "arousal";
+const VAD_KEY_DOMINANCE: &str = "dominance";
+const VAD_KEY_SOURCE: &str = "source";
+const VAD_KEY_ANNOTATED_AT: &str = "annotated_at";
+
 /// Build an edge prefix `[entity_id | kind]` for targeted LMDB prefix scans.
 /// Avoids scanning all edge kinds for a given entity.
 fn edge_kind_prefix(id: &EntityId, kind: EdgeKind) -> [u8; EDGE_KIND_PREFIX_LEN] {
@@ -119,6 +132,262 @@ fn entity_id_from_type_index_key(key: &[u8]) -> Result<EntityId> {
             .map_err(|_| Error::CorruptedIndex("type index key"))?,
     )
     .map_err(|_| Error::CorruptedIndex("type index key"))
+}
+
+pub(crate) fn vad_annotation_meta_key(
+    entity_type: u8,
+    id: &EntityId,
+) -> [u8; VAD_ANNOTATION_META_KEY_LEN] {
+    let mut key = [0_u8; VAD_ANNOTATION_META_KEY_LEN];
+    key[..VAD_ANNOTATION_META_KEY_PREFIX.len()].copy_from_slice(VAD_ANNOTATION_META_KEY_PREFIX);
+    key[VAD_ANNOTATION_META_KEY_PREFIX.len()] = entity_type;
+    key[VAD_ANNOTATION_META_KEY_PREFIX.len() + 1..].copy_from_slice(id.as_bytes());
+    key
+}
+
+pub(crate) fn vad_annotation_claim_id(entity_type: u8, id: &EntityId) -> Result<EntityId> {
+    let mut material = Vec::with_capacity(VAD_ANNOTATION_CLAIM_ID_DOMAIN.len() + 1 + ENTITY_ID_LEN);
+    material.extend_from_slice(VAD_ANNOTATION_CLAIM_ID_DOMAIN);
+    material.push(entity_type);
+    material.extend_from_slice(id.as_bytes());
+
+    let mut bytes = xxh3_128(&material).to_le_bytes();
+    if EntityId::from_bytes(bytes).is_err() {
+        bytes[ENTITY_ID_LEN - 1] ^= 0x01;
+    }
+    EntityId::from_bytes(bytes)
+        .map_err(|_| Error::InvariantViolation("VAD annotation claim id derivation failed"))
+}
+
+fn vad_annotation_value(annotation: &VadAnnotation) -> Value {
+    Value::Map(vec![
+        (
+            Value::from(VAD_KEY_VALENCE),
+            Value::F32(annotation.vad.valence),
+        ),
+        (
+            Value::from(VAD_KEY_AROUSAL),
+            Value::F32(annotation.vad.arousal),
+        ),
+        (
+            Value::from(VAD_KEY_DOMINANCE),
+            Value::F32(annotation.vad.dominance),
+        ),
+        (
+            Value::from(VAD_KEY_SOURCE),
+            Value::from(annotation.source.as_str()),
+        ),
+        (
+            Value::from(VAD_KEY_ANNOTATED_AT),
+            Value::from(annotation.annotated_at),
+        ),
+    ])
+}
+
+fn vad_annotation_claim_body(id: &EntityId, annotation: &VadAnnotation) -> ClaimBody {
+    let mut body = ClaimBody::new(
+        VAD_ANNOTATION_CLAIM_PREDICATE,
+        ClaimSubject::Entity(*id),
+        vad_annotation_value(annotation),
+        1.0,
+        ClaimApprovalStatus::Auto,
+        ClaimLifecycleStatus::Active,
+    );
+    body.source = Some(match annotation.source {
+        VadAnnotationSource::ModelInference => ClaimSource::Inferred,
+        VadAnnotationSource::UserSelfReport => ClaimSource::UserStated,
+    });
+    body.valid_from = Some(annotation.annotated_at);
+    body.valid_to = Some(annotation.annotated_at);
+    body
+}
+
+fn decode_vad_annotation_claim_body_if_present(raw: &[u8]) -> Result<Option<ClaimBody>> {
+    let body = &raw[ENTITY_METADATA_HEADER_LEN..];
+    if body.is_empty() {
+        return Ok(None);
+    }
+    crate::claim::decode_claim_body(body, true).map(Some)
+}
+
+fn vad_annotation_source_from_str(value: &str) -> Result<VadAnnotationSource> {
+    match value {
+        "model_inference" => Ok(VadAnnotationSource::ModelInference),
+        "user_self_report" => Ok(VadAnnotationSource::UserSelfReport),
+        _ => Err(Error::CorruptedIndex("VAD annotation claim")),
+    }
+}
+
+fn vad_annotation_f32(value: &Value) -> Result<f32> {
+    match value {
+        Value::F32(value) => Ok(*value),
+        Value::F64(value) if value.is_finite() => {
+            let narrowed = *value as f32;
+            if f64::from(narrowed) == *value {
+                Ok(narrowed)
+            } else {
+                Err(Error::CorruptedIndex("VAD annotation claim"))
+            }
+        }
+        _ => Err(Error::CorruptedIndex("VAD annotation claim")),
+    }
+}
+
+fn vad_annotation_from_value(value: &Value) -> Result<VadAnnotation> {
+    let Value::Map(entries) = value else {
+        return Err(Error::CorruptedIndex("VAD annotation claim"));
+    };
+
+    let mut valence = None;
+    let mut arousal = None;
+    let mut dominance = None;
+    let mut source = None;
+    let mut annotated_at = None;
+    for (key, value) in entries {
+        let Some(key) = key.as_str() else {
+            return Err(Error::CorruptedIndex("VAD annotation claim"));
+        };
+        match key {
+            VAD_KEY_VALENCE if valence.is_none() => valence = Some(vad_annotation_f32(value)?),
+            VAD_KEY_AROUSAL if arousal.is_none() => arousal = Some(vad_annotation_f32(value)?),
+            VAD_KEY_DOMINANCE if dominance.is_none() => {
+                dominance = Some(vad_annotation_f32(value)?);
+            }
+            VAD_KEY_SOURCE if source.is_none() => {
+                let Some(raw) = value.as_str() else {
+                    return Err(Error::CorruptedIndex("VAD annotation claim"));
+                };
+                source = Some(vad_annotation_source_from_str(raw)?);
+            }
+            VAD_KEY_ANNOTATED_AT if annotated_at.is_none() => {
+                annotated_at = Some(
+                    value
+                        .as_u64()
+                        .ok_or(Error::CorruptedIndex("VAD annotation claim"))?,
+                );
+            }
+            _ => return Err(Error::CorruptedIndex("VAD annotation claim")),
+        }
+    }
+
+    VadAnnotation::new(
+        Vad {
+            valence: valence.ok_or(Error::CorruptedIndex("VAD annotation claim"))?,
+            arousal: arousal.ok_or(Error::CorruptedIndex("VAD annotation claim"))?,
+            dominance: dominance.ok_or(Error::CorruptedIndex("VAD annotation claim"))?,
+        },
+        source.ok_or(Error::CorruptedIndex("VAD annotation claim"))?,
+        annotated_at.ok_or(Error::CorruptedIndex("VAD annotation claim"))?,
+    )
+}
+
+#[derive(Debug, Default)]
+pub(crate) struct VadAnnotationCleanup {
+    pub(crate) had_vector: bool,
+    pub(crate) had_graph_mutation: bool,
+    pub(crate) neighbors: Vec<EntityId>,
+}
+
+impl VadAnnotationCleanup {
+    fn absorb(
+        &mut self,
+        deleted_claim_id: EntityId,
+        had_vector: bool,
+        had_graph_mutation: bool,
+        mut neighbors: Vec<EntityId>,
+    ) {
+        self.had_vector |= had_vector;
+        self.had_graph_mutation |= had_graph_mutation;
+        self.neighbors.push(deleted_claim_id);
+        self.neighbors.append(&mut neighbors);
+        self.neighbors.sort_unstable();
+        self.neighbors.dedup();
+    }
+}
+
+pub(crate) fn delete_vad_annotation_metadata_in_txn(
+    store: &Store,
+    wtxn: &mut heed::RwTxn<'_>,
+    id: &EntityId,
+) -> Result<VadAnnotationCleanup> {
+    let mut cleanup = VadAnnotationCleanup::default();
+    delete_vad_annotation_metadata_for_type_in_txn(
+        store,
+        wtxn,
+        id,
+        ENTITY_TYPE_TURN,
+        &mut cleanup,
+    )?;
+    delete_vad_annotation_metadata_for_type_in_txn(
+        store,
+        wtxn,
+        id,
+        ENTITY_TYPE_MESSAGE,
+        &mut cleanup,
+    )?;
+    Ok(cleanup)
+}
+
+pub(crate) fn delete_vad_annotation_metadata_for_type_in_txn(
+    store: &Store,
+    wtxn: &mut heed::RwTxn<'_>,
+    id: &EntityId,
+    entity_type: u8,
+    cleanup: &mut VadAnnotationCleanup,
+) -> Result<()> {
+    if matches!(entity_type, ENTITY_TYPE_TURN | ENTITY_TYPE_MESSAGE) {
+        let key = vad_annotation_meta_key(entity_type, id);
+        store.vault_meta.delete(wtxn, &key)?;
+
+        let claim_id = vad_annotation_claim_id(entity_type, id)?;
+        if vad_annotation_claim_matches_subject(store, &*wtxn, &claim_id, id)? {
+            let (existed, had_vector, had_graph_mutation, neighbors) =
+                deindex_entity(store, wtxn, &claim_id)?;
+            if existed {
+                cleanup.absorb(claim_id, had_vector, had_graph_mutation, neighbors);
+            }
+        }
+    }
+    Ok(())
+}
+
+fn vad_annotation_claim_matches_subject(
+    store: &Store,
+    rtxn: &heed::RoTxn<'_>,
+    claim_id: &EntityId,
+    annotated_id: &EntityId,
+) -> Result<bool> {
+    let Some(raw) = store.entities.get(rtxn, claim_id.as_bytes())? else {
+        return Ok(false);
+    };
+    let header = EntityMetadataHeader::parse(raw).ok_or(Error::CorruptedIndex("entity header"))?;
+    if header.entity_type != ENTITY_TYPE_CLAIM {
+        return Ok(false);
+    }
+    let Some(body) = decode_vad_annotation_claim_body_if_present(raw)? else {
+        return Ok(false);
+    };
+    Ok(body.predicate == VAD_ANNOTATION_CLAIM_PREDICATE
+        && body.subject == ClaimSubject::Entity(*annotated_id))
+}
+
+fn vad_annotation_delete_scope_exists_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+) -> Result<bool> {
+    for entity_type in [ENTITY_TYPE_TURN, ENTITY_TYPE_MESSAGE] {
+        let key = vad_annotation_meta_key(entity_type, id);
+        if store.vault_meta.get(txn, &key)?.is_some() {
+            return Ok(true);
+        }
+
+        let claim_id = vad_annotation_claim_id(entity_type, id)?;
+        if vad_annotation_claim_matches_subject(store, txn, &claim_id, id)? {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 /// Returns the first outbound ChildOf parent for `node`, or `None` if it has
@@ -502,6 +771,169 @@ impl Vault {
         self.batch()
             .put(id, entity_type, occurred, learned_at, data)
             .commit()
+    }
+
+    /// Writes or replaces the VAD annotation metadata for a TURN entity.
+    pub fn annotate_turn_vad(
+        &self,
+        turn_id: &EntityId,
+        annotation: VadAnnotation,
+    ) -> Result<VadAnnotation> {
+        self.annotate_entity_vad(turn_id, ENTITY_TYPE_TURN, annotation)
+    }
+
+    /// Reads the VAD annotation metadata for a TURN entity.
+    pub fn get_turn_vad_annotation(&self, turn_id: &EntityId) -> Result<Option<VadAnnotation>> {
+        self.get_entity_vad_annotation(turn_id, ENTITY_TYPE_TURN)
+    }
+
+    /// Writes or replaces the VAD annotation metadata for a MESSAGE entity.
+    pub fn annotate_message_vad(
+        &self,
+        message_id: &EntityId,
+        annotation: VadAnnotation,
+    ) -> Result<VadAnnotation> {
+        self.annotate_entity_vad(message_id, ENTITY_TYPE_MESSAGE, annotation)
+    }
+
+    /// Reads the VAD annotation metadata for a MESSAGE entity.
+    pub fn get_message_vad_annotation(
+        &self,
+        message_id: &EntityId,
+    ) -> Result<Option<VadAnnotation>> {
+        self.get_entity_vad_annotation(message_id, ENTITY_TYPE_MESSAGE)
+    }
+
+    fn annotate_entity_vad(
+        &self,
+        id: &EntityId,
+        expected_type: u8,
+        annotation: VadAnnotation,
+    ) -> Result<VadAnnotation> {
+        annotation.vad.validate()?;
+        let claim_id = vad_annotation_claim_id(expected_type, id)?;
+        let claim_body = vad_annotation_claim_body(id, &annotation);
+        let data = encode_claim_body(&claim_body)?;
+        validate_claim_body_bytes(&data, false)?;
+
+        let mut wtxn = self.store.env.write_txn()?;
+        let raw = self
+            .store
+            .entities
+            .get(&wtxn, id.as_bytes())?
+            .ok_or(Error::EntityNotFound)?;
+        let header =
+            EntityMetadataHeader::parse(raw).ok_or(Error::CorruptedIndex("entity header"))?;
+        if header.entity_type != expected_type {
+            return Err(Error::InvalidEntityType(header.entity_type));
+        }
+
+        self.guard_vad_annotation_claim_slot(&wtxn, &claim_id, id)?;
+        apply_ops(
+            &self.store,
+            &self.config,
+            &self.analyzer,
+            &mut wtxn,
+            vec![
+                BatchOp::Put {
+                    id: claim_id,
+                    entity_type: ENTITY_TYPE_CLAIM,
+                    occurred: TimeRange {
+                        start: annotation.annotated_at,
+                        end: annotation.annotated_at,
+                    },
+                    learned_at: annotation.annotated_at,
+                    data,
+                    allow_maintenance: false,
+                    allow_reserved_predicate: false,
+                },
+                BatchOp::Edge {
+                    src: claim_id,
+                    kind: EdgeKind::ClaimOf,
+                    tgt: *id,
+                    weight: CLAIM_OF_DEFAULT_WEIGHT,
+                    vad: Vad::NEUTRAL,
+                },
+            ],
+        )?;
+        let key = vad_annotation_meta_key(expected_type, id);
+        self.store.vault_meta.delete(&mut wtxn, &key)?;
+        wtxn.commit()?;
+        Ok(annotation)
+    }
+
+    fn guard_vad_annotation_claim_slot(
+        &self,
+        rtxn: &heed::RwTxn<'_>,
+        claim_id: &EntityId,
+        annotated_id: &EntityId,
+    ) -> Result<()> {
+        let Some(raw) = self.store.entities.get(rtxn, claim_id.as_bytes())? else {
+            return Ok(());
+        };
+        let header =
+            EntityMetadataHeader::parse(raw).ok_or(Error::CorruptedIndex("entity header"))?;
+        if header.entity_type != ENTITY_TYPE_CLAIM {
+            return Err(Error::InvariantViolation(
+                "VAD annotation claim id collision",
+            ));
+        }
+        let Some(body) = decode_vad_annotation_claim_body_if_present(raw)? else {
+            return Ok(());
+        };
+        if body.predicate != VAD_ANNOTATION_CLAIM_PREDICATE
+            || body.subject != ClaimSubject::Entity(*annotated_id)
+        {
+            return Err(Error::InvariantViolation(
+                "VAD annotation claim id collision",
+            ));
+        }
+        Ok(())
+    }
+
+    fn get_entity_vad_annotation(
+        &self,
+        id: &EntityId,
+        expected_type: u8,
+    ) -> Result<Option<VadAnnotation>> {
+        let rtxn = self.store.env.read_txn()?;
+        let Some(raw) = self.store.entities.get(&rtxn, id.as_bytes())? else {
+            return Ok(None);
+        };
+        let header =
+            EntityMetadataHeader::parse(raw).ok_or(Error::CorruptedIndex("entity header"))?;
+        if header.entity_type != expected_type {
+            return Err(Error::InvalidEntityType(header.entity_type));
+        }
+        let claim_id = vad_annotation_claim_id(expected_type, id)?;
+        if let Some(raw) = self.store.entities.get(&rtxn, claim_id.as_bytes())? {
+            let header =
+                EntityMetadataHeader::parse(raw).ok_or(Error::CorruptedIndex("entity header"))?;
+            if header.entity_type != ENTITY_TYPE_CLAIM {
+                return Err(Error::CorruptedIndex("VAD annotation claim"));
+            }
+            let Some(body) = decode_vad_annotation_claim_body_if_present(raw)? else {
+                return Ok(None);
+            };
+            if body.predicate != VAD_ANNOTATION_CLAIM_PREDICATE
+                || body.subject != ClaimSubject::Entity(*id)
+            {
+                return Err(Error::CorruptedIndex("VAD annotation claim"));
+            }
+            if body.lifecycle != ClaimLifecycleStatus::Active {
+                return Ok(None);
+            }
+            return vad_annotation_from_value(&body.value).map(Some);
+        }
+
+        let key = vad_annotation_meta_key(expected_type, id);
+        let Some(raw) = self.store.vault_meta.get(&rtxn, &key)? else {
+            return Ok(None);
+        };
+        let annotation: VadAnnotation =
+            rmp_serde::from_slice(raw).map_err(|_| Error::CorruptedIndex("VAD annotation"))?;
+        annotation.vad.validate()?;
+        Ok(Some(annotation))
     }
 
     /// Writes a typed CLAIM (type 0) entity with full structural validation
@@ -1915,17 +2347,35 @@ impl Vault {
     ) -> Result<(bool, bool)> {
         bm25::deindex_text(&self.store, wtxn, id)?;
         delete_from_phonetic_postings(&self.store, wtxn, id)?;
-        let had_vector = self.store.vectors.delete(wtxn, id.as_bytes())?;
+        let mut had_vector = self.store.vectors.delete(wtxn, id.as_bytes())?;
         crate::hnsw::hnsw_deindex(&self.store, wtxn, id)?;
 
         let Some(entity_record) = self.store.entities.get(wtxn, id.as_bytes())? else {
+            let cleanup = delete_vad_annotation_metadata_in_txn(&self.store, wtxn, id)?;
+            had_vector |= cleanup.had_vector;
+            if cleanup.had_graph_mutation {
+                ppr::invalidate_ppr_for_delete(&self.store, wtxn, id, &cleanup.neighbors)?;
+                ppr::increment_graph_version(&self.store, wtxn)?;
+            }
             return Ok((false, had_vector));
         };
-        if EntityMetadataHeader::parse(entity_record).is_none() {
-            return Err(Error::CorruptedIndex("entity metadata"));
+        let header = EntityMetadataHeader::parse(entity_record)
+            .ok_or(Error::CorruptedIndex("entity metadata"))?;
+        let payload = entity_record[..ENTITY_METADATA_HEADER_LEN].to_vec();
+        let mut cleanup = VadAnnotationCleanup::default();
+        delete_vad_annotation_metadata_for_type_in_txn(
+            &self.store,
+            wtxn,
+            id,
+            header.entity_type,
+            &mut cleanup,
+        )?;
+        had_vector |= cleanup.had_vector;
+        if cleanup.had_graph_mutation {
+            ppr::invalidate_ppr_for_delete(&self.store, wtxn, id, &cleanup.neighbors)?;
+            ppr::increment_graph_version(&self.store, wtxn)?;
         }
 
-        let payload = entity_record[..ENTITY_METADATA_HEADER_LEN].to_vec();
         self.store.entities.put(wtxn, id.as_bytes(), &payload)?;
         Ok((true, had_vector))
     }
@@ -2124,7 +2574,11 @@ impl Vault {
             return Ok(true);
         }
         let mut edges_in = self.store.edges_in.prefix_iter(txn, id.as_bytes())?;
-        Ok(edges_in.next().transpose()?.is_some())
+        if edges_in.next().transpose()?.is_some() {
+            return Ok(true);
+        }
+
+        vad_annotation_delete_scope_exists_in_txn(&self.store, txn, id)
     }
 
     /// Writes the ARCH-0038 CRDT tombstone (v2 wire value, ONE-1132) into

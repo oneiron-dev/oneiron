@@ -24,7 +24,9 @@ use oneiron::sync::bridge::{
 use oneiron::sync::schema::create_window_doc;
 use oneiron::sync::types::WindowKey;
 use oneiron::sync::window::{self, LoadedWindow};
-use oneiron::types::{EdgeKind, TimeRange, Vad};
+use oneiron::types::{
+    ENTITY_TYPE_TURN, EdgeKind, TimeRange, Vad, VadAnnotation, VadAnnotationSource,
+};
 use oneiron::{
     EdgeActorClass, EdgeConfirmationStatus, EdgeProvenanceFlags, EntityId, HnswConfig, Vault,
     VaultConfig,
@@ -89,6 +91,58 @@ fn put_local_entity(vault: &Vault, id: &EntityId, data: &[u8]) {
             data,
         )
         .unwrap();
+}
+
+#[test]
+fn vad_annotation_claim_survives_reverse_and_forward_remat() {
+    let temp_a = tempfile::tempdir().unwrap();
+    let vault_a = Vault::open(temp_a.path(), test_config()).unwrap();
+
+    let turn = EntityId::now();
+    vault_a
+        .put_entity(
+            &turn,
+            ENTITY_TYPE_TURN,
+            TimeRange {
+                start: LEARNED_AT,
+                end: LEARNED_AT,
+            },
+            LEARNED_AT,
+            b"turn-body",
+        )
+        .unwrap();
+
+    let annotation = VadAnnotation::new(
+        Vad {
+            valence: 0.25,
+            arousal: 0.5,
+            dominance: 0.75,
+        },
+        VadAnnotationSource::ModelInference,
+        LEARNED_AT,
+    )
+    .unwrap();
+    vault_a
+        .annotate_turn_vad(&turn, annotation)
+        .expect("annotation write");
+
+    let doc = create_window_doc("test-user", &window_key());
+    let mirrored = window::reverse_rematerialize(&vault_a, &doc, &window_key()).unwrap();
+    assert_eq!(
+        mirrored, 2,
+        "turn and replicated annotation claim must both enter the CRDT mirror"
+    );
+
+    let temp_b = tempfile::tempdir().unwrap();
+    let vault_b = Vault::open(temp_b.path(), test_config()).unwrap();
+    let materializer = Materializer::new();
+    window::forward_rematerialize(&vault_b, &doc, &materializer, &window_key()).unwrap();
+
+    assert_eq!(
+        vault_b.get_turn_vad_annotation(&turn).unwrap(),
+        Some(annotation),
+        "annotation must survive the replicated entity/edge rematerialization path"
+    );
 }
 
 /// AC1 — ARCH-0023b "if tombstoned in CRDT → never resurrect": an entity
