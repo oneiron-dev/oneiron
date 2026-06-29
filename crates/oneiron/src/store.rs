@@ -1069,15 +1069,18 @@ impl Store {
             if !key.starts_with(RETRIEVAL_RUN_KEY_PREFIX) {
                 break;
             }
-            if let Some(run_id) = retrieval_run_id_from_key(key)
-                && self
-                    .vault_meta
-                    .get(&rtxn, &retrieval_run_provisional_key(run_id))?
-                    .is_some()
+            let run_id = retrieval_run_id_from_key(key)?;
+            if self
+                .vault_meta
+                .get(&rtxn, &retrieval_run_provisional_key(run_id))?
+                .is_some()
             {
                 continue;
             }
             let record = decode_retrieval_run(value)?;
+            if record.run_id != run_id {
+                return Err(Error::CorruptedIndex("retrieval run telemetry"));
+            }
             records.push(record);
             if records.len() == limit {
                 break;
@@ -1120,10 +1123,14 @@ fn retrieval_run_key(run_id: RetrievalRunId) -> Vec<u8> {
     key
 }
 
-fn retrieval_run_id_from_key(key: &[u8]) -> Option<RetrievalRunId> {
-    let bytes = key.get(RETRIEVAL_RUN_KEY_PREFIX.len()..)?;
-    let bytes: [u8; 16] = bytes.try_into().ok()?;
-    Some(RetrievalRunId { bytes })
+fn retrieval_run_id_from_key(key: &[u8]) -> Result<RetrievalRunId> {
+    let bytes = key
+        .strip_prefix(RETRIEVAL_RUN_KEY_PREFIX)
+        .ok_or(Error::CorruptedIndex("retrieval run telemetry"))?;
+    let bytes: [u8; 16] = bytes
+        .try_into()
+        .map_err(|_| Error::CorruptedIndex("retrieval run telemetry"))?;
+    Ok(RetrievalRunId { bytes })
 }
 
 fn retrieval_run_provisional_key(run_id: RetrievalRunId) -> Vec<u8> {
@@ -2289,6 +2296,87 @@ pub(crate) fn parse_utf8_bytes(bytes: &[u8]) -> Result<String> {
     std::str::from_utf8(bytes)
         .map(str::to_owned)
         .map_err(|_| Error::InvalidKey)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::Vault;
+    use crate::types::{EntityId, TimeRange};
+
+    fn open_test_vault() -> (tempfile::TempDir, Vault) {
+        crate::test_util::open_test_vault_with(VaultConfig::device())
+    }
+
+    fn entity_id(byte: u8) -> EntityId {
+        EntityId::from_bytes([byte; 16]).expect("test ids should be valid")
+    }
+
+    fn put_text(vault: &Vault, id: EntityId, text: &str) -> Result<()> {
+        vault
+            .batch()
+            .put(&id, 1, TimeRange { start: 1, end: 1 }, 1, b"payload")
+            .text(&id, &[("body", text)])
+            .commit()
+    }
+
+    fn raw_retrieval_run_row(vault: &Vault, run_id: RetrievalRunId) -> Result<Vec<u8>> {
+        let rtxn = vault.store.env.read_txn()?;
+        vault
+            .store
+            .vault_meta
+            .get(&rtxn, &retrieval_run_key(run_id))?
+            .map(<[u8]>::to_vec)
+            .ok_or(Error::CorruptedIndex("retrieval run telemetry"))
+    }
+
+    #[test]
+    fn retrieval_runs_rejects_malformed_key_shape_and_run_id_mismatch() -> Result<()> {
+        let (_dir, vault) = open_test_vault();
+        let id = entity_id(0x40);
+        put_text(&vault, id, "telemetry key shape")?;
+        assert_eq!(vault.search_text("telemetry key shape", 10)?.len(), 1);
+        let run_id = vault.retrieval_runs(1)?[0].run_id;
+        let raw = raw_retrieval_run_row(&vault, run_id)?;
+        let mut malformed_key = retrieval_run_key(run_id);
+        malformed_key.push(0);
+        vault.with_write_txn(|wtxn| {
+            vault.store.vault_meta.put(wtxn, &malformed_key, &raw)?;
+            Ok(())
+        })?;
+        let error = vault
+            .retrieval_runs(10)
+            .expect_err("malformed retrieval run key should fail closed");
+        assert!(matches!(
+            error,
+            Error::CorruptedIndex("retrieval run telemetry")
+        ));
+
+        let (_dir, vault) = open_test_vault();
+        let first_id = entity_id(0x41);
+        let second_id = entity_id(0x42);
+        put_text(&vault, first_id, "telemetrykeyfirst")?;
+        put_text(&vault, second_id, "telemetrykeysecond")?;
+        assert_eq!(vault.search_text("telemetrykeyfirst", 10)?.len(), 1);
+        let first_run_id = vault.retrieval_runs(1)?[0].run_id;
+        let first_raw = raw_retrieval_run_row(&vault, first_run_id)?;
+        std::thread::sleep(std::time::Duration::from_millis(2));
+        assert_eq!(vault.search_text("telemetrykeysecond", 10)?.len(), 1);
+        let second_run_id = vault.retrieval_runs(1)?[0].run_id;
+        let second_key = retrieval_run_key(second_run_id);
+        vault.with_write_txn(|wtxn| {
+            vault.store.vault_meta.put(wtxn, &second_key, &first_raw)?;
+            Ok(())
+        })?;
+        let error = vault
+            .retrieval_runs(10)
+            .expect_err("retrieval run key/value id mismatch should fail closed");
+        assert!(matches!(
+            error,
+            Error::CorruptedIndex("retrieval run telemetry")
+        ));
+        Ok(())
+    }
 }
 
 #[cfg(test)]
