@@ -477,7 +477,7 @@ impl RuntimeConfig {
         let mut matched_debits = None;
 
         for role in RuntimeRole::ALL {
-            let route = self.route_for_role_with_key_lookup(role, |_| Some("key".into()));
+            let route = self.route_for_role(role);
             if route.model != model || route.state != RuntimeRouteState::Available {
                 continue;
             }
@@ -505,16 +505,20 @@ impl RuntimeConfig {
     }
 
     pub fn usage_mode_without_model(&self) -> Option<UsageMode> {
-        let first = self
-            .role_defaults
-            .target(RuntimeRole::Orchestrator)
-            .mode
-            .usage_mode();
+        let first_route = self.route_for_role(RuntimeRole::Orchestrator);
+        let first = first_route.mode.usage_mode();
         let first_debits = first.debits_usage();
+        if first_debits && first_route.state != RuntimeRouteState::Available {
+            return None;
+        }
 
         for role in RuntimeRole::ALL.into_iter().skip(1) {
-            let usage_mode = self.role_defaults.target(role).mode.usage_mode();
+            let route = self.route_for_role(role);
+            let usage_mode = route.mode.usage_mode();
             if usage_mode.debits_usage() != first_debits {
+                return None;
+            }
+            if first_debits && route.state != RuntimeRouteState::Available {
                 return None;
             }
         }
@@ -1181,6 +1185,9 @@ mod tests {
         assert!(unavailable.has_model_route_match(Some("mismatch-model")));
 
         let mut unmetered_duplicate = RuntimeConfig::for_mode(RuntimeMode::OneironCloud);
+        unmetered_duplicate.apply_override(RuntimeConfigOverride::with_byo_key_env(Some(
+            "PATH".to_owned(),
+        )));
         for (role, mode) in [
             (RuntimeRole::Orchestrator, RuntimeMode::LocalFree),
             (RuntimeRole::Subagent, RuntimeMode::ByoCloudKey),
@@ -1199,5 +1206,39 @@ mod tests {
             unmetered_duplicate.usage_mode_for_model(Some("shared-unmetered-model")),
             Some(UsageMode::Local)
         );
+    }
+
+    #[test]
+    fn usage_classification_requires_resolved_route_availability() {
+        let mut missing_byo_key = RuntimeConfig::for_mode(RuntimeMode::ByoCloudKey);
+        missing_byo_key.apply_override(RuntimeConfigOverride::with_byo_key_env(Some(
+            "ONEIRON_TEST_MISSING_RUNTIME_KEY_DO_NOT_SET".to_owned(),
+        )));
+
+        let model = missing_byo_key
+            .role_defaults
+            .target(RuntimeRole::Orchestrator)
+            .model
+            .clone();
+        let route = missing_byo_key.route_for_role(RuntimeRole::Orchestrator);
+        assert_eq!(route.state, RuntimeRouteState::Unavailable);
+        assert_eq!(route.reason, RuntimeRouteReason::MissingByoKey);
+        assert_eq!(missing_byo_key.usage_mode_for_model(Some(&model)), None);
+        assert!(missing_byo_key.has_model_route_match(Some(&model)));
+        assert_eq!(
+            missing_byo_key.usage_mode_without_model(),
+            Some(UsageMode::Byo)
+        );
+
+        let mut unavailable_hosted = RuntimeConfig::for_mode(RuntimeMode::OneironCloud);
+        unavailable_hosted.apply_override(RuntimeConfigOverride::with_role_override(
+            RuntimeRole::Orchestrator,
+            RuntimeRoleTargetOverride::target(RuntimeProviderKind::Local, "mismatch-model"),
+        ));
+
+        let route = unavailable_hosted.route_for_role(RuntimeRole::Orchestrator);
+        assert_eq!(route.state, RuntimeRouteState::Unavailable);
+        assert_eq!(route.reason, RuntimeRouteReason::ProviderModeMismatch);
+        assert_eq!(unavailable_hosted.usage_mode_without_model(), None);
     }
 }

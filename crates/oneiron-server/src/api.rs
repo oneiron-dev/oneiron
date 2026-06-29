@@ -3245,8 +3245,67 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn usage_event_rejects_unmodeled_unavailable_routes_before_debiting() {
+        let mut runtime = crate::runtime::RuntimeConfig::for_mode(RuntimeMode::OneironCloud);
+        runtime.apply_override(crate::runtime::RuntimeConfigOverride::with_role_override(
+            RuntimeRole::Orchestrator,
+            crate::runtime::RuntimeRoleTargetOverride::target(
+                RuntimeProviderKind::Local,
+                "unavailable-hosted-model",
+            ),
+        ));
+        let (_dir, server) = test_server_with_config(SyncServerConfig {
+            allow_unauthenticated: true,
+            runtime,
+            ..Default::default()
+        });
+        let payload = json!({
+            "tenantId": "tenant-a",
+            "vaultId": "vault-a",
+            "idempotencyKey": "unmodeled-unavailable-route",
+            "source": "oneiron_cloud",
+            "eventType": "inference",
+            "tokenCounts": {
+                "inputTokens": 1000,
+                "outputTokens": 500,
+                "cacheReadTokens": 0,
+                "cacheWriteTokens": 0
+            },
+            "costRates": {
+                "inputTokenUsdPerMillion": 2.0,
+                "outputTokenUsdPerMillion": 4.0,
+                "cacheReadTokenUsdPerMillion": 0.0,
+                "cacheWriteTokenUsdPerMillion": 0.0
+            }
+        });
+
+        let response = api_routes(server)
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/usage/events")
+                    .header(CONTENT_TYPE, "application/json")
+                    .body(Body::from(payload.to_string()))
+                    .expect("request"),
+            )
+            .await
+            .expect("route response");
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        let body = to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("usage response body");
+        let body: Value = serde_json::from_slice(&body).expect("ApiError JSON body");
+        assert_eq!(body["code"], Value::from("BAD_REQUEST"));
+        assert_eq!(body["details"]["field"], Value::from("model"));
+    }
+
+    #[tokio::test]
     async fn usage_event_accepts_duplicate_unmetered_model_matches() {
         let mut runtime = crate::runtime::RuntimeConfig::for_mode(RuntimeMode::OneironCloud);
+        runtime.apply_override(crate::runtime::RuntimeConfigOverride::with_byo_key_env(
+            Some("PATH".to_owned()),
+        ));
         for (role, mode) in [
             (RuntimeRole::Orchestrator, RuntimeMode::LocalFree),
             (RuntimeRole::Subagent, RuntimeMode::ByoCloudKey),
