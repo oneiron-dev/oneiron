@@ -56,7 +56,9 @@ pub use crate::ingest::{
     NormalizedIngestRecord,
 };
 pub use crate::maintain::{MaintenanceBuilder, MaintenanceReport};
-pub use crate::pipeline::{DEFAULT_RECENCY_HALF_LIFE_DAYS, FacetMode, PipelineBuilder, WorldScope};
+pub use crate::pipeline::{
+    DEFAULT_RECENCY_HALF_LIFE_DAYS, FacetMode, PipelineBuilder, RetrievalWithTelemetry, WorldScope,
+};
 pub use crate::provenance::{
     EDGE_PROVENANCE_BODY_KEYS, EDGE_REF_LEN, EdgeProvenanceClaimBody, EdgeRef,
     MODEL_SUBSTRATE_FIELD_MAX_BYTES, PREDICATE_EDGE_PROVENANCE, REASONING_EFFORT_MAX_BYTES,

@@ -92,7 +92,8 @@
 //! [`Bm25FieldSchemaChanged`]: crate::error::Error::Bm25FieldSchemaChanged
 //! [`VaultConfig::skip_text_index_manifest_check`]: crate::types::VaultConfig::skip_text_index_manifest_check
 
-use std::collections::{HashMap, HashSet};
+use std::cell::Cell;
+use std::collections::{BTreeMap, HashMap, HashSet};
 #[cfg(unix)]
 use std::os::unix::fs::MetadataExt;
 #[cfg(windows)]
@@ -103,12 +104,14 @@ use std::sync::{LazyLock, Mutex, MutexGuard, RwLock};
 
 use heed::types::{Bytes, Str};
 use heed::{Database, DatabaseFlags, Env, EnvOpenOptions, RwTxn};
+use serde::{Deserialize, Serialize};
+use uuid::Uuid;
 
 use crate::error::{Error, Result, VaultRootEntry, VaultRootProblem};
 use crate::types::{
-    EdgeKind, EntityId, StructuralKindRegistration, TypeByteBand, VaultConfig, band_of,
-    entity_type_registry_entry, short_id_prefix, static_short_id_prefix_collision,
-    validate_entity_type as validate_static_entity_type,
+    EdgeKind, EntityId, Signal, StructuralKindRegistration, TypeByteBand, VaultConfig, band_of,
+    bytes_to_hex_lower, entity_type_registry_entry, short_id_prefix,
+    static_short_id_prefix_collision, validate_entity_type as validate_static_entity_type,
     validate_public_entity_type as validate_static_public_entity_type,
 };
 
@@ -175,6 +178,174 @@ const _: () =
     assert!(STRUCTURAL_KIND_REGISTRY_KEY_PREFIX.len() + 1 == STRUCTURAL_KIND_REGISTRY_KEY_LEN);
 const STRUCTURAL_KIND_REGISTRY_RECORD_VERSION: u8 = 1;
 const STRUCTURAL_KIND_REGISTRY_RECORD_HEADER_LEN: usize = 6;
+const RETRIEVAL_TELEMETRY_VERSION: u8 = 0;
+const RETRIEVAL_RUN_KEY_PREFIX: &[u8] = b"retr_run:v0:";
+const RETRIEVAL_RUN_PROVISIONAL_KEY_PREFIX: &[u8] = b"retr_run_prov:v0:";
+const RETRIEVAL_OUTCOME_KEY_PREFIX: &[u8] = b"retr_out:v0:";
+const RETRIEVAL_RUNS_CAPACITY_HINT_LIMIT: usize = 1024;
+const RETRIEVAL_OUTCOME_KEY_MAX_LEN: usize = 128;
+
+thread_local! {
+    static ACTIVE_WRITE_TXN_DEPTH: Cell<usize> = const { Cell::new(0) };
+}
+
+pub(crate) struct ActiveWriteTxnGuard;
+
+impl Drop for ActiveWriteTxnGuard {
+    fn drop(&mut self) {
+        ACTIVE_WRITE_TXN_DEPTH.with(|depth| {
+            depth.set(depth.get().saturating_sub(1));
+        });
+    }
+}
+
+pub(crate) fn active_write_txn_guard() -> ActiveWriteTxnGuard {
+    ACTIVE_WRITE_TXN_DEPTH.with(|depth| {
+        depth.set(depth.get().saturating_add(1));
+    });
+    ActiveWriteTxnGuard
+}
+
+fn active_write_txn_depth() -> usize {
+    ACTIVE_WRITE_TXN_DEPTH.with(Cell::get)
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct RetrievalRunId {
+    bytes: [u8; 16],
+}
+
+impl RetrievalRunId {
+    #[must_use]
+    pub fn now() -> Self {
+        Self {
+            bytes: Uuid::now_v7().into_bytes(),
+        }
+    }
+
+    #[must_use]
+    pub fn as_bytes(self) -> [u8; 16] {
+        self.bytes
+    }
+
+    #[must_use]
+    pub fn to_hex(self) -> String {
+        bytes_to_hex_lower(&self.bytes)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RetrievalAction {
+    Pipeline,
+    ContextPack,
+    VaultSearch,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RetrievalSignal {
+    Vector,
+    Text,
+    Phonetic,
+    Temporal,
+    Ppr,
+}
+
+impl From<Signal> for RetrievalSignal {
+    fn from(signal: Signal) -> Self {
+        match signal {
+            Signal::Vector => Self::Vector,
+            Signal::Text => Self::Text,
+            Signal::Phonetic => Self::Phonetic,
+            Signal::Temporal => Self::Temporal,
+            Signal::Ppr => Self::Ppr,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct RetrievalScoreComponent {
+    pub signal: RetrievalSignal,
+    pub rank: u32,
+    pub score: f32,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct RetrievalScoreBreakdown {
+    pub result_id: [u8; 16],
+    pub final_rank: u32,
+    pub final_score: f32,
+    pub components: Vec<RetrievalScoreComponent>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct RetrievalRunRecord {
+    pub version: u8,
+    pub run_id: RetrievalRunId,
+    pub action: RetrievalAction,
+    pub started_at: u64,
+    pub elapsed_us: u64,
+    pub signals: Vec<RetrievalSignal>,
+    pub result_ids: Vec<[u8; 16]>,
+    pub score_breakdown: Vec<RetrievalScoreBreakdown>,
+    pub total_in_scope: usize,
+    pub claims_suppressed: usize,
+    pub empty_reason: Option<String>,
+}
+
+impl RetrievalRunRecord {
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn new(
+        run_id: RetrievalRunId,
+        action: RetrievalAction,
+        started_at: u64,
+        elapsed_us: u64,
+        signals: Vec<RetrievalSignal>,
+        score_breakdown: Vec<RetrievalScoreBreakdown>,
+        total_in_scope: usize,
+        claims_suppressed: usize,
+        empty_reason: Option<String>,
+    ) -> Self {
+        let result_ids = score_breakdown
+            .iter()
+            .map(|entry| entry.result_id)
+            .collect();
+        Self {
+            version: RETRIEVAL_TELEMETRY_VERSION,
+            run_id,
+            action,
+            started_at,
+            elapsed_us,
+            signals,
+            result_ids,
+            score_breakdown,
+            total_in_scope,
+            claims_suppressed,
+            empty_reason,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct RetrievalOutcome {
+    pub run_id: RetrievalRunId,
+    pub key: String,
+    pub reward: Option<f32>,
+    pub accepted: Option<bool>,
+    pub metadata: BTreeMap<String, String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct RetrievalOutcomeRecord {
+    pub version: u8,
+    pub run_id: RetrievalRunId,
+    pub key: String,
+    pub reward: Option<f32>,
+    pub accepted: Option<bool>,
+    pub metadata: BTreeMap<String, String>,
+    pub updated_at: u64,
+}
 
 /// Encodes the `vault_meta` key for the short-id counter of `entity_type`.
 /// See [`SHORT_ID_COUNTER_KEY_PREFIX`] for the documented key scheme.
@@ -728,6 +899,355 @@ impl Store {
         registry.insert(type_byte, registration.clone());
         Ok(registration)
     }
+
+    pub(crate) fn record_retrieval_run(&self, record: &RetrievalRunRecord) -> Result<()> {
+        self.record_retrieval_run_with_visibility(record, true)
+    }
+
+    pub(crate) fn record_context_pack_provisional_retrieval_run(
+        &self,
+        record: &RetrievalRunRecord,
+    ) -> Result<()> {
+        self.record_retrieval_run_with_visibility(record, false)
+    }
+
+    fn record_retrieval_run_with_visibility(
+        &self,
+        record: &RetrievalRunRecord,
+        published: bool,
+    ) -> Result<()> {
+        #[cfg(test)]
+        if test_hooks::take_fail_next_retrieval_run_write(&self._registered_path.path) {
+            return Err(Error::InvariantViolation(
+                "forced retrieval telemetry write failure",
+            ));
+        }
+        if active_write_txn_depth() > 0 {
+            return Err(Error::ConcurrentWrite(
+                "retrieval telemetry skipped inside active write transaction",
+            ));
+        }
+
+        let key = retrieval_run_key(record.run_id);
+        let value = encode_retrieval_run(record)?;
+        let provisional_key = retrieval_run_provisional_key(record.run_id);
+        let mut wtxn = self.env.write_txn()?;
+        self.vault_meta.put(&mut wtxn, &key, &value)?;
+        if published {
+            self.vault_meta.delete(&mut wtxn, &provisional_key)?;
+        } else {
+            self.vault_meta.put(&mut wtxn, &provisional_key, b"1")?;
+        }
+        wtxn.commit()?;
+        Ok(())
+    }
+
+    pub(crate) fn delete_retrieval_run(&self, run_id: RetrievalRunId) -> Result<()> {
+        if active_write_txn_depth() > 0 {
+            return Err(Error::ConcurrentWrite(
+                "retrieval telemetry delete skipped inside active write transaction",
+            ));
+        }
+
+        let key = retrieval_run_key(run_id);
+        let provisional_key = retrieval_run_provisional_key(run_id);
+        let outcome_prefix = retrieval_outcome_run_prefix(run_id);
+        let mut wtxn = self.env.write_txn()?;
+        let mut outcome_keys = Vec::new();
+        for row in self.vault_meta.prefix_iter(&wtxn, &outcome_prefix)? {
+            let (key, _) = row?;
+            outcome_keys.push(key.to_vec());
+        }
+        for key in outcome_keys {
+            self.vault_meta.delete(&mut wtxn, &key)?;
+        }
+        self.vault_meta.delete(&mut wtxn, &provisional_key)?;
+        self.vault_meta.delete(&mut wtxn, &key)?;
+        wtxn.commit()?;
+        Ok(())
+    }
+
+    pub(crate) fn finalize_context_pack_retrieval_run(
+        &self,
+        run_id: RetrievalRunId,
+        elapsed_us: u64,
+        claims_suppressed: usize,
+        surfaced_result_ids: &[[u8; 16]],
+        empty_reason: Option<String>,
+    ) -> Result<()> {
+        if active_write_txn_depth() > 0 {
+            return Err(Error::ConcurrentWrite(
+                "context-pack retrieval telemetry skipped inside active write transaction",
+            ));
+        }
+
+        let key = retrieval_run_key(run_id);
+        let provisional_key = retrieval_run_provisional_key(run_id);
+        let mut wtxn = self.env.write_txn()?;
+        let Some(raw) = self.vault_meta.get(&wtxn, &key)? else {
+            self.vault_meta.delete(&mut wtxn, &provisional_key)?;
+            wtxn.commit()?;
+            return Ok(());
+        };
+        let mut record = decode_retrieval_run(raw)?;
+        record.elapsed_us = elapsed_us;
+        record.claims_suppressed = claims_suppressed;
+        record.result_ids = surfaced_result_ids.to_vec();
+        let mut surfaced_breakdown = Vec::with_capacity(surfaced_result_ids.len());
+        for (index, result_id) in surfaced_result_ids.iter().enumerate() {
+            if let Some(entry) = record
+                .score_breakdown
+                .iter()
+                .find(|entry| entry.result_id == *result_id)
+            {
+                let mut entry = entry.clone();
+                entry.final_rank = u32::try_from(index.saturating_add(1)).unwrap_or(u32::MAX);
+                surfaced_breakdown.push(entry);
+            }
+        }
+        record.score_breakdown = surfaced_breakdown;
+        record.empty_reason = empty_reason;
+        let value = encode_retrieval_run(&record)?;
+        self.vault_meta.put(&mut wtxn, &key, &value)?;
+        self.vault_meta.delete(&mut wtxn, &provisional_key)?;
+        wtxn.commit()?;
+        Ok(())
+    }
+
+    pub(crate) fn record_retrieval_outcome(&self, outcome: RetrievalOutcome) -> Result<()> {
+        if active_write_txn_depth() > 0 {
+            return Err(Error::ConcurrentWrite(
+                "retrieval outcome telemetry skipped inside active write transaction",
+            ));
+        }
+
+        vet_retrieval_outcome(&outcome)?;
+        let record = RetrievalOutcomeRecord {
+            version: RETRIEVAL_TELEMETRY_VERSION,
+            run_id: outcome.run_id,
+            key: outcome.key,
+            reward: outcome.reward,
+            accepted: outcome.accepted,
+            metadata: outcome.metadata,
+            updated_at: crate::unix_seconds_now(),
+        };
+        let key = retrieval_outcome_key(record.run_id, &record.key);
+        let value = encode_retrieval_outcome(&record)?;
+        let mut wtxn = self.env.write_txn()?;
+        let run_key = retrieval_run_key(record.run_id);
+        if self.vault_meta.get(&wtxn, &run_key)?.is_none() {
+            return Err(Error::InvalidConfig(
+                "retrieval outcome references unknown run id".to_owned(),
+            ));
+        }
+        let provisional_key = retrieval_run_provisional_key(record.run_id);
+        if self.vault_meta.get(&wtxn, &provisional_key)?.is_some() {
+            return Err(Error::InvalidConfig(
+                "retrieval outcome references unpublished context-pack run id".to_owned(),
+            ));
+        }
+        self.vault_meta.put(&mut wtxn, &key, &value)?;
+        wtxn.commit()?;
+        Ok(())
+    }
+
+    pub fn retrieval_runs(&self, limit: usize) -> Result<Vec<RetrievalRunRecord>> {
+        if limit == 0 {
+            return Ok(Vec::new());
+        }
+        let rtxn = self.env.read_txn()?;
+        let mut records = Vec::with_capacity(limit.min(RETRIEVAL_RUNS_CAPACITY_HINT_LIMIT));
+        let upper = retrieval_run_upper_bound();
+        for row in self.vault_meta.rev_range(
+            &rtxn,
+            &(
+                std::ops::Bound::Included(RETRIEVAL_RUN_KEY_PREFIX),
+                std::ops::Bound::Excluded(upper.as_slice()),
+            ),
+        )? {
+            let (key, value) = row?;
+            if !key.starts_with(RETRIEVAL_RUN_KEY_PREFIX) {
+                break;
+            }
+            let run_id = retrieval_run_id_from_key(key)?;
+            if self
+                .vault_meta
+                .get(&rtxn, &retrieval_run_provisional_key(run_id))?
+                .is_some()
+            {
+                continue;
+            }
+            let record = decode_retrieval_run(value)?;
+            if record.run_id != run_id {
+                return Err(Error::CorruptedIndex("retrieval run telemetry"));
+            }
+            records.push(record);
+            if records.len() == limit {
+                break;
+            }
+        }
+        Ok(records)
+    }
+
+    pub fn retrieval_outcomes(
+        &self,
+        run_id: RetrievalRunId,
+    ) -> Result<Vec<RetrievalOutcomeRecord>> {
+        let prefix = retrieval_outcome_run_prefix(run_id);
+        let rtxn = self.env.read_txn()?;
+        if self
+            .vault_meta
+            .get(&rtxn, &retrieval_run_key(run_id))?
+            .is_none()
+            || self
+                .vault_meta
+                .get(&rtxn, &retrieval_run_provisional_key(run_id))?
+                .is_some()
+        {
+            return Ok(Vec::new());
+        }
+        let mut records = Vec::new();
+        for row in self.vault_meta.prefix_iter(&rtxn, &prefix)? {
+            let (key, value) = row?;
+            let (key_run_id, key_outcome_key) = retrieval_outcome_parts_from_key(key)?;
+            if key_run_id != run_id {
+                return Err(Error::CorruptedIndex("retrieval outcome telemetry"));
+            }
+            let record = decode_retrieval_outcome(value)?;
+            if record.run_id != key_run_id || record.key != key_outcome_key {
+                return Err(Error::CorruptedIndex("retrieval outcome telemetry"));
+            }
+            records.push(record);
+        }
+        records.sort_by(|left, right| left.key.cmp(&right.key));
+        Ok(records)
+    }
+}
+
+fn retrieval_run_key(run_id: RetrievalRunId) -> Vec<u8> {
+    let mut key = Vec::with_capacity(RETRIEVAL_RUN_KEY_PREFIX.len() + 16);
+    key.extend_from_slice(RETRIEVAL_RUN_KEY_PREFIX);
+    key.extend_from_slice(&run_id.as_bytes());
+    key
+}
+
+fn retrieval_run_id_from_key(key: &[u8]) -> Result<RetrievalRunId> {
+    let bytes = key
+        .strip_prefix(RETRIEVAL_RUN_KEY_PREFIX)
+        .ok_or(Error::CorruptedIndex("retrieval run telemetry"))?;
+    let bytes: [u8; 16] = bytes
+        .try_into()
+        .map_err(|_| Error::CorruptedIndex("retrieval run telemetry"))?;
+    Ok(RetrievalRunId { bytes })
+}
+
+fn retrieval_run_provisional_key(run_id: RetrievalRunId) -> Vec<u8> {
+    let mut key = Vec::with_capacity(RETRIEVAL_RUN_PROVISIONAL_KEY_PREFIX.len() + 16);
+    key.extend_from_slice(RETRIEVAL_RUN_PROVISIONAL_KEY_PREFIX);
+    key.extend_from_slice(&run_id.as_bytes());
+    key
+}
+
+fn retrieval_run_upper_bound() -> Vec<u8> {
+    let mut key = Vec::with_capacity(RETRIEVAL_RUN_KEY_PREFIX.len());
+    key.extend_from_slice(RETRIEVAL_RUN_KEY_PREFIX);
+    *key.last_mut()
+        .expect("retrieval run key prefix must be non-empty") += 1;
+    key
+}
+
+fn retrieval_outcome_run_prefix(run_id: RetrievalRunId) -> Vec<u8> {
+    let mut key = Vec::with_capacity(RETRIEVAL_OUTCOME_KEY_PREFIX.len() + 17);
+    key.extend_from_slice(RETRIEVAL_OUTCOME_KEY_PREFIX);
+    key.extend_from_slice(&run_id.as_bytes());
+    key.push(b':');
+    key
+}
+
+fn retrieval_outcome_key(run_id: RetrievalRunId, outcome_key: &str) -> Vec<u8> {
+    let mut key = retrieval_outcome_run_prefix(run_id);
+    key.extend_from_slice(outcome_key.as_bytes());
+    key
+}
+
+fn retrieval_outcome_parts_from_key(key: &[u8]) -> Result<(RetrievalRunId, String)> {
+    let suffix = key
+        .strip_prefix(RETRIEVAL_OUTCOME_KEY_PREFIX)
+        .ok_or(Error::CorruptedIndex("retrieval outcome telemetry"))?;
+    if suffix.len() < 17 || suffix[16] != b':' {
+        return Err(Error::CorruptedIndex("retrieval outcome telemetry"));
+    }
+    let run_id_bytes: [u8; 16] = suffix[..16]
+        .try_into()
+        .map_err(|_| Error::CorruptedIndex("retrieval outcome telemetry"))?;
+    let outcome_key_bytes = &suffix[17..];
+    let outcome_key = std::str::from_utf8(outcome_key_bytes)
+        .map_err(|_| Error::CorruptedIndex("retrieval outcome telemetry"))?;
+    if outcome_key.is_empty()
+        || outcome_key.len() > RETRIEVAL_OUTCOME_KEY_MAX_LEN
+        || !outcome_key
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-' | b':'))
+    {
+        return Err(Error::CorruptedIndex("retrieval outcome telemetry"));
+    }
+    Ok((
+        RetrievalRunId {
+            bytes: run_id_bytes,
+        },
+        outcome_key.to_owned(),
+    ))
+}
+
+fn encode_retrieval_run(record: &RetrievalRunRecord) -> Result<Vec<u8>> {
+    rmp_serde::to_vec_named(record)
+        .map_err(|_| Error::InvariantViolation("retrieval run telemetry encode failed"))
+}
+
+fn decode_retrieval_run(raw: &[u8]) -> Result<RetrievalRunRecord> {
+    let record: RetrievalRunRecord =
+        rmp_serde::from_slice(raw).map_err(|_| Error::CorruptedIndex("retrieval run telemetry"))?;
+    if record.version != RETRIEVAL_TELEMETRY_VERSION {
+        return Err(Error::CorruptedIndex("retrieval run telemetry"));
+    }
+    Ok(record)
+}
+
+fn encode_retrieval_outcome(record: &RetrievalOutcomeRecord) -> Result<Vec<u8>> {
+    rmp_serde::to_vec_named(record)
+        .map_err(|_| Error::InvariantViolation("retrieval outcome telemetry encode failed"))
+}
+
+fn decode_retrieval_outcome(raw: &[u8]) -> Result<RetrievalOutcomeRecord> {
+    let record: RetrievalOutcomeRecord = rmp_serde::from_slice(raw)
+        .map_err(|_| Error::CorruptedIndex("retrieval outcome telemetry"))?;
+    if record.version != RETRIEVAL_TELEMETRY_VERSION {
+        return Err(Error::CorruptedIndex("retrieval outcome telemetry"));
+    }
+    Ok(record)
+}
+
+fn vet_retrieval_outcome(outcome: &RetrievalOutcome) -> Result<()> {
+    if outcome.key.is_empty()
+        || outcome.key.len() > RETRIEVAL_OUTCOME_KEY_MAX_LEN
+        || !outcome
+            .key
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-' | b':'))
+    {
+        return Err(Error::InvalidConfig(
+            "retrieval outcome key must be 1-128 chars of ASCII alnum, '.', '_', '-', or ':'"
+                .to_owned(),
+        ));
+    }
+    if let Some(reward) = outcome.reward
+        && !reward.is_finite()
+    {
+        return Err(Error::InvalidConfig(
+            "retrieval outcome reward must be finite".to_owned(),
+        ));
+    }
+    Ok(())
 }
 
 fn load_structural_kind_registry(
@@ -1816,7 +2336,175 @@ pub(crate) fn parse_utf8_bytes(bytes: &[u8]) -> Result<String> {
 }
 
 #[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::Vault;
+    use crate::types::{EntityId, TimeRange};
+    use std::collections::BTreeMap;
+
+    fn open_test_vault() -> (tempfile::TempDir, Vault) {
+        crate::test_util::open_test_vault_with(VaultConfig::device())
+    }
+
+    fn entity_id(byte: u8) -> EntityId {
+        EntityId::from_bytes([byte; 16]).expect("test ids should be valid")
+    }
+
+    fn put_text(vault: &Vault, id: EntityId, text: &str) -> Result<()> {
+        vault
+            .batch()
+            .put(&id, 1, TimeRange { start: 1, end: 1 }, 1, b"payload")
+            .text(&id, &[("body", text)])
+            .commit()
+    }
+
+    fn raw_retrieval_run_row(vault: &Vault, run_id: RetrievalRunId) -> Result<Vec<u8>> {
+        let rtxn = vault.store.env.read_txn()?;
+        vault
+            .store
+            .vault_meta
+            .get(&rtxn, &retrieval_run_key(run_id))?
+            .map(<[u8]>::to_vec)
+            .ok_or(Error::CorruptedIndex("retrieval run telemetry"))
+    }
+
+    fn raw_retrieval_outcome_row(
+        vault: &Vault,
+        run_id: RetrievalRunId,
+        outcome_key: &str,
+    ) -> Result<Vec<u8>> {
+        let rtxn = vault.store.env.read_txn()?;
+        vault
+            .store
+            .vault_meta
+            .get(&rtxn, &retrieval_outcome_key(run_id, outcome_key))?
+            .map(<[u8]>::to_vec)
+            .ok_or(Error::CorruptedIndex("retrieval outcome telemetry"))
+    }
+
+    fn record_click_outcome(vault: &Vault, run_id: RetrievalRunId) -> Result<()> {
+        vault.record_retrieval_outcome(RetrievalOutcome {
+            run_id,
+            key: "click".to_owned(),
+            reward: Some(1.0),
+            accepted: Some(true),
+            metadata: BTreeMap::new(),
+        })
+    }
+
+    #[test]
+    fn retrieval_runs_rejects_malformed_key_shape_and_run_id_mismatch() -> Result<()> {
+        let (_dir, vault) = open_test_vault();
+        let id = entity_id(0x40);
+        put_text(&vault, id, "telemetry key shape")?;
+        assert_eq!(vault.search_text("telemetry key shape", 10)?.len(), 1);
+        let run_id = vault.retrieval_runs(1)?[0].run_id;
+        let raw = raw_retrieval_run_row(&vault, run_id)?;
+        let mut malformed_key = retrieval_run_key(run_id);
+        malformed_key.push(0);
+        vault.with_write_txn(|wtxn| {
+            vault.store.vault_meta.put(wtxn, &malformed_key, &raw)?;
+            Ok(())
+        })?;
+        let error = vault
+            .retrieval_runs(10)
+            .expect_err("malformed retrieval run key should fail closed");
+        assert!(matches!(
+            error,
+            Error::CorruptedIndex("retrieval run telemetry")
+        ));
+
+        let (_dir, vault) = open_test_vault();
+        let first_id = entity_id(0x41);
+        let second_id = entity_id(0x42);
+        put_text(&vault, first_id, "telemetrykeyfirst")?;
+        put_text(&vault, second_id, "telemetrykeysecond")?;
+        assert_eq!(vault.search_text("telemetrykeyfirst", 10)?.len(), 1);
+        let first_run_id = vault.retrieval_runs(1)?[0].run_id;
+        let first_raw = raw_retrieval_run_row(&vault, first_run_id)?;
+        std::thread::sleep(std::time::Duration::from_millis(2));
+        assert_eq!(vault.search_text("telemetrykeysecond", 10)?.len(), 1);
+        let second_run_id = vault.retrieval_runs(1)?[0].run_id;
+        let second_key = retrieval_run_key(second_run_id);
+        vault.with_write_txn(|wtxn| {
+            vault.store.vault_meta.put(wtxn, &second_key, &first_raw)?;
+            Ok(())
+        })?;
+        let error = vault
+            .retrieval_runs(10)
+            .expect_err("retrieval run key/value id mismatch should fail closed");
+        assert!(matches!(
+            error,
+            Error::CorruptedIndex("retrieval run telemetry")
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn retrieval_outcomes_rejects_key_value_mismatches() -> Result<()> {
+        let (_dir, vault) = open_test_vault();
+        let id = entity_id(0x43);
+        put_text(&vault, id, "outcomekeymismatch")?;
+        let first = vault
+            .query()
+            .search_text("outcomekeymismatch", 10)
+            .run_with_telemetry()?;
+        assert_eq!(first.value.len(), 1);
+        let run_id = first.run_id.expect("outcome key mismatch run id");
+        record_click_outcome(&vault, run_id)?;
+        let raw = raw_retrieval_outcome_row(&vault, run_id, "click")?;
+        let wrong_key = retrieval_outcome_key(run_id, "dismiss");
+        vault.with_write_txn(|wtxn| {
+            vault.store.vault_meta.put(wtxn, &wrong_key, &raw)?;
+            Ok(())
+        })?;
+        let error = vault
+            .retrieval_outcomes(run_id)
+            .expect_err("outcome key/value key mismatch should fail closed");
+        assert!(matches!(
+            error,
+            Error::CorruptedIndex("retrieval outcome telemetry")
+        ));
+
+        let (_dir, vault) = open_test_vault();
+        let first_id = entity_id(0x44);
+        let second_id = entity_id(0x45);
+        put_text(&vault, first_id, "outcomerunfirst")?;
+        put_text(&vault, second_id, "outcomerunsecond")?;
+        let first = vault
+            .query()
+            .search_text("outcomerunfirst", 10)
+            .run_with_telemetry()?;
+        assert_eq!(first.value.len(), 1);
+        let first_run_id = first.run_id.expect("first outcome run id");
+        record_click_outcome(&vault, first_run_id)?;
+        let first_raw = raw_retrieval_outcome_row(&vault, first_run_id, "click")?;
+        let second = vault
+            .query()
+            .search_text("outcomerunsecond", 10)
+            .run_with_telemetry()?;
+        assert_eq!(second.value.len(), 1);
+        let second_run_id = second.run_id.expect("second outcome run id");
+        let second_key = retrieval_outcome_key(second_run_id, "click");
+        vault.with_write_txn(|wtxn| {
+            vault.store.vault_meta.put(wtxn, &second_key, &first_raw)?;
+            Ok(())
+        })?;
+        let error = vault
+            .retrieval_outcomes(second_run_id)
+            .expect_err("outcome key/value run id mismatch should fail closed");
+        assert!(matches!(
+            error,
+            Error::CorruptedIndex("retrieval outcome telemetry")
+        ));
+        Ok(())
+    }
+}
+
+#[cfg(test)]
 pub(crate) mod test_hooks {
+    use std::cell::RefCell;
+
     use super::*;
 
     struct TargetedAfterLmdbOpenHook {
@@ -1828,6 +2516,9 @@ pub(crate) mod test_hooks {
 
     static AFTER_LMDB_OPEN: LazyLock<Mutex<Option<TargetedAfterLmdbOpenHook>>> =
         LazyLock::new(|| Mutex::new(None));
+    thread_local! {
+        static FAIL_NEXT_RETRIEVAL_RUN_WRITE: RefCell<Option<PathBuf>> = const { RefCell::new(None) };
+    }
 
     pub(crate) fn arm_after_lmdb_open(path: PathBuf, hook: impl FnOnce(&Path) + Send + 'static) {
         *AFTER_LMDB_OPEN
@@ -1852,5 +2543,23 @@ pub(crate) mod test_hooks {
         if let Some(hook) = hook {
             hook(path);
         }
+    }
+
+    pub(crate) fn fail_next_retrieval_run_write_for(path: PathBuf) {
+        FAIL_NEXT_RETRIEVAL_RUN_WRITE.with(|armed| {
+            *armed.borrow_mut() = Some(path);
+        });
+    }
+
+    pub(crate) fn take_fail_next_retrieval_run_write(path: &Path) -> bool {
+        FAIL_NEXT_RETRIEVAL_RUN_WRITE.with(|armed| {
+            let mut armed = armed.borrow_mut();
+            if armed.as_ref().is_some_and(|armed_path| armed_path == path) {
+                armed.take();
+                true
+            } else {
+                false
+            }
+        })
     }
 }
