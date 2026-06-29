@@ -581,7 +581,8 @@ impl RuntimeConfig {
                 role_default: role,
                 source,
             },
-            oneiron_spend_metered: target.mode.oneiron_spend_metered(),
+            oneiron_spend_metered: state == RuntimeRouteState::Available
+                && target.mode.oneiron_spend_metered(),
         }
     }
 }
@@ -1063,6 +1064,30 @@ mod tests {
         assert_eq!(mismatch.reason, RuntimeRouteReason::ProviderModeMismatch);
         assert_eq!(mismatch.provider_kind, RuntimeProviderKind::OneironCloud);
         assert!(!mismatch.oneiron_spend_metered);
+    }
+
+    #[test]
+    fn unavailable_oneiron_cloud_routes_are_not_spend_metered() {
+        let mut config = RuntimeConfig::for_mode(RuntimeMode::OneironCloud);
+        for role in RuntimeRole::ALL {
+            config.apply_override(RuntimeConfigOverride::with_role_override(
+                role,
+                RuntimeRoleTargetOverride::target(
+                    RuntimeProviderKind::Local,
+                    format!("unavailable-{}", role.as_str()),
+                ),
+            ));
+        }
+
+        let status = RuntimeStatus::from_config(&config);
+        assert!(!status.oneiron_spend_metered);
+        for route in status.routes {
+            assert_eq!(route.mode, RuntimeMode::OneironCloud);
+            assert_eq!(route.provider_kind, RuntimeProviderKind::Local);
+            assert_eq!(route.state, RuntimeRouteState::Unavailable);
+            assert_eq!(route.reason, RuntimeRouteReason::ProviderModeMismatch);
+            assert!(!route.oneiron_spend_metered);
+        }
     }
 
     #[test]
