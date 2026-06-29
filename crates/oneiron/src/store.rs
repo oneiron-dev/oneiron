@@ -928,7 +928,16 @@ impl Store {
         }
 
         let key = retrieval_run_key(run_id);
+        let outcome_prefix = retrieval_outcome_run_prefix(run_id);
         let mut wtxn = self.env.write_txn()?;
+        let mut outcome_keys = Vec::new();
+        for row in self.vault_meta.prefix_iter(&wtxn, &outcome_prefix)? {
+            let (key, _) = row?;
+            outcome_keys.push(key.to_vec());
+        }
+        for key in outcome_keys {
+            self.vault_meta.delete(&mut wtxn, &key)?;
+        }
         self.vault_meta.delete(&mut wtxn, &key)?;
         wtxn.commit()?;
         Ok(())

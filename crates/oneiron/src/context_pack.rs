@@ -1168,7 +1168,7 @@ fn walk_edges(
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashSet;
+    use std::collections::{BTreeMap, HashSet};
 
     use crate::error::Error;
     use crate::types::{HnswConfig, TimeRange, VaultConfig};
@@ -2687,6 +2687,52 @@ mod tests {
         assert!(
             vault.retrieval_runs(10)?.is_empty(),
             "failed context-pack assembly must not leave a completed telemetry row"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn context_pack_telemetry_discard_removes_provisional_outcomes() -> Result<()> {
+        let (_dir, vault) = open_test_vault();
+
+        let id = EntityId::from_bytes_unchecked([0x7C; 16]);
+        put_text_entity(
+            &vault,
+            &id,
+            crate::types::ENTITY_TYPE_PERSON,
+            "telemetry provisional outcome",
+            serde_json::json!({"name": "Provisional"}),
+        )?;
+
+        let run = vault
+            .context_pack()
+            .search_text("telemetry provisional outcome", 10)
+            .run_unfinalized()?;
+        let run_id = run
+            .telemetry_run_id
+            .expect("unfinalized context-pack telemetry run id");
+        run.store
+            .record_retrieval_outcome(crate::store::RetrievalOutcome {
+                run_id,
+                key: "click".to_owned(),
+                reward: Some(1.0),
+                accepted: Some(true),
+                metadata: BTreeMap::new(),
+            })?;
+        assert_eq!(run.store.retrieval_outcomes(run_id)?.len(), 1);
+
+        discard_failed_context_pack_telemetry(run.store, run.telemetry_run_id);
+
+        assert!(
+            !run.store
+                .retrieval_runs(10)?
+                .iter()
+                .any(|record| record.run_id == run_id),
+            "discarded context-pack telemetry run should not remain readable"
+        );
+        assert!(
+            run.store.retrieval_outcomes(run_id)?.is_empty(),
+            "discarded context-pack telemetry run should not leave readable outcomes"
         );
         Ok(())
     }
