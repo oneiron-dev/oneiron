@@ -31,6 +31,7 @@ pub const ENTITY_TYPE_NOTIFICATION: u8 = 16;
 pub const ENTITY_TYPE_TASK_LIST: u8 = 80;
 pub const ENTITY_TYPE_TASK: u8 = 81;
 pub const ENTITY_TYPE_MACHINE: u8 = 82;
+pub const ENTITY_TYPE_CODE_ARTIFACT: u8 = 83;
 pub const ENTITY_TYPE_REDACTION_AUDIT: u8 = 120;
 /// MODEL substrate entity (ONE-1138, ratified): engine-authored maintenance
 /// kind — "written when a substrate first appears in a write path". Public
@@ -56,8 +57,9 @@ pub enum EntityClassification {
     Semantic,
     /// `"core"` — universal CORE StructuralKinds (TURN … NOTIFICATION).
     Core,
-    /// `"pack"` — pack-registered StructuralKinds (TASK_LIST / TASK / MACHINE
-    /// today; other pack kinds get bytes at pack registration).
+    /// `"pack"` — pack-registered StructuralKinds (TASK_LIST / TASK /
+    /// MACHINE / CODE_ARTIFACT today; other pack kinds get bytes at pack
+    /// registration).
     Pack,
     /// `"maintenance"` — system/maintenance records (REDACTION_AUDIT, MODEL).
     Maintenance,
@@ -78,7 +80,8 @@ pub enum TypeByteBand {
     /// Bytes `64–79` — "Companion pack (Eiri)".
     Companion,
     /// Bytes `80–99` — "Productivity pack (cross-product)" (TASK_LIST=80,
-    /// TASK=81, MACHINE=82; NOTE assigned at pack registration).
+    /// TASK=81, MACHINE=82, CODE_ARTIFACT=83; NOTE assigned at pack
+    /// registration).
     Productivity,
     /// Bytes `100–119` — "CRM pack".
     Crm,
@@ -302,6 +305,13 @@ pub const ENTITY_TYPE_REGISTRY: &[EntityTypeRegistryEntry] = &[
         kind: "MACHINE",
         type_byte: ENTITY_TYPE_MACHINE,
         short_id_prefix: Some("mc"),
+        classification: EntityClassification::Pack,
+        band: TypeByteBand::Productivity,
+    },
+    EntityTypeRegistryEntry {
+        kind: "CODE_ARTIFACT",
+        type_byte: ENTITY_TYPE_CODE_ARTIFACT,
+        short_id_prefix: Some("cd"),
         classification: EntityClassification::Pack,
         band: TypeByteBand::Productivity,
     },
