@@ -779,10 +779,18 @@ fn validate_public_raw_put(entity_type: u8, data: &[u8]) -> Result<()> {
     }
 
     let body = crate::claim::validate_claim_body_and_decode(data, false)?;
-    if body.source.is_some() {
+    if body.source.is_some() && !is_legacy_raw_claim_compatibility_body(&body) {
         return Err(Error::InvalidClaimBody(ERR_RAW_CLAIM_PUT_REQUIRES_ENVELOPE));
     }
     Ok(())
+}
+
+fn is_legacy_raw_claim_compatibility_body(body: &crate::claim::ClaimBody) -> bool {
+    // Code-revision integrity uses legacy raw CLAIM records as provenance anchors.
+    body.predicate == "code.revision"
+        && matches!(body.subject, crate::claim::ClaimSubject::Entity(_))
+        && body.approval == crate::claim::ClaimApprovalStatus::Auto
+        && body.lifecycle == crate::claim::ClaimLifecycleStatus::Active
 }
 
 /// Applies a list of batch operations to an LMDB write transaction.
@@ -2605,6 +2613,30 @@ mod tests {
             Error::InvalidClaimBody(ERR_RAW_CLAIM_PUT_REQUIRES_ENVELOPE)
         ));
         assert!(vault.get_claim(&txn_claim)?.is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn raw_public_put_allows_legacy_code_revision_claim_compatibility() -> Result<()> {
+        let (_dir, vault) = open_test_vault();
+        let subject = EntityId::now();
+        let mut body = ClaimBody::new(
+            "code.revision",
+            ClaimSubject::Entity(subject),
+            Value::from("finalized"),
+            0.9,
+            ClaimApprovalStatus::Auto,
+            ClaimLifecycleStatus::Active,
+        );
+        body.source = Some(ClaimSource::Generated);
+        let data = crate::claim::encode_claim_body(&body)?;
+
+        let claim = EntityId::now();
+        vault.put_entity(&claim, ENTITY_TYPE_CLAIM, test_time_range(1, 1), 2, &data)?;
+
+        let stored = vault.get_claim(&claim)?.expect("legacy claim stored");
+        assert_eq!(stored.predicate, "code.revision");
+        assert_eq!(stored.source, Some(ClaimSource::Generated));
         Ok(())
     }
 
