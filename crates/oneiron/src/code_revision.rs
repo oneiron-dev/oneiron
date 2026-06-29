@@ -12,8 +12,8 @@ use crate::limits::{
 use crate::ppr;
 use crate::store::Store;
 use crate::types::{
-    ENTITY_ID_LEN, ENTITY_TYPE_CLAIM, ENTITY_TYPE_CODE_ARTIFACT, ENTITY_TYPE_SESSION, EdgeKind,
-    EntityId, Vad, encode_edge_value, parse_entity_id,
+    EDGE_KEY_LEN, ENTITY_ID_LEN, ENTITY_TYPE_CLAIM, ENTITY_TYPE_CODE_ARTIFACT, ENTITY_TYPE_SESSION,
+    EdgeKind, EntityId, Vad, decode_edge_value_for_kind, encode_edge_value, parse_entity_id,
 };
 
 pub const CODE_REVISION_RECORD_KEYS: [&str; 7] = [
@@ -881,15 +881,29 @@ fn child_of_parents(store: &Store, txn: &RwTxn<'_>, child: &EntityId) -> Result<
     let prefix = child_of_prefix(child);
     let mut parents = Vec::new();
     for entry in store.edges_out.prefix_iter(txn, &prefix)? {
-        let (key, _) = entry?;
+        let (key, value) = entry?;
+        validate_child_of_edge_record(key, value)?;
         parents.push(parse_entity_id(
-            key.get(ENTITY_ID_LEN + 1..).unwrap_or_default(),
+            key.get(ENTITY_ID_LEN + 1..EDGE_KEY_LEN)
+                .ok_or(Error::CorruptedIndex("edge record"))?,
             "ChildOf edge key",
         )?);
     }
     parents.sort_unstable();
     parents.dedup();
     Ok(parents)
+}
+
+fn validate_child_of_edge_record(key: &[u8], value: &[u8]) -> Result<()> {
+    if key.len() != EDGE_KEY_LEN {
+        return Err(Error::CorruptedIndex("edge record"));
+    }
+    if key[ENTITY_ID_LEN] != EdgeKind::ChildOf as u8 {
+        return Err(Error::CorruptedIndex("edge record"));
+    }
+    decode_edge_value_for_kind(EdgeKind::ChildOf, value)
+        .map_err(|_| Error::CorruptedIndex("edge record"))?;
+    Ok(())
 }
 
 fn child_of_prefix(child: &EntityId) -> [u8; ENTITY_ID_LEN + 1] {
@@ -1268,6 +1282,36 @@ mod tests {
         assert!(parents.contains(&parent_session));
         let base = vault.targets(&fork_session, EdgeKind::DerivedFrom, None)?;
         assert!(base.contains(&base_revision));
+        Ok(())
+    }
+
+    #[test]
+    fn code_revision_branch_rejects_corrupt_child_of_edge_row() -> Result<()> {
+        let (_dir, vault) = crate::test_util::open_test_vault_with(test_config());
+        let parent_session = entity(0x11);
+        let fork_session = entity(0x12);
+        let base_revision = entity(0x21);
+        put_session(&vault, parent_session, 10)?;
+        put_session(&vault, fork_session, 11)?;
+        put_artifact(&vault, base_revision, 0xA1, 20)?;
+        vault.commit_code_revision(&CodeRevision::commit(base_revision, parent_session, 100))?;
+
+        let edge_key = Store::encode_edge_key(&fork_session, EdgeKind::ChildOf, &parent_session);
+        let mut wtxn = vault.store.env.write_txn()?;
+        vault.store.edges_out.put(&mut wtxn, &edge_key, b"bad")?;
+        wtxn.commit()?;
+
+        let err = vault
+            .branch_code_revision(&CodeRevisionFork::new(
+                fork_session,
+                parent_session,
+                base_revision,
+                150,
+            ))
+            .expect_err("corrupt ChildOf rows must fail closed before logical validation");
+
+        assert_eq!(err.kind(), ErrorKind::CorruptedIndex);
+        assert!(vault.get_code_revision_fork(&fork_session)?.is_none());
         Ok(())
     }
 
