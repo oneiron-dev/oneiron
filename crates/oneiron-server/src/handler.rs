@@ -9,6 +9,7 @@
 use std::collections::HashSet;
 use std::io::Read;
 use std::sync::Arc;
+use std::time::Instant as StdInstant;
 
 use axum::Router;
 use axum::extract::State;
@@ -21,8 +22,8 @@ use futures_util::{SinkExt, StreamExt};
 use loro::{ExportMode, VersionVector};
 use oneiron::sync::export_updates_since;
 use oneiron::sync::{
-    SelectorVvRequest, WindowKey, authorize_sync_selector, decode_selector_vv_request,
-    filtered_window_doc,
+    AllowBlock, FederationConnectionQuota, FederationQuotaConfig, SelectorVvRequest, WindowKey,
+    authorize_sync_selector, decode_selector_vv_request, filtered_window_doc,
 };
 use tokio::time::{Duration, Instant};
 
@@ -42,15 +43,21 @@ const SERVER_SELECTOR_VAULT_ID: u64 = 7;
 /// Phase-1 auth has only a shared secret, so user-scoped limits are not sound.
 struct ConnState {
     windows_touched: HashSet<WindowKey>,
+    federation_quota: FederationConnectionQuota,
     rate_limiter: MessageRateLimiter,
     window_sync_mode: WindowSyncMode,
     protocol_version: u8,
 }
 
 impl ConnState {
-    fn new(max_messages_per_sec: u32, protocol_version: u8) -> Self {
+    fn new(
+        max_messages_per_sec: u32,
+        protocol_version: u8,
+        federation_quota: FederationQuotaConfig,
+    ) -> Self {
         Self {
             windows_touched: HashSet::new(),
+            federation_quota: FederationConnectionQuota::new(federation_quota),
             rate_limiter: MessageRateLimiter::new(max_messages_per_sec),
             window_sync_mode: WindowSyncMode::Unbound,
             protocol_version,
@@ -78,6 +85,14 @@ impl ConnState {
 
         self.windows_touched.insert(key.clone());
         Ok(key)
+    }
+
+    fn allow_federation_window(&mut self, key: &WindowKey) -> AllowBlock {
+        self.federation_quota.allow_window(key, StdInstant::now())
+    }
+
+    fn federation_quota_snapshot(&self) -> oneiron::sync::FederationQuotaSnapshot {
+        self.federation_quota.snapshot(StdInstant::now())
     }
 
     fn bind_window_sync_mode(&mut self, mode: WindowSyncMode) -> Result<(), ProtocolError> {
@@ -238,7 +253,15 @@ async fn handle_connection(socket: WebSocket, server: Arc<SyncServer>, conn_id: 
 
     // Channel for direct responses (e.g. VV_REQUEST replies sent only to requester)
     let (direct_tx, mut direct_rx) = tokio::sync::mpsc::unbounded_channel::<Vec<u8>>();
-    let mut conn_state = ConnState::new(server.config.max_messages_per_sec, protocol_version);
+    let federation_quota = FederationQuotaConfig::new(
+        server.config.max_federation_windows_per_connection,
+        server.config.federation_flood_pause_secs,
+    );
+    let mut conn_state = ConnState::new(
+        server.config.max_messages_per_sec,
+        protocol_version,
+        federation_quota,
+    );
 
     // Spawn outbound task: forwards broadcast + direct messages to WebSocket sink
     let outbound_handle = {
@@ -612,6 +635,31 @@ async fn handle_window_sync(
     match sub_tag {
         window_sub_tags::SELECTOR_VV_REQUEST => {
             conn_state.bind_window_sync_mode(WindowSyncMode::Selector)?;
+            match conn_state.allow_federation_window(&key) {
+                AllowBlock::Allow => {}
+                AllowBlock::Pause(reason) => {
+                    let state = conn_state.federation_quota_snapshot();
+                    tracing::warn!(
+                        conn_id,
+                        window_key,
+                        ?reason,
+                        ?state,
+                        "federation selector connection paused"
+                    );
+                    return Ok(());
+                }
+                AllowBlock::Block(reason) => {
+                    tracing::warn!(
+                        conn_id,
+                        window_key,
+                        ?reason,
+                        "federation selector connection blocked"
+                    );
+                    return Err(ProtocolError::InvalidPayload(
+                        "federation selector quota blocked",
+                    ));
+                }
+            }
         }
         window_sub_tags::VV_REQUEST | window_sub_tags::VV_RESPONSE | window_sub_tags::UPDATE => {
             conn_state.bind_window_sync_mode(WindowSyncMode::FullWindow)?;
@@ -946,16 +994,37 @@ mod tests {
     }
 
     fn test_legacy_conn_state() -> ConnState {
+        let config = SyncServerConfig::default();
         ConnState::new(
-            SyncServerConfig::default().max_messages_per_sec,
+            config.max_messages_per_sec,
             protocol::LEGACY_FULL_WINDOW_PROTOCOL_VERSION,
+            FederationQuotaConfig::new(
+                config.max_federation_windows_per_connection,
+                config.federation_flood_pause_secs,
+            ),
         )
     }
 
     fn test_selector_conn_state() -> ConnState {
+        let config = SyncServerConfig::default();
         ConnState::new(
-            SyncServerConfig::default().max_messages_per_sec,
+            config.max_messages_per_sec,
             protocol::PROTOCOL_VERSION,
+            FederationQuotaConfig::new(
+                config.max_federation_windows_per_connection,
+                config.federation_flood_pause_secs,
+            ),
+        )
+    }
+
+    fn test_selector_conn_state_with_config(config: &SyncServerConfig) -> ConnState {
+        ConnState::new(
+            config.max_messages_per_sec,
+            protocol::PROTOCOL_VERSION,
+            FederationQuotaConfig::new(
+                config.max_federation_windows_per_connection,
+                config.federation_flood_pause_secs,
+            ),
         )
     }
 
@@ -1278,6 +1347,126 @@ mod tests {
         assert!(entities.get(person.to_hex().as_str()).is_some());
         assert!(entities.get(claim_denied.to_hex().as_str()).is_none());
         assert!(entities.get(facet_denied.to_hex().as_str()).is_none());
+    }
+
+    #[tokio::test]
+    async fn federated_selector_window_quota_exceeded_pauses_connection() {
+        let config = SyncServerConfig {
+            max_federation_windows_per_connection: 1,
+            federation_flood_pause_secs: 30,
+            ..Default::default()
+        };
+        let dir = tempfile::tempdir().unwrap();
+        let vault =
+            Arc::new(oneiron::Vault::open(dir.path(), oneiron::VaultConfig::device()).unwrap());
+        let server = SyncServer::new(vault, config.clone()).unwrap();
+
+        let member = entity_id(0x45);
+        let grant_id = oneiron::EntityId::now();
+        let grant = oneiron::FederationGrant::new(
+            test_selector_scope(),
+            member,
+            oneiron::FederationGrantRole::Viewer,
+            oneiron::FederationGrantPreset::ReadOnly,
+        );
+        oneiron::sync::put_selector_test_federation_grant(
+            server.vault.as_ref(),
+            &grant_id,
+            &grant,
+            1,
+        )
+        .unwrap();
+        let selector = oneiron::sync::SyncSelector::new(
+            grant_id,
+            member,
+            oneiron::sync::SyncSelectorWorld::All,
+            vec![],
+            vec![],
+        );
+        let payload =
+            oneiron::sync::encode_selector_vv_request(&selector, &VersionVector::new().encode())
+                .unwrap();
+
+        let (direct_tx, mut direct_rx) = mpsc::unbounded_channel::<Vec<u8>>();
+        let mut conn_state = test_selector_conn_state_with_config(&config);
+        handle_window_sync(
+            &server,
+            1,
+            "2026-03",
+            window_sub_tags::SELECTOR_VV_REQUEST,
+            &payload,
+            &direct_tx,
+            &mut conn_state,
+        )
+        .await
+        .unwrap();
+        let _ = direct_rx
+            .try_recv()
+            .expect("first selector request replies");
+
+        handle_window_sync(
+            &server,
+            1,
+            "2026-04",
+            window_sub_tags::SELECTOR_VV_REQUEST,
+            &payload,
+            &direct_tx,
+            &mut conn_state,
+        )
+        .await
+        .unwrap();
+
+        assert!(
+            direct_rx.try_recv().is_err(),
+            "paused selector connection must not load or reply for the churned window"
+        );
+        let snapshot = conn_state.federation_quota_snapshot();
+        assert_eq!(
+            snapshot.decision,
+            AllowBlock::Pause(oneiron::sync::FederationPauseReason::FloodPauseActive)
+        );
+        assert_eq!(snapshot.windows_touched, 1);
+        assert!(snapshot.pause_remaining.is_some());
+    }
+
+    #[tokio::test]
+    async fn own_device_window_cap_still_rejects_second_distinct_window() {
+        let config = SyncServerConfig {
+            max_windows_per_connection: 1,
+            ..Default::default()
+        };
+        let dir = tempfile::tempdir().unwrap();
+        let vault =
+            Arc::new(oneiron::Vault::open(dir.path(), oneiron::VaultConfig::device()).unwrap());
+        let server = SyncServer::new(vault, config).unwrap();
+        let (direct_tx, _direct_rx) = mpsc::unbounded_channel::<Vec<u8>>();
+        let mut conn_state = test_legacy_conn_state();
+        let vv = VersionVector::new().encode();
+
+        handle_window_sync(
+            &server,
+            1,
+            "2026-03",
+            window_sub_tags::VV_RESPONSE,
+            &vv,
+            &direct_tx,
+            &mut conn_state,
+        )
+        .await
+        .unwrap();
+
+        let result = handle_window_sync(
+            &server,
+            1,
+            "2026-04",
+            window_sub_tags::VV_RESPONSE,
+            &vv,
+            &direct_tx,
+            &mut conn_state,
+        )
+        .await;
+
+        assert!(matches!(result, Err(ProtocolError::InvalidPayload(_))));
     }
 
     #[tokio::test]
