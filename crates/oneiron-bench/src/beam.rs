@@ -75,7 +75,6 @@ struct FixtureRecord {
     entity_type: u8,
     occurred: FixtureTimeRange,
     learned_at: u64,
-    #[serde(default = "empty_fields")]
     fields: serde_json::Value,
     #[serde(default)]
     text: Vec<TextField>,
@@ -907,10 +906,6 @@ fn invalid_manifest(manifest: &RunManifest, reason: impl Into<String>) -> BeamEr
     }
 }
 
-fn empty_fields() -> serde_json::Value {
-    serde_json::json!({})
-}
-
 fn dataset_source_description(source: &DatasetSource) -> String {
     match source {
         DatasetSource::Fixture { fixture_id } => format!("fixture `{fixture_id}`"),
@@ -991,6 +986,20 @@ mod tests {
     }
 
     #[test]
+    fn fixture_validation_rejects_missing_fields() {
+        let mut fixture_json: serde_json::Value =
+            serde_json::from_str(BUILTIN_FIXTURE_JSON).expect("fixture JSON");
+        fixture_json["records"][0]
+            .as_object_mut()
+            .expect("record object")
+            .remove("fields");
+        let err =
+            parse_fixture_json(&fixture_json.to_string()).expect_err("record fields are required");
+
+        assert!(err.to_string().contains("missing field `fields`"));
+    }
+
+    #[test]
     fn fixture_validation_rejects_text_field_missing_from_fields() {
         let mut fixture_json: serde_json::Value =
             serde_json::from_str(BUILTIN_FIXTURE_JSON).expect("fixture JSON");
@@ -1032,6 +1041,11 @@ mod tests {
         assert!(pack.raw.results.len() >= fixture.cases[0].expected_min_results);
         assert!(!pack.serialized.is_empty());
         assert!(serialized_text.contains("results:"));
+        assert!(serialized_text.contains(
+            "txt: BEAM deterministic context pack 128K smoke target for evaluation scaffolding."
+        ));
+        assert!(serialized_text.contains("lvl: benchmark-smoke"));
+        assert!(serialized_text.contains("at: beam-smoke-t1"));
         assert!(
             pack.serialized_ids
                 .results
