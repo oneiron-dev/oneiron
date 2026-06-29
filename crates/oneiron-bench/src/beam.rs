@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 
 pub(crate) const BEAM_128K_TOKEN_BUDGET: usize = 128 * 1024;
 
-const SCHEMA_VERSION: u32 = 1;
+const SCHEMA_VERSION: u32 = 2;
 const BEAM_CONTEXT_PACK_FORMAT: PackFormat = PackFormat::Yaml;
 const BEAM_SCORER_VERSION: &str = "beam-fixed-scorer-v1";
 const BEAM_COMPARATOR_VERSION: &str = "beam-comparator-card-v1";
@@ -121,6 +121,12 @@ pub(crate) struct RunManifest {
     arms: Vec<ArmKind>,
     competitors: Vec<CompetitorConfig>,
     report: ReportConfig,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SchemaHeader {
+    schema_version: u32,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -332,7 +338,7 @@ struct CompetitorReport {
 #[serde(rename_all = "camelCase")]
 struct ScoreReport {
     scorer_version: String,
-    overall_score: f32,
+    overall_score: Option<f32>,
     abilities: Vec<AbilityScoreReport>,
 }
 
@@ -340,8 +346,8 @@ struct ScoreReport {
 #[serde(rename_all = "camelCase")]
 struct AbilityScoreReport {
     ability: AbilityKind,
-    score: f32,
-    passed: bool,
+    score: Option<f32>,
+    passed: Option<bool>,
     detail: String,
 }
 
@@ -557,6 +563,13 @@ pub(crate) fn parse_fixture_json(json: &str) -> BeamResult<BeamFixture> {
 }
 
 pub(crate) fn parse_manifest_json(json: &str) -> BeamResult<RunManifest> {
+    let header: SchemaHeader = serde_json::from_str(json)?;
+    if header.schema_version != SCHEMA_VERSION {
+        return Err(BeamError::UnsupportedSchemaVersion {
+            expected: SCHEMA_VERSION,
+            actual: header.schema_version,
+        });
+    }
     let manifest: RunManifest = serde_json::from_str(json)?;
     validate_manifest(&manifest)?;
     Ok(manifest)
@@ -566,6 +579,8 @@ pub(crate) fn run_fixture_manifest(
     manifest: &RunManifest,
     fixture: &BeamFixture,
 ) -> BeamResult<BeamReport> {
+    validate_manifest(manifest)?;
+
     let tempdir = tempfile::tempdir()?;
     let vault = Vault::open(tempdir.path(), beam_vault_config())?;
     let dataset = load_dataset(&vault, manifest, fixture)?;
@@ -1060,8 +1075,8 @@ fn completed_ability_scores(
     vec![
         AbilityScoreReport {
             ability: AbilityKind::RetrievalCoverage,
-            score: coverage,
-            passed: coverage >= 1.0,
+            score: Some(coverage),
+            passed: Some(coverage >= 1.0),
             detail: format!(
                 "{} serialized results for expected minimum {}",
                 context_pack.result_count, case.expected_min_results
@@ -1069,14 +1084,14 @@ fn completed_ability_scores(
         },
         AbilityScoreReport {
             ability: AbilityKind::BudgetDiscipline,
-            score: budget_score,
-            passed: budget_passed,
+            score: Some(budget_score),
+            passed: Some(budget_passed),
             detail: budget_detail,
         },
         AbilityScoreReport {
             ability: AbilityKind::Readiness,
-            score: 1.0,
-            passed: true,
+            score: Some(1.0),
+            passed: Some(true),
             detail: "arm completed".to_owned(),
         },
     ]
@@ -1114,8 +1129,8 @@ fn not_ready_ability_scores(
     .into_iter()
     .map(|ability| AbilityScoreReport {
         ability,
-        score: 0.0,
-        passed: false,
+        score: None,
+        passed: None,
         detail: format!(
             "{} could not be scored for {}: {}",
             competitor.competitor_id,
@@ -1126,11 +1141,18 @@ fn not_ready_ability_scores(
     .collect()
 }
 
-fn mean_score(abilities: &[AbilityScoreReport]) -> f32 {
-    if abilities.is_empty() {
-        return 0.0;
+fn mean_score(abilities: &[AbilityScoreReport]) -> Option<f32> {
+    let (total, count) = abilities
+        .iter()
+        .filter_map(|ability| ability.score)
+        .fold((0.0_f32, 0_usize), |(total, count), score| {
+            (total + score, count + 1)
+        });
+    if count == 0 {
+        None
+    } else {
+        Some(total / count as f32)
     }
-    abilities.iter().map(|ability| ability.score).sum::<f32>() / abilities.len() as f32
 }
 
 fn context_entity_reports_for_ids(
@@ -1342,6 +1364,8 @@ mod tests {
         let fixture = parse_fixture_json(BUILTIN_FIXTURE_JSON).expect("fixture parses");
         let manifest = parse_manifest_json(BUILTIN_MANIFEST_JSON).expect("manifest parses");
 
+        assert_eq!(fixture.schema_version, SCHEMA_VERSION);
+        assert_eq!(manifest.schema_version, SCHEMA_VERSION);
         assert_eq!(fixture.fixture_id, "beam-128k-smoke");
         assert_eq!(fixture.cases[0].token_budget, BEAM_128K_TOKEN_BUDGET);
         ensure_manifest_selects_128k_case(&manifest, &fixture)
@@ -1406,6 +1430,28 @@ mod tests {
     }
 
     #[test]
+    fn manifest_schema_version_rejects_legacy_v1_before_required_competitors() {
+        let mut manifest_json: serde_json::Value =
+            serde_json::from_str(BUILTIN_MANIFEST_JSON).expect("manifest JSON");
+        manifest_json["schemaVersion"] = serde_json::json!(1);
+        manifest_json
+            .as_object_mut()
+            .expect("manifest object")
+            .remove("competitors");
+        let err = parse_manifest_json(&manifest_json.to_string())
+            .expect_err("legacy v1 manifests must be rejected by schema version first");
+
+        assert!(matches!(
+            &err,
+            BeamError::UnsupportedSchemaVersion {
+                expected: SCHEMA_VERSION,
+                actual: 1
+            }
+        ));
+        assert!(!err.to_string().contains("missing field `competitors`"));
+    }
+
+    #[test]
     fn manifest_validation_rejects_uncarded_competitor_rows() {
         let mut manifest_json: serde_json::Value =
             serde_json::from_str(BUILTIN_MANIFEST_JSON).expect("manifest JSON");
@@ -1434,6 +1480,27 @@ mod tests {
             err.to_string()
                 .contains("competitor row arms must match manifest arms in order")
         );
+    }
+
+    #[test]
+    fn run_fixture_manifest_validates_manifest_before_loading_dataset() {
+        let fixture = parse_fixture_json(BUILTIN_FIXTURE_JSON).expect("fixture parses");
+        let mut manifest = parse_manifest_json(BUILTIN_MANIFEST_JSON).expect("manifest parses");
+        manifest.schema_version = 1;
+        manifest.dataset = DatasetSource::Miracl {
+            dataset: "should-not-load".to_owned(),
+        };
+
+        let err = run_fixture_manifest(&manifest, &fixture)
+            .expect_err("manifest validation must run before dataset loading");
+
+        assert!(matches!(
+            err,
+            BeamError::UnsupportedSchemaVersion {
+                expected: SCHEMA_VERSION,
+                actual: 1
+            }
+        ));
     }
 
     #[test]
@@ -1552,11 +1619,12 @@ neighbors:
 
         let scores = completed_ability_scores(&case, &context_pack);
         let budget = budget_score(&scores);
-        assert!(
+        assert_eq!(
             budget.passed,
+            Some(true),
             "bytes can exceed token budget units when no serializer accounting loss occurred"
         );
-        assert_eq!(budget.score, 1.0);
+        assert_eq!(budget.score, Some(1.0));
 
         context_pack.serialized_bytes = 4;
         context_pack.stats.items_dropped = 1;
@@ -1564,11 +1632,12 @@ neighbors:
 
         let scores = completed_ability_scores(&case, &context_pack);
         let budget = budget_score(&scores);
-        assert!(
-            !budget.passed,
+        assert_eq!(
+            budget.passed,
+            Some(false),
             "small byte output must not pass when serialization accounting dropped content"
         );
-        assert_eq!(budget.score, 0.0);
+        assert_eq!(budget.score, Some(0.0));
         assert!(budget.detail.contains("token_budget"));
     }
 
@@ -1637,6 +1706,44 @@ neighbors:
                 .iter()
                 .any(|ability| ability["ability"] == "retrieval_coverage")
         );
+    }
+
+    #[test]
+    fn not_ready_scores_are_unmeasured_and_do_not_publish_zero_overall() {
+        let report = run_builtin_smoke().expect("BEAM smoke report");
+        let report_json = serde_json::to_value(&report).expect("report serializes");
+        let competitors = report_json["cases"][0]["competitors"]
+            .as_array()
+            .expect("competitors array");
+        let deterministic = competitors
+            .iter()
+            .find(|competitor| competitor["competitorId"] == "deterministic-context-pack")
+            .expect("deterministic competitor");
+
+        assert!(deterministic["scoring"]["overallScore"].as_f64().is_some());
+
+        for competitor_id in ["agentic-adapter", "chat-adapter"] {
+            let competitor = competitors
+                .iter()
+                .find(|competitor| competitor["competitorId"] == competitor_id)
+                .expect("not-ready competitor");
+            assert!(competitor["scoring"]["overallScore"].is_null());
+
+            let abilities = competitor["scoring"]["abilities"]
+                .as_array()
+                .expect("abilities array");
+            assert_eq!(abilities.len(), 3);
+            for ability in abilities {
+                assert!(ability["score"].is_null());
+                assert!(ability["passed"].is_null());
+                assert!(
+                    ability["detail"]
+                        .as_str()
+                        .expect("detail string")
+                        .contains("could not be scored")
+                );
+            }
+        }
     }
 
     #[test]

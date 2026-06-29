@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "fixtureId": "beam-128k-smoke",
   "description": "Minimal BEAM 128K fixture for EVAL-001 deterministic context-pack smoke coverage.",
   "records": [
