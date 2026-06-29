@@ -173,6 +173,151 @@ struct ActorCeiling {
     ceiling: PolicyApprovalCeiling,
 }
 
+#[cfg_attr(not(test), allow(dead_code))]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct GateActor {
+    pub(crate) actor_class: String,
+    pub(crate) actor_ref: Option<String>,
+}
+
+#[cfg_attr(not(test), allow(dead_code))]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum GateContentKind {
+    Claim,
+    EdgeProvenanceClaim,
+    PolicyManifest,
+    ExternalEffect,
+}
+
+#[cfg_attr(not(test), allow(dead_code))]
+impl GateContentKind {
+    #[must_use]
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            Self::Claim => "claim",
+            Self::EdgeProvenanceClaim => "edge_provenance_claim",
+            Self::PolicyManifest => "policy_manifest",
+            Self::ExternalEffect => "external_effect",
+        }
+    }
+}
+
+#[cfg_attr(not(test), allow(dead_code))]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub(crate) struct GateProvenanceHandles {
+    pub(crate) actor_entity_ref: Option<EntityId>,
+    pub(crate) substrate_ref: Option<EntityId>,
+    pub(crate) source_revision_ref: Option<[u8; ENTITY_ID_LEN]>,
+    pub(crate) body_snapshot_ref: Option<[u8; ENTITY_ID_LEN]>,
+}
+
+#[cfg_attr(not(test), allow(dead_code))]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct GateEvaluatorInput {
+    pub(crate) actor: GateActor,
+    pub(crate) source: Option<ClaimSource>,
+    pub(crate) content_kind: GateContentKind,
+    pub(crate) sensitivity_band: Option<u8>,
+    pub(crate) criticality: PolicyCriticality,
+    pub(crate) policy_manifest_version: String,
+    pub(crate) provenance: GateProvenanceHandles,
+}
+
+#[cfg_attr(not(test), allow(dead_code))]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum GateOutcome {
+    Allow,
+    Pending,
+    Deny,
+}
+
+#[cfg_attr(not(test), allow(dead_code))]
+impl GateOutcome {
+    #[must_use]
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            Self::Allow => "allow",
+            Self::Pending => "pending",
+            Self::Deny => "deny",
+        }
+    }
+}
+
+#[cfg_attr(not(test), allow(dead_code))]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum GateReasonCode {
+    Allow,
+    DenyMissingActorClass,
+    DenyMissingActorProvenance,
+    DenyMissingPolicyManifestVersion,
+    DenyPolicyFailClosed,
+    PendingActorCeiling,
+    PendingSourceTrust,
+    PendingCriticalityFloor,
+    PendingPolicyManifestAuthority,
+    PendingExternalEffectAuthority,
+}
+
+#[cfg_attr(not(test), allow(dead_code))]
+impl GateReasonCode {
+    #[must_use]
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            Self::Allow => "gate.allow",
+            Self::DenyMissingActorClass => "gate.deny.missing_actor_class",
+            Self::DenyMissingActorProvenance => "gate.deny.missing_actor_provenance",
+            Self::DenyMissingPolicyManifestVersion => "gate.deny.missing_policy_manifest_version",
+            Self::DenyPolicyFailClosed => "gate.deny.policy_fail_closed",
+            Self::PendingActorCeiling => "gate.pending.actor_ceiling",
+            Self::PendingSourceTrust => "gate.pending.source_trust",
+            Self::PendingCriticalityFloor => "gate.pending.criticality_floor",
+            Self::PendingPolicyManifestAuthority => "gate.pending.policy_manifest_authority",
+            Self::PendingExternalEffectAuthority => "gate.pending.external_effect_authority",
+        }
+    }
+}
+
+#[cfg_attr(not(test), allow(dead_code))]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct GateDecision {
+    outcome: GateOutcome,
+    reason_codes: Vec<GateReasonCode>,
+}
+
+#[cfg_attr(not(test), allow(dead_code))]
+impl GateDecision {
+    fn allow() -> Self {
+        Self {
+            outcome: GateOutcome::Allow,
+            reason_codes: vec![GateReasonCode::Allow],
+        }
+    }
+
+    fn deny(reason_code: GateReasonCode) -> Self {
+        Self {
+            outcome: GateOutcome::Deny,
+            reason_codes: vec![reason_code],
+        }
+    }
+
+    fn pending(reason_codes: Vec<GateReasonCode>) -> Self {
+        Self {
+            outcome: GateOutcome::Pending,
+            reason_codes,
+        }
+    }
+
+    #[must_use]
+    pub(crate) fn outcome(&self) -> GateOutcome {
+        self.outcome
+    }
+
+    #[must_use]
+    pub(crate) fn reason_codes(&self) -> &[GateReasonCode] {
+        &self.reason_codes
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct PolicyScopedGrant {
     pub(crate) actor_class: Option<String>,
@@ -391,6 +536,84 @@ impl PolicyManifestResolution {
     #[must_use]
     pub(crate) fn signatures(&self) -> &[PolicySignature] {
         &self.signatures
+    }
+
+    #[must_use]
+    pub(crate) fn evaluate_gate(&self, input: &GateEvaluatorInput) -> GateDecision {
+        let actor_class = input.actor.actor_class.trim();
+        if actor_class.is_empty() {
+            return GateDecision::deny(GateReasonCode::DenyMissingActorClass);
+        }
+        if input.provenance.actor_entity_ref.is_none() {
+            return GateDecision::deny(GateReasonCode::DenyMissingActorProvenance);
+        }
+        if input.policy_manifest_version.trim().is_empty() {
+            return GateDecision::deny(GateReasonCode::DenyMissingPolicyManifestVersion);
+        }
+        if self.is_fail_closed() {
+            return GateDecision::deny(GateReasonCode::DenyPolicyFailClosed);
+        }
+
+        let mut pending = Vec::new();
+
+        if self.actor_ceiling(actor_class, input.actor.actor_ref.as_deref())
+            == PolicyApprovalCeiling::Proposed
+        {
+            pending.push(GateReasonCode::PendingActorCeiling);
+        }
+
+        if !self.source_trust_allows_auto(input.source, input.sensitivity_band) {
+            pending.push(GateReasonCode::PendingSourceTrust);
+        }
+
+        if input.criticality == PolicyCriticality::Critical {
+            pending.push(GateReasonCode::PendingCriticalityFloor);
+        }
+
+        match input.content_kind {
+            GateContentKind::Claim | GateContentKind::EdgeProvenanceClaim => {}
+            GateContentKind::PolicyManifest => {
+                pending.push(GateReasonCode::PendingPolicyManifestAuthority);
+            }
+            GateContentKind::ExternalEffect => {
+                pending.push(GateReasonCode::PendingExternalEffectAuthority);
+            }
+        }
+
+        if pending.is_empty() {
+            GateDecision::allow()
+        } else {
+            GateDecision::pending(pending)
+        }
+    }
+
+    fn source_trust_allows_auto(
+        &self,
+        source: Option<ClaimSource>,
+        sensitivity: Option<u8>,
+    ) -> bool {
+        let Some(source) = source else {
+            return true;
+        };
+
+        if self.source_trust.malformed_manifest_seen {
+            return false;
+        }
+
+        let Some(sensitivity) = sensitivity else {
+            return false;
+        };
+
+        let Some(row) = self.source_trust.row(source) else {
+            return !source.requires_explicit_auto_permit();
+        };
+
+        let Some(max_auto_sensitivity) = row.max_auto_sensitivity else {
+            return false;
+        };
+
+        sensitivity <= max_auto_sensitivity
+            && (!source.requires_explicit_auto_permit() || (row.receipted && row.warned))
     }
 
     fn axes_for_predicate(&self, predicate: &str) -> PolicyAxes {
@@ -1104,6 +1327,39 @@ mod tests {
         encode_claim_body(&source_trust_claim(source)).expect("claim encode")
     }
 
+    fn gate_evaluator_input(
+        actor_class: &str,
+        actor_ref: Option<&str>,
+        source: ClaimSource,
+        criticality: PolicyCriticality,
+    ) -> GateEvaluatorInput {
+        GateEvaluatorInput {
+            actor: GateActor {
+                actor_class: actor_class.to_owned(),
+                actor_ref: actor_ref.map(str::to_owned),
+            },
+            source: Some(source),
+            content_kind: GateContentKind::Claim,
+            sensitivity_band: Some(0),
+            criticality,
+            policy_manifest_version: POLICY_SCHEMA_VERSION.to_owned(),
+            provenance: GateProvenanceHandles {
+                actor_entity_ref: Some(test_id(0xA0)),
+                substrate_ref: Some(test_id(0xA1)),
+                source_revision_ref: Some([0xA2; ENTITY_ID_LEN]),
+                body_snapshot_ref: Some([0xA3; ENTITY_ID_LEN]),
+            },
+        }
+    }
+
+    fn gate_reason_strs(decision: &GateDecision) -> Vec<&'static str> {
+        decision
+            .reason_codes()
+            .iter()
+            .map(|code| code.as_str())
+            .collect()
+    }
+
     fn assert_auto_source_rejected(
         vault: &crate::Vault,
         seed: u8,
@@ -1122,6 +1378,292 @@ mod tests {
             source.as_str()
         );
         assert!(vault.get_raw(&id)?.is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn gate_evaluator_actor_source_criticality_matrix() -> Result<()> {
+        let (_tmp, vault) = temp_vault();
+        let data = encode_policy_manifest(vec![]);
+        put_policy_manifest_bytes(&vault, 0x71, &data)?;
+        let policy = resolve(&vault)?;
+
+        let cases = [
+            (
+                "auto actor trusted source normal criticality",
+                None,
+                ClaimSource::UserStated,
+                PolicyCriticality::Normal,
+                GateOutcome::Allow,
+                vec![GateReasonCode::Allow],
+            ),
+            (
+                "auto actor trusted source critical floor",
+                None,
+                ClaimSource::UserStated,
+                PolicyCriticality::Critical,
+                GateOutcome::Pending,
+                vec![GateReasonCode::PendingCriticalityFloor],
+            ),
+            (
+                "auto actor low source trust normal criticality",
+                None,
+                ClaimSource::ToolOutput,
+                PolicyCriticality::Normal,
+                GateOutcome::Pending,
+                vec![GateReasonCode::PendingSourceTrust],
+            ),
+            (
+                "auto actor low source trust critical floor",
+                None,
+                ClaimSource::ToolOutput,
+                PolicyCriticality::Critical,
+                GateOutcome::Pending,
+                vec![
+                    GateReasonCode::PendingSourceTrust,
+                    GateReasonCode::PendingCriticalityFloor,
+                ],
+            ),
+            (
+                "proposed actor trusted source normal criticality",
+                Some("probation"),
+                ClaimSource::UserStated,
+                PolicyCriticality::Normal,
+                GateOutcome::Pending,
+                vec![GateReasonCode::PendingActorCeiling],
+            ),
+            (
+                "proposed actor trusted source critical floor",
+                Some("probation"),
+                ClaimSource::UserStated,
+                PolicyCriticality::Critical,
+                GateOutcome::Pending,
+                vec![
+                    GateReasonCode::PendingActorCeiling,
+                    GateReasonCode::PendingCriticalityFloor,
+                ],
+            ),
+            (
+                "proposed actor low source trust normal criticality",
+                Some("probation"),
+                ClaimSource::ToolOutput,
+                PolicyCriticality::Normal,
+                GateOutcome::Pending,
+                vec![
+                    GateReasonCode::PendingActorCeiling,
+                    GateReasonCode::PendingSourceTrust,
+                ],
+            ),
+            (
+                "proposed actor low source trust critical floor",
+                Some("probation"),
+                ClaimSource::ToolOutput,
+                PolicyCriticality::Critical,
+                GateOutcome::Pending,
+                vec![
+                    GateReasonCode::PendingActorCeiling,
+                    GateReasonCode::PendingSourceTrust,
+                    GateReasonCode::PendingCriticalityFloor,
+                ],
+            ),
+        ];
+
+        for (name, actor_ref, source, criticality, outcome, reasons) in cases {
+            let input = gate_evaluator_input("first_party", actor_ref, source, criticality);
+            let decision = policy.evaluate_gate(&input);
+            assert_eq!(decision.outcome(), outcome, "{name}");
+            assert_eq!(decision.reason_codes(), reasons.as_slice(), "{name}");
+            assert!(
+                decision
+                    .reason_codes()
+                    .iter()
+                    .all(|code| code.as_str().starts_with("gate.")),
+                "{name}: reason codes must be stable gate.* strings"
+            );
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn gate_evaluator_denial_reason_codes_are_stable() -> Result<()> {
+        let (_tmp, vault) = temp_vault();
+        let data = encode_policy_manifest(vec![]);
+        put_policy_manifest_bytes(&vault, 0x72, &data)?;
+        let policy = resolve(&vault)?;
+
+        let mut missing_actor_class = gate_evaluator_input(
+            "first_party",
+            None,
+            ClaimSource::UserStated,
+            PolicyCriticality::Normal,
+        );
+        missing_actor_class.actor.actor_class = " \t ".to_owned();
+        let decision = policy.evaluate_gate(&missing_actor_class);
+        assert_eq!(decision.outcome(), GateOutcome::Deny);
+        assert_eq!(
+            gate_reason_strs(&decision),
+            vec!["gate.deny.missing_actor_class"]
+        );
+
+        let mut missing_actor_provenance = gate_evaluator_input(
+            "first_party",
+            None,
+            ClaimSource::UserStated,
+            PolicyCriticality::Normal,
+        );
+        missing_actor_provenance.provenance.actor_entity_ref = None;
+        let decision = policy.evaluate_gate(&missing_actor_provenance);
+        assert_eq!(decision.outcome(), GateOutcome::Deny);
+        assert_eq!(
+            gate_reason_strs(&decision),
+            vec!["gate.deny.missing_actor_provenance"]
+        );
+
+        let mut missing_policy_version = gate_evaluator_input(
+            "first_party",
+            None,
+            ClaimSource::UserStated,
+            PolicyCriticality::Normal,
+        );
+        missing_policy_version.policy_manifest_version.clear();
+        let decision = policy.evaluate_gate(&missing_policy_version);
+        assert_eq!(decision.outcome(), GateOutcome::Deny);
+        assert_eq!(
+            gate_reason_strs(&decision),
+            vec!["gate.deny.missing_policy_manifest_version"]
+        );
+
+        let fail_closed_policy = PolicyManifestResolution::default();
+        let input = gate_evaluator_input(
+            "first_party",
+            None,
+            ClaimSource::UserStated,
+            PolicyCriticality::Normal,
+        );
+        let decision = fail_closed_policy.evaluate_gate(&input);
+        assert_eq!(decision.outcome(), GateOutcome::Deny);
+        assert_eq!(
+            gate_reason_strs(&decision),
+            vec!["gate.deny.policy_fail_closed"]
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn gate_evaluator_missing_source_preserves_write_gate_semantics() -> Result<()> {
+        let (_tmp, vault) = temp_vault();
+        let data = encode_policy_manifest(vec![]);
+        put_policy_manifest_bytes(&vault, 0x74, &data)?;
+        let policy = resolve(&vault)?;
+
+        let mut input = gate_evaluator_input(
+            "first_party",
+            None,
+            ClaimSource::ToolOutput,
+            PolicyCriticality::Normal,
+        );
+        input.source = None;
+        input.sensitivity_band = None;
+
+        let decision = policy.evaluate_gate(&input);
+        assert_eq!(decision.outcome(), GateOutcome::Allow);
+        assert_eq!(gate_reason_strs(&decision), vec!["gate.allow"]);
+
+        Ok(())
+    }
+
+    #[test]
+    fn gate_evaluator_source_trust_respects_sensitivity_ceiling() -> Result<()> {
+        let (_tmp, vault) = temp_vault();
+        let data = encode_policy_manifest(vec![source_trust_entry(ClaimSource::ToolOutput, 0)]);
+        put_policy_manifest_bytes(&vault, 0x75, &data)?;
+        let policy = resolve(&vault)?;
+
+        let mut input = gate_evaluator_input(
+            "first_party",
+            None,
+            ClaimSource::ToolOutput,
+            PolicyCriticality::Normal,
+        );
+
+        let decision = policy.evaluate_gate(&input);
+        assert_eq!(decision.outcome(), GateOutcome::Allow);
+        assert_eq!(gate_reason_strs(&decision), vec!["gate.allow"]);
+
+        input.sensitivity_band = Some(1);
+        let decision = policy.evaluate_gate(&input);
+        assert_eq!(decision.outcome(), GateOutcome::Pending);
+        assert_eq!(
+            gate_reason_strs(&decision),
+            vec!["gate.pending.source_trust"]
+        );
+
+        input.sensitivity_band = None;
+        let decision = policy.evaluate_gate(&input);
+        assert_eq!(decision.outcome(), GateOutcome::Pending);
+        assert_eq!(
+            gate_reason_strs(&decision),
+            vec!["gate.pending.source_trust"]
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn gate_evaluator_content_kind_reasons_are_stable() -> Result<()> {
+        let (_tmp, vault) = temp_vault();
+        let data = encode_policy_manifest(vec![]);
+        put_policy_manifest_bytes(&vault, 0x73, &data)?;
+        let policy = resolve(&vault)?;
+
+        let mut edge_provenance = gate_evaluator_input(
+            "first_party",
+            None,
+            ClaimSource::UserStated,
+            PolicyCriticality::Normal,
+        );
+        edge_provenance.content_kind = GateContentKind::EdgeProvenanceClaim;
+        assert_eq!(
+            edge_provenance.content_kind.as_str(),
+            "edge_provenance_claim"
+        );
+        let decision = policy.evaluate_gate(&edge_provenance);
+        assert_eq!(decision.outcome(), GateOutcome::Allow);
+        assert_eq!(gate_reason_strs(&decision), vec!["gate.allow"]);
+
+        let mut policy_manifest = gate_evaluator_input(
+            "first_party",
+            None,
+            ClaimSource::UserStated,
+            PolicyCriticality::Normal,
+        );
+        policy_manifest.content_kind = GateContentKind::PolicyManifest;
+        assert_eq!(policy_manifest.content_kind.as_str(), "policy_manifest");
+        let decision = policy.evaluate_gate(&policy_manifest);
+        assert_eq!(decision.outcome(), GateOutcome::Pending);
+        assert_eq!(
+            gate_reason_strs(&decision),
+            vec!["gate.pending.policy_manifest_authority"]
+        );
+
+        let mut external_effect = gate_evaluator_input(
+            "first_party",
+            None,
+            ClaimSource::UserStated,
+            PolicyCriticality::Normal,
+        );
+        external_effect.content_kind = GateContentKind::ExternalEffect;
+        assert_eq!(external_effect.content_kind.as_str(), "external_effect");
+        let decision = policy.evaluate_gate(&external_effect);
+        assert_eq!(decision.outcome(), GateOutcome::Pending);
+        assert_eq!(
+            gate_reason_strs(&decision),
+            vec!["gate.pending.external_effect_authority"]
+        );
+        assert_eq!(decision.outcome().as_str(), "pending");
+
         Ok(())
     }
 
