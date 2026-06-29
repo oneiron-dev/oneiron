@@ -1660,6 +1660,9 @@ impl Vault {
         let Some(raw) = self.store.entities.get(rtxn, subject.as_bytes())? else {
             return Ok(None);
         };
+        if raw.len() == ENTITY_METADATA_HEADER_LEN {
+            return Ok(None);
+        }
         let header =
             EntityMetadataHeader::parse(raw).ok_or(Error::CorruptedIndex("entity header"))?;
         if header.entity_type == ENTITY_TYPE_CODE_ARTIFACT {

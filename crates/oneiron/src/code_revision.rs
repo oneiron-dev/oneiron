@@ -1,4 +1,4 @@
-use std::collections::{HashSet, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 
 use heed::{RoTxn, RwTxn};
 use rmpv::Value;
@@ -34,11 +34,12 @@ pub const CODE_REVISION_FORK_KEYS: [&str; 4] = [
     "base_revision_id",
     "forked_at",
 ];
-const CODE_REVISION_INTEGRITY_KEYS: [&str; 9] = [
+const CODE_REVISION_INTEGRITY_KEYS: [&str; 10] = [
     "revision_id",
     "session_id",
     "parent_revision_id",
     "reverted_to_revision_id",
+    "provenance_claim_id",
     "artifact_hash",
     "parent_fold",
     "reverted_to_fold",
@@ -60,10 +61,10 @@ const KEY_FORK_SESSION_ID: &str = CODE_REVISION_FORK_KEYS[0];
 const KEY_PARENT_SESSION_ID: &str = CODE_REVISION_FORK_KEYS[1];
 const KEY_BASE_REVISION_ID: &str = CODE_REVISION_FORK_KEYS[2];
 const KEY_FORKED_AT: &str = CODE_REVISION_FORK_KEYS[3];
-const KEY_ARTIFACT_HASH: &str = CODE_REVISION_INTEGRITY_KEYS[4];
-const KEY_PARENT_FOLD: &str = CODE_REVISION_INTEGRITY_KEYS[5];
-const KEY_REVERTED_TO_FOLD: &str = CODE_REVISION_INTEGRITY_KEYS[6];
-const KEY_REVISION_FOLD: &str = CODE_REVISION_INTEGRITY_KEYS[7];
+const KEY_ARTIFACT_HASH: &str = CODE_REVISION_INTEGRITY_KEYS[5];
+const KEY_PARENT_FOLD: &str = CODE_REVISION_INTEGRITY_KEYS[6];
+const KEY_REVERTED_TO_FOLD: &str = CODE_REVISION_INTEGRITY_KEYS[7];
+const KEY_REVISION_FOLD: &str = CODE_REVISION_INTEGRITY_KEYS[8];
 
 const CODE_REVISION_RECORD_KEY_PREFIX: &[u8] = b"code_revision:record:v1:";
 const CODE_REVISION_SESSION_INDEX_KEY_PREFIX: &[u8] = b"code_revision:session:v1:";
@@ -197,6 +198,7 @@ struct CodeRevisionIntegrityRecord {
     session_id: EntityId,
     parent_revision_id: Option<EntityId>,
     reverted_to_revision_id: Option<EntityId>,
+    provenance_claim_id: Option<EntityId>,
     artifact_hash: [u8; CODE_REVISION_HASH_LEN],
     parent_fold: Option<[u8; CODE_REVISION_HASH_LEN]>,
     reverted_to_fold: Option<[u8; CODE_REVISION_HASH_LEN]>,
@@ -387,13 +389,11 @@ impl Vault {
     }
 
     pub fn get_code_revision(&self, revision_id: &EntityId) -> Result<Option<CodeRevision>> {
-        backfill_code_revision_integrity_for_revision(&self.store, revision_id)?;
         let rtxn = self.store.env.read_txn()?;
         get_code_revision_in_txn(&self.store, &rtxn, revision_id)
     }
 
     pub fn code_revisions_for_session(&self, session_id: &EntityId) -> Result<Vec<CodeRevision>> {
-        backfill_code_revision_integrity_for_session(&self.store, session_id)?;
         let rtxn = self.store.env.read_txn()?;
         let prefix = code_revision_session_index_prefix(session_id);
         let revisions = collect_code_revisions_by_index_prefix(&self.store, &rtxn, &prefix)?;
@@ -404,14 +404,15 @@ impl Vault {
                 ));
             }
         } else {
-            verify_code_revision_frontier_in_txn(&self.store, &rtxn, session_id)?;
+            if get_code_revision_frontier_in_txn(&self.store, &rtxn, session_id)?.is_some() {
+                verify_code_revision_frontier_in_txn(&self.store, &rtxn, session_id)?;
+            }
             verify_code_revision_session_trace_in_txn(&self.store, &rtxn, session_id, &revisions)?;
         }
         Ok(revisions)
     }
 
     pub fn child_code_revisions(&self, parent_revision_id: &EntityId) -> Result<Vec<CodeRevision>> {
-        backfill_code_revision_integrity_for_parent_children(&self.store, parent_revision_id)?;
         let rtxn = self.store.env.read_txn()?;
         let prefix = code_revision_parent_index_prefix(parent_revision_id);
         collect_code_revisions_by_index_prefix(&self.store, &rtxn, &prefix)
@@ -623,6 +624,10 @@ fn encode_code_revision_integrity_record(record: &CodeRevisionIntegrityRecord) -
         (
             Value::from(KEY_REVERTED_TO_REVISION_ID),
             optional_entity_value(record.reverted_to_revision_id),
+        ),
+        (
+            Value::from(KEY_PROVENANCE_CLAIM_ID),
+            optional_entity_value(record.provenance_claim_id),
         ),
         (
             Value::from(KEY_ARTIFACT_HASH),
@@ -858,6 +863,7 @@ fn decode_code_revision_integrity_value(value: &Value) -> Result<CodeRevisionInt
     let mut session_id = None;
     let mut parent_revision_id = None;
     let mut reverted_to_revision_id = None;
+    let mut provenance_claim_id = None;
     let mut artifact_hash = None;
     let mut parent_fold = None;
     let mut reverted_to_fold = None;
@@ -896,6 +902,10 @@ fn decode_code_revision_integrity_value(value: &Value) -> Result<CodeRevisionInt
                     "reverted_to_revision_id",
                 )?);
             }
+            KEY_PROVENANCE_CLAIM_ID => {
+                provenance_claim_id =
+                    Some(optional_entity_from_value(value, "provenance_claim_id")?);
+            }
             KEY_ARTIFACT_HASH => artifact_hash = Some(hash_from_value(value, "artifact_hash")?),
             KEY_PARENT_FOLD => {
                 parent_fold = Some(optional_hash_from_value(value, "parent_fold")?);
@@ -921,6 +931,9 @@ fn decode_code_revision_integrity_value(value: &Value) -> Result<CodeRevisionInt
         ))?,
         reverted_to_revision_id: reverted_to_revision_id.ok_or(Error::InvalidCodeArtifactBody(
             "missing required code revision integrity key reverted_to_revision_id",
+        ))?,
+        provenance_claim_id: provenance_claim_id.ok_or(Error::InvalidCodeArtifactBody(
+            "missing required code revision integrity key provenance_claim_id",
         ))?,
         artifact_hash: artifact_hash.ok_or(Error::InvalidCodeArtifactBody(
             "missing required code revision integrity key artifact_hash",
@@ -1170,44 +1183,6 @@ fn read_code_revision_record_in_txn(
     decode_code_revision(raw).map(Some)
 }
 
-fn backfill_code_revision_integrity_for_revision(
-    store: &Store,
-    revision_id: &EntityId,
-) -> Result<()> {
-    let mut wtxn = store.env.write_txn()?;
-    backfill_code_revision_integrity_for_revision_in_txn(store, &mut wtxn, revision_id)?;
-    wtxn.commit()?;
-    Ok(())
-}
-
-fn backfill_code_revision_integrity_for_session(
-    store: &Store,
-    session_id: &EntityId,
-) -> Result<()> {
-    let mut wtxn = store.env.write_txn()?;
-    backfill_code_revision_integrity_for_session_in_txn(store, &mut wtxn, session_id)?;
-    wtxn.commit()?;
-    Ok(())
-}
-
-fn backfill_code_revision_integrity_for_parent_children(
-    store: &Store,
-    parent_revision_id: &EntityId,
-) -> Result<()> {
-    let mut wtxn = store.env.write_txn()?;
-    let prefix = code_revision_parent_index_prefix(parent_revision_id);
-    let revisions = collect_code_revision_records_by_index_prefix(store, &wtxn, &prefix)?;
-    for revision in revisions {
-        backfill_code_revision_integrity_for_session_in_txn(
-            store,
-            &mut wtxn,
-            &revision.session_id,
-        )?;
-    }
-    wtxn.commit()?;
-    Ok(())
-}
-
 fn backfill_code_revision_integrity_for_revision_in_txn(
     store: &Store,
     wtxn: &mut RwTxn<'_>,
@@ -1337,13 +1312,19 @@ fn ensure_code_revision_integrity_record_in_txn(
 
     let artifact_body = code_artifact_body_bytes(store, wtxn, &revision.revision_id)?;
     let artifact_hash = sha256_bytes(&artifact_body);
-    let revision_fold =
-        compute_code_revision_fold(revision.kind, &artifact_hash, parent_fold, reverted_to_fold);
+    let revision_fold = compute_code_revision_fold(
+        revision.kind,
+        &artifact_hash,
+        revision.provenance_claim_id,
+        parent_fold,
+        reverted_to_fold,
+    );
     let record = CodeRevisionIntegrityRecord {
         revision_id: revision.revision_id,
         session_id: revision.session_id,
         parent_revision_id: revision.parent_revision_id,
         reverted_to_revision_id: revision.reverted_to_revision_id,
+        provenance_claim_id: revision.provenance_claim_id,
         artifact_hash,
         parent_fold,
         reverted_to_fold,
@@ -1375,13 +1356,19 @@ fn build_code_revision_integrity_record(
         .reverted_to_revision_id
         .map(|reverted_to_id| require_code_revision_fold(store, rtxn, &reverted_to_id))
         .transpose()?;
-    let revision_fold =
-        compute_code_revision_fold(revision.kind, &artifact_hash, parent_fold, reverted_to_fold);
+    let revision_fold = compute_code_revision_fold(
+        revision.kind,
+        &artifact_hash,
+        revision.provenance_claim_id,
+        parent_fold,
+        reverted_to_fold,
+    );
     Ok(CodeRevisionIntegrityRecord {
         revision_id: revision.revision_id,
         session_id: revision.session_id,
         parent_revision_id: revision.parent_revision_id,
         reverted_to_revision_id: revision.reverted_to_revision_id,
+        provenance_claim_id: revision.provenance_claim_id,
         artifact_hash,
         parent_fold,
         reverted_to_fold,
@@ -1395,58 +1382,127 @@ fn verify_code_revision_integrity_in_txn(
     rtxn: &RoTxn<'_>,
     revision: &CodeRevision,
 ) -> Result<()> {
-    let record = load_code_revision_integrity_record(store, rtxn, &revision.revision_id)?;
-    if record.revision_id != revision.revision_id
-        || record.session_id != revision.session_id
-        || record.parent_revision_id != revision.parent_revision_id
-        || record.reverted_to_revision_id != revision.reverted_to_revision_id
-        || record.finalized_at != revision.finalized_at
-        || record.parent_fold.is_some() != revision.parent_revision_id.is_some()
-        || record.reverted_to_fold.is_some() != revision.reverted_to_revision_id.is_some()
-    {
-        return Err(Error::InvalidCodeArtifactBody(
-            "code revision integrity record does not match revision record",
-        ));
-    }
-    let artifact_body = code_artifact_body_bytes(store, rtxn, &revision.revision_id)?;
-    let artifact_hash = sha256_bytes(&artifact_body);
-    if artifact_hash != record.artifact_hash {
-        return Err(Error::InvalidCodeArtifactBody(
-            "code revision artifact hash mismatch",
-        ));
-    }
-    let parent_fold = match revision.parent_revision_id {
-        Some(parent_id) => {
-            let parent_fold = require_code_revision_fold(store, rtxn, &parent_id)?;
-            if record.parent_fold != Some(parent_fold) {
-                return Err(Error::InvalidCodeArtifactBody(
-                    "code revision parent fold mismatch",
-                ));
-            }
-            Some(parent_fold)
-        }
-        None => None,
-    };
-    let reverted_to_fold = match revision.reverted_to_revision_id {
-        Some(reverted_to_id) => {
-            let reverted_to_fold = require_code_revision_fold(store, rtxn, &reverted_to_id)?;
-            if record.reverted_to_fold != Some(reverted_to_fold) {
-                return Err(Error::InvalidCodeArtifactBody(
-                    "code revision reverted-to fold mismatch",
-                ));
-            }
-            Some(reverted_to_fold)
-        }
-        None => None,
-    };
-    let expected_fold =
-        compute_code_revision_fold(revision.kind, &artifact_hash, parent_fold, reverted_to_fold);
-    if expected_fold != record.revision_fold {
-        return Err(Error::InvalidCodeArtifactBody(
-            "code revision fold mismatch",
-        ));
-    }
+    let mut visiting = HashSet::new();
+    verify_or_build_code_revision_integrity_record_in_txn(store, rtxn, revision, &mut visiting)?;
     Ok(())
+}
+
+fn verify_or_build_code_revision_integrity_record_in_txn(
+    store: &Store,
+    rtxn: &RoTxn<'_>,
+    revision: &CodeRevision,
+    visiting: &mut HashSet<EntityId>,
+) -> Result<CodeRevisionIntegrityRecord> {
+    if visiting.len() >= MAX_ANCESTOR_DEPTH {
+        return Err(Error::IndexOverflow("code_revision_parent_chain"));
+    }
+    if !visiting.insert(revision.revision_id) {
+        return Err(Error::InvalidCodeArtifactBody(
+            "code revision parent chain contains a cycle",
+        ));
+    }
+
+    let result = (|| {
+        let record =
+            load_optional_code_revision_integrity_record(store, rtxn, &revision.revision_id)?;
+        if let Some(record) = &record
+            && (record.revision_id != revision.revision_id
+                || record.session_id != revision.session_id
+                || record.parent_revision_id != revision.parent_revision_id
+                || record.reverted_to_revision_id != revision.reverted_to_revision_id
+                || record.provenance_claim_id != revision.provenance_claim_id
+                || record.finalized_at != revision.finalized_at
+                || record.parent_fold.is_some() != revision.parent_revision_id.is_some()
+                || record.reverted_to_fold.is_some() != revision.reverted_to_revision_id.is_some())
+        {
+            return Err(Error::InvalidCodeArtifactBody(
+                "code revision integrity record does not match revision record",
+            ));
+        }
+
+        let artifact_body = code_artifact_body_bytes(store, rtxn, &revision.revision_id)?;
+        let artifact_hash = sha256_bytes(&artifact_body);
+        if let Some(record) = &record
+            && artifact_hash != record.artifact_hash
+        {
+            return Err(Error::InvalidCodeArtifactBody(
+                "code revision artifact hash mismatch",
+            ));
+        }
+
+        let parent_fold = match revision.parent_revision_id {
+            Some(parent_id) => {
+                let parent_fold =
+                    require_code_revision_fold_with_visited(store, rtxn, &parent_id, visiting)?;
+                if let Some(record) = &record
+                    && record.parent_fold != Some(parent_fold)
+                {
+                    return Err(Error::InvalidCodeArtifactBody(
+                        "code revision parent fold mismatch",
+                    ));
+                }
+                Some(parent_fold)
+            }
+            None => None,
+        };
+        let reverted_to_fold = match revision.reverted_to_revision_id {
+            Some(reverted_to_id) => {
+                let reverted_to_fold = require_code_revision_fold_with_visited(
+                    store,
+                    rtxn,
+                    &reverted_to_id,
+                    visiting,
+                )?;
+                if let Some(record) = &record
+                    && record.reverted_to_fold != Some(reverted_to_fold)
+                {
+                    return Err(Error::InvalidCodeArtifactBody(
+                        "code revision reverted-to fold mismatch",
+                    ));
+                }
+                Some(reverted_to_fold)
+            }
+            None => None,
+        };
+        if let (Some(parent_id), Some(reverted_to_id)) = (
+            revision.parent_revision_id,
+            revision.reverted_to_revision_id,
+        ) {
+            require_code_revision_ancestor(store, rtxn, &parent_id, &reverted_to_id)?;
+        }
+
+        let expected_fold = compute_code_revision_fold(
+            revision.kind,
+            &artifact_hash,
+            revision.provenance_claim_id,
+            parent_fold,
+            reverted_to_fold,
+        );
+        if let Some(record) = record {
+            if expected_fold != record.revision_fold {
+                return Err(Error::InvalidCodeArtifactBody(
+                    "code revision fold mismatch",
+                ));
+            }
+            Ok(record)
+        } else {
+            Ok(CodeRevisionIntegrityRecord {
+                revision_id: revision.revision_id,
+                session_id: revision.session_id,
+                parent_revision_id: revision.parent_revision_id,
+                reverted_to_revision_id: revision.reverted_to_revision_id,
+                provenance_claim_id: revision.provenance_claim_id,
+                artifact_hash,
+                parent_fold,
+                reverted_to_fold,
+                revision_fold: expected_fold,
+                finalized_at: revision.finalized_at,
+            })
+        }
+    })();
+
+    visiting.remove(&revision.revision_id);
+    result
 }
 
 fn validate_code_revision_frontier_update(
@@ -1464,6 +1520,11 @@ fn validate_code_revision_frontier_update(
         }
         return Ok(true);
     };
+    if frontier.session_id != revision.session_id {
+        return Err(Error::InvalidCodeArtifactBody(
+            "code revision frontier session mismatch",
+        ));
+    }
     verify_code_revision_frontier_record_in_txn(store, rtxn, &frontier)?;
 
     code_revision_frontier_update_decision(Some(&frontier), revision, integrity)
@@ -1528,8 +1589,13 @@ fn verify_code_revision_frontier_record_in_txn(
             "code revision frontier record does not match revision record",
         ));
     }
-    verify_code_revision_integrity_in_txn(store, rtxn, &revision)?;
-    let integrity = load_code_revision_integrity_record(store, rtxn, &frontier.revision_id)?;
+    let mut visiting = HashSet::new();
+    let integrity = verify_or_build_code_revision_integrity_record_in_txn(
+        store,
+        rtxn,
+        &revision,
+        &mut visiting,
+    )?;
     if integrity.revision_fold != frontier.revision_fold {
         return Err(Error::InvalidCodeArtifactBody(
             "code revision frontier fold mismatch",
@@ -1544,17 +1610,25 @@ fn verify_code_revision_session_trace_in_txn(
     session_id: &EntityId,
     revisions: &[CodeRevision],
 ) -> Result<()> {
-    let stored_frontier = get_code_revision_frontier_in_txn(store, rtxn, session_id)?.ok_or(
-        Error::InvalidCodeArtifactBody("code revision frontier record missing"),
-    )?;
+    let stored_frontier = get_code_revision_frontier_in_txn(store, rtxn, session_id)?;
     let mut computed_frontier = None;
+    let mut saw_stored_integrity = false;
     for revision in revisions {
         if revision.session_id != *session_id {
             return Err(Error::InvalidCodeArtifactBody(
                 "code revision session index mismatch",
             ));
         }
-        let integrity = load_code_revision_integrity_record(store, rtxn, &revision.revision_id)?;
+        saw_stored_integrity |=
+            load_optional_code_revision_integrity_record(store, rtxn, &revision.revision_id)?
+                .is_some();
+        let mut visiting = HashSet::new();
+        let integrity = verify_or_build_code_revision_integrity_record_in_txn(
+            store,
+            rtxn,
+            revision,
+            &mut visiting,
+        )?;
         if code_revision_frontier_update_decision(computed_frontier.as_ref(), revision, &integrity)?
         {
             computed_frontier = Some(CodeRevisionFrontierRecord {
@@ -1565,6 +1639,14 @@ fn verify_code_revision_session_trace_in_txn(
             });
         }
     }
+    let Some(stored_frontier) = stored_frontier else {
+        if saw_stored_integrity {
+            return Err(Error::InvalidCodeArtifactBody(
+                "code revision frontier record missing",
+            ));
+        }
+        return Ok(());
+    };
     let computed_frontier = computed_frontier.ok_or(Error::InvalidCodeArtifactBody(
         "code revision frontier record missing",
     ))?;
@@ -1585,22 +1667,22 @@ fn require_code_revision_fold(
     rtxn: &RoTxn<'_>,
     revision_id: &EntityId,
 ) -> Result<[u8; CODE_REVISION_HASH_LEN]> {
-    let revision = read_code_revision_record_in_txn(store, rtxn, revision_id)?.ok_or(
-        Error::InvalidCodeArtifactBody("code revision integrity parent record missing"),
-    )?;
-    verify_code_revision_integrity_in_txn(store, rtxn, &revision)?;
-    let record = load_code_revision_integrity_record(store, rtxn, revision_id)?;
-    Ok(record.revision_fold)
+    let mut visiting = HashSet::new();
+    require_code_revision_fold_with_visited(store, rtxn, revision_id, &mut visiting)
 }
 
-fn load_code_revision_integrity_record(
+fn require_code_revision_fold_with_visited(
     store: &Store,
     rtxn: &RoTxn<'_>,
     revision_id: &EntityId,
-) -> Result<CodeRevisionIntegrityRecord> {
-    load_optional_code_revision_integrity_record(store, rtxn, revision_id)?.ok_or(
-        Error::InvalidCodeArtifactBody("code revision integrity record missing"),
-    )
+    visiting: &mut HashSet<EntityId>,
+) -> Result<[u8; CODE_REVISION_HASH_LEN]> {
+    let revision = read_code_revision_record_in_txn(store, rtxn, revision_id)?.ok_or(
+        Error::InvalidCodeArtifactBody("code revision integrity parent record missing"),
+    )?;
+    let record =
+        verify_or_build_code_revision_integrity_record_in_txn(store, rtxn, &revision, visiting)?;
+    Ok(record.revision_fold)
 }
 
 fn load_optional_code_revision_integrity_record(
@@ -1634,6 +1716,7 @@ fn get_code_revision_frontier_in_txn(
 fn compute_code_revision_fold(
     kind: CodeRevisionKind,
     artifact_hash: &[u8; CODE_REVISION_HASH_LEN],
+    provenance_claim_id: Option<EntityId>,
     parent_fold: Option<[u8; CODE_REVISION_HASH_LEN]>,
     reverted_to_fold: Option<[u8; CODE_REVISION_HASH_LEN]>,
 ) -> [u8; CODE_REVISION_HASH_LEN] {
@@ -1644,9 +1727,20 @@ fn compute_code_revision_fold(
         CodeRevisionKind::Revert => 1,
     }]);
     hasher.update(artifact_hash);
+    update_optional_entity(&mut hasher, provenance_claim_id.as_ref());
     update_optional_hash(&mut hasher, parent_fold.as_ref());
     update_optional_hash(&mut hasher, reverted_to_fold.as_ref());
     hasher.finalize().into()
+}
+
+fn update_optional_entity(hasher: &mut Sha256, value: Option<&EntityId>) {
+    match value {
+        Some(value) => {
+            hasher.update([1]);
+            hasher.update(value.as_bytes());
+        }
+        None => hasher.update([0]),
+    }
 }
 
 fn update_optional_hash(hasher: &mut Sha256, value: Option<&[u8; CODE_REVISION_HASH_LEN]>) {
@@ -1690,8 +1784,7 @@ fn collect_code_revisions_by_index_prefix(
             revisions.push(revision);
         }
     }
-    revisions.sort_by_key(|revision| (revision.finalized_at, revision.revision_id));
-    Ok(revisions)
+    sort_code_revisions_topologically(revisions)
 }
 
 fn collect_code_revision_records_by_index_prefix(
@@ -1707,8 +1800,57 @@ fn collect_code_revision_records_by_index_prefix(
             revisions.push(revision);
         }
     }
+    sort_code_revisions_topologically(revisions)
+}
+
+fn sort_code_revisions_topologically(
+    mut revisions: Vec<CodeRevision>,
+) -> Result<Vec<CodeRevision>> {
     revisions.sort_by_key(|revision| (revision.finalized_at, revision.revision_id));
-    Ok(revisions)
+    let mut index_by_id = HashMap::with_capacity(revisions.len());
+    for (index, revision) in revisions.iter().enumerate() {
+        if index_by_id.insert(revision.revision_id, index).is_some() {
+            return Err(Error::InvalidCodeArtifactBody(
+                "duplicate code revision id in trace",
+            ));
+        }
+    }
+
+    let mut indegree = vec![0usize; revisions.len()];
+    let mut children = vec![Vec::new(); revisions.len()];
+    for (index, revision) in revisions.iter().enumerate() {
+        if let Some(parent_id) = revision.parent_revision_id
+            && let Some(parent_index) = index_by_id.get(&parent_id).copied()
+        {
+            indegree[index] += 1;
+            children[parent_index].push(index);
+        }
+    }
+
+    let mut ready = VecDeque::new();
+    for (index, degree) in indegree.iter().enumerate() {
+        if *degree == 0 {
+            ready.push_back(index);
+        }
+    }
+
+    let mut ordered = Vec::with_capacity(revisions.len());
+    while let Some(index) = ready.pop_front() {
+        ordered.push(revisions[index].clone());
+        for child_index in &children[index] {
+            indegree[*child_index] -= 1;
+            if indegree[*child_index] == 0 {
+                ready.push_back(*child_index);
+            }
+        }
+    }
+
+    if ordered.len() != revisions.len() {
+        return Err(Error::InvalidCodeArtifactBody(
+            "code revision parent chain contains a cycle",
+        ));
+    }
+    Ok(ordered)
 }
 
 fn put_lifecycle_edge(
@@ -1885,11 +2027,21 @@ fn delete_code_revision_frontier_for_revision_in_txn(
         .prefix_iter(wtxn, CODE_REVISION_FRONTIER_KEY_PREFIX)?
     {
         let (key, value) = entry?;
-        if let Ok(frontier) = decode_code_revision_frontier_record(value)
-            && frontier.revision_id == *revision_id
-        {
-            keys.push(key.to_vec());
-            sessions.push(frontier.session_id);
+        match decode_code_revision_frontier_record(value) {
+            Ok(frontier) if frontier.revision_id == *revision_id => {
+                keys.push(key.to_vec());
+                sessions.push(frontier.session_id);
+            }
+            Ok(_) => {}
+            Err(_) => {
+                let session_id = id_from_index_key(
+                    key,
+                    CODE_REVISION_FRONTIER_KEY_PREFIX.len(),
+                    "code revision frontier key",
+                )?;
+                keys.push(key.to_vec());
+                sessions.push(session_id);
+            }
         }
     }
     for key in keys {
@@ -2312,11 +2464,86 @@ mod tests {
         record.revision_fold = compute_code_revision_fold(
             revision.kind,
             &record.artifact_hash,
+            revision.provenance_claim_id,
             record.parent_fold,
             record.reverted_to_fold,
         );
         let encoded = encode_code_revision_integrity_record(&record)?;
         vault.store.vault_meta.put(&mut wtxn, &key, &encoded)?;
+        wtxn.commit()?;
+        Ok(())
+    }
+
+    fn read_code_revision_integrity_record(
+        vault: &Vault,
+        revision_id: &EntityId,
+    ) -> Result<CodeRevisionIntegrityRecord> {
+        let rtxn = vault.store.env.read_txn()?;
+        let raw = vault
+            .store
+            .vault_meta
+            .get(&rtxn, &code_revision_integrity_key(revision_id))?
+            .ok_or(Error::EntityNotFound)?;
+        decode_code_revision_integrity_record(raw)
+    }
+
+    fn replace_code_revision_record_unchecked(
+        vault: &Vault,
+        revision: &CodeRevision,
+    ) -> Result<()> {
+        let encoded = encode_code_revision(revision)?;
+        let mut wtxn = vault.store.env.write_txn()?;
+        vault.store.vault_meta.put(
+            &mut wtxn,
+            &code_revision_record_key(&revision.revision_id),
+            &encoded,
+        )?;
+        wtxn.commit()?;
+        Ok(())
+    }
+
+    fn replace_code_revision_integrity_record_unchecked(
+        vault: &Vault,
+        record: &CodeRevisionIntegrityRecord,
+    ) -> Result<()> {
+        let encoded = encode_code_revision_integrity_record(record)?;
+        let mut wtxn = vault.store.env.write_txn()?;
+        vault.store.vault_meta.put(
+            &mut wtxn,
+            &code_revision_integrity_key(&record.revision_id),
+            &encoded,
+        )?;
+        wtxn.commit()?;
+        Ok(())
+    }
+
+    fn corrupt_code_revision_frontier_session(
+        vault: &Vault,
+        session_id: &EntityId,
+        corrupt_session_id: EntityId,
+    ) -> Result<()> {
+        let mut wtxn = vault.store.env.write_txn()?;
+        let key = code_revision_frontier_key(session_id);
+        let raw = vault
+            .store
+            .vault_meta
+            .get(&wtxn, &key)?
+            .ok_or(Error::EntityNotFound)?;
+        let mut frontier = decode_code_revision_frontier_record(raw)?;
+        frontier.session_id = corrupt_session_id;
+        let encoded = encode_code_revision_frontier_record(&frontier)?;
+        vault.store.vault_meta.put(&mut wtxn, &key, &encoded)?;
+        wtxn.commit()?;
+        Ok(())
+    }
+
+    fn corrupt_code_revision_frontier_bytes(vault: &Vault, session_id: &EntityId) -> Result<()> {
+        let mut wtxn = vault.store.env.write_txn()?;
+        vault.store.vault_meta.put(
+            &mut wtxn,
+            &code_revision_frontier_key(session_id),
+            b"not-a-frontier",
+        )?;
         wtxn.commit()?;
         Ok(())
     }
@@ -2411,6 +2638,46 @@ mod tests {
         assert!(supersedes.contains(&first));
         let derived = vault.targets(&second, EdgeKind::DerivedFrom, None)?;
         assert!(derived.contains(&session));
+        Ok(())
+    }
+
+    #[test]
+    fn code_revision_session_trace_orders_same_second_child_after_parent() -> Result<()> {
+        let (_dir, vault) = crate::test_util::open_test_vault_with(test_config());
+        let session = entity(0x11);
+        let parent = entity(0x30);
+        let child = entity(0x20);
+        let parent_revision = CodeRevision::commit(parent, session, 100);
+        let child_revision = CodeRevision::commit_child(child, session, parent, 100);
+        put_session(&vault, session, 10)?;
+        put_artifact(&vault, parent, 0xA1, 20)?;
+        put_artifact(&vault, child, 0xA2, 30)?;
+
+        vault.commit_code_revision(&parent_revision)?;
+        vault.commit_code_revision(&child_revision)?;
+
+        assert_eq!(
+            vault.code_revisions_for_session(&session)?,
+            vec![parent_revision, child_revision]
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn code_revision_read_inside_write_txn_uses_existing_sidecars_without_nested_write()
+    -> Result<()> {
+        let (_dir, vault) = crate::test_util::open_test_vault_with(test_config());
+        let session = entity(0x11);
+        let revision_id = entity(0x21);
+        let revision = CodeRevision::commit(revision_id, session, 100);
+        put_session(&vault, session, 10)?;
+        put_artifact(&vault, revision_id, 0xA1, 20)?;
+        vault.commit_code_revision(&revision)?;
+
+        vault.with_write_txn(|_| {
+            assert_eq!(vault.get_code_revision(&revision_id)?, Some(revision));
+            Ok(())
+        })?;
         Ok(())
     }
 
@@ -2605,6 +2872,29 @@ mod tests {
         vault.batch().delete(&revision_id).commit()?;
 
         assert!(vault.code_revisions_for_session(&session)?.is_empty());
+        let rtxn = vault.store.env.read_txn()?;
+        assert!(
+            vault
+                .store
+                .vault_meta
+                .get(&rtxn, &code_revision_frontier_key(&session))?
+                .is_none()
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn code_revision_delete_corrupt_frontier_sidecar_repairs_from_key_session() -> Result<()> {
+        let (_dir, vault) = crate::test_util::open_test_vault_with(test_config());
+        let session = entity(0x11);
+        let revision_id = entity(0x21);
+        put_session(&vault, session, 10)?;
+        put_artifact(&vault, revision_id, 0xA1, 20)?;
+        vault.commit_code_revision(&CodeRevision::commit(revision_id, session, 100))?;
+        corrupt_code_revision_frontier_bytes(&vault, &session)?;
+
+        vault.batch().delete(&revision_id).commit()?;
+
         let rtxn = vault.store.env.read_txn()?;
         assert!(
             vault
@@ -2828,6 +3118,32 @@ mod tests {
     }
 
     #[test]
+    fn code_integrity_frontier_session_mismatch_fails_closed_on_update() -> Result<()> {
+        let (_dir, vault) = crate::test_util::open_test_vault_with(test_config());
+        let session = entity(0x11);
+        let other_session = entity(0x12);
+        let first = entity(0x21);
+        let second = entity(0x22);
+        put_session(&vault, session, 10)?;
+        put_session(&vault, other_session, 11)?;
+        put_artifact(&vault, first, 0xA1, 20)?;
+        put_artifact(&vault, second, 0xA2, 30)?;
+        vault.commit_code_revision(&CodeRevision::commit(first, session, 100))?;
+        corrupt_code_revision_frontier_session(&vault, &session, other_session)?;
+
+        let err = vault
+            .commit_code_revision(&CodeRevision::commit_child(second, session, first, 200))
+            .expect_err("frontier stored under a session key must decode to the same session");
+
+        assert_eq!(err.kind(), ErrorKind::InvalidCodeArtifactBody);
+        assert!(
+            err.to_string()
+                .contains("code revision frontier session mismatch")
+        );
+        Ok(())
+    }
+
+    #[test]
     fn code_integrity_parent_fold_mismatch_fails_closed() -> Result<()> {
         let (_dir, vault) = crate::test_util::open_test_vault_with(test_config());
         let session = entity(0x11);
@@ -2850,6 +3166,126 @@ mod tests {
             err.to_string()
                 .contains("code revision parent fold mismatch")
         );
+        Ok(())
+    }
+
+    #[test]
+    fn code_integrity_parent_cycle_fails_closed_without_recursive_overflow() -> Result<()> {
+        let (_dir, vault) = crate::test_util::open_test_vault_with(test_config());
+        let session = entity(0x11);
+        let first = entity(0x21);
+        let second = entity(0x22);
+        put_session(&vault, session, 10)?;
+        put_artifact(&vault, first, 0xA1, 20)?;
+        put_artifact(&vault, second, 0xA2, 30)?;
+        vault.commit_code_revision(&CodeRevision::commit(first, session, 100))?;
+        vault.commit_code_revision(&CodeRevision::commit_child(second, session, first, 200))?;
+
+        let mut corrupted_first = CodeRevision::commit_child(first, session, second, 100);
+        corrupted_first.provenance_claim_id = None;
+        replace_code_revision_record_unchecked(&vault, &corrupted_first)?;
+        let second_record = read_code_revision_integrity_record(&vault, &second)?;
+        let mut first_record = read_code_revision_integrity_record(&vault, &first)?;
+        first_record.parent_revision_id = Some(second);
+        first_record.parent_fold = Some(second_record.revision_fold);
+        first_record.revision_fold = compute_code_revision_fold(
+            corrupted_first.kind,
+            &first_record.artifact_hash,
+            corrupted_first.provenance_claim_id,
+            first_record.parent_fold,
+            first_record.reverted_to_fold,
+        );
+        replace_code_revision_integrity_record_unchecked(&vault, &first_record)?;
+
+        let err = vault
+            .get_code_revision(&second)
+            .expect_err("corrupt parent cycles must fail closed");
+
+        assert_eq!(err.kind(), ErrorKind::InvalidCodeArtifactBody);
+        assert!(
+            err.to_string()
+                .contains("code revision parent chain contains a cycle")
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn code_integrity_revert_target_must_remain_parent_ancestor() -> Result<()> {
+        let (_dir, vault) = crate::test_util::open_test_vault_with(test_config());
+        let session = entity(0x11);
+        let other_session = entity(0x12);
+        let original = entity(0x21);
+        let current = entity(0x22);
+        let reverted = entity(0x23);
+        let unrelated = entity(0x24);
+        put_session(&vault, session, 10)?;
+        put_session(&vault, other_session, 11)?;
+        put_artifact(&vault, original, 0xA1, 20)?;
+        put_artifact(&vault, current, 0xA2, 30)?;
+        put_artifact(&vault, reverted, 0xA3, 40)?;
+        put_artifact(&vault, unrelated, 0xA4, 50)?;
+        vault.commit_code_revision(&CodeRevision::commit(original, session, 100))?;
+        vault.commit_code_revision(&CodeRevision::commit_child(current, session, original, 200))?;
+        vault.commit_code_revision(&CodeRevision::commit(unrelated, other_session, 150))?;
+        vault.revert_code_revision(&CodeRevision::revert(
+            reverted, session, current, original, 300,
+        ))?;
+
+        let corrupted_revert = CodeRevision::revert(reverted, session, current, unrelated, 300);
+        replace_code_revision_record_unchecked(&vault, &corrupted_revert)?;
+        let unrelated_record = read_code_revision_integrity_record(&vault, &unrelated)?;
+        let mut revert_record = read_code_revision_integrity_record(&vault, &reverted)?;
+        revert_record.reverted_to_revision_id = Some(unrelated);
+        revert_record.reverted_to_fold = Some(unrelated_record.revision_fold);
+        revert_record.revision_fold = compute_code_revision_fold(
+            corrupted_revert.kind,
+            &revert_record.artifact_hash,
+            corrupted_revert.provenance_claim_id,
+            revert_record.parent_fold,
+            revert_record.reverted_to_fold,
+        );
+        replace_code_revision_integrity_record_unchecked(&vault, &revert_record)?;
+
+        let err = vault
+            .get_code_revision(&reverted)
+            .expect_err("revert target must remain an ancestor of the parent revision");
+
+        assert_eq!(err.kind(), ErrorKind::InvalidCodeArtifactBody);
+        assert!(
+            err.to_string()
+                .contains("reverted_to_revision_id must be an ancestor of parent_revision_id")
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn code_integrity_provenance_claim_id_is_fold_authenticated() -> Result<()> {
+        let (_dir, vault) = crate::test_util::open_test_vault_with(test_config());
+        let session = entity(0x11);
+        let revision_id = entity(0x21);
+        let original_provenance = entity(0x31);
+        let forged_provenance = entity(0x32);
+        put_session(&vault, session, 10)?;
+        put_artifact(&vault, revision_id, 0xA1, 20)?;
+        put_claim_entity(&vault, original_provenance, revision_id, 30)?;
+        put_claim_entity(&vault, forged_provenance, revision_id, 40)?;
+        let revision = CodeRevision::commit(revision_id, session, 100)
+            .with_provenance_claim_id(original_provenance);
+        vault.commit_code_revision(&revision)?;
+
+        let forged_revision = CodeRevision::commit(revision_id, session, 100)
+            .with_provenance_claim_id(forged_provenance);
+        replace_code_revision_record_unchecked(&vault, &forged_revision)?;
+        let mut record = read_code_revision_integrity_record(&vault, &revision_id)?;
+        record.provenance_claim_id = Some(forged_provenance);
+        replace_code_revision_integrity_record_unchecked(&vault, &record)?;
+
+        let err = vault
+            .get_code_revision(&revision_id)
+            .expect_err("provenance tampering must alter the authenticated fold");
+
+        assert_eq!(err.kind(), ErrorKind::InvalidCodeArtifactBody);
+        assert!(err.to_string().contains("code revision fold mismatch"));
         Ok(())
     }
 
@@ -2877,7 +3313,8 @@ mod tests {
     }
 
     #[test]
-    fn code_integrity_legacy_revision_sidecars_are_lazily_backfilled() -> Result<()> {
+    fn code_integrity_legacy_revision_sidecars_remain_readable_without_read_backfill() -> Result<()>
+    {
         let (_dir, vault) = crate::test_util::open_test_vault_with(test_config());
         let session = entity(0x11);
         let first = entity(0x21);
@@ -2895,7 +3332,7 @@ mod tests {
             vault.code_revisions_for_session(&session)?,
             vec![first_revision, second_revision]
         );
-        assert!(code_revision_integrity_sidecars_exist(
+        assert!(!code_revision_integrity_sidecars_exist(
             &vault,
             &[first, second],
             &session
@@ -3175,6 +3612,44 @@ mod tests {
             300,
         )?;
         vault.batch().delete(&revision_id).commit()?;
+
+        vault.supersede_claim(&generated_apply, &user_truth, 400)?;
+
+        assert_eq!(
+            vault.get_claim(&user_truth)?.expect("user claim").lifecycle,
+            ClaimLifecycleStatus::Superseded
+        );
+        assert!(
+            vault
+                .targets(&generated_apply, EdgeKind::Supersedes, None)?
+                .contains(&user_truth)
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn code_integrity_generated_apply_with_header_only_subject_is_not_false_failure() -> Result<()>
+    {
+        let (_dir, vault) = crate::test_util::open_test_vault_with(test_config());
+        let revision_id = entity(0x21);
+        let user_truth = entity(0x31);
+        let generated_apply = entity(0x32);
+        put_artifact(&vault, revision_id, 0xA1, 20)?;
+        put_claim_entity_with_source(
+            &vault,
+            user_truth,
+            revision_id,
+            Some(ClaimSource::UserStated),
+            200,
+        )?;
+        put_claim_entity_with_source(
+            &vault,
+            generated_apply,
+            revision_id,
+            Some(ClaimSource::Generated),
+            300,
+        )?;
+        replace_entity_with_header_shell(&vault, &revision_id)?;
 
         vault.supersede_claim(&generated_apply, &user_truth, 400)?;
 
