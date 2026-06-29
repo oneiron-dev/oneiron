@@ -2442,6 +2442,35 @@ mod tests {
     }
 
     #[test]
+    fn retrieval_outcome_rejects_active_write_transaction() -> Result<()> {
+        let (_dir, vault) = open_test_vault();
+        let id = entity_id(0x3C);
+        put_text(&vault, id, "outcome active transaction")?;
+
+        let results = vault
+            .query()
+            .search_text("outcome active", 10)
+            .run_with_telemetry()?;
+        assert!(!results.value.is_empty());
+        let run_id = results.run_id.expect("outcome telemetry run id");
+
+        let error = vault
+            .with_write_txn(|_wtxn| {
+                vault.record_retrieval_outcome(crate::store::RetrievalOutcome {
+                    run_id,
+                    key: "click".to_owned(),
+                    reward: Some(1.0),
+                    accepted: Some(true),
+                    metadata: BTreeMap::new(),
+                })
+            })
+            .expect_err("outcome write should fail fast inside active write transaction");
+        assert!(matches!(error, Error::ConcurrentWrite(_)));
+        assert!(vault.retrieval_outcomes(run_id)?.is_empty());
+        Ok(())
+    }
+
+    #[test]
     fn context_pack_records_context_pack_telemetry() -> Result<()> {
         let (_dir, vault) = open_test_vault();
         let id = entity_id(0x34);
