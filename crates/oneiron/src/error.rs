@@ -38,6 +38,7 @@ pub enum ErrorKind {
     InvalidFacet,
     InvalidClaimBody,
     InvalidCodeArtifactBody,
+    InvalidCodebaseSnapshotBody,
     InvalidPredicate,
     ReservedPredicate,
     SourceNotTrustedForAuto,
@@ -276,6 +277,10 @@ pub enum Error {
     /// Nothing was written.
     #[error("invalid CODE artifact body: {0}")]
     InvalidCodeArtifactBody(&'static str),
+    /// A CODE_ARTIFACT codebase snapshot sidecar failed pinned structural
+    /// validation. Nothing was written.
+    #[error("invalid codebase snapshot body: {0}")]
+    InvalidCodebaseSnapshotBody(&'static str),
     /// Claim predicate violates the pinned D17 grammar (≥2 segments of
     /// `[a-z][a-z0-9_]*` joined by `.`, total ≤128 bytes).
     #[error("invalid claim predicate {predicate:?}: {reason}")]
@@ -645,6 +650,7 @@ impl Error {
             Self::InvalidFacet { .. } => ErrorKind::InvalidFacet,
             Self::InvalidClaimBody(_) => ErrorKind::InvalidClaimBody,
             Self::InvalidCodeArtifactBody(_) => ErrorKind::InvalidCodeArtifactBody,
+            Self::InvalidCodebaseSnapshotBody(_) => ErrorKind::InvalidCodebaseSnapshotBody,
             Self::InvalidPredicate { .. } => ErrorKind::InvalidPredicate,
             Self::ReservedPredicate { .. } => ErrorKind::ReservedPredicate,
             Self::SourceNotTrustedForAuto { .. } => ErrorKind::SourceNotTrustedForAuto,

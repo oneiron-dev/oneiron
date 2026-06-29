@@ -159,7 +159,10 @@ fn validate_code_artifact_body(body: &CodeArtifactBody) -> Result<()> {
         &body.repo_ref,
         CODE_ARTIFACT_REPO_REF_MAX_BYTES,
         "repo_ref must be non-empty and at most 1024 bytes",
-    )
+    )?;
+    crate::codebase::RepoRef::parse(&body.repo_ref)
+        .map_err(|_| Error::InvalidCodeArtifactBody("repo_ref must be a valid v1 repo_ref"))?;
+    Ok(())
 }
 
 fn validate_text_field(text: &str, max_bytes: usize, context: &'static str) -> Result<()> {
@@ -232,7 +235,7 @@ mod tests {
         CodeArtifactBody::new(
             "Summarize the diff before applying the patch.",
             [0xA5; CODE_ARTIFACT_SUMMARY_HASH_LEN],
-            "git:https://example.com/oneiron.git#9d561405a81ffbf29d1369cd848e0ef9fca4f277",
+            "github:oneiron-dev/oneiron#9d561405a81ffbf29d1369cd848e0ef9fca4f277",
         )
     }
 
@@ -303,6 +306,19 @@ mod tests {
                 .expect_err("missing replay key must fail closed");
             assert_eq!(err.kind(), ErrorKind::InvalidCodeArtifactBody);
         }
+    }
+
+    #[test]
+    fn code_artifact_repo_ref_must_follow_v1_grammar() {
+        let mut body = test_body();
+        body.repo_ref =
+            "git:https://example.com/oneiron.git#9d561405a81ffbf29d1369cd848e0ef9fca4f277"
+                .to_owned();
+
+        let err = encode_code_artifact_body(&body)
+            .expect_err("CODE artifact repo_ref must use the CODE-002 v1 grammar");
+
+        assert_eq!(err.kind(), ErrorKind::InvalidCodeArtifactBody);
     }
 
     #[test]

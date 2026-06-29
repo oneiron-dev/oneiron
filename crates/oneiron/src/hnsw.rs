@@ -1591,6 +1591,10 @@ fn read_count(store: &Store, txn: &RoTxn<'_>) -> Result<u64> {
     Ok(u64::from_le_bytes(bytes))
 }
 
+pub(crate) fn hnsw_entity_count(store: &Store, txn: &RoTxn<'_>) -> Result<usize> {
+    usize::try_from(read_count(store, txn)?).map_err(|_| Error::IndexOverflow("hnsw entity count"))
+}
+
 fn read_entry_point(store: &Store, txn: &RoTxn<'_>) -> Result<Option<EntityId>> {
     let Some(raw) = store.hnsw_meta.get(txn, ENTRY_POINT_KEY)? else {
         return Ok(None);

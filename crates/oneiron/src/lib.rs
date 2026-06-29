@@ -5,6 +5,7 @@ pub mod batch;
 pub(crate) mod bm25;
 pub mod claim;
 pub mod code_artifact;
+pub mod codebase;
 pub mod context_pack;
 pub mod deletion;
 pub(crate) mod distance;
@@ -42,6 +43,12 @@ pub use crate::code_artifact::{
     CODE_ARTIFACT_BODY_KEYS, CODE_ARTIFACT_REPO_REF_MAX_BYTES, CODE_ARTIFACT_SUMMARY_HASH_LEN,
     CODE_ARTIFACT_SUMMARY_PROMPT_MAX_BYTES, CodeArtifactBody, decode_code_artifact_body,
     encode_code_artifact_body,
+};
+pub use crate::codebase::{
+    CODEBASE_COMMIT_HASH_HEX_LEN, CODEBASE_CONTENT_HASH_LEN, CODEBASE_FILE_ENTRY_KEYS,
+    CODEBASE_FILE_PATH_MAX_BYTES, CODEBASE_PROJECT_ID_MAX_BYTES, CODEBASE_REPO_REF_MAX_BYTES,
+    CODEBASE_SNAPSHOT_BODY_KEYS, CODEBASE_SNAPSHOT_MAX_FILES, CodebaseFileEntry, CodebaseSnapshot,
+    RepoRef, decode_codebase_snapshot, encode_codebase_snapshot,
 };
 pub use crate::context_pack::ContextPackBuilder;
 pub use crate::deletion::{
