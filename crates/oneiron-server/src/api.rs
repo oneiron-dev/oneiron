@@ -175,7 +175,6 @@ pub(crate) fn api_routes(server: Arc<SyncServer>) -> Router {
         // device's lease binding (terminal)
         .route("/api/lease/revoke", post(lease_revoke))
         .route("/v1/core/turns/annotate", post(annotate_turn_vad))
-        .route("/v1/consumer/top-up", post(top_up_consumer))
         .route_layer(middleware::from_fn_with_state(
             idempotency,
             idempotency_middleware,
@@ -199,6 +198,7 @@ pub(crate) fn api_routes(server: Arc<SyncServer>) -> Router {
             "/v1/consumer/usage/details",
             get(get_consumer_usage_details),
         )
+        .route("/v1/consumer/top-up", post(top_up_consumer))
         .route("/v1/usage/events", post(record_usage_event))
         .route(
             "/v1/usage/tenants/{tenant_id}/rollup",
@@ -3723,6 +3723,39 @@ mod tests {
             usage["allowance"]["remainingCreditUnits"],
             Value::from(10.0)
         );
+    }
+
+    #[tokio::test]
+    async fn consumer_top_up_route_with_http_idempotency_header_reaches_ledger_replay() {
+        let (_dir, server) = test_server_with_usage_mode(crate::usage::UsageMode::OneironCloud);
+        let top_up = json!({
+            "tenantId": "tenant-a",
+            "idempotencyKey": "top-up-http-idem",
+            "creditUnits": 10.0,
+        });
+        let request = || {
+            Request::builder()
+                .method("POST")
+                .uri("/v1/consumer/top-up")
+                .header(CONTENT_TYPE, "application/json")
+                .header(
+                    crate::idempotency::IDEMPOTENCY_KEY_HEADER,
+                    "http-top-up-key",
+                )
+                .body(Body::from(top_up.to_string()))
+                .expect("request")
+        };
+
+        let (first_status, first) = route_json(server.clone(), request()).await;
+        let (second_status, second) = route_json(server, request()).await;
+
+        assert_eq!(first_status, StatusCode::OK);
+        assert_eq!(second_status, StatusCode::OK);
+        assert_eq!(first["recorded"], Value::from(true));
+        assert_eq!(first["replayed"], Value::from(false));
+        assert_eq!(second["recorded"], Value::from(false));
+        assert_eq!(second["replayed"], Value::from(true));
+        assert_eq!(first["topUp"], second["topUp"]);
     }
 
     #[tokio::test]
