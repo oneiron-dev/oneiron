@@ -686,7 +686,7 @@ impl UsageLedger {
                 let warning = self.allowance_warning_for_tenant(
                     &event.tenant_id,
                     tenant_rollup.counters.credit_units,
-                )?;
+                );
                 emit_usage_telemetry(
                     &event,
                     source,
@@ -882,7 +882,7 @@ impl UsageLedger {
             tenant_rollup
                 .as_ref()
                 .map_or(0.0, |rollup| rollup.counters.credit_units),
-        )?;
+        );
         emit_usage_telemetry(
             &entry.event,
             entry.source,
@@ -991,12 +991,20 @@ impl UsageLedger {
         &self,
         tenant_id: &str,
         used_credit_units: f64,
-    ) -> Result<ConsumerAllowanceWarning, UsageError> {
-        let allowance = self.consumer_allowance(tenant_id)?;
-        Ok(ConsumerAllowanceWarning::for_usage(
-            used_credit_units,
-            allowance.credit_units,
-        ))
+    ) -> ConsumerAllowanceWarning {
+        match self.consumer_allowance(tenant_id) {
+            Ok(allowance) => {
+                ConsumerAllowanceWarning::for_usage(used_credit_units, allowance.credit_units)
+            }
+            Err(error) => {
+                tracing::warn!(
+                    error = %error,
+                    tenant_id = %tenant_id,
+                    "usage telemetry allowance lookup failed"
+                );
+                ConsumerAllowanceWarning::none(None)
+            }
+        }
     }
 }
 
@@ -1577,6 +1585,23 @@ mod tests {
             .unwrap_or_else(|| panic!("usage token span {token_type}: {records:?}"))
     }
 
+    fn assert_neutral_warning_telemetry(event: &CapturedTelemetry) {
+        assert_eq!(event.fields["allowance_warning_level"], "none");
+        assert_eq!(event.fields["allowance_warning_triggered"], "false");
+        assert_eq!(
+            event.fields["allowance_warning_threshold_ratio"],
+            ALLOWANCE_NOTICE_THRESHOLD_RATIO.to_string()
+        );
+        assert_eq!(event.fields["allowance_warning_used_ratio"], "0.0");
+    }
+
+    fn corrupt_consumer_allowance(ledger: &UsageLedger, tenant_id: &str) {
+        ledger
+            .vault
+            .sync_state_put(&consumer_allowance_key(tenant_id), b"not-msgpack")
+            .expect("corrupt allowance row");
+    }
+
     #[test]
     fn cost_calculator_includes_token_cache_and_service_costs() {
         let cost = cloud_event("cost-key").cost_input().calculate().unwrap();
@@ -1659,6 +1684,63 @@ mod tests {
         });
 
         assert!(!capture.text_dump().contains(secret));
+    }
+
+    #[test]
+    fn record_event_uses_neutral_warning_when_allowance_lookup_fails_after_recording() {
+        let (_dir, ledger) = test_ledger();
+        corrupt_consumer_allowance(&ledger, "tenant-a");
+        let capture = TelemetryCapture::default();
+
+        let result = tracing::subscriber::with_default(capture.clone(), || {
+            ledger.record_event(
+                cloud_event("corrupt-allowance-record"),
+                UsageMode::OneironCloud,
+            )
+        })
+        .expect("usage event should record despite warning lookup failure");
+        let records = capture.records();
+        let event = captured_usage_event(&records);
+        let rollup = ledger
+            .tenant_rollup("tenant-a")
+            .expect("tenant rollup read after recorded usage")
+            .expect("tenant rollup persisted");
+
+        assert!(result.recorded);
+        assert!(!result.replayed);
+        assert_eq!(rollup.counters.event_count, 1);
+        assert_eq!(event.fields["recorded"], "true");
+        assert_eq!(event.fields["replayed"], "false");
+        assert_neutral_warning_telemetry(event);
+    }
+
+    #[test]
+    fn record_event_uses_neutral_warning_when_allowance_lookup_fails_after_replay() {
+        let (_dir, ledger) = test_ledger();
+        ledger
+            .record_event(
+                cloud_event("corrupt-allowance-replay"),
+                UsageMode::OneironCloud,
+            )
+            .expect("initial usage event should record");
+        corrupt_consumer_allowance(&ledger, "tenant-a");
+        let capture = TelemetryCapture::default();
+
+        let result = tracing::subscriber::with_default(capture.clone(), || {
+            ledger.record_event(
+                cloud_event("corrupt-allowance-replay"),
+                UsageMode::OneironCloud,
+            )
+        })
+        .expect("usage replay should succeed despite warning lookup failure");
+        let records = capture.records();
+        let event = captured_usage_event(&records);
+
+        assert!(!result.recorded);
+        assert!(result.replayed);
+        assert_eq!(event.fields["recorded"], "false");
+        assert_eq!(event.fields["replayed"], "true");
+        assert_neutral_warning_telemetry(event);
     }
 
     #[test]
