@@ -9,7 +9,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use axum::extract::rejection::QueryRejection;
+use axum::extract::rejection::{JsonRejection, QueryRejection};
 use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, StatusCode, header::CONTENT_TYPE};
 use axum::response::{IntoResponse, Json, Response};
@@ -512,6 +512,15 @@ fn query_rejection_error(rejection: QueryRejection) -> ApiError {
     } else {
         ApiError::bad_request("invalid query parameters", None)
     }
+}
+
+fn json_payload<T>(payload: Result<Json<T>, JsonRejection>) -> Result<T, ApiError> {
+    let Json(payload) = payload.map_err(json_rejection_error)?;
+    Ok(payload)
+}
+
+fn json_rejection_error(_rejection: JsonRejection) -> ApiError {
+    ApiError::bad_request("invalid JSON request body", None)
 }
 
 // ─── Discovery / capability metadata ─────────────────────────────────────────
@@ -1257,14 +1266,21 @@ async fn get_consumer_usage_details(
 async fn top_up_consumer(
     headers: HeaderMap,
     State(server): State<Arc<SyncServer>>,
-    Json(request): Json<ConsumerTopUpRequest>,
+    request: Result<Json<ConsumerTopUpRequest>, JsonRejection>,
 ) -> Result<Json<ConsumerTopUpState>, ApiError> {
     check_api_auth(&headers, &server.config)?;
+    let request = json_payload(request)?;
     let state = server
         .usage_ledger
         .top_up(request, server.config.usage_mode)
-        .inspect_err(|error| tracing::error!(error = %error, "consumer top-up failed"))
-        .map_err(usage_error)?;
+        .map_err(|error| {
+            if matches!(error, UsageError::IdempotencyConflict { .. }) {
+                tracing::warn!("consumer top-up idempotency conflict");
+            } else {
+                tracing::error!(error = %error, "consumer top-up failed");
+            }
+            usage_error(error)
+        })?;
     Ok(Json(state))
 }
 
@@ -3707,6 +3723,27 @@ mod tests {
             usage["allowance"]["remainingCreditUnits"],
             Value::from(10.0)
         );
+    }
+
+    #[tokio::test]
+    async fn consumer_top_up_route_maps_malformed_json_to_api_error() {
+        let (_dir, server) = test_server_with_usage_mode(crate::usage::UsageMode::OneironCloud);
+
+        let (status, body) = route_json(
+            server,
+            Request::builder()
+                .method("POST")
+                .uri("/v1/consumer/top-up")
+                .header(CONTENT_TYPE, "application/json")
+                .body(Body::from("{"))
+                .expect("request"),
+        )
+        .await;
+
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_eq!(body["code"], Value::from("BAD_REQUEST"));
+        assert_eq!(body["details"]["code"], Value::from("BAD_REQUEST"));
+        assert_eq!(body["message"], Value::from("invalid JSON request body"));
     }
 
     #[tokio::test]
