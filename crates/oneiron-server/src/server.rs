@@ -182,7 +182,7 @@ impl SyncServer {
 
         let reassert_manager = Arc::new(WindowManager::new(
             vault.clone(),
-            Arc::new(Materializer::new()),
+            Arc::new(Materializer::with_lease_vault_id(config.lease_vault_id)),
             SERVER_USER_ID,
         ));
         reassert_manager.attach_to_vault();
@@ -964,6 +964,25 @@ mod tests {
         );
         assert!(deep_map_has_map(&server.root_doc, "meta", "windows"));
         assert!(read_window_list(&server.root_doc).is_empty());
+    }
+
+    #[test]
+    fn window_materializer_uses_configured_lease_vault_id() {
+        let (_dir, vault) = test_vault();
+        let lease_vault_id = 0x0a0b_0c0d_0e0f_1011u64;
+        let server = SyncServer::new(
+            vault,
+            SyncServerConfig {
+                lease_vault_id,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+
+        assert_eq!(
+            server.reassert_manager.materializer().lease_vault_id(),
+            lease_vault_id
+        );
     }
 
     #[tokio::test]
