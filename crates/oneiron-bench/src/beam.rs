@@ -20,6 +20,7 @@ const BEAM_SCORER_VERSION: &str = "beam-fixed-scorer-v1";
 const BEAM_COMPARATOR_VERSION: &str = "beam-comparator-card-v1";
 const COST_USD_SCALE: f64 = 1_000_000.0;
 const MAX_NORMALIZABLE_COST_USD: f64 = f64::MAX / COST_USD_SCALE;
+const LOW_CONFIDENCE_RETRIEVAL_LIMIT: usize = 1;
 const BUILTIN_FIXTURE_JSON: &str = include_str!("../fixtures/beam_128k_smoke.fixture.json");
 const BUILTIN_MANIFEST_JSON: &str = include_str!("../fixtures/beam_128k_smoke.run.json");
 
@@ -114,7 +115,49 @@ pub(crate) struct FixtureCase {
     token_budget: usize,
     expected_min_results: usize,
     #[serde(default)]
+    fixture_class: FixtureClass,
+    #[serde(default)]
+    temporal_search: Option<FixtureTimeRange>,
+    #[serde(default)]
+    temporal_evidence_ids: Vec<String>,
+    #[serde(default)]
+    opposing_evidence: Option<OpposingEvidence>,
+    #[serde(default)]
     offline_amortized_cost: CostComponentInput,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct OpposingEvidence {
+    field: String,
+    record_ids: Vec<String>,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+enum FixtureClass {
+    #[default]
+    EvidenceSupported,
+    EmptyMemory,
+    LowConfidence,
+    AdversarialContradiction,
+    TemporalStaleness,
+}
+
+impl FixtureClass {
+    const fn expects_abstention(self) -> bool {
+        !matches!(self, Self::EvidenceSupported)
+    }
+
+    const fn gate_label(self) -> &'static str {
+        match self {
+            Self::EvidenceSupported => "score_publication",
+            Self::EmptyMemory => "empty_memory_abstention",
+            Self::LowConfidence => "low_confidence_abstention",
+            Self::AdversarialContradiction => "adversarial_contradiction_abstention",
+            Self::TemporalStaleness => "temporal_staleness_abstention",
+        }
+    }
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -323,6 +366,7 @@ struct CaseReport {
     limit: usize,
     token_budget: usize,
     expected_min_results: usize,
+    fixture_class: FixtureClass,
     offline_amortized_cost: CostComponentReport,
     arms: Vec<ArmReport>,
     competitors: Vec<CompetitorReport>,
@@ -365,6 +409,8 @@ struct ContextPackReport {
     neighbors: Vec<ContextEntityReport>,
     stats: PackStatsReport,
     empty: Option<EmptyContextReport>,
+    #[serde(skip)]
+    temporal_result_ids: BTreeSet<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -382,6 +428,8 @@ enum AbilityKind {
     RetrievalCoverage,
     BudgetDiscipline,
     Readiness,
+    AbstentionGate,
+    NoRegressionGate,
 }
 
 impl AbilityKind {
@@ -390,6 +438,8 @@ impl AbilityKind {
             Self::RetrievalCoverage => "retrieval_coverage",
             Self::BudgetDiscipline => "budget_discipline",
             Self::Readiness => "readiness",
+            Self::AbstentionGate => "abstention_gate",
+            Self::NoRegressionGate => "no_regression_gate",
         }
     }
 }
@@ -503,6 +553,8 @@ impl BeamScorer for FixedBeamScorer {
                 AbilityKind::RetrievalCoverage,
                 AbilityKind::BudgetDiscipline,
                 AbilityKind::Readiness,
+                AbilityKind::AbstentionGate,
+                AbilityKind::NoRegressionGate,
             ],
         }
     }
@@ -719,6 +771,7 @@ pub(crate) fn run_fixture_manifest(
             limit: case.limit,
             token_budget: case.token_budget,
             expected_min_results: case.expected_min_results,
+            fixture_class: case.fixture_class,
             offline_amortized_cost: cost_component_from_input(&case.offline_amortized_cost),
             arms,
             competitors,
@@ -744,20 +797,26 @@ fn validate_fixture(fixture: &BeamFixture) -> BeamResult<()> {
             actual: fixture.schema_version,
         });
     }
-    if fixture.records.is_empty() {
-        return Err(invalid_fixture(
-            fixture,
-            "fixture must contain at least one record",
-        ));
-    }
     if fixture.cases.is_empty() {
         return Err(invalid_fixture(
             fixture,
             "fixture must contain at least one case",
         ));
     }
+    if fixture.records.is_empty()
+        && !fixture
+            .cases
+            .iter()
+            .all(|case| case.fixture_class == FixtureClass::EmptyMemory)
+    {
+        return Err(invalid_fixture(
+            fixture,
+            "fixtures without records must use empty_memory abstention cases only",
+        ));
+    }
 
     let mut record_ids = BTreeSet::new();
+    let mut records_by_id = BTreeMap::new();
     for record in &fixture.records {
         EntityId::from_hex(&record.id).map_err(|source| BeamError::InvalidEntityId {
             id: record.id.clone(),
@@ -792,6 +851,7 @@ fn validate_fixture(fixture: &BeamFixture) -> BeamResult<()> {
                 "text fields must reference keys present in record.fields",
             ));
         }
+        records_by_id.insert(record.id.as_str(), record);
     }
 
     let mut case_ids = BTreeSet::new();
@@ -802,8 +862,14 @@ fn validate_fixture(fixture: &BeamFixture) -> BeamResult<()> {
         if case.query.trim().is_empty() {
             return Err(invalid_fixture(fixture, "case query must not be empty"));
         }
-        if case.limit == 0 {
+        if case.limit == 0 && case.fixture_class != FixtureClass::LowConfidence {
             return Err(invalid_fixture(fixture, "case limit must be positive"));
+        }
+        if case.fixture_class == FixtureClass::LowConfidence && case.limit != 0 {
+            return Err(invalid_fixture(
+                fixture,
+                "low_confidence cases must set limit to 0",
+            ));
         }
         if case.token_budget == 0 {
             return Err(invalid_fixture(
@@ -813,12 +879,185 @@ fn validate_fixture(fixture: &BeamFixture) -> BeamResult<()> {
         }
         validate_cost_component("case offlineAmortizedCost", &case.offline_amortized_cost)
             .map_err(|reason| invalid_fixture(fixture, reason))?;
+        if case.fixture_class.expects_abstention() && case.expected_min_results != 0 {
+            return Err(invalid_fixture(
+                fixture,
+                "abstention fixture cases must set expected_min_results to 0",
+            ));
+        }
+        if case.fixture_class == FixtureClass::EmptyMemory && !fixture.records.is_empty() {
+            return Err(invalid_fixture(
+                fixture,
+                "empty_memory cases must not include fixture records",
+            ));
+        }
+        if let Some(temporal_search) = &case.temporal_search
+            && temporal_search.start > temporal_search.end
+        {
+            return Err(invalid_fixture(
+                fixture,
+                "case temporalSearch.start must be <= temporalSearch.end",
+            ));
+        }
+        if case.fixture_class == FixtureClass::TemporalStaleness && case.temporal_search.is_none() {
+            return Err(invalid_fixture(
+                fixture,
+                "temporal_staleness cases must declare temporalSearch",
+            ));
+        }
+        if case.fixture_class == FixtureClass::TemporalStaleness {
+            if case.temporal_evidence_ids.is_empty() {
+                return Err(invalid_fixture(
+                    fixture,
+                    "temporal_staleness cases must declare temporalEvidenceIds",
+                ));
+            }
+            let temporal_search = case
+                .temporal_search
+                .as_ref()
+                .expect("temporal_staleness temporalSearch checked above");
+            validate_temporal_evidence_ids(
+                fixture,
+                &records_by_id,
+                temporal_search,
+                &case.temporal_evidence_ids,
+            )?;
+            if case.temporal_evidence_ids.len() > case.limit {
+                return Err(invalid_fixture(
+                    fixture,
+                    "temporalEvidenceIds count must be <= limit",
+                ));
+            }
+        } else {
+            if case.temporal_search.is_some() {
+                return Err(invalid_fixture(
+                    fixture,
+                    "temporalSearch is only valid for temporal_staleness cases",
+                ));
+            }
+            if !case.temporal_evidence_ids.is_empty() {
+                return Err(invalid_fixture(
+                    fixture,
+                    "temporalEvidenceIds are only valid for temporal_staleness cases",
+                ));
+            }
+        }
+        if case.fixture_class == FixtureClass::AdversarialContradiction {
+            let opposing_evidence = case.opposing_evidence.as_ref().ok_or_else(|| {
+                invalid_fixture(
+                    fixture,
+                    "adversarial_contradiction cases must declare opposingEvidence",
+                )
+            })?;
+            validate_opposing_evidence(fixture, &records_by_id, opposing_evidence)?;
+            if opposing_evidence.record_ids.len() > case.limit {
+                return Err(invalid_fixture(
+                    fixture,
+                    "opposingEvidence.recordIds count must be <= limit",
+                ));
+            }
+        } else if case.opposing_evidence.is_some() {
+            return Err(invalid_fixture(
+                fixture,
+                "opposingEvidence is only valid for adversarial_contradiction cases",
+            ));
+        }
         if case.expected_min_results > case.limit {
             return Err(invalid_fixture(
                 fixture,
                 "expected_min_results must be <= limit",
             ));
         }
+    }
+
+    Ok(())
+}
+
+fn validate_temporal_evidence_ids(
+    fixture: &BeamFixture,
+    records_by_id: &BTreeMap<&str, &FixtureRecord>,
+    temporal_search: &FixtureTimeRange,
+    temporal_evidence_ids: &[String],
+) -> BeamResult<()> {
+    let mut ids = BTreeSet::new();
+    for id in temporal_evidence_ids {
+        if !ids.insert(id.as_str()) {
+            return Err(invalid_fixture(
+                fixture,
+                "temporalEvidenceIds must be unique",
+            ));
+        }
+        let record = records_by_id.get(id.as_str()).ok_or_else(|| {
+            invalid_fixture(
+                fixture,
+                "temporalEvidenceIds must reference fixture records",
+            )
+        })?;
+        if record.occurred.end < temporal_search.start
+            || record.occurred.start > temporal_search.end
+        {
+            return Err(invalid_fixture(
+                fixture,
+                "temporalEvidenceIds must reference records inside temporalSearch",
+            ));
+        }
+    }
+
+    Ok(())
+}
+
+fn validate_opposing_evidence(
+    fixture: &BeamFixture,
+    records_by_id: &BTreeMap<&str, &FixtureRecord>,
+    opposing_evidence: &OpposingEvidence,
+) -> BeamResult<()> {
+    if opposing_evidence.field.trim().is_empty() {
+        return Err(invalid_fixture(
+            fixture,
+            "opposingEvidence.field must not be empty",
+        ));
+    }
+    if opposing_evidence.record_ids.len() < 2 {
+        return Err(invalid_fixture(
+            fixture,
+            "opposingEvidence must reference at least two records",
+        ));
+    }
+
+    let mut ids = BTreeSet::new();
+    let mut values = BTreeSet::new();
+    for id in &opposing_evidence.record_ids {
+        if !ids.insert(id.as_str()) {
+            return Err(invalid_fixture(
+                fixture,
+                "opposingEvidence.recordIds must be unique",
+            ));
+        }
+        let record = records_by_id.get(id.as_str()).ok_or_else(|| {
+            invalid_fixture(
+                fixture,
+                "opposingEvidence.recordIds must reference fixture records",
+            )
+        })?;
+        let field_value = record
+            .fields
+            .as_object()
+            .and_then(|fields| fields.get(opposing_evidence.field.as_str()))
+            .and_then(serde_json::Value::as_str)
+            .ok_or_else(|| {
+                invalid_fixture(
+                    fixture,
+                    "opposingEvidence.field must reference string values on all records",
+                )
+            })?;
+        values.insert(field_value);
+    }
+
+    if values.len() < 2 {
+        return Err(invalid_fixture(
+            fixture,
+            "opposingEvidence must reference records with distinct field values",
+        ));
     }
 
     Ok(())
@@ -1083,14 +1322,28 @@ fn configured_context_pack_builder<'a>(
     vault: &'a Vault,
     case: &FixtureCase,
 ) -> ContextPackBuilder<'a> {
-    vault
+    let text_search_limit = if case.fixture_class == FixtureClass::LowConfidence && case.limit == 0
+    {
+        LOW_CONFIDENCE_RETRIEVAL_LIMIT
+    } else {
+        case.limit
+    };
+    let builder = vault
         .context_pack()
-        .search_text(&case.query, case.limit)
+        .search_text(&case.query, text_search_limit)
         .field_profile(FieldProfile::Standard)
         .format(BEAM_CONTEXT_PACK_FORMAT)
         .merge_neighbors(false)
         .include_stats(true)
-        .token_budget(case.token_budget)
+        .token_budget(case.token_budget);
+
+    match (case.fixture_class, &case.temporal_search) {
+        (FixtureClass::TemporalStaleness, Some(range)) => builder
+            .search_temporal(range.start, range.end, case.limit)
+            .limit(case.limit),
+        (FixtureClass::LowConfidence, _) => builder.limit(case.limit),
+        _ => builder,
+    }
 }
 
 struct BudgetedContextPack {
@@ -1099,6 +1352,7 @@ struct BudgetedContextPack {
     serialized_tokens: u64,
     serialized_elapsed_us: u64,
     serialized_ids: SerializedContextPackIds,
+    temporal_result_ids: BTreeSet<String>,
 }
 
 #[derive(Default)]
@@ -1130,6 +1384,7 @@ fn run_deterministic_context_pack(
     let serialized_text = std::str::from_utf8(&serialized)?;
     let serialized_tokens = count_analyzer_tokens(serialized_text);
     let serialized_ids = serialized_context_pack_ids(serialized_text);
+    let temporal_result_ids = temporal_result_ids(vault, case)?;
 
     Ok(BudgetedContextPack {
         raw: pack,
@@ -1137,7 +1392,27 @@ fn run_deterministic_context_pack(
         serialized_tokens,
         serialized_elapsed_us,
         serialized_ids,
+        temporal_result_ids,
     })
+}
+
+fn temporal_result_ids(vault: &Vault, case: &FixtureCase) -> BeamResult<BTreeSet<String>> {
+    if case.fixture_class != FixtureClass::TemporalStaleness {
+        return Ok(BTreeSet::new());
+    }
+    let Some(range) = &case.temporal_search else {
+        return Ok(BTreeSet::new());
+    };
+    let results = vault
+        .query()
+        .search_temporal(range.start, range.end, case.limit)
+        .limit(case.limit)
+        .run()?;
+
+    Ok(results
+        .into_iter()
+        .map(|entity| entity.id.to_hex())
+        .collect())
 }
 
 fn context_pack_report(pack: &BudgetedContextPack, case: &FixtureCase) -> ContextPackReport {
@@ -1206,6 +1481,7 @@ fn context_pack_report(pack: &BudgetedContextPack, case: &FixtureCase) -> Contex
             total_in_scope: empty.total_in_scope,
             hint: empty.hint.clone(),
         }),
+        temporal_result_ids: pack.temporal_result_ids.clone(),
     }
 }
 
@@ -1352,6 +1628,10 @@ fn completed_ability_scores(
     case: &FixtureCase,
     context_pack: &ContextPackReport,
 ) -> Vec<AbilityScoreReport> {
+    if case.fixture_class.expects_abstention() {
+        return abstention_ability_scores(case, context_pack);
+    }
+
     let coverage = if case.expected_min_results == 0 {
         1.0
     } else {
@@ -1385,6 +1665,135 @@ fn completed_ability_scores(
             detail: "arm completed".to_owned(),
         },
     ]
+}
+
+fn abstention_ability_scores(
+    case: &FixtureCase,
+    context_pack: &ContextPackReport,
+) -> Vec<AbilityScoreReport> {
+    let (gate_passed, gate_detail) = abstention_gate_status(case, context_pack);
+
+    vec![
+        AbilityScoreReport {
+            ability: AbilityKind::AbstentionGate,
+            score: None,
+            passed: Some(gate_passed),
+            detail: format!("{}: {gate_detail}", case.fixture_class.gate_label()),
+        },
+        AbilityScoreReport {
+            ability: AbilityKind::NoRegressionGate,
+            score: None,
+            passed: Some(true),
+            detail: "numeric score suppressed before publication".to_owned(),
+        },
+        AbilityScoreReport {
+            ability: AbilityKind::Readiness,
+            score: None,
+            passed: Some(true),
+            detail: "arm completed and abstained by fixture safety gate".to_owned(),
+        },
+    ]
+}
+
+fn abstention_gate_status(case: &FixtureCase, context_pack: &ContextPackReport) -> (bool, String) {
+    match case.fixture_class {
+        FixtureClass::EvidenceSupported => (
+            false,
+            "evidence_supported cases must use scored BEAM abilities".to_owned(),
+        ),
+        FixtureClass::EmptyMemory => {
+            let Some(empty) = context_pack.empty.as_ref() else {
+                return (
+                    false,
+                    format!(
+                        "empty vault had {} serialized results but no empty report",
+                        context_pack.result_count
+                    ),
+                );
+            };
+            let passed = context_pack.result_count == 0
+                && empty.total_in_scope == 0
+                && empty.reason == "no_data";
+            (
+                passed,
+                format!(
+                    "empty vault had {} serialized results, {} in-scope records, and empty reason={}",
+                    context_pack.result_count, empty.total_in_scope, empty.reason
+                ),
+            )
+        }
+        FixtureClass::LowConfidence => {
+            let (empty_reason, total_in_scope) = context_pack
+                .empty
+                .as_ref()
+                .map(|empty| (empty.reason.as_str(), empty.total_in_scope))
+                .unwrap_or(("none", 0));
+            let passed = context_pack.result_count == 0
+                && empty_reason == "below_threshold"
+                && total_in_scope > 0;
+            (
+                passed,
+                format!(
+                    "low-confidence query produced {} serialized results with {total_in_scope} in-scope records and empty reason={empty_reason}",
+                    context_pack.result_count,
+                ),
+            )
+        }
+        FixtureClass::AdversarialContradiction => {
+            let surfaced = context_pack_result_ids(context_pack);
+            let required_ids = case
+                .opposing_evidence
+                .as_ref()
+                .map(|evidence| evidence.record_ids.as_slice())
+                .unwrap_or(&[]);
+            let matched = required_ids
+                .iter()
+                .filter(|id| surfaced.contains(id.as_str()))
+                .count();
+            let passed = !required_ids.is_empty() && matched == required_ids.len();
+            (
+                passed,
+                format!(
+                    "contradictory fixture evidence surfaced {matched}/{} required opposing records",
+                    required_ids.len()
+                ),
+            )
+        }
+        FixtureClass::TemporalStaleness => {
+            let surfaced = context_pack_result_ids(context_pack);
+            let used_temporal_signal = context_pack
+                .stats
+                .signals_used
+                .iter()
+                .any(|signal| signal == "temporal");
+            let matched = case
+                .temporal_evidence_ids
+                .iter()
+                .filter(|id| {
+                    surfaced.contains(id.as_str())
+                        && context_pack.temporal_result_ids.contains(id.as_str())
+                })
+                .count();
+            let passed = !case.temporal_evidence_ids.is_empty()
+                && used_temporal_signal
+                && matched == case.temporal_evidence_ids.len();
+            (
+                passed,
+                format!(
+                    "staleness fixture surfaced {matched}/{} required temporal records with temporal signal={used_temporal_signal}",
+                    case.temporal_evidence_ids.len()
+                ),
+            )
+        }
+    }
+}
+
+fn context_pack_result_ids(context_pack: &ContextPackReport) -> BTreeSet<&str> {
+    context_pack
+        .results
+        .iter()
+        .map(|entity| entity.id.as_str())
+        .collect()
 }
 
 fn budget_discipline_detail(case: &FixtureCase, context_pack: &ContextPackReport) -> String {
@@ -1933,6 +2342,10 @@ neighbors:
             limit: 1,
             token_budget: 8,
             expected_min_results: 1,
+            fixture_class: FixtureClass::EvidenceSupported,
+            temporal_search: None,
+            temporal_evidence_ids: Vec::new(),
+            opposing_evidence: None,
             offline_amortized_cost: CostComponentInput::default(),
         };
         let mut context_pack = ContextPackReport {
@@ -1955,6 +2368,7 @@ neighbors:
             neighbors: Vec::new(),
             stats: empty_pack_stats_report(),
             empty: None,
+            temporal_result_ids: BTreeSet::new(),
         };
 
         let scores = completed_ability_scores(&case, &context_pack);
@@ -2060,6 +2474,10 @@ neighbors:
             limit: 1,
             token_budget: 128,
             expected_min_results: 0,
+            fixture_class: FixtureClass::EvidenceSupported,
+            temporal_search: None,
+            temporal_evidence_ids: Vec::new(),
+            opposing_evidence: None,
             offline_amortized_cost: CostComponentInput::default(),
         };
         let pack = BudgetedContextPack {
@@ -2083,6 +2501,7 @@ neighbors:
             serialized_tokens: 7,
             serialized_elapsed_us: 13,
             serialized_ids: SerializedContextPackIds::default(),
+            temporal_result_ids: BTreeSet::new(),
         };
 
         let report = query_cost_report(&case, &pack);
@@ -2276,6 +2695,524 @@ neighbors:
     }
 
     #[test]
+    fn empty_memory_fixture_abstains_before_score_publication() {
+        let fixture = eval004_fixture(
+            "eval004-empty-memory",
+            "What did the empty vault remember about Project Borealis?",
+            FixtureClass::EmptyMemory,
+            Vec::new(),
+        );
+        let manifest = manifest_for_fixture_case(&fixture, "eval004-empty-memory");
+        let report = run_fixture_manifest(&manifest, &fixture).expect("empty fixture runs");
+        let report_json = serde_json::to_value(&report).expect("report serializes");
+        let deterministic = deterministic_competitor_json(&report_json);
+
+        assert_abstention_gate_passed(deterministic, "empty_memory_abstention");
+    }
+
+    #[test]
+    fn contradictory_evidence_fixture_abstains_without_regressing_to_score() {
+        let fixture = eval004_fixture(
+            "eval004-contradiction",
+            "What is the Atlas launch date?",
+            FixtureClass::AdversarialContradiction,
+            vec![
+                eval004_record_json(
+                    "30303030303030303030303030303030",
+                    10,
+                    "Atlas launch date is March 1.",
+                ),
+                eval004_record_json(
+                    "40404040404040404040404040404040",
+                    11,
+                    "Atlas launch date is April 1.",
+                ),
+            ],
+        );
+        let manifest = manifest_for_fixture_case(&fixture, "eval004-contradiction");
+        let report = run_fixture_manifest(&manifest, &fixture).expect("contradiction fixture runs");
+        let report_json = serde_json::to_value(&report).expect("report serializes");
+        let deterministic = deterministic_competitor_json(&report_json);
+
+        assert_abstention_gate_passed(deterministic, "adversarial_contradiction_abstention");
+    }
+
+    #[test]
+    fn temporal_staleness_fixture_abstains_without_regressing_to_score() {
+        let fixture = eval004_fixture(
+            "eval004-temporal-staleness",
+            "What is the current Nimbus pricing?",
+            FixtureClass::TemporalStaleness,
+            vec![eval004_record_json(
+                "50505050505050505050505050505050",
+                1,
+                "Old Nimbus pricing was 10 credits before the current plan changed.",
+            )],
+        );
+        let manifest = manifest_for_fixture_case(&fixture, "eval004-temporal-staleness");
+        let report = run_fixture_manifest(&manifest, &fixture).expect("staleness fixture runs");
+        let report_json = serde_json::to_value(&report).expect("report serializes");
+        let deterministic = deterministic_competitor_json(&report_json);
+
+        assert_abstention_gate_passed(deterministic, "temporal_staleness_abstention");
+    }
+
+    #[test]
+    fn low_confidence_fixture_abstains_via_below_threshold_context_pack() {
+        let fixture = eval004_fixture(
+            "eval004-low-confidence",
+            "What is the Atlas launch date?",
+            FixtureClass::LowConfidence,
+            vec![eval004_record_json(
+                "30303030303030303030303030303030",
+                10,
+                "Atlas launch date is March 1.",
+            )],
+        );
+        let manifest = manifest_for_fixture_case(&fixture, "eval004-low-confidence");
+        let report =
+            run_fixture_manifest(&manifest, &fixture).expect("low-confidence fixture runs");
+        let deterministic = find_arm(&report, ArmKind::Deterministic);
+        let ArmOutcome::Completed { context_pack } = &deterministic.outcome else {
+            panic!("deterministic arm should complete");
+        };
+        let empty = context_pack
+            .empty
+            .as_ref()
+            .expect("below-threshold empty report");
+
+        assert_eq!(context_pack.limit, 0);
+        assert_eq!(context_pack.result_count, 0);
+        assert_eq!(empty.reason, "below_threshold");
+        assert!(empty.total_in_scope > 0);
+
+        let report_json = serde_json::to_value(&report).expect("report serializes");
+        let deterministic = deterministic_competitor_json(&report_json);
+        assert_abstention_gate_passed(deterministic, "low_confidence_abstention");
+    }
+
+    #[test]
+    fn empty_memory_fixture_rejects_nonempty_vault() {
+        let mut fixture_json: serde_json::Value =
+            serde_json::from_str(BUILTIN_FIXTURE_JSON).expect("fixture JSON");
+        fixture_json["cases"][0]["expectedMinResults"] = serde_json::json!(0);
+        fixture_json["cases"][0]["fixtureClass"] = serde_json::json!("empty_memory");
+
+        let err = parse_fixture_json(&fixture_json.to_string())
+            .expect_err("empty_memory cases must not carry records");
+
+        assert!(
+            err.to_string()
+                .contains("empty_memory cases must not include fixture records")
+        );
+    }
+
+    #[test]
+    fn contradiction_fixture_requires_distinct_opposing_values() {
+        let mut fixture_json: serde_json::Value =
+            serde_json::from_str(BUILTIN_FIXTURE_JSON).expect("fixture JSON");
+        fixture_json["fixtureId"] = serde_json::json!("eval004-consistent-not-contradiction");
+        fixture_json["records"] = serde_json::json!([
+            eval004_record_json(
+                "30303030303030303030303030303030",
+                10,
+                "Atlas launch date is March 1.",
+            ),
+            eval004_record_json(
+                "40404040404040404040404040404040",
+                11,
+                "Atlas launch date is March 1.",
+            ),
+        ]);
+        fixture_json["cases"][0]["caseId"] =
+            serde_json::json!("eval004-consistent-not-contradiction");
+        fixture_json["cases"][0]["query"] = serde_json::json!("What is the Atlas launch date?");
+        fixture_json["cases"][0]["expectedMinResults"] = serde_json::json!(0);
+        fixture_json["cases"][0]["fixtureClass"] = serde_json::json!("adversarial_contradiction");
+        fixture_json["cases"][0]["opposingEvidence"] = serde_json::json!({
+            "field": "txt",
+            "recordIds": [
+                "30303030303030303030303030303030",
+                "40404040404040404040404040404040",
+            ],
+        });
+
+        let err = parse_fixture_json(&fixture_json.to_string())
+            .expect_err("consistent records must not validate as contradiction");
+
+        assert!(
+            err.to_string()
+                .contains("opposingEvidence must reference records with distinct field values")
+        );
+    }
+
+    #[test]
+    fn temporal_staleness_fixture_requires_evidence_inside_temporal_search() {
+        let mut fixture_json: serde_json::Value =
+            serde_json::from_str(BUILTIN_FIXTURE_JSON).expect("fixture JSON");
+        fixture_json["fixtureId"] = serde_json::json!("eval004-temporal-out-of-range");
+        fixture_json["records"] = serde_json::json!([eval004_record_json(
+            "50505050505050505050505050505050",
+            10,
+            "Old Nimbus pricing was 10 credits.",
+        )]);
+        fixture_json["cases"][0]["caseId"] = serde_json::json!("eval004-temporal-out-of-range");
+        fixture_json["cases"][0]["query"] = serde_json::json!("Nimbus pricing");
+        fixture_json["cases"][0]["expectedMinResults"] = serde_json::json!(0);
+        fixture_json["cases"][0]["fixtureClass"] = serde_json::json!("temporal_staleness");
+        fixture_json["cases"][0]["temporalSearch"] = serde_json::json!({
+            "start": 0,
+            "end": 1,
+        });
+        fixture_json["cases"][0]["temporalEvidenceIds"] =
+            serde_json::json!(["50505050505050505050505050505050"]);
+
+        let err = parse_fixture_json(&fixture_json.to_string())
+            .expect_err("temporal evidence must be inside the temporal search range");
+
+        assert!(
+            err.to_string()
+                .contains("temporalEvidenceIds must reference records inside temporalSearch")
+        );
+    }
+
+    #[test]
+    fn fixture_rejects_temporal_search_on_non_temporal_cases() {
+        let mut fixture_json: serde_json::Value =
+            serde_json::from_str(BUILTIN_FIXTURE_JSON).expect("fixture JSON");
+        fixture_json["cases"][0]["temporalSearch"] = serde_json::json!({
+            "start": 0,
+            "end": 1,
+        });
+
+        let err = parse_fixture_json(&fixture_json.to_string())
+            .expect_err("non-temporal cases must not carry temporalSearch");
+
+        assert!(
+            err.to_string()
+                .contains("temporalSearch is only valid for temporal_staleness cases")
+        );
+    }
+
+    #[test]
+    fn low_confidence_fixture_requires_zero_publication_limit() {
+        let mut fixture_json: serde_json::Value =
+            serde_json::from_str(BUILTIN_FIXTURE_JSON).expect("fixture JSON");
+        fixture_json["cases"][0]["expectedMinResults"] = serde_json::json!(0);
+        fixture_json["cases"][0]["fixtureClass"] = serde_json::json!("low_confidence");
+        fixture_json["cases"][0]["limit"] = serde_json::json!(1);
+
+        let err = parse_fixture_json(&fixture_json.to_string())
+            .expect_err("low-confidence fixtures must publish zero results");
+
+        assert!(
+            err.to_string()
+                .contains("low_confidence cases must set limit to 0")
+        );
+    }
+
+    #[test]
+    fn contradiction_fixture_rejects_more_required_evidence_than_limit() {
+        let mut fixture_json: serde_json::Value =
+            serde_json::from_str(BUILTIN_FIXTURE_JSON).expect("fixture JSON");
+        fixture_json["fixtureId"] = serde_json::json!("eval004-contradiction-over-limit");
+        fixture_json["records"] = serde_json::json!([
+            eval004_record_json(
+                "30303030303030303030303030303030",
+                10,
+                "Atlas launch date is March 1.",
+            ),
+            eval004_record_json(
+                "40404040404040404040404040404040",
+                11,
+                "Atlas launch date is April 1.",
+            ),
+        ]);
+        fixture_json["cases"][0]["caseId"] = serde_json::json!("eval004-contradiction-over-limit");
+        fixture_json["cases"][0]["query"] = serde_json::json!("What is the Atlas launch date?");
+        fixture_json["cases"][0]["limit"] = serde_json::json!(1);
+        fixture_json["cases"][0]["expectedMinResults"] = serde_json::json!(0);
+        fixture_json["cases"][0]["fixtureClass"] = serde_json::json!("adversarial_contradiction");
+        fixture_json["cases"][0]["opposingEvidence"] = serde_json::json!({
+            "field": "txt",
+            "recordIds": [
+                "30303030303030303030303030303030",
+                "40404040404040404040404040404040",
+            ],
+        });
+
+        let err = parse_fixture_json(&fixture_json.to_string())
+            .expect_err("required opposing evidence must fit within limit");
+
+        assert!(
+            err.to_string()
+                .contains("opposingEvidence.recordIds count must be <= limit")
+        );
+    }
+
+    #[test]
+    fn temporal_fixture_rejects_more_required_evidence_than_limit() {
+        let mut fixture_json: serde_json::Value =
+            serde_json::from_str(BUILTIN_FIXTURE_JSON).expect("fixture JSON");
+        fixture_json["fixtureId"] = serde_json::json!("eval004-temporal-over-limit");
+        fixture_json["records"] = serde_json::json!([
+            eval004_record_json(
+                "50505050505050505050505050505050",
+                1,
+                "Old Nimbus pricing was 10 credits.",
+            ),
+            eval004_record_json(
+                "60606060606060606060606060606060",
+                1,
+                "Old Nimbus pricing was 12 credits.",
+            ),
+        ]);
+        fixture_json["cases"][0]["caseId"] = serde_json::json!("eval004-temporal-over-limit");
+        fixture_json["cases"][0]["query"] = serde_json::json!("Nimbus pricing");
+        fixture_json["cases"][0]["limit"] = serde_json::json!(1);
+        fixture_json["cases"][0]["expectedMinResults"] = serde_json::json!(0);
+        fixture_json["cases"][0]["fixtureClass"] = serde_json::json!("temporal_staleness");
+        fixture_json["cases"][0]["temporalSearch"] = serde_json::json!({
+            "start": 0,
+            "end": 1,
+        });
+        fixture_json["cases"][0]["temporalEvidenceIds"] = serde_json::json!([
+            "50505050505050505050505050505050",
+            "60606060606060606060606060606060",
+        ]);
+
+        let err = parse_fixture_json(&fixture_json.to_string())
+            .expect_err("required temporal evidence must fit within limit");
+
+        assert!(
+            err.to_string()
+                .contains("temporalEvidenceIds count must be <= limit")
+        );
+    }
+
+    #[test]
+    fn empty_memory_gate_requires_explicit_no_data_empty_report() {
+        let mut context_pack = minimal_context_pack_report(0, &[], None);
+        let case = gate_case(FixtureClass::EmptyMemory);
+
+        let (passed, detail) = abstention_gate_status(&case, &context_pack);
+        assert!(!passed);
+        assert!(detail.contains("no empty report"));
+
+        context_pack.empty = Some(EmptyContextReport {
+            reason: "filter_matched_none".to_owned(),
+            total_in_scope: 0,
+            hint: "query matched no records".to_owned(),
+        });
+        let (passed, detail) = abstention_gate_status(&case, &context_pack);
+        assert!(!passed);
+        assert!(detail.contains("filter_matched_none"));
+
+        context_pack.empty = Some(EmptyContextReport {
+            reason: "no_data".to_owned(),
+            total_in_scope: 1,
+            hint: "records were in scope".to_owned(),
+        });
+        let (passed, _detail) = abstention_gate_status(&case, &context_pack);
+        assert!(!passed);
+
+        context_pack.empty = Some(EmptyContextReport {
+            reason: "no_data".to_owned(),
+            total_in_scope: 0,
+            hint: "empty vault".to_owned(),
+        });
+        let (passed, _detail) = abstention_gate_status(&case, &context_pack);
+        assert!(passed);
+    }
+
+    #[test]
+    fn low_confidence_gate_requires_below_threshold_empty_reason() {
+        let case = gate_case(FixtureClass::LowConfidence);
+        let mut context_pack = minimal_context_pack_report(
+            0,
+            &[],
+            Some(EmptyContextReport {
+                reason: "no_data".to_owned(),
+                total_in_scope: 0,
+                hint: "no records".to_owned(),
+            }),
+        );
+
+        let (passed, detail) = abstention_gate_status(&case, &context_pack);
+        assert!(!passed);
+        assert!(detail.contains("empty reason=no_data"));
+
+        context_pack.empty = Some(EmptyContextReport {
+            reason: "below_threshold".to_owned(),
+            total_in_scope: 0,
+            hint: "out-of-scope fixture".to_owned(),
+        });
+        let (passed, detail) = abstention_gate_status(&case, &context_pack);
+        assert!(!passed);
+        assert!(detail.contains("0 in-scope records"));
+
+        context_pack.empty = Some(EmptyContextReport {
+            reason: "below_threshold".to_owned(),
+            total_in_scope: 1,
+            hint: "below confidence threshold".to_owned(),
+        });
+        let (passed, detail) = abstention_gate_status(&case, &context_pack);
+        assert!(passed);
+        assert!(detail.contains("1 in-scope records"));
+        assert!(detail.contains("empty reason=below_threshold"));
+    }
+
+    #[test]
+    fn contradiction_gate_requires_declared_opposing_result_ids() {
+        let case = gate_case(FixtureClass::AdversarialContradiction);
+        let context_pack = minimal_context_pack_report_with_result_ids(
+            &["30303030303030303030303030303030"],
+            &[],
+            None,
+        );
+
+        let (passed, detail) = abstention_gate_status(&case, &context_pack);
+        assert!(!passed);
+        assert!(detail.contains("1/2 required opposing records"));
+
+        let context_pack = minimal_context_pack_report_with_result_ids(
+            &[
+                "30303030303030303030303030303030",
+                "40404040404040404040404040404040",
+            ],
+            &[],
+            None,
+        );
+        let (passed, detail) = abstention_gate_status(&case, &context_pack);
+        assert!(passed);
+        assert!(detail.contains("2/2 required opposing records"));
+    }
+
+    #[test]
+    fn temporal_staleness_gate_requires_declared_temporal_result_ids() {
+        let case = gate_case(FixtureClass::TemporalStaleness);
+        let context_pack = minimal_context_pack_report_with_result_ids(
+            &["60606060606060606060606060606060"],
+            &["temporal"],
+            None,
+        );
+
+        let (passed, detail) = abstention_gate_status(&case, &context_pack);
+        assert!(!passed);
+        assert!(detail.contains("0/1 required temporal records"));
+
+        let context_pack = minimal_context_pack_report_with_result_ids(
+            &["50505050505050505050505050505050"],
+            &[],
+            None,
+        );
+        let context_pack = minimal_context_pack_report_with_temporal_result_ids(
+            context_pack,
+            &["50505050505050505050505050505050"],
+        );
+        let (passed, detail) = abstention_gate_status(&case, &context_pack);
+        assert!(!passed);
+        assert!(detail.contains("temporal signal=false"));
+
+        let context_pack = minimal_context_pack_report_with_result_ids(
+            &["50505050505050505050505050505050"],
+            &["temporal"],
+            None,
+        );
+        let context_pack = minimal_context_pack_report_with_temporal_result_ids(
+            context_pack,
+            &["50505050505050505050505050505050"],
+        );
+        let (passed, detail) = abstention_gate_status(&case, &context_pack);
+        assert!(passed);
+        assert!(detail.contains("1/1 required temporal records"));
+        assert!(detail.contains("temporal signal=true"));
+    }
+
+    #[test]
+    fn temporal_staleness_gate_rejects_text_only_expected_result() {
+        let case = gate_case(FixtureClass::TemporalStaleness);
+        let context_pack = minimal_context_pack_report_with_result_ids(
+            &["50505050505050505050505050505050"],
+            &["temporal"],
+            None,
+        );
+        let (passed, detail) = abstention_gate_status(&case, &context_pack);
+        assert!(!passed);
+        assert!(detail.contains("0/1 required temporal records"));
+    }
+
+    #[test]
+    fn low_confidence_gate_suppresses_score_publication() {
+        let case = FixtureCase {
+            case_id: "eval004-low-confidence".to_owned(),
+            query: "unsupported low confidence query".to_owned(),
+            limit: 0,
+            token_budget: 128,
+            expected_min_results: 0,
+            fixture_class: FixtureClass::LowConfidence,
+            temporal_search: None,
+            temporal_evidence_ids: Vec::new(),
+            opposing_evidence: None,
+            offline_amortized_cost: CostComponentInput::default(),
+        };
+        let context_pack = ContextPackReport {
+            token_budget: case.token_budget,
+            limit: case.limit,
+            serialized_format: "yaml".to_owned(),
+            serialized_bytes: 0,
+            serialized_tokens: 0,
+            query_cost: CostComponentReport {
+                token_source: TokenAccountingSource::TokenizerCount,
+                input_tokens: 4,
+                output_tokens: 0,
+                target_tokens: case.token_budget as u64,
+                elapsed_us: 1,
+                cost_usd: 0.0,
+            },
+            result_count: 0,
+            neighbor_count: 0,
+            results: Vec::new(),
+            neighbors: Vec::new(),
+            stats: empty_pack_stats_report(),
+            empty: Some(EmptyContextReport {
+                reason: "below_threshold".to_owned(),
+                total_in_scope: 1,
+                hint: "fixture confidence was below publication threshold".to_owned(),
+            }),
+            temporal_result_ids: BTreeSet::new(),
+        };
+
+        let score = FixedBeamScorer.score(
+            &case,
+            &eval004_deterministic_competitor(),
+            &ArmReport {
+                arm: ArmKind::Deterministic,
+                outcome: ArmOutcome::Completed {
+                    context_pack: Box::new(context_pack),
+                },
+            },
+        );
+
+        assert!(score.overall_score.is_none());
+        assert!(
+            score
+                .abilities
+                .iter()
+                .all(|ability| ability.score.is_none())
+        );
+        assert_eq!(
+            score
+                .abilities
+                .iter()
+                .find(|ability| ability.ability == AbilityKind::AbstentionGate)
+                .expect("abstention gate ability")
+                .passed,
+            Some(true)
+        );
+    }
+
+    #[test]
     fn built_in_128k_guard_checks_manifest_selected_cases() {
         let mut fixture = parse_fixture_json(BUILTIN_FIXTURE_JSON).expect("fixture parses");
         let mut manifest = parse_manifest_json(BUILTIN_MANIFEST_JSON).expect("manifest parses");
@@ -2285,6 +3222,10 @@ neighbors:
             limit: 5,
             token_budget: 4096,
             expected_min_results: 1,
+            fixture_class: FixtureClass::EvidenceSupported,
+            temporal_search: None,
+            temporal_evidence_ids: Vec::new(),
+            opposing_evidence: None,
             offline_amortized_cost: CostComponentInput::default(),
         });
         manifest.case_ids = vec!["beam_small_budget_smoke".to_owned()];
@@ -2325,11 +3266,241 @@ neighbors:
             .expect("arm report exists")
     }
 
+    fn eval004_fixture(
+        case_id: &str,
+        query: &str,
+        fixture_class: FixtureClass,
+        records: Vec<serde_json::Value>,
+    ) -> BeamFixture {
+        let mut fixture_json: serde_json::Value =
+            serde_json::from_str(BUILTIN_FIXTURE_JSON).expect("fixture JSON");
+        fixture_json["fixtureId"] = serde_json::json!(case_id);
+        fixture_json["description"] = serde_json::json!("EVAL-004 abstention gate fixture.");
+        fixture_json["records"] = serde_json::Value::Array(records);
+        fixture_json["cases"][0]["caseId"] = serde_json::json!(case_id);
+        fixture_json["cases"][0]["query"] = serde_json::json!(query);
+        fixture_json["cases"][0]["limit"] =
+            serde_json::json!(if fixture_class == FixtureClass::LowConfidence {
+                0
+            } else {
+                5
+            });
+        fixture_json["cases"][0]["tokenBudget"] = serde_json::json!(4096);
+        fixture_json["cases"][0]["expectedMinResults"] = serde_json::json!(0);
+        fixture_json["cases"][0]["fixtureClass"] =
+            serde_json::to_value(fixture_class).expect("fixture class serializes");
+        let record_ids: Vec<String> = fixture_json["records"]
+            .as_array()
+            .expect("records array")
+            .iter()
+            .map(|record| record["id"].as_str().expect("record id").to_owned())
+            .collect();
+        if fixture_class == FixtureClass::TemporalStaleness {
+            fixture_json["cases"][0]["temporalSearch"] = serde_json::json!({
+                "start": 0,
+                "end": 1
+            });
+            fixture_json["cases"][0]["temporalEvidenceIds"] = serde_json::json!(record_ids);
+        } else {
+            fixture_json["cases"][0]
+                .as_object_mut()
+                .expect("case object")
+                .remove("temporalSearch");
+            fixture_json["cases"][0]
+                .as_object_mut()
+                .expect("case object")
+                .remove("temporalEvidenceIds");
+        }
+        if fixture_class == FixtureClass::AdversarialContradiction {
+            fixture_json["cases"][0]["opposingEvidence"] = serde_json::json!({
+                "field": "txt",
+                "recordIds": record_ids,
+            });
+        } else {
+            fixture_json["cases"][0]
+                .as_object_mut()
+                .expect("case object")
+                .remove("opposingEvidence");
+        }
+
+        parse_fixture_json(&fixture_json.to_string()).expect("EVAL-004 fixture parses")
+    }
+
+    fn eval004_record_json(id: &str, timestamp: u64, text: &str) -> serde_json::Value {
+        serde_json::json!({
+            "id": id,
+            "entityType": 8,
+            "occurred": {
+                "start": timestamp,
+                "end": timestamp
+            },
+            "learnedAt": timestamp,
+            "fields": {
+                "txt": text,
+                "lvl": "eval004",
+                "at": format!("eval004-t{timestamp}")
+            },
+            "text": [
+                {
+                    "field": "txt",
+                    "value": text
+                }
+            ]
+        })
+    }
+
+    fn manifest_for_fixture_case(fixture: &BeamFixture, case_id: &str) -> RunManifest {
+        let mut manifest_json: serde_json::Value =
+            serde_json::from_str(BUILTIN_MANIFEST_JSON).expect("manifest JSON");
+        manifest_json["runId"] = serde_json::json!(case_id);
+        manifest_json["dataset"]["fixtureId"] = serde_json::json!(fixture.fixture_id.as_str());
+        manifest_json["caseIds"] = serde_json::json!([case_id]);
+
+        parse_manifest_json(&manifest_json.to_string()).expect("EVAL-004 manifest parses")
+    }
+
+    fn eval004_deterministic_competitor() -> CompetitorConfig {
+        let manifest = parse_manifest_json(BUILTIN_MANIFEST_JSON).expect("manifest parses");
+        manifest
+            .competitors
+            .into_iter()
+            .find(|competitor| competitor.arm == ArmKind::Deterministic)
+            .expect("deterministic competitor")
+    }
+
+    fn deterministic_competitor_json(report_json: &serde_json::Value) -> &serde_json::Value {
+        report_json["cases"][0]["competitors"]
+            .as_array()
+            .expect("competitors array")
+            .iter()
+            .find(|competitor| competitor["competitorId"] == "deterministic-context-pack")
+            .expect("deterministic competitor")
+    }
+
+    fn assert_abstention_gate_passed(competitor: &serde_json::Value, expected_gate: &str) {
+        assert!(competitor["scoring"]["overallScore"].is_null());
+        let abilities = competitor["scoring"]["abilities"]
+            .as_array()
+            .expect("abilities array");
+        assert!(abilities.iter().all(|ability| ability["score"].is_null()));
+        assert!(abilities.iter().any(|ability| {
+            ability["ability"] == "abstention_gate"
+                && ability["passed"] == true
+                && ability["detail"]
+                    .as_str()
+                    .expect("detail string")
+                    .contains(expected_gate)
+        }));
+        assert!(abilities.iter().any(|ability| {
+            ability["ability"] == "no_regression_gate" && ability["passed"] == true
+        }));
+    }
+
+    fn gate_case(fixture_class: FixtureClass) -> FixtureCase {
+        FixtureCase {
+            case_id: format!("eval004-{}", fixture_class.gate_label()),
+            query: "fixture gate query".to_owned(),
+            limit: if fixture_class == FixtureClass::LowConfidence {
+                0
+            } else {
+                5
+            },
+            token_budget: 128,
+            expected_min_results: 0,
+            fixture_class,
+            temporal_search: (fixture_class == FixtureClass::TemporalStaleness)
+                .then_some(FixtureTimeRange { start: 0, end: 1 }),
+            temporal_evidence_ids: if fixture_class == FixtureClass::TemporalStaleness {
+                vec!["50505050505050505050505050505050".to_owned()]
+            } else {
+                Vec::new()
+            },
+            opposing_evidence: (fixture_class == FixtureClass::AdversarialContradiction).then(
+                || OpposingEvidence {
+                    field: "txt".to_owned(),
+                    record_ids: vec![
+                        "30303030303030303030303030303030".to_owned(),
+                        "40404040404040404040404040404040".to_owned(),
+                    ],
+                },
+            ),
+            offline_amortized_cost: CostComponentInput::default(),
+        }
+    }
+
     fn budget_score(scores: &[AbilityScoreReport]) -> &AbilityScoreReport {
         scores
             .iter()
             .find(|score| score.ability == AbilityKind::BudgetDiscipline)
             .expect("budget discipline score exists")
+    }
+
+    fn minimal_context_pack_report(
+        result_count: usize,
+        signals_used: &[&str],
+        empty: Option<EmptyContextReport>,
+    ) -> ContextPackReport {
+        assert_eq!(
+            result_count, 0,
+            "use minimal_context_pack_report_with_result_ids for non-empty reports"
+        );
+        minimal_context_pack_report_with_result_ids(&[], signals_used, empty)
+    }
+
+    fn minimal_context_pack_report_with_result_ids(
+        result_ids: &[&str],
+        signals_used: &[&str],
+        empty: Option<EmptyContextReport>,
+    ) -> ContextPackReport {
+        let mut stats = empty_pack_stats_report();
+        stats.signals_used = signals_used
+            .iter()
+            .map(|signal| (*signal).to_owned())
+            .collect();
+        let results: Vec<ContextEntityReport> = result_ids
+            .iter()
+            .enumerate()
+            .map(|(idx, id)| ContextEntityReport {
+                id: (*id).to_owned(),
+                short_id: format!("g{idx}"),
+                entity_type: 8,
+                score: 1.0,
+            })
+            .collect();
+
+        ContextPackReport {
+            token_budget: 128,
+            limit: result_ids.len().max(1),
+            serialized_format: "yaml".to_owned(),
+            serialized_bytes: 0,
+            serialized_tokens: 0,
+            query_cost: CostComponentReport {
+                token_source: TokenAccountingSource::TokenizerCount,
+                input_tokens: 0,
+                output_tokens: 0,
+                target_tokens: 128,
+                elapsed_us: 0,
+                cost_usd: 0.0,
+            },
+            result_count: results.len(),
+            neighbor_count: 0,
+            results,
+            neighbors: Vec::new(),
+            stats,
+            empty,
+            temporal_result_ids: BTreeSet::new(),
+        }
+    }
+
+    fn minimal_context_pack_report_with_temporal_result_ids(
+        mut context_pack: ContextPackReport,
+        temporal_result_ids: &[&str],
+    ) -> ContextPackReport {
+        context_pack.temporal_result_ids = temporal_result_ids
+            .iter()
+            .map(|id| (*id).to_owned())
+            .collect();
+        context_pack
     }
 
     fn empty_pack_stats_report() -> PackStatsReport {
