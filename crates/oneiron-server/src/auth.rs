@@ -139,14 +139,23 @@ fn bearer_token(headers: &HeaderMap) -> Result<Option<&str>, ApiError> {
     let Some(value) = headers.get(AUTHORIZATION) else {
         return Ok(None);
     };
-    let value = value.to_str().map_err(|_| ApiError::unauthorized())?;
+    let Ok(value) = value.to_str() else {
+        return Ok(None);
+    };
+    let value = value.trim_start();
     let Some((scheme, token)) = value.split_once(char::is_whitespace) else {
+        if value.eq_ignore_ascii_case("bearer") {
+            return Err(ApiError::unauthorized());
+        }
+        return Ok(None);
+    };
+    if !scheme.eq_ignore_ascii_case("bearer") {
+        return Ok(None);
+    }
+    let token = token.trim();
+    if token.is_empty() {
         return Err(ApiError::unauthorized());
     };
-    let token = token.trim();
-    if !scheme.eq_ignore_ascii_case("bearer") || token.is_empty() {
-        return Err(ApiError::unauthorized());
-    }
     Ok(Some(token))
 }
 
@@ -236,6 +245,34 @@ mod tests {
 
         assert_eq!(auth.principal(), "legacy-shared-secret");
         assert!(auth.require(CoreScope::Write).is_ok());
+    }
+
+    #[test]
+    fn dev_mode_ignores_unrelated_authorization_header() {
+        let config = SyncServerConfig {
+            auth_secret: None,
+            allow_unauthenticated: true,
+            ..Default::default()
+        };
+        let mut headers = HeaderMap::new();
+        headers.insert(AUTHORIZATION, "Basic unrelated".parse().unwrap());
+        let auth = CoreAuth::from_headers(&headers, &config).unwrap();
+
+        assert!(auth.require(CoreScope::Read).is_ok());
+        assert!(auth.require(CoreScope::Write).is_ok());
+    }
+
+    #[test]
+    fn non_bearer_authorization_does_not_bypass_configured_secret() {
+        let mut headers = HeaderMap::new();
+        headers.insert(AUTHORIZATION, "Basic unrelated".parse().unwrap());
+
+        assert_eq!(
+            CoreAuth::from_headers(&headers, &config())
+                .unwrap_err()
+                .code(),
+            crate::error::ErrorCode::Unauthorized
+        );
     }
 
     #[test]
