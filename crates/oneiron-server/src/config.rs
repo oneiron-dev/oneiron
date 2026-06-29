@@ -452,7 +452,11 @@ impl ServeConfig {
             max_entity_blob: self.max_entity_blob,
             max_bulk_decompressed: self.max_bulk_decompressed,
             runtime: self.runtime.clone(),
-            usage_mode: self.runtime.mode.usage_mode(),
+            usage_mode: if self.runtime == RuntimeConfig::default() {
+                self.usage_mode
+            } else {
+                self.runtime.mode.usage_mode()
+            },
         }
     }
 
@@ -1029,6 +1033,19 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(runtime_configured.runtime_usage_mode(), UsageMode::Byo);
+    }
+
+    #[test]
+    fn serve_config_sync_server_config_preserves_legacy_usage_when_runtime_is_default() {
+        let sync = ServeConfig {
+            usage_mode: UsageMode::OneironCloud,
+            runtime: RuntimeConfig::default(),
+            ..Default::default()
+        }
+        .sync_server_config();
+
+        assert_eq!(sync.usage_mode, UsageMode::OneironCloud);
+        assert_eq!(sync.runtime_usage_mode(), UsageMode::OneironCloud);
     }
 
     #[test]
