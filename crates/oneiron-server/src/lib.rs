@@ -21,6 +21,7 @@ pub mod projection;
 mod protocol;
 pub mod server;
 mod skills_pack;
+pub mod usage;
 
 use std::sync::Arc;
 
