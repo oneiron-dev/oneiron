@@ -15,6 +15,7 @@ use tokio::sync::{Mutex, RwLock, broadcast};
 
 use crate::config::SyncServerConfig;
 use crate::protocol::AwarenessState;
+use crate::usage::UsageLedger;
 
 /// User id passed to the shared window loader. The server vault is
 /// single-tenant (one vault per user per ARCH-0023b Fig. 1) and the loader
@@ -55,6 +56,8 @@ pub struct SyncServer {
     lifecycle_in_flight: Mutex<HashSet<LifecycleJobKey>>,
     /// Server configuration.
     pub(crate) config: SyncServerConfig,
+    /// Tenant usage ledger over the server vault.
+    pub(crate) usage_ledger: UsageLedger,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -177,6 +180,7 @@ impl SyncServer {
         reassert_manager.attach_to_vault();
 
         Ok(Self {
+            usage_ledger: UsageLedger::new(vault.clone()),
             vault,
             root_doc,
             awareness: RwLock::new(HashMap::new()),

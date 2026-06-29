@@ -133,6 +133,24 @@ Fetch Tier-1 first. It contains one endpoint block per live route literal and no
   - "get pending notifications"
 - safety: Read-only aggregation with a POST body; requires the configured `x-oneiron-secret` header unless the server is explicitly in unauthenticated development mode.
 
+#### usage-event - `POST /v1/usage/events`
+
+- when-to-use: Submit tenant usage telemetry for cost and credit-unit calculation. Local and BYO sources return a no-debit response; Oneiron Cloud mode records each idempotency key once.
+- trigger phrases:
+  - "record usage telemetry"
+  - "calculate credit units"
+  - "submit tenant usage event"
+- safety: Mutating only in Oneiron Cloud debit mode. Requires auth. Include an event idempotency key when retrying after transport failure.
+
+#### usage-rollup - `GET /v1/usage/tenants/{tenant_id}/rollup`
+
+- when-to-use: Read tenant-wide usage totals, or pass a vault id query parameter to read one tenant/vault rollup with agent, model, and service breakdowns.
+- trigger phrases:
+  - "show tenant usage"
+  - "read vault usage rollup"
+  - "break down usage by model"
+- safety: Read-only; requires the configured `x-oneiron-secret` header unless the server is explicitly in unauthenticated development mode.
+
 #### lease-revoke - `POST /api/lease/revoke`
 
 - when-to-use: Owner recovery path for revoking a lost or stolen device's lease binding by 16-character lowercase hex client id.

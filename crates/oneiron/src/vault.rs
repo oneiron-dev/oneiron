@@ -3260,9 +3260,21 @@ impl Vault {
     where
         F: FnOnce(&mut heed::RwTxn<'_>) -> Result<T>,
     {
-        let mut wtxn = self.store.env.write_txn()?;
+        self.try_with_write_txn(f)
+    }
+
+    /// Executes a closure within a single LMDB write transaction and allows
+    /// callers to return their own error type.
+    ///
+    /// The transaction commits on `Ok` return and rolls back on `Err`.
+    pub fn try_with_write_txn<F, T, E>(&self, f: F) -> std::result::Result<T, E>
+    where
+        F: FnOnce(&mut heed::RwTxn<'_>) -> std::result::Result<T, E>,
+        E: From<Error>,
+    {
+        let mut wtxn = self.store.env.write_txn().map_err(Error::from)?;
         let result = f(&mut wtxn)?;
-        wtxn.commit()?;
+        wtxn.commit().map_err(Error::from)?;
         Ok(result)
     }
 
@@ -3288,6 +3300,21 @@ impl Vault {
             .map(|bytes| bytes.to_vec()))
     }
 
+    /// Reads a value from `sync_state` using an existing write transaction.
+    #[doc(hidden)]
+    #[cfg(feature = "sync")]
+    pub fn sync_state_get_in_write_txn(
+        &self,
+        wtxn: &heed::RwTxn<'_>,
+        key: &str,
+    ) -> Result<Option<Vec<u8>>> {
+        Ok(self
+            .store
+            .sync_state
+            .get(wtxn, key)?
+            .map(|bytes| bytes.to_vec()))
+    }
+
     /// Writes a value to the sync_state database for sync integration tests
     /// and diagnostics.
     ///
@@ -3300,6 +3327,19 @@ impl Vault {
             self.store.sync_state.put(wtxn, key, value)?;
             Ok(())
         })
+    }
+
+    /// Writes a value to `sync_state` using an existing write transaction.
+    #[doc(hidden)]
+    #[cfg(feature = "sync")]
+    pub fn sync_state_put_in_write_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        key: &str,
+        value: &[u8],
+    ) -> Result<()> {
+        self.store.sync_state.put(wtxn, key, value)?;
+        Ok(())
     }
 
     /// Deletes a key from the sync_state database for diagnostics and

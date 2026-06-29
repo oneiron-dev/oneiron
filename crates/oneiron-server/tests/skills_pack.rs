@@ -21,6 +21,8 @@ const EXPECTED_REGISTERED_ROUTES: &[&str] = &[
     "/api/companion/resume",
     "/api/lease/revoke",
     "/v1/core/turns/annotate",
+    "/v1/usage/events",
+    "/v1/usage/tenants/{tenant_id}/rollup",
 ];
 
 #[test]
@@ -237,13 +239,37 @@ fn rust_string_const<'a>(source: &'a str, name: &str) -> &'a str {
     &value[..end]
 }
 
-fn registered_routes_from_api_source(source: &str) -> impl Iterator<Item = &str> {
-    source.lines().filter_map(|line| {
-        let start = line.find(".route(\"")? + ".route(\"".len();
-        let rest = &line[start..];
-        let end = rest.find('"')?;
-        Some(&rest[..end])
-    })
+fn registered_routes_from_api_source(source: &str) -> Vec<&str> {
+    let mut routes = Vec::new();
+    let mut lines = source.lines();
+    while let Some(line) = lines.next() {
+        if let Some(route) = route_literal_from_line(line) {
+            routes.push(route);
+            continue;
+        }
+        if line.trim() != ".route(" {
+            continue;
+        }
+        if let Some(next_line) = lines.next()
+            && let Some(route) = rust_string_literal_from_line(next_line)
+        {
+            routes.push(route);
+        }
+    }
+    routes
+}
+
+fn route_literal_from_line(line: &str) -> Option<&str> {
+    let start = line.find(".route(\"")? + ".route(\"".len();
+    let rest = &line[start..];
+    let end = rest.find('"')?;
+    Some(&rest[..end])
+}
+
+fn rust_string_literal_from_line(line: &str) -> Option<&str> {
+    let rest = line.trim_start().strip_prefix('"')?;
+    let end = rest.find('"')?;
+    Some(&rest[..end])
 }
 
 fn route_set<'a>(routes: impl IntoIterator<Item = &'a str>) -> BTreeSet<&'a str> {
