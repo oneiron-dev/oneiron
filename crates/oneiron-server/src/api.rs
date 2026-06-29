@@ -1106,7 +1106,7 @@ async fn record_usage_event(
     Json(event): Json<UsageEvent>,
 ) -> Result<Json<UsageRecordResult>, ApiError> {
     check_api_auth(&headers, &server.config)?;
-    let usage_mode = usage_mode_for_event(&server.config, &event);
+    let usage_mode = usage_mode_for_event(&server.config, &event)?;
     let result = server
         .usage_ledger
         .record_event(event, usage_mode)
@@ -1115,15 +1115,26 @@ async fn record_usage_event(
     Ok(Json(result))
 }
 
-fn usage_mode_for_event(config: &SyncServerConfig, event: &UsageEvent) -> UsageMode {
+fn usage_mode_for_event(
+    config: &SyncServerConfig,
+    event: &UsageEvent,
+) -> Result<UsageMode, ApiError> {
     if config.runtime == crate::runtime::RuntimeConfig::default() {
-        return config.runtime_usage_mode();
+        return Ok(config.runtime_usage_mode());
     }
 
-    config
-        .runtime
-        .usage_mode_for_model(event.model.as_deref())
-        .unwrap_or_else(|| config.runtime_usage_mode())
+    if let Some(usage_mode) = config.runtime.usage_mode_for_model(event.model.as_deref()) {
+        return Ok(usage_mode);
+    }
+
+    if config.runtime.has_mixed_usage_modes() {
+        return Err(ApiError::bad_request(
+            "usage event model is required when runtime routes mix usage modes",
+            Some("model"),
+        ));
+    }
+
+    Ok(config.runtime_usage_mode())
 }
 
 /// Reads a tenant-wide or tenant/vault-specific usage rollup.
@@ -2804,6 +2815,63 @@ mod tests {
         assert_eq!(body["source"], Value::from("oneiron_cloud"));
         assert_eq!(body["recorded"], Value::from(true));
         assert!(body["debit"].is_object());
+    }
+
+    #[tokio::test]
+    async fn usage_event_rejects_mixed_runtime_without_model_discriminator() {
+        let mut runtime = crate::runtime::RuntimeConfig::for_mode(RuntimeMode::LocalFree);
+        runtime.apply_override(crate::runtime::RuntimeConfigOverride::with_role_override(
+            RuntimeRole::Orchestrator,
+            crate::runtime::RuntimeRoleTargetOverride {
+                mode: Some(RuntimeMode::OneironCloud),
+                provider_kind: None,
+                model: Some("hosted-orchestrator".to_owned()),
+            },
+        ));
+        let (_dir, server) = test_server_with_config(SyncServerConfig {
+            allow_unauthenticated: true,
+            runtime,
+            ..Default::default()
+        });
+        let payload = json!({
+            "tenantId": "tenant-a",
+            "vaultId": "vault-a",
+            "idempotencyKey": "ambiguous-mixed-route",
+            "source": "oneiron_cloud",
+            "eventType": "inference",
+            "tokenCounts": {
+                "inputTokens": 1000,
+                "outputTokens": 500,
+                "cacheReadTokens": 0,
+                "cacheWriteTokens": 0
+            },
+            "costRates": {
+                "inputTokenUsdPerMillion": 2.0,
+                "outputTokenUsdPerMillion": 4.0,
+                "cacheReadTokenUsdPerMillion": 0.0,
+                "cacheWriteTokenUsdPerMillion": 0.0
+            }
+        });
+
+        let response = api_routes(server)
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/usage/events")
+                    .header(CONTENT_TYPE, "application/json")
+                    .body(Body::from(payload.to_string()))
+                    .expect("request"),
+            )
+            .await
+            .expect("route response");
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        let body = to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("usage response body");
+        let body: Value = serde_json::from_slice(&body).expect("ApiError JSON body");
+        assert_eq!(body["code"], Value::from("BAD_REQUEST"));
+        assert_eq!(body["details"]["field"], Value::from("model"));
     }
 
     #[tokio::test]

@@ -209,7 +209,9 @@ impl RuntimeRoleTarget {
     }
 
     fn apply_override(&mut self, role: RuntimeRole, value: RuntimeRoleTargetOverride) {
-        if let Some(mode) = value.mode {
+        if let Some(mode) = value.mode
+            && self.mode != mode
+        {
             *self = Self::for_role_mode(role, mode);
         }
         if let Some(provider_kind) = value.provider_kind {
@@ -336,7 +338,7 @@ impl RuntimeConfig {
         }
         if let Some(byo_key_env) = value.byo_key_env {
             self.byo_key_env = if byo_key_env.trim().is_empty() {
-                None
+                Some(String::new())
             } else {
                 Some(byo_key_env)
             };
@@ -365,13 +367,26 @@ impl RuntimeConfig {
             }
 
             let usage_mode = target.mode.usage_mode();
-            if usage_mode.debits_usage() {
-                return Some(usage_mode);
+            if matched_usage_mode.is_some_and(|matched| matched != usage_mode) {
+                return None;
             }
             matched_usage_mode = Some(usage_mode);
         }
 
         matched_usage_mode
+    }
+
+    pub fn has_mixed_usage_modes(&self) -> bool {
+        let first = self
+            .role_defaults
+            .target(RuntimeRole::Orchestrator)
+            .mode
+            .usage_mode();
+
+        RuntimeRole::ALL
+            .into_iter()
+            .skip(1)
+            .any(|role| self.role_defaults.target(role).mode.usage_mode() != first)
     }
 
     pub fn route_for_role_with_key_lookup(
@@ -401,6 +416,7 @@ impl RuntimeConfig {
             && !self
                 .byo_key_env
                 .as_deref()
+                .filter(|key| !key.trim().is_empty())
                 .and_then(&mut key_lookup)
                 .as_deref()
                 .is_some_and(byo_key_value_available)
@@ -928,6 +944,20 @@ mod tests {
     }
 
     #[test]
+    fn explicit_blank_byo_key_env_disables_default_key_fallback() {
+        let mut config = RuntimeConfig::for_mode(RuntimeMode::ByoCloudKey);
+        config.apply_override(RuntimeConfigOverride::with_byo_key_env(Some(String::new())));
+
+        let route = config.route_for_role_with_key_lookup(RuntimeRole::Orchestrator, |key| {
+            (key == DEFAULT_BYO_KEY_ENV).then_some("default-key".into())
+        });
+
+        assert_eq!(config.byo_key_env.as_deref(), Some(""));
+        assert_eq!(route.state, RuntimeRouteState::Unavailable);
+        assert_eq!(route.reason, RuntimeRouteReason::MissingByoKey);
+    }
+
+    #[test]
     fn provider_mode_mismatch_is_fail_closed_for_local_and_byo() {
         for mode in [RuntimeMode::LocalFree, RuntimeMode::ByoCloudKey] {
             let mut config = RuntimeConfig::for_mode(mode);
@@ -953,5 +983,23 @@ mod tests {
         assert!(!RuntimeMode::LocalFree.usage_mode().debits_usage());
         assert!(!RuntimeMode::ByoCloudKey.usage_mode().debits_usage());
         assert!(RuntimeMode::OneironCloud.usage_mode().debits_usage());
+    }
+
+    #[test]
+    fn role_mode_repeat_preserves_existing_provider_and_model() {
+        let mut config = RuntimeConfig::for_mode(RuntimeMode::ByoCloudKey);
+        config.apply_override(RuntimeConfigOverride::with_role_override(
+            RuntimeRole::Orchestrator,
+            RuntimeRoleTargetOverride::target(RuntimeProviderKind::ByoCloud, "file-orchestrator"),
+        ));
+        config.apply_override(RuntimeConfigOverride::with_role_override(
+            RuntimeRole::Orchestrator,
+            RuntimeRoleTargetOverride::mode(RuntimeMode::ByoCloudKey),
+        ));
+
+        let target = config.role_defaults.target(RuntimeRole::Orchestrator);
+        assert_eq!(target.mode, RuntimeMode::ByoCloudKey);
+        assert_eq!(target.provider_kind, RuntimeProviderKind::ByoCloud);
+        assert_eq!(target.model, "file-orchestrator");
     }
 }
