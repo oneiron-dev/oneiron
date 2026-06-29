@@ -1181,7 +1181,7 @@ impl Vault {
             });
         }
         let retracted = retract_record(&claim.record, now)?;
-        let (occurred, learned_at, data) =
+        let (occurred, learned_at, retracted_claim_body, data) =
             closed_claim_put_payload(&claim, &retracted, ClaimLifecycleStatus::Retracted)?;
 
         // The subject edge must still exist — the retraction KEEPS it and
@@ -1191,6 +1191,14 @@ impl Vault {
         if self.store.edges_out.get(&wtxn, &edge_key)?.is_none() {
             return Err(Error::EdgeNotFound);
         }
+
+        let policy = crate::gate::resolve_policy_manifest(&self.store, &wtxn)?;
+        crate::gate::check_edge_provenance_claim_policy(
+            &retracted_claim_body,
+            &retracted,
+            claim.actor_class,
+            &policy,
+        )?;
 
         // Flags refresh: the D14 winner among REMAINING live Claims, else
         // the contract's retracted stamp with this Claim's persisted class.
@@ -1446,6 +1454,14 @@ impl Vault {
             decode_model_entity_body(&substrate_raw[ENTITY_METADATA_HEADER_LEN..])?;
         }
 
+        let policy = crate::gate::resolve_policy_manifest(&self.store, &wtxn)?;
+        crate::gate::check_edge_provenance_claim_policy(
+            &claim_body,
+            &record,
+            actor_class,
+            &policy,
+        )?;
+
         // Explicit-prior gates (supersede path): the named Claim must be a
         // live edge.provenance Claim addressing the SAME EdgeRef.
         let prior_id = explicit_prior
@@ -1508,9 +1524,28 @@ impl Vault {
             survivors[winner].flags()
         };
 
+        let mut closure_payloads = Vec::with_capacity(closures.len());
+        for closure in &closures {
+            let closed_record = close_record_for_supersession(&closure.record, close_at)?;
+            let (closed_occurred, closed_learned_at, closed_claim_body, closed_data) =
+                closed_claim_put_payload(
+                    closure,
+                    &closed_record,
+                    ClaimLifecycleStatus::Superseded,
+                )?;
+            crate::gate::check_edge_provenance_claim_policy(
+                &closed_claim_body,
+                &closed_record,
+                closure.actor_class,
+                &policy,
+            )?;
+            closure_payloads.push((closure.id, closed_occurred, closed_learned_at, closed_data));
+        }
+
         // New Claim through the reserved-namespace door + claim_of → the
         // subject edge's SOURCE entity (D12) + closure re-puts, all with
-        // full type-0 validation at apply, all in this one transaction.
+        // full Gate checks before apply and full type-0 validation at apply,
+        // all in this one transaction.
         let mut builder = self
             .batch_in()
             .put_reserved_claim(claim_id, occurred, learned_at, &data)
@@ -1520,15 +1555,9 @@ impl Vault {
                 &subject.source,
                 CLAIM_OF_DEFAULT_WEIGHT,
             );
-        for closure in &closures {
-            let closed_record = close_record_for_supersession(&closure.record, close_at)?;
-            let (closed_occurred, closed_learned_at, closed_data) = closed_claim_put_payload(
-                closure,
-                &closed_record,
-                ClaimLifecycleStatus::Superseded,
-            )?;
+        for (closure_id, closed_occurred, closed_learned_at, closed_data) in closure_payloads {
             builder = builder.put_reserved_claim(
-                &closure.id,
+                &closure_id,
                 closed_occurred,
                 closed_learned_at,
                 &closed_data,
@@ -4672,7 +4701,7 @@ fn closed_claim_put_payload(
     claim: &StoredProvenanceClaim,
     closed_record: &EdgeProvenanceClaimBody,
     lifecycle: ClaimLifecycleStatus,
-) -> Result<(TimeRange, u64, Vec<u8>)> {
+) -> Result<(TimeRange, u64, ClaimBody, Vec<u8>)> {
     let valid_to = closed_record.valid_to.ok_or(Error::InvariantViolation(
         "closed provenance record must carry valid_to",
     ))?;
@@ -4691,7 +4720,7 @@ fn closed_claim_put_payload(
     wrapper.lifecycle = lifecycle;
     let data = encode_claim_body(&wrapper)?;
     validate_claim_body_bytes(&data, true)?;
-    Ok((occurred, claim.learned_at, data))
+    Ok((occurred, claim.learned_at, wrapper, data))
 }
 
 /// Parses one `edges_out` / `edges_in` row into an [`EdgeInfo`], failing

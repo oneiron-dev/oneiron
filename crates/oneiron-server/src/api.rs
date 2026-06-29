@@ -2184,6 +2184,12 @@ impl TurnVadAnnotateResponse {
             content_type = "application/json"
         ),
         (
+            status = 409,
+            description = "Active Gate policy rejected the VAD annotation write; response uses INVALID_STATE with Gate outcome and reason codes.",
+            body = ApiError,
+            content_type = "application/json"
+        ),
+        (
             status = 404,
             description = "Turn or message entity was not found.",
             body = ApiError,
@@ -2361,14 +2367,35 @@ fn require_message_in_turn(
 }
 
 fn vad_annotation_core_error(error: oneiron::Error) -> ApiError {
-    match error.kind() {
-        ErrorKind::InvalidVad => ApiError::bad_request(error.to_string(), Some("vad")),
-        ErrorKind::InvalidEntityType => ApiError::bad_request(error.to_string(), Some("entity")),
-        ErrorKind::EntityNotFound => ApiError::not_found("entity", None),
-        _ => {
-            tracing::error!(error = %error, "VAD annotation operation failed");
-            ApiError::internal_server_error("VAD annotation operation failed")
+    match error {
+        oneiron::Error::GateWriteRejected {
+            outcome,
+            reason_codes,
+        } => {
+            let reason_codes = reason_codes.join(",");
+            ApiError::new(
+                format!(
+                    "VAD annotation rejected by Gate: outcome={outcome}, reasons={reason_codes}"
+                ),
+                ApiErrorDetails::InvalidState {
+                    state: Some(format!("gate_write_rejected:{outcome}:{reason_codes}")),
+                },
+                [
+                    "Route the annotation through policy review or adjust the active Gate policy before retrying.",
+                ],
+            )
         }
+        error => match error.kind() {
+            ErrorKind::InvalidVad => ApiError::bad_request(error.to_string(), Some("vad")),
+            ErrorKind::InvalidEntityType => {
+                ApiError::bad_request(error.to_string(), Some("entity"))
+            }
+            ErrorKind::EntityNotFound => ApiError::not_found("entity", None),
+            _ => {
+                tracing::error!(error = %error, "VAD annotation operation failed");
+                ApiError::internal_server_error("VAD annotation operation failed")
+            }
+        },
     }
 }
 
@@ -2905,6 +2932,19 @@ mod tests {
             discover_success["example"]["skill_pack"]["endpoint"],
             Value::from("/api/skills/oneiron.skills.md"),
             "discover example must advertise the committed skill pack endpoint"
+        );
+        let turn_annotate_post_responses =
+            spec["paths"]["/v1/core/turns/annotate"]["post"]["responses"]
+                .as_object()
+                .expect("turn annotate POST responses object");
+        assert!(
+            turn_annotate_post_responses.contains_key("409"),
+            "turn annotate POST must document Gate INVALID_STATE conflict responses"
+        );
+        assert_eq!(
+            turn_annotate_post_responses["409"]["content"]["application/json"]["schema"]["$ref"],
+            Value::from("#/components/schemas/ApiError"),
+            "turn annotate 409 must use the structured ApiError schema"
         );
         let context_pack_responses = spec["paths"]["/api/context-pack"]["post"]["responses"]
             .as_object()
@@ -4404,6 +4444,27 @@ mod tests {
         assert_eq!(body["code"], Value::from("BAD_REQUEST"));
         assert_eq!(body["details"]["field"], Value::from("vad"));
         assert_eq!(server.vault.get_turn_vad_annotation(&turn).unwrap(), None);
+    }
+
+    #[test]
+    fn vad_annotation_core_error_maps_gate_rejection_to_invalid_state() {
+        let error = vad_annotation_core_error(oneiron::Error::GateWriteRejected {
+            outcome: "pending",
+            reason_codes: vec!["gate.pending.source_trust"],
+        });
+
+        assert_eq!(error.status(), StatusCode::CONFLICT);
+        assert_eq!(error.code(), ErrorCode::InvalidState);
+        assert_eq!(
+            error.details(),
+            &ApiErrorDetails::InvalidState {
+                state: Some("gate_write_rejected:pending:gate.pending.source_trust".to_owned()),
+            }
+        );
+        assert!(
+            error.message().contains("gate.pending.source_trust"),
+            "message should expose the stable Gate reason code"
+        );
     }
 
     #[tokio::test]
