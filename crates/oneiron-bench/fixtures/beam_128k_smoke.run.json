@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 1,
+  "runId": "beam-128k-smoke",
+  "dataset": {
+    "kind": "fixture",
+    "fixtureId": "beam-128k-smoke"
+  },
+  "caseIds": [
+    "beam_128k_context_pack_smoke"
+  ],
+  "arms": [
+    "deterministic",
+    "agentic",
+    "chat"
+  ],
+  "report": {
+    "format": "json"
+  }
+}
