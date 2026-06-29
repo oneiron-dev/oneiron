@@ -88,6 +88,13 @@ pub mod window_sub_tags {
     pub const VV_REQUEST: u8 = 2;
     /// Version vector response (sender's VV).
     pub const VV_RESPONSE: u8 = 3;
+    /// Grant-backed closed-subgraph selector request.
+    ///
+    /// Payload: `[selector_len:4BE][selector_msgpack][remote_vv]`.
+    /// The server replies with a normal `UPDATE` frame containing only the
+    /// selected subgraph. Full-window `VV_REQUEST`/`VV_RESPONSE` remain
+    /// unchanged and backward compatible.
+    pub const SELECTOR_VV_REQUEST: u8 = 4;
 }
 
 /// Maximum window key length (YYYY-MM = 7 bytes).
@@ -560,6 +567,14 @@ mod tests {
         assert_eq!(TAG_PROTOCOL_HELLO, 3, "hello tag byte is pinned to 3");
         assert_eq!(PROTOCOL_VERSION, 2, "wire protocol version is pinned to 2");
         assert_eq!(encode_protocol_hello(), vec![3u8, 2u8]);
+    }
+
+    #[test]
+    fn window_subtag_literals() {
+        assert_eq!(window_sub_tags::UPDATE, 0);
+        assert_eq!(window_sub_tags::VV_REQUEST, 2);
+        assert_eq!(window_sub_tags::VV_RESPONSE, 3);
+        assert_eq!(window_sub_tags::SELECTOR_VV_REQUEST, 4);
     }
 
     /// ONE-1140 (OD-5) wire literals: TAG_LEASE_REQUEST=4 (105 B) and

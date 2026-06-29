@@ -19,8 +19,8 @@ use axum::routing::get;
 use futures_util::stream::SplitStream;
 use futures_util::{SinkExt, StreamExt};
 use loro::VersionVector;
-use oneiron::sync::WindowKey;
 use oneiron::sync::export_updates_since;
+use oneiron::sync::{WindowKey, decode_selector_vv_request, filtered_window_doc};
 use tokio::time::{Duration, Instant};
 
 use crate::api::check_auth;
@@ -529,7 +529,11 @@ async fn handle_window_sync(
 
     // Enforce max_update_payload BEFORE the window doc is fetched/created:
     // an oversized update must not mutate any server state.
-    if sub_tag == window_sub_tags::UPDATE && payload.len() > server.config.max_update_payload {
+    if matches!(
+        sub_tag,
+        window_sub_tags::UPDATE | window_sub_tags::SELECTOR_VV_REQUEST
+    ) && payload.len() > server.config.max_update_payload
+    {
         return Err(ProtocolError::FrameTooLarge {
             size: payload.len(),
             max: server.config.max_update_payload,
@@ -574,6 +578,25 @@ async fn handle_window_sync(
             .into_result()
             .map_err(|e| ProtocolError::InvalidPayload(protocol::transport_err_msg(e)))?;
             let _ = direct_tx.send(vv_response);
+        }
+        window_sub_tags::SELECTOR_VV_REQUEST => {
+            // Grant-backed closed-subgraph fetch. The full-window VV path
+            // above stays byte-for-byte compatible; selected sync exports
+            // from a synthetic doc so unauthorized entries are never present
+            // in the outbound Loro update bytes.
+            let request = decode_selector_vv_request(payload)
+                .map_err(|_| ProtocolError::InvalidPayload("invalid sync selector request"))?;
+            let filtered =
+                filtered_window_doc(server.vault.as_ref(), &doc, &key, &request.selector).map_err(
+                    |e| ProtocolError::Persistence(format!("selector filter failed: {e}")),
+                )?;
+            let delta = export_updates_since(&filtered, &request.remote_vv)
+                .map_err(map_delta_export_err)?;
+            let response =
+                protocol::encode_window_sync(window_key, window_sub_tags::UPDATE, &delta)
+                    .into_result()
+                    .map_err(|e| ProtocolError::InvalidPayload(protocol::transport_err_msg(e)))?;
+            let _ = direct_tx.send(response);
         }
         window_sub_tags::UPDATE => {
             // Client sending Loro update bytes — import with origin for echo suppression
@@ -798,6 +821,49 @@ mod tests {
         ConnState::new(SyncServerConfig::default().max_messages_per_sec)
     }
 
+    fn entity_id(byte: u8) -> oneiron::EntityId {
+        oneiron::EntityId::from_bytes([byte; 16]).unwrap()
+    }
+
+    fn entity_blob(entity_type: u8, body: &[u8]) -> Vec<u8> {
+        let mut blob = Vec::with_capacity(25 + body.len());
+        blob.push(entity_type);
+        blob.extend_from_slice(&1_u64.to_be_bytes());
+        blob.extend_from_slice(&1_u64.to_be_bytes());
+        blob.extend_from_slice(&1_u64.to_be_bytes());
+        blob.extend_from_slice(body);
+        blob
+    }
+
+    fn insert_entity(doc: &LoroDoc, id: oneiron::EntityId, entity_type: u8, body: &[u8]) {
+        doc.get_map("entities")
+            .insert(
+                id.to_hex().as_str(),
+                entity_blob(entity_type, body).as_slice(),
+            )
+            .unwrap();
+    }
+
+    fn insert_edge(
+        doc: &LoroDoc,
+        src: oneiron::EntityId,
+        kind: oneiron::EdgeKind,
+        tgt: oneiron::EntityId,
+    ) {
+        let key = format!("{}:{:02}:{}", src.to_hex(), kind as u8, tgt.to_hex());
+        let value = oneiron::sync::bridge::encode_edge_value_for_crdt(
+            kind,
+            0.7,
+            1,
+            Some(oneiron::Vad::NEUTRAL),
+            None,
+        )
+        .unwrap();
+        doc.get_map("edges")
+            .insert(key.as_str(), value.as_slice())
+            .unwrap();
+    }
+
     #[tokio::test]
     async fn vv_request_sends_delta_and_vv_response() {
         let (_dir, server) = test_server();
@@ -943,6 +1009,133 @@ mod tests {
             direct_rx.try_recv().is_err(),
             "VV_RESPONSE must NOT trigger another VV message (no ping-pong loop)"
         );
+    }
+
+    #[tokio::test]
+    async fn selector_vv_request_sends_filtered_update_only() {
+        let (_dir, server) = test_server();
+        let key = "2026-06";
+        let window_key = WindowKey::new(key);
+        let server_doc = server.get_or_create_window(&window_key).await.unwrap();
+
+        let member = entity_id(0x31);
+        let grant_id = oneiron::EntityId::now();
+        let grant = oneiron::FederationGrant::new(
+            oneiron::FederationGrantScope::vault(7),
+            member,
+            oneiron::FederationGrantRole::Viewer,
+            oneiron::FederationGrantPreset::ReadOnly,
+        );
+        oneiron::sync::put_selector_test_federation_grant(
+            server.vault.as_ref(),
+            &grant_id,
+            &grant,
+            1,
+        )
+        .unwrap();
+
+        let facet_allowed = entity_id(0xA1);
+        let facet_denied = entity_id(0xB1);
+        let claim_allowed = entity_id(0x11);
+        let claim_denied = entity_id(0x12);
+        let person = entity_id(0x21);
+        insert_entity(
+            &server_doc,
+            facet_allowed,
+            oneiron::types::ENTITY_TYPE_FACET,
+            b"facet-a",
+        );
+        insert_entity(
+            &server_doc,
+            facet_denied,
+            oneiron::types::ENTITY_TYPE_FACET,
+            b"facet-b",
+        );
+        insert_entity(
+            &server_doc,
+            claim_allowed,
+            oneiron::types::ENTITY_TYPE_CLAIM,
+            b"allowed-claim",
+        );
+        insert_entity(
+            &server_doc,
+            claim_denied,
+            oneiron::types::ENTITY_TYPE_CLAIM,
+            b"denied-claim",
+        );
+        insert_entity(
+            &server_doc,
+            person,
+            oneiron::types::ENTITY_TYPE_PERSON,
+            b"person",
+        );
+        insert_edge(
+            &server_doc,
+            claim_allowed,
+            oneiron::EdgeKind::FacetOf,
+            facet_allowed,
+        );
+        insert_edge(
+            &server_doc,
+            claim_denied,
+            oneiron::EdgeKind::FacetOf,
+            facet_denied,
+        );
+        insert_edge(
+            &server_doc,
+            claim_allowed,
+            oneiron::EdgeKind::Supports,
+            person,
+        );
+        insert_edge(
+            &server_doc,
+            claim_denied,
+            oneiron::EdgeKind::Supports,
+            person,
+        );
+        server_doc.commit();
+
+        let selector = oneiron::sync::SyncSelector::new(
+            grant_id,
+            member,
+            oneiron::sync::SyncSelectorWorld::All,
+            vec![facet_allowed],
+            vec![],
+        );
+        let client_doc = client_window_doc();
+        let payload =
+            oneiron::sync::encode_selector_vv_request(&selector, &client_doc.oplog_vv().encode())
+                .unwrap();
+
+        let (direct_tx, mut direct_rx) = mpsc::unbounded_channel::<Vec<u8>>();
+        let mut conn_state = test_conn_state();
+        handle_window_sync(
+            &server,
+            1,
+            key,
+            window_sub_tags::SELECTOR_VV_REQUEST,
+            &payload,
+            &direct_tx,
+            &mut conn_state,
+        )
+        .await
+        .unwrap();
+
+        let (k, sub, delta) = expect_window_sync(&direct_rx.try_recv().unwrap());
+        assert_eq!(k, key);
+        assert_eq!(sub, window_sub_tags::UPDATE);
+        assert!(
+            direct_rx.try_recv().is_err(),
+            "selector fetch must not ask the client to push a reverse diff"
+        );
+
+        client_doc.import(&delta).unwrap();
+        let entities = client_doc.get_map("entities");
+        assert!(entities.get(claim_allowed.to_hex().as_str()).is_some());
+        assert!(entities.get(facet_allowed.to_hex().as_str()).is_some());
+        assert!(entities.get(person.to_hex().as_str()).is_some());
+        assert!(entities.get(claim_denied.to_hex().as_str()).is_none());
+        assert!(entities.get(facet_denied.to_hex().as_str()).is_none());
     }
 
     #[tokio::test]
