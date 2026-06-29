@@ -10,6 +10,7 @@
 //! path: [`server::SyncServer::new`] + [`build_app`].
 
 mod api;
+mod auth;
 mod broadcast;
 pub mod cli;
 pub mod commands;

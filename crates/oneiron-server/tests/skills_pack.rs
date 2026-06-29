@@ -74,7 +74,7 @@ fn documented_route_set_matches_api_routes_exactly() {
 
     let tier1 = section_between(PACK, "## Tier-1", "## Tier-2");
     let documented_counts = documented_api_literal_counts(tier1);
-    let documented = documented_counts.keys().copied().collect::<BTreeSet<_>>();
+    let documented = route_set(documented_counts.keys().copied());
     assert_eq!(documented, expected, "Tier-1 route literals drifted");
 
     for route in EXPECTED_REGISTERED_ROUTES {
@@ -242,12 +242,12 @@ fn rust_string_const<'a>(source: &'a str, name: &str) -> &'a str {
     &value[..end]
 }
 
-fn registered_routes_from_api_source(source: &str) -> Vec<&str> {
+fn registered_routes_from_api_source(source: &str) -> Vec<String> {
     let mut routes = Vec::new();
     let mut lines = source.lines();
     while let Some(line) = lines.next() {
         if let Some(route) = route_literal_from_line(line) {
-            routes.push(route);
+            routes.push(route.to_owned());
             continue;
         }
         if line.trim() != ".route(" {
@@ -256,7 +256,14 @@ fn registered_routes_from_api_source(source: &str) -> Vec<&str> {
         if let Some(next_line) = lines.next()
             && let Some(route) = rust_string_literal_from_line(next_line)
         {
-            routes.push(route);
+            routes.push(route.to_owned());
+        }
+    }
+    if source.contains(".nest(\"/v1/core\", core_routes)") {
+        for route in &mut routes {
+            if route == "/turns/annotate" {
+                *route = "/v1/core/turns/annotate".to_owned();
+            }
         }
     }
     routes
@@ -275,8 +282,11 @@ fn rust_string_literal_from_line(line: &str) -> Option<&str> {
     Some(&rest[..end])
 }
 
-fn route_set<'a>(routes: impl IntoIterator<Item = &'a str>) -> BTreeSet<&'a str> {
-    routes.into_iter().collect()
+fn route_set(routes: impl IntoIterator<Item = impl AsRef<str>>) -> BTreeSet<String> {
+    routes
+        .into_iter()
+        .map(|route| route.as_ref().to_owned())
+        .collect()
 }
 
 fn documented_api_literal_counts(markdown: &str) -> BTreeMap<&str, usize> {
