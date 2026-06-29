@@ -26,6 +26,7 @@ use crate::deletion::{
     DeleteReason, HardEraseSweepExtras, LAST_HARD_ERASE_SWEEP_SEQ_KEY, RedactionScope,
     ReplayedTombstoneOutcome, encode_hard_erase_sweep_job, encode_hard_erase_sweep_key,
 };
+use crate::error::{VaultRootEntry, VaultRootProblem};
 use crate::hnsw::COUNT_KEY;
 use crate::store::{
     DB_MANIFEST, GRAPH_VERSION_KEY, HNSW_CONFIG_KEY, MAX_DBS, MODEL_ID_KEY, STORAGE_ABI_VERSION,
@@ -4219,7 +4220,13 @@ fn vault_open_rejects_second_live_env_for_same_path() -> Result<()> {
     let Err(err) = Vault::open(path, test_config()) else {
         panic!("expected second live vault open to fail");
     };
-    assert_matches!(err, Error::InvalidConfig(ref message) if message.contains("already open"));
+    assert_matches!(
+        err,
+        Error::VaultRootPreflight {
+            problem: VaultRootProblem::DuplicateOpenRoot { .. },
+            ..
+        }
+    );
 
     drop(first_vault);
     let reopened = Vault::open(path, test_config())?;
@@ -4240,7 +4247,13 @@ fn vault_open_rejects_second_live_env_for_symlinked_path() -> Result<()> {
     let Err(err) = Vault::open(&link_path, test_config()) else {
         panic!("expected symlinked second live vault open to fail");
     };
-    assert_matches!(err, Error::InvalidConfig(ref message) if message.contains("already open"));
+    assert_matches!(
+        err,
+        Error::VaultRootPreflight {
+            problem: VaultRootProblem::DuplicateOpenRoot { .. },
+            ..
+        }
+    );
 
     drop(first_vault);
     let reopened = Vault::open(&link_path, test_config())?;
@@ -4277,6 +4290,140 @@ fn dropping_last_vault_handle_closes_lmdb_env() -> Result<()> {
     let reopened = Vault::open(path, test_config())?;
     drop(reopened);
     assert!(heed::env_closing_event(&canonical).is_none());
+    Ok(())
+}
+
+#[test]
+fn vault_open_rejects_partial_lmdb_root_before_open() -> Result<()> {
+    let temp_dir = tempfile::tempdir()?;
+    let path = temp_dir.path();
+    let canonical = path.canonicalize()?;
+    std::fs::write(path.join("lock.mdb"), b"stale lock")?;
+
+    let Err(err) = Vault::open(path, test_config()) else {
+        panic!("expected partial LMDB root to fail preflight");
+    };
+    assert_matches!(
+        err,
+        Error::VaultRootPreflight {
+            ref path,
+            problem: VaultRootProblem::IncompleteLmdbPair {
+                present: VaultRootEntry::Lock,
+                missing: VaultRootEntry::Data,
+            },
+        } if path == &canonical
+    );
+    assert!(
+        !temp_dir.path().join("data.mdb").exists(),
+        "preflight must reject before LMDB creates data.mdb"
+    );
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
+fn vault_open_rejects_hardlinked_lmdb_root_before_open() -> Result<()> {
+    let temp_dir = tempfile::tempdir()?;
+    let real_path = temp_dir.path().join("vault");
+    let duplicate_path = temp_dir.path().join("vault-hardlink");
+    let _vault = Vault::open(&real_path, test_config())?;
+    std::fs::create_dir_all(&duplicate_path)?;
+    std::fs::hard_link(real_path.join("data.mdb"), duplicate_path.join("data.mdb"))?;
+    std::fs::hard_link(real_path.join("lock.mdb"), duplicate_path.join("lock.mdb"))?;
+    let canonical_duplicate = duplicate_path.canonicalize()?;
+
+    let Err(err) = Vault::open(&duplicate_path, test_config()) else {
+        panic!("expected hardlinked LMDB root to fail preflight");
+    };
+    assert_matches!(
+        err,
+        Error::VaultRootPreflight {
+            ref path,
+            problem: VaultRootProblem::MultipleHardLinks {
+                entry: VaultRootEntry::Data,
+                link_count,
+            },
+        } if path == &canonical_duplicate && link_count >= 2
+    );
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
+fn vault_open_rejects_new_vault_hardlink_alias_before_second_lmdb_open() -> Result<()> {
+    let temp_dir = tempfile::tempdir()?;
+    let real_path = temp_dir.path().join("vault");
+    let duplicate_path = temp_dir.path().join("vault-hardlink");
+    let duplicate_for_hook = duplicate_path.clone();
+    std::fs::create_dir_all(&real_path)?;
+    let canonical_real_path = real_path.canonicalize()?;
+
+    let (hardlinks_ready_tx, hardlinks_ready_rx) = std::sync::mpsc::channel();
+    let (resume_tx, resume_rx) = std::sync::mpsc::channel();
+    crate::store::test_hooks::arm_after_lmdb_open(canonical_real_path, move |canonical_root| {
+        let result = (|| -> std::io::Result<()> {
+            std::fs::create_dir_all(&duplicate_for_hook)?;
+            std::fs::hard_link(
+                canonical_root.join("data.mdb"),
+                duplicate_for_hook.join("data.mdb"),
+            )?;
+            std::fs::hard_link(
+                canonical_root.join("lock.mdb"),
+                duplicate_for_hook.join("lock.mdb"),
+            )?;
+            Ok(())
+        })();
+        hardlinks_ready_tx
+            .send(result)
+            .expect("hardlink readiness receiver dropped");
+        resume_rx
+            .recv_timeout(std::time::Duration::from_secs(10))
+            .expect("test did not resume paused vault open");
+    });
+
+    let first_path = real_path;
+    let first_open = std::thread::spawn(move || Vault::open(&first_path, test_config()).map(drop));
+    match hardlinks_ready_rx
+        .recv_timeout(std::time::Duration::from_secs(10))
+        .expect("paused vault open did not create hardlink alias")
+    {
+        Ok(()) => {}
+        Err(err) => {
+            let _ = resume_tx.send(());
+            panic!("failed to create hardlink alias during vault open: {err}");
+        }
+    }
+
+    let second_path = duplicate_path;
+    let second_open =
+        std::thread::spawn(move || Vault::open(&second_path, test_config()).map(drop));
+
+    std::thread::sleep(std::time::Duration::from_millis(50));
+    resume_tx.send(()).expect("paused vault open exited early");
+
+    let first_err = match first_open.join().expect("first vault open panicked") {
+        Ok(()) => panic!("first vault open must fail closed on new hardlink alias"),
+        Err(err) => err,
+    };
+    let second_err = match second_open.join().expect("second vault open panicked") {
+        Ok(()) => panic!("second vault open must fail closed on new hardlink alias"),
+        Err(err) => err,
+    };
+
+    assert_matches!(
+        first_err,
+        Error::VaultRootPreflight {
+            problem: VaultRootProblem::MultipleHardLinks { link_count, .. },
+            ..
+        } if link_count >= 2
+    );
+    assert_matches!(
+        second_err,
+        Error::VaultRootPreflight {
+            problem: VaultRootProblem::MultipleHardLinks { link_count, .. },
+            ..
+        } if link_count >= 2
+    );
     Ok(())
 }
 
@@ -5088,7 +5235,7 @@ fn open_rejects_missing_or_stale_storage_abi_version() -> Result<()> {
 ///    read or write through);
 /// 2. a second open of the same directory reproduces the same gate error —
 ///    a leaked path registration would instead surface as
-///    `InvalidConfig("vault path is already open in this process: …")`, and
+///    `VaultRootPreflight(DuplicateOpenRoot)`, and
 ///    partially-initialized state would change the error.
 ///
 /// The `*_precedes_*` cases pin the documented gate ORDERING: ABI gate before
@@ -5413,9 +5560,9 @@ fn open_gate_matrix_fails_closed() -> Result<()> {
 
         // Fail-closed also means no partial state survives the rejected
         // open: a second attempt must hit the SAME gate. A leaked path
-        // registration would yield InvalidConfig("vault path is already
-        // open in this process: …") instead; partially-initialized vault
-        // state would change which gate fires.
+        // registration would yield VaultRootPreflight(DuplicateOpenRoot)
+        // instead; partially-initialized vault state would change which gate
+        // fires.
         let second = match Vault::open(path, (case.open_config)()) {
             Ok(_) => panic!(
                 "case {}: second open must fail closed identically",
@@ -5430,13 +5577,15 @@ fn open_gate_matrix_fails_closed() -> Result<()> {
              leaked path registration?): {second:?}",
             case.name
         );
-        // For cases whose expected kind is InvalidConfig, a leaked path
-        // registration would ALSO surface as InvalidConfig("vault path is
-        // already open …") and pass the kind check above — defeating the
-        // no-partial-handle guarantee. Assert the re-open re-hit the GATE,
-        // not a leaked registration.
+        // Assert the re-open re-hit the GATE, not a leaked registration.
         assert!(
-            !second.to_string().contains("vault path is already open"),
+            !matches!(
+                second,
+                Error::VaultRootPreflight {
+                    problem: VaultRootProblem::DuplicateOpenRoot { .. },
+                    ..
+                }
+            ),
             "case {}: second open leaked a path registration instead of \
              re-hitting the gate: {second:?}",
             case.name

@@ -64,6 +64,9 @@ lindera = { version = "3.0", default-features = false }
 [target.'cfg(target_os = "macos")'.dependencies]
 heed = { workspace = true, features = ["posix-sem"] }
 
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_Storage_FileSystem"] }
+
 [features]
 sync = ["loro", "dep:tokio", "dep:tokio-tungstenite", "dep:futures-util", "dep:zstd"]
 # Compiles in cross-crate test-only fault-injection seams (e.g. the lease
