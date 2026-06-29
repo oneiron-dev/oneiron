@@ -5,7 +5,7 @@
 //! sync builds a synthetic window doc containing only the authorized closed
 //! subgraph and exports from that doc instead.
 
-use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::io::Cursor;
 
 use loro::LoroDoc;
@@ -14,7 +14,7 @@ use rmpv::Value;
 use crate::Vault;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::error::{Error, Result};
-use crate::federation::decode_federation_grant_body;
+use crate::federation::{FederationGrantScope, decode_federation_grant_body};
 use crate::types::{
     ENTITY_TYPE_CLAIM, ENTITY_TYPE_FACET, ENTITY_TYPE_FEDERATION_GRANT, ENTITY_TYPE_WORLD,
     EdgeKind, EntityId, TypeByteBand, band_of,
@@ -233,9 +233,10 @@ pub fn filtered_window_doc(
     vault: &Vault,
     source: &LoroDoc,
     key: &WindowKey,
+    grant_scope: FederationGrantScope,
     selector: &SyncSelector,
 ) -> Result<LoroDoc> {
-    authorize_selector(vault, selector)?;
+    authorize_selector(vault, grant_scope, selector)?;
     Ok(filter_window_doc(source, key, selector))
 }
 
@@ -284,7 +285,11 @@ fn decode_selector_value(value: &Value) -> Result<SyncSelector> {
     ))
 }
 
-fn authorize_selector(vault: &Vault, selector: &SyncSelector) -> Result<()> {
+fn authorize_selector(
+    vault: &Vault,
+    grant_scope: FederationGrantScope,
+    selector: &SyncSelector,
+) -> Result<()> {
     let raw = vault
         .get_raw(&selector.grant_id)?
         .ok_or_else(|| selector_err("sync selector grant not found"))?;
@@ -295,6 +300,9 @@ fn authorize_selector(vault: &Vault, selector: &SyncSelector) -> Result<()> {
     }
 
     let grant = decode_federation_grant_body(&raw[ENTITY_METADATA_HEADER_LEN..])?;
+    if grant.scope != grant_scope {
+        return Err(selector_err("sync selector grant scope mismatch"));
+    }
     if grant.member_ref != selector.member_ref {
         return Err(selector_err("sync selector member not granted"));
     }
@@ -307,8 +315,18 @@ fn filter_window_doc(source: &LoroDoc, key: &WindowKey, selector: &SyncSelector)
     let source_edges = source.get_map("edges");
     let source_tombstones = source.get_map("tombstones");
 
+    let mut tombstoned = BTreeSet::<EntityId>::new();
+    map_for_each_tombstone_value(&source_tombstones, |raw_key, _| {
+        let Ok(id) = EntityId::from_hex(raw_key) else {
+            return;
+        };
+        if id.to_hex() == raw_key {
+            tombstoned.insert(id);
+        }
+    });
+
     let facet_scope = facet_scope_by_source(&source_edges, selector);
-    let mut entities = BTreeMap::<EntityId, (String, Vec<u8>)>::new();
+    let mut candidates = BTreeSet::<EntityId>::new();
     let mut kept = BTreeSet::<EntityId>::new();
     let mut seeds = BTreeSet::<EntityId>::new();
 
@@ -322,10 +340,13 @@ fn filter_window_doc(source: &LoroDoc, key: &WindowKey, selector: &SyncSelector)
         if id.to_hex() != raw_key {
             return;
         }
+        if tombstoned.contains(&id) {
+            return;
+        }
         let Some(decision) = entity_selector_decision(&id, blob, selector, &facet_scope) else {
             return;
         };
-        entities.insert(id, (raw_key.to_owned(), blob.to_vec()));
+        candidates.insert(id);
         if selector.facet_filter_active() {
             if decision.facet_seed {
                 seeds.insert(id);
@@ -345,10 +366,10 @@ fn filter_window_doc(source: &LoroDoc, key: &WindowKey, selector: &SyncSelector)
                 return;
             };
             if seeds.contains(&src) || seeds.contains(&tgt) {
-                if entities.contains_key(&src) {
+                if candidates.contains(&src) {
                     kept.insert(src);
                 }
-                if entities.contains_key(&tgt) {
+                if candidates.contains(&tgt) {
                     kept.insert(tgt);
                 }
             }
@@ -356,11 +377,20 @@ fn filter_window_doc(source: &LoroDoc, key: &WindowKey, selector: &SyncSelector)
     }
 
     let out_entities = out.get_map("entities");
-    for id in &kept {
-        if let Some((raw_key, blob)) = entities.get(id) {
+    map_for_each_value_bytes(&source_entities, |raw_key, maybe_blob| {
+        let Some(blob) = maybe_blob else {
+            return;
+        };
+        let Ok(id) = EntityId::from_hex(raw_key) else {
+            return;
+        };
+        if id.to_hex() != raw_key {
+            return;
+        }
+        if kept.contains(&id) && !tombstoned.contains(&id) {
             let _ = map_insert_bytes(&out_entities, raw_key, blob);
         }
-    }
+    });
 
     let out_edges = out.get_map("edges");
     map_for_each_value_bytes(&source_edges, |raw_key, maybe_value| {
@@ -380,7 +410,7 @@ fn filter_window_doc(source: &LoroDoc, key: &WindowKey, selector: &SyncSelector)
         let Ok(id) = EntityId::from_hex(raw_key) else {
             return;
         };
-        if kept.contains(&id) || !selector.any_filter_active() {
+        if id.to_hex() == raw_key && (kept.contains(&id) || !selector.any_filter_active()) {
             let _ = map_insert_bytes(&out_tombstones, raw_key, value);
         }
     });
@@ -393,6 +423,7 @@ fn filter_window_doc(source: &LoroDoc, key: &WindowKey, selector: &SyncSelector)
 struct FacetScope {
     any: bool,
     selected: bool,
+    malformed: bool,
 }
 
 #[derive(Debug)]
@@ -411,9 +442,6 @@ fn facet_scope_by_source(
     }
 
     map_for_each_value_bytes(edges, |raw_key, maybe_value| {
-        if maybe_value.is_none() {
-            return;
-        }
         let Some((src, kind, tgt)) = parse_edge_key(raw_key) else {
             return;
         };
@@ -422,6 +450,10 @@ fn facet_scope_by_source(
         }
         let entry = scopes.entry(src).or_default();
         entry.any = true;
+        if maybe_value.is_none() {
+            entry.malformed = true;
+            return;
+        }
         if selected.contains(&tgt) {
             entry.selected = true;
         }
@@ -448,7 +480,7 @@ fn entity_selector_decision(
     if selector.facet_filter_active()
         && facet_scope
             .get(id)
-            .is_some_and(|scope| scope.any && !scope.selected)
+            .is_some_and(|scope| scope.malformed || (scope.any && !scope.selected))
     {
         return None;
     }
@@ -700,6 +732,17 @@ mod tests {
         map_insert_bytes(&doc.get_map("edges"), &key, &value).unwrap();
     }
 
+    fn insert_malformed_edge(doc: &LoroDoc, src: EntityId, kind: EdgeKind, tgt: EntityId) {
+        let key = format!("{}:{:02}:{}", src.to_hex(), kind as u8, tgt.to_hex());
+        doc.get_map("edges")
+            .insert(key.as_str(), "not-binary")
+            .unwrap();
+    }
+
+    fn insert_tombstone(doc: &LoroDoc, id: EntityId) {
+        map_insert_bytes(&doc.get_map("tombstones"), &id.to_hex(), b"deleted").unwrap();
+    }
+
     fn import_ids(update: &[u8]) -> Vec<EntityId> {
         let doc = create_window_doc("receiver", &WindowKey::new("2026-03"));
         doc.import(update).unwrap();
@@ -713,12 +756,19 @@ mod tests {
         ids
     }
 
-    fn test_vault_with_grant(member_ref: EntityId) -> (tempfile::TempDir, Vault, EntityId) {
+    fn test_selector_scope() -> FederationGrantScope {
+        FederationGrantScope::vault(7)
+    }
+
+    fn test_vault_with_grant_scope(
+        member_ref: EntityId,
+        scope: FederationGrantScope,
+    ) -> (tempfile::TempDir, Vault, EntityId) {
         let dir = tempfile::tempdir().unwrap();
         let vault = Vault::open(dir.path(), crate::VaultConfig::device()).unwrap();
         let grant_id = EntityId::now();
         let grant = FederationGrant::new(
-            FederationGrantScope::vault(7),
+            scope,
             member_ref,
             FederationGrantRole::Viewer,
             FederationGrantPreset::ReadOnly,
@@ -736,6 +786,10 @@ mod tests {
             .commit()
             .unwrap();
         (dir, vault, grant_id)
+    }
+
+    fn test_vault_with_grant(member_ref: EntityId) -> (tempfile::TempDir, Vault, EntityId) {
+        test_vault_with_grant_scope(member_ref, test_selector_scope())
     }
 
     #[test]
@@ -835,7 +889,9 @@ mod tests {
             vec![facet_allowed],
             vec![],
         );
-        let filtered = filtered_window_doc(&vault, &doc, &window_key, &selector).unwrap();
+        let filtered =
+            filtered_window_doc(&vault, &doc, &window_key, test_selector_scope(), &selector)
+                .unwrap();
         let update = filtered.export(ExportMode::all_updates()).unwrap();
         let ids = import_ids(&update);
 
@@ -897,10 +953,11 @@ mod tests {
             vec![],
             vec![TypeByteBand::Semantic, TypeByteBand::Core],
         );
-        let update = filtered_window_doc(&vault, &doc, &window_key, &selector)
-            .unwrap()
-            .export(ExportMode::all_updates())
-            .unwrap();
+        let update =
+            filtered_window_doc(&vault, &doc, &window_key, test_selector_scope(), &selector)
+                .unwrap()
+                .export(ExportMode::all_updates())
+                .unwrap();
         let ids = import_ids(&update);
 
         assert!(ids.contains(&claim_world));
@@ -929,6 +986,100 @@ mod tests {
             vec![],
             vec![],
         );
-        assert!(filtered_window_doc(&vault, &doc, &window_key, &selector).is_err());
+        assert!(
+            filtered_window_doc(&vault, &doc, &window_key, test_selector_scope(), &selector)
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn selector_requires_matching_federation_grant_scope() {
+        let member = entity_id(0x35);
+        let (_dir, vault, grant_id) =
+            test_vault_with_grant_scope(member, FederationGrantScope::vault(8));
+        let window_key = WindowKey::new("2026-05");
+        let doc = create_window_doc("source", &window_key);
+        insert_entity(&doc, entity_id(0x56), ENTITY_TYPE_PERSON, b"person");
+        doc.commit();
+
+        let selector = SyncSelector::new(grant_id, member, SyncSelectorWorld::All, vec![], vec![]);
+        assert!(
+            filtered_window_doc(&vault, &doc, &window_key, test_selector_scope(), &selector)
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn selector_suppresses_tombstoned_live_map_residue() {
+        let member = entity_id(0x36);
+        let (_dir, vault, grant_id) = test_vault_with_grant(member);
+        let window_key = WindowKey::new("2026-06");
+        let doc = create_window_doc("source", &window_key);
+        let residue = entity_id(0x57);
+        insert_entity(&doc, residue, ENTITY_TYPE_PERSON, b"stale-live-blob");
+        insert_tombstone(&doc, residue);
+        doc.commit();
+
+        let selector = SyncSelector::new(grant_id, member, SyncSelectorWorld::All, vec![], vec![]);
+        let filtered =
+            filtered_window_doc(&vault, &doc, &window_key, test_selector_scope(), &selector)
+                .unwrap();
+        let receiver = create_window_doc("receiver", &window_key);
+        receiver
+            .import(&filtered.export(ExportMode::all_updates()).unwrap())
+            .unwrap();
+
+        assert!(
+            receiver
+                .get_map("entities")
+                .get(residue.to_hex().as_str())
+                .is_none(),
+            "tombstoned live-map residue must not replicate"
+        );
+        assert!(
+            receiver
+                .get_map("tombstones")
+                .get(residue.to_hex().as_str())
+                .is_some(),
+            "unfiltered selector snapshots should retain tombstones"
+        );
+    }
+
+    #[test]
+    fn selector_treats_malformed_facet_of_value_as_denied_scope() {
+        let member = entity_id(0x37);
+        let (_dir, vault, grant_id) = test_vault_with_grant(member);
+        let window_key = WindowKey::new("2026-07");
+        let doc = create_window_doc("source", &window_key);
+        let facet_allowed = entity_id(0xA7);
+        let facet_denied = entity_id(0xB7);
+        let malformed_claim = entity_id(0x17);
+
+        insert_entity(&doc, facet_allowed, ENTITY_TYPE_FACET, b"facet-a");
+        insert_entity(&doc, facet_denied, ENTITY_TYPE_FACET, b"facet-b");
+        insert_blob(&doc, malformed_claim, &claim_blob(None));
+        insert_malformed_edge(&doc, malformed_claim, EdgeKind::FacetOf, facet_denied);
+        insert_edge(&doc, facet_allowed, EdgeKind::Supports, malformed_claim);
+        doc.commit();
+
+        let selector = SyncSelector::new(
+            grant_id,
+            member,
+            SyncSelectorWorld::All,
+            vec![facet_allowed],
+            vec![],
+        );
+        let update =
+            filtered_window_doc(&vault, &doc, &window_key, test_selector_scope(), &selector)
+                .unwrap()
+                .export(ExportMode::all_updates())
+                .unwrap();
+        let ids = import_ids(&update);
+
+        assert!(ids.contains(&facet_allowed));
+        assert!(
+            !ids.contains(&malformed_claim),
+            "malformed FacetOf value must fail closed, not behave as absent"
+        );
     }
 }

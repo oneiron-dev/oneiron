@@ -18,7 +18,7 @@ use axum::response::IntoResponse;
 use axum::routing::get;
 use futures_util::stream::SplitStream;
 use futures_util::{SinkExt, StreamExt};
-use loro::VersionVector;
+use loro::{ExportMode, VersionVector};
 use oneiron::sync::export_updates_since;
 use oneiron::sync::{WindowKey, decode_selector_vv_request, filtered_window_doc};
 use tokio::time::{Duration, Instant};
@@ -30,12 +30,17 @@ use crate::server::SyncServer;
 
 /// How long the server waits for the client's protocol-version hello.
 const HELLO_TIMEOUT_SECS: u64 = 10;
+/// Numeric grant-scope ABI for this single-vault selector server path.
+/// Distinct from the lease ABI's internal vault id: federation grants reject
+/// zero as a shared-vault scope, and FED-001 fixtures pin the nonzero scope.
+const SERVER_SELECTOR_VAULT_ID: u64 = 7;
 
 /// Per-connection mutable state. This is intentionally local to one socket:
 /// Phase-1 auth has only a shared secret, so user-scoped limits are not sound.
 struct ConnState {
     windows_touched: HashSet<WindowKey>,
     rate_limiter: MessageRateLimiter,
+    window_sync_mode: WindowSyncMode,
 }
 
 impl ConnState {
@@ -43,6 +48,7 @@ impl ConnState {
         Self {
             windows_touched: HashSet::new(),
             rate_limiter: MessageRateLimiter::new(max_messages_per_sec),
+            window_sync_mode: WindowSyncMode::Unbound,
         }
     }
 
@@ -68,6 +74,37 @@ impl ConnState {
         self.windows_touched.insert(key.clone());
         Ok(key)
     }
+
+    fn bind_window_sync_mode(&mut self, mode: WindowSyncMode) -> Result<(), ProtocolError> {
+        if mode == WindowSyncMode::Unbound {
+            return Ok(());
+        }
+
+        match (self.window_sync_mode, mode) {
+            (WindowSyncMode::Unbound, requested) => {
+                self.window_sync_mode = requested;
+                Ok(())
+            }
+            (WindowSyncMode::FullWindow, WindowSyncMode::FullWindow)
+            | (WindowSyncMode::Selector, WindowSyncMode::Selector) => Ok(()),
+            (WindowSyncMode::Selector, WindowSyncMode::FullWindow) => {
+                Err(ProtocolError::InvalidPayload(
+                    "selector-scoped connection cannot use full-window sync",
+                ))
+            }
+            (WindowSyncMode::FullWindow, WindowSyncMode::Selector) => Err(
+                ProtocolError::InvalidPayload("full-window connection cannot use selector sync"),
+            ),
+            (_, WindowSyncMode::Unbound) => Ok(()),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum WindowSyncMode {
+    Unbound,
+    FullWindow,
+    Selector,
 }
 
 struct MessageRateLimiter {
@@ -545,6 +582,16 @@ async fn handle_window_sync(
     // sync can touch all real windows; it only stops fabricated-key floods.
     let key = conn_state.touch_window(key, server.config.max_windows_per_connection)?;
 
+    match sub_tag {
+        window_sub_tags::SELECTOR_VV_REQUEST => {
+            conn_state.bind_window_sync_mode(WindowSyncMode::Selector)?;
+        }
+        window_sub_tags::VV_REQUEST | window_sub_tags::VV_RESPONSE | window_sub_tags::UPDATE => {
+            conn_state.bind_window_sync_mode(WindowSyncMode::FullWindow)?;
+        }
+        _ => {}
+    }
+
     // Loads persisted window state (d:w: + pending u:w:) on first touch.
     // Corrupt persisted state closes the connection rather than serving a
     // fresh empty window (fail-closed — see SyncServer::get_or_create_window).
@@ -586,12 +633,24 @@ async fn handle_window_sync(
             // in the outbound Loro update bytes.
             let request = decode_selector_vv_request(payload)
                 .map_err(|_| ProtocolError::InvalidPayload("invalid sync selector request"))?;
-            let filtered =
-                filtered_window_doc(server.vault.as_ref(), &doc, &key, &request.selector).map_err(
-                    |e| ProtocolError::Persistence(format!("selector filter failed: {e}")),
-                )?;
-            let delta = export_updates_since(&filtered, &request.remote_vv)
-                .map_err(map_delta_export_err)?;
+            let remote_vv = VersionVector::decode(&request.remote_vv)
+                .map_err(|e| ProtocolError::VvDecode(e.to_string()))?;
+            if !remote_vv.is_empty() {
+                return Err(ProtocolError::InvalidPayload(
+                    "selector sync requires empty version vector resync",
+                ));
+            }
+            let filtered = filtered_window_doc(
+                server.vault.as_ref(),
+                &doc,
+                &key,
+                selector_grant_scope(),
+                &request.selector,
+            )
+            .map_err(map_selector_filter_err)?;
+            let delta = filtered
+                .export(ExportMode::all_updates())
+                .map_err(|e| ProtocolError::LoroImport(e.to_string()))?;
             let response =
                 protocol::encode_window_sync(window_key, window_sub_tags::UPDATE, &delta)
                     .into_result()
@@ -664,6 +723,21 @@ fn map_delta_export_err(e: oneiron::Error) -> ProtocolError {
     } else {
         ProtocolError::LoroImport(e.to_string())
     }
+}
+
+fn map_selector_filter_err(e: oneiron::Error) -> ProtocolError {
+    if matches!(
+        e,
+        oneiron::Error::SyncProtocolError(_) | oneiron::Error::InvalidFederationGrantBody(_)
+    ) {
+        ProtocolError::InvalidPayload("sync selector rejected")
+    } else {
+        ProtocolError::Persistence(format!("selector filter failed: {e}"))
+    }
+}
+
+fn selector_grant_scope() -> oneiron::FederationGrantScope {
+    oneiron::FederationGrantScope::vault(SERVER_SELECTOR_VAULT_ID)
 }
 
 /// Rejects a BulkTransfer message from client.
@@ -864,6 +938,10 @@ mod tests {
             .unwrap();
     }
 
+    fn test_selector_scope() -> oneiron::FederationGrantScope {
+        selector_grant_scope()
+    }
+
     #[tokio::test]
     async fn vv_request_sends_delta_and_vv_response() {
         let (_dir, server) = test_server();
@@ -1021,7 +1099,7 @@ mod tests {
         let member = entity_id(0x31);
         let grant_id = oneiron::EntityId::now();
         let grant = oneiron::FederationGrant::new(
-            oneiron::FederationGrantScope::vault(7),
+            test_selector_scope(),
             member,
             oneiron::FederationGrantRole::Viewer,
             oneiron::FederationGrantPreset::ReadOnly,
@@ -1136,6 +1214,183 @@ mod tests {
         assert!(entities.get(person.to_hex().as_str()).is_some());
         assert!(entities.get(claim_denied.to_hex().as_str()).is_none());
         assert!(entities.get(facet_denied.to_hex().as_str()).is_none());
+    }
+
+    #[tokio::test]
+    async fn selector_connection_rejects_full_window_bypass() {
+        let (_dir, server) = test_server();
+        let key = "2026-07";
+        let window_key = WindowKey::new(key);
+        let server_doc = server.get_or_create_window(&window_key).await.unwrap();
+        server_doc
+            .get_map("entities")
+            .insert("secret", b"full-window-only".as_slice())
+            .unwrap();
+        server_doc.commit();
+
+        let member = entity_id(0x41);
+        let grant_id = oneiron::EntityId::now();
+        let grant = oneiron::FederationGrant::new(
+            test_selector_scope(),
+            member,
+            oneiron::FederationGrantRole::Viewer,
+            oneiron::FederationGrantPreset::ReadOnly,
+        );
+        oneiron::sync::put_selector_test_federation_grant(
+            server.vault.as_ref(),
+            &grant_id,
+            &grant,
+            1,
+        )
+        .unwrap();
+
+        let selector = oneiron::sync::SyncSelector::new(
+            grant_id,
+            member,
+            oneiron::sync::SyncSelectorWorld::All,
+            vec![],
+            vec![],
+        );
+        let payload =
+            oneiron::sync::encode_selector_vv_request(&selector, &VersionVector::new().encode())
+                .unwrap();
+
+        let (direct_tx, mut direct_rx) = mpsc::unbounded_channel::<Vec<u8>>();
+        let mut conn_state = test_conn_state();
+        handle_window_sync(
+            &server,
+            1,
+            key,
+            window_sub_tags::SELECTOR_VV_REQUEST,
+            &payload,
+            &direct_tx,
+            &mut conn_state,
+        )
+        .await
+        .unwrap();
+        let _ = direct_rx.try_recv().unwrap();
+
+        let result = handle_window_sync(
+            &server,
+            1,
+            key,
+            window_sub_tags::VV_REQUEST,
+            &VersionVector::new().encode(),
+            &direct_tx,
+            &mut conn_state,
+        )
+        .await;
+
+        assert!(matches!(result, Err(ProtocolError::InvalidPayload(_))));
+        assert!(
+            direct_rx.try_recv().is_err(),
+            "selector-scoped connection must not receive full-window fallback data"
+        );
+    }
+
+    #[tokio::test]
+    async fn selector_vv_request_rejects_incremental_remote_vv() {
+        let (_dir, server) = test_server();
+        let key = "2026-08";
+        let window_key = WindowKey::new(key);
+        let server_doc = server.get_or_create_window(&window_key).await.unwrap();
+
+        let member = entity_id(0x42);
+        let grant_id = oneiron::EntityId::now();
+        let grant = oneiron::FederationGrant::new(
+            test_selector_scope(),
+            member,
+            oneiron::FederationGrantRole::Viewer,
+            oneiron::FederationGrantPreset::ReadOnly,
+        );
+        oneiron::sync::put_selector_test_federation_grant(
+            server.vault.as_ref(),
+            &grant_id,
+            &grant,
+            1,
+        )
+        .unwrap();
+
+        let facet_allowed = entity_id(0xC1);
+        let claim_allowed = entity_id(0xC2);
+        insert_entity(
+            &server_doc,
+            facet_allowed,
+            oneiron::types::ENTITY_TYPE_FACET,
+            b"facet",
+        );
+        insert_entity(
+            &server_doc,
+            claim_allowed,
+            oneiron::types::ENTITY_TYPE_CLAIM,
+            b"claim",
+        );
+        insert_edge(
+            &server_doc,
+            claim_allowed,
+            oneiron::EdgeKind::FacetOf,
+            facet_allowed,
+        );
+        server_doc.commit();
+
+        let selector = oneiron::sync::SyncSelector::new(
+            grant_id,
+            member,
+            oneiron::sync::SyncSelectorWorld::All,
+            vec![facet_allowed],
+            vec![],
+        );
+        let client_doc = client_window_doc();
+        let empty_payload =
+            oneiron::sync::encode_selector_vv_request(&selector, &client_doc.oplog_vv().encode())
+                .unwrap();
+
+        let (direct_tx, mut direct_rx) = mpsc::unbounded_channel::<Vec<u8>>();
+        let mut conn_state = test_conn_state();
+        handle_window_sync(
+            &server,
+            1,
+            key,
+            window_sub_tags::SELECTOR_VV_REQUEST,
+            &empty_payload,
+            &direct_tx,
+            &mut conn_state,
+        )
+        .await
+        .unwrap();
+
+        let (_, _, snapshot) = expect_window_sync(&direct_rx.try_recv().unwrap());
+        client_doc.import(&snapshot).unwrap();
+        assert!(!client_doc.oplog_vv().is_empty());
+
+        let narrowed_selector = oneiron::sync::SyncSelector::new(
+            grant_id,
+            member,
+            oneiron::sync::SyncSelectorWorld::All,
+            vec![],
+            vec![],
+        );
+        let incremental_payload = oneiron::sync::encode_selector_vv_request(
+            &narrowed_selector,
+            &client_doc.oplog_vv().encode(),
+        )
+        .unwrap();
+        let result = handle_window_sync(
+            &server,
+            1,
+            key,
+            window_sub_tags::SELECTOR_VV_REQUEST,
+            &incremental_payload,
+            &direct_tx,
+            &mut conn_state,
+        )
+        .await;
+
+        assert!(matches!(result, Err(ProtocolError::InvalidPayload(_))));
+        assert!(
+            direct_rx.try_recv().is_err(),
+            "unsafe selector deltas must be rejected instead of sent"
+        );
     }
 
     #[tokio::test]
