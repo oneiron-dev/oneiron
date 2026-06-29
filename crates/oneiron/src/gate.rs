@@ -14,7 +14,9 @@ use crate::claim::{
 };
 use crate::error::{Error, Result};
 use crate::store::Store;
-use crate::types::{ENTITY_ID_LEN, ENTITY_TYPE_POLICY_MANIFEST, EdgeActorClass, EntityId};
+use crate::types::{
+    ENTITY_ID_LEN, ENTITY_TYPE_POLICY_MANIFEST, EdgeActorClass, EntityId, WriteEnvelope,
+};
 
 const POLICY_SCHEMA_VERSION_KEY: &str = "schema_version";
 const POLICY_SCHEMA_VERSION: &str = "1.1";
@@ -725,11 +727,47 @@ pub(crate) fn check_claim_policy(
     check_claim_source_trust(body, policy)
 }
 
+pub(crate) fn check_claim_policy_with_write_envelope(
+    body: &ClaimBody,
+    envelope: &WriteEnvelope,
+    policy: &PolicyManifestResolution,
+) -> Result<()> {
+    validate_write_envelope(envelope)?;
+
+    if policy.enforces_write_gate() {
+        let actor = envelope.actor();
+        let input = claim_gate_input(
+            body,
+            policy,
+            GateActor {
+                actor_class: edge_actor_class_str(actor.actor_class()).to_owned(),
+                actor_ref: Some(actor.entity_ref().to_hex()),
+            },
+            GateContentKind::Claim,
+            GateProvenanceHandles {
+                actor_entity_ref: Some(actor.entity_ref()),
+                ..GateProvenanceHandles::default()
+            },
+        );
+        enforce_claim_gate_decision(policy.evaluate_gate(&input), body.approval)?;
+    }
+
+    check_claim_source_trust(body, policy)
+}
+
 pub(crate) fn check_reserved_claim_policy(
     body: &ClaimBody,
     policy: &PolicyManifestResolution,
 ) -> Result<()> {
     check_claim_source_trust(body, policy)
+}
+
+pub(crate) fn validate_write_envelope(envelope: &WriteEnvelope) -> Result<()> {
+    if matches!(envelope.provenance().value(), &Value::Nil) {
+        return Err(Error::InvalidClaimBody("write envelope missing provenance"));
+    }
+
+    Ok(())
 }
 
 pub(crate) fn check_edge_provenance_claim_policy(
@@ -1289,13 +1327,12 @@ mod tests {
     use super::*;
     use crate::claim::{
         ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSubject,
-        claim_body_decode_count, decode_claim_body, encode_claim_body,
-        reset_claim_body_decode_count,
+        claim_body_decode_count, decode_claim_body, reset_claim_body_decode_count,
     };
     use crate::provenance::{EdgeProvenanceClaimBody, EdgeRef, SupersessionStatus};
     use crate::types::{
-        ENTITY_TYPE_CLAIM, ENTITY_TYPE_PERSON, EdgeActorClass, EdgeConfirmationStatus, EdgeKind,
-        EdgeProvenanceFlags, TimeRange,
+        ClaimCandidate, ENTITY_TYPE_PERSON, EdgeActorClass, EdgeConfirmationStatus, EdgeKind,
+        EdgeProvenanceFlags, TimeRange, WriteActor, WriteProvenance,
     };
 
     fn test_id(seed: u8) -> EntityId {
@@ -1415,6 +1452,24 @@ mod tests {
         });
     }
 
+    fn append_actor_ceiling(data: &mut Vec<u8>, row: Value) {
+        rewrite_policy_manifest_entries(data, |entries| {
+            for (key, value) in entries {
+                if key.as_str() == Some(POLICY_ACTOR_CEILINGS_KEY) {
+                    let Value::Array(rows) = value else {
+                        unreachable!("actor ceilings are an array");
+                    };
+                    rows.push(row);
+                    return;
+                }
+            }
+        });
+    }
+
+    fn trust_human_candidate_actor(data: &mut Vec<u8>) {
+        append_actor_ceiling(data, actor_ceiling_row("human", "auto"));
+    }
+
     fn scoped_grants_entry() -> (Value, Value) {
         (
             Value::from(POLICY_SCOPED_GRANTS_KEY),
@@ -1483,8 +1538,58 @@ mod tests {
         body
     }
 
+    #[cfg(feature = "sync")]
     fn source_trust_claim_data(source: ClaimSource) -> Vec<u8> {
-        encode_claim_body(&source_trust_claim(source)).expect("claim encode")
+        crate::claim::encode_claim_body(&source_trust_claim(source)).expect("claim encode")
+    }
+
+    fn claim_candidate_from_body(body: &ClaimBody) -> ClaimCandidate {
+        let mut candidate = ClaimCandidate::new(
+            body.predicate.clone(),
+            body.subject,
+            body.value.clone(),
+            body.confidence,
+        )
+        .with_validity(body.valid_from, body.valid_to)
+        .with_stale(body.stale);
+        if let Some(salience) = body.salience {
+            candidate = candidate.with_salience(salience);
+        }
+        if let Some(evidence) = body.evidence.clone() {
+            candidate = candidate.with_evidence(evidence);
+        }
+        if let Some(world) = body.world {
+            candidate = candidate.with_world(world);
+        }
+        if let Some(scope) = body.scope.clone() {
+            candidate = candidate.with_scope(scope);
+        }
+        candidate
+    }
+
+    fn claim_candidate_write_parts(
+        vault: &crate::Vault,
+        body: &ClaimBody,
+    ) -> Result<(ClaimCandidate, WriteEnvelope)> {
+        let actor = test_id(0x20);
+        vault.put_entity(&actor, ENTITY_TYPE_PERSON, test_time(1), 1, b"gate actor")?;
+        if let ClaimSubject::Entity(subject) = body.subject {
+            vault.put_entity(
+                &subject,
+                ENTITY_TYPE_PERSON,
+                test_time(1),
+                1,
+                b"gate subject",
+            )?;
+        }
+        let source = body.source.unwrap_or(ClaimSource::UserStated);
+        let envelope = WriteEnvelope::new(
+            WriteActor::new(actor, EdgeActorClass::Human),
+            source,
+            WriteProvenance::new(Value::from("gate-test"))?,
+            body.approval,
+        );
+        Ok((claim_candidate_from_body(body), envelope))
     }
 
     fn gate_evaluator_input(
@@ -1526,10 +1631,11 @@ mod tests {
         source: ClaimSource,
     ) -> Result<()> {
         let id = test_id(seed);
-        let data = source_trust_claim_data(source);
+        let body = source_trust_claim(source);
+        let (candidate, envelope) = claim_candidate_write_parts(vault, &body)?;
         let err = vault
             .batch()
-            .put(&id, ENTITY_TYPE_CLAIM, test_time(6), 6, &data)
+            .claim_candidate(&id, candidate, &envelope, test_time(6), 6)
             .commit()
             .expect_err("manifest must reject risky auto source");
         assert!(
@@ -1549,10 +1655,11 @@ mod tests {
         reason_codes: &[&'static str],
     ) -> Result<()> {
         let id = test_id(seed);
-        let data = source_trust_claim_data(source);
+        let body = source_trust_claim(source);
+        let (candidate, envelope) = claim_candidate_write_parts(vault, &body)?;
         let err = vault
             .batch()
-            .put(&id, ENTITY_TYPE_CLAIM, test_time(6), 6, &data)
+            .claim_candidate(&id, candidate, &envelope, test_time(6), 6)
             .commit()
             .expect_err("active policy write gate must reject risky auto source");
         assert_gate_rejected(err, outcome, reason_codes);
@@ -1883,11 +1990,12 @@ mod tests {
     #[test]
     fn policy_manifest_valid_fixture_resolves_gate_inputs() -> Result<()> {
         let (_tmp, vault) = temp_vault();
-        let data = encode_policy_manifest(vec![
+        let mut data = encode_policy_manifest(vec![
             source_trust_entry(ClaimSource::ToolOutput, 0),
             scoped_grants_entry(),
             signatures_entry(),
         ]);
+        trust_human_candidate_actor(&mut data);
         put_policy_manifest_bytes(&vault, 0x51, &data)?;
 
         let policy = resolve(&vault)?;
@@ -1913,11 +2021,12 @@ mod tests {
         assert_eq!(policy.signatures().len(), 1);
 
         let id = test_id(0x63);
-        let claim = source_trust_claim_data(ClaimSource::ToolOutput);
+        let body = source_trust_claim(ClaimSource::ToolOutput);
+        let (candidate, envelope) = claim_candidate_write_parts(&vault, &body)?;
         reset_claim_body_decode_count();
         vault
             .batch()
-            .put(&id, ENTITY_TYPE_CLAIM, test_time(3), 3, &claim)
+            .claim_candidate(&id, candidate, &envelope, test_time(3), 3)
             .commit()?;
         assert!(vault.get_raw(&id)?.is_some());
         assert_eq!(
@@ -1931,7 +2040,8 @@ mod tests {
     #[test]
     fn gate_chokepoint_active_policy_source_denial_is_typed_gate_rejection() -> Result<()> {
         let (_tmp, vault) = temp_vault();
-        let data = encode_policy_manifest(vec![]);
+        let mut data = encode_policy_manifest(vec![]);
+        trust_human_candidate_actor(&mut data);
         put_policy_manifest_bytes(&vault, 0x84, &data)?;
 
         assert_auto_source_gate_rejected(
@@ -1946,19 +2056,20 @@ mod tests {
     #[test]
     fn gate_chokepoint_batch_claim_denial_aborts_without_partial_writes() -> Result<()> {
         let (_tmp, vault) = temp_vault();
-        let data = encode_policy_manifest(vec![]);
+        let mut data = encode_policy_manifest(vec![]);
+        trust_human_candidate_actor(&mut data);
         put_policy_manifest_bytes(&vault, 0x76, &data)?;
 
         let prior_id = test_id(0x77);
         let claim_id = test_id(0x78);
         let mut body = source_trust_claim(ClaimSource::UserStated);
         body.predicate = "health.allergy".to_owned();
-        let claim = encode_claim_body(&body)?;
+        let (candidate, envelope) = claim_candidate_write_parts(&vault, &body)?;
 
         let err = vault
             .batch()
             .put(&prior_id, ENTITY_TYPE_PERSON, test_time(7), 7, b"prior")
-            .put(&claim_id, ENTITY_TYPE_CLAIM, test_time(7), 7, &claim)
+            .claim_candidate(&claim_id, candidate, &envelope, test_time(7), 7)
             .commit()
             .expect_err("critical local claim must stop at Gate");
 
@@ -1971,19 +2082,20 @@ mod tests {
     #[test]
     fn gate_chokepoint_batch_policy_delete_cannot_weaken_later_claim() -> Result<()> {
         let (_tmp, vault) = temp_vault();
-        let data = encode_policy_manifest(vec![]);
+        let mut data = encode_policy_manifest(vec![]);
+        trust_human_candidate_actor(&mut data);
         let policy_id = test_id(0x95);
         put_policy_manifest_bytes(&vault, 0x95, &data)?;
 
         let claim_id = test_id(0x96);
         let mut body = source_trust_claim(ClaimSource::UserStated);
         body.predicate = "health.allergy".to_owned();
-        let claim = encode_claim_body(&body)?;
+        let (candidate, envelope) = claim_candidate_write_parts(&vault, &body)?;
 
         let err = vault
             .batch()
             .delete(&policy_id)
-            .put(&claim_id, ENTITY_TYPE_CLAIM, test_time(7), 7, &claim)
+            .claim_candidate(&claim_id, candidate, &envelope, test_time(7), 7)
             .commit()
             .expect_err("policy delete must not weaken same-batch Gate checks");
 
@@ -1999,18 +2111,19 @@ mod tests {
     #[test]
     fn gate_chokepoint_allows_proposed_claims_for_review_under_pending_policy() -> Result<()> {
         let (_tmp, vault) = temp_vault();
-        let data = encode_policy_manifest(vec![]);
+        let mut data = encode_policy_manifest(vec![]);
+        trust_human_candidate_actor(&mut data);
         put_policy_manifest_bytes(&vault, 0x97, &data)?;
 
         let claim_id = test_id(0x98);
         let mut body = source_trust_claim(ClaimSource::ToolOutput);
         body.predicate = "health.allergy".to_owned();
         body.approval = ClaimApprovalStatus::Proposed;
-        let claim = encode_claim_body(&body)?;
+        let (candidate, envelope) = claim_candidate_write_parts(&vault, &body)?;
 
         vault
             .batch()
-            .put(&claim_id, ENTITY_TYPE_CLAIM, test_time(7), 7, &claim)
+            .claim_candidate(&claim_id, candidate, &envelope, test_time(7), 7)
             .commit()?;
 
         let stored = stored_claim_body(&vault, &claim_id)?;
@@ -2202,10 +2315,11 @@ mod tests {
         assert_auto_source_rejected(&vault, 0x65, ClaimSource::Imported)?;
 
         let id = test_id(0x66);
-        let data = source_trust_claim_data(ClaimSource::Observed);
+        let body = source_trust_claim(ClaimSource::Observed);
+        let (candidate, envelope) = claim_candidate_write_parts(&vault, &body)?;
         vault
             .batch()
-            .put(&id, ENTITY_TYPE_CLAIM, test_time(4), 4, &data)
+            .claim_candidate(&id, candidate, &envelope, test_time(4), 4)
             .commit()?;
         assert!(vault.get_raw(&id)?.is_some());
         Ok(())
@@ -2285,10 +2399,10 @@ mod tests {
             let claim_id = test_id(seed + 1);
             let mut body = source_trust_claim(ClaimSource::UserStated);
             body.approval = ClaimApprovalStatus::Approved;
-            let claim = encode_claim_body(&body)?;
+            let (candidate, envelope) = claim_candidate_write_parts(&vault, &body)?;
             let err = match vault
                 .batch()
-                .put(&claim_id, ENTITY_TYPE_CLAIM, test_time(4), 4, &claim)
+                .claim_candidate(&claim_id, candidate, &envelope, test_time(4), 4)
                 .commit()
             {
                 Ok(()) => {
@@ -2445,7 +2559,7 @@ mod tests {
 
         vault
             .batch()
-            .put_replicated(&id, ENTITY_TYPE_CLAIM, test_time(5), 5, &data)
+            .put_replicated(&id, crate::types::ENTITY_TYPE_CLAIM, test_time(5), 5, &data)
             .commit()?;
 
         assert!(
@@ -2466,7 +2580,13 @@ mod tests {
         let claim = source_trust_claim_data(ClaimSource::ToolOutput);
         vault
             .batch()
-            .put_replicated(&id, ENTITY_TYPE_CLAIM, test_time(5), 5, &claim)
+            .put_replicated(
+                &id,
+                crate::types::ENTITY_TYPE_CLAIM,
+                test_time(5),
+                5,
+                &claim,
+            )
             .commit()?;
 
         assert!(
