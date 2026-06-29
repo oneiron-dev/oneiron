@@ -386,137 +386,144 @@ impl<'a> ContextPackBuilder<'a> {
     fn run_unfinalized(self) -> Result<ContextPackRun<'a>> {
         let started = Instant::now();
         let pipeline_output = self.pipeline.run_for_pack()?;
-        let total_in_scope = pipeline_output.total_in_scope;
-        let pipeline_empty_reason = pipeline_output.empty_reason;
         let telemetry_run_id = pipeline_output.telemetry_run_id;
         let store = &self.vault.store;
-        let scored = pipeline_output.scores;
-        let surfaced_candidate_count = scored.len();
-        let claim_bodies = pipeline_output.claim_bodies;
-        let mut claims_suppressed = pipeline_output.claims_suppressed;
-        let cosine_ghosts_dampened = pipeline_output.cosine_ghosts_dampened;
+        let result = (|| {
+            let total_in_scope = pipeline_output.total_in_scope;
+            let pipeline_empty_reason = pipeline_output.empty_reason;
+            let scored = pipeline_output.scores;
+            let surfaced_candidate_count = scored.len();
+            let claim_bodies = pipeline_output.claim_bodies;
+            let mut claims_suppressed = pipeline_output.claims_suppressed;
+            let cosine_ghosts_dampened = pipeline_output.cosine_ghosts_dampened;
 
-        let rtxn = self.vault.store.env.read_txn()?;
-        let hydrate_result_edges = self.include_edges && self.edge_hop == 0;
-        let result_options = HydrateOptions {
-            hydrate_fields: self.hydrate,
-            include_edges: hydrate_result_edges,
-            include_vectors: self.include_vectors,
-            edge_cache: None,
-            claim_bodies: Some(&claim_bodies),
-        };
-
-        let mut results = Vec::with_capacity(scored.len());
-        for entry in scored.iter().copied() {
-            let Some(entity) = hydrate_entity(
-                self.vault,
-                &rtxn,
-                entry.id,
-                entry.score,
-                result_options,
-                &mut claims_suppressed,
-            )?
-            else {
-                continue;
+            let rtxn = self.vault.store.env.read_txn()?;
+            let hydrate_result_edges = self.include_edges && self.edge_hop == 0;
+            let result_options = HydrateOptions {
+                hydrate_fields: self.hydrate,
+                include_edges: hydrate_result_edges,
+                include_vectors: self.include_vectors,
+                edge_cache: None,
+                claim_bodies: Some(&claim_bodies),
             };
-            results.push(entity);
-        }
 
-        let seed_ids: Vec<EntityId> = results.iter().map(|entity| entity.id).collect();
-        let result_ids: HashSet<EntityId> = seed_ids.iter().copied().collect();
-        let edge_walk = if self.edge_hop > 0 && self.max_neighbors > 0 {
-            walk_edges(
-                &self.vault.store,
-                &rtxn,
-                &seed_ids,
-                self.edge_hop,
-                self.max_neighbors,
-                &result_ids,
-            )?
-        } else {
-            EdgeWalkResult::default()
-        };
-        let edge_cache = self.include_edges.then_some(&edge_walk.scanned_edges);
-        let neighbor_options = HydrateOptions {
-            hydrate_fields: self.hydrate,
-            include_edges: self.include_edges,
-            include_vectors: self.include_vectors,
-            edge_cache,
-            claim_bodies: Some(&claim_bodies),
-        };
+            let mut results = Vec::with_capacity(scored.len());
+            for entry in scored.iter().copied() {
+                let Some(entity) = hydrate_entity(
+                    self.vault,
+                    &rtxn,
+                    entry.id,
+                    entry.score,
+                    result_options,
+                    &mut claims_suppressed,
+                )?
+                else {
+                    continue;
+                };
+                results.push(entity);
+            }
 
-        if self.include_edges && self.edge_hop > 0 {
-            for entity in &mut results {
-                entity.edges = Some(load_entity_edges(
+            let seed_ids: Vec<EntityId> = results.iter().map(|entity| entity.id).collect();
+            let result_ids: HashSet<EntityId> = seed_ids.iter().copied().collect();
+            let edge_walk = if self.edge_hop > 0 && self.max_neighbors > 0 {
+                walk_edges(
                     &self.vault.store,
                     &rtxn,
-                    &entity.id,
-                    edge_cache,
-                )?);
-            }
-        }
-
-        let mut neighbors = Vec::with_capacity(edge_walk.neighbor_ids.len());
-        for id in edge_walk.neighbor_ids {
-            let Some(entity) = hydrate_entity(
-                self.vault,
-                &rtxn,
-                id,
-                0.0,
-                neighbor_options,
-                &mut claims_suppressed,
-            )?
-            else {
-                continue;
+                    &seed_ids,
+                    self.edge_hop,
+                    self.max_neighbors,
+                    &result_ids,
+                )?
+            } else {
+                EdgeWalkResult::default()
             };
-            neighbors.push(entity);
+            let edge_cache = self.include_edges.then_some(&edge_walk.scanned_edges);
+            let neighbor_options = HydrateOptions {
+                hydrate_fields: self.hydrate,
+                include_edges: self.include_edges,
+                include_vectors: self.include_vectors,
+                edge_cache,
+                claim_bodies: Some(&claim_bodies),
+            };
+
+            if self.include_edges && self.edge_hop > 0 {
+                for entity in &mut results {
+                    entity.edges = Some(load_entity_edges(
+                        &self.vault.store,
+                        &rtxn,
+                        &entity.id,
+                        edge_cache,
+                    )?);
+                }
+            }
+
+            let mut neighbors = Vec::with_capacity(edge_walk.neighbor_ids.len());
+            for id in edge_walk.neighbor_ids {
+                let Some(entity) = hydrate_entity(
+                    self.vault,
+                    &rtxn,
+                    id,
+                    0.0,
+                    neighbor_options,
+                    &mut claims_suppressed,
+                )?
+                else {
+                    continue;
+                };
+                neighbors.push(entity);
+            }
+
+            resolve_edge_short_ids(&mut results, &mut neighbors);
+
+            // ARCH-0004 / ARCH-0022 world partitioning (ONE-1117): under the
+            // default `All` scope, group surviving claims by world — base section
+            // first, then one section per non-base world — and cap how much of the
+            // claim budget fiction may take. Flat (unchanged) for Base / World(id).
+            if matches!(self.world_scope, WorldScope::All) {
+                partition_results_by_world(
+                    &self.vault.store,
+                    &rtxn,
+                    &mut results,
+                    self.non_base_world_fraction,
+                    &claim_bodies,
+                )?;
+            }
+
+            let pack_is_empty = results.is_empty() && neighbors.is_empty();
+            let candidates_considered = if pack_is_empty {
+                total_in_scope
+            } else {
+                surfaced_candidate_count
+            };
+            let stats = PackStats {
+                candidates_considered,
+                signals_used: dedupe_signals(self.signals_used),
+                query_time_us: started.elapsed().as_micros().min(u64::MAX as u128) as u64,
+                entities_hydrated: results.len(),
+                neighbors_hydrated: neighbors.len(),
+                cosine_ghosts_dampened,
+                claims_suppressed,
+                items_truncated: crate::types::PackItemAccounting::item_budget(),
+                items_dropped: crate::types::PackItemAccounting::token_budget(),
+            };
+            let empty = empty_context(pack_is_empty, &stats, pipeline_empty_reason);
+
+            Ok(ContextPackRun {
+                pack: ContextPack {
+                    results,
+                    neighbors,
+                    stats,
+                    empty,
+                },
+                telemetry_run_id,
+                store,
+            })
+        })();
+
+        if result.is_err() {
+            discard_failed_context_pack_telemetry(store, telemetry_run_id);
         }
-
-        resolve_edge_short_ids(&mut results, &mut neighbors);
-
-        // ARCH-0004 / ARCH-0022 world partitioning (ONE-1117): under the
-        // default `All` scope, group surviving claims by world — base section
-        // first, then one section per non-base world — and cap how much of the
-        // claim budget fiction may take. Flat (unchanged) for Base / World(id).
-        if matches!(self.world_scope, WorldScope::All) {
-            partition_results_by_world(
-                &self.vault.store,
-                &rtxn,
-                &mut results,
-                self.non_base_world_fraction,
-                &claim_bodies,
-            )?;
-        }
-
-        let pack_is_empty = results.is_empty() && neighbors.is_empty();
-        let candidates_considered = if pack_is_empty {
-            total_in_scope
-        } else {
-            surfaced_candidate_count
-        };
-        let stats = PackStats {
-            candidates_considered,
-            signals_used: dedupe_signals(self.signals_used),
-            query_time_us: started.elapsed().as_micros().min(u64::MAX as u128) as u64,
-            entities_hydrated: results.len(),
-            neighbors_hydrated: neighbors.len(),
-            cosine_ghosts_dampened,
-            claims_suppressed,
-            items_truncated: crate::types::PackItemAccounting::item_budget(),
-            items_dropped: crate::types::PackItemAccounting::token_budget(),
-        };
-        let empty = empty_context(pack_is_empty, &stats, pipeline_empty_reason);
-
-        Ok(ContextPackRun {
-            pack: ContextPack {
-                results,
-                neighbors,
-                stats,
-                empty,
-            },
-            telemetry_run_id,
-            store,
-        })
+        result
     }
 
     pub fn run_serialized(self) -> Result<Vec<u8>> {
@@ -573,6 +580,18 @@ fn finalize_context_pack_telemetry(
         tracing::warn!(
             ?error,
             "context-pack retrieval telemetry finalization failed; continuing retrieval"
+        );
+    }
+}
+
+fn discard_failed_context_pack_telemetry(store: &Store, telemetry_run_id: Option<RetrievalRunId>) {
+    let Some(run_id) = telemetry_run_id else {
+        return;
+    };
+    if let Err(error) = store.delete_retrieval_run(run_id) {
+        tracing::warn!(
+            ?error,
+            "failed context-pack retrieval telemetry discard failed; continuing error return"
         );
     }
 }
@@ -2616,6 +2635,45 @@ mod tests {
         assert_eq!(runs[0].result_ids, vec![*live.as_bytes()]);
         assert_eq!(runs[0].score_breakdown.len(), 1);
         assert_eq!(runs[0].score_breakdown[0].result_id, *live.as_bytes());
+        Ok(())
+    }
+
+    #[test]
+    fn context_pack_telemetry_discards_run_on_assembly_error() -> Result<()> {
+        let (_dir, vault) = open_test_vault();
+
+        let id = EntityId::from_bytes_unchecked([0x7B; 16]);
+        vault
+            .batch()
+            .put(
+                &id,
+                crate::types::ENTITY_TYPE_PERSON,
+                TimeRange { start: 1, end: 1 },
+                1,
+                &msgpack_entity(serde_json::json!({"name": "Corrupt"})),
+            )
+            .text(&id, &[("body", "telemetry corrupt vector")])
+            .vector(&id, &[1.0, 0.0, 0.0, 0.0])
+            .commit()?;
+        vault.with_write_txn(|wtxn| {
+            vault.store.vectors.put(wtxn, id.as_bytes(), &[1, 2, 3])?;
+            Ok(())
+        })?;
+
+        let error = vault
+            .context_pack()
+            .search_text("telemetry corrupt vector", 10)
+            .include_vectors(true)
+            .run_with_telemetry()
+            .expect_err("corrupt post-pipeline vector hydration should fail the context pack");
+        assert!(
+            matches!(error, Error::CorruptedIndex("entity vector")),
+            "expected CorruptedIndex(\"entity vector\"), got {error:?}"
+        );
+        assert!(
+            vault.retrieval_runs(10)?.is_empty(),
+            "failed context-pack assembly must not leave a completed telemetry row"
+        );
         Ok(())
     }
 
