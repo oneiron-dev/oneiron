@@ -86,6 +86,16 @@ impl CoreAuth {
     pub(crate) fn principal(&self) -> &str {
         &self.principal
     }
+
+    pub(crate) fn idempotency_principal(&self) -> String {
+        let scopes = self
+            .scopes
+            .iter()
+            .map(|scope| scope.as_str())
+            .collect::<Vec<_>>()
+            .join(",");
+        format!("core:{}:scopes={scopes}", self.principal)
+    }
 }
 
 impl FromRequestParts<Arc<SyncServer>> for CoreAuth {
@@ -241,6 +251,38 @@ mod tests {
         assert!(auth.require(CoreScope::Read).is_ok());
         assert!(auth.require(CoreScope::Auth).is_ok());
         assert!(auth.require(CoreScope::Write).is_err());
+    }
+
+    #[test]
+    fn idempotency_principal_includes_auth_mode_and_scopes() {
+        let mut legacy_headers = HeaderMap::new();
+        legacy_headers.insert(LEGACY_SECRET_HEADER, "secret".parse().unwrap());
+        let legacy_auth = CoreAuth::from_headers(&legacy_headers, &config()).unwrap();
+
+        let mut read_headers = HeaderMap::new();
+        read_headers.insert(
+            AUTHORIZATION,
+            "Bearer secret;scope=core:read".parse().unwrap(),
+        );
+        let read_auth = CoreAuth::from_headers(&read_headers, &config()).unwrap();
+
+        let mut write_headers = HeaderMap::new();
+        write_headers.insert(
+            AUTHORIZATION,
+            "Bearer secret;scope=core:write".parse().unwrap(),
+        );
+        let write_auth = CoreAuth::from_headers(&write_headers, &config()).unwrap();
+
+        assert_ne!(
+            legacy_auth.idempotency_principal(),
+            write_auth.idempotency_principal()
+        );
+        assert_ne!(
+            read_auth.idempotency_principal(),
+            write_auth.idempotency_principal()
+        );
+        assert!(read_auth.idempotency_principal().contains("core:read"));
+        assert!(write_auth.idempotency_principal().contains("core:write"));
     }
 
     #[test]

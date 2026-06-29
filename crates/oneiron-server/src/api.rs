@@ -2814,6 +2814,63 @@ mod tests {
         );
     }
 
+    fn seed_turn(server: &SyncServer, text: &str) -> oneiron::EntityId {
+        let turn = oneiron::EntityId::now();
+        let body = rmp_serde::to_vec_named(&json!({
+            "txt": text,
+            "spkr": "user",
+            "at": 100_u64,
+        }))
+        .expect("encode turn body");
+        server
+            .vault
+            .put_entity(
+                &turn,
+                ENTITY_TYPE_TURN,
+                oneiron::TimeRange {
+                    start: 100,
+                    end: 100,
+                },
+                100,
+                &body,
+            )
+            .expect("put turn");
+        turn
+    }
+
+    fn turn_annotation_request_body(turn: &oneiron::EntityId, annotated_at: u64) -> Value {
+        json!({
+            "turn_id": turn.to_hex(),
+            "source": "model_inference",
+            "vad": {
+                "valence": 0.25,
+                "arousal": 0.5,
+                "dominance": 0.75,
+            },
+            "annotated_at": annotated_at,
+        })
+    }
+
+    async fn idempotent_core_annotate(
+        server: Arc<SyncServer>,
+        idempotency_key: &str,
+        auth_header: (&str, &str),
+        body: &Value,
+    ) -> (StatusCode, Value) {
+        route_json(
+            server,
+            Request::builder()
+                .method("POST")
+                .uri("/v1/core/turns/annotate")
+                .header(auth_header.0, auth_header.1)
+                .header("Idempotency-Key", idempotency_key)
+                .header(CONTENT_TYPE, "application/json")
+                .body(Body::from(body.to_string()))
+                .expect("request"),
+        )
+        .await
+    }
+
     async fn top_up_route(
         server: Arc<SyncServer>,
         idempotency_key: &str,
@@ -3298,6 +3355,117 @@ mod tests {
             error_envelope(&body)["details"]["field"],
             Value::from("turn_id")
         );
+    }
+
+    #[tokio::test]
+    async fn v1_core_idempotency_read_only_token_cannot_replay_cached_write_success() {
+        let (_dir, server) = test_server_with_config(SyncServerConfig {
+            auth_secret: Some("secret".to_owned()),
+            ..Default::default()
+        });
+        let turn = seed_turn(&server, "cached write success");
+        let body = turn_annotation_request_body(&turn, 300);
+
+        let (write_status, write_body) = idempotent_core_annotate(
+            server.clone(),
+            "scoped-write-success",
+            (AUTHORIZATION.as_str(), "Bearer secret;scope=core:write"),
+            &body,
+        )
+        .await;
+        assert_eq!(write_status, StatusCode::OK);
+        assert_eq!(write_body["turn_id"], Value::from(turn.to_hex()));
+
+        let (read_status, read_body) = idempotent_core_annotate(
+            server,
+            "scoped-write-success",
+            (AUTHORIZATION.as_str(), "Bearer secret;scope=core:read"),
+            &body,
+        )
+        .await;
+        assert_eq!(read_status, StatusCode::FORBIDDEN);
+        assert_error_envelope(&read_body, "FORBIDDEN");
+        assert_eq!(
+            error_envelope(&read_body)["details"]["requiredScope"],
+            Value::from("core:write")
+        );
+    }
+
+    #[tokio::test]
+    async fn v1_core_idempotency_write_token_retry_is_not_poisoned_by_read_only_403() {
+        let (_dir, server) = test_server_with_config(SyncServerConfig {
+            auth_secret: Some("secret".to_owned()),
+            ..Default::default()
+        });
+        let turn = seed_turn(&server, "read-only poison");
+        let body = turn_annotation_request_body(&turn, 301);
+
+        let (read_status, read_body) = idempotent_core_annotate(
+            server.clone(),
+            "scoped-read-poison",
+            (AUTHORIZATION.as_str(), "Bearer secret;scope=core:read"),
+            &body,
+        )
+        .await;
+        assert_eq!(read_status, StatusCode::FORBIDDEN);
+        assert_error_envelope(&read_body, "FORBIDDEN");
+
+        let (write_status, write_body) = idempotent_core_annotate(
+            server.clone(),
+            "scoped-read-poison",
+            (AUTHORIZATION.as_str(), "Bearer secret;scope=core:write"),
+            &body,
+        )
+        .await;
+        assert_eq!(write_status, StatusCode::OK);
+        assert_eq!(write_body["turn_id"], Value::from(turn.to_hex()));
+        assert!(
+            server
+                .vault
+                .get_turn_vad_annotation(&turn)
+                .unwrap()
+                .is_some()
+        );
+    }
+
+    #[tokio::test]
+    async fn v1_core_idempotency_legacy_shared_secret_still_replays_and_conflicts() {
+        let (_dir, server) = test_server_with_config(SyncServerConfig {
+            auth_secret: Some("secret".to_owned()),
+            ..Default::default()
+        });
+        let turn = seed_turn(&server, "legacy idempotency");
+        let body = turn_annotation_request_body(&turn, 302);
+
+        let (first_status, first_body) = idempotent_core_annotate(
+            server.clone(),
+            "legacy-core-idem",
+            ("x-oneiron-secret", "secret"),
+            &body,
+        )
+        .await;
+        assert_eq!(first_status, StatusCode::OK);
+
+        let (replay_status, replay_body) = idempotent_core_annotate(
+            server.clone(),
+            "legacy-core-idem",
+            ("x-oneiron-secret", "secret"),
+            &body,
+        )
+        .await;
+        assert_eq!(replay_status, StatusCode::OK);
+        assert_eq!(replay_body, first_body);
+
+        let changed_body = turn_annotation_request_body(&turn, 303);
+        let (conflict_status, conflict_body) = idempotent_core_annotate(
+            server,
+            "legacy-core-idem",
+            ("x-oneiron-secret", "secret"),
+            &changed_body,
+        )
+        .await;
+        assert_eq!(conflict_status, StatusCode::CONFLICT);
+        assert_error_envelope(&conflict_body, "IDEMPOTENCY_REPLAY_CONFLICT");
     }
 
     #[tokio::test]
