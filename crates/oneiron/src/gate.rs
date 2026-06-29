@@ -703,25 +703,24 @@ pub(crate) fn check_claim_policy(
     body: &ClaimBody,
     policy: &PolicyManifestResolution,
 ) -> Result<()> {
-    check_claim_source_trust(body, policy)?;
-    if !policy.enforces_write_gate() {
-        return Ok(());
+    if policy.enforces_write_gate() {
+        let input = claim_gate_input(
+            body,
+            policy,
+            GateActor {
+                actor_class: LOCAL_WRITE_ACTOR_CLASS.to_owned(),
+                actor_ref: None,
+            },
+            GateContentKind::Claim,
+            GateProvenanceHandles {
+                actor_entity_ref: Some(local_write_actor_entity_ref()),
+                ..GateProvenanceHandles::default()
+            },
+        );
+        enforce_gate_decision(policy.evaluate_gate(&input))?;
     }
 
-    let input = claim_gate_input(
-        body,
-        policy,
-        GateActor {
-            actor_class: LOCAL_WRITE_ACTOR_CLASS.to_owned(),
-            actor_ref: None,
-        },
-        GateContentKind::Claim,
-        GateProvenanceHandles {
-            actor_entity_ref: Some(local_write_actor_entity_ref()),
-            ..GateProvenanceHandles::default()
-        },
-    );
-    enforce_gate_decision(policy.evaluate_gate(&input))
+    check_claim_source_trust(body, policy)
 }
 
 pub(crate) fn check_reserved_claim_policy(
@@ -737,27 +736,26 @@ pub(crate) fn check_edge_provenance_claim_policy(
     actor_class: EdgeActorClass,
     policy: &PolicyManifestResolution,
 ) -> Result<()> {
-    check_claim_source_trust(body, policy)?;
-    if !policy.enforces_write_gate() {
-        return Ok(());
+    if policy.enforces_write_gate() {
+        let input = claim_gate_input(
+            body,
+            policy,
+            GateActor {
+                actor_class: edge_actor_class_str(actor_class).to_owned(),
+                actor_ref: Some(record.actor_entity_ref.to_hex()),
+            },
+            GateContentKind::EdgeProvenanceClaim,
+            GateProvenanceHandles {
+                actor_entity_ref: Some(record.actor_entity_ref),
+                substrate_ref: record.substrate_ref,
+                source_revision_ref: record.source_revision_ref,
+                body_snapshot_ref: record.body_snapshot_ref,
+            },
+        );
+        enforce_gate_decision(policy.evaluate_gate(&input))?;
     }
 
-    let input = claim_gate_input(
-        body,
-        policy,
-        GateActor {
-            actor_class: edge_actor_class_str(actor_class).to_owned(),
-            actor_ref: Some(record.actor_entity_ref.to_hex()),
-        },
-        GateContentKind::EdgeProvenanceClaim,
-        GateProvenanceHandles {
-            actor_entity_ref: Some(record.actor_entity_ref),
-            substrate_ref: record.substrate_ref,
-            source_revision_ref: record.source_revision_ref,
-            body_snapshot_ref: record.body_snapshot_ref,
-        },
-    );
-    enforce_gate_decision(policy.evaluate_gate(&input))
+    check_claim_source_trust(body, policy)
 }
 
 fn check_claim_source_trust(body: &ClaimBody, policy: &PolicyManifestResolution) -> Result<()> {
@@ -1272,11 +1270,13 @@ mod tests {
     use super::*;
     use crate::claim::{
         ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSubject,
-        claim_body_decode_count, encode_claim_body, reset_claim_body_decode_count,
+        claim_body_decode_count, decode_claim_body, encode_claim_body,
+        reset_claim_body_decode_count,
     };
     use crate::provenance::{EdgeProvenanceClaimBody, EdgeRef, SupersessionStatus};
     use crate::types::{
-        ENTITY_TYPE_CLAIM, ENTITY_TYPE_PERSON, EdgeActorClass, EdgeKind, TimeRange,
+        ENTITY_TYPE_CLAIM, ENTITY_TYPE_PERSON, EdgeActorClass, EdgeConfirmationStatus, EdgeKind,
+        EdgeProvenanceFlags, TimeRange,
     };
 
     fn test_id(seed: u8) -> EntityId {
@@ -1504,6 +1504,25 @@ mod tests {
         Ok(())
     }
 
+    fn assert_auto_source_gate_rejected(
+        vault: &crate::Vault,
+        seed: u8,
+        source: ClaimSource,
+        outcome: &'static str,
+        reason_codes: &[&'static str],
+    ) -> Result<()> {
+        let id = test_id(seed);
+        let data = source_trust_claim_data(source);
+        let err = vault
+            .batch()
+            .put(&id, ENTITY_TYPE_CLAIM, test_time(6), 6, &data)
+            .commit()
+            .expect_err("active policy write gate must reject risky auto source");
+        assert_gate_rejected(err, outcome, reason_codes);
+        assert!(vault.get_raw(&id)?.is_none());
+        Ok(())
+    }
+
     fn assert_gate_rejected(err: Error, outcome: &'static str, reason_codes: &[&'static str]) {
         match err {
             Error::GateWriteRejected {
@@ -1515,6 +1534,27 @@ mod tests {
             }
             other => panic!("expected GateWriteRejected, got {other:?}"),
         }
+    }
+
+    fn stored_claim_body(vault: &crate::Vault, id: &EntityId) -> Result<ClaimBody> {
+        let raw = vault.get_raw(id)?.ok_or(Error::EntityNotFound)?;
+        decode_claim_body(&raw[crate::batch::ENTITY_METADATA_HEADER_LEN..], true)
+    }
+
+    fn edge_provenance_flags(
+        vault: &crate::Vault,
+        source: &EntityId,
+        kind: EdgeKind,
+        target: &EntityId,
+    ) -> Result<EdgeProvenanceFlags> {
+        let edge = vault
+            .edges_out(source)?
+            .into_iter()
+            .find(|edge| edge.kind == kind && edge.target == *target)
+            .ok_or(Error::EdgeNotFound)?;
+        edge.provenance.ok_or(Error::InvariantViolation(
+            "test edge should carry provenance flags",
+        ))
     }
 
     #[test]
@@ -1852,6 +1892,21 @@ mod tests {
     }
 
     #[test]
+    fn gate_chokepoint_active_policy_source_denial_is_typed_gate_rejection() -> Result<()> {
+        let (_tmp, vault) = temp_vault();
+        let data = encode_policy_manifest(vec![]);
+        put_policy_manifest_bytes(&vault, 0x84, &data)?;
+
+        assert_auto_source_gate_rejected(
+            &vault,
+            0x85,
+            ClaimSource::ToolOutput,
+            "pending",
+            &["gate.pending.source_trust"],
+        )
+    }
+
+    #[test]
     fn gate_chokepoint_batch_claim_denial_aborts_without_partial_writes() -> Result<()> {
         let (_tmp, vault) = temp_vault();
         let data = encode_policy_manifest(vec![]);
@@ -1908,6 +1963,60 @@ mod tests {
     }
 
     #[test]
+    fn gate_chokepoint_edge_provenance_retract_uses_gate_before_reserved_reput() -> Result<()> {
+        let (_tmp, vault) = temp_vault();
+
+        let src = test_id(0x90);
+        let tgt = test_id(0x91);
+        let actor = test_id(0x92);
+        let claim_id = test_id(0x93);
+        let occurred = test_time(8);
+        vault.put_entity(&src, ENTITY_TYPE_PERSON, occurred, 8, b"src")?;
+        vault.put_entity(&tgt, ENTITY_TYPE_PERSON, occurred, 8, b"tgt")?;
+        vault.put_entity(&actor, ENTITY_TYPE_PERSON, occurred, 8, b"actor")?;
+        vault.put_edge(&src, EdgeKind::Mentions, &tgt, 0.5)?;
+
+        let subject = EdgeRef {
+            source: src,
+            kind: EdgeKind::Mentions,
+            target: tgt,
+        };
+        let body = EdgeProvenanceClaimBody::new(actor, 0.9, SupersessionStatus::Confirmed);
+        vault.put_edge_provenance(&claim_id, &subject, &body, EdgeActorClass::Human, 9)?;
+
+        let before_body = stored_claim_body(&vault, &claim_id)?;
+        assert_eq!(before_body.lifecycle, ClaimLifecycleStatus::Active);
+        assert_eq!(before_body.valid_to, None);
+        assert_eq!(
+            edge_provenance_flags(&vault, &src, EdgeKind::Mentions, &tgt)?,
+            EdgeProvenanceFlags {
+                confirmation_status: EdgeConfirmationStatus::Confirmed,
+                actor_class: EdgeActorClass::Human,
+            }
+        );
+
+        let data = encode_policy_manifest(vec![]);
+        put_policy_manifest_bytes(&vault, 0x94, &data)?;
+
+        let err = vault
+            .retract_edge_provenance(&claim_id, 10)
+            .expect_err("retraction must stop at Gate before reserved re-put");
+
+        assert_gate_rejected(err, "pending", &["gate.pending.actor_ceiling"]);
+        let after_body = stored_claim_body(&vault, &claim_id)?;
+        assert_eq!(after_body.lifecycle, ClaimLifecycleStatus::Active);
+        assert_eq!(after_body.valid_to, None);
+        assert_eq!(
+            edge_provenance_flags(&vault, &src, EdgeKind::Mentions, &tgt)?,
+            EdgeProvenanceFlags {
+                confirmation_status: EdgeConfirmationStatus::Confirmed,
+                actor_class: EdgeActorClass::Human,
+            }
+        );
+        Ok(())
+    }
+
+    #[test]
     fn policy_manifest_missing_fixture_fails_closed_where_required() -> Result<()> {
         let (_tmp, vault) = temp_vault();
         let policy = resolve(&vault)?;
@@ -1951,7 +2060,13 @@ mod tests {
             policy.criticality_for_predicate("profile.name"),
             PolicyCriticality::Critical
         );
-        assert_auto_source_rejected(&vault, 0x67, ClaimSource::ToolOutput)
+        assert_auto_source_gate_rejected(
+            &vault,
+            0x67,
+            ClaimSource::ToolOutput,
+            "deny",
+            &["gate.deny.policy_fail_closed"],
+        )
     }
 
     #[test]
@@ -1974,7 +2089,13 @@ mod tests {
             policy.actor_ceiling("first_party", None),
             PolicyApprovalCeiling::Proposed
         );
-        assert_auto_source_rejected(&vault, 0x69, ClaimSource::ToolOutput)
+        assert_auto_source_gate_rejected(
+            &vault,
+            0x69,
+            ClaimSource::ToolOutput,
+            "deny",
+            &["gate.deny.policy_fail_closed"],
+        )
     }
 
     #[test]
@@ -2005,7 +2126,13 @@ mod tests {
             policy.criticality_for_predicate("health.allergy"),
             PolicyCriticality::Critical
         );
-        assert_auto_source_rejected(&vault, 0x68, ClaimSource::ToolOutput)
+        assert_auto_source_gate_rejected(
+            &vault,
+            0x68,
+            ClaimSource::ToolOutput,
+            "deny",
+            &["gate.deny.policy_fail_closed"],
+        )
     }
 
     #[test]
@@ -2035,7 +2162,13 @@ mod tests {
             policy.sensitivity_for_predicate("profile.name"),
             PolicySensitivity::Sensitive
         );
-        assert_auto_source_rejected(&vault, 0x6A, ClaimSource::ToolOutput)
+        assert_auto_source_gate_rejected(
+            &vault,
+            0x6A,
+            ClaimSource::ToolOutput,
+            "deny",
+            &["gate.deny.policy_fail_closed"],
+        )
     }
 
     #[test]
