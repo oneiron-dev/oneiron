@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use xxhash_rust::xxh3::xxh3_64;
 
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
-use crate::claim::{ClaimBody, claim_surfaceable};
+use crate::claim::{ClaimBody, ClaimSubject, claim_surfaceable};
 use crate::codebase::RepoRef;
 use crate::error::{Error, Result};
 use crate::pipeline::{PipelineBuilder, RetrievalWithTelemetry, WorldScope};
@@ -707,6 +707,44 @@ fn validate_pack_entity_reference(
     claim_bodies: &mut HashMap<EntityId, ClaimBody>,
     quarantine_index: &PackQuarantineIndex,
 ) -> Result<()> {
+    validate_pack_payload_reference(store, rtxn, id, quarantine_index)?;
+    let Some(raw) = store.entities.get(rtxn, id.as_bytes())? else {
+        return Err(context_pack_validation_error(
+            *id,
+            PACK_VALIDATION_MISSING_PAYLOAD,
+        ));
+    };
+    let Some(header) = EntityMetadataHeader::parse(raw) else {
+        return Err(Error::CorruptedIndex("entity metadata header"));
+    };
+    validate_entity_time_ordering(*id, header)?;
+
+    if header.entity_type == ENTITY_TYPE_CLAIM {
+        if let Some(body) = claim_bodies.get(id) {
+            validate_claim_pack_consistency(store, rtxn, *id, body, quarantine_index)?;
+        } else {
+            let Ok(body) = raw
+                .get(ENTITY_METADATA_HEADER_LEN..)
+                .ok_or(Error::CorruptedIndex("entity metadata header"))
+                .and_then(|payload| crate::claim::decode_claim_body(payload, true))
+            else {
+                return Ok(());
+            };
+            validate_claim_pack_consistency(store, rtxn, *id, &body, quarantine_index)?;
+            if claim_surfaceable(&body) {
+                claim_bodies.insert(*id, body);
+            }
+        }
+    }
+    Ok(())
+}
+
+fn validate_pack_payload_reference(
+    store: &Store,
+    rtxn: &RoTxn<'_>,
+    id: &EntityId,
+    quarantine_index: &PackQuarantineIndex,
+) -> Result<()> {
     if store
         .sync_state
         .get(rtxn, &crate::deletion::local_hard_delete_key(id))?
@@ -724,33 +762,11 @@ fn validate_pack_entity_reference(
         ));
     }
 
-    let Some(raw) = store.entities.get(rtxn, id.as_bytes())? else {
+    if store.entities.get(rtxn, id.as_bytes())?.is_none() {
         return Err(context_pack_validation_error(
             *id,
             PACK_VALIDATION_MISSING_PAYLOAD,
         ));
-    };
-    let Some(header) = EntityMetadataHeader::parse(raw) else {
-        return Err(Error::CorruptedIndex("entity metadata header"));
-    };
-    validate_entity_time_ordering(*id, header)?;
-
-    if header.entity_type == ENTITY_TYPE_CLAIM {
-        if let Some(body) = claim_bodies.get(id) {
-            validate_claim_pack_consistency(*id, body)?;
-        } else {
-            let Ok(body) = raw
-                .get(ENTITY_METADATA_HEADER_LEN..)
-                .ok_or(Error::CorruptedIndex("entity metadata header"))
-                .and_then(|payload| crate::claim::decode_claim_body(payload, true))
-            else {
-                return Ok(());
-            };
-            validate_claim_pack_consistency(*id, &body)?;
-            if claim_surfaceable(&body) {
-                claim_bodies.insert(*id, body);
-            }
-        }
     }
     Ok(())
 }
@@ -765,7 +781,13 @@ fn validate_entity_time_ordering(id: EntityId, header: EntityMetadataHeader) -> 
     Ok(())
 }
 
-fn validate_claim_pack_consistency(id: EntityId, body: &ClaimBody) -> Result<()> {
+fn validate_claim_pack_consistency(
+    store: &Store,
+    rtxn: &RoTxn<'_>,
+    id: EntityId,
+    body: &ClaimBody,
+    quarantine_index: &PackQuarantineIndex,
+) -> Result<()> {
     if let (Some(valid_from), Some(valid_to)) = (body.valid_from, body.valid_to)
         && valid_from > valid_to
     {
@@ -775,11 +797,31 @@ fn validate_claim_pack_consistency(id: EntityId, body: &ClaimBody) -> Result<()>
         ));
     }
 
+    validate_claim_subject_references(store, rtxn, body, quarantine_index)?;
+
     if body.predicate == crate::provenance::PREDICATE_EDGE_PROVENANCE {
         let record = crate::provenance::decode_edge_provenance_body(&body.value)
             .map_err(|_| context_pack_validation_error(id, PACK_VALIDATION_MISSING_EVIDENCE))?;
         crate::provenance::resolve_persisted_actor_class(&record, body.evidence.as_ref())
             .map_err(|_| context_pack_validation_error(id, PACK_VALIDATION_MISSING_EVIDENCE))?;
+    }
+    Ok(())
+}
+
+fn validate_claim_subject_references(
+    store: &Store,
+    rtxn: &RoTxn<'_>,
+    body: &ClaimBody,
+    quarantine_index: &PackQuarantineIndex,
+) -> Result<()> {
+    match body.subject {
+        ClaimSubject::Entity(id) => {
+            validate_pack_payload_reference(store, rtxn, &id, quarantine_index)?;
+        }
+        ClaimSubject::Edge { source, target, .. } => {
+            validate_pack_payload_reference(store, rtxn, &source, quarantine_index)?;
+            validate_pack_payload_reference(store, rtxn, &target, quarantine_index)?;
+        }
     }
     Ok(())
 }
@@ -1560,9 +1602,11 @@ mod tests {
         appr: crate::claim::ClaimApprovalStatus,
         life: crate::claim::ClaimLifecycleStatus,
     ) -> Result<()> {
+        let subject = default_claim_subject_id()?;
+        ensure_claim_subject_payload(vault, &subject)?;
         let body = crate::claim::ClaimBody::new(
             pred,
-            crate::claim::ClaimSubject::Entity(EntityId::from_bytes([0x7C; 16])?),
+            crate::claim::ClaimSubject::Entity(subject),
             rmpv::Value::from(val),
             0.9,
             appr,
@@ -1585,9 +1629,11 @@ mod tests {
         vector: [f32; 4],
         world: Option<EntityId>,
     ) -> Result<()> {
+        let subject = default_claim_subject_id()?;
+        ensure_claim_subject_payload(vault, &subject)?;
         let mut body = crate::claim::ClaimBody::new(
             "facet.scope_test",
-            crate::claim::ClaimSubject::Entity(EntityId::from_bytes([0x7C; 16])?),
+            crate::claim::ClaimSubject::Entity(subject),
             rmpv::Value::from("v"),
             0.9,
             crate::claim::ClaimApprovalStatus::Auto,
@@ -1629,6 +1675,48 @@ mod tests {
             vault.store.entities.put(wtxn, id.as_bytes(), raw)?;
             Ok(())
         })
+    }
+
+    fn default_claim_subject_id() -> Result<EntityId> {
+        EntityId::from_bytes([0x7C; 16])
+    }
+
+    fn ensure_claim_subject_payload(vault: &Vault, id: &EntityId) -> Result<()> {
+        if vault.get_raw(id)?.is_some() {
+            return Ok(());
+        }
+        let raw = raw_entity_record(4, 1, 1, 1, &[]);
+        overwrite_raw_entity(vault, id, &raw)
+    }
+
+    fn put_claim_text_entity_with_subject(
+        vault: &Vault,
+        id: &EntityId,
+        subject: crate::claim::ClaimSubject,
+        text: &str,
+        pred: &str,
+        val: &str,
+    ) -> Result<()> {
+        let body = crate::claim::ClaimBody::new(
+            pred,
+            subject,
+            rmpv::Value::from(val),
+            0.9,
+            crate::claim::ClaimApprovalStatus::Auto,
+            crate::claim::ClaimLifecycleStatus::Active,
+        );
+        let payload = crate::claim::encode_claim_body(&body)?;
+        vault
+            .batch()
+            .put(
+                id,
+                ENTITY_TYPE_CLAIM,
+                TimeRange { start: 1, end: 1 },
+                1,
+                &payload,
+            )
+            .text(id, &[("body", text)])
+            .commit()
     }
 
     fn assert_context_pack_validation(
@@ -2582,9 +2670,11 @@ mod tests {
         life: crate::claim::ClaimLifecycleStatus,
         stale: bool,
     ) -> Result<()> {
+        let subject = default_claim_subject_id()?;
+        ensure_claim_subject_payload(vault, &subject)?;
         let mut body = crate::claim::ClaimBody::new(
             "test.status",
-            crate::claim::ClaimSubject::Entity(EntityId::from_bytes([0x7C; 16])?),
+            crate::claim::ClaimSubject::Entity(subject),
             rmpv::Value::from("v"),
             0.9,
             appr,
@@ -2746,6 +2836,8 @@ mod tests {
         let source = EntityId::from_bytes([0x21; 16])?;
         let target = EntityId::from_bytes([0x22; 16])?;
         let actor = EntityId::from_bytes([0x23; 16])?;
+        ensure_claim_subject_payload(&vault, &source)?;
+        ensure_claim_subject_payload(&vault, &target)?;
         let value = crate::provenance::encode_edge_provenance_value(
             &crate::provenance::EdgeProvenanceClaimBody::new(
                 actor,
@@ -2776,6 +2868,110 @@ mod tests {
             .expect_err("provenance claim without actor-class evidence must fail pack validation");
 
         assert_context_pack_validation(err, id, PACK_VALIDATION_MISSING_EVIDENCE);
+        Ok(())
+    }
+
+    #[test]
+    fn pack_validation_rejects_missing_claim_entity_subject() -> Result<()> {
+        let (_dir, vault) = open_test_vault();
+        let id = EntityId::from_bytes([0x98; 16])?;
+        let subject = EntityId::from_bytes([0x5A; 16])?;
+        put_claim_text_entity_with_subject(
+            &vault,
+            &id,
+            crate::claim::ClaimSubject::Entity(subject),
+            "missingclaimsubjectneedle",
+            "test.missing_subject",
+            "payload",
+        )?;
+
+        let err = vault
+            .context_pack()
+            .search_text("missingclaimsubjectneedle", 10)
+            .run()
+            .expect_err("missing claim subject payload must fail pack validation");
+
+        assert_context_pack_validation(err, subject, PACK_VALIDATION_MISSING_PAYLOAD);
+        Ok(())
+    }
+
+    #[test]
+    fn pack_validation_rejects_deleted_claim_entity_subject() -> Result<()> {
+        let (_dir, vault) = open_test_vault();
+        let id = EntityId::from_bytes([0x99; 16])?;
+        let subject = EntityId::from_bytes([0x5B; 16])?;
+        ensure_claim_subject_payload(&vault, &subject)?;
+        put_claim_text_entity_with_subject(
+            &vault,
+            &id,
+            crate::claim::ClaimSubject::Entity(subject),
+            "deletedclaimsubjectneedle",
+            "test.deleted_subject",
+            "payload",
+        )?;
+        vault.with_write_txn(|wtxn| {
+            vault.store.sync_state.put(
+                wtxn,
+                &crate::deletion::local_hard_delete_key(&subject),
+                b"present",
+            )?;
+            Ok(())
+        })?;
+
+        let err = vault
+            .context_pack()
+            .search_text("deletedclaimsubjectneedle", 10)
+            .run()
+            .expect_err("deleted claim subject payload must fail pack validation");
+
+        assert_context_pack_validation(err, subject, PACK_VALIDATION_DELETED_PAYLOAD);
+        Ok(())
+    }
+
+    #[test]
+    fn pack_validation_rejects_quarantined_claim_edge_subject_endpoint() -> Result<()> {
+        let (_dir, vault) = open_test_vault();
+        let id = EntityId::from_bytes([0x9A; 16])?;
+        let source = EntityId::from_bytes([0x5C; 16])?;
+        let target = EntityId::from_bytes([0x5D; 16])?;
+        let window_key = "2026-03";
+        ensure_claim_subject_payload(&vault, &source)?;
+        ensure_claim_subject_payload(&vault, &target)?;
+        put_claim_text_entity_with_subject(
+            &vault,
+            &id,
+            crate::claim::ClaimSubject::Edge {
+                source,
+                kind: crate::types::EdgeKind::Supports,
+                target,
+            },
+            "quarantinededgeclaimsubjectneedle",
+            "test.quarantined_edge_subject",
+            "payload",
+        )?;
+
+        let record = pack_quarantine_record_for_entity(window_key, &target);
+        let encoded = rmp_serde::to_vec_named(&record).expect("quarantine record encode");
+        vault.with_write_txn(|wtxn| {
+            vault
+                .store
+                .sync_queue
+                .put(wtxn, b"x:\x00\x00\x00\x00\x00\x00\x00\x04", &encoded)?;
+            vault.store.sync_state.put(
+                wtxn,
+                &pack_remat_marker_key(window_key, &target),
+                &[1u8],
+            )?;
+            Ok(())
+        })?;
+
+        let err = vault
+            .context_pack()
+            .search_text("quarantinededgeclaimsubjectneedle", 10)
+            .run()
+            .expect_err("quarantined claim edge subject endpoint must fail pack validation");
+
+        assert_context_pack_validation(err, target, PACK_VALIDATION_QUARANTINED_PAYLOAD);
         Ok(())
     }
 

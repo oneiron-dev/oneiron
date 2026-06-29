@@ -5600,6 +5600,7 @@ fn context_pack_run_serialized_toon_end_to_end() -> Result<()> {
     let (_dir, vault) = open_test_vault();
     let a = EntityId::now();
     let b = EntityId::now();
+    let claim_subject = seeded_entity_id(0xC1A1);
 
     let payload_a = valid_claim_body_bytes("goal.learning", "Learn Japanese by June");
     let payload_b = rmp_serde::to_vec_named(&serde_json::json!({ "name": "Alice" }))
@@ -5607,6 +5608,7 @@ fn context_pack_run_serialized_toon_end_to_end() -> Result<()> {
 
     vault
         .batch()
+        .put(&claim_subject, 4, test_time_range(99, 99), 100, b"subject")
         .put(&a, 0, test_time_range(100, 100), 101, &payload_a)
         .text(&a, &[("body", "learn japanese")])
         .put(&b, 4, test_time_range(102, 102), 103, &payload_b)
