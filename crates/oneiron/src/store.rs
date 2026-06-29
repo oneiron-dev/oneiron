@@ -2149,6 +2149,8 @@ pub(crate) fn parse_utf8_bytes(bytes: &[u8]) -> Result<String> {
 
 #[cfg(test)]
 pub(crate) mod test_hooks {
+    use std::cell::RefCell;
+
     use super::*;
 
     struct TargetedAfterLmdbOpenHook {
@@ -2160,8 +2162,9 @@ pub(crate) mod test_hooks {
 
     static AFTER_LMDB_OPEN: LazyLock<Mutex<Option<TargetedAfterLmdbOpenHook>>> =
         LazyLock::new(|| Mutex::new(None));
-    static FAIL_NEXT_RETRIEVAL_RUN_WRITE: LazyLock<Mutex<Option<PathBuf>>> =
-        LazyLock::new(|| Mutex::new(None));
+    thread_local! {
+        static FAIL_NEXT_RETRIEVAL_RUN_WRITE: RefCell<Option<PathBuf>> = const { RefCell::new(None) };
+    }
 
     pub(crate) fn arm_after_lmdb_open(path: PathBuf, hook: impl FnOnce(&Path) + Send + 'static) {
         *AFTER_LMDB_OPEN
@@ -2189,20 +2192,20 @@ pub(crate) mod test_hooks {
     }
 
     pub(crate) fn fail_next_retrieval_run_write_for(path: PathBuf) {
-        *FAIL_NEXT_RETRIEVAL_RUN_WRITE
-            .lock()
-            .expect("retrieval telemetry test hook mutex poisoned") = Some(path);
+        FAIL_NEXT_RETRIEVAL_RUN_WRITE.with(|armed| {
+            *armed.borrow_mut() = Some(path);
+        });
     }
 
     pub(crate) fn take_fail_next_retrieval_run_write(path: &Path) -> bool {
-        let mut armed = FAIL_NEXT_RETRIEVAL_RUN_WRITE
-            .lock()
-            .expect("retrieval telemetry test hook mutex poisoned");
-        if armed.as_ref().is_some_and(|armed_path| armed_path == path) {
-            armed.take();
-            true
-        } else {
-            false
-        }
+        FAIL_NEXT_RETRIEVAL_RUN_WRITE.with(|armed| {
+            let mut armed = armed.borrow_mut();
+            if armed.as_ref().is_some_and(|armed_path| armed_path == path) {
+                armed.take();
+                true
+            } else {
+                false
+            }
+        })
     }
 }
