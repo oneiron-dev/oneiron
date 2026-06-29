@@ -1201,11 +1201,17 @@ fn backfill_code_revision_integrity_for_session_in_txn(
 ) -> Result<()> {
     let prefix = code_revision_session_index_prefix(session_id);
     let revisions = collect_code_revision_records_by_index_prefix(store, wtxn, &prefix)?;
+    let existing_frontier = get_code_revision_frontier_in_txn(store, wtxn, session_id)?;
     if revisions.is_empty() {
+        if existing_frontier.is_some() {
+            return Err(Error::InvalidCodeArtifactBody(
+                "code revision frontier exists without session index rows",
+            ));
+        }
         return Ok(());
     }
 
-    let mut needs_backfill = get_code_revision_frontier_in_txn(store, wtxn, session_id)?.is_none();
+    let mut needs_backfill = existing_frontier.is_none();
     if !needs_backfill {
         for revision in &revisions {
             if load_optional_code_revision_integrity_record(store, wtxn, &revision.revision_id)?
@@ -1429,11 +1435,26 @@ fn verify_or_build_code_revision_integrity_record_in_txn(
                 "code revision artifact hash mismatch",
             ));
         }
+        if let Some(provenance_claim_id) = revision.provenance_claim_id {
+            require_entity_type(
+                store,
+                rtxn,
+                &provenance_claim_id,
+                ENTITY_TYPE_CLAIM,
+                "provenance_claim_id must be a CLAIM entity",
+            )?;
+        }
 
         let parent_fold = match revision.parent_revision_id {
             Some(parent_id) => {
-                let parent_fold =
-                    require_code_revision_fold_with_visited(store, rtxn, &parent_id, visiting)?;
+                let (parent_revision, parent_fold) = require_code_revision_with_fold_with_visited(
+                    store, rtxn, &parent_id, visiting,
+                )?;
+                require_revision_session(
+                    &parent_revision,
+                    revision.session_id,
+                    "parent_revision_id must belong to session_id",
+                )?;
                 if let Some(record) = &record
                     && record.parent_fold != Some(parent_fold)
                 {
@@ -1677,12 +1698,23 @@ fn require_code_revision_fold_with_visited(
     revision_id: &EntityId,
     visiting: &mut HashSet<EntityId>,
 ) -> Result<[u8; CODE_REVISION_HASH_LEN]> {
+    let (_revision, fold) =
+        require_code_revision_with_fold_with_visited(store, rtxn, revision_id, visiting)?;
+    Ok(fold)
+}
+
+fn require_code_revision_with_fold_with_visited(
+    store: &Store,
+    rtxn: &RoTxn<'_>,
+    revision_id: &EntityId,
+    visiting: &mut HashSet<EntityId>,
+) -> Result<(CodeRevision, [u8; CODE_REVISION_HASH_LEN])> {
     let revision = read_code_revision_record_in_txn(store, rtxn, revision_id)?.ok_or(
         Error::InvalidCodeArtifactBody("code revision integrity parent record missing"),
     )?;
     let record =
         verify_or_build_code_revision_integrity_record_in_txn(store, rtxn, &revision, visiting)?;
-    Ok(record.revision_fold)
+    Ok((revision, record.revision_fold))
 }
 
 fn load_optional_code_revision_integrity_record(
@@ -3170,6 +3202,50 @@ mod tests {
     }
 
     #[test]
+    fn code_integrity_parent_session_mismatch_fails_closed() -> Result<()> {
+        let (_dir, vault) = crate::test_util::open_test_vault_with(test_config());
+        let session = entity(0x11);
+        let other_session = entity(0x12);
+        let parent = entity(0x21);
+        let child = entity(0x22);
+        let foreign_parent = entity(0x23);
+        put_session(&vault, session, 10)?;
+        put_session(&vault, other_session, 11)?;
+        put_artifact(&vault, parent, 0xA1, 20)?;
+        put_artifact(&vault, child, 0xA2, 30)?;
+        put_artifact(&vault, foreign_parent, 0xA3, 40)?;
+        vault.commit_code_revision(&CodeRevision::commit(parent, session, 100))?;
+        vault.commit_code_revision(&CodeRevision::commit_child(child, session, parent, 200))?;
+        vault.commit_code_revision(&CodeRevision::commit(foreign_parent, other_session, 150))?;
+
+        let corrupted_child = CodeRevision::commit_child(child, session, foreign_parent, 200);
+        replace_code_revision_record_unchecked(&vault, &corrupted_child)?;
+        let foreign_record = read_code_revision_integrity_record(&vault, &foreign_parent)?;
+        let mut child_record = read_code_revision_integrity_record(&vault, &child)?;
+        child_record.parent_revision_id = Some(foreign_parent);
+        child_record.parent_fold = Some(foreign_record.revision_fold);
+        child_record.revision_fold = compute_code_revision_fold(
+            corrupted_child.kind,
+            &child_record.artifact_hash,
+            corrupted_child.provenance_claim_id,
+            child_record.parent_fold,
+            child_record.reverted_to_fold,
+        );
+        replace_code_revision_integrity_record_unchecked(&vault, &child_record)?;
+
+        let err = vault
+            .get_code_revision(&child)
+            .expect_err("parent from a different session must fail closed on read");
+
+        assert_eq!(err.kind(), ErrorKind::InvalidCodeArtifactBody);
+        assert!(
+            err.to_string()
+                .contains("parent_revision_id must belong to session_id")
+        );
+        Ok(())
+    }
+
+    #[test]
     fn code_integrity_parent_cycle_fails_closed_without_recursive_overflow() -> Result<()> {
         let (_dir, vault) = crate::test_util::open_test_vault_with(test_config());
         let session = entity(0x11);
@@ -3290,6 +3366,47 @@ mod tests {
     }
 
     #[test]
+    fn code_integrity_provenance_claim_id_type_mismatch_fails_closed() -> Result<()> {
+        let (_dir, vault) = crate::test_util::open_test_vault_with(test_config());
+        let session = entity(0x11);
+        let revision_id = entity(0x21);
+        let provenance_claim = entity(0x31);
+        let non_claim = entity(0x32);
+        put_session(&vault, session, 10)?;
+        put_artifact(&vault, revision_id, 0xA1, 20)?;
+        put_claim_entity(&vault, provenance_claim, revision_id, 30)?;
+        put_session(&vault, non_claim, 40)?;
+        let revision = CodeRevision::commit(revision_id, session, 100)
+            .with_provenance_claim_id(provenance_claim);
+        vault.commit_code_revision(&revision)?;
+
+        let corrupted_revision =
+            CodeRevision::commit(revision_id, session, 100).with_provenance_claim_id(non_claim);
+        replace_code_revision_record_unchecked(&vault, &corrupted_revision)?;
+        let mut record = read_code_revision_integrity_record(&vault, &revision_id)?;
+        record.provenance_claim_id = Some(non_claim);
+        record.revision_fold = compute_code_revision_fold(
+            corrupted_revision.kind,
+            &record.artifact_hash,
+            corrupted_revision.provenance_claim_id,
+            record.parent_fold,
+            record.reverted_to_fold,
+        );
+        replace_code_revision_integrity_record_unchecked(&vault, &record)?;
+
+        let err = vault
+            .get_code_revision(&revision_id)
+            .expect_err("non-CLAIM provenance must fail closed on read");
+
+        assert_eq!(err.kind(), ErrorKind::InvalidCodeArtifactBody);
+        assert!(
+            err.to_string()
+                .contains("provenance_claim_id must be a CLAIM entity")
+        );
+        Ok(())
+    }
+
+    #[test]
     fn code_integrity_empty_session_index_with_frontier_fails_closed() -> Result<()> {
         let (_dir, vault) = crate::test_util::open_test_vault_with(test_config());
         let session = entity(0x11);
@@ -3308,6 +3425,37 @@ mod tests {
         assert!(
             err.to_string()
                 .contains("code revision frontier exists without session index rows")
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn code_integrity_orphaned_frontier_rejects_write_backfill() -> Result<()> {
+        let (_dir, vault) = crate::test_util::open_test_vault_with(test_config());
+        let session = entity(0x11);
+        let parent = entity(0x21);
+        let child = entity(0x22);
+        put_session(&vault, session, 10)?;
+        put_artifact(&vault, parent, 0xA1, 20)?;
+        put_artifact(&vault, child, 0xA2, 30)?;
+
+        vault.commit_code_revision(&CodeRevision::commit(parent, session, 100))?;
+        delete_code_revision_session_index_row(&vault, &session, &parent)?;
+
+        let err = vault
+            .commit_code_revision(&CodeRevision::commit_child(child, session, parent, 200))
+            .expect_err("orphaned frontier must reject writes before indexing a child");
+
+        assert_eq!(err.kind(), ErrorKind::InvalidCodeArtifactBody);
+        assert!(
+            err.to_string()
+                .contains("code revision frontier exists without session index rows")
+        );
+        assert!(vault.get_code_revision(&child)?.is_none());
+        assert!(
+            vault
+                .targets(&child, EdgeKind::Supersedes, None)?
+                .is_empty()
         );
         Ok(())
     }
@@ -3572,6 +3720,60 @@ mod tests {
         let err = vault
             .supersede_claim(&generated_apply, &user_truth, 400)
             .expect_err("generated apply must not supersede user-stated revision truth");
+
+        assert_eq!(err.kind(), ErrorKind::InvalidCodeArtifactBody);
+        assert!(
+            err.to_string()
+                .contains("generated code revision claim cannot supersede user-stated truth")
+        );
+        assert_eq!(
+            vault.get_claim(&user_truth)?.expect("user claim").lifecycle,
+            ClaimLifecycleStatus::Active
+        );
+        assert!(
+            vault
+                .targets(&generated_apply, EdgeKind::Supersedes, None)?
+                .is_empty()
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn code_integrity_generated_apply_cannot_supersede_user_truth_across_revisions() -> Result<()> {
+        let (_dir, vault) = crate::test_util::open_test_vault_with(test_config());
+        let session = entity(0x11);
+        let first_revision = entity(0x21);
+        let second_revision = entity(0x22);
+        let user_truth = entity(0x31);
+        let generated_apply = entity(0x32);
+        put_session(&vault, session, 10)?;
+        put_artifact(&vault, first_revision, 0xA1, 20)?;
+        put_artifact(&vault, second_revision, 0xA2, 30)?;
+        vault.commit_code_revision(&CodeRevision::commit(first_revision, session, 100))?;
+        vault.commit_code_revision(&CodeRevision::commit_child(
+            second_revision,
+            session,
+            first_revision,
+            200,
+        ))?;
+        put_claim_entity_with_source(
+            &vault,
+            user_truth,
+            first_revision,
+            Some(ClaimSource::UserStated),
+            300,
+        )?;
+        put_claim_entity_with_source(
+            &vault,
+            generated_apply,
+            second_revision,
+            Some(ClaimSource::Generated),
+            400,
+        )?;
+
+        let err = vault
+            .supersede_claim(&generated_apply, &user_truth, 500)
+            .expect_err("generated apply must not supersede user truth for another revision");
 
         assert_eq!(err.kind(), ErrorKind::InvalidCodeArtifactBody);
         assert!(
