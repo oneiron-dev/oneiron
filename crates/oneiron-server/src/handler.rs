@@ -102,14 +102,14 @@ impl ConnState {
         match mode {
             WindowSyncMode::Selector if self.protocol_version != protocol::PROTOCOL_VERSION => {
                 return Err(ProtocolError::InvalidPayload(
-                    "selector sync requires protocol v3",
+                    "selector sync requires the current selector protocol",
                 ));
             }
             WindowSyncMode::FullWindow
                 if self.protocol_version != protocol::LEGACY_FULL_WINDOW_PROTOCOL_VERSION =>
             {
                 return Err(ProtocolError::InvalidPayload(
-                    "full-window sync requires legacy protocol v2",
+                    "full-window sync requires the current full-window protocol",
                 ));
             }
             _ => {}
@@ -1719,7 +1719,7 @@ mod tests {
         assert!(matches!(result, Err(ProtocolError::InvalidPayload(_))));
         assert!(
             direct_rx.try_recv().is_err(),
-            "v3 selector-capable connections must not receive full-window data"
+            "selector-capable connections must not receive full-window data"
         );
     }
 
@@ -1769,7 +1769,7 @@ mod tests {
         assert!(matches!(result, Err(ProtocolError::InvalidPayload(_))));
         assert!(
             direct_rx.try_recv().is_err(),
-            "legacy v2 connections must not receive selector data"
+            "full-window connections must not receive selector data"
         );
     }
 
@@ -1939,17 +1939,17 @@ mod tests {
                 protocol::LEGACY_FULL_WINDOW_PROTOCOL_VERSION,
                 &window_update
             ),
-            "legacy v2 full-window clients keep receiving WindowSync broadcasts"
+            "full-window clients keep receiving WindowSync broadcasts"
         );
         assert!(
             !should_forward_broadcast(protocol::PROTOCOL_VERSION, &window_update),
-            "selector-capable v3 clients must not receive full-window WindowSync broadcasts"
+            "selector-capable clients must not receive full-window WindowSync broadcasts"
         );
 
         let root_update = protocol::encode_root_update(b"root");
         assert!(
             should_forward_broadcast(protocol::PROTOCOL_VERSION, &root_update),
-            "non-window broadcasts remain available to v3 clients"
+            "non-window broadcasts remain available to selector-capable clients"
         );
     }
 
@@ -2004,26 +2004,28 @@ mod tests {
 
     #[test]
     fn protocol_hello_validation_literals() {
-        // Contract literals: v2 remains legacy full-window, while v3 gates
-        // FED-002 selector sync. Unsupported versions close with 4006 before
-        // any sync payload flows.
+        // Contract literals: FED-005 scoped lease keys reject old v2/v3 peers
+        // before root `leases` payloads flow, while the current full-window
+        // and selector-capable versions stay distinct for broadcast filtering.
         assert_eq!(
-            validate_protocol_hello(&[3, 2]),
+            validate_protocol_hello(&[3, 4]),
             Ok(protocol::LEGACY_FULL_WINDOW_PROTOCOL_VERSION)
         );
         assert_eq!(
-            validate_protocol_hello(&[3, 3]),
+            validate_protocol_hello(&[3, 5]),
             Ok(protocol::PROTOCOL_VERSION)
         );
 
         let cases: &[(&str, &[u8])] = &[
             ("v1_peer", &[3, 1]),
-            ("future_version", &[3, 4]),
+            ("old_full_window_v2_peer", &[3, 2]),
+            ("old_selector_v3_peer", &[3, 3]),
+            ("future_version", &[3, 6]),
             ("zero_version", &[3, 0]),
-            ("wrong_tag", &[2, 3]),
+            ("wrong_tag", &[2, 5]),
             ("empty", &[]),
             ("tag_only", &[3]),
-            ("trailing_bytes", &[3, 3, 0]),
+            ("trailing_bytes", &[3, 5, 0]),
         ];
         for (case_name, frame) in cases {
             assert_eq!(

@@ -792,11 +792,12 @@ fn sync_client_handle_server_message_dispatch() {
     let build_root_vv = |client: &mut SyncClient| -> Vec<u8> {
         let initial_sync = client.generate_initial_sync();
         // ONE-1127: the FIRST frame is the protocol hello. The in-tree client
-        // is unscoped and still uses the legacy full-window v2 path; selector
-        // sync is gated behind v3. The lease request and root VV follow it.
+        // uses the full-window path; selector sync uses a distinct current
+        // protocol version. The lease request and root VV follow it.
+        let expected_hello = transport::encode_legacy_full_window_protocol_hello();
         assert_eq!(
             initial_sync.first().map(Vec::as_slice),
-            Some(&[3u8, 2u8][..]),
+            Some(expected_hello.as_slice()),
             "initial sync must lead with the protocol hello"
         );
         initial_sync
