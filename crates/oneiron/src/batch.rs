@@ -725,6 +725,11 @@ pub(crate) fn apply_ops(
     let mut had_vector_mutation = false;
     let mut text_manifest_checked = false;
     let later_text_coverage_by_op = text_coverage_after_op(&ops);
+    let write_policy = if contains_local_claim_put(&ops) {
+        Some(crate::gate::resolve_policy_manifest(store, &*wtxn)?)
+    } else {
+        None
+    };
     // Legacy (pre-symmetric-migration) graphs answer a vector refresh with a
     // full snapshot rebuild. Batched vector updates coalesce that into at
     // most ONE rebuild per transaction: once pending, per-op graph mutations
@@ -776,6 +781,7 @@ pub(crate) fn apply_ops(
                     // body-changing overwrite, same-txn (ARCH-0031 amendment).
                     allow_maintenance && allow_reserved_predicate,
                     later_text_coverage_by_op[op_index],
+                    write_policy.as_ref(),
                 )?;
             }
             BatchOp::Vector { id, vector } => {
@@ -900,6 +906,21 @@ pub(crate) fn apply_ops(
 
 fn contains_text_op(ops: &[BatchOp]) -> bool {
     ops.iter().any(|op| matches!(op, BatchOp::Text { .. }))
+}
+
+fn contains_local_claim_put(ops: &[BatchOp]) -> bool {
+    ops.iter().any(|op| {
+        matches!(
+            op,
+            BatchOp::Put {
+                entity_type,
+                allow_maintenance,
+                allow_reserved_predicate,
+                ..
+            } if *entity_type == crate::types::ENTITY_TYPE_CLAIM
+                && !(*allow_maintenance && *allow_reserved_predicate)
+        )
+    })
 }
 
 fn text_coverage_after_op(ops: &[BatchOp]) -> Vec<bool> {
@@ -1116,6 +1137,7 @@ fn apply_put(
     allow_reserved_predicate: bool,
     replicated: bool,
     has_later_covering_text_op: bool,
+    write_policy: Option<&crate::gate::PolicyManifestResolution>,
 ) -> Result<()> {
     // Type-byte validation runs in `apply_ops` (the public-vs-maintenance gate:
     // public writes reject the engine-authored maintenance band, the sync
@@ -1130,11 +1152,13 @@ fn apply_put(
     if entity_type == crate::types::ENTITY_TYPE_CLAIM {
         let body = crate::claim::validate_claim_body_and_decode(data, allow_reserved_predicate)?;
         if !replicated {
-            let policy = crate::gate::resolve_policy_manifest(store, &*wtxn)?;
+            let policy = write_policy.ok_or(Error::InvariantViolation(
+                "local claim write policy snapshot missing",
+            ))?;
             if allow_reserved_predicate {
-                crate::gate::check_reserved_claim_policy(&body, &policy)?;
+                crate::gate::check_reserved_claim_policy(&body, policy)?;
             } else {
-                crate::gate::check_claim_policy(&body, &policy)?;
+                crate::gate::check_claim_policy(&body, policy)?;
             }
         }
     } else if entity_type == crate::types::ENTITY_TYPE_CODE_ARTIFACT {

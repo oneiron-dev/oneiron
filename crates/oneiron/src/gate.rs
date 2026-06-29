@@ -677,6 +677,8 @@ pub(crate) fn resolve_policy_manifest(
         match decode_policy_manifest(&raw[crate::batch::ENTITY_METADATA_HEADER_LEN..]) {
             Some(decoded) => {
                 resolution.diagnostics.manifest_count += 1;
+                resolution.diagnostics.malformed_manifest_seen |=
+                    decoded.source_trust.malformed_manifest_seen;
                 resolution.diagnostics.unsupported_schema_seen |= decoded.unsupported_schema;
                 resolution.diagnostics.engine_version_floor_seen |= decoded.engine_version_floor;
                 resolution.diagnostics.unknown_axis_seen |= decoded.unknown_axis_seen;
@@ -717,7 +719,7 @@ pub(crate) fn check_claim_policy(
                 ..GateProvenanceHandles::default()
             },
         );
-        enforce_gate_decision(policy.evaluate_gate(&input))?;
+        enforce_claim_gate_decision(policy.evaluate_gate(&input), body.approval)?;
     }
 
     check_claim_source_trust(body, policy)
@@ -796,6 +798,23 @@ fn enforce_gate_decision(decision: GateDecision) -> Result<()> {
         return Ok(());
     }
 
+    reject_gate_decision(decision)
+}
+
+fn enforce_claim_gate_decision(
+    decision: GateDecision,
+    approval: ClaimApprovalStatus,
+) -> Result<()> {
+    if decision.outcome() == GateOutcome::Allow
+        || (approval == ClaimApprovalStatus::Proposed && decision.outcome() == GateOutcome::Pending)
+    {
+        return Ok(());
+    }
+
+    reject_gate_decision(decision)
+}
+
+fn reject_gate_decision(decision: GateDecision) -> Result<()> {
     Err(Error::GateWriteRejected {
         outcome: decision.outcome().as_str(),
         reason_codes: decision
@@ -1378,6 +1397,24 @@ mod tests {
         )
     }
 
+    fn actor_ceiling_row(actor_class: &str, ceiling: &str) -> Value {
+        Value::Map(vec![
+            (Value::from(ACTOR_CLASS_KEY), Value::from(actor_class)),
+            (Value::from(ACTOR_CEILING_KEY), Value::from(ceiling)),
+        ])
+    }
+
+    fn replace_actor_ceilings(data: &mut Vec<u8>, rows: Vec<Value>) {
+        rewrite_policy_manifest_entries(data, |entries| {
+            for (key, value) in entries {
+                if key.as_str() == Some(POLICY_ACTOR_CEILINGS_KEY) {
+                    *value = Value::Array(rows);
+                    return;
+                }
+            }
+        });
+    }
+
     fn scoped_grants_entry() -> (Value, Value) {
         (
             Value::from(POLICY_SCOPED_GRANTS_KEY),
@@ -1932,6 +1969,57 @@ mod tests {
     }
 
     #[test]
+    fn gate_chokepoint_batch_policy_delete_cannot_weaken_later_claim() -> Result<()> {
+        let (_tmp, vault) = temp_vault();
+        let data = encode_policy_manifest(vec![]);
+        let policy_id = test_id(0x95);
+        put_policy_manifest_bytes(&vault, 0x95, &data)?;
+
+        let claim_id = test_id(0x96);
+        let mut body = source_trust_claim(ClaimSource::UserStated);
+        body.predicate = "health.allergy".to_owned();
+        let claim = encode_claim_body(&body)?;
+
+        let err = vault
+            .batch()
+            .delete(&policy_id)
+            .put(&claim_id, ENTITY_TYPE_CLAIM, test_time(7), 7, &claim)
+            .commit()
+            .expect_err("policy delete must not weaken same-batch Gate checks");
+
+        assert_gate_rejected(err, "pending", &["gate.pending.criticality_floor"]);
+        assert!(
+            vault.get_raw(&policy_id)?.is_some(),
+            "failed batch must not delete the active policy manifest"
+        );
+        assert!(vault.get_raw(&claim_id)?.is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn gate_chokepoint_allows_proposed_claims_for_review_under_pending_policy() -> Result<()> {
+        let (_tmp, vault) = temp_vault();
+        let data = encode_policy_manifest(vec![]);
+        put_policy_manifest_bytes(&vault, 0x97, &data)?;
+
+        let claim_id = test_id(0x98);
+        let mut body = source_trust_claim(ClaimSource::ToolOutput);
+        body.predicate = "health.allergy".to_owned();
+        body.approval = ClaimApprovalStatus::Proposed;
+        let claim = encode_claim_body(&body)?;
+
+        vault
+            .batch()
+            .put(&claim_id, ENTITY_TYPE_CLAIM, test_time(7), 7, &claim)
+            .commit()?;
+
+        let stored = stored_claim_body(&vault, &claim_id)?;
+        assert_eq!(stored.approval, ClaimApprovalStatus::Proposed);
+        assert_eq!(stored.predicate, "health.allergy");
+        Ok(())
+    }
+
+    #[test]
     fn gate_chokepoint_edge_provenance_uses_actor_gate_before_persistence() -> Result<()> {
         let (_tmp, vault) = temp_vault();
         let data = encode_policy_manifest(vec![]);
@@ -2017,6 +2105,86 @@ mod tests {
     }
 
     #[test]
+    fn gate_chokepoint_edge_provenance_supersede_checks_closed_prior_before_reput() -> Result<()> {
+        let (_tmp, vault) = temp_vault();
+
+        let src = test_id(0xA4);
+        let tgt = test_id(0xA5);
+        let human_actor = test_id(0xA6);
+        let agent_actor = test_id(0xA7);
+        let prior_claim_id = test_id(0xA8);
+        let new_claim_id = test_id(0xA9);
+        let occurred = test_time(8);
+        vault.put_entity(&src, ENTITY_TYPE_PERSON, occurred, 8, b"src")?;
+        vault.put_entity(&tgt, ENTITY_TYPE_PERSON, occurred, 8, b"tgt")?;
+        vault.put_entity(&human_actor, ENTITY_TYPE_PERSON, occurred, 8, b"human")?;
+        vault.put_entity(&agent_actor, ENTITY_TYPE_PERSON, occurred, 8, b"agent")?;
+        vault.put_edge(&src, EdgeKind::Mentions, &tgt, 0.5)?;
+
+        let subject = EdgeRef {
+            source: src,
+            kind: EdgeKind::Mentions,
+            target: tgt,
+        };
+        let prior_body =
+            EdgeProvenanceClaimBody::new(human_actor, 0.9, SupersessionStatus::Confirmed);
+        vault.put_edge_provenance(
+            &prior_claim_id,
+            &subject,
+            &prior_body,
+            EdgeActorClass::Human,
+            9,
+        )?;
+
+        let before_body = stored_claim_body(&vault, &prior_claim_id)?;
+        assert_eq!(before_body.lifecycle, ClaimLifecycleStatus::Active);
+        assert_eq!(before_body.valid_to, None);
+        assert_eq!(
+            edge_provenance_flags(&vault, &src, EdgeKind::Mentions, &tgt)?,
+            EdgeProvenanceFlags {
+                confirmation_status: EdgeConfirmationStatus::Confirmed,
+                actor_class: EdgeActorClass::Human,
+            }
+        );
+
+        let mut policy = encode_policy_manifest(vec![]);
+        replace_actor_ceilings(
+            &mut policy,
+            vec![
+                actor_ceiling_row("first_party", "auto"),
+                actor_ceiling_row("agent", "auto"),
+            ],
+        );
+        put_policy_manifest_bytes(&vault, 0xAA, &policy)?;
+
+        let new_body =
+            EdgeProvenanceClaimBody::new(agent_actor, 0.8, SupersessionStatus::Confirmed);
+        let err = vault
+            .put_edge_provenance(
+                &new_claim_id,
+                &subject,
+                &new_body,
+                EdgeActorClass::Agent,
+                10,
+            )
+            .expect_err("superseded prior closure must stop at Gate before reserved re-put");
+
+        assert_gate_rejected(err, "pending", &["gate.pending.actor_ceiling"]);
+        assert!(vault.get_raw(&new_claim_id)?.is_none());
+        let after_body = stored_claim_body(&vault, &prior_claim_id)?;
+        assert_eq!(after_body.lifecycle, ClaimLifecycleStatus::Active);
+        assert_eq!(after_body.valid_to, None);
+        assert_eq!(
+            edge_provenance_flags(&vault, &src, EdgeKind::Mentions, &tgt)?,
+            EdgeProvenanceFlags {
+                confirmation_status: EdgeConfirmationStatus::Confirmed,
+                actor_class: EdgeActorClass::Human,
+            }
+        );
+        Ok(())
+    }
+
+    #[test]
     fn policy_manifest_missing_fixture_fails_closed_where_required() -> Result<()> {
         let (_tmp, vault) = temp_vault();
         let policy = resolve(&vault)?;
@@ -2067,6 +2235,73 @@ mod tests {
             "deny",
             &["gate.deny.policy_fail_closed"],
         )
+    }
+
+    #[test]
+    fn policy_manifest_malformed_source_trust_fails_closed_with_diagnostics() -> Result<()> {
+        enum SourceTrustMalformed {
+            Duplicate,
+            NotAMap,
+        }
+
+        let cases = [
+            (
+                "duplicate_source_trust",
+                0xB0,
+                SourceTrustMalformed::Duplicate,
+            ),
+            ("source_trust_not_map", 0xB2, SourceTrustMalformed::NotAMap),
+        ];
+
+        for (case_name, seed, malformed) in cases {
+            let (_tmp, vault) = temp_vault();
+            let mut data = encode_policy_manifest(vec![]);
+            rewrite_policy_manifest_entries(&mut data, |entries| match malformed {
+                SourceTrustMalformed::Duplicate => {
+                    let entry = source_trust_entry(ClaimSource::UserStated, 0);
+                    entries.push(entry.clone());
+                    entries.push(entry);
+                }
+                SourceTrustMalformed::NotAMap => {
+                    entries.push((Value::from(POLICY_SOURCE_TRUST_KEY), Value::from("bad")));
+                }
+            });
+            put_policy_manifest_bytes(&vault, seed, &data)?;
+
+            let policy = resolve(&vault)?;
+            assert!(
+                policy.diagnostics().malformed_manifest_seen,
+                "{case_name}: malformed source_trust must set manifest diagnostics"
+            );
+            assert!(
+                policy.is_fail_closed(),
+                "{case_name}: policy must fail closed"
+            );
+            assert!(
+                policy.enforces_write_gate(),
+                "{case_name}: loaded malformed manifest must still enforce Gate"
+            );
+
+            let claim_id = test_id(seed + 1);
+            let mut body = source_trust_claim(ClaimSource::UserStated);
+            body.approval = ClaimApprovalStatus::Approved;
+            let claim = encode_claim_body(&body)?;
+            let err = match vault
+                .batch()
+                .put(&claim_id, ENTITY_TYPE_CLAIM, test_time(4), 4, &claim)
+                .commit()
+            {
+                Ok(()) => {
+                    panic!("{case_name}: fail-closed policy must reject non-auto normal claim")
+                }
+                Err(err) => err,
+            };
+
+            assert_gate_rejected(err, "deny", &["gate.deny.policy_fail_closed"]);
+            assert!(vault.get_raw(&claim_id)?.is_none());
+        }
+
+        Ok(())
     }
 
     #[test]

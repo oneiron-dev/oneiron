@@ -2184,6 +2184,12 @@ impl TurnVadAnnotateResponse {
             content_type = "application/json"
         ),
         (
+            status = 409,
+            description = "Active Gate policy rejected the VAD annotation write; response uses INVALID_STATE with Gate outcome and reason codes.",
+            body = ApiError,
+            content_type = "application/json"
+        ),
+        (
             status = 404,
             description = "Turn or message entity was not found.",
             body = ApiError,
@@ -2926,6 +2932,19 @@ mod tests {
             discover_success["example"]["skill_pack"]["endpoint"],
             Value::from("/api/skills/oneiron.skills.md"),
             "discover example must advertise the committed skill pack endpoint"
+        );
+        let turn_annotate_post_responses =
+            spec["paths"]["/v1/core/turns/annotate"]["post"]["responses"]
+                .as_object()
+                .expect("turn annotate POST responses object");
+        assert!(
+            turn_annotate_post_responses.contains_key("409"),
+            "turn annotate POST must document Gate INVALID_STATE conflict responses"
+        );
+        assert_eq!(
+            turn_annotate_post_responses["409"]["content"]["application/json"]["schema"]["$ref"],
+            Value::from("#/components/schemas/ApiError"),
+            "turn annotate 409 must use the structured ApiError schema"
         );
         let context_pack_responses = spec["paths"]["/api/context-pack"]["post"]["responses"]
             .as_object()
