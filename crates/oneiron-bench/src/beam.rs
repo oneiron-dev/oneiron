@@ -1,4 +1,4 @@
-//! BEAM scaffold for EVAL-001.
+//! BEAM scaffold and fixed scorer for EVAL-001/EVAL-002.
 
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::path::PathBuf;
@@ -12,8 +12,10 @@ use serde::{Deserialize, Serialize};
 
 pub(crate) const BEAM_128K_TOKEN_BUDGET: usize = 128 * 1024;
 
-const SCHEMA_VERSION: u32 = 1;
+const SCHEMA_VERSION: u32 = 2;
 const BEAM_CONTEXT_PACK_FORMAT: PackFormat = PackFormat::Yaml;
+const BEAM_SCORER_VERSION: &str = "beam-fixed-scorer-v1";
+const BEAM_COMPARATOR_VERSION: &str = "beam-comparator-card-v1";
 const BUILTIN_FIXTURE_JSON: &str = include_str!("../fixtures/beam_128k_smoke.fixture.json");
 const BUILTIN_MANIFEST_JSON: &str = include_str!("../fixtures/beam_128k_smoke.run.json");
 
@@ -36,6 +38,11 @@ pub(crate) enum BeamError {
     },
     #[error("manifest case `{case_id}` was not found in fixture `{fixture_id}`")]
     MissingCase { fixture_id: String, case_id: String },
+    #[error("uncarded BEAM competitor row `{competitor_id}` in run manifest `{run_id}`")]
+    UncardedCompetitor {
+        run_id: String,
+        competitor_id: String,
+    },
     #[error("dataset loader is not ready: {0}")]
     DatasetNotReady(NotReadyState),
     #[error(
@@ -112,7 +119,14 @@ pub(crate) struct RunManifest {
     dataset: DatasetSource,
     case_ids: Vec<String>,
     arms: Vec<ArmKind>,
+    competitors: Vec<CompetitorConfig>,
     report: ReportConfig,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SchemaHeader {
+    schema_version: u32,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -152,6 +166,47 @@ struct ReportConfig {
     format: ReportFormat,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct CompetitorConfig {
+    competitor_id: String,
+    arm: ArmKind,
+    card: Option<CompetitorCardConfig>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct CompetitorCardConfig {
+    display_name: String,
+    public_parity_status: PublicParityStatus,
+    judge: JudgeMetadata,
+    comparator: ComparatorMetadata,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+enum PublicParityStatus {
+    PublicParity,
+    FixtureOnly,
+    NotPublicComparable,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct JudgeMetadata {
+    judge_id: String,
+    version: String,
+    notes: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct ComparatorMetadata {
+    comparator_id: String,
+    version: String,
+    baseline_competitor_id: String,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "snake_case")]
 enum ReportFormat {
@@ -180,6 +235,7 @@ pub(crate) struct BeamReport {
     fixture_id: String,
     fixture_description: String,
     dataset: DatasetLoadReport,
+    scorer: ScorerReport,
     report_format: String,
     cases: Vec<CaseReport>,
 }
@@ -202,6 +258,7 @@ struct CaseReport {
     token_budget: usize,
     expected_min_results: usize,
     arms: Vec<ArmReport>,
+    competitors: Vec<CompetitorReport>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -218,8 +275,12 @@ struct ArmReport {
     rename_all_fields = "camelCase"
 )]
 enum ArmOutcome {
-    Completed { context_pack: ContextPackReport },
-    NotReady { not_ready: NotReadyState },
+    Completed {
+        context_pack: Box<ContextPackReport>,
+    },
+    NotReady {
+        not_ready: NotReadyState,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -235,6 +296,59 @@ struct ContextPackReport {
     neighbors: Vec<ContextEntityReport>,
     stats: PackStatsReport,
     empty: Option<EmptyContextReport>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ScorerReport {
+    scorer_id: String,
+    version: String,
+    comparator_version: String,
+    abilities: Vec<AbilityKind>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+enum AbilityKind {
+    RetrievalCoverage,
+    BudgetDiscipline,
+    Readiness,
+}
+
+impl AbilityKind {
+    const fn as_str(self) -> &'static str {
+        match self {
+            Self::RetrievalCoverage => "retrieval_coverage",
+            Self::BudgetDiscipline => "budget_discipline",
+            Self::Readiness => "readiness",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct CompetitorReport {
+    competitor_id: String,
+    arm: ArmKind,
+    card: CompetitorCardConfig,
+    scoring: ScoreReport,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ScoreReport {
+    scorer_version: String,
+    overall_score: Option<f32>,
+    abilities: Vec<AbilityScoreReport>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AbilityScoreReport {
+    ability: AbilityKind,
+    score: Option<f32>,
+    passed: Option<bool>,
+    detail: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -257,7 +371,11 @@ struct PackStatsReport {
     cosine_ghosts_dampened: usize,
     claims_suppressed: usize,
     items_truncated: usize,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    items_truncated_reasons: Vec<String>,
     items_dropped: usize,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    items_dropped_reasons: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -271,6 +389,52 @@ struct EmptyContextReport {
 trait BeamArmAdapter {
     fn kind(&self) -> ArmKind;
     fn run(&self, vault: &Vault, case: &FixtureCase) -> BeamResult<ArmReport>;
+}
+
+trait BeamScorer {
+    fn metadata(&self) -> ScorerReport;
+    fn score(
+        &self,
+        case: &FixtureCase,
+        competitor: &CompetitorConfig,
+        arm: &ArmReport,
+    ) -> ScoreReport;
+}
+
+struct FixedBeamScorer;
+
+impl BeamScorer for FixedBeamScorer {
+    fn metadata(&self) -> ScorerReport {
+        ScorerReport {
+            scorer_id: "beam-fixed-scorer".to_owned(),
+            version: BEAM_SCORER_VERSION.to_owned(),
+            comparator_version: BEAM_COMPARATOR_VERSION.to_owned(),
+            abilities: vec![
+                AbilityKind::RetrievalCoverage,
+                AbilityKind::BudgetDiscipline,
+                AbilityKind::Readiness,
+            ],
+        }
+    }
+
+    fn score(
+        &self,
+        case: &FixtureCase,
+        competitor: &CompetitorConfig,
+        arm: &ArmReport,
+    ) -> ScoreReport {
+        let abilities = match &arm.outcome {
+            ArmOutcome::Completed { context_pack } => completed_ability_scores(case, context_pack),
+            ArmOutcome::NotReady { not_ready } => not_ready_ability_scores(competitor, not_ready),
+        };
+        let overall_score = mean_score(&abilities);
+
+        ScoreReport {
+            scorer_version: BEAM_SCORER_VERSION.to_owned(),
+            overall_score,
+            abilities,
+        }
+    }
 }
 
 struct DeterministicContextPackArm;
@@ -295,7 +459,7 @@ impl BeamArmAdapter for DeterministicContextPackArm {
         Ok(ArmReport {
             arm: self.kind(),
             outcome: ArmOutcome::Completed {
-                context_pack: report,
+                context_pack: Box::new(report),
             },
         })
     }
@@ -399,6 +563,13 @@ pub(crate) fn parse_fixture_json(json: &str) -> BeamResult<BeamFixture> {
 }
 
 pub(crate) fn parse_manifest_json(json: &str) -> BeamResult<RunManifest> {
+    let header: SchemaHeader = serde_json::from_str(json)?;
+    if header.schema_version != SCHEMA_VERSION {
+        return Err(BeamError::UnsupportedSchemaVersion {
+            expected: SCHEMA_VERSION,
+            actual: header.schema_version,
+        });
+    }
     let manifest: RunManifest = serde_json::from_str(json)?;
     validate_manifest(&manifest)?;
     Ok(manifest)
@@ -408,9 +579,13 @@ pub(crate) fn run_fixture_manifest(
     manifest: &RunManifest,
     fixture: &BeamFixture,
 ) -> BeamResult<BeamReport> {
+    validate_manifest(manifest)?;
+    validate_manifest_fixture_cases(manifest, fixture)?;
+
     let tempdir = tempfile::tempdir()?;
     let vault = Vault::open(tempdir.path(), beam_vault_config())?;
     let dataset = load_dataset(&vault, manifest, fixture)?;
+    let scorer = FixedBeamScorer;
     let cases_by_id: BTreeMap<&str, &FixtureCase> = fixture
         .cases
         .iter()
@@ -426,9 +601,25 @@ pub(crate) fn run_fixture_manifest(
                 fixture_id: fixture.fixture_id.clone(),
                 case_id: case_id.clone(),
             })?;
-        let mut arms = Vec::with_capacity(manifest.arms.len());
-        for arm in &manifest.arms {
-            arms.push(adapter_for(*arm).run(&vault, case)?);
+        let mut arms = Vec::with_capacity(manifest.competitors.len());
+        let mut competitors = Vec::with_capacity(manifest.competitors.len());
+        for competitor in &manifest.competitors {
+            let card = competitor
+                .card
+                .as_ref()
+                .ok_or_else(|| BeamError::UncardedCompetitor {
+                    run_id: manifest.run_id.clone(),
+                    competitor_id: competitor.competitor_id.clone(),
+                })?;
+            let arm_report = adapter_for(competitor.arm).run(&vault, case)?;
+            let scoring = scorer.score(case, competitor, &arm_report);
+            arms.push(arm_report);
+            competitors.push(CompetitorReport {
+                competitor_id: competitor.competitor_id.clone(),
+                arm: competitor.arm,
+                card: card.clone(),
+                scoring,
+            });
         }
         cases.push(CaseReport {
             case_id: case.case_id.clone(),
@@ -437,6 +628,7 @@ pub(crate) fn run_fixture_manifest(
             token_budget: case.token_budget,
             expected_min_results: case.expected_min_results,
             arms,
+            competitors,
         });
     }
 
@@ -446,6 +638,7 @@ pub(crate) fn run_fixture_manifest(
         fixture_id: fixture.fixture_id.clone(),
         fixture_description: fixture.description.clone(),
         dataset,
+        scorer: scorer.metadata(),
         report_format,
         cases,
     })
@@ -555,6 +748,12 @@ fn validate_manifest(manifest: &RunManifest) -> BeamResult<()> {
             "manifest must request at least one arm",
         ));
     }
+    if manifest.competitors.is_empty() {
+        return Err(invalid_manifest(
+            manifest,
+            "manifest must declare at least one competitor row",
+        ));
+    }
 
     let mut case_ids = BTreeSet::new();
     for case_id in &manifest.case_ids {
@@ -574,6 +773,117 @@ fn validate_manifest(manifest: &RunManifest) -> BeamResult<()> {
         if !arms.insert(arm.as_str()) {
             return Err(invalid_manifest(manifest, "manifest arms must be unique"));
         }
+    }
+
+    let mut competitor_ids = BTreeSet::new();
+    let mut competitor_arms = Vec::with_capacity(manifest.competitors.len());
+    for competitor in &manifest.competitors {
+        if competitor.competitor_id.trim().is_empty() {
+            return Err(invalid_manifest(
+                manifest,
+                "competitor ids must not be empty",
+            ));
+        }
+        if !competitor_ids.insert(competitor.competitor_id.as_str()) {
+            return Err(invalid_manifest(manifest, "competitor ids must be unique"));
+        }
+        if competitor.card.is_none() {
+            return Err(BeamError::UncardedCompetitor {
+                run_id: manifest.run_id.clone(),
+                competitor_id: competitor.competitor_id.clone(),
+            });
+        }
+        if let Some(card) = &competitor.card {
+            validate_competitor_card(manifest, card)?;
+        }
+        competitor_arms.push(competitor.arm);
+    }
+    for competitor in &manifest.competitors {
+        if let Some(card) = &competitor.card
+            && !competitor_ids.contains(card.comparator.baseline_competitor_id.as_str())
+        {
+            return Err(invalid_manifest(
+                manifest,
+                "competitor card baseline ids must reference a declared competitor",
+            ));
+        }
+    }
+    if competitor_arms != manifest.arms {
+        return Err(invalid_manifest(
+            manifest,
+            "competitor row arms must match manifest arms in order",
+        ));
+    }
+
+    Ok(())
+}
+
+fn validate_manifest_fixture_cases(
+    manifest: &RunManifest,
+    fixture: &BeamFixture,
+) -> BeamResult<()> {
+    let cases_by_id: BTreeMap<&str, &FixtureCase> = fixture
+        .cases
+        .iter()
+        .map(|case| (case.case_id.as_str(), case))
+        .collect();
+
+    for case_id in &manifest.case_ids {
+        if !cases_by_id.contains_key(case_id.as_str()) {
+            return Err(BeamError::MissingCase {
+                fixture_id: fixture.fixture_id.clone(),
+                case_id: case_id.clone(),
+            });
+        }
+    }
+
+    Ok(())
+}
+
+fn validate_competitor_card(manifest: &RunManifest, card: &CompetitorCardConfig) -> BeamResult<()> {
+    if matches!(manifest.dataset, DatasetSource::Fixture { .. })
+        && card.public_parity_status == PublicParityStatus::PublicParity
+    {
+        return Err(invalid_manifest(
+            manifest,
+            "fixture-backed BEAM manifests cannot claim public parity",
+        ));
+    }
+    if card.display_name.trim().is_empty() {
+        return Err(invalid_manifest(
+            manifest,
+            "competitor card display names must not be empty",
+        ));
+    }
+    if card.judge.judge_id.trim().is_empty() {
+        return Err(invalid_manifest(
+            manifest,
+            "competitor card judge ids must not be empty",
+        ));
+    }
+    if card.judge.version.trim().is_empty() {
+        return Err(invalid_manifest(
+            manifest,
+            "competitor card judge versions must not be empty",
+        ));
+    }
+    if card.comparator.comparator_id.trim().is_empty() {
+        return Err(invalid_manifest(
+            manifest,
+            "competitor card comparator ids must not be empty",
+        ));
+    }
+    if card.comparator.version != BEAM_COMPARATOR_VERSION {
+        return Err(invalid_manifest(
+            manifest,
+            format!("competitor card comparator version must be {BEAM_COMPARATOR_VERSION}"),
+        ));
+    }
+    if card.comparator.baseline_competitor_id.trim().is_empty() {
+        return Err(invalid_manifest(
+            manifest,
+            "competitor card baseline competitor ids must not be empty",
+        ));
     }
 
     Ok(())
@@ -710,6 +1020,22 @@ fn context_pack_report(pack: &BudgetedContextPack, case: &FixtureCase) -> Contex
         .len()
         .saturating_add(pack.raw.neighbors.len())
         .saturating_sub(result_count.saturating_add(neighbor_count));
+    let items_truncated = pack.raw.stats.items_truncated.count;
+    let raw_items_dropped = pack.raw.stats.items_dropped.count;
+    let items_dropped = raw_items_dropped.saturating_add(dropped_by_budget);
+    let items_truncated_reasons = accounting_reasons(
+        items_truncated,
+        pack.raw.stats.items_truncated.reason.as_str(),
+    );
+    let mut items_dropped_reasons = accounting_reasons(
+        raw_items_dropped,
+        pack.raw.stats.items_dropped.reason.as_str(),
+    );
+    push_accounting_reason(
+        &mut items_dropped_reasons,
+        dropped_by_budget,
+        "token_budget",
+    );
 
     ContextPackReport {
         token_budget: case.token_budget,
@@ -736,19 +1062,127 @@ fn context_pack_report(pack: &BudgetedContextPack, case: &FixtureCase) -> Contex
             neighbors_hydrated: neighbor_count,
             cosine_ghosts_dampened: pack.raw.stats.cosine_ghosts_dampened,
             claims_suppressed: pack.raw.stats.claims_suppressed,
-            items_truncated: pack.raw.stats.items_truncated.count,
-            items_dropped: pack
-                .raw
-                .stats
-                .items_dropped
-                .count
-                .saturating_add(dropped_by_budget),
+            items_truncated,
+            items_truncated_reasons,
+            items_dropped,
+            items_dropped_reasons,
         },
         empty: pack.raw.empty.as_ref().map(|empty| EmptyContextReport {
             reason: empty_reason_label(empty.reason).to_owned(),
             total_in_scope: empty.total_in_scope,
             hint: empty.hint.clone(),
         }),
+    }
+}
+
+fn accounting_reasons(count: usize, reason: &str) -> Vec<String> {
+    if count == 0 {
+        Vec::new()
+    } else {
+        vec![reason.to_owned()]
+    }
+}
+
+fn push_accounting_reason(reasons: &mut Vec<String>, count: usize, reason: &str) {
+    if count > 0 && !reasons.iter().any(|existing| existing == reason) {
+        reasons.push(reason.to_owned());
+    }
+}
+
+fn completed_ability_scores(
+    case: &FixtureCase,
+    context_pack: &ContextPackReport,
+) -> Vec<AbilityScoreReport> {
+    let coverage = if case.expected_min_results == 0 {
+        1.0
+    } else {
+        (context_pack.result_count as f32 / case.expected_min_results as f32).min(1.0)
+    };
+    let budget_passed =
+        context_pack.stats.items_dropped == 0 && context_pack.stats.items_truncated == 0;
+    let budget_score = if budget_passed { 1.0 } else { 0.0 };
+    let budget_detail = budget_discipline_detail(case, context_pack);
+
+    vec![
+        AbilityScoreReport {
+            ability: AbilityKind::RetrievalCoverage,
+            score: Some(coverage),
+            passed: Some(coverage >= 1.0),
+            detail: format!(
+                "{} serialized results for expected minimum {}",
+                context_pack.result_count, case.expected_min_results
+            ),
+        },
+        AbilityScoreReport {
+            ability: AbilityKind::BudgetDiscipline,
+            score: Some(budget_score),
+            passed: Some(budget_passed),
+            detail: budget_detail,
+        },
+        AbilityScoreReport {
+            ability: AbilityKind::Readiness,
+            score: Some(1.0),
+            passed: Some(true),
+            detail: "arm completed".to_owned(),
+        },
+    ]
+}
+
+fn budget_discipline_detail(case: &FixtureCase, context_pack: &ContextPackReport) -> String {
+    format!(
+        "{} serialized items dropped [{}], {} truncated [{}] under {} token budget ({} bytes emitted)",
+        context_pack.stats.items_dropped,
+        accounting_reason_detail(&context_pack.stats.items_dropped_reasons),
+        context_pack.stats.items_truncated,
+        accounting_reason_detail(&context_pack.stats.items_truncated_reasons),
+        case.token_budget,
+        context_pack.serialized_bytes
+    )
+}
+
+fn accounting_reason_detail(reasons: &[String]) -> String {
+    if reasons.is_empty() {
+        "none".to_owned()
+    } else {
+        reasons.join(", ")
+    }
+}
+
+fn not_ready_ability_scores(
+    competitor: &CompetitorConfig,
+    not_ready: &NotReadyState,
+) -> Vec<AbilityScoreReport> {
+    [
+        AbilityKind::RetrievalCoverage,
+        AbilityKind::BudgetDiscipline,
+        AbilityKind::Readiness,
+    ]
+    .into_iter()
+    .map(|ability| AbilityScoreReport {
+        ability,
+        score: None,
+        passed: None,
+        detail: format!(
+            "{} could not be scored for {}: {}",
+            competitor.competitor_id,
+            ability.as_str(),
+            not_ready.reason
+        ),
+    })
+    .collect()
+}
+
+fn mean_score(abilities: &[AbilityScoreReport]) -> Option<f32> {
+    let (total, count) = abilities
+        .iter()
+        .filter_map(|ability| ability.score)
+        .fold((0.0_f32, 0_usize), |(total, count), score| {
+            (total + score, count + 1)
+        });
+    if count == 0 {
+        None
+    } else {
+        Some(total / count as f32)
     }
 }
 
@@ -961,6 +1395,8 @@ mod tests {
         let fixture = parse_fixture_json(BUILTIN_FIXTURE_JSON).expect("fixture parses");
         let manifest = parse_manifest_json(BUILTIN_MANIFEST_JSON).expect("manifest parses");
 
+        assert_eq!(fixture.schema_version, SCHEMA_VERSION);
+        assert_eq!(manifest.schema_version, SCHEMA_VERSION);
         assert_eq!(fixture.fixture_id, "beam-128k-smoke");
         assert_eq!(fixture.cases[0].token_budget, BEAM_128K_TOKEN_BUDGET);
         ensure_manifest_selects_128k_case(&manifest, &fixture)
@@ -1022,6 +1458,114 @@ mod tests {
             .expect_err("duplicate arms must be rejected");
 
         assert!(err.to_string().contains("manifest arms must be unique"));
+    }
+
+    #[test]
+    fn manifest_schema_version_rejects_legacy_v1_before_required_competitors() {
+        let mut manifest_json: serde_json::Value =
+            serde_json::from_str(BUILTIN_MANIFEST_JSON).expect("manifest JSON");
+        manifest_json["schemaVersion"] = serde_json::json!(1);
+        manifest_json
+            .as_object_mut()
+            .expect("manifest object")
+            .remove("competitors");
+        let err = parse_manifest_json(&manifest_json.to_string())
+            .expect_err("legacy v1 manifests must be rejected by schema version first");
+
+        assert!(matches!(
+            &err,
+            BeamError::UnsupportedSchemaVersion {
+                expected: SCHEMA_VERSION,
+                actual: 1
+            }
+        ));
+        assert!(!err.to_string().contains("missing field `competitors`"));
+    }
+
+    #[test]
+    fn manifest_validation_rejects_uncarded_competitor_rows() {
+        let mut manifest_json: serde_json::Value =
+            serde_json::from_str(BUILTIN_MANIFEST_JSON).expect("manifest JSON");
+        manifest_json["competitors"][0]
+            .as_object_mut()
+            .expect("competitor object")
+            .remove("card");
+        let err = parse_manifest_json(&manifest_json.to_string())
+            .expect_err("uncarded competitors must be rejected");
+
+        assert!(
+            err.to_string()
+                .contains("uncarded BEAM competitor row `deterministic-context-pack`")
+        );
+    }
+
+    #[test]
+    fn manifest_validation_requires_competitor_rows_to_match_arms() {
+        let mut manifest_json: serde_json::Value =
+            serde_json::from_str(BUILTIN_MANIFEST_JSON).expect("manifest JSON");
+        manifest_json["competitors"][0]["arm"] = serde_json::json!("chat");
+        let err = parse_manifest_json(&manifest_json.to_string())
+            .expect_err("competitor rows must match arms");
+
+        assert!(
+            err.to_string()
+                .contains("competitor row arms must match manifest arms in order")
+        );
+    }
+
+    #[test]
+    fn manifest_validation_rejects_public_parity_for_fixture_dataset() {
+        let mut manifest_json: serde_json::Value =
+            serde_json::from_str(BUILTIN_MANIFEST_JSON).expect("manifest JSON");
+        manifest_json["competitors"][0]["card"]["publicParityStatus"] =
+            serde_json::json!("public_parity");
+        let err = parse_manifest_json(&manifest_json.to_string())
+            .expect_err("fixture-backed manifests must not claim public parity");
+
+        assert!(
+            err.to_string()
+                .contains("fixture-backed BEAM manifests cannot claim public parity")
+        );
+    }
+
+    #[test]
+    fn run_fixture_manifest_validates_manifest_before_loading_dataset() {
+        let fixture = parse_fixture_json(BUILTIN_FIXTURE_JSON).expect("fixture parses");
+        let mut manifest = parse_manifest_json(BUILTIN_MANIFEST_JSON).expect("manifest parses");
+        manifest.schema_version = 1;
+        manifest.dataset = DatasetSource::Miracl {
+            dataset: "should-not-load".to_owned(),
+        };
+
+        let err = run_fixture_manifest(&manifest, &fixture)
+            .expect_err("manifest validation must run before dataset loading");
+
+        assert!(matches!(
+            err,
+            BeamError::UnsupportedSchemaVersion {
+                expected: SCHEMA_VERSION,
+                actual: 1
+            }
+        ));
+    }
+
+    #[test]
+    fn run_fixture_manifest_validates_case_ids_before_loading_dataset() {
+        let mut fixture = parse_fixture_json(BUILTIN_FIXTURE_JSON).expect("fixture parses");
+        let mut manifest = parse_manifest_json(BUILTIN_MANIFEST_JSON).expect("manifest parses");
+        fixture.records[0].id = "not-a-hex-entity-id".to_owned();
+        manifest.case_ids = vec!["missing_case".to_owned()];
+
+        let err = run_fixture_manifest(&manifest, &fixture)
+            .expect_err("case-id validation must run before dataset loading");
+
+        assert!(matches!(
+            err,
+            BeamError::MissingCase {
+                fixture_id,
+                case_id
+            } if fixture_id == "beam-128k-smoke" && case_id == "missing_case"
+        ));
     }
 
     #[test]
@@ -1117,6 +1661,52 @@ neighbors:
     }
 
     #[test]
+    fn budget_discipline_uses_accounting_not_serialized_byte_count() {
+        let case = FixtureCase {
+            case_id: "budget-accounting-regression".to_owned(),
+            query: "budget accounting".to_owned(),
+            limit: 1,
+            token_budget: 8,
+            expected_min_results: 1,
+        };
+        let mut context_pack = ContextPackReport {
+            token_budget: case.token_budget,
+            limit: case.limit,
+            serialized_format: "yaml".to_owned(),
+            serialized_bytes: 24,
+            result_count: 1,
+            neighbor_count: 0,
+            results: Vec::new(),
+            neighbors: Vec::new(),
+            stats: empty_pack_stats_report(),
+            empty: None,
+        };
+
+        let scores = completed_ability_scores(&case, &context_pack);
+        let budget = budget_score(&scores);
+        assert_eq!(
+            budget.passed,
+            Some(true),
+            "bytes can exceed token budget units when no serializer accounting loss occurred"
+        );
+        assert_eq!(budget.score, Some(1.0));
+
+        context_pack.serialized_bytes = 4;
+        context_pack.stats.items_dropped = 1;
+        context_pack.stats.items_dropped_reasons = vec!["token_budget".to_owned()];
+
+        let scores = completed_ability_scores(&case, &context_pack);
+        let budget = budget_score(&scores);
+        assert_eq!(
+            budget.passed,
+            Some(false),
+            "small byte output must not pass when serialization accounting dropped content"
+        );
+        assert_eq!(budget.score, Some(0.0));
+        assert!(budget.detail.contains("token_budget"));
+    }
+
+    #[test]
     fn deterministic_arm_runs_beam_128k_fixture_end_to_end() {
         let report = run_builtin_smoke().expect("BEAM smoke report");
         let deterministic = find_arm(&report, ArmKind::Deterministic);
@@ -1154,6 +1744,71 @@ neighbors:
         assert!(deterministic["outcome"].get("context_pack").is_none());
         assert!(agentic["outcome"].get("notReady").is_some());
         assert!(agentic["outcome"].get("not_ready").is_none());
+    }
+
+    #[test]
+    fn report_records_scorer_version_and_public_parity_status() {
+        let report = run_builtin_smoke().expect("BEAM smoke report");
+        let report_json = serde_json::to_value(&report).expect("report serializes");
+        let competitors = report_json["cases"][0]["competitors"]
+            .as_array()
+            .expect("competitors array");
+        let deterministic = competitors
+            .iter()
+            .find(|competitor| competitor["competitorId"] == "deterministic-context-pack")
+            .expect("deterministic competitor");
+
+        assert_eq!(report_json["scorer"]["version"], BEAM_SCORER_VERSION);
+        assert_eq!(deterministic["card"]["publicParityStatus"], "fixture_only");
+        assert_eq!(
+            deterministic["scoring"]["scorerVersion"],
+            BEAM_SCORER_VERSION
+        );
+        assert!(
+            deterministic["scoring"]["abilities"]
+                .as_array()
+                .expect("abilities array")
+                .iter()
+                .any(|ability| ability["ability"] == "retrieval_coverage")
+        );
+    }
+
+    #[test]
+    fn not_ready_scores_are_unmeasured_and_do_not_publish_zero_overall() {
+        let report = run_builtin_smoke().expect("BEAM smoke report");
+        let report_json = serde_json::to_value(&report).expect("report serializes");
+        let competitors = report_json["cases"][0]["competitors"]
+            .as_array()
+            .expect("competitors array");
+        let deterministic = competitors
+            .iter()
+            .find(|competitor| competitor["competitorId"] == "deterministic-context-pack")
+            .expect("deterministic competitor");
+
+        assert!(deterministic["scoring"]["overallScore"].as_f64().is_some());
+
+        for competitor_id in ["agentic-adapter", "chat-adapter"] {
+            let competitor = competitors
+                .iter()
+                .find(|competitor| competitor["competitorId"] == competitor_id)
+                .expect("not-ready competitor");
+            assert!(competitor["scoring"]["overallScore"].is_null());
+
+            let abilities = competitor["scoring"]["abilities"]
+                .as_array()
+                .expect("abilities array");
+            assert_eq!(abilities.len(), 3);
+            for ability in abilities {
+                assert!(ability["score"].is_null());
+                assert!(ability["passed"].is_null());
+                assert!(
+                    ability["detail"]
+                        .as_str()
+                        .expect("detail string")
+                        .contains("could not be scored")
+                );
+            }
+        }
     }
 
     #[test]
@@ -1203,5 +1858,28 @@ neighbors:
             .iter()
             .find(|arm| arm.arm == kind)
             .expect("arm report exists")
+    }
+
+    fn budget_score(scores: &[AbilityScoreReport]) -> &AbilityScoreReport {
+        scores
+            .iter()
+            .find(|score| score.ability == AbilityKind::BudgetDiscipline)
+            .expect("budget discipline score exists")
+    }
+
+    fn empty_pack_stats_report() -> PackStatsReport {
+        PackStatsReport {
+            candidates_considered: 0,
+            signals_used: Vec::new(),
+            query_time_us: 0,
+            entities_hydrated: 0,
+            neighbors_hydrated: 0,
+            cosine_ghosts_dampened: 0,
+            claims_suppressed: 0,
+            items_truncated: 0,
+            items_truncated_reasons: Vec::new(),
+            items_dropped: 0,
+            items_dropped_reasons: Vec::new(),
+        }
     }
 }

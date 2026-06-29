@@ -11,9 +11,10 @@
 //!   corpus, insert p50 (new-node vs refresh), top-10 search p50 at
 //!   ef_search=128, recall@10 vs float32 brute force, refresh/delete
 //!   churn modes, RAM-at-index.
-//! * `beam smoke` — EVAL-001 BEAM 128K fixture scaffold smoke aligned with
+//! * `beam smoke` — EVAL-001/EVAL-002 BEAM 128K fixture scaffold smoke aligned with
 //!   ONEIRON-ARCH-0042: fixture + run-manifest parse, fixture ingest,
-//!   deterministic context-pack arm, and explicit not-ready Agentic/Chat arms.
+//!   deterministic context-pack arm, fixed scorer/carding model, and explicit
+//!   not-ready Agentic/Chat arms.
 //!
 //! The full MIRACL / Mr.TyDi / internal SEA judgment-set retrieval
 //! matrix lives in ONE-318; this binary only ships the skeleton and
