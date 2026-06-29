@@ -478,7 +478,7 @@ pub struct ConsumerUsageState {
     pub mode: UsageMode,
     /// Aggregate usage counters for the selected scope.
     pub counters: UsageCounter,
-    /// Allowance, remaining balance, and explicit warning state.
+    /// Tenant-wide allowance, remaining balance, and explicit warning state.
     pub allowance: ConsumerAllowanceState,
 }
 
@@ -514,7 +514,7 @@ impl ConsumerTopUpRequest {
             &self.idempotency_key,
             MAX_IDEMPOTENCY_KEY_LEN,
         )?;
-        validate_positive_finite("creditUnits", self.credit_units)?;
+        validate_non_negative_finite("creditUnits", self.credit_units)?;
         Ok(())
     }
 }
@@ -705,7 +705,16 @@ impl UsageLedger {
 
         let _guard = self.lock.lock().map_err(|_| UsageError::LockPoisoned)?;
         let rollup = self.consumer_rollup_locked(tenant_id, vault_id)?;
-        let usage = self.consumer_usage_from_rollup(rollup.clone(), configured_mode)?;
+        let allowance_used_credit_units = if vault_id.is_some() {
+            self.tenant_used_credit_units_locked(tenant_id)?
+        } else {
+            rollup.counters.credit_units
+        };
+        let usage = self.consumer_usage_from_rollup(
+            rollup.clone(),
+            configured_mode,
+            allowance_used_credit_units,
+        )?;
         Ok(ConsumerUsageDetails {
             usage,
             agents: rollup.agents,
@@ -721,6 +730,7 @@ impl UsageLedger {
     ) -> Result<ConsumerTopUpState, UsageError> {
         request.validate()?;
         let credit_units = normalize_money(request.credit_units);
+        validate_positive_finite("creditUnits", credit_units)?;
         let amount_usd = normalize_money(credit_units * CREDIT_UNIT_USD);
         let _guard = self.lock.lock().map_err(|_| UsageError::LockPoisoned)?;
         let top_up_key = consumer_top_up_key(&request.tenant_id, &request.idempotency_key);
@@ -729,7 +739,17 @@ impl UsageLedger {
             self.vault
                 .try_with_write_txn(|wtxn| -> Result<TopUpWriteResult, UsageError> {
                     if let Some(raw) = self.vault.sync_state_get_in_write_txn(wtxn, &top_up_key)? {
-                        return Ok(TopUpWriteResult::Replayed(decode_top_up(&raw)?));
+                        let top_up = decode_top_up(&raw)?;
+                        if top_up.tenant_id != request.tenant_id
+                            || top_up.idempotency_key != request.idempotency_key
+                            || normalize_money(top_up.credit_units) != credit_units
+                        {
+                            return Err(UsageError::IdempotencyConflict {
+                                tenant_id: request.tenant_id.clone(),
+                                idempotency_key: request.idempotency_key.clone(),
+                            });
+                        }
+                        return Ok(TopUpWriteResult::Replayed(top_up));
                     }
 
                     let recorded_at = now_secs();
@@ -750,8 +770,10 @@ impl UsageLedger {
                             updated_at: None,
                         },
                     };
-                    allowance.credit_units =
+                    let updated_credit_units =
                         normalize_money(allowance.credit_units + top_up.credit_units);
+                    validate_positive_finite("creditUnits", updated_credit_units)?;
+                    allowance.credit_units = updated_credit_units;
                     allowance.updated_at = Some(recorded_at);
 
                     self.vault.sync_state_put_in_write_txn(
@@ -819,18 +841,23 @@ impl UsageLedger {
         configured_mode: UsageMode,
     ) -> Result<ConsumerUsageState, UsageError> {
         let rollup = self.consumer_rollup_locked(tenant_id, vault_id)?;
-        self.consumer_usage_from_rollup(rollup, configured_mode)
+        let allowance_used_credit_units = if vault_id.is_some() {
+            self.tenant_used_credit_units_locked(tenant_id)?
+        } else {
+            rollup.counters.credit_units
+        };
+        self.consumer_usage_from_rollup(rollup, configured_mode, allowance_used_credit_units)
     }
 
     fn consumer_usage_from_rollup(
         &self,
         rollup: UsageRollup,
         configured_mode: UsageMode,
+        allowance_used_credit_units: f64,
     ) -> Result<ConsumerUsageState, UsageError> {
         let allowance = self.consumer_allowance(&rollup.tenant_id)?;
-        let used_credit_units = rollup.counters.credit_units;
         let remaining_credit_units =
-            normalize_money(allowance.credit_units - used_credit_units).max(0.0);
+            normalize_money(allowance.credit_units - allowance_used_credit_units).max(0.0);
         Ok(ConsumerUsageState {
             tenant_id: rollup.tenant_id,
             vault_id: rollup.vault_id,
@@ -838,11 +865,11 @@ impl UsageLedger {
             counters: rollup.counters,
             allowance: ConsumerAllowanceState {
                 allowance_credit_units: allowance.credit_units,
-                used_credit_units,
+                used_credit_units: allowance_used_credit_units,
                 remaining_credit_units,
                 updated_at: allowance.updated_at,
                 warning: ConsumerAllowanceWarning::for_usage(
-                    used_credit_units,
+                    allowance_used_credit_units,
                     allowance.credit_units,
                 ),
             },
@@ -862,6 +889,11 @@ impl UsageLedger {
 
         self.get_rollup(&tenant_rollup_key(tenant_id))
             .map(|rollup| rollup.unwrap_or_else(|| UsageRollup::tenant(tenant_id)))
+    }
+
+    fn tenant_used_credit_units_locked(&self, tenant_id: &str) -> Result<f64, UsageError> {
+        self.get_rollup(&tenant_rollup_key(tenant_id))
+            .map(|rollup| rollup.map_or(0.0, |rollup| rollup.counters.credit_units))
     }
 
     fn consumer_allowance(&self, tenant_id: &str) -> Result<ConsumerAllowanceRecord, UsageError> {
@@ -946,6 +978,13 @@ pub enum UsageError {
     Encode(rmp_serde::encode::Error),
     #[error("usage ledger decode error: {0}")]
     Decode(rmp_serde::decode::Error),
+    #[error(
+        "idempotency key {idempotency_key} for tenant {tenant_id} conflicts with a recorded top-up"
+    )]
+    IdempotencyConflict {
+        tenant_id: String,
+        idempotency_key: String,
+    },
     #[error("usage ledger lock poisoned")]
     LockPoisoned,
 }

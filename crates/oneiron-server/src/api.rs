@@ -1235,6 +1235,12 @@ async fn get_consumer_usage_details(
             content_type = "application/json"
         ),
         (
+            status = 409,
+            description = "Idempotency key was replayed with a different top-up payload.",
+            body = ApiError,
+            content_type = "application/json"
+        ),
+        (
             status = 401,
             description = "Missing or invalid `x-oneiron-secret` header.",
             body = ApiError,
@@ -1437,6 +1443,13 @@ async fn get_usage_rollup(
 }
 
 fn usage_error(error: UsageError) -> ApiError {
+    if let UsageError::IdempotencyConflict {
+        idempotency_key, ..
+    } = &error
+    {
+        return ApiError::idempotency_replay_conflict(Some(idempotency_key.as_str()));
+    }
+
     if let Some(field) = error.field() {
         return ApiError::bad_request(error.to_string(), Some(field));
     }
@@ -2756,6 +2769,16 @@ mod tests {
         idempotency_key: &str,
         service_cost_usd: f64,
     ) -> (StatusCode, Value) {
+        record_usage_event_for_vault_route(server, idempotency_key, "vault-a", service_cost_usd)
+            .await
+    }
+
+    async fn record_usage_event_for_vault_route(
+        server: Arc<SyncServer>,
+        idempotency_key: &str,
+        vault_id: &str,
+        service_cost_usd: f64,
+    ) -> (StatusCode, Value) {
         route_json(
             server,
             json_request(
@@ -2763,7 +2786,7 @@ mod tests {
                 "/v1/usage/events",
                 json!({
                     "tenantId": "tenant-a",
-                    "vaultId": "vault-a",
+                    "vaultId": vault_id,
                     "idempotencyKey": idempotency_key,
                     "agentId": "agent-a",
                     "model": "model-a",
@@ -3687,6 +3710,83 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn consumer_top_up_route_rejects_idempotency_conflicts() {
+        let (_dir, server) = test_server_with_usage_mode(crate::usage::UsageMode::OneironCloud);
+
+        let (first_status, first) = top_up_route(server.clone(), "top-up-conflict", 10.0).await;
+        let (conflict_status, conflict) =
+            top_up_route(server.clone(), "top-up-conflict", 11.0).await;
+        let (usage_status, usage) = route_json(
+            server,
+            Request::builder()
+                .uri("/v1/consumer/usage?tenantId=tenant-a")
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await;
+
+        assert_eq!(first_status, StatusCode::OK);
+        assert_eq!(first["recorded"], Value::from(true));
+        assert_eq!(conflict_status, StatusCode::CONFLICT);
+        assert_eq!(conflict["code"], Value::from("IDEMPOTENCY_REPLAY_CONFLICT"));
+        assert_eq!(
+            conflict["details"]["idempotencyKey"],
+            Value::from("top-up-conflict")
+        );
+        assert_eq!(usage_status, StatusCode::OK);
+        assert_eq!(
+            usage["allowance"]["allowanceCreditUnits"],
+            Value::from(10.0)
+        );
+    }
+
+    #[tokio::test]
+    async fn consumer_top_up_route_rejects_normalized_zero_credit_units() {
+        let (_dir, server) = test_server_with_usage_mode(crate::usage::UsageMode::OneironCloud);
+
+        let (tiny_status, tiny) =
+            top_up_route(server.clone(), "tiny-top-up", 0.0000000000001).await;
+        let (retry_status, retry) = top_up_route(server, "tiny-top-up", 1.0).await;
+
+        assert_eq!(tiny_status, StatusCode::BAD_REQUEST);
+        assert_eq!(tiny["code"], Value::from("BAD_REQUEST"));
+        assert_eq!(tiny["details"]["field"], Value::from("creditUnits"));
+        assert_eq!(retry_status, StatusCode::OK);
+        assert_eq!(retry["recorded"], Value::from(true));
+        assert_eq!(retry["topUp"]["creditUnits"], Value::from(1.0));
+    }
+
+    #[tokio::test]
+    async fn consumer_top_up_route_rejects_non_finite_allowance_balance() {
+        let (_dir, server) = test_server_with_usage_mode(crate::usage::UsageMode::OneironCloud);
+
+        let (first_status, first) = top_up_route(server.clone(), "large-top-up-1", 1.0e296).await;
+        let (overflow_status, overflow) =
+            top_up_route(server.clone(), "large-top-up-2", 1.0e296).await;
+        let (usage_status, usage) = route_json(
+            server,
+            Request::builder()
+                .uri("/v1/consumer/usage?tenantId=tenant-a")
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await;
+
+        assert_eq!(first_status, StatusCode::OK);
+        assert_eq!(first["recorded"], Value::from(true));
+        assert_eq!(overflow_status, StatusCode::BAD_REQUEST);
+        assert_eq!(overflow["code"], Value::from("BAD_REQUEST"));
+        assert_eq!(overflow["details"]["field"], Value::from("creditUnits"));
+        assert_eq!(usage_status, StatusCode::OK);
+        assert!(
+            usage["allowance"]["allowanceCreditUnits"]
+                .as_f64()
+                .is_some_and(f64::is_finite),
+            "allowance should remain finite after rejected top-up: {usage:?}"
+        );
+    }
+
+    #[tokio::test]
     async fn consumer_usage_route_returns_usage_allowance_and_warning_state() {
         let (_dir, server) = test_server_with_usage_mode(crate::usage::UsageMode::OneironCloud);
         let (top_up_status, _) = top_up_route(server.clone(), "summary-top-up", 10.0).await;
@@ -3721,6 +3821,68 @@ mod tests {
         assert_eq!(
             usage["allowance"]["warning"]["triggered"],
             Value::from(true)
+        );
+    }
+
+    #[tokio::test]
+    async fn consumer_vault_scoped_usage_uses_tenant_allowance_burn_down() {
+        let (_dir, server) = test_server_with_usage_mode(crate::usage::UsageMode::OneironCloud);
+        let (top_up_status, _) = top_up_route(server.clone(), "vault-scope-top-up", 10.0).await;
+        let (vault_a_status, _) =
+            record_usage_event_for_vault_route(server.clone(), "vault-a-usage", "vault-a", 0.08)
+                .await;
+        let (vault_b_status, _) =
+            record_usage_event_for_vault_route(server.clone(), "vault-b-usage", "vault-b", 0.015)
+                .await;
+        let (usage_status, usage) = route_json(
+            server.clone(),
+            Request::builder()
+                .uri("/v1/consumer/usage?tenantId=tenant-a&vaultId=vault-a")
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await;
+        let (details_status, details) = route_json(
+            server,
+            Request::builder()
+                .uri("/v1/consumer/usage/details?tenantId=tenant-a&vaultId=vault-a")
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await;
+
+        assert_eq!(top_up_status, StatusCode::OK);
+        assert_eq!(vault_a_status, StatusCode::OK);
+        assert_eq!(vault_b_status, StatusCode::OK);
+        assert_eq!(usage_status, StatusCode::OK);
+        assert_eq!(details_status, StatusCode::OK);
+        assert_eq!(usage["vaultId"], Value::from("vault-a"));
+        assert_eq!(usage["counters"]["creditUnits"], Value::from(8.0));
+        assert_eq!(usage["allowance"]["usedCreditUnits"], Value::from(9.5));
+        assert_eq!(usage["allowance"]["remainingCreditUnits"], Value::from(0.5));
+        assert_eq!(
+            usage["allowance"]["warning"]["level"],
+            Value::from("critical")
+        );
+        assert_eq!(
+            usage["allowance"]["warning"]["usedRatio"],
+            Value::from(0.95)
+        );
+        assert_eq!(
+            details["usage"]["counters"]["creditUnits"],
+            Value::from(8.0)
+        );
+        assert_eq!(
+            details["usage"]["allowance"]["usedCreditUnits"],
+            Value::from(9.5)
+        );
+        assert_eq!(
+            details["usage"]["allowance"]["warning"]["level"],
+            Value::from("critical")
+        );
+        assert_eq!(
+            details["agents"]["agent-a"]["eventCount"],
+            Value::from(1_u64)
         );
     }
 
