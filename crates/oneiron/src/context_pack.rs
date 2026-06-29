@@ -37,6 +37,8 @@ const PACK_VALIDATION_IMPOSSIBLE_TIME: &str = "impossible time ordering";
 const PACK_VALIDATION_MISSING_EVIDENCE: &str = "missing required evidence";
 const PACK_VALIDATION_DELETED_PAYLOAD: &str = "deleted payload reference";
 const PACK_VALIDATION_QUARANTINED_PAYLOAD: &str = "quarantined payload reference";
+const PACK_QUARANTINE_ROW: &str = "sync quarantine row";
+const PACK_REMAT_MARKER_PREFIX: &str = "rm:w:";
 /// Default share of the claim budget that non-base (fictional / dream) worlds
 /// may occupy in an `All`-scope pack — fiction takes at most half, so it can
 /// never crowd base reality out (ARCH-0004 / ARCH-0022).
@@ -104,9 +106,22 @@ enum PackQuarantineContainer {
 
 #[derive(Debug, Deserialize, Serialize)]
 struct PackQuarantineRecord {
+    window_key: String,
     container: PackQuarantineContainer,
     crdt_key_hash: u64,
     crdt_key_len: u32,
+}
+
+#[derive(Debug, Default)]
+struct PackQuarantineIndex {
+    active_entity_keys: HashSet<(u64, u32)>,
+}
+
+impl PackQuarantineIndex {
+    fn contains_entity(&self, id: &EntityId) -> bool {
+        self.active_entity_keys
+            .contains(&pack_entity_crdt_key_metadata(id))
+    }
 }
 
 impl<'a> ContextPackBuilder<'a> {
@@ -435,6 +450,7 @@ impl<'a> ContextPackBuilder<'a> {
             let rtxn = self.vault.store.env.read_txn()?;
             let hydrate_result_edges = self.include_edges && self.edge_hop == 0;
             let mut claim_bodies = claim_bodies;
+            let quarantine_index = load_pack_quarantine_index(&self.vault.store, &rtxn)?;
 
             let mut results = Vec::with_capacity(scored.len());
             for entry in &scored {
@@ -443,6 +459,7 @@ impl<'a> ContextPackBuilder<'a> {
                     &rtxn,
                     &entry.id,
                     &mut claim_bodies,
+                    &quarantine_index,
                 )?;
             }
             let result_options = HydrateOptions {
@@ -483,7 +500,13 @@ impl<'a> ContextPackBuilder<'a> {
             };
             let edge_cache = self.include_edges.then_some(&edge_walk.scanned_edges);
             for id in &edge_walk.neighbor_ids {
-                validate_pack_entity_reference(&self.vault.store, &rtxn, id, &mut claim_bodies)?;
+                validate_pack_entity_reference(
+                    &self.vault.store,
+                    &rtxn,
+                    id,
+                    &mut claim_bodies,
+                    &quarantine_index,
+                )?;
             }
             let neighbor_options = HydrateOptions {
                 hydrate_fields: self.hydrate,
@@ -521,8 +544,20 @@ impl<'a> ContextPackBuilder<'a> {
             }
 
             validate_hydrated_pack_entities(&results, &neighbors)?;
-            validate_pack_edge_references(&self.vault.store, &rtxn, &results, &mut claim_bodies)?;
-            validate_pack_edge_references(&self.vault.store, &rtxn, &neighbors, &mut claim_bodies)?;
+            validate_pack_edge_references(
+                &self.vault.store,
+                &rtxn,
+                &results,
+                &mut claim_bodies,
+                &quarantine_index,
+            )?;
+            validate_pack_edge_references(
+                &self.vault.store,
+                &rtxn,
+                &neighbors,
+                &mut claim_bodies,
+                &quarantine_index,
+            )?;
             resolve_edge_short_ids(&mut results, &mut neighbors);
 
             // ARCH-0004 / ARCH-0022 world partitioning (ONE-1117): under the
@@ -646,13 +681,20 @@ fn validate_pack_edge_references(
     rtxn: &RoTxn<'_>,
     entities: &[ContextEntity],
     claim_bodies: &mut HashMap<EntityId, ClaimBody>,
+    quarantine_index: &PackQuarantineIndex,
 ) -> Result<()> {
     for entity in entities {
         let Some(edges) = &entity.edges else {
             continue;
         };
         for edge in edges {
-            validate_pack_entity_reference(store, rtxn, &edge.target, claim_bodies)?;
+            validate_pack_entity_reference(
+                store,
+                rtxn,
+                &edge.target,
+                claim_bodies,
+                quarantine_index,
+            )?;
         }
     }
     Ok(())
@@ -663,6 +705,7 @@ fn validate_pack_entity_reference(
     rtxn: &RoTxn<'_>,
     id: &EntityId,
     claim_bodies: &mut HashMap<EntityId, ClaimBody>,
+    quarantine_index: &PackQuarantineIndex,
 ) -> Result<()> {
     if store
         .sync_state
@@ -674,7 +717,7 @@ fn validate_pack_entity_reference(
             PACK_VALIDATION_DELETED_PAYLOAD,
         ));
     }
-    if entity_has_quarantine_record(store, rtxn, id)? {
+    if quarantine_index.contains_entity(id) {
         return Err(context_pack_validation_error(
             *id,
             PACK_VALIDATION_QUARANTINED_PAYLOAD,
@@ -741,27 +784,61 @@ fn validate_claim_pack_consistency(id: EntityId, body: &ClaimBody) -> Result<()>
     Ok(())
 }
 
-fn entity_has_quarantine_record(store: &Store, rtxn: &RoTxn<'_>, id: &EntityId) -> Result<bool> {
-    let id_hex = id.to_hex();
-    let key_hash = xxh3_64(id_hex.as_bytes());
-    let key_len = u32::try_from(id_hex.len()).unwrap_or(u32::MAX);
+fn load_pack_quarantine_index(store: &Store, rtxn: &RoTxn<'_>) -> Result<PackQuarantineIndex> {
+    let active_remat_markers = load_active_pack_entity_remat_markers(store, rtxn)?;
+    let mut active_entity_keys = HashSet::new();
     let iter = store.sync_queue.prefix_iter(rtxn, b"x:")?;
     for entry in iter {
         let (key, value) = entry?;
         if !is_quarantine_key(key) {
             continue;
         }
-        let Ok(record) = rmp_serde::from_slice::<PackQuarantineRecord>(value) else {
+        let record = rmp_serde::from_slice::<PackQuarantineRecord>(value)
+            .map_err(|_| Error::CorruptedIndex(PACK_QUARANTINE_ROW))?;
+        if record.container != PackQuarantineContainer::Entities {
             continue;
-        };
-        if record.container == PackQuarantineContainer::Entities
-            && record.crdt_key_hash == key_hash
-            && record.crdt_key_len == key_len
-        {
-            return Ok(true);
+        }
+        // `x:` rows are retained diagnostics; the pending `rm:w:` marker is
+        // the live retry signal that keeps the referenced entity blocked.
+        let entity_key = (record.crdt_key_hash, record.crdt_key_len);
+        if active_remat_markers.contains(&(record.window_key, entity_key)) {
+            active_entity_keys.insert(entity_key);
         }
     }
-    Ok(false)
+    Ok(PackQuarantineIndex { active_entity_keys })
+}
+
+fn load_active_pack_entity_remat_markers(
+    store: &Store,
+    rtxn: &RoTxn<'_>,
+) -> Result<HashSet<(String, (u64, u32))>> {
+    let mut markers = HashSet::new();
+    let iter = store
+        .sync_state
+        .prefix_iter(rtxn, PACK_REMAT_MARKER_PREFIX)?;
+    for entry in iter {
+        let (key, _) = entry?;
+        let rest = &key[PACK_REMAT_MARKER_PREFIX.len()..];
+        let Some((window_key, entity_hex)) = rest.split_once(':') else {
+            continue;
+        };
+        if EntityId::from_hex(entity_hex).is_err() {
+            continue;
+        }
+        markers.insert((window_key.to_string(), pack_crdt_key_metadata(entity_hex)));
+    }
+    Ok(markers)
+}
+
+fn pack_entity_crdt_key_metadata(id: &EntityId) -> (u64, u32) {
+    pack_crdt_key_metadata(&id.to_hex())
+}
+
+fn pack_crdt_key_metadata(key: &str) -> (u64, u32) {
+    (
+        xxh3_64(key.as_bytes()),
+        u32::try_from(key.len()).unwrap_or(u32::MAX),
+    )
 }
 
 fn is_quarantine_key(key: &[u8]) -> bool {
@@ -1569,6 +1646,20 @@ mod tests {
                 expected_id.to_hex()
             ),
         }
+    }
+
+    fn pack_quarantine_record_for_entity(window_key: &str, id: &EntityId) -> PackQuarantineRecord {
+        let (crdt_key_hash, crdt_key_len) = pack_entity_crdt_key_metadata(id);
+        PackQuarantineRecord {
+            window_key: window_key.to_string(),
+            container: PackQuarantineContainer::Entities,
+            crdt_key_hash,
+            crdt_key_len,
+        }
+    }
+
+    fn pack_remat_marker_key(window_key: &str, id: &EntityId) -> String {
+        format!("rm:w:{window_key}:{}", id.to_hex())
     }
 
     #[test]
@@ -2784,6 +2875,7 @@ mod tests {
     fn pack_validation_rejects_quarantined_payload_reference() -> Result<()> {
         let (_dir, vault) = open_test_vault();
         let id = EntityId::from_bytes([0x95; 16])?;
+        let window_key = "2026-03";
         put_claim_text_entity(
             &vault,
             &id,
@@ -2792,18 +2884,17 @@ mod tests {
             "payload",
         )?;
 
-        let id_hex = id.to_hex();
-        let record = PackQuarantineRecord {
-            container: PackQuarantineContainer::Entities,
-            crdt_key_hash: xxh3_64(id_hex.as_bytes()),
-            crdt_key_len: u32::try_from(id_hex.len()).unwrap_or(u32::MAX),
-        };
+        let record = pack_quarantine_record_for_entity(window_key, &id);
         let encoded = rmp_serde::to_vec_named(&record).expect("quarantine record encode");
         vault.with_write_txn(|wtxn| {
             vault
                 .store
                 .sync_queue
                 .put(wtxn, b"x:\x00\x00\x00\x00\x00\x00\x00\x01", &encoded)?;
+            vault
+                .store
+                .sync_state
+                .put(wtxn, &pack_remat_marker_key(window_key, &id), &[1u8])?;
             Ok(())
         })?;
 
@@ -2814,6 +2905,71 @@ mod tests {
             .expect_err("quarantined payload reference must fail pack validation");
 
         assert_context_pack_validation(err, id, PACK_VALIDATION_QUARANTINED_PAYLOAD);
+        Ok(())
+    }
+
+    #[test]
+    fn pack_validation_ignores_stale_quarantine_row_after_reference_heals() -> Result<()> {
+        let (_dir, vault) = open_test_vault();
+        let id = EntityId::from_bytes([0x96; 16])?;
+        let window_key = "2026-03";
+        put_claim_text_entity(
+            &vault,
+            &id,
+            "stalequarantinereferenceneedle",
+            "test.stale_quarantine",
+            "payload",
+        )?;
+
+        let record = pack_quarantine_record_for_entity(window_key, &id);
+        let encoded = rmp_serde::to_vec_named(&record).expect("quarantine record encode");
+        vault.with_write_txn(|wtxn| {
+            vault
+                .store
+                .sync_queue
+                .put(wtxn, b"x:\x00\x00\x00\x00\x00\x00\x00\x02", &encoded)?;
+            Ok(())
+        })?;
+
+        let pack = vault
+            .context_pack()
+            .search_text("stalequarantinereferenceneedle", 10)
+            .run()?;
+
+        assert!(pack.results.iter().any(|entity| entity.id == id));
+        Ok(())
+    }
+
+    #[test]
+    fn pack_validation_fails_closed_on_corrupt_quarantine_row() -> Result<()> {
+        let (_dir, vault) = open_test_vault();
+        let id = EntityId::from_bytes([0x97; 16])?;
+        put_claim_text_entity(
+            &vault,
+            &id,
+            "corruptquarantinerowneedle",
+            "test.corrupt_quarantine",
+            "payload",
+        )?;
+
+        vault.with_write_txn(|wtxn| {
+            vault
+                .store
+                .sync_queue
+                .put(wtxn, b"x:\x00\x00\x00\x00\x00\x00\x00\x03", &[0xc1])?;
+            Ok(())
+        })?;
+
+        let err = vault
+            .context_pack()
+            .search_text("corruptquarantinerowneedle", 10)
+            .run()
+            .expect_err("corrupt quarantine row must fail closed");
+
+        match err {
+            Error::CorruptedIndex(row) => assert_eq!(row, PACK_QUARANTINE_ROW),
+            other => panic!("expected CorruptedIndex({PACK_QUARANTINE_ROW:?}), got {other:?}"),
+        }
         Ok(())
     }
 
