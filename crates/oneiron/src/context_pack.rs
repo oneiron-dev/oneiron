@@ -520,8 +520,10 @@ impl<'a> ContextPackBuilder<'a> {
                 neighbors.push(entity);
             }
 
-            resolve_edge_short_ids(&mut results, &mut neighbors);
             validate_hydrated_pack_entities(&results, &neighbors)?;
+            validate_pack_edge_references(&self.vault.store, &rtxn, &results, &mut claim_bodies)?;
+            validate_pack_edge_references(&self.vault.store, &rtxn, &neighbors, &mut claim_bodies)?;
+            resolve_edge_short_ids(&mut results, &mut neighbors);
 
             // ARCH-0004 / ARCH-0022 world partitioning (ONE-1117): under the
             // default `All` scope, group surviving claims by world — base section
@@ -634,6 +636,23 @@ fn validate_hydrated_pack_entities(
                 entity.id,
                 PACK_VALIDATION_DUPLICATE_ID,
             ));
+        }
+    }
+    Ok(())
+}
+
+fn validate_pack_edge_references(
+    store: &Store,
+    rtxn: &RoTxn<'_>,
+    entities: &[ContextEntity],
+    claim_bodies: &mut HashMap<EntityId, ClaimBody>,
+) -> Result<()> {
+    for entity in entities {
+        let Some(edges) = &entity.edges else {
+            continue;
+        };
+        for edge in edges {
+            validate_pack_entity_reference(store, rtxn, &edge.target, claim_bodies)?;
         }
     }
     Ok(())
@@ -2718,6 +2737,46 @@ mod tests {
             .expect_err("deleted payload reference must fail pack validation");
 
         assert_context_pack_validation(err, id, PACK_VALIDATION_DELETED_PAYLOAD);
+        Ok(())
+    }
+
+    #[test]
+    fn pack_validation_rejects_deleted_edge_target_reference() -> Result<()> {
+        let (_dir, vault) = open_test_vault();
+        let source = EntityId::from_bytes([0x54; 16])?;
+        let target = EntityId::from_bytes([0x55; 16])?;
+        put_claim_text_entity(
+            &vault,
+            &source,
+            "deletededgetargetneedle",
+            "test.edge_source",
+            "payload",
+        )?;
+        put_text_entity(
+            &vault,
+            &target,
+            4,
+            "edge target",
+            serde_json::json!({"body": "target"}),
+        )?;
+        vault.put_edge(&source, crate::types::EdgeKind::Supports, &target, 0.7)?;
+        vault.with_write_txn(|wtxn| {
+            vault.store.sync_state.put(
+                wtxn,
+                &crate::deletion::local_hard_delete_key(&target),
+                b"present",
+            )?;
+            Ok(())
+        })?;
+
+        let err = vault
+            .context_pack()
+            .search_text("deletededgetargetneedle", 10)
+            .include_edges(true)
+            .run()
+            .expect_err("deleted edge target reference must fail pack validation");
+
+        assert_context_pack_validation(err, target, PACK_VALIDATION_DELETED_PAYLOAD);
         Ok(())
     }
 
