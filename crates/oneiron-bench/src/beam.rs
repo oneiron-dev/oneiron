@@ -118,7 +118,18 @@ pub(crate) struct FixtureCase {
     #[serde(default)]
     temporal_search: Option<FixtureTimeRange>,
     #[serde(default)]
+    temporal_evidence_ids: Vec<String>,
+    #[serde(default)]
+    opposing_evidence: Option<OpposingEvidence>,
+    #[serde(default)]
     offline_amortized_cost: CostComponentInput,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct OpposingEvidence {
+    field: String,
+    record_ids: Vec<String>,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, Serialize)]
@@ -397,6 +408,8 @@ struct ContextPackReport {
     neighbors: Vec<ContextEntityReport>,
     stats: PackStatsReport,
     empty: Option<EmptyContextReport>,
+    #[serde(skip)]
+    temporal_result_ids: BTreeSet<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -802,6 +815,7 @@ fn validate_fixture(fixture: &BeamFixture) -> BeamResult<()> {
     }
 
     let mut record_ids = BTreeSet::new();
+    let mut records_by_id = BTreeMap::new();
     for record in &fixture.records {
         EntityId::from_hex(&record.id).map_err(|source| BeamError::InvalidEntityId {
             id: record.id.clone(),
@@ -836,6 +850,7 @@ fn validate_fixture(fixture: &BeamFixture) -> BeamResult<()> {
                 "text fields must reference keys present in record.fields",
             ));
         }
+        records_by_id.insert(record.id.as_str(), record);
     }
 
     let mut case_ids = BTreeSet::new();
@@ -863,6 +878,12 @@ fn validate_fixture(fixture: &BeamFixture) -> BeamResult<()> {
                 "abstention fixture cases must set expected_min_results to 0",
             ));
         }
+        if case.fixture_class == FixtureClass::EmptyMemory && !fixture.records.is_empty() {
+            return Err(invalid_fixture(
+                fixture,
+                "empty_memory cases must not include fixture records",
+            ));
+        }
         if let Some(temporal_search) = &case.temporal_search
             && temporal_search.start > temporal_search.end
         {
@@ -877,12 +898,139 @@ fn validate_fixture(fixture: &BeamFixture) -> BeamResult<()> {
                 "temporal_staleness cases must declare temporalSearch",
             ));
         }
+        if case.fixture_class == FixtureClass::TemporalStaleness {
+            if case.temporal_evidence_ids.is_empty() {
+                return Err(invalid_fixture(
+                    fixture,
+                    "temporal_staleness cases must declare temporalEvidenceIds",
+                ));
+            }
+            let temporal_search = case
+                .temporal_search
+                .as_ref()
+                .expect("temporal_staleness temporalSearch checked above");
+            validate_temporal_evidence_ids(
+                fixture,
+                &records_by_id,
+                temporal_search,
+                &case.temporal_evidence_ids,
+            )?;
+        } else if !case.temporal_evidence_ids.is_empty() {
+            return Err(invalid_fixture(
+                fixture,
+                "temporalEvidenceIds are only valid for temporal_staleness cases",
+            ));
+        }
+        if case.fixture_class == FixtureClass::AdversarialContradiction {
+            let opposing_evidence = case.opposing_evidence.as_ref().ok_or_else(|| {
+                invalid_fixture(
+                    fixture,
+                    "adversarial_contradiction cases must declare opposingEvidence",
+                )
+            })?;
+            validate_opposing_evidence(fixture, &records_by_id, opposing_evidence)?;
+        } else if case.opposing_evidence.is_some() {
+            return Err(invalid_fixture(
+                fixture,
+                "opposingEvidence is only valid for adversarial_contradiction cases",
+            ));
+        }
         if case.expected_min_results > case.limit {
             return Err(invalid_fixture(
                 fixture,
                 "expected_min_results must be <= limit",
             ));
         }
+    }
+
+    Ok(())
+}
+
+fn validate_temporal_evidence_ids(
+    fixture: &BeamFixture,
+    records_by_id: &BTreeMap<&str, &FixtureRecord>,
+    temporal_search: &FixtureTimeRange,
+    temporal_evidence_ids: &[String],
+) -> BeamResult<()> {
+    let mut ids = BTreeSet::new();
+    for id in temporal_evidence_ids {
+        if !ids.insert(id.as_str()) {
+            return Err(invalid_fixture(
+                fixture,
+                "temporalEvidenceIds must be unique",
+            ));
+        }
+        let record = records_by_id.get(id.as_str()).ok_or_else(|| {
+            invalid_fixture(
+                fixture,
+                "temporalEvidenceIds must reference fixture records",
+            )
+        })?;
+        if record.occurred.end < temporal_search.start
+            || record.occurred.start > temporal_search.end
+        {
+            return Err(invalid_fixture(
+                fixture,
+                "temporalEvidenceIds must reference records inside temporalSearch",
+            ));
+        }
+    }
+
+    Ok(())
+}
+
+fn validate_opposing_evidence(
+    fixture: &BeamFixture,
+    records_by_id: &BTreeMap<&str, &FixtureRecord>,
+    opposing_evidence: &OpposingEvidence,
+) -> BeamResult<()> {
+    if opposing_evidence.field.trim().is_empty() {
+        return Err(invalid_fixture(
+            fixture,
+            "opposingEvidence.field must not be empty",
+        ));
+    }
+    if opposing_evidence.record_ids.len() < 2 {
+        return Err(invalid_fixture(
+            fixture,
+            "opposingEvidence must reference at least two records",
+        ));
+    }
+
+    let mut ids = BTreeSet::new();
+    let mut values = BTreeSet::new();
+    for id in &opposing_evidence.record_ids {
+        if !ids.insert(id.as_str()) {
+            return Err(invalid_fixture(
+                fixture,
+                "opposingEvidence.recordIds must be unique",
+            ));
+        }
+        let record = records_by_id.get(id.as_str()).ok_or_else(|| {
+            invalid_fixture(
+                fixture,
+                "opposingEvidence.recordIds must reference fixture records",
+            )
+        })?;
+        let field_value = record
+            .fields
+            .as_object()
+            .and_then(|fields| fields.get(opposing_evidence.field.as_str()))
+            .and_then(serde_json::Value::as_str)
+            .ok_or_else(|| {
+                invalid_fixture(
+                    fixture,
+                    "opposingEvidence.field must reference string values on all records",
+                )
+            })?;
+        values.insert(field_value);
+    }
+
+    if values.len() < 2 {
+        return Err(invalid_fixture(
+            fixture,
+            "opposingEvidence must reference records with distinct field values",
+        ));
     }
 
     Ok(())
@@ -1157,9 +1305,9 @@ fn configured_context_pack_builder<'a>(
         .token_budget(case.token_budget);
 
     match (case.fixture_class, &case.temporal_search) {
-        (FixtureClass::TemporalStaleness, Some(range)) => {
-            builder.search_temporal(range.start, range.end, case.limit)
-        }
+        (FixtureClass::TemporalStaleness, Some(range)) => builder
+            .search_temporal(range.start, range.end, case.limit)
+            .limit(case.limit),
         _ => builder,
     }
 }
@@ -1170,6 +1318,7 @@ struct BudgetedContextPack {
     serialized_tokens: u64,
     serialized_elapsed_us: u64,
     serialized_ids: SerializedContextPackIds,
+    temporal_result_ids: BTreeSet<String>,
 }
 
 #[derive(Default)]
@@ -1201,6 +1350,7 @@ fn run_deterministic_context_pack(
     let serialized_text = std::str::from_utf8(&serialized)?;
     let serialized_tokens = count_analyzer_tokens(serialized_text);
     let serialized_ids = serialized_context_pack_ids(serialized_text);
+    let temporal_result_ids = temporal_result_ids(vault, case)?;
 
     Ok(BudgetedContextPack {
         raw: pack,
@@ -1208,7 +1358,24 @@ fn run_deterministic_context_pack(
         serialized_tokens,
         serialized_elapsed_us,
         serialized_ids,
+        temporal_result_ids,
     })
+}
+
+fn temporal_result_ids(vault: &Vault, case: &FixtureCase) -> BeamResult<BTreeSet<String>> {
+    let Some(range) = &case.temporal_search else {
+        return Ok(BTreeSet::new());
+    };
+    let results = vault
+        .query()
+        .search_temporal(range.start, range.end, case.limit)
+        .limit(case.limit)
+        .run()?;
+
+    Ok(results
+        .into_iter()
+        .map(|entity| entity.id.to_hex())
+        .collect())
 }
 
 fn context_pack_report(pack: &BudgetedContextPack, case: &FixtureCase) -> ContextPackReport {
@@ -1277,6 +1444,7 @@ fn context_pack_report(pack: &BudgetedContextPack, case: &FixtureCase) -> Contex
             total_in_scope: empty.total_in_scope,
             hint: empty.hint.clone(),
         }),
+        temporal_result_ids: pack.temporal_result_ids.clone(),
     }
 }
 
@@ -1466,7 +1634,7 @@ fn abstention_ability_scores(
     case: &FixtureCase,
     context_pack: &ContextPackReport,
 ) -> Vec<AbilityScoreReport> {
-    let (gate_passed, gate_detail) = abstention_gate_status(case.fixture_class, context_pack);
+    let (gate_passed, gate_detail) = abstention_gate_status(case, context_pack);
 
     vec![
         AbilityScoreReport {
@@ -1490,11 +1658,8 @@ fn abstention_ability_scores(
     ]
 }
 
-fn abstention_gate_status(
-    fixture_class: FixtureClass,
-    context_pack: &ContextPackReport,
-) -> (bool, String) {
-    match fixture_class {
+fn abstention_gate_status(case: &FixtureCase, context_pack: &ContextPackReport) -> (bool, String) {
+    match case.fixture_class {
         FixtureClass::EvidenceSupported => (
             false,
             "evidence_supported cases must use scored BEAM abilities".to_owned(),
@@ -1521,41 +1686,71 @@ fn abstention_gate_status(
             )
         }
         FixtureClass::LowConfidence => {
-            let passed = context_pack.result_count == 0 && context_pack.empty.is_some();
+            let (empty_reason, total_in_scope) = context_pack
+                .empty
+                .as_ref()
+                .map(|empty| (empty.reason.as_str(), empty.total_in_scope))
+                .unwrap_or(("none", 0));
+            let passed = context_pack.result_count == 0
+                && empty_reason == "below_threshold"
+                && total_in_scope > 0;
             (
                 passed,
                 format!(
-                    "low-confidence query produced {} serialized results",
-                    context_pack.result_count
+                    "low-confidence query produced {} serialized results with {total_in_scope} in-scope records and empty reason={empty_reason}",
+                    context_pack.result_count,
                 ),
             )
         }
         FixtureClass::AdversarialContradiction => {
-            let passed = context_pack.result_count >= 2;
+            let surfaced = context_pack_result_ids(context_pack);
+            let required_ids = case
+                .opposing_evidence
+                .as_ref()
+                .map(|evidence| evidence.record_ids.as_slice())
+                .unwrap_or(&[]);
+            let matched = required_ids
+                .iter()
+                .filter(|id| surfaced.contains(id.as_str()))
+                .count();
+            let passed = !required_ids.is_empty() && matched == required_ids.len();
             (
                 passed,
                 format!(
-                    "contradictory fixture evidence surfaced {} serialized results",
-                    context_pack.result_count
+                    "contradictory fixture evidence surfaced {matched}/{} required opposing records",
+                    required_ids.len()
                 ),
             )
         }
         FixtureClass::TemporalStaleness => {
-            let used_temporal_signal = context_pack
-                .stats
-                .signals_used
+            let surfaced = context_pack_result_ids(context_pack);
+            let matched = case
+                .temporal_evidence_ids
                 .iter()
-                .any(|signal| signal == "temporal");
-            let passed = context_pack.result_count > 0 && used_temporal_signal;
+                .filter(|id| {
+                    surfaced.contains(id.as_str())
+                        && context_pack.temporal_result_ids.contains(id.as_str())
+                })
+                .count();
+            let passed = !case.temporal_evidence_ids.is_empty()
+                && matched == case.temporal_evidence_ids.len();
             (
                 passed,
                 format!(
-                    "staleness fixture produced {} serialized results with temporal signal={used_temporal_signal}",
-                    context_pack.result_count
+                    "staleness fixture surfaced {matched}/{} required temporal records",
+                    case.temporal_evidence_ids.len()
                 ),
             )
         }
     }
+}
+
+fn context_pack_result_ids(context_pack: &ContextPackReport) -> BTreeSet<&str> {
+    context_pack
+        .results
+        .iter()
+        .map(|entity| entity.id.as_str())
+        .collect()
 }
 
 fn budget_discipline_detail(case: &FixtureCase, context_pack: &ContextPackReport) -> String {
@@ -2106,6 +2301,8 @@ neighbors:
             expected_min_results: 1,
             fixture_class: FixtureClass::EvidenceSupported,
             temporal_search: None,
+            temporal_evidence_ids: Vec::new(),
+            opposing_evidence: None,
             offline_amortized_cost: CostComponentInput::default(),
         };
         let mut context_pack = ContextPackReport {
@@ -2128,6 +2325,7 @@ neighbors:
             neighbors: Vec::new(),
             stats: empty_pack_stats_report(),
             empty: None,
+            temporal_result_ids: BTreeSet::new(),
         };
 
         let scores = completed_ability_scores(&case, &context_pack);
@@ -2235,6 +2433,8 @@ neighbors:
             expected_min_results: 0,
             fixture_class: FixtureClass::EvidenceSupported,
             temporal_search: None,
+            temporal_evidence_ids: Vec::new(),
+            opposing_evidence: None,
             offline_amortized_cost: CostComponentInput::default(),
         };
         let pack = BudgetedContextPack {
@@ -2258,6 +2458,7 @@ neighbors:
             serialized_tokens: 7,
             serialized_elapsed_us: 13,
             serialized_ids: SerializedContextPackIds::default(),
+            temporal_result_ids: BTreeSet::new(),
         };
 
         let report = query_cost_report(&case, &pack);
@@ -2514,10 +2715,96 @@ neighbors:
     }
 
     #[test]
+    fn empty_memory_fixture_rejects_nonempty_vault() {
+        let mut fixture_json: serde_json::Value =
+            serde_json::from_str(BUILTIN_FIXTURE_JSON).expect("fixture JSON");
+        fixture_json["cases"][0]["expectedMinResults"] = serde_json::json!(0);
+        fixture_json["cases"][0]["fixtureClass"] = serde_json::json!("empty_memory");
+
+        let err = parse_fixture_json(&fixture_json.to_string())
+            .expect_err("empty_memory cases must not carry records");
+
+        assert!(
+            err.to_string()
+                .contains("empty_memory cases must not include fixture records")
+        );
+    }
+
+    #[test]
+    fn contradiction_fixture_requires_distinct_opposing_values() {
+        let mut fixture_json: serde_json::Value =
+            serde_json::from_str(BUILTIN_FIXTURE_JSON).expect("fixture JSON");
+        fixture_json["fixtureId"] = serde_json::json!("eval004-consistent-not-contradiction");
+        fixture_json["records"] = serde_json::json!([
+            eval004_record_json(
+                "30303030303030303030303030303030",
+                10,
+                "Atlas launch date is March 1.",
+            ),
+            eval004_record_json(
+                "40404040404040404040404040404040",
+                11,
+                "Atlas launch date is March 1.",
+            ),
+        ]);
+        fixture_json["cases"][0]["caseId"] =
+            serde_json::json!("eval004-consistent-not-contradiction");
+        fixture_json["cases"][0]["query"] = serde_json::json!("What is the Atlas launch date?");
+        fixture_json["cases"][0]["expectedMinResults"] = serde_json::json!(0);
+        fixture_json["cases"][0]["fixtureClass"] = serde_json::json!("adversarial_contradiction");
+        fixture_json["cases"][0]["opposingEvidence"] = serde_json::json!({
+            "field": "txt",
+            "recordIds": [
+                "30303030303030303030303030303030",
+                "40404040404040404040404040404040",
+            ],
+        });
+
+        let err = parse_fixture_json(&fixture_json.to_string())
+            .expect_err("consistent records must not validate as contradiction");
+
+        assert!(
+            err.to_string()
+                .contains("opposingEvidence must reference records with distinct field values")
+        );
+    }
+
+    #[test]
+    fn temporal_staleness_fixture_requires_evidence_inside_temporal_search() {
+        let mut fixture_json: serde_json::Value =
+            serde_json::from_str(BUILTIN_FIXTURE_JSON).expect("fixture JSON");
+        fixture_json["fixtureId"] = serde_json::json!("eval004-temporal-out-of-range");
+        fixture_json["records"] = serde_json::json!([eval004_record_json(
+            "50505050505050505050505050505050",
+            10,
+            "Old Nimbus pricing was 10 credits.",
+        )]);
+        fixture_json["cases"][0]["caseId"] = serde_json::json!("eval004-temporal-out-of-range");
+        fixture_json["cases"][0]["query"] = serde_json::json!("Nimbus pricing");
+        fixture_json["cases"][0]["expectedMinResults"] = serde_json::json!(0);
+        fixture_json["cases"][0]["fixtureClass"] = serde_json::json!("temporal_staleness");
+        fixture_json["cases"][0]["temporalSearch"] = serde_json::json!({
+            "start": 0,
+            "end": 1,
+        });
+        fixture_json["cases"][0]["temporalEvidenceIds"] =
+            serde_json::json!(["50505050505050505050505050505050"]);
+
+        let err = parse_fixture_json(&fixture_json.to_string())
+            .expect_err("temporal evidence must be inside the temporal search range");
+
+        assert!(
+            err.to_string()
+                .contains("temporalEvidenceIds must reference records inside temporalSearch")
+        );
+    }
+
+    #[test]
     fn empty_memory_gate_requires_explicit_no_data_empty_report() {
         let mut context_pack = minimal_context_pack_report(0, &[], None);
+        let case = gate_case(FixtureClass::EmptyMemory);
 
-        let (passed, detail) = abstention_gate_status(FixtureClass::EmptyMemory, &context_pack);
+        let (passed, detail) = abstention_gate_status(&case, &context_pack);
         assert!(!passed);
         assert!(detail.contains("no empty report"));
 
@@ -2526,7 +2813,7 @@ neighbors:
             total_in_scope: 0,
             hint: "query matched no records".to_owned(),
         });
-        let (passed, detail) = abstention_gate_status(FixtureClass::EmptyMemory, &context_pack);
+        let (passed, detail) = abstention_gate_status(&case, &context_pack);
         assert!(!passed);
         assert!(detail.contains("filter_matched_none"));
 
@@ -2535,7 +2822,7 @@ neighbors:
             total_in_scope: 1,
             hint: "records were in scope".to_owned(),
         });
-        let (passed, _detail) = abstention_gate_status(FixtureClass::EmptyMemory, &context_pack);
+        let (passed, _detail) = abstention_gate_status(&case, &context_pack);
         assert!(!passed);
 
         context_pack.empty = Some(EmptyContextReport {
@@ -2543,24 +2830,111 @@ neighbors:
             total_in_scope: 0,
             hint: "empty vault".to_owned(),
         });
-        let (passed, _detail) = abstention_gate_status(FixtureClass::EmptyMemory, &context_pack);
+        let (passed, _detail) = abstention_gate_status(&case, &context_pack);
         assert!(passed);
     }
 
     #[test]
-    fn temporal_staleness_gate_requires_temporal_signal_usage() {
-        let mut context_pack = minimal_context_pack_report(1, &[], None);
+    fn low_confidence_gate_requires_below_threshold_empty_reason() {
+        let case = gate_case(FixtureClass::LowConfidence);
+        let mut context_pack = minimal_context_pack_report(
+            0,
+            &[],
+            Some(EmptyContextReport {
+                reason: "no_data".to_owned(),
+                total_in_scope: 0,
+                hint: "no records".to_owned(),
+            }),
+        );
 
-        let (passed, detail) =
-            abstention_gate_status(FixtureClass::TemporalStaleness, &context_pack);
+        let (passed, detail) = abstention_gate_status(&case, &context_pack);
         assert!(!passed);
-        assert!(detail.contains("temporal signal=false"));
+        assert!(detail.contains("empty reason=no_data"));
 
-        context_pack.stats.signals_used.push("temporal".to_owned());
-        let (passed, detail) =
-            abstention_gate_status(FixtureClass::TemporalStaleness, &context_pack);
+        context_pack.empty = Some(EmptyContextReport {
+            reason: "below_threshold".to_owned(),
+            total_in_scope: 0,
+            hint: "out-of-scope fixture".to_owned(),
+        });
+        let (passed, detail) = abstention_gate_status(&case, &context_pack);
+        assert!(!passed);
+        assert!(detail.contains("0 in-scope records"));
+
+        context_pack.empty = Some(EmptyContextReport {
+            reason: "below_threshold".to_owned(),
+            total_in_scope: 1,
+            hint: "below confidence threshold".to_owned(),
+        });
+        let (passed, detail) = abstention_gate_status(&case, &context_pack);
         assert!(passed);
-        assert!(detail.contains("temporal signal=true"));
+        assert!(detail.contains("1 in-scope records"));
+        assert!(detail.contains("empty reason=below_threshold"));
+    }
+
+    #[test]
+    fn contradiction_gate_requires_declared_opposing_result_ids() {
+        let case = gate_case(FixtureClass::AdversarialContradiction);
+        let context_pack = minimal_context_pack_report_with_result_ids(
+            &["30303030303030303030303030303030"],
+            &[],
+            None,
+        );
+
+        let (passed, detail) = abstention_gate_status(&case, &context_pack);
+        assert!(!passed);
+        assert!(detail.contains("1/2 required opposing records"));
+
+        let context_pack = minimal_context_pack_report_with_result_ids(
+            &[
+                "30303030303030303030303030303030",
+                "40404040404040404040404040404040",
+            ],
+            &[],
+            None,
+        );
+        let (passed, detail) = abstention_gate_status(&case, &context_pack);
+        assert!(passed);
+        assert!(detail.contains("2/2 required opposing records"));
+    }
+
+    #[test]
+    fn temporal_staleness_gate_requires_declared_temporal_result_ids() {
+        let case = gate_case(FixtureClass::TemporalStaleness);
+        let context_pack = minimal_context_pack_report_with_result_ids(
+            &["60606060606060606060606060606060"],
+            &["temporal"],
+            None,
+        );
+
+        let (passed, detail) = abstention_gate_status(&case, &context_pack);
+        assert!(!passed);
+        assert!(detail.contains("0/1 required temporal records"));
+
+        let context_pack = minimal_context_pack_report_with_result_ids(
+            &["50505050505050505050505050505050"],
+            &[],
+            None,
+        );
+        let context_pack = minimal_context_pack_report_with_temporal_result_ids(
+            context_pack,
+            &["50505050505050505050505050505050"],
+        );
+        let (passed, detail) = abstention_gate_status(&case, &context_pack);
+        assert!(passed);
+        assert!(detail.contains("1/1 required temporal records"));
+    }
+
+    #[test]
+    fn temporal_staleness_gate_rejects_text_only_expected_result() {
+        let case = gate_case(FixtureClass::TemporalStaleness);
+        let context_pack = minimal_context_pack_report_with_result_ids(
+            &["50505050505050505050505050505050"],
+            &["temporal"],
+            None,
+        );
+        let (passed, detail) = abstention_gate_status(&case, &context_pack);
+        assert!(!passed);
+        assert!(detail.contains("0/1 required temporal records"));
     }
 
     #[test]
@@ -2573,6 +2947,8 @@ neighbors:
             expected_min_results: 0,
             fixture_class: FixtureClass::LowConfidence,
             temporal_search: None,
+            temporal_evidence_ids: Vec::new(),
+            opposing_evidence: None,
             offline_amortized_cost: CostComponentInput::default(),
         };
         let context_pack = ContextPackReport {
@@ -2599,6 +2975,7 @@ neighbors:
                 total_in_scope: 1,
                 hint: "fixture confidence was below publication threshold".to_owned(),
             }),
+            temporal_result_ids: BTreeSet::new(),
         };
 
         let score = FixedBeamScorer.score(
@@ -2642,6 +3019,8 @@ neighbors:
             expected_min_results: 1,
             fixture_class: FixtureClass::EvidenceSupported,
             temporal_search: None,
+            temporal_evidence_ids: Vec::new(),
+            opposing_evidence: None,
             offline_amortized_cost: CostComponentInput::default(),
         });
         manifest.case_ids = vec!["beam_small_budget_smoke".to_owned()];
@@ -2700,16 +3079,38 @@ neighbors:
         fixture_json["cases"][0]["expectedMinResults"] = serde_json::json!(0);
         fixture_json["cases"][0]["fixtureClass"] =
             serde_json::to_value(fixture_class).expect("fixture class serializes");
+        let record_ids: Vec<String> = fixture_json["records"]
+            .as_array()
+            .expect("records array")
+            .iter()
+            .map(|record| record["id"].as_str().expect("record id").to_owned())
+            .collect();
         if fixture_class == FixtureClass::TemporalStaleness {
             fixture_json["cases"][0]["temporalSearch"] = serde_json::json!({
                 "start": 0,
                 "end": 1
             });
+            fixture_json["cases"][0]["temporalEvidenceIds"] = serde_json::json!(record_ids);
         } else {
             fixture_json["cases"][0]
                 .as_object_mut()
                 .expect("case object")
                 .remove("temporalSearch");
+            fixture_json["cases"][0]
+                .as_object_mut()
+                .expect("case object")
+                .remove("temporalEvidenceIds");
+        }
+        if fixture_class == FixtureClass::AdversarialContradiction {
+            fixture_json["cases"][0]["opposingEvidence"] = serde_json::json!({
+                "field": "txt",
+                "recordIds": record_ids,
+            });
+        } else {
+            fixture_json["cases"][0]
+                .as_object_mut()
+                .expect("case object")
+                .remove("opposingEvidence");
         }
 
         parse_fixture_json(&fixture_json.to_string()).expect("EVAL-004 fixture parses")
@@ -2785,6 +3186,34 @@ neighbors:
         }));
     }
 
+    fn gate_case(fixture_class: FixtureClass) -> FixtureCase {
+        FixtureCase {
+            case_id: format!("eval004-{}", fixture_class.gate_label()),
+            query: "fixture gate query".to_owned(),
+            limit: 5,
+            token_budget: 128,
+            expected_min_results: 0,
+            fixture_class,
+            temporal_search: (fixture_class == FixtureClass::TemporalStaleness)
+                .then_some(FixtureTimeRange { start: 0, end: 1 }),
+            temporal_evidence_ids: if fixture_class == FixtureClass::TemporalStaleness {
+                vec!["50505050505050505050505050505050".to_owned()]
+            } else {
+                Vec::new()
+            },
+            opposing_evidence: (fixture_class == FixtureClass::AdversarialContradiction).then(
+                || OpposingEvidence {
+                    field: "txt".to_owned(),
+                    record_ids: vec![
+                        "30303030303030303030303030303030".to_owned(),
+                        "40404040404040404040404040404040".to_owned(),
+                    ],
+                },
+            ),
+            offline_amortized_cost: CostComponentInput::default(),
+        }
+    }
+
     fn budget_score(scores: &[AbilityScoreReport]) -> &AbilityScoreReport {
         scores
             .iter()
@@ -2797,15 +3226,37 @@ neighbors:
         signals_used: &[&str],
         empty: Option<EmptyContextReport>,
     ) -> ContextPackReport {
+        assert_eq!(
+            result_count, 0,
+            "use minimal_context_pack_report_with_result_ids for non-empty reports"
+        );
+        minimal_context_pack_report_with_result_ids(&[], signals_used, empty)
+    }
+
+    fn minimal_context_pack_report_with_result_ids(
+        result_ids: &[&str],
+        signals_used: &[&str],
+        empty: Option<EmptyContextReport>,
+    ) -> ContextPackReport {
         let mut stats = empty_pack_stats_report();
         stats.signals_used = signals_used
             .iter()
             .map(|signal| (*signal).to_owned())
             .collect();
+        let results: Vec<ContextEntityReport> = result_ids
+            .iter()
+            .enumerate()
+            .map(|(idx, id)| ContextEntityReport {
+                id: (*id).to_owned(),
+                short_id: format!("g{idx}"),
+                entity_type: 8,
+                score: 1.0,
+            })
+            .collect();
 
         ContextPackReport {
             token_budget: 128,
-            limit: result_count.max(1),
+            limit: result_ids.len().max(1),
             serialized_format: "yaml".to_owned(),
             serialized_bytes: 0,
             serialized_tokens: 0,
@@ -2817,13 +3268,25 @@ neighbors:
                 elapsed_us: 0,
                 cost_usd: 0.0,
             },
-            result_count,
+            result_count: results.len(),
             neighbor_count: 0,
-            results: Vec::new(),
+            results,
             neighbors: Vec::new(),
             stats,
             empty,
+            temporal_result_ids: BTreeSet::new(),
         }
+    }
+
+    fn minimal_context_pack_report_with_temporal_result_ids(
+        mut context_pack: ContextPackReport,
+        temporal_result_ids: &[&str],
+    ) -> ContextPackReport {
+        context_pack.temporal_result_ids = temporal_result_ids
+            .iter()
+            .map(|id| (*id).to_owned())
+            .collect();
+        context_pack
     }
 
     fn empty_pack_stats_report() -> PackStatsReport {
