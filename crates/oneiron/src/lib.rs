@@ -4,6 +4,7 @@ pub mod analyzer;
 pub mod batch;
 pub(crate) mod bm25;
 pub mod claim;
+pub mod code_artifact;
 pub mod context_pack;
 pub mod deletion;
 pub(crate) mod distance;
@@ -35,6 +36,11 @@ pub use crate::claim::{
     CLAIM_BODY_KEYS, ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource,
     ClaimSubject, MAX_PREDICATE_BYTES, RESERVED_PREDICATE_NAMESPACE,
 };
+pub use crate::code_artifact::{
+    CODE_ARTIFACT_BODY_KEYS, CODE_ARTIFACT_REPO_REF_MAX_BYTES, CODE_ARTIFACT_SUMMARY_HASH_LEN,
+    CODE_ARTIFACT_SUMMARY_PROMPT_MAX_BYTES, CodeArtifactBody, decode_code_artifact_body,
+    encode_code_artifact_body,
+};
 pub use crate::context_pack::ContextPackBuilder;
 pub use crate::deletion::{
     DecodedTombstoneValue, DeleteEntityOutcome, DeleteReason, TOMBSTONE_VALUE_LEGACY_LEN,
@@ -50,13 +56,13 @@ pub use crate::provenance::{
     validate_actor_class,
 };
 pub use crate::types::{
-    Bm25RankProfile, ContextEntity, ContextPack, DecodedEdgeValue, EdgeActorClass,
-    EdgeConfirmationStatus, EdgeInfo, EdgeKind, EdgeProvenanceFlags, EdgeValueLayout, EmptyContext,
-    EmptyReason, EntityId, FieldProfile, HnswConfig, NotificationItem, PackFormat, PackStats,
-    ResumeBudget, ResumeBundle, ScoredEntity, SessionContext, Signal, StructuralKindRegistration,
-    TemporalAnchorMode, TemporalGranularity, TextAnalyzerConfig, TextIndexOptions, TimeRange,
-    TokenAllocation, TypeByteBand, UnprocessedItem, Vad, VadAnnotation, VadAnnotationSource,
-    VadComponent, VaultConfig,
+    Bm25RankProfile, ContextEntity, ContextPack, DecodedEdgeValue, ENTITY_TYPE_CODE_ARTIFACT,
+    EdgeActorClass, EdgeConfirmationStatus, EdgeInfo, EdgeKind, EdgeProvenanceFlags,
+    EdgeValueLayout, EmptyContext, EmptyReason, EntityId, FieldProfile, HnswConfig,
+    NotificationItem, PackFormat, PackStats, ResumeBudget, ResumeBundle, ScoredEntity,
+    SessionContext, Signal, StructuralKindRegistration, TemporalAnchorMode, TemporalGranularity,
+    TextAnalyzerConfig, TextIndexOptions, TimeRange, TokenAllocation, TypeByteBand,
+    UnprocessedItem, Vad, VadAnnotation, VadAnnotationSource, VadComponent, VaultConfig,
 };
 pub use crate::vault::{
     ActorBound, TextIndexStatus, Vault, VaultDoctorDbManifestReport, VaultDoctorHnswRecordState,

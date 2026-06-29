@@ -1122,6 +1122,7 @@ fn apply_put(
     //
     // D18: every type-0 (CLAIM) write — put_entity, both batch builders, and
     // sync replay — is structurally validated before any byte is staged.
+    // CODE_ARTIFACT gets the same fail-closed treatment for its replay keys.
     // Bodies of all other type bytes stay opaque at the storage layer.
     if entity_type == crate::types::ENTITY_TYPE_CLAIM {
         let body = crate::claim::validate_claim_body_and_decode(data, allow_reserved_predicate)?;
@@ -1129,6 +1130,8 @@ fn apply_put(
             let policy = crate::gate::resolve_policy_manifest(store, &*wtxn)?;
             crate::gate::check_claim_policy(&body, &policy)?;
         }
+    } else if entity_type == crate::types::ENTITY_TYPE_CODE_ARTIFACT {
+        crate::code_artifact::validate_code_artifact_body_bytes(data)?;
     }
     if occurred.start > occurred.end {
         return Err(Error::InvalidTimeRange {

@@ -5937,8 +5937,8 @@ fn all_entity_type_prefixes() {
     // ARCH-0002 / oneiron-contracts.ts §1 pinned storage ABI: per registry
     // row (kind id, type byte, short-id prefix, classification, band).
     // CLAIM=semantic ("deliberately NOT a StructuralKind"); TURN..NOTIFICATION
-    // = core (band 1–63); TASK_LIST/TASK/MACHINE = pack (productivity band
-    // 80–99); REDACTION_AUDIT = maintenance (band 120+).
+    // = core (band 1–63); TASK_LIST/TASK/MACHINE/CODE_ARTIFACT = pack
+    // (productivity band 80–99); REDACTION_AUDIT = maintenance (band 120+).
     type RegistryRow = (
         &'static str,
         u8,
@@ -6088,6 +6088,13 @@ fn all_entity_type_prefixes() {
             TypeByteBand::Productivity,
         ),
         (
+            "CODE_ARTIFACT",
+            83,
+            Some("cd"),
+            EntityClassification::Pack,
+            TypeByteBand::Productivity,
+        ),
+        (
             "REDACTION_AUDIT",
             120,
             None,
@@ -6214,7 +6221,7 @@ fn type_byte_band_allocation_matches_contract() {
 
     // is_structural_kind: false for the semantic byte 0 and the registered
     // maintenance kinds 120/121/122; true for every REGISTERED core (1..=16)
-    // and pack (80/81/82) kind.
+    // and pack (80/81/82/83) kind.
     assert!(!is_structural_kind(0), "CLAIM is NOT a StructuralKind");
     assert!(
         !is_structural_kind(120),
@@ -6231,7 +6238,7 @@ fn type_byte_band_allocation_matches_contract() {
     for byte in 1..=16_u8 {
         assert!(is_structural_kind(byte), "core byte {byte}");
     }
-    for byte in [80_u8, 81, 82] {
+    for byte in [80_u8, 81, 82, 83] {
         assert!(is_structural_kind(byte), "pack byte {byte}");
     }
 
@@ -6239,7 +6246,7 @@ fn type_byte_band_allocation_matches_contract() {
     // StructuralKinds, and the existing write-path gate still rejects them
     // with the same typed error. (122 left this list when GATE-001 registered
     // POLICY_MANIFEST; 123 is the band's first unregistered byte now.)
-    for byte in [17_u8, 63, 64, 79, 83, 99, 100, 119, 123, 255] {
+    for byte in [17_u8, 63, 64, 79, 84, 99, 100, 119, 123, 255] {
         assert!(!is_structural_kind(byte), "unregistered byte {byte}");
         assert!(
             matches!(
@@ -6285,7 +6292,7 @@ fn structural_kind_registration_vets_bands_and_collisions_transactionally() -> R
         .expect_err("byte 100 is CRM, not companion");
     assert_eq!(err.kind(), ErrorKind::StructuralKindBandViolation);
 
-    vault.register_structural_kind(83, "pd", TypeByteBand::Productivity, "productivity-pack")?;
+    vault.register_structural_kind(84, "pd", TypeByteBand::Productivity, "productivity-pack")?;
     vault.register_structural_kind(100, "cm", TypeByteBand::Crm, "crm-pack")?;
 
     let before = vault_meta_rows_with_prefix(&vault, STRUCTURAL_KIND_REGISTRY_KEY_PREFIX)?;
@@ -6409,7 +6416,7 @@ fn persisted_structural_kind_registry_matches_runtime_config() -> Result<()> {
 
     let (_dir, vault) = open_test_vault();
     vault.register_structural_kind(72, "np", TypeByteBand::Companion, "notes-pack")?;
-    vault.register_structural_kind(83, "cd", TypeByteBand::Productivity, "code-pack")?;
+    vault.register_structural_kind(84, "pd", TypeByteBand::Productivity, "productivity-pack")?;
     vault.register_structural_kind(101, "cc", TypeByteBand::Crm, "crm-pack")?;
 
     let rows = vault.structural_kind_registrations();
