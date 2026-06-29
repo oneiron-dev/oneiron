@@ -1805,6 +1805,36 @@ mod tests {
         );
     }
 
+    #[test]
+    fn own_device_sync_cap_counts_clearable_rows_at_capacity() {
+        let vault = test_vault();
+        let queue = SyncQueue::new(vault.clone()).unwrap();
+        let value = encode_update_value("2026-03", &[9]).unwrap();
+        let mut wtxn = vault.store.env.write_txn().unwrap();
+        for seq in 1..=(MAX_QUEUE_SIZE as u64) {
+            vault
+                .store
+                .sync_queue
+                .put(&mut wtxn, &encode_update_key(seq), &value)
+                .unwrap();
+        }
+        vault
+            .store
+            .sync_queue
+            .put(
+                &mut wtxn,
+                LAST_UPDATE_SEQ_KEY,
+                &(MAX_QUEUE_SIZE as u64).to_le_bytes(),
+            )
+            .unwrap();
+        wtxn.commit().unwrap();
+
+        assert!(queue.is_full().unwrap());
+        queue.clear_all().unwrap();
+        assert!(!queue.is_full().unwrap());
+        assert_eq!(queue.len().unwrap(), 0);
+    }
+
     /// ONE-1135 review rider: delete-bearing rows are exempt from every
     /// unconfirmed clear, so they must also be exempt from the capacity
     /// accounting that TRIGGERS the re-bootstrap (`is_full` → `clear_all`).
