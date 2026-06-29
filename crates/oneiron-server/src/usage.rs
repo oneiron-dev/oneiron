@@ -769,9 +769,17 @@ impl UsageLedger {
                             updated_at: None,
                         },
                     };
+                    let previous_credit_units = normalize_money(allowance.credit_units);
+                    validate_non_negative_finite("creditUnits", previous_credit_units)?;
                     let updated_credit_units =
-                        normalize_money(allowance.credit_units + top_up.credit_units);
+                        normalize_money(previous_credit_units + top_up.credit_units);
                     validate_positive_finite("creditUnits", updated_credit_units)?;
+                    if updated_credit_units <= previous_credit_units {
+                        return Err(UsageError::InvalidField {
+                            field: "creditUnits",
+                            message: "must increase allowance balance",
+                        });
+                    }
                     allowance.credit_units = updated_credit_units;
                     allowance.updated_at = Some(recorded_at);
 
@@ -1404,6 +1412,50 @@ mod tests {
 
         assert_storage_key_invalid_field(err, "tenantId");
         assert_eq!(allowance.credit_units, 0.0);
+        assert!(ledger.vault.sync_state_get(&top_up_key).unwrap().is_none());
+    }
+
+    #[test]
+    fn top_up_rejects_amount_that_does_not_increase_normalized_allowance() {
+        let (_dir, ledger) = test_ledger();
+        let tenant_id = "tenant-a";
+        let first = ledger
+            .top_up(
+                ConsumerTopUpRequest {
+                    tenant_id: tenant_id.to_owned(),
+                    idempotency_key: "large-top-up".to_owned(),
+                    credit_units: 1.0e296,
+                },
+                UsageMode::OneironCloud,
+            )
+            .expect("large finite top-up should record");
+
+        let err = ledger
+            .top_up(
+                ConsumerTopUpRequest {
+                    tenant_id: tenant_id.to_owned(),
+                    idempotency_key: "precision-lost-top-up".to_owned(),
+                    credit_units: 1.0,
+                },
+                UsageMode::OneironCloud,
+            )
+            .expect_err("top-up must increase normalized allowance");
+        let allowance = ledger
+            .consumer_allowance(tenant_id)
+            .expect("allowance should remain readable");
+        let top_up_key = consumer_top_up_key(tenant_id, "precision-lost-top-up");
+
+        assert!(matches!(
+            err,
+            UsageError::InvalidField {
+                field: "creditUnits",
+                message: "must increase allowance balance"
+            }
+        ));
+        assert_eq!(
+            allowance.credit_units,
+            first.usage.allowance.allowance_credit_units
+        );
         assert!(ledger.vault.sync_state_get(&top_up_key).unwrap().is_none());
     }
 

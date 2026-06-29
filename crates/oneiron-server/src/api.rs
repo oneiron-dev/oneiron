@@ -1463,7 +1463,7 @@ fn usage_error(error: UsageError) -> ApiError {
         idempotency_key, ..
     } = &error
     {
-        return ApiError::idempotency_replay_conflict(Some(idempotency_key.as_str()));
+        return consumer_top_up_idempotency_conflict_error(idempotency_key);
     }
 
     if let Some(field) = error.field() {
@@ -1471,6 +1471,16 @@ fn usage_error(error: UsageError) -> ApiError {
     }
 
     ApiError::internal_server_error("usage ledger persistence failed")
+}
+
+fn consumer_top_up_idempotency_conflict_error(idempotency_key: &str) -> ApiError {
+    ApiError::new(
+        "idempotency key was replayed with a different request",
+        ApiErrorDetails::IdempotencyReplayConflict {
+            idempotency_key: Some(idempotency_key.to_owned()),
+        },
+        ["Reuse the original top-up request body or send a new JSON idempotencyKey."],
+    )
 }
 
 // ─── Search Routes ────────────────────────────────────────────────────────────
@@ -3802,6 +3812,10 @@ mod tests {
         assert_eq!(
             conflict["details"]["idempotencyKey"],
             Value::from("top-up-conflict")
+        );
+        assert_eq!(
+            conflict["suggestions"],
+            json!(["Reuse the original top-up request body or send a new JSON idempotencyKey."])
         );
         assert_eq!(usage_status, StatusCode::OK);
         assert_eq!(
