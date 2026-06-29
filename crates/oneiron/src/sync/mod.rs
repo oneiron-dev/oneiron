@@ -63,8 +63,8 @@ pub use queue::{QueuedEmbedJob, QueuedUpdate, SyncQueue};
 pub use selector::put_selector_test_federation_grant;
 pub use selector::{
     SYNC_SELECTOR_SCHEMA_VERSION, SelectorVvRequest, SyncSelector, SyncSelectorWorld,
-    decode_selector_vv_request, decode_sync_selector, encode_selector_vv_request,
-    encode_sync_selector, filtered_window_doc,
+    authorize_sync_selector, decode_selector_vv_request, decode_sync_selector,
+    encode_selector_vv_request, encode_sync_selector, filtered_window_doc,
 };
 pub use transport::{
     LEGACY_FULL_WINDOW_PROTOCOL_VERSION, MAX_DECODED_PAYLOAD_BYTES, PROTOCOL_VERSION,

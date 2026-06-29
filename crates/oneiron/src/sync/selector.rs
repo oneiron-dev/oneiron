@@ -236,7 +236,7 @@ pub fn filtered_window_doc(
     grant_scope: FederationGrantScope,
     selector: &SyncSelector,
 ) -> Result<LoroDoc> {
-    authorize_selector(vault, grant_scope, selector)?;
+    authorize_sync_selector(vault, grant_scope, selector)?;
     Ok(filter_window_doc(source, key, selector))
 }
 
@@ -285,7 +285,8 @@ fn decode_selector_value(value: &Value) -> Result<SyncSelector> {
     ))
 }
 
-fn authorize_selector(
+/// Validates that a selector is backed by a matching federation grant.
+pub fn authorize_sync_selector(
     vault: &Vault,
     grant_scope: FederationGrantScope,
     selector: &SyncSelector,
@@ -346,6 +347,9 @@ fn filter_window_doc(source: &LoroDoc, key: &WindowKey, selector: &SyncSelector)
         };
         candidates.insert(id);
         if selector.facet_filter_active() {
+            if decision.facet_visible {
+                kept.insert(id);
+            }
             if decision.facet_seed {
                 seeds.insert(id);
             }
@@ -421,11 +425,13 @@ fn filter_window_doc(source: &LoroDoc, key: &WindowKey, selector: &SyncSelector)
 struct FacetScope {
     any: bool,
     selected: bool,
+    unselected: bool,
     malformed: bool,
 }
 
 #[derive(Debug)]
 struct EntitySelectorDecision {
+    facet_visible: bool,
     facet_seed: bool,
 }
 
@@ -454,6 +460,8 @@ fn facet_scope_by_source(
         }
         if selected.contains(&tgt) {
             entry.selected = true;
+        } else {
+            entry.unselected = true;
         }
     });
     scopes
@@ -476,9 +484,9 @@ fn entity_selector_decision(
         return None;
     }
     if selector.facet_filter_active()
-        && facet_scope
-            .get(id)
-            .is_some_and(|scope| scope.malformed || (scope.any && !scope.selected))
+        && facet_scope.get(id).is_some_and(|scope| {
+            scope.malformed || scope.unselected || (scope.any && !scope.selected)
+        })
     {
         return None;
     }
@@ -497,10 +505,15 @@ fn entity_selector_decision(
     ) {
         return None;
     }
-    let facet_seed = selector.facet_filter_active()
-        && (header.entity_type == ENTITY_TYPE_FACET
-            || facet_scope.get(id).is_some_and(|scope| scope.selected));
-    Some(EntitySelectorDecision { facet_seed })
+    let facet_visible = selector.facet_filter_active()
+        && header.entity_type == ENTITY_TYPE_FACET
+        && selector.facets.contains(id);
+    let facet_seed =
+        selector.facet_filter_active() && facet_scope.get(id).is_some_and(|scope| scope.selected);
+    Some(EntitySelectorDecision {
+        facet_visible,
+        facet_seed,
+    })
 }
 
 fn world_passes(entity_type: u8, body: &[u8], world: SyncSelectorWorld) -> bool {
@@ -929,6 +942,105 @@ mod tests {
         assert_eq!(
             edge_count, 2,
             "only edges whose endpoints survived the selector should replicate"
+        );
+    }
+
+    #[test]
+    fn selector_denies_entity_with_any_unselected_facet_of() {
+        let member = entity_id(0x39);
+        let (_dir, vault, grant_id) = test_vault_with_grant(member);
+        let window_key = WindowKey::new("2026-09");
+        let doc = create_window_doc("source", &window_key);
+
+        let facet_allowed = entity_id(0xA9);
+        let facet_denied = entity_id(0xB9);
+        let dual_facet_claim = entity_id(0x19);
+        let person = entity_id(0x29);
+
+        insert_entity(&doc, facet_allowed, ENTITY_TYPE_FACET, b"facet-a");
+        insert_entity(&doc, facet_denied, ENTITY_TYPE_FACET, b"facet-b");
+        insert_blob(&doc, dual_facet_claim, &claim_blob(None));
+        insert_entity(&doc, person, ENTITY_TYPE_PERSON, b"person");
+        insert_edge(&doc, dual_facet_claim, EdgeKind::FacetOf, facet_allowed);
+        insert_edge(&doc, dual_facet_claim, EdgeKind::FacetOf, facet_denied);
+        insert_edge(&doc, dual_facet_claim, EdgeKind::Supports, person);
+        doc.commit();
+
+        let selector = SyncSelector::new(
+            grant_id,
+            member,
+            SyncSelectorWorld::All,
+            vec![facet_allowed],
+            vec![],
+        );
+        let update =
+            filtered_window_doc(&vault, &doc, &window_key, test_selector_scope(), &selector)
+                .unwrap()
+                .export(ExportMode::all_updates())
+                .unwrap();
+        let ids = import_ids(&update);
+
+        assert!(ids.contains(&facet_allowed));
+        assert!(
+            !ids.contains(&dual_facet_claim),
+            "an entity with any unselected FacetOf must fail closed"
+        );
+        assert!(
+            !ids.contains(&facet_denied),
+            "unselected facet entity leaked"
+        );
+        assert!(
+            !ids.contains(&person),
+            "neighbors of a denied dual-facet entity leaked"
+        );
+    }
+
+    #[test]
+    fn selector_facet_closure_does_not_expand_from_facet_entities() {
+        let member = entity_id(0x3A);
+        let (_dir, vault, grant_id) = test_vault_with_grant(member);
+        let window_key = WindowKey::new("2026-10");
+        let doc = create_window_doc("source", &window_key);
+
+        let facet_allowed = entity_id(0xAA);
+        let claim_allowed = entity_id(0x1A);
+        let selected_person = entity_id(0x2A);
+        let facet_neighbor = entity_id(0x3B);
+
+        insert_entity(&doc, facet_allowed, ENTITY_TYPE_FACET, b"facet-a");
+        insert_blob(&doc, claim_allowed, &claim_blob(None));
+        insert_entity(
+            &doc,
+            selected_person,
+            ENTITY_TYPE_PERSON,
+            b"selected-person",
+        );
+        insert_entity(&doc, facet_neighbor, ENTITY_TYPE_PERSON, b"facet-neighbor");
+        insert_edge(&doc, claim_allowed, EdgeKind::FacetOf, facet_allowed);
+        insert_edge(&doc, claim_allowed, EdgeKind::Supports, selected_person);
+        insert_edge(&doc, facet_allowed, EdgeKind::Supports, facet_neighbor);
+        doc.commit();
+
+        let selector = SyncSelector::new(
+            grant_id,
+            member,
+            SyncSelectorWorld::All,
+            vec![facet_allowed],
+            vec![],
+        );
+        let update =
+            filtered_window_doc(&vault, &doc, &window_key, test_selector_scope(), &selector)
+                .unwrap()
+                .export(ExportMode::all_updates())
+                .unwrap();
+        let ids = import_ids(&update);
+
+        assert!(ids.contains(&facet_allowed));
+        assert!(ids.contains(&claim_allowed));
+        assert!(ids.contains(&selected_person));
+        assert!(
+            !ids.contains(&facet_neighbor),
+            "selected facet entities must not seed arbitrary closure edges"
         );
     }
 
