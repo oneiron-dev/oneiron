@@ -6,12 +6,14 @@ use rmpv::Value;
 use crate::Vault;
 use crate::batch::EntityMetadataHeader;
 use crate::error::{Error, Result};
-use crate::limits::{ERR_CHILD_OF_CYCLE_CHECK, MAX_CHILD_OF_CYCLE_TRAVERSAL_STEPS};
+use crate::limits::{
+    ERR_CHILD_OF_CYCLE_CHECK, MAX_ANCESTOR_DEPTH, MAX_CHILD_OF_CYCLE_TRAVERSAL_STEPS,
+};
 use crate::ppr;
 use crate::store::Store;
 use crate::types::{
-    ENTITY_ID_LEN, ENTITY_TYPE_CODE_ARTIFACT, ENTITY_TYPE_SESSION, EdgeKind, EntityId, Vad,
-    encode_edge_value, parse_entity_id,
+    ENTITY_ID_LEN, ENTITY_TYPE_CLAIM, ENTITY_TYPE_CODE_ARTIFACT, ENTITY_TYPE_SESSION, EdgeKind,
+    EntityId, Vad, encode_edge_value, parse_entity_id,
 };
 
 pub const CODE_REVISION_RECORD_KEYS: [&str; 7] = [
@@ -384,6 +386,17 @@ pub(crate) fn delete_code_revision_lifecycle_in_txn(
     Ok(())
 }
 
+pub(crate) fn has_finalized_code_revision_in_txn(
+    store: &Store,
+    rtxn: &RoTxn<'_>,
+    revision_id: &EntityId,
+) -> Result<bool> {
+    Ok(store
+        .vault_meta
+        .get(rtxn, &code_revision_record_key(revision_id))?
+        .is_some())
+}
+
 fn write_code_revision(store: &Store, revision: &CodeRevision) -> Result<()> {
     validate_code_revision_shape(revision)?;
     let encoded = encode_code_revision(revision)?;
@@ -408,8 +421,20 @@ fn write_code_revision(store: &Store, revision: &CodeRevision) -> Result<()> {
     if let Some(reverted_to_id) = revision.reverted_to_revision_id {
         require_known_code_revision(store, &wtxn, &reverted_to_id)?;
     }
+    if let (Some(parent_id), Some(reverted_to_id)) = (
+        revision.parent_revision_id,
+        revision.reverted_to_revision_id,
+    ) {
+        require_code_revision_ancestor(store, &wtxn, &parent_id, &reverted_to_id)?;
+    }
     if let Some(provenance_claim_id) = revision.provenance_claim_id {
-        require_entity_exists(store, &wtxn, &provenance_claim_id)?;
+        require_entity_type(
+            store,
+            &wtxn,
+            &provenance_claim_id,
+            ENTITY_TYPE_CLAIM,
+            "provenance_claim_id must be a CLAIM entity",
+        )?;
     }
     let key = code_revision_record_key(&revision.revision_id);
     if store.vault_meta.get(&wtxn, &key)?.is_some() {
@@ -668,7 +693,7 @@ fn require_known_code_revision(
     store: &Store,
     rtxn: &RoTxn<'_>,
     revision_id: &EntityId,
-) -> Result<()> {
+) -> Result<CodeRevision> {
     require_entity_type(
         store,
         rtxn,
@@ -676,23 +701,42 @@ fn require_known_code_revision(
         ENTITY_TYPE_CODE_ARTIFACT,
         "code revision id must be a CODE_ARTIFACT entity",
     )?;
-    if store
-        .vault_meta
-        .get(rtxn, &code_revision_record_key(revision_id))?
-        .is_none()
-    {
-        return Err(Error::InvalidCodeArtifactBody(
-            "code revision must be finalized before it can be referenced",
-        ));
-    }
-    Ok(())
+    get_code_revision_in_txn(store, rtxn, revision_id)?.ok_or(Error::InvalidCodeArtifactBody(
+        "code revision must be finalized before it can be referenced",
+    ))
 }
 
-fn require_entity_exists(store: &Store, rtxn: &RoTxn<'_>, id: &EntityId) -> Result<()> {
-    if store.entities.get(rtxn, id.as_bytes())?.is_none() {
-        return Err(Error::EntityNotFound);
+fn require_code_revision_ancestor(
+    store: &Store,
+    rtxn: &RoTxn<'_>,
+    parent_revision_id: &EntityId,
+    ancestor_revision_id: &EntityId,
+) -> Result<()> {
+    let mut cursor = *parent_revision_id;
+    let mut visited = HashSet::new();
+
+    for _ in 0..MAX_ANCESTOR_DEPTH {
+        if cursor == *ancestor_revision_id {
+            return Ok(());
+        }
+        if !visited.insert(cursor) {
+            return Err(Error::InvalidCodeArtifactBody(
+                "code revision parent chain contains a cycle",
+            ));
+        }
+        let revision = require_known_code_revision(store, rtxn, &cursor)?;
+        let Some(parent_id) = revision.parent_revision_id else {
+            break;
+        };
+        cursor = parent_id;
     }
-    Ok(())
+
+    if visited.len() >= MAX_ANCESTOR_DEPTH {
+        return Err(Error::IndexOverflow("code_revision_parent_chain"));
+    }
+    Err(Error::InvalidCodeArtifactBody(
+        "reverted_to_revision_id must be an ancestor of parent_revision_id",
+    ))
 }
 
 fn require_entity_type(
@@ -1057,9 +1101,12 @@ fn keyed_pair(prefix: &[u8], first: &EntityId, second: &EntityId) -> Vec<u8> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::claim::{
+        ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSubject, encode_claim_body,
+    };
     use crate::code_artifact::{CODE_ARTIFACT_SUMMARY_HASH_LEN, CodeArtifactBody};
     use crate::error::ErrorKind;
-    use crate::types::{HnswConfig, TextAnalyzerConfig, TimeRange, VaultConfig};
+    use crate::types::{ENTITY_TYPE_CLAIM, HnswConfig, TextAnalyzerConfig, TimeRange, VaultConfig};
 
     fn test_config() -> VaultConfig {
         let mut config = VaultConfig::device();
@@ -1106,6 +1153,33 @@ mod tests {
                 end: learned_at,
             },
             learned_at,
+        )
+    }
+
+    fn put_claim_entity(
+        vault: &Vault,
+        id: EntityId,
+        subject: EntityId,
+        learned_at: u64,
+    ) -> Result<()> {
+        let body = ClaimBody::new(
+            "code.revision",
+            ClaimSubject::Entity(subject),
+            Value::from("finalized"),
+            0.9,
+            ClaimApprovalStatus::Auto,
+            ClaimLifecycleStatus::Active,
+        );
+        let data = encode_claim_body(&body)?;
+        vault.put_entity(
+            &id,
+            ENTITY_TYPE_CLAIM,
+            TimeRange {
+                start: learned_at,
+                end: learned_at,
+            },
+            learned_at,
+            &data,
         )
     }
 
@@ -1236,6 +1310,135 @@ mod tests {
         let derived = vault.targets(&reverted, EdgeKind::DerivedFrom, None)?;
         assert!(derived.contains(&session));
         assert!(derived.contains(&original));
+        Ok(())
+    }
+
+    #[test]
+    fn code_revision_batch_delete_removes_lifecycle_sidecars() -> Result<()> {
+        let (_dir, vault) = crate::test_util::open_test_vault_with(test_config());
+        let session = entity(0x11);
+        let revision_id = entity(0x21);
+        put_session(&vault, session, 10)?;
+        put_artifact(&vault, revision_id, 0xA1, 20)?;
+
+        let revision = CodeRevision::commit(revision_id, session, 100);
+        vault.commit_code_revision(&revision)?;
+        vault.batch().delete(&revision_id).commit()?;
+
+        assert!(vault.get_code_revision(&revision_id)?.is_none());
+        assert!(vault.code_revisions_for_session(&session)?.is_empty());
+
+        let rtxn = vault.store.env.read_txn()?;
+        assert!(
+            vault
+                .store
+                .vault_meta
+                .get(&rtxn, &code_revision_record_key(&revision_id))?
+                .is_none()
+        );
+        assert!(
+            vault
+                .store
+                .vault_meta
+                .get(
+                    &rtxn,
+                    &code_revision_session_index_key(&session, &revision_id)
+                )?
+                .is_none()
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn code_revision_finalized_artifact_rejects_body_mutation() -> Result<()> {
+        let (_dir, vault) = crate::test_util::open_test_vault_with(test_config());
+        let session = entity(0x11);
+        let revision_id = entity(0x21);
+        put_session(&vault, session, 10)?;
+        put_artifact(&vault, revision_id, 0xA1, 20)?;
+
+        let revision = CodeRevision::commit(revision_id, session, 100);
+        vault.commit_code_revision(&revision)?;
+
+        let err = vault
+            .put_code_artifact(
+                &revision_id,
+                &artifact_body(0xA2),
+                TimeRange { start: 30, end: 30 },
+                30,
+            )
+            .expect_err("finalized code revision bytes must be immutable");
+
+        assert_eq!(err.kind(), ErrorKind::InvalidCodeArtifactBody);
+        assert_eq!(vault.get_code_revision(&revision_id)?, Some(revision));
+        assert_eq!(
+            vault.get_code_artifact(&revision_id)?,
+            Some(artifact_body(0xA1))
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn code_revision_revert_rejects_unrelated_restored_revision() -> Result<()> {
+        let (_dir, vault) = crate::test_util::open_test_vault_with(test_config());
+        let session = entity(0x11);
+        let original = entity(0x21);
+        let current = entity(0x22);
+        let unrelated = entity(0x23);
+        let reverted = entity(0x24);
+        put_session(&vault, session, 10)?;
+        put_artifact(&vault, original, 0xA1, 20)?;
+        put_artifact(&vault, current, 0xA2, 30)?;
+        put_artifact(&vault, unrelated, 0xA3, 40)?;
+        put_artifact(&vault, reverted, 0xA4, 50)?;
+
+        vault.commit_code_revision(&CodeRevision::commit(original, session, 100))?;
+        vault.commit_code_revision(&CodeRevision::commit_child(current, session, original, 200))?;
+        vault.commit_code_revision(&CodeRevision::commit(unrelated, session, 300))?;
+
+        let err = vault
+            .revert_code_revision(&CodeRevision::revert(
+                reverted, session, current, unrelated, 400,
+            ))
+            .expect_err("revert target must be an ancestor of the current revision");
+
+        assert_eq!(err.kind(), ErrorKind::InvalidCodeArtifactBody);
+        assert!(vault.get_code_revision(&reverted)?.is_none());
+        assert!(
+            vault
+                .targets(&reverted, EdgeKind::Supersedes, None)?
+                .is_empty()
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn code_revision_requires_claim_typed_provenance() -> Result<()> {
+        let (_dir, vault) = crate::test_util::open_test_vault_with(test_config());
+        let session = entity(0x11);
+        let first = entity(0x21);
+        let second = entity(0x22);
+        let provenance_claim = entity(0x31);
+        let non_claim = entity(0x32);
+        put_session(&vault, session, 10)?;
+        put_artifact(&vault, first, 0xA1, 20)?;
+        put_artifact(&vault, second, 0xA2, 30)?;
+        put_claim_entity(&vault, provenance_claim, first, 40)?;
+        put_session(&vault, non_claim, 50)?;
+
+        let first_revision =
+            CodeRevision::commit(first, session, 100).with_provenance_claim_id(provenance_claim);
+        vault.commit_code_revision(&first_revision)?;
+
+        let err = vault
+            .commit_code_revision(
+                &CodeRevision::commit_child(second, session, first, 200)
+                    .with_provenance_claim_id(non_claim),
+            )
+            .expect_err("provenance_claim_id must point at a CLAIM entity");
+
+        assert_eq!(err.kind(), ErrorKind::InvalidCodeArtifactBody);
+        assert!(vault.get_code_revision(&second)?.is_none());
         Ok(())
     }
 
