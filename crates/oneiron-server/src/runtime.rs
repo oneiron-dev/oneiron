@@ -1,3 +1,4 @@
+use std::ffi::{OsStr, OsString};
 use std::fmt;
 use std::str::FromStr;
 
@@ -322,13 +323,13 @@ impl RuntimeConfig {
     }
 
     pub fn route_for_role(&self, role: RuntimeRole) -> RuntimeRoute {
-        self.route_for_role_with_key_lookup(role, |key| std::env::var_os(key).is_some())
+        self.route_for_role_with_key_lookup(role, |key| std::env::var_os(key))
     }
 
     pub fn route_for_role_with_key_lookup(
         &self,
         role: RuntimeRole,
-        key_exists: impl FnMut(&str) -> bool,
+        mut key_lookup: impl FnMut(&str) -> Option<OsString>,
     ) -> RuntimeRoute {
         let target = self.role_defaults.target(role).clone();
         let preset_target = RuntimeRoleDefaults::for_mode(self.mode)
@@ -347,11 +348,16 @@ impl RuntimeConfig {
             )
         } else if !self.mode.allows_provider(target.provider_kind) {
             (
-                RuntimeRouteState::Degraded,
+                RuntimeRouteState::Unavailable,
                 RuntimeRouteReason::ProviderModeMismatch,
             )
         } else if self.mode == RuntimeMode::ByoCloudKey
-            && !self.byo_key_env.as_deref().is_some_and(key_exists)
+            && !self
+                .byo_key_env
+                .as_deref()
+                .and_then(&mut key_lookup)
+                .as_deref()
+                .is_some_and(byo_key_value_available)
         {
             (
                 RuntimeRouteState::Unavailable,
@@ -375,6 +381,10 @@ impl RuntimeConfig {
             oneiron_spend_metered: self.mode.oneiron_spend_metered(),
         }
     }
+}
+
+fn byo_key_value_available(value: &OsStr) -> bool {
+    !value.to_string_lossy().trim().is_empty()
 }
 
 /// Partial runtime config accepted from config files, env, and CLI flags.
@@ -535,6 +545,43 @@ impl RuntimeStatus {
     }
 }
 
+/// Redacted runtime availability advertised by unauthenticated health.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct RuntimeHealthStatus {
+    /// Explicit runtime mode used for routing.
+    pub mode: RuntimeMode,
+    /// Whether this mode can meter Oneiron Cloud spend.
+    pub oneiron_spend_metered: bool,
+    /// Aggregate route availability with per-role details redacted.
+    pub state: RuntimeRouteState,
+}
+
+impl RuntimeHealthStatus {
+    pub fn from_config(config: &RuntimeConfig) -> Self {
+        let routes = RuntimeStatus::from_config(config).routes;
+        let state = if routes
+            .iter()
+            .any(|route| route.state == RuntimeRouteState::Unavailable)
+        {
+            RuntimeRouteState::Unavailable
+        } else if routes
+            .iter()
+            .any(|route| route.state == RuntimeRouteState::Degraded)
+        {
+            RuntimeRouteState::Degraded
+        } else {
+            RuntimeRouteState::Available
+        };
+
+        Self {
+            mode: config.mode,
+            oneiron_spend_metered: config.mode.oneiron_spend_metered(),
+            state,
+        }
+    }
+}
+
 /// Resolved route decision for one runtime role.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
@@ -630,7 +677,7 @@ mod tests {
             let config = RuntimeConfig::for_mode(mode);
 
             for role in RuntimeRole::ALL {
-                let route = config.route_for_role_with_key_lookup(role, |_| true);
+                let route = config.route_for_role_with_key_lookup(role, |_| Some("key".into()));
 
                 assert_eq!(route.mode, mode);
                 assert_eq!(route.provider_kind, provider_kind);
@@ -648,9 +695,10 @@ mod tests {
             RuntimeRoleTargetOverride::target(RuntimeProviderKind::ByoCloud, "custom-orchestrator"),
         ));
 
-        let orchestrator =
-            config.route_for_role_with_key_lookup(RuntimeRole::Orchestrator, |_| true);
-        let subagent = config.route_for_role_with_key_lookup(RuntimeRole::Subagent, |_| true);
+        let orchestrator = config
+            .route_for_role_with_key_lookup(RuntimeRole::Orchestrator, |_| Some("key".into()));
+        let subagent =
+            config.route_for_role_with_key_lookup(RuntimeRole::Subagent, |_| Some("key".into()));
 
         assert_eq!(orchestrator.model, "custom-orchestrator");
         assert_eq!(
@@ -662,9 +710,9 @@ mod tests {
     }
 
     #[test]
-    fn routing_returns_typed_unavailable_and_degraded_states() {
+    fn routing_returns_typed_unavailable_states() {
         let byo = RuntimeConfig::for_mode(RuntimeMode::ByoCloudKey);
-        let missing_key = byo.route_for_role_with_key_lookup(RuntimeRole::Subagent, |_| false);
+        let missing_key = byo.route_for_role_with_key_lookup(RuntimeRole::Subagent, |_| None);
         assert_eq!(missing_key.state, RuntimeRouteState::Unavailable);
         assert_eq!(missing_key.reason, RuntimeRouteReason::MissingByoKey);
 
@@ -673,9 +721,52 @@ mod tests {
             RuntimeRole::Summarizer,
             RuntimeRoleTargetOverride::target(RuntimeProviderKind::OneironCloud, "cloud-model"),
         ));
-        let mismatch = local.route_for_role_with_key_lookup(RuntimeRole::Summarizer, |_| true);
-        assert_eq!(mismatch.state, RuntimeRouteState::Degraded);
+        let mismatch =
+            local.route_for_role_with_key_lookup(RuntimeRole::Summarizer, |_| Some("key".into()));
+        assert_eq!(mismatch.state, RuntimeRouteState::Unavailable);
         assert_eq!(mismatch.reason, RuntimeRouteReason::ProviderModeMismatch);
+        assert_eq!(mismatch.provider_kind, RuntimeProviderKind::OneironCloud);
+        assert!(!mismatch.oneiron_spend_metered);
+    }
+
+    #[test]
+    fn byo_key_env_requires_non_whitespace_value() {
+        let config = RuntimeConfig::for_mode(RuntimeMode::ByoCloudKey);
+
+        for key_value in [None, Some(""), Some(" \t\n")] {
+            let route = config.route_for_role_with_key_lookup(RuntimeRole::Orchestrator, |_| {
+                key_value.map(OsString::from)
+            });
+
+            assert_eq!(route.state, RuntimeRouteState::Unavailable);
+            assert_eq!(route.reason, RuntimeRouteReason::MissingByoKey);
+        }
+
+        let available = config
+            .route_for_role_with_key_lookup(RuntimeRole::Orchestrator, |_| Some("key".into()));
+        assert_eq!(available.state, RuntimeRouteState::Available);
+        assert_eq!(available.reason, RuntimeRouteReason::Ready);
+    }
+
+    #[test]
+    fn provider_mode_mismatch_is_fail_closed_for_local_and_byo() {
+        for mode in [RuntimeMode::LocalFree, RuntimeMode::ByoCloudKey] {
+            let mut config = RuntimeConfig::for_mode(mode);
+            config.apply_override(RuntimeConfigOverride::with_role_override(
+                RuntimeRole::Orchestrator,
+                RuntimeRoleTargetOverride::target(
+                    RuntimeProviderKind::OneironCloud,
+                    "hosted-model",
+                ),
+            ));
+
+            let route = config
+                .route_for_role_with_key_lookup(RuntimeRole::Orchestrator, |_| Some("key".into()));
+            assert_eq!(route.provider_kind, RuntimeProviderKind::OneironCloud);
+            assert_eq!(route.state, RuntimeRouteState::Unavailable);
+            assert_eq!(route.reason, RuntimeRouteReason::ProviderModeMismatch);
+            assert!(!route.oneiron_spend_metered);
+        }
     }
 
     #[test]

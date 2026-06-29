@@ -30,8 +30,9 @@ use crate::idempotency::{IdempotencyLayerState, idempotency_middleware};
 use crate::projection::{self, View};
 use crate::protocol::{CountMode, PaginatedResponse, ResponseMeta};
 use crate::runtime::{
-    RuntimeMode, RuntimeProviderKind, RuntimeRole, RuntimeRoute, RuntimeRouteProvenance,
-    RuntimeRouteReason, RuntimeRouteSource, RuntimeRouteState, RuntimeStatus,
+    RuntimeHealthStatus, RuntimeMode, RuntimeProviderKind, RuntimeRole, RuntimeRoute,
+    RuntimeRouteProvenance, RuntimeRouteReason, RuntimeRouteSource, RuntimeRouteState,
+    RuntimeStatus,
 };
 use crate::server::SyncServer;
 use crate::skills_pack as skills_pack_artifact;
@@ -419,19 +420,7 @@ fn add_security_scheme(spec: &mut Value) {
                 "runtime": {
                     "mode": "local_free",
                     "oneironSpendMetered": false,
-                    "routes": [{
-                        "role": "orchestrator",
-                        "mode": "local_free",
-                        "providerKind": "local",
-                        "model": "local-orchestrator-default",
-                        "state": "available",
-                        "reason": "ready",
-                        "provenance": {
-                            "roleDefault": "orchestrator",
-                            "source": "mode_preset"
-                        },
-                        "oneironSpendMetered": false
-                    }]
+                    "state": "available"
                 }
             })
         )
@@ -444,7 +433,7 @@ async fn health(State(server): State<Arc<SyncServer>>) -> impl IntoResponse {
         capabilities: feature_flags(),
         formats: supported_formats(),
         rate_limit: rate_limit_status(&server.config),
-        runtime: RuntimeStatus::from_config(&server.config.runtime),
+        runtime: RuntimeHealthStatus::from_config(&server.config.runtime),
     })
 }
 
@@ -514,8 +503,8 @@ struct HealthResponse {
     formats: Vec<&'static str>,
     /// Server-side rate-limit configuration visible to API clients.
     rate_limit: RateLimitStatus,
-    /// Resolved runtime routing status for supported model roles.
-    runtime: RuntimeStatus,
+    /// Redacted aggregate runtime availability for unauthenticated health.
+    runtime: RuntimeHealthStatus,
 }
 
 /// Read-only discovery metadata for agent bootstrap.
@@ -2357,6 +2346,56 @@ mod tests {
         (dir, server)
     }
 
+    #[tokio::test]
+    async fn health_runtime_summary_redacts_route_model_details_without_auth() {
+        let mut runtime = crate::runtime::RuntimeConfig::for_mode(RuntimeMode::LocalFree);
+        runtime.apply_override(crate::runtime::RuntimeConfigOverride::with_role_override(
+            RuntimeRole::Orchestrator,
+            crate::runtime::RuntimeRoleTargetOverride::target(
+                RuntimeProviderKind::Local,
+                "sensitive-orchestrator-model",
+            ),
+        ));
+        let (_dir, server) = test_server_with_config(SyncServerConfig {
+            auth_secret: Some("secret".to_owned()),
+            runtime,
+            ..Default::default()
+        });
+
+        let response = api_routes(server)
+            .oneshot(
+                Request::builder()
+                    .uri("/api/health")
+                    .body(Body::empty())
+                    .expect("request"),
+            )
+            .await
+            .expect("route response");
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("health response body");
+        let body: Value = serde_json::from_slice(&body).expect("health JSON body");
+        assert_eq!(body["runtime"]["mode"], Value::from("local_free"));
+        assert_eq!(body["runtime"]["oneironSpendMetered"], Value::from(false));
+        assert_eq!(body["runtime"]["state"], Value::from("available"));
+        assert!(body["runtime"].get("routes").is_none());
+
+        let runtime_json = body["runtime"].to_string();
+        for redacted in [
+            "sensitive-orchestrator-model",
+            "orchestrator",
+            "providerKind",
+            "provenance",
+        ] {
+            assert!(
+                !runtime_json.contains(redacted),
+                "health runtime summary leaked {redacted}: {runtime_json}"
+            );
+        }
+    }
+
     #[test]
     fn generated_openapi_has_descriptions_examples_and_defaults() {
         let spec = generated_spec();
@@ -2557,6 +2596,7 @@ mod tests {
             "DiscoveredEntity",
             "FeatureFlags",
             "RateLimitStatus",
+            "RuntimeHealthStatus",
             "RuntimeStatus",
             "RuntimeRoute",
             "RuntimeRouteProvenance",
