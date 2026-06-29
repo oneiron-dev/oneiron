@@ -521,6 +521,7 @@ async fn discover_requires_auth_and_returns_empty_contract() {
             "last_activity",
             "personas",
             "predicate_namespaces",
+            "runtime",
             "scopes",
             "skill_pack",
         ])
@@ -582,6 +583,18 @@ async fn discover_requires_auth_and_returns_empty_contract() {
     assert_eq!(
         str_array_set(&body["feature_flags"]["modes"]),
         BTreeSet::from(["flash", "pro", "thinking", "ultra"])
+    );
+    assert_eq!(body["runtime"]["mode"].as_str(), Some("local_free"));
+    assert_eq!(
+        body["runtime"]["oneironSpendMetered"].as_bool(),
+        Some(false)
+    );
+    assert_eq!(
+        body["runtime"]["routes"]
+            .as_array()
+            .expect("runtime routes array")
+            .len(),
+        3
     );
 
     handle.abort();
@@ -686,6 +699,30 @@ async fn discover_reports_seeded_counts_namespaces_and_health_capabilities() {
         str_array_set(&body["feature_flags"]["modes"]),
         BTreeSet::from(["flash", "pro", "thinking", "ultra"])
     );
+    assert_eq!(body["runtime"]["mode"].as_str(), Some("local_free"));
+    assert_eq!(
+        body["runtime"]["oneironSpendMetered"].as_bool(),
+        Some(false)
+    );
+    let route_roles = body["runtime"]["routes"]
+        .as_array()
+        .expect("runtime routes array")
+        .iter()
+        .map(|route| route["role"].as_str().expect("route role"))
+        .collect::<BTreeSet<_>>();
+    assert_eq!(
+        route_roles,
+        BTreeSet::from(["orchestrator", "subagent", "summarizer"])
+    );
+    assert!(
+        body["runtime"]["routes"]
+            .as_array()
+            .expect("runtime routes array")
+            .iter()
+            .all(|route| route["providerKind"].as_str() == Some("local")
+                && route["state"].as_str() == Some("available")
+                && route["oneironSpendMetered"].as_bool() == Some(false))
+    );
 
     let health = http_get(addr, "/api/health", None).await;
     assert_http_status(&health, 200);
@@ -703,6 +740,11 @@ async fn discover_reports_seeded_counts_namespaces_and_health_capabilities() {
     assert_eq!(
         health["rate_limit"]["max_messages_per_sec"].as_u64(),
         Some(SyncServerConfig::default().max_messages_per_sec.into())
+    );
+    assert_eq!(health["runtime"]["mode"].as_str(), Some("local_free"));
+    assert_eq!(
+        health["runtime"]["oneironSpendMetered"].as_bool(),
+        Some(false)
     );
 
     handle.abort();
