@@ -94,13 +94,14 @@ pub use crate::provenance::{
     validate_actor_class,
 };
 pub use crate::types::{
-    Bm25RankProfile, ContextEntity, ContextPack, DecodedEdgeValue, ENTITY_TYPE_CODE_ARTIFACT,
-    ENTITY_TYPE_FEDERATION_GRANT, EdgeActorClass, EdgeConfirmationStatus, EdgeInfo, EdgeKind,
-    EdgeProvenanceFlags, EdgeValueLayout, EmptyContext, EmptyReason, EntityId, FieldProfile,
-    HnswConfig, NotificationItem, PackFormat, PackStats, ResumeBudget, ResumeBundle, ScoredEntity,
-    SessionContext, Signal, StructuralKindRegistration, TemporalAnchorMode, TemporalGranularity,
-    TextAnalyzerConfig, TextIndexOptions, TimeRange, TokenAllocation, TypeByteBand,
-    UnprocessedItem, Vad, VadAnnotation, VadAnnotationSource, VadComponent, VaultConfig,
+    Bm25RankProfile, ClaimCandidate, ContextEntity, ContextPack, DecodedEdgeValue,
+    ENTITY_TYPE_CODE_ARTIFACT, ENTITY_TYPE_FEDERATION_GRANT, EdgeActorClass,
+    EdgeConfirmationStatus, EdgeInfo, EdgeKind, EdgeProvenanceFlags, EdgeValueLayout, EmptyContext,
+    EmptyReason, EntityId, FieldProfile, HnswConfig, NotificationItem, PackFormat, PackStats,
+    ResumeBudget, ResumeBundle, ScoredEntity, SessionContext, Signal, StructuralKindRegistration,
+    TemporalAnchorMode, TemporalGranularity, TextAnalyzerConfig, TextIndexOptions, TimeRange,
+    TokenAllocation, TypeByteBand, UnprocessedItem, Vad, VadAnnotation, VadAnnotationSource,
+    VadComponent, VaultConfig, WriteActor, WriteEnvelope, WriteProvenance,
 };
 pub use crate::vault::{
     ActorBound, TextIndexStatus, Vault, VaultDoctorDbManifestReport, VaultDoctorHnswRecordState,

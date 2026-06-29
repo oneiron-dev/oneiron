@@ -10,9 +10,10 @@ use crate::limits::{ERR_CHILD_OF_CYCLE_CHECK, MAX_CHILD_OF_CYCLE_TRAVERSAL_STEPS
 use crate::ppr;
 use crate::store::Store;
 use crate::types::{
-    DecodedEdgeValue, EDGE_KEY_LEN, EDGE_VALUE_SEMANTIC_LEN, EDGE_VALUE_SEMANTIC_PROVENANCED_LEN,
-    EDGE_VALUE_STRUCTURAL_LEN, ENTITY_ID_LEN, EdgeKind, EdgeProvenanceFlags, EntityId, TimeRange,
-    Vad, decode_edge_value_for_kind, encode_edge_value, validate_edge_weight,
+    ClaimCandidate, DecodedEdgeValue, EDGE_KEY_LEN, EDGE_VALUE_SEMANTIC_LEN,
+    EDGE_VALUE_SEMANTIC_PROVENANCED_LEN, EDGE_VALUE_STRUCTURAL_LEN, ENTITY_ID_LEN, EdgeKind,
+    EdgeProvenanceFlags, EntityId, TimeRange, Vad, WriteEnvelope, decode_edge_value_for_kind,
+    encode_edge_value, validate_edge_weight,
 };
 
 pub(crate) const ENTITY_TYPE_OFFSET: usize = 0;
@@ -115,6 +116,13 @@ pub(crate) enum BatchOp {
         /// (`put_replicated` on both builders, via `replicated_put_op`) set
         /// it.
         allow_reserved_predicate: bool,
+    },
+    ClaimCandidate {
+        id: EntityId,
+        candidate: Box<ClaimCandidate>,
+        envelope: WriteEnvelope,
+        occurred: TimeRange,
+        learned_at: u64,
     },
     Vector {
         id: EntityId,
@@ -250,6 +258,25 @@ impl<'a> BatchBuilder<'a> {
             data: data.to_vec(),
             allow_maintenance: false,
             allow_reserved_predicate: false,
+        });
+        self
+    }
+
+    /// Adds a claim candidate write stamped by a [`WriteEnvelope`].
+    pub fn claim_candidate(
+        mut self,
+        id: &EntityId,
+        candidate: ClaimCandidate,
+        envelope: &WriteEnvelope,
+        occurred: TimeRange,
+        learned_at: u64,
+    ) -> Self {
+        self.ops.push(BatchOp::ClaimCandidate {
+            id: *id,
+            candidate: Box::new(candidate),
+            envelope: envelope.clone(),
+            occurred,
+            learned_at,
         });
         self
     }
@@ -565,6 +592,25 @@ impl<'a> TxnBatchBuilder<'a> {
         self
     }
 
+    /// Adds a claim candidate write stamped by a [`WriteEnvelope`].
+    pub fn claim_candidate(
+        mut self,
+        id: &EntityId,
+        candidate: ClaimCandidate,
+        envelope: &WriteEnvelope,
+        occurred: TimeRange,
+        learned_at: u64,
+    ) -> Self {
+        self.ops.push(BatchOp::ClaimCandidate {
+            id: *id,
+            candidate: Box::new(candidate),
+            envelope: envelope.clone(),
+            occurred,
+            learned_at,
+        });
+        self
+    }
+
     /// Sync-replay door (replicated flavor of the old internal put path):
     /// engine-internal put for Observer B's CRDT→LMDB rematerialization. It
     /// admits BOTH engine-authored bands that the public [`put`](Self::put)
@@ -782,7 +828,29 @@ pub(crate) fn apply_ops(
                     allow_maintenance && allow_reserved_predicate,
                     later_text_coverage_by_op[op_index],
                     write_policy.as_ref(),
+                    None,
                 )?;
+            }
+            BatchOp::ClaimCandidate {
+                id,
+                candidate,
+                envelope,
+                occurred,
+                learned_at,
+            } => {
+                if apply_claim_candidate(
+                    store,
+                    wtxn,
+                    id,
+                    *candidate,
+                    &envelope,
+                    occurred,
+                    learned_at,
+                    later_text_coverage_by_op[op_index],
+                    write_policy.as_ref(),
+                )? {
+                    had_graph_mutation = true;
+                }
             }
             BatchOp::Vector { id, vector } => {
                 apply_vector(store, config, wtxn, id, &vector)?;
@@ -910,16 +978,17 @@ fn contains_text_op(ops: &[BatchOp]) -> bool {
 
 fn contains_local_claim_put(ops: &[BatchOp]) -> bool {
     ops.iter().any(|op| {
-        matches!(
-            op,
-            BatchOp::Put {
-                entity_type,
-                allow_maintenance,
-                allow_reserved_predicate,
-                ..
-            } if *entity_type == crate::types::ENTITY_TYPE_CLAIM
-                && !(*allow_maintenance && *allow_reserved_predicate)
-        )
+        matches!(op, BatchOp::ClaimCandidate { .. })
+            || matches!(
+                op,
+                BatchOp::Put {
+                    entity_type,
+                    allow_maintenance,
+                    allow_reserved_predicate,
+                    ..
+                } if *entity_type == crate::types::ENTITY_TYPE_CLAIM
+                    && !(*allow_maintenance && *allow_reserved_predicate)
+            )
     })
 }
 
@@ -929,7 +998,7 @@ fn text_coverage_after_op(ops: &[BatchOp]) -> Vec<bool> {
 
     for (index, op) in ops.iter().enumerate().rev() {
         match op {
-            BatchOp::Put { id, .. } => {
+            BatchOp::Put { id, .. } | BatchOp::ClaimCandidate { id, .. } => {
                 covered[index] = text_ids_after.contains(id);
             }
             BatchOp::Text { id, .. } => {
@@ -1125,6 +1194,78 @@ pub(crate) fn deindex_entity(
 
 #[expect(
     clippy::too_many_arguments,
+    reason = "candidate writes thread existing apply_put context"
+)]
+fn apply_claim_candidate(
+    store: &Store,
+    wtxn: &mut RwTxn<'_>,
+    id: EntityId,
+    candidate: ClaimCandidate,
+    envelope: &WriteEnvelope,
+    occurred: TimeRange,
+    learned_at: u64,
+    has_later_covering_text_op: bool,
+    write_policy: Option<&crate::gate::PolicyManifestResolution>,
+) -> Result<bool> {
+    crate::gate::validate_write_envelope(envelope)?;
+
+    let actor = envelope.actor();
+    let actor_raw = store
+        .entities
+        .get(wtxn, actor.entity_ref().as_bytes())?
+        .ok_or(Error::EntityNotFound)?;
+    let actor_header =
+        EntityMetadataHeader::parse(actor_raw).ok_or(Error::CorruptedIndex("entity header"))?;
+    crate::provenance::validate_actor_class(actor_header.entity_type, actor.actor_class())?;
+
+    let subject = candidate.subject();
+    if let crate::claim::ClaimSubject::Entity(subject_id) = subject
+        && store.entities.get(wtxn, subject_id.as_bytes())?.is_none()
+    {
+        return Err(Error::EntityNotFound);
+    }
+
+    let body = candidate.into_claim_body(envelope);
+    let data = crate::claim::encode_claim_body(&body)?;
+    apply_put(
+        store,
+        wtxn,
+        id,
+        crate::types::ENTITY_TYPE_CLAIM,
+        occurred,
+        learned_at,
+        &data,
+        false,
+        false,
+        has_later_covering_text_op,
+        write_policy,
+        Some(envelope),
+    )?;
+
+    let crate::claim::ClaimSubject::Entity(subject_id) = subject else {
+        return Ok(false);
+    };
+
+    let weight = EdgeKind::ClaimOf
+        .default_weight()
+        .ok_or(Error::InvariantViolation(
+            "ClaimOf edge missing default weight",
+        ))?;
+    apply_edge(
+        store,
+        wtxn,
+        id,
+        EdgeKind::ClaimOf,
+        subject_id,
+        weight,
+        Vad::NEUTRAL,
+    )?;
+    ppr::invalidate_ppr_for_edge(store, wtxn, &id, &subject_id)?;
+    Ok(true)
+}
+
+#[expect(
+    clippy::too_many_arguments,
     reason = "decomposing would obscure direct LMDB write logic"
 )]
 fn apply_put(
@@ -1139,6 +1280,7 @@ fn apply_put(
     replicated: bool,
     has_later_covering_text_op: bool,
     write_policy: Option<&crate::gate::PolicyManifestResolution>,
+    write_envelope: Option<&WriteEnvelope>,
 ) -> Result<()> {
     // Type-byte validation runs in `apply_ops` (the public-vs-maintenance gate:
     // public writes reject the engine-authored maintenance band, the sync
@@ -1158,6 +1300,8 @@ fn apply_put(
             ))?;
             if allow_reserved_predicate {
                 crate::gate::check_reserved_claim_policy(&body, policy)?;
+            } else if let Some(write_envelope) = write_envelope {
+                crate::gate::check_claim_policy_with_write_envelope(&body, write_envelope, policy)?;
             } else {
                 crate::gate::check_claim_policy(&body, policy)?;
             }
@@ -2048,11 +2192,14 @@ fn validate_edge_record(key: &[u8], value: &[u8]) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::claim::ClaimLifecycleStatus;
+    use crate::claim::{ClaimApprovalStatus, ClaimLifecycleStatus, ClaimSource, ClaimSubject};
     use crate::provenance::{EdgeProvenanceClaimBody, EdgeRef, SupersessionStatus};
     use crate::types::{
-        ENTITY_TYPE_PERSON, ENTITY_TYPE_TASK, EdgeActorClass, HnswConfig, VaultConfig,
+        ClaimCandidate, ENTITY_TYPE_PERSON, ENTITY_TYPE_TASK, EdgeActorClass, HnswConfig,
+        VaultConfig, WRITE_ENVELOPE_EVIDENCE_ACTOR_CLASS_KEY, WRITE_ENVELOPE_EVIDENCE_ACTOR_KEY,
+        WRITE_ENVELOPE_EVIDENCE_PROVENANCE_KEY, WriteActor, WriteEnvelope, WriteProvenance,
     };
+    use rmpv::Value;
 
     struct EdgeFixture {
         _dir: tempfile::TempDir,
@@ -2154,6 +2301,172 @@ mod tests {
             edge,
             claim_id,
         })
+    }
+
+    fn evidence_entry<'a>(evidence: &'a Value, key: &str) -> &'a Value {
+        let Value::Map(entries) = evidence else {
+            panic!("expected write envelope evidence map, got {evidence:?}");
+        };
+        entries
+            .iter()
+            .find_map(|(entry_key, entry_value)| {
+                (entry_key.as_str() == Some(key)).then_some(entry_value)
+            })
+            .unwrap_or_else(|| panic!("missing evidence key {key:?} in {evidence:?}"))
+    }
+
+    #[test]
+    fn write_envelope_validation_rejects_missing_required_axes() -> Result<()> {
+        let actor = WriteActor::new(EntityId::now(), EdgeActorClass::Human);
+        let provenance = WriteProvenance::new(Value::from("fixture"))?;
+
+        let err = WriteEnvelope::try_new(
+            None,
+            Some(ClaimSource::UserStated),
+            Some(provenance.clone()),
+            Some(ClaimApprovalStatus::Proposed),
+        )
+        .expect_err("actor is required");
+        assert!(matches!(
+            err,
+            Error::InvalidClaimBody("write envelope missing actor")
+        ));
+
+        let err = WriteEnvelope::try_new(
+            Some(actor),
+            None,
+            Some(provenance.clone()),
+            Some(ClaimApprovalStatus::Proposed),
+        )
+        .expect_err("source is required");
+        assert!(matches!(
+            err,
+            Error::InvalidClaimBody("write envelope missing source")
+        ));
+
+        let err = WriteEnvelope::try_new(
+            Some(actor),
+            Some(ClaimSource::UserStated),
+            None,
+            Some(ClaimApprovalStatus::Proposed),
+        )
+        .expect_err("provenance is required");
+        assert!(matches!(
+            err,
+            Error::InvalidClaimBody("write envelope missing provenance")
+        ));
+
+        let err = WriteEnvelope::try_new(
+            Some(actor),
+            Some(ClaimSource::UserStated),
+            Some(provenance),
+            None,
+        )
+        .expect_err("approval is required");
+        assert!(matches!(
+            err,
+            Error::InvalidClaimBody("write envelope missing approval")
+        ));
+
+        let err = WriteProvenance::new(Value::Nil).expect_err("nil provenance must reject");
+        assert!(matches!(
+            err,
+            Error::InvalidClaimBody("write envelope missing provenance")
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn claim_candidate_rejects_missing_actor_entity() -> Result<()> {
+        let (_dir, vault) = open_test_vault();
+        let subject = EntityId::now();
+        vault.put_entity(
+            &subject,
+            ENTITY_TYPE_PERSON,
+            test_time_range(1, 1),
+            1,
+            b"subject",
+        )?;
+
+        let claim = EntityId::now();
+        let missing_actor = EntityId::now();
+        let envelope = WriteEnvelope::new(
+            WriteActor::new(missing_actor, EdgeActorClass::Human),
+            ClaimSource::UserStated,
+            WriteProvenance::new(Value::from("fixture"))?,
+            ClaimApprovalStatus::Proposed,
+        );
+        let candidate = ClaimCandidate::new(
+            "profile.name",
+            ClaimSubject::Entity(subject),
+            Value::from("Alice"),
+            0.9,
+        );
+
+        let err = vault
+            .batch()
+            .claim_candidate(&claim, candidate, &envelope, test_time_range(1, 1), 2)
+            .commit()
+            .expect_err("missing actor entity must reject");
+        assert!(matches!(err, Error::EntityNotFound));
+        assert!(vault.get_claim(&claim)?.is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn claim_candidate_write_stamps_approved_envelope() -> Result<()> {
+        let (_dir, vault) = open_test_vault();
+        let actor = EntityId::now();
+        let subject = EntityId::now();
+        let occurred = test_time_range(1, 1);
+        vault.put_entity(&actor, ENTITY_TYPE_PERSON, occurred, 1, b"actor")?;
+        vault.put_entity(&subject, ENTITY_TYPE_PERSON, occurred, 1, b"subject")?;
+
+        let claim = EntityId::now();
+        let provenance = Value::Map(vec![(
+            Value::from("source_record_id"),
+            Value::from("fixture-approved-1"),
+        )]);
+        let envelope = WriteEnvelope::new(
+            WriteActor::new(actor, EdgeActorClass::Human),
+            ClaimSource::UserStated,
+            WriteProvenance::new(provenance.clone())?,
+            ClaimApprovalStatus::Approved,
+        );
+        let candidate = ClaimCandidate::new(
+            "profile.name",
+            ClaimSubject::Entity(subject),
+            Value::from("Alice"),
+            0.9,
+        )
+        .with_salience(0.4);
+
+        vault
+            .batch()
+            .claim_candidate(&claim, candidate, &envelope, test_time_range(10, 10), 11)
+            .commit()?;
+
+        let stored = vault.get_claim(&claim)?.expect("candidate claim stored");
+        assert_eq!(stored.approval, ClaimApprovalStatus::Approved);
+        assert_eq!(stored.source, Some(ClaimSource::UserStated));
+        assert_eq!(stored.lifecycle, ClaimLifecycleStatus::Active);
+        assert_eq!(stored.salience, Some(0.4));
+
+        let evidence = stored.evidence.as_ref().expect("envelope evidence");
+        match evidence_entry(evidence, WRITE_ENVELOPE_EVIDENCE_ACTOR_KEY) {
+            Value::Binary(bytes) => assert_eq!(bytes.as_slice(), actor.as_bytes()),
+            other => panic!("actor evidence must be binary, got {other:?}"),
+        }
+        assert_eq!(
+            evidence_entry(evidence, WRITE_ENVELOPE_EVIDENCE_ACTOR_CLASS_KEY).as_u64(),
+            Some(EdgeActorClass::Human as u64)
+        );
+        assert_eq!(
+            evidence_entry(evidence, WRITE_ENVELOPE_EVIDENCE_PROVENANCE_KEY),
+            &provenance
+        );
+        assert_eq!(vault.claims_for_subject(&subject)?, vec![claim]);
+        Ok(())
     }
 
     #[test]
