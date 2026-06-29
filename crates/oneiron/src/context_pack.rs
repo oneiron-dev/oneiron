@@ -10,7 +10,7 @@ use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::claim::{ClaimBody, claim_surfaceable};
 use crate::error::{Error, Result};
 use crate::pipeline::{PipelineBuilder, RetrievalWithTelemetry, WorldScope};
-use crate::serialize::{SerializeConfig, serialize_pack, serialize_pack_telemetry};
+use crate::serialize::{SerializeConfig, SerializedPackTelemetry, serialize_pack_with_telemetry};
 use crate::store::{RetrievalAction, RetrievalRunId, Store};
 use crate::types::{
     ContextEntity, ContextPack, ENTITY_TYPE_CLAIM, EdgeConfirmationStatus, EdgeInfo, EdgeKind,
@@ -542,15 +542,14 @@ impl<'a> ContextPackBuilder<'a> {
             max_item_tokens: self.max_item_tokens,
         };
         let run = self.run_unfinalized()?;
-        let bytes = serialize_pack(&run.pack, &config);
-        let telemetry = serialize_pack_telemetry(&run.pack, &config);
+        let (bytes, telemetry) = serialize_pack_with_telemetry(&run.pack, &config);
         finalize_context_pack_telemetry(
             run.store,
             run.telemetry_run_id,
             telemetry.stats.query_time_us,
             telemetry.stats.claims_suppressed,
             &telemetry.result_ids,
-            context_pack_empty_reason(&run.pack, &telemetry.result_ids),
+            serialized_context_pack_empty_reason(&run.pack, &telemetry),
         );
         Ok(RetrievalWithTelemetry {
             value: bytes,
@@ -609,6 +608,21 @@ fn context_pack_empty_reason(
         .map(|empty| empty.reason)
         .unwrap_or(EmptyReason::FilterMatchedNone);
     Some(format!("{reason:?}"))
+}
+
+fn serialized_context_pack_empty_reason(
+    pack: &ContextPack,
+    telemetry: &SerializedPackTelemetry,
+) -> Option<String> {
+    if !telemetry.result_ids.is_empty() {
+        return None;
+    }
+    if !pack.results.is_empty()
+        && telemetry.stats.items_dropped.count > pack.stats.items_dropped.count
+    {
+        return Some(format!("{:?}", telemetry.stats.items_dropped.reason));
+    }
+    context_pack_empty_reason(pack, &telemetry.result_ids)
 }
 
 fn dedupe_signals(signals: Vec<Signal>) -> Vec<Signal> {
@@ -2731,11 +2745,59 @@ mod tests {
     }
 
     #[test]
+    fn context_pack_serialized_telemetry_reports_item_budget_empty() -> Result<()> {
+        let (_dir, vault) = open_test_vault();
+
+        let first = EntityId::from_bytes_unchecked([0x77; 16]);
+        let second = EntityId::from_bytes_unchecked([0x78; 16]);
+        let put_turn = |id: EntityId, vector: [f32; 4], text: &str| -> Result<()> {
+            let payload = msgpack_entity(serde_json::json!({
+                "txt": text,
+                "spkr": "user",
+                "at": 1_u64,
+            }));
+            vault
+                .batch()
+                .put(
+                    &id,
+                    crate::types::ENTITY_TYPE_TURN,
+                    TimeRange { start: 1, end: 1 },
+                    1,
+                    &payload,
+                )
+                .vector(&id, &vector)
+                .commit()
+        };
+        put_turn(first, [1.0, 0.0, 0.0, 0.0], "budget empty first")?;
+        put_turn(second, [0.0, 1.0, 0.0, 0.0], "budget empty second")?;
+
+        let serialized = vault
+            .context_pack()
+            .search_vector(&[1.0, 0.0, 0.0, 0.0], 10)
+            .format(PackFormat::Plaintext)
+            .max_item_tokens(1)
+            .run_serialized_with_telemetry()?;
+        let run_id = serialized.run_id.expect("serialized telemetry run id");
+
+        let runs = vault.retrieval_runs(1)?;
+        assert_eq!(runs.len(), 1);
+        assert_eq!(runs[0].run_id, run_id);
+        assert!(
+            runs[0].total_in_scope >= 2,
+            "test setup should hydrate at least two pre-budget primary results"
+        );
+        assert!(runs[0].result_ids.is_empty());
+        assert!(runs[0].score_breakdown.is_empty());
+        assert_eq!(runs[0].empty_reason.as_deref(), Some("ItemBudget"));
+        Ok(())
+    }
+
+    #[test]
     fn context_pack_serialized_telemetry_excludes_merged_neighbors() -> Result<()> {
         let (_dir, vault) = open_test_vault();
 
-        let result = EntityId::from_bytes_unchecked([0x79; 16]);
-        let neighbor = EntityId::from_bytes_unchecked([0x7A; 16]);
+        let result = EntityId::from_bytes_unchecked([0x7A; 16]);
+        let neighbor = EntityId::from_bytes_unchecked([0x7B; 16]);
         put_claim_text_entity(
             &vault,
             &result,

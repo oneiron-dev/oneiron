@@ -3007,6 +3007,7 @@ impl Vault {
             started_at,
             started,
             &results,
+            limit,
         );
         Ok(RetrievalWithTelemetry {
             value: results,
@@ -3210,6 +3211,7 @@ impl Vault {
             started_at,
             started,
             &results,
+            limit,
         );
         Ok(RetrievalWithTelemetry {
             value: results,
@@ -3223,6 +3225,7 @@ impl Vault {
         started_at: u64,
         started: Instant,
         results: &[ScoredEntity],
+        limit: usize,
     ) -> Option<RetrievalRunId> {
         let score_breakdown = vault_search_score_breakdown(signal, results);
         let run_id = RetrievalRunId::now();
@@ -3235,7 +3238,7 @@ impl Vault {
             score_breakdown,
             results.len(),
             0,
-            results.is_empty().then(|| "NoData".to_owned()),
+            (limit > 0 && results.is_empty()).then(|| "NoData".to_owned()),
         );
         if let Err(error) = self.store.record_retrieval_run(&record) {
             tracing::warn!(
