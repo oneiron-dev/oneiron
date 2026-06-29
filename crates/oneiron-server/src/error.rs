@@ -1,5 +1,7 @@
 //! Structured HTTP API errors and their schema catalog.
 
+use std::sync::atomic::{AtomicU64, Ordering};
+
 use axum::Json;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
@@ -15,6 +17,8 @@ pub enum ErrorCode {
     BadRequest,
     #[serde(rename = "UNAUTHORIZED")]
     Unauthorized,
+    #[serde(rename = "FORBIDDEN")]
+    Forbidden,
     #[serde(rename = "NOT_FOUND")]
     NotFound,
     #[serde(rename = "NOT_IMPLEMENTED")]
@@ -58,6 +62,7 @@ impl ErrorCode {
     pub const ALL: &'static [Self] = &[
         Self::BadRequest,
         Self::Unauthorized,
+        Self::Forbidden,
         Self::NotFound,
         Self::NotImplemented,
         Self::InternalServerError,
@@ -82,6 +87,7 @@ impl ErrorCode {
         match self {
             Self::BadRequest => "BAD_REQUEST",
             Self::Unauthorized => "UNAUTHORIZED",
+            Self::Forbidden => "FORBIDDEN",
             Self::NotFound => "NOT_FOUND",
             Self::NotImplemented => "NOT_IMPLEMENTED",
             Self::InternalServerError => "INTERNAL_SERVER_ERROR",
@@ -111,6 +117,7 @@ impl ErrorCode {
             | Self::CrdtBulkDecodeFailure
             | Self::CrdtVersionMismatch => StatusCode::BAD_REQUEST,
             Self::Unauthorized | Self::CrdtAuthExpired => StatusCode::UNAUTHORIZED,
+            Self::Forbidden => StatusCode::FORBIDDEN,
             Self::NotFound => StatusCode::NOT_FOUND,
             Self::NotImplemented => StatusCode::NOT_IMPLEMENTED,
             Self::InternalServerError => StatusCode::INTERNAL_SERVER_ERROR,
@@ -136,6 +143,8 @@ pub enum ApiErrorDetails {
     BadRequest { field: Option<String> },
     #[serde(rename = "UNAUTHORIZED")]
     Unauthorized,
+    #[serde(rename = "FORBIDDEN", rename_all = "camelCase")]
+    Forbidden { required_scope: Option<String> },
     #[serde(rename = "NOT_FOUND", rename_all = "camelCase")]
     NotFound {
         resource: String,
@@ -198,6 +207,7 @@ impl ApiErrorDetails {
         match self {
             Self::BadRequest { .. } => ErrorCode::BadRequest,
             Self::Unauthorized => ErrorCode::Unauthorized,
+            Self::Forbidden { .. } => ErrorCode::Forbidden,
             Self::NotFound { .. } => ErrorCode::NotFound,
             Self::NotImplemented => ErrorCode::NotImplemented,
             Self::InternalServerError => ErrorCode::InternalServerError,
@@ -263,6 +273,17 @@ impl ApiError {
             "request is not authorized",
             ApiErrorDetails::Unauthorized,
             ["Send the configured x-oneiron-secret header and retry."],
+        )
+    }
+
+    pub fn forbidden_scope(required_scope: impl Into<String>) -> Self {
+        let required_scope = required_scope.into();
+        Self::new(
+            "request does not have the required scope",
+            ApiErrorDetails::Forbidden {
+                required_scope: Some(required_scope),
+            },
+            ["Request a token with the required Oneiron core scope and retry."],
         )
     }
 
@@ -404,6 +425,61 @@ impl IntoResponse for ApiError {
     }
 }
 
+/// Typed transport envelope used by `/v1/core/*` route errors.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema)]
+pub struct ApiErrorEnvelope {
+    error: ApiErrorEnvelopeBody,
+}
+
+/// Typed error payload nested under [`ApiErrorEnvelope::error`].
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ApiErrorEnvelopeBody {
+    code: ErrorCode,
+    message: String,
+    request_id: String,
+    details: ApiErrorDetails,
+    suggestions: Vec<String>,
+}
+
+impl ApiErrorEnvelope {
+    pub fn new(error: ApiError) -> Self {
+        Self {
+            error: ApiErrorEnvelopeBody {
+                code: error.code,
+                message: error.message,
+                request_id: next_request_id(),
+                details: error.details,
+                suggestions: error.suggestions,
+            },
+        }
+    }
+}
+
+/// Response wrapper that serializes [`ApiError`] through [`ApiErrorEnvelope`].
+#[derive(Clone, Debug)]
+pub struct EnvelopedApiError(ApiError);
+
+impl From<ApiError> for EnvelopedApiError {
+    fn from(error: ApiError) -> Self {
+        Self(error)
+    }
+}
+
+impl IntoResponse for EnvelopedApiError {
+    fn into_response(self) -> Response {
+        let status = self.0.status();
+        (status, Json(ApiErrorEnvelope::new(self.0))).into_response()
+    }
+}
+
+static REQUEST_ID_COUNTER: AtomicU64 = AtomicU64::new(1);
+
+fn next_request_id() -> String {
+    let id = REQUEST_ID_COUNTER.fetch_add(1, Ordering::Relaxed);
+    format!("req-{id:016x}")
+}
+
 /// OpenAPI/JSON-schema component for the closed error-code enum.
 pub fn error_code_schema() -> Value {
     json!({
@@ -440,11 +516,45 @@ pub fn api_error_schema() -> Value {
     })
 }
 
+/// OpenAPI/JSON-schema component for `/v1/core/*` error envelopes.
+pub fn api_error_envelope_schema() -> Value {
+    json!({
+        "type": "object",
+        "required": ["error"],
+        "additionalProperties": false,
+        "properties": {
+            "error": {
+                "type": "object",
+                "required": ["code", "message", "requestId", "details", "suggestions"],
+                "additionalProperties": false,
+                "properties": {
+                    "code": error_code_schema(),
+                    "message": { "type": "string" },
+                    "requestId": { "type": "string" },
+                    "details": {
+                        "oneOf": ErrorCode::ALL
+                            .iter()
+                            .copied()
+                            .map(detail_schema_for_code)
+                            .collect::<Vec<_>>(),
+                        "discriminator": { "propertyName": "code" },
+                    },
+                    "suggestions": {
+                        "type": "array",
+                        "items": { "type": "string" },
+                    },
+                },
+            },
+        },
+    })
+}
+
 /// Reusable OpenAPI components for API error responses.
 pub fn openapi_error_components() -> Value {
     json!({
         "ErrorCode": error_code_schema(),
         "ApiError": api_error_schema(),
+        "ApiErrorEnvelope": api_error_envelope_schema(),
     })
 }
 
@@ -455,6 +565,9 @@ fn detail_schema_for_code(code: ErrorCode) -> Value {
     match code {
         ErrorCode::BadRequest => {
             optional_string(&mut properties, "field");
+        }
+        ErrorCode::Forbidden => {
+            optional_string(&mut properties, "requiredScope");
         }
         ErrorCode::NotFound => {
             required.push("resource");

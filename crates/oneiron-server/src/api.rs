@@ -24,8 +24,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use utoipa::{IntoParams, OpenApi, ToSchema};
 
+use crate::auth::{CoreAuth, CoreScope, check_auth};
 use crate::config::SyncServerConfig;
-use crate::error::{ApiError, ApiErrorDetails, ErrorCode};
+use crate::error::{ApiError, ApiErrorDetails, ApiErrorEnvelope, EnvelopedApiError, ErrorCode};
 use crate::idempotency::{IdempotencyLayerState, idempotency_middleware};
 use crate::projection::{self, View};
 use crate::protocol::{CountMode, PaginatedResponse, ResponseMeta};
@@ -133,6 +134,7 @@ const RESUME_NOTIFICATION_SCAN_LIMIT: usize = 4096;
         RuntimeRouteState,
         RuntimeStatus,
         ApiError,
+        ApiErrorEnvelope,
         ApiErrorDetails,
         ErrorCode,
         VectorSearchQuery,
@@ -170,15 +172,23 @@ pub(crate) struct ApiDoc;
 /// Builds the HTTP API routes.
 pub(crate) fn api_routes(server: Arc<SyncServer>) -> Router {
     let idempotency = IdempotencyLayerState::new(server.clone());
-    let mutation_routes = Router::new()
+    let legacy_mutation_routes = Router::new()
         // owner recovery surface (ONE-1140, OD-8): revoke a lost/stolen
         // device's lease binding (terminal)
         .route("/api/lease/revoke", post(lease_revoke))
-        .route("/v1/core/turns/annotate", post(annotate_turn_vad))
+        .route_layer(middleware::from_fn_with_state(
+            idempotency.clone(),
+            idempotency_middleware,
+        ));
+    let core_mutation_routes = Router::new()
+        .route("/turns/annotate", post(annotate_turn_vad))
         .route_layer(middleware::from_fn_with_state(
             idempotency,
             idempotency_middleware,
         ));
+    let core_routes = Router::new()
+        .route("/turns/annotate", get(read_turn_vad_annotation))
+        .merge(core_mutation_routes);
 
     Router::new()
         .route("/api/openapi.json", get(openapi_json))
@@ -189,7 +199,7 @@ pub(crate) fn api_routes(server: Arc<SyncServer>) -> Router {
         .route("/api/search/text", get(search_text))
         .route("/api/entity/{id}", get(get_entity))
         .route("/api/edges/{id}", get(get_edges))
-        .route("/v1/core/turns/annotate", get(read_turn_vad_annotation))
+        .nest("/v1/core", core_routes)
         // context-pack is POST since it takes a complex options body
         .route("/api/context-pack", post(context_pack))
         .route("/api/companion/resume", post(resume))
@@ -204,7 +214,7 @@ pub(crate) fn api_routes(server: Arc<SyncServer>) -> Router {
             "/v1/usage/tenants/{tenant_id}/rollup",
             get(get_usage_rollup),
         )
-        .merge(mutation_routes)
+        .merge(legacy_mutation_routes)
         .with_state(server)
 }
 
@@ -387,6 +397,19 @@ fn add_security_scheme(spec: &mut Value) {
                 "description": "Phase-1 shared secret required by protected API routes when unauthenticated development access is disabled."
             }),
         );
+    components
+        .entry("securitySchemes")
+        .or_insert_with(|| json!({}))
+        .as_object_mut()
+        .expect("OpenAPI securitySchemes must be an object")
+        .insert(
+            "CoreBearer".to_owned(),
+            json!({
+                "type": "http",
+                "scheme": "bearer",
+                "description": "Scoped bearer token for canonical /v1/core/* routes. The current local shell accepts the configured shared secret, optionally suffixed with ';scope=core:read,core:write,core:auth'."
+            }),
+        );
 
     let protected_operations = [
         ("/api/openapi.json", "get"),
@@ -396,8 +419,6 @@ fn add_security_scheme(spec: &mut Value) {
         ("/api/search/text", "get"),
         ("/api/entity/{id}", "get"),
         ("/api/edges/{id}", "get"),
-        ("/v1/core/turns/annotate", "get"),
-        ("/v1/core/turns/annotate", "post"),
         ("/api/context-pack", "post"),
         ("/v1/consumer/usage", "get"),
         ("/v1/consumer/usage/details", "get"),
@@ -416,6 +437,25 @@ fn add_security_scheme(spec: &mut Value) {
             .and_then(Value::as_object_mut)
         {
             operation.insert("security".to_owned(), json!([{ "OneironSecret": [] }]));
+        }
+    }
+
+    for (path, method) in [
+        ("/v1/core/turns/annotate", "get"),
+        ("/v1/core/turns/annotate", "post"),
+    ] {
+        if let Some(operation) = spec
+            .get_mut("paths")
+            .and_then(Value::as_object_mut)
+            .and_then(|paths| paths.get_mut(path))
+            .and_then(Value::as_object_mut)
+            .and_then(|path_item| path_item.get_mut(method))
+            .and_then(Value::as_object_mut)
+        {
+            operation.insert(
+                "security".to_owned(),
+                json!([{ "CoreBearer": [] }, { "OneironSecret": [] }]),
+            );
         }
     }
 }
@@ -464,37 +504,6 @@ async fn health(State(server): State<Arc<SyncServer>>) -> impl IntoResponse {
         rate_limit: rate_limit_status(&server.config),
         runtime: runtime_health_status_for_config(&server.config),
     })
-}
-
-/// Validates the auth secret from request headers.
-///
-/// Uses constant-time comparison to prevent timing side-channel attacks.
-/// Shared by the HTTP API routes and the `/ws` upgrade handler (Phase-1
-/// shared-secret scheme).
-pub(crate) fn check_auth(headers: &HeaderMap, config: &SyncServerConfig) -> Result<(), StatusCode> {
-    use subtle::ConstantTimeEq;
-
-    let Some(expected) = config.auth_secret.as_ref() else {
-        return if config.allow_unauthenticated {
-            Ok(())
-        } else {
-            Err(StatusCode::UNAUTHORIZED)
-        };
-    };
-    if expected.is_empty() {
-        return Err(StatusCode::UNAUTHORIZED);
-    }
-
-    let provided = headers
-        .get("x-oneiron-secret")
-        .and_then(|v| v.to_str().ok());
-
-    match provided {
-        Some(s) if s.len() == expected.len() && s.as_bytes().ct_eq(expected.as_bytes()).into() => {
-            Ok(())
-        }
-        _ => Err(StatusCode::UNAUTHORIZED),
-    }
 }
 
 fn check_api_auth(headers: &HeaderMap, config: &SyncServerConfig) -> Result<(), ApiError> {
@@ -2174,35 +2183,42 @@ impl TurnVadAnnotateResponse {
         (
             status = 400,
             description = "Malformed id, invalid target type, message outside turn, or VAD outside the contract ranges.",
-            body = ApiError,
+            body = ApiErrorEnvelope,
             content_type = "application/json"
         ),
         (
             status = 401,
-            description = "Missing or invalid `x-oneiron-secret` header.",
-            body = ApiError,
+            description = "Missing or invalid scoped bearer token, or missing/invalid legacy `x-oneiron-secret` header.",
+            body = ApiErrorEnvelope,
+            content_type = "application/json"
+        ),
+        (
+            status = 403,
+            description = "Bearer token is valid but lacks the required `core:write` scope.",
+            body = ApiErrorEnvelope,
             content_type = "application/json"
         ),
         (
             status = 404,
             description = "Turn or message entity was not found.",
-            body = ApiError,
+            body = ApiErrorEnvelope,
             content_type = "application/json"
         ),
         (
             status = 500,
             description = "VAD annotation persistence failed.",
-            body = ApiError,
+            body = ApiErrorEnvelope,
             content_type = "application/json"
         )
     )
 )]
 async fn annotate_turn_vad(
-    headers: HeaderMap,
+    auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    Json(req): Json<TurnVadAnnotateRequest>,
-) -> Result<Json<TurnVadAnnotateResponse>, ApiError> {
-    check_api_auth(&headers, &server.config)?;
+    payload: Result<Json<TurnVadAnnotateRequest>, JsonRejection>,
+) -> Result<Json<TurnVadAnnotateResponse>, EnvelopedApiError> {
+    auth.require(CoreScope::Write)?;
+    let req = json_payload(payload)?;
     let turn_id = parse_entity_id_param(&req.turn_id, "turn_id")?;
     require_entity_type(&server, &turn_id, ENTITY_TYPE_TURN, "turn")?;
 
@@ -2248,35 +2264,41 @@ async fn annotate_turn_vad(
         (
             status = 400,
             description = "Malformed id, invalid target type, or message outside turn.",
-            body = ApiError,
+            body = ApiErrorEnvelope,
             content_type = "application/json"
         ),
         (
             status = 401,
-            description = "Missing or invalid `x-oneiron-secret` header.",
-            body = ApiError,
+            description = "Missing or invalid scoped bearer token, or missing/invalid legacy `x-oneiron-secret` header.",
+            body = ApiErrorEnvelope,
+            content_type = "application/json"
+        ),
+        (
+            status = 403,
+            description = "Bearer token is valid but lacks the required `core:read` scope.",
+            body = ApiErrorEnvelope,
             content_type = "application/json"
         ),
         (
             status = 404,
             description = "Turn/message entity or VAD annotation was not found.",
-            body = ApiError,
+            body = ApiErrorEnvelope,
             content_type = "application/json"
         ),
         (
             status = 500,
             description = "VAD annotation read failed.",
-            body = ApiError,
+            body = ApiErrorEnvelope,
             content_type = "application/json"
         )
     )
 )]
 async fn read_turn_vad_annotation(
-    headers: HeaderMap,
+    auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
     query: Result<Query<TurnVadAnnotateQuery>, QueryRejection>,
-) -> Result<Json<TurnVadAnnotateResponse>, ApiError> {
-    check_api_auth(&headers, &server.config)?;
+) -> Result<Json<TurnVadAnnotateResponse>, EnvelopedApiError> {
+    auth.require(CoreScope::Read)?;
     let params = query_params(query)?;
     let turn_id = parse_entity_id_param(&params.turn_id, "turn_id")?;
     require_entity_type(&server, &turn_id, ENTITY_TYPE_TURN, "turn")?;
@@ -2298,7 +2320,7 @@ async fn read_turn_vad_annotation(
 
     let Some(annotation) = annotation else {
         let id = params.message_id.as_deref().unwrap_or(&params.turn_id);
-        return Err(ApiError::not_found("vad_annotation", Some(id)));
+        return Err(ApiError::not_found("vad_annotation", Some(id)).into());
     };
 
     Ok(Json(TurnVadAnnotateResponse::new(
@@ -2553,7 +2575,7 @@ async fn context_pack(
 mod tests {
     use super::*;
     use axum::body::{Body, to_bytes};
-    use axum::http::{Request, header::CONTENT_TYPE};
+    use axum::http::{Request, StatusCode, header::AUTHORIZATION, header::CONTENT_TYPE};
     use serde_json::Value;
     use tower::ServiceExt;
 
@@ -2770,6 +2792,28 @@ mod tests {
         (status, body)
     }
 
+    fn error_envelope(body: &Value) -> &Value {
+        body.get("error")
+            .and_then(Value::as_object)
+            .map(|_| &body["error"])
+            .expect("typed error envelope")
+    }
+
+    fn assert_error_envelope(body: &Value, code: &str) {
+        let error = error_envelope(body);
+        assert_eq!(error["code"], Value::from(code));
+        assert!(
+            error["requestId"]
+                .as_str()
+                .is_some_and(|request_id| !request_id.is_empty()),
+            "enveloped errors must include a requestId: {body:?}"
+        );
+        assert!(
+            body.get("code").is_none(),
+            "v1 core errors must not serialize as a flat ApiError: {body:?}"
+        );
+    }
+
     async fn top_up_route(
         server: Arc<SyncServer>,
         idempotency_key: &str,
@@ -2936,6 +2980,11 @@ mod tests {
             Value::from("x-oneiron-secret"),
             "protected operations must document the x-oneiron-secret auth header"
         );
+        assert_eq!(
+            spec["components"]["securitySchemes"]["CoreBearer"]["scheme"],
+            Value::from("bearer"),
+            "v1 core operations must document bearer auth"
+        );
         for (path, method) in [
             ("/api/openapi.json", "get"),
             ("/api/skills/oneiron.skills.md", "get"),
@@ -2944,8 +2993,6 @@ mod tests {
             ("/api/search/text", "get"),
             ("/api/entity/{id}", "get"),
             ("/api/edges/{id}", "get"),
-            ("/v1/core/turns/annotate", "get"),
-            ("/v1/core/turns/annotate", "post"),
             ("/api/context-pack", "post"),
             ("/api/lease/revoke", "post"),
             ("/v1/consumer/usage", "get"),
@@ -2958,10 +3005,26 @@ mod tests {
                 "{method} {path} must require OneironSecret"
             );
         }
+        for (path, method) in [
+            ("/v1/core/turns/annotate", "get"),
+            ("/v1/core/turns/annotate", "post"),
+        ] {
+            assert_eq!(
+                spec["paths"][path][method]["security"],
+                json!([{ "CoreBearer": [] }, { "OneironSecret": [] }]),
+                "{method} {path} must accept scoped bearer auth with legacy secret fallback"
+            );
+        }
 
         assert!(
             spec["components"]["schemas"].get("ApiError").is_some(),
             "structured ApiError schema must be reusable from components"
+        );
+        assert!(
+            spec["components"]["schemas"]
+                .get("ApiErrorEnvelope")
+                .is_some(),
+            "v1 core ApiErrorEnvelope schema must be reusable from components"
         );
         assert!(
             spec["components"]["schemas"].get("ErrorCode").is_some(),
@@ -3129,6 +3192,112 @@ mod tests {
             .expect("ApiError response body");
         let body: Value = serde_json::from_slice(&body).expect("ApiError JSON body");
         assert_eq!(body["code"], Value::from("UNAUTHORIZED"));
+    }
+
+    #[tokio::test]
+    async fn v1_core_route_missing_auth_returns_typed_error_envelope() {
+        let (_dir, server) = test_server_with_config(SyncServerConfig {
+            auth_secret: Some("secret".to_owned()),
+            ..Default::default()
+        });
+
+        let (status, body) = route_json(
+            server,
+            Request::builder()
+                .uri("/v1/core/turns/annotate?turn_id=not-an-entity")
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await;
+
+        assert_eq!(status, StatusCode::UNAUTHORIZED);
+        assert_error_envelope(&body, "UNAUTHORIZED");
+        assert_eq!(error_envelope(&body)["details"]["code"], "UNAUTHORIZED");
+    }
+
+    #[tokio::test]
+    async fn v1_core_idempotency_preflight_uses_typed_error_envelope() {
+        let (_dir, server) = test_server_with_config(SyncServerConfig {
+            auth_secret: Some("secret".to_owned()),
+            ..Default::default()
+        });
+
+        let (status, body) = route_json(
+            server,
+            Request::builder()
+                .method("POST")
+                .uri("/v1/core/turns/annotate")
+                .header("Idempotency-Key", "idem-1")
+                .header(CONTENT_TYPE, "application/json")
+                .body(Body::from(
+                    json!({
+                        "turn_id": "not-an-entity",
+                        "source": "model_inference",
+                        "vad": {
+                            "valence": 0.0,
+                            "arousal": 0.0,
+                            "dominance": 0.0,
+                        },
+                        "annotated_at": 1_u64,
+                    })
+                    .to_string(),
+                ))
+                .expect("request"),
+        )
+        .await;
+
+        assert_eq!(status, StatusCode::UNAUTHORIZED);
+        assert_error_envelope(&body, "UNAUTHORIZED");
+    }
+
+    #[tokio::test]
+    async fn v1_core_route_rejects_valid_bearer_without_required_scope() {
+        let (_dir, server) = test_server_with_config(SyncServerConfig {
+            auth_secret: Some("secret".to_owned()),
+            ..Default::default()
+        });
+
+        let (status, body) = route_json(
+            server,
+            Request::builder()
+                .uri("/v1/core/turns/annotate?turn_id=not-an-entity")
+                .header(AUTHORIZATION, "Bearer secret;scope=core:write")
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await;
+
+        assert_eq!(status, StatusCode::FORBIDDEN);
+        assert_error_envelope(&body, "FORBIDDEN");
+        assert_eq!(
+            error_envelope(&body)["details"]["requiredScope"],
+            Value::from("core:read")
+        );
+    }
+
+    #[tokio::test]
+    async fn v1_core_route_wraps_handler_errors_after_bearer_auth() {
+        let (_dir, server) = test_server_with_config(SyncServerConfig {
+            auth_secret: Some("secret".to_owned()),
+            ..Default::default()
+        });
+
+        let (status, body) = route_json(
+            server,
+            Request::builder()
+                .uri("/v1/core/turns/annotate?turn_id=not-an-entity")
+                .header(AUTHORIZATION, "Bearer secret;scope=core:read")
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await;
+
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_error_envelope(&body, "BAD_REQUEST");
+        assert_eq!(
+            error_envelope(&body)["details"]["field"],
+            Value::from("turn_id")
+        );
     }
 
     #[tokio::test]
@@ -4307,8 +4476,11 @@ mod tests {
             .await
             .expect("mismatch response body");
         let body: Value = serde_json::from_slice(&body).expect("ApiError JSON body");
-        assert_eq!(body["code"], Value::from("BAD_REQUEST"));
-        assert_eq!(body["details"]["field"], Value::from("message_id"));
+        assert_error_envelope(&body, "BAD_REQUEST");
+        assert_eq!(
+            error_envelope(&body)["details"]["field"],
+            Value::from("message_id")
+        );
         assert_eq!(
             server.vault.get_message_vad_annotation(&message).unwrap(),
             None
@@ -4347,8 +4519,11 @@ mod tests {
             .await
             .expect("mismatch read response body");
         let body: Value = serde_json::from_slice(&body).expect("ApiError JSON body");
-        assert_eq!(body["code"], Value::from("BAD_REQUEST"));
-        assert_eq!(body["details"]["field"], Value::from("message_id"));
+        assert_error_envelope(&body, "BAD_REQUEST");
+        assert_eq!(
+            error_envelope(&body)["details"]["field"],
+            Value::from("message_id")
+        );
     }
 
     #[tokio::test]
@@ -4401,8 +4576,11 @@ mod tests {
             .await
             .expect("invalid VAD response body");
         let body: Value = serde_json::from_slice(&body).expect("ApiError JSON body");
-        assert_eq!(body["code"], Value::from("BAD_REQUEST"));
-        assert_eq!(body["details"]["field"], Value::from("vad"));
+        assert_error_envelope(&body, "BAD_REQUEST");
+        assert_eq!(
+            error_envelope(&body)["details"]["field"],
+            Value::from("vad")
+        );
         assert_eq!(server.vault.get_turn_vad_annotation(&turn).unwrap(), None);
     }
 
