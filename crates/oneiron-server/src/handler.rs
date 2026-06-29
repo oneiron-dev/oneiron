@@ -41,14 +41,16 @@ struct ConnState {
     windows_touched: HashSet<WindowKey>,
     rate_limiter: MessageRateLimiter,
     window_sync_mode: WindowSyncMode,
+    protocol_version: u8,
 }
 
 impl ConnState {
-    fn new(max_messages_per_sec: u32) -> Self {
+    fn new(max_messages_per_sec: u32, protocol_version: u8) -> Self {
         Self {
             windows_touched: HashSet::new(),
             rate_limiter: MessageRateLimiter::new(max_messages_per_sec),
             window_sync_mode: WindowSyncMode::Unbound,
+            protocol_version,
         }
     }
 
@@ -78,6 +80,21 @@ impl ConnState {
     fn bind_window_sync_mode(&mut self, mode: WindowSyncMode) -> Result<(), ProtocolError> {
         if mode == WindowSyncMode::Unbound {
             return Ok(());
+        }
+        match mode {
+            WindowSyncMode::Selector if self.protocol_version != protocol::PROTOCOL_VERSION => {
+                return Err(ProtocolError::InvalidPayload(
+                    "selector sync requires protocol v3",
+                ));
+            }
+            WindowSyncMode::FullWindow
+                if self.protocol_version != protocol::LEGACY_FULL_WINDOW_PROTOCOL_VERSION =>
+            {
+                return Err(ProtocolError::InvalidPayload(
+                    "full-window sync requires legacy protocol v2",
+                ));
+            }
+            _ => {}
         }
 
         match (self.window_sync_mode, mode) {
@@ -177,12 +194,11 @@ async fn handle_connection(socket: WebSocket, server: Arc<SyncServer>, conn_id: 
     let (mut ws_sink, mut ws_stream) = socket.split();
 
     // Phase 0: protocol-version hello (ONE-1127). The client's FIRST frame
-    // must be [TAG_PROTOCOL_HELLO, PROTOCOL_VERSION]. Anything else — wrong
-    // version, malformed frame, text, or timeout — closes with 4006 BEFORE
-    // any sync payload flows, so the next wire break is detectable instead
-    // of surfacing as garbled decode errors mid-sync.
-    match await_protocol_hello(&mut ws_stream).await {
-        HelloOutcome::Valid => {}
+    // must be a supported protocol hello. Malformed frames or unsupported
+    // versions close with 4006 BEFORE any sync payload flows, so wire breaks
+    // are detectable instead of surfacing as garbled decode errors mid-sync.
+    let protocol_version = match await_protocol_hello(&mut ws_stream).await {
+        HelloOutcome::Valid(version) => version,
         HelloOutcome::Reject(reason) => {
             tracing::warn!(conn_id, reason, "protocol hello rejected — closing");
             let close = WsMessage::Close(Some(CloseFrame {
@@ -196,7 +212,7 @@ async fn handle_connection(socket: WebSocket, server: Arc<SyncServer>, conn_id: 
             tracing::info!(conn_id, "client disconnected before protocol hello");
             return;
         }
-    }
+    };
 
     // Subscribe to broadcast channel for outbound messages
     let mut subscriber = BroadcastSubscriber::new(conn_id, &server.broadcast_tx);
@@ -219,7 +235,7 @@ async fn handle_connection(socket: WebSocket, server: Arc<SyncServer>, conn_id: 
 
     // Channel for direct responses (e.g. VV_REQUEST replies sent only to requester)
     let (direct_tx, mut direct_rx) = tokio::sync::mpsc::unbounded_channel::<Vec<u8>>();
-    let mut conn_state = ConnState::new(server.config.max_messages_per_sec);
+    let mut conn_state = ConnState::new(server.config.max_messages_per_sec, protocol_version);
 
     // Spawn outbound task: forwards broadcast + direct messages to WebSocket sink
     let outbound_handle = {
@@ -229,6 +245,9 @@ async fn handle_connection(socket: WebSocket, server: Arc<SyncServer>, conn_id: 
                     broadcast_result = subscriber.recv() => {
                         match broadcast_result {
                             Ok(Some(data)) => {
+                                if !should_forward_broadcast(protocol_version, &data) {
+                                    continue;
+                                }
                                 if ws_sink.send(WsMessage::Binary(data.into())).await.is_err() {
                                     tracing::debug!(conn_id, "outbound sink closed");
                                     break;
@@ -383,8 +402,8 @@ async fn handle_connection(socket: WebSocket, server: Arc<SyncServer>, conn_id: 
 
 /// Outcome of the protocol-version hello phase.
 enum HelloOutcome {
-    /// First frame was a valid hello with a matching version.
-    Valid,
+    /// First frame was a valid hello with a supported version.
+    Valid(u8),
     /// Hello missing/malformed/mismatched/timed out — close with
     /// `close_codes::VERSION_MISMATCH` and this reason.
     Reject(&'static str),
@@ -402,7 +421,7 @@ async fn await_protocol_hello(ws_stream: &mut SplitStream<WebSocket>) -> HelloOu
             match ws_stream.next().await {
                 Some(Ok(WsMessage::Binary(data))) => {
                     return match validate_protocol_hello(&data) {
-                        Ok(()) => HelloOutcome::Valid,
+                        Ok(version) => HelloOutcome::Valid(version),
                         Err(_) => HelloOutcome::Reject("protocol version mismatch"),
                     };
                 }
@@ -421,16 +440,26 @@ async fn await_protocol_hello(ws_stream: &mut SplitStream<WebSocket>) -> HelloOu
     outcome.unwrap_or(HelloOutcome::Reject("protocol hello timeout"))
 }
 
-/// Validates a hello frame against the server's wire-protocol version.
+/// Validates a hello frame against the server's supported wire protocols.
 ///
-/// Returns the close code to send on mismatch (always
-/// `close_codes::VERSION_MISMATCH`) so callers cannot accidentally
-/// downgrade the failure to a softer close.
-fn validate_protocol_hello(frame: &[u8]) -> Result<(), u16> {
+/// Returns the negotiated version on success. Unsupported versions return the
+/// close code to send (always `close_codes::VERSION_MISMATCH`) so callers
+/// cannot accidentally downgrade the failure to a softer close.
+fn validate_protocol_hello(frame: &[u8]) -> Result<u8, u16> {
     match protocol::decode_protocol_hello(frame) {
-        Ok(version) if version == protocol::PROTOCOL_VERSION => Ok(()),
+        Ok(version)
+            if version == protocol::PROTOCOL_VERSION
+                || version == protocol::LEGACY_FULL_WINDOW_PROTOCOL_VERSION =>
+        {
+            Ok(version)
+        }
         _ => Err(close_codes::VERSION_MISMATCH),
     }
+}
+
+fn should_forward_broadcast(protocol_version: u8, data: &[u8]) -> bool {
+    protocol_version == protocol::LEGACY_FULL_WINDOW_PROTOCOL_VERSION
+        || data.first().copied() != Some(protocol::TAG_WINDOW_SYNC)
 }
 
 /// Dispatches a parsed SyncMessage to the appropriate handler.
@@ -891,8 +920,18 @@ mod tests {
         (window_key, sub_tag, payload)
     }
 
-    fn test_conn_state() -> ConnState {
-        ConnState::new(SyncServerConfig::default().max_messages_per_sec)
+    fn test_legacy_conn_state() -> ConnState {
+        ConnState::new(
+            SyncServerConfig::default().max_messages_per_sec,
+            protocol::LEGACY_FULL_WINDOW_PROTOCOL_VERSION,
+        )
+    }
+
+    fn test_selector_conn_state() -> ConnState {
+        ConnState::new(
+            SyncServerConfig::default().max_messages_per_sec,
+            protocol::PROTOCOL_VERSION,
+        )
     }
 
     fn entity_id(byte: u8) -> oneiron::EntityId {
@@ -971,7 +1010,7 @@ mod tests {
         server_doc.commit();
 
         let (direct_tx, mut direct_rx) = mpsc::unbounded_channel::<Vec<u8>>();
-        let mut conn_state = test_conn_state();
+        let mut conn_state = test_legacy_conn_state();
         handle_window_sync(
             &server,
             1,
@@ -1024,7 +1063,7 @@ mod tests {
         server_doc.commit();
 
         let (direct_tx, mut direct_rx) = mpsc::unbounded_channel::<Vec<u8>>();
-        let mut conn_state = test_conn_state();
+        let mut conn_state = test_legacy_conn_state();
         // The dead JSON encoding and garbage must both be rejected.
         for payload in [&b"{}"[..], &[0xFFu8, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF][..]] {
             let result = handle_window_sync(
@@ -1064,7 +1103,7 @@ mod tests {
 
         let client_doc = client_window_doc();
         let (direct_tx, mut direct_rx) = mpsc::unbounded_channel::<Vec<u8>>();
-        let mut conn_state = test_conn_state();
+        let mut conn_state = test_legacy_conn_state();
         handle_window_sync(
             &server,
             1,
@@ -1186,7 +1225,7 @@ mod tests {
                 .unwrap();
 
         let (direct_tx, mut direct_rx) = mpsc::unbounded_channel::<Vec<u8>>();
-        let mut conn_state = test_conn_state();
+        let mut conn_state = test_selector_conn_state();
         handle_window_sync(
             &server,
             1,
@@ -1256,7 +1295,7 @@ mod tests {
                 .unwrap();
 
         let (direct_tx, mut direct_rx) = mpsc::unbounded_channel::<Vec<u8>>();
-        let mut conn_state = test_conn_state();
+        let mut conn_state = test_selector_conn_state();
         handle_window_sync(
             &server,
             1,
@@ -1285,6 +1324,81 @@ mod tests {
         assert!(
             direct_rx.try_recv().is_err(),
             "selector-scoped connection must not receive full-window fallback data"
+        );
+    }
+
+    #[tokio::test]
+    async fn selector_protocol_rejects_first_message_full_window_sync() {
+        let (_dir, server) = test_server();
+        let key = "2026-10";
+        let (direct_tx, mut direct_rx) = mpsc::unbounded_channel::<Vec<u8>>();
+        let mut conn_state = test_selector_conn_state();
+
+        let result = handle_window_sync(
+            &server,
+            1,
+            key,
+            window_sub_tags::VV_REQUEST,
+            &VersionVector::new().encode(),
+            &direct_tx,
+            &mut conn_state,
+        )
+        .await;
+
+        assert!(matches!(result, Err(ProtocolError::InvalidPayload(_))));
+        assert!(
+            direct_rx.try_recv().is_err(),
+            "v3 selector-capable connections must not receive full-window data"
+        );
+    }
+
+    #[tokio::test]
+    async fn legacy_protocol_rejects_selector_sync() {
+        let (_dir, server) = test_server();
+        let key = "2026-12";
+        let member = entity_id(0x43);
+        let grant_id = oneiron::EntityId::now();
+        let grant = oneiron::FederationGrant::new(
+            test_selector_scope(),
+            member,
+            oneiron::FederationGrantRole::Viewer,
+            oneiron::FederationGrantPreset::ReadOnly,
+        );
+        oneiron::sync::put_selector_test_federation_grant(
+            server.vault.as_ref(),
+            &grant_id,
+            &grant,
+            1,
+        )
+        .unwrap();
+        let selector = oneiron::sync::SyncSelector::new(
+            grant_id,
+            member,
+            oneiron::sync::SyncSelectorWorld::All,
+            vec![],
+            vec![],
+        );
+        let payload =
+            oneiron::sync::encode_selector_vv_request(&selector, &VersionVector::new().encode())
+                .unwrap();
+
+        let (direct_tx, mut direct_rx) = mpsc::unbounded_channel::<Vec<u8>>();
+        let mut conn_state = test_legacy_conn_state();
+        let result = handle_window_sync(
+            &server,
+            1,
+            key,
+            window_sub_tags::SELECTOR_VV_REQUEST,
+            &payload,
+            &direct_tx,
+            &mut conn_state,
+        )
+        .await;
+
+        assert!(matches!(result, Err(ProtocolError::InvalidPayload(_))));
+        assert!(
+            direct_rx.try_recv().is_err(),
+            "legacy v2 connections must not receive selector data"
         );
     }
 
@@ -1346,7 +1460,7 @@ mod tests {
                 .unwrap();
 
         let (direct_tx, mut direct_rx) = mpsc::unbounded_channel::<Vec<u8>>();
-        let mut conn_state = test_conn_state();
+        let mut conn_state = test_selector_conn_state();
         handle_window_sync(
             &server,
             1,
@@ -1393,6 +1507,31 @@ mod tests {
         );
     }
 
+    #[test]
+    fn selector_protocol_drops_window_sync_broadcasts() {
+        let window_update =
+            protocol::encode_window_sync("2026-11", window_sub_tags::UPDATE, b"window")
+                .into_result()
+                .unwrap();
+        assert!(
+            should_forward_broadcast(
+                protocol::LEGACY_FULL_WINDOW_PROTOCOL_VERSION,
+                &window_update
+            ),
+            "legacy v2 full-window clients keep receiving WindowSync broadcasts"
+        );
+        assert!(
+            !should_forward_broadcast(protocol::PROTOCOL_VERSION, &window_update),
+            "selector-capable v3 clients must not receive full-window WindowSync broadcasts"
+        );
+
+        let root_update = protocol::encode_root_update(b"root");
+        assert!(
+            should_forward_broadcast(protocol::PROTOCOL_VERSION, &root_update),
+            "non-window broadcasts remain available to v3 clients"
+        );
+    }
+
     #[tokio::test]
     async fn root_vv_replies_with_delta_and_rejects_malformed() {
         let (_dir, server) = test_server();
@@ -1410,7 +1549,7 @@ mod tests {
         server.root_doc.commit();
 
         let (direct_tx, mut direct_rx) = mpsc::unbounded_channel::<Vec<u8>>();
-        let mut conn_state = test_conn_state();
+        let mut conn_state = test_legacy_conn_state();
         handle_sync_message(
             &server,
             1,
@@ -1444,16 +1583,20 @@ mod tests {
 
     #[test]
     fn protocol_hello_validation_literals() {
-        // Contract literals: the valid hello is EXACTLY [3, 3] and every
-        // failure closes with 4006 — assert the raw values so a drifted
-        // tag/version/close-code fails here. Version pinned 2→3 by FED-002
-        // selector sync: a pre-selector v2 peer ([3, 2]) is rejected at
-        // hello before an unknown selector sub-tag can hang.
-        assert!(validate_protocol_hello(&[3, 3]).is_ok());
+        // Contract literals: v2 remains legacy full-window, while v3 gates
+        // FED-002 selector sync. Unsupported versions close with 4006 before
+        // any sync payload flows.
+        assert_eq!(
+            validate_protocol_hello(&[3, 2]),
+            Ok(protocol::LEGACY_FULL_WINDOW_PROTOCOL_VERSION)
+        );
+        assert_eq!(
+            validate_protocol_hello(&[3, 3]),
+            Ok(protocol::PROTOCOL_VERSION)
+        );
 
         let cases: &[(&str, &[u8])] = &[
             ("v1_peer", &[3, 1]),
-            ("pre_selector_v2_peer", &[3, 2]),
             ("future_version", &[3, 4]),
             ("zero_version", &[3, 0]),
             ("wrong_tag", &[2, 3]),

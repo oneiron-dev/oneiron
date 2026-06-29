@@ -320,9 +320,7 @@ fn filter_window_doc(source: &LoroDoc, key: &WindowKey, selector: &SyncSelector)
         let Ok(id) = EntityId::from_hex(raw_key) else {
             return;
         };
-        if id.to_hex() == raw_key {
-            tombstoned.insert(id);
-        }
+        tombstoned.insert(id);
     });
 
     let facet_scope = facet_scope_by_source(&source_edges, selector);
@@ -410,7 +408,7 @@ fn filter_window_doc(source: &LoroDoc, key: &WindowKey, selector: &SyncSelector)
         let Ok(id) = EntityId::from_hex(raw_key) else {
             return;
         };
-        if id.to_hex() == raw_key && (kept.contains(&id) || !selector.any_filter_active()) {
+        if kept.contains(&id) || !selector.any_filter_active() {
             let _ = map_insert_bytes(&out_tombstones, raw_key, value);
         }
     });
@@ -743,6 +741,15 @@ mod tests {
         map_insert_bytes(&doc.get_map("tombstones"), &id.to_hex(), b"deleted").unwrap();
     }
 
+    fn insert_uppercase_tombstone_alias(doc: &LoroDoc, id: EntityId) {
+        map_insert_bytes(
+            &doc.get_map("tombstones"),
+            &id.to_hex().to_ascii_uppercase(),
+            b"deleted",
+        )
+        .unwrap();
+    }
+
     fn import_ids(update: &[u8]) -> Vec<EntityId> {
         let doc = create_window_doc("receiver", &WindowKey::new("2026-03"));
         doc.import(update).unwrap();
@@ -1042,6 +1049,42 @@ mod tests {
                 .get(residue.to_hex().as_str())
                 .is_some(),
             "unfiltered selector snapshots should retain tombstones"
+        );
+    }
+
+    #[test]
+    fn selector_suppresses_tombstone_alias_live_map_residue() {
+        let member = entity_id(0x38);
+        let (_dir, vault, grant_id) = test_vault_with_grant(member);
+        let window_key = WindowKey::new("2026-08");
+        let doc = create_window_doc("source", &window_key);
+        let residue = entity_id(0x58);
+        insert_entity(&doc, residue, ENTITY_TYPE_PERSON, b"stale-live-blob");
+        insert_uppercase_tombstone_alias(&doc, residue);
+        doc.commit();
+
+        let selector = SyncSelector::new(grant_id, member, SyncSelectorWorld::All, vec![], vec![]);
+        let filtered =
+            filtered_window_doc(&vault, &doc, &window_key, test_selector_scope(), &selector)
+                .unwrap();
+        let receiver = create_window_doc("receiver", &window_key);
+        receiver
+            .import(&filtered.export(ExportMode::all_updates()).unwrap())
+            .unwrap();
+
+        assert!(
+            receiver
+                .get_map("entities")
+                .get(residue.to_hex().as_str())
+                .is_none(),
+            "any parseable tombstone alias must suppress live-map residue"
+        );
+        assert!(
+            receiver
+                .get_map("tombstones")
+                .get(residue.to_hex().to_ascii_uppercase().as_str())
+                .is_some(),
+            "selector snapshots should retain the alias tombstone"
         );
     }
 

@@ -821,11 +821,11 @@ impl SyncClient {
     pub(crate) fn try_generate_initial_sync(
         &self,
     ) -> std::result::Result<Vec<Vec<u8>>, TransportError> {
-        // Phase 0: protocol-version hello — first frame on every connection so
-        // the server can detect wire breaks before any sync payload flows.
+        // Phase 0: legacy full-window hello — this client path is unscoped and
+        // still uses the pre-FED-002 full-window VV_REQUEST flow.
         // Frame #2: lease request (ONE-1140, OD-5).
         let mut messages = vec![
-            transport::encode_protocol_hello(),
+            transport::encode_legacy_full_window_protocol_hello(),
             self.lease_request_frame(),
         ];
         messages.extend(self.generate_phase_frames()?);
@@ -1167,11 +1167,14 @@ mod tests {
         // `[hello][lease_request][…existing]` (ONE-1140).
         assert_eq!(messages.len(), 5);
 
-        // Frame 0: protocol hello — exact wire bytes [tag=3, version=3].
-        // v3 gates FED-002 selector sync, while legacy full-window sub-tags
-        // remain byte-compatible after the hello.
+        // Frame 0: protocol hello — exact wire bytes [tag=3, version=2].
+        // The in-tree sync client is unscoped and uses the legacy
+        // full-window VV_REQUEST flow; selector-capable callers use v3.
         // It MUST be the first frame.
-        assert_eq!(messages[0], vec![3u8, 3u8]);
+        assert_eq!(
+            messages[0],
+            transport::encode_legacy_full_window_protocol_hello()
+        );
 
         // Frame 1: lease request — 105 B pinned layout, client_id BE at
         // offset 1, and the embedded PoP signature verifies over the OD-6
