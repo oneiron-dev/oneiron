@@ -134,7 +134,10 @@ fn entity_id_from_type_index_key(key: &[u8]) -> Result<EntityId> {
     .map_err(|_| Error::CorruptedIndex("type index key"))
 }
 
-fn vad_annotation_meta_key(entity_type: u8, id: &EntityId) -> [u8; VAD_ANNOTATION_META_KEY_LEN] {
+pub(crate) fn vad_annotation_meta_key(
+    entity_type: u8,
+    id: &EntityId,
+) -> [u8; VAD_ANNOTATION_META_KEY_LEN] {
     let mut key = [0_u8; VAD_ANNOTATION_META_KEY_LEN];
     key[..VAD_ANNOTATION_META_KEY_PREFIX.len()].copy_from_slice(VAD_ANNOTATION_META_KEY_PREFIX);
     key[VAD_ANNOTATION_META_KEY_PREFIX.len()] = entity_type;
@@ -329,7 +332,7 @@ pub(crate) fn delete_vad_annotation_metadata_for_type_in_txn(
         store.vault_meta.delete(wtxn, &key)?;
 
         let claim_id = vad_annotation_claim_id(entity_type, id)?;
-        if vad_annotation_claim_matches_subject(store, wtxn, &claim_id, id)? {
+        if vad_annotation_claim_matches_subject(store, &*wtxn, &claim_id, id)? {
             let (existed, had_vector, had_graph_mutation, neighbors) =
                 deindex_entity(store, wtxn, &claim_id)?;
             if existed {
@@ -342,7 +345,7 @@ pub(crate) fn delete_vad_annotation_metadata_for_type_in_txn(
 
 fn vad_annotation_claim_matches_subject(
     store: &Store,
-    rtxn: &heed::RwTxn<'_>,
+    rtxn: &heed::RoTxn<'_>,
     claim_id: &EntityId,
     annotated_id: &EntityId,
 ) -> Result<bool> {
@@ -356,6 +359,25 @@ fn vad_annotation_claim_matches_subject(
     let body = crate::claim::decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true)?;
     Ok(body.predicate == VAD_ANNOTATION_CLAIM_PREDICATE
         && body.subject == ClaimSubject::Entity(*annotated_id))
+}
+
+fn vad_annotation_delete_scope_exists_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+) -> Result<bool> {
+    for entity_type in [ENTITY_TYPE_TURN, ENTITY_TYPE_MESSAGE] {
+        let key = vad_annotation_meta_key(entity_type, id);
+        if store.vault_meta.get(txn, &key)?.is_some() {
+            return Ok(true);
+        }
+
+        let claim_id = vad_annotation_claim_id(entity_type, id)?;
+        if vad_annotation_claim_matches_subject(store, txn, &claim_id, id)? {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 /// Returns the first outbound ChildOf parent for `node`, or `None` if it has
@@ -2538,7 +2560,11 @@ impl Vault {
             return Ok(true);
         }
         let mut edges_in = self.store.edges_in.prefix_iter(txn, id.as_bytes())?;
-        Ok(edges_in.next().transpose()?.is_some())
+        if edges_in.next().transpose()?.is_some() {
+            return Ok(true);
+        }
+
+        vad_annotation_delete_scope_exists_in_txn(&self.store, txn, id)
     }
 
     /// Writes the ARCH-0038 CRDT tombstone (v2 wire value, ONE-1132) into

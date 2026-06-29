@@ -34,7 +34,7 @@ use crate::store::{
     VECTOR_VERSION_KEY, lmdb_database_open_guard, short_id_counter_key,
     structural_kind_registry_key,
 };
-use crate::vault::vad_annotation_claim_id;
+use crate::vault::{vad_annotation_claim_id, vad_annotation_meta_key};
 
 fn test_config() -> VaultConfig {
     // Build from the public preset so tests exercise the same construction
@@ -6734,6 +6734,111 @@ fn soft_delete_removes_message_vad_annotation_claim_and_edges() -> Result<()> {
     assert_vad_annotation_claim_removed(&vault, &claim_id, &message)?;
     assert_eq!(vault.get_message_vad_annotation(&message)?, None);
     assert_vad_annotation_claim_removed(&vault, &claim_id, &message)?;
+    Ok(())
+}
+
+#[test]
+fn headerless_delete_treats_vad_only_residue_as_active_scope() -> Result<()> {
+    let (_legacy_dir, legacy_vault) = open_test_vault();
+    let legacy_turn = EntityId::now();
+    let legacy_annotation = VadAnnotation::new(
+        Vad {
+            valence: 0.4,
+            arousal: 0.5,
+            dominance: 0.6,
+        },
+        VadAnnotationSource::ModelInference,
+        232,
+    )?;
+    let legacy_key = vad_annotation_meta_key(ENTITY_TYPE_TURN, &legacy_turn);
+    let legacy_bytes = rmp_serde::to_vec_named(&legacy_annotation).expect("encode legacy VAD");
+    {
+        let mut wtxn = legacy_vault.store.env.write_txn()?;
+        legacy_vault
+            .store
+            .vault_meta
+            .put(&mut wtxn, &legacy_key, &legacy_bytes)?;
+        wtxn.commit()?;
+    }
+
+    let legacy_outcome =
+        legacy_vault.delete_entity_with_reason(&legacy_turn, DeleteReason::UserHardDelete)?;
+
+    assert!(
+        legacy_outcome.receipt_id.is_some(),
+        "VAD-only legacy metadata must count as active delete scope"
+    );
+    {
+        let rtxn = legacy_vault.store.env.read_txn()?;
+        assert!(
+            legacy_vault
+                .store
+                .vault_meta
+                .get(&rtxn, &legacy_key)?
+                .is_none(),
+            "headerless delete must remove legacy VAD metadata residue"
+        );
+    }
+
+    let (_claim_dir, claim_vault) = open_test_vault();
+    let message = EntityId::now();
+    let body = rmp_serde::to_vec_named(&serde_json::json!({
+        "txt": "message claim residue",
+        "spkr": "assistant",
+        "at": 132_u64,
+    }))
+    .expect("encode message body");
+    claim_vault.put_entity(
+        &message,
+        ENTITY_TYPE_MESSAGE,
+        test_time_range(132, 132),
+        132,
+        &body,
+    )?;
+    let annotation = VadAnnotation::new(
+        Vad {
+            valence: 0.3,
+            arousal: 0.8,
+            dominance: 0.4,
+        },
+        VadAnnotationSource::UserSelfReport,
+        233,
+    )?;
+    claim_vault.annotate_message_vad(&message, annotation)?;
+    let claim_id = vad_annotation_claim_id(ENTITY_TYPE_MESSAGE, &message)?;
+    let edge_out = Store::encode_edge_key(&claim_id, EdgeKind::ClaimOf, &message);
+    let edge_in = Store::encode_edge_key(&message, EdgeKind::ClaimOf, &claim_id);
+    {
+        let mut wtxn = claim_vault.store.env.write_txn()?;
+        claim_vault
+            .store
+            .entities
+            .delete(&mut wtxn, message.as_bytes())?;
+        claim_vault.store.type_index.delete(
+            &mut wtxn,
+            &Store::encode_type_key(ENTITY_TYPE_MESSAGE, &message),
+        )?;
+        claim_vault
+            .store
+            .temporal_occurred_start
+            .delete(&mut wtxn, &Store::encode_temporal_key(132, &message))?;
+        claim_vault
+            .store
+            .temporal_learned
+            .delete(&mut wtxn, &Store::encode_temporal_key(132, &message))?;
+        claim_vault.store.edges_out.delete(&mut wtxn, &edge_out)?;
+        claim_vault.store.edges_in.delete(&mut wtxn, &edge_in)?;
+        wtxn.commit()?;
+    }
+
+    let claim_outcome =
+        claim_vault.delete_entity_with_reason(&message, DeleteReason::UserHardDelete)?;
+
+    assert!(
+        claim_outcome.receipt_id.is_some(),
+        "derived VAD claim without claim_of edge must count as active delete scope"
+    );
+    assert_vad_annotation_claim_removed(&claim_vault, &claim_id, &message)?;
     Ok(())
 }
 
