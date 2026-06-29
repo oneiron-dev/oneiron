@@ -21,6 +21,9 @@ const EXPECTED_REGISTERED_ROUTES: &[&str] = &[
     "/api/companion/resume",
     "/api/lease/revoke",
     "/v1/core/turns/annotate",
+    "/v1/consumer/usage",
+    "/v1/consumer/usage/details",
+    "/v1/consumer/top-up",
     "/v1/usage/events",
     "/v1/usage/tenants/{tenant_id}/rollup",
 ];
