@@ -11,7 +11,7 @@ use crate::claim::{ClaimBody, claim_surfaceable};
 use crate::error::{Error, Result};
 use crate::pipeline::{PipelineBuilder, WorldScope};
 use crate::serialize::{SerializeConfig, serialize_pack};
-use crate::store::Store;
+use crate::store::{RetrievalAction, Store};
 use crate::types::{
     ContextEntity, ContextPack, ENTITY_TYPE_CLAIM, EdgeConfirmationStatus, EdgeInfo, EdgeKind,
     EmptyContext, EmptyReason, EntityId, FieldProfile, PackFormat, PackStats, Signal,
@@ -82,7 +82,7 @@ pub struct ContextPackBuilder<'a> {
 impl<'a> ContextPackBuilder<'a> {
     pub(crate) fn new(vault: &'a Vault) -> Self {
         Self {
-            pipeline: vault.query(),
+            pipeline: vault.query().telemetry_action(RetrievalAction::ContextPack),
             vault,
             hydrate: true,
             include_edges: false,
@@ -356,6 +356,7 @@ impl<'a> ContextPackBuilder<'a> {
         let pipeline_output = self.pipeline.run_for_pack()?;
         let total_in_scope = pipeline_output.total_in_scope;
         let pipeline_empty_reason = pipeline_output.empty_reason;
+        let telemetry_run_id = pipeline_output.telemetry_run_id;
         let scored = pipeline_output.scores;
         let surfaced_candidate_count = scored.len();
         let claim_bodies = pipeline_output.claim_bodies;
@@ -471,6 +472,11 @@ impl<'a> ContextPackBuilder<'a> {
             items_truncated: crate::types::PackItemAccounting::item_budget(),
             items_dropped: crate::types::PackItemAccounting::token_budget(),
         };
+        if let Some(run_id) = telemetry_run_id {
+            self.vault
+                .store
+                .update_retrieval_run_elapsed(run_id, stats.query_time_us)?;
+        }
         let empty = empty_context(pack_is_empty, &stats, pipeline_empty_reason);
 
         Ok(ContextPack {
