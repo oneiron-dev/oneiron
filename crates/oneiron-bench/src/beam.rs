@@ -580,6 +580,7 @@ pub(crate) fn run_fixture_manifest(
     fixture: &BeamFixture,
 ) -> BeamResult<BeamReport> {
     validate_manifest(manifest)?;
+    validate_manifest_fixture_cases(manifest, fixture)?;
 
     let tempdir = tempfile::tempdir()?;
     let vault = Vault::open(tempdir.path(), beam_vault_config())?;
@@ -817,7 +818,37 @@ fn validate_manifest(manifest: &RunManifest) -> BeamResult<()> {
     Ok(())
 }
 
+fn validate_manifest_fixture_cases(
+    manifest: &RunManifest,
+    fixture: &BeamFixture,
+) -> BeamResult<()> {
+    let cases_by_id: BTreeMap<&str, &FixtureCase> = fixture
+        .cases
+        .iter()
+        .map(|case| (case.case_id.as_str(), case))
+        .collect();
+
+    for case_id in &manifest.case_ids {
+        if !cases_by_id.contains_key(case_id.as_str()) {
+            return Err(BeamError::MissingCase {
+                fixture_id: fixture.fixture_id.clone(),
+                case_id: case_id.clone(),
+            });
+        }
+    }
+
+    Ok(())
+}
+
 fn validate_competitor_card(manifest: &RunManifest, card: &CompetitorCardConfig) -> BeamResult<()> {
+    if matches!(manifest.dataset, DatasetSource::Fixture { .. })
+        && card.public_parity_status == PublicParityStatus::PublicParity
+    {
+        return Err(invalid_manifest(
+            manifest,
+            "fixture-backed BEAM manifests cannot claim public parity",
+        ));
+    }
     if card.display_name.trim().is_empty() {
         return Err(invalid_manifest(
             manifest,
@@ -1483,6 +1514,21 @@ mod tests {
     }
 
     #[test]
+    fn manifest_validation_rejects_public_parity_for_fixture_dataset() {
+        let mut manifest_json: serde_json::Value =
+            serde_json::from_str(BUILTIN_MANIFEST_JSON).expect("manifest JSON");
+        manifest_json["competitors"][0]["card"]["publicParityStatus"] =
+            serde_json::json!("public_parity");
+        let err = parse_manifest_json(&manifest_json.to_string())
+            .expect_err("fixture-backed manifests must not claim public parity");
+
+        assert!(
+            err.to_string()
+                .contains("fixture-backed BEAM manifests cannot claim public parity")
+        );
+    }
+
+    #[test]
     fn run_fixture_manifest_validates_manifest_before_loading_dataset() {
         let fixture = parse_fixture_json(BUILTIN_FIXTURE_JSON).expect("fixture parses");
         let mut manifest = parse_manifest_json(BUILTIN_MANIFEST_JSON).expect("manifest parses");
@@ -1500,6 +1546,25 @@ mod tests {
                 expected: SCHEMA_VERSION,
                 actual: 1
             }
+        ));
+    }
+
+    #[test]
+    fn run_fixture_manifest_validates_case_ids_before_loading_dataset() {
+        let mut fixture = parse_fixture_json(BUILTIN_FIXTURE_JSON).expect("fixture parses");
+        let mut manifest = parse_manifest_json(BUILTIN_MANIFEST_JSON).expect("manifest parses");
+        fixture.records[0].id = "not-a-hex-entity-id".to_owned();
+        manifest.case_ids = vec!["missing_case".to_owned()];
+
+        let err = run_fixture_manifest(&manifest, &fixture)
+            .expect_err("case-id validation must run before dataset loading");
+
+        assert!(matches!(
+            err,
+            BeamError::MissingCase {
+                fixture_id,
+                case_id
+            } if fixture_id == "beam-128k-smoke" && case_id == "missing_case"
         ));
     }
 
