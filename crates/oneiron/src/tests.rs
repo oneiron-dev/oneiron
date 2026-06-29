@@ -10235,6 +10235,27 @@ fn replicated_door_still_fails_typed_on_structural_violations() -> Result<()> {
 /// FEDERATION_GRANT, but the body still has to fail closed before storage or
 /// indexes are written.
 #[cfg(feature = "sync")]
+fn federation_grant_body_with_role_and_preset(role: &str, preset: &str) -> Vec<u8> {
+    let member_ref = seeded_entity_id(0xFEDA).to_hex();
+    rmpv_map_bytes(&[
+        (
+            "schema_version".into(),
+            rmpv::Value::from(crate::federation::FEDERATION_GRANT_SCHEMA_VERSION),
+        ),
+        (
+            "scope".into(),
+            rmpv::Value::Map(vec![
+                ("kind".into(), "vault".into()),
+                ("vault_id".into(), rmpv::Value::from(7_u64)),
+            ]),
+        ),
+        ("member_ref".into(), rmpv::Value::from(member_ref.as_str())),
+        ("role".into(), rmpv::Value::from(role)),
+        ("preset".into(), rmpv::Value::from(preset)),
+    ])
+}
+
+#[cfg(feature = "sync")]
 #[test]
 fn replicated_door_fails_closed_on_malformed_federation_grant_body() -> Result<()> {
     let (_dir, vault) = open_test_vault();
@@ -10270,6 +10291,49 @@ fn replicated_door_fails_closed_on_malformed_federation_grant_body() -> Result<(
         )
         .commit()
         .expect_err("batch replay door must reject malformed federation grants");
+    assert_eq!(err.kind(), ErrorKind::InvalidKey);
+    assert_no_entity_state(&vault, &bad_batch)?;
+    Ok(())
+}
+
+/// FED-001: syntactically valid FEDERATION_GRANT bodies still fail closed at
+/// the replicated write chokepoint when role/preset policy is invalid.
+#[cfg(feature = "sync")]
+#[test]
+fn replicated_door_fails_closed_on_invalid_federation_grant_policy() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let invalid_policy = federation_grant_body_with_role_and_preset("admin", "read_only");
+
+    let bad_txn = EntityId::now();
+    let err = vault
+        .with_write_txn(|wtxn| {
+            vault
+                .batch_in()
+                .put_replicated(
+                    &bad_txn,
+                    ENTITY_TYPE_FEDERATION_GRANT,
+                    test_time_range(1, 1),
+                    2,
+                    &invalid_policy,
+                )
+                .apply(wtxn)
+        })
+        .expect_err("txn replay door must reject role/preset mismatches");
+    assert_eq!(err.kind(), ErrorKind::InvalidKey);
+    assert_no_entity_state(&vault, &bad_txn)?;
+
+    let bad_batch = EntityId::now();
+    let err = vault
+        .batch()
+        .put_replicated(
+            &bad_batch,
+            ENTITY_TYPE_FEDERATION_GRANT,
+            test_time_range(1, 1),
+            2,
+            &invalid_policy,
+        )
+        .commit()
+        .expect_err("batch replay door must reject role/preset mismatches");
     assert_eq!(err.kind(), ErrorKind::InvalidKey);
     assert_no_entity_state(&vault, &bad_batch)?;
     Ok(())
