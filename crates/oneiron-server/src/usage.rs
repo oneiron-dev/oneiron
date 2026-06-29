@@ -12,9 +12,15 @@ pub const CREDIT_UNIT_USD: f64 = 0.01;
 const USAGE_EVENT_PREFIX: &str = "usage:event:";
 const USAGE_TENANT_ROLLUP_PREFIX: &str = "usage:rollup:tenant:";
 const USAGE_VAULT_ROLLUP_PREFIX: &str = "usage:rollup:vault:";
+const CONSUMER_ALLOWANCE_PREFIX: &str = "consumer:allowance:";
+const CONSUMER_TOP_UP_PREFIX: &str = "consumer:top-up:";
+// LMDB's default maximum key size, exposed by heed as `Env::max_key_size`.
+const MAX_SYNC_STATE_KEY_LEN: usize = 511;
 const MAX_DIMENSION_LEN: usize = 256;
 const MAX_IDEMPOTENCY_KEY_LEN: usize = 256;
 const TOKENS_PER_MILLION: f64 = 1_000_000.0;
+const ALLOWANCE_NOTICE_THRESHOLD_RATIO: f64 = 0.80;
+const ALLOWANCE_CRITICAL_THRESHOLD_RATIO: f64 = 0.95;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
@@ -367,6 +373,187 @@ impl UsageCounter {
     }
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ConsumerAllowanceWarningLevel {
+    #[default]
+    None,
+    Notice,
+    Critical,
+    Exhausted,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ConsumerAllowanceWarning {
+    /// Machine-readable warning level for the current allowance burn-down.
+    pub level: ConsumerAllowanceWarningLevel,
+    /// Whether the warning threshold has been reached.
+    pub triggered: bool,
+    /// Threshold ratio that selected this warning level.
+    pub threshold_ratio: f64,
+    /// Current usage divided by allowance. Null when no allowance exists.
+    pub used_ratio: Option<f64>,
+    /// Human-readable warning message for UI and API clients.
+    pub message: String,
+}
+
+impl ConsumerAllowanceWarning {
+    fn for_usage(used_credit_units: f64, allowance_credit_units: f64) -> Self {
+        if allowance_credit_units <= 0.0 {
+            return Self::exhausted(None);
+        }
+
+        let raw_used_ratio = used_credit_units / allowance_credit_units;
+        let used_ratio = normalize_money(raw_used_ratio);
+        if raw_used_ratio >= 1.0 {
+            Self::exhausted(Some(used_ratio))
+        } else if raw_used_ratio >= ALLOWANCE_CRITICAL_THRESHOLD_RATIO {
+            Self {
+                level: ConsumerAllowanceWarningLevel::Critical,
+                triggered: true,
+                threshold_ratio: ALLOWANCE_CRITICAL_THRESHOLD_RATIO,
+                used_ratio: Some(used_ratio),
+                message: "consumer allowance is at or above the critical threshold".to_owned(),
+            }
+        } else if raw_used_ratio >= ALLOWANCE_NOTICE_THRESHOLD_RATIO {
+            Self {
+                level: ConsumerAllowanceWarningLevel::Notice,
+                triggered: true,
+                threshold_ratio: ALLOWANCE_NOTICE_THRESHOLD_RATIO,
+                used_ratio: Some(used_ratio),
+                message: "consumer allowance is at or above the notice threshold".to_owned(),
+            }
+        } else {
+            Self::none(Some(used_ratio))
+        }
+    }
+
+    fn none(used_ratio: Option<f64>) -> Self {
+        Self {
+            level: ConsumerAllowanceWarningLevel::None,
+            triggered: false,
+            threshold_ratio: ALLOWANCE_NOTICE_THRESHOLD_RATIO,
+            used_ratio,
+            message: "consumer allowance is within the available balance".to_owned(),
+        }
+    }
+
+    fn exhausted(used_ratio: Option<f64>) -> Self {
+        Self {
+            level: ConsumerAllowanceWarningLevel::Exhausted,
+            triggered: true,
+            threshold_ratio: 1.0,
+            used_ratio,
+            message: "consumer allowance is exhausted".to_owned(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ConsumerAllowanceState {
+    /// Total credited allowance available to the tenant.
+    pub allowance_credit_units: f64,
+    /// Tenant-wide credit units consumed against this allowance.
+    pub used_credit_units: f64,
+    /// Remaining tenant allowance after subtracting tenant-wide usage.
+    pub remaining_credit_units: f64,
+    /// Last top-up timestamp for this tenant, if any.
+    pub updated_at: Option<u64>,
+    /// Explicit threshold warning for the current allowance state.
+    pub warning: ConsumerAllowanceWarning,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ConsumerUsageState {
+    /// Tenant whose usage and allowance are represented.
+    pub tenant_id: String,
+    /// Optional vault scope for this usage state.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub vault_id: Option<String>,
+    /// Server usage mode that determines whether usage events debit credits.
+    pub mode: UsageMode,
+    /// Aggregate usage counters for the selected scope.
+    pub counters: UsageCounter,
+    /// Tenant-wide allowance, remaining balance, and explicit warning state.
+    pub allowance: ConsumerAllowanceState,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ConsumerUsageDetails {
+    /// Summary usage and allowance state for the selected scope.
+    pub usage: ConsumerUsageState,
+    /// Per-agent usage counters for the selected scope.
+    pub agents: BTreeMap<String, UsageCounter>,
+    /// Per-model usage counters for the selected scope.
+    pub models: BTreeMap<String, UsageCounter>,
+    /// Per-service usage counters for the selected scope.
+    pub services: BTreeMap<String, UsageCounter>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ConsumerTopUpRequest {
+    /// Tenant whose allowance should be credited.
+    pub tenant_id: String,
+    /// Idempotency key that records this top-up once per tenant.
+    pub idempotency_key: String,
+    /// Credit units to add to the tenant allowance.
+    pub credit_units: f64,
+}
+
+impl ConsumerTopUpRequest {
+    fn validate(&self) -> Result<(), UsageError> {
+        validate_dimension("tenantId", &self.tenant_id, MAX_DIMENSION_LEN)?;
+        validate_dimension(
+            "idempotencyKey",
+            &self.idempotency_key,
+            MAX_IDEMPOTENCY_KEY_LEN,
+        )?;
+        validate_consumer_top_up_storage_keys(&self.tenant_id, &self.idempotency_key)?;
+        validate_non_negative_finite("creditUnits", self.credit_units)?;
+        Ok(())
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ConsumerTopUp {
+    /// Tenant credited by this top-up.
+    pub tenant_id: String,
+    /// Idempotency key that identifies this top-up.
+    pub idempotency_key: String,
+    /// Credit units added by this top-up.
+    pub credit_units: f64,
+    /// USD value represented by the credited units.
+    pub amount_usd: f64,
+    /// Server timestamp when this top-up was first recorded.
+    pub recorded_at: u64,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ConsumerTopUpState {
+    /// True when this request created a new top-up.
+    pub recorded: bool,
+    /// True when the idempotency key had already been recorded.
+    pub replayed: bool,
+    /// Top-up state associated with the idempotency key.
+    pub top_up: ConsumerTopUp,
+    /// Usage and allowance state after applying or replaying the top-up.
+    pub usage: ConsumerUsageState,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ConsumerAllowanceRecord {
+    credit_units: f64,
+    updated_at: Option<u64>,
+}
+
 #[derive(Clone)]
 pub struct UsageLedger {
     vault: Arc<oneiron::Vault>,
@@ -490,6 +677,148 @@ impl UsageLedger {
         self.get_rollup(&vault_rollup_key(tenant_id, vault_id))
     }
 
+    pub fn consumer_usage(
+        &self,
+        tenant_id: &str,
+        vault_id: Option<&str>,
+        configured_mode: UsageMode,
+    ) -> Result<ConsumerUsageState, UsageError> {
+        validate_dimension("tenantId", tenant_id, MAX_DIMENSION_LEN)?;
+        if let Some(vault_id) = vault_id {
+            validate_dimension("vaultId", vault_id, MAX_DIMENSION_LEN)?;
+        }
+        validate_consumer_usage_storage_keys(tenant_id, vault_id)?;
+
+        let _guard = self.lock.lock().map_err(|_| UsageError::LockPoisoned)?;
+        self.consumer_usage_locked(tenant_id, vault_id, configured_mode)
+    }
+
+    pub fn consumer_usage_details(
+        &self,
+        tenant_id: &str,
+        vault_id: Option<&str>,
+        configured_mode: UsageMode,
+    ) -> Result<ConsumerUsageDetails, UsageError> {
+        validate_dimension("tenantId", tenant_id, MAX_DIMENSION_LEN)?;
+        if let Some(vault_id) = vault_id {
+            validate_dimension("vaultId", vault_id, MAX_DIMENSION_LEN)?;
+        }
+        validate_consumer_usage_storage_keys(tenant_id, vault_id)?;
+
+        let _guard = self.lock.lock().map_err(|_| UsageError::LockPoisoned)?;
+        let rollup = self.consumer_rollup_locked(tenant_id, vault_id)?;
+        let allowance_used_credit_units = if vault_id.is_some() {
+            self.tenant_used_credit_units_locked(tenant_id)?
+        } else {
+            rollup.counters.credit_units
+        };
+        let usage =
+            self.consumer_usage_from_rollup(&rollup, configured_mode, allowance_used_credit_units)?;
+        Ok(ConsumerUsageDetails {
+            usage,
+            agents: rollup.agents,
+            models: rollup.models,
+            services: rollup.services,
+        })
+    }
+
+    pub fn top_up(
+        &self,
+        request: ConsumerTopUpRequest,
+        configured_mode: UsageMode,
+    ) -> Result<ConsumerTopUpState, UsageError> {
+        request.validate()?;
+        let credit_units = normalize_money(request.credit_units);
+        validate_positive_finite("creditUnits", credit_units)?;
+        let amount_usd = normalize_money(credit_units * CREDIT_UNIT_USD);
+        let _guard = self.lock.lock().map_err(|_| UsageError::LockPoisoned)?;
+        let top_up_key = consumer_top_up_key(&request.tenant_id, &request.idempotency_key);
+        let allowance_key = consumer_allowance_key(&request.tenant_id);
+        let write_result =
+            self.vault
+                .try_with_write_txn(|wtxn| -> Result<TopUpWriteResult, UsageError> {
+                    if let Some(raw) = self.vault.sync_state_get_in_write_txn(wtxn, &top_up_key)? {
+                        let top_up = decode_top_up(&raw)?;
+                        if top_up.tenant_id != request.tenant_id
+                            || top_up.idempotency_key != request.idempotency_key
+                            || normalize_money(top_up.credit_units) != credit_units
+                        {
+                            return Err(UsageError::IdempotencyConflict {
+                                tenant_id: request.tenant_id.clone(),
+                                idempotency_key: request.idempotency_key.clone(),
+                            });
+                        }
+                        return Ok(TopUpWriteResult::Replayed(top_up));
+                    }
+
+                    let recorded_at = now_secs();
+                    let top_up = ConsumerTopUp {
+                        tenant_id: request.tenant_id.clone(),
+                        idempotency_key: request.idempotency_key.clone(),
+                        credit_units,
+                        amount_usd,
+                        recorded_at,
+                    };
+                    let mut allowance = match self
+                        .vault
+                        .sync_state_get_in_write_txn(wtxn, &allowance_key)?
+                    {
+                        Some(raw) => decode_allowance(&raw)?,
+                        None => ConsumerAllowanceRecord {
+                            credit_units: 0.0,
+                            updated_at: None,
+                        },
+                    };
+                    let previous_credit_units = normalize_money(allowance.credit_units);
+                    validate_non_negative_finite("creditUnits", previous_credit_units)?;
+                    let updated_credit_units =
+                        normalize_money(previous_credit_units + top_up.credit_units);
+                    validate_positive_finite("creditUnits", updated_credit_units)?;
+                    if updated_credit_units <= previous_credit_units {
+                        return Err(UsageError::InvalidField {
+                            field: "creditUnits",
+                            message: "must increase allowance balance",
+                        });
+                    }
+                    allowance.credit_units = updated_credit_units;
+                    allowance.updated_at = Some(recorded_at);
+
+                    self.vault.sync_state_put_in_write_txn(
+                        wtxn,
+                        &allowance_key,
+                        &encode_allowance(&allowance)?,
+                    )?;
+                    self.vault.sync_state_put_in_write_txn(
+                        wtxn,
+                        &top_up_key,
+                        &encode_top_up(&top_up)?,
+                    )?;
+
+                    Ok(TopUpWriteResult::Recorded(top_up))
+                })?;
+
+        match write_result {
+            TopUpWriteResult::Recorded(top_up) => {
+                let usage = self.consumer_usage_locked(&top_up.tenant_id, None, configured_mode)?;
+                Ok(ConsumerTopUpState {
+                    recorded: true,
+                    replayed: false,
+                    top_up,
+                    usage,
+                })
+            }
+            TopUpWriteResult::Replayed(top_up) => {
+                let usage = self.consumer_usage_locked(&top_up.tenant_id, None, configured_mode)?;
+                Ok(ConsumerTopUpState {
+                    recorded: false,
+                    replayed: true,
+                    top_up,
+                    usage,
+                })
+            }
+        }
+    }
+
     fn replayed_result(&self, entry: StoredUsageEvent) -> Result<UsageRecordResult, UsageError> {
         Ok(UsageRecordResult {
             recorded: false,
@@ -511,6 +840,81 @@ impl UsageLedger {
         };
         decode_rollup(&raw).map(Some)
     }
+
+    fn consumer_usage_locked(
+        &self,
+        tenant_id: &str,
+        vault_id: Option<&str>,
+        configured_mode: UsageMode,
+    ) -> Result<ConsumerUsageState, UsageError> {
+        let rollup = self.consumer_rollup_locked(tenant_id, vault_id)?;
+        let allowance_used_credit_units = if vault_id.is_some() {
+            self.tenant_used_credit_units_locked(tenant_id)?
+        } else {
+            rollup.counters.credit_units
+        };
+        self.consumer_usage_from_rollup(&rollup, configured_mode, allowance_used_credit_units)
+    }
+
+    fn consumer_usage_from_rollup(
+        &self,
+        rollup: &UsageRollup,
+        configured_mode: UsageMode,
+        allowance_used_credit_units: f64,
+    ) -> Result<ConsumerUsageState, UsageError> {
+        let allowance = self.consumer_allowance(&rollup.tenant_id)?;
+        let remaining_credit_units =
+            normalize_money(allowance.credit_units - allowance_used_credit_units).max(0.0);
+        Ok(ConsumerUsageState {
+            tenant_id: rollup.tenant_id.clone(),
+            vault_id: rollup.vault_id.clone(),
+            mode: configured_mode,
+            counters: rollup.counters.clone(),
+            allowance: ConsumerAllowanceState {
+                allowance_credit_units: allowance.credit_units,
+                used_credit_units: allowance_used_credit_units,
+                remaining_credit_units,
+                updated_at: allowance.updated_at,
+                warning: ConsumerAllowanceWarning::for_usage(
+                    allowance_used_credit_units,
+                    allowance.credit_units,
+                ),
+            },
+        })
+    }
+
+    fn consumer_rollup_locked(
+        &self,
+        tenant_id: &str,
+        vault_id: Option<&str>,
+    ) -> Result<UsageRollup, UsageError> {
+        if let Some(vault_id) = vault_id {
+            return self
+                .get_rollup(&vault_rollup_key(tenant_id, vault_id))
+                .map(|rollup| rollup.unwrap_or_else(|| UsageRollup::vault(tenant_id, vault_id)));
+        }
+
+        self.get_rollup(&tenant_rollup_key(tenant_id))
+            .map(|rollup| rollup.unwrap_or_else(|| UsageRollup::tenant(tenant_id)))
+    }
+
+    fn tenant_used_credit_units_locked(&self, tenant_id: &str) -> Result<f64, UsageError> {
+        self.get_rollup(&tenant_rollup_key(tenant_id))
+            .map(|rollup| rollup.map_or(0.0, |rollup| rollup.counters.credit_units))
+    }
+
+    fn consumer_allowance(&self, tenant_id: &str) -> Result<ConsumerAllowanceRecord, UsageError> {
+        let Some(raw) = self
+            .vault
+            .sync_state_get(&consumer_allowance_key(tenant_id))?
+        else {
+            return Ok(ConsumerAllowanceRecord {
+                credit_units: 0.0,
+                updated_at: None,
+            });
+        };
+        decode_allowance(&raw)
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -531,6 +935,11 @@ enum LedgerWriteResult {
     Replayed(StoredUsageEvent),
 }
 
+enum TopUpWriteResult {
+    Recorded(ConsumerTopUp),
+    Replayed(ConsumerTopUp),
+}
+
 fn encode_entry(entry: &StoredUsageEvent) -> Result<Vec<u8>, UsageError> {
     rmp_serde::to_vec_named(entry).map_err(UsageError::encode)
 }
@@ -547,6 +956,22 @@ fn decode_rollup(raw: &[u8]) -> Result<UsageRollup, UsageError> {
     rmp_serde::from_slice(raw).map_err(UsageError::decode)
 }
 
+fn encode_allowance(allowance: &ConsumerAllowanceRecord) -> Result<Vec<u8>, UsageError> {
+    rmp_serde::to_vec_named(allowance).map_err(UsageError::encode)
+}
+
+fn decode_allowance(raw: &[u8]) -> Result<ConsumerAllowanceRecord, UsageError> {
+    rmp_serde::from_slice(raw).map_err(UsageError::decode)
+}
+
+fn encode_top_up(top_up: &ConsumerTopUp) -> Result<Vec<u8>, UsageError> {
+    rmp_serde::to_vec_named(top_up).map_err(UsageError::encode)
+}
+
+fn decode_top_up(raw: &[u8]) -> Result<ConsumerTopUp, UsageError> {
+    rmp_serde::from_slice(raw).map_err(UsageError::decode)
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum UsageError {
     #[error("{field}: {message}")]
@@ -560,6 +985,13 @@ pub enum UsageError {
     Encode(rmp_serde::encode::Error),
     #[error("usage ledger decode error: {0}")]
     Decode(rmp_serde::decode::Error),
+    #[error(
+        "idempotency key {idempotency_key} for tenant {tenant_id} conflicts with a recorded top-up"
+    )]
+    IdempotencyConflict {
+        tenant_id: String,
+        idempotency_key: String,
+    },
     #[error("usage ledger lock poisoned")]
     LockPoisoned,
 }
@@ -630,6 +1062,72 @@ fn vault_rollup_key(tenant_id: &str, vault_id: &str) -> String {
     )
 }
 
+fn consumer_allowance_key(tenant_id: &str) -> String {
+    format!("{CONSUMER_ALLOWANCE_PREFIX}{}", key_part(tenant_id))
+}
+
+fn consumer_top_up_key(tenant_id: &str, idempotency_key: &str) -> String {
+    format!(
+        "{CONSUMER_TOP_UP_PREFIX}{}:{}",
+        key_part(tenant_id),
+        key_part(idempotency_key)
+    )
+}
+
+fn validate_consumer_top_up_storage_keys(
+    tenant_id: &str,
+    idempotency_key: &str,
+) -> Result<(), UsageError> {
+    validate_consumer_usage_storage_keys(tenant_id, None)?;
+    validate_sync_state_key_len(
+        "idempotencyKey",
+        consumer_top_up_key_len(tenant_id, idempotency_key),
+    )?;
+    Ok(())
+}
+
+fn validate_consumer_usage_storage_keys(
+    tenant_id: &str,
+    vault_id: Option<&str>,
+) -> Result<(), UsageError> {
+    validate_sync_state_key_len("tenantId", consumer_allowance_key_len(tenant_id))?;
+    validate_sync_state_key_len("tenantId", tenant_rollup_key_len(tenant_id))?;
+    if let Some(vault_id) = vault_id {
+        validate_sync_state_key_len("vaultId", vault_rollup_key_len(tenant_id, vault_id))?;
+    }
+    Ok(())
+}
+
+fn validate_sync_state_key_len(field: &'static str, key_len: usize) -> Result<(), UsageError> {
+    if key_len > MAX_SYNC_STATE_KEY_LEN {
+        return Err(UsageError::InvalidField {
+            field,
+            message: "produces a storage key that is too long",
+        });
+    }
+    Ok(())
+}
+
+fn tenant_rollup_key_len(tenant_id: &str) -> usize {
+    USAGE_TENANT_ROLLUP_PREFIX.len() + key_part_len(tenant_id)
+}
+
+fn vault_rollup_key_len(tenant_id: &str, vault_id: &str) -> usize {
+    USAGE_VAULT_ROLLUP_PREFIX.len() + key_part_len(tenant_id) + 1 + key_part_len(vault_id)
+}
+
+fn consumer_allowance_key_len(tenant_id: &str) -> usize {
+    CONSUMER_ALLOWANCE_PREFIX.len() + key_part_len(tenant_id)
+}
+
+fn consumer_top_up_key_len(tenant_id: &str, idempotency_key: &str) -> usize {
+    CONSUMER_TOP_UP_PREFIX.len() + key_part_len(tenant_id) + 1 + key_part_len(idempotency_key)
+}
+
+fn key_part_len(value: &str) -> usize {
+    value.len() * 2
+}
+
 fn key_part(value: &str) -> String {
     const HEX: &[u8; 16] = b"0123456789abcdef";
     let bytes = value.as_bytes();
@@ -680,6 +1178,17 @@ fn validate_non_negative_finite(field: &'static str, value: f64) -> Result<(), U
     Ok(())
 }
 
+fn validate_positive_finite(field: &'static str, value: f64) -> Result<(), UsageError> {
+    validate_non_negative_finite(field, value)?;
+    if value == 0.0 {
+        return Err(UsageError::InvalidField {
+            field,
+            message: "must be greater than zero",
+        });
+    }
+    Ok(())
+}
+
 fn now_secs() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -725,6 +1234,43 @@ mod tests {
         }
     }
 
+    fn max_top_up_idempotency_key_len(tenant_id: &str) -> usize {
+        (MAX_SYNC_STATE_KEY_LEN - CONSUMER_TOP_UP_PREFIX.len() - 1 - key_part_len(tenant_id)) / 2
+    }
+
+    fn tenant_id_over_tenant_rollup_key_limit() -> String {
+        let tenant_id =
+            "t".repeat((MAX_SYNC_STATE_KEY_LEN - USAGE_TENANT_ROLLUP_PREFIX.len()) / 2 + 1);
+        assert!(tenant_id.len() <= MAX_DIMENSION_LEN);
+        assert!(consumer_allowance_key_len(&tenant_id) <= MAX_SYNC_STATE_KEY_LEN);
+        assert!(tenant_rollup_key_len(&tenant_id) > MAX_SYNC_STATE_KEY_LEN);
+        tenant_id
+    }
+
+    fn vault_id_over_vault_rollup_key_limit(tenant_id: &str) -> String {
+        let vault_id = "v".repeat(
+            (MAX_SYNC_STATE_KEY_LEN
+                - USAGE_VAULT_ROLLUP_PREFIX.len()
+                - 1
+                - key_part_len(tenant_id))
+                / 2
+                + 1,
+        );
+        assert!(vault_id.len() <= MAX_DIMENSION_LEN);
+        assert!(vault_rollup_key_len(tenant_id, &vault_id) > MAX_SYNC_STATE_KEY_LEN);
+        vault_id
+    }
+
+    fn assert_storage_key_invalid_field(error: UsageError, expected_field: &'static str) {
+        assert!(matches!(
+            error,
+            UsageError::InvalidField {
+                field,
+                message: "produces a storage key that is too long"
+            } if field == expected_field
+        ));
+    }
+
     #[test]
     fn cost_calculator_includes_token_cache_and_service_costs() {
         let cost = cloud_event("cost-key").cost_input().calculate().unwrap();
@@ -734,6 +1280,183 @@ mod tests {
         assert_eq!(cost.service_cost_usd, 0.044);
         assert_eq!(cost.cost_usd, 0.05);
         assert_eq!(cost.credit_units, cost.cost_usd / CREDIT_UNIT_USD);
+    }
+
+    #[test]
+    fn allowance_warning_exhausts_zero_allowance_without_usage() {
+        let warning = ConsumerAllowanceWarning::for_usage(0.0, 0.0);
+
+        assert_eq!(warning.level, ConsumerAllowanceWarningLevel::Exhausted);
+        assert!(warning.triggered);
+        assert_eq!(warning.threshold_ratio, 1.0);
+        assert_eq!(warning.used_ratio, None);
+    }
+
+    #[test]
+    fn allowance_warning_uses_raw_ratio_for_thresholds() {
+        let warning = ConsumerAllowanceWarning::for_usage(0.7999999999996, 1.0);
+
+        assert_eq!(warning.level, ConsumerAllowanceWarningLevel::None);
+        assert!(!warning.triggered);
+        assert_eq!(warning.threshold_ratio, ALLOWANCE_NOTICE_THRESHOLD_RATIO);
+        assert_eq!(warning.used_ratio, Some(0.8));
+    }
+
+    #[test]
+    fn consumer_usage_rejects_overlong_tenant_rollup_key() {
+        let (_dir, ledger) = test_ledger();
+        let tenant_id = tenant_id_over_tenant_rollup_key_limit();
+
+        let err = ledger
+            .consumer_usage(&tenant_id, None, UsageMode::OneironCloud)
+            .expect_err("overlong tenant rollup key should validate before storage");
+
+        assert_storage_key_invalid_field(err, "tenantId");
+    }
+
+    #[test]
+    fn consumer_usage_details_rejects_overlong_vault_rollup_key() {
+        let (_dir, ledger) = test_ledger();
+        let tenant_id = "tenant-a";
+        let vault_id = vault_id_over_vault_rollup_key_limit(tenant_id);
+
+        let err = ledger
+            .consumer_usage_details(tenant_id, Some(&vault_id), UsageMode::OneironCloud)
+            .expect_err("overlong vault rollup key should validate before storage");
+
+        assert_storage_key_invalid_field(err, "vaultId");
+    }
+
+    #[test]
+    fn top_up_accepts_idempotency_key_at_encoded_storage_limit() {
+        let (_dir, ledger) = test_ledger();
+        let tenant_id = "tenant-a";
+        let idempotency_key = "k".repeat(max_top_up_idempotency_key_len(tenant_id));
+        assert_eq!(
+            consumer_top_up_key_len(tenant_id, &idempotency_key),
+            MAX_SYNC_STATE_KEY_LEN
+        );
+
+        let result = ledger
+            .top_up(
+                ConsumerTopUpRequest {
+                    tenant_id: tenant_id.to_owned(),
+                    idempotency_key: idempotency_key.clone(),
+                    credit_units: 1.0,
+                },
+                UsageMode::OneironCloud,
+            )
+            .expect("top-up at encoded key limit should record");
+
+        assert!(result.recorded);
+        assert!(!result.replayed);
+        assert_eq!(result.top_up.idempotency_key, idempotency_key);
+        assert_eq!(result.usage.allowance.allowance_credit_units, 1.0);
+    }
+
+    #[test]
+    fn top_up_rejects_idempotency_key_over_encoded_storage_limit() {
+        let (_dir, ledger) = test_ledger();
+        let tenant_id = "tenant-a";
+        let idempotency_key = "k".repeat(max_top_up_idempotency_key_len(tenant_id) + 1);
+        assert_eq!(
+            consumer_top_up_key_len(tenant_id, &idempotency_key),
+            MAX_SYNC_STATE_KEY_LEN + 2
+        );
+
+        let err = ledger
+            .top_up(
+                ConsumerTopUpRequest {
+                    tenant_id: tenant_id.to_owned(),
+                    idempotency_key,
+                    credit_units: 1.0,
+                },
+                UsageMode::OneironCloud,
+            )
+            .expect_err("oversized encoded top-up key should validate before storage");
+        let usage = ledger
+            .consumer_usage(tenant_id, None, UsageMode::OneironCloud)
+            .expect("usage after rejected top-up");
+
+        assert!(matches!(
+            err,
+            UsageError::InvalidField {
+                field: "idempotencyKey",
+                message: "produces a storage key that is too long"
+            }
+        ));
+        assert_eq!(usage.allowance.allowance_credit_units, 0.0);
+    }
+
+    #[test]
+    fn top_up_rejects_overlong_response_rollup_key_before_recording() {
+        let (_dir, ledger) = test_ledger();
+        let tenant_id = tenant_id_over_tenant_rollup_key_limit();
+        let idempotency_key = "k";
+        assert!(consumer_top_up_key_len(&tenant_id, idempotency_key) <= MAX_SYNC_STATE_KEY_LEN);
+
+        let err = ledger
+            .top_up(
+                ConsumerTopUpRequest {
+                    tenant_id: tenant_id.clone(),
+                    idempotency_key: idempotency_key.to_owned(),
+                    credit_units: 1.0,
+                },
+                UsageMode::OneironCloud,
+            )
+            .expect_err("overlong response rollup key should validate before write transaction");
+        let allowance = ledger
+            .consumer_allowance(&tenant_id)
+            .expect("allowance should remain readable");
+        let top_up_key = consumer_top_up_key(&tenant_id, idempotency_key);
+
+        assert_storage_key_invalid_field(err, "tenantId");
+        assert_eq!(allowance.credit_units, 0.0);
+        assert!(ledger.vault.sync_state_get(&top_up_key).unwrap().is_none());
+    }
+
+    #[test]
+    fn top_up_rejects_amount_that_does_not_increase_normalized_allowance() {
+        let (_dir, ledger) = test_ledger();
+        let tenant_id = "tenant-a";
+        let first = ledger
+            .top_up(
+                ConsumerTopUpRequest {
+                    tenant_id: tenant_id.to_owned(),
+                    idempotency_key: "large-top-up".to_owned(),
+                    credit_units: 1.0e296,
+                },
+                UsageMode::OneironCloud,
+            )
+            .expect("large finite top-up should record");
+
+        let err = ledger
+            .top_up(
+                ConsumerTopUpRequest {
+                    tenant_id: tenant_id.to_owned(),
+                    idempotency_key: "precision-lost-top-up".to_owned(),
+                    credit_units: 1.0,
+                },
+                UsageMode::OneironCloud,
+            )
+            .expect_err("top-up must increase normalized allowance");
+        let allowance = ledger
+            .consumer_allowance(tenant_id)
+            .expect("allowance should remain readable");
+        let top_up_key = consumer_top_up_key(tenant_id, "precision-lost-top-up");
+
+        assert!(matches!(
+            err,
+            UsageError::InvalidField {
+                field: "creditUnits",
+                message: "must increase allowance balance"
+            }
+        ));
+        assert_eq!(
+            allowance.credit_units,
+            first.usage.allowance.allowance_credit_units
+        );
+        assert!(ledger.vault.sync_state_get(&top_up_key).unwrap().is_none());
     }
 
     #[test]
