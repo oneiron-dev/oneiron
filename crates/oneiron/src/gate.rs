@@ -14,7 +14,9 @@ use crate::claim::{
 };
 use crate::error::{Error, Result};
 use crate::store::Store;
-use crate::types::{ENTITY_ID_LEN, ENTITY_TYPE_POLICY_MANIFEST, EdgeActorClass, EntityId};
+use crate::types::{
+    ENTITY_ID_LEN, ENTITY_TYPE_POLICY_MANIFEST, EdgeActorClass, EntityId, WriteEnvelope,
+};
 
 const POLICY_SCHEMA_VERSION_KEY: &str = "schema_version";
 const POLICY_SCHEMA_VERSION: &str = "1.1";
@@ -725,11 +727,47 @@ pub(crate) fn check_claim_policy(
     check_claim_source_trust(body, policy)
 }
 
+pub(crate) fn check_claim_policy_with_write_envelope(
+    body: &ClaimBody,
+    envelope: &WriteEnvelope,
+    policy: &PolicyManifestResolution,
+) -> Result<()> {
+    validate_write_envelope(envelope)?;
+
+    if policy.enforces_write_gate() {
+        let actor = envelope.actor();
+        let input = claim_gate_input(
+            body,
+            policy,
+            GateActor {
+                actor_class: edge_actor_class_str(actor.actor_class()).to_owned(),
+                actor_ref: Some(actor.entity_ref().to_hex()),
+            },
+            GateContentKind::Claim,
+            GateProvenanceHandles {
+                actor_entity_ref: Some(actor.entity_ref()),
+                ..GateProvenanceHandles::default()
+            },
+        );
+        enforce_claim_gate_decision(policy.evaluate_gate(&input), body.approval)?;
+    }
+
+    check_claim_source_trust(body, policy)
+}
+
 pub(crate) fn check_reserved_claim_policy(
     body: &ClaimBody,
     policy: &PolicyManifestResolution,
 ) -> Result<()> {
     check_claim_source_trust(body, policy)
+}
+
+pub(crate) fn validate_write_envelope(envelope: &WriteEnvelope) -> Result<()> {
+    if matches!(envelope.provenance().value(), &Value::Nil) {
+        return Err(Error::InvalidClaimBody("write envelope missing provenance"));
+    }
+
+    Ok(())
 }
 
 pub(crate) fn check_edge_provenance_claim_policy(
