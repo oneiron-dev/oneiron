@@ -538,7 +538,8 @@ impl<'a> PipelineBuilder<'a> {
         let started = Instant::now();
         let started_at = crate::unix_seconds_now();
         let telemetry_action = self.telemetry_action;
-        let telemetry_signals = self.telemetry_signals();
+        let mut telemetry_signals = self.telemetry_signals();
+        let mut ppr_expand_executed = false;
 
         // Resolve the rank profile before anything else: an invalid
         // profile is a caller bug and fails closed even when no text
@@ -723,6 +724,7 @@ impl<'a> PipelineBuilder<'a> {
                 }
 
                 if !seeds.is_empty() {
+                    ppr_expand_executed = true;
                     seeds.sort_unstable_by(|a, b| a.as_bytes().cmp(b.as_bytes()));
 
                     // expand_ppr seeds stay UNIFORM — ARCH-0039 Layer-2
@@ -882,6 +884,9 @@ impl<'a> PipelineBuilder<'a> {
         }
 
         let score_breakdown = telemetry_score_breakdown(&scores, &signal_components);
+        if self.ppr_search.is_none() && self.ppr_expand.is_some() && !ppr_expand_executed {
+            telemetry_signals.retain(|signal| *signal != RetrievalSignal::Ppr);
+        }
         let run_id = RetrievalRunId::now();
         let run_record = RetrievalRunRecord::new(
             run_id,
@@ -2539,6 +2544,35 @@ mod tests {
     }
 
     #[test]
+    fn direct_vault_zero_limit_telemetry_has_no_empty_reason() -> Result<()> {
+        let (_dir, vault) = open_test_vault();
+        let id = entity_id(0x37);
+        put_text_and_vector(&vault, id, "zero limit telemetry", [1.0, 0.0, 0.0, 0.0])?;
+
+        let text = vault.search_text_with_telemetry("zero limit", 0)?;
+        let vector = vault.search_vector_with_telemetry(&[1.0, 0.0, 0.0, 0.0], 0)?;
+        assert!(text.value.is_empty());
+        assert!(vector.value.is_empty());
+        let text_run_id = text.run_id.expect("text zero-limit telemetry run id");
+        let vector_run_id = vector.run_id.expect("vector zero-limit telemetry run id");
+
+        let runs = vault.retrieval_runs(10)?;
+        let text_run = runs
+            .iter()
+            .find(|run| run.run_id == text_run_id)
+            .expect("text zero-limit telemetry row");
+        let vector_run = runs
+            .iter()
+            .find(|run| run.run_id == vector_run_id)
+            .expect("vector zero-limit telemetry row");
+        assert!(text_run.result_ids.is_empty());
+        assert!(vector_run.result_ids.is_empty());
+        assert_eq!(text_run.empty_reason, None);
+        assert_eq!(vector_run.empty_reason, None);
+        Ok(())
+    }
+
+    #[test]
     fn retrieval_telemetry_records_no_hit_empty_reason() -> Result<()> {
         let (_dir, vault) = open_test_vault();
 
@@ -2558,11 +2592,42 @@ mod tests {
     }
 
     #[test]
+    fn retrieval_telemetry_omits_ppr_for_noop_expansion() -> Result<()> {
+        let (_dir, vault) = open_test_vault();
+        let dead = entity_id(0x3D);
+        put_status_claim(
+            &vault,
+            dead,
+            "noop ppr telemetry",
+            crate::claim::ClaimApprovalStatus::Auto,
+            crate::claim::ClaimLifecycleStatus::Retracted,
+            false,
+        )?;
+
+        let results = vault
+            .query()
+            .search_text("noop ppr telemetry", 10)
+            .expand_ppr(&[], 2)
+            .run_with_telemetry()?;
+        assert!(results.value.is_empty());
+        let run_id = results.run_id.expect("noop ppr telemetry run id");
+
+        let runs = vault.retrieval_runs(1)?;
+        assert_eq!(runs.len(), 1);
+        assert_eq!(runs[0].run_id, run_id);
+        assert_eq!(runs[0].signals, vec![RetrievalSignal::Text]);
+        assert!(!runs[0].signals.contains(&RetrievalSignal::Ppr));
+        assert_eq!(runs[0].claims_suppressed, 1);
+        assert_eq!(runs[0].empty_reason.as_deref(), Some("AllActivated"));
+        Ok(())
+    }
+
+    #[test]
     fn retrieval_runs_returns_bounded_newest_first() -> Result<()> {
         let (_dir, vault) = open_test_vault();
-        let first_id = entity_id(0x37);
-        let second_id = entity_id(0x38);
-        let third_id = entity_id(0x39);
+        let first_id = entity_id(0x38);
+        let second_id = entity_id(0x39);
+        let third_id = entity_id(0x3A);
 
         put_text(&vault, first_id, "alphaone")?;
         assert_eq!(vault.search_text("alphaone", 10)?.len(), 1);

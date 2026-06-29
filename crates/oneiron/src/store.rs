@@ -181,6 +181,7 @@ const STRUCTURAL_KIND_REGISTRY_RECORD_HEADER_LEN: usize = 6;
 const RETRIEVAL_TELEMETRY_VERSION: u8 = 0;
 const RETRIEVAL_RUN_KEY_PREFIX: &[u8] = b"retr_run:v0:";
 const RETRIEVAL_OUTCOME_KEY_PREFIX: &[u8] = b"retr_out:v0:";
+const RETRIEVAL_RUNS_CAPACITY_HINT_LIMIT: usize = 1024;
 const RETRIEVAL_OUTCOME_KEY_MAX_LEN: usize = 128;
 
 thread_local! {
@@ -1012,7 +1013,7 @@ impl Store {
             return Ok(Vec::new());
         }
         let rtxn = self.env.read_txn()?;
-        let mut records = Vec::with_capacity(limit);
+        let mut records = Vec::with_capacity(limit.min(RETRIEVAL_RUNS_CAPACITY_HINT_LIMIT));
         let upper = retrieval_run_upper_bound();
         for row in self.vault_meta.rev_range(
             &rtxn,

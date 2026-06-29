@@ -72,20 +72,35 @@ pub(crate) struct SerializedPackTelemetry {
 }
 
 pub fn serialize_pack(pack: &ContextPack, config: &SerializeConfig) -> Vec<u8> {
+    let prepared = prepare_pack(pack, config, config.format == PackFormat::Json);
+    serialize_prepared_pack(pack, config, prepared)
+}
+
+pub(crate) fn serialize_pack_with_telemetry(
+    pack: &ContextPack,
+    config: &SerializeConfig,
+) -> (Vec<u8>, SerializedPackTelemetry) {
+    let prepared = prepare_pack(pack, config, config.format == PackFormat::Json);
+    let telemetry = serialize_prepared_pack_telemetry(&prepared);
+    let bytes = serialize_prepared_pack(pack, config, prepared);
+    (bytes, telemetry)
+}
+
+fn serialize_prepared_pack(
+    pack: &ContextPack,
+    config: &SerializeConfig,
+    prepared: PreparedPack,
+) -> Vec<u8> {
     match config.format {
-        PackFormat::Json => serialize_json(pack, config),
-        PackFormat::Yaml => serialize_yaml(pack, config).into_bytes(),
-        PackFormat::Toon => serialize_toon(pack, config).into_bytes(),
-        PackFormat::Markdown => serialize_markdown(pack, config).into_bytes(),
-        PackFormat::Plaintext => serialize_plaintext(pack, config).into_bytes(),
+        PackFormat::Json => serialize_json(pack, config, prepared),
+        PackFormat::Yaml => serialize_yaml(config, prepared).into_bytes(),
+        PackFormat::Toon => serialize_toon(config, prepared).into_bytes(),
+        PackFormat::Markdown => serialize_markdown(config, prepared).into_bytes(),
+        PackFormat::Plaintext => serialize_plaintext(config, prepared).into_bytes(),
     }
 }
 
-pub(crate) fn serialize_pack_telemetry(
-    pack: &ContextPack,
-    config: &SerializeConfig,
-) -> SerializedPackTelemetry {
-    let prepared = prepare_pack(pack, config, config.format == PackFormat::Json);
+fn serialize_prepared_pack_telemetry(prepared: &PreparedPack) -> SerializedPackTelemetry {
     let result_ids = prepared
         .results
         .iter()
@@ -95,7 +110,7 @@ pub(crate) fn serialize_pack_telemetry(
         .collect();
     SerializedPackTelemetry {
         result_ids,
-        stats: prepared.stats,
+        stats: prepared.stats.clone(),
     }
 }
 
@@ -103,8 +118,7 @@ pub fn serialize_resume_bundle(bundle: &ResumeBundle) -> Vec<u8> {
     serde_json::to_vec(bundle).expect("ResumeBundle JSON serialization should not fail")
 }
 
-fn serialize_json(pack: &ContextPack, config: &SerializeConfig) -> Vec<u8> {
-    let prepared = prepare_pack(pack, config, true);
+fn serialize_json(pack: &ContextPack, config: &SerializeConfig, prepared: PreparedPack) -> Vec<u8> {
     let stats = prepared.stats.clone();
     let mut root = Map::new();
 
@@ -141,9 +155,7 @@ fn serialize_json(pack: &ContextPack, config: &SerializeConfig) -> Vec<u8> {
     serde_json::to_vec(&Value::Object(root)).unwrap_or_else(|_| b"{}".to_vec())
 }
 
-fn serialize_toon(pack: &ContextPack, config: &SerializeConfig) -> String {
-    let prepared = prepare_pack(pack, config, false);
-
+fn serialize_toon(config: &SerializeConfig, prepared: PreparedPack) -> String {
     let mut out = String::new();
     if prepared.merged {
         out.push_str(&encode_toon_section(&prepared.results));
@@ -170,8 +182,7 @@ fn serialize_toon(pack: &ContextPack, config: &SerializeConfig) -> String {
     out
 }
 
-fn serialize_markdown(pack: &ContextPack, config: &SerializeConfig) -> String {
-    let prepared = prepare_pack(pack, config, false);
+fn serialize_markdown(config: &SerializeConfig, prepared: PreparedPack) -> String {
     let mut out = String::new();
 
     write_markdown_groups(&mut out, &prepared.results, "##");
@@ -190,8 +201,7 @@ fn serialize_markdown(pack: &ContextPack, config: &SerializeConfig) -> String {
     out
 }
 
-fn serialize_plaintext(pack: &ContextPack, config: &SerializeConfig) -> String {
-    let prepared = prepare_pack(pack, config, false);
+fn serialize_plaintext(config: &SerializeConfig, prepared: PreparedPack) -> String {
     let mut out = String::new();
 
     write_plaintext_groups(&mut out, &prepared.results);
@@ -210,8 +220,7 @@ fn serialize_plaintext(pack: &ContextPack, config: &SerializeConfig) -> String {
     out
 }
 
-fn serialize_yaml(pack: &ContextPack, config: &SerializeConfig) -> String {
-    let prepared = prepare_pack(pack, config, false);
+fn serialize_yaml(config: &SerializeConfig, prepared: PreparedPack) -> String {
     let mut out = String::new();
 
     if prepared.merged {
