@@ -22,6 +22,7 @@
 //!   + `ra:` tombstone re-assertion markers (ONE-1156)
 //! - `lease` — device-lease registry + receipt origin attestation (ONE-1140)
 //! - `selector` — grant-backed closed-subgraph window export selectors
+//! - `quota` — per-federated-connection quota and pause decisions
 //! - `server_state` — server-side sync_state persistence (Observer-A-equivalent)
 
 pub mod bridge;
@@ -34,6 +35,7 @@ pub(crate) mod loro_support;
 pub mod manager;
 pub mod quarantine;
 pub mod queue;
+pub mod quota;
 pub mod schema;
 pub mod selector;
 pub mod server_state;
@@ -59,6 +61,11 @@ pub use quarantine::{
     sync_doctor,
 };
 pub use queue::{QueuedEmbedJob, QueuedUpdate, SyncQueue};
+pub use quota::{
+    AllowBlock, DEFAULT_FEDERATION_FLOOD_PAUSE_SECS, DEFAULT_MAX_FEDERATION_WINDOWS_PER_CONNECTION,
+    FederationBlockReason, FederationConnectionQuota, FederationPauseReason, FederationQuotaConfig,
+    FederationQuotaSnapshot,
+};
 #[cfg(feature = "test-hooks")]
 pub use selector::put_selector_test_federation_grant;
 pub use selector::{
