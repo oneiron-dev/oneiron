@@ -4,7 +4,8 @@ use heed::{RoTxn, RwTxn};
 use rmpv::Value;
 
 use crate::Vault;
-use crate::batch::EntityMetadataHeader;
+use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
+use crate::code_artifact::decode_code_artifact_body;
 use crate::error::{Error, Result};
 use crate::limits::{
     ERR_CHILD_OF_CYCLE_CHECK, MAX_ANCESTOR_DEPTH, MAX_CHILD_OF_CYCLE_TRAVERSAL_STEPS,
@@ -284,7 +285,13 @@ impl Vault {
             ENTITY_TYPE_SESSION,
             "parent_session_id must be a SESSION entity",
         )?;
-        require_known_code_revision(&self.store, &wtxn, &fork.base_revision_id)?;
+        let base_revision =
+            require_known_code_revision(&self.store, &wtxn, &fork.base_revision_id)?;
+        require_revision_session(
+            &base_revision,
+            fork.parent_session_id,
+            "base_revision_id must belong to parent_session_id",
+        )?;
         let key = code_revision_fork_key(&fork.fork_session_id);
         if self.store.vault_meta.get(&wtxn, &key)?.is_some() {
             return Err(Error::InvalidCodeArtifactBody(
@@ -383,6 +390,9 @@ pub(crate) fn delete_code_revision_lifecycle_in_txn(
 ) -> Result<()> {
     delete_code_revision_record_in_txn(store, wtxn, id)?;
     delete_code_revision_fork_in_txn(store, wtxn, id)?;
+    delete_index_rows_with_prefix(store, wtxn, &code_revision_session_index_prefix(id))?;
+    delete_index_rows_with_prefix(store, wtxn, &code_revision_parent_index_prefix(id))?;
+    delete_index_rows_with_prefix(store, wtxn, &code_revision_fork_parent_index_prefix(id))?;
     Ok(())
 }
 
@@ -401,13 +411,7 @@ fn write_code_revision(store: &Store, revision: &CodeRevision) -> Result<()> {
     validate_code_revision_shape(revision)?;
     let encoded = encode_code_revision(revision)?;
     let mut wtxn = store.env.write_txn()?;
-    require_entity_type(
-        store,
-        &wtxn,
-        &revision.revision_id,
-        ENTITY_TYPE_CODE_ARTIFACT,
-        "revision_id must be a CODE_ARTIFACT entity",
-    )?;
+    require_code_artifact_body(store, &wtxn, &revision.revision_id)?;
     require_entity_type(
         store,
         &wtxn,
@@ -415,11 +419,27 @@ fn write_code_revision(store: &Store, revision: &CodeRevision) -> Result<()> {
         ENTITY_TYPE_SESSION,
         "session_id must be a SESSION entity",
     )?;
-    if let Some(parent_id) = revision.parent_revision_id {
-        require_known_code_revision(store, &wtxn, &parent_id)?;
+    let parent_revision = revision
+        .parent_revision_id
+        .map(|parent_id| require_known_code_revision(store, &wtxn, &parent_id))
+        .transpose()?;
+    let reverted_to_revision = revision
+        .reverted_to_revision_id
+        .map(|reverted_to_id| require_known_code_revision(store, &wtxn, &reverted_to_id))
+        .transpose()?;
+    if let Some(parent_revision) = &parent_revision {
+        require_revision_session(
+            parent_revision,
+            revision.session_id,
+            "parent_revision_id must belong to session_id",
+        )?;
     }
-    if let Some(reverted_to_id) = revision.reverted_to_revision_id {
-        require_known_code_revision(store, &wtxn, &reverted_to_id)?;
+    if let Some(reverted_to_revision) = &reverted_to_revision {
+        require_revision_session(
+            reverted_to_revision,
+            revision.session_id,
+            "reverted_to_revision_id must belong to session_id",
+        )?;
     }
     if let (Some(parent_id), Some(reverted_to_id)) = (
         revision.parent_revision_id,
@@ -704,6 +724,38 @@ fn require_known_code_revision(
     get_code_revision_in_txn(store, rtxn, revision_id)?.ok_or(Error::InvalidCodeArtifactBody(
         "code revision must be finalized before it can be referenced",
     ))
+}
+
+fn require_code_artifact_body(
+    store: &Store,
+    rtxn: &RoTxn<'_>,
+    revision_id: &EntityId,
+) -> Result<()> {
+    let Some(raw) = store.entities.get(rtxn, revision_id.as_bytes())? else {
+        return Err(Error::EntityNotFound);
+    };
+    let header = EntityMetadataHeader::parse(raw).ok_or(Error::CorruptedIndex("entity header"))?;
+    if header.entity_type != ENTITY_TYPE_CODE_ARTIFACT {
+        return Err(Error::InvalidCodeArtifactBody(
+            "revision_id must be a CODE_ARTIFACT entity",
+        ));
+    }
+    decode_code_artifact_body(
+        raw.get(ENTITY_METADATA_HEADER_LEN..)
+            .ok_or(Error::CorruptedIndex("entity header"))?,
+    )?;
+    Ok(())
+}
+
+fn require_revision_session(
+    revision: &CodeRevision,
+    session_id: EntityId,
+    context: &'static str,
+) -> Result<()> {
+    if revision.session_id != session_id {
+        return Err(Error::InvalidCodeArtifactBody(context));
+    }
+    Ok(())
 }
 
 fn require_code_revision_ancestor(
@@ -1004,6 +1056,18 @@ fn delete_index_rows_for_id(
     Ok(())
 }
 
+fn delete_index_rows_with_prefix(store: &Store, wtxn: &mut RwTxn<'_>, prefix: &[u8]) -> Result<()> {
+    let mut keys = Vec::new();
+    for entry in store.vault_meta.prefix_iter(wtxn, prefix)? {
+        let (key, _) = entry?;
+        keys.push(key.to_vec());
+    }
+    for key in keys {
+        store.vault_meta.delete(wtxn, &key)?;
+    }
+    Ok(())
+}
+
 fn encode_value(value: &Value, context: &'static str) -> Result<Vec<u8>> {
     let mut out = Vec::new();
     rmpv::encode::write_value(&mut out, value).map_err(|_| Error::InvariantViolation(context))?;
@@ -1197,6 +1261,20 @@ mod tests {
         )
     }
 
+    fn replace_entity_with_header_shell(vault: &Vault, id: &EntityId) -> Result<()> {
+        let mut wtxn = vault.store.env.write_txn()?;
+        let raw = vault
+            .store
+            .entities
+            .get(&wtxn, id.as_bytes())?
+            .ok_or(Error::EntityNotFound)?
+            .to_vec();
+        let shell = raw[..ENTITY_METADATA_HEADER_LEN].to_vec();
+        vault.store.entities.put(&mut wtxn, id.as_bytes(), &shell)?;
+        wtxn.commit()?;
+        Ok(())
+    }
+
     #[test]
     fn code_revision_codec_round_trips_commit_revert_and_fork() -> Result<()> {
         let session = entity(0x11);
@@ -1282,6 +1360,47 @@ mod tests {
         assert!(parents.contains(&parent_session));
         let base = vault.targets(&fork_session, EdgeKind::DerivedFrom, None)?;
         assert!(base.contains(&base_revision));
+        Ok(())
+    }
+
+    #[test]
+    fn code_revision_branch_rejects_base_revision_from_unrelated_session() -> Result<()> {
+        let (_dir, vault) = crate::test_util::open_test_vault_with(test_config());
+        let parent_session = entity(0x11);
+        let fork_session = entity(0x12);
+        let other_session = entity(0x13);
+        let base_revision = entity(0x21);
+        put_session(&vault, parent_session, 10)?;
+        put_session(&vault, fork_session, 11)?;
+        put_session(&vault, other_session, 12)?;
+        put_artifact(&vault, base_revision, 0xA1, 20)?;
+        vault.commit_code_revision(&CodeRevision::commit(base_revision, other_session, 100))?;
+
+        let err = vault
+            .branch_code_revision(&CodeRevisionFork::new(
+                fork_session,
+                parent_session,
+                base_revision,
+                150,
+            ))
+            .expect_err("fork base revision must belong to the declared parent session");
+
+        assert_eq!(err.kind(), ErrorKind::InvalidCodeArtifactBody);
+        assert!(
+            err.to_string()
+                .contains("base_revision_id must belong to parent_session_id")
+        );
+        assert!(vault.get_code_revision_fork(&fork_session)?.is_none());
+        assert!(
+            vault
+                .code_revision_forks_from_session(&parent_session)?
+                .is_empty()
+        );
+        assert!(
+            vault
+                .targets(&fork_session, EdgeKind::ChildOf, None)?
+                .is_empty()
+        );
         Ok(())
     }
 
@@ -1394,6 +1513,90 @@ mod tests {
     }
 
     #[test]
+    fn code_revision_batch_delete_session_removes_reverse_indexes() -> Result<()> {
+        let (_dir, vault) = crate::test_util::open_test_vault_with(test_config());
+        let parent_session = entity(0x11);
+        let fork_session = entity(0x12);
+        let revision_id = entity(0x21);
+        put_session(&vault, parent_session, 10)?;
+        put_session(&vault, fork_session, 11)?;
+        put_artifact(&vault, revision_id, 0xA1, 20)?;
+
+        let revision = CodeRevision::commit(revision_id, parent_session, 100);
+        let fork = CodeRevisionFork::new(fork_session, parent_session, revision_id, 150);
+        vault.commit_code_revision(&revision)?;
+        vault.branch_code_revision(&fork)?;
+        vault.batch().delete(&parent_session).commit()?;
+
+        assert!(
+            vault
+                .code_revisions_for_session(&parent_session)?
+                .is_empty()
+        );
+        assert!(
+            vault
+                .code_revision_forks_from_session(&parent_session)?
+                .is_empty()
+        );
+        assert_eq!(vault.get_code_revision(&revision_id)?, Some(revision));
+        assert_eq!(vault.get_code_revision_fork(&fork_session)?, Some(fork));
+
+        let rtxn = vault.store.env.read_txn()?;
+        assert!(
+            vault
+                .store
+                .vault_meta
+                .get(
+                    &rtxn,
+                    &code_revision_session_index_key(&parent_session, &revision_id)
+                )?
+                .is_none()
+        );
+        assert!(
+            vault
+                .store
+                .vault_meta
+                .get(
+                    &rtxn,
+                    &code_revision_fork_parent_index_key(&parent_session, &fork_session)
+                )?
+                .is_none()
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn code_revision_batch_delete_parent_removes_child_index_rows() -> Result<()> {
+        let (_dir, vault) = crate::test_util::open_test_vault_with(test_config());
+        let session = entity(0x11);
+        let parent = entity(0x21);
+        let child = entity(0x22);
+        put_session(&vault, session, 10)?;
+        put_artifact(&vault, parent, 0xA1, 20)?;
+        put_artifact(&vault, child, 0xA2, 30)?;
+
+        let parent_revision = CodeRevision::commit(parent, session, 100);
+        let child_revision = CodeRevision::commit_child(child, session, parent, 200);
+        vault.commit_code_revision(&parent_revision)?;
+        vault.commit_code_revision(&child_revision)?;
+        vault.batch().delete(&parent).commit()?;
+
+        assert!(vault.get_code_revision(&parent)?.is_none());
+        assert_eq!(vault.get_code_revision(&child)?, Some(child_revision));
+        assert!(vault.child_code_revisions(&parent)?.is_empty());
+
+        let rtxn = vault.store.env.read_txn()?;
+        assert!(
+            vault
+                .store
+                .vault_meta
+                .get(&rtxn, &code_revision_parent_index_key(&parent, &child))?
+                .is_none()
+        );
+        Ok(())
+    }
+
+    #[test]
     fn code_revision_finalized_artifact_rejects_body_mutation() -> Result<()> {
         let (_dir, vault) = crate::test_util::open_test_vault_with(test_config());
         let session = entity(0x11);
@@ -1423,6 +1626,24 @@ mod tests {
     }
 
     #[test]
+    fn code_revision_finalization_rejects_header_only_artifact_shell() -> Result<()> {
+        let (_dir, vault) = crate::test_util::open_test_vault_with(test_config());
+        let session = entity(0x11);
+        let revision_id = entity(0x21);
+        put_session(&vault, session, 10)?;
+        put_artifact(&vault, revision_id, 0xA1, 20)?;
+        replace_entity_with_header_shell(&vault, &revision_id)?;
+
+        let err = vault
+            .commit_code_revision(&CodeRevision::commit(revision_id, session, 100))
+            .expect_err("header-only CODE_ARTIFACT shells must not be finalized");
+
+        assert_eq!(err.kind(), ErrorKind::InvalidCodeArtifactBody);
+        assert!(vault.get_code_revision(&revision_id)?.is_none());
+        Ok(())
+    }
+
+    #[test]
     fn code_revision_revert_rejects_unrelated_restored_revision() -> Result<()> {
         let (_dir, vault) = crate::test_util::open_test_vault_with(test_config());
         let session = entity(0x11);
@@ -1447,6 +1668,76 @@ mod tests {
             .expect_err("revert target must be an ancestor of the current revision");
 
         assert_eq!(err.kind(), ErrorKind::InvalidCodeArtifactBody);
+        assert!(vault.get_code_revision(&reverted)?.is_none());
+        assert!(
+            vault
+                .targets(&reverted, EdgeKind::Supersedes, None)?
+                .is_empty()
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn code_revision_rejects_parent_revision_from_different_session() -> Result<()> {
+        let (_dir, vault) = crate::test_util::open_test_vault_with(test_config());
+        let session = entity(0x11);
+        let other_session = entity(0x12);
+        let parent = entity(0x21);
+        let child = entity(0x22);
+        put_session(&vault, session, 10)?;
+        put_session(&vault, other_session, 11)?;
+        put_artifact(&vault, parent, 0xA1, 20)?;
+        put_artifact(&vault, child, 0xA2, 30)?;
+        vault.commit_code_revision(&CodeRevision::commit(parent, other_session, 100))?;
+
+        let err = vault
+            .commit_code_revision(&CodeRevision::commit_child(child, session, parent, 200))
+            .expect_err("parent revision must belong to the new revision session");
+
+        assert_eq!(err.kind(), ErrorKind::InvalidCodeArtifactBody);
+        assert!(
+            err.to_string()
+                .contains("parent_revision_id must belong to session_id")
+        );
+        assert!(vault.get_code_revision(&child)?.is_none());
+        assert!(
+            vault
+                .targets(&child, EdgeKind::Supersedes, None)?
+                .is_empty()
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn code_revision_rejects_restored_revision_from_different_session() -> Result<()> {
+        let (_dir, vault) = crate::test_util::open_test_vault_with(test_config());
+        let session = entity(0x11);
+        let other_session = entity(0x12);
+        let original = entity(0x21);
+        let current = entity(0x22);
+        let restored = entity(0x23);
+        let reverted = entity(0x24);
+        put_session(&vault, session, 10)?;
+        put_session(&vault, other_session, 11)?;
+        put_artifact(&vault, original, 0xA1, 20)?;
+        put_artifact(&vault, current, 0xA2, 30)?;
+        put_artifact(&vault, restored, 0xA3, 40)?;
+        put_artifact(&vault, reverted, 0xA4, 50)?;
+        vault.commit_code_revision(&CodeRevision::commit(original, session, 100))?;
+        vault.commit_code_revision(&CodeRevision::commit_child(current, session, original, 200))?;
+        vault.commit_code_revision(&CodeRevision::commit(restored, other_session, 300))?;
+
+        let err = vault
+            .revert_code_revision(&CodeRevision::revert(
+                reverted, session, current, restored, 400,
+            ))
+            .expect_err("restored revision must belong to the new revision session");
+
+        assert_eq!(err.kind(), ErrorKind::InvalidCodeArtifactBody);
+        assert!(
+            err.to_string()
+                .contains("reverted_to_revision_id must belong to session_id")
+        );
         assert!(vault.get_code_revision(&reverted)?.is_none());
         assert!(
             vault
