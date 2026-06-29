@@ -3,6 +3,7 @@
 //! edge-record helpers used exclusively by Vault methods.
 
 use std::path::Path;
+use std::time::Instant;
 
 use heed::Database;
 use heed::types::Bytes;
@@ -40,10 +41,12 @@ use crate::provenance::{
     validate_model_substrate_field, winner_index,
 };
 use crate::store::{
-    DB_MANIFEST, HnswCompatibilityState, MODEL_ID_KEY, RetrievalOutcome, RetrievalOutcomeRecord,
-    RetrievalRunId, RetrievalRunRecord, STORAGE_ABI_VERSION_KEY, STORAGE_SCHEMA_VERSION_KEY, Store,
-    TEXT_ANALYZER_MANIFEST_HASH_KEY, TEXT_ANALYZER_MANIFEST_KEY, TEXT_BM25_FIELD_SCHEMA_HASH_KEY,
-    TEXT_INDEX_SCHEMA_VERSION, TEXT_INDEX_SCHEMA_VERSION_KEY, lmdb_database_open_guard,
+    DB_MANIFEST, HnswCompatibilityState, MODEL_ID_KEY, RetrievalAction, RetrievalOutcome,
+    RetrievalOutcomeRecord, RetrievalRunId, RetrievalRunRecord, RetrievalScoreBreakdown,
+    RetrievalScoreComponent, RetrievalSignal, STORAGE_ABI_VERSION_KEY, STORAGE_SCHEMA_VERSION_KEY,
+    Store, TEXT_ANALYZER_MANIFEST_HASH_KEY, TEXT_ANALYZER_MANIFEST_KEY,
+    TEXT_BM25_FIELD_SCHEMA_HASH_KEY, TEXT_INDEX_SCHEMA_VERSION, TEXT_INDEX_SCHEMA_VERSION_KEY,
+    lmdb_database_open_guard,
 };
 use crate::types::{
     EDGE_KEY_LEN, ENTITY_ID_LEN, ENTITY_TYPE_CLAIM, ENTITY_TYPE_MESSAGE, ENTITY_TYPE_MODEL,
@@ -2982,8 +2985,19 @@ impl Vault {
             return Err(error);
         }
 
-        let rtxn = self.store.env.read_txn()?;
-        hnsw::hnsw_search(&self.store, &self.config, &rtxn, query, limit)
+        let started_at = unix_seconds_now();
+        let started = Instant::now();
+        let results = {
+            let rtxn = self.store.env.read_txn()?;
+            hnsw::hnsw_search(&self.store, &self.config, &rtxn, query, limit)?
+        };
+        self.record_vault_search_retrieval_run(
+            RetrievalSignal::Vector,
+            started_at,
+            started,
+            &results,
+        );
+        Ok(results)
     }
 
     /// Stores a directed edge and its reverse index entry.
@@ -3143,8 +3157,46 @@ impl Vault {
     ) -> Result<Vec<ScoredEntity>> {
         let config = profile.to_bm25_config()?;
         self.ensure_text_index_trusted()?;
-        let rtxn = self.store.env.read_txn()?;
-        bm25::search_text(&self.store, &rtxn, &self.analyzer, &config, query, limit)
+        let started_at = unix_seconds_now();
+        let started = Instant::now();
+        let results = {
+            let rtxn = self.store.env.read_txn()?;
+            bm25::search_text(&self.store, &rtxn, &self.analyzer, &config, query, limit)?
+        };
+        self.record_vault_search_retrieval_run(
+            RetrievalSignal::Text,
+            started_at,
+            started,
+            &results,
+        );
+        Ok(results)
+    }
+
+    fn record_vault_search_retrieval_run(
+        &self,
+        signal: RetrievalSignal,
+        started_at: u64,
+        started: Instant,
+        results: &[ScoredEntity],
+    ) {
+        let score_breakdown = vault_search_score_breakdown(signal, results);
+        let record = RetrievalRunRecord::new(
+            RetrievalRunId::now(),
+            RetrievalAction::VaultSearch,
+            started_at,
+            started.elapsed().as_micros().min(u64::MAX as u128) as u64,
+            vec![signal],
+            score_breakdown,
+            results.len(),
+            0,
+            results.is_empty().then(|| "NoData".to_owned()),
+        );
+        if let Err(error) = self.store.record_retrieval_run(&record) {
+            tracing::warn!(
+                ?error,
+                "vault search retrieval telemetry write failed; continuing retrieval"
+            );
+        }
     }
 
     /// Creates a new write batch builder bound to this vault.
@@ -3907,6 +3959,29 @@ fn scan_edges(
         edges.push(parse_edge_record(key, value)?);
     }
     Ok(edges)
+}
+
+fn vault_search_score_breakdown(
+    signal: RetrievalSignal,
+    results: &[ScoredEntity],
+) -> Vec<RetrievalScoreBreakdown> {
+    results
+        .iter()
+        .enumerate()
+        .map(|(index, result)| {
+            let rank = u32::try_from(index.saturating_add(1)).unwrap_or(u32::MAX);
+            RetrievalScoreBreakdown {
+                result_id: *result.id.as_bytes(),
+                final_rank: rank,
+                final_score: result.score,
+                components: vec![RetrievalScoreComponent {
+                    signal,
+                    rank,
+                    score: result.score,
+                }],
+            }
+        })
+        .collect()
 }
 
 /// Snapshot of a vault's text-index state. Returned from

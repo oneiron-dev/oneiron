@@ -211,6 +211,7 @@ impl RetrievalRunId {
 pub enum RetrievalAction {
     Pipeline,
     ContextPack,
+    VaultSearch,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -872,6 +873,13 @@ impl Store {
     }
 
     pub(crate) fn record_retrieval_run(&self, record: &RetrievalRunRecord) -> Result<()> {
+        #[cfg(test)]
+        if test_hooks::take_fail_next_retrieval_run_write(&self._registered_path.path) {
+            return Err(Error::InvariantViolation(
+                "forced retrieval telemetry write failure",
+            ));
+        }
+
         let key = retrieval_run_key(record.run_id);
         let value = encode_retrieval_run(record)?;
         let mut wtxn = self.env.write_txn()?;
@@ -880,10 +888,12 @@ impl Store {
         Ok(())
     }
 
-    pub(crate) fn update_retrieval_run_elapsed(
+    pub(crate) fn finalize_context_pack_retrieval_run(
         &self,
         run_id: RetrievalRunId,
         elapsed_us: u64,
+        claims_suppressed: usize,
+        surfaced_result_ids: &[[u8; 16]],
     ) -> Result<()> {
         let key = retrieval_run_key(run_id);
         let mut wtxn = self.env.write_txn()?;
@@ -892,6 +902,19 @@ impl Store {
         };
         let mut record = decode_retrieval_run(raw)?;
         record.elapsed_us = elapsed_us;
+        record.claims_suppressed = claims_suppressed;
+        record.result_ids = surfaced_result_ids.to_vec();
+        let mut surfaced_breakdown = Vec::with_capacity(surfaced_result_ids.len());
+        for result_id in surfaced_result_ids {
+            if let Some(entry) = record
+                .score_breakdown
+                .iter()
+                .find(|entry| entry.result_id == *result_id)
+            {
+                surfaced_breakdown.push(entry.clone());
+            }
+        }
+        record.score_breakdown = surfaced_breakdown;
         let value = encode_retrieval_run(&record)?;
         self.vault_meta.put(&mut wtxn, &key, &value)?;
         wtxn.commit()?;
@@ -918,18 +941,28 @@ impl Store {
     }
 
     pub fn retrieval_runs(&self, limit: usize) -> Result<Vec<RetrievalRunRecord>> {
-        let rtxn = self.env.read_txn()?;
-        let mut records = Vec::new();
-        for row in self
-            .vault_meta
-            .prefix_iter(&rtxn, RETRIEVAL_RUN_KEY_PREFIX)?
-        {
-            let (_, value) = row?;
-            records.push(decode_retrieval_run(value)?);
+        if limit == 0 {
+            return Ok(Vec::new());
         }
-        records.sort_by_key(|record| record.run_id.as_bytes());
-        records.reverse();
-        records.truncate(limit);
+        let rtxn = self.env.read_txn()?;
+        let mut records = Vec::with_capacity(limit);
+        let upper = retrieval_run_upper_bound();
+        for row in self.vault_meta.rev_range(
+            &rtxn,
+            &(
+                std::ops::Bound::Included(RETRIEVAL_RUN_KEY_PREFIX),
+                std::ops::Bound::Excluded(upper.as_slice()),
+            ),
+        )? {
+            let (key, value) = row?;
+            if !key.starts_with(RETRIEVAL_RUN_KEY_PREFIX) {
+                break;
+            }
+            records.push(decode_retrieval_run(value)?);
+            if records.len() == limit {
+                break;
+            }
+        }
         Ok(records)
     }
 
@@ -953,6 +986,14 @@ fn retrieval_run_key(run_id: RetrievalRunId) -> Vec<u8> {
     let mut key = Vec::with_capacity(RETRIEVAL_RUN_KEY_PREFIX.len() + 16);
     key.extend_from_slice(RETRIEVAL_RUN_KEY_PREFIX);
     key.extend_from_slice(&run_id.as_bytes());
+    key
+}
+
+fn retrieval_run_upper_bound() -> Vec<u8> {
+    let mut key = Vec::with_capacity(RETRIEVAL_RUN_KEY_PREFIX.len());
+    key.extend_from_slice(RETRIEVAL_RUN_KEY_PREFIX);
+    *key.last_mut()
+        .expect("retrieval run key prefix must be non-empty") += 1;
     key
 }
 
@@ -2119,6 +2160,8 @@ pub(crate) mod test_hooks {
 
     static AFTER_LMDB_OPEN: LazyLock<Mutex<Option<TargetedAfterLmdbOpenHook>>> =
         LazyLock::new(|| Mutex::new(None));
+    static FAIL_NEXT_RETRIEVAL_RUN_WRITE: LazyLock<Mutex<Option<PathBuf>>> =
+        LazyLock::new(|| Mutex::new(None));
 
     pub(crate) fn arm_after_lmdb_open(path: PathBuf, hook: impl FnOnce(&Path) + Send + 'static) {
         *AFTER_LMDB_OPEN
@@ -2142,6 +2185,24 @@ pub(crate) mod test_hooks {
         };
         if let Some(hook) = hook {
             hook(path);
+        }
+    }
+
+    pub(crate) fn fail_next_retrieval_run_write_for(path: PathBuf) {
+        *FAIL_NEXT_RETRIEVAL_RUN_WRITE
+            .lock()
+            .expect("retrieval telemetry test hook mutex poisoned") = Some(path);
+    }
+
+    pub(crate) fn take_fail_next_retrieval_run_write(path: &Path) -> bool {
+        let mut armed = FAIL_NEXT_RETRIEVAL_RUN_WRITE
+            .lock()
+            .expect("retrieval telemetry test hook mutex poisoned");
+        if armed.as_ref().is_some_and(|armed_path| armed_path == path) {
+            armed.take();
+            true
+        } else {
+            false
         }
     }
 }
