@@ -1,6 +1,7 @@
 use std::collections::{BTreeMap, HashMap};
 use std::path::PathBuf;
 
+use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 pub(crate) const ENTITY_ID_LEN: usize = 16;
@@ -1152,7 +1153,7 @@ pub struct EdgeInfo {
     pub provenance: Option<EdgeProvenanceFlags>,
 }
 
-#[derive(Debug, Clone, Copy, Default, PartialEq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
 pub struct Vad {
     pub valence: f32,
     pub arousal: f32,
@@ -1181,6 +1182,13 @@ impl Vad {
 
     pub fn is_in_range(&self) -> bool {
         self.out_of_range_component().is_none()
+    }
+
+    pub fn validate(&self) -> crate::error::Result<()> {
+        if let Some((component, value)) = self.invalid_component() {
+            return Err(crate::error::Error::InvalidVad { component, value });
+        }
+        Ok(())
     }
 
     pub(crate) fn invalid_component(&self) -> Option<(VadComponent, f32)> {
@@ -1212,6 +1220,46 @@ impl Vad {
             return Some((VadComponent::Dominance, self.dominance));
         }
         None
+    }
+}
+
+/// Source that produced a turn/message VAD annotation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum VadAnnotationSource {
+    ModelInference,
+    UserSelfReport,
+}
+
+impl VadAnnotationSource {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::ModelInference => "model_inference",
+            Self::UserSelfReport => "user_self_report",
+        }
+    }
+}
+
+/// Persisted VAD metadata attached to a TURN or MESSAGE entity.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct VadAnnotation {
+    pub vad: Vad,
+    pub source: VadAnnotationSource,
+    pub annotated_at: u64,
+}
+
+impl VadAnnotation {
+    pub fn new(
+        vad: Vad,
+        source: VadAnnotationSource,
+        annotated_at: u64,
+    ) -> crate::error::Result<Self> {
+        vad.validate()?;
+        Ok(Self {
+            vad,
+            source,
+            annotated_at,
+        })
     }
 }
 

@@ -20,6 +20,7 @@ const EXPECTED_REGISTERED_ROUTES: &[&str] = &[
     "/api/context-pack",
     "/api/companion/resume",
     "/api/lease/revoke",
+    "/v1/core/turns/annotate",
 ];
 
 #[test]
@@ -253,7 +254,7 @@ fn documented_api_literal_counts(markdown: &str) -> BTreeMap<&str, usize> {
     let mut counts = BTreeMap::new();
     let mut cursor = markdown;
 
-    while let Some(start) = cursor.find("/api/") {
+    while let Some(start) = next_route_literal_start(cursor) {
         let route_start = &cursor[start..];
         let route_len = route_start
             .char_indices()
@@ -269,6 +270,13 @@ fn documented_api_literal_counts(markdown: &str) -> BTreeMap<&str, usize> {
     }
 
     counts
+}
+
+fn next_route_literal_start(markdown: &str) -> Option<usize> {
+    [markdown.find("/api/"), markdown.find("/v1/")]
+        .into_iter()
+        .flatten()
+        .min()
 }
 
 fn section_between<'a>(text: &'a str, start_heading: &str, end_heading: &str) -> &'a str {

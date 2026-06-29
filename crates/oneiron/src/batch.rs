@@ -1030,9 +1030,9 @@ pub(crate) fn deindex_entity(
     // entity record (e.g. text indexed via batch().text() without a preceding put()).
     crate::bm25::deindex_text(store, wtxn, id)?;
     delete_from_phonetic_postings(store, wtxn, id)?;
-    let had_vector = store.vectors.delete(wtxn, id.as_bytes())?;
+    let mut had_vector = store.vectors.delete(wtxn, id.as_bytes())?;
     crate::hnsw::hnsw_deindex(store, wtxn, id)?;
-    let neighbors = delete_related_edges(store, wtxn, id)?;
+    let mut neighbors = delete_related_edges(store, wtxn, id)?;
     let mut had_graph_mutation = !neighbors.is_empty();
 
     let forward_key = store
@@ -1047,11 +1047,31 @@ pub(crate) fn deindex_entity(
     }
 
     let Some(entity_record) = store.entities.get(wtxn, id.as_bytes())? else {
+        let cleanup = crate::vault::delete_vad_annotation_metadata_in_txn(store, wtxn, id)?;
+        had_vector |= cleanup.had_vector;
+        had_graph_mutation |= cleanup.had_graph_mutation;
+        neighbors.extend(cleanup.neighbors);
+        neighbors.sort_unstable();
+        neighbors.dedup();
         return Ok((false, had_vector, had_graph_mutation, neighbors));
     };
     had_graph_mutation = true;
 
     let (entity_type, occurred, learned_at) = parse_entity_metadata(entity_record)?;
+    let mut cleanup = crate::vault::VadAnnotationCleanup::default();
+    crate::vault::delete_vad_annotation_metadata_for_type_in_txn(
+        store,
+        wtxn,
+        id,
+        entity_type,
+        &mut cleanup,
+    )?;
+    had_vector |= cleanup.had_vector;
+    had_graph_mutation |= cleanup.had_graph_mutation;
+    neighbors.extend(cleanup.neighbors);
+    neighbors.sort_unstable();
+    neighbors.dedup();
+
     let type_key = Store::encode_type_key(entity_type, id);
     store.type_index.delete(wtxn, &type_key)?;
 
