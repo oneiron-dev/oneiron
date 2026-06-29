@@ -6738,6 +6738,110 @@ fn soft_delete_removes_message_vad_annotation_claim_and_edges() -> Result<()> {
 }
 
 #[test]
+fn soft_deleted_vad_claim_shell_is_absent_for_reads_cleanup_and_reannotation() -> Result<()> {
+    let (_delete_dir, delete_vault) = open_test_vault();
+    let turn = EntityId::now();
+    let turn_body = rmp_serde::to_vec_named(&serde_json::json!({
+        "txt": "turn claim shell",
+        "spkr": "user",
+        "at": 133_u64,
+    }))
+    .expect("encode turn body");
+    delete_vault.put_entity(
+        &turn,
+        ENTITY_TYPE_TURN,
+        test_time_range(133, 133),
+        133,
+        &turn_body,
+    )?;
+    let annotation = VadAnnotation::new(
+        Vad {
+            valence: 0.45,
+            arousal: 0.55,
+            dominance: 0.65,
+        },
+        VadAnnotationSource::ModelInference,
+        234,
+    )?;
+    delete_vault.annotate_turn_vad(&turn, annotation)?;
+    let turn_claim = vad_annotation_claim_id(ENTITY_TYPE_TURN, &turn)?;
+
+    let claim_delete =
+        delete_vault.delete_entity_with_reason(&turn_claim, DeleteReason::UserDelete)?;
+
+    assert!(claim_delete.existed);
+    assert_eq!(
+        delete_vault.get_raw(&turn_claim)?.as_ref().map(Vec::len),
+        Some(ENTITY_METADATA_HEADER_LEN),
+        "soft-deleting the derived VAD claim must leave a header-only shell"
+    );
+    assert_eq!(delete_vault.get_turn_vad_annotation(&turn)?, None);
+    let turn_delete =
+        delete_vault.delete_entity_with_reason(&turn, DeleteReason::UserHardDelete)?;
+    assert!(turn_delete.existed);
+    assert_eq!(delete_vault.get_turn_vad_annotation(&turn)?, None);
+
+    let (_annotate_dir, annotate_vault) = open_test_vault();
+    let message = EntityId::now();
+    let message_body = rmp_serde::to_vec_named(&serde_json::json!({
+        "txt": "message claim shell",
+        "spkr": "assistant",
+        "at": 134_u64,
+    }))
+    .expect("encode message body");
+    annotate_vault.put_entity(
+        &message,
+        ENTITY_TYPE_MESSAGE,
+        test_time_range(134, 134),
+        134,
+        &message_body,
+    )?;
+    let first = VadAnnotation::new(
+        Vad {
+            valence: 0.15,
+            arousal: 0.25,
+            dominance: 0.35,
+        },
+        VadAnnotationSource::UserSelfReport,
+        235,
+    )?;
+    annotate_vault.annotate_message_vad(&message, first)?;
+    let message_claim = vad_annotation_claim_id(ENTITY_TYPE_MESSAGE, &message)?;
+    let claim_delete =
+        annotate_vault.delete_entity_with_reason(&message_claim, DeleteReason::UserDelete)?;
+    assert!(claim_delete.existed);
+    assert_eq!(
+        annotate_vault
+            .get_raw(&message_claim)?
+            .as_ref()
+            .map(Vec::len),
+        Some(ENTITY_METADATA_HEADER_LEN),
+        "soft-deleting the derived VAD claim must leave a header-only shell"
+    );
+    assert_eq!(annotate_vault.get_message_vad_annotation(&message)?, None);
+
+    let replacement = VadAnnotation::new(
+        Vad {
+            valence: -0.15,
+            arousal: 0.35,
+            dominance: 0.75,
+        },
+        VadAnnotationSource::ModelInference,
+        236,
+    )?;
+    assert_eq!(
+        annotate_vault.annotate_message_vad(&message, replacement)?,
+        replacement
+    );
+    assert_eq!(
+        annotate_vault.get_message_vad_annotation(&message)?,
+        Some(replacement)
+    );
+    assert_vad_annotation_claim_present(&annotate_vault, &message_claim, &message)?;
+    Ok(())
+}
+
+#[test]
 fn headerless_delete_treats_vad_only_residue_as_active_scope() -> Result<()> {
     let (_legacy_dir, legacy_vault) = open_test_vault();
     let legacy_turn = EntityId::now();

@@ -202,6 +202,14 @@ fn vad_annotation_claim_body(id: &EntityId, annotation: &VadAnnotation) -> Claim
     body
 }
 
+fn decode_vad_annotation_claim_body_if_present(raw: &[u8]) -> Result<Option<ClaimBody>> {
+    let body = &raw[ENTITY_METADATA_HEADER_LEN..];
+    if body.is_empty() {
+        return Ok(None);
+    }
+    crate::claim::decode_claim_body(body, true).map(Some)
+}
+
 fn vad_annotation_source_from_str(value: &str) -> Result<VadAnnotationSource> {
     match value {
         "model_inference" => Ok(VadAnnotationSource::ModelInference),
@@ -356,7 +364,9 @@ fn vad_annotation_claim_matches_subject(
     if header.entity_type != ENTITY_TYPE_CLAIM {
         return Ok(false);
     }
-    let body = crate::claim::decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true)?;
+    let Some(body) = decode_vad_annotation_claim_body_if_present(raw)? else {
+        return Ok(false);
+    };
     Ok(body.predicate == VAD_ANNOTATION_CLAIM_PREDICATE
         && body.subject == ClaimSubject::Entity(*annotated_id))
 }
@@ -868,7 +878,9 @@ impl Vault {
                 "VAD annotation claim id collision",
             ));
         }
-        let body = crate::claim::decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true)?;
+        let Some(body) = decode_vad_annotation_claim_body_if_present(raw)? else {
+            return Ok(());
+        };
         if body.predicate != VAD_ANNOTATION_CLAIM_PREDICATE
             || body.subject != ClaimSubject::Entity(*annotated_id)
         {
@@ -900,7 +912,9 @@ impl Vault {
             if header.entity_type != ENTITY_TYPE_CLAIM {
                 return Err(Error::CorruptedIndex("VAD annotation claim"));
             }
-            let body = crate::claim::decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true)?;
+            let Some(body) = decode_vad_annotation_claim_body_if_present(raw)? else {
+                return Ok(None);
+            };
             if body.predicate != VAD_ANNOTATION_CLAIM_PREDICATE
                 || body.subject != ClaimSubject::Entity(*id)
             {
