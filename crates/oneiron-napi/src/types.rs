@@ -56,3 +56,27 @@ pub struct NapiBatchEntity {
     /// Entity data payload (msgpack-encoded).
     pub data: Buffer,
 }
+
+/// One file entry in a codebase snapshot manifest.
+#[napi(object)]
+pub struct NapiCodebaseFileEntry {
+    /// Repository-relative normalized file path.
+    pub path: String,
+    /// 32-byte content hash.
+    pub content_hash: Buffer,
+    /// File size in bytes.
+    pub size_bytes: i64,
+}
+
+/// Codebase snapshot metadata attached to a CODE_ARTIFACT entity.
+#[napi(object)]
+pub struct NapiCodebaseSnapshot {
+    /// Stable project identity used for retrieval filters.
+    pub project_id: String,
+    /// Canonical or parseable repo_ref string.
+    pub repo_ref: String,
+    /// 40-hex commit hash, required for GitHub-at-commit repo_refs.
+    pub commit_hash: Option<String>,
+    /// Deterministic file manifest.
+    pub files: Vec<NapiCodebaseFileEntry>,
+}

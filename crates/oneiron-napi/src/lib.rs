@@ -4,14 +4,21 @@ use std::sync::Arc;
 
 use napi::bindgen_prelude::*;
 use napi_derive::napi;
-use oneiron::{EdgeKind, EntityId, TimeRange, Vault, VaultConfig};
+use oneiron::{
+    CODEBASE_CONTENT_HASH_LEN, CodebaseFileEntry, CodebaseSnapshot, EdgeKind, EntityId, RepoRef,
+    TimeRange, Vault, VaultConfig,
+};
 
-use types::{NapiBatchEntity, NapiEdgeInfo, NapiScoredEntity, NapiSubtreeEntry};
+use types::{
+    NapiBatchEntity, NapiCodebaseFileEntry, NapiCodebaseSnapshot, NapiEdgeInfo, NapiScoredEntity,
+    NapiSubtreeEntry,
+};
 
 const DEFAULT_NAPI_SEARCH_LIMIT: u32 = 10;
 const MAX_NAPI_SEARCH_LIMIT: u32 = 1_000;
 const MAX_NAPI_QUERY_BYTES: usize = 8 * 1024;
 const MAX_NAPI_BATCH_ENTITIES: usize = 10_000;
+const MAX_NAPI_CODEBASE_FILES: usize = 100_000;
 const MAX_NAPI_DIMENSIONS: usize = 16_384;
 
 type BoundaryResult<T> = std::result::Result<T, String>;
@@ -89,6 +96,31 @@ fn validate_batch_size(len: usize) -> BoundaryResult<()> {
     Ok(())
 }
 
+/// Validate codebase manifest size before allocating core snapshot entries.
+fn validate_codebase_file_count(len: usize) -> BoundaryResult<()> {
+    if len > MAX_NAPI_CODEBASE_FILES {
+        return Err(format!(
+            "codebase snapshot accepts at most {MAX_NAPI_CODEBASE_FILES} files, got {len}"
+        ));
+    }
+    Ok(())
+}
+
+/// Validate and copy a 32-byte content hash from JS.
+fn parse_content_hash(buf: &Buffer) -> BoundaryResult<[u8; CODEBASE_CONTENT_HASH_LEN]> {
+    buf.as_ref().try_into().map_err(|_| {
+        format!(
+            "content_hash must be exactly {CODEBASE_CONTENT_HASH_LEN} bytes, got {}",
+            buf.len()
+        )
+    })
+}
+
+/// Validate a JS file size before narrowing to u64.
+fn parse_file_size(size: i64) -> BoundaryResult<u64> {
+    u64::try_from(size).map_err(|_| format!("size_bytes must be >= 0, got {size}"))
+}
+
 /// Validate configured vector dimensions before opening a vault.
 fn validate_dimensions(dimensions: usize) -> BoundaryResult<()> {
     if dimensions > MAX_NAPI_DIMENSIONS {
@@ -114,6 +146,78 @@ fn entity_ids_to_buffers(ids: Vec<EntityId>) -> Vec<Buffer> {
     ids.into_iter()
         .map(|id| Buffer::from(id.as_bytes().as_slice()))
         .collect()
+}
+
+fn core_codebase_snapshot(input: NapiCodebaseSnapshot) -> BoundaryResult<CodebaseSnapshot> {
+    validate_codebase_file_count(input.files.len())?;
+    let repo_ref = RepoRef::parse(&input.repo_ref).map_err(|e| e.to_string())?;
+    let files = input
+        .files
+        .into_iter()
+        .map(|entry| {
+            Ok(CodebaseFileEntry::new(
+                entry.path,
+                parse_content_hash(&entry.content_hash)?,
+                parse_file_size(entry.size_bytes)?,
+            ))
+        })
+        .collect::<BoundaryResult<Vec<_>>>()?;
+    CodebaseSnapshot::new(input.project_id, repo_ref, input.commit_hash, files)
+        .map_err(|e| e.to_string())
+}
+
+fn napi_codebase_snapshot(snapshot: CodebaseSnapshot) -> BoundaryResult<NapiCodebaseSnapshot> {
+    let files = snapshot
+        .files
+        .into_iter()
+        .map(|entry| {
+            let size_bytes = i64::try_from(entry.size_bytes).map_err(|_| {
+                format!(
+                    "size_bytes must fit in signed 64-bit integer, got {}",
+                    entry.size_bytes
+                )
+            })?;
+            Ok(NapiCodebaseFileEntry {
+                path: entry.path,
+                content_hash: Buffer::from(entry.content_hash.as_slice()),
+                size_bytes,
+            })
+        })
+        .collect::<BoundaryResult<Vec<_>>>()?;
+    Ok(NapiCodebaseSnapshot {
+        project_id: snapshot.project_id,
+        repo_ref: snapshot.repo_ref.canonical(),
+        commit_hash: snapshot.commit_hash,
+        files,
+    })
+}
+
+fn apply_codebase_filters<'a>(
+    mut builder: oneiron::PipelineBuilder<'a>,
+    repo_ref: Option<String>,
+    project_id: Option<String>,
+) -> napi::Result<oneiron::PipelineBuilder<'a>> {
+    if let Some(repo_ref) = repo_ref {
+        builder = builder.filter_repo_ref(RepoRef::parse(&repo_ref).map_err(to_napi_err)?);
+    }
+    if let Some(project_id) = project_id {
+        builder = builder.filter_project_id(project_id);
+    }
+    Ok(builder)
+}
+
+fn apply_codebase_context_filters<'a>(
+    mut builder: oneiron::ContextPackBuilder<'a>,
+    repo_ref: Option<String>,
+    project_id: Option<String>,
+) -> napi::Result<oneiron::ContextPackBuilder<'a>> {
+    if let Some(repo_ref) = repo_ref {
+        builder = builder.filter_repo_ref(RepoRef::parse(&repo_ref).map_err(to_napi_err)?);
+    }
+    if let Some(project_id) = project_id {
+        builder = builder.filter_project_id(project_id);
+    }
+    Ok(builder)
 }
 
 /// Node.js binding for the Oneiron Vault.
@@ -309,6 +413,30 @@ impl NapiVault {
             .collect())
     }
 
+    /// Search for entities by BM25 text matching, scoped to codebase metadata.
+    #[napi]
+    pub fn search_text_scoped(
+        &self,
+        query: String,
+        limit: u32,
+        repo_ref: Option<String>,
+        project_id: Option<String>,
+    ) -> napi::Result<Vec<NapiScoredEntity>> {
+        validate_query_len(&query).map_err(napi::Error::from_reason)?;
+        let limit = parse_search_limit(limit).map_err(napi::Error::from_reason)?;
+        let builder = self.vault.query().search_text(&query, limit).limit(limit);
+        let results = apply_codebase_filters(builder, repo_ref, project_id)?
+            .run()
+            .map_err(to_napi_err)?;
+        Ok(results
+            .into_iter()
+            .map(|s| NapiScoredEntity {
+                id: Buffer::from(s.id.as_bytes().as_slice()),
+                score: s.score as f64,
+            })
+            .collect())
+    }
+
     // ─── Vectors ───────────────────────────────────────────────
 
     /// Store a vector embedding for an entity.
@@ -319,6 +447,58 @@ impl NapiVault {
             .map_err(napi::Error::from_reason)?;
         let f32_vec: Vec<f32> = vector.iter().map(|&v| v as f32).collect();
         self.vault.put_vector(&eid, &f32_vec).map_err(to_napi_err)
+    }
+
+    // ─── Codebase Metadata ─────────────────────────────────────
+
+    /// Attach or replace codebase snapshot metadata for a CODE_ARTIFACT entity.
+    #[napi]
+    pub fn put_codebase_snapshot(
+        &self,
+        id: Buffer,
+        snapshot: NapiCodebaseSnapshot,
+    ) -> napi::Result<()> {
+        let eid = parse_entity_id(&id)?;
+        let snapshot = core_codebase_snapshot(snapshot).map_err(napi::Error::from_reason)?;
+        self.vault
+            .put_codebase_snapshot(&eid, &snapshot)
+            .map_err(to_napi_err)
+    }
+
+    /// Read codebase snapshot metadata for a CODE_ARTIFACT entity.
+    #[napi]
+    pub fn get_codebase_snapshot(&self, id: Buffer) -> napi::Result<Option<NapiCodebaseSnapshot>> {
+        let eid = parse_entity_id(&id)?;
+        self.vault
+            .get_codebase_snapshot(&eid)
+            .map_err(to_napi_err)?
+            .map(napi_codebase_snapshot)
+            .transpose()
+            .map_err(napi::Error::from_reason)
+    }
+
+    /// Return CODE_ARTIFACT ids whose snapshot uses the given repo_ref.
+    #[napi]
+    pub fn codebase_snapshots_by_repo_ref(&self, repo_ref: String) -> napi::Result<Vec<Buffer>> {
+        let repo_ref = RepoRef::parse(&repo_ref).map_err(to_napi_err)?;
+        let ids = self
+            .vault
+            .codebase_snapshots_by_repo_ref(&repo_ref)
+            .map_err(to_napi_err)?;
+        Ok(entity_ids_to_buffers(ids))
+    }
+
+    /// Return CODE_ARTIFACT ids whose snapshot uses the given project id.
+    #[napi]
+    pub fn codebase_snapshots_by_project_id(
+        &self,
+        project_id: String,
+    ) -> napi::Result<Vec<Buffer>> {
+        let ids = self
+            .vault
+            .codebase_snapshots_by_project_id(&project_id)
+            .map_err(to_napi_err)?;
+        Ok(entity_ids_to_buffers(ids))
     }
 
     // ─── Context Pack ──────────────────────────────────────────
@@ -349,7 +529,7 @@ impl NapiVault {
             _ => oneiron::PackFormat::Json,
         };
 
-        let mut builder = self.vault.context_pack().format(pack_format);
+        let mut builder = self.vault.context_pack().format(pack_format).limit(limit);
 
         if let Some(text) = &query_text {
             validate_query_len(text).map_err(napi::Error::from_reason)?;
@@ -364,6 +544,48 @@ impl NapiVault {
         }
 
         let output = builder.run_serialized().map_err(to_napi_err)?;
+        String::from_utf8(output)
+            .map_err(|e| napi::Error::from_reason(format!("context pack output is not utf8: {e}")))
+    }
+
+    /// Run a context pack query scoped to codebase metadata.
+    #[napi]
+    pub fn context_pack_scoped(
+        &self,
+        query_text: Option<String>,
+        query_vector: Option<Vec<f64>>,
+        limit: Option<u32>,
+        format: Option<String>,
+        repo_ref: Option<String>,
+        project_id: Option<String>,
+    ) -> napi::Result<String> {
+        let limit = parse_search_limit(limit.unwrap_or(DEFAULT_NAPI_SEARCH_LIMIT))
+            .map_err(napi::Error::from_reason)?;
+        let pack_format = match format.as_deref() {
+            Some("yaml") => oneiron::PackFormat::Yaml,
+            Some("toon") => oneiron::PackFormat::Toon,
+            Some("markdown") => oneiron::PackFormat::Markdown,
+            Some("plaintext") => oneiron::PackFormat::Plaintext,
+            _ => oneiron::PackFormat::Json,
+        };
+
+        let mut builder = self.vault.context_pack().format(pack_format).limit(limit);
+
+        if let Some(text) = &query_text {
+            validate_query_len(text).map_err(napi::Error::from_reason)?;
+            builder = builder.search_text(text, limit);
+        }
+
+        if let Some(vec) = &query_vector {
+            validate_vector_len(vec.len(), self.dimensions, "query vector")
+                .map_err(napi::Error::from_reason)?;
+            let f32_vec: Vec<f32> = vec.iter().map(|&v| v as f32).collect();
+            builder = builder.search_vector(&f32_vec, limit);
+        }
+
+        let output = apply_codebase_context_filters(builder, repo_ref, project_id)?
+            .run_serialized()
+            .map_err(to_napi_err)?;
         String::from_utf8(output)
             .map_err(|e| napi::Error::from_reason(format!("context pack output is not utf8: {e}")))
     }
