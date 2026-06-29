@@ -9,6 +9,7 @@ use crate::batch::{
     ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader, LONG_INTERVAL_THRESHOLD_SECS,
 };
 use crate::claim::{ClaimBody, claim_surfaceable};
+use crate::codebase::RepoRef;
 use crate::error::{Error, Result};
 use crate::fusion;
 use crate::store::{
@@ -113,6 +114,8 @@ struct PipelineFilterConfig<'a> {
     since_filter: Option<u64>,
     occurred_range: Option<(u64, u64)>,
     learned_range: Option<(u64, u64)>,
+    repo_ref_filter: Option<&'a RepoRef>,
+    project_id_filter: Option<&'a str>,
 }
 
 #[derive(Default)]
@@ -257,6 +260,8 @@ pub struct PipelineBuilder<'a> {
     since_filter: Option<u64>,
     occurred_range: Option<(u64, u64)>,
     learned_range: Option<(u64, u64)>,
+    repo_ref_filter: Option<RepoRef>,
+    project_id_filter: Option<String>,
     facet_filter: Option<(EntityId, FacetMode)>,
     world_scope: WorldScope,
     result_limit: usize,
@@ -284,6 +289,8 @@ impl<'a> PipelineBuilder<'a> {
             since_filter: None,
             occurred_range: None,
             learned_range: None,
+            repo_ref_filter: None,
+            project_id_filter: None,
             facet_filter: None,
             world_scope: WorldScope::All,
             result_limit: DEFAULT_RESULT_LIMIT,
@@ -482,6 +489,16 @@ impl<'a> PipelineBuilder<'a> {
 
     pub fn filter_learned_range(mut self, start: u64, end: u64) -> Self {
         self.learned_range = Some(normalize_range(start, end));
+        self
+    }
+
+    pub fn filter_repo_ref(mut self, repo_ref: RepoRef) -> Self {
+        self.repo_ref_filter = Some(repo_ref);
+        self
+    }
+
+    pub fn filter_project_id(mut self, project_id: impl Into<String>) -> Self {
+        self.project_id_filter = Some(project_id.into());
         self
     }
 
@@ -801,6 +818,8 @@ impl<'a> PipelineBuilder<'a> {
                 since_filter: self.since_filter,
                 occurred_range: self.occurred_range,
                 learned_range: self.learned_range,
+                repo_ref_filter: self.repo_ref_filter.as_ref(),
+                project_id_filter: self.project_id_filter.as_deref(),
             };
             let before_filters = scores.len();
             apply_filters(
@@ -1935,6 +1954,16 @@ fn apply_filters(
         if let Some((start, end)) = filters.learned_range
             && (meta.learned_at < start || meta.learned_at > end)
         {
+            continue;
+        }
+
+        if !crate::codebase::codebase_candidate_matches_filters(
+            store,
+            rtxn,
+            &scored.id,
+            filters.repo_ref_filter,
+            filters.project_id_filter,
+        )? {
             continue;
         }
 
