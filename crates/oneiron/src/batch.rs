@@ -1159,6 +1159,7 @@ pub(crate) fn deindex_entity(
     delete_from_phonetic_postings(store, wtxn, id)?;
     crate::code_revision::delete_code_revision_lifecycle_in_txn(store, wtxn, id)?;
     crate::codebase::delete_codebase_snapshot_in_txn(store, wtxn, id)?;
+    store.clear_pending_embedding(wtxn, id)?;
     let mut had_vector = store.vectors.delete(wtxn, id.as_bytes())?;
     crate::hnsw::hnsw_deindex(store, wtxn, id)?;
     let mut neighbors = delete_related_edges(store, wtxn, id)?;
@@ -1523,6 +1524,9 @@ fn apply_put(
     if let Some(plan) = short_id_plan {
         apply_short_id_plan(store, wtxn, &id, plan)?;
     }
+    if entity_type == crate::types::ENTITY_TYPE_CLAIM && !replicated {
+        store.mark_pending_embedding(wtxn, &id)?;
+    }
     Ok(())
 }
 
@@ -1549,6 +1553,7 @@ fn apply_vector(
         bytes.extend_from_slice(&v.to_le_bytes());
     }
     store.vectors.put(wtxn, id.as_bytes(), &bytes)?;
+    store.clear_pending_embedding(wtxn, &id)?;
     Ok(())
 }
 
@@ -2397,6 +2402,11 @@ mod tests {
             .unwrap_or_else(|| panic!("missing evidence key {key:?} in {evidence:?}"))
     }
 
+    fn has_pending_embedding_marker(vault: &Vault, id: &EntityId) -> Result<bool> {
+        let rtxn = vault.store.env.read_txn()?;
+        vault.store.has_pending_embedding(&rtxn, id)
+    }
+
     fn test_write_envelope(actor: EntityId) -> Result<WriteEnvelope> {
         Ok(WriteEnvelope::new(
             WriteActor::new(actor, EdgeActorClass::Human),
@@ -2557,6 +2567,88 @@ mod tests {
             &provenance
         );
         assert_eq!(vault.claims_for_subject(&subject)?, vec![claim]);
+        Ok(())
+    }
+
+    fn commit_claim_candidate_fixture(vault: &Vault, claim: EntityId) -> Result<()> {
+        let actor = EntityId::now();
+        let subject = EntityId::now();
+        let occurred = test_time_range(1, 1);
+        vault.put_entity(&actor, ENTITY_TYPE_PERSON, occurred, 1, b"actor")?;
+        vault.put_entity(&subject, ENTITY_TYPE_PERSON, occurred, 1, b"subject")?;
+
+        let envelope = test_write_envelope(actor)?;
+        let candidate = ClaimCandidate::new(
+            "profile.name",
+            ClaimSubject::Entity(subject),
+            Value::from("Alice"),
+            0.9,
+        );
+        vault
+            .batch()
+            .claim_candidate(&claim, candidate, &envelope, test_time_range(10, 10), 11)
+            .commit()
+    }
+
+    #[test]
+    fn claim_candidate_commit_writes_pending_embedding_marker_before_vector_exists() -> Result<()> {
+        let (_dir, vault) = open_test_vault();
+        let claim = EntityId::now();
+
+        commit_claim_candidate_fixture(&vault, claim)?;
+
+        assert!(vault.get_claim(&claim)?.is_some(), "claim must be durable");
+        assert!(
+            vault.get_vector(&claim)?.is_none(),
+            "claim commit must not fabricate a vector row"
+        );
+        assert!(
+            has_pending_embedding_marker(&vault, &claim)?,
+            "claim commit must mark embedding as pending"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn vector_fill_clears_pending_embedding_marker() -> Result<()> {
+        let (_dir, vault) = open_test_vault();
+        let claim = EntityId::now();
+        commit_claim_candidate_fixture(&vault, claim)?;
+
+        vault.put_vector(&claim, &[1.0, 0.0, 0.0, 0.0])?;
+
+        assert_eq!(
+            vault.get_vector(&claim)?.as_deref(),
+            Some([1.0, 0.0, 0.0, 0.0].as_slice())
+        );
+        assert!(
+            !has_pending_embedding_marker(&vault, &claim)?,
+            "vector fill must clear the pending marker"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn duplicate_vector_fill_keeps_pending_embedding_marker_cleared() -> Result<()> {
+        let (_dir, vault) = open_test_vault();
+        let claim = EntityId::now();
+        commit_claim_candidate_fixture(&vault, claim)?;
+
+        vault.put_vector(&claim, &[1.0, 0.0, 0.0, 0.0])?;
+        vault.put_vector(&claim, &[1.0, 0.0, 0.0, 0.0])?;
+
+        assert!(
+            !has_pending_embedding_marker(&vault, &claim)?,
+            "duplicate fills must be idempotent"
+        );
+        assert_eq!(
+            vault
+                .query()
+                .search_vector(&[1.0, 0.0, 0.0, 0.0], 10)
+                .run()?
+                .len(),
+            1
+        );
         Ok(())
     }
 

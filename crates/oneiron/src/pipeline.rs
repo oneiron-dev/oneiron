@@ -147,6 +147,7 @@ struct ClaimStatusGateCache {
 pub(crate) struct PipelineOutput {
     pub(crate) scores: Vec<ScoredEntity>,
     pub(crate) claim_bodies: HashMap<EntityId, ClaimBody>,
+    pub(crate) pending_vector_ids: HashSet<EntityId>,
     pub(crate) claims_suppressed: usize,
     pub(crate) cosine_ghosts_dampened: usize,
     pub(crate) total_in_scope: usize,
@@ -157,6 +158,13 @@ pub(crate) struct PipelineOutput {
 #[derive(Debug, Clone)]
 pub struct RetrievalWithTelemetry<T> {
     pub value: T,
+    pub run_id: Option<RetrievalRunId>,
+}
+
+#[derive(Debug, Clone)]
+pub struct RetrievalWithPendingVectors<T> {
+    pub value: T,
+    pub pending_vector_ids: Vec<EntityId>,
     pub run_id: Option<RetrievalRunId>,
 }
 
@@ -548,6 +556,17 @@ impl<'a> PipelineBuilder<'a> {
         })
     }
 
+    pub fn run_with_pending_vectors(
+        self,
+    ) -> Result<RetrievalWithPendingVectors<Vec<ScoredEntity>>> {
+        let output = self.run_for_pack()?;
+        Ok(RetrievalWithPendingVectors {
+            value: output.scores,
+            pending_vector_ids: sorted_entity_ids(output.pending_vector_ids),
+            run_id: output.telemetry_run_id,
+        })
+    }
+
     /// Executes the pipeline and returns the detailed [`PipelineOutput`]
     /// the context-pack path consumes (gated scores + the claim bodies the
     /// D19 gate already decoded + the suppression count).
@@ -584,6 +603,7 @@ impl<'a> PipelineBuilder<'a> {
 
         let (
             scores,
+            pending_vector_ids,
             claim_gate,
             deferred_ppr_cache_writes,
             cosine_ghosts_dampened,
@@ -718,6 +738,7 @@ impl<'a> PipelineBuilder<'a> {
                 return Ok(PipelineOutput {
                     scores: Vec::new(),
                     claim_bodies: HashMap::new(),
+                    pending_vector_ids: HashSet::new(),
                     claims_suppressed: 0,
                     cosine_ghosts_dampened: 0,
                     total_in_scope: 0,
@@ -912,8 +933,11 @@ impl<'a> PipelineBuilder<'a> {
             {
                 empty_reason = Some(EmptyReason::NoData);
             }
+            let pending_vector_ids =
+                pending_vector_ids_for_scores(&self.vault.store, &rtxn, &scores)?;
             (
                 scores,
+                pending_vector_ids,
                 claim_gate,
                 deferred_ppr_cache_writes,
                 cosine_ghosts_dampened,
@@ -977,6 +1001,7 @@ impl<'a> PipelineBuilder<'a> {
         Ok(PipelineOutput {
             scores,
             claim_bodies,
+            pending_vector_ids,
             claims_suppressed,
             cosine_ghosts_dampened,
             total_in_scope,
@@ -1043,6 +1068,26 @@ impl<'a> PipelineBuilder<'a> {
     fn has_codebase_scope_filter(&self) -> bool {
         self.repo_ref_filter.is_some() || self.project_id_filter.is_some()
     }
+}
+
+fn pending_vector_ids_for_scores(
+    store: &Store,
+    rtxn: &RoTxn<'_>,
+    scores: &[ScoredEntity],
+) -> Result<HashSet<EntityId>> {
+    let mut pending = HashSet::new();
+    for scored in scores {
+        if store.has_pending_embedding(rtxn, &scored.id)? {
+            pending.insert(scored.id);
+        }
+    }
+    Ok(pending)
+}
+
+fn sorted_entity_ids(ids: HashSet<EntityId>) -> Vec<EntityId> {
+    let mut ids: Vec<EntityId> = ids.into_iter().collect();
+    ids.sort_unstable_by(|left, right| left.as_bytes().cmp(right.as_bytes()));
+    ids
 }
 
 fn add_signal_score_components(
@@ -4405,6 +4450,46 @@ mod tests {
             )
             .text(&id, &[("body", text)])
             .commit()
+    }
+
+    #[test]
+    fn pipeline_reports_pending_vector_state_for_retrieved_claim() -> Result<()> {
+        let (_dir, vault) = open_test_vault();
+        let claim = entity_id(0x71);
+        put_status_claim(
+            &vault,
+            claim,
+            "pendingvectorneedle",
+            ClaimApprovalStatus::Auto,
+            ClaimLifecycleStatus::Active,
+            false,
+        )?;
+
+        let pending = vault
+            .query()
+            .search_text("pendingvectorneedle", 10)
+            .run_with_pending_vectors()?;
+        assert!(
+            pending.value.iter().any(|scored| scored.id == claim),
+            "claim should be retrievable through text before embedding fill"
+        );
+        assert_eq!(pending.pending_vector_ids, vec![claim]);
+
+        vault.put_vector(&claim, &[1.0, 0.0, 0.0, 0.0])?;
+
+        let filled = vault
+            .query()
+            .search_text("pendingvectorneedle", 10)
+            .run_with_pending_vectors()?;
+        assert!(
+            filled.value.iter().any(|scored| scored.id == claim),
+            "claim should remain retrievable after embedding fill"
+        );
+        assert!(
+            filled.pending_vector_ids.is_empty(),
+            "embedding fill should clear pending vector state"
+        );
+        Ok(())
     }
 
     /// Raw-writes an entity record (25-byte envelope + `body`), bypassing

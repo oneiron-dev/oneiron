@@ -103,7 +103,7 @@ use std::str;
 use std::sync::{LazyLock, Mutex, MutexGuard, RwLock};
 
 use heed::types::{Bytes, Str};
-use heed::{Database, DatabaseFlags, Env, EnvOpenOptions, RwTxn};
+use heed::{Database, DatabaseFlags, Env, EnvOpenOptions, RoTxn, RwTxn};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -132,6 +132,8 @@ pub(crate) const TEMPORAL_LONG_INTERVALS_SCHEMA_VERSION_KEY: &[u8] =
     b"temporal_long_intervals_schema_version";
 const TEMPORAL_LONG_INTERVALS_SCHEMA_VERSION: u8 = 2;
 pub(crate) const VECTOR_VERSION_KEY: &[u8] = b"vector_version";
+const PENDING_EMBEDDING_MARKER_PREFIX: &str = "pe:";
+const PENDING_EMBEDDING_MARKER_VALUE: &[u8] = &[1];
 const HNSW_COMPATIBILITY_VERSION: u8 = 2;
 const HNSW_COMPATIBILITY_V0_LEN: usize = 24;
 const HNSW_COMPATIBILITY_V1_LEN: usize = 25;
@@ -796,6 +798,31 @@ impl Store {
         key[0] = entity_type;
         key[1..].copy_from_slice(id.as_bytes());
         key
+    }
+
+    pub(crate) fn pending_embedding_marker_key(id: &EntityId) -> String {
+        format!("{PENDING_EMBEDDING_MARKER_PREFIX}{}", id.to_hex())
+    }
+
+    pub(crate) fn mark_pending_embedding(&self, wtxn: &mut RwTxn<'_>, id: &EntityId) -> Result<()> {
+        let key = Self::pending_embedding_marker_key(id);
+        self.sync_state
+            .put(wtxn, key.as_str(), PENDING_EMBEDDING_MARKER_VALUE)?;
+        Ok(())
+    }
+
+    pub(crate) fn clear_pending_embedding(
+        &self,
+        wtxn: &mut RwTxn<'_>,
+        id: &EntityId,
+    ) -> Result<bool> {
+        let key = Self::pending_embedding_marker_key(id);
+        Ok(self.sync_state.delete(wtxn, key.as_str())?)
+    }
+
+    pub(crate) fn has_pending_embedding(&self, rtxn: &RoTxn<'_>, id: &EntityId) -> Result<bool> {
+        let key = Self::pending_embedding_marker_key(id);
+        Ok(self.sync_state.get(rtxn, key.as_str())?.is_some())
     }
 
     pub(crate) fn structural_kind_registration(
