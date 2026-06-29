@@ -20,7 +20,10 @@ use futures_util::stream::SplitStream;
 use futures_util::{SinkExt, StreamExt};
 use loro::{ExportMode, VersionVector};
 use oneiron::sync::export_updates_since;
-use oneiron::sync::{WindowKey, decode_selector_vv_request, filtered_window_doc};
+use oneiron::sync::{
+    SelectorVvRequest, WindowKey, authorize_sync_selector, decode_selector_vv_request,
+    filtered_window_doc,
+};
 use tokio::time::{Duration, Instant};
 
 use crate::api::check_auth;
@@ -606,11 +609,6 @@ async fn handle_window_sync(
         });
     }
 
-    // Count distinct, valid window keys per connection before any load/create.
-    // The default cap is generous so legitimate historical-window tombstone
-    // sync can touch all real windows; it only stops fabricated-key floods.
-    let key = conn_state.touch_window(key, server.config.max_windows_per_connection)?;
-
     match sub_tag {
         window_sub_tags::SELECTOR_VV_REQUEST => {
             conn_state.bind_window_sync_mode(WindowSyncMode::Selector)?;
@@ -620,6 +618,17 @@ async fn handle_window_sync(
         }
         _ => {}
     }
+
+    let selector_request = if sub_tag == window_sub_tags::SELECTOR_VV_REQUEST {
+        Some(decode_and_authorize_selector_request(server, payload)?)
+    } else {
+        None
+    };
+
+    // Count distinct, valid window keys per connection before any load/create.
+    // The default cap is generous so legitimate historical-window tombstone
+    // sync can touch all real windows; it only stops fabricated-key floods.
+    let key = conn_state.touch_window(key, server.config.max_windows_per_connection)?;
 
     // Loads persisted window state (d:w: + pending u:w:) on first touch.
     // Corrupt persisted state closes the connection rather than serving a
@@ -660,15 +669,9 @@ async fn handle_window_sync(
             // above stays byte-for-byte compatible; selected sync exports
             // from a synthetic doc so unauthorized entries are never present
             // in the outbound Loro update bytes.
-            let request = decode_selector_vv_request(payload)
-                .map_err(|_| ProtocolError::InvalidPayload("invalid sync selector request"))?;
-            let remote_vv = VersionVector::decode(&request.remote_vv)
-                .map_err(|e| ProtocolError::VvDecode(e.to_string()))?;
-            if !remote_vv.is_empty() {
-                return Err(ProtocolError::InvalidPayload(
-                    "selector sync requires empty version vector resync",
-                ));
-            }
+            let request = selector_request.ok_or(ProtocolError::InvalidPayload(
+                "missing sync selector request",
+            ))?;
             let filtered = filtered_window_doc(
                 server.vault.as_ref(),
                 &doc,
@@ -739,6 +742,28 @@ async fn handle_window_sync(
     }
 
     Ok(())
+}
+
+fn decode_and_authorize_selector_request(
+    server: &SyncServer,
+    payload: &[u8],
+) -> Result<SelectorVvRequest, ProtocolError> {
+    let request = decode_selector_vv_request(payload)
+        .map_err(|_| ProtocolError::InvalidPayload("invalid sync selector request"))?;
+    let remote_vv = VersionVector::decode(&request.remote_vv)
+        .map_err(|e| ProtocolError::VvDecode(e.to_string()))?;
+    if !remote_vv.is_empty() {
+        return Err(ProtocolError::InvalidPayload(
+            "selector sync requires empty version vector resync",
+        ));
+    }
+    authorize_sync_selector(
+        server.vault.as_ref(),
+        selector_grant_scope(),
+        &request.selector,
+    )
+    .map_err(map_selector_filter_err)?;
+    Ok(request)
 }
 
 /// Maps a delta-export error onto the protocol taxonomy.
@@ -1399,6 +1424,56 @@ mod tests {
         assert!(
             direct_rx.try_recv().is_err(),
             "legacy v2 connections must not receive selector data"
+        );
+    }
+
+    #[tokio::test]
+    async fn selector_request_authorizes_before_window_creation() {
+        let (_dir, server) = test_server();
+        let key = "2027-01";
+        let member = entity_id(0x44);
+        let missing_grant_id = oneiron::EntityId::now();
+        let selector = oneiron::sync::SyncSelector::new(
+            missing_grant_id,
+            member,
+            oneiron::sync::SyncSelectorWorld::All,
+            vec![],
+            vec![],
+        );
+        let payload =
+            oneiron::sync::encode_selector_vv_request(&selector, &VersionVector::new().encode())
+                .unwrap();
+
+        let (direct_tx, mut direct_rx) = mpsc::unbounded_channel::<Vec<u8>>();
+        let mut conn_state = test_selector_conn_state();
+        let result = handle_window_sync(
+            &server,
+            1,
+            key,
+            window_sub_tags::SELECTOR_VV_REQUEST,
+            &payload,
+            &direct_tx,
+            &mut conn_state,
+        )
+        .await;
+
+        assert!(matches!(result, Err(ProtocolError::InvalidPayload(_))));
+        assert!(
+            direct_rx.try_recv().is_err(),
+            "unauthorized selector requests must not receive data"
+        );
+        assert!(
+            server
+                .vault
+                .sync_state_get(&format!("d:w:{key}"))
+                .unwrap()
+                .is_none(),
+            "selector auth must run before durable window snapshot creation"
+        );
+        assert!(
+            !oneiron::sync::schema::read_window_list(&server.root_doc)
+                .contains(&WindowKey::new(key)),
+            "selector auth must run before registering the window in root"
         );
     }
 
