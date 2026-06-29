@@ -2229,6 +2229,7 @@ dependencies = [
  "unicode-segmentation",
  "uuid",
  "whichlang",
+ "windows-sys",
  "xxhash-rust",
  "yrs",
  "zstd",

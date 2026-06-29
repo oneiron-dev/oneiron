@@ -13,6 +13,11 @@
 //! holding `lmdb_database_open_guard` (`mdb_dbi_open` is transaction-scoped:
 //! the txn that opens a DBI must finish before another txn opens one):
 //!
+//! 0. **`preflight_vault_root`** — before the unsafe LMDB open, the root must
+//!    contain either no LMDB files (new vault) or exactly one regular,
+//!    non-symlink, single-link `data.mdb` plus one matching `lock.mdb`
+//!    (existing vault). Partial, aliased, hard-linked, or already-live roots
+//!    fail with [`VaultRootPreflight`].
 //! 1. **`vault_meta` (manifest DB #5) is created/opened FIRST.** Rationale:
 //!    the storage-version gate (step 2) reads its versions FROM `vault_meta`,
 //!    so an existing vault with a missing/blank `vault_meta` is caught by the
@@ -79,6 +84,7 @@
 //! [`StorageAbiVersionChanged`]: crate::error::Error::StorageAbiVersionChanged
 //! [`StorageSchemaVersionChanged`]: crate::error::Error::StorageSchemaVersionChanged
 //! [`DbManifestMismatch`]: crate::error::Error::DbManifestMismatch
+//! [`VaultRootPreflight`]: crate::error::Error::VaultRootPreflight
 //! [`HnswConfigChanged`]: crate::error::Error::HnswConfigChanged
 //! [`EmbeddingModelChanged`]: crate::error::Error::EmbeddingModelChanged
 //! [`InvalidConfig`]: crate::error::Error::InvalidConfig
@@ -87,6 +93,10 @@
 //! [`VaultConfig::skip_text_index_manifest_check`]: crate::types::VaultConfig::skip_text_index_manifest_check
 
 use std::collections::{HashMap, HashSet};
+#[cfg(unix)]
+use std::os::unix::fs::MetadataExt;
+#[cfg(windows)]
+use std::os::windows::io::AsRawHandle;
 use std::path::{Path, PathBuf};
 use std::str;
 use std::sync::{LazyLock, Mutex, MutexGuard, RwLock};
@@ -94,7 +104,7 @@ use std::sync::{LazyLock, Mutex, MutexGuard, RwLock};
 use heed::types::{Bytes, Str};
 use heed::{Database, DatabaseFlags, Env, EnvOpenOptions, RwTxn};
 
-use crate::error::{Error, Result};
+use crate::error::{Error, Result, VaultRootEntry, VaultRootProblem};
 use crate::types::{
     EdgeKind, EntityId, StructuralKindRegistration, TypeByteBand, VaultConfig, band_of,
     entity_type_registry_entry, short_id_prefix, static_short_id_prefix_collision,
@@ -129,6 +139,10 @@ const HNSW_INDEX_STRUCTURE_MISSING: u8 = 0;
 // ARCH-0019 fixes the graph as flat single-layer NSW; the upper-layer M value
 // stays compile-time-only because this structure has no upper layers.
 const HNSW_INDEX_STRUCTURE_FLAT_NSW: u8 = 1;
+#[cfg(any(unix, windows))]
+const VAULT_ROOT_IDENTITY_CHECKS_AVAILABLE: bool = true;
+#[cfg(not(any(unix, windows)))]
+const VAULT_ROOT_IDENTITY_CHECKS_AVAILABLE: bool = false;
 const ERR_POPULATED_MISSING_MODEL_ID: &str =
     "populated vault is missing embedding model identity; rebuild or migrate it before reopening";
 const ERR_POPULATED_REQUIRES_EMBEDDING_MODEL: &str =
@@ -136,8 +150,9 @@ const ERR_POPULATED_REQUIRES_EMBEDDING_MODEL: &str =
 const ERR_VECTOR_WRITE_REQUIRES_EMBEDDING_MODEL: &str =
     "embedding model is required before writing vectors";
 static LMDB_DATABASE_OPEN_LOCK: Mutex<()> = Mutex::new(());
-static OPEN_STORE_PATHS: LazyLock<Mutex<HashSet<PathBuf>>> =
-    LazyLock::new(|| Mutex::new(HashSet::new()));
+static VAULT_ROOT_OPEN_LOCK: Mutex<()> = Mutex::new(());
+static OPEN_STORE_PATHS: LazyLock<Mutex<HashMap<PathBuf, Option<VaultRootIdentity>>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
 
 /// `vault_meta` key prefix for the per-type short-id counters (M2-5 /
 /// ONE-1102, storage ABI v3). The full key is the 12-byte ASCII prefix
@@ -449,30 +464,48 @@ pub struct Store {
 impl Store {
     /// Opens or creates a store at `path` and initializes all named databases.
     pub fn open(path: impl AsRef<Path>, config: &VaultConfig) -> Result<Self> {
-        std::fs::create_dir_all(path.as_ref())?;
-        let canonical_path = path.as_ref().canonicalize()?;
-        let is_new_vault = !canonical_path.join("data.mdb").exists();
-        let registered_path = RegisteredPath::reserve(canonical_path.clone())?;
+        let (env, registered_path, is_new_vault) = {
+            let _vault_root_open_guard = vault_root_open_guard()?;
 
-        // SAFETY: heed/LMDB require a single Env per filesystem path, the path
-        // must not be on NFS or another unsupported network filesystem, and
-        // map_size must not be changed concurrently while the environment is
-        // open elsewhere. The path existence/writability precondition is
-        // established by create_dir_all above. The caller must not retarget the
-        // canonicalized filesystem path while it is being opened, and the
-        // process-local registry above rejects a second live Env for the same
-        // canonical path.
-        let env = unsafe {
-            EnvOpenOptions::new()
-                .map_size(config.map_size)
-                .max_readers(config.max_readers)
-                .max_dbs(MAX_DBS)
-                .open(&canonical_path)?
+            std::fs::create_dir_all(path.as_ref())?;
+            let canonical_path = path.as_ref().canonicalize()?;
+            let root_preflight = preflight_vault_root(&canonical_path)?;
+            let is_new_vault = root_preflight.is_new_vault;
+            let mut registered_path =
+                RegisteredPath::reserve(canonical_path.clone(), root_preflight.identity)?;
+
+            // SAFETY: heed/LMDB require a single Env per filesystem path, the
+            // path must not be on NFS or another unsupported network
+            // filesystem, and map_size must not be changed concurrently while
+            // the environment is open elsewhere. The path
+            // existence/writability precondition is established by
+            // create_dir_all plus the root preflight above. The caller must
+            // not retarget the canonicalized filesystem path while it is being
+            // opened. The process-local root-open guard keeps the initial
+            // preflight, path reservation, unsafe LMDB open, and post-create
+            // identity refresh indivisible against other openers; the
+            // path/identity registry then rejects later duplicate live Env
+            // opens for the same canonical path or known LMDB file identity.
+            let env = unsafe {
+                EnvOpenOptions::new()
+                    .map_size(config.map_size)
+                    .max_readers(config.max_readers)
+                    .max_dbs(MAX_DBS)
+                    .open(&canonical_path)?
+            };
+            // Wrap IMMEDIATELY so every `?` early-return below (failed open
+            // gates) also releases the environment instead of leaking it into
+            // heed's process-global registry (ONE-1142).
+            let env = OwnedEnv { env };
+            #[cfg(test)]
+            test_hooks::run_after_lmdb_open(&canonical_path);
+            if VAULT_ROOT_IDENTITY_CHECKS_AVAILABLE {
+                registered_path
+                    .refresh_identity(preflight_vault_root(&canonical_path)?.identity)?;
+            }
+
+            (env, registered_path, is_new_vault)
         };
-        // Wrap IMMEDIATELY so every `?` early-return below (failed open
-        // gates) also releases the environment instead of leaking it into
-        // heed's process-global registry (ONE-1142).
-        let env = OwnedEnv { env };
 
         let db_open_guard = lmdb_database_open_guard()?;
         let mut wtxn = env.write_txn()?;
@@ -876,24 +909,269 @@ fn type_byte_band_from_code(code: u8) -> Option<TypeByteBand> {
     }
 }
 
+#[derive(Clone, Debug)]
+struct VaultRootPreflight {
+    is_new_vault: bool,
+    identity: Option<VaultRootIdentity>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct VaultRootIdentity {
+    data: FileIdentity,
+    lock: FileIdentity,
+}
+
+impl VaultRootIdentity {
+    fn overlaps(&self, other: &Self) -> bool {
+        self.data == other.data
+            || self.data == other.lock
+            || self.lock == other.data
+            || self.lock == other.lock
+    }
+}
+
+#[cfg(unix)]
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct FileIdentity {
+    dev: u64,
+    ino: u64,
+}
+
+#[cfg(windows)]
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct FileIdentity {
+    volume_serial_number: u32,
+    file_index: u64,
+}
+
+#[cfg(not(any(unix, windows)))]
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct FileIdentity {
+    unsupported: (),
+}
+
+#[derive(Clone, Debug)]
+struct VaultRootFile {
+    identity: FileIdentity,
+    link_count: u64,
+}
+
+fn preflight_vault_root(root: &Path) -> Result<VaultRootPreflight> {
+    let data = inspect_vault_root_entry(root, VaultRootEntry::Data)?;
+    let lock = inspect_vault_root_entry(root, VaultRootEntry::Lock)?;
+
+    match (data, lock) {
+        (None, None) => Ok(VaultRootPreflight {
+            is_new_vault: true,
+            identity: None,
+        }),
+        (Some(_), None) => Err(vault_root_preflight_error(
+            root,
+            VaultRootProblem::IncompleteLmdbPair {
+                present: VaultRootEntry::Data,
+                missing: VaultRootEntry::Lock,
+            },
+        )),
+        (None, Some(_)) => Err(vault_root_preflight_error(
+            root,
+            VaultRootProblem::IncompleteLmdbPair {
+                present: VaultRootEntry::Lock,
+                missing: VaultRootEntry::Data,
+            },
+        )),
+        (Some(data), Some(lock)) => {
+            if data.identity == lock.identity {
+                return Err(vault_root_preflight_error(
+                    root,
+                    VaultRootProblem::AliasedLmdbFiles {
+                        first: VaultRootEntry::Data,
+                        second: VaultRootEntry::Lock,
+                    },
+                ));
+            }
+            if data.link_count > 1 {
+                return Err(vault_root_preflight_error(
+                    root,
+                    VaultRootProblem::MultipleHardLinks {
+                        entry: VaultRootEntry::Data,
+                        link_count: data.link_count,
+                    },
+                ));
+            }
+            if lock.link_count > 1 {
+                return Err(vault_root_preflight_error(
+                    root,
+                    VaultRootProblem::MultipleHardLinks {
+                        entry: VaultRootEntry::Lock,
+                        link_count: lock.link_count,
+                    },
+                ));
+            }
+
+            Ok(VaultRootPreflight {
+                is_new_vault: false,
+                identity: Some(VaultRootIdentity {
+                    data: data.identity,
+                    lock: lock.identity,
+                }),
+            })
+        }
+    }
+}
+
+fn inspect_vault_root_entry(root: &Path, entry: VaultRootEntry) -> Result<Option<VaultRootFile>> {
+    let path = root.join(entry.file_name());
+    let metadata = match std::fs::symlink_metadata(&path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error.into()),
+    };
+    let file_type = metadata.file_type();
+    if file_type.is_symlink() {
+        return Err(vault_root_preflight_error(
+            root,
+            VaultRootProblem::SymlinkEntry { entry },
+        ));
+    }
+    if !file_type.is_file() {
+        return Err(vault_root_preflight_error(
+            root,
+            VaultRootProblem::NonRegularEntry { entry },
+        ));
+    }
+
+    #[cfg(unix)]
+    {
+        Ok(Some(VaultRootFile {
+            identity: file_identity(&metadata),
+            link_count: hard_link_count(&metadata),
+        }))
+    }
+    #[cfg(windows)]
+    {
+        file_info(&path).map(Some)
+    }
+    #[cfg(not(any(unix, windows)))]
+    {
+        Err(vault_root_preflight_error(
+            root,
+            VaultRootProblem::UnsupportedPlatform { entry },
+        ))
+    }
+}
+
+#[cfg(unix)]
+fn file_identity(metadata: &std::fs::Metadata) -> FileIdentity {
+    FileIdentity {
+        dev: metadata.dev(),
+        ino: metadata.ino(),
+    }
+}
+
+#[cfg(unix)]
+fn hard_link_count(metadata: &std::fs::Metadata) -> u64 {
+    metadata.nlink()
+}
+
+#[cfg(windows)]
+fn file_info(path: &Path) -> Result<VaultRootFile> {
+    use windows_sys::Win32::Storage::FileSystem::{
+        BY_HANDLE_FILE_INFORMATION, GetFileInformationByHandle,
+    };
+
+    let file = std::fs::File::open(path)?;
+    let mut info = std::mem::MaybeUninit::<BY_HANDLE_FILE_INFORMATION>::uninit();
+    // SAFETY: `file.as_raw_handle()` is a live file handle for the duration of
+    // the call, and `info` points to writable, properly aligned storage for the
+    // Win32 API to initialize.
+    let ok = unsafe { GetFileInformationByHandle(file.as_raw_handle(), info.as_mut_ptr()) };
+    if ok == 0 {
+        return Err(std::io::Error::last_os_error().into());
+    }
+    // SAFETY: `GetFileInformationByHandle` returned non-zero, which means it
+    // initialized the BY_HANDLE_FILE_INFORMATION buffer.
+    let info = unsafe { info.assume_init() };
+
+    Ok(VaultRootFile {
+        identity: FileIdentity {
+            volume_serial_number: info.dwVolumeSerialNumber,
+            file_index: (u64::from(info.nFileIndexHigh) << 32) | u64::from(info.nFileIndexLow),
+        },
+        link_count: u64::from(info.nNumberOfLinks),
+    })
+}
+
+fn vault_root_preflight_error(root: &Path, problem: VaultRootProblem) -> Error {
+    Error::VaultRootPreflight {
+        path: root.to_path_buf(),
+        problem,
+    }
+}
+
+fn duplicate_open_root(
+    open_paths: &HashMap<PathBuf, Option<VaultRootIdentity>>,
+    path: &Path,
+    identity: &VaultRootIdentity,
+) -> Option<PathBuf> {
+    open_paths.iter().find_map(|(open_path, open_identity)| {
+        (open_path != path
+            && open_identity
+                .as_ref()
+                .is_some_and(|open| open.overlaps(identity)))
+        .then(|| open_path.clone())
+    })
+}
+
 struct RegisteredPath {
     path: PathBuf,
 }
 
 impl RegisteredPath {
-    fn reserve(path: PathBuf) -> Result<Self> {
+    fn reserve(path: PathBuf, identity: Option<VaultRootIdentity>) -> Result<Self> {
         let mut open_paths = OPEN_STORE_PATHS
             .lock()
             .map_err(|_| Error::InvariantViolation("store path registry mutex poisoned"))?;
 
-        if !open_paths.insert(path.clone()) {
-            return Err(Error::InvalidConfig(format!(
-                "vault path is already open in this process: {}",
-                path.display()
-            )));
+        if open_paths.contains_key(&path) {
+            return Err(vault_root_preflight_error(
+                &path,
+                VaultRootProblem::DuplicateOpenRoot {
+                    open_path: path.clone(),
+                },
+            ));
+        }
+        if let Some(identity) = &identity
+            && let Some(open_path) = duplicate_open_root(&open_paths, &path, identity)
+        {
+            return Err(vault_root_preflight_error(
+                &path,
+                VaultRootProblem::DuplicateOpenRoot { open_path },
+            ));
         }
 
+        open_paths.insert(path.clone(), identity);
         Ok(Self { path })
+    }
+
+    fn refresh_identity(&mut self, identity: Option<VaultRootIdentity>) -> Result<()> {
+        let mut open_paths = OPEN_STORE_PATHS
+            .lock()
+            .map_err(|_| Error::InvariantViolation("store path registry mutex poisoned"))?;
+
+        if let Some(identity) = &identity
+            && let Some(open_path) = duplicate_open_root(&open_paths, &self.path, identity)
+        {
+            return Err(vault_root_preflight_error(
+                &self.path,
+                VaultRootProblem::DuplicateOpenRoot { open_path },
+            ));
+        }
+
+        let slot = open_paths
+            .get_mut(&self.path)
+            .ok_or(Error::InvariantViolation("missing reserved store path"))?;
+        *slot = identity;
+        Ok(())
     }
 }
 
@@ -963,6 +1241,12 @@ pub(crate) fn lmdb_database_open_guard() -> Result<MutexGuard<'static, ()>> {
     LMDB_DATABASE_OPEN_LOCK
         .lock()
         .map_err(|_| Error::InvariantViolation("lmdb database-open mutex poisoned"))
+}
+
+fn vault_root_open_guard() -> Result<MutexGuard<'static, ()>> {
+    VAULT_ROOT_OPEN_LOCK
+        .lock()
+        .map_err(|_| Error::InvariantViolation("vault root open mutex poisoned"))
 }
 
 fn create_manifest_db(
@@ -1529,4 +1813,44 @@ pub(crate) fn parse_utf8_bytes(bytes: &[u8]) -> Result<String> {
     std::str::from_utf8(bytes)
         .map(str::to_owned)
         .map_err(|_| Error::InvalidKey)
+}
+
+#[cfg(test)]
+pub(crate) mod test_hooks {
+    use super::*;
+
+    struct TargetedAfterLmdbOpenHook {
+        path: PathBuf,
+        hook: AfterLmdbOpenHook,
+    }
+
+    type AfterLmdbOpenHook = Box<dyn FnOnce(&Path) + Send>;
+
+    static AFTER_LMDB_OPEN: LazyLock<Mutex<Option<TargetedAfterLmdbOpenHook>>> =
+        LazyLock::new(|| Mutex::new(None));
+
+    pub(crate) fn arm_after_lmdb_open(path: PathBuf, hook: impl FnOnce(&Path) + Send + 'static) {
+        *AFTER_LMDB_OPEN
+            .lock()
+            .expect("after-lmdb-open hook mutex poisoned") = Some(TargetedAfterLmdbOpenHook {
+            path,
+            hook: Box::new(hook),
+        });
+    }
+
+    pub(crate) fn run_after_lmdb_open(path: &Path) {
+        let hook = {
+            let mut armed = AFTER_LMDB_OPEN
+                .lock()
+                .expect("after-lmdb-open hook mutex poisoned");
+            if armed.as_ref().is_some_and(|hook| hook.path == path) {
+                armed.take().map(|hook| hook.hook)
+            } else {
+                None
+            }
+        };
+        if let Some(hook) = hook {
+            hook(path);
+        }
+    }
 }

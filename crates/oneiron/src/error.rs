@@ -1,3 +1,6 @@
+use std::fmt;
+use std::path::PathBuf;
+
 use crate::claim::ClaimLifecycleStatus;
 use crate::types::{ENTITY_TYPE_FACET, EntityId, TypeByteBand, VadComponent};
 
@@ -19,6 +22,7 @@ pub enum ErrorKind {
     StorageAbiVersionChanged,
     StorageSchemaVersionChanged,
     DbManifestMismatch,
+    VaultRootPreflight,
     MapFull,
     InvalidConfig,
     EntityNotFound,
@@ -82,6 +86,88 @@ pub enum ErrorKind {
     ReceiptLeaseRevoked,
 }
 
+/// LMDB file inside a vault root.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum VaultRootEntry {
+    Data,
+    Lock,
+}
+
+impl VaultRootEntry {
+    pub(crate) fn file_name(self) -> &'static str {
+        match self {
+            Self::Data => "data.mdb",
+            Self::Lock => "lock.mdb",
+        }
+    }
+}
+
+impl fmt::Display for VaultRootEntry {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.file_name())
+    }
+}
+
+/// Typed reason a vault root failed the filesystem preflight.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum VaultRootProblem {
+    /// A live store already owns the same root or an aliased LMDB file.
+    DuplicateOpenRoot { open_path: PathBuf },
+    /// Only one of LMDB's paired environment files exists.
+    IncompleteLmdbPair {
+        present: VaultRootEntry,
+        missing: VaultRootEntry,
+    },
+    /// An LMDB environment file is not a regular file.
+    NonRegularEntry { entry: VaultRootEntry },
+    /// An LMDB environment file is a symlink.
+    SymlinkEntry { entry: VaultRootEntry },
+    /// `data.mdb` and `lock.mdb` point at the same underlying file.
+    AliasedLmdbFiles {
+        first: VaultRootEntry,
+        second: VaultRootEntry,
+    },
+    /// A hard-linked LMDB file can make multiple filesystem roots name one
+    /// vault. Those roots cannot safely own separate LMDB environments.
+    MultipleHardLinks {
+        entry: VaultRootEntry,
+        link_count: u64,
+    },
+    /// This platform cannot report stable file identity and hard-link counts
+    /// for existing LMDB environment files.
+    UnsupportedPlatform { entry: VaultRootEntry },
+}
+
+impl fmt::Display for VaultRootProblem {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::DuplicateOpenRoot { open_path } => {
+                write!(f, "duplicates live vault root {}", open_path.display())
+            }
+            Self::IncompleteLmdbPair { present, missing } => {
+                write!(f, "found {present} without {missing}")
+            }
+            Self::NonRegularEntry { entry } => {
+                write!(f, "{entry} is not a regular file")
+            }
+            Self::SymlinkEntry { entry } => {
+                write!(f, "{entry} is a symlink")
+            }
+            Self::AliasedLmdbFiles { first, second } => {
+                write!(f, "{first} and {second} refer to the same file")
+            }
+            Self::MultipleHardLinks { entry, link_count } => {
+                write!(f, "{entry} has {link_count} hard links")
+            }
+            Self::UnsupportedPlatform { entry } => {
+                write!(f, "{entry} cannot be safely preflighted on this platform")
+            }
+        }
+    }
+}
+
 /// Crate error type.
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
@@ -125,6 +211,12 @@ pub enum Error {
     DbManifestMismatch {
         missing: Vec<String>,
         unexpected: Vec<String>,
+    },
+    /// The vault root failed deterministic filesystem preflight before LMDB open.
+    #[error("vault root preflight failed at {}: {problem}", path.display())]
+    VaultRootPreflight {
+        path: PathBuf,
+        problem: VaultRootProblem,
     },
     /// LMDB map is full and requires a larger map size.
     #[error("lmdb map is full")]
@@ -528,6 +620,7 @@ impl Error {
             Self::StorageAbiVersionChanged { .. } => ErrorKind::StorageAbiVersionChanged,
             Self::StorageSchemaVersionChanged { .. } => ErrorKind::StorageSchemaVersionChanged,
             Self::DbManifestMismatch { .. } => ErrorKind::DbManifestMismatch,
+            Self::VaultRootPreflight { .. } => ErrorKind::VaultRootPreflight,
             Self::MapFull => ErrorKind::MapFull,
             Self::InvalidConfig(_) => ErrorKind::InvalidConfig,
             Self::EntityNotFound => ErrorKind::EntityNotFound,
