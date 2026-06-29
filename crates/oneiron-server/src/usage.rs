@@ -387,9 +387,9 @@ impl UsageLedger {
         configured_mode: UsageMode,
     ) -> Result<UsageRecordResult, UsageError> {
         event.validate()?;
-        let source = event.resolved_source(configured_mode);
+        let source = configured_mode;
         let cost = event.cost_input().calculate()?;
-        if !configured_mode.debits_usage() || !source.debits_usage() {
+        if !source.debits_usage() {
             return Ok(UsageRecordResult {
                 recorded: false,
                 replayed: false,
@@ -403,47 +403,74 @@ impl UsageLedger {
 
         let _guard = self.lock.lock().map_err(|_| UsageError::LockPoisoned)?;
         let event_key = usage_event_key(&event.tenant_id, &event.vault_id, &event.idempotency_key);
-        if let Some(entry) = self.get_entry(&event_key)? {
-            return self.replayed_result(entry);
-        }
-
         let debit = UsageDebit {
             idempotency_key: event.idempotency_key.clone(),
             cost_usd: cost.cost_usd,
             credit_units: cost.credit_units,
         };
-        let entry = StoredUsageEvent {
-            event: event.clone(),
-            source,
-            cost: cost.clone(),
-            debit: debit.clone(),
-            recorded_at: now_secs(),
-        };
-
         let tenant_key = tenant_rollup_key(&event.tenant_id);
         let vault_key = vault_rollup_key(&event.tenant_id, &event.vault_id);
-        let mut tenant_rollup = self
-            .get_rollup(&tenant_key)?
-            .unwrap_or_else(|| UsageRollup::tenant(event.tenant_id.clone()));
-        let mut vault_rollup = self
-            .get_rollup(&vault_key)?
-            .unwrap_or_else(|| UsageRollup::vault(event.tenant_id.clone(), event.vault_id.clone()));
-        tenant_rollup.add_event(&event, &cost);
-        vault_rollup.add_event(&event, &cost);
+        let write_result =
+            self.vault
+                .try_with_write_txn(|wtxn| -> Result<LedgerWriteResult, UsageError> {
+                    if let Some(raw) = self.vault.sync_state_get_in_write_txn(wtxn, &event_key)? {
+                        return Ok(LedgerWriteResult::Replayed(decode_entry(&raw)?));
+                    }
 
-        self.put_rollup(&tenant_key, &tenant_rollup)?;
-        self.put_rollup(&vault_key, &vault_rollup)?;
-        self.put_entry(&event_key, &entry)?;
+                    let mut tenant_rollup =
+                        match self.vault.sync_state_get_in_write_txn(wtxn, &tenant_key)? {
+                            Some(raw) => decode_rollup(&raw)?,
+                            None => UsageRollup::tenant(event.tenant_id.clone()),
+                        };
+                    let mut vault_rollup = match self
+                        .vault
+                        .sync_state_get_in_write_txn(wtxn, &vault_key)?
+                    {
+                        Some(raw) => decode_rollup(&raw)?,
+                        None => UsageRollup::vault(event.tenant_id.clone(), event.vault_id.clone()),
+                    };
+                    tenant_rollup.add_event(&event, &cost);
+                    vault_rollup.add_event(&event, &cost);
 
-        Ok(UsageRecordResult {
-            recorded: true,
-            replayed: false,
-            source,
-            cost,
-            debit: Some(debit),
-            tenant_rollup: Some(tenant_rollup),
-            vault_rollup: Some(vault_rollup),
-        })
+                    let entry = StoredUsageEvent {
+                        event: event.clone(),
+                        source,
+                        cost: cost.clone(),
+                        debit: debit.clone(),
+                        recorded_at: now_secs(),
+                    };
+                    let tenant_raw = encode_rollup(&tenant_rollup)?;
+                    let vault_raw = encode_rollup(&vault_rollup)?;
+                    let entry_raw = encode_entry(&entry)?;
+
+                    self.vault
+                        .sync_state_put_in_write_txn(wtxn, &tenant_key, &tenant_raw)?;
+                    self.vault
+                        .sync_state_put_in_write_txn(wtxn, &vault_key, &vault_raw)?;
+                    self.vault
+                        .sync_state_put_in_write_txn(wtxn, &event_key, &entry_raw)?;
+
+                    Ok(LedgerWriteResult::Recorded {
+                        tenant_rollup,
+                        vault_rollup,
+                    })
+                })?;
+
+        match write_result {
+            LedgerWriteResult::Recorded {
+                tenant_rollup,
+                vault_rollup,
+            } => Ok(UsageRecordResult {
+                recorded: true,
+                replayed: false,
+                source,
+                cost,
+                debit: Some(debit),
+                tenant_rollup: Some(tenant_rollup),
+                vault_rollup: Some(vault_rollup),
+            }),
+            LedgerWriteResult::Replayed(entry) => self.replayed_result(entry),
+        }
     }
 
     pub fn tenant_rollup(&self, tenant_id: &str) -> Result<Option<UsageRollup>, UsageError> {
@@ -478,34 +505,11 @@ impl UsageLedger {
         })
     }
 
-    fn get_entry(&self, key: &str) -> Result<Option<StoredUsageEvent>, UsageError> {
-        let Some(raw) = self.vault.sync_state_get(key)? else {
-            return Ok(None);
-        };
-        rmp_serde::from_slice(&raw)
-            .map(Some)
-            .map_err(UsageError::decode)
-    }
-
-    fn put_entry(&self, key: &str, entry: &StoredUsageEvent) -> Result<(), UsageError> {
-        let raw = rmp_serde::to_vec_named(entry).map_err(UsageError::encode)?;
-        self.vault.sync_state_put(key, &raw)?;
-        Ok(())
-    }
-
     fn get_rollup(&self, key: &str) -> Result<Option<UsageRollup>, UsageError> {
         let Some(raw) = self.vault.sync_state_get(key)? else {
             return Ok(None);
         };
-        rmp_serde::from_slice(&raw)
-            .map(Some)
-            .map_err(UsageError::decode)
-    }
-
-    fn put_rollup(&self, key: &str, rollup: &UsageRollup) -> Result<(), UsageError> {
-        let raw = rmp_serde::to_vec_named(rollup).map_err(UsageError::encode)?;
-        self.vault.sync_state_put(key, &raw)?;
-        Ok(())
+        decode_rollup(&raw).map(Some)
     }
 }
 
@@ -517,6 +521,30 @@ struct StoredUsageEvent {
     cost: UsageCost,
     debit: UsageDebit,
     recorded_at: u64,
+}
+
+enum LedgerWriteResult {
+    Recorded {
+        tenant_rollup: UsageRollup,
+        vault_rollup: UsageRollup,
+    },
+    Replayed(StoredUsageEvent),
+}
+
+fn encode_entry(entry: &StoredUsageEvent) -> Result<Vec<u8>, UsageError> {
+    rmp_serde::to_vec_named(entry).map_err(UsageError::encode)
+}
+
+fn decode_entry(raw: &[u8]) -> Result<StoredUsageEvent, UsageError> {
+    rmp_serde::from_slice(raw).map_err(UsageError::decode)
+}
+
+fn encode_rollup(rollup: &UsageRollup) -> Result<Vec<u8>, UsageError> {
+    rmp_serde::to_vec_named(rollup).map_err(UsageError::encode)
+}
+
+fn decode_rollup(raw: &[u8]) -> Result<UsageRollup, UsageError> {
+    rmp_serde::from_slice(raw).map_err(UsageError::decode)
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -709,23 +737,41 @@ mod tests {
     }
 
     #[test]
-    fn local_and_byo_telemetry_return_no_debit() {
+    fn local_and_byo_server_modes_return_no_debit() {
         let (_dir, ledger) = test_ledger();
-        let mut local = cloud_event("local-key");
-        local.source = Some(UsageMode::Local);
-        let mut byo = cloud_event("byo-key");
-        byo.source = Some(UsageMode::Byo);
 
         let local_result = ledger
-            .record_event(local, UsageMode::OneironCloud)
+            .record_event(cloud_event("local-key"), UsageMode::Local)
             .expect("local usage");
         let byo_result = ledger
-            .record_event(byo, UsageMode::OneironCloud)
+            .record_event(cloud_event("byo-key"), UsageMode::Byo)
             .expect("byo usage");
 
+        assert_eq!(local_result.source, UsageMode::Local);
+        assert_eq!(byo_result.source, UsageMode::Byo);
         assert!(local_result.debit.is_none());
         assert!(byo_result.debit.is_none());
         assert!(ledger.tenant_rollup("tenant-a").unwrap().is_none());
+    }
+
+    #[test]
+    fn oneiron_cloud_ignores_request_source_for_debit_decisions() {
+        let (_dir, ledger) = test_ledger();
+        let mut event = cloud_event("source-override-key");
+        event.source = Some(UsageMode::Local);
+
+        let result = ledger
+            .record_event(event, UsageMode::OneironCloud)
+            .expect("cloud usage with request source override");
+        let rollup = ledger
+            .tenant_rollup("tenant-a")
+            .unwrap()
+            .expect("tenant rollup");
+
+        assert!(result.recorded);
+        assert_eq!(result.source, UsageMode::OneironCloud);
+        assert!(result.debit.is_some());
+        assert_eq!(rollup.counters.event_count, 1);
     }
 
     #[test]
@@ -749,6 +795,24 @@ mod tests {
         assert_eq!(rollup.counters.event_count, 1);
         assert_eq!(rollup.counters.cost_usd, 0.05);
         assert_eq!(rollup.counters.credit_units, 5.0);
+    }
+
+    #[test]
+    fn record_event_rolls_back_rollups_when_batch_write_fails() {
+        let (_dir, ledger) = test_ledger();
+        let mut event = cloud_event("x");
+        event.tenant_id = "t".repeat(123);
+        event.vault_id = "v".repeat(123);
+
+        let err = ledger
+            .record_event(event.clone(), UsageMode::OneironCloud)
+            .expect_err("oversized vault rollup key should fail");
+
+        assert!(
+            matches!(err, UsageError::Storage(_)),
+            "expected storage error, got {err:?}"
+        );
+        assert!(ledger.tenant_rollup(&event.tenant_id).unwrap().is_none());
     }
 
     #[test]
