@@ -7,11 +7,11 @@ use std::time::Instant;
 use crate::limits::{MAX_ANCESTOR_DEPTH, MAX_CHILD_OF_CYCLE_TRAVERSAL_STEPS};
 use crate::types::{
     EDGE_VALUE_SEMANTIC_LEN, EDGE_VALUE_SEMANTIC_PROVENANCED_LEN, EDGE_VALUE_STRUCTURAL_LEN,
-    ENTITY_ID_LEN, ENTITY_TYPE_MACHINE, ENTITY_TYPE_MESSAGE, ENTITY_TYPE_MODEL,
-    ENTITY_TYPE_NOTIFICATION, ENTITY_TYPE_POLICY_MANIFEST, ENTITY_TYPE_REDACTION_AUDIT,
-    ENTITY_TYPE_TASK, ENTITY_TYPE_TASK_LIST, ENTITY_TYPE_TURN, EdgeActorClass,
-    EdgeConfirmationStatus, EdgeProvenanceFlags, decode_edge_value, decode_edge_value_for_kind,
-    encode_edge_value,
+    ENTITY_ID_LEN, ENTITY_TYPE_FEDERATION_GRANT, ENTITY_TYPE_MACHINE, ENTITY_TYPE_MESSAGE,
+    ENTITY_TYPE_MODEL, ENTITY_TYPE_NOTIFICATION, ENTITY_TYPE_POLICY_MANIFEST,
+    ENTITY_TYPE_REDACTION_AUDIT, ENTITY_TYPE_TASK, ENTITY_TYPE_TASK_LIST, ENTITY_TYPE_TURN,
+    EdgeActorClass, EdgeConfirmationStatus, EdgeProvenanceFlags, decode_edge_value,
+    decode_edge_value_for_kind, encode_edge_value,
 };
 use heed::EnvOpenOptions;
 use heed::types::{Bytes, Str};
@@ -6118,6 +6118,13 @@ fn all_entity_type_prefixes() {
             EntityClassification::Maintenance,
             TypeByteBand::InducedDynamicMaintenance,
         ),
+        (
+            "FEDERATION_GRANT",
+            123,
+            None,
+            EntityClassification::Maintenance,
+            TypeByteBand::InducedDynamicMaintenance,
+        ),
     ];
 
     let actual: Vec<RegistryRow> = ENTITY_TYPE_REGISTRY
@@ -6220,8 +6227,8 @@ fn type_byte_band_allocation_matches_contract() {
     }
 
     // is_structural_kind: false for the semantic byte 0 and the registered
-    // maintenance kinds 120/121/122; true for every REGISTERED core (1..=16)
-    // and pack (80/81/82/83) kind.
+    // maintenance kinds 120/121/122/123; true for every REGISTERED core
+    // (1..=16) and pack (80/81/82/83) kind.
     assert!(!is_structural_kind(0), "CLAIM is NOT a StructuralKind");
     assert!(
         !is_structural_kind(120),
@@ -6235,6 +6242,10 @@ fn type_byte_band_allocation_matches_contract() {
         !is_structural_kind(122),
         "POLICY_MANIFEST is NOT a StructuralKind (GATE-001: vault-resident maintenance)"
     );
+    assert!(
+        !is_structural_kind(123),
+        "FEDERATION_GRANT is NOT a StructuralKind (FED-001: shared-vault membership)"
+    );
     for byte in 1..=16_u8 {
         assert!(is_structural_kind(byte), "core byte {byte}");
     }
@@ -6244,9 +6255,9 @@ fn type_byte_band_allocation_matches_contract() {
 
     // Unregistered bytes — including bytes INSIDE structural bands — are not
     // StructuralKinds, and the existing write-path gate still rejects them
-    // with the same typed error. (122 left this list when GATE-001 registered
-    // POLICY_MANIFEST; 123 is the band's first unregistered byte now.)
-    for byte in [17_u8, 63, 64, 79, 84, 99, 100, 119, 123, 255] {
+    // with the same typed error. (123 left this list when FED-001 registered
+    // FEDERATION_GRANT; 124 is the band's first unregistered byte now.)
+    for byte in [17_u8, 63, 64, 79, 84, 99, 100, 119, 124, 255] {
         assert!(!is_structural_kind(byte), "unregistered byte {byte}");
         assert!(
             matches!(
@@ -7263,13 +7274,12 @@ fn txn_batch_put_invalid_entity_type_returns_error() -> Result<()> {
     Ok(())
 }
 
-/// D5: public puts of a REGISTERED maintenance-band kind (REDACTION_AUDIT =
-/// 120, MODEL = 121 per the ratified ONE-1138 kind registration) must fail
-/// with the distinct `MaintenanceKindNotWritable` error — not the misleading
+/// D5: public puts of a REGISTERED maintenance-band kind must fail with the
+/// distinct `MaintenanceKindNotWritable` error — not the misleading
 /// `InvalidEntityType` — and must write nothing. The engine-internal writers
 /// are unaffected (the receipt writer, see
-/// `redaction_receipt_indexes_temporal_occurred_start_as_point_event`, and
-/// the `ensure_model_substrate` door).
+/// `redaction_receipt_indexes_temporal_occurred_start_as_point_event`, the
+/// `ensure_model_substrate` door, and grant/policy substrate writers).
 #[test]
 fn public_put_of_maintenance_kind_rejected_with_distinct_typed_error() -> Result<()> {
     let (_dir, vault) = open_test_vault();
@@ -7278,6 +7288,7 @@ fn public_put_of_maintenance_kind_rejected_with_distinct_typed_error() -> Result
         (ENTITY_TYPE_REDACTION_AUDIT, b"forged-receipt".as_slice()),
         (ENTITY_TYPE_MODEL, b"forged-model".as_slice()),
         (ENTITY_TYPE_POLICY_MANIFEST, b"forged-policy".as_slice()),
+        (ENTITY_TYPE_FEDERATION_GRANT, b"forged-grant".as_slice()),
     ] {
         let id = EntityId::now();
 
@@ -7346,9 +7357,10 @@ fn unknown_type_bytes_still_fail_with_invalid_entity_type() -> Result<()> {
     let (_dir, vault) = open_test_vault();
 
     // 121 left this list when ONE-1138 registered MODEL; 122 left it when
-    // GATE-001 registered POLICY_MANIFEST. Public puts of those bytes now fail
+    // GATE-001 registered POLICY_MANIFEST; 123 left it when FED-001
+    // registered FEDERATION_GRANT. Public puts of those bytes now fail
     // MaintenanceKindNotWritable — covered by the D5 gate test.
-    for unknown in [99_u8, 123, 200] {
+    for unknown in [99_u8, 124, 200] {
         let id = EntityId::now();
         let err = vault
             .put_entity(&id, unknown, test_time_range(1, 1), 2, b"unknown-type")
@@ -10216,6 +10228,114 @@ fn replicated_door_still_fails_typed_on_structural_violations() -> Result<()> {
         .expect_err("replay door must still reject unregistered type bytes");
     assert_eq!(err.kind(), ErrorKind::InvalidEntityType);
     assert_no_entity_state(&vault, &bad_type)?;
+    Ok(())
+}
+
+/// FED-001: `put_replicated` admits the registered maintenance type byte for
+/// FEDERATION_GRANT, but the body still has to fail closed before storage or
+/// indexes are written.
+#[cfg(feature = "sync")]
+fn federation_grant_body_with_role_and_preset(role: &str, preset: &str) -> Vec<u8> {
+    let member_ref = seeded_entity_id(0xFEDA).to_hex();
+    rmpv_map_bytes(&[
+        (
+            "schema_version".into(),
+            rmpv::Value::from(crate::federation::FEDERATION_GRANT_SCHEMA_VERSION),
+        ),
+        (
+            "scope".into(),
+            rmpv::Value::Map(vec![
+                ("kind".into(), "vault".into()),
+                ("vault_id".into(), rmpv::Value::from(7_u64)),
+            ]),
+        ),
+        ("member_ref".into(), rmpv::Value::from(member_ref.as_str())),
+        ("role".into(), rmpv::Value::from(role)),
+        ("preset".into(), rmpv::Value::from(preset)),
+    ])
+}
+
+#[cfg(feature = "sync")]
+#[test]
+fn replicated_door_fails_closed_on_malformed_federation_grant_body() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let malformed = b"not a federation grant body";
+
+    let bad_txn = EntityId::now();
+    let err = vault
+        .with_write_txn(|wtxn| {
+            vault
+                .batch_in()
+                .put_replicated(
+                    &bad_txn,
+                    ENTITY_TYPE_FEDERATION_GRANT,
+                    test_time_range(1, 1),
+                    2,
+                    malformed,
+                )
+                .apply(wtxn)
+        })
+        .expect_err("txn replay door must reject malformed federation grants");
+    assert_eq!(err.kind(), ErrorKind::InvalidFederationGrantBody);
+    assert_no_entity_state(&vault, &bad_txn)?;
+
+    let bad_batch = EntityId::now();
+    let err = vault
+        .batch()
+        .put_replicated(
+            &bad_batch,
+            ENTITY_TYPE_FEDERATION_GRANT,
+            test_time_range(1, 1),
+            2,
+            malformed,
+        )
+        .commit()
+        .expect_err("batch replay door must reject malformed federation grants");
+    assert_eq!(err.kind(), ErrorKind::InvalidFederationGrantBody);
+    assert_no_entity_state(&vault, &bad_batch)?;
+    Ok(())
+}
+
+/// FED-001: syntactically valid FEDERATION_GRANT bodies still fail closed at
+/// the replicated write chokepoint when role/preset policy is invalid.
+#[cfg(feature = "sync")]
+#[test]
+fn replicated_door_fails_closed_on_invalid_federation_grant_policy() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let invalid_policy = federation_grant_body_with_role_and_preset("admin", "read_only");
+
+    let bad_txn = EntityId::now();
+    let err = vault
+        .with_write_txn(|wtxn| {
+            vault
+                .batch_in()
+                .put_replicated(
+                    &bad_txn,
+                    ENTITY_TYPE_FEDERATION_GRANT,
+                    test_time_range(1, 1),
+                    2,
+                    &invalid_policy,
+                )
+                .apply(wtxn)
+        })
+        .expect_err("txn replay door must reject role/preset mismatches");
+    assert_eq!(err.kind(), ErrorKind::InvalidFederationGrantBody);
+    assert_no_entity_state(&vault, &bad_txn)?;
+
+    let bad_batch = EntityId::now();
+    let err = vault
+        .batch()
+        .put_replicated(
+            &bad_batch,
+            ENTITY_TYPE_FEDERATION_GRANT,
+            test_time_range(1, 1),
+            2,
+            &invalid_policy,
+        )
+        .commit()
+        .expect_err("batch replay door must reject role/preset mismatches");
+    assert_eq!(err.kind(), ErrorKind::InvalidFederationGrantBody);
+    assert_no_entity_state(&vault, &bad_batch)?;
     Ok(())
 }
 

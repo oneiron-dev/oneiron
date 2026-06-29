@@ -30,6 +30,7 @@ pub enum ErrorKind {
     ArithmeticOverflow,
     InvariantViolation,
     InvalidKey,
+    InvalidFederationGrantBody,
     CorruptedIndex,
     IndexOverflow,
     MissingPostingEntry,
@@ -240,6 +241,9 @@ pub enum Error {
     /// Encountered malformed key or value bytes.
     #[error("invalid key or value bytes")]
     InvalidKey,
+    /// A FEDERATION_GRANT (type 123) body failed structural validation.
+    #[error("invalid federation grant body: {0}")]
+    InvalidFederationGrantBody(&'static str),
     /// Index metadata or neighbor storage is internally inconsistent.
     #[error("corrupted index: {0}")]
     CorruptedIndex(&'static str),
@@ -633,6 +637,7 @@ impl Error {
             Self::ArithmeticOverflow(_) => ErrorKind::ArithmeticOverflow,
             Self::InvariantViolation(_) => ErrorKind::InvariantViolation,
             Self::InvalidKey => ErrorKind::InvalidKey,
+            Self::InvalidFederationGrantBody(_) => ErrorKind::InvalidFederationGrantBody,
             Self::CorruptedIndex(_) => ErrorKind::CorruptedIndex,
             Self::IndexOverflow(_) => ErrorKind::IndexOverflow,
             Self::MissingPostingEntry => ErrorKind::MissingPostingEntry,

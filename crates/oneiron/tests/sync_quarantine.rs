@@ -24,7 +24,8 @@ use oneiron::sync::quarantine::{QuarantineContainer, quarantined_records};
 use oneiron::sync::schema::create_window_doc;
 use oneiron::sync::window::forward_rematerialize;
 use oneiron::types::{
-    ENTITY_TYPE_CLAIM, ENTITY_TYPE_PERSON, ENTITY_TYPE_TASK, EdgeKind, TimeRange,
+    ENTITY_TYPE_CLAIM, ENTITY_TYPE_FEDERATION_GRANT, ENTITY_TYPE_PERSON, ENTITY_TYPE_TASK,
+    EdgeKind, TimeRange,
 };
 use oneiron::{EntityId, Vault, VaultConfig};
 use xxhash_rust::xxh3::xxh3_64;
@@ -196,6 +197,15 @@ fn insert_bytes(map: &loro::LoroMap, key: &str, value: &[u8]) {
     map.insert(key, value).unwrap();
 }
 
+fn malformed_federation_grant_blob() -> Vec<u8> {
+    entity_blob(
+        ENTITY_TYPE_FEDERATION_GRANT,
+        valid_time_range(),
+        LEARNED_AT,
+        b"not a federation grant body",
+    )
+}
+
 struct GateCase {
     name: &'static str,
     container: QuarantineContainer,
@@ -301,6 +311,17 @@ fn each_gate_rejection_class_produces_exactly_one_quarantine_record() {
                     LEARNED_AT,
                     &claim_body_with_bad_predicate(),
                 );
+                insert_bytes(&doc.get_map("entities"), &id.to_hex(), &blob);
+                (id.to_hex(), blob)
+            },
+        },
+        GateCase {
+            name: "entity_malformed_federation_grant_body",
+            container: QuarantineContainer::Entities,
+            expected_reason: "InvalidFederationGrantBody",
+            setup: |_vault, doc| {
+                let id = EntityId::now();
+                let blob = malformed_federation_grant_blob();
                 insert_bytes(&doc.get_map("entities"), &id.to_hex(), &blob);
                 (id.to_hex(), blob)
             },
@@ -796,6 +817,89 @@ fn poisoned_entity_op_does_not_abort_the_batch() {
     let records = quarantined_records(&vault).unwrap();
     assert_eq!(records.len(), 1);
     assert_eq!(records[0].1.reason_code, "InvalidEntityType");
+}
+
+/// FED-001: a malformed remote FEDERATION_GRANT body is a remote rejection,
+/// not a local replay failure. Observer B quarantines the bad op and keeps
+/// applying the valid sibling from the same CRDT commit.
+#[test]
+fn observer_b_quarantines_malformed_federation_grant_and_continues() {
+    let (_dir, vault) = test_vault_with_dir();
+    let doc = LoroDoc::new();
+    let materializer = Arc::new(Materializer::new());
+    let _subs = register_observer_b(&doc, &vault, &materializer, WINDOW);
+
+    let bad_id = EntityId::now();
+    let good_id = EntityId::now();
+    let bad_blob = malformed_federation_grant_blob();
+    let entities = doc.get_map("entities");
+    insert_bytes(&entities, &bad_id.to_hex(), &bad_blob);
+    insert_bytes(
+        &entities,
+        &good_id.to_hex(),
+        &entity_blob(ENTITY_TYPE_TASK, valid_time_range(), LEARNED_AT, b"good"),
+    );
+    doc.commit();
+
+    assert!(
+        vault.get(&bad_id).unwrap().is_none(),
+        "malformed federation grant must not materialize"
+    );
+    assert_eq!(
+        vault.get(&good_id).unwrap().as_deref(),
+        Some(b"good".as_slice()),
+        "valid sibling must land after quarantining the malformed grant"
+    );
+
+    let records = quarantined_records(&vault).unwrap();
+    assert_eq!(records.len(), 1);
+    let (_, rec) = &records[0];
+    assert_eq!(rec.container, QuarantineContainer::Entities);
+    assert_eq!(rec.reason_code, "InvalidFederationGrantBody");
+    assert_eq!(rec.crdt_key_hash, xxh3_64(bad_id.to_hex().as_bytes()));
+    assert_eq!(rec.payload_hash, xxh3_64(&bad_blob));
+}
+
+/// FED-001 forward-remat parity: a malformed remote FEDERATION_GRANT body
+/// must quarantine and continue instead of wedging rematerialization.
+#[test]
+fn forward_remat_quarantines_malformed_federation_grant_and_continues() {
+    let (_dir, vault) = test_vault_with_dir();
+    let materializer = Materializer::new();
+    let window_key = WindowKey::new(WINDOW);
+    let doc = create_window_doc("test-user", &window_key);
+
+    let bad_id = EntityId::now();
+    let good_id = EntityId::now();
+    let bad_blob = malformed_federation_grant_blob();
+    let entities = doc.get_map("entities");
+    insert_bytes(&entities, &bad_id.to_hex(), &bad_blob);
+    insert_bytes(
+        &entities,
+        &good_id.to_hex(),
+        &entity_blob(ENTITY_TYPE_TASK, valid_time_range(), LEARNED_AT, b"good"),
+    );
+    doc.commit();
+
+    let count = forward_rematerialize(&vault, &doc, &materializer, &window_key).unwrap();
+    assert_eq!(count, 1, "only the valid sibling materializes");
+    assert!(
+        vault.get(&bad_id).unwrap().is_none(),
+        "malformed federation grant must not materialize"
+    );
+    assert_eq!(
+        vault.get(&good_id).unwrap().as_deref(),
+        Some(b"good".as_slice())
+    );
+
+    let records = quarantined_records(&vault).unwrap();
+    assert_eq!(records.len(), 1);
+    let (_, rec) = &records[0];
+    assert_eq!(rec.window_key, WINDOW);
+    assert_eq!(rec.container, QuarantineContainer::Entities);
+    assert_eq!(rec.reason_code, "InvalidFederationGrantBody");
+    assert_eq!(rec.crdt_key_hash, xxh3_64(bad_id.to_hex().as_bytes()));
+    assert_eq!(rec.payload_hash, xxh3_64(&bad_blob));
 }
 
 /// ONE-1124 AC2 — a poisoned edge op never aborts the edge batch.

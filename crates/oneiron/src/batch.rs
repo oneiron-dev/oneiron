@@ -192,8 +192,9 @@ pub(crate) enum BatchOp {
 ///
 /// A trusted door still validates structure: the flags only skip the
 /// public-band rejections (`MaintenanceKindNotWritable` /
-/// `ReservedPredicate`). `apply_put` still runs the registry type-byte gate
-/// and the full D17/D18 CLAIM body validation on every op built here. Policy
+/// `ReservedPredicate`). `apply_put` still runs the registry type-byte gate,
+/// the full D17/D18 CLAIM body validation, and registered maintenance body
+/// validation on every typed maintenance kind that defines one. Policy
 /// manifests are owner-policy inputs and are not admitted through this
 /// unverified replicated door.
 #[cfg(feature = "sync")]
@@ -1122,7 +1123,8 @@ fn apply_put(
     //
     // D18: every type-0 (CLAIM) write — put_entity, both batch builders, and
     // sync replay — is structurally validated before any byte is staged.
-    // CODE_ARTIFACT gets the same fail-closed treatment for its replay keys.
+    // Registered maintenance kinds with pinned body schemas get the same
+    // fail-closed treatment on every path that can admit their type byte.
     // Bodies of all other type bytes stay opaque at the storage layer.
     if entity_type == crate::types::ENTITY_TYPE_CLAIM {
         let body = crate::claim::validate_claim_body_and_decode(data, allow_reserved_predicate)?;
@@ -1132,6 +1134,8 @@ fn apply_put(
         }
     } else if entity_type == crate::types::ENTITY_TYPE_CODE_ARTIFACT {
         crate::code_artifact::validate_code_artifact_body_bytes(data)?;
+    } else if entity_type == crate::types::ENTITY_TYPE_FEDERATION_GRANT {
+        crate::federation::validate_federation_grant_body_bytes(data)?;
     }
     if occurred.start > occurred.end {
         return Err(Error::InvalidTimeRange {
