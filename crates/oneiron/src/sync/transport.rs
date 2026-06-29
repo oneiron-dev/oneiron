@@ -63,15 +63,18 @@ pub const LEASE_STATUS_REJECTED: u8 = 0x00;
 /// `[hello][lease_request][…]` connect sequence, the root-doc `leases`
 /// registry, and the attested-receipt `verification` pin (ONE-1140, OD-5 —
 /// one atomic wire train; v1 peers are rejected at hello with close 4006).
-/// v3 = grant-backed selector sync (`SELECTOR_VV_REQUEST`) so selector-capable
-/// clients fail at hello against older daemons instead of hanging on an
-/// unknown WindowSync sub-tag (ONE-1271, FED-002).
-pub const PROTOCOL_VERSION: u8 = 3;
-/// Legacy full-window protocol version kept for unscoped v2 clients.
+/// v3 = pre-FED-005 grant-backed selector sync (`SELECTOR_VV_REQUEST`).
+/// v4 = scoped lease root keys for full-window clients; v2/v3 are rejected
+/// so old clients do not quarantine scoped root `leases` entries.
+/// v5 = scoped lease root keys for selector-capable clients (ONE-1271,
+/// FED-002 plus FED-005 scoped keys).
+pub const PROTOCOL_VERSION: u8 = 5;
+/// Full-window protocol version kept separate from selector-capable clients.
 ///
-/// v2 peers cannot use selector sync, but their existing full-window
-/// `VV_REQUEST`/`VV_RESPONSE`/`UPDATE` flow remains byte-compatible.
-pub const LEGACY_FULL_WINDOW_PROTOCOL_VERSION: u8 = 2;
+/// Full-window peers cannot use selector sync, but their
+/// `VV_REQUEST`/`VV_RESPONSE`/`UPDATE` flow remains byte-compatible once they
+/// send the scoped-lease-capable hello.
+pub const LEGACY_FULL_WINDOW_PROTOCOL_VERSION: u8 = 4;
 
 /// Shared 8 MB cap for decoded payloads: bulk-transfer decompression and
 /// root-doc imports both refuse anything larger (decompression-bomb /
@@ -190,9 +193,10 @@ pub fn encode_protocol_hello() -> Vec<u8> {
 
 /// Encodes the legacy full-window protocol hello frame.
 ///
-/// Unscoped clients that use the pre-FED-002 full-window WindowSync flow send
-/// v2 so selector-capable v3 connections cannot downgrade themselves to a
-/// full-window export after negotiating the selector protocol.
+/// Clients that use the pre-FED-002 full-window WindowSync flow send a
+/// distinct scoped-lease-capable version so selector-capable connections
+/// cannot downgrade themselves to a full-window export after negotiating the
+/// selector protocol.
 pub fn encode_legacy_full_window_protocol_hello() -> Vec<u8> {
     vec![TAG_PROTOCOL_HELLO, LEGACY_FULL_WINDOW_PROTOCOL_VERSION]
 }
@@ -576,21 +580,23 @@ mod tests {
     #[test]
     fn protocol_hello_wire_literals() {
         // Contract literals: the hello frame is EXACTLY
-        // [TAG_PROTOCOL_HELLO=3, PROTOCOL_VERSION=3]. A drifted tag or
+        // [TAG_PROTOCOL_HELLO=3, PROTOCOL_VERSION=5]. A drifted tag or
         // version byte is a silent wire break — assert the raw bytes.
         // Version pinned 1→2 by the ONE-1140 atomic wire train (OD-5):
         // lease frames + connect sequence + leases registry + attested
         // receipts land behind this single bump; v1 peers close 4006.
         // Version pinned 2→3 by FED-002 selector sync so v3 clients do not
         // negotiate successfully with pre-selector daemons.
+        // Version pinned 3→4/5 by FED-005 scoped lease keys so v2/v3 clients
+        // are rejected before they can quarantine scoped root `leases` rows.
         assert_eq!(TAG_PROTOCOL_HELLO, 3, "hello tag byte is pinned to 3");
-        assert_eq!(PROTOCOL_VERSION, 3, "wire protocol version is pinned to 3");
+        assert_eq!(PROTOCOL_VERSION, 5, "wire protocol version is pinned to 5");
         assert_eq!(
-            LEGACY_FULL_WINDOW_PROTOCOL_VERSION, 2,
-            "legacy full-window version is pinned to 2"
+            LEGACY_FULL_WINDOW_PROTOCOL_VERSION, 4,
+            "legacy full-window version is pinned to 4"
         );
-        assert_eq!(encode_protocol_hello(), vec![3u8, 3u8]);
-        assert_eq!(encode_legacy_full_window_protocol_hello(), vec![3u8, 2u8]);
+        assert_eq!(encode_protocol_hello(), vec![3u8, 5u8]);
+        assert_eq!(encode_legacy_full_window_protocol_hello(), vec![3u8, 4u8]);
     }
 
     #[test]
