@@ -963,6 +963,12 @@ impl Store {
     }
 
     pub(crate) fn record_retrieval_outcome(&self, outcome: RetrievalOutcome) -> Result<()> {
+        if active_write_txn_depth() > 0 {
+            return Err(Error::ConcurrentWrite(
+                "retrieval outcome telemetry skipped inside active write transaction",
+            ));
+        }
+
         vet_retrieval_outcome(&outcome)?;
         let record = RetrievalOutcomeRecord {
             version: RETRIEVAL_TELEMETRY_VERSION,

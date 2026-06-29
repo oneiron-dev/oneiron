@@ -2671,4 +2671,51 @@ mod tests {
         assert_eq!(runs[0].empty_reason, None);
         Ok(())
     }
+
+    #[test]
+    fn context_pack_serialized_telemetry_excludes_merged_neighbors() -> Result<()> {
+        let (_dir, vault) = open_test_vault();
+
+        let result = EntityId::from_bytes_unchecked([0x79; 16]);
+        let neighbor = EntityId::from_bytes_unchecked([0x7A; 16]);
+        put_claim_text_entity(
+            &vault,
+            &result,
+            "serializedneighborroot",
+            "test.result",
+            "root",
+        )?;
+        put_text_entity(
+            &vault,
+            &neighbor,
+            crate::types::ENTITY_TYPE_PERSON,
+            "serialized neighbor",
+            serde_json::json!({"name": "Neighbor"}),
+        )?;
+        vault.put_edge(&result, crate::types::EdgeKind::Supports, &neighbor, 1.0)?;
+
+        let serialized = vault
+            .context_pack()
+            .search_text("serializedneighborroot", 10)
+            .edge_hop(1)
+            .format(PackFormat::Plaintext)
+            .run_serialized_with_telemetry()?;
+        assert!(!serialized.value.is_empty());
+        let text = std::str::from_utf8(&serialized.value).expect("plaintext context pack");
+        assert!(
+            text.contains("Neighbor"),
+            "test setup should serialize the merged neighbor"
+        );
+        let run_id = serialized.run_id.expect("serialized telemetry run id");
+
+        let runs = vault.retrieval_runs(1)?;
+        assert_eq!(runs.len(), 1);
+        assert_eq!(runs[0].run_id, run_id);
+        assert_eq!(runs[0].action, crate::store::RetrievalAction::ContextPack);
+        assert_eq!(runs[0].result_ids, vec![*result.as_bytes()]);
+        assert!(!runs[0].result_ids.contains(neighbor.as_bytes()));
+        assert_eq!(runs[0].score_breakdown.len(), 1);
+        assert_eq!(runs[0].score_breakdown[0].result_id, *result.as_bytes());
+        Ok(())
+    }
 }
