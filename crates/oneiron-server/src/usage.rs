@@ -687,6 +687,7 @@ impl UsageLedger {
         if let Some(vault_id) = vault_id {
             validate_dimension("vaultId", vault_id, MAX_DIMENSION_LEN)?;
         }
+        validate_consumer_usage_storage_keys(tenant_id, vault_id)?;
 
         let _guard = self.lock.lock().map_err(|_| UsageError::LockPoisoned)?;
         self.consumer_usage_locked(tenant_id, vault_id, configured_mode)
@@ -702,6 +703,7 @@ impl UsageLedger {
         if let Some(vault_id) = vault_id {
             validate_dimension("vaultId", vault_id, MAX_DIMENSION_LEN)?;
         }
+        validate_consumer_usage_storage_keys(tenant_id, vault_id)?;
 
         let _guard = self.lock.lock().map_err(|_| UsageError::LockPoisoned)?;
         let rollup = self.consumer_rollup_locked(tenant_id, vault_id)?;
@@ -1068,11 +1070,23 @@ fn validate_consumer_top_up_storage_keys(
     tenant_id: &str,
     idempotency_key: &str,
 ) -> Result<(), UsageError> {
-    validate_sync_state_key_len("tenantId", consumer_allowance_key_len(tenant_id))?;
+    validate_consumer_usage_storage_keys(tenant_id, None)?;
     validate_sync_state_key_len(
         "idempotencyKey",
         consumer_top_up_key_len(tenant_id, idempotency_key),
     )?;
+    Ok(())
+}
+
+fn validate_consumer_usage_storage_keys(
+    tenant_id: &str,
+    vault_id: Option<&str>,
+) -> Result<(), UsageError> {
+    validate_sync_state_key_len("tenantId", consumer_allowance_key_len(tenant_id))?;
+    validate_sync_state_key_len("tenantId", tenant_rollup_key_len(tenant_id))?;
+    if let Some(vault_id) = vault_id {
+        validate_sync_state_key_len("vaultId", vault_rollup_key_len(tenant_id, vault_id))?;
+    }
     Ok(())
 }
 
@@ -1084,6 +1098,14 @@ fn validate_sync_state_key_len(field: &'static str, key_len: usize) -> Result<()
         });
     }
     Ok(())
+}
+
+fn tenant_rollup_key_len(tenant_id: &str) -> usize {
+    USAGE_TENANT_ROLLUP_PREFIX.len() + key_part_len(tenant_id)
+}
+
+fn vault_rollup_key_len(tenant_id: &str, vault_id: &str) -> usize {
+    USAGE_VAULT_ROLLUP_PREFIX.len() + key_part_len(tenant_id) + 1 + key_part_len(vault_id)
 }
 
 fn consumer_allowance_key_len(tenant_id: &str) -> usize {
@@ -1208,6 +1230,39 @@ mod tests {
         (MAX_SYNC_STATE_KEY_LEN - CONSUMER_TOP_UP_PREFIX.len() - 1 - key_part_len(tenant_id)) / 2
     }
 
+    fn tenant_id_over_tenant_rollup_key_limit() -> String {
+        let tenant_id =
+            "t".repeat((MAX_SYNC_STATE_KEY_LEN - USAGE_TENANT_ROLLUP_PREFIX.len()) / 2 + 1);
+        assert!(tenant_id.len() <= MAX_DIMENSION_LEN);
+        assert!(consumer_allowance_key_len(&tenant_id) <= MAX_SYNC_STATE_KEY_LEN);
+        assert!(tenant_rollup_key_len(&tenant_id) > MAX_SYNC_STATE_KEY_LEN);
+        tenant_id
+    }
+
+    fn vault_id_over_vault_rollup_key_limit(tenant_id: &str) -> String {
+        let vault_id = "v".repeat(
+            (MAX_SYNC_STATE_KEY_LEN
+                - USAGE_VAULT_ROLLUP_PREFIX.len()
+                - 1
+                - key_part_len(tenant_id))
+                / 2
+                + 1,
+        );
+        assert!(vault_id.len() <= MAX_DIMENSION_LEN);
+        assert!(vault_rollup_key_len(tenant_id, &vault_id) > MAX_SYNC_STATE_KEY_LEN);
+        vault_id
+    }
+
+    fn assert_storage_key_invalid_field(error: UsageError, expected_field: &'static str) {
+        assert!(matches!(
+            error,
+            UsageError::InvalidField {
+                field,
+                message: "produces a storage key that is too long"
+            } if field == expected_field
+        ));
+    }
+
     #[test]
     fn cost_calculator_includes_token_cache_and_service_costs() {
         let cost = cloud_event("cost-key").cost_input().calculate().unwrap();
@@ -1237,6 +1292,31 @@ mod tests {
         assert!(!warning.triggered);
         assert_eq!(warning.threshold_ratio, ALLOWANCE_NOTICE_THRESHOLD_RATIO);
         assert_eq!(warning.used_ratio, Some(0.8));
+    }
+
+    #[test]
+    fn consumer_usage_rejects_overlong_tenant_rollup_key() {
+        let (_dir, ledger) = test_ledger();
+        let tenant_id = tenant_id_over_tenant_rollup_key_limit();
+
+        let err = ledger
+            .consumer_usage(&tenant_id, None, UsageMode::OneironCloud)
+            .expect_err("overlong tenant rollup key should validate before storage");
+
+        assert_storage_key_invalid_field(err, "tenantId");
+    }
+
+    #[test]
+    fn consumer_usage_details_rejects_overlong_vault_rollup_key() {
+        let (_dir, ledger) = test_ledger();
+        let tenant_id = "tenant-a";
+        let vault_id = vault_id_over_vault_rollup_key_limit(tenant_id);
+
+        let err = ledger
+            .consumer_usage_details(tenant_id, Some(&vault_id), UsageMode::OneironCloud)
+            .expect_err("overlong vault rollup key should validate before storage");
+
+        assert_storage_key_invalid_field(err, "vaultId");
     }
 
     #[test]
@@ -1298,6 +1378,33 @@ mod tests {
             }
         ));
         assert_eq!(usage.allowance.allowance_credit_units, 0.0);
+    }
+
+    #[test]
+    fn top_up_rejects_overlong_response_rollup_key_before_recording() {
+        let (_dir, ledger) = test_ledger();
+        let tenant_id = tenant_id_over_tenant_rollup_key_limit();
+        let idempotency_key = "k";
+        assert!(consumer_top_up_key_len(&tenant_id, idempotency_key) <= MAX_SYNC_STATE_KEY_LEN);
+
+        let err = ledger
+            .top_up(
+                ConsumerTopUpRequest {
+                    tenant_id: tenant_id.clone(),
+                    idempotency_key: idempotency_key.to_owned(),
+                    credit_units: 1.0,
+                },
+                UsageMode::OneironCloud,
+            )
+            .expect_err("overlong response rollup key should validate before write transaction");
+        let allowance = ledger
+            .consumer_allowance(&tenant_id)
+            .expect("allowance should remain readable");
+        let top_up_key = consumer_top_up_key(&tenant_id, idempotency_key);
+
+        assert_storage_key_invalid_field(err, "tenantId");
+        assert_eq!(allowance.credit_units, 0.0);
+        assert!(ledger.vault.sync_state_get(&top_up_key).unwrap().is_none());
     }
 
     #[test]
