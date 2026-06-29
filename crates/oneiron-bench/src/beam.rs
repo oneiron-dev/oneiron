@@ -20,6 +20,7 @@ const BEAM_SCORER_VERSION: &str = "beam-fixed-scorer-v1";
 const BEAM_COMPARATOR_VERSION: &str = "beam-comparator-card-v1";
 const COST_USD_SCALE: f64 = 1_000_000.0;
 const MAX_NORMALIZABLE_COST_USD: f64 = f64::MAX / COST_USD_SCALE;
+const LOW_CONFIDENCE_RETRIEVAL_LIMIT: usize = 1;
 const BUILTIN_FIXTURE_JSON: &str = include_str!("../fixtures/beam_128k_smoke.fixture.json");
 const BUILTIN_MANIFEST_JSON: &str = include_str!("../fixtures/beam_128k_smoke.run.json");
 
@@ -861,8 +862,14 @@ fn validate_fixture(fixture: &BeamFixture) -> BeamResult<()> {
         if case.query.trim().is_empty() {
             return Err(invalid_fixture(fixture, "case query must not be empty"));
         }
-        if case.limit == 0 {
+        if case.limit == 0 && case.fixture_class != FixtureClass::LowConfidence {
             return Err(invalid_fixture(fixture, "case limit must be positive"));
+        }
+        if case.fixture_class == FixtureClass::LowConfidence && case.limit != 0 {
+            return Err(invalid_fixture(
+                fixture,
+                "low_confidence cases must set limit to 0",
+            ));
         }
         if case.token_budget == 0 {
             return Err(invalid_fixture(
@@ -915,6 +922,12 @@ fn validate_fixture(fixture: &BeamFixture) -> BeamResult<()> {
                 temporal_search,
                 &case.temporal_evidence_ids,
             )?;
+            if case.temporal_evidence_ids.len() > case.limit {
+                return Err(invalid_fixture(
+                    fixture,
+                    "temporalEvidenceIds count must be <= limit",
+                ));
+            }
         } else {
             if case.temporal_search.is_some() {
                 return Err(invalid_fixture(
@@ -937,6 +950,12 @@ fn validate_fixture(fixture: &BeamFixture) -> BeamResult<()> {
                 )
             })?;
             validate_opposing_evidence(fixture, &records_by_id, opposing_evidence)?;
+            if opposing_evidence.record_ids.len() > case.limit {
+                return Err(invalid_fixture(
+                    fixture,
+                    "opposingEvidence.recordIds count must be <= limit",
+                ));
+            }
         } else if case.opposing_evidence.is_some() {
             return Err(invalid_fixture(
                 fixture,
@@ -1303,9 +1322,15 @@ fn configured_context_pack_builder<'a>(
     vault: &'a Vault,
     case: &FixtureCase,
 ) -> ContextPackBuilder<'a> {
+    let text_search_limit = if case.fixture_class == FixtureClass::LowConfidence && case.limit == 0
+    {
+        LOW_CONFIDENCE_RETRIEVAL_LIMIT
+    } else {
+        case.limit
+    };
     let builder = vault
         .context_pack()
-        .search_text(&case.query, case.limit)
+        .search_text(&case.query, text_search_limit)
         .field_profile(FieldProfile::Standard)
         .format(BEAM_CONTEXT_PACK_FORMAT)
         .merge_neighbors(false)
@@ -1316,6 +1341,7 @@ fn configured_context_pack_builder<'a>(
         (FixtureClass::TemporalStaleness, Some(range)) => builder
             .search_temporal(range.start, range.end, case.limit)
             .limit(case.limit),
+        (FixtureClass::LowConfidence, _) => builder.limit(case.limit),
         _ => builder,
     }
 }
@@ -2732,6 +2758,40 @@ neighbors:
     }
 
     #[test]
+    fn low_confidence_fixture_abstains_via_below_threshold_context_pack() {
+        let fixture = eval004_fixture(
+            "eval004-low-confidence",
+            "What is the Atlas launch date?",
+            FixtureClass::LowConfidence,
+            vec![eval004_record_json(
+                "30303030303030303030303030303030",
+                10,
+                "Atlas launch date is March 1.",
+            )],
+        );
+        let manifest = manifest_for_fixture_case(&fixture, "eval004-low-confidence");
+        let report =
+            run_fixture_manifest(&manifest, &fixture).expect("low-confidence fixture runs");
+        let deterministic = find_arm(&report, ArmKind::Deterministic);
+        let ArmOutcome::Completed { context_pack } = &deterministic.outcome else {
+            panic!("deterministic arm should complete");
+        };
+        let empty = context_pack
+            .empty
+            .as_ref()
+            .expect("below-threshold empty report");
+
+        assert_eq!(context_pack.limit, 0);
+        assert_eq!(context_pack.result_count, 0);
+        assert_eq!(empty.reason, "below_threshold");
+        assert!(empty.total_in_scope > 0);
+
+        let report_json = serde_json::to_value(&report).expect("report serializes");
+        let deterministic = deterministic_competitor_json(&report_json);
+        assert_abstention_gate_passed(deterministic, "low_confidence_abstention");
+    }
+
+    #[test]
     fn empty_memory_fixture_rejects_nonempty_vault() {
         let mut fixture_json: serde_json::Value =
             serde_json::from_str(BUILTIN_FIXTURE_JSON).expect("fixture JSON");
@@ -2831,6 +2891,102 @@ neighbors:
         assert!(
             err.to_string()
                 .contains("temporalSearch is only valid for temporal_staleness cases")
+        );
+    }
+
+    #[test]
+    fn low_confidence_fixture_requires_zero_publication_limit() {
+        let mut fixture_json: serde_json::Value =
+            serde_json::from_str(BUILTIN_FIXTURE_JSON).expect("fixture JSON");
+        fixture_json["cases"][0]["expectedMinResults"] = serde_json::json!(0);
+        fixture_json["cases"][0]["fixtureClass"] = serde_json::json!("low_confidence");
+        fixture_json["cases"][0]["limit"] = serde_json::json!(1);
+
+        let err = parse_fixture_json(&fixture_json.to_string())
+            .expect_err("low-confidence fixtures must publish zero results");
+
+        assert!(
+            err.to_string()
+                .contains("low_confidence cases must set limit to 0")
+        );
+    }
+
+    #[test]
+    fn contradiction_fixture_rejects_more_required_evidence_than_limit() {
+        let mut fixture_json: serde_json::Value =
+            serde_json::from_str(BUILTIN_FIXTURE_JSON).expect("fixture JSON");
+        fixture_json["fixtureId"] = serde_json::json!("eval004-contradiction-over-limit");
+        fixture_json["records"] = serde_json::json!([
+            eval004_record_json(
+                "30303030303030303030303030303030",
+                10,
+                "Atlas launch date is March 1.",
+            ),
+            eval004_record_json(
+                "40404040404040404040404040404040",
+                11,
+                "Atlas launch date is April 1.",
+            ),
+        ]);
+        fixture_json["cases"][0]["caseId"] = serde_json::json!("eval004-contradiction-over-limit");
+        fixture_json["cases"][0]["query"] = serde_json::json!("What is the Atlas launch date?");
+        fixture_json["cases"][0]["limit"] = serde_json::json!(1);
+        fixture_json["cases"][0]["expectedMinResults"] = serde_json::json!(0);
+        fixture_json["cases"][0]["fixtureClass"] = serde_json::json!("adversarial_contradiction");
+        fixture_json["cases"][0]["opposingEvidence"] = serde_json::json!({
+            "field": "txt",
+            "recordIds": [
+                "30303030303030303030303030303030",
+                "40404040404040404040404040404040",
+            ],
+        });
+
+        let err = parse_fixture_json(&fixture_json.to_string())
+            .expect_err("required opposing evidence must fit within limit");
+
+        assert!(
+            err.to_string()
+                .contains("opposingEvidence.recordIds count must be <= limit")
+        );
+    }
+
+    #[test]
+    fn temporal_fixture_rejects_more_required_evidence_than_limit() {
+        let mut fixture_json: serde_json::Value =
+            serde_json::from_str(BUILTIN_FIXTURE_JSON).expect("fixture JSON");
+        fixture_json["fixtureId"] = serde_json::json!("eval004-temporal-over-limit");
+        fixture_json["records"] = serde_json::json!([
+            eval004_record_json(
+                "50505050505050505050505050505050",
+                1,
+                "Old Nimbus pricing was 10 credits.",
+            ),
+            eval004_record_json(
+                "60606060606060606060606060606060",
+                1,
+                "Old Nimbus pricing was 12 credits.",
+            ),
+        ]);
+        fixture_json["cases"][0]["caseId"] = serde_json::json!("eval004-temporal-over-limit");
+        fixture_json["cases"][0]["query"] = serde_json::json!("Nimbus pricing");
+        fixture_json["cases"][0]["limit"] = serde_json::json!(1);
+        fixture_json["cases"][0]["expectedMinResults"] = serde_json::json!(0);
+        fixture_json["cases"][0]["fixtureClass"] = serde_json::json!("temporal_staleness");
+        fixture_json["cases"][0]["temporalSearch"] = serde_json::json!({
+            "start": 0,
+            "end": 1,
+        });
+        fixture_json["cases"][0]["temporalEvidenceIds"] = serde_json::json!([
+            "50505050505050505050505050505050",
+            "60606060606060606060606060606060",
+        ]);
+
+        let err = parse_fixture_json(&fixture_json.to_string())
+            .expect_err("required temporal evidence must fit within limit");
+
+        assert!(
+            err.to_string()
+                .contains("temporalEvidenceIds count must be <= limit")
         );
     }
 
@@ -2991,7 +3147,7 @@ neighbors:
         let case = FixtureCase {
             case_id: "eval004-low-confidence".to_owned(),
             query: "unsupported low confidence query".to_owned(),
-            limit: 1,
+            limit: 0,
             token_budget: 128,
             expected_min_results: 0,
             fixture_class: FixtureClass::LowConfidence,
@@ -3123,7 +3279,12 @@ neighbors:
         fixture_json["records"] = serde_json::Value::Array(records);
         fixture_json["cases"][0]["caseId"] = serde_json::json!(case_id);
         fixture_json["cases"][0]["query"] = serde_json::json!(query);
-        fixture_json["cases"][0]["limit"] = serde_json::json!(5);
+        fixture_json["cases"][0]["limit"] =
+            serde_json::json!(if fixture_class == FixtureClass::LowConfidence {
+                0
+            } else {
+                5
+            });
         fixture_json["cases"][0]["tokenBudget"] = serde_json::json!(4096);
         fixture_json["cases"][0]["expectedMinResults"] = serde_json::json!(0);
         fixture_json["cases"][0]["fixtureClass"] =
@@ -3239,7 +3400,11 @@ neighbors:
         FixtureCase {
             case_id: format!("eval004-{}", fixture_class.gate_label()),
             query: "fixture gate query".to_owned(),
-            limit: 5,
+            limit: if fixture_class == FixtureClass::LowConfidence {
+                0
+            } else {
+                5
+            },
             token_budget: 128,
             expected_min_results: 0,
             fixture_class,
