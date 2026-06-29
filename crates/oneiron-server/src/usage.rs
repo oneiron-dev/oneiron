@@ -14,6 +14,8 @@ const USAGE_TENANT_ROLLUP_PREFIX: &str = "usage:rollup:tenant:";
 const USAGE_VAULT_ROLLUP_PREFIX: &str = "usage:rollup:vault:";
 const CONSUMER_ALLOWANCE_PREFIX: &str = "consumer:allowance:";
 const CONSUMER_TOP_UP_PREFIX: &str = "consumer:top-up:";
+// LMDB's default maximum key size, exposed by heed as `Env::max_key_size`.
+const MAX_SYNC_STATE_KEY_LEN: usize = 511;
 const MAX_DIMENSION_LEN: usize = 256;
 const MAX_IDEMPOTENCY_KEY_LEN: usize = 256;
 const TOKENS_PER_MILLION: f64 = 1_000_000.0;
@@ -453,9 +455,9 @@ impl ConsumerAllowanceWarning {
 pub struct ConsumerAllowanceState {
     /// Total credited allowance available to the tenant.
     pub allowance_credit_units: f64,
-    /// Credit units consumed by usage rollups in this scope.
+    /// Tenant-wide credit units consumed against this allowance.
     pub used_credit_units: f64,
-    /// Remaining credit units after subtracting scoped usage.
+    /// Remaining tenant allowance after subtracting tenant-wide usage.
     pub remaining_credit_units: f64,
     /// Last top-up timestamp for this tenant, if any.
     pub updated_at: Option<u64>,
@@ -511,6 +513,7 @@ impl ConsumerTopUpRequest {
             &self.idempotency_key,
             MAX_IDEMPOTENCY_KEY_LEN,
         )?;
+        validate_consumer_top_up_storage_keys(&self.tenant_id, &self.idempotency_key)?;
         validate_non_negative_finite("creditUnits", self.credit_units)?;
         Ok(())
     }
@@ -1061,6 +1064,40 @@ fn consumer_top_up_key(tenant_id: &str, idempotency_key: &str) -> String {
     )
 }
 
+fn validate_consumer_top_up_storage_keys(
+    tenant_id: &str,
+    idempotency_key: &str,
+) -> Result<(), UsageError> {
+    validate_sync_state_key_len("tenantId", consumer_allowance_key_len(tenant_id))?;
+    validate_sync_state_key_len(
+        "idempotencyKey",
+        consumer_top_up_key_len(tenant_id, idempotency_key),
+    )?;
+    Ok(())
+}
+
+fn validate_sync_state_key_len(field: &'static str, key_len: usize) -> Result<(), UsageError> {
+    if key_len > MAX_SYNC_STATE_KEY_LEN {
+        return Err(UsageError::InvalidField {
+            field,
+            message: "produces a storage key that is too long",
+        });
+    }
+    Ok(())
+}
+
+fn consumer_allowance_key_len(tenant_id: &str) -> usize {
+    CONSUMER_ALLOWANCE_PREFIX.len() + key_part_len(tenant_id)
+}
+
+fn consumer_top_up_key_len(tenant_id: &str, idempotency_key: &str) -> usize {
+    CONSUMER_TOP_UP_PREFIX.len() + key_part_len(tenant_id) + 1 + key_part_len(idempotency_key)
+}
+
+fn key_part_len(value: &str) -> usize {
+    value.len() * 2
+}
+
 fn key_part(value: &str) -> String {
     const HEX: &[u8; 16] = b"0123456789abcdef";
     let bytes = value.as_bytes();
@@ -1167,6 +1204,10 @@ mod tests {
         }
     }
 
+    fn max_top_up_idempotency_key_len(tenant_id: &str) -> usize {
+        (MAX_SYNC_STATE_KEY_LEN - CONSUMER_TOP_UP_PREFIX.len() - 1 - key_part_len(tenant_id)) / 2
+    }
+
     #[test]
     fn cost_calculator_includes_token_cache_and_service_costs() {
         let cost = cloud_event("cost-key").cost_input().calculate().unwrap();
@@ -1196,6 +1237,67 @@ mod tests {
         assert!(!warning.triggered);
         assert_eq!(warning.threshold_ratio, ALLOWANCE_NOTICE_THRESHOLD_RATIO);
         assert_eq!(warning.used_ratio, Some(0.8));
+    }
+
+    #[test]
+    fn top_up_accepts_idempotency_key_at_encoded_storage_limit() {
+        let (_dir, ledger) = test_ledger();
+        let tenant_id = "tenant-a";
+        let idempotency_key = "k".repeat(max_top_up_idempotency_key_len(tenant_id));
+        assert_eq!(
+            consumer_top_up_key_len(tenant_id, &idempotency_key),
+            MAX_SYNC_STATE_KEY_LEN
+        );
+
+        let result = ledger
+            .top_up(
+                ConsumerTopUpRequest {
+                    tenant_id: tenant_id.to_owned(),
+                    idempotency_key: idempotency_key.clone(),
+                    credit_units: 1.0,
+                },
+                UsageMode::OneironCloud,
+            )
+            .expect("top-up at encoded key limit should record");
+
+        assert!(result.recorded);
+        assert!(!result.replayed);
+        assert_eq!(result.top_up.idempotency_key, idempotency_key);
+        assert_eq!(result.usage.allowance.allowance_credit_units, 1.0);
+    }
+
+    #[test]
+    fn top_up_rejects_idempotency_key_over_encoded_storage_limit() {
+        let (_dir, ledger) = test_ledger();
+        let tenant_id = "tenant-a";
+        let idempotency_key = "k".repeat(max_top_up_idempotency_key_len(tenant_id) + 1);
+        assert_eq!(
+            consumer_top_up_key_len(tenant_id, &idempotency_key),
+            MAX_SYNC_STATE_KEY_LEN + 2
+        );
+
+        let err = ledger
+            .top_up(
+                ConsumerTopUpRequest {
+                    tenant_id: tenant_id.to_owned(),
+                    idempotency_key,
+                    credit_units: 1.0,
+                },
+                UsageMode::OneironCloud,
+            )
+            .expect_err("oversized encoded top-up key should validate before storage");
+        let usage = ledger
+            .consumer_usage(tenant_id, None, UsageMode::OneironCloud)
+            .expect("usage after rejected top-up");
+
+        assert!(matches!(
+            err,
+            UsageError::InvalidField {
+                field: "idempotencyKey",
+                message: "produces a storage key that is too long"
+            }
+        ));
+        assert_eq!(usage.allowance.allowance_credit_units, 0.0);
     }
 
     #[test]
