@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "runId": "beam-128k-smoke",
   "dataset": {
     "kind": "fixture",
