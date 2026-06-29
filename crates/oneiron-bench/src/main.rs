@@ -11,6 +11,9 @@
 //!   corpus, insert p50 (new-node vs refresh), top-10 search p50 at
 //!   ef_search=128, recall@10 vs float32 brute force, refresh/delete
 //!   churn modes, RAM-at-index.
+//! * `beam smoke` — EVAL-001 BEAM 128K fixture scaffold smoke: fixture +
+//!   run-manifest parse, fixture ingest, deterministic context-pack arm,
+//!   and explicit not-ready Agentic/Chat arms.
 //!
 //! The full MIRACL / Mr.TyDi / internal SEA judgment-set retrieval
 //! matrix lives in ONE-318; this binary only ships the skeleton and
@@ -22,6 +25,7 @@ use std::time::Instant;
 use oneiron::analyzer::{AnalyzerContext, MultilingualAnalyzer, Token};
 use oneiron::{EntityId, TimeRange, Vault, VaultConfig};
 
+mod beam;
 mod vector;
 
 fn main() -> ExitCode {
@@ -49,6 +53,7 @@ fn main() -> ExitCode {
                 ExitCode::FAILURE
             }
         },
+        [cmd, rest @ ..] if cmd == "beam" => beam::run(rest),
         [cmd, rest @ ..] if cmd == "vector" => vector::run(rest),
         _ => {
             eprintln!("unknown invocation: {args:?}");
@@ -69,6 +74,9 @@ fn print_help() {
            bm25 hot-term-ingest [N]    ingest N docs (default 10000) sharing one\n\
                                        hot term; reports per-chunk + total cost\n\
                                        (ONE-299 posting-append microbench)\n\
+           beam smoke                  run the BEAM 128K fixture scaffold smoke\n\
+                                       (deterministic context-pack arm +\n\
+                                       explicit not-ready Agentic/Chat arms)\n\
            vector                      ARCH-0019 vector perf/recall harness\n\
                                        [--n 1k|10k] [--dim 1024|4096] [--seed N]\n\
                                        [--queries N] [--churn none|refresh|delete|both]\n\
