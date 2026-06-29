@@ -919,6 +919,20 @@ impl Store {
         Ok(())
     }
 
+    pub(crate) fn delete_retrieval_run(&self, run_id: RetrievalRunId) -> Result<()> {
+        if active_write_txn_depth() > 0 {
+            return Err(Error::ConcurrentWrite(
+                "retrieval telemetry delete skipped inside active write transaction",
+            ));
+        }
+
+        let key = retrieval_run_key(run_id);
+        let mut wtxn = self.env.write_txn()?;
+        self.vault_meta.delete(&mut wtxn, &key)?;
+        wtxn.commit()?;
+        Ok(())
+    }
+
     pub(crate) fn finalize_context_pack_retrieval_run(
         &self,
         run_id: RetrievalRunId,
