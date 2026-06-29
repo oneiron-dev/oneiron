@@ -473,9 +473,19 @@ impl<'a> ContextPackBuilder<'a> {
             items_dropped: crate::types::PackItemAccounting::token_budget(),
         };
         if let Some(run_id) = telemetry_run_id {
-            self.vault
-                .store
-                .update_retrieval_run_elapsed(run_id, stats.query_time_us)?;
+            let surfaced_result_ids: Vec<[u8; 16]> =
+                results.iter().map(|entity| *entity.id.as_bytes()).collect();
+            if let Err(error) = self.vault.store.finalize_context_pack_retrieval_run(
+                run_id,
+                stats.query_time_us,
+                stats.claims_suppressed,
+                &surfaced_result_ids,
+            ) {
+                tracing::warn!(
+                    ?error,
+                    "context-pack retrieval telemetry finalization failed; continuing retrieval"
+                );
+            }
         }
         let empty = empty_context(pack_is_empty, &stats, pipeline_empty_reason);
 
@@ -2486,6 +2496,42 @@ mod tests {
         assert_eq!(pack.results.len(), 1);
         assert_eq!(pack.results[0].id, live);
         assert_eq!(pack.stats.claims_suppressed, 1);
+        Ok(())
+    }
+
+    #[test]
+    fn context_pack_telemetry_records_final_hydration_suppressions() -> Result<()> {
+        let (_dir, vault) = open_test_vault();
+
+        let live = EntityId::from_bytes_unchecked([0x73; 16]);
+        let dead_neighbor = EntityId::from_bytes_unchecked([0x74; 16]);
+        put_claim_text_entity(&vault, &live, "telemetryhydrate", "test.live", "v")?;
+        put_claim_with_status(
+            &vault,
+            &dead_neighbor,
+            crate::claim::ClaimApprovalStatus::Auto,
+            crate::claim::ClaimLifecycleStatus::Retracted,
+            false,
+        )?;
+        vault.put_edge(&live, crate::types::EdgeKind::Supports, &dead_neighbor, 0.9)?;
+
+        let pack = vault
+            .context_pack()
+            .search_text("telemetryhydrate", 10)
+            .edge_hop(1)
+            .run()?;
+        assert_eq!(pack.results.len(), 1);
+        assert_eq!(pack.results[0].id, live);
+        assert!(pack.neighbors.is_empty());
+        assert_eq!(pack.stats.claims_suppressed, 1);
+
+        let runs = vault.retrieval_runs(1)?;
+        assert_eq!(runs.len(), 1);
+        assert_eq!(runs[0].action, crate::store::RetrievalAction::ContextPack);
+        assert_eq!(runs[0].claims_suppressed, pack.stats.claims_suppressed);
+        assert_eq!(runs[0].result_ids, vec![*live.as_bytes()]);
+        assert_eq!(runs[0].score_breakdown.len(), 1);
+        assert_eq!(runs[0].score_breakdown[0].result_id, *live.as_bytes());
         Ok(())
     }
 }

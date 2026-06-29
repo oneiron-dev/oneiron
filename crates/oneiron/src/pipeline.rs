@@ -877,7 +877,16 @@ impl<'a> PipelineBuilder<'a> {
             claims_suppressed,
             empty_reason.map(|reason| format!("{reason:?}")),
         );
-        self.vault.store.record_retrieval_run(&run_record)?;
+        let telemetry_run_id = match self.vault.store.record_retrieval_run(&run_record) {
+            Ok(()) => Some(run_id),
+            Err(error) => {
+                tracing::warn!(
+                    ?error,
+                    "retrieval telemetry run write failed; continuing retrieval"
+                );
+                None
+            }
+        };
 
         Ok(PipelineOutput {
             scores,
@@ -886,7 +895,7 @@ impl<'a> PipelineBuilder<'a> {
             cosine_ghosts_dampened,
             total_in_scope,
             empty_reason,
-            telemetry_run_id: Some(run_id),
+            telemetry_run_id,
         })
     }
 
@@ -2408,6 +2417,101 @@ mod tests {
         assert_eq!(runs[0].signals, vec![RetrievalSignal::Text]);
         assert_eq!(runs[0].elapsed_us, pack.stats.query_time_us);
         assert!(runs[0].result_ids.contains(id.as_bytes()));
+        Ok(())
+    }
+
+    #[test]
+    fn direct_vault_searches_emit_retrieval_telemetry() -> Result<()> {
+        let (_dir, vault) = open_test_vault();
+        let id = entity_id(0x36);
+        put_text_and_vector(&vault, id, "direct telemetry", [1.0, 0.0, 0.0, 0.0])?;
+
+        let vector = vault.search_vector(&[1.0, 0.0, 0.0, 0.0], 10)?;
+        let text = vault.search_text("direct", 10)?;
+        assert_eq!(vector.len(), 1);
+        assert_eq!(text.len(), 1);
+
+        let runs = vault.retrieval_runs(10)?;
+        let vector_run = runs
+            .iter()
+            .find(|run| {
+                run.action == RetrievalAction::VaultSearch
+                    && run.signals == vec![RetrievalSignal::Vector]
+            })
+            .expect("direct vector telemetry run");
+        assert_eq!(vector_run.claims_suppressed, 0);
+        assert_eq!(vector_run.result_ids, vec![*id.as_bytes()]);
+        assert!(vector_run.score_breakdown.iter().any(|entry| {
+            entry
+                .components
+                .iter()
+                .any(|component| component.signal == RetrievalSignal::Vector)
+        }));
+
+        let text_run = runs
+            .iter()
+            .find(|run| {
+                run.action == RetrievalAction::VaultSearch
+                    && run.signals == vec![RetrievalSignal::Text]
+            })
+            .expect("direct text telemetry run");
+        assert_eq!(text_run.claims_suppressed, 0);
+        assert_eq!(text_run.result_ids, vec![*id.as_bytes()]);
+        assert!(text_run.score_breakdown.iter().any(|entry| {
+            entry
+                .components
+                .iter()
+                .any(|component| component.signal == RetrievalSignal::Text)
+        }));
+        Ok(())
+    }
+
+    #[test]
+    fn retrieval_runs_returns_bounded_newest_first() -> Result<()> {
+        let (_dir, vault) = open_test_vault();
+        let first_id = entity_id(0x37);
+        let second_id = entity_id(0x38);
+        let third_id = entity_id(0x39);
+
+        put_text(&vault, first_id, "alphaone")?;
+        assert_eq!(vault.search_text("alphaone", 10)?.len(), 1);
+        let first_run = vault.retrieval_runs(1)?[0].run_id;
+        std::thread::sleep(std::time::Duration::from_millis(2));
+
+        put_text(&vault, second_id, "betatwo")?;
+        assert_eq!(vault.search_text("betatwo", 10)?.len(), 1);
+        let second_run = vault.retrieval_runs(1)?[0].run_id;
+        std::thread::sleep(std::time::Duration::from_millis(2));
+
+        put_text(&vault, third_id, "gammathree")?;
+        assert_eq!(vault.search_text("gammathree", 10)?.len(), 1);
+        let third_run = vault.retrieval_runs(1)?[0].run_id;
+
+        let newest_two = vault.retrieval_runs(2)?;
+        assert_eq!(newest_two.len(), 2);
+        assert_eq!(newest_two[0].run_id, third_run);
+        assert_eq!(newest_two[1].run_id, second_run);
+        assert!(!newest_two.iter().any(|run| run.run_id == first_run));
+        assert!(vault.retrieval_runs(0)?.is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn telemetry_write_failure_is_best_effort_for_retrieval() -> Result<()> {
+        let (dir, vault) = open_test_vault();
+        let id = entity_id(0x3A);
+        put_text(&vault, id, "best effort telemetry")?;
+        let vault_path = dir.path().canonicalize()?;
+
+        crate::store::test_hooks::fail_next_retrieval_run_write_for(vault_path.clone());
+        let pipeline = vault.query().search_text("best effort", 10).run()?;
+        assert_eq!(pipeline.len(), 1);
+        assert!(vault.retrieval_runs(1)?.is_empty());
+
+        crate::store::test_hooks::fail_next_retrieval_run_write_for(vault_path);
+        let direct = vault.search_text("best effort", 10)?;
+        assert_eq!(direct.len(), 1);
+        assert!(vault.retrieval_runs(1)?.is_empty());
         Ok(())
     }
 
