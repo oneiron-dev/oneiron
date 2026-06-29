@@ -49,11 +49,12 @@ use crate::store::{
     lmdb_database_open_guard,
 };
 use crate::types::{
-    EDGE_KEY_LEN, ENTITY_ID_LEN, ENTITY_TYPE_CLAIM, ENTITY_TYPE_MESSAGE, ENTITY_TYPE_MODEL,
-    ENTITY_TYPE_REDACTION_AUDIT, ENTITY_TYPE_TURN, EdgeActorClass, EdgeConfirmationStatus,
-    EdgeInfo, EdgeKind, EdgeProvenanceFlags, EdgeValueLayout, EntityId, ScoredEntity,
-    StructuralKindRegistration, TimeRange, TypeByteBand, Vad, VadAnnotation, VadAnnotationSource,
-    VaultConfig, bytes_to_hex_lower, decode_edge_value_for_kind, edge_value_layout_for_kind,
+    EDGE_KEY_LEN, ENTITY_ID_LEN, ENTITY_TYPE_CLAIM, ENTITY_TYPE_CODE_ARTIFACT, ENTITY_TYPE_MESSAGE,
+    ENTITY_TYPE_MODEL, ENTITY_TYPE_REDACTION_AUDIT, ENTITY_TYPE_TURN, EdgeActorClass,
+    EdgeConfirmationStatus, EdgeInfo, EdgeKind, EdgeProvenanceFlags, EdgeValueLayout, EntityId,
+    ScoredEntity, StructuralKindRegistration, TimeRange, TypeByteBand, Vad, VadAnnotation,
+    VadAnnotationSource, VaultConfig, bytes_to_hex_lower, decode_edge_value_for_kind,
+    edge_value_layout_for_kind,
 };
 use crate::{
     BatchBuilder, ContextPackBuilder, MaintenanceBuilder, PipelineBuilder, RetrievalWithTelemetry,
@@ -1620,6 +1621,54 @@ impl Vault {
         Ok(())
     }
 
+    fn require_code_revision_supersession_rights(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        new_body: &ClaimBody,
+        old_body: &ClaimBody,
+    ) -> Result<()> {
+        if new_body.source != Some(ClaimSource::Generated)
+            || old_body.source != Some(ClaimSource::UserStated)
+        {
+            return Ok(());
+        }
+        let Some(new_subject) = self.code_revision_claim_subject_in_txn(rtxn, new_body)? else {
+            return Ok(());
+        };
+        let Some(old_subject) = self.code_revision_claim_subject_in_txn(rtxn, old_body)? else {
+            return Ok(());
+        };
+        if new_subject == old_subject {
+            return Err(Error::InvalidCodeArtifactBody(
+                "generated code revision claim cannot supersede user-stated truth",
+            ));
+        }
+        Ok(())
+    }
+
+    fn code_revision_claim_subject_in_txn(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        body: &ClaimBody,
+    ) -> Result<Option<EntityId>> {
+        if body.predicate != crate::code_revision::CODE_REVISION_CLAIM_PREDICATE {
+            return Ok(None);
+        }
+        let ClaimSubject::Entity(subject) = body.subject else {
+            return Ok(None);
+        };
+        let Some(raw) = self.store.entities.get(rtxn, subject.as_bytes())? else {
+            return Err(Error::EntityNotFound);
+        };
+        let header =
+            EntityMetadataHeader::parse(raw).ok_or(Error::CorruptedIndex("entity header"))?;
+        if header.entity_type == ENTITY_TYPE_CODE_ARTIFACT {
+            Ok(Some(subject))
+        } else {
+            Ok(None)
+        }
+    }
+
     /// Supersedes the active claim `old_id` with the claim `new_id` — the
     /// general ARCH-0003 claim lifecycle mechanics, in ONE write
     /// transaction:
@@ -1658,6 +1707,7 @@ impl Vault {
         Self::require_active_claim(&new_body)?;
         let (mut old_body, old_header) = self.claim_for_lifecycle_in(&wtxn, old_id)?;
         Self::require_active_claim(&old_body)?;
+        self.require_code_revision_supersession_rights(&wtxn, &new_body, &old_body)?;
 
         old_body.lifecycle = ClaimLifecycleStatus::Superseded;
         old_body.valid_to = Some(now);
