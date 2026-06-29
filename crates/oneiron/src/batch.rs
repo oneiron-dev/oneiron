@@ -1131,7 +1131,11 @@ fn apply_put(
         let body = crate::claim::validate_claim_body_and_decode(data, allow_reserved_predicate)?;
         if !replicated {
             let policy = crate::gate::resolve_policy_manifest(store, &*wtxn)?;
-            crate::gate::check_claim_policy(&body, &policy)?;
+            if allow_reserved_predicate {
+                crate::gate::check_reserved_claim_policy(&body, &policy)?;
+            } else {
+                crate::gate::check_claim_policy(&body, &policy)?;
+            }
         }
     } else if entity_type == crate::types::ENTITY_TYPE_CODE_ARTIFACT {
         crate::code_artifact::validate_code_artifact_body_bytes(data)?;

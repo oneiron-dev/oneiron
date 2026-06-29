@@ -1,9 +1,7 @@
 //! DEC-0005 Gate policy manifest resolver.
 //!
-//! GATE-001 deliberately stops at stable decision inputs. The unified write
-//! chokepoint and new Gate outcomes are GATE-002 work; this module only
-//! resolves vault-resident PolicyManifestV1 rows and feeds the existing
-//! source-trust claim gate.
+//! GATE-001 added stable decision inputs. GATE-002 routes local write doors
+//! through the evaluator while keeping replicated replay trust-blind.
 
 use std::cmp::Ordering;
 use std::io::Cursor;
@@ -16,7 +14,7 @@ use crate::claim::{
 };
 use crate::error::{Error, Result};
 use crate::store::Store;
-use crate::types::{ENTITY_ID_LEN, ENTITY_TYPE_POLICY_MANIFEST, EntityId};
+use crate::types::{ENTITY_ID_LEN, ENTITY_TYPE_POLICY_MANIFEST, EdgeActorClass, EntityId};
 
 const POLICY_SCHEMA_VERSION_KEY: &str = "schema_version";
 const POLICY_SCHEMA_VERSION: &str = "1.1";
@@ -50,6 +48,11 @@ const SIGNATURE_ALG_KEY: &str = "alg";
 const SIGNATURE_KEY_ID_KEY: &str = "key_id";
 const SIGNATURE_SIG_KEY: &str = "sig";
 const SIGNATURE_SIGNATURE_KEY: &str = "signature";
+// Legacy generic claim puts do not carry an actor-bound handle yet. Treat
+// those local storage doors as first-party engine writes until a future
+// actor-bound generic claim API can supply per-caller Gate inputs.
+const LOCAL_WRITE_ACTOR_CLASS: &str = "first_party";
+const LOCAL_WRITE_ACTOR_ENTITY_REF: [u8; ENTITY_ID_LEN] = [0x47; ENTITY_ID_LEN];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum PolicyApprovalCeiling {
@@ -471,6 +474,13 @@ impl PolicyManifestResolution {
     }
 
     #[must_use]
+    pub(crate) fn enforces_write_gate(&self) -> bool {
+        // A completely absent manifest preserves the existing bootstrap
+        // behavior; any loaded malformed/unsupported manifest fails closed.
+        self.diagnostics.manifest_count > 0 || self.diagnostics.loaded_manifest_forces_fail_closed()
+    }
+
+    #[must_use]
     pub(crate) fn actor_ceiling(
         &self,
         actor_class: &str,
@@ -693,12 +703,122 @@ pub(crate) fn check_claim_policy(
     body: &ClaimBody,
     policy: &PolicyManifestResolution,
 ) -> Result<()> {
+    check_claim_source_trust(body, policy)?;
+    if !policy.enforces_write_gate() {
+        return Ok(());
+    }
+
+    let input = claim_gate_input(
+        body,
+        policy,
+        GateActor {
+            actor_class: LOCAL_WRITE_ACTOR_CLASS.to_owned(),
+            actor_ref: None,
+        },
+        GateContentKind::Claim,
+        GateProvenanceHandles {
+            actor_entity_ref: Some(local_write_actor_entity_ref()),
+            ..GateProvenanceHandles::default()
+        },
+    );
+    enforce_gate_decision(policy.evaluate_gate(&input))
+}
+
+pub(crate) fn check_reserved_claim_policy(
+    body: &ClaimBody,
+    policy: &PolicyManifestResolution,
+) -> Result<()> {
+    check_claim_source_trust(body, policy)
+}
+
+pub(crate) fn check_edge_provenance_claim_policy(
+    body: &ClaimBody,
+    record: &crate::provenance::EdgeProvenanceClaimBody,
+    actor_class: EdgeActorClass,
+    policy: &PolicyManifestResolution,
+) -> Result<()> {
+    check_claim_source_trust(body, policy)?;
+    if !policy.enforces_write_gate() {
+        return Ok(());
+    }
+
+    let input = claim_gate_input(
+        body,
+        policy,
+        GateActor {
+            actor_class: edge_actor_class_str(actor_class).to_owned(),
+            actor_ref: Some(record.actor_entity_ref.to_hex()),
+        },
+        GateContentKind::EdgeProvenanceClaim,
+        GateProvenanceHandles {
+            actor_entity_ref: Some(record.actor_entity_ref),
+            substrate_ref: record.substrate_ref,
+            source_revision_ref: record.source_revision_ref,
+            body_snapshot_ref: record.body_snapshot_ref,
+        },
+    );
+    enforce_gate_decision(policy.evaluate_gate(&input))
+}
+
+fn check_claim_source_trust(body: &ClaimBody, policy: &PolicyManifestResolution) -> Result<()> {
     check_source_trust(
         body.source,
         body.approval,
         claim_sensitivity_band(body),
         &policy.source_trust,
     )
+}
+
+fn claim_gate_input(
+    body: &ClaimBody,
+    policy: &PolicyManifestResolution,
+    actor: GateActor,
+    content_kind: GateContentKind,
+    provenance: GateProvenanceHandles,
+) -> GateEvaluatorInput {
+    let (source, sensitivity_band) = if body.approval == ClaimApprovalStatus::Auto {
+        (body.source, claim_sensitivity_band(body))
+    } else {
+        (None, None)
+    };
+
+    GateEvaluatorInput {
+        actor,
+        source,
+        content_kind,
+        sensitivity_band,
+        criticality: policy.criticality_for_predicate(&body.predicate),
+        policy_manifest_version: POLICY_SCHEMA_VERSION.to_owned(),
+        provenance,
+    }
+}
+
+fn enforce_gate_decision(decision: GateDecision) -> Result<()> {
+    if decision.outcome() == GateOutcome::Allow {
+        return Ok(());
+    }
+
+    Err(Error::GateWriteRejected {
+        outcome: decision.outcome().as_str(),
+        reason_codes: decision
+            .reason_codes()
+            .iter()
+            .map(|code| code.as_str())
+            .collect(),
+    })
+}
+
+fn local_write_actor_entity_ref() -> EntityId {
+    EntityId::from_bytes(LOCAL_WRITE_ACTOR_ENTITY_REF)
+        .expect("local Gate actor entity ref is non-reserved")
+}
+
+const fn edge_actor_class_str(actor_class: EdgeActorClass) -> &'static str {
+    match actor_class {
+        EdgeActorClass::Human => "human",
+        EdgeActorClass::Agent => "agent",
+        EdgeActorClass::System => "system",
+    }
 }
 
 fn check_source_trust(
@@ -1154,7 +1274,10 @@ mod tests {
         ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSubject,
         claim_body_decode_count, encode_claim_body, reset_claim_body_decode_count,
     };
-    use crate::types::{ENTITY_TYPE_CLAIM, TimeRange};
+    use crate::provenance::{EdgeProvenanceClaimBody, EdgeRef, SupersessionStatus};
+    use crate::types::{
+        ENTITY_TYPE_CLAIM, ENTITY_TYPE_PERSON, EdgeActorClass, EdgeKind, TimeRange,
+    };
 
     fn test_id(seed: u8) -> EntityId {
         EntityId::from_bytes([seed; 16]).expect("valid test id")
@@ -1379,6 +1502,19 @@ mod tests {
         );
         assert!(vault.get_raw(&id)?.is_none());
         Ok(())
+    }
+
+    fn assert_gate_rejected(err: Error, outcome: &'static str, reason_codes: &[&'static str]) {
+        match err {
+            Error::GateWriteRejected {
+                outcome: got_outcome,
+                reason_codes: got_reasons,
+            } => {
+                assert_eq!(got_outcome, outcome);
+                assert_eq!(got_reasons, reason_codes);
+            }
+            other => panic!("expected GateWriteRejected, got {other:?}"),
+        }
     }
 
     #[test]
@@ -1716,6 +1852,62 @@ mod tests {
     }
 
     #[test]
+    fn gate_chokepoint_batch_claim_denial_aborts_without_partial_writes() -> Result<()> {
+        let (_tmp, vault) = temp_vault();
+        let data = encode_policy_manifest(vec![]);
+        put_policy_manifest_bytes(&vault, 0x76, &data)?;
+
+        let prior_id = test_id(0x77);
+        let claim_id = test_id(0x78);
+        let mut body = source_trust_claim(ClaimSource::UserStated);
+        body.predicate = "health.allergy".to_owned();
+        let claim = encode_claim_body(&body)?;
+
+        let err = vault
+            .batch()
+            .put(&prior_id, ENTITY_TYPE_PERSON, test_time(7), 7, b"prior")
+            .put(&claim_id, ENTITY_TYPE_CLAIM, test_time(7), 7, &claim)
+            .commit()
+            .expect_err("critical local claim must stop at Gate");
+
+        assert_gate_rejected(err, "pending", &["gate.pending.criticality_floor"]);
+        assert!(vault.get_raw(&claim_id)?.is_none());
+        assert!(vault.get_raw(&prior_id)?.is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn gate_chokepoint_edge_provenance_uses_actor_gate_before_persistence() -> Result<()> {
+        let (_tmp, vault) = temp_vault();
+        let data = encode_policy_manifest(vec![]);
+        put_policy_manifest_bytes(&vault, 0x79, &data)?;
+
+        let src = test_id(0x7A);
+        let tgt = test_id(0x7B);
+        let actor = test_id(0x7C);
+        let claim_id = test_id(0x7D);
+        let occurred = test_time(8);
+        vault.put_entity(&src, ENTITY_TYPE_PERSON, occurred, 8, b"src")?;
+        vault.put_entity(&tgt, ENTITY_TYPE_PERSON, occurred, 8, b"tgt")?;
+        vault.put_entity(&actor, ENTITY_TYPE_PERSON, occurred, 8, b"actor")?;
+        vault.put_edge(&src, EdgeKind::Mentions, &tgt, 0.5)?;
+
+        let subject = EdgeRef {
+            source: src,
+            kind: EdgeKind::Mentions,
+            target: tgt,
+        };
+        let body = EdgeProvenanceClaimBody::new(actor, 0.9, SupersessionStatus::Confirmed);
+        let err = vault
+            .put_edge_provenance(&claim_id, &subject, &body, EdgeActorClass::Human, 9)
+            .expect_err("unlisted actor class must stop at Gate");
+
+        assert_gate_rejected(err, "pending", &["gate.pending.actor_ceiling"]);
+        assert!(vault.get_raw(&claim_id)?.is_none());
+        Ok(())
+    }
+
+    #[test]
     fn policy_manifest_missing_fixture_fails_closed_where_required() -> Result<()> {
         let (_tmp, vault) = temp_vault();
         let policy = resolve(&vault)?;
@@ -1891,6 +2083,27 @@ mod tests {
         assert!(
             vault.get_raw(&id)?.is_some(),
             "replicated replay must not re-gate remote source trust"
+        );
+        Ok(())
+    }
+
+    #[cfg(feature = "sync")]
+    #[test]
+    fn gate_chokepoint_replicated_claim_stays_trust_blind() -> Result<()> {
+        let (_tmp, vault) = temp_vault();
+        let data = encode_policy_manifest(vec![]);
+        put_policy_manifest_bytes(&vault, 0x80, &data)?;
+
+        let id = test_id(0x83);
+        let claim = source_trust_claim_data(ClaimSource::ToolOutput);
+        vault
+            .batch()
+            .put_replicated(&id, ENTITY_TYPE_CLAIM, test_time(5), 5, &claim)
+            .commit()?;
+
+        assert!(
+            vault.get_raw(&id)?.is_some(),
+            "replicated replay must not call the local Gate chokepoint"
         );
         Ok(())
     }
