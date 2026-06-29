@@ -5,6 +5,7 @@ pub mod batch;
 pub(crate) mod bm25;
 pub mod claim;
 pub mod code_artifact;
+pub mod code_symbol;
 pub mod codebase;
 pub mod context_pack;
 pub mod deletion;
@@ -43,6 +44,14 @@ pub use crate::code_artifact::{
     CODE_ARTIFACT_BODY_KEYS, CODE_ARTIFACT_REPO_REF_MAX_BYTES, CODE_ARTIFACT_SUMMARY_HASH_LEN,
     CODE_ARTIFACT_SUMMARY_PROMPT_MAX_BYTES, CodeArtifactBody, decode_code_artifact_body,
     encode_code_artifact_body,
+};
+pub use crate::code_symbol::{
+    CODE_SYMBOL_CHUNK_KEYS, CODE_SYMBOL_FINGERPRINT_LEN, CODE_SYMBOL_KIND_MAX_BYTES,
+    CODE_SYMBOL_MANIFEST_BODY_KEYS, CODE_SYMBOL_MANIFEST_MAX_CHUNKS,
+    CODE_SYMBOL_MANIFEST_MAX_SYMBOLS, CODE_SYMBOL_NAME_MAX_BYTES, CODE_SYMBOL_REVISION_KEYS,
+    CODE_SYMBOL_SOURCE_SESSION_MAX_BYTES, CODE_SYMBOL_TEXT_HASH_LEN, CodeChunk, CodeSymbolBlame,
+    CodeSymbolManifest, CodeSymbolRevision, decode_code_symbol_manifest,
+    derive_code_chunks_from_text_diff, derive_symbol_fingerprint, encode_code_symbol_manifest,
 };
 pub use crate::codebase::{
     CODEBASE_COMMIT_HASH_HEX_LEN, CODEBASE_CONTENT_HASH_LEN, CODEBASE_FILE_ENTRY_KEYS,

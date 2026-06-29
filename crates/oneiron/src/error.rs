@@ -39,6 +39,7 @@ pub enum ErrorKind {
     InvalidClaimBody,
     InvalidCodeArtifactBody,
     InvalidCodebaseSnapshotBody,
+    InvalidCodeSymbolManifestBody,
     InvalidPredicate,
     ReservedPredicate,
     SourceNotTrustedForAuto,
@@ -282,6 +283,10 @@ pub enum Error {
     /// validation. Nothing was written.
     #[error("invalid codebase snapshot body: {0}")]
     InvalidCodebaseSnapshotBody(&'static str),
+    /// A CODE_ARTIFACT symbol/chunk sidecar failed pinned structural
+    /// validation. Nothing was written.
+    #[error("invalid code symbol manifest body: {0}")]
+    InvalidCodeSymbolManifestBody(&'static str),
     /// Claim predicate violates the pinned D17 grammar (≥2 segments of
     /// `[a-z][a-z0-9_]*` joined by `.`, total ≤128 bytes).
     #[error("invalid claim predicate {predicate:?}: {reason}")]
@@ -660,6 +665,7 @@ impl Error {
             Self::InvalidClaimBody(_) => ErrorKind::InvalidClaimBody,
             Self::InvalidCodeArtifactBody(_) => ErrorKind::InvalidCodeArtifactBody,
             Self::InvalidCodebaseSnapshotBody(_) => ErrorKind::InvalidCodebaseSnapshotBody,
+            Self::InvalidCodeSymbolManifestBody(_) => ErrorKind::InvalidCodeSymbolManifestBody,
             Self::InvalidPredicate { .. } => ErrorKind::InvalidPredicate,
             Self::ReservedPredicate { .. } => ErrorKind::ReservedPredicate,
             Self::SourceNotTrustedForAuto { .. } => ErrorKind::SourceNotTrustedForAuto,
