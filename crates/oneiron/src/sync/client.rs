@@ -1167,10 +1167,11 @@ mod tests {
         // `[hello][lease_request][…existing]` (ONE-1140).
         assert_eq!(messages.len(), 5);
 
-        // Frame 0: protocol hello — exact wire bytes [tag=3, version=2]
-        // (contract literal; v2 pinned by the ONE-1140 wire train, OD-5).
+        // Frame 0: protocol hello — exact wire bytes [tag=3, version=3].
+        // v3 gates FED-002 selector sync, while legacy full-window sub-tags
+        // remain byte-compatible after the hello.
         // It MUST be the first frame.
-        assert_eq!(messages[0], vec![3u8, 2u8]);
+        assert_eq!(messages[0], vec![3u8, 3u8]);
 
         // Frame 1: lease request — 105 B pinned layout, client_id BE at
         // offset 1, and the embedded PoP signature verifies over the OD-6

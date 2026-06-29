@@ -1567,9 +1567,9 @@ mod tests {
 
         // Phase 1-3 frames: root VV (EMPTY — docs really dropped) + default
         // window VV requests, and NO per-connection hello (the hello is
-        // [3, 2] since the ONE-1140 wire train, OD-5).
+        // [3, 3] since the FED-002 selector-sync protocol bump).
         assert!(
-            frames.iter().all(|f| f != &vec![3u8, 2u8]),
+            frames.iter().all(|f| f != &vec![3u8, 3u8]),
             "re-bootstrap must not re-send the protocol hello"
         );
         assert_eq!(frames[0][0], TAG_VERSION_VECTOR);

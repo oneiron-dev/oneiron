@@ -63,7 +63,10 @@ pub const LEASE_STATUS_REJECTED: u8 = 0x00;
 /// `[hello][lease_request][…]` connect sequence, the root-doc `leases`
 /// registry, and the attested-receipt `verification` pin (ONE-1140, OD-5 —
 /// one atomic wire train; v1 peers are rejected at hello with close 4006).
-pub const PROTOCOL_VERSION: u8 = 2;
+/// v3 = grant-backed selector sync (`SELECTOR_VV_REQUEST`) so selector-capable
+/// clients fail at hello against older daemons instead of hanging on an
+/// unknown WindowSync sub-tag (ONE-1271, FED-002).
+pub const PROTOCOL_VERSION: u8 = 3;
 
 /// Shared 8 MB cap for decoded payloads: bulk-transfer decompression and
 /// root-doc imports both refuse anything larger (decompression-bomb /
@@ -559,14 +562,16 @@ mod tests {
     #[test]
     fn protocol_hello_wire_literals() {
         // Contract literals: the hello frame is EXACTLY
-        // [TAG_PROTOCOL_HELLO=3, PROTOCOL_VERSION=2]. A drifted tag or
+        // [TAG_PROTOCOL_HELLO=3, PROTOCOL_VERSION=3]. A drifted tag or
         // version byte is a silent wire break — assert the raw bytes.
         // Version pinned 1→2 by the ONE-1140 atomic wire train (OD-5):
         // lease frames + connect sequence + leases registry + attested
         // receipts land behind this single bump; v1 peers close 4006.
+        // Version pinned 2→3 by FED-002 selector sync so v3 clients do not
+        // negotiate successfully with pre-selector daemons.
         assert_eq!(TAG_PROTOCOL_HELLO, 3, "hello tag byte is pinned to 3");
-        assert_eq!(PROTOCOL_VERSION, 2, "wire protocol version is pinned to 2");
-        assert_eq!(encode_protocol_hello(), vec![3u8, 2u8]);
+        assert_eq!(PROTOCOL_VERSION, 3, "wire protocol version is pinned to 3");
+        assert_eq!(encode_protocol_hello(), vec![3u8, 3u8]);
     }
 
     #[test]
@@ -575,6 +580,46 @@ mod tests {
         assert_eq!(window_sub_tags::VV_REQUEST, 2);
         assert_eq!(window_sub_tags::VV_RESPONSE, 3);
         assert_eq!(window_sub_tags::SELECTOR_VV_REQUEST, 4);
+    }
+
+    #[test]
+    fn full_window_sync_wire_frames_remain_backward_compatible_under_v3() {
+        let vv_payload = [0xAA, 0xBB, 0xCC];
+        let update_payload = [0x11, 0x22];
+        let key = "2026-09";
+
+        let vv_request = encode_window_sync(key, window_sub_tags::VV_REQUEST, &vv_payload)
+            .into_result()
+            .unwrap();
+        assert_eq!(
+            vv_request,
+            [
+                &[TAG_WINDOW_SYNC, 7],
+                key.as_bytes(),
+                &[window_sub_tags::VV_REQUEST],
+                &vv_payload,
+            ]
+            .concat()
+        );
+        let (decoded_key, decoded_subtag, decoded_payload) =
+            decode_window_sync(&vv_request[1..]).unwrap();
+        assert_eq!(decoded_key, key);
+        assert_eq!(decoded_subtag, window_sub_tags::VV_REQUEST);
+        assert_eq!(decoded_payload, vv_payload);
+
+        let vv_response = encode_window_sync(key, window_sub_tags::VV_RESPONSE, &vv_payload)
+            .into_result()
+            .unwrap();
+        let (_, decoded_subtag, decoded_payload) = decode_window_sync(&vv_response[1..]).unwrap();
+        assert_eq!(decoded_subtag, window_sub_tags::VV_RESPONSE);
+        assert_eq!(decoded_payload, vv_payload);
+
+        let update = encode_window_sync(key, window_sub_tags::UPDATE, &update_payload)
+            .into_result()
+            .unwrap();
+        let (_, decoded_subtag, decoded_payload) = decode_window_sync(&update[1..]).unwrap();
+        assert_eq!(decoded_subtag, window_sub_tags::UPDATE);
+        assert_eq!(decoded_payload, update_payload);
     }
 
     /// ONE-1140 (OD-5) wire literals: TAG_LEASE_REQUEST=4 (105 B) and
