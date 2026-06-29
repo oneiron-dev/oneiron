@@ -12,12 +12,13 @@
       },
       "learnedAt": 1,
       "fields": {
-        "title": "BEAM deterministic scaffold",
-        "body": "BEAM deterministic context pack 128K smoke target for evaluation scaffolding."
+        "txt": "BEAM deterministic context pack 128K smoke target for evaluation scaffolding.",
+        "lvl": "benchmark-smoke",
+        "at": "beam-smoke-t1"
       },
       "text": [
         {
-          "field": "body",
+          "field": "txt",
           "value": "BEAM deterministic context pack 128K smoke target evaluation scaffold"
         }
       ]
@@ -31,12 +32,13 @@
       },
       "learnedAt": 2,
       "fields": {
-        "title": "Control summary",
-        "body": "Analyzer and retrieval control record for unrelated benchmark smoke coverage."
+        "txt": "Analyzer and retrieval control record for unrelated benchmark smoke coverage.",
+        "lvl": "benchmark-smoke",
+        "at": "beam-smoke-t2"
       },
       "text": [
         {
-          "field": "body",
+          "field": "txt",
           "value": "analyzer retrieval control unrelated benchmark smoke coverage"
         }
       ]
