@@ -8,6 +8,7 @@ use heed::RoTxn;
 
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::claim::{ClaimBody, claim_surfaceable};
+use crate::codebase::RepoRef;
 use crate::error::{Error, Result};
 use crate::pipeline::{PipelineBuilder, RetrievalWithTelemetry, WorldScope};
 use crate::serialize::{SerializeConfig, SerializedPackTelemetry, serialize_pack_with_telemetry};
@@ -264,6 +265,16 @@ impl<'a> ContextPackBuilder<'a> {
 
     pub fn filter_learned_range(mut self, start: u64, end: u64) -> Self {
         self.pipeline = self.pipeline.filter_learned_range(start, end);
+        self
+    }
+
+    pub fn filter_repo_ref(mut self, repo_ref: RepoRef) -> Self {
+        self.pipeline = self.pipeline.filter_repo_ref(repo_ref);
+        self
+    }
+
+    pub fn filter_project_id(mut self, project_id: impl Into<String>) -> Self {
+        self.pipeline = self.pipeline.filter_project_id(project_id);
         self
     }
 
