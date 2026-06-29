@@ -1446,6 +1446,14 @@ impl Vault {
             decode_model_entity_body(&substrate_raw[ENTITY_METADATA_HEADER_LEN..])?;
         }
 
+        let policy = crate::gate::resolve_policy_manifest(&self.store, &wtxn)?;
+        crate::gate::check_edge_provenance_claim_policy(
+            &claim_body,
+            &record,
+            actor_class,
+            &policy,
+        )?;
+
         // Explicit-prior gates (supersede path): the named Claim must be a
         // live edge.provenance Claim addressing the SAME EdgeRef.
         let prior_id = explicit_prior

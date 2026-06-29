@@ -42,6 +42,7 @@ pub enum ErrorKind {
     InvalidPredicate,
     ReservedPredicate,
     SourceNotTrustedForAuto,
+    GateWriteRejected,
     MaintenanceKindNotWritable,
     StructuralKindBandViolation,
     StructuralKindCollision,
@@ -299,6 +300,14 @@ pub enum Error {
         "claim source {claim_source} is not trusted for auto approval; route as proposed/inbox review"
     )]
     SourceNotTrustedForAuto { claim_source: &'static str },
+    /// The Gate evaluator rejected a local write before persistence. The
+    /// outcome is `pending` or `deny`, and `reason_codes` are stable
+    /// `gate.*` strings suitable for caller routing and audit breadcrumbs.
+    #[error("gate write rejected: outcome={outcome}, reasons={reason_codes:?}")]
+    GateWriteRejected {
+        outcome: &'static str,
+        reason_codes: Vec<&'static str>,
+    },
     /// Registered maintenance-band entity kind (type bytes 120+, e.g.
     /// REDACTION_AUDIT) rejected on a public write path. Maintenance records
     /// are engine-authored only; this is distinct from
@@ -654,6 +663,7 @@ impl Error {
             Self::InvalidPredicate { .. } => ErrorKind::InvalidPredicate,
             Self::ReservedPredicate { .. } => ErrorKind::ReservedPredicate,
             Self::SourceNotTrustedForAuto { .. } => ErrorKind::SourceNotTrustedForAuto,
+            Self::GateWriteRejected { .. } => ErrorKind::GateWriteRejected,
             Self::MaintenanceKindNotWritable(_) => ErrorKind::MaintenanceKindNotWritable,
             Self::StructuralKindBandViolation { .. } => ErrorKind::StructuralKindBandViolation,
             Self::StructuralKindTypeByteCollision(_) | Self::StructuralKindPrefixCollision(_) => {
