@@ -299,12 +299,12 @@ pub(crate) async fn idempotency_middleware(
 ) -> Response {
     let has_idempotency_header = request.headers().contains_key(IDEMPOTENCY_KEY_HEADER);
     let is_core_route = request_path(&request).starts_with("/v1/core/");
-    let auth_ok = if is_core_route {
-        CoreAuth::from_headers(request.headers(), &state.server.config)
-            .map(|auth| !auth.principal().is_empty())
-            .unwrap_or(false)
-    } else {
-        check_auth(request.headers(), &state.server.config).is_ok()
+    let core_auth =
+        is_core_route.then(|| CoreAuth::from_headers(request.headers(), &state.server.config));
+    let auth_ok = match &core_auth {
+        Some(Ok(auth)) => !auth.principal().is_empty(),
+        Some(Err(_)) => false,
+        None => check_auth(request.headers(), &state.server.config).is_ok(),
     };
     if has_idempotency_header && !auth_ok {
         return api_error_response(ApiError::unauthorized(), is_core_route);
@@ -316,7 +316,13 @@ pub(crate) async fn idempotency_middleware(
         IdempotencyKey::Invalid => return invalid_key_response(is_core_route),
     };
 
-    let principal = principal_from_headers(request.headers(), &state.server.config);
+    let principal = match &core_auth {
+        Some(Ok(auth)) => auth.idempotency_principal(),
+        Some(Err(_)) => {
+            return api_error_response(ApiError::unauthorized(), is_core_route);
+        }
+        None => principal_from_headers(request.headers(), &state.server.config),
+    };
     let store_key = store_key(&principal, &key);
     let (parts, body) = request.into_parts();
     let body = match to_bytes(body, IDEMPOTENCY_MAX_REQUEST_BODY_BYTES).await {
