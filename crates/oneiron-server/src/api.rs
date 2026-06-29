@@ -36,7 +36,11 @@ use crate::runtime::{
 };
 use crate::server::SyncServer;
 use crate::skills_pack as skills_pack_artifact;
-use crate::usage::{UsageError, UsageEvent, UsageMode, UsageRecordResult, UsageRollup};
+use crate::usage::{
+    ConsumerAllowanceState, ConsumerAllowanceWarning, ConsumerAllowanceWarningLevel, ConsumerTopUp,
+    ConsumerTopUpRequest, ConsumerTopUpState, ConsumerUsageDetails, ConsumerUsageState, UsageError,
+    UsageEvent, UsageMode, UsageRecordResult, UsageRollup,
+};
 
 const API_LEVEL: &str = "v1";
 const SUPPORTED_FORMATS: &[&str] = &["json", "yaml", "toon", "markdown", "plaintext"];
@@ -58,6 +62,8 @@ const EFFECTIVE_AUTH_SCOPES: &[&str] = &[
     "companion:resume",
     "usage:read",
     "usage:write",
+    "consumer:usage:read",
+    "consumer:top-up:write",
     "sync:connect",
 ];
 const CAPABILITIES: &[&str] = &[
@@ -74,6 +80,9 @@ const CAPABILITIES: &[&str] = &[
     "lease.revoke",
     "usage.event",
     "usage.rollup",
+    "consumer.usage",
+    "consumer.usage.details",
+    "consumer.top_up",
 ];
 const CAPABILITY_MODES: &[&str] = &["flash", "thinking", "pro", "ultra"];
 // ONE-214 is read-only and adds no notification-specific storage. Keep resume
@@ -97,6 +106,9 @@ const RESUME_NOTIFICATION_SCAN_LIMIT: usize = 4096;
         context_pack,
         record_usage_event,
         get_usage_rollup,
+        get_consumer_usage,
+        get_consumer_usage_details,
+        top_up_consumer,
         lease_revoke
     ),
     components(schemas(
@@ -135,6 +147,14 @@ const RESUME_NOTIFICATION_SCAN_LIMIT: usize = 4096;
         LeaseRevokeRequest,
         LeaseRevokeResponse,
         ContextPackRequest,
+        ConsumerAllowanceState,
+        ConsumerAllowanceWarning,
+        ConsumerAllowanceWarningLevel,
+        ConsumerTopUp,
+        ConsumerTopUpRequest,
+        ConsumerTopUpState,
+        ConsumerUsageDetails,
+        ConsumerUsageState,
         UsageEvent,
         UsageRecordResult,
         UsageRollup
@@ -155,6 +175,7 @@ pub(crate) fn api_routes(server: Arc<SyncServer>) -> Router {
         // device's lease binding (terminal)
         .route("/api/lease/revoke", post(lease_revoke))
         .route("/v1/core/turns/annotate", post(annotate_turn_vad))
+        .route("/v1/consumer/top-up", post(top_up_consumer))
         .route_layer(middleware::from_fn_with_state(
             idempotency,
             idempotency_middleware,
@@ -173,6 +194,11 @@ pub(crate) fn api_routes(server: Arc<SyncServer>) -> Router {
         // context-pack is POST since it takes a complex options body
         .route("/api/context-pack", post(context_pack))
         .route("/api/companion/resume", post(resume))
+        .route("/v1/consumer/usage", get(get_consumer_usage))
+        .route(
+            "/v1/consumer/usage/details",
+            get(get_consumer_usage_details),
+        )
         .route("/v1/usage/events", post(record_usage_event))
         .route(
             "/v1/usage/tenants/{tenant_id}/rollup",
@@ -373,6 +399,9 @@ fn add_security_scheme(spec: &mut Value) {
         ("/v1/core/turns/annotate", "get"),
         ("/v1/core/turns/annotate", "post"),
         ("/api/context-pack", "post"),
+        ("/v1/consumer/usage", "get"),
+        ("/v1/consumer/usage/details", "get"),
+        ("/v1/consumer/top-up", "post"),
         ("/v1/usage/events", "post"),
         ("/v1/usage/tenants/{tenant_id}/rollup", "get"),
         ("/api/lease/revoke", "post"),
@@ -1052,6 +1081,21 @@ fn caller_marker_contains(value: Option<&Value>, caller: &str) -> bool {
 
 // ─── Usage Ledger ────────────────────────────────────────────────────────────
 
+/// Query parameters for consumer usage reads.
+#[derive(Deserialize, ToSchema, IntoParams)]
+#[serde(rename_all = "camelCase")]
+#[into_params(parameter_in = Query)]
+struct ConsumerUsageQuery {
+    /// Tenant id whose usage and allowance should be read.
+    #[schema(example = "tenant-a")]
+    #[param(example = "tenant-a")]
+    tenant_id: String,
+    /// Optional vault id for a per-vault usage scope.
+    #[schema(example = "vault-a")]
+    #[param(example = "vault-a")]
+    vault_id: Option<String>,
+}
+
 /// Optional selector for a tenant usage rollup.
 #[derive(Deserialize, ToSchema, IntoParams)]
 #[into_params(parameter_in = Query)]
@@ -1060,6 +1104,162 @@ struct UsageRollupQuery {
     #[schema(example = "vault-a")]
     #[param(example = "vault-a")]
     vault_id: Option<String>,
+}
+
+/// Reads consumer usage, allowance balance, and explicit warning state.
+#[utoipa::path(
+    get,
+    path = "/v1/consumer/usage",
+    params(ConsumerUsageQuery),
+    responses(
+        (
+            status = 200,
+            description = "Consumer usage and allowance state for the selected tenant or tenant/vault scope.",
+            body = ConsumerUsageState,
+            content_type = "application/json"
+        ),
+        (
+            status = 400,
+            description = "Invalid tenant or vault identifier.",
+            body = ApiError,
+            content_type = "application/json"
+        ),
+        (
+            status = 401,
+            description = "Missing or invalid `x-oneiron-secret` header.",
+            body = ApiError,
+            content_type = "application/json"
+        ),
+        (
+            status = 500,
+            description = "Consumer usage read failed.",
+            body = ApiError,
+            content_type = "application/json"
+        )
+    )
+)]
+async fn get_consumer_usage(
+    headers: HeaderMap,
+    State(server): State<Arc<SyncServer>>,
+    query: Result<Query<ConsumerUsageQuery>, QueryRejection>,
+) -> Result<Json<ConsumerUsageState>, ApiError> {
+    check_api_auth(&headers, &server.config)?;
+    let params = query_params(query)?;
+    let usage = server
+        .usage_ledger
+        .consumer_usage(
+            &params.tenant_id,
+            params.vault_id.as_deref(),
+            server.config.usage_mode,
+        )
+        .inspect_err(|error| tracing::error!(error = %error, "consumer usage read failed"))
+        .map_err(usage_error)?;
+    Ok(Json(usage))
+}
+
+/// Reads consumer usage details including agent, model, and service breakdowns.
+#[utoipa::path(
+    get,
+    path = "/v1/consumer/usage/details",
+    params(ConsumerUsageQuery),
+    responses(
+        (
+            status = 200,
+            description = "Detailed consumer usage and allowance state for the selected tenant or tenant/vault scope.",
+            body = ConsumerUsageDetails,
+            content_type = "application/json"
+        ),
+        (
+            status = 400,
+            description = "Invalid tenant or vault identifier.",
+            body = ApiError,
+            content_type = "application/json"
+        ),
+        (
+            status = 401,
+            description = "Missing or invalid `x-oneiron-secret` header.",
+            body = ApiError,
+            content_type = "application/json"
+        ),
+        (
+            status = 500,
+            description = "Consumer usage details read failed.",
+            body = ApiError,
+            content_type = "application/json"
+        )
+    )
+)]
+async fn get_consumer_usage_details(
+    headers: HeaderMap,
+    State(server): State<Arc<SyncServer>>,
+    query: Result<Query<ConsumerUsageQuery>, QueryRejection>,
+) -> Result<Json<ConsumerUsageDetails>, ApiError> {
+    check_api_auth(&headers, &server.config)?;
+    let params = query_params(query)?;
+    let details = server
+        .usage_ledger
+        .consumer_usage_details(
+            &params.tenant_id,
+            params.vault_id.as_deref(),
+            server.config.usage_mode,
+        )
+        .inspect_err(|error| tracing::error!(error = %error, "consumer usage details read failed"))
+        .map_err(usage_error)?;
+    Ok(Json(details))
+}
+
+/// Credits a tenant allowance without integrating a payment processor.
+#[utoipa::path(
+    post,
+    path = "/v1/consumer/top-up",
+    request_body(
+        content = ConsumerTopUpRequest,
+        content_type = "application/json",
+        example = json!({
+            "tenantId": "tenant-a",
+            "idempotencyKey": "top-up-2026-06-29-0001",
+            "creditUnits": 100.0
+        })
+    ),
+    responses(
+        (
+            status = 200,
+            description = "Top-up accepted or replayed by idempotency key.",
+            body = ConsumerTopUpState,
+            content_type = "application/json"
+        ),
+        (
+            status = 400,
+            description = "Invalid top-up payload.",
+            body = ApiError,
+            content_type = "application/json"
+        ),
+        (
+            status = 401,
+            description = "Missing or invalid `x-oneiron-secret` header.",
+            body = ApiError,
+            content_type = "application/json"
+        ),
+        (
+            status = 500,
+            description = "Top-up persistence failed.",
+            body = ApiError,
+            content_type = "application/json"
+        )
+    )
+)]
+async fn top_up_consumer(
+    headers: HeaderMap,
+    State(server): State<Arc<SyncServer>>,
+    Json(request): Json<ConsumerTopUpRequest>,
+) -> Result<Json<ConsumerTopUpState>, ApiError> {
+    check_api_auth(&headers, &server.config)?;
+    let state = server
+        .usage_ledger
+        .top_up(request, server.config.usage_mode)
+        .inspect_err(|error| tracing::error!(error = %error, "consumer top-up failed"))
+        .map_err(usage_error)?;
+    Ok(Json(state))
 }
 
 /// Records one tenant usage event and returns the resulting debit decision.
@@ -2395,6 +2595,14 @@ mod tests {
         (dir, server)
     }
 
+    fn test_server_with_usage_mode(usage_mode: UsageMode) -> (tempfile::TempDir, Arc<SyncServer>) {
+        test_server_with_config(SyncServerConfig {
+            allow_unauthenticated: true,
+            usage_mode,
+            ..Default::default()
+        })
+    }
+
     #[tokio::test]
     async fn health_runtime_summary_redacts_route_model_details_without_auth() {
         let mut runtime = crate::runtime::RuntimeConfig::for_mode(RuntimeMode::LocalFree);
@@ -2501,6 +2709,72 @@ mod tests {
         assert!(body["runtime"].get("routes").is_none());
     }
 
+    fn json_request(method: &str, uri: &str, body: Value) -> Request<Body> {
+        Request::builder()
+            .method(method)
+            .uri(uri)
+            .header(CONTENT_TYPE, "application/json")
+            .body(Body::from(body.to_string()))
+            .expect("request")
+    }
+
+    async fn route_json(server: Arc<SyncServer>, request: Request<Body>) -> (StatusCode, Value) {
+        let response = api_routes(server)
+            .oneshot(request)
+            .await
+            .expect("route response");
+        let status = response.status();
+        let body = to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("JSON response body");
+        let body: Value = serde_json::from_slice(&body).expect("JSON response");
+        (status, body)
+    }
+
+    async fn top_up_route(
+        server: Arc<SyncServer>,
+        idempotency_key: &str,
+        credit_units: f64,
+    ) -> (StatusCode, Value) {
+        route_json(
+            server,
+            json_request(
+                "POST",
+                "/v1/consumer/top-up",
+                json!({
+                    "tenantId": "tenant-a",
+                    "idempotencyKey": idempotency_key,
+                    "creditUnits": credit_units,
+                }),
+            ),
+        )
+        .await
+    }
+
+    async fn record_usage_event_route(
+        server: Arc<SyncServer>,
+        idempotency_key: &str,
+        service_cost_usd: f64,
+    ) -> (StatusCode, Value) {
+        route_json(
+            server,
+            json_request(
+                "POST",
+                "/v1/usage/events",
+                json!({
+                    "tenantId": "tenant-a",
+                    "vaultId": "vault-a",
+                    "idempotencyKey": idempotency_key,
+                    "agentId": "agent-a",
+                    "model": "model-a",
+                    "service": "inference",
+                    "serviceCostUsd": service_cost_usd,
+                }),
+            ),
+        )
+        .await
+    }
+
     #[test]
     fn generated_openapi_has_descriptions_examples_and_defaults() {
         let spec = generated_spec();
@@ -2526,6 +2800,9 @@ mod tests {
             "/api/context-pack",
             "/api/lease/revoke",
             "/api/health",
+            "/v1/consumer/usage",
+            "/v1/consumer/usage/details",
+            "/v1/consumer/top-up",
         ] {
             assert!(paths.contains_key(path), "missing path {path}");
         }
@@ -2622,6 +2899,9 @@ mod tests {
             ("/v1/core/turns/annotate", "post"),
             ("/api/context-pack", "post"),
             ("/api/lease/revoke", "post"),
+            ("/v1/consumer/usage", "get"),
+            ("/v1/consumer/usage/details", "get"),
+            ("/v1/consumer/top-up", "post"),
         ] {
             assert_eq!(
                 spec["paths"][path][method]["security"],
@@ -2716,6 +2996,13 @@ mod tests {
             "LeaseRevokeRequest",
             "LeaseRevokeResponse",
             "ContextPackRequest",
+            "ConsumerAllowanceState",
+            "ConsumerAllowanceWarning",
+            "ConsumerTopUp",
+            "ConsumerTopUpRequest",
+            "ConsumerTopUpState",
+            "ConsumerUsageDetails",
+            "ConsumerUsageState",
         ] {
             let properties = spec["components"]["schemas"][schema_name]["properties"]
                 .as_object()
@@ -3364,6 +3651,160 @@ mod tests {
         let body: Value = serde_json::from_slice(&body).expect("usage JSON body");
         assert_eq!(body["recorded"], Value::from(false));
         assert_eq!(body["debit"], Value::Null);
+    }
+
+    #[tokio::test]
+    async fn consumer_top_up_route_is_idempotent() {
+        let (_dir, server) = test_server_with_usage_mode(crate::usage::UsageMode::OneironCloud);
+
+        let (first_status, first) = top_up_route(server.clone(), "top-up-idem", 10.0).await;
+        let (second_status, second) = top_up_route(server.clone(), "top-up-idem", 10.0).await;
+        let (usage_status, usage) = route_json(
+            server,
+            Request::builder()
+                .uri("/v1/consumer/usage?tenantId=tenant-a")
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await;
+
+        assert_eq!(first_status, StatusCode::OK);
+        assert_eq!(second_status, StatusCode::OK);
+        assert_eq!(usage_status, StatusCode::OK);
+        assert_eq!(first["recorded"], Value::from(true));
+        assert_eq!(first["replayed"], Value::from(false));
+        assert_eq!(second["recorded"], Value::from(false));
+        assert_eq!(second["replayed"], Value::from(true));
+        assert_eq!(first["topUp"], second["topUp"]);
+        assert_eq!(
+            usage["allowance"]["allowanceCreditUnits"],
+            Value::from(10.0)
+        );
+        assert_eq!(
+            usage["allowance"]["remainingCreditUnits"],
+            Value::from(10.0)
+        );
+    }
+
+    #[tokio::test]
+    async fn consumer_usage_route_returns_usage_allowance_and_warning_state() {
+        let (_dir, server) = test_server_with_usage_mode(crate::usage::UsageMode::OneironCloud);
+        let (top_up_status, _) = top_up_route(server.clone(), "summary-top-up", 10.0).await;
+        let (record_status, _) =
+            record_usage_event_route(server.clone(), "summary-usage", 0.08).await;
+        let (usage_status, usage) = route_json(
+            server,
+            Request::builder()
+                .uri("/v1/consumer/usage?tenantId=tenant-a")
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await;
+
+        assert_eq!(top_up_status, StatusCode::OK);
+        assert_eq!(record_status, StatusCode::OK);
+        assert_eq!(usage_status, StatusCode::OK);
+        assert_eq!(usage["tenantId"], Value::from("tenant-a"));
+        assert_eq!(usage["mode"], Value::from("oneiron_cloud"));
+        assert_eq!(usage["counters"]["eventCount"], Value::from(1_u64));
+        assert_eq!(
+            usage["allowance"]["allowanceCreditUnits"],
+            Value::from(10.0)
+        );
+        assert_eq!(usage["allowance"]["usedCreditUnits"], Value::from(8.0));
+        assert_eq!(usage["allowance"]["remainingCreditUnits"], Value::from(2.0));
+        assert_eq!(
+            usage["allowance"]["warning"]["level"],
+            Value::from("notice")
+        );
+        assert_eq!(usage["allowance"]["warning"]["usedRatio"], Value::from(0.8));
+        assert_eq!(
+            usage["allowance"]["warning"]["triggered"],
+            Value::from(true)
+        );
+    }
+
+    #[tokio::test]
+    async fn consumer_usage_details_route_returns_breakdowns() {
+        let (_dir, server) = test_server_with_usage_mode(crate::usage::UsageMode::OneironCloud);
+        let (top_up_status, _) = top_up_route(server.clone(), "details-top-up", 100.0).await;
+        let (record_status, _) =
+            record_usage_event_route(server.clone(), "details-usage", 0.05).await;
+        let (details_status, details) = route_json(
+            server,
+            Request::builder()
+                .uri("/v1/consumer/usage/details?tenantId=tenant-a&vaultId=vault-a")
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await;
+
+        assert_eq!(top_up_status, StatusCode::OK);
+        assert_eq!(record_status, StatusCode::OK);
+        assert_eq!(details_status, StatusCode::OK);
+        assert_eq!(details["usage"]["vaultId"], Value::from("vault-a"));
+        assert_eq!(
+            details["usage"]["counters"]["creditUnits"],
+            Value::from(5.0)
+        );
+        assert_eq!(
+            details["agents"]["agent-a"]["eventCount"],
+            Value::from(1_u64)
+        );
+        assert_eq!(
+            details["models"]["model-a"]["creditUnits"],
+            Value::from(5.0)
+        );
+        assert_eq!(
+            details["services"]["inference"]["costUsd"],
+            Value::from(0.05)
+        );
+    }
+
+    #[tokio::test]
+    async fn consumer_usage_route_reports_allowance_warning_thresholds() {
+        for (used_credit_units, expected_level, expected_triggered, expected_threshold) in [
+            (7.0, "none", false, 0.8),
+            (8.0, "notice", true, 0.8),
+            (9.5, "critical", true, 0.95),
+            (10.0, "exhausted", true, 1.0),
+        ] {
+            let (_dir, server) = test_server_with_usage_mode(crate::usage::UsageMode::OneironCloud);
+            let (top_up_status, _) = top_up_route(server.clone(), "threshold-top-up", 10.0).await;
+            let (record_status, _) = record_usage_event_route(
+                server.clone(),
+                "threshold-usage",
+                used_credit_units * crate::usage::CREDIT_UNIT_USD,
+            )
+            .await;
+            let (usage_status, usage) = route_json(
+                server,
+                Request::builder()
+                    .uri("/v1/consumer/usage?tenantId=tenant-a")
+                    .body(Body::empty())
+                    .expect("request"),
+            )
+            .await;
+
+            assert_eq!(top_up_status, StatusCode::OK);
+            assert_eq!(record_status, StatusCode::OK);
+            assert_eq!(usage_status, StatusCode::OK);
+            assert_eq!(
+                usage["allowance"]["warning"]["level"],
+                Value::from(expected_level),
+                "used credit units: {used_credit_units}"
+            );
+            assert_eq!(
+                usage["allowance"]["warning"]["triggered"],
+                Value::from(expected_triggered),
+                "used credit units: {used_credit_units}"
+            );
+            assert_eq!(
+                usage["allowance"]["warning"]["thresholdRatio"],
+                Value::from(expected_threshold),
+                "used credit units: {used_credit_units}"
+            );
+        }
     }
 
     #[tokio::test]

@@ -12,9 +12,13 @@ pub const CREDIT_UNIT_USD: f64 = 0.01;
 const USAGE_EVENT_PREFIX: &str = "usage:event:";
 const USAGE_TENANT_ROLLUP_PREFIX: &str = "usage:rollup:tenant:";
 const USAGE_VAULT_ROLLUP_PREFIX: &str = "usage:rollup:vault:";
+const CONSUMER_ALLOWANCE_PREFIX: &str = "consumer:allowance:";
+const CONSUMER_TOP_UP_PREFIX: &str = "consumer:top-up:";
 const MAX_DIMENSION_LEN: usize = 256;
 const MAX_IDEMPOTENCY_KEY_LEN: usize = 256;
 const TOKENS_PER_MILLION: f64 = 1_000_000.0;
+const ALLOWANCE_NOTICE_THRESHOLD_RATIO: f64 = 0.80;
+const ALLOWANCE_CRITICAL_THRESHOLD_RATIO: f64 = 0.95;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
@@ -367,6 +371,189 @@ impl UsageCounter {
     }
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ConsumerAllowanceWarningLevel {
+    #[default]
+    None,
+    Notice,
+    Critical,
+    Exhausted,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ConsumerAllowanceWarning {
+    /// Machine-readable warning level for the current allowance burn-down.
+    pub level: ConsumerAllowanceWarningLevel,
+    /// Whether the warning threshold has been reached.
+    pub triggered: bool,
+    /// Threshold ratio that selected this warning level.
+    pub threshold_ratio: f64,
+    /// Current usage divided by allowance. Null when no allowance exists.
+    pub used_ratio: Option<f64>,
+    /// Human-readable warning message for UI and API clients.
+    pub message: String,
+}
+
+impl ConsumerAllowanceWarning {
+    fn for_usage(used_credit_units: f64, allowance_credit_units: f64) -> Self {
+        if allowance_credit_units <= 0.0 {
+            return if used_credit_units > 0.0 {
+                Self::exhausted(None)
+            } else {
+                Self::none(None)
+            };
+        }
+
+        let used_ratio = normalize_money(used_credit_units / allowance_credit_units);
+        if used_ratio >= 1.0 {
+            Self::exhausted(Some(used_ratio))
+        } else if used_ratio >= ALLOWANCE_CRITICAL_THRESHOLD_RATIO {
+            Self {
+                level: ConsumerAllowanceWarningLevel::Critical,
+                triggered: true,
+                threshold_ratio: ALLOWANCE_CRITICAL_THRESHOLD_RATIO,
+                used_ratio: Some(used_ratio),
+                message: "consumer allowance is at or above the critical threshold".to_owned(),
+            }
+        } else if used_ratio >= ALLOWANCE_NOTICE_THRESHOLD_RATIO {
+            Self {
+                level: ConsumerAllowanceWarningLevel::Notice,
+                triggered: true,
+                threshold_ratio: ALLOWANCE_NOTICE_THRESHOLD_RATIO,
+                used_ratio: Some(used_ratio),
+                message: "consumer allowance is at or above the notice threshold".to_owned(),
+            }
+        } else {
+            Self::none(Some(used_ratio))
+        }
+    }
+
+    fn none(used_ratio: Option<f64>) -> Self {
+        Self {
+            level: ConsumerAllowanceWarningLevel::None,
+            triggered: false,
+            threshold_ratio: ALLOWANCE_NOTICE_THRESHOLD_RATIO,
+            used_ratio,
+            message: "consumer allowance is within the available balance".to_owned(),
+        }
+    }
+
+    fn exhausted(used_ratio: Option<f64>) -> Self {
+        Self {
+            level: ConsumerAllowanceWarningLevel::Exhausted,
+            triggered: true,
+            threshold_ratio: 1.0,
+            used_ratio,
+            message: "consumer allowance is exhausted".to_owned(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ConsumerAllowanceState {
+    /// Total credited allowance available to the tenant.
+    pub allowance_credit_units: f64,
+    /// Credit units consumed by usage rollups in this scope.
+    pub used_credit_units: f64,
+    /// Remaining credit units after subtracting scoped usage.
+    pub remaining_credit_units: f64,
+    /// Last top-up timestamp for this tenant, if any.
+    pub updated_at: Option<u64>,
+    /// Explicit threshold warning for the current allowance state.
+    pub warning: ConsumerAllowanceWarning,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ConsumerUsageState {
+    /// Tenant whose usage and allowance are represented.
+    pub tenant_id: String,
+    /// Optional vault scope for this usage state.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub vault_id: Option<String>,
+    /// Server usage mode that determines whether usage events debit credits.
+    pub mode: UsageMode,
+    /// Aggregate usage counters for the selected scope.
+    pub counters: UsageCounter,
+    /// Allowance, remaining balance, and explicit warning state.
+    pub allowance: ConsumerAllowanceState,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ConsumerUsageDetails {
+    /// Summary usage and allowance state for the selected scope.
+    pub usage: ConsumerUsageState,
+    /// Per-agent usage counters for the selected scope.
+    pub agents: BTreeMap<String, UsageCounter>,
+    /// Per-model usage counters for the selected scope.
+    pub models: BTreeMap<String, UsageCounter>,
+    /// Per-service usage counters for the selected scope.
+    pub services: BTreeMap<String, UsageCounter>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ConsumerTopUpRequest {
+    /// Tenant whose allowance should be credited.
+    pub tenant_id: String,
+    /// Idempotency key that records this top-up once per tenant.
+    pub idempotency_key: String,
+    /// Credit units to add to the tenant allowance.
+    pub credit_units: f64,
+}
+
+impl ConsumerTopUpRequest {
+    fn validate(&self) -> Result<(), UsageError> {
+        validate_dimension("tenantId", &self.tenant_id, MAX_DIMENSION_LEN)?;
+        validate_dimension(
+            "idempotencyKey",
+            &self.idempotency_key,
+            MAX_IDEMPOTENCY_KEY_LEN,
+        )?;
+        validate_positive_finite("creditUnits", self.credit_units)?;
+        Ok(())
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ConsumerTopUp {
+    /// Tenant credited by this top-up.
+    pub tenant_id: String,
+    /// Idempotency key that identifies this top-up.
+    pub idempotency_key: String,
+    /// Credit units added by this top-up.
+    pub credit_units: f64,
+    /// USD value represented by the credited units.
+    pub amount_usd: f64,
+    /// Server timestamp when this top-up was first recorded.
+    pub recorded_at: u64,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ConsumerTopUpState {
+    /// True when this request created a new top-up.
+    pub recorded: bool,
+    /// True when the idempotency key had already been recorded.
+    pub replayed: bool,
+    /// Top-up state associated with the idempotency key.
+    pub top_up: ConsumerTopUp,
+    /// Usage and allowance state after applying or replaying the top-up.
+    pub usage: ConsumerUsageState,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ConsumerAllowanceRecord {
+    credit_units: f64,
+    updated_at: Option<u64>,
+}
+
 #[derive(Clone)]
 pub struct UsageLedger {
     vault: Arc<oneiron::Vault>,
@@ -490,6 +677,119 @@ impl UsageLedger {
         self.get_rollup(&vault_rollup_key(tenant_id, vault_id))
     }
 
+    pub fn consumer_usage(
+        &self,
+        tenant_id: &str,
+        vault_id: Option<&str>,
+        configured_mode: UsageMode,
+    ) -> Result<ConsumerUsageState, UsageError> {
+        validate_dimension("tenantId", tenant_id, MAX_DIMENSION_LEN)?;
+        if let Some(vault_id) = vault_id {
+            validate_dimension("vaultId", vault_id, MAX_DIMENSION_LEN)?;
+        }
+
+        let _guard = self.lock.lock().map_err(|_| UsageError::LockPoisoned)?;
+        self.consumer_usage_locked(tenant_id, vault_id, configured_mode)
+    }
+
+    pub fn consumer_usage_details(
+        &self,
+        tenant_id: &str,
+        vault_id: Option<&str>,
+        configured_mode: UsageMode,
+    ) -> Result<ConsumerUsageDetails, UsageError> {
+        validate_dimension("tenantId", tenant_id, MAX_DIMENSION_LEN)?;
+        if let Some(vault_id) = vault_id {
+            validate_dimension("vaultId", vault_id, MAX_DIMENSION_LEN)?;
+        }
+
+        let _guard = self.lock.lock().map_err(|_| UsageError::LockPoisoned)?;
+        let rollup = self.consumer_rollup_locked(tenant_id, vault_id)?;
+        let usage = self.consumer_usage_from_rollup(rollup.clone(), configured_mode)?;
+        Ok(ConsumerUsageDetails {
+            usage,
+            agents: rollup.agents,
+            models: rollup.models,
+            services: rollup.services,
+        })
+    }
+
+    pub fn top_up(
+        &self,
+        request: ConsumerTopUpRequest,
+        configured_mode: UsageMode,
+    ) -> Result<ConsumerTopUpState, UsageError> {
+        request.validate()?;
+        let credit_units = normalize_money(request.credit_units);
+        let amount_usd = normalize_money(credit_units * CREDIT_UNIT_USD);
+        let _guard = self.lock.lock().map_err(|_| UsageError::LockPoisoned)?;
+        let top_up_key = consumer_top_up_key(&request.tenant_id, &request.idempotency_key);
+        let allowance_key = consumer_allowance_key(&request.tenant_id);
+        let write_result =
+            self.vault
+                .try_with_write_txn(|wtxn| -> Result<TopUpWriteResult, UsageError> {
+                    if let Some(raw) = self.vault.sync_state_get_in_write_txn(wtxn, &top_up_key)? {
+                        return Ok(TopUpWriteResult::Replayed(decode_top_up(&raw)?));
+                    }
+
+                    let recorded_at = now_secs();
+                    let top_up = ConsumerTopUp {
+                        tenant_id: request.tenant_id.clone(),
+                        idempotency_key: request.idempotency_key.clone(),
+                        credit_units,
+                        amount_usd,
+                        recorded_at,
+                    };
+                    let mut allowance = match self
+                        .vault
+                        .sync_state_get_in_write_txn(wtxn, &allowance_key)?
+                    {
+                        Some(raw) => decode_allowance(&raw)?,
+                        None => ConsumerAllowanceRecord {
+                            credit_units: 0.0,
+                            updated_at: None,
+                        },
+                    };
+                    allowance.credit_units =
+                        normalize_money(allowance.credit_units + top_up.credit_units);
+                    allowance.updated_at = Some(recorded_at);
+
+                    self.vault.sync_state_put_in_write_txn(
+                        wtxn,
+                        &allowance_key,
+                        &encode_allowance(&allowance)?,
+                    )?;
+                    self.vault.sync_state_put_in_write_txn(
+                        wtxn,
+                        &top_up_key,
+                        &encode_top_up(&top_up)?,
+                    )?;
+
+                    Ok(TopUpWriteResult::Recorded(top_up))
+                })?;
+
+        match write_result {
+            TopUpWriteResult::Recorded(top_up) => {
+                let usage = self.consumer_usage_locked(&top_up.tenant_id, None, configured_mode)?;
+                Ok(ConsumerTopUpState {
+                    recorded: true,
+                    replayed: false,
+                    top_up,
+                    usage,
+                })
+            }
+            TopUpWriteResult::Replayed(top_up) => {
+                let usage = self.consumer_usage_locked(&top_up.tenant_id, None, configured_mode)?;
+                Ok(ConsumerTopUpState {
+                    recorded: false,
+                    replayed: true,
+                    top_up,
+                    usage,
+                })
+            }
+        }
+    }
+
     fn replayed_result(&self, entry: StoredUsageEvent) -> Result<UsageRecordResult, UsageError> {
         Ok(UsageRecordResult {
             recorded: false,
@@ -511,6 +811,71 @@ impl UsageLedger {
         };
         decode_rollup(&raw).map(Some)
     }
+
+    fn consumer_usage_locked(
+        &self,
+        tenant_id: &str,
+        vault_id: Option<&str>,
+        configured_mode: UsageMode,
+    ) -> Result<ConsumerUsageState, UsageError> {
+        let rollup = self.consumer_rollup_locked(tenant_id, vault_id)?;
+        self.consumer_usage_from_rollup(rollup, configured_mode)
+    }
+
+    fn consumer_usage_from_rollup(
+        &self,
+        rollup: UsageRollup,
+        configured_mode: UsageMode,
+    ) -> Result<ConsumerUsageState, UsageError> {
+        let allowance = self.consumer_allowance(&rollup.tenant_id)?;
+        let used_credit_units = rollup.counters.credit_units;
+        let remaining_credit_units =
+            normalize_money(allowance.credit_units - used_credit_units).max(0.0);
+        Ok(ConsumerUsageState {
+            tenant_id: rollup.tenant_id,
+            vault_id: rollup.vault_id,
+            mode: configured_mode,
+            counters: rollup.counters,
+            allowance: ConsumerAllowanceState {
+                allowance_credit_units: allowance.credit_units,
+                used_credit_units,
+                remaining_credit_units,
+                updated_at: allowance.updated_at,
+                warning: ConsumerAllowanceWarning::for_usage(
+                    used_credit_units,
+                    allowance.credit_units,
+                ),
+            },
+        })
+    }
+
+    fn consumer_rollup_locked(
+        &self,
+        tenant_id: &str,
+        vault_id: Option<&str>,
+    ) -> Result<UsageRollup, UsageError> {
+        if let Some(vault_id) = vault_id {
+            return self
+                .get_rollup(&vault_rollup_key(tenant_id, vault_id))
+                .map(|rollup| rollup.unwrap_or_else(|| UsageRollup::vault(tenant_id, vault_id)));
+        }
+
+        self.get_rollup(&tenant_rollup_key(tenant_id))
+            .map(|rollup| rollup.unwrap_or_else(|| UsageRollup::tenant(tenant_id)))
+    }
+
+    fn consumer_allowance(&self, tenant_id: &str) -> Result<ConsumerAllowanceRecord, UsageError> {
+        let Some(raw) = self
+            .vault
+            .sync_state_get(&consumer_allowance_key(tenant_id))?
+        else {
+            return Ok(ConsumerAllowanceRecord {
+                credit_units: 0.0,
+                updated_at: None,
+            });
+        };
+        decode_allowance(&raw)
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -531,6 +896,11 @@ enum LedgerWriteResult {
     Replayed(StoredUsageEvent),
 }
 
+enum TopUpWriteResult {
+    Recorded(ConsumerTopUp),
+    Replayed(ConsumerTopUp),
+}
+
 fn encode_entry(entry: &StoredUsageEvent) -> Result<Vec<u8>, UsageError> {
     rmp_serde::to_vec_named(entry).map_err(UsageError::encode)
 }
@@ -544,6 +914,22 @@ fn encode_rollup(rollup: &UsageRollup) -> Result<Vec<u8>, UsageError> {
 }
 
 fn decode_rollup(raw: &[u8]) -> Result<UsageRollup, UsageError> {
+    rmp_serde::from_slice(raw).map_err(UsageError::decode)
+}
+
+fn encode_allowance(allowance: &ConsumerAllowanceRecord) -> Result<Vec<u8>, UsageError> {
+    rmp_serde::to_vec_named(allowance).map_err(UsageError::encode)
+}
+
+fn decode_allowance(raw: &[u8]) -> Result<ConsumerAllowanceRecord, UsageError> {
+    rmp_serde::from_slice(raw).map_err(UsageError::decode)
+}
+
+fn encode_top_up(top_up: &ConsumerTopUp) -> Result<Vec<u8>, UsageError> {
+    rmp_serde::to_vec_named(top_up).map_err(UsageError::encode)
+}
+
+fn decode_top_up(raw: &[u8]) -> Result<ConsumerTopUp, UsageError> {
     rmp_serde::from_slice(raw).map_err(UsageError::decode)
 }
 
@@ -630,6 +1016,18 @@ fn vault_rollup_key(tenant_id: &str, vault_id: &str) -> String {
     )
 }
 
+fn consumer_allowance_key(tenant_id: &str) -> String {
+    format!("{CONSUMER_ALLOWANCE_PREFIX}{}", key_part(tenant_id))
+}
+
+fn consumer_top_up_key(tenant_id: &str, idempotency_key: &str) -> String {
+    format!(
+        "{CONSUMER_TOP_UP_PREFIX}{}:{}",
+        key_part(tenant_id),
+        key_part(idempotency_key)
+    )
+}
+
 fn key_part(value: &str) -> String {
     const HEX: &[u8; 16] = b"0123456789abcdef";
     let bytes = value.as_bytes();
@@ -675,6 +1073,17 @@ fn validate_non_negative_finite(field: &'static str, value: f64) -> Result<(), U
         return Err(UsageError::InvalidField {
             field,
             message: "must not be negative",
+        });
+    }
+    Ok(())
+}
+
+fn validate_positive_finite(field: &'static str, value: f64) -> Result<(), UsageError> {
+    validate_non_negative_finite(field, value)?;
+    if value == 0.0 {
+        return Err(UsageError::InvalidField {
+            field,
+            message: "must be greater than zero",
         });
     }
     Ok(())

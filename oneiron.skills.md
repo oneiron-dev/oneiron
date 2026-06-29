@@ -133,6 +133,33 @@ Fetch Tier-1 first. It contains one endpoint block per live route literal and no
   - "get pending notifications"
 - safety: Read-only aggregation with a POST body; requires the configured `x-oneiron-secret` header unless the server is explicitly in unauthenticated development mode.
 
+#### consumer-usage - `GET /v1/consumer/usage`
+
+- when-to-use: Read consumer usage counters, credited allowance, remaining balance, and explicit allowance warning state for a tenant or tenant/vault scope.
+- trigger phrases:
+  - "show consumer usage"
+  - "check allowance balance"
+  - "read allowance warning"
+- safety: Read-only; requires the configured `x-oneiron-secret` header unless the server is explicitly in unauthenticated development mode.
+
+#### consumer-usage-details - `GET /v1/consumer/usage/details`
+
+- when-to-use: Read consumer usage details with agent, model, and service breakdowns alongside the same allowance and warning state.
+- trigger phrases:
+  - "show detailed consumer usage"
+  - "break down consumer usage"
+  - "inspect usage by service"
+- safety: Read-only; requires the configured `x-oneiron-secret` header unless the server is explicitly in unauthenticated development mode.
+
+#### consumer-top-up - `POST /v1/consumer/top-up`
+
+- when-to-use: Credit a tenant allowance without payment-processor integration, replaying by top-up idempotency key on retries.
+- trigger phrases:
+  - "top up allowance"
+  - "add consumer credits"
+  - "credit tenant usage allowance"
+- safety: Mutating. Requires auth. The request body idempotency key records each tenant top-up once; no external payment processor is called.
+
 #### usage-event - `POST /v1/usage/events`
 
 - when-to-use: Submit tenant usage telemetry for cost and credit-unit calculation. Local and BYO sources return a no-debit response; Oneiron Cloud mode records each idempotency key once.
