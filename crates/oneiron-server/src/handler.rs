@@ -23,7 +23,7 @@ use oneiron::sync::WindowKey;
 use oneiron::sync::export_updates_since;
 use tokio::time::{Duration, Instant};
 
-use crate::api::check_auth;
+use crate::auth::check_auth;
 use crate::broadcast::BroadcastSubscriber;
 use crate::protocol::{self, ProtocolError, SyncMessage, close_codes, window_sub_tags};
 use crate::server::SyncServer;

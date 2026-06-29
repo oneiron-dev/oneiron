@@ -4,15 +4,15 @@ use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use axum::body::{Body, to_bytes};
-use axum::extract::{Request, State};
+use axum::extract::{OriginalUri, Request, State};
 use axum::http::{HeaderMap, HeaderName, HeaderValue, StatusCode};
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
 use serde::{Deserialize, Serialize};
 
-use crate::api::check_auth;
+use crate::auth::{CoreAuth, check_auth};
 use crate::config::SyncServerConfig;
-use crate::error::ApiError;
+use crate::error::{ApiError, EnvelopedApiError};
 use crate::server::SyncServer;
 
 pub(crate) const IDEMPOTENCY_KEY_HEADER: &str = "Idempotency-Key";
@@ -298,14 +298,22 @@ pub(crate) async fn idempotency_middleware(
     next: Next,
 ) -> Response {
     let has_idempotency_header = request.headers().contains_key(IDEMPOTENCY_KEY_HEADER);
-    if has_idempotency_header && check_auth(request.headers(), &state.server.config).is_err() {
-        return ApiError::unauthorized().into_response();
+    let is_core_route = request_path(&request).starts_with("/v1/core/");
+    let auth_ok = if is_core_route {
+        CoreAuth::from_headers(request.headers(), &state.server.config)
+            .map(|auth| !auth.principal().is_empty())
+            .unwrap_or(false)
+    } else {
+        check_auth(request.headers(), &state.server.config).is_ok()
+    };
+    if has_idempotency_header && !auth_ok {
+        return api_error_response(ApiError::unauthorized(), is_core_route);
     }
 
     let key = match idempotency_key(request.headers()) {
         IdempotencyKey::Present(key) => key,
         IdempotencyKey::Absent => return next.run(request).await,
-        IdempotencyKey::Invalid => return invalid_key_response(),
+        IdempotencyKey::Invalid => return invalid_key_response(is_core_route),
     };
 
     let principal = principal_from_headers(request.headers(), &state.server.config);
@@ -323,12 +331,14 @@ pub(crate) async fn idempotency_middleware(
     let _guard = state.store.lock_for(&store_key).await;
     match state.store.lookup(&store_key, &request_body) {
         Ok(IdempotencyLookup::Replay(response)) => return response.into_response(),
-        Ok(IdempotencyLookup::Conflict) => return conflict_response(&key),
+        Ok(IdempotencyLookup::Conflict) => return conflict_response(&key, is_core_route),
         Ok(IdempotencyLookup::Miss) => {}
         Err(error) => {
             tracing::error!(error = %error, "failed to read idempotency cache");
-            return ApiError::internal_server_error("failed to read idempotency cache")
-                .into_response();
+            return api_error_response(
+                ApiError::internal_server_error("failed to read idempotency cache"),
+                is_core_route,
+            );
         }
     }
 
@@ -339,8 +349,10 @@ pub(crate) async fn idempotency_middleware(
         Ok(body) => body,
         Err(error) => {
             tracing::error!(error = %error, "failed to read idempotent response body");
-            return ApiError::internal_server_error("failed to read idempotent response body")
-                .into_response();
+            return api_error_response(
+                ApiError::internal_server_error("failed to read idempotent response body"),
+                is_core_route,
+            );
         }
     };
     let response_body = body.to_vec();
@@ -352,8 +364,10 @@ pub(crate) async fn idempotency_middleware(
 
     if let Err(error) = state.store.insert(&store_key, request_body, cached) {
         tracing::error!(error = %error, "failed to persist idempotency response");
-        return ApiError::internal_server_error("failed to persist idempotency response")
-            .into_response();
+        return api_error_response(
+            ApiError::internal_server_error("failed to persist idempotency response"),
+            is_core_route,
+        );
     }
 
     Response::from_parts(parts, Body::from(response_body))
@@ -375,6 +389,13 @@ fn idempotency_key(headers: &HeaderMap) -> IdempotencyKey {
     }
 }
 
+fn request_path(request: &Request) -> &str {
+    request
+        .extensions()
+        .get::<OriginalUri>()
+        .map_or_else(|| request.uri().path(), |uri| uri.0.path())
+}
+
 fn principal_from_headers(headers: &HeaderMap, config: &SyncServerConfig) -> String {
     if config.auth_secret.is_some() {
         return SHARED_SECRET_PRINCIPAL.to_owned();
@@ -388,12 +409,26 @@ fn principal_from_headers(headers: &HeaderMap, config: &SyncServerConfig) -> Str
         .unwrap_or_else(|| ANONYMOUS_PRINCIPAL.to_owned())
 }
 
-fn conflict_response(key: &str) -> Response {
-    ApiError::idempotency_replay_conflict(Some(key)).into_response()
+fn conflict_response(key: &str, is_core_route: bool) -> Response {
+    api_error_response(
+        ApiError::idempotency_replay_conflict(Some(key)),
+        is_core_route,
+    )
 }
 
-fn invalid_key_response() -> Response {
-    ApiError::invalid_header(IDEMPOTENCY_KEY_HEADER).into_response()
+fn invalid_key_response(is_core_route: bool) -> Response {
+    api_error_response(
+        ApiError::invalid_header(IDEMPOTENCY_KEY_HEADER),
+        is_core_route,
+    )
+}
+
+fn api_error_response(error: ApiError, is_core_route: bool) -> Response {
+    if is_core_route {
+        EnvelopedApiError::from(error).into_response()
+    } else {
+        error.into_response()
+    }
 }
 
 fn store_key(principal: &str, key: &str) -> String {
