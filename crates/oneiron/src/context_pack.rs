@@ -5,6 +5,8 @@ use std::io::Cursor;
 use std::time::Instant;
 
 use heed::RoTxn;
+use serde::{Deserialize, Serialize};
+use xxhash_rust::xxh3::xxh3_64;
 
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::claim::{ClaimBody, claim_surfaceable};
@@ -15,7 +17,7 @@ use crate::serialize::{SerializeConfig, SerializedPackTelemetry, serialize_pack_
 use crate::store::{RetrievalAction, RetrievalRunId, Store};
 use crate::types::{
     ContextEntity, ContextPack, ENTITY_TYPE_CLAIM, EdgeConfirmationStatus, EdgeInfo, EdgeKind,
-    EmptyContext, EmptyReason, EntityId, FieldProfile, PackFormat, PackStats, Signal,
+    EmptyContext, EmptyReason, EntityId, FieldProfile, PackFormat, PackStats, ScoredEntity, Signal,
     TemporalAnchorMode, TemporalGranularity, TimeRange, TokenAllocation,
 };
 use crate::{Vault, le_bytes_to_f32_vec};
@@ -29,6 +31,12 @@ const MAX_EDGE_SCAN_RESULTS: usize = 100_000;
 #[cfg(test)]
 const MAX_EDGE_SCAN_RESULTS: usize = 64;
 const MAX_CONTEXT_NEIGHBORS: usize = 1000;
+const PACK_VALIDATION_DUPLICATE_ID: &str = "conflicting duplicate id";
+const PACK_VALIDATION_MISSING_PAYLOAD: &str = "missing referenced payload";
+const PACK_VALIDATION_IMPOSSIBLE_TIME: &str = "impossible time ordering";
+const PACK_VALIDATION_MISSING_EVIDENCE: &str = "missing required evidence";
+const PACK_VALIDATION_DELETED_PAYLOAD: &str = "deleted payload reference";
+const PACK_VALIDATION_QUARANTINED_PAYLOAD: &str = "quarantined payload reference";
 /// Default share of the claim budget that non-base (fictional / dream) worlds
 /// may occupy in an `All`-scope pack — fiction takes at most half, so it can
 /// never crowd base reality out (ARCH-0004 / ARCH-0022).
@@ -50,11 +58,10 @@ struct HydrateOptions<'a> {
     include_edges: bool,
     include_vectors: bool,
     edge_cache: Option<&'a HashMap<EntityId, Vec<EdgeInfo>>>,
-    /// Claim bodies the pipeline's D19 gate already decoded (and passed):
-    /// the hydrator projects fields from these instead of re-decoding, so a
-    /// claim's body is MessagePack-decoded once per result across gate +
-    /// projection (AC 9). Misses (neighbors, post-gate writes) decode once
-    /// here, under the same gate.
+    /// Claim bodies already decoded and accepted before hydration: pipeline
+    /// result claims from the D19 gate, plus any neighbor claims decoded by
+    /// pre-assembly validation. The hydrator projects fields from these
+    /// instead of re-decoding, so each surfaced claim body is decoded once.
     claim_bodies: Option<&'a HashMap<EntityId, ClaimBody>>,
 }
 
@@ -84,6 +91,22 @@ struct ContextPackRun<'a> {
     pack: ContextPack,
     telemetry_run_id: Option<RetrievalRunId>,
     store: &'a Store,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+enum PackQuarantineContainer {
+    Entities,
+    Edges,
+    Tombstones,
+    Leases,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+struct PackQuarantineRecord {
+    container: PackQuarantineContainer,
+    crdt_key_hash: u64,
+    crdt_key_len: u32,
 }
 
 impl<'a> ContextPackBuilder<'a> {
@@ -403,6 +426,7 @@ impl<'a> ContextPackBuilder<'a> {
             let total_in_scope = pipeline_output.total_in_scope;
             let pipeline_empty_reason = pipeline_output.empty_reason;
             let scored = pipeline_output.scores;
+            validate_scored_candidates(&scored)?;
             let surfaced_candidate_count = scored.len();
             let claim_bodies = pipeline_output.claim_bodies;
             let mut claims_suppressed = pipeline_output.claims_suppressed;
@@ -410,6 +434,17 @@ impl<'a> ContextPackBuilder<'a> {
 
             let rtxn = self.vault.store.env.read_txn()?;
             let hydrate_result_edges = self.include_edges && self.edge_hop == 0;
+            let mut claim_bodies = claim_bodies;
+
+            let mut results = Vec::with_capacity(scored.len());
+            for entry in &scored {
+                validate_pack_entity_reference(
+                    &self.vault.store,
+                    &rtxn,
+                    &entry.id,
+                    &mut claim_bodies,
+                )?;
+            }
             let result_options = HydrateOptions {
                 hydrate_fields: self.hydrate,
                 include_edges: hydrate_result_edges,
@@ -417,8 +452,6 @@ impl<'a> ContextPackBuilder<'a> {
                 edge_cache: None,
                 claim_bodies: Some(&claim_bodies),
             };
-
-            let mut results = Vec::with_capacity(scored.len());
             for entry in scored.iter().copied() {
                 let Some(entity) = hydrate_entity(
                     self.vault,
@@ -449,6 +482,9 @@ impl<'a> ContextPackBuilder<'a> {
                 EdgeWalkResult::default()
             };
             let edge_cache = self.include_edges.then_some(&edge_walk.scanned_edges);
+            for id in &edge_walk.neighbor_ids {
+                validate_pack_entity_reference(&self.vault.store, &rtxn, id, &mut claim_bodies)?;
+            }
             let neighbor_options = HydrateOptions {
                 hydrate_fields: self.hydrate,
                 include_edges: self.include_edges,
@@ -485,6 +521,7 @@ impl<'a> ContextPackBuilder<'a> {
             }
 
             resolve_edge_short_ids(&mut results, &mut neighbors);
+            validate_hydrated_pack_entities(&results, &neighbors)?;
 
             // ARCH-0004 / ARCH-0022 world partitioning (ONE-1117): under the
             // default `All` scope, group surviving claims by world — base section
@@ -567,6 +604,149 @@ impl<'a> ContextPackBuilder<'a> {
             run_id: telemetry_run_id,
         })
     }
+}
+
+fn context_pack_validation_error(id: EntityId, reason: &'static str) -> Error {
+    Error::ContextPackValidation { id, reason }
+}
+
+fn validate_scored_candidates(scored: &[ScoredEntity]) -> Result<()> {
+    let mut seen = HashSet::with_capacity(scored.len());
+    for entry in scored {
+        if !seen.insert(entry.id) {
+            return Err(context_pack_validation_error(
+                entry.id,
+                PACK_VALIDATION_DUPLICATE_ID,
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn validate_hydrated_pack_entities(
+    results: &[ContextEntity],
+    neighbors: &[ContextEntity],
+) -> Result<()> {
+    let mut seen = HashSet::with_capacity(results.len() + neighbors.len());
+    for entity in results.iter().chain(neighbors.iter()) {
+        if !seen.insert(entity.id) {
+            return Err(context_pack_validation_error(
+                entity.id,
+                PACK_VALIDATION_DUPLICATE_ID,
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn validate_pack_entity_reference(
+    store: &Store,
+    rtxn: &RoTxn<'_>,
+    id: &EntityId,
+    claim_bodies: &mut HashMap<EntityId, ClaimBody>,
+) -> Result<()> {
+    if store
+        .sync_state
+        .get(rtxn, &crate::deletion::local_hard_delete_key(id))?
+        .is_some()
+    {
+        return Err(context_pack_validation_error(
+            *id,
+            PACK_VALIDATION_DELETED_PAYLOAD,
+        ));
+    }
+    if entity_has_quarantine_record(store, rtxn, id)? {
+        return Err(context_pack_validation_error(
+            *id,
+            PACK_VALIDATION_QUARANTINED_PAYLOAD,
+        ));
+    }
+
+    let Some(raw) = store.entities.get(rtxn, id.as_bytes())? else {
+        return Err(context_pack_validation_error(
+            *id,
+            PACK_VALIDATION_MISSING_PAYLOAD,
+        ));
+    };
+    let Some(header) = EntityMetadataHeader::parse(raw) else {
+        return Err(Error::CorruptedIndex("entity metadata header"));
+    };
+    validate_entity_time_ordering(*id, header)?;
+
+    if header.entity_type == ENTITY_TYPE_CLAIM {
+        if let Some(body) = claim_bodies.get(id) {
+            validate_claim_pack_consistency(*id, body)?;
+        } else {
+            let Ok(body) = raw
+                .get(ENTITY_METADATA_HEADER_LEN..)
+                .ok_or(Error::CorruptedIndex("entity metadata header"))
+                .and_then(|payload| crate::claim::decode_claim_body(payload, true))
+            else {
+                return Ok(());
+            };
+            validate_claim_pack_consistency(*id, &body)?;
+            if claim_surfaceable(&body) {
+                claim_bodies.insert(*id, body);
+            }
+        }
+    }
+    Ok(())
+}
+
+fn validate_entity_time_ordering(id: EntityId, header: EntityMetadataHeader) -> Result<()> {
+    if header.occurred_start > header.occurred_end {
+        return Err(context_pack_validation_error(
+            id,
+            PACK_VALIDATION_IMPOSSIBLE_TIME,
+        ));
+    }
+    Ok(())
+}
+
+fn validate_claim_pack_consistency(id: EntityId, body: &ClaimBody) -> Result<()> {
+    if let (Some(valid_from), Some(valid_to)) = (body.valid_from, body.valid_to)
+        && valid_from > valid_to
+    {
+        return Err(context_pack_validation_error(
+            id,
+            PACK_VALIDATION_IMPOSSIBLE_TIME,
+        ));
+    }
+
+    if body.predicate == crate::provenance::PREDICATE_EDGE_PROVENANCE {
+        let record = crate::provenance::decode_edge_provenance_body(&body.value)
+            .map_err(|_| context_pack_validation_error(id, PACK_VALIDATION_MISSING_EVIDENCE))?;
+        crate::provenance::resolve_persisted_actor_class(&record, body.evidence.as_ref())
+            .map_err(|_| context_pack_validation_error(id, PACK_VALIDATION_MISSING_EVIDENCE))?;
+    }
+    Ok(())
+}
+
+fn entity_has_quarantine_record(store: &Store, rtxn: &RoTxn<'_>, id: &EntityId) -> Result<bool> {
+    let id_hex = id.to_hex();
+    let key_hash = xxh3_64(id_hex.as_bytes());
+    let key_len = u32::try_from(id_hex.len()).unwrap_or(u32::MAX);
+    let iter = store.sync_queue.prefix_iter(rtxn, b"x:")?;
+    for entry in iter {
+        let (key, value) = entry?;
+        if !is_quarantine_key(key) {
+            continue;
+        }
+        let Ok(record) = rmp_serde::from_slice::<PackQuarantineRecord>(value) else {
+            continue;
+        };
+        if record.container == PackQuarantineContainer::Entities
+            && record.crdt_key_hash == key_hash
+            && record.crdt_key_len == key_len
+        {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+fn is_quarantine_key(key: &[u8]) -> bool {
+    key.len() == 10 && key.starts_with(b"x:")
 }
 
 fn finalize_context_pack_telemetry(
@@ -1330,6 +1510,46 @@ mod tests {
             )
             .vector(&id, &vector)
             .commit()
+    }
+
+    fn raw_entity_record(
+        entity_type: u8,
+        occurred_start: u64,
+        occurred_end: u64,
+        learned_at: u64,
+        payload: &[u8],
+    ) -> Vec<u8> {
+        let mut raw = Vec::with_capacity(ENTITY_METADATA_HEADER_LEN + payload.len());
+        raw.push(entity_type);
+        raw.extend_from_slice(&occurred_start.to_be_bytes());
+        raw.extend_from_slice(&occurred_end.to_be_bytes());
+        raw.extend_from_slice(&learned_at.to_be_bytes());
+        raw.extend_from_slice(payload);
+        raw
+    }
+
+    fn overwrite_raw_entity(vault: &Vault, id: &EntityId, raw: &[u8]) -> Result<()> {
+        vault.with_write_txn(|wtxn| {
+            vault.store.entities.put(wtxn, id.as_bytes(), raw)?;
+            Ok(())
+        })
+    }
+
+    fn assert_context_pack_validation(
+        err: Error,
+        expected_id: EntityId,
+        expected_reason: &'static str,
+    ) {
+        match err {
+            Error::ContextPackValidation { id, reason } => {
+                assert_eq!(id, expected_id);
+                assert_eq!(reason, expected_reason);
+            }
+            other => panic!(
+                "expected ContextPackValidation({expected_reason:?}) for {}, got {other:?}",
+                expected_id.to_hex()
+            ),
+        }
     }
 
     #[test]
@@ -2385,6 +2605,159 @@ mod tests {
         Ok(())
     }
 
+    // ── RET-005 pre-assembly pack validation ───────────────────────
+
+    #[test]
+    fn pack_validation_rejects_conflicting_duplicate_ids() -> Result<()> {
+        let id = EntityId::from_bytes([0x91; 16])?;
+        let err = validate_scored_candidates(&[
+            ScoredEntity { id, score: 1.0 },
+            ScoredEntity { id, score: 0.5 },
+        ])
+        .expect_err("duplicate retrieval candidate id must fail before pack assembly");
+
+        assert_context_pack_validation(err, id, PACK_VALIDATION_DUPLICATE_ID);
+        Ok(())
+    }
+
+    #[test]
+    fn pack_validation_rejects_missing_required_evidence() -> Result<()> {
+        let (_dir, vault) = open_test_vault();
+        let id = EntityId::from_bytes([0x92; 16])?;
+
+        put_text_entity(
+            &vault,
+            &id,
+            1,
+            "missingevidenceneedle",
+            serde_json::json!({"body": "placeholder"}),
+        )?;
+
+        let source = EntityId::from_bytes([0x21; 16])?;
+        let target = EntityId::from_bytes([0x22; 16])?;
+        let actor = EntityId::from_bytes([0x23; 16])?;
+        let value = crate::provenance::encode_edge_provenance_value(
+            &crate::provenance::EdgeProvenanceClaimBody::new(
+                actor,
+                0.75,
+                crate::provenance::SupersessionStatus::Confirmed,
+            ),
+        );
+        let body = crate::claim::ClaimBody::new(
+            crate::provenance::PREDICATE_EDGE_PROVENANCE,
+            crate::claim::ClaimSubject::Edge {
+                source,
+                kind: crate::types::EdgeKind::Supports,
+                target,
+            },
+            value,
+            0.75,
+            crate::claim::ClaimApprovalStatus::Auto,
+            crate::claim::ClaimLifecycleStatus::Active,
+        );
+        let payload = crate::claim::encode_claim_body(&body)?;
+        let raw = raw_entity_record(ENTITY_TYPE_CLAIM, 1, 1, 1, &payload);
+        overwrite_raw_entity(&vault, &id, &raw)?;
+
+        let err = vault
+            .context_pack()
+            .search_text("missingevidenceneedle", 10)
+            .run()
+            .expect_err("provenance claim without actor-class evidence must fail pack validation");
+
+        assert_context_pack_validation(err, id, PACK_VALIDATION_MISSING_EVIDENCE);
+        Ok(())
+    }
+
+    #[test]
+    fn pack_validation_rejects_impossible_time_ordering() -> Result<()> {
+        let (_dir, vault) = open_test_vault();
+        let id = EntityId::from_bytes([0x93; 16])?;
+        put_claim_text_entity(&vault, &id, "reversedtimeneedle", "test.time", "payload")?;
+
+        let raw = vault.get_raw(&id)?.expect("claim exists");
+        let payload = raw[ENTITY_METADATA_HEADER_LEN..].to_vec();
+        let reversed = raw_entity_record(ENTITY_TYPE_CLAIM, 20, 10, 1, &payload);
+        overwrite_raw_entity(&vault, &id, &reversed)?;
+
+        let err = vault
+            .context_pack()
+            .search_text("reversedtimeneedle", 10)
+            .run()
+            .expect_err("reversed entity envelope must fail pack validation");
+
+        assert_context_pack_validation(err, id, PACK_VALIDATION_IMPOSSIBLE_TIME);
+        Ok(())
+    }
+
+    #[test]
+    fn pack_validation_rejects_deleted_payload_reference() -> Result<()> {
+        let (_dir, vault) = open_test_vault();
+        let id = EntityId::from_bytes([0x94; 16])?;
+        put_claim_text_entity(
+            &vault,
+            &id,
+            "deletedreferenceneedle",
+            "test.deleted",
+            "payload",
+        )?;
+
+        vault.with_write_txn(|wtxn| {
+            vault.store.sync_state.put(
+                wtxn,
+                &crate::deletion::local_hard_delete_key(&id),
+                b"present",
+            )?;
+            Ok(())
+        })?;
+
+        let err = vault
+            .context_pack()
+            .search_text("deletedreferenceneedle", 10)
+            .run()
+            .expect_err("deleted payload reference must fail pack validation");
+
+        assert_context_pack_validation(err, id, PACK_VALIDATION_DELETED_PAYLOAD);
+        Ok(())
+    }
+
+    #[test]
+    fn pack_validation_rejects_quarantined_payload_reference() -> Result<()> {
+        let (_dir, vault) = open_test_vault();
+        let id = EntityId::from_bytes([0x95; 16])?;
+        put_claim_text_entity(
+            &vault,
+            &id,
+            "quarantinedreferenceneedle",
+            "test.quarantined",
+            "payload",
+        )?;
+
+        let id_hex = id.to_hex();
+        let record = PackQuarantineRecord {
+            container: PackQuarantineContainer::Entities,
+            crdt_key_hash: xxh3_64(id_hex.as_bytes()),
+            crdt_key_len: u32::try_from(id_hex.len()).unwrap_or(u32::MAX),
+        };
+        let encoded = rmp_serde::to_vec_named(&record).expect("quarantine record encode");
+        vault.with_write_txn(|wtxn| {
+            vault
+                .store
+                .sync_queue
+                .put(wtxn, b"x:\x00\x00\x00\x00\x00\x00\x00\x01", &encoded)?;
+            Ok(())
+        })?;
+
+        let err = vault
+            .context_pack()
+            .search_text("quarantinedreferenceneedle", 10)
+            .run()
+            .expect_err("quarantined payload reference must fail pack validation");
+
+        assert_context_pack_validation(err, id, PACK_VALIDATION_QUARANTINED_PAYLOAD);
+        Ok(())
+    }
+
     /// AC 7 — fail-closed hydration: a raw-written type-0 neighbor whose
     /// body is not the pinned CLAIM ABI is EXCLUDED (and counted), never
     /// surfaced with empty fields. Exclusion, not error.
@@ -2429,8 +2802,8 @@ mod tests {
 
     /// AC 9 — a claim body is MessagePack-decoded exactly ONCE per entity
     /// for gate + projection: results reuse the pipeline gate's decode,
-    /// neighbors decode once in hydration. Counted via the claim-module
-    /// decode counter, not by round-tripping output.
+    /// neighbors reuse the pre-assembly validation decode. Counted via the
+    /// claim-module decode counter, not by round-tripping output.
     #[test]
     fn claim_body_is_decoded_once_per_result_for_gate_and_projection() -> Result<()> {
         let (_dir, vault) = open_test_vault();
@@ -2457,7 +2830,7 @@ mod tests {
             crate::claim::claim_body_decode_count(),
             2,
             "one decode for the result claim (pipeline gate, reused by projection) \
-             + one for the neighbor claim (hydration gate + projection)"
+             + one for the neighbor claim (validation, reused by projection)"
         );
 
         // The single decode still projects full fields on both.
