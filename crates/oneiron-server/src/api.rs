@@ -36,7 +36,7 @@ use crate::runtime::{
 };
 use crate::server::SyncServer;
 use crate::skills_pack as skills_pack_artifact;
-use crate::usage::{UsageError, UsageEvent, UsageRecordResult, UsageRollup};
+use crate::usage::{UsageError, UsageEvent, UsageMode, UsageRecordResult, UsageRollup};
 
 const API_LEVEL: &str = "v1";
 const SUPPORTED_FORMATS: &[&str] = &["json", "yaml", "toon", "markdown", "plaintext"];
@@ -1106,12 +1106,24 @@ async fn record_usage_event(
     Json(event): Json<UsageEvent>,
 ) -> Result<Json<UsageRecordResult>, ApiError> {
     check_api_auth(&headers, &server.config)?;
+    let usage_mode = usage_mode_for_event(&server.config, &event);
     let result = server
         .usage_ledger
-        .record_event(event, server.config.runtime_usage_mode())
+        .record_event(event, usage_mode)
         .inspect_err(|error| tracing::error!(error = %error, "usage event record failed"))
         .map_err(usage_error)?;
     Ok(Json(result))
+}
+
+fn usage_mode_for_event(config: &SyncServerConfig, event: &UsageEvent) -> UsageMode {
+    if config.runtime == crate::runtime::RuntimeConfig::default() {
+        return config.runtime_usage_mode();
+    }
+
+    config
+        .runtime
+        .usage_mode_for_model(event.model.as_deref())
+        .unwrap_or_else(|| config.runtime_usage_mode())
 }
 
 /// Reads a tenant-wide or tenant/vault-specific usage rollup.
@@ -2741,6 +2753,175 @@ mod tests {
         assert_eq!(body["source"], Value::from("byo"));
         assert_eq!(body["debit"], Value::Null);
         assert_eq!(body["recorded"], Value::from(false));
+    }
+
+    #[tokio::test]
+    async fn usage_event_honors_legacy_usage_mode_when_runtime_is_default() {
+        let (_dir, server) = test_server_with_config(SyncServerConfig {
+            allow_unauthenticated: true,
+            usage_mode: crate::usage::UsageMode::OneironCloud,
+            runtime: crate::runtime::RuntimeConfig::default(),
+            ..Default::default()
+        });
+        let payload = json!({
+            "tenantId": "tenant-a",
+            "vaultId": "vault-a",
+            "idempotencyKey": "legacy-usage-default-runtime",
+            "source": "local",
+            "eventType": "inference",
+            "model": "local-orchestrator-default",
+            "tokenCounts": {
+                "inputTokens": 1000,
+                "outputTokens": 500,
+                "cacheReadTokens": 0,
+                "cacheWriteTokens": 0
+            },
+            "costRates": {
+                "inputTokenUsdPerMillion": 2.0,
+                "outputTokenUsdPerMillion": 4.0,
+                "cacheReadTokenUsdPerMillion": 0.0,
+                "cacheWriteTokenUsdPerMillion": 0.0
+            }
+        });
+
+        let response = api_routes(server)
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/usage/events")
+                    .header(CONTENT_TYPE, "application/json")
+                    .body(Body::from(payload.to_string()))
+                    .expect("request"),
+            )
+            .await
+            .expect("route response");
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("usage response body");
+        let body: Value = serde_json::from_slice(&body).expect("usage JSON body");
+        assert_eq!(body["source"], Value::from("oneiron_cloud"));
+        assert_eq!(body["recorded"], Value::from(true));
+        assert!(body["debit"].is_object());
+    }
+
+    #[tokio::test]
+    async fn usage_event_uses_matching_hosted_route_for_debit_boundary() {
+        let mut runtime = crate::runtime::RuntimeConfig::for_mode(RuntimeMode::LocalFree);
+        runtime.apply_override(crate::runtime::RuntimeConfigOverride::with_role_override(
+            RuntimeRole::Orchestrator,
+            crate::runtime::RuntimeRoleTargetOverride {
+                mode: Some(RuntimeMode::OneironCloud),
+                provider_kind: None,
+                model: Some("hosted-orchestrator".to_owned()),
+            },
+        ));
+        let (_dir, server) = test_server_with_config(SyncServerConfig {
+            allow_unauthenticated: true,
+            runtime,
+            ..Default::default()
+        });
+        let payload = json!({
+            "tenantId": "tenant-a",
+            "vaultId": "vault-a",
+            "idempotencyKey": "hosted-route-boundary",
+            "source": "local",
+            "eventType": "inference",
+            "model": "hosted-orchestrator",
+            "tokenCounts": {
+                "inputTokens": 1000,
+                "outputTokens": 500,
+                "cacheReadTokens": 0,
+                "cacheWriteTokens": 0
+            },
+            "costRates": {
+                "inputTokenUsdPerMillion": 2.0,
+                "outputTokenUsdPerMillion": 4.0,
+                "cacheReadTokenUsdPerMillion": 0.0,
+                "cacheWriteTokenUsdPerMillion": 0.0
+            }
+        });
+
+        let response = api_routes(server)
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/usage/events")
+                    .header(CONTENT_TYPE, "application/json")
+                    .body(Body::from(payload.to_string()))
+                    .expect("request"),
+            )
+            .await
+            .expect("route response");
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("usage response body");
+        let body: Value = serde_json::from_slice(&body).expect("usage JSON body");
+        assert_eq!(body["source"], Value::from("oneiron_cloud"));
+        assert_eq!(body["recorded"], Value::from(true));
+        assert!(body["debit"].is_object());
+    }
+
+    #[tokio::test]
+    async fn usage_event_uses_matching_local_route_for_no_debit_boundary() {
+        let mut runtime = crate::runtime::RuntimeConfig::for_mode(RuntimeMode::OneironCloud);
+        runtime.apply_override(crate::runtime::RuntimeConfigOverride::with_role_override(
+            RuntimeRole::Subagent,
+            crate::runtime::RuntimeRoleTargetOverride {
+                mode: Some(RuntimeMode::LocalFree),
+                provider_kind: None,
+                model: Some("local-subagent".to_owned()),
+            },
+        ));
+        let (_dir, server) = test_server_with_config(SyncServerConfig {
+            allow_unauthenticated: true,
+            runtime,
+            ..Default::default()
+        });
+        let payload = json!({
+            "tenantId": "tenant-a",
+            "vaultId": "vault-a",
+            "idempotencyKey": "local-route-boundary",
+            "source": "oneiron_cloud",
+            "eventType": "inference",
+            "model": "local-subagent",
+            "tokenCounts": {
+                "inputTokens": 1000,
+                "outputTokens": 500,
+                "cacheReadTokens": 0,
+                "cacheWriteTokens": 0
+            },
+            "costRates": {
+                "inputTokenUsdPerMillion": 2.0,
+                "outputTokenUsdPerMillion": 4.0,
+                "cacheReadTokenUsdPerMillion": 0.0,
+                "cacheWriteTokenUsdPerMillion": 0.0
+            }
+        });
+
+        let response = api_routes(server)
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/usage/events")
+                    .header(CONTENT_TYPE, "application/json")
+                    .body(Body::from(payload.to_string()))
+                    .expect("request"),
+            )
+            .await
+            .expect("route response");
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("usage response body");
+        let body: Value = serde_json::from_slice(&body).expect("usage JSON body");
+        assert_eq!(body["source"], Value::from("local"));
+        assert_eq!(body["recorded"], Value::from(false));
+        assert_eq!(body["debit"], Value::Null);
     }
 
     #[tokio::test]

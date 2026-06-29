@@ -354,6 +354,26 @@ impl RuntimeConfig {
         self.route_for_role_with_key_lookup(role, |key| std::env::var_os(key))
     }
 
+    pub fn usage_mode_for_model(&self, model: Option<&str>) -> Option<UsageMode> {
+        let model = model.map(str::trim).filter(|model| !model.is_empty())?;
+        let mut matched_usage_mode = None;
+
+        for role in RuntimeRole::ALL {
+            let target = self.role_defaults.target(role);
+            if target.model != model {
+                continue;
+            }
+
+            let usage_mode = target.mode.usage_mode();
+            if usage_mode.debits_usage() {
+                return Some(usage_mode);
+            }
+            matched_usage_mode = Some(usage_mode);
+        }
+
+        matched_usage_mode
+    }
+
     pub fn route_for_role_with_key_lookup(
         &self,
         role: RuntimeRole,
