@@ -5,6 +5,7 @@ pub mod batch;
 pub(crate) mod bm25;
 pub mod claim;
 pub mod code_artifact;
+pub mod code_revision;
 pub mod code_symbol;
 pub mod codebase;
 pub mod context_pack;
@@ -44,6 +45,11 @@ pub use crate::code_artifact::{
     CODE_ARTIFACT_BODY_KEYS, CODE_ARTIFACT_REPO_REF_MAX_BYTES, CODE_ARTIFACT_SUMMARY_HASH_LEN,
     CODE_ARTIFACT_SUMMARY_PROMPT_MAX_BYTES, CodeArtifactBody, decode_code_artifact_body,
     encode_code_artifact_body,
+};
+pub use crate::code_revision::{
+    CODE_REVISION_FORK_KEYS, CODE_REVISION_RECORD_KEYS, CodeRevision, CodeRevisionFork,
+    CodeRevisionKind, decode_code_revision, decode_code_revision_fork, encode_code_revision,
+    encode_code_revision_fork,
 };
 pub use crate::code_symbol::{
     CODE_SYMBOL_CHUNK_KEYS, CODE_SYMBOL_FINGERPRINT_LEN, CODE_SYMBOL_KIND_MAX_BYTES,
