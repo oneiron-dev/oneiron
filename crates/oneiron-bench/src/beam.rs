@@ -481,10 +481,24 @@ fn validate_fixture(fixture: &BeamFixture) -> BeamResult<()> {
                 "record occurred.start must be <= occurred.end",
             ));
         }
+        let field_object = record
+            .fields
+            .as_object()
+            .ok_or_else(|| invalid_fixture(fixture, "record fields must be a JSON object"))?;
         if record.text.iter().any(|field| field.field.is_empty()) {
             return Err(invalid_fixture(
                 fixture,
                 "text field names must not be empty",
+            ));
+        }
+        if record
+            .text
+            .iter()
+            .any(|field| !field_object.contains_key(field.field.as_str()))
+        {
+            return Err(invalid_fixture(
+                fixture,
+                "text fields must reference keys present in record.fields",
             ));
         }
     }
@@ -547,6 +561,13 @@ fn validate_manifest(manifest: &RunManifest) -> BeamResult<()> {
                 manifest,
                 "manifest case ids must be unique",
             ));
+        }
+    }
+
+    let mut arms = BTreeSet::new();
+    for arm in &manifest.arms {
+        if !arms.insert(arm.as_str()) {
+            return Err(invalid_manifest(manifest, "manifest arms must be unique"));
         }
     }
 
@@ -779,6 +800,45 @@ mod tests {
             manifest.arms,
             vec![ArmKind::Deterministic, ArmKind::Agentic, ArmKind::Chat]
         );
+    }
+
+    #[test]
+    fn fixture_validation_requires_fields_object() {
+        let mut fixture_json: serde_json::Value =
+            serde_json::from_str(BUILTIN_FIXTURE_JSON).expect("fixture JSON");
+        fixture_json["records"][0]["fields"] = serde_json::json!(["body"]);
+        let err = parse_fixture_json(&fixture_json.to_string())
+            .expect_err("fixture fields must be object");
+
+        assert!(
+            err.to_string()
+                .contains("record fields must be a JSON object")
+        );
+    }
+
+    #[test]
+    fn fixture_validation_rejects_text_field_missing_from_fields() {
+        let mut fixture_json: serde_json::Value =
+            serde_json::from_str(BUILTIN_FIXTURE_JSON).expect("fixture JSON");
+        fixture_json["records"][0]["text"][0]["field"] = serde_json::json!("missing");
+        let err = parse_fixture_json(&fixture_json.to_string())
+            .expect_err("text field must reference stored field");
+
+        assert!(
+            err.to_string()
+                .contains("text fields must reference keys present in record.fields")
+        );
+    }
+
+    #[test]
+    fn manifest_validation_rejects_duplicate_arms() {
+        let mut manifest_json: serde_json::Value =
+            serde_json::from_str(BUILTIN_MANIFEST_JSON).expect("manifest JSON");
+        manifest_json["arms"] = serde_json::json!(["deterministic", "deterministic"]);
+        let err = parse_manifest_json(&manifest_json.to_string())
+            .expect_err("duplicate arms must be rejected");
+
+        assert!(err.to_string().contains("manifest arms must be unique"));
     }
 
     #[test]
