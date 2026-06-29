@@ -433,7 +433,7 @@ async fn health(State(server): State<Arc<SyncServer>>) -> impl IntoResponse {
         capabilities: feature_flags(),
         formats: supported_formats(),
         rate_limit: rate_limit_status(&server.config),
-        runtime: RuntimeHealthStatus::from_config(&server.config.runtime),
+        runtime: runtime_health_status_for_config(&server.config),
     })
 }
 
@@ -783,8 +783,28 @@ fn discover_response(server: &SyncServer) -> Result<DiscoverResponse, ApiError> 
         counts,
         predicate_namespaces: predicate_namespaces(&server.vault, &claim_ids)?,
         last_activity,
-        runtime: RuntimeStatus::from_config(&server.config.runtime),
+        runtime: runtime_status_for_config(&server.config),
     })
+}
+
+fn runtime_status_for_config(config: &SyncServerConfig) -> RuntimeStatus {
+    if config.runtime == crate::runtime::RuntimeConfig::default() {
+        let runtime =
+            crate::runtime::RuntimeConfig::for_mode(RuntimeMode::from(config.runtime_usage_mode()));
+        RuntimeStatus::from_config(&runtime)
+    } else {
+        RuntimeStatus::from_config(&config.runtime)
+    }
+}
+
+fn runtime_health_status_for_config(config: &SyncServerConfig) -> RuntimeHealthStatus {
+    if config.runtime == crate::runtime::RuntimeConfig::default() {
+        let runtime =
+            crate::runtime::RuntimeConfig::for_mode(RuntimeMode::from(config.runtime_usage_mode()));
+        RuntimeHealthStatus::from_config(&runtime)
+    } else {
+        RuntimeHealthStatus::from_config(&config.runtime)
+    }
 }
 
 fn skill_pack_discovery() -> SkillPackDiscovery {
@@ -1127,14 +1147,14 @@ fn usage_mode_for_event(
         return Ok(usage_mode);
     }
 
-    if config.runtime.has_mixed_usage_modes() {
-        return Err(ApiError::bad_request(
-            "usage event model is required when runtime routes mix usage modes",
-            Some("model"),
-        ));
+    if let Some(usage_mode) = config.runtime.usage_mode_without_model() {
+        return Ok(usage_mode);
     }
 
-    Ok(config.runtime_usage_mode())
+    Err(ApiError::bad_request(
+        "usage event model is required when runtime routes mix metered and unmetered modes",
+        Some("model"),
+    ))
 }
 
 /// Reads a tenant-wide or tenant/vault-specific usage rollup.
@@ -2419,6 +2439,62 @@ mod tests {
         }
     }
 
+    #[tokio::test]
+    async fn runtime_status_uses_legacy_usage_mode_when_runtime_is_default() {
+        let (_dir, server) = test_server_with_config(SyncServerConfig {
+            allow_unauthenticated: true,
+            usage_mode: crate::usage::UsageMode::OneironCloud,
+            runtime: crate::runtime::RuntimeConfig::default(),
+            ..Default::default()
+        });
+
+        let response = api_routes(server.clone())
+            .oneshot(
+                Request::builder()
+                    .uri("/api/core/discover")
+                    .body(Body::empty())
+                    .expect("request"),
+            )
+            .await
+            .expect("route response");
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("discover response body");
+        let body: Value = serde_json::from_slice(&body).expect("discover JSON body");
+        assert_eq!(body["runtime"]["mode"], Value::from("oneiron_cloud"));
+        assert_eq!(body["runtime"]["oneironSpendMetered"], Value::from(true));
+        assert!(
+            body["runtime"]["routes"]
+                .as_array()
+                .expect("runtime routes array")
+                .iter()
+                .all(
+                    |route| route["providerKind"].as_str() == Some("oneiron_cloud")
+                        && route["oneironSpendMetered"].as_bool() == Some(true)
+                )
+        );
+
+        let health = api_routes(server)
+            .oneshot(
+                Request::builder()
+                    .uri("/api/health")
+                    .body(Body::empty())
+                    .expect("request"),
+            )
+            .await
+            .expect("health route response");
+        assert_eq!(health.status(), StatusCode::OK);
+        let body = to_bytes(health.into_body(), usize::MAX)
+            .await
+            .expect("health response body");
+        let body: Value = serde_json::from_slice(&body).expect("health JSON body");
+        assert_eq!(body["runtime"]["mode"], Value::from("oneiron_cloud"));
+        assert_eq!(body["runtime"]["oneironSpendMetered"], Value::from(true));
+        assert!(body["runtime"].get("routes").is_none());
+    }
+
     #[test]
     fn generated_openapi_has_descriptions_examples_and_defaults() {
         let spec = generated_spec();
@@ -2872,6 +2948,119 @@ mod tests {
         let body: Value = serde_json::from_slice(&body).expect("ApiError JSON body");
         assert_eq!(body["code"], Value::from("BAD_REQUEST"));
         assert_eq!(body["details"]["field"], Value::from("model"));
+    }
+
+    #[tokio::test]
+    async fn usage_event_uses_unanimous_hosted_routes_without_model_discriminator() {
+        let mut runtime = crate::runtime::RuntimeConfig::for_mode(RuntimeMode::LocalFree);
+        for role in RuntimeRole::ALL {
+            runtime.apply_override(crate::runtime::RuntimeConfigOverride::with_role_override(
+                role,
+                crate::runtime::RuntimeRoleTargetOverride {
+                    mode: Some(RuntimeMode::OneironCloud),
+                    provider_kind: None,
+                    model: Some(format!("hosted-{role}")),
+                },
+            ));
+        }
+        let (_dir, server) = test_server_with_config(SyncServerConfig {
+            allow_unauthenticated: true,
+            runtime,
+            ..Default::default()
+        });
+        let payload = json!({
+            "tenantId": "tenant-a",
+            "vaultId": "vault-a",
+            "idempotencyKey": "unmodeled-hosted-routes",
+            "source": "local",
+            "eventType": "inference",
+            "tokenCounts": {
+                "inputTokens": 1000,
+                "outputTokens": 500,
+                "cacheReadTokens": 0,
+                "cacheWriteTokens": 0
+            },
+            "costRates": {
+                "inputTokenUsdPerMillion": 2.0,
+                "outputTokenUsdPerMillion": 4.0,
+                "cacheReadTokenUsdPerMillion": 0.0,
+                "cacheWriteTokenUsdPerMillion": 0.0
+            }
+        });
+
+        let response = api_routes(server)
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/usage/events")
+                    .header(CONTENT_TYPE, "application/json")
+                    .body(Body::from(payload.to_string()))
+                    .expect("request"),
+            )
+            .await
+            .expect("route response");
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("usage response body");
+        let body: Value = serde_json::from_slice(&body).expect("usage JSON body");
+        assert_eq!(body["source"], Value::from("oneiron_cloud"));
+        assert_eq!(body["recorded"], Value::from(true));
+        assert!(body["debit"].is_object());
+    }
+
+    #[tokio::test]
+    async fn usage_event_accepts_all_unmetered_runtime_mix_without_model_discriminator() {
+        let mut runtime = crate::runtime::RuntimeConfig::for_mode(RuntimeMode::LocalFree);
+        runtime.apply_override(crate::runtime::RuntimeConfigOverride::with_role_override(
+            RuntimeRole::Orchestrator,
+            crate::runtime::RuntimeRoleTargetOverride::mode(RuntimeMode::ByoCloudKey),
+        ));
+        let (_dir, server) = test_server_with_config(SyncServerConfig {
+            allow_unauthenticated: true,
+            runtime,
+            ..Default::default()
+        });
+        let payload = json!({
+            "tenantId": "tenant-a",
+            "vaultId": "vault-a",
+            "idempotencyKey": "unmodeled-unmetered-routes",
+            "source": "oneiron_cloud",
+            "eventType": "inference",
+            "tokenCounts": {
+                "inputTokens": 1000,
+                "outputTokens": 500,
+                "cacheReadTokens": 0,
+                "cacheWriteTokens": 0
+            },
+            "costRates": {
+                "inputTokenUsdPerMillion": 2.0,
+                "outputTokenUsdPerMillion": 4.0,
+                "cacheReadTokenUsdPerMillion": 0.0,
+                "cacheWriteTokenUsdPerMillion": 0.0
+            }
+        });
+
+        let response = api_routes(server)
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/usage/events")
+                    .header(CONTENT_TYPE, "application/json")
+                    .body(Body::from(payload.to_string()))
+                    .expect("request"),
+            )
+            .await
+            .expect("route response");
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("usage response body");
+        let body: Value = serde_json::from_slice(&body).expect("usage JSON body");
+        assert_eq!(body["recorded"], Value::from(false));
+        assert_eq!(body["debit"], Value::Null);
     }
 
     #[tokio::test]

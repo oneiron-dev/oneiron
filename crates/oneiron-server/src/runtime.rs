@@ -376,17 +376,26 @@ impl RuntimeConfig {
         matched_usage_mode
     }
 
-    pub fn has_mixed_usage_modes(&self) -> bool {
+    pub fn usage_mode_without_model(&self) -> Option<UsageMode> {
         let first = self
             .role_defaults
             .target(RuntimeRole::Orchestrator)
             .mode
             .usage_mode();
+        let first_debits = first.debits_usage();
 
-        RuntimeRole::ALL
-            .into_iter()
-            .skip(1)
-            .any(|role| self.role_defaults.target(role).mode.usage_mode() != first)
+        for role in RuntimeRole::ALL.into_iter().skip(1) {
+            let usage_mode = self.role_defaults.target(role).mode.usage_mode();
+            if usage_mode.debits_usage() != first_debits {
+                return None;
+            }
+        }
+
+        Some(if first_debits {
+            UsageMode::OneironCloud
+        } else {
+            first
+        })
     }
 
     pub fn route_for_role_with_key_lookup(
