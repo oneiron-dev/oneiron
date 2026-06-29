@@ -2656,6 +2656,74 @@ mod tests {
     }
 
     #[test]
+    fn context_pack_provisional_telemetry_hidden_until_finalization() -> Result<()> {
+        let (_dir, vault) = open_test_vault();
+
+        let id = EntityId::from_bytes_unchecked([0x7E; 16]);
+        put_text_entity(
+            &vault,
+            &id,
+            crate::types::ENTITY_TYPE_PERSON,
+            "telemetry unpublished finalization",
+            serde_json::json!({"name": "Unpublished"}),
+        )?;
+
+        let run = vault
+            .context_pack()
+            .search_text("telemetry unpublished finalization", 10)
+            .run_unfinalized()?;
+        let run_id = run
+            .telemetry_run_id
+            .expect("unfinalized context-pack telemetry run id");
+        assert!(
+            vault.retrieval_runs(10)?.is_empty(),
+            "unfinalized context-pack telemetry must not be publicly listed"
+        );
+        let outcome_error = run
+            .store
+            .record_retrieval_outcome(crate::store::RetrievalOutcome {
+                run_id,
+                key: "click".to_owned(),
+                reward: Some(1.0),
+                accepted: Some(true),
+                metadata: BTreeMap::new(),
+            })
+            .expect_err("unfinalized context-pack telemetry must reject outcomes");
+        assert!(matches!(outcome_error, Error::InvalidConfig(_)));
+
+        let surfaced_result_ids: Vec<[u8; 16]> = run
+            .pack
+            .results
+            .iter()
+            .map(|entity| *entity.id.as_bytes())
+            .collect();
+        let finalized_run_id = finalize_context_pack_telemetry(
+            run.store,
+            run.telemetry_run_id,
+            run.pack.stats.query_time_us,
+            run.pack.stats.claims_suppressed,
+            &surfaced_result_ids,
+            context_pack_empty_reason(&run.pack, &surfaced_result_ids),
+        );
+        assert_eq!(finalized_run_id, Some(run_id));
+
+        let runs = vault.retrieval_runs(1)?;
+        assert_eq!(runs.len(), 1);
+        assert_eq!(runs[0].run_id, run_id);
+        assert_eq!(runs[0].result_ids, vec![*id.as_bytes()]);
+        run.store
+            .record_retrieval_outcome(crate::store::RetrievalOutcome {
+                run_id,
+                key: "click".to_owned(),
+                reward: Some(1.0),
+                accepted: Some(true),
+                metadata: BTreeMap::new(),
+            })?;
+        assert_eq!(run.store.retrieval_outcomes(run_id)?.len(), 1);
+        Ok(())
+    }
+
+    #[test]
     fn context_pack_telemetry_discards_run_on_assembly_error() -> Result<()> {
         let (_dir, vault) = open_test_vault();
 
@@ -2714,15 +2782,18 @@ mod tests {
         let run_id = run
             .telemetry_run_id
             .expect("unfinalized context-pack telemetry run id");
-        run.store
+        let outcome_error = run
+            .store
             .record_retrieval_outcome(crate::store::RetrievalOutcome {
                 run_id,
                 key: "click".to_owned(),
                 reward: Some(1.0),
                 accepted: Some(true),
                 metadata: BTreeMap::new(),
-            })?;
-        assert_eq!(run.store.retrieval_outcomes(run_id)?.len(), 1);
+            })
+            .expect_err("unfinalized context-pack telemetry must reject outcomes");
+        assert!(matches!(outcome_error, Error::InvalidConfig(_)));
+        assert!(run.store.retrieval_outcomes(run_id)?.is_empty());
 
         discard_failed_context_pack_telemetry(run.store, run.telemetry_run_id);
 
@@ -2760,14 +2831,17 @@ mod tests {
         let run_id = run
             .telemetry_run_id
             .expect("unfinalized context-pack telemetry run id");
-        run.store
+        let outcome_error = run
+            .store
             .record_retrieval_outcome(crate::store::RetrievalOutcome {
                 run_id,
                 key: "click".to_owned(),
                 reward: Some(1.0),
                 accepted: Some(true),
                 metadata: BTreeMap::new(),
-            })?;
+            })
+            .expect_err("unfinalized context-pack telemetry must reject outcomes");
+        assert!(matches!(outcome_error, Error::InvalidConfig(_)));
 
         let mut run_key = Vec::from(&b"retr_run:v0:"[..]);
         run_key.extend_from_slice(&run_id.as_bytes());
