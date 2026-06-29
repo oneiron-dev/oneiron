@@ -1444,22 +1444,22 @@ mod tests {
 
     #[test]
     fn protocol_hello_validation_literals() {
-        // Contract literals: the valid hello is EXACTLY [3, 2] and every
+        // Contract literals: the valid hello is EXACTLY [3, 3] and every
         // failure closes with 4006 — assert the raw values so a drifted
-        // tag/version/close-code fails here. Version pinned 1→2 by the
-        // ONE-1140 atomic wire train (OD-5): a v1 peer ([3, 1]) is now a
-        // version mismatch, rejected at hello exactly like any other
-        // non-current version.
-        assert!(validate_protocol_hello(&[3, 2]).is_ok());
+        // tag/version/close-code fails here. Version pinned 2→3 by FED-002
+        // selector sync: a pre-selector v2 peer ([3, 2]) is rejected at
+        // hello before an unknown selector sub-tag can hang.
+        assert!(validate_protocol_hello(&[3, 3]).is_ok());
 
         let cases: &[(&str, &[u8])] = &[
             ("v1_peer", &[3, 1]),
-            ("future_version", &[3, 3]),
+            ("pre_selector_v2_peer", &[3, 2]),
+            ("future_version", &[3, 4]),
             ("zero_version", &[3, 0]),
-            ("wrong_tag", &[2, 2]),
+            ("wrong_tag", &[2, 3]),
             ("empty", &[]),
             ("tag_only", &[3]),
-            ("trailing_bytes", &[3, 2, 0]),
+            ("trailing_bytes", &[3, 3, 0]),
         ];
         for (case_name, frame) in cases {
             assert_eq!(
