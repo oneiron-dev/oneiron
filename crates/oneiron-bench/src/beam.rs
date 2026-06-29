@@ -116,6 +116,8 @@ pub(crate) struct FixtureCase {
     #[serde(default)]
     fixture_class: FixtureClass,
     #[serde(default)]
+    temporal_search: Option<FixtureTimeRange>,
+    #[serde(default)]
     offline_amortized_cost: CostComponentInput,
 }
 
@@ -861,6 +863,20 @@ fn validate_fixture(fixture: &BeamFixture) -> BeamResult<()> {
                 "abstention fixture cases must set expected_min_results to 0",
             ));
         }
+        if let Some(temporal_search) = &case.temporal_search
+            && temporal_search.start > temporal_search.end
+        {
+            return Err(invalid_fixture(
+                fixture,
+                "case temporalSearch.start must be <= temporalSearch.end",
+            ));
+        }
+        if case.fixture_class == FixtureClass::TemporalStaleness && case.temporal_search.is_none() {
+            return Err(invalid_fixture(
+                fixture,
+                "temporal_staleness cases must declare temporalSearch",
+            ));
+        }
         if case.expected_min_results > case.limit {
             return Err(invalid_fixture(
                 fixture,
@@ -1131,14 +1147,21 @@ fn configured_context_pack_builder<'a>(
     vault: &'a Vault,
     case: &FixtureCase,
 ) -> ContextPackBuilder<'a> {
-    vault
+    let builder = vault
         .context_pack()
         .search_text(&case.query, case.limit)
         .field_profile(FieldProfile::Standard)
         .format(BEAM_CONTEXT_PACK_FORMAT)
         .merge_neighbors(false)
         .include_stats(true)
-        .token_budget(case.token_budget)
+        .token_budget(case.token_budget);
+
+    match (case.fixture_class, &case.temporal_search) {
+        (FixtureClass::TemporalStaleness, Some(range)) => {
+            builder.search_temporal(range.start, range.end, case.limit)
+        }
+        _ => builder,
+    }
 }
 
 struct BudgetedContextPack {
@@ -1477,17 +1500,23 @@ fn abstention_gate_status(
             "evidence_supported cases must use scored BEAM abilities".to_owned(),
         ),
         FixtureClass::EmptyMemory => {
-            let empty_total = context_pack
-                .empty
-                .as_ref()
-                .map(|empty| empty.total_in_scope)
-                .unwrap_or(context_pack.result_count);
-            let passed = context_pack.result_count == 0 && empty_total == 0;
+            let Some(empty) = context_pack.empty.as_ref() else {
+                return (
+                    false,
+                    format!(
+                        "empty vault had {} serialized results but no empty report",
+                        context_pack.result_count
+                    ),
+                );
+            };
+            let passed = context_pack.result_count == 0
+                && empty.total_in_scope == 0
+                && empty.reason == "no_data";
             (
                 passed,
                 format!(
-                    "empty vault had {} serialized results and {empty_total} in-scope records",
-                    context_pack.result_count
+                    "empty vault had {} serialized results, {} in-scope records, and empty reason={}",
+                    context_pack.result_count, empty.total_in_scope, empty.reason
                 ),
             )
         }
@@ -1517,7 +1546,7 @@ fn abstention_gate_status(
                 .signals_used
                 .iter()
                 .any(|signal| signal == "temporal");
-            let passed = context_pack.result_count > 0;
+            let passed = context_pack.result_count > 0 && used_temporal_signal;
             (
                 passed,
                 format!(
@@ -2076,6 +2105,7 @@ neighbors:
             token_budget: 8,
             expected_min_results: 1,
             fixture_class: FixtureClass::EvidenceSupported,
+            temporal_search: None,
             offline_amortized_cost: CostComponentInput::default(),
         };
         let mut context_pack = ContextPackReport {
@@ -2204,6 +2234,7 @@ neighbors:
             token_budget: 128,
             expected_min_results: 0,
             fixture_class: FixtureClass::EvidenceSupported,
+            temporal_search: None,
             offline_amortized_cost: CostComponentInput::default(),
         };
         let pack = BudgetedContextPack {
@@ -2483,6 +2514,56 @@ neighbors:
     }
 
     #[test]
+    fn empty_memory_gate_requires_explicit_no_data_empty_report() {
+        let mut context_pack = minimal_context_pack_report(0, &[], None);
+
+        let (passed, detail) = abstention_gate_status(FixtureClass::EmptyMemory, &context_pack);
+        assert!(!passed);
+        assert!(detail.contains("no empty report"));
+
+        context_pack.empty = Some(EmptyContextReport {
+            reason: "filter_matched_none".to_owned(),
+            total_in_scope: 0,
+            hint: "query matched no records".to_owned(),
+        });
+        let (passed, detail) = abstention_gate_status(FixtureClass::EmptyMemory, &context_pack);
+        assert!(!passed);
+        assert!(detail.contains("filter_matched_none"));
+
+        context_pack.empty = Some(EmptyContextReport {
+            reason: "no_data".to_owned(),
+            total_in_scope: 1,
+            hint: "records were in scope".to_owned(),
+        });
+        let (passed, _detail) = abstention_gate_status(FixtureClass::EmptyMemory, &context_pack);
+        assert!(!passed);
+
+        context_pack.empty = Some(EmptyContextReport {
+            reason: "no_data".to_owned(),
+            total_in_scope: 0,
+            hint: "empty vault".to_owned(),
+        });
+        let (passed, _detail) = abstention_gate_status(FixtureClass::EmptyMemory, &context_pack);
+        assert!(passed);
+    }
+
+    #[test]
+    fn temporal_staleness_gate_requires_temporal_signal_usage() {
+        let mut context_pack = minimal_context_pack_report(1, &[], None);
+
+        let (passed, detail) =
+            abstention_gate_status(FixtureClass::TemporalStaleness, &context_pack);
+        assert!(!passed);
+        assert!(detail.contains("temporal signal=false"));
+
+        context_pack.stats.signals_used.push("temporal".to_owned());
+        let (passed, detail) =
+            abstention_gate_status(FixtureClass::TemporalStaleness, &context_pack);
+        assert!(passed);
+        assert!(detail.contains("temporal signal=true"));
+    }
+
+    #[test]
     fn low_confidence_gate_suppresses_score_publication() {
         let case = FixtureCase {
             case_id: "eval004-low-confidence".to_owned(),
@@ -2491,6 +2572,7 @@ neighbors:
             token_budget: 128,
             expected_min_results: 0,
             fixture_class: FixtureClass::LowConfidence,
+            temporal_search: None,
             offline_amortized_cost: CostComponentInput::default(),
         };
         let context_pack = ContextPackReport {
@@ -2559,6 +2641,7 @@ neighbors:
             token_budget: 4096,
             expected_min_results: 1,
             fixture_class: FixtureClass::EvidenceSupported,
+            temporal_search: None,
             offline_amortized_cost: CostComponentInput::default(),
         });
         manifest.case_ids = vec!["beam_small_budget_smoke".to_owned()];
@@ -2617,6 +2700,17 @@ neighbors:
         fixture_json["cases"][0]["expectedMinResults"] = serde_json::json!(0);
         fixture_json["cases"][0]["fixtureClass"] =
             serde_json::to_value(fixture_class).expect("fixture class serializes");
+        if fixture_class == FixtureClass::TemporalStaleness {
+            fixture_json["cases"][0]["temporalSearch"] = serde_json::json!({
+                "start": 0,
+                "end": 1
+            });
+        } else {
+            fixture_json["cases"][0]
+                .as_object_mut()
+                .expect("case object")
+                .remove("temporalSearch");
+        }
 
         parse_fixture_json(&fixture_json.to_string()).expect("EVAL-004 fixture parses")
     }
@@ -2696,6 +2790,40 @@ neighbors:
             .iter()
             .find(|score| score.ability == AbilityKind::BudgetDiscipline)
             .expect("budget discipline score exists")
+    }
+
+    fn minimal_context_pack_report(
+        result_count: usize,
+        signals_used: &[&str],
+        empty: Option<EmptyContextReport>,
+    ) -> ContextPackReport {
+        let mut stats = empty_pack_stats_report();
+        stats.signals_used = signals_used
+            .iter()
+            .map(|signal| (*signal).to_owned())
+            .collect();
+
+        ContextPackReport {
+            token_budget: 128,
+            limit: result_count.max(1),
+            serialized_format: "yaml".to_owned(),
+            serialized_bytes: 0,
+            serialized_tokens: 0,
+            query_cost: CostComponentReport {
+                token_source: TokenAccountingSource::TokenizerCount,
+                input_tokens: 0,
+                output_tokens: 0,
+                target_tokens: 128,
+                elapsed_us: 0,
+                cost_usd: 0.0,
+            },
+            result_count,
+            neighbor_count: 0,
+            results: Vec::new(),
+            neighbors: Vec::new(),
+            stats,
+            empty,
+        }
     }
 
     fn empty_pack_stats_report() -> PackStatsReport {
