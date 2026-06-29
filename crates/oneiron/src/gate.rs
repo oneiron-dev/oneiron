@@ -217,6 +217,7 @@ pub(crate) struct GateEvaluatorInput {
     pub(crate) actor: GateActor,
     pub(crate) source: ClaimSource,
     pub(crate) content_kind: GateContentKind,
+    pub(crate) sensitivity_band: Option<u8>,
     pub(crate) criticality: PolicyCriticality,
     pub(crate) policy_manifest_version: String,
     pub(crate) provenance: GateProvenanceHandles,
@@ -539,7 +540,8 @@ impl PolicyManifestResolution {
 
     #[must_use]
     pub(crate) fn evaluate_gate(&self, input: &GateEvaluatorInput) -> GateDecision {
-        if input.actor.actor_class.is_empty() {
+        let actor_class = input.actor.actor_class.trim();
+        if actor_class.is_empty() {
             return GateDecision::deny(GateReasonCode::DenyMissingActorClass);
         }
         if input.provenance.actor_entity_ref.is_none() {
@@ -554,13 +556,13 @@ impl PolicyManifestResolution {
 
         let mut pending = Vec::new();
 
-        if self.actor_ceiling(&input.actor.actor_class, input.actor.actor_ref.as_deref())
+        if self.actor_ceiling(actor_class, input.actor.actor_ref.as_deref())
             == PolicyApprovalCeiling::Proposed
         {
             pending.push(GateReasonCode::PendingActorCeiling);
         }
 
-        if !self.source_trust_allows_auto(input.source) {
+        if !self.source_trust_allows_auto(input.source, input.sensitivity_band) {
             pending.push(GateReasonCode::PendingSourceTrust);
         }
 
@@ -585,16 +587,24 @@ impl PolicyManifestResolution {
         }
     }
 
-    fn source_trust_allows_auto(&self, source: ClaimSource) -> bool {
+    fn source_trust_allows_auto(&self, source: ClaimSource, sensitivity: Option<u8>) -> bool {
         if self.source_trust.malformed_manifest_seen {
             return false;
         }
+
+        let Some(sensitivity) = sensitivity else {
+            return false;
+        };
 
         let Some(row) = self.source_trust.row(source) else {
             return !source.requires_explicit_auto_permit();
         };
 
-        row.max_auto_sensitivity.is_some()
+        let Some(max_auto_sensitivity) = row.max_auto_sensitivity else {
+            return false;
+        };
+
+        sensitivity <= max_auto_sensitivity
             && (!source.requires_explicit_auto_permit() || (row.receipted && row.warned))
     }
 
@@ -1322,6 +1332,7 @@ mod tests {
             },
             source,
             content_kind: GateContentKind::Claim,
+            sensitivity_band: Some(0),
             criticality,
             policy_manifest_version: POLICY_SCHEMA_VERSION.to_owned(),
             provenance: GateProvenanceHandles {
@@ -1479,7 +1490,7 @@ mod tests {
             ClaimSource::UserStated,
             PolicyCriticality::Normal,
         );
-        missing_actor_class.actor.actor_class.clear();
+        missing_actor_class.actor.actor_class = " \t ".to_owned();
         let decision = policy.evaluate_gate(&missing_actor_class);
         assert_eq!(decision.outcome(), GateOutcome::Deny);
         assert_eq!(
@@ -1527,6 +1538,43 @@ mod tests {
         assert_eq!(
             gate_reason_strs(&decision),
             vec!["gate.deny.policy_fail_closed"]
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn gate_evaluator_source_trust_respects_sensitivity_ceiling() -> Result<()> {
+        let (_tmp, vault) = temp_vault();
+        let data = encode_policy_manifest(vec![source_trust_entry(ClaimSource::ToolOutput, 0)]);
+        put_policy_manifest_bytes(&vault, 0x74, &data)?;
+        let policy = resolve(&vault)?;
+
+        let mut input = gate_evaluator_input(
+            "first_party",
+            None,
+            ClaimSource::ToolOutput,
+            PolicyCriticality::Normal,
+        );
+
+        let decision = policy.evaluate_gate(&input);
+        assert_eq!(decision.outcome(), GateOutcome::Allow);
+        assert_eq!(gate_reason_strs(&decision), vec!["gate.allow"]);
+
+        input.sensitivity_band = Some(1);
+        let decision = policy.evaluate_gate(&input);
+        assert_eq!(decision.outcome(), GateOutcome::Pending);
+        assert_eq!(
+            gate_reason_strs(&decision),
+            vec!["gate.pending.source_trust"]
+        );
+
+        input.sensitivity_band = None;
+        let decision = policy.evaluate_gate(&input);
+        assert_eq!(decision.outcome(), GateOutcome::Pending);
+        assert_eq!(
+            gate_reason_strs(&decision),
+            vec!["gate.pending.source_trust"]
         );
 
         Ok(())
