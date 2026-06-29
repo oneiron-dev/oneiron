@@ -1524,9 +1524,28 @@ impl Vault {
             survivors[winner].flags()
         };
 
+        let mut closure_payloads = Vec::with_capacity(closures.len());
+        for closure in &closures {
+            let closed_record = close_record_for_supersession(&closure.record, close_at)?;
+            let (closed_occurred, closed_learned_at, closed_claim_body, closed_data) =
+                closed_claim_put_payload(
+                    closure,
+                    &closed_record,
+                    ClaimLifecycleStatus::Superseded,
+                )?;
+            crate::gate::check_edge_provenance_claim_policy(
+                &closed_claim_body,
+                &closed_record,
+                closure.actor_class,
+                &policy,
+            )?;
+            closure_payloads.push((closure.id, closed_occurred, closed_learned_at, closed_data));
+        }
+
         // New Claim through the reserved-namespace door + claim_of → the
         // subject edge's SOURCE entity (D12) + closure re-puts, all with
-        // full type-0 validation at apply, all in this one transaction.
+        // full Gate checks before apply and full type-0 validation at apply,
+        // all in this one transaction.
         let mut builder = self
             .batch_in()
             .put_reserved_claim(claim_id, occurred, learned_at, &data)
@@ -1536,16 +1555,9 @@ impl Vault {
                 &subject.source,
                 CLAIM_OF_DEFAULT_WEIGHT,
             );
-        for closure in &closures {
-            let closed_record = close_record_for_supersession(&closure.record, close_at)?;
-            let (closed_occurred, closed_learned_at, _closed_claim_body, closed_data) =
-                closed_claim_put_payload(
-                    closure,
-                    &closed_record,
-                    ClaimLifecycleStatus::Superseded,
-                )?;
+        for (closure_id, closed_occurred, closed_learned_at, closed_data) in closure_payloads {
             builder = builder.put_reserved_claim(
-                &closure.id,
+                &closure_id,
                 closed_occurred,
                 closed_learned_at,
                 &closed_data,
