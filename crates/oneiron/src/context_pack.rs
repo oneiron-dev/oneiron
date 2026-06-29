@@ -452,16 +452,6 @@ impl<'a> ContextPackBuilder<'a> {
             let mut claim_bodies = claim_bodies;
             let quarantine_index = load_pack_quarantine_index(&self.vault.store, &rtxn)?;
 
-            let mut results = Vec::with_capacity(scored.len());
-            for entry in &scored {
-                validate_pack_entity_reference(
-                    &self.vault.store,
-                    &rtxn,
-                    &entry.id,
-                    &mut claim_bodies,
-                    &quarantine_index,
-                )?;
-            }
             let result_options = HydrateOptions {
                 hydrate_fields: self.hydrate,
                 include_edges: hydrate_result_edges,
@@ -469,6 +459,7 @@ impl<'a> ContextPackBuilder<'a> {
                 edge_cache: None,
                 claim_bodies: Some(&claim_bodies),
             };
+            let mut results = Vec::with_capacity(scored.len());
             for entry in scored.iter().copied() {
                 let Some(entity) = hydrate_entity(
                     self.vault,
@@ -482,6 +473,30 @@ impl<'a> ContextPackBuilder<'a> {
                     continue;
                 };
                 results.push(entity);
+            }
+
+            // ARCH-0004 / ARCH-0022 world partitioning (ONE-1117): under the
+            // default `All` scope, group surviving claims by world — base section
+            // first, then one section per non-base world — and cap how much of the
+            // claim budget fiction may take. Flat (unchanged) for Base / World(id).
+            if matches!(self.world_scope, WorldScope::All) {
+                partition_results_by_world(
+                    &self.vault.store,
+                    &rtxn,
+                    &mut results,
+                    self.non_base_world_fraction,
+                    &claim_bodies,
+                )?;
+            }
+
+            for entity in &results {
+                validate_pack_entity_reference(
+                    &self.vault.store,
+                    &rtxn,
+                    &entity.id,
+                    &mut claim_bodies,
+                    &quarantine_index,
+                )?;
             }
 
             let seed_ids: Vec<EntityId> = results.iter().map(|entity| entity.id).collect();
@@ -559,20 +574,6 @@ impl<'a> ContextPackBuilder<'a> {
                 &quarantine_index,
             )?;
             resolve_edge_short_ids(&mut results, &mut neighbors);
-
-            // ARCH-0004 / ARCH-0022 world partitioning (ONE-1117): under the
-            // default `All` scope, group surviving claims by world — base section
-            // first, then one section per non-base world — and cap how much of the
-            // claim budget fiction may take. Flat (unchanged) for Base / World(id).
-            if matches!(self.world_scope, WorldScope::All) {
-                partition_results_by_world(
-                    &self.vault.store,
-                    &rtxn,
-                    &mut results,
-                    self.non_base_world_fraction,
-                    &claim_bodies,
-                )?;
-            }
 
             let pack_is_empty = results.is_empty() && neighbors.is_empty();
             let candidates_considered = if pack_is_empty {
@@ -828,7 +829,10 @@ fn validate_claim_subject_references(
 
 fn load_pack_quarantine_index(store: &Store, rtxn: &RoTxn<'_>) -> Result<PackQuarantineIndex> {
     let active_remat_markers = load_active_pack_entity_remat_markers(store, rtxn)?;
-    let mut active_entity_keys = HashSet::new();
+    let mut active_entity_keys: HashSet<(u64, u32)> = active_remat_markers
+        .iter()
+        .map(|(_window, entity_key)| *entity_key)
+        .collect();
     let iter = store.sync_queue.prefix_iter(rtxn, b"x:")?;
     for entry in iter {
         let (key, value) = entry?;
@@ -2805,6 +2809,43 @@ mod tests {
         Ok(())
     }
 
+    #[test]
+    fn pack_validation_skips_world_partition_dropped_results() -> Result<()> {
+        let (_dir, vault) = open_test_vault();
+        let world_w = EntityId::from_bytes([0xE1; 16])?;
+
+        let base = EntityId::from_bytes([0x63; 16])?;
+        let kept_fiction = EntityId::from_bytes([0x75; 16])?;
+        let dropped_fiction = EntityId::from_bytes([0x76; 16])?;
+        put_world_claim(&vault, base, [1.0, 0.0, 0.0, 0.0], None)?;
+        put_world_claim(&vault, kept_fiction, [0.9, 0.1, 0.0, 0.0], Some(world_w))?;
+        put_world_claim(&vault, dropped_fiction, [0.0, 1.0, 0.0, 0.0], Some(world_w))?;
+
+        let raw = vault
+            .get_raw(&dropped_fiction)?
+            .expect("dropped fiction claim exists");
+        let payload = raw[ENTITY_METADATA_HEADER_LEN..].to_vec();
+        let reversed = raw_entity_record(ENTITY_TYPE_CLAIM, 20, 10, 1, &payload);
+        overwrite_raw_entity(&vault, &dropped_fiction, &reversed)?;
+
+        let pack = vault
+            .context_pack()
+            .search_vector(&[1.0, 0.0, 0.0, 0.0], 10)
+            .run()?;
+
+        let ids: HashSet<EntityId> = pack.results.iter().map(|entity| entity.id).collect();
+        assert!(ids.contains(&base), "base claim must survive");
+        assert!(
+            ids.contains(&kept_fiction),
+            "top fiction claim must survive the cap"
+        );
+        assert!(
+            !ids.contains(&dropped_fiction),
+            "invalid fiction claim dropped by the cap must not abort the pack"
+        );
+        Ok(())
+    }
+
     // ── RET-005 pre-assembly pack validation ───────────────────────
 
     #[test]
@@ -3101,6 +3142,78 @@ mod tests {
             .expect_err("quarantined payload reference must fail pack validation");
 
         assert_context_pack_validation(err, id, PACK_VALIDATION_QUARANTINED_PAYLOAD);
+        Ok(())
+    }
+
+    #[test]
+    fn pack_validation_rejects_active_remat_marker_without_quarantine_row() -> Result<()> {
+        let (_dir, vault) = open_test_vault();
+        let id = EntityId::from_bytes([0x5E; 16])?;
+        let window_key = "2026-03";
+        put_claim_text_entity(
+            &vault,
+            &id,
+            "rematmarkerwithoutquarantineneedle",
+            "test.marker_only",
+            "payload",
+        )?;
+
+        vault.with_write_txn(|wtxn| {
+            vault
+                .store
+                .sync_state
+                .put(wtxn, &pack_remat_marker_key(window_key, &id), &[1u8])?;
+            Ok(())
+        })?;
+
+        let err = vault
+            .context_pack()
+            .search_text("rematmarkerwithoutquarantineneedle", 10)
+            .run()
+            .expect_err("active remat marker alone must fail pack validation");
+
+        assert_context_pack_validation(err, id, PACK_VALIDATION_QUARANTINED_PAYLOAD);
+        Ok(())
+    }
+
+    #[test]
+    fn pack_validation_rejects_active_edge_source_remat_marker() -> Result<()> {
+        let (_dir, vault) = open_test_vault();
+        let source = EntityId::from_bytes([0x5F; 16])?;
+        let target = EntityId::from_bytes([0x60; 16])?;
+        let window_key = "2026-03";
+        put_claim_text_entity(
+            &vault,
+            &source,
+            "edgesourcerematmarkerneedle",
+            "test.edge_marker",
+            "payload",
+        )?;
+        put_text_entity(
+            &vault,
+            &target,
+            4,
+            "edge target",
+            serde_json::json!({"body": "target"}),
+        )?;
+        vault.put_edge(&source, crate::types::EdgeKind::Supports, &target, 0.7)?;
+        vault.with_write_txn(|wtxn| {
+            vault.store.sync_state.put(
+                wtxn,
+                &pack_remat_marker_key(window_key, &source),
+                &[1u8],
+            )?;
+            Ok(())
+        })?;
+
+        let err = vault
+            .context_pack()
+            .search_text("edgesourcerematmarkerneedle", 10)
+            .include_edges(true)
+            .run()
+            .expect_err("active edge-source remat marker must fail pack validation");
+
+        assert_context_pack_validation(err, source, PACK_VALIDATION_QUARANTINED_PAYLOAD);
         Ok(())
     }
 
