@@ -63,7 +63,15 @@ pub const LEASE_STATUS_REJECTED: u8 = 0x00;
 /// `[hello][lease_request][…]` connect sequence, the root-doc `leases`
 /// registry, and the attested-receipt `verification` pin (ONE-1140, OD-5 —
 /// one atomic wire train; v1 peers are rejected at hello with close 4006).
-pub const PROTOCOL_VERSION: u8 = 2;
+/// v3 = grant-backed selector sync (`SELECTOR_VV_REQUEST`) so selector-capable
+/// clients fail at hello against older daemons instead of hanging on an
+/// unknown WindowSync sub-tag (ONE-1271, FED-002).
+pub const PROTOCOL_VERSION: u8 = 3;
+/// Legacy full-window protocol version kept for unscoped v2 clients.
+///
+/// v2 peers cannot use selector sync, but their existing full-window
+/// `VV_REQUEST`/`VV_RESPONSE`/`UPDATE` flow remains byte-compatible.
+pub const LEGACY_FULL_WINDOW_PROTOCOL_VERSION: u8 = 2;
 
 /// Shared 8 MB cap for decoded payloads: bulk-transfer decompression and
 /// root-doc imports both refuse anything larger (decompression-bomb /
@@ -88,6 +96,13 @@ pub mod window_sub_tags {
     pub const VV_REQUEST: u8 = 2;
     /// Version vector response (sender's VV).
     pub const VV_RESPONSE: u8 = 3;
+    /// Grant-backed closed-subgraph selector request.
+    ///
+    /// Payload: `[selector_len:4BE][selector_msgpack][remote_vv]`.
+    /// The server replies with a normal `UPDATE` frame containing only the
+    /// selected subgraph. Full-window `VV_REQUEST`/`VV_RESPONSE` remain
+    /// unchanged and backward compatible.
+    pub const SELECTOR_VV_REQUEST: u8 = 4;
 }
 
 /// Maximum window key length (YYYY-MM = 7 bytes).
@@ -171,6 +186,15 @@ impl From<EncodedFrame> for tokio_tungstenite::tungstenite::Bytes {
 /// Format: `[TAG_PROTOCOL_HELLO:1][PROTOCOL_VERSION:1]` — exactly 2 bytes.
 pub fn encode_protocol_hello() -> Vec<u8> {
     vec![TAG_PROTOCOL_HELLO, PROTOCOL_VERSION]
+}
+
+/// Encodes the legacy full-window protocol hello frame.
+///
+/// Unscoped clients that use the pre-FED-002 full-window WindowSync flow send
+/// v2 so selector-capable v3 connections cannot downgrade themselves to a
+/// full-window export after negotiating the selector protocol.
+pub fn encode_legacy_full_window_protocol_hello() -> Vec<u8> {
+    vec![TAG_PROTOCOL_HELLO, LEGACY_FULL_WINDOW_PROTOCOL_VERSION]
 }
 
 /// Decodes a protocol-version hello frame (the FULL frame, tag included).
@@ -552,14 +576,69 @@ mod tests {
     #[test]
     fn protocol_hello_wire_literals() {
         // Contract literals: the hello frame is EXACTLY
-        // [TAG_PROTOCOL_HELLO=3, PROTOCOL_VERSION=2]. A drifted tag or
+        // [TAG_PROTOCOL_HELLO=3, PROTOCOL_VERSION=3]. A drifted tag or
         // version byte is a silent wire break — assert the raw bytes.
         // Version pinned 1→2 by the ONE-1140 atomic wire train (OD-5):
         // lease frames + connect sequence + leases registry + attested
         // receipts land behind this single bump; v1 peers close 4006.
+        // Version pinned 2→3 by FED-002 selector sync so v3 clients do not
+        // negotiate successfully with pre-selector daemons.
         assert_eq!(TAG_PROTOCOL_HELLO, 3, "hello tag byte is pinned to 3");
-        assert_eq!(PROTOCOL_VERSION, 2, "wire protocol version is pinned to 2");
-        assert_eq!(encode_protocol_hello(), vec![3u8, 2u8]);
+        assert_eq!(PROTOCOL_VERSION, 3, "wire protocol version is pinned to 3");
+        assert_eq!(
+            LEGACY_FULL_WINDOW_PROTOCOL_VERSION, 2,
+            "legacy full-window version is pinned to 2"
+        );
+        assert_eq!(encode_protocol_hello(), vec![3u8, 3u8]);
+        assert_eq!(encode_legacy_full_window_protocol_hello(), vec![3u8, 2u8]);
+    }
+
+    #[test]
+    fn window_subtag_literals() {
+        assert_eq!(window_sub_tags::UPDATE, 0);
+        assert_eq!(window_sub_tags::VV_REQUEST, 2);
+        assert_eq!(window_sub_tags::VV_RESPONSE, 3);
+        assert_eq!(window_sub_tags::SELECTOR_VV_REQUEST, 4);
+    }
+
+    #[test]
+    fn full_window_sync_wire_frames_remain_backward_compatible_under_selector_bump() {
+        let vv_payload = [0xAA, 0xBB, 0xCC];
+        let update_payload = [0x11, 0x22];
+        let key = "2026-09";
+
+        let vv_request = encode_window_sync(key, window_sub_tags::VV_REQUEST, &vv_payload)
+            .into_result()
+            .unwrap();
+        assert_eq!(
+            vv_request,
+            [
+                &[TAG_WINDOW_SYNC, 7],
+                key.as_bytes(),
+                &[window_sub_tags::VV_REQUEST],
+                &vv_payload,
+            ]
+            .concat()
+        );
+        let (decoded_key, decoded_subtag, decoded_payload) =
+            decode_window_sync(&vv_request[1..]).unwrap();
+        assert_eq!(decoded_key, key);
+        assert_eq!(decoded_subtag, window_sub_tags::VV_REQUEST);
+        assert_eq!(decoded_payload, vv_payload);
+
+        let vv_response = encode_window_sync(key, window_sub_tags::VV_RESPONSE, &vv_payload)
+            .into_result()
+            .unwrap();
+        let (_, decoded_subtag, decoded_payload) = decode_window_sync(&vv_response[1..]).unwrap();
+        assert_eq!(decoded_subtag, window_sub_tags::VV_RESPONSE);
+        assert_eq!(decoded_payload, vv_payload);
+
+        let update = encode_window_sync(key, window_sub_tags::UPDATE, &update_payload)
+            .into_result()
+            .unwrap();
+        let (_, decoded_subtag, decoded_payload) = decode_window_sync(&update[1..]).unwrap();
+        assert_eq!(decoded_subtag, window_sub_tags::UPDATE);
+        assert_eq!(decoded_payload, update_payload);
     }
 
     /// ONE-1140 (OD-5) wire literals: TAG_LEASE_REQUEST=4 (105 B) and
@@ -637,6 +716,11 @@ mod tests {
     fn protocol_hello_decode_roundtrip() {
         let frame = encode_protocol_hello();
         assert_eq!(decode_protocol_hello(&frame).unwrap(), PROTOCOL_VERSION);
+        let legacy_frame = encode_legacy_full_window_protocol_hello();
+        assert_eq!(
+            decode_protocol_hello(&legacy_frame).unwrap(),
+            LEGACY_FULL_WINDOW_PROTOCOL_VERSION
+        );
         // A future-version peer's hello must still DECODE (the caller
         // compares versions and closes) — decode returns the raw byte.
         assert_eq!(decode_protocol_hello(&[TAG_PROTOCOL_HELLO, 7]).unwrap(), 7);

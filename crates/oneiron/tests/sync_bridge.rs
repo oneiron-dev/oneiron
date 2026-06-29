@@ -791,9 +791,9 @@ fn sync_client_handle_server_message_dispatch() {
 
     let build_root_vv = |client: &mut SyncClient| -> Vec<u8> {
         let initial_sync = client.generate_initial_sync();
-        // ONE-1127: the FIRST frame is the protocol hello — [3, 2] since
-        // the ONE-1140 wire train bumped the version (OD-5); the lease
-        // request and root VV (Loro binary encoding) follow it.
+        // ONE-1127: the FIRST frame is the protocol hello. The in-tree client
+        // is unscoped and still uses the legacy full-window v2 path; selector
+        // sync is gated behind v3. The lease request and root VV follow it.
         assert_eq!(
             initial_sync.first().map(Vec::as_slice),
             Some(&[3u8, 2u8][..]),
