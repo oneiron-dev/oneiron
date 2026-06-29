@@ -424,7 +424,7 @@ impl NapiVault {
     ) -> napi::Result<Vec<NapiScoredEntity>> {
         validate_query_len(&query).map_err(napi::Error::from_reason)?;
         let limit = parse_search_limit(limit).map_err(napi::Error::from_reason)?;
-        let builder = self.vault.query().search_text(&query, limit);
+        let builder = self.vault.query().search_text(&query, limit).limit(limit);
         let results = apply_codebase_filters(builder, repo_ref, project_id)?
             .run()
             .map_err(to_napi_err)?;
@@ -529,7 +529,7 @@ impl NapiVault {
             _ => oneiron::PackFormat::Json,
         };
 
-        let mut builder = self.vault.context_pack().format(pack_format);
+        let mut builder = self.vault.context_pack().format(pack_format).limit(limit);
 
         if let Some(text) = &query_text {
             validate_query_len(text).map_err(napi::Error::from_reason)?;
@@ -569,7 +569,7 @@ impl NapiVault {
             _ => oneiron::PackFormat::Json,
         };
 
-        let mut builder = self.vault.context_pack().format(pack_format);
+        let mut builder = self.vault.context_pack().format(pack_format).limit(limit);
 
         if let Some(text) = &query_text {
             validate_query_len(text).map_err(napi::Error::from_reason)?;

@@ -522,6 +522,12 @@ fn decode_codebase_file_entry(value: &Value) -> Result<CodebaseFileEntry> {
 
 fn validate_codebase_snapshot(snapshot: &CodebaseSnapshot) -> Result<()> {
     validate_project_id(&snapshot.project_id)?;
+    let canonical_repo_ref = snapshot.repo_ref.canonical();
+    if RepoRef::parse(&canonical_repo_ref)? != snapshot.repo_ref {
+        return Err(Error::InvalidCodebaseSnapshotBody(
+            "repo_ref must be a canonical v1 repo_ref",
+        ));
+    }
     if let Some(commit_hash) = &snapshot.commit_hash {
         validate_normalized_commit_hash(commit_hash)?;
     }
@@ -917,6 +923,25 @@ mod tests {
 
         let err = encode_codebase_snapshot(&raw)
             .expect_err("backslash paths must fail closed instead of hiding traversal");
+
+        assert_eq!(err.kind(), ErrorKind::InvalidCodebaseSnapshotBody);
+    }
+
+    #[test]
+    fn codebase_snapshot_codec_rejects_invalid_constructed_repo_ref() {
+        let raw = CodebaseSnapshot {
+            project_id: "project.alpha".to_owned(),
+            repo_ref: RepoRef::GitHubAtCommit {
+                owner: "oneiron-dev".to_owned(),
+                repo: "oneiron".to_owned(),
+                commit: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA".to_owned(),
+            },
+            commit_hash: Some("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_owned()),
+            files: vec![file("src/main.rs", 1)],
+        };
+
+        let err = encode_codebase_snapshot(&raw)
+            .expect_err("constructed repo_ref values must still satisfy the v1 grammar");
 
         assert_eq!(err.kind(), ErrorKind::InvalidCodebaseSnapshotBody);
     }
