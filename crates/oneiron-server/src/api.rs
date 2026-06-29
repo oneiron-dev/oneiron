@@ -1146,6 +1146,12 @@ fn usage_mode_for_event(
     if let Some(usage_mode) = config.runtime.usage_mode_for_model(event.model.as_deref()) {
         return Ok(usage_mode);
     }
+    if config.runtime.has_model_route_match(event.model.as_deref()) {
+        return Err(ApiError::bad_request(
+            "usage event model must match an available runtime route with a single debit boundary",
+            Some("model"),
+        ));
+    }
 
     if let Some(usage_mode) = config.runtime.usage_mode_without_model() {
         return Ok(usage_mode);
@@ -3177,6 +3183,126 @@ mod tests {
             .expect("usage response body");
         let body: Value = serde_json::from_slice(&body).expect("usage JSON body");
         assert_eq!(body["source"], Value::from("local"));
+        assert_eq!(body["recorded"], Value::from(false));
+        assert_eq!(body["debit"], Value::Null);
+    }
+
+    #[tokio::test]
+    async fn usage_event_rejects_unavailable_model_route_match_before_debiting() {
+        let mut runtime = crate::runtime::RuntimeConfig::for_mode(RuntimeMode::OneironCloud);
+        runtime.apply_override(crate::runtime::RuntimeConfigOverride::with_role_override(
+            RuntimeRole::Orchestrator,
+            crate::runtime::RuntimeRoleTargetOverride::target(
+                RuntimeProviderKind::Local,
+                "unavailable-hosted-model",
+            ),
+        ));
+        let (_dir, server) = test_server_with_config(SyncServerConfig {
+            allow_unauthenticated: true,
+            runtime,
+            ..Default::default()
+        });
+        let payload = json!({
+            "tenantId": "tenant-a",
+            "vaultId": "vault-a",
+            "idempotencyKey": "unavailable-model-route",
+            "source": "oneiron_cloud",
+            "eventType": "inference",
+            "model": "unavailable-hosted-model",
+            "tokenCounts": {
+                "inputTokens": 1000,
+                "outputTokens": 500,
+                "cacheReadTokens": 0,
+                "cacheWriteTokens": 0
+            },
+            "costRates": {
+                "inputTokenUsdPerMillion": 2.0,
+                "outputTokenUsdPerMillion": 4.0,
+                "cacheReadTokenUsdPerMillion": 0.0,
+                "cacheWriteTokenUsdPerMillion": 0.0
+            }
+        });
+
+        let response = api_routes(server)
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/usage/events")
+                    .header(CONTENT_TYPE, "application/json")
+                    .body(Body::from(payload.to_string()))
+                    .expect("request"),
+            )
+            .await
+            .expect("route response");
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        let body = to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("usage response body");
+        let body: Value = serde_json::from_slice(&body).expect("ApiError JSON body");
+        assert_eq!(body["code"], Value::from("BAD_REQUEST"));
+        assert_eq!(body["details"]["field"], Value::from("model"));
+    }
+
+    #[tokio::test]
+    async fn usage_event_accepts_duplicate_unmetered_model_matches() {
+        let mut runtime = crate::runtime::RuntimeConfig::for_mode(RuntimeMode::OneironCloud);
+        for (role, mode) in [
+            (RuntimeRole::Orchestrator, RuntimeMode::LocalFree),
+            (RuntimeRole::Subagent, RuntimeMode::ByoCloudKey),
+        ] {
+            runtime.apply_override(crate::runtime::RuntimeConfigOverride::with_role_override(
+                role,
+                crate::runtime::RuntimeRoleTargetOverride {
+                    mode: Some(mode),
+                    provider_kind: None,
+                    model: Some("shared-unmetered-model".to_owned()),
+                },
+            ));
+        }
+        let (_dir, server) = test_server_with_config(SyncServerConfig {
+            allow_unauthenticated: true,
+            runtime,
+            ..Default::default()
+        });
+        let payload = json!({
+            "tenantId": "tenant-a",
+            "vaultId": "vault-a",
+            "idempotencyKey": "duplicate-unmetered-model",
+            "source": "oneiron_cloud",
+            "eventType": "inference",
+            "model": "shared-unmetered-model",
+            "tokenCounts": {
+                "inputTokens": 1000,
+                "outputTokens": 500,
+                "cacheReadTokens": 0,
+                "cacheWriteTokens": 0
+            },
+            "costRates": {
+                "inputTokenUsdPerMillion": 2.0,
+                "outputTokenUsdPerMillion": 4.0,
+                "cacheReadTokenUsdPerMillion": 0.0,
+                "cacheWriteTokenUsdPerMillion": 0.0
+            }
+        });
+
+        let response = api_routes(server)
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/usage/events")
+                    .header(CONTENT_TYPE, "application/json")
+                    .body(Body::from(payload.to_string()))
+                    .expect("request"),
+            )
+            .await
+            .expect("route response");
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("usage response body");
+        let body: Value = serde_json::from_slice(&body).expect("usage JSON body");
         assert_eq!(body["recorded"], Value::from(false));
         assert_eq!(body["debit"], Value::Null);
     }
