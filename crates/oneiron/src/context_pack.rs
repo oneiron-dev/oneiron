@@ -369,7 +369,7 @@ impl<'a> ContextPackBuilder<'a> {
             .iter()
             .map(|entity| *entity.id.as_bytes())
             .collect();
-        finalize_context_pack_telemetry(
+        let telemetry_run_id = finalize_context_pack_telemetry(
             run.store,
             run.telemetry_run_id,
             run.pack.stats.query_time_us,
@@ -379,7 +379,7 @@ impl<'a> ContextPackBuilder<'a> {
         );
         Ok(RetrievalWithTelemetry {
             value: run.pack,
-            run_id: run.telemetry_run_id,
+            run_id: telemetry_run_id,
         })
     }
 
@@ -543,7 +543,7 @@ impl<'a> ContextPackBuilder<'a> {
         };
         let run = self.run_unfinalized()?;
         let (bytes, telemetry) = serialize_pack_with_telemetry(&run.pack, &config);
-        finalize_context_pack_telemetry(
+        let telemetry_run_id = finalize_context_pack_telemetry(
             run.store,
             run.telemetry_run_id,
             telemetry.stats.query_time_us,
@@ -553,7 +553,7 @@ impl<'a> ContextPackBuilder<'a> {
         );
         Ok(RetrievalWithTelemetry {
             value: bytes,
-            run_id: run.telemetry_run_id,
+            run_id: telemetry_run_id,
         })
     }
 }
@@ -565,21 +565,24 @@ fn finalize_context_pack_telemetry(
     claims_suppressed: usize,
     surfaced_result_ids: &[[u8; 16]],
     empty_reason: Option<String>,
-) {
-    let Some(run_id) = telemetry_run_id else {
-        return;
-    };
-    if let Err(error) = store.finalize_context_pack_retrieval_run(
+) -> Option<RetrievalRunId> {
+    let run_id = telemetry_run_id?;
+    match store.finalize_context_pack_retrieval_run(
         run_id,
         elapsed_us,
         claims_suppressed,
         surfaced_result_ids,
         empty_reason,
     ) {
-        tracing::warn!(
-            ?error,
-            "context-pack retrieval telemetry finalization failed; continuing retrieval"
-        );
+        Ok(()) => Some(run_id),
+        Err(error) => {
+            tracing::warn!(
+                ?error,
+                "context-pack retrieval telemetry finalization failed; discarding provisional run id"
+            );
+            discard_failed_context_pack_telemetry(store, Some(run_id));
+            None
+        }
     }
 }
 
@@ -2733,6 +2736,75 @@ mod tests {
         assert!(
             run.store.retrieval_outcomes(run_id)?.is_empty(),
             "discarded context-pack telemetry run should not leave readable outcomes"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn context_pack_telemetry_finalization_failure_returns_no_run_id() -> Result<()> {
+        let (_dir, vault) = open_test_vault();
+
+        let id = EntityId::from_bytes_unchecked([0x7D; 16]);
+        put_text_entity(
+            &vault,
+            &id,
+            crate::types::ENTITY_TYPE_PERSON,
+            "telemetry corrupt finalization",
+            serde_json::json!({"name": "Corrupt Finalization"}),
+        )?;
+
+        let run = vault
+            .context_pack()
+            .search_text("telemetry corrupt finalization", 10)
+            .run_unfinalized()?;
+        let run_id = run
+            .telemetry_run_id
+            .expect("unfinalized context-pack telemetry run id");
+        run.store
+            .record_retrieval_outcome(crate::store::RetrievalOutcome {
+                run_id,
+                key: "click".to_owned(),
+                reward: Some(1.0),
+                accepted: Some(true),
+                metadata: BTreeMap::new(),
+            })?;
+
+        let mut run_key = Vec::from(&b"retr_run:v0:"[..]);
+        run_key.extend_from_slice(&run_id.as_bytes());
+        vault.with_write_txn(|wtxn| {
+            vault
+                .store
+                .vault_meta
+                .put(wtxn, &run_key, b"not a retrieval run")?;
+            Ok(())
+        })?;
+
+        let surfaced_result_ids: Vec<[u8; 16]> = run
+            .pack
+            .results
+            .iter()
+            .map(|entity| *entity.id.as_bytes())
+            .collect();
+        let returned_run_id = finalize_context_pack_telemetry(
+            run.store,
+            run.telemetry_run_id,
+            run.pack.stats.query_time_us,
+            run.pack.stats.claims_suppressed,
+            &surfaced_result_ids,
+            context_pack_empty_reason(&run.pack, &surfaced_result_ids),
+        );
+
+        assert_eq!(returned_run_id, None);
+        assert!(
+            !run.store
+                .retrieval_runs(10)?
+                .iter()
+                .any(|record| record.run_id == run_id),
+            "failed finalization should discard the provisional telemetry row"
+        );
+        assert!(
+            run.store.retrieval_outcomes(run_id)?.is_empty(),
+            "failed finalization should discard provisional outcomes"
         );
         Ok(())
     }
