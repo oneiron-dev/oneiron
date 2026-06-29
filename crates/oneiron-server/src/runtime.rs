@@ -185,6 +185,8 @@ impl FromStr for RuntimeRole {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct RuntimeRoleTarget {
+    /// Runtime mode selected for this role.
+    pub mode: RuntimeMode,
     /// Provider class used by this role.
     pub provider_kind: RuntimeProviderKind,
     /// Provider-specific model identifier or local model name.
@@ -192,14 +194,24 @@ pub struct RuntimeRoleTarget {
 }
 
 impl RuntimeRoleTarget {
-    fn new(provider_kind: RuntimeProviderKind, model: impl Into<String>) -> Self {
+    fn for_role_mode(role: RuntimeRole, mode: RuntimeMode) -> Self {
+        let prefix = match mode {
+            RuntimeMode::LocalFree => "local",
+            RuntimeMode::ByoCloudKey => "byo",
+            RuntimeMode::OneironCloud => "oneiron-cloud",
+        };
+
         Self {
-            provider_kind,
-            model: model.into(),
+            mode,
+            provider_kind: mode.provider_kind(),
+            model: format!("{prefix}-{}-default", role.as_str()),
         }
     }
 
-    fn apply_override(&mut self, value: RuntimeRoleTargetOverride) {
+    fn apply_override(&mut self, role: RuntimeRole, value: RuntimeRoleTargetOverride) {
+        if let Some(mode) = value.mode {
+            *self = Self::for_role_mode(role, mode);
+        }
         if let Some(provider_kind) = value.provider_kind {
             self.provider_kind = provider_kind;
         }
@@ -223,23 +235,10 @@ pub struct RuntimeRoleDefaults {
 
 impl RuntimeRoleDefaults {
     pub fn for_mode(mode: RuntimeMode) -> Self {
-        let provider_kind = mode.provider_kind();
-        let prefix = match mode {
-            RuntimeMode::LocalFree => "local",
-            RuntimeMode::ByoCloudKey => "byo",
-            RuntimeMode::OneironCloud => "oneiron-cloud",
-        };
-
         Self {
-            orchestrator: RuntimeRoleTarget::new(
-                provider_kind,
-                format!("{prefix}-orchestrator-default"),
-            ),
-            subagent: RuntimeRoleTarget::new(provider_kind, format!("{prefix}-subagent-default")),
-            summarizer: RuntimeRoleTarget::new(
-                provider_kind,
-                format!("{prefix}-summarizer-default"),
-            ),
+            orchestrator: RuntimeRoleTarget::for_role_mode(RuntimeRole::Orchestrator, mode),
+            subagent: RuntimeRoleTarget::for_role_mode(RuntimeRole::Subagent, mode),
+            summarizer: RuntimeRoleTarget::for_role_mode(RuntimeRole::Summarizer, mode),
         }
     }
 
@@ -262,15 +261,34 @@ impl RuntimeRoleDefaults {
     fn apply_overrides(&mut self, overrides: RuntimeRoleDefaultOverrides) {
         if let Some(value) = overrides.orchestrator {
             self.target_mut(RuntimeRole::Orchestrator)
-                .apply_override(value);
+                .apply_override(RuntimeRole::Orchestrator, value);
         }
         if let Some(value) = overrides.subagent {
-            self.target_mut(RuntimeRole::Subagent).apply_override(value);
+            self.target_mut(RuntimeRole::Subagent)
+                .apply_override(RuntimeRole::Subagent, value);
         }
         if let Some(value) = overrides.summarizer {
             self.target_mut(RuntimeRole::Summarizer)
-                .apply_override(value);
+                .apply_override(RuntimeRole::Summarizer, value);
         }
+    }
+
+    fn apply_default_mode_change(&mut self, previous_mode: RuntimeMode, next_mode: RuntimeMode) {
+        let previous_defaults = Self::for_mode(previous_mode);
+        let next_defaults = Self::for_mode(next_mode);
+
+        for role in RuntimeRole::ALL {
+            let target = self.target_mut(role);
+            if target == previous_defaults.target(role) {
+                *target = next_defaults.target(role).clone();
+            }
+        }
+    }
+
+    fn contains_mode(&self, mode: RuntimeMode) -> bool {
+        RuntimeRole::ALL
+            .into_iter()
+            .any(|role| self.target(role).mode == mode)
     }
 }
 
@@ -308,7 +326,13 @@ impl RuntimeConfig {
 
     pub fn apply_override(&mut self, value: RuntimeConfigOverride) {
         if let Some(mode) = value.mode {
-            *self = Self::for_mode(mode);
+            let previous_mode = self.mode;
+            self.mode = mode;
+            self.role_defaults
+                .apply_default_mode_change(previous_mode, mode);
+            if self.byo_key_env.is_none() && mode == RuntimeMode::ByoCloudKey {
+                self.byo_key_env = Some(DEFAULT_BYO_KEY_ENV.to_owned());
+            }
         }
         if let Some(byo_key_env) = value.byo_key_env {
             self.byo_key_env = if byo_key_env.trim().is_empty() {
@@ -319,6 +343,10 @@ impl RuntimeConfig {
         }
         if let Some(role_defaults) = value.role_defaults {
             self.role_defaults.apply_overrides(role_defaults);
+        }
+        if self.byo_key_env.is_none() && self.role_defaults.contains_mode(RuntimeMode::ByoCloudKey)
+        {
+            self.byo_key_env = Some(DEFAULT_BYO_KEY_ENV.to_owned());
         }
     }
 
@@ -332,10 +360,8 @@ impl RuntimeConfig {
         mut key_lookup: impl FnMut(&str) -> Option<OsString>,
     ) -> RuntimeRoute {
         let target = self.role_defaults.target(role).clone();
-        let preset_target = RuntimeRoleDefaults::for_mode(self.mode)
-            .target(role)
-            .clone();
-        let source = if target == preset_target {
+        let preset_target = RuntimeRoleTarget::for_role_mode(role, target.mode);
+        let source = if target.mode == self.mode && target == preset_target {
             RuntimeRouteSource::ModePreset
         } else {
             RuntimeRouteSource::ConfigOverride
@@ -346,12 +372,12 @@ impl RuntimeConfig {
                 RuntimeRouteState::Unavailable,
                 RuntimeRouteReason::MissingModel,
             )
-        } else if !self.mode.allows_provider(target.provider_kind) {
+        } else if !target.mode.allows_provider(target.provider_kind) {
             (
                 RuntimeRouteState::Unavailable,
                 RuntimeRouteReason::ProviderModeMismatch,
             )
-        } else if self.mode == RuntimeMode::ByoCloudKey
+        } else if target.mode == RuntimeMode::ByoCloudKey
             && !self
                 .byo_key_env
                 .as_deref()
@@ -369,7 +395,7 @@ impl RuntimeConfig {
 
         RuntimeRoute {
             role,
-            mode: self.mode,
+            mode: target.mode,
             provider_kind: target.provider_kind,
             model: target.model,
             state,
@@ -378,7 +404,7 @@ impl RuntimeConfig {
                 role_default: role,
                 source,
             },
-            oneiron_spend_metered: self.mode.oneiron_spend_metered(),
+            oneiron_spend_metered: target.mode.oneiron_spend_metered(),
         }
     }
 }
@@ -484,11 +510,19 @@ impl RuntimeRoleDefaultOverrides {
 #[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct RuntimeRoleTargetOverride {
+    pub mode: Option<RuntimeMode>,
     pub provider_kind: Option<RuntimeProviderKind>,
     pub model: Option<String>,
 }
 
 impl RuntimeRoleTargetOverride {
+    pub fn mode(mode: RuntimeMode) -> Self {
+        Self {
+            mode: Some(mode),
+            ..Default::default()
+        }
+    }
+
     pub fn provider_kind(provider_kind: RuntimeProviderKind) -> Self {
         Self {
             provider_kind: Some(provider_kind),
@@ -505,12 +539,16 @@ impl RuntimeRoleTargetOverride {
 
     pub fn target(provider_kind: RuntimeProviderKind, model: impl Into<String>) -> Self {
         Self {
+            mode: None,
             provider_kind: Some(provider_kind),
             model: Some(model.into()),
         }
     }
 
     fn merge(&mut self, other: Self) {
+        if other.mode.is_some() {
+            self.mode = other.mode;
+        }
         if other.provider_kind.is_some() {
             self.provider_kind = other.provider_kind;
         }
@@ -524,9 +562,9 @@ impl RuntimeRoleTargetOverride {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct RuntimeStatus {
-    /// Explicit runtime mode used for routing.
+    /// Default runtime mode used when a role does not override it.
     pub mode: RuntimeMode,
-    /// Whether this mode can meter Oneiron Cloud spend.
+    /// Whether any configured route can meter Oneiron Cloud spend.
     pub oneiron_spend_metered: bool,
     /// Route decision for each supported runtime role.
     pub routes: Vec<RuntimeRoute>,
@@ -534,13 +572,16 @@ pub struct RuntimeStatus {
 
 impl RuntimeStatus {
     pub fn from_config(config: &RuntimeConfig) -> Self {
+        let routes = RuntimeRole::ALL
+            .into_iter()
+            .map(|role| config.route_for_role(role))
+            .collect::<Vec<_>>();
+        let oneiron_spend_metered = routes.iter().any(|route| route.oneiron_spend_metered);
+
         Self {
             mode: config.mode,
-            oneiron_spend_metered: config.mode.oneiron_spend_metered(),
-            routes: RuntimeRole::ALL
-                .into_iter()
-                .map(|role| config.route_for_role(role))
-                .collect(),
+            oneiron_spend_metered,
+            routes,
         }
     }
 }
@@ -549,9 +590,9 @@ impl RuntimeStatus {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct RuntimeHealthStatus {
-    /// Explicit runtime mode used for routing.
+    /// Default runtime mode used when a role does not override it.
     pub mode: RuntimeMode,
-    /// Whether this mode can meter Oneiron Cloud spend.
+    /// Whether any configured route can meter Oneiron Cloud spend.
     pub oneiron_spend_metered: bool,
     /// Aggregate route availability with per-role details redacted.
     pub state: RuntimeRouteState,
@@ -559,7 +600,8 @@ pub struct RuntimeHealthStatus {
 
 impl RuntimeHealthStatus {
     pub fn from_config(config: &RuntimeConfig) -> Self {
-        let routes = RuntimeStatus::from_config(config).routes;
+        let status = RuntimeStatus::from_config(config);
+        let routes = status.routes;
         let state = if routes
             .iter()
             .any(|route| route.state == RuntimeRouteState::Unavailable)
@@ -576,7 +618,7 @@ impl RuntimeHealthStatus {
 
         Self {
             mode: config.mode,
-            oneiron_spend_metered: config.mode.oneiron_spend_metered(),
+            oneiron_spend_metered: status.oneiron_spend_metered,
             state,
         }
     }
@@ -701,12 +743,129 @@ mod tests {
             config.route_for_role_with_key_lookup(RuntimeRole::Subagent, |_| Some("key".into()));
 
         assert_eq!(orchestrator.model, "custom-orchestrator");
+        assert_eq!(orchestrator.mode, RuntimeMode::ByoCloudKey);
         assert_eq!(
             orchestrator.provenance.source,
             RuntimeRouteSource::ConfigOverride
         );
+        assert_eq!(subagent.mode, RuntimeMode::ByoCloudKey);
         assert_eq!(subagent.provider_kind, RuntimeProviderKind::ByoCloud);
         assert_eq!(subagent.provenance.source, RuntimeRouteSource::ModePreset);
+    }
+
+    #[test]
+    fn per_role_modes_select_mode_defaults_for_each_role() {
+        let mut config = RuntimeConfig::for_mode(RuntimeMode::LocalFree);
+        let mut overrides = RuntimeRoleDefaultOverrides::default();
+        overrides.merge(RuntimeRoleDefaultOverrides::with_role(
+            RuntimeRole::Orchestrator,
+            RuntimeRoleTargetOverride::mode(RuntimeMode::ByoCloudKey),
+        ));
+        overrides.merge(RuntimeRoleDefaultOverrides::with_role(
+            RuntimeRole::Subagent,
+            RuntimeRoleTargetOverride::mode(RuntimeMode::OneironCloud),
+        ));
+        overrides.merge(RuntimeRoleDefaultOverrides::with_role(
+            RuntimeRole::Summarizer,
+            RuntimeRoleTargetOverride::mode(RuntimeMode::LocalFree),
+        ));
+        config.apply_override(RuntimeConfigOverride {
+            role_defaults: Some(overrides),
+            ..Default::default()
+        });
+
+        let orchestrator = config
+            .route_for_role_with_key_lookup(RuntimeRole::Orchestrator, |_| Some("key".into()));
+        let subagent =
+            config.route_for_role_with_key_lookup(RuntimeRole::Subagent, |_| Some("key".into()));
+        let summarizer =
+            config.route_for_role_with_key_lookup(RuntimeRole::Summarizer, |_| Some("key".into()));
+
+        assert_eq!(
+            (
+                orchestrator.mode,
+                orchestrator.provider_kind,
+                orchestrator.model.as_str(),
+                orchestrator.oneiron_spend_metered,
+            ),
+            (
+                RuntimeMode::ByoCloudKey,
+                RuntimeProviderKind::ByoCloud,
+                "byo-orchestrator-default",
+                false,
+            )
+        );
+        assert_eq!(
+            (
+                subagent.mode,
+                subagent.provider_kind,
+                subagent.model.as_str(),
+                subagent.oneiron_spend_metered,
+            ),
+            (
+                RuntimeMode::OneironCloud,
+                RuntimeProviderKind::OneironCloud,
+                "oneiron-cloud-subagent-default",
+                true,
+            )
+        );
+        assert_eq!(
+            (
+                summarizer.mode,
+                summarizer.provider_kind,
+                summarizer.model.as_str(),
+                summarizer.oneiron_spend_metered,
+            ),
+            (
+                RuntimeMode::LocalFree,
+                RuntimeProviderKind::Local,
+                "local-summarizer-default",
+                false,
+            )
+        );
+    }
+
+    #[test]
+    fn per_role_byo_and_local_modes_stay_unmetered_under_metered_default() {
+        let mut config = RuntimeConfig::for_mode(RuntimeMode::OneironCloud);
+        let mut overrides = RuntimeRoleDefaultOverrides::default();
+        overrides.merge(RuntimeRoleDefaultOverrides::with_role(
+            RuntimeRole::Orchestrator,
+            RuntimeRoleTargetOverride::mode(RuntimeMode::ByoCloudKey),
+        ));
+        overrides.merge(RuntimeRoleDefaultOverrides::with_role(
+            RuntimeRole::Subagent,
+            RuntimeRoleTargetOverride::mode(RuntimeMode::LocalFree),
+        ));
+        config.apply_override(RuntimeConfigOverride {
+            role_defaults: Some(overrides),
+            ..Default::default()
+        });
+
+        let status = RuntimeStatus::from_config(&config);
+        let orchestrator = status
+            .routes
+            .iter()
+            .find(|route| route.role == RuntimeRole::Orchestrator)
+            .unwrap();
+        let subagent = status
+            .routes
+            .iter()
+            .find(|route| route.role == RuntimeRole::Subagent)
+            .unwrap();
+        let summarizer = status
+            .routes
+            .iter()
+            .find(|route| route.role == RuntimeRole::Summarizer)
+            .unwrap();
+
+        assert_eq!(orchestrator.mode, RuntimeMode::ByoCloudKey);
+        assert!(!orchestrator.oneiron_spend_metered);
+        assert_eq!(subagent.mode, RuntimeMode::LocalFree);
+        assert!(!subagent.oneiron_spend_metered);
+        assert_eq!(summarizer.mode, RuntimeMode::OneironCloud);
+        assert!(summarizer.oneiron_spend_metered);
+        assert!(status.oneiron_spend_metered);
     }
 
     #[test]

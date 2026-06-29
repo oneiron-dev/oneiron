@@ -238,6 +238,10 @@ pub struct ServeArgs {
     #[arg(long)]
     pub runtime_byo_key_env: Option<String>,
 
+    /// Runtime mode for orchestrator routing.
+    #[arg(long, value_parser = parse_runtime_mode)]
+    pub runtime_orchestrator_mode: Option<RuntimeMode>,
+
     /// Provider kind for orchestrator routing.
     #[arg(long, value_parser = parse_runtime_provider_kind)]
     pub runtime_orchestrator_provider_kind: Option<RuntimeProviderKind>,
@@ -246,6 +250,10 @@ pub struct ServeArgs {
     #[arg(long)]
     pub runtime_orchestrator_model: Option<String>,
 
+    /// Runtime mode for subagent routing.
+    #[arg(long, value_parser = parse_runtime_mode)]
+    pub runtime_subagent_mode: Option<RuntimeMode>,
+
     /// Provider kind for subagent routing.
     #[arg(long, value_parser = parse_runtime_provider_kind)]
     pub runtime_subagent_provider_kind: Option<RuntimeProviderKind>,
@@ -253,6 +261,10 @@ pub struct ServeArgs {
     /// Model id for subagent routing.
     #[arg(long)]
     pub runtime_subagent_model: Option<String>,
+
+    /// Runtime mode for summarizer routing.
+    #[arg(long, value_parser = parse_runtime_mode)]
+    pub runtime_summarizer_mode: Option<RuntimeMode>,
 
     /// Provider kind for summarizer routing.
     #[arg(long, value_parser = parse_runtime_provider_kind)]
@@ -299,6 +311,7 @@ impl fmt::Debug for ServeArgs {
             .field("usage_mode", &self.usage_mode)
             .field("runtime_mode", &self.runtime_mode)
             .field("runtime_byo_key_env", &self.runtime_byo_key_env)
+            .field("runtime_orchestrator_mode", &self.runtime_orchestrator_mode)
             .field(
                 "runtime_orchestrator_provider_kind",
                 &self.runtime_orchestrator_provider_kind,
@@ -307,11 +320,13 @@ impl fmt::Debug for ServeArgs {
                 "runtime_orchestrator_model",
                 &self.runtime_orchestrator_model,
             )
+            .field("runtime_subagent_mode", &self.runtime_subagent_mode)
             .field(
                 "runtime_subagent_provider_kind",
                 &self.runtime_subagent_provider_kind,
             )
             .field("runtime_subagent_model", &self.runtime_subagent_model)
+            .field("runtime_summarizer_mode", &self.runtime_summarizer_mode)
             .field(
                 "runtime_summarizer_provider_kind",
                 &self.runtime_summarizer_provider_kind,
@@ -769,8 +784,16 @@ fn lookup_runtime_override(
 
     for role in RuntimeRole::ALL {
         let prefix = role_env_prefix(role);
+        let mode_key = format!("{prefix}_MODE");
         let provider_key = format!("{prefix}_PROVIDER_KIND");
         let model_key = format!("{prefix}_MODEL");
+        let mode = lookup(&mode_key)
+            .map(|value| {
+                value
+                    .parse::<RuntimeMode>()
+                    .map_err(|e| anyhow::anyhow!("parse {mode_key}={value:?}: {e}"))
+            })
+            .transpose()?;
         let provider_kind = lookup(&provider_key)
             .map(|value| {
                 value
@@ -780,10 +803,11 @@ fn lookup_runtime_override(
             .transpose()?;
         let model = lookup(&model_key);
 
-        if provider_kind.is_some() || model.is_some() {
+        if mode.is_some() || provider_kind.is_some() || model.is_some() {
             runtime.merge(RuntimeConfigOverride::with_role_override(
                 role,
                 RuntimeRoleTargetOverride {
+                    mode,
                     provider_kind,
                     model,
                 },
@@ -810,27 +834,31 @@ fn runtime_override_from_args(args: &ServeArgs) -> Option<RuntimeConfigOverride>
         has_runtime = true;
     }
 
-    for (role, provider_kind, model) in [
+    for (role, mode, provider_kind, model) in [
         (
             RuntimeRole::Orchestrator,
+            args.runtime_orchestrator_mode,
             args.runtime_orchestrator_provider_kind,
             args.runtime_orchestrator_model.clone(),
         ),
         (
             RuntimeRole::Subagent,
+            args.runtime_subagent_mode,
             args.runtime_subagent_provider_kind,
             args.runtime_subagent_model.clone(),
         ),
         (
             RuntimeRole::Summarizer,
+            args.runtime_summarizer_mode,
             args.runtime_summarizer_provider_kind,
             args.runtime_summarizer_model.clone(),
         ),
     ] {
-        if provider_kind.is_some() || model.is_some() {
+        if mode.is_some() || provider_kind.is_some() || model.is_some() {
             runtime.merge(RuntimeConfigOverride::with_role_override(
                 role,
                 RuntimeRoleTargetOverride {
+                    mode,
                     provider_kind,
                     model,
                 },
@@ -1135,6 +1163,8 @@ usage_mode = "byo"
             "byo_cloud_key",
             "--runtime-byo-key-env",
             "OPENAI_API_KEY",
+            "--runtime-orchestrator-mode",
+            "byo_cloud_key",
             "--runtime-orchestrator-provider-kind",
             "byo_cloud",
             "--runtime-orchestrator-model",
@@ -1146,6 +1176,10 @@ usage_mode = "byo"
         assert_eq!(
             cli.serve.runtime_byo_key_env.as_deref(),
             Some("OPENAI_API_KEY")
+        );
+        assert_eq!(
+            cli.serve.runtime_orchestrator_mode,
+            Some(RuntimeMode::ByoCloudKey)
         );
         assert_eq!(
             cli.serve.runtime_orchestrator_provider_kind,
@@ -1169,6 +1203,7 @@ mode = "byo_cloud_key"
 byo_key_env = "FILE_BYO_KEY"
 
 [runtime.role_defaults.orchestrator]
+mode = "byo_cloud_key"
 provider_kind = "byo_cloud"
 model = "file-orchestrator"
 "#,
@@ -1176,10 +1211,12 @@ model = "file-orchestrator"
         .unwrap();
         let env = EnvConfig::from_pairs([
             ("ONEIRON_CONFIG", config_path.to_str().unwrap()),
+            ("ONEIRON_RUNTIME_SUBAGENT_MODE", "local_free"),
             ("ONEIRON_RUNTIME_SUBAGENT_MODEL", "env-subagent"),
         ])
         .unwrap();
         let flags = ServeArgs {
+            runtime_summarizer_mode: Some(RuntimeMode::OneironCloud),
             runtime_summarizer_model: Some("flag-summarizer".to_owned()),
             ..Default::default()
         };
@@ -1197,6 +1234,14 @@ model = "file-orchestrator"
                 .runtime
                 .role_defaults
                 .target(RuntimeRole::Orchestrator)
+                .mode,
+            RuntimeMode::ByoCloudKey
+        );
+        assert_eq!(
+            resolved
+                .runtime
+                .role_defaults
+                .target(RuntimeRole::Orchestrator)
                 .model
                 .as_str(),
             "file-orchestrator"
@@ -1206,9 +1251,25 @@ model = "file-orchestrator"
                 .runtime
                 .role_defaults
                 .target(RuntimeRole::Subagent)
+                .mode,
+            RuntimeMode::LocalFree
+        );
+        assert_eq!(
+            resolved
+                .runtime
+                .role_defaults
+                .target(RuntimeRole::Subagent)
                 .model
                 .as_str(),
             "env-subagent"
+        );
+        assert_eq!(
+            resolved
+                .runtime
+                .role_defaults
+                .target(RuntimeRole::Summarizer)
+                .mode,
+            RuntimeMode::OneironCloud
         );
         assert_eq!(
             resolved
@@ -1225,7 +1286,67 @@ model = "file-orchestrator"
                 .role_defaults
                 .target(RuntimeRole::Summarizer)
                 .provider_kind,
-            RuntimeProviderKind::ByoCloud
+            RuntimeProviderKind::OneironCloud
         );
+    }
+
+    #[test]
+    fn legacy_usage_mode_preserves_prior_runtime_role_defaults_and_byo_key_env() {
+        let dir = tempfile::tempdir().unwrap();
+        let config_path = dir.path().join("oneiron.toml");
+        std::fs::write(
+            &config_path,
+            r#"
+[runtime]
+mode = "byo_cloud_key"
+byo_key_env = "FILE_BYO_KEY"
+
+[runtime.role_defaults.orchestrator]
+mode = "byo_cloud_key"
+provider_kind = "byo_cloud"
+model = "file-orchestrator"
+
+[runtime.role_defaults.subagent]
+mode = "local_free"
+provider_kind = "local"
+model = "file-subagent"
+"#,
+        )
+        .unwrap();
+        let env = EnvConfig::from_pairs([
+            ("ONEIRON_CONFIG", config_path.to_str().unwrap()),
+            ("ONEIRON_USAGE_MODE", "oneiron_cloud"),
+        ])
+        .unwrap();
+
+        let resolved = resolve_serve_config_with_sources(&ServeArgs::default(), env, None).unwrap();
+
+        assert_eq!(resolved.runtime.mode, RuntimeMode::OneironCloud);
+        assert_eq!(resolved.usage_mode, UsageMode::OneironCloud);
+        assert_eq!(
+            resolved.runtime.byo_key_env.as_deref(),
+            Some("FILE_BYO_KEY")
+        );
+
+        let orchestrator = resolved
+            .runtime
+            .role_defaults
+            .target(RuntimeRole::Orchestrator);
+        assert_eq!(orchestrator.mode, RuntimeMode::ByoCloudKey);
+        assert_eq!(orchestrator.provider_kind, RuntimeProviderKind::ByoCloud);
+        assert_eq!(orchestrator.model, "file-orchestrator");
+
+        let subagent = resolved.runtime.role_defaults.target(RuntimeRole::Subagent);
+        assert_eq!(subagent.mode, RuntimeMode::LocalFree);
+        assert_eq!(subagent.provider_kind, RuntimeProviderKind::Local);
+        assert_eq!(subagent.model, "file-subagent");
+
+        let summarizer = resolved
+            .runtime
+            .role_defaults
+            .target(RuntimeRole::Summarizer);
+        assert_eq!(summarizer.mode, RuntimeMode::OneironCloud);
+        assert_eq!(summarizer.provider_kind, RuntimeProviderKind::OneironCloud);
+        assert_eq!(summarizer.model, "oneiron-cloud-summarizer-default");
     }
 }
