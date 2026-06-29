@@ -1,6 +1,6 @@
 //! BEAM scaffold for EVAL-001.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::path::PathBuf;
 use std::process::ExitCode;
 
@@ -13,6 +13,7 @@ use serde::{Deserialize, Serialize};
 pub(crate) const BEAM_128K_TOKEN_BUDGET: usize = 128 * 1024;
 
 const SCHEMA_VERSION: u32 = 1;
+const BEAM_CONTEXT_PACK_FORMAT: PackFormat = PackFormat::Yaml;
 const BUILTIN_FIXTURE_JSON: &str = include_str!("../fixtures/beam_128k_smoke.fixture.json");
 const BUILTIN_MANIFEST_JSON: &str = include_str!("../fixtures/beam_128k_smoke.run.json");
 
@@ -51,6 +52,8 @@ pub(crate) enum BeamError {
     MessagePackEncode(#[from] rmp_serde::encode::Error),
     #[error("oneiron engine error: {0}")]
     Oneiron(#[from] oneiron::Error),
+    #[error("budgeted deterministic context pack serialization was not UTF-8: {0}")]
+    BudgetedContextPackUtf8(#[from] std::str::Utf8Error),
     #[error("temporary vault error: {0}")]
     TempVault(#[from] std::io::Error),
 }
@@ -225,6 +228,8 @@ enum ArmOutcome {
 struct ContextPackReport {
     token_budget: usize,
     limit: usize,
+    serialized_format: String,
+    serialized_bytes: usize,
     result_count: usize,
     neighbor_count: usize,
     results: Vec<ContextEntityReport>,
@@ -277,20 +282,21 @@ impl BeamArmAdapter for DeterministicContextPackArm {
     }
 
     fn run(&self, vault: &Vault, case: &FixtureCase) -> BeamResult<ArmReport> {
-        let (pack, _) = run_deterministic_context_pack(vault, case)?;
+        let pack = run_deterministic_context_pack(vault, case)?;
+        let report = context_pack_report(&pack, case);
 
-        if pack.results.len() < case.expected_min_results {
+        if report.result_count < case.expected_min_results {
             return Err(BeamError::DeterministicExpectation {
                 case_id: case.case_id.clone(),
                 expected: case.expected_min_results,
-                actual: pack.results.len(),
+                actual: report.result_count,
             });
         }
 
         Ok(ArmReport {
             arm: self.kind(),
             outcome: ArmOutcome::Completed {
-                context_pack: context_pack_report(&pack, case),
+                context_pack: report,
             },
         })
     }
@@ -647,30 +653,72 @@ fn configured_context_pack_builder<'a>(
         .context_pack()
         .search_text(&case.query, case.limit)
         .field_profile(FieldProfile::Standard)
-        .format(PackFormat::Json)
+        .format(BEAM_CONTEXT_PACK_FORMAT)
+        .merge_neighbors(false)
+        .include_stats(true)
         .token_budget(case.token_budget)
+}
+
+struct BudgetedContextPack {
+    raw: ContextPack,
+    serialized: Vec<u8>,
+    serialized_ids: SerializedContextPackIds,
+}
+
+#[derive(Default)]
+struct SerializedContextPackIds {
+    results: HashSet<String>,
+    neighbors: HashSet<String>,
+}
+
+#[derive(Clone, Copy)]
+enum SerializedContextPackSection {
+    Results,
+    Neighbors,
 }
 
 fn run_deterministic_context_pack(
     vault: &Vault,
     case: &FixtureCase,
-) -> BeamResult<(ContextPack, Vec<u8>)> {
+) -> BeamResult<BudgetedContextPack> {
     let pack = configured_context_pack_builder(vault, case).run()?;
     let serialized = configured_context_pack_builder(vault, case).run_serialized()?;
-    Ok((pack, serialized))
+    let serialized_text = std::str::from_utf8(&serialized)?;
+    let serialized_ids = serialized_context_pack_ids(serialized_text);
+
+    Ok(BudgetedContextPack {
+        raw: pack,
+        serialized,
+        serialized_ids,
+    })
 }
 
-fn context_pack_report(pack: &ContextPack, case: &FixtureCase) -> ContextPackReport {
+fn context_pack_report(pack: &BudgetedContextPack, case: &FixtureCase) -> ContextPackReport {
+    let results = context_entity_reports_for_ids(&pack.raw.results, &pack.serialized_ids.results);
+    let neighbors =
+        context_entity_reports_for_ids(&pack.raw.neighbors, &pack.serialized_ids.neighbors);
+    let result_count = results.len();
+    let neighbor_count = neighbors.len();
+    let dropped_by_budget = pack
+        .raw
+        .results
+        .len()
+        .saturating_add(pack.raw.neighbors.len())
+        .saturating_sub(result_count.saturating_add(neighbor_count));
+
     ContextPackReport {
         token_budget: case.token_budget,
         limit: case.limit,
-        result_count: pack.results.len(),
-        neighbor_count: pack.neighbors.len(),
-        results: pack.results.iter().map(context_entity_report).collect(),
-        neighbors: pack.neighbors.iter().map(context_entity_report).collect(),
+        serialized_format: pack_format_label(BEAM_CONTEXT_PACK_FORMAT).to_owned(),
+        serialized_bytes: pack.serialized.len(),
+        result_count,
+        neighbor_count,
+        results,
+        neighbors,
         stats: PackStatsReport {
-            candidates_considered: pack.stats.candidates_considered,
+            candidates_considered: pack.raw.stats.candidates_considered,
             signals_used: pack
+                .raw
                 .stats
                 .signals_used
                 .iter()
@@ -678,20 +726,36 @@ fn context_pack_report(pack: &ContextPack, case: &FixtureCase) -> ContextPackRep
                 .map(signal_label)
                 .map(str::to_owned)
                 .collect(),
-            query_time_us: pack.stats.query_time_us,
-            entities_hydrated: pack.stats.entities_hydrated,
-            neighbors_hydrated: pack.stats.neighbors_hydrated,
-            cosine_ghosts_dampened: pack.stats.cosine_ghosts_dampened,
-            claims_suppressed: pack.stats.claims_suppressed,
-            items_truncated: pack.stats.items_truncated.count,
-            items_dropped: pack.stats.items_dropped.count,
+            query_time_us: pack.raw.stats.query_time_us,
+            entities_hydrated: result_count,
+            neighbors_hydrated: neighbor_count,
+            cosine_ghosts_dampened: pack.raw.stats.cosine_ghosts_dampened,
+            claims_suppressed: pack.raw.stats.claims_suppressed,
+            items_truncated: pack.raw.stats.items_truncated.count,
+            items_dropped: pack
+                .raw
+                .stats
+                .items_dropped
+                .count
+                .saturating_add(dropped_by_budget),
         },
-        empty: pack.empty.as_ref().map(|empty| EmptyContextReport {
+        empty: pack.raw.empty.as_ref().map(|empty| EmptyContextReport {
             reason: empty_reason_label(empty.reason).to_owned(),
             total_in_scope: empty.total_in_scope,
             hint: empty.hint.clone(),
         }),
     }
+}
+
+fn context_entity_reports_for_ids(
+    entities: &[oneiron::ContextEntity],
+    serialized_ids: &HashSet<String>,
+) -> Vec<ContextEntityReport> {
+    entities
+        .iter()
+        .filter(|entity| serialized_ids.contains(&serialized_context_entity_id(entity)))
+        .map(context_entity_report)
+        .collect()
 }
 
 fn context_entity_report(entity: &oneiron::ContextEntity) -> ContextEntityReport {
@@ -701,6 +765,57 @@ fn context_entity_report(entity: &oneiron::ContextEntity) -> ContextEntityReport
         entity_type: entity.entity_type,
         score: entity.score,
     }
+}
+
+fn serialized_context_pack_ids(serialized: &str) -> SerializedContextPackIds {
+    let mut ids = SerializedContextPackIds::default();
+    let mut section = None;
+
+    for line in serialized.lines() {
+        let trimmed = line.trim();
+        match trimmed {
+            "results:" => section = Some(SerializedContextPackSection::Results),
+            "neighbors:" => section = Some(SerializedContextPackSection::Neighbors),
+            _ => {
+                let Some(raw_id) = trimmed.strip_prefix("- id: ") else {
+                    continue;
+                };
+                let Some(section) = section else {
+                    continue;
+                };
+                let id = generated_yaml_scalar(raw_id);
+                match section {
+                    SerializedContextPackSection::Results => {
+                        ids.results.insert(id);
+                    }
+                    SerializedContextPackSection::Neighbors => {
+                        ids.neighbors.insert(id);
+                    }
+                }
+            }
+        }
+    }
+
+    ids
+}
+
+fn generated_yaml_scalar(raw: &str) -> String {
+    let trimmed = raw.trim();
+    trimmed
+        .strip_prefix('"')
+        .and_then(|quoted| quoted.strip_suffix('"'))
+        .unwrap_or(trimmed)
+        .replace("\\\"", "\"")
+        .replace("\\\\", "\\")
+}
+
+fn serialized_context_entity_id(entity: &oneiron::ContextEntity) -> String {
+    let short_id = if entity.short_id.is_empty() {
+        entity.id.to_hex()
+    } else {
+        entity.short_id.clone()
+    };
+    format!("{}:{:02x}", short_id, entity.content_hash)
 }
 
 fn arm_not_ready(kind: ArmKind) -> NotReadyState {
@@ -760,6 +875,17 @@ fn dataset_source_description(source: &DatasetSource) -> String {
 fn report_format_label(format: ReportFormat) -> &'static str {
     match format {
         ReportFormat::Json => "json",
+    }
+}
+
+fn pack_format_label(format: PackFormat) -> &'static str {
+    match format {
+        PackFormat::Json => "json",
+        PackFormat::Yaml => "yaml",
+        PackFormat::Toon => "toon",
+        PackFormat::Markdown => "markdown",
+        PackFormat::Plaintext => "plaintext",
+        _ => "unknown",
     }
 }
 
@@ -849,16 +975,61 @@ mod tests {
         let vault = Vault::open(tempdir.path(), beam_vault_config()).expect("vault opens");
         load_dataset(&vault, &manifest, &fixture).expect("fixture loads");
 
-        let (pack, serialized) =
+        let pack =
             run_deterministic_context_pack(&vault, &fixture.cases[0]).expect("deterministic run");
-        let serialized_json: serde_json::Value =
-            serde_json::from_slice(&serialized).expect("serialized context pack is JSON");
-        let serialized_object = serialized_json.as_object().expect("serialized JSON object");
+        let serialized_text =
+            std::str::from_utf8(&pack.serialized).expect("serialized context pack is UTF-8");
 
         assert_eq!(fixture.cases[0].token_budget, BEAM_128K_TOKEN_BUDGET);
-        assert!(pack.results.len() >= fixture.cases[0].expected_min_results);
-        assert!(!serialized.is_empty());
-        assert!(!serialized_object.is_empty());
+        assert!(pack.raw.results.len() >= fixture.cases[0].expected_min_results);
+        assert!(!pack.serialized.is_empty());
+        assert!(serialized_text.contains("results:"));
+        assert!(
+            pack.serialized_ids
+                .results
+                .iter()
+                .any(|id| id.starts_with("sm"))
+        );
+    }
+
+    #[test]
+    fn deterministic_arm_reports_budgeted_pack_when_token_budget_drops_rows() {
+        let mut fixture = parse_fixture_json(BUILTIN_FIXTURE_JSON).expect("fixture parses");
+        let manifest = parse_manifest_json(BUILTIN_MANIFEST_JSON).expect("manifest parses");
+        for (offset, id) in [
+            "30303030303030303030303030303030",
+            "40404040404040404040404040404040",
+            "50505050505050505050505050505050",
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let mut record = fixture.records[0].clone();
+            record.id = id.to_owned();
+            record.occurred.start = 3 + offset as u64;
+            record.occurred.end = 3 + offset as u64;
+            record.learned_at = 3 + offset as u64;
+            fixture.records.push(record);
+        }
+        fixture.cases[0].token_budget = 1;
+        fixture.cases[0].expected_min_results = 0;
+        let tempdir = tempfile::tempdir().expect("tempdir");
+        let vault = Vault::open(tempdir.path(), beam_vault_config()).expect("vault opens");
+        load_dataset(&vault, &manifest, &fixture).expect("fixture loads");
+        let raw_pack = configured_context_pack_builder(&vault, &fixture.cases[0])
+            .run()
+            .expect("raw context pack");
+
+        let arm = DeterministicContextPackArm
+            .run(&vault, &fixture.cases[0])
+            .expect("deterministic arm reports");
+        let ArmOutcome::Completed { context_pack } = arm.outcome else {
+            panic!("deterministic arm should complete");
+        };
+
+        assert_eq!(context_pack.serialized_format, "yaml");
+        assert!(raw_pack.results.len() > context_pack.result_count);
+        assert!(context_pack.stats.items_dropped > 0);
     }
 
     #[test]
