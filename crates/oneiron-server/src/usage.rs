@@ -399,17 +399,14 @@ pub struct ConsumerAllowanceWarning {
 impl ConsumerAllowanceWarning {
     fn for_usage(used_credit_units: f64, allowance_credit_units: f64) -> Self {
         if allowance_credit_units <= 0.0 {
-            return if used_credit_units > 0.0 {
-                Self::exhausted(None)
-            } else {
-                Self::none(None)
-            };
+            return Self::exhausted(None);
         }
 
-        let used_ratio = normalize_money(used_credit_units / allowance_credit_units);
-        if used_ratio >= 1.0 {
+        let raw_used_ratio = used_credit_units / allowance_credit_units;
+        let used_ratio = normalize_money(raw_used_ratio);
+        if raw_used_ratio >= 1.0 {
             Self::exhausted(Some(used_ratio))
-        } else if used_ratio >= ALLOWANCE_CRITICAL_THRESHOLD_RATIO {
+        } else if raw_used_ratio >= ALLOWANCE_CRITICAL_THRESHOLD_RATIO {
             Self {
                 level: ConsumerAllowanceWarningLevel::Critical,
                 triggered: true,
@@ -417,7 +414,7 @@ impl ConsumerAllowanceWarning {
                 used_ratio: Some(used_ratio),
                 message: "consumer allowance is at or above the critical threshold".to_owned(),
             }
-        } else if used_ratio >= ALLOWANCE_NOTICE_THRESHOLD_RATIO {
+        } else if raw_used_ratio >= ALLOWANCE_NOTICE_THRESHOLD_RATIO {
             Self {
                 level: ConsumerAllowanceWarningLevel::Notice,
                 triggered: true,
@@ -710,11 +707,8 @@ impl UsageLedger {
         } else {
             rollup.counters.credit_units
         };
-        let usage = self.consumer_usage_from_rollup(
-            rollup.clone(),
-            configured_mode,
-            allowance_used_credit_units,
-        )?;
+        let usage =
+            self.consumer_usage_from_rollup(&rollup, configured_mode, allowance_used_credit_units)?;
         Ok(ConsumerUsageDetails {
             usage,
             agents: rollup.agents,
@@ -846,12 +840,12 @@ impl UsageLedger {
         } else {
             rollup.counters.credit_units
         };
-        self.consumer_usage_from_rollup(rollup, configured_mode, allowance_used_credit_units)
+        self.consumer_usage_from_rollup(&rollup, configured_mode, allowance_used_credit_units)
     }
 
     fn consumer_usage_from_rollup(
         &self,
-        rollup: UsageRollup,
+        rollup: &UsageRollup,
         configured_mode: UsageMode,
         allowance_used_credit_units: f64,
     ) -> Result<ConsumerUsageState, UsageError> {
@@ -859,10 +853,10 @@ impl UsageLedger {
         let remaining_credit_units =
             normalize_money(allowance.credit_units - allowance_used_credit_units).max(0.0);
         Ok(ConsumerUsageState {
-            tenant_id: rollup.tenant_id,
-            vault_id: rollup.vault_id,
+            tenant_id: rollup.tenant_id.clone(),
+            vault_id: rollup.vault_id.clone(),
             mode: configured_mode,
-            counters: rollup.counters,
+            counters: rollup.counters.clone(),
             allowance: ConsumerAllowanceState {
                 allowance_credit_units: allowance.credit_units,
                 used_credit_units: allowance_used_credit_units,
@@ -1182,6 +1176,26 @@ mod tests {
         assert_eq!(cost.service_cost_usd, 0.044);
         assert_eq!(cost.cost_usd, 0.05);
         assert_eq!(cost.credit_units, cost.cost_usd / CREDIT_UNIT_USD);
+    }
+
+    #[test]
+    fn allowance_warning_exhausts_zero_allowance_without_usage() {
+        let warning = ConsumerAllowanceWarning::for_usage(0.0, 0.0);
+
+        assert_eq!(warning.level, ConsumerAllowanceWarningLevel::Exhausted);
+        assert!(warning.triggered);
+        assert_eq!(warning.threshold_ratio, 1.0);
+        assert_eq!(warning.used_ratio, None);
+    }
+
+    #[test]
+    fn allowance_warning_uses_raw_ratio_for_thresholds() {
+        let warning = ConsumerAllowanceWarning::for_usage(0.7999999999996, 1.0);
+
+        assert_eq!(warning.level, ConsumerAllowanceWarningLevel::None);
+        assert!(!warning.triggered);
+        assert_eq!(warning.threshold_ratio, ALLOWANCE_NOTICE_THRESHOLD_RATIO);
+        assert_eq!(warning.used_ratio, Some(0.8));
     }
 
     #[test]
