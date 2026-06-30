@@ -1114,6 +1114,9 @@ impl<'a> PipelineBuilder<'a> {
 
     fn has_strict_text_scope_filter(&self) -> bool {
         self.type_filter.is_some()
+            || self.since_filter.is_some()
+            || self.occurred_range.is_some()
+            || self.learned_range.is_some()
             || matches!(self.facet_filter, Some((_, FacetMode::Strict)))
             || self.world_scope != WorldScope::All
     }
@@ -3469,6 +3472,43 @@ mod tests {
 
         assert!(results.iter().any(|entry| entry.id == in_scope_prefix));
         assert!(!results.iter().any(|entry| entry.id == out_of_scope_exact));
+        Ok(())
+    }
+
+    #[test]
+    fn exact_old_text_hit_does_not_suppress_since_prefix() -> Result<()> {
+        let (_dir, vault) = open_test_vault();
+        let old_exact = entity_id(0x12);
+        let recent_prefix = entity_id(0x22);
+
+        vault
+            .batch()
+            .put(
+                &old_exact,
+                1,
+                TimeRange { start: 1, end: 1 },
+                100,
+                b"payload",
+            )
+            .text(&old_exact, &[("body", "sinceprefix")])
+            .put(
+                &recent_prefix,
+                1,
+                TimeRange { start: 1, end: 1 },
+                200,
+                b"payload",
+            )
+            .text(&recent_prefix, &[("body", "sinceprefixalpha")])
+            .commit()?;
+
+        let results = vault
+            .query()
+            .search_text("sinceprefix", 1)
+            .filter_since(200)
+            .run()?;
+
+        assert!(results.iter().any(|entry| entry.id == recent_prefix));
+        assert!(!results.iter().any(|entry| entry.id == old_exact));
         Ok(())
     }
 
