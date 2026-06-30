@@ -2898,7 +2898,7 @@
     },
     "securitySchemes": {
       "CoreBearer": {
-        "description": "Scoped bearer token for canonical /v1/core/* routes. The current local shell accepts the configured shared secret, optionally suffixed with ';scope=core:read,core:write,core:auth'.",
+        "description": "Scoped bearer token for canonical /v1/core/* and companion control-plane routes. The current local shell accepts the configured shared secret, optionally suffixed with ';scope=core:read,core:write,core:auth'.",
         "scheme": "bearer",
         "type": "http"
       },

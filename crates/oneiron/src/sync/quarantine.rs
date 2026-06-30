@@ -179,11 +179,12 @@ pub(crate) fn remote_rejection_reason(error: &Error) -> Option<String> {
         | ErrorKind::InvalidEdgeWeight
         | ErrorKind::InvalidVad
         | ErrorKind::InvalidProvenanceBody
-        // FED-001: a remote FEDERATION_GRANT (type 124) body failing its
+        // FED-001/EIRI-004: a remote grant body failing its
         // pinned structural/policy validation is a rejection of that remote
         // op, not a local storage/index failure. Keep generic InvalidKey
         // unclassified; only the grant-specific typed error quarantines.
         | ErrorKind::InvalidFederationGrantBody
+        | ErrorKind::InvalidAccessGrantBody
         | ErrorKind::ProvenanceOnStructuralEdge
         | ErrorKind::CycleDetected
         // A remote ChildOf op violating the single-parent pin is a pure
