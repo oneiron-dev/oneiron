@@ -2959,7 +2959,8 @@ struct CoreMemoryVerbRequest {
     #[serde(default, rename = "old_id", alias = "oldId")]
     #[schema(example = "11111111111111111111111111111111")]
     old_id: Option<String>,
-    /// Operation timestamp for lifecycle verbs. Defaults to server time.
+    /// Operation timestamp for supersede/retract verbs. Defaults to server time.
+    /// Delete verbs reject this field because the vault owns deletion time.
     #[serde(default, alias = "now")]
     #[schema(example = 1782357700_u64)]
     at: Option<u64>,
@@ -2990,7 +2991,7 @@ struct CoreMemoryVerbResponse {
     verb: String,
     /// Typed operation family selected by the verb.
     operation: CoreMemoryOperationKind,
-    /// Operation timestamp used by lifecycle/delete verbs.
+    /// Operation timestamp used by supersede/retract verbs.
     #[serde(skip_serializing_if = "Option::is_none")]
     #[schema(example = 1782357700_u64)]
     at: Option<u64>,
@@ -3815,7 +3816,7 @@ async fn core_memory_verb(
     auth.require(CoreScope::Write)?;
     let verb = oneiron::NamedMemoryVerb::parse(&verb_name).ok_or_else(|| {
         ApiError::bad_request(
-            "verb must be one of remember, supersede, retract, delete, hard_delete",
+            "verb must be one of remember (put), supersede (replace/revise), retract (withdraw), delete (forget), hard_delete (erase/purge)",
             Some("verb"),
         )
     })?;
@@ -3910,9 +3911,15 @@ async fn core_memory_verb(
             }))
         }
         oneiron::NamedMemoryVerb::Delete | oneiron::NamedMemoryVerb::HardDelete => {
+            if req.at.is_some() {
+                return Err(ApiError::bad_request(
+                    "at is not supported for delete verbs; deletion time is recorded by the vault",
+                    Some("at"),
+                )
+                .into());
+            }
             let id = parse_required_entity_id(req.id.as_deref(), "id")?;
             let (reason, response_reason) = core_memory_delete_reason(verb, req.reason)?;
-            let at = unix_seconds_now();
             let outcome = server
                 .vault
                 .delete_entity_with_reason(&id, reason)
@@ -3924,7 +3931,7 @@ async fn core_memory_verb(
             Ok(Json(CoreMemoryVerbResponse {
                 verb: verb.canonical_name().to_owned(),
                 operation,
-                at: Some(at),
+                at: None,
                 id: Some(id.to_hex()),
                 new_id: None,
                 old_id: None,
@@ -4044,13 +4051,27 @@ fn core_memory_delete_reason(
         CoreMemoryVerbDeleteReason::Gdpr => oneiron::DeleteReason::GdprDelete,
         CoreMemoryVerbDeleteReason::Policy => oneiron::DeleteReason::PolicyDelete,
     };
-    if verb == oneiron::NamedMemoryVerb::HardDelete
-        && matches!(reason, oneiron::DeleteReason::UserDelete)
-    {
-        return Err(ApiError::bad_request(
-            "hard_delete requires user_hard_delete, gdpr_delete, or policy_delete",
-            Some("reason"),
-        ));
+    match (verb, response_reason) {
+        (oneiron::NamedMemoryVerb::Delete, CoreMemoryVerbDeleteReason::User) => {}
+        (oneiron::NamedMemoryVerb::Delete, _) => {
+            return Err(ApiError::bad_request(
+                "delete only accepts user_delete; use hard_delete for hard-delete reasons",
+                Some("reason"),
+            ));
+        }
+        (
+            oneiron::NamedMemoryVerb::HardDelete,
+            CoreMemoryVerbDeleteReason::UserHard
+            | CoreMemoryVerbDeleteReason::Gdpr
+            | CoreMemoryVerbDeleteReason::Policy,
+        ) => {}
+        (oneiron::NamedMemoryVerb::HardDelete, CoreMemoryVerbDeleteReason::User) => {
+            return Err(ApiError::bad_request(
+                "hard_delete requires user_hard_delete, gdpr_delete, or policy_delete",
+                Some("reason"),
+            ));
+        }
+        _ => {}
     }
     Ok((reason, response_reason))
 }
@@ -8305,6 +8326,66 @@ mod tests {
         assert_eq!(withdraw_body["operation"], Value::from("retract_claim"));
         assert_eq!(withdraw_body["id"], Value::from(retractable.to_hex()));
 
+        let (soft_gdpr_status, soft_gdpr_body) = route_json(
+            server.clone(),
+            json_request(
+                "POST",
+                "/v1/core/memory/verbs/delete",
+                json!({
+                    "id": remembered.to_hex(),
+                    "reason": "gdpr_delete"
+                }),
+            ),
+        )
+        .await;
+        assert_eq!(soft_gdpr_status, StatusCode::BAD_REQUEST);
+        assert_error_envelope(&soft_gdpr_body, "BAD_REQUEST");
+
+        let (soft_hard_status, soft_hard_body) = route_json(
+            server.clone(),
+            json_request(
+                "POST",
+                "/v1/core/memory/verbs/delete",
+                json!({
+                    "id": remembered.to_hex(),
+                    "reason": "user_hard_delete"
+                }),
+            ),
+        )
+        .await;
+        assert_eq!(soft_hard_status, StatusCode::BAD_REQUEST);
+        assert_error_envelope(&soft_hard_body, "BAD_REQUEST");
+
+        let (delete_at_status, delete_at_body) = route_json(
+            server.clone(),
+            json_request(
+                "POST",
+                "/v1/core/memory/verbs/delete",
+                json!({
+                    "id": remembered.to_hex(),
+                    "at": 902_u64
+                }),
+            ),
+        )
+        .await;
+        assert_eq!(delete_at_status, StatusCode::BAD_REQUEST);
+        assert_error_envelope(&delete_at_body, "BAD_REQUEST");
+
+        let (hard_user_status, hard_user_body) = route_json(
+            server.clone(),
+            json_request(
+                "POST",
+                "/v1/core/memory/verbs/hard_delete",
+                json!({
+                    "id": remembered.to_hex(),
+                    "reason": "user_delete"
+                }),
+            ),
+        )
+        .await;
+        assert_eq!(hard_user_status, StatusCode::BAD_REQUEST);
+        assert_error_envelope(&hard_user_body, "BAD_REQUEST");
+
         let (forget_status, forget_body) = route_json(
             server.clone(),
             json_request(
@@ -8320,6 +8401,7 @@ mod tests {
         assert_eq!(forget_body["delete"]["existed"], Value::from(true));
         assert_eq!(forget_body["delete"]["reason"], Value::from("user_delete"));
         assert_eq!(forget_body["delete"]["hard"], Value::from(false));
+        assert!(forget_body.get("at").is_none());
 
         let deleted_path = format!("/v1/core/memory/{}/timeline", remembered.to_hex());
         let (timeline_status, timeline_body) = route_json(
