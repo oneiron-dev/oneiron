@@ -116,6 +116,8 @@ struct PipelineFilterConfig<'a> {
     learned_range: Option<(u64, u64)>,
     repo_ref_filter: Option<&'a RepoRef>,
     project_id_filter: Option<&'a str>,
+    facet_filter: Option<(EntityId, FacetMode)>,
+    world_scope: WorldScope,
 }
 
 #[derive(Default)]
@@ -636,6 +638,8 @@ impl<'a> PipelineBuilder<'a> {
                 learned_range: self.learned_range,
                 repo_ref_filter: self.repo_ref_filter.as_ref(),
                 project_id_filter: self.project_id_filter.as_deref(),
+                facet_filter: self.facet_filter,
+                world_scope: self.world_scope,
             };
 
             if let Some((query_vector, limit)) = &self.vector_search {
@@ -817,6 +821,7 @@ impl<'a> PipelineBuilder<'a> {
                     recency,
                     &mut metadata_cache,
                 )?;
+                fusion::sort_scored_entities_desc(&mut scores);
             }
 
             if let Some((explicit_seeds, depth)) = &self.ppr_expand {
@@ -2178,7 +2183,72 @@ fn pipeline_candidate_matches_filters_and_gate(
         return Ok(false);
     }
 
+    if !pipeline_candidate_matches_facet_filter(
+        store,
+        rtxn,
+        id,
+        meta.entity_type,
+        filters.facet_filter,
+        metadata_cache,
+    )? {
+        return Ok(false);
+    }
+
+    if !pipeline_candidate_matches_world_filter(store, rtxn, id, filters.world_scope)? {
+        return Ok(false);
+    }
+
     claim_status_gate_allows(store, rtxn, id, metadata_cache, claim_gate)
+}
+
+fn pipeline_candidate_matches_facet_filter(
+    store: &Store,
+    rtxn: &RoTxn<'_>,
+    id: &EntityId,
+    entity_type: u8,
+    facet_filter: Option<(EntityId, FacetMode)>,
+    metadata_cache: &mut EntityMetadataCache,
+) -> Result<bool> {
+    let Some((active_facet, mode)) = facet_filter else {
+        return Ok(true);
+    };
+
+    let active_facet_type = metadata_cache
+        .get(store, rtxn, &active_facet)?
+        .map(|meta| meta.entity_type);
+    if active_facet_type != Some(ENTITY_TYPE_FACET) {
+        return Err(Error::InvalidFacet {
+            facet: active_facet,
+            found: active_facet_type,
+        });
+    }
+
+    if entity_type != ENTITY_TYPE_CLAIM {
+        return Ok(true);
+    }
+
+    match claim_facet_scope(store, rtxn, id, &active_facet)? {
+        ClaimFacetScope::OtherFacetsOnly => Ok(matches!(mode, FacetMode::Prefer { .. })),
+        ClaimFacetScope::Unfaceted | ClaimFacetScope::ActiveFacet => Ok(true),
+    }
+}
+
+fn pipeline_candidate_matches_world_filter(
+    store: &Store,
+    rtxn: &RoTxn<'_>,
+    id: &EntityId,
+    scope: WorldScope,
+) -> Result<bool> {
+    let target = match scope {
+        WorldScope::All => return Ok(true),
+        WorldScope::Base => None,
+        WorldScope::World(id) => Some(id),
+    };
+
+    Ok(match claim_world(store, rtxn, id)? {
+        None => true,
+        Some(world) => target == Some(world),
+    })
 }
 
 fn apply_pipeline_recency_boost(
@@ -2414,6 +2484,38 @@ mod tests {
                 TimeRange { start: 1, end: 1 },
                 learned_at,
                 b"payload",
+            )
+            .text(&id, &[("body", text)])
+            .commit()
+    }
+
+    fn active_claim_body(world: Option<EntityId>) -> Vec<u8> {
+        let mut body = ClaimBody::new(
+            "test.prefix_scope",
+            crate::claim::ClaimSubject::Entity(entity_id(0x7C)),
+            rmpv::Value::from("v"),
+            0.9,
+            crate::claim::ClaimApprovalStatus::Auto,
+            crate::claim::ClaimLifecycleStatus::Active,
+        );
+        body.world = world;
+        crate::claim::encode_claim_body(&body).expect("encode claim body")
+    }
+
+    fn put_claim_text(
+        vault: &Vault,
+        id: EntityId,
+        text: &str,
+        world: Option<EntityId>,
+    ) -> Result<()> {
+        vault
+            .batch()
+            .put(
+                &id,
+                ENTITY_TYPE_CLAIM,
+                TimeRange { start: 1, end: 1 },
+                1,
+                &active_claim_body(world),
             )
             .text(&id, &[("body", text)])
             .commit()
@@ -3316,6 +3418,77 @@ mod tests {
     }
 
     #[test]
+    fn exact_other_facet_text_hit_does_not_suppress_strict_facet_prefix() -> Result<()> {
+        let (_dir, vault) = open_test_vault();
+        let facet_active = entity_id(0xA1);
+        let facet_other = entity_id(0xB1);
+        let other_facet_exact = entity_id(0x10);
+        let active_facet_prefix = entity_id(0x20);
+
+        vault
+            .batch()
+            .put(
+                &facet_active,
+                ENTITY_TYPE_FACET,
+                TimeRange { start: 1, end: 1 },
+                1,
+                b"facet",
+            )
+            .put(
+                &facet_other,
+                ENTITY_TYPE_FACET,
+                TimeRange { start: 1, end: 1 },
+                1,
+                b"facet",
+            )
+            .commit()?;
+        put_claim_text(&vault, other_facet_exact, "facetprefix", None)?;
+        put_claim_text(&vault, active_facet_prefix, "facetprefixalpha", None)?;
+        vault
+            .batch()
+            .edge(&other_facet_exact, EdgeKind::FacetOf, &facet_other, 0.7)
+            .edge(&active_facet_prefix, EdgeKind::FacetOf, &facet_active, 0.7)
+            .commit()?;
+
+        let results = vault
+            .query()
+            .search_text("facetprefix", 10)
+            .facet(&facet_active, FacetMode::Strict)
+            .run()?;
+
+        assert!(results.iter().any(|entry| entry.id == active_facet_prefix));
+        assert!(!results.iter().any(|entry| entry.id == other_facet_exact));
+        Ok(())
+    }
+
+    #[test]
+    fn exact_other_world_text_hit_does_not_suppress_world_prefix() -> Result<()> {
+        let (_dir, vault) = open_test_vault();
+        let world_active = entity_id(0xA2);
+        let world_other = entity_id(0xB2);
+        let other_world_exact = entity_id(0x11);
+        let active_world_prefix = entity_id(0x21);
+
+        put_claim_text(&vault, other_world_exact, "worldprefix", Some(world_other))?;
+        put_claim_text(
+            &vault,
+            active_world_prefix,
+            "worldprefixalpha",
+            Some(world_active),
+        )?;
+
+        let results = vault
+            .query()
+            .search_text("worldprefix", 10)
+            .world(WorldScope::World(world_active))
+            .run()?;
+
+        assert!(results.iter().any(|entry| entry.id == active_world_prefix));
+        assert!(!results.iter().any(|entry| entry.id == other_world_exact));
+        Ok(())
+    }
+
+    #[test]
     fn recency_boost_applies_to_vector_only_pipeline() -> Result<()> {
         let (_dir, vault) = open_test_vault();
         let old = entity_id(0x10);
@@ -3336,6 +3509,28 @@ mod tests {
             .search_vector(&[1.0, 0.0, 0.0, 0.0], 2)
             .boost_recency(0.01)
             .run()?;
+        assert_eq!(boosted[0].id, fresh);
+        Ok(())
+    }
+
+    #[test]
+    fn recency_boost_orders_non_text_scores_before_ppr_expansion_fusion() -> Result<()> {
+        let (_dir, vault) = open_test_vault();
+        let old = entity_id(0x12);
+        let fresh = entity_id(0x22);
+        let now = crate::unix_seconds_now();
+
+        put_vector_at(&vault, old, [1.0, 0.0, 0.0, 0.0], 1)?;
+        put_vector_at(&vault, fresh, [0.99, 0.01, 0.0, 0.0], now)?;
+
+        let boosted = vault
+            .query()
+            .search_vector(&[1.0, 0.0, 0.0, 0.0], 2)
+            .boost_recency(0.01)
+            .expand_ppr(&[], 2)
+            .limit(1)
+            .run()?;
+
         assert_eq!(boosted[0].id, fresh);
         Ok(())
     }
