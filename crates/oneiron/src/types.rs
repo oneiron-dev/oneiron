@@ -9,6 +9,15 @@ use crate::claim::{
     ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject,
 };
 
+#[path = "companion.rs"]
+pub mod companion;
+pub use companion::{
+    COMPANION_RECORD_BODY_KEYS, COMPANION_RECORD_SCHEMA_VERSION, CompanionExportClassification,
+    CompanionProvenance, CompanionRecord, CompanionRecordKey, CompanionRecordKind,
+    CompanionRegister, CompanionScope, CompanionSubject, decode_companion_record_body,
+    encode_companion_record_body,
+};
+
 pub(crate) const ENTITY_ID_LEN: usize = 16;
 pub(crate) const EDGE_KEY_LEN: usize = 33;
 pub(crate) const EDGE_VALUE_STRUCTURAL_LEN: usize = 12;
