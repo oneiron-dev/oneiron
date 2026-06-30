@@ -187,8 +187,11 @@ where
 
 const FINAL_TOKEN_PREFIX_WEIGHT: f64 = 0.5;
 const MAX_FINAL_TOKEN_PREFIX_TERMS: usize = 64;
-/// Bound global term-key reads before scope filtering for any one prefix.
-const MAX_FINAL_TOKEN_PREFIX_SCAN_TERMS: usize = MAX_FINAL_TOKEN_PREFIX_TERMS * 16;
+/// Bound term-key reads for any one prefix after the scoped expansion cap.
+///
+/// Out-of-scope completions do not consume the 64-term expansion budget, but
+/// broad prefixes still need a hard cursor-walk ceiling.
+const MAX_FINAL_TOKEN_PREFIX_SCAN_TERMS: usize = MAX_FINAL_TOKEN_PREFIX_TERMS * 64;
 
 /// One slot per reserved [`AnalyzerChannel`]. A new channel whose
 /// `field_id()` falls outside `0..BM25_FIELD_COUNT` would silently
@@ -545,21 +548,25 @@ fn collect_final_token_prefix_terms(
         .map(|token| token.term.as_ref().to_owned())
         .collect();
 
-    for prefix in &prefixes {
-        if exact_term_has_scoped_posting(store, rtxn, config, prefix, exact_posting_matches_scope)?
-        {
-            return Ok(());
-        }
-    }
-
     let mut expanded_terms = 0usize;
     'prefixes: for prefix in prefixes {
-        for row in store
+        if exact_term_has_scoped_posting(store, rtxn, config, &prefix, exact_posting_matches_scope)?
+        {
+            continue;
+        }
+        if expanded_terms == MAX_FINAL_TOKEN_PREFIX_TERMS {
+            break;
+        }
+
+        for (scanned_terms, row) in store
             .text_postings
             .prefix_iter(rtxn, prefix.as_bytes())?
             .move_between_keys()
-            .take(MAX_FINAL_TOKEN_PREFIX_SCAN_TERMS)
+            .enumerate()
         {
+            if scanned_terms == MAX_FINAL_TOKEN_PREFIX_SCAN_TERMS {
+                break;
+            }
             if expanded_terms == MAX_FINAL_TOKEN_PREFIX_TERMS {
                 break 'prefixes;
             }
@@ -1520,6 +1527,56 @@ mod tests {
     }
 
     #[test]
+    fn final_token_prefix_scan_budget_ignores_out_of_scope_completions() -> Result<()> {
+        let temp_dir = tempfile::tempdir()?;
+        let vault = Vault::open(temp_dir.path(), test_config())?;
+        let prefix = "scopeaware";
+        let old_prescope_cap = MAX_FINAL_TOKEN_PREFIX_TERMS * 16;
+        let in_scope_index = old_prescope_cap + 1;
+        assert!(in_scope_index < MAX_FINAL_TOKEN_PREFIX_SCAN_TERMS);
+
+        let in_scope_id = test_entity_id(0x9000);
+        let mut postings = (0..in_scope_index)
+            .map(|idx| {
+                (
+                    format!("{prefix}{idx:04}"),
+                    test_entity_id(u16::try_from(idx).expect("test id fits in u16")),
+                )
+            })
+            .collect::<Vec<_>>();
+        postings.push((format!("{prefix}{in_scope_index:04}"), in_scope_id));
+        put_raw_posting_terms_with_ids(&vault, &postings)?;
+
+        let rtxn = vault.store.env.read_txn()?;
+        let mut terms = BTreeMap::new();
+        let mut scope_checks = 0usize;
+        let mut exact_posting_matches_scope = |id: &EntityId| {
+            scope_checks += 1;
+            Ok(*id == in_scope_id)
+        };
+        collect_final_token_prefix_terms(
+            &vault.store,
+            &rtxn,
+            prefix.len(),
+            &Bm25Config::default(),
+            &[final_word_token(prefix)],
+            &mut terms,
+            &mut exact_posting_matches_scope,
+        )?;
+
+        assert_eq!(
+            terms.keys().cloned().collect::<Vec<_>>(),
+            vec![format!("{prefix}{in_scope_index:04}")]
+        );
+        assert!(
+            scope_checks > old_prescope_cap,
+            "out-of-scope completions must not consume the scoped expansion budget"
+        );
+        assert!(scope_checks <= MAX_FINAL_TOKEN_PREFIX_SCAN_TERMS);
+        Ok(())
+    }
+
+    #[test]
     fn final_token_prefix_scope_filtering_keeps_global_scan_bounded() -> Result<()> {
         let temp_dir = tempfile::tempdir()?;
         let vault = Vault::open(temp_dir.path(), test_config())?;
@@ -2046,6 +2103,23 @@ mod tests {
             .with_channel_weight(AnalyzerChannel::CjkNgram, 0.0);
         let hits = vault.search_text_with_profile("runs", 10, &all_zero)?;
         assert!(hits.is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn stem_exact_hit_does_not_suppress_surface_prefix_expansion() -> Result<()> {
+        let temp_dir = tempfile::tempdir()?;
+        let vault = Vault::open(temp_dir.path(), test_config())?;
+        let stem_exact = EntityId::from_bytes_unchecked([0x10; ENTITY_ID_LEN]);
+        let surface_prefix = EntityId::from_bytes_unchecked([0x20; ENTITY_ID_LEN]);
+
+        put_text_doc(&vault, &stem_exact, "she runs daily")?;
+        put_text_doc(&vault, &surface_prefix, "runningly specific surface")?;
+
+        let hits = vault.search_text("running", 10)?;
+
+        assert!(contains_id(&hits, &stem_exact));
+        assert!(contains_id(&hits, &surface_prefix));
         Ok(())
     }
 
