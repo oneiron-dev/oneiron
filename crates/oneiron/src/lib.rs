@@ -85,7 +85,8 @@ pub use crate::ingest::{
 };
 pub use crate::maintain::{MaintenanceBuilder, MaintenanceReport};
 pub use crate::pipeline::{
-    DEFAULT_RECENCY_HALF_LIFE_DAYS, FacetMode, PipelineBuilder, RetrievalWithTelemetry, WorldScope,
+    DEFAULT_RECENCY_HALF_LIFE_DAYS, FacetMode, PendingVectorEmbedding, PipelineBuilder,
+    RetrievalWithPendingVectors, RetrievalWithTelemetry, WorldScope,
 };
 pub use crate::provenance::{
     EDGE_PROVENANCE_BODY_KEYS, EDGE_REF_LEN, EdgeProvenanceClaimBody, EdgeRef,
