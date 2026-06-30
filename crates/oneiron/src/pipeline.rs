@@ -629,6 +629,14 @@ impl<'a> PipelineBuilder<'a> {
             let mut claim_gate = ClaimStatusGateCache::default();
             let mut deferred_ppr_cache_writes = Vec::new();
             let codebase_scope_active = self.has_codebase_scope_filter();
+            let filter_config = PipelineFilterConfig {
+                type_filter: self.type_filter.as_deref(),
+                since_filter: self.since_filter,
+                occurred_range: self.occurred_range,
+                learned_range: self.learned_range,
+                repo_ref_filter: self.repo_ref_filter.as_ref(),
+                project_id_filter: self.project_id_filter.as_deref(),
+            };
 
             if let Some((query_vector, limit)) = &self.vector_search {
                 if query_vector.len() != self.vault.config.dimensions {
@@ -677,14 +685,27 @@ impl<'a> PipelineBuilder<'a> {
                 } else {
                     None
                 };
-                let text_results = crate::bm25::search_text_with_recency(
+                let mut exact_posting_matches_scope = |id: &EntityId| {
+                    pipeline_candidate_matches_filters_and_gate(
+                        &self.vault.store,
+                        &rtxn,
+                        id,
+                        filter_config,
+                        &mut metadata_cache,
+                        &mut claim_gate,
+                    )
+                };
+                let text_results = crate::bm25::search_text_scoped_with_recency(
                     &self.vault.store,
                     &rtxn,
                     &self.vault.analyzer,
                     &bm25_config,
                     query,
                     channel_limit,
-                    recency,
+                    crate::bm25::Bm25SearchOptions {
+                        recency,
+                        exact_posting_matches_scope: &mut exact_posting_matches_scope,
+                    },
                 )?;
                 add_signal_score_components(
                     &mut signal_components,
@@ -784,6 +805,20 @@ impl<'a> PipelineBuilder<'a> {
                 empty_reason = Some(EmptyReason::AllActivated);
             }
 
+            if self.text_search.is_none()
+                && self.temporal_search.is_none()
+                && let Some(half_life_days) = self.recency_half_life
+            {
+                let recency = crate::bm25::Bm25RecencyConfig::new(half_life_days, started_at);
+                apply_pipeline_recency_boost(
+                    &mut scores,
+                    &self.vault.store,
+                    &rtxn,
+                    recency,
+                    &mut metadata_cache,
+                )?;
+            }
+
             if let Some((explicit_seeds, depth)) = &self.ppr_expand {
                 let mut seen = HashSet::<EntityId>::new();
                 let mut seeds = Vec::<EntityId>::new();
@@ -868,14 +903,6 @@ impl<'a> PipelineBuilder<'a> {
                 0
             };
 
-            let filter_config = PipelineFilterConfig {
-                type_filter: self.type_filter.as_deref(),
-                since_filter: self.since_filter,
-                occurred_range: self.occurred_range,
-                learned_range: self.learned_range,
-                repo_ref_filter: self.repo_ref_filter.as_ref(),
-                project_id_filter: self.project_id_filter.as_deref(),
-            };
             let before_filters = scores.len();
             apply_filters(
                 &mut scores,
@@ -1231,41 +1258,47 @@ fn apply_claim_status_gate(
     let mut kept = Vec::with_capacity(scores.len());
 
     for scored in scores.iter().copied() {
-        // Entities without a parseable envelope are not a claim-status
-        // decision; `apply_filters` drops them downstream exactly as before.
-        let Some(meta) = metadata_cache.get(store, rtxn, &scored.id)? else {
-            kept.push(scored);
-            continue;
-        };
-        if meta.entity_type != ENTITY_TYPE_CLAIM {
-            kept.push(scored);
-            continue;
-        }
-
-        if let Some(decision) = gate.decisions.get(&scored.id) {
-            if decision.is_some() {
-                kept.push(scored);
-            }
-            continue;
-        }
-
-        // Read path allows reserved `edge.*` predicates so stored
-        // provenance Claims gate on their own appr/life/stale like any
-        // other claim instead of failing the decode.
-        let decision = store
-            .entities
-            .get(rtxn, scored.id.as_bytes())?
-            .and_then(|raw| raw.get(ENTITY_METADATA_HEADER_LEN..))
-            .and_then(|body| crate::claim::decode_claim_body(body, true).ok())
-            .filter(claim_surfaceable);
-        if decision.is_some() {
+        if claim_status_gate_allows(store, rtxn, &scored.id, metadata_cache, gate)? {
             kept.push(scored);
         }
-        gate.decisions.insert(scored.id, decision);
     }
 
     *scores = kept;
     Ok(())
+}
+
+fn claim_status_gate_allows(
+    store: &Store,
+    rtxn: &RoTxn<'_>,
+    id: &EntityId,
+    metadata_cache: &mut EntityMetadataCache,
+    gate: &mut ClaimStatusGateCache,
+) -> Result<bool> {
+    // Entities without a parseable envelope are not a claim-status
+    // decision; `apply_filters` drops them downstream exactly as before.
+    let Some(meta) = metadata_cache.get(store, rtxn, id)? else {
+        return Ok(true);
+    };
+    if meta.entity_type != ENTITY_TYPE_CLAIM {
+        return Ok(true);
+    }
+
+    if let Some(decision) = gate.decisions.get(id) {
+        return Ok(decision.is_some());
+    }
+
+    // Read path allows reserved `edge.*` predicates so stored provenance
+    // Claims gate on their own appr/life/stale like any other claim instead
+    // of failing the decode.
+    let decision = store
+        .entities
+        .get(rtxn, id.as_bytes())?
+        .and_then(|raw| raw.get(ENTITY_METADATA_HEADER_LEN..))
+        .and_then(|body| crate::claim::decode_claim_body(body, true).ok())
+        .filter(claim_surfaceable);
+    let allowed = decision.is_some();
+    gate.decisions.insert(*id, decision);
+    Ok(allowed)
 }
 
 /// ARCH-0039 facet filter (its own pipeline stage, ONE-1117): the
@@ -2099,6 +2132,83 @@ fn apply_filters(
     Ok(())
 }
 
+fn pipeline_candidate_matches_filters_and_gate(
+    store: &Store,
+    rtxn: &RoTxn<'_>,
+    id: &EntityId,
+    filters: PipelineFilterConfig<'_>,
+    metadata_cache: &mut EntityMetadataCache,
+    claim_gate: &mut ClaimStatusGateCache,
+) -> Result<bool> {
+    let Some(meta) = metadata_cache.get(store, rtxn, id)? else {
+        return Ok(false);
+    };
+
+    if let Some(types) = filters.type_filter
+        && !types.contains(&meta.entity_type)
+    {
+        return Ok(false);
+    }
+
+    if let Some(timestamp) = filters.since_filter
+        && meta.learned_at < timestamp
+    {
+        return Ok(false);
+    }
+
+    if let Some((start, end)) = filters.occurred_range
+        && !intervals_overlap(meta.occurred_start, meta.occurred_end, start, end)
+    {
+        return Ok(false);
+    }
+
+    if let Some((start, end)) = filters.learned_range
+        && (meta.learned_at < start || meta.learned_at > end)
+    {
+        return Ok(false);
+    }
+
+    if !crate::codebase::codebase_candidate_matches_filters(
+        store,
+        rtxn,
+        id,
+        filters.repo_ref_filter,
+        filters.project_id_filter,
+    )? {
+        return Ok(false);
+    }
+
+    claim_status_gate_allows(store, rtxn, id, metadata_cache, claim_gate)
+}
+
+fn apply_pipeline_recency_boost(
+    scores: &mut [ScoredEntity],
+    store: &Store,
+    rtxn: &RoTxn<'_>,
+    recency: crate::bm25::Bm25RecencyConfig,
+    metadata_cache: &mut EntityMetadataCache,
+) -> Result<()> {
+    if !recency.half_life_days.is_finite()
+        || recency.half_life_days <= 0.0
+        || !recency.boost.is_finite()
+        || recency.boost <= 0.0
+    {
+        return Ok(());
+    }
+
+    let seconds_per_half_life = recency.half_life_days * SECONDS_PER_DAY_F64;
+    for scored in scores {
+        let Some(meta) = metadata_cache.get(store, rtxn, &scored.id)? else {
+            continue;
+        };
+        let age_secs = recency.now_secs.saturating_sub(meta.learned_at) as f64;
+        let freshness = 2.0_f64.powf(-age_secs / seconds_per_half_life);
+        scored.score *= (1.0 + recency.boost * freshness) as f32;
+    }
+
+    Ok(())
+}
+
 fn read_entity_metadata(
     store: &Store,
     rtxn: &RoTxn<'_>,
@@ -2310,9 +2420,22 @@ mod tests {
     }
 
     fn put_vector(vault: &Vault, id: EntityId, vector: [f32; 4]) -> Result<()> {
+        put_vector_at(vault, id, vector, 1)
+    }
+
+    fn put_vector_at(vault: &Vault, id: EntityId, vector: [f32; 4], learned_at: u64) -> Result<()> {
         vault
             .batch()
-            .put(&id, 1, TimeRange { start: 1, end: 1 }, 1, b"payload")
+            .put(
+                &id,
+                1,
+                TimeRange {
+                    start: learned_at,
+                    end: learned_at,
+                },
+                learned_at,
+                b"payload",
+            )
             .vector(&id, &vector)
             .commit()
     }
@@ -3149,6 +3272,68 @@ mod tests {
         let boosted = vault
             .query()
             .search_text("recencyneedle", 2)
+            .boost_recency(0.01)
+            .run()?;
+        assert_eq!(boosted[0].id, fresh);
+        Ok(())
+    }
+
+    #[test]
+    fn exact_out_of_scope_text_hit_does_not_suppress_in_scope_prefix() -> Result<()> {
+        let (_dir, vault) = open_test_vault();
+        let out_of_scope_exact = entity_id(0x10);
+        let in_scope_prefix = entity_id(0x20);
+
+        vault
+            .batch()
+            .put(
+                &out_of_scope_exact,
+                2,
+                TimeRange { start: 1, end: 1 },
+                1,
+                b"payload",
+            )
+            .text(&out_of_scope_exact, &[("body", "scopedprefix")])
+            .put(
+                &in_scope_prefix,
+                1,
+                TimeRange { start: 1, end: 1 },
+                1,
+                b"payload",
+            )
+            .text(&in_scope_prefix, &[("body", "scopedprefixalpha")])
+            .commit()?;
+
+        let results = vault
+            .query()
+            .search_text("scopedprefix", 10)
+            .filter_types(&[1])
+            .run()?;
+
+        assert!(results.iter().any(|entry| entry.id == in_scope_prefix));
+        assert!(!results.iter().any(|entry| entry.id == out_of_scope_exact));
+        Ok(())
+    }
+
+    #[test]
+    fn recency_boost_applies_to_vector_only_pipeline() -> Result<()> {
+        let (_dir, vault) = open_test_vault();
+        let old = entity_id(0x10);
+        let fresh = entity_id(0x20);
+        let now = crate::unix_seconds_now();
+
+        put_vector_at(&vault, old, [1.0, 0.0, 0.0, 0.0], 1)?;
+        put_vector_at(&vault, fresh, [0.99, 0.01, 0.0, 0.0], now)?;
+
+        let baseline = vault
+            .query()
+            .search_vector(&[1.0, 0.0, 0.0, 0.0], 2)
+            .run()?;
+        assert_eq!(baseline[0].id, old);
+
+        let boosted = vault
+            .query()
+            .search_vector(&[1.0, 0.0, 0.0, 0.0], 2)
             .boost_recency(0.01)
             .run()?;
         assert_eq!(boosted[0].id, fresh);

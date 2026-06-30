@@ -177,6 +177,14 @@ struct QueryTerm {
     weight: f64,
 }
 
+pub(crate) struct Bm25SearchOptions<'a, F>
+where
+    F: FnMut(&EntityId) -> Result<bool>,
+{
+    pub(crate) recency: Option<Bm25RecencyConfig>,
+    pub(crate) exact_posting_matches_scope: &'a mut F,
+}
+
 const FINAL_TOKEN_PREFIX_WEIGHT: f64 = 0.5;
 const MAX_FINAL_TOKEN_PREFIX_TERMS: usize = 64;
 
@@ -486,7 +494,9 @@ pub(crate) fn deindex_text(store: &Store, wtxn: &mut RwTxn<'_>, id: &EntityId) -
 fn collect_query_terms(
     store: &Store,
     rtxn: &RoTxn<'_>,
+    query: &str,
     tokens: &[Token],
+    exact_posting_matches_scope: &mut impl FnMut(&EntityId) -> Result<bool>,
 ) -> Result<Vec<QueryTerm>> {
     // Dedupe query terms across channels — one term per unique string
     // (scorer looks up posting list then combines field TFs from the
@@ -497,7 +507,14 @@ fn collect_query_terms(
         insert_query_term(&mut terms, token.term.as_ref().to_owned(), 1.0);
     }
 
-    collect_final_token_prefix_terms(store, rtxn, tokens, &mut terms)?;
+    collect_final_token_prefix_terms(
+        store,
+        rtxn,
+        query.trim_end().len(),
+        tokens,
+        &mut terms,
+        exact_posting_matches_scope,
+    )?;
 
     Ok(terms
         .into_iter()
@@ -508,16 +525,15 @@ fn collect_query_terms(
 fn collect_final_token_prefix_terms(
     store: &Store,
     rtxn: &RoTxn<'_>,
+    trimmed_query_end: usize,
     tokens: &[Token],
     terms: &mut BTreeMap<String, f64>,
+    exact_posting_matches_scope: &mut impl FnMut(&EntityId) -> Result<bool>,
 ) -> Result<()> {
-    let Some(final_byte_end) = tokens.iter().map(|token| token.byte_end).max() else {
-        return Ok(());
-    };
     let prefixes: BTreeSet<String> = tokens
         .iter()
         .filter(|token| {
-            token.byte_end == final_byte_end
+            token.byte_end as usize == trimmed_query_end
                 && !token.term.is_empty()
                 && matches!(token.kind, TokenKind::Word | TokenKind::Numeric)
         })
@@ -525,7 +541,7 @@ fn collect_final_token_prefix_terms(
         .collect();
 
     for prefix in &prefixes {
-        if store.text_postings.get(rtxn, prefix.as_bytes())?.is_some() {
+        if exact_term_has_scoped_posting(store, rtxn, prefix, exact_posting_matches_scope)? {
             return Ok(());
         }
     }
@@ -552,6 +568,25 @@ fn collect_final_token_prefix_terms(
     }
 
     Ok(())
+}
+
+fn exact_term_has_scoped_posting(
+    store: &Store,
+    rtxn: &RoTxn<'_>,
+    term: &str,
+    exact_posting_matches_scope: &mut impl FnMut(&EntityId) -> Result<bool>,
+) -> Result<bool> {
+    let Some(dups) = store.text_postings.get_duplicates(rtxn, term.as_bytes())? else {
+        return Ok(false);
+    };
+    for item in dups {
+        let (_, dup) = item?;
+        let entry = decode_posting_entry(dup)?;
+        if exact_posting_matches_scope(&entry.id)? {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 fn insert_query_term(terms: &mut BTreeMap<String, f64>, term: String, weight: f64) {
@@ -621,6 +656,33 @@ pub(crate) fn search_text_with_recency(
     limit: usize,
     recency: Option<Bm25RecencyConfig>,
 ) -> Result<Vec<ScoredEntity>> {
+    let mut exact_posting_matches_scope = |_id: &EntityId| Ok(true);
+    search_text_scoped_with_recency(
+        store,
+        rtxn,
+        analyzer,
+        config,
+        query,
+        limit,
+        Bm25SearchOptions {
+            recency,
+            exact_posting_matches_scope: &mut exact_posting_matches_scope,
+        },
+    )
+}
+
+pub(crate) fn search_text_scoped_with_recency<F>(
+    store: &Store,
+    rtxn: &RoTxn<'_>,
+    analyzer: &MultilingualAnalyzer,
+    config: &Bm25Config,
+    query: &str,
+    limit: usize,
+    options: Bm25SearchOptions<'_, F>,
+) -> Result<Vec<ScoredEntity>>
+where
+    F: FnMut(&EntityId) -> Result<bool>,
+{
     if limit == 0 {
         return Ok(Vec::new());
     }
@@ -631,7 +693,13 @@ pub(crate) fn search_text_with_recency(
         return Ok(Vec::new());
     }
 
-    let query_terms = collect_query_terms(store, rtxn, &tokens)?;
+    let query_terms = collect_query_terms(
+        store,
+        rtxn,
+        query,
+        &tokens,
+        options.exact_posting_matches_scope,
+    )?;
 
     let total_docs = read_total_docs(store, rtxn)?;
     if total_docs == 0 {
@@ -775,7 +843,7 @@ pub(crate) fn search_text_with_recency(
         }
     }
 
-    apply_recency_blend(store, rtxn, recency, &mut scores)?;
+    apply_recency_blend(store, rtxn, options.recency, &mut scores)?;
 
     let mut ranked: Vec<(EntityId, f64)> = scores.into_iter().collect();
     ranked.sort_by(|a, b| {
@@ -1304,11 +1372,14 @@ mod tests {
 
         let rtxn = vault.store.env.read_txn()?;
         let mut terms = BTreeMap::new();
+        let mut exact_posting_matches_scope = |_id: &EntityId| Ok(true);
         collect_final_token_prefix_terms(
             &vault.store,
             &rtxn,
+            "normprefix".len(),
             &[final_word_token("normprefix")],
             &mut terms,
+            &mut exact_posting_matches_scope,
         )?;
 
         let collected = terms.keys().cloned().collect::<Vec<_>>();
@@ -1335,11 +1406,14 @@ mod tests {
 
         let rtxn = vault.store.env.read_txn()?;
         let mut terms = BTreeMap::new();
+        let mut exact_posting_matches_scope = |_id: &EntityId| Ok(true);
         collect_final_token_prefix_terms(
             &vault.store,
             &rtxn,
+            "capbound".len(),
             &[final_word_token("capbound")],
             &mut terms,
+            &mut exact_posting_matches_scope,
         )?;
 
         let collected = terms.keys().cloned().collect::<Vec<_>>();
@@ -1348,6 +1422,22 @@ mod tests {
             .collect::<Vec<_>>();
         assert_eq!(collected, expected);
         assert!(!terms.contains_key(&cap_prefix_term(MAX_FINAL_TOKEN_PREFIX_TERMS)));
+        Ok(())
+    }
+
+    #[test]
+    fn final_token_prefix_does_not_expand_before_dropped_punctuation() -> Result<()> {
+        let temp_dir = tempfile::tempdir()?;
+        let vault = Vault::open(temp_dir.path(), test_config())?;
+        let widened = EntityId::now();
+
+        put_text_doc(&vault, &widened, "foobarbaz")?;
+
+        let results = vault.search_text("foo.", 10)?;
+        assert!(
+            !contains_id(&results, &widened),
+            "token before trailing punctuation must not be treated as a final prefix"
+        );
         Ok(())
     }
 
