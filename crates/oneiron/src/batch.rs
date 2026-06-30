@@ -7,9 +7,10 @@ pub mod export;
 pub(crate) mod secret_scan;
 
 use heed::RwTxn;
-use xxhash_rust::xxh32::xxh32;
+use xxhash_rust::{xxh3::xxh3_128, xxh32::xxh32};
 
 use crate::Vault;
+use crate::claim::ClaimSubject;
 use crate::error::{Error, Result};
 use crate::limits::{ERR_CHILD_OF_CYCLE_CHECK, MAX_CHILD_OF_CYCLE_TRAVERSAL_STEPS};
 use crate::ppr;
@@ -290,6 +291,29 @@ impl<'a> BatchBuilder<'a> {
             occurred,
             learned_at,
         });
+        self
+    }
+
+    /// Adds a claim candidate and capped prospective-query lexical hints.
+    pub fn claim_candidate_with_lexical_hints(
+        mut self,
+        id: &EntityId,
+        candidate: ClaimCandidate,
+        envelope: &WriteEnvelope,
+        occurred: TimeRange,
+        learned_at: u64,
+        hints: &[&str],
+    ) -> Self {
+        push_claim_candidate_with_lexical_hints(
+            &mut self.ops,
+            &mut self.validation_error,
+            id,
+            candidate,
+            envelope,
+            occurred,
+            learned_at,
+            hints,
+        );
         self
     }
 
@@ -649,6 +673,29 @@ impl<'a> TxnBatchBuilder<'a> {
         self
     }
 
+    /// Adds a claim candidate and capped prospective-query lexical hints.
+    pub fn claim_candidate_with_lexical_hints(
+        mut self,
+        id: &EntityId,
+        candidate: ClaimCandidate,
+        envelope: &WriteEnvelope,
+        occurred: TimeRange,
+        learned_at: u64,
+        hints: &[&str],
+    ) -> Self {
+        push_claim_candidate_with_lexical_hints(
+            &mut self.ops,
+            &mut self.validation_error,
+            id,
+            candidate,
+            envelope,
+            occurred,
+            learned_at,
+            hints,
+        );
+        self
+    }
+
     /// Sync-replay door (replicated flavor of the old internal put path):
     /// engine-internal put for Observer B's CRDT→LMDB rematerialization. It
     /// admits BOTH engine-authored bands that the public [`put`](Self::put)
@@ -816,6 +863,100 @@ fn is_legacy_raw_claim_compatibility_body(body: &crate::claim::ClaimBody) -> boo
         && matches!(body.subject, crate::claim::ClaimSubject::Entity(_))
         && body.approval == crate::claim::ClaimApprovalStatus::Auto
         && body.lifecycle == crate::claim::ClaimLifecycleStatus::Active
+}
+
+#[expect(
+    clippy::too_many_arguments,
+    reason = "batch builder helper mirrors the public candidate API shape"
+)]
+fn push_claim_candidate_with_lexical_hints(
+    ops: &mut Vec<BatchOp>,
+    validation_error: &mut Option<Error>,
+    id: &EntityId,
+    candidate: ClaimCandidate,
+    envelope: &WriteEnvelope,
+    occurred: TimeRange,
+    learned_at: u64,
+    hints: &[&str],
+) {
+    let normalized_hints = match crate::claim::normalize_lexical_query_hints(hints) {
+        Ok(hints) => hints,
+        Err(err) => {
+            if validation_error.is_none() {
+                *validation_error = Some(err);
+            }
+            Vec::new()
+        }
+    };
+
+    ops.push(BatchOp::ClaimCandidate {
+        id: *id,
+        candidate: Box::new(candidate),
+        envelope: envelope.clone(),
+        occurred,
+        learned_at,
+    });
+
+    for (index, hint) in normalized_hints.into_iter().enumerate() {
+        let hint_id = match lexical_query_hint_claim_id(id, index, &hint) {
+            Ok(hint_id) => hint_id,
+            Err(err) => {
+                if validation_error.is_none() {
+                    *validation_error = Some(err);
+                }
+                continue;
+            }
+        };
+        let hint_candidate = ClaimCandidate::new(
+            crate::claim::PREDICATE_LEXICAL_QUERY_HINT,
+            ClaimSubject::Entity(*id),
+            crate::claim::encode_lexical_query_hint_value(id, &hint),
+            1.0,
+        );
+        ops.push(BatchOp::ClaimCandidate {
+            id: hint_id,
+            candidate: Box::new(hint_candidate),
+            envelope: envelope.clone(),
+            occurred,
+            learned_at,
+        });
+        ops.push(BatchOp::Text {
+            id: hint_id,
+            fields: vec![("query_hint".to_owned(), hint)],
+        });
+    }
+}
+
+fn lexical_query_hint_claim_id(
+    source_claim_id: &EntityId,
+    index: usize,
+    hint: &str,
+) -> Result<EntityId> {
+    let mut material = Vec::with_capacity(
+        b"oneiron.lexical-query-hint.v1".len()
+            + ENTITY_ID_LEN
+            + std::mem::size_of::<u64>()
+            + std::mem::size_of::<u64>()
+            + hint.len(),
+    );
+    material.extend_from_slice(b"oneiron.lexical-query-hint.v1");
+    material.extend_from_slice(source_claim_id.as_bytes());
+    material.extend_from_slice(&(index as u64).to_le_bytes());
+    material.extend_from_slice(&(hint.len() as u64).to_le_bytes());
+    material.extend_from_slice(hint.as_bytes());
+
+    let mut bytes = xxh3_128(&material).to_le_bytes();
+    bytes[..2].copy_from_slice(&crate::claim::LEXICAL_QUERY_HINT_ID_PREFIX);
+    bytes[ENTITY_ID_LEN - 1] &= 0x7F;
+    match EntityId::from_bytes(bytes) {
+        Ok(id) => Ok(id),
+        Err(_) => {
+            bytes[0] = 0x42;
+            bytes[ENTITY_ID_LEN - 1] = 0x24;
+            EntityId::from_bytes(bytes)
+                .map_err(|_| Error::InvariantViolation("lexical query hint id derivation failed"))
+        }
+    }
 }
 
 /// Applies a list of batch operations to an LMDB write transaction.
@@ -2831,6 +2972,126 @@ mod tests {
             &provenance
         );
         assert_eq!(vault.claims_for_subject(&subject)?, vec![claim]);
+        Ok(())
+    }
+
+    #[test]
+    fn claim_candidate_lexical_hints_write_read_and_search_source_claim() -> Result<()> {
+        let (_dir, vault) = open_test_vault();
+        let actor = EntityId::now();
+        let subject = EntityId::now();
+        let occurred = test_time_range(1, 1);
+        vault.put_entity(&actor, ENTITY_TYPE_PERSON, occurred, 1, b"actor")?;
+        vault.put_entity(&subject, ENTITY_TYPE_PERSON, occurred, 1, b"subject")?;
+
+        let claim = EntityId::now();
+        let envelope = test_write_envelope(actor)?;
+        let candidate = ClaimCandidate::new(
+            "profile.preference",
+            ClaimSubject::Entity(subject),
+            Value::from("sencha"),
+            0.9,
+        );
+
+        vault
+            .batch()
+            .claim_candidate_with_lexical_hints(
+                &claim,
+                candidate,
+                &envelope,
+                test_time_range(10, 10),
+                11,
+                &[
+                    "green tea preferences",
+                    "  matcha order history  ",
+                    "green tea preferences",
+                ],
+            )
+            .commit()?;
+
+        let hint_claims = vault.claims_for_subject(&claim)?;
+        assert_eq!(hint_claims.len(), 2);
+        let mut stored_queries = Vec::new();
+        for hint_claim in &hint_claims {
+            let stored = vault
+                .get_claim(hint_claim)?
+                .expect("lexical hint claim stored");
+            assert_eq!(stored.predicate, crate::claim::PREDICATE_LEXICAL_QUERY_HINT);
+            assert_eq!(stored.source, Some(ClaimSource::UserStated));
+            assert!(stored.evidence.is_some());
+            let value = crate::claim::decode_lexical_query_hint_value(&stored.value)?;
+            assert_eq!(value.target, claim);
+            stored_queries.push(value.query);
+        }
+        stored_queries.sort();
+        assert_eq!(
+            stored_queries,
+            vec!["green tea preferences", "matcha order history"]
+        );
+
+        let hits = vault.search_text("matcha order", 10)?;
+        assert_eq!(hits.first().map(|hit| hit.id), Some(claim));
+        assert!(
+            !hits.iter().any(|hit| hint_claims.contains(&hit.id)),
+            "lexical hint docs must collapse to the source claim"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn claim_candidate_lexical_hints_are_capped() -> Result<()> {
+        let (_dir, vault) = open_test_vault();
+        let actor = EntityId::now();
+        let subject = EntityId::now();
+        let occurred = test_time_range(1, 1);
+        vault.put_entity(&actor, ENTITY_TYPE_PERSON, occurred, 1, b"actor")?;
+        vault.put_entity(&subject, ENTITY_TYPE_PERSON, occurred, 1, b"subject")?;
+
+        let claim = EntityId::now();
+        let envelope = test_write_envelope(actor)?;
+        let candidate = ClaimCandidate::new(
+            "profile.preference",
+            ClaimSubject::Entity(subject),
+            Value::from("sencha"),
+            0.9,
+        );
+        let hints = [
+            "hint zero",
+            "hint one",
+            "hint two",
+            "hint three",
+            "hint four",
+            "hint five",
+            "hint six",
+            "hint seven",
+            "hint eight",
+            "hint nine",
+        ];
+
+        vault
+            .batch()
+            .claim_candidate_with_lexical_hints(
+                &claim,
+                candidate,
+                &envelope,
+                test_time_range(10, 10),
+                11,
+                &hints,
+            )
+            .commit()?;
+
+        let hint_claims = vault.claims_for_subject(&claim)?;
+        assert_eq!(
+            hint_claims.len(),
+            crate::claim::MAX_LEXICAL_QUERY_HINTS_PER_CLAIM
+        );
+        assert!(
+            vault
+                .search_text("seven", 10)?
+                .iter()
+                .any(|hit| hit.id == claim)
+        );
+        assert!(vault.search_text("nine", 10)?.is_empty());
         Ok(())
     }
 
