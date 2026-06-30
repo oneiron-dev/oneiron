@@ -3410,14 +3410,15 @@ async fn core_query(
 ) -> Result<Json<SearchResponse>, EnvelopedApiError> {
     auth.require(CoreScope::Read)?;
     let req = json_payload(payload)?;
-    validate_core_query_seeds(req.query.as_deref(), req.query_vector.as_deref())?;
+    let query = non_empty_query(req.query.as_deref());
+    validate_core_query_seeds(query, req.query_vector.as_deref())?;
 
     let view = req.view.unwrap_or(View::Summary);
     let count_mode = req.count_mode.for_search_response();
     let fetch_limit = search_fetch_limit(count_mode, req.limit);
     let results = run_core_query(
         &server.vault,
-        req.query.as_deref(),
+        query,
         req.query_vector.as_deref(),
         fetch_limit,
     )
@@ -3647,7 +3648,8 @@ async fn core_context_pack(
 ) -> Result<Json<CoreContextPackResponse>, EnvelopedApiError> {
     auth.require(CoreScope::Read)?;
     let req = json_payload(payload)?;
-    validate_core_query_seeds(req.query.as_deref(), req.query_vector.as_deref())?;
+    let query = non_empty_query(req.query.as_deref());
+    validate_core_query_seeds(query, req.query_vector.as_deref())?;
     let (edge_hop, edge_hop_field, max_neighbors, max_neighbors_field) =
         resolved_context_pack_depth(req.depth.as_ref(), req.edge_hop, req.max_neighbors);
     validate_context_pack_depth(edge_hop, edge_hop_field, max_neighbors, max_neighbors_field)?;
@@ -3684,7 +3686,7 @@ async fn core_context_pack(
         .max_neighbors(max_neighbors)
         .include_vectors(include_vectors)
         .field_profile(projection.profile);
-    if let Some(query) = req.query.as_deref() {
+    if let Some(query) = query {
         builder = builder.search_text(query, req.limit);
     }
     if let Some(vector) = req.query_vector.as_deref() {
@@ -3986,8 +3988,12 @@ fn core_text_fields(text: Option<&[CoreTextField]>, body: &Value) -> Vec<(String
         .collect()
 }
 
+fn non_empty_query(query: Option<&str>) -> Option<&str> {
+    query.map(str::trim).filter(|query| !query.is_empty())
+}
+
 fn validate_core_query_seeds(query: Option<&str>, vector: Option<&[f32]>) -> Result<(), ApiError> {
-    if query.is_none_or(|query| query.trim().is_empty()) && vector.is_none() {
+    if non_empty_query(query).is_none() && vector.is_none() {
         return Err(ApiError::bad_request(
             "query or query_vector is required",
             Some("query"),
@@ -5482,7 +5488,8 @@ async fn context_pack(
 ) -> Result<Json<CoreContextPackResponse>, ApiError> {
     check_api_auth(&headers, &server.config)?;
     let req = json_payload(payload)?;
-    validate_core_query_seeds(req.query.as_deref(), req.query_vector.as_deref())?;
+    let query = non_empty_query(req.query.as_deref());
+    validate_core_query_seeds(query, req.query_vector.as_deref())?;
     let (edge_hop, edge_hop_field, max_neighbors, max_neighbors_field) =
         resolved_context_pack_depth(req.depth.as_ref(), req.edge_hop, req.max_neighbors);
     validate_context_pack_depth(edge_hop, edge_hop_field, max_neighbors, max_neighbors_field)?;
@@ -5520,7 +5527,7 @@ async fn context_pack(
         .max_neighbors(max_neighbors)
         .include_vectors(include_vectors)
         .field_profile(projection.profile);
-    if let Some(query) = req.query.as_deref() {
+    if let Some(query) = query {
         builder = builder.search_text(query, req.limit);
     }
     if let Some(vector) = req.query_vector.as_deref() {
@@ -9568,6 +9575,17 @@ mod tests {
         assert_eq!(evidence.retrieval_run_id, None);
         assert!(evidence.result_ids.is_empty());
         assert!(evidence.scores.is_empty());
+    }
+
+    #[test]
+    fn non_empty_query_trims_and_filters_blank_values() {
+        assert_eq!(non_empty_query(None), None);
+        assert_eq!(non_empty_query(Some("")), None);
+        assert_eq!(non_empty_query(Some("   \n\t  ")), None);
+        assert_eq!(
+            non_empty_query(Some("  recent decisions  ")),
+            Some("recent decisions")
+        );
     }
 
     #[tokio::test]
