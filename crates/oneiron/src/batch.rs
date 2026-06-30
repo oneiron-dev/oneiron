@@ -1922,11 +1922,6 @@ fn apply_put(
                     &target_raw[ENTITY_METADATA_HEADER_LEN..],
                     true,
                 ) else {
-                    if replicated {
-                        return Err(Error::InvalidClaimBody(
-                            "lexical query hint target must be claim",
-                        ));
-                    }
                     return Err(Error::InvalidClaimBody(
                         "lexical query hint target must be claim",
                     ));

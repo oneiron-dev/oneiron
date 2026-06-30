@@ -1118,20 +1118,26 @@ fn resolve_lexical_query_hint_record(
     if header.entity_type != crate::types::ENTITY_TYPE_CLAIM {
         return Ok(LexicalQueryHintResolution::NonHint);
     }
-    let Ok(body) =
-        crate::claim::decode_claim_body(&raw[crate::batch::ENTITY_METADATA_HEADER_LEN..], true)
-    else {
+    if raw.len() == crate::batch::ENTITY_METADATA_HEADER_LEN {
         return Ok(LexicalQueryHintResolution::DeadHint);
-    };
+    }
+    let body =
+        crate::claim::decode_claim_body(&raw[crate::batch::ENTITY_METADATA_HEADER_LEN..], true)
+            .map_err(|_| corrupted("lexical query hint claim"))?;
     if body.predicate != crate::claim::PREDICATE_LEXICAL_QUERY_HINT {
         return Ok(LexicalQueryHintResolution::NonHint);
     }
-    let Some(target) = crate::claim::lexical_query_hint_target(&body)? else {
-        return Ok(LexicalQueryHintResolution::DeadHint);
-    };
     if body.lifecycle != crate::claim::ClaimLifecycleStatus::Active {
         return Ok(LexicalQueryHintResolution::DeadHint);
     }
+    if !body.stale {
+        return Ok(LexicalQueryHintResolution::DeadHint);
+    }
+    let Some(target) = crate::claim::lexical_query_hint_target(&body)
+        .map_err(|_| corrupted("lexical query hint claim"))?
+    else {
+        return Ok(LexicalQueryHintResolution::DeadHint);
+    };
     Ok(LexicalQueryHintResolution::Live { target })
 }
 
@@ -1509,6 +1515,10 @@ mod tests {
 
     fn seed_raw_claim(vault: &Vault, id: &EntityId, body: ClaimBody) -> Result<()> {
         let data = crate::claim::encode_claim_body(&body)?;
+        seed_raw_claim_bytes(vault, id, &data)
+    }
+
+    fn seed_raw_claim_bytes(vault: &Vault, id: &EntityId, data: &[u8]) -> Result<()> {
         let header = crate::batch::EntityMetadataHeader {
             entity_type: ENTITY_TYPE_CLAIM,
             occurred_start: 1,
@@ -1520,7 +1530,7 @@ mod tests {
         payload.extend_from_slice(&header.occurred_start.to_be_bytes());
         payload.extend_from_slice(&header.occurred_end.to_be_bytes());
         payload.extend_from_slice(&header.learned_at.to_be_bytes());
-        payload.extend_from_slice(&data);
+        payload.extend_from_slice(data);
 
         let mut wtxn = vault.store.env.write_txn()?;
         vault
@@ -1756,6 +1766,78 @@ mod tests {
 
         assert_eq!(hits.first().map(|hit| hit.id), Some(live));
         assert!(!hits.iter().any(|hit| hit.id == dead_hint));
+        Ok(())
+    }
+
+    #[test]
+    fn malformed_non_empty_lexical_hint_claim_posting_fails_closed() -> Result<()> {
+        let temp_dir = tempfile::tempdir()?;
+        let vault = Vault::open(temp_dir.path(), test_config())?;
+        let hint = lh_prefixed_id(0x63)?;
+
+        seed_raw_claim_bytes(&vault, &hint, b"not-msgpack")?;
+        vault
+            .batch()
+            .text(&hint, &[("query_hint", "malformedhintprobe")])
+            .commit()?;
+
+        let err = vault
+            .search_text("malformedhintprobe", 10)
+            .expect_err("malformed non-empty lexical hint rows must not be hidden");
+        assert_matches!(err, Error::CorruptedIndex("lexical query hint claim"));
+        Ok(())
+    }
+
+    #[test]
+    fn header_only_lexical_hint_claim_posting_is_dead_not_corrupt() -> Result<()> {
+        let temp_dir = tempfile::tempdir()?;
+        let vault = Vault::open(temp_dir.path(), test_config())?;
+        let hint = lh_prefixed_id(0x64)?;
+
+        seed_raw_claim_bytes(&vault, &hint, &[])?;
+        vault
+            .batch()
+            .text(&hint, &[("query_hint", "headeronlyhintprobe")])
+            .commit()?;
+
+        let hits = vault.search_text("headeronlyhintprobe", 10)?;
+        assert!(hits.is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn non_stale_lexical_hint_claim_posting_does_not_collapse_to_target() -> Result<()> {
+        let temp_dir = tempfile::tempdir()?;
+        let vault = Vault::open(temp_dir.path(), test_config())?;
+        let target = EntityId::now();
+        let hint = lh_prefixed_id(0x65)?;
+
+        let target_body = ClaimBody::new(
+            "profile.preference",
+            crate::claim::ClaimSubject::Entity(EntityId::now()),
+            Value::from("sencha"),
+            1.0,
+            ClaimApprovalStatus::Approved,
+            ClaimLifecycleStatus::Active,
+        );
+        seed_raw_claim(&vault, &target, target_body)?;
+
+        let body = ClaimBody::new(
+            crate::claim::PREDICATE_LEXICAL_QUERY_HINT,
+            crate::claim::ClaimSubject::Entity(target),
+            crate::claim::encode_lexical_query_hint_value(&target, "nonstalehintprobe"),
+            1.0,
+            ClaimApprovalStatus::Approved,
+            ClaimLifecycleStatus::Active,
+        );
+        seed_raw_claim(&vault, &hint, body)?;
+        vault
+            .batch()
+            .text(&hint, &[("query_hint", "nonstalehintprobe")])
+            .commit()?;
+
+        let hits = vault.search_text("nonstalehintprobe", 10)?;
+        assert!(hits.is_empty());
         Ok(())
     }
 
