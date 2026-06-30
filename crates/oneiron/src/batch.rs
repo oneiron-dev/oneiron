@@ -601,9 +601,14 @@ impl<'a> BatchBuilder<'a> {
         if let Some(err) = self.validation_error {
             return Err(err);
         }
-        if contains_text_op(&self.ops) {
+        let text_index_trusted = if contains_text_op(&self.ops) {
             self.vault.ensure_text_index_trusted()?;
-        }
+            true
+        } else {
+            self.vault
+                .text_index_trusted
+                .load(std::sync::atomic::Ordering::Acquire)
+        };
         let mut wtxn = self.vault.store.env.write_txn()?;
 
         apply_ops(
@@ -612,6 +617,7 @@ impl<'a> BatchBuilder<'a> {
             &self.vault.analyzer,
             &mut wtxn,
             self.ops,
+            text_index_trusted,
         )?;
         wtxn.commit()?;
         Ok(())
@@ -847,15 +853,21 @@ impl<'a> TxnBatchBuilder<'a> {
         if let Some(err) = self.validation_error {
             return Err(err);
         }
-        if contains_text_op(&self.ops) {
+        let text_index_trusted = if contains_text_op(&self.ops) {
             self.vault.ensure_text_index_trusted()?;
-        }
+            true
+        } else {
+            self.vault
+                .text_index_trusted
+                .load(std::sync::atomic::Ordering::Acquire)
+        };
         apply_ops(
             &self.vault.store,
             &self.vault.config,
             &self.vault.analyzer,
             wtxn,
             self.ops,
+            text_index_trusted,
         )
     }
 }
@@ -1005,14 +1017,19 @@ fn lexical_query_hint_target_is_ready(
         && body.lifecycle == crate::claim::ClaimLifecycleStatus::Active)
 }
 
+struct LexicalHintTextIndexing<'a> {
+    analyzer: &'a crate::analyzer::MultilingualAnalyzer,
+    manifest_checked: &'a mut bool,
+    trusted: bool,
+}
+
 fn materialize_lexical_query_hint_text_if_target_ready(
     store: &Store,
     wtxn: &mut RwTxn<'_>,
-    analyzer: &crate::analyzer::MultilingualAnalyzer,
+    text_indexing: &mut LexicalHintTextIndexing<'_>,
     hint_id: EntityId,
     target: &EntityId,
     query_hint: String,
-    text_manifest_checked: &mut bool,
 ) -> Result<bool> {
     if !lexical_query_hint_target_is_ready(store, wtxn, target)? {
         return Ok(false);
@@ -1034,14 +1051,23 @@ fn materialize_lexical_query_hint_text_if_target_ready(
     ppr::invalidate_ppr_for_edge(store, wtxn, &hint_id, target)?;
 
     if store.text_forward.get(wtxn, hint_id.as_bytes())?.is_none() {
-        if !*text_manifest_checked {
-            crate::vault::ensure_text_index_manifest_matches_wtxn(store, wtxn, analyzer)?;
-            *text_manifest_checked = true;
+        if !text_indexing.trusted {
+            return Err(Error::CorruptedIndex(
+                "text index handshake bypassed on populated index",
+            ));
+        }
+        if !*text_indexing.manifest_checked {
+            crate::vault::ensure_text_index_manifest_matches_wtxn(
+                store,
+                wtxn,
+                text_indexing.analyzer,
+            )?;
+            *text_indexing.manifest_checked = true;
         }
         crate::bm25::index_text(
             store,
             wtxn,
-            analyzer,
+            text_indexing.analyzer,
             &hint_id,
             &[("query_hint".to_owned(), query_hint)],
         )?;
@@ -1052,9 +1078,8 @@ fn materialize_lexical_query_hint_text_if_target_ready(
 fn materialize_lexical_query_hints_for_target(
     store: &Store,
     wtxn: &mut RwTxn<'_>,
-    analyzer: &crate::analyzer::MultilingualAnalyzer,
+    text_indexing: &mut LexicalHintTextIndexing<'_>,
     target: &EntityId,
-    text_manifest_checked: &mut bool,
 ) -> Result<bool> {
     let mut had_graph_mutation = false;
     for hint_id in legacy_lexical_query_hint_claim_ids_for_target(store, wtxn, target)? {
@@ -1065,11 +1090,10 @@ fn materialize_lexical_query_hints_for_target(
         if materialize_lexical_query_hint_text_if_target_ready(
             store,
             wtxn,
-            analyzer,
+            text_indexing,
             hint_id,
             target,
             hint.query,
-            text_manifest_checked,
         )? {
             had_graph_mutation = true;
         }
@@ -1084,6 +1108,7 @@ pub(crate) fn apply_ops(
     analyzer: &crate::analyzer::MultilingualAnalyzer,
     wtxn: &mut RwTxn<'_>,
     ops: Vec<BatchOp>,
+    text_index_trusted: bool,
 ) -> Result<()> {
     secret_scan::scan_batch_ops(&ops)?;
     let child_of_overlay = ChildOfBatchOverlay::from_ops(&ops);
@@ -1160,30 +1185,55 @@ pub(crate) fn apply_ops(
                     pending_embedding_tokens_written.remove(&id);
                 }
                 had_vector_mutation |= applied.had_vector_mutation;
+                if entity_type == crate::types::ENTITY_TYPE_CLAIM
+                    && !(allow_maintenance && allow_reserved_predicate)
+                    && !applied.is_lexical_query_hint_claim
+                {
+                    let deleted = delete_lexical_query_hint_claims_for_target(
+                        store,
+                        wtxn,
+                        &id,
+                        &HashSet::new(),
+                    )?;
+                    for (deleted_id, neighbors) in &deleted.deleted {
+                        pending_embedding_tokens_written.remove(deleted_id);
+                        ppr::invalidate_ppr_for_delete(store, wtxn, deleted_id, neighbors)?;
+                    }
+                    had_graph_mutation |= deleted.had_graph_mutation;
+                    had_vector_mutation |= deleted.had_vector;
+                }
                 if let Some((target, query_hint)) = lexical_query_hint_for_replayed_put(
                     &id,
                     entity_type,
                     allow_maintenance && allow_reserved_predicate,
                     &data,
                 )? {
+                    let mut text_indexing = LexicalHintTextIndexing {
+                        analyzer,
+                        manifest_checked: &mut text_manifest_checked,
+                        trusted: text_index_trusted,
+                    };
                     let materialized = materialize_lexical_query_hint_text_if_target_ready(
                         store,
                         wtxn,
-                        analyzer,
+                        &mut text_indexing,
                         id,
                         &target,
                         query_hint,
-                        &mut text_manifest_checked,
                     )?;
                     had_graph_mutation |= materialized;
                 }
                 if entity_type == crate::types::ENTITY_TYPE_CLAIM {
+                    let mut text_indexing = LexicalHintTextIndexing {
+                        analyzer,
+                        manifest_checked: &mut text_manifest_checked,
+                        trusted: text_index_trusted,
+                    };
                     let materialized = materialize_lexical_query_hints_for_target(
                         store,
                         wtxn,
-                        analyzer,
+                        &mut text_indexing,
                         &id,
-                        &mut text_manifest_checked,
                     )?;
                     had_graph_mutation |= materialized;
                 }
@@ -1327,6 +1377,11 @@ pub(crate) fn apply_ops(
                 had_graph_mutation = true;
             }
             BatchOp::Text { id, fields } => {
+                if !text_index_trusted {
+                    return Err(Error::CorruptedIndex(
+                        "text index handshake bypassed on populated index",
+                    ));
+                }
                 if !text_manifest_checked {
                     crate::vault::ensure_text_index_manifest_matches_wtxn(store, wtxn, analyzer)?;
                     text_manifest_checked = true;
@@ -1786,6 +1841,7 @@ struct AppliedPut {
     pending_embedding_token: Option<Vec<u8>>,
     cleared_pending_embedding: bool,
     had_vector_mutation: bool,
+    is_lexical_query_hint_claim: bool,
 }
 
 #[expect(
@@ -2071,6 +2127,7 @@ fn apply_put(
         pending_embedding_token,
         cleared_pending_embedding,
         had_vector_mutation,
+        is_lexical_query_hint_claim,
     })
 }
 
@@ -3732,6 +3789,71 @@ mod tests {
     }
 
     #[test]
+    fn lexical_hint_claim_of_edges_do_not_dilute_ppr_claim_neighbors() -> Result<()> {
+        let (_dir, vault) = open_test_vault();
+        let actor = EntityId::now();
+        let subject = EntityId::now();
+        let occurred = test_time_range(1, 1);
+        vault.put_entity(&actor, ENTITY_TYPE_PERSON, occurred, 1, b"actor")?;
+        vault.put_entity(&subject, ENTITY_TYPE_PERSON, occurred, 1, b"subject")?;
+
+        let claim = EntityId::now();
+        let envelope = test_write_envelope(actor)?;
+        let candidate = ClaimCandidate::new(
+            "profile.preference",
+            ClaimSubject::Entity(subject),
+            Value::from("sencha"),
+            0.9,
+        );
+        vault
+            .batch()
+            .claim_candidate_with_lexical_hints(
+                &claim,
+                candidate,
+                &envelope,
+                test_time_range(10, 10),
+                11,
+                &["ppr synthetic one", "ppr synthetic two"],
+            )
+            .commit()?;
+        let hint_claims = vault.claims_for_subject(&claim)?;
+        assert_eq!(hint_claims.len(), 2);
+
+        let real_neighbor = EntityId::now();
+        let real_neighbor_body = ClaimBody::new(
+            "profile.related",
+            ClaimSubject::Entity(claim),
+            Value::from("real ppr neighbor"),
+            0.9,
+            ClaimApprovalStatus::Approved,
+            ClaimLifecycleStatus::Active,
+        );
+        seed_raw_claim_record(&vault, &real_neighbor, real_neighbor_body)?;
+        seed_claim_of_edge(&vault, &real_neighbor, &claim)?;
+
+        let rtxn = vault.store.env.read_txn()?;
+        let scores = crate::ppr::ppr_compute(&vault.store, &rtxn, &[claim], 1, 0.15)?;
+        let score_for = |id: EntityId| -> f32 {
+            scores
+                .iter()
+                .find(|scored| scored.id == id)
+                .map_or(0.0, |scored| scored.score)
+        };
+        assert!(
+            score_for(real_neighbor) > 0.84,
+            "real ClaimOf neighbor should receive the full inbound ClaimOf mass"
+        );
+        for hint in hint_claims {
+            assert_eq!(
+                score_for(hint),
+                0.0,
+                "lexical hint ClaimOf rows must not receive PPR mass"
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
     fn claim_candidate_lexical_hints_bypass_hint_policy_gate() -> Result<()> {
         let (_dir, vault) = open_test_vault();
         seed_policy_manifest_with_critical_defaults(&vault)?;
@@ -3894,6 +4016,62 @@ mod tests {
         assert!(vault.get_claim(&live_hint)?.is_none());
         assert!(vault.claims_for_subject(&claim)?.is_empty());
         assert!(vault.search_text("liveuniquebeta", 10)?.is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn local_raw_claim_put_removes_lexical_hint_side_records() -> Result<()> {
+        let (_dir, vault) = open_test_vault();
+        let actor = EntityId::now();
+        let subject = EntityId::now();
+        let occurred = test_time_range(1, 1);
+        vault.put_entity(&actor, ENTITY_TYPE_PERSON, occurred, 1, b"actor")?;
+        vault.put_entity(&subject, ENTITY_TYPE_PERSON, occurred, 1, b"subject")?;
+
+        let claim = EntityId::now();
+        let envelope = test_write_envelope(actor)?;
+        let candidate = ClaimCandidate::new(
+            "profile.preference",
+            ClaimSubject::Entity(subject),
+            Value::from("sencha"),
+            0.9,
+        );
+        vault
+            .batch()
+            .claim_candidate_with_lexical_hints(
+                &claim,
+                candidate,
+                &envelope,
+                test_time_range(10, 10),
+                11,
+                &["rawputretiredunique"],
+            )
+            .commit()?;
+
+        let hint = lexical_query_hint_claim_id(&claim, "rawputretiredunique")?;
+        assert!(vault.get_claim(&hint)?.is_some());
+        assert_eq!(
+            vault
+                .search_text("rawputretiredunique", 10)?
+                .first()
+                .map(|hit| hit.id),
+            Some(claim)
+        );
+
+        let replacement = ClaimBody::new(
+            "profile.preference",
+            ClaimSubject::Entity(subject),
+            Value::from("gyokuro"),
+            0.9,
+            ClaimApprovalStatus::Approved,
+            ClaimLifecycleStatus::Active,
+        );
+        vault.put_claim(&claim, &replacement, test_time_range(12, 12), 13)?;
+
+        assert!(vault.get_claim(&hint)?.is_none());
+        assert!(vault.claims_for_subject(&claim)?.is_empty());
+        assert!(vault.search_text("rawputretiredunique", 10)?.is_empty());
+        assert_eq!(vault.claims_for_subject(&subject)?, vec![claim]);
         Ok(())
     }
 
@@ -4107,6 +4285,7 @@ mod tests {
                 allow_maintenance: true,
                 allow_reserved_predicate: true,
             }],
+            true,
         )
         .expect_err("self-target lexical hints must reject");
         assert_matches!(err, Error::InvalidClaimBody(_));
@@ -4160,6 +4339,7 @@ mod tests {
                 allow_maintenance: true,
                 allow_reserved_predicate: true,
             }],
+            true,
         )
         .expect_err("lexical hints targeting synthetic hints must reject");
         assert_matches!(err, Error::InvalidClaimBody(_));
@@ -4206,6 +4386,7 @@ mod tests {
                 allow_maintenance: true,
                 allow_reserved_predicate: true,
             }],
+            true,
         )
         .expect_err("lexical hints must target claim records");
         assert_matches!(err, Error::InvalidClaimBody(_));
@@ -4319,6 +4500,7 @@ mod tests {
                 allow_maintenance: true,
                 allow_reserved_predicate: true,
             }],
+            true,
         )?;
         wtxn.commit()?;
 
@@ -4402,6 +4584,7 @@ mod tests {
                     allow_reserved_predicate: true,
                 },
             ],
+            true,
         )?;
         wtxn.commit()?;
 
@@ -4409,6 +4592,122 @@ mod tests {
         assert_eq!(
             vault.search_text(query, 10)?.first().map(|hit| hit.id),
             Some(claim)
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn deferred_lexical_hint_materialization_fails_closed_when_text_index_untrusted() -> Result<()>
+    {
+        let dir = tempfile::tempdir()?;
+        let subject = EntityId::now();
+        let claim = EntityId::from_bytes([0x7B; ENTITY_ID_LEN])
+            .map_err(|_| Error::InvariantViolation("invalid test claim id"))?;
+        let query = "deferred trust replay lexical hint";
+        let hint = lexical_query_hint_claim_id(&claim, query)?;
+
+        let mut hint_body = ClaimBody::new(
+            crate::claim::PREDICATE_LEXICAL_QUERY_HINT,
+            ClaimSubject::Entity(claim),
+            crate::claim::encode_lexical_query_hint_value(&claim, query),
+            1.0,
+            ClaimApprovalStatus::Approved,
+            ClaimLifecycleStatus::Active,
+        );
+        hint_body.stale = true;
+        let hint_data = crate::claim::encode_claim_body(&hint_body)?;
+
+        let claim_body = ClaimBody::new(
+            "profile.preference",
+            ClaimSubject::Entity(subject),
+            Value::from("sencha"),
+            0.9,
+            ClaimApprovalStatus::Approved,
+            ClaimLifecycleStatus::Active,
+        );
+        let claim_data = crate::claim::encode_claim_body(&claim_body)?;
+
+        {
+            let vault = Vault::open(dir.path(), test_config())?;
+            vault
+                .batch()
+                .put(
+                    &subject,
+                    ENTITY_TYPE_PERSON,
+                    test_time_range(1, 1),
+                    1,
+                    b"subject",
+                )
+                .text(&subject, &[("body", "trusted seed text")])
+                .commit()?;
+
+            let mut wtxn = vault.store.env.write_txn()?;
+            apply_ops(
+                &vault.store,
+                &vault.config,
+                &vault.analyzer,
+                &mut wtxn,
+                vec![BatchOp::Put {
+                    id: hint,
+                    entity_type: ENTITY_TYPE_CLAIM,
+                    occurred: test_time_range(20, 20),
+                    learned_at: 21,
+                    data: hint_data,
+                    allow_maintenance: true,
+                    allow_reserved_predicate: true,
+                }],
+                true,
+            )?;
+            wtxn.commit()?;
+
+            let rtxn = vault.store.env.read_txn()?;
+            assert!(
+                vault
+                    .store
+                    .text_forward
+                    .get(&rtxn, hint.as_bytes())?
+                    .is_none(),
+                "missing-target replicated hint must defer text indexing"
+            );
+        }
+
+        let mut cfg = test_config();
+        cfg.skip_text_index_manifest_check = true;
+        let vault = Vault::open(dir.path(), cfg)?;
+        let mut wtxn = vault.store.env.write_txn()?;
+        let err = apply_ops(
+            &vault.store,
+            &vault.config,
+            &vault.analyzer,
+            &mut wtxn,
+            vec![BatchOp::Put {
+                id: claim,
+                entity_type: ENTITY_TYPE_CLAIM,
+                occurred: test_time_range(30, 30),
+                learned_at: 31,
+                data: claim_data,
+                allow_maintenance: true,
+                allow_reserved_predicate: true,
+            }],
+            false,
+        )
+        .expect_err("target-only replay must not index deferred hints while untrusted");
+        assert_matches!(err, Error::CorruptedIndex(_));
+        drop(wtxn);
+
+        let rtxn = vault.store.env.read_txn()?;
+        assert!(
+            vault
+                .store
+                .text_forward
+                .get(&rtxn, hint.as_bytes())?
+                .is_none(),
+            "failed deferred materialization must leave hint text unindexed"
+        );
+        drop(rtxn);
+        assert!(
+            vault.get_claim(&claim)?.is_none(),
+            "failed target replay transaction must not commit the target claim"
         );
         Ok(())
     }
@@ -5536,6 +5835,7 @@ mod tests {
                     vad: Vad::NEUTRAL,
                     provenance: None,
                 }],
+                true,
             )
         })?;
 
