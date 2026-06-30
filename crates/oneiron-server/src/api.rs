@@ -2902,6 +2902,7 @@ async fn list_core_conversation_turns(
         (status = 401, description = "Missing or invalid core auth.", body = ApiErrorEnvelope, content_type = "application/json"),
         (status = 403, description = "Core token lacks core:write.", body = ApiErrorEnvelope, content_type = "application/json"),
         (status = 404, description = "Conversation was not found.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 409, description = "Child-of constraints rejected the turn create request; response uses INVALID_STATE.", body = ApiErrorEnvelope, content_type = "application/json"),
         (status = 500, description = "Turn create failed.", body = ApiErrorEnvelope, content_type = "application/json")
     )
 )]
@@ -3755,7 +3756,7 @@ impl TurnVadAnnotateResponse {
         (
             status = 409,
             description = "Active Gate policy rejected the VAD annotation write; response uses INVALID_STATE with Gate outcome and reason codes.",
-            body = ApiError,
+            body = ApiErrorEnvelope,
             content_type = "application/json"
         ),
         (
@@ -4895,6 +4896,38 @@ mod tests {
     }
 
     #[test]
+    fn v1_core_openapi_documents_invalid_state_envelopes() {
+        let spec = generated_spec();
+        let turn_create_post_responses =
+            spec["paths"]["/v1/core/conversations/{conversation_id}/turns"]["post"]["responses"]
+                .as_object()
+                .expect("turn create POST responses object");
+        assert!(
+            turn_create_post_responses.contains_key("409"),
+            "turn create POST must document INVALID_STATE conflict responses"
+        );
+        assert_eq!(
+            turn_create_post_responses["409"]["content"]["application/json"]["schema"]["$ref"],
+            Value::from("#/components/schemas/ApiErrorEnvelope"),
+            "turn create 409 must use the ApiErrorEnvelope schema"
+        );
+
+        let turn_annotate_post_responses =
+            spec["paths"]["/v1/core/turns/annotate"]["post"]["responses"]
+                .as_object()
+                .expect("turn annotate POST responses object");
+        assert!(
+            turn_annotate_post_responses.contains_key("409"),
+            "turn annotate POST must document Gate INVALID_STATE conflict responses"
+        );
+        assert_eq!(
+            turn_annotate_post_responses["409"]["content"]["application/json"]["schema"]["$ref"],
+            Value::from("#/components/schemas/ApiErrorEnvelope"),
+            "turn annotate 409 must use the ApiErrorEnvelope schema"
+        );
+    }
+
+    #[test]
     fn v1_core_openapi_contract_preserves_nested_error_schema_fidelity() {
         let spec = generated_spec();
         let envelope = openapi_schema_contract(openapi_component_schema(&spec, "ApiErrorEnvelope"));
@@ -5534,8 +5567,8 @@ mod tests {
         );
         assert_eq!(
             turn_annotate_post_responses["409"]["content"]["application/json"]["schema"]["$ref"],
-            Value::from("#/components/schemas/ApiError"),
-            "turn annotate 409 must use the structured ApiError schema"
+            Value::from("#/components/schemas/ApiErrorEnvelope"),
+            "turn annotate 409 must use the ApiErrorEnvelope schema"
         );
         let context_pack_responses = spec["paths"]["/api/context-pack"]["post"]["responses"]
             .as_object()
