@@ -185,6 +185,12 @@ where
     pub(crate) exact_posting_matches_scope: &'a mut F,
 }
 
+#[derive(Debug, Clone, Copy, Default)]
+pub(crate) struct PrefixExpansionPostingDecision {
+    pub(crate) matches_scope: bool,
+    pub(crate) rejected_by_gate: bool,
+}
+
 const FINAL_TOKEN_PREFIX_WEIGHT: f64 = 0.5;
 const MAX_FINAL_TOKEN_PREFIX_TERMS: usize = 64;
 /// Bound term-key reads for any one prefix after the scoped expansion cap.
@@ -621,6 +627,66 @@ where
     Ok(false)
 }
 
+pub(crate) fn final_token_prefix_expansion_has_scoped_and_rejected_postings<F>(
+    store: &Store,
+    rtxn: &RoTxn<'_>,
+    analyzer: &MultilingualAnalyzer,
+    config: &Bm25Config,
+    query: &str,
+    mut classify_posting: F,
+) -> Result<bool>
+where
+    F: FnMut(&EntityId) -> Result<PrefixExpansionPostingDecision>,
+{
+    let trimmed_query_end = query.trim_end().len();
+    if trimmed_query_end == 0 {
+        return Ok(false);
+    }
+
+    let mut tokens = Vec::new();
+    analyzer.analyze(query, &AnalyzerContext::for_query(), &mut tokens);
+
+    let prefixes = final_token_prefix_terms(&tokens, trimmed_query_end);
+    let mut expanded_terms = 0usize;
+    'prefixes: for prefix in prefixes {
+        let exact_status =
+            term_posting_decisions(store, rtxn, config, &prefix, &mut classify_posting)?;
+        if exact_status.has_scoped_posting {
+            continue;
+        }
+        if expanded_terms == MAX_FINAL_TOKEN_PREFIX_TERMS {
+            break;
+        }
+
+        for (scanned_terms, row) in store
+            .text_postings
+            .prefix_iter(rtxn, prefix.as_bytes())?
+            .move_between_keys()
+            .enumerate()
+        {
+            if scanned_terms == MAX_FINAL_TOKEN_PREFIX_SCAN_TERMS {
+                break;
+            }
+            if expanded_terms == MAX_FINAL_TOKEN_PREFIX_TERMS {
+                break 'prefixes;
+            }
+            let (term_bytes, _) = row?;
+            let term = str::from_utf8(term_bytes)
+                .map_err(|_| corrupted("posting term key is not valid utf-8"))?;
+            let status = term_posting_decisions(store, rtxn, config, term, &mut classify_posting)?;
+            if !status.has_scoped_posting {
+                continue;
+            }
+            if status.has_rejected_posting {
+                return Ok(true);
+            }
+            expanded_terms += 1;
+        }
+    }
+
+    Ok(false)
+}
+
 fn final_token_prefix_terms(tokens: &[Token], trimmed_query_end: usize) -> BTreeSet<String> {
     tokens
         .iter()
@@ -654,6 +720,41 @@ fn exact_term_has_scoped_posting(
         }
     }
     Ok(false)
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+struct TermPostingDecisions {
+    has_scoped_posting: bool,
+    has_rejected_posting: bool,
+}
+
+fn term_posting_decisions(
+    store: &Store,
+    rtxn: &RoTxn<'_>,
+    config: &Bm25Config,
+    term: &str,
+    classify_posting: &mut impl FnMut(&EntityId) -> Result<PrefixExpansionPostingDecision>,
+) -> Result<TermPostingDecisions> {
+    let Some(dups) = store.text_postings.get_duplicates(rtxn, term.as_bytes())? else {
+        return Ok(TermPostingDecisions::default());
+    };
+
+    let mut decisions = TermPostingDecisions::default();
+    for item in dups {
+        let (_, dup) = item?;
+        let entry = decode_posting_entry(dup)?;
+        if !posting_has_enabled_channel(config, &entry)? {
+            continue;
+        }
+        let decision = classify_posting(&entry.id)?;
+        decisions.has_scoped_posting |= decision.matches_scope;
+        decisions.has_rejected_posting |= decision.rejected_by_gate;
+        if decisions.has_scoped_posting && decisions.has_rejected_posting {
+            break;
+        }
+    }
+
+    Ok(decisions)
 }
 
 fn posting_has_enabled_channel(config: &Bm25Config, entry: &PostingEntry) -> Result<bool> {
