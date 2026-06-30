@@ -678,7 +678,7 @@ impl<'a> PipelineBuilder<'a> {
             }
 
             if let Some((query, limit)) = &self.text_search {
-                let channel_limit = scoped_text_channel_limit(
+                let text_channel_limit = scoped_text_channel_limit(
                     &self.vault.store,
                     &rtxn,
                     *limit,
@@ -708,7 +708,7 @@ impl<'a> PipelineBuilder<'a> {
                     &self.vault.analyzer,
                     &bm25_config,
                     query,
-                    channel_limit,
+                    text_channel_limit,
                     crate::bm25::Bm25SearchOptions {
                         recency,
                         exact_posting_matches_scope: &mut exact_posting_matches_scope,
