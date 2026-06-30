@@ -25,7 +25,7 @@ use crate::{Vault, le_bytes_to_f32_vec};
 
 pub const DEFAULT_MAX_NEIGHBORS: usize = 50;
 const DEFAULT_TOKEN_BUDGET: usize = 4000;
-const DEFAULT_MAX_FIELD_CHARS: usize = 500;
+pub const DEFAULT_MAX_FIELD_CHARS: usize = 500;
 pub const MAX_EDGE_HOP: u32 = 5;
 #[cfg(not(test))]
 const MAX_EDGE_SCAN_RESULTS: usize = 100_000;

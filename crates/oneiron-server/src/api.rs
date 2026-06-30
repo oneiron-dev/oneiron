@@ -3672,6 +3672,7 @@ async fn core_context_pack(
         .and_then(|policy| policy.view)
         .or(req.view)
         .unwrap_or(View::Standard);
+    let projection = context_pack_json_projection_config(view, req.budget.as_ref(), 0);
 
     let mut builder = server
         .vault
@@ -3682,7 +3683,7 @@ async fn core_context_pack(
         .edge_hop(edge_hop)
         .max_neighbors(max_neighbors)
         .include_vectors(include_vectors)
-        .field_profile(field_profile_for_view(view));
+        .field_profile(projection.profile);
     if let Some(query) = req.query.as_deref() {
         builder = builder.search_text(query, req.limit);
     }
@@ -3696,6 +3697,7 @@ async fn core_context_pack(
     Ok(Json(run_context_pack_builder(
         &server.vault,
         builder,
+        projection,
         "core context-pack failed",
     )?))
 }
@@ -4192,14 +4194,18 @@ fn apply_context_pack_budget<'a>(
 fn run_context_pack_builder(
     vault: &oneiron::Vault,
     builder: oneiron::ContextPackBuilder<'_>,
+    projection: oneiron::serialize::SerializeConfig,
     error_context: &'static str,
 ) -> Result<CoreContextPackResponse, ApiError> {
     let pack = builder.run_with_telemetry().map_err(|error| {
         tracing::error!(error = %error, "{error_context}");
         core_engine_error(error_context, error)
     })?;
-    let evidence = core_context_pack_evidence(vault, pack.run_id)?;
-    Ok(core_context_pack_response(pack.value, evidence))
+    let run_id = pack.run_id;
+    let pack = oneiron::serialize::project_pack_for_json_response(pack.value, &projection);
+    let evidence = core_context_pack_evidence(vault, run_id)?;
+    let evidence = core_context_pack_evidence_for_results(evidence, &pack.results);
+    Ok(core_context_pack_response(pack, evidence))
 }
 
 fn run_core_query(
@@ -4274,6 +4280,41 @@ fn field_profile_for_view(view: View) -> oneiron::FieldProfile {
         View::Standard => oneiron::FieldProfile::Standard,
         View::Full => oneiron::FieldProfile::Full,
     }
+}
+
+fn context_pack_json_projection_config(
+    view: View,
+    budget: Option<&ContextPackBudgetControls>,
+    top_level_max_item_tokens: usize,
+) -> oneiron::serialize::SerializeConfig {
+    oneiron::serialize::SerializeConfig {
+        format: oneiron::PackFormat::Json,
+        profile: field_profile_for_view(view),
+        budget: 0,
+        allocation: oneiron::TokenAllocation::default(),
+        include_stats: false,
+        merge_neighbors: false,
+        max_field_chars: budget
+            .and_then(|budget| budget.max_field_chars)
+            .unwrap_or(oneiron::context_pack::DEFAULT_MAX_FIELD_CHARS),
+        max_item_tokens: budget
+            .and_then(|budget| budget.max_item_tokens)
+            .unwrap_or(top_level_max_item_tokens),
+    }
+}
+
+fn core_context_pack_evidence_for_results(
+    mut evidence: CoreContextPackEvidence,
+    results: &[oneiron::ContextEntity],
+) -> CoreContextPackEvidence {
+    let result_ids: BTreeSet<String> = results.iter().map(|entity| entity.id.to_hex()).collect();
+    evidence
+        .result_ids
+        .retain(|result_id| result_ids.contains(result_id));
+    evidence
+        .scores
+        .retain(|score| result_ids.contains(&score.result_id));
+    evidence
 }
 
 fn core_context_pack_response(
@@ -5466,6 +5507,8 @@ async fn context_pack(
         .and_then(|policy| policy.view)
         .or(req.view)
         .unwrap_or(View::Standard);
+    let projection =
+        context_pack_json_projection_config(view, req.budget.as_ref(), req.max_item_tokens);
 
     let mut builder = server
         .vault
@@ -5476,7 +5519,7 @@ async fn context_pack(
         .edge_hop(edge_hop)
         .max_neighbors(max_neighbors)
         .include_vectors(include_vectors)
-        .field_profile(field_profile_for_view(view));
+        .field_profile(projection.profile);
     if let Some(query) = req.query.as_deref() {
         builder = builder.search_text(query, req.limit);
     }
@@ -5496,6 +5539,7 @@ async fn context_pack(
     Ok(Json(run_context_pack_builder(
         &server.vault,
         builder,
+        projection,
         "context-pack failed",
     )?))
 }
@@ -9423,6 +9467,94 @@ mod tests {
             body["evidence"]["retrieval_run_id"]
         );
         assert_eq!(runs[0].action, oneiron::RetrievalAction::ContextPack);
+    }
+
+    #[tokio::test]
+    async fn context_pack_route_projects_json_response_controls() {
+        let (_dir, server) = test_server();
+        let long_text = format!("projection budget needle {}", "x".repeat(800));
+        let (batch_status, batch_body) = route_json(
+            server.clone(),
+            json_request(
+                "POST",
+                "/v1/core/batch",
+                json!({
+                    "entities": [{
+                        "entity_type": ENTITY_TYPE_TURN,
+                        "learned_at": 510_u64,
+                        "occurred_start": 510_u64,
+                        "occurred_end": 510_u64,
+                        "body": {
+                            "txt": long_text,
+                            "spkr": "user",
+                            "at": 510_u64,
+                            "sess": "session-alpha",
+                            "debug": "private"
+                        },
+                        "text": [{ "field": "body", "value": "projection budget needle" }]
+                    }]
+                }),
+            ),
+        )
+        .await;
+        assert_eq!(batch_status, StatusCode::OK);
+        let id = batch_body["entities"][0]["id"]
+            .as_str()
+            .expect("written id")
+            .to_owned();
+
+        let (summary_status, summary_body) = route_json(
+            server.clone(),
+            json_request(
+                "POST",
+                "/api/context-pack",
+                json!({
+                    "query": "projection budget needle",
+                    "limit": 5,
+                    "policy": { "view": "summary" }
+                }),
+            ),
+        )
+        .await;
+        assert_eq!(summary_status, StatusCode::OK);
+        assert_eq!(summary_body["results"][0]["id"], Value::from(id.clone()));
+        let fields = summary_body["results"][0]["fields"]
+            .as_object()
+            .expect("projected fields");
+        assert!(fields.contains_key("txt"));
+        assert!(!fields.contains_key("spkr"));
+        assert!(!fields.contains_key("at"));
+        assert!(!fields.contains_key("sess"));
+        assert!(!fields.contains_key("debug"));
+
+        let (budget_status, budget_body) = route_json(
+            server,
+            json_request(
+                "POST",
+                "/api/context-pack",
+                json!({
+                    "query": "projection budget needle",
+                    "limit": 5,
+                    "policy": { "view": "full" },
+                    "maxItemTokens": 48
+                }),
+            ),
+        )
+        .await;
+        assert_eq!(budget_status, StatusCode::OK);
+        assert_eq!(budget_body["results"][0]["id"], Value::from(id.clone()));
+        let truncated = budget_body["results"][0]["fields"]["txt"]
+            .as_str()
+            .expect("truncated text field");
+        assert!(truncated.contains("truncated"));
+        assert_eq!(
+            budget_body["stats"]["items_truncated"]["count"],
+            Value::from(1)
+        );
+        assert_eq!(
+            budget_body["evidence"]["result_ids"],
+            Value::Array(vec![Value::from(id)])
+        );
     }
 
     #[test]
