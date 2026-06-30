@@ -982,7 +982,7 @@ pub(crate) fn check_claim_policy_for_write(
             &decision,
             body.approval,
             &binding,
-            mode.resolve_pending,
+            mode,
         )?;
     }
 
@@ -994,6 +994,7 @@ pub(crate) struct GateWriteMode {
     pub(crate) record_decision: bool,
     pub(crate) persist_pending_consent: bool,
     pub(crate) resolve_pending: bool,
+    pub(crate) can_resolve_pending_consent: bool,
 }
 
 pub(crate) fn check_reserved_claim_policy(
@@ -1108,12 +1109,20 @@ fn enforce_claim_gate_decision_with_consent(
     decision: &GateDecision,
     approval: ClaimApprovalStatus,
     binding: &GateConsentBinding,
-    resolve_pending: bool,
+    mode: GateWriteMode,
 ) -> Result<()> {
     match (decision.outcome(), approval) {
-        (GateOutcome::Allow, _) => Ok(()),
+        (GateOutcome::Allow, _) => {
+            if mode.resolve_pending {
+                store.delete_pending_gate_consent_in_txn(wtxn, id)?;
+            }
+            Ok(())
+        }
         (GateOutcome::Pending, ClaimApprovalStatus::Proposed) => Ok(()),
         (GateOutcome::Pending, ClaimApprovalStatus::Approved) => {
+            if !mode.can_resolve_pending_consent {
+                return reject_gate_decision(decision.clone());
+            }
             let Some(pending) = store.pending_gate_consent_in_txn(wtxn, id)? else {
                 return reject_gate_decision(decision.clone());
             };
@@ -1122,7 +1131,7 @@ fn enforce_claim_gate_decision_with_consent(
             {
                 return Err(Error::GateConsentStale { claim_id: *id });
             }
-            if resolve_pending {
+            if mode.resolve_pending {
                 store.delete_pending_gate_consent_in_txn(wtxn, id)?;
             }
             Ok(())
@@ -1805,6 +1814,14 @@ mod tests {
         vault.with_write_txn(|wtxn| resolve_policy_manifest(&vault.store, wtxn))
     }
 
+    fn has_pending_gate_consent(vault: &crate::Vault, id: &EntityId) -> Result<bool> {
+        let rtxn = vault.store.env.read_txn()?;
+        Ok(vault
+            .store
+            .pending_gate_consent_in_txn(&rtxn, id)?
+            .is_some())
+    }
+
     fn source_trust_claim(source: ClaimSource) -> ClaimBody {
         let mut body = ClaimBody::new(
             "profile.name",
@@ -2471,6 +2488,65 @@ mod tests {
                 .ok_or(Error::CorruptedIndex("pending gate consent"))
         })?;
         assert_eq!(pending.claim_id, *id.as_bytes());
+        Ok(())
+    }
+
+    #[test]
+    fn approved_gate_consent_followup_succeeds_and_clears_pending() -> Result<()> {
+        let (_tmp, vault) = temp_vault();
+        put_policy_manifest_bytes(&vault, 0x96, &encode_policy_manifest(vec![]))?;
+
+        let id = test_id(0x97);
+        let mut proposed = source_trust_claim(ClaimSource::UserStated);
+        proposed.approval = ClaimApprovalStatus::Proposed;
+        let (candidate, envelope) = claim_candidate_write_parts(&vault, &proposed)?;
+        vault
+            .batch()
+            .claim_candidate(&id, candidate, &envelope, test_time(3), 3)
+            .commit()?;
+        assert!(has_pending_gate_consent(&vault, &id)?);
+
+        let mut approved = proposed;
+        approved.approval = ClaimApprovalStatus::Approved;
+        let (candidate, envelope) = claim_candidate_write_parts(&vault, &approved)?;
+        vault
+            .batch()
+            .claim_candidate(&id, candidate, &envelope, test_time(4), 4)
+            .commit()?;
+
+        assert!(!has_pending_gate_consent(&vault, &id)?);
+        assert_eq!(
+            vault.get_claim(&id)?.expect("approved claim").approval,
+            ClaimApprovalStatus::Approved
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn same_batch_proposed_then_approved_rejects_without_pending_consent() -> Result<()> {
+        let (_tmp, vault) = temp_vault();
+        put_policy_manifest_bytes(&vault, 0x98, &encode_policy_manifest(vec![]))?;
+
+        let id = test_id(0x99);
+        let mut proposed = source_trust_claim(ClaimSource::UserStated);
+        proposed.approval = ClaimApprovalStatus::Proposed;
+        let (proposed_candidate, proposed_envelope) =
+            claim_candidate_write_parts(&vault, &proposed)?;
+        let mut approved = proposed;
+        approved.approval = ClaimApprovalStatus::Approved;
+        let (approved_candidate, approved_envelope) =
+            claim_candidate_write_parts(&vault, &approved)?;
+
+        let err = vault
+            .batch()
+            .claim_candidate(&id, proposed_candidate, &proposed_envelope, test_time(3), 3)
+            .claim_candidate(&id, approved_candidate, &approved_envelope, test_time(4), 4)
+            .commit()
+            .expect_err("same batch approval must not consume same batch consent");
+
+        assert_gate_rejected(err, "pending", &["gate.pending.actor_ceiling"]);
+        assert!(vault.get_raw(&id)?.is_none());
+        assert!(!has_pending_gate_consent(&vault, &id)?);
         Ok(())
     }
 

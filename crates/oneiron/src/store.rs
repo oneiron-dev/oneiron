@@ -1134,7 +1134,7 @@ impl Store {
 
     pub(crate) fn pending_gate_consent_in_txn(
         &self,
-        txn: &RwTxn<'_>,
+        txn: &RoTxn<'_>,
         claim_id: &EntityId,
     ) -> Result<Option<PendingGateConsentRecord>> {
         let Some(value) = self
@@ -1555,8 +1555,12 @@ fn gate_decision_id_from_key(key: &[u8]) -> Result<GateDecisionId> {
 
 fn gate_decision_upper_bound() -> Vec<u8> {
     let mut key = Vec::from(GATE_DECISION_KEY_PREFIX);
-    *key.last_mut()
-        .expect("gate decision key prefix must be non-empty") += 1;
+    let last = key
+        .last_mut()
+        .expect("gate decision key prefix must be non-empty");
+    *last = last
+        .checked_add(1)
+        .expect("gate decision key prefix upper bound must not overflow");
     key
 }
 

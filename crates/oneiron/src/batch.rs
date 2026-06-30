@@ -620,7 +620,7 @@ impl<'a> BatchBuilder<'a> {
             self.ops,
             text_index_trusted,
             false,
-            false,
+            true,
         )?;
         wtxn.commit()?;
         Ok(())
@@ -655,8 +655,9 @@ fn preflight_standalone_gate_decisions(store: &Store, ops: &[BatchOp]) -> Result
                         &policy,
                         crate::gate::GateWriteMode {
                             record_decision: true,
-                            persist_pending_consent: true,
+                            persist_pending_consent: false,
                             resolve_pending: false,
+                            can_resolve_pending_consent: true,
                         },
                     )
                 })
@@ -678,8 +679,9 @@ fn preflight_standalone_gate_decisions(store: &Store, ops: &[BatchOp]) -> Result
                     &policy,
                     crate::gate::GateWriteMode {
                         record_decision: true,
-                        persist_pending_consent: true,
+                        persist_pending_consent: false,
                         resolve_pending: false,
+                        can_resolve_pending_consent: true,
                     },
                 )
             }
@@ -1205,6 +1207,11 @@ pub(crate) fn apply_ops(
     } else {
         None
     };
+    let pending_gate_consent_at_batch_start = if persist_gate_pending_consent {
+        pending_gate_consent_ids_at_batch_start(store, &*wtxn, &ops)?
+    } else {
+        HashSet::new()
+    };
     // Legacy (pre-symmetric-migration) graphs answer a vector refresh with a
     // full snapshot rebuild. Batched vector updates coalesce that into at
     // most ONE rebuild per transaction: once pending, per-op graph mutations
@@ -1262,6 +1269,7 @@ pub(crate) fn apply_ops(
                     false,
                     record_gate_decisions,
                     persist_gate_pending_consent,
+                    pending_gate_consent_at_batch_start.contains(&id),
                 )?;
                 if let Some(token) = applied.pending_embedding_token {
                     pending_embedding_tokens_written.insert(id, token);
@@ -1344,6 +1352,7 @@ pub(crate) fn apply_ops(
                     internal_lexical_query_hint,
                     record_gate_decisions,
                     persist_gate_pending_consent,
+                    pending_gate_consent_at_batch_start.contains(&id),
                 )?;
                 if applied.had_graph_mutation {
                     had_graph_mutation = true;
@@ -1481,6 +1490,9 @@ pub(crate) fn apply_ops(
             BatchOp::Delete { id } => {
                 let (_existed, had_vector, deleted_graph_state, neighbors) =
                     deindex_entity(store, wtxn, &id)?;
+                if persist_gate_pending_consent {
+                    store.delete_pending_gate_consent_in_txn(wtxn, &id)?;
+                }
                 pending_embedding_tokens_written.remove(&id);
                 ppr::invalidate_ppr_for_delete(store, wtxn, &id, &neighbors)?;
                 had_graph_mutation |= deleted_graph_state;
@@ -1548,6 +1560,45 @@ fn contains_local_claim_put(ops: &[BatchOp]) -> bool {
                     && !(*allow_maintenance && *allow_reserved_predicate)
             )
     })
+}
+
+fn pending_gate_consent_ids_at_batch_start(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    ops: &[BatchOp],
+) -> Result<HashSet<EntityId>> {
+    let mut pending = HashSet::new();
+    for op in ops {
+        let Some(id) = local_claim_op_id(op) else {
+            continue;
+        };
+        if store.pending_gate_consent_in_txn(txn, &id)?.is_some() {
+            pending.insert(id);
+        }
+    }
+    Ok(pending)
+}
+
+fn local_claim_op_id(op: &BatchOp) -> Option<EntityId> {
+    match op {
+        BatchOp::ClaimCandidate {
+            id,
+            internal_lexical_query_hint,
+            ..
+        } if !*internal_lexical_query_hint => Some(*id),
+        BatchOp::Put {
+            id,
+            entity_type,
+            allow_maintenance,
+            allow_reserved_predicate,
+            ..
+        } if *entity_type == crate::types::ENTITY_TYPE_CLAIM
+            && !(*allow_maintenance && *allow_reserved_predicate) =>
+        {
+            Some(*id)
+        }
+        _ => None,
+    }
 }
 
 fn text_coverage_after_op(ops: &[BatchOp]) -> Vec<bool> {
@@ -1818,6 +1869,7 @@ fn apply_claim_candidate(
     internal_lexical_query_hint: bool,
     record_gate_decisions: bool,
     persist_gate_pending_consent: bool,
+    can_resolve_pending_consent: bool,
 ) -> Result<AppliedClaimCandidate> {
     crate::gate::validate_write_envelope(envelope)?;
 
@@ -1855,6 +1907,7 @@ fn apply_claim_candidate(
         internal_lexical_query_hint,
         record_gate_decisions,
         persist_gate_pending_consent,
+        can_resolve_pending_consent,
     )?;
 
     let subject_id = match subject {
@@ -1955,6 +2008,7 @@ fn apply_put(
     internal_lexical_query_hint: bool,
     record_gate_decisions: bool,
     persist_gate_pending_consent: bool,
+    can_resolve_pending_consent: bool,
 ) -> Result<AppliedPut> {
     // Type-byte validation runs in `apply_ops` (the public-vs-maintenance gate:
     // public writes reject the engine-authored maintenance band, the sync
@@ -2048,6 +2102,7 @@ fn apply_put(
                         record_decision: record_gate_decisions,
                         persist_pending_consent: persist_gate_pending_consent,
                         resolve_pending: true,
+                        can_resolve_pending_consent,
                     },
                 )?;
             } else {
@@ -2062,6 +2117,7 @@ fn apply_put(
                         record_decision: record_gate_decisions,
                         persist_pending_consent: persist_gate_pending_consent,
                         resolve_pending: true,
+                        can_resolve_pending_consent,
                     },
                 )?;
             }
