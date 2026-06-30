@@ -1,3 +1,6 @@
+use std::fs;
+use std::path::{Path, PathBuf};
+
 use crate::error::{Error, Result};
 use crate::serialize::{WHOLE_VAULT_EXPORT_SERIALIZER, WHOLE_VAULT_EXPORT_SERIALIZER_VERSION};
 use crate::store::{
@@ -5,7 +8,14 @@ use crate::store::{
     STORAGE_SCHEMA_VERSION,
 };
 
+pub const EXPORT_MANIFEST_ARTIFACT_NAME: &str = "manifest.json";
 pub const EXPORT_MANIFEST_VERSION: u16 = 1;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExportManifestArtifact {
+    relative_path: &'static str,
+    bytes: Vec<u8>,
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
 pub struct ExportManifest {
@@ -21,7 +31,7 @@ pub struct ExportSerializerManifest {
     version: u16,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
 pub struct ExportSecretsNulledManifest {
     payloads: bool,
     structural_placeholders: bool,
@@ -43,6 +53,53 @@ pub struct ExportDbManifestEntry {
     group: String,
 }
 
+impl ExportManifestArtifact {
+    pub fn current(redacted: bool) -> Result<Self> {
+        Self::from_manifest(&ExportManifest::from_redacted(redacted))
+    }
+
+    pub fn from_manifest(manifest: &ExportManifest) -> Result<Self> {
+        Ok(Self {
+            relative_path: EXPORT_MANIFEST_ARTIFACT_NAME,
+            bytes: manifest.to_json_pretty()?,
+        })
+    }
+
+    #[must_use]
+    pub const fn relative_path(&self) -> &str {
+        self.relative_path
+    }
+
+    #[must_use]
+    pub fn bytes(&self) -> &[u8] {
+        &self.bytes
+    }
+
+    #[must_use]
+    pub fn into_bytes(self) -> Vec<u8> {
+        self.bytes
+    }
+
+    pub fn write_to_dir(&self, export_dir: impl AsRef<Path>) -> Result<PathBuf> {
+        let path = export_dir.as_ref().join(self.relative_path);
+        fs::write(&path, &self.bytes)?;
+        Ok(path)
+    }
+}
+
+pub fn whole_vault_export_manifest_artifact(
+    secrets_nulled: ExportSecretsNulledManifest,
+) -> Result<ExportManifestArtifact> {
+    ExportManifestArtifact::from_manifest(&ExportManifest::from_secrets_nulled(secrets_nulled))
+}
+
+pub fn write_whole_vault_export_manifest(
+    export_dir: impl AsRef<Path>,
+    secrets_nulled: ExportSecretsNulledManifest,
+) -> Result<PathBuf> {
+    whole_vault_export_manifest_artifact(secrets_nulled)?.write_to_dir(export_dir)
+}
+
 impl ExportManifest {
     #[must_use]
     pub fn clear() -> Self {
@@ -55,6 +112,16 @@ impl ExportManifest {
             manifest_version: EXPORT_MANIFEST_VERSION,
             serializer: ExportSerializerManifest::current(),
             secrets_nulled: ExportSecretsNulledManifest::from_redacted(redacted),
+            data_shape: ExportDataShapeManifest::current(),
+        }
+    }
+
+    #[must_use]
+    pub fn from_secrets_nulled(secrets_nulled: ExportSecretsNulledManifest) -> Self {
+        Self {
+            manifest_version: EXPORT_MANIFEST_VERSION,
+            serializer: ExportSerializerManifest::current(),
+            secrets_nulled,
             data_shape: ExportDataShapeManifest::current(),
         }
     }
@@ -103,7 +170,8 @@ impl ExportManifest {
                 self.manifest_version
             )));
         }
-        self.serializer.validate_import_supported()
+        self.serializer.validate_import_supported()?;
+        self.data_shape.validate_import_supported()
     }
 }
 
@@ -199,6 +267,45 @@ impl ExportDataShapeManifest {
     pub fn named_databases(&self) -> &[ExportDbManifestEntry] {
         &self.named_databases
     }
+
+    fn validate_import_supported(&self) -> Result<()> {
+        if self.storage_abi_version != STORAGE_ABI_VERSION {
+            return Err(Error::InvalidConfig(format!(
+                "unsupported export storage ABI version {}",
+                self.storage_abi_version
+            )));
+        }
+        if self.storage_schema_version != STORAGE_SCHEMA_VERSION {
+            return Err(Error::InvalidConfig(format!(
+                "unsupported export storage schema version {}",
+                self.storage_schema_version
+            )));
+        }
+        if self.db_manifest_version != DB_MANIFEST_VERSION {
+            return Err(Error::InvalidConfig(format!(
+                "unsupported export DB manifest version {}",
+                self.db_manifest_version
+            )));
+        }
+        if self.max_dbs != MAX_DBS {
+            return Err(Error::InvalidConfig(format!(
+                "unsupported export max DB count {}",
+                self.max_dbs
+            )));
+        }
+        if self.named_databases.len() != DB_MANIFEST.len()
+            || !self
+                .named_databases
+                .iter()
+                .zip(DB_MANIFEST.iter().copied())
+                .all(|(actual, expected)| actual.matches_store_entry(expected))
+        {
+            return Err(Error::InvalidConfig(
+                "unsupported export DB manifest shape".to_owned(),
+            ));
+        }
+        Ok(())
+    }
 }
 
 impl ExportDbManifestEntry {
@@ -215,6 +322,10 @@ impl ExportDbManifestEntry {
     #[must_use]
     pub fn group(&self) -> &str {
         &self.group
+    }
+
+    fn matches_store_entry(&self, entry: DbManifestEntry) -> bool {
+        self.n == entry.n && self.name == entry.name && self.group == entry.group
     }
 }
 
@@ -264,6 +375,31 @@ mod tests {
     }
 
     #[test]
+    fn whole_vault_export_manifest_artifact_writes_stable_manifest_json() {
+        let secrets_nulled = ExportSecretsNulledManifest::from_redacted(true);
+        let artifact =
+            whole_vault_export_manifest_artifact(secrets_nulled).expect("manifest artifact builds");
+        let repeated = whole_vault_export_manifest_artifact(secrets_nulled)
+            .expect("repeated manifest artifact builds");
+
+        assert_eq!(artifact.relative_path(), EXPORT_MANIFEST_ARTIFACT_NAME);
+        assert_eq!(artifact.bytes(), repeated.bytes());
+        assert_eq!(
+            artifact.bytes(),
+            ExportManifest::from_secrets_nulled(secrets_nulled)
+                .to_json_pretty()
+                .expect("manifest serializes")
+                .as_slice()
+        );
+
+        let dir = tempfile::tempdir().expect("temp dir");
+        let path = write_whole_vault_export_manifest(dir.path(), secrets_nulled)
+            .expect("manifest artifact writes");
+        let written = std::fs::read(path).expect("manifest artifact is readable");
+        assert_eq!(written, artifact.bytes());
+    }
+
+    #[test]
     fn export_manifest_import_rejects_unsupported_manifest_version() {
         let manifest = ExportManifest::clear();
         let mut value: serde_json::Value =
@@ -282,5 +418,71 @@ mod tests {
             }
             other => panic!("expected InvalidConfig, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn export_manifest_import_rejects_unsupported_storage_abi() {
+        let mut value = manifest_json_value();
+        value["data_shape"]["storage_abi_version"] =
+            serde_json::Value::from(u64::from(STORAGE_ABI_VERSION) + 1);
+        let unsupported =
+            serde_json::to_vec_pretty(&value).expect("unsupported manifest serializes");
+
+        let err = ExportManifest::from_json_for_import(&unsupported)
+            .expect_err("unsupported storage ABI must fail closed");
+
+        match err {
+            Error::InvalidConfig(message) => {
+                assert_eq!(message, "unsupported export storage ABI version 5");
+            }
+            other => panic!("expected InvalidConfig, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn export_manifest_import_rejects_unsupported_storage_schema() {
+        let mut value = manifest_json_value();
+        value["data_shape"]["storage_schema_version"] =
+            serde_json::Value::from(u64::from(STORAGE_SCHEMA_VERSION) + 1);
+        let unsupported =
+            serde_json::to_vec_pretty(&value).expect("unsupported manifest serializes");
+
+        let err = ExportManifest::from_json_for_import(&unsupported)
+            .expect_err("unsupported storage schema must fail closed");
+
+        match err {
+            Error::InvalidConfig(message) => {
+                assert_eq!(message, "unsupported export storage schema version 2");
+            }
+            other => panic!("expected InvalidConfig, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn export_manifest_import_rejects_unsupported_db_manifest_shape() {
+        let mut value = manifest_json_value();
+        value["data_shape"]["named_databases"][0]["name"] =
+            serde_json::Value::from("future_entities");
+        let unsupported =
+            serde_json::to_vec_pretty(&value).expect("unsupported manifest serializes");
+
+        let err = ExportManifest::from_json_for_import(&unsupported)
+            .expect_err("unsupported DB manifest shape must fail closed");
+
+        match err {
+            Error::InvalidConfig(message) => {
+                assert_eq!(message, "unsupported export DB manifest shape");
+            }
+            other => panic!("expected InvalidConfig, got {other:?}"),
+        }
+    }
+
+    fn manifest_json_value() -> serde_json::Value {
+        serde_json::from_slice(
+            &ExportManifest::clear()
+                .to_json_pretty()
+                .expect("manifest serializes"),
+        )
+        .expect("manifest JSON parses")
     }
 }
