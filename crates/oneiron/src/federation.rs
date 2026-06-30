@@ -586,7 +586,7 @@ mod tests {
         let entry = entity_type_registry_entry(ENTITY_TYPE_FEDERATION_GRANT)
             .expect("FEDERATION_GRANT registry row");
 
-        assert_eq!(ENTITY_TYPE_FEDERATION_GRANT, 123);
+        assert_eq!(ENTITY_TYPE_FEDERATION_GRANT, 124);
         assert_eq!(entry.kind, "FEDERATION_GRANT");
         assert_eq!(entry.short_id_prefix, None);
         assert_eq!(entry.classification, EntityClassification::Maintenance);
