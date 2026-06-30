@@ -2373,6 +2373,272 @@
         },
         "type": "object"
       },
+      "CoreMemoryOperationKind": {
+        "enum": [
+          "put_entity",
+          "supersede_claim",
+          "retract_claim",
+          "delete_entity"
+        ],
+        "type": "string"
+      },
+      "CoreMemoryTimelineRecord": {
+        "properties": {
+          "body_bytes": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "deletion": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/CoreHydrateDeletionMetadata"
+              }
+            ]
+          },
+          "entity_type": {
+            "format": "int32",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "id": {
+            "type": "string"
+          },
+          "item": {
+            "type": [
+              "object",
+              "null"
+            ]
+          },
+          "learned_at": {
+            "format": "int64",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "occurred_end": {
+            "format": "int64",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "occurred_start": {
+            "format": "int64",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "state": {
+            "$ref": "#/components/schemas/CoreMemoryTimelineRecordState"
+          },
+          "superseded_by": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "supersedes": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "id",
+          "state",
+          "supersedes",
+          "superseded_by"
+        ],
+        "type": "object"
+      },
+      "CoreMemoryTimelineRecordState": {
+        "enum": [
+          "live",
+          "superseded",
+          "retracted",
+          "deleted",
+          "missing"
+        ],
+        "type": "string"
+      },
+      "CoreMemoryTimelineResponse": {
+        "properties": {
+          "anchor_id": {
+            "type": "string"
+          },
+          "records": {
+            "items": {
+              "$ref": "#/components/schemas/CoreMemoryTimelineRecord"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "anchor_id",
+          "records"
+        ],
+        "type": "object"
+      },
+      "CoreMemoryVerbDeleteOutcome": {
+        "properties": {
+          "existed": {
+            "type": "boolean"
+          },
+          "hard": {
+            "type": "boolean"
+          },
+          "reason": {
+            "$ref": "#/components/schemas/CoreMemoryVerbDeleteReason"
+          },
+          "receipt_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "sweep_key": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "existed",
+          "reason",
+          "hard"
+        ],
+        "type": "object"
+      },
+      "CoreMemoryVerbDeleteReason": {
+        "enum": [
+          "user_delete",
+          "user_hard_delete",
+          "gdpr_delete",
+          "policy_delete"
+        ],
+        "type": "string"
+      },
+      "CoreMemoryVerbRequest": {
+        "properties": {
+          "at": {
+            "format": "int64",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "entity": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/CoreBatchEntityInput"
+              }
+            ]
+          },
+          "id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "new_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "old_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "reason": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/CoreMemoryVerbDeleteReason"
+              }
+            ]
+          }
+        },
+        "type": "object"
+      },
+      "CoreMemoryVerbResponse": {
+        "properties": {
+          "at": {
+            "format": "int64",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "delete": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/CoreMemoryVerbDeleteOutcome"
+              }
+            ]
+          },
+          "entity": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/CoreBatchEntityResult"
+              }
+            ]
+          },
+          "id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "new_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "old_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "operation": {
+            "$ref": "#/components/schemas/CoreMemoryOperationKind"
+          },
+          "verb": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "verb",
+          "operation"
+        ],
+        "type": "object"
+      },
       "CoreQueryRequest": {
         "properties": {
           "countMode": {

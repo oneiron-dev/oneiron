@@ -36,6 +36,8 @@ const CORE_API_PARITY_ROUTES_PENDING_SKILLS_PACK_DOCS: &[&str] = &[
     "/v1/core/query",
     "/v1/core/context-pack",
     "/v1/core/hydrate",
+    "/v1/core/memory/{id}/timeline",
+    "/v1/core/memory/verbs/{verb}",
     "/v1/core/conversations",
     "/v1/core/conversations/{conversation_id}/turns",
     "/v1/core/turns/{turn_id}",
@@ -47,6 +49,8 @@ const NESTED_CORE_ROUTE_PREFIXES: &[(&str, &str)] = &[
     ("/query", "/v1/core/query"),
     ("/context-pack", "/v1/core/context-pack"),
     ("/hydrate", "/v1/core/hydrate"),
+    ("/memory/{id}/timeline", "/v1/core/memory/{id}/timeline"),
+    ("/memory/verbs/{verb}", "/v1/core/memory/verbs/{verb}"),
     ("/conversations", "/v1/core/conversations"),
     (
         "/conversations/{conversation_id}/turns",
