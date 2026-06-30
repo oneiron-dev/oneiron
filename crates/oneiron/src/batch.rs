@@ -4,7 +4,7 @@ use std::str;
 #[path = "export.rs"]
 pub mod export;
 #[path = "secret_scan.rs"]
-mod secret_scan;
+pub(crate) mod secret_scan;
 
 use heed::RwTxn;
 use xxhash_rust::xxh32::xxh32;
