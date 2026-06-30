@@ -1,0 +1,143 @@
+[
+  {
+    "name": "malformed_request",
+    "request": {
+      "method": "POST",
+      "path": "/v1/core/hydrate",
+      "auth": {
+        "type": "bearer",
+        "scope": "core:read"
+      },
+      "body": {
+        "ref": "bad-ref"
+      }
+    },
+    "response": {
+      "status": 400,
+      "body": {
+        "error": {
+          "code": "BAD_REQUEST",
+          "message": "ref must be in shortId:contentHashHex form",
+          "requestId": "<request-id>",
+          "details": {
+            "code": "BAD_REQUEST",
+            "field": "ref"
+          },
+          "suggestions": [
+            "Fix the request shape and retry."
+          ]
+        }
+      }
+    }
+  },
+  {
+    "name": "missing_auth",
+    "request": {
+      "method": "GET",
+      "path": "/v1/core/turns/annotate?turn_id=not-an-entity",
+      "auth": {
+        "type": "none"
+      },
+      "body": null
+    },
+    "response": {
+      "status": 401,
+      "body": {
+        "error": {
+          "code": "UNAUTHORIZED",
+          "message": "request is not authorized",
+          "requestId": "<request-id>",
+          "details": {
+            "code": "UNAUTHORIZED"
+          },
+          "suggestions": [
+            "Send the configured x-oneiron-secret header and retry."
+          ]
+        }
+      }
+    }
+  },
+  {
+    "name": "wrong_scope",
+    "request": {
+      "method": "GET",
+      "path": "/v1/core/turns/annotate?turn_id=not-an-entity",
+      "auth": {
+        "type": "bearer",
+        "scope": "core:write"
+      },
+      "body": null
+    },
+    "response": {
+      "status": 403,
+      "body": {
+        "error": {
+          "code": "FORBIDDEN",
+          "message": "request does not have the required scope",
+          "requestId": "<request-id>",
+          "details": {
+            "code": "FORBIDDEN",
+            "requiredScope": "core:read"
+          },
+          "suggestions": [
+            "Request a token with the required Oneiron core scope and retry."
+          ]
+        }
+      }
+    }
+  },
+  {
+    "name": "not_found",
+    "request": {
+      "method": "GET",
+      "path": "/v1/core/turns/7e0000000000000000000000122100ff",
+      "auth": {
+        "type": "bearer",
+        "scope": "core:read"
+      },
+      "body": null
+    },
+    "response": {
+      "status": 404,
+      "body": {
+        "error": {
+          "code": "NOT_FOUND",
+          "message": "turn was not found",
+          "requestId": "<request-id>",
+          "details": {
+            "code": "NOT_FOUND",
+            "resource": "turn",
+            "id": "7e0000000000000000000000122100ff"
+          },
+          "suggestions": [
+            "Verify the identifier and retry."
+          ]
+        }
+      }
+    }
+  },
+  {
+    "name": "deleted_entity",
+    "request": {
+      "method": "POST",
+      "path": "/v1/core/hydrate",
+      "auth": {
+        "type": "bearer",
+        "scope": "core:read"
+      },
+      "body": {
+        "ref": "tn1:9c"
+      }
+    },
+    "response": {
+      "status": 200,
+      "body": {
+        "status": "deleted",
+        "short_id": "tn1",
+        "content_hash": "9c",
+        "id": "7e00000000000000000000001221dead",
+        "entity_type": 1
+      }
+    }
+  }
+]

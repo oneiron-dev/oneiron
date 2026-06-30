@@ -4157,8 +4157,28 @@ mod tests {
     use super::*;
     use axum::body::{Body, to_bytes};
     use axum::http::{Request, StatusCode, header::AUTHORIZATION, header::CONTENT_TYPE};
+    use serde_json::Map;
     use serde_json::Value;
     use tower::ServiceExt;
+
+    const V1_CORE_OPENAPI_CONTRACT_SNAPSHOT: &str =
+        include_str!("../tests/fixtures/v1_core_openapi_contract.snapshot.json");
+    const V1_CORE_OPENAPI_CONTRACT_SNAPSHOT_PATH: &str = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/fixtures/v1_core_openapi_contract.snapshot.json"
+    );
+    const V1_CORE_SUCCESS_CONTRACT_SNAPSHOT: &str =
+        include_str!("../tests/fixtures/v1_core_success_contract.snapshot.json");
+    const V1_CORE_SUCCESS_CONTRACT_SNAPSHOT_PATH: &str = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/fixtures/v1_core_success_contract.snapshot.json"
+    );
+    const V1_CORE_ERROR_CONTRACT_SNAPSHOT: &str =
+        include_str!("../tests/fixtures/v1_core_error_contract.snapshot.json");
+    const V1_CORE_ERROR_CONTRACT_SNAPSHOT_PATH: &str = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/fixtures/v1_core_error_contract.snapshot.json"
+    );
 
     #[test]
     fn search_response_drops_stale_hydrated_hits() {
@@ -4243,6 +4263,12 @@ mod tests {
             usage_mode,
             ..Default::default()
         })
+    }
+
+    fn seeded_test_entity_id(counter: u128) -> oneiron::EntityId {
+        let mut bytes = counter.to_be_bytes();
+        bytes[0] = 0x7e;
+        oneiron::EntityId::from_bytes(bytes).expect("seeded test id should be valid")
     }
 
     #[tokio::test]
@@ -4360,6 +4386,19 @@ mod tests {
             .expect("request")
     }
 
+    fn core_request(method: &str, uri: &str, scope: &str, body: Option<&Value>) -> Request<Body> {
+        let mut builder = Request::builder()
+            .method(method)
+            .uri(uri)
+            .header(AUTHORIZATION, format!("Bearer secret;scope={scope}"));
+        if body.is_some() {
+            builder = builder.header(CONTENT_TYPE, "application/json");
+        }
+        builder
+            .body(body.map_or_else(Body::empty, |body| Body::from(body.to_string())))
+            .expect("request")
+    }
+
     async fn route_json(server: Arc<SyncServer>, request: Request<Body>) -> (StatusCode, Value) {
         let response = api_routes(server)
             .oneshot(request)
@@ -4393,6 +4432,209 @@ mod tests {
             body.get("code").is_none(),
             "v1 core errors must not serialize as a flat ApiError: {body:?}"
         );
+    }
+
+    fn assert_json_snapshot(mut actual: Value, fixture: &str, path: &str, label: &str) {
+        let mut expected: Value = serde_json::from_str(fixture).expect("snapshot fixture JSON");
+        sort_json(&mut actual);
+        let actual = serde_json::to_string_pretty(&actual).expect("serialize actual snapshot");
+        if std::env::var_os("ONEIRON_UPDATE_TEST_FIXTURES").is_some() {
+            std::fs::write(path, format!("{actual}\n")).expect("write snapshot fixture");
+        }
+        let actual: Value = serde_json::from_str(&actual).expect("actual snapshot JSON");
+        sort_json(&mut expected);
+        if actual != expected {
+            let actual = serde_json::to_string_pretty(&actual).expect("serialize actual snapshot");
+            panic!("{label} snapshot drifted; update fixture with:\n{actual}");
+        }
+    }
+
+    fn sort_json(value: &mut Value) {
+        match value {
+            Value::Array(items) => {
+                for item in items {
+                    sort_json(item);
+                }
+            }
+            Value::Object(object) => {
+                let mut sorted = Map::new();
+                for (key, mut value) in std::mem::take(object) {
+                    sort_json(&mut value);
+                    sorted.insert(key, value);
+                }
+                *object = sorted;
+            }
+            Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => {}
+        }
+    }
+
+    fn normalize_contract_body(body: &mut Value) {
+        match body {
+            Value::Array(items) => {
+                for item in items {
+                    normalize_contract_body(item);
+                }
+            }
+            Value::Object(object) => {
+                for (key, value) in object {
+                    match key.as_str() {
+                        "query_time_us" => *value = Value::from("<duration-us>"),
+                        "requestId" => *value = Value::from("<request-id>"),
+                        _ => normalize_contract_body(value),
+                    }
+                }
+            }
+            Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => {}
+        }
+    }
+
+    fn contract_exchange(
+        name: &str,
+        method: &str,
+        path: &str,
+        auth_scope: Option<&str>,
+        request_body: Option<Value>,
+        status: StatusCode,
+        mut response_body: Value,
+    ) -> Value {
+        normalize_contract_body(&mut response_body);
+        json!({
+            "name": name,
+            "request": {
+                "method": method,
+                "path": path,
+                "auth": auth_scope.map_or_else(
+                    || json!({ "type": "none" }),
+                    |scope| json!({ "type": "bearer", "scope": scope }),
+                ),
+                "body": request_body.unwrap_or(Value::Null),
+            },
+            "response": {
+                "status": status.as_u16(),
+                "body": response_body,
+            },
+        })
+    }
+
+    fn openapi_operation_contract(operation: &Value) -> Value {
+        let responses = operation["responses"]
+            .as_object()
+            .expect("responses object")
+            .iter()
+            .map(|(status, response)| {
+                (
+                    status.clone(),
+                    json!({
+                        "description": response["description"].clone(),
+                        "schema": openapi_json_schema_ref(response),
+                    }),
+                )
+            })
+            .collect::<Map<_, _>>();
+        let parameters = operation["parameters"]
+            .as_array()
+            .map(|parameters| {
+                parameters
+                    .iter()
+                    .map(|parameter| {
+                        json!({
+                            "name": parameter["name"].clone(),
+                            "in": parameter["in"].clone(),
+                            "required": parameter["required"].clone(),
+                            "schema": openapi_schema_shape(&parameter["schema"]),
+                        })
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        json!({
+            "operationId": operation["operationId"].clone(),
+            "security": operation["security"].clone(),
+            "parameters": parameters,
+            "requestSchema": operation
+                .get("requestBody")
+                .map(openapi_json_schema_ref)
+                .unwrap_or(Value::Null),
+            "responses": responses,
+        })
+    }
+
+    fn openapi_json_schema_ref(value: &Value) -> Value {
+        value
+            .pointer("/content/application~1json/schema")
+            .map(openapi_schema_shape)
+            .unwrap_or(Value::Null)
+    }
+
+    fn openapi_schema_contract(schema: &Value) -> Value {
+        let mut contract = Map::new();
+        for key in ["type", "enum", "required"] {
+            if let Some(value) = schema.get(key) {
+                contract.insert(key.to_owned(), value.clone());
+            }
+        }
+        if let Some(properties) = schema.get("properties").and_then(Value::as_object) {
+            let mut property_contract = Map::new();
+            for (name, property) in properties {
+                property_contract.insert(name.clone(), Value::from(openapi_schema_kind(property)));
+            }
+            contract.insert("properties".to_owned(), Value::Object(property_contract));
+        }
+        Value::Object(contract)
+    }
+
+    fn openapi_schema_shape(schema: &Value) -> Value {
+        let mut shape = Map::new();
+        for key in ["$ref", "type", "format", "enum", "required", "default"] {
+            if let Some(value) = schema.get(key) {
+                shape.insert(key.to_owned(), value.clone());
+            }
+        }
+        if let Some(items) = schema.get("items") {
+            shape.insert("items".to_owned(), openapi_schema_shape(items));
+        }
+        if let Some(one_of) = schema.get("oneOf").and_then(Value::as_array) {
+            shape.insert(
+                "oneOf".to_owned(),
+                Value::Array(one_of.iter().map(openapi_schema_shape).collect()),
+            );
+        }
+        Value::Object(shape)
+    }
+
+    fn openapi_schema_kind(schema: &Value) -> String {
+        if let Some(reference) = schema.get("$ref").and_then(Value::as_str) {
+            return reference.to_owned();
+        }
+        if let Some(one_of) = schema.get("oneOf").and_then(Value::as_array) {
+            return one_of
+                .iter()
+                .map(openapi_schema_kind)
+                .collect::<Vec<_>>()
+                .join("|");
+        }
+        if let Some(items) = schema.get("items") {
+            return format!("array<{}>", openapi_schema_kind(items));
+        }
+        match schema.get("type") {
+            Some(Value::String(kind)) => kind.clone(),
+            Some(Value::Array(kinds)) => kinds
+                .iter()
+                .filter_map(Value::as_str)
+                .collect::<Vec<_>>()
+                .join("|"),
+            _ => "unknown".to_owned(),
+        }
+    }
+
+    async fn core_json(
+        server: Arc<SyncServer>,
+        method: &str,
+        uri: &str,
+        scope: &str,
+        body: Option<&Value>,
+    ) -> (StatusCode, Value) {
+        route_json(server, core_request(method, uri, scope, body)).await
     }
 
     fn seed_turn(server: &SyncServer, text: &str) -> oneiron::EntityId {
@@ -4450,6 +4692,522 @@ mod tests {
                 .expect("request"),
         )
         .await
+    }
+
+    #[test]
+    fn v1_core_openapi_contract_snapshot_matches_fixture() {
+        let spec = generated_spec();
+        let operations = [
+            ("/v1/core/batch", "post"),
+            ("/v1/core/query", "post"),
+            ("/v1/core/context-pack", "post"),
+            ("/v1/core/hydrate", "post"),
+            ("/v1/core/conversations", "get"),
+            ("/v1/core/conversations", "post"),
+            ("/v1/core/conversations/{conversation_id}/turns", "get"),
+            ("/v1/core/conversations/{conversation_id}/turns", "post"),
+            ("/v1/core/turns/{turn_id}", "get"),
+            ("/v1/core/turns/annotate", "get"),
+            ("/v1/core/turns/annotate", "post"),
+        ];
+        let mut paths = Map::new();
+        for (path, method) in operations {
+            paths
+                .entry(path.to_owned())
+                .or_insert_with(|| Value::Object(Map::new()))
+                .as_object_mut()
+                .expect("path item object")
+                .insert(
+                    method.to_owned(),
+                    openapi_operation_contract(&spec["paths"][path][method]),
+                );
+        }
+
+        let schema_names = [
+            "ApiErrorEnvelope",
+            "CoreBatchEntityInput",
+            "CoreBatchEntityResult",
+            "CoreBatchRequest",
+            "CoreBatchResponse",
+            "CoreContextEdge",
+            "CoreContextEntity",
+            "CoreContextPackItemAccounting",
+            "CoreContextPackRequest",
+            "CoreContextPackResponse",
+            "CoreContextPackStats",
+            "CoreCreateEntityRequest",
+            "CoreCreateTurnRequest",
+            "CoreEntityWriteResponse",
+            "CoreHydrateRequest",
+            "CoreHydrateResponse",
+            "CoreHydrateStatus",
+            "CoreListQuery",
+            "CoreQueryRequest",
+            "CoreTextField",
+            "CountMode",
+            "ResponseMeta",
+            "TurnVadAnnotateQuery",
+            "TurnVadAnnotateRequest",
+            "TurnVadAnnotateResponse",
+            "TurnVadAnnotationSource",
+            "VadPayload",
+            "View",
+        ];
+        let mut schemas = Map::new();
+        for name in schema_names {
+            schemas.insert(
+                name.to_owned(),
+                openapi_schema_contract(&spec["components"]["schemas"][name]),
+            );
+        }
+
+        assert_json_snapshot(
+            json!({
+                "paths": paths,
+                "components": {
+                    "schemas": schemas,
+                    "securitySchemes": {
+                        "CoreBearer": spec["components"]["securitySchemes"]["CoreBearer"].clone(),
+                        "OneironSecret": spec["components"]["securitySchemes"]["OneironSecret"].clone(),
+                    },
+                },
+            }),
+            V1_CORE_OPENAPI_CONTRACT_SNAPSHOT,
+            V1_CORE_OPENAPI_CONTRACT_SNAPSHOT_PATH,
+            "v1 core OpenAPI contract",
+        );
+    }
+
+    #[tokio::test]
+    async fn v1_core_success_contract_snapshot_matches_fixture() {
+        let (_dir, server) = test_server_with_config(SyncServerConfig {
+            auth_secret: Some("secret".to_owned()),
+            ..Default::default()
+        });
+        let batch_id = seeded_test_entity_id(0x1221_0001).to_hex();
+        let conversation_id = seeded_test_entity_id(0x1221_0002).to_hex();
+        let turn_id = seeded_test_entity_id(0x1221_0003).to_hex();
+        let mut exchanges = Vec::new();
+
+        let batch_request = json!({
+            "entities": [{
+                "id": batch_id,
+                "entity_type": ENTITY_TYPE_TURN,
+                "occurred_start": 1_782_357_600_u64,
+                "occurred_end": 1_782_357_600_u64,
+                "learned_at": 1_782_357_635_u64,
+                "body": {
+                    "txt": "blue hallway contractneedle",
+                    "spkr": "user",
+                    "at": 1_782_357_600_u64
+                },
+                "text": [{ "field": "body", "value": "blue hallway contractneedle" }]
+            }]
+        });
+        let (status, body) = core_json(
+            server.clone(),
+            "POST",
+            "/v1/core/batch",
+            "core:write",
+            Some(&batch_request),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        exchanges.push(contract_exchange(
+            "core_batch",
+            "POST",
+            "/v1/core/batch",
+            Some("core:write"),
+            Some(batch_request),
+            status,
+            body,
+        ));
+
+        let query_request = json!({
+            "query": "contractneedle",
+            "limit": 3,
+            "view": "full",
+            "countMode": "estimate"
+        });
+        let (status, body) = core_json(
+            server.clone(),
+            "POST",
+            "/v1/core/query",
+            "core:read",
+            Some(&query_request),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        exchanges.push(contract_exchange(
+            "core_query",
+            "POST",
+            "/v1/core/query",
+            Some("core:read"),
+            Some(query_request),
+            status,
+            body,
+        ));
+
+        let context_pack_request = json!({
+            "query": "contractneedle",
+            "limit": 3,
+            "view": "full",
+            "include_edges": false
+        });
+        let (status, context_pack_body) = core_json(
+            server.clone(),
+            "POST",
+            "/v1/core/context-pack",
+            "core:read",
+            Some(&context_pack_request),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        let context_entity = &context_pack_body["results"][0];
+        let short_ref = format!(
+            "{}:{}",
+            context_entity["short_id"].as_str().expect("short id"),
+            context_entity["content_hash"]
+                .as_str()
+                .expect("content hash")
+        );
+        exchanges.push(contract_exchange(
+            "core_context_pack",
+            "POST",
+            "/v1/core/context-pack",
+            Some("core:read"),
+            Some(context_pack_request),
+            status,
+            context_pack_body,
+        ));
+
+        let hydrate_request = json!({
+            "ref": short_ref,
+            "view": "full"
+        });
+        let (status, body) = core_json(
+            server.clone(),
+            "POST",
+            "/v1/core/hydrate",
+            "core:read",
+            Some(&hydrate_request),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        exchanges.push(contract_exchange(
+            "core_hydrate",
+            "POST",
+            "/v1/core/hydrate",
+            Some("core:read"),
+            Some(hydrate_request),
+            status,
+            body,
+        ));
+
+        let conversation_request = json!({
+            "id": conversation_id,
+            "occurred_start": 1_782_357_700_u64,
+            "occurred_end": 1_782_357_700_u64,
+            "learned_at": 1_782_357_735_u64,
+            "body": { "name": "Contract dream" },
+            "text": [{ "field": "name", "value": "Contract dream" }]
+        });
+        let (status, body) = core_json(
+            server.clone(),
+            "POST",
+            "/v1/core/conversations",
+            "core:write",
+            Some(&conversation_request),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        exchanges.push(contract_exchange(
+            "create_core_conversation",
+            "POST",
+            "/v1/core/conversations",
+            Some("core:write"),
+            Some(conversation_request),
+            status,
+            body,
+        ));
+
+        let conversations_path = "/v1/core/conversations?view=full&limit=5&countMode=exact";
+        let (status, body) =
+            core_json(server.clone(), "GET", conversations_path, "core:read", None).await;
+        assert_eq!(status, StatusCode::OK);
+        exchanges.push(contract_exchange(
+            "list_core_conversations",
+            "GET",
+            conversations_path,
+            Some("core:read"),
+            None,
+            status,
+            body,
+        ));
+
+        let turn_request = json!({
+            "id": turn_id,
+            "occurred_start": 1_782_357_800_u64,
+            "occurred_end": 1_782_357_800_u64,
+            "learned_at": 1_782_357_835_u64,
+            "body": {
+                "txt": "turn contract envelope",
+                "spkr": "assistant",
+                "at": 1_782_357_800_u64
+            },
+            "text": [{ "field": "body", "value": "turn contract envelope" }]
+        });
+        let turns_path = format!("/v1/core/conversations/{conversation_id}/turns");
+        let (status, body) = core_json(
+            server.clone(),
+            "POST",
+            &turns_path,
+            "core:write",
+            Some(&turn_request),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        exchanges.push(contract_exchange(
+            "create_core_conversation_turn",
+            "POST",
+            &turns_path,
+            Some("core:write"),
+            Some(turn_request),
+            status,
+            body,
+        ));
+
+        let list_turns_path =
+            format!("/v1/core/conversations/{conversation_id}/turns?view=full&limit=5");
+        let (status, body) =
+            core_json(server.clone(), "GET", &list_turns_path, "core:read", None).await;
+        assert_eq!(status, StatusCode::OK);
+        exchanges.push(contract_exchange(
+            "list_core_conversation_turns",
+            "GET",
+            &list_turns_path,
+            Some("core:read"),
+            None,
+            status,
+            body,
+        ));
+
+        let get_turn_path = format!("/v1/core/turns/{turn_id}?view=full");
+        let (status, body) =
+            core_json(server.clone(), "GET", &get_turn_path, "core:read", None).await;
+        assert_eq!(status, StatusCode::OK);
+        exchanges.push(contract_exchange(
+            "get_core_turn",
+            "GET",
+            &get_turn_path,
+            Some("core:read"),
+            None,
+            status,
+            body,
+        ));
+
+        let annotate_request = json!({
+            "turn_id": turn_id,
+            "source": "model_inference",
+            "vad": {
+                "valence": 0.25,
+                "arousal": 0.5,
+                "dominance": 0.75
+            },
+            "annotated_at": 1_782_357_900_u64
+        });
+        let (status, body) = core_json(
+            server.clone(),
+            "POST",
+            "/v1/core/turns/annotate",
+            "core:write",
+            Some(&annotate_request),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        exchanges.push(contract_exchange(
+            "annotate_turn_vad",
+            "POST",
+            "/v1/core/turns/annotate",
+            Some("core:write"),
+            Some(annotate_request),
+            status,
+            body,
+        ));
+
+        let read_annotation_path = format!("/v1/core/turns/annotate?turn_id={turn_id}");
+        let (status, body) =
+            core_json(server, "GET", &read_annotation_path, "core:read", None).await;
+        assert_eq!(status, StatusCode::OK);
+        exchanges.push(contract_exchange(
+            "read_turn_vad_annotation",
+            "GET",
+            &read_annotation_path,
+            Some("core:read"),
+            None,
+            status,
+            body,
+        ));
+
+        assert_json_snapshot(
+            Value::Array(exchanges),
+            V1_CORE_SUCCESS_CONTRACT_SNAPSHOT,
+            V1_CORE_SUCCESS_CONTRACT_SNAPSHOT_PATH,
+            "v1 core success contract",
+        );
+    }
+
+    #[tokio::test]
+    async fn v1_core_error_contract_snapshot_matches_fixture() {
+        let (_dir, server) = test_server_with_config(SyncServerConfig {
+            auth_secret: Some("secret".to_owned()),
+            ..Default::default()
+        });
+        let missing_id = seeded_test_entity_id(0x1221_00ff).to_hex();
+        let deleted_id = seeded_test_entity_id(0x1221_dead);
+        let deleted_body = rmp_serde::to_vec_named(&json!({
+            "txt": "deleted contract turn",
+            "spkr": "user",
+            "at": 1_782_358_000_u64,
+        }))
+        .expect("encode deleted turn");
+        server
+            .vault
+            .batch()
+            .put(
+                &deleted_id,
+                ENTITY_TYPE_TURN,
+                oneiron::TimeRange {
+                    start: 1_782_358_000_u64,
+                    end: 1_782_358_000_u64,
+                },
+                1_782_358_000_u64,
+                &deleted_body,
+            )
+            .text(&deleted_id, &[("body", "deleted contract turn")])
+            .commit()
+            .expect("seed deleted turn");
+        let deleted_pack = server
+            .vault
+            .context_pack()
+            .search_text("deleted contract turn", 1)
+            .run()
+            .expect("deleted context pack");
+        let deleted_entity = deleted_pack
+            .results
+            .first()
+            .expect("deleted entity has short ref");
+        let deleted_ref = format!(
+            "{}:{:02x}",
+            deleted_entity.short_id, deleted_entity.content_hash
+        );
+        server
+            .vault
+            .delete_entity_with_reason(&deleted_id, oneiron::DeleteReason::UserDelete)
+            .expect("delete seeded turn");
+
+        let mut exchanges = Vec::new();
+
+        let malformed_request = json!({ "ref": "bad-ref" });
+        let (status, body) = core_json(
+            server.clone(),
+            "POST",
+            "/v1/core/hydrate",
+            "core:read",
+            Some(&malformed_request),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_error_envelope(&body, "BAD_REQUEST");
+        exchanges.push(contract_exchange(
+            "malformed_request",
+            "POST",
+            "/v1/core/hydrate",
+            Some("core:read"),
+            Some(malformed_request),
+            status,
+            body,
+        ));
+
+        let missing_auth_path = "/v1/core/turns/annotate?turn_id=not-an-entity";
+        let (status, body) = route_json(
+            server.clone(),
+            Request::builder()
+                .uri(missing_auth_path)
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await;
+        assert_eq!(status, StatusCode::UNAUTHORIZED);
+        assert_error_envelope(&body, "UNAUTHORIZED");
+        exchanges.push(contract_exchange(
+            "missing_auth",
+            "GET",
+            missing_auth_path,
+            None,
+            None,
+            status,
+            body,
+        ));
+
+        let wrong_scope_path = "/v1/core/turns/annotate?turn_id=not-an-entity";
+        let (status, body) =
+            core_json(server.clone(), "GET", wrong_scope_path, "core:write", None).await;
+        assert_eq!(status, StatusCode::FORBIDDEN);
+        assert_error_envelope(&body, "FORBIDDEN");
+        exchanges.push(contract_exchange(
+            "wrong_scope",
+            "GET",
+            wrong_scope_path,
+            Some("core:write"),
+            None,
+            status,
+            body,
+        ));
+
+        let not_found_path = format!("/v1/core/turns/{missing_id}");
+        let (status, body) =
+            core_json(server.clone(), "GET", &not_found_path, "core:read", None).await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+        assert_error_envelope(&body, "NOT_FOUND");
+        exchanges.push(contract_exchange(
+            "not_found",
+            "GET",
+            &not_found_path,
+            Some("core:read"),
+            None,
+            status,
+            body,
+        ));
+
+        let deleted_request = json!({ "ref": deleted_ref });
+        let (status, body) = core_json(
+            server,
+            "POST",
+            "/v1/core/hydrate",
+            "core:read",
+            Some(&deleted_request),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body["status"], Value::from("deleted"));
+        assert!(body.get("item").is_none());
+        exchanges.push(contract_exchange(
+            "deleted_entity",
+            "POST",
+            "/v1/core/hydrate",
+            Some("core:read"),
+            Some(deleted_request),
+            status,
+            body,
+        ));
+
+        assert_json_snapshot(
+            Value::Array(exchanges),
+            V1_CORE_ERROR_CONTRACT_SNAPSHOT,
+            V1_CORE_ERROR_CONTRACT_SNAPSHOT_PATH,
+            "v1 core error contract",
+        );
     }
 
     async fn top_up_route(
