@@ -84,6 +84,9 @@ pub(crate) const KEY_STALE: &str = CLAIM_BODY_KEYS[13];
 /// Predicate used for synthetic prospective-query hint side records.
 pub const PREDICATE_LEXICAL_QUERY_HINT: &str = "lexical.query_hint";
 
+/// Pinned companion-expression predicate for the relationship/persona layer.
+pub const PREDICATE_COMPANION_EXPRESSION: &str = "companion.expression";
+
 /// Maximum number of lexical query hints one claim-candidate write may emit.
 pub(crate) const MAX_LEXICAL_QUERY_HINTS_PER_CLAIM: usize = 8;
 
@@ -95,6 +98,8 @@ const LEXICAL_HINT_KIND: &str = "prospective_query";
 const LEXICAL_HINT_VALUE_KEY_KIND: &str = "kind";
 const LEXICAL_HINT_VALUE_KEY_QUERY: &str = "query";
 const LEXICAL_HINT_VALUE_KEY_TARGET: &str = "target";
+
+pub(crate) const COMPANION_EXPRESSION_VALUES: [&str; 3] = ["professional", "warm", "unrestricted"];
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct LexicalQueryHintValue {
