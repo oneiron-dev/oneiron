@@ -105,8 +105,8 @@ pub use crate::types::{
     VadComponent, VaultConfig, WriteActor, WriteEnvelope, WriteProvenance,
 };
 pub use crate::vault::{
-    ActorBound, TextIndexStatus, Vault, VaultDoctorDbManifestReport, VaultDoctorHnswRecordState,
-    VaultDoctorHnswReport, VaultDoctorReport,
+    ActorBound, HydratedShortId, TextIndexStatus, Vault, VaultDoctorDbManifestReport,
+    VaultDoctorHnswRecordState, VaultDoctorHnswReport, VaultDoctorReport,
 };
 
 pub(crate) fn unix_seconds_now() -> u64 {
