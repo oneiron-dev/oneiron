@@ -452,6 +452,7 @@ mod tests {
         );
         assert!(!artifact_path.exists(), "tampered source is moved aside");
         assert_eq!(fs::read(&quarantined.quarantine_path)?, tampered);
+        assert_invalid_suffix(&quarantined.quarantine_path, &artifact_path, 1);
         Ok(())
     }
 
@@ -477,6 +478,7 @@ mod tests {
         );
         assert!(!artifact_path.exists(), "unexpected source is moved aside");
         assert_eq!(fs::read(&quarantined.quarantine_path)?, encoded);
+        assert_invalid_suffix(&quarantined.quarantine_path, &artifact_path, 1);
         Ok(())
     }
 
