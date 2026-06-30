@@ -1036,6 +1036,12 @@ pub(crate) fn claim_surfaceable(body: &ClaimBody) -> bool {
         && !body.stale
 }
 
+#[cfg(feature = "sync")]
+pub(crate) fn restamp_federated_claim_source(mut body: ClaimBody) -> ClaimBody {
+    body.source = Some(ClaimSource::Imported);
+    body
+}
+
 /// Parses a MessagePack number as a finite `f32` in `[0, 1]`. Shared with
 /// the provenance module so `conf` and `confidence` validate identically.
 pub(crate) fn unit_interval_f32(value: &Value) -> Option<f32> {
