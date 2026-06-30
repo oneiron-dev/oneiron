@@ -117,6 +117,7 @@ const CORE_MAX_LIST_LIMIT: usize = 1000;
         core_batch,
         core_query,
         core_hydrate,
+        core_batch_short_id_hydrate,
         core_context_pack,
         list_core_conversations,
         create_core_conversation,
@@ -171,6 +172,15 @@ const CORE_MAX_LIST_LIMIT: usize = 1000;
         CoreHydrateRequest,
         CoreHydrateResponse,
         CoreHydrateStatus,
+        CoreHydrateDeletionMetadata,
+        CoreHydrateDeletionSource,
+        CoreHydrateDeletionReason,
+        CoreBatchShortIdHydrateRequest,
+        CoreBatchShortIdHydrateResponse,
+        CoreBatchShortIdHydrateItem,
+        CoreShortIdHydrateOutcome,
+        CoreShortIdHydrateError,
+        CoreShortIdHydrateErrorKind,
         CoreContextPackRequest,
         CoreContextPackResponse,
         CoreContextEntity,
@@ -236,6 +246,7 @@ pub(crate) fn api_routes(server: Arc<SyncServer>) -> Router {
         .route("/query", post(core_query))
         .route("/context-pack", post(core_context_pack))
         .route("/hydrate", post(core_hydrate))
+        .route("/batch/shortId/hydrate", post(core_batch_short_id_hydrate))
         .route("/conversations", get(list_core_conversations))
         .route(
             "/conversations/{conversation_id}/turns",
@@ -442,6 +453,42 @@ fn fill_schema_description_gaps(spec: &mut Value) {
     );
     set_schema_property_description(
         spec,
+        "CoreHydrateResponse",
+        "deletion",
+        "Deletion metadata when the short ref resolves to a deleted entity.",
+    );
+    set_schema_property_description(
+        spec,
+        "CoreHydrateDeletionMetadata",
+        "reason",
+        "Decoded tombstone reason, absent for legacy, malformed, or dangling deletion rows.",
+    );
+    set_schema_property_description(
+        spec,
+        "CoreBatchShortIdHydrateRequest",
+        "view",
+        "Optional projection view for live hydrate results. Defaults to full.",
+    );
+    set_schema_property_description(
+        spec,
+        "CoreBatchShortIdHydrateItem",
+        "result",
+        "Live or deleted hydrate payload when the input resolves.",
+    );
+    set_schema_property_description(
+        spec,
+        "CoreBatchShortIdHydrateItem",
+        "error",
+        "Typed per-input hydrate error for malformed or not-found refs.",
+    );
+    set_schema_property_description(
+        spec,
+        "CoreShortIdHydrateError",
+        "field",
+        "Request field that failed validation, when known.",
+    );
+    set_schema_property_description(
+        spec,
         "CoreContextEdge",
         "vad",
         "Optional edge VAD payload for semantic edges.",
@@ -559,6 +606,7 @@ fn add_security_scheme(spec: &mut Value) {
         ("/v1/core/query", "post"),
         ("/v1/core/context-pack", "post"),
         ("/v1/core/hydrate", "post"),
+        ("/v1/core/batch/shortId/hydrate", "post"),
         ("/v1/core/conversations", "get"),
         ("/v1/core/conversations", "post"),
         ("/v1/core/conversations/{conversation_id}/turns", "get"),
@@ -2278,7 +2326,7 @@ struct CoreHydrateRequest {
 }
 
 /// Short-id hydrate status.
-#[derive(Debug, Serialize, ToSchema)]
+#[derive(Debug, Clone, Copy, Serialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
 enum CoreHydrateStatus {
     /// The short ref resolved to a live entity payload.
@@ -2308,10 +2356,134 @@ struct CoreHydrateResponse {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[schema(example = 1)]
     entity_type: Option<u8>,
+    /// Explicit deletion metadata for deleted refs.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    deletion: Option<CoreHydrateDeletionMetadata>,
     /// Projected live entity. Omitted for deleted refs.
     #[serde(skip_serializing_if = "Option::is_none")]
     #[schema(value_type = Option<Object>)]
     item: Option<Value>,
+}
+
+/// Deletion metadata returned for a deleted short-id hydrate result.
+#[derive(Debug, Serialize, ToSchema)]
+struct CoreHydrateDeletionMetadata {
+    /// Storage evidence that proved deletion.
+    source: CoreHydrateDeletionSource,
+    /// Decoded tombstone reason, absent for legacy/malformed/dangling rows.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    reason: Option<CoreHydrateDeletionReason>,
+    /// Unix seconds from tombstone metadata when available.
+    #[serde(skip_serializing_if = "Option::is_none", rename = "deleted_at")]
+    #[schema(example = 1771027200_u64)]
+    deleted_at: Option<u64>,
+    /// Deletion request UUID when the v2 tombstone carried one.
+    #[serde(skip_serializing_if = "Option::is_none", rename = "request_id")]
+    #[schema(example = "00000000-0000-0000-0000-000000000000")]
+    request_id: Option<String>,
+    /// Whether the tombstone effect class is destructive/hard.
+    hard: bool,
+}
+
+/// Source of deletion evidence for short-id hydrate.
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+enum CoreHydrateDeletionSource {
+    Tombstone,
+    PendingTombstone,
+    DanglingShortId,
+}
+
+/// Decoded short-id hydrate deletion reason.
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+enum CoreHydrateDeletionReason {
+    #[serde(rename = "user_delete")]
+    User,
+    #[serde(rename = "user_hard_delete")]
+    UserHard,
+    #[serde(rename = "gdpr_delete")]
+    Gdpr,
+    #[serde(rename = "policy_delete")]
+    Policy,
+}
+
+/// Batch short-id hydrate request.
+#[derive(Debug, Deserialize, ToSchema)]
+#[schema(example = json!({
+    "refs": ["tn1:a7", "tn2:ff"],
+    "view": "full"
+}))]
+struct CoreBatchShortIdHydrateRequest {
+    /// Canonical short references in `shortId:contentHashHex` form.
+    #[serde(
+        default,
+        rename = "refs",
+        alias = "short_refs",
+        alias = "shortRefs",
+        alias = "short_ids",
+        alias = "shortIds"
+    )]
+    #[schema(example = json!(["tn1:a7", "tn2:ff"]))]
+    refs: Vec<String>,
+    /// Projection view for live entities. Defaults to full.
+    #[serde(default)]
+    #[schema(example = "full")]
+    view: Option<View>,
+}
+
+/// Batch short-id hydrate response.
+#[derive(Debug, Serialize, ToSchema)]
+struct CoreBatchShortIdHydrateResponse {
+    /// Per-input hydrate result or typed error.
+    results: Vec<CoreBatchShortIdHydrateItem>,
+}
+
+/// One batch short-id hydrate item.
+#[derive(Debug, Serialize, ToSchema)]
+struct CoreBatchShortIdHydrateItem {
+    /// Input short ref.
+    #[serde(rename = "ref")]
+    #[schema(example = "tn1:a7")]
+    reference: String,
+    /// Stable per-input hydrate outcome discriminator.
+    outcome: CoreShortIdHydrateOutcome,
+    /// Live or deleted hydrate payload when the input resolves.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    result: Option<CoreHydrateResponse>,
+    /// Typed per-input error for malformed or not-found refs.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    error: Option<CoreShortIdHydrateError>,
+}
+
+/// Stable per-input short-id hydrate outcome.
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+enum CoreShortIdHydrateOutcome {
+    Live,
+    Deleted,
+    MalformedShortId,
+    NotFound,
+}
+
+/// Per-input short-id hydrate error.
+#[derive(Debug, Serialize, ToSchema)]
+struct CoreShortIdHydrateError {
+    /// Stable machine-readable per-item error kind.
+    kind: CoreShortIdHydrateErrorKind,
+    /// Human-readable error summary.
+    message: String,
+    /// Request field that failed validation, when known.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    field: Option<String>,
+}
+
+/// Stable per-input short-id hydrate error kind.
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+enum CoreShortIdHydrateErrorKind {
+    MalformedShortId,
+    NotFound,
 }
 
 /// Context-pack request on the canonical core route.
@@ -2706,6 +2878,97 @@ async fn core_hydrate(
     let req = json_payload(payload)?;
     let (short_id, content_hash) = parse_short_ref_request(&req)?;
     let content_hash_hex = format!("{content_hash:02x}");
+    let view = req.view.unwrap_or(View::Full);
+    let Some(response) = hydrate_short_id_response(&server, short_id.clone(), content_hash, view)?
+    else {
+        return Err(ApiError::not_found(
+            "short_id",
+            Some(&format!("{short_id}:{content_hash_hex}")),
+        )
+        .into());
+    };
+
+    Ok(Json(response))
+}
+
+/// Batch-hydrate entities by context-pack short references.
+#[utoipa::path(
+    post,
+    path = "/v1/core/batch/shortId/hydrate",
+    request_body(content = CoreBatchShortIdHydrateRequest, content_type = "application/json"),
+    responses(
+        (status = 200, description = "Short refs hydrated with per-item typed results/errors.", body = CoreBatchShortIdHydrateResponse, content_type = "application/json"),
+        (status = 400, description = "Malformed batch request.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 401, description = "Missing or invalid core auth.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 403, description = "Core token lacks core:read.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 500, description = "Hydrate lookup failed.", body = ApiErrorEnvelope, content_type = "application/json")
+    )
+)]
+async fn core_batch_short_id_hydrate(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    payload: Result<Json<CoreBatchShortIdHydrateRequest>, JsonRejection>,
+) -> Result<Json<CoreBatchShortIdHydrateResponse>, EnvelopedApiError> {
+    auth.require(CoreScope::Read)?;
+    let req = json_payload(payload)?;
+    if req.refs.is_empty() {
+        return Err(ApiError::bad_request("refs must not be empty", Some("refs")).into());
+    }
+
+    let view = req.view.unwrap_or(View::Full);
+    let mut results = Vec::with_capacity(req.refs.len());
+    for reference in req.refs {
+        let item = match parse_short_ref(&reference) {
+            Ok((short_id, content_hash)) => {
+                match hydrate_short_id_response(&server, short_id, content_hash, view)? {
+                    Some(result) => CoreBatchShortIdHydrateItem {
+                        reference,
+                        outcome: match result.status {
+                            CoreHydrateStatus::Live => CoreShortIdHydrateOutcome::Live,
+                            CoreHydrateStatus::Deleted => CoreShortIdHydrateOutcome::Deleted,
+                        },
+                        result: Some(result),
+                        error: None,
+                    },
+                    None => CoreBatchShortIdHydrateItem {
+                        reference,
+                        outcome: CoreShortIdHydrateOutcome::NotFound,
+                        result: None,
+                        error: Some(CoreShortIdHydrateError {
+                            kind: CoreShortIdHydrateErrorKind::NotFound,
+                            message: "short_id was not found".to_owned(),
+                            field: Some("ref".to_owned()),
+                        }),
+                    },
+                }
+            }
+            Err(error) => CoreBatchShortIdHydrateItem {
+                reference,
+                outcome: CoreShortIdHydrateOutcome::MalformedShortId,
+                result: None,
+                error: Some(CoreShortIdHydrateError {
+                    kind: CoreShortIdHydrateErrorKind::MalformedShortId,
+                    message: error.message().to_owned(),
+                    field: match error.details() {
+                        ApiErrorDetails::BadRequest { field } => field.clone(),
+                        _ => None,
+                    },
+                }),
+            },
+        };
+        results.push(item);
+    }
+
+    Ok(Json(CoreBatchShortIdHydrateResponse { results }))
+}
+
+fn hydrate_short_id_response(
+    server: &SyncServer,
+    short_id: String,
+    content_hash: u8,
+    view: View,
+) -> Result<Option<CoreHydrateResponse>, ApiError> {
+    let content_hash_hex = format!("{content_hash:02x}");
     let result = server
         .vault
         .hydrate_short_id(&short_id, content_hash)
@@ -2718,37 +2981,66 @@ async fn core_hydrate(
         id,
         entity_type,
         learned_at,
+        deletion,
         body,
     }) = result
     else {
-        return Err(ApiError::not_found(
-            "short_id",
-            Some(&format!("{short_id}:{content_hash_hex}")),
-        )
-        .into());
+        return Ok(None);
     };
 
     let Some(body) = body else {
-        return Ok(Json(CoreHydrateResponse {
+        return Ok(Some(CoreHydrateResponse {
             status: CoreHydrateStatus::Deleted,
             short_id,
             content_hash: content_hash_hex,
             id: Some(id.to_hex()),
             entity_type: (entity_type != 0).then_some(entity_type),
+            deletion: deletion.map(core_hydrate_deletion_metadata),
             item: None,
         }));
     };
 
-    let view = req.view.unwrap_or(View::Full);
     let item = projection::project_entity_parts(&id, entity_type, learned_at, &body, view);
-    Ok(Json(CoreHydrateResponse {
+    Ok(Some(CoreHydrateResponse {
         status: CoreHydrateStatus::Live,
         short_id,
         content_hash: content_hash_hex,
         id: Some(id.to_hex()),
         entity_type: Some(entity_type),
+        deletion: None,
         item: Some(item),
     }))
+}
+
+fn core_hydrate_deletion_metadata(
+    deletion: oneiron::HydratedShortIdDeletion,
+) -> CoreHydrateDeletionMetadata {
+    CoreHydrateDeletionMetadata {
+        source: match deletion.source {
+            oneiron::HydratedShortIdDeletionSource::Tombstone => {
+                CoreHydrateDeletionSource::Tombstone
+            }
+            oneiron::HydratedShortIdDeletionSource::PendingTombstone => {
+                CoreHydrateDeletionSource::PendingTombstone
+            }
+            oneiron::HydratedShortIdDeletionSource::DanglingShortId => {
+                CoreHydrateDeletionSource::DanglingShortId
+            }
+        },
+        reason: deletion.reason.map(|reason| match reason {
+            oneiron::HydratedShortIdDeletionReason::UserDelete => CoreHydrateDeletionReason::User,
+            oneiron::HydratedShortIdDeletionReason::UserHardDelete => {
+                CoreHydrateDeletionReason::UserHard
+            }
+            oneiron::HydratedShortIdDeletionReason::GdprDelete => CoreHydrateDeletionReason::Gdpr,
+            oneiron::HydratedShortIdDeletionReason::PolicyDelete => {
+                CoreHydrateDeletionReason::Policy
+            }
+        }),
+        deleted_at: deletion.deleted_at,
+        request_id: deletion.request_id,
+        hard: deletion.hard,
+    }
 }
 
 /// Assemble a context pack from existing retrieval and hydration APIs.
@@ -4186,6 +4478,7 @@ mod tests {
         ("/v1/core/query", "post"),
         ("/v1/core/context-pack", "post"),
         ("/v1/core/hydrate", "post"),
+        ("/v1/core/batch/shortId/hydrate", "post"),
         ("/v1/core/conversations", "get"),
         ("/v1/core/conversations", "post"),
         ("/v1/core/conversations/{conversation_id}/turns", "get"),
@@ -4212,11 +4505,20 @@ mod tests {
         "CoreCreateEntityRequest",
         "CoreCreateTurnRequest",
         "CoreEntityWriteResponse",
+        "CoreBatchShortIdHydrateItem",
+        "CoreBatchShortIdHydrateRequest",
+        "CoreBatchShortIdHydrateResponse",
+        "CoreShortIdHydrateOutcome",
+        "CoreHydrateDeletionMetadata",
+        "CoreHydrateDeletionReason",
+        "CoreHydrateDeletionSource",
         "CoreHydrateRequest",
         "CoreHydrateResponse",
         "CoreHydrateStatus",
         "CoreListQuery",
         "CoreQueryRequest",
+        "CoreShortIdHydrateError",
+        "CoreShortIdHydrateErrorKind",
         "CoreTextField",
         "CountMode",
         "ResponseMeta",
@@ -4587,7 +4889,9 @@ mod tests {
             Value::Object(object) => {
                 for (key, value) in object {
                     match key.as_str() {
+                        "deleted_at" => *value = Value::from("<deleted-at>"),
                         "query_time_us" => *value = Value::from("<duration-us>"),
+                        "request_id" => *value = Value::from("<request-id>"),
                         "requestId" => *value = Value::from("<request-id>"),
                         _ => normalize_contract_body(value),
                     }
@@ -5631,6 +5935,7 @@ mod tests {
             ("/v1/core/query", "post"),
             ("/v1/core/context-pack", "post"),
             ("/v1/core/hydrate", "post"),
+            ("/v1/core/batch/shortId/hydrate", "post"),
             ("/v1/core/conversations", "get"),
             ("/v1/core/conversations", "post"),
             ("/v1/core/conversations/{conversation_id}/turns", "get"),
@@ -5737,8 +6042,13 @@ mod tests {
             "CoreBatchResponse",
             "CoreTextField",
             "CoreQueryRequest",
+            "CoreBatchShortIdHydrateItem",
+            "CoreBatchShortIdHydrateRequest",
+            "CoreBatchShortIdHydrateResponse",
+            "CoreHydrateDeletionMetadata",
             "CoreHydrateRequest",
             "CoreHydrateResponse",
+            "CoreShortIdHydrateError",
             "CoreContextPackRequest",
             "CoreContextPackResponse",
             "CoreContextEntity",
@@ -6263,14 +6573,70 @@ mod tests {
             .expect("soft delete turn");
 
         let (deleted_status, deleted_body) = route_json(
-            server,
+            server.clone(),
             json_request("POST", "/v1/core/hydrate", json!({ "ref": short_ref })),
         )
         .await;
         assert_eq!(deleted_status, StatusCode::OK);
         assert_eq!(deleted_body["status"], Value::from("deleted"));
         assert_eq!(deleted_body["id"], Value::from(entity_id.to_hex()));
+        assert!(
+            matches!(
+                deleted_body["deletion"]["source"].as_str(),
+                Some("pending_tombstone" | "tombstone")
+            ),
+            "{deleted_body:#}"
+        );
+        assert_eq!(
+            deleted_body["deletion"]["reason"],
+            Value::from("user_delete")
+        );
+        assert_eq!(deleted_body["deletion"]["hard"], Value::from(false));
+        assert!(
+            deleted_body["deletion"]["deleted_at"].as_u64().is_some(),
+            "{deleted_body:#}"
+        );
+        assert!(
+            deleted_body["deletion"]["request_id"].as_str().is_some(),
+            "{deleted_body:#}"
+        );
         assert!(deleted_body.get("item").is_none());
+
+        let (batch_status, batch_body) = route_json(
+            server,
+            json_request(
+                "POST",
+                "/v1/core/batch/shortId/hydrate",
+                json!({
+                    "refs": [
+                        empty_short_ref,
+                        short_ref,
+                        "bad-ref",
+                        "tn999:aa"
+                    ]
+                }),
+            ),
+        )
+        .await;
+        assert_eq!(batch_status, StatusCode::OK, "{batch_body:#}");
+        let results = batch_body["results"].as_array().expect("batch results");
+        assert_eq!(results.len(), 4);
+        assert_eq!(results[0]["outcome"], Value::from("live"));
+        assert_eq!(results[0]["result"]["status"], Value::from("live"));
+        assert_eq!(results[0]["result"]["id"], Value::from(empty_id.to_hex()));
+        assert_eq!(results[1]["outcome"], Value::from("deleted"));
+        assert_eq!(results[1]["result"]["status"], Value::from("deleted"));
+        assert_eq!(
+            results[1]["result"]["deletion"]["reason"],
+            Value::from("user_delete")
+        );
+        assert_eq!(results[2]["outcome"], Value::from("malformed_short_id"));
+        assert_eq!(
+            results[2]["error"]["kind"],
+            Value::from("malformed_short_id")
+        );
+        assert_eq!(results[3]["outcome"], Value::from("not_found"));
+        assert_eq!(results[3]["error"]["kind"], Value::from("not_found"));
     }
 
     #[tokio::test]
