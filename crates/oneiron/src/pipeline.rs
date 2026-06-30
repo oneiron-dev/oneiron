@@ -689,6 +689,7 @@ impl<'a> PipelineBuilder<'a> {
                 } else {
                     None
                 };
+                let mut prefix_probe_claim_gate = ClaimStatusGateCache::default();
                 let mut exact_posting_matches_scope = |id: &EntityId| {
                     pipeline_candidate_matches_filters_and_gate(
                         &self.vault.store,
@@ -696,7 +697,7 @@ impl<'a> PipelineBuilder<'a> {
                         id,
                         filter_config,
                         &mut metadata_cache,
-                        &mut claim_gate,
+                        &mut prefix_probe_claim_gate,
                     )
                 };
                 let text_results = crate::bm25::search_text_scoped_with_recency(
@@ -711,6 +712,11 @@ impl<'a> PipelineBuilder<'a> {
                         exact_posting_matches_scope: &mut exact_posting_matches_scope,
                     },
                 )?;
+                import_claim_gate_decisions_for_scores(
+                    &mut claim_gate,
+                    &mut prefix_probe_claim_gate,
+                    &text_results,
+                );
                 add_signal_score_components(
                     &mut signal_components,
                     RetrievalSignal::Text,
@@ -809,8 +815,7 @@ impl<'a> PipelineBuilder<'a> {
                 empty_reason = Some(EmptyReason::AllActivated);
             }
 
-            if self.text_search.is_none()
-                && self.temporal_search.is_none()
+            if self.temporal_search.is_none()
                 && let Some(half_life_days) = self.recency_half_life
             {
                 let recency = crate::bm25::Bm25RecencyConfig::new(half_life_days, started_at);
@@ -1304,6 +1309,19 @@ fn claim_status_gate_allows(
     let allowed = decision.is_some();
     gate.decisions.insert(*id, decision);
     Ok(allowed)
+}
+
+fn import_claim_gate_decisions_for_scores(
+    claim_gate: &mut ClaimStatusGateCache,
+    probe_gate: &mut ClaimStatusGateCache,
+    scores: &[ScoredEntity],
+) {
+    for scored in scores {
+        let Some(decision) = probe_gate.decisions.remove(&scored.id) else {
+            continue;
+        };
+        claim_gate.decisions.entry(scored.id).or_insert(decision);
+    }
 }
 
 /// ARCH-0039 facet filter (its own pipeline stage, ONE-1117): the
@@ -3381,6 +3399,31 @@ mod tests {
     }
 
     #[test]
+    fn prefix_probe_claim_gate_does_not_export_pack_stats() -> Result<()> {
+        let (_dir, vault) = open_test_vault();
+        let probe_only_dead_claim = entity_id(0x10);
+        let live_result = entity_id(0x20);
+
+        put_status_claim(
+            &vault,
+            probe_only_dead_claim,
+            "probeonlydead",
+            crate::claim::ClaimApprovalStatus::Auto,
+            crate::claim::ClaimLifecycleStatus::Retracted,
+            false,
+        )?;
+        put_text(&vault, live_result, "probeonlylive")?;
+
+        let output = vault.query().search_text("probeonly", 10).run_for_pack()?;
+
+        assert_eq!(output.scores.len(), 1);
+        assert_eq!(output.scores[0].id, live_result);
+        assert_eq!(output.claims_suppressed, 0);
+        assert!(output.claim_bodies.is_empty());
+        Ok(())
+    }
+
+    #[test]
     fn exact_out_of_scope_text_hit_does_not_suppress_in_scope_prefix() -> Result<()> {
         let (_dir, vault) = open_test_vault();
         let out_of_scope_exact = entity_id(0x10);
@@ -3510,6 +3553,33 @@ mod tests {
             .boost_recency(0.01)
             .run()?;
         assert_eq!(boosted[0].id, fresh);
+        Ok(())
+    }
+
+    #[test]
+    fn recency_boost_applies_to_mixed_text_and_vector_pipeline() -> Result<()> {
+        let (_dir, vault) = open_test_vault();
+        let old_text_only = entity_id(0x10);
+        let fresh_vector_only = entity_id(0x20);
+        let now = crate::unix_seconds_now();
+
+        put_text_at(&vault, old_text_only, "mixedrecencyneedle", 1)?;
+        put_vector_at(&vault, fresh_vector_only, [1.0, 0.0, 0.0, 0.0], now)?;
+
+        let baseline = vault
+            .query()
+            .search_text("mixedrecencyneedle", 10)
+            .search_vector(&[1.0, 0.0, 0.0, 0.0], 10)
+            .run()?;
+        assert_eq!(baseline[0].id, old_text_only);
+
+        let boosted = vault
+            .query()
+            .search_text("mixedrecencyneedle", 10)
+            .search_vector(&[1.0, 0.0, 0.0, 0.0], 10)
+            .boost_recency(0.01)
+            .run()?;
+        assert_eq!(boosted[0].id, fresh_vector_only);
         Ok(())
     }
 
