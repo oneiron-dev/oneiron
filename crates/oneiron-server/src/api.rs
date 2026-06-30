@@ -4179,6 +4179,50 @@ mod tests {
         env!("CARGO_MANIFEST_DIR"),
         "/tests/fixtures/v1_core_error_contract.snapshot.json"
     );
+    const V1_CORE_OPENAPI_CONTRACT_OPERATIONS: &[(&str, &str)] = &[
+        ("/v1/core/batch", "post"),
+        ("/v1/core/query", "post"),
+        ("/v1/core/context-pack", "post"),
+        ("/v1/core/hydrate", "post"),
+        ("/v1/core/conversations", "get"),
+        ("/v1/core/conversations", "post"),
+        ("/v1/core/conversations/{conversation_id}/turns", "get"),
+        ("/v1/core/conversations/{conversation_id}/turns", "post"),
+        ("/v1/core/turns/{turn_id}", "get"),
+        ("/v1/core/turns/annotate", "get"),
+        ("/v1/core/turns/annotate", "post"),
+    ];
+    const V1_CORE_OPENAPI_CONTRACT_SCHEMA_NAMES: &[&str] = &[
+        "ApiError",
+        "ApiErrorEnvelope",
+        "CoreBatchEntityInput",
+        "CoreBatchEntityResult",
+        "CoreBatchRequest",
+        "CoreBatchResponse",
+        "CoreContextEdge",
+        "CoreContextEntity",
+        "CoreContextPackItemAccounting",
+        "CoreContextPackRequest",
+        "CoreContextPackResponse",
+        "CoreContextPackStats",
+        "CoreCreateEntityRequest",
+        "CoreCreateTurnRequest",
+        "CoreEntityWriteResponse",
+        "CoreHydrateRequest",
+        "CoreHydrateResponse",
+        "CoreHydrateStatus",
+        "CoreListQuery",
+        "CoreQueryRequest",
+        "CoreTextField",
+        "CountMode",
+        "ResponseMeta",
+        "TurnVadAnnotateQuery",
+        "TurnVadAnnotateRequest",
+        "TurnVadAnnotateResponse",
+        "TurnVadAnnotationSource",
+        "VadPayload",
+        "View",
+    ];
 
     #[test]
     fn search_response_drops_stale_hydrated_hits() {
@@ -4434,12 +4478,29 @@ mod tests {
         );
     }
 
-    fn assert_json_snapshot(mut actual: Value, fixture: &str, path: &str, label: &str) {
+    fn assert_json_snapshot(actual: Value, fixture: &str, path: &str, label: &str) {
+        assert_json_snapshot_with_update(
+            actual,
+            fixture,
+            path,
+            label,
+            std::env::var_os("ONEIRON_UPDATE_TEST_FIXTURES").is_some(),
+        );
+    }
+
+    fn assert_json_snapshot_with_update(
+        mut actual: Value,
+        fixture: &str,
+        path: &str,
+        label: &str,
+        update_fixture: bool,
+    ) {
         let mut expected: Value = serde_json::from_str(fixture).expect("snapshot fixture JSON");
         sort_json(&mut actual);
         let actual = serde_json::to_string_pretty(&actual).expect("serialize actual snapshot");
-        if std::env::var_os("ONEIRON_UPDATE_TEST_FIXTURES").is_some() {
+        if update_fixture {
             std::fs::write(path, format!("{actual}\n")).expect("write snapshot fixture");
+            return;
         }
         let actual: Value = serde_json::from_str(&actual).expect("actual snapshot JSON");
         sort_json(&mut expected);
@@ -4447,6 +4508,25 @@ mod tests {
             let actual = serde_json::to_string_pretty(&actual).expect("serialize actual snapshot");
             panic!("{label} snapshot drifted; update fixture with:\n{actual}");
         }
+    }
+
+    #[test]
+    fn assert_json_snapshot_update_writes_fixture_without_comparing_stale_fixture() {
+        let dir = tempfile::tempdir().expect("temp snapshot dir");
+        let path = dir.path().join("snapshot.json");
+        let path = path.to_str().expect("snapshot path should be UTF-8");
+
+        assert_json_snapshot_with_update(
+            json!({ "updated": true }),
+            r#"{ "stale": true }"#,
+            path,
+            "fixture update",
+            true,
+        );
+
+        let written = std::fs::read_to_string(path).expect("read updated fixture");
+        let written: Value = serde_json::from_str(&written).expect("updated fixture JSON");
+        assert_eq!(written, json!({ "updated": true }));
     }
 
     fn sort_json(value: &mut Value) {
@@ -4652,6 +4732,29 @@ mod tests {
         }
     }
 
+    fn collect_schema_refs(value: &Value, refs: &mut BTreeSet<String>) {
+        match value {
+            Value::Array(items) => {
+                for item in items {
+                    collect_schema_refs(item, refs);
+                }
+            }
+            Value::Object(object) => {
+                if let Some(name) = object
+                    .get("$ref")
+                    .and_then(Value::as_str)
+                    .and_then(|reference| reference.strip_prefix("#/components/schemas/"))
+                {
+                    refs.insert(name.to_owned());
+                }
+                for value in object.values() {
+                    collect_schema_refs(value, refs);
+                }
+            }
+            Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => {}
+        }
+    }
+
     async fn core_json(
         server: Arc<SyncServer>,
         method: &str,
@@ -4722,21 +4825,8 @@ mod tests {
     #[test]
     fn v1_core_openapi_contract_snapshot_matches_fixture() {
         let spec = generated_spec();
-        let operations = [
-            ("/v1/core/batch", "post"),
-            ("/v1/core/query", "post"),
-            ("/v1/core/context-pack", "post"),
-            ("/v1/core/hydrate", "post"),
-            ("/v1/core/conversations", "get"),
-            ("/v1/core/conversations", "post"),
-            ("/v1/core/conversations/{conversation_id}/turns", "get"),
-            ("/v1/core/conversations/{conversation_id}/turns", "post"),
-            ("/v1/core/turns/{turn_id}", "get"),
-            ("/v1/core/turns/annotate", "get"),
-            ("/v1/core/turns/annotate", "post"),
-        ];
         let mut paths = Map::new();
-        for (path, method) in operations {
+        for &(path, method) in V1_CORE_OPENAPI_CONTRACT_OPERATIONS {
             paths
                 .entry(path.to_owned())
                 .or_insert_with(|| Value::Object(Map::new()))
@@ -4748,41 +4838,11 @@ mod tests {
                 );
         }
 
-        let schema_names = [
-            "ApiErrorEnvelope",
-            "CoreBatchEntityInput",
-            "CoreBatchEntityResult",
-            "CoreBatchRequest",
-            "CoreBatchResponse",
-            "CoreContextEdge",
-            "CoreContextEntity",
-            "CoreContextPackItemAccounting",
-            "CoreContextPackRequest",
-            "CoreContextPackResponse",
-            "CoreContextPackStats",
-            "CoreCreateEntityRequest",
-            "CoreCreateTurnRequest",
-            "CoreEntityWriteResponse",
-            "CoreHydrateRequest",
-            "CoreHydrateResponse",
-            "CoreHydrateStatus",
-            "CoreListQuery",
-            "CoreQueryRequest",
-            "CoreTextField",
-            "CountMode",
-            "ResponseMeta",
-            "TurnVadAnnotateQuery",
-            "TurnVadAnnotateRequest",
-            "TurnVadAnnotateResponse",
-            "TurnVadAnnotationSource",
-            "VadPayload",
-            "View",
-        ];
         let mut schemas = Map::new();
-        for name in schema_names {
+        for name in V1_CORE_OPENAPI_CONTRACT_SCHEMA_NAMES {
             schemas.insert(
-                name.to_owned(),
-                openapi_schema_contract(&spec["components"]["schemas"][name]),
+                (*name).to_owned(),
+                openapi_schema_contract(&spec["components"]["schemas"][*name]),
             );
         }
 
@@ -4800,6 +4860,27 @@ mod tests {
             V1_CORE_OPENAPI_CONTRACT_SNAPSHOT,
             V1_CORE_OPENAPI_CONTRACT_SNAPSHOT_PATH,
             "v1 core OpenAPI contract",
+        );
+    }
+
+    #[test]
+    fn v1_core_openapi_contract_snapshots_referenced_schemas() {
+        let spec = generated_spec();
+        let mut references = BTreeSet::new();
+        for &(path, method) in V1_CORE_OPENAPI_CONTRACT_OPERATIONS {
+            collect_schema_refs(
+                &openapi_operation_contract(&spec["paths"][path][method]),
+                &mut references,
+            );
+        }
+
+        let missing = references
+            .into_iter()
+            .filter(|name| !V1_CORE_OPENAPI_CONTRACT_SCHEMA_NAMES.contains(&name.as_str()))
+            .collect::<Vec<_>>();
+        assert!(
+            missing.is_empty(),
+            "OpenAPI contract references unsnapshotted schemas: {missing:?}"
         );
     }
 

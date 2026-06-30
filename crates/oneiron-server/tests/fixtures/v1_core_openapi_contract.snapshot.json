@@ -1,16 +1,388 @@
 {
+  "components": {
+    "schemas": {
+      "ApiError": {
+        "properties": {
+          "code": "string",
+          "details": "object|object|object|object|object|object|object|object|object|object|object|object|object|object|object|object|object|object|object|object|object",
+          "message": "string",
+          "suggestions": "array<string>"
+        },
+        "required": [
+          "code",
+          "message",
+          "details",
+          "suggestions"
+        ],
+        "type": "object"
+      },
+      "ApiErrorEnvelope": {
+        "properties": {
+          "error": "object"
+        },
+        "required": [
+          "error"
+        ],
+        "type": "object"
+      },
+      "CoreBatchEntityInput": {
+        "properties": {
+          "body": "object",
+          "entity_type": "integer",
+          "id": "string|null",
+          "learned_at": "integer|null",
+          "occurred_end": "integer|null",
+          "occurred_start": "integer|null",
+          "text": "array<#/components/schemas/CoreTextField>"
+        },
+        "required": [
+          "entity_type",
+          "body"
+        ],
+        "type": "object"
+      },
+      "CoreBatchEntityResult": {
+        "properties": {
+          "entity_type": "integer",
+          "id": "string"
+        },
+        "required": [
+          "id",
+          "entity_type"
+        ],
+        "type": "object"
+      },
+      "CoreBatchRequest": {
+        "properties": {
+          "entities": "array<#/components/schemas/CoreBatchEntityInput>"
+        },
+        "required": [
+          "entities"
+        ],
+        "type": "object"
+      },
+      "CoreBatchResponse": {
+        "properties": {
+          "count": "integer",
+          "entities": "array<#/components/schemas/CoreBatchEntityResult>"
+        },
+        "required": [
+          "count",
+          "entities"
+        ],
+        "type": "object"
+      },
+      "CoreContextEdge": {
+        "properties": {
+          "created_at": "integer",
+          "kind": "integer",
+          "target": "string",
+          "target_short_id": "string|null",
+          "vad": "null|#/components/schemas/VadPayload",
+          "weight": "number"
+        },
+        "required": [
+          "kind",
+          "target",
+          "weight",
+          "created_at"
+        ],
+        "type": "object"
+      },
+      "CoreContextEntity": {
+        "properties": {
+          "content_hash": "string",
+          "edges": "array<#/components/schemas/CoreContextEdge>",
+          "entity_type": "integer",
+          "fields": "object|null",
+          "id": "string",
+          "score": "number",
+          "short_id": "string",
+          "vector": "array<number>"
+        },
+        "required": [
+          "id",
+          "short_id",
+          "content_hash",
+          "entity_type",
+          "score"
+        ],
+        "type": "object"
+      },
+      "CoreContextPackItemAccounting": {
+        "properties": {
+          "count": "integer",
+          "reason": "string"
+        },
+        "required": [
+          "count",
+          "reason"
+        ],
+        "type": "object"
+      },
+      "CoreContextPackRequest": {
+        "properties": {
+          "edge_hop": "integer",
+          "hydrate": "boolean",
+          "include_edges": "boolean",
+          "include_vectors": "boolean",
+          "limit": "integer",
+          "max_neighbors": "integer",
+          "query": "string|null",
+          "query_vector": "array<number>",
+          "view": "null|#/components/schemas/View"
+        },
+        "type": "object"
+      },
+      "CoreContextPackResponse": {
+        "properties": {
+          "empty": "object|null",
+          "neighbors": "array<#/components/schemas/CoreContextEntity>",
+          "results": "array<#/components/schemas/CoreContextEntity>",
+          "stats": "#/components/schemas/CoreContextPackStats"
+        },
+        "required": [
+          "results",
+          "neighbors",
+          "stats"
+        ],
+        "type": "object"
+      },
+      "CoreContextPackStats": {
+        "properties": {
+          "candidates_considered": "integer",
+          "claims_suppressed": "integer",
+          "cosine_ghosts_dampened": "integer",
+          "entities_hydrated": "integer",
+          "items_dropped": "#/components/schemas/CoreContextPackItemAccounting",
+          "items_truncated": "#/components/schemas/CoreContextPackItemAccounting",
+          "neighbors_hydrated": "integer",
+          "query_time_us": "integer",
+          "signals_used": "array<string>"
+        },
+        "required": [
+          "candidates_considered",
+          "signals_used",
+          "query_time_us",
+          "entities_hydrated",
+          "neighbors_hydrated",
+          "cosine_ghosts_dampened",
+          "claims_suppressed",
+          "items_truncated",
+          "items_dropped"
+        ],
+        "type": "object"
+      },
+      "CoreCreateEntityRequest": {
+        "properties": {
+          "body": "object",
+          "id": "string|null",
+          "learned_at": "integer|null",
+          "occurred_end": "integer|null",
+          "occurred_start": "integer|null",
+          "text": "array<#/components/schemas/CoreTextField>"
+        },
+        "required": [
+          "body"
+        ],
+        "type": "object"
+      },
+      "CoreCreateTurnRequest": {
+        "properties": {
+          "body": "object",
+          "id": "string|null",
+          "learned_at": "integer|null",
+          "occurred_end": "integer|null",
+          "occurred_start": "integer|null",
+          "text": "array<#/components/schemas/CoreTextField>"
+        },
+        "required": [
+          "body"
+        ],
+        "type": "object"
+      },
+      "CoreEntityWriteResponse": {
+        "properties": {
+          "entity_type": "integer",
+          "id": "string",
+          "item": "object"
+        },
+        "required": [
+          "id",
+          "entity_type",
+          "item"
+        ],
+        "type": "object"
+      },
+      "CoreHydrateRequest": {
+        "properties": {
+          "content_hash": "string|null",
+          "ref": "string|null",
+          "short_id": "string|null",
+          "view": "null|#/components/schemas/View"
+        },
+        "type": "object"
+      },
+      "CoreHydrateResponse": {
+        "properties": {
+          "content_hash": "string",
+          "entity_type": "integer|null",
+          "id": "string|null",
+          "item": "object|null",
+          "short_id": "string",
+          "status": "#/components/schemas/CoreHydrateStatus"
+        },
+        "required": [
+          "status",
+          "short_id",
+          "content_hash"
+        ],
+        "type": "object"
+      },
+      "CoreHydrateStatus": {
+        "enum": [
+          "live",
+          "deleted"
+        ],
+        "type": "string"
+      },
+      "CoreListQuery": {
+        "properties": {
+          "after": "string|null",
+          "countMode": "#/components/schemas/CountMode",
+          "limit": "integer",
+          "view": "null|#/components/schemas/View"
+        },
+        "type": "object"
+      },
+      "CoreQueryRequest": {
+        "properties": {
+          "countMode": "#/components/schemas/CountMode",
+          "limit": "integer",
+          "query": "string|null",
+          "query_vector": "array<number>",
+          "view": "null|#/components/schemas/View"
+        },
+        "type": "object"
+      },
+      "CoreTextField": {
+        "properties": {
+          "field": "string",
+          "value": "string"
+        },
+        "required": [
+          "field",
+          "value"
+        ],
+        "type": "object"
+      },
+      "CountMode": {
+        "enum": [
+          "none",
+          "estimate",
+          "exact"
+        ],
+        "type": "string"
+      },
+      "ResponseMeta": {
+        "properties": {
+          "countMode": "#/components/schemas/CountMode",
+          "total": "integer"
+        },
+        "required": [
+          "total",
+          "countMode"
+        ],
+        "type": "object"
+      },
+      "TurnVadAnnotateQuery": {
+        "properties": {
+          "message_id": "string|null",
+          "turn_id": "string"
+        },
+        "required": [
+          "turn_id"
+        ],
+        "type": "object"
+      },
+      "TurnVadAnnotateRequest": {
+        "properties": {
+          "annotated_at": "integer|null",
+          "message_id": "string|null",
+          "source": "#/components/schemas/TurnVadAnnotationSource",
+          "turn_id": "string",
+          "vad": "#/components/schemas/VadPayload"
+        },
+        "required": [
+          "turn_id",
+          "vad",
+          "source"
+        ],
+        "type": "object"
+      },
+      "TurnVadAnnotateResponse": {
+        "properties": {
+          "annotated_at": "integer",
+          "message_id": "string|null",
+          "source": "#/components/schemas/TurnVadAnnotationSource",
+          "turn_id": "string",
+          "vad": "#/components/schemas/VadPayload"
+        },
+        "required": [
+          "turn_id",
+          "vad",
+          "source",
+          "annotated_at"
+        ],
+        "type": "object"
+      },
+      "TurnVadAnnotationSource": {
+        "enum": [
+          "model_inference",
+          "user_self_report"
+        ],
+        "type": "string"
+      },
+      "VadPayload": {
+        "properties": {
+          "arousal": "number",
+          "dominance": "number",
+          "valence": "number"
+        },
+        "required": [
+          "valence",
+          "arousal",
+          "dominance"
+        ],
+        "type": "object"
+      },
+      "View": {
+        "enum": [
+          "summary",
+          "standard",
+          "full"
+        ],
+        "type": "string"
+      }
+    },
+    "securitySchemes": {
+      "CoreBearer": {
+        "description": "Scoped bearer token for canonical /v1/core/* routes. The current local shell accepts the configured shared secret, optionally suffixed with ';scope=core:read,core:write,core:auth'.",
+        "scheme": "bearer",
+        "type": "http"
+      },
+      "OneironSecret": {
+        "description": "Phase-1 shared secret required by protected API routes when unauthenticated development access is disabled.",
+        "in": "header",
+        "name": "x-oneiron-secret",
+        "type": "apiKey"
+      }
+    }
+  },
   "paths": {
     "/v1/core/batch": {
       "post": {
         "operationId": "core_batch",
-        "security": [
-          {
-            "CoreBearer": []
-          },
-          {
-            "OneironSecret": []
-          }
-        ],
         "parameters": [],
         "requestSchema": {
           "$ref": "#/components/schemas/CoreBatchRequest"
@@ -46,12 +418,7 @@
               "$ref": "#/components/schemas/ApiErrorEnvelope"
             }
           }
-        }
-      }
-    },
-    "/v1/core/query": {
-      "post": {
-        "operationId": "core_query",
+        },
         "security": [
           {
             "CoreBearer": []
@@ -59,56 +426,12 @@
           {
             "OneironSecret": []
           }
-        ],
-        "parameters": [],
-        "requestSchema": {
-          "$ref": "#/components/schemas/CoreQueryRequest"
-        },
-        "responses": {
-          "200": {
-            "description": "Projected query results.",
-            "schema": {
-              "type": "object"
-            }
-          },
-          "400": {
-            "description": "Malformed query request.",
-            "schema": {
-              "$ref": "#/components/schemas/ApiErrorEnvelope"
-            }
-          },
-          "401": {
-            "description": "Missing or invalid core auth.",
-            "schema": {
-              "$ref": "#/components/schemas/ApiErrorEnvelope"
-            }
-          },
-          "403": {
-            "description": "Core token lacks core:read.",
-            "schema": {
-              "$ref": "#/components/schemas/ApiErrorEnvelope"
-            }
-          },
-          "500": {
-            "description": "Query failed.",
-            "schema": {
-              "$ref": "#/components/schemas/ApiErrorEnvelope"
-            }
-          }
-        }
+        ]
       }
     },
     "/v1/core/context-pack": {
       "post": {
         "operationId": "core_context_pack",
-        "security": [
-          {
-            "CoreBearer": []
-          },
-          {
-            "OneironSecret": []
-          }
-        ],
         "parameters": [],
         "requestSchema": {
           "$ref": "#/components/schemas/CoreContextPackRequest"
@@ -144,12 +467,7 @@
               "$ref": "#/components/schemas/ApiErrorEnvelope"
             }
           }
-        }
-      }
-    },
-    "/v1/core/hydrate": {
-      "post": {
-        "operationId": "core_hydrate",
+        },
         "security": [
           {
             "CoreBearer": []
@@ -157,91 +475,41 @@
           {
             "OneironSecret": []
           }
-        ],
-        "parameters": [],
-        "requestSchema": {
-          "$ref": "#/components/schemas/CoreHydrateRequest"
-        },
-        "responses": {
-          "200": {
-            "description": "Short ref resolved to a live or deleted entity.",
-            "schema": {
-              "$ref": "#/components/schemas/CoreHydrateResponse"
-            }
-          },
-          "400": {
-            "description": "Malformed short ref.",
-            "schema": {
-              "$ref": "#/components/schemas/ApiErrorEnvelope"
-            }
-          },
-          "401": {
-            "description": "Missing or invalid core auth.",
-            "schema": {
-              "$ref": "#/components/schemas/ApiErrorEnvelope"
-            }
-          },
-          "403": {
-            "description": "Core token lacks core:read.",
-            "schema": {
-              "$ref": "#/components/schemas/ApiErrorEnvelope"
-            }
-          },
-          "404": {
-            "description": "Short ref was not found.",
-            "schema": {
-              "$ref": "#/components/schemas/ApiErrorEnvelope"
-            }
-          },
-          "500": {
-            "description": "Hydrate lookup failed.",
-            "schema": {
-              "$ref": "#/components/schemas/ApiErrorEnvelope"
-            }
-          }
-        }
+        ]
       }
     },
     "/v1/core/conversations": {
       "get": {
         "operationId": "list_core_conversations",
-        "security": [
-          {
-            "CoreBearer": []
-          },
-          {
-            "OneironSecret": []
-          }
-        ],
         "parameters": [
           {
-            "name": "limit",
             "in": "query",
+            "name": "limit",
             "required": false,
             "schema": {
-              "type": "integer",
-              "default": 10
+              "default": 10,
+              "type": "integer"
             }
           },
           {
-            "name": "after",
             "in": "query",
+            "name": "after",
             "required": false,
             "schema": {
               "type": "string"
             }
           },
           {
-            "name": "view",
             "in": "query",
+            "name": "view",
             "required": false,
             "schema": {
               "$ref": "#/components/schemas/View"
             }
           },
           {
-            "name": "countMode",
             "in": "query",
+            "name": "countMode",
             "required": false,
             "schema": {
               "$ref": "#/components/schemas/CountMode"
@@ -280,10 +548,7 @@
               "$ref": "#/components/schemas/ApiErrorEnvelope"
             }
           }
-        }
-      },
-      "post": {
-        "operationId": "create_core_conversation",
+        },
         "security": [
           {
             "CoreBearer": []
@@ -291,7 +556,10 @@
           {
             "OneironSecret": []
           }
-        ],
+        ]
+      },
+      "post": {
+        "operationId": "create_core_conversation",
         "parameters": [],
         "requestSchema": {
           "$ref": "#/components/schemas/CoreCreateEntityRequest"
@@ -327,12 +595,7 @@
               "$ref": "#/components/schemas/ApiErrorEnvelope"
             }
           }
-        }
-      }
-    },
-    "/v1/core/conversations/{conversation_id}/turns": {
-      "get": {
-        "operationId": "list_core_conversation_turns",
+        },
         "security": [
           {
             "CoreBearer": []
@@ -340,44 +603,49 @@
           {
             "OneironSecret": []
           }
-        ],
+        ]
+      }
+    },
+    "/v1/core/conversations/{conversation_id}/turns": {
+      "get": {
+        "operationId": "list_core_conversation_turns",
         "parameters": [
           {
-            "name": "conversation_id",
             "in": "path",
+            "name": "conversation_id",
             "required": true,
             "schema": {
               "type": "string"
             }
           },
           {
-            "name": "limit",
             "in": "query",
+            "name": "limit",
             "required": false,
             "schema": {
-              "type": "integer",
-              "default": 10
+              "default": 10,
+              "type": "integer"
             }
           },
           {
-            "name": "after",
             "in": "query",
+            "name": "after",
             "required": false,
             "schema": {
               "type": "string"
             }
           },
           {
-            "name": "view",
             "in": "query",
+            "name": "view",
             "required": false,
             "schema": {
               "$ref": "#/components/schemas/View"
             }
           },
           {
-            "name": "countMode",
             "in": "query",
+            "name": "countMode",
             "required": false,
             "schema": {
               "$ref": "#/components/schemas/CountMode"
@@ -422,10 +690,7 @@
               "$ref": "#/components/schemas/ApiErrorEnvelope"
             }
           }
-        }
-      },
-      "post": {
-        "operationId": "create_core_conversation_turn",
+        },
         "security": [
           {
             "CoreBearer": []
@@ -433,11 +698,14 @@
           {
             "OneironSecret": []
           }
-        ],
+        ]
+      },
+      "post": {
+        "operationId": "create_core_conversation_turn",
         "parameters": [
           {
-            "name": "conversation_id",
             "in": "path",
+            "name": "conversation_id",
             "required": true,
             "schema": {
               "type": "string"
@@ -484,12 +752,7 @@
               "$ref": "#/components/schemas/ApiErrorEnvelope"
             }
           }
-        }
-      }
-    },
-    "/v1/core/turns/{turn_id}": {
-      "get": {
-        "operationId": "get_core_turn",
+        },
         "security": [
           {
             "CoreBearer": []
@@ -497,35 +760,25 @@
           {
             "OneironSecret": []
           }
-        ],
-        "parameters": [
-          {
-            "name": "turn_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "view",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "$ref": "#/components/schemas/View"
-            }
-          }
-        ],
-        "requestSchema": null,
+        ]
+      }
+    },
+    "/v1/core/hydrate": {
+      "post": {
+        "operationId": "core_hydrate",
+        "parameters": [],
+        "requestSchema": {
+          "$ref": "#/components/schemas/CoreHydrateRequest"
+        },
         "responses": {
           "200": {
-            "description": "Projected turn entity.",
+            "description": "Short ref resolved to a live or deleted entity.",
             "schema": {
-              "type": "object"
+              "$ref": "#/components/schemas/CoreHydrateResponse"
             }
           },
           "400": {
-            "description": "Malformed turn id or view.",
+            "description": "Malformed short ref.",
             "schema": {
               "$ref": "#/components/schemas/ApiErrorEnvelope"
             }
@@ -543,23 +796,18 @@
             }
           },
           "404": {
-            "description": "Turn was not found.",
+            "description": "Short ref was not found.",
             "schema": {
               "$ref": "#/components/schemas/ApiErrorEnvelope"
             }
           },
           "500": {
-            "description": "Turn read failed.",
+            "description": "Hydrate lookup failed.",
             "schema": {
               "$ref": "#/components/schemas/ApiErrorEnvelope"
             }
           }
-        }
-      }
-    },
-    "/v1/core/turns/annotate": {
-      "get": {
-        "operationId": "read_turn_vad_annotation",
+        },
         "security": [
           {
             "CoreBearer": []
@@ -567,19 +815,73 @@
           {
             "OneironSecret": []
           }
-        ],
+        ]
+      }
+    },
+    "/v1/core/query": {
+      "post": {
+        "operationId": "core_query",
+        "parameters": [],
+        "requestSchema": {
+          "$ref": "#/components/schemas/CoreQueryRequest"
+        },
+        "responses": {
+          "200": {
+            "description": "Projected query results.",
+            "schema": {
+              "type": "object"
+            }
+          },
+          "400": {
+            "description": "Malformed query request.",
+            "schema": {
+              "$ref": "#/components/schemas/ApiErrorEnvelope"
+            }
+          },
+          "401": {
+            "description": "Missing or invalid core auth.",
+            "schema": {
+              "$ref": "#/components/schemas/ApiErrorEnvelope"
+            }
+          },
+          "403": {
+            "description": "Core token lacks core:read.",
+            "schema": {
+              "$ref": "#/components/schemas/ApiErrorEnvelope"
+            }
+          },
+          "500": {
+            "description": "Query failed.",
+            "schema": {
+              "$ref": "#/components/schemas/ApiErrorEnvelope"
+            }
+          }
+        },
+        "security": [
+          {
+            "CoreBearer": []
+          },
+          {
+            "OneironSecret": []
+          }
+        ]
+      }
+    },
+    "/v1/core/turns/annotate": {
+      "get": {
+        "operationId": "read_turn_vad_annotation",
         "parameters": [
           {
-            "name": "turn_id",
             "in": "query",
+            "name": "turn_id",
             "required": true,
             "schema": {
               "type": "string"
             }
           },
           {
-            "name": "message_id",
             "in": "query",
+            "name": "message_id",
             "required": false,
             "schema": {
               "type": "string"
@@ -624,10 +926,7 @@
               "$ref": "#/components/schemas/ApiErrorEnvelope"
             }
           }
-        }
-      },
-      "post": {
-        "operationId": "annotate_turn_vad",
+        },
         "security": [
           {
             "CoreBearer": []
@@ -635,7 +934,10 @@
           {
             "OneironSecret": []
           }
-        ],
+        ]
+      },
+      "post": {
+        "operationId": "annotate_turn_vad",
         "parameters": [],
         "requestSchema": {
           "$ref": "#/components/schemas/TurnVadAnnotateRequest"
@@ -683,372 +985,85 @@
               "$ref": "#/components/schemas/ApiErrorEnvelope"
             }
           }
-        }
-      }
-    }
-  },
-  "components": {
-    "schemas": {
-      "ApiErrorEnvelope": {
-        "type": "object",
-        "required": [
-          "error"
-        ],
-        "properties": {
-          "error": "object"
-        }
-      },
-      "CoreBatchEntityInput": {
-        "type": "object",
-        "required": [
-          "entity_type",
-          "body"
-        ],
-        "properties": {
-          "body": "object",
-          "entity_type": "integer",
-          "id": "string|null",
-          "learned_at": "integer|null",
-          "occurred_end": "integer|null",
-          "occurred_start": "integer|null",
-          "text": "array<#/components/schemas/CoreTextField>"
-        }
-      },
-      "CoreBatchEntityResult": {
-        "type": "object",
-        "required": [
-          "id",
-          "entity_type"
-        ],
-        "properties": {
-          "entity_type": "integer",
-          "id": "string"
-        }
-      },
-      "CoreBatchRequest": {
-        "type": "object",
-        "required": [
-          "entities"
-        ],
-        "properties": {
-          "entities": "array<#/components/schemas/CoreBatchEntityInput>"
-        }
-      },
-      "CoreBatchResponse": {
-        "type": "object",
-        "required": [
-          "count",
-          "entities"
-        ],
-        "properties": {
-          "count": "integer",
-          "entities": "array<#/components/schemas/CoreBatchEntityResult>"
-        }
-      },
-      "CoreContextEdge": {
-        "type": "object",
-        "required": [
-          "kind",
-          "target",
-          "weight",
-          "created_at"
-        ],
-        "properties": {
-          "created_at": "integer",
-          "kind": "integer",
-          "target": "string",
-          "target_short_id": "string|null",
-          "vad": "null|#/components/schemas/VadPayload",
-          "weight": "number"
-        }
-      },
-      "CoreContextEntity": {
-        "type": "object",
-        "required": [
-          "id",
-          "short_id",
-          "content_hash",
-          "entity_type",
-          "score"
-        ],
-        "properties": {
-          "content_hash": "string",
-          "edges": "array<#/components/schemas/CoreContextEdge>",
-          "entity_type": "integer",
-          "fields": "object|null",
-          "id": "string",
-          "score": "number",
-          "short_id": "string",
-          "vector": "array<number>"
-        }
-      },
-      "CoreContextPackItemAccounting": {
-        "type": "object",
-        "required": [
-          "count",
-          "reason"
-        ],
-        "properties": {
-          "count": "integer",
-          "reason": "string"
-        }
-      },
-      "CoreContextPackRequest": {
-        "type": "object",
-        "properties": {
-          "edge_hop": "integer",
-          "hydrate": "boolean",
-          "include_edges": "boolean",
-          "include_vectors": "boolean",
-          "limit": "integer",
-          "max_neighbors": "integer",
-          "query": "string|null",
-          "query_vector": "array<number>",
-          "view": "null|#/components/schemas/View"
-        }
-      },
-      "CoreContextPackResponse": {
-        "type": "object",
-        "required": [
-          "results",
-          "neighbors",
-          "stats"
-        ],
-        "properties": {
-          "empty": "object|null",
-          "neighbors": "array<#/components/schemas/CoreContextEntity>",
-          "results": "array<#/components/schemas/CoreContextEntity>",
-          "stats": "#/components/schemas/CoreContextPackStats"
-        }
-      },
-      "CoreContextPackStats": {
-        "type": "object",
-        "required": [
-          "candidates_considered",
-          "signals_used",
-          "query_time_us",
-          "entities_hydrated",
-          "neighbors_hydrated",
-          "cosine_ghosts_dampened",
-          "claims_suppressed",
-          "items_truncated",
-          "items_dropped"
-        ],
-        "properties": {
-          "candidates_considered": "integer",
-          "claims_suppressed": "integer",
-          "cosine_ghosts_dampened": "integer",
-          "entities_hydrated": "integer",
-          "items_dropped": "#/components/schemas/CoreContextPackItemAccounting",
-          "items_truncated": "#/components/schemas/CoreContextPackItemAccounting",
-          "neighbors_hydrated": "integer",
-          "query_time_us": "integer",
-          "signals_used": "array<string>"
-        }
-      },
-      "CoreCreateEntityRequest": {
-        "type": "object",
-        "required": [
-          "body"
-        ],
-        "properties": {
-          "body": "object",
-          "id": "string|null",
-          "learned_at": "integer|null",
-          "occurred_end": "integer|null",
-          "occurred_start": "integer|null",
-          "text": "array<#/components/schemas/CoreTextField>"
-        }
-      },
-      "CoreCreateTurnRequest": {
-        "type": "object",
-        "required": [
-          "body"
-        ],
-        "properties": {
-          "body": "object",
-          "id": "string|null",
-          "learned_at": "integer|null",
-          "occurred_end": "integer|null",
-          "occurred_start": "integer|null",
-          "text": "array<#/components/schemas/CoreTextField>"
-        }
-      },
-      "CoreEntityWriteResponse": {
-        "type": "object",
-        "required": [
-          "id",
-          "entity_type",
-          "item"
-        ],
-        "properties": {
-          "entity_type": "integer",
-          "id": "string",
-          "item": "object"
-        }
-      },
-      "CoreHydrateRequest": {
-        "type": "object",
-        "properties": {
-          "content_hash": "string|null",
-          "ref": "string|null",
-          "short_id": "string|null",
-          "view": "null|#/components/schemas/View"
-        }
-      },
-      "CoreHydrateResponse": {
-        "type": "object",
-        "required": [
-          "status",
-          "short_id",
-          "content_hash"
-        ],
-        "properties": {
-          "content_hash": "string",
-          "entity_type": "integer|null",
-          "id": "string|null",
-          "item": "object|null",
-          "short_id": "string",
-          "status": "#/components/schemas/CoreHydrateStatus"
-        }
-      },
-      "CoreHydrateStatus": {
-        "type": "string",
-        "enum": [
-          "live",
-          "deleted"
-        ]
-      },
-      "CoreListQuery": {
-        "type": "object",
-        "properties": {
-          "after": "string|null",
-          "countMode": "#/components/schemas/CountMode",
-          "limit": "integer",
-          "view": "null|#/components/schemas/View"
-        }
-      },
-      "CoreQueryRequest": {
-        "type": "object",
-        "properties": {
-          "countMode": "#/components/schemas/CountMode",
-          "limit": "integer",
-          "query": "string|null",
-          "query_vector": "array<number>",
-          "view": "null|#/components/schemas/View"
-        }
-      },
-      "CoreTextField": {
-        "type": "object",
-        "required": [
-          "field",
-          "value"
-        ],
-        "properties": {
-          "field": "string",
-          "value": "string"
-        }
-      },
-      "CountMode": {
-        "type": "string",
-        "enum": [
-          "none",
-          "estimate",
-          "exact"
-        ]
-      },
-      "ResponseMeta": {
-        "type": "object",
-        "required": [
-          "total",
-          "countMode"
-        ],
-        "properties": {
-          "countMode": "#/components/schemas/CountMode",
-          "total": "integer"
-        }
-      },
-      "TurnVadAnnotateQuery": {
-        "type": "object",
-        "required": [
-          "turn_id"
-        ],
-        "properties": {
-          "message_id": "string|null",
-          "turn_id": "string"
-        }
-      },
-      "TurnVadAnnotateRequest": {
-        "type": "object",
-        "required": [
-          "turn_id",
-          "vad",
-          "source"
-        ],
-        "properties": {
-          "annotated_at": "integer|null",
-          "message_id": "string|null",
-          "source": "#/components/schemas/TurnVadAnnotationSource",
-          "turn_id": "string",
-          "vad": "#/components/schemas/VadPayload"
-        }
-      },
-      "TurnVadAnnotateResponse": {
-        "type": "object",
-        "required": [
-          "turn_id",
-          "vad",
-          "source",
-          "annotated_at"
-        ],
-        "properties": {
-          "annotated_at": "integer",
-          "message_id": "string|null",
-          "source": "#/components/schemas/TurnVadAnnotationSource",
-          "turn_id": "string",
-          "vad": "#/components/schemas/VadPayload"
-        }
-      },
-      "TurnVadAnnotationSource": {
-        "type": "string",
-        "enum": [
-          "model_inference",
-          "user_self_report"
-        ]
-      },
-      "VadPayload": {
-        "type": "object",
-        "required": [
-          "valence",
-          "arousal",
-          "dominance"
-        ],
-        "properties": {
-          "arousal": "number",
-          "dominance": "number",
-          "valence": "number"
-        }
-      },
-      "View": {
-        "type": "string",
-        "enum": [
-          "summary",
-          "standard",
-          "full"
+        },
+        "security": [
+          {
+            "CoreBearer": []
+          },
+          {
+            "OneironSecret": []
+          }
         ]
       }
     },
-    "securitySchemes": {
-      "CoreBearer": {
-        "type": "http",
-        "scheme": "bearer",
-        "description": "Scoped bearer token for canonical /v1/core/* routes. The current local shell accepts the configured shared secret, optionally suffixed with ';scope=core:read,core:write,core:auth'."
-      },
-      "OneironSecret": {
-        "type": "apiKey",
-        "in": "header",
-        "name": "x-oneiron-secret",
-        "description": "Phase-1 shared secret required by protected API routes when unauthenticated development access is disabled."
+    "/v1/core/turns/{turn_id}": {
+      "get": {
+        "operationId": "get_core_turn",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "turn_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "view",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/View"
+            }
+          }
+        ],
+        "requestSchema": null,
+        "responses": {
+          "200": {
+            "description": "Projected turn entity.",
+            "schema": {
+              "type": "object"
+            }
+          },
+          "400": {
+            "description": "Malformed turn id or view.",
+            "schema": {
+              "$ref": "#/components/schemas/ApiErrorEnvelope"
+            }
+          },
+          "401": {
+            "description": "Missing or invalid core auth.",
+            "schema": {
+              "$ref": "#/components/schemas/ApiErrorEnvelope"
+            }
+          },
+          "403": {
+            "description": "Core token lacks core:read.",
+            "schema": {
+              "$ref": "#/components/schemas/ApiErrorEnvelope"
+            }
+          },
+          "404": {
+            "description": "Turn was not found.",
+            "schema": {
+              "$ref": "#/components/schemas/ApiErrorEnvelope"
+            }
+          },
+          "500": {
+            "description": "Turn read failed.",
+            "schema": {
+              "$ref": "#/components/schemas/ApiErrorEnvelope"
+            }
+          }
+        },
+        "security": [
+          {
+            "CoreBearer": []
+          },
+          {
+            "OneironSecret": []
+          }
+        ]
       }
     }
   }
