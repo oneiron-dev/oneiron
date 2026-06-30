@@ -7,6 +7,134 @@ use crate::types::{ENTITY_TYPE_FACET, EntityId, TypeByteBand, VadComponent};
 /// Result type used throughout the crate.
 pub type Result<T> = std::result::Result<T, Error>;
 
+/// Stable Gate rejection outcome for typed caller handling.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum GateDenialOutcome {
+    Pending,
+    Deny,
+}
+
+impl GateDenialOutcome {
+    /// Stable string used in audit logs and existing [`Error::GateWriteRejected`] fields.
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Pending => "pending",
+            Self::Deny => "deny",
+        }
+    }
+
+    /// Parses the stable string form used by [`Error::GateWriteRejected`].
+    #[must_use]
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "pending" => Some(Self::Pending),
+            "deny" => Some(Self::Deny),
+            _ => None,
+        }
+    }
+}
+
+impl fmt::Display for GateDenialOutcome {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+/// Stable Gate rejection reason for typed caller handling and audit logs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum GateDenialReason {
+    DenyMissingActorClass,
+    DenyMissingActorProvenance,
+    DenyMissingPolicyManifestVersion,
+    DenyPolicyFailClosed,
+    PendingActorCeiling,
+    PendingSourceTrust,
+    PendingCriticalityFloor,
+    PendingPolicyManifestAuthority,
+    PendingExternalEffectAuthority,
+}
+
+impl GateDenialReason {
+    /// Stable `gate.*` code used in audit logs and existing [`Error::GateWriteRejected`] fields.
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::DenyMissingActorClass => "gate.deny.missing_actor_class",
+            Self::DenyMissingActorProvenance => "gate.deny.missing_actor_provenance",
+            Self::DenyMissingPolicyManifestVersion => "gate.deny.missing_policy_manifest_version",
+            Self::DenyPolicyFailClosed => "gate.deny.policy_fail_closed",
+            Self::PendingActorCeiling => "gate.pending.actor_ceiling",
+            Self::PendingSourceTrust => "gate.pending.source_trust",
+            Self::PendingCriticalityFloor => "gate.pending.criticality_floor",
+            Self::PendingPolicyManifestAuthority => "gate.pending.policy_manifest_authority",
+            Self::PendingExternalEffectAuthority => "gate.pending.external_effect_authority",
+        }
+    }
+
+    /// Parses a stable `gate.*` reason code.
+    #[must_use]
+    pub fn from_code(value: &str) -> Option<Self> {
+        match value {
+            "gate.deny.missing_actor_class" => Some(Self::DenyMissingActorClass),
+            "gate.deny.missing_actor_provenance" => Some(Self::DenyMissingActorProvenance),
+            "gate.deny.missing_policy_manifest_version" => {
+                Some(Self::DenyMissingPolicyManifestVersion)
+            }
+            "gate.deny.policy_fail_closed" => Some(Self::DenyPolicyFailClosed),
+            "gate.pending.actor_ceiling" => Some(Self::PendingActorCeiling),
+            "gate.pending.source_trust" => Some(Self::PendingSourceTrust),
+            "gate.pending.criticality_floor" => Some(Self::PendingCriticalityFloor),
+            "gate.pending.policy_manifest_authority" => Some(Self::PendingPolicyManifestAuthority),
+            "gate.pending.external_effect_authority" => Some(Self::PendingExternalEffectAuthority),
+            _ => None,
+        }
+    }
+
+    /// Outcome associated with this rejection reason.
+    #[must_use]
+    pub fn outcome(self) -> GateDenialOutcome {
+        match self {
+            Self::DenyMissingActorClass
+            | Self::DenyMissingActorProvenance
+            | Self::DenyMissingPolicyManifestVersion
+            | Self::DenyPolicyFailClosed => GateDenialOutcome::Deny,
+            Self::PendingActorCeiling
+            | Self::PendingSourceTrust
+            | Self::PendingCriticalityFloor
+            | Self::PendingPolicyManifestAuthority
+            | Self::PendingExternalEffectAuthority => GateDenialOutcome::Pending,
+        }
+    }
+}
+
+impl fmt::Display for GateDenialReason {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+/// Typed view over [`Error::GateWriteRejected`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GateDenial {
+    outcome: GateDenialOutcome,
+    reason_codes: Vec<GateDenialReason>,
+}
+
+impl GateDenial {
+    /// Gate rejection outcome.
+    #[must_use]
+    pub fn outcome(&self) -> GateDenialOutcome {
+        self.outcome
+    }
+
+    /// Stable Gate rejection reasons.
+    #[must_use]
+    pub fn reason_codes(&self) -> &[GateDenialReason] {
+        &self.reason_codes
+    }
+}
+
 /// Stable coarse-grained category for [`Error`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
@@ -312,6 +440,7 @@ pub enum Error {
     /// The Gate evaluator rejected a local write before persistence. The
     /// outcome is `pending` or `deny`, and `reason_codes` are stable
     /// `gate.*` strings suitable for caller routing and audit breadcrumbs.
+    /// [`Error::gate_denial`] exposes the same fields as typed taxonomy values.
     #[error("gate write rejected: outcome={outcome}, reasons={reason_codes:?}")]
     GateWriteRejected {
         outcome: &'static str,
@@ -627,6 +756,33 @@ pub enum Error {
 }
 
 impl Error {
+    /// Returns the typed Gate denial taxonomy for [`Error::GateWriteRejected`].
+    #[must_use]
+    pub fn gate_denial(&self) -> Option<GateDenial> {
+        let Self::GateWriteRejected {
+            outcome,
+            reason_codes,
+        } = self
+        else {
+            return None;
+        };
+
+        let outcome = GateDenialOutcome::parse(outcome)?;
+        let mut typed_reasons = Vec::with_capacity(reason_codes.len());
+        for reason_code in reason_codes {
+            let reason = GateDenialReason::from_code(reason_code)?;
+            if reason.outcome() != outcome {
+                return None;
+            }
+            typed_reasons.push(reason);
+        }
+
+        Some(GateDenial {
+            outcome,
+            reason_codes: typed_reasons,
+        })
+    }
+
     pub(crate) fn invalid_vector_component(vector: &[f32]) -> Option<Self> {
         vector
             .iter()
