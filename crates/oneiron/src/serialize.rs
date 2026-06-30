@@ -28,6 +28,11 @@ const OTHER_ENTITY_TYPE: u8 = u8::MAX;
 const TOON_MAX_DEPTH: usize = 128;
 type ValueDepthLimit = Option<usize>;
 
+/// Stable serializer identity recorded in whole-vault export manifests.
+pub const WHOLE_VAULT_EXPORT_SERIALIZER: &str = "oneiron.whole_vault_export";
+/// Version of the whole-vault export serializer contract.
+pub const WHOLE_VAULT_EXPORT_SERIALIZER_VERSION: u16 = 1;
+
 #[derive(Debug, Clone)]
 pub struct SerializeConfig {
     pub format: PackFormat,

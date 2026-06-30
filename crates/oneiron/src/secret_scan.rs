@@ -1,5 +1,5 @@
 use super::BatchOp;
-use super::export::ExportManifest;
+use super::export::ExportSecretsNulledManifest;
 use crate::error::{Error, Result};
 
 const REASON_DETECTED: &str = "gate.secret_scan.detected";
@@ -15,7 +15,7 @@ pub(crate) fn scan_batch_ops(ops: &[BatchOp]) -> Result<()> {
     for op in ops {
         match op {
             BatchOp::Put { data, .. } => {
-                let _manifest = scan_payload(data)?;
+                let _secrets_nulled = scan_payload(data)?;
             }
             BatchOp::ClaimCandidate {
                 candidate,
@@ -24,16 +24,16 @@ pub(crate) fn scan_batch_ops(ops: &[BatchOp]) -> Result<()> {
             } => {
                 let body = (**candidate).clone().into_claim_body(envelope);
                 let data = crate::claim::encode_claim_body(&body)?;
-                let _manifest = scan_payload(&data)?;
+                let _secrets_nulled = scan_payload(&data)?;
             }
             BatchOp::Text { fields, .. } => {
                 for (_, value) in fields {
-                    let _manifest = scan_payload(value.as_bytes())?;
+                    let _secrets_nulled = scan_payload(value.as_bytes())?;
                 }
             }
             BatchOp::Phonetic { codes, .. } => {
                 for code in codes {
-                    let _manifest = scan_payload(code.as_bytes())?;
+                    let _secrets_nulled = scan_payload(code.as_bytes())?;
                 }
             }
             _ => {}
@@ -43,17 +43,18 @@ pub(crate) fn scan_batch_ops(ops: &[BatchOp]) -> Result<()> {
 }
 
 pub(crate) fn scan_metadata_field(value: &str) -> Result<()> {
-    let _manifest = scan_payload(value.as_bytes())?;
+    let _secrets_nulled = scan_payload(value.as_bytes())?;
     Ok(())
 }
 
-fn scan_payload(data: &[u8]) -> Result<ExportManifest> {
+fn scan_payload(data: &[u8]) -> Result<ExportSecretsNulledManifest> {
     let haystack = String::from_utf8_lossy(data);
-    let manifest = ExportManifest::from_redacted(has_redaction_marker(&haystack));
+    let secrets_nulled =
+        ExportSecretsNulledManifest::from_redacted(has_redaction_marker(&haystack));
     if let Some(reason) = detect_secret(&haystack) {
         return Err(secret_scan_error(reason));
     }
-    Ok(manifest)
+    Ok(secrets_nulled)
 }
 
 fn secret_scan_error(reason: &'static str) -> Error {
@@ -71,6 +72,8 @@ fn has_redaction_marker(haystack: &str) -> bool {
         "<redacted>",
         "secret_nulled",
         "structurally_secret_nulled",
+        "secrets_nulled",
+        "structural_placeholders",
     ]
     .iter()
     .any(|marker| lower.contains(marker))
@@ -212,7 +215,26 @@ mod tests {
     fn scan_payload_marks_redacted_payload_as_structurally_secret_nulled() {
         let manifest = scan_payload(b"api_key=[REDACTED]").expect("redacted payload is safe");
 
-        assert!(manifest.redacted());
-        assert!(manifest.structurally_secret_nulled());
+        assert!(manifest.payloads());
+        assert!(manifest.structural_placeholders());
+    }
+
+    #[test]
+    fn scan_payload_marks_export_manifest_redaction_fields_as_secret_nulled() {
+        let manifest =
+            scan_payload(br#"{"secrets_nulled":{"payloads":true,"structural_placeholders":true}}"#)
+                .expect("export manifest marker payload is safe");
+
+        assert!(manifest.payloads());
+        assert!(manifest.structural_placeholders());
+    }
+
+    #[test]
+    fn scan_payload_keeps_legacy_redaction_fields_as_secret_nulled() {
+        let manifest = scan_payload(br#"{"secret_nulled":true,"structurally_secret_nulled":true}"#)
+            .expect("legacy manifest marker payload is safe");
+
+        assert!(manifest.payloads());
+        assert!(manifest.structural_placeholders());
     }
 }
