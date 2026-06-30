@@ -1260,7 +1260,7 @@ fn utc_day_start(timestamp: u64) -> u64 {
 }
 
 fn previous_calendar_month_range(now: u64) -> TimeRange {
-    let (year, month, _) = civil_from_unix_days((now / TEMPORAL_SECONDS_PER_DAY) as i64);
+    let (year, month, _) = civil_from_unix_days(unix_days_from_timestamp(now));
     let current_month_start = unix_seconds_from_civil(year, month, 1);
     let (previous_year, previous_month) = if month == 1 {
         (year - 1, 12)
@@ -1274,7 +1274,7 @@ fn previous_calendar_month_range(now: u64) -> TimeRange {
 }
 
 fn previous_calendar_year_range(now: u64) -> TimeRange {
-    let (year, _, _) = civil_from_unix_days((now / TEMPORAL_SECONDS_PER_DAY) as i64);
+    let (year, _, _) = civil_from_unix_days(unix_days_from_timestamp(now));
     let current_year_start = unix_seconds_from_civil(year, 1, 1);
     TimeRange {
         start: unix_seconds_from_civil(year - 1, 1, 1),
@@ -1295,6 +1295,11 @@ fn unix_seconds_from_civil(year: i32, month: u32, day: u32) -> u64 {
     }
 }
 
+fn unix_days_from_timestamp(timestamp: u64) -> i64 {
+    i64::try_from(timestamp / TEMPORAL_SECONDS_PER_DAY)
+        .expect("temporal UTC conversion supports Unix days representable as i64")
+}
+
 fn civil_from_unix_days(days: i64) -> (i32, u32, u32) {
     let z = days + 719_468;
     let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
@@ -1306,7 +1311,9 @@ fn civil_from_unix_days(days: i64) -> (i32, u32, u32) {
     let d = doy - (153 * mp + 2) / 5 + 1;
     let m = mp + if mp < 10 { 3 } else { -9 };
     let year = y + i64::from(m <= 2);
-    (year as i32, m as u32, d as u32)
+    let year = i32::try_from(year)
+        .expect("temporal UTC conversion supports civil years representable as i32");
+    (year, m as u32, d as u32)
 }
 
 fn unix_days_from_civil(year: i32, month: u32, day: u32) -> i64 {
@@ -2382,6 +2389,12 @@ mod tests {
     #[should_panic(expected = "only defined for Unix epoch and later dates")]
     fn unix_seconds_from_civil_rejects_pre_epoch_dates() {
         let _ = unix_seconds_from_civil(1969, 12, 31);
+    }
+
+    #[test]
+    #[should_panic(expected = "civil years representable as i32")]
+    fn temporal_expression_rejects_extreme_timestamp_without_wrapping() {
+        let _ = parse_temporal_expression("last month", u64::MAX);
     }
 
     #[test]
