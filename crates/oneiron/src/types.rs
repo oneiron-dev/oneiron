@@ -1162,8 +1162,8 @@ pub fn parse_temporal_expression(
 /// Extracts one accepted temporal hint from a larger retrieval query.
 ///
 /// Queries without temporal hint words return `Ok(None)`. Queries containing
-/// an unsupported `last <unit>` phrase, or more than one temporal hint, fail
-/// closed with a typed parse error.
+/// an unsupported temporal-looking phrase, or more than one temporal hint,
+/// fail closed with a typed parse error.
 pub fn temporal_expression_from_query(
     query: &str,
 ) -> std::result::Result<Option<TemporalExpression>, TemporalExpressionParseError> {
@@ -1175,46 +1175,37 @@ pub fn temporal_expression_from_query(
         let parsed = match tokens[index].as_str() {
             "recent" => Some(TemporalExpression::Recent),
             "yesterday" => Some(TemporalExpression::Yesterday),
-            "last" => {
-                let Some(next) = tokens.get(index + 1) else {
-                    return Err(TemporalExpressionParseError::Unsupported {
-                        expression: "last".to_owned(),
-                    });
-                };
-                match next.as_str() {
-                    "week" => {
-                        index += 1;
-                        Some(TemporalExpression::LastWeek)
-                    }
-                    "month" => {
-                        index += 1;
-                        Some(TemporalExpression::LastMonth)
-                    }
-                    "year" => {
-                        index += 1;
-                        Some(TemporalExpression::LastYear)
-                    }
-                    "weeks" | "months" | "years" | "day" | "days" | "quarter" | "quarters"
-                    | "friday" | "monday" | "tuesday" | "wednesday" | "thursday" | "saturday"
-                    | "sunday" => {
-                        return Err(TemporalExpressionParseError::Unsupported {
-                            expression: format!("last {next}"),
-                        });
-                    }
-                    _ if next.bytes().all(|byte| byte.is_ascii_digit()) => {
-                        let expression = match tokens.get(index + 2) {
-                            Some(unit) => format!("last {next} {unit}"),
-                            None => format!("last {next}"),
-                        };
-                        return Err(TemporalExpressionParseError::Unsupported { expression });
-                    }
-                    _ => {
-                        return Err(TemporalExpressionParseError::Unsupported {
-                            expression: format!("last {next}"),
-                        });
-                    }
+            "last" => match tokens.get(index + 1).map(String::as_str) {
+                None => None,
+                Some("week") => {
+                    index += 1;
+                    Some(TemporalExpression::LastWeek)
                 }
-            }
+                Some("month") => {
+                    index += 1;
+                    Some(TemporalExpression::LastMonth)
+                }
+                Some("year") => {
+                    index += 1;
+                    Some(TemporalExpression::LastYear)
+                }
+                Some(next) if is_temporal_unit_token(next) || is_weekday_token(next) => {
+                    return Err(TemporalExpressionParseError::Unsupported {
+                        expression: format!("last {next}"),
+                    });
+                }
+                Some(next) if next.bytes().all(|byte| byte.is_ascii_digit()) => {
+                    if let Some(unit) = tokens.get(index + 2).map(String::as_str)
+                        && (is_temporal_unit_token(unit) || is_weekday_token(unit))
+                    {
+                        return Err(TemporalExpressionParseError::Unsupported {
+                            expression: format!("last {next} {unit}"),
+                        });
+                    }
+                    None
+                }
+                Some(_) => None,
+            },
             _ => None,
         };
 
@@ -1239,6 +1230,29 @@ fn temporal_query_tokens(value: &str) -> Vec<String> {
         .filter(|token| !token.is_empty())
         .map(str::to_ascii_lowercase)
         .collect()
+}
+
+fn is_temporal_unit_token(token: &str) -> bool {
+    matches!(
+        token,
+        "day"
+            | "days"
+            | "week"
+            | "weeks"
+            | "month"
+            | "months"
+            | "year"
+            | "years"
+            | "quarter"
+            | "quarters"
+    )
+}
+
+fn is_weekday_token(token: &str) -> bool {
+    matches!(
+        token,
+        "monday" | "tuesday" | "wednesday" | "thursday" | "friday" | "saturday" | "sunday"
+    )
 }
 
 fn utc_day_start(timestamp: u64) -> u64 {
@@ -1270,7 +1284,11 @@ fn previous_calendar_year_range(now: u64) -> TimeRange {
 
 fn unix_seconds_from_civil(year: i32, month: u32, day: u32) -> u64 {
     let days = unix_days_from_civil(year, month, day);
-    if days <= 0 {
+    assert!(
+        days >= 0,
+        "temporal UTC conversion is only defined for Unix epoch and later dates"
+    );
+    if days == 0 {
         0
     } else {
         (days as u64).saturating_mul(TEMPORAL_SECONDS_PER_DAY)
@@ -2336,11 +2354,34 @@ mod tests {
     }
 
     #[test]
+    fn temporal_expression_query_parser_ignores_non_temporal_last_nouns() {
+        for query in ["last commit", "my last note", "last update", "show me last"] {
+            assert_eq!(
+                temporal_expression_from_query(query).unwrap(),
+                None,
+                "{query}"
+            );
+        }
+    }
+
+    #[test]
     fn temporal_expression_query_parser_rejects_multiple_hints() {
         assert!(matches!(
             temporal_expression_from_query("recent notes from yesterday"),
             Err(TemporalExpressionParseError::Ambiguous)
         ));
+    }
+
+    #[test]
+    fn unix_seconds_from_civil_keeps_epoch_boundary_at_zero() {
+        assert_eq!(unix_seconds_from_civil(1970, 1, 1), 0);
+        assert_eq!(unix_seconds_from_civil(1970, 1, 2), 86_400);
+    }
+
+    #[test]
+    #[should_panic(expected = "only defined for Unix epoch and later dates")]
+    fn unix_seconds_from_civil_rejects_pre_epoch_dates() {
+        let _ = unix_seconds_from_civil(1969, 12, 31);
     }
 
     #[test]
