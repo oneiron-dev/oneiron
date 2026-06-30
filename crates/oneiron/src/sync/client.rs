@@ -41,7 +41,7 @@
 //!   loading the window doc.
 
 use std::cmp::Ordering::{Equal, Less};
-use std::collections::{HashMap, VecDeque};
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use loro::{LoroDoc, VersionVector};
@@ -163,11 +163,6 @@ pub struct SyncClient {
     /// may only be cleared once the server's OWN vv proves it holds every op
     /// the local doc holds.
     server_vvs: HashMap<String, VersionVector>,
-    /// Selector-capable callers record the admission role for each pending
-    /// selector response. The following server `UPDATE` for that window is
-    /// admitted through the federation seam instead of the full-window replay
-    /// path.
-    pending_federated_window_updates: HashMap<String, VecDeque<FederationAdmissionRole>>,
     status: SyncStatus,
     pub(crate) event_tx: mpsc::UnboundedSender<SyncEvent>,
 }
@@ -209,7 +204,6 @@ impl SyncClient {
             device_signing_key: identity.signing_key,
             config,
             server_vvs: HashMap::new(),
-            pending_federated_window_updates: HashMap::new(),
             status: SyncStatus::Disconnected,
             event_tx,
         };
@@ -431,12 +425,8 @@ impl SyncClient {
                 Ok(responses)
             }
             window_sub_tags::UPDATE => {
-                if let Some(role) = self.take_pending_federated_window_update(window_key) {
-                    self.import_federated_window_update(window_key, payload, role)?;
-                } else {
-                    let window = self.ensure_window(window_key)?;
-                    self.import_accepted_window_update(window_key, &window, payload)?;
-                }
+                let window = self.ensure_window(window_key)?;
+                self.import_accepted_window_update(window_key, &window, payload)?;
                 Ok(Vec::new())
             }
             window_sub_tags::VV_RESPONSE => {
@@ -460,9 +450,11 @@ impl SyncClient {
 
     /// Builds a selector request frame for a selector-capable caller.
     ///
-    /// This is deliberately pure: callers should record the explicit
-    /// member/guest marker only after the frame is successfully sent, via
-    /// [`SyncClient::record_federated_selector_request_sent`].
+    /// This is deliberately pure: a generic `UPDATE` response has no selector
+    /// discriminator, so `handle_window_sync` cannot safely classify the next
+    /// same-window update as federated. A selector-capable caller that has
+    /// explicit member/guest context must route the selected response bytes
+    /// through [`SyncClient::import_federated_selector_window_update`].
     pub fn federated_selector_vv_request(
         &self,
         window_key: &str,
@@ -481,42 +473,19 @@ impl SyncClient {
         Ok(frame)
     }
 
-    /// Records that a selector request was sent and the next selected
-    /// `UPDATE` response for this window must enter federation admission.
+    /// Imports a selector response whose caller already bound the request to
+    /// an explicit member/guest admission role.
     ///
-    /// The role is explicit; it is not inferred from the grant role.
-    pub fn record_federated_selector_request_sent(
+    /// The role is explicit; it is not inferred from grant role names, and it
+    /// is intentionally not stored as global "next update" state because
+    /// same-window full-window updates share the same wire `UPDATE` tag.
+    pub fn import_federated_selector_window_update(
         &mut self,
         window_key: &str,
+        update: &[u8],
         role: FederationAdmissionRole,
     ) -> std::result::Result<(), TransportError> {
-        let key = WindowKey::try_new(window_key).ok_or(TransportError::InvalidWindowKey)?;
-        self.pending_federated_window_updates
-            .entry(key.as_str().to_owned())
-            .or_default()
-            .push_back(role);
-        Ok(())
-    }
-
-    /// Clears pending selector admission markers for a new connection or a
-    /// failed selector exchange.
-    pub fn clear_pending_federated_window_updates(&mut self) {
-        self.pending_federated_window_updates.clear();
-    }
-
-    fn take_pending_federated_window_update(
-        &mut self,
-        window_key: &str,
-    ) -> Option<FederationAdmissionRole> {
-        let (role, empty) = {
-            let pending = self.pending_federated_window_updates.get_mut(window_key)?;
-            let role = pending.pop_front();
-            (role, pending.is_empty())
-        };
-        if empty {
-            self.pending_federated_window_updates.remove(window_key);
-        }
-        role
+        self.import_federated_window_update(window_key, update, role)
     }
 
     /// Imports a member/guest federation update after applying the local
@@ -1925,19 +1894,13 @@ mod tests {
             transport::decode_window_sync(&request[1..]).expect("decode selector request frame");
         assert_eq!(request_key, key);
         assert_eq!(request_sub_tag, window_sub_tags::SELECTOR_VV_REQUEST);
-        client
-            .record_federated_selector_request_sent(key, FederationAdmissionRole::Member)
-            .expect("member selector request marker records");
 
         let id = test_entity_id(0x94);
         let remote_body = source_trust_claim(ClaimSource::ToolOutput);
         let update = federated_claim_update(&id, &remote_body);
-        let response = transport::encode_window_sync(key, window_sub_tags::UPDATE, &update)
-            .into_result()
-            .expect("selector response encodes");
 
         client
-            .handle_server_message(&response)
+            .import_federated_selector_window_update(key, &update, FederationAdmissionRole::Member)
             .expect("selector member response should be admitted");
 
         let raw = vault
@@ -1948,6 +1911,30 @@ mod tests {
             crate::claim::decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], false)
                 .expect("decode materialized selector claim");
         assert_eq!(materialized_body.source, Some(ClaimSource::Imported));
+
+        let ordinary_id = test_entity_id(0x9A);
+        let ordinary_body = internal_source_trust_claim(ClaimSource::ToolOutput);
+        let ordinary_update = federated_claim_update(&ordinary_id, &ordinary_body);
+        let ordinary_response =
+            transport::encode_window_sync(key, window_sub_tags::UPDATE, &ordinary_update)
+                .into_result()
+                .expect("ordinary full-window update encodes");
+
+        client
+            .handle_server_message(&ordinary_response)
+            .expect("ordinary full-window update should remain trust-blind after selector import");
+
+        let ordinary_raw = vault
+            .get_raw(&ordinary_id)
+            .expect("read ordinary post-selector claim")
+            .expect("ordinary post-selector claim materializes");
+        let ordinary_materialized_body =
+            crate::claim::decode_claim_body(&ordinary_raw[ENTITY_METADATA_HEADER_LEN..], false)
+                .expect("decode ordinary post-selector claim");
+        assert_eq!(
+            ordinary_materialized_body.source,
+            Some(ClaimSource::ToolOutput)
+        );
     }
 
     #[test]
@@ -1965,18 +1952,12 @@ mod tests {
         client
             .federated_selector_vv_request(key, &test_selector(), &VersionVector::new().encode())
             .expect("guest selector request encodes");
-        client
-            .record_federated_selector_request_sent(key, FederationAdmissionRole::Guest)
-            .expect("guest selector request marker records");
         let id = test_entity_id(0x96);
         let remote_body = internal_source_trust_claim(ClaimSource::ToolOutput);
         let update = federated_claim_update(&id, &remote_body);
-        let response = transport::encode_window_sync(key, window_sub_tags::UPDATE, &update)
-            .into_result()
-            .expect("selector response encodes");
 
         let err = client
-            .handle_server_message(&response)
+            .import_federated_selector_window_update(key, &update, FederationAdmissionRole::Guest)
             .expect_err("guest selector response above local ceiling must be denied");
         let TransportError::Storage(message) = err else {
             panic!("expected auditable admission storage error, got {err:?}");
@@ -2026,7 +2007,7 @@ mod tests {
     }
 
     #[test]
-    fn unsent_federated_selector_request_does_not_mark_next_update() {
+    fn selector_request_builder_does_not_reclassify_next_update() {
         let manager = test_manager();
         let vault = Arc::clone(manager.vault());
         let (mut client, _rx) = test_client(&manager);
@@ -2044,39 +2025,7 @@ mod tests {
 
         client
             .handle_server_message(&response)
-            .expect("unsent selector request must not reclassify the update");
-
-        let raw = vault
-            .get_raw(&id)
-            .expect("read full-window claim")
-            .expect("full-window claim materializes");
-        let materialized_body =
-            crate::claim::decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], false)
-                .expect("decode full-window claim");
-        assert_eq!(materialized_body.source, Some(ClaimSource::ToolOutput));
-    }
-
-    #[test]
-    fn clearing_pending_federated_selector_marker_restores_full_window_classification() {
-        let manager = test_manager();
-        let vault = Arc::clone(manager.vault());
-        let (mut client, _rx) = test_client(&manager);
-        let key = "2026-03";
-        client
-            .record_federated_selector_request_sent(key, FederationAdmissionRole::Guest)
-            .expect("guest selector marker records");
-        client.clear_pending_federated_window_updates();
-
-        let id = test_entity_id(0x99);
-        let remote_body = internal_source_trust_claim(ClaimSource::ToolOutput);
-        let update = federated_claim_update(&id, &remote_body);
-        let response = transport::encode_window_sync(key, window_sub_tags::UPDATE, &update)
-            .into_result()
-            .expect("full-window update encodes");
-
-        client
-            .handle_server_message(&response)
-            .expect("cleared selector marker must not reclassify the update");
+            .expect("selector request builder must not reclassify the update");
 
         let raw = vault
             .get_raw(&id)
