@@ -642,14 +642,22 @@ impl<'a> PipelineBuilder<'a> {
             // D19 is always active. For final-token prefix queries, a dead
             // exact claim can outrank a live prefix hit in BM25, then be
             // removed after fusion; overfetch prevents that dead exact hit
-            // from consuming the only text-channel slot.
+            // from consuming the only text-channel slot. Live exact claims
+            // already satisfy the D19 gate, so they must not widen ordinary
+            // `search_text(..., limit)` calls.
+            let mut claim_gate_widening_probe = ClaimStatusGateCache::default();
             let claim_gate_text_widening_active = if let Some((query, limit)) = &self.text_search
                 && *limit > 0
             {
-                let mut exact_posting_is_claim = |id: &EntityId| {
-                    Ok(metadata_cache
-                        .get(&self.vault.store, &rtxn, id)?
-                        .is_some_and(|meta| meta.entity_type == ENTITY_TYPE_CLAIM))
+                let mut exact_posting_fails_claim_gate = |id: &EntityId| {
+                    claim_status_gate_allows(
+                        &self.vault.store,
+                        &rtxn,
+                        id,
+                        &mut metadata_cache,
+                        &mut claim_gate_widening_probe,
+                    )
+                    .map(|allowed| !allowed)
                 };
                 crate::bm25::final_token_exact_posting_matches(
                     &self.vault.store,
@@ -657,7 +665,7 @@ impl<'a> PipelineBuilder<'a> {
                     &self.vault.analyzer,
                     &bm25_config,
                     query,
-                    &mut exact_posting_is_claim,
+                    &mut exact_posting_fails_claim_gate,
                 )?
             } else {
                 false
@@ -716,7 +724,7 @@ impl<'a> PipelineBuilder<'a> {
                     *limit,
                     text_scope_widening_active,
                 )?;
-                let mut prefix_probe_claim_gate = ClaimStatusGateCache::default();
+                let mut prefix_probe_claim_gate = claim_gate_widening_probe;
                 let mut exact_posting_matches_scope = |id: &EntityId| {
                     pipeline_candidate_matches_filters_and_gate(
                         &self.vault.store,
@@ -3613,6 +3621,24 @@ mod tests {
 
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].id, live_prefix);
+        Ok(())
+    }
+
+    #[test]
+    fn live_exact_claim_preserves_search_text_limit() -> Result<()> {
+        let (_dir, vault) = open_test_vault();
+        let live_exact = entity_id(0x12);
+        let lower_ranked_exact_doc = entity_id(0x22);
+        let live_prefix = entity_id(0x32);
+
+        put_claim_text(&vault, live_exact, "livegateprefix", None)?;
+        put_text(&vault, lower_ranked_exact_doc, "livegateprefix")?;
+        put_claim_text(&vault, live_prefix, "livegateprefixalpha", None)?;
+
+        let results = vault.query().search_text("livegateprefix", 1).run()?;
+
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].id, live_exact);
         Ok(())
     }
 
