@@ -1938,6 +1938,45 @@ mod tests {
     }
 
     #[test]
+    fn federated_selector_member_stale_claim_is_restamped_and_retained() {
+        let manager = test_manager();
+        let vault = Arc::clone(manager.vault());
+        let (mut client, _rx) = test_client(&manager);
+        let key = "2026-03";
+        put_policy_manifest_bytes(
+            &vault,
+            0x9B,
+            &encode_policy_manifest(vec![source_trust_entry(ClaimSource::Imported, 0)]),
+        );
+
+        let id = test_entity_id(0x9C);
+        let mut remote_body = source_trust_claim(ClaimSource::ToolOutput);
+        remote_body.stale = true;
+        let update = federated_claim_update(&id, &remote_body);
+
+        client
+            .import_federated_selector_window_update(key, &update, FederationAdmissionRole::Member)
+            .expect("stale selector member response should be admitted and retained");
+
+        let raw = vault
+            .get_raw(&id)
+            .expect("read stale selector claim")
+            .expect("stale selector claim materializes");
+        let materialized_body =
+            crate::claim::decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], false)
+                .expect("decode stale selector claim");
+        assert_eq!(materialized_body.source, Some(ClaimSource::Imported));
+        assert!(
+            materialized_body.stale,
+            "F-STALE marker must be retained for read-path gating"
+        );
+        assert!(
+            !crate::claim::claim_surfaceable(&materialized_body),
+            "stale federated claims must remain hidden from surfaceable read paths"
+        );
+    }
+
+    #[test]
     fn federated_selector_guest_response_cannot_auto_approve_above_local_ceiling() {
         let manager = test_manager();
         let vault = Arc::clone(manager.vault());
