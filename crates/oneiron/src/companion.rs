@@ -9,7 +9,10 @@ use std::io::Cursor;
 
 use rmpv::Value;
 
-use crate::claim::{ClaimApprovalStatus, ClaimLifecycleStatus, ClaimSource};
+use crate::claim::{
+    COMPANION_EXPRESSION_PROFESSIONAL, COMPANION_EXPRESSION_UNRESTRICTED,
+    COMPANION_EXPRESSION_WARM, ClaimApprovalStatus, ClaimLifecycleStatus, ClaimSource,
+};
 use crate::error::{Error, Result};
 
 use super::{EdgeActorClass, EntityId, WriteEnvelope};
@@ -194,6 +197,48 @@ impl CompanionExportClassification {
             "shared_vault" => Some(Self::SharedVault),
             _ => None,
         }
+    }
+}
+
+/// Companion expression mode for persona/relationship state.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[non_exhaustive]
+pub enum CompanionExpression {
+    /// Professional, bounded interaction style.
+    Professional,
+    /// Warm companion style.
+    Warm,
+    /// Unrestricted style selected by policy or user intent.
+    Unrestricted,
+}
+
+impl CompanionExpression {
+    /// Returns the pinned on-disk string for this expression mode.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Professional => COMPANION_EXPRESSION_PROFESSIONAL,
+            Self::Warm => COMPANION_EXPRESSION_WARM,
+            Self::Unrestricted => COMPANION_EXPRESSION_UNRESTRICTED,
+        }
+    }
+
+    /// Parses a pinned expression mode string. Unknown future values fail closed.
+    #[must_use]
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            COMPANION_EXPRESSION_PROFESSIONAL => Some(Self::Professional),
+            COMPANION_EXPRESSION_WARM => Some(Self::Warm),
+            COMPANION_EXPRESSION_UNRESTRICTED => Some(Self::Unrestricted),
+            _ => None,
+        }
+    }
+
+    /// Parses a pinned expression mode string into a typed error.
+    pub fn parse_closed(value: &str) -> Result<Self> {
+        Self::parse(value).ok_or(invalid_companion(
+            "expression must be professional|warm|unrestricted",
+        ))
     }
 }
 
@@ -390,6 +435,10 @@ impl CompanionRecordKey {
             subject: CompanionSubject::relationship(source_ref, target_ref),
         }
     }
+
+    fn validate(&self) -> Result<()> {
+        self.scope.validate()
+    }
 }
 
 /// In-memory companion record register keyed by `(scope, subject)`.
@@ -470,6 +519,82 @@ impl CompanionRegister {
     #[must_use]
     pub fn is_empty(&self) -> bool {
         self.records.is_empty()
+    }
+}
+
+/// In-memory expression register keyed by companion persona/relationship.
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub struct CompanionExpressionRegister {
+    expressions: BTreeMap<CompanionRecordKey, CompanionExpression>,
+}
+
+impl CompanionExpressionRegister {
+    /// Creates an empty expression register.
+    #[must_use]
+    pub const fn new() -> Self {
+        Self {
+            expressions: BTreeMap::new(),
+        }
+    }
+
+    /// Updates the expression for a companion persona/relationship key.
+    pub fn update(
+        &mut self,
+        key: CompanionRecordKey,
+        expression: CompanionExpression,
+    ) -> Result<Option<CompanionExpression>> {
+        key.validate()?;
+        Ok(self.expressions.insert(key, expression))
+    }
+
+    /// Looks up an expression by key.
+    #[must_use]
+    pub fn lookup(&self, key: &CompanionRecordKey) -> Option<CompanionExpression> {
+        self.expressions.get(key).copied()
+    }
+
+    /// Looks up a persona expression in a specific scope.
+    #[must_use]
+    pub fn lookup_persona(
+        &self,
+        scope: &CompanionScope,
+        persona_ref: EntityId,
+    ) -> Option<CompanionExpression> {
+        self.lookup(&CompanionRecordKey::persona(scope.clone(), persona_ref))
+    }
+
+    /// Looks up a relationship expression in a specific scope.
+    #[must_use]
+    pub fn lookup_relationship(
+        &self,
+        scope: &CompanionScope,
+        source_ref: EntityId,
+        target_ref: EntityId,
+    ) -> Option<CompanionExpression> {
+        self.lookup(&CompanionRecordKey::relationship(
+            scope.clone(),
+            source_ref,
+            target_ref,
+        ))
+    }
+
+    /// Iterates over expression entries in key order.
+    pub fn iter(&self) -> impl Iterator<Item = (&CompanionRecordKey, CompanionExpression)> {
+        self.expressions
+            .iter()
+            .map(|(key, expression)| (key, *expression))
+    }
+
+    /// Returns the number of expression entries in the register.
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.expressions.len()
+    }
+
+    /// Returns whether the register is empty.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.expressions.is_empty()
     }
 }
 
@@ -1087,6 +1212,75 @@ mod tests {
             CompanionExportClassification::SharedVault
         );
         assert_eq!(decoded.provenance.actor_class, EdgeActorClass::Human);
+        Ok(())
+    }
+
+    #[test]
+    fn companion_export_expression_register_updates_and_fails_closed_on_future_values() -> Result<()>
+    {
+        assert_eq!(
+            CompanionExpression::parse("professional"),
+            Some(CompanionExpression::Professional)
+        );
+        assert_eq!(
+            CompanionExpression::parse("warm"),
+            Some(CompanionExpression::Warm)
+        );
+        assert_eq!(
+            CompanionExpression::parse("unrestricted"),
+            Some(CompanionExpression::Unrestricted)
+        );
+        for expression in [
+            CompanionExpression::Professional,
+            CompanionExpression::Warm,
+            CompanionExpression::Unrestricted,
+        ] {
+            assert_eq!(
+                CompanionExpression::parse(expression.as_str()),
+                Some(expression)
+            );
+        }
+        assert!(CompanionExpression::parse("future_closed").is_none());
+        assert!(matches!(
+            CompanionExpression::parse_closed("future_closed"),
+            Err(Error::InvalidClaimBody(
+                "expression must be professional|warm|unrestricted"
+            ))
+        ));
+
+        let neutral = CompanionScope::neutral();
+        let persona_ref = entity(0x41);
+        let key = CompanionRecordKey::persona(neutral.clone(), persona_ref);
+        let mut register = CompanionExpressionRegister::new();
+
+        assert!(
+            register
+                .update(key.clone(), CompanionExpression::Professional)?
+                .is_none()
+        );
+        assert_eq!(
+            register.lookup_persona(&neutral, persona_ref),
+            Some(CompanionExpression::Professional)
+        );
+        assert_eq!(
+            register.update(key, CompanionExpression::Warm)?,
+            Some(CompanionExpression::Professional)
+        );
+        assert_eq!(
+            register.lookup_persona(&neutral, persona_ref),
+            Some(CompanionExpression::Warm)
+        );
+
+        let err = register
+            .update(
+                CompanionRecordKey::persona(CompanionScope::shared_vault(0), persona_ref),
+                CompanionExpression::Unrestricted,
+            )
+            .expect_err("invalid shared-vault expression scope must fail closed");
+        assert!(matches!(
+            err,
+            Error::InvalidClaimBody("shared-vault companion scope requires nonzero vault_id")
+        ));
         Ok(())
     }
 }
