@@ -1242,6 +1242,12 @@ fn is_temporal_unit_token(token: &str) -> bool {
         token,
         "day"
             | "days"
+            | "hour"
+            | "hours"
+            | "minute"
+            | "minutes"
+            | "second"
+            | "seconds"
             | "week"
             | "weeks"
             | "month"
@@ -2384,6 +2390,16 @@ mod tests {
             temporal_expression_from_query("notes from last 2 weeks"),
             Err(TemporalExpressionParseError::Unsupported { expression })
                 if expression == "last 2 weeks"
+        ));
+        assert!(matches!(
+            temporal_expression_from_query("notes from last 24 hours"),
+            Err(TemporalExpressionParseError::Unsupported { expression })
+                if expression == "last 24 hours"
+        ));
+        assert!(matches!(
+            temporal_expression_from_query("notes from last 30 minutes"),
+            Err(TemporalExpressionParseError::Unsupported { expression })
+                if expression == "last 30 minutes"
         ));
         assert!(matches!(
             temporal_expression_from_query("notes from last two weeks"),
