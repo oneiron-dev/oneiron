@@ -118,11 +118,15 @@ use crate::types::{
 
 // Contract-pinned at 32 by ARCH-0019/ARCH-0031: 25 named DBs plus headroom.
 pub const MAX_DBS: u32 = 32;
+/// v5 (ONE-1293): maintenance-band bytes were realigned so byte 122 is
+/// reserved for AUTHORITY_LOG, POLICY_MANIFEST is 123, and FEDERATION_GRANT is
+/// 124. v4 vaults fail closed at the ABI gate — there is no silent migration;
+/// rebuild the vault.
+///
 /// v4 (ONE-299): `text_postings` became a DUP_SORT database holding one
 /// posting entry per (term, entity) duplicate item, and `text_forward`
-/// records dropped the dead `tf` u32. v3 vaults fail closed at the ABI
-/// gate — there is no silent migration; rebuild the vault.
-pub const STORAGE_ABI_VERSION: u16 = 4;
+/// records dropped the dead `tf` u32.
+pub const STORAGE_ABI_VERSION: u16 = 5;
 pub(crate) const STORAGE_ABI_VERSION_KEY: &[u8] = b"storage_abi_version";
 pub const STORAGE_SCHEMA_VERSION: u16 = 1;
 pub(crate) const STORAGE_SCHEMA_VERSION_KEY: &[u8] = b"schema_version";
@@ -628,7 +632,11 @@ pub struct Store {
     pub(crate) vault_meta: Database<Bytes, Bytes>,
     /// Vault-scoped dynamic StructuralKind registry loaded from `vault_meta`.
     pub(crate) kind_registry: RwLock<HashMap<u8, StructuralKindRegistration>>,
+    /// PPR cache rows. Values carry the final scores and, for current rows,
+    /// the residual/frontier state needed to resume a deeper Forward-Push run.
     pub(crate) ppr_cache: Database<Bytes, Bytes>,
+    /// Reverse dependency index for PPR cache invalidation:
+    /// `[entity_id | cache_key]`.
     pub(crate) ppr_cache_deps: Database<Bytes, Bytes>,
     pub(crate) type_index: Database<Bytes, Bytes>,
     pub(crate) temporal_occurred_start: Database<Bytes, Bytes>,

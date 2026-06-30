@@ -167,6 +167,7 @@ pub enum ErrorKind {
     InvalidFacet,
     InvalidClaimBody,
     InvalidCodeArtifactBody,
+    InvalidRecoveryArtifact,
     InvalidCodebaseSnapshotBody,
     InvalidCodeSymbolManifestBody,
     InvalidPredicate,
@@ -373,7 +374,7 @@ pub enum Error {
     /// Encountered malformed key or value bytes.
     #[error("invalid key or value bytes")]
     InvalidKey,
-    /// A FEDERATION_GRANT (type 123) body failed structural validation.
+    /// A FEDERATION_GRANT (type 124) body failed structural validation.
     #[error("invalid federation grant body: {0}")]
     InvalidFederationGrantBody(&'static str),
     /// Index metadata or neighbor storage is internally inconsistent.
@@ -411,6 +412,10 @@ pub enum Error {
     /// Nothing was written.
     #[error("invalid CODE artifact body: {0}")]
     InvalidCodeArtifactBody(&'static str),
+    /// A recovery artifact shell failed magic, version, length, or checksum
+    /// validation before its payload could be used.
+    #[error("invalid recovery artifact: {0}")]
+    InvalidRecoveryArtifact(&'static str),
     /// A CODE_ARTIFACT codebase snapshot sidecar failed pinned structural
     /// validation. Nothing was written.
     #[error("invalid codebase snapshot body: {0}")]
@@ -825,6 +830,7 @@ impl Error {
             Self::InvalidFacet { .. } => ErrorKind::InvalidFacet,
             Self::InvalidClaimBody(_) => ErrorKind::InvalidClaimBody,
             Self::InvalidCodeArtifactBody(_) => ErrorKind::InvalidCodeArtifactBody,
+            Self::InvalidRecoveryArtifact(_) => ErrorKind::InvalidRecoveryArtifact,
             Self::InvalidCodebaseSnapshotBody(_) => ErrorKind::InvalidCodebaseSnapshotBody,
             Self::InvalidCodeSymbolManifestBody(_) => ErrorKind::InvalidCodeSymbolManifestBody,
             Self::InvalidPredicate { .. } => ErrorKind::InvalidPredicate,
