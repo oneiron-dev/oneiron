@@ -164,6 +164,10 @@ pub(crate) fn reason_code_for(error: &Error) -> String {
 /// and NEVER be quarantined. Unknown kinds classify as local (fail closed).
 #[must_use]
 pub(crate) fn remote_rejection_reason(error: &Error) -> Option<String> {
+    if is_remote_secret_scan_rejection(error) {
+        return Some(reason_code_for(error));
+    }
+
     match error.kind() {
         ErrorKind::InvalidEntityType
         | ErrorKind::MaintenanceKindNotWritable
@@ -205,6 +209,21 @@ pub(crate) fn remote_rejection_reason(error: &Error) -> Option<String> {
         | ErrorKind::ReceiptLeaseRevoked => Some(reason_code_for(error)),
         _ => None,
     }
+}
+
+fn is_remote_secret_scan_rejection(error: &Error) -> bool {
+    let Error::GateWriteRejected {
+        outcome,
+        reason_codes,
+    } = error
+    else {
+        return false;
+    };
+
+    *outcome == "deny"
+        && reason_codes
+            .iter()
+            .any(|code| code.starts_with("gate.secret_scan."))
 }
 
 // ─── Key encoding ────────────────────────────────────────────────────────────
@@ -1133,6 +1152,7 @@ mod tests {
     /// `learned_at` inside the 2026-03 window used throughout.
     const LEARNED_AT: u64 = 1_772_400_000;
     const WINDOW: &str = "2026-03";
+    const GITHUB_PAT_SECRET_FIXTURE: &[u8] = b"token=ghp_0123456789abcdefghijklmnopqrstuvwxyz";
 
     /// Small map_size + tempdir held for the vault's lifetime — macOS LMDB
     /// flake isolation. NOTE: the lib test binary sits near a per-process
@@ -1205,6 +1225,29 @@ mod tests {
                 Some(seq)
             );
         }
+    }
+
+    #[test]
+    fn remote_rejection_reason_classifies_secret_scan_denials_only() {
+        let secret_scan = Error::GateWriteRejected {
+            outcome: "deny",
+            reason_codes: vec!["gate.secret_scan.detected", "gate.secret_scan.github_token"],
+        };
+        let other_gate = Error::GateWriteRejected {
+            outcome: "deny",
+            reason_codes: vec!["gate.policy.denied"],
+        };
+        let pending_secret_scan = Error::GateWriteRejected {
+            outcome: "pending",
+            reason_codes: vec!["gate.secret_scan.detected"],
+        };
+
+        assert_eq!(
+            remote_rejection_reason(&secret_scan).as_deref(),
+            Some("GateWriteRejected")
+        );
+        assert_eq!(remote_rejection_reason(&other_gate), None);
+        assert_eq!(remote_rejection_reason(&pending_secret_scan), None);
     }
 
     /// Pinned retention decision: 4096 rows, ≤30 days.
@@ -2396,6 +2439,39 @@ mod tests {
                 "InvalidKey".to_string()
             ]
         );
+    }
+
+    #[test]
+    fn forward_remat_quarantines_secret_scan_rejection() {
+        let (_dir, vault) = test_vault_with_dir();
+        let materializer = Materializer::new();
+        let window_key = WindowKey::new(WINDOW);
+        let doc = create_window_doc("test-user", &window_key);
+
+        let secret = EntityId::now();
+        map_insert_bytes(
+            &doc.get_map("entities"),
+            &secret.to_hex(),
+            &entity_blob(
+                ENTITY_TYPE_TASK,
+                valid_time_range(),
+                LEARNED_AT,
+                GITHUB_PAT_SECRET_FIXTURE,
+            ),
+        )
+        .unwrap();
+        doc.commit();
+
+        let count = forward_rematerialize(&vault, &doc, &materializer, &window_key).unwrap();
+        assert_eq!(
+            count, 0,
+            "secret-bearing remote entity must not materialize"
+        );
+        assert!(vault.get(&secret).unwrap().is_none());
+
+        let records = quarantined_records(&vault).unwrap();
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].1.reason_code, "GateWriteRejected");
     }
 
     /// ONE-1124 fix wave 2 (item 3) — rm: retry markers are ENTITY-scoped:
