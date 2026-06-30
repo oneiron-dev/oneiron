@@ -3,7 +3,7 @@ use rmpv::Value;
 use sha2::{Digest, Sha256};
 
 use crate::Vault;
-use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
+use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader, secret_scan};
 use crate::code_artifact::decode_code_artifact_body;
 use crate::codebase::{CODEBASE_COMMIT_HASH_HEX_LEN, CODEBASE_FILE_PATH_MAX_BYTES, RepoRef};
 use crate::error::{Error, Result};
@@ -350,6 +350,7 @@ impl Vault {
         manifest: &CodeSymbolManifest,
     ) -> Result<()> {
         validate_code_symbol_manifest(manifest)?;
+        scan_code_symbol_manifest_metadata(manifest)?;
         let encoded = encode_code_symbol_manifest(manifest)?;
         let mut wtxn = self.store.env.write_txn()?;
         validate_code_artifact_target(&self.store, &wtxn, code_artifact_id, &manifest.repo_ref)?;
@@ -822,6 +823,26 @@ fn validate_code_symbol_manifest(manifest: &CodeSymbolManifest) -> Result<()> {
     Ok(())
 }
 
+fn scan_code_symbol_manifest_metadata(manifest: &CodeSymbolManifest) -> Result<()> {
+    let repo_ref = manifest.repo_ref.canonical();
+    secret_scan::scan_metadata_field(&repo_ref)?;
+    if let Some(commit_hash) = &manifest.commit_hash {
+        secret_scan::scan_metadata_field(commit_hash)?;
+    }
+    for chunk in &manifest.chunks {
+        secret_scan::scan_metadata_field(&chunk.path)?;
+    }
+    for symbol in &manifest.symbols {
+        secret_scan::scan_metadata_field(&symbol.path)?;
+        secret_scan::scan_metadata_field(&symbol.name)?;
+        secret_scan::scan_metadata_field(&symbol.kind)?;
+        if let Some(source_session) = &symbol.source_session {
+            secret_scan::scan_metadata_field(source_session)?;
+        }
+    }
+    Ok(())
+}
+
 fn validate_chunk(chunk: &CodeChunk) -> Result<()> {
     validate_manifest_path(&chunk.path)?;
     if chunk.start_line == 0 || chunk.end_line == 0 || chunk.start_line > chunk.end_line {
@@ -1201,7 +1222,7 @@ mod tests {
     use crate::code_artifact::{
         CODE_ARTIFACT_SUMMARY_HASH_LEN, CodeArtifactBody, encode_code_artifact_body,
     };
-    use crate::error::ErrorKind;
+    use crate::error::{Error, ErrorKind};
     use crate::types::{HnswConfig, TextAnalyzerConfig, TimeRange, VaultConfig};
 
     fn test_config() -> VaultConfig {
@@ -1235,6 +1256,24 @@ mod tests {
 
     fn entity(byte: u8) -> EntityId {
         EntityId::from_bytes([byte; 16]).expect("entity id")
+    }
+
+    const GITHUB_TOKEN_SECRET_FIXTURE: &str = "ghp_0123456789abcdefghijklmnopqrstuvwxyz";
+
+    fn assert_secret_scan_rejected(err: Error) {
+        match err {
+            Error::GateWriteRejected {
+                outcome,
+                reason_codes,
+            } => {
+                assert_eq!(outcome, "deny");
+                assert_eq!(
+                    reason_codes.as_slice(),
+                    &["gate.secret_scan.detected", "gate.secret_scan.github_token"]
+                );
+            }
+            other => panic!("expected secret-scan GateWriteRejected, got {other:?}"),
+        }
     }
 
     fn manifest_with_blame(
@@ -1400,6 +1439,32 @@ mod tests {
             .lookup_code_symbol_blame(&repo_ref, "src/lib.rs", "answer", &fingerprint)?
             .expect("indexed blame");
         assert_eq!(lookup, direct);
+        Ok(())
+    }
+
+    #[test]
+    fn code_symbol_manifest_rejects_secret_source_session_before_sidecar_mutation() -> Result<()> {
+        let (_dir, vault) = crate::test_util::open_test_vault_with(test_config());
+        let id = entity(0xB8);
+        let repo_ref = repo_ref();
+        let safe_manifest = manifest_with_blame(None, Some("codex-session-001".to_owned()))?;
+        let secret_manifest =
+            manifest_with_blame(None, Some(GITHUB_TOKEN_SECRET_FIXTURE.to_owned()))?;
+
+        vault.put_code_artifact(
+            &id,
+            &code_body(&repo_ref),
+            TimeRange { start: 10, end: 10 },
+            11,
+        )?;
+        vault.put_code_symbol_manifest(&id, &safe_manifest)?;
+
+        let err = vault
+            .put_code_symbol_manifest(&id, &secret_manifest)
+            .expect_err("secret source_session must reject before sidecar mutation");
+
+        assert_secret_scan_rejected(err);
+        assert_eq!(vault.get_code_symbol_manifest(&id)?, Some(safe_manifest));
         Ok(())
     }
 
