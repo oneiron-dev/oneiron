@@ -54,9 +54,9 @@ use crate::types::{
     ENTITY_TYPE_MODEL, ENTITY_TYPE_REDACTION_AUDIT, ENTITY_TYPE_TURN, EdgeActorClass,
     EdgeConfirmationStatus, EdgeInfo, EdgeKind, EdgeProvenanceFlags, EdgeValueLayout, EntityId,
     HydratedShortIdDeletion, HydratedShortIdDeletionReason, HydratedShortIdDeletionSource,
-    ScoredEntity, StructuralKindRegistration, TimeRange, TypeByteBand, Vad, VadAnnotation,
-    VadAnnotationSource, VaultConfig, bytes_to_hex_lower, decode_edge_value_for_kind,
-    edge_value_layout_for_kind,
+    MemoryTimeline, MemoryTimelineRecord, MemoryTimelineRecordState, ScoredEntity,
+    StructuralKindRegistration, TimeRange, TypeByteBand, Vad, VadAnnotation, VadAnnotationSource,
+    VaultConfig, bytes_to_hex_lower, decode_edge_value_for_kind, edge_value_layout_for_kind,
 };
 use crate::{
     BatchBuilder, ContextPackBuilder, MaintenanceBuilder, PipelineBuilder, RetrievalWithTelemetry,
@@ -98,6 +98,9 @@ const MAX_EDGE_QUERY_RESULTS: usize = 100_000;
 
 /// Cap for `subtree` to prevent unbounded allocation on deep trees.
 const MAX_SUBTREE_RESULTS: usize = 50_000;
+
+/// Cap for renderer timeline expansion across supersession edges.
+const MAX_MEMORY_TIMELINE_RECORDS: usize = 10_000;
 
 /// Cap for `sync_state_keys_with_prefix` to prevent unbounded allocation when
 /// a pathological prefix scans a very large sync_state database.
@@ -3782,6 +3785,97 @@ impl Vault {
             .is_some())
     }
 
+    /// Returns stable, renderer-facing data for the supersession chain that
+    /// contains `anchor`.
+    pub fn memory_timeline(&self, anchor: &EntityId) -> Result<MemoryTimeline> {
+        let mut ids = std::collections::BTreeSet::new();
+        let mut stack = vec![*anchor];
+        ids.insert(*anchor);
+
+        while let Some(id) = stack.pop() {
+            let older = self.targets(&id, EdgeKind::Supersedes, None)?;
+            let newer = self.sources(&id, EdgeKind::Supersedes, None)?;
+            for next in older.into_iter().chain(newer) {
+                if ids.insert(next) {
+                    if ids.len() > MAX_MEMORY_TIMELINE_RECORDS {
+                        return Err(Error::IndexOverflow("memory_timeline"));
+                    }
+                    stack.push(next);
+                }
+            }
+        }
+
+        let mut records = Vec::with_capacity(ids.len());
+        for id in ids {
+            records.push(self.memory_timeline_record(&id)?);
+        }
+        records.sort_unstable_by(memory_timeline_record_cmp);
+
+        Ok(MemoryTimeline {
+            anchor: *anchor,
+            records,
+        })
+    }
+
+    fn memory_timeline_record(&self, id: &EntityId) -> Result<MemoryTimelineRecord> {
+        let mut supersedes = self.targets(id, EdgeKind::Supersedes, None)?;
+        let mut superseded_by = self.sources(id, EdgeKind::Supersedes, None)?;
+        supersedes.sort_unstable();
+        superseded_by.sort_unstable();
+
+        let Some(raw) = self.get_raw(id)? else {
+            return Ok(MemoryTimelineRecord {
+                id: *id,
+                state: MemoryTimelineRecordState::Missing,
+                entity_type: None,
+                occurred_start: None,
+                occurred_end: None,
+                learned_at: None,
+                body_bytes: None,
+                deletion: None,
+                supersedes,
+                superseded_by,
+            });
+        };
+
+        let header =
+            EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
+        let body_bytes = raw.len().saturating_sub(ENTITY_METADATA_HEADER_LEN);
+        let deletion = if body_bytes == 0 {
+            self.entity_deletion_metadata(id, header.learned_at)?
+        } else {
+            None
+        };
+        let lifecycle =
+            if deletion.is_none() && header.entity_type == ENTITY_TYPE_CLAIM && body_bytes > 0 {
+                self.get_claim(id)?.map(|claim| claim.lifecycle)
+            } else {
+                None
+            };
+        let state = if deletion.is_some() {
+            MemoryTimelineRecordState::Deleted
+        } else if lifecycle == Some(ClaimLifecycleStatus::Retracted) {
+            MemoryTimelineRecordState::Retracted
+        } else if lifecycle == Some(ClaimLifecycleStatus::Superseded) || !superseded_by.is_empty() {
+            MemoryTimelineRecordState::Superseded
+        } else {
+            MemoryTimelineRecordState::Live
+        };
+
+        Ok(MemoryTimelineRecord {
+            id: *id,
+            state,
+            entity_type: Some(header.entity_type),
+            occurred_start: Some(header.occurred_start),
+            occurred_end: Some(header.occurred_end),
+            learned_at: Some(header.learned_at),
+            body_bytes: Some(body_bytes),
+            deletion,
+            supersedes,
+            superseded_by,
+        })
+    }
+
     fn entity_deletion_metadata(
         &self,
         id: &EntityId,
@@ -4418,6 +4512,26 @@ fn scan_edges(
         edges.push(parse_edge_record(key, value)?);
     }
     Ok(edges)
+}
+
+fn memory_timeline_record_cmp(
+    left: &MemoryTimelineRecord,
+    right: &MemoryTimelineRecord,
+) -> std::cmp::Ordering {
+    left.occurred_start
+        .unwrap_or(u64::MAX)
+        .cmp(&right.occurred_start.unwrap_or(u64::MAX))
+        .then_with(|| {
+            left.learned_at
+                .unwrap_or(u64::MAX)
+                .cmp(&right.learned_at.unwrap_or(u64::MAX))
+        })
+        .then_with(|| {
+            left.occurred_end
+                .unwrap_or(u64::MAX)
+                .cmp(&right.occurred_end.unwrap_or(u64::MAX))
+        })
+        .then_with(|| left.id.as_bytes().cmp(right.id.as_bytes()))
 }
 
 fn vault_search_score_breakdown(
