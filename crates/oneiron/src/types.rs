@@ -1952,12 +1952,13 @@ impl ContextPackRetrievalBudget {
         allocation: TokenAllocation,
         selected_edges: usize,
     ) -> Self {
+        let split_other = allocation.other / 2.0;
         let weights = [
             allocation.claims,
             allocation.turns,
             allocation.summaries,
-            allocation.other,
-            allocation.other,
+            split_other,
+            split_other,
         ];
         let budgets = allocate_context_pack_item_budgets(result_limit, weights);
         Self {
@@ -2038,5 +2039,17 @@ mod tests {
     fn entity_id_from_hex_rejects_invalid() {
         assert!(EntityId::from_hex("too_short").is_err());
         assert!(EntityId::from_hex("gggggggggggggggggggggggggggggggg").is_err());
+    }
+
+    #[test]
+    fn context_pack_retrieval_budget_default_token_allocation_splits_other_weight() {
+        let budget = ContextPackRetrievalBudget::from_limit(20, TokenAllocation::default(), 7);
+
+        assert_eq!(budget.claims, 9);
+        assert_eq!(budget.turns, 2);
+        assert_eq!(budget.summaries, 5);
+        assert_eq!(budget.facets, 2);
+        assert_eq!(budget.other, 2);
+        assert_eq!(budget.selected_edges, 7);
     }
 }
