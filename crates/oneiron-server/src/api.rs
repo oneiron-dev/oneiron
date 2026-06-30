@@ -3648,17 +3648,9 @@ async fn core_context_pack(
     auth.require(CoreScope::Read)?;
     let req = json_payload(payload)?;
     validate_core_query_seeds(req.query.as_deref(), req.query_vector.as_deref())?;
-    let edge_hop = req
-        .depth
-        .as_ref()
-        .and_then(|depth| depth.edge_hop)
-        .unwrap_or(req.edge_hop);
-    let max_neighbors = req
-        .depth
-        .as_ref()
-        .and_then(|depth| depth.max_neighbors)
-        .unwrap_or(req.max_neighbors);
-    validate_context_pack_depth(edge_hop, max_neighbors)?;
+    let (edge_hop, edge_hop_field, max_neighbors, max_neighbors_field) =
+        resolved_context_pack_depth(req.depth.as_ref(), req.edge_hop, req.max_neighbors);
+    validate_context_pack_depth(edge_hop, edge_hop_field, max_neighbors, max_neighbors_field)?;
     let hydrate = req
         .policy
         .as_ref()
@@ -4008,14 +4000,42 @@ fn validate_core_query_seeds(query: Option<&str>, vector: Option<&[f32]>) -> Res
     Ok(())
 }
 
-fn validate_context_pack_depth(edge_hop: u32, max_neighbors: usize) -> Result<(), ApiError> {
+fn resolved_context_pack_depth(
+    depth: Option<&ContextPackDepthControls>,
+    edge_hop: u32,
+    max_neighbors: usize,
+) -> (u32, &'static str, usize, &'static str) {
+    let depth_edge_hop = depth.and_then(|depth| depth.edge_hop);
+    let depth_max_neighbors = depth.and_then(|depth| depth.max_neighbors);
+    (
+        depth_edge_hop.unwrap_or(edge_hop),
+        if depth_edge_hop.is_some() {
+            "depth.edge_hop"
+        } else {
+            "edge_hop"
+        },
+        depth_max_neighbors.unwrap_or(max_neighbors),
+        if depth_max_neighbors.is_some() {
+            "depth.max_neighbors"
+        } else {
+            "max_neighbors"
+        },
+    )
+}
+
+fn validate_context_pack_depth(
+    edge_hop: u32,
+    edge_hop_field: &'static str,
+    max_neighbors: usize,
+    max_neighbors_field: &'static str,
+) -> Result<(), ApiError> {
     if edge_hop > oneiron::context_pack::MAX_EDGE_HOP {
         return Err(ApiError::bad_request(
             format!(
                 "edge_hop must be less than or equal to {}",
                 oneiron::context_pack::MAX_EDGE_HOP
             ),
-            Some("depth.edge_hop"),
+            Some(edge_hop_field),
         ));
     }
     if max_neighbors > oneiron::context_pack::MAX_CONTEXT_NEIGHBORS {
@@ -4024,7 +4044,7 @@ fn validate_context_pack_depth(edge_hop: u32, max_neighbors: usize) -> Result<()
                 "max_neighbors must be less than or equal to {}",
                 oneiron::context_pack::MAX_CONTEXT_NEIGHBORS
             ),
-            Some("depth.max_neighbors"),
+            Some(max_neighbors_field),
         ));
     }
     Ok(())
@@ -4065,13 +4085,8 @@ fn apply_context_pack_time<'a>(
     let Some(time) = time else {
         return Ok(builder);
     };
-    if let Some(since) = time.since {
-        builder = builder.filter_since(since);
-    }
-    match (time.occurred_start, time.occurred_end) {
-        (Some(start), Some(end)) if start <= end => {
-            builder = builder.filter_occurred_range(start, end);
-        }
+    let occurred_range = match (time.occurred_start, time.occurred_end) {
+        (Some(start), Some(end)) if start <= end => Some((start, end)),
         (Some(_), Some(_)) => {
             return Err(ApiError::bad_request(
                 "occurred_start must be less than or equal to occurred_end",
@@ -4084,12 +4099,10 @@ fn apply_context_pack_time<'a>(
                 Some("time"),
             ));
         }
-        (None, None) => {}
-    }
-    match (time.learned_start, time.learned_end) {
-        (Some(start), Some(end)) if start <= end => {
-            builder = builder.filter_learned_range(start, end);
-        }
+        (None, None) => None,
+    };
+    let learned_range = match (time.learned_start, time.learned_end) {
+        (Some(start), Some(end)) if start <= end => Some((start, end)),
         (Some(_), Some(_)) => {
             return Err(ApiError::bad_request(
                 "learned_start must be less than or equal to learned_end",
@@ -4102,7 +4115,24 @@ fn apply_context_pack_time<'a>(
                 Some("time"),
             ));
         }
-        (None, None) => {}
+        (None, None) => None,
+    };
+    if let (Some(since), Some((_, learned_end))) = (time.since, learned_range)
+        && since > learned_end
+    {
+        return Err(ApiError::bad_request(
+            "since must be less than or equal to learned_end",
+            Some("time.since"),
+        ));
+    }
+    if let Some(since) = time.since {
+        builder = builder.filter_since(since);
+    }
+    if let Some((start, end)) = occurred_range {
+        builder = builder.filter_occurred_range(start, end);
+    }
+    if let Some((start, end)) = learned_range {
+        builder = builder.filter_learned_range(start, end);
     }
     Ok(builder)
 }
@@ -4112,7 +4142,7 @@ fn apply_context_pack_budget<'a>(
     budget: Option<&ContextPackBudgetControls>,
     top_level_max_item_tokens: usize,
     limit: usize,
-    selected_edges: usize,
+    default_selected_edges: usize,
 ) -> Result<oneiron::ContextPackBuilder<'a>, ApiError> {
     let max_item_tokens = budget
         .and_then(|budget| budget.max_item_tokens)
@@ -4130,8 +4160,9 @@ fn apply_context_pack_budget<'a>(
         builder = builder.max_field_chars(max_field_chars);
     }
     if let Some(retrieval) = budget.retrieval.as_ref() {
-        let selected_edges = retrieval.selected_edges.unwrap_or(selected_edges);
-        if selected_edges > oneiron::context_pack::MAX_CONTEXT_NEIGHBORS {
+        if retrieval.selected_edges.is_some_and(|selected_edges| {
+            selected_edges > oneiron::context_pack::MAX_CONTEXT_NEIGHBORS
+        }) {
             return Err(ApiError::bad_request(
                 format!(
                     "selected_edges must be less than or equal to {}",
@@ -4143,8 +4174,9 @@ fn apply_context_pack_budget<'a>(
         let defaults = oneiron::ContextPackRetrievalBudget::from_limit(
             limit,
             oneiron::TokenAllocation::default(),
-            selected_edges,
+            default_selected_edges,
         );
+        let selected_edges = retrieval.selected_edges.unwrap_or(defaults.selected_edges);
         builder = builder.retrieval_budget(oneiron::ContextPackRetrievalBudget::new(
             retrieval.claims.unwrap_or(defaults.claims),
             retrieval.turns.unwrap_or(defaults.turns),
@@ -4365,7 +4397,7 @@ fn core_context_pack_evidence(
     else {
         return Ok(CoreContextPackEvidence {
             telemetry_persisted: false,
-            retrieval_run_id: Some(run_id.to_hex()),
+            retrieval_run_id: None,
             result_ids: Vec::new(),
             scores: Vec::new(),
         });
@@ -5410,17 +5442,9 @@ async fn context_pack(
     check_api_auth(&headers, &server.config)?;
     let req = json_payload(payload)?;
     validate_core_query_seeds(req.query.as_deref(), req.query_vector.as_deref())?;
-    let edge_hop = req
-        .depth
-        .as_ref()
-        .and_then(|depth| depth.edge_hop)
-        .unwrap_or(req.edge_hop);
-    let max_neighbors = req
-        .depth
-        .as_ref()
-        .and_then(|depth| depth.max_neighbors)
-        .unwrap_or(req.max_neighbors);
-    validate_context_pack_depth(edge_hop, max_neighbors)?;
+    let (edge_hop, edge_hop_field, max_neighbors, max_neighbors_field) =
+        resolved_context_pack_depth(req.depth.as_ref(), req.edge_hop, req.max_neighbors);
+    validate_context_pack_depth(edge_hop, edge_hop_field, max_neighbors, max_neighbors_field)?;
     let hydrate = req
         .policy
         .as_ref()
@@ -9401,11 +9425,24 @@ mod tests {
         assert_eq!(runs[0].action, oneiron::RetrievalAction::ContextPack);
     }
 
+    #[test]
+    fn context_pack_evidence_omits_run_id_without_finalized_telemetry() {
+        let (_dir, server) = test_server();
+        let evidence =
+            core_context_pack_evidence(&server.vault, Some(oneiron::RetrievalRunId::now()))
+                .expect("context-pack evidence");
+
+        assert!(!evidence.telemetry_persisted);
+        assert_eq!(evidence.retrieval_run_id, None);
+        assert!(evidence.result_ids.is_empty());
+        assert!(evidence.scores.is_empty());
+    }
+
     #[tokio::test]
     async fn context_pack_route_rejects_malformed_controls() {
         let (_dir, server) = test_server();
         let (status, body) = route_json(
-            server,
+            server.clone(),
             json_request(
                 "POST",
                 "/api/context-pack",
@@ -9425,6 +9462,67 @@ mod tests {
                 .as_str()
                 .is_some_and(|message| message.contains("edge_hop")),
             "control error should name the malformed field: {body:?}"
+        );
+
+        let (status, body) = route_json(
+            server.clone(),
+            json_request(
+                "POST",
+                "/api/context-pack",
+                json!({
+                    "query": "recent decisions",
+                    "edge_hop": oneiron::context_pack::MAX_EDGE_HOP + 1
+                }),
+            ),
+        )
+        .await;
+
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_eq!(body["code"], Value::from("BAD_REQUEST"));
+        assert_eq!(body["details"]["field"], Value::from("edge_hop"));
+
+        let (status, body) = route_json(
+            server.clone(),
+            json_request(
+                "POST",
+                "/api/context-pack",
+                json!({
+                    "query": "recent decisions",
+                    "max_neighbors": oneiron::context_pack::MAX_CONTEXT_NEIGHBORS + 1
+                }),
+            ),
+        )
+        .await;
+
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_eq!(body["code"], Value::from("BAD_REQUEST"));
+        assert_eq!(body["details"]["field"], Value::from("max_neighbors"));
+
+        let (status, body) = route_json(
+            server,
+            json_request(
+                "POST",
+                "/api/context-pack",
+                json!({
+                    "query": "recent decisions",
+                    "time": {
+                        "since": 300_u64,
+                        "learned_start": 100_u64,
+                        "learned_end": 200_u64
+                    }
+                }),
+            ),
+        )
+        .await;
+
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_eq!(body["code"], Value::from("BAD_REQUEST"));
+        assert_eq!(body["details"]["field"], Value::from("time.since"));
+        assert!(
+            body["message"]
+                .as_str()
+                .is_some_and(|message| message.contains("learned_end")),
+            "control error should name the contradictory learned bound: {body:?}"
         );
     }
 
