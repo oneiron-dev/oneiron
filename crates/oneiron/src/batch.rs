@@ -128,6 +128,7 @@ pub(crate) enum BatchOp {
     Vector {
         id: EntityId,
         vector: Vec<f32>,
+        pending_embedding_token: Option<Vec<u8>>,
     },
     Edge {
         src: EntityId,
@@ -339,6 +340,25 @@ impl<'a> BatchBuilder<'a> {
         self.ops.push(BatchOp::Vector {
             id: *id,
             vector: vector.to_vec(),
+            pending_embedding_token: None,
+        });
+        self
+    }
+
+    /// Adds a vector fill for a pending CLAIM embedding marker.
+    ///
+    /// The vector row is written only if `pending_embedding_token` still
+    /// matches the current marker for `id`; stale async fills become no-ops.
+    pub fn vector_for_pending_embedding(
+        mut self,
+        id: &EntityId,
+        vector: &[f32],
+        pending_embedding_token: &[u8],
+    ) -> Self {
+        self.ops.push(BatchOp::Vector {
+            id: *id,
+            vector: vector.to_vec(),
+            pending_embedding_token: Some(pending_embedding_token.to_vec()),
         });
         self
     }
@@ -818,6 +838,7 @@ pub(crate) fn apply_ops(
     // are skipped (the end-of-batch rebuild re-derives the graph from the
     // `vectors` DB) and the rebuild runs after the op loop (ONE-324 AC11).
     let mut pending_hnsw_rebuild = false;
+    let mut pending_embedding_tokens_written = HashMap::<EntityId, Vec<u8>>::new();
 
     for (op_index, op) in ops.into_iter().enumerate() {
         match op {
@@ -846,7 +867,7 @@ pub(crate) fn apply_ops(
                 } else {
                     store.validate_public_entity_type(entity_type)?;
                 }
-                apply_put(
+                let pending_embedding_token = apply_put(
                     store,
                     wtxn,
                     id,
@@ -866,6 +887,9 @@ pub(crate) fn apply_ops(
                     write_policy.as_ref(),
                     None,
                 )?;
+                if let Some(token) = pending_embedding_token {
+                    pending_embedding_tokens_written.insert(id, token);
+                }
             }
             BatchOp::ClaimCandidate {
                 id,
@@ -874,7 +898,7 @@ pub(crate) fn apply_ops(
                 occurred,
                 learned_at,
             } => {
-                if apply_claim_candidate(
+                let applied = apply_claim_candidate(
                     store,
                     wtxn,
                     id,
@@ -884,21 +908,37 @@ pub(crate) fn apply_ops(
                     learned_at,
                     later_text_coverage_by_op[op_index],
                     write_policy.as_ref(),
-                )? {
+                )?;
+                if applied.had_graph_mutation {
                     had_graph_mutation = true;
                 }
+                if let Some(token) = applied.pending_embedding_token {
+                    pending_embedding_tokens_written.insert(id, token);
+                }
             }
-            BatchOp::Vector { id, vector } => {
-                apply_vector(store, config, wtxn, id, &vector)?;
-                crate::hnsw::hnsw_insert_batched(
-                    store,
-                    config,
-                    wtxn,
-                    &id,
-                    &vector,
-                    &mut pending_hnsw_rebuild,
-                )?;
-                had_vector_mutation = true;
+            BatchOp::Vector {
+                id,
+                vector,
+                pending_embedding_token,
+            } => {
+                let same_batch_token = pending_embedding_token
+                    .as_deref()
+                    .or_else(|| pending_embedding_tokens_written.get(&id).map(Vec::as_slice));
+                let applied = apply_vector(store, config, wtxn, id, &vector, same_batch_token)?;
+                if applied.wrote_vector {
+                    crate::hnsw::hnsw_insert_batched(
+                        store,
+                        config,
+                        wtxn,
+                        &id,
+                        &vector,
+                        &mut pending_hnsw_rebuild,
+                    )?;
+                    had_vector_mutation = true;
+                }
+                if applied.cleared_pending_embedding {
+                    pending_embedding_tokens_written.remove(&id);
+                }
             }
             BatchOp::Edge {
                 src,
@@ -1229,6 +1269,11 @@ pub(crate) fn deindex_entity(
     Ok((true, had_vector, had_graph_mutation, neighbors))
 }
 
+struct AppliedClaimCandidate {
+    had_graph_mutation: bool,
+    pending_embedding_token: Option<Vec<u8>>,
+}
+
 #[expect(
     clippy::too_many_arguments,
     reason = "candidate writes thread existing apply_put context"
@@ -1243,7 +1288,7 @@ fn apply_claim_candidate(
     learned_at: u64,
     has_later_covering_text_op: bool,
     write_policy: Option<&crate::gate::PolicyManifestResolution>,
-) -> Result<bool> {
+) -> Result<AppliedClaimCandidate> {
     crate::gate::validate_write_envelope(envelope)?;
 
     let actor = envelope.actor();
@@ -1264,7 +1309,7 @@ fn apply_claim_candidate(
 
     let body = candidate.into_claim_body(envelope);
     let data = crate::claim::encode_claim_body(&body)?;
-    apply_put(
+    let pending_embedding_token = apply_put(
         store,
         wtxn,
         id,
@@ -1290,7 +1335,10 @@ fn apply_claim_candidate(
     }
 
     let Some(subject_id) = subject_id else {
-        return Ok(had_graph_mutation);
+        return Ok(AppliedClaimCandidate {
+            had_graph_mutation,
+            pending_embedding_token,
+        });
     };
 
     let weight = EdgeKind::ClaimOf
@@ -1309,7 +1357,10 @@ fn apply_claim_candidate(
     )?;
     ppr::invalidate_ppr_for_edge(store, wtxn, &id, &subject_id)?;
     had_graph_mutation = true;
-    Ok(had_graph_mutation)
+    Ok(AppliedClaimCandidate {
+        had_graph_mutation,
+        pending_embedding_token,
+    })
 }
 
 fn reconcile_claim_of_edges(
@@ -1357,7 +1408,7 @@ fn apply_put(
     has_later_covering_text_op: bool,
     write_policy: Option<&crate::gate::PolicyManifestResolution>,
     write_envelope: Option<&WriteEnvelope>,
-) -> Result<()> {
+) -> Result<Option<Vec<u8>>> {
     // Type-byte validation runs in `apply_ops` (the public-vs-maintenance gate:
     // public writes reject the engine-authored maintenance band, the sync
     // rematerialization path admits it via `allow_maintenance`). apply_put is
@@ -1412,6 +1463,7 @@ fn apply_put(
         None
     };
 
+    let mut body_changed = true;
     if let Some(old_record) = store.entities.get(wtxn, id.as_bytes())? {
         let (old_type, old_occurred, old_learned) = parse_entity_metadata(old_record)?;
         // ONE-1141 + ONE-1168 (ARCH-0031 amendment): body-changing overwrites
@@ -1425,7 +1477,7 @@ fn apply_put(
         // and is a no-op for never-indexed entities. Byte-compare guard:
         // same-bytes replay must NOT touch the index, and metadata-only
         // (occurred/learned) changes are not body changes.
-        let body_changed = old_record[ENTITY_METADATA_HEADER_LEN..] != *data;
+        body_changed = old_record[ENTITY_METADATA_HEADER_LEN..] != *data;
         let should_deindex_stale_text = body_changed && (replicated || !has_later_covering_text_op);
         let old_code_artifact_body =
             if old_type == crate::types::ENTITY_TYPE_CODE_ARTIFACT && body_changed {
@@ -1524,10 +1576,23 @@ fn apply_put(
     if let Some(plan) = short_id_plan {
         apply_short_id_plan(store, wtxn, &id, plan)?;
     }
-    if entity_type == crate::types::ENTITY_TYPE_CLAIM && !replicated {
-        store.mark_pending_embedding(wtxn, &id)?;
-    }
-    Ok(())
+    let pending_embedding_token = if entity_type == crate::types::ENTITY_TYPE_CLAIM {
+        let has_current_pending = store.has_current_pending_embedding_in_txn(wtxn, &id)?;
+        let has_vector = store.vectors.get(wtxn, id.as_bytes())?.is_some();
+        if !body_changed && has_vector && !has_current_pending {
+            None
+        } else {
+            Some(store.mark_pending_embedding(wtxn, &id, data)?)
+        }
+    } else {
+        None
+    };
+    Ok(pending_embedding_token)
+}
+
+struct AppliedVector {
+    wrote_vector: bool,
+    cleared_pending_embedding: bool,
 }
 
 fn apply_vector(
@@ -1536,7 +1601,16 @@ fn apply_vector(
     wtxn: &mut RwTxn<'_>,
     id: EntityId,
     vector: &[f32],
-) -> Result<()> {
+    pending_embedding_token: Option<&[u8]>,
+) -> Result<AppliedVector> {
+    if let Some(token) = pending_embedding_token
+        && !store.pending_embedding_matches_in_txn(wtxn, &id, token)?
+    {
+        return Ok(AppliedVector {
+            wrote_vector: false,
+            cleared_pending_embedding: false,
+        });
+    }
     crate::store::ensure_model_id_for_vector_write(store, wtxn, config.embedding_model.as_deref())?;
     if vector.len() != config.dimensions {
         return Err(Error::DimensionMismatch {
@@ -1553,8 +1627,15 @@ fn apply_vector(
         bytes.extend_from_slice(&v.to_le_bytes());
     }
     store.vectors.put(wtxn, id.as_bytes(), &bytes)?;
-    store.clear_pending_embedding(wtxn, &id)?;
-    Ok(())
+    let cleared_pending_embedding = if let Some(token) = pending_embedding_token {
+        store.clear_pending_embedding_if_token_matches(wtxn, &id, token)?
+    } else {
+        false
+    };
+    Ok(AppliedVector {
+        wrote_vector: true,
+        cleared_pending_embedding,
+    })
 }
 
 /// Applies one PUBLIC plain edge put (`BatchOp::Edge` — the op behind
@@ -2279,6 +2360,7 @@ mod tests {
     use crate::claim::{
         ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject,
     };
+    use crate::deletion::DeleteReason;
     use crate::provenance::{EdgeProvenanceClaimBody, EdgeRef, SupersessionStatus};
     use crate::types::{
         ClaimCandidate, ENTITY_TYPE_CLAIM, ENTITY_TYPE_PERSON, ENTITY_TYPE_TASK, EdgeActorClass,
@@ -2404,7 +2486,15 @@ mod tests {
 
     fn has_pending_embedding_marker(vault: &Vault, id: &EntityId) -> Result<bool> {
         let rtxn = vault.store.env.read_txn()?;
-        vault.store.has_pending_embedding(&rtxn, id)
+        Ok(vault.store.pending_embedding_token(&rtxn, id)?.is_some())
+    }
+
+    fn pending_embedding_token(vault: &Vault, id: &EntityId) -> Result<Vec<u8>> {
+        let rtxn = vault.store.env.read_txn()?;
+        vault
+            .store
+            .pending_embedding_token(&rtxn, id)?
+            .ok_or(Error::InvariantViolation("pending embedding token missing"))
     }
 
     fn test_write_envelope(actor: EntityId) -> Result<WriteEnvelope> {
@@ -2570,7 +2660,10 @@ mod tests {
         Ok(())
     }
 
-    fn commit_claim_candidate_fixture(vault: &Vault, claim: EntityId) -> Result<()> {
+    fn claim_candidate_fixture(
+        vault: &Vault,
+        value: &str,
+    ) -> Result<(WriteEnvelope, ClaimCandidate)> {
         let actor = EntityId::now();
         let subject = EntityId::now();
         let occurred = test_time_range(1, 1);
@@ -2581,13 +2674,26 @@ mod tests {
         let candidate = ClaimCandidate::new(
             "profile.name",
             ClaimSubject::Entity(subject),
-            Value::from("Alice"),
+            Value::from(value),
             0.9,
         );
+        Ok((envelope, candidate))
+    }
+
+    fn commit_claim_candidate_with_value(
+        vault: &Vault,
+        claim: EntityId,
+        value: &str,
+    ) -> Result<()> {
+        let (envelope, candidate) = claim_candidate_fixture(vault, value)?;
         vault
             .batch()
             .claim_candidate(&claim, candidate, &envelope, test_time_range(10, 10), 11)
             .commit()
+    }
+
+    fn commit_claim_candidate_fixture(vault: &Vault, claim: EntityId) -> Result<()> {
+        commit_claim_candidate_with_value(vault, claim, "Alice")
     }
 
     #[test]
@@ -2614,8 +2720,12 @@ mod tests {
         let (_dir, vault) = open_test_vault();
         let claim = EntityId::now();
         commit_claim_candidate_fixture(&vault, claim)?;
+        let token = pending_embedding_token(&vault, &claim)?;
 
-        vault.put_vector(&claim, &[1.0, 0.0, 0.0, 0.0])?;
+        vault
+            .batch()
+            .vector_for_pending_embedding(&claim, &[1.0, 0.0, 0.0, 0.0], &token)
+            .commit()?;
 
         assert_eq!(
             vault.get_vector(&claim)?.as_deref(),
@@ -2633,9 +2743,16 @@ mod tests {
         let (_dir, vault) = open_test_vault();
         let claim = EntityId::now();
         commit_claim_candidate_fixture(&vault, claim)?;
+        let token = pending_embedding_token(&vault, &claim)?;
 
-        vault.put_vector(&claim, &[1.0, 0.0, 0.0, 0.0])?;
-        vault.put_vector(&claim, &[1.0, 0.0, 0.0, 0.0])?;
+        vault
+            .batch()
+            .vector_for_pending_embedding(&claim, &[1.0, 0.0, 0.0, 0.0], &token)
+            .commit()?;
+        vault
+            .batch()
+            .vector_for_pending_embedding(&claim, &[1.0, 0.0, 0.0, 0.0], &token)
+            .commit()?;
 
         assert!(
             !has_pending_embedding_marker(&vault, &claim)?,
@@ -2648,6 +2765,141 @@ mod tests {
                 .run()?
                 .len(),
             1
+        );
+        Ok(())
+    }
+
+    #[cfg(feature = "sync")]
+    #[test]
+    fn replicated_claim_materialization_writes_pending_embedding_marker() -> Result<()> {
+        let (_dir, vault) = open_test_vault();
+        let claim = EntityId::now();
+        let body = ClaimBody::new(
+            "profile.name",
+            ClaimSubject::Entity(EntityId::now()),
+            Value::from("replicated Alice"),
+            0.9,
+            ClaimApprovalStatus::Approved,
+            ClaimLifecycleStatus::Active,
+        );
+        let data = crate::claim::encode_claim_body(&body)?;
+
+        vault
+            .batch()
+            .put_replicated(&claim, ENTITY_TYPE_CLAIM, test_time_range(1, 1), 2, &data)
+            .commit()?;
+
+        assert!(
+            has_pending_embedding_marker(&vault, &claim)?,
+            "replicated claim materialization must request embedding"
+        );
+        assert!(
+            !pending_embedding_token(&vault, &claim)?.is_empty(),
+            "replicated marker must carry a body token"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn stale_vector_fill_does_not_clear_or_overwrite_newer_claim_marker() -> Result<()> {
+        let (_dir, vault) = open_test_vault();
+        let claim = EntityId::now();
+        commit_claim_candidate_with_value(&vault, claim, "Alice")?;
+        let old_token = pending_embedding_token(&vault, &claim)?;
+
+        vault
+            .batch()
+            .vector_for_pending_embedding(&claim, &[1.0, 0.0, 0.0, 0.0], &old_token)
+            .commit()?;
+        commit_claim_candidate_with_value(&vault, claim, "Bob")?;
+        let new_token = pending_embedding_token(&vault, &claim)?;
+        assert_ne!(
+            old_token, new_token,
+            "claim body overwrite must mint a new token"
+        );
+
+        vault
+            .batch()
+            .vector_for_pending_embedding(&claim, &[0.0, 1.0, 0.0, 0.0], &old_token)
+            .commit()?;
+
+        assert_eq!(
+            vault.get_vector(&claim)?.as_deref(),
+            Some([1.0, 0.0, 0.0, 0.0].as_slice()),
+            "stale fill must not overwrite the current vector row"
+        );
+        assert_eq!(
+            pending_embedding_token(&vault, &claim)?,
+            new_token,
+            "stale fill must leave the newer marker token pending"
+        );
+
+        vault
+            .batch()
+            .vector_for_pending_embedding(&claim, &[0.0, 1.0, 0.0, 0.0], &new_token)
+            .commit()?;
+        assert!(
+            !has_pending_embedding_marker(&vault, &claim)?,
+            "current-token fill must clear the marker"
+        );
+        assert_eq!(
+            vault.get_vector(&claim)?.as_deref(),
+            Some([0.0, 1.0, 0.0, 0.0].as_slice())
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn same_batch_claim_then_vector_clears_pending_embedding_marker() -> Result<()> {
+        let (_dir, vault) = open_test_vault();
+        let claim = EntityId::now();
+        let (envelope, candidate) = claim_candidate_fixture(&vault, "Alice")?;
+
+        vault
+            .batch()
+            .claim_candidate(&claim, candidate, &envelope, test_time_range(10, 10), 11)
+            .vector(&claim, &[1.0, 0.0, 0.0, 0.0])
+            .commit()?;
+
+        assert!(
+            !has_pending_embedding_marker(&vault, &claim)?,
+            "same-batch vector after claim materialization proves freshness"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn same_batch_vector_then_claim_leaves_pending_embedding_marker() -> Result<()> {
+        let (_dir, vault) = open_test_vault();
+        let claim = EntityId::now();
+        let (envelope, candidate) = claim_candidate_fixture(&vault, "Alice")?;
+
+        vault
+            .batch()
+            .vector(&claim, &[1.0, 0.0, 0.0, 0.0])
+            .claim_candidate(&claim, candidate, &envelope, test_time_range(10, 10), 11)
+            .commit()?;
+
+        assert!(
+            has_pending_embedding_marker(&vault, &claim)?,
+            "vector before claim materialization cannot prove it embedded the claim"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn soft_delete_removes_pending_embedding_state_for_claim_shell() -> Result<()> {
+        let (_dir, vault) = open_test_vault();
+        let claim = EntityId::now();
+        commit_claim_candidate_fixture(&vault, claim)?;
+        assert!(has_pending_embedding_marker(&vault, &claim)?);
+
+        let outcome = vault.delete_entity_with_reason(&claim, DeleteReason::UserDelete)?;
+
+        assert!(outcome.existed);
+        assert!(
+            !has_pending_embedding_marker(&vault, &claim)?,
+            "soft-erased header-only claims must not remain pending"
         );
         Ok(())
     }

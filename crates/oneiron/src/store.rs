@@ -105,12 +105,13 @@ use std::sync::{LazyLock, Mutex, MutexGuard, RwLock};
 use heed::types::{Bytes, Str};
 use heed::{Database, DatabaseFlags, Env, EnvOpenOptions, RoTxn, RwTxn};
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
 use crate::error::{Error, Result, VaultRootEntry, VaultRootProblem};
 use crate::types::{
-    EdgeKind, EntityId, Signal, StructuralKindRegistration, TypeByteBand, VaultConfig, band_of,
-    bytes_to_hex_lower, entity_type_registry_entry, short_id_prefix,
+    ENTITY_TYPE_CLAIM, EdgeKind, EntityId, Signal, StructuralKindRegistration, TypeByteBand,
+    VaultConfig, band_of, bytes_to_hex_lower, entity_type_registry_entry, short_id_prefix,
     static_short_id_prefix_collision, validate_entity_type as validate_static_entity_type,
     validate_public_entity_type as validate_static_public_entity_type,
 };
@@ -133,7 +134,9 @@ pub(crate) const TEMPORAL_LONG_INTERVALS_SCHEMA_VERSION_KEY: &[u8] =
 const TEMPORAL_LONG_INTERVALS_SCHEMA_VERSION: u8 = 2;
 pub(crate) const VECTOR_VERSION_KEY: &[u8] = b"vector_version";
 const PENDING_EMBEDDING_MARKER_PREFIX: &str = "pe:";
-const PENDING_EMBEDDING_MARKER_VALUE: &[u8] = &[1];
+const PENDING_EMBEDDING_MARKER_VERSION: u8 = 1;
+const PENDING_EMBEDDING_MARKER_TOKEN_LEN: usize = 1 + 32;
+const ENTITY_BODY_OFFSET: usize = 25;
 const HNSW_COMPATIBILITY_VERSION: u8 = 2;
 const HNSW_COMPATIBILITY_V0_LEN: usize = 24;
 const HNSW_COMPATIBILITY_V1_LEN: usize = 25;
@@ -144,6 +147,20 @@ const HNSW_INDEX_STRUCTURE_MISSING: u8 = 0;
 // ARCH-0019 fixes the graph as flat single-layer NSW; the upper-layer M value
 // stays compile-time-only because this structure has no upper layers.
 const HNSW_INDEX_STRUCTURE_FLAT_NSW: u8 = 1;
+
+fn current_claim_embedding_token_from_record(
+    record: &[u8],
+) -> Option<[u8; PENDING_EMBEDDING_MARKER_TOKEN_LEN]> {
+    if record.len() <= ENTITY_BODY_OFFSET || record[0] != ENTITY_TYPE_CLAIM {
+        return None;
+    }
+    let body = &record[ENTITY_BODY_OFFSET..];
+    if body.is_empty() {
+        return None;
+    }
+    Some(Store::pending_embedding_marker_token(body))
+}
+
 #[cfg(any(unix, windows))]
 const VAULT_ROOT_IDENTITY_CHECKS_AVAILABLE: bool = true;
 #[cfg(not(any(unix, windows)))]
@@ -804,11 +821,26 @@ impl Store {
         format!("{PENDING_EMBEDDING_MARKER_PREFIX}{}", id.to_hex())
     }
 
-    pub(crate) fn mark_pending_embedding(&self, wtxn: &mut RwTxn<'_>, id: &EntityId) -> Result<()> {
+    pub(crate) fn pending_embedding_marker_token(
+        claim_body: &[u8],
+    ) -> [u8; PENDING_EMBEDDING_MARKER_TOKEN_LEN] {
+        let digest = Sha256::digest(claim_body);
+        let mut token = [0_u8; PENDING_EMBEDDING_MARKER_TOKEN_LEN];
+        token[0] = PENDING_EMBEDDING_MARKER_VERSION;
+        token[1..].copy_from_slice(&digest);
+        token
+    }
+
+    pub(crate) fn mark_pending_embedding(
+        &self,
+        wtxn: &mut RwTxn<'_>,
+        id: &EntityId,
+        claim_body: &[u8],
+    ) -> Result<Vec<u8>> {
         let key = Self::pending_embedding_marker_key(id);
-        self.sync_state
-            .put(wtxn, key.as_str(), PENDING_EMBEDDING_MARKER_VALUE)?;
-        Ok(())
+        let token = Self::pending_embedding_marker_token(claim_body);
+        self.sync_state.put(wtxn, key.as_str(), token.as_slice())?;
+        Ok(token.to_vec())
     }
 
     pub(crate) fn clear_pending_embedding(
@@ -820,9 +852,86 @@ impl Store {
         Ok(self.sync_state.delete(wtxn, key.as_str())?)
     }
 
-    pub(crate) fn has_pending_embedding(&self, rtxn: &RoTxn<'_>, id: &EntityId) -> Result<bool> {
+    pub(crate) fn clear_pending_embedding_if_token_matches(
+        &self,
+        wtxn: &mut RwTxn<'_>,
+        id: &EntityId,
+        token: &[u8],
+    ) -> Result<bool> {
+        if !self.pending_embedding_matches_in_txn(wtxn, id, token)? {
+            return Ok(false);
+        }
+        self.clear_pending_embedding(wtxn, id)
+    }
+
+    pub(crate) fn pending_embedding_token(
+        &self,
+        rtxn: &RoTxn<'_>,
+        id: &EntityId,
+    ) -> Result<Option<Vec<u8>>> {
         let key = Self::pending_embedding_marker_key(id);
-        Ok(self.sync_state.get(rtxn, key.as_str())?.is_some())
+        let Some(marker) = self.sync_state.get(rtxn, key.as_str())? else {
+            return Ok(None);
+        };
+        let Some(current) = self.current_claim_embedding_token(rtxn, id)? else {
+            return Ok(None);
+        };
+        Ok((marker == current).then_some(marker.to_vec()))
+    }
+
+    pub(crate) fn has_current_pending_embedding_in_txn(
+        &self,
+        wtxn: &RwTxn<'_>,
+        id: &EntityId,
+    ) -> Result<bool> {
+        let key = Self::pending_embedding_marker_key(id);
+        let Some(marker) = self.sync_state.get(wtxn, key.as_str())? else {
+            return Ok(false);
+        };
+        let Some(current) = self.current_claim_embedding_token_in_txn(wtxn, id)? else {
+            return Ok(false);
+        };
+        Ok(marker == current)
+    }
+
+    pub(crate) fn pending_embedding_matches_in_txn(
+        &self,
+        wtxn: &RwTxn<'_>,
+        id: &EntityId,
+        token: &[u8],
+    ) -> Result<bool> {
+        let key = Self::pending_embedding_marker_key(id);
+        let Some(marker) = self.sync_state.get(wtxn, key.as_str())? else {
+            return Ok(false);
+        };
+        if marker != token {
+            return Ok(false);
+        }
+        Ok(self
+            .current_claim_embedding_token_in_txn(wtxn, id)?
+            .is_some_and(|current| current == token))
+    }
+
+    fn current_claim_embedding_token(
+        &self,
+        rtxn: &RoTxn<'_>,
+        id: &EntityId,
+    ) -> Result<Option<[u8; PENDING_EMBEDDING_MARKER_TOKEN_LEN]>> {
+        let Some(record) = self.entities.get(rtxn, id.as_bytes())? else {
+            return Ok(None);
+        };
+        Ok(current_claim_embedding_token_from_record(record))
+    }
+
+    fn current_claim_embedding_token_in_txn(
+        &self,
+        wtxn: &RwTxn<'_>,
+        id: &EntityId,
+    ) -> Result<Option<[u8; PENDING_EMBEDDING_MARKER_TOKEN_LEN]>> {
+        let Some(record) = self.entities.get(wtxn, id.as_bytes())? else {
+            return Ok(None);
+        };
+        Ok(current_claim_embedding_token_from_record(record))
     }
 
     pub(crate) fn structural_kind_registration(
