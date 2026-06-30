@@ -362,7 +362,7 @@ fn run_ppr_rounds(
                 let mut groups = HashMap::<EdgeKind, Vec<GatedEdge>>::new();
                 for entry in db.prefix_iter(context.txn, node.as_bytes())? {
                     let (key, value) = entry?;
-                    if let Some(edge) = gate_edge(store, txn, key, value, hops)? {
+                    if let Some(edge) = gate_edge(context.store, context.txn, key, value, hops)? {
                         groups.entry(edge.kind).or_default().push(edge);
                     }
                 }
