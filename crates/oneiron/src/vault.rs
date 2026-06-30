@@ -3789,12 +3789,14 @@ impl Vault {
     /// contains `anchor`.
     pub fn memory_timeline(&self, anchor: &EntityId) -> Result<MemoryTimeline> {
         let mut ids = std::collections::BTreeSet::new();
+        let mut edges = std::collections::BTreeMap::new();
         let mut stack = vec![*anchor];
         ids.insert(*anchor);
 
         while let Some(id) = stack.pop() {
             let older = self.targets(&id, EdgeKind::Supersedes, None)?;
             let newer = self.sources(&id, EdgeKind::Supersedes, None)?;
+            edges.insert(id, (older.clone(), newer.clone()));
             for next in older.into_iter().chain(newer) {
                 if ids.insert(next) {
                     if ids.len() > MAX_MEMORY_TIMELINE_RECORDS {
@@ -3807,7 +3809,8 @@ impl Vault {
 
         let mut records = Vec::with_capacity(ids.len());
         for id in ids {
-            records.push(self.memory_timeline_record(&id)?);
+            let (supersedes, superseded_by) = edges.remove(&id).unwrap_or_default();
+            records.push(self.memory_timeline_record(&id, supersedes, superseded_by)?);
         }
         records.sort_unstable_by(memory_timeline_record_cmp);
 
@@ -3817,9 +3820,12 @@ impl Vault {
         })
     }
 
-    fn memory_timeline_record(&self, id: &EntityId) -> Result<MemoryTimelineRecord> {
-        let mut supersedes = self.targets(id, EdgeKind::Supersedes, None)?;
-        let mut superseded_by = self.sources(id, EdgeKind::Supersedes, None)?;
+    fn memory_timeline_record(
+        &self,
+        id: &EntityId,
+        mut supersedes: Vec<EntityId>,
+        mut superseded_by: Vec<EntityId>,
+    ) -> Result<MemoryTimelineRecord> {
         supersedes.sort_unstable();
         superseded_by.sort_unstable();
 
