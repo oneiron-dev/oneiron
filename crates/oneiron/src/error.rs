@@ -171,6 +171,7 @@ pub enum ErrorKind {
     InvalidClaimBody,
     InvalidCodeArtifactBody,
     InvalidRecoveryArtifact,
+    RecoveryArtifactQuarantineExhausted,
     InvalidCodebaseSnapshotBody,
     InvalidCodeSymbolManifestBody,
     InvalidPredicate,
@@ -423,6 +424,13 @@ pub enum Error {
     /// validation before its payload could be used.
     #[error("invalid recovery artifact: {0}")]
     InvalidRecoveryArtifact(&'static str),
+    /// A recovery artifact was invalid, but every sibling `.invalid-N`
+    /// quarantine target was occupied.
+    #[error(
+        "recovery artifact quarantine suffix space exhausted for {}",
+        path.display()
+    )]
+    RecoveryArtifactQuarantineExhausted { path: PathBuf },
     /// A CODE_ARTIFACT codebase snapshot sidecar failed pinned structural
     /// validation. Nothing was written.
     #[error("invalid codebase snapshot body: {0}")]
@@ -843,6 +851,9 @@ impl Error {
             Self::InvalidClaimBody(_) => ErrorKind::InvalidClaimBody,
             Self::InvalidCodeArtifactBody(_) => ErrorKind::InvalidCodeArtifactBody,
             Self::InvalidRecoveryArtifact(_) => ErrorKind::InvalidRecoveryArtifact,
+            Self::RecoveryArtifactQuarantineExhausted { .. } => {
+                ErrorKind::RecoveryArtifactQuarantineExhausted
+            }
             Self::InvalidCodebaseSnapshotBody(_) => ErrorKind::InvalidCodebaseSnapshotBody,
             Self::InvalidCodeSymbolManifestBody(_) => ErrorKind::InvalidCodeSymbolManifestBody,
             Self::InvalidPredicate { .. } => ErrorKind::InvalidPredicate,

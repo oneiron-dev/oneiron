@@ -6,8 +6,8 @@
 //! artifact so the original bytes remain available for later inspection.
 
 use std::ffi::OsString;
-use std::fs::{self, OpenOptions};
-use std::io::Write;
+use std::fs::{self, File, OpenOptions};
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 
 use sha2::{Digest, Sha256};
@@ -26,6 +26,7 @@ const KIND_OFFSET: usize = VERSION_OFFSET + 2;
 const LEN_OFFSET: usize = KIND_OFFSET + 2;
 const CHECKSUM_OFFSET: usize = LEN_OFFSET + 8;
 const HEADER_LEN: usize = CHECKSUM_OFFSET + 32;
+const QUARANTINE_SUFFIX_RETRY_LIMIT: usize = 2;
 
 /// Recovery ladder result for a filesystem artifact.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -242,31 +243,57 @@ fn recovery_artifact_checksum(artifact_type: u16, payload: &[u8]) -> [u8; 32] {
 }
 
 fn quarantine_invalid_artifact(path: &Path, bytes: &[u8]) -> Result<PathBuf> {
-    for suffix in 1..=u16::MAX {
+    'suffixes: for suffix in 1..=u16::MAX {
         let candidate = invalid_artifact_path(path, suffix);
-        match persist_quarantine_bytes(&candidate, bytes) {
-            Ok(()) => {
-                remove_original_if_unchanged(path, bytes)?;
-                return Ok(candidate);
-            }
-            Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => {
-                match fs::read(&candidate) {
-                    Ok(existing) if existing == bytes => {
-                        remove_original_if_unchanged(path, bytes)?;
-                        return Ok(candidate);
-                    }
-                    Ok(_) => {}
-                    Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
-                    Err(err) => return Err(Error::Io(err)),
+        for _attempt in 0..=QUARANTINE_SUFFIX_RETRY_LIMIT {
+            match persist_quarantine_bytes(&candidate, bytes) {
+                Ok(()) => {
+                    remove_original_if_unchanged(path, bytes)?;
+                    return Ok(candidate);
                 }
+                Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => {
+                    match artifact_file_matches(&candidate, bytes) {
+                        Ok(true) => {
+                            remove_original_if_unchanged(path, bytes)?;
+                            return Ok(candidate);
+                        }
+                        Ok(false) => continue 'suffixes,
+                        Err(err) if err.kind() == std::io::ErrorKind::NotFound => continue,
+                        Err(err) => return Err(Error::Io(err)),
+                    }
+                }
+                Err(err) => return Err(Error::Io(err)),
             }
-            Err(err) => return Err(Error::Io(err)),
         }
     }
 
-    Err(Error::InvalidRecoveryArtifact(
-        "artifact quarantine path space exhausted",
-    ))
+    Err(Error::RecoveryArtifactQuarantineExhausted {
+        path: path.to_path_buf(),
+    })
+}
+
+fn artifact_file_matches(path: &Path, bytes: &[u8]) -> std::io::Result<bool> {
+    if fs::metadata(path)?.len() != bytes.len() as u64 {
+        return Ok(false);
+    }
+
+    let mut file = File::open(path)?;
+    let mut offset = 0;
+    let mut buffer = [0_u8; 8192];
+    while offset < bytes.len() {
+        let read = file.read(&mut buffer)?;
+        if read == 0 {
+            return Ok(false);
+        }
+        let end = offset + read;
+        if end > bytes.len() || buffer[..read] != bytes[offset..end] {
+            return Ok(false);
+        }
+        offset = end;
+    }
+
+    let mut trailing = [0_u8; 1];
+    Ok(file.read(&mut trailing)? == 0)
 }
 
 fn invalid_artifact_path(path: &Path, suffix: u16) -> PathBuf {
@@ -500,6 +527,7 @@ mod tests {
         };
 
         assert_eq!(fs::read(&quarantined.quarantine_path)?, corrupt);
+        assert!(!artifact_path.exists(), "fallback source is removed");
         assert_invalid_suffix(&quarantined.quarantine_path, &artifact_path, 2);
         Ok(())
     }
