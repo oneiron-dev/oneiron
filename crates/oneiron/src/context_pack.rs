@@ -23,15 +23,15 @@ use crate::types::{
 };
 use crate::{Vault, le_bytes_to_f32_vec};
 
-const DEFAULT_MAX_NEIGHBORS: usize = 50;
+pub const DEFAULT_MAX_NEIGHBORS: usize = 50;
 const DEFAULT_TOKEN_BUDGET: usize = 4000;
 const DEFAULT_MAX_FIELD_CHARS: usize = 500;
-const MAX_EDGE_HOP: u32 = 5;
+pub const MAX_EDGE_HOP: u32 = 5;
 #[cfg(not(test))]
 const MAX_EDGE_SCAN_RESULTS: usize = 100_000;
 #[cfg(test)]
 const MAX_EDGE_SCAN_RESULTS: usize = 64;
-const MAX_CONTEXT_NEIGHBORS: usize = 1000;
+pub const MAX_CONTEXT_NEIGHBORS: usize = 1000;
 const PACK_VALIDATION_DUPLICATE_ID: &str = "conflicting duplicate id";
 const PACK_VALIDATION_MISSING_PAYLOAD: &str = "missing referenced payload";
 const PACK_VALIDATION_IMPOSSIBLE_TIME: &str = "impossible time ordering";
