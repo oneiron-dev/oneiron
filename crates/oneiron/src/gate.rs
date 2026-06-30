@@ -5,6 +5,7 @@
 
 use std::cmp::Ordering;
 use std::io::Cursor;
+use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
 
 use rmpv::Value;
 use sha2::{Digest, Sha256};
@@ -56,6 +57,12 @@ const SIGNATURE_SIGNATURE_KEY: &str = "signature";
 // actor-bound generic claim API can supply per-caller Gate inputs.
 const LOCAL_WRITE_ACTOR_CLASS: &str = "first_party";
 const LOCAL_WRITE_ACTOR_ENTITY_REF: [u8; ENTITY_ID_LEN] = [0x47; ENTITY_ID_LEN];
+const GATE_METRIC_OUTCOME_COUNT: usize = 3;
+const GATE_METRIC_REASON_CLASS_COUNT: usize = 10;
+
+static GATE_METRIC_COUNTERS: [[AtomicU64; GATE_METRIC_REASON_CLASS_COUNT];
+    GATE_METRIC_OUTCOME_COUNT] = [const { [const { AtomicU64::new(0) }; GATE_METRIC_REASON_CLASS_COUNT] };
+    GATE_METRIC_OUTCOME_COUNT];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum PolicyApprovalCeiling {
@@ -247,6 +254,82 @@ impl GateOutcome {
             Self::Deny => "deny",
         }
     }
+
+    const fn metric_index(self) -> usize {
+        match self {
+            Self::Allow => 0,
+            Self::Pending => 1,
+            Self::Deny => 2,
+        }
+    }
+
+    const fn metric_values() -> [Self; GATE_METRIC_OUTCOME_COUNT] {
+        [Self::Allow, Self::Pending, Self::Deny]
+    }
+}
+
+#[cfg_attr(not(test), allow(dead_code))]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum GateMetricReasonClass {
+    Allow,
+    MissingActorClass,
+    MissingActorProvenance,
+    MissingPolicyManifestVersion,
+    PolicyFailClosed,
+    ActorCeiling,
+    SourceTrust,
+    CriticalityFloor,
+    PolicyManifestAuthority,
+    ExternalEffectAuthority,
+}
+
+#[cfg_attr(not(test), allow(dead_code))]
+impl GateMetricReasonClass {
+    #[must_use]
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            Self::Allow => "allow",
+            Self::MissingActorClass => "missing_actor_class",
+            Self::MissingActorProvenance => "missing_actor_provenance",
+            Self::MissingPolicyManifestVersion => "missing_policy_manifest_version",
+            Self::PolicyFailClosed => "policy_fail_closed",
+            Self::ActorCeiling => "actor_ceiling",
+            Self::SourceTrust => "source_trust",
+            Self::CriticalityFloor => "criticality_floor",
+            Self::PolicyManifestAuthority => "policy_manifest_authority",
+            Self::ExternalEffectAuthority => "external_effect_authority",
+        }
+    }
+
+    const fn metric_index(self) -> usize {
+        match self {
+            Self::Allow => 0,
+            Self::MissingActorClass => 1,
+            Self::MissingActorProvenance => 2,
+            Self::MissingPolicyManifestVersion => 3,
+            Self::PolicyFailClosed => 4,
+            Self::ActorCeiling => 5,
+            Self::SourceTrust => 6,
+            Self::CriticalityFloor => 7,
+            Self::PolicyManifestAuthority => 8,
+            Self::ExternalEffectAuthority => 9,
+        }
+    }
+
+    const fn metric_values() -> [Self; GATE_METRIC_REASON_CLASS_COUNT] {
+        [
+            Self::Allow,
+            Self::MissingActorClass,
+            Self::MissingActorProvenance,
+            Self::MissingPolicyManifestVersion,
+            Self::PolicyFailClosed,
+            Self::ActorCeiling,
+            Self::SourceTrust,
+            Self::CriticalityFloor,
+            Self::PolicyManifestAuthority,
+            Self::ExternalEffectAuthority,
+        ]
+    }
 }
 
 #[cfg_attr(not(test), allow(dead_code))]
@@ -279,6 +362,23 @@ impl GateReasonCode {
             Self::PendingCriticalityFloor => "gate.pending.criticality_floor",
             Self::PendingPolicyManifestAuthority => "gate.pending.policy_manifest_authority",
             Self::PendingExternalEffectAuthority => "gate.pending.external_effect_authority",
+        }
+    }
+
+    const fn metric_reason_class(self) -> GateMetricReasonClass {
+        match self {
+            Self::Allow => GateMetricReasonClass::Allow,
+            Self::DenyMissingActorClass => GateMetricReasonClass::MissingActorClass,
+            Self::DenyMissingActorProvenance => GateMetricReasonClass::MissingActorProvenance,
+            Self::DenyMissingPolicyManifestVersion => {
+                GateMetricReasonClass::MissingPolicyManifestVersion
+            }
+            Self::DenyPolicyFailClosed => GateMetricReasonClass::PolicyFailClosed,
+            Self::PendingActorCeiling => GateMetricReasonClass::ActorCeiling,
+            Self::PendingSourceTrust => GateMetricReasonClass::SourceTrust,
+            Self::PendingCriticalityFloor => GateMetricReasonClass::CriticalityFloor,
+            Self::PendingPolicyManifestAuthority => GateMetricReasonClass::PolicyManifestAuthority,
+            Self::PendingExternalEffectAuthority => GateMetricReasonClass::ExternalEffectAuthority,
         }
     }
 }
@@ -321,6 +421,82 @@ impl GateDecision {
     #[must_use]
     pub(crate) fn reason_codes(&self) -> &[GateReasonCode] {
         &self.reason_codes
+    }
+}
+
+#[cfg_attr(not(test), allow(dead_code))]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct GateMetricCounter {
+    outcome: GateOutcome,
+    reason_class: GateMetricReasonClass,
+    count: u64,
+}
+
+#[cfg_attr(not(test), allow(dead_code))]
+impl GateMetricCounter {
+    #[must_use]
+    pub(crate) fn outcome(&self) -> GateOutcome {
+        self.outcome
+    }
+
+    #[must_use]
+    pub(crate) fn reason_class(&self) -> GateMetricReasonClass {
+        self.reason_class
+    }
+
+    #[must_use]
+    pub(crate) fn count(&self) -> u64 {
+        self.count
+    }
+}
+
+#[cfg_attr(not(test), allow(dead_code))]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct GateMetricsSnapshot {
+    counters: Vec<GateMetricCounter>,
+}
+
+#[cfg_attr(not(test), allow(dead_code))]
+impl GateMetricsSnapshot {
+    #[must_use]
+    pub(crate) fn counters(&self) -> &[GateMetricCounter] {
+        &self.counters
+    }
+
+    #[must_use]
+    pub(crate) fn count(&self, outcome: GateOutcome, reason_class: GateMetricReasonClass) -> u64 {
+        self.counters
+            .iter()
+            .find(|counter| counter.outcome == outcome && counter.reason_class == reason_class)
+            .map_or(0, |counter| counter.count)
+    }
+}
+
+#[must_use]
+#[cfg_attr(not(test), allow(dead_code))]
+pub(crate) fn gate_metrics_snapshot() -> GateMetricsSnapshot {
+    let mut counters =
+        Vec::with_capacity(GATE_METRIC_OUTCOME_COUNT * GATE_METRIC_REASON_CLASS_COUNT);
+    for outcome in GateOutcome::metric_values() {
+        for reason_class in GateMetricReasonClass::metric_values() {
+            counters.push(GateMetricCounter {
+                outcome,
+                reason_class,
+                count: GATE_METRIC_COUNTERS[outcome.metric_index()][reason_class.metric_index()]
+                    .load(AtomicOrdering::Relaxed),
+            });
+        }
+    }
+    GateMetricsSnapshot { counters }
+}
+
+fn record_gate_decision_metrics(decision: &GateDecision) {
+    let outcome = decision.outcome();
+    // A decision with multiple reason codes records one outcome/reason-class co-occurrence per code.
+    for reason_code in decision.reason_codes() {
+        let reason_class = reason_code.metric_reason_class();
+        GATE_METRIC_COUNTERS[outcome.metric_index()][reason_class.metric_index()]
+            .fetch_add(1, AtomicOrdering::Relaxed);
     }
 }
 
@@ -951,6 +1127,7 @@ pub(crate) fn check_claim_policy_for_write(
                     read_frontier_hash: binding.read_frontier_hash,
                 },
             )?;
+            record_gate_decision_metrics(&decision);
         }
 
         if mode.persist_pending_consent
@@ -1034,7 +1211,9 @@ pub(crate) fn check_edge_provenance_claim_policy(
                 body_snapshot_ref: record.body_snapshot_ref,
             },
         );
-        enforce_gate_decision(policy.evaluate_gate(&input))?;
+        let decision = policy.evaluate_gate(&input);
+        record_gate_decision_metrics(&decision);
+        enforce_gate_decision(decision)?;
     }
 
     check_claim_source_trust(body, policy)
@@ -1988,6 +2167,23 @@ mod tests {
         }
     }
 
+    fn assert_metric_counter_advanced(
+        before: &GateMetricsSnapshot,
+        after: &GateMetricsSnapshot,
+        outcome: GateOutcome,
+        reason_class: GateMetricReasonClass,
+        delta: u64,
+    ) {
+        let before_count = before.count(outcome, reason_class);
+        let after_count = after.count(outcome, reason_class);
+        assert!(
+            after_count >= before_count + delta,
+            "expected metric {}/{} to advance by at least {delta}; before={before_count}, after={after_count}",
+            outcome.as_str(),
+            reason_class.as_str()
+        );
+    }
+
     fn stored_claim_body(vault: &crate::Vault, id: &EntityId) -> Result<ClaimBody> {
         let raw = vault.get_raw(id)?.ok_or(Error::EntityNotFound)?;
         decode_claim_body(&raw[crate::batch::ENTITY_METADATA_HEADER_LEN..], true)
@@ -2007,6 +2203,154 @@ mod tests {
         edge.provenance.ok_or(Error::InvariantViolation(
             "test edge should carry provenance flags",
         ))
+    }
+
+    #[test]
+    fn gate_metrics_snapshot_has_stable_privacy_preserving_labels() {
+        let snapshot = gate_metrics_snapshot();
+        assert_eq!(
+            snapshot.counters().len(),
+            GATE_METRIC_OUTCOME_COUNT * GATE_METRIC_REASON_CLASS_COUNT
+        );
+
+        let labels = snapshot
+            .counters()
+            .iter()
+            .map(|counter| (counter.outcome().as_str(), counter.reason_class().as_str()))
+            .collect::<Vec<_>>();
+        for counter in snapshot.counters() {
+            assert_eq!(
+                counter.count(),
+                snapshot.count(counter.outcome(), counter.reason_class())
+            );
+        }
+        assert!(labels.contains(&("allow", "allow")));
+        assert!(labels.contains(&("pending", "actor_ceiling")));
+        assert!(labels.contains(&("pending", "source_trust")));
+        assert!(labels.contains(&("deny", "policy_fail_closed")));
+    }
+
+    #[test]
+    fn gate_metrics_counters_advance_for_representative_decisions() {
+        let before = gate_metrics_snapshot();
+        record_gate_decision_metrics(&GateDecision::allow());
+        record_gate_decision_metrics(&GateDecision::deny(GateReasonCode::DenyPolicyFailClosed));
+        record_gate_decision_metrics(&GateDecision::pending(vec![
+            GateReasonCode::PendingSourceTrust,
+            GateReasonCode::PendingCriticalityFloor,
+        ]));
+        let after = gate_metrics_snapshot();
+
+        assert_metric_counter_advanced(
+            &before,
+            &after,
+            GateOutcome::Allow,
+            GateMetricReasonClass::Allow,
+            1,
+        );
+        assert_metric_counter_advanced(
+            &before,
+            &after,
+            GateOutcome::Deny,
+            GateMetricReasonClass::PolicyFailClosed,
+            1,
+        );
+        assert_metric_counter_advanced(
+            &before,
+            &after,
+            GateOutcome::Pending,
+            GateMetricReasonClass::SourceTrust,
+            1,
+        );
+        assert_metric_counter_advanced(
+            &before,
+            &after,
+            GateOutcome::Pending,
+            GateMetricReasonClass::CriticalityFloor,
+            1,
+        );
+    }
+
+    #[test]
+    fn gate_metrics_advance_at_claim_write_chokepoint_without_double_counting() -> Result<()> {
+        let before = gate_metrics_snapshot();
+
+        let (_allow_tmp, allow_vault) = temp_vault();
+        let mut allow_policy = encode_policy_manifest(vec![]);
+        trust_human_candidate_actor(&mut allow_policy);
+        put_policy_manifest_bytes(&allow_vault, 0x40, &allow_policy)?;
+        let allow_body = source_trust_claim(ClaimSource::UserStated);
+        let (allow_candidate, allow_envelope) =
+            claim_candidate_write_parts(&allow_vault, &allow_body)?;
+        allow_vault
+            .batch()
+            .claim_candidate(
+                &test_id(0x41),
+                allow_candidate,
+                &allow_envelope,
+                test_time(3),
+                3,
+            )
+            .commit()?;
+
+        let (_pending_tmp, pending_vault) = temp_vault();
+        put_policy_manifest_bytes(&pending_vault, 0x42, &encode_policy_manifest(vec![]))?;
+        let pending_body = source_trust_claim(ClaimSource::UserStated);
+        let (pending_candidate, pending_envelope) =
+            claim_candidate_write_parts(&pending_vault, &pending_body)?;
+        let pending_err = pending_vault
+            .batch()
+            .claim_candidate(
+                &test_id(0x43),
+                pending_candidate,
+                &pending_envelope,
+                test_time(3),
+                3,
+            )
+            .commit()
+            .expect_err("untrusted actor class must remain pending");
+        assert_gate_rejected(pending_err, "pending", &["gate.pending.actor_ceiling"]);
+
+        let (_deny_tmp, deny_vault) = temp_vault();
+        put_policy_manifest_bytes(&deny_vault, 0x45, b"not-msgpack")?;
+        let deny_body = source_trust_claim(ClaimSource::UserStated);
+        let (deny_candidate, deny_envelope) = claim_candidate_write_parts(&deny_vault, &deny_body)?;
+        let deny_err = deny_vault
+            .batch()
+            .claim_candidate(
+                &test_id(0x44),
+                deny_candidate,
+                &deny_envelope,
+                test_time(3),
+                3,
+            )
+            .commit()
+            .expect_err("missing policy manifest must fail closed");
+        assert_gate_rejected(deny_err, "deny", &["gate.deny.policy_fail_closed"]);
+
+        let after = gate_metrics_snapshot();
+        assert_metric_counter_advanced(
+            &before,
+            &after,
+            GateOutcome::Allow,
+            GateMetricReasonClass::Allow,
+            1,
+        );
+        assert_metric_counter_advanced(
+            &before,
+            &after,
+            GateOutcome::Pending,
+            GateMetricReasonClass::ActorCeiling,
+            1,
+        );
+        assert_metric_counter_advanced(
+            &before,
+            &after,
+            GateOutcome::Deny,
+            GateMetricReasonClass::PolicyFailClosed,
+            1,
+        );
+        Ok(())
     }
 
     #[test]
