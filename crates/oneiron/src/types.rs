@@ -1194,13 +1194,18 @@ pub fn temporal_expression_from_query(
                         expression: format!("last {next}"),
                     });
                 }
-                Some(next) if next.bytes().all(|byte| byte.is_ascii_digit()) => {
-                    if let Some(unit) = tokens.get(index + 2).map(String::as_str)
+                Some(next) if is_temporal_quantity_token(next) => {
+                    let unit_index =
+                        if matches!(tokens.get(index + 2).map(String::as_str), Some("of")) {
+                            index + 3
+                        } else {
+                            index + 2
+                        };
+                    if let Some(unit) = tokens.get(unit_index).map(String::as_str)
                         && (is_temporal_unit_token(unit) || is_weekday_token(unit))
                     {
-                        return Err(TemporalExpressionParseError::Unsupported {
-                            expression: format!("last {next} {unit}"),
-                        });
+                        let expression = tokens[index..=unit_index].join(" ");
+                        return Err(TemporalExpressionParseError::Unsupported { expression });
                     }
                     None
                 }
@@ -1246,6 +1251,28 @@ fn is_temporal_unit_token(token: &str) -> bool {
             | "quarter"
             | "quarters"
     )
+}
+
+fn is_temporal_quantity_token(token: &str) -> bool {
+    token.bytes().all(|byte| byte.is_ascii_digit())
+        || matches!(
+            token,
+            "a" | "an"
+                | "one"
+                | "two"
+                | "three"
+                | "four"
+                | "five"
+                | "six"
+                | "seven"
+                | "eight"
+                | "nine"
+                | "ten"
+                | "couple"
+                | "few"
+                | "several"
+                | "many"
+        )
 }
 
 fn is_weekday_token(token: &str) -> bool {
@@ -2357,6 +2384,21 @@ mod tests {
             temporal_expression_from_query("notes from last 2 weeks"),
             Err(TemporalExpressionParseError::Unsupported { expression })
                 if expression == "last 2 weeks"
+        ));
+        assert!(matches!(
+            temporal_expression_from_query("notes from last two weeks"),
+            Err(TemporalExpressionParseError::Unsupported { expression })
+                if expression == "last two weeks"
+        ));
+        assert!(matches!(
+            temporal_expression_from_query("notes from last few days"),
+            Err(TemporalExpressionParseError::Unsupported { expression })
+                if expression == "last few days"
+        ));
+        assert!(matches!(
+            temporal_expression_from_query("notes from last couple of months"),
+            Err(TemporalExpressionParseError::Unsupported { expression })
+                if expression == "last couple of months"
         ));
     }
 

@@ -4340,6 +4340,32 @@ mod tests {
     }
 
     #[test]
+    fn unsupported_last_spelled_quantity_query_fails_closed() -> Result<()> {
+        let (_dir, vault) = open_test_vault();
+        let id = entity_id(0x17);
+        put_text(&vault, id, "last two weeks failclosed")?;
+
+        let err = vault
+            .query()
+            .search_text("last two weeks failclosed", 10)
+            .with_temporal_now(1_710_504_000)
+            .run()
+            .expect_err("unsupported temporal expression must fail closed");
+
+        assert_eq!(
+            err.kind(),
+            crate::error::ErrorKind::InvalidTemporalExpression
+        );
+        assert_matches!(
+            err,
+            Error::InvalidTemporalExpression(
+                TemporalExpressionParseError::Unsupported { expression }
+            ) if expression == "last two weeks"
+        );
+        Ok(())
+    }
+
+    #[test]
     fn exact_other_facet_text_hit_does_not_suppress_strict_facet_prefix() -> Result<()> {
         let (_dir, vault) = open_test_vault();
         let facet_active = entity_id(0xA1);
