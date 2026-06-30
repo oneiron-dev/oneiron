@@ -275,7 +275,7 @@ pub(crate) fn api_routes(server: Arc<SyncServer>) -> Router {
         )
         .route("/turns/annotate", post(annotate_turn_vad))
         .route_layer(middleware::from_fn_with_state(
-            idempotency,
+            idempotency.clone(),
             idempotency_middleware,
         ));
     let core_routes = Router::new()
@@ -292,13 +292,19 @@ pub(crate) fn api_routes(server: Arc<SyncServer>) -> Router {
         .route("/turns/{turn_id}", get(get_core_turn))
         .route("/turns/annotate", get(read_turn_vad_annotation))
         .merge(core_mutation_routes);
-    let companion_routes = Router::new()
+    let companion_mutation_routes = Router::new()
         .route("/access-grants", post(create_companion_access_grant))
         .route(
             "/access-grants/{grant_id}/revoke",
             post(revoke_companion_access_grant),
         )
-        .route("/profiles/{persona_ref}", get(get_companion_profile));
+        .route_layer(middleware::from_fn_with_state(
+            idempotency,
+            idempotency_middleware,
+        ));
+    let companion_routes = Router::new()
+        .route("/profiles/{persona_ref}", get(get_companion_profile))
+        .merge(companion_mutation_routes);
 
     Router::new()
         .route("/api/openapi.json", get(openapi_json))
@@ -8455,6 +8461,64 @@ mod tests {
         .await;
         assert_eq!(status, StatusCode::FORBIDDEN);
         assert_error_envelope(&body, "FORBIDDEN");
+    }
+
+    #[tokio::test]
+    async fn v1_companion_access_grant_create_replays_idempotency_key() {
+        let (_dir, server) = test_server_with_config(SyncServerConfig {
+            auth_secret: Some("secret".to_owned()),
+            ..Default::default()
+        });
+        let principal_ref = seeded_test_entity_id(0x1265_0101).to_hex();
+        let person_ref = seeded_test_entity_id(0x1265_0102).to_hex();
+        let persona_ref = seeded_test_entity_id(0x1265_0103).to_hex();
+        let create_request = json!({
+            "principal_ref": principal_ref,
+            "scope": {
+                "kind": "companion_profile",
+                "person_ref": person_ref,
+                "persona_ref": persona_ref,
+            },
+            "created_at": 30_u64,
+        });
+
+        let make_request = || {
+            Request::builder()
+                .method("POST")
+                .uri("/v1/companion/access-grants")
+                .header(AUTHORIZATION, "Bearer secret;scope=core:auth")
+                .header("Idempotency-Key", "companion-create-replay")
+                .header(CONTENT_TYPE, "application/json")
+                .body(Body::from(create_request.to_string()))
+                .expect("request")
+        };
+        let (first_status, first_body) = route_json(server.clone(), make_request()).await;
+        let (replay_status, replay_body) = route_json(server.clone(), make_request()).await;
+
+        assert_eq!(first_status, StatusCode::OK);
+        assert_eq!(replay_status, StatusCode::OK);
+        assert_eq!(replay_body, first_body);
+
+        let grant_id = oneiron::EntityId::from_hex(first_body["id"].as_str().expect("grant id"))
+            .expect("grant id parses");
+        assert_eq!(
+            server
+                .vault
+                .entities_by_type(oneiron::ENTITY_TYPE_ACCESS_GRANT)
+                .expect("list access grants"),
+            vec![grant_id]
+        );
+        assert_eq!(
+            server
+                .vault
+                .companion_profile_access_grant(
+                    &oneiron::EntityId::from_hex(&principal_ref).expect("principal id"),
+                    &oneiron::EntityId::from_hex(&person_ref).expect("person id"),
+                    &oneiron::EntityId::from_hex(&persona_ref).expect("persona id"),
+                )
+                .expect("grant lookup"),
+            Some(grant_id)
+        );
     }
 
     #[tokio::test]

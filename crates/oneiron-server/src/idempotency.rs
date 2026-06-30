@@ -298,28 +298,28 @@ pub(crate) async fn idempotency_middleware(
     next: Next,
 ) -> Response {
     let has_idempotency_header = request.headers().contains_key(IDEMPOTENCY_KEY_HEADER);
-    let is_core_route = request_path(&request).starts_with("/v1/core/");
+    let is_core_auth_route = is_core_auth_route(request_path(&request));
     let core_auth =
-        is_core_route.then(|| CoreAuth::from_headers(request.headers(), &state.server.config));
+        is_core_auth_route.then(|| CoreAuth::from_headers(request.headers(), &state.server.config));
     let auth_ok = match &core_auth {
         Some(Ok(auth)) => !auth.principal().is_empty(),
         Some(Err(_)) => false,
         None => check_auth(request.headers(), &state.server.config).is_ok(),
     };
     if has_idempotency_header && !auth_ok {
-        return api_error_response(ApiError::unauthorized(), is_core_route);
+        return api_error_response(ApiError::unauthorized(), is_core_auth_route);
     }
 
     let key = match idempotency_key(request.headers()) {
         IdempotencyKey::Present(key) => key,
         IdempotencyKey::Absent => return next.run(request).await,
-        IdempotencyKey::Invalid => return invalid_key_response(is_core_route),
+        IdempotencyKey::Invalid => return invalid_key_response(is_core_auth_route),
     };
 
     let principal = match &core_auth {
         Some(Ok(auth)) => auth.idempotency_principal(),
         Some(Err(_)) => {
-            return api_error_response(ApiError::unauthorized(), is_core_route);
+            return api_error_response(ApiError::unauthorized(), is_core_auth_route);
         }
         None => principal_from_headers(request.headers(), &state.server.config),
     };
@@ -337,13 +337,13 @@ pub(crate) async fn idempotency_middleware(
     let _guard = state.store.lock_for(&store_key).await;
     match state.store.lookup(&store_key, &request_body) {
         Ok(IdempotencyLookup::Replay(response)) => return response.into_response(),
-        Ok(IdempotencyLookup::Conflict) => return conflict_response(&key, is_core_route),
+        Ok(IdempotencyLookup::Conflict) => return conflict_response(&key, is_core_auth_route),
         Ok(IdempotencyLookup::Miss) => {}
         Err(error) => {
             tracing::error!(error = %error, "failed to read idempotency cache");
             return api_error_response(
                 ApiError::internal_server_error("failed to read idempotency cache"),
-                is_core_route,
+                is_core_auth_route,
             );
         }
     }
@@ -357,7 +357,7 @@ pub(crate) async fn idempotency_middleware(
             tracing::error!(error = %error, "failed to read idempotent response body");
             return api_error_response(
                 ApiError::internal_server_error("failed to read idempotent response body"),
-                is_core_route,
+                is_core_auth_route,
             );
         }
     };
@@ -372,7 +372,7 @@ pub(crate) async fn idempotency_middleware(
         tracing::error!(error = %error, "failed to persist idempotency response");
         return api_error_response(
             ApiError::internal_server_error("failed to persist idempotency response"),
-            is_core_route,
+            is_core_auth_route,
         );
     }
 
@@ -400,6 +400,10 @@ fn request_path(request: &Request) -> &str {
         .extensions()
         .get::<OriginalUri>()
         .map_or_else(|| request.uri().path(), |uri| uri.0.path())
+}
+
+fn is_core_auth_route(path: &str) -> bool {
+    path.starts_with("/v1/core/") || path.starts_with("/v1/companion/")
 }
 
 fn principal_from_headers(headers: &HeaderMap, config: &SyncServerConfig) -> String {
