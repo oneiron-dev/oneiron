@@ -157,6 +157,7 @@ pub enum ErrorKind {
     InvalidConfig,
     InvalidTemporalExpression,
     EntityNotFound,
+    AccessGrantAlreadyExists,
     ConcurrentWrite,
     ArithmeticOverflow,
     InvariantViolation,
@@ -371,6 +372,9 @@ pub enum Error {
     /// Requested entity does not exist.
     #[error("entity not found")]
     EntityNotFound,
+    /// AccessGrant creation attempted to reuse an existing entity id.
+    #[error("access grant already exists")]
+    AccessGrantAlreadyExists,
     /// A concurrent write invalidated an operation that relied on a stable snapshot.
     #[error("concurrent write detected: {0}")]
     ConcurrentWrite(&'static str),
@@ -842,6 +846,7 @@ impl Error {
             Self::InvalidConfig(_) => ErrorKind::InvalidConfig,
             Self::InvalidTemporalExpression(_) => ErrorKind::InvalidTemporalExpression,
             Self::EntityNotFound => ErrorKind::EntityNotFound,
+            Self::AccessGrantAlreadyExists => ErrorKind::AccessGrantAlreadyExists,
             Self::ConcurrentWrite(_) => ErrorKind::ConcurrentWrite,
             Self::ArithmeticOverflow(_) => ErrorKind::ArithmeticOverflow,
             Self::InvariantViolation(_) => ErrorKind::InvariantViolation,
