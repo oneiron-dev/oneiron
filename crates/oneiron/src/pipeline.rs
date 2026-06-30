@@ -19,7 +19,8 @@ use crate::store::{
 use crate::types::{
     ContextPackRetrievalBudget, EDGE_KEY_LEN, ENTITY_ID_LEN, ENTITY_TYPE_CLAIM, ENTITY_TYPE_FACET,
     ENTITY_TYPE_SUMMARY, ENTITY_TYPE_TURN, EdgeKind, EmptyReason, EntityId, ScoredEntity,
-    TemporalAnchorMode, TemporalGranularity, TimeRange,
+    TemporalAnchorMode, TemporalExpressionParseError, TemporalGranularity, TimeRange,
+    temporal_expression_from_query,
 };
 
 const DEFAULT_RESULT_LIMIT: usize = 20;
@@ -352,6 +353,7 @@ pub struct PipelineBuilder<'a> {
     context_pack_budget: Option<ContextPackRetrievalBudget>,
     result_limit: usize,
     temporal_adaptive_default: bool,
+    temporal_now: Option<u64>,
     telemetry_action: RetrievalAction,
 }
 
@@ -382,6 +384,7 @@ impl<'a> PipelineBuilder<'a> {
             context_pack_budget: None,
             result_limit: DEFAULT_RESULT_LIMIT,
             temporal_adaptive_default: true,
+            temporal_now: None,
             telemetry_action: RetrievalAction::Pipeline,
         }
     }
@@ -519,6 +522,14 @@ impl<'a> PipelineBuilder<'a> {
         self
     }
 
+    /// Overrides the clock used to resolve natural-language temporal query
+    /// hints. Production callers normally use the default wall clock; tests
+    /// and replay fixtures can inject a frozen Unix timestamp.
+    pub fn with_temporal_now(mut self, now: u64) -> Self {
+        self.temporal_now = Some(now);
+        self
+    }
+
     pub fn search(
         mut self,
         query: &str,
@@ -528,7 +539,9 @@ impl<'a> PipelineBuilder<'a> {
     ) -> Self {
         self = self.search_text(query, limit).search_vector(vector, limit);
         if let Some(range) = time {
-            self = self.search_temporal(range.start, range.end, limit);
+            self = self
+                .search_temporal(range.start, range.end, limit)
+                .filter_occurred_range(range.start, range.end);
         }
         self.limit(limit)
     }
@@ -663,6 +676,8 @@ impl<'a> PipelineBuilder<'a> {
     pub(crate) fn run_for_pack(self) -> Result<PipelineOutput> {
         let started = Instant::now();
         let started_at = crate::unix_seconds_now();
+        let temporal_now = self.temporal_now.unwrap_or(started_at);
+        let occurred_range = self.resolved_occurred_range(temporal_now)?;
         let telemetry_action = self.telemetry_action;
         let mut telemetry_signals = self.telemetry_signals();
         let no_data_fallback_eligible = self.no_data_fallback_eligible();
@@ -721,7 +736,7 @@ impl<'a> PipelineBuilder<'a> {
             let filter_config = PipelineFilterConfig {
                 type_filter: self.type_filter.as_deref(),
                 since_filter: self.since_filter,
-                occurred_range: self.occurred_range,
+                occurred_range,
                 learned_range: self.learned_range,
                 repo_ref_filter: self.repo_ref_filter.as_ref(),
                 project_id_filter: self.project_id_filter.as_deref(),
@@ -797,6 +812,7 @@ impl<'a> PipelineBuilder<'a> {
             };
             let text_scope_widening_active = codebase_scope_active
                 || self.has_strict_text_scope_filter()
+                || occurred_range.is_some()
                 || claim_gate_text_widening_active;
 
             if let Some((query_vector, limit)) = &self.vector_search {
@@ -1301,6 +1317,28 @@ impl<'a> PipelineBuilder<'a> {
             || matches!(self.facet_filter, Some((_, FacetMode::Strict)))
             || self.world_scope != WorldScope::All
     }
+
+    fn resolved_occurred_range(&self, now: u64) -> Result<Option<(u64, u64)>> {
+        if self.occurred_range.is_some()
+            || self.learned_range.is_some()
+            || self.temporal_search.is_some()
+        {
+            return Ok(self.occurred_range);
+        }
+
+        let Some((query, _)) = self.text_search.as_ref() else {
+            return Ok(None);
+        };
+
+        temporal_expression_from_query(query)
+            .map(|expression| expression.map(|expression| expression.resolve(now)))
+            .map(|range| range.map(|range| normalize_range(range.start, range.end)))
+            .map_err(invalid_temporal_expression)
+    }
+}
+
+fn invalid_temporal_expression(error: TemporalExpressionParseError) -> Error {
+    Error::InvalidConfig(format!("invalid temporal expression: {error}"))
 }
 
 fn pending_vectors_for_scores(
@@ -2826,6 +2864,20 @@ mod tests {
             .commit()
     }
 
+    fn put_text_with_time(
+        vault: &Vault,
+        id: EntityId,
+        text: &str,
+        occurred: TimeRange,
+        learned_at: u64,
+    ) -> Result<()> {
+        vault
+            .batch()
+            .put(&id, 1, occurred, learned_at, b"payload")
+            .text(&id, &[("body", text)])
+            .commit()
+    }
+
     fn active_claim_body(world: Option<EntityId>) -> Vec<u8> {
         let mut body = ClaimBody::new(
             "test.prefix_scope",
@@ -2888,6 +2940,22 @@ mod tests {
         vault
             .batch()
             .put(&id, 1, TimeRange { start: 1, end: 1 }, 1, b"payload")
+            .text(&id, &[("body", text)])
+            .vector(&id, &vector)
+            .commit()
+    }
+
+    fn put_text_and_vector_with_time(
+        vault: &Vault,
+        id: EntityId,
+        text: &str,
+        vector: [f32; 4],
+        occurred: TimeRange,
+        learned_at: u64,
+    ) -> Result<()> {
+        vault
+            .batch()
+            .put(&id, 1, occurred, learned_at, b"payload")
             .text(&id, &[("body", text)])
             .vector(&id, &vector)
             .commit()
@@ -4050,6 +4118,168 @@ mod tests {
 
         assert!(results.iter().any(|entry| entry.id == recent_prefix));
         assert!(!results.iter().any(|entry| entry.id == old_exact));
+        Ok(())
+    }
+
+    #[test]
+    fn parsed_recent_query_bounds_text_retrieval() -> Result<()> {
+        const NOW: u64 = 1_710_504_000; // 2024-03-15T12:00:00Z
+
+        let (_dir, vault) = open_test_vault();
+        let old = entity_id(0x13);
+        let recent = entity_id(0x23);
+
+        put_text_with_time(
+            &vault,
+            old,
+            "recent parsedbounds",
+            TimeRange {
+                start: NOW - 7 * 86_400 - 1,
+                end: NOW - 7 * 86_400 - 1,
+            },
+            NOW - 7 * 86_400 - 1,
+        )?;
+        put_text_with_time(
+            &vault,
+            recent,
+            "recent parsedbounds",
+            TimeRange {
+                start: NOW - 60,
+                end: NOW - 60,
+            },
+            NOW - 60,
+        )?;
+
+        let results = vault
+            .query()
+            .search_text("recent parsedbounds", 10)
+            .with_temporal_now(NOW)
+            .run()?;
+
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].id, recent);
+        Ok(())
+    }
+
+    #[test]
+    fn explicit_time_range_overrides_parsed_recent_hint() -> Result<()> {
+        const NOW: u64 = 1_710_504_000; // 2024-03-15T12:00:00Z
+
+        let (_dir, vault) = open_test_vault();
+        let explicit_keep = entity_id(0x14);
+        let parsed_recent_drop = entity_id(0x24);
+        let vector = [1.0, 0.0, 0.0, 0.0];
+
+        put_text_and_vector_with_time(
+            &vault,
+            explicit_keep,
+            "recent overridebounds",
+            vector,
+            TimeRange {
+                start: 100,
+                end: 100,
+            },
+            100,
+        )?;
+        put_text_and_vector_with_time(
+            &vault,
+            parsed_recent_drop,
+            "recent overridebounds",
+            vector,
+            TimeRange {
+                start: NOW - 60,
+                end: NOW - 60,
+            },
+            NOW - 60,
+        )?;
+
+        let results = vault
+            .query()
+            .search(
+                "recent overridebounds",
+                &vector,
+                Some(TimeRange {
+                    start: 90,
+                    end: 110,
+                }),
+                10,
+            )
+            .with_temporal_now(NOW)
+            .run()?;
+
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].id, explicit_keep);
+        Ok(())
+    }
+
+    #[test]
+    fn explicit_time_range_overrides_unsupported_last_phrase() -> Result<()> {
+        let (_dir, vault) = open_test_vault();
+        let explicit_keep = entity_id(0x34);
+        let vector = [1.0, 0.0, 0.0, 0.0];
+
+        put_text_and_vector_with_time(
+            &vault,
+            explicit_keep,
+            "last friday overridebounds",
+            vector,
+            TimeRange {
+                start: 100,
+                end: 100,
+            },
+            100,
+        )?;
+
+        let results = vault
+            .query()
+            .search(
+                "last friday overridebounds",
+                &vector,
+                Some(TimeRange {
+                    start: 90,
+                    end: 110,
+                }),
+                10,
+            )
+            .with_temporal_now(1_710_504_000)
+            .run()?;
+
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].id, explicit_keep);
+        Ok(())
+    }
+
+    #[test]
+    fn unsupported_last_friday_query_fails_closed() -> Result<()> {
+        let (_dir, vault) = open_test_vault();
+        let id = entity_id(0x15);
+        put_text(&vault, id, "last friday failclosed")?;
+
+        let err = vault
+            .query()
+            .search_text("last friday failclosed", 10)
+            .with_temporal_now(1_710_504_000)
+            .run()
+            .expect_err("unsupported temporal expression must fail closed");
+
+        assert_matches!(err, Error::InvalidConfig(message) if message.contains("last friday"));
+        Ok(())
+    }
+
+    #[test]
+    fn unsupported_last_two_weeks_query_fails_closed() -> Result<()> {
+        let (_dir, vault) = open_test_vault();
+        let id = entity_id(0x16);
+        put_text(&vault, id, "last 2 weeks failclosed")?;
+
+        let err = vault
+            .query()
+            .search_text("last 2 weeks failclosed", 10)
+            .with_temporal_now(1_710_504_000)
+            .run()
+            .expect_err("unsupported temporal expression must fail closed");
+
+        assert_matches!(err, Error::InvalidConfig(message) if message.contains("last 2 weeks"));
         Ok(())
     }
 
