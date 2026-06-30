@@ -16,9 +16,10 @@ use crate::pipeline::{PipelineBuilder, RetrievalWithTelemetry, WorldScope};
 use crate::serialize::{SerializeConfig, SerializedPackTelemetry, serialize_pack_with_telemetry};
 use crate::store::{RetrievalAction, RetrievalRunId, Store};
 use crate::types::{
-    ContextEntity, ContextPack, ENTITY_TYPE_CLAIM, EdgeConfirmationStatus, EdgeInfo, EdgeKind,
-    EmptyContext, EmptyReason, EntityId, FieldProfile, PackFormat, PackStats, ScoredEntity, Signal,
-    TemporalAnchorMode, TemporalGranularity, TimeRange, TokenAllocation,
+    ContextEntity, ContextPack, ContextPackRetrievalBudget, ENTITY_TYPE_CLAIM,
+    EdgeConfirmationStatus, EdgeInfo, EdgeKind, EmptyContext, EmptyReason, EntityId, FieldProfile,
+    PackFormat, PackStats, ScoredEntity, Signal, TemporalAnchorMode, TemporalGranularity,
+    TimeRange, TokenAllocation,
 };
 use crate::{Vault, le_bytes_to_f32_vec};
 
@@ -74,7 +75,8 @@ pub struct ContextPackBuilder<'a> {
     hydrate: bool,
     include_edges: bool,
     edge_hop: u32,
-    max_neighbors: usize,
+    selected_edge_budget: usize,
+    retrieval_budget: Option<ContextPackRetrievalBudget>,
     include_vectors: bool,
     include_stats: bool,
     merge_neighbors: bool,
@@ -132,7 +134,8 @@ impl<'a> ContextPackBuilder<'a> {
             hydrate: true,
             include_edges: false,
             edge_hop: 0,
-            max_neighbors: DEFAULT_MAX_NEIGHBORS,
+            selected_edge_budget: DEFAULT_MAX_NEIGHBORS,
+            retrieval_budget: None,
             include_vectors: false,
             include_stats: false,
             merge_neighbors: true,
@@ -357,7 +360,15 @@ impl<'a> ContextPackBuilder<'a> {
     }
 
     pub fn max_neighbors(mut self, n: usize) -> Self {
-        self.max_neighbors = n.min(MAX_CONTEXT_NEIGHBORS);
+        self = self.selected_edge_budget(n);
+        self
+    }
+
+    pub fn selected_edge_budget(mut self, n: usize) -> Self {
+        self.selected_edge_budget = n.min(MAX_CONTEXT_NEIGHBORS);
+        if let Some(budget) = self.retrieval_budget.as_mut() {
+            budget.selected_edges = self.selected_edge_budget;
+        }
         self
     }
 
@@ -393,6 +404,16 @@ impl<'a> ContextPackBuilder<'a> {
 
     pub fn token_allocation(mut self, allocation: TokenAllocation) -> Self {
         self.token_allocation = allocation;
+        self
+    }
+
+    pub fn retrieval_budget(mut self, budget: ContextPackRetrievalBudget) -> Self {
+        let selected_edges = budget.selected_edges.min(MAX_CONTEXT_NEIGHBORS);
+        self.selected_edge_budget = selected_edges;
+        self.retrieval_budget = Some(ContextPackRetrievalBudget {
+            selected_edges,
+            ..budget
+        });
         self
     }
 
@@ -434,7 +455,18 @@ impl<'a> ContextPackBuilder<'a> {
 
     fn run_unfinalized(self) -> Result<ContextPackRun<'a>> {
         let started = Instant::now();
-        let pipeline_output = self.pipeline.run_for_pack()?;
+        let retrieval_budget = self.retrieval_budget.unwrap_or_else(|| {
+            ContextPackRetrievalBudget::from_limit(
+                self.pipeline.result_limit(),
+                self.token_allocation,
+                self.selected_edge_budget,
+            )
+        });
+        let selected_edge_budget = retrieval_budget.selected_edges;
+        let pipeline_output = self
+            .pipeline
+            .context_pack_budget(retrieval_budget)
+            .run_for_pack()?;
         let telemetry_run_id = pipeline_output.telemetry_run_id;
         let store = &self.vault.store;
         let result = (|| {
@@ -501,13 +533,13 @@ impl<'a> ContextPackBuilder<'a> {
 
             let seed_ids: Vec<EntityId> = results.iter().map(|entity| entity.id).collect();
             let result_ids: HashSet<EntityId> = seed_ids.iter().copied().collect();
-            let edge_walk = if self.edge_hop > 0 && self.max_neighbors > 0 {
+            let edge_walk = if self.edge_hop > 0 && selected_edge_budget > 0 {
                 walk_edges(
                     &self.vault.store,
                     &rtxn,
                     &seed_ids,
                     self.edge_hop,
-                    self.max_neighbors,
+                    selected_edge_budget,
                     &result_ids,
                 )?
             } else {
@@ -1414,21 +1446,21 @@ fn walk_edges(
     rtxn: &RoTxn<'_>,
     seed_ids: &[EntityId],
     hops: u32,
-    max_neighbors: usize,
+    selected_edge_budget: usize,
     exclude: &HashSet<EntityId>,
 ) -> Result<EdgeWalkResult> {
-    if hops == 0 || max_neighbors == 0 || seed_ids.is_empty() {
+    if hops == 0 || selected_edge_budget == 0 || seed_ids.is_empty() {
         return Ok(EdgeWalkResult::default());
     }
 
-    let mut visited = HashSet::with_capacity(max_neighbors);
-    let mut ordered_neighbors = Vec::with_capacity(max_neighbors);
+    let mut visited = HashSet::with_capacity(selected_edge_budget);
+    let mut ordered_neighbors = Vec::with_capacity(selected_edge_budget);
     let mut frontier = seed_ids.to_vec();
     frontier.sort_unstable_by(|a, b| a.as_bytes().cmp(b.as_bytes()));
     let mut scanned_edges = HashMap::<EntityId, Vec<EdgeInfo>>::new();
 
     for _ in 0..hops {
-        if frontier.is_empty() || visited.len() >= max_neighbors {
+        if frontier.is_empty() || visited.len() >= selected_edge_budget {
             break;
         }
 
@@ -1478,7 +1510,7 @@ fn walk_edges(
             break;
         }
 
-        let remaining = max_neighbors.saturating_sub(visited.len());
+        let remaining = selected_edge_budget.saturating_sub(visited.len());
         let mut next_frontier: Vec<(EntityId, f32)> = candidates.into_iter().collect();
         next_frontier.sort_unstable_by(|a, b| {
             b.1.total_cmp(&a.1)
@@ -1809,7 +1841,7 @@ mod tests {
 
         let builder = vault.context_pack().edge_hop(99).max_neighbors(10_000);
         assert_eq!(builder.edge_hop, MAX_EDGE_HOP);
-        assert_eq!(builder.max_neighbors, MAX_CONTEXT_NEIGHBORS);
+        assert_eq!(builder.selected_edge_budget, MAX_CONTEXT_NEIGHBORS);
     }
 
     #[test]
@@ -2304,6 +2336,179 @@ mod tests {
             .run()?;
 
         assert!(pack.neighbors.len() <= 5);
+        Ok(())
+    }
+
+    #[test]
+    fn retrieval_budget_balances_claim_turn_and_facet_before_global_truncation() -> Result<()> {
+        let (_dir, vault) = open_test_vault();
+
+        let claim_top = EntityId::from_bytes_unchecked([0xA1; 16]);
+        let claim_crowder_a = EntityId::from_bytes_unchecked([0xA2; 16]);
+        let claim_crowder_b = EntityId::from_bytes_unchecked([0xA3; 16]);
+        let turn = EntityId::from_bytes_unchecked([0xB1; 16]);
+        let facet = EntityId::from_bytes_unchecked([0xC1; 16]);
+
+        put_claim_text_entity(
+            &vault,
+            &claim_top,
+            "budgetbalance",
+            "test.budget.top",
+            "top",
+        )?;
+        put_claim_text_entity(
+            &vault,
+            &claim_crowder_a,
+            "budgetbalance",
+            "test.budget.crowder_a",
+            "crowder a",
+        )?;
+        put_claim_text_entity(
+            &vault,
+            &claim_crowder_b,
+            "budgetbalance",
+            "test.budget.crowder_b",
+            "crowder b",
+        )?;
+        put_text_entity(
+            &vault,
+            &turn,
+            crate::types::ENTITY_TYPE_TURN,
+            "budgetbalance",
+            serde_json::json!({"text": "turn"}),
+        )?;
+        put_text_entity(
+            &vault,
+            &facet,
+            crate::types::ENTITY_TYPE_FACET,
+            "budgetbalance",
+            serde_json::json!({"name": "active facet"}),
+        )?;
+
+        vault.put_vector(&claim_top, &[1.0, 0.0, 0.0, 0.0])?;
+        vault.put_vector(&claim_crowder_a, &[0.9, 0.1, 0.0, 0.0])?;
+        vault.put_vector(&claim_crowder_b, &[0.8, 0.2, 0.0, 0.0])?;
+        vault.put_vector(&turn, &[0.7, 0.3, 0.0, 0.0])?;
+        vault.put_vector(&facet, &[0.6, 0.4, 0.0, 0.0])?;
+
+        let pack = vault
+            .context_pack()
+            .search_vector(&[1.0, 0.0, 0.0, 0.0], 10)
+            .limit(3)
+            .retrieval_budget(ContextPackRetrievalBudget::new(1, 1, 0, 1, 0, 0))
+            .run()?;
+
+        let ids: Vec<EntityId> = pack.results.iter().map(|entity| entity.id).collect();
+        assert_eq!(
+            ids,
+            vec![claim_top, turn, facet],
+            "CLAIM/TURN/FACET budgets must apply before global truncation"
+        );
+        assert!(
+            !ids.contains(&claim_crowder_a) && !ids.contains(&claim_crowder_b),
+            "lower-ranked claims must not consume the TURN/FACET budget"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn retrieval_budget_zero_caps_remain_excluded_after_surplus_redistribution() -> Result<()> {
+        let (_dir, vault) = open_test_vault();
+
+        let claim = EntityId::from_bytes_unchecked([0xE1; 16]);
+        let summary_a = EntityId::from_bytes_unchecked([0xE2; 16]);
+        let summary_b = EntityId::from_bytes_unchecked([0xE3; 16]);
+
+        put_claim_text_entity(&vault, &claim, "zerocapbudget", "test.zero.cap", "claim")?;
+        put_text_entity(
+            &vault,
+            &summary_a,
+            crate::types::ENTITY_TYPE_SUMMARY,
+            "zerocapbudget",
+            serde_json::json!({"text": "summary a"}),
+        )?;
+        put_text_entity(
+            &vault,
+            &summary_b,
+            crate::types::ENTITY_TYPE_SUMMARY,
+            "zerocapbudget",
+            serde_json::json!({"text": "summary b"}),
+        )?;
+
+        let pack = vault
+            .context_pack()
+            .search_text("zerocapbudget", 10)
+            .limit(3)
+            .retrieval_budget(ContextPackRetrievalBudget::new(2, 0, 0, 0, 0, 0))
+            .run()?;
+
+        let ids: Vec<EntityId> = pack.results.iter().map(|entity| entity.id).collect();
+        assert_eq!(
+            ids,
+            vec![claim],
+            "explicit zero caps must not become eligible during surplus redistribution"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn default_retrieval_budget_keeps_small_limit_turn_results_eligible() -> Result<()> {
+        let (_dir, vault) = open_test_vault();
+
+        let turn = EntityId::from_bytes_unchecked([0xE4; 16]);
+        put_text_entity(
+            &vault,
+            &turn,
+            crate::types::ENTITY_TYPE_TURN,
+            "smalllimitturn",
+            serde_json::json!({"text": "turn"}),
+        )?;
+
+        let pack = vault
+            .context_pack()
+            .search_text("smalllimitturn", 10)
+            .limit(3)
+            .run()?;
+
+        let ids: Vec<EntityId> = pack.results.iter().map(|entity| entity.id).collect();
+        assert_eq!(ids, vec![turn]);
+        Ok(())
+    }
+
+    #[test]
+    fn selected_edge_budget_caps_edge_walk() -> Result<()> {
+        let (_dir, vault) = open_test_vault();
+
+        let root = EntityId::from_bytes_unchecked([0xD1; 16]);
+        let strongest = EntityId::from_bytes_unchecked([0xD2; 16]);
+        let weaker = EntityId::from_bytes_unchecked([0xD3; 16]);
+        put_claim_text_entity(&vault, &root, "edgebudget", "test.edge.root", "root")?;
+        put_text_entity(
+            &vault,
+            &strongest,
+            4,
+            "edge neighbor strongest",
+            serde_json::json!({"name": "strongest"}),
+        )?;
+        put_text_entity(
+            &vault,
+            &weaker,
+            4,
+            "edge neighbor weaker",
+            serde_json::json!({"name": "weaker"}),
+        )?;
+        vault.put_edge(&root, crate::types::EdgeKind::Mentions, &strongest, 0.9)?;
+        vault.put_edge(&root, crate::types::EdgeKind::Mentions, &weaker, 0.8)?;
+
+        let pack = vault
+            .context_pack()
+            .search_text("edgebudget", 10)
+            .edge_hop(1)
+            .selected_edge_budget(1)
+            .run()?;
+
+        let neighbor_ids: Vec<EntityId> = pack.neighbors.iter().map(|entity| entity.id).collect();
+        assert_eq!(neighbor_ids, vec![strongest]);
         Ok(())
     }
 

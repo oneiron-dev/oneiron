@@ -1911,6 +1911,124 @@ impl Default for TokenAllocation {
     }
 }
 
+/// Item budget for context-pack retrieval before the final global truncation.
+///
+/// Primary entity budgets are enforced per retrieval kind after query filters
+/// and before `limit` truncation. `selected_edges` caps edge-walk neighbor
+/// selection; it is not an entity type byte.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ContextPackRetrievalBudget {
+    pub claims: usize,
+    pub turns: usize,
+    pub summaries: usize,
+    pub facets: usize,
+    pub other: usize,
+    pub selected_edges: usize,
+}
+
+impl ContextPackRetrievalBudget {
+    #[must_use]
+    pub const fn new(
+        claims: usize,
+        turns: usize,
+        summaries: usize,
+        facets: usize,
+        other: usize,
+        selected_edges: usize,
+    ) -> Self {
+        Self {
+            claims,
+            turns,
+            summaries,
+            facets,
+            other,
+            selected_edges,
+        }
+    }
+
+    #[must_use]
+    pub fn from_limit(
+        result_limit: usize,
+        allocation: TokenAllocation,
+        selected_edges: usize,
+    ) -> Self {
+        let split_other = allocation.other / 2.0;
+        let weights = [
+            allocation.claims,
+            allocation.turns,
+            allocation.summaries,
+            split_other,
+            split_other,
+        ];
+        let mut budgets = allocate_context_pack_item_budgets(result_limit, weights);
+        if result_limit > 0 {
+            for (budget, weight) in budgets.iter_mut().zip(weights) {
+                if *budget == 0 && weight.is_finite() && weight > 0.0 {
+                    *budget = 1;
+                }
+            }
+        }
+        Self {
+            claims: budgets[0],
+            turns: budgets[1],
+            summaries: budgets[2],
+            facets: budgets[3],
+            other: budgets[4],
+            selected_edges,
+        }
+    }
+}
+
+fn allocate_context_pack_item_budgets(limit: usize, weights: [f32; 5]) -> [usize; 5] {
+    if limit == 0 {
+        return [0; 5];
+    }
+
+    let mut sanitized = [0.0_f32; 5];
+    for (index, weight) in weights.into_iter().enumerate() {
+        if weight.is_finite() && weight > 0.0 {
+            sanitized[index] = weight;
+        }
+    }
+
+    let total_weight: f32 = sanitized.iter().sum();
+    if total_weight <= 0.0 {
+        let base = limit / sanitized.len();
+        let mut budgets = [base; 5];
+        for budget in budgets.iter_mut().take(limit % sanitized.len()) {
+            *budget = budget.saturating_add(1);
+        }
+        return budgets;
+    }
+
+    let mut budgets = [0_usize; 5];
+    let mut remainders = [(0_usize, 0.0_f32); 5];
+    let mut allocated = 0_usize;
+    for (index, weight) in sanitized.iter().copied().enumerate() {
+        if weight <= 0.0 {
+            continue;
+        }
+        let exact = (limit as f32) * (weight / total_weight);
+        let whole = exact.floor() as usize;
+        budgets[index] = whole;
+        remainders[index] = (index, exact - whole as f32);
+        allocated = allocated.saturating_add(whole);
+    }
+
+    let mut leftover = limit.saturating_sub(allocated);
+    remainders.sort_unstable_by(|a, b| b.1.total_cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+    for (index, _) in remainders {
+        if leftover == 0 {
+            break;
+        }
+        if sanitized[index] > 0.0 {
+            budgets[index] = budgets[index].saturating_add(1);
+            leftover -= 1;
+        }
+    }
+    budgets
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1928,5 +2046,28 @@ mod tests {
     fn entity_id_from_hex_rejects_invalid() {
         assert!(EntityId::from_hex("too_short").is_err());
         assert!(EntityId::from_hex("gggggggggggggggggggggggggggggggg").is_err());
+    }
+
+    #[test]
+    fn context_pack_retrieval_budget_default_token_allocation_splits_other_weight() {
+        let budget = ContextPackRetrievalBudget::from_limit(20, TokenAllocation::default(), 7);
+
+        assert_eq!(budget.claims, 9);
+        assert_eq!(budget.turns, 2);
+        assert_eq!(budget.summaries, 5);
+        assert_eq!(budget.facets, 2);
+        assert_eq!(budget.other, 2);
+        assert_eq!(budget.selected_edges, 7);
+    }
+
+    #[test]
+    fn context_pack_retrieval_budget_default_small_limit_keeps_positive_buckets_eligible() {
+        let budget = ContextPackRetrievalBudget::from_limit(3, TokenAllocation::default(), 0);
+
+        assert!(budget.claims > 0);
+        assert!(budget.turns > 0);
+        assert!(budget.summaries > 0);
+        assert!(budget.facets > 0);
+        assert!(budget.other > 0);
     }
 }
