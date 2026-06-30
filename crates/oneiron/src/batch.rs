@@ -1,6 +1,11 @@
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::str;
 
+#[path = "export.rs"]
+pub mod export;
+#[path = "secret_scan.rs"]
+mod secret_scan;
+
 use heed::RwTxn;
 use xxhash_rust::xxh32::xxh32;
 
@@ -821,6 +826,7 @@ pub(crate) fn apply_ops(
     wtxn: &mut RwTxn<'_>,
     ops: Vec<BatchOp>,
 ) -> Result<()> {
+    secret_scan::scan_batch_ops(&ops)?;
     let child_of_overlay = ChildOfBatchOverlay::from_ops(&ops);
     validate_child_of_batch(store, &*wtxn, &child_of_overlay)?;
     let mut had_graph_mutation = false;
@@ -2440,6 +2446,109 @@ mod tests {
             Some(before),
             "{context}: edges_in must stay byte-identical"
         );
+        Ok(())
+    }
+
+    const GITHUB_PAT_SECRET_FIXTURE: &[u8] = b"token=ghp_0123456789abcdefghijklmnopqrstuvwxyz";
+
+    fn assert_secret_scan_rejected(err: Error) {
+        match err {
+            Error::GateWriteRejected {
+                outcome,
+                reason_codes,
+            } => {
+                assert_eq!(outcome, "deny");
+                assert_eq!(
+                    reason_codes.as_slice(),
+                    &["secret_scan.detected", "secret_scan.github_token"]
+                );
+            }
+            other => panic!("expected secret-scan GateWriteRejected, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn secret_scan_rejects_known_secret_fixture_before_persistence() -> Result<()> {
+        let (_dir, vault) = open_test_vault();
+        let safe_id = EntityId::now();
+        let secret_id = EntityId::now();
+        let occurred = test_time_range(10, 10);
+
+        let err = vault
+            .batch()
+            .put(
+                &safe_id,
+                ENTITY_TYPE_PERSON,
+                occurred,
+                10,
+                b"ordinary memory",
+            )
+            .put(
+                &secret_id,
+                ENTITY_TYPE_PERSON,
+                occurred,
+                10,
+                GITHUB_PAT_SECRET_FIXTURE,
+            )
+            .commit()
+            .expect_err("known secret fixture must reject before any batch write");
+
+        assert_secret_scan_rejected(err);
+        assert!(vault.get(&safe_id)?.is_none());
+        assert!(vault.get(&secret_id)?.is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn secret_scan_allows_non_secret_write_unchanged() -> Result<()> {
+        let (_dir, vault) = open_test_vault();
+        let id = EntityId::now();
+        let occurred = test_time_range(20, 20);
+        let data = b"ordinary memory body";
+
+        vault
+            .batch()
+            .put(&id, ENTITY_TYPE_PERSON, occurred, 20, data)
+            .text(&id, &[("body", "ordinary memory body")])
+            .commit()?;
+
+        assert_eq!(vault.get(&id)?.as_deref(), Some(&data[..]));
+        assert_eq!(vault.search_text("ordinary", 10)?.len(), 1);
+        Ok(())
+    }
+
+    #[test]
+    fn txn_batch_secret_scan_rejects_before_staging_writes() -> Result<()> {
+        let (_dir, vault) = open_test_vault();
+        let safe_id = EntityId::now();
+        let secret_id = EntityId::now();
+        let occurred = test_time_range(30, 30);
+        let mut wtxn = vault.store.env.write_txn()?;
+
+        let err = vault
+            .batch_in()
+            .put(
+                &safe_id,
+                ENTITY_TYPE_PERSON,
+                occurred,
+                30,
+                b"ordinary memory",
+            )
+            .put(
+                &secret_id,
+                ENTITY_TYPE_PERSON,
+                occurred,
+                30,
+                GITHUB_PAT_SECRET_FIXTURE,
+            )
+            .apply(&mut wtxn)
+            .expect_err("txn batch secret fixture must reject before staging writes");
+
+        assert_secret_scan_rejected(err);
+        wtxn.commit()?;
+
+        assert!(vault.get(&safe_id)?.is_none());
+        assert!(vault.get(&secret_id)?.is_none());
         Ok(())
     }
 
