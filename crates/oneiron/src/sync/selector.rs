@@ -10,6 +10,8 @@ use std::io::Cursor;
 
 use loro::{CommitOptions, ExportMode, LoroDoc};
 use rmpv::Value;
+#[cfg(feature = "sync")]
+use xxhash_rust::xxh3::xxh3_64;
 
 use crate::Vault;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
@@ -283,7 +285,7 @@ pub fn admit_federated_window_update(
             source,
         })?;
 
-    let admitted = create_window_doc("federation-admitted", key);
+    let admitted = create_admission_doc(key, update, role)?;
     let policy =
         vault.with_write_txn(|wtxn| crate::gate::resolve_policy_manifest(&vault.store, wtxn))?;
 
@@ -295,6 +297,50 @@ pub fn admit_federated_window_update(
     admitted
         .export(ExportMode::all_updates())
         .map_err(|e| Error::SyncProtocolError(e.to_string()))
+}
+
+#[cfg(feature = "sync")]
+fn create_admission_doc(
+    key: &WindowKey,
+    update: &[u8],
+    role: FederationAdmissionRole,
+) -> Result<LoroDoc> {
+    let doc = LoroDoc::new();
+    doc.set_peer_id(federated_admission_peer_id(key, update, role))
+        .map_err(|e| Error::SyncProtocolError(e.to_string()))?;
+    let _entities = doc.get_map("entities");
+    let _edges = doc.get_map("edges");
+    let _tombstones = doc.get_map("tombstones");
+    doc.commit();
+    Ok(doc)
+}
+
+#[cfg(feature = "sync")]
+fn federated_admission_peer_id(
+    key: &WindowKey,
+    update: &[u8],
+    role: FederationAdmissionRole,
+) -> u64 {
+    let mut material = Vec::with_capacity(
+        b"oneiron.federation.admission.peer.v0".len()
+            + role.origin().len()
+            + key.as_str().len()
+            + std::mem::size_of::<u64>()
+            + update.len(),
+    );
+    material.extend_from_slice(b"oneiron.federation.admission.peer.v0");
+    material.extend_from_slice(&(role.origin().len() as u64).to_le_bytes());
+    material.extend_from_slice(role.origin().as_bytes());
+    material.extend_from_slice(&(key.as_str().len() as u64).to_le_bytes());
+    material.extend_from_slice(key.as_str().as_bytes());
+    material.extend_from_slice(&(update.len() as u64).to_le_bytes());
+    material.extend_from_slice(update);
+
+    match xxh3_64(&material) {
+        0 => 1,
+        u64::MAX => u64::MAX - 1,
+        peer_id => peer_id,
+    }
 }
 
 /// Test-only helper for downstream crates that need to seed a grant-backed
@@ -382,7 +428,7 @@ fn admit_federated_entity_blob(
         return Ok(blob.to_vec());
     }
 
-    let body = validate_claim_body_and_decode(&blob[ENTITY_METADATA_HEADER_LEN..], false)?;
+    let body = validate_claim_body_and_decode(&blob[ENTITY_METADATA_HEADER_LEN..], true)?;
     let body = restamp_federated_claim_source(body);
     crate::gate::check_federated_claim_admission(&body, policy)?;
     let encoded = crate::claim::encode_claim_body(&body)?;
@@ -824,16 +870,23 @@ mod tests {
     use super::*;
     use crate::batch::ENTITY_METADATA_HEADER_LEN;
     use crate::claim::{
-        ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSubject, encode_claim_body,
+        ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject,
+        decode_claim_body, encode_claim_body,
     };
     use crate::federation::{
         FederationGrant, FederationGrantPreset, FederationGrantRole, FederationGrantScope,
         encode_federation_grant_body,
     };
+    use crate::provenance::{
+        EdgeProvenanceClaimBody, SupersessionStatus, encode_actor_class_evidence,
+        encode_edge_provenance_value,
+    };
+    use crate::store::Store;
     use crate::sync::bridge::encode_edge_value_for_crdt;
+    use crate::sync::loro_support::map_get_bytes;
     use crate::types::{
         ENTITY_TYPE_FACET, ENTITY_TYPE_PERSON, ENTITY_TYPE_POLICY_MANIFEST, ENTITY_TYPE_WORLD,
-        TimeRange, Vad,
+        EdgeActorClass, TimeRange, Vad,
     };
 
     fn entity_id(byte: u8) -> EntityId {
@@ -861,6 +914,90 @@ mod tests {
         );
         claim.world = world;
         entity_blob(ENTITY_TYPE_CLAIM, &encode_claim_body(&claim).unwrap())
+    }
+
+    fn edge_provenance_claim_blob() -> Vec<u8> {
+        let confidence = 0.75_f32;
+        let record = EdgeProvenanceClaimBody::new(
+            entity_id(0xA4),
+            confidence,
+            SupersessionStatus::Confirmed,
+        );
+        let mut claim = ClaimBody::new(
+            crate::provenance::PREDICATE_EDGE_PROVENANCE,
+            ClaimSubject::Edge {
+                source: entity_id(0xA5),
+                kind: EdgeKind::Mentions,
+                target: entity_id(0xA6),
+            },
+            encode_edge_provenance_value(&record),
+            confidence,
+            ClaimApprovalStatus::Auto,
+            ClaimLifecycleStatus::Active,
+        );
+        claim.evidence = Some(encode_actor_class_evidence(EdgeActorClass::Human));
+        claim.source = Some(ClaimSource::ToolOutput);
+        entity_blob(ENTITY_TYPE_CLAIM, &encode_claim_body(&claim).unwrap())
+    }
+
+    fn encode_policy_manifest(extra_entries: Vec<(Value, Value)>) -> Vec<u8> {
+        let mut entries = vec![
+            (Value::from("schema_version"), Value::from("1.1")),
+            (Value::from("pack_id"), Value::from("selector-test")),
+            (Value::from("pack_version"), Value::from("v1")),
+            (
+                Value::from("min_engine_version"),
+                Value::from(env!("CARGO_PKG_VERSION")),
+            ),
+            (
+                Value::from("defaults"),
+                Value::Map(vec![
+                    (Value::from("criticality"), Value::from("normal")),
+                    (Value::from("sensitivity"), Value::from("normal")),
+                ]),
+            ),
+            (Value::from("rules"), Value::Array(vec![])),
+            (
+                Value::from("actor_ceilings"),
+                Value::Array(vec![Value::Map(vec![
+                    (Value::from("actor_class"), Value::from("first_party")),
+                    (Value::from("ceiling"), Value::from("auto")),
+                ])]),
+            ),
+        ];
+        entries.extend(extra_entries);
+        let mut out = Vec::new();
+        rmpv::encode::write_value(&mut out, &Value::Map(entries)).unwrap();
+        out
+    }
+
+    fn source_trust_entry(source: ClaimSource, max_auto_sensitivity: u8) -> (Value, Value) {
+        let row = Value::Map(vec![
+            (
+                Value::from("max_auto_sensitivity"),
+                Value::from(u64::from(max_auto_sensitivity)),
+            ),
+            (Value::from("receipted"), Value::Boolean(true)),
+            (Value::from("warned"), Value::Boolean(true)),
+        ]);
+        (
+            Value::from("source_trust"),
+            Value::Map(vec![(Value::from(source.as_str()), row)]),
+        )
+    }
+
+    fn put_imported_source_trust(vault: &Vault) {
+        let body = encode_policy_manifest(vec![source_trust_entry(ClaimSource::Imported, 0)]);
+        let id = entity_id(0xA7);
+        let payload = entity_blob(ENTITY_TYPE_POLICY_MANIFEST, &body);
+        vault
+            .with_write_txn(|wtxn| {
+                vault.store.entities.put(wtxn, id.as_bytes(), &payload)?;
+                let type_key = Store::encode_type_key(ENTITY_TYPE_POLICY_MANIFEST, &id);
+                vault.store.type_index.put(wtxn, &type_key, &[])?;
+                Ok(())
+            })
+            .unwrap();
     }
 
     fn insert_entity(doc: &LoroDoc, id: EntityId, entity_type: u8, body: &[u8]) {
@@ -1035,6 +1172,65 @@ mod tests {
             err,
             Error::MaintenanceKindNotWritable(ENTITY_TYPE_POLICY_MANIFEST)
         ));
+    }
+
+    #[test]
+    fn federated_admission_allows_reserved_edge_provenance_claim_with_imported_trust() {
+        let (_dir, vault, _grant_id) = test_vault_with_grant(entity_id(0xA8));
+        put_imported_source_trust(&vault);
+        let window_key = WindowKey::new("2026-03");
+        let claim_id = entity_id(0xA9);
+        let doc = create_window_doc("remote", &window_key);
+        insert_blob(&doc, claim_id, &edge_provenance_claim_blob());
+        doc.commit();
+        let update = doc.export(ExportMode::all_updates()).unwrap();
+
+        let admitted = admit_federated_window_update(
+            &vault,
+            &window_key,
+            &update,
+            FederationAdmissionRole::Member,
+        )
+        .expect("valid reserved provenance claim should admit under imported trust");
+
+        let receiver = create_window_doc("receiver", &window_key);
+        receiver.import(&admitted).unwrap();
+        let blob = map_get_bytes(&receiver.get_map("entities"), &claim_id.to_hex())
+            .expect("admitted provenance claim");
+        let body = decode_claim_body(&blob[ENTITY_METADATA_HEADER_LEN..], true).unwrap();
+        assert_eq!(body.predicate, crate::provenance::PREDICATE_EDGE_PROVENANCE);
+        assert_eq!(body.source, Some(ClaimSource::Imported));
+    }
+
+    #[test]
+    fn federated_admission_duplicate_frame_is_byte_identical() {
+        let (_dir, vault, _grant_id) = test_vault_with_grant(entity_id(0xAA));
+        put_imported_source_trust(&vault);
+        let window_key = WindowKey::new("2026-03");
+        let claim_id = entity_id(0xAB);
+        let doc = create_window_doc("remote", &window_key);
+        insert_blob(&doc, claim_id, &edge_provenance_claim_blob());
+        doc.commit();
+        let update = doc.export(ExportMode::all_updates()).unwrap();
+
+        let first = admit_federated_window_update(
+            &vault,
+            &window_key,
+            &update,
+            FederationAdmissionRole::Guest,
+        )
+        .expect("first admission");
+        let second = admit_federated_window_update(
+            &vault,
+            &window_key,
+            &update,
+            FederationAdmissionRole::Guest,
+        )
+        .expect("duplicate admission");
+        assert_eq!(
+            second, first,
+            "same role/window/update must produce byte-identical admitted updates"
+        );
     }
 
     #[test]
