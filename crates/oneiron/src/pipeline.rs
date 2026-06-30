@@ -639,40 +639,6 @@ impl<'a> PipelineBuilder<'a> {
             let mut claim_gate = ClaimStatusGateCache::default();
             let mut deferred_ppr_cache_writes = Vec::new();
             let codebase_scope_active = self.has_codebase_scope_filter();
-            // D19 is always active. For final-token prefix queries, a dead
-            // exact claim can outrank a live prefix hit in BM25, then be
-            // removed after fusion; overfetch prevents that dead exact hit
-            // from consuming the only text-channel slot. Live exact claims
-            // already satisfy the D19 gate, so they must not widen ordinary
-            // `search_text(..., limit)` calls.
-            let mut claim_gate_widening_probe = ClaimStatusGateCache::default();
-            let claim_gate_text_widening_active = if let Some((query, limit)) = &self.text_search
-                && *limit > 0
-            {
-                let mut exact_posting_fails_claim_gate = |id: &EntityId| {
-                    claim_status_gate_allows(
-                        &self.vault.store,
-                        &rtxn,
-                        id,
-                        &mut metadata_cache,
-                        &mut claim_gate_widening_probe,
-                    )
-                    .map(|allowed| !allowed)
-                };
-                crate::bm25::final_token_exact_posting_matches(
-                    &self.vault.store,
-                    &rtxn,
-                    &self.vault.analyzer,
-                    &bm25_config,
-                    query,
-                    &mut exact_posting_fails_claim_gate,
-                )?
-            } else {
-                false
-            };
-            let text_scope_widening_active = codebase_scope_active
-                || self.has_strict_text_scope_filter()
-                || claim_gate_text_widening_active;
             let filter_config = PipelineFilterConfig {
                 type_filter: self.type_filter.as_deref(),
                 since_filter: self.since_filter,
@@ -683,6 +649,76 @@ impl<'a> PipelineBuilder<'a> {
                 facet_filter: self.facet_filter,
                 world_scope: self.world_scope,
             };
+            // D19 is always active. For final-token prefix queries, a dead
+            // claim can outrank a live prefix hit in BM25, then be removed
+            // after fusion; overfetch prevents that dead hit from consuming
+            // the only text-channel slot. Live exact claims already satisfy
+            // the D19 gate, so they must not widen ordinary
+            // `search_text(..., limit)` calls.
+            let mut claim_gate_widening_probe = ClaimStatusGateCache::default();
+            let claim_gate_text_widening_active = if let Some((query, limit)) = &self.text_search
+                && *limit > 0
+            {
+                let exact_posting_fails_claim_gate = {
+                    let mut exact_posting_fails_claim_gate = |id: &EntityId| {
+                        claim_status_gate_allows(
+                            &self.vault.store,
+                            &rtxn,
+                            id,
+                            &mut metadata_cache,
+                            &mut claim_gate_widening_probe,
+                        )
+                        .map(|allowed| !allowed)
+                    };
+                    crate::bm25::final_token_exact_posting_matches(
+                        &self.vault.store,
+                        &rtxn,
+                        &self.vault.analyzer,
+                        &bm25_config,
+                        query,
+                        &mut exact_posting_fails_claim_gate,
+                    )?
+                };
+                if exact_posting_fails_claim_gate {
+                    true
+                } else {
+                    let mut classify_prefix_posting = |id: &EntityId| {
+                        let rejected_by_gate = !claim_status_gate_allows(
+                            &self.vault.store,
+                            &rtxn,
+                            id,
+                            &mut metadata_cache,
+                            &mut claim_gate_widening_probe,
+                        )?;
+                        let matches_scope = !rejected_by_gate
+                            && pipeline_candidate_matches_filters_and_gate(
+                                &self.vault.store,
+                                &rtxn,
+                                id,
+                                filter_config,
+                                &mut metadata_cache,
+                                &mut claim_gate_widening_probe,
+                            )?;
+                        Ok(crate::bm25::PrefixExpansionPostingDecision {
+                            matches_scope,
+                            rejected_by_gate,
+                        })
+                    };
+                    crate::bm25::final_token_prefix_expansion_has_scoped_and_rejected_postings(
+                        &self.vault.store,
+                        &rtxn,
+                        &self.vault.analyzer,
+                        &bm25_config,
+                        query,
+                        &mut classify_prefix_posting,
+                    )?
+                }
+            } else {
+                false
+            };
+            let text_scope_widening_active = codebase_scope_active
+                || self.has_strict_text_scope_filter()
+                || claim_gate_text_widening_active;
 
             if let Some((query_vector, limit)) = &self.vector_search {
                 if query_vector.len() != self.vault.config.dimensions {
@@ -3618,6 +3654,29 @@ mod tests {
         put_claim_text(&vault, live_prefix, "claimgateprefixalpha", None)?;
 
         let results = vault.query().search_text("claimgateprefix", 1).run()?;
+
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].id, live_prefix);
+        Ok(())
+    }
+
+    #[test]
+    fn dead_prefix_expanded_claim_does_not_truncate_live_prefix_hit() -> Result<()> {
+        let (_dir, vault) = open_test_vault();
+        let dead_prefix = entity_id(0x12);
+        let live_prefix = entity_id(0x22);
+
+        put_status_claim(
+            &vault,
+            dead_prefix,
+            "prefixgateexpanded prefixgateexpanded prefixgateexpanded",
+            crate::claim::ClaimApprovalStatus::Auto,
+            crate::claim::ClaimLifecycleStatus::Retracted,
+            false,
+        )?;
+        put_claim_text(&vault, live_prefix, "prefixgateexpanded", None)?;
+
+        let results = vault.query().search_text("prefixgate", 1).run()?;
 
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].id, live_prefix);
