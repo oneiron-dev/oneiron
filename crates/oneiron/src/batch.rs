@@ -2460,7 +2460,7 @@ mod tests {
                 assert_eq!(outcome, "deny");
                 assert_eq!(
                     reason_codes.as_slice(),
-                    &["secret_scan.detected", "secret_scan.github_token"]
+                    &["gate.secret_scan.detected", "gate.secret_scan.github_token"]
                 );
             }
             other => panic!("expected secret-scan GateWriteRejected, got {other:?}"),
@@ -2514,6 +2514,49 @@ mod tests {
 
         assert_eq!(vault.get(&id)?.as_deref(), Some(&data[..]));
         assert_eq!(vault.search_text("ordinary", 10)?.len(), 1);
+        Ok(())
+    }
+
+    #[test]
+    fn secret_scan_rejects_phonetic_payload_before_persistence() -> Result<()> {
+        let (_dir, vault) = open_test_vault();
+        let safe_id = EntityId::now();
+        let phonetic_id = EntityId::now();
+        let occurred = test_time_range(25, 25);
+        let secret_code =
+            std::str::from_utf8(GITHUB_PAT_SECRET_FIXTURE).expect("secret fixture is UTF-8");
+
+        let err = vault
+            .batch()
+            .put(
+                &safe_id,
+                ENTITY_TYPE_PERSON,
+                occurred,
+                25,
+                b"ordinary memory",
+            )
+            .phonetic(&phonetic_id, &[secret_code])
+            .commit()
+            .expect_err("known secret fixture in phonetic payload must reject before batch write");
+
+        assert_secret_scan_rejected(err);
+        assert!(vault.get(&safe_id)?.is_none());
+
+        let rtxn = vault.store.env.read_txn()?;
+        assert!(
+            vault
+                .store
+                .phonetic_index
+                .get(&rtxn, secret_code.as_bytes())?
+                .is_none()
+        );
+        assert!(
+            vault
+                .store
+                .phonetic_forward
+                .get(&rtxn, phonetic_id.as_bytes())?
+                .is_none()
+        );
         Ok(())
     }
 

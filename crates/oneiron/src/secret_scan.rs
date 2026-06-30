@@ -2,14 +2,14 @@ use super::BatchOp;
 use super::export::ExportManifest;
 use crate::error::{Error, Result};
 
-const REASON_DETECTED: &str = "secret_scan.detected";
-const REASON_AWS_ACCESS_KEY_ID: &str = "secret_scan.aws_access_key_id";
-const REASON_GITHUB_TOKEN: &str = "secret_scan.github_token";
-const REASON_GOOGLE_API_KEY: &str = "secret_scan.google_api_key";
-const REASON_OPENAI_KEY: &str = "secret_scan.openai_key";
-const REASON_PRIVATE_KEY: &str = "secret_scan.private_key";
-const REASON_SLACK_TOKEN: &str = "secret_scan.slack_token";
-const REASON_STRIPE_KEY: &str = "secret_scan.stripe_key";
+const REASON_DETECTED: &str = "gate.secret_scan.detected";
+const REASON_AWS_ACCESS_KEY_ID: &str = "gate.secret_scan.aws_access_key_id";
+const REASON_GITHUB_TOKEN: &str = "gate.secret_scan.github_token";
+const REASON_GOOGLE_API_KEY: &str = "gate.secret_scan.google_api_key";
+const REASON_OPENAI_KEY: &str = "gate.secret_scan.openai_key";
+const REASON_PRIVATE_KEY: &str = "gate.secret_scan.private_key";
+const REASON_SLACK_TOKEN: &str = "gate.secret_scan.slack_token";
+const REASON_STRIPE_KEY: &str = "gate.secret_scan.stripe_key";
 
 pub(crate) fn scan_batch_ops(ops: &[BatchOp]) -> Result<()> {
     for op in ops {
@@ -29,6 +29,11 @@ pub(crate) fn scan_batch_ops(ops: &[BatchOp]) -> Result<()> {
             BatchOp::Text { fields, .. } => {
                 for (_, value) in fields {
                     let _manifest = scan_payload(value.as_bytes())?;
+                }
+            }
+            BatchOp::Phonetic { codes, .. } => {
+                for code in codes {
+                    let _manifest = scan_payload(code.as_bytes())?;
                 }
             }
             _ => {}
@@ -164,8 +169,35 @@ mod tests {
             .expect_err("known GitHub token fixture must reject");
 
         match err {
+            Error::GateWriteRejected {
+                outcome,
+                reason_codes,
+            } => {
+                assert_eq!(outcome, "deny");
+                assert_eq!(
+                    reason_codes.as_slice(),
+                    &[REASON_DETECTED, REASON_GITHUB_TOKEN]
+                );
+                assert!(reason_codes.iter().all(|code| code.starts_with("gate.")));
+            }
+            other => panic!("expected GateWriteRejected, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn scan_batch_ops_rejects_phonetic_secret_payload() {
+        let err = scan_batch_ops(&[BatchOp::Phonetic {
+            id: crate::types::EntityId::now(),
+            codes: vec!["token=ghp_0123456789abcdefghijklmnopqrstuvwxyz".to_owned()],
+        }])
+        .expect_err("known GitHub token fixture in phonetic payload must reject");
+
+        match err {
             Error::GateWriteRejected { reason_codes, .. } => {
-                assert!(reason_codes.contains(&REASON_GITHUB_TOKEN));
+                assert_eq!(
+                    reason_codes.as_slice(),
+                    &[REASON_DETECTED, REASON_GITHUB_TOKEN]
+                );
             }
             other => panic!("expected GateWriteRejected, got {other:?}"),
         }
