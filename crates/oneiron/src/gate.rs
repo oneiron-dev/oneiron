@@ -492,6 +492,7 @@ pub(crate) fn gate_metrics_snapshot() -> GateMetricsSnapshot {
 
 fn record_gate_decision_metrics(decision: &GateDecision) {
     let outcome = decision.outcome();
+    // A decision with multiple reason codes records one outcome/reason-class co-occurrence per code.
     for reason_code in decision.reason_codes() {
         let reason_class = reason_code.metric_reason_class();
         GATE_METRIC_COUNTERS[outcome.metric_index()][reason_class.metric_index()]
@@ -2217,11 +2218,12 @@ mod tests {
             .iter()
             .map(|counter| (counter.outcome().as_str(), counter.reason_class().as_str()))
             .collect::<Vec<_>>();
-        let _total_count = snapshot
-            .counters()
-            .iter()
-            .map(GateMetricCounter::count)
-            .sum::<u64>();
+        for counter in snapshot.counters() {
+            assert_eq!(
+                counter.count(),
+                snapshot.count(counter.outcome(), counter.reason_class())
+            );
+        }
         assert!(labels.contains(&("allow", "allow")));
         assert!(labels.contains(&("pending", "actor_ceiling")));
         assert!(labels.contains(&("pending", "source_trust")));
