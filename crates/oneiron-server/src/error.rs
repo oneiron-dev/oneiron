@@ -431,7 +431,7 @@ pub struct ApiErrorEnvelope {
     error: ApiErrorEnvelopeBody,
 }
 
-/// Typed error payload nested under [`ApiErrorEnvelope::error`].
+/// Typed error payload nested under the transport envelope's error field.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct ApiErrorEnvelopeBody {
