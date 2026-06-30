@@ -771,7 +771,7 @@ impl<'a> PipelineBuilder<'a> {
                         &mut prefix_probe_claim_gate,
                     )
                 };
-                let text_results = crate::bm25::search_text_scoped_with_recency(
+                let mut text_results = crate::bm25::search_text_scoped_with_recency(
                     &self.vault.store,
                     &rtxn,
                     &self.vault.analyzer,
@@ -783,6 +783,17 @@ impl<'a> PipelineBuilder<'a> {
                         exact_posting_matches_scope: &mut exact_posting_matches_scope,
                     },
                 )?;
+                if text_channel_limit > *limit {
+                    truncate_widened_text_results_to_scope(
+                        &mut text_results,
+                        &self.vault.store,
+                        &rtxn,
+                        *limit,
+                        filter_config,
+                        &mut metadata_cache,
+                        &mut prefix_probe_claim_gate,
+                    )?;
+                }
                 import_claim_gate_decisions_for_scores(
                     &mut claim_gate,
                     &mut prefix_probe_claim_gate,
@@ -1272,6 +1283,36 @@ fn scoped_text_channel_limit(
     let indexed_docs = usize::try_from(crate::bm25::read_total_docs(store, rtxn)?)
         .map_err(|_| Error::IndexOverflow("bm25 total docs"))?;
     Ok(requested.max(indexed_docs))
+}
+
+fn truncate_widened_text_results_to_scope(
+    scores: &mut Vec<ScoredEntity>,
+    store: &Store,
+    rtxn: &RoTxn<'_>,
+    requested: usize,
+    filters: PipelineFilterConfig<'_>,
+    metadata_cache: &mut EntityMetadataCache,
+    claim_gate: &mut ClaimStatusGateCache,
+) -> Result<()> {
+    let mut filtered = Vec::with_capacity(requested.min(scores.len()));
+    for scored in scores.iter().copied() {
+        if pipeline_candidate_matches_filters_and_gate(
+            store,
+            rtxn,
+            &scored.id,
+            filters,
+            metadata_cache,
+            claim_gate,
+        )? {
+            filtered.push(scored);
+            if filtered.len() == requested {
+                break;
+            }
+        }
+    }
+
+    *scores = filtered;
+    Ok(())
 }
 
 fn scoped_vector_channel_limit(
@@ -3734,6 +3775,62 @@ mod tests {
             .run()?;
 
         assert!(results.iter().any(|entry| entry.id == in_scope_prefix));
+        assert!(!results.iter().any(|entry| entry.id == out_of_scope_exact));
+        Ok(())
+    }
+
+    #[test]
+    fn prefix_scope_widening_preserves_exact_text_limit_after_type_filter() -> Result<()> {
+        let (_dir, vault) = open_test_vault();
+        let out_of_scope_exact = entity_id(0x10);
+        let in_scope_preferred = entity_id(0x20);
+        let in_scope_extra = entity_id(0x30);
+
+        vault
+            .batch()
+            .put(
+                &out_of_scope_exact,
+                2,
+                TimeRange { start: 1, end: 1 },
+                1,
+                b"payload",
+            )
+            .text(
+                &out_of_scope_exact,
+                &[(
+                    "body",
+                    "limitfilterneedle limitfilterneedle limitfilterneedle",
+                )],
+            )
+            .put(
+                &in_scope_preferred,
+                1,
+                TimeRange { start: 1, end: 1 },
+                1,
+                b"payload",
+            )
+            .text(
+                &in_scope_preferred,
+                &[("body", "limitfilterneedle limitfilterneedle")],
+            )
+            .put(
+                &in_scope_extra,
+                1,
+                TimeRange { start: 1, end: 1 },
+                1,
+                b"payload",
+            )
+            .text(&in_scope_extra, &[("body", "limitfilterneedle")])
+            .commit()?;
+
+        let results = vault
+            .query()
+            .search_text("limitfilterneedle", 1)
+            .filter_types(&[1])
+            .run()?;
+
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].id, in_scope_preferred);
         assert!(!results.iter().any(|entry| entry.id == out_of_scope_exact));
         Ok(())
     }
