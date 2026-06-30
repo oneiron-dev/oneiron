@@ -1911,6 +1911,116 @@ impl Default for TokenAllocation {
     }
 }
 
+/// Item budget for context-pack retrieval before the final global truncation.
+///
+/// Primary entity budgets are enforced per retrieval kind after query filters
+/// and before `limit` truncation. `selected_edges` caps edge-walk neighbor
+/// selection; it is not an entity type byte.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ContextPackRetrievalBudget {
+    pub claims: usize,
+    pub turns: usize,
+    pub summaries: usize,
+    pub facets: usize,
+    pub other: usize,
+    pub selected_edges: usize,
+}
+
+impl ContextPackRetrievalBudget {
+    #[must_use]
+    pub const fn new(
+        claims: usize,
+        turns: usize,
+        summaries: usize,
+        facets: usize,
+        other: usize,
+        selected_edges: usize,
+    ) -> Self {
+        Self {
+            claims,
+            turns,
+            summaries,
+            facets,
+            other,
+            selected_edges,
+        }
+    }
+
+    #[must_use]
+    pub fn from_limit(
+        result_limit: usize,
+        allocation: TokenAllocation,
+        selected_edges: usize,
+    ) -> Self {
+        let weights = [
+            allocation.claims,
+            allocation.turns,
+            allocation.summaries,
+            allocation.other,
+            allocation.other,
+        ];
+        let budgets = allocate_context_pack_item_budgets(result_limit, weights);
+        Self {
+            claims: budgets[0],
+            turns: budgets[1],
+            summaries: budgets[2],
+            facets: budgets[3],
+            other: budgets[4],
+            selected_edges,
+        }
+    }
+}
+
+fn allocate_context_pack_item_budgets(limit: usize, weights: [f32; 5]) -> [usize; 5] {
+    if limit == 0 {
+        return [0; 5];
+    }
+
+    let mut sanitized = [0.0_f32; 5];
+    for (index, weight) in weights.into_iter().enumerate() {
+        if weight.is_finite() && weight > 0.0 {
+            sanitized[index] = weight;
+        }
+    }
+
+    let total_weight: f32 = sanitized.iter().sum();
+    if total_weight <= 0.0 {
+        let base = limit / sanitized.len();
+        let mut budgets = [base; 5];
+        for budget in budgets.iter_mut().take(limit % sanitized.len()) {
+            *budget = budget.saturating_add(1);
+        }
+        return budgets;
+    }
+
+    let mut budgets = [0_usize; 5];
+    let mut remainders = [(0_usize, 0.0_f32); 5];
+    let mut allocated = 0_usize;
+    for (index, weight) in sanitized.iter().copied().enumerate() {
+        if weight <= 0.0 {
+            continue;
+        }
+        let exact = (limit as f32) * (weight / total_weight);
+        let whole = exact.floor() as usize;
+        budgets[index] = whole;
+        remainders[index] = (index, exact - whole as f32);
+        allocated = allocated.saturating_add(whole);
+    }
+
+    let mut leftover = limit.saturating_sub(allocated);
+    remainders.sort_unstable_by(|a, b| b.1.total_cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+    for (index, _) in remainders {
+        if leftover == 0 {
+            break;
+        }
+        if sanitized[index] > 0.0 {
+            budgets[index] = budgets[index].saturating_add(1);
+            leftover -= 1;
+        }
+    }
+    budgets
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
