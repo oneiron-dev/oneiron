@@ -123,7 +123,7 @@ impl ClaimApprovalStatus {
         }
     }
 
-    fn parse(value: &str) -> Option<Self> {
+    pub(crate) fn parse(value: &str) -> Option<Self> {
         match value {
             "auto" => Some(Self::Auto),
             "proposed" => Some(Self::Proposed),
@@ -153,7 +153,7 @@ impl ClaimLifecycleStatus {
         }
     }
 
-    fn parse(value: &str) -> Option<Self> {
+    pub(crate) fn parse(value: &str) -> Option<Self> {
         match value {
             "active" => Some(Self::Active),
             "superseded" => Some(Self::Superseded),
