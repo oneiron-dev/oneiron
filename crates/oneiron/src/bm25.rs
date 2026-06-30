@@ -559,6 +559,10 @@ fn collect_final_token_prefix_terms(
             break;
         }
 
+        // The scan cap is per distinct final surface prefix. A query can
+        // carry multiple final surface tokens, so total cursor reads are
+        // bounded by prefix_count * MAX_FINAL_TOKEN_PREFIX_SCAN_TERMS while
+        // accepted expansions still share MAX_FINAL_TOKEN_PREFIX_TERMS.
         for (scanned_terms, row) in store
             .text_postings
             .prefix_iter(rtxn, prefix.as_bytes())?
