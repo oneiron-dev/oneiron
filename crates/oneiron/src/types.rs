@@ -1194,22 +1194,12 @@ pub fn temporal_expression_from_query(
                         expression: format!("last {next}"),
                     });
                 }
-                Some(next) if is_temporal_quantity_token(next) => {
-                    let unit_index =
-                        if matches!(tokens.get(index + 2).map(String::as_str), Some("of")) {
-                            index + 3
-                        } else {
-                            index + 2
-                        };
-                    if let Some(unit) = tokens.get(unit_index).map(String::as_str)
-                        && (is_temporal_unit_token(unit) || is_weekday_token(unit))
-                    {
-                        let expression = tokens[index..=unit_index].join(" ");
+                Some(_) => {
+                    if let Some(expression) = unsupported_last_quantity_expression(&tokens, index) {
                         return Err(TemporalExpressionParseError::Unsupported { expression });
                     }
                     None
                 }
-                Some(_) => None,
             },
             _ => None,
         };
@@ -1263,7 +1253,9 @@ fn is_temporal_quantity_token(token: &str) -> bool {
     token.bytes().all(|byte| byte.is_ascii_digit())
         || matches!(
             token,
-            "a" | "an"
+            "zero"
+                | "a"
+                | "an"
                 | "one"
                 | "two"
                 | "three"
@@ -1274,11 +1266,58 @@ fn is_temporal_quantity_token(token: &str) -> bool {
                 | "eight"
                 | "nine"
                 | "ten"
+                | "eleven"
+                | "twelve"
+                | "thirteen"
+                | "fourteen"
+                | "fifteen"
+                | "sixteen"
+                | "seventeen"
+                | "eighteen"
+                | "nineteen"
+                | "twenty"
+                | "thirty"
+                | "forty"
+                | "fifty"
+                | "sixty"
+                | "seventy"
+                | "eighty"
+                | "ninety"
+                | "hundred"
+                | "thousand"
+                | "dozen"
+                | "half"
                 | "couple"
                 | "few"
                 | "several"
                 | "many"
         )
+}
+
+fn unsupported_last_quantity_expression(tokens: &[String], last_index: usize) -> Option<String> {
+    let mut index = last_index + 1;
+    let mut saw_quantity = false;
+
+    while let Some(token) = tokens.get(index).map(String::as_str) {
+        if token == "of" && saw_quantity {
+            index += 1;
+            continue;
+        }
+
+        if is_temporal_quantity_token(token) {
+            saw_quantity = true;
+            index += 1;
+            continue;
+        }
+
+        if saw_quantity && (is_temporal_unit_token(token) || is_weekday_token(token)) {
+            return Some(tokens[last_index..=index].join(" "));
+        }
+
+        return None;
+    }
+
+    None
 }
 
 fn is_weekday_token(token: &str) -> bool {
@@ -1301,7 +1340,7 @@ fn previous_calendar_month_range(now: u64) -> TimeRange {
         (year, month - 1)
     };
     TimeRange {
-        start: unix_seconds_from_civil(previous_year, previous_month, 1),
+        start: unix_seconds_from_civil_saturating(previous_year, previous_month, 1),
         end: current_month_start.saturating_sub(1),
     }
 }
@@ -1310,8 +1349,17 @@ fn previous_calendar_year_range(now: u64) -> TimeRange {
     let (year, _, _) = civil_from_unix_days(unix_days_from_timestamp(now));
     let current_year_start = unix_seconds_from_civil(year, 1, 1);
     TimeRange {
-        start: unix_seconds_from_civil(year - 1, 1, 1),
+        start: unix_seconds_from_civil_saturating(year - 1, 1, 1),
         end: current_year_start.saturating_sub(1),
+    }
+}
+
+fn unix_seconds_from_civil_saturating(year: i32, month: u32, day: u32) -> u64 {
+    let days = unix_days_from_civil(year, month, day);
+    if days <= 0 {
+        0
+    } else {
+        (days as u64).saturating_mul(TEMPORAL_SECONDS_PER_DAY)
     }
 }
 
@@ -2402,6 +2450,16 @@ mod tests {
                 if expression == "last 30 minutes"
         ));
         assert!(matches!(
+            temporal_expression_from_query("notes from last eleven weeks"),
+            Err(TemporalExpressionParseError::Unsupported { expression })
+                if expression == "last eleven weeks"
+        ));
+        assert!(matches!(
+            temporal_expression_from_query("notes from last twenty four hours"),
+            Err(TemporalExpressionParseError::Unsupported { expression })
+                if expression == "last twenty four hours"
+        ));
+        assert!(matches!(
             temporal_expression_from_query("notes from last two weeks"),
             Err(TemporalExpressionParseError::Unsupported { expression })
                 if expression == "last two weeks"
@@ -2447,6 +2505,26 @@ mod tests {
     #[should_panic(expected = "only defined for Unix epoch and later dates")]
     fn unix_seconds_from_civil_rejects_pre_epoch_dates() {
         let _ = unix_seconds_from_civil(1969, 12, 31);
+    }
+
+    #[test]
+    fn temporal_expression_calendar_ranges_saturate_at_epoch_boundary() {
+        assert_eq!(
+            parse_temporal_expression("last month", 0).unwrap(),
+            TimeRange { start: 0, end: 0 }
+        );
+        assert_eq!(
+            parse_temporal_expression("last year", 0).unwrap(),
+            TimeRange { start: 0, end: 0 }
+        );
+        assert_eq!(
+            parse_temporal_expression("last month", 15 * TEMPORAL_SECONDS_PER_DAY).unwrap(),
+            TimeRange { start: 0, end: 0 }
+        );
+        assert_eq!(
+            parse_temporal_expression("last year", 15 * TEMPORAL_SECONDS_PER_DAY).unwrap(),
+            TimeRange { start: 0, end: 0 }
+        );
     }
 
     #[test]
