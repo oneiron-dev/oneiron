@@ -2914,6 +2914,13 @@ async fn core_batch_short_id_hydrate(
     if req.refs.is_empty() {
         return Err(ApiError::bad_request("refs must not be empty", Some("refs")).into());
     }
+    if req.refs.len() > CORE_MAX_BATCH_ENTITIES {
+        return Err(ApiError::bad_request(
+            format!("refs must contain at most {CORE_MAX_BATCH_ENTITIES} entries"),
+            Some("refs"),
+        )
+        .into());
+    }
 
     let view = req.view.unwrap_or(View::Full);
     let mut results = Vec::with_capacity(req.refs.len());
@@ -6601,6 +6608,19 @@ mod tests {
             "{deleted_body:#}"
         );
         assert!(deleted_body.get("item").is_none());
+
+        let too_many_refs = vec![empty_short_ref.clone(); CORE_MAX_BATCH_ENTITIES + 1];
+        let (too_many_status, too_many_body) = route_json(
+            server.clone(),
+            json_request(
+                "POST",
+                "/v1/core/batch/shortId/hydrate",
+                json!({ "refs": too_many_refs }),
+            ),
+        )
+        .await;
+        assert_eq!(too_many_status, StatusCode::BAD_REQUEST);
+        assert_error_envelope(&too_many_body, "BAD_REQUEST");
 
         let (batch_status, batch_body) = route_json(
             server,

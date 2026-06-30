@@ -3713,6 +3713,8 @@ impl Vault {
                     reason: None,
                     deleted_at: None,
                     request_id: None,
+                    // No entity row remains to inspect, so hydrate treats this
+                    // as an effectively hard deletion and keeps the source explicit.
                     hard: true,
                 }),
                 body: None,
