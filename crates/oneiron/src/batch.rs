@@ -131,6 +131,10 @@ pub(crate) enum BatchOp {
         occurred: TimeRange,
         learned_at: u64,
     },
+    ReconcileLexicalQueryHints {
+        source: EntityId,
+        keep: Vec<EntityId>,
+    },
     Vector {
         id: EntityId,
         vector: Vec<f32>,
@@ -897,8 +901,9 @@ fn push_claim_candidate_with_lexical_hints(
         learned_at,
     });
 
-    for (index, hint) in normalized_hints.into_iter().enumerate() {
-        let hint_id = match lexical_query_hint_claim_id(id, index, &hint) {
+    let mut hint_ids = Vec::with_capacity(normalized_hints.len());
+    for hint in normalized_hints {
+        let hint_id = match lexical_query_hint_claim_id(id, &hint) {
             Ok(hint_id) => hint_id,
             Err(err) => {
                 if validation_error.is_none() {
@@ -907,6 +912,7 @@ fn push_claim_candidate_with_lexical_hints(
                 continue;
             }
         };
+        hint_ids.push(hint_id);
         let hint_candidate = ClaimCandidate::new(
             crate::claim::PREDICATE_LEXICAL_QUERY_HINT,
             ClaimSubject::Entity(*id),
@@ -925,38 +931,53 @@ fn push_claim_candidate_with_lexical_hints(
             fields: vec![("query_hint".to_owned(), hint)],
         });
     }
+    ops.push(BatchOp::ReconcileLexicalQueryHints {
+        source: *id,
+        keep: hint_ids,
+    });
 }
 
-fn lexical_query_hint_claim_id(
-    source_claim_id: &EntityId,
-    index: usize,
-    hint: &str,
-) -> Result<EntityId> {
+fn lexical_query_hint_claim_id(source_claim_id: &EntityId, hint: &str) -> Result<EntityId> {
     let mut material = Vec::with_capacity(
         b"oneiron.lexical-query-hint.v1".len()
             + ENTITY_ID_LEN
-            + std::mem::size_of::<u64>()
             + std::mem::size_of::<u64>()
             + hint.len(),
     );
     material.extend_from_slice(b"oneiron.lexical-query-hint.v1");
     material.extend_from_slice(source_claim_id.as_bytes());
-    material.extend_from_slice(&(index as u64).to_le_bytes());
     material.extend_from_slice(&(hint.len() as u64).to_le_bytes());
     material.extend_from_slice(hint.as_bytes());
 
     let mut bytes = xxh3_128(&material).to_le_bytes();
     bytes[..2].copy_from_slice(&crate::claim::LEXICAL_QUERY_HINT_ID_PREFIX);
     bytes[ENTITY_ID_LEN - 1] &= 0x7F;
-    match EntityId::from_bytes(bytes) {
-        Ok(id) => Ok(id),
-        Err(_) => {
-            bytes[0] = 0x42;
-            bytes[ENTITY_ID_LEN - 1] = 0x24;
-            EntityId::from_bytes(bytes)
-                .map_err(|_| Error::InvariantViolation("lexical query hint id derivation failed"))
-        }
+    EntityId::from_bytes(bytes)
+        .map_err(|_| Error::InvariantViolation("lexical query hint id derivation failed"))
+}
+
+fn lexical_query_hint_text_for_replayed_put(
+    id: &EntityId,
+    entity_type: u8,
+    replicated: bool,
+    data: &[u8],
+) -> Result<Option<String>> {
+    if !replicated
+        || entity_type != crate::types::ENTITY_TYPE_CLAIM
+        || !id
+            .as_bytes()
+            .starts_with(&crate::claim::LEXICAL_QUERY_HINT_ID_PREFIX)
+    {
+        return Ok(None);
     }
+    let body = crate::claim::decode_claim_body(data, true)?;
+    if body.predicate != crate::claim::PREDICATE_LEXICAL_QUERY_HINT {
+        return Ok(None);
+    }
+    crate::claim::lexical_query_hint_target(&body)?;
+    Ok(Some(
+        crate::claim::decode_lexical_query_hint_value(&body.value)?.query,
+    ))
 }
 
 /// Applies a list of batch operations to an LMDB write transaction.
@@ -1037,6 +1058,27 @@ pub(crate) fn apply_ops(
                 if let Some(token) = pending_embedding_token {
                     pending_embedding_tokens_written.insert(id, token);
                 }
+                if let Some(query_hint) = lexical_query_hint_text_for_replayed_put(
+                    &id,
+                    entity_type,
+                    allow_maintenance && allow_reserved_predicate,
+                    &data,
+                )? && store.text_forward.get(wtxn, id.as_bytes())?.is_none()
+                {
+                    if !text_manifest_checked {
+                        crate::vault::ensure_text_index_manifest_matches_wtxn(
+                            store, wtxn, analyzer,
+                        )?;
+                        text_manifest_checked = true;
+                    }
+                    crate::bm25::index_text(
+                        store,
+                        wtxn,
+                        analyzer,
+                        &id,
+                        &[("query_hint".to_owned(), query_hint)],
+                    )?;
+                }
             }
             BatchOp::ClaimCandidate {
                 id,
@@ -1062,6 +1104,17 @@ pub(crate) fn apply_ops(
                 if let Some(token) = applied.pending_embedding_token {
                     pending_embedding_tokens_written.insert(id, token);
                 }
+            }
+            BatchOp::ReconcileLexicalQueryHints { source, keep } => {
+                let keep: HashSet<EntityId> = keep.into_iter().collect();
+                let deleted =
+                    delete_lexical_query_hint_claims_for_target(store, wtxn, &source, &keep)?;
+                for (deleted_id, neighbors) in &deleted.deleted {
+                    pending_embedding_tokens_written.remove(deleted_id);
+                    ppr::invalidate_ppr_for_delete(store, wtxn, deleted_id, neighbors)?;
+                }
+                had_graph_mutation |= deleted.had_graph_mutation;
+                had_vector_mutation |= deleted.had_vector;
             }
             BatchOp::Vector {
                 id,
@@ -1197,7 +1250,24 @@ pub(crate) fn apply_ops(
 }
 
 fn contains_text_op(ops: &[BatchOp]) -> bool {
-    ops.iter().any(|op| matches!(op, BatchOp::Text { .. }))
+    ops.iter().any(|op| match op {
+        BatchOp::Text { .. } => true,
+        BatchOp::Put {
+            id,
+            entity_type,
+            allow_maintenance,
+            allow_reserved_predicate,
+            ..
+        } => {
+            *entity_type == crate::types::ENTITY_TYPE_CLAIM
+                && *allow_maintenance
+                && *allow_reserved_predicate
+                && id
+                    .as_bytes()
+                    .starts_with(&crate::claim::LEXICAL_QUERY_HINT_ID_PREFIX)
+        }
+        _ => false,
+    })
 }
 
 fn contains_local_claim_put(ops: &[BatchOp]) -> bool {
@@ -1341,6 +1411,22 @@ pub(crate) fn deindex_entity(
     wtxn: &mut RwTxn<'_>,
     id: &EntityId,
 ) -> Result<(bool, bool, bool, Vec<EntityId>)> {
+    let deleted_hints =
+        delete_lexical_query_hint_claims_for_target(store, wtxn, id, &HashSet::new())?;
+    let mut had_vector = deleted_hints.had_vector;
+    let mut had_graph_mutation = deleted_hints.had_graph_mutation;
+    let mut neighbors = Vec::new();
+    for (hint_id, hint_neighbors) in &deleted_hints.deleted {
+        ppr::invalidate_ppr_for_delete(store, wtxn, hint_id, hint_neighbors)?;
+        neighbors.push(*hint_id);
+        neighbors.extend(
+            hint_neighbors
+                .iter()
+                .copied()
+                .filter(|neighbor| neighbor != id),
+        );
+    }
+
     // Clean secondary indexes unconditionally — they may exist even without an
     // entity record (e.g. text indexed via batch().text() without a preceding put()).
     crate::bm25::deindex_text(store, wtxn, id)?;
@@ -1348,10 +1434,11 @@ pub(crate) fn deindex_entity(
     crate::code_revision::delete_code_revision_lifecycle_in_txn(store, wtxn, id)?;
     crate::codebase::delete_codebase_snapshot_in_txn(store, wtxn, id)?;
     store.clear_pending_embedding(wtxn, id)?;
-    let mut had_vector = store.vectors.delete(wtxn, id.as_bytes())?;
+    had_vector |= store.vectors.delete(wtxn, id.as_bytes())?;
     crate::hnsw::hnsw_deindex(store, wtxn, id)?;
-    let mut neighbors = delete_related_edges(store, wtxn, id)?;
-    let mut had_graph_mutation = !neighbors.is_empty();
+    let related_neighbors = delete_related_edges(store, wtxn, id)?;
+    had_graph_mutation |= !related_neighbors.is_empty();
+    neighbors.extend(related_neighbors);
 
     let forward_key = store
         .short_ids_reverse
@@ -1414,6 +1501,8 @@ pub(crate) fn deindex_entity(
     store.temporal_learned.delete(wtxn, &learned_key)?;
 
     store.entities.delete(wtxn, id.as_bytes())?;
+    neighbors.sort_unstable();
+    neighbors.dedup();
     Ok((true, had_vector, had_graph_mutation, neighbors))
 }
 
@@ -1567,8 +1656,10 @@ fn apply_put(
     // Registered maintenance kinds with pinned body schemas get the same
     // fail-closed treatment on every path that can admit their type byte.
     // Bodies of all other type bytes stay opaque at the storage layer.
+    let mut is_lexical_query_hint_claim = false;
     if entity_type == crate::types::ENTITY_TYPE_CLAIM {
         let body = crate::claim::validate_claim_body_and_decode(data, allow_reserved_predicate)?;
+        is_lexical_query_hint_claim = body.predicate == crate::claim::PREDICATE_LEXICAL_QUERY_HINT;
         if !replicated {
             let policy = write_policy.ok_or(Error::InvariantViolation(
                 "local claim write policy snapshot missing",
@@ -1724,17 +1815,18 @@ fn apply_put(
     if let Some(plan) = short_id_plan {
         apply_short_id_plan(store, wtxn, &id, plan)?;
     }
-    let pending_embedding_token = if entity_type == crate::types::ENTITY_TYPE_CLAIM {
-        let has_current_pending = store.has_current_pending_embedding_in_txn(wtxn, &id)?;
-        let has_vector = store.vectors.get(wtxn, id.as_bytes())?.is_some();
-        if !body_changed && has_vector && !has_current_pending {
-            None
+    let pending_embedding_token =
+        if entity_type == crate::types::ENTITY_TYPE_CLAIM && !is_lexical_query_hint_claim {
+            let has_current_pending = store.has_current_pending_embedding_in_txn(wtxn, &id)?;
+            let has_vector = store.vectors.get(wtxn, id.as_bytes())?.is_some();
+            if !body_changed && has_vector && !has_current_pending {
+                None
+            } else {
+                Some(store.mark_pending_embedding(wtxn, &id, data)?)
+            }
         } else {
-            Some(store.mark_pending_embedding(wtxn, &id, data)?)
-        }
-    } else {
-        None
-    };
+            None
+        };
     Ok(pending_embedding_token)
 }
 
@@ -2051,6 +2143,81 @@ fn edge_kind_prefix(id: &EntityId, kind: EdgeKind) -> [u8; 17] {
 
 fn child_of_prefix(id: &EntityId) -> [u8; 17] {
     edge_kind_prefix(id, EdgeKind::ChildOf)
+}
+
+#[derive(Default)]
+struct DeletedLexicalQueryHints {
+    had_vector: bool,
+    had_graph_mutation: bool,
+    deleted: Vec<(EntityId, Vec<EntityId>)>,
+}
+
+fn delete_lexical_query_hint_claims_for_target(
+    store: &Store,
+    wtxn: &mut RwTxn<'_>,
+    target: &EntityId,
+    keep: &HashSet<EntityId>,
+) -> Result<DeletedLexicalQueryHints> {
+    let mut result = DeletedLexicalQueryHints::default();
+    for hint_id in lexical_query_hint_claim_ids_for_target(store, wtxn, target)? {
+        if keep.contains(&hint_id) {
+            continue;
+        }
+        let (existed, had_vector, had_graph_mutation, neighbors) =
+            deindex_entity(store, wtxn, &hint_id)?;
+        if existed {
+            result.deleted.push((hint_id, neighbors));
+        }
+        result.had_vector |= had_vector;
+        result.had_graph_mutation |= had_graph_mutation;
+    }
+    Ok(result)
+}
+
+fn lexical_query_hint_claim_ids_for_target(
+    store: &Store,
+    wtxn: &mut RwTxn<'_>,
+    target: &EntityId,
+) -> Result<Vec<EntityId>> {
+    let mut candidates = Vec::new();
+    for entry in store.edges_in.prefix_iter(wtxn, target.as_bytes())? {
+        let (key, value) = entry?;
+        validate_edge_record(key, value)?;
+        let kind = EdgeKind::try_from_u8(key[16]).ok_or(Error::CorruptedIndex("edge record"))?;
+        if kind != EdgeKind::ClaimOf {
+            continue;
+        }
+        let source = EntityId::from_bytes(
+            key[17..33]
+                .try_into()
+                .map_err(|_| Error::CorruptedIndex("edge record"))?,
+        )
+        .map_err(|_| Error::CorruptedIndex("edge record"))?;
+        candidates.push(source);
+    }
+
+    let mut hint_ids = Vec::new();
+    for candidate in candidates {
+        let Some(raw) = store.entities.get(wtxn, candidate.as_bytes())? else {
+            continue;
+        };
+        let Some(header) = EntityMetadataHeader::parse(raw) else {
+            return Err(Error::CorruptedIndex("entity header"));
+        };
+        if header.entity_type != crate::types::ENTITY_TYPE_CLAIM {
+            continue;
+        }
+        let Ok(body) = crate::claim::decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true)
+        else {
+            continue;
+        };
+        if body.predicate == crate::claim::PREDICATE_LEXICAL_QUERY_HINT {
+            hint_ids.push(candidate);
+        }
+    }
+    hint_ids.sort_unstable();
+    hint_ids.dedup();
+    Ok(hint_ids)
 }
 
 fn apply_delete_edge(
@@ -2515,6 +2682,7 @@ mod tests {
         WRITE_ENVELOPE_EVIDENCE_ACTOR_KEY, WRITE_ENVELOPE_EVIDENCE_PROVENANCE_KEY, WriteActor,
         WriteEnvelope, WriteProvenance,
     };
+    use core::assert_matches;
     use rmpv::Value;
 
     struct EdgeFixture {
@@ -3013,6 +3181,15 @@ mod tests {
         assert_eq!(hint_claims.len(), 2);
         let mut stored_queries = Vec::new();
         for hint_claim in &hint_claims {
+            assert!(
+                hint_claim
+                    .as_bytes()
+                    .starts_with(&crate::claim::LEXICAL_QUERY_HINT_ID_PREFIX)
+            );
+            assert!(
+                !has_pending_embedding_marker(&vault, hint_claim)?,
+                "lexical hint side claims must not be queued for embeddings"
+            );
             let stored = vault
                 .get_claim(hint_claim)?
                 .expect("lexical hint claim stored");
@@ -3034,6 +3211,216 @@ mod tests {
         assert!(
             !hits.iter().any(|hit| hint_claims.contains(&hit.id)),
             "lexical hint docs must collapse to the source claim"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn claim_candidate_lexical_hints_replace_and_delete_stale_side_records() -> Result<()> {
+        let (_dir, vault) = open_test_vault();
+        let actor = EntityId::now();
+        let subject = EntityId::now();
+        let occurred = test_time_range(1, 1);
+        vault.put_entity(&actor, ENTITY_TYPE_PERSON, occurred, 1, b"actor")?;
+        vault.put_entity(&subject, ENTITY_TYPE_PERSON, occurred, 1, b"subject")?;
+
+        let claim = EntityId::now();
+        let envelope = test_write_envelope(actor)?;
+        let write_hints = |hints: &[&str]| -> Result<()> {
+            let candidate = ClaimCandidate::new(
+                "profile.preference",
+                ClaimSubject::Entity(subject),
+                Value::from("sencha"),
+                0.9,
+            );
+            vault
+                .batch()
+                .claim_candidate_with_lexical_hints(
+                    &claim,
+                    candidate,
+                    &envelope,
+                    test_time_range(10, 10),
+                    11,
+                    hints,
+                )
+                .commit()
+        };
+
+        write_hints(&["retireduniquealpha", "liveuniquebeta"])?;
+        let obsolete_hint = lexical_query_hint_claim_id(&claim, "retireduniquealpha")?;
+        let live_hint = lexical_query_hint_claim_id(&claim, "liveuniquebeta")?;
+        assert!(vault.get_claim(&obsolete_hint)?.is_some());
+        assert!(vault.get_claim(&live_hint)?.is_some());
+
+        write_hints(&["liveuniquebeta"])?;
+        assert!(vault.get_claim(&obsolete_hint)?.is_none());
+        assert!(vault.get_claim(&live_hint)?.is_some());
+        assert_eq!(vault.claims_for_subject(&claim)?, vec![live_hint]);
+        assert!(vault.search_text("retireduniquealpha", 10)?.is_empty());
+        assert_eq!(
+            vault
+                .search_text("liveuniquebeta", 10)?
+                .first()
+                .map(|hit| hit.id),
+            Some(claim)
+        );
+
+        vault.batch().delete(&claim).commit()?;
+        assert!(vault.get_claim(&live_hint)?.is_none());
+        assert!(vault.claims_for_subject(&claim)?.is_empty());
+        assert!(vault.search_text("liveuniquebeta", 10)?.is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn raw_claim_put_rejects_malformed_lexical_hint_claim() -> Result<()> {
+        let (_dir, vault) = open_test_vault();
+        let target = EntityId::now();
+        let hint = EntityId::now();
+        let body = crate::claim::ClaimBody::new(
+            crate::claim::PREDICATE_LEXICAL_QUERY_HINT,
+            ClaimSubject::Entity(target),
+            Value::from("not a typed lexical hint value"),
+            1.0,
+            ClaimApprovalStatus::Approved,
+            ClaimLifecycleStatus::Active,
+        );
+        let data = crate::claim::encode_claim_body(&body)?;
+
+        let err = vault
+            .batch()
+            .put(&hint, ENTITY_TYPE_CLAIM, test_time_range(10, 10), 11, &data)
+            .commit()
+            .expect_err("malformed lexical hint values must reject at the write door");
+        assert_matches!(err, Error::InvalidClaimBody(_));
+        assert!(vault.get_claim(&hint)?.is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn replicated_lexical_hint_put_indexes_query_text() -> Result<()> {
+        let (_dir, vault) = open_test_vault();
+        let actor = EntityId::now();
+        let subject = EntityId::now();
+        let occurred = test_time_range(1, 1);
+        vault.put_entity(&actor, ENTITY_TYPE_PERSON, occurred, 1, b"actor")?;
+        vault.put_entity(&subject, ENTITY_TYPE_PERSON, occurred, 1, b"subject")?;
+
+        let claim = EntityId::now();
+        let envelope = test_write_envelope(actor)?;
+        let candidate = ClaimCandidate::new(
+            "profile.preference",
+            ClaimSubject::Entity(subject),
+            Value::from("sencha"),
+            0.9,
+        );
+        vault
+            .batch()
+            .claim_candidate(&claim, candidate, &envelope, test_time_range(10, 10), 11)
+            .commit()?;
+
+        let query = "replicated rematerialized hint";
+        let hint = lexical_query_hint_claim_id(&claim, query)?;
+        let body = crate::claim::ClaimBody::new(
+            crate::claim::PREDICATE_LEXICAL_QUERY_HINT,
+            ClaimSubject::Entity(claim),
+            crate::claim::encode_lexical_query_hint_value(&claim, query),
+            1.0,
+            ClaimApprovalStatus::Approved,
+            ClaimLifecycleStatus::Active,
+        );
+        let data = crate::claim::encode_claim_body(&body)?;
+        let mut wtxn = vault.store.env.write_txn()?;
+        apply_ops(
+            &vault.store,
+            &vault.config,
+            &vault.analyzer,
+            &mut wtxn,
+            vec![BatchOp::Put {
+                id: hint,
+                entity_type: ENTITY_TYPE_CLAIM,
+                occurred: test_time_range(20, 20),
+                learned_at: 21,
+                data,
+                allow_maintenance: true,
+                allow_reserved_predicate: true,
+            }],
+        )?;
+        wtxn.commit()?;
+
+        assert!(
+            !has_pending_embedding_marker(&vault, &hint)?,
+            "replayed lexical hint side claims must not be queued for embeddings"
+        );
+        assert_eq!(
+            vault.search_text(query, 10)?.first().map(|hit| hit.id),
+            Some(claim)
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn claim_candidate_lexical_hint_ids_are_order_stable() -> Result<()> {
+        let (_dir, vault) = open_test_vault();
+        let actor = EntityId::now();
+        let subject = EntityId::now();
+        let occurred = test_time_range(1, 1);
+        vault.put_entity(&actor, ENTITY_TYPE_PERSON, occurred, 1, b"actor")?;
+        vault.put_entity(&subject, ENTITY_TYPE_PERSON, occurred, 1, b"subject")?;
+
+        let claim = EntityId::now();
+        let envelope = test_write_envelope(actor)?;
+        let write_hints = |hints: &[&str]| -> Result<()> {
+            let candidate = ClaimCandidate::new(
+                "profile.preference",
+                ClaimSubject::Entity(subject),
+                Value::from("sencha"),
+                0.9,
+            );
+            vault
+                .batch()
+                .claim_candidate_with_lexical_hints(
+                    &claim,
+                    candidate,
+                    &envelope,
+                    test_time_range(10, 10),
+                    11,
+                    hints,
+                )
+                .commit()
+        };
+
+        write_hints(&["spring roadmap migration", "account recovery plan"])?;
+        let mut first_hint_claims = vault.claims_for_subject(&claim)?;
+        first_hint_claims.sort();
+        assert_eq!(first_hint_claims.len(), 2);
+
+        write_hints(&["account recovery plan", "spring roadmap migration"])?;
+        let mut reordered_hint_claims = vault.claims_for_subject(&claim)?;
+        reordered_hint_claims.sort();
+        assert_eq!(reordered_hint_claims, first_hint_claims);
+        assert!(reordered_hint_claims.iter().all(|hint_claim| {
+            hint_claim
+                .as_bytes()
+                .starts_with(&crate::claim::LEXICAL_QUERY_HINT_ID_PREFIX)
+        }));
+
+        let roadmap_hits = vault.search_text("spring roadmap migration", 10)?;
+        assert_eq!(roadmap_hits.first().map(|hit| hit.id), Some(claim));
+        assert!(
+            !roadmap_hits
+                .iter()
+                .any(|hit| reordered_hint_claims.contains(&hit.id)),
+            "reordered lexical hint docs must collapse to the source claim"
+        );
+
+        let recovery_hits = vault.search_text("account recovery plan", 10)?;
+        assert_eq!(recovery_hits.first().map(|hit| hit.id), Some(claim));
+        assert!(
+            !recovery_hits
+                .iter()
+                .any(|hit| reordered_hint_claims.contains(&hit.id)),
+            "reordered lexical hint docs must collapse to the source claim"
         );
         Ok(())
     }

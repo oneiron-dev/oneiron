@@ -736,6 +736,8 @@ pub(crate) fn validate_claim_body_and_decode(
     let body = decode_claim_body(data, allow_reserved_predicate)?;
     if body.predicate == crate::provenance::PREDICATE_EDGE_PROVENANCE {
         validate_edge_provenance_claim_structure(&body)?;
+    } else if body.predicate == PREDICATE_LEXICAL_QUERY_HINT {
+        lexical_query_hint_target(&body)?;
     }
     Ok(body)
 }
@@ -751,16 +753,16 @@ pub(crate) fn normalize_lexical_query_hints(hints: &[&str]) -> Result<Vec<String
         if hint.is_empty() {
             continue;
         }
-        if hint.len() > MAX_LEXICAL_QUERY_HINT_BYTES {
-            return Err(Error::InvalidClaimBody(
-                "lexical query hint exceeds 256 bytes",
-            ));
-        }
         if normalized.iter().any(|existing| existing == hint) {
             continue;
         }
         if normalized.len() == MAX_LEXICAL_QUERY_HINTS_PER_CLAIM {
             break;
+        }
+        if hint.len() > MAX_LEXICAL_QUERY_HINT_BYTES {
+            return Err(Error::InvalidClaimBody(
+                "lexical query hint exceeds 256 bytes",
+            ));
         }
         normalized.push(hint.to_owned());
     }
@@ -1130,6 +1132,68 @@ mod tests {
             assert_eq!(ClaimSource::parse(wire), Some(source), "{wire}");
             assert_eq!(source.as_str(), wire, "{wire} round-trip literal");
         }
+    }
+
+    #[test]
+    fn lexical_query_hint_cap_ignores_oversize_tail_entries() -> Result<()> {
+        let overlong = "x".repeat(MAX_LEXICAL_QUERY_HINT_BYTES + 1);
+        let hints = vec![
+            "hint zero",
+            "hint one",
+            "hint two",
+            "hint three",
+            "hint four",
+            "hint five",
+            "hint six",
+            "hint seven",
+            overlong.as_str(),
+        ];
+
+        let normalized = normalize_lexical_query_hints(&hints)?;
+        assert_eq!(normalized.len(), MAX_LEXICAL_QUERY_HINTS_PER_CLAIM);
+        assert!(!normalized.iter().any(|hint| hint == &overlong));
+        Ok(())
+    }
+
+    #[test]
+    fn write_door_validates_lexical_query_hint_claim_structure() -> Result<()> {
+        let target = EntityId::from_bytes([0x11; 16]).expect("valid id");
+        let other = EntityId::from_bytes([0x22; 16]).expect("valid id");
+        let encode = |subject: EntityId, value: Value| -> Result<Vec<u8>> {
+            let body = ClaimBody::new(
+                PREDICATE_LEXICAL_QUERY_HINT,
+                ClaimSubject::Entity(subject),
+                value,
+                1.0,
+                ClaimApprovalStatus::Approved,
+                ClaimLifecycleStatus::Active,
+            );
+            encode_claim_body(&body)
+        };
+
+        validate_claim_body_bytes(
+            &encode(
+                target,
+                encode_lexical_query_hint_value(&target, "future migration question"),
+            )?,
+            false,
+        )?;
+
+        assert_matches!(
+            validate_claim_body_bytes(&encode(target, Value::from("not a hint map"))?, false),
+            Err(Error::InvalidClaimBody(_))
+        );
+        assert_matches!(
+            validate_claim_body_bytes(
+                &encode(
+                    other,
+                    encode_lexical_query_hint_value(&target, "future migration question"),
+                )?,
+                false,
+            ),
+            Err(Error::InvalidClaimBody(_))
+        );
+        Ok(())
     }
 
     #[test]

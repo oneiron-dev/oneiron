@@ -618,7 +618,8 @@ where
         for item in dups {
             let (_, dup) = item?;
             let entry = decode_posting_entry(dup)?;
-            if posting_has_enabled_channel(config, &entry)? && posting_matches(&entry.id)? {
+            let scope_id = lexical_query_hint_scope_id(store, rtxn, &entry.id)?;
+            if posting_has_enabled_channel(config, &entry)? && posting_matches(&scope_id)? {
                 return Ok(true);
             }
         }
@@ -715,7 +716,8 @@ fn exact_term_has_scoped_posting(
     for item in dups {
         let (_, dup) = item?;
         let entry = decode_posting_entry(dup)?;
-        if exact_posting_matches_scope(&entry.id)? && posting_has_enabled_channel(config, &entry)? {
+        let scope_id = lexical_query_hint_scope_id(store, rtxn, &entry.id)?;
+        if exact_posting_matches_scope(&scope_id)? && posting_has_enabled_channel(config, &entry)? {
             return Ok(true);
         }
     }
@@ -746,7 +748,8 @@ fn term_posting_decisions(
         if !posting_has_enabled_channel(config, &entry)? {
             continue;
         }
-        let decision = classify_posting(&entry.id)?;
+        let scope_id = lexical_query_hint_scope_id(store, rtxn, &entry.id)?;
+        let decision = classify_posting(&scope_id)?;
         decisions.has_scoped_posting |= decision.matches_scope;
         decisions.has_rejected_posting |= decision.rejected_by_gate;
         if decisions.has_scoped_posting && decisions.has_rejected_posting {
@@ -1099,6 +1102,10 @@ fn resolve_lexical_query_hint_target(
     crate::claim::lexical_query_hint_target(&body)
 }
 
+fn lexical_query_hint_scope_id(store: &Store, rtxn: &RoTxn<'_>, id: &EntityId) -> Result<EntityId> {
+    Ok(resolve_lexical_query_hint_target(store, rtxn, id)?.unwrap_or(*id))
+}
+
 // === Encoders / decoders ===
 
 #[derive(Debug)]
@@ -1370,9 +1377,14 @@ fn validate_text_doc_id(id: &EntityId) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::types::{HnswConfig, TimeRange, VaultConfig};
+    use crate::claim::{ClaimApprovalStatus, ClaimSource};
+    use crate::types::{
+        ClaimCandidate, ENTITY_TYPE_PERSON, EdgeActorClass, HnswConfig, TimeRange, VaultConfig,
+        WriteActor, WriteEnvelope, WriteProvenance,
+    };
     use crate::{Error, Vault};
     use core::assert_matches;
+    use rmpv::Value;
 
     fn test_config() -> VaultConfig {
         VaultConfig {
@@ -1510,6 +1522,76 @@ mod tests {
         assert!(contains_id(&results, &id1));
         assert!(!contains_id(&results, &id2));
         assert!(!contains_id(&results, &id3));
+        Ok(())
+    }
+
+    #[test]
+    fn scoped_prefix_expansion_resolves_lexical_hint_target() -> Result<()> {
+        let temp_dir = tempfile::tempdir()?;
+        let vault = Vault::open(temp_dir.path(), test_config())?;
+        let actor = EntityId::now();
+        let subject = EntityId::now();
+        vault.put_entity(
+            &actor,
+            ENTITY_TYPE_PERSON,
+            test_time_range(1, 1),
+            1,
+            b"actor",
+        )?;
+        vault.put_entity(
+            &subject,
+            ENTITY_TYPE_PERSON,
+            test_time_range(1, 1),
+            1,
+            b"subject",
+        )?;
+
+        let claim = EntityId::now();
+        let envelope = WriteEnvelope::new(
+            WriteActor::new(actor, EdgeActorClass::Human),
+            ClaimSource::UserStated,
+            WriteProvenance::new(Value::from("fixture"))?,
+            ClaimApprovalStatus::Approved,
+        );
+        let candidate = ClaimCandidate::new(
+            "profile.preference",
+            crate::claim::ClaimSubject::Entity(subject),
+            Value::from("sencha"),
+            0.9,
+        );
+        vault
+            .batch()
+            .claim_candidate_with_lexical_hints(
+                &claim,
+                candidate,
+                &envelope,
+                test_time_range(10, 10),
+                11,
+                &["scopedprefixalpha"],
+            )
+            .commit()?;
+
+        let rtxn = vault.store.env.read_txn()?;
+        let mut scope_checks = 0usize;
+        let mut exact_posting_matches_scope = |id: &EntityId| {
+            scope_checks += 1;
+            Ok(*id == claim)
+        };
+        let hits = search_text_scoped_with_recency(
+            &vault.store,
+            &rtxn,
+            &vault.analyzer,
+            &Bm25Config::default(),
+            "scopedprefix",
+            10,
+            Bm25SearchOptions {
+                recency: None,
+                exact_posting_matches_scope: &mut exact_posting_matches_scope,
+            },
+        )?;
+
+        assert_eq!(hits.first().map(|hit| hit.id), Some(claim));
+        assert!(scope_checks > 0);
         Ok(())
     }
 
