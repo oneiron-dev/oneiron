@@ -3528,6 +3528,7 @@ fn core_engine_error(message: &'static str, error: oneiron::Error) -> ApiError {
         | ErrorKind::InvalidVector
         | ErrorKind::InvalidKey
         | ErrorKind::InvalidConfig
+        | ErrorKind::InvalidTemporalExpression
         | ErrorKind::InvalidEntityType
         | ErrorKind::InvalidTimeRange
         | ErrorKind::InvalidClaimBody
@@ -7867,6 +7868,25 @@ mod tests {
         assert!(
             error.message().contains("gate.pending.source_trust"),
             "message should expose the stable Gate reason code"
+        );
+    }
+
+    #[test]
+    fn core_engine_error_maps_temporal_parse_errors_to_bad_request() {
+        let error = core_engine_error(
+            "core query failed",
+            oneiron::Error::InvalidTemporalExpression(
+                oneiron::types::TemporalExpressionParseError::Unsupported {
+                    expression: "last friday".to_owned(),
+                },
+            ),
+        );
+
+        assert_eq!(error.status(), StatusCode::BAD_REQUEST);
+        assert_eq!(error.code(), ErrorCode::BadRequest);
+        assert!(
+            error.message().contains("unsupported temporal expression"),
+            "message should expose the temporal parse failure"
         );
     }
 
