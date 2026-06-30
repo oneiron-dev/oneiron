@@ -57,7 +57,8 @@ use crate::sync::manager::WindowManager;
 use crate::sync::quarantine;
 use crate::sync::schema::{create_window_doc, read_window_list};
 use crate::sync::selector::{
-    FEDERATED_TOMBSTONE_ADMISSION_ERROR, FederationAdmissionRole, admit_federated_window_update,
+    FEDERATED_TOMBSTONE_ADMISSION_ERROR, FederationAdmissionRole, SyncSelector,
+    admit_federated_window_update, encode_selector_vv_request,
 };
 use crate::sync::transport::{
     self, LEASE_STATUS_GRANTED, MAX_DECODED_PAYLOAD_BYTES, TAG_AWARENESS, TAG_BULK_TRANSFER,
@@ -397,9 +398,6 @@ impl SyncClient {
         sub_tag: u8,
         payload: &[u8],
     ) -> std::result::Result<Vec<Vec<u8>>, TransportError> {
-        let window = self.ensure_window(window_key)?;
-        let doc = &window.doc;
-
         match sub_tag {
             window_sub_tags::VV_REQUEST => {
                 // Peer sent its binary VV (SyncStep1) — reply with the delta it
@@ -408,6 +406,8 @@ impl SyncClient {
                 // typed error, fail-closed: NEVER fall back to a full export.
                 let server_vv = VersionVector::decode(payload)
                     .map_err(|_| TransportError::VersionVectorDecode)?;
+                let window = self.ensure_window(window_key)?;
+                let doc = &window.doc;
                 let delta = export_updates_since(doc, payload).map_err(map_delta_export_err)?;
                 let responses = vec![
                     transport::encode_window_sync(window_key, window_sub_tags::UPDATE, &delta)
@@ -425,6 +425,13 @@ impl SyncClient {
                 Ok(responses)
             }
             window_sub_tags::UPDATE => {
+                if payload.len() > MAX_DECODED_PAYLOAD_BYTES {
+                    return Err(TransportError::FrameTooLarge {
+                        size: payload.len(),
+                        max: MAX_DECODED_PAYLOAD_BYTES,
+                    });
+                }
+                let window = self.ensure_window(window_key)?;
                 self.import_accepted_window_update(window_key, &window, payload)?;
                 Ok(Vec::new())
             }
@@ -433,6 +440,8 @@ impl SyncClient {
                 // local diff. Same fail-closed VV decoding as VV_REQUEST.
                 let server_vv = VersionVector::decode(payload)
                     .map_err(|_| TransportError::VersionVectorDecode)?;
+                let window = self.ensure_window(window_key)?;
+                let doc = &window.doc;
                 let delta = export_updates_since(doc, payload).map_err(map_delta_export_err)?;
                 let responses = vec![
                     transport::encode_window_sync(window_key, window_sub_tags::UPDATE, &delta)
@@ -443,6 +452,46 @@ impl SyncClient {
             }
             _ => Ok(Vec::new()),
         }
+    }
+
+    /// Builds a selector request frame for a selector-capable caller.
+    ///
+    /// This is deliberately pure: a generic `UPDATE` response has no selector
+    /// discriminator, so `handle_window_sync` cannot safely classify the next
+    /// same-window update as federated. A selector-capable caller that has
+    /// explicit member/guest context must route the selected response bytes
+    /// through [`SyncClient::import_federated_selector_window_update`].
+    pub fn federated_selector_vv_request(
+        &self,
+        window_key: &str,
+        selector: &SyncSelector,
+        remote_vv: &[u8],
+    ) -> std::result::Result<Vec<u8>, TransportError> {
+        let key = WindowKey::try_new(window_key).ok_or(TransportError::InvalidWindowKey)?;
+        let payload = encode_selector_vv_request(selector, remote_vv)
+            .map_err(|_| TransportError::InvalidPayload("sync selector request encode failed"))?;
+        let frame = transport::encode_window_sync(
+            key.as_str(),
+            window_sub_tags::SELECTOR_VV_REQUEST,
+            &payload,
+        )
+        .into_result()?;
+        Ok(frame)
+    }
+
+    /// Imports a selector response whose caller already bound the request to
+    /// an explicit member/guest admission role.
+    ///
+    /// The role is explicit; it is not inferred from grant role names, and it
+    /// is intentionally not stored as global "next update" state because
+    /// same-window full-window updates share the same wire `UPDATE` tag.
+    pub fn import_federated_selector_window_update(
+        &mut self,
+        window_key: &str,
+        update: &[u8],
+        role: FederationAdmissionRole,
+    ) -> std::result::Result<(), TransportError> {
+        self.import_federated_window_update(window_key, update, role)
     }
 
     /// Imports a member/guest federation update after applying the local
@@ -1323,6 +1372,25 @@ mod tests {
         body
     }
 
+    fn internal_source_trust_claim(source: ClaimSource) -> ClaimBody {
+        let mut body = source_trust_claim(source);
+        body.scope = Some(rmpv::Value::Map(vec![(
+            rmpv::Value::from("sensitivity"),
+            rmpv::Value::from("internal"),
+        )]));
+        body
+    }
+
+    fn test_selector() -> SyncSelector {
+        SyncSelector::new(
+            test_entity_id(0xA1),
+            test_entity_id(0xA2),
+            crate::sync::SyncSelectorWorld::All,
+            vec![],
+            vec![],
+        )
+    }
+
     fn federated_claim_update(id: &EntityId, body: &ClaimBody) -> Vec<u8> {
         let data = crate::claim::encode_claim_body(body).expect("claim encode");
         let blob = entity_blob(ENTITY_TYPE_CLAIM, TimeRange { start: 5, end: 5 }, 5, &data);
@@ -1813,6 +1881,208 @@ mod tests {
     }
 
     #[test]
+    fn federated_selector_member_response_enters_admission_once() {
+        let manager = test_manager();
+        let vault = Arc::clone(manager.vault());
+        let (mut client, _rx) = test_client(&manager);
+        let key = "2026-03";
+        put_policy_manifest_bytes(
+            &vault,
+            0x93,
+            &encode_policy_manifest(vec![source_trust_entry(ClaimSource::Imported, 0)]),
+        );
+
+        let selector = test_selector();
+        let request = client
+            .federated_selector_vv_request(key, &selector, &VersionVector::new().encode())
+            .expect("selector request encodes");
+        let (request_key, request_sub_tag, _) =
+            transport::decode_window_sync(&request[1..]).expect("decode selector request frame");
+        assert_eq!(request_key, key);
+        assert_eq!(request_sub_tag, window_sub_tags::SELECTOR_VV_REQUEST);
+
+        let id = test_entity_id(0x94);
+        let remote_body = source_trust_claim(ClaimSource::ToolOutput);
+        let update = federated_claim_update(&id, &remote_body);
+
+        client
+            .import_federated_selector_window_update(key, &update, FederationAdmissionRole::Member)
+            .expect("selector member response should be admitted");
+
+        let raw = vault
+            .get_raw(&id)
+            .expect("read admitted selector claim")
+            .expect("admitted selector claim materializes");
+        let materialized_body =
+            crate::claim::decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], false)
+                .expect("decode materialized selector claim");
+        assert_eq!(materialized_body.source, Some(ClaimSource::Imported));
+
+        let ordinary_id = test_entity_id(0x9A);
+        let ordinary_body = internal_source_trust_claim(ClaimSource::ToolOutput);
+        let ordinary_update = federated_claim_update(&ordinary_id, &ordinary_body);
+        let ordinary_response =
+            transport::encode_window_sync(key, window_sub_tags::UPDATE, &ordinary_update)
+                .into_result()
+                .expect("ordinary full-window update encodes");
+
+        client
+            .handle_server_message(&ordinary_response)
+            .expect("ordinary full-window update should remain trust-blind after selector import");
+
+        let ordinary_raw = vault
+            .get_raw(&ordinary_id)
+            .expect("read ordinary post-selector claim")
+            .expect("ordinary post-selector claim materializes");
+        let ordinary_materialized_body =
+            crate::claim::decode_claim_body(&ordinary_raw[ENTITY_METADATA_HEADER_LEN..], false)
+                .expect("decode ordinary post-selector claim");
+        assert_eq!(
+            ordinary_materialized_body.source,
+            Some(ClaimSource::ToolOutput)
+        );
+    }
+
+    #[test]
+    fn federated_selector_member_stale_claim_is_restamped_and_retained() {
+        let manager = test_manager();
+        let vault = Arc::clone(manager.vault());
+        let (mut client, _rx) = test_client(&manager);
+        let key = "2026-03";
+        put_policy_manifest_bytes(
+            &vault,
+            0x9B,
+            &encode_policy_manifest(vec![source_trust_entry(ClaimSource::Imported, 0)]),
+        );
+
+        let id = test_entity_id(0x9C);
+        let mut remote_body = source_trust_claim(ClaimSource::ToolOutput);
+        remote_body.stale = true;
+        let update = federated_claim_update(&id, &remote_body);
+
+        client
+            .import_federated_selector_window_update(key, &update, FederationAdmissionRole::Member)
+            .expect("stale selector member response should be admitted and retained");
+
+        let raw = vault
+            .get_raw(&id)
+            .expect("read stale selector claim")
+            .expect("stale selector claim materializes");
+        let materialized_body =
+            crate::claim::decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], false)
+                .expect("decode stale selector claim");
+        assert_eq!(materialized_body.source, Some(ClaimSource::Imported));
+        assert!(
+            materialized_body.stale,
+            "F-STALE marker must be retained for read-path gating"
+        );
+        assert!(
+            !crate::claim::claim_surfaceable(&materialized_body),
+            "stale federated claims must remain hidden from surfaceable read paths"
+        );
+    }
+
+    #[test]
+    fn federated_selector_guest_response_cannot_auto_approve_above_local_ceiling() {
+        let manager = test_manager();
+        let vault = Arc::clone(manager.vault());
+        let (mut client, _rx) = test_client(&manager);
+        let key = "2026-03";
+        put_policy_manifest_bytes(
+            &vault,
+            0x95,
+            &encode_policy_manifest(vec![source_trust_entry(ClaimSource::Imported, 0)]),
+        );
+
+        client
+            .federated_selector_vv_request(key, &test_selector(), &VersionVector::new().encode())
+            .expect("guest selector request encodes");
+        let id = test_entity_id(0x96);
+        let remote_body = internal_source_trust_claim(ClaimSource::ToolOutput);
+        let update = federated_claim_update(&id, &remote_body);
+
+        let err = client
+            .import_federated_selector_window_update(key, &update, FederationAdmissionRole::Guest)
+            .expect_err("guest selector response above local ceiling must be denied");
+        let TransportError::Storage(message) = err else {
+            panic!("expected auditable admission storage error, got {err:?}");
+        };
+        assert!(
+            message.contains("gate.pending.source_trust"),
+            "denial reason must remain auditable, got {message}"
+        );
+        assert!(
+            client.window(key).is_none(),
+            "denied guest selector bytes must not open a live window"
+        );
+        assert!(
+            vault
+                .get_raw(&id)
+                .expect("read denied guest selector claim")
+                .is_none(),
+            "denied guest selector claim must not materialize"
+        );
+    }
+
+    #[test]
+    fn ordinary_full_window_update_remains_trust_blind_without_selector_marker() {
+        let manager = test_manager();
+        let vault = Arc::clone(manager.vault());
+        let (mut client, _rx) = test_client(&manager);
+        let key = "2026-03";
+        let id = test_entity_id(0x97);
+        let remote_body = internal_source_trust_claim(ClaimSource::ToolOutput);
+        let update = federated_claim_update(&id, &remote_body);
+        let response = transport::encode_window_sync(key, window_sub_tags::UPDATE, &update)
+            .into_result()
+            .expect("full-window update encodes");
+
+        client
+            .handle_server_message(&response)
+            .expect("ordinary full-window update should remain trust-blind");
+
+        let raw = vault
+            .get_raw(&id)
+            .expect("read full-window claim")
+            .expect("full-window claim materializes");
+        let materialized_body =
+            crate::claim::decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], false)
+                .expect("decode full-window claim");
+        assert_eq!(materialized_body.source, Some(ClaimSource::ToolOutput));
+    }
+
+    #[test]
+    fn selector_request_builder_does_not_reclassify_next_update() {
+        let manager = test_manager();
+        let vault = Arc::clone(manager.vault());
+        let (mut client, _rx) = test_client(&manager);
+        let key = "2026-03";
+        let _request = client
+            .federated_selector_vv_request(key, &test_selector(), &VersionVector::new().encode())
+            .expect("selector request encodes without recording a marker");
+
+        let id = test_entity_id(0x98);
+        let remote_body = internal_source_trust_claim(ClaimSource::ToolOutput);
+        let update = federated_claim_update(&id, &remote_body);
+        let response = transport::encode_window_sync(key, window_sub_tags::UPDATE, &update)
+            .into_result()
+            .expect("full-window update encodes");
+
+        client
+            .handle_server_message(&response)
+            .expect("selector request builder must not reclassify the update");
+
+        let raw = vault
+            .get_raw(&id)
+            .expect("read full-window claim")
+            .expect("full-window claim materializes");
+        let materialized_body =
+            crate::claim::decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], false)
+                .expect("decode full-window claim");
+        assert_eq!(materialized_body.source, Some(ClaimSource::ToolOutput));
+    }
+
+    #[test]
     fn federated_import_seam_denies_before_window_import_with_reason() {
         let manager = test_manager();
         let vault = Arc::clone(manager.vault());
@@ -2085,9 +2355,9 @@ mod tests {
         let json_vv: &[u8] = b"{}";
         let garbage: &[u8] = &[0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF];
 
-        for payload in [json_vv, garbage] {
-            let req =
-                transport::encode_window_sync("2026-03", window_sub_tags::VV_REQUEST, payload);
+        for (index, payload) in [json_vv, garbage].into_iter().enumerate() {
+            let key = if index == 0 { "2026-03" } else { "2026-04" };
+            let req = transport::encode_window_sync(key, window_sub_tags::VV_REQUEST, payload);
             assert!(
                 matches!(
                     client.handle_server_message(&req),
@@ -2095,15 +2365,22 @@ mod tests {
                 ),
                 "VV_REQUEST with malformed VV must fail closed"
             );
+            assert!(
+                client.window(key).is_none(),
+                "malformed VV_REQUEST must not open a live window"
+            );
 
-            let resp =
-                transport::encode_window_sync("2026-03", window_sub_tags::VV_RESPONSE, payload);
+            let resp = transport::encode_window_sync(key, window_sub_tags::VV_RESPONSE, payload);
             assert!(
                 matches!(
                     client.handle_server_message(&resp),
                     Err(TransportError::VersionVectorDecode)
                 ),
                 "VV_RESPONSE with malformed VV must fail closed"
+            );
+            assert!(
+                client.window(key).is_none(),
+                "malformed VV_RESPONSE must not open a live window"
             );
 
             let mut root = vec![TAG_VERSION_VECTOR];
@@ -2145,6 +2422,28 @@ mod tests {
 
         assert_matches!(client.handle_server_message(&msg), Err(TransportError::FrameTooLarge { size, max })
                 if size == MAX_DECODED_PAYLOAD_BYTES + 1 && max == MAX_DECODED_PAYLOAD_BYTES);
+    }
+
+    #[test]
+    fn oversized_window_update_fails_closed_before_window_open() {
+        let manager = test_manager();
+        let (mut client, _rx) = test_client(&manager);
+        let key = "2026-03";
+        let update = vec![0u8; MAX_DECODED_PAYLOAD_BYTES + 1];
+        let mut msg = vec![TAG_WINDOW_SYNC, key.len() as u8];
+        msg.extend_from_slice(key.as_bytes());
+        msg.push(window_sub_tags::UPDATE);
+        msg.extend_from_slice(&update);
+
+        assert_matches!(
+            client.handle_server_message(&msg),
+            Err(TransportError::FrameTooLarge { size, max })
+                if size == MAX_DECODED_PAYLOAD_BYTES + 1 && max == MAX_DECODED_PAYLOAD_BYTES
+        );
+        assert!(
+            client.window(key).is_none(),
+            "oversized ordinary window update must not open a live window"
+        );
     }
 
     #[test]
