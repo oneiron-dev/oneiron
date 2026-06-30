@@ -15,7 +15,8 @@ use xxhash_rust::xxh3::xxh3_128;
 use crate::analyzer::{AnalyzerChannel, AnalyzerManifest, AnalyzerMode, MultilingualAnalyzer};
 use crate::batch::{
     BatchOp, ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader, apply_ops, deindex_entity,
-    delete_from_phonetic_postings, encode_short_id_forward_key,
+    deindex_lexical_query_hints_for_target, delete_from_phonetic_postings,
+    encode_short_id_forward_key,
 };
 use crate::claim::{
     ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject,
@@ -2441,12 +2442,18 @@ impl Vault {
         wtxn: &mut heed::RwTxn<'_>,
         id: &EntityId,
     ) -> Result<(bool, bool)> {
+        let (hint_had_vector, hint_had_graph_mutation, _hint_neighbors) =
+            deindex_lexical_query_hints_for_target(&self.store, wtxn, id)?;
+        if hint_had_graph_mutation {
+            ppr::increment_graph_version(&self.store, wtxn)?;
+        }
         bm25::deindex_text(&self.store, wtxn, id)?;
         delete_from_phonetic_postings(&self.store, wtxn, id)?;
         crate::code_revision::delete_code_revision_lifecycle_in_txn(&self.store, wtxn, id)?;
         crate::codebase::delete_codebase_snapshot_in_txn(&self.store, wtxn, id)?;
         self.store.clear_pending_embedding(wtxn, id)?;
-        let mut had_vector = self.store.vectors.delete(wtxn, id.as_bytes())?;
+        let entity_had_vector = self.store.vectors.delete(wtxn, id.as_bytes())?;
+        let mut had_vector = hint_had_vector | entity_had_vector;
         crate::hnsw::hnsw_deindex(&self.store, wtxn, id)?;
 
         let Some(entity_record) = self.store.entities.get(wtxn, id.as_bytes())? else {
