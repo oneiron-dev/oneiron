@@ -28,6 +28,32 @@ const EXPECTED_REGISTERED_ROUTES: &[&str] = &[
     "/v1/usage/tenants/{tenant_id}/rollup",
 ];
 
+// ONE-1214 exposes canonical core API parity routes while skills-pack docs
+// remain on a separate docs lane.
+const CORE_API_PARITY_ROUTES_PENDING_SKILLS_PACK_DOCS: &[&str] = &[
+    "/v1/core/batch",
+    "/v1/core/query",
+    "/v1/core/context-pack",
+    "/v1/core/hydrate",
+    "/v1/core/conversations",
+    "/v1/core/conversations/{conversation_id}/turns",
+    "/v1/core/turns/{turn_id}",
+];
+
+const NESTED_CORE_ROUTE_PREFIXES: &[(&str, &str)] = &[
+    ("/batch", "/v1/core/batch"),
+    ("/query", "/v1/core/query"),
+    ("/context-pack", "/v1/core/context-pack"),
+    ("/hydrate", "/v1/core/hydrate"),
+    ("/conversations", "/v1/core/conversations"),
+    (
+        "/conversations/{conversation_id}/turns",
+        "/v1/core/conversations/{conversation_id}/turns",
+    ),
+    ("/turns/{turn_id}", "/v1/core/turns/{turn_id}"),
+    ("/turns/annotate", "/v1/core/turns/annotate"),
+];
+
 #[test]
 fn crate_local_pack_matches_root_artifact() {
     let root_pack_path = Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -65,7 +91,22 @@ fn frontmatter_has_required_skill_keys() {
 
 #[test]
 fn documented_route_set_matches_api_routes_exactly() {
-    let registered = route_set(registered_routes_from_api_source(API_RS));
+    let registered_all = route_set(registered_routes_from_api_source(API_RS));
+    for route in CORE_API_PARITY_ROUTES_PENDING_SKILLS_PACK_DOCS {
+        assert!(
+            registered_all.contains(*route),
+            "pending skills-pack route {route} must still be registered"
+        );
+    }
+    let pending_docs = route_set(
+        CORE_API_PARITY_ROUTES_PENDING_SKILLS_PACK_DOCS
+            .iter()
+            .copied(),
+    );
+    let registered = registered_all
+        .difference(&pending_docs)
+        .cloned()
+        .collect::<BTreeSet<_>>();
     let expected = route_set(EXPECTED_REGISTERED_ROUTES.iter().copied());
     assert_eq!(
         registered, expected,
@@ -261,8 +302,11 @@ fn registered_routes_from_api_source(source: &str) -> Vec<String> {
     }
     if source.contains(".nest(\"/v1/core\", core_routes)") {
         for route in &mut routes {
-            if route == "/turns/annotate" {
-                *route = "/v1/core/turns/annotate".to_owned();
+            if let Some((_, prefixed)) = NESTED_CORE_ROUTE_PREFIXES
+                .iter()
+                .find(|(nested, _)| route == nested)
+            {
+                *route = (*prefixed).to_owned();
             }
         }
     }
