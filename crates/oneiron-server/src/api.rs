@@ -3257,25 +3257,24 @@ fn core_list_entities_by_type(
         .as_deref()
         .map(|after| parse_entity_id_param(after, "after"))
         .transpose()?;
-    let ids = vault
-        .entities_by_type_page(entity_type, after.as_ref(), limit)
-        .map_err(|error| {
-            tracing::error!(error = %error, entity_type, "core list failed");
-            core_engine_error("core list failed", error)
-        })?;
+    let (ids, next_cursor) = collect_live_entity_page(vault, after, limit, |after, limit| {
+        vault
+            .entities_by_type_page(entity_type, after, limit)
+            .map_err(|error| {
+                tracing::error!(error = %error, entity_type, "core list failed");
+                core_engine_error("core list failed", error).into()
+            })
+    })?;
     let items = project_entity_ids(vault, ids, view)?;
     let meta = match params.count_mode {
         CountMode::None => ResponseMeta::none(),
         CountMode::Estimate => ResponseMeta::estimate(items.len() as u64),
         CountMode::Exact => {
-            let total = vault.count_entities_by_type(entity_type).map_err(|error| {
-                tracing::error!(error = %error, entity_type, "core list count failed");
-                core_engine_error("core list count failed", error)
-            })?;
+            let total = count_live_entities_by_type(vault, entity_type)?;
             ResponseMeta::new(total, CountMode::Exact)
         }
     };
-    Ok(Json(PaginatedResponse::new(items, None, meta)))
+    Ok(Json(PaginatedResponse::new(items, next_cursor, meta)))
 }
 
 fn core_list_conversation_turns(
@@ -3285,22 +3284,163 @@ fn core_list_conversation_turns(
 ) -> Result<Json<SearchResponse>, EnvelopedApiError> {
     let view = params.view.unwrap_or(View::Summary);
     let limit = core_list_limit(params.limit);
-    let mut ids = vault
-        .sources(conversation, EdgeKind::ChildOf, Some(ENTITY_TYPE_TURN))
-        .map_err(|error| {
-            tracing::error!(error = %error, conversation = %conversation.to_hex(), "core conversation turns failed");
-            core_engine_error("core conversation turns failed", error)
-        })?;
-    ids.sort_by_key(|id| vault.get_learned_at(id).unwrap_or(0));
-    let total = ids.len() as u64;
-    ids.truncate(limit);
+    let after = params
+        .after
+        .as_deref()
+        .map(|after| parse_entity_id_param(after, "after"))
+        .transpose()?;
+    let (ids, next_cursor) = collect_live_entity_page(vault, after, limit, |after, limit| {
+        vault
+            .sources_page(
+                conversation,
+                EdgeKind::ChildOf,
+                Some(ENTITY_TYPE_TURN),
+                after,
+                limit,
+            )
+            .map_err(|error| {
+                tracing::error!(error = %error, conversation = %conversation.to_hex(), "core conversation turns failed");
+                core_engine_error("core conversation turns failed", error).into()
+            })
+    })?;
     let items = project_entity_ids(vault, ids, view)?;
     let meta = match params.count_mode {
         CountMode::None => ResponseMeta::none(),
-        CountMode::Estimate => ResponseMeta::estimate(total),
-        CountMode::Exact => ResponseMeta::new(total, CountMode::Exact),
+        CountMode::Estimate => ResponseMeta::estimate(items.len() as u64),
+        CountMode::Exact => ResponseMeta::new(
+            count_live_conversation_turns(vault, conversation)?,
+            CountMode::Exact,
+        ),
     };
-    Ok(Json(PaginatedResponse::new(items, None, meta)))
+    Ok(Json(PaginatedResponse::new(items, next_cursor, meta)))
+}
+
+fn collect_live_entity_page<F>(
+    vault: &oneiron::Vault,
+    after: Option<oneiron::EntityId>,
+    limit: usize,
+    mut fetch: F,
+) -> Result<(Vec<oneiron::EntityId>, Option<String>), EnvelopedApiError>
+where
+    F: FnMut(
+        Option<&oneiron::EntityId>,
+        usize,
+    ) -> Result<Vec<oneiron::EntityId>, EnvelopedApiError>,
+{
+    if limit == 0 {
+        return Ok((Vec::new(), None));
+    }
+
+    let mut cursor = after;
+    let mut ids = Vec::with_capacity(limit);
+    let mut next_cursor = None;
+
+    while next_cursor.is_none() {
+        let remaining = limit.saturating_sub(ids.len());
+        let fetch_limit = if remaining == 0 {
+            1
+        } else {
+            remaining.saturating_add(1)
+        };
+        let fetched = fetch(cursor.as_ref(), fetch_limit)?;
+        if fetched.is_empty() {
+            break;
+        }
+
+        let fetched_len = fetched.len();
+        for id in fetched {
+            cursor = Some(id);
+            if is_deleted_shell_for_core_list(vault, &id)? {
+                continue;
+            }
+            if ids.len() < limit {
+                ids.push(id);
+            } else {
+                next_cursor = ids.last().map(oneiron::EntityId::to_hex);
+                break;
+            }
+        }
+
+        if fetched_len < fetch_limit {
+            break;
+        }
+    }
+
+    Ok((ids, next_cursor))
+}
+
+fn count_live_entities_by_type(
+    vault: &oneiron::Vault,
+    entity_type: u8,
+) -> Result<u64, EnvelopedApiError> {
+    let mut after = None;
+    let mut total = 0_u64;
+    loop {
+        let ids = vault
+            .entities_by_type_page(entity_type, after.as_ref(), CORE_MAX_LIST_LIMIT)
+            .map_err(|error| {
+                tracing::error!(error = %error, entity_type, "core list count failed");
+                core_engine_error("core list count failed", error)
+            })?;
+        if ids.is_empty() {
+            break;
+        }
+        for id in &ids {
+            if !is_deleted_shell_for_core_list(vault, id)? {
+                total = total.saturating_add(1);
+            }
+        }
+        after = ids.last().copied();
+        if ids.len() < CORE_MAX_LIST_LIMIT {
+            break;
+        }
+    }
+    Ok(total)
+}
+
+fn count_live_conversation_turns(
+    vault: &oneiron::Vault,
+    conversation: &oneiron::EntityId,
+) -> Result<u64, EnvelopedApiError> {
+    let mut after = None;
+    let mut total = 0_u64;
+    loop {
+        let ids = vault
+            .sources_page(
+                conversation,
+                EdgeKind::ChildOf,
+                Some(ENTITY_TYPE_TURN),
+                after.as_ref(),
+                CORE_MAX_LIST_LIMIT,
+            )
+            .map_err(|error| {
+                tracing::error!(error = %error, conversation = %conversation.to_hex(), "core conversation turns count failed");
+                core_engine_error("core conversation turns count failed", error)
+            })?;
+        if ids.is_empty() {
+            break;
+        }
+        for id in &ids {
+            if !is_deleted_shell_for_core_list(vault, id)? {
+                total = total.saturating_add(1);
+            }
+        }
+        after = ids.last().copied();
+        if ids.len() < CORE_MAX_LIST_LIMIT {
+            break;
+        }
+    }
+    Ok(total)
+}
+
+fn is_deleted_shell_for_core_list(
+    vault: &oneiron::Vault,
+    id: &oneiron::EntityId,
+) -> Result<bool, ApiError> {
+    vault.is_deleted_shell(id).map_err(|error| {
+        tracing::error!(error = %error, id = %id.to_hex(), "core deleted-shell check failed");
+        core_engine_error("core deleted-shell check failed", error)
+    })
 }
 
 fn project_entity_ids(
@@ -3310,6 +3450,9 @@ fn project_entity_ids(
 ) -> Result<Vec<Value>, ApiError> {
     let mut items = Vec::with_capacity(ids.len());
     for id in ids {
+        if is_deleted_shell_for_core_list(vault, &id)? {
+            continue;
+        }
         if let Some(item) = projection::project_entity(vault, &id, view).map_err(|error| {
             tracing::error!(error = %error, id = %id.to_hex(), "core projection failed");
             core_engine_error("core projection failed", error)
@@ -3398,6 +3541,9 @@ fn core_engine_error(message: &'static str, error: oneiron::Error) -> ApiError {
             ApiError::bad_request(error.to_string(), None)
         }
         ErrorKind::EntityNotFound | ErrorKind::EdgeNotFound => ApiError::not_found("entity", None),
+        ErrorKind::CycleDetected | ErrorKind::ChildOfCardinality => {
+            ApiError::invalid_state(Some("child_of_constraint"))
+        }
         ErrorKind::GateWriteRejected => ApiError::new(
             error.to_string(),
             ApiErrorDetails::InvalidState {
@@ -5106,6 +5252,48 @@ mod tests {
         assert_eq!(not_found_status, StatusCode::NOT_FOUND);
         assert_error_envelope(&not_found_body, "NOT_FOUND");
 
+        let empty_id = oneiron::EntityId::now();
+        server
+            .vault
+            .batch()
+            .put(
+                &empty_id,
+                ENTITY_TYPE_TURN,
+                oneiron::TimeRange {
+                    start: 601,
+                    end: 601,
+                },
+                601,
+                b"",
+            )
+            .text(&empty_id, &[("body", "empty live body needle")])
+            .commit()
+            .expect("seed empty live turn");
+        let empty_pack = server
+            .vault
+            .context_pack()
+            .search_text("empty live body needle", 1)
+            .run()
+            .expect("empty context pack");
+        let empty_entity = empty_pack.results.first().expect("empty live result");
+        let empty_short_ref = format!(
+            "{}:{:02x}",
+            empty_entity.short_id, empty_entity.content_hash
+        );
+        let (empty_status, empty_body) = route_json(
+            server.clone(),
+            json_request(
+                "POST",
+                "/v1/core/hydrate",
+                json!({ "ref": empty_short_ref }),
+            ),
+        )
+        .await;
+        assert_eq!(empty_status, StatusCode::OK, "{empty_body:#}");
+        assert_eq!(empty_body["status"], Value::from("live"));
+        assert_eq!(empty_body["id"], Value::from(empty_id.to_hex()));
+        assert_eq!(empty_body["item"]["bodyBytes"], Value::Array(Vec::new()));
+
         server
             .vault
             .delete_entity_with_reason(&entity_id, oneiron::DeleteReason::UserDelete)
@@ -5216,6 +5404,203 @@ mod tests {
         .await;
         assert_eq!(read_status, StatusCode::OK);
         assert_eq!(read_body["txt"], Value::from("conversation turn needle"));
+    }
+
+    #[tokio::test]
+    async fn v1_core_conversation_turns_honor_after_and_filter_deleted_shells() {
+        let (_dir, server) = test_server();
+
+        let (conversation_status, conversation_body) = route_json(
+            server.clone(),
+            json_request(
+                "POST",
+                "/v1/core/conversations",
+                json!({
+                    "learned_at": 800_u64,
+                    "body": { "name": "Cursor session" }
+                }),
+            ),
+        )
+        .await;
+        assert_eq!(conversation_status, StatusCode::OK);
+        let conversation_id = conversation_body["id"]
+            .as_str()
+            .expect("conversation id")
+            .to_owned();
+
+        let mut turn_ids = Vec::new();
+        for index in 0..3_u64 {
+            let (turn_status, turn_body) = route_json(
+                server.clone(),
+                json_request(
+                    "POST",
+                    &format!("/v1/core/conversations/{conversation_id}/turns"),
+                    json!({
+                        "learned_at": 801_u64 + index,
+                        "occurred_start": 801_u64 + index,
+                        "occurred_end": 801_u64 + index,
+                        "body": {
+                            "txt": format!("cursor turn {index}"),
+                            "spkr": "assistant",
+                            "at": 801_u64 + index
+                        }
+                    }),
+                ),
+            )
+            .await;
+            assert_eq!(turn_status, StatusCode::OK);
+            turn_ids.push(turn_body["id"].as_str().expect("turn id").to_owned());
+        }
+
+        let (first_page_status, first_page) = route_json(
+            server.clone(),
+            Request::builder()
+                .uri(format!(
+                    "/v1/core/conversations/{conversation_id}/turns?limit=1&countMode=none"
+                ))
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await;
+        assert_eq!(first_page_status, StatusCode::OK);
+        let first_id = first_page["items"][0]["id"]
+            .as_str()
+            .expect("first page id")
+            .to_owned();
+        assert_eq!(first_page["nextCursor"], Value::from(first_id.clone()));
+
+        let (second_page_status, second_page) = route_json(
+            server.clone(),
+            Request::builder()
+                .uri(format!(
+                    "/v1/core/conversations/{conversation_id}/turns?limit=1&countMode=none&after={first_id}"
+                ))
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await;
+        assert_eq!(second_page_status, StatusCode::OK);
+        assert_ne!(second_page["items"][0]["id"], Value::from(first_id.clone()));
+
+        let deleted_id = oneiron::EntityId::from_hex(&turn_ids[1]).expect("turn id parses");
+        server
+            .vault
+            .delete_entity_with_reason(&deleted_id, oneiron::DeleteReason::UserDelete)
+            .expect("soft delete turn");
+
+        let (deleted_gap_status, deleted_gap_page) = route_json(
+            server.clone(),
+            Request::builder()
+                .uri(format!(
+                    "/v1/core/conversations/{conversation_id}/turns?limit=1&countMode=none"
+                ))
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await;
+        assert_eq!(deleted_gap_status, StatusCode::OK);
+        let deleted_gap_first = deleted_gap_page["items"][0]["id"]
+            .as_str()
+            .expect("deleted gap first id")
+            .to_owned();
+        assert_ne!(deleted_gap_first, turn_ids[1]);
+        assert_eq!(
+            deleted_gap_page["nextCursor"],
+            Value::from(deleted_gap_first.clone())
+        );
+
+        let (after_deleted_gap_status, after_deleted_gap_page) = route_json(
+            server.clone(),
+            Request::builder()
+                .uri(format!(
+                    "/v1/core/conversations/{conversation_id}/turns?limit=1&countMode=none&after={deleted_gap_first}"
+                ))
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await;
+        assert_eq!(after_deleted_gap_status, StatusCode::OK);
+        let after_deleted_gap_id = after_deleted_gap_page["items"][0]["id"]
+            .as_str()
+            .expect("after deleted gap id");
+        assert_ne!(after_deleted_gap_id, deleted_gap_first);
+        assert_ne!(after_deleted_gap_id, turn_ids[1]);
+
+        let (filtered_status, filtered_body) = route_json(
+            server,
+            Request::builder()
+                .uri(format!(
+                    "/v1/core/conversations/{conversation_id}/turns?view=full&countMode=exact"
+                ))
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await;
+        assert_eq!(filtered_status, StatusCode::OK);
+        let listed_ids: Vec<&str> = filtered_body["items"]
+            .as_array()
+            .expect("items")
+            .iter()
+            .map(|item| item["id"].as_str().expect("item id"))
+            .collect();
+        assert_eq!(listed_ids.len(), 2);
+        assert!(!listed_ids.contains(&turn_ids[1].as_str()));
+        assert_eq!(filtered_body["meta"]["total"], Value::from(2));
+    }
+
+    #[tokio::test]
+    async fn v1_core_turn_create_maps_childof_constraints_to_invalid_state() {
+        let (_dir, server) = test_server();
+
+        let create_conversation = |name: &str| {
+            json_request(
+                "POST",
+                "/v1/core/conversations",
+                json!({
+                    "body": { "name": name }
+                }),
+            )
+        };
+        let (first_status, first_body) =
+            route_json(server.clone(), create_conversation("first")).await;
+        assert_eq!(first_status, StatusCode::OK);
+        let first_conversation = first_body["id"].as_str().expect("first id").to_owned();
+        let (second_status, second_body) =
+            route_json(server.clone(), create_conversation("second")).await;
+        assert_eq!(second_status, StatusCode::OK);
+        let second_conversation = second_body["id"].as_str().expect("second id").to_owned();
+
+        let turn_id = oneiron::EntityId::now().to_hex();
+        let turn_body = json!({
+            "id": turn_id,
+            "body": {
+                "txt": "cardinality turn",
+                "spkr": "assistant",
+                "at": 900_u64
+            }
+        });
+        let (first_turn_status, _) = route_json(
+            server.clone(),
+            json_request(
+                "POST",
+                &format!("/v1/core/conversations/{first_conversation}/turns"),
+                turn_body.clone(),
+            ),
+        )
+        .await;
+        assert_eq!(first_turn_status, StatusCode::OK);
+
+        let (conflict_status, conflict_body) = route_json(
+            server,
+            json_request(
+                "POST",
+                &format!("/v1/core/conversations/{second_conversation}/turns"),
+                turn_body,
+            ),
+        )
+        .await;
+        assert_eq!(conflict_status, StatusCode::CONFLICT);
+        assert_error_envelope(&conflict_body, "INVALID_STATE");
     }
 
     #[tokio::test]
