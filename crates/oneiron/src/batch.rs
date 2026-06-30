@@ -1035,7 +1035,7 @@ pub(crate) fn apply_ops(
                 } else {
                     store.validate_public_entity_type(entity_type)?;
                 }
-                let pending_embedding_token = apply_put(
+                let applied = apply_put(
                     store,
                     wtxn,
                     id,
@@ -1055,9 +1055,13 @@ pub(crate) fn apply_ops(
                     write_policy.as_ref(),
                     None,
                 )?;
-                if let Some(token) = pending_embedding_token {
+                if let Some(token) = applied.pending_embedding_token {
                     pending_embedding_tokens_written.insert(id, token);
                 }
+                if applied.cleared_pending_embedding {
+                    pending_embedding_tokens_written.remove(&id);
+                }
+                had_vector_mutation |= applied.had_vector_mutation;
                 if let Some(query_hint) = lexical_query_hint_text_for_replayed_put(
                     &id,
                     entity_type,
@@ -1101,8 +1105,14 @@ pub(crate) fn apply_ops(
                 if applied.had_graph_mutation {
                     had_graph_mutation = true;
                 }
+                if applied.had_vector_mutation {
+                    had_vector_mutation = true;
+                }
                 if let Some(token) = applied.pending_embedding_token {
                     pending_embedding_tokens_written.insert(id, token);
+                }
+                if applied.cleared_pending_embedding {
+                    pending_embedding_tokens_written.remove(&id);
                 }
             }
             BatchOp::ReconcileLexicalQueryHints { source, keep } => {
@@ -1508,6 +1518,8 @@ pub(crate) fn deindex_entity(
 
 struct AppliedClaimCandidate {
     had_graph_mutation: bool,
+    had_vector_mutation: bool,
+    cleared_pending_embedding: bool,
     pending_embedding_token: Option<Vec<u8>>,
 }
 
@@ -1546,7 +1558,7 @@ fn apply_claim_candidate(
 
     let body = candidate.into_claim_body(envelope);
     let data = crate::claim::encode_claim_body(&body)?;
-    let pending_embedding_token = apply_put(
+    let applied_put = apply_put(
         store,
         wtxn,
         id,
@@ -1574,7 +1586,9 @@ fn apply_claim_candidate(
     let Some(subject_id) = subject_id else {
         return Ok(AppliedClaimCandidate {
             had_graph_mutation,
-            pending_embedding_token,
+            had_vector_mutation: applied_put.had_vector_mutation,
+            cleared_pending_embedding: applied_put.cleared_pending_embedding,
+            pending_embedding_token: applied_put.pending_embedding_token,
         });
     };
 
@@ -1596,7 +1610,9 @@ fn apply_claim_candidate(
     had_graph_mutation = true;
     Ok(AppliedClaimCandidate {
         had_graph_mutation,
-        pending_embedding_token,
+        had_vector_mutation: applied_put.had_vector_mutation,
+        cleared_pending_embedding: applied_put.cleared_pending_embedding,
+        pending_embedding_token: applied_put.pending_embedding_token,
     })
 }
 
@@ -1628,6 +1644,12 @@ fn reconcile_claim_of_edges(
     Ok(stale_subjects)
 }
 
+struct AppliedPut {
+    pending_embedding_token: Option<Vec<u8>>,
+    cleared_pending_embedding: bool,
+    had_vector_mutation: bool,
+}
+
 #[expect(
     clippy::too_many_arguments,
     reason = "decomposing would obscure direct LMDB write logic"
@@ -1645,7 +1667,7 @@ fn apply_put(
     has_later_covering_text_op: bool,
     write_policy: Option<&crate::gate::PolicyManifestResolution>,
     write_envelope: Option<&WriteEnvelope>,
-) -> Result<Option<Vec<u8>>> {
+) -> Result<AppliedPut> {
     // Type-byte validation runs in `apply_ops` (the public-vs-maintenance gate:
     // public writes reject the engine-authored maintenance band, the sync
     // rematerialization path admits it via `allow_maintenance`). apply_put is
@@ -1815,6 +1837,14 @@ fn apply_put(
     if let Some(plan) = short_id_plan {
         apply_short_id_plan(store, wtxn, &id, plan)?;
     }
+    let mut cleared_pending_embedding = false;
+    let mut had_vector_mutation = false;
+    if is_lexical_query_hint_claim {
+        cleared_pending_embedding = store.clear_pending_embedding(wtxn, &id)?;
+        let had_hnsw = store.hnsw_neighbors.get(wtxn, id.as_bytes())?.is_some();
+        had_vector_mutation = store.vectors.delete(wtxn, id.as_bytes())? || had_hnsw;
+        crate::hnsw::hnsw_deindex(store, wtxn, &id)?;
+    }
     let pending_embedding_token =
         if entity_type == crate::types::ENTITY_TYPE_CLAIM && !is_lexical_query_hint_claim {
             let has_current_pending = store.has_current_pending_embedding_in_txn(wtxn, &id)?;
@@ -1827,7 +1857,11 @@ fn apply_put(
         } else {
             None
         };
-    Ok(pending_embedding_token)
+    Ok(AppliedPut {
+        pending_embedding_token,
+        cleared_pending_embedding,
+        had_vector_mutation,
+    })
 }
 
 struct AppliedVector {
@@ -2179,7 +2213,8 @@ fn lexical_query_hint_claim_ids_for_target(
     wtxn: &mut RwTxn<'_>,
     target: &EntityId,
 ) -> Result<Vec<EntityId>> {
-    let mut candidates = Vec::new();
+    let mut edge_candidates = HashSet::new();
+    let mut candidates = HashSet::new();
     for entry in store.edges_in.prefix_iter(wtxn, target.as_bytes())? {
         let (key, value) = entry?;
         validate_edge_record(key, value)?;
@@ -2193,7 +2228,30 @@ fn lexical_query_hint_claim_ids_for_target(
                 .map_err(|_| Error::CorruptedIndex("edge record"))?,
         )
         .map_err(|_| Error::CorruptedIndex("edge record"))?;
-        candidates.push(source);
+        edge_candidates.insert(source);
+        candidates.insert(source);
+    }
+
+    for entry in store
+        .type_index
+        .prefix_iter(wtxn, &[crate::types::ENTITY_TYPE_CLAIM])?
+    {
+        let (key, _) = entry?;
+        if key.len() != 1 + ENTITY_ID_LEN {
+            return Err(Error::CorruptedIndex("type index key"));
+        }
+        let candidate = EntityId::from_bytes(
+            key[1..]
+                .try_into()
+                .map_err(|_| Error::CorruptedIndex("type index key"))?,
+        )
+        .map_err(|_| Error::CorruptedIndex("type index key"))?;
+        if candidate
+            .as_bytes()
+            .starts_with(&crate::claim::LEXICAL_QUERY_HINT_ID_PREFIX)
+        {
+            candidates.insert(candidate);
+        }
     }
 
     let mut hint_ids = Vec::new();
@@ -2212,7 +2270,16 @@ fn lexical_query_hint_claim_ids_for_target(
             continue;
         };
         if body.predicate == crate::claim::PREDICATE_LEXICAL_QUERY_HINT {
-            hint_ids.push(candidate);
+            if edge_candidates.contains(&candidate) {
+                hint_ids.push(candidate);
+                continue;
+            }
+            let Ok(Some(hint_target)) = crate::claim::lexical_query_hint_target(&body) else {
+                continue;
+            };
+            if hint_target == *target {
+                hint_ids.push(candidate);
+            }
         }
     }
     hint_ids.sort_unstable();
@@ -3298,7 +3365,7 @@ mod tests {
     }
 
     #[test]
-    fn replicated_lexical_hint_put_indexes_query_text() -> Result<()> {
+    fn replicated_lexical_hint_put_indexes_query_text_and_deletes_without_claim_of() -> Result<()> {
         let (_dir, vault) = open_test_vault();
         let actor = EntityId::now();
         let subject = EntityId::now();
@@ -3352,9 +3419,95 @@ mod tests {
             !has_pending_embedding_marker(&vault, &hint)?,
             "replayed lexical hint side claims must not be queued for embeddings"
         );
+        assert!(
+            vault.claims_for_subject(&claim)?.is_empty(),
+            "regression fixture intentionally omits the hint ClaimOf edge"
+        );
         assert_eq!(
             vault.search_text(query, 10)?.first().map(|hit| hit.id),
             Some(claim)
+        );
+
+        vault.batch().delete(&claim).commit()?;
+
+        assert!(vault.get_claim(&hint)?.is_none());
+        assert!(vault.search_text(query, 10)?.is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn retained_lexical_hint_reput_clears_stale_vector_and_embedding_state() -> Result<()> {
+        let (_dir, vault) = open_test_vault();
+        let actor = EntityId::now();
+        let subject = EntityId::now();
+        let occurred = test_time_range(1, 1);
+        vault.put_entity(&actor, ENTITY_TYPE_PERSON, occurred, 1, b"actor")?;
+        vault.put_entity(&subject, ENTITY_TYPE_PERSON, occurred, 1, b"subject")?;
+
+        let claim = EntityId::now();
+        let envelope = test_write_envelope(actor)?;
+        let write_hints = || -> Result<()> {
+            let candidate = ClaimCandidate::new(
+                "profile.preference",
+                ClaimSubject::Entity(subject),
+                Value::from("sencha"),
+                0.9,
+            );
+            vault
+                .batch()
+                .claim_candidate_with_lexical_hints(
+                    &claim,
+                    candidate,
+                    &envelope,
+                    test_time_range(10, 10),
+                    11,
+                    &["retained vector cleanup hint"],
+                )
+                .commit()
+        };
+
+        write_hints()?;
+        let hint = lexical_query_hint_claim_id(&claim, "retained vector cleanup hint")?;
+        vault.put_vector(&hint, &[1.0, 0.0, 0.0, 0.0])?;
+        overwrite_pending_embedding_marker(&vault, &hint, b"stale lexical hint marker")?;
+
+        assert_eq!(
+            vault.get_vector(&hint)?.as_deref(),
+            Some([1.0, 0.0, 0.0, 0.0].as_slice())
+        );
+        assert!(raw_pending_embedding_marker(&vault, &hint)?.is_some());
+        assert!(
+            vault
+                .search_vector(&[1.0, 0.0, 0.0, 0.0], 10)?
+                .iter()
+                .any(|hit| hit.id == hint),
+            "seeded stale vector must be reachable before the retained hint re-put"
+        );
+
+        write_hints()?;
+
+        assert!(
+            raw_pending_embedding_marker(&vault, &hint)?.is_none(),
+            "retained lexical hint re-put must clear stale embedding marker state"
+        );
+        assert!(
+            vault.get_vector(&hint)?.is_none(),
+            "retained lexical hint re-put must delete stale vector rows"
+        );
+        assert!(
+            !vault
+                .search_vector(&[1.0, 0.0, 0.0, 0.0], 10)?
+                .iter()
+                .any(|hit| hit.id == hint),
+            "retained lexical hint must not remain reachable through vector search"
+        );
+        assert_eq!(
+            vault
+                .search_text("retained vector cleanup hint", 10)?
+                .first()
+                .map(|hit| hit.id),
+            Some(claim),
+            "lexical hint text must remain searchable after vector cleanup"
         );
         Ok(())
     }
