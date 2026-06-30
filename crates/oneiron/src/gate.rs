@@ -1329,6 +1329,7 @@ mod tests {
         ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSubject,
         claim_body_decode_count, decode_claim_body, reset_claim_body_decode_count,
     };
+    use crate::error::{GateDenialOutcome, GateDenialReason};
     use crate::provenance::{EdgeProvenanceClaimBody, EdgeRef, SupersessionStatus};
     use crate::types::{
         ClaimCandidate, ENTITY_TYPE_PERSON, EdgeActorClass, EdgeConfirmationStatus, EdgeKind,
@@ -1668,6 +1669,17 @@ mod tests {
     }
 
     fn assert_gate_rejected(err: Error, outcome: &'static str, reason_codes: &[&'static str]) {
+        let typed = err
+            .gate_denial()
+            .expect("GateWriteRejected must expose typed denial taxonomy");
+        assert_eq!(typed.outcome().as_str(), outcome);
+        let typed_reason_codes = typed
+            .reason_codes()
+            .iter()
+            .map(|reason| reason.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(typed_reason_codes, reason_codes);
+
         match err {
             Error::GateWriteRejected {
                 outcome: got_outcome,
@@ -1699,6 +1711,40 @@ mod tests {
         edge.provenance.ok_or(Error::InvariantViolation(
             "test edge should carry provenance flags",
         ))
+    }
+
+    #[test]
+    fn gate_evaluator_default_policy_fails_closed_with_typed_denial() {
+        let policy = PolicyManifestResolution::default();
+        let input = gate_evaluator_input(
+            "first_party",
+            None,
+            ClaimSource::UserStated,
+            PolicyCriticality::Normal,
+        );
+
+        let decision = policy.evaluate_gate(&input);
+        assert_eq!(decision.outcome(), GateOutcome::Deny);
+        assert_eq!(
+            decision.reason_codes(),
+            &[GateReasonCode::DenyPolicyFailClosed]
+        );
+        let err = Error::GateWriteRejected {
+            outcome: decision.outcome().as_str(),
+            reason_codes: decision
+                .reason_codes()
+                .iter()
+                .map(|reason| reason.as_str())
+                .collect(),
+        };
+        let typed = err
+            .gate_denial()
+            .expect("default fail-closed denial must be typed");
+        assert_eq!(typed.outcome(), GateDenialOutcome::Deny);
+        assert_eq!(
+            typed.reason_codes(),
+            &[GateDenialReason::DenyPolicyFailClosed]
+        );
     }
 
     #[test]
