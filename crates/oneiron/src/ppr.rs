@@ -3,7 +3,7 @@ use std::collections::{HashMap, HashSet};
 use heed::{RoTxn, RwTxn};
 use xxhash_rust::xxh3::xxh3_128;
 
-use crate::batch::EntityMetadataHeader;
+use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::error::{Error, Result};
 use crate::store::Store;
 #[cfg(test)]
@@ -11,8 +11,8 @@ use crate::types::EDGE_VALUE_STRUCTURAL_LEN;
 #[cfg(test)]
 use crate::types::VaultConfig;
 use crate::types::{
-    EDGE_KEY_LEN, ENTITY_ID_LEN, EdgeConfirmationStatus, EdgeKind, EntityId, ScoredEntity,
-    decode_edge_value_for_kind,
+    EDGE_KEY_LEN, ENTITY_ID_LEN, ENTITY_TYPE_CLAIM, EdgeConfirmationStatus, EdgeKind, EntityId,
+    ScoredEntity, decode_edge_value_for_kind,
 };
 
 const SEED_HASH_LEN: usize = 16;
@@ -55,8 +55,10 @@ const MAX_PPR_DEPTH: u32 = 10;
 /// gates + retracted skip (ONE-1100). v3 = ARCH-0039 Layer-2 seed specificity
 /// (ONE-1116): `search_ppr` seeds are weighted `1/ln(1 + passage_count)`
 /// instead of uniform `1/n`, and the cache key gained a [`SeedWeighting`]
-/// byte — pre-bump uniform-seeded rows are unreachable under v3 keys.
-const PPR_FORMULA_VERSION: u32 = 3;
+/// byte. v4 = ONE-1236 lexical query hint side claims are skipped during
+/// `ClaimOf` traversal so synthetic hint records do not consume transition
+/// mass. Pre-bump rows are unreachable under v4 keys.
+const PPR_FORMULA_VERSION: u32 = 4;
 
 /// Seed-mass distribution mode (ARCH-0039 Layer 2, "Seed specificity
 /// (search_ppr only)").
@@ -215,7 +217,7 @@ pub(crate) fn ppr_compute_weighted(
                 let mut groups = HashMap::<EdgeKind, Vec<GatedEdge>>::new();
                 for entry in db.prefix_iter(txn, node.as_bytes())? {
                     let (key, value) = entry?;
-                    if let Some(edge) = gate_edge(key, value, hops)? {
+                    if let Some(edge) = gate_edge(store, txn, key, value, hops)? {
                         groups.entry(edge.kind).or_default().push(edge);
                     }
                 }
@@ -832,11 +834,23 @@ struct GatedEdge {
 /// Returns `Ok(None)` when the edge is valid but must not propagate; corrupt
 /// rows are always a typed error (gates never mask corruption — the row is
 /// decoded before any gate runs).
-fn gate_edge(key: &[u8], value: &[u8], hops: u32) -> Result<Option<GatedEdge>> {
+fn gate_edge(
+    store: &Store,
+    txn: &RoTxn<'_>,
+    key: &[u8],
+    value: &[u8],
+    hops: u32,
+) -> Result<Option<GatedEdge>> {
     if key.len() != EDGE_KEY_LEN {
         return Err(Error::CorruptedIndex("edge record"));
     }
 
+    let current = EntityId::from_bytes(
+        key[..ENTITY_ID_LEN]
+            .try_into()
+            .map_err(|_| Error::CorruptedIndex("edge record"))?,
+    )
+    .map_err(|_| Error::CorruptedIndex("edge record"))?;
     let kind = EdgeKind::try_from_u8(key[16]).ok_or(Error::CorruptedIndex("edge record"))?;
     let neighbor = EntityId::from_bytes(
         key[17..33]
@@ -857,6 +871,16 @@ fn gate_edge(key: &[u8], value: &[u8], hops: u32) -> Result<Option<GatedEdge>> {
     // Gate 2 — kind-level block: λ_τ = 0.0 (`opposes`) propagates nothing
     // even when the stored weight byte is non-zero (contradiction isolation).
     if lambda == 0.0 {
+        return Ok(None);
+    }
+
+    // Synthetic lexical-query hint claims use ClaimOf as a local target
+    // relation for cleanup/search compatibility, but they are derived text
+    // index side records and must not consume PPR transition mass.
+    if kind == EdgeKind::ClaimOf
+        && (entity_is_lexical_query_hint_claim(store, txn, &current)?
+            || entity_is_lexical_query_hint_claim(store, txn, &neighbor)?)
+    {
         return Ok(None);
     }
 
@@ -898,6 +922,24 @@ fn gate_edge(key: &[u8], value: &[u8], hops: u32) -> Result<Option<GatedEdge>> {
         neighbor,
         new_hops,
     }))
+}
+
+fn entity_is_lexical_query_hint_claim(
+    store: &Store,
+    txn: &RoTxn<'_>,
+    id: &EntityId,
+) -> Result<bool> {
+    let Some(raw) = store.entities.get(txn, id.as_bytes())? else {
+        return Ok(false);
+    };
+    let Some(header) = EntityMetadataHeader::parse(raw) else {
+        return Err(Error::CorruptedIndex("entity header"));
+    };
+    if header.entity_type != ENTITY_TYPE_CLAIM {
+        return Ok(false);
+    }
+    let body = crate::claim::decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true)?;
+    Ok(body.predicate == crate::claim::PREDICATE_LEXICAL_QUERY_HINT)
 }
 
 fn sort_scores(scores: &mut [ScoredEntity]) {
@@ -1154,7 +1196,7 @@ mod tests {
 
     /// ONE-1116 AC4 — the cache key hashes `sorted seeds ‖ depth ‖ alpha ‖
     /// FORMULA_VERSION ‖ weighting byte` with the LITERAL pinned values:
-    /// version 3 and mode bytes Uniform = 0 / Specificity = 1 (hand-built
+    /// version 4 and mode bytes Uniform = 0 / Specificity = 1 (hand-built
     /// here, NOT read from the constants, so a wrong bump fails). The two
     /// weighting modes must never collide — `search_ppr` rows are not
     /// servable to `expand_ppr` and vice versa.
@@ -1172,7 +1214,7 @@ mod tests {
         bytes.extend_from_slice(b.as_bytes());
         bytes.extend_from_slice(&depth.to_le_bytes());
         bytes.extend_from_slice(&alpha.to_le_bytes());
-        bytes.extend_from_slice(&3_u32.to_le_bytes());
+        bytes.extend_from_slice(&4_u32.to_le_bytes());
 
         let mut uniform_bytes = bytes.clone();
         uniform_bytes.push(0_u8);
@@ -1182,7 +1224,10 @@ mod tests {
         specificity_bytes.push(1_u8);
         let expected_specificity = xxh3_128(&specificity_bytes).to_le_bytes();
 
-        assert_eq!(PPR_FORMULA_VERSION, 3, "Layer-2 bump must pin version 3");
+        assert_eq!(
+            PPR_FORMULA_VERSION, 4,
+            "ONE-1236 lexical hint traversal skip must pin version 4"
+        );
         assert_eq!(
             hash_seeds(&[a, b], depth, alpha, SeedWeighting::Uniform),
             expected_uniform
@@ -2725,11 +2770,11 @@ mod tests {
         Ok(())
     }
 
-    /// ONE-1116 AC4 — PPR_FORMULA_VERSION 2 → 3: a row persisted under the
+    /// ONE-1116/ONE-1236 — pre-bump PPR rows are unreachable: a row persisted under the
     /// pre-bump v2 key (seeds ‖ depth ‖ alpha ‖ version 2, NO weighting
     /// byte — the literal pre-ONE-1116 layout) is unreachable even with a
     /// fresh `computed_at`, matching graph version, and stale = 0. The
-    /// query recomputes, lands its row under the v3 key, and the orphaned
+    /// query recomputes, lands its row under the current key, and the orphaned
     /// v2 row is reaped by the existing cleanup (it has no dep rows).
     #[test]
     fn pre_bump_formula_v2_rows_are_never_served() -> Result<()> {
@@ -2764,10 +2809,10 @@ mod tests {
         );
         assert!(score_for(&scores, b) > 0.0);
 
-        let v3_hash = hash_seeds(&[a], 3, 0.15, SeedWeighting::Uniform);
+        let current_hash = hash_seeds(&[a], 3, 0.15, SeedWeighting::Uniform);
         {
             let rtxn = vault.store.env.read_txn()?;
-            assert!(vault.store.ppr_cache.get(&rtxn, &v3_hash)?.is_some());
+            assert!(vault.store.ppr_cache.get(&rtxn, &current_hash)?.is_some());
         }
 
         let report = vault
@@ -2781,8 +2826,8 @@ mod tests {
             "orphaned v2 row must be reaped by cleanup"
         );
         assert!(
-            vault.store.ppr_cache.get(&rtxn, &v3_hash)?.is_some(),
-            "live v3 row must survive cleanup"
+            vault.store.ppr_cache.get(&rtxn, &current_hash)?.is_some(),
+            "live current-version row must survive cleanup"
         );
         Ok(())
     }

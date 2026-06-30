@@ -1025,8 +1025,16 @@ fn apply_materialized_edge_ops(
                 });
             }
             _ => {
-                let apply_result =
-                    batch::apply_ops(&vault.store, &vault.config, &vault.analyzer, wtxn, vec![op]);
+                let apply_result = batch::apply_ops(
+                    &vault.store,
+                    &vault.config,
+                    &vault.analyzer,
+                    wtxn,
+                    vec![op],
+                    vault
+                        .text_index_trusted
+                        .load(std::sync::atomic::Ordering::Acquire),
+                );
                 match apply_result {
                     Err(e) if remote_rejection_reason(&e).is_none() => return Err(e),
                     Err(e) => {
@@ -1047,6 +1055,9 @@ fn apply_materialized_edge_ops(
             &vault.analyzer,
             wtxn,
             vec![pending.op],
+            vault
+                .text_index_trusted
+                .load(std::sync::atomic::Ordering::Acquire),
         );
         match apply_result {
             Err(e) if remote_rejection_reason(&e).is_none() => return Err(e),
@@ -1067,8 +1078,16 @@ fn apply_materialized_edge_ops(
         let mut component_ops = component;
         component_ops.sort_by(cmp_pending_child_of_ops);
         let ops: Vec<BatchOp> = component_ops.iter().map(|entry| entry.op.clone()).collect();
-        let apply_result =
-            batch::apply_ops(&vault.store, &vault.config, &vault.analyzer, wtxn, ops);
+        let apply_result = batch::apply_ops(
+            &vault.store,
+            &vault.config,
+            &vault.analyzer,
+            wtxn,
+            ops,
+            vault
+                .text_index_trusted
+                .load(std::sync::atomic::Ordering::Acquire),
+        );
         match apply_result {
             Err(e) if remote_rejection_reason(&e).is_none() => return Err(e),
             Err(_) => {
@@ -1085,6 +1104,9 @@ fn apply_materialized_edge_ops(
                         &vault.analyzer,
                         wtxn,
                         vec![pending.op],
+                        vault
+                            .text_index_trusted
+                            .load(std::sync::atomic::Ordering::Acquire),
                     );
                     match apply_result {
                         Err(e) if remote_rejection_reason(&e).is_none() => return Err(e),

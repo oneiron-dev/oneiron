@@ -873,6 +873,8 @@ impl Vault {
                     vad: Vad::NEUTRAL,
                 },
             ],
+            self.text_index_trusted
+                .load(std::sync::atomic::Ordering::Acquire),
         )?;
         let key = vad_annotation_meta_key(expected_type, id);
         self.store.vault_meta.delete(&mut wtxn, &key)?;
@@ -1009,7 +1011,15 @@ impl Vault {
                 vad: Vad::NEUTRAL,
             });
         }
-        apply_ops(&self.store, &self.config, &self.analyzer, &mut wtxn, ops)?;
+        apply_ops(
+            &self.store,
+            &self.config,
+            &self.analyzer,
+            &mut wtxn,
+            ops,
+            self.text_index_trusted
+                .load(std::sync::atomic::Ordering::Acquire),
+        )?;
         wtxn.commit()?;
         Ok(())
     }
@@ -1326,7 +1336,15 @@ impl Vault {
             allow_maintenance: true,
             allow_reserved_predicate: false,
         }];
-        apply_ops(&self.store, &self.config, &self.analyzer, &mut wtxn, ops)?;
+        apply_ops(
+            &self.store,
+            &self.config,
+            &self.analyzer,
+            &mut wtxn,
+            ops,
+            self.text_index_trusted
+                .load(std::sync::atomic::Ordering::Acquire),
+        )?;
         wtxn.commit()?;
         Ok(id)
     }
@@ -1750,7 +1768,15 @@ impl Vault {
                 provenance: None,
             },
         ];
-        apply_ops(&self.store, &self.config, &self.analyzer, &mut wtxn, ops)?;
+        apply_ops(
+            &self.store,
+            &self.config,
+            &self.analyzer,
+            &mut wtxn,
+            ops,
+            self.text_index_trusted
+                .load(std::sync::atomic::Ordering::Acquire),
+        )?;
         wtxn.commit()?;
         Ok(())
     }
@@ -1787,7 +1813,15 @@ impl Vault {
             allow_maintenance: false,
             allow_reserved_predicate: false,
         }];
-        apply_ops(&self.store, &self.config, &self.analyzer, &mut wtxn, ops)?;
+        apply_ops(
+            &self.store,
+            &self.config,
+            &self.analyzer,
+            &mut wtxn,
+            ops,
+            self.text_index_trusted
+                .load(std::sync::atomic::Ordering::Acquire),
+        )?;
         wtxn.commit()?;
         Ok(())
     }
