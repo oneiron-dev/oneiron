@@ -1960,7 +1960,14 @@ impl ContextPackRetrievalBudget {
             split_other,
             split_other,
         ];
-        let budgets = allocate_context_pack_item_budgets(result_limit, weights);
+        let mut budgets = allocate_context_pack_item_budgets(result_limit, weights);
+        if result_limit > 0 {
+            for (budget, weight) in budgets.iter_mut().zip(weights) {
+                if *budget == 0 && weight.is_finite() && weight > 0.0 {
+                    *budget = 1;
+                }
+            }
+        }
         Self {
             claims: budgets[0],
             turns: budgets[1],
@@ -2051,5 +2058,16 @@ mod tests {
         assert_eq!(budget.facets, 2);
         assert_eq!(budget.other, 2);
         assert_eq!(budget.selected_edges, 7);
+    }
+
+    #[test]
+    fn context_pack_retrieval_budget_default_small_limit_keeps_positive_buckets_eligible() {
+        let budget = ContextPackRetrievalBudget::from_limit(3, TokenAllocation::default(), 0);
+
+        assert!(budget.claims > 0);
+        assert!(budget.turns > 0);
+        assert!(budget.summaries > 0);
+        assert!(budget.facets > 0);
+        assert!(budget.other > 0);
     }
 }

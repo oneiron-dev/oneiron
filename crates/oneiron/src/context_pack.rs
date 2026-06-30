@@ -2452,6 +2452,30 @@ mod tests {
     }
 
     #[test]
+    fn default_retrieval_budget_keeps_small_limit_turn_results_eligible() -> Result<()> {
+        let (_dir, vault) = open_test_vault();
+
+        let turn = EntityId::from_bytes_unchecked([0xE4; 16]);
+        put_text_entity(
+            &vault,
+            &turn,
+            crate::types::ENTITY_TYPE_TURN,
+            "smalllimitturn",
+            serde_json::json!({"text": "turn"}),
+        )?;
+
+        let pack = vault
+            .context_pack()
+            .search_text("smalllimitturn", 10)
+            .limit(3)
+            .run()?;
+
+        let ids: Vec<EntityId> = pack.results.iter().map(|entity| entity.id).collect();
+        assert_eq!(ids, vec![turn]);
+        Ok(())
+    }
+
+    #[test]
     fn selected_edge_budget_caps_edge_walk() -> Result<()> {
         let (_dir, vault) = open_test_vault();
 
