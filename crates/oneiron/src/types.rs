@@ -1175,6 +1175,19 @@ pub fn temporal_expression_from_query(
         let parsed = match tokens[index].as_str() {
             "recent" => Some(TemporalExpression::Recent),
             "yesterday" => Some(TemporalExpression::Yesterday),
+            "today" | "tomorrow" | "tonight" => {
+                return Err(TemporalExpressionParseError::Unsupported {
+                    expression: tokens[index].clone(),
+                });
+            }
+            "next" | "this" => match tokens.get(index + 1).map(String::as_str) {
+                Some(next) if is_temporal_unit_token(next) || is_weekday_token(next) => {
+                    return Err(TemporalExpressionParseError::Unsupported {
+                        expression: format!("{} {next}", tokens[index]),
+                    });
+                }
+                _ => None,
+            },
             "last" => match tokens.get(index + 1).map(String::as_str) {
                 None => None,
                 Some("week") => {
@@ -2493,6 +2506,26 @@ mod tests {
             temporal_expression_from_query("recent notes from yesterday"),
             Err(TemporalExpressionParseError::Ambiguous)
         ));
+    }
+
+    #[test]
+    fn temporal_expression_query_parser_rejects_unsupported_non_last_forms() {
+        assert!(matches!(
+            temporal_expression_from_query("notes from tomorrow"),
+            Err(TemporalExpressionParseError::Unsupported { expression })
+                if expression == "tomorrow"
+        ));
+        assert!(matches!(
+            temporal_expression_from_query("notes from next week"),
+            Err(TemporalExpressionParseError::Unsupported { expression })
+                if expression == "next week"
+        ));
+        assert!(matches!(
+            temporal_expression_from_query("notes from this month"),
+            Err(TemporalExpressionParseError::Unsupported { expression })
+                if expression == "this month"
+        ));
+        assert_eq!(temporal_expression_from_query("next steps").unwrap(), None);
     }
 
     #[test]

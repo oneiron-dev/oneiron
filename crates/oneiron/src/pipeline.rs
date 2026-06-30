@@ -157,6 +157,7 @@ pub(crate) struct PipelineOutput {
     pub(crate) total_in_scope: usize,
     pub(crate) empty_reason: Option<EmptyReason>,
     pub(crate) telemetry_run_id: Option<RetrievalRunId>,
+    pub(crate) signals: Vec<RetrievalSignal>,
 }
 
 #[derive(Debug, Clone)]
@@ -972,6 +973,7 @@ impl<'a> PipelineBuilder<'a> {
                     total_in_scope: 0,
                     empty_reason: None,
                     telemetry_run_id: None,
+                    signals: telemetry_signals,
                 });
             }
 
@@ -1217,7 +1219,7 @@ impl<'a> PipelineBuilder<'a> {
             telemetry_action,
             started_at,
             started.elapsed().as_micros().min(u64::MAX as u128) as u64,
-            telemetry_signals,
+            telemetry_signals.clone(),
             score_breakdown,
             total_in_scope,
             claims_suppressed,
@@ -1250,6 +1252,7 @@ impl<'a> PipelineBuilder<'a> {
             total_in_scope,
             empty_reason,
             telemetry_run_id,
+            signals: telemetry_signals,
         })
     }
 
@@ -1322,10 +1325,7 @@ impl<'a> PipelineBuilder<'a> {
     }
 
     fn resolved_occurred_range(&self, now: u64) -> Result<Option<(u64, u64)>> {
-        if self.occurred_range.is_some()
-            || self.learned_range.is_some()
-            || self.temporal_search.is_some()
-        {
+        if self.occurred_range.is_some() || self.temporal_search.is_some() {
             return Ok(self.occurred_range);
         }
 
@@ -4191,6 +4191,47 @@ mod tests {
         let results = vault
             .query()
             .search_text("recent parsedbounds", 10)
+            .with_temporal_now(NOW)
+            .run()?;
+
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].id, recent);
+        Ok(())
+    }
+
+    #[test]
+    fn learned_range_does_not_override_parsed_recent_hint() -> Result<()> {
+        const NOW: u64 = 1_710_504_000; // 2024-03-15T12:00:00Z
+
+        let (_dir, vault) = open_test_vault();
+        let old = entity_id(0x63);
+        let recent = entity_id(0x64);
+
+        put_text_with_time(
+            &vault,
+            old,
+            "recent learnedbounds",
+            TimeRange {
+                start: NOW - 7 * 86_400 - 1,
+                end: NOW - 7 * 86_400 - 1,
+            },
+            200,
+        )?;
+        put_text_with_time(
+            &vault,
+            recent,
+            "recent learnedbounds",
+            TimeRange {
+                start: NOW - 60,
+                end: NOW - 60,
+            },
+            200,
+        )?;
+
+        let results = vault
+            .query()
+            .search_text("recent learnedbounds", 10)
+            .filter_learned_range(190, 210)
             .with_temporal_now(NOW)
             .run()?;
 
