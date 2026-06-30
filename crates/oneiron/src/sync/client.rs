@@ -400,14 +400,14 @@ impl SyncClient {
     ) -> std::result::Result<Vec<Vec<u8>>, TransportError> {
         match sub_tag {
             window_sub_tags::VV_REQUEST => {
-                let window = self.ensure_window(window_key)?;
-                let doc = &window.doc;
                 // Peer sent its binary VV (SyncStep1) — reply with the delta it
                 // is missing (SyncStep2), then our own VV so it can push its
                 // local diff back (the reverse SyncStep1). Malformed VV →
                 // typed error, fail-closed: NEVER fall back to a full export.
                 let server_vv = VersionVector::decode(payload)
                     .map_err(|_| TransportError::VersionVectorDecode)?;
+                let window = self.ensure_window(window_key)?;
+                let doc = &window.doc;
                 let delta = export_updates_since(doc, payload).map_err(map_delta_export_err)?;
                 let responses = vec![
                     transport::encode_window_sync(window_key, window_sub_tags::UPDATE, &delta)
@@ -425,17 +425,23 @@ impl SyncClient {
                 Ok(responses)
             }
             window_sub_tags::UPDATE => {
+                if payload.len() > MAX_DECODED_PAYLOAD_BYTES {
+                    return Err(TransportError::FrameTooLarge {
+                        size: payload.len(),
+                        max: MAX_DECODED_PAYLOAD_BYTES,
+                    });
+                }
                 let window = self.ensure_window(window_key)?;
                 self.import_accepted_window_update(window_key, &window, payload)?;
                 Ok(Vec::new())
             }
             window_sub_tags::VV_RESPONSE => {
-                let window = self.ensure_window(window_key)?;
-                let doc = &window.doc;
                 // Peer's VV answering our VV_REQUEST — export and send only our
                 // local diff. Same fail-closed VV decoding as VV_REQUEST.
                 let server_vv = VersionVector::decode(payload)
                     .map_err(|_| TransportError::VersionVectorDecode)?;
+                let window = self.ensure_window(window_key)?;
+                let doc = &window.doc;
                 let delta = export_updates_since(doc, payload).map_err(map_delta_export_err)?;
                 let responses = vec![
                     transport::encode_window_sync(window_key, window_sub_tags::UPDATE, &delta)
@@ -2349,9 +2355,9 @@ mod tests {
         let json_vv: &[u8] = b"{}";
         let garbage: &[u8] = &[0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF];
 
-        for payload in [json_vv, garbage] {
-            let req =
-                transport::encode_window_sync("2026-03", window_sub_tags::VV_REQUEST, payload);
+        for (index, payload) in [json_vv, garbage].into_iter().enumerate() {
+            let key = if index == 0 { "2026-03" } else { "2026-04" };
+            let req = transport::encode_window_sync(key, window_sub_tags::VV_REQUEST, payload);
             assert!(
                 matches!(
                     client.handle_server_message(&req),
@@ -2359,15 +2365,22 @@ mod tests {
                 ),
                 "VV_REQUEST with malformed VV must fail closed"
             );
+            assert!(
+                client.window(key).is_none(),
+                "malformed VV_REQUEST must not open a live window"
+            );
 
-            let resp =
-                transport::encode_window_sync("2026-03", window_sub_tags::VV_RESPONSE, payload);
+            let resp = transport::encode_window_sync(key, window_sub_tags::VV_RESPONSE, payload);
             assert!(
                 matches!(
                     client.handle_server_message(&resp),
                     Err(TransportError::VersionVectorDecode)
                 ),
                 "VV_RESPONSE with malformed VV must fail closed"
+            );
+            assert!(
+                client.window(key).is_none(),
+                "malformed VV_RESPONSE must not open a live window"
             );
 
             let mut root = vec![TAG_VERSION_VECTOR];
@@ -2409,6 +2422,28 @@ mod tests {
 
         assert_matches!(client.handle_server_message(&msg), Err(TransportError::FrameTooLarge { size, max })
                 if size == MAX_DECODED_PAYLOAD_BYTES + 1 && max == MAX_DECODED_PAYLOAD_BYTES);
+    }
+
+    #[test]
+    fn oversized_window_update_fails_closed_before_window_open() {
+        let manager = test_manager();
+        let (mut client, _rx) = test_client(&manager);
+        let key = "2026-03";
+        let update = vec![0u8; MAX_DECODED_PAYLOAD_BYTES + 1];
+        let mut msg = vec![TAG_WINDOW_SYNC, key.len() as u8];
+        msg.extend_from_slice(key.as_bytes());
+        msg.push(window_sub_tags::UPDATE);
+        msg.extend_from_slice(&update);
+
+        assert_matches!(
+            client.handle_server_message(&msg),
+            Err(TransportError::FrameTooLarge { size, max })
+                if size == MAX_DECODED_PAYLOAD_BYTES + 1 && max == MAX_DECODED_PAYLOAD_BYTES
+        );
+        assert!(
+            client.window(key).is_none(),
+            "oversized ordinary window update must not open a live window"
+        );
     }
 
     #[test]
