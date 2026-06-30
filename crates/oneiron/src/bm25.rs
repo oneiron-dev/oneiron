@@ -543,6 +543,7 @@ fn collect_final_token_prefix_terms(
         .filter(|token| {
             token.byte_end as usize == trimmed_query_end
                 && !token.term.is_empty()
+                && token.channel == AnalyzerChannel::Surface
                 && matches!(token.kind, TokenKind::Word | TokenKind::Numeric)
         })
         .map(|token| token.term.as_ref().to_owned())
@@ -1443,6 +1444,49 @@ mod tests {
             terms
                 .values()
                 .all(|weight| *weight == FINAL_TOKEN_PREFIX_WEIGHT)
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn final_token_prefix_ignores_derived_stem_prefixes() -> Result<()> {
+        let temp_dir = tempfile::tempdir()?;
+        let vault = Vault::open(temp_dir.path(), test_config())?;
+        put_raw_posting_terms(
+            &vault,
+            &[
+                "runner".to_owned(),
+                "runningly".to_owned(),
+                "runt".to_owned(),
+            ],
+        )?;
+
+        let rtxn = vault.store.env.read_txn()?;
+        let mut terms = BTreeMap::new();
+        let mut exact_posting_matches_scope = |_id: &EntityId| Ok(true);
+        collect_final_token_prefix_terms(
+            &vault.store,
+            &rtxn,
+            "running".len(),
+            &Bm25Config::default(),
+            &[
+                final_word_token("running"),
+                Token::new(
+                    "run",
+                    0,
+                    "running".len() as u32,
+                    0,
+                    AnalyzerChannel::Stem,
+                    TokenKind::Word,
+                ),
+            ],
+            &mut terms,
+            &mut exact_posting_matches_scope,
+        )?;
+
+        assert_eq!(
+            terms.keys().cloned().collect::<Vec<_>>(),
+            vec!["runningly".to_owned()]
         );
         Ok(())
     }
