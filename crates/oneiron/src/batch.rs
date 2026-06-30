@@ -2357,8 +2357,61 @@ fn lexical_query_hint_claim_ids_for_target(
             hint_ids.push(source);
         }
     }
+
+    if stored_entity_is_claim_type(store, wtxn, target)? {
+        for hint_id in legacy_lexical_query_hint_claim_ids_for_target(store, wtxn, target)? {
+            hint_ids.push(hint_id);
+        }
+    }
     hint_ids.sort_unstable();
     hint_ids.dedup();
+    Ok(hint_ids)
+}
+
+fn legacy_lexical_query_hint_claim_ids_for_target(
+    store: &Store,
+    wtxn: &mut RwTxn<'_>,
+    target: &EntityId,
+) -> Result<Vec<EntityId>> {
+    let mut candidates = Vec::new();
+    for entry in store
+        .type_index
+        .prefix_iter(wtxn, &[crate::types::ENTITY_TYPE_CLAIM])?
+    {
+        let (key, _) = entry?;
+        if key.len() != 1 + ENTITY_ID_LEN {
+            return Err(Error::CorruptedIndex("type index key"));
+        }
+        let candidate = EntityId::from_bytes(
+            key[1..]
+                .try_into()
+                .map_err(|_| Error::CorruptedIndex("type index key"))?,
+        )
+        .map_err(|_| Error::CorruptedIndex("type index key"))?;
+        if !candidate
+            .as_bytes()
+            .starts_with(&crate::claim::LEXICAL_QUERY_HINT_ID_PREFIX)
+        {
+            continue;
+        }
+        candidates.push(candidate);
+    }
+
+    let mut hint_ids = Vec::new();
+    for candidate in candidates {
+        let Some(body) = stored_claim_body(store, wtxn, &candidate)? else {
+            continue;
+        };
+        if body.predicate != crate::claim::PREDICATE_LEXICAL_QUERY_HINT {
+            continue;
+        }
+        let Ok(Some(hint_target)) = crate::claim::lexical_query_hint_target(&body) else {
+            continue;
+        };
+        if hint_target == *target {
+            hint_ids.push(candidate);
+        }
+    }
     Ok(hint_ids)
 }
 
@@ -2371,6 +2424,16 @@ fn stored_entity_is_lexical_query_hint_claim(
         return Ok(false);
     };
     Ok(body.predicate == crate::claim::PREDICATE_LEXICAL_QUERY_HINT)
+}
+
+fn stored_entity_is_claim_type(store: &Store, wtxn: &mut RwTxn<'_>, id: &EntityId) -> Result<bool> {
+    let Some(raw) = store.entities.get(wtxn, id.as_bytes())? else {
+        return Ok(false);
+    };
+    let Some(header) = EntityMetadataHeader::parse(raw) else {
+        return Err(Error::CorruptedIndex("entity header"));
+    };
+    Ok(header.entity_type == crate::types::ENTITY_TYPE_CLAIM)
 }
 
 fn stored_claim_body(
@@ -3690,6 +3753,72 @@ mod tests {
         assert!(vault.get_claim(&hint)?.is_none());
         assert!(vault.claims_for_subject(&claim)?.is_empty());
         assert!(vault.search_text("soft delete lexical", 10)?.is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn plain_overwrite_removes_orphan_lexical_hint_without_claim_of() -> Result<()> {
+        let (_dir, vault) = open_test_vault();
+        let actor = EntityId::now();
+        let subject = EntityId::now();
+        let occurred = test_time_range(1, 1);
+        vault.put_entity(&actor, ENTITY_TYPE_PERSON, occurred, 1, b"actor")?;
+        vault.put_entity(&subject, ENTITY_TYPE_PERSON, occurred, 1, b"subject")?;
+
+        let claim = EntityId::now();
+        let envelope = test_write_envelope(actor)?;
+        let candidate = ClaimCandidate::new(
+            "profile.preference",
+            ClaimSubject::Entity(subject),
+            Value::from("sencha"),
+            0.9,
+        );
+        vault
+            .batch()
+            .claim_candidate(&claim, candidate, &envelope, test_time_range(10, 10), 11)
+            .commit()?;
+
+        let stale_query = "legacy orphan lexical hint";
+        let orphan_hint = lexical_query_hint_claim_id(&claim, stale_query)?;
+        let mut orphan_body = ClaimBody::new(
+            crate::claim::PREDICATE_LEXICAL_QUERY_HINT,
+            ClaimSubject::Entity(claim),
+            crate::claim::encode_lexical_query_hint_value(&claim, stale_query),
+            1.0,
+            ClaimApprovalStatus::Approved,
+            ClaimLifecycleStatus::Active,
+        );
+        orphan_body.stale = true;
+        seed_raw_claim_record(&vault, &orphan_hint, orphan_body)?;
+        vault
+            .batch()
+            .text(&orphan_hint, &[("query_hint", stale_query)])
+            .commit()?;
+        assert!(
+            vault.claims_for_subject(&claim)?.is_empty(),
+            "fixture intentionally omits the legacy hint ClaimOf edge"
+        );
+        assert_eq!(
+            vault
+                .search_text(stale_query, 10)?
+                .first()
+                .map(|hit| hit.id),
+            Some(claim)
+        );
+
+        let replacement = ClaimCandidate::new(
+            "profile.preference",
+            ClaimSubject::Entity(subject),
+            Value::from("hojicha"),
+            0.9,
+        );
+        vault
+            .batch()
+            .claim_candidate(&claim, replacement, &envelope, test_time_range(12, 12), 13)
+            .commit()?;
+
+        assert!(vault.get_claim(&orphan_hint)?.is_none());
+        assert!(vault.search_text(stale_query, 10)?.is_empty());
         Ok(())
     }
 
