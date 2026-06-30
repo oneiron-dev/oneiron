@@ -178,6 +178,7 @@ struct QueryTerm {
 }
 
 const FINAL_TOKEN_PREFIX_WEIGHT: f64 = 0.5;
+const MAX_FINAL_TOKEN_PREFIX_TERMS: usize = 64;
 
 /// One slot per reserved [`AnalyzerChannel`]. A new channel whose
 /// `field_id()` falls outside `0..BM25_FIELD_COUNT` would silently
@@ -529,18 +530,24 @@ fn collect_final_token_prefix_terms(
         }
     }
 
+    let mut expanded_terms = 0usize;
     for prefix in prefixes {
-        let mut last_term: Option<Vec<u8>> = None;
-        for row in store.text_postings.prefix_iter(rtxn, prefix.as_bytes())? {
+        let remaining = MAX_FINAL_TOKEN_PREFIX_TERMS.saturating_sub(expanded_terms);
+        if remaining == 0 {
+            break;
+        }
+        for row in store
+            .text_postings
+            .prefix_iter(rtxn, prefix.as_bytes())?
+            .move_between_keys()
+            .take(remaining)
+        {
             let (term_bytes, _) = row?;
-            if last_term.as_deref() == Some(term_bytes) {
-                continue;
-            }
-            last_term = Some(term_bytes.to_vec());
             let term = str::from_utf8(term_bytes)
                 .map_err(|_| corrupted("posting term key is not valid utf-8"))?
                 .to_owned();
             insert_query_term(terms, term, FINAL_TOKEN_PREFIX_WEIGHT);
+            expanded_terms += 1;
         }
     }
 
@@ -1106,6 +1113,44 @@ mod tests {
             .commit()
     }
 
+    fn test_entity_id(n: u16) -> EntityId {
+        let mut bytes = [0x42; ENTITY_ID_LEN];
+        bytes[14..].copy_from_slice(&n.to_be_bytes());
+        EntityId::from_bytes_unchecked(bytes)
+    }
+
+    fn final_word_token(term: &str) -> Token {
+        Token::new(
+            term,
+            0,
+            u32::try_from(term.len()).expect("test token fits in u32"),
+            0,
+            AnalyzerChannel::Surface,
+            TokenKind::Word,
+        )
+    }
+
+    fn put_raw_posting_terms(vault: &Vault, terms: &[String]) -> Result<()> {
+        let mut wtxn = vault.store.env.write_txn()?;
+        let mut fields = BTreeMap::new();
+        fields.insert(AnalyzerChannel::Surface.field_id(), 1);
+        for (idx, term) in terms.iter().enumerate() {
+            let id = test_entity_id(u16::try_from(idx).expect("test id fits in u16"));
+            let mut entry = Vec::new();
+            encode_posting_entry(&id, &fields, &mut entry)?;
+            vault
+                .store
+                .text_postings
+                .put(&mut wtxn, term.as_bytes(), &entry)?;
+        }
+        wtxn.commit()?;
+        Ok(())
+    }
+
+    fn cap_prefix_term(index: usize) -> String {
+        format!("capbound{index:04}")
+    }
+
     fn repeated(term: &str, count: usize) -> String {
         std::iter::repeat_n(term, count)
             .collect::<Vec<_>>()
@@ -1241,6 +1286,68 @@ mod tests {
         );
         assert!(!contains_id(&results, &unrelated));
 
+        Ok(())
+    }
+
+    #[test]
+    fn final_token_prefix_expands_matching_terms_below_cap() -> Result<()> {
+        let temp_dir = tempfile::tempdir()?;
+        let vault = Vault::open(temp_dir.path(), test_config())?;
+        put_raw_posting_terms(
+            &vault,
+            &[
+                "normprefixalpha".to_owned(),
+                "normprefixbeta".to_owned(),
+                "otherprefix".to_owned(),
+            ],
+        )?;
+
+        let rtxn = vault.store.env.read_txn()?;
+        let mut terms = BTreeMap::new();
+        collect_final_token_prefix_terms(
+            &vault.store,
+            &rtxn,
+            &[final_word_token("normprefix")],
+            &mut terms,
+        )?;
+
+        let collected = terms.keys().cloned().collect::<Vec<_>>();
+        assert_eq!(
+            collected,
+            vec!["normprefixalpha".to_owned(), "normprefixbeta".to_owned()]
+        );
+        assert!(
+            terms
+                .values()
+                .all(|weight| *weight == FINAL_TOKEN_PREFIX_WEIGHT)
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn final_token_prefix_expansion_is_capped_in_deterministic_order() -> Result<()> {
+        let temp_dir = tempfile::tempdir()?;
+        let vault = Vault::open(temp_dir.path(), test_config())?;
+        let indexed_terms = (0..MAX_FINAL_TOKEN_PREFIX_TERMS + 2)
+            .map(cap_prefix_term)
+            .collect::<Vec<_>>();
+        put_raw_posting_terms(&vault, &indexed_terms)?;
+
+        let rtxn = vault.store.env.read_txn()?;
+        let mut terms = BTreeMap::new();
+        collect_final_token_prefix_terms(
+            &vault.store,
+            &rtxn,
+            &[final_word_token("capbound")],
+            &mut terms,
+        )?;
+
+        let collected = terms.keys().cloned().collect::<Vec<_>>();
+        let expected = (0..MAX_FINAL_TOKEN_PREFIX_TERMS)
+            .map(cap_prefix_term)
+            .collect::<Vec<_>>();
+        assert_eq!(collected, expected);
+        assert!(!terms.contains_key(&cap_prefix_term(MAX_FINAL_TOKEN_PREFIX_TERMS)));
         Ok(())
     }
 
