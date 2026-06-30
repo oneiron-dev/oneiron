@@ -23,6 +23,7 @@ pub mod maintain;
 pub mod pipeline;
 pub(crate) mod ppr;
 pub mod provenance;
+pub mod recovery;
 pub mod serialize;
 pub mod store;
 pub(crate) mod sweep;
@@ -93,6 +94,11 @@ pub use crate::provenance::{
     MODEL_SUBSTRATE_FIELD_MAX_BYTES, PREDICATE_EDGE_PROVENANCE, REASONING_EFFORT_MAX_BYTES,
     SupersessionStatus, decode_edge_provenance_body, derive_confirmation_status,
     validate_actor_class,
+};
+pub use crate::recovery::{
+    QuarantinedArtifact, RECOVERY_ARTIFACT_MAGIC, RECOVERY_ARTIFACT_QUARANTINE_DIR,
+    RECOVERY_ARTIFACT_VERSION, RecoveryArtifact, RecoveryArtifactFailure, RecoveryArtifactLoad,
+    decode_recovery_artifact, encode_recovery_artifact, load_recovery_artifact,
 };
 pub use crate::types::{
     Bm25RankProfile, ClaimCandidate, ContextEntity, ContextPack, DecodedEdgeValue,
