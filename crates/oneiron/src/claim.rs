@@ -745,8 +745,26 @@ pub(crate) fn validate_claim_body_and_decode(
         validate_edge_provenance_claim_structure(&body)?;
     } else if body.predicate == PREDICATE_LEXICAL_QUERY_HINT {
         lexical_query_hint_target(&body)?;
+    } else if body.predicate == PREDICATE_COMPANION_EXPRESSION {
+        validate_companion_expression_claim_structure(&body)?;
     }
     Ok(body)
+}
+
+fn validate_companion_expression_claim_structure(body: &ClaimBody) -> Result<()> {
+    let Some(expression) = body.value.as_str() else {
+        return Err(Error::InvalidClaimBody(
+            "companion.expression value must be a string",
+        ));
+    };
+    match expression {
+        COMPANION_EXPRESSION_PROFESSIONAL
+        | COMPANION_EXPRESSION_WARM
+        | COMPANION_EXPRESSION_UNRESTRICTED => Ok(()),
+        _ => Err(Error::InvalidClaimBody(
+            "expression must be professional|warm|unrestricted",
+        )),
+    }
 }
 
 pub(crate) fn validate_claim_body_bytes(data: &[u8], allow_reserved_predicate: bool) -> Result<()> {
@@ -1205,6 +1223,44 @@ mod tests {
                 false,
             ),
             Err(Error::InvalidClaimBody(_))
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn write_door_validates_companion_expression_claim_values() -> Result<()> {
+        let subject = EntityId::from_bytes([0x33; 16]).expect("valid id");
+        let encode = |value: Value| -> Result<Vec<u8>> {
+            let body = ClaimBody::new(
+                PREDICATE_COMPANION_EXPRESSION,
+                ClaimSubject::Entity(subject),
+                value,
+                1.0,
+                ClaimApprovalStatus::Approved,
+                ClaimLifecycleStatus::Active,
+            );
+            encode_claim_body(&body)
+        };
+
+        for expression in [
+            COMPANION_EXPRESSION_PROFESSIONAL,
+            COMPANION_EXPRESSION_WARM,
+            COMPANION_EXPRESSION_UNRESTRICTED,
+        ] {
+            validate_claim_body_bytes(&encode(Value::from(expression))?, false)?;
+        }
+
+        assert_matches!(
+            validate_claim_body_bytes(&encode(Value::from("future_closed"))?, false),
+            Err(Error::InvalidClaimBody(
+                "expression must be professional|warm|unrestricted"
+            ))
+        );
+        assert_matches!(
+            validate_claim_body_bytes(&encode(Value::Map(Vec::new()))?, false),
+            Err(Error::InvalidClaimBody(
+                "companion.expression value must be a string"
+            ))
         );
         Ok(())
     }
