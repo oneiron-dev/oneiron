@@ -2902,6 +2902,7 @@ async fn list_core_conversation_turns(
         (status = 401, description = "Missing or invalid core auth.", body = ApiErrorEnvelope, content_type = "application/json"),
         (status = 403, description = "Core token lacks core:write.", body = ApiErrorEnvelope, content_type = "application/json"),
         (status = 404, description = "Conversation was not found.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 409, description = "Child-of constraints rejected the turn create request; response uses INVALID_STATE.", body = ApiErrorEnvelope, content_type = "application/json"),
         (status = 500, description = "Turn create failed.", body = ApiErrorEnvelope, content_type = "application/json")
     )
 )]
@@ -3755,7 +3756,7 @@ impl TurnVadAnnotateResponse {
         (
             status = 409,
             description = "Active Gate policy rejected the VAD annotation write; response uses INVALID_STATE with Gate outcome and reason codes.",
-            body = ApiError,
+            body = ApiErrorEnvelope,
             content_type = "application/json"
         ),
         (
@@ -4157,8 +4158,74 @@ mod tests {
     use super::*;
     use axum::body::{Body, to_bytes};
     use axum::http::{Request, StatusCode, header::AUTHORIZATION, header::CONTENT_TYPE};
+    use serde_json::Map;
     use serde_json::Value;
     use tower::ServiceExt;
+
+    const V1_CORE_OPENAPI_CONTRACT_SNAPSHOT: &str =
+        include_str!("../tests/fixtures/v1_core_openapi_contract.snapshot.json");
+    const V1_CORE_OPENAPI_CONTRACT_SNAPSHOT_PATH: &str = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/fixtures/v1_core_openapi_contract.snapshot.json"
+    );
+    const V1_CORE_SUCCESS_CONTRACT_SNAPSHOT: &str =
+        include_str!("../tests/fixtures/v1_core_success_contract.snapshot.json");
+    const V1_CORE_SUCCESS_CONTRACT_SNAPSHOT_PATH: &str = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/fixtures/v1_core_success_contract.snapshot.json"
+    );
+    const V1_CORE_ERROR_CONTRACT_SNAPSHOT: &str =
+        include_str!("../tests/fixtures/v1_core_error_contract.snapshot.json");
+    const V1_CORE_ERROR_CONTRACT_SNAPSHOT_PATH: &str = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/fixtures/v1_core_error_contract.snapshot.json"
+    );
+    const V1_CORE_OPENAPI_CONTRACT_OPERATIONS: &[(&str, &str)] = &[
+        ("/v1/core/batch", "post"),
+        ("/v1/core/query", "post"),
+        ("/v1/core/context-pack", "post"),
+        ("/v1/core/hydrate", "post"),
+        ("/v1/core/conversations", "get"),
+        ("/v1/core/conversations", "post"),
+        ("/v1/core/conversations/{conversation_id}/turns", "get"),
+        ("/v1/core/conversations/{conversation_id}/turns", "post"),
+        ("/v1/core/turns/{turn_id}", "get"),
+        ("/v1/core/turns/annotate", "get"),
+        ("/v1/core/turns/annotate", "post"),
+    ];
+    const V1_CORE_OPENAPI_CONTRACT_SCHEMA_NAMES: &[&str] = &[
+        "ApiError",
+        "ApiErrorDetails",
+        "ApiErrorEnvelope",
+        "ErrorCode",
+        "CoreBatchEntityInput",
+        "CoreBatchEntityResult",
+        "CoreBatchRequest",
+        "CoreBatchResponse",
+        "CoreContextEdge",
+        "CoreContextEntity",
+        "CoreContextPackItemAccounting",
+        "CoreContextPackRequest",
+        "CoreContextPackResponse",
+        "CoreContextPackStats",
+        "CoreCreateEntityRequest",
+        "CoreCreateTurnRequest",
+        "CoreEntityWriteResponse",
+        "CoreHydrateRequest",
+        "CoreHydrateResponse",
+        "CoreHydrateStatus",
+        "CoreListQuery",
+        "CoreQueryRequest",
+        "CoreTextField",
+        "CountMode",
+        "ResponseMeta",
+        "TurnVadAnnotateQuery",
+        "TurnVadAnnotateRequest",
+        "TurnVadAnnotateResponse",
+        "TurnVadAnnotationSource",
+        "VadPayload",
+        "View",
+    ];
 
     #[test]
     fn search_response_drops_stale_hydrated_hits() {
@@ -4243,6 +4310,12 @@ mod tests {
             usage_mode,
             ..Default::default()
         })
+    }
+
+    fn seeded_test_entity_id(counter: u128) -> oneiron::EntityId {
+        let mut bytes = counter.to_be_bytes();
+        bytes[0] = 0x7e;
+        oneiron::EntityId::from_bytes(bytes).expect("seeded test id should be valid")
     }
 
     #[tokio::test]
@@ -4360,6 +4433,19 @@ mod tests {
             .expect("request")
     }
 
+    fn core_request(method: &str, uri: &str, scope: &str, body: Option<&Value>) -> Request<Body> {
+        let mut builder = Request::builder()
+            .method(method)
+            .uri(uri)
+            .header(AUTHORIZATION, format!("Bearer secret;scope={scope}"));
+        if body.is_some() {
+            builder = builder.header(CONTENT_TYPE, "application/json");
+        }
+        builder
+            .body(body.map_or_else(Body::empty, |body| Body::from(body.to_string())))
+            .expect("request")
+    }
+
     async fn route_json(server: Arc<SyncServer>, request: Request<Body>) -> (StatusCode, Value) {
         let response = api_routes(server)
             .oneshot(request)
@@ -4393,6 +4479,295 @@ mod tests {
             body.get("code").is_none(),
             "v1 core errors must not serialize as a flat ApiError: {body:?}"
         );
+    }
+
+    fn assert_json_snapshot(actual: Value, fixture: &str, path: &str, label: &str) {
+        assert_json_snapshot_with_update(
+            actual,
+            fixture,
+            path,
+            label,
+            std::env::var_os("ONEIRON_UPDATE_TEST_FIXTURES").is_some(),
+        );
+    }
+
+    fn assert_json_snapshot_with_update(
+        mut actual: Value,
+        fixture: &str,
+        path: &str,
+        label: &str,
+        update_fixture: bool,
+    ) {
+        let mut expected: Value = serde_json::from_str(fixture).expect("snapshot fixture JSON");
+        sort_json(&mut actual);
+        let actual = serde_json::to_string_pretty(&actual).expect("serialize actual snapshot");
+        if update_fixture {
+            std::fs::write(path, format!("{actual}\n")).expect("write snapshot fixture");
+            return;
+        }
+        let actual: Value = serde_json::from_str(&actual).expect("actual snapshot JSON");
+        sort_json(&mut expected);
+        if actual != expected {
+            let actual = serde_json::to_string_pretty(&actual).expect("serialize actual snapshot");
+            panic!("{label} snapshot drifted; update fixture with:\n{actual}");
+        }
+    }
+
+    #[test]
+    fn assert_json_snapshot_update_writes_fixture_without_comparing_stale_fixture() {
+        let dir = tempfile::tempdir().expect("temp snapshot dir");
+        let path = dir.path().join("snapshot.json");
+        let path = path.to_str().expect("snapshot path should be UTF-8");
+
+        assert_json_snapshot_with_update(
+            json!({ "updated": true }),
+            r#"{ "stale": true }"#,
+            path,
+            "fixture update",
+            true,
+        );
+
+        let written = std::fs::read_to_string(path).expect("read updated fixture");
+        let written: Value = serde_json::from_str(&written).expect("updated fixture JSON");
+        assert_eq!(written, json!({ "updated": true }));
+    }
+
+    fn sort_json(value: &mut Value) {
+        match value {
+            Value::Array(items) => {
+                for item in items {
+                    sort_json(item);
+                }
+            }
+            Value::Object(object) => {
+                let mut entries = std::mem::take(object).into_iter().collect::<Vec<_>>();
+                entries.sort_by(|(left, _), (right, _)| left.cmp(right));
+
+                for (key, mut value) in entries {
+                    sort_json(&mut value);
+                    object.insert(key, value);
+                }
+            }
+            Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => {}
+        }
+    }
+
+    #[test]
+    fn sort_json_orders_object_keys_recursively() {
+        let mut value = json!({
+            "z": {
+                "nested_z": true,
+                "nested_a": true
+            },
+            "a": [
+                {
+                    "array_z": true,
+                    "array_a": true
+                }
+            ]
+        });
+
+        sort_json(&mut value);
+
+        let serialized = serde_json::to_string(&value).expect("serialize sorted JSON");
+        assert_eq!(
+            serialized,
+            r#"{"a":[{"array_a":true,"array_z":true}],"z":{"nested_a":true,"nested_z":true}}"#
+        );
+    }
+
+    fn normalize_contract_body(body: &mut Value) {
+        match body {
+            Value::Array(items) => {
+                for item in items {
+                    normalize_contract_body(item);
+                }
+            }
+            Value::Object(object) => {
+                for (key, value) in object {
+                    match key.as_str() {
+                        "query_time_us" => *value = Value::from("<duration-us>"),
+                        "requestId" => *value = Value::from("<request-id>"),
+                        _ => normalize_contract_body(value),
+                    }
+                }
+            }
+            Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => {}
+        }
+    }
+
+    fn contract_exchange(
+        name: &str,
+        method: &str,
+        path: &str,
+        auth_scope: Option<&str>,
+        request_body: Option<Value>,
+        status: StatusCode,
+        mut response_body: Value,
+    ) -> Value {
+        normalize_contract_body(&mut response_body);
+        json!({
+            "name": name,
+            "request": {
+                "method": method,
+                "path": path,
+                "auth": auth_scope.map_or_else(
+                    || json!({ "type": "none" }),
+                    |scope| json!({ "type": "bearer", "scope": scope }),
+                ),
+                "body": request_body.unwrap_or(Value::Null),
+            },
+            "response": {
+                "status": status.as_u16(),
+                "body": response_body,
+            },
+        })
+    }
+
+    fn openapi_operation_contract(operation: &Value) -> Value {
+        let responses = operation["responses"]
+            .as_object()
+            .expect("responses object")
+            .iter()
+            .map(|(status, response)| {
+                (
+                    status.clone(),
+                    json!({
+                        "description": response["description"].clone(),
+                        "schema": openapi_json_schema_ref(response),
+                    }),
+                )
+            })
+            .collect::<Map<_, _>>();
+        let parameters = operation["parameters"]
+            .as_array()
+            .map(|parameters| {
+                parameters
+                    .iter()
+                    .map(|parameter| {
+                        json!({
+                            "name": parameter["name"].clone(),
+                            "in": parameter["in"].clone(),
+                            "required": parameter["required"].clone(),
+                            "schema": openapi_schema_shape(&parameter["schema"]),
+                        })
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        json!({
+            "operationId": operation["operationId"].clone(),
+            "security": operation["security"].clone(),
+            "parameters": parameters,
+            "requestSchema": operation
+                .get("requestBody")
+                .map(openapi_json_schema_ref)
+                .unwrap_or(Value::Null),
+            "responses": responses,
+        })
+    }
+
+    fn openapi_json_schema_ref(value: &Value) -> Value {
+        value
+            .pointer("/content/application~1json/schema")
+            .map(openapi_schema_shape)
+            .unwrap_or(Value::Null)
+    }
+
+    fn openapi_component_schema<'a>(spec: &'a Value, name: &str) -> &'a Value {
+        spec.pointer(&format!("/components/schemas/{name}"))
+            .unwrap_or_else(|| panic!("OpenAPI component schema {name} must exist"))
+    }
+
+    fn openapi_schema_contract(schema: &Value) -> Value {
+        let mut contract = Map::new();
+        for key in [
+            "$ref",
+            "type",
+            "format",
+            "enum",
+            "const",
+            "required",
+            "default",
+            "nullable",
+            "additionalProperties",
+            "discriminator",
+        ] {
+            if let Some(value) = schema.get(key) {
+                contract.insert(key.to_owned(), value.clone());
+            }
+        }
+        if let Some(properties) = schema.get("properties").and_then(Value::as_object) {
+            let mut property_contract = Map::new();
+            for (name, property) in properties {
+                property_contract.insert(name.clone(), openapi_schema_contract(property));
+            }
+            contract.insert("properties".to_owned(), Value::Object(property_contract));
+        }
+        if let Some(items) = schema.get("items") {
+            contract.insert("items".to_owned(), openapi_schema_contract(items));
+        }
+        for key in ["oneOf", "anyOf", "allOf"] {
+            if let Some(schemas) = schema.get(key).and_then(Value::as_array) {
+                contract.insert(
+                    key.to_owned(),
+                    Value::Array(schemas.iter().map(openapi_schema_contract).collect()),
+                );
+            }
+        }
+        Value::Object(contract)
+    }
+
+    fn openapi_schema_shape(schema: &Value) -> Value {
+        let mut shape = Map::new();
+        for key in ["$ref", "type", "format", "enum", "required", "default"] {
+            if let Some(value) = schema.get(key) {
+                shape.insert(key.to_owned(), value.clone());
+            }
+        }
+        if let Some(items) = schema.get("items") {
+            shape.insert("items".to_owned(), openapi_schema_shape(items));
+        }
+        if let Some(one_of) = schema.get("oneOf").and_then(Value::as_array) {
+            shape.insert(
+                "oneOf".to_owned(),
+                Value::Array(one_of.iter().map(openapi_schema_shape).collect()),
+            );
+        }
+        Value::Object(shape)
+    }
+
+    fn collect_schema_refs(value: &Value, refs: &mut BTreeSet<String>) {
+        match value {
+            Value::Array(items) => {
+                for item in items {
+                    collect_schema_refs(item, refs);
+                }
+            }
+            Value::Object(object) => {
+                if let Some(name) = object
+                    .get("$ref")
+                    .and_then(Value::as_str)
+                    .and_then(|reference| reference.strip_prefix("#/components/schemas/"))
+                {
+                    refs.insert(name.to_owned());
+                }
+                for value in object.values() {
+                    collect_schema_refs(value, refs);
+                }
+            }
+            Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => {}
+        }
+    }
+
+    async fn core_json(
+        server: Arc<SyncServer>,
+        method: &str,
+        uri: &str,
+        scope: &str,
+        body: Option<&Value>,
+    ) -> (StatusCode, Value) {
+        route_json(server, core_request(method, uri, scope, body)).await
     }
 
     fn seed_turn(server: &SyncServer, text: &str) -> oneiron::EntityId {
@@ -4450,6 +4825,593 @@ mod tests {
                 .expect("request"),
         )
         .await
+    }
+
+    #[test]
+    fn v1_core_openapi_contract_snapshot_matches_fixture() {
+        let spec = generated_spec();
+        let mut paths = Map::new();
+        for &(path, method) in V1_CORE_OPENAPI_CONTRACT_OPERATIONS {
+            paths
+                .entry(path.to_owned())
+                .or_insert_with(|| Value::Object(Map::new()))
+                .as_object_mut()
+                .expect("path item object")
+                .insert(
+                    method.to_owned(),
+                    openapi_operation_contract(&spec["paths"][path][method]),
+                );
+        }
+
+        let mut schemas = Map::new();
+        for name in V1_CORE_OPENAPI_CONTRACT_SCHEMA_NAMES {
+            schemas.insert(
+                (*name).to_owned(),
+                openapi_schema_contract(openapi_component_schema(&spec, name)),
+            );
+        }
+
+        assert_json_snapshot(
+            json!({
+                "paths": paths,
+                "components": {
+                    "schemas": schemas,
+                    "securitySchemes": {
+                        "CoreBearer": spec["components"]["securitySchemes"]["CoreBearer"].clone(),
+                        "OneironSecret": spec["components"]["securitySchemes"]["OneironSecret"].clone(),
+                    },
+                },
+            }),
+            V1_CORE_OPENAPI_CONTRACT_SNAPSHOT,
+            V1_CORE_OPENAPI_CONTRACT_SNAPSHOT_PATH,
+            "v1 core OpenAPI contract",
+        );
+    }
+
+    #[test]
+    fn v1_core_openapi_contract_snapshots_referenced_schemas() {
+        let spec = generated_spec();
+        let mut references = BTreeSet::new();
+        for &(path, method) in V1_CORE_OPENAPI_CONTRACT_OPERATIONS {
+            collect_schema_refs(
+                &openapi_operation_contract(&spec["paths"][path][method]),
+                &mut references,
+            );
+        }
+        for name in V1_CORE_OPENAPI_CONTRACT_SCHEMA_NAMES {
+            collect_schema_refs(
+                &openapi_schema_contract(openapi_component_schema(&spec, name)),
+                &mut references,
+            );
+        }
+
+        let missing = references
+            .into_iter()
+            .filter(|name| !V1_CORE_OPENAPI_CONTRACT_SCHEMA_NAMES.contains(&name.as_str()))
+            .collect::<Vec<_>>();
+        assert!(
+            missing.is_empty(),
+            "OpenAPI contract references unsnapshotted schemas: {missing:?}"
+        );
+    }
+
+    #[test]
+    fn v1_core_openapi_documents_invalid_state_envelopes() {
+        let spec = generated_spec();
+        let turn_create_post_responses =
+            spec["paths"]["/v1/core/conversations/{conversation_id}/turns"]["post"]["responses"]
+                .as_object()
+                .expect("turn create POST responses object");
+        assert!(
+            turn_create_post_responses.contains_key("409"),
+            "turn create POST must document INVALID_STATE conflict responses"
+        );
+        assert_eq!(
+            turn_create_post_responses["409"]["content"]["application/json"]["schema"]["$ref"],
+            Value::from("#/components/schemas/ApiErrorEnvelope"),
+            "turn create 409 must use the ApiErrorEnvelope schema"
+        );
+
+        let turn_annotate_post_responses =
+            spec["paths"]["/v1/core/turns/annotate"]["post"]["responses"]
+                .as_object()
+                .expect("turn annotate POST responses object");
+        assert!(
+            turn_annotate_post_responses.contains_key("409"),
+            "turn annotate POST must document Gate INVALID_STATE conflict responses"
+        );
+        assert_eq!(
+            turn_annotate_post_responses["409"]["content"]["application/json"]["schema"]["$ref"],
+            Value::from("#/components/schemas/ApiErrorEnvelope"),
+            "turn annotate 409 must use the ApiErrorEnvelope schema"
+        );
+    }
+
+    #[test]
+    fn v1_core_openapi_contract_preserves_nested_error_schema_fidelity() {
+        let spec = generated_spec();
+        let envelope = openapi_schema_contract(openapi_component_schema(&spec, "ApiErrorEnvelope"));
+        assert!(
+            envelope
+                .pointer("/properties/error/properties/code/enum")
+                .and_then(Value::as_array)
+                .is_some_and(|codes| codes.len() == ErrorCode::ALL.len()),
+            "ApiErrorEnvelope.error.code must snapshot the full ErrorCode enum: {envelope}"
+        );
+        assert!(
+            envelope
+                .pointer("/properties/error/properties/details/oneOf")
+                .and_then(Value::as_array)
+                .is_some_and(|variants| variants.len() == ErrorCode::ALL.len()),
+            "ApiErrorEnvelope.error.details must snapshot all ApiErrorDetails variants: {envelope}"
+        );
+
+        let api_error = openapi_schema_contract(openapi_component_schema(&spec, "ApiError"));
+        assert!(
+            api_error
+                .pointer("/properties/code/enum")
+                .and_then(Value::as_array)
+                .is_some_and(|codes| codes.len() == ErrorCode::ALL.len()),
+            "ApiError.code must snapshot the full ErrorCode enum: {api_error}"
+        );
+        assert!(
+            api_error
+                .pointer("/properties/details/oneOf")
+                .and_then(Value::as_array)
+                .is_some_and(|variants| variants.len() == ErrorCode::ALL.len()),
+            "ApiError.details must snapshot all ApiErrorDetails variants: {api_error}"
+        );
+
+        let api_error_details =
+            openapi_schema_contract(openapi_component_schema(&spec, "ApiErrorDetails"));
+        assert!(
+            api_error_details
+                .pointer("/oneOf")
+                .and_then(Value::as_array)
+                .is_some_and(|variants| variants.len() == ErrorCode::ALL.len()),
+            "ApiErrorDetails must snapshot all error detail variants: {api_error_details}"
+        );
+
+        let error_code = openapi_schema_contract(openapi_component_schema(&spec, "ErrorCode"));
+        assert!(
+            error_code
+                .pointer("/enum")
+                .and_then(Value::as_array)
+                .is_some_and(|codes| codes.len() == ErrorCode::ALL.len()),
+            "ErrorCode must snapshot the full enum catalog: {error_code}"
+        );
+    }
+
+    #[tokio::test]
+    async fn v1_core_success_contract_snapshot_matches_fixture() {
+        let (_dir, server) = test_server_with_config(SyncServerConfig {
+            auth_secret: Some("secret".to_owned()),
+            ..Default::default()
+        });
+        let batch_id = seeded_test_entity_id(0x1221_0001).to_hex();
+        let conversation_id = seeded_test_entity_id(0x1221_0002).to_hex();
+        let turn_id = seeded_test_entity_id(0x1221_0003).to_hex();
+        let mut exchanges = Vec::new();
+
+        let batch_request = json!({
+            "entities": [{
+                "id": batch_id,
+                "entity_type": ENTITY_TYPE_TURN,
+                "occurred_start": 1_782_357_600_u64,
+                "occurred_end": 1_782_357_600_u64,
+                "learned_at": 1_782_357_635_u64,
+                "body": {
+                    "txt": "blue hallway contractneedle",
+                    "spkr": "user",
+                    "at": 1_782_357_600_u64
+                },
+                "text": [{ "field": "body", "value": "blue hallway contractneedle" }]
+            }]
+        });
+        let (status, body) = core_json(
+            server.clone(),
+            "POST",
+            "/v1/core/batch",
+            "core:write",
+            Some(&batch_request),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        exchanges.push(contract_exchange(
+            "core_batch",
+            "POST",
+            "/v1/core/batch",
+            Some("core:write"),
+            Some(batch_request),
+            status,
+            body,
+        ));
+
+        let query_request = json!({
+            "query": "contractneedle",
+            "limit": 3,
+            "view": "full",
+            "countMode": "estimate"
+        });
+        let (status, body) = core_json(
+            server.clone(),
+            "POST",
+            "/v1/core/query",
+            "core:read",
+            Some(&query_request),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        exchanges.push(contract_exchange(
+            "core_query",
+            "POST",
+            "/v1/core/query",
+            Some("core:read"),
+            Some(query_request),
+            status,
+            body,
+        ));
+
+        let context_pack_request = json!({
+            "query": "contractneedle",
+            "limit": 3,
+            "view": "full",
+            "include_edges": false
+        });
+        let (status, context_pack_body) = core_json(
+            server.clone(),
+            "POST",
+            "/v1/core/context-pack",
+            "core:read",
+            Some(&context_pack_request),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        let context_entity = &context_pack_body["results"][0];
+        let short_ref = format!(
+            "{}:{}",
+            context_entity["short_id"].as_str().expect("short id"),
+            context_entity["content_hash"]
+                .as_str()
+                .expect("content hash")
+        );
+        exchanges.push(contract_exchange(
+            "core_context_pack",
+            "POST",
+            "/v1/core/context-pack",
+            Some("core:read"),
+            Some(context_pack_request),
+            status,
+            context_pack_body,
+        ));
+
+        let hydrate_request = json!({
+            "ref": short_ref,
+            "view": "full"
+        });
+        let (status, body) = core_json(
+            server.clone(),
+            "POST",
+            "/v1/core/hydrate",
+            "core:read",
+            Some(&hydrate_request),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        exchanges.push(contract_exchange(
+            "core_hydrate",
+            "POST",
+            "/v1/core/hydrate",
+            Some("core:read"),
+            Some(hydrate_request),
+            status,
+            body,
+        ));
+
+        let conversation_request = json!({
+            "id": conversation_id,
+            "occurred_start": 1_782_357_700_u64,
+            "occurred_end": 1_782_357_700_u64,
+            "learned_at": 1_782_357_735_u64,
+            "body": { "name": "Contract dream" },
+            "text": [{ "field": "name", "value": "Contract dream" }]
+        });
+        let (status, body) = core_json(
+            server.clone(),
+            "POST",
+            "/v1/core/conversations",
+            "core:write",
+            Some(&conversation_request),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        exchanges.push(contract_exchange(
+            "create_core_conversation",
+            "POST",
+            "/v1/core/conversations",
+            Some("core:write"),
+            Some(conversation_request),
+            status,
+            body,
+        ));
+
+        let conversations_path = "/v1/core/conversations?view=full&limit=5&countMode=exact";
+        let (status, body) =
+            core_json(server.clone(), "GET", conversations_path, "core:read", None).await;
+        assert_eq!(status, StatusCode::OK);
+        exchanges.push(contract_exchange(
+            "list_core_conversations",
+            "GET",
+            conversations_path,
+            Some("core:read"),
+            None,
+            status,
+            body,
+        ));
+
+        let turn_request = json!({
+            "id": turn_id,
+            "occurred_start": 1_782_357_800_u64,
+            "occurred_end": 1_782_357_800_u64,
+            "learned_at": 1_782_357_835_u64,
+            "body": {
+                "txt": "turn contract envelope",
+                "spkr": "assistant",
+                "at": 1_782_357_800_u64
+            },
+            "text": [{ "field": "body", "value": "turn contract envelope" }]
+        });
+        let turns_path = format!("/v1/core/conversations/{conversation_id}/turns");
+        let (status, body) = core_json(
+            server.clone(),
+            "POST",
+            &turns_path,
+            "core:write",
+            Some(&turn_request),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        exchanges.push(contract_exchange(
+            "create_core_conversation_turn",
+            "POST",
+            &turns_path,
+            Some("core:write"),
+            Some(turn_request),
+            status,
+            body,
+        ));
+
+        let list_turns_path =
+            format!("/v1/core/conversations/{conversation_id}/turns?view=full&limit=5");
+        let (status, body) =
+            core_json(server.clone(), "GET", &list_turns_path, "core:read", None).await;
+        assert_eq!(status, StatusCode::OK);
+        exchanges.push(contract_exchange(
+            "list_core_conversation_turns",
+            "GET",
+            &list_turns_path,
+            Some("core:read"),
+            None,
+            status,
+            body,
+        ));
+
+        let get_turn_path = format!("/v1/core/turns/{turn_id}?view=full");
+        let (status, body) =
+            core_json(server.clone(), "GET", &get_turn_path, "core:read", None).await;
+        assert_eq!(status, StatusCode::OK);
+        exchanges.push(contract_exchange(
+            "get_core_turn",
+            "GET",
+            &get_turn_path,
+            Some("core:read"),
+            None,
+            status,
+            body,
+        ));
+
+        let annotate_request = json!({
+            "turn_id": turn_id,
+            "source": "model_inference",
+            "vad": {
+                "valence": 0.25,
+                "arousal": 0.5,
+                "dominance": 0.75
+            },
+            "annotated_at": 1_782_357_900_u64
+        });
+        let (status, body) = core_json(
+            server.clone(),
+            "POST",
+            "/v1/core/turns/annotate",
+            "core:write",
+            Some(&annotate_request),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        exchanges.push(contract_exchange(
+            "annotate_turn_vad",
+            "POST",
+            "/v1/core/turns/annotate",
+            Some("core:write"),
+            Some(annotate_request),
+            status,
+            body,
+        ));
+
+        let read_annotation_path = format!("/v1/core/turns/annotate?turn_id={turn_id}");
+        let (status, body) =
+            core_json(server, "GET", &read_annotation_path, "core:read", None).await;
+        assert_eq!(status, StatusCode::OK);
+        exchanges.push(contract_exchange(
+            "read_turn_vad_annotation",
+            "GET",
+            &read_annotation_path,
+            Some("core:read"),
+            None,
+            status,
+            body,
+        ));
+
+        assert_json_snapshot(
+            Value::Array(exchanges),
+            V1_CORE_SUCCESS_CONTRACT_SNAPSHOT,
+            V1_CORE_SUCCESS_CONTRACT_SNAPSHOT_PATH,
+            "v1 core success contract",
+        );
+    }
+
+    #[tokio::test]
+    async fn v1_core_error_contract_snapshot_matches_fixture() {
+        let (_dir, server) = test_server_with_config(SyncServerConfig {
+            auth_secret: Some("secret".to_owned()),
+            ..Default::default()
+        });
+        let missing_id = seeded_test_entity_id(0x1221_00ff).to_hex();
+        let deleted_id = seeded_test_entity_id(0x1221_dead);
+        let deleted_body = rmp_serde::to_vec_named(&json!({
+            "txt": "deleted contract turn",
+            "spkr": "user",
+            "at": 1_782_358_000_u64,
+        }))
+        .expect("encode deleted turn");
+        server
+            .vault
+            .batch()
+            .put(
+                &deleted_id,
+                ENTITY_TYPE_TURN,
+                oneiron::TimeRange {
+                    start: 1_782_358_000_u64,
+                    end: 1_782_358_000_u64,
+                },
+                1_782_358_000_u64,
+                &deleted_body,
+            )
+            .text(&deleted_id, &[("body", "deleted contract turn")])
+            .commit()
+            .expect("seed deleted turn");
+        let deleted_pack = server
+            .vault
+            .context_pack()
+            .search_text("deleted contract turn", 1)
+            .run()
+            .expect("deleted context pack");
+        let deleted_entity = deleted_pack
+            .results
+            .first()
+            .expect("deleted entity has short ref");
+        let deleted_ref = format!(
+            "{}:{:02x}",
+            deleted_entity.short_id, deleted_entity.content_hash
+        );
+        server
+            .vault
+            .delete_entity_with_reason(&deleted_id, oneiron::DeleteReason::UserDelete)
+            .expect("delete seeded turn");
+
+        let mut exchanges = Vec::new();
+
+        let malformed_request = json!({ "ref": "bad-ref" });
+        let (status, body) = core_json(
+            server.clone(),
+            "POST",
+            "/v1/core/hydrate",
+            "core:read",
+            Some(&malformed_request),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_error_envelope(&body, "BAD_REQUEST");
+        exchanges.push(contract_exchange(
+            "malformed_request",
+            "POST",
+            "/v1/core/hydrate",
+            Some("core:read"),
+            Some(malformed_request),
+            status,
+            body,
+        ));
+
+        let missing_auth_path = "/v1/core/turns/annotate?turn_id=not-an-entity";
+        let (status, body) = route_json(
+            server.clone(),
+            Request::builder()
+                .uri(missing_auth_path)
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await;
+        assert_eq!(status, StatusCode::UNAUTHORIZED);
+        assert_error_envelope(&body, "UNAUTHORIZED");
+        exchanges.push(contract_exchange(
+            "missing_auth",
+            "GET",
+            missing_auth_path,
+            None,
+            None,
+            status,
+            body,
+        ));
+
+        let wrong_scope_path = "/v1/core/turns/annotate?turn_id=not-an-entity";
+        let (status, body) =
+            core_json(server.clone(), "GET", wrong_scope_path, "core:write", None).await;
+        assert_eq!(status, StatusCode::FORBIDDEN);
+        assert_error_envelope(&body, "FORBIDDEN");
+        exchanges.push(contract_exchange(
+            "wrong_scope",
+            "GET",
+            wrong_scope_path,
+            Some("core:write"),
+            None,
+            status,
+            body,
+        ));
+
+        let not_found_path = format!("/v1/core/turns/{missing_id}");
+        let (status, body) =
+            core_json(server.clone(), "GET", &not_found_path, "core:read", None).await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+        assert_error_envelope(&body, "NOT_FOUND");
+        exchanges.push(contract_exchange(
+            "not_found",
+            "GET",
+            &not_found_path,
+            Some("core:read"),
+            None,
+            status,
+            body,
+        ));
+
+        let deleted_request = json!({ "ref": deleted_ref });
+        let (status, body) = core_json(
+            server,
+            "POST",
+            "/v1/core/hydrate",
+            "core:read",
+            Some(&deleted_request),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body["status"], Value::from("deleted"));
+        assert!(body.get("item").is_none());
+        exchanges.push(contract_exchange(
+            "deleted_entity",
+            "POST",
+            "/v1/core/hydrate",
+            Some("core:read"),
+            Some(deleted_request),
+            status,
+            body,
+        ));
+
+        assert_json_snapshot(
+            Value::Array(exchanges),
+            V1_CORE_ERROR_CONTRACT_SNAPSHOT,
+            V1_CORE_ERROR_CONTRACT_SNAPSHOT_PATH,
+            "v1 core error contract",
+        );
     }
 
     async fn top_up_route(
@@ -4605,8 +5567,8 @@ mod tests {
         );
         assert_eq!(
             turn_annotate_post_responses["409"]["content"]["application/json"]["schema"]["$ref"],
-            Value::from("#/components/schemas/ApiError"),
-            "turn annotate 409 must use the structured ApiError schema"
+            Value::from("#/components/schemas/ApiErrorEnvelope"),
+            "turn annotate 409 must use the ApiErrorEnvelope schema"
         );
         let context_pack_responses = spec["paths"]["/api/context-pack"]["post"]["responses"]
             .as_object()
