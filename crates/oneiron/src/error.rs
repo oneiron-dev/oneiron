@@ -373,7 +373,7 @@ pub enum Error {
     /// Encountered malformed key or value bytes.
     #[error("invalid key or value bytes")]
     InvalidKey,
-    /// A FEDERATION_GRANT (type 123) body failed structural validation.
+    /// A FEDERATION_GRANT (type 124) body failed structural validation.
     #[error("invalid federation grant body: {0}")]
     InvalidFederationGrantBody(&'static str),
     /// Index metadata or neighbor storage is internally inconsistent.
