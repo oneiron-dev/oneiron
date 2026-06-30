@@ -618,7 +618,10 @@ where
         for item in dups {
             let (_, dup) = item?;
             let entry = decode_posting_entry(dup)?;
-            if posting_has_enabled_channel(config, &entry)? && posting_matches(&entry.id)? {
+            let Some(scope_id) = lexical_query_hint_scope_id(store, rtxn, &entry.id)? else {
+                continue;
+            };
+            if posting_has_enabled_channel(config, &entry)? && posting_matches(&scope_id)? {
                 return Ok(true);
             }
         }
@@ -715,7 +718,10 @@ fn exact_term_has_scoped_posting(
     for item in dups {
         let (_, dup) = item?;
         let entry = decode_posting_entry(dup)?;
-        if exact_posting_matches_scope(&entry.id)? && posting_has_enabled_channel(config, &entry)? {
+        let Some(scope_id) = lexical_query_hint_scope_id(store, rtxn, &entry.id)? else {
+            continue;
+        };
+        if exact_posting_matches_scope(&scope_id)? && posting_has_enabled_channel(config, &entry)? {
             return Ok(true);
         }
     }
@@ -746,7 +752,10 @@ fn term_posting_decisions(
         if !posting_has_enabled_channel(config, &entry)? {
             continue;
         }
-        let decision = classify_posting(&entry.id)?;
+        let Some(scope_id) = lexical_query_hint_scope_id(store, rtxn, &entry.id)? else {
+            continue;
+        };
+        let decision = classify_posting(&scope_id)?;
         decisions.has_scoped_posting |= decision.matches_scope;
         decisions.has_rejected_posting |= decision.rejected_by_gate;
         if decisions.has_scoped_posting && decisions.has_rejected_posting {
@@ -1024,6 +1033,7 @@ where
         }
     }
 
+    collapse_lexical_query_hint_scores(store, rtxn, &mut scores)?;
     apply_recency_blend(store, rtxn, options.recency, &mut scores)?;
 
     let mut ranked: Vec<(EntityId, f64)> = scores.into_iter().collect();
@@ -1048,6 +1058,127 @@ fn compute_avgdl(store: &Store, rtxn: &RoTxn<'_>, field_id: u16) -> Result<f64> 
         return Ok(0.0);
     }
     Ok(total_length as f64 / f64::from(doc_count))
+}
+
+fn collapse_lexical_query_hint_scores(
+    store: &Store,
+    rtxn: &RoTxn<'_>,
+    scores: &mut HashMap<EntityId, f64>,
+) -> Result<()> {
+    let mut collapsed = HashMap::<EntityId, f64>::with_capacity(scores.len());
+    for (id, score) in scores.drain() {
+        let target = match resolve_lexical_query_hint_record(store, rtxn, &id)? {
+            LexicalQueryHintResolution::Live { target } => {
+                if !lexical_query_hint_target_is_live_claim(store, rtxn, &target)? {
+                    continue;
+                }
+                target
+            }
+            LexicalQueryHintResolution::DeadHint => continue,
+            LexicalQueryHintResolution::NonHint => id,
+        };
+        match collapsed.entry(target) {
+            Entry::Occupied(mut entry) => {
+                if score > *entry.get() {
+                    *entry.get_mut() = score;
+                }
+            }
+            Entry::Vacant(entry) => {
+                entry.insert(score);
+            }
+        }
+    }
+    *scores = collapsed;
+    Ok(())
+}
+
+enum LexicalQueryHintResolution {
+    NonHint,
+    Live { target: EntityId },
+    DeadHint,
+}
+
+fn resolve_lexical_query_hint_record(
+    store: &Store,
+    rtxn: &RoTxn<'_>,
+    id: &EntityId,
+) -> Result<LexicalQueryHintResolution> {
+    if !id
+        .as_bytes()
+        .starts_with(&crate::claim::LEXICAL_QUERY_HINT_ID_PREFIX)
+    {
+        return Ok(LexicalQueryHintResolution::NonHint);
+    }
+    let Some(raw) = store.entities.get(rtxn, id.as_bytes())? else {
+        return Ok(LexicalQueryHintResolution::NonHint);
+    };
+    let Some(header) = EntityMetadataHeader::parse(raw) else {
+        return Err(corrupted("entity header"));
+    };
+    if header.entity_type != crate::types::ENTITY_TYPE_CLAIM {
+        return Ok(LexicalQueryHintResolution::NonHint);
+    }
+    if raw.len() == crate::batch::ENTITY_METADATA_HEADER_LEN {
+        return Ok(LexicalQueryHintResolution::DeadHint);
+    }
+    let body =
+        crate::claim::decode_claim_body(&raw[crate::batch::ENTITY_METADATA_HEADER_LEN..], true)
+            .map_err(|_| corrupted("lexical query hint claim"))?;
+    if body.predicate != crate::claim::PREDICATE_LEXICAL_QUERY_HINT {
+        return Ok(LexicalQueryHintResolution::NonHint);
+    }
+    if body.lifecycle != crate::claim::ClaimLifecycleStatus::Active {
+        return Ok(LexicalQueryHintResolution::DeadHint);
+    }
+    if !body.stale {
+        return Ok(LexicalQueryHintResolution::DeadHint);
+    }
+    let Some(target) = crate::claim::lexical_query_hint_target(&body)
+        .map_err(|_| corrupted("lexical query hint claim"))?
+    else {
+        return Ok(LexicalQueryHintResolution::DeadHint);
+    };
+    Ok(LexicalQueryHintResolution::Live { target })
+}
+
+fn lexical_query_hint_target_is_live_claim(
+    store: &Store,
+    rtxn: &RoTxn<'_>,
+    target: &EntityId,
+) -> Result<bool> {
+    let Some(raw) = store.entities.get(rtxn, target.as_bytes())? else {
+        return Ok(false);
+    };
+    let Some(header) = EntityMetadataHeader::parse(raw) else {
+        return Err(corrupted("entity header"));
+    };
+    if header.entity_type != crate::types::ENTITY_TYPE_CLAIM {
+        return Ok(false);
+    }
+    let Ok(body) =
+        crate::claim::decode_claim_body(&raw[crate::batch::ENTITY_METADATA_HEADER_LEN..], true)
+    else {
+        return Ok(false);
+    };
+    Ok(body.lifecycle == crate::claim::ClaimLifecycleStatus::Active)
+}
+
+fn lexical_query_hint_scope_id(
+    store: &Store,
+    rtxn: &RoTxn<'_>,
+    id: &EntityId,
+) -> Result<Option<EntityId>> {
+    match resolve_lexical_query_hint_record(store, rtxn, id)? {
+        LexicalQueryHintResolution::Live { target } => {
+            if lexical_query_hint_target_is_live_claim(store, rtxn, &target)? {
+                Ok(Some(target))
+            } else {
+                Ok(None)
+            }
+        }
+        LexicalQueryHintResolution::NonHint => Ok(Some(*id)),
+        LexicalQueryHintResolution::DeadHint => Ok(None),
+    }
 }
 
 // === Encoders / decoders ===
@@ -1321,9 +1452,14 @@ fn validate_text_doc_id(id: &EntityId) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::types::{HnswConfig, TimeRange, VaultConfig};
+    use crate::claim::{ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource};
+    use crate::types::{
+        ClaimCandidate, ENTITY_TYPE_CLAIM, ENTITY_TYPE_PERSON, EdgeActorClass, HnswConfig,
+        TimeRange, VaultConfig, WriteActor, WriteEnvelope, WriteProvenance,
+    };
     use crate::{Error, Vault};
     use core::assert_matches;
+    use rmpv::Value;
 
     fn test_config() -> VaultConfig {
         VaultConfig {
@@ -1366,6 +1502,45 @@ mod tests {
         let mut bytes = [0x42; ENTITY_ID_LEN];
         bytes[14..].copy_from_slice(&n.to_be_bytes());
         EntityId::from_bytes_unchecked(bytes)
+    }
+
+    fn lh_prefixed_id(fill: u8) -> Result<EntityId> {
+        let mut raw = [fill; ENTITY_ID_LEN];
+        raw[0] = b'L';
+        raw[1] = b'H';
+        raw[ENTITY_ID_LEN - 1] &= 0x7F;
+        EntityId::from_bytes(raw)
+            .map_err(|_| Error::InvariantViolation("invalid LH-prefixed test id"))
+    }
+
+    fn seed_raw_claim(vault: &Vault, id: &EntityId, body: ClaimBody) -> Result<()> {
+        let data = crate::claim::encode_claim_body(&body)?;
+        seed_raw_claim_bytes(vault, id, &data)
+    }
+
+    fn seed_raw_claim_bytes(vault: &Vault, id: &EntityId, data: &[u8]) -> Result<()> {
+        let header = crate::batch::EntityMetadataHeader {
+            entity_type: ENTITY_TYPE_CLAIM,
+            occurred_start: 1,
+            occurred_end: 1,
+            learned_at: 2,
+        };
+        let mut payload = Vec::with_capacity(crate::batch::ENTITY_METADATA_HEADER_LEN + data.len());
+        payload.push(header.entity_type);
+        payload.extend_from_slice(&header.occurred_start.to_be_bytes());
+        payload.extend_from_slice(&header.occurred_end.to_be_bytes());
+        payload.extend_from_slice(&header.learned_at.to_be_bytes());
+        payload.extend_from_slice(data);
+
+        let mut wtxn = vault.store.env.write_txn()?;
+        vault
+            .store
+            .entities
+            .put(&mut wtxn, id.as_bytes(), &payload)?;
+        let type_key = Store::encode_type_key(ENTITY_TYPE_CLAIM, id);
+        vault.store.type_index.put(&mut wtxn, &type_key, &[])?;
+        wtxn.commit()?;
+        Ok(())
     }
 
     fn final_word_token(term: &str) -> Token {
@@ -1461,6 +1636,208 @@ mod tests {
         assert!(contains_id(&results, &id1));
         assert!(!contains_id(&results, &id2));
         assert!(!contains_id(&results, &id3));
+        Ok(())
+    }
+
+    #[test]
+    fn scoped_prefix_expansion_resolves_lexical_hint_target() -> Result<()> {
+        let temp_dir = tempfile::tempdir()?;
+        let vault = Vault::open(temp_dir.path(), test_config())?;
+        let actor = EntityId::now();
+        let subject = EntityId::now();
+        vault.put_entity(
+            &actor,
+            ENTITY_TYPE_PERSON,
+            test_time_range(1, 1),
+            1,
+            b"actor",
+        )?;
+        vault.put_entity(
+            &subject,
+            ENTITY_TYPE_PERSON,
+            test_time_range(1, 1),
+            1,
+            b"subject",
+        )?;
+
+        let claim = EntityId::now();
+        let envelope = WriteEnvelope::new(
+            WriteActor::new(actor, EdgeActorClass::Human),
+            ClaimSource::UserStated,
+            WriteProvenance::new(Value::from("fixture"))?,
+            ClaimApprovalStatus::Approved,
+        );
+        let candidate = ClaimCandidate::new(
+            "profile.preference",
+            crate::claim::ClaimSubject::Entity(subject),
+            Value::from("sencha"),
+            0.9,
+        );
+        vault
+            .batch()
+            .claim_candidate_with_lexical_hints(
+                &claim,
+                candidate,
+                &envelope,
+                test_time_range(10, 10),
+                11,
+                &["scopedprefixalpha"],
+            )
+            .commit()?;
+
+        let rtxn = vault.store.env.read_txn()?;
+        let mut scope_checks = 0usize;
+        let mut exact_posting_matches_scope = |id: &EntityId| {
+            scope_checks += 1;
+            Ok(*id == claim)
+        };
+        let hits = search_text_scoped_with_recency(
+            &vault.store,
+            &rtxn,
+            &vault.analyzer,
+            &Bm25Config::default(),
+            "scopedprefix",
+            10,
+            Bm25SearchOptions {
+                recency: None,
+                exact_posting_matches_scope: &mut exact_posting_matches_scope,
+            },
+        )?;
+
+        assert_eq!(hits.first().map(|hit| hit.id), Some(claim));
+        assert!(scope_checks > 0);
+        Ok(())
+    }
+
+    #[test]
+    fn lh_prefixed_text_only_postings_remain_searchable() -> Result<()> {
+        let temp_dir = tempfile::tempdir()?;
+        let vault = Vault::open(temp_dir.path(), test_config())?;
+        let id = lh_prefixed_id(0x61)?;
+
+        vault
+            .batch()
+            .text(&id, &[("body", "lhprefix text only document")])
+            .commit()?;
+
+        let hits = vault.search_text("lhprefix", 10)?;
+        assert_eq!(hits.first().map(|hit| hit.id), Some(id));
+        Ok(())
+    }
+
+    #[test]
+    fn scoped_prefix_expansion_ignores_dead_lexical_hint_exact_posting() -> Result<()> {
+        let temp_dir = tempfile::tempdir()?;
+        let vault = Vault::open(temp_dir.path(), test_config())?;
+        let live = EntityId::now();
+        put_text_doc(&vault, &live, "deadprobealive")?;
+
+        let missing_target = EntityId::now();
+        let dead_hint = lh_prefixed_id(0x62)?;
+        let mut body = ClaimBody::new(
+            crate::claim::PREDICATE_LEXICAL_QUERY_HINT,
+            crate::claim::ClaimSubject::Entity(missing_target),
+            crate::claim::encode_lexical_query_hint_value(&missing_target, "deadprobe"),
+            1.0,
+            ClaimApprovalStatus::Approved,
+            ClaimLifecycleStatus::Active,
+        );
+        body.stale = true;
+        seed_raw_claim(&vault, &dead_hint, body)?;
+        vault
+            .batch()
+            .text(&dead_hint, &[("query_hint", "deadprobe")])
+            .commit()?;
+
+        let rtxn = vault.store.env.read_txn()?;
+        let mut exact_posting_matches_scope = |id: &EntityId| Ok(*id == live);
+        let hits = search_text_scoped_with_recency(
+            &vault.store,
+            &rtxn,
+            &vault.analyzer,
+            &Bm25Config::default(),
+            "deadprobe",
+            10,
+            Bm25SearchOptions {
+                recency: None,
+                exact_posting_matches_scope: &mut exact_posting_matches_scope,
+            },
+        )?;
+
+        assert_eq!(hits.first().map(|hit| hit.id), Some(live));
+        assert!(!hits.iter().any(|hit| hit.id == dead_hint));
+        Ok(())
+    }
+
+    #[test]
+    fn malformed_non_empty_lexical_hint_claim_posting_fails_closed() -> Result<()> {
+        let temp_dir = tempfile::tempdir()?;
+        let vault = Vault::open(temp_dir.path(), test_config())?;
+        let hint = lh_prefixed_id(0x63)?;
+
+        seed_raw_claim_bytes(&vault, &hint, b"not-msgpack")?;
+        vault
+            .batch()
+            .text(&hint, &[("query_hint", "malformedhintprobe")])
+            .commit()?;
+
+        let err = vault
+            .search_text("malformedhintprobe", 10)
+            .expect_err("malformed non-empty lexical hint rows must not be hidden");
+        assert_matches!(err, Error::CorruptedIndex("lexical query hint claim"));
+        Ok(())
+    }
+
+    #[test]
+    fn header_only_lexical_hint_claim_posting_is_dead_not_corrupt() -> Result<()> {
+        let temp_dir = tempfile::tempdir()?;
+        let vault = Vault::open(temp_dir.path(), test_config())?;
+        let hint = lh_prefixed_id(0x64)?;
+
+        seed_raw_claim_bytes(&vault, &hint, &[])?;
+        vault
+            .batch()
+            .text(&hint, &[("query_hint", "headeronlyhintprobe")])
+            .commit()?;
+
+        let hits = vault.search_text("headeronlyhintprobe", 10)?;
+        assert!(hits.is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn non_stale_lexical_hint_claim_posting_does_not_collapse_to_target() -> Result<()> {
+        let temp_dir = tempfile::tempdir()?;
+        let vault = Vault::open(temp_dir.path(), test_config())?;
+        let target = EntityId::now();
+        let hint = lh_prefixed_id(0x65)?;
+
+        let target_body = ClaimBody::new(
+            "profile.preference",
+            crate::claim::ClaimSubject::Entity(EntityId::now()),
+            Value::from("sencha"),
+            1.0,
+            ClaimApprovalStatus::Approved,
+            ClaimLifecycleStatus::Active,
+        );
+        seed_raw_claim(&vault, &target, target_body)?;
+
+        let body = ClaimBody::new(
+            crate::claim::PREDICATE_LEXICAL_QUERY_HINT,
+            crate::claim::ClaimSubject::Entity(target),
+            crate::claim::encode_lexical_query_hint_value(&target, "nonstalehintprobe"),
+            1.0,
+            ClaimApprovalStatus::Approved,
+            ClaimLifecycleStatus::Active,
+        );
+        seed_raw_claim(&vault, &hint, body)?;
+        vault
+            .batch()
+            .text(&hint, &[("query_hint", "nonstalehintprobe")])
+            .commit()?;
+
+        let hits = vault.search_text("nonstalehintprobe", 10)?;
+        assert!(hits.is_empty());
         Ok(())
     }
 
