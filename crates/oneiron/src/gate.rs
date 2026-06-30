@@ -17,7 +17,8 @@ use crate::claim::{
 use crate::error::{Error, Result};
 use crate::store::{GateDecisionId, GateDecisionRecord, PendingGateConsentRecord, Store};
 use crate::types::{
-    ENTITY_ID_LEN, ENTITY_TYPE_POLICY_MANIFEST, EdgeActorClass, EntityId, WriteEnvelope,
+    ENTITY_ID_LEN, ENTITY_TYPE_ACCESS_GRANT, ENTITY_TYPE_POLICY_MANIFEST, EdgeActorClass, EntityId,
+    WriteEnvelope,
 };
 
 const POLICY_SCHEMA_VERSION_KEY: &str = "schema_version";
@@ -820,6 +821,47 @@ impl PolicyManifestResolution {
     }
 }
 
+pub(crate) fn companion_profile_access_grant(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    principal_ref: &EntityId,
+    person_ref: &EntityId,
+    persona_ref: &EntityId,
+) -> Result<Option<EntityId>> {
+    for index_entry in store
+        .type_index
+        .prefix_iter(txn, &[ENTITY_TYPE_ACCESS_GRANT])?
+    {
+        let (key, _) = index_entry?;
+        // AccessGrant checks are fail-closed: any anomalous grant index row or
+        // body means the profile cannot be authorized by scanning past it.
+        let Some(id) = type_index_entity_id(key, ENTITY_TYPE_ACCESS_GRANT) else {
+            return Ok(None);
+        };
+        let Some(raw) = store.entities.get(txn, id.as_bytes())? else {
+            return Ok(None);
+        };
+        let Some(header) = crate::batch::EntityMetadataHeader::parse(raw) else {
+            return Ok(None);
+        };
+        if header.entity_type != ENTITY_TYPE_ACCESS_GRANT {
+            return Ok(None);
+        }
+
+        let grant = match crate::access_grant::decode_access_grant_body(
+            &raw[crate::batch::ENTITY_METADATA_HEADER_LEN..],
+        ) {
+            Ok(grant) => grant,
+            Err(_) => return Ok(None),
+        };
+        if grant.allows_companion_profile_read(principal_ref, person_ref, persona_ref) {
+            return Ok(Some(id));
+        }
+    }
+
+    Ok(None)
+}
+
 fn hash_policy_frontier_v0(
     hasher: &mut Sha256,
     resolution: &PolicyManifestResolution,
@@ -1018,7 +1060,7 @@ pub(crate) fn resolve_policy_manifest(
         .prefix_iter(txn, &[ENTITY_TYPE_POLICY_MANIFEST])?
     {
         let (key, _) = index_entry?;
-        let Some(id) = type_index_entity_id(key) else {
+        let Some(id) = type_index_entity_id(key, ENTITY_TYPE_POLICY_MANIFEST) else {
             resolution.diagnostics.malformed_manifest_seen = true;
             continue;
         };
@@ -1425,8 +1467,8 @@ fn check_source_trust(
     Ok(())
 }
 
-fn type_index_entity_id(key: &[u8]) -> Option<EntityId> {
-    if key.len() != ENTITY_ID_LEN + 1 || key[0] != ENTITY_TYPE_POLICY_MANIFEST {
+fn type_index_entity_id(key: &[u8], entity_type: u8) -> Option<EntityId> {
+    if key.len() != ENTITY_ID_LEN + 1 || key[0] != entity_type {
         return None;
     }
     EntityId::from_bytes(key[1..].try_into().ok()?).ok()
@@ -1825,8 +1867,9 @@ mod tests {
     use crate::error::{GateDenialOutcome, GateDenialReason};
     use crate::provenance::{EdgeProvenanceClaimBody, EdgeRef, SupersessionStatus};
     use crate::types::{
-        ClaimCandidate, ENTITY_TYPE_PERSON, EdgeActorClass, EdgeConfirmationStatus, EdgeKind,
-        EdgeProvenanceFlags, TimeRange, WriteActor, WriteProvenance,
+        ClaimCandidate, ENTITY_TYPE_ACCESS_GRANT, ENTITY_TYPE_PERSON, EdgeActorClass,
+        EdgeConfirmationStatus, EdgeKind, EdgeProvenanceFlags, TimeRange, WriteActor,
+        WriteProvenance,
     };
 
     fn test_id(seed: u8) -> EntityId {
@@ -1842,6 +1885,72 @@ mod tests {
         let vault = crate::Vault::open(tmp.path(), crate::types::VaultConfig::default())
             .expect("open vault");
         (tmp, vault)
+    }
+
+    #[test]
+    fn companion_profile_access_grants_allow_deny_and_revoke() -> Result<()> {
+        let (_tmp, vault) = temp_vault();
+        let grant_id = test_id(0xA1);
+        let principal = test_id(0xB1);
+        let other_principal = test_id(0xB3);
+        let person = test_id(0xC1);
+        let persona = test_id(0xD1);
+        let other_persona = test_id(0xD2);
+
+        assert_eq!(
+            vault.companion_profile_access_grant(&principal, &person, &persona)?,
+            None,
+            "missing grant must fail closed"
+        );
+
+        let grant = crate::AccessGrant::companion_profile_read(principal, person, persona, 10);
+        vault.create_access_grant(&grant_id, &grant)?;
+
+        assert_eq!(
+            vault.companion_profile_access_grant(&principal, &person, &persona)?,
+            Some(grant_id),
+            "exact active grant should authorize"
+        );
+        assert_eq!(
+            vault.companion_profile_access_grant(&other_principal, &person, &persona)?,
+            None,
+            "principal mismatch must deny"
+        );
+        assert_eq!(
+            vault.companion_profile_access_grant(&principal, &person, &other_persona)?,
+            None,
+            "scope mismatch must deny"
+        );
+
+        let revoked = vault.revoke_access_grant(&grant_id, 20)?;
+        assert_eq!(revoked.status, crate::AccessGrantStatus::Revoked);
+        assert_eq!(
+            vault.companion_profile_access_grant(&principal, &person, &persona)?,
+            None,
+            "revoked grant must fail closed"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn companion_profile_access_grant_fails_closed_on_malformed_record() -> Result<()> {
+        let (_tmp, vault) = temp_vault();
+        let malformed_id = test_id(0x01);
+        let valid_id = test_id(0xA2);
+        let principal = test_id(0xB2);
+        let person = test_id(0xC2);
+        let persona = test_id(0xD3);
+
+        put_malformed_access_grant_bytes(&vault, &malformed_id, b"not-msgpack")?;
+        let grant = crate::AccessGrant::companion_profile_read(principal, person, persona, 10);
+        vault.create_access_grant(&valid_id, &grant)?;
+
+        assert_eq!(
+            vault.companion_profile_access_grant(&principal, &person, &persona)?,
+            None,
+            "malformed AccessGrant row must fail closed before any later allow"
+        );
+        Ok(())
     }
 
     fn encode_policy_manifest(extra_entries: Vec<(Value, Value)>) -> Vec<u8> {
@@ -2001,6 +2110,31 @@ mod tests {
         payload.extend_from_slice(&1_u64.to_be_bytes());
         payload.extend_from_slice(data);
         payload
+    }
+
+    fn access_grant_blob(data: &[u8]) -> Vec<u8> {
+        let mut payload = Vec::with_capacity(crate::batch::ENTITY_METADATA_HEADER_LEN + data.len());
+        payload.push(ENTITY_TYPE_ACCESS_GRANT);
+        payload.extend_from_slice(&1_u64.to_be_bytes());
+        payload.extend_from_slice(&1_u64.to_be_bytes());
+        payload.extend_from_slice(&1_u64.to_be_bytes());
+        payload.extend_from_slice(data);
+        payload
+    }
+
+    fn put_malformed_access_grant_bytes(
+        vault: &crate::Vault,
+        id: &EntityId,
+        data: &[u8],
+    ) -> Result<()> {
+        let payload = access_grant_blob(data);
+
+        vault.with_write_txn(|wtxn| {
+            vault.store.entities.put(wtxn, id.as_bytes(), &payload)?;
+            let type_key = Store::encode_type_key(ENTITY_TYPE_ACCESS_GRANT, id);
+            vault.store.type_index.put(wtxn, &type_key, &[])?;
+            Ok(())
+        })
     }
 
     fn put_policy_manifest_bytes(vault: &crate::Vault, seed: u8, data: &[u8]) -> Result<()> {

@@ -1,5 +1,6 @@
 use std::time::{SystemTime, UNIX_EPOCH};
 
+pub mod access_grant;
 pub mod analyzer;
 pub mod batch;
 pub(crate) mod bm25;
@@ -32,6 +33,10 @@ pub mod sync;
 pub mod types;
 mod vault;
 
+pub use crate::access_grant::{
+    ACCESS_GRANT_BODY_KEYS, ACCESS_GRANT_SCHEMA_VERSION, AccessGrant, AccessGrantCapability,
+    AccessGrantScope, AccessGrantStatus, decode_access_grant_body, encode_access_grant_body,
+};
 pub use crate::analyzer::{
     ANALYZER_VERSION, AnalyzerAssetManifest, AnalyzerChannel, AnalyzerContext, AnalyzerManifest,
     AnalyzerMode, LangPolicy, LanguageHint, NormalizationPolicy, Token, TokenKind,
@@ -106,16 +111,16 @@ pub use crate::store::{
 };
 pub use crate::types::{
     Bm25RankProfile, ClaimCandidate, ContextEntity, ContextPack, ContextPackRetrievalBudget,
-    DecodedEdgeValue, ENTITY_TYPE_CODE_ARTIFACT, ENTITY_TYPE_FEDERATION_GRANT, EdgeActorClass,
-    EdgeConfirmationStatus, EdgeInfo, EdgeKind, EdgeProvenanceFlags, EdgeValueLayout, EmptyContext,
-    EmptyReason, EntityId, FieldProfile, HnswConfig, HydratedShortIdDeletion,
-    HydratedShortIdDeletionReason, HydratedShortIdDeletionSource, MemoryOperationKind,
-    MemoryTimeline, MemoryTimelineRecord, MemoryTimelineRecordState, NamedMemoryVerb,
-    NotificationItem, PackFormat, PackStats, ResumeBudget, ResumeBundle, ScoredEntity,
-    SessionContext, Signal, StructuralKindRegistration, TemporalAnchorMode, TemporalGranularity,
-    TextAnalyzerConfig, TextIndexOptions, TimeRange, TokenAllocation, TypeByteBand,
-    UnprocessedItem, Vad, VadAnnotation, VadAnnotationSource, VadComponent, VaultConfig,
-    WriteActor, WriteEnvelope, WriteProvenance,
+    DecodedEdgeValue, ENTITY_TYPE_ACCESS_GRANT, ENTITY_TYPE_CODE_ARTIFACT,
+    ENTITY_TYPE_FEDERATION_GRANT, EdgeActorClass, EdgeConfirmationStatus, EdgeInfo, EdgeKind,
+    EdgeProvenanceFlags, EdgeValueLayout, EmptyContext, EmptyReason, EntityId, FieldProfile,
+    HnswConfig, HydratedShortIdDeletion, HydratedShortIdDeletionReason,
+    HydratedShortIdDeletionSource, MemoryOperationKind, MemoryTimeline, MemoryTimelineRecord,
+    MemoryTimelineRecordState, NamedMemoryVerb, NotificationItem, PackFormat, PackStats,
+    ResumeBudget, ResumeBundle, ScoredEntity, SessionContext, Signal, StructuralKindRegistration,
+    TemporalAnchorMode, TemporalGranularity, TextAnalyzerConfig, TextIndexOptions, TimeRange,
+    TokenAllocation, TypeByteBand, UnprocessedItem, Vad, VadAnnotation, VadAnnotationSource,
+    VadComponent, VaultConfig, WriteActor, WriteEnvelope, WriteProvenance,
 };
 pub use crate::vault::{
     ActorBound, HydratedShortId, TextIndexStatus, Vault, VaultDoctorDbManifestReport,

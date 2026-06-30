@@ -157,11 +157,13 @@ pub enum ErrorKind {
     InvalidConfig,
     InvalidTemporalExpression,
     EntityNotFound,
+    AccessGrantAlreadyExists,
     ConcurrentWrite,
     ArithmeticOverflow,
     InvariantViolation,
     InvalidKey,
     InvalidFederationGrantBody,
+    InvalidAccessGrantBody,
     CorruptedIndex,
     ContextPackValidation,
     IndexOverflow,
@@ -370,6 +372,9 @@ pub enum Error {
     /// Requested entity does not exist.
     #[error("entity not found")]
     EntityNotFound,
+    /// AccessGrant creation attempted to reuse an existing entity id.
+    #[error("access grant already exists")]
+    AccessGrantAlreadyExists,
     /// A concurrent write invalidated an operation that relied on a stable snapshot.
     #[error("concurrent write detected: {0}")]
     ConcurrentWrite(&'static str),
@@ -420,6 +425,10 @@ pub enum Error {
     /// Nothing was written.
     #[error("invalid CODE artifact body: {0}")]
     InvalidCodeArtifactBody(&'static str),
+    /// An AccessGrant control-plane record failed pinned structural
+    /// validation. Nothing was written.
+    #[error("invalid access grant body: {0}")]
+    InvalidAccessGrantBody(&'static str),
     /// A recovery artifact shell failed magic, version, length, or checksum
     /// validation before its payload could be used.
     #[error("invalid recovery artifact: {0}")]
@@ -837,11 +846,13 @@ impl Error {
             Self::InvalidConfig(_) => ErrorKind::InvalidConfig,
             Self::InvalidTemporalExpression(_) => ErrorKind::InvalidTemporalExpression,
             Self::EntityNotFound => ErrorKind::EntityNotFound,
+            Self::AccessGrantAlreadyExists => ErrorKind::AccessGrantAlreadyExists,
             Self::ConcurrentWrite(_) => ErrorKind::ConcurrentWrite,
             Self::ArithmeticOverflow(_) => ErrorKind::ArithmeticOverflow,
             Self::InvariantViolation(_) => ErrorKind::InvariantViolation,
             Self::InvalidKey => ErrorKind::InvalidKey,
             Self::InvalidFederationGrantBody(_) => ErrorKind::InvalidFederationGrantBody,
+            Self::InvalidAccessGrantBody(_) => ErrorKind::InvalidAccessGrantBody,
             Self::CorruptedIndex(_) => ErrorKind::CorruptedIndex,
             Self::ContextPackValidation { .. } => ErrorKind::ContextPackValidation,
             Self::IndexOverflow(_) => ErrorKind::IndexOverflow,

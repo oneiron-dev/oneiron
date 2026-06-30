@@ -28,9 +28,9 @@ const EXPECTED_REGISTERED_ROUTES: &[&str] = &[
     "/v1/usage/tenants/{tenant_id}/rollup",
 ];
 
-// ONE-1214 exposes canonical core API parity routes while skills-pack docs
+// ONE-1214 and ONE-1265 expose canonical v1 API routes while skills-pack docs
 // remain on a separate docs lane.
-const CORE_API_PARITY_ROUTES_PENDING_SKILLS_PACK_DOCS: &[&str] = &[
+const API_PARITY_ROUTES_PENDING_SKILLS_PACK_DOCS: &[&str] = &[
     "/v1/core/batch",
     "/v1/core/batch/shortId/hydrate",
     "/v1/core/query",
@@ -41,9 +41,12 @@ const CORE_API_PARITY_ROUTES_PENDING_SKILLS_PACK_DOCS: &[&str] = &[
     "/v1/core/conversations",
     "/v1/core/conversations/{conversation_id}/turns",
     "/v1/core/turns/{turn_id}",
+    "/v1/companion/access-grants",
+    "/v1/companion/access-grants/{grant_id}/revoke",
+    "/v1/companion/profiles/{persona_ref}",
 ];
 
-const NESTED_CORE_ROUTE_PREFIXES: &[(&str, &str)] = &[
+const NESTED_ROUTE_PREFIXES: &[(&str, &str)] = &[
     ("/batch", "/v1/core/batch"),
     ("/batch/shortId/hydrate", "/v1/core/batch/shortId/hydrate"),
     ("/query", "/v1/core/query"),
@@ -58,6 +61,15 @@ const NESTED_CORE_ROUTE_PREFIXES: &[(&str, &str)] = &[
     ),
     ("/turns/{turn_id}", "/v1/core/turns/{turn_id}"),
     ("/turns/annotate", "/v1/core/turns/annotate"),
+    ("/access-grants", "/v1/companion/access-grants"),
+    (
+        "/access-grants/{grant_id}/revoke",
+        "/v1/companion/access-grants/{grant_id}/revoke",
+    ),
+    (
+        "/profiles/{persona_ref}",
+        "/v1/companion/profiles/{persona_ref}",
+    ),
 ];
 
 #[test]
@@ -98,17 +110,13 @@ fn frontmatter_has_required_skill_keys() {
 #[test]
 fn documented_route_set_matches_api_routes_exactly() {
     let registered_all = route_set(registered_routes_from_api_source(API_RS));
-    for route in CORE_API_PARITY_ROUTES_PENDING_SKILLS_PACK_DOCS {
+    for route in API_PARITY_ROUTES_PENDING_SKILLS_PACK_DOCS {
         assert!(
             registered_all.contains(*route),
             "pending skills-pack route {route} must still be registered"
         );
     }
-    let pending_docs = route_set(
-        CORE_API_PARITY_ROUTES_PENDING_SKILLS_PACK_DOCS
-            .iter()
-            .copied(),
-    );
+    let pending_docs = route_set(API_PARITY_ROUTES_PENDING_SKILLS_PACK_DOCS.iter().copied());
     let registered = registered_all
         .difference(&pending_docs)
         .cloned()
@@ -306,9 +314,11 @@ fn registered_routes_from_api_source(source: &str) -> Vec<String> {
             routes.push(route.to_owned());
         }
     }
-    if source.contains(".nest(\"/v1/core\", core_routes)") {
+    if source.contains(".nest(\"/v1/core\", core_routes)")
+        || source.contains(".nest(\"/v1/companion\", companion_routes)")
+    {
         for route in &mut routes {
-            if let Some((_, prefixed)) = NESTED_CORE_ROUTE_PREFIXES
+            if let Some((_, prefixed)) = NESTED_ROUTE_PREFIXES
                 .iter()
                 .find(|(nested, _)| route == nested)
             {

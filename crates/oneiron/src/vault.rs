@@ -12,6 +12,7 @@ use serde::Serialize;
 use uuid::Uuid;
 use xxhash_rust::xxh3::xxh3_128;
 
+use crate::access_grant::{AccessGrant, decode_access_grant_body, encode_access_grant_body};
 use crate::analyzer::{AnalyzerChannel, AnalyzerManifest, AnalyzerMode, MultilingualAnalyzer};
 use crate::batch::{
     BatchOp, ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader, apply_ops, deindex_entity,
@@ -50,13 +51,14 @@ use crate::store::{
     lmdb_database_open_guard,
 };
 use crate::types::{
-    EDGE_KEY_LEN, ENTITY_ID_LEN, ENTITY_TYPE_CLAIM, ENTITY_TYPE_CODE_ARTIFACT, ENTITY_TYPE_MESSAGE,
-    ENTITY_TYPE_MODEL, ENTITY_TYPE_REDACTION_AUDIT, ENTITY_TYPE_TURN, EdgeActorClass,
-    EdgeConfirmationStatus, EdgeInfo, EdgeKind, EdgeProvenanceFlags, EdgeValueLayout, EntityId,
-    HydratedShortIdDeletion, HydratedShortIdDeletionReason, HydratedShortIdDeletionSource,
-    MemoryTimeline, MemoryTimelineRecord, MemoryTimelineRecordState, ScoredEntity,
-    StructuralKindRegistration, TimeRange, TypeByteBand, Vad, VadAnnotation, VadAnnotationSource,
-    VaultConfig, bytes_to_hex_lower, decode_edge_value_for_kind, edge_value_layout_for_kind,
+    EDGE_KEY_LEN, ENTITY_ID_LEN, ENTITY_TYPE_ACCESS_GRANT, ENTITY_TYPE_CLAIM,
+    ENTITY_TYPE_CODE_ARTIFACT, ENTITY_TYPE_MESSAGE, ENTITY_TYPE_MODEL, ENTITY_TYPE_REDACTION_AUDIT,
+    ENTITY_TYPE_TURN, EdgeActorClass, EdgeConfirmationStatus, EdgeInfo, EdgeKind,
+    EdgeProvenanceFlags, EdgeValueLayout, EntityId, HydratedShortIdDeletion,
+    HydratedShortIdDeletionReason, HydratedShortIdDeletionSource, MemoryTimeline,
+    MemoryTimelineRecord, MemoryTimelineRecordState, ScoredEntity, StructuralKindRegistration,
+    TimeRange, TypeByteBand, Vad, VadAnnotation, VadAnnotationSource, VaultConfig,
+    bytes_to_hex_lower, decode_edge_value_for_kind, edge_value_layout_for_kind,
 };
 use crate::{
     BatchBuilder, ContextPackBuilder, MaintenanceBuilder, PipelineBuilder, RetrievalWithTelemetry,
@@ -795,6 +797,118 @@ impl Vault {
         self.batch()
             .put(id, entity_type, occurred, learned_at, data)
             .commit()
+    }
+
+    /// Engine-authored write door for AccessGrant control-plane records.
+    ///
+    /// Public generic entity puts for `ENTITY_TYPE_ACCESS_GRANT` remain
+    /// rejected with `MaintenanceKindNotWritable`; this method validates the
+    /// pinned AccessGrant body before using the maintenance write path.
+    pub fn put_access_grant(&self, id: &EntityId, grant: &AccessGrant) -> Result<()> {
+        let data = encode_access_grant_body(grant)?;
+        self.write_access_grant_body(id, grant.created_at, &data)
+    }
+
+    /// Creates an AccessGrant only when no entity already exists at `id`.
+    pub fn create_access_grant(&self, id: &EntityId, grant: &AccessGrant) -> Result<()> {
+        let data = encode_access_grant_body(grant)?;
+        let mut wtxn = self.store.env.write_txn()?;
+        if self.store.entities.get(&wtxn, id.as_bytes())?.is_some() {
+            return Err(Error::AccessGrantAlreadyExists);
+        }
+        self.apply_access_grant_body(&mut wtxn, id, grant.created_at, data)?;
+        wtxn.commit()?;
+        Ok(())
+    }
+
+    /// Revokes an AccessGrant by rewriting the same record as revoked.
+    pub fn revoke_access_grant(&self, id: &EntityId, revoked_at: u64) -> Result<AccessGrant> {
+        let mut wtxn = self.store.env.write_txn()?;
+        let raw = self
+            .store
+            .entities
+            .get(&wtxn, id.as_bytes())?
+            .ok_or(Error::EntityNotFound)?;
+        let header =
+            EntityMetadataHeader::parse(raw).ok_or(Error::CorruptedIndex("entity header"))?;
+        if header.entity_type != ENTITY_TYPE_ACCESS_GRANT {
+            return Err(Error::InvalidEntityType(header.entity_type));
+        }
+        let grant = decode_access_grant_body(&raw[ENTITY_METADATA_HEADER_LEN..])?;
+        let revoked = grant.revoked(revoked_at)?;
+        let data = encode_access_grant_body(&revoked)?;
+        self.apply_access_grant_body(&mut wtxn, id, revoked_at, data)?;
+        wtxn.commit()?;
+        Ok(revoked)
+    }
+
+    /// Reads and decodes an AccessGrant record.
+    pub fn get_access_grant(&self, id: &EntityId) -> Result<Option<AccessGrant>> {
+        let rtxn = self.store.env.read_txn()?;
+        let Some(raw) = self.store.entities.get(&rtxn, id.as_bytes())? else {
+            return Ok(None);
+        };
+        let header =
+            EntityMetadataHeader::parse(raw).ok_or(Error::CorruptedIndex("entity header"))?;
+        if header.entity_type != ENTITY_TYPE_ACCESS_GRANT {
+            return Err(Error::InvalidEntityType(header.entity_type));
+        }
+        decode_access_grant_body(&raw[ENTITY_METADATA_HEADER_LEN..]).map(Some)
+    }
+
+    /// Returns the active grant id authorizing a companion profile, if any.
+    pub fn companion_profile_access_grant(
+        &self,
+        principal_ref: &EntityId,
+        person_ref: &EntityId,
+        persona_ref: &EntityId,
+    ) -> Result<Option<EntityId>> {
+        let rtxn = self.store.env.read_txn()?;
+        crate::gate::companion_profile_access_grant(
+            &self.store,
+            &rtxn,
+            principal_ref,
+            person_ref,
+            persona_ref,
+        )
+    }
+
+    fn write_access_grant_body(&self, id: &EntityId, learned_at: u64, data: &[u8]) -> Result<()> {
+        let mut wtxn = self.store.env.write_txn()?;
+        self.apply_access_grant_body(&mut wtxn, id, learned_at, data.to_vec())?;
+        wtxn.commit()?;
+        Ok(())
+    }
+
+    fn apply_access_grant_body(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        id: &EntityId,
+        learned_at: u64,
+        data: Vec<u8>,
+    ) -> Result<()> {
+        apply_ops(
+            &self.store,
+            &self.config,
+            &self.analyzer,
+            wtxn,
+            vec![BatchOp::Put {
+                id: *id,
+                entity_type: ENTITY_TYPE_ACCESS_GRANT,
+                occurred: TimeRange {
+                    start: learned_at,
+                    end: learned_at,
+                },
+                learned_at,
+                data,
+                allow_maintenance: true,
+                allow_reserved_predicate: false,
+            }],
+            self.text_index_trusted
+                .load(std::sync::atomic::Ordering::Acquire),
+            false,
+            true,
+        )
     }
 
     /// Writes or replaces the VAD annotation metadata for a TURN entity.
