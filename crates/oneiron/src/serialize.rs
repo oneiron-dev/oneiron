@@ -3,13 +3,13 @@ use std::collections::{HashMap, HashSet};
 use serde_json::{Map, Number, Value};
 
 use crate::types::{
-    ContextEntity, ContextPack, ENTITY_TYPE_ASSET, ENTITY_TYPE_ASSET_TEXT, ENTITY_TYPE_CLAIM,
-    ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_EVENT, ENTITY_TYPE_FACET, ENTITY_TYPE_FEDERATION_GRANT,
-    ENTITY_TYPE_MACHINE, ENTITY_TYPE_MESSAGE, ENTITY_TYPE_NOTIFICATION, ENTITY_TYPE_ORG,
-    ENTITY_TYPE_PERSON, ENTITY_TYPE_PLACE, ENTITY_TYPE_RELATIONSHIP, ENTITY_TYPE_SESSION,
-    ENTITY_TYPE_SKILL, ENTITY_TYPE_SUMMARY, ENTITY_TYPE_TASK, ENTITY_TYPE_TASK_LIST,
-    ENTITY_TYPE_TURN, ENTITY_TYPE_WORLD, FieldProfile, PackFormat, PackStats, ResumeBundle, Signal,
-    TokenAllocation,
+    ContextEntity, ContextPack, ENTITY_TYPE_ACCESS_GRANT, ENTITY_TYPE_ASSET,
+    ENTITY_TYPE_ASSET_TEXT, ENTITY_TYPE_CLAIM, ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_EVENT,
+    ENTITY_TYPE_FACET, ENTITY_TYPE_FEDERATION_GRANT, ENTITY_TYPE_MACHINE, ENTITY_TYPE_MESSAGE,
+    ENTITY_TYPE_NOTIFICATION, ENTITY_TYPE_ORG, ENTITY_TYPE_PERSON, ENTITY_TYPE_PLACE,
+    ENTITY_TYPE_RELATIONSHIP, ENTITY_TYPE_SESSION, ENTITY_TYPE_SKILL, ENTITY_TYPE_SUMMARY,
+    ENTITY_TYPE_TASK, ENTITY_TYPE_TASK_LIST, ENTITY_TYPE_TURN, ENTITY_TYPE_WORLD, FieldProfile,
+    PackFormat, PackStats, ResumeBundle, Signal, TokenAllocation,
 };
 
 const GROUP_ORDER: &[u8] = &[
@@ -2032,6 +2032,11 @@ fn known_group_labels(entity_type: u8) -> Option<GroupLabels> {
             name: "FEDERATION_GRANTS",
             title: "Federation Grants",
         }),
+        ENTITY_TYPE_ACCESS_GRANT => Some(GroupLabels {
+            key: "access_grants",
+            name: "ACCESS_GRANTS",
+            title: "Access Grants",
+        }),
         _ => None,
     }
 }
@@ -2127,6 +2132,15 @@ fn fields_for_profile(entity_type: u8, profile: FieldProfile) -> &'static [&'sta
         }
         (ENTITY_TYPE_FEDERATION_GRANT, FieldProfile::Full) => {
             crate::federation::FEDERATION_GRANT_FIELDS_FULL
+        }
+        (ENTITY_TYPE_ACCESS_GRANT, FieldProfile::Minimal) => {
+            crate::access_grant::ACCESS_GRANT_FIELDS_MINIMAL
+        }
+        (ENTITY_TYPE_ACCESS_GRANT, FieldProfile::Standard) => {
+            crate::access_grant::ACCESS_GRANT_FIELDS_STANDARD
+        }
+        (ENTITY_TYPE_ACCESS_GRANT, FieldProfile::Full) => {
+            crate::access_grant::ACCESS_GRANT_FIELDS_FULL
         }
 
         _ => &[],
@@ -4639,6 +4653,15 @@ mod tests {
         assert_eq!(
             fields_for_profile(ENTITY_TYPE_FEDERATION_GRANT, FieldProfile::Minimal),
             crate::federation::FEDERATION_GRANT_FIELDS_MINIMAL
+        );
+
+        let access_grant = group_labels(ENTITY_TYPE_ACCESS_GRANT);
+        assert_eq!(access_grant.key, "access_grants");
+        assert_eq!(access_grant.name, "ACCESS_GRANTS");
+        assert_eq!(access_grant.title, "Access Grants");
+        assert_eq!(
+            fields_for_profile(ENTITY_TYPE_ACCESS_GRANT, FieldProfile::Minimal),
+            crate::access_grant::ACCESS_GRANT_FIELDS_MINIMAL
         );
 
         // Types outside the known set should fall back to OTHER_GROUP_LABELS.

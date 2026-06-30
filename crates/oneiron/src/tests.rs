@@ -7,8 +7,8 @@ use std::time::Instant;
 use crate::limits::{MAX_ANCESTOR_DEPTH, MAX_CHILD_OF_CYCLE_TRAVERSAL_STEPS};
 use crate::types::{
     EDGE_VALUE_SEMANTIC_LEN, EDGE_VALUE_SEMANTIC_PROVENANCED_LEN, EDGE_VALUE_STRUCTURAL_LEN,
-    ENTITY_ID_LEN, ENTITY_TYPE_FEDERATION_GRANT, ENTITY_TYPE_MACHINE, ENTITY_TYPE_MESSAGE,
-    ENTITY_TYPE_MODEL, ENTITY_TYPE_NOTIFICATION, ENTITY_TYPE_POLICY_MANIFEST,
+    ENTITY_ID_LEN, ENTITY_TYPE_ACCESS_GRANT, ENTITY_TYPE_FEDERATION_GRANT, ENTITY_TYPE_MACHINE,
+    ENTITY_TYPE_MESSAGE, ENTITY_TYPE_MODEL, ENTITY_TYPE_NOTIFICATION, ENTITY_TYPE_POLICY_MANIFEST,
     ENTITY_TYPE_REDACTION_AUDIT, ENTITY_TYPE_TASK, ENTITY_TYPE_TASK_LIST, ENTITY_TYPE_TURN,
     EdgeActorClass, EdgeConfirmationStatus, EdgeProvenanceFlags, decode_edge_value,
     decode_edge_value_for_kind, encode_edge_value,
@@ -6125,6 +6125,13 @@ fn all_entity_type_prefixes() {
             EntityClassification::Maintenance,
             TypeByteBand::InducedDynamicMaintenance,
         ),
+        (
+            "ACCESS_GRANT",
+            128,
+            None,
+            EntityClassification::Maintenance,
+            TypeByteBand::InducedDynamicMaintenance,
+        ),
     ];
 
     let actual: Vec<RegistryRow> = ENTITY_TYPE_REGISTRY
@@ -6227,9 +6234,10 @@ fn type_byte_band_allocation_matches_contract() {
     }
 
     // is_structural_kind: false for the semantic byte 0 and the registered
-    // maintenance kinds 120/121/123/124; true for every REGISTERED core
+    // maintenance kinds 120/121/123/124/128; true for every REGISTERED core
     // (1..=16) and pack (80/81/82/83) kind. Byte 122 is reserved for
-    // AUTHORITY_LOG but not registered yet.
+    // AUTHORITY_LOG, and 125..=127 are reserved for future maintenance
+    // substrates, but none are registered yet.
     assert!(!is_structural_kind(0), "CLAIM is NOT a StructuralKind");
     assert!(
         !is_structural_kind(120),
@@ -6251,6 +6259,22 @@ fn type_byte_band_allocation_matches_contract() {
         !is_structural_kind(124),
         "FEDERATION_GRANT is NOT a StructuralKind (FED-001: shared-vault membership)"
     );
+    assert!(
+        !is_structural_kind(125),
+        "CONNECTION_RECORD byte 125 is reserved but not a StructuralKind"
+    );
+    assert!(
+        !is_structural_kind(126),
+        "DIAGNOSTIC byte 126 is reserved but not a StructuralKind"
+    );
+    assert!(
+        !is_structural_kind(127),
+        "FEDERATION_KEY_ENVELOPE byte 127 is reserved but not a StructuralKind"
+    );
+    assert!(
+        !is_structural_kind(128),
+        "ACCESS_GRANT is NOT a StructuralKind (EIRI-004: companion control plane)"
+    );
     for byte in 1..=16_u8 {
         assert!(is_structural_kind(byte), "core byte {byte}");
     }
@@ -6260,10 +6284,10 @@ fn type_byte_band_allocation_matches_contract() {
 
     // Unregistered bytes — including bytes INSIDE structural bands — are not
     // StructuralKinds, and the existing write-path gate still rejects them
-    // with the same typed error. (122 is reserved for AUTHORITY_LOG but
-    // remains unregistered; 125 is the band's first unregistered byte after
-    // FEDERATION_GRANT.)
-    for byte in [17_u8, 63, 64, 79, 84, 99, 100, 119, 122, 125, 255] {
+    // with the same typed error. (122 is reserved for AUTHORITY_LOG, while
+    // 125..=127 are reserved for future maintenance substrates, but all
+    // remain unregistered.)
+    for byte in [17_u8, 63, 64, 79, 84, 99, 100, 119, 122, 125, 126, 127, 255] {
         assert!(!is_structural_kind(byte), "unregistered byte {byte}");
         assert!(
             matches!(
@@ -7295,6 +7319,7 @@ fn public_put_of_maintenance_kind_rejected_with_distinct_typed_error() -> Result
         (ENTITY_TYPE_MODEL, b"forged-model".as_slice()),
         (ENTITY_TYPE_POLICY_MANIFEST, b"forged-policy".as_slice()),
         (ENTITY_TYPE_FEDERATION_GRANT, b"forged-grant".as_slice()),
+        (ENTITY_TYPE_ACCESS_GRANT, b"forged-access-grant".as_slice()),
     ] {
         let id = EntityId::now();
 
@@ -7364,10 +7389,12 @@ fn unknown_type_bytes_still_fail_with_invalid_entity_type() -> Result<()> {
 
     // 121 left this list when ONE-1138 registered MODEL; 123 left it when
     // GATE-001 registered POLICY_MANIFEST; 124 left it when FED-001
-    // registered FEDERATION_GRANT. Public puts of those bytes now fail
+    // registered FEDERATION_GRANT; 128 left it when EIRI-004 registered
+    // ACCESS_GRANT. Public puts of those bytes now fail
     // MaintenanceKindNotWritable — covered by the D5 gate test. Byte 122 is
-    // reserved for AUTHORITY_LOG but remains unregistered.
-    for unknown in [99_u8, 122, 125, 200] {
+    // reserved for AUTHORITY_LOG, and 125..=127 are reserved for future
+    // maintenance substrates, but all remain unregistered.
+    for unknown in [99_u8, 122, 125, 126, 127, 200] {
         let id = EntityId::now();
         let err = vault
             .put_entity(&id, unknown, test_time_range(1, 1), 2, b"unknown-type")

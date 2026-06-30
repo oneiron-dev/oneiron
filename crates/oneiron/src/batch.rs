@@ -2126,6 +2126,8 @@ fn apply_put(
         crate::code_artifact::validate_code_artifact_body_bytes(data)?;
     } else if entity_type == crate::types::ENTITY_TYPE_FEDERATION_GRANT {
         crate::federation::validate_federation_grant_body_bytes(data)?;
+    } else if entity_type == crate::types::ENTITY_TYPE_ACCESS_GRANT {
+        crate::access_grant::validate_access_grant_body_bytes(data)?;
     }
     if occurred.start > occurred.end {
         return Err(Error::InvalidTimeRange {

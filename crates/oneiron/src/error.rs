@@ -162,6 +162,7 @@ pub enum ErrorKind {
     InvariantViolation,
     InvalidKey,
     InvalidFederationGrantBody,
+    InvalidAccessGrantBody,
     CorruptedIndex,
     ContextPackValidation,
     IndexOverflow,
@@ -420,6 +421,10 @@ pub enum Error {
     /// Nothing was written.
     #[error("invalid CODE artifact body: {0}")]
     InvalidCodeArtifactBody(&'static str),
+    /// An AccessGrant control-plane record failed pinned structural
+    /// validation. Nothing was written.
+    #[error("invalid access grant body: {0}")]
+    InvalidAccessGrantBody(&'static str),
     /// A recovery artifact shell failed magic, version, length, or checksum
     /// validation before its payload could be used.
     #[error("invalid recovery artifact: {0}")]
@@ -842,6 +847,7 @@ impl Error {
             Self::InvariantViolation(_) => ErrorKind::InvariantViolation,
             Self::InvalidKey => ErrorKind::InvalidKey,
             Self::InvalidFederationGrantBody(_) => ErrorKind::InvalidFederationGrantBody,
+            Self::InvalidAccessGrantBody(_) => ErrorKind::InvalidAccessGrantBody,
             Self::CorruptedIndex(_) => ErrorKind::CorruptedIndex,
             Self::ContextPackValidation { .. } => ErrorKind::ContextPackValidation,
             Self::IndexOverflow(_) => ErrorKind::IndexOverflow,

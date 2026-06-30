@@ -64,6 +64,8 @@ const EFFECTIVE_AUTH_SCOPES: &[&str] = &[
     "entity:read",
     "turns:annotate",
     "companion:resume",
+    "companion:profile:read",
+    "companion:access-grant:write",
     "usage:read",
     "usage:write",
     "consumer:usage:read",
@@ -89,6 +91,8 @@ const CAPABILITIES: &[&str] = &[
     "turns.annotate",
     "context_pack",
     "companion.resume",
+    "companion.profile",
+    "companion.access_grants",
     "lease.revoke",
     "usage.event",
     "usage.rollup",
@@ -129,6 +133,9 @@ const CORE_MAX_LIST_LIMIT: usize = 1000;
         get_core_turn,
         annotate_turn_vad,
         read_turn_vad_annotation,
+        create_companion_access_grant,
+        revoke_companion_access_grant,
+        get_companion_profile,
         context_pack,
         record_usage_event,
         get_usage_rollup,
@@ -218,6 +225,12 @@ const CORE_MAX_LIST_LIMIT: usize = 1000;
         TurnVadAnnotateRequest,
         TurnVadAnnotateQuery,
         TurnVadAnnotateResponse,
+        CompanionAccessGrantScopePayload,
+        CompanionAccessGrantResponse,
+        CompanionCreateAccessGrantRequest,
+        CompanionRevokeAccessGrantRequest,
+        CompanionProfileAccess,
+        CompanionProfileResponse,
         LeaseRevokeRequest,
         LeaseRevokeResponse,
         ContextPackRequest,
@@ -279,6 +292,13 @@ pub(crate) fn api_routes(server: Arc<SyncServer>) -> Router {
         .route("/turns/{turn_id}", get(get_core_turn))
         .route("/turns/annotate", get(read_turn_vad_annotation))
         .merge(core_mutation_routes);
+    let companion_routes = Router::new()
+        .route("/access-grants", post(create_companion_access_grant))
+        .route(
+            "/access-grants/{grant_id}/revoke",
+            post(revoke_companion_access_grant),
+        )
+        .route("/profiles/{persona_ref}", get(get_companion_profile));
 
     Router::new()
         .route("/api/openapi.json", get(openapi_json))
@@ -290,6 +310,7 @@ pub(crate) fn api_routes(server: Arc<SyncServer>) -> Router {
         .route("/api/entity/{id}", get(get_entity))
         .route("/api/edges/{id}", get(get_edges))
         .nest("/v1/core", core_routes)
+        .nest("/v1/companion", companion_routes)
         // context-pack is POST since it takes a complex options body
         .route("/api/context-pack", post(context_pack))
         .route("/api/companion/resume", post(resume))
@@ -953,7 +974,7 @@ fn add_security_scheme(spec: &mut Value) {
             json!({
                 "type": "http",
                 "scheme": "bearer",
-                "description": "Scoped bearer token for canonical /v1/core/* routes. The current local shell accepts the configured shared secret, optionally suffixed with ';scope=core:read,core:write,core:auth'."
+                "description": "Scoped bearer token for canonical /v1/core/* and companion control-plane routes. The current local shell accepts the configured shared secret, optionally suffixed with ';scope=core:read,core:write,core:auth'."
             }),
         );
 
@@ -1001,6 +1022,9 @@ fn add_security_scheme(spec: &mut Value) {
         ("/v1/core/batch", "post"),
         ("/v1/core/turns/annotate", "get"),
         ("/v1/core/turns/annotate", "post"),
+        ("/v1/companion/access-grants", "post"),
+        ("/v1/companion/access-grants/{grant_id}/revoke", "post"),
+        ("/v1/companion/profiles/{persona_ref}", "get"),
     ] {
         if let Some(operation) = spec
             .get_mut("paths")
@@ -1475,6 +1499,324 @@ fn rate_limit_status(config: &SyncServerConfig) -> RateLimitStatus {
         max_windows_per_connection: config.max_windows_per_connection,
         max_frame_size_bytes: config.max_frame_size,
         max_update_payload_bytes: config.max_update_payload,
+    }
+}
+
+// ─── Companion v1 profile access ─────────────────────────────────────────────
+
+/// Scope payload for companion AccessGrant control-plane records.
+#[derive(Clone, Debug, Deserialize, Serialize, ToSchema)]
+#[schema(example = json!({
+    "kind": "companion_profile",
+    "person_ref": "11111111111111111111111111111111",
+    "persona_ref": "22222222222222222222222222222222"
+}))]
+struct CompanionAccessGrantScopePayload {
+    /// Scope discriminator. Currently only `companion_profile` is accepted.
+    #[schema(example = "companion_profile")]
+    kind: String,
+    /// Person scope for the companion profile.
+    #[schema(example = "11111111111111111111111111111111")]
+    person_ref: String,
+    /// Persona/profile entity receiving scoped access.
+    #[schema(example = "22222222222222222222222222222222")]
+    persona_ref: String,
+}
+
+/// Request body for creating a companion AccessGrant.
+#[derive(Clone, Debug, Deserialize, ToSchema)]
+#[schema(example = json!({
+    "principal_ref": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "scope": {
+        "kind": "companion_profile",
+        "person_ref": "11111111111111111111111111111111",
+        "persona_ref": "22222222222222222222222222222222"
+    },
+    "created_at": 1700000000
+}))]
+struct CompanionCreateAccessGrantRequest {
+    /// Optional grant entity id. Defaults to a new UUIDv7 entity id.
+    #[schema(example = "33333333333333333333333333333333")]
+    id: Option<String>,
+    /// Principal receiving access.
+    #[schema(example = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")]
+    principal_ref: String,
+    /// Exact companion profile scope.
+    scope: CompanionAccessGrantScopePayload,
+    /// Creation timestamp in Unix seconds. Defaults to server time.
+    #[schema(example = 1700000000)]
+    created_at: Option<u64>,
+}
+
+/// Request body for revoking a companion AccessGrant.
+#[derive(Clone, Debug, Deserialize, ToSchema)]
+#[schema(example = json!({ "revoked_at": 1700000300 }))]
+struct CompanionRevokeAccessGrantRequest {
+    /// Revocation timestamp in Unix seconds. Defaults to server time.
+    #[schema(example = 1700000300)]
+    revoked_at: Option<u64>,
+}
+
+/// AccessGrant response body.
+#[derive(Clone, Debug, Serialize, ToSchema)]
+struct CompanionAccessGrantResponse {
+    /// Grant entity id.
+    #[schema(example = "33333333333333333333333333333333")]
+    id: String,
+    /// Principal receiving access.
+    #[schema(example = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")]
+    principal_ref: String,
+    /// Exact companion profile scope.
+    scope: CompanionAccessGrantScopePayload,
+    /// Granted capability.
+    #[schema(example = "companion_profile.read")]
+    capability: String,
+    /// Grant status.
+    #[schema(example = "active")]
+    status: String,
+    /// Creation timestamp in Unix seconds.
+    #[schema(example = 1700000000)]
+    created_at: u64,
+    /// Revocation timestamp when status is `revoked`.
+    #[schema(example = 1700000300)]
+    revoked_at: Option<u64>,
+}
+
+/// Query parameters for companion profile reads.
+#[derive(Clone, Debug, Deserialize, IntoParams)]
+struct CompanionProfileQuery {
+    /// Principal requesting profile access.
+    #[param(example = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")]
+    principal_ref: String,
+    /// Person scope for the companion profile.
+    #[param(example = "11111111111111111111111111111111")]
+    person_ref: String,
+}
+
+/// Access evidence returned with a companion profile response.
+#[derive(Clone, Debug, Serialize, ToSchema)]
+struct CompanionProfileAccess {
+    /// Grant entity id that authorized the response.
+    #[schema(example = "33333333333333333333333333333333")]
+    grant_id: String,
+    /// Principal authorized by the grant.
+    #[schema(example = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")]
+    principal_ref: String,
+    /// Exact scope authorized by the grant.
+    scope: CompanionAccessGrantScopePayload,
+}
+
+/// Companion profile access response.
+#[derive(Clone, Debug, Serialize, ToSchema)]
+struct CompanionProfileResponse {
+    /// Persona/profile entity id.
+    #[schema(example = "22222222222222222222222222222222")]
+    persona_ref: String,
+    /// Person scope for this profile.
+    #[schema(example = "11111111111111111111111111111111")]
+    person_ref: String,
+    /// Grant evidence for the access decision.
+    access: CompanionProfileAccess,
+    /// Profile payload placeholder for the v1 shell.
+    #[schema(value_type = Object)]
+    profile: Value,
+}
+
+/// Create a scoped companion AccessGrant.
+#[utoipa::path(
+    post,
+    path = "/v1/companion/access-grants",
+    request_body(content = CompanionCreateAccessGrantRequest, content_type = "application/json"),
+    responses(
+        (status = 200, description = "AccessGrant created.", body = CompanionAccessGrantResponse, content_type = "application/json"),
+        (status = 400, description = "Malformed grant request.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 401, description = "Missing or invalid core auth.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 403, description = "Token lacks core:auth.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 500, description = "AccessGrant write failed.", body = ApiErrorEnvelope, content_type = "application/json")
+    )
+)]
+async fn create_companion_access_grant(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    payload: Result<Json<CompanionCreateAccessGrantRequest>, JsonRejection>,
+) -> Result<Json<CompanionAccessGrantResponse>, EnvelopedApiError> {
+    auth.require(CoreScope::Auth)?;
+    let req = json_payload(payload)?;
+    let grant_id = parse_optional_entity_id(req.id.as_deref(), "id")?;
+    let principal_ref = parse_entity_id_param(&req.principal_ref, "principal_ref")?;
+    let (person_ref, persona_ref) = companion_scope_entity_refs(&req.scope)?;
+    let created_at = req.created_at.unwrap_or_else(unix_seconds_now);
+    let grant = oneiron::AccessGrant::companion_profile_read(
+        principal_ref,
+        person_ref,
+        persona_ref,
+        created_at,
+    );
+
+    server.vault.put_access_grant(&grant_id, &grant).map_err(|error| {
+        tracing::error!(error = %error, id = %grant_id.to_hex(), "companion access grant create failed");
+        companion_engine_error("companion access grant create failed", error)
+    })?;
+
+    Ok(Json(companion_access_grant_response(&grant_id, &grant)))
+}
+
+/// Revoke a scoped companion AccessGrant.
+#[utoipa::path(
+    post,
+    path = "/v1/companion/access-grants/{grant_id}/revoke",
+    params(("grant_id" = String, Path, description = "AccessGrant entity id.")),
+    request_body(content = CompanionRevokeAccessGrantRequest, content_type = "application/json"),
+    responses(
+        (status = 200, description = "AccessGrant revoked.", body = CompanionAccessGrantResponse, content_type = "application/json"),
+        (status = 400, description = "Malformed grant id or request.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 401, description = "Missing or invalid core auth.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 403, description = "Token lacks core:auth.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 404, description = "AccessGrant was not found.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 500, description = "AccessGrant revoke failed.", body = ApiErrorEnvelope, content_type = "application/json")
+    )
+)]
+async fn revoke_companion_access_grant(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    Path(grant_id): Path<String>,
+    payload: Result<Json<CompanionRevokeAccessGrantRequest>, JsonRejection>,
+) -> Result<Json<CompanionAccessGrantResponse>, EnvelopedApiError> {
+    auth.require(CoreScope::Auth)?;
+    let grant_id = parse_entity_id_param(&grant_id, "grant_id")?;
+    let req = json_payload(payload)?;
+    let revoked_at = req.revoked_at.unwrap_or_else(unix_seconds_now);
+
+    let grant = server
+        .vault
+        .revoke_access_grant(&grant_id, revoked_at)
+        .map_err(|error| {
+            tracing::error!(error = %error, id = %grant_id.to_hex(), "companion access grant revoke failed");
+            companion_engine_error("companion access grant revoke failed", error)
+        })?;
+
+    Ok(Json(companion_access_grant_response(&grant_id, &grant)))
+}
+
+/// Read a companion profile when an active matching AccessGrant exists.
+#[utoipa::path(
+    get,
+    path = "/v1/companion/profiles/{persona_ref}",
+    params(
+        ("persona_ref" = String, Path, description = "Persona/profile entity id."),
+        CompanionProfileQuery
+    ),
+    responses(
+        (status = 200, description = "Companion profile access authorized.", body = CompanionProfileResponse, content_type = "application/json"),
+        (status = 400, description = "Malformed profile request.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 401, description = "Missing or invalid core auth.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 403, description = "No active AccessGrant authorizes this profile.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 500, description = "AccessGrant lookup failed.", body = ApiErrorEnvelope, content_type = "application/json")
+    )
+)]
+async fn get_companion_profile(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    Path(persona_ref): Path<String>,
+    query: Result<Query<CompanionProfileQuery>, QueryRejection>,
+) -> Result<Json<CompanionProfileResponse>, EnvelopedApiError> {
+    auth.require(CoreScope::Read)?;
+    let params = query_params(query)?;
+    let persona_ref = parse_entity_id_param(&persona_ref, "persona_ref")?;
+    let principal_ref = parse_entity_id_param(&params.principal_ref, "principal_ref")?;
+    let person_ref = parse_entity_id_param(&params.person_ref, "person_ref")?;
+
+    let grant_id = server
+        .vault
+        .companion_profile_access_grant(&principal_ref, &person_ref, &persona_ref)
+        .map_err(|error| {
+            tracing::error!(
+                error = %error,
+                principal_ref = %principal_ref.to_hex(),
+                person_ref = %person_ref.to_hex(),
+                persona_ref = %persona_ref.to_hex(),
+                "companion profile grant lookup failed"
+            );
+            companion_engine_error("companion profile grant lookup failed", error)
+        })?
+        .ok_or_else(companion_access_denied)?;
+
+    let scope = companion_scope_response(&person_ref, &persona_ref);
+    Ok(Json(CompanionProfileResponse {
+        persona_ref: persona_ref.to_hex(),
+        person_ref: person_ref.to_hex(),
+        access: CompanionProfileAccess {
+            grant_id: grant_id.to_hex(),
+            principal_ref: principal_ref.to_hex(),
+            scope,
+        },
+        profile: json!({}),
+    }))
+}
+
+fn companion_scope_entity_refs(
+    scope: &CompanionAccessGrantScopePayload,
+) -> Result<(oneiron::EntityId, oneiron::EntityId), ApiError> {
+    if scope.kind != "companion_profile" {
+        return Err(ApiError::bad_request(
+            "scope.kind must be companion_profile",
+            Some("scope.kind"),
+        ));
+    }
+    let person_ref = parse_entity_id_param(&scope.person_ref, "scope.person_ref")?;
+    let persona_ref = parse_entity_id_param(&scope.persona_ref, "scope.persona_ref")?;
+    Ok((person_ref, persona_ref))
+}
+
+fn companion_access_grant_response(
+    id: &oneiron::EntityId,
+    grant: &oneiron::AccessGrant,
+) -> CompanionAccessGrantResponse {
+    let (person_ref, persona_ref) = grant
+        .scope
+        .companion_profile_refs()
+        .expect("companion access grants only expose companion_profile scopes");
+    CompanionAccessGrantResponse {
+        id: id.to_hex(),
+        principal_ref: grant.principal_ref.to_hex(),
+        scope: companion_scope_response(&person_ref, &persona_ref),
+        capability: grant.capability.as_str().to_owned(),
+        status: grant.status.as_str().to_owned(),
+        created_at: grant.created_at,
+        revoked_at: grant.revoked_at,
+    }
+}
+
+fn companion_scope_response(
+    person_ref: &oneiron::EntityId,
+    persona_ref: &oneiron::EntityId,
+) -> CompanionAccessGrantScopePayload {
+    CompanionAccessGrantScopePayload {
+        kind: "companion_profile".to_owned(),
+        person_ref: person_ref.to_hex(),
+        persona_ref: persona_ref.to_hex(),
+    }
+}
+
+fn companion_access_denied() -> EnvelopedApiError {
+    ApiError::new(
+        "companion profile access is not granted",
+        ApiErrorDetails::Forbidden {
+            required_scope: Some("companion_profile.read".to_owned()),
+        },
+        ["Create an active AccessGrant for this principal and profile before retrying."],
+    )
+    .into()
+}
+
+fn companion_engine_error(message: &'static str, error: oneiron::Error) -> EnvelopedApiError {
+    match error.kind() {
+        ErrorKind::InvalidKey
+        | ErrorKind::InvalidAccessGrantBody
+        | ErrorKind::InvalidEntityType
+        | ErrorKind::InvalidTimeRange => ApiError::bad_request(error.to_string(), None).into(),
+        ErrorKind::EntityNotFound => ApiError::not_found("access_grant", None).into(),
+        _ => ApiError::internal_server_error(message).into(),
     }
 }
 
@@ -5338,6 +5680,7 @@ fn core_engine_error(message: &'static str, error: oneiron::Error) -> ApiError {
         | ErrorKind::InvalidEntityType
         | ErrorKind::InvalidTimeRange
         | ErrorKind::InvalidClaimBody
+        | ErrorKind::InvalidAccessGrantBody
         | ErrorKind::InvalidCodeArtifactBody
         | ErrorKind::InvalidCodebaseSnapshotBody
         | ErrorKind::InvalidCodeSymbolManifestBody
@@ -7510,6 +7853,9 @@ mod tests {
             "/v1/core/conversations/{conversation_id}/turns",
             "/v1/core/turns/{turn_id}",
             "/v1/core/turns/annotate",
+            "/v1/companion/access-grants",
+            "/v1/companion/access-grants/{grant_id}/revoke",
+            "/v1/companion/profiles/{persona_ref}",
             "/api/context-pack",
             "/api/lease/revoke",
             "/api/health",
@@ -7647,6 +7993,9 @@ mod tests {
             ("/v1/core/turns/{turn_id}", "get"),
             ("/v1/core/turns/annotate", "get"),
             ("/v1/core/turns/annotate", "post"),
+            ("/v1/companion/access-grants", "post"),
+            ("/v1/companion/access-grants/{grant_id}/revoke", "post"),
+            ("/v1/companion/profiles/{persona_ref}", "get"),
         ] {
             assert_eq!(
                 spec["paths"][path][method]["security"],
@@ -7776,6 +8125,12 @@ mod tests {
             "TurnVadAnnotateRequest",
             "TurnVadAnnotateQuery",
             "TurnVadAnnotateResponse",
+            "CompanionAccessGrantScopePayload",
+            "CompanionAccessGrantResponse",
+            "CompanionCreateAccessGrantRequest",
+            "CompanionRevokeAccessGrantRequest",
+            "CompanionProfileAccess",
+            "CompanionProfileResponse",
             "LeaseRevokeRequest",
             "LeaseRevokeResponse",
             "ContextPackRequest",
@@ -7969,6 +8324,98 @@ mod tests {
             error_envelope(&body)["details"]["field"],
             Value::from("turn_id")
         );
+    }
+
+    #[tokio::test]
+    async fn v1_companion_profile_access_grants_allow_deny_and_revoke() {
+        let (_dir, server) = test_server_with_config(SyncServerConfig {
+            auth_secret: Some("secret".to_owned()),
+            ..Default::default()
+        });
+        let grant_id = seeded_test_entity_id(0x1265_0001).to_hex();
+        let principal_ref = seeded_test_entity_id(0x1265_0002).to_hex();
+        let person_ref = seeded_test_entity_id(0x1265_0003).to_hex();
+        let persona_ref = seeded_test_entity_id(0x1265_0004).to_hex();
+        let other_person_ref = seeded_test_entity_id(0x1265_0005).to_hex();
+
+        let profile_path = format!(
+            "/v1/companion/profiles/{persona_ref}?principal_ref={principal_ref}&person_ref={person_ref}"
+        );
+        let (status, body) = route_json(
+            server.clone(),
+            core_request("GET", &profile_path, "core:read", None),
+        )
+        .await;
+        assert_eq!(status, StatusCode::FORBIDDEN);
+        assert_error_envelope(&body, "FORBIDDEN");
+        assert_eq!(
+            error_envelope(&body)["details"]["requiredScope"],
+            Value::from("companion_profile.read")
+        );
+
+        let create_request = json!({
+            "id": grant_id,
+            "principal_ref": principal_ref,
+            "scope": {
+                "kind": "companion_profile",
+                "person_ref": person_ref,
+                "persona_ref": persona_ref,
+            },
+            "created_at": 10_u64,
+        });
+        let (status, body) = route_json(
+            server.clone(),
+            core_request(
+                "POST",
+                "/v1/companion/access-grants",
+                "core:auth",
+                Some(&create_request),
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body["id"], Value::from(grant_id.clone()));
+        assert_eq!(body["status"], Value::from("active"));
+        assert_eq!(body["capability"], Value::from("companion_profile.read"));
+
+        let (status, body) = route_json(
+            server.clone(),
+            core_request("GET", &profile_path, "core:read", None),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body["access"]["grant_id"], Value::from(grant_id.clone()));
+        assert_eq!(body["persona_ref"], Value::from(persona_ref.clone()));
+
+        let wrong_scope_path = format!(
+            "/v1/companion/profiles/{persona_ref}?principal_ref={principal_ref}&person_ref={other_person_ref}"
+        );
+        let (status, body) = route_json(
+            server.clone(),
+            core_request("GET", &wrong_scope_path, "core:read", None),
+        )
+        .await;
+        assert_eq!(status, StatusCode::FORBIDDEN);
+        assert_error_envelope(&body, "FORBIDDEN");
+
+        let revoke_path = format!("/v1/companion/access-grants/{grant_id}/revoke");
+        let revoke_request = json!({ "revoked_at": 20_u64 });
+        let (status, body) = route_json(
+            server.clone(),
+            core_request("POST", &revoke_path, "core:auth", Some(&revoke_request)),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body["status"], Value::from("revoked"));
+        assert_eq!(body["revoked_at"], Value::from(20_u64));
+
+        let (status, body) = route_json(
+            server,
+            core_request("GET", &profile_path, "core:read", None),
+        )
+        .await;
+        assert_eq!(status, StatusCode::FORBIDDEN);
+        assert_error_envelope(&body, "FORBIDDEN");
     }
 
     #[tokio::test]
