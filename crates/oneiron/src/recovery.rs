@@ -5,27 +5,28 @@
 //! artifacts are moved into a deterministic quarantine path next to the source
 //! artifact so the original bytes remain available for later inspection.
 
-use std::fs::{self, OpenOptions};
-use std::io::Write;
+use std::ffi::OsString;
+use std::fs::{self, File, OpenOptions};
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 
 use sha2::{Digest, Sha256};
 
 use crate::error::{Error, Result};
-use crate::types::bytes_to_hex_lower;
 
 /// Magic prefix for recovery artifacts: `ONEIRONA`.
 pub const RECOVERY_ARTIFACT_MAGIC: [u8; 8] = *b"ONEIRONA";
 /// Current recovery artifact shell version.
 pub const RECOVERY_ARTIFACT_VERSION: u16 = 1;
-/// Deterministic sidecar directory for recovery artifact quarantine.
-pub const RECOVERY_ARTIFACT_QUARANTINE_DIR: &str = ".oneiron-recovery-quarantine";
+/// Sibling suffix prefix for invalid recovery artifact quarantine.
+pub const RECOVERY_ARTIFACT_INVALID_SUFFIX_PREFIX: &str = ".invalid-";
 
 const VERSION_OFFSET: usize = RECOVERY_ARTIFACT_MAGIC.len();
 const KIND_OFFSET: usize = VERSION_OFFSET + 2;
 const LEN_OFFSET: usize = KIND_OFFSET + 2;
 const CHECKSUM_OFFSET: usize = LEN_OFFSET + 8;
 const HEADER_LEN: usize = CHECKSUM_OFFSET + 32;
+const QUARANTINE_SUFFIX_RETRY_LIMIT: usize = 2;
 
 /// Recovery ladder result for a filesystem artifact.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -100,7 +101,8 @@ pub enum RecoveryArtifactFailure {
 }
 
 impl RecoveryArtifactFailure {
-    pub(crate) fn reason(&self) -> &'static str {
+    #[must_use]
+    pub fn reason(&self) -> &'static str {
         match self {
             Self::Truncated { .. } => "artifact header is truncated",
             Self::MagicMismatch { .. } => "artifact magic mismatch",
@@ -241,72 +243,73 @@ fn recovery_artifact_checksum(artifact_type: u16, payload: &[u8]) -> [u8; 32] {
 }
 
 fn quarantine_invalid_artifact(path: &Path, bytes: &[u8]) -> Result<PathBuf> {
+    'suffixes: for suffix in 1..=u16::MAX {
+        let candidate = invalid_artifact_path(path, suffix);
+        for _attempt in 0..=QUARANTINE_SUFFIX_RETRY_LIMIT {
+            match persist_quarantine_bytes(&candidate, bytes) {
+                Ok(()) => {
+                    remove_original_if_unchanged(path, bytes)?;
+                    return Ok(candidate);
+                }
+                Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => {
+                    match artifact_file_matches(&candidate, bytes) {
+                        Ok(true) => {
+                            remove_original_if_unchanged(path, bytes)?;
+                            return Ok(candidate);
+                        }
+                        Ok(false) => continue 'suffixes,
+                        Err(err) if err.kind() == std::io::ErrorKind::NotFound => continue,
+                        Err(err) => return Err(Error::Io(err)),
+                    }
+                }
+                Err(err) => return Err(Error::Io(err)),
+            }
+        }
+    }
+
+    Err(Error::RecoveryArtifactQuarantineExhausted {
+        path: path.to_path_buf(),
+    })
+}
+
+fn artifact_file_matches(path: &Path, bytes: &[u8]) -> std::io::Result<bool> {
+    let path_metadata = fs::symlink_metadata(path)?;
+    if !path_metadata.file_type().is_file() || path_metadata.len() != bytes.len() as u64 {
+        return Ok(false);
+    }
+
+    let mut file = File::open(path)?;
+    let file_metadata = file.metadata()?;
+    if !file_metadata.file_type().is_file() || file_metadata.len() != bytes.len() as u64 {
+        return Ok(false);
+    }
+
+    let mut offset = 0;
+    let mut buffer = [0_u8; 8192];
+    while offset < bytes.len() {
+        let read = file.read(&mut buffer)?;
+        if read == 0 {
+            return Ok(false);
+        }
+        let end = offset + read;
+        if end > bytes.len() || buffer[..read] != bytes[offset..end] {
+            return Ok(false);
+        }
+        offset = end;
+    }
+
+    let mut trailing = [0_u8; 1];
+    Ok(file.read(&mut trailing)? == 0)
+}
+
+fn invalid_artifact_path(path: &Path, suffix: u16) -> PathBuf {
     let parent = path.parent().unwrap_or_else(|| Path::new("."));
-    let quarantine_dir = parent.join(RECOVERY_ARTIFACT_QUARANTINE_DIR);
-    fs::create_dir_all(&quarantine_dir)?;
-
-    let file_name = path
+    let mut file_name = path
         .file_name()
-        .and_then(|name| name.to_str())
-        .unwrap_or("artifact");
-    let digest = bytes_to_hex_lower(&Sha256::digest(bytes));
-    let quarantine_path = quarantine_dir.join(format!("{file_name}.{digest}.quarantined"));
-    move_to_quarantine(path, bytes, quarantine_path)
-}
-
-fn move_to_quarantine(path: &Path, bytes: &[u8], quarantine_path: PathBuf) -> Result<PathBuf> {
-    match persist_quarantine_bytes(&quarantine_path, bytes) {
-        Ok(()) => {
-            remove_original_if_unchanged(path, bytes)?;
-            Ok(quarantine_path)
-        }
-        Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => {
-            handle_existing_quarantine(path, bytes, quarantine_path)
-        }
-        Err(err) => Err(Error::Io(err)),
-    }
-}
-
-fn handle_existing_quarantine(
-    path: &Path,
-    bytes: &[u8],
-    quarantine_path: PathBuf,
-) -> Result<PathBuf> {
-    if fs::read(&quarantine_path)? == bytes {
-        remove_original_if_unchanged(path, bytes)?;
-        return Ok(quarantine_path);
-    }
-
-    let fallback = next_quarantine_fallback(&quarantine_path, bytes)?;
-    if fallback.exists() {
-        remove_original_if_unchanged(path, bytes)?;
-        return Ok(fallback);
-    }
-    persist_quarantine_bytes(&fallback, bytes)?;
-    remove_original_if_unchanged(path, bytes)?;
-    Ok(fallback)
-}
-
-fn next_quarantine_fallback(quarantine_path: &Path, bytes: &[u8]) -> Result<PathBuf> {
-    let stem = quarantine_path
-        .file_name()
-        .and_then(|name| name.to_str())
-        .unwrap_or("artifact.quarantined");
-    let parent = quarantine_path.parent().unwrap_or_else(|| Path::new("."));
-
-    for suffix in 1..=u16::MAX {
-        let candidate = parent.join(format!("{stem}.{suffix}"));
-        if !candidate.exists() {
-            return Ok(candidate);
-        }
-        if fs::read(&candidate)? == bytes {
-            return Ok(candidate);
-        }
-    }
-
-    Err(Error::InvalidRecoveryArtifact(
-        "artifact quarantine path space exhausted",
-    ))
+        .map(OsString::from)
+        .unwrap_or_else(|| OsString::from("artifact"));
+    file_name.push(format!("{RECOVERY_ARTIFACT_INVALID_SUFFIX_PREFIX}{suffix}"));
+    parent.join(file_name)
 }
 
 fn persist_quarantine_bytes(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
@@ -337,6 +340,21 @@ mod tests {
 
     const ARTIFACT_TYPE_FIXTURE: u16 = 42;
 
+    fn assert_invalid_suffix(path: &Path, original: &Path, suffix: u16) {
+        let mut expected = original
+            .file_name()
+            .and_then(|name| name.to_str())
+            .expect("test artifact path is valid UTF-8")
+            .to_owned();
+        expected.push_str(&format!(
+            "{RECOVERY_ARTIFACT_INVALID_SUFFIX_PREFIX}{suffix}"
+        ));
+        assert_eq!(
+            path.file_name().and_then(|name| name.to_str()),
+            Some(expected.as_str())
+        );
+    }
+
     #[test]
     fn valid_artifact_loads_after_header_and_checksum_validation() -> Result<()> {
         let dir = tempfile::tempdir()?;
@@ -356,14 +374,40 @@ mod tests {
         assert_eq!(artifact.payload(), b"payload");
         assert!(artifact_path.exists(), "valid artifact stays in place");
         assert!(
-            !dir.path().join(RECOVERY_ARTIFACT_QUARANTINE_DIR).exists(),
+            !invalid_artifact_path(&artifact_path, 1).exists(),
             "valid artifact must not create quarantine state"
         );
         Ok(())
     }
 
     #[test]
-    fn corrupt_artifact_quarantines_without_losing_bytes() -> Result<()> {
+    fn corrupt_magic_artifact_quarantines_without_losing_bytes() -> Result<()> {
+        let dir = tempfile::tempdir()?;
+        let artifact_path = dir.path().join("snapshot.oneiron-artifact");
+        let mut corrupt = encode_recovery_artifact(ARTIFACT_TYPE_FIXTURE, b"payload")?;
+        corrupt[0] = b'X';
+        fs::write(&artifact_path, &corrupt)?;
+
+        let RecoveryArtifactLoad::Quarantined(quarantined) =
+            load_recovery_artifact(&artifact_path, ARTIFACT_TYPE_FIXTURE)?
+        else {
+            panic!("bad magic artifact should quarantine");
+        };
+
+        let mut found = RECOVERY_ARTIFACT_MAGIC;
+        found[0] = b'X';
+        assert_eq!(
+            quarantined.failure,
+            RecoveryArtifactFailure::MagicMismatch { found }
+        );
+        assert!(!artifact_path.exists(), "invalid source is moved aside");
+        assert_eq!(fs::read(&quarantined.quarantine_path)?, corrupt);
+        assert_invalid_suffix(&quarantined.quarantine_path, &artifact_path, 1);
+        Ok(())
+    }
+
+    #[test]
+    fn corrupt_checksum_artifact_quarantines_without_losing_bytes() -> Result<()> {
         let dir = tempfile::tempdir()?;
         let artifact_path = dir.path().join("snapshot.oneiron-artifact");
         let mut corrupt = encode_recovery_artifact(ARTIFACT_TYPE_FIXTURE, b"payload")?;
@@ -386,21 +430,7 @@ mod tests {
         );
         assert!(!artifact_path.exists(), "invalid source is moved aside");
         assert_eq!(fs::read(&quarantined.quarantine_path)?, corrupt);
-        assert_eq!(
-            quarantined
-                .quarantine_path
-                .parent()
-                .and_then(Path::file_name),
-            Some(std::ffi::OsStr::new(RECOVERY_ARTIFACT_QUARANTINE_DIR))
-        );
-        assert!(
-            quarantined
-                .quarantine_path
-                .file_name()
-                .and_then(|name| name.to_str())
-                .is_some_and(|name| name.starts_with("snapshot.oneiron-artifact.")),
-            "quarantine name is deterministic from original name and bytes"
-        );
+        assert_invalid_suffix(&quarantined.quarantine_path, &artifact_path, 1);
         Ok(())
     }
 
@@ -428,6 +458,7 @@ mod tests {
         );
         assert!(!artifact_path.exists(), "tampered source is moved aside");
         assert_eq!(fs::read(&quarantined.quarantine_path)?, tampered);
+        assert_invalid_suffix(&quarantined.quarantine_path, &artifact_path, 1);
         Ok(())
     }
 
@@ -453,6 +484,7 @@ mod tests {
         );
         assert!(!artifact_path.exists(), "unexpected source is moved aside");
         assert_eq!(fs::read(&quarantined.quarantine_path)?, encoded);
+        assert_invalid_suffix(&quarantined.quarantine_path, &artifact_path, 1);
         Ok(())
     }
 
@@ -480,6 +512,53 @@ mod tests {
         assert_eq!(second.quarantine_path, first.quarantine_path);
         assert_eq!(fs::read(&second.quarantine_path)?, corrupt);
         assert!(!artifact_path.exists(), "second source is removed");
+        assert_invalid_suffix(&second.quarantine_path, &artifact_path, 1);
+        Ok(())
+    }
+
+    #[test]
+    fn quarantine_uses_next_invalid_suffix_for_distinct_existing_bytes() -> Result<()> {
+        let dir = tempfile::tempdir()?;
+        let artifact_path = dir.path().join("snapshot.oneiron-artifact");
+        let mut corrupt = encode_recovery_artifact(ARTIFACT_TYPE_FIXTURE, b"payload")?;
+        corrupt[HEADER_LEN] ^= 0x01;
+        fs::write(
+            invalid_artifact_path(&artifact_path, 1),
+            b"previous invalid bytes",
+        )?;
+        fs::write(&artifact_path, &corrupt)?;
+
+        let RecoveryArtifactLoad::Quarantined(quarantined) =
+            load_recovery_artifact(&artifact_path, ARTIFACT_TYPE_FIXTURE)?
+        else {
+            panic!("corrupt artifact should quarantine");
+        };
+
+        assert_eq!(fs::read(&quarantined.quarantine_path)?, corrupt);
+        assert!(!artifact_path.exists(), "fallback source is removed");
+        assert_invalid_suffix(&quarantined.quarantine_path, &artifact_path, 2);
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn quarantine_skips_symlink_candidate_to_preserve_bytes() -> Result<()> {
+        let dir = tempfile::tempdir()?;
+        let artifact_path = dir.path().join("snapshot.oneiron-artifact");
+        let mut corrupt = encode_recovery_artifact(ARTIFACT_TYPE_FIXTURE, b"payload")?;
+        corrupt[HEADER_LEN] ^= 0x01;
+        fs::write(&artifact_path, &corrupt)?;
+        std::os::unix::fs::symlink(&artifact_path, invalid_artifact_path(&artifact_path, 1))?;
+
+        let RecoveryArtifactLoad::Quarantined(quarantined) =
+            load_recovery_artifact(&artifact_path, ARTIFACT_TYPE_FIXTURE)?
+        else {
+            panic!("corrupt artifact should quarantine");
+        };
+
+        assert_eq!(fs::read(&quarantined.quarantine_path)?, corrupt);
+        assert!(!artifact_path.exists(), "source is removed after fallback");
+        assert_invalid_suffix(&quarantined.quarantine_path, &artifact_path, 2);
         Ok(())
     }
 
@@ -504,6 +583,7 @@ mod tests {
             concurrently_written,
             "changed source bytes are not removed after quarantine"
         );
+        assert_invalid_suffix(&quarantine_path, &artifact_path, 1);
         Ok(())
     }
 
@@ -531,6 +611,22 @@ mod tests {
         );
         assert!(!artifact_path.exists(), "unsupported source is moved aside");
         assert_eq!(fs::read(&quarantined.quarantine_path)?, future);
+        assert_invalid_suffix(&quarantined.quarantine_path, &artifact_path, 1);
+        Ok(())
+    }
+
+    #[test]
+    fn decode_error_exposes_recovery_reason() -> Result<()> {
+        let mut corrupt = encode_recovery_artifact(ARTIFACT_TYPE_FIXTURE, b"payload")?;
+        corrupt[HEADER_LEN] ^= 0x01;
+
+        let err = decode_recovery_artifact(&corrupt, ARTIFACT_TYPE_FIXTURE)
+            .expect_err("bad checksum must fail closed");
+
+        assert!(matches!(
+            err,
+            Error::InvalidRecoveryArtifact("artifact checksum mismatch")
+        ));
         Ok(())
     }
 }
