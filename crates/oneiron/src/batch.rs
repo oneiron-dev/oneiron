@@ -609,6 +609,7 @@ impl<'a> BatchBuilder<'a> {
                 .text_index_trusted
                 .load(std::sync::atomic::Ordering::Acquire)
         };
+        preflight_standalone_gate_decisions(&self.vault.store, &self.ops)?;
         let mut wtxn = self.vault.store.env.write_txn()?;
 
         apply_ops(
@@ -618,10 +619,81 @@ impl<'a> BatchBuilder<'a> {
             &mut wtxn,
             self.ops,
             text_index_trusted,
+            false,
         )?;
         wtxn.commit()?;
         Ok(())
     }
+}
+
+fn preflight_standalone_gate_decisions(store: &Store, ops: &[BatchOp]) -> Result<()> {
+    if !contains_local_claim_put(ops) {
+        return Ok(());
+    }
+
+    let mut wtxn = store.env.write_txn()?;
+    let policy = crate::gate::resolve_policy_manifest(store, &wtxn)?;
+    let mut first_error = None;
+
+    for op in ops {
+        let result = match op {
+            BatchOp::Put {
+                id,
+                entity_type,
+                data,
+                allow_reserved_predicate,
+                ..
+            } if *entity_type == crate::types::ENTITY_TYPE_CLAIM && !*allow_reserved_predicate => {
+                crate::claim::validate_claim_body_and_decode(data, false).and_then(|body| {
+                    crate::gate::check_claim_policy_for_write(
+                        store,
+                        &mut wtxn,
+                        id,
+                        &body,
+                        None,
+                        &policy,
+                        crate::gate::GateWriteMode {
+                            record_decision: true,
+                            resolve_pending: false,
+                        },
+                    )
+                })
+            }
+            BatchOp::ClaimCandidate {
+                id,
+                candidate,
+                envelope,
+                internal_lexical_query_hint,
+                ..
+            } if !*internal_lexical_query_hint => {
+                let body = (**candidate).clone().into_claim_body(envelope);
+                crate::gate::check_claim_policy_for_write(
+                    store,
+                    &mut wtxn,
+                    id,
+                    &body,
+                    Some(envelope),
+                    &policy,
+                    crate::gate::GateWriteMode {
+                        record_decision: true,
+                        resolve_pending: false,
+                    },
+                )
+            }
+            _ => Ok(()),
+        };
+
+        if let Err(err) = result {
+            first_error = Some(err);
+            break;
+        }
+    }
+
+    wtxn.commit()?;
+    if let Some(err) = first_error {
+        return Err(err);
+    }
+    Ok(())
 }
 
 /// Builder for batch writes into an externally-owned LMDB write transaction.
@@ -868,6 +940,7 @@ impl<'a> TxnBatchBuilder<'a> {
             wtxn,
             self.ops,
             text_index_trusted,
+            false,
         )
     }
 }
@@ -1109,6 +1182,7 @@ pub(crate) fn apply_ops(
     wtxn: &mut RwTxn<'_>,
     ops: Vec<BatchOp>,
     text_index_trusted: bool,
+    record_gate_decisions: bool,
 ) -> Result<()> {
     secret_scan::scan_batch_ops(&ops)?;
     let child_of_overlay = ChildOfBatchOverlay::from_ops(&ops);
@@ -1177,6 +1251,7 @@ pub(crate) fn apply_ops(
                     write_policy.as_ref(),
                     None,
                     false,
+                    record_gate_decisions,
                 )?;
                 if let Some(token) = applied.pending_embedding_token {
                     pending_embedding_tokens_written.insert(id, token);
@@ -1257,6 +1332,7 @@ pub(crate) fn apply_ops(
                     later_text_coverage_by_op[op_index],
                     write_policy.as_ref(),
                     internal_lexical_query_hint,
+                    record_gate_decisions,
                 )?;
                 if applied.had_graph_mutation {
                     had_graph_mutation = true;
@@ -1729,6 +1805,7 @@ fn apply_claim_candidate(
     has_later_covering_text_op: bool,
     write_policy: Option<&crate::gate::PolicyManifestResolution>,
     internal_lexical_query_hint: bool,
+    record_gate_decisions: bool,
 ) -> Result<AppliedClaimCandidate> {
     crate::gate::validate_write_envelope(envelope)?;
 
@@ -1764,6 +1841,7 @@ fn apply_claim_candidate(
         write_policy,
         Some(envelope),
         internal_lexical_query_hint,
+        record_gate_decisions,
     )?;
 
     let subject_id = match subject {
@@ -1862,6 +1940,7 @@ fn apply_put(
     write_policy: Option<&crate::gate::PolicyManifestResolution>,
     write_envelope: Option<&WriteEnvelope>,
     internal_lexical_query_hint: bool,
+    record_gate_decisions: bool,
 ) -> Result<AppliedPut> {
     // Type-byte validation runs in `apply_ops` (the public-vs-maintenance gate:
     // public writes reject the engine-authored maintenance band, the sync
@@ -1944,9 +2023,31 @@ fn apply_put(
             if allow_reserved_predicate {
                 crate::gate::check_reserved_claim_policy(&body, policy)?;
             } else if let Some(write_envelope) = write_envelope {
-                crate::gate::check_claim_policy_with_write_envelope(&body, write_envelope, policy)?;
+                crate::gate::check_claim_policy_for_write(
+                    store,
+                    wtxn,
+                    &id,
+                    &body,
+                    Some(write_envelope),
+                    policy,
+                    crate::gate::GateWriteMode {
+                        record_decision: record_gate_decisions,
+                        resolve_pending: true,
+                    },
+                )?;
             } else {
-                crate::gate::check_claim_policy(&body, policy)?;
+                crate::gate::check_claim_policy_for_write(
+                    store,
+                    wtxn,
+                    &id,
+                    &body,
+                    None,
+                    policy,
+                    crate::gate::GateWriteMode {
+                        record_decision: record_gate_decisions,
+                        resolve_pending: true,
+                    },
+                )?;
             }
         }
     } else if entity_type == crate::types::ENTITY_TYPE_CODE_ARTIFACT {
@@ -4281,6 +4382,7 @@ mod tests {
                 allow_reserved_predicate: true,
             }],
             true,
+            false,
         )
         .expect_err("self-target lexical hints must reject");
         assert_matches!(err, Error::InvalidClaimBody(_));
@@ -4335,6 +4437,7 @@ mod tests {
                 allow_reserved_predicate: true,
             }],
             true,
+            false,
         )
         .expect_err("lexical hints targeting synthetic hints must reject");
         assert_matches!(err, Error::InvalidClaimBody(_));
@@ -4382,6 +4485,7 @@ mod tests {
                 allow_reserved_predicate: true,
             }],
             true,
+            false,
         )
         .expect_err("lexical hints must target claim records");
         assert_matches!(err, Error::InvalidClaimBody(_));
@@ -4496,6 +4600,7 @@ mod tests {
                 allow_reserved_predicate: true,
             }],
             true,
+            false,
         )?;
         wtxn.commit()?;
 
@@ -4580,6 +4685,7 @@ mod tests {
                 },
             ],
             true,
+            false,
         )?;
         wtxn.commit()?;
 
@@ -4652,6 +4758,7 @@ mod tests {
                     allow_reserved_predicate: true,
                 }],
                 true,
+                false,
             )?;
             wtxn.commit()?;
 
@@ -4684,6 +4791,7 @@ mod tests {
                 allow_maintenance: true,
                 allow_reserved_predicate: true,
             }],
+            false,
             false,
         )
         .expect_err("target-only replay must not index deferred hints while untrusted");
@@ -5831,6 +5939,7 @@ mod tests {
                     provenance: None,
                 }],
                 true,
+                false,
             )
         })?;
 

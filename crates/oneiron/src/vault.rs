@@ -878,6 +878,7 @@ impl Vault {
             ],
             self.text_index_trusted
                 .load(std::sync::atomic::Ordering::Acquire),
+            false,
         )?;
         let key = vad_annotation_meta_key(expected_type, id);
         self.store.vault_meta.delete(&mut wtxn, &key)?;
@@ -1022,6 +1023,7 @@ impl Vault {
             ops,
             self.text_index_trusted
                 .load(std::sync::atomic::Ordering::Acquire),
+            false,
         )?;
         wtxn.commit()?;
         Ok(())
@@ -1347,6 +1349,7 @@ impl Vault {
             ops,
             self.text_index_trusted
                 .load(std::sync::atomic::Ordering::Acquire),
+            false,
         )?;
         wtxn.commit()?;
         Ok(id)
@@ -1779,6 +1782,7 @@ impl Vault {
             ops,
             self.text_index_trusted
                 .load(std::sync::atomic::Ordering::Acquire),
+            false,
         )?;
         wtxn.commit()?;
         Ok(())
@@ -1824,6 +1828,7 @@ impl Vault {
             ops,
             self.text_index_trusted
                 .load(std::sync::atomic::Ordering::Acquire),
+            false,
         )?;
         wtxn.commit()?;
         Ok(())
