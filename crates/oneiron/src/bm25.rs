@@ -618,7 +618,9 @@ where
         for item in dups {
             let (_, dup) = item?;
             let entry = decode_posting_entry(dup)?;
-            let scope_id = lexical_query_hint_scope_id(store, rtxn, &entry.id)?;
+            let Some(scope_id) = lexical_query_hint_scope_id(store, rtxn, &entry.id)? else {
+                continue;
+            };
             if posting_has_enabled_channel(config, &entry)? && posting_matches(&scope_id)? {
                 return Ok(true);
             }
@@ -716,7 +718,9 @@ fn exact_term_has_scoped_posting(
     for item in dups {
         let (_, dup) = item?;
         let entry = decode_posting_entry(dup)?;
-        let scope_id = lexical_query_hint_scope_id(store, rtxn, &entry.id)?;
+        let Some(scope_id) = lexical_query_hint_scope_id(store, rtxn, &entry.id)? else {
+            continue;
+        };
         if exact_posting_matches_scope(&scope_id)? && posting_has_enabled_channel(config, &entry)? {
             return Ok(true);
         }
@@ -748,7 +752,9 @@ fn term_posting_decisions(
         if !posting_has_enabled_channel(config, &entry)? {
             continue;
         }
-        let scope_id = lexical_query_hint_scope_id(store, rtxn, &entry.id)?;
+        let Some(scope_id) = lexical_query_hint_scope_id(store, rtxn, &entry.id)? else {
+            continue;
+        };
         let decision = classify_posting(&scope_id)?;
         decisions.has_scoped_posting |= decision.matches_scope;
         decisions.has_rejected_posting |= decision.rejected_by_gate;
@@ -1061,7 +1067,16 @@ fn collapse_lexical_query_hint_scores(
 ) -> Result<()> {
     let mut collapsed = HashMap::<EntityId, f64>::with_capacity(scores.len());
     for (id, score) in scores.drain() {
-        let target = resolve_lexical_query_hint_target(store, rtxn, &id)?.unwrap_or(id);
+        let target = match resolve_lexical_query_hint_record(store, rtxn, &id)? {
+            LexicalQueryHintResolution::Live { target } => {
+                if !lexical_query_hint_target_is_live_claim(store, rtxn, &target)? {
+                    continue;
+                }
+                target
+            }
+            LexicalQueryHintResolution::DeadHint => continue,
+            LexicalQueryHintResolution::NonHint => id,
+        };
         match collapsed.entry(target) {
             Entry::Occupied(mut entry) => {
                 if score > *entry.get() {
@@ -1077,33 +1092,78 @@ fn collapse_lexical_query_hint_scores(
     Ok(())
 }
 
-fn resolve_lexical_query_hint_target(
+enum LexicalQueryHintResolution {
+    NonHint,
+    Live { target: EntityId },
+    DeadHint,
+}
+
+fn resolve_lexical_query_hint_record(
     store: &Store,
     rtxn: &RoTxn<'_>,
     id: &EntityId,
-) -> Result<Option<EntityId>> {
+) -> Result<LexicalQueryHintResolution> {
     if !id
         .as_bytes()
         .starts_with(&crate::claim::LEXICAL_QUERY_HINT_ID_PREFIX)
     {
-        return Ok(None);
+        return Ok(LexicalQueryHintResolution::NonHint);
     }
     let Some(raw) = store.entities.get(rtxn, id.as_bytes())? else {
-        return Ok(None);
+        return Ok(LexicalQueryHintResolution::DeadHint);
     };
     let Some(header) = EntityMetadataHeader::parse(raw) else {
         return Err(corrupted("entity header"));
     };
     if header.entity_type != crate::types::ENTITY_TYPE_CLAIM {
-        return Ok(None);
+        return Ok(LexicalQueryHintResolution::NonHint);
     }
-    let body =
-        crate::claim::decode_claim_body(&raw[crate::batch::ENTITY_METADATA_HEADER_LEN..], true)?;
-    crate::claim::lexical_query_hint_target(&body)
+    let Ok(body) =
+        crate::claim::decode_claim_body(&raw[crate::batch::ENTITY_METADATA_HEADER_LEN..], true)
+    else {
+        return Ok(LexicalQueryHintResolution::DeadHint);
+    };
+    let Some(target) = crate::claim::lexical_query_hint_target(&body)? else {
+        return Ok(LexicalQueryHintResolution::NonHint);
+    };
+    if body.lifecycle != crate::claim::ClaimLifecycleStatus::Active {
+        return Ok(LexicalQueryHintResolution::DeadHint);
+    }
+    Ok(LexicalQueryHintResolution::Live { target })
 }
 
-fn lexical_query_hint_scope_id(store: &Store, rtxn: &RoTxn<'_>, id: &EntityId) -> Result<EntityId> {
-    Ok(resolve_lexical_query_hint_target(store, rtxn, id)?.unwrap_or(*id))
+fn lexical_query_hint_target_is_live_claim(
+    store: &Store,
+    rtxn: &RoTxn<'_>,
+    target: &EntityId,
+) -> Result<bool> {
+    let Some(raw) = store.entities.get(rtxn, target.as_bytes())? else {
+        return Ok(false);
+    };
+    let Some(header) = EntityMetadataHeader::parse(raw) else {
+        return Err(corrupted("entity header"));
+    };
+    if header.entity_type != crate::types::ENTITY_TYPE_CLAIM {
+        return Ok(false);
+    }
+    let Ok(body) =
+        crate::claim::decode_claim_body(&raw[crate::batch::ENTITY_METADATA_HEADER_LEN..], true)
+    else {
+        return Ok(false);
+    };
+    Ok(body.lifecycle == crate::claim::ClaimLifecycleStatus::Active)
+}
+
+fn lexical_query_hint_scope_id(
+    store: &Store,
+    rtxn: &RoTxn<'_>,
+    id: &EntityId,
+) -> Result<Option<EntityId>> {
+    match resolve_lexical_query_hint_record(store, rtxn, id)? {
+        LexicalQueryHintResolution::Live { target } => Ok(Some(target)),
+        LexicalQueryHintResolution::NonHint => Ok(Some(*id)),
+        LexicalQueryHintResolution::DeadHint => Ok(None),
+    }
 }
 
 // === Encoders / decoders ===
