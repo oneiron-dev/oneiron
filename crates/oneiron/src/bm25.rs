@@ -496,6 +496,7 @@ pub(crate) fn deindex_text(store: &Store, wtxn: &mut RwTxn<'_>, id: &EntityId) -
 fn collect_query_terms(
     store: &Store,
     rtxn: &RoTxn<'_>,
+    config: &Bm25Config,
     query: &str,
     tokens: &[Token],
     exact_posting_matches_scope: &mut impl FnMut(&EntityId) -> Result<bool>,
@@ -513,6 +514,7 @@ fn collect_query_terms(
         store,
         rtxn,
         query.trim_end().len(),
+        config,
         tokens,
         &mut terms,
         exact_posting_matches_scope,
@@ -528,6 +530,7 @@ fn collect_final_token_prefix_terms(
     store: &Store,
     rtxn: &RoTxn<'_>,
     trimmed_query_end: usize,
+    config: &Bm25Config,
     tokens: &[Token],
     terms: &mut BTreeMap<String, f64>,
     exact_posting_matches_scope: &mut impl FnMut(&EntityId) -> Result<bool>,
@@ -543,7 +546,8 @@ fn collect_final_token_prefix_terms(
         .collect();
 
     for prefix in &prefixes {
-        if exact_term_has_scoped_posting(store, rtxn, prefix, exact_posting_matches_scope)? {
+        if exact_term_has_scoped_posting(store, rtxn, config, prefix, exact_posting_matches_scope)?
+        {
             return Ok(());
         }
     }
@@ -563,7 +567,13 @@ fn collect_final_token_prefix_terms(
             let term = str::from_utf8(term_bytes)
                 .map_err(|_| corrupted("posting term key is not valid utf-8"))?
                 .to_owned();
-            if !exact_term_has_scoped_posting(store, rtxn, &term, exact_posting_matches_scope)? {
+            if !exact_term_has_scoped_posting(
+                store,
+                rtxn,
+                config,
+                &term,
+                exact_posting_matches_scope,
+            )? {
                 continue;
             }
             insert_query_term(terms, term, FINAL_TOKEN_PREFIX_WEIGHT);
@@ -577,6 +587,7 @@ fn collect_final_token_prefix_terms(
 fn exact_term_has_scoped_posting(
     store: &Store,
     rtxn: &RoTxn<'_>,
+    config: &Bm25Config,
     term: &str,
     exact_posting_matches_scope: &mut impl FnMut(&EntityId) -> Result<bool>,
 ) -> Result<bool> {
@@ -586,7 +597,19 @@ fn exact_term_has_scoped_posting(
     for item in dups {
         let (_, dup) = item?;
         let entry = decode_posting_entry(dup)?;
-        if exact_posting_matches_scope(&entry.id)? {
+        if exact_posting_matches_scope(&entry.id)? && posting_has_enabled_channel(config, &entry)? {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+fn posting_has_enabled_channel(config: &Bm25Config, entry: &PostingEntry) -> Result<bool> {
+    for (fid, _) in &entry.fields {
+        let Some(channel) = AnalyzerChannel::from_field_id(*fid) else {
+            return Err(corrupted("posting field_id not in current schema"));
+        };
+        if config.field(channel).weight != 0.0 {
             return Ok(true);
         }
     }
@@ -700,6 +723,7 @@ where
     let query_terms = collect_query_terms(
         store,
         rtxn,
+        config,
         query,
         &tokens,
         options.exact_posting_matches_scope,
@@ -1397,6 +1421,7 @@ mod tests {
             &vault.store,
             &rtxn,
             "normprefix".len(),
+            &Bm25Config::default(),
             &[final_word_token("normprefix")],
             &mut terms,
             &mut exact_posting_matches_scope,
@@ -1431,6 +1456,7 @@ mod tests {
             &vault.store,
             &rtxn,
             "capbound".len(),
+            &Bm25Config::default(),
             &[final_word_token("capbound")],
             &mut terms,
             &mut exact_posting_matches_scope,
@@ -1474,6 +1500,7 @@ mod tests {
             &vault.store,
             &rtxn,
             prefix.len(),
+            &Bm25Config::default(),
             &[final_word_token(prefix)],
             &mut terms,
             &mut exact_posting_matches_scope,
@@ -1518,6 +1545,7 @@ mod tests {
             &vault.store,
             &rtxn,
             prefix.len(),
+            &Bm25Config::default(),
             &[final_word_token(prefix)],
             &mut terms,
             &mut exact_posting_matches_scope,
@@ -1984,13 +2012,16 @@ mod tests {
 
         // Default profile: stem channel carries the match.
         let default_profile = crate::types::Bm25RankProfile::default();
-        let hits = vault.search_text_with_profile("running", 10, &default_profile)?;
+        let stem_only_query = "running.";
+        let hits = vault.search_text_with_profile(stem_only_query, 10, &default_profile)?;
         assert!(contains_id(&hits, &id));
 
-        // Stem weight zeroed: the only matching channel is excluded.
+        // Stem weight zeroed: the only matching channel is excluded. The
+        // punctuation keeps this assertion isolated from final-token prefix
+        // widening, which may legitimately match `runs` through Surface.
         let stem_zero = crate::types::Bm25RankProfile::default()
             .with_channel_weight(AnalyzerChannel::Stem, 0.0);
-        let hits = vault.search_text_with_profile("running", 10, &stem_zero)?;
+        let hits = vault.search_text_with_profile(stem_only_query, 10, &stem_zero)?;
         assert!(
             !contains_id(&hits, &id),
             "zero-weight Stem channel must be excluded from scoring",
@@ -1999,11 +2030,11 @@ mod tests {
         // Same exclusion through the pipeline path.
         let hits = vault
             .query()
-            .search_text("running", 10)
+            .search_text(stem_only_query, 10)
             .rank_profile(stem_zero)
             .run()?;
         assert!(!contains_id(&hits, &id));
-        let hits = vault.query().search_text("running", 10).run()?;
+        let hits = vault.query().search_text(stem_only_query, 10).run()?;
         assert!(contains_id(&hits, &id), "default pipeline still matches");
 
         // All four v1 channels zeroed: even a direct surface match is
@@ -2015,6 +2046,24 @@ mod tests {
             .with_channel_weight(AnalyzerChannel::CjkNgram, 0.0);
         let hits = vault.search_text_with_profile("runs", 10, &all_zero)?;
         assert!(hits.is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn disabled_channel_exact_hit_does_not_suppress_enabled_prefix() -> Result<()> {
+        let temp_dir = tempfile::tempdir()?;
+        let vault = Vault::open(temp_dir.path(), test_config())?;
+        let disabled_exact = EntityId::from_bytes_unchecked([0x10; ENTITY_ID_LEN]);
+        let enabled_prefix = EntityId::from_bytes_unchecked([0x20; ENTITY_ID_LEN]);
+
+        put_text_doc(&vault, &disabled_exact, "she runs daily")?;
+        put_text_doc(&vault, &enabled_prefix, "runningly specific surface")?;
+
+        let stem_zero = crate::types::Bm25RankProfile::default()
+            .with_channel_weight(AnalyzerChannel::Stem, 0.0);
+        let hits = vault.search_text_with_profile("running", 10, &stem_zero)?;
+
+        assert!(contains_id(&hits, &enabled_prefix));
         Ok(())
     }
 
