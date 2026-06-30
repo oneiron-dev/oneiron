@@ -187,6 +187,8 @@ where
 
 const FINAL_TOKEN_PREFIX_WEIGHT: f64 = 0.5;
 const MAX_FINAL_TOKEN_PREFIX_TERMS: usize = 64;
+/// Bound global term-key reads before scope filtering for any one prefix.
+const MAX_FINAL_TOKEN_PREFIX_SCAN_TERMS: usize = MAX_FINAL_TOKEN_PREFIX_TERMS * 16;
 
 /// One slot per reserved [`AnalyzerChannel`]. A new channel whose
 /// `field_id()` falls outside `0..BM25_FIELD_COUNT` would silently
@@ -547,21 +549,23 @@ fn collect_final_token_prefix_terms(
     }
 
     let mut expanded_terms = 0usize;
-    for prefix in prefixes {
-        let remaining = MAX_FINAL_TOKEN_PREFIX_TERMS.saturating_sub(expanded_terms);
-        if remaining == 0 {
-            break;
-        }
+    'prefixes: for prefix in prefixes {
         for row in store
             .text_postings
             .prefix_iter(rtxn, prefix.as_bytes())?
             .move_between_keys()
-            .take(remaining)
+            .take(MAX_FINAL_TOKEN_PREFIX_SCAN_TERMS)
         {
+            if expanded_terms == MAX_FINAL_TOKEN_PREFIX_TERMS {
+                break 'prefixes;
+            }
             let (term_bytes, _) = row?;
             let term = str::from_utf8(term_bytes)
                 .map_err(|_| corrupted("posting term key is not valid utf-8"))?
                 .to_owned();
+            if !exact_term_has_scoped_posting(store, rtxn, &term, exact_posting_matches_scope)? {
+                continue;
+            }
             insert_query_term(terms, term, FINAL_TOKEN_PREFIX_WEIGHT);
             expanded_terms += 1;
         }
@@ -1199,13 +1203,29 @@ mod tests {
     }
 
     fn put_raw_posting_terms(vault: &Vault, terms: &[String]) -> Result<()> {
+        let postings = terms
+            .iter()
+            .enumerate()
+            .map(|(idx, term)| {
+                (
+                    term.clone(),
+                    test_entity_id(u16::try_from(idx).expect("test id fits in u16")),
+                )
+            })
+            .collect::<Vec<_>>();
+        put_raw_posting_terms_with_ids(vault, &postings)
+    }
+
+    fn put_raw_posting_terms_with_ids(
+        vault: &Vault,
+        postings: &[(String, EntityId)],
+    ) -> Result<()> {
         let mut wtxn = vault.store.env.write_txn()?;
         let mut fields = BTreeMap::new();
         fields.insert(AnalyzerChannel::Surface.field_id(), 1);
-        for (idx, term) in terms.iter().enumerate() {
-            let id = test_entity_id(u16::try_from(idx).expect("test id fits in u16"));
+        for (term, id) in postings {
             let mut entry = Vec::new();
-            encode_posting_entry(&id, &fields, &mut entry)?;
+            encode_posting_entry(id, &fields, &mut entry)?;
             vault
                 .store
                 .text_postings
@@ -1422,6 +1442,89 @@ mod tests {
             .collect::<Vec<_>>();
         assert_eq!(collected, expected);
         assert!(!terms.contains_key(&cap_prefix_term(MAX_FINAL_TOKEN_PREFIX_TERMS)));
+        Ok(())
+    }
+
+    #[test]
+    fn final_token_prefix_expansion_applies_cap_after_scope_filtering() -> Result<()> {
+        let temp_dir = tempfile::tempdir()?;
+        let vault = Vault::open(temp_dir.path(), test_config())?;
+        let prefix = "scopecap";
+        let in_scope_index = MAX_FINAL_TOKEN_PREFIX_TERMS + 1;
+        let in_scope_id = test_entity_id(0x8000);
+        let mut postings = (0..in_scope_index)
+            .map(|idx| {
+                (
+                    format!("{prefix}{idx:04}"),
+                    test_entity_id(u16::try_from(idx).expect("test id fits in u16")),
+                )
+            })
+            .collect::<Vec<_>>();
+        postings.push((format!("{prefix}{in_scope_index:04}"), in_scope_id));
+        put_raw_posting_terms_with_ids(&vault, &postings)?;
+
+        let rtxn = vault.store.env.read_txn()?;
+        let mut terms = BTreeMap::new();
+        let mut scope_checks = 0usize;
+        let mut exact_posting_matches_scope = |id: &EntityId| {
+            scope_checks += 1;
+            Ok(*id == in_scope_id)
+        };
+        collect_final_token_prefix_terms(
+            &vault.store,
+            &rtxn,
+            prefix.len(),
+            &[final_word_token(prefix)],
+            &mut terms,
+            &mut exact_posting_matches_scope,
+        )?;
+
+        let in_scope_term = format!("{prefix}{in_scope_index:04}");
+        assert_eq!(
+            terms.keys().cloned().collect::<Vec<_>>(),
+            vec![in_scope_term]
+        );
+        assert!(
+            scope_checks > MAX_FINAL_TOKEN_PREFIX_TERMS,
+            "scope filtering must happen before the 64-term expansion cap"
+        );
+        assert!(scope_checks <= MAX_FINAL_TOKEN_PREFIX_SCAN_TERMS);
+        Ok(())
+    }
+
+    #[test]
+    fn final_token_prefix_scope_filtering_keeps_global_scan_bounded() -> Result<()> {
+        let temp_dir = tempfile::tempdir()?;
+        let vault = Vault::open(temp_dir.path(), test_config())?;
+        let prefix = "scopebound";
+        let postings = (0..MAX_FINAL_TOKEN_PREFIX_SCAN_TERMS + 2)
+            .map(|idx| {
+                (
+                    format!("{prefix}{idx:04}"),
+                    test_entity_id(u16::try_from(idx).expect("test id fits in u16")),
+                )
+            })
+            .collect::<Vec<_>>();
+        put_raw_posting_terms_with_ids(&vault, &postings)?;
+
+        let rtxn = vault.store.env.read_txn()?;
+        let mut terms = BTreeMap::new();
+        let mut scope_checks = 0usize;
+        let mut exact_posting_matches_scope = |_id: &EntityId| {
+            scope_checks += 1;
+            Ok(false)
+        };
+        collect_final_token_prefix_terms(
+            &vault.store,
+            &rtxn,
+            prefix.len(),
+            &[final_word_token(prefix)],
+            &mut terms,
+            &mut exact_posting_matches_scope,
+        )?;
+
+        assert!(terms.is_empty());
+        assert_eq!(scope_checks, MAX_FINAL_TOKEN_PREFIX_SCAN_TERMS);
         Ok(())
     }
 
