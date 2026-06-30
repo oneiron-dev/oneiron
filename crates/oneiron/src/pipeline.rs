@@ -684,13 +684,6 @@ impl<'a> PipelineBuilder<'a> {
                     *limit,
                     text_scope_widening_active,
                 )?;
-                let recency = if self.temporal_search.is_none() {
-                    self.recency_half_life.map(|half_life_days| {
-                        crate::bm25::Bm25RecencyConfig::new(half_life_days, started_at)
-                    })
-                } else {
-                    None
-                };
                 let mut prefix_probe_claim_gate = ClaimStatusGateCache::default();
                 let mut exact_posting_matches_scope = |id: &EntityId| {
                     pipeline_candidate_matches_filters_and_gate(
@@ -710,7 +703,7 @@ impl<'a> PipelineBuilder<'a> {
                     query,
                     text_channel_limit,
                     crate::bm25::Bm25SearchOptions {
-                        recency,
+                        recency: None,
                         exact_posting_matches_scope: &mut exact_posting_matches_scope,
                     },
                 )?;
@@ -800,6 +793,13 @@ impl<'a> PipelineBuilder<'a> {
             let mut scores = fusion::rrf_fuse(&ranked_lists, RRF_K);
             let total_in_scope = scores.len();
             let mut empty_reason = None;
+            let recency = if self.temporal_search.is_none() {
+                self.recency_half_life.map(|half_life_days| {
+                    crate::bm25::Bm25RecencyConfig::new(half_life_days, started_at)
+                })
+            } else {
+                None
+            };
 
             // D19 claim status gate, first application: covers the fused
             // candidates of all five channels (text/vector/phonetic/
@@ -817,10 +817,12 @@ impl<'a> PipelineBuilder<'a> {
                 empty_reason = Some(EmptyReason::AllActivated);
             }
 
-            if self.temporal_search.is_none()
-                && let Some(half_life_days) = self.recency_half_life
+            if self.ppr_expand.is_some()
+                && let Some(recency) = recency
             {
-                let recency = crate::bm25::Bm25RecencyConfig::new(half_life_days, started_at);
+                // This pre-expansion pass is only for implicit PPR seed
+                // ordering. The later RRF fuse discards these magnitudes, and
+                // the final fused list receives the single persisted boost.
                 apply_pipeline_recency_boost(
                     &mut scores,
                     &self.vault.store,
@@ -894,6 +896,17 @@ impl<'a> PipelineBuilder<'a> {
                     );
                     scores = fusion::rrf_fuse(&[scores, ppr_results], RRF_K);
                 }
+            }
+
+            if let Some(recency) = recency {
+                apply_pipeline_recency_boost(
+                    &mut scores,
+                    &self.vault.store,
+                    &rtxn,
+                    recency,
+                    &mut metadata_cache,
+                )?;
+                fusion::sort_scored_entities_desc(&mut scores);
             }
 
             if self.apply_salience {
@@ -3392,7 +3405,7 @@ mod tests {
     }
 
     #[test]
-    fn recency_boost_applies_inside_text_ranking() -> Result<()> {
+    fn recency_boost_orders_text_only_results() -> Result<()> {
         let (_dir, vault) = open_test_vault();
         let old = entity_id(0x10);
         let fresh = entity_id(0x20);
@@ -3410,6 +3423,98 @@ mod tests {
             .boost_recency(0.01)
             .run()?;
         assert_eq!(boosted[0].id, fresh);
+        Ok(())
+    }
+
+    #[test]
+    fn recency_boost_applies_once_to_fused_text_scores() -> Result<()> {
+        let (_dir, vault) = open_test_vault();
+        let old_text = entity_id(0x10);
+        let fresh_text = entity_id(0x20);
+        let fresh_vector = entity_id(0x30);
+        let future = crate::unix_seconds_now() + 3_600;
+
+        put_text_at(&vault, old_text, "fairrecencyneedle", 1)?;
+        put_text_at(&vault, fresh_text, "fairrecencyneedle", future)?;
+        put_vector_at(&vault, fresh_vector, [1.0, 0.0, 0.0, 0.0], future)?;
+
+        let baseline = vault
+            .query()
+            .search_text("fairrecencyneedle", 2)
+            .search_vector(&[1.0, 0.0, 0.0, 0.0], 1)
+            .run()?;
+        assert_eq!(baseline[0].id, old_text, "baseline text rank tie");
+
+        let boosted = vault
+            .query()
+            .search_text("fairrecencyneedle", 2)
+            .search_vector(&[1.0, 0.0, 0.0, 0.0], 1)
+            .boost_recency(0.01)
+            .run()?;
+
+        let baseline_scores = to_score_map(&baseline);
+        let boosted_scores = to_score_map(&boosted);
+        let fresh_multiplier = 1.0 + crate::bm25::Bm25RecencyConfig::DEFAULT_BOOST as f32;
+
+        assert!(approx_eq(
+            boosted_scores[&fresh_text],
+            baseline_scores[&fresh_text] * fresh_multiplier,
+            1e-6
+        ));
+        assert!(approx_eq(
+            boosted_scores[&fresh_vector],
+            baseline_scores[&fresh_vector] * fresh_multiplier,
+            1e-6
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn recency_boost_applies_to_ppr_expansion_results() -> Result<()> {
+        let (_dir, vault) = open_test_vault();
+        let seed = entity_id(0x13);
+        let expanded = entity_id(0x23);
+        let future = crate::unix_seconds_now() + 3_600;
+
+        vault
+            .batch()
+            .put(&seed, 1, TimeRange { start: 1, end: 1 }, 1, b"payload")
+            .text(&seed, &[("body", "pprrecencyneedle")])
+            .put(
+                &expanded,
+                1,
+                TimeRange {
+                    start: future,
+                    end: future,
+                },
+                future,
+                b"payload",
+            )
+            .edge(&seed, EdgeKind::Supports, &expanded, 1.0)
+            .commit()?;
+
+        let baseline = vault
+            .query()
+            .search_text("pprrecencyneedle", 10)
+            .expand_ppr(&[], 2)
+            .run()?;
+        let boosted = vault
+            .query()
+            .search_text("pprrecencyneedle", 10)
+            .expand_ppr(&[], 2)
+            .boost_recency(0.01)
+            .run()?;
+
+        let baseline_scores = to_score_map(&baseline);
+        let boosted_scores = to_score_map(&boosted);
+        let fresh_multiplier = 1.0 + crate::bm25::Bm25RecencyConfig::DEFAULT_BOOST as f32;
+
+        assert!(baseline_scores.contains_key(&expanded));
+        assert!(approx_eq(
+            boosted_scores[&expanded],
+            baseline_scores[&expanded] * fresh_multiplier,
+            1e-6
+        ));
         Ok(())
     }
 
