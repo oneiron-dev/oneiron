@@ -4457,15 +4457,40 @@ mod tests {
                 }
             }
             Value::Object(object) => {
-                let mut sorted = Map::new();
-                for (key, mut value) in std::mem::take(object) {
+                let mut entries = std::mem::take(object).into_iter().collect::<Vec<_>>();
+                entries.sort_by(|(left, _), (right, _)| left.cmp(right));
+
+                for (key, mut value) in entries {
                     sort_json(&mut value);
-                    sorted.insert(key, value);
+                    object.insert(key, value);
                 }
-                *object = sorted;
             }
             Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => {}
         }
+    }
+
+    #[test]
+    fn sort_json_orders_object_keys_recursively() {
+        let mut value = json!({
+            "z": {
+                "nested_z": true,
+                "nested_a": true
+            },
+            "a": [
+                {
+                    "array_z": true,
+                    "array_a": true
+                }
+            ]
+        });
+
+        sort_json(&mut value);
+
+        let serialized = serde_json::to_string(&value).expect("serialize sorted JSON");
+        assert_eq!(
+            serialized,
+            r#"{"a":[{"array_a":true,"array_z":true}],"z":{"nested_a":true,"nested_z":true}}"#
+        );
     }
 
     fn normalize_contract_body(body: &mut Value) {
