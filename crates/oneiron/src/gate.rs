@@ -1200,9 +1200,7 @@ fn federated_claim_admission_decision(
         return GateDecision::deny(GateReasonCode::DenyPolicyFailClosed);
     }
 
-    if body.approval == ClaimApprovalStatus::Auto
-        && !policy.source_trust_allows_auto(body.source, claim_sensitivity_band(body))
-    {
+    if !policy.source_trust_allows_auto(body.source, claim_sensitivity_band(body)) {
         return GateDecision::pending(vec![GateReasonCode::PendingSourceTrust]);
     }
 
@@ -3504,6 +3502,27 @@ mod tests {
         let err =
             admit_federated_window_update(&vault, &key, &update, FederationAdmissionRole::Guest)
                 .expect_err("imported auto claims need an explicit local trust floor");
+        assert_gate_rejected(err, "pending", &["gate.pending.source_trust"]);
+        assert!(vault.get_raw(&id)?.is_none());
+        Ok(())
+    }
+
+    #[cfg(feature = "sync")]
+    #[test]
+    fn federated_admission_denies_preapproved_untrusted_import() -> Result<()> {
+        use crate::sync::types::WindowKey;
+        use crate::sync::{FederationAdmissionRole, admit_federated_window_update};
+
+        let (_tmp, vault) = temp_vault();
+        let id = test_id(0x8F);
+        let mut remote_body = source_trust_claim(ClaimSource::ToolOutput);
+        remote_body.approval = ClaimApprovalStatus::Approved;
+        let update = federated_claim_update(&id, &remote_body)?;
+        let key = WindowKey::new("2026-03");
+
+        let err =
+            admit_federated_window_update(&vault, &key, &update, FederationAdmissionRole::Member)
+                .expect_err("preapproved federated claims still need local imported trust");
         assert_gate_rejected(err, "pending", &["gate.pending.source_trust"]);
         assert!(vault.get_raw(&id)?.is_none());
         Ok(())

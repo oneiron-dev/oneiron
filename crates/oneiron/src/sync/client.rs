@@ -1843,6 +1843,37 @@ mod tests {
     }
 
     #[test]
+    fn federated_import_seam_denies_preapproved_untrusted_claim() {
+        let manager = test_manager();
+        let vault = Arc::clone(manager.vault());
+        let (mut client, _rx) = test_client(&manager);
+        let key = "2026-03";
+        let id = test_entity_id(0x92);
+        let mut remote_body = source_trust_claim(ClaimSource::ToolOutput);
+        remote_body.approval = ClaimApprovalStatus::Approved;
+        let update = federated_claim_update(&id, &remote_body);
+
+        let err = client
+            .import_federated_window_update(key, &update, FederationAdmissionRole::Member)
+            .expect_err("preapproved federated claim must still pass local source trust");
+        let TransportError::Storage(message) = err else {
+            panic!("expected auditable admission storage error, got {err:?}");
+        };
+        assert!(
+            message.contains("gate.pending.source_trust"),
+            "denial reason must remain auditable, got {message}"
+        );
+        assert!(
+            client.window(key).is_none(),
+            "denied preapproved federated bytes must not open or import a live window"
+        );
+        assert!(
+            vault.get_raw(&id).expect("read denied claim").is_none(),
+            "denied preapproved federated claim must not materialize"
+        );
+    }
+
+    #[test]
     fn federated_import_seam_denial_preserves_open_durable_window() {
         let manager = test_manager();
         let vault = Arc::clone(manager.vault());

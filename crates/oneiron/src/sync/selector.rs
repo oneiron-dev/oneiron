@@ -376,6 +376,9 @@ fn admit_federated_entity_blob(
     let header =
         EntityMetadataHeader::parse(blob).ok_or(Error::CorruptedIndex("entity metadata"))?;
     if header.entity_type != ENTITY_TYPE_CLAIM {
+        if band_of(header.entity_type) == TypeByteBand::InducedDynamicMaintenance {
+            return Err(Error::MaintenanceKindNotWritable(header.entity_type));
+        }
         return Ok(blob.to_vec());
     }
 
@@ -828,7 +831,10 @@ mod tests {
         encode_federation_grant_body,
     };
     use crate::sync::bridge::encode_edge_value_for_crdt;
-    use crate::types::{ENTITY_TYPE_FACET, ENTITY_TYPE_PERSON, ENTITY_TYPE_WORLD, TimeRange, Vad};
+    use crate::types::{
+        ENTITY_TYPE_FACET, ENTITY_TYPE_PERSON, ENTITY_TYPE_POLICY_MANIFEST, ENTITY_TYPE_WORLD,
+        TimeRange, Vad,
+    };
 
     fn entity_id(byte: u8) -> EntityId {
         EntityId::from_bytes([byte; 16]).unwrap()
@@ -1002,6 +1008,33 @@ mod tests {
         let mut unsupported = Vec::new();
         rmpv::encode::write_value(&mut unsupported, &unsupported_version).unwrap();
         assert!(decode_sync_selector(&unsupported).is_err());
+    }
+
+    #[test]
+    fn federated_admission_rejects_maintenance_band_non_claim_entities() {
+        let (_dir, vault, _grant_id) = test_vault_with_grant(entity_id(0xA2));
+        let window_key = WindowKey::new("2026-03");
+        let doc = create_window_doc("remote", &window_key);
+        insert_entity(
+            &doc,
+            entity_id(0xA3),
+            ENTITY_TYPE_POLICY_MANIFEST,
+            b"remote-policy",
+        );
+        doc.commit();
+        let update = doc.export(ExportMode::all_updates()).unwrap();
+
+        let err = admit_federated_window_update(
+            &vault,
+            &window_key,
+            &update,
+            FederationAdmissionRole::Member,
+        )
+        .expect_err("federated maintenance-band non-claims must fail closed");
+        assert!(matches!(
+            err,
+            Error::MaintenanceKindNotWritable(ENTITY_TYPE_POLICY_MANIFEST)
+        ));
     }
 
     #[test]
