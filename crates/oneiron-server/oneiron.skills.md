@@ -108,12 +108,12 @@ Fetch Tier-1 first. It contains one endpoint block per live route literal and no
 
 #### context-pack - `POST /api/context-pack`
 
-- when-to-use: Ask the server to assemble retrieval context for an agent turn from a query, query vector, and limit. The current route acknowledges the request while the full ContextPackBuilder integration is pending.
+- when-to-use: Ask the server to assemble retrieval context for an agent turn from a query, query vector, depth/policy/time controls, and budget controls.
 - trigger phrases:
   - "build context for this turn"
   - "assemble memory context"
   - "get a context pack"
-- safety: Read-only retrieval intent with a POST body; no persisted mutation in the current implementation.
+- safety: Read-only retrieval intent with a POST body; emits retrieval telemetry evidence but does not mutate memory contents.
 
 #### turns-annotate - `GET/POST /v1/core/turns/annotate`
 
@@ -497,17 +497,24 @@ Request body:
 - `query` optional: retrieval text.
 - `query_vector` optional: numeric vector as an array of `f32` values.
 - `limit` optional: maximum entities to retrieve, default `10`.
+- `depth` optional: `edge_hop` and `max_neighbors` controls.
+- `policy` optional: hydration, edge/vector inclusion, view profile, and ranking boosts.
+- `time` optional: `since`, occurred range, or learned range filters.
+- `budget` optional: `max_item_tokens`, `max_field_chars`, and retrieval item budgets.
 
 Current response:
 
 ```json
 {
-  "status": "ok",
-  "message": "context-pack endpoint ready - full implementation pending ContextPackBuilder integration"
+  "results": [],
+  "neighbors": [],
+  "stats": { "candidates_considered": 0 },
+  "state": { "kind": "missing_data", "reason": "no_data" },
+  "evidence": { "telemetry_persisted": true, "result_ids": [], "scores": [] }
 }
 ```
 
-Agent note: Treat this as a future context-assembly route that already has a stable call shape, not as a complete context-pack implementation.
+Agent note: Treat `state.kind` and `state.reason` as the typed missing-data or low-confidence signal when no usable context is returned.
 
 ### Companion Resume
 

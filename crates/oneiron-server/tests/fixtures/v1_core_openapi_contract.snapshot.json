@@ -1308,6 +1308,196 @@
         ],
         "type": "object"
       },
+      "ContextPackBudgetControls": {
+        "properties": {
+          "max_field_chars": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "max_item_tokens": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "retrieval": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ContextPackRetrievalBudgetControls"
+              }
+            ]
+          },
+          "token_budget": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          }
+        },
+        "type": "object"
+      },
+      "ContextPackDepthControls": {
+        "properties": {
+          "edge_hop": {
+            "format": "int32",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "max_neighbors": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          }
+        },
+        "type": "object"
+      },
+      "ContextPackPolicyControls": {
+        "properties": {
+          "boost_confidence": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "boost_contiguity": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "boost_recency_days": {
+            "format": "float",
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "boost_salience": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "hydrate": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "include_edges": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "include_vectors": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "view": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/View"
+              }
+            ]
+          }
+        },
+        "type": "object"
+      },
+      "ContextPackRetrievalBudgetControls": {
+        "properties": {
+          "claims": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "facets": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "other": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "selected_edges": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "summaries": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "turns": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          }
+        },
+        "type": "object"
+      },
+      "ContextPackTimeControls": {
+        "properties": {
+          "learned_end": {
+            "format": "int64",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "learned_start": {
+            "format": "int64",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "occurred_end": {
+            "format": "int64",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "occurred_start": {
+            "format": "int64",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "since": {
+            "format": "int64",
+            "type": [
+              "integer",
+              "null"
+            ]
+          }
+        },
+        "type": "object"
+      },
       "CoreBatchEntityInput": {
         "properties": {
           "body": {
@@ -1574,6 +1764,37 @@
         ],
         "type": "object"
       },
+      "CoreContextPackEvidence": {
+        "properties": {
+          "result_ids": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "retrieval_run_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "scores": {
+            "items": {
+              "$ref": "#/components/schemas/CoreContextPackScoreEvidence"
+            },
+            "type": "array"
+          },
+          "telemetry_persisted": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "telemetry_persisted",
+          "result_ids",
+          "scores"
+        ],
+        "type": "object"
+      },
       "CoreContextPackItemAccounting": {
         "properties": {
           "count": {
@@ -1591,6 +1812,26 @@
       },
       "CoreContextPackRequest": {
         "properties": {
+          "budget": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ContextPackBudgetControls"
+              }
+            ]
+          },
+          "depth": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ContextPackDepthControls"
+              }
+            ]
+          },
           "edge_hop": {
             "format": "int32",
             "type": "integer"
@@ -1613,6 +1854,16 @@
             "default": 50,
             "type": "integer"
           },
+          "policy": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ContextPackPolicyControls"
+              }
+            ]
+          },
           "query": {
             "type": [
               "string",
@@ -1627,6 +1878,16 @@
             "type": [
               "array",
               "null"
+            ]
+          },
+          "time": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ContextPackTimeControls"
+              }
             ]
           },
           "view": {
@@ -1650,6 +1911,9 @@
               "null"
             ]
           },
+          "evidence": {
+            "$ref": "#/components/schemas/CoreContextPackEvidence"
+          },
           "neighbors": {
             "items": {
               "$ref": "#/components/schemas/CoreContextEntity"
@@ -1662,6 +1926,9 @@
             },
             "type": "array"
           },
+          "state": {
+            "$ref": "#/components/schemas/CoreContextPackState"
+          },
           "stats": {
             "$ref": "#/components/schemas/CoreContextPackStats"
           }
@@ -1669,9 +1936,110 @@
         "required": [
           "results",
           "neighbors",
-          "stats"
+          "stats",
+          "state",
+          "evidence"
         ],
         "type": "object"
+      },
+      "CoreContextPackScoreComponent": {
+        "properties": {
+          "rank": {
+            "format": "int32",
+            "type": "integer"
+          },
+          "score": {
+            "format": "float",
+            "type": "number"
+          },
+          "signal": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "signal",
+          "rank",
+          "score"
+        ],
+        "type": "object"
+      },
+      "CoreContextPackScoreEvidence": {
+        "properties": {
+          "components": {
+            "items": {
+              "$ref": "#/components/schemas/CoreContextPackScoreComponent"
+            },
+            "type": "array"
+          },
+          "final_rank": {
+            "format": "int32",
+            "type": "integer"
+          },
+          "final_score": {
+            "format": "float",
+            "type": "number"
+          },
+          "result_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "result_id",
+          "final_rank",
+          "final_score",
+          "components"
+        ],
+        "type": "object"
+      },
+      "CoreContextPackState": {
+        "properties": {
+          "hint": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "kind": {
+            "$ref": "#/components/schemas/CoreContextPackStateKind"
+          },
+          "reason": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/CoreContextPackStateReason"
+              }
+            ]
+          },
+          "total_in_scope": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "kind"
+        ],
+        "type": "object"
+      },
+      "CoreContextPackStateKind": {
+        "enum": [
+          "ok",
+          "missing_data",
+          "low_confidence"
+        ],
+        "type": "string"
+      },
+      "CoreContextPackStateReason": {
+        "enum": [
+          "filter_matched_none",
+          "no_data",
+          "all_activated",
+          "below_threshold"
+        ],
+        "type": "string"
       },
       "CoreContextPackStats": {
         "properties": {

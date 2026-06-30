@@ -55,7 +55,6 @@ const SKILL_PACK_LAYER_BOUNDARY: &str =
     "skills = how to think about memory; MCP tools = what to call";
 const SKILL_PACK_LOAD_HINT: &str = "GET /api/skills/oneiron.skills.md from the same Oneiron HTTP origin before choosing memory search, read, context-pack, discovery, or recovery calls; use MCP tools as the callable layer.";
 const SKILL_PACK_RESOLUTION: &str = "Resolve endpoint against the same origin used for /api/core/discover and send the configured x-oneiron-secret; do not resolve the pack against a local working directory.";
-const CONTEXT_PACK_FEATURE: &str = "context-pack HTTP endpoint";
 const EFFECTIVE_AUTH_SCOPES: &[&str] = &[
     "core:discover",
     "core:read",
@@ -181,12 +180,23 @@ const CORE_MAX_LIST_LIMIT: usize = 1000;
         CoreShortIdHydrateOutcome,
         CoreShortIdHydrateError,
         CoreShortIdHydrateErrorKind,
+        ContextPackDepthControls,
+        ContextPackPolicyControls,
+        ContextPackTimeControls,
+        ContextPackRetrievalBudgetControls,
+        ContextPackBudgetControls,
         CoreContextPackRequest,
         CoreContextPackResponse,
         CoreContextEntity,
         CoreContextEdge,
         CoreContextPackStats,
         CoreContextPackItemAccounting,
+        CoreContextPackState,
+        CoreContextPackStateKind,
+        CoreContextPackStateReason,
+        CoreContextPackScoreComponent,
+        CoreContextPackScoreEvidence,
+        CoreContextPackEvidence,
         CoreListQuery,
         CoreCreateEntityRequest,
         CoreCreateTurnRequest,
@@ -441,6 +451,264 @@ fn fill_schema_description_gaps(spec: &mut Value) {
     );
     set_schema_property_description(
         spec,
+        "CoreContextPackRequest",
+        "depth",
+        "Optional nested edge-depth controls for context-pack assembly.",
+    );
+    set_schema_property_description(
+        spec,
+        "CoreContextPackRequest",
+        "policy",
+        "Optional nested ranking and projection policy controls.",
+    );
+    set_schema_property_description(
+        spec,
+        "CoreContextPackRequest",
+        "time",
+        "Optional time-window filters for context-pack retrieval.",
+    );
+    set_schema_property_description(
+        spec,
+        "CoreContextPackRequest",
+        "budget",
+        "Optional retrieval and serialization budget controls.",
+    );
+    set_schema_property_description(
+        spec,
+        "ContextPackDepthControls",
+        "edge_hop",
+        "Edge expansion depth for neighbor hydration.",
+    );
+    set_schema_property_description(
+        spec,
+        "ContextPackDepthControls",
+        "max_neighbors",
+        "Maximum neighbors to hydrate during edge expansion.",
+    );
+    set_schema_property_description(
+        spec,
+        "ContextPackPolicyControls",
+        "hydrate",
+        "Whether to include hydrated fields.",
+    );
+    set_schema_property_description(
+        spec,
+        "ContextPackPolicyControls",
+        "include_edges",
+        "Whether to include edge records in hydrated entities.",
+    );
+    set_schema_property_description(
+        spec,
+        "ContextPackPolicyControls",
+        "include_vectors",
+        "Whether to include stored vectors when present.",
+    );
+    set_schema_property_description(
+        spec,
+        "ContextPackPolicyControls",
+        "view",
+        "Field profile for hydrated fields.",
+    );
+    set_schema_property_description(
+        spec,
+        "ContextPackPolicyControls",
+        "boost_recency_days",
+        "Apply recency boost with the supplied half-life in days.",
+    );
+    set_schema_property_description(
+        spec,
+        "ContextPackPolicyControls",
+        "boost_salience",
+        "Apply salience boost.",
+    );
+    set_schema_property_description(
+        spec,
+        "ContextPackPolicyControls",
+        "boost_confidence",
+        "Apply confidence boost.",
+    );
+    set_schema_property_description(
+        spec,
+        "ContextPackPolicyControls",
+        "boost_contiguity",
+        "Apply contiguity boost.",
+    );
+    set_schema_property_description(
+        spec,
+        "ContextPackTimeControls",
+        "since",
+        "Keep entities learned at or after this Unix timestamp.",
+    );
+    set_schema_property_description(
+        spec,
+        "ContextPackTimeControls",
+        "occurred_start",
+        "Occurrence window start, inclusive.",
+    );
+    set_schema_property_description(
+        spec,
+        "ContextPackTimeControls",
+        "occurred_end",
+        "Occurrence window end, inclusive.",
+    );
+    set_schema_property_description(
+        spec,
+        "ContextPackTimeControls",
+        "learned_start",
+        "Learned-at window start, inclusive.",
+    );
+    set_schema_property_description(
+        spec,
+        "ContextPackTimeControls",
+        "learned_end",
+        "Learned-at window end, inclusive.",
+    );
+    set_schema_property_description(
+        spec,
+        "ContextPackRetrievalBudgetControls",
+        "claims",
+        "Maximum claim entities.",
+    );
+    set_schema_property_description(
+        spec,
+        "ContextPackRetrievalBudgetControls",
+        "turns",
+        "Maximum turn entities.",
+    );
+    set_schema_property_description(
+        spec,
+        "ContextPackRetrievalBudgetControls",
+        "summaries",
+        "Maximum summary entities.",
+    );
+    set_schema_property_description(
+        spec,
+        "ContextPackRetrievalBudgetControls",
+        "facets",
+        "Maximum facet entities.",
+    );
+    set_schema_property_description(
+        spec,
+        "ContextPackRetrievalBudgetControls",
+        "other",
+        "Maximum other entities.",
+    );
+    set_schema_property_description(
+        spec,
+        "ContextPackRetrievalBudgetControls",
+        "selected_edges",
+        "Edge-walk neighbor selection budget.",
+    );
+    set_schema_property_description(
+        spec,
+        "ContextPackBudgetControls",
+        "token_budget",
+        "Serialized token budget for downstream serialized packs.",
+    );
+    set_schema_property_description(
+        spec,
+        "ContextPackBudgetControls",
+        "max_item_tokens",
+        "Per-item token cap for context-pack serialization.",
+    );
+    set_schema_property_description(
+        spec,
+        "ContextPackBudgetControls",
+        "max_field_chars",
+        "Maximum field characters before serialization truncation.",
+    );
+    set_schema_property_description(
+        spec,
+        "ContextPackBudgetControls",
+        "retrieval",
+        "Per-kind retrieval item budgets before final truncation.",
+    );
+    set_schema_property_description(
+        spec,
+        "ContextPackRequest",
+        "query",
+        "Optional text retrieval seed for context-pack assembly.",
+    );
+    set_schema_property_description(
+        spec,
+        "ContextPackRequest",
+        "query_vector",
+        "Optional embedding vector retrieval seed.",
+    );
+    set_schema_property_description(
+        spec,
+        "ContextPackRequest",
+        "limit",
+        "Maximum number of candidate entities to retrieve.",
+    );
+    set_schema_property_description(
+        spec,
+        "ContextPackRequest",
+        "maxItemTokens",
+        "Per-item token cap for context-pack serialization.",
+    );
+    set_schema_property_description(
+        spec,
+        "ContextPackRequest",
+        "hydrate",
+        "Whether to include hydrated fields.",
+    );
+    set_schema_property_description(
+        spec,
+        "ContextPackRequest",
+        "include_edges",
+        "Whether to include edge records in hydrated entities.",
+    );
+    set_schema_property_description(
+        spec,
+        "ContextPackRequest",
+        "edge_hop",
+        "Edge expansion depth for neighbor hydration.",
+    );
+    set_schema_property_description(
+        spec,
+        "ContextPackRequest",
+        "max_neighbors",
+        "Maximum neighbors to hydrate during edge expansion.",
+    );
+    set_schema_property_description(
+        spec,
+        "ContextPackRequest",
+        "include_vectors",
+        "Whether to include stored vectors when present.",
+    );
+    set_schema_property_description(
+        spec,
+        "ContextPackRequest",
+        "view",
+        "Field profile for hydrated fields.",
+    );
+    set_schema_property_description(
+        spec,
+        "ContextPackRequest",
+        "depth",
+        "Optional nested edge-depth controls for context-pack assembly.",
+    );
+    set_schema_property_description(
+        spec,
+        "ContextPackRequest",
+        "policy",
+        "Optional nested ranking and projection policy controls.",
+    );
+    set_schema_property_description(
+        spec,
+        "ContextPackRequest",
+        "time",
+        "Optional time-window filters for context-pack retrieval.",
+    );
+    set_schema_property_description(
+        spec,
+        "ContextPackRequest",
+        "budget",
+        "Optional retrieval and serialization budget controls.",
+    );
+    set_schema_property_description(
+        spec,
         "CoreListQuery",
         "view",
         "Optional projection view for returned entities. Defaults to summary.",
@@ -516,6 +784,108 @@ fn fill_schema_description_gaps(spec: &mut Value) {
         "CoreContextPackResponse",
         "empty",
         "Structured empty-result context when no entities surface.",
+    );
+    set_schema_property_description(
+        spec,
+        "CoreContextPackResponse",
+        "state",
+        "Typed missing-data or low-confidence state.",
+    );
+    set_schema_property_description(
+        spec,
+        "CoreContextPackResponse",
+        "evidence",
+        "Retrieval telemetry evidence and score breakdown.",
+    );
+    set_schema_property_description(
+        spec,
+        "CoreContextPackState",
+        "kind",
+        "Stable state discriminator.",
+    );
+    set_schema_property_description(
+        spec,
+        "CoreContextPackState",
+        "reason",
+        "Empty-result reason when no entities surfaced.",
+    );
+    set_schema_property_description(
+        spec,
+        "CoreContextPackState",
+        "total_in_scope",
+        "Total records in scope when known.",
+    );
+    set_schema_property_description(
+        spec,
+        "CoreContextPackState",
+        "hint",
+        "Caller-facing hint from the retrieval layer.",
+    );
+    set_schema_property_description(
+        spec,
+        "CoreContextPackEvidence",
+        "telemetry_persisted",
+        "Whether the retrieval telemetry row was finalized.",
+    );
+    set_schema_property_description(
+        spec,
+        "CoreContextPackEvidence",
+        "retrieval_run_id",
+        "Retrieval telemetry run id when persistence succeeded.",
+    );
+    set_schema_property_description(
+        spec,
+        "CoreContextPackEvidence",
+        "result_ids",
+        "Surfaced result ids recorded in telemetry.",
+    );
+    set_schema_property_description(
+        spec,
+        "CoreContextPackEvidence",
+        "scores",
+        "Final score evidence recorded in telemetry.",
+    );
+    set_schema_property_description(
+        spec,
+        "CoreContextPackScoreEvidence",
+        "result_id",
+        "Hex entity id.",
+    );
+    set_schema_property_description(
+        spec,
+        "CoreContextPackScoreEvidence",
+        "final_rank",
+        "Final rank after context-pack hydration.",
+    );
+    set_schema_property_description(
+        spec,
+        "CoreContextPackScoreEvidence",
+        "final_score",
+        "Final fused score.",
+    );
+    set_schema_property_description(
+        spec,
+        "CoreContextPackScoreEvidence",
+        "components",
+        "Signal-level score components.",
+    );
+    set_schema_property_description(
+        spec,
+        "CoreContextPackScoreComponent",
+        "signal",
+        "Retrieval signal name.",
+    );
+    set_schema_property_description(
+        spec,
+        "CoreContextPackScoreComponent",
+        "rank",
+        "Rank within the signal.",
+    );
+    set_schema_property_description(
+        spec,
+        "CoreContextPackScoreComponent",
+        "score",
+        "Raw signal score.",
     );
 }
 
@@ -2486,6 +2856,124 @@ enum CoreShortIdHydrateErrorKind {
     NotFound,
 }
 
+/// Edge expansion depth controls for context-pack assembly.
+#[derive(Debug, Default, Deserialize, ToSchema)]
+struct ContextPackDepthControls {
+    /// Edge expansion depth for neighbor hydration.
+    #[serde(default, rename = "edge_hop", alias = "edgeHop")]
+    #[schema(example = 1)]
+    edge_hop: Option<u32>,
+    /// Maximum neighbors to hydrate during edge expansion.
+    #[serde(default, rename = "max_neighbors", alias = "maxNeighbors")]
+    #[schema(example = 50)]
+    max_neighbors: Option<usize>,
+}
+
+/// Ranking and projection policy controls for context-pack assembly.
+#[derive(Debug, Default, Deserialize, ToSchema)]
+struct ContextPackPolicyControls {
+    /// Whether to include hydrated fields.
+    #[serde(default)]
+    #[schema(example = true)]
+    hydrate: Option<bool>,
+    /// Whether to include edge records in hydrated entities.
+    #[serde(default, rename = "include_edges", alias = "includeEdges")]
+    #[schema(example = true)]
+    include_edges: Option<bool>,
+    /// Whether to include stored vectors when present.
+    #[serde(default, rename = "include_vectors", alias = "includeVectors")]
+    #[schema(example = false)]
+    include_vectors: Option<bool>,
+    /// Field profile for hydrated fields.
+    #[serde(default)]
+    #[schema(example = "standard")]
+    view: Option<View>,
+    /// Apply recency boost with the supplied half-life in days.
+    #[serde(default, rename = "boost_recency_days", alias = "boostRecencyDays")]
+    #[schema(example = 7.0)]
+    boost_recency_days: Option<f32>,
+    /// Apply salience boost.
+    #[serde(default, rename = "boost_salience", alias = "boostSalience")]
+    #[schema(example = true)]
+    boost_salience: Option<bool>,
+    /// Apply confidence boost.
+    #[serde(default, rename = "boost_confidence", alias = "boostConfidence")]
+    #[schema(example = true)]
+    boost_confidence: Option<bool>,
+    /// Apply contiguity boost.
+    #[serde(default, rename = "boost_contiguity", alias = "boostContiguity")]
+    #[schema(example = true)]
+    boost_contiguity: Option<bool>,
+}
+
+/// Time-window controls for context-pack assembly.
+#[derive(Debug, Default, Deserialize, ToSchema)]
+struct ContextPackTimeControls {
+    /// Keep entities learned at or after this Unix timestamp.
+    #[serde(default)]
+    #[schema(example = 1_782_357_600_u64)]
+    since: Option<u64>,
+    /// Occurrence window start, inclusive.
+    #[serde(default, rename = "occurred_start", alias = "occurredStart")]
+    #[schema(example = 1_782_357_600_u64)]
+    occurred_start: Option<u64>,
+    /// Occurrence window end, inclusive.
+    #[serde(default, rename = "occurred_end", alias = "occurredEnd")]
+    #[schema(example = 1_782_357_900_u64)]
+    occurred_end: Option<u64>,
+    /// Learned-at window start, inclusive.
+    #[serde(default, rename = "learned_start", alias = "learnedStart")]
+    #[schema(example = 1_782_357_600_u64)]
+    learned_start: Option<u64>,
+    /// Learned-at window end, inclusive.
+    #[serde(default, rename = "learned_end", alias = "learnedEnd")]
+    #[schema(example = 1_782_357_900_u64)]
+    learned_end: Option<u64>,
+}
+
+/// Per-kind retrieval item budget for context-pack assembly.
+#[derive(Debug, Default, Deserialize, ToSchema)]
+struct ContextPackRetrievalBudgetControls {
+    #[serde(default)]
+    #[schema(example = 4)]
+    claims: Option<usize>,
+    #[serde(default)]
+    #[schema(example = 2)]
+    turns: Option<usize>,
+    #[serde(default)]
+    #[schema(example = 2)]
+    summaries: Option<usize>,
+    #[serde(default)]
+    #[schema(example = 1)]
+    facets: Option<usize>,
+    #[serde(default)]
+    #[schema(example = 1)]
+    other: Option<usize>,
+    #[serde(default, rename = "selected_edges", alias = "selectedEdges")]
+    #[schema(example = 50)]
+    selected_edges: Option<usize>,
+}
+
+/// Token and item budget controls for context-pack assembly.
+#[derive(Debug, Default, Deserialize, ToSchema)]
+struct ContextPackBudgetControls {
+    /// Serialized token budget for callers that request serialized packs downstream.
+    #[serde(default, rename = "token_budget", alias = "tokenBudget")]
+    #[schema(example = 4000)]
+    token_budget: Option<usize>,
+    /// Per-item token cap for context-pack serialization; 0 disables it.
+    #[serde(default, rename = "max_item_tokens", alias = "maxItemTokens")]
+    #[schema(example = 512)]
+    max_item_tokens: Option<usize>,
+    /// Maximum field characters before serialization truncation.
+    #[serde(default, rename = "max_field_chars", alias = "maxFieldChars")]
+    #[schema(example = 500)]
+    max_field_chars: Option<usize>,
+    /// Per-kind retrieval item budgets before final result truncation.
+    #[serde(default)]
+    retrieval: Option<ContextPackRetrievalBudgetControls>,
+}
+
 /// Context-pack request on the canonical core route.
 #[derive(Debug, Deserialize, ToSchema)]
 #[schema(example = json!({
@@ -2536,6 +3024,18 @@ struct CoreContextPackRequest {
     #[serde(default)]
     #[schema(example = "standard")]
     view: Option<View>,
+    /// Optional nested depth controls. Overrides top-level edge_hop/max_neighbors when set.
+    #[serde(default)]
+    depth: Option<ContextPackDepthControls>,
+    /// Optional nested ranking/projection policy controls.
+    #[serde(default)]
+    policy: Option<ContextPackPolicyControls>,
+    /// Optional time-window filters.
+    #[serde(default)]
+    time: Option<ContextPackTimeControls>,
+    /// Optional retrieval and serialization budget controls.
+    #[serde(default)]
+    budget: Option<ContextPackBudgetControls>,
 }
 
 /// Hydrated context edge.
@@ -2634,6 +3134,79 @@ struct CoreContextPackStats {
     items_dropped: CoreContextPackItemAccounting,
 }
 
+/// Typed context-pack result state.
+#[derive(Debug, Serialize, ToSchema)]
+struct CoreContextPackState {
+    /// Stable state discriminator.
+    kind: CoreContextPackStateKind,
+    /// Empty-result reason when the pack did not surface entities.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    reason: Option<CoreContextPackStateReason>,
+    /// Total records in scope when known.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    total_in_scope: Option<usize>,
+    /// Caller-facing hint from the retrieval layer.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    hint: Option<String>,
+}
+
+/// Stable context-pack state discriminator.
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+enum CoreContextPackStateKind {
+    Ok,
+    MissingData,
+    LowConfidence,
+}
+
+/// Stable context-pack empty-result reason.
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+enum CoreContextPackStateReason {
+    FilterMatchedNone,
+    NoData,
+    AllActivated,
+    BelowThreshold,
+}
+
+/// Score component that contributed to a context-pack result.
+#[derive(Debug, Serialize, ToSchema)]
+struct CoreContextPackScoreComponent {
+    /// Retrieval signal name.
+    signal: String,
+    /// Rank within the signal.
+    rank: u32,
+    /// Raw signal score.
+    score: f32,
+}
+
+/// Per-result context-pack score evidence.
+#[derive(Debug, Serialize, ToSchema)]
+struct CoreContextPackScoreEvidence {
+    /// Hex entity id.
+    result_id: String,
+    /// Final rank after context-pack hydration.
+    final_rank: u32,
+    /// Final fused score.
+    final_score: f32,
+    /// Signal-level score components.
+    components: Vec<CoreContextPackScoreComponent>,
+}
+
+/// Retrieval evidence attached to a context-pack response.
+#[derive(Debug, Serialize, ToSchema)]
+struct CoreContextPackEvidence {
+    /// Whether the retrieval telemetry row was persisted and finalized.
+    telemetry_persisted: bool,
+    /// Retrieval telemetry run id when persistence succeeded.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    retrieval_run_id: Option<String>,
+    /// Surfaced result ids recorded in telemetry.
+    result_ids: Vec<String>,
+    /// Final score evidence recorded in telemetry.
+    scores: Vec<CoreContextPackScoreEvidence>,
+}
+
 /// Context-pack response envelope.
 #[derive(Debug, Serialize, ToSchema)]
 struct CoreContextPackResponse {
@@ -2643,6 +3216,10 @@ struct CoreContextPackResponse {
     neighbors: Vec<CoreContextEntity>,
     /// Retrieval and hydration stats.
     stats: CoreContextPackStats,
+    /// Typed missing-data / low-confidence state.
+    state: CoreContextPackState,
+    /// Retrieval evidence and score breakdown.
+    evidence: CoreContextPackEvidence,
     /// Empty-result context when no entities surface.
     #[serde(skip_serializing_if = "Option::is_none")]
     #[schema(value_type = Option<Object>)]
@@ -2833,14 +3410,15 @@ async fn core_query(
 ) -> Result<Json<SearchResponse>, EnvelopedApiError> {
     auth.require(CoreScope::Read)?;
     let req = json_payload(payload)?;
-    validate_core_query_seeds(req.query.as_deref(), req.query_vector.as_deref())?;
+    let query = non_empty_query(req.query.as_deref());
+    validate_core_query_seeds(query, req.query_vector.as_deref())?;
 
     let view = req.view.unwrap_or(View::Summary);
     let count_mode = req.count_mode.for_search_response();
     let fetch_limit = search_fetch_limit(count_mode, req.limit);
     let results = run_core_query(
         &server.vault,
-        req.query.as_deref(),
+        query,
         req.query_vector.as_deref(),
         fetch_limit,
     )
@@ -3070,31 +3648,60 @@ async fn core_context_pack(
 ) -> Result<Json<CoreContextPackResponse>, EnvelopedApiError> {
     auth.require(CoreScope::Read)?;
     let req = json_payload(payload)?;
-    validate_core_query_seeds(req.query.as_deref(), req.query_vector.as_deref())?;
+    let query = non_empty_query(req.query.as_deref());
+    validate_core_query_seeds(query, req.query_vector.as_deref())?;
+    let (edge_hop, edge_hop_field, max_neighbors, max_neighbors_field) =
+        resolved_context_pack_depth(req.depth.as_ref(), req.edge_hop, req.max_neighbors);
+    validate_context_pack_depth(edge_hop, edge_hop_field, max_neighbors, max_neighbors_field)?;
+    let hydrate = req
+        .policy
+        .as_ref()
+        .and_then(|policy| policy.hydrate)
+        .unwrap_or(req.hydrate);
+    let include_edges = req
+        .policy
+        .as_ref()
+        .and_then(|policy| policy.include_edges)
+        .unwrap_or(req.include_edges);
+    let include_vectors = req
+        .policy
+        .as_ref()
+        .and_then(|policy| policy.include_vectors)
+        .unwrap_or(req.include_vectors);
+    let view = req
+        .policy
+        .as_ref()
+        .and_then(|policy| policy.view)
+        .or(req.view)
+        .unwrap_or(View::Standard);
+    let projection = context_pack_json_projection_config(view, req.budget.as_ref(), 0);
 
     let mut builder = server
         .vault
         .context_pack()
         .limit(req.limit)
-        .hydrate(req.hydrate)
-        .include_edges(req.include_edges)
-        .edge_hop(req.edge_hop)
-        .max_neighbors(req.max_neighbors)
-        .include_vectors(req.include_vectors)
-        .field_profile(field_profile_for_view(req.view.unwrap_or(View::Standard)));
-    if let Some(query) = req.query.as_deref() {
+        .hydrate(hydrate)
+        .include_edges(include_edges)
+        .edge_hop(edge_hop)
+        .max_neighbors(max_neighbors)
+        .include_vectors(include_vectors)
+        .field_profile(projection.profile);
+    if let Some(query) = query {
         builder = builder.search_text(query, req.limit);
     }
     if let Some(vector) = req.query_vector.as_deref() {
         builder = builder.search_vector(vector, req.limit);
     }
+    builder = apply_context_pack_policy(builder, req.policy.as_ref())?;
+    builder = apply_context_pack_time(builder, req.time.as_ref())?;
+    builder = apply_context_pack_budget(builder, req.budget.as_ref(), 0, req.limit, max_neighbors)?;
 
-    let pack = builder.run().map_err(|error| {
-        tracing::error!(error = %error, "core context-pack failed");
-        core_engine_error("core context-pack failed", error)
-    })?;
-
-    Ok(Json(core_context_pack_response(pack)))
+    Ok(Json(run_context_pack_builder(
+        &server.vault,
+        builder,
+        projection,
+        "core context-pack failed",
+    )?))
 }
 
 /// List conversation entities.
@@ -3381,14 +3988,232 @@ fn core_text_fields(text: Option<&[CoreTextField]>, body: &Value) -> Vec<(String
         .collect()
 }
 
+fn non_empty_query(query: Option<&str>) -> Option<&str> {
+    query.map(str::trim).filter(|query| !query.is_empty())
+}
+
 fn validate_core_query_seeds(query: Option<&str>, vector: Option<&[f32]>) -> Result<(), ApiError> {
-    if query.is_none_or(|query| query.trim().is_empty()) && vector.is_none() {
+    if non_empty_query(query).is_none() && vector.is_none() {
         return Err(ApiError::bad_request(
             "query or query_vector is required",
             Some("query"),
         ));
     }
+    if vector.is_some_and(|vector| vector.iter().any(|value| !value.is_finite())) {
+        return Err(ApiError::bad_request(
+            "query_vector values must be finite",
+            Some("query_vector"),
+        ));
+    }
     Ok(())
+}
+
+fn resolved_context_pack_depth(
+    depth: Option<&ContextPackDepthControls>,
+    edge_hop: u32,
+    max_neighbors: usize,
+) -> (u32, &'static str, usize, &'static str) {
+    let depth_edge_hop = depth.and_then(|depth| depth.edge_hop);
+    let depth_max_neighbors = depth.and_then(|depth| depth.max_neighbors);
+    (
+        depth_edge_hop.unwrap_or(edge_hop),
+        if depth_edge_hop.is_some() {
+            "depth.edge_hop"
+        } else {
+            "edge_hop"
+        },
+        depth_max_neighbors.unwrap_or(max_neighbors),
+        if depth_max_neighbors.is_some() {
+            "depth.max_neighbors"
+        } else {
+            "max_neighbors"
+        },
+    )
+}
+
+fn validate_context_pack_depth(
+    edge_hop: u32,
+    edge_hop_field: &'static str,
+    max_neighbors: usize,
+    max_neighbors_field: &'static str,
+) -> Result<(), ApiError> {
+    if edge_hop > oneiron::context_pack::MAX_EDGE_HOP {
+        return Err(ApiError::bad_request(
+            format!(
+                "edge_hop must be less than or equal to {}",
+                oneiron::context_pack::MAX_EDGE_HOP
+            ),
+            Some(edge_hop_field),
+        ));
+    }
+    if max_neighbors > oneiron::context_pack::MAX_CONTEXT_NEIGHBORS {
+        return Err(ApiError::bad_request(
+            format!(
+                "max_neighbors must be less than or equal to {}",
+                oneiron::context_pack::MAX_CONTEXT_NEIGHBORS
+            ),
+            Some(max_neighbors_field),
+        ));
+    }
+    Ok(())
+}
+
+fn apply_context_pack_policy<'a>(
+    mut builder: oneiron::ContextPackBuilder<'a>,
+    policy: Option<&ContextPackPolicyControls>,
+) -> Result<oneiron::ContextPackBuilder<'a>, ApiError> {
+    let Some(policy) = policy else {
+        return Ok(builder);
+    };
+    if let Some(half_life_days) = policy.boost_recency_days {
+        if !half_life_days.is_finite() || half_life_days <= 0.0 {
+            return Err(ApiError::bad_request(
+                "boost_recency_days must be finite and positive",
+                Some("policy.boost_recency_days"),
+            ));
+        }
+        builder = builder.boost_recency(half_life_days);
+    }
+    if policy.boost_salience.unwrap_or(false) {
+        builder = builder.boost_salience();
+    }
+    if policy.boost_confidence.unwrap_or(false) {
+        builder = builder.boost_confidence();
+    }
+    if policy.boost_contiguity.unwrap_or(false) {
+        builder = builder.boost_contiguity();
+    }
+    Ok(builder)
+}
+
+fn apply_context_pack_time<'a>(
+    mut builder: oneiron::ContextPackBuilder<'a>,
+    time: Option<&ContextPackTimeControls>,
+) -> Result<oneiron::ContextPackBuilder<'a>, ApiError> {
+    let Some(time) = time else {
+        return Ok(builder);
+    };
+    let occurred_range = match (time.occurred_start, time.occurred_end) {
+        (Some(start), Some(end)) if start <= end => Some((start, end)),
+        (Some(_), Some(_)) => {
+            return Err(ApiError::bad_request(
+                "occurred_start must be less than or equal to occurred_end",
+                Some("time.occurred_start"),
+            ));
+        }
+        (Some(_), None) | (None, Some(_)) => {
+            return Err(ApiError::bad_request(
+                "occurred_start and occurred_end must be supplied together",
+                Some("time"),
+            ));
+        }
+        (None, None) => None,
+    };
+    let learned_range = match (time.learned_start, time.learned_end) {
+        (Some(start), Some(end)) if start <= end => Some((start, end)),
+        (Some(_), Some(_)) => {
+            return Err(ApiError::bad_request(
+                "learned_start must be less than or equal to learned_end",
+                Some("time.learned_start"),
+            ));
+        }
+        (Some(_), None) | (None, Some(_)) => {
+            return Err(ApiError::bad_request(
+                "learned_start and learned_end must be supplied together",
+                Some("time"),
+            ));
+        }
+        (None, None) => None,
+    };
+    if let (Some(since), Some((_, learned_end))) = (time.since, learned_range)
+        && since > learned_end
+    {
+        return Err(ApiError::bad_request(
+            "since must be less than or equal to learned_end",
+            Some("time.since"),
+        ));
+    }
+    if let Some(since) = time.since {
+        builder = builder.filter_since(since);
+    }
+    if let Some((start, end)) = occurred_range {
+        builder = builder.filter_occurred_range(start, end);
+    }
+    if let Some((start, end)) = learned_range {
+        builder = builder.filter_learned_range(start, end);
+    }
+    Ok(builder)
+}
+
+fn apply_context_pack_budget<'a>(
+    mut builder: oneiron::ContextPackBuilder<'a>,
+    budget: Option<&ContextPackBudgetControls>,
+    top_level_max_item_tokens: usize,
+    limit: usize,
+    default_selected_edges: usize,
+) -> Result<oneiron::ContextPackBuilder<'a>, ApiError> {
+    let max_item_tokens = budget
+        .and_then(|budget| budget.max_item_tokens)
+        .unwrap_or(top_level_max_item_tokens);
+    if max_item_tokens > 0 {
+        builder = builder.max_item_tokens(max_item_tokens);
+    }
+    let Some(budget) = budget else {
+        return Ok(builder);
+    };
+    if let Some(token_budget) = budget.token_budget {
+        builder = builder.token_budget(token_budget);
+    }
+    if let Some(max_field_chars) = budget.max_field_chars {
+        builder = builder.max_field_chars(max_field_chars);
+    }
+    if let Some(retrieval) = budget.retrieval.as_ref() {
+        if retrieval.selected_edges.is_some_and(|selected_edges| {
+            selected_edges > oneiron::context_pack::MAX_CONTEXT_NEIGHBORS
+        }) {
+            return Err(ApiError::bad_request(
+                format!(
+                    "selected_edges must be less than or equal to {}",
+                    oneiron::context_pack::MAX_CONTEXT_NEIGHBORS
+                ),
+                Some("budget.retrieval.selected_edges"),
+            ));
+        }
+        let defaults = oneiron::ContextPackRetrievalBudget::from_limit(
+            limit,
+            oneiron::TokenAllocation::default(),
+            default_selected_edges,
+        );
+        let selected_edges = retrieval.selected_edges.unwrap_or(defaults.selected_edges);
+        builder = builder.retrieval_budget(oneiron::ContextPackRetrievalBudget::new(
+            retrieval.claims.unwrap_or(defaults.claims),
+            retrieval.turns.unwrap_or(defaults.turns),
+            retrieval.summaries.unwrap_or(defaults.summaries),
+            retrieval.facets.unwrap_or(defaults.facets),
+            retrieval.other.unwrap_or(defaults.other),
+            selected_edges,
+        ));
+    }
+    Ok(builder)
+}
+
+fn run_context_pack_builder(
+    vault: &oneiron::Vault,
+    builder: oneiron::ContextPackBuilder<'_>,
+    projection: oneiron::serialize::SerializeConfig,
+    error_context: &'static str,
+) -> Result<CoreContextPackResponse, ApiError> {
+    let pack = builder
+        .run_projected_json_with_telemetry(&projection)
+        .map_err(|error| {
+            tracing::error!(error = %error, "{error_context}");
+            core_engine_error(error_context, error)
+        })?;
+    let run_id = pack.run_id;
+    let pack = pack.value;
+    let evidence = core_context_pack_evidence(vault, run_id)?;
+    let evidence = core_context_pack_evidence_for_results(evidence, &pack.results);
+    Ok(core_context_pack_response(pack, evidence))
 }
 
 fn run_core_query(
@@ -3465,7 +4290,46 @@ fn field_profile_for_view(view: View) -> oneiron::FieldProfile {
     }
 }
 
-fn core_context_pack_response(pack: oneiron::ContextPack) -> CoreContextPackResponse {
+fn context_pack_json_projection_config(
+    view: View,
+    budget: Option<&ContextPackBudgetControls>,
+    top_level_max_item_tokens: usize,
+) -> oneiron::serialize::SerializeConfig {
+    oneiron::serialize::SerializeConfig {
+        format: oneiron::PackFormat::Json,
+        profile: field_profile_for_view(view),
+        budget: 0,
+        allocation: oneiron::TokenAllocation::default(),
+        include_stats: false,
+        merge_neighbors: false,
+        max_field_chars: budget
+            .and_then(|budget| budget.max_field_chars)
+            .unwrap_or(oneiron::context_pack::DEFAULT_MAX_FIELD_CHARS),
+        max_item_tokens: budget
+            .and_then(|budget| budget.max_item_tokens)
+            .unwrap_or(top_level_max_item_tokens),
+    }
+}
+
+fn core_context_pack_evidence_for_results(
+    mut evidence: CoreContextPackEvidence,
+    results: &[oneiron::ContextEntity],
+) -> CoreContextPackEvidence {
+    let result_ids: BTreeSet<String> = results.iter().map(|entity| entity.id.to_hex()).collect();
+    evidence
+        .result_ids
+        .retain(|result_id| result_ids.contains(result_id));
+    evidence
+        .scores
+        .retain(|score| result_ids.contains(&score.result_id));
+    evidence
+}
+
+fn core_context_pack_response(
+    pack: oneiron::ContextPack,
+    evidence: CoreContextPackEvidence,
+) -> CoreContextPackResponse {
+    let state = core_context_pack_state(pack.empty.as_ref());
     CoreContextPackResponse {
         results: pack.results.into_iter().map(core_context_entity).collect(),
         neighbors: pack
@@ -3474,6 +4338,8 @@ fn core_context_pack_response(pack: oneiron::ContextPack) -> CoreContextPackResp
             .map(core_context_entity)
             .collect(),
         stats: core_context_pack_stats(pack.stats),
+        state,
+        evidence,
         empty: pack
             .empty
             .map(|empty| serde_json::to_value(empty).expect("EmptyContext serializes")),
@@ -3530,6 +4396,98 @@ fn core_context_pack_stats(stats: oneiron::PackStats) -> CoreContextPackStats {
     }
 }
 
+fn core_context_pack_state(empty: Option<&oneiron::EmptyContext>) -> CoreContextPackState {
+    let Some(empty) = empty else {
+        return CoreContextPackState {
+            kind: CoreContextPackStateKind::Ok,
+            reason: None,
+            total_in_scope: None,
+            hint: None,
+        };
+    };
+    CoreContextPackState {
+        kind: match empty.reason {
+            oneiron::EmptyReason::BelowThreshold => CoreContextPackStateKind::LowConfidence,
+            oneiron::EmptyReason::FilterMatchedNone
+            | oneiron::EmptyReason::NoData
+            | oneiron::EmptyReason::AllActivated => CoreContextPackStateKind::MissingData,
+        },
+        reason: Some(core_context_pack_state_reason(empty.reason)),
+        total_in_scope: Some(empty.total_in_scope),
+        hint: Some(empty.hint.clone()),
+    }
+}
+
+fn core_context_pack_state_reason(reason: oneiron::EmptyReason) -> CoreContextPackStateReason {
+    match reason {
+        oneiron::EmptyReason::FilterMatchedNone => CoreContextPackStateReason::FilterMatchedNone,
+        oneiron::EmptyReason::NoData => CoreContextPackStateReason::NoData,
+        oneiron::EmptyReason::AllActivated => CoreContextPackStateReason::AllActivated,
+        oneiron::EmptyReason::BelowThreshold => CoreContextPackStateReason::BelowThreshold,
+    }
+}
+
+fn core_context_pack_evidence(
+    vault: &oneiron::Vault,
+    run_id: Option<oneiron::RetrievalRunId>,
+) -> Result<CoreContextPackEvidence, ApiError> {
+    let Some(run_id) = run_id else {
+        return Ok(CoreContextPackEvidence {
+            telemetry_persisted: false,
+            retrieval_run_id: None,
+            result_ids: Vec::new(),
+            scores: Vec::new(),
+        });
+    };
+    let Some(record) = vault.retrieval_run(run_id).map_err(|error| {
+        tracing::error!(error = %error, "context-pack telemetry lookup failed");
+        core_engine_error("context-pack telemetry lookup failed", error)
+    })?
+    else {
+        return Ok(CoreContextPackEvidence {
+            telemetry_persisted: false,
+            retrieval_run_id: None,
+            result_ids: Vec::new(),
+            scores: Vec::new(),
+        });
+    };
+    Ok(CoreContextPackEvidence {
+        telemetry_persisted: true,
+        retrieval_run_id: Some(record.run_id.to_hex()),
+        result_ids: record.result_ids.iter().map(|id| hex_bytes(id)).collect(),
+        scores: record
+            .score_breakdown
+            .into_iter()
+            .map(core_context_pack_score_evidence)
+            .collect(),
+    })
+}
+
+fn core_context_pack_score_evidence(
+    score: oneiron::RetrievalScoreBreakdown,
+) -> CoreContextPackScoreEvidence {
+    CoreContextPackScoreEvidence {
+        result_id: hex_bytes(&score.result_id),
+        final_rank: score.final_rank,
+        final_score: score.final_score,
+        components: score
+            .components
+            .into_iter()
+            .map(core_context_pack_score_component)
+            .collect(),
+    }
+}
+
+fn core_context_pack_score_component(
+    component: oneiron::RetrievalScoreComponent,
+) -> CoreContextPackScoreComponent {
+    CoreContextPackScoreComponent {
+        signal: retrieval_signal_name(component.signal).to_owned(),
+        rank: component.rank,
+        score: component.score,
+    }
+}
+
 fn signal_name(signal: oneiron::Signal) -> &'static str {
     match signal {
         oneiron::Signal::Vector => "vector",
@@ -3539,6 +4497,26 @@ fn signal_name(signal: oneiron::Signal) -> &'static str {
         oneiron::Signal::Ppr => "ppr",
         _ => "unknown",
     }
+}
+
+fn retrieval_signal_name(signal: oneiron::RetrievalSignal) -> &'static str {
+    match signal {
+        oneiron::RetrievalSignal::Vector => "vector",
+        oneiron::RetrievalSignal::Text => "text",
+        oneiron::RetrievalSignal::Phonetic => "phonetic",
+        oneiron::RetrievalSignal::Temporal => "temporal",
+        oneiron::RetrievalSignal::Ppr => "ppr",
+    }
+}
+
+fn hex_bytes(bytes: &[u8]) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut encoded = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        encoded.push(HEX[(byte >> 4) as usize] as char);
+        encoded.push(HEX[(byte & 0x0f) as usize] as char);
+    }
+    encoded
 }
 
 fn core_list_limit(limit: usize) -> usize {
@@ -4394,14 +5372,19 @@ async fn lease_revoke(
 #[schema(example = json!({
     "query": "recent decisions about project alpha",
     "query_vector": [0.12, -0.04, 0.98],
-    "limit": 10
+    "limit": 10,
+    "depth": { "edge_hop": 1, "max_neighbors": 50 },
+    "policy": { "hydrate": true, "include_edges": true, "view": "full" },
+    "time": { "since": 1782357600 },
+    "budget": { "max_item_tokens": 512 }
 }))]
-#[allow(dead_code)] // Request shape is documented while the HTTP endpoint fails closed.
 struct ContextPackRequest {
     /// Optional text retrieval seed for context-pack assembly; omit when the caller only has an embedding vector.
+    #[serde(default)]
     #[schema(example = "recent decisions about project alpha")]
     query: Option<String>,
     /// Optional embedding vector retrieval seed; omit when the caller only has text.
+    #[serde(default, rename = "query_vector", alias = "queryVector")]
     #[schema(example = json!([0.12, -0.04, 0.98]))]
     query_vector: Option<Vec<f32>>,
     /// Maximum number of candidate entities to retrieve for the pack. Defaults to `10` when omitted.
@@ -4411,6 +5394,46 @@ struct ContextPackRequest {
     /// Per-item token cap for context-pack serialization; 0 disables it.
     #[serde(default, rename = "maxItemTokens", alias = "max_item_tokens")]
     max_item_tokens: usize,
+    /// Whether to include hydrated fields. Defaults to true.
+    #[serde(default = "default_true")]
+    #[schema(default = default_true, example = true)]
+    hydrate: bool,
+    /// Whether to include edge records in hydrated entities.
+    #[serde(default, rename = "include_edges", alias = "includeEdges")]
+    #[schema(example = true)]
+    include_edges: bool,
+    /// Edge expansion depth for neighbor hydration.
+    #[serde(default, rename = "edge_hop", alias = "edgeHop")]
+    #[schema(example = 1)]
+    edge_hop: u32,
+    /// Maximum neighbors to hydrate during edge expansion.
+    #[serde(
+        default = "default_context_neighbors",
+        rename = "max_neighbors",
+        alias = "maxNeighbors"
+    )]
+    #[schema(default = default_context_neighbors, example = 50)]
+    max_neighbors: usize,
+    /// Whether to include stored vectors when present.
+    #[serde(default, rename = "include_vectors", alias = "includeVectors")]
+    #[schema(example = false)]
+    include_vectors: bool,
+    /// Field profile for hydrated fields. Defaults to standard.
+    #[serde(default)]
+    #[schema(example = "standard")]
+    view: Option<View>,
+    /// Optional nested depth controls. Overrides top-level edge_hop/max_neighbors when set.
+    #[serde(default)]
+    depth: Option<ContextPackDepthControls>,
+    /// Optional nested ranking/projection policy controls.
+    #[serde(default)]
+    policy: Option<ContextPackPolicyControls>,
+    /// Optional time-window filters.
+    #[serde(default)]
+    time: Option<ContextPackTimeControls>,
+    /// Optional retrieval and serialization budget controls.
+    #[serde(default)]
+    budget: Option<ContextPackBudgetControls>,
 }
 
 /// Context pack assembly.
@@ -4424,16 +5447,33 @@ struct ContextPackRequest {
     ),
     responses(
         (
-            status = 501,
-            description = "Context-pack assembly is not implemented; endpoint fails closed instead of returning a placeholder pack.",
-            body = ApiError,
+            status = 200,
+            description = "Context pack assembled.",
+            body = CoreContextPackResponse,
             content_type = "application/json",
             example = json!({
-                "code": "NOT_IMPLEMENTED",
-                "message": "context-pack HTTP endpoint is not implemented",
-                "details": { "code": "NOT_IMPLEMENTED" },
-                "suggestions": ["Do not treat this response as a successful context pack."]
+                "results": [],
+                "neighbors": [],
+                "stats": {
+                    "candidates_considered": 0,
+                    "signals_used": ["text"],
+                    "query_time_us": 1000,
+                    "entities_hydrated": 0,
+                    "neighbors_hydrated": 0,
+                    "cosine_ghosts_dampened": 0,
+                    "claims_suppressed": 0,
+                    "items_truncated": { "count": 0, "reason": "item_budget" },
+                    "items_dropped": { "count": 0, "reason": "token_budget" }
+                },
+                "state": { "kind": "missing_data", "reason": "no_data", "total_in_scope": 0 },
+                "evidence": { "telemetry_persisted": true, "retrieval_run_id": "018f0000000000000000000000000000", "result_ids": [], "scores": [] }
             })
+        ),
+        (
+            status = 400,
+            description = "Malformed context-pack request or controls.",
+            body = ApiError,
+            content_type = "application/json"
         ),
         (
             status = 401,
@@ -4446,11 +5486,71 @@ struct ContextPackRequest {
 async fn context_pack(
     headers: HeaderMap,
     State(server): State<Arc<SyncServer>>,
-    Json(_req): Json<ContextPackRequest>,
-) -> Result<Json<serde_json::Value>, ApiError> {
+    payload: Result<Json<ContextPackRequest>, JsonRejection>,
+) -> Result<Json<CoreContextPackResponse>, ApiError> {
     check_api_auth(&headers, &server.config)?;
+    let req = json_payload(payload)?;
+    let query = non_empty_query(req.query.as_deref());
+    validate_core_query_seeds(query, req.query_vector.as_deref())?;
+    let (edge_hop, edge_hop_field, max_neighbors, max_neighbors_field) =
+        resolved_context_pack_depth(req.depth.as_ref(), req.edge_hop, req.max_neighbors);
+    validate_context_pack_depth(edge_hop, edge_hop_field, max_neighbors, max_neighbors_field)?;
+    let hydrate = req
+        .policy
+        .as_ref()
+        .and_then(|policy| policy.hydrate)
+        .unwrap_or(req.hydrate);
+    let include_edges = req
+        .policy
+        .as_ref()
+        .and_then(|policy| policy.include_edges)
+        .unwrap_or(req.include_edges);
+    let include_vectors = req
+        .policy
+        .as_ref()
+        .and_then(|policy| policy.include_vectors)
+        .unwrap_or(req.include_vectors);
+    let view = req
+        .policy
+        .as_ref()
+        .and_then(|policy| policy.view)
+        .or(req.view)
+        .unwrap_or(View::Standard);
+    let projection =
+        context_pack_json_projection_config(view, req.budget.as_ref(), req.max_item_tokens);
 
-    Err(ApiError::not_implemented(CONTEXT_PACK_FEATURE))
+    let mut builder = server
+        .vault
+        .context_pack()
+        .limit(req.limit)
+        .hydrate(hydrate)
+        .include_edges(include_edges)
+        .edge_hop(edge_hop)
+        .max_neighbors(max_neighbors)
+        .include_vectors(include_vectors)
+        .field_profile(projection.profile);
+    if let Some(query) = query {
+        builder = builder.search_text(query, req.limit);
+    }
+    if let Some(vector) = req.query_vector.as_deref() {
+        builder = builder.search_vector(vector, req.limit);
+    }
+    builder = apply_context_pack_policy(builder, req.policy.as_ref())?;
+    builder = apply_context_pack_time(builder, req.time.as_ref())?;
+    builder = apply_context_pack_budget(
+        builder,
+        req.budget.as_ref(),
+        req.max_item_tokens,
+        req.limit,
+        max_neighbors,
+    )?;
+
+    Ok(Json(run_context_pack_builder(
+        &server.vault,
+        builder,
+        projection,
+        "context-pack failed",
+    )?))
 }
 
 #[cfg(test)]
@@ -4506,8 +5606,19 @@ mod tests {
         "CoreContextEdge",
         "CoreContextEntity",
         "CoreContextPackItemAccounting",
+        "ContextPackBudgetControls",
+        "ContextPackDepthControls",
+        "ContextPackPolicyControls",
+        "ContextPackRetrievalBudgetControls",
+        "ContextPackTimeControls",
+        "CoreContextPackEvidence",
         "CoreContextPackRequest",
         "CoreContextPackResponse",
+        "CoreContextPackScoreComponent",
+        "CoreContextPackScoreEvidence",
+        "CoreContextPackState",
+        "CoreContextPackStateKind",
+        "CoreContextPackStateReason",
         "CoreContextPackStats",
         "CoreCreateEntityRequest",
         "CoreCreateTurnRequest",
@@ -4900,6 +6011,7 @@ mod tests {
                         "query_time_us" => *value = Value::from("<duration-us>"),
                         "request_id" => *value = Value::from("<request-id>"),
                         "requestId" => *value = Value::from("<request-id>"),
+                        "retrieval_run_id" => *value = Value::from("<retrieval-run-id>"),
                         _ => normalize_contract_body(value),
                     }
                 }
@@ -5886,20 +6998,16 @@ mod tests {
             .as_object()
             .expect("context-pack responses object");
         assert!(
-            !context_pack_responses.contains_key("200"),
-            "context-pack must not document a placeholder success response"
+            context_pack_responses.contains_key("200"),
+            "context-pack must document its live success response"
         );
-        let context_pack_not_implemented =
-            &context_pack_responses["501"]["content"]["application/json"]["example"];
-        assert_eq!(
-            context_pack_not_implemented["code"],
-            Value::from("NOT_IMPLEMENTED"),
-            "context-pack must document explicit fail-closed status"
+        assert!(
+            context_pack_responses.contains_key("400"),
+            "context-pack must document fail-closed malformed-control responses"
         );
-        assert_eq!(
-            context_pack_not_implemented.get("status"),
-            None,
-            "context-pack must not document legacy status: ok placeholder body"
+        assert!(
+            !context_pack_responses.contains_key("501"),
+            "context-pack must not document the retired not-implemented response"
         );
         assert_eq!(
             spec["components"]["schemas"]["DiscoverResponse"]["properties"]["skill_pack"]["$ref"],
@@ -6056,12 +7164,21 @@ mod tests {
             "CoreHydrateRequest",
             "CoreHydrateResponse",
             "CoreShortIdHydrateError",
+            "ContextPackDepthControls",
+            "ContextPackPolicyControls",
+            "ContextPackTimeControls",
+            "ContextPackRetrievalBudgetControls",
+            "ContextPackBudgetControls",
             "CoreContextPackRequest",
             "CoreContextPackResponse",
             "CoreContextEntity",
             "CoreContextEdge",
             "CoreContextPackStats",
             "CoreContextPackItemAccounting",
+            "CoreContextPackState",
+            "CoreContextPackScoreComponent",
+            "CoreContextPackScoreEvidence",
+            "CoreContextPackEvidence",
             "CoreListQuery",
             "CoreCreateEntityRequest",
             "CoreCreateTurnRequest",
@@ -8277,39 +9394,334 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn context_pack_route_returns_501_instead_of_placeholder_success() {
+    async fn context_pack_route_returns_pack_evidence_and_records_telemetry() {
         let (_dir, server) = test_server();
-        let response = api_routes(server)
-            .oneshot(
-                Request::builder()
-                    .method("POST")
-                    .uri("/api/context-pack")
-                    .header(CONTENT_TYPE, "application/json")
-                    .body(Body::from(
-                        r#"{"query":"recent decisions","limit":1,"maxItemTokens":64}"#,
-                    ))
-                    .expect("request"),
-            )
-            .await
-            .expect("route response");
+        let (batch_status, batch_body) = route_json(
+            server.clone(),
+            json_request(
+                "POST",
+                "/v1/core/batch",
+                json!({
+                    "entities": [{
+                        "entity_type": ENTITY_TYPE_TURN,
+                        "learned_at": 500_u64,
+                        "occurred_start": 500_u64,
+                        "occurred_end": 500_u64,
+                        "body": {
+                            "txt": "public context pack evidence needle",
+                            "spkr": "user",
+                            "at": 500_u64
+                        },
+                        "text": [{ "field": "body", "value": "public context pack evidence needle" }]
+                    }]
+                }),
+            ),
+        )
+        .await;
+        assert_eq!(batch_status, StatusCode::OK);
+        let id = batch_body["entities"][0]["id"]
+            .as_str()
+            .expect("written id")
+            .to_owned();
 
-        assert_eq!(response.status(), StatusCode::NOT_IMPLEMENTED);
-        let body = to_bytes(response.into_body(), usize::MAX)
-            .await
-            .expect("context-pack response body");
-        let body: Value = serde_json::from_slice(&body).expect("ApiError JSON body");
-        assert_eq!(body["code"], Value::from("NOT_IMPLEMENTED"));
-        assert_eq!(body["details"]["code"], Value::from("NOT_IMPLEMENTED"));
+        let (status, body) = route_json(
+            server.clone(),
+            json_request(
+                "POST",
+                "/api/context-pack",
+                json!({
+                    "query": "evidence needle",
+                    "limit": 5,
+                    "depth": { "edge_hop": 1, "max_neighbors": 5 },
+                    "policy": {
+                        "hydrate": true,
+                        "include_edges": true,
+                        "view": "full",
+                        "boost_confidence": true
+                    },
+                    "time": { "occurred_start": 500_u64, "occurred_end": 500_u64 },
+                    "budget": {
+                        "max_item_tokens": 64,
+                        "retrieval": {
+                            "claims": 0,
+                            "turns": 1,
+                            "summaries": 0,
+                            "facets": 0,
+                            "other": 0,
+                            "selected_edges": 5
+                        }
+                    }
+                }),
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body["results"][0]["id"], Value::from(id.clone()));
+        assert_eq!(body["state"]["kind"], Value::from("ok"));
+        assert_eq!(body["evidence"]["telemetry_persisted"], Value::from(true));
         assert_eq!(
-            body.get("status"),
-            None,
-            "context-pack must not return the legacy status: ok placeholder body"
+            body["evidence"]["result_ids"],
+            Value::Array(vec![Value::from(id.clone())])
         );
+        assert_eq!(body["evidence"]["scores"][0]["result_id"], Value::from(id));
+        assert_eq!(
+            body["evidence"]["scores"][0]["components"][0]["signal"],
+            Value::from("text")
+        );
+
+        let runs = server.vault.retrieval_runs(1).expect("retrieval runs");
+        assert_eq!(runs.len(), 1);
+        assert_eq!(
+            runs[0].run_id.to_hex(),
+            body["evidence"]["retrieval_run_id"]
+        );
+        assert_eq!(runs[0].action, oneiron::RetrievalAction::ContextPack);
+    }
+
+    #[tokio::test]
+    async fn context_pack_route_projects_json_response_controls() {
+        let (_dir, server) = test_server();
+        let long_text = format!("projection budget needle {}", "x".repeat(800));
+        let (batch_status, batch_body) = route_json(
+            server.clone(),
+            json_request(
+                "POST",
+                "/v1/core/batch",
+                json!({
+                    "entities": [{
+                        "entity_type": ENTITY_TYPE_TURN,
+                        "learned_at": 510_u64,
+                        "occurred_start": 510_u64,
+                        "occurred_end": 510_u64,
+                        "body": {
+                            "txt": long_text,
+                            "spkr": "user",
+                            "at": 510_u64,
+                            "sess": "session-alpha",
+                            "debug": "private"
+                        },
+                        "text": [{ "field": "body", "value": "projection budget needle" }]
+                    }]
+                }),
+            ),
+        )
+        .await;
+        assert_eq!(batch_status, StatusCode::OK);
+        let id = batch_body["entities"][0]["id"]
+            .as_str()
+            .expect("written id")
+            .to_owned();
+
+        let (summary_status, summary_body) = route_json(
+            server.clone(),
+            json_request(
+                "POST",
+                "/api/context-pack",
+                json!({
+                    "query": "projection budget needle",
+                    "limit": 5,
+                    "policy": { "view": "summary" }
+                }),
+            ),
+        )
+        .await;
+        assert_eq!(summary_status, StatusCode::OK);
+        assert_eq!(summary_body["results"][0]["id"], Value::from(id.clone()));
+        let fields = summary_body["results"][0]["fields"]
+            .as_object()
+            .expect("projected fields");
+        assert!(fields.contains_key("txt"));
+        assert!(!fields.contains_key("spkr"));
+        assert!(!fields.contains_key("at"));
+        assert!(!fields.contains_key("sess"));
+        assert!(!fields.contains_key("debug"));
+
+        let (budget_status, budget_body) = route_json(
+            server.clone(),
+            json_request(
+                "POST",
+                "/api/context-pack",
+                json!({
+                    "query": "projection budget needle",
+                    "limit": 5,
+                    "policy": { "view": "full" },
+                    "maxItemTokens": 48
+                }),
+            ),
+        )
+        .await;
+        assert_eq!(budget_status, StatusCode::OK);
+        assert_eq!(budget_body["results"][0]["id"], Value::from(id.clone()));
+        let truncated = budget_body["results"][0]["fields"]["txt"]
+            .as_str()
+            .expect("truncated text field");
+        assert!(truncated.contains("truncated"));
+        assert_eq!(
+            budget_body["stats"]["items_truncated"]["count"],
+            Value::from(1)
+        );
+        assert_eq!(
+            budget_body["evidence"]["result_ids"],
+            Value::Array(vec![Value::from(id.clone())])
+        );
+
+        let (dropped_status, dropped_body) = route_json(
+            server.clone(),
+            json_request(
+                "POST",
+                "/api/context-pack",
+                json!({
+                    "query": "projection budget needle",
+                    "limit": 5,
+                    "policy": { "view": "full" },
+                    "maxItemTokens": 1
+                }),
+            ),
+        )
+        .await;
+        assert_eq!(dropped_status, StatusCode::OK);
+        assert_eq!(dropped_body["results"], Value::Array(Vec::new()));
+        assert_eq!(dropped_body["neighbors"], Value::Array(Vec::new()));
+        assert_eq!(dropped_body["state"]["kind"], Value::from("missing_data"));
+        assert_eq!(
+            dropped_body["state"]["reason"],
+            Value::from("filter_matched_none")
+        );
+        assert!(
+            dropped_body["state"]["hint"]
+                .as_str()
+                .is_some_and(|hint| hint.contains("budget.max_item_tokens"))
+        );
+        assert_eq!(
+            dropped_body["empty"]["reason"],
+            Value::from("filter_matched_none")
+        );
+        assert_eq!(
+            dropped_body["stats"]["items_dropped"]["count"],
+            Value::from(1)
+        );
+        assert_eq!(
+            dropped_body["evidence"]["result_ids"],
+            Value::Array(Vec::new())
+        );
+        assert_eq!(dropped_body["evidence"]["scores"], Value::Array(Vec::new()));
+
+        let runs = server.vault.retrieval_runs(1).expect("retrieval runs");
+        assert_eq!(runs.len(), 1);
+        assert!(runs[0].result_ids.is_empty());
+        assert!(runs[0].score_breakdown.is_empty());
+        assert_eq!(runs[0].empty_reason.as_deref(), Some("ItemBudget"));
+    }
+
+    #[test]
+    fn context_pack_evidence_omits_run_id_without_finalized_telemetry() {
+        let (_dir, server) = test_server();
+        let evidence =
+            core_context_pack_evidence(&server.vault, Some(oneiron::RetrievalRunId::now()))
+                .expect("context-pack evidence");
+
+        assert!(!evidence.telemetry_persisted);
+        assert_eq!(evidence.retrieval_run_id, None);
+        assert!(evidence.result_ids.is_empty());
+        assert!(evidence.scores.is_empty());
+    }
+
+    #[test]
+    fn non_empty_query_trims_and_filters_blank_values() {
+        assert_eq!(non_empty_query(None), None);
+        assert_eq!(non_empty_query(Some("")), None);
+        assert_eq!(non_empty_query(Some("   \n\t  ")), None);
+        assert_eq!(
+            non_empty_query(Some("  recent decisions  ")),
+            Some("recent decisions")
+        );
+    }
+
+    #[tokio::test]
+    async fn context_pack_route_rejects_malformed_controls() {
+        let (_dir, server) = test_server();
+        let (status, body) = route_json(
+            server.clone(),
+            json_request(
+                "POST",
+                "/api/context-pack",
+                json!({
+                    "query": "recent decisions",
+                    "depth": { "edge_hop": oneiron::context_pack::MAX_EDGE_HOP + 1 }
+                }),
+            ),
+        )
+        .await;
+
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_eq!(body["code"], Value::from("BAD_REQUEST"));
+        assert_eq!(body["details"]["field"], Value::from("depth.edge_hop"));
         assert!(
             body["message"]
                 .as_str()
-                .is_some_and(|message| message.contains("not implemented")),
-            "context-pack message must clearly state not implemented: {body:?}"
+                .is_some_and(|message| message.contains("edge_hop")),
+            "control error should name the malformed field: {body:?}"
+        );
+
+        let (status, body) = route_json(
+            server.clone(),
+            json_request(
+                "POST",
+                "/api/context-pack",
+                json!({
+                    "query": "recent decisions",
+                    "edge_hop": oneiron::context_pack::MAX_EDGE_HOP + 1
+                }),
+            ),
+        )
+        .await;
+
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_eq!(body["code"], Value::from("BAD_REQUEST"));
+        assert_eq!(body["details"]["field"], Value::from("edge_hop"));
+
+        let (status, body) = route_json(
+            server.clone(),
+            json_request(
+                "POST",
+                "/api/context-pack",
+                json!({
+                    "query": "recent decisions",
+                    "max_neighbors": oneiron::context_pack::MAX_CONTEXT_NEIGHBORS + 1
+                }),
+            ),
+        )
+        .await;
+
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_eq!(body["code"], Value::from("BAD_REQUEST"));
+        assert_eq!(body["details"]["field"], Value::from("max_neighbors"));
+
+        let (status, body) = route_json(
+            server,
+            json_request(
+                "POST",
+                "/api/context-pack",
+                json!({
+                    "query": "recent decisions",
+                    "time": {
+                        "since": 300_u64,
+                        "learned_start": 100_u64,
+                        "learned_end": 200_u64
+                    }
+                }),
+            ),
+        )
+        .await;
+
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_eq!(body["code"], Value::from("BAD_REQUEST"));
+        assert_eq!(body["details"]["field"], Value::from("time.since"));
+        assert!(
+            body["message"]
+                .as_str()
+                .is_some_and(|message| message.contains("learned_end")),
+            "control error should name the contradictory learned bound: {body:?}"
         );
     }
 
