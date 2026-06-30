@@ -1,0 +1,1055 @@
+{
+  "paths": {
+    "/v1/core/batch": {
+      "post": {
+        "operationId": "core_batch",
+        "security": [
+          {
+            "CoreBearer": []
+          },
+          {
+            "OneironSecret": []
+          }
+        ],
+        "parameters": [],
+        "requestSchema": {
+          "$ref": "#/components/schemas/CoreBatchRequest"
+        },
+        "responses": {
+          "200": {
+            "description": "Batch committed atomically.",
+            "schema": {
+              "$ref": "#/components/schemas/CoreBatchResponse"
+            }
+          },
+          "400": {
+            "description": "Malformed batch or invalid entity body.",
+            "schema": {
+              "$ref": "#/components/schemas/ApiErrorEnvelope"
+            }
+          },
+          "401": {
+            "description": "Missing or invalid core auth.",
+            "schema": {
+              "$ref": "#/components/schemas/ApiErrorEnvelope"
+            }
+          },
+          "403": {
+            "description": "Core token lacks core:write.",
+            "schema": {
+              "$ref": "#/components/schemas/ApiErrorEnvelope"
+            }
+          },
+          "500": {
+            "description": "Batch commit failed.",
+            "schema": {
+              "$ref": "#/components/schemas/ApiErrorEnvelope"
+            }
+          }
+        }
+      }
+    },
+    "/v1/core/query": {
+      "post": {
+        "operationId": "core_query",
+        "security": [
+          {
+            "CoreBearer": []
+          },
+          {
+            "OneironSecret": []
+          }
+        ],
+        "parameters": [],
+        "requestSchema": {
+          "$ref": "#/components/schemas/CoreQueryRequest"
+        },
+        "responses": {
+          "200": {
+            "description": "Projected query results.",
+            "schema": {
+              "type": "object"
+            }
+          },
+          "400": {
+            "description": "Malformed query request.",
+            "schema": {
+              "$ref": "#/components/schemas/ApiErrorEnvelope"
+            }
+          },
+          "401": {
+            "description": "Missing or invalid core auth.",
+            "schema": {
+              "$ref": "#/components/schemas/ApiErrorEnvelope"
+            }
+          },
+          "403": {
+            "description": "Core token lacks core:read.",
+            "schema": {
+              "$ref": "#/components/schemas/ApiErrorEnvelope"
+            }
+          },
+          "500": {
+            "description": "Query failed.",
+            "schema": {
+              "$ref": "#/components/schemas/ApiErrorEnvelope"
+            }
+          }
+        }
+      }
+    },
+    "/v1/core/context-pack": {
+      "post": {
+        "operationId": "core_context_pack",
+        "security": [
+          {
+            "CoreBearer": []
+          },
+          {
+            "OneironSecret": []
+          }
+        ],
+        "parameters": [],
+        "requestSchema": {
+          "$ref": "#/components/schemas/CoreContextPackRequest"
+        },
+        "responses": {
+          "200": {
+            "description": "Context pack assembled.",
+            "schema": {
+              "$ref": "#/components/schemas/CoreContextPackResponse"
+            }
+          },
+          "400": {
+            "description": "Malformed context-pack request.",
+            "schema": {
+              "$ref": "#/components/schemas/ApiErrorEnvelope"
+            }
+          },
+          "401": {
+            "description": "Missing or invalid core auth.",
+            "schema": {
+              "$ref": "#/components/schemas/ApiErrorEnvelope"
+            }
+          },
+          "403": {
+            "description": "Core token lacks core:read.",
+            "schema": {
+              "$ref": "#/components/schemas/ApiErrorEnvelope"
+            }
+          },
+          "500": {
+            "description": "Context-pack assembly failed.",
+            "schema": {
+              "$ref": "#/components/schemas/ApiErrorEnvelope"
+            }
+          }
+        }
+      }
+    },
+    "/v1/core/hydrate": {
+      "post": {
+        "operationId": "core_hydrate",
+        "security": [
+          {
+            "CoreBearer": []
+          },
+          {
+            "OneironSecret": []
+          }
+        ],
+        "parameters": [],
+        "requestSchema": {
+          "$ref": "#/components/schemas/CoreHydrateRequest"
+        },
+        "responses": {
+          "200": {
+            "description": "Short ref resolved to a live or deleted entity.",
+            "schema": {
+              "$ref": "#/components/schemas/CoreHydrateResponse"
+            }
+          },
+          "400": {
+            "description": "Malformed short ref.",
+            "schema": {
+              "$ref": "#/components/schemas/ApiErrorEnvelope"
+            }
+          },
+          "401": {
+            "description": "Missing or invalid core auth.",
+            "schema": {
+              "$ref": "#/components/schemas/ApiErrorEnvelope"
+            }
+          },
+          "403": {
+            "description": "Core token lacks core:read.",
+            "schema": {
+              "$ref": "#/components/schemas/ApiErrorEnvelope"
+            }
+          },
+          "404": {
+            "description": "Short ref was not found.",
+            "schema": {
+              "$ref": "#/components/schemas/ApiErrorEnvelope"
+            }
+          },
+          "500": {
+            "description": "Hydrate lookup failed.",
+            "schema": {
+              "$ref": "#/components/schemas/ApiErrorEnvelope"
+            }
+          }
+        }
+      }
+    },
+    "/v1/core/conversations": {
+      "get": {
+        "operationId": "list_core_conversations",
+        "security": [
+          {
+            "CoreBearer": []
+          },
+          {
+            "OneironSecret": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 10
+            }
+          },
+          {
+            "name": "after",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "view",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/View"
+            }
+          },
+          {
+            "name": "countMode",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/CountMode"
+            }
+          }
+        ],
+        "requestSchema": null,
+        "responses": {
+          "200": {
+            "description": "Conversation entities.",
+            "schema": {
+              "type": "object"
+            }
+          },
+          "400": {
+            "description": "Invalid list query.",
+            "schema": {
+              "$ref": "#/components/schemas/ApiErrorEnvelope"
+            }
+          },
+          "401": {
+            "description": "Missing or invalid core auth.",
+            "schema": {
+              "$ref": "#/components/schemas/ApiErrorEnvelope"
+            }
+          },
+          "403": {
+            "description": "Core token lacks core:read.",
+            "schema": {
+              "$ref": "#/components/schemas/ApiErrorEnvelope"
+            }
+          },
+          "500": {
+            "description": "Conversation listing failed.",
+            "schema": {
+              "$ref": "#/components/schemas/ApiErrorEnvelope"
+            }
+          }
+        }
+      },
+      "post": {
+        "operationId": "create_core_conversation",
+        "security": [
+          {
+            "CoreBearer": []
+          },
+          {
+            "OneironSecret": []
+          }
+        ],
+        "parameters": [],
+        "requestSchema": {
+          "$ref": "#/components/schemas/CoreCreateEntityRequest"
+        },
+        "responses": {
+          "200": {
+            "description": "Conversation created.",
+            "schema": {
+              "$ref": "#/components/schemas/CoreEntityWriteResponse"
+            }
+          },
+          "400": {
+            "description": "Malformed create request.",
+            "schema": {
+              "$ref": "#/components/schemas/ApiErrorEnvelope"
+            }
+          },
+          "401": {
+            "description": "Missing or invalid core auth.",
+            "schema": {
+              "$ref": "#/components/schemas/ApiErrorEnvelope"
+            }
+          },
+          "403": {
+            "description": "Core token lacks core:write.",
+            "schema": {
+              "$ref": "#/components/schemas/ApiErrorEnvelope"
+            }
+          },
+          "500": {
+            "description": "Conversation create failed.",
+            "schema": {
+              "$ref": "#/components/schemas/ApiErrorEnvelope"
+            }
+          }
+        }
+      }
+    },
+    "/v1/core/conversations/{conversation_id}/turns": {
+      "get": {
+        "operationId": "list_core_conversation_turns",
+        "security": [
+          {
+            "CoreBearer": []
+          },
+          {
+            "OneironSecret": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "conversation_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 10
+            }
+          },
+          {
+            "name": "after",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "view",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/View"
+            }
+          },
+          {
+            "name": "countMode",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/CountMode"
+            }
+          }
+        ],
+        "requestSchema": null,
+        "responses": {
+          "200": {
+            "description": "Conversation turns.",
+            "schema": {
+              "type": "object"
+            }
+          },
+          "400": {
+            "description": "Malformed conversation id or query.",
+            "schema": {
+              "$ref": "#/components/schemas/ApiErrorEnvelope"
+            }
+          },
+          "401": {
+            "description": "Missing or invalid core auth.",
+            "schema": {
+              "$ref": "#/components/schemas/ApiErrorEnvelope"
+            }
+          },
+          "403": {
+            "description": "Core token lacks core:read.",
+            "schema": {
+              "$ref": "#/components/schemas/ApiErrorEnvelope"
+            }
+          },
+          "404": {
+            "description": "Conversation was not found.",
+            "schema": {
+              "$ref": "#/components/schemas/ApiErrorEnvelope"
+            }
+          },
+          "500": {
+            "description": "Turn listing failed.",
+            "schema": {
+              "$ref": "#/components/schemas/ApiErrorEnvelope"
+            }
+          }
+        }
+      },
+      "post": {
+        "operationId": "create_core_conversation_turn",
+        "security": [
+          {
+            "CoreBearer": []
+          },
+          {
+            "OneironSecret": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "conversation_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestSchema": {
+          "$ref": "#/components/schemas/CoreCreateTurnRequest"
+        },
+        "responses": {
+          "200": {
+            "description": "Turn created and linked to conversation.",
+            "schema": {
+              "$ref": "#/components/schemas/CoreEntityWriteResponse"
+            }
+          },
+          "400": {
+            "description": "Malformed request.",
+            "schema": {
+              "$ref": "#/components/schemas/ApiErrorEnvelope"
+            }
+          },
+          "401": {
+            "description": "Missing or invalid core auth.",
+            "schema": {
+              "$ref": "#/components/schemas/ApiErrorEnvelope"
+            }
+          },
+          "403": {
+            "description": "Core token lacks core:write.",
+            "schema": {
+              "$ref": "#/components/schemas/ApiErrorEnvelope"
+            }
+          },
+          "404": {
+            "description": "Conversation was not found.",
+            "schema": {
+              "$ref": "#/components/schemas/ApiErrorEnvelope"
+            }
+          },
+          "500": {
+            "description": "Turn create failed.",
+            "schema": {
+              "$ref": "#/components/schemas/ApiErrorEnvelope"
+            }
+          }
+        }
+      }
+    },
+    "/v1/core/turns/{turn_id}": {
+      "get": {
+        "operationId": "get_core_turn",
+        "security": [
+          {
+            "CoreBearer": []
+          },
+          {
+            "OneironSecret": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "turn_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "view",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/View"
+            }
+          }
+        ],
+        "requestSchema": null,
+        "responses": {
+          "200": {
+            "description": "Projected turn entity.",
+            "schema": {
+              "type": "object"
+            }
+          },
+          "400": {
+            "description": "Malformed turn id or view.",
+            "schema": {
+              "$ref": "#/components/schemas/ApiErrorEnvelope"
+            }
+          },
+          "401": {
+            "description": "Missing or invalid core auth.",
+            "schema": {
+              "$ref": "#/components/schemas/ApiErrorEnvelope"
+            }
+          },
+          "403": {
+            "description": "Core token lacks core:read.",
+            "schema": {
+              "$ref": "#/components/schemas/ApiErrorEnvelope"
+            }
+          },
+          "404": {
+            "description": "Turn was not found.",
+            "schema": {
+              "$ref": "#/components/schemas/ApiErrorEnvelope"
+            }
+          },
+          "500": {
+            "description": "Turn read failed.",
+            "schema": {
+              "$ref": "#/components/schemas/ApiErrorEnvelope"
+            }
+          }
+        }
+      }
+    },
+    "/v1/core/turns/annotate": {
+      "get": {
+        "operationId": "read_turn_vad_annotation",
+        "security": [
+          {
+            "CoreBearer": []
+          },
+          {
+            "OneironSecret": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "turn_id",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "message_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestSchema": null,
+        "responses": {
+          "200": {
+            "description": "Persisted VAD annotation for the requested turn or message.",
+            "schema": {
+              "$ref": "#/components/schemas/TurnVadAnnotateResponse"
+            }
+          },
+          "400": {
+            "description": "Malformed id, invalid target type, or message outside turn.",
+            "schema": {
+              "$ref": "#/components/schemas/ApiErrorEnvelope"
+            }
+          },
+          "401": {
+            "description": "Missing or invalid scoped bearer token, or missing/invalid legacy `x-oneiron-secret` header.",
+            "schema": {
+              "$ref": "#/components/schemas/ApiErrorEnvelope"
+            }
+          },
+          "403": {
+            "description": "Bearer token is valid but lacks the required `core:read` scope.",
+            "schema": {
+              "$ref": "#/components/schemas/ApiErrorEnvelope"
+            }
+          },
+          "404": {
+            "description": "Turn/message entity or VAD annotation was not found.",
+            "schema": {
+              "$ref": "#/components/schemas/ApiErrorEnvelope"
+            }
+          },
+          "500": {
+            "description": "VAD annotation read failed.",
+            "schema": {
+              "$ref": "#/components/schemas/ApiErrorEnvelope"
+            }
+          }
+        }
+      },
+      "post": {
+        "operationId": "annotate_turn_vad",
+        "security": [
+          {
+            "CoreBearer": []
+          },
+          {
+            "OneironSecret": []
+          }
+        ],
+        "parameters": [],
+        "requestSchema": {
+          "$ref": "#/components/schemas/TurnVadAnnotateRequest"
+        },
+        "responses": {
+          "200": {
+            "description": "VAD annotation persisted and returned.",
+            "schema": {
+              "$ref": "#/components/schemas/TurnVadAnnotateResponse"
+            }
+          },
+          "400": {
+            "description": "Malformed id, invalid target type, message outside turn, or VAD outside the contract ranges.",
+            "schema": {
+              "$ref": "#/components/schemas/ApiErrorEnvelope"
+            }
+          },
+          "401": {
+            "description": "Missing or invalid scoped bearer token, or missing/invalid legacy `x-oneiron-secret` header.",
+            "schema": {
+              "$ref": "#/components/schemas/ApiErrorEnvelope"
+            }
+          },
+          "403": {
+            "description": "Bearer token is valid but lacks the required `core:write` scope.",
+            "schema": {
+              "$ref": "#/components/schemas/ApiErrorEnvelope"
+            }
+          },
+          "404": {
+            "description": "Turn or message entity was not found.",
+            "schema": {
+              "$ref": "#/components/schemas/ApiErrorEnvelope"
+            }
+          },
+          "409": {
+            "description": "Active Gate policy rejected the VAD annotation write; response uses INVALID_STATE with Gate outcome and reason codes.",
+            "schema": {
+              "$ref": "#/components/schemas/ApiError"
+            }
+          },
+          "500": {
+            "description": "VAD annotation persistence failed.",
+            "schema": {
+              "$ref": "#/components/schemas/ApiErrorEnvelope"
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "ApiErrorEnvelope": {
+        "type": "object",
+        "required": [
+          "error"
+        ],
+        "properties": {
+          "error": "object"
+        }
+      },
+      "CoreBatchEntityInput": {
+        "type": "object",
+        "required": [
+          "entity_type",
+          "body"
+        ],
+        "properties": {
+          "body": "object",
+          "entity_type": "integer",
+          "id": "string|null",
+          "learned_at": "integer|null",
+          "occurred_end": "integer|null",
+          "occurred_start": "integer|null",
+          "text": "array<#/components/schemas/CoreTextField>"
+        }
+      },
+      "CoreBatchEntityResult": {
+        "type": "object",
+        "required": [
+          "id",
+          "entity_type"
+        ],
+        "properties": {
+          "entity_type": "integer",
+          "id": "string"
+        }
+      },
+      "CoreBatchRequest": {
+        "type": "object",
+        "required": [
+          "entities"
+        ],
+        "properties": {
+          "entities": "array<#/components/schemas/CoreBatchEntityInput>"
+        }
+      },
+      "CoreBatchResponse": {
+        "type": "object",
+        "required": [
+          "count",
+          "entities"
+        ],
+        "properties": {
+          "count": "integer",
+          "entities": "array<#/components/schemas/CoreBatchEntityResult>"
+        }
+      },
+      "CoreContextEdge": {
+        "type": "object",
+        "required": [
+          "kind",
+          "target",
+          "weight",
+          "created_at"
+        ],
+        "properties": {
+          "created_at": "integer",
+          "kind": "integer",
+          "target": "string",
+          "target_short_id": "string|null",
+          "vad": "null|#/components/schemas/VadPayload",
+          "weight": "number"
+        }
+      },
+      "CoreContextEntity": {
+        "type": "object",
+        "required": [
+          "id",
+          "short_id",
+          "content_hash",
+          "entity_type",
+          "score"
+        ],
+        "properties": {
+          "content_hash": "string",
+          "edges": "array<#/components/schemas/CoreContextEdge>",
+          "entity_type": "integer",
+          "fields": "object|null",
+          "id": "string",
+          "score": "number",
+          "short_id": "string",
+          "vector": "array<number>"
+        }
+      },
+      "CoreContextPackItemAccounting": {
+        "type": "object",
+        "required": [
+          "count",
+          "reason"
+        ],
+        "properties": {
+          "count": "integer",
+          "reason": "string"
+        }
+      },
+      "CoreContextPackRequest": {
+        "type": "object",
+        "properties": {
+          "edge_hop": "integer",
+          "hydrate": "boolean",
+          "include_edges": "boolean",
+          "include_vectors": "boolean",
+          "limit": "integer",
+          "max_neighbors": "integer",
+          "query": "string|null",
+          "query_vector": "array<number>",
+          "view": "null|#/components/schemas/View"
+        }
+      },
+      "CoreContextPackResponse": {
+        "type": "object",
+        "required": [
+          "results",
+          "neighbors",
+          "stats"
+        ],
+        "properties": {
+          "empty": "object|null",
+          "neighbors": "array<#/components/schemas/CoreContextEntity>",
+          "results": "array<#/components/schemas/CoreContextEntity>",
+          "stats": "#/components/schemas/CoreContextPackStats"
+        }
+      },
+      "CoreContextPackStats": {
+        "type": "object",
+        "required": [
+          "candidates_considered",
+          "signals_used",
+          "query_time_us",
+          "entities_hydrated",
+          "neighbors_hydrated",
+          "cosine_ghosts_dampened",
+          "claims_suppressed",
+          "items_truncated",
+          "items_dropped"
+        ],
+        "properties": {
+          "candidates_considered": "integer",
+          "claims_suppressed": "integer",
+          "cosine_ghosts_dampened": "integer",
+          "entities_hydrated": "integer",
+          "items_dropped": "#/components/schemas/CoreContextPackItemAccounting",
+          "items_truncated": "#/components/schemas/CoreContextPackItemAccounting",
+          "neighbors_hydrated": "integer",
+          "query_time_us": "integer",
+          "signals_used": "array<string>"
+        }
+      },
+      "CoreCreateEntityRequest": {
+        "type": "object",
+        "required": [
+          "body"
+        ],
+        "properties": {
+          "body": "object",
+          "id": "string|null",
+          "learned_at": "integer|null",
+          "occurred_end": "integer|null",
+          "occurred_start": "integer|null",
+          "text": "array<#/components/schemas/CoreTextField>"
+        }
+      },
+      "CoreCreateTurnRequest": {
+        "type": "object",
+        "required": [
+          "body"
+        ],
+        "properties": {
+          "body": "object",
+          "id": "string|null",
+          "learned_at": "integer|null",
+          "occurred_end": "integer|null",
+          "occurred_start": "integer|null",
+          "text": "array<#/components/schemas/CoreTextField>"
+        }
+      },
+      "CoreEntityWriteResponse": {
+        "type": "object",
+        "required": [
+          "id",
+          "entity_type",
+          "item"
+        ],
+        "properties": {
+          "entity_type": "integer",
+          "id": "string",
+          "item": "object"
+        }
+      },
+      "CoreHydrateRequest": {
+        "type": "object",
+        "properties": {
+          "content_hash": "string|null",
+          "ref": "string|null",
+          "short_id": "string|null",
+          "view": "null|#/components/schemas/View"
+        }
+      },
+      "CoreHydrateResponse": {
+        "type": "object",
+        "required": [
+          "status",
+          "short_id",
+          "content_hash"
+        ],
+        "properties": {
+          "content_hash": "string",
+          "entity_type": "integer|null",
+          "id": "string|null",
+          "item": "object|null",
+          "short_id": "string",
+          "status": "#/components/schemas/CoreHydrateStatus"
+        }
+      },
+      "CoreHydrateStatus": {
+        "type": "string",
+        "enum": [
+          "live",
+          "deleted"
+        ]
+      },
+      "CoreListQuery": {
+        "type": "object",
+        "properties": {
+          "after": "string|null",
+          "countMode": "#/components/schemas/CountMode",
+          "limit": "integer",
+          "view": "null|#/components/schemas/View"
+        }
+      },
+      "CoreQueryRequest": {
+        "type": "object",
+        "properties": {
+          "countMode": "#/components/schemas/CountMode",
+          "limit": "integer",
+          "query": "string|null",
+          "query_vector": "array<number>",
+          "view": "null|#/components/schemas/View"
+        }
+      },
+      "CoreTextField": {
+        "type": "object",
+        "required": [
+          "field",
+          "value"
+        ],
+        "properties": {
+          "field": "string",
+          "value": "string"
+        }
+      },
+      "CountMode": {
+        "type": "string",
+        "enum": [
+          "none",
+          "estimate",
+          "exact"
+        ]
+      },
+      "ResponseMeta": {
+        "type": "object",
+        "required": [
+          "total",
+          "countMode"
+        ],
+        "properties": {
+          "countMode": "#/components/schemas/CountMode",
+          "total": "integer"
+        }
+      },
+      "TurnVadAnnotateQuery": {
+        "type": "object",
+        "required": [
+          "turn_id"
+        ],
+        "properties": {
+          "message_id": "string|null",
+          "turn_id": "string"
+        }
+      },
+      "TurnVadAnnotateRequest": {
+        "type": "object",
+        "required": [
+          "turn_id",
+          "vad",
+          "source"
+        ],
+        "properties": {
+          "annotated_at": "integer|null",
+          "message_id": "string|null",
+          "source": "#/components/schemas/TurnVadAnnotationSource",
+          "turn_id": "string",
+          "vad": "#/components/schemas/VadPayload"
+        }
+      },
+      "TurnVadAnnotateResponse": {
+        "type": "object",
+        "required": [
+          "turn_id",
+          "vad",
+          "source",
+          "annotated_at"
+        ],
+        "properties": {
+          "annotated_at": "integer",
+          "message_id": "string|null",
+          "source": "#/components/schemas/TurnVadAnnotationSource",
+          "turn_id": "string",
+          "vad": "#/components/schemas/VadPayload"
+        }
+      },
+      "TurnVadAnnotationSource": {
+        "type": "string",
+        "enum": [
+          "model_inference",
+          "user_self_report"
+        ]
+      },
+      "VadPayload": {
+        "type": "object",
+        "required": [
+          "valence",
+          "arousal",
+          "dominance"
+        ],
+        "properties": {
+          "arousal": "number",
+          "dominance": "number",
+          "valence": "number"
+        }
+      },
+      "View": {
+        "type": "string",
+        "enum": [
+          "summary",
+          "standard",
+          "full"
+        ]
+      }
+    },
+    "securitySchemes": {
+      "CoreBearer": {
+        "type": "http",
+        "scheme": "bearer",
+        "description": "Scoped bearer token for canonical /v1/core/* routes. The current local shell accepts the configured shared secret, optionally suffixed with ';scope=core:read,core:write,core:auth'."
+      },
+      "OneironSecret": {
+        "type": "apiKey",
+        "in": "header",
+        "name": "x-oneiron-secret",
+        "description": "Phase-1 shared secret required by protected API routes when unauthenticated development access is disabled."
+      }
+    }
+  }
+}

@@ -1,0 +1,413 @@
+[
+  {
+    "name": "core_batch",
+    "request": {
+      "method": "POST",
+      "path": "/v1/core/batch",
+      "auth": {
+        "type": "bearer",
+        "scope": "core:write"
+      },
+      "body": {
+        "entities": [
+          {
+            "id": "7e000000000000000000000012210001",
+            "entity_type": 1,
+            "occurred_start": 1782357600,
+            "occurred_end": 1782357600,
+            "learned_at": 1782357635,
+            "body": {
+              "txt": "blue hallway contractneedle",
+              "spkr": "user",
+              "at": 1782357600
+            },
+            "text": [
+              {
+                "field": "body",
+                "value": "blue hallway contractneedle"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    "response": {
+      "status": 200,
+      "body": {
+        "count": 1,
+        "entities": [
+          {
+            "id": "7e000000000000000000000012210001",
+            "entity_type": 1
+          }
+        ]
+      }
+    }
+  },
+  {
+    "name": "core_query",
+    "request": {
+      "method": "POST",
+      "path": "/v1/core/query",
+      "auth": {
+        "type": "bearer",
+        "scope": "core:read"
+      },
+      "body": {
+        "query": "contractneedle",
+        "limit": 3,
+        "view": "full",
+        "countMode": "estimate"
+      }
+    },
+    "response": {
+      "status": 200,
+      "body": {
+        "items": [
+          {
+            "txt": "blue hallway contractneedle",
+            "spkr": "user",
+            "at": 1782357600,
+            "id": "7e000000000000000000000012210001",
+            "kind": "TURN",
+            "type": 1,
+            "label": "blue hallway contractneedle",
+            "updatedAt": 1782357635,
+            "score": 0.4305950999259949
+          }
+        ],
+        "meta": {
+          "total": 1,
+          "countMode": "estimate"
+        }
+      }
+    }
+  },
+  {
+    "name": "core_context_pack",
+    "request": {
+      "method": "POST",
+      "path": "/v1/core/context-pack",
+      "auth": {
+        "type": "bearer",
+        "scope": "core:read"
+      },
+      "body": {
+        "query": "contractneedle",
+        "limit": 3,
+        "view": "full",
+        "include_edges": false
+      }
+    },
+    "response": {
+      "status": 200,
+      "body": {
+        "results": [
+          {
+            "id": "7e000000000000000000000012210001",
+            "short_id": "tn1",
+            "content_hash": "de",
+            "entity_type": 1,
+            "score": 0.016393442,
+            "fields": {
+              "at": 1782357600,
+              "spkr": "user",
+              "txt": "blue hallway contractneedle"
+            }
+          }
+        ],
+        "neighbors": [],
+        "stats": {
+          "candidates_considered": 1,
+          "signals_used": [
+            "text"
+          ],
+          "query_time_us": "<duration-us>",
+          "entities_hydrated": 1,
+          "neighbors_hydrated": 0,
+          "cosine_ghosts_dampened": 0,
+          "claims_suppressed": 0,
+          "items_truncated": {
+            "count": 0,
+            "reason": "item_budget"
+          },
+          "items_dropped": {
+            "count": 0,
+            "reason": "token_budget"
+          }
+        }
+      }
+    }
+  },
+  {
+    "name": "core_hydrate",
+    "request": {
+      "method": "POST",
+      "path": "/v1/core/hydrate",
+      "auth": {
+        "type": "bearer",
+        "scope": "core:read"
+      },
+      "body": {
+        "ref": "tn1:de",
+        "view": "full"
+      }
+    },
+    "response": {
+      "status": 200,
+      "body": {
+        "status": "live",
+        "short_id": "tn1",
+        "content_hash": "de",
+        "id": "7e000000000000000000000012210001",
+        "entity_type": 1,
+        "item": {
+          "txt": "blue hallway contractneedle",
+          "spkr": "user",
+          "at": 1782357600,
+          "id": "7e000000000000000000000012210001",
+          "kind": "TURN",
+          "type": 1,
+          "label": "blue hallway contractneedle",
+          "updatedAt": 1782357635
+        }
+      }
+    }
+  },
+  {
+    "name": "create_core_conversation",
+    "request": {
+      "method": "POST",
+      "path": "/v1/core/conversations",
+      "auth": {
+        "type": "bearer",
+        "scope": "core:write"
+      },
+      "body": {
+        "id": "7e000000000000000000000012210002",
+        "occurred_start": 1782357700,
+        "occurred_end": 1782357700,
+        "learned_at": 1782357735,
+        "body": {
+          "name": "Contract dream"
+        },
+        "text": [
+          {
+            "field": "name",
+            "value": "Contract dream"
+          }
+        ]
+      }
+    },
+    "response": {
+      "status": 200,
+      "body": {
+        "id": "7e000000000000000000000012210002",
+        "entity_type": 11,
+        "item": {
+          "name": "Contract dream",
+          "id": "7e000000000000000000000012210002",
+          "kind": "CONVERSATION",
+          "type": 11,
+          "label": "Contract dream",
+          "updatedAt": 1782357735
+        }
+      }
+    }
+  },
+  {
+    "name": "list_core_conversations",
+    "request": {
+      "method": "GET",
+      "path": "/v1/core/conversations?view=full&limit=5&countMode=exact",
+      "auth": {
+        "type": "bearer",
+        "scope": "core:read"
+      },
+      "body": null
+    },
+    "response": {
+      "status": 200,
+      "body": {
+        "items": [
+          {
+            "name": "Contract dream",
+            "id": "7e000000000000000000000012210002",
+            "kind": "CONVERSATION",
+            "type": 11,
+            "label": "Contract dream",
+            "updatedAt": 1782357735
+          }
+        ],
+        "meta": {
+          "total": 1,
+          "countMode": "exact"
+        }
+      }
+    }
+  },
+  {
+    "name": "create_core_conversation_turn",
+    "request": {
+      "method": "POST",
+      "path": "/v1/core/conversations/7e000000000000000000000012210002/turns",
+      "auth": {
+        "type": "bearer",
+        "scope": "core:write"
+      },
+      "body": {
+        "id": "7e000000000000000000000012210003",
+        "occurred_start": 1782357800,
+        "occurred_end": 1782357800,
+        "learned_at": 1782357835,
+        "body": {
+          "txt": "turn contract envelope",
+          "spkr": "assistant",
+          "at": 1782357800
+        },
+        "text": [
+          {
+            "field": "body",
+            "value": "turn contract envelope"
+          }
+        ]
+      }
+    },
+    "response": {
+      "status": 200,
+      "body": {
+        "id": "7e000000000000000000000012210003",
+        "entity_type": 1,
+        "item": {
+          "txt": "turn contract envelope",
+          "spkr": "assistant",
+          "at": 1782357800,
+          "id": "7e000000000000000000000012210003",
+          "kind": "TURN",
+          "type": 1,
+          "label": "turn contract envelope",
+          "updatedAt": 1782357835
+        }
+      }
+    }
+  },
+  {
+    "name": "list_core_conversation_turns",
+    "request": {
+      "method": "GET",
+      "path": "/v1/core/conversations/7e000000000000000000000012210002/turns?view=full&limit=5",
+      "auth": {
+        "type": "bearer",
+        "scope": "core:read"
+      },
+      "body": null
+    },
+    "response": {
+      "status": 200,
+      "body": {
+        "items": [
+          {
+            "txt": "turn contract envelope",
+            "spkr": "assistant",
+            "at": 1782357800,
+            "id": "7e000000000000000000000012210003",
+            "kind": "TURN",
+            "type": 1,
+            "label": "turn contract envelope",
+            "updatedAt": 1782357835
+          }
+        ],
+        "meta": {
+          "total": 1,
+          "countMode": "exact"
+        }
+      }
+    }
+  },
+  {
+    "name": "get_core_turn",
+    "request": {
+      "method": "GET",
+      "path": "/v1/core/turns/7e000000000000000000000012210003?view=full",
+      "auth": {
+        "type": "bearer",
+        "scope": "core:read"
+      },
+      "body": null
+    },
+    "response": {
+      "status": 200,
+      "body": {
+        "txt": "turn contract envelope",
+        "spkr": "assistant",
+        "at": 1782357800,
+        "id": "7e000000000000000000000012210003",
+        "kind": "TURN",
+        "type": 1,
+        "label": "turn contract envelope",
+        "updatedAt": 1782357835
+      }
+    }
+  },
+  {
+    "name": "annotate_turn_vad",
+    "request": {
+      "method": "POST",
+      "path": "/v1/core/turns/annotate",
+      "auth": {
+        "type": "bearer",
+        "scope": "core:write"
+      },
+      "body": {
+        "turn_id": "7e000000000000000000000012210003",
+        "source": "model_inference",
+        "vad": {
+          "valence": 0.25,
+          "arousal": 0.5,
+          "dominance": 0.75
+        },
+        "annotated_at": 1782357900
+      }
+    },
+    "response": {
+      "status": 200,
+      "body": {
+        "turn_id": "7e000000000000000000000012210003",
+        "message_id": null,
+        "vad": {
+          "valence": 0.25,
+          "arousal": 0.5,
+          "dominance": 0.75
+        },
+        "source": "model_inference",
+        "annotated_at": 1782357900
+      }
+    }
+  },
+  {
+    "name": "read_turn_vad_annotation",
+    "request": {
+      "method": "GET",
+      "path": "/v1/core/turns/annotate?turn_id=7e000000000000000000000012210003",
+      "auth": {
+        "type": "bearer",
+        "scope": "core:read"
+      },
+      "body": null
+    },
+    "response": {
+      "status": 200,
+      "body": {
+        "turn_id": "7e000000000000000000000012210003",
+        "message_id": null,
+        "vad": {
+          "valence": 0.25,
+          "arousal": 0.5,
+          "dominance": 0.75
+        },
+        "source": "model_inference",
+        "annotated_at": 1782357900
+      }
+    }
+  }
+]
