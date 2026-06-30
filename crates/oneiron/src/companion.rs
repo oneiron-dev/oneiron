@@ -10,7 +10,8 @@ use std::io::Cursor;
 use rmpv::Value;
 
 use crate::claim::{
-    COMPANION_EXPRESSION_VALUES, ClaimApprovalStatus, ClaimLifecycleStatus, ClaimSource,
+    COMPANION_EXPRESSION_PROFESSIONAL, COMPANION_EXPRESSION_UNRESTRICTED,
+    COMPANION_EXPRESSION_WARM, ClaimApprovalStatus, ClaimLifecycleStatus, ClaimSource,
 };
 use crate::error::{Error, Result};
 
@@ -216,9 +217,9 @@ impl CompanionExpression {
     #[must_use]
     pub const fn as_str(self) -> &'static str {
         match self {
-            Self::Professional => COMPANION_EXPRESSION_VALUES[0],
-            Self::Warm => COMPANION_EXPRESSION_VALUES[1],
-            Self::Unrestricted => COMPANION_EXPRESSION_VALUES[2],
+            Self::Professional => COMPANION_EXPRESSION_PROFESSIONAL,
+            Self::Warm => COMPANION_EXPRESSION_WARM,
+            Self::Unrestricted => COMPANION_EXPRESSION_UNRESTRICTED,
         }
     }
 
@@ -226,9 +227,9 @@ impl CompanionExpression {
     #[must_use]
     pub fn parse(value: &str) -> Option<Self> {
         match value {
-            value if value == COMPANION_EXPRESSION_VALUES[0] => Some(Self::Professional),
-            value if value == COMPANION_EXPRESSION_VALUES[1] => Some(Self::Warm),
-            value if value == COMPANION_EXPRESSION_VALUES[2] => Some(Self::Unrestricted),
+            COMPANION_EXPRESSION_PROFESSIONAL => Some(Self::Professional),
+            COMPANION_EXPRESSION_WARM => Some(Self::Warm),
+            COMPANION_EXPRESSION_UNRESTRICTED => Some(Self::Unrestricted),
             _ => None,
         }
     }
@@ -1229,6 +1230,16 @@ mod tests {
             CompanionExpression::parse("unrestricted"),
             Some(CompanionExpression::Unrestricted)
         );
+        for expression in [
+            CompanionExpression::Professional,
+            CompanionExpression::Warm,
+            CompanionExpression::Unrestricted,
+        ] {
+            assert_eq!(
+                CompanionExpression::parse(expression.as_str()),
+                Some(expression)
+            );
+        }
         assert!(CompanionExpression::parse("future_closed").is_none());
         assert!(matches!(
             CompanionExpression::parse_closed("future_closed"),
