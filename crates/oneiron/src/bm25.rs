@@ -538,16 +538,7 @@ fn collect_final_token_prefix_terms(
     terms: &mut BTreeMap<String, f64>,
     exact_posting_matches_scope: &mut impl FnMut(&EntityId) -> Result<bool>,
 ) -> Result<()> {
-    let prefixes: BTreeSet<String> = tokens
-        .iter()
-        .filter(|token| {
-            token.byte_end as usize == trimmed_query_end
-                && !token.term.is_empty()
-                && token.channel == AnalyzerChannel::Surface
-                && matches!(token.kind, TokenKind::Word | TokenKind::Numeric)
-        })
-        .map(|token| token.term.as_ref().to_owned())
-        .collect();
+    let prefixes = final_token_prefix_terms(tokens, trimmed_query_end);
 
     let mut expanded_terms = 0usize;
     'prefixes: for prefix in prefixes {
@@ -594,6 +585,55 @@ fn collect_final_token_prefix_terms(
     }
 
     Ok(())
+}
+
+pub(crate) fn final_token_exact_posting_matches<F>(
+    store: &Store,
+    rtxn: &RoTxn<'_>,
+    analyzer: &MultilingualAnalyzer,
+    config: &Bm25Config,
+    query: &str,
+    mut posting_matches: F,
+) -> Result<bool>
+where
+    F: FnMut(&EntityId) -> Result<bool>,
+{
+    let trimmed_query_end = query.trim_end().len();
+    if trimmed_query_end == 0 {
+        return Ok(false);
+    }
+
+    let mut tokens = Vec::new();
+    analyzer.analyze(query, &AnalyzerContext::for_query(), &mut tokens);
+    for term in final_token_prefix_terms(&tokens, trimmed_query_end) {
+        let Some(dups) = store.text_postings.get_duplicates(rtxn, term.as_bytes())? else {
+            continue;
+        };
+        for item in dups {
+            let (_, dup) = item?;
+            let entry = decode_posting_entry(dup)?;
+            if posting_has_enabled_channel(config, &entry)? && posting_matches(&entry.id)? {
+                return Ok(true);
+            }
+        }
+    }
+
+    Ok(false)
+}
+
+fn final_token_prefix_terms(tokens: &[Token], trimmed_query_end: usize) -> BTreeSet<String> {
+    tokens
+        .iter()
+        .filter(|token| final_token_prefix_candidate(token, trimmed_query_end))
+        .map(|token| token.term.as_ref().to_owned())
+        .collect()
+}
+
+fn final_token_prefix_candidate(token: &Token, trimmed_query_end: usize) -> bool {
+    token.byte_end as usize == trimmed_query_end
+        && !token.term.is_empty()
+        && token.channel == AnalyzerChannel::Surface
+        && matches!(token.kind, TokenKind::Word | TokenKind::Numeric)
 }
 
 fn exact_term_has_scoped_posting(
