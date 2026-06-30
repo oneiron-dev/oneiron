@@ -612,6 +612,14 @@ impl<'a> PipelineBuilder<'a> {
             self.vault.ensure_text_index_trusted()?;
         }
 
+        let recency = if self.temporal_search.is_none() {
+            self.recency_half_life.map(|half_life_days| {
+                crate::bm25::Bm25RecencyConfig::new(half_life_days, started_at)
+            })
+        } else {
+            None
+        };
+
         let (
             scores,
             pending_vectors,
@@ -631,8 +639,32 @@ impl<'a> PipelineBuilder<'a> {
             let mut claim_gate = ClaimStatusGateCache::default();
             let mut deferred_ppr_cache_writes = Vec::new();
             let codebase_scope_active = self.has_codebase_scope_filter();
-            let text_scope_widening_active =
-                codebase_scope_active || self.has_strict_text_scope_filter();
+            // D19 is always active. For final-token prefix queries, a dead
+            // exact claim can outrank a live prefix hit in BM25, then be
+            // removed after fusion; overfetch prevents that dead exact hit
+            // from consuming the only text-channel slot.
+            let claim_gate_text_widening_active = if let Some((query, limit)) = &self.text_search
+                && *limit > 0
+            {
+                let mut exact_posting_is_claim = |id: &EntityId| {
+                    Ok(metadata_cache
+                        .get(&self.vault.store, &rtxn, id)?
+                        .is_some_and(|meta| meta.entity_type == ENTITY_TYPE_CLAIM))
+                };
+                crate::bm25::final_token_exact_posting_matches(
+                    &self.vault.store,
+                    &rtxn,
+                    &self.vault.analyzer,
+                    &bm25_config,
+                    query,
+                    &mut exact_posting_is_claim,
+                )?
+            } else {
+                false
+            };
+            let text_scope_widening_active = codebase_scope_active
+                || self.has_strict_text_scope_filter()
+                || claim_gate_text_widening_active;
             let filter_config = PipelineFilterConfig {
                 type_filter: self.type_filter.as_deref(),
                 since_filter: self.since_filter,
@@ -703,7 +735,7 @@ impl<'a> PipelineBuilder<'a> {
                     query,
                     text_channel_limit,
                     crate::bm25::Bm25SearchOptions {
-                        recency: None,
+                        recency,
                         exact_posting_matches_scope: &mut exact_posting_matches_scope,
                     },
                 )?;
@@ -793,13 +825,6 @@ impl<'a> PipelineBuilder<'a> {
             let mut scores = fusion::rrf_fuse(&ranked_lists, RRF_K);
             let total_in_scope = scores.len();
             let mut empty_reason = None;
-            let recency = if self.temporal_search.is_none() {
-                self.recency_half_life.map(|half_life_days| {
-                    crate::bm25::Bm25RecencyConfig::new(half_life_days, started_at)
-                })
-            } else {
-                None
-            };
 
             // D19 claim status gate, first application: covers the fused
             // candidates of all five channels (text/vector/phonetic/
@@ -3427,6 +3452,31 @@ mod tests {
     }
 
     #[test]
+    fn recency_boost_orders_text_channel_before_truncation() -> Result<()> {
+        let (_dir, vault) = open_test_vault();
+        let old = entity_id(0x10);
+        let fresh = entity_id(0x20);
+        let now = crate::unix_seconds_now();
+
+        put_text_at(&vault, old, "limitrecencyneedle", 1)?;
+        put_text_at(&vault, fresh, "limitrecencyneedle", now)?;
+
+        let baseline = vault.query().search_text("limitrecencyneedle", 1).run()?;
+        assert_eq!(baseline[0].id, old, "baseline tie breaks by entity id");
+
+        let boosted = vault
+            .query()
+            .search_text("limitrecencyneedle", 1)
+            .boost_recency(0.01)
+            .run()?;
+        assert_eq!(
+            boosted[0].id, fresh,
+            "fresh text hit must win before the BM25 channel is truncated"
+        );
+        Ok(())
+    }
+
+    #[test]
     fn recency_boost_applies_once_to_fused_text_scores() -> Result<()> {
         let (_dir, vault) = open_test_vault();
         let old_text = entity_id(0x10);
@@ -3434,20 +3484,20 @@ mod tests {
         let fresh_vector = entity_id(0x30);
         let future = crate::unix_seconds_now() + 3_600;
 
-        put_text_at(&vault, old_text, "fairrecencyneedle", 1)?;
+        put_text_at(&vault, old_text, "fairrecencyneedle stableanchor", 1)?;
         put_text_at(&vault, fresh_text, "fairrecencyneedle", future)?;
         put_vector_at(&vault, fresh_vector, [1.0, 0.0, 0.0, 0.0], future)?;
 
         let baseline = vault
             .query()
-            .search_text("fairrecencyneedle", 2)
+            .search_text("fairrecencyneedle stableanchor", 2)
             .search_vector(&[1.0, 0.0, 0.0, 0.0], 1)
             .run()?;
-        assert_eq!(baseline[0].id, old_text, "baseline text rank tie");
+        assert_eq!(baseline[0].id, old_text, "baseline text rank");
 
         let boosted = vault
             .query()
-            .search_text("fairrecencyneedle", 2)
+            .search_text("fairrecencyneedle stableanchor", 2)
             .search_vector(&[1.0, 0.0, 0.0, 0.0], 1)
             .boost_recency(0.01)
             .run()?;
@@ -3540,6 +3590,29 @@ mod tests {
         assert_eq!(output.scores[0].id, live_result);
         assert_eq!(output.claims_suppressed, 0);
         assert!(output.claim_bodies.is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn dead_exact_claim_does_not_truncate_live_prefix_hit() -> Result<()> {
+        let (_dir, vault) = open_test_vault();
+        let dead_exact = entity_id(0x12);
+        let live_prefix = entity_id(0x22);
+
+        put_status_claim(
+            &vault,
+            dead_exact,
+            "claimgateprefix",
+            crate::claim::ClaimApprovalStatus::Auto,
+            crate::claim::ClaimLifecycleStatus::Retracted,
+            false,
+        )?;
+        put_claim_text(&vault, live_prefix, "claimgateprefixalpha", None)?;
+
+        let results = vault.query().search_text("claimgateprefix", 1).run()?;
+
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].id, live_prefix);
         Ok(())
     }
 
