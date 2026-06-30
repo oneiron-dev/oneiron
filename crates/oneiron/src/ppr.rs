@@ -134,7 +134,6 @@ pub(crate) const fn lambda_for_kind(kind: EdgeKind) -> Option<f32> {
 #[derive(Debug, Clone)]
 pub(crate) struct DeferredPprCacheWrite {
     seed_hash: [u8; SEED_HASH_LEN],
-    seeds: Vec<EntityId>,
     computed_at: u64,
     graph_version: u64,
     state: PprCacheState,
@@ -155,9 +154,25 @@ struct PprCacheState {
     dependencies: Vec<EntityId>,
 }
 
-struct CachedPprRow {
-    scores: Vec<ScoredEntity>,
-    state: Option<PprCacheState>,
+enum CachedPprRow {
+    Scores(Vec<ScoredEntity>),
+    State(PprCacheState),
+}
+
+impl CachedPprRow {
+    fn into_scores(self) -> Vec<ScoredEntity> {
+        match self {
+            Self::Scores(scores) => scores,
+            Self::State(state) => state.scores,
+        }
+    }
+
+    fn into_state(self) -> Option<PprCacheState> {
+        match self {
+            Self::Scores(_) => None,
+            Self::State(state) => Some(state),
+        }
+    }
 }
 
 struct PprRoundContext<'a, 'txn> {
@@ -598,7 +613,6 @@ pub(crate) fn ppr_query(
         write_ppr_cache(
             store,
             &deferred_write.seed_hash,
-            &deferred_write.seeds,
             deferred_write.computed_at,
             deferred_write.graph_version,
             &deferred_write.state,
@@ -647,7 +661,6 @@ pub(crate) fn flush_deferred_ppr_cache_writes(
         write_ppr_cache(
             store,
             &write.seed_hash,
-            &write.seeds,
             write.computed_at,
             write.graph_version,
             &write.state,
@@ -684,9 +697,10 @@ fn ppr_query_in_txn_impl(
         current_graph_version,
     };
 
-    if let Some(mut row) = read_servable_cache_row(&cache_context, &seed_hash)? {
-        sort_scores(&mut row.scores);
-        return Ok((row.scores, None));
+    if let Some(row) = read_exact_cache_row(&cache_context, &seed_hash, depth)? {
+        let mut scores = row.into_scores();
+        sort_scores(&mut scores);
+        return Ok((scores, None));
     }
 
     let resume = read_deepest_resume_state(&cache_context, depth)?;
@@ -702,7 +716,6 @@ fn ppr_query_in_txn_impl(
 
     let deferred_write = DeferredPprCacheWrite {
         seed_hash,
-        seeds: seeds.to_vec(),
         computed_at: now,
         graph_version: current_graph_version,
         state,
@@ -721,23 +734,38 @@ fn read_deepest_resume_state(
             context.alpha,
             context.weighting,
         );
-        let Some(row) = read_servable_cache_row(context, &seed_hash)? else {
+        let Some(row) = read_resume_cache_row(context, &seed_hash, completed_depth)? else {
             continue;
         };
-        let Some(state) = row.state else {
+        let Some(state) = row.into_state() else {
             continue;
         };
-        if state.completed_depth != completed_depth {
-            return Err(Error::CorruptedIndex("ppr cache state"));
-        }
         return Ok(Some(state));
     }
     Ok(None)
 }
 
+fn read_exact_cache_row(
+    context: &PprCacheReadContext<'_, '_>,
+    seed_hash: &[u8; SEED_HASH_LEN],
+    expected_depth: u32,
+) -> Result<Option<CachedPprRow>> {
+    read_servable_cache_row(context, seed_hash, expected_depth, true)
+}
+
+fn read_resume_cache_row(
+    context: &PprCacheReadContext<'_, '_>,
+    seed_hash: &[u8; SEED_HASH_LEN],
+    expected_depth: u32,
+) -> Result<Option<CachedPprRow>> {
+    read_servable_cache_row(context, seed_hash, expected_depth, false)
+}
+
 fn read_servable_cache_row(
     context: &PprCacheReadContext<'_, '_>,
     seed_hash: &[u8; SEED_HASH_LEN],
+    expected_depth: u32,
+    enforce_ttl: bool,
 ) -> Result<Option<CachedPprRow>> {
     let Some(raw) = context.store.ppr_cache.get(context.txn, seed_hash)? else {
         return Ok(None);
@@ -747,18 +775,27 @@ fn read_servable_cache_row(
         return Ok(None);
     }
 
-    // ARCH-0019 / ARCH-0014 recency-tiered serve TTL: the seed set's
-    // max(learned_at) decides the tier at read time (24h / 72h / 168h);
-    // see `recency_tiered_cache_ttl_secs` for the contract cite and the
-    // fail-closed defaults. Only consulted for rows that already passed the
-    // stale + graph-version gates.
-    let ttl_secs =
-        recency_tiered_cache_ttl_secs(context.store, context.txn, context.seeds, context.now)?;
-    if context.now.saturating_sub(computed_at) > ttl_secs {
-        return Ok(None);
+    if enforce_ttl {
+        // ARCH-0019 / ARCH-0014 recency-tiered serve TTL: the seed set's
+        // max(learned_at) decides the tier at read time (24h / 72h / 168h);
+        // see `recency_tiered_cache_ttl_secs` for the contract cite and the
+        // fail-closed defaults. Only consulted for rows that already passed
+        // the stale + graph-version gates, and only for final-score hits.
+        let ttl_secs =
+            recency_tiered_cache_ttl_secs(context.store, context.txn, context.seeds, context.now)?;
+        if context.now.saturating_sub(computed_at) > ttl_secs {
+            return Ok(None);
+        }
     }
 
-    Ok(Some(decode_cache_payload(&raw[CACHE_HEADER_LEN..])?))
+    let row = decode_cache_payload(&raw[CACHE_HEADER_LEN..])?;
+    if let CachedPprRow::State(state) = &row
+        && state.completed_depth != expected_depth
+    {
+        return Err(Error::CorruptedIndex("ppr cache state"));
+    }
+
+    Ok(Some(row))
 }
 
 fn validate_ppr_request(seeds: &[EntityId], depth: u32) -> Result<()> {
@@ -778,7 +815,6 @@ fn validate_ppr_request(seeds: &[EntityId], depth: u32) -> Result<()> {
 fn write_ppr_cache(
     store: &Store,
     seed_hash: &[u8; SEED_HASH_LEN],
-    seeds: &[EntityId],
     computed_at: u64,
     graph_version: u64,
     state: &PprCacheState,
@@ -795,7 +831,6 @@ fn write_ppr_cache(
         store,
         &mut wtxn,
         seed_hash,
-        seeds,
         computed_at,
         graph_version,
         state,
@@ -992,7 +1027,6 @@ fn store_cache_entry(
     store: &Store,
     wtxn: &mut RwTxn<'_>,
     seed_hash: &[u8; SEED_HASH_LEN],
-    seeds: &[EntityId],
     computed_at: u64,
     graph_version: u64,
     state: &PprCacheState,
@@ -1003,18 +1037,33 @@ fn store_cache_entry(
 
     let encoded = encode_cache_value_with_state(computed_at, graph_version, 0, state)?;
     store.ppr_cache.put(wtxn, seed_hash, &encoded)?;
+    delete_dep_rows_for_seed_hash(store, wtxn, seed_hash)?;
 
-    let mut dependencies = state.dependencies.clone();
-    dependencies.extend_from_slice(seeds);
-    dependencies.sort_unstable_by(|a, b| a.as_bytes().cmp(b.as_bytes()));
-    dependencies.dedup();
-
-    for dependency in dependencies {
-        let dep_key = encode_dep_key(&dependency, seed_hash);
+    for dependency in &state.dependencies {
+        let dep_key = encode_dep_key(dependency, seed_hash);
         store.ppr_cache_deps.put(wtxn, &dep_key, &[])?;
     }
 
     Ok(true)
+}
+
+fn delete_dep_rows_for_seed_hash(
+    store: &Store,
+    wtxn: &mut RwTxn<'_>,
+    seed_hash: &[u8; SEED_HASH_LEN],
+) -> Result<()> {
+    let mut dep_keys = Vec::new();
+    for entry in store.ppr_cache_deps.iter(&*wtxn)? {
+        let (key, _) = entry?;
+        if key.len() == CACHE_DEP_KEY_LEN && &key[ENTITY_ID_LEN..] == seed_hash {
+            dep_keys.push(key.to_vec());
+        }
+    }
+
+    for key in dep_keys {
+        store.ppr_cache_deps.delete(wtxn, &key)?;
+    }
+    Ok(())
 }
 
 pub(crate) fn invalidate_ppr_for_edge(
@@ -1205,22 +1254,16 @@ fn parse_cache_header(bytes: &[u8]) -> Result<(u64, u64, u8)> {
 #[cfg(test)]
 fn decode_cache_scores(payload: &[u8]) -> Result<Vec<ScoredEntity>> {
     let decoded = decode_cache_payload(payload)?;
-    Ok(decoded.scores)
+    Ok(decoded.into_scores())
 }
 
 fn decode_cache_payload(payload: &[u8]) -> Result<CachedPprRow> {
     if is_state_cache_payload(payload) {
         let state = decode_cache_state(payload)?;
-        return Ok(CachedPprRow {
-            scores: state.scores.clone(),
-            state: Some(state),
-        });
+        return Ok(CachedPprRow::State(state));
     }
 
-    Ok(CachedPprRow {
-        scores: decode_legacy_cache_scores(payload)?,
-        state: None,
-    })
+    Ok(CachedPprRow::Scores(decode_legacy_cache_scores(payload)?))
 }
 
 fn decode_legacy_cache_scores(payload: &[u8]) -> Result<Vec<ScoredEntity>> {
@@ -1513,6 +1556,27 @@ mod tests {
         vault.store.ppr_cache.put(&mut wtxn, &hash, &value)?;
         for seed in seeds {
             let dep_key = encode_dep_key(seed, &hash);
+            vault.store.ppr_cache_deps.put(&mut wtxn, &dep_key, &[])?;
+        }
+        wtxn.commit()?;
+        Ok(hash)
+    }
+
+    fn plant_state_cache_row(
+        vault: &Vault,
+        seeds: &[EntityId],
+        depth: u32,
+        alpha: f32,
+        computed_at: u64,
+        state: &PprCacheState,
+    ) -> Result<[u8; SEED_HASH_LEN]> {
+        let hash = hash_seeds(seeds, depth, alpha, SeedWeighting::Uniform);
+        let version = graph_version(vault)?;
+        let value = encode_cache_value_with_state(computed_at, version, 0, state)?;
+        let mut wtxn = vault.store.env.write_txn()?;
+        vault.store.ppr_cache.put(&mut wtxn, &hash, &value)?;
+        for dependency in &state.dependencies {
+            let dep_key = encode_dep_key(dependency, &hash);
             vault.store.ppr_cache_deps.put(&mut wtxn, &dep_key, &[])?;
         }
         wtxn.commit()?;
@@ -2184,6 +2248,28 @@ mod tests {
     }
 
     #[test]
+    fn ppr_query_rejects_state_cache_hit_with_mismatched_completed_depth() -> Result<()> {
+        let temp_dir = tempdir()?;
+        let vault = Vault::open(temp_dir.path(), test_config())?;
+        let seed = entity(18);
+        let state = PprCacheState {
+            completed_depth: 1,
+            scores: sentinel_scores(),
+            frontier: Vec::new(),
+            dependencies: vec![seed],
+        };
+
+        plant_state_cache_row(&vault, &[seed], 3, 0.15, crate::unix_seconds_now(), &state)?;
+
+        match ppr_query(&vault.store, &vault.config, &[seed], 3, 0.15) {
+            Err(Error::CorruptedIndex("ppr cache state")) => {}
+            Err(err) => panic!("expected ppr cache state corruption, got {err:?}"),
+            Ok(scores) => panic!("expected ppr cache state corruption, got scores {scores:?}"),
+        }
+        Ok(())
+    }
+
+    #[test]
     fn ppr_cache_is_marked_stale_and_refreshed_after_edge_write() -> Result<()> {
         let temp_dir = tempdir()?;
         let vault = Vault::open(temp_dir.path(), test_config())?;
@@ -2303,6 +2389,46 @@ mod tests {
         assert!(
             dep_exists(&vault, sentinel_dep, &depth_three_hash)?,
             "depth-3 cache must inherit dependencies from the resumed state"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn ppr_query_can_resume_from_expired_current_graph_state() -> Result<()> {
+        let temp_dir = tempdir()?;
+        let vault = Vault::open(temp_dir.path(), test_config())?;
+        let a = entity(79);
+        let b = entity(80);
+        let c = entity(81);
+        let sentinel_dep = entity(82);
+
+        vault.put_edge(&a, EdgeKind::BelongsTo, &b, 1.0)?;
+        vault.put_edge(&b, EdgeKind::BelongsTo, &c, 1.0)?;
+
+        let mut depth_one_state = {
+            let rtxn = vault.store.env.read_txn()?;
+            ppr_compute_state_weighted(&vault.store, &rtxn, &[a], SeedWeighting::Uniform, 1, 0.15)?
+        };
+        depth_one_state.dependencies.push(sentinel_dep);
+        depth_one_state
+            .dependencies
+            .sort_unstable_by(|left, right| left.as_bytes().cmp(right.as_bytes()));
+        depth_one_state.dependencies.dedup();
+
+        let expired_at = crate::unix_seconds_now().saturating_sub(CACHE_TTL_DORMANT_SECS + 1);
+        plant_state_cache_row(&vault, &[a], 1, 0.15, expired_at, &depth_one_state)?;
+
+        let resumed = ppr_query(&vault.store, &vault.config, &[a], 3, 0.15)?;
+        let fresh = {
+            let rtxn = vault.store.env.read_txn()?;
+            ppr_compute(&vault.store, &rtxn, &[a], 3, 0.15)?
+        };
+        assert_scores_equal(&resumed, &fresh);
+
+        let depth_three_hash = hash_seeds(&[a], 3, 0.15, SeedWeighting::Uniform);
+        assert!(
+            dep_exists(&vault, sentinel_dep, &depth_three_hash)?,
+            "depth-3 cache must inherit dependencies from the expired resume state"
         );
         Ok(())
     }
@@ -2925,7 +3051,6 @@ mod tests {
             &vault.store,
             &mut wtxn,
             &seed_hash,
-            &[a],
             crate::unix_seconds_now(),
             stale_version,
             &state,
@@ -2935,6 +3060,63 @@ mod tests {
         assert!(!stored);
         let rtxn = vault.store.env.read_txn()?;
         assert!(vault.store.ppr_cache.get(&rtxn, &seed_hash)?.is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn store_cache_entry_replaces_dependency_rows_for_same_hash() -> Result<()> {
+        let temp_dir = tempdir()?;
+        let vault = Vault::open(temp_dir.path(), test_config())?;
+        let seed = entity(83);
+        let stale_dep = entity(84);
+        let seed_hash = hash_seeds(&[seed], 3, 0.15, SeedWeighting::Uniform);
+        let graph_version = graph_version(&vault)?;
+        let first_state = PprCacheState {
+            completed_depth: 3,
+            scores: vec![ScoredEntity {
+                id: stale_dep,
+                score: 0.25,
+            }],
+            frontier: Vec::new(),
+            dependencies: vec![seed, stale_dep],
+        };
+        let second_state = PprCacheState {
+            completed_depth: 3,
+            scores: vec![ScoredEntity {
+                id: seed,
+                score: 1.0,
+            }],
+            frontier: Vec::new(),
+            dependencies: vec![seed],
+        };
+
+        let mut wtxn = vault.store.env.write_txn()?;
+        assert!(store_cache_entry(
+            &vault.store,
+            &mut wtxn,
+            &seed_hash,
+            crate::unix_seconds_now(),
+            graph_version,
+            &first_state,
+        )?);
+        wtxn.commit()?;
+        assert!(dep_exists(&vault, stale_dep, &seed_hash)?);
+        assert_eq!(count_entries(&vault.store.ppr_cache_deps, &vault)?, 2);
+
+        let mut wtxn = vault.store.env.write_txn()?;
+        assert!(store_cache_entry(
+            &vault.store,
+            &mut wtxn,
+            &seed_hash,
+            crate::unix_seconds_now(),
+            graph_version,
+            &second_state,
+        )?);
+        wtxn.commit()?;
+
+        assert!(dep_exists(&vault, seed, &seed_hash)?);
+        assert!(!dep_exists(&vault, stale_dep, &seed_hash)?);
+        assert_eq!(count_entries(&vault.store.ppr_cache_deps, &vault)?, 1);
         Ok(())
     }
 
