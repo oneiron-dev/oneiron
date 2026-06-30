@@ -680,6 +680,9 @@ impl<'a> PipelineBuilder<'a> {
         let occurred_range = self.resolved_occurred_range(temporal_now)?;
         let telemetry_action = self.telemetry_action;
         let mut telemetry_signals = self.telemetry_signals();
+        if occurred_range.is_some() && !telemetry_signals.contains(&RetrievalSignal::Temporal) {
+            telemetry_signals.push(RetrievalSignal::Temporal);
+        }
         let no_data_fallback_eligible = self.no_data_fallback_eligible();
         let mut ppr_expand_executed = false;
 
@@ -1338,7 +1341,7 @@ impl<'a> PipelineBuilder<'a> {
 }
 
 fn invalid_temporal_expression(error: TemporalExpressionParseError) -> Error {
-    Error::InvalidConfig(format!("invalid temporal expression: {error}"))
+    Error::InvalidTemporalExpression(error)
 }
 
 fn pending_vectors_for_scores(
@@ -3307,6 +3310,41 @@ mod tests {
     }
 
     #[test]
+    fn parsed_temporal_bounds_record_temporal_telemetry_signal() -> Result<()> {
+        const NOW: u64 = 1_710_504_000; // 2024-03-15T12:00:00Z
+
+        let (_dir, vault) = open_test_vault();
+        let id = entity_id(0x35);
+        put_text_with_time(
+            &vault,
+            id,
+            "recent temporal telemetry",
+            TimeRange {
+                start: NOW - 60,
+                end: NOW - 60,
+            },
+            NOW - 60,
+        )?;
+
+        let results = vault
+            .query()
+            .search_text("recent temporal telemetry", 10)
+            .with_temporal_now(NOW)
+            .run_with_telemetry()?;
+        assert_eq!(results.value.len(), 1);
+        let run_id = results.run_id.expect("parsed temporal telemetry run id");
+
+        let runs = vault.retrieval_runs(1)?;
+        assert_eq!(runs.len(), 1);
+        assert_eq!(runs[0].run_id, run_id);
+        assert_eq!(
+            runs[0].signals,
+            vec![RetrievalSignal::Text, RetrievalSignal::Temporal]
+        );
+        Ok(())
+    }
+
+    #[test]
     fn direct_vault_searches_emit_retrieval_telemetry() -> Result<()> {
         let (_dir, vault) = open_test_vault();
         let id = entity_id(0x36);
@@ -4262,7 +4300,16 @@ mod tests {
             .run()
             .expect_err("unsupported temporal expression must fail closed");
 
-        assert_matches!(err, Error::InvalidConfig(message) if message.contains("last friday"));
+        assert_eq!(
+            err.kind(),
+            crate::error::ErrorKind::InvalidTemporalExpression
+        );
+        assert_matches!(
+            err,
+            Error::InvalidTemporalExpression(
+                TemporalExpressionParseError::Unsupported { expression }
+            ) if expression == "last friday"
+        );
         Ok(())
     }
 
@@ -4279,7 +4326,16 @@ mod tests {
             .run()
             .expect_err("unsupported temporal expression must fail closed");
 
-        assert_matches!(err, Error::InvalidConfig(message) if message.contains("last 2 weeks"));
+        assert_eq!(
+            err.kind(),
+            crate::error::ErrorKind::InvalidTemporalExpression
+        );
+        assert_matches!(
+            err,
+            Error::InvalidTemporalExpression(
+                TemporalExpressionParseError::Unsupported { expression }
+            ) if expression == "last 2 weeks"
+        );
         Ok(())
     }
 
