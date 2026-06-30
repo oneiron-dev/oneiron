@@ -107,7 +107,7 @@ pub fn companion_export_layer(
 fn companion_record_exportable(record: &CompanionRecord) -> bool {
     record.lifecycle == ClaimLifecycleStatus::Active
         && record.export_classification == CompanionExportClassification::Portable
-        && !matches!(record.scope, CompanionScope::SharedVault { .. })
+        && !matches!(&record.scope, CompanionScope::SharedVault { .. })
 }
 
 impl CompanionExportLayer {
