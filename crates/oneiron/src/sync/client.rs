@@ -1103,22 +1103,12 @@ fn is_local_federated_admission_failure(e: &crate::error::Error) -> bool {
             | crate::error::Error::Io(_)
             | crate::error::Error::MapFull
             | crate::error::Error::InvalidConfig(_)
-            | crate::error::Error::ConcurrentWrite(_)
-            | crate::error::Error::ArithmeticOverflow(_)
-            | crate::error::Error::InvariantViolation(_)
-            | crate::error::Error::CorruptedIndex(_)
-            | crate::error::Error::IndexOverflow(_)
-            | crate::error::Error::MissingPostingEntry
             | crate::error::Error::EmbeddingModelChanged { .. }
             | crate::error::Error::HnswConfigChanged { .. }
             | crate::error::Error::StorageAbiVersionChanged { .. }
             | crate::error::Error::StorageSchemaVersionChanged { .. }
             | crate::error::Error::DbManifestMismatch { .. }
             | crate::error::Error::VaultRootPreflight { .. }
-            | crate::error::Error::IncompatibleAnalyzer { .. }
-            | crate::error::Error::Bm25FieldSchemaChanged
-            | crate::error::Error::AnalyzerAssetMissing(_)
-            | crate::error::Error::AnalyzerError(_)
             | crate::error::Error::WindowNotFound { .. }
             | crate::error::Error::WindowBusy { .. }
     )
@@ -1980,6 +1970,14 @@ mod tests {
         assert!(
             message.contains("federated admission failed"),
             "storage mapping should keep admission context, got {message}"
+        );
+    }
+
+    #[test]
+    fn federated_admission_error_mapping_keeps_remote_content_malformed() {
+        assert_matches!(
+            map_federated_admission_err(crate::error::Error::CorruptedIndex("entity metadata")),
+            TransportError::InvalidPayload("federated update admission failed")
         );
     }
 
