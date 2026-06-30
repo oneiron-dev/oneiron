@@ -99,7 +99,9 @@ const LEXICAL_HINT_VALUE_KEY_KIND: &str = "kind";
 const LEXICAL_HINT_VALUE_KEY_QUERY: &str = "query";
 const LEXICAL_HINT_VALUE_KEY_TARGET: &str = "target";
 
-pub(crate) const COMPANION_EXPRESSION_VALUES: [&str; 3] = ["professional", "warm", "unrestricted"];
+pub(crate) const COMPANION_EXPRESSION_PROFESSIONAL: &str = "professional";
+pub(crate) const COMPANION_EXPRESSION_WARM: &str = "warm";
+pub(crate) const COMPANION_EXPRESSION_UNRESTRICTED: &str = "unrestricted";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct LexicalQueryHintValue {
