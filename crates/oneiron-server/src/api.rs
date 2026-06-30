@@ -4203,12 +4203,14 @@ fn run_context_pack_builder(
     projection: oneiron::serialize::SerializeConfig,
     error_context: &'static str,
 ) -> Result<CoreContextPackResponse, ApiError> {
-    let pack = builder.run_with_telemetry().map_err(|error| {
-        tracing::error!(error = %error, "{error_context}");
-        core_engine_error(error_context, error)
-    })?;
+    let pack = builder
+        .run_projected_json_with_telemetry(&projection)
+        .map_err(|error| {
+            tracing::error!(error = %error, "{error_context}");
+            core_engine_error(error_context, error)
+        })?;
     let run_id = pack.run_id;
-    let pack = oneiron::serialize::project_pack_for_json_response(pack.value, &projection);
+    let pack = pack.value;
     let evidence = core_context_pack_evidence(vault, run_id)?;
     let evidence = core_context_pack_evidence_for_results(evidence, &pack.results);
     Ok(core_context_pack_response(pack, evidence))
@@ -9535,7 +9537,7 @@ mod tests {
         assert!(!fields.contains_key("debug"));
 
         let (budget_status, budget_body) = route_json(
-            server,
+            server.clone(),
             json_request(
                 "POST",
                 "/api/context-pack",
@@ -9560,8 +9562,55 @@ mod tests {
         );
         assert_eq!(
             budget_body["evidence"]["result_ids"],
-            Value::Array(vec![Value::from(id)])
+            Value::Array(vec![Value::from(id.clone())])
         );
+
+        let (dropped_status, dropped_body) = route_json(
+            server.clone(),
+            json_request(
+                "POST",
+                "/api/context-pack",
+                json!({
+                    "query": "projection budget needle",
+                    "limit": 5,
+                    "policy": { "view": "full" },
+                    "maxItemTokens": 1
+                }),
+            ),
+        )
+        .await;
+        assert_eq!(dropped_status, StatusCode::OK);
+        assert_eq!(dropped_body["results"], Value::Array(Vec::new()));
+        assert_eq!(dropped_body["neighbors"], Value::Array(Vec::new()));
+        assert_eq!(dropped_body["state"]["kind"], Value::from("missing_data"));
+        assert_eq!(
+            dropped_body["state"]["reason"],
+            Value::from("filter_matched_none")
+        );
+        assert!(
+            dropped_body["state"]["hint"]
+                .as_str()
+                .is_some_and(|hint| hint.contains("budget.max_item_tokens"))
+        );
+        assert_eq!(
+            dropped_body["empty"]["reason"],
+            Value::from("filter_matched_none")
+        );
+        assert_eq!(
+            dropped_body["stats"]["items_dropped"]["count"],
+            Value::from(1)
+        );
+        assert_eq!(
+            dropped_body["evidence"]["result_ids"],
+            Value::Array(Vec::new())
+        );
+        assert_eq!(dropped_body["evidence"]["scores"], Value::Array(Vec::new()));
+
+        let runs = server.vault.retrieval_runs(1).expect("retrieval runs");
+        assert_eq!(runs.len(), 1);
+        assert!(runs[0].result_ids.is_empty());
+        assert!(runs[0].score_breakdown.is_empty());
+        assert_eq!(runs[0].empty_reason.as_deref(), Some("ItemBudget"));
     }
 
     #[test]

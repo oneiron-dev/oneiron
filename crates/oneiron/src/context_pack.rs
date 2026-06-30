@@ -453,6 +453,39 @@ impl<'a> ContextPackBuilder<'a> {
         })
     }
 
+    pub fn run_projected_json_with_telemetry(
+        self,
+        config: &SerializeConfig,
+    ) -> Result<RetrievalWithTelemetry<ContextPack>> {
+        let run = self.run_unfinalized()?;
+        let pre_projection_stats = run.pack.stats.clone();
+        let pre_projection_had_results = !run.pack.results.is_empty();
+        let mut pack = crate::serialize::project_pack_for_json_response(run.pack, config);
+        refresh_projected_empty_context(&mut pack);
+        let surfaced_result_ids: Vec<[u8; 16]> = pack
+            .results
+            .iter()
+            .map(|entity| *entity.id.as_bytes())
+            .collect();
+        let telemetry_run_id = finalize_context_pack_telemetry(
+            run.store,
+            run.telemetry_run_id,
+            pack.stats.query_time_us,
+            pack.stats.claims_suppressed,
+            &surfaced_result_ids,
+            projected_context_pack_empty_reason(
+                &pack,
+                &pre_projection_stats,
+                pre_projection_had_results,
+                &surfaced_result_ids,
+            ),
+        );
+        Ok(RetrievalWithTelemetry {
+            value: pack,
+            run_id: telemetry_run_id,
+        })
+    }
+
     fn run_unfinalized(self) -> Result<ContextPackRun<'a>> {
         let started = Instant::now();
         let retrieval_budget = self.retrieval_budget.unwrap_or_else(|| {
@@ -994,6 +1027,49 @@ fn serialized_context_pack_empty_reason(
         return Some(format!("{:?}", telemetry.stats.items_dropped.reason));
     }
     context_pack_empty_reason(pack, &telemetry.result_ids)
+}
+
+fn projected_context_pack_empty_reason(
+    pack: &ContextPack,
+    pre_projection_stats: &PackStats,
+    pre_projection_had_results: bool,
+    surfaced_result_ids: &[[u8; 16]],
+) -> Option<String> {
+    if !surfaced_result_ids.is_empty() {
+        return None;
+    }
+    if pre_projection_had_results
+        && pack.stats.items_dropped.count > pre_projection_stats.items_dropped.count
+    {
+        return Some(format!("{:?}", pack.stats.items_dropped.reason));
+    }
+    context_pack_empty_reason(pack, surfaced_result_ids)
+}
+
+fn refresh_projected_empty_context(pack: &mut ContextPack) {
+    if !pack.results.is_empty() || !pack.neighbors.is_empty() {
+        pack.empty = None;
+        return;
+    }
+    if pack.empty.is_some() {
+        return;
+    }
+
+    let reason = if pack.stats.candidates_considered == 0 {
+        EmptyReason::NoData
+    } else {
+        EmptyReason::FilterMatchedNone
+    };
+    let hint = if pack.stats.items_dropped.count > 0 {
+        "Raise budget.max_item_tokens or request a less restrictive view to return context-pack results"
+    } else {
+        empty_hint(reason)
+    };
+    pack.empty = Some(EmptyContext {
+        reason,
+        total_in_scope: pack.stats.candidates_considered,
+        hint: hint.to_owned(),
+    });
 }
 
 fn pack_signal_from_retrieval(signal: RetrievalSignal) -> Signal {
