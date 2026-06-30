@@ -126,6 +126,8 @@ pub const STORAGE_ABI_VERSION: u16 = 4;
 pub(crate) const STORAGE_ABI_VERSION_KEY: &[u8] = b"storage_abi_version";
 pub const STORAGE_SCHEMA_VERSION: u16 = 1;
 pub(crate) const STORAGE_SCHEMA_VERSION_KEY: &[u8] = b"schema_version";
+/// Version of the pinned DB-manifest shape surfaced in whole-vault exports.
+pub const DB_MANIFEST_VERSION: u16 = 1;
 pub(crate) const MODEL_ID_KEY: &[u8] = b"model_id";
 pub(crate) const GRAPH_VERSION_KEY: &[u8] = b"graph_version";
 pub(crate) const HNSW_CONFIG_KEY: &[u8] = b"hnsw_config";
