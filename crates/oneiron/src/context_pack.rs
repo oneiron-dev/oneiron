@@ -14,7 +14,7 @@ use crate::codebase::RepoRef;
 use crate::error::{Error, Result};
 use crate::pipeline::{PipelineBuilder, RetrievalWithTelemetry, WorldScope};
 use crate::serialize::{SerializeConfig, SerializedPackTelemetry, serialize_pack_with_telemetry};
-use crate::store::{RetrievalAction, RetrievalRunId, Store};
+use crate::store::{RetrievalAction, RetrievalRunId, RetrievalSignal, Store};
 use crate::types::{
     ContextEntity, ContextPack, ContextPackRetrievalBudget, ENTITY_TYPE_CLAIM,
     EdgeConfirmationStatus, EdgeInfo, EdgeKind, EmptyContext, EmptyReason, EntityId, FieldProfile,
@@ -472,6 +472,7 @@ impl<'a> ContextPackBuilder<'a> {
         let result = (|| {
             let total_in_scope = pipeline_output.total_in_scope;
             let pipeline_empty_reason = pipeline_output.empty_reason;
+            let pipeline_signals = pipeline_output.signals;
             let scored = pipeline_output.scores;
             validate_scored_candidates(&scored)?;
             let surfaced_candidate_count = scored.len();
@@ -613,9 +614,11 @@ impl<'a> ContextPackBuilder<'a> {
             } else {
                 surfaced_candidate_count
             };
+            let mut signals_used = self.signals_used;
+            signals_used.extend(pipeline_signals.into_iter().map(pack_signal_from_retrieval));
             let stats = PackStats {
                 candidates_considered,
-                signals_used: dedupe_signals(self.signals_used),
+                signals_used: dedupe_signals(signals_used),
                 query_time_us: started.elapsed().as_micros().min(u64::MAX as u128) as u64,
                 entities_hydrated: results.len(),
                 neighbors_hydrated: neighbors.len(),
@@ -991,6 +994,16 @@ fn serialized_context_pack_empty_reason(
         return Some(format!("{:?}", telemetry.stats.items_dropped.reason));
     }
     context_pack_empty_reason(pack, &telemetry.result_ids)
+}
+
+fn pack_signal_from_retrieval(signal: RetrievalSignal) -> Signal {
+    match signal {
+        RetrievalSignal::Vector => Signal::Vector,
+        RetrievalSignal::Text => Signal::Text,
+        RetrievalSignal::Phonetic => Signal::Phonetic,
+        RetrievalSignal::Temporal => Signal::Temporal,
+        RetrievalSignal::Ppr => Signal::Ppr,
+    }
 }
 
 fn dedupe_signals(signals: Vec<Signal>) -> Vec<Signal> {
@@ -3765,6 +3778,20 @@ mod tests {
         assert_eq!(runs[0].result_ids, vec![*live.as_bytes()]);
         assert_eq!(runs[0].score_breakdown.len(), 1);
         assert_eq!(runs[0].score_breakdown[0].result_id, *live.as_bytes());
+        Ok(())
+    }
+
+    #[test]
+    fn context_pack_stats_include_parsed_temporal_hint_signal() -> Result<()> {
+        let (_dir, vault) = open_test_vault();
+
+        let pack = vault
+            .context_pack()
+            .search_text("recent stattemporal", 10)
+            .run()?;
+
+        assert!(pack.stats.signals_used.contains(&Signal::Text));
+        assert!(pack.stats.signals_used.contains(&Signal::Temporal));
         Ok(())
     }
 

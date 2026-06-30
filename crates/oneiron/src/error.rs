@@ -2,7 +2,9 @@ use std::fmt;
 use std::path::PathBuf;
 
 use crate::claim::ClaimLifecycleStatus;
-use crate::types::{ENTITY_TYPE_FACET, EntityId, TypeByteBand, VadComponent};
+use crate::types::{
+    ENTITY_TYPE_FACET, EntityId, TemporalExpressionParseError, TypeByteBand, VadComponent,
+};
 
 /// Result type used throughout the crate.
 pub type Result<T> = std::result::Result<T, Error>;
@@ -153,6 +155,7 @@ pub enum ErrorKind {
     VaultRootPreflight,
     MapFull,
     InvalidConfig,
+    InvalidTemporalExpression,
     EntityNotFound,
     ConcurrentWrite,
     ArithmeticOverflow,
@@ -359,6 +362,9 @@ pub enum Error {
     /// Invalid runtime configuration input.
     #[error("invalid config: {0}")]
     InvalidConfig(String),
+    /// Natural-language temporal retrieval hint could not be parsed.
+    #[error("invalid temporal expression: {0}")]
+    InvalidTemporalExpression(TemporalExpressionParseError),
     /// Requested entity does not exist.
     #[error("entity not found")]
     EntityNotFound,
@@ -816,6 +822,7 @@ impl Error {
             Self::VaultRootPreflight { .. } => ErrorKind::VaultRootPreflight,
             Self::MapFull => ErrorKind::MapFull,
             Self::InvalidConfig(_) => ErrorKind::InvalidConfig,
+            Self::InvalidTemporalExpression(_) => ErrorKind::InvalidTemporalExpression,
             Self::EntityNotFound => ErrorKind::EntityNotFound,
             Self::ConcurrentWrite(_) => ErrorKind::ConcurrentWrite,
             Self::ArithmeticOverflow(_) => ErrorKind::ArithmeticOverflow,
