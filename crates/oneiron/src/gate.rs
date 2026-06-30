@@ -1329,6 +1329,7 @@ mod tests {
         ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSubject,
         claim_body_decode_count, decode_claim_body, reset_claim_body_decode_count,
     };
+    use crate::error::{GateDenialOutcome, GateDenialReason};
     use crate::provenance::{EdgeProvenanceClaimBody, EdgeRef, SupersessionStatus};
     use crate::types::{
         ClaimCandidate, ENTITY_TYPE_PERSON, EdgeActorClass, EdgeConfirmationStatus, EdgeKind,
@@ -1668,6 +1669,17 @@ mod tests {
     }
 
     fn assert_gate_rejected(err: Error, outcome: &'static str, reason_codes: &[&'static str]) {
+        let typed = err
+            .gate_denial()
+            .expect("GateWriteRejected must expose typed denial taxonomy");
+        assert_eq!(typed.outcome().as_str(), outcome);
+        let typed_reason_codes = typed
+            .reason_codes()
+            .iter()
+            .map(|reason| reason.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(typed_reason_codes, reason_codes);
+
         match err {
             Error::GateWriteRejected {
                 outcome: got_outcome,
@@ -1678,6 +1690,102 @@ mod tests {
             }
             other => panic!("expected GateWriteRejected, got {other:?}"),
         }
+    }
+
+    #[derive(Clone, Copy)]
+    enum GateRegressionPolicyFixture {
+        ActorDefaultOnly,
+        HumanTrusted,
+        MalformedPolicy,
+        MissingPolicy,
+    }
+
+    #[derive(Clone, Copy)]
+    enum GateRegressionExpectedError {
+        Gate {
+            outcome: &'static str,
+            reason_codes: &'static [&'static str],
+        },
+        SourceNotTrusted {
+            source: ClaimSource,
+        },
+    }
+
+    #[derive(Clone, Copy)]
+    struct GateRegressionDeniedWriteCase {
+        name: &'static str,
+        seed: u8,
+        policy: GateRegressionPolicyFixture,
+        source: ClaimSource,
+        predicate: &'static str,
+        expected: GateRegressionExpectedError,
+    }
+
+    fn install_gate_regression_policy(
+        vault: &crate::Vault,
+        seed: u8,
+        policy: GateRegressionPolicyFixture,
+    ) -> Result<()> {
+        match policy {
+            GateRegressionPolicyFixture::ActorDefaultOnly => {
+                let data = encode_policy_manifest(vec![]);
+                put_policy_manifest_bytes(vault, seed, &data)
+            }
+            GateRegressionPolicyFixture::HumanTrusted => {
+                let mut data = encode_policy_manifest(vec![]);
+                trust_human_candidate_actor(&mut data);
+                put_policy_manifest_bytes(vault, seed, &data)
+            }
+            GateRegressionPolicyFixture::MalformedPolicy => {
+                put_policy_manifest_bytes(vault, seed, b"not-msgpack")
+            }
+            GateRegressionPolicyFixture::MissingPolicy => Ok(()),
+        }
+    }
+
+    fn run_gate_regression_denied_write_case(case: &GateRegressionDeniedWriteCase) -> Result<()> {
+        let (_tmp, vault) = temp_vault();
+        install_gate_regression_policy(&vault, case.seed, case.policy)?;
+
+        let prior_id = test_id(case.seed + 1);
+        let claim_id = test_id(case.seed + 2);
+        let mut body = source_trust_claim(case.source);
+        body.predicate = case.predicate.to_owned();
+        let (candidate, envelope) = claim_candidate_write_parts(&vault, &body)?;
+
+        let err = vault
+            .batch()
+            .put(&prior_id, ENTITY_TYPE_PERSON, test_time(11), 11, b"prior")
+            .claim_candidate(&claim_id, candidate, &envelope, test_time(11), 11)
+            .commit()
+            .expect_err(case.name);
+
+        match case.expected {
+            GateRegressionExpectedError::Gate {
+                outcome,
+                reason_codes,
+            } => assert_gate_rejected(err, outcome, reason_codes),
+            GateRegressionExpectedError::SourceNotTrusted { source } => match err {
+                Error::SourceNotTrustedForAuto { claim_source }
+                    if claim_source == source.as_str() => {}
+                other => panic!(
+                    "{}: expected SourceNotTrustedForAuto, got {other:?}",
+                    case.name
+                ),
+            },
+        }
+
+        assert!(
+            vault.get_raw(&prior_id)?.is_none(),
+            "{}: denied batch must not commit earlier put",
+            case.name
+        );
+        assert!(
+            vault.get_raw(&claim_id)?.is_none(),
+            "{}: denied batch must not commit claim",
+            case.name
+        );
+        Ok(())
     }
 
     fn stored_claim_body(vault: &crate::Vault, id: &EntityId) -> Result<ClaimBody> {
@@ -1699,6 +1807,188 @@ mod tests {
         edge.provenance.ok_or(Error::InvariantViolation(
             "test edge should carry provenance flags",
         ))
+    }
+
+    #[test]
+    fn gate_regression_denial_taxonomy_is_typed_and_stable() {
+        assert_eq!(
+            GateDenialOutcome::parse("pending"),
+            Some(GateDenialOutcome::Pending)
+        );
+        assert_eq!(
+            GateDenialOutcome::parse("deny"),
+            Some(GateDenialOutcome::Deny)
+        );
+        assert_eq!(GateDenialOutcome::parse("allow"), None);
+
+        let cases = [
+            (
+                GateDenialReason::DenyMissingActorClass,
+                GateDenialOutcome::Deny,
+                "gate.deny.missing_actor_class",
+            ),
+            (
+                GateDenialReason::DenyMissingActorProvenance,
+                GateDenialOutcome::Deny,
+                "gate.deny.missing_actor_provenance",
+            ),
+            (
+                GateDenialReason::DenyMissingPolicyManifestVersion,
+                GateDenialOutcome::Deny,
+                "gate.deny.missing_policy_manifest_version",
+            ),
+            (
+                GateDenialReason::DenyPolicyFailClosed,
+                GateDenialOutcome::Deny,
+                "gate.deny.policy_fail_closed",
+            ),
+            (
+                GateDenialReason::PendingActorCeiling,
+                GateDenialOutcome::Pending,
+                "gate.pending.actor_ceiling",
+            ),
+            (
+                GateDenialReason::PendingSourceTrust,
+                GateDenialOutcome::Pending,
+                "gate.pending.source_trust",
+            ),
+            (
+                GateDenialReason::PendingCriticalityFloor,
+                GateDenialOutcome::Pending,
+                "gate.pending.criticality_floor",
+            ),
+            (
+                GateDenialReason::PendingPolicyManifestAuthority,
+                GateDenialOutcome::Pending,
+                "gate.pending.policy_manifest_authority",
+            ),
+            (
+                GateDenialReason::PendingExternalEffectAuthority,
+                GateDenialOutcome::Pending,
+                "gate.pending.external_effect_authority",
+            ),
+        ];
+
+        for (reason, outcome, code) in cases {
+            assert_eq!(reason.as_str(), code);
+            assert_eq!(reason.outcome(), outcome);
+            assert_eq!(GateDenialReason::from_code(code), Some(reason));
+
+            let err = Error::GateWriteRejected {
+                outcome: outcome.as_str(),
+                reason_codes: vec![code],
+            };
+            let typed = err.gate_denial().expect("stable Gate code must parse");
+            assert_eq!(typed.outcome(), outcome);
+            assert_eq!(typed.reason_codes(), &[reason]);
+        }
+
+        assert_eq!(GateDenialReason::from_code("gate.allow"), None);
+        let inconsistent = Error::GateWriteRejected {
+            outcome: "pending",
+            reason_codes: vec!["gate.deny.policy_fail_closed"],
+        };
+        assert!(inconsistent.gate_denial().is_none());
+    }
+
+    #[test]
+    fn gate_regression_default_policy_evaluator_fails_closed() {
+        let policy = PolicyManifestResolution::default();
+        let input = gate_evaluator_input(
+            "first_party",
+            None,
+            ClaimSource::UserStated,
+            PolicyCriticality::Normal,
+        );
+
+        let decision = policy.evaluate_gate(&input);
+        assert_eq!(decision.outcome(), GateOutcome::Deny);
+        assert_eq!(
+            decision.reason_codes(),
+            &[GateReasonCode::DenyPolicyFailClosed]
+        );
+        let err = Error::GateWriteRejected {
+            outcome: decision.outcome().as_str(),
+            reason_codes: decision
+                .reason_codes()
+                .iter()
+                .map(|reason| reason.as_str())
+                .collect(),
+        };
+        let typed = err
+            .gate_denial()
+            .expect("default fail-closed denial must be typed");
+        assert_eq!(typed.outcome(), GateDenialOutcome::Deny);
+        assert_eq!(
+            typed.reason_codes(),
+            &[GateDenialReason::DenyPolicyFailClosed]
+        );
+    }
+
+    #[test]
+    fn gate_regression_denied_write_matrix_leaves_no_committed_side_effects() -> Result<()> {
+        let cases = [
+            GateRegressionDeniedWriteCase {
+                name: "actor ceiling denial",
+                seed: 0xC0,
+                policy: GateRegressionPolicyFixture::ActorDefaultOnly,
+                source: ClaimSource::UserStated,
+                predicate: "profile.name",
+                expected: GateRegressionExpectedError::Gate {
+                    outcome: "pending",
+                    reason_codes: &["gate.pending.actor_ceiling"],
+                },
+            },
+            GateRegressionDeniedWriteCase {
+                name: "source trust denial",
+                seed: 0xC3,
+                policy: GateRegressionPolicyFixture::HumanTrusted,
+                source: ClaimSource::ToolOutput,
+                predicate: "profile.name",
+                expected: GateRegressionExpectedError::Gate {
+                    outcome: "pending",
+                    reason_codes: &["gate.pending.source_trust"],
+                },
+            },
+            GateRegressionDeniedWriteCase {
+                name: "content criticality denial",
+                seed: 0xC6,
+                policy: GateRegressionPolicyFixture::HumanTrusted,
+                source: ClaimSource::UserStated,
+                predicate: "health.allergy",
+                expected: GateRegressionExpectedError::Gate {
+                    outcome: "pending",
+                    reason_codes: &["gate.pending.criticality_floor"],
+                },
+            },
+            GateRegressionDeniedWriteCase {
+                name: "malformed policy denial",
+                seed: 0xC9,
+                policy: GateRegressionPolicyFixture::MalformedPolicy,
+                source: ClaimSource::UserStated,
+                predicate: "profile.name",
+                expected: GateRegressionExpectedError::Gate {
+                    outcome: "deny",
+                    reason_codes: &["gate.deny.policy_fail_closed"],
+                },
+            },
+            GateRegressionDeniedWriteCase {
+                name: "missing manifest default source trust denial",
+                seed: 0xCC,
+                policy: GateRegressionPolicyFixture::MissingPolicy,
+                source: ClaimSource::ToolOutput,
+                predicate: "profile.name",
+                expected: GateRegressionExpectedError::SourceNotTrusted {
+                    source: ClaimSource::ToolOutput,
+                },
+            },
+        ];
+
+        for case in &cases {
+            run_gate_regression_denied_write_case(case)?;
+        }
+
+        Ok(())
     }
 
     #[test]
