@@ -1023,6 +1023,7 @@ pub(crate) fn apply_ops(
             BatchOp::Delete { id } => {
                 let (_existed, had_vector, deleted_graph_state, neighbors) =
                     deindex_entity(store, wtxn, &id)?;
+                pending_embedding_tokens_written.remove(&id);
                 ppr::invalidate_ppr_for_delete(store, wtxn, &id, &neighbors)?;
                 had_graph_mutation |= deleted_graph_state;
                 had_vector_mutation |= had_vector;
@@ -1627,10 +1628,12 @@ fn apply_vector(
         bytes.extend_from_slice(&v.to_le_bytes());
     }
     store.vectors.put(wtxn, id.as_bytes(), &bytes)?;
-    let cleared_pending_embedding = if let Some(token) = pending_embedding_token {
-        store.clear_pending_embedding_if_token_matches(wtxn, &id, token)?
-    } else {
-        false
+    let cleared_pending_embedding = match pending_embedding_token {
+        Some(token) => store.clear_pending_embedding_if_token_matches(wtxn, &id, token)?,
+        None if store.has_current_pending_embedding_in_txn(wtxn, &id)? => {
+            store.clear_pending_embedding(wtxn, &id)?
+        }
+        None => false,
     };
     Ok(AppliedVector {
         wrote_vector: true,
@@ -2489,6 +2492,28 @@ mod tests {
         Ok(vault.store.pending_embedding_token(&rtxn, id)?.is_some())
     }
 
+    fn raw_pending_embedding_marker(vault: &Vault, id: &EntityId) -> Result<Option<Vec<u8>>> {
+        let rtxn = vault.store.env.read_txn()?;
+        let key = Store::pending_embedding_marker_key(id);
+        Ok(vault
+            .store
+            .sync_state
+            .get(&rtxn, key.as_str())?
+            .map(<[u8]>::to_vec))
+    }
+
+    fn overwrite_pending_embedding_marker(
+        vault: &Vault,
+        id: &EntityId,
+        token: &[u8],
+    ) -> Result<()> {
+        let mut wtxn = vault.store.env.write_txn()?;
+        let key = Store::pending_embedding_marker_key(id);
+        vault.store.sync_state.put(&mut wtxn, key.as_str(), token)?;
+        wtxn.commit()?;
+        Ok(())
+    }
+
     fn pending_embedding_token(vault: &Vault, id: &EntityId) -> Result<Vec<u8>> {
         let rtxn = vault.store.env.read_txn()?;
         vault
@@ -2769,6 +2794,25 @@ mod tests {
         Ok(())
     }
 
+    #[test]
+    fn plain_vector_fill_clears_current_pending_embedding_marker() -> Result<()> {
+        let (_dir, vault) = open_test_vault();
+        let claim = EntityId::now();
+        commit_claim_candidate_fixture(&vault, claim)?;
+
+        vault.put_vector(&claim, &[1.0, 0.0, 0.0, 0.0])?;
+
+        assert_eq!(
+            vault.get_vector(&claim)?.as_deref(),
+            Some([1.0, 0.0, 0.0, 0.0].as_slice())
+        );
+        assert!(
+            !has_pending_embedding_marker(&vault, &claim)?,
+            "plain vector fills must clear current pending markers"
+        );
+        Ok(())
+    }
+
     #[cfg(feature = "sync")]
     #[test]
     fn replicated_claim_materialization_writes_pending_embedding_marker() -> Result<()> {
@@ -2850,6 +2894,39 @@ mod tests {
     }
 
     #[test]
+    fn plain_vector_fill_does_not_clear_stale_pending_embedding_marker() -> Result<()> {
+        let (_dir, vault) = open_test_vault();
+        let claim = EntityId::now();
+        commit_claim_candidate_with_value(&vault, claim, "Alice")?;
+        let old_token = pending_embedding_token(&vault, &claim)?;
+
+        commit_claim_candidate_with_value(&vault, claim, "Bob")?;
+        let new_token = pending_embedding_token(&vault, &claim)?;
+        assert_ne!(
+            old_token, new_token,
+            "claim body overwrite must mint a new token"
+        );
+        overwrite_pending_embedding_marker(&vault, &claim, &old_token)?;
+        assert!(
+            !has_pending_embedding_marker(&vault, &claim)?,
+            "stale marker token must not report as current pending work"
+        );
+
+        vault.put_vector(&claim, &[1.0, 0.0, 0.0, 0.0])?;
+
+        assert_eq!(
+            vault.get_vector(&claim)?.as_deref(),
+            Some([1.0, 0.0, 0.0, 0.0].as_slice())
+        );
+        assert_eq!(
+            raw_pending_embedding_marker(&vault, &claim)?.as_deref(),
+            Some(old_token.as_slice()),
+            "plain vector fills must not clear stale markers by id alone"
+        );
+        Ok(())
+    }
+
+    #[test]
     fn same_batch_claim_then_vector_clears_pending_embedding_marker() -> Result<()> {
         let (_dir, vault) = open_test_vault();
         let claim = EntityId::now();
@@ -2864,6 +2941,35 @@ mod tests {
         assert!(
             !has_pending_embedding_marker(&vault, &claim)?,
             "same-batch vector after claim materialization proves freshness"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn same_batch_delete_clears_pending_embedding_token_cache_before_plain_vector() -> Result<()> {
+        let (_dir, vault) = open_test_vault();
+        let claim = EntityId::now();
+        let (envelope, candidate) = claim_candidate_fixture(&vault, "Alice")?;
+
+        vault
+            .batch()
+            .claim_candidate(&claim, candidate, &envelope, test_time_range(10, 10), 11)
+            .delete(&claim)
+            .vector(&claim, &[1.0, 0.0, 0.0, 0.0])
+            .commit()?;
+
+        assert!(
+            vault.get_claim(&claim)?.is_none(),
+            "delete must remove the same-batch claim materialization"
+        );
+        assert_eq!(
+            vault.get_vector(&claim)?.as_deref(),
+            Some([1.0, 0.0, 0.0, 0.0].as_slice()),
+            "delete must not leave a stale same-batch token that drops later vectors"
+        );
+        assert!(
+            raw_pending_embedding_marker(&vault, &claim)?.is_none(),
+            "delete must clear durable pending marker state"
         );
         Ok(())
     }
