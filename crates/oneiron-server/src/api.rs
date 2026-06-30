@@ -76,6 +76,8 @@ const CAPABILITIES: &[&str] = &[
     "core.query",
     "core.context_pack",
     "core.hydrate",
+    "core.memory_timeline",
+    "core.memory_verbs",
     "core.conversations",
     "core.turns",
     "health.capabilities",
@@ -117,6 +119,8 @@ const CORE_MAX_LIST_LIMIT: usize = 1000;
         core_query,
         core_hydrate,
         core_batch_short_id_hydrate,
+        core_memory_timeline,
+        core_memory_verb,
         core_context_pack,
         list_core_conversations,
         create_core_conversation,
@@ -180,6 +184,14 @@ const CORE_MAX_LIST_LIMIT: usize = 1000;
         CoreShortIdHydrateOutcome,
         CoreShortIdHydrateError,
         CoreShortIdHydrateErrorKind,
+        CoreMemoryTimelineResponse,
+        CoreMemoryTimelineRecord,
+        CoreMemoryTimelineRecordState,
+        CoreMemoryVerbRequest,
+        CoreMemoryVerbResponse,
+        CoreMemoryVerbDeleteOutcome,
+        CoreMemoryVerbDeleteReason,
+        CoreMemoryOperationKind,
         ContextPackDepthControls,
         ContextPackPolicyControls,
         ContextPackTimeControls,
@@ -242,6 +254,7 @@ pub(crate) fn api_routes(server: Arc<SyncServer>) -> Router {
         ));
     let core_mutation_routes = Router::new()
         .route("/batch", post(core_batch))
+        .route("/memory/verbs/{verb}", post(core_memory_verb))
         .route("/conversations", post(create_core_conversation))
         .route(
             "/conversations/{conversation_id}/turns",
@@ -257,6 +270,7 @@ pub(crate) fn api_routes(server: Arc<SyncServer>) -> Router {
         .route("/context-pack", post(core_context_pack))
         .route("/hydrate", post(core_hydrate))
         .route("/batch/shortId/hydrate", post(core_batch_short_id_hydrate))
+        .route("/memory/{id}/timeline", get(core_memory_timeline))
         .route("/conversations", get(list_core_conversations))
         .route(
             "/conversations/{conversation_id}/turns",
@@ -977,6 +991,8 @@ fn add_security_scheme(spec: &mut Value) {
         ("/v1/core/context-pack", "post"),
         ("/v1/core/hydrate", "post"),
         ("/v1/core/batch/shortId/hydrate", "post"),
+        ("/v1/core/memory/{id}/timeline", "get"),
+        ("/v1/core/memory/verbs/{verb}", "post"),
         ("/v1/core/conversations", "get"),
         ("/v1/core/conversations", "post"),
         ("/v1/core/conversations/{conversation_id}/turns", "get"),
@@ -2856,6 +2872,178 @@ enum CoreShortIdHydrateErrorKind {
     NotFound,
 }
 
+/// Supersession timeline response for one memory anchor.
+#[derive(Debug, Serialize, ToSchema)]
+struct CoreMemoryTimelineResponse {
+    /// Requested anchor entity id.
+    #[serde(rename = "anchor_id")]
+    #[schema(example = "0123456789abcdef0123456789abcdef")]
+    anchor_id: String,
+    /// Stable ordered timeline records, oldest bitemporal start first.
+    records: Vec<CoreMemoryTimelineRecord>,
+}
+
+/// One renderer-ready record in a supersession timeline.
+#[derive(Debug, Serialize, ToSchema)]
+struct CoreMemoryTimelineRecord {
+    /// Hex entity id.
+    #[schema(example = "0123456789abcdef0123456789abcdef")]
+    id: String,
+    /// Explicit lifecycle/deletion state for this timeline row.
+    state: CoreMemoryTimelineRecordState,
+    /// Numeric entity type byte when the record is still locally present.
+    #[serde(skip_serializing_if = "Option::is_none", rename = "entity_type")]
+    #[schema(example = 0)]
+    entity_type: Option<u8>,
+    /// Entity occurrence start timestamp.
+    #[serde(skip_serializing_if = "Option::is_none", rename = "occurred_start")]
+    #[schema(example = 1782357600_u64)]
+    occurred_start: Option<u64>,
+    /// Entity occurrence end timestamp.
+    #[serde(skip_serializing_if = "Option::is_none", rename = "occurred_end")]
+    #[schema(example = 1782357635_u64)]
+    occurred_end: Option<u64>,
+    /// Entity learned-at timestamp.
+    #[serde(skip_serializing_if = "Option::is_none", rename = "learned_at")]
+    #[schema(example = 1782357635_u64)]
+    learned_at: Option<u64>,
+    /// Stored body byte length for present records, including zero-byte live bodies.
+    #[serde(skip_serializing_if = "Option::is_none", rename = "body_bytes")]
+    #[schema(example = 48)]
+    body_bytes: Option<usize>,
+    /// Deletion metadata for deleted-shell rows.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    deletion: Option<CoreHydrateDeletionMetadata>,
+    /// Older records this record supersedes.
+    supersedes: Vec<String>,
+    /// Newer records that supersede this record.
+    #[serde(rename = "superseded_by")]
+    superseded_by: Vec<String>,
+    /// Projected entity payload for non-deleted present records.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(value_type = Option<Object>)]
+    item: Option<Value>,
+}
+
+/// Stable row state in a memory timeline.
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+enum CoreMemoryTimelineRecordState {
+    Live,
+    Superseded,
+    Retracted,
+    Deleted,
+    Missing,
+}
+
+/// Payload for the named memory verb route.
+#[derive(Debug, Deserialize, ToSchema)]
+#[schema(example = json!({
+    "new_id": "22222222222222222222222222222222",
+    "old_id": "11111111111111111111111111111111",
+    "at": 1782357700_u64
+}))]
+struct CoreMemoryVerbRequest {
+    /// Entity payload for the `remember` verb.
+    #[serde(default)]
+    entity: Option<CoreBatchEntityInput>,
+    /// Target entity id for `retract`, `delete`, and `hard_delete`.
+    #[serde(default)]
+    #[schema(example = "0123456789abcdef0123456789abcdef")]
+    id: Option<String>,
+    /// New claim id for `supersede`.
+    #[serde(default, rename = "new_id", alias = "newId")]
+    #[schema(example = "22222222222222222222222222222222")]
+    new_id: Option<String>,
+    /// Old claim id for `supersede`.
+    #[serde(default, rename = "old_id", alias = "oldId")]
+    #[schema(example = "11111111111111111111111111111111")]
+    old_id: Option<String>,
+    /// Operation timestamp for supersede/retract verbs. Defaults to server time.
+    /// Delete verbs reject this field because the vault owns deletion time.
+    #[serde(default, alias = "now")]
+    #[schema(example = 1782357700_u64)]
+    at: Option<u64>,
+    /// Delete reason override for delete verbs.
+    #[serde(default)]
+    reason: Option<CoreMemoryVerbDeleteReason>,
+}
+
+/// Named delete reason accepted by the memory verb route.
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+enum CoreMemoryVerbDeleteReason {
+    #[serde(rename = "user_delete")]
+    User,
+    #[serde(rename = "user_hard_delete")]
+    UserHard,
+    #[serde(rename = "gdpr_delete")]
+    Gdpr,
+    #[serde(rename = "policy_delete")]
+    Policy,
+}
+
+/// Named memory verb response.
+#[derive(Debug, Serialize, ToSchema)]
+struct CoreMemoryVerbResponse {
+    /// Canonical verb name selected after alias resolution.
+    #[schema(example = "supersede")]
+    verb: String,
+    /// Typed operation family selected by the verb.
+    operation: CoreMemoryOperationKind,
+    /// Operation timestamp used by supersede/retract verbs.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(example = 1782357700_u64)]
+    at: Option<u64>,
+    /// Target id for single-target verbs.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(example = "0123456789abcdef0123456789abcdef")]
+    id: Option<String>,
+    /// New claim id for supersession.
+    #[serde(skip_serializing_if = "Option::is_none", rename = "new_id")]
+    #[schema(example = "22222222222222222222222222222222")]
+    new_id: Option<String>,
+    /// Old claim id for supersession.
+    #[serde(skip_serializing_if = "Option::is_none", rename = "old_id")]
+    #[schema(example = "11111111111111111111111111111111")]
+    old_id: Option<String>,
+    /// Entity written by `remember`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    entity: Option<CoreBatchEntityResult>,
+    /// Delete outcome for delete verbs.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    delete: Option<CoreMemoryVerbDeleteOutcome>,
+}
+
+/// Delete operation result returned by named delete verbs.
+#[derive(Debug, Serialize, ToSchema)]
+struct CoreMemoryVerbDeleteOutcome {
+    /// Whether the delete found active local state to erase.
+    existed: bool,
+    /// Reason applied by the delete operation.
+    reason: CoreMemoryVerbDeleteReason,
+    /// Whether the reason has hard-delete semantics.
+    hard: bool,
+    /// Redaction receipt entity id for hard-delete classes.
+    #[serde(skip_serializing_if = "Option::is_none", rename = "receipt_id")]
+    #[schema(example = "fedcba9876543210fedcba9876543210")]
+    receipt_id: Option<String>,
+    /// Hex-encoded hard-erasure sweep key when one was queued.
+    #[serde(skip_serializing_if = "Option::is_none", rename = "sweep_key")]
+    #[schema(example = "686172646572617365")]
+    sweep_key: Option<String>,
+}
+
+/// Typed operation family selected by a named memory verb.
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+enum CoreMemoryOperationKind {
+    PutEntity,
+    SupersedeClaim,
+    RetractClaim,
+    DeleteEntity,
+}
+
 /// Edge expansion depth controls for context-pack assembly.
 #[derive(Debug, Default, Deserialize, ToSchema)]
 struct ContextPackDepthControls {
@@ -3545,6 +3733,347 @@ async fn core_batch_short_id_hydrate(
     }
 
     Ok(Json(CoreBatchShortIdHydrateResponse { results }))
+}
+
+/// Return renderer-ready supersession timeline data for one memory record.
+#[utoipa::path(
+    get,
+    path = "/v1/core/memory/{id}/timeline",
+    params(
+        (
+            "id" = String,
+            Path,
+            description = "Hex entity id whose supersession chain should be rendered.",
+            example = "0123456789abcdef0123456789abcdef"
+        ),
+        ViewQuery
+    ),
+    responses(
+        (status = 200, description = "Stable ordered memory supersession timeline.", body = CoreMemoryTimelineResponse, content_type = "application/json"),
+        (status = 400, description = "Malformed entity id or view.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 401, description = "Missing or invalid core auth.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 403, description = "Core token lacks core:read.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 404, description = "Anchor entity was not found.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 500, description = "Timeline lookup failed.", body = ApiErrorEnvelope, content_type = "application/json")
+    )
+)]
+async fn core_memory_timeline(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    Path(id_hex): Path<String>,
+    query: Result<Query<ViewQuery>, QueryRejection>,
+) -> Result<Json<CoreMemoryTimelineResponse>, EnvelopedApiError> {
+    auth.require(CoreScope::Read)?;
+    let id = parse_entity_id_param(&id_hex, "id")?;
+    let params = query_params(query)?;
+    let view = params.view.unwrap_or(View::Summary);
+    let timeline = server.vault.memory_timeline(&id).map_err(|error| {
+        tracing::error!(error = %error, id = %id.to_hex(), "core memory timeline failed");
+        core_engine_error("core memory timeline failed", error)
+    })?;
+
+    if timeline.records.len() == 1
+        && timeline.records[0].state == oneiron::MemoryTimelineRecordState::Missing
+    {
+        return Err(ApiError::not_found("entity", Some(&id.to_hex())).into());
+    }
+
+    Ok(Json(core_memory_timeline_response(
+        &server.vault,
+        timeline,
+        view,
+    )?))
+}
+
+/// Execute a named memory verb after resolving it to a typed vault operation.
+#[utoipa::path(
+    post,
+    path = "/v1/core/memory/verbs/{verb}",
+    params(
+        (
+            "verb" = String,
+            Path,
+            description = "Named memory verb: remember, supersede, retract, delete/forget, or hard_delete/erase.",
+            example = "supersede"
+        )
+    ),
+    request_body(content = CoreMemoryVerbRequest, content_type = "application/json"),
+    responses(
+        (status = 200, description = "Named verb resolved and executed as a typed operation.", body = CoreMemoryVerbResponse, content_type = "application/json"),
+        (status = 400, description = "Malformed verb request.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 401, description = "Missing or invalid core auth.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 403, description = "Core token lacks core:write.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 404, description = "Referenced entity was not found.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 500, description = "Memory verb failed.", body = ApiErrorEnvelope, content_type = "application/json")
+    )
+)]
+async fn core_memory_verb(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    Path(verb_name): Path<String>,
+    payload: Result<Json<CoreMemoryVerbRequest>, JsonRejection>,
+) -> Result<Json<CoreMemoryVerbResponse>, EnvelopedApiError> {
+    auth.require(CoreScope::Write)?;
+    let verb = oneiron::NamedMemoryVerb::parse(&verb_name).ok_or_else(|| {
+        ApiError::bad_request(
+            "verb must be one of remember (put), supersede (replace/revise), retract (withdraw), delete (forget), hard_delete (erase/purge)",
+            Some("verb"),
+        )
+    })?;
+    let req = json_payload(payload)?;
+    let operation = core_memory_operation_kind(verb.operation_kind());
+
+    match verb {
+        oneiron::NamedMemoryVerb::Remember => {
+            let entity = req.entity.ok_or_else(|| {
+                ApiError::bad_request("entity is required for remember", Some("entity"))
+            })?;
+            let id = parse_optional_entity_id(entity.id.as_deref(), "entity.id")?;
+            let timestamps = core_entity_timestamps(
+                entity.occurred_start,
+                entity.occurred_end,
+                entity.learned_at,
+            )?;
+            let batch = server.vault.batch();
+            stage_core_entity_put(
+                batch,
+                &id,
+                entity.entity_type,
+                timestamps,
+                &entity.body,
+                entity.text.as_deref(),
+            )?
+            .commit()
+            .map_err(|error| {
+                tracing::error!(error = %error, id = %id.to_hex(), "core memory remember failed");
+                core_engine_error("core memory remember failed", error)
+            })?;
+
+            Ok(Json(CoreMemoryVerbResponse {
+                verb: verb.canonical_name().to_owned(),
+                operation,
+                at: None,
+                id: Some(id.to_hex()),
+                new_id: None,
+                old_id: None,
+                entity: Some(CoreBatchEntityResult {
+                    id: id.to_hex(),
+                    entity_type: entity.entity_type,
+                }),
+                delete: None,
+            }))
+        }
+        oneiron::NamedMemoryVerb::Supersede => {
+            let new_id = parse_required_entity_id(req.new_id.as_deref(), "new_id")?;
+            let old_id = parse_required_entity_id(req.old_id.as_deref(), "old_id")?;
+            let at = req.at.unwrap_or_else(unix_seconds_now);
+            server
+                .vault
+                .supersede_claim(&new_id, &old_id, at)
+                .map_err(|error| {
+                    tracing::error!(
+                        error = %error,
+                        new_id = %new_id.to_hex(),
+                        old_id = %old_id.to_hex(),
+                        "core memory supersede failed"
+                    );
+                    core_engine_error("core memory supersede failed", error)
+                })?;
+
+            Ok(Json(CoreMemoryVerbResponse {
+                verb: verb.canonical_name().to_owned(),
+                operation,
+                at: Some(at),
+                id: None,
+                new_id: Some(new_id.to_hex()),
+                old_id: Some(old_id.to_hex()),
+                entity: None,
+                delete: None,
+            }))
+        }
+        oneiron::NamedMemoryVerb::Retract => {
+            let id = parse_required_entity_id(req.id.as_deref(), "id")?;
+            let at = req.at.unwrap_or_else(unix_seconds_now);
+            server.vault.retract_claim(&id, at).map_err(|error| {
+                tracing::error!(error = %error, id = %id.to_hex(), "core memory retract failed");
+                core_engine_error("core memory retract failed", error)
+            })?;
+
+            Ok(Json(CoreMemoryVerbResponse {
+                verb: verb.canonical_name().to_owned(),
+                operation,
+                at: Some(at),
+                id: Some(id.to_hex()),
+                new_id: None,
+                old_id: None,
+                entity: None,
+                delete: None,
+            }))
+        }
+        oneiron::NamedMemoryVerb::Delete | oneiron::NamedMemoryVerb::HardDelete => {
+            if req.at.is_some() {
+                return Err(ApiError::bad_request(
+                    "at is not supported for delete verbs; deletion time is recorded by the vault",
+                    Some("at"),
+                )
+                .into());
+            }
+            let id = parse_required_entity_id(req.id.as_deref(), "id")?;
+            let (reason, response_reason) = core_memory_delete_reason(verb, req.reason)?;
+            let outcome = server
+                .vault
+                .delete_entity_with_reason(&id, reason)
+                .map_err(|error| {
+                    tracing::error!(error = %error, id = %id.to_hex(), "core memory delete failed");
+                    core_engine_error("core memory delete failed", error)
+                })?;
+
+            Ok(Json(CoreMemoryVerbResponse {
+                verb: verb.canonical_name().to_owned(),
+                operation,
+                at: None,
+                id: Some(id.to_hex()),
+                new_id: None,
+                old_id: None,
+                entity: None,
+                delete: Some(CoreMemoryVerbDeleteOutcome {
+                    existed: outcome.existed,
+                    reason: response_reason,
+                    hard: matches!(
+                        reason,
+                        oneiron::DeleteReason::UserHardDelete
+                            | oneiron::DeleteReason::GdprDelete
+                            | oneiron::DeleteReason::PolicyDelete
+                    ),
+                    receipt_id: outcome.receipt_id.map(|id| id.to_hex()),
+                    sweep_key: outcome.sweep_key.as_deref().map(hex_bytes),
+                }),
+            }))
+        }
+    }
+}
+
+fn core_memory_timeline_response(
+    vault: &oneiron::Vault,
+    timeline: oneiron::MemoryTimeline,
+    view: View,
+) -> Result<CoreMemoryTimelineResponse, ApiError> {
+    let mut records = Vec::with_capacity(timeline.records.len());
+    for record in timeline.records {
+        let item = if matches!(
+            record.state,
+            oneiron::MemoryTimelineRecordState::Live
+                | oneiron::MemoryTimelineRecordState::Superseded
+                | oneiron::MemoryTimelineRecordState::Retracted
+        ) {
+            projection::project_entity(vault, &record.id, view).map_err(|error| {
+                tracing::error!(error = %error, id = %record.id.to_hex(), "core memory timeline projection failed");
+                core_engine_error("core memory timeline projection failed", error)
+            })?
+        } else {
+            None
+        };
+
+        records.push(CoreMemoryTimelineRecord {
+            id: record.id.to_hex(),
+            state: core_memory_timeline_state(record.state),
+            entity_type: record.entity_type,
+            occurred_start: record.occurred_start,
+            occurred_end: record.occurred_end,
+            learned_at: record.learned_at,
+            body_bytes: record.body_bytes,
+            deletion: record.deletion.map(core_hydrate_deletion_metadata),
+            supersedes: record
+                .supersedes
+                .into_iter()
+                .map(|id| id.to_hex())
+                .collect(),
+            superseded_by: record
+                .superseded_by
+                .into_iter()
+                .map(|id| id.to_hex())
+                .collect(),
+            item,
+        });
+    }
+
+    Ok(CoreMemoryTimelineResponse {
+        anchor_id: timeline.anchor.to_hex(),
+        records,
+    })
+}
+
+fn core_memory_timeline_state(
+    state: oneiron::MemoryTimelineRecordState,
+) -> CoreMemoryTimelineRecordState {
+    match state {
+        oneiron::MemoryTimelineRecordState::Live => CoreMemoryTimelineRecordState::Live,
+        oneiron::MemoryTimelineRecordState::Superseded => CoreMemoryTimelineRecordState::Superseded,
+        oneiron::MemoryTimelineRecordState::Retracted => CoreMemoryTimelineRecordState::Retracted,
+        oneiron::MemoryTimelineRecordState::Deleted => CoreMemoryTimelineRecordState::Deleted,
+        oneiron::MemoryTimelineRecordState::Missing => CoreMemoryTimelineRecordState::Missing,
+    }
+}
+
+fn core_memory_operation_kind(kind: oneiron::MemoryOperationKind) -> CoreMemoryOperationKind {
+    match kind {
+        oneiron::MemoryOperationKind::PutEntity => CoreMemoryOperationKind::PutEntity,
+        oneiron::MemoryOperationKind::SupersedeClaim => CoreMemoryOperationKind::SupersedeClaim,
+        oneiron::MemoryOperationKind::RetractClaim => CoreMemoryOperationKind::RetractClaim,
+        oneiron::MemoryOperationKind::DeleteEntity => CoreMemoryOperationKind::DeleteEntity,
+    }
+}
+
+fn parse_required_entity_id(
+    value: Option<&str>,
+    field: &'static str,
+) -> Result<oneiron::EntityId, ApiError> {
+    let Some(value) = value else {
+        return Err(ApiError::bad_request(
+            format!("{field} is required"),
+            Some(field),
+        ));
+    };
+    parse_entity_id_param(value, field)
+}
+
+fn core_memory_delete_reason(
+    verb: oneiron::NamedMemoryVerb,
+    requested: Option<CoreMemoryVerbDeleteReason>,
+) -> Result<(oneiron::DeleteReason, CoreMemoryVerbDeleteReason), ApiError> {
+    let response_reason = requested.unwrap_or(match verb {
+        oneiron::NamedMemoryVerb::HardDelete => CoreMemoryVerbDeleteReason::UserHard,
+        _ => CoreMemoryVerbDeleteReason::User,
+    });
+    let reason = match response_reason {
+        CoreMemoryVerbDeleteReason::User => oneiron::DeleteReason::UserDelete,
+        CoreMemoryVerbDeleteReason::UserHard => oneiron::DeleteReason::UserHardDelete,
+        CoreMemoryVerbDeleteReason::Gdpr => oneiron::DeleteReason::GdprDelete,
+        CoreMemoryVerbDeleteReason::Policy => oneiron::DeleteReason::PolicyDelete,
+    };
+    match (verb, response_reason) {
+        (oneiron::NamedMemoryVerb::Delete, CoreMemoryVerbDeleteReason::User) => {}
+        (oneiron::NamedMemoryVerb::Delete, _) => {
+            return Err(ApiError::bad_request(
+                "delete only accepts user_delete; use hard_delete for hard-delete reasons",
+                Some("reason"),
+            ));
+        }
+        (
+            oneiron::NamedMemoryVerb::HardDelete,
+            CoreMemoryVerbDeleteReason::UserHard
+            | CoreMemoryVerbDeleteReason::Gdpr
+            | CoreMemoryVerbDeleteReason::Policy,
+        ) => {}
+        (oneiron::NamedMemoryVerb::HardDelete, CoreMemoryVerbDeleteReason::User) => {
+            return Err(ApiError::bad_request(
+                "hard_delete requires user_hard_delete, gdpr_delete, or policy_delete",
+                Some("reason"),
+            ));
+        }
+        _ => {}
+    }
+    Ok((reason, response_reason))
 }
 
 fn hydrate_short_id_response(
@@ -4816,12 +5345,15 @@ fn core_engine_error(message: &'static str, error: oneiron::Error) -> ApiError {
         | ErrorKind::EntityTypeImmutable
         | ErrorKind::StructuralKindBandViolation
         | ErrorKind::StructuralKindCollision
-        | ErrorKind::InvalidStructuralKindRegistration => {
-            ApiError::bad_request(error.to_string(), None)
-        }
+        | ErrorKind::InvalidStructuralKindRegistration
+        | ErrorKind::ClaimSelfSupersession
+        | ErrorKind::ProvenanceClaimLifecycle => ApiError::bad_request(error.to_string(), None),
         ErrorKind::EntityNotFound | ErrorKind::EdgeNotFound => ApiError::not_found("entity", None),
         ErrorKind::CycleDetected | ErrorKind::ChildOfCardinality => {
             ApiError::invalid_state(Some("child_of_constraint"))
+        }
+        ErrorKind::ClaimAlreadyClosed | ErrorKind::ProvenanceClaimAlreadyClosed => {
+            ApiError::invalid_state(Some("memory_lifecycle_closed"))
         }
         ErrorKind::GateWriteRejected => ApiError::new(
             error.to_string(),
@@ -5641,6 +6173,14 @@ mod tests {
         "CoreHydrateResponse",
         "CoreHydrateStatus",
         "CoreListQuery",
+        "CoreMemoryOperationKind",
+        "CoreMemoryTimelineRecord",
+        "CoreMemoryTimelineRecordState",
+        "CoreMemoryTimelineResponse",
+        "CoreMemoryVerbDeleteOutcome",
+        "CoreMemoryVerbDeleteReason",
+        "CoreMemoryVerbRequest",
+        "CoreMemoryVerbResponse",
         "CoreQueryRequest",
         "CoreShortIdHydrateError",
         "CoreShortIdHydrateErrorKind",
@@ -5744,6 +6284,48 @@ mod tests {
         let mut bytes = counter.to_be_bytes();
         bytes[0] = 0x7e;
         oneiron::EntityId::from_bytes(bytes).expect("seeded test id should be valid")
+    }
+
+    fn seed_active_claim(
+        server: &SyncServer,
+        id: oneiron::EntityId,
+        subject: oneiron::EntityId,
+        value: &str,
+        learned_at: u64,
+    ) {
+        #[derive(serde::Serialize)]
+        struct ClaimSeed<'a> {
+            pred: &'a str,
+            val: &'a str,
+            conf: f32,
+            #[serde(with = "serde_bytes")]
+            subj: &'a [u8],
+            appr: &'static str,
+            life: &'static str,
+        }
+
+        let body = rmp_serde::to_vec_named(&ClaimSeed {
+            pred: "profile.route_test",
+            val: value,
+            conf: 0.9,
+            subj: subject.as_bytes(),
+            appr: "auto",
+            life: "active",
+        })
+        .expect("encode claim fixture");
+        server
+            .vault
+            .put_entity(
+                &id,
+                oneiron::types::ENTITY_TYPE_CLAIM,
+                oneiron::TimeRange {
+                    start: learned_at,
+                    end: learned_at,
+                },
+                learned_at,
+                &body,
+            )
+            .expect("seed active claim");
     }
 
     #[tokio::test]
@@ -7603,6 +8185,240 @@ mod tests {
             hydrate_body["item"]["txt"],
             Value::from("blue hallway contextneedle")
         );
+    }
+
+    #[tokio::test]
+    async fn v1_core_memory_timeline_orders_supersession_chain() {
+        let (_dir, server) = test_server();
+        let subject = seeded_test_entity_id(0x1261_0100);
+        let old = seeded_test_entity_id(0x1261_0101);
+        let new = seeded_test_entity_id(0x1261_0102);
+        server
+            .vault
+            .put_entity(
+                &subject,
+                oneiron::types::ENTITY_TYPE_PERSON,
+                oneiron::TimeRange { start: 1, end: 1 },
+                1,
+                b"subject",
+            )
+            .expect("seed subject");
+        seed_active_claim(&server, old, subject, "osaka", 100);
+        seed_active_claim(&server, new, subject, "tokyo", 200);
+        server
+            .vault
+            .supersede_claim(&new, &old, 777)
+            .expect("supersede claim");
+
+        let path = format!("/v1/core/memory/{}/timeline?view=full", new.to_hex());
+        let (status, body) = route_json(
+            server,
+            Request::builder()
+                .uri(path)
+                .body(Body::empty())
+                .expect("timeline request"),
+        )
+        .await;
+
+        assert_eq!(status, StatusCode::OK, "{body:#}");
+        assert_eq!(body["anchor_id"], Value::from(new.to_hex()));
+        let records = body["records"].as_array().expect("timeline records");
+        assert_eq!(records.len(), 2, "{body:#}");
+        assert_eq!(records[0]["id"], Value::from(old.to_hex()));
+        assert_eq!(records[0]["state"], Value::from("superseded"));
+        assert_eq!(records[0]["occurred_start"], Value::from(100_u64));
+        assert_eq!(records[0]["occurred_end"], Value::from(777_u64));
+        assert_eq!(
+            records[0]["superseded_by"],
+            Value::Array(vec![Value::from(new.to_hex())])
+        );
+        assert_eq!(records[1]["id"], Value::from(new.to_hex()));
+        assert_eq!(records[1]["state"], Value::from("live"));
+        assert_eq!(
+            records[1]["supersedes"],
+            Value::Array(vec![Value::from(old.to_hex())])
+        );
+    }
+
+    #[tokio::test]
+    async fn v1_core_memory_verbs_resolve_aliases_to_typed_operations() {
+        let (_dir, server) = test_server();
+        let remembered = seeded_test_entity_id(0x1261_0200);
+        let remember_request = json!({
+            "entity": {
+                "id": remembered.to_hex(),
+                "entity_type": ENTITY_TYPE_TURN,
+                "learned_at": 300_u64,
+                "occurred_start": 300_u64,
+                "occurred_end": 300_u64,
+                "body": {
+                    "txt": "memory verb remembered turn",
+                    "spkr": "user",
+                    "at": 300_u64
+                },
+                "text": [{ "field": "body", "value": "memory verb remembered turn" }]
+            }
+        });
+        let (remember_status, remember_body) = route_json(
+            server.clone(),
+            json_request("POST", "/v1/core/memory/verbs/remember", remember_request),
+        )
+        .await;
+        assert_eq!(remember_status, StatusCode::OK, "{remember_body:#}");
+        assert_eq!(remember_body["verb"], Value::from("remember"));
+        assert_eq!(remember_body["operation"], Value::from("put_entity"));
+        assert_eq!(
+            remember_body["entity"]["id"],
+            Value::from(remembered.to_hex())
+        );
+
+        let subject = seeded_test_entity_id(0x1261_0201);
+        let old = seeded_test_entity_id(0x1261_0202);
+        let new = seeded_test_entity_id(0x1261_0203);
+        let retractable = seeded_test_entity_id(0x1261_0204);
+        server
+            .vault
+            .put_entity(
+                &subject,
+                oneiron::types::ENTITY_TYPE_PERSON,
+                oneiron::TimeRange { start: 1, end: 1 },
+                1,
+                b"subject",
+            )
+            .expect("seed subject");
+        seed_active_claim(&server, old, subject, "before", 310);
+        seed_active_claim(&server, new, subject, "after", 320);
+        seed_active_claim(&server, retractable, subject, "withdraw", 330);
+
+        let (replace_status, replace_body) = route_json(
+            server.clone(),
+            json_request(
+                "POST",
+                "/v1/core/memory/verbs/replace",
+                json!({
+                    "new_id": new.to_hex(),
+                    "old_id": old.to_hex(),
+                    "at": 900_u64
+                }),
+            ),
+        )
+        .await;
+        assert_eq!(replace_status, StatusCode::OK, "{replace_body:#}");
+        assert_eq!(replace_body["verb"], Value::from("supersede"));
+        assert_eq!(replace_body["operation"], Value::from("supersede_claim"));
+        assert_eq!(replace_body["new_id"], Value::from(new.to_hex()));
+        assert_eq!(replace_body["old_id"], Value::from(old.to_hex()));
+
+        let (withdraw_status, withdraw_body) = route_json(
+            server.clone(),
+            json_request(
+                "POST",
+                "/v1/core/memory/verbs/withdraw",
+                json!({
+                    "id": retractable.to_hex(),
+                    "at": 901_u64
+                }),
+            ),
+        )
+        .await;
+        assert_eq!(withdraw_status, StatusCode::OK, "{withdraw_body:#}");
+        assert_eq!(withdraw_body["verb"], Value::from("retract"));
+        assert_eq!(withdraw_body["operation"], Value::from("retract_claim"));
+        assert_eq!(withdraw_body["id"], Value::from(retractable.to_hex()));
+
+        let (soft_gdpr_status, soft_gdpr_body) = route_json(
+            server.clone(),
+            json_request(
+                "POST",
+                "/v1/core/memory/verbs/delete",
+                json!({
+                    "id": remembered.to_hex(),
+                    "reason": "gdpr_delete"
+                }),
+            ),
+        )
+        .await;
+        assert_eq!(soft_gdpr_status, StatusCode::BAD_REQUEST);
+        assert_error_envelope(&soft_gdpr_body, "BAD_REQUEST");
+
+        let (soft_hard_status, soft_hard_body) = route_json(
+            server.clone(),
+            json_request(
+                "POST",
+                "/v1/core/memory/verbs/delete",
+                json!({
+                    "id": remembered.to_hex(),
+                    "reason": "user_hard_delete"
+                }),
+            ),
+        )
+        .await;
+        assert_eq!(soft_hard_status, StatusCode::BAD_REQUEST);
+        assert_error_envelope(&soft_hard_body, "BAD_REQUEST");
+
+        let (delete_at_status, delete_at_body) = route_json(
+            server.clone(),
+            json_request(
+                "POST",
+                "/v1/core/memory/verbs/delete",
+                json!({
+                    "id": remembered.to_hex(),
+                    "at": 902_u64
+                }),
+            ),
+        )
+        .await;
+        assert_eq!(delete_at_status, StatusCode::BAD_REQUEST);
+        assert_error_envelope(&delete_at_body, "BAD_REQUEST");
+
+        let (hard_user_status, hard_user_body) = route_json(
+            server.clone(),
+            json_request(
+                "POST",
+                "/v1/core/memory/verbs/hard_delete",
+                json!({
+                    "id": remembered.to_hex(),
+                    "reason": "user_delete"
+                }),
+            ),
+        )
+        .await;
+        assert_eq!(hard_user_status, StatusCode::BAD_REQUEST);
+        assert_error_envelope(&hard_user_body, "BAD_REQUEST");
+
+        let (forget_status, forget_body) = route_json(
+            server.clone(),
+            json_request(
+                "POST",
+                "/v1/core/memory/verbs/forget",
+                json!({ "id": remembered.to_hex() }),
+            ),
+        )
+        .await;
+        assert_eq!(forget_status, StatusCode::OK, "{forget_body:#}");
+        assert_eq!(forget_body["verb"], Value::from("delete"));
+        assert_eq!(forget_body["operation"], Value::from("delete_entity"));
+        assert_eq!(forget_body["delete"]["existed"], Value::from(true));
+        assert_eq!(forget_body["delete"]["reason"], Value::from("user_delete"));
+        assert_eq!(forget_body["delete"]["hard"], Value::from(false));
+        assert!(forget_body.get("at").is_none());
+
+        let deleted_path = format!("/v1/core/memory/{}/timeline", remembered.to_hex());
+        let (timeline_status, timeline_body) = route_json(
+            server,
+            Request::builder()
+                .uri(deleted_path)
+                .body(Body::empty())
+                .expect("deleted timeline request"),
+        )
+        .await;
+        assert_eq!(timeline_status, StatusCode::OK, "{timeline_body:#}");
+        let records = timeline_body["records"].as_array().expect("records");
+        assert_eq!(records.len(), 1, "{timeline_body:#}");
+        assert_eq!(records[0]["id"], Value::from(remembered.to_hex()));
+        assert_eq!(records[0]["state"], Value::from("deleted"));
+        assert_eq!(records[0]["deletion"]["reason"], Value::from("user_delete"));
+        assert!(records[0].get("item").is_none());
     }
 
     #[tokio::test]
