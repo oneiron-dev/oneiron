@@ -181,6 +181,17 @@ pub fn admit_imported_evidence_claim(
     claim: &NormalizedIngestClaim,
     admission: ImportedEvidenceAdmission,
 ) -> crate::Result<()> {
+    if admission.source_id.trim().is_empty() {
+        return Err(crate::error::Error::InvalidClaimBody(
+            "imported evidence missing source_id",
+        ));
+    }
+    if claim.source_record_id.trim().is_empty() {
+        return Err(crate::error::Error::InvalidClaimBody(
+            "imported evidence missing source_record_id",
+        ));
+    }
+
     let imported_evidence = imported_evidence_value(&admission.source_id, &claim.source_record_id);
     let candidate = ClaimCandidate::new(
         claim.predicate.clone(),
@@ -759,6 +770,58 @@ mod tests {
             evidence_field(candidate_evidence, "source_record_id").and_then(MsgpackValue::as_str),
             Some("turn-001")
         );
+        Ok(())
+    }
+
+    #[test]
+    fn imported_evidence_rejects_blank_source_id_before_persistence() -> crate::Result<()> {
+        let (_tmp, vault) = temp_vault();
+        let actor = test_id(0x51);
+        let subject = test_id(0x52);
+        let claim_id = test_id(0x53);
+        put_actor_and_subject(&vault, &actor, &subject);
+        let mut admission = proposed_admission(claim_id, subject, actor);
+        admission.source_id = " \t\n".to_owned();
+
+        let err = admit_imported_evidence_claim(&vault, &normalized_imported_claim(), admission)
+            .expect_err("blank source_id must fail before persistence");
+
+        assert!(
+            matches!(
+                err,
+                Error::InvalidClaimBody("imported evidence missing source_id")
+            ),
+            "expected InvalidClaimBody for blank source_id, got {err:?}"
+        );
+        assert!(vault.get_raw(&claim_id)?.is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn imported_evidence_rejects_blank_source_record_id_before_persistence() -> crate::Result<()> {
+        let (_tmp, vault) = temp_vault();
+        let actor = test_id(0x61);
+        let subject = test_id(0x62);
+        let claim_id = test_id(0x63);
+        put_actor_and_subject(&vault, &actor, &subject);
+        let mut claim = normalized_imported_claim();
+        claim.source_record_id = " \t\n".to_owned();
+
+        let err = admit_imported_evidence_claim(
+            &vault,
+            &claim,
+            proposed_admission(claim_id, subject, actor),
+        )
+        .expect_err("blank source_record_id must fail before persistence");
+
+        assert!(
+            matches!(
+                err,
+                Error::InvalidClaimBody("imported evidence missing source_record_id")
+            ),
+            "expected InvalidClaimBody for blank source_record_id, got {err:?}"
+        );
+        assert!(vault.get_raw(&claim_id)?.is_none());
         Ok(())
     }
 
