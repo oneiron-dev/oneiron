@@ -1024,6 +1024,7 @@ where
         }
     }
 
+    collapse_lexical_query_hint_scores(store, rtxn, &mut scores)?;
     apply_recency_blend(store, rtxn, options.recency, &mut scores)?;
 
     let mut ranked: Vec<(EntityId, f64)> = scores.into_iter().collect();
@@ -1048,6 +1049,54 @@ fn compute_avgdl(store: &Store, rtxn: &RoTxn<'_>, field_id: u16) -> Result<f64> 
         return Ok(0.0);
     }
     Ok(total_length as f64 / f64::from(doc_count))
+}
+
+fn collapse_lexical_query_hint_scores(
+    store: &Store,
+    rtxn: &RoTxn<'_>,
+    scores: &mut HashMap<EntityId, f64>,
+) -> Result<()> {
+    let mut collapsed = HashMap::<EntityId, f64>::with_capacity(scores.len());
+    for (id, score) in scores.drain() {
+        let target = resolve_lexical_query_hint_target(store, rtxn, &id)?.unwrap_or(id);
+        match collapsed.entry(target) {
+            Entry::Occupied(mut entry) => {
+                if score > *entry.get() {
+                    *entry.get_mut() = score;
+                }
+            }
+            Entry::Vacant(entry) => {
+                entry.insert(score);
+            }
+        }
+    }
+    *scores = collapsed;
+    Ok(())
+}
+
+fn resolve_lexical_query_hint_target(
+    store: &Store,
+    rtxn: &RoTxn<'_>,
+    id: &EntityId,
+) -> Result<Option<EntityId>> {
+    if !id
+        .as_bytes()
+        .starts_with(&crate::claim::LEXICAL_QUERY_HINT_ID_PREFIX)
+    {
+        return Ok(None);
+    }
+    let Some(raw) = store.entities.get(rtxn, id.as_bytes())? else {
+        return Ok(None);
+    };
+    let Some(header) = EntityMetadataHeader::parse(raw) else {
+        return Err(corrupted("entity header"));
+    };
+    if header.entity_type != crate::types::ENTITY_TYPE_CLAIM {
+        return Ok(None);
+    }
+    let body =
+        crate::claim::decode_claim_body(&raw[crate::batch::ENTITY_METADATA_HEADER_LEN..], true)?;
+    crate::claim::lexical_query_hint_target(&body)
 }
 
 // === Encoders / decoders ===
