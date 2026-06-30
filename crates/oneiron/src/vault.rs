@@ -15,7 +15,7 @@ use xxhash_rust::xxh3::xxh3_128;
 use crate::analyzer::{AnalyzerChannel, AnalyzerManifest, AnalyzerMode, MultilingualAnalyzer};
 use crate::batch::{
     BatchOp, ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader, apply_ops, deindex_entity,
-    delete_from_phonetic_postings,
+    delete_from_phonetic_postings, encode_short_id_forward_key,
 };
 use crate::claim::{
     ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject,
@@ -459,6 +459,19 @@ fn signal_after_header_read() {
 #[cfg(not(test))]
 #[inline(always)]
 fn signal_after_header_read() {}
+
+/// Result of resolving a context-pack short reference.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HydratedShortId {
+    /// Entity id referenced by the short-id row.
+    pub id: EntityId,
+    /// Numeric entity type from the entity header, or zero for a dangling row.
+    pub entity_type: u8,
+    /// Entity learned-at timestamp from the header, or zero for a dangling row.
+    pub learned_at: u64,
+    /// Entity body bytes. `None` means a deleted shell or dangling row.
+    pub body: Option<Vec<u8>>,
+}
 
 /// Main vault API wrapping LMDB storage and configuration.
 pub struct Vault {
@@ -3619,6 +3632,57 @@ impl Vault {
             .entities
             .get(rtxn, id.as_bytes())?
             .map(|bytes| bytes.to_vec()))
+    }
+
+    /// Resolves a context-pack short reference to a live or soft-deleted entity.
+    ///
+    /// The caller supplies the parsed short id and one-byte content hash from
+    /// the public `short_id:hash` form. `Ok(None)` means no short-id row exists.
+    /// `Ok(Some(result))` with `result.body == None` means the short id resolves
+    /// to a deleted shell or dangling row; a live entity returns its body bytes.
+    pub fn hydrate_short_id(
+        &self,
+        short_id: &str,
+        content_hash: u8,
+    ) -> Result<Option<HydratedShortId>> {
+        let rtxn = self.store.env.read_txn()?;
+        let forward_key = encode_short_id_forward_key(short_id, content_hash);
+        let Some(raw_id) = self.store.short_ids.get(&rtxn, &forward_key)? else {
+            return Ok(None);
+        };
+        require_key_len(raw_id, ENTITY_ID_LEN, "short id entity id")?;
+        let id = EntityId::from_bytes(
+            raw_id
+                .try_into()
+                .map_err(|_| Error::CorruptedIndex("short id entity id"))?,
+        )
+        .map_err(|_| Error::CorruptedIndex("short id entity id"))?;
+
+        let Some(raw) = self.store.entities.get(&rtxn, id.as_bytes())? else {
+            return Ok(Some(HydratedShortId {
+                id,
+                entity_type: 0,
+                learned_at: 0,
+                body: None,
+            }));
+        };
+        let header =
+            EntityMetadataHeader::parse(raw).ok_or(Error::CorruptedIndex("entity header"))?;
+        if raw.len() == ENTITY_METADATA_HEADER_LEN {
+            return Ok(Some(HydratedShortId {
+                id,
+                entity_type: header.entity_type,
+                learned_at: header.learned_at,
+                body: None,
+            }));
+        }
+
+        Ok(Some(HydratedShortId {
+            id,
+            entity_type: header.entity_type,
+            learned_at: header.learned_at,
+            body: Some(raw[ENTITY_METADATA_HEADER_LEN..].to_vec()),
+        }))
     }
 
     // ─── Tree Query API ───────────────────────────────────────

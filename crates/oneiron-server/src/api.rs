@@ -18,7 +18,9 @@ use axum::{Router, middleware};
 use oneiron::{
     EdgeKind, ErrorKind, NotificationItem, ResumeBudget, ResumeBundle, SessionContext,
     UnprocessedItem, Vad, VadAnnotation, VadAnnotationSource,
-    types::{ENTITY_TYPE_MESSAGE, ENTITY_TYPE_NOTIFICATION, ENTITY_TYPE_TURN},
+    types::{
+        ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_MESSAGE, ENTITY_TYPE_NOTIFICATION, ENTITY_TYPE_TURN,
+    },
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -56,6 +58,8 @@ const SKILL_PACK_RESOLUTION: &str = "Resolve endpoint against the same origin us
 const CONTEXT_PACK_FEATURE: &str = "context-pack HTTP endpoint";
 const EFFECTIVE_AUTH_SCOPES: &[&str] = &[
     "core:discover",
+    "core:read",
+    "core:write",
     "vault:read",
     "search:read",
     "entity:read",
@@ -69,6 +73,12 @@ const EFFECTIVE_AUTH_SCOPES: &[&str] = &[
 ];
 const CAPABILITIES: &[&str] = &[
     "core.discover",
+    "core.batch",
+    "core.query",
+    "core.context_pack",
+    "core.hydrate",
+    "core.conversations",
+    "core.turns",
     "health.capabilities",
     "skills_pack.fetch",
     "search.vector",
@@ -90,6 +100,8 @@ const CAPABILITY_MODES: &[&str] = &["flash", "thinking", "pro", "ultra"];
 // hydration bounded by returning pending notifications from a latest window.
 const RESUME_NOTIFICATION_LIMIT: usize = 128;
 const RESUME_NOTIFICATION_SCAN_LIMIT: usize = 4096;
+const CORE_MAX_BATCH_ENTITIES: usize = 256;
+const CORE_MAX_LIST_LIMIT: usize = 1000;
 
 #[derive(OpenApi)]
 #[openapi(
@@ -102,6 +114,15 @@ const RESUME_NOTIFICATION_SCAN_LIMIT: usize = 4096;
         search_text,
         get_entity,
         get_edges,
+        core_batch,
+        core_query,
+        core_hydrate,
+        core_context_pack,
+        list_core_conversations,
+        create_core_conversation,
+        list_core_conversation_turns,
+        create_core_conversation_turn,
+        get_core_turn,
         annotate_turn_vad,
         read_turn_vad_annotation,
         context_pack,
@@ -141,6 +162,25 @@ const RESUME_NOTIFICATION_SCAN_LIMIT: usize = 4096;
         SearchResult,
         TextSearchQuery,
         EdgeResult,
+        CoreBatchRequest,
+        CoreBatchEntityInput,
+        CoreBatchEntityResult,
+        CoreBatchResponse,
+        CoreTextField,
+        CoreQueryRequest,
+        CoreHydrateRequest,
+        CoreHydrateResponse,
+        CoreHydrateStatus,
+        CoreContextPackRequest,
+        CoreContextPackResponse,
+        CoreContextEntity,
+        CoreContextEdge,
+        CoreContextPackStats,
+        CoreContextPackItemAccounting,
+        CoreListQuery,
+        CoreCreateEntityRequest,
+        CoreCreateTurnRequest,
+        CoreEntityWriteResponse,
         VadPayload,
         TurnVadAnnotationSource,
         TurnVadAnnotateRequest,
@@ -181,12 +221,27 @@ pub(crate) fn api_routes(server: Arc<SyncServer>) -> Router {
             idempotency_middleware,
         ));
     let core_mutation_routes = Router::new()
+        .route("/batch", post(core_batch))
+        .route("/conversations", post(create_core_conversation))
+        .route(
+            "/conversations/{conversation_id}/turns",
+            post(create_core_conversation_turn),
+        )
         .route("/turns/annotate", post(annotate_turn_vad))
         .route_layer(middleware::from_fn_with_state(
             idempotency,
             idempotency_middleware,
         ));
     let core_routes = Router::new()
+        .route("/query", post(core_query))
+        .route("/context-pack", post(core_context_pack))
+        .route("/hydrate", post(core_hydrate))
+        .route("/conversations", get(list_core_conversations))
+        .route(
+            "/conversations/{conversation_id}/turns",
+            get(list_core_conversation_turns),
+        )
+        .route("/turns/{turn_id}", get(get_core_turn))
         .route("/turns/annotate", get(read_turn_vad_annotation))
         .merge(core_mutation_routes);
 
@@ -355,6 +410,66 @@ fn fill_schema_description_gaps(spec: &mut Value) {
         "view",
         "Optional projection view for returned items. Defaults to summary.",
     );
+    set_schema_property_description(
+        spec,
+        "CoreQueryRequest",
+        "view",
+        "Optional projection view for returned items. Defaults to summary.",
+    );
+    set_schema_property_description(
+        spec,
+        "CoreHydrateRequest",
+        "view",
+        "Optional projection view for the hydrated live entity. Defaults to full.",
+    );
+    set_schema_property_description(
+        spec,
+        "CoreContextPackRequest",
+        "view",
+        "Optional field profile for hydrated context-pack fields. Defaults to standard.",
+    );
+    set_schema_property_description(
+        spec,
+        "CoreListQuery",
+        "view",
+        "Optional projection view for returned entities. Defaults to summary.",
+    );
+    set_schema_property_description(
+        spec,
+        "CoreHydrateResponse",
+        "item",
+        "Projected live entity; omitted when the short ref resolves to a deleted entity.",
+    );
+    set_schema_property_description(
+        spec,
+        "CoreContextEdge",
+        "vad",
+        "Optional edge VAD payload for semantic edges.",
+    );
+    set_schema_property_description(
+        spec,
+        "CoreContextEntity",
+        "fields",
+        "Hydrated entity fields when requested.",
+    );
+    set_schema_property_description(
+        spec,
+        "CoreContextEntity",
+        "edges",
+        "Hydrated outbound edges when requested.",
+    );
+    set_schema_property_description(
+        spec,
+        "CoreContextEntity",
+        "vector",
+        "Stored vector when requested and present.",
+    );
+    set_schema_property_description(
+        spec,
+        "CoreContextPackResponse",
+        "empty",
+        "Structured empty-result context when no entities surface.",
+    );
 }
 
 fn set_schema_property_description(
@@ -441,6 +556,15 @@ fn add_security_scheme(spec: &mut Value) {
     }
 
     for (path, method) in [
+        ("/v1/core/query", "post"),
+        ("/v1/core/context-pack", "post"),
+        ("/v1/core/hydrate", "post"),
+        ("/v1/core/conversations", "get"),
+        ("/v1/core/conversations", "post"),
+        ("/v1/core/conversations/{conversation_id}/turns", "get"),
+        ("/v1/core/conversations/{conversation_id}/turns", "post"),
+        ("/v1/core/turns/{turn_id}", "get"),
+        ("/v1/core/batch", "post"),
         ("/v1/core/turns/annotate", "get"),
         ("/v1/core/turns/annotate", "post"),
     ] {
@@ -2001,6 +2125,1290 @@ struct EdgeResult {
     created_at: u64,
 }
 
+// ─── Core API parity routes ─────────────────────────────────────────────────
+
+/// One text-index field to write alongside an entity body in a core batch.
+#[derive(Debug, Deserialize, ToSchema)]
+struct CoreTextField {
+    /// Text index field name.
+    #[schema(example = "body")]
+    field: String,
+    /// Text value to index for this field.
+    #[schema(example = "blue hallway door")]
+    value: String,
+}
+
+/// Entity put operation accepted by the canonical core batch route.
+#[derive(Debug, Deserialize, ToSchema)]
+#[schema(example = json!({
+    "id": "0123456789abcdef0123456789abcdef",
+    "entity_type": 1,
+    "occurred_start": 1782357600_u64,
+    "occurred_end": 1782357600_u64,
+    "learned_at": 1782357635_u64,
+    "body": {
+        "txt": "I saw a blue hallway door.",
+        "spkr": "user",
+        "at": 1782357600_u64
+    },
+    "text": [{ "field": "body", "value": "blue hallway door" }]
+}))]
+struct CoreBatchEntityInput {
+    /// Optional hex entity id. When omitted, the server generates an id.
+    #[serde(default)]
+    #[schema(example = "0123456789abcdef0123456789abcdef")]
+    id: Option<String>,
+    /// Numeric entity type byte.
+    #[serde(rename = "entity_type", alias = "entityType")]
+    #[schema(example = 1)]
+    entity_type: u8,
+    /// Occurrence start timestamp in Unix seconds. Defaults to `learned_at` or current server time.
+    #[serde(default, rename = "occurred_start", alias = "occurredStart")]
+    #[schema(example = 1782357600_u64)]
+    occurred_start: Option<u64>,
+    /// Occurrence end timestamp in Unix seconds. Defaults to `occurred_start`.
+    #[serde(default, rename = "occurred_end", alias = "occurredEnd")]
+    #[schema(example = 1782357600_u64)]
+    occurred_end: Option<u64>,
+    /// Learned-at timestamp in Unix seconds. Defaults to current server time.
+    #[serde(default, rename = "learned_at", alias = "learnedAt")]
+    #[schema(example = 1782357635_u64)]
+    learned_at: Option<u64>,
+    /// JSON body encoded into the vault's msgpack entity payload.
+    #[schema(value_type = Object, example = json!({"txt": "I saw a blue hallway door."}))]
+    body: Value,
+    /// Optional explicit text index fields. When omitted, top-level string body fields are indexed.
+    #[serde(default)]
+    text: Option<Vec<CoreTextField>>,
+}
+
+/// Core batch request envelope.
+#[derive(Debug, Deserialize, ToSchema)]
+#[schema(example = json!({
+    "entities": [{
+        "entity_type": 1,
+        "body": { "txt": "Blue hallway door", "spkr": "user", "at": 1782357600_u64 }
+    }]
+}))]
+struct CoreBatchRequest {
+    /// Entity put operations to commit atomically.
+    entities: Vec<CoreBatchEntityInput>,
+}
+
+/// Entity write summary returned by core write routes.
+#[derive(Debug, Serialize, ToSchema)]
+struct CoreBatchEntityResult {
+    /// Hex-encoded entity id written by the batch.
+    #[schema(example = "0123456789abcdef0123456789abcdef")]
+    id: String,
+    /// Numeric entity type byte.
+    #[schema(example = 1)]
+    entity_type: u8,
+}
+
+/// Core batch response envelope.
+#[derive(Debug, Serialize, ToSchema)]
+struct CoreBatchResponse {
+    /// Number of entity puts committed.
+    #[schema(example = 1)]
+    count: usize,
+    /// Entity ids written by the batch.
+    entities: Vec<CoreBatchEntityResult>,
+}
+
+/// Unified core query request over existing text/vector retrieval APIs.
+#[derive(Debug, Deserialize, ToSchema)]
+#[schema(example = json!({
+    "query": "blue hallway",
+    "query_vector": [0.1, 0.2, 0.3, 0.4],
+    "limit": 10,
+    "view": "summary",
+    "countMode": "estimate"
+}))]
+struct CoreQueryRequest {
+    /// Optional BM25 text query.
+    #[serde(default)]
+    #[schema(example = "blue hallway")]
+    query: Option<String>,
+    /// Optional vector query. If supplied with `query`, the retrieval pipeline combines signals.
+    #[serde(default, rename = "query_vector", alias = "queryVector")]
+    #[schema(example = json!([0.1, 0.2, 0.3, 0.4]))]
+    query_vector: Option<Vec<f32>>,
+    /// Maximum result count.
+    #[serde(default = "default_limit")]
+    #[schema(default = default_limit, example = 10)]
+    limit: usize,
+    /// Projection view for returned entities. Defaults to summary.
+    #[serde(default)]
+    #[schema(example = "summary")]
+    view: Option<View>,
+    /// Count precision for response metadata. Query defaults to estimate.
+    #[serde(
+        default = "CountMode::default_estimate",
+        rename = "countMode",
+        alias = "count_mode"
+    )]
+    #[schema(example = "estimate")]
+    count_mode: CountMode,
+}
+
+/// Short-id hydrate request.
+#[derive(Debug, Deserialize, ToSchema)]
+#[schema(example = json!({
+    "ref": "tn1:a7",
+    "view": "full"
+}))]
+struct CoreHydrateRequest {
+    /// Canonical short reference in `shortId:contentHashHex` form.
+    #[serde(default, rename = "ref", alias = "short_ref", alias = "shortRef")]
+    #[schema(example = "tn1:a7")]
+    reference: Option<String>,
+    /// Short id without the content hash, accepted when `content_hash` is also supplied.
+    #[serde(default, rename = "short_id", alias = "shortId")]
+    #[schema(example = "tn1")]
+    short_id: Option<String>,
+    /// Two-hex-digit content hash, accepted when `short_id` is also supplied.
+    #[serde(default, rename = "content_hash", alias = "contentHash")]
+    #[schema(example = "a7")]
+    content_hash: Option<String>,
+    /// Projection view for live entities. Defaults to full.
+    #[serde(default)]
+    #[schema(example = "full")]
+    view: Option<View>,
+}
+
+/// Short-id hydrate status.
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+enum CoreHydrateStatus {
+    /// The short ref resolved to a live entity payload.
+    Live,
+    /// The short ref resolved to a deleted shell or dangling short-id row.
+    Deleted,
+}
+
+/// Short-id hydrate response.
+#[derive(Debug, Serialize, ToSchema)]
+struct CoreHydrateResponse {
+    /// Hydrate state for the resolved short ref.
+    status: CoreHydrateStatus,
+    /// Requested short id without content hash.
+    #[serde(rename = "short_id")]
+    #[schema(example = "tn1")]
+    short_id: String,
+    /// Requested content hash as two lowercase hex digits.
+    #[serde(rename = "content_hash")]
+    #[schema(example = "a7")]
+    content_hash: String,
+    /// Hex entity id when the short ref resolves.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(example = "0123456789abcdef0123456789abcdef")]
+    id: Option<String>,
+    /// Numeric entity type byte when the entity header is still present.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(example = 1)]
+    entity_type: Option<u8>,
+    /// Projected live entity. Omitted for deleted refs.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(value_type = Option<Object>)]
+    item: Option<Value>,
+}
+
+/// Context-pack request on the canonical core route.
+#[derive(Debug, Deserialize, ToSchema)]
+#[schema(example = json!({
+    "query": "blue hallway",
+    "limit": 10,
+    "include_edges": true,
+    "edge_hop": 1,
+    "view": "full"
+}))]
+struct CoreContextPackRequest {
+    /// Optional BM25 text query.
+    #[serde(default)]
+    #[schema(example = "blue hallway")]
+    query: Option<String>,
+    /// Optional vector query.
+    #[serde(default, rename = "query_vector", alias = "queryVector")]
+    #[schema(example = json!([0.1, 0.2, 0.3, 0.4]))]
+    query_vector: Option<Vec<f32>>,
+    /// Maximum primary candidates to retrieve.
+    #[serde(default = "default_limit")]
+    #[schema(default = default_limit, example = 10)]
+    limit: usize,
+    /// Whether to include hydrated fields. Defaults to true.
+    #[serde(default = "default_true")]
+    #[schema(default = default_true, example = true)]
+    hydrate: bool,
+    /// Whether to include edge records in hydrated entities.
+    #[serde(default, rename = "include_edges", alias = "includeEdges")]
+    #[schema(example = true)]
+    include_edges: bool,
+    /// Edge expansion depth for neighbor hydration.
+    #[serde(default, rename = "edge_hop", alias = "edgeHop")]
+    #[schema(example = 1)]
+    edge_hop: u32,
+    /// Maximum neighbors to hydrate during edge expansion.
+    #[serde(
+        default = "default_context_neighbors",
+        rename = "max_neighbors",
+        alias = "maxNeighbors"
+    )]
+    #[schema(default = default_context_neighbors, example = 50)]
+    max_neighbors: usize,
+    /// Whether to include vectors in hydrated entities.
+    #[serde(default, rename = "include_vectors", alias = "includeVectors")]
+    #[schema(example = false)]
+    include_vectors: bool,
+    /// Field profile for hydrated fields. Defaults to standard.
+    #[serde(default)]
+    #[schema(example = "standard")]
+    view: Option<View>,
+}
+
+/// Hydrated context edge.
+#[derive(Debug, Serialize, ToSchema)]
+struct CoreContextEdge {
+    /// Numeric edge-kind discriminant.
+    #[schema(example = 1)]
+    kind: u8,
+    /// Hex target entity id.
+    #[schema(example = "fedcba9876543210fedcba9876543210")]
+    target: String,
+    /// Target short id when the target is present in the same context pack.
+    #[serde(rename = "target_short_id", skip_serializing_if = "Option::is_none")]
+    #[schema(example = "tn2")]
+    target_short_id: Option<String>,
+    /// Edge weight.
+    #[schema(example = 1.0)]
+    weight: f32,
+    /// Edge creation timestamp in Unix seconds.
+    #[schema(example = 1782357635_u64)]
+    created_at: u64,
+    /// Optional edge VAD payload.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    vad: Option<VadPayload>,
+}
+
+/// Hydrated context entity.
+#[derive(Debug, Serialize, ToSchema)]
+struct CoreContextEntity {
+    /// Hex entity id.
+    #[schema(example = "0123456789abcdef0123456789abcdef")]
+    id: String,
+    /// Short id allocated by the vault, or hex fallback when no short id exists.
+    #[serde(rename = "short_id")]
+    #[schema(example = "tn1")]
+    short_id: String,
+    /// One-byte content hash as two lowercase hex digits.
+    #[serde(rename = "content_hash")]
+    #[schema(example = "a7")]
+    content_hash: String,
+    /// Numeric entity type byte.
+    #[schema(example = 1)]
+    entity_type: u8,
+    /// Retrieval score.
+    #[schema(example = 0.87)]
+    score: f32,
+    /// Hydrated fields when requested.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(value_type = Option<Object>)]
+    fields: Option<BTreeMap<String, Value>>,
+    /// Hydrated edges when requested.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    edges: Option<Vec<CoreContextEdge>>,
+    /// Stored vector when requested and present.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    vector: Option<Vec<f32>>,
+}
+
+/// Context-pack item accounting.
+#[derive(Debug, Serialize, ToSchema)]
+struct CoreContextPackItemAccounting {
+    /// Number of items affected.
+    #[schema(example = 0)]
+    count: usize,
+    /// Accounting reason.
+    #[schema(example = "token_budget")]
+    reason: String,
+}
+
+/// Context-pack stats.
+#[derive(Debug, Serialize, ToSchema)]
+struct CoreContextPackStats {
+    /// Candidate count considered by the pack.
+    #[schema(example = 1)]
+    candidates_considered: usize,
+    /// Retrieval signals used.
+    signals_used: Vec<String>,
+    /// Query execution duration in microseconds.
+    #[schema(example = 1000_u64)]
+    query_time_us: u64,
+    /// Primary entities hydrated.
+    #[schema(example = 1)]
+    entities_hydrated: usize,
+    /// Neighbor entities hydrated.
+    #[schema(example = 0)]
+    neighbors_hydrated: usize,
+    /// Vector-only candidates dampened by cosine-ghost suppression.
+    #[schema(example = 0)]
+    cosine_ghosts_dampened: usize,
+    /// Claims suppressed by read-path gates.
+    #[schema(example = 0)]
+    claims_suppressed: usize,
+    /// Item truncation accounting.
+    items_truncated: CoreContextPackItemAccounting,
+    /// Item drop accounting.
+    items_dropped: CoreContextPackItemAccounting,
+}
+
+/// Context-pack response envelope.
+#[derive(Debug, Serialize, ToSchema)]
+struct CoreContextPackResponse {
+    /// Primary hydrated retrieval results.
+    results: Vec<CoreContextEntity>,
+    /// Neighbor entities hydrated through edge expansion.
+    neighbors: Vec<CoreContextEntity>,
+    /// Retrieval and hydration stats.
+    stats: CoreContextPackStats,
+    /// Empty-result context when no entities surface.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(value_type = Option<Object>)]
+    empty: Option<Value>,
+}
+
+/// Query parameters for core list endpoints.
+#[derive(Debug, Deserialize, ToSchema, IntoParams)]
+#[into_params(parameter_in = Query)]
+struct CoreListQuery {
+    /// Maximum number of entities to return.
+    #[serde(default = "default_limit")]
+    #[schema(default = default_limit, example = 10)]
+    #[param(default = 10, example = 10)]
+    limit: usize,
+    /// Optional exclusive cursor id for entity-type scans.
+    #[serde(default)]
+    #[schema(example = "0123456789abcdef0123456789abcdef")]
+    #[param(example = "0123456789abcdef0123456789abcdef")]
+    after: Option<String>,
+    /// Projection view. Defaults to summary.
+    #[serde(default)]
+    #[schema(example = "summary")]
+    #[param(example = "summary")]
+    view: Option<View>,
+    /// Count precision for response metadata. List endpoints default to exact.
+    #[serde(default, rename = "countMode", alias = "count_mode")]
+    #[schema(example = "exact")]
+    #[param(example = "exact")]
+    count_mode: CountMode,
+}
+
+/// Generic core entity create request.
+#[derive(Debug, Deserialize, ToSchema)]
+#[schema(example = json!({
+    "body": { "name": "Dream session" },
+    "text": [{ "field": "name", "value": "Dream session" }]
+}))]
+struct CoreCreateEntityRequest {
+    /// Optional hex entity id. When omitted, the server generates an id.
+    #[serde(default)]
+    #[schema(example = "0123456789abcdef0123456789abcdef")]
+    id: Option<String>,
+    /// Occurrence start timestamp in Unix seconds. Defaults to `learned_at` or current server time.
+    #[serde(default, rename = "occurred_start", alias = "occurredStart")]
+    #[schema(example = 1782357600_u64)]
+    occurred_start: Option<u64>,
+    /// Occurrence end timestamp in Unix seconds. Defaults to `occurred_start`.
+    #[serde(default, rename = "occurred_end", alias = "occurredEnd")]
+    #[schema(example = 1782357600_u64)]
+    occurred_end: Option<u64>,
+    /// Learned-at timestamp in Unix seconds. Defaults to current server time.
+    #[serde(default, rename = "learned_at", alias = "learnedAt")]
+    #[schema(example = 1782357635_u64)]
+    learned_at: Option<u64>,
+    /// JSON body encoded into the vault's msgpack entity payload.
+    #[schema(value_type = Object, example = json!({"name": "Dream session"}))]
+    body: Value,
+    /// Optional explicit text index fields. When omitted, top-level string body fields are indexed.
+    #[serde(default)]
+    text: Option<Vec<CoreTextField>>,
+}
+
+/// Core turn create request.
+#[derive(Debug, Deserialize, ToSchema)]
+#[schema(example = json!({
+    "body": { "txt": "I saw a blue hallway door.", "spkr": "user", "at": 1782357600_u64 },
+    "text": [{ "field": "body", "value": "I saw a blue hallway door." }]
+}))]
+struct CoreCreateTurnRequest {
+    /// Optional hex TURN id. When omitted, the server generates an id.
+    #[serde(default)]
+    #[schema(example = "0123456789abcdef0123456789abcdef")]
+    id: Option<String>,
+    /// Occurrence start timestamp in Unix seconds. Defaults to `learned_at` or current server time.
+    #[serde(default, rename = "occurred_start", alias = "occurredStart")]
+    #[schema(example = 1782357600_u64)]
+    occurred_start: Option<u64>,
+    /// Occurrence end timestamp in Unix seconds. Defaults to `occurred_start`.
+    #[serde(default, rename = "occurred_end", alias = "occurredEnd")]
+    #[schema(example = 1782357600_u64)]
+    occurred_end: Option<u64>,
+    /// Learned-at timestamp in Unix seconds. Defaults to current server time.
+    #[serde(default, rename = "learned_at", alias = "learnedAt")]
+    #[schema(example = 1782357635_u64)]
+    learned_at: Option<u64>,
+    /// JSON body encoded into the vault's msgpack TURN payload.
+    #[schema(value_type = Object, example = json!({"txt": "I saw a blue hallway door."}))]
+    body: Value,
+    /// Optional explicit text index fields. When omitted, top-level string body fields are indexed.
+    #[serde(default)]
+    text: Option<Vec<CoreTextField>>,
+}
+
+/// Response from core conversation/turn create routes.
+#[derive(Debug, Serialize, ToSchema)]
+struct CoreEntityWriteResponse {
+    /// Hex entity id written by the route.
+    #[schema(example = "0123456789abcdef0123456789abcdef")]
+    id: String,
+    /// Numeric entity type byte.
+    #[schema(example = 1)]
+    entity_type: u8,
+    /// Projected entity body after write.
+    #[schema(value_type = Object)]
+    item: Value,
+}
+
+/// Commit a core entity batch.
+#[utoipa::path(
+    post,
+    path = "/v1/core/batch",
+    request_body(content = CoreBatchRequest, content_type = "application/json"),
+    responses(
+        (status = 200, description = "Batch committed atomically.", body = CoreBatchResponse, content_type = "application/json"),
+        (status = 400, description = "Malformed batch or invalid entity body.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 401, description = "Missing or invalid core auth.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 403, description = "Core token lacks core:write.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 500, description = "Batch commit failed.", body = ApiErrorEnvelope, content_type = "application/json")
+    )
+)]
+async fn core_batch(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    payload: Result<Json<CoreBatchRequest>, JsonRejection>,
+) -> Result<Json<CoreBatchResponse>, EnvelopedApiError> {
+    auth.require(CoreScope::Write)?;
+    let req = json_payload(payload)?;
+    if req.entities.len() > CORE_MAX_BATCH_ENTITIES {
+        return Err(ApiError::bad_request(
+            format!("entities must contain at most {CORE_MAX_BATCH_ENTITIES} entries"),
+            Some("entities"),
+        )
+        .into());
+    }
+
+    let mut batch = server.vault.batch();
+    let mut entities = Vec::with_capacity(req.entities.len());
+    for entity in req.entities {
+        let id = parse_optional_entity_id(entity.id.as_deref(), "id")?;
+        let timestamps = core_entity_timestamps(
+            entity.occurred_start,
+            entity.occurred_end,
+            entity.learned_at,
+        )?;
+        batch = stage_core_entity_put(
+            batch,
+            &id,
+            entity.entity_type,
+            timestamps,
+            &entity.body,
+            entity.text.as_deref(),
+        )?;
+        entities.push(CoreBatchEntityResult {
+            id: id.to_hex(),
+            entity_type: entity.entity_type,
+        });
+    }
+
+    batch.commit().map_err(|error| {
+        tracing::error!(error = %error, "core batch commit failed");
+        core_engine_error("core batch commit failed", error)
+    })?;
+
+    Ok(Json(CoreBatchResponse {
+        count: entities.len(),
+        entities,
+    }))
+}
+
+/// Query core memory through text and/or vector retrieval.
+#[utoipa::path(
+    post,
+    path = "/v1/core/query",
+    request_body(content = CoreQueryRequest, content_type = "application/json"),
+    responses(
+        (status = 200, description = "Projected query results.", body = Object, content_type = "application/json"),
+        (status = 400, description = "Malformed query request.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 401, description = "Missing or invalid core auth.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 403, description = "Core token lacks core:read.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 500, description = "Query failed.", body = ApiErrorEnvelope, content_type = "application/json")
+    )
+)]
+async fn core_query(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    payload: Result<Json<CoreQueryRequest>, JsonRejection>,
+) -> Result<Json<SearchResponse>, EnvelopedApiError> {
+    auth.require(CoreScope::Read)?;
+    let req = json_payload(payload)?;
+    validate_core_query_seeds(req.query.as_deref(), req.query_vector.as_deref())?;
+
+    let view = req.view.unwrap_or(View::Summary);
+    let count_mode = req.count_mode.for_search_response();
+    let fetch_limit = search_fetch_limit(count_mode, req.limit);
+    let results = run_core_query(
+        &server.vault,
+        req.query.as_deref(),
+        req.query_vector.as_deref(),
+        fetch_limit,
+    )
+    .map_err(|error| {
+        tracing::error!(error = %error, "core query failed");
+        core_engine_error("core query failed", error)
+    })?;
+    let total = results.len();
+    let response = search_response(&server.vault, results, view, req.limit)?;
+    let meta = search_meta(count_mode, total);
+
+    Ok(Json(PaginatedResponse::new(response, None, meta)))
+}
+
+/// Hydrate an entity by context-pack short reference.
+#[utoipa::path(
+    post,
+    path = "/v1/core/hydrate",
+    request_body(content = CoreHydrateRequest, content_type = "application/json"),
+    responses(
+        (status = 200, description = "Short ref resolved to a live or deleted entity.", body = CoreHydrateResponse, content_type = "application/json"),
+        (status = 400, description = "Malformed short ref.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 401, description = "Missing or invalid core auth.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 403, description = "Core token lacks core:read.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 404, description = "Short ref was not found.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 500, description = "Hydrate lookup failed.", body = ApiErrorEnvelope, content_type = "application/json")
+    )
+)]
+async fn core_hydrate(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    payload: Result<Json<CoreHydrateRequest>, JsonRejection>,
+) -> Result<Json<CoreHydrateResponse>, EnvelopedApiError> {
+    auth.require(CoreScope::Read)?;
+    let req = json_payload(payload)?;
+    let (short_id, content_hash) = parse_short_ref_request(&req)?;
+    let content_hash_hex = format!("{content_hash:02x}");
+    let result = server
+        .vault
+        .hydrate_short_id(&short_id, content_hash)
+        .map_err(|error| {
+            tracing::error!(error = %error, short_id, content_hash = content_hash_hex, "core short hydrate failed");
+            core_engine_error("core short hydrate failed", error)
+        })?;
+
+    let Some(oneiron::HydratedShortId {
+        id,
+        entity_type,
+        learned_at,
+        body,
+    }) = result
+    else {
+        return Err(ApiError::not_found(
+            "short_id",
+            Some(&format!("{short_id}:{content_hash_hex}")),
+        )
+        .into());
+    };
+
+    let Some(body) = body else {
+        return Ok(Json(CoreHydrateResponse {
+            status: CoreHydrateStatus::Deleted,
+            short_id,
+            content_hash: content_hash_hex,
+            id: Some(id.to_hex()),
+            entity_type: (entity_type != 0).then_some(entity_type),
+            item: None,
+        }));
+    };
+
+    let view = req.view.unwrap_or(View::Full);
+    let item = projection::project_entity_parts(&id, entity_type, learned_at, &body, view);
+    Ok(Json(CoreHydrateResponse {
+        status: CoreHydrateStatus::Live,
+        short_id,
+        content_hash: content_hash_hex,
+        id: Some(id.to_hex()),
+        entity_type: Some(entity_type),
+        item: Some(item),
+    }))
+}
+
+/// Assemble a context pack from existing retrieval and hydration APIs.
+#[utoipa::path(
+    post,
+    path = "/v1/core/context-pack",
+    request_body(content = CoreContextPackRequest, content_type = "application/json"),
+    responses(
+        (status = 200, description = "Context pack assembled.", body = CoreContextPackResponse, content_type = "application/json"),
+        (status = 400, description = "Malformed context-pack request.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 401, description = "Missing or invalid core auth.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 403, description = "Core token lacks core:read.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 500, description = "Context-pack assembly failed.", body = ApiErrorEnvelope, content_type = "application/json")
+    )
+)]
+async fn core_context_pack(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    payload: Result<Json<CoreContextPackRequest>, JsonRejection>,
+) -> Result<Json<CoreContextPackResponse>, EnvelopedApiError> {
+    auth.require(CoreScope::Read)?;
+    let req = json_payload(payload)?;
+    validate_core_query_seeds(req.query.as_deref(), req.query_vector.as_deref())?;
+
+    let mut builder = server
+        .vault
+        .context_pack()
+        .limit(req.limit)
+        .hydrate(req.hydrate)
+        .include_edges(req.include_edges)
+        .edge_hop(req.edge_hop)
+        .max_neighbors(req.max_neighbors)
+        .include_vectors(req.include_vectors)
+        .field_profile(field_profile_for_view(req.view.unwrap_or(View::Standard)));
+    if let Some(query) = req.query.as_deref() {
+        builder = builder.search_text(query, req.limit);
+    }
+    if let Some(vector) = req.query_vector.as_deref() {
+        builder = builder.search_vector(vector, req.limit);
+    }
+
+    let pack = builder.run().map_err(|error| {
+        tracing::error!(error = %error, "core context-pack failed");
+        core_engine_error("core context-pack failed", error)
+    })?;
+
+    Ok(Json(core_context_pack_response(pack)))
+}
+
+/// List conversation entities.
+#[utoipa::path(
+    get,
+    path = "/v1/core/conversations",
+    params(CoreListQuery),
+    responses(
+        (status = 200, description = "Conversation entities.", body = Object, content_type = "application/json"),
+        (status = 400, description = "Invalid list query.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 401, description = "Missing or invalid core auth.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 403, description = "Core token lacks core:read.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 500, description = "Conversation listing failed.", body = ApiErrorEnvelope, content_type = "application/json")
+    )
+)]
+async fn list_core_conversations(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    query: Result<Query<CoreListQuery>, QueryRejection>,
+) -> Result<Json<SearchResponse>, EnvelopedApiError> {
+    auth.require(CoreScope::Read)?;
+    let params = query_params(query)?;
+    core_list_entities_by_type(&server.vault, ENTITY_TYPE_CONVERSATION, params)
+}
+
+/// Create a conversation entity.
+#[utoipa::path(
+    post,
+    path = "/v1/core/conversations",
+    request_body(content = CoreCreateEntityRequest, content_type = "application/json"),
+    responses(
+        (status = 200, description = "Conversation created.", body = CoreEntityWriteResponse, content_type = "application/json"),
+        (status = 400, description = "Malformed create request.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 401, description = "Missing or invalid core auth.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 403, description = "Core token lacks core:write.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 500, description = "Conversation create failed.", body = ApiErrorEnvelope, content_type = "application/json")
+    )
+)]
+async fn create_core_conversation(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    payload: Result<Json<CoreCreateEntityRequest>, JsonRejection>,
+) -> Result<Json<CoreEntityWriteResponse>, EnvelopedApiError> {
+    auth.require(CoreScope::Write)?;
+    let req = json_payload(payload)?;
+    write_core_entity(
+        &server.vault,
+        CoreEntityWriteInput {
+            id: req.id.as_deref(),
+            entity_type: ENTITY_TYPE_CONVERSATION,
+            occurred_start: req.occurred_start,
+            occurred_end: req.occurred_end,
+            learned_at: req.learned_at,
+            body: &req.body,
+            text: req.text.as_deref(),
+        },
+    )
+}
+
+/// List turns attached to a conversation.
+#[utoipa::path(
+    get,
+    path = "/v1/core/conversations/{conversation_id}/turns",
+    params(
+        ("conversation_id" = String, Path, description = "Hex conversation id."),
+        CoreListQuery
+    ),
+    responses(
+        (status = 200, description = "Conversation turns.", body = Object, content_type = "application/json"),
+        (status = 400, description = "Malformed conversation id or query.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 401, description = "Missing or invalid core auth.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 403, description = "Core token lacks core:read.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 404, description = "Conversation was not found.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 500, description = "Turn listing failed.", body = ApiErrorEnvelope, content_type = "application/json")
+    )
+)]
+async fn list_core_conversation_turns(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    Path(conversation_id): Path<String>,
+    query: Result<Query<CoreListQuery>, QueryRejection>,
+) -> Result<Json<SearchResponse>, EnvelopedApiError> {
+    auth.require(CoreScope::Read)?;
+    let conversation = parse_entity_id_param(&conversation_id, "conversation_id")?;
+    require_entity_type(
+        &server,
+        &conversation,
+        ENTITY_TYPE_CONVERSATION,
+        "conversation",
+    )?;
+    let params = query_params(query)?;
+    core_list_conversation_turns(&server.vault, &conversation, params)
+}
+
+/// Create a turn inside a conversation.
+#[utoipa::path(
+    post,
+    path = "/v1/core/conversations/{conversation_id}/turns",
+    params(("conversation_id" = String, Path, description = "Hex conversation id.")),
+    request_body(content = CoreCreateTurnRequest, content_type = "application/json"),
+    responses(
+        (status = 200, description = "Turn created and linked to conversation.", body = CoreEntityWriteResponse, content_type = "application/json"),
+        (status = 400, description = "Malformed request.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 401, description = "Missing or invalid core auth.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 403, description = "Core token lacks core:write.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 404, description = "Conversation was not found.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 500, description = "Turn create failed.", body = ApiErrorEnvelope, content_type = "application/json")
+    )
+)]
+async fn create_core_conversation_turn(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    Path(conversation_id): Path<String>,
+    payload: Result<Json<CoreCreateTurnRequest>, JsonRejection>,
+) -> Result<Json<CoreEntityWriteResponse>, EnvelopedApiError> {
+    auth.require(CoreScope::Write)?;
+    let conversation = parse_entity_id_param(&conversation_id, "conversation_id")?;
+    require_entity_type(
+        &server,
+        &conversation,
+        ENTITY_TYPE_CONVERSATION,
+        "conversation",
+    )?;
+    let req = json_payload(payload)?;
+    let id = parse_optional_entity_id(req.id.as_deref(), "id")?;
+    let timestamps = core_entity_timestamps(req.occurred_start, req.occurred_end, req.learned_at)?;
+    let mut batch = server.vault.batch();
+    batch = stage_core_entity_put(
+        batch,
+        &id,
+        ENTITY_TYPE_TURN,
+        timestamps,
+        &req.body,
+        req.text.as_deref(),
+    )?
+    .edge_checked(&id, &conversation, 1.0);
+    batch.commit().map_err(|error| {
+        tracing::error!(error = %error, "core turn create failed");
+        core_engine_error("core turn create failed", error)
+    })?;
+
+    let item = projection::project_entity_parts(
+        &id,
+        ENTITY_TYPE_TURN,
+        timestamps.learned_at,
+        &encode_core_body(&req.body)?,
+        View::Full,
+    );
+    Ok(Json(CoreEntityWriteResponse {
+        id: id.to_hex(),
+        entity_type: ENTITY_TYPE_TURN,
+        item,
+    }))
+}
+
+/// Read one turn entity by id.
+#[utoipa::path(
+    get,
+    path = "/v1/core/turns/{turn_id}",
+    params(
+        ("turn_id" = String, Path, description = "Hex turn id."),
+        ViewQuery
+    ),
+    responses(
+        (status = 200, description = "Projected turn entity.", body = Object, content_type = "application/json"),
+        (status = 400, description = "Malformed turn id or view.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 401, description = "Missing or invalid core auth.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 403, description = "Core token lacks core:read.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 404, description = "Turn was not found.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 500, description = "Turn read failed.", body = ApiErrorEnvelope, content_type = "application/json")
+    )
+)]
+async fn get_core_turn(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    Path(turn_id): Path<String>,
+    query: Result<Query<ViewQuery>, QueryRejection>,
+) -> Result<Json<Value>, EnvelopedApiError> {
+    auth.require(CoreScope::Read)?;
+    let id = parse_entity_id_param(&turn_id, "turn_id")?;
+    require_entity_type(&server, &id, ENTITY_TYPE_TURN, "turn")?;
+    let params = query_params(query)?;
+    let view = params.view.unwrap_or(View::Full);
+    project_core_entity(&server.vault, &id, view)
+}
+
+#[derive(Clone, Copy)]
+struct CoreEntityTimestamps {
+    occurred: oneiron::TimeRange,
+    learned_at: u64,
+}
+
+fn default_true() -> bool {
+    true
+}
+
+fn default_context_neighbors() -> usize {
+    50
+}
+
+fn parse_optional_entity_id(
+    value: Option<&str>,
+    field: &'static str,
+) -> Result<oneiron::EntityId, ApiError> {
+    value.map_or_else(
+        || Ok(oneiron::EntityId::now()),
+        |value| parse_entity_id_param(value, field),
+    )
+}
+
+fn core_entity_timestamps(
+    occurred_start: Option<u64>,
+    occurred_end: Option<u64>,
+    learned_at: Option<u64>,
+) -> Result<CoreEntityTimestamps, ApiError> {
+    let learned_at = learned_at.unwrap_or_else(unix_seconds_now);
+    let start = occurred_start.unwrap_or(learned_at);
+    let end = occurred_end.unwrap_or(start);
+    if start > end {
+        return Err(ApiError::bad_request(
+            "occurred_start must be less than or equal to occurred_end",
+            Some("occurred_start"),
+        ));
+    }
+    Ok(CoreEntityTimestamps {
+        occurred: oneiron::TimeRange { start, end },
+        learned_at,
+    })
+}
+
+fn encode_core_body(body: &Value) -> Result<Vec<u8>, ApiError> {
+    rmp_serde::to_vec_named(body)
+        .map_err(|_| ApiError::bad_request("body must be msgpack-encodable JSON", Some("body")))
+}
+
+fn stage_core_entity_put<'a>(
+    batch: oneiron::BatchBuilder<'a>,
+    id: &oneiron::EntityId,
+    entity_type: u8,
+    timestamps: CoreEntityTimestamps,
+    body: &Value,
+    text: Option<&[CoreTextField]>,
+) -> Result<oneiron::BatchBuilder<'a>, ApiError> {
+    let data = encode_core_body(body)?;
+    let mut batch = batch.put(
+        id,
+        entity_type,
+        timestamps.occurred,
+        timestamps.learned_at,
+        &data,
+    );
+    let text_fields = core_text_fields(text, body);
+    if !text_fields.is_empty() {
+        let refs: Vec<(&str, &str)> = text_fields
+            .iter()
+            .map(|(field, value)| (field.as_str(), value.as_str()))
+            .collect();
+        batch = batch.text(id, &refs);
+    }
+    Ok(batch)
+}
+
+fn core_text_fields(text: Option<&[CoreTextField]>, body: &Value) -> Vec<(String, String)> {
+    if let Some(text) = text {
+        return text
+            .iter()
+            .filter(|entry| !entry.field.is_empty() && !entry.value.is_empty())
+            .map(|entry| (entry.field.clone(), entry.value.clone()))
+            .collect();
+    }
+
+    let Value::Object(object) = body else {
+        return Vec::new();
+    };
+    object
+        .iter()
+        .filter_map(|(key, value)| {
+            value
+                .as_str()
+                .filter(|value| !value.is_empty())
+                .map(|value| (key.clone(), value.to_owned()))
+        })
+        .collect()
+}
+
+fn validate_core_query_seeds(query: Option<&str>, vector: Option<&[f32]>) -> Result<(), ApiError> {
+    if query.is_none_or(|query| query.trim().is_empty()) && vector.is_none() {
+        return Err(ApiError::bad_request(
+            "query or query_vector is required",
+            Some("query"),
+        ));
+    }
+    Ok(())
+}
+
+fn run_core_query(
+    vault: &oneiron::Vault,
+    query: Option<&str>,
+    vector: Option<&[f32]>,
+    limit: usize,
+) -> oneiron::Result<Vec<oneiron::ScoredEntity>> {
+    match (query, vector) {
+        (Some(query), Some(vector)) => vault.query().search(query, vector, None, limit).run(),
+        (Some(query), None) => vault.search_text(query, limit),
+        (None, Some(vector)) => vault.search_vector(vector, limit),
+        (None, None) => Ok(Vec::new()),
+    }
+}
+
+fn parse_short_ref_request(req: &CoreHydrateRequest) -> Result<(String, u8), ApiError> {
+    if let Some(reference) = req.reference.as_deref() {
+        return parse_short_ref(reference);
+    }
+    let Some(short_id) = req.short_id.as_deref() else {
+        return Err(ApiError::bad_request(
+            "ref or short_id/content_hash is required",
+            Some("ref"),
+        ));
+    };
+    let Some(content_hash) = req.content_hash.as_deref() else {
+        return Err(ApiError::bad_request(
+            "ref or short_id/content_hash is required",
+            Some("content_hash"),
+        ));
+    };
+    parse_short_ref_parts(short_id, content_hash)
+}
+
+fn parse_short_ref(reference: &str) -> Result<(String, u8), ApiError> {
+    let Some((short_id, content_hash)) = reference.split_once(':') else {
+        return Err(ApiError::bad_request(
+            "ref must be in shortId:contentHashHex form",
+            Some("ref"),
+        ));
+    };
+    parse_short_ref_parts(short_id, content_hash)
+}
+
+fn parse_short_ref_parts(short_id: &str, content_hash: &str) -> Result<(String, u8), ApiError> {
+    let short_id_bytes = short_id.as_bytes();
+    if short_id_bytes.len() < 3
+        || !short_id_bytes[0].is_ascii_lowercase()
+        || !short_id_bytes[1].is_ascii_lowercase()
+        || !short_id_bytes[2..].iter().all(|byte| byte.is_ascii_digit())
+    {
+        return Err(ApiError::bad_request(
+            "short_id must be two lowercase letters followed by decimal digits",
+            Some("short_id"),
+        ));
+    }
+    if content_hash.len() != 2 || !content_hash.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return Err(ApiError::bad_request(
+            "content_hash must be exactly two hex digits",
+            Some("content_hash"),
+        ));
+    }
+    let content_hash = u8::from_str_radix(content_hash, 16)
+        .map_err(|_| ApiError::bad_request("content_hash must be hex", Some("content_hash")))?;
+    Ok((short_id.to_owned(), content_hash))
+}
+
+fn field_profile_for_view(view: View) -> oneiron::FieldProfile {
+    match view {
+        View::Summary => oneiron::FieldProfile::Minimal,
+        View::Standard => oneiron::FieldProfile::Standard,
+        View::Full => oneiron::FieldProfile::Full,
+    }
+}
+
+fn core_context_pack_response(pack: oneiron::ContextPack) -> CoreContextPackResponse {
+    CoreContextPackResponse {
+        results: pack.results.into_iter().map(core_context_entity).collect(),
+        neighbors: pack
+            .neighbors
+            .into_iter()
+            .map(core_context_entity)
+            .collect(),
+        stats: core_context_pack_stats(pack.stats),
+        empty: pack
+            .empty
+            .map(|empty| serde_json::to_value(empty).expect("EmptyContext serializes")),
+    }
+}
+
+fn core_context_entity(entity: oneiron::ContextEntity) -> CoreContextEntity {
+    CoreContextEntity {
+        id: entity.id.to_hex(),
+        short_id: entity.short_id,
+        content_hash: format!("{:02x}", entity.content_hash),
+        entity_type: entity.entity_type,
+        score: entity.score,
+        fields: entity.fields.map(BTreeMap::from_iter),
+        edges: entity
+            .edges
+            .map(|edges| edges.into_iter().map(core_context_edge).collect()),
+        vector: entity.vector,
+    }
+}
+
+fn core_context_edge(edge: oneiron::EdgeInfo) -> CoreContextEdge {
+    CoreContextEdge {
+        kind: edge.kind as u8,
+        target: edge.target.to_hex(),
+        target_short_id: edge.target_short_id,
+        weight: edge.weight,
+        created_at: edge.created_at,
+        vad: edge.vad.map(Into::into),
+    }
+}
+
+fn core_context_pack_stats(stats: oneiron::PackStats) -> CoreContextPackStats {
+    CoreContextPackStats {
+        candidates_considered: stats.candidates_considered,
+        signals_used: stats
+            .signals_used
+            .into_iter()
+            .map(|signal| signal_name(signal).to_owned())
+            .collect(),
+        query_time_us: stats.query_time_us,
+        entities_hydrated: stats.entities_hydrated,
+        neighbors_hydrated: stats.neighbors_hydrated,
+        cosine_ghosts_dampened: stats.cosine_ghosts_dampened,
+        claims_suppressed: stats.claims_suppressed,
+        items_truncated: CoreContextPackItemAccounting {
+            count: stats.items_truncated.count,
+            reason: stats.items_truncated.reason.as_str().to_owned(),
+        },
+        items_dropped: CoreContextPackItemAccounting {
+            count: stats.items_dropped.count,
+            reason: stats.items_dropped.reason.as_str().to_owned(),
+        },
+    }
+}
+
+fn signal_name(signal: oneiron::Signal) -> &'static str {
+    match signal {
+        oneiron::Signal::Vector => "vector",
+        oneiron::Signal::Text => "text",
+        oneiron::Signal::Phonetic => "phonetic",
+        oneiron::Signal::Temporal => "temporal",
+        oneiron::Signal::Ppr => "ppr",
+        _ => "unknown",
+    }
+}
+
+fn core_list_limit(limit: usize) -> usize {
+    limit.min(CORE_MAX_LIST_LIMIT)
+}
+
+fn core_list_entities_by_type(
+    vault: &oneiron::Vault,
+    entity_type: u8,
+    params: CoreListQuery,
+) -> Result<Json<SearchResponse>, EnvelopedApiError> {
+    let view = params.view.unwrap_or(View::Summary);
+    let limit = core_list_limit(params.limit);
+    let after = params
+        .after
+        .as_deref()
+        .map(|after| parse_entity_id_param(after, "after"))
+        .transpose()?;
+    let ids = vault
+        .entities_by_type_page(entity_type, after.as_ref(), limit)
+        .map_err(|error| {
+            tracing::error!(error = %error, entity_type, "core list failed");
+            core_engine_error("core list failed", error)
+        })?;
+    let items = project_entity_ids(vault, ids, view)?;
+    let meta = match params.count_mode {
+        CountMode::None => ResponseMeta::none(),
+        CountMode::Estimate => ResponseMeta::estimate(items.len() as u64),
+        CountMode::Exact => {
+            let total = vault.count_entities_by_type(entity_type).map_err(|error| {
+                tracing::error!(error = %error, entity_type, "core list count failed");
+                core_engine_error("core list count failed", error)
+            })?;
+            ResponseMeta::new(total, CountMode::Exact)
+        }
+    };
+    Ok(Json(PaginatedResponse::new(items, None, meta)))
+}
+
+fn core_list_conversation_turns(
+    vault: &oneiron::Vault,
+    conversation: &oneiron::EntityId,
+    params: CoreListQuery,
+) -> Result<Json<SearchResponse>, EnvelopedApiError> {
+    let view = params.view.unwrap_or(View::Summary);
+    let limit = core_list_limit(params.limit);
+    let mut ids = vault
+        .sources(conversation, EdgeKind::ChildOf, Some(ENTITY_TYPE_TURN))
+        .map_err(|error| {
+            tracing::error!(error = %error, conversation = %conversation.to_hex(), "core conversation turns failed");
+            core_engine_error("core conversation turns failed", error)
+        })?;
+    ids.sort_by_key(|id| vault.get_learned_at(id).unwrap_or(0));
+    let total = ids.len() as u64;
+    ids.truncate(limit);
+    let items = project_entity_ids(vault, ids, view)?;
+    let meta = match params.count_mode {
+        CountMode::None => ResponseMeta::none(),
+        CountMode::Estimate => ResponseMeta::estimate(total),
+        CountMode::Exact => ResponseMeta::new(total, CountMode::Exact),
+    };
+    Ok(Json(PaginatedResponse::new(items, None, meta)))
+}
+
+fn project_entity_ids(
+    vault: &oneiron::Vault,
+    ids: Vec<oneiron::EntityId>,
+    view: View,
+) -> Result<Vec<Value>, ApiError> {
+    let mut items = Vec::with_capacity(ids.len());
+    for id in ids {
+        if let Some(item) = projection::project_entity(vault, &id, view).map_err(|error| {
+            tracing::error!(error = %error, id = %id.to_hex(), "core projection failed");
+            core_engine_error("core projection failed", error)
+        })? {
+            items.push(item);
+        }
+    }
+    Ok(items)
+}
+
+struct CoreEntityWriteInput<'a> {
+    id: Option<&'a str>,
+    entity_type: u8,
+    occurred_start: Option<u64>,
+    occurred_end: Option<u64>,
+    learned_at: Option<u64>,
+    body: &'a Value,
+    text: Option<&'a [CoreTextField]>,
+}
+
+fn write_core_entity(
+    vault: &oneiron::Vault,
+    input: CoreEntityWriteInput<'_>,
+) -> Result<Json<CoreEntityWriteResponse>, EnvelopedApiError> {
+    let id = parse_optional_entity_id(input.id, "id")?;
+    let timestamps =
+        core_entity_timestamps(input.occurred_start, input.occurred_end, input.learned_at)?;
+    let batch = stage_core_entity_put(
+        vault.batch(),
+        &id,
+        input.entity_type,
+        timestamps,
+        input.body,
+        input.text,
+    )?;
+    batch.commit().map_err(|error| {
+        tracing::error!(error = %error, entity_type = input.entity_type, "core entity create failed");
+        core_engine_error("core entity create failed", error)
+    })?;
+    let item = projection::project_entity_parts(
+        &id,
+        input.entity_type,
+        timestamps.learned_at,
+        &encode_core_body(input.body)?,
+        View::Full,
+    );
+    Ok(Json(CoreEntityWriteResponse {
+        id: id.to_hex(),
+        entity_type: input.entity_type,
+        item,
+    }))
+}
+
+fn project_core_entity(
+    vault: &oneiron::Vault,
+    id: &oneiron::EntityId,
+    view: View,
+) -> Result<Json<Value>, EnvelopedApiError> {
+    let Some(item) = projection::project_entity(vault, id, view).map_err(|error| {
+        tracing::error!(error = %error, id = %id.to_hex(), "core entity read failed");
+        core_engine_error("core entity read failed", error)
+    })?
+    else {
+        return Err(ApiError::not_found("entity", Some(&id.to_hex())).into());
+    };
+    Ok(Json(item))
+}
+
+fn core_engine_error(message: &'static str, error: oneiron::Error) -> ApiError {
+    match error.kind() {
+        ErrorKind::DimensionMismatch
+        | ErrorKind::InvalidVector
+        | ErrorKind::InvalidKey
+        | ErrorKind::InvalidConfig
+        | ErrorKind::InvalidEntityType
+        | ErrorKind::InvalidTimeRange
+        | ErrorKind::InvalidClaimBody
+        | ErrorKind::InvalidCodeArtifactBody
+        | ErrorKind::InvalidCodebaseSnapshotBody
+        | ErrorKind::InvalidCodeSymbolManifestBody
+        | ErrorKind::MaintenanceKindNotWritable
+        | ErrorKind::EntityTypeImmutable
+        | ErrorKind::StructuralKindBandViolation
+        | ErrorKind::StructuralKindCollision
+        | ErrorKind::InvalidStructuralKindRegistration => {
+            ApiError::bad_request(error.to_string(), None)
+        }
+        ErrorKind::EntityNotFound | ErrorKind::EdgeNotFound => ApiError::not_found("entity", None),
+        ErrorKind::GateWriteRejected => ApiError::new(
+            error.to_string(),
+            ApiErrorDetails::InvalidState {
+                state: Some("gate_write_rejected".to_owned()),
+            },
+            ["Route the write through policy review before retrying."],
+        ),
+        _ => ApiError::internal_server_error(message),
+    }
+}
+
 // ─── Turn VAD annotation ─────────────────────────────────────────────────────
 
 /// Valence/arousal/dominance annotation payload.
@@ -2973,6 +4381,13 @@ mod tests {
             "/api/search/text",
             "/api/entity/{id}",
             "/api/edges/{id}",
+            "/v1/core/batch",
+            "/v1/core/query",
+            "/v1/core/context-pack",
+            "/v1/core/hydrate",
+            "/v1/core/conversations",
+            "/v1/core/conversations/{conversation_id}/turns",
+            "/v1/core/turns/{turn_id}",
             "/v1/core/turns/annotate",
             "/api/context-pack",
             "/api/lease/revoke",
@@ -3103,6 +4518,15 @@ mod tests {
             );
         }
         for (path, method) in [
+            ("/v1/core/batch", "post"),
+            ("/v1/core/query", "post"),
+            ("/v1/core/context-pack", "post"),
+            ("/v1/core/hydrate", "post"),
+            ("/v1/core/conversations", "get"),
+            ("/v1/core/conversations", "post"),
+            ("/v1/core/conversations/{conversation_id}/turns", "get"),
+            ("/v1/core/conversations/{conversation_id}/turns", "post"),
+            ("/v1/core/turns/{turn_id}", "get"),
             ("/v1/core/turns/annotate", "get"),
             ("/v1/core/turns/annotate", "post"),
         ] {
@@ -3198,6 +4622,24 @@ mod tests {
             "SearchResult",
             "TextSearchQuery",
             "EdgeResult",
+            "CoreBatchRequest",
+            "CoreBatchEntityInput",
+            "CoreBatchEntityResult",
+            "CoreBatchResponse",
+            "CoreTextField",
+            "CoreQueryRequest",
+            "CoreHydrateRequest",
+            "CoreHydrateResponse",
+            "CoreContextPackRequest",
+            "CoreContextPackResponse",
+            "CoreContextEntity",
+            "CoreContextEdge",
+            "CoreContextPackStats",
+            "CoreContextPackItemAccounting",
+            "CoreListQuery",
+            "CoreCreateEntityRequest",
+            "CoreCreateTurnRequest",
+            "CoreEntityWriteResponse",
             "VadPayload",
             "TurnVadAnnotateRequest",
             "TurnVadAnnotateQuery",
@@ -3506,6 +4948,274 @@ mod tests {
         .await;
         assert_eq!(conflict_status, StatusCode::CONFLICT);
         assert_error_envelope(&conflict_body, "IDEMPOTENCY_REPLAY_CONFLICT");
+    }
+
+    #[tokio::test]
+    async fn v1_core_batch_query_context_pack_and_hydrate_routes_are_live() {
+        let (_dir, server) = test_server();
+
+        let (batch_status, batch_body) = route_json(
+            server.clone(),
+            json_request(
+                "POST",
+                "/v1/core/batch",
+                json!({
+                    "entities": [{
+                        "entity_type": ENTITY_TYPE_TURN,
+                        "learned_at": 500_u64,
+                        "occurred_start": 500_u64,
+                        "occurred_end": 500_u64,
+                        "body": {
+                            "txt": "blue hallway contextneedle",
+                            "spkr": "user",
+                            "at": 500_u64
+                        }
+                    }]
+                }),
+            ),
+        )
+        .await;
+        assert_eq!(batch_status, StatusCode::OK);
+        let id = batch_body["entities"][0]["id"]
+            .as_str()
+            .expect("written id")
+            .to_owned();
+        assert_eq!(batch_body["count"], Value::from(1));
+
+        let (query_status, query_body) = route_json(
+            server.clone(),
+            json_request(
+                "POST",
+                "/v1/core/query",
+                json!({
+                    "query": "contextneedle",
+                    "limit": 5,
+                    "view": "full"
+                }),
+            ),
+        )
+        .await;
+        assert_eq!(query_status, StatusCode::OK);
+        assert_eq!(query_body["items"][0]["id"], Value::from(id.clone()));
+        assert_eq!(
+            query_body["items"][0]["txt"],
+            Value::from("blue hallway contextneedle")
+        );
+        assert_eq!(query_body["meta"]["countMode"], Value::from("estimate"));
+
+        let (pack_status, pack_body) = route_json(
+            server.clone(),
+            json_request(
+                "POST",
+                "/v1/core/context-pack",
+                json!({
+                    "query": "contextneedle",
+                    "limit": 5,
+                    "view": "full"
+                }),
+            ),
+        )
+        .await;
+        assert_eq!(pack_status, StatusCode::OK);
+        assert_eq!(pack_body["results"][0]["id"], Value::from(id.clone()));
+        assert_eq!(
+            pack_body["results"][0]["fields"]["txt"],
+            Value::from("blue hallway contextneedle")
+        );
+        assert_eq!(
+            pack_body["stats"]["signals_used"],
+            Value::Array(vec![Value::from("text")])
+        );
+        let short_id = pack_body["results"][0]["short_id"]
+            .as_str()
+            .expect("short id");
+        let content_hash = pack_body["results"][0]["content_hash"]
+            .as_str()
+            .expect("content hash");
+        let short_ref = format!("{short_id}:{content_hash}");
+
+        let (hydrate_status, hydrate_body) = route_json(
+            server.clone(),
+            json_request(
+                "POST",
+                "/v1/core/hydrate",
+                json!({
+                    "ref": short_ref,
+                    "view": "full"
+                }),
+            ),
+        )
+        .await;
+        assert_eq!(hydrate_status, StatusCode::OK);
+        assert_eq!(hydrate_body["status"], Value::from("live"));
+        assert_eq!(hydrate_body["id"], Value::from(id.clone()));
+        assert_eq!(
+            hydrate_body["item"]["txt"],
+            Value::from("blue hallway contextneedle")
+        );
+    }
+
+    #[tokio::test]
+    async fn v1_core_hydrate_distinguishes_malformed_not_found_and_deleted() {
+        let (_dir, server) = test_server();
+        let entity_id = oneiron::EntityId::now();
+        let body = json!({
+            "txt": "hydrate deleted needle",
+            "spkr": "user",
+            "at": 600_u64
+        });
+        server
+            .vault
+            .batch()
+            .put(
+                &entity_id,
+                ENTITY_TYPE_TURN,
+                oneiron::TimeRange {
+                    start: 600,
+                    end: 600,
+                },
+                600,
+                &rmp_serde::to_vec_named(&body).expect("encode body"),
+            )
+            .text(&entity_id, &[("body", "hydrate deleted needle")])
+            .commit()
+            .expect("seed turn");
+
+        let pack = server
+            .vault
+            .context_pack()
+            .search_text("hydrate deleted needle", 1)
+            .run()
+            .expect("context pack");
+        let entity = pack.results.first().expect("hydrated result");
+        let short_ref = format!("{}:{:02x}", entity.short_id, entity.content_hash);
+
+        let (malformed_status, malformed_body) = route_json(
+            server.clone(),
+            json_request("POST", "/v1/core/hydrate", json!({ "ref": "bad-ref" })),
+        )
+        .await;
+        assert_eq!(malformed_status, StatusCode::BAD_REQUEST);
+        assert_error_envelope(&malformed_body, "BAD_REQUEST");
+
+        let (not_found_status, not_found_body) = route_json(
+            server.clone(),
+            json_request("POST", "/v1/core/hydrate", json!({ "ref": "tn999:aa" })),
+        )
+        .await;
+        assert_eq!(not_found_status, StatusCode::NOT_FOUND);
+        assert_error_envelope(&not_found_body, "NOT_FOUND");
+
+        server
+            .vault
+            .delete_entity_with_reason(&entity_id, oneiron::DeleteReason::UserDelete)
+            .expect("soft delete turn");
+
+        let (deleted_status, deleted_body) = route_json(
+            server,
+            json_request("POST", "/v1/core/hydrate", json!({ "ref": short_ref })),
+        )
+        .await;
+        assert_eq!(deleted_status, StatusCode::OK);
+        assert_eq!(deleted_body["status"], Value::from("deleted"));
+        assert_eq!(deleted_body["id"], Value::from(entity_id.to_hex()));
+        assert!(deleted_body.get("item").is_none());
+    }
+
+    #[tokio::test]
+    async fn v1_core_conversation_routes_create_list_and_read_turns() {
+        let (_dir, server) = test_server();
+
+        let (conversation_status, conversation_body) = route_json(
+            server.clone(),
+            json_request(
+                "POST",
+                "/v1/core/conversations",
+                json!({
+                    "learned_at": 700_u64,
+                    "occurred_start": 700_u64,
+                    "occurred_end": 700_u64,
+                    "body": { "name": "Dream session" }
+                }),
+            ),
+        )
+        .await;
+        assert_eq!(conversation_status, StatusCode::OK);
+        let conversation_id = conversation_body["id"]
+            .as_str()
+            .expect("conversation id")
+            .to_owned();
+
+        let (conversations_status, conversations_body) = route_json(
+            server.clone(),
+            Request::builder()
+                .uri("/v1/core/conversations?view=full")
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await;
+        assert_eq!(conversations_status, StatusCode::OK);
+        assert_eq!(
+            conversations_body["items"][0]["id"],
+            Value::from(conversation_id.clone())
+        );
+        assert_eq!(
+            conversations_body["items"][0]["name"],
+            Value::from("Dream session")
+        );
+
+        let (turn_status, turn_body) = route_json(
+            server.clone(),
+            json_request(
+                "POST",
+                &format!("/v1/core/conversations/{conversation_id}/turns"),
+                json!({
+                    "learned_at": 701_u64,
+                    "occurred_start": 701_u64,
+                    "occurred_end": 701_u64,
+                    "body": {
+                        "txt": "conversation turn needle",
+                        "spkr": "assistant",
+                        "at": 701_u64
+                    }
+                }),
+            ),
+        )
+        .await;
+        assert_eq!(turn_status, StatusCode::OK);
+        let turn_id = turn_body["id"].as_str().expect("turn id").to_owned();
+        assert_eq!(
+            turn_body["item"]["txt"],
+            Value::from("conversation turn needle")
+        );
+
+        let (turns_status, turns_body) = route_json(
+            server.clone(),
+            Request::builder()
+                .uri(format!(
+                    "/v1/core/conversations/{conversation_id}/turns?view=full"
+                ))
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await;
+        assert_eq!(turns_status, StatusCode::OK);
+        assert_eq!(turns_body["items"][0]["id"], Value::from(turn_id.clone()));
+        assert_eq!(
+            turns_body["items"][0]["txt"],
+            Value::from("conversation turn needle")
+        );
+
+        let (read_status, read_body) = route_json(
+            server,
+            Request::builder()
+                .uri(format!("/v1/core/turns/{turn_id}?view=full"))
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await;
+        assert_eq!(read_status, StatusCode::OK);
+        assert_eq!(read_body["txt"], Value::from("conversation turn needle"));
     }
 
     #[tokio::test]
