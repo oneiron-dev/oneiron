@@ -458,6 +458,12 @@ impl SyncClient {
         update: &[u8],
         role: FederationAdmissionRole,
     ) -> std::result::Result<(), TransportError> {
+        if update.len() > MAX_DECODED_PAYLOAD_BYTES {
+            return Err(TransportError::FrameTooLarge {
+                size: update.len(),
+                max: MAX_DECODED_PAYLOAD_BYTES,
+            });
+        }
         let key = WindowKey::try_new(window_key).ok_or(TransportError::InvalidWindowKey)?;
         let admitted = admit_federated_window_update(&self.vault, &key, update, role)
             .map_err(map_federated_admission_err)?;
@@ -1083,8 +1089,39 @@ fn map_federated_admission_err(e: crate::error::Error) -> TransportError {
         {
             TransportError::InvalidPayload("federated tombstone update rejected")
         }
+        e if is_local_federated_admission_failure(&e) => {
+            TransportError::Storage(format!("federated admission failed: {e}"))
+        }
         _ => TransportError::InvalidPayload("federated update admission failed"),
     }
+}
+
+fn is_local_federated_admission_failure(e: &crate::error::Error) -> bool {
+    matches!(
+        e,
+        crate::error::Error::Storage(_)
+            | crate::error::Error::Io(_)
+            | crate::error::Error::MapFull
+            | crate::error::Error::InvalidConfig(_)
+            | crate::error::Error::ConcurrentWrite(_)
+            | crate::error::Error::ArithmeticOverflow(_)
+            | crate::error::Error::InvariantViolation(_)
+            | crate::error::Error::CorruptedIndex(_)
+            | crate::error::Error::IndexOverflow(_)
+            | crate::error::Error::MissingPostingEntry
+            | crate::error::Error::EmbeddingModelChanged { .. }
+            | crate::error::Error::HnswConfigChanged { .. }
+            | crate::error::Error::StorageAbiVersionChanged { .. }
+            | crate::error::Error::StorageSchemaVersionChanged { .. }
+            | crate::error::Error::DbManifestMismatch { .. }
+            | crate::error::Error::VaultRootPreflight { .. }
+            | crate::error::Error::IncompatibleAnalyzer { .. }
+            | crate::error::Error::Bm25FieldSchemaChanged
+            | crate::error::Error::AnalyzerAssetMissing(_)
+            | crate::error::Error::AnalyzerError(_)
+            | crate::error::Error::WindowNotFound { .. }
+            | crate::error::Error::WindowBusy { .. }
+    )
 }
 
 /// Computes the next backoff delay with exponential growth capped at max.
@@ -1913,6 +1950,36 @@ mod tests {
         assert!(
             sync_state_values_with_prefix(&vault, &format!("u:w:{key}:")).is_empty(),
             "rejected federated tombstone bytes must not be persisted"
+        );
+    }
+
+    #[test]
+    fn federated_import_seam_rejects_oversized_update_before_window_open() {
+        let manager = test_manager();
+        let (mut client, _rx) = test_client(&manager);
+        let key = "2026-03";
+        let update = vec![0u8; MAX_DECODED_PAYLOAD_BYTES + 1];
+
+        assert_matches!(
+            client.import_federated_window_update(key, &update, FederationAdmissionRole::Guest),
+            Err(TransportError::FrameTooLarge { size, max })
+                if size == MAX_DECODED_PAYLOAD_BYTES + 1 && max == MAX_DECODED_PAYLOAD_BYTES
+        );
+        assert!(
+            client.window(key).is_none(),
+            "oversized federated bytes must not open a live window"
+        );
+    }
+
+    #[test]
+    fn federated_admission_error_mapping_preserves_local_storage_failures() {
+        let err = map_federated_admission_err(crate::error::Error::MapFull);
+        let TransportError::Storage(message) = err else {
+            panic!("expected local storage failure to remain storage, got {err:?}");
+        };
+        assert!(
+            message.contains("federated admission failed"),
+            "storage mapping should keep admission context, got {message}"
         );
     }
 
