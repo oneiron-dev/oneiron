@@ -4194,7 +4194,9 @@ mod tests {
     ];
     const V1_CORE_OPENAPI_CONTRACT_SCHEMA_NAMES: &[&str] = &[
         "ApiError",
+        "ApiErrorDetails",
         "ApiErrorEnvelope",
+        "ErrorCode",
         "CoreBatchEntityInput",
         "CoreBatchEntityResult",
         "CoreBatchRequest",
@@ -4671,9 +4673,25 @@ mod tests {
             .unwrap_or(Value::Null)
     }
 
+    fn openapi_component_schema<'a>(spec: &'a Value, name: &str) -> &'a Value {
+        spec.pointer(&format!("/components/schemas/{name}"))
+            .unwrap_or_else(|| panic!("OpenAPI component schema {name} must exist"))
+    }
+
     fn openapi_schema_contract(schema: &Value) -> Value {
         let mut contract = Map::new();
-        for key in ["type", "enum", "required"] {
+        for key in [
+            "$ref",
+            "type",
+            "format",
+            "enum",
+            "const",
+            "required",
+            "default",
+            "nullable",
+            "additionalProperties",
+            "discriminator",
+        ] {
             if let Some(value) = schema.get(key) {
                 contract.insert(key.to_owned(), value.clone());
             }
@@ -4681,9 +4699,20 @@ mod tests {
         if let Some(properties) = schema.get("properties").and_then(Value::as_object) {
             let mut property_contract = Map::new();
             for (name, property) in properties {
-                property_contract.insert(name.clone(), Value::from(openapi_schema_kind(property)));
+                property_contract.insert(name.clone(), openapi_schema_contract(property));
             }
             contract.insert("properties".to_owned(), Value::Object(property_contract));
+        }
+        if let Some(items) = schema.get("items") {
+            contract.insert("items".to_owned(), openapi_schema_contract(items));
+        }
+        for key in ["oneOf", "anyOf", "allOf"] {
+            if let Some(schemas) = schema.get(key).and_then(Value::as_array) {
+                contract.insert(
+                    key.to_owned(),
+                    Value::Array(schemas.iter().map(openapi_schema_contract).collect()),
+                );
+            }
         }
         Value::Object(contract)
     }
@@ -4705,31 +4734,6 @@ mod tests {
             );
         }
         Value::Object(shape)
-    }
-
-    fn openapi_schema_kind(schema: &Value) -> String {
-        if let Some(reference) = schema.get("$ref").and_then(Value::as_str) {
-            return reference.to_owned();
-        }
-        if let Some(one_of) = schema.get("oneOf").and_then(Value::as_array) {
-            return one_of
-                .iter()
-                .map(openapi_schema_kind)
-                .collect::<Vec<_>>()
-                .join("|");
-        }
-        if let Some(items) = schema.get("items") {
-            return format!("array<{}>", openapi_schema_kind(items));
-        }
-        match schema.get("type") {
-            Some(Value::String(kind)) => kind.clone(),
-            Some(Value::Array(kinds)) => kinds
-                .iter()
-                .filter_map(Value::as_str)
-                .collect::<Vec<_>>()
-                .join("|"),
-            _ => "unknown".to_owned(),
-        }
     }
 
     fn collect_schema_refs(value: &Value, refs: &mut BTreeSet<String>) {
@@ -4842,7 +4846,7 @@ mod tests {
         for name in V1_CORE_OPENAPI_CONTRACT_SCHEMA_NAMES {
             schemas.insert(
                 (*name).to_owned(),
-                openapi_schema_contract(&spec["components"]["schemas"][*name]),
+                openapi_schema_contract(openapi_component_schema(&spec, name)),
             );
         }
 
@@ -4873,6 +4877,12 @@ mod tests {
                 &mut references,
             );
         }
+        for name in V1_CORE_OPENAPI_CONTRACT_SCHEMA_NAMES {
+            collect_schema_refs(
+                &openapi_schema_contract(openapi_component_schema(&spec, name)),
+                &mut references,
+            );
+        }
 
         let missing = references
             .into_iter()
@@ -4881,6 +4891,61 @@ mod tests {
         assert!(
             missing.is_empty(),
             "OpenAPI contract references unsnapshotted schemas: {missing:?}"
+        );
+    }
+
+    #[test]
+    fn v1_core_openapi_contract_preserves_nested_error_schema_fidelity() {
+        let spec = generated_spec();
+        let envelope = openapi_schema_contract(openapi_component_schema(&spec, "ApiErrorEnvelope"));
+        assert!(
+            envelope
+                .pointer("/properties/error/properties/code/enum")
+                .and_then(Value::as_array)
+                .is_some_and(|codes| codes.len() == ErrorCode::ALL.len()),
+            "ApiErrorEnvelope.error.code must snapshot the full ErrorCode enum: {envelope}"
+        );
+        assert!(
+            envelope
+                .pointer("/properties/error/properties/details/oneOf")
+                .and_then(Value::as_array)
+                .is_some_and(|variants| variants.len() == ErrorCode::ALL.len()),
+            "ApiErrorEnvelope.error.details must snapshot all ApiErrorDetails variants: {envelope}"
+        );
+
+        let api_error = openapi_schema_contract(openapi_component_schema(&spec, "ApiError"));
+        assert!(
+            api_error
+                .pointer("/properties/code/enum")
+                .and_then(Value::as_array)
+                .is_some_and(|codes| codes.len() == ErrorCode::ALL.len()),
+            "ApiError.code must snapshot the full ErrorCode enum: {api_error}"
+        );
+        assert!(
+            api_error
+                .pointer("/properties/details/oneOf")
+                .and_then(Value::as_array)
+                .is_some_and(|variants| variants.len() == ErrorCode::ALL.len()),
+            "ApiError.details must snapshot all ApiErrorDetails variants: {api_error}"
+        );
+
+        let api_error_details =
+            openapi_schema_contract(openapi_component_schema(&spec, "ApiErrorDetails"));
+        assert!(
+            api_error_details
+                .pointer("/oneOf")
+                .and_then(Value::as_array)
+                .is_some_and(|variants| variants.len() == ErrorCode::ALL.len()),
+            "ApiErrorDetails must snapshot all error detail variants: {api_error_details}"
+        );
+
+        let error_code = openapi_schema_contract(openapi_component_schema(&spec, "ErrorCode"));
+        assert!(
+            error_code
+                .pointer("/enum")
+                .and_then(Value::as_array)
+                .is_some_and(|codes| codes.len() == ErrorCode::ALL.len()),
+            "ErrorCode must snapshot the full enum catalog: {error_code}"
         );
     }
 
