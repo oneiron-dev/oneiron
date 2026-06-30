@@ -17,8 +17,9 @@ use crate::store::{
     RetrievalScoreComponent, RetrievalSignal, Store,
 };
 use crate::types::{
-    EDGE_KEY_LEN, ENTITY_ID_LEN, ENTITY_TYPE_CLAIM, ENTITY_TYPE_FACET, EdgeKind, EmptyReason,
-    EntityId, ScoredEntity, TemporalAnchorMode, TemporalGranularity, TimeRange,
+    ContextPackRetrievalBudget, EDGE_KEY_LEN, ENTITY_ID_LEN, ENTITY_TYPE_CLAIM, ENTITY_TYPE_FACET,
+    ENTITY_TYPE_SUMMARY, ENTITY_TYPE_TURN, EdgeKind, EmptyReason, EntityId, ScoredEntity,
+    TemporalAnchorMode, TemporalGranularity, TimeRange,
 };
 
 const DEFAULT_RESULT_LIMIT: usize = 20;
@@ -258,6 +259,73 @@ enum ClaimFacetScope {
     OtherFacetsOnly,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ContextPackBudgetKind {
+    Claim,
+    Turn,
+    Summary,
+    Facet,
+    Other,
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+struct ContextPackBudgetCounts {
+    claims: usize,
+    turns: usize,
+    summaries: usize,
+    facets: usize,
+    other: usize,
+}
+
+impl ContextPackBudgetKind {
+    fn from_entity_type(entity_type: u8) -> Self {
+        match entity_type {
+            ENTITY_TYPE_CLAIM => Self::Claim,
+            ENTITY_TYPE_TURN => Self::Turn,
+            ENTITY_TYPE_SUMMARY => Self::Summary,
+            ENTITY_TYPE_FACET => Self::Facet,
+            _ => Self::Other,
+        }
+    }
+}
+
+impl ContextPackBudgetCounts {
+    fn from_budget(budget: ContextPackRetrievalBudget) -> Self {
+        Self {
+            claims: budget.claims,
+            turns: budget.turns,
+            summaries: budget.summaries,
+            facets: budget.facets,
+            other: budget.other,
+        }
+    }
+
+    fn get(self, kind: ContextPackBudgetKind) -> usize {
+        match kind {
+            ContextPackBudgetKind::Claim => self.claims,
+            ContextPackBudgetKind::Turn => self.turns,
+            ContextPackBudgetKind::Summary => self.summaries,
+            ContextPackBudgetKind::Facet => self.facets,
+            ContextPackBudgetKind::Other => self.other,
+        }
+    }
+
+    fn add(&mut self, kind: ContextPackBudgetKind, amount: usize) {
+        let slot = match kind {
+            ContextPackBudgetKind::Claim => &mut self.claims,
+            ContextPackBudgetKind::Turn => &mut self.turns,
+            ContextPackBudgetKind::Summary => &mut self.summaries,
+            ContextPackBudgetKind::Facet => &mut self.facets,
+            ContextPackBudgetKind::Other => &mut self.other,
+        };
+        *slot = slot.saturating_add(amount);
+    }
+
+    fn increment(&mut self, kind: ContextPackBudgetKind) {
+        self.add(kind, 1);
+    }
+}
+
 #[must_use = "PipelineBuilder executes no query until a terminal `.run*()` method is called"]
 pub struct PipelineBuilder<'a> {
     vault: &'a Vault,
@@ -281,6 +349,7 @@ pub struct PipelineBuilder<'a> {
     project_id_filter: Option<String>,
     facet_filter: Option<(EntityId, FacetMode)>,
     world_scope: WorldScope,
+    context_pack_budget: Option<ContextPackRetrievalBudget>,
     result_limit: usize,
     temporal_adaptive_default: bool,
     telemetry_action: RetrievalAction,
@@ -310,6 +379,7 @@ impl<'a> PipelineBuilder<'a> {
             project_id_filter: None,
             facet_filter: None,
             world_scope: WorldScope::All,
+            context_pack_budget: None,
             result_limit: DEFAULT_RESULT_LIMIT,
             temporal_adaptive_default: true,
             telemetry_action: RetrievalAction::Pipeline,
@@ -318,6 +388,15 @@ impl<'a> PipelineBuilder<'a> {
 
     pub(crate) fn telemetry_action(mut self, action: RetrievalAction) -> Self {
         self.telemetry_action = action;
+        self
+    }
+
+    pub(crate) fn result_limit(&self) -> usize {
+        self.result_limit
+    }
+
+    pub(crate) fn context_pack_budget(mut self, budget: ContextPackRetrievalBudget) -> Self {
+        self.context_pack_budget = Some(budget);
         self
     }
 
@@ -1059,6 +1138,15 @@ impl<'a> PipelineBuilder<'a> {
 
             let before_limit = scores.len();
             fusion::sort_scored_entities_desc(&mut scores);
+            if let Some(context_pack_budget) = self.context_pack_budget {
+                apply_context_pack_retrieval_budget(
+                    &mut scores,
+                    &self.vault.store,
+                    &rtxn,
+                    &mut metadata_cache,
+                    context_pack_budget,
+                )?;
+            }
             scores.truncate(self.result_limit);
             if before_limit > 0 && scores.is_empty() {
                 empty_reason = Some(EmptyReason::BelowThreshold);
@@ -2405,6 +2493,99 @@ fn pipeline_candidate_matches_world_filter(
         None => true,
         Some(world) => target == Some(world),
     })
+}
+
+fn apply_context_pack_retrieval_budget(
+    scores: &mut Vec<ScoredEntity>,
+    store: &Store,
+    rtxn: &RoTxn<'_>,
+    metadata_cache: &mut EntityMetadataCache,
+    budget: ContextPackRetrievalBudget,
+) -> Result<()> {
+    if scores.is_empty() {
+        return Ok(());
+    }
+
+    let mut candidates = Vec::with_capacity(scores.len());
+    let mut available = ContextPackBudgetCounts::default();
+    for scored in scores.iter().copied() {
+        let Some(meta) = metadata_cache.get(store, rtxn, &scored.id)? else {
+            continue;
+        };
+        let kind = ContextPackBudgetKind::from_entity_type(meta.entity_type);
+        available.increment(kind);
+        candidates.push((scored, kind));
+    }
+
+    let caps =
+        redistribute_context_pack_budget(ContextPackBudgetCounts::from_budget(budget), available);
+    let mut used = ContextPackBudgetCounts::default();
+    let mut kept = Vec::with_capacity(candidates.len().min(scores.len()));
+    for (scored, kind) in candidates {
+        if used.get(kind) >= caps.get(kind) {
+            continue;
+        }
+        used.increment(kind);
+        kept.push(scored);
+    }
+
+    *scores = kept;
+    Ok(())
+}
+
+fn redistribute_context_pack_budget(
+    mut caps: ContextPackBudgetCounts,
+    available: ContextPackBudgetCounts,
+) -> ContextPackBudgetCounts {
+    let kinds = [
+        ContextPackBudgetKind::Claim,
+        ContextPackBudgetKind::Turn,
+        ContextPackBudgetKind::Summary,
+        ContextPackBudgetKind::Facet,
+        ContextPackBudgetKind::Other,
+    ];
+
+    let mut surplus = 0_usize;
+    let mut hungry = Vec::new();
+    for kind in kinds {
+        let cap = caps.get(kind);
+        let count = available.get(kind);
+        if count <= cap {
+            surplus = surplus.saturating_add(cap.saturating_sub(count));
+        } else {
+            hungry.push((kind, count - cap));
+        }
+    }
+
+    if surplus == 0 || hungry.is_empty() {
+        return caps;
+    }
+
+    hungry.sort_unstable_by_key(|(kind, _)| match kind {
+        ContextPackBudgetKind::Claim => 0,
+        ContextPackBudgetKind::Turn => 1,
+        ContextPackBudgetKind::Summary => 2,
+        ContextPackBudgetKind::Facet => 3,
+        ContextPackBudgetKind::Other => 4,
+    });
+
+    while surplus > 0 && !hungry.is_empty() {
+        let mut still_hungry = Vec::with_capacity(hungry.len());
+        for (kind, need) in hungry {
+            if surplus == 0 {
+                still_hungry.push((kind, need));
+                continue;
+            }
+            caps.increment(kind);
+            surplus -= 1;
+            if need > 1 {
+                still_hungry.push((kind, need - 1));
+            }
+        }
+        hungry = still_hungry;
+    }
+
+    caps
 }
 
 fn apply_pipeline_recency_boost(
