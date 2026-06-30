@@ -2,7 +2,7 @@ use heed::{RoTxn, RwTxn};
 use rmpv::Value;
 
 use crate::Vault;
-use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
+use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader, secret_scan};
 use crate::code_artifact::decode_code_artifact_body;
 use crate::error::{Error, Result};
 use crate::store::Store;
@@ -283,6 +283,7 @@ impl Vault {
         snapshot: &CodebaseSnapshot,
     ) -> Result<()> {
         validate_codebase_snapshot(snapshot)?;
+        scan_codebase_snapshot_metadata(snapshot)?;
         let encoded = encode_codebase_snapshot(snapshot)?;
         let mut wtxn = self.store.env.write_txn()?;
         let Some(raw) = self
@@ -559,6 +560,19 @@ fn validate_codebase_snapshot(snapshot: &CodebaseSnapshot) -> Result<()> {
     Ok(())
 }
 
+fn scan_codebase_snapshot_metadata(snapshot: &CodebaseSnapshot) -> Result<()> {
+    secret_scan::scan_metadata_field(&snapshot.project_id)?;
+    let repo_ref = snapshot.repo_ref.canonical();
+    secret_scan::scan_metadata_field(&repo_ref)?;
+    if let Some(commit_hash) = &snapshot.commit_hash {
+        secret_scan::scan_metadata_field(commit_hash)?;
+    }
+    for entry in &snapshot.files {
+        secret_scan::scan_metadata_field(&entry.path)?;
+    }
+    Ok(())
+}
+
 fn validate_project_id(project_id: &str) -> Result<()> {
     validate_bounded_text(
         project_id,
@@ -808,7 +822,7 @@ fn codebase_ids_by_index_prefix(
 mod tests {
     use super::*;
     use crate::code_artifact::{CODE_ARTIFACT_SUMMARY_HASH_LEN, CodeArtifactBody};
-    use crate::error::ErrorKind;
+    use crate::error::{Error, ErrorKind};
     use crate::types::{HnswConfig, PackFormat, TextAnalyzerConfig, TimeRange, VaultConfig};
 
     fn test_config() -> VaultConfig {
@@ -834,6 +848,24 @@ mod tests {
 
     fn entity_id(byte: u8) -> EntityId {
         EntityId::from_bytes([byte; 16]).expect("entity id")
+    }
+
+    const GITHUB_TOKEN_SECRET_FIXTURE: &str = "ghp_0123456789abcdefghijklmnopqrstuvwxyz";
+
+    fn assert_secret_scan_rejected(err: Error) {
+        match err {
+            Error::GateWriteRejected {
+                outcome,
+                reason_codes,
+            } => {
+                assert_eq!(outcome, "deny");
+                assert_eq!(
+                    reason_codes.as_slice(),
+                    &["gate.secret_scan.detected", "gate.secret_scan.github_token"]
+                );
+            }
+            other => panic!("expected secret-scan GateWriteRejected, got {other:?}"),
+        }
     }
 
     fn file(path: &str, hash_byte: u8) -> CodebaseFileEntry {
@@ -971,6 +1003,42 @@ mod tests {
             vault
                 .codebase_snapshots_by_project_id("project.beta")?
                 .is_empty()
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn codebase_snapshot_rejects_secret_file_path_before_sidecar_mutation() -> Result<()> {
+        let (_dir, vault) = crate::test_util::open_test_vault_with(test_config());
+        let id = entity_id(0x33);
+        let repo_ref = repo_ref();
+        let safe_snapshot = snapshot("project.alpha", repo_ref.clone())?;
+        let secret_path = format!("src/{GITHUB_TOKEN_SECRET_FIXTURE}");
+        let secret_snapshot = CodebaseSnapshot::new(
+            "project.alpha",
+            repo_ref.clone(),
+            Some("9d561405a81ffbf29d1369cd848e0ef9fca4f277".to_owned()),
+            vec![file("Cargo.toml", 1), file(&secret_path, 3)],
+        )?;
+
+        vault.put_code_artifact(
+            &id,
+            &code_body(&repo_ref),
+            TimeRange { start: 10, end: 10 },
+            11,
+        )?;
+        vault.put_codebase_snapshot(&id, &safe_snapshot)?;
+
+        let err = vault
+            .put_codebase_snapshot(&id, &secret_snapshot)
+            .expect_err("secret file path must reject before sidecar mutation");
+
+        assert_secret_scan_rejected(err);
+        assert_eq!(vault.get_codebase_snapshot(&id)?, Some(safe_snapshot));
+        assert_eq!(vault.codebase_snapshots_by_repo_ref(&repo_ref)?, vec![id]);
+        assert_eq!(
+            vault.codebase_snapshots_by_project_id("project.alpha")?,
+            vec![id]
         );
         Ok(())
     }

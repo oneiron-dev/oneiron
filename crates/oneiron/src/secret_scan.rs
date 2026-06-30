@@ -42,6 +42,11 @@ pub(crate) fn scan_batch_ops(ops: &[BatchOp]) -> Result<()> {
     Ok(())
 }
 
+pub(crate) fn scan_metadata_field(value: &str) -> Result<()> {
+    let _manifest = scan_payload(value.as_bytes())?;
+    Ok(())
+}
+
 fn scan_payload(data: &[u8]) -> Result<ExportManifest> {
     let haystack = String::from_utf8_lossy(data);
     let manifest = ExportManifest::from_redacted(has_redaction_marker(&haystack));
