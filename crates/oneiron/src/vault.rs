@@ -15,7 +15,7 @@ use xxhash_rust::xxh3::xxh3_128;
 use crate::analyzer::{AnalyzerChannel, AnalyzerManifest, AnalyzerMode, MultilingualAnalyzer};
 use crate::batch::{
     BatchOp, ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader, apply_ops, deindex_entity,
-    delete_from_phonetic_postings,
+    delete_from_phonetic_postings, encode_short_id_forward_key,
 };
 use crate::claim::{
     ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject,
@@ -459,6 +459,19 @@ fn signal_after_header_read() {
 #[cfg(not(test))]
 #[inline(always)]
 fn signal_after_header_read() {}
+
+/// Result of resolving a context-pack short reference.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HydratedShortId {
+    /// Entity id referenced by the short-id row.
+    pub id: EntityId,
+    /// Numeric entity type from the entity header, or zero for a dangling row.
+    pub entity_type: u8,
+    /// Entity learned-at timestamp from the header, or zero for a dangling row.
+    pub learned_at: u64,
+    /// Entity body bytes. `None` means a deleted shell or dangling row.
+    pub body: Option<Vec<u8>>,
+}
 
 /// Main vault API wrapping LMDB storage and configuration.
 pub struct Vault {
@@ -3621,6 +3634,112 @@ impl Vault {
             .map(|bytes| bytes.to_vec()))
     }
 
+    /// Resolves a context-pack short reference to a live or soft-deleted entity.
+    ///
+    /// The caller supplies the parsed short id and one-byte content hash from
+    /// the public `short_id:hash` form. `Ok(None)` means no short-id row exists.
+    /// `Ok(Some(result))` with `result.body == None` means the short id resolves
+    /// to a deleted shell or dangling row; a live entity returns its body bytes.
+    pub fn hydrate_short_id(
+        &self,
+        short_id: &str,
+        content_hash: u8,
+    ) -> Result<Option<HydratedShortId>> {
+        let rtxn = self.store.env.read_txn()?;
+        let forward_key = encode_short_id_forward_key(short_id, content_hash);
+        let Some(raw_id) = self.store.short_ids.get(&rtxn, &forward_key)? else {
+            return Ok(None);
+        };
+        require_key_len(raw_id, ENTITY_ID_LEN, "short id entity id")?;
+        let id = EntityId::from_bytes(
+            raw_id
+                .try_into()
+                .map_err(|_| Error::CorruptedIndex("short id entity id"))?,
+        )
+        .map_err(|_| Error::CorruptedIndex("short id entity id"))?;
+
+        let Some(raw) = self.store.entities.get(&rtxn, id.as_bytes())? else {
+            return Ok(Some(HydratedShortId {
+                id,
+                entity_type: 0,
+                learned_at: 0,
+                body: None,
+            }));
+        };
+        let header =
+            EntityMetadataHeader::parse(raw).ok_or(Error::CorruptedIndex("entity header"))?;
+        let entity_type = header.entity_type;
+        let learned_at = header.learned_at;
+        let body = raw[ENTITY_METADATA_HEADER_LEN..].to_vec();
+        drop(rtxn);
+
+        if body.is_empty() && self.entity_has_tombstone(&id, learned_at)? {
+            return Ok(Some(HydratedShortId {
+                id,
+                entity_type,
+                learned_at,
+                body: None,
+            }));
+        }
+
+        Ok(Some(HydratedShortId {
+            id,
+            entity_type,
+            learned_at,
+            body: Some(body),
+        }))
+    }
+
+    /// Returns true when an entity row is a soft-delete shell, not a live
+    /// zero-byte payload.
+    pub fn is_deleted_shell(&self, id: &EntityId) -> Result<bool> {
+        let rtxn = self.store.env.read_txn()?;
+        let Some(raw) = self.store.entities.get(&rtxn, id.as_bytes())? else {
+            return Ok(false);
+        };
+        let header =
+            EntityMetadataHeader::parse(raw).ok_or(Error::CorruptedIndex("entity header"))?;
+        if raw.len() != ENTITY_METADATA_HEADER_LEN {
+            return Ok(false);
+        }
+        drop(rtxn);
+
+        self.entity_has_tombstone(id, header.learned_at)
+    }
+
+    fn entity_has_tombstone(&self, id: &EntityId, learned_at: u64) -> Result<bool> {
+        let window_label = window_label_from_timestamp(learned_at);
+        let pending_key = pending_tombstone_key(&window_label, id);
+        let rtxn = self.store.env.read_txn()?;
+        if self
+            .store
+            .sync_state
+            .get(&rtxn, pending_key.as_str())?
+            .is_some()
+        {
+            return Ok(true);
+        }
+        drop(rtxn);
+
+        #[cfg(feature = "sync")]
+        {
+            use crate::sync::loro_support::tombstone_map_contains_id;
+            use crate::sync::types::WindowKey;
+
+            let window_key = WindowKey::from_timestamp(learned_at);
+            match crate::sync::window::load_window_from_state(self, "local", &window_key) {
+                Ok(doc) => Ok(tombstone_map_contains_id(&doc.get_map("tombstones"), id)),
+                Err(Error::WindowNotFound { .. }) => Ok(false),
+                Err(error) => Err(error),
+            }
+        }
+
+        #[cfg(not(feature = "sync"))]
+        {
+            Ok(false)
+        }
+    }
+
     // ─── Tree Query API ───────────────────────────────────────
 
     /// Returns all entity IDs of a given type via prefix scan on type_index.
@@ -3822,6 +3941,29 @@ impl Vault {
         )
     }
 
+    /// Returns at most `limit` inbound edge sources after `after_source`.
+    ///
+    /// This is the bounded counterpart to [`Self::sources`]. Results follow
+    /// the LMDB inbound edge key order `[target | kind | source]`, so
+    /// `after_source` is an exclusive lower bound on the source entity id.
+    pub fn sources_page(
+        &self,
+        tgt: &EntityId,
+        kind: EdgeKind,
+        source_type: Option<u8>,
+        after_source: Option<&EntityId>,
+        limit: usize,
+    ) -> Result<Vec<EntityId>> {
+        self.filtered_edge_peers_page(
+            &self.store.edges_in,
+            tgt,
+            kind,
+            source_type,
+            after_source,
+            limit,
+        )
+    }
+
     /// Scans an edge database (edges_out or edges_in) for entries matching `kind`,
     /// returning the peer entity IDs. Optionally filters by the peer's entity type.
     ///
@@ -3852,6 +3994,54 @@ impl Vault {
             }
 
             ids.push(peer);
+        }
+        Ok(ids)
+    }
+
+    fn filtered_edge_peers_page(
+        &self,
+        db: &Database<Bytes, Bytes>,
+        prefix_id: &EntityId,
+        kind: EdgeKind,
+        peer_type: Option<u8>,
+        after_peer: Option<&EntityId>,
+        limit: usize,
+    ) -> Result<Vec<EntityId>> {
+        if limit == 0 {
+            return Ok(Vec::new());
+        }
+
+        let limit = limit.min(MAX_EDGE_QUERY_RESULTS);
+        let rtxn = self.store.env.read_txn()?;
+        let prefix = edge_kind_prefix(prefix_id, kind);
+        let start_key = match after_peer {
+            Some(peer) => Store::encode_edge_key(prefix_id, kind, peer).to_vec(),
+            None => prefix.to_vec(),
+        };
+        let start_bound: std::ops::Bound<&[u8]> = match after_peer {
+            Some(_) => std::ops::Bound::Excluded(&start_key[..]),
+            None => std::ops::Bound::Included(&start_key[..]),
+        };
+        let end_bound: std::ops::Bound<&[u8]> = std::ops::Bound::Unbounded;
+
+        let mut ids = Vec::with_capacity(limit.min(1024));
+        for entry in db.range(&rtxn, &(start_bound, end_bound))? {
+            let (key, value) = entry?;
+            if !key.starts_with(&prefix) {
+                break;
+            }
+            let peer = parse_edge_record(key, value)?.target;
+
+            if let Some(req_type) = peer_type
+                && !self.entity_has_type(&rtxn, &peer, req_type)?
+            {
+                continue;
+            }
+
+            ids.push(peer);
+            if ids.len() >= limit {
+                break;
+            }
         }
         Ok(ids)
     }
