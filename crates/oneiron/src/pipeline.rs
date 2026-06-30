@@ -631,6 +631,8 @@ impl<'a> PipelineBuilder<'a> {
             let mut claim_gate = ClaimStatusGateCache::default();
             let mut deferred_ppr_cache_writes = Vec::new();
             let codebase_scope_active = self.has_codebase_scope_filter();
+            let text_scope_widening_active =
+                codebase_scope_active || self.has_strict_text_scope_filter();
             let filter_config = PipelineFilterConfig {
                 type_filter: self.type_filter.as_deref(),
                 since_filter: self.since_filter,
@@ -680,7 +682,7 @@ impl<'a> PipelineBuilder<'a> {
                     &self.vault.store,
                     &rtxn,
                     *limit,
-                    codebase_scope_active,
+                    text_scope_widening_active,
                 )?;
                 let recency = if self.temporal_search.is_none() {
                     self.recency_half_life.map(|half_life_days| {
@@ -1109,6 +1111,12 @@ impl<'a> PipelineBuilder<'a> {
     fn has_codebase_scope_filter(&self) -> bool {
         self.repo_ref_filter.is_some() || self.project_id_filter.is_some()
     }
+
+    fn has_strict_text_scope_filter(&self) -> bool {
+        self.type_filter.is_some()
+            || matches!(self.facet_filter, Some((_, FacetMode::Strict)))
+            || self.world_scope != WorldScope::All
+    }
 }
 
 fn pending_vectors_for_scores(
@@ -1171,9 +1179,9 @@ fn scoped_text_channel_limit(
     store: &Store,
     rtxn: &RoTxn<'_>,
     requested: usize,
-    codebase_scope_active: bool,
+    text_scope_widening_active: bool,
 ) -> Result<usize> {
-    if !codebase_scope_active || requested == 0 {
+    if !text_scope_widening_active || requested == 0 {
         return Ok(requested);
     }
     let indexed_docs = usize::try_from(crate::bm25::read_total_docs(store, rtxn)?)
@@ -2201,6 +2209,10 @@ fn pipeline_candidate_matches_filters_and_gate(
         return Ok(false);
     }
 
+    if !claim_status_gate_allows(store, rtxn, id, metadata_cache, claim_gate)? {
+        return Ok(false);
+    }
+
     if !pipeline_candidate_matches_facet_filter(
         store,
         rtxn,
@@ -2216,7 +2228,7 @@ fn pipeline_candidate_matches_filters_and_gate(
         return Ok(false);
     }
 
-    claim_status_gate_allows(store, rtxn, id, metadata_cache, claim_gate)
+    Ok(true)
 }
 
 fn pipeline_candidate_matches_facet_filter(
@@ -3451,7 +3463,7 @@ mod tests {
 
         let results = vault
             .query()
-            .search_text("scopedprefix", 10)
+            .search_text("scopedprefix", 1)
             .filter_types(&[1])
             .run()?;
 
@@ -3495,7 +3507,7 @@ mod tests {
 
         let results = vault
             .query()
-            .search_text("facetprefix", 10)
+            .search_text("facetprefix", 1)
             .facet(&facet_active, FacetMode::Strict)
             .run()?;
 
@@ -3522,12 +3534,50 @@ mod tests {
 
         let results = vault
             .query()
-            .search_text("worldprefix", 10)
+            .search_text("worldprefix", 1)
             .world(WorldScope::World(world_active))
             .run()?;
 
         assert!(results.iter().any(|entry| entry.id == active_world_prefix));
         assert!(!results.iter().any(|entry| entry.id == other_world_exact));
+        Ok(())
+    }
+
+    #[test]
+    fn prefix_probe_claim_gate_runs_before_world_scope_decode() -> Result<()> {
+        let (_dir, vault) = open_test_vault();
+        let world_active = entity_id(0xA3);
+        let malformed_probe_only = entity_id(0x13);
+        let active_world_prefix = entity_id(0x23);
+
+        put_status_claim(
+            &vault,
+            malformed_probe_only,
+            "worldgateprefixdead",
+            crate::claim::ClaimApprovalStatus::Auto,
+            crate::claim::ClaimLifecycleStatus::Active,
+            false,
+        )?;
+        let mut junk = Vec::new();
+        rmpv::encode::write_value(&mut junk, &rmpv::Value::from("junk")).expect("msgpack encode");
+        overwrite_entity_record(&vault, &malformed_probe_only, ENTITY_TYPE_CLAIM, &junk)?;
+        put_claim_text(
+            &vault,
+            active_world_prefix,
+            "worldgateprefixlive",
+            Some(world_active),
+        )?;
+
+        let output = vault
+            .query()
+            .search_text("worldgateprefix", 10)
+            .world(WorldScope::World(world_active))
+            .run_for_pack()?;
+
+        assert_eq!(output.scores.len(), 1);
+        assert_eq!(output.scores[0].id, active_world_prefix);
+        assert_eq!(output.claims_suppressed, 0);
+        assert!(output.claim_bodies.contains_key(&active_world_prefix));
         Ok(())
     }
 
