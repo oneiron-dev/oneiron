@@ -670,13 +670,21 @@ impl<'a> PipelineBuilder<'a> {
                     *limit,
                     codebase_scope_active,
                 )?;
-                let text_results = crate::bm25::search_text(
+                let recency = if self.temporal_search.is_none() {
+                    self.recency_half_life.map(|half_life_days| {
+                        crate::bm25::Bm25RecencyConfig::new(half_life_days, started_at)
+                    })
+                } else {
+                    None
+                };
+                let text_results = crate::bm25::search_text_with_recency(
                     &self.vault.store,
                     &rtxn,
                     &self.vault.analyzer,
                     &bm25_config,
                     query,
                     channel_limit,
+                    recency,
                 )?;
                 add_signal_score_components(
                     &mut signal_components,
@@ -839,18 +847,6 @@ impl<'a> PipelineBuilder<'a> {
                     );
                     scores = fusion::rrf_fuse(&[scores, ppr_results], RRF_K);
                 }
-            }
-
-            if let (None, Some(half_life_days)) =
-                (self.temporal_search.as_ref(), self.recency_half_life)
-            {
-                boost_recency_with_cache(
-                    &mut scores,
-                    half_life_days,
-                    &self.vault.store,
-                    &rtxn,
-                    &mut metadata_cache,
-                )?;
             }
 
             if self.apply_salience {
@@ -2103,38 +2099,6 @@ fn apply_filters(
     Ok(())
 }
 
-fn boost_recency_with_cache(
-    scores: &mut [ScoredEntity],
-    half_life_days: f32,
-    store: &Store,
-    rtxn: &RoTxn<'_>,
-    metadata_cache: &mut EntityMetadataCache,
-) -> Result<()> {
-    if !half_life_days.is_finite() || half_life_days <= 0.0 {
-        return Ok(());
-    }
-
-    let seconds_per_half_life = f64::from(half_life_days) * SECONDS_PER_DAY_F64;
-    if seconds_per_half_life <= 0.0 {
-        return Ok(());
-    }
-
-    let decay = std::f64::consts::LN_2 / seconds_per_half_life;
-    let now = crate::unix_seconds_now();
-
-    for scored in scores {
-        let Some(meta) = metadata_cache.get(store, rtxn, &scored.id)? else {
-            continue;
-        };
-
-        let age_secs = now.saturating_sub(meta.learned_at) as f64;
-        let recency = (-decay * age_secs).exp();
-        scored.score *= (1.0 + 0.5 * recency) as f32;
-    }
-
-    Ok(())
-}
-
 fn read_entity_metadata(
     store: &Store,
     rtxn: &RoTxn<'_>,
@@ -2328,9 +2292,19 @@ mod tests {
     }
 
     fn put_text(vault: &Vault, id: EntityId, text: &str) -> Result<()> {
+        put_text_at(vault, id, text, 1)
+    }
+
+    fn put_text_at(vault: &Vault, id: EntityId, text: &str, learned_at: u64) -> Result<()> {
         vault
             .batch()
-            .put(&id, 1, TimeRange { start: 1, end: 1 }, 1, b"payload")
+            .put(
+                &id,
+                1,
+                TimeRange { start: 1, end: 1 },
+                learned_at,
+                b"payload",
+            )
             .text(&id, &[("body", text)])
             .commit()
     }
@@ -3157,6 +3131,28 @@ mod tests {
 
         let too_deep = vault.query().search_ppr(&[entity_id(1)], 11).run();
         assert_matches!(too_deep, Err(Error::InvalidConfig(_)));
+    }
+
+    #[test]
+    fn recency_boost_applies_inside_text_ranking() -> Result<()> {
+        let (_dir, vault) = open_test_vault();
+        let old = entity_id(0x10);
+        let fresh = entity_id(0x20);
+        let now = crate::unix_seconds_now();
+
+        put_text_at(&vault, old, "recencyneedle", 1)?;
+        put_text_at(&vault, fresh, "recencyneedle", now)?;
+
+        let baseline = vault.query().search_text("recencyneedle", 2).run()?;
+        assert_eq!(baseline[0].id, old, "baseline tie breaks by entity id");
+
+        let boosted = vault
+            .query()
+            .search_text("recencyneedle", 2)
+            .boost_recency(0.01)
+            .run()?;
+        assert_eq!(boosted[0].id, fresh);
+        Ok(())
     }
 
     #[test]

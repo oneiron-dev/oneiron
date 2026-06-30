@@ -37,7 +37,8 @@ use std::str;
 
 use heed::{RoTxn, RwTxn};
 
-use crate::analyzer::{AnalyzerChannel, AnalyzerContext, MultilingualAnalyzer, Token};
+use crate::analyzer::{AnalyzerChannel, AnalyzerContext, MultilingualAnalyzer, Token, TokenKind};
+use crate::batch::EntityMetadataHeader;
 use crate::error::{Error, Result};
 use crate::store::Store;
 use crate::types::{EntityId, ScoredEntity, short_id_prefix};
@@ -142,6 +143,41 @@ pub(crate) struct Bm25Config {
     /// in [`AnalyzerChannel`] requires extending this.
     pub(crate) fields: [FieldConfig; BM25_FIELD_COUNT],
 }
+
+/// Query-time recency blend for BM25F keyword ranking.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) struct Bm25RecencyConfig {
+    pub(crate) half_life_days: f64,
+    pub(crate) boost: f64,
+    pub(crate) now_secs: u64,
+}
+
+impl Bm25RecencyConfig {
+    pub(crate) const DEFAULT_BOOST: f64 = 0.5;
+
+    pub(crate) fn new(half_life_days: f32, now_secs: u64) -> Self {
+        Self {
+            half_life_days: f64::from(half_life_days),
+            boost: Self::DEFAULT_BOOST,
+            now_secs,
+        }
+    }
+
+    fn is_enabled(self) -> bool {
+        self.half_life_days.is_finite()
+            && self.half_life_days > 0.0
+            && self.boost.is_finite()
+            && self.boost > 0.0
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+struct QueryTerm {
+    term: String,
+    weight: f64,
+}
+
+const FINAL_TOKEN_PREFIX_WEIGHT: f64 = 0.5;
 
 /// One slot per reserved [`AnalyzerChannel`]. A new channel whose
 /// `field_id()` falls outside `0..BM25_FIELD_COUNT` would silently
@@ -446,6 +482,118 @@ pub(crate) fn deindex_text(store: &Store, wtxn: &mut RwTxn<'_>, id: &EntityId) -
 
 // === Scoring ===
 
+fn collect_query_terms(
+    store: &Store,
+    rtxn: &RoTxn<'_>,
+    tokens: &[Token],
+) -> Result<Vec<QueryTerm>> {
+    // Dedupe query terms across channels — one term per unique string
+    // (scorer looks up posting list then combines field TFs from the
+    // posting entries themselves). This preserves the pre-ONE-317
+    // "query dedupe" semantics for exact query tokens.
+    let mut terms: BTreeMap<String, f64> = BTreeMap::new();
+    for token in tokens {
+        insert_query_term(&mut terms, token.term.as_ref().to_owned(), 1.0);
+    }
+
+    collect_final_token_prefix_terms(store, rtxn, tokens, &mut terms)?;
+
+    Ok(terms
+        .into_iter()
+        .map(|(term, weight)| QueryTerm { term, weight })
+        .collect())
+}
+
+fn collect_final_token_prefix_terms(
+    store: &Store,
+    rtxn: &RoTxn<'_>,
+    tokens: &[Token],
+    terms: &mut BTreeMap<String, f64>,
+) -> Result<()> {
+    let Some(final_byte_end) = tokens.iter().map(|token| token.byte_end).max() else {
+        return Ok(());
+    };
+    let prefixes: BTreeSet<String> = tokens
+        .iter()
+        .filter(|token| {
+            token.byte_end == final_byte_end
+                && !token.term.is_empty()
+                && matches!(token.kind, TokenKind::Word | TokenKind::Numeric)
+        })
+        .map(|token| token.term.as_ref().to_owned())
+        .collect();
+
+    for prefix in &prefixes {
+        if store.text_postings.get(rtxn, prefix.as_bytes())?.is_some() {
+            return Ok(());
+        }
+    }
+
+    for prefix in prefixes {
+        let mut last_term: Option<Vec<u8>> = None;
+        for row in store.text_postings.prefix_iter(rtxn, prefix.as_bytes())? {
+            let (term_bytes, _) = row?;
+            if last_term.as_deref() == Some(term_bytes) {
+                continue;
+            }
+            last_term = Some(term_bytes.to_vec());
+            let term = str::from_utf8(term_bytes)
+                .map_err(|_| corrupted("posting term key is not valid utf-8"))?
+                .to_owned();
+            insert_query_term(terms, term, FINAL_TOKEN_PREFIX_WEIGHT);
+        }
+    }
+
+    Ok(())
+}
+
+fn insert_query_term(terms: &mut BTreeMap<String, f64>, term: String, weight: f64) {
+    match terms.entry(term) {
+        std::collections::btree_map::Entry::Occupied(mut entry) => {
+            if weight > *entry.get() {
+                *entry.get_mut() = weight;
+            }
+        }
+        std::collections::btree_map::Entry::Vacant(entry) => {
+            entry.insert(weight);
+        }
+    }
+}
+
+fn apply_recency_blend(
+    store: &Store,
+    rtxn: &RoTxn<'_>,
+    recency: Option<Bm25RecencyConfig>,
+    scores: &mut HashMap<EntityId, f64>,
+) -> Result<()> {
+    let Some(recency) = recency else {
+        return Ok(());
+    };
+    if !recency.is_enabled() {
+        return Ok(());
+    }
+
+    let seconds_per_half_life = recency.half_life_days * 86_400.0;
+    if seconds_per_half_life <= 0.0 {
+        return Ok(());
+    }
+    let decay = std::f64::consts::LN_2 / seconds_per_half_life;
+
+    for (id, score) in scores {
+        let Some(raw) = store.entities.get(rtxn, id.as_bytes())? else {
+            continue;
+        };
+        let Some(header) = EntityMetadataHeader::parse(raw) else {
+            continue;
+        };
+        let age_secs = recency.now_secs.saturating_sub(header.learned_at) as f64;
+        let freshness = (-decay * age_secs).exp();
+        *score *= 1.0 + recency.boost * freshness;
+    }
+
+    Ok(())
+}
+
 pub(crate) fn search_text(
     store: &Store,
     rtxn: &RoTxn<'_>,
@@ -453,6 +601,18 @@ pub(crate) fn search_text(
     config: &Bm25Config,
     query: &str,
     limit: usize,
+) -> Result<Vec<ScoredEntity>> {
+    search_text_with_recency(store, rtxn, analyzer, config, query, limit, None)
+}
+
+pub(crate) fn search_text_with_recency(
+    store: &Store,
+    rtxn: &RoTxn<'_>,
+    analyzer: &MultilingualAnalyzer,
+    config: &Bm25Config,
+    query: &str,
+    limit: usize,
+    recency: Option<Bm25RecencyConfig>,
 ) -> Result<Vec<ScoredEntity>> {
     if limit == 0 {
         return Ok(Vec::new());
@@ -464,16 +624,7 @@ pub(crate) fn search_text(
         return Ok(Vec::new());
     }
 
-    // Dedupe query terms across channels — one term per unique string
-    // (scorer looks up posting list then combines field TFs from the
-    // posting entries themselves). This preserves the pre-ONE-317
-    // "query dedupe" semantics.
-    let mut unique_terms: Vec<String> = tokens
-        .into_iter()
-        .map(|t| t.term.as_ref().to_owned())
-        .collect();
-    unique_terms.sort();
-    unique_terms.dedup();
+    let query_terms = collect_query_terms(store, rtxn, &tokens)?;
 
     let total_docs = read_total_docs(store, rtxn)?;
     if total_docs == 0 {
@@ -487,8 +638,11 @@ pub(crate) fn search_text(
     let mut field_length_cache: HashMap<EntityId, HashMap<u16, u32>> = HashMap::new();
     let mut scores: HashMap<EntityId, f64> = HashMap::new();
 
-    for term in unique_terms {
-        let Some(dups) = store.text_postings.get_duplicates(rtxn, term.as_bytes())? else {
+    for query_term in query_terms {
+        let Some(dups) = store
+            .text_postings
+            .get_duplicates(rtxn, query_term.term.as_bytes())?
+        else {
             continue;
         };
 
@@ -609,9 +763,12 @@ pub(crate) fn search_text(
             if let Bm25Formula::Plus { delta } = config.formula {
                 contribution += idf * delta;
             }
+            contribution *= query_term.weight;
             *scores.entry(id).or_insert(0.0) += contribution;
         }
     }
+
+    apply_recency_blend(store, rtxn, recency, &mut scores)?;
 
     let mut ranked: Vec<(EntityId, f64)> = scores.into_iter().collect();
     ranked.sort_by(|a, b| {
@@ -938,9 +1095,13 @@ mod tests {
     }
 
     fn put_text_doc(vault: &Vault, id: &EntityId, text: &str) -> Result<()> {
+        put_text_doc_at(vault, id, text, 2)
+    }
+
+    fn put_text_doc_at(vault: &Vault, id: &EntityId, text: &str, learned_at: u64) -> Result<()> {
         vault
             .batch()
-            .put(id, 1, test_time_range(1, 1), 2, b"text-doc")
+            .put(id, 1, test_time_range(1, 1), learned_at, b"text-doc")
             .text(id, &[("body", text)])
             .commit()
     }
@@ -1057,6 +1218,84 @@ mod tests {
 
         let results = vault.search_text("alpha beta", 10)?;
         assert_eq!(results[0].id, id_both);
+        Ok(())
+    }
+
+    #[test]
+    fn final_token_prefix_matches_only_last_query_token() -> Result<()> {
+        let temp_dir = tempfile::tempdir()?;
+        let vault = Vault::open(temp_dir.path(), test_config())?;
+        let retrieval = EntityId::now();
+        let alpha_only = EntityId::now();
+        let unrelated = EntityId::now();
+
+        put_text_doc(&vault, &retrieval, "omega retrieval")?;
+        put_text_doc(&vault, &alpha_only, "alpha zulu")?;
+        put_text_doc(&vault, &unrelated, "garden zulu")?;
+
+        let results = vault.search_text("alp retr", 10)?;
+        assert!(contains_id(&results, &retrieval));
+        assert!(
+            !contains_id(&results, &alpha_only),
+            "non-final query token must not be prefix-expanded",
+        );
+        assert!(!contains_id(&results, &unrelated));
+
+        Ok(())
+    }
+
+    #[test]
+    fn bm25_recency_blend_is_configurable_and_deterministic() -> Result<()> {
+        let temp_dir = tempfile::tempdir()?;
+        let vault = Vault::open(temp_dir.path(), test_config())?;
+        let old = EntityId::from_bytes_unchecked([0x10; ENTITY_ID_LEN]);
+        let fresh = EntityId::from_bytes_unchecked([0x20; ENTITY_ID_LEN]);
+
+        put_text_doc_at(&vault, &old, "needle", 0)?;
+        put_text_doc_at(&vault, &fresh, "needle", 86_400)?;
+
+        let rtxn = vault.store.env.read_txn()?;
+        let config = Bm25Config::default();
+        let baseline = search_text_with_recency(
+            &vault.store,
+            &rtxn,
+            &MultilingualAnalyzer::portable(),
+            &config,
+            "needle",
+            10,
+            None,
+        )?;
+        assert_eq!(baseline[0].id, old, "baseline tie breaks by entity id");
+
+        let recency = Some(Bm25RecencyConfig {
+            half_life_days: 0.01,
+            boost: 4.0,
+            now_secs: 86_400,
+        });
+        let boosted = search_text_with_recency(
+            &vault.store,
+            &rtxn,
+            &MultilingualAnalyzer::portable(),
+            &config,
+            "needle",
+            10,
+            recency,
+        )?;
+        let repeated = search_text_with_recency(
+            &vault.store,
+            &rtxn,
+            &MultilingualAnalyzer::portable(),
+            &config,
+            "needle",
+            10,
+            recency,
+        )?;
+        assert_eq!(boosted[0].id, fresh);
+        assert_eq!(boosted.len(), repeated.len());
+        for (left, right) in boosted.iter().zip(repeated.iter()) {
+            assert_eq!(left.id, right.id);
+            assert_eq!(left.score, right.score);
+        }
         Ok(())
     }
 
