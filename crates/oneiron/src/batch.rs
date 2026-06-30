@@ -620,6 +620,7 @@ impl<'a> BatchBuilder<'a> {
             self.ops,
             text_index_trusted,
             false,
+            false,
         )?;
         wtxn.commit()?;
         Ok(())
@@ -654,6 +655,7 @@ fn preflight_standalone_gate_decisions(store: &Store, ops: &[BatchOp]) -> Result
                         &policy,
                         crate::gate::GateWriteMode {
                             record_decision: true,
+                            persist_pending_consent: true,
                             resolve_pending: false,
                         },
                     )
@@ -676,6 +678,7 @@ fn preflight_standalone_gate_decisions(store: &Store, ops: &[BatchOp]) -> Result
                     &policy,
                     crate::gate::GateWriteMode {
                         record_decision: true,
+                        persist_pending_consent: true,
                         resolve_pending: false,
                     },
                 )
@@ -941,6 +944,7 @@ impl<'a> TxnBatchBuilder<'a> {
             self.ops,
             text_index_trusted,
             false,
+            true,
         )
     }
 }
@@ -1175,6 +1179,10 @@ fn materialize_lexical_query_hints_for_target(
 }
 
 /// Applies a list of batch operations to an LMDB write transaction.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "batch write plumbing keeps gate persistence modes explicit at call sites"
+)]
 pub(crate) fn apply_ops(
     store: &Store,
     config: &crate::types::VaultConfig,
@@ -1183,6 +1191,7 @@ pub(crate) fn apply_ops(
     ops: Vec<BatchOp>,
     text_index_trusted: bool,
     record_gate_decisions: bool,
+    persist_gate_pending_consent: bool,
 ) -> Result<()> {
     secret_scan::scan_batch_ops(&ops)?;
     let child_of_overlay = ChildOfBatchOverlay::from_ops(&ops);
@@ -1252,6 +1261,7 @@ pub(crate) fn apply_ops(
                     None,
                     false,
                     record_gate_decisions,
+                    persist_gate_pending_consent,
                 )?;
                 if let Some(token) = applied.pending_embedding_token {
                     pending_embedding_tokens_written.insert(id, token);
@@ -1333,6 +1343,7 @@ pub(crate) fn apply_ops(
                     write_policy.as_ref(),
                     internal_lexical_query_hint,
                     record_gate_decisions,
+                    persist_gate_pending_consent,
                 )?;
                 if applied.had_graph_mutation {
                     had_graph_mutation = true;
@@ -1806,6 +1817,7 @@ fn apply_claim_candidate(
     write_policy: Option<&crate::gate::PolicyManifestResolution>,
     internal_lexical_query_hint: bool,
     record_gate_decisions: bool,
+    persist_gate_pending_consent: bool,
 ) -> Result<AppliedClaimCandidate> {
     crate::gate::validate_write_envelope(envelope)?;
 
@@ -1842,6 +1854,7 @@ fn apply_claim_candidate(
         Some(envelope),
         internal_lexical_query_hint,
         record_gate_decisions,
+        persist_gate_pending_consent,
     )?;
 
     let subject_id = match subject {
@@ -1941,6 +1954,7 @@ fn apply_put(
     write_envelope: Option<&WriteEnvelope>,
     internal_lexical_query_hint: bool,
     record_gate_decisions: bool,
+    persist_gate_pending_consent: bool,
 ) -> Result<AppliedPut> {
     // Type-byte validation runs in `apply_ops` (the public-vs-maintenance gate:
     // public writes reject the engine-authored maintenance band, the sync
@@ -2032,6 +2046,7 @@ fn apply_put(
                     policy,
                     crate::gate::GateWriteMode {
                         record_decision: record_gate_decisions,
+                        persist_pending_consent: persist_gate_pending_consent,
                         resolve_pending: true,
                     },
                 )?;
@@ -2045,6 +2060,7 @@ fn apply_put(
                     policy,
                     crate::gate::GateWriteMode {
                         record_decision: record_gate_decisions,
+                        persist_pending_consent: persist_gate_pending_consent,
                         resolve_pending: true,
                     },
                 )?;
@@ -4383,6 +4399,7 @@ mod tests {
             }],
             true,
             false,
+            false,
         )
         .expect_err("self-target lexical hints must reject");
         assert_matches!(err, Error::InvalidClaimBody(_));
@@ -4438,6 +4455,7 @@ mod tests {
             }],
             true,
             false,
+            false,
         )
         .expect_err("lexical hints targeting synthetic hints must reject");
         assert_matches!(err, Error::InvalidClaimBody(_));
@@ -4485,6 +4503,7 @@ mod tests {
                 allow_reserved_predicate: true,
             }],
             true,
+            false,
             false,
         )
         .expect_err("lexical hints must target claim records");
@@ -4601,6 +4620,7 @@ mod tests {
             }],
             true,
             false,
+            false,
         )?;
         wtxn.commit()?;
 
@@ -4686,6 +4706,7 @@ mod tests {
             ],
             true,
             false,
+            false,
         )?;
         wtxn.commit()?;
 
@@ -4759,6 +4780,7 @@ mod tests {
                 }],
                 true,
                 false,
+                false,
             )?;
             wtxn.commit()?;
 
@@ -4791,6 +4813,7 @@ mod tests {
                 allow_maintenance: true,
                 allow_reserved_predicate: true,
             }],
+            false,
             false,
             false,
         )
@@ -5939,6 +5962,7 @@ mod tests {
                     provenance: None,
                 }],
                 true,
+                false,
                 false,
             )
         })?;

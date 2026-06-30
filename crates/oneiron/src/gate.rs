@@ -551,11 +551,10 @@ impl PolicyManifestResolution {
         &self.signatures
     }
 
-    #[must_use]
-    pub(crate) fn read_frontier_hash(&self) -> [u8; 32] {
+    pub(crate) fn read_frontier_hash(&self) -> Result<[u8; 32]> {
         let mut hasher = Sha256::new();
-        hasher.update(format!("{self:?}").as_bytes());
-        hasher.finalize().into()
+        hash_policy_frontier_v0(&mut hasher, self)?;
+        Ok(hasher.finalize().into())
     }
 
     #[must_use]
@@ -643,6 +642,182 @@ impl PolicyManifestResolution {
         }
         resolved
     }
+}
+
+fn hash_policy_frontier_v0(
+    hasher: &mut Sha256,
+    resolution: &PolicyManifestResolution,
+) -> Result<()> {
+    hash_bytes(hasher, b"oneiron.gate.policy_frontier.v0");
+    hash_diagnostics(hasher, resolution.diagnostics);
+    hash_source_trust(hasher, &resolution.source_trust);
+
+    hash_len(hasher, resolution.packs.len());
+    for pack in &resolution.packs {
+        hash_str(hasher, &pack._pack_id);
+        hash_str(hasher, &pack._pack_version);
+        hash_str(hasher, &pack._min_engine_version);
+        hash_axes(hasher, pack.defaults);
+        hash_len(hasher, pack.rules.len());
+        for rule in &pack.rules {
+            hash_str(hasher, &rule.prefix);
+            hash_axes(hasher, rule.axes);
+        }
+    }
+
+    hash_len(hasher, resolution.actor_ceilings.len());
+    for ceiling in &resolution.actor_ceilings {
+        hash_str(hasher, &ceiling.actor_class);
+        hash_opt_str(hasher, ceiling.actor_ref.as_deref());
+        hash_approval_ceiling(hasher, ceiling.ceiling);
+    }
+
+    hash_len(hasher, resolution.scoped_grants.len());
+    for grant in &resolution.scoped_grants {
+        hash_opt_str(hasher, grant.actor_class.as_deref());
+        hash_opt_str(hasher, grant.actor_ref.as_deref());
+        hash_str(hasher, &grant.effector);
+        hash_opt_value(hasher, grant.scope.as_ref())?;
+        hash_opt_value(hasher, grant.budget.as_ref())?;
+        hash_bool(hasher, grant.receipt_required);
+    }
+
+    hash_len(hasher, resolution.signatures.len());
+    for signature in &resolution.signatures {
+        hash_str(hasher, &signature.alg);
+        hash_opt_str(hasher, signature.key_id.as_deref());
+        hash_str(hasher, &signature.sig);
+    }
+
+    Ok(())
+}
+
+fn hash_diagnostics(hasher: &mut Sha256, diagnostics: PolicyManifestDiagnostics) {
+    hash_len(hasher, diagnostics.manifest_count);
+    hash_bool(hasher, diagnostics.malformed_manifest_seen);
+    hash_bool(hasher, diagnostics.unsupported_schema_seen);
+    hash_bool(hasher, diagnostics.engine_version_floor_seen);
+    hash_bool(hasher, diagnostics.unknown_axis_seen);
+}
+
+fn hash_source_trust(hasher: &mut Sha256, source_trust: &SourceTrustCeiling) {
+    hash_bool(hasher, source_trust.malformed_manifest_seen);
+    for source in [
+        ClaimSource::UserStated,
+        ClaimSource::Observed,
+        ClaimSource::Inferred,
+        ClaimSource::Imported,
+        ClaimSource::ToolOutput,
+        ClaimSource::Generated,
+    ] {
+        hash_str(hasher, source.as_str());
+        hash_source_trust_row(hasher, source_trust.row(source));
+    }
+}
+
+fn hash_source_trust_row(hasher: &mut Sha256, row: Option<SourceTrustRow>) {
+    let Some(row) = row else {
+        hash_bool(hasher, false);
+        return;
+    };
+    hash_bool(hasher, true);
+    hash_opt_u8(hasher, row.max_auto_sensitivity);
+    hash_bool(hasher, row.receipted);
+    hash_bool(hasher, row.warned);
+}
+
+fn hash_axes(hasher: &mut Sha256, axes: PolicyAxes) {
+    hash_opt_criticality(hasher, axes.criticality);
+    hash_opt_sensitivity(hasher, axes.sensitivity);
+    hash_bool(hasher, axes.unknown_axis_seen);
+}
+
+fn hash_approval_ceiling(hasher: &mut Sha256, ceiling: PolicyApprovalCeiling) {
+    hash_str(
+        hasher,
+        match ceiling {
+            PolicyApprovalCeiling::Auto => "auto",
+            PolicyApprovalCeiling::Proposed => "proposed",
+        },
+    );
+}
+
+fn hash_opt_criticality(hasher: &mut Sha256, criticality: Option<PolicyCriticality>) {
+    let Some(criticality) = criticality else {
+        hash_bool(hasher, false);
+        return;
+    };
+    hash_bool(hasher, true);
+    hash_str(
+        hasher,
+        match criticality {
+            PolicyCriticality::Normal => "normal",
+            PolicyCriticality::Critical => "critical",
+        },
+    );
+}
+
+fn hash_opt_sensitivity(hasher: &mut Sha256, sensitivity: Option<PolicySensitivity>) {
+    let Some(sensitivity) = sensitivity else {
+        hash_bool(hasher, false);
+        return;
+    };
+    hash_bool(hasher, true);
+    hash_str(
+        hasher,
+        match sensitivity {
+            PolicySensitivity::Normal => "normal",
+            PolicySensitivity::Sensitive => "sensitive",
+        },
+    );
+}
+
+fn hash_opt_value(hasher: &mut Sha256, value: Option<&Value>) -> Result<()> {
+    let Some(value) = value else {
+        hash_bool(hasher, false);
+        return Ok(());
+    };
+    hash_bool(hasher, true);
+    let mut encoded = Vec::new();
+    rmpv::encode::write_value(&mut encoded, value)
+        .map_err(|_| Error::InvariantViolation("policy frontier value encode failed"))?;
+    hash_bytes(hasher, &encoded);
+    Ok(())
+}
+
+fn hash_opt_str(hasher: &mut Sha256, value: Option<&str>) {
+    let Some(value) = value else {
+        hash_bool(hasher, false);
+        return;
+    };
+    hash_bool(hasher, true);
+    hash_str(hasher, value);
+}
+
+fn hash_opt_u8(hasher: &mut Sha256, value: Option<u8>) {
+    let Some(value) = value else {
+        hash_bool(hasher, false);
+        return;
+    };
+    hash_bool(hasher, true);
+    hasher.update([value]);
+}
+
+fn hash_str(hasher: &mut Sha256, value: &str) {
+    hash_bytes(hasher, value.as_bytes());
+}
+
+fn hash_bytes(hasher: &mut Sha256, bytes: &[u8]) {
+    hash_len(hasher, bytes.len());
+    hasher.update(bytes);
+}
+
+fn hash_bool(hasher: &mut Sha256, value: bool) {
+    hasher.update([u8::from(value)]);
+}
+
+fn hash_len(hasher: &mut Sha256, value: usize) {
+    hasher.update((value as u64).to_le_bytes());
 }
 
 struct DecodedPolicyManifest {
@@ -776,27 +951,28 @@ pub(crate) fn check_claim_policy_for_write(
                     read_frontier_hash: binding.read_frontier_hash,
                 },
             )?;
+        }
 
-            if decision.outcome() == GateOutcome::Pending
-                && body.approval == ClaimApprovalStatus::Proposed
-            {
-                store.put_pending_gate_consent_in_txn(
-                    wtxn,
-                    &PendingGateConsentRecord {
-                        version: 0,
-                        claim_id: *id.as_bytes(),
-                        decision_id,
-                        created_at: crate::unix_seconds_now(),
-                        diff_handle: binding.diff_handle.clone(),
-                        read_frontier_hash: binding.read_frontier_hash,
-                        reason_codes: decision
-                            .reason_codes()
-                            .iter()
-                            .map(|code| code.as_str().to_owned())
-                            .collect(),
-                    },
-                )?;
-            }
+        if mode.persist_pending_consent
+            && decision.outcome() == GateOutcome::Pending
+            && body.approval == ClaimApprovalStatus::Proposed
+        {
+            store.put_pending_gate_consent_in_txn(
+                wtxn,
+                &PendingGateConsentRecord {
+                    version: 0,
+                    claim_id: *id.as_bytes(),
+                    decision_id,
+                    created_at: crate::unix_seconds_now(),
+                    diff_handle: binding.diff_handle.clone(),
+                    read_frontier_hash: binding.read_frontier_hash,
+                    reason_codes: decision
+                        .reason_codes()
+                        .iter()
+                        .map(|code| code.as_str().to_owned())
+                        .collect(),
+                },
+            )?;
         }
 
         enforce_claim_gate_decision_with_consent(
@@ -816,6 +992,7 @@ pub(crate) fn check_claim_policy_for_write(
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct GateWriteMode {
     pub(crate) record_decision: bool,
+    pub(crate) persist_pending_consent: bool,
     pub(crate) resolve_pending: bool,
 }
 
@@ -919,7 +1096,7 @@ impl GateConsentBinding {
         hasher.update(&encoded);
         Ok(Self {
             diff_handle: hasher.finalize().to_vec(),
-            read_frontier_hash: policy.read_frontier_hash(),
+            read_frontier_hash: policy.read_frontier_hash()?,
         })
     }
 }

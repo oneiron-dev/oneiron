@@ -1035,6 +1035,7 @@ fn apply_materialized_edge_ops(
                         .text_index_trusted
                         .load(std::sync::atomic::Ordering::Acquire),
                     false,
+                    false,
                 );
                 match apply_result {
                     Err(e) if remote_rejection_reason(&e).is_none() => return Err(e),
@@ -1059,6 +1060,7 @@ fn apply_materialized_edge_ops(
             vault
                 .text_index_trusted
                 .load(std::sync::atomic::Ordering::Acquire),
+            false,
             false,
         );
         match apply_result {
@@ -1090,6 +1092,7 @@ fn apply_materialized_edge_ops(
                 .text_index_trusted
                 .load(std::sync::atomic::Ordering::Acquire),
             false,
+            false,
         );
         match apply_result {
             Err(e) if remote_rejection_reason(&e).is_none() => return Err(e),
@@ -1110,6 +1113,7 @@ fn apply_materialized_edge_ops(
                         vault
                             .text_index_trusted
                             .load(std::sync::atomic::Ordering::Acquire),
+                        false,
                         false,
                     );
                     match apply_result {
