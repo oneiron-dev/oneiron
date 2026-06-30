@@ -2552,7 +2552,7 @@ fn redistribute_context_pack_budget(
         let count = available.get(kind);
         if count <= cap {
             surplus = surplus.saturating_add(cap.saturating_sub(count));
-        } else {
+        } else if cap > 0 {
             hungry.push((kind, count - cap));
         }
     }

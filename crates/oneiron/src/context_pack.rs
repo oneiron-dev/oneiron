@@ -2412,6 +2412,46 @@ mod tests {
     }
 
     #[test]
+    fn retrieval_budget_zero_caps_remain_excluded_after_surplus_redistribution() -> Result<()> {
+        let (_dir, vault) = open_test_vault();
+
+        let claim = EntityId::from_bytes_unchecked([0xE1; 16]);
+        let summary_a = EntityId::from_bytes_unchecked([0xE2; 16]);
+        let summary_b = EntityId::from_bytes_unchecked([0xE3; 16]);
+
+        put_claim_text_entity(&vault, &claim, "zerocapbudget", "test.zero.cap", "claim")?;
+        put_text_entity(
+            &vault,
+            &summary_a,
+            crate::types::ENTITY_TYPE_SUMMARY,
+            "zerocapbudget",
+            serde_json::json!({"text": "summary a"}),
+        )?;
+        put_text_entity(
+            &vault,
+            &summary_b,
+            crate::types::ENTITY_TYPE_SUMMARY,
+            "zerocapbudget",
+            serde_json::json!({"text": "summary b"}),
+        )?;
+
+        let pack = vault
+            .context_pack()
+            .search_text("zerocapbudget", 10)
+            .limit(3)
+            .retrieval_budget(ContextPackRetrievalBudget::new(2, 0, 0, 0, 0, 0))
+            .run()?;
+
+        let ids: Vec<EntityId> = pack.results.iter().map(|entity| entity.id).collect();
+        assert_eq!(
+            ids,
+            vec![claim],
+            "explicit zero caps must not become eligible during surplus redistribution"
+        );
+        Ok(())
+    }
+
+    #[test]
     fn selected_edge_budget_caps_edge_walk() -> Result<()> {
         let (_dir, vault) = open_test_vault();
 
