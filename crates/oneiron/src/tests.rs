@@ -3332,17 +3332,15 @@ fn open_rejects_abi_v2_vault_after_short_id_swap() -> Result<()> {
     Ok(())
 }
 
-/// ONE-299 fail-closed gate over the DUP_SORT postings bump: vaults written
-/// under storage ABI v3 (single-blob `text_postings`, `tf`-carrying
-/// `text_forward`) are REJECTED at open with the typed gate error and NO
-/// silent migration. Pins the literal versions 3 → 4 — an implementation
-/// that skipped the bump would open the old vault (and then misread its v3
-/// posting blobs) and FAIL this test.
+/// ONE-1293 fail-closed gate over the maintenance-band type-byte realignment:
+/// vaults written under storage ABI v4 have POLICY_MANIFEST at 122 and
+/// FEDERATION_GRANT at 123, while v5 reserves 122 for AUTHORITY_LOG and moves
+/// those kinds to 123/124. There is NO silent migration.
 #[test]
-fn open_rejects_abi_v3_vault_after_dupsort_postings() -> Result<()> {
+fn open_rejects_abi_v4_vault_after_maintenance_band_reallocation() -> Result<()> {
     assert_eq!(
-        STORAGE_ABI_VERSION, 4,
-        "ONE-299 pins the current storage ABI at 4",
+        STORAGE_ABI_VERSION, 5,
+        "ONE-1293 pins the current storage ABI at 5",
     );
 
     let temp_dir = tempfile::tempdir()?;
@@ -3351,21 +3349,21 @@ fn open_rejects_abi_v3_vault_after_dupsort_postings() -> Result<()> {
     {
         let _vault = Vault::open(path, test_config())?;
     }
-    set_raw_storage_abi_version(path, Some(3))?;
+    set_raw_storage_abi_version(path, Some(4))?;
 
     let err = match Vault::open(path, test_config()) {
-        Ok(_) => panic!("expected Vault::open to reject a pre-DUP_SORT ABI v3 vault"),
+        Ok(_) => panic!("expected Vault::open to reject a pre-ONE-1293 ABI v4 vault"),
         Err(err) => err,
     };
     assert!(
         matches!(
             err,
             Error::StorageAbiVersionChanged {
-                stored: Some(3),
-                current: 4,
+                stored: Some(4),
+                current: 5,
             }
         ),
-        "expected StorageAbiVersionChanged {{ stored: Some(3), current: 4 }}, got {err:?}"
+        "expected StorageAbiVersionChanged {{ stored: Some(4), current: 5 }}, got {err:?}"
     );
     Ok(())
 }
@@ -5006,7 +5004,7 @@ fn doctor_reflects_persisted_open_compatibility_values() -> Result<()> {
     let report = vault.doctor()?;
     serde_json::to_value(&report).expect("doctor report must serialize");
 
-    assert_eq!(report.storage_abi_version, Some(4));
+    assert_eq!(report.storage_abi_version, Some(5));
     assert_eq!(report.storage_schema_version, Some(1));
     assert_eq!(
         report.embedding_model_id,
@@ -6115,14 +6113,14 @@ fn all_entity_type_prefixes() {
         ),
         (
             "POLICY_MANIFEST",
-            122,
+            123,
             None,
             EntityClassification::Maintenance,
             TypeByteBand::InducedDynamicMaintenance,
         ),
         (
             "FEDERATION_GRANT",
-            123,
+            124,
             None,
             EntityClassification::Maintenance,
             TypeByteBand::InducedDynamicMaintenance,
@@ -6229,8 +6227,9 @@ fn type_byte_band_allocation_matches_contract() {
     }
 
     // is_structural_kind: false for the semantic byte 0 and the registered
-    // maintenance kinds 120/121/122/123; true for every REGISTERED core
-    // (1..=16) and pack (80/81/82/83) kind.
+    // maintenance kinds 120/121/123/124; true for every REGISTERED core
+    // (1..=16) and pack (80/81/82/83) kind. Byte 122 is reserved for
+    // AUTHORITY_LOG but not registered yet.
     assert!(!is_structural_kind(0), "CLAIM is NOT a StructuralKind");
     assert!(
         !is_structural_kind(120),
@@ -6242,10 +6241,14 @@ fn type_byte_band_allocation_matches_contract() {
     );
     assert!(
         !is_structural_kind(122),
-        "POLICY_MANIFEST is NOT a StructuralKind (GATE-001: vault-resident maintenance)"
+        "AUTHORITY_LOG byte 122 is reserved but not a StructuralKind"
     );
     assert!(
         !is_structural_kind(123),
+        "POLICY_MANIFEST is NOT a StructuralKind (GATE-001: vault-resident maintenance)"
+    );
+    assert!(
+        !is_structural_kind(124),
         "FEDERATION_GRANT is NOT a StructuralKind (FED-001: shared-vault membership)"
     );
     for byte in 1..=16_u8 {
@@ -6257,9 +6260,10 @@ fn type_byte_band_allocation_matches_contract() {
 
     // Unregistered bytes — including bytes INSIDE structural bands — are not
     // StructuralKinds, and the existing write-path gate still rejects them
-    // with the same typed error. (123 left this list when FED-001 registered
-    // FEDERATION_GRANT; 124 is the band's first unregistered byte now.)
-    for byte in [17_u8, 63, 64, 79, 84, 99, 100, 119, 124, 255] {
+    // with the same typed error. (122 is reserved for AUTHORITY_LOG but
+    // remains unregistered; 125 is the band's first unregistered byte after
+    // FEDERATION_GRANT.)
+    for byte in [17_u8, 63, 64, 79, 84, 99, 100, 119, 122, 125, 255] {
         assert!(!is_structural_kind(byte), "unregistered byte {byte}");
         assert!(
             matches!(
@@ -7358,11 +7362,12 @@ fn public_put_of_maintenance_kind_rejected_with_distinct_typed_error() -> Result
 fn unknown_type_bytes_still_fail_with_invalid_entity_type() -> Result<()> {
     let (_dir, vault) = open_test_vault();
 
-    // 121 left this list when ONE-1138 registered MODEL; 122 left it when
-    // GATE-001 registered POLICY_MANIFEST; 123 left it when FED-001
+    // 121 left this list when ONE-1138 registered MODEL; 123 left it when
+    // GATE-001 registered POLICY_MANIFEST; 124 left it when FED-001
     // registered FEDERATION_GRANT. Public puts of those bytes now fail
-    // MaintenanceKindNotWritable — covered by the D5 gate test.
-    for unknown in [99_u8, 124, 200] {
+    // MaintenanceKindNotWritable — covered by the D5 gate test. Byte 122 is
+    // reserved for AUTHORITY_LOG but remains unregistered.
+    for unknown in [99_u8, 122, 125, 200] {
         let id = EntityId::now();
         let err = vault
             .put_entity(&id, unknown, test_time_range(1, 1), 2, b"unknown-type")
