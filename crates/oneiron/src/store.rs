@@ -632,7 +632,11 @@ pub struct Store {
     pub(crate) vault_meta: Database<Bytes, Bytes>,
     /// Vault-scoped dynamic StructuralKind registry loaded from `vault_meta`.
     pub(crate) kind_registry: RwLock<HashMap<u8, StructuralKindRegistration>>,
+    /// PPR cache rows. Values carry the final scores and, for current rows,
+    /// the residual/frontier state needed to resume a deeper Forward-Push run.
     pub(crate) ppr_cache: Database<Bytes, Bytes>,
+    /// Reverse dependency index for PPR cache invalidation:
+    /// `[entity_id | cache_key]`.
     pub(crate) ppr_cache_deps: Database<Bytes, Bytes>,
     pub(crate) type_index: Database<Bytes, Bytes>,
     pub(crate) temporal_occurred_start: Database<Bytes, Bytes>,
