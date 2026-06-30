@@ -13,9 +13,9 @@ use crate::claim::{
 pub mod companion;
 pub use companion::{
     COMPANION_RECORD_BODY_KEYS, COMPANION_RECORD_SCHEMA_VERSION, CompanionExportClassification,
-    CompanionProvenance, CompanionRecord, CompanionRecordKey, CompanionRecordKind,
-    CompanionRegister, CompanionScope, CompanionSubject, decode_companion_record_body,
-    encode_companion_record_body,
+    CompanionExpression, CompanionExpressionRegister, CompanionProvenance, CompanionRecord,
+    CompanionRecordKey, CompanionRecordKind, CompanionRegister, CompanionScope, CompanionSubject,
+    decode_companion_record_body, encode_companion_record_body,
 };
 
 pub(crate) const ENTITY_ID_LEN: usize = 16;

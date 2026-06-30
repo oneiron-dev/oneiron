@@ -84,6 +84,9 @@ pub(crate) const KEY_STALE: &str = CLAIM_BODY_KEYS[13];
 /// Predicate used for synthetic prospective-query hint side records.
 pub const PREDICATE_LEXICAL_QUERY_HINT: &str = "lexical.query_hint";
 
+/// Pinned companion-expression predicate for the relationship/persona layer.
+pub const PREDICATE_COMPANION_EXPRESSION: &str = "companion.expression";
+
 /// Maximum number of lexical query hints one claim-candidate write may emit.
 pub(crate) const MAX_LEXICAL_QUERY_HINTS_PER_CLAIM: usize = 8;
 
@@ -95,6 +98,10 @@ const LEXICAL_HINT_KIND: &str = "prospective_query";
 const LEXICAL_HINT_VALUE_KEY_KIND: &str = "kind";
 const LEXICAL_HINT_VALUE_KEY_QUERY: &str = "query";
 const LEXICAL_HINT_VALUE_KEY_TARGET: &str = "target";
+
+pub(crate) const COMPANION_EXPRESSION_PROFESSIONAL: &str = "professional";
+pub(crate) const COMPANION_EXPRESSION_WARM: &str = "warm";
+pub(crate) const COMPANION_EXPRESSION_UNRESTRICTED: &str = "unrestricted";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct LexicalQueryHintValue {
@@ -738,8 +745,26 @@ pub(crate) fn validate_claim_body_and_decode(
         validate_edge_provenance_claim_structure(&body)?;
     } else if body.predicate == PREDICATE_LEXICAL_QUERY_HINT {
         lexical_query_hint_target(&body)?;
+    } else if body.predicate == PREDICATE_COMPANION_EXPRESSION {
+        validate_companion_expression_claim_structure(&body)?;
     }
     Ok(body)
+}
+
+fn validate_companion_expression_claim_structure(body: &ClaimBody) -> Result<()> {
+    let Some(expression) = body.value.as_str() else {
+        return Err(Error::InvalidClaimBody(
+            "companion.expression value must be a string",
+        ));
+    };
+    match expression {
+        COMPANION_EXPRESSION_PROFESSIONAL
+        | COMPANION_EXPRESSION_WARM
+        | COMPANION_EXPRESSION_UNRESTRICTED => Ok(()),
+        _ => Err(Error::InvalidClaimBody(
+            "expression must be professional|warm|unrestricted",
+        )),
+    }
 }
 
 pub(crate) fn validate_claim_body_bytes(data: &[u8], allow_reserved_predicate: bool) -> Result<()> {
@@ -1198,6 +1223,44 @@ mod tests {
                 false,
             ),
             Err(Error::InvalidClaimBody(_))
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn write_door_validates_companion_expression_claim_values() -> Result<()> {
+        let subject = EntityId::from_bytes([0x33; 16]).expect("valid id");
+        let encode = |value: Value| -> Result<Vec<u8>> {
+            let body = ClaimBody::new(
+                PREDICATE_COMPANION_EXPRESSION,
+                ClaimSubject::Entity(subject),
+                value,
+                1.0,
+                ClaimApprovalStatus::Approved,
+                ClaimLifecycleStatus::Active,
+            );
+            encode_claim_body(&body)
+        };
+
+        for expression in [
+            COMPANION_EXPRESSION_PROFESSIONAL,
+            COMPANION_EXPRESSION_WARM,
+            COMPANION_EXPRESSION_UNRESTRICTED,
+        ] {
+            validate_claim_body_bytes(&encode(Value::from(expression))?, false)?;
+        }
+
+        assert_matches!(
+            validate_claim_body_bytes(&encode(Value::from("future_closed"))?, false),
+            Err(Error::InvalidClaimBody(
+                "expression must be professional|warm|unrestricted"
+            ))
+        );
+        assert_matches!(
+            validate_claim_body_bytes(&encode(Value::Map(Vec::new()))?, false),
+            Err(Error::InvalidClaimBody(
+                "companion.expression value must be a string"
+            ))
         );
         Ok(())
     }

@@ -1,15 +1,35 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use crate::claim::ClaimLifecycleStatus;
 use crate::error::{Error, Result};
 use crate::serialize::{WHOLE_VAULT_EXPORT_SERIALIZER, WHOLE_VAULT_EXPORT_SERIALIZER_VERSION};
 use crate::store::{
     DB_MANIFEST, DB_MANIFEST_VERSION, DbManifestEntry, MAX_DBS, STORAGE_ABI_VERSION,
     STORAGE_SCHEMA_VERSION,
 };
+use crate::types::{
+    CompanionExportClassification, CompanionExpression, CompanionExpressionRegister,
+    CompanionRecord, CompanionRecordKey, CompanionRecordKind, CompanionRegister, CompanionScope,
+};
 
 pub const EXPORT_MANIFEST_ARTIFACT_NAME: &str = "manifest.json";
 pub const EXPORT_MANIFEST_VERSION: u16 = 1;
+pub const COMPANION_EXPORT_LAYER_VERSION: u16 = 1;
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct CompanionExportLayer {
+    layer_version: u16,
+    personas: Vec<CompanionExportRecord>,
+    relationships: Vec<CompanionExportRecord>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct CompanionExportRecord {
+    key: CompanionRecordKey,
+    record: CompanionRecord,
+    expression: Option<CompanionExpression>,
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ExportManifestArtifact {
@@ -51,6 +71,87 @@ pub struct ExportDbManifestEntry {
     n: u8,
     name: String,
     group: String,
+}
+
+pub fn companion_export_layer(
+    records: &CompanionRegister,
+    expressions: &CompanionExpressionRegister,
+) -> CompanionExportLayer {
+    let mut personas = Vec::new();
+    let mut relationships = Vec::new();
+
+    for (key, record) in records.iter() {
+        if !companion_record_exportable(record) {
+            continue;
+        }
+
+        let exported = CompanionExportRecord {
+            key: key.clone(),
+            record: record.clone(),
+            expression: expressions.lookup(key),
+        };
+
+        match record.kind() {
+            CompanionRecordKind::Persona => personas.push(exported),
+            CompanionRecordKind::Relationship => relationships.push(exported),
+        }
+    }
+
+    CompanionExportLayer {
+        layer_version: COMPANION_EXPORT_LAYER_VERSION,
+        personas,
+        relationships,
+    }
+}
+
+fn companion_record_exportable(record: &CompanionRecord) -> bool {
+    record.lifecycle == ClaimLifecycleStatus::Active
+        && record.export_classification == CompanionExportClassification::Portable
+        && !matches!(&record.scope, CompanionScope::SharedVault { .. })
+}
+
+impl CompanionExportLayer {
+    #[must_use]
+    pub const fn layer_version(&self) -> u16 {
+        self.layer_version
+    }
+
+    #[must_use]
+    pub fn personas(&self) -> &[CompanionExportRecord] {
+        &self.personas
+    }
+
+    #[must_use]
+    pub fn relationships(&self) -> &[CompanionExportRecord] {
+        &self.relationships
+    }
+
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.personas.len() + self.relationships.len()
+    }
+
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.personas.is_empty() && self.relationships.is_empty()
+    }
+}
+
+impl CompanionExportRecord {
+    #[must_use]
+    pub const fn key(&self) -> &CompanionRecordKey {
+        &self.key
+    }
+
+    #[must_use]
+    pub const fn record(&self) -> &CompanionRecord {
+        &self.record
+    }
+
+    #[must_use]
+    pub const fn expression(&self) -> Option<CompanionExpression> {
+        self.expression
+    }
 }
 
 impl ExportManifestArtifact {
@@ -342,6 +443,159 @@ impl From<DbManifestEntry> for ExportDbManifestEntry {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::claim::{ClaimApprovalStatus, ClaimSource};
+    use crate::types::{
+        CompanionProvenance, EdgeActorClass, EntityId, WriteActor, WriteEnvelope, WriteProvenance,
+    };
+    use rmpv::Value;
+
+    fn entity(seed: u8) -> EntityId {
+        let mut bytes = [seed; 16];
+        bytes[0] = seed.max(1);
+        EntityId::from_bytes(bytes).expect("test entity id")
+    }
+
+    fn provenance(seed: u8) -> CompanionProvenance {
+        let envelope = WriteEnvelope::new(
+            WriteActor::new(entity(seed), EdgeActorClass::Agent),
+            ClaimSource::UserStated,
+            WriteProvenance::new(Value::from(format!("fixture-{seed}"))).unwrap(),
+            ClaimApprovalStatus::Approved,
+        );
+        CompanionProvenance::from_envelope(&envelope)
+    }
+
+    #[test]
+    fn companion_export_includes_portable_persona_and_relationship_layer() -> Result<()> {
+        let neutral = CompanionScope::neutral();
+        let personal = CompanionScope::personal(entity(0x51));
+        let persona_ref = entity(0x52);
+        let relationship_source = entity(0x53);
+        let relationship_target = entity(0x54);
+
+        let persona = CompanionRecord::persona(
+            neutral,
+            persona_ref,
+            Value::from("portable persona"),
+            provenance(0xA1),
+            CompanionExportClassification::Portable,
+        );
+        let relationship = CompanionRecord::relationship(
+            personal,
+            relationship_source,
+            relationship_target,
+            Value::from("portable relationship"),
+            provenance(0xA2),
+            CompanionExportClassification::Portable,
+        );
+
+        let mut records = CompanionRegister::new();
+        records.register(persona.clone())?;
+        records.register(relationship.clone())?;
+
+        let mut expressions = CompanionExpressionRegister::new();
+        expressions.update(persona.key(), CompanionExpression::Professional)?;
+        expressions.update(relationship.key(), CompanionExpression::Warm)?;
+
+        let layer = companion_export_layer(&records, &expressions);
+
+        assert_eq!(layer.layer_version(), COMPANION_EXPORT_LAYER_VERSION);
+        assert_eq!(layer.len(), 2);
+        assert_eq!(layer.personas().len(), 1);
+        assert_eq!(layer.relationships().len(), 1);
+        assert_eq!(layer.personas()[0].record(), &persona);
+        assert_eq!(
+            layer.personas()[0].expression(),
+            Some(CompanionExpression::Professional)
+        );
+        assert_eq!(layer.relationships()[0].record(), &relationship);
+        assert_eq!(
+            layer.relationships()[0].expression(),
+            Some(CompanionExpression::Warm)
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn companion_export_excludes_private_shared_and_closed_records() -> Result<()> {
+        let neutral = CompanionScope::neutral();
+        let personal = CompanionScope::personal(entity(0x61));
+        let shared = CompanionScope::shared_vault(7);
+
+        let included = CompanionRecord::persona(
+            neutral,
+            entity(0x62),
+            Value::from("portable neutral persona"),
+            provenance(0xB1),
+            CompanionExportClassification::Portable,
+        );
+        let private = CompanionRecord::persona(
+            personal.clone(),
+            entity(0x63),
+            Value::from("private personal persona"),
+            provenance(0xB2),
+            CompanionExportClassification::LocalOnly,
+        );
+        let shared_classified = CompanionRecord::relationship(
+            shared.clone(),
+            entity(0x64),
+            entity(0x65),
+            Value::from("shared org relationship"),
+            provenance(0xB3),
+            CompanionExportClassification::SharedVault,
+        );
+        let shared_misclassified = CompanionRecord::persona(
+            shared,
+            entity(0x66),
+            Value::from("shared scope with portable flag"),
+            provenance(0xB4),
+            CompanionExportClassification::Portable,
+        );
+        let mut closed = CompanionRecord::relationship(
+            personal,
+            entity(0x67),
+            entity(0x68),
+            Value::from("closed relationship"),
+            provenance(0xB5),
+            CompanionExportClassification::Portable,
+        );
+        closed.lifecycle = ClaimLifecycleStatus::Retracted;
+
+        let mut records = CompanionRegister::new();
+        for record in [
+            included.clone(),
+            private.clone(),
+            shared_classified.clone(),
+            shared_misclassified.clone(),
+            closed.clone(),
+        ] {
+            records.register(record)?;
+        }
+
+        let mut expressions = CompanionExpressionRegister::new();
+        expressions.update(included.key(), CompanionExpression::Warm)?;
+        expressions.update(private.key(), CompanionExpression::Unrestricted)?;
+        expressions.update(shared_classified.key(), CompanionExpression::Unrestricted)?;
+        expressions.update(
+            shared_misclassified.key(),
+            CompanionExpression::Unrestricted,
+        )?;
+        expressions.update(closed.key(), CompanionExpression::Professional)?;
+
+        let layer = companion_export_layer(&records, &expressions);
+
+        assert_eq!(layer.len(), 1);
+        assert_eq!(layer.personas().len(), 1);
+        assert!(layer.relationships().is_empty());
+        assert_eq!(layer.personas()[0].record(), &included);
+        assert_eq!(
+            layer.personas()[0].expression(),
+            Some(CompanionExpression::Warm)
+        );
+        assert_ne!(layer.personas()[0].record(), &private);
+        assert_ne!(layer.personas()[0].record(), &shared_misclassified);
+        Ok(())
+    }
 
     #[test]
     fn export_manifest_stable_fixture_records_data_shape_and_secret_nulling() {
