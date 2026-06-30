@@ -92,6 +92,92 @@ pub(crate) fn serialize_pack_with_telemetry(
     (bytes, telemetry)
 }
 
+/// Apply JSON context-pack field projection and item-budget controls while
+/// preserving the structured `ContextPack` envelope used by HTTP APIs.
+pub fn project_pack_for_json_response(
+    mut pack: ContextPack,
+    config: &SerializeConfig,
+) -> ContextPack {
+    let now = crate::unix_seconds_now();
+    let value_depth_limit = value_depth_limit_for_format(PackFormat::Json);
+    let mut stats = pack.stats.clone();
+
+    pack.results = project_entities_for_json_response(
+        pack.results,
+        PreparedEntitySource::Result,
+        config,
+        now,
+        value_depth_limit,
+        &mut stats,
+    );
+    pack.neighbors = project_entities_for_json_response(
+        pack.neighbors,
+        PreparedEntitySource::Neighbor,
+        config,
+        now,
+        value_depth_limit,
+        &mut stats,
+    );
+    pack.stats = stats;
+    pack
+}
+
+fn project_entities_for_json_response(
+    entities: Vec<ContextEntity>,
+    source: PreparedEntitySource,
+    config: &SerializeConfig,
+    now: u64,
+    value_depth_limit: ValueDepthLimit,
+    stats: &mut PackStats,
+) -> Vec<ContextEntity> {
+    entities
+        .into_iter()
+        .filter_map(|mut entity| {
+            let had_fields = entity.fields.is_some();
+            let fields = entity.fields.take().map_or_else(Vec::new, |map| {
+                let field_keys = field_keys(entity.entity_type, config.profile, &map);
+                field_keys
+                    .into_iter()
+                    .filter_map(|key| {
+                        let value = map.get(&key)?;
+                        should_include_projected_field(entity.entity_type, &key, value).then(|| {
+                            (
+                                key.clone(),
+                                normalize_value(
+                                    &key,
+                                    value,
+                                    true,
+                                    now,
+                                    config.max_field_chars,
+                                    value_depth_limit,
+                                ),
+                            )
+                        })
+                    })
+                    .collect()
+            });
+            let mut prepared = PreparedEntity {
+                entity_type: entity.entity_type,
+                score: entity.score,
+                source,
+                source_id: *entity.id.as_bytes(),
+                id: format_short_id(&entity),
+                fields,
+            };
+            if !apply_item_budget_with_depth_limit(
+                &mut prepared,
+                config.max_item_tokens,
+                stats,
+                value_depth_limit,
+            ) {
+                return None;
+            }
+            entity.fields = had_fields.then(|| HashMap::from_iter(prepared.fields));
+            Some(entity)
+        })
+        .collect()
+}
+
 fn serialize_prepared_pack(
     pack: &ContextPack,
     config: &SerializeConfig,

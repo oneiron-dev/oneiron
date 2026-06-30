@@ -100,9 +100,13 @@ pub use crate::recovery::{
     RECOVERY_ARTIFACT_VERSION, RecoveryArtifact, RecoveryArtifactFailure, RecoveryArtifactLoad,
     decode_recovery_artifact, encode_recovery_artifact, load_recovery_artifact,
 };
+pub use crate::store::{
+    RetrievalAction, RetrievalRunId, RetrievalRunRecord, RetrievalScoreBreakdown,
+    RetrievalScoreComponent, RetrievalSignal,
+};
 pub use crate::types::{
-    Bm25RankProfile, ClaimCandidate, ContextEntity, ContextPack, DecodedEdgeValue,
-    ENTITY_TYPE_CODE_ARTIFACT, ENTITY_TYPE_FEDERATION_GRANT, EdgeActorClass,
+    Bm25RankProfile, ClaimCandidate, ContextEntity, ContextPack, ContextPackRetrievalBudget,
+    DecodedEdgeValue, ENTITY_TYPE_CODE_ARTIFACT, ENTITY_TYPE_FEDERATION_GRANT, EdgeActorClass,
     EdgeConfirmationStatus, EdgeInfo, EdgeKind, EdgeProvenanceFlags, EdgeValueLayout, EmptyContext,
     EmptyReason, EntityId, FieldProfile, HnswConfig, HydratedShortIdDeletion,
     HydratedShortIdDeletionReason, HydratedShortIdDeletionSource, NotificationItem, PackFormat,

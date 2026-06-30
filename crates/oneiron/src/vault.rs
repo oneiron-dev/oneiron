@@ -3419,6 +3419,11 @@ impl Vault {
         self.store.retrieval_runs(limit)
     }
 
+    /// Returns one published retrieval telemetry row by id.
+    pub fn retrieval_run(&self, run_id: RetrievalRunId) -> Result<Option<RetrievalRunRecord>> {
+        self.store.retrieval_run(run_id)
+    }
+
     /// Idempotently writes or replaces a retrieval outcome row for one run.
     pub fn record_retrieval_outcome(&self, outcome: RetrievalOutcome) -> Result<()> {
         self.store.record_retrieval_outcome(outcome)

@@ -1235,6 +1235,28 @@ impl Store {
         Ok(records)
     }
 
+    pub(crate) fn retrieval_run(
+        &self,
+        run_id: RetrievalRunId,
+    ) -> Result<Option<RetrievalRunRecord>> {
+        let rtxn = self.env.read_txn()?;
+        if self
+            .vault_meta
+            .get(&rtxn, &retrieval_run_provisional_key(run_id))?
+            .is_some()
+        {
+            return Ok(None);
+        }
+        let Some(value) = self.vault_meta.get(&rtxn, &retrieval_run_key(run_id))? else {
+            return Ok(None);
+        };
+        let record = decode_retrieval_run(value)?;
+        if record.run_id != run_id {
+            return Err(Error::CorruptedIndex("retrieval run telemetry"));
+        }
+        Ok(Some(record))
+    }
+
     pub fn retrieval_outcomes(
         &self,
         run_id: RetrievalRunId,
