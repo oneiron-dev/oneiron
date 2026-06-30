@@ -96,7 +96,7 @@ pub use crate::provenance::{
     validate_actor_class,
 };
 pub use crate::recovery::{
-    QuarantinedArtifact, RECOVERY_ARTIFACT_MAGIC, RECOVERY_ARTIFACT_QUARANTINE_DIR,
+    QuarantinedArtifact, RECOVERY_ARTIFACT_INVALID_SUFFIX_PREFIX, RECOVERY_ARTIFACT_MAGIC,
     RECOVERY_ARTIFACT_VERSION, RecoveryArtifact, RecoveryArtifactFailure, RecoveryArtifactLoad,
     decode_recovery_artifact, encode_recovery_artifact, load_recovery_artifact,
 };
