@@ -177,6 +177,7 @@ pub enum ErrorKind {
     ReservedPredicate,
     SourceNotTrustedForAuto,
     GateWriteRejected,
+    GateConsentStale,
     MaintenanceKindNotWritable,
     StructuralKindBandViolation,
     StructuralKindCollision,
@@ -457,6 +458,10 @@ pub enum Error {
         outcome: &'static str,
         reason_codes: Vec<&'static str>,
     },
+    /// A pending consent approval attempted to approve bytes or a policy
+    /// read-frontier different from the original pending Gate decision.
+    #[error("gate consent approval is stale for claim {}", claim_id.to_hex())]
+    GateConsentStale { claim_id: EntityId },
     /// Registered maintenance-band entity kind (type bytes 120+, e.g.
     /// REDACTION_AUDIT) rejected on a public write path. Maintenance records
     /// are engine-authored only; this is distinct from
@@ -844,6 +849,7 @@ impl Error {
             Self::ReservedPredicate { .. } => ErrorKind::ReservedPredicate,
             Self::SourceNotTrustedForAuto { .. } => ErrorKind::SourceNotTrustedForAuto,
             Self::GateWriteRejected { .. } => ErrorKind::GateWriteRejected,
+            Self::GateConsentStale { .. } => ErrorKind::GateConsentStale,
             Self::MaintenanceKindNotWritable(_) => ErrorKind::MaintenanceKindNotWritable,
             Self::StructuralKindBandViolation { .. } => ErrorKind::StructuralKindBandViolation,
             Self::StructuralKindTypeByteCollision(_) | Self::StructuralKindPrefixCollision(_) => {

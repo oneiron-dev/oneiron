@@ -209,6 +209,10 @@ const RETRIEVAL_RUN_PROVISIONAL_KEY_PREFIX: &[u8] = b"retr_run_prov:v0:";
 const RETRIEVAL_OUTCOME_KEY_PREFIX: &[u8] = b"retr_out:v0:";
 const RETRIEVAL_RUNS_CAPACITY_HINT_LIMIT: usize = 1024;
 const RETRIEVAL_OUTCOME_KEY_MAX_LEN: usize = 128;
+const GATE_DECISION_LEDGER_VERSION: u8 = 0;
+const GATE_DECISION_KEY_PREFIX: &[u8] = b"gate_decision:v0:";
+const PENDING_GATE_CONSENT_KEY_PREFIX: &[u8] = b"gate_pending:v0:";
+const GATE_DIFF_HANDLE_MAX_LEN: usize = 128;
 
 thread_local! {
     static ACTIVE_WRITE_TXN_DEPTH: Cell<usize> = const { Cell::new(0) };
@@ -370,6 +374,57 @@ pub struct RetrievalOutcomeRecord {
     pub accepted: Option<bool>,
     pub metadata: BTreeMap<String, String>,
     pub updated_at: u64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct GateDecisionId {
+    bytes: [u8; 16],
+}
+
+impl GateDecisionId {
+    #[must_use]
+    pub fn now() -> Self {
+        Self {
+            bytes: Uuid::now_v7().into_bytes(),
+        }
+    }
+
+    #[must_use]
+    pub fn as_bytes(self) -> [u8; 16] {
+        self.bytes
+    }
+
+    #[must_use]
+    pub fn to_hex(self) -> String {
+        bytes_to_hex_lower(&self.bytes)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GateDecisionRecord {
+    pub version: u8,
+    pub decision_id: GateDecisionId,
+    pub created_at: u64,
+    pub outcome: String,
+    pub reason_codes: Vec<String>,
+    pub actor_class: String,
+    pub actor_ref: Option<String>,
+    pub content_kind: String,
+    pub policy_manifest_version: String,
+    pub claim_id: Option<[u8; 16]>,
+    pub diff_handle: Vec<u8>,
+    pub read_frontier_hash: [u8; 32],
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PendingGateConsentRecord {
+    pub version: u8,
+    pub claim_id: [u8; 16],
+    pub decision_id: GateDecisionId,
+    pub created_at: u64,
+    pub diff_handle: Vec<u8>,
+    pub read_frontier_hash: [u8; 32],
+    pub reason_codes: Vec<String>,
 }
 
 /// Encodes the `vault_meta` key for the short-id counter of `entity_type`.
@@ -1050,6 +1105,92 @@ impl Store {
         self.record_retrieval_run_with_visibility(record, true)
     }
 
+    pub(crate) fn append_gate_decision_in_txn(
+        &self,
+        wtxn: &mut RwTxn<'_>,
+        record: &GateDecisionRecord,
+    ) -> Result<()> {
+        vet_gate_decision_record(record)?;
+        let key = gate_decision_key(record.decision_id);
+        if self.vault_meta.get(wtxn, &key)?.is_some() {
+            return Err(Error::InvariantViolation("gate decision id collision"));
+        }
+        let value = encode_gate_decision(record)?;
+        self.vault_meta.put(wtxn, &key, &value)?;
+        Ok(())
+    }
+
+    pub(crate) fn put_pending_gate_consent_in_txn(
+        &self,
+        wtxn: &mut RwTxn<'_>,
+        record: &PendingGateConsentRecord,
+    ) -> Result<()> {
+        vet_pending_gate_consent_record(record)?;
+        let key = pending_gate_consent_key(&record.claim_id);
+        let value = encode_pending_gate_consent(record)?;
+        self.vault_meta.put(wtxn, &key, &value)?;
+        Ok(())
+    }
+
+    pub(crate) fn pending_gate_consent_in_txn(
+        &self,
+        txn: &RoTxn<'_>,
+        claim_id: &EntityId,
+    ) -> Result<Option<PendingGateConsentRecord>> {
+        let Some(value) = self
+            .vault_meta
+            .get(txn, &pending_gate_consent_key(claim_id.as_bytes()))?
+        else {
+            return Ok(None);
+        };
+        let record = decode_pending_gate_consent(value)?;
+        if record.claim_id != *claim_id.as_bytes() {
+            return Err(Error::CorruptedIndex("pending gate consent"));
+        }
+        Ok(Some(record))
+    }
+
+    pub(crate) fn delete_pending_gate_consent_in_txn(
+        &self,
+        wtxn: &mut RwTxn<'_>,
+        claim_id: &EntityId,
+    ) -> Result<()> {
+        self.vault_meta
+            .delete(wtxn, &pending_gate_consent_key(claim_id.as_bytes()))?;
+        Ok(())
+    }
+
+    pub fn gate_decisions(&self, limit: usize) -> Result<Vec<GateDecisionRecord>> {
+        if limit == 0 {
+            return Ok(Vec::new());
+        }
+        let rtxn = self.env.read_txn()?;
+        let upper = gate_decision_upper_bound();
+        let mut records = Vec::with_capacity(limit.min(RETRIEVAL_RUNS_CAPACITY_HINT_LIMIT));
+        for row in self.vault_meta.rev_range(
+            &rtxn,
+            &(
+                std::ops::Bound::Included(GATE_DECISION_KEY_PREFIX),
+                std::ops::Bound::Excluded(upper.as_slice()),
+            ),
+        )? {
+            let (key, value) = row?;
+            if !key.starts_with(GATE_DECISION_KEY_PREFIX) {
+                break;
+            }
+            let decision_id = gate_decision_id_from_key(key)?;
+            let record = decode_gate_decision(value)?;
+            if record.decision_id != decision_id {
+                return Err(Error::CorruptedIndex("gate decision ledger"));
+            }
+            records.push(record);
+            if records.len() == limit {
+                break;
+            }
+        }
+        Ok(records)
+    }
+
     pub(crate) fn record_context_pack_provisional_retrieval_run(
         &self,
         record: &RetrievalRunRecord,
@@ -1393,6 +1534,98 @@ fn decode_retrieval_outcome(raw: &[u8]) -> Result<RetrievalOutcomeRecord> {
         return Err(Error::CorruptedIndex("retrieval outcome telemetry"));
     }
     Ok(record)
+}
+
+fn gate_decision_key(decision_id: GateDecisionId) -> Vec<u8> {
+    let mut key = Vec::with_capacity(GATE_DECISION_KEY_PREFIX.len() + 16);
+    key.extend_from_slice(GATE_DECISION_KEY_PREFIX);
+    key.extend_from_slice(&decision_id.as_bytes());
+    key
+}
+
+fn gate_decision_id_from_key(key: &[u8]) -> Result<GateDecisionId> {
+    let bytes = key
+        .strip_prefix(GATE_DECISION_KEY_PREFIX)
+        .ok_or(Error::CorruptedIndex("gate decision ledger"))?;
+    let bytes: [u8; 16] = bytes
+        .try_into()
+        .map_err(|_| Error::CorruptedIndex("gate decision ledger"))?;
+    Ok(GateDecisionId { bytes })
+}
+
+fn gate_decision_upper_bound() -> Vec<u8> {
+    let mut key = Vec::from(GATE_DECISION_KEY_PREFIX);
+    let last = key
+        .last_mut()
+        .expect("gate decision key prefix must be non-empty");
+    *last = last
+        .checked_add(1)
+        .expect("gate decision key prefix upper bound must not overflow");
+    key
+}
+
+fn pending_gate_consent_key(claim_id: &[u8; 16]) -> Vec<u8> {
+    let mut key = Vec::with_capacity(PENDING_GATE_CONSENT_KEY_PREFIX.len() + 16);
+    key.extend_from_slice(PENDING_GATE_CONSENT_KEY_PREFIX);
+    key.extend_from_slice(claim_id);
+    key
+}
+
+fn encode_gate_decision(record: &GateDecisionRecord) -> Result<Vec<u8>> {
+    rmp_serde::to_vec_named(record)
+        .map_err(|_| Error::InvariantViolation("gate decision ledger encode failed"))
+}
+
+fn decode_gate_decision(raw: &[u8]) -> Result<GateDecisionRecord> {
+    let record: GateDecisionRecord =
+        rmp_serde::from_slice(raw).map_err(|_| Error::CorruptedIndex("gate decision ledger"))?;
+    vet_gate_decision_record(&record)?;
+    Ok(record)
+}
+
+fn encode_pending_gate_consent(record: &PendingGateConsentRecord) -> Result<Vec<u8>> {
+    rmp_serde::to_vec_named(record)
+        .map_err(|_| Error::InvariantViolation("pending gate consent encode failed"))
+}
+
+fn decode_pending_gate_consent(raw: &[u8]) -> Result<PendingGateConsentRecord> {
+    let record: PendingGateConsentRecord =
+        rmp_serde::from_slice(raw).map_err(|_| Error::CorruptedIndex("pending gate consent"))?;
+    vet_pending_gate_consent_record(&record)?;
+    Ok(record)
+}
+
+fn vet_gate_decision_record(record: &GateDecisionRecord) -> Result<()> {
+    if record.version != GATE_DECISION_LEDGER_VERSION
+        || record.outcome.is_empty()
+        || record.reason_codes.is_empty()
+        || record.content_kind.is_empty()
+        || record.policy_manifest_version.is_empty()
+        || record.diff_handle.is_empty()
+        || record.diff_handle.len() > GATE_DIFF_HANDLE_MAX_LEN
+        || !record
+            .reason_codes
+            .iter()
+            .all(|reason| reason.starts_with("gate."))
+    {
+        return Err(Error::CorruptedIndex("gate decision ledger"));
+    }
+    Ok(())
+}
+
+fn vet_pending_gate_consent_record(record: &PendingGateConsentRecord) -> Result<()> {
+    if record.version != GATE_DECISION_LEDGER_VERSION
+        || record.diff_handle.is_empty()
+        || record.diff_handle.len() > GATE_DIFF_HANDLE_MAX_LEN
+        || record.reason_codes.is_empty()
+        || !record
+            .reason_codes
+            .iter()
+            .all(|reason| reason.starts_with("gate.pending."))
+    {
+        return Err(Error::CorruptedIndex("pending gate consent"));
+    }
+    Ok(())
 }
 
 fn vet_retrieval_outcome(outcome: &RetrievalOutcome) -> Result<()> {
