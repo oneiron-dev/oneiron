@@ -1630,9 +1630,6 @@ fn apply_vector(
     store.vectors.put(wtxn, id.as_bytes(), &bytes)?;
     let cleared_pending_embedding = match pending_embedding_token {
         Some(token) => store.clear_pending_embedding_if_token_matches(wtxn, &id, token)?,
-        None if store.has_current_pending_embedding_in_txn(wtxn, &id)? => {
-            store.clear_pending_embedding(wtxn, &id)?
-        }
         None => false,
     };
     Ok(AppliedVector {
@@ -2760,6 +2757,10 @@ mod tests {
             !has_pending_embedding_marker(&vault, &claim)?,
             "vector fill must clear the pending marker"
         );
+        assert!(
+            raw_pending_embedding_marker(&vault, &claim)?.is_none(),
+            "token-proven vector fill must remove durable marker state"
+        );
         Ok(())
     }
 
@@ -2795,10 +2796,11 @@ mod tests {
     }
 
     #[test]
-    fn plain_vector_fill_clears_current_pending_embedding_marker() -> Result<()> {
+    fn plain_vector_fill_keeps_current_pending_embedding_marker() -> Result<()> {
         let (_dir, vault) = open_test_vault();
         let claim = EntityId::now();
         commit_claim_candidate_fixture(&vault, claim)?;
+        let token = pending_embedding_token(&vault, &claim)?;
 
         vault.put_vector(&claim, &[1.0, 0.0, 0.0, 0.0])?;
 
@@ -2806,9 +2808,10 @@ mod tests {
             vault.get_vector(&claim)?.as_deref(),
             Some([1.0, 0.0, 0.0, 0.0].as_slice())
         );
-        assert!(
-            !has_pending_embedding_marker(&vault, &claim)?,
-            "plain vector fills must clear current pending markers"
+        assert_eq!(
+            pending_embedding_token(&vault, &claim)?,
+            token,
+            "un-tokened vector fills cannot prove they embedded the current claim body"
         );
         Ok(())
     }
@@ -2927,6 +2930,41 @@ mod tests {
     }
 
     #[test]
+    fn plain_vector_fill_after_claim_overwrite_keeps_newer_pending_embedding_marker() -> Result<()>
+    {
+        let (_dir, vault) = open_test_vault();
+        let claim = EntityId::now();
+        commit_claim_candidate_with_value(&vault, claim, "Alice")?;
+        let old_token = pending_embedding_token(&vault, &claim)?;
+
+        commit_claim_candidate_with_value(&vault, claim, "Bob")?;
+        let new_token = pending_embedding_token(&vault, &claim)?;
+        assert_ne!(
+            old_token, new_token,
+            "claim body overwrite must mint a new token"
+        );
+
+        vault.put_vector(&claim, &[1.0, 0.0, 0.0, 0.0])?;
+
+        assert_eq!(
+            vault.get_vector(&claim)?.as_deref(),
+            Some([1.0, 0.0, 0.0, 0.0].as_slice()),
+            "legacy vector path still writes the row"
+        );
+        assert_eq!(
+            pending_embedding_token(&vault, &claim)?,
+            new_token,
+            "un-tokened vector fills must not clear a newer pending marker"
+        );
+        assert_eq!(
+            raw_pending_embedding_marker(&vault, &claim)?.as_deref(),
+            Some(new_token.as_slice()),
+            "the durable marker row must remain for the current claim body"
+        );
+        Ok(())
+    }
+
+    #[test]
     fn same_batch_claim_then_vector_clears_pending_embedding_marker() -> Result<()> {
         let (_dir, vault) = open_test_vault();
         let claim = EntityId::now();
@@ -2941,6 +2979,10 @@ mod tests {
         assert!(
             !has_pending_embedding_marker(&vault, &claim)?,
             "same-batch vector after claim materialization proves freshness"
+        );
+        assert!(
+            raw_pending_embedding_marker(&vault, &claim)?.is_none(),
+            "same-batch vector after claim must remove durable marker state"
         );
         Ok(())
     }
@@ -3006,6 +3048,10 @@ mod tests {
         assert!(
             !has_pending_embedding_marker(&vault, &claim)?,
             "soft-erased header-only claims must not remain pending"
+        );
+        assert!(
+            raw_pending_embedding_marker(&vault, &claim)?.is_none(),
+            "soft delete must remove the durable marker row, not only hide API-visible pending state"
         );
         Ok(())
     }
