@@ -2154,6 +2154,36 @@ pub enum EmptyReason {
     BelowThreshold,
 }
 
+/// Stable deletion reason surfaced by short-id hydrate.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum HydratedShortIdDeletionReason {
+    UserDelete,
+    UserHardDelete,
+    GdprDelete,
+    PolicyDelete,
+}
+
+/// Where hydrate found deletion evidence for a short-id row.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum HydratedShortIdDeletionSource {
+    Tombstone,
+    PendingTombstone,
+    DanglingShortId,
+}
+
+/// Deletion metadata returned when a short-id row resolves to deleted state.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HydratedShortIdDeletion {
+    pub source: HydratedShortIdDeletionSource,
+    pub reason: Option<HydratedShortIdDeletionReason>,
+    pub deleted_at: Option<u64>,
+    pub request_id: Option<String>,
+    pub hard: bool,
+}
+
 /// Structured context for an empty context-pack response.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]

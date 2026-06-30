@@ -2,142 +2,149 @@
   {
     "name": "malformed_request",
     "request": {
-      "method": "POST",
-      "path": "/v1/core/hydrate",
       "auth": {
-        "type": "bearer",
-        "scope": "core:read"
+        "scope": "core:read",
+        "type": "bearer"
       },
       "body": {
         "ref": "bad-ref"
-      }
+      },
+      "method": "POST",
+      "path": "/v1/core/hydrate"
     },
     "response": {
-      "status": 400,
       "body": {
         "error": {
           "code": "BAD_REQUEST",
-          "message": "ref must be in shortId:contentHashHex form",
-          "requestId": "<request-id>",
           "details": {
             "code": "BAD_REQUEST",
             "field": "ref"
           },
+          "message": "ref must be in shortId:contentHashHex form",
+          "requestId": "<request-id>",
           "suggestions": [
             "Fix the request shape and retry."
           ]
         }
-      }
+      },
+      "status": 400
     }
   },
   {
     "name": "missing_auth",
     "request": {
-      "method": "GET",
-      "path": "/v1/core/turns/annotate?turn_id=not-an-entity",
       "auth": {
         "type": "none"
       },
-      "body": null
+      "body": null,
+      "method": "GET",
+      "path": "/v1/core/turns/annotate?turn_id=not-an-entity"
     },
     "response": {
-      "status": 401,
       "body": {
         "error": {
           "code": "UNAUTHORIZED",
-          "message": "request is not authorized",
-          "requestId": "<request-id>",
           "details": {
             "code": "UNAUTHORIZED"
           },
+          "message": "request is not authorized",
+          "requestId": "<request-id>",
           "suggestions": [
             "Send the configured x-oneiron-secret header and retry."
           ]
         }
-      }
+      },
+      "status": 401
     }
   },
   {
     "name": "wrong_scope",
     "request": {
-      "method": "GET",
-      "path": "/v1/core/turns/annotate?turn_id=not-an-entity",
       "auth": {
-        "type": "bearer",
-        "scope": "core:write"
+        "scope": "core:write",
+        "type": "bearer"
       },
-      "body": null
+      "body": null,
+      "method": "GET",
+      "path": "/v1/core/turns/annotate?turn_id=not-an-entity"
     },
     "response": {
-      "status": 403,
       "body": {
         "error": {
           "code": "FORBIDDEN",
-          "message": "request does not have the required scope",
-          "requestId": "<request-id>",
           "details": {
             "code": "FORBIDDEN",
             "requiredScope": "core:read"
           },
+          "message": "request does not have the required scope",
+          "requestId": "<request-id>",
           "suggestions": [
             "Request a token with the required Oneiron core scope and retry."
           ]
         }
-      }
+      },
+      "status": 403
     }
   },
   {
     "name": "not_found",
     "request": {
-      "method": "GET",
-      "path": "/v1/core/turns/7e0000000000000000000000122100ff",
       "auth": {
-        "type": "bearer",
-        "scope": "core:read"
+        "scope": "core:read",
+        "type": "bearer"
       },
-      "body": null
+      "body": null,
+      "method": "GET",
+      "path": "/v1/core/turns/7e0000000000000000000000122100ff"
     },
     "response": {
-      "status": 404,
       "body": {
         "error": {
           "code": "NOT_FOUND",
-          "message": "turn was not found",
-          "requestId": "<request-id>",
           "details": {
             "code": "NOT_FOUND",
-            "resource": "turn",
-            "id": "7e0000000000000000000000122100ff"
+            "id": "7e0000000000000000000000122100ff",
+            "resource": "turn"
           },
+          "message": "turn was not found",
+          "requestId": "<request-id>",
           "suggestions": [
             "Verify the identifier and retry."
           ]
         }
-      }
+      },
+      "status": 404
     }
   },
   {
     "name": "deleted_entity",
     "request": {
-      "method": "POST",
-      "path": "/v1/core/hydrate",
       "auth": {
-        "type": "bearer",
-        "scope": "core:read"
+        "scope": "core:read",
+        "type": "bearer"
       },
       "body": {
         "ref": "tn1:9c"
-      }
+      },
+      "method": "POST",
+      "path": "/v1/core/hydrate"
     },
     "response": {
-      "status": 200,
       "body": {
-        "status": "deleted",
-        "short_id": "tn1",
         "content_hash": "9c",
+        "deletion": {
+          "deleted_at": "<deleted-at>",
+          "hard": false,
+          "reason": "user_delete",
+          "request_id": "<request-id>",
+          "source": "tombstone"
+        },
+        "entity_type": 1,
         "id": "7e00000000000000000000001221dead",
-        "entity_type": 1
-      }
+        "short_id": "tn1",
+        "status": "deleted"
+      },
+      "status": 200
     }
   }
 ]

@@ -53,6 +53,7 @@ use crate::types::{
     EDGE_KEY_LEN, ENTITY_ID_LEN, ENTITY_TYPE_CLAIM, ENTITY_TYPE_CODE_ARTIFACT, ENTITY_TYPE_MESSAGE,
     ENTITY_TYPE_MODEL, ENTITY_TYPE_REDACTION_AUDIT, ENTITY_TYPE_TURN, EdgeActorClass,
     EdgeConfirmationStatus, EdgeInfo, EdgeKind, EdgeProvenanceFlags, EdgeValueLayout, EntityId,
+    HydratedShortIdDeletion, HydratedShortIdDeletionReason, HydratedShortIdDeletionSource,
     ScoredEntity, StructuralKindRegistration, TimeRange, TypeByteBand, Vad, VadAnnotation,
     VadAnnotationSource, VaultConfig, bytes_to_hex_lower, decode_edge_value_for_kind,
     edge_value_layout_for_kind,
@@ -470,6 +471,8 @@ pub struct HydratedShortId {
     pub entity_type: u8,
     /// Entity learned-at timestamp from the header, or zero for a dangling row.
     pub learned_at: u64,
+    /// Deletion metadata when the short-id row resolves to deleted state.
+    pub deletion: Option<HydratedShortIdDeletion>,
     /// Entity body bytes. `None` means a deleted shell or dangling row.
     pub body: Option<Vec<u8>>,
 }
@@ -3705,6 +3708,15 @@ impl Vault {
                 id,
                 entity_type: 0,
                 learned_at: 0,
+                deletion: Some(HydratedShortIdDeletion {
+                    source: HydratedShortIdDeletionSource::DanglingShortId,
+                    reason: None,
+                    deleted_at: None,
+                    request_id: None,
+                    // No entity row remains to inspect, so hydrate treats this
+                    // as an effectively hard deletion and keeps the source explicit.
+                    hard: true,
+                }),
                 body: None,
             }));
         };
@@ -3715,11 +3727,14 @@ impl Vault {
         let body = raw[ENTITY_METADATA_HEADER_LEN..].to_vec();
         drop(rtxn);
 
-        if body.is_empty() && self.entity_has_tombstone(&id, learned_at)? {
+        if body.is_empty()
+            && let Some(deletion) = self.entity_deletion_metadata(&id, learned_at)?
+        {
             return Ok(Some(HydratedShortId {
                 id,
                 entity_type,
                 learned_at,
+                deletion: Some(deletion),
                 body: None,
             }));
         }
@@ -3728,6 +3743,7 @@ impl Vault {
             id,
             entity_type,
             learned_at,
+            deletion: None,
             body: Some(body),
         }))
     }
@@ -3746,40 +3762,99 @@ impl Vault {
         }
         drop(rtxn);
 
-        self.entity_has_tombstone(id, header.learned_at)
+        Ok(self
+            .entity_deletion_metadata(id, header.learned_at)?
+            .is_some())
     }
 
-    fn entity_has_tombstone(&self, id: &EntityId, learned_at: u64) -> Result<bool> {
+    fn entity_deletion_metadata(
+        &self,
+        id: &EntityId,
+        learned_at: u64,
+    ) -> Result<Option<HydratedShortIdDeletion>> {
         let window_label = window_label_from_timestamp(learned_at);
         let pending_key = pending_tombstone_key(&window_label, id);
         let rtxn = self.store.env.read_txn()?;
-        if self
-            .store
-            .sync_state
-            .get(&rtxn, pending_key.as_str())?
-            .is_some()
-        {
-            return Ok(true);
+        if let Some(value) = self.store.sync_state.get(&rtxn, pending_key.as_str())? {
+            return Ok(Some(Self::deletion_metadata_from_tombstone_value(
+                HydratedShortIdDeletionSource::PendingTombstone,
+                value,
+            )));
         }
         drop(rtxn);
 
         #[cfg(feature = "sync")]
         {
-            use crate::sync::loro_support::tombstone_map_contains_id;
+            use crate::sync::loro_support::tombstone_values_for_id;
             use crate::sync::types::WindowKey;
 
             let window_key = WindowKey::from_timestamp(learned_at);
             match crate::sync::window::load_window_from_state(self, "local", &window_key) {
-                Ok(doc) => Ok(tombstone_map_contains_id(&doc.get_map("tombstones"), id)),
-                Err(Error::WindowNotFound { .. }) => Ok(false),
+                Ok(doc) => Ok(
+                    Self::select_tombstone_metadata_value(&tombstone_values_for_id(
+                        &doc.get_map("tombstones"),
+                        id,
+                    ))
+                    .map(|value| {
+                        Self::deletion_metadata_from_tombstone_value(
+                            HydratedShortIdDeletionSource::Tombstone,
+                            value,
+                        )
+                    }),
+                ),
+                Err(Error::WindowNotFound { .. }) => Ok(None),
                 Err(error) => Err(error),
             }
         }
 
         #[cfg(not(feature = "sync"))]
         {
-            Ok(false)
+            Ok(None)
         }
+    }
+
+    fn deletion_metadata_from_tombstone_value(
+        source: HydratedShortIdDeletionSource,
+        value: &[u8],
+    ) -> HydratedShortIdDeletion {
+        let decoded = decode_tombstone_value(value);
+        HydratedShortIdDeletion {
+            source,
+            reason: decoded.reason.map(Self::hydrate_deletion_reason),
+            deleted_at: (decoded.deleted_at != 0).then_some(decoded.deleted_at),
+            request_id: decoded
+                .request_id
+                .map(|request_id| Uuid::from_bytes(request_id).to_string()),
+            hard: decoded.is_hard(),
+        }
+    }
+
+    fn hydrate_deletion_reason(
+        reason: crate::deletion::TombstoneReason,
+    ) -> HydratedShortIdDeletionReason {
+        match reason {
+            crate::deletion::TombstoneReason::UserDelete => {
+                HydratedShortIdDeletionReason::UserDelete
+            }
+            crate::deletion::TombstoneReason::UserHardDelete => {
+                HydratedShortIdDeletionReason::UserHardDelete
+            }
+            crate::deletion::TombstoneReason::GdprDelete => {
+                HydratedShortIdDeletionReason::GdprDelete
+            }
+            crate::deletion::TombstoneReason::PolicyDelete => {
+                HydratedShortIdDeletionReason::PolicyDelete
+            }
+        }
+    }
+
+    #[cfg(feature = "sync")]
+    fn select_tombstone_metadata_value(values: &[Vec<u8>]) -> Option<&[u8]> {
+        values
+            .iter()
+            .find(|value| decode_tombstone_value(value).is_hard())
+            .or_else(|| values.first())
+            .map(Vec::as_slice)
     }
 
     // ─── Tree Query API ───────────────────────────────────────
