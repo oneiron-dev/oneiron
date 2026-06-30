@@ -1181,6 +1181,32 @@ pub(crate) fn check_reserved_claim_policy(
     check_claim_source_trust(body, policy)
 }
 
+#[cfg(feature = "sync")]
+pub(crate) fn check_federated_claim_admission(
+    body: &ClaimBody,
+    policy: &PolicyManifestResolution,
+) -> Result<()> {
+    let decision = federated_claim_admission_decision(body, policy);
+    record_gate_decision_metrics(&decision);
+    enforce_gate_decision(decision)
+}
+
+#[cfg(feature = "sync")]
+fn federated_claim_admission_decision(
+    body: &ClaimBody,
+    policy: &PolicyManifestResolution,
+) -> GateDecision {
+    if policy.enforces_write_gate() && policy.is_fail_closed() {
+        return GateDecision::deny(GateReasonCode::DenyPolicyFailClosed);
+    }
+
+    if !policy.source_trust_allows_auto(body.source, claim_sensitivity_band(body)) {
+        return GateDecision::pending(vec![GateReasonCode::PendingSourceTrust]);
+    }
+
+    GateDecision::allow()
+}
+
 pub(crate) fn validate_write_envelope(envelope: &WriteEnvelope) -> Result<()> {
     if matches!(envelope.provenance().value(), &Value::Nil) {
         return Err(Error::InvalidClaimBody("write envelope missing provenance"));
@@ -2017,6 +2043,28 @@ mod tests {
     #[cfg(feature = "sync")]
     fn source_trust_claim_data(source: ClaimSource) -> Vec<u8> {
         crate::claim::encode_claim_body(&source_trust_claim(source)).expect("claim encode")
+    }
+
+    #[cfg(feature = "sync")]
+    fn federated_claim_update(id: &EntityId, body: &ClaimBody) -> Result<Vec<u8>> {
+        use crate::batch::ENTITY_METADATA_HEADER_LEN;
+        use crate::sync::loro_support::{export_all_updates, map_insert_bytes};
+        use crate::sync::schema::create_window_doc;
+        use crate::sync::types::WindowKey;
+
+        let data = crate::claim::encode_claim_body(body)?;
+        let mut blob = Vec::with_capacity(ENTITY_METADATA_HEADER_LEN + data.len());
+        blob.push(crate::types::ENTITY_TYPE_CLAIM);
+        blob.extend_from_slice(&5_u64.to_be_bytes());
+        blob.extend_from_slice(&5_u64.to_be_bytes());
+        blob.extend_from_slice(&5_u64.to_be_bytes());
+        blob.extend_from_slice(&data);
+
+        let key = WindowKey::new("2026-03");
+        let doc = create_window_doc("federation-remote", &key);
+        map_insert_bytes(&doc.get_map("entities"), &id.to_hex(), &blob)?;
+        doc.commit();
+        export_all_updates(&doc)
     }
 
     fn claim_candidate_from_body(body: &ClaimBody) -> ClaimCandidate {
@@ -3406,6 +3454,111 @@ mod tests {
         assert!(
             vault.get_raw(&id)?.is_some(),
             "replicated replay must not re-gate remote source trust"
+        );
+        Ok(())
+    }
+
+    #[cfg(feature = "sync")]
+    #[test]
+    fn federated_admission_allows_and_restamps_imported_claim() -> Result<()> {
+        use crate::batch::ENTITY_METADATA_HEADER_LEN;
+        use crate::sync::loro_support::{import_doc, map_get_bytes};
+        use crate::sync::schema::create_window_doc;
+        use crate::sync::types::WindowKey;
+        use crate::sync::{FederationAdmissionRole, admit_federated_window_update};
+
+        let (_tmp, vault) = temp_vault();
+        let data = encode_policy_manifest(vec![source_trust_entry(ClaimSource::Imported, 0)]);
+        put_policy_manifest_bytes(&vault, 0x8A, &data)?;
+
+        let id = test_id(0x8B);
+        let remote_body = source_trust_claim(ClaimSource::ToolOutput);
+        let update = federated_claim_update(&id, &remote_body)?;
+        let key = WindowKey::new("2026-03");
+        let admitted =
+            admit_federated_window_update(&vault, &key, &update, FederationAdmissionRole::Member)?;
+
+        let doc = create_window_doc("receiver", &key);
+        import_doc(&doc, &admitted)?;
+        let blob =
+            map_get_bytes(&doc.get_map("entities"), &id.to_hex()).ok_or(Error::InvalidKey)?;
+        let body = decode_claim_body(&blob[ENTITY_METADATA_HEADER_LEN..], false)?;
+        assert_eq!(body.source, Some(ClaimSource::Imported));
+        Ok(())
+    }
+
+    #[cfg(feature = "sync")]
+    #[test]
+    fn federated_admission_denies_untrusted_import_with_auditable_reason() -> Result<()> {
+        use crate::sync::types::WindowKey;
+        use crate::sync::{FederationAdmissionRole, admit_federated_window_update};
+
+        let (_tmp, vault) = temp_vault();
+        let id = test_id(0x8C);
+        let remote_body = source_trust_claim(ClaimSource::ToolOutput);
+        let update = federated_claim_update(&id, &remote_body)?;
+        let key = WindowKey::new("2026-03");
+
+        let err =
+            admit_federated_window_update(&vault, &key, &update, FederationAdmissionRole::Guest)
+                .expect_err("imported auto claims need an explicit local trust floor");
+        assert_gate_rejected(err, "pending", &["gate.pending.source_trust"]);
+        assert!(vault.get_raw(&id)?.is_none());
+        Ok(())
+    }
+
+    #[cfg(feature = "sync")]
+    #[test]
+    fn federated_admission_denies_preapproved_untrusted_import() -> Result<()> {
+        use crate::sync::types::WindowKey;
+        use crate::sync::{FederationAdmissionRole, admit_federated_window_update};
+
+        let (_tmp, vault) = temp_vault();
+        let id = test_id(0x8F);
+        let mut remote_body = source_trust_claim(ClaimSource::ToolOutput);
+        remote_body.approval = ClaimApprovalStatus::Approved;
+        let update = federated_claim_update(&id, &remote_body)?;
+        let key = WindowKey::new("2026-03");
+
+        let err =
+            admit_federated_window_update(&vault, &key, &update, FederationAdmissionRole::Member)
+                .expect_err("preapproved federated claims still need local imported trust");
+        assert_gate_rejected(err, "pending", &["gate.pending.source_trust"]);
+        assert!(vault.get_raw(&id)?.is_none());
+        Ok(())
+    }
+
+    #[cfg(feature = "sync")]
+    #[test]
+    fn federated_admission_denial_does_not_regress_own_device_replay() -> Result<()> {
+        use crate::sync::types::WindowKey;
+        use crate::sync::{FederationAdmissionRole, admit_federated_window_update};
+
+        let (_tmp, vault) = temp_vault();
+        let id = test_id(0x8D);
+        let remote_body = source_trust_claim(ClaimSource::ToolOutput);
+        let update = federated_claim_update(&id, &remote_body)?;
+        let key = WindowKey::new("2026-03");
+        let err =
+            admit_federated_window_update(&vault, &key, &update, FederationAdmissionRole::Member)
+                .expect_err("federated path must enforce local imported trust floor");
+        assert_gate_rejected(err, "pending", &["gate.pending.source_trust"]);
+
+        let replay_id = test_id(0x8E);
+        let replay_data = crate::claim::encode_claim_body(&remote_body)?;
+        vault
+            .batch()
+            .put_replicated(
+                &replay_id,
+                crate::types::ENTITY_TYPE_CLAIM,
+                test_time(5),
+                5,
+                &replay_data,
+            )
+            .commit()?;
+        assert!(
+            vault.get_raw(&replay_id)?.is_some(),
+            "own-device replicated replay remains trust-blind"
         );
         Ok(())
     }
