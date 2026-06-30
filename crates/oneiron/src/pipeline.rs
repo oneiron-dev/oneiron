@@ -3498,7 +3498,7 @@ mod tests {
         let results = vault.query().search_ppr(&[a], 3).run()?;
         assert!(results.iter().any(|entry| entry.id == b));
         assert_eq!(count_entries(&vault.store.ppr_cache, &vault)?, 1);
-        assert_eq!(count_entries(&vault.store.ppr_cache_deps, &vault)?, 1);
+        assert_eq!(count_entries(&vault.store.ppr_cache_deps, &vault)?, 2);
         Ok(())
     }
 
