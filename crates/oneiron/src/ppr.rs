@@ -1209,7 +1209,7 @@ fn decode_cache_scores(payload: &[u8]) -> Result<Vec<ScoredEntity>> {
 }
 
 fn decode_cache_payload(payload: &[u8]) -> Result<CachedPprRow> {
-    if payload.starts_with(CACHE_STATE_MAGIC) {
+    if is_state_cache_payload(payload) {
         let state = decode_cache_state(payload)?;
         return Ok(CachedPprRow {
             scores: state.scores.clone(),
@@ -1242,6 +1242,15 @@ fn decode_legacy_cache_scores(payload: &[u8]) -> Result<Vec<ScoredEntity>> {
             Ok(ScoredEntity { id, score })
         })
         .collect()
+}
+
+fn is_state_cache_payload(payload: &[u8]) -> bool {
+    // Legacy score-only rows are exactly `[EntityId | f32] * n`, so their
+    // payload length is always a multiple of `CACHE_ENTRY_LEN`. Current state
+    // rows start with `FPRS` but have a 21-byte prefix, making that shape
+    // impossible; use both checks so a legacy EntityId may safely begin with
+    // the state magic bytes.
+    payload.starts_with(CACHE_STATE_MAGIC) && !payload.len().is_multiple_of(CACHE_ENTRY_LEN)
 }
 
 fn decode_cache_state(payload: &[u8]) -> Result<PprCacheState> {
@@ -1512,6 +1521,12 @@ mod tests {
 
     fn sentinel_entity() -> EntityId {
         entity(0xEE)
+    }
+
+    fn state_magic_prefixed_entity() -> EntityId {
+        let mut bytes = [0x11; ENTITY_ID_LEN];
+        bytes[..CACHE_STATE_MAGIC.len()].copy_from_slice(CACHE_STATE_MAGIC);
+        EntityId::from_bytes(bytes).expect("state-magic prefix is not a reserved entity id")
     }
 
     fn sentinel_scores() -> Vec<ScoredEntity> {
@@ -2139,6 +2154,32 @@ mod tests {
 
         assert_scores_equal(&first, &second);
         assert_eq!(cache_after_first, cache_after_second);
+        Ok(())
+    }
+
+    #[test]
+    fn legacy_cache_row_with_state_magic_entity_id_stays_servable() -> Result<()> {
+        let temp_dir = tempdir()?;
+        let vault = Vault::open(temp_dir.path(), test_config())?;
+        let seed = entity(18);
+        let magic_id = state_magic_prefixed_entity();
+        let sentinel = [ScoredEntity {
+            id: magic_id,
+            score: 0.25,
+        }];
+
+        plant_cache_row(
+            &vault,
+            &[seed],
+            3,
+            0.15,
+            SeedWeighting::Uniform,
+            crate::unix_seconds_now(),
+            &sentinel,
+        )?;
+
+        let scores = ppr_query(&vault.store, &vault.config, &[seed], 3, 0.15)?;
+        assert_eq!(scores, sentinel);
         Ok(())
     }
 
