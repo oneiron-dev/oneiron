@@ -7,13 +7,14 @@ use std::cmp::Ordering;
 use std::io::Cursor;
 
 use rmpv::Value;
+use sha2::{Digest, Sha256};
 
 use crate::claim::{
     ClaimApprovalStatus, ClaimBody, ClaimSource, claim_sensitivity_band,
     sensitivity_band_from_value,
 };
 use crate::error::{Error, Result};
-use crate::store::Store;
+use crate::store::{GateDecisionId, GateDecisionRecord, PendingGateConsentRecord, Store};
 use crate::types::{
     ENTITY_ID_LEN, ENTITY_TYPE_POLICY_MANIFEST, EdgeActorClass, EntityId, WriteEnvelope,
 };
@@ -550,6 +551,12 @@ impl PolicyManifestResolution {
         &self.signatures
     }
 
+    pub(crate) fn read_frontier_hash(&self) -> Result<[u8; 32]> {
+        let mut hasher = Sha256::new();
+        hash_policy_frontier_v0(&mut hasher, self)?;
+        Ok(hasher.finalize().into())
+    }
+
     #[must_use]
     pub(crate) fn evaluate_gate(&self, input: &GateEvaluatorInput) -> GateDecision {
         let actor_class = input.actor.actor_class.trim();
@@ -637,6 +644,182 @@ impl PolicyManifestResolution {
     }
 }
 
+fn hash_policy_frontier_v0(
+    hasher: &mut Sha256,
+    resolution: &PolicyManifestResolution,
+) -> Result<()> {
+    hash_bytes(hasher, b"oneiron.gate.policy_frontier.v0");
+    hash_diagnostics(hasher, resolution.diagnostics);
+    hash_source_trust(hasher, &resolution.source_trust);
+
+    hash_len(hasher, resolution.packs.len());
+    for pack in &resolution.packs {
+        hash_str(hasher, &pack._pack_id);
+        hash_str(hasher, &pack._pack_version);
+        hash_str(hasher, &pack._min_engine_version);
+        hash_axes(hasher, pack.defaults);
+        hash_len(hasher, pack.rules.len());
+        for rule in &pack.rules {
+            hash_str(hasher, &rule.prefix);
+            hash_axes(hasher, rule.axes);
+        }
+    }
+
+    hash_len(hasher, resolution.actor_ceilings.len());
+    for ceiling in &resolution.actor_ceilings {
+        hash_str(hasher, &ceiling.actor_class);
+        hash_opt_str(hasher, ceiling.actor_ref.as_deref());
+        hash_approval_ceiling(hasher, ceiling.ceiling);
+    }
+
+    hash_len(hasher, resolution.scoped_grants.len());
+    for grant in &resolution.scoped_grants {
+        hash_opt_str(hasher, grant.actor_class.as_deref());
+        hash_opt_str(hasher, grant.actor_ref.as_deref());
+        hash_str(hasher, &grant.effector);
+        hash_opt_value(hasher, grant.scope.as_ref())?;
+        hash_opt_value(hasher, grant.budget.as_ref())?;
+        hash_bool(hasher, grant.receipt_required);
+    }
+
+    hash_len(hasher, resolution.signatures.len());
+    for signature in &resolution.signatures {
+        hash_str(hasher, &signature.alg);
+        hash_opt_str(hasher, signature.key_id.as_deref());
+        hash_str(hasher, &signature.sig);
+    }
+
+    Ok(())
+}
+
+fn hash_diagnostics(hasher: &mut Sha256, diagnostics: PolicyManifestDiagnostics) {
+    hash_len(hasher, diagnostics.manifest_count);
+    hash_bool(hasher, diagnostics.malformed_manifest_seen);
+    hash_bool(hasher, diagnostics.unsupported_schema_seen);
+    hash_bool(hasher, diagnostics.engine_version_floor_seen);
+    hash_bool(hasher, diagnostics.unknown_axis_seen);
+}
+
+fn hash_source_trust(hasher: &mut Sha256, source_trust: &SourceTrustCeiling) {
+    hash_bool(hasher, source_trust.malformed_manifest_seen);
+    for source in [
+        ClaimSource::UserStated,
+        ClaimSource::Observed,
+        ClaimSource::Inferred,
+        ClaimSource::Imported,
+        ClaimSource::ToolOutput,
+        ClaimSource::Generated,
+    ] {
+        hash_str(hasher, source.as_str());
+        hash_source_trust_row(hasher, source_trust.row(source));
+    }
+}
+
+fn hash_source_trust_row(hasher: &mut Sha256, row: Option<SourceTrustRow>) {
+    let Some(row) = row else {
+        hash_bool(hasher, false);
+        return;
+    };
+    hash_bool(hasher, true);
+    hash_opt_u8(hasher, row.max_auto_sensitivity);
+    hash_bool(hasher, row.receipted);
+    hash_bool(hasher, row.warned);
+}
+
+fn hash_axes(hasher: &mut Sha256, axes: PolicyAxes) {
+    hash_opt_criticality(hasher, axes.criticality);
+    hash_opt_sensitivity(hasher, axes.sensitivity);
+    hash_bool(hasher, axes.unknown_axis_seen);
+}
+
+fn hash_approval_ceiling(hasher: &mut Sha256, ceiling: PolicyApprovalCeiling) {
+    hash_str(
+        hasher,
+        match ceiling {
+            PolicyApprovalCeiling::Auto => "auto",
+            PolicyApprovalCeiling::Proposed => "proposed",
+        },
+    );
+}
+
+fn hash_opt_criticality(hasher: &mut Sha256, criticality: Option<PolicyCriticality>) {
+    let Some(criticality) = criticality else {
+        hash_bool(hasher, false);
+        return;
+    };
+    hash_bool(hasher, true);
+    hash_str(
+        hasher,
+        match criticality {
+            PolicyCriticality::Normal => "normal",
+            PolicyCriticality::Critical => "critical",
+        },
+    );
+}
+
+fn hash_opt_sensitivity(hasher: &mut Sha256, sensitivity: Option<PolicySensitivity>) {
+    let Some(sensitivity) = sensitivity else {
+        hash_bool(hasher, false);
+        return;
+    };
+    hash_bool(hasher, true);
+    hash_str(
+        hasher,
+        match sensitivity {
+            PolicySensitivity::Normal => "normal",
+            PolicySensitivity::Sensitive => "sensitive",
+        },
+    );
+}
+
+fn hash_opt_value(hasher: &mut Sha256, value: Option<&Value>) -> Result<()> {
+    let Some(value) = value else {
+        hash_bool(hasher, false);
+        return Ok(());
+    };
+    hash_bool(hasher, true);
+    let mut encoded = Vec::new();
+    rmpv::encode::write_value(&mut encoded, value)
+        .map_err(|_| Error::InvariantViolation("policy frontier value encode failed"))?;
+    hash_bytes(hasher, &encoded);
+    Ok(())
+}
+
+fn hash_opt_str(hasher: &mut Sha256, value: Option<&str>) {
+    let Some(value) = value else {
+        hash_bool(hasher, false);
+        return;
+    };
+    hash_bool(hasher, true);
+    hash_str(hasher, value);
+}
+
+fn hash_opt_u8(hasher: &mut Sha256, value: Option<u8>) {
+    let Some(value) = value else {
+        hash_bool(hasher, false);
+        return;
+    };
+    hash_bool(hasher, true);
+    hasher.update([value]);
+}
+
+fn hash_str(hasher: &mut Sha256, value: &str) {
+    hash_bytes(hasher, value.as_bytes());
+}
+
+fn hash_bytes(hasher: &mut Sha256, bytes: &[u8]) {
+    hash_len(hasher, bytes.len());
+    hasher.update(bytes);
+}
+
+fn hash_bool(hasher: &mut Sha256, value: bool) {
+    hasher.update([u8::from(value)]);
+}
+
+fn hash_len(hasher: &mut Sha256, value: usize) {
+    hasher.update((value as u64).to_le_bytes());
+}
+
 struct DecodedPolicyManifest {
     pack: PolicyPack,
     actor_ceilings: Vec<ActorCeiling>,
@@ -703,56 +886,115 @@ pub(crate) fn resolve_policy_manifest(
     Ok(resolution)
 }
 
-pub(crate) fn check_claim_policy(
+pub(crate) fn check_claim_policy_for_write(
+    store: &Store,
+    wtxn: &mut heed::RwTxn<'_>,
+    id: &EntityId,
     body: &ClaimBody,
+    envelope: Option<&WriteEnvelope>,
     policy: &PolicyManifestResolution,
+    mode: GateWriteMode,
 ) -> Result<()> {
+    if let Some(envelope) = envelope {
+        validate_write_envelope(envelope)?;
+    }
+
     if policy.enforces_write_gate() {
-        let input = claim_gate_input(
-            body,
-            policy,
-            GateActor {
-                actor_class: LOCAL_WRITE_ACTOR_CLASS.to_owned(),
-                actor_ref: None,
-            },
-            GateContentKind::Claim,
-            GateProvenanceHandles {
-                actor_entity_ref: Some(local_write_actor_entity_ref()),
-                ..GateProvenanceHandles::default()
-            },
-        );
-        enforce_claim_gate_decision(policy.evaluate_gate(&input), body.approval)?;
+        let (actor, provenance) = if let Some(envelope) = envelope {
+            let actor = envelope.actor();
+            (
+                GateActor {
+                    actor_class: edge_actor_class_str(actor.actor_class()).to_owned(),
+                    actor_ref: Some(actor.entity_ref().to_hex()),
+                },
+                GateProvenanceHandles {
+                    actor_entity_ref: Some(actor.entity_ref()),
+                    ..GateProvenanceHandles::default()
+                },
+            )
+        } else {
+            (
+                GateActor {
+                    actor_class: LOCAL_WRITE_ACTOR_CLASS.to_owned(),
+                    actor_ref: None,
+                },
+                GateProvenanceHandles {
+                    actor_entity_ref: Some(local_write_actor_entity_ref()),
+                    ..GateProvenanceHandles::default()
+                },
+            )
+        };
+        let input = claim_gate_input(body, policy, actor, GateContentKind::Claim, provenance);
+        let decision = policy.evaluate_gate(&input);
+        let binding = GateConsentBinding::for_claim(body, policy)?;
+        let decision_id = GateDecisionId::now();
+
+        if mode.record_decision {
+            store.append_gate_decision_in_txn(
+                wtxn,
+                &GateDecisionRecord {
+                    version: 0,
+                    decision_id,
+                    created_at: crate::unix_seconds_now(),
+                    outcome: decision.outcome().as_str().to_owned(),
+                    reason_codes: decision
+                        .reason_codes()
+                        .iter()
+                        .map(|code| code.as_str().to_owned())
+                        .collect(),
+                    actor_class: input.actor.actor_class.clone(),
+                    actor_ref: input.actor.actor_ref.clone(),
+                    content_kind: input.content_kind.as_str().to_owned(),
+                    policy_manifest_version: input.policy_manifest_version,
+                    claim_id: Some(*id.as_bytes()),
+                    diff_handle: binding.diff_handle.clone(),
+                    read_frontier_hash: binding.read_frontier_hash,
+                },
+            )?;
+        }
+
+        if mode.persist_pending_consent
+            && decision.outcome() == GateOutcome::Pending
+            && body.approval == ClaimApprovalStatus::Proposed
+        {
+            store.put_pending_gate_consent_in_txn(
+                wtxn,
+                &PendingGateConsentRecord {
+                    version: 0,
+                    claim_id: *id.as_bytes(),
+                    decision_id,
+                    created_at: crate::unix_seconds_now(),
+                    diff_handle: binding.diff_handle.clone(),
+                    read_frontier_hash: binding.read_frontier_hash,
+                    reason_codes: decision
+                        .reason_codes()
+                        .iter()
+                        .map(|code| code.as_str().to_owned())
+                        .collect(),
+                },
+            )?;
+        }
+
+        enforce_claim_gate_decision_with_consent(
+            store,
+            wtxn,
+            id,
+            &decision,
+            body.approval,
+            &binding,
+            mode,
+        )?;
     }
 
     check_claim_source_trust(body, policy)
 }
 
-pub(crate) fn check_claim_policy_with_write_envelope(
-    body: &ClaimBody,
-    envelope: &WriteEnvelope,
-    policy: &PolicyManifestResolution,
-) -> Result<()> {
-    validate_write_envelope(envelope)?;
-
-    if policy.enforces_write_gate() {
-        let actor = envelope.actor();
-        let input = claim_gate_input(
-            body,
-            policy,
-            GateActor {
-                actor_class: edge_actor_class_str(actor.actor_class()).to_owned(),
-                actor_ref: Some(actor.entity_ref().to_hex()),
-            },
-            GateContentKind::Claim,
-            GateProvenanceHandles {
-                actor_entity_ref: Some(actor.entity_ref()),
-                ..GateProvenanceHandles::default()
-            },
-        );
-        enforce_claim_gate_decision(policy.evaluate_gate(&input), body.approval)?;
-    }
-
-    check_claim_source_trust(body, policy)
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct GateWriteMode {
+    pub(crate) record_decision: bool,
+    pub(crate) persist_pending_consent: bool,
+    pub(crate) resolve_pending: bool,
+    pub(crate) can_resolve_pending_consent: bool,
 }
 
 pub(crate) fn check_reserved_claim_policy(
@@ -839,17 +1081,63 @@ fn enforce_gate_decision(decision: GateDecision) -> Result<()> {
     reject_gate_decision(decision)
 }
 
-fn enforce_claim_gate_decision(
-    decision: GateDecision,
-    approval: ClaimApprovalStatus,
-) -> Result<()> {
-    if decision.outcome() == GateOutcome::Allow
-        || (approval == ClaimApprovalStatus::Proposed && decision.outcome() == GateOutcome::Pending)
-    {
-        return Ok(());
-    }
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct GateConsentBinding {
+    diff_handle: Vec<u8>,
+    read_frontier_hash: [u8; 32],
+}
 
-    reject_gate_decision(decision)
+impl GateConsentBinding {
+    fn for_claim(body: &ClaimBody, policy: &PolicyManifestResolution) -> Result<Self> {
+        let mut normalized = body.clone();
+        normalized.approval = ClaimApprovalStatus::Proposed;
+        let encoded = crate::claim::encode_claim_body(&normalized)?;
+        let mut hasher = Sha256::new();
+        hasher.update(b"oneiron.gate.claim_diff.v0");
+        hasher.update(&encoded);
+        Ok(Self {
+            diff_handle: hasher.finalize().to_vec(),
+            read_frontier_hash: policy.read_frontier_hash()?,
+        })
+    }
+}
+
+fn enforce_claim_gate_decision_with_consent(
+    store: &Store,
+    wtxn: &mut heed::RwTxn<'_>,
+    id: &EntityId,
+    decision: &GateDecision,
+    approval: ClaimApprovalStatus,
+    binding: &GateConsentBinding,
+    mode: GateWriteMode,
+) -> Result<()> {
+    match (decision.outcome(), approval) {
+        (GateOutcome::Allow, _) => {
+            if mode.resolve_pending {
+                store.delete_pending_gate_consent_in_txn(wtxn, id)?;
+            }
+            Ok(())
+        }
+        (GateOutcome::Pending, ClaimApprovalStatus::Proposed) => Ok(()),
+        (GateOutcome::Pending, ClaimApprovalStatus::Approved) => {
+            if !mode.can_resolve_pending_consent {
+                return reject_gate_decision(decision.clone());
+            }
+            let Some(pending) = store.pending_gate_consent_in_txn(wtxn, id)? else {
+                return reject_gate_decision(decision.clone());
+            };
+            if pending.diff_handle != binding.diff_handle
+                || pending.read_frontier_hash != binding.read_frontier_hash
+            {
+                return Err(Error::GateConsentStale { claim_id: *id });
+            }
+            if mode.resolve_pending {
+                store.delete_pending_gate_consent_in_txn(wtxn, id)?;
+            }
+            Ok(())
+        }
+        _ => reject_gate_decision(decision.clone()),
+    }
 }
 
 fn reject_gate_decision(decision: GateDecision) -> Result<()> {
@@ -1526,6 +1814,14 @@ mod tests {
         vault.with_write_txn(|wtxn| resolve_policy_manifest(&vault.store, wtxn))
     }
 
+    fn has_pending_gate_consent(vault: &crate::Vault, id: &EntityId) -> Result<bool> {
+        let rtxn = vault.store.env.read_txn()?;
+        Ok(vault
+            .store
+            .pending_gate_consent_in_txn(&rtxn, id)?
+            .is_some())
+    }
+
     fn source_trust_claim(source: ClaimSource) -> ClaimBody {
         let mut body = ClaimBody::new(
             "profile.name",
@@ -2097,6 +2393,161 @@ mod tests {
             "pending",
             &["gate.pending.source_trust"],
         )
+    }
+
+    #[test]
+    fn gate_decision_ledger_survives_rejected_standalone_write() -> Result<()> {
+        let (_tmp, vault) = temp_vault();
+        put_policy_manifest_bytes(&vault, 0x90, &encode_policy_manifest(vec![]))?;
+
+        let id = test_id(0x91);
+        let body = source_trust_claim(ClaimSource::UserStated);
+        let (candidate, envelope) = claim_candidate_write_parts(&vault, &body)?;
+
+        let err = vault
+            .batch()
+            .claim_candidate(&id, candidate, &envelope, test_time(3), 3)
+            .commit()
+            .expect_err("pending auto write must be rejected");
+        assert_gate_rejected(err, "pending", &["gate.pending.actor_ceiling"]);
+        assert!(
+            vault.get_raw(&id)?.is_none(),
+            "rejected entity write must not stage the claim"
+        );
+
+        let decisions = vault.store.gate_decisions(10)?;
+        assert_eq!(decisions.len(), 1);
+        assert_eq!(decisions[0].outcome, "pending");
+        assert_eq!(decisions[0].claim_id, Some(*id.as_bytes()));
+        assert_eq!(
+            decisions[0].reason_codes,
+            vec!["gate.pending.actor_ceiling"]
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn pending_gate_consent_survives_reopen() -> Result<()> {
+        let tmp = tempfile::tempdir().expect("temp dir");
+        {
+            let vault = crate::Vault::open(tmp.path(), crate::types::VaultConfig::default())?;
+            put_policy_manifest_bytes(&vault, 0x92, &encode_policy_manifest(vec![]))?;
+
+            let id = test_id(0x93);
+            let mut body = source_trust_claim(ClaimSource::UserStated);
+            body.approval = ClaimApprovalStatus::Proposed;
+            let (candidate, envelope) = claim_candidate_write_parts(&vault, &body)?;
+            vault
+                .batch()
+                .claim_candidate(&id, candidate, &envelope, test_time(3), 3)
+                .commit()?;
+        }
+
+        let reopened = crate::Vault::open(tmp.path(), crate::types::VaultConfig::default())?;
+        let id = test_id(0x93);
+        let pending = reopened.with_write_txn(|wtxn| {
+            reopened
+                .store
+                .pending_gate_consent_in_txn(wtxn, &id)?
+                .ok_or(Error::CorruptedIndex("pending gate consent"))
+        })?;
+        assert_eq!(pending.claim_id, *id.as_bytes());
+        assert_eq!(pending.reason_codes, vec!["gate.pending.actor_ceiling"]);
+        Ok(())
+    }
+
+    #[test]
+    fn approved_gate_consent_rejects_drifted_diff() -> Result<()> {
+        let (_tmp, vault) = temp_vault();
+        put_policy_manifest_bytes(&vault, 0x94, &encode_policy_manifest(vec![]))?;
+
+        let id = test_id(0x95);
+        let mut proposed = source_trust_claim(ClaimSource::UserStated);
+        proposed.approval = ClaimApprovalStatus::Proposed;
+        let (candidate, envelope) = claim_candidate_write_parts(&vault, &proposed)?;
+        vault
+            .batch()
+            .claim_candidate(&id, candidate, &envelope, test_time(3), 3)
+            .commit()?;
+
+        let mut drifted = proposed;
+        drifted.value = Value::from("Grace");
+        drifted.approval = ClaimApprovalStatus::Approved;
+        let (candidate, envelope) = claim_candidate_write_parts(&vault, &drifted)?;
+        let err = vault
+            .batch()
+            .claim_candidate(&id, candidate, &envelope, test_time(4), 4)
+            .commit()
+            .expect_err("approval must bind to original pending diff");
+        assert!(matches!(err, Error::GateConsentStale { claim_id } if claim_id == id));
+
+        let pending = vault.with_write_txn(|wtxn| {
+            vault
+                .store
+                .pending_gate_consent_in_txn(wtxn, &id)?
+                .ok_or(Error::CorruptedIndex("pending gate consent"))
+        })?;
+        assert_eq!(pending.claim_id, *id.as_bytes());
+        Ok(())
+    }
+
+    #[test]
+    fn approved_gate_consent_followup_succeeds_and_clears_pending() -> Result<()> {
+        let (_tmp, vault) = temp_vault();
+        put_policy_manifest_bytes(&vault, 0x96, &encode_policy_manifest(vec![]))?;
+
+        let id = test_id(0x97);
+        let mut proposed = source_trust_claim(ClaimSource::UserStated);
+        proposed.approval = ClaimApprovalStatus::Proposed;
+        let (candidate, envelope) = claim_candidate_write_parts(&vault, &proposed)?;
+        vault
+            .batch()
+            .claim_candidate(&id, candidate, &envelope, test_time(3), 3)
+            .commit()?;
+        assert!(has_pending_gate_consent(&vault, &id)?);
+
+        let mut approved = proposed;
+        approved.approval = ClaimApprovalStatus::Approved;
+        let (candidate, envelope) = claim_candidate_write_parts(&vault, &approved)?;
+        vault
+            .batch()
+            .claim_candidate(&id, candidate, &envelope, test_time(4), 4)
+            .commit()?;
+
+        assert!(!has_pending_gate_consent(&vault, &id)?);
+        assert_eq!(
+            vault.get_claim(&id)?.expect("approved claim").approval,
+            ClaimApprovalStatus::Approved
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn same_batch_proposed_then_approved_rejects_without_pending_consent() -> Result<()> {
+        let (_tmp, vault) = temp_vault();
+        put_policy_manifest_bytes(&vault, 0x98, &encode_policy_manifest(vec![]))?;
+
+        let id = test_id(0x99);
+        let mut proposed = source_trust_claim(ClaimSource::UserStated);
+        proposed.approval = ClaimApprovalStatus::Proposed;
+        let (proposed_candidate, proposed_envelope) =
+            claim_candidate_write_parts(&vault, &proposed)?;
+        let mut approved = proposed;
+        approved.approval = ClaimApprovalStatus::Approved;
+        let (approved_candidate, approved_envelope) =
+            claim_candidate_write_parts(&vault, &approved)?;
+
+        let err = vault
+            .batch()
+            .claim_candidate(&id, proposed_candidate, &proposed_envelope, test_time(3), 3)
+            .claim_candidate(&id, approved_candidate, &approved_envelope, test_time(4), 4)
+            .commit()
+            .expect_err("same batch approval must not consume same batch consent");
+
+        assert_gate_rejected(err, "pending", &["gate.pending.actor_ceiling"]);
+        assert!(vault.get_raw(&id)?.is_none());
+        assert!(!has_pending_gate_consent(&vault, &id)?);
+        Ok(())
     }
 
     #[test]

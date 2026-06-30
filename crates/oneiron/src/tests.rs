@@ -13566,6 +13566,8 @@ fn put_edge_provenance_substrate_and_effort_round_trip_with_model_gate() -> Resu
                 allow_reserved_predicate: false,
             }],
             true,
+            false,
+            false,
         )?;
         wtxn.commit()?;
     }
