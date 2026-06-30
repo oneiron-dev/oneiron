@@ -4368,26 +4368,34 @@ mod tests {
     #[test]
     fn unsupported_last_subday_quantity_query_fails_closed() -> Result<()> {
         let (_dir, vault) = open_test_vault();
-        let id = entity_id(0x18);
-        put_text(&vault, id, "last 24 hours failclosed")?;
+        for (offset, query, expected) in [
+            (0, "last 24 hours failclosed", "last 24 hours"),
+            (
+                1,
+                "last twenty four hours failclosed",
+                "last twenty four hours",
+            ),
+        ] {
+            put_text(&vault, entity_id(0x18 + offset), query)?;
 
-        let err = vault
-            .query()
-            .search_text("last 24 hours failclosed", 10)
-            .with_temporal_now(1_710_504_000)
-            .run()
-            .expect_err("unsupported temporal expression must fail closed");
+            let err = vault
+                .query()
+                .search_text(query, 10)
+                .with_temporal_now(1_710_504_000)
+                .run()
+                .expect_err("unsupported temporal expression must fail closed");
 
-        assert_eq!(
-            err.kind(),
-            crate::error::ErrorKind::InvalidTemporalExpression
-        );
-        assert_matches!(
-            err,
-            Error::InvalidTemporalExpression(
-                TemporalExpressionParseError::Unsupported { expression }
-            ) if expression == "last 24 hours"
-        );
+            assert_eq!(
+                err.kind(),
+                crate::error::ErrorKind::InvalidTemporalExpression
+            );
+            assert_matches!(
+                err,
+                Error::InvalidTemporalExpression(
+                    TemporalExpressionParseError::Unsupported { expression }
+                ) if expression == expected
+            );
+        }
         Ok(())
     }
 
