@@ -273,11 +273,17 @@ fn quarantine_invalid_artifact(path: &Path, bytes: &[u8]) -> Result<PathBuf> {
 }
 
 fn artifact_file_matches(path: &Path, bytes: &[u8]) -> std::io::Result<bool> {
-    if fs::metadata(path)?.len() != bytes.len() as u64 {
+    let path_metadata = fs::symlink_metadata(path)?;
+    if !path_metadata.file_type().is_file() || path_metadata.len() != bytes.len() as u64 {
         return Ok(false);
     }
 
     let mut file = File::open(path)?;
+    let file_metadata = file.metadata()?;
+    if !file_metadata.file_type().is_file() || file_metadata.len() != bytes.len() as u64 {
+        return Ok(false);
+    }
+
     let mut offset = 0;
     let mut buffer = [0_u8; 8192];
     while offset < bytes.len() {
@@ -530,6 +536,28 @@ mod tests {
 
         assert_eq!(fs::read(&quarantined.quarantine_path)?, corrupt);
         assert!(!artifact_path.exists(), "fallback source is removed");
+        assert_invalid_suffix(&quarantined.quarantine_path, &artifact_path, 2);
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn quarantine_skips_symlink_candidate_to_preserve_bytes() -> Result<()> {
+        let dir = tempfile::tempdir()?;
+        let artifact_path = dir.path().join("snapshot.oneiron-artifact");
+        let mut corrupt = encode_recovery_artifact(ARTIFACT_TYPE_FIXTURE, b"payload")?;
+        corrupt[HEADER_LEN] ^= 0x01;
+        fs::write(&artifact_path, &corrupt)?;
+        std::os::unix::fs::symlink(&artifact_path, invalid_artifact_path(&artifact_path, 1))?;
+
+        let RecoveryArtifactLoad::Quarantined(quarantined) =
+            load_recovery_artifact(&artifact_path, ARTIFACT_TYPE_FIXTURE)?
+        else {
+            panic!("corrupt artifact should quarantine");
+        };
+
+        assert_eq!(fs::read(&quarantined.quarantine_path)?, corrupt);
+        assert!(!artifact_path.exists(), "source is removed after fallback");
         assert_invalid_suffix(&quarantined.quarantine_path, &artifact_path, 2);
         Ok(())
     }
