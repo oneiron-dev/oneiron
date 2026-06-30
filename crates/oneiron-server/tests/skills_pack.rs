@@ -32,6 +32,7 @@ const EXPECTED_REGISTERED_ROUTES: &[&str] = &[
 // remain on a separate docs lane.
 const CORE_API_PARITY_ROUTES_PENDING_SKILLS_PACK_DOCS: &[&str] = &[
     "/v1/core/batch",
+    "/v1/core/batch/shortId/hydrate",
     "/v1/core/query",
     "/v1/core/context-pack",
     "/v1/core/hydrate",
@@ -42,6 +43,7 @@ const CORE_API_PARITY_ROUTES_PENDING_SKILLS_PACK_DOCS: &[&str] = &[
 
 const NESTED_CORE_ROUTE_PREFIXES: &[(&str, &str)] = &[
     ("/batch", "/v1/core/batch"),
+    ("/batch/shortId/hydrate", "/v1/core/batch/shortId/hydrate"),
     ("/query", "/v1/core/query"),
     ("/context-pack", "/v1/core/context-pack"),
     ("/hydrate", "/v1/core/hydrate"),

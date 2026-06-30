@@ -1408,6 +1408,76 @@
         ],
         "type": "object"
       },
+      "CoreBatchShortIdHydrateItem": {
+        "properties": {
+          "error": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/CoreShortIdHydrateError"
+              }
+            ]
+          },
+          "outcome": {
+            "$ref": "#/components/schemas/CoreShortIdHydrateOutcome"
+          },
+          "ref": {
+            "type": "string"
+          },
+          "result": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/CoreHydrateResponse"
+              }
+            ]
+          }
+        },
+        "required": [
+          "ref",
+          "outcome"
+        ],
+        "type": "object"
+      },
+      "CoreBatchShortIdHydrateRequest": {
+        "properties": {
+          "refs": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "view": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/View"
+              }
+            ]
+          }
+        },
+        "type": "object"
+      },
+      "CoreBatchShortIdHydrateResponse": {
+        "properties": {
+          "results": {
+            "items": {
+              "$ref": "#/components/schemas/CoreBatchShortIdHydrateItem"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "results"
+        ],
+        "type": "object"
+      },
       "CoreContextEdge": {
         "properties": {
           "created_at": {
@@ -1764,6 +1834,61 @@
         ],
         "type": "object"
       },
+      "CoreHydrateDeletionMetadata": {
+        "properties": {
+          "deleted_at": {
+            "format": "int64",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "hard": {
+            "type": "boolean"
+          },
+          "reason": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/CoreHydrateDeletionReason"
+              }
+            ]
+          },
+          "request_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "source": {
+            "$ref": "#/components/schemas/CoreHydrateDeletionSource"
+          }
+        },
+        "required": [
+          "source",
+          "hard"
+        ],
+        "type": "object"
+      },
+      "CoreHydrateDeletionReason": {
+        "enum": [
+          "user_delete",
+          "user_hard_delete",
+          "gdpr_delete",
+          "policy_delete"
+        ],
+        "type": "string"
+      },
+      "CoreHydrateDeletionSource": {
+        "enum": [
+          "tombstone",
+          "pending_tombstone",
+          "dangling_short_id"
+        ],
+        "type": "string"
+      },
       "CoreHydrateRequest": {
         "properties": {
           "content_hash": {
@@ -1801,6 +1926,16 @@
         "properties": {
           "content_hash": {
             "type": "string"
+          },
+          "deletion": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/CoreHydrateDeletionMetadata"
+              }
+            ]
           },
           "entity_type": {
             "format": "int32",
@@ -1907,6 +2042,43 @@
           }
         },
         "type": "object"
+      },
+      "CoreShortIdHydrateError": {
+        "properties": {
+          "field": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "kind": {
+            "$ref": "#/components/schemas/CoreShortIdHydrateErrorKind"
+          },
+          "message": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "message"
+        ],
+        "type": "object"
+      },
+      "CoreShortIdHydrateErrorKind": {
+        "enum": [
+          "malformed_short_id",
+          "not_found"
+        ],
+        "type": "string"
+      },
+      "CoreShortIdHydrateOutcome": {
+        "enum": [
+          "live",
+          "deleted",
+          "malformed_short_id",
+          "not_found"
+        ],
+        "type": "string"
       },
       "CoreTextField": {
         "properties": {
@@ -2139,6 +2311,55 @@
           },
           "500": {
             "description": "Batch commit failed.",
+            "schema": {
+              "$ref": "#/components/schemas/ApiErrorEnvelope"
+            }
+          }
+        },
+        "security": [
+          {
+            "CoreBearer": []
+          },
+          {
+            "OneironSecret": []
+          }
+        ]
+      }
+    },
+    "/v1/core/batch/shortId/hydrate": {
+      "post": {
+        "operationId": "core_batch_short_id_hydrate",
+        "parameters": [],
+        "requestSchema": {
+          "$ref": "#/components/schemas/CoreBatchShortIdHydrateRequest"
+        },
+        "responses": {
+          "200": {
+            "description": "Short refs hydrated with per-item typed results/errors.",
+            "schema": {
+              "$ref": "#/components/schemas/CoreBatchShortIdHydrateResponse"
+            }
+          },
+          "400": {
+            "description": "Malformed batch request.",
+            "schema": {
+              "$ref": "#/components/schemas/ApiErrorEnvelope"
+            }
+          },
+          "401": {
+            "description": "Missing or invalid core auth.",
+            "schema": {
+              "$ref": "#/components/schemas/ApiErrorEnvelope"
+            }
+          },
+          "403": {
+            "description": "Core token lacks core:read.",
+            "schema": {
+              "$ref": "#/components/schemas/ApiErrorEnvelope"
+            }
+          },
+          "500": {
+            "description": "Hydrate lookup failed.",
             "schema": {
               "$ref": "#/components/schemas/ApiErrorEnvelope"
             }
