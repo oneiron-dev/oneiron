@@ -833,6 +833,8 @@ pub(crate) fn companion_profile_access_grant(
         .prefix_iter(txn, &[ENTITY_TYPE_ACCESS_GRANT])?
     {
         let (key, _) = index_entry?;
+        // AccessGrant checks are fail-closed: any anomalous grant index row or
+        // body means the profile cannot be authorized by scanning past it.
         let Some(id) = type_index_entity_id(key, ENTITY_TYPE_ACCESS_GRANT) else {
             return Ok(None);
         };
@@ -1890,6 +1892,7 @@ mod tests {
         let (_tmp, vault) = temp_vault();
         let grant_id = test_id(0xA1);
         let principal = test_id(0xB1);
+        let other_principal = test_id(0xB3);
         let person = test_id(0xC1);
         let persona = test_id(0xD1);
         let other_persona = test_id(0xD2);
@@ -1901,12 +1904,17 @@ mod tests {
         );
 
         let grant = crate::AccessGrant::companion_profile_read(principal, person, persona, 10);
-        vault.put_access_grant(&grant_id, &grant)?;
+        vault.create_access_grant(&grant_id, &grant)?;
 
         assert_eq!(
             vault.companion_profile_access_grant(&principal, &person, &persona)?,
             Some(grant_id),
             "exact active grant should authorize"
+        );
+        assert_eq!(
+            vault.companion_profile_access_grant(&other_principal, &person, &persona)?,
+            None,
+            "principal mismatch must deny"
         );
         assert_eq!(
             vault.companion_profile_access_grant(&principal, &person, &other_persona)?,
@@ -1935,7 +1943,7 @@ mod tests {
 
         put_malformed_access_grant_bytes(&vault, &malformed_id, b"not-msgpack")?;
         let grant = crate::AccessGrant::companion_profile_read(principal, person, persona, 10);
-        vault.put_access_grant(&valid_id, &grant)?;
+        vault.create_access_grant(&valid_id, &grant)?;
 
         assert_eq!(
             vault.companion_profile_access_grant(&principal, &person, &persona)?,

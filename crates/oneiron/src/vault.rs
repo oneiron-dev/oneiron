@@ -809,6 +809,18 @@ impl Vault {
         self.write_access_grant_body(id, grant.created_at, &data)
     }
 
+    /// Creates an AccessGrant only when no entity already exists at `id`.
+    pub fn create_access_grant(&self, id: &EntityId, grant: &AccessGrant) -> Result<()> {
+        let data = encode_access_grant_body(grant)?;
+        let mut wtxn = self.store.env.write_txn()?;
+        if self.store.entities.get(&wtxn, id.as_bytes())?.is_some() {
+            return Err(Error::AccessGrantAlreadyExists);
+        }
+        self.apply_access_grant_body(&mut wtxn, id, grant.created_at, data)?;
+        wtxn.commit()?;
+        Ok(())
+    }
+
     /// Revokes an AccessGrant by rewriting the same record as revoked.
     pub fn revoke_access_grant(&self, id: &EntityId, revoked_at: u64) -> Result<AccessGrant> {
         let mut wtxn = self.store.env.write_txn()?;

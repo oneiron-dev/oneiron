@@ -1632,6 +1632,7 @@ struct CompanionProfileResponse {
         (status = 400, description = "Malformed grant request.", body = ApiErrorEnvelope, content_type = "application/json"),
         (status = 401, description = "Missing or invalid core auth.", body = ApiErrorEnvelope, content_type = "application/json"),
         (status = 403, description = "Token lacks core:auth.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 409, description = "AccessGrant id already exists.", body = ApiErrorEnvelope, content_type = "application/json"),
         (status = 500, description = "AccessGrant write failed.", body = ApiErrorEnvelope, content_type = "application/json")
     )
 )]
@@ -1653,10 +1654,13 @@ async fn create_companion_access_grant(
         created_at,
     );
 
-    server.vault.put_access_grant(&grant_id, &grant).map_err(|error| {
+    server
+        .vault
+        .create_access_grant(&grant_id, &grant)
+        .map_err(|error| {
         tracing::error!(error = %error, id = %grant_id.to_hex(), "companion access grant create failed");
-        companion_engine_error("companion access grant create failed", error)
-    })?;
+            companion_create_error(error)
+        })?;
 
     Ok(Json(companion_access_grant_response(&grant_id, &grant)))
 }
@@ -1807,6 +1811,15 @@ fn companion_access_denied() -> EnvelopedApiError {
         ["Create an active AccessGrant for this principal and profile before retrying."],
     )
     .into()
+}
+
+fn companion_create_error(error: oneiron::Error) -> EnvelopedApiError {
+    match error.kind() {
+        ErrorKind::AccessGrantAlreadyExists => {
+            ApiError::invalid_state(Some("access_grant_exists")).into()
+        }
+        _ => companion_engine_error("companion access grant create failed", error),
+    }
 }
 
 fn companion_engine_error(message: &'static str, error: oneiron::Error) -> EnvelopedApiError {
@@ -8410,7 +8423,33 @@ mod tests {
         assert_eq!(body["revoked_at"], Value::from(20_u64));
 
         let (status, body) = route_json(
-            server,
+            server.clone(),
+            core_request(
+                "POST",
+                "/v1/companion/access-grants",
+                "core:auth",
+                Some(&create_request),
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CONFLICT);
+        assert_error_envelope(&body, "INVALID_STATE");
+        assert_eq!(
+            error_envelope(&body)["details"]["state"],
+            Value::from("access_grant_exists")
+        );
+        assert_eq!(
+            server
+                .vault
+                .get_access_grant(&oneiron::EntityId::from_hex(&grant_id).expect("test grant id"))
+                .expect("read grant")
+                .expect("grant exists")
+                .status,
+            oneiron::AccessGrantStatus::Revoked
+        );
+
+        let (status, body) = route_json(
+            server.clone(),
             core_request("GET", &profile_path, "core:read", None),
         )
         .await;
