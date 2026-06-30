@@ -8,11 +8,12 @@
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::io::Cursor;
 
-use loro::LoroDoc;
+use loro::{CommitOptions, ExportMode, LoroDoc};
 use rmpv::Value;
 
 use crate::Vault;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
+use crate::claim::{restamp_federated_claim_source, validate_claim_body_and_decode};
 use crate::error::{Error, Result};
 use crate::federation::{FederationGrantScope, decode_federation_grant_body};
 use crate::types::{
@@ -51,6 +52,8 @@ const WORLD_KIND_BASE: &str = "base";
 const WORLD_KIND_WORLD: &str = "world";
 
 const SELECTOR_VV_PREFIX_LEN: usize = 4;
+pub(crate) const FEDERATED_TOMBSTONE_ADMISSION_ERROR: &str =
+    "federated tombstone updates require delete admission";
 
 /// World component of a closed-subgraph selector.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -240,6 +243,60 @@ pub fn filtered_window_doc(
     Ok(filter_window_doc(source, key, selector))
 }
 
+/// Role carried by a member/guest federation import path.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum FederationAdmissionRole {
+    Member,
+    Guest,
+}
+
+impl FederationAdmissionRole {
+    const fn origin(self) -> &'static str {
+        match self {
+            Self::Member => "federation_admission.member",
+            Self::Guest => "federation_admission.guest",
+        }
+    }
+}
+
+/// Produces locally admitted window update bytes for a member/guest federation
+/// import.
+///
+/// The incoming CRDT update is decoded into an unobserved scratch doc. Claim
+/// entities are re-stamped to `src=imported` and evaluated against the local
+/// source-trust floor before any bytes are copied into the returned update.
+/// The returned doc is freshly authored with a federation admission origin,
+/// so callers can import it through the ordinary replay/materialization path
+/// without giving the original remote op ids trust-blind write authority.
+#[cfg(feature = "sync")]
+pub fn admit_federated_window_update(
+    vault: &Vault,
+    key: &WindowKey,
+    update: &[u8],
+    role: FederationAdmissionRole,
+) -> Result<Vec<u8>> {
+    let remote = create_window_doc("federation-remote", key);
+    remote
+        .import(update)
+        .map_err(|source| Error::CrdtDecodeError {
+            context: "import federated update",
+            source,
+        })?;
+
+    let admitted = create_window_doc("federation-admitted", key);
+    let policy =
+        vault.with_write_txn(|wtxn| crate::gate::resolve_policy_manifest(&vault.store, wtxn))?;
+
+    reject_federated_tombstones(&remote)?;
+    copy_admitted_entities(&policy, &remote, &admitted)?;
+    copy_binary_map(&remote.get_map("edges"), &admitted.get_map("edges"))?;
+
+    admitted.commit_with(CommitOptions::new().origin(role.origin()));
+    admitted
+        .export(ExportMode::all_updates())
+        .map_err(|e| Error::SyncProtocolError(e.to_string()))
+}
+
 /// Test-only helper for downstream crates that need to seed a grant-backed
 /// selector without opening the public maintenance-band write gate.
 #[cfg(feature = "test-hooks")]
@@ -283,6 +340,82 @@ fn decode_selector_value(value: &Value) -> Result<SyncSelector> {
     Ok(SyncSelector::new(
         grant_id, member_ref, world, facets, bands,
     ))
+}
+
+#[cfg(feature = "sync")]
+fn copy_admitted_entities(
+    policy: &crate::gate::PolicyManifestResolution,
+    source: &LoroDoc,
+    target: &LoroDoc,
+) -> Result<()> {
+    let source_entities = source.get_map("entities");
+    let target_entities = target.get_map("entities");
+    let mut result = Ok(());
+    map_for_each_value_bytes(&source_entities, |key, value| {
+        if result.is_err() {
+            return;
+        }
+        result = admit_federated_entity_blob(policy, key, value)
+            .and_then(|blob| map_insert_bytes(&target_entities, key, &blob));
+    });
+    result
+}
+
+#[cfg(feature = "sync")]
+fn admit_federated_entity_blob(
+    policy: &crate::gate::PolicyManifestResolution,
+    key: &str,
+    value: Option<&[u8]>,
+) -> Result<Vec<u8>> {
+    let blob = value.ok_or(Error::InvalidKey)?;
+    let id = EntityId::from_hex(key).map_err(|_| Error::InvalidKey)?;
+    if key != id.to_hex() {
+        return Err(Error::InvalidKey);
+    }
+
+    let header =
+        EntityMetadataHeader::parse(blob).ok_or(Error::CorruptedIndex("entity metadata"))?;
+    if header.entity_type != ENTITY_TYPE_CLAIM {
+        return Ok(blob.to_vec());
+    }
+
+    let body = validate_claim_body_and_decode(&blob[ENTITY_METADATA_HEADER_LEN..], false)?;
+    let body = restamp_federated_claim_source(body);
+    crate::gate::check_federated_claim_admission(&body, policy)?;
+    let encoded = crate::claim::encode_claim_body(&body)?;
+
+    let mut admitted = Vec::with_capacity(ENTITY_METADATA_HEADER_LEN + encoded.len());
+    admitted.extend_from_slice(&blob[..ENTITY_METADATA_HEADER_LEN]);
+    admitted.extend_from_slice(&encoded);
+    Ok(admitted)
+}
+
+#[cfg(feature = "sync")]
+fn copy_binary_map(source: &loro::LoroMap, target: &loro::LoroMap) -> Result<()> {
+    let mut result = Ok(());
+    map_for_each_value_bytes(source, |key, value| {
+        if result.is_err() {
+            return;
+        }
+        result = value
+            .ok_or(Error::InvalidKey)
+            .and_then(|bytes| map_insert_bytes(target, key, bytes));
+    });
+    result
+}
+
+#[cfg(feature = "sync")]
+fn reject_federated_tombstones(source: &LoroDoc) -> Result<()> {
+    let mut has_tombstone = false;
+    map_for_each_tombstone_value(&source.get_map("tombstones"), |_, _| {
+        has_tombstone = true;
+    });
+    if has_tombstone {
+        return Err(Error::SyncProtocolError(
+            FEDERATED_TOMBSTONE_ADMISSION_ERROR.to_string(),
+        ));
+    }
+    Ok(())
 }
 
 /// Validates that a selector is backed by a matching federation grant.

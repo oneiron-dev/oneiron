@@ -56,6 +56,9 @@ use crate::sync::loro_support::{
 use crate::sync::manager::WindowManager;
 use crate::sync::quarantine;
 use crate::sync::schema::{create_window_doc, read_window_list};
+use crate::sync::selector::{
+    FEDERATED_TOMBSTONE_ADMISSION_ERROR, FederationAdmissionRole, admit_federated_window_update,
+};
 use crate::sync::transport::{
     self, LEASE_STATUS_GRANTED, MAX_DECODED_PAYLOAD_BYTES, TAG_AWARENESS, TAG_BULK_TRANSFER,
     TAG_BULK_TRANSFER_DONE, TAG_LEASE_GRANTED, TAG_SYNC_UPDATE, TAG_VERSION_VECTOR,
@@ -422,110 +425,7 @@ impl SyncClient {
                 Ok(responses)
             }
             window_sub_tags::UPDATE => {
-                // Server sending Loro update bytes — import into the
-                // manager-owned live doc. Observer B materializes the
-                // change to LMDB synchronously (entities/edges/tombstones).
-                //
-                // Import-then-persist is deliberate: persisting BEFORE the
-                // import would durably append an unvalidated frame as a
-                // `u:w:` row, and window load is fail-closed on pending
-                // updates — one malformed frame would brick every future
-                // open of this window.
-                let vv_before = window.doc.oplog_vv();
-                window
-                    .doc
-                    .import(payload)
-                    .map_err(|_| TransportError::InvalidPayload("window import failed"))?;
-                // A no-op import can still reveal a same-process durability
-                // gap: compare the live doc with exactly what restart would
-                // load from `d:w:` + surviving `u:w:` rows, then heal only
-                // the missing live-doc delta.
-                if window.doc.oplog_vv() == vv_before {
-                    let key = WindowKey::new(window_key);
-                    let durable_doc = match load_window_from_state(&self.vault, "local", &key) {
-                        Ok(doc) => doc,
-                        Err(Error::WindowNotFound { .. }) => {
-                            let doc = create_window_doc("local", &key);
-                            if let Err(e) = apply_pending_window_updates(&self.vault, &doc, &key) {
-                                self.manager.discard_window(&key);
-                                return Err(TransportError::Storage(format!(
-                                    "load durable window updates: {e}"
-                                )));
-                            }
-                            doc
-                        }
-                        Err(e) => {
-                            self.manager.discard_window(&key);
-                            return Err(TransportError::Storage(format!(
-                                "load durable window state: {e}"
-                            )));
-                        }
-                    };
-                    let live_vv = window.doc.oplog_vv();
-                    let durable_vv = durable_doc.oplog_vv();
-                    if matches!(live_vv.partial_cmp(&durable_vv), Some(Less | Equal)) {
-                        return Ok(Vec::new());
-                    }
-                    let fr_key = format!("fr:w:{window_key}");
-                    match self.vault.sync_state_get(&fr_key) {
-                        Ok(Some(_)) => {
-                            self.manager.discard_window(&key);
-                            return Err(TransportError::Storage(
-                                "post-scrub echo deferred to full resync".to_string(),
-                            ));
-                        }
-                        Ok(None) => {}
-                        Err(e) => {
-                            self.manager.discard_window(&key);
-                            return Err(TransportError::Storage(format!(
-                                "read full-resync marker: {e}"
-                            )));
-                        }
-                    }
-                    let missing = match export_updates_since(
-                        &window.doc,
-                        &doc_version_vector(&durable_doc),
-                    ) {
-                        Ok(missing) => missing,
-                        Err(e) => {
-                            self.manager.discard_window(&key);
-                            return Err(map_delta_export_err(e));
-                        }
-                    };
-                    if let Err(e) = persist_window_update(&self.vault, window_key, &missing) {
-                        self.manager.discard_window(&key);
-                        return Err(TransportError::Storage(format!(
-                            "persist live durable delta: {e}"
-                        )));
-                    }
-                    return Ok(Vec::new());
-                }
-                // Remote imports never fire Observer A (local-only), so
-                // persist the accepted update bytes ourselves: without a
-                // u:w: row, remote state — including tombstones, whose LMDB
-                // purge already ran — would vanish from the doc on restart.
-                if let Err(e) = persist_window_update(&self.vault, window_key, payload) {
-                    // Never leave RAM ahead of durable state on a FAILED
-                    // persist (client analog of the ONE-1129 server
-                    // evict-on-persist-failure): the import advanced this
-                    // doc's version vector, so keeping the doc registered
-                    // would tell the server — on the next VV exchange —
-                    // that we already hold bytes that never became
-                    // durable; they would never be re-sent and would
-                    // vanish from the doc on restart (tombstones
-                    // included). Discard the live window WITHOUT
-                    // persisting (a persist would durably commit the
-                    // unconfirmed import); the next open reloads from
-                    // durable state and the ONE-1127/1128 VV exchange
-                    // re-delivers the update.
-                    self.manager.discard_window(&WindowKey::new(window_key));
-                    return Err(TransportError::Storage(format!(
-                        "persist remote update: {e}"
-                    )));
-                }
-                let _ = self.event_tx.send(SyncEvent::WindowUpdated {
-                    window_key: window_key.to_string(),
-                });
+                self.import_accepted_window_update(window_key, &window, payload)?;
                 Ok(Vec::new())
             }
             window_sub_tags::VV_RESPONSE => {
@@ -543,6 +443,133 @@ impl SyncClient {
             }
             _ => Ok(Vec::new()),
         }
+    }
+
+    /// Imports a member/guest federation update after applying the local
+    /// federation admission gate.
+    ///
+    /// Full-window sync continues to call the ordinary `UPDATE` arm directly.
+    /// Selector/federation callers that can identify member/guest bytes should
+    /// enter through this seam so claim entities are re-stamped and admitted
+    /// exactly once before the shared observed-doc import/materialization path.
+    pub fn import_federated_window_update(
+        &mut self,
+        window_key: &str,
+        update: &[u8],
+        role: FederationAdmissionRole,
+    ) -> std::result::Result<(), TransportError> {
+        let key = WindowKey::try_new(window_key).ok_or(TransportError::InvalidWindowKey)?;
+        let admitted = admit_federated_window_update(&self.vault, &key, update, role)
+            .map_err(map_federated_admission_err)?;
+        let window = self.ensure_window(window_key)?;
+        self.import_accepted_window_update(window_key, &window, &admitted)
+    }
+
+    fn import_accepted_window_update(
+        &mut self,
+        window_key: &str,
+        window: &LoadedWindow,
+        payload: &[u8],
+    ) -> std::result::Result<(), TransportError> {
+        // Server sending Loro update bytes — import into the manager-owned
+        // live doc. Observer B materializes the change to LMDB synchronously
+        // (entities/edges/tombstones).
+        //
+        // Import-then-persist is deliberate: persisting BEFORE the import
+        // would durably append an unvalidated frame as a `u:w:` row, and
+        // window load is fail-closed on pending updates — one malformed frame
+        // would brick every future open of this window.
+        let vv_before = window.doc.oplog_vv();
+        window
+            .doc
+            .import(payload)
+            .map_err(|_| TransportError::InvalidPayload("window import failed"))?;
+        // A no-op import can still reveal a same-process durability gap:
+        // compare the live doc with exactly what restart would load from
+        // `d:w:` + surviving `u:w:` rows, then heal only the missing live-doc
+        // delta.
+        if window.doc.oplog_vv() == vv_before {
+            let key = WindowKey::new(window_key);
+            let durable_doc = match load_window_from_state(&self.vault, "local", &key) {
+                Ok(doc) => doc,
+                Err(Error::WindowNotFound { .. }) => {
+                    let doc = create_window_doc("local", &key);
+                    if let Err(e) = apply_pending_window_updates(&self.vault, &doc, &key) {
+                        self.manager.discard_window(&key);
+                        return Err(TransportError::Storage(format!(
+                            "load durable window updates: {e}"
+                        )));
+                    }
+                    doc
+                }
+                Err(e) => {
+                    self.manager.discard_window(&key);
+                    return Err(TransportError::Storage(format!(
+                        "load durable window state: {e}"
+                    )));
+                }
+            };
+            let live_vv = window.doc.oplog_vv();
+            let durable_vv = durable_doc.oplog_vv();
+            if matches!(live_vv.partial_cmp(&durable_vv), Some(Less | Equal)) {
+                return Ok(());
+            }
+            let fr_key = format!("fr:w:{window_key}");
+            match self.vault.sync_state_get(&fr_key) {
+                Ok(Some(_)) => {
+                    self.manager.discard_window(&key);
+                    return Err(TransportError::Storage(
+                        "post-scrub echo deferred to full resync".to_string(),
+                    ));
+                }
+                Ok(None) => {}
+                Err(e) => {
+                    self.manager.discard_window(&key);
+                    return Err(TransportError::Storage(format!(
+                        "read full-resync marker: {e}"
+                    )));
+                }
+            }
+            let missing = match export_updates_since(&window.doc, &doc_version_vector(&durable_doc))
+            {
+                Ok(missing) => missing,
+                Err(e) => {
+                    self.manager.discard_window(&key);
+                    return Err(map_delta_export_err(e));
+                }
+            };
+            if let Err(e) = persist_window_update(&self.vault, window_key, &missing) {
+                self.manager.discard_window(&key);
+                return Err(TransportError::Storage(format!(
+                    "persist live durable delta: {e}"
+                )));
+            }
+            return Ok(());
+        }
+        // Remote imports never fire Observer A (local-only), so persist the
+        // accepted update bytes ourselves: without a u:w: row, remote state —
+        // including tombstones, whose LMDB purge already ran — would vanish
+        // from the doc on restart.
+        if let Err(e) = persist_window_update(&self.vault, window_key, payload) {
+            // Never leave RAM ahead of durable state on a FAILED persist
+            // (client analog of the ONE-1129 server evict-on-persist-failure):
+            // the import advanced this doc's version vector, so keeping the
+            // doc registered would tell the server — on the next VV exchange —
+            // that we already hold bytes that never became durable; they would
+            // never be re-sent and would vanish from the doc on restart
+            // (tombstones included). Discard the live window WITHOUT
+            // persisting (a persist would durably commit the unconfirmed
+            // import); the next open reloads from durable state and the
+            // ONE-1127/1128 VV exchange re-delivers the update.
+            self.manager.discard_window(&WindowKey::new(window_key));
+            return Err(TransportError::Storage(format!(
+                "persist remote update: {e}"
+            )));
+        }
+        let _ = self.event_tx.send(SyncEvent::WindowUpdated {
+            window_key: window_key.to_string(),
+        });
+        Ok(())
     }
 
     fn handle_bulk_transfer(
@@ -1040,6 +1067,26 @@ fn map_delta_export_err(e: crate::error::Error) -> TransportError {
     }
 }
 
+fn map_federated_admission_err(e: crate::error::Error) -> TransportError {
+    match e {
+        crate::error::Error::CrdtDecodeError { .. } => {
+            TransportError::InvalidPayload("federated update import failed")
+        }
+        crate::error::Error::GateWriteRejected {
+            outcome,
+            reason_codes,
+        } => TransportError::Storage(format!(
+            "federated admission rejected: outcome={outcome}, reasons={reason_codes:?}"
+        )),
+        crate::error::Error::SyncProtocolError(message)
+            if message == FEDERATED_TOMBSTONE_ADMISSION_ERROR =>
+        {
+            TransportError::InvalidPayload("federated tombstone update rejected")
+        }
+        _ => TransportError::InvalidPayload("federated update admission failed"),
+    }
+}
+
 /// Computes the next backoff delay with exponential growth capped at max.
 pub fn next_backoff(current_ms: u32, max_ms: u32) -> u32 {
     std::cmp::min(current_ms.saturating_mul(2), max_ms)
@@ -1052,10 +1099,16 @@ mod tests {
     use loro::{Container, ExportMode, LoroMap, ValueOrContainer};
 
     use crate::batch::ENTITY_METADATA_HEADER_LEN;
+    use crate::claim::{
+        ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject,
+    };
+    use crate::store::Store;
     use crate::sync::bridge::Materializer;
     use crate::sync::loro_support::export_snapshot;
     use crate::sync::schema::create_root_doc;
-    use crate::types::{ENTITY_TYPE_TASK, EntityId, TimeRange};
+    use crate::types::{
+        ENTITY_TYPE_CLAIM, ENTITY_TYPE_POLICY_MANIFEST, ENTITY_TYPE_TASK, EntityId, TimeRange,
+    };
 
     fn test_manager() -> Arc<WindowManager> {
         let dir = tempfile::tempdir().unwrap();
@@ -1141,6 +1194,128 @@ mod tests {
             .unwrap();
         window.doc.commit();
         export_updates_since(&window.doc, &vv_before.encode()).unwrap()
+    }
+
+    fn test_entity_id(seed: u8) -> EntityId {
+        EntityId::from_bytes([seed; 16]).expect("valid test entity id")
+    }
+
+    fn encode_policy_manifest(extra_entries: Vec<(rmpv::Value, rmpv::Value)>) -> Vec<u8> {
+        use rmpv::Value;
+
+        let mut entries = vec![
+            (Value::from("schema_version"), Value::from("1.1")),
+            (Value::from("pack_id"), Value::from("client-test")),
+            (Value::from("pack_version"), Value::from("v1")),
+            (
+                Value::from("min_engine_version"),
+                Value::from(env!("CARGO_PKG_VERSION")),
+            ),
+            (
+                Value::from("defaults"),
+                Value::Map(vec![
+                    (Value::from("criticality"), Value::from("normal")),
+                    (Value::from("sensitivity"), Value::from("normal")),
+                ]),
+            ),
+            (
+                Value::from("rules"),
+                Value::Array(vec![Value::Map(vec![
+                    (Value::from("prefix"), Value::from("health.")),
+                    (
+                        Value::from("axes"),
+                        Value::Map(vec![
+                            (Value::from("criticality"), Value::from("critical")),
+                            (Value::from("sensitivity"), Value::from("sensitive")),
+                        ]),
+                    ),
+                ])]),
+            ),
+            (
+                Value::from("actor_ceilings"),
+                Value::Array(vec![Value::Map(vec![
+                    (Value::from("actor_class"), Value::from("first_party")),
+                    (Value::from("ceiling"), Value::from("auto")),
+                ])]),
+            ),
+        ];
+        entries.extend(extra_entries);
+        let mut out = Vec::new();
+        rmpv::encode::write_value(&mut out, &Value::Map(entries)).expect("manifest encode");
+        out
+    }
+
+    fn source_trust_entry(
+        source: ClaimSource,
+        max_auto_sensitivity: u8,
+    ) -> (rmpv::Value, rmpv::Value) {
+        use rmpv::Value;
+
+        let row = Value::Map(vec![
+            (
+                Value::from("max_auto_sensitivity"),
+                Value::from(u64::from(max_auto_sensitivity)),
+            ),
+            (Value::from("receipted"), Value::Boolean(true)),
+            (Value::from("warned"), Value::Boolean(true)),
+        ]);
+        (
+            Value::from("source_trust"),
+            Value::Map(vec![(Value::from(source.as_str()), row)]),
+        )
+    }
+
+    fn put_policy_manifest_bytes(vault: &Vault, seed: u8, data: &[u8]) {
+        let id = test_entity_id(seed);
+        let payload = entity_blob(
+            ENTITY_TYPE_POLICY_MANIFEST,
+            TimeRange { start: 1, end: 1 },
+            1,
+            data,
+        );
+        vault
+            .with_write_txn(|wtxn| {
+                vault.store.entities.put(wtxn, id.as_bytes(), &payload)?;
+                let type_key = Store::encode_type_key(ENTITY_TYPE_POLICY_MANIFEST, &id);
+                vault.store.type_index.put(wtxn, &type_key, &[])?;
+                Ok(())
+            })
+            .expect("put policy manifest");
+    }
+
+    fn source_trust_claim(source: ClaimSource) -> ClaimBody {
+        let mut body = ClaimBody::new(
+            "profile.name",
+            ClaimSubject::Entity(test_entity_id(0x21)),
+            rmpv::Value::from("Ada"),
+            1.0,
+            ClaimApprovalStatus::Auto,
+            ClaimLifecycleStatus::Active,
+        );
+        body.source = Some(source);
+        body
+    }
+
+    fn federated_claim_update(id: &EntityId, body: &ClaimBody) -> Vec<u8> {
+        let data = crate::claim::encode_claim_body(body).expect("claim encode");
+        let blob = entity_blob(ENTITY_TYPE_CLAIM, TimeRange { start: 5, end: 5 }, 5, &data);
+        let doc = server_window_doc();
+        doc.get_map("entities")
+            .insert(id.to_hex().as_str(), blob.as_slice())
+            .expect("insert claim");
+        doc.commit();
+        doc.export(ExportMode::all_updates())
+            .expect("export update")
+    }
+
+    fn federated_tombstone_update(id: &EntityId) -> Vec<u8> {
+        let doc = server_window_doc();
+        doc.get_map("tombstones")
+            .insert(id.to_hex().as_str(), b"deleted".as_slice())
+            .expect("insert tombstone");
+        doc.commit();
+        doc.export(ExportMode::all_updates())
+            .expect("export update")
     }
 
     #[test]
@@ -1569,6 +1744,175 @@ mod tests {
         assert_matches!(
             client.import_queued_update("2026-13", &update),
             Err(TransportError::InvalidWindowKey)
+        );
+    }
+
+    #[test]
+    fn federated_import_seam_restamps_before_observed_import() {
+        let manager = test_manager();
+        let vault = Arc::clone(manager.vault());
+        let (mut client, _rx) = test_client(&manager);
+        let key = "2026-03";
+        put_policy_manifest_bytes(
+            &vault,
+            0x8A,
+            &encode_policy_manifest(vec![source_trust_entry(ClaimSource::Imported, 0)]),
+        );
+
+        let id = test_entity_id(0x8B);
+        let remote_body = source_trust_claim(ClaimSource::ToolOutput);
+        let update = federated_claim_update(&id, &remote_body);
+        client
+            .import_federated_window_update(key, &update, FederationAdmissionRole::Member)
+            .expect("federated member import should be admitted");
+
+        let window = client.window(key).expect("federated import opens window");
+        let doc_blob =
+            crate::sync::loro_support::map_get_bytes(&window.doc.get_map("entities"), &id.to_hex())
+                .expect("claim must be present in admitted window doc");
+        let doc_body =
+            crate::claim::decode_claim_body(&doc_blob[ENTITY_METADATA_HEADER_LEN..], false)
+                .expect("decode doc claim");
+        assert_eq!(doc_body.source, Some(ClaimSource::Imported));
+
+        let raw = vault
+            .get_raw(&id)
+            .expect("read materialized claim")
+            .expect("claim must materialize after admitted import");
+        let materialized_body =
+            crate::claim::decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], false)
+                .expect("decode materialized claim");
+        assert_eq!(materialized_body.source, Some(ClaimSource::Imported));
+    }
+
+    #[test]
+    fn federated_import_seam_denies_before_window_import_with_reason() {
+        let manager = test_manager();
+        let vault = Arc::clone(manager.vault());
+        let (mut client, _rx) = test_client(&manager);
+        let key = "2026-03";
+        let id = test_entity_id(0x8C);
+        let remote_body = source_trust_claim(ClaimSource::ToolOutput);
+        let update = federated_claim_update(&id, &remote_body);
+
+        let err = client
+            .import_federated_window_update(key, &update, FederationAdmissionRole::Guest)
+            .expect_err("untrusted imported auto claim must be denied before import");
+        let TransportError::Storage(message) = err else {
+            panic!("expected auditable admission storage error, got {err:?}");
+        };
+        assert!(
+            message.contains("gate.pending.source_trust"),
+            "denial reason must remain auditable, got {message}"
+        );
+        assert!(
+            client.window(key).is_none(),
+            "denied federated bytes must not open or import a live window"
+        );
+        assert!(
+            vault.get_raw(&id).expect("read denied claim").is_none(),
+            "denied federated bytes must not materialize"
+        );
+    }
+
+    #[test]
+    fn federated_import_seam_denial_preserves_open_durable_window() {
+        let manager = test_manager();
+        let vault = Arc::clone(manager.vault());
+        let (mut client, _rx) = test_client(&manager);
+        let key = "2026-03";
+        let window = client.ensure_window(key).expect("open window");
+        let local_id = test_entity_id(0x8F);
+        commit_local_entity(&window, &local_id, 1_772_400_000, b"local-stays");
+        window.persist_state(&vault).expect("persist local state");
+
+        let live_before = window.doc.get_deep_value();
+        let updates_before = sync_state_values_with_prefix(&vault, &format!("u:w:{key}:"));
+        let snapshot_before = vault.sync_state_get(&format!("d:w:{key}")).unwrap();
+        let sv_before = vault.sync_state_get(&format!("sv:w:{key}")).unwrap();
+        let svf_before = vault.sync_state_get(&format!("svf:w:{key}")).unwrap();
+
+        let denied_id = test_entity_id(0x90);
+        let remote_body = source_trust_claim(ClaimSource::ToolOutput);
+        let update = federated_claim_update(&denied_id, &remote_body);
+        let err = client
+            .import_federated_window_update(key, &update, FederationAdmissionRole::Member)
+            .expect_err("untrusted imported auto claim must be denied");
+        let TransportError::Storage(message) = err else {
+            panic!("expected auditable admission storage error, got {err:?}");
+        };
+        assert!(
+            message.contains("gate.pending.source_trust"),
+            "denial reason must remain auditable, got {message}"
+        );
+
+        assert_eq!(
+            window.doc.get_deep_value(),
+            live_before,
+            "denied federated bytes must not mutate an already-open window"
+        );
+        assert!(
+            vault
+                .get_raw(&local_id)
+                .expect("read local entity")
+                .is_some(),
+            "unrelated local state must survive the denied import"
+        );
+        assert!(
+            vault
+                .get_raw(&denied_id)
+                .expect("read denied claim")
+                .is_none(),
+            "denied federated claim must not materialize"
+        );
+        assert_eq!(
+            sync_state_values_with_prefix(&vault, &format!("u:w:{key}:")),
+            updates_before,
+            "denied federated bytes must not append durable update rows"
+        );
+        assert_eq!(
+            vault.sync_state_get(&format!("d:w:{key}")).unwrap(),
+            snapshot_before
+        );
+        assert_eq!(
+            vault.sync_state_get(&format!("sv:w:{key}")).unwrap(),
+            sv_before
+        );
+        assert_eq!(
+            vault.sync_state_get(&format!("svf:w:{key}")).unwrap(),
+            svf_before
+        );
+    }
+
+    #[test]
+    fn federated_import_seam_rejects_tombstone_updates_until_delete_admission() {
+        let manager = test_manager();
+        let vault = Arc::clone(manager.vault());
+        let (mut client, _rx) = test_client(&manager);
+        let key = "2026-03";
+        let tombstoned = test_entity_id(0x91);
+        let update = federated_tombstone_update(&tombstoned);
+
+        assert_matches!(
+            client.import_federated_window_update(key, &update, FederationAdmissionRole::Member),
+            Err(TransportError::InvalidPayload(
+                "federated tombstone update rejected"
+            ))
+        );
+        assert!(
+            client.window(key).is_none(),
+            "tombstone-only federated bytes must not open or import a live window"
+        );
+        assert!(
+            vault
+                .get_raw(&tombstoned)
+                .expect("read tombstoned id")
+                .is_none(),
+            "rejected federated tombstone must not materialize delete effects"
+        );
+        assert!(
+            sync_state_values_with_prefix(&vault, &format!("u:w:{key}:")).is_empty(),
+            "rejected federated tombstone bytes must not be persisted"
         );
     }
 
