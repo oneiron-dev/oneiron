@@ -366,11 +366,6 @@ impl SyncConnection {
 
         let (mut write, mut read) = ws_stream.split();
 
-        // A selector-capable caller may have recorded a one-shot federation
-        // admission marker on a previous connection. A fresh connection must
-        // not let that stale marker reclassify ordinary full-window updates.
-        client.clear_pending_federated_window_updates();
-
         // Phase 1-2: Initial sync (send our VVs, receive server state)
         let initial_messages = client
             .try_generate_initial_sync()
