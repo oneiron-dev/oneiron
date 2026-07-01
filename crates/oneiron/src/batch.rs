@@ -24,8 +24,8 @@ use crate::types::{
     ClaimCandidate, CompanionExportClassification, CompanionRecordKey, DecodedEdgeValue,
     EDGE_KEY_LEN, EDGE_VALUE_SEMANTIC_LEN, EDGE_VALUE_SEMANTIC_PROVENANCED_LEN,
     EDGE_VALUE_STRUCTURAL_LEN, ENTITY_ID_LEN, ENTITY_TYPE_ACCESS_GRANT,
-    ENTITY_TYPE_COMPANION_REGISTER, ENTITY_TYPE_PSYCH_PROFILE, EdgeKind, EdgeProvenanceFlags,
-    EntityId, TimeRange, Vad, WriteEnvelope, decode_companion_record_body,
+    ENTITY_TYPE_COMPANION_REGISTER, ENTITY_TYPE_PSYCH_PROFILE, ENTITY_TYPE_SKILL, EdgeKind,
+    EdgeProvenanceFlags, EntityId, TimeRange, Vad, WriteEnvelope, decode_companion_record_body,
     decode_edge_value_for_kind, encode_edge_value, validate_edge_weight,
 };
 
@@ -1121,13 +1121,15 @@ impl<'a> TxnBatchBuilder<'a> {
 }
 
 fn validate_public_raw_put(entity_type: u8, data: &[u8]) -> Result<()> {
-    if entity_type != crate::types::ENTITY_TYPE_CLAIM {
-        return Ok(());
-    }
-
-    let body = crate::claim::validate_claim_body_and_decode(data, false)?;
-    if body.source.is_some() && !is_legacy_raw_claim_compatibility_body(&body) {
-        return Err(Error::InvalidClaimBody(ERR_RAW_CLAIM_PUT_REQUIRES_ENVELOPE));
+    match entity_type {
+        crate::types::ENTITY_TYPE_CLAIM => {
+            let body = crate::claim::validate_claim_body_and_decode(data, false)?;
+            if body.source.is_some() && !is_legacy_raw_claim_compatibility_body(&body) {
+                return Err(Error::InvalidClaimBody(ERR_RAW_CLAIM_PUT_REQUIRES_ENVELOPE));
+            }
+        }
+        ENTITY_TYPE_SKILL => crate::skill::validate_skill_record_bytes(data)?,
+        _ => {}
     }
     Ok(())
 }
@@ -2218,6 +2220,7 @@ fn apply_put(
     // fail-closed treatment on every path that can admit their type byte.
     // Bodies of all other type bytes stay opaque at the storage layer.
     let mut is_lexical_query_hint_claim = false;
+    let mut new_skill_record = None;
     if entity_type == crate::types::ENTITY_TYPE_CLAIM {
         let body = crate::claim::validate_claim_body_and_decode(data, allow_reserved_predicate)?;
         is_lexical_query_hint_claim = body.predicate == crate::claim::PREDICATE_LEXICAL_QUERY_HINT;
@@ -2327,6 +2330,8 @@ fn apply_put(
         crate::access_grant::validate_access_grant_body_bytes(data)?;
     } else if entity_type == ENTITY_TYPE_PSYCH_PROFILE {
         crate::types::psych_profile::validate_psych_profile_body_bytes(data)?;
+    } else if entity_type == ENTITY_TYPE_SKILL {
+        new_skill_record = Some(crate::skill::decode_skill_record(data)?);
     } else if entity_type == ENTITY_TYPE_COMPANION_REGISTER {
         validate_companion_register_put(store, wtxn, &id, data, companion_retired_histories)?;
     }
@@ -2387,6 +2392,14 @@ fn apply_put(
                 existing: old_type,
                 attempted: entity_type,
             });
+        }
+        if old_type == ENTITY_TYPE_SKILL && body_changed {
+            let prior =
+                crate::skill::decode_skill_record(&old_record[ENTITY_METADATA_HEADER_LEN..])?;
+            let updated = new_skill_record
+                .as_ref()
+                .ok_or(Error::InvariantViolation("validated SKILL record missing"))?;
+            crate::skill::validate_skill_update(&prior, updated)?;
         }
         if old_type == crate::types::ENTITY_TYPE_CODE_ARTIFACT
             && body_changed
