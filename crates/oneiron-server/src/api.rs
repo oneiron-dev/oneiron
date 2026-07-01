@@ -9,7 +9,8 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::sync::{Arc, OnceLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use axum::extract::rejection::{JsonRejection, QueryRejection};
+use axum::body::Bytes;
+use axum::extract::rejection::{BytesRejection, JsonRejection, QueryRejection};
 use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, StatusCode, header::CONTENT_TYPE};
 use axum::response::{IntoResponse, Json, Response};
@@ -231,6 +232,7 @@ impl EiriSessionRagStore {
         create_companion_access_grant,
         revoke_companion_access_grant,
         get_companion_profile,
+        refresh_companion_profile,
         create_companion_register_record,
         get_companion_register_record,
         update_companion_register_record,
@@ -340,7 +342,13 @@ impl EiriSessionRagStore {
         CompanionCreateAccessGrantRequest,
         CompanionRevokeAccessGrantRequest,
         CompanionProfileAccess,
+        CompanionProfileConfidencePayload,
+        CompanionProfileDriftAnchor,
+        CompanionProfileNextAction,
+        CompanionProfilePayload,
+        CompanionProfileRefreshRequest,
         CompanionProfileResponse,
+        CompanionProfileStaleReasonPayload,
         CompanionRegisterScopePayload,
         CompanionRegisterRelationshipRefPayload,
         CompanionRegisterSubjectPayload,
@@ -431,7 +439,10 @@ pub(crate) fn api_routes(server: Arc<SyncServer>) -> Router {
             idempotency_middleware,
         ));
     let companion_routes = Router::new()
-        .route("/profiles/{persona_ref}", get(get_companion_profile))
+        .route(
+            "/profiles/{persona_ref}",
+            get(get_companion_profile).post(refresh_companion_profile),
+        )
         .route(
             "/register/records/{record_id}",
             get(get_companion_register_record),
@@ -1417,6 +1428,7 @@ fn add_security_scheme(spec: &mut Value) {
         ("/v1/companion/access-grants", "post"),
         ("/v1/companion/access-grants/{grant_id}/revoke", "post"),
         ("/v1/companion/profiles/{persona_ref}", "get"),
+        ("/v1/companion/profiles/{persona_ref}", "post"),
         ("/v1/companion/register/records", "post"),
         ("/v1/companion/register/records/{record_id}", "get"),
         ("/v1/companion/register/records/{record_id}", "post"),
@@ -1508,6 +1520,36 @@ fn json_payload<T>(payload: Result<Json<T>, JsonRejection>) -> Result<T, ApiErro
 
 fn json_rejection_error(_rejection: JsonRejection) -> ApiError {
     ApiError::bad_request("invalid JSON request body", None)
+}
+
+fn optional_companion_profile_refresh_request(
+    headers: &HeaderMap,
+    payload: Result<Bytes, BytesRejection>,
+) -> Result<CompanionProfileRefreshRequest, ApiError> {
+    let payload = payload.map_err(|_| ApiError::bad_request("invalid JSON request body", None))?;
+    if payload.is_empty() {
+        return Ok(CompanionProfileRefreshRequest::default());
+    }
+
+    if !has_json_content_type(headers) {
+        return Err(ApiError::bad_request("invalid JSON request body", None));
+    }
+
+    serde_json::from_slice(&payload)
+        .map_err(|_| ApiError::bad_request("invalid JSON request body", None))
+}
+
+fn has_json_content_type(headers: &HeaderMap) -> bool {
+    headers
+        .get(CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.split(';').next())
+        .map(|media_type| {
+            let media_type = media_type.trim();
+            media_type.eq_ignore_ascii_case("application/json")
+                || media_type.to_ascii_lowercase().ends_with("+json")
+        })
+        .unwrap_or(false)
 }
 
 // ─── Discovery / capability metadata ─────────────────────────────────────────
@@ -1988,6 +2030,10 @@ struct CompanionProfileQuery {
     /// Person scope for the companion profile.
     #[param(example = "11111111111111111111111111111111")]
     person_ref: String,
+    /// Optional comma-separated source revisions to check freshness against.
+    #[serde(rename = "sourceRevisionIds", alias = "source_revision_ids")]
+    #[param(example = "cccccccccccccccccccccccccccccccc,dddddddddddddddddddddddddddddddd")]
+    source_revision_ids: Option<String>,
 }
 
 /// Access evidence returned with a companion profile response.
@@ -2003,6 +2049,102 @@ struct CompanionProfileAccess {
     scope: CompanionAccessGrantScopePayload,
 }
 
+/// Psych mirror tier payload backed by one persisted PsychProfile record.
+#[derive(Clone, Debug, Serialize, ToSchema)]
+struct CompanionProfilePayload {
+    /// Entity the profile describes.
+    #[schema(example = "22222222222222222222222222222222")]
+    subject_ref: String,
+    /// Compact tier optimized for cheap profile display.
+    #[schema(example = "warm, concise profile")]
+    compact: String,
+    /// Text tier optimized for retrieval/context assembly.
+    #[schema(example = "retrieval-friendly psych mirror text")]
+    text: String,
+    /// Narrative tier optimized for companion mirror rendering.
+    #[schema(example = "A warm narrative profile for the companion.")]
+    narrative: String,
+    /// Persisted source revisions used to build this profile.
+    #[serde(rename = "sourceRevisionIds")]
+    #[schema(example = json!(["cccccccccccccccccccccccccccccccc"]))]
+    source_revision_ids: Vec<String>,
+    /// Per-tier confidence metadata.
+    confidence: CompanionProfileConfidencePayload,
+    /// Stored snapshot status.
+    #[schema(example = "fresh")]
+    status: String,
+}
+
+/// Per-tier confidence metadata returned with a profile payload.
+#[derive(Clone, Debug, Serialize, ToSchema)]
+struct CompanionProfileConfidencePayload {
+    /// Confidence for the compact tier.
+    #[schema(example = 0.8)]
+    compact: f32,
+    /// Confidence for the text tier.
+    #[schema(example = 0.7)]
+    text: f32,
+    /// Confidence for the narrative tier.
+    #[schema(example = 0.6)]
+    narrative: f32,
+}
+
+/// Typed stale reason for a companion profile read.
+#[derive(Clone, Debug, Serialize, ToSchema)]
+struct CompanionProfileStaleReasonPayload {
+    /// Stable reason code.
+    #[schema(example = "source_revision_mismatch")]
+    kind: String,
+    /// Source revisions requested by the caller when they differ from storage.
+    #[serde(rename = "expectedSourceRevisionIds")]
+    #[schema(example = json!(["dddddddddddddddddddddddddddddddd"]))]
+    expected_source_revision_ids: Option<Vec<String>>,
+    /// Source revisions persisted on the profile when they differ.
+    #[serde(rename = "actualSourceRevisionIds")]
+    #[schema(example = json!(["cccccccccccccccccccccccccccccccc"]))]
+    actual_source_revision_ids: Option<Vec<String>>,
+}
+
+/// Drift-anchor bookkeeping emitted during refresh planning.
+#[derive(Clone, Debug, Serialize, ToSchema)]
+struct CompanionProfileDriftAnchor {
+    /// Anchor state: `keep`, `revert`, or `tune`.
+    #[schema(example = "keep")]
+    state: String,
+    /// Source revision this anchor applies to.
+    #[serde(rename = "sourceRevisionRef")]
+    #[schema(example = "cccccccccccccccccccccccccccccccc")]
+    source_revision_ref: String,
+}
+
+/// Next action metadata for missing or stale profile states.
+#[derive(Clone, Debug, Serialize, ToSchema)]
+struct CompanionProfileNextAction {
+    /// Action code the caller should take.
+    #[schema(example = "refresh")]
+    kind: String,
+    /// Why the action is recommended.
+    #[schema(example = "source_revision_mismatch")]
+    reason: String,
+    /// Source revisions to use for the next refresh when known.
+    #[serde(rename = "sourceRevisionIds")]
+    #[schema(example = json!(["dddddddddddddddddddddddddddddddd"]))]
+    source_revision_ids: Option<Vec<String>>,
+    /// Drift anchors to carry into refresh bookkeeping.
+    drift_anchors: Vec<CompanionProfileDriftAnchor>,
+}
+
+/// Request body for refresh planning over a persisted PsychProfile.
+#[derive(Clone, Debug, Default, Deserialize, ToSchema)]
+#[schema(example = json!({
+    "sourceRevisionIds": ["cccccccccccccccccccccccccccccccc"]
+}))]
+struct CompanionProfileRefreshRequest {
+    /// Currently selected source revisions for the next profile refresh.
+    #[serde(rename = "sourceRevisionIds", alias = "source_revision_ids")]
+    source_revision_ids: Option<Vec<String>>,
+}
+
 /// Companion profile access response.
 #[derive(Clone, Debug, Serialize, ToSchema)]
 struct CompanionProfileResponse {
@@ -2014,9 +2156,20 @@ struct CompanionProfileResponse {
     person_ref: String,
     /// Grant evidence for the access decision.
     access: CompanionProfileAccess,
-    /// Profile payload placeholder for the v1 shell.
-    #[schema(value_type = Object)]
-    profile: Value,
+    /// Typed profile state: `missing`, `fresh`, or `stale`.
+    #[schema(example = "fresh")]
+    state: String,
+    /// Profile payload when a persisted PsychProfile exists.
+    #[schema(inline)]
+    profile: Option<CompanionProfilePayload>,
+    /// Typed stale reason when `state = stale`.
+    #[schema(inline)]
+    stale_reason: Option<CompanionProfileStaleReasonPayload>,
+    /// Next action metadata for missing/stale profiles.
+    #[schema(inline)]
+    next_action: Option<CompanionProfileNextAction>,
+    /// Drift-anchor events derived from persisted and selected source revisions.
+    drift_anchors: Vec<CompanionProfileDriftAnchor>,
 }
 
 /// Scope boundary for a companion register record.
@@ -2312,7 +2465,7 @@ async fn revoke_companion_access_grant(
         (status = 400, description = "Malformed profile request.", body = ApiErrorEnvelope, content_type = "application/json"),
         (status = 401, description = "Missing or invalid core auth.", body = ApiErrorEnvelope, content_type = "application/json"),
         (status = 403, description = "No active AccessGrant authorizes this profile.", body = ApiErrorEnvelope, content_type = "application/json"),
-        (status = 500, description = "AccessGrant lookup failed.", body = ApiErrorEnvelope, content_type = "application/json")
+        (status = 500, description = "Companion profile state lookup failed.", body = ApiErrorEnvelope, content_type = "application/json")
     )
 )]
 async fn get_companion_profile(
@@ -2324,6 +2477,8 @@ async fn get_companion_profile(
     require_companion_profile_read(&auth)?;
     let params = query_params(query)?;
     let persona_ref = parse_entity_id_param(&persona_ref, "persona_ref")?;
+    let selected_source_revision_ids =
+        parse_source_revision_ids_query(params.source_revision_ids.as_deref())?;
     let requested_principal_ref = params
         .principal_ref
         .as_deref()
@@ -2332,9 +2487,79 @@ async fn get_companion_profile(
     let principal_ref = companion_profile_principal_ref(&auth, requested_principal_ref)?;
     let person_ref = parse_entity_id_param(&params.person_ref, "person_ref")?;
 
+    let access = companion_profile_access(&server, &principal_ref, &person_ref, &persona_ref)?;
+    let state = companion_profile_response_state(
+        &server,
+        &persona_ref,
+        &person_ref,
+        access,
+        selected_source_revision_ids.as_deref(),
+    )?;
+    Ok(Json(state))
+}
+
+/// Plan a companion profile refresh while preserving persisted sourceRevisionIds.
+#[utoipa::path(
+    post,
+    path = "/v1/companion/profiles/{persona_ref}",
+    params(
+        ("persona_ref" = String, Path, description = "Persona/profile entity id."),
+        CompanionProfileQuery
+    ),
+    request_body(content = CompanionProfileRefreshRequest, content_type = "application/json"),
+    responses(
+        (status = 200, description = "Companion profile refresh state.", body = CompanionProfileResponse, content_type = "application/json"),
+        (status = 400, description = "Malformed profile refresh request.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 401, description = "Missing or invalid core auth.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 403, description = "No active AccessGrant authorizes this profile.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 500, description = "Companion profile refresh lookup failed.", body = ApiErrorEnvelope, content_type = "application/json")
+    )
+)]
+async fn refresh_companion_profile(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    Path(persona_ref): Path<String>,
+    query: Result<Query<CompanionProfileQuery>, QueryRejection>,
+    headers: HeaderMap,
+    payload: Result<Bytes, BytesRejection>,
+) -> Result<Json<CompanionProfileResponse>, EnvelopedApiError> {
+    require_companion_profile_read(&auth)?;
+    let params = query_params(query)?;
+    let req = optional_companion_profile_refresh_request(&headers, payload)?;
+    let persona_ref = parse_entity_id_param(&persona_ref, "persona_ref")?;
+    let query_source_revision_ids =
+        parse_source_revision_ids_query(params.source_revision_ids.as_deref())?;
+    let body_source_revision_ids = parse_source_revision_ids_body(req.source_revision_ids)?;
+    let selected_source_revision_ids =
+        select_refresh_source_revision_ids(body_source_revision_ids, query_source_revision_ids)?;
+    let requested_principal_ref = params
+        .principal_ref
+        .as_deref()
+        .map(|principal_ref| parse_entity_id_param(principal_ref, "principal_ref"))
+        .transpose()?;
+    let principal_ref = companion_profile_principal_ref(&auth, requested_principal_ref)?;
+    let person_ref = parse_entity_id_param(&params.person_ref, "person_ref")?;
+
+    let access = companion_profile_access(&server, &principal_ref, &person_ref, &persona_ref)?;
+    let state = companion_profile_response_state(
+        &server,
+        &persona_ref,
+        &person_ref,
+        access,
+        selected_source_revision_ids.as_deref(),
+    )?;
+    Ok(Json(state))
+}
+
+fn companion_profile_access(
+    server: &SyncServer,
+    principal_ref: &oneiron::EntityId,
+    person_ref: &oneiron::EntityId,
+    persona_ref: &oneiron::EntityId,
+) -> Result<CompanionProfileAccess, EnvelopedApiError> {
     let grant_id = server
         .vault
-        .companion_profile_access_grant(&principal_ref, &person_ref, &persona_ref)
+        .companion_profile_access_grant(principal_ref, person_ref, persona_ref)
         .map_err(|error| {
             tracing::error!(
                 error = %error,
@@ -2347,17 +2572,234 @@ async fn get_companion_profile(
         })?
         .ok_or_else(companion_access_denied)?;
 
-    let scope = companion_scope_response(&person_ref, &persona_ref);
-    Ok(Json(CompanionProfileResponse {
-        persona_ref: persona_ref.to_hex(),
-        person_ref: person_ref.to_hex(),
-        access: CompanionProfileAccess {
-            grant_id: grant_id.to_hex(),
-            principal_ref: principal_ref.to_hex(),
-            scope,
+    let scope = companion_scope_response(person_ref, persona_ref);
+    Ok(CompanionProfileAccess {
+        grant_id: grant_id.to_hex(),
+        principal_ref: principal_ref.to_hex(),
+        scope,
+    })
+}
+
+fn companion_profile_response_state(
+    server: &SyncServer,
+    persona_ref: &oneiron::EntityId,
+    person_ref: &oneiron::EntityId,
+    access: CompanionProfileAccess,
+    selected_source_revision_ids: Option<&[oneiron::EntityId]>,
+) -> Result<CompanionProfileResponse, EnvelopedApiError> {
+    let state = match server
+        .vault
+        .psych_profile_state(persona_ref, selected_source_revision_ids)
+    {
+        Ok(state) => state,
+        Err(error) if error.kind() == ErrorKind::InvalidEntityType => {
+            oneiron::PsychProfileState::Missing
+        }
+        Err(error) => {
+            tracing::error!(
+                error = %error,
+                persona_ref = %persona_ref.to_hex(),
+                "psych profile lookup failed"
+            );
+            return Err(companion_engine_error("psych profile lookup failed", error));
+        }
+    };
+
+    let selected_hex = selected_source_revision_ids.map(entity_ids_hex);
+    let response = match state {
+        oneiron::PsychProfileState::Missing => {
+            let drift_anchors = selected_source_revision_ids
+                .map(|selected| companion_profile_drift_anchors(&[], selected))
+                .unwrap_or_default();
+            let next_action = Some(CompanionProfileNextAction {
+                kind: "refresh".to_owned(),
+                reason: "missing".to_owned(),
+                source_revision_ids: selected_hex,
+                drift_anchors: drift_anchors.clone(),
+            });
+            CompanionProfileResponse {
+                persona_ref: persona_ref.to_hex(),
+                person_ref: person_ref.to_hex(),
+                access,
+                state: "missing".to_owned(),
+                profile: None,
+                stale_reason: None,
+                next_action,
+                drift_anchors,
+            }
+        }
+        oneiron::PsychProfileState::Fresh(profile) => {
+            let drift_anchors = selected_source_revision_ids
+                .map(|selected| {
+                    companion_profile_drift_anchors(&profile.source_revision_ids, selected)
+                })
+                .unwrap_or_default();
+            CompanionProfileResponse {
+                persona_ref: persona_ref.to_hex(),
+                person_ref: person_ref.to_hex(),
+                access,
+                state: "fresh".to_owned(),
+                profile: Some(companion_profile_payload(&profile)),
+                stale_reason: None,
+                next_action: None,
+                drift_anchors,
+            }
+        }
+        oneiron::PsychProfileState::Stale { profile, reason } => {
+            let stale_reason = companion_profile_stale_reason(&reason);
+            let action_source_revision_ids = stale_reason
+                .expected_source_revision_ids
+                .clone()
+                .or_else(|| selected_hex.clone())
+                .or_else(|| Some(entity_ids_hex(&profile.source_revision_ids)));
+            let drift_anchors = companion_profile_drift_anchors(
+                &profile.source_revision_ids,
+                selected_source_revision_ids.unwrap_or(&profile.source_revision_ids),
+            );
+            let next_action = Some(CompanionProfileNextAction {
+                kind: "refresh".to_owned(),
+                reason: stale_reason.kind.clone(),
+                source_revision_ids: action_source_revision_ids,
+                drift_anchors: drift_anchors.clone(),
+            });
+            CompanionProfileResponse {
+                persona_ref: persona_ref.to_hex(),
+                person_ref: person_ref.to_hex(),
+                access,
+                state: "stale".to_owned(),
+                profile: Some(companion_profile_payload(&profile)),
+                stale_reason: Some(stale_reason),
+                next_action,
+                drift_anchors,
+            }
+        }
+    };
+    Ok(response)
+}
+
+fn companion_profile_payload(profile: &oneiron::PsychProfile) -> CompanionProfilePayload {
+    CompanionProfilePayload {
+        subject_ref: profile.subject_ref.to_hex(),
+        compact: profile.compact.clone(),
+        text: profile.text.clone(),
+        narrative: profile.narrative.clone(),
+        source_revision_ids: entity_ids_hex(&profile.source_revision_ids),
+        confidence: CompanionProfileConfidencePayload {
+            compact: profile.confidence.compact,
+            text: profile.confidence.text,
+            narrative: profile.confidence.narrative,
         },
-        profile: json!({}),
-    }))
+        status: match profile.status {
+            oneiron::PsychProfileSnapshotStatus::Fresh => "fresh",
+            oneiron::PsychProfileSnapshotStatus::Stale => "stale",
+        }
+        .to_owned(),
+    }
+}
+
+fn companion_profile_stale_reason(
+    reason: &oneiron::PsychProfileStaleReason,
+) -> CompanionProfileStaleReasonPayload {
+    match reason {
+        oneiron::PsychProfileStaleReason::MarkedStale => CompanionProfileStaleReasonPayload {
+            kind: "marked_stale".to_owned(),
+            expected_source_revision_ids: None,
+            actual_source_revision_ids: None,
+        },
+        oneiron::PsychProfileStaleReason::SourceRevisionMismatch { expected, actual } => {
+            CompanionProfileStaleReasonPayload {
+                kind: "source_revision_mismatch".to_owned(),
+                expected_source_revision_ids: Some(entity_ids_hex(expected)),
+                actual_source_revision_ids: Some(entity_ids_hex(actual)),
+            }
+        }
+    }
+}
+
+fn companion_profile_drift_anchors(
+    previous_source_revision_ids: &[oneiron::EntityId],
+    selected_source_revision_ids: &[oneiron::EntityId],
+) -> Vec<CompanionProfileDriftAnchor> {
+    oneiron::types::psych_profile::psych_mirror_drift_anchor_events(
+        previous_source_revision_ids,
+        selected_source_revision_ids,
+    )
+    .into_iter()
+    .map(|event| CompanionProfileDriftAnchor {
+        state: event.state.as_str().to_owned(),
+        source_revision_ref: event.source_revision_ref.to_hex(),
+    })
+    .collect()
+}
+
+fn parse_source_revision_ids_query(
+    raw: Option<&str>,
+) -> Result<Option<Vec<oneiron::EntityId>>, ApiError> {
+    raw.map(|value| parse_source_revision_ids(value.split(',')))
+        .transpose()
+        .map(|ids| ids.and_then(non_empty_source_revision_ids))
+}
+
+fn parse_source_revision_ids_body(
+    raw: Option<Vec<String>>,
+) -> Result<Option<Vec<oneiron::EntityId>>, ApiError> {
+    raw.map(|values| parse_source_revision_ids(values.iter().map(String::as_str)))
+        .transpose()
+        .map(|ids| ids.and_then(non_empty_source_revision_ids))
+}
+
+fn parse_source_revision_ids<T>(
+    values: impl IntoIterator<Item = T>,
+) -> Result<Vec<oneiron::EntityId>, ApiError>
+where
+    T: AsRef<str>,
+{
+    let mut ids = Vec::new();
+    for value in values {
+        let value = value.as_ref().trim();
+        if value.is_empty() {
+            continue;
+        }
+        let id = parse_entity_id_param(value, "sourceRevisionIds")?;
+        if !ids.contains(&id) {
+            ids.push(id);
+        }
+    }
+    Ok(ids)
+}
+
+fn entity_ids_hex(ids: &[oneiron::EntityId]) -> Vec<String> {
+    ids.iter().map(oneiron::EntityId::to_hex).collect()
+}
+
+fn non_empty_source_revision_ids(ids: Vec<oneiron::EntityId>) -> Option<Vec<oneiron::EntityId>> {
+    (!ids.is_empty()).then_some(ids)
+}
+
+fn select_refresh_source_revision_ids(
+    body_source_revision_ids: Option<Vec<oneiron::EntityId>>,
+    query_source_revision_ids: Option<Vec<oneiron::EntityId>>,
+) -> Result<Option<Vec<oneiron::EntityId>>, ApiError> {
+    match (body_source_revision_ids, query_source_revision_ids) {
+        (Some(body), Some(query)) if !same_source_revision_selection(&body, &query) => {
+            Err(ApiError::bad_request(
+                "sourceRevisionIds query and body values must match when both are provided",
+                Some("sourceRevisionIds"),
+            ))
+        }
+        (Some(body), _) => Ok(Some(body)),
+        (None, query) => Ok(query),
+    }
+}
+
+fn same_source_revision_selection(left: &[oneiron::EntityId], right: &[oneiron::EntityId]) -> bool {
+    let mut left = entity_ids_hex(left);
+    let mut right = entity_ids_hex(right);
+    left.sort_unstable();
+    left.dedup();
+    right.sort_unstable();
+    right.dedup();
+    left == right
 }
 
 fn require_companion_profile_read(auth: &CoreAuth) -> Result<(), ApiError> {
@@ -8517,6 +8959,25 @@ mod tests {
             .expect("seed active claim");
     }
 
+    fn seed_companion_profile_access(
+        server: &SyncServer,
+        grant_id: oneiron::EntityId,
+        principal_ref: oneiron::EntityId,
+        person_ref: oneiron::EntityId,
+        persona_ref: oneiron::EntityId,
+    ) {
+        let grant = oneiron::AccessGrant::companion_profile_read(
+            principal_ref,
+            person_ref,
+            persona_ref,
+            10,
+        );
+        server
+            .vault
+            .create_access_grant(&grant_id, &grant)
+            .expect("seed companion profile grant");
+    }
+
     #[tokio::test]
     async fn health_runtime_summary_redacts_route_model_details_without_auth() {
         let mut runtime = crate::runtime::RuntimeConfig::for_mode(RuntimeMode::LocalFree);
@@ -10069,7 +10530,13 @@ mod tests {
             "CompanionCreateAccessGrantRequest",
             "CompanionRevokeAccessGrantRequest",
             "CompanionProfileAccess",
+            "CompanionProfileConfidencePayload",
+            "CompanionProfileDriftAnchor",
+            "CompanionProfileNextAction",
+            "CompanionProfilePayload",
+            "CompanionProfileRefreshRequest",
             "CompanionProfileResponse",
+            "CompanionProfileStaleReasonPayload",
             "CompanionRegisterScopePayload",
             "CompanionRegisterRelationshipRefPayload",
             "CompanionRegisterSubjectPayload",
@@ -10521,6 +10988,532 @@ mod tests {
         .await;
         assert_eq!(status, StatusCode::FORBIDDEN);
         assert_error_envelope(&body, "FORBIDDEN");
+    }
+
+    #[tokio::test]
+    async fn v1_companion_profile_read_returns_persisted_tiers_snapshot() {
+        let (_dir, server) = test_server_with_config(SyncServerConfig {
+            auth_secret: Some("secret".to_owned()),
+            ..Default::default()
+        });
+        let grant_id = seeded_test_entity_id(0x1218_0001);
+        let principal_ref = seeded_test_entity_id(0x1218_0002);
+        let person_ref = seeded_test_entity_id(0x1218_0003);
+        let persona_ref = seeded_test_entity_id(0x1218_0004);
+        let source_a = seeded_test_entity_id(0x1218_0005);
+        let source_b = seeded_test_entity_id(0x1218_0006);
+        seed_companion_profile_access(&server, grant_id, principal_ref, person_ref, persona_ref);
+
+        let profile = oneiron::PsychProfile::new(
+            persona_ref,
+            "compact tier",
+            "retrieval text tier",
+            "Narrative profile tier.",
+            vec![source_b, source_a],
+            oneiron::PsychProfileConfidence::new(0.8, 0.7, 0.6).expect("confidence"),
+        )
+        .expect("profile");
+        server
+            .vault
+            .put_psych_profile(&persona_ref, &profile)
+            .expect("put psych profile");
+
+        let path = format!(
+            "/v1/companion/profiles/{}?person_ref={}&sourceRevisionIds={},{}",
+            persona_ref.to_hex(),
+            person_ref.to_hex(),
+            source_b.to_hex(),
+            source_a.to_hex()
+        );
+        let (status, body) = route_json(
+            server,
+            core_request_with_principal_ref(
+                "GET",
+                &path,
+                "companion:profile:read",
+                &principal_ref.to_hex(),
+                None,
+            ),
+        )
+        .await;
+
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(
+            body,
+            json!({
+                "persona_ref": persona_ref.to_hex(),
+                "person_ref": person_ref.to_hex(),
+                "access": {
+                    "grant_id": grant_id.to_hex(),
+                    "principal_ref": principal_ref.to_hex(),
+                    "scope": {
+                        "kind": "companion_profile",
+                        "person_ref": person_ref.to_hex(),
+                        "persona_ref": persona_ref.to_hex(),
+                    },
+                },
+                "state": "fresh",
+                "profile": {
+                    "subject_ref": persona_ref.to_hex(),
+                    "compact": "compact tier",
+                    "text": "retrieval text tier",
+                    "narrative": "Narrative profile tier.",
+                    "sourceRevisionIds": [source_a.to_hex(), source_b.to_hex()],
+                    "confidence": {
+                        "compact": 0.8,
+                        "text": 0.7,
+                        "narrative": 0.6,
+                    },
+                    "status": "fresh",
+                },
+                "stale_reason": null,
+                "next_action": null,
+                "drift_anchors": [
+                    {
+                        "state": "keep",
+                        "sourceRevisionRef": source_a.to_hex(),
+                    },
+                    {
+                        "state": "keep",
+                        "sourceRevisionRef": source_b.to_hex(),
+                    },
+                ],
+            })
+        );
+    }
+
+    #[tokio::test]
+    async fn v1_companion_profile_read_returns_missing_and_stale_next_actions() {
+        let (_dir, server) = test_server_with_config(SyncServerConfig {
+            auth_secret: Some("secret".to_owned()),
+            ..Default::default()
+        });
+        let principal_ref = seeded_test_entity_id(0x1218_0101);
+        let person_ref = seeded_test_entity_id(0x1218_0102);
+        let missing_persona_ref = seeded_test_entity_id(0x1218_0103);
+        let stale_persona_ref = seeded_test_entity_id(0x1218_0104);
+        let source_a = seeded_test_entity_id(0x1218_0105);
+        let source_b = seeded_test_entity_id(0x1218_0106);
+        let existing_persona_ref = seeded_test_entity_id(0x1218_0109);
+        seed_companion_profile_access(
+            &server,
+            seeded_test_entity_id(0x1218_0107),
+            principal_ref,
+            person_ref,
+            missing_persona_ref,
+        );
+        seed_companion_profile_access(
+            &server,
+            seeded_test_entity_id(0x1218_0108),
+            principal_ref,
+            person_ref,
+            stale_persona_ref,
+        );
+        seed_companion_profile_access(
+            &server,
+            seeded_test_entity_id(0x1218_010A),
+            principal_ref,
+            person_ref,
+            existing_persona_ref,
+        );
+        server
+            .vault
+            .put_entity(
+                &existing_persona_ref,
+                oneiron::types::ENTITY_TYPE_PERSON,
+                oneiron::TimeRange { start: 1, end: 1 },
+                1,
+                b"persona entity without psych profile",
+            )
+            .expect("seed existing persona entity");
+        let stale_profile = oneiron::PsychProfile::new(
+            stale_persona_ref,
+            "stale compact",
+            "stale text",
+            "Stale narrative.",
+            vec![source_a],
+            oneiron::PsychProfileConfidence::new(0.5, 0.5, 0.5).expect("confidence"),
+        )
+        .expect("profile")
+        .marked_stale();
+        server
+            .vault
+            .put_psych_profile(&stale_persona_ref, &stale_profile)
+            .expect("put stale profile");
+
+        let missing_path = format!(
+            "/v1/companion/profiles/{}?person_ref={}",
+            missing_persona_ref.to_hex(),
+            person_ref.to_hex()
+        );
+        let (missing_status, missing_body) = route_json(
+            server.clone(),
+            core_request_with_principal_ref(
+                "GET",
+                &missing_path,
+                "companion:profile:read",
+                &principal_ref.to_hex(),
+                None,
+            ),
+        )
+        .await;
+        assert_eq!(missing_status, StatusCode::OK);
+        assert_eq!(missing_body["state"], Value::from("missing"));
+        assert!(missing_body["profile"].is_null());
+        assert_eq!(missing_body["next_action"]["kind"], Value::from("refresh"));
+        assert_eq!(
+            missing_body["next_action"]["reason"],
+            Value::from("missing")
+        );
+
+        let existing_path = format!(
+            "/v1/companion/profiles/{}?person_ref={}",
+            existing_persona_ref.to_hex(),
+            person_ref.to_hex()
+        );
+        let (existing_status, existing_body) = route_json(
+            server.clone(),
+            core_request_with_principal_ref(
+                "GET",
+                &existing_path,
+                "companion:profile:read",
+                &principal_ref.to_hex(),
+                None,
+            ),
+        )
+        .await;
+        assert_eq!(existing_status, StatusCode::OK);
+        assert_eq!(existing_body["state"], Value::from("missing"));
+        assert!(existing_body["profile"].is_null());
+        assert_eq!(
+            existing_body["next_action"]["reason"],
+            Value::from("missing")
+        );
+
+        let stale_path = format!(
+            "/v1/companion/profiles/{}?person_ref={}&sourceRevisionIds={}",
+            stale_persona_ref.to_hex(),
+            person_ref.to_hex(),
+            source_b.to_hex()
+        );
+        let (stale_status, stale_body) = route_json(
+            server.clone(),
+            core_request_with_principal_ref(
+                "GET",
+                &stale_path,
+                "companion:profile:read",
+                &principal_ref.to_hex(),
+                None,
+            ),
+        )
+        .await;
+        assert_eq!(stale_status, StatusCode::OK);
+        assert_eq!(stale_body["state"], Value::from("stale"));
+        assert_eq!(
+            stale_body["stale_reason"],
+            json!({
+                "kind": "marked_stale",
+                "expectedSourceRevisionIds": null,
+                "actualSourceRevisionIds": null,
+            })
+        );
+        assert_eq!(
+            stale_body["next_action"]["sourceRevisionIds"],
+            json!([source_b.to_hex()])
+        );
+        assert_eq!(
+            stale_body["drift_anchors"],
+            json!([
+                {
+                    "state": "revert",
+                    "sourceRevisionRef": source_a.to_hex(),
+                },
+                {
+                    "state": "tune",
+                    "sourceRevisionRef": source_b.to_hex(),
+                },
+            ])
+        );
+
+        let stale_fallback_path = format!(
+            "/v1/companion/profiles/{}?person_ref={}",
+            stale_persona_ref.to_hex(),
+            person_ref.to_hex()
+        );
+        let (fallback_status, fallback_body) = route_json(
+            server,
+            core_request_with_principal_ref(
+                "GET",
+                &stale_fallback_path,
+                "companion:profile:read",
+                &principal_ref.to_hex(),
+                None,
+            ),
+        )
+        .await;
+        assert_eq!(fallback_status, StatusCode::OK);
+        assert_eq!(fallback_body["state"], Value::from("stale"));
+        assert_eq!(
+            fallback_body["next_action"]["sourceRevisionIds"],
+            json!([source_a.to_hex()])
+        );
+        assert_eq!(
+            fallback_body["drift_anchors"],
+            json!([
+                {
+                    "state": "keep",
+                    "sourceRevisionRef": source_a.to_hex(),
+                },
+            ])
+        );
+        assert_eq!(
+            fallback_body["next_action"]["drift_anchors"],
+            fallback_body["drift_anchors"]
+        );
+    }
+
+    #[tokio::test]
+    async fn v1_companion_profile_refresh_preserves_sources_and_drift_anchors() {
+        let (_dir, server) = test_server_with_config(SyncServerConfig {
+            auth_secret: Some("secret".to_owned()),
+            ..Default::default()
+        });
+        let grant_id = seeded_test_entity_id(0x1218_0201);
+        let principal_ref = seeded_test_entity_id(0x1218_0202);
+        let person_ref = seeded_test_entity_id(0x1218_0203);
+        let persona_ref = seeded_test_entity_id(0x1218_0204);
+        let keep_source = seeded_test_entity_id(0x1218_0205);
+        let revert_source = seeded_test_entity_id(0x1218_0206);
+        let tune_source = seeded_test_entity_id(0x1218_0207);
+        seed_companion_profile_access(&server, grant_id, principal_ref, person_ref, persona_ref);
+        let profile = oneiron::PsychProfile::new(
+            persona_ref,
+            "refresh compact",
+            "refresh text",
+            "Refresh narrative.",
+            vec![revert_source, keep_source],
+            oneiron::PsychProfileConfidence::new(0.9, 0.8, 0.7).expect("confidence"),
+        )
+        .expect("profile");
+        let stored_source_revision_ids = profile.source_revision_ids.clone();
+        server
+            .vault
+            .put_psych_profile(&persona_ref, &profile)
+            .expect("put profile");
+
+        let refresh_path = format!(
+            "/v1/companion/profiles/{}?person_ref={}",
+            persona_ref.to_hex(),
+            person_ref.to_hex()
+        );
+        let refresh_request = json!({
+            "sourceRevisionIds": [
+                keep_source.to_hex(),
+                tune_source.to_hex(),
+                tune_source.to_hex(),
+            ],
+        });
+        let (status, body) = route_json(
+            server.clone(),
+            core_request_with_principal_ref(
+                "POST",
+                &refresh_path,
+                "companion:profile:read",
+                &principal_ref.to_hex(),
+                Some(&refresh_request),
+            ),
+        )
+        .await;
+
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body["state"], Value::from("stale"));
+        assert_eq!(
+            body["profile"]["sourceRevisionIds"],
+            json!([keep_source.to_hex(), revert_source.to_hex()])
+        );
+        assert_eq!(
+            body["stale_reason"],
+            json!({
+                "kind": "source_revision_mismatch",
+                "expectedSourceRevisionIds": [keep_source.to_hex(), tune_source.to_hex()],
+                "actualSourceRevisionIds": [keep_source.to_hex(), revert_source.to_hex()],
+            })
+        );
+        assert_eq!(
+            body["drift_anchors"],
+            json!([
+                {
+                    "state": "keep",
+                    "sourceRevisionRef": keep_source.to_hex(),
+                },
+                {
+                    "state": "revert",
+                    "sourceRevisionRef": revert_source.to_hex(),
+                },
+                {
+                    "state": "tune",
+                    "sourceRevisionRef": tune_source.to_hex(),
+                },
+            ])
+        );
+        assert_eq!(body["next_action"]["drift_anchors"], body["drift_anchors"]);
+        assert_eq!(
+            server
+                .vault
+                .get_psych_profile(&persona_ref)
+                .expect("read profile")
+                .expect("profile persists")
+                .source_revision_ids,
+            stored_source_revision_ids
+        );
+
+        let refresh_query_path = format!(
+            "/v1/companion/profiles/{}?person_ref={}&sourceRevisionIds={},{}",
+            persona_ref.to_hex(),
+            person_ref.to_hex(),
+            keep_source.to_hex(),
+            tune_source.to_hex()
+        );
+        let (query_status, query_body) = route_json(
+            server.clone(),
+            core_request_with_principal_ref(
+                "POST",
+                &refresh_query_path,
+                "companion:profile:read",
+                &principal_ref.to_hex(),
+                Some(&json!({})),
+            ),
+        )
+        .await;
+        assert_eq!(query_status, StatusCode::OK);
+        assert_eq!(
+            query_body["stale_reason"],
+            json!({
+                "kind": "source_revision_mismatch",
+                "expectedSourceRevisionIds": [keep_source.to_hex(), tune_source.to_hex()],
+                "actualSourceRevisionIds": [keep_source.to_hex(), revert_source.to_hex()],
+            })
+        );
+
+        let (bodyless_query_status, bodyless_query_body) = route_json(
+            server.clone(),
+            core_request_with_principal_ref(
+                "POST",
+                &refresh_query_path,
+                "companion:profile:read",
+                &principal_ref.to_hex(),
+                None,
+            ),
+        )
+        .await;
+        assert_eq!(bodyless_query_status, StatusCode::OK);
+        assert_eq!(
+            bodyless_query_body["stale_reason"],
+            json!({
+                "kind": "source_revision_mismatch",
+                "expectedSourceRevisionIds": [keep_source.to_hex(), tune_source.to_hex()],
+                "actualSourceRevisionIds": [keep_source.to_hex(), revert_source.to_hex()],
+            })
+        );
+
+        let malformed_request = Request::builder()
+            .method("POST")
+            .uri(&refresh_query_path)
+            .header(
+                AUTHORIZATION,
+                format!(
+                    "Bearer secret;scope=companion:profile:read;principal_ref={}",
+                    principal_ref.to_hex()
+                ),
+            )
+            .header(CONTENT_TYPE, "application/json")
+            .body(Body::from("{"))
+            .expect("request");
+        let (malformed_status, malformed_body) =
+            route_json(server.clone(), malformed_request).await;
+        assert_eq!(malformed_status, StatusCode::BAD_REQUEST);
+        assert_error_envelope(&malformed_body, "BAD_REQUEST");
+
+        let reordered_request = json!({
+            "sourceRevisionIds": [tune_source.to_hex(), keep_source.to_hex()],
+        });
+        let (reordered_status, reordered_body) = route_json(
+            server.clone(),
+            core_request_with_principal_ref(
+                "POST",
+                &refresh_query_path,
+                "companion:profile:read",
+                &principal_ref.to_hex(),
+                Some(&reordered_request),
+            ),
+        )
+        .await;
+        assert_eq!(reordered_status, StatusCode::OK);
+        assert_eq!(reordered_body["state"], Value::from("stale"));
+        assert_eq!(
+            reordered_body["stale_reason"],
+            json!({
+                "kind": "source_revision_mismatch",
+                "expectedSourceRevisionIds": [keep_source.to_hex(), tune_source.to_hex()],
+                "actualSourceRevisionIds": [keep_source.to_hex(), revert_source.to_hex()],
+            })
+        );
+
+        let conflict_request = json!({
+            "sourceRevisionIds": [keep_source.to_hex()],
+        });
+        let (conflict_status, conflict_body) = route_json(
+            server.clone(),
+            core_request_with_principal_ref(
+                "POST",
+                &refresh_query_path,
+                "companion:profile:read",
+                &principal_ref.to_hex(),
+                Some(&conflict_request),
+            ),
+        )
+        .await;
+        assert_eq!(conflict_status, StatusCode::BAD_REQUEST);
+        assert_error_envelope(&conflict_body, "BAD_REQUEST");
+        assert_eq!(
+            error_envelope(&conflict_body)["details"]["field"],
+            Value::from("sourceRevisionIds")
+        );
+
+        let refresh_empty_query_path = format!(
+            "/v1/companion/profiles/{}?person_ref={}&sourceRevisionIds=",
+            persona_ref.to_hex(),
+            person_ref.to_hex()
+        );
+        let (empty_query_status, empty_query_body) = route_json(
+            server.clone(),
+            core_request_with_principal_ref(
+                "POST",
+                &refresh_empty_query_path,
+                "companion:profile:read",
+                &principal_ref.to_hex(),
+                Some(&json!({})),
+            ),
+        )
+        .await;
+        assert_eq!(empty_query_status, StatusCode::OK);
+        assert_eq!(empty_query_body["state"], Value::from("fresh"));
+        assert!(empty_query_body["next_action"].is_null());
+
+        let (empty_status, empty_body) = route_json(
+            server,
+            core_request_with_principal_ref(
+                "POST",
+                &refresh_path,
+                "companion:profile:read",
+                &principal_ref.to_hex(),
+                Some(&json!({ "sourceRevisionIds": [] })),
+            ),
+        )
+        .await;
+        assert_eq!(empty_status, StatusCode::OK);
+        assert_eq!(empty_body["state"], Value::from("fresh"));
+        assert!(empty_body["next_action"].is_null());
     }
 
     #[tokio::test]
