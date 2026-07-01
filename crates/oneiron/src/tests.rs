@@ -7490,6 +7490,31 @@ fn claim_vad_consolidation_rejects_derived_state_claims() -> Result<()> {
 }
 
 #[test]
+fn claim_vad_consolidation_rejects_turn_vad_annotation_claims() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let turn = EntityId::now();
+
+    put_claim_vad_turn(
+        &vault,
+        &turn,
+        10,
+        Vad {
+            valence: 0.2,
+            arousal: 0.4,
+            dominance: 0.6,
+        },
+    )?;
+    let annotation_claim_id = vad_annotation_claim_id(ENTITY_TYPE_TURN, &turn)?;
+    let err = block_on_ready(vault.consolidate_claim_vad(&annotation_claim_id, 110))
+        .expect_err("turn VAD annotation claims must not recursively consolidate");
+    assert_matches!(
+        err,
+        Error::InvalidClaimBody("turn VAD annotation claims cannot be consolidated")
+    );
+    Ok(())
+}
+
+#[test]
 fn claim_vad_consolidation_averages_boundary_vad_without_drift() -> Result<()> {
     let (_dir, vault) = open_test_vault();
     let subject = EntityId::now();

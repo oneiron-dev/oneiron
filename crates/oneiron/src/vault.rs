@@ -986,6 +986,11 @@ impl Vault {
                 "claim VAD state claims cannot be consolidated",
             ));
         }
+        if claim_body.predicate == VAD_ANNOTATION_CLAIM_PREDICATE {
+            return Err(Error::InvalidClaimBody(
+                "turn VAD annotation claims cannot be consolidated",
+            ));
+        }
 
         let mut evidence_turns = Vec::new();
         for candidate in collect_claim_turn_evidence_refs(&claim_body) {
