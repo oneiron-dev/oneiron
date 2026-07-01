@@ -1427,6 +1427,19 @@ mod tests {
             *arousal = Value::F64(1.0_f64 + f64::EPSILON);
             Value::Map(entries)
         };
+        let impossible_trigger_count_value = || {
+            let Value::Map(mut entries) = crate::affect::affect_trigger_value(&value) else {
+                panic!("affect.trigger value is a map");
+            };
+            let Some((_, k)) = entries
+                .iter_mut()
+                .find(|(key, _)| key.as_str() == Some("k"))
+            else {
+                panic!("affect.trigger value has k");
+            };
+            *k = Value::from(13_u64);
+            Value::Map(entries)
+        };
         let integer_vad_delta_value = || {
             let Value::Map(mut entries) = crate::affect::affect_trigger_value(&value) else {
                 panic!("affect.trigger value is a map");
@@ -1453,6 +1466,23 @@ mod tests {
             )?,
             false,
         )?;
+        for (k, observed_n) in [(0, 1), (1, 1), (12, 12)] {
+            let boundary_value = crate::affect::AffectTriggerValue::new(
+                affected_person,
+                trigger_ref,
+                crate::affect::VadDelta::new(-0.4, 0.2, -0.1)?,
+                0.82,
+                k,
+                observed_n,
+            )?;
+            validate_claim_body_bytes(
+                &encode(
+                    ClaimSubject::Entity(affected_person),
+                    crate::affect::affect_trigger_value(&boundary_value),
+                )?,
+                false,
+            )?;
+        }
 
         assert_matches!(
             validate_claim_body_bytes(
@@ -1475,6 +1505,16 @@ mod tests {
                 false,
             ),
             Err(Error::InvalidClaimBody(_))
+        );
+        assert_matches!(
+            validate_claim_body_bytes(
+                &encode(
+                    ClaimSubject::Entity(affected_person),
+                    impossible_trigger_count_value()
+                )?,
+                false,
+            ),
+            Err(Error::InvalidClaimBody("k must not exceed observedN"))
         );
         validate_claim_body_bytes(
             &encode(
