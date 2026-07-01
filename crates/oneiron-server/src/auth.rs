@@ -13,7 +13,7 @@ use crate::error::ApiError;
 use crate::server::SyncServer;
 
 const LEGACY_SECRET_HEADER: &str = "x-oneiron-secret";
-const IMPLICIT_ALL_IDEMPOTENCY_SCOPES: &str = "core:read,core:write,core:auth";
+const IMPLICIT_ALL_IDEMPOTENCY_SCOPES: &str = "__implicit_all_scopes__";
 
 /// Canonical scopes for the `/v1/core/*` route shell.
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
@@ -353,7 +353,7 @@ mod tests {
         );
         assert_eq!(
             legacy_auth.idempotency_principal(),
-            "core:legacy-shared-secret:scopes=core:read,core:write,core:auth"
+            "core:legacy-shared-secret:scopes=__implicit_all_scopes__"
         );
         assert!(read_auth.idempotency_principal().contains("core:read"));
         assert!(write_auth.idempotency_principal().contains("core:write"));
@@ -372,6 +372,31 @@ mod tests {
         assert!(auth.require(CoreScope::CompanionRegisterWrite).is_ok());
         assert_eq!(
             auth.idempotency_principal(),
+            "core:bearer:scopes=__implicit_all_scopes__"
+        );
+    }
+
+    #[test]
+    fn implicit_all_idempotency_principal_does_not_collide_with_explicit_core_scopes() {
+        let mut bare_headers = HeaderMap::new();
+        bare_headers.insert(AUTHORIZATION, "Bearer secret".parse().unwrap());
+        let bare_auth = CoreAuth::from_headers(&bare_headers, &config()).unwrap();
+
+        let mut explicit_headers = HeaderMap::new();
+        explicit_headers.insert(
+            AUTHORIZATION,
+            "Bearer secret;scope=core:read,core:write,core:auth"
+                .parse()
+                .unwrap(),
+        );
+        let explicit_auth = CoreAuth::from_headers(&explicit_headers, &config()).unwrap();
+
+        assert_ne!(
+            bare_auth.idempotency_principal(),
+            explicit_auth.idempotency_principal()
+        );
+        assert_eq!(
+            explicit_auth.idempotency_principal(),
             "core:bearer:scopes=core:read,core:write,core:auth"
         );
     }

@@ -16,10 +16,12 @@ use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 
-use loro::{ContainerTrait, LoroDoc, LoroMap, Subscription};
+use loro::{CommitOptions, ContainerTrait, LoroDoc, LoroMap, Subscription};
 use tokio::sync::mpsc;
 
-use super::loro_support::{map_get_bytes, tombstone_map_contains_id};
+use super::loro_support::{
+    map_delete, map_for_each_bytes, map_get_bytes, tombstone_map_contains_id,
+};
 use super::quarantine::{
     self, QuarantineContainer, quarantine_rejected_op, quarantine_rejected_op_in_txn,
     remote_rejection_reason,
@@ -475,6 +477,10 @@ fn materialize_entities_from_delta(
                         );
                         continue;
                     }
+                    if matches!(companion_register_blob_is_local_only(blob), Ok(true)) {
+                        scrub_local_only_companion_from_crdt(doc, key.as_ref(), &id)?;
+                        continue;
+                    }
                     let materialize_result = materialize_entity_blob_in_txn(
                         vault,
                         wtxn,
@@ -674,6 +680,12 @@ fn materialize_edges_from_delta(
                     if let Ok(EndpointHydration::Hydrated(blob)) = &tgt_ready {
                         hydrated_endpoints.push((tgt, blob.clone()));
                     }
+                    if matches!(&src_ready, Ok(EndpointHydration::LocalOnly)) {
+                        scrub_local_only_companion_from_crdt(doc, &src.to_hex(), &src)?;
+                    }
+                    if matches!(&tgt_ready, Ok(EndpointHydration::LocalOnly)) {
+                        scrub_local_only_companion_from_crdt(doc, &tgt.to_hex(), &tgt)?;
+                    }
                     match (src_ready, tgt_ready) {
                         // Both endpoints present — already there (`Ready`) or
                         // just hydrated this batch (`Hydrated`): the edge may
@@ -682,6 +694,14 @@ fn materialize_edges_from_delta(
                             Ok(EndpointHydration::Ready | EndpointHydration::Hydrated(_)),
                             Ok(EndpointHydration::Ready | EndpointHydration::Hydrated(_)),
                         ) => {}
+                        (Ok(EndpointHydration::LocalOnly), Ok(_))
+                        | (Ok(_), Ok(EndpointHydration::LocalOnly)) => {
+                            tracing::warn!(
+                                edge = %key,
+                                "observer-b: edge scrubbed because it touches a local-only companion register row"
+                            );
+                            continue;
+                        }
                         (Ok(EndpointHydration::RejectedBlob), Ok(_))
                         | (Ok(_), Ok(EndpointHydration::RejectedBlob)) => {
                             // The endpoint's CRDT blob is undecodable REMOTE
@@ -1565,6 +1585,54 @@ fn companion_register_sync_admitted(data: &[u8]) -> Result<bool> {
     Ok(record.export_classification != CompanionExportClassification::LocalOnly)
 }
 
+fn companion_register_blob_is_local_only(blob: &[u8]) -> Result<bool> {
+    let Some(header) = EntityMetadataHeader::parse(blob) else {
+        return Err(Error::CorruptedIndex("entity metadata"));
+    };
+    if header.entity_type != ENTITY_TYPE_COMPANION_REGISTER {
+        return Ok(false);
+    }
+    let data = if blob.len() > ENTITY_METADATA_HEADER_LEN {
+        &blob[ENTITY_METADATA_HEADER_LEN..]
+    } else {
+        &[]
+    };
+    Ok(!companion_register_sync_admitted(data)?)
+}
+
+fn scrub_local_only_companion_from_crdt(
+    doc: &LoroDoc,
+    entity_key: &str,
+    id: &EntityId,
+) -> Result<()> {
+    let entities_map = doc.get_map("entities");
+    let edges_map = doc.get_map("edges");
+    let mut changed = false;
+
+    if entities_map.get(entity_key).is_some() {
+        map_delete(&entities_map, entity_key)?;
+        changed = true;
+    }
+
+    let mut edge_keys = Vec::new();
+    map_for_each_bytes(&edges_map, |edge_key, _| {
+        if let Some((src, _, tgt)) = parse_edge_key(edge_key)
+            && (src == *id || tgt == *id)
+        {
+            edge_keys.push(edge_key.to_owned());
+        }
+    });
+    for edge_key in &edge_keys {
+        map_delete(&edges_map, edge_key)?;
+        changed = true;
+    }
+
+    if changed {
+        doc.commit_with(CommitOptions::new().origin(BRIDGE_ORIGIN));
+    }
+    Ok(())
+}
+
 /// Endpoint hydration outcome for Observer B edge materialization.
 enum EndpointHydration {
     /// Endpoint already present in LMDB — NO write was performed, so a batch
@@ -1581,6 +1649,9 @@ enum EndpointHydration {
     /// Endpoint absent or tombstoned — defer the edge (it stays in the CRDT
     /// and re-materializes when its endpoint does).
     Deferred,
+    /// Endpoint is a local-only companion register row. Edges touching it
+    /// must not materialize or remain in a shared CRDT window.
+    LocalOnly,
     /// The endpoint's CRDT entities-map blob is structurally undecodable —
     /// REMOTE garbage by construction (the blob came from the remote doc),
     /// so the edge op is rejected with it (quarantined by the caller). Never
@@ -1648,7 +1719,10 @@ fn ensure_entity_materialized_from_crdt(
         return Ok(EndpointHydration::Deferred);
     }
 
-    if vault.store.entities.get(&*wtxn, id.as_bytes())?.is_some() {
+    if let Some(raw) = vault.store.entities.get(&*wtxn, id.as_bytes())? {
+        if companion_register_blob_is_local_only(raw)? {
+            return Ok(EndpointHydration::LocalOnly);
+        }
         return Ok(EndpointHydration::Ready);
     }
 
@@ -1663,6 +1737,9 @@ fn ensure_entity_materialized_from_crdt(
     // it with at the caller's classification.
     if EntityMetadataHeader::parse(&blob).is_none() {
         return Ok(EndpointHydration::RejectedBlob);
+    }
+    if companion_register_blob_is_local_only(&blob)? {
+        return Ok(EndpointHydration::LocalOnly);
     }
     if !materialize_entity_blob_in_txn(vault, wtxn, tombstones_map, &hex_id, &blob, lease_vault_id)?
     {
@@ -2790,6 +2867,129 @@ mod tests {
         assert!(
             vault.get_companion_record(&id).unwrap().is_none(),
             "live sync replay must not materialize local-only companion register records"
+        );
+    }
+
+    #[test]
+    fn companion_register_api_observer_b_scrubs_local_only_rows_and_edges_from_crdt() {
+        let vault = test_vault();
+        let doc = LoroDoc::new();
+        let materializer = Arc::new(Materializer::new());
+        let _subs = register_observer_b(&doc, &vault, &materializer, "2026-03");
+
+        let local_id = EntityId::from_bytes_unchecked([0x43; 16]);
+        let portable_id = EntityId::from_bytes_unchecked([0x44; 16]);
+        let learned_at = 1_772_400_001u64;
+        let local_record = companion_record(local_id, CompanionExportClassification::LocalOnly);
+        let portable_record =
+            companion_record(portable_id, CompanionExportClassification::Portable);
+        let local_body = encode_companion_record_body(&local_record).unwrap();
+        let portable_body = encode_companion_record_body(&portable_record).unwrap();
+        let entities = doc.get_map("entities");
+        let edges = doc.get_map("edges");
+        let edge_key = format_edge_key(&local_id, EdgeKind::Mentions, &portable_id);
+
+        map_insert_bytes(
+            &entities,
+            &portable_id.to_hex(),
+            &entity_blob(
+                ENTITY_TYPE_COMPANION_REGISTER,
+                TimeRange {
+                    start: learned_at,
+                    end: learned_at,
+                },
+                learned_at,
+                &portable_body,
+            ),
+        )
+        .unwrap();
+        map_insert_bytes(
+            &edges,
+            &edge_key,
+            &encode_edge_value_for_crdt(EdgeKind::Mentions, 0.6, learned_at, None, None).unwrap(),
+        )
+        .unwrap();
+        doc.commit();
+
+        map_insert_bytes(
+            &entities,
+            &local_id.to_hex(),
+            &entity_blob(
+                ENTITY_TYPE_COMPANION_REGISTER,
+                TimeRange {
+                    start: learned_at,
+                    end: learned_at,
+                },
+                learned_at,
+                &local_body,
+            ),
+        )
+        .unwrap();
+        doc.commit();
+
+        assert!(vault.get_companion_record(&local_id).unwrap().is_none());
+        assert!(
+            map_get_bytes(&entities, &local_id.to_hex()).is_none(),
+            "live observer must scrub local-only companion rows from the CRDT window"
+        );
+        assert!(
+            map_get_bytes(&edges, &edge_key).is_none(),
+            "live observer must scrub edges touching local-only companion rows"
+        );
+        assert!(
+            vault.get_companion_record(&portable_id).unwrap().is_some(),
+            "syncable companion rows should still materialize"
+        );
+    }
+
+    #[test]
+    fn companion_register_api_observer_b_rejects_edges_touching_existing_local_only_endpoint() {
+        let vault = test_vault();
+        let doc = LoroDoc::new();
+        let materializer = Arc::new(Materializer::new());
+        let _subs = register_observer_b(&doc, &vault, &materializer, "2026-03");
+
+        let local_id = EntityId::from_bytes_unchecked([0x45; 16]);
+        let task_id = EntityId::from_bytes_unchecked([0x46; 16]);
+        let learned_at = 1_772_400_002u64;
+        let local_record = companion_record(local_id, CompanionExportClassification::LocalOnly);
+        vault
+            .create_companion_record(&local_id, &local_record, learned_at)
+            .unwrap();
+        map_insert_bytes(
+            &doc.get_map("entities"),
+            &task_id.to_hex(),
+            &entity_blob(
+                ENTITY_TYPE_TASK,
+                TimeRange {
+                    start: learned_at,
+                    end: learned_at,
+                },
+                learned_at,
+                b"syncable-task",
+            ),
+        )
+        .unwrap();
+        doc.commit();
+
+        let edge_key = format_edge_key(&task_id, EdgeKind::Mentions, &local_id);
+        map_insert_bytes(
+            &doc.get_map("edges"),
+            &edge_key,
+            &encode_edge_value_for_crdt(EdgeKind::Mentions, 0.7, learned_at, None, None).unwrap(),
+        )
+        .unwrap();
+        doc.commit();
+
+        assert!(
+            !vault
+                .edge_exists(&task_id, EdgeKind::Mentions, &local_id)
+                .unwrap(),
+            "edges touching existing local-only companion endpoints must not materialize"
+        );
+        assert!(
+            map_get_bytes(&doc.get_map("edges"), &edge_key).is_none(),
+            "live observer must scrub the rejected local-only edge carrier"
         );
     }
 

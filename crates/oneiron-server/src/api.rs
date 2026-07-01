@@ -2247,6 +2247,7 @@ fn companion_register_record_from_payload(
     }
     let export_classification =
         companion_register_export_from_wire(&payload.export_classification)?;
+    validate_companion_register_scope_export(&scope, export_classification)?;
 
     Ok(oneiron::CompanionRecord::new(
         scope,
@@ -2256,6 +2257,27 @@ fn companion_register_record_from_payload(
         lifecycle,
         export_classification,
     ))
+}
+
+fn validate_companion_register_scope_export(
+    scope: &oneiron::CompanionScope,
+    export: oneiron::CompanionExportClassification,
+) -> Result<(), ApiError> {
+    match (scope, export) {
+        (
+            oneiron::CompanionScope::SharedVault { .. },
+            oneiron::CompanionExportClassification::SharedVault,
+        ) => Ok(()),
+        (oneiron::CompanionScope::SharedVault { .. }, _) => Err(ApiError::bad_request(
+            "shared_vault scope requires shared_vault export",
+            Some("record.export"),
+        )),
+        (_, oneiron::CompanionExportClassification::SharedVault) => Err(ApiError::bad_request(
+            "shared_vault export requires shared_vault scope",
+            Some("record.export"),
+        )),
+        _ => Ok(()),
+    }
 }
 
 fn companion_register_scope_from_payload(
@@ -9373,6 +9395,50 @@ mod tests {
             assert_eq!(body["id"], Value::from(id.clone()));
             assert_eq!(body["record"]["lifecycle"], Value::from("active"));
         }
+
+        let mut shared_scope_portable_export = shared_record.clone();
+        shared_scope_portable_export["export"] = Value::from("portable");
+        let (status, body) = route_json(
+            server.clone(),
+            core_request(
+                "POST",
+                "/v1/companion/register/records",
+                "companion:register:write",
+                Some(&json!({
+                    "id": seeded_test_entity_id(0x1219_0009).to_hex(),
+                    "record": shared_scope_portable_export
+                })),
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_error_envelope(&body, "BAD_REQUEST");
+        assert_eq!(
+            error_envelope(&body)["details"]["field"],
+            Value::from("record.export")
+        );
+
+        let mut neutral_scope_shared_export = neutral_record.clone();
+        neutral_scope_shared_export["export"] = Value::from("shared_vault");
+        let (status, body) = route_json(
+            server.clone(),
+            core_request(
+                "POST",
+                "/v1/companion/register/records",
+                "companion:register:write",
+                Some(&json!({
+                    "id": seeded_test_entity_id(0x1219_000A).to_hex(),
+                    "record": neutral_scope_shared_export
+                })),
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_error_envelope(&body, "BAD_REQUEST");
+        assert_eq!(
+            error_envelope(&body)["details"]["field"],
+            Value::from("record.export")
+        );
 
         let mut retired_create_record = personal_record.clone();
         retired_create_record["lifecycle"] = Value::from("retracted");
