@@ -5,6 +5,7 @@
 //! source-revision tracking so callers can distinguish a missing profile from
 //! a stale one without stringly sentinel states.
 
+use std::collections::BTreeSet;
 use std::io::Cursor;
 use std::sync::atomic::Ordering;
 
@@ -59,6 +60,166 @@ const CONFIDENCE_KEYS: [&str; 3] = ["compact", "text", "narrative"];
 const MAX_COMPACT_BYTES: usize = 4096;
 const MAX_TEXT_BYTES: usize = 32 * 1024;
 const MAX_NARRATIVE_BYTES: usize = 32 * 1024;
+const PSYCH_MIRROR_RECENCY_HALF_LIFE_SECS: f64 = 30.0 * 24.0 * 60.0 * 60.0;
+
+/// Default source-selection weights for Psych Mirror snapshots.
+///
+/// Connectivity leads, affect/salience follows, and recency/entropy are
+/// smaller tiebreaking signals. The scorer normalizes custom weights by their
+/// sum so totals remain comparable.
+pub const PSYCH_MIRROR_SELECTION_WEIGHTS: PsychMirrorSelectionWeights =
+    PsychMirrorSelectionWeights {
+        connectivity: 0.40,
+        affect_salience: 0.25,
+        recency: 0.20,
+        entropy: 0.15,
+    };
+
+/// Relative weights applied to Psych Mirror source-selection signals.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct PsychMirrorSelectionWeights {
+    pub connectivity: f32,
+    pub affect_salience: f32,
+    pub recency: f32,
+    pub entropy: f32,
+}
+
+impl PsychMirrorSelectionWeights {
+    fn total(self) -> Result<f32> {
+        let total = self.connectivity + self.affect_salience + self.recency + self.entropy;
+        if self.connectivity.is_finite()
+            && self.affect_salience.is_finite()
+            && self.recency.is_finite()
+            && self.entropy.is_finite()
+            && self.connectivity >= 0.0
+            && self.affect_salience >= 0.0
+            && self.recency >= 0.0
+            && self.entropy >= 0.0
+            && total.is_finite()
+            && total > 0.0
+        {
+            Ok(total)
+        } else {
+            Err(invalid_profile(
+                "Psych Mirror selection weights must be finite non-negative values with positive sum",
+            ))
+        }
+    }
+}
+
+impl Default for PsychMirrorSelectionWeights {
+    fn default() -> Self {
+        PSYCH_MIRROR_SELECTION_WEIGHTS
+    }
+}
+
+/// One candidate memory source available to Psych Mirror snapshot generation.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct PsychMirrorSourceCandidate {
+    pub source_id: EntityId,
+    pub source_revision_ref: EntityId,
+    pub connectivity: f32,
+    pub affect_salience: f32,
+    pub learned_at: u64,
+    pub entropy: f32,
+}
+
+impl PsychMirrorSourceCandidate {
+    /// Creates a selector candidate, normalizing finite non-negative signals
+    /// into `[0, 1]` so callers can pass raw retrieval/PPR scores safely.
+    pub fn new(
+        source_id: EntityId,
+        source_revision_ref: EntityId,
+        connectivity: f32,
+        affect_salience: f32,
+        learned_at: u64,
+        entropy: f32,
+    ) -> Result<Self> {
+        Ok(Self {
+            source_id,
+            source_revision_ref,
+            connectivity: normalized_selection_signal(
+                connectivity,
+                "Psych Mirror connectivity must be finite and non-negative",
+            )?,
+            affect_salience: normalized_selection_signal(
+                affect_salience,
+                "Psych Mirror affect/salience must be finite and non-negative",
+            )?,
+            learned_at,
+            entropy: normalized_selection_signal(
+                entropy,
+                "Psych Mirror entropy must be finite and non-negative",
+            )?,
+        })
+    }
+}
+
+/// Weighted score contributions for a selected Psych Mirror source.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct PsychMirrorSelectionScore {
+    pub connectivity: f32,
+    pub affect_salience: f32,
+    pub recency: f32,
+    pub entropy: f32,
+    pub total: f32,
+}
+
+/// Ranked source selected for Psych Mirror snapshot generation.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct PsychMirrorSelectedSource {
+    pub rank: usize,
+    pub source_id: EntityId,
+    pub source_revision_ref: EntityId,
+    pub score: PsychMirrorSelectionScore,
+}
+
+/// Drift-anchor state emitted when comparing old and new Psych Mirror sources.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum PsychMirrorDriftAnchorState {
+    /// Existing snapshot source revision remains selected.
+    Keep,
+    /// Existing snapshot source revision fell out of selection and should be
+    /// available for revert decisions.
+    Revert,
+    /// Newly selected source revision should tune the next snapshot.
+    Tune,
+}
+
+impl PsychMirrorDriftAnchorState {
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Keep => "keep",
+            Self::Revert => "revert",
+            Self::Tune => "tune",
+        }
+    }
+}
+
+/// Stable drift-anchor bookkeeping state for one source revision.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct PsychMirrorDriftAnchor {
+    pub state: PsychMirrorDriftAnchorState,
+    pub source_revision_ref: EntityId,
+}
+
+impl PsychMirrorDriftAnchor {
+    #[must_use]
+    pub const fn event(self) -> PsychMirrorDriftAnchorEvent {
+        PsychMirrorDriftAnchorEvent {
+            state: self.state,
+            source_revision_ref: self.source_revision_ref,
+        }
+    }
+}
+
+/// Event emitted from drift-anchor bookkeeping.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct PsychMirrorDriftAnchorEvent {
+    pub state: PsychMirrorDriftAnchorState,
+    pub source_revision_ref: EntityId,
+}
 
 /// Per-tier confidence metadata stored with a PsychProfile snapshot.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -246,6 +407,177 @@ impl PsychProfile {
     }
 }
 
+/// Ranks Psych Mirror source candidates with the default deterministic weights.
+pub fn rank_psych_mirror_sources(
+    candidates: &[PsychMirrorSourceCandidate],
+    now_secs: u64,
+    limit: usize,
+) -> Result<Vec<PsychMirrorSelectedSource>> {
+    rank_psych_mirror_sources_with_weights(
+        candidates,
+        now_secs,
+        limit,
+        PSYCH_MIRROR_SELECTION_WEIGHTS,
+    )
+}
+
+/// Ranks Psych Mirror source candidates using caller-supplied weights.
+pub fn rank_psych_mirror_sources_with_weights(
+    candidates: &[PsychMirrorSourceCandidate],
+    now_secs: u64,
+    limit: usize,
+    weights: PsychMirrorSelectionWeights,
+) -> Result<Vec<PsychMirrorSelectedSource>> {
+    let mut ranked = Vec::with_capacity(candidates.len());
+    for candidate in candidates {
+        let score = psych_mirror_selection_score(candidate, now_secs, weights)?;
+        ranked.push(PsychMirrorSelectedSource {
+            rank: 0,
+            source_id: candidate.source_id,
+            source_revision_ref: candidate.source_revision_ref,
+            score,
+        });
+    }
+
+    ranked.sort_unstable_by(|left, right| {
+        right
+            .score
+            .total
+            .total_cmp(&left.score.total)
+            .then_with(|| {
+                left.source_revision_ref
+                    .as_bytes()
+                    .cmp(right.source_revision_ref.as_bytes())
+            })
+            .then_with(|| left.source_id.as_bytes().cmp(right.source_id.as_bytes()))
+    });
+    ranked.truncate(limit);
+    for (index, source) in ranked.iter_mut().enumerate() {
+        source.rank = index + 1;
+    }
+    Ok(ranked)
+}
+
+fn psych_mirror_selection_score(
+    candidate: &PsychMirrorSourceCandidate,
+    now_secs: u64,
+    weights: PsychMirrorSelectionWeights,
+) -> Result<PsychMirrorSelectionScore> {
+    let weight_total = weights.total()?;
+    let connectivity = normalized_selection_signal(
+        candidate.connectivity,
+        "Psych Mirror connectivity must be finite and non-negative",
+    )? * weights.connectivity
+        / weight_total;
+    let affect_salience = normalized_selection_signal(
+        candidate.affect_salience,
+        "Psych Mirror affect/salience must be finite and non-negative",
+    )? * weights.affect_salience
+        / weight_total;
+    let recency =
+        psych_mirror_recency_score(candidate.learned_at, now_secs) * weights.recency / weight_total;
+    let entropy = normalized_selection_signal(
+        candidate.entropy,
+        "Psych Mirror entropy must be finite and non-negative",
+    )? * weights.entropy
+        / weight_total;
+    Ok(PsychMirrorSelectionScore {
+        connectivity,
+        affect_salience,
+        recency,
+        entropy,
+        total: connectivity + affect_salience + recency + entropy,
+    })
+}
+
+fn psych_mirror_recency_score(learned_at: u64, now_secs: u64) -> f32 {
+    let age_secs = now_secs.saturating_sub(learned_at) as f64;
+    2.0_f64.powf(-age_secs / PSYCH_MIRROR_RECENCY_HALF_LIFE_SECS) as f32
+}
+
+fn normalized_selection_signal(value: f32, context: &'static str) -> Result<f32> {
+    if value.is_finite() && value >= 0.0 {
+        Ok(value.min(1.0))
+    } else {
+        Err(invalid_profile(context))
+    }
+}
+
+/// Returns normalized Shannon entropy for a text source in `[0, 1]`.
+#[must_use]
+pub fn psych_mirror_text_entropy(text: &str) -> f32 {
+    if text.is_empty() {
+        return 0.0;
+    }
+
+    let mut counts = [0_u32; 256];
+    for byte in text.bytes() {
+        counts[usize::from(byte)] += 1;
+    }
+
+    let len = text.len() as f64;
+    let mut entropy = 0.0_f64;
+    let mut distinct = 0_u32;
+    for count in counts.into_iter().filter(|count| *count > 0) {
+        distinct += 1;
+        let probability = f64::from(count) / len;
+        entropy -= probability * probability.log2();
+    }
+
+    if distinct <= 1 {
+        0.0
+    } else {
+        (entropy / f64::from(distinct).log2()).clamp(0.0, 1.0) as f32
+    }
+}
+
+/// Builds deterministic drift anchors from previous and currently selected
+/// source revision refs.
+#[must_use]
+pub fn psych_mirror_drift_anchors(
+    previous_source_revision_refs: &[EntityId],
+    selected_source_revision_refs: &[EntityId],
+) -> Vec<PsychMirrorDriftAnchor> {
+    let previous = canonical_revision_refs_allow_empty(previous_source_revision_refs);
+    let selected = canonical_revision_refs_allow_empty(selected_source_revision_refs);
+    let selected_set: BTreeSet<EntityId> = selected.iter().copied().collect();
+    let previous_set: BTreeSet<EntityId> = previous.iter().copied().collect();
+
+    let mut anchors = Vec::with_capacity(previous.len() + selected.len());
+    for source_revision_ref in previous {
+        let state = if selected_set.contains(&source_revision_ref) {
+            PsychMirrorDriftAnchorState::Keep
+        } else {
+            PsychMirrorDriftAnchorState::Revert
+        };
+        anchors.push(PsychMirrorDriftAnchor {
+            state,
+            source_revision_ref,
+        });
+    }
+    for source_revision_ref in selected {
+        if !previous_set.contains(&source_revision_ref) {
+            anchors.push(PsychMirrorDriftAnchor {
+                state: PsychMirrorDriftAnchorState::Tune,
+                source_revision_ref,
+            });
+        }
+    }
+    anchors
+}
+
+/// Emits typed drift-anchor events for keep/revert/tune source revision refs.
+#[must_use]
+pub fn psych_mirror_drift_anchor_events(
+    previous_source_revision_refs: &[EntityId],
+    selected_source_revision_refs: &[EntityId],
+) -> Vec<PsychMirrorDriftAnchorEvent> {
+    psych_mirror_drift_anchors(previous_source_revision_refs, selected_source_revision_refs)
+        .into_iter()
+        .map(PsychMirrorDriftAnchor::event)
+        .collect()
+}
+
 /// Encodes a PsychProfile body in canonical MessagePack field order.
 pub fn encode_psych_profile_body(profile: &PsychProfile) -> Result<Vec<u8>> {
     profile.validate()?;
@@ -381,6 +713,13 @@ fn canonical_source_revision_ids(mut ids: Vec<EntityId>) -> Result<Vec<EntityId>
         ));
     }
     Ok(ids)
+}
+
+fn canonical_revision_refs_allow_empty(ids: &[EntityId]) -> Vec<EntityId> {
+    let mut ids = ids.to_vec();
+    ids.sort_unstable();
+    ids.dedup();
+    ids
 }
 
 fn canonical_expected_source_revision_ids(mut ids: Vec<EntityId>) -> Vec<EntityId> {
@@ -574,9 +913,16 @@ impl crate::Vault {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashMap;
+
     use rmpv::Value;
 
     use super::*;
+    use crate::claim::{ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSubject};
+    use crate::context_pack::{
+        psych_mirror_source_candidate_from_claim, psych_mirror_source_candidate_from_context_entity,
+    };
+    use crate::types::ContextEntity;
     use crate::types::{ENTITY_TYPE_PERSON, VaultConfig};
     use crate::{ErrorKind, Vault};
 
@@ -615,6 +961,131 @@ mod tests {
         )
         .expect("encode msgpack");
         out
+    }
+
+    fn fixture_claim(text: &'static str, salience: f32) -> ClaimBody {
+        let mut body = ClaimBody::new(
+            "profile.preference",
+            ClaimSubject::Entity(entity(0xA1)),
+            Value::from(text),
+            0.8,
+            ClaimApprovalStatus::Auto,
+            ClaimLifecycleStatus::Active,
+        );
+        body.salience = Some(salience);
+        body
+    }
+
+    #[test]
+    fn psych_mirror_selection_ranks_fixture_memories_deterministically() -> Result<()> {
+        let now = 20_000_000_u64;
+        let candidates = vec![
+            psych_mirror_source_candidate_from_claim(
+                entity(0x11),
+                entity(0xB1),
+                0.98,
+                now - 90 * 86_400,
+                &fixture_claim("long-term preference for direct concise answers", 0.10),
+            )?,
+            psych_mirror_source_candidate_from_claim(
+                entity(0x12),
+                entity(0xB2),
+                0.72,
+                now - 2 * 86_400,
+                &fixture_claim("high salience self story about anxious onboarding", 0.95),
+            )?,
+            psych_mirror_source_candidate_from_claim(
+                entity(0x13),
+                entity(0xB3),
+                0.50,
+                now,
+                &fixture_claim("fresh mixed topic with several distinct cues", 0.55),
+            )?,
+            psych_mirror_source_candidate_from_claim(
+                entity(0x14),
+                entity(0xB4),
+                0.40,
+                now - 30 * 86_400,
+                &fixture_claim("abcdefghi jklmnop qrstuv wxyz", 0.20),
+            )?,
+        ];
+
+        let ranked = rank_psych_mirror_sources(&candidates, now, candidates.len())?;
+
+        assert_eq!(
+            ranked
+                .iter()
+                .map(|source| source.source_revision_ref)
+                .collect::<Vec<_>>(),
+            vec![entity(0xB2), entity(0xB3), entity(0xB1), entity(0xB4)]
+        );
+        assert_eq!(
+            ranked.iter().map(|source| source.rank).collect::<Vec<_>>(),
+            vec![1, 2, 3, 4]
+        );
+        assert!(ranked[0].score.affect_salience > ranked[0].score.connectivity * 0.5);
+        assert!(ranked[1].score.recency > ranked[2].score.recency);
+        assert!(ranked[3].score.entropy > 0.0);
+        Ok(())
+    }
+
+    #[test]
+    fn psych_mirror_selection_context_entity_adapter_reads_projected_fields() -> Result<()> {
+        let mut fields = HashMap::new();
+        fields.insert("sal".to_owned(), serde_json::json!(0.7));
+        fields.insert("txt".to_owned(), serde_json::json!("distinct context text"));
+        let context_entity = ContextEntity {
+            id: entity(0x21),
+            short_id: "ctx".to_owned(),
+            content_hash: 7,
+            entity_type: ENTITY_TYPE_PERSON,
+            score: 2.0,
+            fields: Some(fields),
+            edges: None,
+            vector: None,
+        };
+
+        let candidate =
+            psych_mirror_source_candidate_from_context_entity(&context_entity, entity(0xC1), 42)?;
+
+        assert_eq!(candidate.source_revision_ref, entity(0xC1));
+        assert_eq!(candidate.connectivity, 1.0);
+        assert!((candidate.affect_salience - 0.7).abs() < 1e-6);
+        assert!(candidate.entropy > 0.0);
+        Ok(())
+    }
+
+    #[test]
+    fn psych_mirror_selection_emits_drift_anchor_events_with_revision_refs() {
+        let events = psych_mirror_drift_anchor_events(
+            &[entity(0xC3), entity(0xC1), entity(0xC2), entity(0xC2)],
+            &[entity(0xC4), entity(0xC1), entity(0xC3), entity(0xC4)],
+        );
+
+        assert_eq!(
+            events,
+            vec![
+                PsychMirrorDriftAnchorEvent {
+                    state: PsychMirrorDriftAnchorState::Keep,
+                    source_revision_ref: entity(0xC1),
+                },
+                PsychMirrorDriftAnchorEvent {
+                    state: PsychMirrorDriftAnchorState::Revert,
+                    source_revision_ref: entity(0xC2),
+                },
+                PsychMirrorDriftAnchorEvent {
+                    state: PsychMirrorDriftAnchorState::Keep,
+                    source_revision_ref: entity(0xC3),
+                },
+                PsychMirrorDriftAnchorEvent {
+                    state: PsychMirrorDriftAnchorState::Tune,
+                    source_revision_ref: entity(0xC4),
+                },
+            ]
+        );
+        assert_eq!(events[0].state.as_str(), "keep");
+        assert_eq!(events[1].state.as_str(), "revert");
+        assert_eq!(events[3].state.as_str(), "tune");
     }
 
     #[test]
