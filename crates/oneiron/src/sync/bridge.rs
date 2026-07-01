@@ -29,7 +29,8 @@ use super::types::LocalUpdate;
 use crate::batch::{self, BatchOp, ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::store::Store;
 use crate::types::{
-    DecodedEdgeValue, EdgeKind, EdgeProvenanceFlags, EntityId, Vad, decode_edge_value,
+    CompanionExportClassification, DecodedEdgeValue, ENTITY_TYPE_COMPANION_REGISTER, EdgeKind,
+    EdgeProvenanceFlags, EntityId, Vad, decode_companion_record_body, decode_edge_value,
     decode_edge_value_for_kind, encode_edge_value,
 };
 use crate::{Error, Result, Vault};
@@ -376,7 +377,8 @@ fn materialize_entities_from_delta(
     // point (unlike the tombstone path), so the swallow site below needs
     // the full list to flag retry markers.
     let mut applied_ops: Vec<(EntityId, Vec<u8>)> = Vec::new();
-    let result = vault.with_write_txn(|wtxn| {
+    let result = ensure_companion_register_kind_for_entity_delta(vault, delta).and_then(|()| {
+        vault.with_write_txn(|wtxn| {
         for (key, new_val) in &delta.updated {
             match new_val {
                 Some(loro::ValueOrContainer::Value(loro::LoroValue::Binary(blob))) => {
@@ -482,7 +484,8 @@ fn materialize_entities_from_delta(
                         lease_vault_id,
                     );
                     match materialize_result {
-                        Ok(()) => applied_ops.push((id, blob.to_vec())),
+                        Ok(true) => applied_ops.push((id, blob.to_vec())),
+                        Ok(false) => {}
                         Err(e) => {
                             if remote_rejection_reason(&e).is_some() {
                                 quarantine_rejected_op_in_txn(
@@ -526,6 +529,7 @@ fn materialize_entities_from_delta(
             )));
         }
         Ok(())
+        })
     });
 
     if let Err(e) = result {
@@ -1388,7 +1392,7 @@ fn materialize_entity_blob_in_txn(
     key: &str,
     blob: &[u8],
     lease_vault_id: u64,
-) -> Result<()> {
+) -> Result<bool> {
     let id = EntityId::from_hex(key).map_err(|_| crate::Error::InvalidKey)?;
 
     // Tombstone gate — fires BEFORE the put, never heals after (ARCH-0023b:
@@ -1403,7 +1407,7 @@ fn materialize_entity_blob_in_txn(
     // and entity-canonical: a case-shifted hex key still names this id.
     if tombstone_map_contains_id(tombstones_map, &id) {
         tracing::debug!(entity = %key, "observer-b: entity tombstoned in CRDT, skipping put");
-        return Ok(());
+        return Ok(false);
     }
 
     // `dt:` local hard-delete marker gate (ONE-1122): the CRDT tombstones
@@ -1419,7 +1423,7 @@ fn materialize_entity_blob_in_txn(
             entity = %key,
             "observer-b: entity locally hard-deleted (dt: marker), refusing materialization"
         );
-        return Ok(());
+        return Ok(false);
     }
 
     let Some(header) = EntityMetadataHeader::parse(blob) else {
@@ -1430,6 +1434,16 @@ fn materialize_entity_blob_in_txn(
     } else {
         &[]
     };
+
+    if header.entity_type == ENTITY_TYPE_COMPANION_REGISTER
+        && !companion_register_sync_admitted(data)?
+    {
+        tracing::warn!(
+            entity = %key,
+            "observer-b: refused local-only companion register materialization"
+        );
+        return Ok(false);
+    }
 
     // ONE-1134 + ONE-1140: REDACTION_AUDIT (type 120) replay door. Receipts
     // are immutable audit records (contracts.ts `redactionAuditReceipt`;
@@ -1461,7 +1475,7 @@ fn materialize_entity_blob_in_txn(
         crate::deletion::validate_redaction_receipt_body(data)?;
         if let Some(existing) = vault.store.entities.get(&*wtxn, id.as_bytes())? {
             if existing == blob {
-                return Ok(());
+                return Ok(false);
             }
             // ONE-1087 designed exception: the sweep executor's receipt
             // finalization (`sweep_complete_at` None→Some) is LOCAL-LMDB
@@ -1476,7 +1490,7 @@ fn materialize_entity_blob_in_txn(
                     entity = %key,
                     "observer-b: stale pre-finalization receipt echo — keeping finalized local"
                 );
-                return Ok(());
+                return Ok(false);
             }
             return Err(crate::Error::RedactionReceiptDivergence { id });
         }
@@ -1515,7 +1529,40 @@ fn materialize_entity_blob_in_txn(
             header.learned_at,
             data,
         )
-        .apply(wtxn)
+        .apply(wtxn)?;
+    Ok(true)
+}
+
+fn ensure_companion_register_kind_for_entity_delta(
+    vault: &Vault,
+    delta: &loro::event::MapDelta<'_>,
+) -> Result<()> {
+    for new_val in delta.updated.values() {
+        let Some(loro::ValueOrContainer::Value(loro::LoroValue::Binary(blob))) = new_val else {
+            continue;
+        };
+        let Some(header) = EntityMetadataHeader::parse(blob) else {
+            continue;
+        };
+        if header.entity_type != ENTITY_TYPE_COMPANION_REGISTER {
+            continue;
+        }
+        let data = if blob.len() > ENTITY_METADATA_HEADER_LEN {
+            &blob[ENTITY_METADATA_HEADER_LEN..]
+        } else {
+            &[]
+        };
+        if companion_register_sync_admitted(data).unwrap_or(false) {
+            vault.ensure_companion_register_kind()?;
+            return Ok(());
+        }
+    }
+    Ok(())
+}
+
+fn companion_register_sync_admitted(data: &[u8]) -> Result<bool> {
+    let record = decode_companion_record_body(data)?;
+    Ok(record.export_classification != CompanionExportClassification::LocalOnly)
 }
 
 /// Endpoint hydration outcome for Observer B edge materialization.
@@ -1617,7 +1664,10 @@ fn ensure_entity_materialized_from_crdt(
     if EntityMetadataHeader::parse(&blob).is_none() {
         return Ok(EndpointHydration::RejectedBlob);
     }
-    materialize_entity_blob_in_txn(vault, wtxn, tombstones_map, &hex_id, &blob, lease_vault_id)?;
+    if !materialize_entity_blob_in_txn(vault, wtxn, tombstones_map, &hex_id, &blob, lease_vault_id)?
+    {
+        return Ok(EndpointHydration::Deferred);
+    }
     // ONE-1147 fix-wave: distinguish an ACTUAL hydration write from the
     // already-present `Ready` above, carrying the written bytes so the
     // edge-batch swallow site can flag a durable rm: marker (parity guard +
@@ -1679,11 +1729,17 @@ pub fn format_edge_key(src: &EntityId, kind: EdgeKind, tgt: &EntityId) -> String
 mod tests {
     use super::*;
     use crate::Vault;
+    use crate::claim::{ClaimApprovalStatus, ClaimSource};
     use crate::sync::loro_support::{
         doc_from_snapshot, doc_version_vector, export_snapshot, export_updates_since, import_doc,
         map_contains_binary, map_insert_bytes,
     };
-    use crate::types::{ENTITY_TYPE_TASK, TimeRange, VaultConfig};
+    use crate::types::{
+        CompanionExportClassification, CompanionProvenance, CompanionRecord, CompanionScope,
+        ENTITY_TYPE_COMPANION_REGISTER, ENTITY_TYPE_TASK, EdgeActorClass, TimeRange, VaultConfig,
+        encode_companion_record_body,
+    };
+    use rmpv::Value;
     use std::sync::Arc;
 
     fn test_vault() -> Arc<Vault> {
@@ -1751,6 +1807,25 @@ mod tests {
         blob.extend_from_slice(&learned_at.to_be_bytes());
         blob.extend_from_slice(data);
         blob
+    }
+
+    fn companion_record(
+        persona_ref: EntityId,
+        export_classification: CompanionExportClassification,
+    ) -> CompanionRecord {
+        CompanionRecord::persona(
+            CompanionScope::neutral(),
+            persona_ref,
+            Value::from("private companion tuning"),
+            CompanionProvenance::new(
+                EntityId::from_bytes_unchecked([0xB8; 16]),
+                EdgeActorClass::Agent,
+                ClaimSource::UserStated,
+                ClaimApprovalStatus::Approved,
+                Value::from("private provenance"),
+            ),
+            export_classification,
+        )
     }
 
     /// Index-aligned metas for direct `apply_materialized_edge_ops` calls.
@@ -2649,6 +2724,72 @@ mod tests {
             vault.get(&id).unwrap().as_deref(),
             Some(&b"honest-path"[..]),
             "never-deleted entity must materialize normally"
+        );
+    }
+
+    #[test]
+    fn companion_register_api_observer_b_materializes_portable_on_fresh_vault() {
+        let vault = test_vault();
+        let doc = LoroDoc::new();
+        let materializer = Arc::new(Materializer::new());
+        let _subs = register_observer_b(&doc, &vault, &materializer, "2026-03");
+
+        let id = EntityId::from_bytes_unchecked([0x41; 16]);
+        let learned_at = 1_772_400_000u64;
+        let record = companion_record(id, CompanionExportClassification::Portable);
+        let body = encode_companion_record_body(&record).unwrap();
+        map_insert_bytes(
+            &doc.get_map("entities"),
+            &id.to_hex(),
+            &entity_blob(
+                ENTITY_TYPE_COMPANION_REGISTER,
+                TimeRange {
+                    start: learned_at,
+                    end: learned_at,
+                },
+                learned_at,
+                &body,
+            ),
+        )
+        .unwrap();
+        doc.commit();
+
+        assert!(
+            vault.get_companion_record(&id).unwrap().is_some(),
+            "live sync replay should register the companion kind and materialize portable records"
+        );
+    }
+
+    #[test]
+    fn companion_register_api_observer_b_suppresses_local_only_records() {
+        let vault = test_vault();
+        let doc = LoroDoc::new();
+        let materializer = Arc::new(Materializer::new());
+        let _subs = register_observer_b(&doc, &vault, &materializer, "2026-03");
+
+        let id = EntityId::from_bytes_unchecked([0x42; 16]);
+        let learned_at = 1_772_400_000u64;
+        let record = companion_record(id, CompanionExportClassification::LocalOnly);
+        let body = encode_companion_record_body(&record).unwrap();
+        map_insert_bytes(
+            &doc.get_map("entities"),
+            &id.to_hex(),
+            &entity_blob(
+                ENTITY_TYPE_COMPANION_REGISTER,
+                TimeRange {
+                    start: learned_at,
+                    end: learned_at,
+                },
+                learned_at,
+                &body,
+            ),
+        )
+        .unwrap();
+        doc.commit();
+
+        assert!(
+            vault.get_companion_record(&id).unwrap().is_none(),
+            "live sync replay must not materialize local-only companion register records"
         );
     }
 
