@@ -1004,9 +1004,11 @@ impl Vault {
     ) -> Result<CompanionRecord> {
         self.ensure_companion_register_kind()?;
         let mut wtxn = self.store.env.write_txn()?;
-        let retired = self
-            .read_companion_record_in_txn(&wtxn, id)?
-            .retired_at(retired_at)?;
+        let existing = self.read_companion_record_in_txn(&wtxn, id)?;
+        if existing.lifecycle == ClaimLifecycleStatus::Retracted {
+            return Ok(existing);
+        }
+        let retired = existing.retired_at(retired_at)?;
         let data = encode_companion_record_body(&retired)?;
         self.apply_companion_record_body(&mut wtxn, id, retired_at, data)?;
         wtxn.commit()?;
