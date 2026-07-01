@@ -1822,6 +1822,22 @@
               }
             ]
           },
+          "companion": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/EiriCompanionControls"
+              }
+            ]
+          },
+          "context_version": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "depth": {
             "oneOf": [
               {
@@ -1854,6 +1870,16 @@
             "default": 50,
             "type": "integer"
           },
+          "memory_board": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/EiriMemoryBoardControls"
+              }
+            ]
+          },
           "policy": {
             "oneOf": [
               {
@@ -1878,6 +1904,16 @@
             "type": [
               "array",
               "null"
+            ]
+          },
+          "session_rag": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/EiriSessionRagControls"
+              }
             ]
           },
           "time": {
@@ -1905,6 +1941,12 @@
       },
       "CoreContextPackResponse": {
         "properties": {
+          "context_version": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "empty": {
             "type": [
               "object",
@@ -1913,6 +1955,12 @@
           },
           "evidence": {
             "$ref": "#/components/schemas/CoreContextPackEvidence"
+          },
+          "memory_board": {
+            "type": [
+              "object",
+              "null"
+            ]
           },
           "neighbors": {
             "items": {
@@ -1925,6 +1973,12 @@
               "$ref": "#/components/schemas/CoreContextEntity"
             },
             "type": "array"
+          },
+          "session_rag": {
+            "type": [
+              "object",
+              "null"
+            ]
           },
           "state": {
             "$ref": "#/components/schemas/CoreContextPackState"
@@ -2736,6 +2790,96 @@
           "exact"
         ],
         "type": "string"
+      },
+      "EiriCompanionControls": {
+        "properties": {
+          "person_ref": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "persona_ref": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "type": "object"
+      },
+      "EiriMemoryBoardControls": {
+        "properties": {
+          "enabled": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "slots": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/EiriMemoryBoardSlotControls"
+              }
+            ]
+          }
+        },
+        "type": "object"
+      },
+      "EiriMemoryBoardSlotControls": {
+        "properties": {
+          "claims": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "companions": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "facets": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "other": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "summaries": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "turns": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          }
+        },
+        "type": "object"
+      },
+      "EiriSessionRagControls": {
+        "properties": {
+          "session_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "type": "object"
       },
       "ErrorCode": {
         "enum": [
