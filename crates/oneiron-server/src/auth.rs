@@ -21,6 +21,8 @@ pub(crate) enum CoreScope {
     Read,
     Write,
     Auth,
+    CompanionProfileRead,
+    CompanionAccessGrantWrite,
     CompanionRegisterRead,
     CompanionRegisterWrite,
 }
@@ -31,6 +33,8 @@ impl CoreScope {
             Self::Read => "core:read",
             Self::Write => "core:write",
             Self::Auth => "core:auth",
+            Self::CompanionProfileRead => "companion:profile:read",
+            Self::CompanionAccessGrantWrite => "companion:access-grant:write",
             Self::CompanionRegisterRead => "companion:register:read",
             Self::CompanionRegisterWrite => "companion:register:write",
         }
@@ -41,6 +45,8 @@ impl CoreScope {
             "core:read" => Some(Self::Read),
             "core:write" => Some(Self::Write),
             "core:auth" => Some(Self::Auth),
+            "companion:profile:read" => Some(Self::CompanionProfileRead),
+            "companion:access-grant:write" => Some(Self::CompanionAccessGrantWrite),
             "companion:register:read" => Some(Self::CompanionRegisterRead),
             "companion:register:write" => Some(Self::CompanionRegisterWrite),
             _ => None,
@@ -52,6 +58,8 @@ impl CoreScope {
             Self::Read,
             Self::Write,
             Self::Auth,
+            Self::CompanionProfileRead,
+            Self::CompanionAccessGrantWrite,
             Self::CompanionRegisterRead,
             Self::CompanionRegisterWrite,
         ]
@@ -64,6 +72,7 @@ impl CoreScope {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct CoreAuth {
     principal: String,
+    principal_ref: Option<String>,
     scopes: BTreeSet<CoreScope>,
     implicit_all_scopes: bool,
 }
@@ -76,6 +85,7 @@ impl CoreAuth {
         if headers.contains_key(LEGACY_SECRET_HEADER) && check_auth(headers, config).is_ok() {
             return Ok(Self {
                 principal: "legacy-shared-secret".to_owned(),
+                principal_ref: None,
                 scopes: CoreScope::all(),
                 implicit_all_scopes: true,
             });
@@ -88,6 +98,7 @@ impl CoreAuth {
         check_auth(headers, config).map_err(|_| ApiError::unauthorized())?;
         Ok(Self {
             principal: "legacy-shared-secret".to_owned(),
+            principal_ref: None,
             scopes: CoreScope::all(),
             implicit_all_scopes: true,
         })
@@ -101,8 +112,16 @@ impl CoreAuth {
         }
     }
 
+    pub(crate) fn has_scope(&self, scope: CoreScope) -> bool {
+        self.scopes.contains(&scope)
+    }
+
     pub(crate) fn principal(&self) -> &str {
         &self.principal
+    }
+
+    pub(crate) fn principal_ref(&self) -> Option<&str> {
+        self.principal_ref.as_deref()
     }
 
     pub(crate) fn idempotency_principal(&self) -> String {
@@ -115,7 +134,12 @@ impl CoreAuth {
                 .collect::<Vec<_>>()
                 .join(",")
         };
-        format!("core:{}:scopes={scopes}", self.principal)
+        let principal_ref = self
+            .principal_ref
+            .as_deref()
+            .map(|principal_ref| format!(":principal_ref={principal_ref}"))
+            .unwrap_or_default();
+        format!("core:{}{principal_ref}:scopes={scopes}", self.principal)
     }
 }
 
@@ -183,11 +207,12 @@ fn bearer_token(headers: &HeaderMap) -> Result<Option<&str>, ApiError> {
 fn bearer_auth(token: &str, config: &SyncServerConfig) -> Result<CoreAuth, ApiError> {
     let Some(expected) = config.auth_secret.as_ref() else {
         if config.allow_unauthenticated {
-            let scopes = parse_bearer_scopes(token)?;
-            let implicit_all_scopes = scopes.is_none();
+            let claims = parse_bearer_claims(token)?;
+            let implicit_all_scopes = claims.scopes.is_none();
             return Ok(CoreAuth {
                 principal: "dev-bearer".to_owned(),
-                scopes: scopes.unwrap_or_else(CoreScope::all),
+                principal_ref: claims.principal_ref,
+                scopes: claims.scopes.unwrap_or_else(CoreScope::all),
                 implicit_all_scopes,
             });
         }
@@ -202,27 +227,40 @@ fn bearer_auth(token: &str, config: &SyncServerConfig) -> Result<CoreAuth, ApiEr
         return Err(ApiError::unauthorized());
     }
 
-    let scopes = parse_bearer_scopes(claims)?;
-    let implicit_all_scopes = scopes.is_none();
+    let claims = parse_bearer_claims(claims)?;
+    let implicit_all_scopes = claims.scopes.is_none();
     Ok(CoreAuth {
         principal: "bearer".to_owned(),
-        scopes: scopes.unwrap_or_else(CoreScope::all),
+        principal_ref: claims.principal_ref,
+        scopes: claims.scopes.unwrap_or_else(CoreScope::all),
         implicit_all_scopes,
     })
 }
 
-fn parse_bearer_scopes(token_claims: &str) -> Result<Option<BTreeSet<CoreScope>>, ApiError> {
-    let mut scopes = None;
+#[derive(Default)]
+struct BearerClaims {
+    scopes: Option<BTreeSet<CoreScope>>,
+    principal_ref: Option<String>,
+}
+
+fn parse_bearer_claims(token_claims: &str) -> Result<BearerClaims, ApiError> {
+    let mut claims = BearerClaims::default();
+    let mut saw_claim = false;
     for claim in token_claims.split(';').filter(|claim| !claim.is_empty()) {
+        saw_claim = true;
         let Some((key, value)) = claim.split_once('=') else {
             return Err(ApiError::unauthorized());
         };
         match key {
-            "scope" | "scopes" => scopes = Some(parse_scope_list(value)?),
+            "scope" | "scopes" => claims.scopes = Some(parse_scope_list(value)?),
+            "principal_ref" => claims.principal_ref = Some(parse_principal_ref(value)?),
             _ => return Err(ApiError::unauthorized()),
         }
     }
-    Ok(scopes)
+    if saw_claim && claims.scopes.is_none() {
+        return Err(ApiError::unauthorized());
+    }
+    Ok(claims)
 }
 
 fn parse_scope_list(value: &str) -> Result<BTreeSet<CoreScope>, ApiError> {
@@ -234,6 +272,12 @@ fn parse_scope_list(value: &str) -> Result<BTreeSet<CoreScope>, ApiError> {
         scopes.insert(scope);
     }
     Ok(scopes)
+}
+
+fn parse_principal_ref(value: &str) -> Result<String, ApiError> {
+    oneiron::EntityId::from_hex(value)
+        .map(|id| id.to_hex())
+        .map_err(|_| ApiError::unauthorized())
 }
 
 fn constant_time_eq(provided: &str, expected: &str) -> bool {
@@ -261,6 +305,8 @@ mod tests {
         assert!(auth.require(CoreScope::Read).is_ok());
         assert!(auth.require(CoreScope::Write).is_ok());
         assert!(auth.require(CoreScope::Auth).is_ok());
+        assert!(auth.require(CoreScope::CompanionProfileRead).is_ok());
+        assert!(auth.require(CoreScope::CompanionAccessGrantWrite).is_ok());
         assert!(auth.require(CoreScope::CompanionRegisterRead).is_ok());
         assert!(auth.require(CoreScope::CompanionRegisterWrite).is_ok());
     }
@@ -309,15 +355,18 @@ mod tests {
         let mut headers = HeaderMap::new();
         headers.insert(
             AUTHORIZATION,
-            "Bearer secret;scope=core:read,core:auth,companion:register:write"
+            "Bearer secret;scope=core:read,core:auth,companion:profile:read,companion:access-grant:write,companion:register:write"
                 .parse()
                 .unwrap(),
         );
         let auth = CoreAuth::from_headers(&headers, &config()).unwrap();
 
         assert_eq!(auth.principal(), "bearer");
+        assert_eq!(auth.principal_ref(), None);
         assert!(auth.require(CoreScope::Read).is_ok());
         assert!(auth.require(CoreScope::Auth).is_ok());
+        assert!(auth.require(CoreScope::CompanionProfileRead).is_ok());
+        assert!(auth.require(CoreScope::CompanionAccessGrantWrite).is_ok());
         assert!(auth.require(CoreScope::CompanionRegisterWrite).is_ok());
         assert!(auth.require(CoreScope::Write).is_err());
         assert!(auth.require(CoreScope::CompanionRegisterRead).is_err());
@@ -368,11 +417,71 @@ mod tests {
         assert!(auth.require(CoreScope::Read).is_ok());
         assert!(auth.require(CoreScope::Write).is_ok());
         assert!(auth.require(CoreScope::Auth).is_ok());
+        assert!(auth.require(CoreScope::CompanionProfileRead).is_ok());
+        assert!(auth.require(CoreScope::CompanionAccessGrantWrite).is_ok());
         assert!(auth.require(CoreScope::CompanionRegisterRead).is_ok());
         assert!(auth.require(CoreScope::CompanionRegisterWrite).is_ok());
         assert_eq!(
             auth.idempotency_principal(),
             "core:bearer:scopes=__implicit_all_scopes__"
+        );
+    }
+
+    #[test]
+    fn bearer_token_extracts_bound_principal_ref() {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            AUTHORIZATION,
+            "Bearer secret;scope=companion:profile:read;principal_ref=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+                .parse()
+                .unwrap(),
+        );
+        let auth = CoreAuth::from_headers(&headers, &config()).unwrap();
+
+        assert_eq!(
+            auth.principal_ref(),
+            Some("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+        );
+        assert!(auth.require(CoreScope::CompanionProfileRead).is_ok());
+        assert_eq!(
+            auth.idempotency_principal(),
+            "core:bearer:principal_ref=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:scopes=companion:profile:read"
+        );
+    }
+
+    #[test]
+    fn bearer_token_rejects_malformed_principal_ref_claim() {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            AUTHORIZATION,
+            "Bearer secret;scope=companion:profile:read;principal_ref=not-an-entity"
+                .parse()
+                .unwrap(),
+        );
+
+        assert_eq!(
+            CoreAuth::from_headers(&headers, &config())
+                .unwrap_err()
+                .code(),
+            crate::error::ErrorCode::Unauthorized
+        );
+    }
+
+    #[test]
+    fn bearer_token_principal_ref_claim_requires_explicit_scope() {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            AUTHORIZATION,
+            "Bearer secret;principal_ref=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                .parse()
+                .unwrap(),
+        );
+
+        assert_eq!(
+            CoreAuth::from_headers(&headers, &config())
+                .unwrap_err()
+                .code(),
+            crate::error::ErrorCode::Unauthorized
         );
     }
 
