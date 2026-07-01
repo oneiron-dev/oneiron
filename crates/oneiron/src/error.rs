@@ -174,6 +174,7 @@ pub enum ErrorKind {
     InvalidClaimBody,
     InvalidPsychProfileBody,
     InvalidCodeArtifactBody,
+    InvalidSkillBody,
     InvalidRecoveryArtifact,
     RecoveryArtifactQuarantineExhausted,
     InvalidCodebaseSnapshotBody,
@@ -434,6 +435,10 @@ pub enum Error {
     /// Nothing was written.
     #[error("invalid CODE artifact body: {0}")]
     InvalidCodeArtifactBody(&'static str),
+    /// A SKILL entity body failed pinned reliability/provenance validation.
+    /// Nothing was written.
+    #[error("invalid SKILL body: {0}")]
+    InvalidSkillBody(&'static str),
     /// An AccessGrant control-plane record failed pinned structural
     /// validation. Nothing was written.
     #[error("invalid access grant body: {0}")]
@@ -872,6 +877,7 @@ impl Error {
             Self::InvalidClaimBody(_) => ErrorKind::InvalidClaimBody,
             Self::InvalidPsychProfileBody(_) => ErrorKind::InvalidPsychProfileBody,
             Self::InvalidCodeArtifactBody(_) => ErrorKind::InvalidCodeArtifactBody,
+            Self::InvalidSkillBody(_) => ErrorKind::InvalidSkillBody,
             Self::InvalidRecoveryArtifact(_) => ErrorKind::InvalidRecoveryArtifact,
             Self::RecoveryArtifactQuarantineExhausted { .. } => {
                 ErrorKind::RecoveryArtifactQuarantineExhausted
