@@ -7432,6 +7432,88 @@ fn claim_vad_reappraisal_preserves_provenance_and_supersession() -> Result<()> {
 }
 
 #[test]
+fn claim_vad_reappraisal_clears_state_when_turn_evidence_disappears() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let subject = EntityId::now();
+    let turn = EntityId::now();
+    let claim = EntityId::now();
+
+    vault.put_entity(
+        &subject,
+        ENTITY_TYPE_PERSON,
+        test_time_range(1, 1),
+        1,
+        b"subject",
+    )?;
+    put_claim_vad_turn(
+        &vault,
+        &turn,
+        10,
+        Vad {
+            valence: 0.6,
+            arousal: 0.4,
+            dominance: 0.8,
+        },
+    )?;
+    let body = claim_vad_fixture_body(subject, &[turn]);
+    vault.put_claim(&claim, &body, test_time_range(30, 30), 30)?;
+    vault.put_edge(&claim, EdgeKind::Mentions, &subject, 0.6)?;
+
+    let first = block_on_ready(vault.consolidate_claim_vad(&claim, 100))?;
+    assert!(first.vad.is_some());
+    let old_state_id = first
+        .reappraisal
+        .created_claim_id
+        .expect("initial state claim");
+    let old_before = vault
+        .get_claim(&old_state_id)?
+        .expect("initial state remains readable");
+
+    vault.batch().delete(&turn).commit()?;
+    assert_eq!(vault.get_turn_vad_annotation(&turn)?, None);
+
+    let second = block_on_ready(vault.consolidate_claim_vad(&claim, 200))?;
+    assert_eq!(second.vad, None);
+    assert!(second.evidence_turns.is_empty());
+    assert_eq!(second.semantic_edges_updated, 1);
+    assert_eq!(second.reappraisal.active_claim_id, None);
+    assert_eq!(second.reappraisal.created_claim_id, None);
+    assert_eq!(second.reappraisal.superseded_claim_ids, vec![old_state_id]);
+
+    let old_after = vault
+        .get_claim(&old_state_id)?
+        .expect("superseded state stays readable");
+    assert_eq!(old_after.lifecycle, ClaimLifecycleStatus::Superseded);
+    assert_eq!(old_after.valid_to, Some(200));
+    assert_eq!(old_after.source, old_before.source);
+    assert_eq!(old_after.evidence, old_before.evidence);
+
+    let mentions = vault
+        .edges_out(&claim)?
+        .into_iter()
+        .find(|edge| edge.kind == EdgeKind::Mentions && edge.target == subject)
+        .expect("semantic edge survives");
+    assert_vad_close(mentions.vad.expect("cleared VAD"), Vad::NEUTRAL);
+
+    let mut active_claim_vad_states = Vec::new();
+    for state_id in vault.claims_for_subject(&claim)? {
+        let Some(state) = vault.get_claim(&state_id)? else {
+            continue;
+        };
+        if state.predicate == CLAIM_VAD_REAPPRAISAL_PREDICATE
+            && state.lifecycle == ClaimLifecycleStatus::Active
+        {
+            active_claim_vad_states.push(state_id);
+        }
+    }
+    assert!(
+        active_claim_vad_states.is_empty(),
+        "removed evidence must not leave an active claim-VAD state"
+    );
+    Ok(())
+}
+
+#[test]
 fn batch_edge_with_vad_api() -> Result<()> {
     let (_dir, vault) = open_test_vault();
     let src = EntityId::now();
