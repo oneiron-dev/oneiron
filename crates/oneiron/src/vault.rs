@@ -168,7 +168,7 @@ fn companion_record_id_for_key_in_txn(
             return Err(Error::CorruptedIndex("companion register type index"));
         }
         let record = decode_companion_record_body(&raw[ENTITY_METADATA_HEADER_LEN..])?;
-        if record.key() == *key {
+        if record.lifecycle == ClaimLifecycleStatus::Active && record.key() == *key {
             return Ok(Some(id));
         }
     }
@@ -940,6 +940,9 @@ impl Vault {
         let data = encode_companion_record_body(record)?;
         let mut wtxn = self.store.env.write_txn()?;
         let existing = self.read_companion_record_in_txn(&wtxn, id)?;
+        if existing.lifecycle != ClaimLifecycleStatus::Active {
+            return Err(Error::InvalidClaimBody("companion record is retired"));
+        }
         if existing.key() != record.key() {
             return Err(Error::InvalidClaimBody(
                 "companion record key cannot change",
@@ -1008,6 +1011,9 @@ impl Vault {
                 return Err(Error::CorruptedIndex("companion register type index"));
             }
             let record = decode_companion_record_body(&raw[ENTITY_METADATA_HEADER_LEN..])?;
+            if record.lifecycle != ClaimLifecycleStatus::Active {
+                continue;
+            }
             if register.register(record)?.is_some() {
                 return Err(Error::CorruptedIndex("companion register duplicate key"));
             }

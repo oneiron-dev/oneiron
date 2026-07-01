@@ -1465,6 +1465,37 @@ mod tests {
             companion_export_layer(&register, &expressions).is_empty(),
             "retired neutral record and private/shared records must not export"
         );
+
+        let err = vault
+            .update_companion_record(&neutral_id, &neutral, 16)
+            .expect_err("retired records must not reactivate through update");
+        assert!(matches!(
+            err,
+            Error::InvalidClaimBody("companion record is retired")
+        ));
+        assert_eq!(vault.companion_record_id_for_key(&neutral.key())?, None);
+
+        let replacement_id = entity(0x55);
+        let mut replacement = neutral;
+        replacement.value = Value::from("replacement neutral @Oneiron");
+        vault.create_companion_record(&replacement_id, &replacement, 17)?;
+        assert_eq!(
+            vault.companion_record_id_for_key(&replacement.key())?,
+            Some(replacement_id)
+        );
+        assert_eq!(
+            vault
+                .get_companion_record(&neutral_id)?
+                .expect("retired record remains readable")
+                .lifecycle,
+            ClaimLifecycleStatus::Retracted
+        );
+        let register = vault.companion_register()?;
+        assert_eq!(register.records_in_scope(&neutral_scope).count(), 1);
+        assert_eq!(
+            register.lookup_persona(&neutral_scope, neutral_persona),
+            Some(&replacement)
+        );
         Ok(())
     }
 

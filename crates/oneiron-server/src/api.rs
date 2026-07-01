@@ -2051,7 +2051,7 @@ async fn create_companion_register_record(
     State(server): State<Arc<SyncServer>>,
     payload: Result<Json<CompanionRegisterCreateRecordRequest>, JsonRejection>,
 ) -> Result<Json<CompanionRegisterRecordResponse>, EnvelopedApiError> {
-    auth.require(CoreScope::Write)?;
+    auth.require(CoreScope::CompanionRegisterWrite)?;
     let req = json_payload(payload)?;
     let id = parse_optional_entity_id(req.id.as_deref(), "id")?;
     let learned_at = req.learned_at.unwrap_or_else(unix_seconds_now);
@@ -2087,7 +2087,7 @@ async fn get_companion_register_record(
     State(server): State<Arc<SyncServer>>,
     Path(record_id): Path<String>,
 ) -> Result<Json<CompanionRegisterRecordResponse>, EnvelopedApiError> {
-    auth.require(CoreScope::Read)?;
+    auth.require(CoreScope::CompanionRegisterRead)?;
     let id = parse_entity_id_param(&record_id, "record_id")?;
     let record = server
         .vault
@@ -2122,7 +2122,7 @@ async fn update_companion_register_record(
     Path(record_id): Path<String>,
     payload: Result<Json<CompanionRegisterUpdateRecordRequest>, JsonRejection>,
 ) -> Result<Json<CompanionRegisterRecordResponse>, EnvelopedApiError> {
-    auth.require(CoreScope::Write)?;
+    auth.require(CoreScope::CompanionRegisterWrite)?;
     let id = parse_entity_id_param(&record_id, "record_id")?;
     let req = json_payload(payload)?;
     let learned_at = req.learned_at.unwrap_or_else(unix_seconds_now);
@@ -2160,7 +2160,7 @@ async fn retire_companion_register_record(
     Path(record_id): Path<String>,
     payload: Result<Json<CompanionRegisterRetireRecordRequest>, JsonRejection>,
 ) -> Result<Json<CompanionRegisterRecordResponse>, EnvelopedApiError> {
-    auth.require(CoreScope::Write)?;
+    auth.require(CoreScope::CompanionRegisterWrite)?;
     let id = parse_entity_id_param(&record_id, "record_id")?;
     let req = json_payload(payload)?;
     let retired_at = req.retired_at.unwrap_or_else(unix_seconds_now);
@@ -9331,6 +9331,26 @@ mod tests {
             "export": "shared_vault"
         });
 
+        let (status, body) = route_json(
+            server.clone(),
+            core_request(
+                "POST",
+                "/v1/companion/register/records",
+                "core:write",
+                Some(&json!({
+                    "id": seeded_test_entity_id(0x1219_0010).to_hex(),
+                    "record": neutral_record.clone()
+                })),
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::FORBIDDEN);
+        assert_error_envelope(&body, "FORBIDDEN");
+        assert_eq!(
+            error_envelope(&body)["details"]["requiredScope"],
+            Value::from("companion:register:write")
+        );
+
         for (id, record, learned_at) in [
             (&neutral_id, neutral_record.clone(), 30_u64),
             (&personal_id, personal_record.clone(), 31_u64),
@@ -9342,7 +9362,7 @@ mod tests {
                 core_request(
                     "POST",
                     "/v1/companion/register/records",
-                    "core:write",
+                    "companion:register:write",
                     Some(&request),
                 ),
             )
@@ -9359,7 +9379,7 @@ mod tests {
             core_request(
                 "POST",
                 "/v1/companion/register/records",
-                "core:write",
+                "companion:register:write",
                 Some(&json!({
                     "id": seeded_test_entity_id(0x1219_000A).to_hex(),
                     "record": bad_record_value
@@ -9381,7 +9401,7 @@ mod tests {
             core_request(
                 "POST",
                 "/v1/companion/register/records",
-                "core:write",
+                "companion:register:write",
                 Some(&json!({
                     "id": seeded_test_entity_id(0x1219_000B).to_hex(),
                     "record": bad_provenance_value
@@ -9402,6 +9422,18 @@ mod tests {
             core_request("GET", &read_path, "core:read", None),
         )
         .await;
+        assert_eq!(status, StatusCode::FORBIDDEN);
+        assert_error_envelope(&body, "FORBIDDEN");
+        assert_eq!(
+            error_envelope(&body)["details"]["requiredScope"],
+            Value::from("companion:register:read")
+        );
+
+        let (status, body) = route_json(
+            server.clone(),
+            core_request("GET", &read_path, "companion:register:read", None),
+        )
+        .await;
         assert_eq!(status, StatusCode::OK);
         assert_eq!(
             body["record"]["value"]["note"],
@@ -9419,7 +9451,12 @@ mod tests {
         let update_request = json!({ "learned_at": 33_u64, "record": updated_record });
         let (status, body) = route_json(
             server.clone(),
-            core_request("POST", &read_path, "core:write", Some(&update_request)),
+            core_request(
+                "POST",
+                &read_path,
+                "companion:register:write",
+                Some(&update_request),
+            ),
         )
         .await;
         assert_eq!(status, StatusCode::OK);
@@ -9432,18 +9469,47 @@ mod tests {
         let retire_request = json!({ "retired_at": 34_u64 });
         let (status, body) = route_json(
             server.clone(),
-            core_request("POST", &retire_path, "core:write", Some(&retire_request)),
+            core_request(
+                "POST",
+                &retire_path,
+                "companion:register:write",
+                Some(&retire_request),
+            ),
         )
         .await;
         assert_eq!(status, StatusCode::OK);
         assert_eq!(body["record"]["lifecycle"], Value::from("retracted"));
+
+        let reactivate_request = json!({
+            "learned_at": 35_u64,
+            "record": {
+                "kind": "persona",
+                "scope": { "kind": "personal", "person_ref": person_ref },
+                "subject": { "kind": "persona", "persona_ref": persona_ref },
+                "value": { "note": "reactivated private note" },
+                "provenance": body["record"]["provenance"].clone(),
+                "export": "local_only"
+            }
+        });
+        let (status, body) = route_json(
+            server.clone(),
+            core_request(
+                "POST",
+                &read_path,
+                "companion:register:write",
+                Some(&reactivate_request),
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_error_envelope(&body, "BAD_REQUEST");
 
         let (status, body) = route_json(
             server.clone(),
             core_request(
                 "POST",
                 "/v1/companion/register/records",
-                "core:write",
+                "companion:register:write",
                 Some(&json!({
                     "id": seeded_test_entity_id(0x1219_0009).to_hex(),
                     "record": neutral_record
