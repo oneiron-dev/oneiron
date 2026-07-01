@@ -992,102 +992,157 @@ impl Vault {
             }
         }
 
-        let Some(vad) = mean_vad(&evidence_turns) else {
-            wtxn.commit()?;
-            return Ok(ClaimVadConsolidation {
-                claim_id: *claim_id,
-                vad: None,
-                evidence_turns,
-                semantic_edges_updated: 0,
-                structural_edges_skipped: 0,
-                reappraisal: ClaimVadReappraisal {
-                    active_claim_id: None,
-                    created_claim_id: None,
-                    superseded_claim_ids: Vec::new(),
-                },
-            });
-        };
-        vad.validate()?;
-
         let (semantic_edges, structural_edges_skipped) =
             self.claim_vad_incident_edges_in_txn(&wtxn, claim_id)?;
-        let value = claim_vad_value(vad, evidence_turns.len());
-        let evidence = claim_vad_evidence_value(&evidence_turns);
         let active_states = self.active_claim_vad_states_in_txn(&wtxn, claim_id)?;
-
         let mut ops = Vec::new();
-        for edge in &semantic_edges {
-            ops.push(BatchOp::SetEdgeVad {
-                src: edge.source,
-                kind: edge.kind,
-                tgt: edge.target,
-                vad,
-            });
-        }
 
-        let reappraisal = if active_states.len() == 1
-            && active_states[0].body.value == value
-            && active_states[0].body.evidence.as_ref() == Some(&evidence)
-        {
-            ClaimVadReappraisal {
-                active_claim_id: Some(active_states[0].id),
-                created_claim_id: None,
-                superseded_claim_ids: Vec::new(),
+        let (vad, reappraisal) = if let Some(vad) = mean_vad(&evidence_turns) {
+            vad.validate()?;
+            for edge in &semantic_edges {
+                ops.push(BatchOp::SetEdgeVad {
+                    src: edge.source,
+                    kind: edge.kind,
+                    tgt: edge.target,
+                    vad,
+                });
             }
-        } else {
-            let state_claim_id = EntityId::now();
-            let mut body = ClaimBody::new(
-                CLAIM_VAD_REAPPRAISAL_PREDICATE,
-                ClaimSubject::Entity(*claim_id),
-                value,
-                1.0,
-                ClaimApprovalStatus::Auto,
-                ClaimLifecycleStatus::Active,
-            );
-            body.evidence = Some(evidence);
-            body.source = Some(ClaimSource::Inferred);
-            body.valid_from = Some(now);
-            let data = encode_claim_body(&body)?;
-            ops.push(BatchOp::Put {
-                id: state_claim_id,
-                entity_type: ENTITY_TYPE_CLAIM,
-                occurred: TimeRange {
-                    start: now,
-                    end: now,
-                },
-                learned_at: now,
-                data,
-                allow_maintenance: false,
-                allow_reserved_predicate: false,
-            });
-            ops.push(BatchOp::Edge {
-                src: state_claim_id,
-                kind: EdgeKind::ClaimOf,
-                tgt: *claim_id,
-                weight: CLAIM_OF_DEFAULT_WEIGHT,
-                vad: Vad::NEUTRAL,
-            });
 
-            let mut superseded_claim_ids = Vec::with_capacity(active_states.len());
-            for state in active_states {
-                let mut closed = state.body;
-                closed.lifecycle = ClaimLifecycleStatus::Superseded;
-                closed.valid_to = Some(now);
-                let closed_data = encode_claim_body(&closed)?;
+            let value = claim_vad_value(vad, evidence_turns.len());
+            let evidence = claim_vad_evidence_value(&evidence_turns);
+
+            let reappraisal = if active_states.len() == 1
+                && active_states[0].body.value == value
+                && active_states[0].body.evidence.as_ref() == Some(&evidence)
+            {
+                ClaimVadReappraisal {
+                    active_claim_id: Some(active_states[0].id),
+                    created_claim_id: None,
+                    superseded_claim_ids: Vec::new(),
+                }
+            } else {
+                let state_claim_id = EntityId::now();
+                let mut body = ClaimBody::new(
+                    CLAIM_VAD_REAPPRAISAL_PREDICATE,
+                    ClaimSubject::Entity(*claim_id),
+                    value,
+                    1.0,
+                    ClaimApprovalStatus::Auto,
+                    ClaimLifecycleStatus::Active,
+                );
+                body.evidence = Some(evidence);
+                body.source = Some(ClaimSource::Inferred);
+                body.valid_from = Some(now);
+                let data = encode_claim_body(&body)?;
                 ops.push(BatchOp::Put {
-                    id: state.id,
+                    id: state_claim_id,
                     entity_type: ENTITY_TYPE_CLAIM,
                     occurred: TimeRange {
-                        start: state.header.occurred_start,
+                        start: now,
                         end: now,
                     },
-                    learned_at: state.header.learned_at,
-                    data: closed_data,
+                    learned_at: now,
+                    data,
                     allow_maintenance: false,
                     allow_reserved_predicate: false,
                 });
-                ops.push(BatchOp::EdgeWithCreatedAt {
+                ops.push(BatchOp::Edge {
                     src: state_claim_id,
+                    kind: EdgeKind::ClaimOf,
+                    tgt: *claim_id,
+                    weight: CLAIM_OF_DEFAULT_WEIGHT,
+                    vad: Vad::NEUTRAL,
+                });
+
+                let superseded_claim_ids = Self::close_claim_vad_states(
+                    &mut ops,
+                    active_states,
+                    now,
+                    Some(state_claim_id),
+                )?;
+
+                ClaimVadReappraisal {
+                    active_claim_id: Some(state_claim_id),
+                    created_claim_id: Some(state_claim_id),
+                    superseded_claim_ids,
+                }
+            };
+
+            (Some(vad), reappraisal)
+        } else {
+            for edge in &semantic_edges {
+                ops.push(BatchOp::SetEdgeVad {
+                    src: edge.source,
+                    kind: edge.kind,
+                    tgt: edge.target,
+                    vad: Vad::NEUTRAL,
+                });
+            }
+
+            let superseded_claim_ids =
+                Self::close_claim_vad_states(&mut ops, active_states, now, None)?;
+            (
+                None,
+                ClaimVadReappraisal {
+                    active_claim_id: None,
+                    created_claim_id: None,
+                    superseded_claim_ids,
+                },
+            )
+        };
+
+        if !ops.is_empty() {
+            apply_ops(
+                &self.store,
+                &self.config,
+                &self.analyzer,
+                &mut wtxn,
+                ops,
+                self.text_index_trusted
+                    .load(std::sync::atomic::Ordering::Acquire),
+                false,
+                true,
+            )?;
+        }
+        wtxn.commit()?;
+
+        Ok(ClaimVadConsolidation {
+            claim_id: *claim_id,
+            vad,
+            evidence_turns,
+            semantic_edges_updated: semantic_edges.len(),
+            structural_edges_skipped,
+            reappraisal,
+        })
+    }
+
+    fn close_claim_vad_states(
+        ops: &mut Vec<BatchOp>,
+        active_states: Vec<StoredClaimVadState>,
+        now: u64,
+        successor: Option<EntityId>,
+    ) -> Result<Vec<EntityId>> {
+        let mut superseded_claim_ids = Vec::with_capacity(active_states.len());
+        for state in active_states {
+            let mut closed = state.body;
+            closed.lifecycle = ClaimLifecycleStatus::Superseded;
+            closed.valid_to = Some(now);
+            let closed_data = encode_claim_body(&closed)?;
+            ops.push(BatchOp::Put {
+                id: state.id,
+                entity_type: ENTITY_TYPE_CLAIM,
+                occurred: TimeRange {
+                    start: state.header.occurred_start,
+                    end: now,
+                },
+                learned_at: state.header.learned_at,
+                data: closed_data,
+                allow_maintenance: false,
+                allow_reserved_predicate: false,
+            });
+            if let Some(successor) = successor {
+                ops.push(BatchOp::EdgeWithCreatedAt {
+                    src: successor,
                     kind: EdgeKind::Supersedes,
                     tgt: state.id,
                     weight: SUPERSEDES_DEFAULT_WEIGHT,
@@ -1095,37 +1150,10 @@ impl Vault {
                     vad: Vad::NEUTRAL,
                     provenance: None,
                 });
-                superseded_claim_ids.push(state.id);
             }
-
-            ClaimVadReappraisal {
-                active_claim_id: Some(state_claim_id),
-                created_claim_id: Some(state_claim_id),
-                superseded_claim_ids,
-            }
-        };
-
-        apply_ops(
-            &self.store,
-            &self.config,
-            &self.analyzer,
-            &mut wtxn,
-            ops,
-            self.text_index_trusted
-                .load(std::sync::atomic::Ordering::Acquire),
-            false,
-            true,
-        )?;
-        wtxn.commit()?;
-
-        Ok(ClaimVadConsolidation {
-            claim_id: *claim_id,
-            vad: Some(vad),
-            evidence_turns,
-            semantic_edges_updated: semantic_edges.len(),
-            structural_edges_skipped,
-            reappraisal,
-        })
+            superseded_claim_ids.push(state.id);
+        }
+        Ok(superseded_claim_ids)
     }
 
     fn claim_body_for_claim_vad_in_txn(
