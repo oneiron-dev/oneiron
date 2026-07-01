@@ -159,6 +159,18 @@ fn resume_bundle_empty_surfaces_serialize_as_empty_arrays() {
     );
 }
 
+#[test]
+fn session_context_deserializes_legacy_without_rag_state() {
+    let session: SessionContext = serde_json::from_value(serde_json::json!({
+        "api_version": "v1",
+        "counts": {},
+        "last_activity": null
+    }))
+    .expect("legacy session context should deserialize");
+
+    assert_eq!(session.rag_state, EiriSessionRagState::default());
+}
+
 fn seeded_entity_id(counter: u128) -> EntityId {
     let mut bytes = counter.to_be_bytes();
     bytes[0] = 0x7e;
