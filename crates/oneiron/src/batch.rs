@@ -2536,9 +2536,23 @@ fn validate_companion_register_put(
         {
             return Err(Error::CompanionRecordAlreadyExists);
         }
-        if record.terminal_lifecycle_event_kind() != Some(CompanionLifecycleEventKind::Revived)
-            && let Some(existing_id) =
-                crate::vault::companion_record_any_id_for_key_in_txn(store, &*wtxn, &key)?
+        if record.terminal_lifecycle_event_kind() == Some(CompanionLifecycleEventKind::Revived) {
+            let prior_lifecycle_events =
+                &record.lifecycle_events[..record.lifecycle_events.len() - 1];
+            if crate::vault::companion_retired_record_id_for_key_and_lifecycle_events_in_txn(
+                store,
+                &*wtxn,
+                &key,
+                prior_lifecycle_events,
+            )?
+            .is_none()
+            {
+                return Err(Error::InvalidClaimBody(
+                    "companion record revive requires retired history",
+                ));
+            }
+        } else if let Some(existing_id) =
+            crate::vault::companion_record_any_id_for_key_in_txn(store, &*wtxn, &key)?
             && existing_id != *id
         {
             return Err(Error::CompanionRecordAlreadyExists);

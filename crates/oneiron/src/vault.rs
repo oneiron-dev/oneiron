@@ -55,6 +55,7 @@ use crate::store::{
     TEXT_BM25_FIELD_SCHEMA_HASH_KEY, TEXT_INDEX_SCHEMA_VERSION, TEXT_INDEX_SCHEMA_VERSION_KEY,
     lmdb_database_open_guard,
 };
+use crate::types::companion::CompanionLifecycleEvent;
 use crate::types::{
     COMPANION_REGISTER_PACK_ID, COMPANION_REGISTER_SHORT_ID_PREFIX, CompanionExportClassification,
     CompanionRecord, CompanionRecordKey, CompanionRegister, EDGE_KEY_LEN, ENTITY_ID_LEN,
@@ -203,6 +204,38 @@ pub(crate) fn companion_record_any_id_for_key_in_txn(
         }
         let record = decode_companion_record_body(&raw[ENTITY_METADATA_HEADER_LEN..])?;
         if record.key() == *key {
+            return Ok(Some(id));
+        }
+    }
+    Ok(None)
+}
+
+pub(crate) fn companion_retired_record_id_for_key_and_lifecycle_events_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    key: &CompanionRecordKey,
+    lifecycle_events: &[CompanionLifecycleEvent],
+) -> Result<Option<EntityId>> {
+    key.validate()?;
+    for index_entry in store
+        .type_index
+        .prefix_iter(txn, &[ENTITY_TYPE_COMPANION_REGISTER])?
+    {
+        let (type_key, _) = index_entry?;
+        let id = entity_id_from_type_index_key(type_key)?;
+        let Some(raw) = store.entities.get(txn, id.as_bytes())? else {
+            return Err(Error::CorruptedIndex("companion register type index"));
+        };
+        let header =
+            EntityMetadataHeader::parse(raw).ok_or(Error::CorruptedIndex("entity header"))?;
+        if header.entity_type != ENTITY_TYPE_COMPANION_REGISTER {
+            return Err(Error::CorruptedIndex("companion register type index"));
+        }
+        let record = decode_companion_record_body(&raw[ENTITY_METADATA_HEADER_LEN..])?;
+        if record.lifecycle == ClaimLifecycleStatus::Retracted
+            && record.key() == *key
+            && record.lifecycle_events.as_slice() == lifecycle_events
+        {
             return Ok(Some(id));
         }
     }
