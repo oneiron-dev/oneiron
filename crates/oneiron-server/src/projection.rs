@@ -6,7 +6,7 @@ use oneiron::types::{
     ENTITY_TYPE_SUMMARY, ENTITY_TYPE_TASK, ENTITY_TYPE_TASK_LIST, ENTITY_TYPE_TURN,
     companion::CompanionLifecycleEvent, decode_companion_record_body, entity_type_registry_entry,
 };
-use oneiron::{EdgeInfo, EntityId, FieldProfile, Vault};
+use oneiron::{EdgeInfo, EntityId, FieldProfile, SKILL_RECORD_BODY_KEYS, Vault};
 use serde::de::{self, Visitor};
 use serde::{Deserialize, Deserializer};
 use serde_json::{Map, Value, json};
@@ -403,15 +403,7 @@ fn profile_fields(entity_type: u8, profile: FieldProfile) -> &'static [&'static 
 
         (ENTITY_TYPE_SKILL, FieldProfile::Minimal) => &["skillId"],
         (ENTITY_TYPE_SKILL, FieldProfile::Standard) => &["skillId", "desc", "approvalStatus"],
-        (ENTITY_TYPE_SKILL, FieldProfile::Full) => &[
-            "skillId",
-            "desc",
-            "version",
-            "approvalStatus",
-            "lifecycleStatus",
-            "source",
-            "confidence",
-        ],
+        (ENTITY_TYPE_SKILL, FieldProfile::Full) => &SKILL_RECORD_BODY_KEYS,
 
         (ENTITY_TYPE_TASK_LIST, FieldProfile::Minimal) => &["name"],
         (ENTITY_TYPE_TASK_LIST, FieldProfile::Standard) => &["name", "goal", "status"],
@@ -551,6 +543,38 @@ mod tests {
         assert_eq!(full["kind"], "TASK");
         assert_eq!(full["label"], "Ship projection");
         assert_eq!(full["updatedAt"], 1_777_000_000_u64);
+    }
+
+    #[test]
+    fn skill_full_projection_exposes_reliability_metadata() {
+        let id = EntityId::now();
+        let body = rmp_serde::to_vec_named(&json!({
+            "skillId": "oneiron.skill.full",
+            "desc": "Full SKILL projection",
+            "version": "1.0.0",
+            "approvalStatus": "approved",
+            "lifecycleStatus": "active",
+            "source": "user_stated",
+            "confidence": 1.0,
+            "generated": false,
+            "humanAuthored": true,
+            "dependencies": [{"skillId": "oneiron.skill.base", "minVersion": "1.0.0"}],
+            "provenance": {"source": "fixture"}
+        }))
+        .unwrap();
+
+        let full = project_entity_parts(&id, ENTITY_TYPE_SKILL, 1_777_000_000, &body, View::Full);
+        let full_object = full.as_object().unwrap();
+        for key in SKILL_RECORD_BODY_KEYS {
+            assert!(
+                full_object.contains_key(key),
+                "full SKILL projection must include {key}"
+            );
+        }
+        assert_eq!(full["generated"], false);
+        assert_eq!(full["humanAuthored"], true);
+        assert_eq!(full["dependencies"][0]["skillId"], "oneiron.skill.base");
+        assert_eq!(full["provenance"]["source"], "fixture");
     }
 
     #[test]

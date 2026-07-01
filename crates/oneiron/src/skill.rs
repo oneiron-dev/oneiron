@@ -767,6 +767,36 @@ mod tests {
     }
 
     #[test]
+    fn raw_skill_put_upgrades_legacy_opaque_skill_body() -> Result<()> {
+        let (_dir, vault) = crate::test_util::open_test_vault_with(test_config());
+        let id = EntityId::now();
+        let occurred = TimeRange { start: 10, end: 10 };
+        let legacy_body = b"legacy opaque skill body";
+        let mut raw = Vec::with_capacity(ENTITY_METADATA_HEADER_LEN + legacy_body.len());
+        raw.push(ENTITY_TYPE_SKILL);
+        raw.extend_from_slice(&occurred.start.to_be_bytes());
+        raw.extend_from_slice(&occurred.end.to_be_bytes());
+        raw.extend_from_slice(&11_u64.to_be_bytes());
+        raw.extend_from_slice(legacy_body);
+        let mut wtxn = vault.store.env.write_txn()?;
+        vault.store.entities.put(&mut wtxn, id.as_bytes(), &raw)?;
+        wtxn.commit()?;
+
+        let upgraded = human_skill("1.0.0");
+        let upgraded_bytes = encode_skill_record(&upgraded)?;
+        vault.put_entity(
+            &id,
+            ENTITY_TYPE_SKILL,
+            TimeRange { start: 12, end: 12 },
+            13,
+            &upgraded_bytes,
+        )?;
+
+        assert_eq!(vault.get_skill_record(&id)?, Some(upgraded));
+        Ok(())
+    }
+
+    #[test]
     fn skill_record_rejects_mismatched_flags_bad_provenance_and_bad_dependencies() {
         let mut mismatched = generated_skill("1.0.0");
         mismatched.source = ClaimSource::UserStated;
