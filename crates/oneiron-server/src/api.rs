@@ -9,7 +9,8 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::sync::{Arc, OnceLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use axum::extract::rejection::{JsonRejection, QueryRejection};
+use axum::body::Bytes;
+use axum::extract::rejection::{BytesRejection, JsonRejection, QueryRejection};
 use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, StatusCode, header::CONTENT_TYPE};
 use axum::response::{IntoResponse, Json, Response};
@@ -1521,6 +1522,36 @@ fn json_rejection_error(_rejection: JsonRejection) -> ApiError {
     ApiError::bad_request("invalid JSON request body", None)
 }
 
+fn optional_companion_profile_refresh_request(
+    headers: &HeaderMap,
+    payload: Result<Bytes, BytesRejection>,
+) -> Result<CompanionProfileRefreshRequest, ApiError> {
+    let payload = payload.map_err(|_| ApiError::bad_request("invalid JSON request body", None))?;
+    if payload.is_empty() {
+        return Ok(CompanionProfileRefreshRequest::default());
+    }
+
+    if !has_json_content_type(headers) {
+        return Err(ApiError::bad_request("invalid JSON request body", None));
+    }
+
+    serde_json::from_slice(&payload)
+        .map_err(|_| ApiError::bad_request("invalid JSON request body", None))
+}
+
+fn has_json_content_type(headers: &HeaderMap) -> bool {
+    headers
+        .get(CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.split(';').next())
+        .map(|media_type| {
+            let media_type = media_type.trim();
+            media_type.eq_ignore_ascii_case("application/json")
+                || media_type.to_ascii_lowercase().ends_with("+json")
+        })
+        .unwrap_or(false)
+}
+
 // ─── Discovery / capability metadata ─────────────────────────────────────────
 
 /// Health response returned by `/api/health`.
@@ -2104,7 +2135,7 @@ struct CompanionProfileNextAction {
 }
 
 /// Request body for refresh planning over a persisted PsychProfile.
-#[derive(Clone, Debug, Deserialize, ToSchema)]
+#[derive(Clone, Debug, Default, Deserialize, ToSchema)]
 #[schema(example = json!({
     "sourceRevisionIds": ["cccccccccccccccccccccccccccccccc"]
 }))]
@@ -2489,11 +2520,12 @@ async fn refresh_companion_profile(
     State(server): State<Arc<SyncServer>>,
     Path(persona_ref): Path<String>,
     query: Result<Query<CompanionProfileQuery>, QueryRejection>,
-    payload: Result<Json<CompanionProfileRefreshRequest>, JsonRejection>,
+    headers: HeaderMap,
+    payload: Result<Bytes, BytesRejection>,
 ) -> Result<Json<CompanionProfileResponse>, EnvelopedApiError> {
     require_companion_profile_read(&auth)?;
     let params = query_params(query)?;
-    let req = json_payload(payload)?;
+    let req = optional_companion_profile_refresh_request(&headers, payload)?;
     let persona_ref = parse_entity_id_param(&persona_ref, "persona_ref")?;
     let query_source_revision_ids =
         parse_source_revision_ids_query(params.source_revision_ids.as_deref())?;
@@ -2749,13 +2781,25 @@ fn select_refresh_source_revision_ids(
     query_source_revision_ids: Option<Vec<oneiron::EntityId>>,
 ) -> Result<Option<Vec<oneiron::EntityId>>, ApiError> {
     match (body_source_revision_ids, query_source_revision_ids) {
-        (Some(body), Some(query)) if body != query => Err(ApiError::bad_request(
-            "sourceRevisionIds query and body values must match when both are provided",
-            Some("sourceRevisionIds"),
-        )),
+        (Some(body), Some(query)) if !same_source_revision_selection(&body, &query) => {
+            Err(ApiError::bad_request(
+                "sourceRevisionIds query and body values must match when both are provided",
+                Some("sourceRevisionIds"),
+            ))
+        }
         (Some(body), _) => Ok(Some(body)),
         (None, query) => Ok(query),
     }
+}
+
+fn same_source_revision_selection(left: &[oneiron::EntityId], right: &[oneiron::EntityId]) -> bool {
+    let mut left = entity_ids_hex(left);
+    let mut right = entity_ids_hex(right);
+    left.sort_unstable();
+    left.dedup();
+    right.sort_unstable();
+    right.dedup();
+    left == right
 }
 
 fn require_companion_profile_read(auth: &CoreAuth) -> Result<(), ApiError> {
@@ -11344,6 +11388,70 @@ mod tests {
         assert_eq!(query_status, StatusCode::OK);
         assert_eq!(
             query_body["stale_reason"],
+            json!({
+                "kind": "source_revision_mismatch",
+                "expectedSourceRevisionIds": [keep_source.to_hex(), tune_source.to_hex()],
+                "actualSourceRevisionIds": [keep_source.to_hex(), revert_source.to_hex()],
+            })
+        );
+
+        let (bodyless_query_status, bodyless_query_body) = route_json(
+            server.clone(),
+            core_request_with_principal_ref(
+                "POST",
+                &refresh_query_path,
+                "companion:profile:read",
+                &principal_ref.to_hex(),
+                None,
+            ),
+        )
+        .await;
+        assert_eq!(bodyless_query_status, StatusCode::OK);
+        assert_eq!(
+            bodyless_query_body["stale_reason"],
+            json!({
+                "kind": "source_revision_mismatch",
+                "expectedSourceRevisionIds": [keep_source.to_hex(), tune_source.to_hex()],
+                "actualSourceRevisionIds": [keep_source.to_hex(), revert_source.to_hex()],
+            })
+        );
+
+        let malformed_request = Request::builder()
+            .method("POST")
+            .uri(&refresh_query_path)
+            .header(
+                AUTHORIZATION,
+                format!(
+                    "Bearer secret;scope=companion:profile:read;principal_ref={}",
+                    principal_ref.to_hex()
+                ),
+            )
+            .header(CONTENT_TYPE, "application/json")
+            .body(Body::from("{"))
+            .expect("request");
+        let (malformed_status, malformed_body) =
+            route_json(server.clone(), malformed_request).await;
+        assert_eq!(malformed_status, StatusCode::BAD_REQUEST);
+        assert_error_envelope(&malformed_body, "BAD_REQUEST");
+
+        let reordered_request = json!({
+            "sourceRevisionIds": [tune_source.to_hex(), keep_source.to_hex()],
+        });
+        let (reordered_status, reordered_body) = route_json(
+            server.clone(),
+            core_request_with_principal_ref(
+                "POST",
+                &refresh_query_path,
+                "companion:profile:read",
+                &principal_ref.to_hex(),
+                Some(&reordered_request),
+            ),
+        )
+        .await;
+        assert_eq!(reordered_status, StatusCode::OK);
+        assert_eq!(reordered_body["state"], Value::from("stale"));
+        assert_eq!(
+            reordered_body["stale_reason"],
             json!({
                 "kind": "source_revision_mismatch",
                 "expectedSourceRevisionIds": [keep_source.to_hex(), tune_source.to_hex()],
