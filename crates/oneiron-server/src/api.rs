@@ -2722,13 +2722,18 @@ fn parse_source_revision_ids<T>(
 where
     T: AsRef<str>,
 {
-    values
-        .into_iter()
-        .filter_map(|value| {
-            let value = value.as_ref().trim();
-            (!value.is_empty()).then(|| parse_entity_id_param(value, "sourceRevisionIds"))
-        })
-        .collect()
+    let mut ids = Vec::new();
+    for value in values {
+        let value = value.as_ref().trim();
+        if value.is_empty() {
+            continue;
+        }
+        let id = parse_entity_id_param(value, "sourceRevisionIds")?;
+        if !ids.contains(&id) {
+            ids.push(id);
+        }
+    }
+    Ok(ids)
 }
 
 fn entity_ids_hex(ids: &[oneiron::EntityId]) -> Vec<String> {
@@ -11300,10 +11305,6 @@ mod tests {
                 {
                     "state": "revert",
                     "sourceRevisionRef": revert_source.to_hex(),
-                },
-                {
-                    "state": "tune",
-                    "sourceRevisionRef": tune_source.to_hex(),
                 },
                 {
                     "state": "tune",
